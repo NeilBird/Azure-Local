@@ -303,7 +303,7 @@
             "type": 3,
             "content": {
               "version": "KqlItem/1.0",
-              "query": "extensibilityresources\r\n| where type == \"microsoft.azurestackhci/clusters/updatesummaries\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| extend clusterName = tolower(tostring(split(id, '/')[8]))\r\n| extend clusterRG = tolower(resourceGroup)\r\n| join kind=inner (\r\n    resources\r\n    | where type == \"microsoft.azurestackhci/clusters\"\r\n    | where '{ClusterTagName}' == '' or ('{ClusterTagValue}' != '' and tostring(tags['{ClusterTagName}']) =~ '{ClusterTagValue}')\r\n    | project clusterName = tolower(name), clusterRG = tolower(resourceGroup)\r\n) on clusterName, clusterRG\r\n| extend HealthStatus = tostring(properties.healthState)\r\n| extend HealthStatus = case(\r\n    HealthStatus == \"Success\", \"Healthy\",\r\n    HealthStatus == \"Warning\", \"Warning\",\r\n    HealthStatus == \"Failure\", \"Failed\",\r\n    \"Unknown\")\r\n| summarize Count = count() by HealthStatus",
+              "query": "extensibilityresources\r\n| where type == \"microsoft.azurestackhci/clusters/updatesummaries\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| extend clusterName = tolower(tostring(split(id, '/')[8]))\r\n| extend clusterRG = tolower(resourceGroup)\r\n| join kind=inner (\r\n    resources\r\n    | where type == \"microsoft.azurestackhci/clusters\"\r\n    | where '{ClusterTagName}' == '' or ('{ClusterTagValue}' != '' and tostring(tags['{ClusterTagName}']) =~ '{ClusterTagValue}')\r\n    | project clusterName = tolower(name), clusterRG = tolower(resourceGroup)\r\n) on clusterName, clusterRG\r\n| extend HealthStatus = tostring(properties.healthState)\r\n| extend HealthStatus = case(\r\n    HealthStatus == \"Success\", \"Healthy\",\r\n    HealthStatus == \"Warning\", \"Warning\",\r\n    HealthStatus == \"Failure\", \"Failed\",\r\n    HealthStatus == \"InProgress\", \"In Progress\",\r\n    \"Unknown\")\r\n| summarize Count = count() by HealthStatus",
               "size": 3,
               "title": "Cluster Health Status",
               "queryType": 1,
@@ -325,6 +325,10 @@
                   {
                     "seriesName": "Failed",
                     "color": "red"
+                  },
+                  {
+                    "seriesName": "In Progress",
+                    "color": "blue"
                   },
                   {
                     "seriesName": "Unknown",
