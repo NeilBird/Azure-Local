@@ -90,7 +90,7 @@
             LicenseUri = 'https://opensource.org/licenses/MIT'
             
             # A URL to the main website for this project.
-            ProjectUri = 'https://github.com/NeilBird/PowerShell-Snippnets'
+            ProjectUri = 'https://github.com/NeilBird/Azure-Local'
             
             # A URL to an icon representing this module.
             # IconUri = ''

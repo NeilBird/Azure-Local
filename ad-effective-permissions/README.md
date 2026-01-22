@@ -18,7 +18,7 @@ The `Get-ADEffectiveAccess` module provides comprehensive functionality to:
 
 ```powershell
 # Navigate to the module directory
-cd "C:\path\to\PowerShell-Snippnets\ad-effective-permissions"
+cd "C:\path\to\Azure-Local\ad-effective-permissions"
 
 # Import the module
 Import-Module .\Get-ADEffectiveAccess.psd1
@@ -206,8 +206,8 @@ Example commands to download the module, import it and confirm that an Azure Loc
 
 ```PowerShell
 # Download the module files
-Invoke-WebRequest -UseBasicParsing -Uri 'https://raw.githubusercontent.com/NeilBird/PowerShell-Snippnets/refs/heads/main/ad-effective-permissions/Get-ADEffectiveAccess.psm1' -OutFile .\Get-ADEffectiveAccess.psm1
-Invoke-WebRequest -UseBasicParsing -Uri 'https://raw.githubusercontent.com/NeilBird/PowerShell-Snippnets/refs/heads/main/ad-effective-permissions/Get-ADEffectiveAccess.psd1' -OutFile .\Get-ADEffectiveAccess.psd1
+Invoke-WebRequest -UseBasicParsing -Uri 'https://raw.githubusercontent.com/NeilBird/Azure-Local/refs/heads/main/ad-effective-permissions/Get-ADEffectiveAccess.psm1' -OutFile .\Get-ADEffectiveAccess.psm1
+Invoke-WebRequest -UseBasicParsing -Uri 'https://raw.githubusercontent.com/NeilBird/Azure-Local/refs/heads/main/ad-effective-permissions/Get-ADEffectiveAccess.psd1' -OutFile .\Get-ADEffectiveAccess.psd1
 
 # Import the module
 Import-Module .\Get-ADEffectiveAccess.psd1 -Force

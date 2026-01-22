@@ -1,7 +1,7 @@
 
 # Download the module files directly from GitHub:
-Invoke-WebRequest -UseBasicParsing -Uri 'https://raw.githubusercontent.com/NeilBird/PowerShell-Snippnets/refs/heads/main/AzureLocalVM/AzureLocalVM.psm1' -OutFile .\AzureLocalVM.psm1
-Invoke-WebRequest -UseBasicParsing -Uri 'https://raw.githubusercontent.com/NeilBird/PowerShell-Snippnets/refs/heads/main/AzureLocalVM/AzureLocalVM.psd1' -OutFile .\AzureLocalVM.psd1
+Invoke-WebRequest -UseBasicParsing -Uri 'https://raw.githubusercontent.com/NeilBird/Azure-Local/refs/heads/main/AzureLocalVM/AzureLocalVM.psm1' -OutFile .\AzureLocalVM.psm1
+Invoke-WebRequest -UseBasicParsing -Uri 'https://raw.githubusercontent.com/NeilBird/Azure-Local/refs/heads/main/AzureLocalVM/AzureLocalVM.psd1' -OutFile .\AzureLocalVM.psd1
 
 # Import the module:
 Import-Module .\AzureLocalVM.psd1 -Force

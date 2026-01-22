@@ -4,7 +4,7 @@
 
 An Azure Monitor Workbook for monitoring and managing Azure Local (formerly Azure Stack HCI) clusters at scale. This workbook provides comprehensive visibility into cluster health, update readiness, and workload status across your entire Azure Local fleet.
 
-**Important:** This is a community driven project, (not officially supported by Microsoft), for any issues, requests or feedback, please [raise an Issue](https://github.com/NeilBird/PowerShell-Snippnets/issues) (note: no time scales or guarantees can be provided for responses to issues.)
+**Important:** This is a community driven project, (not officially supported by Microsoft), for any issues, requests or feedback, please [raise an Issue](https://github.com/NeilBird/Azure-Local/issues) (note: no time scales or guarantees can be provided for responses to issues.)
 
 ## How to Import the Workbook
 
@@ -20,7 +20,7 @@ An Azure Monitor Workbook for monitoring and managing Azure Local (formerly Azur
 3. **Import the JSON Template**
    - In the Advanced Editor, select the **Gallery Template** tab
    - Delete any existing content in the editor
-   - Copy the entire contents of the [`Azure-Workbook_AzLocal-Managing-Updates-At-Scale.json`](https://raw.githubusercontent.com/NeilBird/PowerShell-Snippnets/refs/heads/main/Azure-Local-Manage-Updates-At-Scale/Azure-Workbook_AzLocal-Managing-Updates-At-Scale.json) file
+   - Copy the entire contents of the [`Azure-Workbook_AzLocal-Managing-Updates-At-Scale.json`](https://raw.githubusercontent.com/NeilBird/Azure-Local/refs/heads/main/Azure-Local-Manage-Updates-At-Scale/Azure-Workbook_AzLocal-Managing-Updates-At-Scale.json) file
    - Paste the JSON content into the editor
    - Click **Apply**
 
