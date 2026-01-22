@@ -1,6 +1,6 @@
 # Azure Local - Managing Updates At Scale Workbook
 
-**Latest Version: v0.5.7**
+**Latest Version: v0.5.8**
 
 An Azure Monitor Workbook for monitoring and managing Azure Local (formerly Azure Stack HCI) clusters at scale. This workbook provides comprehensive visibility into cluster health, update readiness, and workload status across your entire Azure Local fleet.
 
@@ -89,7 +89,11 @@ Detailed view of cluster update readiness:
 - Version distribution across clusters
 - Summary of health states by update status
 - Failed prechecks analysis with filtering by cluster, health state, and severity
-- Detailed failure reason summaries showing affected clusters and occurrence counts
+- **Failure By Reason Summary** table with:
+  - Filter by cluster to narrow down to specific clusters
+  - **Filter by severity** to focus on Critical and Warning issues (defaults to excluding Informational)
+  - Sorted by cluster count (highest first) to identify issues affecting the most clusters
+  - Detailed failure reason summaries showing affected clusters and occurrence counts
 - Link to Microsoft documentation for troubleshooting Azure Local updates
 
 ![Update Readiness](images/update-readiness-and-system-health-screenshot.png)
@@ -103,6 +107,14 @@ Track the progress of ongoing updates across your clusters with detailed status 
   - Direct link to apply One Time Update in Azure Update Manager
   - Link to Azure Local Known Issues documentation
 - **All Cluster Update Status** table with information about the 6-month support window
+- **Update Run History and Error Details** table showing recent update runs with:
+  - Cluster name and update name
+  - **Details** column (3rd column) with direct link to view update run details in Azure portal
+  - State and status with icons (success/failed/in-progress)
+  - Current step description showing what the update is doing
+  - **Error Message** column displaying extracted error details for failed updates (click to view full error)
+  - Human-readable duration format (e.g., "1h 7m 15s" instead of ISO 8601 format)
+  - Start time and last updated timestamps
 
 ![Update Progress](images/update-progress-screenshot.png)
 
@@ -121,9 +133,12 @@ Comprehensive view of physical server machines in Azure Local clusters:
   - Connection status with icons
   - vCPUs (logical core count) and memory (GB)
   - Hardware vendor, model, and processor
-  - Solution version and IP address
-  - OS version and last status change
-- **Disconnected Machines** warning table
+  - Solution version, IP address, and OS version
+  - Last status change
+- **Disconnected Machines** warning table showing:
+  - Disconnected nodes with OS version information
+  - Time since disconnection
+  - Associated cluster and resource group details
 - **Machine Extensions**:
   - Filter by extension status (Succeeded, Failed, Creating, Updating, Deleting)
   - Filter by extension name

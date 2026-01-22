@@ -99,7 +99,7 @@
     {
       "type": 1,
       "content": {
-        "json": "## 🖥️ Azure Local - Managing Updates At Scale\r\n**Version: v0.5.7** | [Check for Updates to apply by checking the latest release available on GitHub](https://github.com/NeilBird/Azure-Local/tree/main/Azure-Local-Manage-Updates-At-Scale)\r\n\r\nThis example Workbook is a community driven project, (not officially supported by Microsoft). If you encounter an issue or have feedback, please [raise an Issue on GitHub](https://github.com/NeilBird/Azure-Local/issues)."
+        "json": "## 🖥️ Azure Local - Managing Updates At Scale\r\n**Version: v0.5.8** | [Check for Updates to apply by checking the latest release available on GitHub](https://github.com/NeilBird/Azure-Local/tree/main/Azure-Local-Manage-Updates-At-Scale)\r\n\r\nThis example Workbook is a community driven project, (not officially supported by Microsoft). If you encounter an issue or have feedback, please [raise an Issue on GitHub](https://github.com/NeilBird/Azure-Local/issues)."
       },
       "name": "workbook-title-version"
     },
@@ -2300,7 +2300,7 @@
             "type": 3,
             "content": {
               "version": "KqlItem/1.0",
-              "query": "resources\r\n| where type == \"microsoft.hybridcompute/machines\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| where properties.cloudMetadata.provider == \"AzSHCI\"\r\n| join kind=inner (\r\n    resources\r\n    | where type == \"microsoft.azurestackhci/clusters\"\r\n    | where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n    | where '{ClusterTagName}' == '' or ('{ClusterTagValue}' != '' and tostring(tags['{ClusterTagName}']) =~ '{ClusterTagValue}')\r\n    | project clusterName = name, clusterResourceGroup = resourceGroup, clusterId = id\r\n) on $left.resourceGroup == $right.clusterResourceGroup\r\n| where tostring(properties.status) == \"Disconnected\"\r\n| extend nodeName = name\r\n| extend lastStatusChange = todatetime(properties.lastStatusChange)\r\n| extend solutionVersion = tostring(properties.detectedProperties.solutionversion)\r\n| extend nodeLink = strcat('https://portal.azure.com/#@/resource', id)\r\n| extend clusterLink = strcat('https://portal.azure.com/#@/resource', clusterId)\r\n| project nodeName, nodeLink, clusterName, clusterLink, lastStatusChange, solutionVersion, resourceGroup, subscriptionId\r\n| order by lastStatusChange asc",
+              "query": "resources\r\n| where type == \"microsoft.hybridcompute/machines\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| where properties.cloudMetadata.provider == \"AzSHCI\"\r\n| join kind=inner (\r\n    resources\r\n    | where type == \"microsoft.azurestackhci/clusters\"\r\n    | where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n    | where '{ClusterTagName}' == '' or ('{ClusterTagValue}' != '' and tostring(tags['{ClusterTagName}']) =~ '{ClusterTagValue}')\r\n    | project clusterName = name, clusterResourceGroup = resourceGroup, clusterId = id\r\n) on $left.resourceGroup == $right.clusterResourceGroup\r\n| where tostring(properties.status) == \"Disconnected\"\r\n| extend nodeName = name\r\n| extend lastStatusChange = todatetime(properties.lastStatusChange)\r\n| extend osVersion = tostring(properties.osVersion)\r\n| extend nodeLink = strcat('https://portal.azure.com/#@/resource', id)\r\n| extend clusterLink = strcat('https://portal.azure.com/#@/resource', clusterId)\r\n| project nodeName, nodeLink, clusterName, clusterLink, lastStatusChange, osVersion, resourceGroup, subscriptionId\r\n| order by lastStatusChange asc",
               "size": 0,
               "showAnalytics": true,
               "title": "⚠️ Disconnected Nodes",
@@ -2366,8 +2366,8 @@
                     "label": "Disconnected Since"
                   },
                   {
-                    "columnId": "solutionVersion",
-                    "label": "Solution Version"
+                    "columnId": "osVersion",
+                    "label": "OS Version"
                   },
                   {
                     "columnId": "resourceGroup",
@@ -4263,6 +4263,30 @@
                   "defaultValue": "value::all",
                   "queryType": 1,
                   "resourceType": "microsoft.resourcegraph/resources"
+                },
+                {
+                  "id": "severity-filter-001",
+                  "version": "KqlParameterItem/1.0",
+                  "name": "SeverityFilter",
+                  "label": "Filter by Severity",
+                  "type": 2,
+                  "isRequired": true,
+                  "multiSelect": true,
+                  "quote": "'",
+                  "delimiter": ",",
+                  "typeSettings": {
+                    "additionalResourceOptions": [],
+                    "showDefault": false
+                  },
+                  "jsonData": "[\r\n  { \"value\": \"Critical\", \"label\": \"Critical\" },\r\n  { \"value\": \"Warning\", \"label\": \"Warning\" },\r\n  { \"value\": \"Informational\", \"label\": \"Informational\" }\r\n]",
+                  "defaultValue": [
+                    "Critical",
+                    "Warning"
+                  ],
+                  "value": [
+                    "Critical",
+                    "Warning"
+                  ]
                 }
               ],
               "style": "pills",
@@ -4275,7 +4299,7 @@
             "type": 3,
             "content": {
               "version": "KqlItem/1.0",
-              "query": "extensibilityresources\r\n| where type == \"microsoft.azurestackhci/clusters/updatesummaries\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| extend hciClusterName = tostring(split(id, '/')[8])\r\n| extend healthCheckResult = properties.healthCheckResult\r\n| mv-expand healthCheck = healthCheckResult\r\n| where tostring(healthCheck.status) == \"Failed\"\r\n| where todatetime(healthCheck.timestamp) >= {TimeRange:start}\r\n| extend displayName = tostring(split(tostring(healthCheck.name), '/')[0])\r\n| extend severity = tostring(healthCheck.severity)\r\n| where '*' in ({FailureClusterFilter}) or hciClusterName in ({FailureClusterFilter})\r\n| summarize FailureCount = count(), AffectedClustersList = make_set(hciClusterName), LatestOccurrence = max(todatetime(healthCheck.timestamp)) by displayName, severity\r\n| extend AffectedClusters = strcat_array(AffectedClustersList, ', '), ClusterCount = array_length(AffectedClustersList)\r\n| extend severityOrder = case(\r\n    severity == \"Critical\", 1,\r\n    severity == \"Warning\", 2,\r\n    severity == \"Informational\", 3,\r\n    4)\r\n| project displayName, severity, FailureCount, ClusterCount, AffectedClusters, LatestOccurrence, severityOrder\r\n| order by severityOrder asc, FailureCount desc\r\n",
+              "query": "extensibilityresources\r\n| where type == \"microsoft.azurestackhci/clusters/updatesummaries\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| extend hciClusterName = tostring(split(id, '/')[8])\r\n| extend healthCheckResult = properties.healthCheckResult\r\n| mv-expand healthCheck = healthCheckResult\r\n| where tostring(healthCheck.status) == \"Failed\"\r\n| where todatetime(healthCheck.timestamp) >= {TimeRange:start}\r\n| extend displayName = tostring(split(tostring(healthCheck.name), '/')[0])\r\n| extend severity = tostring(healthCheck.severity)\r\n| where '*' in ({FailureClusterFilter}) or hciClusterName in ({FailureClusterFilter})\r\n| where severity in ({SeverityFilter})\r\n| summarize FailureCount = count(), AffectedClustersList = make_set(hciClusterName), LatestOccurrence = max(todatetime(healthCheck.timestamp)) by displayName, severity\r\n| extend AffectedClusters = strcat_array(AffectedClustersList, ', '), ClusterCount = array_length(AffectedClustersList)\r\n| extend severityOrder = case(\r\n    severity == \"Critical\", 1,\r\n    severity == \"Warning\", 2,\r\n    severity == \"Informational\", 3,\r\n    4)\r\n| project displayName, severity, FailureCount, ClusterCount, AffectedClusters, LatestOccurrence, severityOrder\r\n| order by ClusterCount desc, severityOrder asc, FailureCount desc\r\n",
               "size": 0,
               "showAnalytics": true,
               "showRefreshButton": true,
@@ -5108,7 +5132,7 @@
           {
             "type": 1,
             "content": {
-              "json": "## Update Run History\n\nRecent update runs across all clusters."
+              "json": "## Update Run History and Error Details\n\nRecent update runs across all clusters. For failed updates, expand the row to see step failure details."
             },
             "name": "text-update-history"
           },
@@ -5116,7 +5140,7 @@
             "type": 3,
             "content": {
               "version": "KqlItem/1.0",
-              "query": "extensibilityresources\r\n| where type == \"microsoft.azurestackhci/clusters/updates/updateruns\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| extend hciClusterName = tostring(split(id, '/')[8])\r\n| extend updateName = tostring(split(id, '/')[10])\r\n| extend runName = name\r\n| extend state = tostring(properties.state)\r\n| extend status = tostring(properties.status)\r\n| extend progress = tostring(properties.progress)\r\n| extend timeStarted = todatetime(properties.timeStarted)\r\n| extend lastUpdatedTime = todatetime(properties.lastUpdatedTime)\r\n| extend duration = tostring(properties.duration)\r\n| where todatetime(timeStarted) >= {TimeRange:start}\r\n| project ClusterName = hciClusterName, UpdateName = updateName, State = state, Status = status, Progress = progress, TimeStarted = timeStarted, LastUpdated = lastUpdatedTime, Duration = duration\r\n| order by TimeStarted desc",
+              "query": "extensibilityresources\r\n| where type == 'microsoft.azurestackhci/clusters/updates/updateruns'\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| extend hciClusterName = tostring(split(id, '/')[8])\r\n| extend updateName = tostring(split(id, '/')[10])\r\n| extend runName = name\r\n| extend state = tostring(properties.state)\r\n| extend timeStarted = todatetime(properties.timeStarted)\r\n| extend lastUpdatedTime = todatetime(properties.lastUpdatedTime)\r\n| extend duration = tostring(properties.duration)\r\n| extend durationHours = iff(duration contains 'H', toint(extract('([0-9]+)H', 1, duration)), 0)\r\n| extend durationMinutes = iff(duration contains 'M', toint(extract('([0-9]+)M', 1, duration)), 0)\r\n| extend durationSeconds = iff(duration contains 'S', toint(extract('([0-9]+)', 1, extract('([0-9.]+)S', 1, duration))), 0)\r\n| extend durationFormatted = strcat(iff(durationHours > 0, strcat(tostring(durationHours), 'h '), ''), iff(durationMinutes > 0 or durationHours > 0, strcat(tostring(durationMinutes), 'm '), ''), tostring(durationSeconds), 's')\r\n| extend progressObj = properties.progress\r\n| extend progressStatus = tostring(progressObj.status)\r\n| extend progressDescription = tostring(progressObj.description)\r\n| extend progressJson = tostring(progressObj)\r\n| extend errorPosType = indexof(progressJson, 'errorMessage\":\"Type ')\r\n| extend errorPosECE = indexof(progressJson, 'errorMessage\":\"ECE ')\r\n| extend errorPos = iff(errorPosType >= 0, errorPosType, errorPosECE)\r\n| extend hasErrorDetails = iff(errorPos >= 0, 1, 0)\r\n| extend errorExtract = iff(errorPos >= 0, substring(progressJson, errorPos + 15), '')\r\n| extend errorEndPos = indexof(errorExtract, '\",\"')\r\n| extend ErrorMessage = iff(errorPos >= 0 and errorEndPos > 0, substring(errorExtract, 0, errorEndPos), '')\r\n| extend ErrorMessageClean = replace_string(replace_string(ErrorMessage, '\\\\n', ' '), '\\\\r', '')\r\n| extend ErrorMessageDisplay = iff(strlen(ErrorMessageClean) > 0, ErrorMessageClean, iff(state == 'Failed' and progressStatus == 'Error', 'Error details not available in update progress', ''))\r\n| extend ErrorMessageTruncated = iff(strlen(ErrorMessageDisplay) > 300, strcat(substring(ErrorMessageDisplay, 0, 300), '...'), ErrorMessageDisplay)\r\n| where todatetime(timeStarted) >= {TimeRange:start}\r\n| extend sortKey = strcat(tostring(hasErrorDetails), '_', format_datetime(timeStarted, 'yyyy-MM-dd HH:mm:ss'))\r\n| extend clusterResourceId = strcat('/subscriptions/', subscriptionId, '/resourceGroups/', resourceGroup, '/providers/microsoft.azurestackhci/clusters/', hciClusterName)\r\n| extend encodedResourceId = replace_string(replace_string(clusterResourceId, '/', '%2F'), ' ', '%20')\r\n| extend PortalLink = strcat('https://portal.azure.com/#view/Microsoft_AzureStackHCI_PortalExtension/SingleInstanceHistoryDetails.ReactView/resourceId/', encodedResourceId, '/updateName~/null/updateRunName~/null/refresh~/false')\r\n| summarize arg_max(sortKey, *) by hciClusterName, updateName\r\n| project ClusterName = hciClusterName, UpdateName = updateName, PortalLink, State = state, Status = progressStatus, CurrentStep = progressDescription, ErrorMessage = ErrorMessageTruncated, Duration = durationFormatted, TimeStarted = timeStarted, LastUpdated = lastUpdatedTime\r\n| order by TimeStarted desc",
               "size": 0,
               "showAnalytics": true,
               "showRefreshButton": true,
@@ -5160,9 +5184,72 @@
                         }
                       ]
                     }
+                  },
+                  {
+                    "columnMatch": "ErrorMessage",
+                    "formatter": 1,
+                    "formatOptions": {
+                      "linkTarget": "CellDetails",
+                      "linkIsContextBlade": true
+                    }
+                  },
+                  {
+                    "columnMatch": "Status",
+                    "formatter": 18,
+                    "formatOptions": {
+                      "thresholdsOptions": "icons",
+                      "thresholdsGrid": [
+                        {
+                          "operator": "==",
+                          "thresholdValue": "Success",
+                          "representation": "success",
+                          "text": "{0}{1}"
+                        },
+                        {
+                          "operator": "==",
+                          "thresholdValue": "Error",
+                          "representation": "4",
+                          "text": "{0}{1}"
+                        },
+                        {
+                          "operator": "==",
+                          "thresholdValue": "InProgress",
+                          "representation": "pending",
+                          "text": "{0}{1}"
+                        },
+                        {
+                          "operator": "Default",
+                          "thresholdValue": null,
+                          "representation": "unknown",
+                          "text": "{0}{1}"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "columnMatch": "PortalLink",
+                    "formatter": 7,
+                    "formatOptions": {
+                      "linkTarget": "Url",
+                      "linkLabel": "View in Portal"
+                    }
                   }
                 ],
-                "filter": true
+                "filter": true,
+                "labelSettings": [
+                  {
+                    "columnId": "PortalLink",
+                    "label": "Details"
+                  },
+                  {
+                    "columnId": "CurrentStep",
+                    "label": "Current Step"
+                  },
+                  {
+                    "columnId": "ErrorMessage",
+                    "label": "Error Message"
+                  }
+                ]
               }
             },
             "name": "update-run-history"
