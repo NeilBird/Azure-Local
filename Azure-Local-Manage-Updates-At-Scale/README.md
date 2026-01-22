@@ -1,6 +1,6 @@
 # Azure Local - Managing Updates At Scale Workbook
 
-**Latest Version: v0.6.0**
+**Latest Version: v0.6.1**
 
 An Azure Monitor Workbook for monitoring and managing Azure Local (formerly Azure Stack HCI) clusters at scale. This workbook provides comprehensive visibility into cluster health, update readiness, and workload status across your entire Azure Local fleet.
 
@@ -257,6 +257,10 @@ The workbook provides several filtering options to help you focus on specific re
 
 ### Time Range
 - **Time Range**: Select the time range for time-based queries (1 day to 30 days, or custom)
+
+## Recent Changes (v0.6.1)
+
+- **System Health Naming Updates**: Renamed "Failed Prechecks" to "System Health Filters" and "Cluster Health Overview" to "System Health Checks Overview" for improved clarity and consistency
 
 ## Usage Tips
 

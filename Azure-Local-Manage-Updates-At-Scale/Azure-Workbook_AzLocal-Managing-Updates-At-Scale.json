@@ -99,7 +99,7 @@
     {
       "type": 1,
       "content": {
-        "json": "## 🖥️ Azure Local - Managing Updates At Scale\r\n**Version: v0.6.0** | [Check for Updates to apply by checking the latest release available on GitHub](https://github.com/NeilBird/Azure-Local/tree/main/Azure-Local-Manage-Updates-At-Scale)\r\n\r\nThis example Workbook is a community driven project, (not officially supported by Microsoft). If you encounter an issue or have feedback, please [raise an Issue on GitHub](https://github.com/NeilBird/Azure-Local/issues)."
+        "json": "## 🖥️ Azure Local - Managing Updates At Scale\r\n**Version: v0.6.1** | [Check for Updates to apply by checking the latest release available on GitHub](https://github.com/NeilBird/Azure-Local/tree/main/Azure-Local-Manage-Updates-At-Scale)\r\n\r\nThis example Workbook is a community driven project, (not officially supported by Microsoft). If you encounter an issue or have feedback, please [raise an Issue on GitHub](https://github.com/NeilBird/Azure-Local/issues)."
       },
       "name": "workbook-title-version"
     },
@@ -726,7 +726,7 @@
             "type": 3,
             "content": {
               "version": "KqlItem/1.0",
-              "query": "extensibilityresources\r\n| where type == \"microsoft.azurestackhci/clusters/updatesummaries\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| where properties.healthState == \"Failure\"\r\n| extend clusterName = tolower(tostring(split(id, '/')[8]))\r\n| extend clusterRG = tolower(resourceGroup)\r\n| join kind=inner (\r\n    resources\r\n    | where type == \"microsoft.azurestackhci/clusters\"\r\n    | where '{ClusterTagName}' == '' or ('{ClusterTagValue}' != '' and tostring(tags['{ClusterTagName}']) =~ '{ClusterTagValue}')\r\n    | project clusterName = tolower(name), clusterRG = tolower(resourceGroup)\r\n) on clusterName, clusterRG\r\n| summarize FailedPrechecks = count()\r\n| extend Label = 'Failed Prechecks'",
+              "query": "extensibilityresources\r\n| where type == \"microsoft.azurestackhci/clusters/updatesummaries\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| where properties.healthState == \"Failure\"\r\n| extend clusterName = tolower(tostring(split(id, '/')[8]))\r\n| extend clusterRG = tolower(resourceGroup)\r\n| join kind=inner (\r\n    resources\r\n    | where type == \"microsoft.azurestackhci/clusters\"\r\n    | where '{ClusterTagName}' == '' or ('{ClusterTagValue}' != '' and tostring(tags['{ClusterTagName}']) =~ '{ClusterTagValue}')\r\n    | project clusterName = tolower(name), clusterRG = tolower(resourceGroup)\r\n) on clusterName, clusterRG\r\n| summarize FailedPrechecks = count()\r\n| extend Label = 'Critical Health Issues'",
               "size": 4,
               "queryType": 1,
               "resourceType": "microsoft.resourcegraph/resources",
@@ -752,7 +752,43 @@
             },
             "customWidth": "16",
             "name": "tile-failed-prechecks",
-            "title": "Failed Prechecks",
+            "title": "Critical Health Issues",
+            "styleSettings": {
+              "margin": "5px",
+              "padding": "5px"
+            }
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "extensibilityresources\r\n| where type == \"microsoft.azurestackhci/clusters/updatesummaries\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| where properties.healthState == \"InProgress\"\r\n| extend clusterName = tolower(tostring(split(id, '/')[8]))\r\n| extend clusterRG = tolower(resourceGroup)\r\n| join kind=inner (\r\n    resources\r\n    | where type == \"microsoft.azurestackhci/clusters\"\r\n    | where '{ClusterTagName}' == '' or ('{ClusterTagValue}' != '' and tostring(tags['{ClusterTagName}']) =~ '{ClusterTagValue}')\r\n    | project clusterName = tolower(name), clusterRG = tolower(resourceGroup)\r\n) on clusterName, clusterRG\r\n| summarize InProgressChecks = count()\r\n| extend Label = 'Health Check InProgress'",
+              "size": 4,
+              "queryType": 1,
+              "resourceType": "microsoft.resourcegraph/resources",
+              "crossComponentResources": [
+                "{Subscriptions}"
+              ],
+              "visualization": "tiles",
+              "tileSettings": {
+                "titleContent": {
+                  "columnMatch": "Label",
+                  "formatter": 1
+                },
+                "leftContent": {
+                  "columnMatch": "InProgressChecks",
+                  "formatter": 12,
+                  "formatOptions": {
+                    "palette": "blue"
+                  }
+                },
+                "showBorder": true,
+                "size": "auto"
+              }
+            },
+            "customWidth": "16",
+            "name": "tile-inprogress-health",
+            "title": "Health Check InProgress",
             "styleSettings": {
               "margin": "5px",
               "padding": "5px"
@@ -4370,7 +4406,7 @@
           {
             "type": 1,
             "content": {
-              "json": "## Failed Prechecks"
+              "json": "## System Health Filters"
             },
             "name": "text - 5"
           },
@@ -4496,10 +4532,10 @@
             "type": 3,
             "content": {
               "version": "KqlItem/1.0",
-              "query": "resources\r\n| where type == \"microsoft.azurestackhci/clusters\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| where '{ClusterTagName}' == '' or ('{ClusterTagValue}' != '' and tostring(tags['{ClusterTagName}']) =~ '{ClusterTagValue}')\r\n| project clusterName = name, clusterId = id, resourceGroup, subscriptionId\r\n| join kind=inner (\r\n    extensibilityresources\r\n    | where type == \"microsoft.azurestackhci/clusters/updatesummaries\"\r\n    | where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n    | extend hciClusterName = tostring(split(id, '/')[8])\r\n    | extend healthState = tostring(properties.healthState)\r\n    | extend state = tostring(properties.state)\r\n    | extend lastChecked = todatetime(properties.lastChecked)\r\n    | extend currentVersion = tostring(properties.currentVersion)\r\n    | project hciClusterName, healthState, state, lastChecked, currentVersion\r\n) on $left.clusterName == $right.hciClusterName\r\n| join kind=leftouter (\r\n    resources\r\n    | where type == \"microsoft.hybridcompute/machines\"\r\n    | where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n    | where properties.cloudMetadata.provider == \"AzSHCI\"\r\n    | summarize nodeCount = count() by resourceGroup\r\n) on resourceGroup\r\n| join kind=leftouter (\r\n    resources\r\n    | where type == \"microsoft.hybridcompute/machines\"\r\n    | where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n    | where kind == \"HCI\"\r\n    | summarize VMCount = count() by resourceGroup\r\n) on resourceGroup\r\n| join kind=leftouter (\r\n    resources\r\n    | where type == \"microsoft.kubernetes/connectedclusters\"\r\n    | where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n    | where properties.infrastructure == \"azure_stack_hci\"\r\n    | summarize AKSArcCount = count() by resourceGroup\r\n) on resourceGroup\r\n| where clusterName in ({clustername})\r\n| where healthState in ({healthState})\r\n| extend DaysSinceLastCheck = datetime_diff('day', now(), lastChecked)\r\n| extend clusterLink = strcat('https://portal.azure.com/#@/resource', clusterId)\r\n| project clusterName, clusterLink, healthState, state, currentVersion, lastChecked, DaysSinceLastCheck, resourceGroup, nodeCount = coalesce(nodeCount, 0), VMCount = coalesce(VMCount, 0), AKSArcCount = coalesce(AKSArcCount, 0)\r\n| order by DaysSinceLastCheck desc, clusterName asc",
+              "query": "resources\r\n| where type == \"microsoft.azurestackhci/clusters\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| where '{ClusterTagName}' == '' or ('{ClusterTagValue}' != '' and tostring(tags['{ClusterTagName}']) =~ '{ClusterTagValue}')\r\n| project clusterName = name, clusterId = id, resourceGroup, subscriptionId\r\n| join kind=inner (\r\n    extensibilityresources\r\n    | where type == \"microsoft.azurestackhci/clusters/updatesummaries\"\r\n    | where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n    | extend hciClusterName = tostring(split(id, '/')[8])\r\n    | extend healthState = tostring(properties.healthState)\r\n    | extend healthStateDisplay = case(\r\n        healthState =~ 'Success', 'Healthy',\r\n        healthState =~ 'Failure', 'Critical',\r\n        healthState =~ 'Warning', 'Warning',\r\n        healthState =~ 'InProgress', 'In progress',\r\n        healthState =~ 'Error', 'Health check failed',\r\n        healthState =~ 'Unknown', 'Unknown',\r\n        healthState\r\n    )\r\n    | extend state = tostring(properties.state)\r\n    | extend lastChecked = todatetime(properties.lastChecked)\r\n    | extend currentVersion = tostring(properties.currentVersion)\r\n    | project hciClusterName, healthState, healthStateDisplay, state, lastChecked, currentVersion\r\n) on $left.clusterName == $right.hciClusterName\r\n| join kind=leftouter (\r\n    resources\r\n    | where type == \"microsoft.hybridcompute/machines\"\r\n    | where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n    | where properties.cloudMetadata.provider == \"AzSHCI\"\r\n    | summarize nodeCount = count() by resourceGroup\r\n) on resourceGroup\r\n| join kind=leftouter (\r\n    resources\r\n    | where type == \"microsoft.hybridcompute/machines\"\r\n    | where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n    | where kind == \"HCI\"\r\n    | summarize VMCount = count() by resourceGroup\r\n) on resourceGroup\r\n| join kind=leftouter (\r\n    resources\r\n    | where type == \"microsoft.kubernetes/connectedclusters\"\r\n    | where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n    | where properties.infrastructure == \"azure_stack_hci\"\r\n    | summarize AKSArcCount = count() by resourceGroup\r\n) on resourceGroup\r\n| where clusterName in ({clustername})\r\n| where healthState in ({healthState})\r\n| extend DaysSinceLastCheck = datetime_diff('day', now(), lastChecked)\r\n| extend clusterLink = strcat('https://portal.azure.com/#@/resource', clusterId)\r\n| project clusterName, clusterLink, HealthStatus = healthStateDisplay, healthState, state, currentVersion, lastChecked, DaysSinceLastCheck, resourceGroup, nodeCount = coalesce(nodeCount, 0), VMCount = coalesce(VMCount, 0), AKSArcCount = coalesce(AKSArcCount, 0)\r\n| order by DaysSinceLastCheck desc, clusterName asc",
               "size": 0,
               "showAnalytics": true,
-              "title": "Cluster Health Overview",
+              "title": "System Health Checks Overview",
               "showRefreshButton": true,
               "showExportToExcel": true,
               "queryType": 1,
@@ -4522,20 +4558,20 @@
                     }
                   },
                   {
-                    "columnMatch": "healthState",
+                    "columnMatch": "HealthStatus",
                     "formatter": 18,
                     "formatOptions": {
                       "thresholdsOptions": "icons",
                       "thresholdsGrid": [
                         {
                           "operator": "==",
-                          "thresholdValue": "Success",
+                          "thresholdValue": "Healthy",
                           "representation": "success",
                           "text": "{0}{1}"
                         },
                         {
                           "operator": "==",
-                          "thresholdValue": "Failure",
+                          "thresholdValue": "Critical",
                           "representation": "4",
                           "text": "{0}{1}"
                         },
@@ -4547,8 +4583,14 @@
                         },
                         {
                           "operator": "==",
-                          "thresholdValue": "InProgress",
+                          "thresholdValue": "In progress",
                           "representation": "pending",
+                          "text": "{0}{1}"
+                        },
+                        {
+                          "operator": "==",
+                          "thresholdValue": "Health check failed",
+                          "representation": "4",
                           "text": "{0}{1}"
                         },
                         {
@@ -4559,6 +4601,10 @@
                         }
                       ]
                     }
+                  },
+                  {
+                    "columnMatch": "healthState",
+                    "formatter": 5
                   },
                   {
                     "columnMatch": "DaysSinceLastCheck",
