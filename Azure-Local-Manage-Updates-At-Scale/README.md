@@ -1,6 +1,6 @@
 # Azure Local - Managing Updates At Scale Workbook
 
-**Latest Version: v0.5.8**
+**Latest Version: v0.5.9**
 
 An Azure Monitor Workbook for monitoring and managing Azure Local (formerly Azure Stack HCI) clusters at scale. This workbook provides comprehensive visibility into cluster health, update readiness, and workload status across your entire Azure Local fleet.
 
