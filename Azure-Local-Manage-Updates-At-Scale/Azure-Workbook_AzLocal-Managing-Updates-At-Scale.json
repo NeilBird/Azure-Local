@@ -99,7 +99,7 @@
     {
       "type": 1,
       "content": {
-        "json": "## 🖥️ Azure Local - Managing Updates At Scale\r\n**Version: v0.5.9** | [Check for Updates to apply by checking the latest release available on GitHub](https://github.com/NeilBird/Azure-Local/tree/main/Azure-Local-Manage-Updates-At-Scale)\r\n\r\nThis example Workbook is a community driven project, (not officially supported by Microsoft). If you encounter an issue or have feedback, please [raise an Issue on GitHub](https://github.com/NeilBird/Azure-Local/issues)."
+        "json": "## 🖥️ Azure Local - Managing Updates At Scale\r\n**Version: v0.6.0** | [Check for Updates to apply by checking the latest release available on GitHub](https://github.com/NeilBird/Azure-Local/tree/main/Azure-Local-Manage-Updates-At-Scale)\r\n\r\nThis example Workbook is a community driven project, (not officially supported by Microsoft). If you encounter an issue or have feedback, please [raise an Issue on GitHub](https://github.com/NeilBird/Azure-Local/issues)."
       },
       "name": "workbook-title-version"
     },
@@ -4909,6 +4909,269 @@
           {
             "type": 1,
             "content": {
+              "json": "## All Cluster Update Status\r\n\r\n💡 **Information:** Apply updates to keep your clusters within the six month support window."
+            },
+            "name": "text-all-update-status"
+          },
+          {
+            "type": 9,
+            "content": {
+              "version": "KqlParameterItem/1.0",
+              "parameters": [
+                {
+                  "id": "cluster-status-name-filter",
+                  "version": "KqlParameterItem/1.0",
+                  "name": "ClusterStatusNameFilter",
+                  "label": "Filter by Cluster Name",
+                  "type": 1,
+                  "description": "Optional: Filter by cluster name using wildcards. Example: *prod* or *hci*",
+                  "isRequired": false,
+                  "value": "",
+                  "timeContext": {
+                    "durationMs": 86400000
+                  }
+                },
+                {
+                  "id": "cluster-update-status-filter",
+                  "version": "KqlParameterItem/1.0",
+                  "name": "ClusterUpdateStatusFilter",
+                  "label": "Filter by Update Status",
+                  "type": 2,
+                  "isRequired": true,
+                  "multiSelect": true,
+                  "quote": "'",
+                  "delimiter": ",",
+                  "typeSettings": {
+                    "additionalResourceOptions": [
+                      "value::all"
+                    ],
+                    "showDefault": false
+                  },
+                  "jsonData": "[\r\n  { \"value\": \"Up to date\", \"label\": \"Up to date\" },\r\n  { \"value\": \"Update(s) available\", \"label\": \"Update(s) available\" },\r\n  { \"value\": \"In progress\", \"label\": \"In progress\" },\r\n  { \"value\": \"Failed to update\", \"label\": \"Failed to update\" },\r\n  { \"value\": \"Action required\", \"label\": \"Action required\" },\r\n  { \"value\": \"Unknown\", \"label\": \"Unknown\" }\r\n]",
+                  "defaultValue": "value::all",
+                  "timeContext": {
+                    "durationMs": 86400000
+                  }
+                },
+                {
+                  "id": "cluster-health-status-filter",
+                  "version": "KqlParameterItem/1.0",
+                  "name": "ClusterHealthStatusFilter",
+                  "label": "Filter by Health Status",
+                  "type": 2,
+                  "isRequired": true,
+                  "multiSelect": true,
+                  "quote": "'",
+                  "delimiter": ",",
+                  "typeSettings": {
+                    "additionalResourceOptions": [
+                      "value::all"
+                    ],
+                    "showDefault": false
+                  },
+                  "jsonData": "[\r\n  { \"value\": \"Healthy\", \"label\": \"Healthy\" },\r\n  { \"value\": \"Warning\", \"label\": \"Warning\" },\r\n  { \"value\": \"Critical\", \"label\": \"Critical\" },\r\n  { \"value\": \"Health check failed\", \"label\": \"Health check failed\" },\r\n  { \"value\": \"In progress\", \"label\": \"In progress\" },\r\n  { \"value\": \"Unknown\", \"label\": \"Unknown\" }\r\n]",
+                  "defaultValue": "value::all",
+                  "timeContext": {
+                    "durationMs": 86400000
+                  }
+                }
+              ],
+              "style": "pills",
+              "queryType": 0,
+              "resourceType": "microsoft.operationalinsights/workspaces"
+            },
+            "name": "cluster-status-filters"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "extensibilityresources\r\n| where type =~ 'microsoft.azurestackhci/clusters/updateSummaries'\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| parse id with id \"/updateSummaries/default\"\r\n| parse id with * \"/clusters/\" name\r\n| extend lowercase_id = tolower(id)\r\n| extend state = properties.state, healthState = properties.healthState\r\n| extend updateStatus = case(\r\n    state =~ 'Unknown', 'Unknown',\r\n    state =~ 'AppliedSuccessfully', 'Up to date',\r\n    state =~ 'UpdateAvailable', 'Update(s) available',\r\n    state =~ 'UpdateInProgress', 'In progress',\r\n    state =~ 'UpdateFailed', 'Failed to update',\r\n    state =~ 'NeedsAttention', 'Failed to update',\r\n    state =~ 'PreparationInProgress', 'In progress',\r\n    state =~ 'PreparationFailed', 'Action required', 'Unknown'\r\n    )\r\n| extend healthStatus = case(\r\n    healthState =~ 'Unknown', 'Unknown',\r\n    healthState =~ 'Success', 'Healthy',\r\n    healthState =~ 'Failure', 'Critical',\r\n    healthState =~ 'Warning', 'Warning',\r\n    healthState =~ 'Error', 'Health check failed',\r\n    healthState =~ 'InProgress', 'In progress', 'Unknown'\r\n    )\r\n| extend currentVersion = tostring(properties.currentVersion)\r\n| extend lastUpdated = todatetime(properties.lastUpdated)\r\n| extend lastChecked = todatetime(properties.lastChecked)\r\n| extend oemFamily = tostring(properties.oemFamily)\r\n| extend hardwareModel = tostring(properties.hardwareModel)\r\n| extend packageVersions = properties.packageVersions\r\n| where state in ('Unknown', 'AppliedSuccessfully', 'UpdateAvailable', 'UpdateInProgress', 'UpdateFailed', 'PreparationFailed', 'PreparationInProgress', 'NeedsAttention')\r\n| where healthState in ('Unknown', 'Success', 'Failure', 'Warning', 'Error', 'InProgress')\r\n| join kind=inner (\r\n    resources\r\n    | where type =~ 'microsoft.azurestackhci/clusters'\r\n    | where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n    | where '{ClusterTagName}' == '' or ('{ClusterTagValue}' != '' and tostring(tags['{ClusterTagName}']) =~ '{ClusterTagValue}')\r\n    | where properties.reportedProperties.supportedCapabilities has 'CloudManagedUpdates'\r\n    | extend azureConnection = case(\r\n        properties.status =~ 'NotSpecified', 'Unknown',\r\n        properties.status =~ 'ConnectedRecently', 'Connected',\r\n        properties.status =~ 'NotConnectedRecently', 'Not connected recently',\r\n        properties.status =~ 'NotYetRegistered', 'Not yet registered',\r\n        properties.status =~ 'Error', 'Error',\r\n        properties.status =~ 'Disconnected', 'Disconnected',\r\n        properties.status =~ 'ValidationInProgress', 'Validation in progress',\r\n        properties.status =~ 'ValidationSuccess', 'Validation success',\r\n        properties.status =~ 'ValidationFailed', 'Validation failed',\r\n        properties.status =~ 'DeploymentInProgress', 'Deployment in progress',\r\n        properties.status =~ 'DeploymentSuccess', 'Deployment success',\r\n        properties.status =~ 'DeploymentFailed', 'Deployment failed',\r\n        'Unknown'\r\n        )\r\n    | project clusterId = tolower(id), clusterTags = tags, azureConnection, clusterConnectionStatus = properties.status)\r\n    on $left.lowercase_id == $right.clusterId\r\n| extend clusterLink = strcat('https://portal.azure.com/#@/resource', id)\r\n| extend DaysSinceUpdate = datetime_diff('day', now(), lastUpdated)\r\n| where '{ClusterStatusNameFilter}' == '' or name matches regex strcat('(?i)', replace_string(replace_string('{ClusterStatusNameFilter}', '*', '.*'), '?', '.'))\r\n| where '*' in ({ClusterUpdateStatusFilter}) or updateStatus in ({ClusterUpdateStatusFilter})\r\n| where '*' in ({ClusterHealthStatusFilter}) or healthStatus in ({ClusterHealthStatusFilter})\r\n| project ClusterName = name, clusterLink, UpdateStatus = updateStatus, HealthStatus = healthStatus, CurrentVersion = currentVersion, AzureConnection = azureConnection, LastUpdated = lastUpdated, DaysSinceUpdate, LastChecked = lastChecked, OEMFamily = oemFamily, HardwareModel = hardwareModel, State = state, HealthState = healthState, resourceGroup, subscriptionId\r\n| order by DaysSinceUpdate desc, ClusterName asc",
+              "size": 0,
+              "showAnalytics": true,
+              "showRefreshButton": true,
+              "showExportToExcel": true,
+              "queryType": 1,
+              "resourceType": "microsoft.resourcegraph/resources",
+              "crossComponentResources": [
+                "{Subscriptions}"
+              ],
+              "gridSettings": {
+                "formatters": [
+                  {
+                    "columnMatch": "clusterLink",
+                    "formatter": 7,
+                    "formatOptions": {
+                      "linkTarget": "Url",
+                      "linkLabel": "Open Cluster"
+                    }
+                  },
+                  {
+                    "columnMatch": "UpdateStatus",
+                    "formatter": 18,
+                    "formatOptions": {
+                      "thresholdsOptions": "icons",
+                      "thresholdsGrid": [
+                        {
+                          "operator": "==",
+                          "thresholdValue": "Up to date",
+                          "representation": "success",
+                          "text": "{0}{1}"
+                        },
+                        {
+                          "operator": "==",
+                          "thresholdValue": "In progress",
+                          "representation": "pending",
+                          "text": "{0}{1}"
+                        },
+                        {
+                          "operator": "==",
+                          "thresholdValue": "Update(s) available",
+                          "representation": "2",
+                          "text": "{0}{1}"
+                        },
+                        {
+                          "operator": "==",
+                          "thresholdValue": "Failed to update",
+                          "representation": "4",
+                          "text": "{0}{1}"
+                        },
+                        {
+                          "operator": "==",
+                          "thresholdValue": "Action required",
+                          "representation": "4",
+                          "text": "{0}{1}"
+                        },
+                        {
+                          "operator": "Default",
+                          "thresholdValue": null,
+                          "representation": "unknown",
+                          "text": "{0}{1}"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "columnMatch": "HealthStatus",
+                    "formatter": 18,
+                    "formatOptions": {
+                      "thresholdsOptions": "icons",
+                      "thresholdsGrid": [
+                        {
+                          "operator": "==",
+                          "thresholdValue": "Healthy",
+                          "representation": "success",
+                          "text": "{0}{1}"
+                        },
+                        {
+                          "operator": "==",
+                          "thresholdValue": "Warning",
+                          "representation": "2",
+                          "text": "{0}{1}"
+                        },
+                        {
+                          "operator": "==",
+                          "thresholdValue": "Critical",
+                          "representation": "4",
+                          "text": "{0}{1}"
+                        },
+                        {
+                          "operator": "==",
+                          "thresholdValue": "Health check failed",
+                          "representation": "4",
+                          "text": "{0}{1}"
+                        },
+                        {
+                          "operator": "==",
+                          "thresholdValue": "In progress",
+                          "representation": "pending",
+                          "text": "{0}{1}"
+                        },
+                        {
+                          "operator": "Default",
+                          "thresholdValue": null,
+                          "representation": "unknown",
+                          "text": "{0}{1}"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "columnMatch": "AzureConnection",
+                    "formatter": 18,
+                    "formatOptions": {
+                      "thresholdsOptions": "icons",
+                      "thresholdsGrid": [
+                        {
+                          "operator": "==",
+                          "thresholdValue": "Connected",
+                          "representation": "success",
+                          "text": "{0}{1}"
+                        },
+                        {
+                          "operator": "==",
+                          "thresholdValue": "Disconnected",
+                          "representation": "4",
+                          "text": "{0}{1}"
+                        },
+                        {
+                          "operator": "==",
+                          "thresholdValue": "Not connected recently",
+                          "representation": "2",
+                          "text": "{0}{1}"
+                        },
+                        {
+                          "operator": "Default",
+                          "thresholdValue": null,
+                          "representation": "unknown",
+                          "text": "{0}{1}"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "columnMatch": "DaysSinceUpdate",
+                    "formatter": 18,
+                    "formatOptions": {
+                      "thresholdsOptions": "colors",
+                      "thresholdsGrid": [
+                        {
+                          "operator": ">=",
+                          "thresholdValue": "60",
+                          "representation": "redBright",
+                          "text": "{0}{1} days"
+                        },
+                        {
+                          "operator": ">=",
+                          "thresholdValue": "30",
+                          "representation": "yellow",
+                          "text": "{0}{1} days"
+                        },
+                        {
+                          "operator": "Default",
+                          "thresholdValue": null,
+                          "text": "{0}{1} days"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "columnMatch": "State",
+                    "formatter": 5
+                  },
+                  {
+                    "columnMatch": "HealthState",
+                    "formatter": 5
+                  }
+                ],
+                "filter": true
+              }
+            },
+            "name": "all-cluster-update-status"
+          },
+          {
+            "type": 1,
+            "content": {
               "json": "## Clusters Currently Updating"
             },
             "name": "text-currently-updating"
@@ -5026,108 +5289,6 @@
               }
             },
             "name": "clusters-updates-available"
-          },
-          {
-            "type": 1,
-            "content": {
-              "json": "## All Cluster Update Status\r\n\r\n💡 **Information:** Apply updates to keep your clusters within the six month support window."
-            },
-            "name": "text-all-update-status"
-          },
-          {
-            "type": 3,
-            "content": {
-              "version": "KqlItem/1.0",
-              "query": "extensibilityresources\r\n| where type == \"microsoft.azurestackhci/clusters/updatesummaries\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| extend hciClusterName = tostring(split(id, '/')[8])\r\n| extend state = tostring(properties.state)\r\n| extend currentVersion = tostring(properties.currentVersion)\r\n| extend lastUpdated = todatetime(properties.lastUpdated)\r\n| extend lastChecked = todatetime(properties.lastChecked)\r\n| extend clusterId = substring(id, 0, indexof(id, '/updateSummaries/'))\r\n| extend clusterLink = strcat('https://portal.azure.com/#@/resource', clusterId)\r\n| extend DaysSinceUpdate = datetime_diff('day', now(), lastUpdated)\r\n| project ClusterName = hciClusterName, clusterLink, State = state, CurrentVersion = currentVersion, LastUpdated = lastUpdated, DaysSinceUpdate, LastChecked = lastChecked\r\n| order by DaysSinceUpdate desc, ClusterName asc",
-              "size": 0,
-              "showAnalytics": true,
-              "showRefreshButton": true,
-              "showExportToExcel": true,
-              "queryType": 1,
-              "resourceType": "microsoft.resourcegraph/resources",
-              "crossComponentResources": [
-                "{Subscriptions}"
-              ],
-              "gridSettings": {
-                "formatters": [
-                  {
-                    "columnMatch": "clusterLink",
-                    "formatter": 7,
-                    "formatOptions": {
-                      "linkTarget": "Url",
-                      "linkLabel": "Open Cluster"
-                    }
-                  },
-                  {
-                    "columnMatch": "State",
-                    "formatter": 18,
-                    "formatOptions": {
-                      "thresholdsOptions": "icons",
-                      "thresholdsGrid": [
-                        {
-                          "operator": "==",
-                          "thresholdValue": "AppliedSuccessfully",
-                          "representation": "success",
-                          "text": "{0}{1}"
-                        },
-                        {
-                          "operator": "contains",
-                          "thresholdValue": "Progress",
-                          "representation": "pending",
-                          "text": "{0}{1}"
-                        },
-                        {
-                          "operator": "==",
-                          "thresholdValue": "UpdateAvailable",
-                          "representation": "2",
-                          "text": "{0}{1}"
-                        },
-                        {
-                          "operator": "==",
-                          "thresholdValue": "UpdateFailed",
-                          "representation": "4",
-                          "text": "{0}{1}"
-                        },
-                        {
-                          "operator": "Default",
-                          "thresholdValue": null,
-                          "representation": "unknown",
-                          "text": "{0}{1}"
-                        }
-                      ]
-                    }
-                  },
-                  {
-                    "columnMatch": "DaysSinceUpdate",
-                    "formatter": 18,
-                    "formatOptions": {
-                      "thresholdsOptions": "colors",
-                      "thresholdsGrid": [
-                        {
-                          "operator": ">=",
-                          "thresholdValue": "60",
-                          "representation": "redBright",
-                          "text": "{0}{1} days"
-                        },
-                        {
-                          "operator": ">=",
-                          "thresholdValue": "30",
-                          "representation": "yellow",
-                          "text": "{0}{1} days"
-                        },
-                        {
-                          "operator": "Default",
-                          "thresholdValue": null,
-                          "text": "{0}{1} days"
-                        }
-                      ]
-                    }
-                  }
-                ],
-                "filter": true
-              }
-            },
-            "name": "all-cluster-update-status"
           },
           {
             "type": 1,
