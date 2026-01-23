@@ -1,10 +1,26 @@
 # Azure Local - Managing Updates At Scale Workbook
 
-**Latest Version: v0.6.3**
+## Latest Version: v0.6.3
 
 An Azure Monitor Workbook for monitoring and managing Azure Local (formerly Azure Stack HCI) clusters at scale. This workbook provides comprehensive visibility into cluster health, update readiness, and workload status across your entire Azure Local fleet.
 
 **Important:** This is a community driven project, (not officially supported by Microsoft), for any issues, requests or feedback, please [raise an Issue](https://github.com/NeilBird/Azure-Local/issues) (note: no time scales or guarantees can be provided for responses to issues.)
+
+## Recent Changes (v0.6.3)
+
+- **Added Update Available Column**: "Clusters with Updates Available" table now displays the actual update name (e.g., "Solution12.2601.1002.38") from the updates resource
+- **Added Update State Column**: New column showing the state of available updates (e.g., "Ready")
+
+## Previous Changes (v0.6.2)
+
+- **Improved Error Message Display**: Update Run History table now includes expandable row details showing error messages in a formatted markdown code block for better readability
+- **Fixed Apply Update Link**: Corrected the "Apply Update" button URL to properly open the Azure Portal Install Updates blade
+- **Enhanced Error Message Formatting**: Preserved line breaks in error messages and increased column width for better visibility
+- **Column Naming Consistency**: Added proper labelSettings to all tables across all tabs with consistent capitalization and spacing (e.g., "clusterName" → "Cluster Name")
+
+## Previous Changes (v0.6.1)
+
+- **System Health Naming Updates**: Renamed "Failed Prechecks" to "System Health Filters" and "Cluster Health Overview" to "System Health Checks Overview" for improved clarity and consistency
 
 ## How to Import the Workbook
 
@@ -257,22 +273,6 @@ The workbook provides several filtering options to help you focus on specific re
 
 ### Time Range
 - **Time Range**: Select the time range for time-based queries (1 day to 30 days, or custom)
-
-## Recent Changes (v0.6.3)
-
-- **Added Update Available Column**: "Clusters with Updates Available" table now displays the actual update name (e.g., "Solution12.2601.1002.38") from the updates resource
-- **Added Update State Column**: New column showing the state of available updates (e.g., "Ready")
-
-## Previous Changes (v0.6.2)
-
-- **Improved Error Message Display**: Update Run History table now includes expandable row details showing error messages in a formatted markdown code block for better readability
-- **Fixed Apply Update Link**: Corrected the "Apply Update" button URL to properly open the Azure Portal Install Updates blade
-- **Enhanced Error Message Formatting**: Preserved line breaks in error messages and increased column width for better visibility
-- **Column Naming Consistency**: Added proper labelSettings to all tables across all tabs with consistent capitalization and spacing (e.g., "clusterName" → "Cluster Name")
-
-## Previous Changes (v0.6.1)
-
-- **System Health Naming Updates**: Renamed "Failed Prechecks" to "System Health Filters" and "Cluster Health Overview" to "System Health Checks Overview" for improved clarity and consistency
 
 ## Usage Tips
 
