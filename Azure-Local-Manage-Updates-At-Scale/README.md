@@ -1,6 +1,6 @@
 # Azure Local - Managing Updates At Scale Workbook
 
-## Latest Version: v0.6.5
+## Latest Version: v0.6.6
 
 📥 **[Copy / Paste (or download) the latest Workbook JSON](https://raw.githubusercontent.com/NeilBird/Azure-Local/refs/heads/main/Azure-Local-Manage-Updates-At-Scale/Azure-Workbook_AzLocal-Managing-Updates-At-Scale.json)**
 
@@ -8,16 +8,23 @@ An Azure Monitor Workbook for monitoring and managing Azure Local (formerly Azur
 
 **Important:** This is a community driven project, (not officially supported by Microsoft), for any issues, requests or feedback, please [raise an Issue](https://github.com/NeilBird/Azure-Local/issues) (note: no time scales or guarantees can be provided for responses to issues.)
 
-## Recent Changes (v0.6.5)
+## Recent Changes (v0.6.6)
 
-- **Clusters Currently Updating**:
-  - Added **Update Run** column with "View Progress" link to open the update history details page in Azure Portal
-
-- **All Azure Resource Bridges (ARB) appliances**:
-  - Updated **Days Since Last Modified** column color coding:
-    - 🟢 Green: "Connected" for Running ARBs
-    - 🟡 Yellow: 1-45 days since last modified
-    - 🔴 Red: More than 45 days since last modified 
+- **ARB Alert Rules Configuration** (new section in ARB Status tab):
+  - Added toggle to show/hide Alert Rules setup panel
+  - **ARB Alert Rules Table** listing all Arc Resource Bridges with:
+    - Current status with visual indicators (Running/Offline)
+    - Days offline tracking with color coding (🟢 Online, 🟡 <14 days, 🔴 >14 days)
+    - Direct links to create **Resource Health** alerts in Azure Portal
+    - Direct links to create **Activity Log** alerts in Azure Portal
+  - **Prerequisites documentation**: Action Groups, permissions, Resource Health support
+  - **Recommended alert types** with severity guidance:
+    - Offline Status (Sev 1)
+    - Resource Health - Unavailable (Sev 1)
+    - Resource Health - Degraded (Sev 2)
+    - Extended Offline >14 days (Sev 0)
+  - **Manual alert rule creation steps** including sample ARG query for bulk monitoring
+  - **Quick Links**: Create Action Group, View Alert Rules, Resource Health docs, ARB troubleshooting
 
 > See [Appendix: Previous Version Changes](#appendix-previous-version-changes) for older release notes.
 
@@ -191,6 +198,11 @@ Monitor the status of Azure Resource Bridge appliances:
 - All ARB appliances table with filters for ARB Status and Cluster Name
 - Shows "Connected" (green) for Running ARBs or days since last modified (yellow) for Offline ARBs
 - Direct links to open ARB and cluster resources in the Azure portal
+- **ARB Alert Rules Configuration** (toggle to show/hide):
+  - Table with direct links to create Resource Health and Activity Log alerts for each ARB
+  - Recommended alert types with severity guidance
+  - Step-by-step instructions for manual alert creation
+  - Quick links to Action Groups, Alert Rules, and documentation
 
 ![Azure Resource Bridges Status](images/arb-offline-screenshot.png)
 
@@ -292,6 +304,17 @@ See the repository's LICENSE file for details.
 ---
 
 ## Appendix: Previous Version Changes
+
+### v0.6.5
+
+- **Clusters Currently Updating**:
+  - Added **Update Run** column with "View Progress" link to open the update history details page in Azure Portal
+
+- **All Azure Resource Bridges (ARB) appliances**:
+  - Updated **Days Since Last Modified** column color coding:
+    - 🟢 Green: "Connected" for Running ARBs
+    - 🟡 Yellow: 1-45 days since last modified
+    - 🔴 Red: More than 45 days since last modified
 
 ### v0.6.4
 
