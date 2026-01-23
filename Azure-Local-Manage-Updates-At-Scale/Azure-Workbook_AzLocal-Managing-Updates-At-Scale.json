@@ -99,7 +99,7 @@
     {
       "type": 1,
       "content": {
-        "json": "## 🖥️ Azure Local - Managing Updates At Scale\r\n**Version: v0.6.4** | [Check for Updates to apply by checking the latest release available on GitHub](https://github.com/NeilBird/Azure-Local/tree/main/Azure-Local-Manage-Updates-At-Scale)\r\n\r\nThis example Workbook is a community driven project, (not officially supported by Microsoft). If you encounter an issue or have feedback, please [raise an Issue on GitHub](https://github.com/NeilBird/Azure-Local/issues)."
+        "json": "## 🖥️ Azure Local - Managing Updates At Scale\r\n**Version: v0.6.5** | [Check for Updates to apply by checking the latest release available on GitHub](https://github.com/NeilBird/Azure-Local/tree/main/Azure-Local-Manage-Updates-At-Scale)\r\n\r\nThis example Workbook is a community driven project, (not officially supported by Microsoft). If you encounter an issue or have feedback, please [raise an Issue on GitHub](https://github.com/NeilBird/Azure-Local/issues)."
       },
       "name": "workbook-title-version"
     },
@@ -1970,7 +1970,7 @@
             "type": 3,
             "content": {
               "version": "KqlItem/1.0",
-              "query": "resources\r\n| where type == \"microsoft.resourceconnector/appliances\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| extend status = tostring(properties.status)\r\n| extend lastModified = todatetime(systemData.lastModifiedAt)\r\n| extend daysSinceLastModifiedNum = datetime_diff('day', now(), lastModified)\r\n| extend daysSinceLastModified = iff(status == \"Running\", \"Connected\", strcat(tostring(daysSinceLastModifiedNum), \" days\"))\r\n| project arcbridgename = name, arcbridgeId = id, resourceGroup, status, lastModified, daysSinceLastModified, daysSinceLastModifiedNum\r\n| join kind=leftouter (\r\n    resources\r\n    | where type == \"microsoft.azurestackhci/clusters\"\r\n    | where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n    | where '{ClusterTagName}' == '' or ('{ClusterTagValue}' != '' and tostring(tags['{ClusterTagName}']) =~ '{ClusterTagValue}')\r\n    | extend hcistatus = tostring(properties.status)\r\n    | project hciname = name, clusterId = id, resourceGroup, hcistatus\r\n    | join kind=leftouter (\r\n        ExtensibilityResources\r\n        | where type =~ 'microsoft.azurestackhci/clusters/updateSummaries'\r\n        | extend currentVersion = tostring(properties.currentVersion)\r\n        | extend cId = substring(id, 0, indexof(id, '/updateSummaries/'))\r\n        | project cId, currentVersion\r\n    ) on $left.clusterId == $right.cId\r\n    | join kind=leftouter (\r\n        resources\r\n        | where type == \"microsoft.hybridcompute/machines\"\r\n        | where kind == \"HCI\"\r\n        | where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n        | summarize VMCount = count() by resourceGroup\r\n    ) on resourceGroup\r\n    | join kind=leftouter (\r\n        resources\r\n        | where type == \"microsoft.kubernetes/connectedclusters\"\r\n        | where properties.infrastructure == \"azure_stack_hci\"\r\n        | where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n        | summarize AKSArcCount = count() by resourceGroup\r\n    ) on resourceGroup\r\n) on resourceGroup\r\n| where '*' in ({ArbStatusFilter}) or status in ({ArbStatusFilter})\r\n| where '*' in ({ArbClusterFilter}) or hciname in ({ArbClusterFilter}) or isempty(hciname)\r\n| extend arbLink = strcat('https://portal.azure.com/#@/resource', arcbridgeId)\r\n| extend clusterLink = strcat('https://portal.azure.com/#@/resource', clusterId)\r\n| project ARBResourceName = arcbridgename, arbLink, resourceGroup, ARBStatus = status, lastModified, daysSinceLastModified, ClusterName = coalesce(hciname, 'Unknown'), clusterLink, HCIClusterConnectivity = coalesce(hcistatus, 'Unknown'), currentVersion, VMCount = coalesce(VMCount, 0), AKSArcCount = coalesce(AKSArcCount, 0)\r\n| order by HCIClusterConnectivity desc, ARBStatus asc",
+              "query": "resources\r\n| where type == \"microsoft.resourceconnector/appliances\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| extend status = tostring(properties.status)\r\n| extend lastModified = todatetime(systemData.lastModifiedAt)\r\n| extend daysSinceLastModified = iff(status == \"Running\", toint(-1), datetime_diff('day', now(), lastModified))\r\n| project arcbridgename = name, arcbridgeId = id, resourceGroup, status, lastModified, daysSinceLastModified\r\n| join kind=leftouter (\r\n    resources\r\n    | where type == \"microsoft.azurestackhci/clusters\"\r\n    | where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n    | where '{ClusterTagName}' == '' or ('{ClusterTagValue}' != '' and tostring(tags['{ClusterTagName}']) =~ '{ClusterTagValue}')\r\n    | extend hcistatus = tostring(properties.status)\r\n    | project hciname = name, clusterId = id, resourceGroup, hcistatus\r\n    | join kind=leftouter (\r\n        ExtensibilityResources\r\n        | where type =~ 'microsoft.azurestackhci/clusters/updateSummaries'\r\n        | extend currentVersion = tostring(properties.currentVersion)\r\n        | extend cId = substring(id, 0, indexof(id, '/updateSummaries/'))\r\n        | project cId, currentVersion\r\n    ) on $left.clusterId == $right.cId\r\n    | join kind=leftouter (\r\n        resources\r\n        | where type == \"microsoft.hybridcompute/machines\"\r\n        | where kind == \"HCI\"\r\n        | where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n        | summarize VMCount = count() by resourceGroup\r\n    ) on resourceGroup\r\n    | join kind=leftouter (\r\n        resources\r\n        | where type == \"microsoft.kubernetes/connectedclusters\"\r\n        | where properties.infrastructure == \"azure_stack_hci\"\r\n        | where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n        | summarize AKSArcCount = count() by resourceGroup\r\n    ) on resourceGroup\r\n) on resourceGroup\r\n| where '*' in ({ArbStatusFilter}) or status in ({ArbStatusFilter})\r\n| where '*' in ({ArbClusterFilter}) or hciname in ({ArbClusterFilter}) or isempty(hciname)\r\n| extend arbLink = strcat('https://portal.azure.com/#@/resource', arcbridgeId)\r\n| extend clusterLink = strcat('https://portal.azure.com/#@/resource', clusterId)\r\n| project ARBResourceName = arcbridgename, arbLink, resourceGroup, ARBStatus = status, lastModified, daysSinceLastModified, ClusterName = coalesce(hciname, 'Unknown'), clusterLink, HCIClusterConnectivity = coalesce(hcistatus, 'Unknown'), currentVersion, VMCount = coalesce(VMCount, 0), AKSArcCount = coalesce(AKSArcCount, 0)\r\n| order by HCIClusterConnectivity desc, ARBStatus asc",
               "size": 0,
               "showRefreshButton": true,
               "showExportToExcel": true,
@@ -2027,16 +2027,22 @@
                       "thresholdsOptions": "colors",
                       "thresholdsGrid": [
                         {
-                          "operator": "==",
-                          "thresholdValue": "Connected",
+                          "operator": "<",
+                          "thresholdValue": "0",
                           "representation": "green",
-                          "text": "{0}{1}"
+                          "text": "Connected"
+                        },
+                        {
+                          "operator": ">",
+                          "thresholdValue": "45",
+                          "representation": "redBright",
+                          "text": "{0}{1} days"
                         },
                         {
                           "operator": "Default",
                           "thresholdValue": null,
                           "representation": "yellow",
-                          "text": "{0}{1}"
+                          "text": "{0}{1} days"
                         }
                       ]
                     }
@@ -6113,7 +6119,7 @@
             "type": 3,
             "content": {
               "version": "KqlItem/1.0",
-              "query": "extensibilityresources\r\n| where type == \"microsoft.azurestackhci/clusters/updatesummaries\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| extend hciClusterName = tostring(split(id, '/')[8])\r\n| extend state = tostring(properties.state)\r\n| extend currentVersion = tostring(properties.currentVersion)\r\n| extend lastUpdated = todatetime(properties.lastUpdated)\r\n| extend lastChecked = todatetime(properties.lastChecked)\r\n| extend clusterId = substring(id, 0, indexof(id, '/updateSummaries/'))\r\n| where state in (\"UpdateInProgress\", \"Updating\", \"PreparingToUpdate\")\r\n| extend clusterLink = strcat('https://portal.azure.com/#@/resource', clusterId)\r\n| project ClusterName = hciClusterName, clusterLink, State = state, CurrentVersion = currentVersion, LastUpdated = lastUpdated, LastChecked = lastChecked\r\n| order by ClusterName asc",
+              "query": "extensibilityresources\r\n| where type == \"microsoft.azurestackhci/clusters/updatesummaries\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| extend hciClusterName = tostring(split(id, '/')[8])\r\n| extend state = tostring(properties.state)\r\n| extend currentVersion = tostring(properties.currentVersion)\r\n| extend lastUpdated = todatetime(properties.lastUpdated)\r\n| extend lastChecked = todatetime(properties.lastChecked)\r\n| extend clusterId = substring(id, 0, indexof(id, '/updateSummaries/'))\r\n| where state in (\"UpdateInProgress\", \"Updating\", \"PreparingToUpdate\")\r\n| extend clusterIdLower = tolower(clusterId)\r\n| join kind=leftouter (\r\n    extensibilityresources\r\n    | where type == \"microsoft.azurestackhci/clusters/updates/updateruns\"\r\n    | extend runState = tostring(properties.state)\r\n    | where runState == \"InProgress\"\r\n    | extend updateName = tostring(split(id, '/updates/')[1])\r\n    | extend updateName = tostring(split(updateName, '/updateruns')[0])\r\n    | extend runClusterId = tolower(substring(id, 0, indexof(id, '/updates/')))\r\n    | project runClusterId, UpdateInstalling = updateName\r\n) on $left.clusterIdLower == $right.runClusterId\r\n| extend clusterLink = strcat('https://portal.azure.com/#@/resource', clusterId)\r\n| extend clusterIdEncoded = replace_string(clusterId, '/', '%2F')\r\n| extend updateRunLink = strcat('https://portal.azure.com/#view/Microsoft_AzureStackHCI_PortalExtension/SingleInstanceHistoryDetails.ReactView/resourceId/', clusterIdEncoded, '/updateName~/null/updateRunName~/null/refresh~/false')\r\n| extend UpdateInstalling = coalesce(UpdateInstalling, '')\r\n| project ClusterName = hciClusterName, clusterLink, UpdateInstalling, State = state, updateRunLink, CurrentVersion = currentVersion, LastUpdated = lastUpdated, LastChecked = lastChecked\r\n| order by ClusterName asc",
               "size": 0,
               "showRefreshButton": true,
               "showExportToExcel": true,
@@ -6152,6 +6158,14 @@
                         }
                       ]
                     }
+                  },
+                  {
+                    "columnMatch": "updateRunLink",
+                    "formatter": 7,
+                    "formatOptions": {
+                      "linkTarget": "Url",
+                      "linkLabel": "View Progress"
+                    }
                   }
                 ],
                 "labelSettings": [
@@ -6164,8 +6178,16 @@
                     "label": "Cluster Link"
                   },
                   {
+                    "columnId": "UpdateInstalling",
+                    "label": "Update Installing"
+                  },
+                  {
                     "columnId": "State",
                     "label": "State"
+                  },
+                  {
+                    "columnId": "updateRunLink",
+                    "label": "Update Run"
                   },
                   {
                     "columnId": "CurrentVersion",
