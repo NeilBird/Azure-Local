@@ -99,7 +99,7 @@
     {
       "type": 1,
       "content": {
-        "json": "## 🖥️ Azure Local - Managing Updates At Scale\r\n**Version: v0.6.6** | [Check for Updates to apply by checking the latest release available on GitHub](https://github.com/NeilBird/Azure-Local/tree/main/Azure-Local-Manage-Updates-At-Scale)\r\n\r\nThis example Workbook is a community driven project, (not officially supported by Microsoft). If you encounter any issues or have feedback, please [raise an Issue on GitHub](https://github.com/NeilBird/Azure-Local/issues)."
+        "json": "## 🖥️ Azure Local - Managing Updates At Scale\r\n**Version: v0.6.7** | [Check for Updates to apply by checking the latest release available on GitHub](https://github.com/NeilBird/Azure-Local/tree/main/Azure-Local-Manage-Updates-At-Scale)\r\n\r\nThis example Workbook is a community driven project, (not officially supported by Microsoft). If you encounter any issues or have feedback, please [raise an Issue on GitHub](https://github.com/NeilBird/Azure-Local/issues)."
       },
       "name": "workbook-title-version"
     },
@@ -4557,6 +4557,8 @@
               "size": 0,
               "title": "Clusters with Certificates Expiring Soon",
               "noDataMessage": "No clusters with certificates expiring in the next 30 days",
+              "showRefreshButton": true,
+              "showExportToExcel": true,
               "queryType": 1,
               "resourceType": "microsoft.resourcegraph/resources",
               "crossComponentResources": [
@@ -4580,24 +4582,24 @@
                     "columnMatch": "daysUntilExpiration",
                     "formatter": 18,
                     "formatOptions": {
-                      "thresholdsOptions": "icons",
+                      "thresholdsOptions": "colors",
                       "thresholdsGrid": [
                         {
                           "operator": "<=",
                           "thresholdValue": "7",
-                          "representation": "4",
+                          "representation": "redBright",
                           "text": "{0}{1} days"
                         },
                         {
                           "operator": "<=",
                           "thresholdValue": "14",
-                          "representation": "warning",
+                          "representation": "yellow",
                           "text": "{0}{1} days"
                         },
                         {
                           "operator": "Default",
                           "thresholdValue": null,
-                          "representation": "Blank",
+                          "representation": "green",
                           "text": "{0}{1} days"
                         }
                       ]
@@ -4951,7 +4953,7 @@
             "content": {
               "version": "KqlItem/1.0",
               "query": "extensibilityresources\r\n| where type == \"microsoft.azurestackhci/clusters/updatesummaries\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| extend healthState = tostring(properties.healthState)\r\n| summarize Count = count() by healthState\r\n| order by Count desc",
-              "size": 1,
+              "size": 0,
               "title": "Health State Distribution",
               "showAnalytics": true,
               "queryType": 1,
@@ -4961,6 +4963,8 @@
               ],
               "visualization": "piechart",
               "chartSettings": {
+                "showLegend": true,
+                "legendPosition": "bottom",
                 "seriesLabelSettings": [
                   {
                     "seriesName": "Success",
@@ -4993,14 +4997,18 @@
             "content": {
               "version": "KqlItem/1.0",
               "query": "extensibilityresources\r\n| where type == \"microsoft.azurestackhci/clusters/updatesummaries\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| extend currentVersion = tostring(properties.currentVersion)\r\n| summarize ClusterCount = count() by currentVersion\r\n| order by ClusterCount desc",
-              "size": 1,
+              "size": 0,
               "title": "Version Distribution",
               "queryType": 1,
               "resourceType": "microsoft.resourcegraph/resources",
               "crossComponentResources": [
                 "{Subscriptions}"
               ],
-              "visualization": "piechart"
+              "visualization": "piechart",
+              "chartSettings": {
+                "showLegend": true,
+                "legendPosition": "bottom"
+              }
             },
             "customWidth": "50",
             "name": "version-distribution-chart"
@@ -5484,19 +5492,9 @@
             "name": "query - 3"
           },
           {
-            "type": 11,
+            "type": 1,
             "content": {
-              "version": "LinkItem/1.0",
-              "style": "nav",
-              "links": [
-                {
-                  "id": "troubleshooting-docs-link",
-                  "cellValue": "https://learn.microsoft.com/azure/azure-local/update/update-troubleshooting-23h2#using-powershell",
-                  "linkTarget": "Url",
-                  "linkLabel": "📚 Documentation: Troubleshooting Azure Local Updates",
-                  "style": "link"
-                }
-              ]
+              "json": "📚 **Documentation:** [Troubleshooting Azure Local Updates](https://learn.microsoft.com/azure/azure-local/update/update-troubleshooting-23h2#using-powershell)\r\n\r\n📚 **Knowledge:** [Review troubleshooting guides (TSGs) in the Azure Local GitHub Supportability Forum, (search for the error message)](https://github.com/Azure/AzureLocal-Supportability)"
             },
             "name": "troubleshooting-link"
           },
@@ -6114,7 +6112,7 @@
             "type": 3,
             "content": {
               "version": "KqlItem/1.0",
-              "query": "extensibilityresources\r\n| where type =~ 'microsoft.azurestackhci/clusters/updateSummaries'\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| parse id with id \"/updateSummaries/default\"\r\n| parse id with * \"/clusters/\" name\r\n| extend lowercase_id = tolower(id)\r\n| extend state = properties.state, healthState = properties.healthState\r\n| extend updateStatus = case(\r\n    state =~ 'Unknown', 'Unknown',\r\n    state =~ 'AppliedSuccessfully', 'Up to date',\r\n    state =~ 'UpdateAvailable', 'Update(s) available',\r\n    state =~ 'UpdateInProgress', 'In progress',\r\n    state =~ 'UpdateFailed', 'Failed to update',\r\n    state =~ 'NeedsAttention', 'Failed to update',\r\n    state =~ 'PreparationInProgress', 'In progress',\r\n    state =~ 'PreparationFailed', 'Action required', 'Unknown'\r\n    )\r\n| extend healthStatus = case(\r\n    healthState =~ 'Unknown', 'Unknown',\r\n    healthState =~ 'Success', 'Healthy',\r\n    healthState =~ 'Failure', 'Critical',\r\n    healthState =~ 'Warning', 'Warning',\r\n    healthState =~ 'Error', 'Health check failed',\r\n    healthState =~ 'InProgress', 'In progress', 'Unknown'\r\n    )\r\n| extend currentVersion = tostring(properties.currentVersion)\r\n| extend lastUpdated = todatetime(properties.lastUpdated)\r\n| extend lastChecked = todatetime(properties.lastChecked)\r\n| extend oemFamily = tostring(properties.oemFamily)\r\n| extend hardwareModel = tostring(properties.hardwareModel)\r\n| extend packageVersions = properties.packageVersions\r\n| where state in ('Unknown', 'AppliedSuccessfully', 'UpdateAvailable', 'UpdateInProgress', 'UpdateFailed', 'PreparationFailed', 'PreparationInProgress', 'NeedsAttention')\r\n| where healthState in ('Unknown', 'Success', 'Failure', 'Warning', 'Error', 'InProgress')\r\n| join kind=inner (\r\n    resources\r\n    | where type =~ 'microsoft.azurestackhci/clusters'\r\n    | where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n    | where '{ClusterTagName}' == '' or ('{ClusterTagValue}' != '' and tostring(tags['{ClusterTagName}']) =~ '{ClusterTagValue}')\r\n    | where properties.reportedProperties.supportedCapabilities has 'CloudManagedUpdates'\r\n    | extend azureConnection = case(\r\n        properties.status =~ 'NotSpecified', 'Unknown',\r\n        properties.status =~ 'ConnectedRecently', 'Connected',\r\n        properties.status =~ 'NotConnectedRecently', 'Not connected recently',\r\n        properties.status =~ 'NotYetRegistered', 'Not yet registered',\r\n        properties.status =~ 'Error', 'Error',\r\n        properties.status =~ 'Disconnected', 'Disconnected',\r\n        properties.status =~ 'ValidationInProgress', 'Validation in progress',\r\n        properties.status =~ 'ValidationSuccess', 'Validation success',\r\n        properties.status =~ 'ValidationFailed', 'Validation failed',\r\n        properties.status =~ 'DeploymentInProgress', 'Deployment in progress',\r\n        properties.status =~ 'DeploymentSuccess', 'Deployment success',\r\n        properties.status =~ 'DeploymentFailed', 'Deployment failed',\r\n        'Unknown'\r\n        )\r\n    | project clusterId = tolower(id), clusterTags = tags, azureConnection, clusterConnectionStatus = properties.status)\r\n    on $left.lowercase_id == $right.clusterId\r\n| extend clusterLink = strcat('https://portal.azure.com/#@/resource', id)\r\n| extend DaysSinceUpdate = datetime_diff('day', now(), lastUpdated)\r\n| where '{ClusterStatusNameFilter}' == '' or name matches regex strcat('(?i)', replace_string(replace_string('{ClusterStatusNameFilter}', '*', '.*'), '?', '.'))\r\n| where '*' in ({ClusterUpdateStatusFilter}) or updateStatus in ({ClusterUpdateStatusFilter})\r\n| where '*' in ({ClusterHealthStatusFilter}) or healthStatus in ({ClusterHealthStatusFilter})\r\n| project ClusterName = name, clusterLink, UpdateStatus = updateStatus, HealthStatus = healthStatus, CurrentVersion = currentVersion, AzureConnection = azureConnection, LastUpdated = lastUpdated, DaysSinceUpdate, LastChecked = lastChecked, OEMFamily = oemFamily, HardwareModel = hardwareModel, State = state, HealthState = healthState, resourceGroup, subscriptionId\r\n| order by DaysSinceUpdate desc, ClusterName asc",
+              "query": "extensibilityresources\r\n| where type =~ 'microsoft.azurestackhci/clusters/updateSummaries'\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| parse id with id \"/updateSummaries/default\"\r\n| parse id with * \"/clusters/\" name\r\n| extend lowercase_id = tolower(id)\r\n| extend state = properties.state, healthState = properties.healthState\r\n| extend updateStatus = case(\r\n    state =~ 'Unknown', 'Unknown',\r\n    state =~ 'AppliedSuccessfully', 'Up to date',\r\n    state =~ 'UpdateAvailable', 'Update(s) available',\r\n    state =~ 'UpdateInProgress', 'In progress',\r\n    state =~ 'UpdateFailed', 'Failed to update',\r\n    state =~ 'NeedsAttention', 'Failed to update',\r\n    state =~ 'PreparationInProgress', 'In progress',\r\n    state =~ 'PreparationFailed', 'Action required', 'Unknown'\r\n    )\r\n| extend healthStatus = case(\r\n    healthState =~ 'Unknown', 'Unknown',\r\n    healthState =~ 'Success', 'Healthy',\r\n    healthState =~ 'Failure', 'Critical',\r\n    healthState =~ 'Warning', 'Warning',\r\n    healthState =~ 'Error', 'Health check failed',\r\n    healthState =~ 'InProgress', 'In progress', 'Unknown'\r\n    )\r\n| extend currentVersion = tostring(properties.currentVersion)\r\n| extend lastUpdated = todatetime(properties.lastUpdated)\r\n| extend lastChecked = todatetime(properties.lastChecked)\r\n| extend oemFamily = tostring(properties.oemFamily)\r\n| extend hardwareModel = tostring(properties.hardwareModel)\r\n| extend packageVersions = properties.packageVersions\r\n| where state in ('Unknown', 'AppliedSuccessfully', 'UpdateAvailable', 'UpdateInProgress', 'UpdateFailed', 'PreparationFailed', 'PreparationInProgress', 'NeedsAttention')\r\n| where healthState in ('Unknown', 'Success', 'Failure', 'Warning', 'Error', 'InProgress')\r\n| join kind=inner (\r\n    resources\r\n    | where type =~ 'microsoft.azurestackhci/clusters'\r\n    | where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n    | where '{ClusterTagName}' == '' or ('{ClusterTagValue}' != '' and tostring(tags['{ClusterTagName}']) =~ '{ClusterTagValue}')\r\n    | where properties.reportedProperties.supportedCapabilities has 'CloudManagedUpdates'\r\n    | extend azureConnection = case(\r\n        properties.status =~ 'NotSpecified', 'Unknown',\r\n        properties.status =~ 'ConnectedRecently', 'Connected',\r\n        properties.status =~ 'NotConnectedRecently', 'Not connected recently',\r\n        properties.status =~ 'NotYetRegistered', 'Not yet registered',\r\n        properties.status =~ 'Error', 'Error',\r\n        properties.status =~ 'Disconnected', 'Disconnected',\r\n        properties.status =~ 'ValidationInProgress', 'Validation in progress',\r\n        properties.status =~ 'ValidationSuccess', 'Validation success',\r\n        properties.status =~ 'ValidationFailed', 'Validation failed',\r\n        properties.status =~ 'DeploymentInProgress', 'Deployment in progress',\r\n        properties.status =~ 'DeploymentSuccess', 'Deployment success',\r\n        properties.status =~ 'DeploymentFailed', 'Deployment failed',\r\n        'Unknown'\r\n        )\r\n    | project clusterId = tolower(id), clusterTags = tags, azureConnection, clusterConnectionStatus = properties.status)\r\n    on $left.lowercase_id == $right.clusterId\r\n| extend clusterLink = strcat('https://portal.azure.com/#@/resource', id, '/updates')\r\n| extend DaysSinceUpdate = datetime_diff('day', now(), lastUpdated)\r\n| where '{ClusterStatusNameFilter}' == '' or name matches regex strcat('(?i)', replace_string(replace_string('{ClusterStatusNameFilter}', '*', '.*'), '?', '.'))\r\n| where '*' in ({ClusterUpdateStatusFilter}) or updateStatus in ({ClusterUpdateStatusFilter})\r\n| where '*' in ({ClusterHealthStatusFilter}) or healthStatus in ({ClusterHealthStatusFilter})\r\n| project ClusterName = name, clusterLink, UpdateStatus = updateStatus, HealthStatus = healthStatus, CurrentVersion = currentVersion, AzureConnection = azureConnection, DaysSinceUpdate, LastUpdated = lastUpdated, LastChecked = lastChecked, OEMFamily = oemFamily, HardwareModel = hardwareModel, State = state, HealthState = healthState, resourceGroup, subscriptionId\r\n| order by DaysSinceUpdate desc, ClusterName asc",
               "size": 0,
               "showAnalytics": true,
               "showRefreshButton": true,
@@ -6131,7 +6129,7 @@
                     "formatter": 7,
                     "formatOptions": {
                       "linkTarget": "Url",
-                      "linkLabel": "Open Cluster"
+                      "linkLabel": "View Updates"
                     }
                   },
                   {
@@ -6319,12 +6317,12 @@
                     "label": "Current Version"
                   },
                   {
-                    "columnId": "LastUpdated",
-                    "label": "Last Updated"
-                  },
-                  {
                     "columnId": "DaysSinceUpdate",
                     "label": "Days Since Update"
+                  },
+                  {
+                    "columnId": "LastUpdated",
+                    "label": "Last Updated"
                   },
                   {
                     "columnId": "LastChecked",
@@ -6354,7 +6352,7 @@
             "type": 3,
             "content": {
               "version": "KqlItem/1.0",
-              "query": "extensibilityresources\r\n| where type == \"microsoft.azurestackhci/clusters/updatesummaries\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| extend hciClusterName = tostring(split(id, '/')[8])\r\n| extend state = tostring(properties.state)\r\n| extend currentVersion = tostring(properties.currentVersion)\r\n| extend lastUpdated = todatetime(properties.lastUpdated)\r\n| extend lastChecked = todatetime(properties.lastChecked)\r\n| extend clusterId = substring(id, 0, indexof(id, '/updateSummaries/'))\r\n| where state in (\"UpdateInProgress\", \"Updating\", \"PreparingToUpdate\")\r\n| extend clusterIdLower = tolower(clusterId)\r\n| join kind=leftouter (\r\n    extensibilityresources\r\n    | where type == \"microsoft.azurestackhci/clusters/updates/updateruns\"\r\n    | extend runState = tostring(properties.state)\r\n    | where runState == \"InProgress\"\r\n    | extend updateName = tostring(split(id, '/updates/')[1])\r\n    | extend updateName = tostring(split(updateName, '/updateruns')[0])\r\n    | extend runClusterId = tolower(substring(id, 0, indexof(id, '/updates/')))\r\n    | project runClusterId, UpdateInstalling = updateName\r\n) on $left.clusterIdLower == $right.runClusterId\r\n| extend clusterLink = strcat('https://portal.azure.com/#@/resource', clusterId)\r\n| extend clusterIdEncoded = replace_string(clusterId, '/', '%2F')\r\n| extend updateRunLink = strcat('https://portal.azure.com/#view/Microsoft_AzureStackHCI_PortalExtension/SingleInstanceHistoryDetails.ReactView/resourceId/', clusterIdEncoded, '/updateName~/null/updateRunName~/null/refresh~/false')\r\n| extend UpdateInstalling = coalesce(UpdateInstalling, '')\r\n| project ClusterName = hciClusterName, clusterLink, UpdateInstalling, State = state, updateRunLink, CurrentVersion = currentVersion, LastUpdated = lastUpdated, LastChecked = lastChecked\r\n| order by ClusterName asc",
+              "query": "extensibilityresources\r\n| where type == \"microsoft.azurestackhci/clusters/updatesummaries\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| extend hciClusterName = tostring(split(id, '/')[8])\r\n| extend state = tostring(properties.state)\r\n| extend currentVersion = tostring(properties.currentVersion)\r\n| extend lastUpdated = todatetime(properties.lastUpdated)\r\n| extend lastChecked = todatetime(properties.lastChecked)\r\n| extend clusterId = substring(id, 0, indexof(id, '/updateSummaries/'))\r\n| where state in (\"UpdateInProgress\", \"Updating\", \"PreparingToUpdate\")\r\n| extend clusterIdLower = tolower(clusterId)\r\n| join kind=leftouter (\r\n    extensibilityresources\r\n    | where type == \"microsoft.azurestackhci/clusters/updates/updateruns\"\r\n    | extend runState = tostring(properties.state)\r\n    | where runState == \"InProgress\"\r\n    | extend updateName = tostring(split(id, '/updates/')[1])\r\n    | extend updateName = tostring(split(updateName, '/updateruns')[0])\r\n    | extend runClusterId = tolower(substring(id, 0, indexof(id, '/updates/')))\r\n    | project runClusterId, UpdateInstalling = updateName\r\n) on $left.clusterIdLower == $right.runClusterId\r\n| extend clusterLink = strcat('https://portal.azure.com/#@/resource', clusterId, '/updates')\r\n| extend clusterIdEncoded = replace_string(clusterId, '/', '%2F')\r\n| extend updateRunLink = strcat('https://portal.azure.com/#view/Microsoft_AzureStackHCI_PortalExtension/SingleInstanceHistoryDetails.ReactView/resourceId/', clusterIdEncoded, '/updateName~/null/updateRunName~/null/refresh~/false')\r\n| extend UpdateInstalling = coalesce(UpdateInstalling, '')\r\n| project ClusterName = hciClusterName, clusterLink, UpdateInstalling, State = state, updateRunLink, CurrentVersion = currentVersion, LastUpdated = lastUpdated, LastChecked = lastChecked\r\n| order by ClusterName asc",
               "size": 0,
               "showRefreshButton": true,
               "showExportToExcel": true,
@@ -6370,7 +6368,7 @@
                     "formatter": 7,
                     "formatOptions": {
                       "linkTarget": "Url",
-                      "linkLabel": "Open Cluster"
+                      "linkLabel": "View Updates"
                     }
                   },
                   {
@@ -6444,6 +6442,13 @@
           {
             "type": 1,
             "content": {
+              "json": "📚 **Knowledge:** [Troubleshoot Update failures](https://learn.microsoft.com/azure/azure-local/update/update-troubleshooting-23h2#troubleshoot-update-failures)"
+            },
+            "name": "update-failures-knowledge-link"
+          },
+          {
+            "type": 1,
+            "content": {
               "json": "## 📦 Clusters with Updates Available\r\n\r\n💡 **Information:** [Azure Local Known Issues documentation](https://learn.microsoft.com/azure/azure-local/known-issues)"
             },
             "name": "text-updates-available"
@@ -6452,7 +6457,7 @@
             "type": 3,
             "content": {
               "version": "KqlItem/1.0",
-              "query": "extensibilityresources\r\n| where type == \"microsoft.azurestackhci/clusters/updatesummaries\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| extend hciClusterName = tostring(split(id, '/')[8])\r\n| extend state = tostring(properties.state)\r\n| extend currentVersion = tostring(properties.currentVersion)\r\n| extend lastChecked = todatetime(properties.lastChecked)\r\n| extend clusterId = substring(id, 0, indexof(id, '/updateSummaries/'))\r\n| where state == \"UpdateAvailable\"\r\n| join kind=leftouter (\r\n    extensibilityresources\r\n    | where type == \"microsoft.azurestackhci/clusters/updates\"\r\n    | where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n    | extend updateClusterId = substring(id, 0, indexof(id, '/updates/'))\r\n    | extend updateState = tostring(properties.state)\r\n    | where updateState == \"Ready\"\r\n    | summarize AvailableUpdates = make_list(name), UpdateStates = make_list(updateState) by updateClusterId\r\n    | extend UpdateAvailable = strcat_array(AvailableUpdates, ', ')\r\n    | extend UpdateState = strcat_array(UpdateStates, ', ')\r\n) on $left.clusterId == $right.updateClusterId\r\n| extend clusterLink = strcat('https://portal.azure.com/#@/resource', clusterId)\r\n| extend clusterIdEncoded = replace_string(replace_string(replace_string(clusterId, '/', '%2F'), '\"', '%22'), ' ', '%20')\r\n| extend clusterIdsJson = strcat('%5B%7B%22id%22%3A%22', clusterIdEncoded, '%22%2C%22oemFamily%22%3A%22%22%7D%5D')\r\n| extend oneTimeUpdateLink = strcat('https://portal.azure.com/#view/Microsoft_AzureStackHCI_PortalExtension/InstallUpdates.ReactView/clusterIds~/', clusterIdsJson)\r\n| extend UpdateAvailable = coalesce(UpdateAvailable, 'Check Azure Portal')\r\n| extend UpdateState = coalesce(UpdateState, '')\r\n| project ClusterName = hciClusterName, clusterLink, CurrentVersion = currentVersion, UpdateAvailable, UpdateState, LastChecked = lastChecked, oneTimeUpdateLink\r\n| order by ClusterName asc",
+              "query": "extensibilityresources\r\n| where type == \"microsoft.azurestackhci/clusters/updatesummaries\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| extend hciClusterName = tostring(split(id, '/')[8])\r\n| extend state = tostring(properties.state)\r\n| extend currentVersion = tostring(properties.currentVersion)\r\n| extend lastChecked = todatetime(properties.lastChecked)\r\n| extend clusterId = substring(id, 0, indexof(id, '/updateSummaries/'))\r\n| where state == \"UpdateAvailable\"\r\n| join kind=leftouter (\r\n    extensibilityresources\r\n    | where type == \"microsoft.azurestackhci/clusters/updates\"\r\n    | where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n    | extend updateClusterId = substring(id, 0, indexof(id, '/updates/'))\r\n    | extend updateState = tostring(properties.state)\r\n    | where updateState == \"Ready\"\r\n    | summarize AvailableUpdates = make_list(name), UpdateStates = make_list(updateState) by updateClusterId\r\n    | extend UpdateAvailable = strcat_array(AvailableUpdates, ', ')\r\n    | extend UpdateState = strcat_array(UpdateStates, ', ')\r\n) on $left.clusterId == $right.updateClusterId\r\n| extend clusterLink = strcat('https://portal.azure.com/#@/resource', clusterId, '/updates')\r\n| extend clusterIdEncoded = replace_string(replace_string(replace_string(clusterId, '/', '%2F'), '\"', '%22'), ' ', '%20')\r\n| extend clusterIdsJson = strcat('%5B%7B%22id%22%3A%22', clusterIdEncoded, '%22%2C%22oemFamily%22%3A%22%22%7D%5D')\r\n| extend oneTimeUpdateLink = strcat('https://portal.azure.com/#view/Microsoft_AzureStackHCI_PortalExtension/InstallUpdates.ReactView/clusterIds~/', clusterIdsJson)\r\n| extend UpdateAvailable = coalesce(UpdateAvailable, 'Check Azure Portal')\r\n| extend UpdateState = coalesce(UpdateState, '')\r\n| project ClusterName = hciClusterName, clusterLink, CurrentVersion = currentVersion, UpdateAvailable, UpdateState, LastChecked = lastChecked, oneTimeUpdateLink\r\n| order by ClusterName asc",
               "size": 0,
               "showRefreshButton": true,
               "showExportToExcel": true,
@@ -6468,7 +6473,7 @@
                     "formatter": 7,
                     "formatOptions": {
                       "linkTarget": "Url",
-                      "linkLabel": "Open Cluster"
+                      "linkLabel": "View Updates"
                     }
                   },
                   {
@@ -6480,6 +6485,7 @@
                     }
                   }
                 ],
+                "filter": true,
                 "labelSettings": [
                   {
                     "columnId": "ClusterName",
