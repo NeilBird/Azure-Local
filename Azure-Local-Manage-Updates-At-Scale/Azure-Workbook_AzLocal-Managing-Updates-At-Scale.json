@@ -99,7 +99,7 @@
     {
       "type": 1,
       "content": {
-        "json": "## 🖥️ Azure Local - Managing Updates At Scale\r\n**Version: v0.6.7** | [Check for Updates to apply by checking the latest release available on GitHub](https://github.com/NeilBird/Azure-Local/tree/main/Azure-Local-Manage-Updates-At-Scale)\r\n\r\nThis example Workbook is a community driven project, (not officially supported by Microsoft). If you encounter any issues or have feedback, please [raise an Issue on GitHub](https://github.com/NeilBird/Azure-Local/issues)."
+        "json": "## 🖥️ Azure Local - Managing Updates At Scale\r\n**Version: v0.6.8** | [Check for Updates to apply by checking the latest release available on GitHub](https://github.com/NeilBird/Azure-Local/tree/main/Azure-Local-Manage-Updates-At-Scale)\r\n\r\nThis example Workbook is a community driven project, (not officially supported by Microsoft). If you encounter any issues or have feedback, please [raise an Issue on GitHub](https://github.com/NeilBird/Azure-Local/issues)."
       },
       "name": "workbook-title-version"
     },
@@ -1291,14 +1291,18 @@
             "content": {
               "version": "KqlItem/1.0",
               "query": "resources\r\n| where type == \"microsoft.azurestackhci/clusters\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| where '{ClusterTagName}' == '' or ('{ClusterTagValue}' != '' and tostring(tags['{ClusterTagName}']) =~ '{ClusterTagValue}')\r\n| extend osDisplayVersion = tostring(properties.reportedProperties.nodes[0].osDisplayVersion)\r\n| summarize Count = count() by osDisplayVersion\r\n| order by Count desc",
-              "size": 1,
+              "size": 0,
               "title": "OS Version Distribution",
               "queryType": 1,
               "resourceType": "microsoft.resourcegraph/resources",
               "crossComponentResources": [
                 "{Subscriptions}"
               ],
-              "visualization": "piechart"
+              "visualization": "piechart",
+              "chartSettings": {
+                "showLegend": true,
+                "legendPosition": "bottom"
+              }
             },
             "customWidth": "25",
             "name": "chart-os-version",
@@ -1312,14 +1316,18 @@
             "content": {
               "version": "KqlItem/1.0",
               "query": "resources\r\n| where type == \"microsoft.azurestackhci/clusters\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| where '{ClusterTagName}' == '' or ('{ClusterTagValue}' != '' and tostring(tags['{ClusterTagName}']) =~ '{ClusterTagValue}')\r\n| extend hardwareClass = tostring(properties.reportedProperties.hardwareClass)\r\n| summarize Count = count() by hardwareClass\r\n| order by Count desc",
-              "size": 1,
+              "size": 0,
               "title": "Hardware Class Distribution",
               "queryType": 1,
               "resourceType": "microsoft.resourcegraph/resources",
               "crossComponentResources": [
                 "{Subscriptions}"
               ],
-              "visualization": "piechart"
+              "visualization": "piechart",
+              "chartSettings": {
+                "showLegend": true,
+                "legendPosition": "bottom"
+              }
             },
             "customWidth": "25",
             "name": "chart-hardware-class",
@@ -1333,14 +1341,18 @@
             "content": {
               "version": "KqlItem/1.0",
               "query": "resources\r\n| where type == \"microsoft.azurestackhci/clusters\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| where '{ClusterTagName}' == '' or ('{ClusterTagValue}' != '' and tostring(tags['{ClusterTagName}']) =~ '{ClusterTagValue}')\r\n| extend billingModel = tostring(properties.billingModel)\r\n| summarize Count = count() by billingModel\r\n| order by Count desc",
-              "size": 1,
+              "size": 0,
               "title": "Billing Model",
               "queryType": 1,
               "resourceType": "microsoft.resourcegraph/resources",
               "crossComponentResources": [
                 "{Subscriptions}"
               ],
-              "visualization": "piechart"
+              "visualization": "piechart",
+              "chartSettings": {
+                "showLegend": true,
+                "legendPosition": "bottom"
+              }
             },
             "customWidth": "25",
             "name": "chart-billing-model",
@@ -1354,14 +1366,18 @@
             "content": {
               "version": "KqlItem/1.0",
               "query": "resources\r\n| where type == \"microsoft.azurestackhci/clusters\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| where '{ClusterTagName}' == '' or ('{ClusterTagValue}' != '' and tostring(tags['{ClusterTagName}']) =~ '{ClusterTagValue}')\r\n| extend manufacturer = tostring(properties.reportedProperties.nodes[0].manufacturer)\r\n| extend model = tostring(properties.reportedProperties.nodes[0].model)\r\n| extend hwVendor = strcat(manufacturer, ' - ', model)\r\n| summarize Count = count() by hwVendor\r\n| order by Count desc",
-              "size": 1,
+              "size": 0,
               "title": "Hardware Vendor/Model",
               "queryType": 1,
               "resourceType": "microsoft.resourcegraph/resources",
               "crossComponentResources": [
                 "{Subscriptions}"
               ],
-              "visualization": "piechart"
+              "visualization": "piechart",
+              "chartSettings": {
+                "showLegend": true,
+                "legendPosition": "bottom"
+              }
             },
             "customWidth": "25",
             "name": "chart-hardware-vendor",
@@ -1591,6 +1607,13 @@
               }
             },
             "name": "table-stale-clusters"
+          },
+          {
+            "type": 1,
+            "content": {
+              "json": "📚 **Knowledge:** [Send Diagnostic Logs to Microsoft using Azure portal or PowerShell](https://learn.microsoft.com/azure/azure-local/manage/collect-logs?tabs=azureportal#collect-logs-for-azure-local)"
+            },
+            "name": "stale-clusters-knowledge-link"
           }
         ]
       },
@@ -3703,7 +3726,7 @@
             "content": {
               "version": "KqlItem/1.0",
               "query": "resources\r\n| where type == \"microsoft.hybridcompute/machines\"\r\n| where kind == \"HCI\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| extend status = tostring(properties.status)\r\n| summarize Count = count() by status\r\n| order by Count desc",
-              "size": 1,
+              "size": 0,
               "title": "VM Connection Status",
               "queryType": 1,
               "resourceType": "microsoft.resourcegraph/resources",
@@ -3712,6 +3735,8 @@
               ],
               "visualization": "piechart",
               "chartSettings": {
+                "showLegend": true,
+                "legendPosition": "bottom",
                 "seriesLabelSettings": [
                   {
                     "seriesName": "Connected",
@@ -3740,14 +3765,18 @@
             "content": {
               "version": "KqlItem/1.0",
               "query": "resources\r\n| where type == \"microsoft.hybridcompute/machines\"\r\n| where kind == \"HCI\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| extend osSku = tostring(properties.osSku)\r\n| extend osType = iff(isempty(osSku), \"Unknown\", osSku)\r\n| summarize Count = count() by osType\r\n| order by Count desc",
-              "size": 1,
+              "size": 0,
               "title": "OS Distribution",
               "queryType": 1,
               "resourceType": "microsoft.resourcegraph/resources",
               "crossComponentResources": [
                 "{Subscriptions}"
               ],
-              "visualization": "piechart"
+              "visualization": "piechart",
+              "chartSettings": {
+                "showLegend": true,
+                "legendPosition": "bottom"
+              }
             },
             "customWidth": "50",
             "name": "vm-os-distribution",
@@ -3761,14 +3790,18 @@
             "content": {
               "version": "KqlItem/1.0",
               "query": "resources\r\n| where type == \"microsoft.hybridcompute/machines\"\r\n| where kind == \"HCI\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| summarize Count = count() by resourceGroup\r\n| order by Count desc\r\n| take 10",
-              "size": 1,
+              "size": 0,
               "title": "VMs by Resource Group (Top 10)",
               "queryType": 1,
               "resourceType": "microsoft.resourcegraph/resources",
               "crossComponentResources": [
                 "{Subscriptions}"
               ],
-              "visualization": "piechart"
+              "visualization": "piechart",
+              "chartSettings": {
+                "showLegend": true,
+                "legendPosition": "bottom"
+              }
             },
             "customWidth": "50",
             "name": "vm-by-rg",
@@ -4221,7 +4254,7 @@
             "content": {
               "version": "KqlItem/1.0",
               "query": "resources\r\n| where type == \"microsoft.kubernetes/connectedclusters\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| where properties.infrastructure == \"azure_stack_hci\"\r\n| extend connectivityStatus = tostring(properties.connectivityStatus)\r\n| summarize Count = count() by connectivityStatus\r\n| order by Count desc",
-              "size": 1,
+              "size": 0,
               "title": "Connectivity Status",
               "queryType": 1,
               "resourceType": "microsoft.resourcegraph/resources",
@@ -4230,6 +4263,8 @@
               ],
               "visualization": "piechart",
               "chartSettings": {
+                "showLegend": true,
+                "legendPosition": "bottom",
                 "seriesLabelSettings": [
                   {
                     "seriesName": "Connected",
@@ -4258,14 +4293,18 @@
             "content": {
               "version": "KqlItem/1.0",
               "query": "resources\r\n| where type == \"microsoft.kubernetes/connectedclusters\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| where properties.infrastructure == \"azure_stack_hci\"\r\n| extend kubernetesVersion = tostring(properties.kubernetesVersion)\r\n| summarize ClusterCount = count() by kubernetesVersion\r\n| order by ClusterCount desc",
-              "size": 1,
+              "size": 0,
               "title": "Kubernetes Version Distribution",
               "queryType": 1,
               "resourceType": "microsoft.resourcegraph/resources",
               "crossComponentResources": [
                 "{Subscriptions}"
               ],
-              "visualization": "piechart"
+              "visualization": "piechart",
+              "chartSettings": {
+                "showLegend": true,
+                "legendPosition": "bottom"
+              }
             },
             "customWidth": "50",
             "name": "aks-version-distribution",
@@ -4279,7 +4318,7 @@
             "content": {
               "version": "KqlItem/1.0",
               "query": "resources\r\n| where type == \"microsoft.kubernetes/connectedclusters\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| where properties.infrastructure == \"azure_stack_hci\"\r\n| extend provisioningState = tostring(properties.provisioningState)\r\n| summarize Count = count() by provisioningState\r\n| order by Count desc",
-              "size": 1,
+              "size": 0,
               "title": "Provisioning State",
               "queryType": 1,
               "resourceType": "microsoft.resourcegraph/resources",
@@ -4288,6 +4327,8 @@
               ],
               "visualization": "piechart",
               "chartSettings": {
+                "showLegend": true,
+                "legendPosition": "bottom",
                 "seriesLabelSettings": [
                   {
                     "seriesName": "Succeeded",
@@ -4837,6 +4878,13 @@
               "padding": "5px",
               "maxWidth": "40"
             }
+          },
+          {
+            "type": 1,
+            "content": {
+              "json": "📚 **Knowledge:** [Troubleshoot extension issues for AKS Arc Kubernetes clusters](https://learn.microsoft.com/azure/azure-arc/kubernetes/extensions-troubleshooting)"
+            },
+            "name": "aks-extensions-knowledge-link"
           },
           {
             "type": 3,
