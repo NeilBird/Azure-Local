@@ -1,6 +1,6 @@
 # Azure Local - Managing Updates At Scale Workbook
 
-## Latest Version: v0.6.7
+## Latest Version: v0.6.8
 
 📥 **[Copy / Paste (or download) the latest Workbook JSON](https://raw.githubusercontent.com/NeilBird/Azure-Local/refs/heads/main/Azure-Local-Manage-Updates-At-Scale/Azure-Workbook_AzLocal-Managing-Updates-At-Scale.json)**
 
@@ -8,34 +8,16 @@ An Azure Monitor Workbook for monitoring and managing Azure Local (formerly Azur
 
 **Important:** This is a community driven project, (not officially supported by Microsoft), for any issues, requests or feedback, please [raise an Issue](https://github.com/NeilBird/Azure-Local/issues) (note: no time scales or guarantees can be provided for responses to issues.)
 
-## Recent Changes (v0.6.7)
+## Recent Changes (v0.6.8)
 
-- **Cluster Link Improvements**:
-  - Updated cluster links in update-related tables to open the `/updates` view directly:
-    - Cluster Update Status table
-    - Clusters Currently Updating table
-    - Clusters with Updates Available table
-  - Link label changed from "Open Cluster" to "View Updates" for clarity
+- **Pie Chart Improvements** (consistent auto-sizing and legend placement across all tabs):
+  - **Summary Dashboard - Cluster Details**: OS Version, Hardware Class, Billing Model, Hardware Vendor/Model
+  - **Azure Local Virtual Machines**: VM Connection Status, OS Distribution, VMs by Resource Group
+  - **AKS Arc Clusters**: Connectivity Status, Kubernetes Version Distribution, Provisioning State
 
-- **Certificate Expiration Warning Improvements**:
-  - Added information banner with link to [certificate rotation documentation](https://learn.microsoft.com/azure/aks/hybrid/rotate-certificates)
-  - Enhanced **Days Until Expiration** column with color coding:
-    - 🟢 Green: More than 14 days remaining
-    - 🟡 Yellow: 8-14 days remaining
-    - 🔴 Red: 7 days or less remaining
-  - Added refresh and export buttons to the table
-
-- **Clusters with Updates Available**:
-  - Added column filtering capability for easier searching
-
-- **Update Readiness Tab**:
-  - Enlarged pie charts (Health State Distribution, Version Distribution) for better visibility
-  - Moved chart legends to bottom position for improved layout
-  - Added knowledge link to [Azure Local GitHub Supportability Forum](https://github.com/Azure/AzureLocal-Supportability) for TSGs and known issue mitigations
-
-- **Update Progress Tab**:
-  - Moved "Days Since Update" column before "Last Updated" in All Cluster Update Status table
-  - Added knowledge link for [Troubleshoot Update failures](https://learn.microsoft.com/azure/azure-local/update/update-troubleshooting-23h2#troubleshoot-update-failures) below Clusters Currently Updating table
+- **New Knowledge Links**:
+  - **AKS Arc Clusters Tab**: Added [Troubleshoot extension issues for AKS Arc Kubernetes clusters](https://learn.microsoft.com/azure/azure-arc/kubernetes/extensions-troubleshooting) above Failed AKS Extensions table
+  - **Summary Dashboard**: Added [Send Diagnostic Logs to Microsoft](https://learn.microsoft.com/azure/azure-local/manage/collect-logs?tabs=azureportal#collect-logs-for-azure-local) below Clusters Not Synced Recently table
 
 > See [Appendix: Previous Version Changes](#appendix-previous-version-changes) for older release notes.
 
@@ -315,6 +297,35 @@ See the repository's LICENSE file for details.
 ---
 
 ## Appendix: Previous Version Changes
+
+### v0.6.7
+
+- **Cluster Link Improvements**:
+  - Updated cluster links in update-related tables to open the `/updates` view directly:
+    - Cluster Update Status table
+    - Clusters Currently Updating table
+    - Clusters with Updates Available table
+  - Link label changed from "Open Cluster" to "View Updates" for clarity
+
+- **Certificate Expiration Warning Improvements**:
+  - Added information banner with link to [certificate rotation documentation](https://learn.microsoft.com/azure/aks/hybrid/rotate-certificates)
+  - Enhanced **Days Until Expiration** column with color coding:
+    - 🟢 Green: More than 14 days remaining
+    - 🟡 Yellow: 8-14 days remaining
+    - 🔴 Red: 7 days or less remaining
+  - Added refresh and export buttons to the table
+
+- **Clusters with Updates Available**:
+  - Added column filtering capability for easier searching
+
+- **Update Readiness Tab**:
+  - Enlarged pie charts (Health State Distribution, Version Distribution) for better visibility
+  - Moved chart legends to bottom position for improved layout
+  - Added knowledge link to [Azure Local GitHub Supportability Forum](https://github.com/Azure/AzureLocal-Supportability) for TSGs and known issue mitigations
+
+- **Update Progress Tab**:
+  - Moved "Days Since Update" column before "Last Updated" in All Cluster Update Status table
+  - Added knowledge link for [Troubleshoot Update failures](https://learn.microsoft.com/azure/azure-local/update/update-troubleshooting-23h2#troubleshoot-update-failures) below Clusters Currently Updating table
 
 ### v0.6.6
 
