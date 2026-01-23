@@ -99,7 +99,7 @@
     {
       "type": 1,
       "content": {
-        "json": "## 🖥️ Azure Local - Managing Updates At Scale\r\n**Version: v0.6.4** | [Check for Updates to apply by checking the latest release available on GitHub](https://github.com/NeilBird/Azure-Local/tree/main/Azure-Local-Manage-Updates-At-Scale)\r\n\r\nThis example Workbook is a community driven project, (not officially supported by Microsoft). If you encounter an issue or have feedback, please [raise an Issue on GitHub](https://github.com/NeilBird/Azure-Local/issues)."
+        "json": "## 🖥️ Azure Local - Managing Updates At Scale\r\n**Version: v0.6.5** | [Check for Updates to apply by checking the latest release available on GitHub](https://github.com/NeilBird/Azure-Local/tree/main/Azure-Local-Manage-Updates-At-Scale)\r\n\r\nThis example Workbook is a community driven project, (not officially supported by Microsoft). If you encounter an issue or have feedback, please [raise an Issue on GitHub](https://github.com/NeilBird/Azure-Local/issues)."
       },
       "name": "workbook-title-version"
     },
@@ -2126,6 +2126,241 @@
               "sortBy": []
             },
             "name": "Offline Arcbridges (online Azure Local) - Copy"
+          },
+          {
+            "type": 1,
+            "content": {
+              "json": "---\r\n# 🔔 ARB Alert Rules Configuration\r\nCreate alert rules to monitor Arc Resource Bridge health and status. Get notified when ARBs go offline or encounter issues."
+            },
+            "name": "arb-alert-header"
+          },
+          {
+            "type": 9,
+            "content": {
+              "version": "KqlParameterItem/1.0",
+              "parameters": [
+                {
+                  "id": "arb-alert-toggle",
+                  "version": "KqlParameterItem/1.0",
+                  "name": "ShowAlertRulesSection",
+                  "label": "Show Alert Rules Setup",
+                  "type": 10,
+                  "isRequired": true,
+                  "typeSettings": {
+                    "additionalResourceOptions": [],
+                    "showDefault": false
+                  },
+                  "jsonData": "[{\"value\": \"yes\", \"label\": \"Yes - Show Alert Setup\"}, {\"value\": \"no\", \"label\": \"No - Hide Alert Setup\"}]",
+                  "value": "no"
+                }
+              ],
+              "style": "pills",
+              "queryType": 0,
+              "resourceType": "microsoft.operationalinsights/workspaces"
+            },
+            "name": "arb-alert-toggle-param"
+          },
+          {
+            "type": 12,
+            "content": {
+              "version": "NotebookGroup/1.0",
+              "groupType": "editable",
+              "items": [
+                {
+                  "type": 1,
+                  "content": {
+                    "json": "### 📋 Prerequisites for Alert Rules\r\n\r\n1. **Action Group**: Create or use an existing [Action Group](https://portal.azure.com/#view/Microsoft_Azure_Monitoring/ActionGroupsTemplateBlade) to receive notifications (Email, SMS, Webhook, etc.)\r\n2. **Permissions**: Contributor or Monitoring Contributor role on the subscription/resource group\r\n3. **Resource Health**: Azure Resource Health alerts are supported for Arc Resource Bridge\r\n\r\n---"
+                  },
+                  "name": "arb-alert-prereqs"
+                },
+                {
+                  "type": 1,
+                  "content": {
+                    "json": "### 🎯 Recommended Alert Rules for Arc Resource Bridge\r\n\r\n| Alert Type | Description | Recommended Severity |\r\n|------------|-------------|---------------------|\r\n| **Offline Status** | ARB appliance status is 'Offline' | Sev 1 (Critical) |\r\n| **Resource Health - Unavailable** | ARB resource health state is unavailable | Sev 1 (Critical) |\r\n| **Resource Health - Degraded** | ARB resource health state is degraded | Sev 2 (Warning) |\r\n| **Extended Offline (>14 days)** | ARB has been offline for more than 14 days | Sev 0 (Critical) |\r\n\r\n⚠️ **Important**: Arc Resource Bridge can't be offline for more than 45 days or the security key will expire.\r\n\r\n---"
+                  },
+                  "name": "arb-alert-types"
+                },
+                {
+                  "type": 1,
+                  "content": {
+                    "json": "### 🚀 Create Alert Rules\r\n\r\nSelect the Arc Resource Bridges below to create alert rules. Click the **Create Alert Rule** link to open Azure Portal with pre-configured settings."
+                  },
+                  "name": "arb-alert-instructions"
+                },
+                {
+                  "type": 3,
+                  "content": {
+                    "version": "KqlItem/1.0",
+                    "query": "resources\r\n| where type == \"microsoft.resourceconnector/appliances\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| extend status = tostring(properties.status)\r\n| extend lastModified = todatetime(systemData.lastModifiedAt)\r\n| extend daysSinceLastModifiedNum = datetime_diff('day', now(), lastModified)\r\n| extend ResourceHealthAlertLink = strcat('https://portal.azure.com/#view/Microsoft_Azure_Monitoring/CreateAlertRuleFromResourceBlade/resourceId/', url_encode(id), '/alertType/ResourceHealth')\r\n| extend ActivityLogAlertLink = strcat('https://portal.azure.com/#view/Microsoft_Azure_Monitoring/CreateAlertRuleFromResourceBlade/resourceId/', url_encode(id), '/alertType/ActivityLog')\r\n| project \r\n    ARBName = name, \r\n    ResourceId = id,\r\n    ResourceGroup = resourceGroup,\r\n    SubscriptionId = subscriptionId,\r\n    Status = status,\r\n    DaysOffline = iff(status == \"Running\", 0, daysSinceLastModifiedNum),\r\n    ResourceHealthAlertLink,\r\n    ActivityLogAlertLink\r\n| join kind=leftouter (\r\n    resources\r\n    | where type == \"microsoft.azurestackhci/clusters\"\r\n    | where '{ClusterTagName}' == '' or ('{ClusterTagValue}' != '' and tostring(tags['{ClusterTagName}']) =~ '{ClusterTagValue}')\r\n    | project ClusterName = name, resourceGroup\r\n) on $left.ResourceGroup == $right.resourceGroup\r\n| extend ClusterName = coalesce(ClusterName, 'N/A')\r\n| project ARBName, ResourceGroup, ClusterName, Status, DaysOffline, ResourceHealthAlertLink, ActivityLogAlertLink, ResourceId\r\n| order by Status desc, DaysOffline desc",
+                    "size": 0,
+                    "showRefreshButton": true,
+                    "showExportToExcel": true,
+                    "queryType": 1,
+                    "resourceType": "microsoft.resourcegraph/resources",
+                    "crossComponentResources": [
+                      "{Subscriptions}"
+                    ],
+                    "gridSettings": {
+                      "formatters": [
+                        {
+                          "columnMatch": "Status",
+                          "formatter": 18,
+                          "formatOptions": {
+                            "thresholdsOptions": "icons",
+                            "thresholdsGrid": [
+                              {
+                                "operator": "==",
+                                "thresholdValue": "Running",
+                                "representation": "success",
+                                "text": "{0}{1}"
+                              },
+                              {
+                                "operator": "==",
+                                "thresholdValue": "Offline",
+                                "representation": "4",
+                                "text": "{0}{1}"
+                              },
+                              {
+                                "operator": "Default",
+                                "thresholdValue": null,
+                                "representation": "warning",
+                                "text": "{0}{1}"
+                              }
+                            ]
+                          }
+                        },
+                        {
+                          "columnMatch": "DaysOffline",
+                          "formatter": 18,
+                          "formatOptions": {
+                            "thresholdsOptions": "colors",
+                            "thresholdsGrid": [
+                              {
+                                "operator": ">",
+                                "thresholdValue": "14",
+                                "representation": "redBright",
+                                "text": "{0}{1} days"
+                              },
+                              {
+                                "operator": ">=",
+                                "thresholdValue": "1",
+                                "representation": "yellow",
+                                "text": "{0}{1} days"
+                              },
+                              {
+                                "operator": "Default",
+                                "thresholdValue": null,
+                                "representation": "green",
+                                "text": "Online"
+                              }
+                            ]
+                          }
+                        },
+                        {
+                          "columnMatch": "ResourceHealthAlertLink",
+                          "formatter": 7,
+                          "formatOptions": {
+                            "linkTarget": "Url",
+                            "linkLabel": "🔔 Resource Health Alert"
+                          }
+                        },
+                        {
+                          "columnMatch": "ActivityLogAlertLink",
+                          "formatter": 7,
+                          "formatOptions": {
+                            "linkTarget": "Url",
+                            "linkLabel": "📋 Activity Log Alert"
+                          }
+                        },
+                        {
+                          "columnMatch": "ResourceId",
+                          "formatter": 5
+                        }
+                      ],
+                      "filter": true,
+                      "labelSettings": [
+                        {
+                          "columnId": "ARBName",
+                          "label": "Arc Resource Bridge"
+                        },
+                        {
+                          "columnId": "ResourceGroup",
+                          "label": "Resource Group"
+                        },
+                        {
+                          "columnId": "ClusterName",
+                          "label": "Associated Cluster"
+                        },
+                        {
+                          "columnId": "DaysOffline",
+                          "label": "Days Offline"
+                        },
+                        {
+                          "columnId": "ResourceHealthAlertLink",
+                          "label": "Resource Health Alert"
+                        },
+                        {
+                          "columnId": "ActivityLogAlertLink",
+                          "label": "Activity Log Alert"
+                        }
+                      ]
+                    }
+                  },
+                  "name": "arb-alert-rules-table"
+                },
+                {
+                  "type": 1,
+                  "content": {
+                    "json": "---\r\n### 📝 Manual Alert Rule Creation Steps\r\n\r\n**Option 1: Resource Health Alert (Recommended for Offline Detection)**\r\n1. Click **Resource Health Alert** link above for the specific ARB\r\n2. Configure the alert condition:\r\n   - **Current resource status**: Select `Unavailable`\r\n   - **Previous resource status**: Select `Available`\r\n   - **Reason type**: Select `Platform Initiated` and `User Initiated`\r\n3. Select or create an **Action Group**\r\n4. Set alert severity (Sev 1 recommended for offline)\r\n5. Name the alert rule and create\r\n\r\n**Option 2: Activity Log Alert (For status changes)**\r\n1. Click **Activity Log Alert** link above for the specific ARB\r\n2. Select signal: `All Administrative operations`\r\n3. Filter by operation: `Microsoft.ResourceConnector/appliances/write`\r\n4. Select or create an **Action Group**\r\n5. Name the alert rule and create\r\n\r\n**Option 3: Azure Resource Graph Alert (Advanced - For bulk monitoring)**\r\n1. Go to [Azure Monitor Alert Rules](https://portal.azure.com/#view/Microsoft_Azure_Monitoring/AzureMonitoringBrowseBlade/~/alertsV2)\r\n2. Create a new **Log Search Alert**\r\n3. Use the following ARG query:\r\n```kusto\r\narg(\"\").resources\r\n| where type == \"microsoft.resourceconnector/appliances\"\r\n| where properties.status == \"Offline\"\r\n| project name, resourceGroup, status = tostring(properties.status)\r\n```\r\n4. Set condition: `Number of results > 0`\r\n5. Configure frequency (e.g., every 15 minutes)\r\n6. Select Action Group and create"
+                  },
+                  "name": "arb-manual-alert-steps"
+                },
+                {
+                  "type": 11,
+                  "content": {
+                    "version": "LinkItem/1.0",
+                    "style": "nav",
+                    "links": [
+                      {
+                        "id": "create-action-group-link",
+                        "cellValue": "https://portal.azure.com/#view/Microsoft_Azure_Monitoring/ActionGroupsTemplateBlade",
+                        "linkTarget": "Url",
+                        "linkLabel": "➕ Create Action Group",
+                        "style": "link"
+                      },
+                      {
+                        "id": "view-alert-rules-link",
+                        "cellValue": "https://portal.azure.com/#view/Microsoft_Azure_Monitoring/AzureMonitoringBrowseBlade/~/alertsV2",
+                        "linkTarget": "Url",
+                        "linkLabel": "📋 View Existing Alert Rules",
+                        "style": "link"
+                      },
+                      {
+                        "id": "resource-health-docs-link",
+                        "cellValue": "https://learn.microsoft.com/azure/service-health/resource-health-alert-monitor-guide",
+                        "linkTarget": "Url",
+                        "linkLabel": "📚 Resource Health Alerts Docs",
+                        "style": "link"
+                      },
+                      {
+                        "id": "arb-troubleshoot-link",
+                        "cellValue": "https://learn.microsoft.com/azure/azure-arc/resource-bridge/troubleshoot-resource-bridge",
+                        "linkTarget": "Url",
+                        "linkLabel": "🔧 Troubleshoot ARB",
+                        "style": "link"
+                      }
+                    ]
+                  },
+                  "name": "arb-alert-quick-links"
+                }
+              ]
+            },
+            "conditionalVisibility": {
+              "parameterName": "ShowAlertRulesSection",
+              "comparison": "isEqualTo",
+              "value": "yes"
+            },
+            "name": "arb-alert-rules-group"
           }
         ]
       },
