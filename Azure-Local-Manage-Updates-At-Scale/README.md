@@ -1,6 +1,6 @@
 # Azure Local - Managing Updates At Scale Workbook
 
-## Latest Version: v0.6.3
+## Latest Version: v0.6.4
 
 📥 **[Copy / Paste (or download) the latest Workbook JSON](https://raw.githubusercontent.com/NeilBird/Azure-Local/refs/heads/main/Azure-Local-Manage-Updates-At-Scale/Azure-Workbook_AzLocal-Managing-Updates-At-Scale.json)**
 
@@ -8,10 +8,37 @@ An Azure Monitor Workbook for monitoring and managing Azure Local (formerly Azur
 
 **Important:** This is a community driven project, (not officially supported by Microsoft), for any issues, requests or feedback, please [raise an Issue](https://github.com/NeilBird/Azure-Local/issues) (note: no time scales or guarantees can be provided for responses to issues.)
 
-## Recent Changes (v0.6.3)
+## Recent Changes (v0.6.4)
 
-- **Added Update Available Column**: "Clusters with Updates Available" table now displays the actual update name (e.g., "Solution12.2601.1002.38") from the updates resource
-- **Added Update State Column**: New column showing the state of available updates (e.g., "Ready")
+- **Network Adapter Details Improvements**:
+  - Added filters for the **NIC Status Distribution** pie chart (Machine Name, Machine Connectivity, NIC Status)
+  - Reorganized table filters to appear directly above the table (below the pie chart)
+  - Added **IP Address** text filter for partial/complete IP address matching
+  - Added **Machine Connectivity** dropdown filter to filter by machine connection status
+  - Added **Machine Connectivity** column (2nd column) with status icons:
+    - ✅ Green tick for "Connected" machines
+    - ❌ Red cross for "Disconnected" machines
+  - Fixed **Cluster** link to now open the `/machines` view of the cluster in Azure Portal
+
+- **Update Attempts by Day Improvements**:
+  - Added **Time Period** filter with consistent options: 1 week (default), 2 weeks, 1 month, 3 months, 6 months, 9 months, 12 months
+  - Added **Update Attempts Details** table below the chart showing:
+    - Cluster Name with "Open Cluster" link
+    - Update Name
+    - State with status icons (Succeeded/Failed/InProgress)
+    - Started and Ended timestamps
+    - Duration (formatted as hours and minutes)
+    - Resource Group
+  - Added **Update Attempts by Status Percentages** pie chart showing percentage breakdown of update states (Succeeded/Failed/InProgress)
+
+- **AKS Arc Clusters Table Improvements**:
+  - Added **Masters** column showing the number of control plane (master) nodes
+  - Added **Workers** column showing the total number of worker nodes across all agent pools
+  - Renamed "Total Node Count" to **Total Nodes** for consistency
+  - New columns appear before "Total Nodes" for easy comparison
+
+- **AKS Arc Cluster Deployments Over Time**:
+  - Added additional time range options: 1 month, 2 weeks, 1 week (consistent with Update Attempts filter)
 
 > See [Appendix: Previous Version Changes](#appendix-previous-version-changes) for older release notes.
 
@@ -286,6 +313,11 @@ See the repository's LICENSE file for details.
 ---
 
 ## Appendix: Previous Version Changes
+
+### v0.6.3
+
+- **Added Update Available Column**: "Clusters with Updates Available" table now displays the actual update name (e.g., "Solution12.2601.1002.38") from the updates resource
+- **Added Update State Column**: New column showing the state of available updates (e.g., "Ready")
 
 ### v0.6.2
 
