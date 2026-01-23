@@ -11,16 +11,7 @@ An Azure Monitor Workbook for monitoring and managing Azure Local (formerly Azur
 - **Added Update Available Column**: "Clusters with Updates Available" table now displays the actual update name (e.g., "Solution12.2601.1002.38") from the updates resource
 - **Added Update State Column**: New column showing the state of available updates (e.g., "Ready")
 
-## Previous Changes (v0.6.2)
-
-- **Improved Error Message Display**: Update Run History table now includes expandable row details showing error messages in a formatted markdown code block for better readability
-- **Fixed Apply Update Link**: Corrected the "Apply Update" button URL to properly open the Azure Portal Install Updates blade
-- **Enhanced Error Message Formatting**: Preserved line breaks in error messages and increased column width for better visibility
-- **Column Naming Consistency**: Added proper labelSettings to all tables across all tabs with consistent capitalization and spacing (e.g., "clusterName" → "Cluster Name")
-
-## Previous Changes (v0.6.1)
-
-- **System Health Naming Updates**: Renamed "Failed Prechecks" to "System Health Filters" and "Cluster Health Overview" to "System Health Checks Overview" for improved clarity and consistency
+> See [Appendix: Previous Version Changes](#appendix-previous-version-changes) for older release notes.
 
 ## How to Import the Workbook
 
@@ -289,3 +280,18 @@ Feel free to submit issues or pull requests to improve this workbook.
 ## License
 
 See the repository's LICENSE file for details.
+
+---
+
+## Appendix: Previous Version Changes
+
+### v0.6.2
+
+- **Improved Error Message Display**: Update Run History table now includes expandable row details showing error messages in a formatted markdown code block for better readability
+- **Fixed Apply Update Link**: Corrected the "Apply Update" button URL to properly open the Azure Portal Install Updates blade
+- **Enhanced Error Message Formatting**: Preserved line breaks in error messages and increased column width for better visibility
+- **Column Naming Consistency**: Added proper labelSettings to all tables across all tabs with consistent capitalization and spacing (e.g., "clusterName" → "Cluster Name")
+
+### v0.6.1
+
+- **System Health Naming Updates**: Renamed "Failed Prechecks" to "System Health Filters" and "Cluster Health Overview" to "System Health Checks Overview" for improved clarity and consistency
