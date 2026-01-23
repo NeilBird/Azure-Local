@@ -17,7 +17,7 @@ An Azure Monitor Workbook for monitoring and managing Azure Local (formerly Azur
   - Updated **Days Since Last Modified** column color coding:
     - 🟢 Green: "Connected" for Running ARBs
     - 🟡 Yellow: 1-45 days since last modified
-    - 🔴 Red: More than 45 days since last modified
+    - 🔴 Red: More than 45 days since last modified 
 
 > See [Appendix: Previous Version Changes](#appendix-previous-version-changes) for older release notes.
 
