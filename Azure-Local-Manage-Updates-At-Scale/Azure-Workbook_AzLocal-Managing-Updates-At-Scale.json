@@ -99,7 +99,7 @@
     {
       "type": 1,
       "content": {
-        "json": "## 🖥️ Azure Local - Managing Updates At Scale\r\n**Version: v0.6.1** | [Check for Updates to apply by checking the latest release available on GitHub](https://github.com/NeilBird/Azure-Local/tree/main/Azure-Local-Manage-Updates-At-Scale)\r\n\r\nThis example Workbook is a community driven project, (not officially supported by Microsoft). If you encounter an issue or have feedback, please [raise an Issue on GitHub](https://github.com/NeilBird/Azure-Local/issues)."
+        "json": "## 🖥️ Azure Local - Managing Updates At Scale\r\n**Version: v0.6.2** | [Check for Updates to apply by checking the latest release available on GitHub](https://github.com/NeilBird/Azure-Local/tree/main/Azure-Local-Manage-Updates-At-Scale)\r\n\r\nThis example Workbook is a community driven project, (not officially supported by Microsoft). If you encounter an issue or have feedback, please [raise an Issue on GitHub](https://github.com/NeilBird/Azure-Local/issues)."
       },
       "name": "workbook-title-version"
     },
@@ -262,7 +262,7 @@
           {
             "type": 1,
             "content": {
-              "json": "#### � Visual Summary"
+              "json": "## 📊 Visual Summary"
             },
             "name": "section-header-charts"
           },
@@ -380,7 +380,43 @@
           {
             "type": 1,
             "content": {
-              "json": "---\r\n#### �🖥️ Azure Local Totals and Connectivity"
+              "json": "📍 *See connectivity table below*"
+            },
+            "customWidth": "33",
+            "name": "link-row-connectivity",
+            "styleSettings": {
+              "margin": "0px",
+              "padding": "0px 0px 0px 50px"
+            }
+          },
+          {
+            "type": 1,
+            "content": {
+              "json": "📋 *See Update Readiness tab*"
+            },
+            "customWidth": "33",
+            "name": "link-row-health",
+            "styleSettings": {
+              "margin": "0px",
+              "padding": "0px 0px 0px 50px"
+            }
+          },
+          {
+            "type": 1,
+            "content": {
+              "json": "🔗 *See ARB Status tab*"
+            },
+            "customWidth": "33",
+            "name": "link-row-arb",
+            "styleSettings": {
+              "margin": "0px",
+              "padding": "0px 0px 0px 60px"
+            }
+          },
+          {
+            "type": 1,
+            "content": {
+              "json": "---\r\n## 🖥️ Azure Local Totals and Connectivity"
             },
             "name": "section-header-connectivity"
           },
@@ -588,7 +624,7 @@
             "type": 3,
             "content": {
               "version": "KqlItem/1.0",
-              "query": "resources\r\n| where type == \"microsoft.azurestackhci/clusters\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| where '{ClusterTagName}' == '' or ('{ClusterTagValue}' != '' and tostring(tags['{ClusterTagName}']) =~ '{ClusterTagValue}')\r\n| project clusterRG = resourceGroup\r\n| join kind=leftouter (\r\n    resources\r\n    | where type == \"microsoft.resourceconnector/appliances\"\r\n    | where properties.status == \"Offline\"\r\n    | project arbRG = resourceGroup\r\n) on $left.clusterRG == $right.arbRG\r\n| summarize TotalClusters = dcount(clusterRG), OfflineARB = dcountif(arbRG, isnotempty(arbRG))\r\n| extend OfflinePercent = iff(TotalClusters == 0, 0.0, round(todouble(OfflineARB) / todouble(TotalClusters) * 100, 1))\r\n| extend Label = 'ARB Offline'\r\n| project Label, OfflineARB, OfflinePercent",
+              "query": "resources\r\n| where type == \"microsoft.resourceconnector/appliances\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| join kind=inner (\r\n    resources\r\n    | where type == \"microsoft.azurestackhci/clusters\"\r\n    | where '{ClusterTagName}' == '' or ('{ClusterTagValue}' != '' and tostring(tags['{ClusterTagName}']) =~ '{ClusterTagValue}')\r\n    | project clusterRG = resourceGroup\r\n) on $left.resourceGroup == $right.clusterRG\r\n| extend Status = tostring(properties.status)\r\n| extend isOffline = iff(Status != \"Running\", 1, 0)\r\n| summarize TotalARB = count(), OfflineARB = sum(isOffline)\r\n| extend OfflinePercent = iff(TotalARB == 0, 0.0, round(todouble(OfflineARB) / todouble(TotalARB) * 100, 1))\r\n| extend Label = 'ARB Offline'\r\n| project Label, OfflineARB, OfflinePercent",
               "size": 4,
               "queryType": 1,
               "resourceType": "microsoft.resourcegraph/resources",
@@ -650,7 +686,7 @@
           {
             "type": 1,
             "content": {
-              "json": "#### 🩺 Azure Local Health and Patching"
+              "json": "## 🩺 Azure Local Health and Patching"
             },
             "name": "section-header-health"
           },
@@ -893,7 +929,7 @@
           {
             "type": 1,
             "content": {
-              "json": "#### 💼 Azure Local Workloads"
+              "json": "## 💼 Azure Local Workloads"
             },
             "name": "section-header-workloads"
           },
@@ -972,7 +1008,7 @@
           {
             "type": 1,
             "content": {
-              "json": "#### 🔄 Update Compliance"
+              "json": "## 🔄 Update Compliance"
             },
             "name": "section-header-update-compliance"
           },
@@ -1246,7 +1282,7 @@
           {
             "type": 1,
             "content": {
-              "json": "---\r\n#### 📋 Cluster Details"
+              "json": "---\r\n## 📋 Cluster Details"
             },
             "name": "section-header-cluster-details"
           },
@@ -1337,7 +1373,7 @@
           {
             "type": 1,
             "content": {
-              "json": "#### 📊 All Azure Local Clusters"
+              "json": "### 📊 All Azure Local Clusters"
             },
             "name": "section-header-all-clusters"
           },
@@ -1395,7 +1431,69 @@
                     "formatter": 6
                   }
                 ],
-                "filter": true
+                "filter": true,
+                "labelSettings": [
+                  {
+                    "columnId": "ClusterName",
+                    "label": "Cluster Name"
+                  },
+                  {
+                    "columnId": "clusterLink",
+                    "label": "Cluster Link"
+                  },
+                  {
+                    "columnId": "resourceGroup",
+                    "label": "Resource Group"
+                  },
+                  {
+                    "columnId": "status",
+                    "label": "Status"
+                  },
+                  {
+                    "columnId": "solutionVersion",
+                    "label": "Solution Version"
+                  },
+                  {
+                    "columnId": "nodeCount",
+                    "label": "Node Count"
+                  },
+                  {
+                    "columnId": "totalCores",
+                    "label": "Total Cores"
+                  },
+                  {
+                    "columnId": "totalMemoryGB",
+                    "label": "Total Memory (GB)"
+                  },
+                  {
+                    "columnId": "osVersion",
+                    "label": "OS Version"
+                  },
+                  {
+                    "columnId": "hardwareClass",
+                    "label": "Hardware Class"
+                  },
+                  {
+                    "columnId": "manufacturer",
+                    "label": "Manufacturer"
+                  },
+                  {
+                    "columnId": "model",
+                    "label": "Model"
+                  },
+                  {
+                    "columnId": "lastSync",
+                    "label": "Last Sync"
+                  },
+                  {
+                    "columnId": "registrationDate",
+                    "label": "Registration Date"
+                  },
+                  {
+                    "columnId": "location",
+                    "label": "Location"
+                  }
+                ]
               }
             },
             "name": "table-all-clusters"
@@ -1403,7 +1501,7 @@
           {
             "type": 1,
             "content": {
-              "json": "#### ⚠️ Clusters Not Synced Recently\r\n*Clusters that haven't synced in the last 24 hours*"
+              "json": "### ⚠️ Clusters Not Synced Recently\r\n*Clusters that haven't synced in the last 24 hours*"
             },
             "name": "section-header-stale-clusters"
           },
@@ -1463,7 +1561,33 @@
                     }
                   }
                 ],
-                "filter": true
+                "filter": true,
+                "labelSettings": [
+                  {
+                    "columnId": "ClusterName",
+                    "label": "Cluster Name"
+                  },
+                  {
+                    "columnId": "clusterLink",
+                    "label": "Cluster Link"
+                  },
+                  {
+                    "columnId": "resourceGroup",
+                    "label": "Resource Group"
+                  },
+                  {
+                    "columnId": "lastSync",
+                    "label": "Last Sync"
+                  },
+                  {
+                    "columnId": "hoursSinceSync",
+                    "label": "Hours Since Sync"
+                  },
+                  {
+                    "columnId": "location",
+                    "label": "Location"
+                  }
+                ]
               }
             },
             "name": "table-stale-clusters"
@@ -1492,7 +1616,7 @@
                 {
                   "type": 1,
                   "content": {
-                    "json": "# ARB Status per Azure Local instance"
+                    "json": "## 🔗 ARB Status per Azure Local instance"
                   },
                   "name": "text - 2"
                 },
@@ -1580,7 +1704,7 @@
           {
             "type": 1,
             "content": {
-              "json": "## Offline Azure Resource Bridges (ARB) appliances"
+              "json": "## ⚠️ Offline Azure Resource Bridges (ARB) appliances"
             },
             "name": "text - 2 - Copy"
           },
@@ -1679,18 +1803,106 @@
                       "linkTarget": "Url",
                       "linkLabel": "Open Cluster"
                     }
+                  },
+                  {
+                    "columnMatch": "HCIClusterConnectivity",
+                    "formatter": 18,
+                    "formatOptions": {
+                      "thresholdsOptions": "icons",
+                      "thresholdsGrid": [
+                        {
+                          "operator": "==",
+                          "thresholdValue": "ConnectedRecently",
+                          "representation": "success",
+                          "text": "{0}{1}"
+                        },
+                        {
+                          "operator": "Default",
+                          "thresholdValue": null,
+                          "representation": "4",
+                          "text": "{0}{1}"
+                        }
+                      ]
+                    }
                   }
                 ],
-                "filter": true
+                "filter": true,
+                "labelSettings": [
+                  {
+                    "columnId": "ARBResourceName",
+                    "label": "ARB Resource Name"
+                  },
+                  {
+                    "columnId": "arbLink",
+                    "label": "ARB Link"
+                  },
+                  {
+                    "columnId": "resourceGroup",
+                    "label": "Resource Group"
+                  },
+                  {
+                    "columnId": "ARBStatus",
+                    "label": "ARB Status"
+                  },
+                  {
+                    "columnId": "lastModified",
+                    "label": "Last Modified"
+                  },
+                  {
+                    "columnId": "daysSinceLastModified",
+                    "label": "Days Since Last Modified"
+                  },
+                  {
+                    "columnId": "ClusterName",
+                    "label": "Cluster Name"
+                  },
+                  {
+                    "columnId": "clusterLink",
+                    "label": "Cluster Link"
+                  },
+                  {
+                    "columnId": "HCIClusterConnectivity",
+                    "label": "HCI Cluster Connectivity"
+                  },
+                  {
+                    "columnId": "currentVersion",
+                    "label": "Current Version"
+                  },
+                  {
+                    "columnId": "VMCount",
+                    "label": "VM Count"
+                  },
+                  {
+                    "columnId": "AKSArcCount",
+                    "label": "AKS Arc Count"
+                  }
+                ]
               },
               "sortBy": []
             },
             "name": "Offline Arcbridges (online Azure Local)"
           },
           {
+            "type": 11,
+            "content": {
+              "version": "LinkItem/1.0",
+              "style": "nav",
+              "links": [
+                {
+                  "id": "arb-offline-troubleshoot-link",
+                  "cellValue": "https://learn.microsoft.com/azure/azure-arc/resource-bridge/troubleshoot-resource-bridge#arc-resource-bridge-is-offline",
+                  "linkTarget": "Url",
+                  "linkLabel": "📚 Knowledge Link: Troubleshoot Azure Resource Bridge (ARB) Offline status",
+                  "style": "link"
+                }
+              ]
+            },
+            "name": "arb-offline-knowledge-link"
+          },
+          {
             "type": 1,
             "content": {
-              "json": "# All Azure Resource Bridges (ARB) appliances"
+              "json": "## 🔗 All Azure Resource Bridges (ARB) appliances"
             },
             "name": "text - 3"
           },
@@ -1859,7 +2071,57 @@
                     }
                   }
                 ],
-                "filter": true
+                "filter": true,
+                "labelSettings": [
+                  {
+                    "columnId": "ARBResourceName",
+                    "label": "ARB Resource Name"
+                  },
+                  {
+                    "columnId": "arbLink",
+                    "label": "ARB Link"
+                  },
+                  {
+                    "columnId": "resourceGroup",
+                    "label": "Resource Group"
+                  },
+                  {
+                    "columnId": "ARBStatus",
+                    "label": "ARB Status"
+                  },
+                  {
+                    "columnId": "lastModified",
+                    "label": "Last Modified"
+                  },
+                  {
+                    "columnId": "daysSinceLastModified",
+                    "label": "Days Since Last Modified"
+                  },
+                  {
+                    "columnId": "ClusterName",
+                    "label": "Cluster Name"
+                  },
+                  {
+                    "columnId": "clusterLink",
+                    "label": "Cluster Link"
+                  },
+                  {
+                    "columnId": "HCIClusterConnectivity",
+                    "label": "HCI Cluster Connectivity"
+                  },
+                  {
+                    "columnId": "currentVersion",
+                    "label": "Current Version"
+                  },
+                  {
+                    "columnId": "VMCount",
+                    "label": "VM Count"
+                  },
+                  {
+                    "columnId": "AKSArcCount",
+                    "label": "AKS Arc Count"
+                  }
+                ]
               },
               "sortBy": []
             },
@@ -1884,7 +2146,7 @@
           {
             "type": 1,
             "content": {
-              "json": "# Azure Local Physical Machines\r\nPhysical server machines that make up Azure Local (Azure Stack HCI) clusters, connected through Azure Arc.\r\n\r\n**Last Refreshed:** {TimeRange:label} | Click refresh on any tile to update data"
+              "json": "## 🖥️ Azure Local Physical Machines\r\nPhysical server machines that make up Azure Local (Azure Stack HCI) clusters, connected through Azure Arc.\r\n\r\n**Last Refreshed:** {TimeRange:label} | Click refresh on any tile to update data"
             },
             "name": "text-nodes-header"
           },
@@ -2038,7 +2300,7 @@
           {
             "type": 1,
             "content": {
-              "json": "### Machine Overview"
+              "json": "## 💻 Machine Overview"
             },
             "name": "text-machine-overview-header"
           },
@@ -2425,7 +2687,7 @@
           {
             "type": 1,
             "content": {
-              "json": "---\r\n## Node Extensions\r\nArc agent extensions installed on physical cluster nodes."
+              "json": "---\r\n## 🧩 Node Extensions\r\nArc agent extensions installed on physical cluster nodes."
             },
             "name": "text-extensions-divider"
           },
@@ -2746,7 +3008,7 @@
           {
             "type": 1,
             "content": {
-              "json": "## Network Adapter Details\r\n\r\nNetwork adapter (NIC) information from Azure Local edge devices, including driver versions and network configuration.\r\n\r\n> **Note:** Cluster Tag filtering is not supported for this section due to Azure Resource Graph query limitations."
+              "json": "## 🌐 Network Adapter Details\r\n\r\nNetwork adapter (NIC) information from Azure Local edge devices, including driver versions and network configuration.\r\n\r\n> **Note:** Cluster Tag filtering is not supported for this section due to Azure Resource Graph query limitations."
             },
             "name": "text-nic-status-header"
           },
@@ -2979,7 +3241,7 @@
           {
             "type": 1,
             "content": {
-              "json": "# Azure Local Virtual Machines\r\nVirtual machines running on Azure Local (Azure Stack HCI) clusters managed through Azure Arc.\r\n\r\n**Last Refreshed:** {TimeRange:label} | Click refresh on any tile to update data"
+              "json": "## 💻 Azure Local Virtual Machines\r\nVirtual machines running on Azure Local (Azure Stack HCI) clusters managed through Azure Arc.\r\n\r\n**Last Refreshed:** {TimeRange:label} | Click refresh on any tile to update data"
             },
             "name": "text-vm-header"
           },
@@ -3123,7 +3385,7 @@
           {
             "type": 1,
             "content": {
-              "json": "## VM Deployments Over Time\r\n*Based on OS installation date (properties.osInstallDate)*"
+              "json": "## 📈 VM Deployments Over Time\r\n*Based on OS installation date (properties.osInstallDate)*"
             },
             "name": "text-vm-deployments"
           },
@@ -3185,7 +3447,7 @@
           {
             "type": 1,
             "content": {
-              "json": "## All Azure Local VMs"
+              "json": "## 💻 All Azure Local VMs"
             },
             "name": "text-vm-all"
           },
@@ -3275,7 +3537,65 @@
                     }
                   }
                 ],
-                "filter": true
+                "filter": true,
+                "labelSettings": [
+                  {
+                    "columnId": "VMName",
+                    "label": "VM Name"
+                  },
+                  {
+                    "columnId": "vmLink",
+                    "label": "VM Link"
+                  },
+                  {
+                    "columnId": "resourceGroup",
+                    "label": "Resource Group"
+                  },
+                  {
+                    "columnId": "status",
+                    "label": "Status"
+                  },
+                  {
+                    "columnId": "osSku",
+                    "label": "OS SKU"
+                  },
+                  {
+                    "columnId": "osVersion",
+                    "label": "OS Version"
+                  },
+                  {
+                    "columnId": "vCPUs",
+                    "label": "vCPUs"
+                  },
+                  {
+                    "columnId": "memoryGB",
+                    "label": "Memory (GB)"
+                  },
+                  {
+                    "columnId": "ipAddress",
+                    "label": "IP Address"
+                  },
+                  {
+                    "columnId": "domainName",
+                    "label": "Domain Name"
+                  },
+                  {
+                    "columnId": "agentVersion",
+                    "label": "Agent Version"
+                  },
+                  {
+                    "columnId": "osInstallDate",
+                    "label": "OS Install Date"
+                  },
+                  {
+                    "columnId": "lastStatusChange",
+                    "label": "Last Status Change"
+                  },
+                  {
+                    "columnId": "location",
+                    "label": "Location"
+                  }
+                ]
               }
             },
             "name": "vm-all-list"
@@ -3283,7 +3603,7 @@
           {
             "type": 1,
             "content": {
-              "json": "## VMs by Azure Local Cluster"
+              "json": "## 📊 VMs by Azure Local Cluster"
             },
             "name": "text-vm-by-cluster"
           },
@@ -3347,7 +3667,45 @@
                     }
                   }
                 ],
-                "filter": true
+                "filter": true,
+                "labelSettings": [
+                  {
+                    "columnId": "vmName",
+                    "label": "VM Name"
+                  },
+                  {
+                    "columnId": "vmLink",
+                    "label": "VM Link"
+                  },
+                  {
+                    "columnId": "vmStatus",
+                    "label": "VM Status"
+                  },
+                  {
+                    "columnId": "osSku",
+                    "label": "OS SKU"
+                  },
+                  {
+                    "columnId": "vCPUs",
+                    "label": "vCPUs"
+                  },
+                  {
+                    "columnId": "memoryGB",
+                    "label": "Memory (GB)"
+                  },
+                  {
+                    "columnId": "ipAddress",
+                    "label": "IP Address"
+                  },
+                  {
+                    "columnId": "ClusterName",
+                    "label": "Cluster Name"
+                  },
+                  {
+                    "columnId": "clusterLink",
+                    "label": "Cluster Link"
+                  }
+                ]
               }
             },
             "name": "vm-by-cluster"
@@ -3355,7 +3713,7 @@
           {
             "type": 1,
             "content": {
-              "json": "## VM Count by Cluster"
+              "json": "## #️⃣ VM Count by Cluster"
             },
             "name": "text-vm-count-cluster"
           },
@@ -3407,7 +3765,7 @@
           {
             "type": 1,
             "content": {
-              "json": "# AKS Arc Clusters on Azure Local\r\n\r\n**Last Refreshed:** {TimeRange:label} | Click refresh on any tile to update data"
+              "json": "## ☸️ AKS Arc Clusters on Azure Local\r\n\r\n**Last Refreshed:** {TimeRange:label} | Click refresh on any tile to update data"
             },
             "name": "text-aks-header"
           },
@@ -3567,7 +3925,7 @@
           {
             "type": 1,
             "content": {
-              "json": "## AKS Arc Cluster Deployments Over Time"
+              "json": "## 📈 AKS Arc Cluster Deployments Over Time"
             },
             "name": "text-aks-deployments"
           },
@@ -3629,7 +3987,7 @@
           {
             "type": 1,
             "content": {
-              "json": "## All AKS Arc Clusters"
+              "json": "## ☸️ All AKS Arc Clusters"
             },
             "name": "text-aks-all"
           },
@@ -3724,7 +4082,65 @@
                     "formatter": 6
                   }
                 ],
-                "filter": true
+                "filter": true,
+                "labelSettings": [
+                  {
+                    "columnId": "ClusterName",
+                    "label": "Cluster Name"
+                  },
+                  {
+                    "columnId": "clusterLink",
+                    "label": "Cluster Link"
+                  },
+                  {
+                    "columnId": "resourceGroup",
+                    "label": "Resource Group"
+                  },
+                  {
+                    "columnId": "connectivityStatus",
+                    "label": "Connectivity Status"
+                  },
+                  {
+                    "columnId": "provisioningState",
+                    "label": "Provisioning State"
+                  },
+                  {
+                    "columnId": "kubernetesVersion",
+                    "label": "Kubernetes Version"
+                  },
+                  {
+                    "columnId": "agentVersion",
+                    "label": "Agent Version"
+                  },
+                  {
+                    "columnId": "totalNodeCount",
+                    "label": "Total Node Count"
+                  },
+                  {
+                    "columnId": "totalCoreCount",
+                    "label": "Total Core Count"
+                  },
+                  {
+                    "columnId": "distribution",
+                    "label": "Distribution"
+                  },
+                  {
+                    "columnId": "lastConnectivityTime",
+                    "label": "Last Connectivity Time"
+                  },
+                  {
+                    "columnId": "certExpiration",
+                    "label": "Certificate Expiration"
+                  },
+                  {
+                    "columnId": "createdAt",
+                    "label": "Created At"
+                  },
+                  {
+                    "columnId": "location",
+                    "label": "Location"
+                  }
+                ]
               }
             },
             "name": "aks-all-clusters"
@@ -3732,7 +4148,7 @@
           {
             "type": 1,
             "content": {
-              "json": "## Certificate Expiration Warning\r\n*Clusters with managed identity certificates expiring within 30 days*"
+              "json": "## 🔐 Certificate Expiration Warning\r\n*Clusters with managed identity certificates expiring within 30 days*"
             },
             "name": "text-cert-warning"
           },
@@ -3791,7 +4207,33 @@
                     }
                   }
                 ],
-                "filter": true
+                "filter": true,
+                "labelSettings": [
+                  {
+                    "columnId": "ClusterName",
+                    "label": "Cluster Name"
+                  },
+                  {
+                    "columnId": "clusterLink",
+                    "label": "Cluster Link"
+                  },
+                  {
+                    "columnId": "resourceGroup",
+                    "label": "Resource Group"
+                  },
+                  {
+                    "columnId": "certExpiration",
+                    "label": "Certificate Expiration"
+                  },
+                  {
+                    "columnId": "daysUntilExpiration",
+                    "label": "Days Until Expiration"
+                  },
+                  {
+                    "columnId": "location",
+                    "label": "Location"
+                  }
+                ]
               }
             },
             "name": "aks-cert-expiration"
@@ -3799,7 +4241,7 @@
           {
             "type": 1,
             "content": {
-              "json": "---\r\n## AKS Arc Cluster Extensions\r\nArc agent extensions installed on AKS Arc clusters."
+              "json": "---\r\n## 🧩 AKS Arc Cluster Extensions\r\nArc agent extensions installed on AKS Arc clusters."
             },
             "name": "text-aks-extensions-divider"
           },
@@ -4103,7 +4545,7 @@
           {
             "type": 1,
             "content": {
-              "json": "# Azure Local Update Readiness\r\n\r\n**Last Refreshed:** {TimeRange:label} | Click refresh on any tile to update data"
+              "json": "## 📋 Azure Local Update Readiness\r\n\r\n**Last Refreshed:** {TimeRange:label} | Click refresh on any tile to update data"
             },
             "name": "text - 0"
           },
@@ -4182,66 +4624,22 @@
                 "formatters": [
                   {
                     "columnMatch": "Success",
-                    "formatter": 18,
-                    "formatOptions": {
-                      "thresholdsOptions": "colors",
-                      "thresholdsGrid": [
-                        {
-                          "operator": ">",
-                          "thresholdValue": "0",
-                          "representation": "green",
-                          "text": "{0}{1}"
-                        },
-                        {
-                          "operator": "Default",
-                          "thresholdValue": null,
-                          "text": "{0}{1}"
-                        }
-                      ]
-                    }
+                    "formatter": 0
                   },
                   {
                     "columnMatch": "Warning",
-                    "formatter": 18,
-                    "formatOptions": {
-                      "thresholdsOptions": "colors",
-                      "thresholdsGrid": [
-                        {
-                          "operator": ">",
-                          "thresholdValue": "0",
-                          "representation": "yellow",
-                          "text": "{0}{1}"
-                        },
-                        {
-                          "operator": "Default",
-                          "thresholdValue": null,
-                          "text": "{0}{1}"
-                        }
-                      ]
-                    }
+                    "formatter": 0
                   },
                   {
                     "columnMatch": "Failure",
-                    "formatter": 18,
-                    "formatOptions": {
-                      "thresholdsOptions": "colors",
-                      "thresholdsGrid": [
-                        {
-                          "operator": ">",
-                          "thresholdValue": "0",
-                          "representation": "redBright",
-                          "text": "{0}{1}"
-                        },
-                        {
-                          "operator": "Default",
-                          "thresholdValue": null,
-                          "text": "{0}{1}"
-                        }
-                      ]
-                    }
+                    "formatter": 0
                   }
                 ],
                 "labelSettings": [
+                  {
+                    "columnId": "state",
+                    "label": "Update Status"
+                  },
                   {
                     "columnId": "Success",
                     "label": "Success"
@@ -4252,7 +4650,7 @@
                   },
                   {
                     "columnId": "Failure",
-                    "label": "Failure - Prechecks Failed",
+                    "label": "Critical",
                     "comment": "Updates are Blocked"
                   },
                   {
@@ -4271,7 +4669,7 @@
           {
             "type": 1,
             "content": {
-              "json": "## Failure By Reason Summary"
+              "json": "## ❌ Failure By Reason Summary"
             },
             "name": "text - 7"
           },
@@ -4410,7 +4808,7 @@
           {
             "type": 1,
             "content": {
-              "json": "## System Health Filters"
+              "json": "## 📋 System Health Filters"
             },
             "name": "text - 5"
           },
@@ -4637,7 +5035,53 @@
                     }
                   }
                 ],
-                "filter": true
+                "filter": true,
+                "labelSettings": [
+                  {
+                    "columnId": "clusterName",
+                    "label": "Cluster Name"
+                  },
+                  {
+                    "columnId": "clusterLink",
+                    "label": "Cluster Link"
+                  },
+                  {
+                    "columnId": "HealthStatus",
+                    "label": "Health Status"
+                  },
+                  {
+                    "columnId": "state",
+                    "label": "State"
+                  },
+                  {
+                    "columnId": "currentVersion",
+                    "label": "Current Version"
+                  },
+                  {
+                    "columnId": "lastChecked",
+                    "label": "Last Checked"
+                  },
+                  {
+                    "columnId": "DaysSinceLastCheck",
+                    "label": "Days Since Last Check"
+                  },
+                  {
+                    "columnId": "resourceGroup",
+                    "label": "Resource Group"
+                  },
+                  {
+                    "columnId": "nodeCount",
+                    "label": "Node Count"
+                  },
+                  {
+                    "columnId": "VMCount",
+                    "label": "VM Count"
+                  },
+                  {
+                    "columnId": "AKSArcCount",
+                    "label": "AKS Arc Count"
+                  }
+                ]
               }
             },
             "name": "query - 3"
@@ -4812,7 +5256,65 @@
                     "formatter": 5
                   }
                 ],
-                "filter": true
+                "filter": true,
+                "labelSettings": [
+                  {
+                    "columnId": "clusterName",
+                    "label": "Cluster Name"
+                  },
+                  {
+                    "columnId": "clusterLink",
+                    "label": "Cluster Link"
+                  },
+                  {
+                    "columnId": "healthState",
+                    "label": "Health State"
+                  },
+                  {
+                    "columnId": "stepStatus",
+                    "label": "Step Status"
+                  },
+                  {
+                    "columnId": "displayName",
+                    "label": "Display Name"
+                  },
+                  {
+                    "columnId": "description",
+                    "label": "Description"
+                  },
+                  {
+                    "columnId": "remediation",
+                    "label": "Remediation"
+                  },
+                  {
+                    "columnId": "severity",
+                    "label": "Severity"
+                  },
+                  {
+                    "columnId": "targetResourceName",
+                    "label": "Target Resource Name"
+                  },
+                  {
+                    "columnId": "targetResourceType",
+                    "label": "Target Resource Type"
+                  },
+                  {
+                    "columnId": "timestamp",
+                    "label": "Timestamp"
+                  },
+                  {
+                    "columnId": "resourceGroup",
+                    "label": "Resource Group"
+                  },
+                  {
+                    "columnId": "lastChecked",
+                    "label": "Last Checked"
+                  },
+                  {
+                    "columnId": "DaysSinceCheck",
+                    "label": "Days Since Check"
+                  }
+                ]
               }
             },
             "name": "query - 4"
@@ -4836,7 +5338,7 @@
           {
             "type": 1,
             "content": {
-              "json": "# Update Progress & History\n\nTrack ongoing updates and review historical update runs across your Azure Local clusters."
+              "json": "## 🔄 Update Progress & History\n\nTrack ongoing updates and review historical update runs across your Azure Local clusters."
             },
             "name": "text-update-progress-header"
           },
@@ -4959,7 +5461,7 @@
           {
             "type": 1,
             "content": {
-              "json": "## All Cluster Update Status\r\n\r\n💡 **Information:** Apply updates to keep your clusters within the six month support window."
+              "json": "## 🔄 All Cluster Update Status\r\n\r\n💡 **Information:** Apply updates to keep your clusters within the six month support window."
             },
             "name": "text-all-update-status"
           },
@@ -5214,7 +5716,53 @@
                     "formatter": 5
                   }
                 ],
-                "filter": true
+                "filter": true,
+                "labelSettings": [
+                  {
+                    "columnId": "ClusterName",
+                    "label": "Cluster Name"
+                  },
+                  {
+                    "columnId": "clusterLink",
+                    "label": "Cluster Link"
+                  },
+                  {
+                    "columnId": "UpdateStatus",
+                    "label": "Update Status"
+                  },
+                  {
+                    "columnId": "HealthStatus",
+                    "label": "Health Status"
+                  },
+                  {
+                    "columnId": "AzureConnection",
+                    "label": "Azure Connection"
+                  },
+                  {
+                    "columnId": "CurrentVersion",
+                    "label": "Current Version"
+                  },
+                  {
+                    "columnId": "LastUpdated",
+                    "label": "Last Updated"
+                  },
+                  {
+                    "columnId": "DaysSinceUpdate",
+                    "label": "Days Since Update"
+                  },
+                  {
+                    "columnId": "LastChecked",
+                    "label": "Last Checked"
+                  },
+                  {
+                    "columnId": "resourceGroup",
+                    "label": "Resource Group"
+                  },
+                  {
+                    "columnId": "location",
+                    "label": "Location"
+                  }
+                ]
               }
             },
             "name": "all-cluster-update-status"
@@ -5222,7 +5770,7 @@
           {
             "type": 1,
             "content": {
-              "json": "## Clusters Currently Updating"
+              "json": "## ⏳ Clusters Currently Updating"
             },
             "name": "text-currently-updating"
           },
@@ -5270,6 +5818,32 @@
                       ]
                     }
                   }
+                ],
+                "labelSettings": [
+                  {
+                    "columnId": "ClusterName",
+                    "label": "Cluster Name"
+                  },
+                  {
+                    "columnId": "clusterLink",
+                    "label": "Cluster Link"
+                  },
+                  {
+                    "columnId": "State",
+                    "label": "State"
+                  },
+                  {
+                    "columnId": "CurrentVersion",
+                    "label": "Current Version"
+                  },
+                  {
+                    "columnId": "LastUpdated",
+                    "label": "Last Updated"
+                  },
+                  {
+                    "columnId": "LastChecked",
+                    "label": "Last Checked"
+                  }
                 ]
               }
             },
@@ -5278,7 +5852,7 @@
           {
             "type": 1,
             "content": {
-              "json": "## Clusters with Updates Available\r\n\r\n💡 **Information:** [Azure Local Known Issues documentation](https://learn.microsoft.com/azure/azure-local/known-issues)"
+              "json": "## 📦 Clusters with Updates Available\r\n\r\n💡 **Information:** [Azure Local Known Issues documentation](https://learn.microsoft.com/azure/azure-local/known-issues)"
             },
             "name": "text-updates-available"
           },
@@ -5286,7 +5860,7 @@
             "type": 3,
             "content": {
               "version": "KqlItem/1.0",
-              "query": "extensibilityresources\r\n| where type == \"microsoft.azurestackhci/clusters/updatesummaries\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| extend hciClusterName = tostring(split(id, '/')[8])\r\n| extend state = tostring(properties.state)\r\n| extend currentVersion = tostring(properties.currentVersion)\r\n| extend lastChecked = todatetime(properties.lastChecked)\r\n| extend clusterId = substring(id, 0, indexof(id, '/updateSummaries/'))\r\n| where state == \"UpdateAvailable\"\r\n| extend clusterLink = strcat('https://portal.azure.com/#@/resource', clusterId)\r\n| extend oneTimeUpdateLink = strcat('https://portal.azure.com/#@/resource', clusterId, '/oneTimeUpdate')\r\n| project ClusterName = hciClusterName, clusterLink, CurrentVersion = currentVersion, LastChecked = lastChecked, oneTimeUpdateLink\r\n| order by ClusterName asc",
+              "query": "extensibilityresources\r\n| where type == \"microsoft.azurestackhci/clusters/updatesummaries\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| extend hciClusterName = tostring(split(id, '/')[8])\r\n| extend state = tostring(properties.state)\r\n| extend currentVersion = tostring(properties.currentVersion)\r\n| extend lastChecked = todatetime(properties.lastChecked)\r\n| extend clusterId = substring(id, 0, indexof(id, '/updateSummaries/'))\r\n| where state == \"UpdateAvailable\"\r\n| extend clusterLink = strcat('https://portal.azure.com/#@/resource', clusterId)\r\n| extend clusterIdEncoded = replace_string(replace_string(replace_string(clusterId, '/', '%2F'), '\"', '%22'), ' ', '%20')\r\n| extend clusterIdsJson = strcat('%5B%7B%22id%22%3A%22', clusterIdEncoded, '%22%2C%22oemFamily%22%3A%22%22%7D%5D')\r\n| extend oneTimeUpdateLink = strcat('https://portal.azure.com/#view/Microsoft_AzureStackHCI_PortalExtension/InstallUpdates.ReactView/clusterIds~/', clusterIdsJson)\r\n| project ClusterName = hciClusterName, clusterLink, CurrentVersion = currentVersion, LastChecked = lastChecked, oneTimeUpdateLink\r\n| order by ClusterName asc",
               "size": 0,
               "showRefreshButton": true,
               "showExportToExcel": true,
@@ -5343,7 +5917,7 @@
           {
             "type": 1,
             "content": {
-              "json": "## Update Run History and Error Details\n\nRecent update runs across all clusters. For failed updates, expand the row to see step failure details."
+              "json": "## 📜 Update Run History and Error Details\n\nRecent update runs across all clusters. For failed updates, expand the row to see step failure details."
             },
             "name": "text-update-history"
           },
@@ -5351,7 +5925,7 @@
             "type": 3,
             "content": {
               "version": "KqlItem/1.0",
-              "query": "extensibilityresources\r\n| where type == 'microsoft.azurestackhci/clusters/updates/updateruns'\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| extend hciClusterName = tostring(split(id, '/')[8])\r\n| extend updateName = tostring(split(id, '/')[10])\r\n| extend runName = name\r\n| extend state = tostring(properties.state)\r\n| extend timeStarted = todatetime(properties.timeStarted)\r\n| extend lastUpdatedTime = todatetime(properties.lastUpdatedTime)\r\n| extend duration = tostring(properties.duration)\r\n| extend durationHours = iff(duration contains 'H', toint(extract('([0-9]+)H', 1, duration)), 0)\r\n| extend durationMinutes = iff(duration contains 'M', toint(extract('([0-9]+)M', 1, duration)), 0)\r\n| extend durationSeconds = iff(duration contains 'S', toint(extract('([0-9]+)', 1, extract('([0-9.]+)S', 1, duration))), 0)\r\n| extend durationFormatted = strcat(iff(durationHours > 0, strcat(tostring(durationHours), 'h '), ''), iff(durationMinutes > 0 or durationHours > 0, strcat(tostring(durationMinutes), 'm '), ''), tostring(durationSeconds), 's')\r\n| extend progressObj = properties.progress\r\n| extend progressStatus = tostring(progressObj.status)\r\n| extend progressDescription = tostring(progressObj.description)\r\n| extend progressJson = tostring(progressObj)\r\n| extend errorPosType = indexof(progressJson, 'errorMessage\":\"Type ')\r\n| extend errorPosECE = indexof(progressJson, 'errorMessage\":\"ECE ')\r\n| extend errorPos = iff(errorPosType >= 0, errorPosType, errorPosECE)\r\n| extend hasErrorDetails = iff(errorPos >= 0, 1, 0)\r\n| extend errorExtract = iff(errorPos >= 0, substring(progressJson, errorPos + 15), '')\r\n| extend errorEndPos = indexof(errorExtract, '\",\"')\r\n| extend ErrorMessage = iff(errorPos >= 0 and errorEndPos > 0, substring(errorExtract, 0, errorEndPos), '')\r\n| extend ErrorMessageClean = replace_string(replace_string(ErrorMessage, '\\\\n', ' '), '\\\\r', '')\r\n| extend ErrorMessageDisplay = iff(strlen(ErrorMessageClean) > 0, ErrorMessageClean, iff(state == 'Failed' and progressStatus == 'Error', 'Error details not available in update progress', ''))\r\n| extend ErrorMessageTruncated = iff(strlen(ErrorMessageDisplay) > 2000, strcat(substring(ErrorMessageDisplay, 0, 2000), '...'), ErrorMessageDisplay)\r\n| where todatetime(timeStarted) >= {TimeRange:start}\r\n| extend sortKey = strcat(tostring(hasErrorDetails), '_', format_datetime(timeStarted, 'yyyy-MM-dd HH:mm:ss'))\r\n| extend clusterResourceId = strcat('/subscriptions/', subscriptionId, '/resourceGroups/', resourceGroup, '/providers/microsoft.azurestackhci/clusters/', hciClusterName)\r\n| extend encodedResourceId = replace_string(replace_string(clusterResourceId, '/', '%2F'), ' ', '%20')\r\n| extend PortalLink = strcat('https://portal.azure.com/#view/Microsoft_AzureStackHCI_PortalExtension/SingleInstanceHistoryDetails.ReactView/resourceId/', encodedResourceId, '/updateName~/null/updateRunName~/null/refresh~/false')\r\n| summarize arg_max(sortKey, *) by hciClusterName, updateName\r\n| project ClusterName = hciClusterName, UpdateName = updateName, PortalLink, State = state, Status = progressStatus, CurrentStep = progressDescription, ErrorMessage = ErrorMessageTruncated, Duration = durationFormatted, TimeStarted = timeStarted, LastUpdated = lastUpdatedTime\r\n| order by TimeStarted desc",
+              "query": "extensibilityresources\r\n| where type == 'microsoft.azurestackhci/clusters/updates/updateruns'\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| extend hciClusterName = tostring(split(id, '/')[8])\r\n| extend updateName = tostring(split(id, '/')[10])\r\n| extend runName = name\r\n| extend state = tostring(properties.state)\r\n| extend timeStarted = todatetime(properties.timeStarted)\r\n| extend lastUpdatedTime = todatetime(properties.lastUpdatedTime)\r\n| extend duration = tostring(properties.duration)\r\n| extend durationHours = iff(duration contains 'H', toint(extract('([0-9]+)H', 1, duration)), 0)\r\n| extend durationMinutes = iff(duration contains 'M', toint(extract('([0-9]+)M', 1, duration)), 0)\r\n| extend durationSeconds = iff(duration contains 'S', toint(extract('([0-9]+)', 1, extract('([0-9.]+)S', 1, duration))), 0)\r\n| extend durationFormatted = strcat(iff(durationHours > 0, strcat(tostring(durationHours), 'h '), ''), iff(durationMinutes > 0 or durationHours > 0, strcat(tostring(durationMinutes), 'm '), ''), tostring(durationSeconds), 's')\r\n| extend progressObj = properties.progress\r\n| extend progressStatus = tostring(progressObj.status)\r\n| extend progressDescription = tostring(progressObj.description)\r\n| extend progressJson = tostring(progressObj)\r\n| extend errorPosType = indexof(progressJson, 'errorMessage\":\"Type ')\r\n| extend errorPosECE = indexof(progressJson, 'errorMessage\":\"ECE ')\r\n| extend errorPos = iff(errorPosType >= 0, errorPosType, errorPosECE)\r\n| extend hasErrorDetails = iff(errorPos >= 0, 1, 0)\r\n| extend errorExtract = iff(errorPos >= 0, substring(progressJson, errorPos + 15), '')\r\n| extend errorEndPos = indexof(errorExtract, '\",\"')\r\n| extend ErrorMessage = iff(errorPos >= 0 and errorEndPos > 0, substring(errorExtract, 0, errorEndPos), '')\r\n| extend ErrorMessageClean = replace_string(replace_string(ErrorMessage, '\\\\r\\\\n', '\\n'), '\\\\n', '\\n')\r\n| extend ErrorMessageClean = replace_string(ErrorMessageClean, '\\\\r', '')\r\n| extend ErrorMessageDisplay = iff(strlen(ErrorMessageClean) > 0, ErrorMessageClean, iff(state == 'Failed' and progressStatus == 'Error', 'Error details not available in update progress', ''))\r\n| extend ErrorMessageTruncated = iff(strlen(ErrorMessageDisplay) > 3000, strcat(substring(ErrorMessageDisplay, 0, 3000), '\\n\\n... (truncated)'), ErrorMessageDisplay)\r\n| where todatetime(timeStarted) >= {TimeRange:start}\r\n| extend sortKey = strcat(tostring(hasErrorDetails), '_', format_datetime(timeStarted, 'yyyy-MM-dd HH:mm:ss'))\r\n| extend clusterResourceId = strcat('/subscriptions/', subscriptionId, '/resourceGroups/', resourceGroup, '/providers/microsoft.azurestackhci/clusters/', hciClusterName)\r\n| extend encodedResourceId = replace_string(replace_string(clusterResourceId, '/', '%2F'), ' ', '%20')\r\n| extend PortalLink = strcat('https://portal.azure.com/#view/Microsoft_AzureStackHCI_PortalExtension/SingleInstanceHistoryDetails.ReactView/resourceId/', encodedResourceId, '/updateName~/null/updateRunName~/null/refresh~/false')\r\n| summarize arg_max(sortKey, *) by hciClusterName, updateName\r\n| project ClusterName = hciClusterName, UpdateName = updateName, PortalLink, State = state, Status = progressStatus, CurrentStep = progressDescription, ErrorMessage = ErrorMessageTruncated, Duration = durationFormatted, TimeStarted = timeStarted, LastUpdated = lastUpdatedTime\r\n| order by TimeStarted desc",
               "size": 0,
               "showAnalytics": true,
               "showRefreshButton": true,
@@ -5401,7 +5975,11 @@
                     "formatter": 1,
                     "formatOptions": {
                       "linkTarget": "CellDetails",
-                      "linkIsContextBlade": true
+                      "linkIsContextBlade": true,
+                      "customColumnWidthSetting": "45ch"
+                    },
+                    "tooltipFormat": {
+                      "tooltip": "Click to view full error details"
                     }
                   },
                   {
@@ -5449,8 +6027,24 @@
                 "filter": true,
                 "labelSettings": [
                   {
+                    "columnId": "ClusterName",
+                    "label": "Cluster Name"
+                  },
+                  {
+                    "columnId": "UpdateName",
+                    "label": "Update Name"
+                  },
+                  {
                     "columnId": "PortalLink",
                     "label": "Details"
+                  },
+                  {
+                    "columnId": "State",
+                    "label": "State"
+                  },
+                  {
+                    "columnId": "Status",
+                    "label": "Status"
                   },
                   {
                     "columnId": "CurrentStep",
@@ -5459,8 +6053,31 @@
                   {
                     "columnId": "ErrorMessage",
                     "label": "Error Message"
+                  },
+                  {
+                    "columnId": "Duration",
+                    "label": "Duration"
+                  },
+                  {
+                    "columnId": "TimeStarted",
+                    "label": "Time Started"
+                  },
+                  {
+                    "columnId": "LastUpdated",
+                    "label": "Last Updated"
                   }
-                ]
+                ],
+                "rowDetails": {
+                  "type": 1,
+                  "content": {
+                    "json": "### 🔴 Error Details for {ClusterName}\r\n\r\n**Update:** {UpdateName}  \r\n**State:** {State}  \r\n**Status:** {Status}  \r\n**Current Step:** {CurrentStep}\r\n\r\n---\r\n\r\n#### Error Message\r\n\r\n```\r\n{ErrorMessage}\r\n```\r\n\r\n---\r\n\r\n💡 **Tip:** Use the \"View in Portal\" link to see detailed step-by-step progress and additional diagnostics."
+                  },
+                  "conditionalVisibility": {
+                    "parameterName": "ErrorMessage",
+                    "comparison": "isNotEqualTo",
+                    "value": ""
+                  }
+                }
               }
             },
             "name": "update-run-history"
