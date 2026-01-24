@@ -5216,7 +5216,7 @@
           {
             "type": 1,
             "content": {
-              "json": "📚 **Knowledge:** [Learn how to Troubleshoot Azure Local Readiness Checks using Azure portal or PowerShell](https://learn.microsoft.com/azure/azure-local/update/update-troubleshooting-23h2?view=azloc-2601#troubleshoot-readiness-checks)"
+              "json": "📚 **Knowledge:** [Troubleshoot Azure Local Readiness Checks using Azure portal or PowerShell](https://learn.microsoft.com/azure/azure-local/update/update-troubleshooting-23h2?view=azloc-2601#troubleshoot-readiness-checks)"
             },
             "name": "text - readiness knowledge link"
           },
