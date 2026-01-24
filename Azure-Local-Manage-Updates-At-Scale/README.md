@@ -16,6 +16,7 @@ An Azure Monitor Workbook for monitoring and managing Azure Local (formerly Azur
   - **Azure Local Machines Tab**: Connection Status, Hardware Vendor, OS Version, Arc Agent Version, License Type
   - **Azure Local Machines Tab - NIC Section**: NIC Status Distribution
   - **Update Progress Tab**: Update Attempts by Status Percentages
+  - **Summary Dashboard - Cluster Details**: Changed from 1x4 to 2x2 layout for better visibility
 
 - **Empty State Messages** (noDataMessage for better UX):
   - Disconnected Nodes table: "✅ All nodes are connected"
@@ -24,9 +25,19 @@ An Azure Monitor Workbook for monitoring and managing Azure Local (formerly Azur
 
 - **Update Progress Tab**: Added "Last Refreshed" timestamp to header
 
-- **VM Tab Knowledge Links**: Added [Troubleshoot Arc-enabled VMs](https://learn.microsoft.com/azure/azure-local/manage/troubleshoot-arc-enabled-vms) link
+- **VM Tab Improvements**:
+  - Added [Troubleshoot Arc-enabled VMs](https://learn.microsoft.com/azure/azure-local/manage/troubleshoot-arc-enabled-vms) knowledge link
+  - Split VM Status Summary into separate "Total VMs" and "Connected VMs" tiles with clear labels
+
+- **Update Readiness Tab**: Added prominent styled banner and title above the Update Readiness Summary table with refresh and export buttons
 
 - **All Clusters Table**: Updated cluster link to open directly to the Updates view in Azure Portal
+
+- **All Cluster Update Status Table**: Updated "Days Since Update" color thresholds (60-99 days yellow, 100+ days red)
+
+- **Disconnected Nodes Table**: Added "Status" column with red coloring
+
+- **Knowledge Link Repositioning**: Moved "Send Diagnostic Logs to Microsoft" link above "Clusters Not Synced Recently" section
 
 > See [Appendix: Previous Version Changes](#appendix-previous-version-changes) for older release notes.
 

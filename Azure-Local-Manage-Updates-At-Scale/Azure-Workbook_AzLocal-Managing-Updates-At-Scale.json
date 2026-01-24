@@ -5146,12 +5146,22 @@
             "name": "version-distribution-chart"
           },
           {
+            "type": 1,
+            "content": {
+              "json": "<div style=\"background-color: #fff3cd; border-left: 4px solid #ffc107; padding: 10px 15px; margin: 10px 0; border-radius: 4px;\">\r\n<span style=\"font-size: 16px;\">⚠️ <strong>Update Readiness Summary by Health State</strong></span><br/>\r\n<span style=\"font-size: 13px;\">This table shows the readiness status of all Azure Local clusters. Review clusters with <strong>Warning</strong> or <strong>Critical</strong> health states before applying updates.</span>\r\n</div>"
+            },
+            "name": "update-readiness-table-header"
+          },
+          {
             "type": 3,
             "content": {
               "version": "KqlItem/1.0",
               "query": "extensibilityresources\r\n| where type == \"microsoft.azurestackhci/clusters/updatesummaries\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| extend hciClusterName = tostring(split(id, '/')[8])\r\n| extend healthState = tostring(properties.healthState)\r\n| extend state = tostring(properties.state)\r\n| summarize \r\n    Success = countif(healthState == \"Success\"),\r\n    Warning = countif(healthState == \"Warning\"),\r\n    Failure = countif(healthState == \"Failure\"),\r\n    InProgress = countif(healthState == \"InProgress\"),\r\n    Unknown = countif(healthState == \"Unknown\")\r\n    by state\r\n| extend Total = Success + Warning + Failure + InProgress + Unknown\r\n| union (\r\n    extensibilityresources\r\n    | where type == \"microsoft.azurestackhci/clusters/updatesummaries\"\r\n    | where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n    | extend hciClusterName = tostring(split(id, '/')[8])\r\n    | extend healthState = tostring(properties.healthState)\r\n    | summarize \r\n        Success = countif(healthState == \"Success\"),\r\n        Warning = countif(healthState == \"Warning\"),\r\n        Failure = countif(healthState == \"Failure\"),\r\n        InProgress = countif(healthState == \"InProgress\"),\r\n        Unknown = countif(healthState == \"Unknown\")\r\n    | extend state = \"TOTAL\", Total = Success + Warning + Failure + InProgress + Unknown\r\n)\r\n| order by case(state == \"TOTAL\", 1, 0), state",
               "size": 0,
+              "title": "Update Readiness Summary",
               "showAnalytics": true,
+              "showRefreshButton": true,
+              "showExportToExcel": true,
               "queryType": 1,
               "resourceType": "microsoft.resourcegraph/resources",
               "crossComponentResources": [
