@@ -5153,6 +5153,13 @@
             "name": "update-readiness-table-header"
           },
           {
+            "type": 1,
+            "content": {
+              "json": "📚 **Knowledge:** [Troubleshoot Azure Local Readiness Checks using Azure portal or PowerShell](https://learn.microsoft.com/azure/azure-local/update/update-troubleshooting-23h2?view=azloc-2601#troubleshoot-readiness-checks)"
+            },
+            "name": "text - readiness knowledge link"
+          },
+          {
             "type": 3,
             "content": {
               "version": "KqlItem/1.0",
@@ -5212,13 +5219,6 @@
               }
             },
             "name": "query - 1"
-          },
-          {
-            "type": 1,
-            "content": {
-              "json": "📚 **Knowledge:** [Troubleshoot Azure Local Readiness Checks using Azure portal or PowerShell](https://learn.microsoft.com/azure/azure-local/update/update-troubleshooting-23h2?view=azloc-2601#troubleshoot-readiness-checks)"
-            },
-            "name": "text - readiness knowledge link"
           },
           {
             "type": 1,
