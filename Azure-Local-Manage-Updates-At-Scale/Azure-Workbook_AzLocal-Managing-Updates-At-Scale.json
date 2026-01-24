@@ -3746,9 +3746,9 @@
             "type": 3,
             "content": {
               "version": "KqlItem/1.0",
-              "query": "resources\r\n| where type == \"microsoft.hybridcompute/machines\"\r\n| where kind == \"HCI\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| extend powerState = tostring(properties.status)\r\n| summarize \r\n    Running = countif(powerState == \"Connected\"),\r\n    Other = countif(powerState != \"Connected\"),\r\n    Total = count()",
+              "query": "resources\r\n| where type == \"microsoft.hybridcompute/machines\"\r\n| where kind == \"HCI\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| summarize Count = count()",
               "size": 4,
-              "title": "VM Status Summary",
+              "title": "Total VMs",
               "queryType": 1,
               "resourceType": "microsoft.resourcegraph/resources",
               "crossComponentResources": [
@@ -3756,19 +3756,40 @@
               ],
               "visualization": "tiles",
               "tileSettings": {
-                "titleContent": {
-                  "formatter": 1
-                },
                 "leftContent": {
-                  "columnMatch": "Total",
+                  "columnMatch": "Count",
                   "formatter": 12,
                   "formatOptions": {
                     "palette": "blue"
                   }
                 },
-                "secondaryContent": {
-                  "columnMatch": "Running",
-                  "formatter": 1,
+                "showBorder": true
+              }
+            },
+            "customWidth": "25",
+            "name": "vm-total-tile",
+            "styleSettings": {
+              "margin": "5px",
+              "padding": "5px"
+            }
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "resources\r\n| where type == \"microsoft.hybridcompute/machines\"\r\n| where kind == \"HCI\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| where tostring(properties.status) == \"Connected\"\r\n| summarize Count = count()",
+              "size": 4,
+              "title": "Connected VMs",
+              "queryType": 1,
+              "resourceType": "microsoft.resourcegraph/resources",
+              "crossComponentResources": [
+                "{Subscriptions}"
+              ],
+              "visualization": "tiles",
+              "tileSettings": {
+                "leftContent": {
+                  "columnMatch": "Count",
+                  "formatter": 12,
                   "formatOptions": {
                     "palette": "green"
                   }
@@ -3776,8 +3797,8 @@
                 "showBorder": true
               }
             },
-            "customWidth": "50",
-            "name": "vm-summary-tile",
+            "customWidth": "25",
+            "name": "vm-connected-tile",
             "styleSettings": {
               "margin": "5px",
               "padding": "5px"
