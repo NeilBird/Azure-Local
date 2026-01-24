@@ -5148,7 +5148,7 @@
           {
             "type": 1,
             "content": {
-              "json": "<div style=\"background-color: #fff3cd; border-left: 4px solid #ffc107; padding: 10px 15px; margin: 10px 0; border-radius: 4px;\">\r\n<span style=\"font-size: 16px;\">⚠️ <strong>Update Readiness Summary by Health State</strong></span><br/>\r\n<span style=\"font-size: 13px;\">This table shows the readiness status of all Azure Local clusters. Review clusters with <strong>Warning</strong> or <strong>Critical</strong> health states before applying updates.</span>\r\n</div>"
+              "json": "<div style=\"background-color: #fff3cd; border-left: 4px solid #ffc107; padding: 10px 15px; margin: 10px 0; border-radius: 4px;\">\r\n<span style=\"font-size: 16px;\">⚠️ <strong>Update Readiness Summary by Health State</strong></span><br/>\r\n<span style=\"font-size: 13px;\">This table shows the readiness status of all Azure Local clusters. Review clusters with <strong>Warning</strong> or <strong>Critical</strong> health status using the tables below, to remove blockers that prevent applying updates.</span>\r\n</div>"
             },
             "name": "update-readiness-table-header"
           },
