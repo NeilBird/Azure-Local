@@ -1,6 +1,6 @@
 # Azure Local - Managing Updates At Scale Workbook
 
-## Latest Version: v0.6.8
+## Latest Version: v0.6.9
 
 📥 **[Copy / Paste (or download) the latest Workbook JSON](https://raw.githubusercontent.com/NeilBird/Azure-Local/refs/heads/main/Azure-Local-Manage-Updates-At-Scale/Azure-Workbook_AzLocal-Managing-Updates-At-Scale.json)**
 
@@ -8,16 +8,36 @@ An Azure Monitor Workbook for monitoring and managing Azure Local (formerly Azur
 
 **Important:** This is a community driven project, (not officially supported by Microsoft), for any issues, requests or feedback, please [raise an Issue](https://github.com/NeilBird/Azure-Local/issues) (note: no time scales or guarantees can be provided for responses to issues.)
 
-## Recent Changes (v0.6.8)
+## Recent Changes (v0.6.9)
 
-- **Pie Chart Improvements** (consistent auto-sizing and legend placement across all tabs):
-  - **Summary Dashboard - Cluster Details**: OS Version, Hardware Class, Billing Model, Hardware Vendor/Model
-  - **Azure Local Virtual Machines**: VM Connection Status, OS Distribution, VMs by Resource Group
-  - **AKS Arc Clusters**: Connectivity Status, Kubernetes Version Distribution, Provisioning State
+- **Version Check Banner**: Added prominent styled banner at top of workbook displaying current version with link to [check GitHub for updates](https://github.com/NeilBird/Azure-Local/tree/main/Azure-Local-Manage-Updates-At-Scale)
 
-- **New Knowledge Links**:
-  - **AKS Arc Clusters Tab**: Added [Troubleshoot extension issues for AKS Arc Kubernetes clusters](https://learn.microsoft.com/azure/azure-arc/kubernetes/extensions-troubleshooting) above Failed AKS Extensions table
-  - **Summary Dashboard**: Added [Send Diagnostic Logs to Microsoft](https://learn.microsoft.com/azure/azure-local/manage/collect-logs?tabs=azureportal#collect-logs-for-azure-local) below Clusters Not Synced Recently table
+- **Pie Chart Improvements** (consistent auto-sizing and legend placement):
+  - **Azure Local Machines Tab**: Connection Status, Hardware Vendor, OS Version, Arc Agent Version, License Type
+  - **Azure Local Machines Tab - NIC Section**: NIC Status Distribution
+  - **Update Progress Tab**: Update Attempts by Status Percentages
+  - **Summary Dashboard - Cluster Details**: Changed from 1x4 to 2x2 layout for better visibility
+
+- **Empty State Messages** (noDataMessage for better UX):
+  - Disconnected Nodes table: "✅ All nodes are connected"
+  - Failed Node Extensions table: "✅ No failed extensions found"
+  - All Azure Local VMs table: "No Azure Local VMs found in the selected scope"
+
+- **Update Progress Tab**: Added "Last Refreshed" timestamp to header
+
+- **VM Tab Improvements**:
+  - Added [Troubleshoot Arc-enabled VMs](https://learn.microsoft.com/azure/azure-local/manage/troubleshoot-arc-enabled-vms) knowledge link
+  - Split VM Status Summary into separate "Total VMs" and "Connected VMs" tiles with clear labels
+
+- **Update Readiness Tab**: Added prominent styled banner and title above the Update Readiness Summary table with refresh and export buttons
+
+- **All Clusters Table**: Updated cluster link to open directly to the Updates view in Azure Portal
+
+- **All Cluster Update Status Table**: Updated "Days Since Update" color thresholds (60-99 days yellow, 100+ days red)
+
+- **Disconnected Nodes Table**: Added "Status" column with red coloring
+
+- **Knowledge Link Repositioning**: Moved "Send Diagnostic Logs to Microsoft" link above "Clusters Not Synced Recently" section
 
 > See [Appendix: Previous Version Changes](#appendix-previous-version-changes) for older release notes.
 
@@ -297,6 +317,17 @@ See the repository's LICENSE file for details.
 ---
 
 ## Appendix: Previous Version Changes
+
+### v0.6.8
+
+- **Pie Chart Improvements** (consistent auto-sizing and legend placement across all tabs):
+  - **Summary Dashboard - Cluster Details**: OS Version, Hardware Class, Billing Model, Hardware Vendor/Model
+  - **Azure Local Virtual Machines**: VM Connection Status, OS Distribution, VMs by Resource Group
+  - **AKS Arc Clusters**: Connectivity Status, Kubernetes Version Distribution, Provisioning State
+
+- **New Knowledge Links**:
+  - **AKS Arc Clusters Tab**: Added [Troubleshoot extension issues for AKS Arc Kubernetes clusters](https://learn.microsoft.com/azure/azure-arc/kubernetes/extensions-troubleshooting) above Failed AKS Extensions table
+  - **Summary Dashboard**: Added [Send Diagnostic Logs to Microsoft](https://learn.microsoft.com/azure/azure-local/manage/collect-logs?tabs=azureportal#collect-logs-for-azure-local) below Clusters Not Synced Recently table
 
 ### v0.6.7
 

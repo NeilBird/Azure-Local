@@ -99,9 +99,17 @@
     {
       "type": 1,
       "content": {
-        "json": "## 🖥️ Azure Local - Managing Updates At Scale\r\n**Version: v0.6.8** | [Check for Updates to apply by checking the latest release available on GitHub](https://github.com/NeilBird/Azure-Local/tree/main/Azure-Local-Manage-Updates-At-Scale)\r\n\r\nThis example Workbook is a community driven project, (not officially supported by Microsoft). If you encounter any issues or have feedback, please [raise an Issue on GitHub](https://github.com/NeilBird/Azure-Local/issues)."
+        "json": "## 🖥️ Azure Local - Managing Updates At Scale\r\n\r\nThis example Workbook is a community driven project, (not officially supported by Microsoft). If you encounter any issues or have feedback, please [raise an Issue on GitHub](https://github.com/NeilBird/Azure-Local/issues)."
       },
       "name": "workbook-title-version"
+    },
+    {
+      "type": 1,
+      "content": {
+        "json": "<div style=\"background-color: #e6f2ff; border-left: 4px solid #0078d4; padding: 10px 15px; margin: 10px 0; border-radius: 4px;\">\r\n<span style=\"font-size: 16px;\">📋 <strong>Workbook Version: v0.6.9</strong></span><br/>\r\n<span style=\"font-size: 13px;\">🔄 <a href=\"https://github.com/NeilBird/Azure-Local/tree/main/Azure-Local-Manage-Updates-At-Scale\" target=\"_blank\"><strong>Check GitHub for Updates</strong></a> — Compare your version against the latest release on GitHub</span>\r\n</div>",
+        "style": "info"
+      },
+      "name": "version-update-banner"
     },
     {
       "type": 1,
@@ -1304,7 +1312,7 @@
                 "legendPosition": "bottom"
               }
             },
-            "customWidth": "25",
+            "customWidth": "50",
             "name": "chart-os-version",
             "styleSettings": {
               "margin": "5px",
@@ -1329,7 +1337,7 @@
                 "legendPosition": "bottom"
               }
             },
-            "customWidth": "25",
+            "customWidth": "50",
             "name": "chart-hardware-class",
             "styleSettings": {
               "margin": "5px",
@@ -1354,7 +1362,7 @@
                 "legendPosition": "bottom"
               }
             },
-            "customWidth": "25",
+            "customWidth": "50",
             "name": "chart-billing-model",
             "styleSettings": {
               "margin": "5px",
@@ -1379,7 +1387,7 @@
                 "legendPosition": "bottom"
               }
             },
-            "customWidth": "25",
+            "customWidth": "50",
             "name": "chart-hardware-vendor",
             "styleSettings": {
               "margin": "5px",
@@ -1397,7 +1405,7 @@
             "type": 3,
             "content": {
               "version": "KqlItem/1.0",
-              "query": "resources\r\n| where type == \"microsoft.azurestackhci/clusters\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| where '{ClusterTagName}' == '' or ('{ClusterTagValue}' != '' and tostring(tags['{ClusterTagName}']) =~ '{ClusterTagValue}')\r\n| extend clusterName = tolower(name)\r\n| extend clusterRG = tolower(resourceGroup)\r\n| join kind=leftouter (\r\n    extensibilityresources\r\n    | where type == \"microsoft.azurestackhci/clusters/updatesummaries\"\r\n    | extend clusterName = tolower(tostring(split(id, '/')[8]))\r\n    | extend clusterRG = tolower(resourceGroup)\r\n    | extend solutionVersion = tostring(properties.currentVersion)\r\n    | project clusterName, clusterRG, solutionVersion\r\n) on clusterName, clusterRG\r\n| extend status = iff(properties.status == \"ConnectedRecently\", \"Connected\", \"Disconnected\")\r\n| extend nodeCount = array_length(properties.reportedProperties.nodes)\r\n| extend totalCores = toint(properties.reportedProperties.nodes[0].coreCount) * nodeCount\r\n| extend totalMemoryGB = toint(properties.reportedProperties.nodes[0].memoryInGiB) * nodeCount\r\n| extend osVersion = tostring(properties.reportedProperties.nodes[0].osDisplayVersion)\r\n| extend hardwareClass = tostring(properties.reportedProperties.hardwareClass)\r\n| extend manufacturer = tostring(properties.reportedProperties.nodes[0].manufacturer)\r\n| extend model = tostring(properties.reportedProperties.nodes[0].model)\r\n| extend lastSync = todatetime(properties.lastSyncTimestamp)\r\n| extend registrationDate = todatetime(properties.registrationTimestamp)\r\n| extend clusterLink = strcat('https://portal.azure.com/#@/resource', id)\r\n| project ClusterName = name, clusterLink, resourceGroup, status, solutionVersion, nodeCount, totalCores, totalMemoryGB, osVersion, hardwareClass, manufacturer, model, lastSync, registrationDate, location\r\n| order by status asc, ClusterName asc",
+              "query": "resources\r\n| where type == \"microsoft.azurestackhci/clusters\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| where '{ClusterTagName}' == '' or ('{ClusterTagValue}' != '' and tostring(tags['{ClusterTagName}']) =~ '{ClusterTagValue}')\r\n| extend clusterName = tolower(name)\r\n| extend clusterRG = tolower(resourceGroup)\r\n| join kind=leftouter (\r\n    extensibilityresources\r\n    | where type == \"microsoft.azurestackhci/clusters/updatesummaries\"\r\n    | extend clusterName = tolower(tostring(split(id, '/')[8]))\r\n    | extend clusterRG = tolower(resourceGroup)\r\n    | extend solutionVersion = tostring(properties.currentVersion)\r\n    | project clusterName, clusterRG, solutionVersion\r\n) on clusterName, clusterRG\r\n| extend status = iff(properties.status == \"ConnectedRecently\", \"Connected\", \"Disconnected\")\r\n| extend nodeCount = array_length(properties.reportedProperties.nodes)\r\n| extend totalCores = toint(properties.reportedProperties.nodes[0].coreCount) * nodeCount\r\n| extend totalMemoryGB = toint(properties.reportedProperties.nodes[0].memoryInGiB) * nodeCount\r\n| extend osVersion = tostring(properties.reportedProperties.nodes[0].osDisplayVersion)\r\n| extend hardwareClass = tostring(properties.reportedProperties.hardwareClass)\r\n| extend manufacturer = tostring(properties.reportedProperties.nodes[0].manufacturer)\r\n| extend model = tostring(properties.reportedProperties.nodes[0].model)\r\n| extend lastSync = todatetime(properties.lastSyncTimestamp)\r\n| extend registrationDate = todatetime(properties.registrationTimestamp)\r\n| extend clusterLink = strcat('https://portal.azure.com/#@/resource', id, '/updates')\r\n| project ClusterName = name, clusterLink, resourceGroup, status, solutionVersion, nodeCount, totalCores, totalMemoryGB, osVersion, hardwareClass, manufacturer, model, lastSync, registrationDate, location\r\n| order by status asc, ClusterName asc",
               "size": 0,
               "showAnalytics": true,
               "showRefreshButton": true,
@@ -1414,7 +1422,7 @@
                     "formatter": 7,
                     "formatOptions": {
                       "linkTarget": "Url",
-                      "linkLabel": "Open Cluster"
+                      "linkLabel": "Open Updates"
                     }
                   },
                   {
@@ -1517,6 +1525,13 @@
           {
             "type": 1,
             "content": {
+              "json": "📚 **Knowledge:** [Send Diagnostic Logs to Microsoft using Azure portal or PowerShell](https://learn.microsoft.com/azure/azure-local/manage/collect-logs?tabs=azureportal#collect-logs-for-azure-local)"
+            },
+            "name": "stale-clusters-knowledge-link"
+          },
+          {
+            "type": 1,
+            "content": {
               "json": "### ⚠️ Clusters Not Synced Recently\r\n*Clusters that haven't synced in the last 24 hours*"
             },
             "name": "section-header-stale-clusters"
@@ -1607,13 +1622,6 @@
               }
             },
             "name": "table-stale-clusters"
-          },
-          {
-            "type": 1,
-            "content": {
-              "json": "📚 **Knowledge:** [Send Diagnostic Logs to Microsoft using Azure portal or PowerShell](https://learn.microsoft.com/azure/azure-local/manage/collect-logs?tabs=azureportal#collect-logs-for-azure-local)"
-            },
-            "name": "stale-clusters-knowledge-link"
           }
         ]
       },
@@ -2573,7 +2581,7 @@
             "content": {
               "version": "KqlItem/1.0",
               "query": "resources\r\n| where type == \"microsoft.hybridcompute/machines\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| where properties.cloudMetadata.provider == \"AzSHCI\"\r\n| join kind=inner (\r\n    resources\r\n    | where type == \"microsoft.azurestackhci/clusters\"\r\n    | where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n    | where '{ClusterTagName}' == '' or ('{ClusterTagValue}' != '' and tostring(tags['{ClusterTagName}']) =~ '{ClusterTagValue}')\r\n    | project clusterResourceGroup = resourceGroup\r\n) on $left.resourceGroup == $right.clusterResourceGroup\r\n| extend status = tostring(properties.status)\r\n| summarize Count = count() by status\r\n| order by Count desc",
-              "size": 2,
+              "size": 0,
               "title": "Connection Status",
               "queryType": 1,
               "resourceType": "microsoft.resourcegraph/resources",
@@ -2582,6 +2590,8 @@
               ],
               "visualization": "piechart",
               "chartSettings": {
+                "showLegend": true,
+                "legendPosition": "bottom",
                 "seriesLabelSettings": [
                   {
                     "seriesName": "Connected",
@@ -2610,14 +2620,18 @@
             "content": {
               "version": "KqlItem/1.0",
               "query": "resources\r\n| where type == \"microsoft.hybridcompute/machines\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| where properties.cloudMetadata.provider == \"AzSHCI\"\r\n| join kind=inner (\r\n    resources\r\n    | where type == \"microsoft.azurestackhci/clusters\"\r\n    | where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n    | where '{ClusterTagName}' == '' or ('{ClusterTagValue}' != '' and tostring(tags['{ClusterTagName}']) =~ '{ClusterTagValue}')\r\n    | project clusterResourceGroup = resourceGroup\r\n) on $left.resourceGroup == $right.clusterResourceGroup\r\n| extend manufacturer = coalesce(tostring(properties.detectedProperties.manufacturer), \"Unknown\")\r\n| summarize Count = count() by manufacturer\r\n| order by Count desc",
-              "size": 2,
+              "size": 0,
               "title": "Hardware Vendor",
               "queryType": 1,
               "resourceType": "microsoft.resourcegraph/resources",
               "crossComponentResources": [
                 "{Subscriptions}"
               ],
-              "visualization": "piechart"
+              "visualization": "piechart",
+              "chartSettings": {
+                "showLegend": true,
+                "legendPosition": "bottom"
+              }
             },
             "customWidth": "33",
             "name": "node-vendor-pie",
@@ -2631,14 +2645,18 @@
             "content": {
               "version": "KqlItem/1.0",
               "query": "resources\r\n| where type == \"microsoft.hybridcompute/machines\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| where properties.cloudMetadata.provider == \"AzSHCI\"\r\n| join kind=inner (\r\n    resources\r\n    | where type == \"microsoft.azurestackhci/clusters\"\r\n    | where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n    | where '{ClusterTagName}' == '' or ('{ClusterTagValue}' != '' and tostring(tags['{ClusterTagName}']) =~ '{ClusterTagValue}')\r\n    | project clusterResourceGroup = resourceGroup\r\n) on $left.resourceGroup == $right.clusterResourceGroup\r\n| extend osVersion = coalesce(tostring(properties.osVersion), \"Unknown\")\r\n| summarize Count = count() by osVersion\r\n| order by Count desc",
-              "size": 2,
+              "size": 0,
               "title": "OS Version",
               "queryType": 1,
               "resourceType": "microsoft.resourcegraph/resources",
               "crossComponentResources": [
                 "{Subscriptions}"
               ],
-              "visualization": "piechart"
+              "visualization": "piechart",
+              "chartSettings": {
+                "showLegend": true,
+                "legendPosition": "bottom"
+              }
             },
             "customWidth": "33",
             "name": "node-version-pie",
@@ -2652,14 +2670,18 @@
             "content": {
               "version": "KqlItem/1.0",
               "query": "resources\r\n| where type == \"microsoft.hybridcompute/machines\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| where properties.cloudMetadata.provider == \"AzSHCI\"\r\n| join kind=inner (\r\n    resources\r\n    | where type == \"microsoft.azurestackhci/clusters\"\r\n    | where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n    | where '{ClusterTagName}' == '' or ('{ClusterTagValue}' != '' and tostring(tags['{ClusterTagName}']) =~ '{ClusterTagValue}')\r\n    | project clusterResourceGroup = resourceGroup\r\n) on $left.resourceGroup == $right.clusterResourceGroup\r\n| extend agentVersion = coalesce(tostring(properties.agentVersion), \"Unknown\")\r\n| summarize Count = count() by agentVersion\r\n| order by Count desc",
-              "size": 2,
+              "size": 0,
               "title": "Arc Agent Version",
               "queryType": 1,
               "resourceType": "microsoft.resourcegraph/resources",
               "crossComponentResources": [
                 "{Subscriptions}"
               ],
-              "visualization": "piechart"
+              "visualization": "piechart",
+              "chartSettings": {
+                "showLegend": true,
+                "legendPosition": "bottom"
+              }
             },
             "customWidth": "33",
             "name": "node-agent-version-pie",
@@ -2673,14 +2695,18 @@
             "content": {
               "version": "KqlItem/1.0",
               "query": "resources\r\n| where type == \"microsoft.hybridcompute/machines\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| where properties.cloudMetadata.provider == \"AzSHCI\"\r\n| join kind=inner (\r\n    resources\r\n    | where type == \"microsoft.azurestackhci/clusters\"\r\n    | where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n    | where '{ClusterTagName}' == '' or ('{ClusterTagValue}' != '' and tostring(tags['{ClusterTagName}']) =~ '{ClusterTagValue}')\r\n    | project clusterResourceGroup = resourceGroup\r\n) on $left.resourceGroup == $right.clusterResourceGroup\r\n| extend licenseType = case(\r\n    isnotnull(properties.licenseProfile.licenseType), tostring(properties.licenseProfile.licenseType),\r\n    isnotnull(properties.licenseProfile.esuProfile.licenseAssignmentState), tostring(properties.licenseProfile.esuProfile.licenseAssignmentState),\r\n    \"Not Configured\")\r\n| summarize Count = count() by licenseType\r\n| order by Count desc",
-              "size": 2,
+              "size": 0,
               "title": "License Type",
               "queryType": 1,
               "resourceType": "microsoft.resourcegraph/resources",
               "crossComponentResources": [
                 "{Subscriptions}"
               ],
-              "visualization": "piechart"
+              "visualization": "piechart",
+              "chartSettings": {
+                "showLegend": true,
+                "legendPosition": "bottom"
+              }
             },
             "customWidth": "33",
             "name": "node-license-type-pie",
@@ -2866,7 +2892,7 @@
             "type": 3,
             "content": {
               "version": "KqlItem/1.0",
-              "query": "resources\r\n| where type == \"microsoft.hybridcompute/machines\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| where properties.cloudMetadata.provider == \"AzSHCI\"\r\n| join kind=inner (\r\n    resources\r\n    | where type == \"microsoft.azurestackhci/clusters\"\r\n    | where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n    | where '{ClusterTagName}' == '' or ('{ClusterTagValue}' != '' and tostring(tags['{ClusterTagName}']) =~ '{ClusterTagValue}')\r\n    | project clusterName = name, clusterResourceGroup = resourceGroup, clusterId = id\r\n) on $left.resourceGroup == $right.clusterResourceGroup\r\n| where tostring(properties.status) == \"Disconnected\"\r\n| extend nodeName = name\r\n| extend lastStatusChange = todatetime(properties.lastStatusChange)\r\n| extend osVersion = tostring(properties.osVersion)\r\n| extend nodeLink = strcat('https://portal.azure.com/#@/resource', id)\r\n| extend clusterLink = strcat('https://portal.azure.com/#@/resource', clusterId)\r\n| project nodeName, nodeLink, clusterName, clusterLink, lastStatusChange, osVersion, resourceGroup, subscriptionId\r\n| order by lastStatusChange asc",
+              "query": "resources\r\n| where type == \"microsoft.hybridcompute/machines\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| where properties.cloudMetadata.provider == \"AzSHCI\"\r\n| join kind=inner (\r\n    resources\r\n    | where type == \"microsoft.azurestackhci/clusters\"\r\n    | where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n    | where '{ClusterTagName}' == '' or ('{ClusterTagValue}' != '' and tostring(tags['{ClusterTagName}']) =~ '{ClusterTagValue}')\r\n    | project clusterName = name, clusterResourceGroup = resourceGroup, clusterId = id\r\n) on $left.resourceGroup == $right.clusterResourceGroup\r\n| where tostring(properties.status) == \"Disconnected\"\r\n| extend nodeName = name\r\n| extend status = tostring(properties.status)\r\n| extend lastStatusChange = todatetime(properties.lastStatusChange)\r\n| extend osVersion = tostring(properties.osVersion)\r\n| extend nodeLink = strcat('https://portal.azure.com/#@/resource', id)\r\n| extend clusterLink = strcat('https://portal.azure.com/#@/resource', clusterId)\r\n| project nodeName, nodeLink, clusterName, clusterLink, status, lastStatusChange, osVersion, resourceGroup, subscriptionId\r\n| order by lastStatusChange asc",
               "size": 0,
               "showAnalytics": true,
               "title": "⚠️ Disconnected Nodes",
@@ -2904,6 +2930,27 @@
                     }
                   },
                   {
+                    "columnMatch": "status",
+                    "formatter": 18,
+                    "formatOptions": {
+                      "thresholdsOptions": "colors",
+                      "thresholdsGrid": [
+                        {
+                          "operator": "==",
+                          "thresholdValue": "Disconnected",
+                          "representation": "redBright",
+                          "text": "{0}{1}"
+                        },
+                        {
+                          "operator": "Default",
+                          "thresholdValue": null,
+                          "representation": "redBright",
+                          "text": "{0}{1}"
+                        }
+                      ]
+                    }
+                  },
+                  {
                     "columnMatch": "lastStatusChange",
                     "formatter": 6
                   }
@@ -2928,6 +2975,10 @@
                     "label": "Cluster"
                   },
                   {
+                    "columnId": "status",
+                    "label": "Status"
+                  },
+                  {
                     "columnId": "lastStatusChange",
                     "label": "Disconnected Since"
                   },
@@ -2943,7 +2994,8 @@
                     "columnId": "subscriptionId",
                     "label": "Subscription"
                   }
-                ]
+                ],
+                "noDataMessage": "✅ All nodes are connected"
               }
             },
             "name": "disconnected-nodes-table"
@@ -3264,7 +3316,8 @@
                     "columnId": "subscriptionId",
                     "label": "Subscription"
                   }
-                ]
+                ],
+                "noDataMessage": "✅ No failed extensions found"
               }
             },
             "name": "failed-extensions-table"
@@ -3365,7 +3418,7 @@
             "content": {
               "version": "KqlItem/1.0",
               "query": "extensibilityresources\r\n| where type == \"microsoft.azurestackhci/edgedevices\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| extend reportedProperties = properties.reportedProperties.networkProfile.nicDetails\r\n| extend edgeDeviceRG = resourceGroup\r\n| mv-expand nic = reportedProperties\r\n| extend nicStatus = tostring(nic.nicStatus)\r\n| join kind=inner (\r\n    resources\r\n    | where type == \"microsoft.hybridcompute/machines\"\r\n    | where properties.cloudMetadata.provider == \"AzSHCI\"\r\n    | extend machineStatus = tostring(properties.status)\r\n    | project machineName = name, machineRG = resourceGroup, machineStatus\r\n) on $left.edgeDeviceRG == $right.machineRG\r\n| where '*' in ({NicPieMachineFilter}) or machineName in ({NicPieMachineFilter})\r\n| where '*' in ({NicPieConnectivityFilter}) or machineStatus in ({NicPieConnectivityFilter})\r\n| where '*' in ({NicPieStatusFilter}) or nicStatus in ({NicPieStatusFilter})\r\n| summarize Count = count() by nicStatus\r\n| order by Count desc",
-              "size": 3,
+              "size": 0,
               "title": "NIC Status Distribution",
               "queryType": 1,
               "resourceType": "microsoft.resourcegraph/resources",
@@ -3374,6 +3427,8 @@
               ],
               "visualization": "piechart",
               "chartSettings": {
+                "showLegend": true,
+                "legendPosition": "bottom",
                 "seriesLabelSettings": [
                   {
                     "seriesName": "Up",
@@ -3675,6 +3730,13 @@
                   "linkTarget": "Url",
                   "linkLabel": "📚 Documentation: Azure Arc VM Management",
                   "style": "link"
+                },
+                {
+                  "id": "arc-vm-troubleshoot-link",
+                  "cellValue": "https://learn.microsoft.com/azure/azure-local/manage/troubleshoot-arc-enabled-vms",
+                  "linkTarget": "Url",
+                  "linkLabel": "🔧 Troubleshoot Arc-enabled VMs",
+                  "style": "link"
                 }
               ]
             },
@@ -3684,9 +3746,9 @@
             "type": 3,
             "content": {
               "version": "KqlItem/1.0",
-              "query": "resources\r\n| where type == \"microsoft.hybridcompute/machines\"\r\n| where kind == \"HCI\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| extend powerState = tostring(properties.status)\r\n| summarize \r\n    Running = countif(powerState == \"Connected\"),\r\n    Other = countif(powerState != \"Connected\"),\r\n    Total = count()",
+              "query": "resources\r\n| where type == \"microsoft.hybridcompute/machines\"\r\n| where kind == \"HCI\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| summarize Count = count()",
               "size": 4,
-              "title": "VM Status Summary",
+              "title": "Total VMs",
               "queryType": 1,
               "resourceType": "microsoft.resourcegraph/resources",
               "crossComponentResources": [
@@ -3694,19 +3756,40 @@
               ],
               "visualization": "tiles",
               "tileSettings": {
-                "titleContent": {
-                  "formatter": 1
-                },
                 "leftContent": {
-                  "columnMatch": "Total",
+                  "columnMatch": "Count",
                   "formatter": 12,
                   "formatOptions": {
                     "palette": "blue"
                   }
                 },
-                "secondaryContent": {
-                  "columnMatch": "Running",
-                  "formatter": 1,
+                "showBorder": true
+              }
+            },
+            "customWidth": "25",
+            "name": "vm-total-tile",
+            "styleSettings": {
+              "margin": "5px",
+              "padding": "5px"
+            }
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "resources\r\n| where type == \"microsoft.hybridcompute/machines\"\r\n| where kind == \"HCI\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| where tostring(properties.status) == \"Connected\"\r\n| summarize Count = count()",
+              "size": 4,
+              "title": "Connected VMs",
+              "queryType": 1,
+              "resourceType": "microsoft.resourcegraph/resources",
+              "crossComponentResources": [
+                "{Subscriptions}"
+              ],
+              "visualization": "tiles",
+              "tileSettings": {
+                "leftContent": {
+                  "columnMatch": "Count",
+                  "formatter": 12,
                   "formatOptions": {
                     "palette": "green"
                   }
@@ -3714,8 +3797,8 @@
                 "showBorder": true
               }
             },
-            "customWidth": "50",
-            "name": "vm-summary-tile",
+            "customWidth": "25",
+            "name": "vm-connected-tile",
             "styleSettings": {
               "margin": "5px",
               "padding": "5px"
@@ -4023,7 +4106,8 @@
                     "columnId": "location",
                     "label": "Location"
                   }
-                ]
+                ],
+                "noDataMessage": "No Azure Local VMs found in the selected scope"
               }
             },
             "name": "vm-all-list"
@@ -5062,12 +5146,29 @@
             "name": "version-distribution-chart"
           },
           {
+            "type": 1,
+            "content": {
+              "json": "<div style=\"background-color: #fff3cd; border-left: 4px solid #ffc107; padding: 10px 15px; margin: 10px 0; border-radius: 4px;\">\r\n<span style=\"font-size: 16px;\">⚠️ <strong>Update Readiness Summary by Health State</strong></span><br/>\r\n<span style=\"font-size: 13px;\">This table shows the readiness status of all Azure Local clusters. Review clusters with <strong>Warning</strong> or <strong>Critical</strong> health status using the tables below, to remove blockers that prevent applying updates.</span>\r\n</div>"
+            },
+            "name": "update-readiness-table-header"
+          },
+          {
+            "type": 1,
+            "content": {
+              "json": "📚 **Knowledge:** [Troubleshoot Azure Local Readiness Checks using Azure portal or PowerShell](https://learn.microsoft.com/azure/azure-local/update/update-troubleshooting-23h2?view=azloc-2601#troubleshoot-readiness-checks)"
+            },
+            "name": "text - readiness knowledge link"
+          },
+          {
             "type": 3,
             "content": {
               "version": "KqlItem/1.0",
               "query": "extensibilityresources\r\n| where type == \"microsoft.azurestackhci/clusters/updatesummaries\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| extend hciClusterName = tostring(split(id, '/')[8])\r\n| extend healthState = tostring(properties.healthState)\r\n| extend state = tostring(properties.state)\r\n| summarize \r\n    Success = countif(healthState == \"Success\"),\r\n    Warning = countif(healthState == \"Warning\"),\r\n    Failure = countif(healthState == \"Failure\"),\r\n    InProgress = countif(healthState == \"InProgress\"),\r\n    Unknown = countif(healthState == \"Unknown\")\r\n    by state\r\n| extend Total = Success + Warning + Failure + InProgress + Unknown\r\n| union (\r\n    extensibilityresources\r\n    | where type == \"microsoft.azurestackhci/clusters/updatesummaries\"\r\n    | where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n    | extend hciClusterName = tostring(split(id, '/')[8])\r\n    | extend healthState = tostring(properties.healthState)\r\n    | summarize \r\n        Success = countif(healthState == \"Success\"),\r\n        Warning = countif(healthState == \"Warning\"),\r\n        Failure = countif(healthState == \"Failure\"),\r\n        InProgress = countif(healthState == \"InProgress\"),\r\n        Unknown = countif(healthState == \"Unknown\")\r\n    | extend state = \"TOTAL\", Total = Success + Warning + Failure + InProgress + Unknown\r\n)\r\n| order by case(state == \"TOTAL\", 1, 0), state",
               "size": 0,
+              "title": "Update Readiness Summary",
               "showAnalytics": true,
+              "showRefreshButton": true,
+              "showExportToExcel": true,
               "queryType": 1,
               "resourceType": "microsoft.resourcegraph/resources",
               "crossComponentResources": [
@@ -5781,7 +5882,7 @@
           {
             "type": 1,
             "content": {
-              "json": "## 🔄 Update Progress & History\n\nTrack ongoing updates and review historical update runs across your Azure Local clusters."
+              "json": "## 🔄 Update Progress & History\n\nTrack ongoing updates and review historical update runs across your Azure Local clusters.\n\n**Last Refreshed:** {TimeRange:label} | Click refresh on any tile to update data"
             },
             "name": "text-update-progress-header"
           },
@@ -6052,7 +6153,7 @@
             "content": {
               "version": "KqlItem/1.0",
               "query": "extensibilityresources\r\n| where type == \"microsoft.azurestackhci/clusters/updates/updateruns\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| extend state = tostring(properties.state)\r\n| extend timeStarted = todatetime(properties.timeStarted)\r\n| where timeStarted >= ago({UpdateAttemptsTimeFilter}d)\r\n| summarize Count = count() by state\r\n| order by Count desc",
-              "size": 3,
+              "size": 0,
               "title": "Update Attempts by Status Percentages",
               "queryType": 1,
               "resourceType": "microsoft.resourcegraph/resources",
@@ -6061,6 +6162,8 @@
               ],
               "visualization": "piechart",
               "chartSettings": {
+                "showLegend": true,
+                "legendPosition": "bottom",
                 "seriesLabelSettings": [
                   {
                     "seriesName": "Succeeded",
@@ -6311,13 +6414,13 @@
                       "thresholdsGrid": [
                         {
                           "operator": ">=",
-                          "thresholdValue": "60",
+                          "thresholdValue": "100",
                           "representation": "redBright",
                           "text": "{0}{1} days"
                         },
                         {
                           "operator": ">=",
-                          "thresholdValue": "30",
+                          "thresholdValue": "60",
                           "representation": "yellow",
                           "text": "{0}{1} days"
                         },
