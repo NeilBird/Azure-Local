@@ -10,6 +10,8 @@ An Azure Monitor Workbook for monitoring and managing Azure Local (formerly Azur
 
 ## Recent Changes (v0.6.9)
 
+- **Version Check Banner**: Added prominent styled banner at top of workbook displaying current version with link to [check GitHub for updates](https://github.com/NeilBird/Azure-Local/tree/main/Azure-Local-Manage-Updates-At-Scale)
+
 - **Pie Chart Improvements** (consistent auto-sizing and legend placement):
   - **Azure Local Machines Tab**: Connection Status, Hardware Vendor, OS Version, Arc Agent Version, License Type
   - **Azure Local Machines Tab - NIC Section**: NIC Status Distribution
