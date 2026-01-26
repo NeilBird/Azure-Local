@@ -3345,6 +3345,13 @@
           {
             "type": 1,
             "content": {
+              "json": "📚 **Knowledge:** [Troubleshoot Azure Arc-enabled servers VM extension issues](https://learn.microsoft.com/azure/azure-arc/servers/troubleshoot-vm-extensions)"
+            },
+            "name": "failed-extensions-knowledge-link"
+          },
+          {
+            "type": 1,
+            "content": {
               "json": "## 🌐 Network Adapter Details\r\n\r\nNetwork adapter (NIC) information from Azure Local edge devices, including driver versions and network configuration.\r\n\r\n> **Note:** Cluster Tag filtering is not supported for this section due to Azure Resource Graph query limitations."
             },
             "name": "text-nic-status-header"
