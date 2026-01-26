@@ -24,6 +24,32 @@ An Azure Monitor Workbook for monitoring and managing Azure Local (formerly Azur
 
 - **Update Readiness Tab**: Added "Top 5 - System Health Check Issues" pie chart showing most common failure reasons
 
+- **Clickable Name Columns**: Made name columns directly clickable with hidden link columns to reduce table width
+  - Cluster Name is now clickable in all tables (Summary, Update Readiness, Update Progress, VMs, AKS tabs)
+  - Machine Name is now clickable in All Network Adapters table
+  - VM Name is now clickable in All Azure Local VMs table
+  - Machine column renamed from "Node" and made clickable in Failed Node Extensions table
+  - Remediation column in Detailed Health Check Results is conditionally clickable when it contains a URL
+
+- **Quick Actions Updates**:
+  - Added "Solution Builder Extension (SBE) updates" link for OEM-specific updates
+  - Added "Azure Local Supportability Forum" link for community support
+  - Removed Azure Advisor link
+
+- **Knowledge Links Added**:
+  - Added VM extension troubleshooting link below Failed Node Extensions table
+  - Added Network ATC intent validation link above All Network Adapters table
+  - Reorganized Update Readiness knowledge links for better organization
+  - Renamed lifecycle and releases links with more descriptive labels (📚 Knowledge / 📋 Documentation prefixes)
+
+- **ARB Alert Rules Tip**: Expanded guidance text for Azure Resource Bridge alert rule recommendations
+
+- **Auto-Refresh Tips**: Added helpful tips about 5-minute auto-refresh and manual refresh buttons
+
+- **Bug Fixes**:
+  - Fixed ARG join limit error in Update Readiness Summary query
+  - Updated version banner text with copy/paste hint
+
 ## Previous Changes (v0.6.9)
 
 - **Version Check Banner**: Added prominent styled banner at top of workbook displaying current version with link to [check GitHub for updates](https://github.com/NeilBird/Azure-Local/tree/main/Azure-Local-Manage-Updates-At-Scale)
