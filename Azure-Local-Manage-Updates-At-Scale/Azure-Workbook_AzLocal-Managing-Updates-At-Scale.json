@@ -6834,6 +6834,14 @@
               "gridSettings": {
                 "formatters": [
                   {
+                    "columnMatch": "UpdateName",
+                    "formatter": 7,
+                    "formatOptions": {
+                      "linkTarget": "Url",
+                      "linkColumn": "PortalLink"
+                    }
+                  },
+                  {
                     "columnMatch": "State",
                     "formatter": 18,
                     "formatOptions": {
@@ -6913,11 +6921,7 @@
                   },
                   {
                     "columnMatch": "PortalLink",
-                    "formatter": 7,
-                    "formatOptions": {
-                      "linkTarget": "Url",
-                      "linkLabel": "View in Portal"
-                    }
+                    "formatter": 5
                   }
                 ],
                 "filter": true,
