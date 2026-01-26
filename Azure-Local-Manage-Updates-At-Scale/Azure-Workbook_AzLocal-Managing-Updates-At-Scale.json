@@ -1458,8 +1458,7 @@
                     "label": "Cluster Name"
                   },
                   {
-                    "columnId": "clusterLink",
-                    "label": "Cluster Link"
+                    "columnId": "clusterLink"
                   },
                   {
                     "columnId": "resourceGroup",
@@ -1550,12 +1549,16 @@
               "gridSettings": {
                 "formatters": [
                   {
-                    "columnMatch": "clusterLink",
+                    "columnMatch": "ClusterName",
                     "formatter": 7,
                     "formatOptions": {
                       "linkTarget": "Url",
-                      "linkLabel": "Open Cluster"
+                      "linkColumn": "clusterLink"
                     }
+                  },
+                  {
+                    "columnMatch": "clusterLink",
+                    "formatter": 5
                   },
                   {
                     "columnMatch": "lastSync",
@@ -1596,8 +1599,7 @@
                     "label": "Cluster Name"
                   },
                   {
-                    "columnId": "clusterLink",
-                    "label": "Cluster Link"
+                    "columnId": "clusterLink"
                   },
                   {
                     "columnId": "resourceGroup",
@@ -1826,12 +1828,16 @@
                     }
                   },
                   {
-                    "columnMatch": "clusterLink",
+                    "columnMatch": "ClusterName",
                     "formatter": 7,
                     "formatOptions": {
                       "linkTarget": "Url",
-                      "linkLabel": "Open Cluster"
+                      "linkColumn": "clusterLink"
                     }
+                  },
+                  {
+                    "columnMatch": "clusterLink",
+                    "formatter": 5
                   },
                   {
                     "columnMatch": "HCIClusterConnectivity",
@@ -1886,8 +1892,7 @@
                     "label": "Cluster Name"
                   },
                   {
-                    "columnId": "clusterLink",
-                    "label": "Cluster Link"
+                    "columnId": "clusterLink"
                   },
                   {
                     "columnId": "HCIClusterConnectivity",
@@ -2077,12 +2082,16 @@
                     }
                   },
                   {
-                    "columnMatch": "clusterLink",
+                    "columnMatch": "ClusterName",
                     "formatter": 7,
                     "formatOptions": {
                       "linkTarget": "Url",
-                      "linkLabel": "Open Cluster"
+                      "linkColumn": "clusterLink"
                     }
+                  },
+                  {
+                    "columnMatch": "clusterLink",
+                    "formatter": 5
                   },
                   {
                     "columnMatch": "HCIClusterConnectivity",
@@ -2137,8 +2146,7 @@
                     "label": "Cluster Name"
                   },
                   {
-                    "columnId": "clusterLink",
-                    "label": "Cluster Link"
+                    "columnId": "clusterLink"
                   },
                   {
                     "columnId": "HCIClusterConnectivity",
@@ -3980,7 +3988,7 @@
             "type": 3,
             "content": {
               "version": "KqlItem/1.0",
-              "query": "resources\r\n| where type == \"microsoft.hybridcompute/machines\"\r\n| where kind == \"HCI\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| join kind=inner (\r\n    resources\r\n    | where type == \"microsoft.azurestackhci/clusters\"\r\n    | where '{ClusterTagName}' == '' or ('{ClusterTagValue}' != '' and tostring(tags['{ClusterTagName}']) =~ '{ClusterTagValue}')\r\n    | project clusterRG = resourceGroup\r\n) on $left.resourceGroup == $right.clusterRG\r\n| extend status = tostring(properties.status)\r\n| extend osSku = tostring(properties.osSku)\r\n| extend osVersion = tostring(properties.osVersion)\r\n| extend agentVersion = tostring(properties.agentVersion)\r\n| extend vCPUs = toint(properties.detectedProperties.logicalCoreCount)\r\n| extend memoryGB = toint(properties.detectedProperties.totalPhysicalMemoryInGigabytes)\r\n| extend processor = tostring(properties.detectedProperties.processorNames)\r\n| extend ipAddress = tostring(properties.networkProfile.networkInterfaces[0].ipAddresses[0].address)\r\n| extend domainName = tostring(properties.domainName)\r\n| extend osInstallDate = todatetime(properties.osInstallDate)\r\n| extend lastStatusChange = todatetime(properties.lastStatusChange)\r\n| extend vmLink = strcat('https://portal.azure.com/#@/resource', id)\r\n| extend statusSort = case(status == 'Connected', 0, 1)\r\n| project VMName = name, vmLink, resourceGroup, status, osSku, osVersion, vCPUs, memoryGB, ipAddress, domainName, agentVersion, osInstallDate, lastStatusChange, location, statusSort\r\n| order by statusSort asc, VMName asc\r\n| project-away statusSort",
+              "query": "resources\r\n| where type == \"microsoft.hybridcompute/machines\"\r\n| where kind == \"HCI\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| join kind=inner (\r\n    resources\r\n    | where type == \"microsoft.azurestackhci/clusters\"\r\n    | where '{ClusterTagName}' == '' or ('{ClusterTagValue}' != '' and tostring(tags['{ClusterTagName}']) =~ '{ClusterTagValue}')\r\n    | project clusterName = name, clusterRG = resourceGroup, clusterId = id\r\n) on $left.resourceGroup == $right.clusterRG\r\n| extend status = tostring(properties.status)\r\n| extend osSku = tostring(properties.osSku)\r\n| extend osVersion = tostring(properties.osVersion)\r\n| extend agentVersion = tostring(properties.agentVersion)\r\n| extend vCPUs = toint(properties.detectedProperties.logicalCoreCount)\r\n| extend memoryGB = toint(properties.detectedProperties.totalPhysicalMemoryInGigabytes)\r\n| extend processor = tostring(properties.detectedProperties.processorNames)\r\n| extend ipAddress = tostring(properties.networkProfile.networkInterfaces[0].ipAddresses[0].address)\r\n| extend domainName = tostring(properties.domainName)\r\n| extend osInstallDate = todatetime(properties.osInstallDate)\r\n| extend lastStatusChange = todatetime(properties.lastStatusChange)\r\n| extend vmLink = strcat('https://portal.azure.com/#@/resource', id)\r\n| extend clusterLink = strcat('https://portal.azure.com/#@/resource', clusterId)\r\n| extend statusSort = case(status == 'Connected', 0, 1)\r\n| project VMName = name, vmLink, resourceGroup, clusterName, clusterLink, status, osSku, osVersion, vCPUs, memoryGB, ipAddress, domainName, agentVersion, osInstallDate, lastStatusChange, location, statusSort\r\n| order by statusSort asc, VMName asc\r\n| project-away statusSort",
               "size": 0,
               "showAnalytics": true,
               "showRefreshButton": true,
@@ -3993,12 +4001,28 @@
               "gridSettings": {
                 "formatters": [
                   {
-                    "columnMatch": "vmLink",
+                    "columnMatch": "VMName",
                     "formatter": 7,
                     "formatOptions": {
                       "linkTarget": "Url",
-                      "linkLabel": "Open VM"
+                      "linkColumn": "vmLink"
                     }
+                  },
+                  {
+                    "columnMatch": "vmLink",
+                    "formatter": 5
+                  },
+                  {
+                    "columnMatch": "clusterName",
+                    "formatter": 7,
+                    "formatOptions": {
+                      "linkTarget": "Url",
+                      "linkColumn": "clusterLink"
+                    }
+                  },
+                  {
+                    "columnMatch": "clusterLink",
+                    "formatter": 5
                   },
                   {
                     "columnMatch": "status",
@@ -4069,12 +4093,18 @@
                     "label": "VM Name"
                   },
                   {
-                    "columnId": "vmLink",
-                    "label": "VM Link"
+                    "columnId": "vmLink"
                   },
                   {
                     "columnId": "resourceGroup",
                     "label": "Resource Group"
+                  },
+                  {
+                    "columnId": "clusterName",
+                    "label": "Cluster"
+                  },
+                  {
+                    "columnId": "clusterLink"
                   },
                   {
                     "columnId": "status",
@@ -4185,12 +4215,16 @@
                     }
                   },
                   {
-                    "columnMatch": "clusterLink",
+                    "columnMatch": "ClusterName",
                     "formatter": 7,
                     "formatOptions": {
                       "linkTarget": "Url",
-                      "linkLabel": "Open Cluster"
+                      "linkColumn": "clusterLink"
                     }
+                  },
+                  {
+                    "columnMatch": "clusterLink",
+                    "formatter": 5
                   }
                 ],
                 "filter": true,
@@ -4228,8 +4262,7 @@
                     "label": "Cluster Name"
                   },
                   {
-                    "columnId": "clusterLink",
-                    "label": "Cluster Link"
+                    "columnId": "clusterLink"
                   }
                 ]
               }
@@ -4536,12 +4569,16 @@
               "gridSettings": {
                 "formatters": [
                   {
-                    "columnMatch": "clusterLink",
+                    "columnMatch": "ClusterName",
                     "formatter": 7,
                     "formatOptions": {
                       "linkTarget": "Url",
-                      "linkLabel": "Open Cluster"
+                      "linkColumn": "clusterLink"
                     }
+                  },
+                  {
+                    "columnMatch": "clusterLink",
+                    "formatter": 5
                   },
                   {
                     "columnMatch": "connectivityStatus",
@@ -4617,8 +4654,7 @@
                     "label": "Cluster Name"
                   },
                   {
-                    "columnId": "clusterLink",
-                    "label": "Cluster Link"
+                    "columnId": "clusterLink"
                   },
                   {
                     "columnId": "resourceGroup",
@@ -4706,12 +4742,16 @@
               "gridSettings": {
                 "formatters": [
                   {
-                    "columnMatch": "clusterLink",
+                    "columnMatch": "ClusterName",
                     "formatter": 7,
                     "formatOptions": {
                       "linkTarget": "Url",
-                      "linkLabel": "Open Cluster"
+                      "linkColumn": "clusterLink"
                     }
+                  },
+                  {
+                    "columnMatch": "clusterLink",
+                    "formatter": 5
                   },
                   {
                     "columnMatch": "certExpiration",
@@ -4752,8 +4792,7 @@
                     "label": "Cluster Name"
                   },
                   {
-                    "columnId": "clusterLink",
-                    "label": "Cluster Link"
+                    "columnId": "clusterLink"
                   },
                   {
                     "columnId": "resourceGroup",
@@ -5003,12 +5042,16 @@
               "gridSettings": {
                 "formatters": [
                   {
-                    "columnMatch": "clusterLink",
+                    "columnMatch": "clusterName",
                     "formatter": 7,
                     "formatOptions": {
                       "linkTarget": "Url",
-                      "linkLabel": "Open Cluster"
+                      "linkColumn": "clusterLink"
                     }
+                  },
+                  {
+                    "columnMatch": "clusterLink",
+                    "formatter": 5
                   },
                   {
                     "columnMatch": "status",
@@ -5043,8 +5086,7 @@
                     "label": "Cluster"
                   },
                   {
-                    "columnId": "clusterLink",
-                    "label": "Cluster Link"
+                    "columnId": "clusterLink"
                   },
                   {
                     "columnId": "extensionName",
@@ -5545,15 +5587,15 @@
                 "formatters": [
                   {
                     "columnMatch": "clusterName",
-                    "formatter": 1
-                  },
-                  {
-                    "columnMatch": "clusterLink",
                     "formatter": 7,
                     "formatOptions": {
                       "linkTarget": "Url",
-                      "linkLabel": "Open in Portal"
+                      "linkColumn": "clusterLink"
                     }
+                  },
+                  {
+                    "columnMatch": "clusterLink",
+                    "formatter": 5
                   },
                   {
                     "columnMatch": "HealthStatus",
@@ -5638,8 +5680,7 @@
                     "label": "Cluster Name"
                   },
                   {
-                    "columnId": "clusterLink",
-                    "label": "Cluster Link"
+                    "columnId": "clusterLink"
                   },
                   {
                     "columnId": "HealthStatus",
@@ -5708,15 +5749,15 @@
                 "formatters": [
                   {
                     "columnMatch": "clusterName",
-                    "formatter": 1
-                  },
-                  {
-                    "columnMatch": "clusterLink",
                     "formatter": 7,
                     "formatOptions": {
                       "linkTarget": "Url",
-                      "linkLabel": "Open Cluster"
+                      "linkColumn": "clusterLink"
                     }
+                  },
+                  {
+                    "columnMatch": "clusterLink",
+                    "formatter": 5
                   },
                   {
                     "columnMatch": "healthState",
@@ -5849,8 +5890,7 @@
                     "label": "Cluster Name"
                   },
                   {
-                    "columnId": "clusterLink",
-                    "label": "Cluster Link"
+                    "columnId": "clusterLink"
                   },
                   {
                     "columnId": "healthState",
@@ -6089,12 +6129,16 @@
               "gridSettings": {
                 "formatters": [
                   {
-                    "columnMatch": "ClusterLink",
+                    "columnMatch": "ClusterName",
                     "formatter": 7,
                     "formatOptions": {
                       "linkTarget": "Url",
-                      "linkLabel": "Open Cluster"
+                      "linkColumn": "ClusterLink"
                     }
+                  },
+                  {
+                    "columnMatch": "ClusterLink",
+                    "formatter": 5
                   },
                   {
                     "columnMatch": "State",
@@ -6152,8 +6196,7 @@
                     "label": "Cluster Name"
                   },
                   {
-                    "columnId": "ClusterLink",
-                    "label": "Cluster Link"
+                    "columnId": "ClusterLink"
                   },
                   {
                     "columnId": "UpdateName",
@@ -6565,12 +6608,16 @@
               "gridSettings": {
                 "formatters": [
                   {
-                    "columnMatch": "clusterLink",
+                    "columnMatch": "ClusterName",
                     "formatter": 7,
                     "formatOptions": {
                       "linkTarget": "Url",
-                      "linkLabel": "View Updates"
+                      "linkColumn": "clusterLink"
                     }
+                  },
+                  {
+                    "columnMatch": "clusterLink",
+                    "formatter": 5
                   },
                   {
                     "columnMatch": "State",
@@ -6608,8 +6655,7 @@
                     "label": "Cluster Name"
                   },
                   {
-                    "columnId": "clusterLink",
-                    "label": "Cluster Link"
+                    "columnId": "clusterLink"
                   },
                   {
                     "columnId": "UpdateInstalling",
