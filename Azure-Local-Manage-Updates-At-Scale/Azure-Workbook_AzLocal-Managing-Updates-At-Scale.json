@@ -106,7 +106,7 @@
     {
       "type": 1,
       "content": {
-        "json": "<div style=\"background-color: #e6f2ff; border-left: 4px solid #0078d4; padding: 10px 15px; margin: 10px 0; border-radius: 4px;\">\r\n<span style=\"font-size: 16px;\">📋 <strong>Workbook Version: v0.7.0</strong></span><br/>\r\n<span style=\"font-size: 13px;\">🔄 <a href=\"https://github.com/NeilBird/Azure-Local/tree/main/Azure-Local-Manage-Updates-At-Scale\" target=\"_blank\"><strong>Check GitHub for Updates</strong></a> — Compare your version against the latest release on GitHub, and copy/paste to update if needed</span>\r\n</div>",
+        "json": "<div style=\"background-color: #e6f2ff; border-left: 4px solid #0078d4; padding: 10px 15px; margin: 10px 0; border-radius: 4px;\">\r\n<span style=\"font-size: 16px;\">📋 <strong>Workbook Version: v0.7.0</strong></span><br/>\r\n<span style=\"font-size: 13px;\">🔄 <a href=\"https://github.com/NeilBird/Azure-Local/tree/main/Azure-Local-Manage-Updates-At-Scale\" target=\"_blank\"><strong>Check GitHub for Updates</strong></a> — Compare your version against the latest release on GitHub, and copy/paste, then Apply to update if needed</span>\r\n</div>",
         "style": "info"
       },
       "name": "version-update-banner"
@@ -4286,10 +4286,80 @@
             "name": "text-vm-by-cluster"
           },
           {
+            "type": 9,
+            "content": {
+              "version": "KqlParameterItem/1.0",
+              "parameters": [
+                {
+                  "id": "vm-cluster-name-filter",
+                  "version": "KqlParameterItem/1.0",
+                  "name": "VMClusterVMNameFilter",
+                  "label": "Filter by VM Name",
+                  "type": 1,
+                  "description": "Optional: Filter by VM name using wildcards. Example: *vm01* or *web*",
+                  "isRequired": false,
+                  "value": "",
+                  "timeContext": {
+                    "durationMs": 86400000
+                  }
+                },
+                {
+                  "id": "vm-cluster-status-filter",
+                  "version": "KqlParameterItem/1.0",
+                  "name": "VMClusterStatusFilter",
+                  "label": "VM Status",
+                  "type": 2,
+                  "description": "Filter by VM connection status",
+                  "isRequired": true,
+                  "multiSelect": true,
+                  "quote": "'",
+                  "delimiter": ",",
+                  "typeSettings": {
+                    "additionalResourceOptions": [
+                      "value::all"
+                    ],
+                    "showDefault": false
+                  },
+                  "jsonData": "[\"Connected\", \"Disconnected\", \"Expired\", \"Error\"]",
+                  "defaultValue": "value::all"
+                },
+                {
+                  "id": "vm-cluster-ossku-filter",
+                  "version": "KqlParameterItem/1.0",
+                  "name": "VMClusterOsSkuFilter",
+                  "label": "OS SKU",
+                  "type": 2,
+                  "description": "Filter by OS SKU",
+                  "isRequired": true,
+                  "multiSelect": true,
+                  "quote": "'",
+                  "delimiter": ",",
+                  "query": "resources\r\n| where type == \"microsoft.hybridcompute/machines\"\r\n| where kind == \"HCI\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| extend osSku = tostring(properties.osSku)\r\n| where isnotempty(osSku)\r\n| distinct osSku\r\n| order by osSku asc",
+                  "crossComponentResources": [
+                    "{Subscriptions}"
+                  ],
+                  "typeSettings": {
+                    "additionalResourceOptions": [
+                      "value::all"
+                    ],
+                    "showDefault": false
+                  },
+                  "defaultValue": "value::all",
+                  "queryType": 1,
+                  "resourceType": "microsoft.resourcegraph/resources"
+                }
+              ],
+              "style": "pills",
+              "queryType": 1,
+              "resourceType": "microsoft.resourcegraph/resources"
+            },
+            "name": "vm-by-cluster-filters"
+          },
+          {
             "type": 3,
             "content": {
               "version": "KqlItem/1.0",
-              "query": "resources\r\n| where type == \"microsoft.hybridcompute/machines\"\r\n| where kind == \"HCI\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| extend vCPUs = toint(properties.detectedProperties.logicalCoreCount)\r\n| extend memoryGB = toint(properties.detectedProperties.totalPhysicalMemoryInGigabytes)\r\n| extend ipAddress = tostring(properties.networkProfile.networkInterfaces[0].ipAddresses[0].address)\r\n| project vmName = name, vmResourceGroup = resourceGroup, vmId = id, vmStatus = tostring(properties.status), osSku = tostring(properties.osSku), vCPUs, memoryGB, ipAddress\r\n| join kind=inner (\r\n    resources\r\n    | where type == \"microsoft.azurestackhci/clusters\"\r\n    | where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n    | where '{ClusterTagName}' == '' or ('{ClusterTagValue}' != '' and tostring(tags['{ClusterTagName}']) =~ '{ClusterTagValue}')\r\n    | project clusterName = name, clusterResourceGroup = resourceGroup, clusterId = id\r\n) on $left.vmResourceGroup == $right.clusterResourceGroup\r\n| extend vmLink = strcat('https://portal.azure.com/#@/resource', vmId)\r\n| extend clusterLink = strcat('https://portal.azure.com/#@/resource', clusterId)\r\n| project vmName, vmLink, vmStatus, osSku, vCPUs, memoryGB, ipAddress, ClusterName = coalesce(clusterName, 'Unknown'), clusterLink\r\n| order by ClusterName asc, vmName asc",
+              "query": "resources\r\n| where type == \"microsoft.hybridcompute/machines\"\r\n| where kind == \"HCI\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| extend vCPUs = toint(properties.detectedProperties.logicalCoreCount)\r\n| extend memoryGB = toint(properties.detectedProperties.totalPhysicalMemoryInGigabytes)\r\n| extend ipAddress = tostring(properties.networkProfile.networkInterfaces[0].ipAddresses[0].address)\r\n| project vmName = name, vmResourceGroup = resourceGroup, vmId = id, vmStatus = tostring(properties.status), osSku = tostring(properties.osSku), vCPUs, memoryGB, ipAddress\r\n| join kind=inner (\r\n    resources\r\n    | where type == \"microsoft.azurestackhci/clusters\"\r\n    | where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n    | where '{ClusterTagName}' == '' or ('{ClusterTagValue}' != '' and tostring(tags['{ClusterTagName}']) =~ '{ClusterTagValue}')\r\n    | project clusterName = name, clusterResourceGroup = resourceGroup, clusterId = id\r\n) on $left.vmResourceGroup == $right.clusterResourceGroup\r\n| extend vmLink = strcat('https://portal.azure.com/#@/resource', vmId)\r\n| extend clusterLink = strcat('https://portal.azure.com/#@/resource', clusterId)\r\n| where '{VMClusterVMNameFilter}' == '' or vmName matches regex strcat('(?i)', replace_string(replace_string('{VMClusterVMNameFilter}', '*', '.*'), '?', '.'))\r\n| where '*' in ({VMClusterStatusFilter}) or vmStatus in ({VMClusterStatusFilter})\r\n| where '*' in ({VMClusterOsSkuFilter}) or osSku in ({VMClusterOsSkuFilter})\r\n| project vmName, vmLink, vmStatus, osSku, vCPUs, memoryGB, ipAddress, ClusterName = coalesce(clusterName, 'Unknown'), clusterLink\r\n| order by ClusterName asc, vmName asc",
               "size": 0,
               "showAnalytics": true,
               "showRefreshButton": true,
@@ -4302,12 +4372,16 @@
               "gridSettings": {
                 "formatters": [
                   {
-                    "columnMatch": "vmLink",
+                    "columnMatch": "vmName",
                     "formatter": 7,
                     "formatOptions": {
                       "linkTarget": "Url",
-                      "linkLabel": "Open VM"
+                      "linkColumn": "vmLink"
                     }
+                  },
+                  {
+                    "columnMatch": "vmLink",
+                    "formatter": 5
                   },
                   {
                     "columnMatch": "vmStatus",
@@ -4356,8 +4430,7 @@
                     "label": "VM Name"
                   },
                   {
-                    "columnId": "vmLink",
-                    "label": "VM Link"
+                    "columnId": "vmLink"
                   },
                   {
                     "columnId": "vmStatus",
@@ -4773,7 +4846,7 @@
                 "labelSettings": [
                   {
                     "columnId": "ClusterName",
-                    "label": "Cluster Name"
+                    "label": "AKS Cluster Name"
                   },
                   {
                     "columnId": "clusterLink"
@@ -4911,7 +4984,7 @@
                 "labelSettings": [
                   {
                     "columnId": "ClusterName",
-                    "label": "Cluster Name"
+                    "label": "AKS Cluster Name"
                   },
                   {
                     "columnId": "clusterLink"
@@ -4978,7 +5051,7 @@
                   "multiSelect": true,
                   "quote": "'",
                   "delimiter": ",",
-                  "query": "kubernetesconfigurationresources\r\n| where type == \"microsoft.kubernetesconfiguration/extensions\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| extend extensionName = coalesce(tostring(properties.ExtensionType), tostring(properties.extensionType))\r\n| parse tolower(id) with clusterId \"/providers/microsoft.kubernetesconfiguration/extensions/\" *\r\n| join kind=inner (\r\n    resources\r\n    | where type == \"microsoft.kubernetes/connectedclusters\"\r\n    | where properties.infrastructure == \"azure_stack_hci\"\r\n    | join kind=inner (\r\n        resources\r\n        | where type == \"microsoft.azurestackhci/clusters\"\r\n        | where '{ClusterTagName}' == '' or ('{ClusterTagValue}' != '' and tostring(tags['{ClusterTagName}']) =~ '{ClusterTagValue}')\r\n        | project clusterRG = resourceGroup\r\n    ) on $left.resourceGroup == $right.clusterRG\r\n    | project clusterId = tolower(id)\r\n) on clusterId\r\n| where isnotempty(extensionName)\r\n| distinct extensionName\r\n| order by extensionName asc",
+                  "query": "kubernetesconfigurationresources\r\n| where type == \"microsoft.kubernetesconfiguration/extensions\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| extend extensionName = coalesce(tostring(properties.ExtensionType), tostring(properties.extensionType))\r\n| parse tolower(id) with clusterId \"/providers/microsoft.kubernetesconfiguration/extensions/\" *\r\n| join kind=inner (\r\n    resources\r\n    | where type == \"microsoft.kubernetes/connectedclusters\"\r\n    | where properties.infrastructure == \"azure_stack_hci\"\r\n    | project clusterId = tolower(id)\r\n) on clusterId\r\n| where isnotempty(extensionName)\r\n| distinct extensionName\r\n| order by extensionName asc",
                   "crossComponentResources": [
                     "{Subscriptions}"
                   ],
@@ -5003,7 +5076,7 @@
             "type": 3,
             "content": {
               "version": "KqlItem/1.0",
-              "query": "kubernetesconfigurationresources\r\n| where type == \"microsoft.kubernetesconfiguration/extensions\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| extend status = coalesce(tostring(properties.ProvisioningState), tostring(properties.provisioningState))\r\n| extend extensionName = coalesce(tostring(properties.ExtensionType), tostring(properties.extensionType))\r\n| parse tolower(id) with clusterId \"/providers/microsoft.kubernetesconfiguration/extensions/\" *\r\n| join kind=inner (\r\n    resources\r\n    | where type == \"microsoft.kubernetes/connectedclusters\"\r\n    | where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n    | where properties.infrastructure == \"azure_stack_hci\"\r\n    | join kind=inner (\r\n        resources\r\n        | where type == \"microsoft.azurestackhci/clusters\"\r\n        | where '{ClusterTagName}' == '' or ('{ClusterTagValue}' != '' and tostring(tags['{ClusterTagName}']) =~ '{ClusterTagValue}')\r\n        | project clusterRG = resourceGroup\r\n    ) on $left.resourceGroup == $right.clusterRG\r\n    | project clusterId = tolower(id), clusterName = name\r\n) on clusterId\r\n| where isnotempty(extensionName)\r\n| where '*' in ({AksExtensionNameFilter}) or extensionName in ({AksExtensionNameFilter})\r\n| where '*' in ({AksExtensionStatusFilter}) or status in ({AksExtensionStatusFilter})\r\n| summarize count() by extensionName, status\r\n| summarize \r\n    Succeeded = sumif(count_, status == \"Succeeded\"),\r\n    Failed = sumif(count_, status == \"Failed\"),\r\n    Creating = sumif(count_, status == \"Creating\"),\r\n    Updating = sumif(count_, status == \"Updating\"),\r\n    Deleting = sumif(count_, status == \"Deleting\"),\r\n    Other = sumif(count_, status !in (\"Succeeded\", \"Failed\", \"Creating\", \"Updating\", \"Deleting\"))\r\n    by extensionName\r\n| project extensionName, Succeeded, Failed, Creating, Updating, Deleting, Other\r\n| order by extensionName asc",
+              "query": "kubernetesconfigurationresources\r\n| where type == \"microsoft.kubernetesconfiguration/extensions\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| extend status = coalesce(tostring(properties.ProvisioningState), tostring(properties.provisioningState))\r\n| extend extensionName = coalesce(tostring(properties.ExtensionType), tostring(properties.extensionType))\r\n| parse tolower(id) with clusterId \"/providers/microsoft.kubernetesconfiguration/extensions/\" *\r\n| join kind=inner (\r\n    resources\r\n    | where type == \"microsoft.kubernetes/connectedclusters\"\r\n    | where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n    | where properties.infrastructure == \"azure_stack_hci\"\r\n    | project clusterId = tolower(id), clusterName = name\r\n) on clusterId\r\n| where isnotempty(extensionName)\r\n| where '*' in ({AksExtensionNameFilter}) or extensionName in ({AksExtensionNameFilter})\r\n| where '*' in ({AksExtensionStatusFilter}) or status in ({AksExtensionStatusFilter})\r\n| summarize count() by extensionName, status\r\n| summarize \r\n    Succeeded = sumif(count_, status == \"Succeeded\"),\r\n    Failed = sumif(count_, status == \"Failed\"),\r\n    Creating = sumif(count_, status == \"Creating\"),\r\n    Updating = sumif(count_, status == \"Updating\"),\r\n    Deleting = sumif(count_, status == \"Deleting\"),\r\n    Other = sumif(count_, status !in (\"Succeeded\", \"Failed\", \"Creating\", \"Updating\", \"Deleting\"))\r\n    by extensionName\r\n| project extensionName, Succeeded, Failed, Creating, Updating, Deleting, Other\r\n| order by extensionName asc",
               "size": 0,
               "showRefreshButton": true,
               "title": "AKS Extension Status by Type",
@@ -5149,7 +5222,7 @@
             "type": 3,
             "content": {
               "version": "KqlItem/1.0",
-              "query": "kubernetesconfigurationresources\r\n| where type == \"microsoft.kubernetesconfiguration/extensions\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| extend status = coalesce(tostring(properties.ProvisioningState), tostring(properties.provisioningState))\r\n| where status == \"Failed\"\r\n| extend extensionName = coalesce(tostring(properties.ExtensionType), tostring(properties.extensionType))\r\n| extend message = coalesce(tostring(properties.Statuses[0].message), tostring(properties.statuses[0].message))\r\n| parse tolower(id) with clusterId \"/providers/microsoft.kubernetesconfiguration/extensions/\" *\r\n| join kind=inner (\r\n    resources\r\n    | where type == \"microsoft.kubernetes/connectedclusters\"\r\n    | where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n    | where properties.infrastructure == \"azure_stack_hci\"\r\n    | join kind=inner (\r\n        resources\r\n        | where type == \"microsoft.azurestackhci/clusters\"\r\n        | where '{ClusterTagName}' == '' or ('{ClusterTagValue}' != '' and tostring(tags['{ClusterTagName}']) =~ '{ClusterTagValue}')\r\n        | project clusterRG = resourceGroup\r\n    ) on $left.resourceGroup == $right.clusterRG\r\n    | project clusterId = tolower(id), clusterName = name, clusterResourceGroup = resourceGroup, subscriptionId\r\n) on clusterId\r\n| extend clusterLink = strcat('https://portal.azure.com/#@/resource', clusterId)\r\n| project clusterName, clusterLink, extensionName, status, message, resourceGroup = clusterResourceGroup, subscriptionId\r\n| order by clusterName asc, extensionName asc",
+              "query": "kubernetesconfigurationresources\r\n| where type == \"microsoft.kubernetesconfiguration/extensions\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| extend status = coalesce(tostring(properties.ProvisioningState), tostring(properties.provisioningState))\r\n| where status == \"Failed\"\r\n| extend extensionName = coalesce(tostring(properties.ExtensionType), tostring(properties.extensionType))\r\n| extend message = coalesce(tostring(properties.Statuses[0].message), tostring(properties.statuses[0].message))\r\n| parse tolower(id) with clusterId \"/providers/microsoft.kubernetesconfiguration/extensions/\" *\r\n| join kind=inner (\r\n    resources\r\n    | where type == \"microsoft.kubernetes/connectedclusters\"\r\n    | where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n    | where properties.infrastructure == \"azure_stack_hci\"\r\n    | project clusterId = tolower(id), clusterName = name, clusterResourceGroup = resourceGroup, subscriptionId\r\n) on clusterId\r\n| extend clusterLink = strcat('https://portal.azure.com/#@/resource', clusterId)\r\n| project clusterName, clusterLink, extensionName, status, message, resourceGroup = clusterResourceGroup, subscriptionId\r\n| order by clusterName asc, extensionName asc",
               "size": 0,
               "showAnalytics": true,
               "title": "⚠️ Failed AKS Extensions",
@@ -5205,7 +5278,7 @@
                 "labelSettings": [
                   {
                     "columnId": "clusterName",
-                    "label": "Cluster"
+                    "label": "AKS Cluster Name"
                   },
                   {
                     "columnId": "clusterLink"
