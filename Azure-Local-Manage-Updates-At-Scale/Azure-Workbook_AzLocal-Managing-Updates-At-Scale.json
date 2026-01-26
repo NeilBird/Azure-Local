@@ -106,7 +106,7 @@
     {
       "type": 1,
       "content": {
-        "json": "<div style=\"background-color: #e6f2ff; border-left: 4px solid #0078d4; padding: 10px 15px; margin: 10px 0; border-radius: 4px;\">\r\n<span style=\"font-size: 16px;\">📋 <strong>Workbook Version: v0.7.0</strong></span><br/>\r\n<span style=\"font-size: 13px;\">🔄 <a href=\"https://github.com/NeilBird/Azure-Local/tree/main/Azure-Local-Manage-Updates-At-Scale\" target=\"_blank\"><strong>Check GitHub for Updates</strong></a> — Compare your version against the latest release on GitHub, and copy/paste, then Apply to update if needed</span>\r\n</div>",
+        "json": "<div style=\"background-color: #e6f2ff; border-left: 4px solid #0078d4; padding: 10px 15px; margin: 10px 0; border-radius: 4px;\">\r\n<span style=\"font-size: 16px;\">📋 <strong>Workbook Version: v0.7.1</strong></span><br/>\r\n<span style=\"font-size: 13px;\">🔄 <a href=\"https://github.com/NeilBird/Azure-Local/tree/main/Azure-Local-Manage-Updates-At-Scale\" target=\"_blank\"><strong>Check GitHub for Updates</strong></a> — Compare your version against the latest release on GitHub, and copy/paste, then Apply to update if needed</span>\r\n</div>",
         "style": "info"
       },
       "name": "version-update-banner"
@@ -1058,7 +1058,7 @@
             "type": 3,
             "content": {
               "version": "KqlItem/1.0",
-              "query": "extensibilityresources\r\n| where type == \"microsoft.azurestackhci/clusters/updatesummaries\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| extend currentVersion = tostring(properties.currentVersion)\r\n| extend versionParts = split(currentVersion, '.')\r\n| extend yymm = tostring(versionParts[1])\r\n| extend versionYear = toint(substring(yymm, 0, 2))\r\n| extend versionMonth = toint(substring(yymm, 2, 2))\r\n| extend versionDate = make_datetime(2000 + versionYear, versionMonth, 1)\r\n| extend cutoffDate = datetime_add('month', -6, startofmonth(now()))\r\n| extend isSupported = versionDate >= cutoffDate\r\n| where isSupported == true\r\n| summarize Supported = count()\r\n| extend Label = 'Supported release'",
+              "query": "extensibilityresources\r\n| where type == \"microsoft.azurestackhci/clusters/updatesummaries\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| extend clusterName = tolower(tostring(split(id, '/')[8]))\r\n| extend clusterRG = tolower(resourceGroup)\r\n| join kind=inner (\r\n    resources\r\n    | where type == \"microsoft.azurestackhci/clusters\"\r\n    | where '{ClusterTagName}' == '' or ('{ClusterTagValue}' != '' and tostring(tags['{ClusterTagName}']) =~ '{ClusterTagValue}')\r\n    | project clusterName = tolower(name), clusterRG = tolower(resourceGroup)\r\n) on clusterName, clusterRG\r\n| extend currentVersion = tostring(properties.currentVersion)\r\n| extend versionParts = split(currentVersion, '.')\r\n| extend yymm = tostring(versionParts[1])\r\n| extend versionYear = toint(substring(yymm, 0, 2))\r\n| extend versionMonth = toint(substring(yymm, 2, 2))\r\n| extend versionDate = make_datetime(2000 + versionYear, versionMonth, 1)\r\n| extend cutoffDate = datetime_add('month', -6, startofmonth(now()))\r\n| extend isSupported = versionDate >= cutoffDate\r\n| where isSupported == true\r\n| summarize Supported = count()\r\n| extend Label = 'Supported release'",
               "size": 4,
               "queryType": 1,
               "resourceType": "microsoft.resourcegraph/resources",
@@ -1108,7 +1108,7 @@
             "type": 3,
             "content": {
               "version": "KqlItem/1.0",
-              "query": "extensibilityresources\r\n| where type == \"microsoft.azurestackhci/clusters/updatesummaries\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| extend currentVersion = tostring(properties.currentVersion)\r\n| extend versionParts = split(currentVersion, '.')\r\n| extend yymm = tostring(versionParts[1])\r\n| extend versionYear = toint(substring(yymm, 0, 2))\r\n| extend versionMonth = toint(substring(yymm, 2, 2))\r\n| extend versionDate = make_datetime(2000 + versionYear, versionMonth, 1)\r\n| extend cutoffDate = datetime_add('month', -6, startofmonth(now()))\r\n| extend isSupported = versionDate >= cutoffDate\r\n| where isSupported == false\r\n| summarize Unsupported = count()\r\n| extend Label = 'Unsupported release'",
+              "query": "extensibilityresources\r\n| where type == \"microsoft.azurestackhci/clusters/updatesummaries\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| extend clusterName = tolower(tostring(split(id, '/')[8]))\r\n| extend clusterRG = tolower(resourceGroup)\r\n| join kind=inner (\r\n    resources\r\n    | where type == \"microsoft.azurestackhci/clusters\"\r\n    | where '{ClusterTagName}' == '' or ('{ClusterTagValue}' != '' and tostring(tags['{ClusterTagName}']) =~ '{ClusterTagValue}')\r\n    | project clusterName = tolower(name), clusterRG = tolower(resourceGroup)\r\n) on clusterName, clusterRG\r\n| extend currentVersion = tostring(properties.currentVersion)\r\n| extend versionParts = split(currentVersion, '.')\r\n| extend yymm = tostring(versionParts[1])\r\n| extend versionYear = toint(substring(yymm, 0, 2))\r\n| extend versionMonth = toint(substring(yymm, 2, 2))\r\n| extend versionDate = make_datetime(2000 + versionYear, versionMonth, 1)\r\n| extend cutoffDate = datetime_add('month', -6, startofmonth(now()))\r\n| extend isSupported = versionDate >= cutoffDate\r\n| where isSupported == false\r\n| summarize Unsupported = count()\r\n| extend Label = 'Unsupported release'",
               "size": 4,
               "queryType": 1,
               "resourceType": "microsoft.resourcegraph/resources",
@@ -4882,16 +4882,50 @@
             "type": 3,
             "content": {
               "version": "KqlItem/1.0",
-              "query": "resources\r\n| where type == \"microsoft.kubernetes/connectedclusters\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| where properties.infrastructure == \"azure_stack_hci\"\r\n| join kind=leftouter (\r\n    resources\r\n    | where type == \"microsoft.extendedlocation/customlocations\"\r\n    | where tostring(properties.hostResourceId) contains \"Microsoft.ResourceConnector/appliances\"\r\n    | extend arcBridgeRG = tolower(tostring(split(tostring(properties.hostResourceId), '/')[4]))\r\n    | project customLocationRG = tolower(resourceGroup), arcBridgeRG\r\n) on $left.resourceGroup == $right.customLocationRG\r\n| join kind=leftouter (\r\n    resources\r\n    | where type == \"microsoft.azurestackhci/clusters\"\r\n    | where '{ClusterTagName}' == '' or ('{ClusterTagValue}' != '' and tostring(tags['{ClusterTagName}']) =~ '{ClusterTagValue}')\r\n    | project azureLocalClusterName = name, clusterRG = tolower(resourceGroup)\r\n) on $left.arcBridgeRG == $right.clusterRG\r\n| where '{ClusterTagName}' == '' or isnotempty(azureLocalClusterName)\r\n| extend connectivityStatus = tostring(properties.connectivityStatus)\r\n| extend provisioningState = tostring(properties.provisioningState)\r\n| extend kubernetesVersion = tostring(properties.kubernetesVersion)\r\n| extend agentVersion = tostring(properties.agentVersion)\r\n| extend totalNodeCount = toint(properties.totalNodeCount)\r\n| extend totalCoreCount = toint(properties.totalCoreCount)\r\n| extend distribution = tostring(properties.distribution)\r\n| extend lastConnectivityTime = todatetime(properties.lastConnectivityTime)\r\n| extend certExpiration = todatetime(properties.managedIdentityCertificateExpirationTime)\r\n| extend createdAt = todatetime(systemData.createdAt)\r\n| extend clusterLink = strcat('https://portal.azure.com/#@/resource', id)\r\n| extend clusterResourceId = tolower(id)\r\n| join kind=leftouter (\r\n    extensibilityresources\r\n    | where type == \"microsoft.hybridcontainerservice/provisionedclusterinstances\"\r\n    | extend controlPlaneNodes = toint(properties[\"controlPlane\"][\"count\"])\r\n    | mv-expand agentPool = properties.agentPoolProfiles\r\n    | summarize controlPlaneNodes = max(controlPlaneNodes), workerNodes = sum(toint(agentPool[\"count\"])) by id\r\n    | extend clusterResourceId = tolower(substring(id, 0, indexof(id, \"/providers/Microsoft.HybridContainerService\")))\r\n    | project clusterResourceId, controlPlaneNodes, workerNodes\r\n) on clusterResourceId\r\n| project ClusterName = name, clusterLink, connectivityStatus, provisioningState, resourceGroup, azureLocalClusterName, kubernetesVersion, agentVersion, controlPlaneNodes, workerNodes, totalNodeCount, totalCoreCount, distribution, lastConnectivityTime, certExpiration, createdAt, location\r\n| order by connectivityStatus asc, ClusterName asc",
+              "query": "resources\r\n| where type == \"microsoft.kubernetes/connectedclusters\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| where properties.infrastructure == \"azure_stack_hci\"\r\n| extend aksRG = tolower(resourceGroup)\r\n| join kind=leftouter (\r\n    resources\r\n    | where type == \"microsoft.extendedlocation/customlocations\"\r\n    | where tostring(properties.hostResourceId) contains \"Microsoft.ResourceConnector/appliances\"\r\n    | extend arcBridgeId = tolower(tostring(properties.hostResourceId))\r\n    | project customLocationRG = tolower(resourceGroup), arcBridgeId\r\n) on $left.aksRG == $right.customLocationRG\r\n| join kind=leftouter (\r\n    kubernetesconfigurationresources\r\n    | where type =~ \"microsoft.kubernetesconfiguration/extensions\"\r\n    | where name =~ \"hybridaksextension\"\r\n    | extend hciClusterId = tolower(tostring(properties.ConfigurationSettings.HCIClusterID))\r\n    | extend arcBridgeId = tolower(substring(id, 0, indexof(id, \"/providers/Microsoft.KubernetesConfiguration\")))\r\n    | project arcBridgeId, hciClusterId\r\n) on arcBridgeId\r\n| join kind=leftouter (\r\n    resources\r\n    | where type == \"microsoft.azurestackhci/clusters\"\r\n    | where '{ClusterTagName}' == '' or ('{ClusterTagValue}' != '' and tostring(tags['{ClusterTagName}']) =~ '{ClusterTagValue}')\r\n    | project azureLocalClusterName = name, hciClusterId = tolower(id), azureLocalClusterLink = strcat('https://portal.azure.com/#@/resource', id)\r\n) on hciClusterId\r\n| where '{ClusterTagName}' == '' or isnotempty(azureLocalClusterName)\r\n| extend connectivityStatus = tostring(properties.connectivityStatus)\r\n| extend provisioningState = tostring(properties.provisioningState)\r\n| extend kubernetesVersion = tostring(properties.kubernetesVersion)\r\n| extend agentVersion = tostring(properties.agentVersion)\r\n| extend totalNodeCount = toint(properties.totalNodeCount)\r\n| extend totalCoreCount = toint(properties.totalCoreCount)\r\n| extend distribution = tostring(properties.distribution)\r\n| extend lastConnectivityTime = todatetime(properties.lastConnectivityTime)\r\n| extend certExpiration = todatetime(properties.managedIdentityCertificateExpirationTime)\r\n| extend createdAt = todatetime(systemData.createdAt)\r\n| extend clusterLink = strcat('https://portal.azure.com/#@/resource', id)\r\n| extend clusterResourceId = tolower(id)\r\n| project ClusterName = name, clusterLink, clusterResourceId, connectivityStatus, provisioningState, resourceGroup, azureLocalClusterName, azureLocalClusterLink, kubernetesVersion, agentVersion, totalNodeCount, totalCoreCount, distribution, lastConnectivityTime, certExpiration, createdAt, location\r\n| order by connectivityStatus asc, ClusterName asc",
               "size": 0,
-              "showAnalytics": true,
-              "showRefreshButton": true,
-              "showExportToExcel": true,
               "queryType": 1,
               "resourceType": "microsoft.resourcegraph/resources",
               "crossComponentResources": [
                 "{Subscriptions}"
-              ],
+              ]
+            },
+            "conditionalVisibility": {
+              "parameterName": "yourMom",
+              "comparison": "isEqualTo",
+              "value": "alwaysHidden"
+            },
+            "name": "aks-all-clusters-base"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "resources\r\n| where type == \"microsoft.kubernetes/connectedclusters\"\r\n| where properties.infrastructure == \"azure_stack_hci\"\r\n| extend clusterResourceId = tolower(id)\r\n| join kind=leftouter (\r\n    extensibilityresources\r\n    | where type == \"microsoft.hybridcontainerservice/provisionedclusterinstances\"\r\n    | extend controlPlaneNodes = toint(properties[\"controlPlane\"][\"count\"])\r\n    | mv-expand agentPool = properties.agentPoolProfiles\r\n    | summarize controlPlaneNodes = max(controlPlaneNodes), workerNodes = sum(toint(agentPool[\"count\"])) by id\r\n    | extend clusterResourceId = tolower(substring(id, 0, indexof(id, \"/providers/Microsoft.HybridContainerService\")))\r\n    | project clusterResourceId, controlPlaneNodes, workerNodes\r\n) on clusterResourceId\r\n| project clusterResourceId, controlPlaneNodes, workerNodes",
+              "size": 0,
+              "queryType": 1,
+              "resourceType": "microsoft.resourcegraph/resources",
+              "crossComponentResources": [
+                "{Subscriptions}"
+              ]
+            },
+            "conditionalVisibility": {
+              "parameterName": "yourMom",
+              "comparison": "isEqualTo",
+              "value": "alwaysHidden"
+            },
+            "name": "aks-all-clusters-nodes"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "{\"version\":\"Merge/1.0\",\"merges\":[{\"id\":\"aks-base-merge\",\"mergeType\":\"inner\",\"leftTable\":\"aks-all-clusters-base\",\"rightTable\":\"aks-all-clusters-nodes\",\"leftColumn\":\"clusterResourceId\",\"rightColumn\":\"clusterResourceId\"}],\"projectRename\":[{\"originalName\":\"[aks-all-clusters-base].ClusterName\",\"mergedName\":\"ClusterName\",\"fromId\":\"aks-base-merge\"},{\"originalName\":\"[aks-all-clusters-base].clusterLink\",\"mergedName\":\"clusterLink\",\"fromId\":\"aks-base-merge\"},{\"originalName\":\"[aks-all-clusters-base].connectivityStatus\",\"mergedName\":\"connectivityStatus\",\"fromId\":\"aks-base-merge\"},{\"originalName\":\"[aks-all-clusters-base].provisioningState\",\"mergedName\":\"provisioningState\",\"fromId\":\"aks-base-merge\"},{\"originalName\":\"[aks-all-clusters-base].resourceGroup\",\"mergedName\":\"resourceGroup\",\"fromId\":\"aks-base-merge\"},{\"originalName\":\"[aks-all-clusters-base].azureLocalClusterName\",\"mergedName\":\"azureLocalClusterName\",\"fromId\":\"aks-base-merge\"},{\"originalName\":\"[aks-all-clusters-base].azureLocalClusterLink\",\"mergedName\":\"azureLocalClusterLink\",\"fromId\":\"aks-base-merge\"},{\"originalName\":\"[aks-all-clusters-base].kubernetesVersion\",\"mergedName\":\"kubernetesVersion\",\"fromId\":\"aks-base-merge\"},{\"originalName\":\"[aks-all-clusters-base].agentVersion\",\"mergedName\":\"agentVersion\",\"fromId\":\"aks-base-merge\"},{\"originalName\":\"[aks-all-clusters-nodes].controlPlaneNodes\",\"mergedName\":\"controlPlaneNodes\",\"fromId\":\"aks-base-merge\"},{\"originalName\":\"[aks-all-clusters-nodes].workerNodes\",\"mergedName\":\"workerNodes\",\"fromId\":\"aks-base-merge\"},{\"originalName\":\"[aks-all-clusters-base].totalNodeCount\",\"mergedName\":\"totalNodeCount\",\"fromId\":\"aks-base-merge\"},{\"originalName\":\"[aks-all-clusters-base].totalCoreCount\",\"mergedName\":\"totalCoreCount\",\"fromId\":\"aks-base-merge\"},{\"originalName\":\"[aks-all-clusters-base].distribution\",\"mergedName\":\"distribution\",\"fromId\":\"aks-base-merge\"},{\"originalName\":\"[aks-all-clusters-base].lastConnectivityTime\",\"mergedName\":\"lastConnectivityTime\",\"fromId\":\"aks-base-merge\"},{\"originalName\":\"[aks-all-clusters-base].certExpiration\",\"mergedName\":\"certExpiration\",\"fromId\":\"aks-base-merge\"},{\"originalName\":\"[aks-all-clusters-base].createdAt\",\"mergedName\":\"createdAt\",\"fromId\":\"aks-base-merge\"},{\"originalName\":\"[aks-all-clusters-base].location\",\"mergedName\":\"location\",\"fromId\":\"aks-base-merge\"},{\"originalName\":\"[aks-all-clusters-base].clusterResourceId\"},{\"originalName\":\"[aks-all-clusters-nodes].clusterResourceId\"}]}",
+              "size": 0,
+              "showAnalytics": true,
+              "showRefreshButton": true,
+              "showExportToExcel": true,
+              "queryType": 7,
               "gridSettings": {
                 "formatters": [
                   {
@@ -4961,6 +4995,18 @@
                     }
                   },
                   {
+                    "columnMatch": "azureLocalClusterName",
+                    "formatter": 7,
+                    "formatOptions": {
+                      "linkTarget": "Url",
+                      "linkColumn": "azureLocalClusterLink"
+                    }
+                  },
+                  {
+                    "columnMatch": "azureLocalClusterLink",
+                    "formatter": 5
+                  },
+                  {
                     "columnMatch": "lastConnectivityTime",
                     "formatter": 6
                   },
@@ -4989,6 +5035,9 @@
                   {
                     "columnId": "azureLocalClusterName",
                     "label": "Azure Local Cluster"
+                  },
+                  {
+                    "columnId": "azureLocalClusterLink"
                   },
                   {
                     "columnId": "connectivityStatus",
