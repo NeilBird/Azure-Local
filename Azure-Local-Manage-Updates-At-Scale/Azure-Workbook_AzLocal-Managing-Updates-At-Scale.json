@@ -173,7 +173,7 @@
     {
       "type": 1,
       "content": {
-        "json": "### Filter Instructions\r\n- **Subscriptions**: Select one or more subscriptions to filter data (defaults to all accessible subscriptions)\r\n- **Resource Group Filter**: Optional wildcard filter for resource group names. Use `*` as wildcard (e.g., `*-prod-*` matches 'rg-hci-prod-01')\r\n- **Cluster Tag**: Optional tag filter. Enter both Tag Name and Tag Value to filter by Azure Local cluster tags. This filter also applies to AKS Arc clusters and VMs in the same resource group as matching clusters.\r\n\r\n---"
+        "json": "### Filter Instructions\r\n- **Subscriptions**: Select one or more subscriptions to filter data (defaults to all accessible subscriptions)\r\n- **Resource Group Filter**: Optional wildcard filter for resource group names. Use `*` as wildcard (e.g., `*-prod-*` matches 'rg-hci-prod-01')\r\n- **Cluster Tag**: Optional tag filter. Enter both Tag Name and Tag Value to filter by Azure Local cluster tags. This filter also applies to AKS Arc clusters and VMs in the same resource group as matching clusters.\r\n- **💡 Tip**: Set **Auto refresh** to 30 minutes using the toolbar dropdown (⟳) for hands-free monitoring\r\n\r\n---"
       },
       "name": "filter-instructions"
     },
@@ -1540,6 +1540,7 @@
               "size": 0,
               "title": "Clusters Not Synced in 24+ Hours",
               "noDataMessage": "All clusters have synced within the last 24 hours",
+              "showRefreshButton": true,
               "showExportToExcel": true,
               "queryType": 1,
               "resourceType": "microsoft.resourcegraph/resources",
@@ -1653,6 +1654,7 @@
                     "version": "KqlItem/1.0",
                     "query": "resources\r\n| where type == \"microsoft.resourceconnector/appliances\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| extend status = tostring(properties.status)\r\n| project arcbridgename = name, resourceGroup, status\r\n| join kind=leftouter (\r\n    resources\r\n    | where type == \"microsoft.azurestackhci/clusters\"\r\n    | where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n    | where '{ClusterTagName}' == '' or ('{ClusterTagValue}' != '' and tostring(tags['{ClusterTagName}']) =~ '{ClusterTagValue}')\r\n    | extend hcistatus = tostring(properties.status)\r\n    | project hciname = name, resourceGroup, hcistatus\r\n) on resourceGroup\r\n| extend hcistatus = coalesce(hcistatus, \"Unknown\")\r\n| summarize \r\n    TotalResources = count(),\r\n    ArcBridgeCount = dcount(arcbridgename),\r\n    HCIClusterCount = dcount(hciname)\r\n    by ArcBridgeStatus = status, HCIClusterConnectivity = hcistatus\r\n| extend sortOrder = case(ArcBridgeStatus == \"Running\", 0, ArcBridgeStatus == \"Offline\", 2, 1)\r\n| order by sortOrder asc\r\n| project-away sortOrder",
                     "size": 0,
+                    "showRefreshButton": true,
                     "queryType": 1,
                     "resourceType": "microsoft.resourcegraph/resources",
                     "crossComponentResources": [
