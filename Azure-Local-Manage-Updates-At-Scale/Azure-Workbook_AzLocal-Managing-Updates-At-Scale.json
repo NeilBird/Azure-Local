@@ -3572,6 +3572,13 @@
             "name": "nic-filters"
           },
           {
+            "type": 1,
+            "content": {
+              "json": "📚 **Knowledge:** [Retry and/or validate Network ATC intents using PowerShell](https://learn.microsoft.com/windows-server/networking/network-atc/manage-network-atc#validate-automatic-remediation)"
+            },
+            "name": "nic-atc-knowledge-link"
+          },
+          {
             "type": 3,
             "content": {
               "version": "KqlItem/1.0",
