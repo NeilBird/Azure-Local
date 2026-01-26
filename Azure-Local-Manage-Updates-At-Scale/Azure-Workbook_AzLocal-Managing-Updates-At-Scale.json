@@ -6205,6 +6205,14 @@
           {
             "type": 1,
             "content": {
+              "json": "💡 **Tip:** Hover your mouse cursor over the pie chart to show the percentage for each status."
+            },
+            "customWidth": "50",
+            "name": "pie-chart-hover-tip"
+          },
+          {
+            "type": 1,
+            "content": {
               "json": "## 🔄 All Cluster Update Status\r\n\r\n💡 **Information:** Apply updates to keep your clusters within the six month support window."
             },
             "name": "text-all-update-status"
