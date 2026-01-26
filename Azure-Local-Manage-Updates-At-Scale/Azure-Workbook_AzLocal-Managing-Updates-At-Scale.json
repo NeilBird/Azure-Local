@@ -3262,12 +3262,16 @@
               "gridSettings": {
                 "formatters": [
                   {
-                    "columnMatch": "machineLink",
+                    "columnMatch": "machineName",
                     "formatter": 7,
                     "formatOptions": {
                       "linkTarget": "Url",
-                      "linkLabel": "Open Node"
+                      "linkColumn": "machineLink"
                     }
+                  },
+                  {
+                    "columnMatch": "machineLink",
+                    "formatter": 5
                   },
                   {
                     "columnMatch": "status",
@@ -3303,11 +3307,10 @@
                   },
                   {
                     "columnId": "machineName",
-                    "label": "Node"
+                    "label": "Machine"
                   },
                   {
-                    "columnId": "machineLink",
-                    "label": "Node Link"
+                    "columnId": "machineLink"
                   },
                   {
                     "columnId": "extensionName",
