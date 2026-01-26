@@ -5153,9 +5153,9 @@
           {
             "type": 1,
             "content": {
-              "json": "📚 **Knowledge:** [Troubleshoot Azure Local Readiness Checks using Azure portal or PowerShell](https://learn.microsoft.com/azure/azure-local/update/update-troubleshooting-23h2?view=azloc-2601#troubleshoot-readiness-checks)"
+              "json": "📚 **Knowledge:** [Understand Azure Local update phases](https://learn.microsoft.com/azure/azure-local/update/update-phases-23h2)"
             },
-            "name": "text - readiness knowledge link"
+            "name": "text - update phases knowledge link"
           },
           {
             "type": 3,
@@ -5224,6 +5224,13 @@
               "json": "## ❌ Failure By Reason Summary"
             },
             "name": "text - 7"
+          },
+          {
+            "type": 1,
+            "content": {
+              "json": "📚 **Knowledge:** [Troubleshoot Azure Local Readiness Checks using Azure portal or PowerShell](https://learn.microsoft.com/azure/azure-local/update/update-troubleshooting-23h2?view=azloc-2601#troubleshoot-readiness-checks)"
+            },
+            "name": "text - readiness knowledge link"
           },
           {
             "type": 9,
