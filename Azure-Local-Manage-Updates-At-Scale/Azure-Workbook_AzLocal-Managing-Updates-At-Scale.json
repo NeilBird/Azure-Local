@@ -5669,7 +5669,7 @@
           {
             "type": 1,
             "content": {
-              "json": "📚 **Documentation:** [Troubleshooting Azure Local Updates](https://learn.microsoft.com/azure/azure-local/update/update-troubleshooting-23h2#using-powershell)\r\n\r\n📚 **Knowledge:** [Review troubleshooting guides (TSGs) in the Azure Local GitHub Supportability Forum, (search for the error message)](https://github.com/Azure/AzureLocal-Supportability)"
+              "json": "📚 **Documentation:** [Troubleshooting Azure Local Updates](https://learn.microsoft.com/azure/azure-local/update/update-troubleshooting-23h2#using-powershell)\r\n\r\n📚 **Knowledge:** [Review TroubleShooting Guides (TSGs) in the Azure Local GitHub Supportability Forum, (search for the error or scenario)](https://github.com/Azure/AzureLocal-Supportability)"
             },
             "name": "troubleshooting-link"
           },
