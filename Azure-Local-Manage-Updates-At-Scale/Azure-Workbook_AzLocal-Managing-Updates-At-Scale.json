@@ -160,6 +160,13 @@
             "style": "link"
           },
           {
+            "id": "sbe-updates-link",
+            "cellValue": "https://learn.microsoft.com/azure/azure-local/update/solution-builder-extension",
+            "linkTarget": "Url",
+            "linkLabel": "🧩 Solution Builder Extension (SBE) updates",
+            "style": "link"
+          },
+          {
             "id": "update-docs-link",
             "cellValue": "https://learn.microsoft.com/azure/azure-local/update/update-via-powershell-23h2",
             "linkTarget": "Url",
