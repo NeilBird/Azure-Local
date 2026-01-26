@@ -6678,7 +6678,7 @@
                   },
                   {
                     "columnId": "clusterLink",
-                    "label": "Cluster"
+                    "label": "Available Updates"
                   },
                   {
                     "columnId": "CurrentVersion",
