@@ -114,13 +114,6 @@
     {
       "type": 1,
       "content": {
-        "json": "### Filter Instructions\r\n- **Subscriptions**: Select one or more subscriptions to filter data (defaults to all accessible subscriptions)\r\n- **Resource Group Filter**: Optional wildcard filter for resource group names. Use `*` as wildcard (e.g., `*-prod-*` matches 'rg-hci-prod-01')\r\n- **Cluster Tag**: Optional tag filter. Enter both Tag Name and Tag Value to filter by Azure Local cluster tags. This filter also applies to AKS Arc clusters and VMs in the same resource group as matching clusters.\r\n\r\n---"
-      },
-      "name": "filter-instructions"
-    },
-    {
-      "type": 1,
-      "content": {
         "json": "### ⚡ Quick Actions and Knowledge Links"
       },
       "name": "quick-actions-header"
@@ -180,9 +173,9 @@
     {
       "type": 1,
       "content": {
-        "json": "---"
+        "json": "### Filter Instructions\r\n- **Subscriptions**: Select one or more subscriptions to filter data (defaults to all accessible subscriptions)\r\n- **Resource Group Filter**: Optional wildcard filter for resource group names. Use `*` as wildcard (e.g., `*-prod-*` matches 'rg-hci-prod-01')\r\n- **Cluster Tag**: Optional tag filter. Enter both Tag Name and Tag Value to filter by Azure Local cluster tags. This filter also applies to AKS Arc clusters and VMs in the same resource group as matching clusters.\r\n\r\n---"
       },
-      "name": "quick-actions-separator"
+      "name": "filter-instructions"
     },
     {
       "type": 11,
