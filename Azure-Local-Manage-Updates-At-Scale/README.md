@@ -19,6 +19,12 @@ An Azure Monitor Workbook for monitoring and managing Azure Local (formerly Azur
   - Azure Local Cluster column is now clickable with direct link to the parent cluster
   - Retained Control Plane and Worker Node columns
 
+- **Failed AKS Extensions Table Improvements**:
+  - Renamed "Error Message" column to "Error Details"
+  - Fixed case-sensitivity issue for error message property extraction
+  - Now includes error Code prefix when available (e.g., `InstallationFailed: Helm Upgrade Failed...`)
+  - Added clickable "Subscription Name" column with link to subscription in Azure Portal
+
 ## Previous Changes (v0.7.0)
 
 ### Major Updates and Improvements
