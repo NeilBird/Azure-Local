@@ -10,6 +10,41 @@ An Azure Monitor Workbook for monitoring and managing Azure Local (formerly Azur
 
 ## Recent Changes (v0.7.0)
 
+### Major Updates and Improvements
+
+- **Clusters Not Synced Recently Table**:
+  - Added "Subscription Name" column with clickable link to subscription in Azure Portal
+
+- **Update Readiness Summary Table Improvements**:
+  - Added status icons to "Update Status" column:
+    - ✅ Green tick for "AppliedSuccessfully"
+    - ❌ Red X for "UpdateFailed"
+    - ⚠️ Warning triangle for "NeedsAttention"
+    - 🕐 Pending icon for "UpdateAvailable"
+  - Added "Total" column showing sum of all health states per update status
+  - Moved "Total" column to second position (after Update Status)
+  - Table now sorted by Total (descending) - largest counts at top
+  - Renamed health columns: "Health State: Success", "Health State: Warning", "Health State: Critical"
+
+- **SBE Version Column**: Added "SBE Version" (Solution Builder Extension) column to display currently installed OEM extension version
+  - All Azure Local Machines table
+  - System Health Checks Overview table (after Azure Connection column)
+  - All Cluster Update Status table (after Azure Connection column)
+  - Clusters with Updates Available table (after Update State column)
+
+- **New Filter Options**:
+  - **Update Run History and Error Details table**: Added filters for Cluster Name, Update Name, State, and Status
+  - **All Azure Local Machines and Disconnected Nodes tables**: Added filters for Node Name and Cluster Name
+
+- **Column Naming**: Renamed "Cluster" column to "Cluster Name" in All Azure Local Machines, Disconnected Nodes, All Network Adapters, and Failed Node Extensions tables for consistency
+
+- **Failed Node Extensions Table Improvements**:
+  - Renamed "Machine" to "Machine Name" and moved it to first column
+  - Renamed "Cluster" to "Cluster Name" and moved it to fourth column (after Status)
+  - Made Cluster Name clickable with link to parent cluster resource
+
+- **Quick Actions Reordered**: Moved Activity Log, Azure Service Health, and Create Alert Rule links to the end of Quick Actions section
+
 - **Cluster Tag Filter Support**: Added comprehensive cluster tag filtering across all tabs
   - All feasible queries now honor the ClusterTagName and ClusterTagValue filter parameters
   - AKS Arc clusters and VMs in the same resource group as matching clusters are also filtered
@@ -29,6 +64,8 @@ An Azure Monitor Workbook for monitoring and managing Azure Local (formerly Azur
   - Machine Name is now clickable in All Network Adapters table
   - VM Name is now clickable in All Azure Local VMs table
   - Machine column renamed from "Node" and made clickable in Failed Node Extensions table
+  - Update Name in Update Attempts Details table is now clickable and links to the update run details view
+  - ARB Resource Name in Offline Azure Resource Bridges table is now clickable and links to the ARB resource
   - Remediation column in Detailed Health Check Results is conditionally clickable when it contains a URL
 
 - **Quick Actions Updates**:
@@ -39,12 +76,35 @@ An Azure Monitor Workbook for monitoring and managing Azure Local (formerly Azur
 - **Knowledge Links Added**:
   - Added VM extension troubleshooting link below Failed Node Extensions table
   - Added Network ATC intent validation link above All Network Adapters table
+  - Added tip for disconnected network adapters: check adapter status using `Get-NetAdapter` on the physical machine
+  - Added tip for orphaned ARBs: if Cluster Name shows 'Unknown', the ARB may have been orphaned
   - Reorganized Update Readiness knowledge links for better organization
   - Renamed lifecycle and releases links with more descriptive labels (📚 Knowledge / 📋 Documentation prefixes)
 
 - **ARB Alert Rules Tip**: Expanded guidance text for Azure Resource Bridge alert rule recommendations
 
 - **Auto-Refresh Tips**: Added helpful tips about 5-minute auto-refresh and manual refresh buttons
+
+- **Update Progress Tab Improvements**:
+  - **Update Run History and Error Details table**: 
+    - Renamed "State" filter to "Update State" with default filter of "Failed"
+    - Added note above table indicating default filter is applied
+    - Renamed "Error Message" column to "Error Details"
+    - "Current Step" column now properly populated for failed updates by extracting from deeply nested progress.steps
+    - "Current Step" is only shown for failed updates (empty for succeeded)
+    - Enhanced error extraction using hybrid approach:
+      - Primary: mv-expand traversal through 8 levels of nested steps for standard error messages
+      - Fallback: Regex pattern matching for deeply nested exceptions (up to 13+ levels) that contain "raised an exception:" patterns
+    - Improved handling of varied error nesting depths across different cluster configurations
+    - Error Details flyout now titled "Error Details" and displays full error message in formatted HTML with table layout for properties
+  - **Update Attempts Details table**: Moved "State" column to second position for better visibility
+  - **Success / Failure Summary table**: Added small summary table next to pie chart showing Succeeded and Failed counts with percentages; renamed "%" column to "Overall Percentage"
+  - Moved pie chart hover tip above the chart for better visibility
+
+- **All Cluster Update Status Table**:
+  - Renamed "Available Updates" column to "Update History"
+  - Link label changed from "View Updates" to "View History"
+  - Links directly to the cluster's update history page in Azure Portal
 
 - **Bug Fixes**:
   - Fixed ARG join limit error in Update Readiness Summary query
