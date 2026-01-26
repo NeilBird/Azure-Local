@@ -198,7 +198,7 @@
             "id": "summary-dashboard-tab",
             "cellValue": "selectedTab",
             "linkTarget": "parameter",
-            "linkLabel": "📊 Summary Dashboard",
+            "linkLabel": "📊 Azure Local Instances",
             "subTarget": "0",
             "style": "link",
             "preText": "",
@@ -261,7 +261,7 @@
       "content": {
         "version": "NotebookGroup/1.0",
         "groupType": "editable",
-        "title": "Summary Dashboard",
+        "title": "Azure Local Instances",
         "items": [
           {
             "type": 1,
@@ -984,7 +984,7 @@
             "type": 3,
             "content": {
               "version": "KqlItem/1.0",
-              "query": "resources\r\n| where type == \"microsoft.kubernetes/connectedclusters\"\r\n| where properties.infrastructure == \"azure_stack_hci\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| join kind=inner (\r\n    resources\r\n    | where type == \"microsoft.azurestackhci/clusters\"\r\n    | where '{ClusterTagName}' == '' or ('{ClusterTagValue}' != '' and tostring(tags['{ClusterTagName}']) =~ '{ClusterTagValue}')\r\n    | project clusterRG = resourceGroup\r\n) on $left.resourceGroup == $right.clusterRG\r\n| summarize TotalAKSArc = count()\r\n| extend Label = 'Total AKS Arc Clusters'",
+              "query": "resources\r\n| where type == \"microsoft.kubernetes/connectedclusters\"\r\n| where properties.infrastructure == \"azure_stack_hci\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| join kind=leftouter (\r\n    resources\r\n    | where type == \"microsoft.extendedlocation/customlocations\"\r\n    | where tostring(properties.hostResourceId) contains \"Microsoft.ResourceConnector/appliances\"\r\n    | extend arcBridgeRG = tolower(tostring(split(tostring(properties.hostResourceId), '/')[4]))\r\n    | project customLocationRG = tolower(resourceGroup), arcBridgeRG\r\n) on $left.resourceGroup == $right.customLocationRG\r\n| join kind=leftouter (\r\n    resources\r\n    | where type == \"microsoft.azurestackhci/clusters\"\r\n    | where '{ClusterTagName}' == '' or ('{ClusterTagValue}' != '' and tostring(tags['{ClusterTagName}']) =~ '{ClusterTagValue}')\r\n    | project azureLocalClusterName = name, clusterRG = tolower(resourceGroup)\r\n) on $left.arcBridgeRG == $right.clusterRG\r\n| where '{ClusterTagName}' == '' or isnotempty(azureLocalClusterName)\r\n| summarize TotalAKSArc = count()\r\n| extend Label = 'Total AKS Arc Clusters'",
               "size": 4,
               "queryType": 1,
               "resourceType": "microsoft.resourcegraph/resources",
@@ -1289,6 +1289,68 @@
               "margin": "5px",
               "padding": "5px"
             }
+          },
+          {
+            "type": 1,
+            "content": {
+              "json": "---\r\n## 📈 Azure Local Clusters Deployment Over Time"
+            },
+            "name": "text-cluster-deployments"
+          },
+          {
+            "type": 9,
+            "content": {
+              "version": "KqlParameterItem/1.0",
+              "parameters": [
+                {
+                  "id": "cluster-deployment-months",
+                  "version": "KqlParameterItem/1.0",
+                  "name": "ClusterDeploymentMonths",
+                  "label": "Time Range",
+                  "type": 2,
+                  "isRequired": true,
+                  "value": "12",
+                  "typeSettings": {
+                    "additionalResourceOptions": [],
+                    "showDefault": false
+                  },
+                  "jsonData": "[{\"value\":\"24\",\"label\":\"24 months\"},{\"value\":\"18\",\"label\":\"18 months\"},{\"value\":\"12\",\"label\":\"12 months\"},{\"value\":\"9\",\"label\":\"9 months\"},{\"value\":\"6\",\"label\":\"6 months\"},{\"value\":\"3\",\"label\":\"3 months\"},{\"value\":\"1\",\"label\":\"1 month\"},{\"value\":\"0.5\",\"label\":\"2 weeks\"},{\"value\":\"0.25\",\"label\":\"1 week\"}]"
+                }
+              ],
+              "style": "pills",
+              "queryType": 0,
+              "resourceType": "microsoft.resourcegraph/resources"
+            },
+            "name": "cluster-deployment-params"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "resources\r\n| where type == \"microsoft.azurestackhci/clusters\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| where '{ClusterTagName}' == '' or ('{ClusterTagValue}' != '' and tostring(tags['{ClusterTagName}']) =~ '{ClusterTagValue}')\r\n| extend registrationDate = todatetime(properties.registrationTimestamp)\r\n| where isnotempty(registrationDate)\r\n| where registrationDate >= ago(toint('{ClusterDeploymentMonths}') * 30d)\r\n| extend deploymentMonth = format_datetime(registrationDate, 'yyyy-MM')\r\n| summarize ClusterCount = count() by deploymentMonth\r\n| order by deploymentMonth asc",
+              "size": 0,
+              "title": "Azure Local Clusters Registered by Month",
+              "queryType": 1,
+              "resourceType": "microsoft.resourcegraph/resources",
+              "crossComponentResources": [
+                "{Subscriptions}"
+              ],
+              "visualization": "barchart",
+              "chartSettings": {
+                "xAxis": "deploymentMonth",
+                "yAxis": [
+                  "ClusterCount"
+                ],
+                "seriesLabelSettings": [
+                  {
+                    "seriesName": "ClusterCount",
+                    "label": "Clusters Registered",
+                    "color": "blue"
+                  }
+                ]
+              }
+            },
+            "name": "cluster-deployments-bar"
           },
           {
             "type": 1,
@@ -4544,7 +4606,7 @@
             "type": 3,
             "content": {
               "version": "KqlItem/1.0",
-              "query": "resources\r\n| where type == \"microsoft.kubernetes/connectedclusters\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| where properties.infrastructure == \"azure_stack_hci\"\r\n| join kind=inner (\r\n    resources\r\n    | where type == \"microsoft.azurestackhci/clusters\"\r\n    | where '{ClusterTagName}' == '' or ('{ClusterTagValue}' != '' and tostring(tags['{ClusterTagName}']) =~ '{ClusterTagValue}')\r\n    | project clusterRG = resourceGroup\r\n) on $left.resourceGroup == $right.clusterRG\r\n| extend connectivityStatus = tostring(properties.connectivityStatus)\r\n| extend provisioningState = tostring(properties.provisioningState)\r\n| summarize \r\n    Connected = countif(connectivityStatus == \"Connected\"),\r\n    Offline = countif(connectivityStatus == \"Offline\"),\r\n    Succeeded = countif(provisioningState == \"Succeeded\"),\r\n    Failed = countif(provisioningState == \"Failed\"),\r\n    Total = count()\r\n| extend Title = 'AKS Arc Clusters'",
+              "query": "resources\r\n| where type == \"microsoft.kubernetes/connectedclusters\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| where properties.infrastructure == \"azure_stack_hci\"\r\n| join kind=leftouter (\r\n    resources\r\n    | where type == \"microsoft.extendedlocation/customlocations\"\r\n    | where tostring(properties.hostResourceId) contains \"Microsoft.ResourceConnector/appliances\"\r\n    | extend arcBridgeRG = tolower(tostring(split(tostring(properties.hostResourceId), '/')[4]))\r\n    | project customLocationRG = tolower(resourceGroup), arcBridgeRG\r\n) on $left.resourceGroup == $right.customLocationRG\r\n| join kind=leftouter (\r\n    resources\r\n    | where type == \"microsoft.azurestackhci/clusters\"\r\n    | where '{ClusterTagName}' == '' or ('{ClusterTagValue}' != '' and tostring(tags['{ClusterTagName}']) =~ '{ClusterTagValue}')\r\n    | project azureLocalClusterName = name, clusterRG = tolower(resourceGroup)\r\n) on $left.arcBridgeRG == $right.clusterRG\r\n| where '{ClusterTagName}' == '' or isnotempty(azureLocalClusterName)\r\n| extend connectivityStatus = tostring(properties.connectivityStatus)\r\n| extend provisioningState = tostring(properties.provisioningState)\r\n| summarize \r\n    Connected = countif(connectivityStatus == \"Connected\"),\r\n    Offline = countif(connectivityStatus == \"Offline\"),\r\n    Succeeded = countif(provisioningState == \"Succeeded\"),\r\n    Failed = countif(provisioningState == \"Failed\"),\r\n    Total = count()\r\n| extend Title = 'AKS Arc Clusters'",
               "size": 4,
               "title": "AKS Arc Summary",
               "queryType": 1,
@@ -4579,7 +4641,7 @@
             "type": 3,
             "content": {
               "version": "KqlItem/1.0",
-              "query": "resources\r\n| where type == \"microsoft.kubernetes/connectedclusters\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| where properties.infrastructure == \"azure_stack_hci\"\r\n| join kind=inner (\r\n    resources\r\n    | where type == \"microsoft.azurestackhci/clusters\"\r\n    | where '{ClusterTagName}' == '' or ('{ClusterTagValue}' != '' and tostring(tags['{ClusterTagName}']) =~ '{ClusterTagValue}')\r\n    | project clusterRG = resourceGroup\r\n) on $left.resourceGroup == $right.clusterRG\r\n| extend connectivityStatus = tostring(properties.connectivityStatus)\r\n| summarize Count = count() by connectivityStatus\r\n| order by Count desc",
+              "query": "resources\r\n| where type == \"microsoft.kubernetes/connectedclusters\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| where properties.infrastructure == \"azure_stack_hci\"\r\n| join kind=leftouter (\r\n    resources\r\n    | where type == \"microsoft.extendedlocation/customlocations\"\r\n    | where tostring(properties.hostResourceId) contains \"Microsoft.ResourceConnector/appliances\"\r\n    | extend arcBridgeRG = tolower(tostring(split(tostring(properties.hostResourceId), '/')[4]))\r\n    | project customLocationRG = tolower(resourceGroup), arcBridgeRG\r\n) on $left.resourceGroup == $right.customLocationRG\r\n| join kind=leftouter (\r\n    resources\r\n    | where type == \"microsoft.azurestackhci/clusters\"\r\n    | where '{ClusterTagName}' == '' or ('{ClusterTagValue}' != '' and tostring(tags['{ClusterTagName}']) =~ '{ClusterTagValue}')\r\n    | project azureLocalClusterName = name, clusterRG = tolower(resourceGroup)\r\n) on $left.arcBridgeRG == $right.clusterRG\r\n| where '{ClusterTagName}' == '' or isnotempty(azureLocalClusterName)\r\n| extend connectivityStatus = tostring(properties.connectivityStatus)\r\n| summarize Count = count() by connectivityStatus\r\n| order by Count desc",
               "size": 0,
               "title": "Connectivity Status",
               "queryType": 1,
@@ -4618,7 +4680,7 @@
             "type": 3,
             "content": {
               "version": "KqlItem/1.0",
-              "query": "resources\r\n| where type == \"microsoft.kubernetes/connectedclusters\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| where properties.infrastructure == \"azure_stack_hci\"\r\n| join kind=inner (\r\n    resources\r\n    | where type == \"microsoft.azurestackhci/clusters\"\r\n    | where '{ClusterTagName}' == '' or ('{ClusterTagValue}' != '' and tostring(tags['{ClusterTagName}']) =~ '{ClusterTagValue}')\r\n    | project clusterRG = resourceGroup\r\n) on $left.resourceGroup == $right.clusterRG\r\n| extend kubernetesVersion = tostring(properties.kubernetesVersion)\r\n| summarize ClusterCount = count() by kubernetesVersion\r\n| order by ClusterCount desc",
+              "query": "resources\r\n| where type == \"microsoft.kubernetes/connectedclusters\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| where properties.infrastructure == \"azure_stack_hci\"\r\n| join kind=leftouter (\r\n    resources\r\n    | where type == \"microsoft.extendedlocation/customlocations\"\r\n    | where tostring(properties.hostResourceId) contains \"Microsoft.ResourceConnector/appliances\"\r\n    | extend arcBridgeRG = tolower(tostring(split(tostring(properties.hostResourceId), '/')[4]))\r\n    | project customLocationRG = tolower(resourceGroup), arcBridgeRG\r\n) on $left.resourceGroup == $right.customLocationRG\r\n| join kind=leftouter (\r\n    resources\r\n    | where type == \"microsoft.azurestackhci/clusters\"\r\n    | where '{ClusterTagName}' == '' or ('{ClusterTagValue}' != '' and tostring(tags['{ClusterTagName}']) =~ '{ClusterTagValue}')\r\n    | project azureLocalClusterName = name, clusterRG = tolower(resourceGroup)\r\n) on $left.arcBridgeRG == $right.clusterRG\r\n| where '{ClusterTagName}' == '' or isnotempty(azureLocalClusterName)\r\n| extend kubernetesVersion = tostring(properties.kubernetesVersion)\r\n| summarize ClusterCount = count() by kubernetesVersion\r\n| order by ClusterCount desc",
               "size": 0,
               "title": "Kubernetes Version Distribution",
               "queryType": 1,
@@ -4643,7 +4705,7 @@
             "type": 3,
             "content": {
               "version": "KqlItem/1.0",
-              "query": "resources\r\n| where type == \"microsoft.kubernetes/connectedclusters\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| where properties.infrastructure == \"azure_stack_hci\"\r\n| join kind=inner (\r\n    resources\r\n    | where type == \"microsoft.azurestackhci/clusters\"\r\n    | where '{ClusterTagName}' == '' or ('{ClusterTagValue}' != '' and tostring(tags['{ClusterTagName}']) =~ '{ClusterTagValue}')\r\n    | project clusterRG = resourceGroup\r\n) on $left.resourceGroup == $right.clusterRG\r\n| extend provisioningState = tostring(properties.provisioningState)\r\n| summarize Count = count() by provisioningState\r\n| order by Count desc",
+              "query": "resources\r\n| where type == \"microsoft.kubernetes/connectedclusters\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| where properties.infrastructure == \"azure_stack_hci\"\r\n| join kind=leftouter (\r\n    resources\r\n    | where type == \"microsoft.extendedlocation/customlocations\"\r\n    | where tostring(properties.hostResourceId) contains \"Microsoft.ResourceConnector/appliances\"\r\n    | extend arcBridgeRG = tolower(tostring(split(tostring(properties.hostResourceId), '/')[4]))\r\n    | project customLocationRG = tolower(resourceGroup), arcBridgeRG\r\n) on $left.resourceGroup == $right.customLocationRG\r\n| join kind=leftouter (\r\n    resources\r\n    | where type == \"microsoft.azurestackhci/clusters\"\r\n    | where '{ClusterTagName}' == '' or ('{ClusterTagValue}' != '' and tostring(tags['{ClusterTagName}']) =~ '{ClusterTagValue}')\r\n    | project azureLocalClusterName = name, clusterRG = tolower(resourceGroup)\r\n) on $left.arcBridgeRG == $right.clusterRG\r\n| where '{ClusterTagName}' == '' or isnotempty(azureLocalClusterName)\r\n| extend provisioningState = tostring(properties.provisioningState)\r\n| summarize Count = count() by provisioningState\r\n| order by Count desc",
               "size": 0,
               "title": "Provisioning State",
               "queryType": 1,
@@ -4715,7 +4777,7 @@
             "type": 3,
             "content": {
               "version": "KqlItem/1.0",
-              "query": "resources\r\n| where type == \"microsoft.kubernetes/connectedclusters\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| where properties.infrastructure == \"azure_stack_hci\"\r\n| join kind=inner (\r\n    resources\r\n    | where type == \"microsoft.azurestackhci/clusters\"\r\n    | where '{ClusterTagName}' == '' or ('{ClusterTagValue}' != '' and tostring(tags['{ClusterTagName}']) =~ '{ClusterTagValue}')\r\n    | project clusterRG = resourceGroup\r\n) on $left.resourceGroup == $right.clusterRG\r\n| extend createdAt = todatetime(systemData.createdAt)\r\n| where isnotempty(createdAt)\r\n| where createdAt >= ago(toint('{AKSDeploymentMonths}') * 30d)\r\n| extend deploymentMonth = format_datetime(createdAt, 'yyyy-MM')\r\n| summarize ClusterCount = count() by deploymentMonth\r\n| order by deploymentMonth asc",
+              "query": "resources\r\n| where type == \"microsoft.kubernetes/connectedclusters\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| where properties.infrastructure == \"azure_stack_hci\"\r\n| join kind=leftouter (\r\n    resources\r\n    | where type == \"microsoft.extendedlocation/customlocations\"\r\n    | where tostring(properties.hostResourceId) contains \"Microsoft.ResourceConnector/appliances\"\r\n    | extend arcBridgeRG = tolower(tostring(split(tostring(properties.hostResourceId), '/')[4]))\r\n    | project customLocationRG = tolower(resourceGroup), arcBridgeRG\r\n) on $left.resourceGroup == $right.customLocationRG\r\n| join kind=leftouter (\r\n    resources\r\n    | where type == \"microsoft.azurestackhci/clusters\"\r\n    | where '{ClusterTagName}' == '' or ('{ClusterTagValue}' != '' and tostring(tags['{ClusterTagName}']) =~ '{ClusterTagValue}')\r\n    | project azureLocalClusterName = name, clusterRG = tolower(resourceGroup)\r\n) on $left.arcBridgeRG == $right.clusterRG\r\n| where '{ClusterTagName}' == '' or isnotempty(azureLocalClusterName)\r\n| extend createdAt = todatetime(systemData.createdAt)\r\n| where isnotempty(createdAt)\r\n| where createdAt >= ago(toint('{AKSDeploymentMonths}') * 30d)\r\n| extend deploymentMonth = format_datetime(createdAt, 'yyyy-MM')\r\n| summarize ClusterCount = count() by deploymentMonth\r\n| order by deploymentMonth asc",
               "size": 0,
               "title": "AKS Arc Cluster Deployments by Month",
               "queryType": 1,
@@ -4751,7 +4813,7 @@
             "type": 3,
             "content": {
               "version": "KqlItem/1.0",
-              "query": "resources\r\n| where type == \"microsoft.kubernetes/connectedclusters\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| where properties.infrastructure == \"azure_stack_hci\"\r\n| join kind=inner (\r\n    resources\r\n    | where type == \"microsoft.azurestackhci/clusters\"\r\n    | where '{ClusterTagName}' == '' or ('{ClusterTagValue}' != '' and tostring(tags['{ClusterTagName}']) =~ '{ClusterTagValue}')\r\n    | project clusterRG = resourceGroup\r\n) on $left.resourceGroup == $right.clusterRG\r\n| extend connectivityStatus = tostring(properties.connectivityStatus)\r\n| extend provisioningState = tostring(properties.provisioningState)\r\n| extend kubernetesVersion = tostring(properties.kubernetesVersion)\r\n| extend agentVersion = tostring(properties.agentVersion)\r\n| extend totalNodeCount = toint(properties.totalNodeCount)\r\n| extend totalCoreCount = toint(properties.totalCoreCount)\r\n| extend distribution = tostring(properties.distribution)\r\n| extend lastConnectivityTime = todatetime(properties.lastConnectivityTime)\r\n| extend certExpiration = todatetime(properties.managedIdentityCertificateExpirationTime)\r\n| extend createdAt = todatetime(systemData.createdAt)\r\n| extend clusterLink = strcat('https://portal.azure.com/#@/resource', id)\r\n| extend clusterResourceId = tolower(id)\r\n| join kind=leftouter (\r\n    extensibilityresources\r\n    | where type == \"microsoft.hybridcontainerservice/provisionedclusterinstances\"\r\n    | extend controlPlaneNodes = toint(properties[\"controlPlane\"][\"count\"])\r\n    | mv-expand agentPool = properties.agentPoolProfiles\r\n    | summarize controlPlaneNodes = max(controlPlaneNodes), workerNodes = sum(toint(agentPool[\"count\"])) by id\r\n    | extend clusterResourceId = tolower(substring(id, 0, indexof(id, \"/providers/Microsoft.HybridContainerService\")))\r\n    | project clusterResourceId, controlPlaneNodes, workerNodes\r\n) on clusterResourceId\r\n| project ClusterName = name, clusterLink, resourceGroup, connectivityStatus, provisioningState, kubernetesVersion, agentVersion, controlPlaneNodes, workerNodes, totalNodeCount, totalCoreCount, distribution, lastConnectivityTime, certExpiration, createdAt, location\r\n| order by connectivityStatus asc, ClusterName asc",
+              "query": "resources\r\n| where type == \"microsoft.kubernetes/connectedclusters\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| where properties.infrastructure == \"azure_stack_hci\"\r\n| join kind=leftouter (\r\n    resources\r\n    | where type == \"microsoft.extendedlocation/customlocations\"\r\n    | where tostring(properties.hostResourceId) contains \"Microsoft.ResourceConnector/appliances\"\r\n    | extend arcBridgeRG = tolower(tostring(split(tostring(properties.hostResourceId), '/')[4]))\r\n    | project customLocationRG = tolower(resourceGroup), arcBridgeRG\r\n) on $left.resourceGroup == $right.customLocationRG\r\n| join kind=leftouter (\r\n    resources\r\n    | where type == \"microsoft.azurestackhci/clusters\"\r\n    | where '{ClusterTagName}' == '' or ('{ClusterTagValue}' != '' and tostring(tags['{ClusterTagName}']) =~ '{ClusterTagValue}')\r\n    | project azureLocalClusterName = name, clusterRG = tolower(resourceGroup)\r\n) on $left.arcBridgeRG == $right.clusterRG\r\n| where '{ClusterTagName}' == '' or isnotempty(azureLocalClusterName)\r\n| extend connectivityStatus = tostring(properties.connectivityStatus)\r\n| extend provisioningState = tostring(properties.provisioningState)\r\n| extend kubernetesVersion = tostring(properties.kubernetesVersion)\r\n| extend agentVersion = tostring(properties.agentVersion)\r\n| extend totalNodeCount = toint(properties.totalNodeCount)\r\n| extend totalCoreCount = toint(properties.totalCoreCount)\r\n| extend distribution = tostring(properties.distribution)\r\n| extend lastConnectivityTime = todatetime(properties.lastConnectivityTime)\r\n| extend certExpiration = todatetime(properties.managedIdentityCertificateExpirationTime)\r\n| extend createdAt = todatetime(systemData.createdAt)\r\n| extend clusterLink = strcat('https://portal.azure.com/#@/resource', id)\r\n| extend clusterResourceId = tolower(id)\r\n| join kind=leftouter (\r\n    extensibilityresources\r\n    | where type == \"microsoft.hybridcontainerservice/provisionedclusterinstances\"\r\n    | extend controlPlaneNodes = toint(properties[\"controlPlane\"][\"count\"])\r\n    | mv-expand agentPool = properties.agentPoolProfiles\r\n    | summarize controlPlaneNodes = max(controlPlaneNodes), workerNodes = sum(toint(agentPool[\"count\"])) by id\r\n    | extend clusterResourceId = tolower(substring(id, 0, indexof(id, \"/providers/Microsoft.HybridContainerService\")))\r\n    | project clusterResourceId, controlPlaneNodes, workerNodes\r\n) on clusterResourceId\r\n| project ClusterName = name, clusterLink, connectivityStatus, provisioningState, resourceGroup, azureLocalClusterName, kubernetesVersion, agentVersion, controlPlaneNodes, workerNodes, totalNodeCount, totalCoreCount, distribution, lastConnectivityTime, certExpiration, createdAt, location\r\n| order by connectivityStatus asc, ClusterName asc",
               "size": 0,
               "showAnalytics": true,
               "showRefreshButton": true,
@@ -4856,6 +4918,10 @@
                     "label": "Resource Group"
                   },
                   {
+                    "columnId": "azureLocalClusterName",
+                    "label": "Azure Local Cluster"
+                  },
+                  {
                     "columnId": "connectivityStatus",
                     "label": "Connectivity Status"
                   },
@@ -4873,7 +4939,7 @@
                   },
                   {
                     "columnId": "controlPlaneNodes",
-                    "label": "Masters"
+                    "label": "Control Plane"
                   },
                   {
                     "columnId": "workerNodes",
@@ -4923,7 +4989,7 @@
             "type": 3,
             "content": {
               "version": "KqlItem/1.0",
-              "query": "resources\r\n| where type == \"microsoft.kubernetes/connectedclusters\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| where properties.infrastructure == \"azure_stack_hci\"\r\n| join kind=inner (\r\n    resources\r\n    | where type == \"microsoft.azurestackhci/clusters\"\r\n    | where '{ClusterTagName}' == '' or ('{ClusterTagValue}' != '' and tostring(tags['{ClusterTagName}']) =~ '{ClusterTagValue}')\r\n    | project clusterRG = resourceGroup\r\n) on $left.resourceGroup == $right.clusterRG\r\n| extend certExpiration = todatetime(properties.managedIdentityCertificateExpirationTime)\r\n| where isnotempty(certExpiration)\r\n| where certExpiration <= now() + 30d\r\n| extend daysUntilExpiration = datetime_diff('day', certExpiration, now())\r\n| extend clusterLink = strcat('https://portal.azure.com/#@/resource', id)\r\n| project ClusterName = name, clusterLink, resourceGroup, certExpiration, daysUntilExpiration, location\r\n| order by daysUntilExpiration asc",
+              "query": "resources\r\n| where type == \"microsoft.kubernetes/connectedclusters\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| where properties.infrastructure == \"azure_stack_hci\"\r\n| join kind=leftouter (\r\n    resources\r\n    | where type == \"microsoft.extendedlocation/customlocations\"\r\n    | where tostring(properties.hostResourceId) contains \"Microsoft.ResourceConnector/appliances\"\r\n    | extend arcBridgeRG = tolower(tostring(split(tostring(properties.hostResourceId), '/')[4]))\r\n    | project customLocationRG = tolower(resourceGroup), arcBridgeRG\r\n) on $left.resourceGroup == $right.customLocationRG\r\n| join kind=leftouter (\r\n    resources\r\n    | where type == \"microsoft.azurestackhci/clusters\"\r\n    | where '{ClusterTagName}' == '' or ('{ClusterTagValue}' != '' and tostring(tags['{ClusterTagName}']) =~ '{ClusterTagValue}')\r\n    | project azureLocalClusterName = name, clusterRG = tolower(resourceGroup)\r\n) on $left.arcBridgeRG == $right.clusterRG\r\n| where '{ClusterTagName}' == '' or isnotempty(azureLocalClusterName)\r\n| extend certExpiration = todatetime(properties.managedIdentityCertificateExpirationTime)\r\n| where isnotempty(certExpiration)\r\n| where certExpiration <= now() + 30d\r\n| extend daysUntilExpiration = datetime_diff('day', certExpiration, now())\r\n| extend clusterLink = strcat('https://portal.azure.com/#@/resource', id)\r\n| project ClusterName = name, clusterLink, resourceGroup, certExpiration, daysUntilExpiration, location\r\n| order by daysUntilExpiration asc",
               "size": 0,
               "title": "Clusters with Certificates Expiring Soon",
               "noDataMessage": "No clusters with certificates expiring in the next 30 days",
