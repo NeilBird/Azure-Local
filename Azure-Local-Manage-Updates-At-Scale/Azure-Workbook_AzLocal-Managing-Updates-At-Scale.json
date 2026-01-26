@@ -5406,7 +5406,7 @@
             "type": 3,
             "content": {
               "version": "KqlItem/1.0",
-              "query": "kubernetesconfigurationresources\r\n| where type == \"microsoft.kubernetesconfiguration/extensions\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| extend status = coalesce(tostring(properties.ProvisioningState), tostring(properties.provisioningState))\r\n| where status == \"Failed\"\r\n| extend extensionName = coalesce(tostring(properties.ExtensionType), tostring(properties.extensionType))\r\n| extend message = coalesce(tostring(properties.Statuses[0].message), tostring(properties.statuses[0].message))\r\n| parse tolower(id) with clusterId \"/providers/microsoft.kubernetesconfiguration/extensions/\" *\r\n| join kind=inner (\r\n    resources\r\n    | where type == \"microsoft.kubernetes/connectedclusters\"\r\n    | where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n    | where properties.infrastructure == \"azure_stack_hci\"\r\n    | project clusterId = tolower(id), clusterName = name, clusterResourceGroup = resourceGroup, subscriptionId\r\n) on clusterId\r\n| extend clusterLink = strcat('https://portal.azure.com/#@/resource', clusterId)\r\n| project clusterName, clusterLink, extensionName, status, message, resourceGroup = clusterResourceGroup, subscriptionId\r\n| order by clusterName asc, extensionName asc",
+              "query": "kubernetesconfigurationresources\r\n| where type == \"microsoft.kubernetesconfiguration/extensions\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| extend status = coalesce(tostring(properties.ProvisioningState), tostring(properties.provisioningState))\r\n| where status == \"Failed\"\r\n| extend extensionName = coalesce(tostring(properties.ExtensionType), tostring(properties.extensionType))\r\n| extend message = coalesce(tostring(properties.Statuses[0].message), tostring(properties.statuses[0].message))\r\n| parse tolower(id) with clusterId \"/providers/microsoft.kubernetesconfiguration/extensions/\" *\r\n| join kind=inner (\r\n    resources\r\n    | where type == \"microsoft.kubernetes/connectedclusters\"\r\n    | where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n    | where properties.infrastructure == \"azure_stack_hci\"\r\n    | project clusterId = tolower(id), clusterName = name, clusterResourceGroup = resourceGroup, subscriptionId\r\n) on clusterId\r\n| join kind=leftouter (\r\n    resourcecontainers\r\n    | where type == \"microsoft.resources/subscriptions\"\r\n    | project subscriptionId, subscriptionName = name\r\n) on subscriptionId\r\n| extend clusterLink = strcat('https://portal.azure.com/#@/resource', clusterId)\r\n| extend subscriptionLink = strcat('https://portal.azure.com/#@/resource/subscriptions/', subscriptionId)\r\n| project clusterName, clusterLink, extensionName, status, message, resourceGroup = clusterResourceGroup, subscriptionName, subscriptionLink\r\n| order by clusterName asc, extensionName asc",
               "size": 0,
               "showAnalytics": true,
               "title": "⚠️ Failed AKS Extensions",
@@ -5455,6 +5455,18 @@
                   {
                     "columnMatch": "message",
                     "formatter": 1
+                  },
+                  {
+                    "columnMatch": "subscriptionName",
+                    "formatter": 7,
+                    "formatOptions": {
+                      "linkTarget": "Url",
+                      "linkColumn": "subscriptionLink"
+                    }
+                  },
+                  {
+                    "columnMatch": "subscriptionLink",
+                    "formatter": 5
                   }
                 ],
                 "rowLimit": 1000,
@@ -5484,8 +5496,11 @@
                     "label": "Resource Group"
                   },
                   {
-                    "columnId": "subscriptionId",
-                    "label": "Subscription"
+                    "columnId": "subscriptionName",
+                    "label": "Subscription Name"
+                  },
+                  {
+                    "columnId": "subscriptionLink"
                   }
                 ]
               }
