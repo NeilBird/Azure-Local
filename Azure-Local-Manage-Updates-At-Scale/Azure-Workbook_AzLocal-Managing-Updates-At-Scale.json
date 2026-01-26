@@ -139,13 +139,6 @@
             "style": "link"
           },
           {
-            "id": "advisor-link",
-            "cellValue": "https://portal.azure.com/#view/Microsoft_Azure_Expert/AdvisorMenuBlade/~/overview",
-            "linkTarget": "Url",
-            "linkLabel": "💡 Azure Advisor",
-            "style": "link"
-          },
-          {
             "id": "service-health-link",
             "cellValue": "https://portal.azure.com/#view/Microsoft_Azure_Health/AzureHealthBrowseBlade/~/serviceIssues",
             "linkTarget": "Url",
