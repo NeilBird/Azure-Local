@@ -12,6 +12,21 @@ An Azure Monitor Workbook for monitoring and managing Azure Local (formerly Azur
 
 ### Major Updates and Improvements
 
+- **Azure Local Instances Tab** (formerly "Summary Dashboard"):
+  - Renamed tab from "Summary Dashboard" to "Azure Local Instances"
+  - **Deployment Trend Charts**: Added deployment over time line charts for:
+    - Azure Local Clusters Registered by Month
+    - VM Deployments by Month (OS Install Date)
+    - AKS Arc Cluster Deployments by Month
+  - Each chart shows connected data points with monthly trend visualization
+  - Companion data tables (20% width) display monthly breakdown with TOTAL row at top
+  - Time range filter for each chart (1-24 months)
+  - Made "Solution Version Distribution" chart full width (100%)
+
+- **AKS Arc Clusters Linking**: Improved AKS-to-Azure-Local cluster association
+  - Now uses Custom Location → Arc Bridge → Azure Local Cluster linking pattern
+  - More accurate association than previous resource group matching approach
+
 - **Clusters Not Synced Recently Table**:
   - Added "Subscription Name" column with clickable link to subscription in Azure Portal
 
