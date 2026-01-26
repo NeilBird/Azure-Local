@@ -1033,14 +1033,14 @@
                   "id": "lifecycle-cadence-link",
                   "cellValue": "https://learn.microsoft.com/azure/azure-local/update/about-updates-23h2#lifecycle-cadence",
                   "linkTarget": "Url",
-                  "linkLabel": "📚 Lifecycle cadence",
+                  "linkLabel": "📚 Knowledge: Azure Local Lifecycle cadence",
                   "style": "link"
                 },
                 {
                   "id": "latest-releases-link",
                   "cellValue": "https://learn.microsoft.com/azure/azure-local/release-information-23h2#about-azure-local-releases",
                   "linkTarget": "Url",
-                  "linkLabel": "📋 Latest releases",
+                  "linkLabel": "📋 Documentation: Azure Local - Latest Releases",
                   "style": "link"
                 }
               ]
