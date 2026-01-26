@@ -24,6 +24,7 @@ An Azure Monitor Workbook for monitoring and managing Azure Local (formerly Azur
   - Fixed case-sensitivity issue for error message property extraction
   - Now includes error Code prefix when available (e.g., `InstallationFailed: Helm Upgrade Failed...`)
   - Added clickable "Subscription Name" column with link to subscription in Azure Portal
+  - Added clickable flyout for "Error Details" column - click to expand full error message in a context blade with formatted layout
 
 ## Previous Changes (v0.7.0)
 
@@ -74,6 +75,8 @@ An Azure Monitor Workbook for monitoring and managing Azure Local (formerly Azur
   - Renamed "Machine" to "Machine Name" and moved it to first column
   - Renamed "Cluster" to "Cluster Name" and moved it to fourth column (after Status)
   - Made Cluster Name clickable with link to parent cluster resource
+  - Renamed "Error Message" column to "Error Details"
+  - Added clickable flyout for "Error Details" column - click to expand full error message in a context blade with formatted layout
 
 - **Quick Actions Reordered**: Moved Activity Log, Azure Service Health, and Create Alert Rule links to the end of Quick Actions section
 
