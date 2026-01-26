@@ -6483,7 +6483,7 @@
                   },
                   {
                     "columnId": "clusterLink",
-                    "label": "Cluster Link"
+                    "label": "Available Updates"
                   },
                   {
                     "columnId": "UpdateStatus",
