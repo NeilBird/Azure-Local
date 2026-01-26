@@ -2924,27 +2924,27 @@
                 "formatters": [
                   {
                     "columnMatch": "nodeName",
-                    "formatter": 1
+                    "formatter": 7,
+                    "formatOptions": {
+                      "linkTarget": "Url",
+                      "linkColumn": "nodeLink"
+                    }
                   },
                   {
                     "columnMatch": "nodeLink",
-                    "formatter": 7,
-                    "formatOptions": {
-                      "linkTarget": "Url",
-                      "linkLabel": "Open"
-                    }
+                    "formatter": 5
                   },
                   {
                     "columnMatch": "clusterName",
-                    "formatter": 1
-                  },
-                  {
-                    "columnMatch": "clusterLink",
                     "formatter": 7,
                     "formatOptions": {
                       "linkTarget": "Url",
-                      "linkLabel": "Open"
+                      "linkColumn": "clusterLink"
                     }
+                  },
+                  {
+                    "columnMatch": "clusterLink",
+                    "formatter": 5
                   },
                   {
                     "columnMatch": "status",
