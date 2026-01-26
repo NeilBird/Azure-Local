@@ -3574,7 +3574,7 @@
           {
             "type": 1,
             "content": {
-              "json": "📚 **Knowledge:** [Retry and/or validate Network ATC intents using PowerShell](https://learn.microsoft.com/windows-server/networking/network-atc/manage-network-atc#validate-automatic-remediation)"
+              "json": "📚 **Knowledge:** [Validate and/or set the retry status of a Network ATC intent using PowerShell](https://learn.microsoft.com/windows-server/networking/network-atc/manage-network-atc#validate-automatic-remediation)"
             },
             "name": "nic-atc-knowledge-link"
           },
