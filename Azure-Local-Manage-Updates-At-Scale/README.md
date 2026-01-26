@@ -1,6 +1,6 @@
 # Azure Local - Managing Updates At Scale Workbook
 
-## Latest Version: v0.6.9
+## Latest Version: v0.7.0
 
 📥 **[Copy / Paste (or download) the latest Workbook JSON](https://raw.githubusercontent.com/NeilBird/Azure-Local/refs/heads/main/Azure-Local-Manage-Updates-At-Scale/Azure-Workbook_AzLocal-Managing-Updates-At-Scale.json)**
 
@@ -8,7 +8,23 @@ An Azure Monitor Workbook for monitoring and managing Azure Local (formerly Azur
 
 **Important:** This is a community driven project, (not officially supported by Microsoft), for any issues, requests or feedback, please [raise an Issue](https://github.com/NeilBird/Azure-Local/issues) (note: no time scales or guarantees can be provided for responses to issues.)
 
-## Recent Changes (v0.6.9)
+## Recent Changes (v0.7.0)
+
+- **Cluster Tag Filter Support**: Added comprehensive cluster tag filtering across all tabs
+  - All feasible queries now honor the ClusterTagName and ClusterTagValue filter parameters
+  - AKS Arc clusters and VMs in the same resource group as matching clusters are also filtered
+  - Updated ~35+ queries across Summary Dashboard, Update Readiness, Update Progress, Azure Local VMs, and AKS Arc Clusters tabs
+  - Note: ARB tables and NIC Status tables cannot support tag filtering due to Azure Resource Graph join limitations
+
+- **Filter Instructions Updated**: Clarified that cluster tag filter now applies to AKS Arc clusters and VMs via resource group association
+
+- **UI Improvements**:
+  - Moved Quick Actions and Knowledge Links above Filter Instructions for better visual separation from Tabs
+  - Increased tab font size for improved readability
+
+- **Update Readiness Tab**: Added "Top 5 - System Health Check Issues" pie chart showing most common failure reasons
+
+## Previous Changes (v0.6.9)
 
 - **Version Check Banner**: Added prominent styled banner at top of workbook displaying current version with link to [check GitHub for updates](https://github.com/NeilBird/Azure-Local/tree/main/Azure-Local-Manage-Updates-At-Scale)
 
