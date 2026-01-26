@@ -2165,7 +2165,7 @@
           {
             "type": 1,
             "content": {
-              "json": "---\r\n## 🔔 ARB Alert Rules Configuration\r\nCreate alert rules to monitor Arc Resource Bridge health and status. Get notified when ARBs go offline or encounter issues."
+              "json": "---\r\n## 🔔 ARB Alert Rules Configuration\r\n💡 **Tip:** Create alert rules to monitor Arc Resource Bridge(ARB) health and status. Get notified when ARBs go offline or encounter issues. Expand below section to view a step by step guide."
             },
             "name": "arb-alert-header"
           },
