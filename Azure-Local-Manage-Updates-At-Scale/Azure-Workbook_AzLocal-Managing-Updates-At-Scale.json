@@ -3405,7 +3405,7 @@
             "type": 3,
             "content": {
               "version": "KqlItem/1.0",
-              "query": "resources\r\n| where type == \"microsoft.hybridcompute/machines\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| where properties.cloudMetadata.provider == \"AzSHCI\"\r\n| project machineId = id, machineName = name, machineResourceGroup = resourceGroup\r\n| join kind=inner (\r\n    resources\r\n    | where type == \"microsoft.azurestackhci/clusters\"\r\n    | where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n    | where '{ClusterTagName}' == '' or ('{ClusterTagValue}' != '' and tostring(tags['{ClusterTagName}']) =~ '{ClusterTagValue}')\r\n    | project clusterName = name, clusterResourceGroup = resourceGroup, clusterId = id\r\n    | join kind=leftouter (\r\n        ExtensibilityResources\r\n        | where type =~ 'microsoft.azurestackhci/clusters/updateSummaries'\r\n        | extend cId = substring(id, 0, indexof(id, '/updateSummaries/'))\r\n        | project cId, currentVersion = tostring(properties.currentVersion)\r\n    ) on $left.clusterId == $right.cId\r\n) on $left.machineResourceGroup == $right.clusterResourceGroup\r\n| join kind=inner (\r\n    resources\r\n    | where type == \"microsoft.hybridcompute/machines/extensions\"\r\n    | where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n    | extend status = properties.provisioningState\r\n    | where status == \"Failed\"\r\n    | extend message = properties.instanceView.status.message\r\n    | parse id with * \"/machines/\" mName \"/extensions/\" extensionName\r\n    | project extensionName, status, message, mName, resourceGroup, subscriptionId\r\n) on $left.machineName == $right.mName and $left.machineResourceGroup == $right.resourceGroup\r\n| extend machineLink = strcat('https://portal.azure.com/#@/resource', machineId)\r\n| extend clusterLink = strcat('https://portal.azure.com/#@/resource', clusterId)\r\n| project machineName, machineLink, extensionName, status, clusterName, clusterLink, message, currentVersion, resourceGroup = machineResourceGroup, subscriptionId\r\n| order by clusterName asc, machineName asc",
+              "query": "resources\r\n| where type == \"microsoft.hybridcompute/machines\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| where properties.cloudMetadata.provider == \"AzSHCI\"\r\n| project machineId = id, machineName = name, machineResourceGroup = resourceGroup\r\n| join kind=inner (\r\n    resources\r\n    | where type == \"microsoft.azurestackhci/clusters\"\r\n    | where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n    | where '{ClusterTagName}' == '' or ('{ClusterTagValue}' != '' and tostring(tags['{ClusterTagName}']) =~ '{ClusterTagValue}')\r\n    | project clusterName = name, clusterResourceGroup = resourceGroup, clusterId = id\r\n    | join kind=leftouter (\r\n        ExtensibilityResources\r\n        | where type =~ 'microsoft.azurestackhci/clusters/updateSummaries'\r\n        | extend cId = substring(id, 0, indexof(id, '/updateSummaries/'))\r\n        | project cId, currentVersion = tostring(properties.currentVersion)\r\n    ) on $left.clusterId == $right.cId\r\n) on $left.machineResourceGroup == $right.clusterResourceGroup\r\n| join kind=inner (\r\n    resources\r\n    | where type == \"microsoft.hybridcompute/machines/extensions\"\r\n    | where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n    | extend status = properties.provisioningState\r\n    | where status == \"Failed\"\r\n    | extend errorDetails = tostring(properties.instanceView.status.message)\r\n    | extend errorDetailsFull = errorDetails\r\n    | parse id with * \"/machines/\" mName \"/extensions/\" extensionName\r\n    | project extensionName, status, errorDetails, errorDetailsFull, mName, resourceGroup, subscriptionId\r\n) on $left.machineName == $right.mName and $left.machineResourceGroup == $right.resourceGroup\r\n| extend machineLink = strcat('https://portal.azure.com/#@/resource', machineId)\r\n| extend clusterLink = strcat('https://portal.azure.com/#@/resource', clusterId)\r\n| project machineName, machineLink, extensionName, status, clusterName, clusterLink, errorDetails, errorDetailsFull, currentVersion, resourceGroup = machineResourceGroup, subscriptionId\r\n| order by clusterName asc, machineName asc",
               "size": 0,
               "showAnalytics": true,
               "title": "⚠️ Failed Node Extensions",
@@ -3463,8 +3463,20 @@
                     }
                   },
                   {
-                    "columnMatch": "message",
-                    "formatter": 1
+                    "columnMatch": "errorDetails",
+                    "formatter": 1,
+                    "formatOptions": {
+                      "linkTarget": "CellDetails",
+                      "linkIsContextBlade": true,
+                      "customColumnWidthSetting": "45ch"
+                    },
+                    "tooltipFormat": {
+                      "tooltip": "Click to view full error details"
+                    }
+                  },
+                  {
+                    "columnMatch": "errorDetailsFull",
+                    "formatter": 5
                   }
                 ],
                 "rowLimit": 1000,
@@ -3493,8 +3505,11 @@
                     "columnId": "clusterLink"
                   },
                   {
-                    "columnId": "message",
-                    "label": "Error Message"
+                    "columnId": "errorDetails",
+                    "label": "Error Details"
+                  },
+                  {
+                    "columnId": "errorDetailsFull"
                   },
                   {
                     "columnId": "currentVersion",
@@ -3509,6 +3524,18 @@
                     "label": "Subscription"
                   }
                 ],
+                "rowDetails": {
+                  "type": 1,
+                  "title": "Error Details",
+                  "content": {
+                    "json": "### ⚠️ Node Extension Error Details\r\n\r\n| Property | Value |\r\n|:--|:--|\r\n| **Machine Name** | {machineName} |\r\n| **Extension** | {extensionName} |\r\n| **Status** | {status} |\r\n| **Cluster Name** | {clusterName} |\r\n| **Cluster Version** | {currentVersion} |\r\n| **Resource Group** | {resourceGroup} |\r\n\r\n---\r\n\r\n#### Full Error Message\r\n\r\n<div style=\\\"background-color: #fff3cd; border: 1px solid #ffc107; border-radius: 4px; padding: 12px; font-family: 'Segoe UI', sans-serif; white-space: pre-wrap; word-wrap: break-word; line-height: 1.5;\\\">\r\n\r\n{errorDetailsFull}\r\n\r\n</div>\r\n\r\n---\r\n\r\n💡 **Tip:** Click on the Machine Name link to view the extension in the Azure Portal for additional details and remediation options."
+                  },
+                  "conditionalVisibility": {
+                    "parameterName": "errorDetails",
+                    "comparison": "isNotEqualTo",
+                    "value": ""
+                  }
+                },
                 "noDataMessage": "✅ No failed extensions found"
               }
             },
@@ -5406,7 +5433,7 @@
             "type": 3,
             "content": {
               "version": "KqlItem/1.0",
-              "query": "kubernetesconfigurationresources\r\n| where type == \"microsoft.kubernetesconfiguration/extensions\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| extend status = coalesce(tostring(properties.ProvisioningState), tostring(properties.provisioningState))\r\n| where status == \"Failed\"\r\n| extend extensionName = coalesce(tostring(properties.ExtensionType), tostring(properties.extensionType))\r\n| extend message = coalesce(tostring(properties.Statuses[0].message), tostring(properties.statuses[0].message))\r\n| parse tolower(id) with clusterId \"/providers/microsoft.kubernetesconfiguration/extensions/\" *\r\n| join kind=inner (\r\n    resources\r\n    | where type == \"microsoft.kubernetes/connectedclusters\"\r\n    | where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n    | where properties.infrastructure == \"azure_stack_hci\"\r\n    | project clusterId = tolower(id), clusterName = name, clusterResourceGroup = resourceGroup, subscriptionId\r\n) on clusterId\r\n| extend clusterLink = strcat('https://portal.azure.com/#@/resource', clusterId)\r\n| project clusterName, clusterLink, extensionName, status, message, resourceGroup = clusterResourceGroup, subscriptionId\r\n| order by clusterName asc, extensionName asc",
+              "query": "kubernetesconfigurationresources\r\n| where type == \"microsoft.kubernetesconfiguration/extensions\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| extend status = coalesce(tostring(properties.ProvisioningState), tostring(properties.provisioningState))\r\n| where status == \"Failed\"\r\n| extend extensionName = coalesce(tostring(properties.ExtensionType), tostring(properties.extensionType))\r\n| extend errorCode = coalesce(tostring(properties.Statuses[0].Code), tostring(properties.Statuses[0].code), tostring(properties.statuses[0].Code), tostring(properties.statuses[0].code))\r\n| extend errorMessage = coalesce(tostring(properties.Statuses[0].Message), tostring(properties.Statuses[0].message), tostring(properties.statuses[0].Message), tostring(properties.statuses[0].message))\r\n| extend errorDetails = iff(isnotempty(errorCode), strcat(errorCode, ': ', errorMessage), errorMessage)\r\n| extend errorDetailsFull = errorDetails\r\n| parse tolower(id) with clusterId \"/providers/microsoft.kubernetesconfiguration/extensions/\" *\r\n| join kind=inner (\r\n    resources\r\n    | where type == \"microsoft.kubernetes/connectedclusters\"\r\n    | where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n    | where properties.infrastructure == \"azure_stack_hci\"\r\n    | project clusterId = tolower(id), clusterName = name, clusterResourceGroup = resourceGroup, subscriptionId\r\n) on clusterId\r\n| join kind=leftouter (\r\n    resourcecontainers\r\n    | where type == \"microsoft.resources/subscriptions\"\r\n    | project subscriptionId, subscriptionName = name\r\n) on subscriptionId\r\n| extend clusterLink = strcat('https://portal.azure.com/#@/resource', clusterId)\r\n| extend subscriptionLink = strcat('https://portal.azure.com/#@/resource/subscriptions/', subscriptionId)\r\n| project clusterName, clusterLink, extensionName, status, errorDetails, errorDetailsFull, resourceGroup = clusterResourceGroup, subscriptionName, subscriptionLink\r\n| order by clusterName asc, extensionName asc",
               "size": 0,
               "showAnalytics": true,
               "title": "⚠️ Failed AKS Extensions",
@@ -5453,8 +5480,32 @@
                     }
                   },
                   {
-                    "columnMatch": "message",
-                    "formatter": 1
+                    "columnMatch": "errorDetails",
+                    "formatter": 1,
+                    "formatOptions": {
+                      "linkTarget": "CellDetails",
+                      "linkIsContextBlade": true,
+                      "customColumnWidthSetting": "45ch"
+                    },
+                    "tooltipFormat": {
+                      "tooltip": "Click to view full error details"
+                    }
+                  },
+                  {
+                    "columnMatch": "errorDetailsFull",
+                    "formatter": 5
+                  },
+                  {
+                    "columnMatch": "subscriptionName",
+                    "formatter": 7,
+                    "formatOptions": {
+                      "linkTarget": "Url",
+                      "linkColumn": "subscriptionLink"
+                    }
+                  },
+                  {
+                    "columnMatch": "subscriptionLink",
+                    "formatter": 5
                   }
                 ],
                 "rowLimit": 1000,
@@ -5476,18 +5527,36 @@
                     "label": "Status"
                   },
                   {
-                    "columnId": "message",
-                    "label": "Error Message"
+                    "columnId": "errorDetails",
+                    "label": "Error Details"
+                  },
+                  {
+                    "columnId": "errorDetailsFull"
                   },
                   {
                     "columnId": "resourceGroup",
                     "label": "Resource Group"
                   },
                   {
-                    "columnId": "subscriptionId",
-                    "label": "Subscription"
+                    "columnId": "subscriptionName",
+                    "label": "Subscription Name"
+                  },
+                  {
+                    "columnId": "subscriptionLink"
                   }
-                ]
+                ],
+                "rowDetails": {
+                  "type": 1,
+                  "title": "Error Details",
+                  "content": {
+                    "json": "### ⚠️ AKS Extension Error Details\r\n\r\n| Property | Value |\r\n|:--|:--|\r\n| **AKS Cluster** | {clusterName} |\r\n| **Extension** | {extensionName} |\r\n| **Status** | {status} |\r\n| **Resource Group** | {resourceGroup} |\r\n\r\n---\r\n\r\n#### Full Error Message\r\n\r\n<div style=\\\"background-color: #fff3cd; border: 1px solid #ffc107; border-radius: 4px; padding: 12px; font-family: 'Segoe UI', sans-serif; white-space: pre-wrap; word-wrap: break-word; line-height: 1.5;\\\">\r\n\r\n{errorDetailsFull}\r\n\r\n</div>\r\n\r\n---\r\n\r\n💡 **Tip:** Click on the AKS Cluster Name link to view the extension in the Azure Portal for additional details and remediation options."
+                  },
+                  "conditionalVisibility": {
+                    "parameterName": "errorDetails",
+                    "comparison": "isNotEqualTo",
+                    "value": ""
+                  }
+                }
               }
             },
             "name": "aks-failed-extensions-table"
