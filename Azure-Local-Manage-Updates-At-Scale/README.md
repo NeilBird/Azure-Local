@@ -1,6 +1,6 @@
 # Azure Local - Managing Updates At Scale Workbook
 
-## Latest Version: v0.7.0
+## Latest Version: v0.7.1
 
 📥 **[Copy / Paste (or download) the latest Workbook JSON](https://raw.githubusercontent.com/NeilBird/Azure-Local/refs/heads/main/Azure-Local-Manage-Updates-At-Scale/Azure-Workbook_AzLocal-Managing-Updates-At-Scale.json)**
 
@@ -8,7 +8,18 @@ An Azure Monitor Workbook for monitoring and managing Azure Local (formerly Azur
 
 **Important:** This is a community driven project, (not officially supported by Microsoft), for any issues, requests or feedback, please [raise an Issue](https://github.com/NeilBird/Azure-Local/issues) (note: no time scales or guarantees can be provided for responses to issues.)
 
-## Recent Changes (v0.7.0)
+## Recent Changes (v0.7.1)
+
+### Bug Fixes
+
+- **All AKS Arc Clusters Table - Azure Local Cluster Linking Fix**: Fixed issue where the "Azure Local Cluster" column was showing null for all AKS Arc clusters
+  - Changed to use `HCIClusterID` from `kubernetesconfigurationresources` for reliable cluster lookup
+  - Query now follows the correct relationship path: AKS Cluster → Custom Location → Arc Bridge → hybridaksextension → `properties.ConfigurationSettings.HCIClusterID`
+  - Uses merge query pattern to combine data from incompatible ARG table types (`kubernetesconfigurationresources` and `extensibilityresources`)
+  - Azure Local Cluster column is now clickable with direct link to the parent cluster
+  - Retained Control Plane and Worker Node columns
+
+## Previous Changes (v0.7.0)
 
 ### Major Updates and Improvements
 
