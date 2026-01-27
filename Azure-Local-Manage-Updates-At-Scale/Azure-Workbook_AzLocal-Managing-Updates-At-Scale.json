@@ -7169,7 +7169,7 @@
             "type": 3,
             "content": {
               "version": "KqlItem/1.0",
-              "query": "extensibilityresources\r\n| where type == \"microsoft.azurestackhci/clusters/updates/updateruns\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| extend state = tostring(properties.state)\r\n| extend timeStarted = todatetime(properties.timeStarted)\r\n| where timeStarted >= ago({UpdateAttemptsTimeFilter}d)\r\n| extend updateName = tostring(split(id, '/updates/')[1])\r\n| extend updateName = tostring(split(updateName, '/updateruns')[0])\r\n| extend solutionUpdate = tostring(split(updateName, '/')[0])\r\n| where '*' in ({SolutionUpdateFilter}) or solutionUpdate in ({SolutionUpdateFilter})\r\n| extend clusterIdParts = split(id, '/')\r\n| extend clusterName = tostring(clusterIdParts[8])\r\n| extend updateKey = strcat(clusterName, '|', updateName)\r\n| order by updateKey asc, timeStarted asc\r\n| extend runNumber = row_number(1, updateKey != prev(updateKey))\r\n| summarize \r\n    FirstRunState = take_anyif(state, runNumber == 1),\r\n    HasSuccess = countif(state == 'Succeeded') > 0,\r\n    HasFailure = countif(state == 'Failed') > 0,\r\n    TotalRuns = count()\r\n    by updateKey\r\n| extend UpdateOutcome = case(\r\n    FirstRunState == 'Succeeded', 'First Time Success',\r\n    HasSuccess and HasFailure, 'Resumed After Failure',\r\n    HasSuccess and not(HasFailure), 'Succeeded (Multiple Runs)',\r\n    FirstRunState == 'InProgress', 'In Progress',\r\n    HasFailure and not(HasSuccess), 'Failed (Not Recovered)',\r\n    'Other'\r\n)\r\n| summarize Count = count() by UpdateOutcome\r\n| order by Count desc",
+              "query": "extensibilityresources\r\n| where type == \"microsoft.azurestackhci/clusters/updates/updateruns\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| extend state = tostring(properties.state)\r\n| extend timeStarted = todatetime(properties.timeStarted)\r\n| where timeStarted >= ago({UpdateAttemptsTimeFilter}d)\r\n| extend updateName = tostring(split(id, '/updates/')[1])\r\n| extend updateName = tostring(split(updateName, '/updateruns')[0])\r\n| extend solutionUpdate = tostring(split(updateName, '/')[0])\r\n| where '*' in ({SolutionUpdateFilter}) or solutionUpdate in ({SolutionUpdateFilter})\r\n| extend clusterIdParts = split(id, '/')\r\n| extend clusterName = tostring(clusterIdParts[8])\r\n| extend updateKey = strcat(clusterName, '|', updateName)\r\n| order by updateKey asc, timeStarted asc\r\n| extend runNumber = row_number(1, updateKey != prev(updateKey))\r\n| summarize \r\n    FirstRunState = take_anyif(state, runNumber == 1),\r\n    HasSuccess = countif(state == 'Succeeded') > 0,\r\n    HasFailure = countif(state == 'Failed') > 0,\r\n    TotalRuns = count()\r\n    by updateKey\r\n| extend UpdateOutcome = case(\r\n    FirstRunState == 'Succeeded', 'First Time Success',\r\n    HasSuccess and HasFailure, 'Resumed After Failure',\r\n    HasSuccess and not(HasFailure), 'Succeeded (Multiple Runs)',\r\n    FirstRunState == 'InProgress', 'In Progress',\r\n    HasFailure and not(HasSuccess), 'Failed (Not Recovered)',\r\n    'Other'\r\n)\r\n| summarize Count = count() by UpdateOutcome\r\n| extend JoinKey = 1\r\n| join kind=inner (\r\n    extensibilityresources\r\n    | where type == \"microsoft.azurestackhci/clusters/updates/updateruns\"\r\n    | where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n    | extend timeStarted = todatetime(properties.timeStarted)\r\n    | where timeStarted >= ago({UpdateAttemptsTimeFilter}d)\r\n    | extend updateName = tostring(split(id, '/updates/')[1])\r\n    | extend updateName = tostring(split(updateName, '/updateruns')[0])\r\n    | extend solutionUpdate = tostring(split(updateName, '/')[0])\r\n    | where '*' in ({SolutionUpdateFilter}) or solutionUpdate in ({SolutionUpdateFilter})\r\n    | extend clusterIdParts = split(id, '/')\r\n    | extend clusterName = tostring(clusterIdParts[8])\r\n    | extend updateKey = strcat(clusterName, '|', updateName)\r\n    | summarize by updateKey\r\n    | count\r\n    | project Total = Count, JoinKey = 1\r\n) on JoinKey\r\n| project UpdateOutcome, Count, Percentage = strcat(tostring(round(100.0 * Count / Total, 1)), '%')\r\n| order by Count desc",
               "size": 0,
               "title": "Update Success Analysis (by Unique Update)",
               "queryType": 1,
@@ -7231,18 +7231,6 @@
                     "formatOptions": {
                       "palette": "blue"
                     }
-                  },
-                  {
-                    "columnMatch": "Percentage",
-                    "formatter": 0,
-                    "numberFormat": {
-                      "unit": 1,
-                      "options": {
-                        "style": "decimal",
-                        "minimumFractionDigits": 1,
-                        "maximumFractionDigits": 1
-                      }
-                    }
                   }
                 ],
                 "labelSettings": [
@@ -7257,17 +7245,6 @@
                   {
                     "columnId": "Percentage",
                     "label": "Percentage"
-                  }
-                ],
-                "transformers": [
-                  {
-                    "type": "ColumnArithmetic",
-                    "settings": {
-                      "operation": "Percentage of Total",
-                      "operandColIdx": 1,
-                      "resultLabel": "Percentage",
-                      "numberPrecision": 1
-                    }
                   }
                 ]
               }

@@ -32,7 +32,7 @@ An Azure Monitor Workbook for monitoring and managing Azure Local (formerly Azur
 
 - **Update Success Analysis Table Improvements** (Update Progress tab):
   - Added **Percentage** column showing the proportion of each outcome category relative to total unique updates
-  - Uses Workbook Column Arithmetic transformer to calculate percentages client-side
+  - Uses ARG `join kind=inner` with subquery to calculate percentages server-side
 
 > See [Appendix: Previous Version Changes](#appendix-previous-version-changes) for older release notes.
 
