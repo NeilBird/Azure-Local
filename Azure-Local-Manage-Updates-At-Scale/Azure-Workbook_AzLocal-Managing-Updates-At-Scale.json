@@ -4909,84 +4909,16 @@
             "type": 3,
             "content": {
               "version": "KqlItem/1.0",
-              "query": "resources\r\n| where type == \"microsoft.kubernetes/connectedclusters\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| where properties.infrastructure == \"azure_stack_hci\"\r\n| extend connectivityStatus = tostring(properties.connectivityStatus)\r\n| extend provisioningState = tostring(properties.provisioningState)\r\n| extend kubernetesVersion = tostring(properties.kubernetesVersion)\r\n| extend agentVersion = tostring(properties.agentVersion)\r\n| extend totalNodeCount = toint(properties.totalNodeCount)\r\n| extend totalCoreCount = toint(properties.totalCoreCount)\r\n| extend distribution = tostring(properties.distribution)\r\n| extend lastConnectivityTime = todatetime(properties.lastConnectivityTime)\r\n| extend certExpiration = todatetime(properties.managedIdentityCertificateExpirationTime)\r\n| extend createdAt = todatetime(systemData.createdAt)\r\n| extend clusterLink = strcat('https://portal.azure.com/#@/resource', id)\r\n| extend clusterResourceId = tolower(id)\r\n| join kind=leftouter (\r\n    extensibilityresources\r\n    | where type == \"microsoft.hybridcontainerservice/provisionedclusterinstances\"\r\n    | extend customLocId = tolower(tostring(extendedLocation.name))\r\n    | extend customLocKey = iff(customLocId startswith \"/\", tolower(trim_end(\"/\", customLocId)), customLocId)\r\n    | extend clusterResourceId = tolower(substring(id, 0, indexof(id, \"/providers/Microsoft.HybridContainerService\")))\r\n    | project clusterResourceId, customLocKey\r\n) on clusterResourceId\r\n| project ClusterName = name, clusterLink, clusterResourceId, customLocKey, connectivityStatus, provisioningState, resourceGroup, kubernetesVersion, agentVersion, totalNodeCount, totalCoreCount, distribution, lastConnectivityTime, certExpiration, createdAt, location\r\n| order by connectivityStatus asc, ClusterName asc",
-              "size": 0,
-              "queryType": 1,
-              "resourceType": "microsoft.resourcegraph/resources",
-              "crossComponentResources": [
-                "{Subscriptions}"
-              ]
-            },
-            "conditionalVisibility": {
-              "parameterName": "yourMom",
-              "comparison": "isEqualTo",
-              "value": "alwaysHidden"
-            },
-            "name": "aks-all-clusters-base"
-          },
-          {
-            "type": 3,
-            "content": {
-              "version": "KqlItem/1.0",
-              "query": "resources\r\n| where type == \"microsoft.extendedlocation/customlocations\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| where tostring(properties.hostResourceId) contains \"Microsoft.ResourceConnector/appliances\"\r\n| extend arcBridgeId = tolower(tostring(properties.hostResourceId))\r\n| extend customLocKey = tolower(trim_end(\"/\", id))\r\n| join kind=leftouter (\r\n    kubernetesconfigurationresources\r\n    | where type =~ \"microsoft.kubernetesconfiguration/extensions\"\r\n    | where name =~ \"hybridaksextension\"\r\n    | extend hciClusterId = tolower(tostring(properties.ConfigurationSettings.HCIClusterID))\r\n    | extend arcBridgeId = tolower(substring(id, 0, indexof(id, \"/providers/Microsoft.KubernetesConfiguration\")))\r\n    | project arcBridgeId, hciClusterId\r\n) on arcBridgeId\r\n| join kind=leftouter (\r\n    resources\r\n    | where type == \"microsoft.azurestackhci/clusters\"\r\n    | where '{ClusterTagName}' == '' or ('{ClusterTagValue}' != '' and tostring(tags['{ClusterTagName}']) =~ '{ClusterTagValue}')\r\n    | project azureLocalClusterName = name, hciClusterId = tolower(id), azureLocalClusterLink = strcat('https://portal.azure.com/#@/resource', id)\r\n) on hciClusterId\r\n| project customLocKey, azureLocalClusterName, azureLocalClusterLink",
-              "size": 0,
-              "queryType": 1,
-              "resourceType": "microsoft.resourcegraph/resources",
-              "crossComponentResources": [
-                "{Subscriptions}"
-              ]
-            },
-            "conditionalVisibility": {
-              "parameterName": "yourMom",
-              "comparison": "isEqualTo",
-              "value": "alwaysHidden"
-            },
-            "name": "aks-azurelocal-mapping"
-          },
-          {
-            "type": 3,
-            "content": {
-              "version": "KqlItem/1.0",
-              "query": "resources\r\n| where type == \"microsoft.kubernetes/connectedclusters\"\r\n| where properties.infrastructure == \"azure_stack_hci\"\r\n| extend clusterResourceId = tolower(id)\r\n| join kind=leftouter (\r\n    extensibilityresources\r\n    | where type == \"microsoft.hybridcontainerservice/provisionedclusterinstances\"\r\n    | extend controlPlaneNodes = toint(properties[\"controlPlane\"][\"count\"])\r\n    | mv-expand agentPool = properties.agentPoolProfiles\r\n    | summarize controlPlaneNodes = max(controlPlaneNodes), workerNodes = sum(toint(agentPool[\"count\"])) by id\r\n    | extend clusterResourceId = tolower(substring(id, 0, indexof(id, \"/providers/Microsoft.HybridContainerService\")))\r\n    | project clusterResourceId, controlPlaneNodes, workerNodes\r\n) on clusterResourceId\r\n| project clusterResourceId, controlPlaneNodes, workerNodes",
-              "size": 0,
-              "queryType": 1,
-              "resourceType": "microsoft.resourcegraph/resources",
-              "crossComponentResources": [
-                "{Subscriptions}"
-              ]
-            },
-            "conditionalVisibility": {
-              "parameterName": "yourMom",
-              "comparison": "isEqualTo",
-              "value": "alwaysHidden"
-            },
-            "name": "aks-all-clusters-nodes"
-          },
-          {
-            "type": 3,
-            "content": {
-              "version": "KqlItem/1.0",
-              "query": "{\"version\":\"Merge/1.0\",\"merges\":[{\"id\":\"aks-base-nodes-merge\",\"mergeType\":\"inner\",\"leftTable\":\"aks-all-clusters-base\",\"rightTable\":\"aks-all-clusters-nodes\",\"leftColumn\":\"clusterResourceId\",\"rightColumn\":\"clusterResourceId\"}],\"projectRename\":[{\"originalName\":\"[aks-all-clusters-base].ClusterName\",\"mergedName\":\"ClusterName\",\"fromId\":\"aks-base-nodes-merge\"},{\"originalName\":\"[aks-all-clusters-base].clusterLink\",\"mergedName\":\"clusterLink\",\"fromId\":\"aks-base-nodes-merge\"},{\"originalName\":\"[aks-all-clusters-base].clusterResourceId\",\"mergedName\":\"clusterResourceId\",\"fromId\":\"aks-base-nodes-merge\"},{\"originalName\":\"[aks-all-clusters-base].customLocKey\",\"mergedName\":\"customLocKey\",\"fromId\":\"aks-base-nodes-merge\"},{\"originalName\":\"[aks-all-clusters-base].connectivityStatus\",\"mergedName\":\"connectivityStatus\",\"fromId\":\"aks-base-nodes-merge\"},{\"originalName\":\"[aks-all-clusters-base].provisioningState\",\"mergedName\":\"provisioningState\",\"fromId\":\"aks-base-nodes-merge\"},{\"originalName\":\"[aks-all-clusters-base].resourceGroup\",\"mergedName\":\"resourceGroup\",\"fromId\":\"aks-base-nodes-merge\"},{\"originalName\":\"[aks-all-clusters-base].kubernetesVersion\",\"mergedName\":\"kubernetesVersion\",\"fromId\":\"aks-base-nodes-merge\"},{\"originalName\":\"[aks-all-clusters-base].agentVersion\",\"mergedName\":\"agentVersion\",\"fromId\":\"aks-base-nodes-merge\"},{\"originalName\":\"[aks-all-clusters-nodes].controlPlaneNodes\",\"mergedName\":\"controlPlaneNodes\",\"fromId\":\"aks-base-nodes-merge\"},{\"originalName\":\"[aks-all-clusters-nodes].workerNodes\",\"mergedName\":\"workerNodes\",\"fromId\":\"aks-base-nodes-merge\"},{\"originalName\":\"[aks-all-clusters-base].totalNodeCount\",\"mergedName\":\"totalNodeCount\",\"fromId\":\"aks-base-nodes-merge\"},{\"originalName\":\"[aks-all-clusters-base].totalCoreCount\",\"mergedName\":\"totalCoreCount\",\"fromId\":\"aks-base-nodes-merge\"},{\"originalName\":\"[aks-all-clusters-base].distribution\",\"mergedName\":\"distribution\",\"fromId\":\"aks-base-nodes-merge\"},{\"originalName\":\"[aks-all-clusters-base].lastConnectivityTime\",\"mergedName\":\"lastConnectivityTime\",\"fromId\":\"aks-base-nodes-merge\"},{\"originalName\":\"[aks-all-clusters-base].certExpiration\",\"mergedName\":\"certExpiration\",\"fromId\":\"aks-base-nodes-merge\"},{\"originalName\":\"[aks-all-clusters-base].createdAt\",\"mergedName\":\"createdAt\",\"fromId\":\"aks-base-nodes-merge\"},{\"originalName\":\"[aks-all-clusters-base].location\",\"mergedName\":\"location\",\"fromId\":\"aks-base-nodes-merge\"},{\"originalName\":\"[aks-all-clusters-nodes].clusterResourceId\"}]}",
-              "size": 0,
-              "queryType": 7
-            },
-            "conditionalVisibility": {
-              "parameterName": "yourMom",
-              "comparison": "isEqualTo",
-              "value": "alwaysHidden"
-            },
-            "name": "aks-base-nodes-merged"
-          },
-          {
-            "type": 3,
-            "content": {
-              "version": "KqlItem/1.0",
-              "query": "{\"version\":\"Merge/1.0\",\"merges\":[{\"id\":\"aks-azurelocal-merge\",\"mergeType\":\"leftouter\",\"leftTable\":\"aks-base-nodes-merged\",\"rightTable\":\"aks-azurelocal-mapping\",\"leftColumn\":\"customLocKey\",\"rightColumn\":\"customLocKey\"}],\"projectRename\":[{\"originalName\":\"[aks-base-nodes-merged].ClusterName\",\"mergedName\":\"ClusterName\",\"fromId\":\"aks-azurelocal-merge\"},{\"originalName\":\"[aks-base-nodes-merged].clusterLink\",\"mergedName\":\"clusterLink\",\"fromId\":\"aks-azurelocal-merge\"},{\"originalName\":\"[aks-base-nodes-merged].connectivityStatus\",\"mergedName\":\"connectivityStatus\",\"fromId\":\"aks-azurelocal-merge\"},{\"originalName\":\"[aks-base-nodes-merged].provisioningState\",\"mergedName\":\"provisioningState\",\"fromId\":\"aks-azurelocal-merge\"},{\"originalName\":\"[aks-base-nodes-merged].resourceGroup\",\"mergedName\":\"resourceGroup\",\"fromId\":\"aks-azurelocal-merge\"},{\"originalName\":\"[aks-azurelocal-mapping].azureLocalClusterName\",\"mergedName\":\"azureLocalClusterName\",\"fromId\":\"aks-azurelocal-merge\"},{\"originalName\":\"[aks-azurelocal-mapping].azureLocalClusterLink\",\"mergedName\":\"azureLocalClusterLink\",\"fromId\":\"aks-azurelocal-merge\"},{\"originalName\":\"[aks-base-nodes-merged].kubernetesVersion\",\"mergedName\":\"kubernetesVersion\",\"fromId\":\"aks-azurelocal-merge\"},{\"originalName\":\"[aks-base-nodes-merged].agentVersion\",\"mergedName\":\"agentVersion\",\"fromId\":\"aks-azurelocal-merge\"},{\"originalName\":\"[aks-base-nodes-merged].controlPlaneNodes\",\"mergedName\":\"controlPlaneNodes\",\"fromId\":\"aks-azurelocal-merge\"},{\"originalName\":\"[aks-base-nodes-merged].workerNodes\",\"mergedName\":\"workerNodes\",\"fromId\":\"aks-azurelocal-merge\"},{\"originalName\":\"[aks-base-nodes-merged].totalNodeCount\",\"mergedName\":\"totalNodeCount\",\"fromId\":\"aks-azurelocal-merge\"},{\"originalName\":\"[aks-base-nodes-merged].totalCoreCount\",\"mergedName\":\"totalCoreCount\",\"fromId\":\"aks-azurelocal-merge\"},{\"originalName\":\"[aks-base-nodes-merged].distribution\",\"mergedName\":\"distribution\",\"fromId\":\"aks-azurelocal-merge\"},{\"originalName\":\"[aks-base-nodes-merged].lastConnectivityTime\",\"mergedName\":\"lastConnectivityTime\",\"fromId\":\"aks-azurelocal-merge\"},{\"originalName\":\"[aks-base-nodes-merged].certExpiration\",\"mergedName\":\"certExpiration\",\"fromId\":\"aks-azurelocal-merge\"},{\"originalName\":\"[aks-base-nodes-merged].createdAt\",\"mergedName\":\"createdAt\",\"fromId\":\"aks-azurelocal-merge\"},{\"originalName\":\"[aks-base-nodes-merged].location\",\"mergedName\":\"location\",\"fromId\":\"aks-azurelocal-merge\"},{\"originalName\":\"[aks-base-nodes-merged].clusterResourceId\"},{\"originalName\":\"[aks-base-nodes-merged].customLocKey\"},{\"originalName\":\"[aks-azurelocal-mapping].customLocKey\"}]}",
+              "query": "resources\r\n| where type == \"microsoft.kubernetes/connectedclusters\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| where properties.infrastructure == \"azure_stack_hci\"\r\n| extend connectivityStatus = tostring(properties.connectivityStatus)\r\n| extend provisioningState = tostring(properties.provisioningState)\r\n| extend kubernetesVersion = tostring(properties.kubernetesVersion)\r\n| extend agentVersion = tostring(properties.agentVersion)\r\n| extend totalNodeCount = toint(properties.totalNodeCount)\r\n| extend totalCoreCount = toint(properties.totalCoreCount)\r\n| extend distribution = tostring(properties.distribution)\r\n| extend lastConnectivityTime = todatetime(properties.lastConnectivityTime)\r\n| extend certExpiration = todatetime(properties.managedIdentityCertificateExpirationTime)\r\n| extend createdAt = todatetime(systemData.createdAt)\r\n| extend clusterLink = strcat('https://portal.azure.com/#@/resource', id)\r\n| extend clusterResourceId = tolower(id)\r\n| join kind=leftouter (\r\n    extensibilityresources\r\n    | where type == \"microsoft.hybridcontainerservice/provisionedclusterinstances\"\r\n    | extend customLocId = tolower(tostring(extendedLocation.name))\r\n    | extend customLocKey = iff(customLocId startswith \"/\", tolower(trim_end(\"/\", customLocId)), customLocId)\r\n    | extend controlPlaneNodes = toint(properties[\"controlPlane\"][\"count\"])\r\n    | mv-expand agentPool = properties.agentPoolProfiles\r\n    | summarize customLocKey = max(customLocKey), controlPlaneNodes = max(controlPlaneNodes), workerNodes = sum(toint(agentPool[\"count\"])) by id\r\n    | extend clusterResourceId = tolower(substring(id, 0, indexof(id, \"/providers/Microsoft.HybridContainerService\")))\r\n    | project clusterResourceId, customLocKey, controlPlaneNodes, workerNodes\r\n) on clusterResourceId\r\n| join kind=leftouter (\r\n    resources\r\n    | where type == \"microsoft.extendedlocation/customlocations\"\r\n    | where tostring(properties.hostResourceId) contains \"Microsoft.ResourceConnector/appliances\"\r\n    | extend arcBridgeId = tolower(tostring(properties.hostResourceId))\r\n    | extend customLocKey = tolower(trim_end(\"/\", id))\r\n    | join kind=leftouter (\r\n        kubernetesconfigurationresources\r\n        | where type =~ \"microsoft.kubernetesconfiguration/extensions\"\r\n        | where name =~ \"hybridaksextension\"\r\n        | extend hciClusterId = tolower(tostring(properties.ConfigurationSettings.HCIClusterID))\r\n        | extend arcBridgeId = tolower(substring(id, 0, indexof(id, \"/providers/Microsoft.KubernetesConfiguration\")))\r\n        | project arcBridgeId, hciClusterId\r\n    ) on arcBridgeId\r\n    | join kind=leftouter (\r\n        resources\r\n        | where type == \"microsoft.azurestackhci/clusters\"\r\n        | where '{ClusterTagName}' == '' or ('{ClusterTagValue}' != '' and tostring(tags['{ClusterTagName}']) =~ '{ClusterTagValue}')\r\n        | project azureLocalClusterName = name, hciClusterId = tolower(id), azureLocalClusterLink = strcat('https://portal.azure.com/#@/resource', id)\r\n    ) on hciClusterId\r\n    | project customLocKey, azureLocalClusterName, azureLocalClusterLink\r\n) on customLocKey\r\n| project ClusterName = name, clusterLink, connectivityStatus, provisioningState, resourceGroup, azureLocalClusterName, azureLocalClusterLink, kubernetesVersion, agentVersion, controlPlaneNodes, workerNodes, totalNodeCount, totalCoreCount, distribution, lastConnectivityTime, certExpiration, createdAt, location\r\n| order by connectivityStatus asc, ClusterName asc",
               "size": 0,
               "showAnalytics": true,
               "showRefreshButton": true,
               "showExportToExcel": true,
-              "queryType": 7,
+              "queryType": 1,
+              "resourceType": "microsoft.resourcegraph/resources",
+              "crossComponentResources": [
+                "{Subscriptions}"
+              ],
               "gridSettings": {
                 "formatters": [
                   {
