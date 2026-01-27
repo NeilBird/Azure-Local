@@ -28,6 +28,26 @@ An Azure Monitor Workbook for monitoring and managing Azure Local (formerly Azur
     - Available upgrade versions (comma-separated list)
   - Data sourced from `extensibilityresources` upgradeprofiles joined with connectedclusters
 
+- **Tab Navigation Improvements**:
+  - Reordered tabs: ARB Status now appears before Azure Local Machines for better logical grouping
+  - Updated tab icons for better visual distinction:
+    - Azure Local Machines: 🗄️ (file cabinet)
+    - Azure Local VMs: 💻 (laptop)
+
+- **All Cluster Update Status Table Improvements** (Update Readiness tab):
+  - Renamed **"Days Since Update"** column to **"Last Update Installed"**
+  - Updated format from "X days" to "X days ago" for clearer time indication
+
+- **System Health Checks Overview Table Improvements** (Update Readiness tab):
+  - Renamed **"Days Since Last Check"** column to **"Age of Health Results"**
+  - Added explanatory tip text above table clarifying what "Age of Health Results" represents
+
+- **Update Attempts Details Table Improvements** (Update Progress tab):
+  - Moved **Duration** column to appear before Started/Ended columns for better readability
+
+- **Clusters with Updates Available Table** (Update Readiness tab):
+  - Renamed action button from "Apply Update" to "Install Update" for consistency with Azure Portal terminology
+
 - **Update Progress Tab Improvements**:
   - **New "Solution Update" Filter**: Multi-select dropdown to filter by specific solution update versions
     - Extracts version from full update name (e.g., `Solution12.2601.1002.38/updateRuns/...` → `Solution12.2601.1002.38`)

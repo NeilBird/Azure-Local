@@ -7502,18 +7502,18 @@
                           "operator": ">=",
                           "thresholdValue": "100",
                           "representation": "redBright",
-                          "text": "{0}{1} days"
+                          "text": "{0}{1} days ago"
                         },
                         {
                           "operator": ">=",
                           "thresholdValue": "60",
                           "representation": "yellow",
-                          "text": "{0}{1} days"
+                          "text": "{0}{1} days ago"
                         },
                         {
                           "operator": "Default",
                           "thresholdValue": null,
-                          "text": "{0}{1} days"
+                          "text": "{0}{1} days ago"
                         }
                       ]
                     }
@@ -7559,7 +7559,7 @@
                   },
                   {
                     "columnId": "DaysSinceUpdate",
-                    "label": "Days Since Update"
+                    "label": "Last Update Installed"
                   },
                   {
                     "columnId": "LastUpdated",
