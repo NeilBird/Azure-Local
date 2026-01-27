@@ -48,6 +48,13 @@ An Azure Monitor Workbook for monitoring and managing Azure Local (formerly Azur
 - **Clusters with Updates Available Table** (Update Readiness tab):
   - Renamed action button from "Apply Update" to "Install Update" for consistency with Azure Portal terminology
 
+### Bug Fixes
+
+- **Clusters Currently Updating Table** (Update Readiness tab):
+  - Fixed inconsistency where clusters with active update runs showing "InProgress" in Update Attempts Details table were not appearing in Clusters Currently Updating
+  - Query now uses update runs (`updateruns`) as the primary source of truth instead of relying on `updateSummaries.state` which may not be synchronized
+  - Ensures consistent display of in-progress updates across both tables
+
 - **Update Progress Tab Improvements**:
   - **New "Solution Update" Filter**: Multi-select dropdown to filter by specific solution update versions
     - Extracts version from full update name (e.g., `Solution12.2601.1002.38/updateRuns/...` → `Solution12.2601.1002.38`)
