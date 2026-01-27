@@ -1,4 +1,4 @@
-# Azure Local - Managing Updates At Scale Workbook
+# Azure Local LENS (Lifecycle, Events & Notification Status) Workbook
 
 ## Latest Version: v0.7.3
 
