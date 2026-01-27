@@ -6896,7 +6896,7 @@
                   },
                   {
                     "columnId": "UpdateName",
-                    "label": "Update Name"
+                    "label": "Update Run"
                   },
                   {
                     "columnId": "UpdateRunLink"
