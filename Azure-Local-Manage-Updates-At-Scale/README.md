@@ -2,4 +2,4 @@
 
 ## HTTP 403 - Redirect
 
-This resource has permanently moved, please visit for further updates and enhancements to the workbook: https://aka.ms/AzureLocalLENS
+This resource has permanently moved, for further updates and enhancements please visit: https://aka.ms/AzureLocalLENS
