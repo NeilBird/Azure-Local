@@ -13,9 +13,12 @@ An Azure Monitor Workbook for monitoring and managing Azure Local (formerly Azur
 ### Bug Fixes
 
 - **All AKS Arc Clusters Table - Azure Local Cluster Linking Fix**: Fixed issue where the "Azure Local Cluster" column was showing null for all AKS Arc clusters
-  - Changed to use `HCIClusterID` from `kubernetesconfigurationresources` for reliable cluster lookup
-  - Query now follows the correct relationship path: AKS Cluster → Custom Location → Arc Bridge → hybridaksextension → `properties.ConfigurationSettings.HCIClusterID`
-  - Uses merge query pattern to combine data from incompatible ARG table types (`kubernetesconfigurationresources` and `extensibilityresources`)
+  - Redesigned query architecture to use proper relationship chain: AKS Cluster → provisionedclusterinstances (custom location) → customlocations → Arc Bridge → hybridaksextension → `HCIClusterID` → Azure Local Cluster
+  - Uses normalized custom location key (lowercased, trimmed) for reliable joins across queries
+  - Implemented 3-query merge pattern to work around ARG cross-table join limitations:
+    - Query A: AKS cluster base info + custom location key from `extensibilityresources` (provisionedclusterinstances)
+    - Query B: Custom location → Arc Bridge → `kubernetesconfigurationresources` (hybridaksextension) → Azure Local cluster mapping
+    - Query C: Node counts from provisionedclusterinstances
   - Azure Local Cluster column is now clickable with direct link to the parent cluster
   - Retained Control Plane and Worker Node columns
 
