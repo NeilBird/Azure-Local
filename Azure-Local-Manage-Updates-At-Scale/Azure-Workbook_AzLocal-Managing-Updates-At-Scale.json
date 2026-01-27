@@ -6705,6 +6705,30 @@
                   "defaultValue": "7",
                   "queryType": 1,
                   "resourceType": "microsoft.resourcegraph/resources"
+                },
+                {
+                  "id": "solution-update-filter",
+                  "version": "KqlParameterItem/1.0",
+                  "name": "SolutionUpdateFilter",
+                  "label": "Solution Update",
+                  "type": 2,
+                  "isRequired": true,
+                  "multiSelect": true,
+                  "quote": "'",
+                  "delimiter": ",",
+                  "query": "extensibilityresources\r\n| where type == \"microsoft.azurestackhci/clusters/updates/updateruns\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| extend updateName = tostring(split(id, '/updates/')[1])\r\n| extend updateName = tostring(split(updateName, '/updateruns')[0])\r\n| extend solutionUpdate = tostring(split(updateName, '/')[0])\r\n| where isnotempty(solutionUpdate)\r\n| distinct solutionUpdate\r\n| order by solutionUpdate desc",
+                  "crossComponentResources": [
+                    "{Subscriptions}"
+                  ],
+                  "typeSettings": {
+                    "additionalResourceOptions": [
+                      "value::all"
+                    ],
+                    "showDefault": false
+                  },
+                  "defaultValue": "value::all",
+                  "queryType": 1,
+                  "resourceType": "microsoft.resourcegraph/resources"
                 }
               ],
               "style": "pills",
@@ -6717,7 +6741,7 @@
             "type": 3,
             "content": {
               "version": "KqlItem/1.0",
-              "query": "extensibilityresources\r\n| where type == \"microsoft.azurestackhci/clusters/updates/updateruns\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| extend state = tostring(properties.state)\r\n| extend timeStarted = todatetime(properties.timeStarted)\r\n| where timeStarted >= ago({UpdateAttemptsTimeFilter}d)\r\n| extend DayValue = startofday(timeStarted)\r\n| extend Day = format_datetime(DayValue, 'yyyy-MM-dd')\r\n| summarize Count = count() by Day, state\r\n| order by Day asc",
+              "query": "extensibilityresources\r\n| where type == \"microsoft.azurestackhci/clusters/updates/updateruns\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| extend state = tostring(properties.state)\r\n| extend timeStarted = todatetime(properties.timeStarted)\r\n| where timeStarted >= ago({UpdateAttemptsTimeFilter}d)\r\n| extend updateName = tostring(split(id, '/updates/')[1])\r\n| extend updateName = tostring(split(updateName, '/updateruns')[0])\r\n| extend solutionUpdate = tostring(split(updateName, '/')[0])\r\n| where '*' in ({SolutionUpdateFilter}) or solutionUpdate in ({SolutionUpdateFilter})\r\n| extend timePeriod = {UpdateAttemptsTimeFilter}\r\n| extend TimeBucket = case(\r\n    timePeriod <= 30, startofday(timeStarted),\r\n    timePeriod <= 90, startofweek(timeStarted),\r\n    startofmonth(timeStarted)\r\n)\r\n| extend TimeLabel = case(\r\n    timePeriod <= 30, format_datetime(TimeBucket, 'yyyy-MM-dd'),\r\n    timePeriod <= 90, strcat('Week of ', format_datetime(TimeBucket, 'yyyy-MM-dd')),\r\n    format_datetime(TimeBucket, 'yyyy-MM')\r\n)\r\n| summarize Count = count() by TimeLabel, TimeBucket, state\r\n| order by TimeBucket asc\r\n| project TimeLabel, state, Count",
               "size": 0,
               "title": "Update Attempts by Day",
               "queryType": 1,
@@ -6727,7 +6751,7 @@
               ],
               "visualization": "barchart",
               "chartSettings": {
-                "xAxis": "Day",
+                "xAxis": "TimeLabel",
                 "yAxis": [
                   "Count"
                 ],
@@ -6760,7 +6784,7 @@
             "type": 3,
             "content": {
               "version": "KqlItem/1.0",
-              "query": "extensibilityresources\r\n| where type == \"microsoft.azurestackhci/clusters/updates/updateruns\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| extend state = tostring(properties.state)\r\n| extend timeStarted = todatetime(properties.timeStarted)\r\n| extend timeEnded = todatetime(properties.lastUpdatedTime)\r\n| where timeStarted >= ago({UpdateAttemptsTimeFilter}d)\r\n| extend clusterId = tostring(split(id, '/providers/Microsoft.AzureStackHCI/clusters/')[0])\r\n| extend clusterIdFull = strcat(clusterId, '/providers/Microsoft.AzureStackHCI/clusters/', tostring(split(id, '/providers/Microsoft.AzureStackHCI/clusters/')[1]))\r\n| extend clusterIdParts = split(clusterIdFull, '/')\r\n| extend clusterName = tostring(clusterIdParts[8])\r\n| extend clusterResourceId = strcat('/subscriptions/', tostring(clusterIdParts[2]), '/resourceGroups/', tostring(clusterIdParts[4]), '/providers/Microsoft.AzureStackHCI/clusters/', clusterName)\r\n| extend clusterLink = strcat('https://portal.azure.com/#@/resource', clusterResourceId)\r\n| extend updateName = tostring(split(id, '/updates/')[1])\r\n| extend updateName = tostring(split(updateName, '/updateruns')[0])\r\n| extend updateRunName = tostring(split(id, '/updateruns/')[1])\r\n| extend encodedClusterResourceId = replace_string(replace_string(clusterResourceId, '/', '%2F'), ' ', '%20')\r\n| extend updateRunLink = strcat('https://portal.azure.com/#view/Microsoft_AzureStackHCI_PortalExtension/SingleInstanceHistoryDetails.ReactView/resourceId/', encodedClusterResourceId, '/updateName/', updateName, '/updateRunName/', updateRunName, '/refresh~/false')\r\n| extend duration = iff(isnotempty(timeEnded) and timeEnded > timeStarted, timeEnded - timeStarted, timespan(null))\r\n| extend durationMinutes = iff(isnotnull(duration), tolong(duration / 1m), long(null))\r\n| extend durationFormatted = iff(isnotnull(durationMinutes), strcat(durationMinutes / 60, 'h ', durationMinutes % 60, 'm'), '')\r\n| project ClusterName = clusterName, ClusterLink = clusterLink, State = state, UpdateName = updateName, UpdateRunLink = updateRunLink, Started = timeStarted, Ended = timeEnded, Duration = durationFormatted, ResourceGroup = resourceGroup\r\n| order by Started desc",
+              "query": "extensibilityresources\r\n| where type == \"microsoft.azurestackhci/clusters/updates/updateruns\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| extend state = tostring(properties.state)\r\n| extend timeStarted = todatetime(properties.timeStarted)\r\n| extend timeEnded = todatetime(properties.lastUpdatedTime)\r\n| where timeStarted >= ago({UpdateAttemptsTimeFilter}d)\r\n| extend clusterId = tostring(split(id, '/providers/Microsoft.AzureStackHCI/clusters/')[0])\r\n| extend clusterIdFull = strcat(clusterId, '/providers/Microsoft.AzureStackHCI/clusters/', tostring(split(id, '/providers/Microsoft.AzureStackHCI/clusters/')[1]))\r\n| extend clusterIdParts = split(clusterIdFull, '/')\r\n| extend clusterName = tostring(clusterIdParts[8])\r\n| extend clusterResourceId = strcat('/subscriptions/', tostring(clusterIdParts[2]), '/resourceGroups/', tostring(clusterIdParts[4]), '/providers/Microsoft.AzureStackHCI/clusters/', clusterName)\r\n| extend clusterLink = strcat('https://portal.azure.com/#@/resource', clusterResourceId)\r\n| extend updateName = tostring(split(id, '/updates/')[1])\r\n| extend updateName = tostring(split(updateName, '/updateruns')[0])\r\n| extend solutionUpdate = tostring(split(updateName, '/')[0])\r\n| where '*' in ({SolutionUpdateFilter}) or solutionUpdate in ({SolutionUpdateFilter})\r\n| extend updateRunName = tostring(split(id, '/updateruns/')[1])\r\n| extend encodedClusterResourceId = replace_string(replace_string(clusterResourceId, '/', '%2F'), ' ', '%20')\r\n| extend updateRunLink = strcat('https://portal.azure.com/#view/Microsoft_AzureStackHCI_PortalExtension/SingleInstanceHistoryDetails.ReactView/resourceId/', encodedClusterResourceId, '/updateName/', updateName, '/updateRunName/', updateRunName, '/refresh~/false')\r\n| extend duration = iff(isnotempty(timeEnded) and timeEnded > timeStarted, timeEnded - timeStarted, timespan(null))\r\n| extend durationMinutes = iff(isnotnull(duration), tolong(duration / 1m), long(null))\r\n| extend durationFormatted = iff(isnotnull(durationMinutes), strcat(durationMinutes / 60, 'h ', durationMinutes % 60, 'm'), '')\r\n| project ClusterName = clusterName, ClusterLink = clusterLink, State = state, SolutionUpdate = solutionUpdate, UpdateName = updateName, UpdateRunLink = updateRunLink, Started = timeStarted, Ended = timeEnded, Duration = durationFormatted, ResourceGroup = resourceGroup\r\n| order by Started desc",
               "size": 0,
               "title": "Update Attempts Details",
               "showRefreshButton": true,
@@ -6857,6 +6881,10 @@
                   {
                     "columnId": "State",
                     "label": "State"
+                  },
+                  {
+                    "columnId": "SolutionUpdate",
+                    "label": "Solution Update"
                   },
                   {
                     "columnId": "UpdateName",
