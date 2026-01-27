@@ -1,6 +1,6 @@
 # Azure Local - Managing Updates At Scale Workbook
 
-## Latest Version: v0.7.2
+## Latest Version: v0.7.3
 
 📥 **[Copy / Paste (or download) the latest Workbook JSON](https://raw.githubusercontent.com/NeilBird/Azure-Local/refs/heads/main/Azure-Local-Manage-Updates-At-Scale/Azure-Workbook_AzLocal-Managing-Updates-At-Scale.json)**
 
@@ -8,7 +8,23 @@ An Azure Monitor Workbook for monitoring and managing Azure Local (formerly Azur
 
 **Important:** This is a community driven project, (not officially supported by Microsoft), for any issues, requests or feedback, please [raise an Issue](https://github.com/NeilBird/Azure-Local/issues) (note: no time scales or guarantees can be provided for responses to issues.)
 
-## Recent Changes (v0.7.2)
+## Recent Changes (v0.7.3)
+
+### New Features
+
+- **Kubernetes Version & Upgrade Status Section** (AKS Arc Clusters tab):
+  - **Pie Chart**: "Upgrade Status (Minor Available vs Fully Upgraded)" - visualizes cluster count by upgrade availability
+    - Yellow = Minor upgrades available
+    - Green = Fully upgraded (no minor version upgrades)
+  - **Summary Table**: "Version/Upgrade Summary" - counts clusters grouped by current version and available upgrades
+  - **Detail Table**: "Kubernetes Version and Available Upgrades" - per-cluster view showing:
+    - Cluster name (clickable link to Azure Portal)
+    - Resource group, location
+    - Current Kubernetes version
+    - Available upgrade versions (comma-separated list)
+  - Data sourced from `extensibilityresources` upgradeprofiles joined with connectedclusters
+
+## Previous Changes (v0.7.2)
 
 ### Bug Fixes
 
