@@ -106,7 +106,7 @@
     {
       "type": 1,
       "content": {
-        "json": "<div style=\"background-color: #e6f2ff; border-left: 4px solid #0078d4; padding: 10px 15px; margin: 10px 0; border-radius: 4px;\">\r\n<span style=\"font-size: 16px;\">📋 <strong>Workbook Version: v0.7.3</strong></span><br/>\r\n<span style=\"font-size: 13px;\">🔄 <a href=\"https://github.com/NeilBird/Azure-Local/tree/main/Azure-Local-Manage-Updates-At-Scale\" target=\"_blank\"><strong>Check GitHub for Updates</strong></a> — Compare your version against the latest release on GitHub, and copy/paste, then Apply to update if needed</span>\r\n</div>",
+        "json": "<div style=\"background-color: #e6f2ff; border-left: 4px solid #0078d4; padding: 10px 15px; margin: 10px 0; border-radius: 4px;\">\r\n<span style=\"font-size: 16px;\">📋 <strong>Workbook Version: v0.7.4</strong></span><br/>\r\n<span style=\"font-size: 13px;\">🔄 <a href=\"https://github.com/NeilBird/Azure-Local/tree/main/Azure-Local-Manage-Updates-At-Scale\" target=\"_blank\"><strong>Check GitHub for Updates</strong></a> — Compare your version against the latest release on GitHub, and copy/paste, then Apply to update if needed</span>\r\n</div>",
         "style": "info"
       },
       "name": "version-update-banner"
@@ -5134,6 +5134,285 @@
           {
             "type": 1,
             "content": {
+              "json": "---\r\n## 🌐 AKS Arc Network Details"
+            },
+            "name": "text-aks-network-details"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "resources\r\n| where type == \"microsoft.kubernetes/connectedclusters\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| where properties.infrastructure == \"azure_stack_hci\"\r\n| extend clusterLink = strcat('https://portal.azure.com/#@/resource', id)\r\n| extend clusterResourceId = tolower(id)\r\n| project ClusterName = name, clusterLink, clusterResourceId, resourceGroup, location\r\n| join kind=leftouter (\r\n    extensibilityresources\r\n    | where type == \"microsoft.hybridcontainerservice/provisionedclusterinstances\"\r\n    | extend clusterResourceId = tolower(substring(id, 0, indexof(id, \"/providers/Microsoft.HybridContainerService\")))\r\n    | extend podCidr = tostring(properties.networkProfile.podCidr)\r\n    | extend controlPlaneHostIP = tostring(properties.controlPlane.controlPlaneEndpoint.hostIP)\r\n    | extend vnetSubnetIds = properties.cloudProviderProfile.infraNetworkProfile.vnetSubnetIds\r\n    | mv-expand vnetSubnetId = vnetSubnetIds\r\n    | extend logicalNetworkId = tolower(tostring(vnetSubnetId))\r\n    | summarize podCidr = max(podCidr), controlPlaneHostIP = max(controlPlaneHostIP), logicalNetworkIds = make_set(logicalNetworkId) by clusterResourceId\r\n    | project clusterResourceId, podCidr, controlPlaneHostIP, logicalNetworkIds\r\n) on clusterResourceId\r\n| mv-expand logicalNetworkId = logicalNetworkIds\r\n| extend logicalNetworkId = tostring(logicalNetworkId)\r\n| join kind=leftouter (\r\n    resources\r\n    | where type == \"microsoft.azurestackhci/logicalnetworks\"\r\n    | extend logicalNetworkId = tolower(id)\r\n    | extend logicalNetworkLink = strcat('https://portal.azure.com/#@/resource', id)\r\n    | extend logicalNetworkState = tostring(properties.status.provisioningStatus.status)\r\n    | extend subnets = properties.subnets\r\n    | mv-expand subnet = subnets\r\n    | extend addressPrefix = tostring(subnet.properties.addressPrefix)\r\n    | extend vlanId = tostring(subnet.properties.vlan)\r\n    | extend ipPools = subnet.properties.ipPools\r\n    | mv-expand ipPool = ipPools\r\n    | extend ipPoolStart = tostring(ipPool.start)\r\n    | extend ipPoolEnd = tostring(ipPool.['end'])\r\n    | extend ipPoolUsed = tostring(ipPool.info.usedIPCount)\r\n    | extend ipPoolAvailable = tostring(ipPool.info.availableIPCount)\r\n    | extend dnsServers = strcat_array(properties.dhcpOptions.dnsServers, ', ')\r\n    | project logicalNetworkId, logicalNetworkName = name, logicalNetworkLink, logicalNetworkState, addressPrefix, vlanId, ipPoolStart, ipPoolEnd, ipPoolUsed, ipPoolAvailable, dnsServers\r\n) on logicalNetworkId\r\n| project ClusterName, clusterLink, clusterResourceId, resourceGroup, location, podCidr, controlPlaneHostIP, logicalNetworkName, logicalNetworkLink, logicalNetworkState, addressPrefix, ipPoolStart, ipPoolEnd, ipPoolUsed, ipPoolAvailable, vlanId, dnsServers\r\n| order by ClusterName asc",
+              "size": 0,
+              "queryType": 1,
+              "resourceType": "microsoft.resourcegraph/resources",
+              "crossComponentResources": [
+                "{Subscriptions}"
+              ]
+            },
+            "conditionalVisibility": {
+              "parameterName": "alwaysHidden",
+              "comparison": "isEqualTo",
+              "value": "true"
+            },
+            "name": "aks-network-base"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "extensibilityresources\r\n| where type == \"microsoft.kubernetesruntime/loadbalancers\"\r\n| extend clusterResourceId = tolower(substring(id, 0, indexof(id, \"/providers/Microsoft.KubernetesRuntime\")))\r\n| summarize loadBalancers = strcat_array(make_set(name), ', ') by clusterResourceId",
+              "size": 0,
+              "queryType": 1,
+              "resourceType": "microsoft.resourcegraph/resources",
+              "crossComponentResources": [
+                "{Subscriptions}"
+              ]
+            },
+            "conditionalVisibility": {
+              "parameterName": "alwaysHidden",
+              "comparison": "isEqualTo",
+              "value": "true"
+            },
+            "name": "aks-loadbalancers-lookup"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "{\"version\":\"Merge/1.0\",\"merges\":[{\"id\":\"aks-network-merge\",\"mergeType\":\"leftouter\",\"leftTable\":\"aks-network-base\",\"rightTable\":\"aks-loadbalancers-lookup\",\"leftColumn\":\"clusterResourceId\",\"rightColumn\":\"clusterResourceId\"}],\"projectRename\":[{\"originalName\":\"[aks-network-base].ClusterName\",\"mergedName\":\"ClusterName\",\"fromId\":\"aks-network-merge\"},{\"originalName\":\"[aks-network-base].clusterLink\",\"mergedName\":\"clusterLink\",\"fromId\":\"aks-network-merge\"},{\"originalName\":\"[aks-network-base].resourceGroup\",\"mergedName\":\"resourceGroup\",\"fromId\":\"aks-network-merge\"},{\"originalName\":\"[aks-network-base].location\",\"mergedName\":\"location\",\"fromId\":\"aks-network-merge\"},{\"originalName\":\"[aks-network-base].podCidr\",\"mergedName\":\"podCidr\",\"fromId\":\"aks-network-merge\"},{\"originalName\":\"[aks-network-base].controlPlaneHostIP\",\"mergedName\":\"controlPlaneHostIP\",\"fromId\":\"aks-network-merge\"},{\"originalName\":\"[aks-network-base].logicalNetworkName\",\"mergedName\":\"logicalNetworkName\",\"fromId\":\"aks-network-merge\"},{\"originalName\":\"[aks-network-base].logicalNetworkLink\",\"mergedName\":\"logicalNetworkLink\",\"fromId\":\"aks-network-merge\"},{\"originalName\":\"[aks-network-base].logicalNetworkState\",\"mergedName\":\"logicalNetworkState\",\"fromId\":\"aks-network-merge\"},{\"originalName\":\"[aks-loadbalancers-lookup].loadBalancers\",\"mergedName\":\"loadBalancers\",\"fromId\":\"aks-network-merge\"},{\"originalName\":\"[aks-network-base].addressPrefix\",\"mergedName\":\"addressPrefix\",\"fromId\":\"aks-network-merge\"},{\"originalName\":\"[aks-network-base].ipPoolStart\",\"mergedName\":\"ipPoolStart\",\"fromId\":\"aks-network-merge\"},{\"originalName\":\"[aks-network-base].ipPoolEnd\",\"mergedName\":\"ipPoolEnd\",\"fromId\":\"aks-network-merge\"},{\"originalName\":\"[aks-network-base].ipPoolUsed\",\"mergedName\":\"ipPoolUsed\",\"fromId\":\"aks-network-merge\"},{\"originalName\":\"[aks-network-base].ipPoolAvailable\",\"mergedName\":\"ipPoolAvailable\",\"fromId\":\"aks-network-merge\"},{\"originalName\":\"[aks-network-base].vlanId\",\"mergedName\":\"vlanId\",\"fromId\":\"aks-network-merge\"},{\"originalName\":\"[aks-network-base].dnsServers\",\"mergedName\":\"dnsServers\",\"fromId\":\"aks-network-merge\"},{\"originalName\":\"[aks-network-base].clusterResourceId\"},{\"originalName\":\"[aks-loadbalancers-lookup].clusterResourceId\"}]}",
+              "size": 0,
+              "showAnalytics": true,
+              "showRefreshButton": true,
+              "showExportToExcel": true,
+              "queryType": 7,
+              "gridSettings": {
+                "formatters": [
+                  {
+                    "columnMatch": "ClusterName",
+                    "formatter": 7,
+                    "formatOptions": {
+                      "linkTarget": "Url",
+                      "linkColumn": "clusterLink"
+                    }
+                  },
+                  {
+                    "columnMatch": "clusterLink",
+                    "formatter": 5
+                  },
+                  {
+                    "columnMatch": "logicalNetworkName",
+                    "formatter": 7,
+                    "formatOptions": {
+                      "linkTarget": "Url",
+                      "linkColumn": "logicalNetworkLink"
+                    }
+                  },
+                  {
+                    "columnMatch": "logicalNetworkLink",
+                    "formatter": 5
+                  },
+                  {
+                    "columnMatch": "logicalNetworkState",
+                    "formatter": 18,
+                    "formatOptions": {
+                      "thresholdsOptions": "icons",
+                      "thresholdsGrid": [
+                        {
+                          "operator": "==",
+                          "thresholdValue": "Succeeded",
+                          "representation": "success",
+                          "text": "{0}{1}"
+                        },
+                        {
+                          "operator": "==",
+                          "thresholdValue": "Failed",
+                          "representation": "4",
+                          "text": "{0}{1}"
+                        },
+                        {
+                          "operator": "Default",
+                          "thresholdValue": null,
+                          "representation": "pending",
+                          "text": "{0}{1}"
+                        }
+                      ]
+                    }
+                  }
+                ],
+                "filter": true,
+                "labelSettings": [
+                  {
+                    "columnId": "ClusterName",
+                    "label": "AKS Cluster Name"
+                  },
+                  {
+                    "columnId": "clusterLink"
+                  },
+                  {
+                    "columnId": "resourceGroup",
+                    "label": "Resource Group"
+                  },
+                  {
+                    "columnId": "location",
+                    "label": "Location"
+                  },
+                  {
+                    "columnId": "podCidr",
+                    "label": "Pod CIDR"
+                  },
+                  {
+                    "columnId": "controlPlaneHostIP",
+                    "label": "Control Plane IP"
+                  },
+                  {
+                    "columnId": "logicalNetworkName",
+                    "label": "Logical Network"
+                  },
+                  {
+                    "columnId": "logicalNetworkLink"
+                  },
+                  {
+                    "columnId": "logicalNetworkState",
+                    "label": "Network State"
+                  },
+                  {
+                    "columnId": "loadBalancers",
+                    "label": "Load Balancers"
+                  },
+                  {
+                    "columnId": "addressPrefix",
+                    "label": "Address Prefix"
+                  },
+                  {
+                    "columnId": "ipPoolStart",
+                    "label": "IP Pool Start"
+                  },
+                  {
+                    "columnId": "ipPoolEnd",
+                    "label": "IP Pool End"
+                  },
+                  {
+                    "columnId": "ipPoolUsed",
+                    "label": "IPs Used"
+                  },
+                  {
+                    "columnId": "ipPoolAvailable",
+                    "label": "IPs Available"
+                  },
+                  {
+                    "columnId": "vlanId",
+                    "label": "VLAN ID"
+                  },
+                  {
+                    "columnId": "dnsServers",
+                    "label": "DNS Servers"
+                  }
+                ]
+              }
+            },
+            "name": "aks-network-details"
+          },
+          {
+            "type": 1,
+            "content": {
+              "json": "---\r\n## ⚖️ Load Balancers"
+            },
+            "name": "text-aks-load-balancers"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "extensibilityresources\r\n| where type == \"microsoft.kubernetesruntime/loadbalancers\"\r\n| extend clusterResourceId = tolower(substring(id, 0, indexof(id, \"/providers/Microsoft.KubernetesRuntime\")))\r\n| extend loadBalancerName = name\r\n| extend provisioningState = tostring(properties.provisioningState)\r\n| extend advertiseMode = tostring(properties.advertiseMode)\r\n| extend addresses = properties.addresses\r\n| mv-expand addr = addresses\r\n| extend addressValue = tostring(addr)\r\n| summarize addressList = strcat_array(make_set(addressValue), ', ') by clusterResourceId, loadBalancerName, provisioningState, advertiseMode\r\n| join kind=inner (\r\n    resources\r\n    | where type == \"microsoft.kubernetes/connectedclusters\"\r\n    | where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n    | where properties.infrastructure == \"azure_stack_hci\"\r\n    | extend clusterLink = strcat('https://portal.azure.com/#@/resource', id)\r\n    | project ClusterName = name, clusterLink, clusterResourceId = tolower(id), resourceGroup\r\n) on clusterResourceId\r\n| project ClusterName, clusterLink, resourceGroup, loadBalancerName, provisioningState, advertiseMode, addressList\r\n| order by ClusterName asc, loadBalancerName asc",
+              "size": 0,
+              "showAnalytics": true,
+              "showRefreshButton": true,
+              "showExportToExcel": true,
+              "queryType": 1,
+              "resourceType": "microsoft.resourcegraph/resources",
+              "crossComponentResources": [
+                "{Subscriptions}"
+              ],
+              "gridSettings": {
+                "formatters": [
+                  {
+                    "columnMatch": "ClusterName",
+                    "formatter": 7,
+                    "formatOptions": {
+                      "linkTarget": "Url",
+                      "linkColumn": "clusterLink"
+                    }
+                  },
+                  {
+                    "columnMatch": "clusterLink",
+                    "formatter": 5
+                  },
+                  {
+                    "columnMatch": "provisioningState",
+                    "formatter": 18,
+                    "formatOptions": {
+                      "thresholdsOptions": "icons",
+                      "thresholdsGrid": [
+                        {
+                          "operator": "==",
+                          "thresholdValue": "Succeeded",
+                          "representation": "success",
+                          "text": "{0}{1}"
+                        },
+                        {
+                          "operator": "==",
+                          "thresholdValue": "Failed",
+                          "representation": "4",
+                          "text": "{0}{1}"
+                        },
+                        {
+                          "operator": "Default",
+                          "thresholdValue": null,
+                          "representation": "pending",
+                          "text": "{0}{1}"
+                        }
+                      ]
+                    }
+                  }
+                ],
+                "filter": true,
+                "labelSettings": [
+                  {
+                    "columnId": "ClusterName",
+                    "label": "AKS Cluster Name"
+                  },
+                  {
+                    "columnId": "clusterLink"
+                  },
+                  {
+                    "columnId": "resourceGroup",
+                    "label": "Resource Group"
+                  },
+                  {
+                    "columnId": "loadBalancerName",
+                    "label": "Load Balancer"
+                  },
+                  {
+                    "columnId": "provisioningState",
+                    "label": "Provisioning State"
+                  },
+                  {
+                    "columnId": "advertiseMode",
+                    "label": "Advertise Mode"
+                  },
+                  {
+                    "columnId": "addressList",
+                    "label": "Addresses"
+                  }
+                ]
+              }
+            },
+            "name": "aks-load-balancers"
+          },
+          {
+            "type": 1,
+            "content": {
               "json": "---\r\n## 📦 Kubernetes Version & Upgrade Status"
             },
             "name": "text-aks-upgrade-status"
@@ -6816,9 +7095,9 @@
             "type": 3,
             "content": {
               "version": "KqlItem/1.0",
-              "query": "extensibilityresources\r\n| where type == \"microsoft.azurestackhci/clusters/updates/updateruns\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| extend state = tostring(properties.state)\r\n| extend timeStarted = todatetime(properties.timeStarted)\r\n| extend timeEnded = todatetime(properties.lastUpdatedTime)\r\n| where timeStarted >= ago({UpdateAttemptsTimeFilter}d)\r\n| extend updateName = tostring(split(id, '/updates/')[1])\r\n| extend updateName = tostring(split(updateName, '/updateruns')[0])\r\n| extend solutionUpdate = tostring(split(updateName, '/')[0])\r\n| where '*' in ({SolutionUpdateFilter}) or solutionUpdate in ({SolutionUpdateFilter})\r\n| extend clusterIdParts = split(id, '/')\r\n| extend clusterName = tostring(clusterIdParts[8])\r\n| extend updateKey = strcat(clusterName, '|', updateName)\r\n| extend duration = iff(state == 'Succeeded' and isnotempty(timeEnded) and timeEnded > timeStarted, timeEnded - timeStarted, timespan(null))\r\n| extend durationMinutes = iff(isnotnull(duration), todouble(duration / 1m), double(null))\r\n| summarize \r\n    TotalRuns = count(),\r\n    SucceededRuns = countif(state == 'Succeeded'),\r\n    FailedRuns = countif(state == 'Failed'),\r\n    InProgressRuns = countif(state == 'InProgress'),\r\n    AvgDurationMinutes = avg(durationMinutes),\r\n    StdDevDurationMinutes = stdev(durationMinutes),\r\n    MinDurationMinutes = min(durationMinutes),\r\n    MaxDurationMinutes = max(durationMinutes),\r\n    CompletedDurationCount = countif(isnotnull(durationMinutes))\r\n| extend SuccessRate = round(100.0 * SucceededRuns / TotalRuns, 1)\r\n| extend FailureRate = round(100.0 * FailedRuns / TotalRuns, 1)\r\n| extend AvgDurationFormatted = iff(isnotnull(AvgDurationMinutes), strcat(tolong(AvgDurationMinutes / 60), 'h ', tolong(AvgDurationMinutes % 60), 'm'), 'N/A')\r\n| extend StdDevFormatted = iff(isnotnull(StdDevDurationMinutes), strcat(tolong(StdDevDurationMinutes / 60), 'h ', tolong(StdDevDurationMinutes % 60), 'm'), 'N/A')\r\n| extend MinDurationFormatted = iff(isnotnull(MinDurationMinutes), strcat(tolong(MinDurationMinutes / 60), 'h ', tolong(MinDurationMinutes % 60), 'm'), 'N/A')\r\n| extend MaxDurationFormatted = iff(isnotnull(MaxDurationMinutes), strcat(tolong(MaxDurationMinutes / 60), 'h ', tolong(MaxDurationMinutes % 60), 'm'), 'N/A')\r\n| project \r\n    ['Total Runs'] = TotalRuns,\r\n    ['Succeeded'] = SucceededRuns,\r\n    ['Failed'] = FailedRuns,\r\n    ['In Progress'] = InProgressRuns,\r\n    ['Success Rate'] = strcat(tostring(SuccessRate), '%'),\r\n    ['Avg Duration'] = AvgDurationFormatted,\r\n    ['Std Dev'] = StdDevFormatted,\r\n    ['Min Duration'] = MinDurationFormatted,\r\n    ['Max Duration'] = MaxDurationFormatted",
+              "query": "extensibilityresources\r\n| where type == \"microsoft.azurestackhci/clusters/updates/updateruns\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| extend state = tostring(properties.state)\r\n| extend timeStarted = todatetime(properties.timeStarted)\r\n| extend timeEnded = todatetime(properties.lastUpdatedTime)\r\n| where timeStarted >= ago({UpdateAttemptsTimeFilter}d)\r\n| extend updateName = tostring(split(id, '/updates/')[1])\r\n| extend updateName = tostring(split(updateName, '/updateruns')[0])\r\n| extend solutionUpdate = tostring(split(updateName, '/')[0])\r\n| where '*' in ({SolutionUpdateFilter}) or solutionUpdate in ({SolutionUpdateFilter})\r\n| extend clusterIdParts = split(id, '/')\r\n| extend clusterName = tostring(clusterIdParts[8])\r\n| extend updateKey = strcat(clusterName, '|', updateName)\r\n| extend duration = iff(state == 'Succeeded' and isnotempty(timeEnded) and timeEnded > timeStarted, timeEnded - timeStarted, timespan(null))\r\n| extend durationMinutes = iff(isnotnull(duration), todouble(duration / 1m), double(null))\r\n| summarize \r\n    TotalRuns = count(),\r\n    SucceededRuns = countif(state == 'Succeeded'),\r\n    FailedRuns = countif(state == 'Failed'),\r\n    InProgressRuns = countif(state == 'InProgress'),\r\n    AvgDurationMinutes = avg(durationMinutes),\r\n    StdDevDurationMinutes = stdev(durationMinutes),\r\n    MinDurationMinutes = min(durationMinutes),\r\n    MaxDurationMinutes = max(durationMinutes),\r\n    P95DurationMinutes = percentile(durationMinutes, 95),\r\n    P99DurationMinutes = percentile(durationMinutes, 99),\r\n    CompletedDurationCount = countif(isnotnull(durationMinutes))\r\n| extend SuccessRate = round(100.0 * SucceededRuns / TotalRuns, 1)\r\n| extend FailureRate = round(100.0 * FailedRuns / TotalRuns, 1)\r\n| extend AvgDurationFormatted = iff(isnotnull(AvgDurationMinutes), strcat(tolong(AvgDurationMinutes / 60), 'h ', tolong(AvgDurationMinutes % 60), 'm'), 'N/A')\r\n| extend StdDevFormatted = iff(isnotnull(StdDevDurationMinutes), strcat(tolong(StdDevDurationMinutes / 60), 'h ', tolong(StdDevDurationMinutes % 60), 'm'), 'N/A')\r\n| extend MinDurationFormatted = iff(isnotnull(MinDurationMinutes), strcat(tolong(MinDurationMinutes / 60), 'h ', tolong(MinDurationMinutes % 60), 'm'), 'N/A')\r\n| extend MaxDurationFormatted = iff(isnotnull(MaxDurationMinutes), strcat(tolong(MaxDurationMinutes / 60), 'h ', tolong(MaxDurationMinutes % 60), 'm'), 'N/A')\r\n| extend P95DurationFormatted = iff(isnotnull(P95DurationMinutes), strcat(tolong(P95DurationMinutes / 60), 'h ', tolong(P95DurationMinutes % 60), 'm'), 'N/A')\r\n| extend P99DurationFormatted = iff(isnotnull(P99DurationMinutes), strcat(tolong(P99DurationMinutes / 60), 'h ', tolong(P99DurationMinutes % 60), 'm'), 'N/A')\r\n| project \r\n    ['Total Runs'] = TotalRuns,\r\n    ['Succeeded'] = SucceededRuns,\r\n    ['Failed'] = FailedRuns,\r\n    ['In Progress'] = InProgressRuns,\r\n    ['Success Rate'] = strcat(tostring(SuccessRate), '%'),\r\n    ['Average Duration'] = AvgDurationFormatted,\r\n    ['Standard Deviation'] = StdDevFormatted,\r\n    ['95th Percentile'] = P95DurationFormatted,\r\n    ['99th Percentile'] = P99DurationFormatted,\r\n    ['Min Duration'] = MinDurationFormatted,\r\n    ['Max Duration'] = MaxDurationFormatted",
               "size": 4,
-              "title": "Duration Statistics (Succeeded Updates)",
+              "title": "Update Duration - Analytical Statistics (Succeeded Updates)",
               "queryType": 1,
               "resourceType": "microsoft.resourcegraph/resources",
               "crossComponentResources": [
