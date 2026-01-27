@@ -5126,6 +5126,136 @@
           {
             "type": 1,
             "content": {
+              "json": "---\r\n## 📦 Kubernetes Version & Upgrade Status"
+            },
+            "name": "text-aks-upgrade-status"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "resources\r\n| where type == \"microsoft.kubernetes/connectedclusters\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| where properties.infrastructure == \"azure_stack_hci\"\r\n| extend clusterResourceId = tolower(id)\r\n| join kind=leftouter (\r\n    extensibilityresources\r\n    | where type == \"microsoft.hybridcontainerservice/provisionedclusterinstances/upgradeprofiles\"\r\n    | extend clusterResourceId = tolower(substring(id, 0, indexof(id, \"/providers/Microsoft.HybridContainerService\")))\r\n    | extend currentVersion = coalesce(tostring(properties.controlPlaneProfile.kubernetesVersion), tostring(properties.currentKubernetesVersion), tostring(properties.currentVersion), tostring(properties.kubernetesVersion))\r\n    | extend upgradesRaw = coalesce(properties.controlPlaneProfile.upgrades, properties.upgrades)\r\n    | extend upgradesRaw = iif(isnull(upgradesRaw) or array_length(upgradesRaw) == 0, dynamic([{}]), upgradesRaw)\r\n    | mv-expand upgrade = upgradesRaw\r\n    | extend upgradeVersion = coalesce(tostring(upgrade.kubernetesVersion), tostring(upgrade.version), tostring(upgrade.targetVersion))\r\n    | extend curParts = split(currentVersion, '.')\r\n    | extend upParts = split(upgradeVersion, '.')\r\n    | extend curMajor = toint(curParts[0]), curMinor = toint(curParts[1])\r\n    | extend upMajor = toint(upParts[0]), upMinor = toint(upParts[1])\r\n    | extend isMinorUpgrade = iif(isnotempty(upgradeVersion) and (upMajor > curMajor or (upMajor == curMajor and upMinor > curMinor)), 1, 0)\r\n    | summarize hasMinorUpgrade = max(isMinorUpgrade) by clusterResourceId\r\n    | project clusterResourceId, hasMinorUpgrade\r\n) on clusterResourceId\r\n| extend status = case(hasMinorUpgrade == 1, 'Minor available', 'Fully upgraded')\r\n| summarize Count = count() by status",
+              "size": 3,
+              "title": "Upgrade Status (Minor Available vs Fully Upgraded)",
+              "queryType": 1,
+              "resourceType": "microsoft.resourcegraph/resources",
+              "crossComponentResources": [
+                "{Subscriptions}"
+              ],
+              "visualization": "piechart",
+              "chartSettings": {
+                "seriesLabelSettings": [
+                  {
+                    "seriesName": "Minor available",
+                    "color": "yellow"
+                  },
+                  {
+                    "seriesName": "Fully upgraded",
+                    "color": "green"
+                  }
+                ]
+              }
+            },
+            "customWidth": "50",
+            "name": "aks-upgrade-status-pie"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "resources\r\n| where type == \"microsoft.kubernetes/connectedclusters\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| where properties.infrastructure == \"azure_stack_hci\"\r\n| extend clusterResourceId = tolower(id)\r\n| join kind=leftouter (\r\n    extensibilityresources\r\n    | where type == \"microsoft.hybridcontainerservice/provisionedclusterinstances/upgradeprofiles\"\r\n    | extend clusterResourceId = tolower(substring(id, 0, indexof(id, \"/providers/Microsoft.HybridContainerService\")))\r\n    | extend currentVersion = coalesce(tostring(properties.controlPlaneProfile.kubernetesVersion), tostring(properties.currentKubernetesVersion), tostring(properties.currentVersion), tostring(properties.kubernetesVersion))\r\n    | extend upgradesRaw = coalesce(properties.controlPlaneProfile.upgrades, properties.upgrades)\r\n    | extend upgradesRaw = iif(isnull(upgradesRaw) or array_length(upgradesRaw) == 0, dynamic([{}]), upgradesRaw)\r\n    | mv-expand upgrade = upgradesRaw\r\n    | extend upgradeVersion = coalesce(tostring(upgrade.kubernetesVersion), tostring(upgrade.version), tostring(upgrade.targetVersion))\r\n    | summarize currentVersion = any(currentVersion), upgrades = strcat_array(make_set_if(upgradeVersion, isnotempty(upgradeVersion)), ', ') by clusterResourceId\r\n) on clusterResourceId\r\n| extend upgrades = iif(isempty(upgrades), 'No upgrades', upgrades)\r\n| summarize ClusterCount = count() by currentVersion, upgrades\r\n| order by currentVersion asc, upgrades asc",
+              "size": 0,
+              "title": "Version/Upgrade Summary",
+              "showRefreshButton": true,
+              "showExportToExcel": true,
+              "queryType": 1,
+              "resourceType": "microsoft.resourcegraph/resources",
+              "crossComponentResources": [
+                "{Subscriptions}"
+              ],
+              "gridSettings": {
+                "labelSettings": [
+                  {
+                    "columnId": "currentVersion",
+                    "label": "Current Version"
+                  },
+                  {
+                    "columnId": "upgrades",
+                    "label": "Available Upgrades"
+                  },
+                  {
+                    "columnId": "ClusterCount",
+                    "label": "Clusters"
+                  }
+                ]
+              }
+            },
+            "customWidth": "50",
+            "name": "aks-version-upgrade-summary"
+          },
+          {
+            "type": 3,
+            "content": {
+              "version": "KqlItem/1.0",
+              "query": "resources\r\n| where type == \"microsoft.kubernetes/connectedclusters\"\r\n| where '{ResourceGroupFilter}' == '' or resourceGroup matches regex strcat('(?i)', replace_string(replace_string('{ResourceGroupFilter}', '*', '.*'), '?', '.'))\r\n| where properties.infrastructure == \"azure_stack_hci\"\r\n| extend clusterResourceId = tolower(id)\r\n| extend clusterLink = strcat('https://portal.azure.com/#@/resource', id)\r\n| project clusterResourceId, ClusterName = name, clusterLink, resourceGroup, location\r\n| join kind=leftouter (\r\n    extensibilityresources\r\n    | where type == \"microsoft.hybridcontainerservice/provisionedclusterinstances/upgradeprofiles\"\r\n    | extend clusterResourceId = tolower(substring(id, 0, indexof(id, \"/providers/Microsoft.HybridContainerService\")))\r\n    | extend currentVersion = coalesce(tostring(properties.controlPlaneProfile.kubernetesVersion), tostring(properties.currentKubernetesVersion), tostring(properties.currentVersion), tostring(properties.kubernetesVersion))\r\n    | extend upgradesRaw = coalesce(properties.controlPlaneProfile.upgrades, properties.upgrades)\r\n    | extend upgradesRaw = iif(isnull(upgradesRaw) or array_length(upgradesRaw) == 0, dynamic([{}]), upgradesRaw)\r\n    | mv-expand upgrade = upgradesRaw\r\n    | extend upgradeVersion = coalesce(tostring(upgrade.kubernetesVersion), tostring(upgrade.version), tostring(upgrade.targetVersion))\r\n    | summarize currentVersion = any(currentVersion), upgrades = strcat_array(make_set_if(upgradeVersion, isnotempty(upgradeVersion)), ', ') by clusterResourceId\r\n) on clusterResourceId\r\n| project ClusterName, clusterLink, resourceGroup, location, currentVersion, upgrades\r\n| order by ClusterName asc",
+              "size": 0,
+              "title": "Kubernetes Version and Available Upgrades",
+              "showAnalytics": true,
+              "showRefreshButton": true,
+              "showExportToExcel": true,
+              "queryType": 1,
+              "resourceType": "microsoft.resourcegraph/resources",
+              "crossComponentResources": [
+                "{Subscriptions}"
+              ],
+              "gridSettings": {
+                "formatters": [
+                  {
+                    "columnMatch": "ClusterName",
+                    "formatter": 7,
+                    "formatOptions": {
+                      "linkTarget": "Url",
+                      "linkColumn": "clusterLink"
+                    }
+                  },
+                  {
+                    "columnMatch": "clusterLink",
+                    "formatter": 5
+                  }
+                ],
+                "filter": true,
+                "labelSettings": [
+                  {
+                    "columnId": "ClusterName",
+                    "label": "AKS Cluster Name"
+                  },
+                  {
+                    "columnId": "clusterLink"
+                  },
+                  {
+                    "columnId": "resourceGroup",
+                    "label": "Resource Group"
+                  },
+                  {
+                    "columnId": "location",
+                    "label": "Location"
+                  },
+                  {
+                    "columnId": "currentVersion",
+                    "label": "Current Version"
+                  },
+                  {
+                    "columnId": "upgrades",
+                    "label": "Available Upgrades"
+                  }
+                ]
+              }
+            },
+            "name": "aks-version-upgrades-detail"
+          },
+          {
+            "type": 1,
+            "content": {
               "json": "## 🔐 Certificate Expiration Warning\r\n*Clusters with managed identity certificates expiring within 30 days*"
             },
             "name": "text-cert-warning"
