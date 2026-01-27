@@ -1,6 +1,6 @@
 # Azure Local - Managing Updates At Scale Workbook
 
-## Latest Version: v0.7.2
+## Latest Version: v0.7.3
 
 📥 **[Copy / Paste (or download) the latest Workbook JSON](https://raw.githubusercontent.com/NeilBird/Azure-Local/refs/heads/main/Azure-Local-Manage-Updates-At-Scale/Azure-Workbook_AzLocal-Managing-Updates-At-Scale.json)**
 
@@ -8,7 +8,80 @@ An Azure Monitor Workbook for monitoring and managing Azure Local (formerly Azur
 
 **Important:** This is a community driven project, (not officially supported by Microsoft), for any issues, requests or feedback, please [raise an Issue](https://github.com/NeilBird/Azure-Local/issues) (note: no time scales or guarantees can be provided for responses to issues.)
 
-## Recent Changes (v0.7.2)
+## Recent Changes (v0.7.3)
+
+### New Features
+
+- **All AKS Arc Clusters Table Enhancements** (AKS Arc Clusters tab):
+  - Added **OIDC Issuer URL** column showing the cluster's OIDC issuer URL for workload identity federation
+  - Added **Admin Group Object IDs** column showing comma-separated list of Microsoft Entra ID admin group object IDs
+
+- **Kubernetes Version & Upgrade Status Section** (AKS Arc Clusters tab):
+  - **Pie Chart**: "Upgrade Status (Minor Available vs Fully Upgraded)" - visualizes cluster count by upgrade availability
+    - Yellow = Minor upgrades available
+    - Green = Fully upgraded (no minor version upgrades)
+  - **Summary Table**: "Version/Upgrade Summary" - counts clusters grouped by current version and available upgrades
+  - **Detail Table**: "Kubernetes Version and Available Upgrades" - per-cluster view showing:
+    - Cluster name (clickable link to Azure Portal)
+    - Resource group, location
+    - Current Kubernetes version
+    - Available upgrade versions (comma-separated list)
+  - Data sourced from `extensibilityresources` upgradeprofiles joined with connectedclusters
+
+- **Tab Navigation Improvements**:
+  - Reordered tabs: ARB Status now appears before Azure Local Machines for better logical grouping
+  - Updated tab icons for better visual distinction:
+    - Azure Local Machines: 🗄️ (file cabinet)
+    - Azure Local VMs: 💻 (laptop)
+
+- **All Cluster Update Status Table Improvements** (Update Readiness tab):
+  - Renamed **"Days Since Update"** column to **"Last Update Installed"**
+  - Updated format from "X days" to "X days ago" for clearer time indication
+
+- **System Health Checks Overview Table Improvements** (Update Readiness tab):
+  - Renamed **"Days Since Last Check"** column to **"Age of Health Results"**
+  - Added explanatory tip text above table clarifying what "Age of Health Results" represents
+
+- **Update Attempts Details Table Improvements** (Update Progress tab):
+  - Moved **Duration** column to appear before Started/Ended columns for better readability
+
+- **Clusters with Updates Available Table** (Update Readiness tab):
+  - Renamed action button from "Apply Update" to "Install Update" for consistency with Azure Portal terminology
+
+### Bug Fixes
+
+- **Clusters Currently Updating Table** (Update Readiness tab):
+  - Fixed inconsistency where clusters with active update runs showing "InProgress" in Update Attempts Details table were not appearing in Clusters Currently Updating
+  - Query now uses update runs (`updateruns`) as the primary source of truth instead of relying on `updateSummaries.state` which may not be synchronized
+  - Ensures consistent display of in-progress updates across both tables
+
+- **Update Progress Tab Improvements**:
+  - **New "Solution Update" Filter**: Multi-select dropdown to filter by specific solution update versions
+    - Extracts version from full update name (e.g., `Solution12.2601.1002.38/updateRuns/...` → `Solution12.2601.1002.38`)
+    - Applied to all update visualizations: chart, pie chart, summary table, and details table
+  - **Dynamic Time Series Granularity** for "Update Attempts by Day" chart:
+    - Up to 1 month: Daily grouping (`2025-01-15`)
+    - 1-3 months: Weekly grouping (`Week of 2025-01-13`)
+    - 6, 9, 12 months: Monthly grouping (`2025-01`)
+    - Eliminates the "Other" bucket issue when selecting longer time periods
+  - **Update Attempts Details Table**: 
+    - Added "Solution Update" column showing the extracted version
+    - Renamed "Update Name" column to "Update Run" for clarity
+  - **Tip Text**: Added helpful tip above filters explaining their purpose
+  - **New "Update Analytics" Section** (above Update Attempts Details table):
+    - **Duration Statistics**: Summary row showing Total Runs, Succeeded, Failed, In Progress counts with visual bars
+      - Success Rate with color-coded thresholds (green ≥90%, yellow ≥70%, red <70%)
+      - Average Duration, Standard Deviation, Min and Max durations for succeeded updates
+    - **Update Success Analysis Table**: Breakdown of unique updates by outcome category:
+      - **First Time Success**: Updates that succeeded on the first run
+      - **Resumed After Failure**: Updates that failed initially but were resumed and succeeded
+      - **Succeeded (Multiple Runs)**: Updates with multiple runs, all succeeded (no failures)
+      - **In Progress**: Updates currently running
+      - **Failed (Not Recovered)**: Updates that failed and haven't been retried/recovered
+      - Shows count and percentage of total for each outcome
+    - **Update Outcomes Distribution Pie Chart**: Visual breakdown of the same outcome categories
+
+## Previous Changes (v0.7.2)
 
 ### Bug Fixes
 
