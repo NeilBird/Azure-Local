@@ -33,8 +33,22 @@ An Azure Monitor Workbook for monitoring and managing Azure Local (formerly Azur
     - 1-3 months: Weekly grouping (`Week of 2025-01-13`)
     - 6, 9, 12 months: Monthly grouping (`2025-01`)
     - Eliminates the "Other" bucket issue when selecting longer time periods
-  - **Update Attempts Details Table**: Added new "Solution Update" column showing the extracted version
+  - **Update Attempts Details Table**: 
+    - Added "Solution Update" column showing the extracted version
+    - Renamed "Update Name" column to "Update Run" for clarity
   - **Tip Text**: Added helpful tip above filters explaining their purpose
+  - **New "Update Analytics" Section** (above Update Attempts Details table):
+    - **Duration Statistics**: Summary row showing Total Runs, Succeeded, Failed, In Progress counts with visual bars
+      - Success Rate with color-coded thresholds (green ≥90%, yellow ≥70%, red <70%)
+      - Average Duration, Standard Deviation, Min and Max durations for succeeded updates
+    - **Update Success Analysis Table**: Breakdown of unique updates by outcome category:
+      - **First Time Success**: Updates that succeeded on the first run
+      - **Resumed After Failure**: Updates that failed initially but were resumed and succeeded
+      - **Succeeded (Multiple Runs)**: Updates with multiple runs, all succeeded (no failures)
+      - **In Progress**: Updates currently running
+      - **Failed (Not Recovered)**: Updates that failed and haven't been retried/recovered
+      - Shows count and percentage of total for each outcome
+    - **Update Outcomes Distribution Pie Chart**: Visual breakdown of the same outcome categories
 
 ## Previous Changes (v0.7.2)
 
