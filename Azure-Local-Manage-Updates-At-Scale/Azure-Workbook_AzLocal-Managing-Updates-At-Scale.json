@@ -7231,6 +7231,18 @@
                     "formatOptions": {
                       "palette": "blue"
                     }
+                  },
+                  {
+                    "columnMatch": "Percentage",
+                    "formatter": 0,
+                    "numberFormat": {
+                      "unit": 1,
+                      "options": {
+                        "style": "decimal",
+                        "minimumFractionDigits": 1,
+                        "maximumFractionDigits": 1
+                      }
+                    }
                   }
                 ],
                 "labelSettings": [
@@ -7241,6 +7253,21 @@
                   {
                     "columnId": "Count",
                     "label": "Updates"
+                  },
+                  {
+                    "columnId": "Percentage",
+                    "label": "Percentage"
+                  }
+                ],
+                "transformers": [
+                  {
+                    "type": "ColumnArithmetic",
+                    "settings": {
+                      "operation": "Percentage of Total",
+                      "operandColIdx": 1,
+                      "resultLabel": "Percentage",
+                      "numberPrecision": 1
+                    }
                   }
                 ]
               }

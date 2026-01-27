@@ -30,6 +30,10 @@ An Azure Monitor Workbook for monitoring and managing Azure Local (formerly Azur
   - Expanded column names for clarity: "Avg Duration" → "Average Duration", "Std Dev" → "Standard Deviation"
   - Added **95th Percentile** and **99th Percentile** duration columns for better statistical analysis of update durations
 
+- **Update Success Analysis Table Improvements** (Update Progress tab):
+  - Added **Percentage** column showing the proportion of each outcome category relative to total unique updates
+  - Uses Workbook Column Arithmetic transformer to calculate percentages client-side
+
 > See [Appendix: Previous Version Changes](#appendix-previous-version-changes) for older release notes.
 
 ## How to Import the Workbook
