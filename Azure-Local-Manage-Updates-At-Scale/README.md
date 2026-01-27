@@ -1,6 +1,6 @@
 # Azure Local - Managing Updates At Scale Workbook
 
-## Latest Version: v0.7.1
+## Latest Version: v0.7.2
 
 📥 **[Copy / Paste (or download) the latest Workbook JSON](https://raw.githubusercontent.com/NeilBird/Azure-Local/refs/heads/main/Azure-Local-Manage-Updates-At-Scale/Azure-Workbook_AzLocal-Managing-Updates-At-Scale.json)**
 
@@ -8,14 +8,17 @@ An Azure Monitor Workbook for monitoring and managing Azure Local (formerly Azur
 
 **Important:** This is a community driven project, (not officially supported by Microsoft), for any issues, requests or feedback, please [raise an Issue](https://github.com/NeilBird/Azure-Local/issues) (note: no time scales or guarantees can be provided for responses to issues.)
 
-## Recent Changes (v0.7.1)
+## Recent Changes (v0.7.2)
 
 ### Bug Fixes
 
 - **All AKS Arc Clusters Table - Azure Local Cluster Linking Fix**: Fixed issue where the "Azure Local Cluster" column was showing null for all AKS Arc clusters
-  - Changed to use `HCIClusterID` from `kubernetesconfigurationresources` for reliable cluster lookup
-  - Query now follows the correct relationship path: AKS Cluster → Custom Location → Arc Bridge → hybridaksextension → `properties.ConfigurationSettings.HCIClusterID`
-  - Uses merge query pattern to combine data from incompatible ARG table types (`kubernetesconfigurationresources` and `extensibilityresources`)
+  - Redesigned query architecture to use proper relationship chain: AKS Cluster → provisionedclusterinstances (custom location) → customlocations → Arc Bridge → hybridaksextension → `HCIClusterID` → Azure Local Cluster
+  - Uses normalized custom location key (lowercased, trimmed) for reliable joins across queries
+  - Implemented 2-query + 1-merge pattern to work around ARG cross-table limitations (extensibilityresources + kubernetesconfigurationresources cannot be queried together):
+    - Query 1: AKS cluster base info + custom location key + node counts from `extensibilityresources` (provisionedclusterinstances)
+    - Query 2: Custom location → Arc Bridge → `kubernetesconfigurationresources` (hybridaksextension) → Azure Local cluster mapping
+    - Workbook merge: Joins both results on customLocKey
   - Azure Local Cluster column is now clickable with direct link to the parent cluster
   - Retained Control Plane and Worker Node columns
 
@@ -25,6 +28,10 @@ An Azure Monitor Workbook for monitoring and managing Azure Local (formerly Azur
   - Now includes error Code prefix when available (e.g., `InstallationFailed: Helm Upgrade Failed...`)
   - Added clickable "Subscription Name" column with link to subscription in Azure Portal
   - Added clickable flyout for "Error Details" column - click to expand full error message in a context blade with formatted layout
+
+- **Failed Node Extensions Table Improvements**:
+  - Renamed "Error Message" column to "Error Details"
+  - Added clickable flyout for "Error Details" column - click to expand full error message in a context blade with formatted layout (consistent with Failed AKS Extensions)
 
 ## Previous Changes (v0.7.0)
 
@@ -71,12 +78,10 @@ An Azure Monitor Workbook for monitoring and managing Azure Local (formerly Azur
 
 - **Column Naming**: Renamed "Cluster" column to "Cluster Name" in All Azure Local Machines, Disconnected Nodes, All Network Adapters, and Failed Node Extensions tables for consistency
 
-- **Failed Node Extensions Table Improvements**:
+- **Failed Node Extensions Table Improvements** (v0.7.0):
   - Renamed "Machine" to "Machine Name" and moved it to first column
   - Renamed "Cluster" to "Cluster Name" and moved it to fourth column (after Status)
   - Made Cluster Name clickable with link to parent cluster resource
-  - Renamed "Error Message" column to "Error Details"
-  - Added clickable flyout for "Error Details" column - click to expand full error message in a context blade with formatted layout
 
 - **Quick Actions Reordered**: Moved Activity Log, Azure Service Health, and Create Alert Rule links to the end of Quick Actions section
 
