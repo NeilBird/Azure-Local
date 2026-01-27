@@ -24,6 +24,18 @@ An Azure Monitor Workbook for monitoring and managing Azure Local (formerly Azur
     - Available upgrade versions (comma-separated list)
   - Data sourced from `extensibilityresources` upgradeprofiles joined with connectedclusters
 
+- **Update Progress Tab Improvements**:
+  - **New "Solution Update" Filter**: Multi-select dropdown to filter by specific solution update versions
+    - Extracts version from full update name (e.g., `Solution12.2601.1002.38/updateRuns/...` → `Solution12.2601.1002.38`)
+    - Applied to all update visualizations: chart, pie chart, summary table, and details table
+  - **Dynamic Time Series Granularity** for "Update Attempts by Day" chart:
+    - Up to 1 month: Daily grouping (`2025-01-15`)
+    - 1-3 months: Weekly grouping (`Week of 2025-01-13`)
+    - 6, 9, 12 months: Monthly grouping (`2025-01`)
+    - Eliminates the "Other" bucket issue when selecting longer time periods
+  - **Update Attempts Details Table**: Added new "Solution Update" column showing the extracted version
+  - **Tip Text**: Added helpful tip above filters explaining their purpose
+
 ## Previous Changes (v0.7.2)
 
 ### Bug Fixes
