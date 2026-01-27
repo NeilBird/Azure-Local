@@ -81,179 +81,6 @@ An Azure Monitor Workbook for monitoring and managing Azure Local (formerly Azur
       - Shows count and percentage of total for each outcome
     - **Update Outcomes Distribution Pie Chart**: Visual breakdown of the same outcome categories
 
-## Previous Changes (v0.7.2)
-
-### Bug Fixes
-
-- **All AKS Arc Clusters Table - Azure Local Cluster Linking Fix**: Fixed issue where the "Azure Local Cluster" column was showing null for all AKS Arc clusters
-  - Redesigned query architecture to use proper relationship chain: AKS Cluster → provisionedclusterinstances (custom location) → customlocations → Arc Bridge → hybridaksextension → `HCIClusterID` → Azure Local Cluster
-  - Uses normalized custom location key (lowercased, trimmed) for reliable joins across queries
-  - Implemented 2-query + 1-merge pattern to work around ARG cross-table limitations (extensibilityresources + kubernetesconfigurationresources cannot be queried together):
-    - Query 1: AKS cluster base info + custom location key + node counts from `extensibilityresources` (provisionedclusterinstances)
-    - Query 2: Custom location → Arc Bridge → `kubernetesconfigurationresources` (hybridaksextension) → Azure Local cluster mapping
-    - Workbook merge: Joins both results on customLocKey
-  - Azure Local Cluster column is now clickable with direct link to the parent cluster
-  - Retained Control Plane and Worker Node columns
-
-- **Failed AKS Extensions Table Improvements**:
-  - Renamed "Error Message" column to "Error Details"
-  - Fixed case-sensitivity issue for error message property extraction
-  - Now includes error Code prefix when available (e.g., `InstallationFailed: Helm Upgrade Failed...`)
-  - Added clickable "Subscription Name" column with link to subscription in Azure Portal
-  - Added clickable flyout for "Error Details" column - click to expand full error message in a context blade with formatted layout
-
-- **Failed Node Extensions Table Improvements**:
-  - Renamed "Error Message" column to "Error Details"
-  - Added clickable flyout for "Error Details" column - click to expand full error message in a context blade with formatted layout (consistent with Failed AKS Extensions)
-
-## Previous Changes (v0.7.0)
-
-### Major Updates and Improvements
-
-- **Azure Local Instances Tab** (formerly "Summary Dashboard"):
-  - Renamed tab from "Summary Dashboard" to "Azure Local Instances"
-  - **Deployment Trend Charts**: Added deployment over time line charts for:
-    - Azure Local Clusters Registered by Month
-    - VM Deployments by Month (OS Install Date)
-    - AKS Arc Cluster Deployments by Month
-  - Each chart shows connected data points with monthly trend visualization
-  - Companion data tables (20% width) display monthly breakdown with TOTAL row at top
-  - Time range filter for each chart (1-24 months)
-  - Made "Solution Version Distribution" chart full width (100%)
-
-- **AKS Arc Clusters Linking**: Improved AKS-to-Azure-Local cluster association
-  - Now uses Custom Location → Arc Bridge → Azure Local Cluster linking pattern
-  - More accurate association than previous resource group matching approach
-
-- **Clusters Not Synced Recently Table**:
-  - Added "Subscription Name" column with clickable link to subscription in Azure Portal
-
-- **Update Readiness Summary Table Improvements**:
-  - Added status icons to "Update Status" column:
-    - ✅ Green tick for "AppliedSuccessfully"
-    - ❌ Red X for "UpdateFailed"
-    - ⚠️ Warning triangle for "NeedsAttention"
-    - 🕐 Pending icon for "UpdateAvailable"
-  - Added "Total" column showing sum of all health states per update status
-  - Moved "Total" column to second position (after Update Status)
-  - Table now sorted by Total (descending) - largest counts at top
-  - Renamed health columns: "Health State: Success", "Health State: Warning", "Health State: Critical"
-
-- **SBE Version Column**: Added "SBE Version" (Solution Builder Extension) column to display currently installed OEM extension version
-  - All Azure Local Machines table
-  - System Health Checks Overview table (after Azure Connection column)
-  - All Cluster Update Status table (after Azure Connection column)
-  - Clusters with Updates Available table (after Update State column)
-
-- **New Filter Options**:
-  - **Update Run History and Error Details table**: Added filters for Cluster Name, Update Name, State, and Status
-  - **All Azure Local Machines and Disconnected Nodes tables**: Added filters for Node Name and Cluster Name
-
-- **Column Naming**: Renamed "Cluster" column to "Cluster Name" in All Azure Local Machines, Disconnected Nodes, All Network Adapters, and Failed Node Extensions tables for consistency
-
-- **Failed Node Extensions Table Improvements** (v0.7.0):
-  - Renamed "Machine" to "Machine Name" and moved it to first column
-  - Renamed "Cluster" to "Cluster Name" and moved it to fourth column (after Status)
-  - Made Cluster Name clickable with link to parent cluster resource
-
-- **Quick Actions Reordered**: Moved Activity Log, Azure Service Health, and Create Alert Rule links to the end of Quick Actions section
-
-- **Cluster Tag Filter Support**: Added comprehensive cluster tag filtering across all tabs
-  - All feasible queries now honor the ClusterTagName and ClusterTagValue filter parameters
-  - AKS Arc clusters and VMs in the same resource group as matching clusters are also filtered
-  - Updated ~35+ queries across Summary Dashboard, Update Readiness, Update Progress, Azure Local VMs, and AKS Arc Clusters tabs
-  - Note: ARB tables and NIC Status tables cannot support tag filtering due to Azure Resource Graph join limitations
-
-- **Filter Instructions Updated**: Clarified that cluster tag filter now applies to AKS Arc clusters and VMs via resource group association
-
-- **UI Improvements**:
-  - Moved Quick Actions and Knowledge Links above Filter Instructions for better visual separation from Tabs
-  - Increased tab font size for improved readability
-
-- **Update Readiness Tab**: Added "Top 5 - System Health Check Issues" pie chart showing most common failure reasons
-
-- **Clickable Name Columns**: Made name columns directly clickable with hidden link columns to reduce table width
-  - Cluster Name is now clickable in all tables (Summary, Update Readiness, Update Progress, VMs, AKS tabs)
-  - Machine Name is now clickable in All Network Adapters table
-  - VM Name is now clickable in All Azure Local VMs table
-  - Machine column renamed from "Node" and made clickable in Failed Node Extensions table
-  - Update Name in Update Attempts Details table is now clickable and links to the update run details view
-  - ARB Resource Name in Offline Azure Resource Bridges table is now clickable and links to the ARB resource
-  - Remediation column in Detailed Health Check Results is conditionally clickable when it contains a URL
-
-- **Quick Actions Updates**:
-  - Added "Solution Builder Extension (SBE) updates" link for OEM-specific updates
-  - Added "Azure Local Supportability Forum" link for community support
-  - Removed Azure Advisor link
-
-- **Knowledge Links Added**:
-  - Added VM extension troubleshooting link below Failed Node Extensions table
-  - Added Network ATC intent validation link above All Network Adapters table
-  - Added tip for disconnected network adapters: check adapter status using `Get-NetAdapter` on the physical machine
-  - Added tip for orphaned ARBs: if Cluster Name shows 'Unknown', the ARB may have been orphaned
-  - Reorganized Update Readiness knowledge links for better organization
-  - Renamed lifecycle and releases links with more descriptive labels (📚 Knowledge / 📋 Documentation prefixes)
-
-- **ARB Alert Rules Tip**: Expanded guidance text for Azure Resource Bridge alert rule recommendations
-
-- **Auto-Refresh Tips**: Added helpful tips about 5-minute auto-refresh and manual refresh buttons
-
-- **Update Progress Tab Improvements**:
-  - **Update Run History and Error Details table**: 
-    - Renamed "State" filter to "Update State" with default filter of "Failed"
-    - Added note above table indicating default filter is applied
-    - Renamed "Error Message" column to "Error Details"
-    - "Current Step" column now properly populated for failed updates by extracting from deeply nested progress.steps
-    - "Current Step" is only shown for failed updates (empty for succeeded)
-    - Enhanced error extraction using hybrid approach:
-      - Primary: mv-expand traversal through 8 levels of nested steps for standard error messages
-      - Fallback: Regex pattern matching for deeply nested exceptions (up to 13+ levels) that contain "raised an exception:" patterns
-    - Improved handling of varied error nesting depths across different cluster configurations
-    - Error Details flyout now titled "Error Details" and displays full error message in formatted HTML with table layout for properties
-  - **Update Attempts Details table**: Moved "State" column to second position for better visibility
-  - **Success / Failure Summary table**: Added small summary table next to pie chart showing Succeeded and Failed counts with percentages; renamed "%" column to "Overall Percentage"
-  - Moved pie chart hover tip above the chart for better visibility
-
-- **All Cluster Update Status Table**:
-  - Renamed "Available Updates" column to "Update History"
-  - Link label changed from "View Updates" to "View History"
-  - Links directly to the cluster's update history page in Azure Portal
-
-- **Bug Fixes**:
-  - Fixed ARG join limit error in Update Readiness Summary query
-  - Updated version banner text with copy/paste hint
-
-## Previous Changes (v0.6.9)
-
-- **Version Check Banner**: Added prominent styled banner at top of workbook displaying current version with link to [check GitHub for updates](https://github.com/NeilBird/Azure-Local/tree/main/Azure-Local-Manage-Updates-At-Scale)
-
-- **Pie Chart Improvements** (consistent auto-sizing and legend placement):
-  - **Azure Local Machines Tab**: Connection Status, Hardware Vendor, OS Version, Arc Agent Version, License Type
-  - **Azure Local Machines Tab - NIC Section**: NIC Status Distribution
-  - **Update Progress Tab**: Update Attempts by Status Percentages
-  - **Summary Dashboard - Cluster Details**: Changed from 1x4 to 2x2 layout for better visibility
-
-- **Empty State Messages** (noDataMessage for better UX):
-  - Disconnected Nodes table: "✅ All nodes are connected"
-  - Failed Node Extensions table: "✅ No failed extensions found"
-  - All Azure Local VMs table: "No Azure Local VMs found in the selected scope"
-
-- **Update Progress Tab**: Added "Last Refreshed" timestamp to header
-
-- **VM Tab Improvements**:
-  - Added [Troubleshoot Arc-enabled VMs](https://learn.microsoft.com/azure/azure-local/manage/troubleshoot-arc-enabled-vms) knowledge link
-  - Split VM Status Summary into separate "Total VMs" and "Connected VMs" tiles with clear labels
-
-- **Update Readiness Tab**: Added prominent styled banner and title above the Update Readiness Summary table with refresh and export buttons
-
-- **All Clusters Table**: Updated cluster link to open directly to the Updates view in Azure Portal
-
-- **All Cluster Update Status Table**: Updated "Days Since Update" color thresholds (60-99 days yellow, 100+ days red)
-
-- **Disconnected Nodes Table**: Added "Status" column with red coloring
-
-- **Knowledge Link Repositioning**: Moved "Send Diagnostic Logs to Microsoft" link above "Clusters Not Synced Recently" section
-
 > See [Appendix: Previous Version Changes](#appendix-previous-version-changes) for older release notes.
 
 ## How to Import the Workbook
@@ -532,6 +359,179 @@ See the repository's LICENSE file for details.
 ---
 
 ## Appendix: Previous Version Changes
+
+### v0.7.2
+
+#### Bug Fixes
+
+- **All AKS Arc Clusters Table - Azure Local Cluster Linking Fix**: Fixed issue where the "Azure Local Cluster" column was showing null for all AKS Arc clusters
+  - Redesigned query architecture to use proper relationship chain: AKS Cluster → provisionedclusterinstances (custom location) → customlocations → Arc Bridge → hybridaksextension → `HCIClusterID` → Azure Local Cluster
+  - Uses normalized custom location key (lowercased, trimmed) for reliable joins across queries
+  - Implemented 2-query + 1-merge pattern to work around ARG cross-table limitations (extensibilityresources + kubernetesconfigurationresources cannot be queried together):
+    - Query 1: AKS cluster base info + custom location key + node counts from `extensibilityresources` (provisionedclusterinstances)
+    - Query 2: Custom location → Arc Bridge → `kubernetesconfigurationresources` (hybridaksextension) → Azure Local cluster mapping
+    - Workbook merge: Joins both results on customLocKey
+  - Azure Local Cluster column is now clickable with direct link to the parent cluster
+  - Retained Control Plane and Worker Node columns
+
+- **Failed AKS Extensions Table Improvements**:
+  - Renamed "Error Message" column to "Error Details"
+  - Fixed case-sensitivity issue for error message property extraction
+  - Now includes error Code prefix when available (e.g., `InstallationFailed: Helm Upgrade Failed...`)
+  - Added clickable "Subscription Name" column with link to subscription in Azure Portal
+  - Added clickable flyout for "Error Details" column - click to expand full error message in a context blade with formatted layout
+
+- **Failed Node Extensions Table Improvements**:
+  - Renamed "Error Message" column to "Error Details"
+  - Added clickable flyout for "Error Details" column - click to expand full error message in a context blade with formatted layout (consistent with Failed AKS Extensions)
+
+### v0.7.0
+
+#### Major Updates and Improvements
+
+- **Azure Local Instances Tab** (formerly "Summary Dashboard"):
+  - Renamed tab from "Summary Dashboard" to "Azure Local Instances"
+  - **Deployment Trend Charts**: Added deployment over time line charts for:
+    - Azure Local Clusters Registered by Month
+    - VM Deployments by Month (OS Install Date)
+    - AKS Arc Cluster Deployments by Month
+  - Each chart shows connected data points with monthly trend visualization
+  - Companion data tables (20% width) display monthly breakdown with TOTAL row at top
+  - Time range filter for each chart (1-24 months)
+  - Made "Solution Version Distribution" chart full width (100%)
+
+- **AKS Arc Clusters Linking**: Improved AKS-to-Azure-Local cluster association
+  - Now uses Custom Location → Arc Bridge → Azure Local Cluster linking pattern
+  - More accurate association than previous resource group matching approach
+
+- **Clusters Not Synced Recently Table**:
+  - Added "Subscription Name" column with clickable link to subscription in Azure Portal
+
+- **Update Readiness Summary Table Improvements**:
+  - Added status icons to "Update Status" column:
+    - ✅ Green tick for "AppliedSuccessfully"
+    - ❌ Red X for "UpdateFailed"
+    - ⚠️ Warning triangle for "NeedsAttention"
+    - 🕐 Pending icon for "UpdateAvailable"
+  - Added "Total" column showing sum of all health states per update status
+  - Moved "Total" column to second position (after Update Status)
+  - Table now sorted by Total (descending) - largest counts at top
+  - Renamed health columns: "Health State: Success", "Health State: Warning", "Health State: Critical"
+
+- **SBE Version Column**: Added "SBE Version" (Solution Builder Extension) column to display currently installed OEM extension version
+  - All Azure Local Machines table
+  - System Health Checks Overview table (after Azure Connection column)
+  - All Cluster Update Status table (after Azure Connection column)
+  - Clusters with Updates Available table (after Update State column)
+
+- **New Filter Options**:
+  - **Update Run History and Error Details table**: Added filters for Cluster Name, Update Name, State, and Status
+  - **All Azure Local Machines and Disconnected Nodes tables**: Added filters for Node Name and Cluster Name
+
+- **Column Naming**: Renamed "Cluster" column to "Cluster Name" in All Azure Local Machines, Disconnected Nodes, All Network Adapters, and Failed Node Extensions tables for consistency
+
+- **Failed Node Extensions Table Improvements** (v0.7.0):
+  - Renamed "Machine" to "Machine Name" and moved it to first column
+  - Renamed "Cluster" to "Cluster Name" and moved it to fourth column (after Status)
+  - Made Cluster Name clickable with link to parent cluster resource
+
+- **Quick Actions Reordered**: Moved Activity Log, Azure Service Health, and Create Alert Rule links to the end of Quick Actions section
+
+- **Cluster Tag Filter Support**: Added comprehensive cluster tag filtering across all tabs
+  - All feasible queries now honor the ClusterTagName and ClusterTagValue filter parameters
+  - AKS Arc clusters and VMs in the same resource group as matching clusters are also filtered
+  - Updated ~35+ queries across Summary Dashboard, Update Readiness, Update Progress, Azure Local VMs, and AKS Arc Clusters tabs
+  - Note: ARB tables and NIC Status tables cannot support tag filtering due to Azure Resource Graph join limitations
+
+- **Filter Instructions Updated**: Clarified that cluster tag filter now applies to AKS Arc clusters and VMs via resource group association
+
+- **UI Improvements**:
+  - Moved Quick Actions and Knowledge Links above Filter Instructions for better visual separation from Tabs
+  - Increased tab font size for improved readability
+
+- **Update Readiness Tab**: Added "Top 5 - System Health Check Issues" pie chart showing most common failure reasons
+
+- **Clickable Name Columns**: Made name columns directly clickable with hidden link columns to reduce table width
+  - Cluster Name is now clickable in all tables (Summary, Update Readiness, Update Progress, VMs, AKS tabs)
+  - Machine Name is now clickable in All Network Adapters table
+  - VM Name is now clickable in All Azure Local VMs table
+  - Machine column renamed from "Node" and made clickable in Failed Node Extensions table
+  - Update Name in Update Attempts Details table is now clickable and links to the update run details view
+  - ARB Resource Name in Offline Azure Resource Bridges table is now clickable and links to the ARB resource
+  - Remediation column in Detailed Health Check Results is conditionally clickable when it contains a URL
+
+- **Quick Actions Updates**:
+  - Added "Solution Builder Extension (SBE) updates" link for OEM-specific updates
+  - Added "Azure Local Supportability Forum" link for community support
+  - Removed Azure Advisor link
+
+- **Knowledge Links Added**:
+  - Added VM extension troubleshooting link below Failed Node Extensions table
+  - Added Network ATC intent validation link above All Network Adapters table
+  - Added tip for disconnected network adapters: check adapter status using `Get-NetAdapter` on the physical machine
+  - Added tip for orphaned ARBs: if Cluster Name shows 'Unknown', the ARB may have been orphaned
+  - Reorganized Update Readiness knowledge links for better organization
+  - Renamed lifecycle and releases links with more descriptive labels (📚 Knowledge / 📋 Documentation prefixes)
+
+- **ARB Alert Rules Tip**: Expanded guidance text for Azure Resource Bridge alert rule recommendations
+
+- **Auto-Refresh Tips**: Added helpful tips about 5-minute auto-refresh and manual refresh buttons
+
+- **Update Progress Tab Improvements**:
+  - **Update Run History and Error Details table**: 
+    - Renamed "State" filter to "Update State" with default filter of "Failed"
+    - Added note above table indicating default filter is applied
+    - Renamed "Error Message" column to "Error Details"
+    - "Current Step" column now properly populated for failed updates by extracting from deeply nested progress.steps
+    - "Current Step" is only shown for failed updates (empty for succeeded)
+    - Enhanced error extraction using hybrid approach:
+      - Primary: mv-expand traversal through 8 levels of nested steps for standard error messages
+      - Fallback: Regex pattern matching for deeply nested exceptions (up to 13+ levels) that contain "raised an exception:" patterns
+    - Improved handling of varied error nesting depths across different cluster configurations
+    - Error Details flyout now titled "Error Details" and displays full error message in formatted HTML with table layout for properties
+  - **Update Attempts Details table**: Moved "State" column to second position for better visibility
+  - **Success / Failure Summary table**: Added small summary table next to pie chart showing Succeeded and Failed counts with percentages; renamed "%" column to "Overall Percentage"
+  - Moved pie chart hover tip above the chart for better visibility
+
+- **All Cluster Update Status Table**:
+  - Renamed "Available Updates" column to "Update History"
+  - Link label changed from "View Updates" to "View History"
+  - Links directly to the cluster's update history page in Azure Portal
+
+- **Bug Fixes**:
+  - Fixed ARG join limit error in Update Readiness Summary query
+  - Updated version banner text with copy/paste hint
+
+### v0.6.9
+
+- **Version Check Banner**: Added prominent styled banner at top of workbook displaying current version with link to [check GitHub for updates](https://github.com/NeilBird/Azure-Local/tree/main/Azure-Local-Manage-Updates-At-Scale)
+
+- **Pie Chart Improvements** (consistent auto-sizing and legend placement):
+  - **Azure Local Machines Tab**: Connection Status, Hardware Vendor, OS Version, Arc Agent Version, License Type
+  - **Azure Local Machines Tab - NIC Section**: NIC Status Distribution
+  - **Update Progress Tab**: Update Attempts by Status Percentages
+  - **Summary Dashboard - Cluster Details**: Changed from 1x4 to 2x2 layout for better visibility
+
+- **Empty State Messages** (noDataMessage for better UX):
+  - Disconnected Nodes table: "✅ All nodes are connected"
+  - Failed Node Extensions table: "✅ No failed extensions found"
+  - All Azure Local VMs table: "No Azure Local VMs found in the selected scope"
+
+- **Update Progress Tab**: Added "Last Refreshed" timestamp to header
+
+- **VM Tab Improvements**:
+  - Added [Troubleshoot Arc-enabled VMs](https://learn.microsoft.com/azure/azure-local/manage/troubleshoot-arc-enabled-vms) knowledge link
+  - Split VM Status Summary into separate "Total VMs" and "Connected VMs" tiles with clear labels
+
+- **Update Readiness Tab**: Added prominent styled banner and title above the Update Readiness Summary table with refresh and export buttons
+
+- **All Clusters Table**: Updated cluster link to open directly to the Updates view in Azure Portal
+
+- **All Cluster Update Status Table**: Updated "Days Since Update" color thresholds (60-99 days yellow, 100+ days red)
+
+- **Disconnected Nodes Table**: Added "Status" column with red coloring
+
+- **Knowledge Link Repositioning**: Moved "Send Diagnostic Logs to Microsoft" link above "Clusters Not Synced Recently" section
 
 ### v0.6.8
 
