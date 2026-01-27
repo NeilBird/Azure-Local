@@ -106,7 +106,7 @@
     {
       "type": 1,
       "content": {
-        "json": "<div style=\"background-color: #e6f2ff; border-left: 4px solid #0078d4; padding: 10px 15px; margin: 10px 0; border-radius: 4px;\">\r\n<span style=\"font-size: 16px;\">📋 <strong>Workbook Version: v0.7.1</strong></span><br/>\r\n<span style=\"font-size: 13px;\">🔄 <a href=\"https://github.com/NeilBird/Azure-Local/tree/main/Azure-Local-Manage-Updates-At-Scale\" target=\"_blank\"><strong>Check GitHub for Updates</strong></a> — Compare your version against the latest release on GitHub, and copy/paste, then Apply to update if needed</span>\r\n</div>",
+        "json": "<div style=\"background-color: #e6f2ff; border-left: 4px solid #0078d4; padding: 10px 15px; margin: 10px 0; border-radius: 4px;\">\r\n<span style=\"font-size: 16px;\">📋 <strong>Workbook Version: v0.7.2</strong></span><br/>\r\n<span style=\"font-size: 13px;\">🔄 <a href=\"https://github.com/NeilBird/Azure-Local/tree/main/Azure-Local-Manage-Updates-At-Scale\" target=\"_blank\"><strong>Check GitHub for Updates</strong></a> — Compare your version against the latest release on GitHub, and copy/paste, then Apply to update if needed</span>\r\n</div>",
         "style": "info"
       },
       "name": "version-update-banner"

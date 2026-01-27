@@ -1,6 +1,6 @@
 # Azure Local - Managing Updates At Scale Workbook
 
-## Latest Version: v0.7.1
+## Latest Version: v0.7.2
 
 📥 **[Copy / Paste (or download) the latest Workbook JSON](https://raw.githubusercontent.com/NeilBird/Azure-Local/refs/heads/main/Azure-Local-Manage-Updates-At-Scale/Azure-Workbook_AzLocal-Managing-Updates-At-Scale.json)**
 
@@ -8,7 +8,7 @@ An Azure Monitor Workbook for monitoring and managing Azure Local (formerly Azur
 
 **Important:** This is a community driven project, (not officially supported by Microsoft), for any issues, requests or feedback, please [raise an Issue](https://github.com/NeilBird/Azure-Local/issues) (note: no time scales or guarantees can be provided for responses to issues.)
 
-## Recent Changes (v0.7.1)
+## Recent Changes (v0.7.2)
 
 ### Bug Fixes
 
