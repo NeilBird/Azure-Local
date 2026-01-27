@@ -221,19 +221,19 @@
             "style": "link"
           },
           {
-            "id": "a285a540-ba34-4588-b467-b0b8b21d1494",
-            "cellValue": "selectedTab",
-            "linkTarget": "parameter",
-            "linkLabel": "🖥️ Azure Local Machines",
-            "subTarget": "2",
-            "style": "link"
-          },
-          {
             "id": "3f29b7be-5489-43f2-beb7-c90c618ad71c",
             "cellValue": "selectedTab",
             "linkTarget": "parameter",
             "linkLabel": "🔗 ARB Status",
             "subTarget": "1",
+            "style": "link"
+          },
+          {
+            "id": "a285a540-ba34-4588-b467-b0b8b21d1494",
+            "cellValue": "selectedTab",
+            "linkTarget": "parameter",
+            "linkLabel": "🗄️ Azure Local Machines",
+            "subTarget": "2",
             "style": "link"
           },
           {
@@ -2550,7 +2550,7 @@
           {
             "type": 1,
             "content": {
-              "json": "## 🖥️ Azure Local Physical Machines\r\nPhysical server machines that make up Azure Local (Azure Stack HCI) clusters, connected through Azure Arc.\r\n\r\n**Last Refreshed:** {TimeRange:label} | Click refresh on any tile to update data"
+              "json": "## �️ Azure Local Physical Machines\r\nPhysical server machines that make up Azure Local (Azure Stack HCI) clusters, connected through Azure Arc.\r\n\r\n**Last Refreshed:** {TimeRange:label} | Click refresh on any tile to update data"
             },
             "name": "text-nodes-header"
           },
