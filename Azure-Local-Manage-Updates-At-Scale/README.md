@@ -12,6 +12,10 @@ An Azure Monitor Workbook for monitoring and managing Azure Local (formerly Azur
 
 ### New Features
 
+- **All AKS Arc Clusters Table Enhancements** (AKS Arc Clusters tab):
+  - Added **OIDC Issuer URL** column showing the cluster's OIDC issuer URL for workload identity federation
+  - Added **Admin Group Object IDs** column showing comma-separated list of Microsoft Entra ID admin group object IDs
+
 - **Kubernetes Version & Upgrade Status Section** (AKS Arc Clusters tab):
   - **Pie Chart**: "Upgrade Status (Minor Available vs Fully Upgraded)" - visualizes cluster count by upgrade availability
     - Yellow = Minor upgrades available
