@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Starts updates on one or more Azure Local (Azure Stack HCI) clusters.
+    AzStackHci.ManageUpdates module, to enable automation to start updates on one or more Azure Local (Azure Stack HCI) clusters.
 
 .DESCRIPTION
     This function queries Azure Local clusters by name or resource ID, checks their update status,
@@ -76,6 +76,7 @@
     Start-AzureLocalClusterUpdate -ClusterResourceIds $resourceIds -Force
 
 .NOTES
+    Version: 0.1.1
     Author: Neil Bird, Microsoft.
     Requires: Azure CLI (az) installed and authenticated
     API Reference: https://github.com/Azure/azure-rest-api-specs/blob/main/specification/azurestackhci/resource-manager/Microsoft.AzureStackHCI/StackHCI/stable/2025-10-01/hci.json
@@ -84,6 +85,8 @@
 # Script-level variables for logging
 $script:LogFilePath = $null
 $script:ErrorLogPath = $null
+$script:UpdateSkippedLogPath = $null
+$script:UpdateStartedLogPath = $null
 
 function Write-Log {
     <#
@@ -144,6 +147,50 @@ function Write-Log {
     }
 }
 
+function Write-UpdateCsvLog {
+    <#
+    .SYNOPSIS
+        Writes a CSV entry to the Update_Skipped or Update_Started log file.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateSet('Skipped', 'Started')]
+        [string]$LogType,
+
+        [Parameter(Mandatory = $true)]
+        [string]$ClusterName,
+
+        [Parameter(Mandatory = $false)]
+        [string]$ResourceGroup = "",
+
+        [Parameter(Mandatory = $false)]
+        [string]$SubscriptionId = "",
+
+        [Parameter(Mandatory = $true)]
+        [string]$Message
+    )
+
+    # Escape quotes in values for CSV
+    $escapedClusterName = $ClusterName -replace '"', '""'
+    $escapedResourceGroup = $ResourceGroup -replace '"', '""'
+    $escapedSubscriptionId = $SubscriptionId -replace '"', '""'
+    $escapedMessage = $Message -replace '"', '""'
+    
+    $csvLine = "`"$escapedClusterName`",`"$escapedResourceGroup`",`"$escapedSubscriptionId`",`"$escapedMessage`""
+
+    $logPath = if ($LogType -eq 'Skipped') { $script:UpdateSkippedLogPath } else { $script:UpdateStartedLogPath }
+    
+    if ($logPath) {
+        try {
+            Add-Content -Path $logPath -Value $csvLine -Encoding UTF8 -ErrorAction SilentlyContinue
+        }
+        catch {
+            # Silently continue if CSV log write fails
+        }
+    }
+}
+
 function Start-AzureLocalClusterUpdate {
     [CmdletBinding(SupportsShouldProcess = $true, DefaultParameterSetName = 'ByName')]
     param(
@@ -194,6 +241,10 @@ function Start-AzureLocalClusterUpdate {
         if (-not $logDir) { $logDir = Get-Location }
         $logName = [System.IO.Path]::GetFileNameWithoutExtension($script:LogFilePath)
         $script:ErrorLogPath = Join-Path -Path $logDir -ChildPath "${logName}_errors.log"
+        
+        # Create CSV summary log paths
+        $script:UpdateSkippedLogPath = Join-Path -Path $logDir -ChildPath "${logName}_Update_Skipped.csv"
+        $script:UpdateStartedLogPath = Join-Path -Path $logDir -ChildPath "${logName}_Update_Started.csv"
 
         # Ensure log directory exists
         if ($logDir -and -not (Test-Path $logDir)) {
@@ -218,6 +269,13 @@ function Start-AzureLocalClusterUpdate {
         Write-Log -Message "========================================" -Level Header
         Write-Log -Message "Log file: $($script:LogFilePath)" -Level Info
         Write-Log -Message "Error log: $($script:ErrorLogPath)" -Level Info
+        Write-Log -Message "Update Skipped CSV: $($script:UpdateSkippedLogPath)" -Level Info
+        Write-Log -Message "Update Started CSV: $($script:UpdateStartedLogPath)" -Level Info
+        
+        # Initialize CSV files with headers
+        $csvHeaders = '"ClusterName","ResourceGroup","SubscriptionId","Message"'
+        $csvHeaders | Out-File -FilePath $script:UpdateSkippedLogPath -Encoding UTF8 -Force
+        $csvHeaders | Out-File -FilePath $script:UpdateStartedLogPath -Encoding UTF8 -Force
         
         # Build list of clusters to process
         $clustersToProcess = @()
@@ -373,6 +431,12 @@ function Start-AzureLocalClusterUpdate {
                 $validStates = @("UpdateAvailable", "Ready")
                 if ($updateSummary.properties.state -notin $validStates) {
                     Write-Log -Message "Cluster '$clusterName' is not in a valid state for updates. Current state: $($updateSummary.properties.state)" -Level Warning
+                    
+                    # Parse Resource Group and Subscription ID from cluster resource ID
+                    $clusterRgName = ($clusterInfo.id -split '/resourceGroups/')[1] -split '/' | Select-Object -First 1
+                    $clusterSubId = ($clusterInfo.id -split '/subscriptions/')[1] -split '/' | Select-Object -First 1
+                    Write-UpdateCsvLog -LogType Skipped -ClusterName $clusterName -ResourceGroup $clusterRgName -SubscriptionId $clusterSubId -Message "Update Not started as Cluster NOT in Ready state (Current state: $($updateSummary.properties.state))"
+                    
                     $results += [PSCustomObject]@{
                         ClusterName   = $clusterName
                         Status        = "NotReady"
@@ -413,6 +477,13 @@ function Start-AzureLocalClusterUpdate {
                     foreach ($update in $availableUpdates) {
                         Write-Log -Message "  - $($update.name): $($update.properties.state)" -Level Verbose
                     }
+                    
+                    # Parse Resource Group and Subscription ID from cluster resource ID
+                    $clusterRgName = ($clusterInfo.id -split '/resourceGroups/')[1] -split '/' | Select-Object -First 1
+                    $clusterSubId = ($clusterInfo.id -split '/subscriptions/')[1] -split '/' | Select-Object -First 1
+                    $updateStatesList = ($availableUpdates | ForEach-Object { "$($_.name): $($_.properties.state)" }) -join '; '
+                    Write-UpdateCsvLog -LogType Skipped -ClusterName $clusterName -ResourceGroup $clusterRgName -SubscriptionId $clusterSubId -Message "Update Not started as no updates in Ready state. Available: $updateStatesList"
+                    
                     $results += [PSCustomObject]@{
                         ClusterName   = $clusterName
                         Status        = "NoReadyUpdates"
@@ -462,6 +533,12 @@ function Start-AzureLocalClusterUpdate {
                         $confirmation = Read-Host "  Do you want to start update '$($selectedUpdate.name)' on cluster '$clusterName'? (Y/N)"
                         if ($confirmation -notmatch '^[Yy]') {
                             Write-Log -Message "Update skipped by user." -Level Warning
+                            
+                            # Parse Resource Group and Subscription ID from cluster resource ID
+                            $clusterRgName = ($clusterInfo.id -split '/resourceGroups/')[1] -split '/' | Select-Object -First 1
+                            $clusterSubId = ($clusterInfo.id -split '/subscriptions/')[1] -split '/' | Select-Object -First 1
+                            Write-UpdateCsvLog -LogType Skipped -ClusterName $clusterName -ResourceGroup $clusterRgName -SubscriptionId $clusterSubId -Message "Update skipped by user"
+                            
                             $results += [PSCustomObject]@{
                                 ClusterName   = $clusterName
                                 Status        = "Skipped"
@@ -486,6 +563,12 @@ function Start-AzureLocalClusterUpdate {
                     if ($applyResult) {
                         Write-Log -Message "Update started successfully!" -Level Success
                         Write-Log -Message "Monitor progress using: Get-AzureLocalUpdateRuns -ClusterName '$clusterName'" -Level Info
+                        
+                        # Parse Resource Group and Subscription ID from cluster resource ID
+                        $clusterRgName = ($clusterInfo.id -split '/resourceGroups/')[1] -split '/' | Select-Object -First 1
+                        $clusterSubId = ($clusterInfo.id -split '/subscriptions/')[1] -split '/' | Select-Object -First 1
+                        Write-UpdateCsvLog -LogType Started -ClusterName $clusterName -ResourceGroup $clusterRgName -SubscriptionId $clusterSubId -Message "Update Started: $($selectedUpdate.name)"
+                        
                         $results += [PSCustomObject]@{
                             ClusterName   = $clusterName
                             Status        = "UpdateStarted"
@@ -614,6 +697,20 @@ function Start-AzureLocalClusterUpdate {
             $errorContent = Get-Content $script:ErrorLogPath -ErrorAction SilentlyContinue
             if ($errorContent) {
                 Write-Log -Message "Error log saved to: $($script:ErrorLogPath)" -Level Warning
+            }
+        }
+        
+        # Report CSV summary files
+        if ($script:UpdateSkippedLogPath -and (Test-Path $script:UpdateSkippedLogPath)) {
+            $skippedCount = ((Get-Content $script:UpdateSkippedLogPath | Measure-Object).Count - 1)  # Subtract header
+            if ($skippedCount -gt 0) {
+                Write-Log -Message "Update Skipped CSV ($skippedCount entries): $($script:UpdateSkippedLogPath)" -Level Warning
+            }
+        }
+        if ($script:UpdateStartedLogPath -and (Test-Path $script:UpdateStartedLogPath)) {
+            $startedCount = ((Get-Content $script:UpdateStartedLogPath | Measure-Object).Count - 1)  # Subtract header
+            if ($startedCount -gt 0) {
+                Write-Log -Message "Update Started CSV ($startedCount entries): $($script:UpdateStartedLogPath)" -Level Success
             }
         }
 

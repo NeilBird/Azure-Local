@@ -1,5 +1,7 @@
 # Azure Local Cluster Update Module
 
+**Latest Version:** v0.1.1
+
 This folder contains the 'AzStackHci.ManageUpdates' PowerShell module which is an example module for managing updates on Azure Local (Azure Stack HCI) clusters using the Azure Stack HCI REST API.
 
 Azure Stack HCI REST API specification (includes update management endpoints): https://github.com/Azure/azure-rest-api-specs/blob/main/specification/azurestackhci/resource-manager/Microsoft.AzureStackHCI/StackHCI/stable/2025-10-01/hci.json
@@ -253,7 +255,27 @@ When you run `Start-AzureLocalClusterUpdate`, the following files are automatica
 |------|-------------|
 | `AzureLocalUpdate_YYYYMMDD_HHmmss.log` | Main log file with timestamped entries |
 | `AzureLocalUpdate_YYYYMMDD_HHmmss_errors.log` | Separate error log (only created if errors occur) |
+| `AzureLocalUpdate_YYYYMMDD_HHmmss_Update_Skipped.csv` | CSV of clusters where updates were skipped (not in Ready state) |
+| `AzureLocalUpdate_YYYYMMDD_HHmmss_Update_Started.csv` | CSV of clusters where updates were successfully started |
 | `AzureLocalUpdate_YYYYMMDD_HHmmss_transcript.log` | Full PowerShell transcript (if `-EnableTranscript` is used) |
+
+#### CSV Summary Files
+
+The `Update_Skipped.csv` and `Update_Started.csv` files provide a quick summary for reporting:
+
+| Column | Description |
+|--------|-------------|
+| `ClusterName` | Name of the Azure Local cluster |
+| `ResourceGroup` | Resource group containing the cluster |
+| `SubscriptionId` | Azure subscription ID |
+| `Message` | Status message (e.g., "Update Started: Solution12.2601.1002.38" or "Update Not started as Cluster NOT in Ready state") |
+
+Example CSV content:
+```csv
+"ClusterName","ResourceGroup","SubscriptionId","Message"
+"Cluster01","RG-West","12345-abcd","Update Started: Solution12.2601.1002.38"
+"Cluster02","RG-East","12345-abcd","Update Not started as Cluster NOT in Ready state (Current state: UpdateInProgress)"
+```
 
 ### Logging Examples
 
