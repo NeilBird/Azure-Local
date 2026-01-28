@@ -1,6 +1,8 @@
 ﻿# Azure Local Cluster Update Module
 
-This folder contains the 'AzStackHci.ManageUpdates' PowerShell module which is an example module for managing updates on Azure Local (Azure Stack HCI) clusters using the Azure Update Manager REST API.
+This folder contains the 'AzStackHci.ManageUpdates' PowerShell module which is an example module for managing updates on Azure Local (Azure Stack HCI) clusters using the Azure Stack HCI REST API.
+
+Azure Stack HCI REST API specification (includes update management endpoints): https://github.com/Azure/azure-rest-api-specs/blob/main/specification/azurestackhci/resource-manager/Microsoft.AzureStackHCI/StackHCI/stable/2026-02-01/hci.json
 
 ## Files
 
