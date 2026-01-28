@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    AzStackHci.ManageUpdates module, to enable automation to start updates on one or more Azure Local (Azure Stack HCI) clusters.
+    AzStackHci.ManageUpdates example module, for automating starting Updates on one or more Azure Local (Azure Stack HCI) clusters.
 
 .DESCRIPTION
     This function queries Azure Local clusters by name or resource ID, checks their update status,
