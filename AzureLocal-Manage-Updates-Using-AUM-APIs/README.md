@@ -183,9 +183,10 @@ Get-AzureLocalUpdateRuns -ClusterName "MyCluster01" -ResourceGroupName "MyRG"
 Main function to start updates on one or more Azure Local clusters.
 
 **Parameters:**
-- `-ClusterNames` (Required): Array of cluster names to update
-- `-ResourceGroupName` (Optional): Resource group containing the clusters
-- `-SubscriptionId` (Optional): Azure subscription ID (defaults to current)
+- `-ClusterNames` (Required*): Array of cluster names to update. Use this OR `-ClusterResourceIds`.
+- `-ClusterResourceIds` (Required*): Array of full Azure Resource IDs for clusters. Use this when clusters are in different resource groups. Resource IDs are validated before processing to ensure the format is correct, the resource exists, and you have the required permissions. Use this OR `-ClusterNames`.
+- `-ResourceGroupName` (Optional): Resource group containing the clusters (only used with `-ClusterNames`)
+- `-SubscriptionId` (Optional): Azure subscription ID (defaults to current, only used with `-ClusterNames`)
 - `-UpdateName` (Optional): Specific update name to apply
 - `-ApiVersion` (Optional): API version (default: "2025-10-01")
 - `-Force` (Optional): Skip confirmation prompts
@@ -193,6 +194,17 @@ Main function to start updates on one or more Azure Local clusters.
 - `-LogPath` (Optional): Path to log file. Default: `AzureLocalUpdate_YYYYMMDD_HHmmss.log` in current directory
 - `-EnableTranscript` (Optional): Enable PowerShell transcript recording
 - `-ExportResultsPath` (Optional): Export results to JSON or CSV file
+
+**Examples using Resource IDs:**
+
+```powershell
+# Update clusters in different resource groups using Resource IDs
+$resourceIds = @(
+    "/subscriptions/xxx/resourceGroups/RG1/providers/Microsoft.AzureStackHCI/clusters/Cluster01",
+    "/subscriptions/xxx/resourceGroups/RG2/providers/Microsoft.AzureStackHCI/clusters/Cluster02"
+)
+Start-AzureLocalClusterUpdate -ClusterResourceIds $resourceIds -Force
+```
 
 ### `Get-AzureLocalClusterInfo`
 

@@ -3,7 +3,7 @@
     Starts updates on one or more Azure Local (Azure Stack HCI) clusters.
 
 .DESCRIPTION
-    This function queries Azure Local clusters by name, checks their update status,
+    This function queries Azure Local clusters by name or resource ID, checks their update status,
     and starts specified updates on clusters that are in "Ready" state with "UpdatesAvailable".
     
     It uses the Azure REST API directly via az rest to call the Update Manager API.
@@ -12,14 +12,27 @@
     transcript support, and result export to JSON/CSV.
 
 .PARAMETER ClusterNames
-    An array of Azure Local cluster names to update.
+    An array of Azure Local cluster names to update. Use this OR ClusterResourceIds.
+
+.PARAMETER ClusterResourceIds
+    An array of full Azure Resource IDs for the clusters to update. Use this when clusters
+    are in different resource groups or subscriptions. Use this OR ClusterNames.
+    
+    The Resource IDs are validated before processing to ensure:
+    - The format is correct (must match Azure Stack HCI cluster resource pattern)
+    - The resource exists in Azure
+    - You have the required permissions to access the resource
+    
+    Example: "/subscriptions/xxx/resourceGroups/RG1/providers/Microsoft.AzureStackHCI/clusters/Cluster01"
 
 .PARAMETER ResourceGroupName
     The resource group containing the clusters. If not specified, the function will 
     search for the cluster across all resource groups in the subscription.
+    Only used with -ClusterNames parameter.
 
 .PARAMETER SubscriptionId
     The Azure subscription ID. If not specified, uses the current az CLI subscription.
+    Only used with -ClusterNames parameter.
 
 .PARAMETER UpdateName
     The specific update name to apply. If not specified, the function will list 
@@ -53,6 +66,14 @@
 .EXAMPLE
     # Start a specific update with full logging
     Start-AzureLocalClusterUpdate -ClusterNames "MyCluster01" -UpdateName "Solution12.2601.1002.38" -LogPath "C:\Logs\update.log" -EnableTranscript
+
+.EXAMPLE
+    # Start updates on clusters in different resource groups using Resource IDs
+    $resourceIds = @(
+        "/subscriptions/xxx/resourceGroups/RG1/providers/Microsoft.AzureStackHCI/clusters/Cluster01",
+        "/subscriptions/xxx/resourceGroups/RG2/providers/Microsoft.AzureStackHCI/clusters/Cluster02"
+    )
+    Start-AzureLocalClusterUpdate -ClusterResourceIds $resourceIds -Force
 
 .NOTES
     Author: Neil Bird, Microsoft.
@@ -124,15 +145,18 @@ function Write-Log {
 }
 
 function Start-AzureLocalClusterUpdate {
-    [CmdletBinding(SupportsShouldProcess = $true)]
+    [CmdletBinding(SupportsShouldProcess = $true, DefaultParameterSetName = 'ByName')]
     param(
-        [Parameter(Mandatory = $true)]
+        [Parameter(Mandatory = $true, ParameterSetName = 'ByName')]
         [string[]]$ClusterNames,
 
-        [Parameter(Mandatory = $false)]
+        [Parameter(Mandatory = $true, ParameterSetName = 'ByResourceId')]
+        [string[]]$ClusterResourceIds,
+
+        [Parameter(Mandatory = $false, ParameterSetName = 'ByName')]
         [string]$ResourceGroupName,
 
-        [Parameter(Mandatory = $false)]
+        [Parameter(Mandatory = $false, ParameterSetName = 'ByName')]
         [string]$SubscriptionId,
 
         [Parameter(Mandatory = $false)]
@@ -194,7 +218,61 @@ function Start-AzureLocalClusterUpdate {
         Write-Log -Message "========================================" -Level Header
         Write-Log -Message "Log file: $($script:LogFilePath)" -Level Info
         Write-Log -Message "Error log: $($script:ErrorLogPath)" -Level Info
-        Write-Log -Message "Clusters to process: $($ClusterNames -join ', ')" -Level Info
+        
+        # Build list of clusters to process
+        $clustersToProcess = @()
+        if ($PSCmdlet.ParameterSetName -eq 'ByResourceId') {
+            Write-Log -Message "Validating Cluster Resource IDs: $($ClusterResourceIds.Count)" -Level Info
+            foreach ($resourceId in $ClusterResourceIds) {
+                Write-Log -Message "  Validating: $resourceId" -Level Info
+                
+                # Validate ResourceId format
+                $resourceIdPattern = '^/subscriptions/[^/]+/resourceGroups/[^/]+/providers/Microsoft\.AzureStackHCI/clusters/[^/]+$'
+                if ($resourceId -notmatch $resourceIdPattern) {
+                    Write-Log -Message "    Invalid Resource ID format. Expected: /subscriptions/{subId}/resourceGroups/{rgName}/providers/Microsoft.AzureStackHCI/clusters/{clusterName}" -Level Error
+                    throw "Invalid Resource ID format: $resourceId"
+                }
+                
+                # Validate resource exists and user has access
+                $validateUri = "https://management.azure.com$resourceId`?api-version=$ApiVersion"
+                Write-Verbose "Validating resource at: $validateUri"
+                try {
+                    $validateResult = az rest --method GET --uri $validateUri 2>&1
+                    if ($LASTEXITCODE -ne 0) {
+                        $errorMessage = $validateResult | Out-String
+                        if ($errorMessage -match "ResourceNotFound|ResourceGroupNotFound") {
+                            Write-Log -Message "    Resource not found: $resourceId" -Level Error
+                            throw "Resource not found: $resourceId. Please verify the Resource ID is correct."
+                        }
+                        elseif ($errorMessage -match "AuthorizationFailed|Forbidden") {
+                            Write-Log -Message "    Access denied: You do not have permission to access $resourceId" -Level Error
+                            throw "Access denied: You do not have permission to access $resourceId. Please verify you have the required RBAC permissions."
+                        }
+                        else {
+                            Write-Log -Message "    Failed to validate resource: $errorMessage" -Level Error
+                            throw "Failed to validate resource: $resourceId. Error: $errorMessage"
+                        }
+                    }
+                    Write-Log -Message "    Validated successfully" -Level Success
+                }
+                catch {
+                    if ($_.Exception.Message -match "Resource not found|Access denied|Failed to validate") {
+                        throw
+                    }
+                    Write-Log -Message "    Failed to validate resource: $_" -Level Error
+                    throw "Failed to validate resource: $resourceId. Error: $_"
+                }
+                
+                $clustersToProcess += @{ ResourceId = $resourceId; Name = ($resourceId -split '/')[-1] }
+            }
+            Write-Log -Message "All Resource IDs validated successfully" -Level Success
+        }
+        else {
+            Write-Log -Message "Clusters to process: $($ClusterNames -join ', ')" -Level Info
+            foreach ($name in $ClusterNames) {
+                $clustersToProcess += @{ ResourceId = $null; Name = $name }
+            }
+        }
 
         # Verify Azure CLI is installed and logged in
         try {
@@ -209,8 +287,8 @@ function Start-AzureLocalClusterUpdate {
             throw
         }
 
-        # Get subscription ID if not provided
-        if (-not $SubscriptionId) {
+        # Get subscription ID if not provided (only needed for ByName parameter set)
+        if ($PSCmdlet.ParameterSetName -eq 'ByName' -and -not $SubscriptionId) {
             $SubscriptionId = (az account show --query id -o tsv)
             Write-Log -Message "Using current subscription: $SubscriptionId" -Level Info
         }
@@ -220,7 +298,10 @@ function Start-AzureLocalClusterUpdate {
     }
 
     process {
-        foreach ($clusterName in $ClusterNames) {
+        foreach ($cluster in $clustersToProcess) {
+            $clusterName = $cluster.Name
+            $clusterResourceId = $cluster.ResourceId
+
             Write-Log -Message "" -Level Info
             Write-Log -Message "========================================" -Level Header
             Write-Log -Message "Processing cluster: $clusterName" -Level Header
@@ -229,12 +310,25 @@ function Start-AzureLocalClusterUpdate {
             $clusterStartTime = Get-Date
 
             try {
-                # Step 1: Get cluster resource ID
+                # Step 1: Get cluster resource ID (or use provided ResourceId)
                 Write-Log -Message "Step 1: Looking up cluster resource..." -Level Info
-                $clusterInfo = Get-AzureLocalClusterInfo -ClusterName $clusterName `
-                    -ResourceGroupName $ResourceGroupName `
-                    -SubscriptionId $SubscriptionId `
-                    -ApiVersion $ApiVersion
+                
+                if ($clusterResourceId) {
+                    # ResourceId was provided directly - fetch cluster info using the ResourceId
+                    $uri = "https://management.azure.com$clusterResourceId`?api-version=$ApiVersion"
+                    Write-Verbose "Getting cluster info from: $uri"
+                    $clusterInfo = az rest --method GET --uri $uri 2>$null | ConvertFrom-Json
+                    if ($LASTEXITCODE -ne 0) {
+                        $clusterInfo = $null
+                    }
+                }
+                else {
+                    # Look up by name
+                    $clusterInfo = Get-AzureLocalClusterInfo -ClusterName $clusterName `
+                        -ResourceGroupName $ResourceGroupName `
+                        -SubscriptionId $SubscriptionId `
+                        -ApiVersion $ApiVersion
+                }
 
                 if (-not $clusterInfo) {
                     Write-Log -Message "Cluster '$clusterName' not found." -Level Warning
