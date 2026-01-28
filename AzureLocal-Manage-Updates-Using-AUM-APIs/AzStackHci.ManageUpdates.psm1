@@ -266,6 +266,7 @@ function Start-AzureLocalClusterUpdate {
 
         Write-Log -Message "========================================" -Level Header
         Write-Log -Message "Azure Local Cluster Update - Started" -Level Header
+        Write-Log -Message "Module Version: 0.1.1" -Level Header
         Write-Log -Message "========================================" -Level Header
         Write-Log -Message "Log file: $($script:LogFilePath)" -Level Info
         Write-Log -Message "Error log: $($script:ErrorLogPath)" -Level Info
