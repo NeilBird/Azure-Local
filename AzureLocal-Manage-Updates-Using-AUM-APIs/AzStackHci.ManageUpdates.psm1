@@ -26,7 +26,7 @@
     available updates and prompt for selection or apply the latest available update.
 
 .PARAMETER ApiVersion
-    The API version to use. Defaults to "2026-02-01".
+    The API version to use. Defaults to "2025-10-01".
 
 .PARAMETER LogPath
     Path to the log file. If not specified, logs are written to the current directory
@@ -57,7 +57,7 @@
 .NOTES
     Author: Neil Bird, Microsoft.
     Requires: Azure CLI (az) installed and authenticated
-    API Reference: https://github.com/Azure/azure-rest-api-specs/blob/main/specification/azurestackhci/resource-manager/Microsoft.AzureStackHCI/StackHCI/stable/2026-02-01/hci.json
+    API Reference: https://github.com/Azure/azure-rest-api-specs/blob/main/specification/azurestackhci/resource-manager/Microsoft.AzureStackHCI/StackHCI/stable/2025-10-01/hci.json
 #>
 
 # Script-level variables for logging
@@ -71,8 +71,9 @@ function Write-Log {
     #>
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory = $true)]
-        [string]$Message,
+        [Parameter(Mandatory = $false)]
+        [AllowEmptyString()]
+        [string]$Message = "",
 
         [Parameter(Mandatory = $false)]
         [ValidateSet('Info', 'Warning', 'Error', 'Success', 'Verbose', 'Header')]
@@ -138,7 +139,7 @@ function Start-AzureLocalClusterUpdate {
         [string]$UpdateName,
 
         [Parameter(Mandatory = $false)]
-        [string]$ApiVersion = "2026-02-01",
+        [string]$ApiVersion = "2025-10-01",
 
         [Parameter(Mandatory = $false)]
         [switch]$Force,
@@ -554,7 +555,7 @@ function Get-AzureLocalClusterInfo {
         [string]$SubscriptionId,
 
         [Parameter(Mandatory = $false)]
-        [string]$ApiVersion = "2026-02-01"
+        [string]$ApiVersion = "2025-10-01"
     )
 
     if ($ResourceGroupName) {
@@ -593,7 +594,7 @@ function Get-AzureLocalUpdateSummary {
         [string]$ClusterResourceId,
 
         [Parameter(Mandatory = $false)]
-        [string]$ApiVersion = "2026-02-01"
+        [string]$ApiVersion = "2025-10-01"
     )
 
     $uri = "https://management.azure.com$ClusterResourceId/updateSummaries/default?api-version=$ApiVersion"
@@ -615,7 +616,7 @@ function Get-AzureLocalAvailableUpdates {
         [string]$ClusterResourceId,
 
         [Parameter(Mandatory = $false)]
-        [string]$ApiVersion = "2026-02-01"
+        [string]$ApiVersion = "2025-10-01"
     )
 
     $uri = "https://management.azure.com$ClusterResourceId/updates?api-version=$ApiVersion"
@@ -640,7 +641,7 @@ function Invoke-AzureLocalUpdateApply {
         [string]$UpdateName,
 
         [Parameter(Mandatory = $false)]
-        [string]$ApiVersion = "2026-02-01"
+        [string]$ApiVersion = "2025-10-01"
     )
 
     $uri = "https://management.azure.com$ClusterResourceId/updates/$UpdateName/apply?api-version=$ApiVersion"
@@ -678,7 +679,7 @@ function Get-AzureLocalUpdateRuns {
         [string]$UpdateName,
 
         [Parameter(Mandatory = $false)]
-        [string]$ApiVersion = "2026-02-01"
+        [string]$ApiVersion = "2025-10-01"
     )
 
     # Get subscription ID if not provided

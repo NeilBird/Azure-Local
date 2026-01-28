@@ -2,7 +2,7 @@
   "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
   "_comment": "This is an example JSON configuration for starting an Azure Local cluster update, it is not used by the PowerShell function directly.",
   "_description": "This file demonstrates the API request structure for applying updates to Azure Local (Azure Stack HCI) clusters",
-  "_apiVersion": "2026-02-01",
+  "_apiVersion": "2025-10-01",
   
   "clusterExample": {
     "_description": "Example of a cluster that is Ready for updates",
@@ -18,7 +18,7 @@
   
   "updateSummaryExample": {
     "_description": "Example Update Summary showing cluster has updates available",
-    "_endpoint": "GET /subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.AzureStackHCI/clusters/{clusterName}/updateSummaries/default?api-version=2026-02-01",
+    "_endpoint": "GET /subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.AzureStackHCI/clusters/{clusterName}/updateSummaries/default?api-version=2025-10-01",
     "name": "default",
     "type": "Microsoft.AzureStackHCI/clusters/updateSummaries",
     "properties": {
@@ -43,7 +43,7 @@
   
   "availableUpdateExample": {
     "_description": "Example of an available update in Ready state",
-    "_endpoint": "GET /subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.AzureStackHCI/clusters/{clusterName}/updates?api-version=2026-02-01",
+    "_endpoint": "GET /subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.AzureStackHCI/clusters/{clusterName}/updates?api-version=2025-10-01",
     "value": [
       {
         "id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/contoso-azure-local-rg/providers/Microsoft.AzureStackHCI/clusters/contoso-cluster-01/updates/Microsoft4.2402.1.5",
@@ -85,20 +85,20 @@
   
   "applyUpdateRequest": {
     "_description": "Request to apply/start an update on the cluster",
-    "_endpoint": "POST /subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.AzureStackHCI/clusters/{clusterName}/updates/{updateName}/apply?api-version=2026-02-01",
+    "_endpoint": "POST /subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.AzureStackHCI/clusters/{clusterName}/updates/{updateName}/apply?api-version=2025-10-01",
     "_method": "POST",
     "_requestBody": "Empty - no request body required",
     "_responseCode": "202 Accepted (Long-running operation)",
     "_responseHeaders": {
-      "Azure-AsyncOperation": "https://management.azure.com/subscriptions/{subscriptionId}/providers/Microsoft.AzureStackHCI/locations/{location}/operationStatuses/{operationId}?api-version=2026-02-01",
-      "Location": "https://management.azure.com/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.AzureStackHCI/clusters/{clusterName}/updates/{updateName}/operationResults/{operationId}?api-version=2026-02-01",
+      "Azure-AsyncOperation": "https://management.azure.com/subscriptions/{subscriptionId}/providers/Microsoft.AzureStackHCI/locations/{location}/operationStatuses/{operationId}?api-version=2025-10-01",
+      "Location": "https://management.azure.com/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.AzureStackHCI/clusters/{clusterName}/updates/{updateName}/operationResults/{operationId}?api-version=2025-10-01",
       "Retry-After": 30
     }
   },
   
   "updateRunExample": {
     "_description": "Example of an update run (progress tracking)",
-    "_endpoint": "GET /subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.AzureStackHCI/clusters/{clusterName}/updates/{updateName}/updateRuns/{updateRunName}?api-version=2026-02-01",
+    "_endpoint": "GET /subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.AzureStackHCI/clusters/{clusterName}/updates/{updateName}/updateRuns/{updateRunName}?api-version=2025-10-01",
     "id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/contoso-azure-local-rg/providers/Microsoft.AzureStackHCI/clusters/contoso-cluster-01/updates/Microsoft4.2402.1.5/updateRuns/23b779ba-0d52-4a80-8571-45ca74664ec3",
     "name": "23b779ba-0d52-4a80-8571-45ca74664ec3",
     "type": "Microsoft.AzureStackHCI/clusters/updates/updateRuns",
@@ -143,21 +143,21 @@
   "azCliExamples": {
     "_description": "Azure CLI commands using 'az rest' to interact with the Update API",
     
-    "listClusters": "az rest --method GET --uri \"https://management.azure.com/subscriptions/{subscriptionId}/providers/Microsoft.AzureStackHCI/clusters?api-version=2026-02-01\"",
+    "listClusters": "az rest --method GET --uri \"https://management.azure.com/subscriptions/{subscriptionId}/providers/Microsoft.AzureStackHCI/clusters?api-version=2025-10-01\"",
     
-    "getCluster": "az rest --method GET --uri \"https://management.azure.com/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.AzureStackHCI/clusters/{clusterName}?api-version=2026-02-01\"",
+    "getCluster": "az rest --method GET --uri \"https://management.azure.com/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.AzureStackHCI/clusters/{clusterName}?api-version=2025-10-01\"",
     
-    "getUpdateSummary": "az rest --method GET --uri \"https://management.azure.com/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.AzureStackHCI/clusters/{clusterName}/updateSummaries/default?api-version=2026-02-01\"",
+    "getUpdateSummary": "az rest --method GET --uri \"https://management.azure.com/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.AzureStackHCI/clusters/{clusterName}/updateSummaries/default?api-version=2025-10-01\"",
     
-    "listAvailableUpdates": "az rest --method GET --uri \"https://management.azure.com/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.AzureStackHCI/clusters/{clusterName}/updates?api-version=2026-02-01\"",
+    "listAvailableUpdates": "az rest --method GET --uri \"https://management.azure.com/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.AzureStackHCI/clusters/{clusterName}/updates?api-version=2025-10-01\"",
     
-    "getSpecificUpdate": "az rest --method GET --uri \"https://management.azure.com/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.AzureStackHCI/clusters/{clusterName}/updates/{updateName}?api-version=2026-02-01\"",
+    "getSpecificUpdate": "az rest --method GET --uri \"https://management.azure.com/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.AzureStackHCI/clusters/{clusterName}/updates/{updateName}?api-version=2025-10-01\"",
     
-    "applyUpdate": "az rest --method POST --uri \"https://management.azure.com/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.AzureStackHCI/clusters/{clusterName}/updates/{updateName}/apply?api-version=2026-02-01\"",
+    "applyUpdate": "az rest --method POST --uri \"https://management.azure.com/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.AzureStackHCI/clusters/{clusterName}/updates/{updateName}/apply?api-version=2025-10-01\"",
     
-    "listUpdateRuns": "az rest --method GET --uri \"https://management.azure.com/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.AzureStackHCI/clusters/{clusterName}/updates/{updateName}/updateRuns?api-version=2026-02-01\"",
+    "listUpdateRuns": "az rest --method GET --uri \"https://management.azure.com/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.AzureStackHCI/clusters/{clusterName}/updates/{updateName}/updateRuns?api-version=2025-10-01\"",
     
-    "getUpdateRunStatus": "az rest --method GET --uri \"https://management.azure.com/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.AzureStackHCI/clusters/{clusterName}/updates/{updateName}/updateRuns/{updateRunName}?api-version=2026-02-01\""
+    "getUpdateRunStatus": "az rest --method GET --uri \"https://management.azure.com/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.AzureStackHCI/clusters/{clusterName}/updates/{updateName}/updateRuns/{updateRunName}?api-version=2025-10-01\""
   },
   
   "validClusterStates": {

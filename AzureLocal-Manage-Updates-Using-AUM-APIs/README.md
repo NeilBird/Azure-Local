@@ -1,8 +1,8 @@
-﻿# Azure Local Cluster Update Module
+# Azure Local Cluster Update Module
 
 This folder contains the 'AzStackHci.ManageUpdates' PowerShell module which is an example module for managing updates on Azure Local (Azure Stack HCI) clusters using the Azure Stack HCI REST API.
 
-Azure Stack HCI REST API specification (includes update management endpoints): https://github.com/Azure/azure-rest-api-specs/blob/main/specification/azurestackhci/resource-manager/Microsoft.AzureStackHCI/StackHCI/stable/2026-02-01/hci.json
+Azure Stack HCI REST API specification (includes update management endpoints): https://github.com/Azure/azure-rest-api-specs/blob/main/specification/azurestackhci/resource-manager/Microsoft.AzureStackHCI/StackHCI/stable/2025-10-01/hci.json
 
 ## Files
 
@@ -187,7 +187,7 @@ Main function to start updates on one or more Azure Local clusters.
 - `-ResourceGroupName` (Optional): Resource group containing the clusters
 - `-SubscriptionId` (Optional): Azure subscription ID (defaults to current)
 - `-UpdateName` (Optional): Specific update name to apply
-- `-ApiVersion` (Optional): API version (default: "2026-02-01")
+- `-ApiVersion` (Optional): API version (default: "2025-10-01")
 - `-Force` (Optional): Skip confirmation prompts
 - `-WhatIf` (Optional): Show what would happen without executing
 - `-LogPath` (Optional): Path to log file. Default: `AzureLocalUpdate_YYYYMMDD_HHmmss.log` in current directory
@@ -299,7 +299,7 @@ Each log entry includes a timestamp and severity level:
 
 ## API Reference
 
-The functions use the Azure Stack HCI REST API (version 2026-02-01):
+The functions use the Azure Stack HCI REST API (version 2025-10-01):
 
 | Operation | HTTP Method | Endpoint |
 |-----------|-------------|----------|
@@ -317,22 +317,22 @@ The functions use the Azure Stack HCI REST API (version 2026-02-01):
 
 | State | Description | Can Start Update? |
 |-------|-------------|-------------------|
-| `UpdateAvailable` | Updates are available | ✅ Yes |
-| `AppliedSuccessfully` | All updates applied | ❌ No updates to apply |
-| `UpdateInProgress` | Update is running | ❌ Wait for completion |
-| `UpdateFailed` | Last update failed | ⚠️ Investigate first |
-| `NeedsAttention` | Manual intervention needed | ❌ Resolve issues first |
+| `UpdateAvailable` | Updates are available | ? Yes |
+| `AppliedSuccessfully` | All updates applied | ? No updates to apply |
+| `UpdateInProgress` | Update is running | ? Wait for completion |
+| `UpdateFailed` | Last update failed | ?? Investigate first |
+| `NeedsAttention` | Manual intervention needed | ? Resolve issues first |
 
 ### Individual Update States
 
 | State | Description | Can Apply? |
 |-------|-------------|------------|
-| `Ready` | Update is ready to install | ✅ Yes |
-| `ReadyToInstall` | Preparation complete | ✅ Yes |
-| `HasPrerequisite` | Prerequisites required | ❌ Install prerequisites first |
-| `Installing` | Currently installing | ❌ In progress |
-| `Installed` | Successfully installed | ❌ Already done |
-| `InstallationFailed` | Installation failed | ⚠️ Retry or investigate |
+| `Ready` | Update is ready to install | ? Yes |
+| `ReadyToInstall` | Preparation complete | ? Yes |
+| `HasPrerequisite` | Prerequisites required | ? Install prerequisites first |
+| `Installing` | Currently installing | ? In progress |
+| `Installed` | Successfully installed | ? Already done |
+| `InstallationFailed` | Installation failed | ?? Retry or investigate |
 
 ## Using Azure CLI Directly
 
@@ -340,16 +340,16 @@ You can also use `az rest` commands directly:
 
 ```powershell
 # List all clusters in subscription
-az rest --method GET --uri "https://management.azure.com/subscriptions/{subscriptionId}/providers/Microsoft.AzureStackHCI/clusters?api-version=2026-02-01"
+az rest --method GET --uri "https://management.azure.com/subscriptions/{subscriptionId}/providers/Microsoft.AzureStackHCI/clusters?api-version=2025-10-01"
 
 # Get update summary
-az rest --method GET --uri "https://management.azure.com/subscriptions/{subscriptionId}/resourceGroups/{resourceGroup}/providers/Microsoft.AzureStackHCI/clusters/{clusterName}/updateSummaries/default?api-version=2026-02-01"
+az rest --method GET --uri "https://management.azure.com/subscriptions/{subscriptionId}/resourceGroups/{resourceGroup}/providers/Microsoft.AzureStackHCI/clusters/{clusterName}/updateSummaries/default?api-version=2025-10-01"
 
 # List available updates
-az rest --method GET --uri "https://management.azure.com/subscriptions/{subscriptionId}/resourceGroups/{resourceGroup}/providers/Microsoft.AzureStackHCI/clusters/{clusterName}/updates?api-version=2026-02-01"
+az rest --method GET --uri "https://management.azure.com/subscriptions/{subscriptionId}/resourceGroups/{resourceGroup}/providers/Microsoft.AzureStackHCI/clusters/{clusterName}/updates?api-version=2025-10-01"
 
 # Apply an update (no body required)
-az rest --method POST --uri "https://management.azure.com/subscriptions/{subscriptionId}/resourceGroups/{resourceGroup}/providers/Microsoft.AzureStackHCI/clusters/{clusterName}/updates/{updateName}/apply?api-version=2026-02-01"
+az rest --method POST --uri "https://management.azure.com/subscriptions/{subscriptionId}/resourceGroups/{resourceGroup}/providers/Microsoft.AzureStackHCI/clusters/{clusterName}/updates/{updateName}/apply?api-version=2025-10-01"
 ```
 
 ## Alternative: Az.StackHCI PowerShell Module
