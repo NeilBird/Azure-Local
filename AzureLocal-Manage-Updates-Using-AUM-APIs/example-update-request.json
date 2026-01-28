@@ -1,0 +1,197 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "_comment": "This is an example JSON configuration for starting an Azure Local cluster update, it is not used by the PowerShell function directly.",
+  "_description": "This file demonstrates the API request structure for applying updates to Azure Local (Azure Stack HCI) clusters",
+  "_apiVersion": "2026-02-01",
+  
+  "clusterExample": {
+    "_description": "Example of a cluster that is Ready for updates",
+    "name": "contoso-cluster-01",
+    "resourceGroup": "contoso-azure-local-rg",
+    "subscriptionId": "00000000-0000-0000-0000-000000000000",
+    "location": "eastus",
+    "properties": {
+      "status": "ConnectedRecently",
+      "connectivityStatus": "Connected"
+    }
+  },
+  
+  "updateSummaryExample": {
+    "_description": "Example Update Summary showing cluster has updates available",
+    "_endpoint": "GET /subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.AzureStackHCI/clusters/{clusterName}/updateSummaries/default?api-version=2026-02-01",
+    "name": "default",
+    "type": "Microsoft.AzureStackHCI/clusters/updateSummaries",
+    "properties": {
+      "provisioningState": "Succeeded",
+      "state": "UpdateAvailable",
+      "oemFamily": "Contoso",
+      "currentVersion": "10.2311.0.26",
+      "currentSbeVersion": "4.1.2.3",
+      "hardwareModel": "Contoso HCI Node",
+      "lastUpdated": "2026-01-15T10:30:00Z",
+      "lastChecked": "2026-01-28T08:00:00Z",
+      "healthState": "Success",
+      "packageVersions": [
+        {
+          "version": "10.2311.0.26",
+          "packageType": "Infrastructure",
+          "lastUpdated": "2026-01-15T10:30:00Z"
+        }
+      ]
+    }
+  },
+  
+  "availableUpdateExample": {
+    "_description": "Example of an available update in Ready state",
+    "_endpoint": "GET /subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.AzureStackHCI/clusters/{clusterName}/updates?api-version=2026-02-01",
+    "value": [
+      {
+        "id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/contoso-azure-local-rg/providers/Microsoft.AzureStackHCI/clusters/contoso-cluster-01/updates/Microsoft4.2402.1.5",
+        "name": "Microsoft4.2402.1.5",
+        "type": "Microsoft.AzureStackHCI/clusters/updates",
+        "location": "eastus",
+        "properties": {
+          "provisioningState": "Succeeded",
+          "state": "Ready",
+          "installedDate": null,
+          "description": "Azure Stack HCI, version 23H2 February 2024 cumulative update",
+          "version": "10.2402.1.5",
+          "publisher": "Microsoft",
+          "displayName": "Azure Stack HCI 2402.1 Update",
+          "releaseLink": "https://learn.microsoft.com/azure-stack/hci/release-notes",
+          "availabilityType": "Online",
+          "packageType": "Infrastructure",
+          "packageSizeInMb": 4500.0,
+          "rebootRequired": "True",
+          "healthState": "Success",
+          "healthCheckDate": "2026-01-28T06:00:00Z",
+          "componentVersions": [
+            {
+              "version": "10.2402.1.5",
+              "packageType": "Infrastructure",
+              "lastUpdated": null
+            },
+            {
+              "version": "4.2.0.1",
+              "packageType": "SBE",
+              "lastUpdated": null
+            }
+          ],
+          "prerequisites": []
+        }
+      }
+    ]
+  },
+  
+  "applyUpdateRequest": {
+    "_description": "Request to apply/start an update on the cluster",
+    "_endpoint": "POST /subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.AzureStackHCI/clusters/{clusterName}/updates/{updateName}/apply?api-version=2026-02-01",
+    "_method": "POST",
+    "_requestBody": "Empty - no request body required",
+    "_responseCode": "202 Accepted (Long-running operation)",
+    "_responseHeaders": {
+      "Azure-AsyncOperation": "https://management.azure.com/subscriptions/{subscriptionId}/providers/Microsoft.AzureStackHCI/locations/{location}/operationStatuses/{operationId}?api-version=2026-02-01",
+      "Location": "https://management.azure.com/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.AzureStackHCI/clusters/{clusterName}/updates/{updateName}/operationResults/{operationId}?api-version=2026-02-01",
+      "Retry-After": 30
+    }
+  },
+  
+  "updateRunExample": {
+    "_description": "Example of an update run (progress tracking)",
+    "_endpoint": "GET /subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.AzureStackHCI/clusters/{clusterName}/updates/{updateName}/updateRuns/{updateRunName}?api-version=2026-02-01",
+    "id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/contoso-azure-local-rg/providers/Microsoft.AzureStackHCI/clusters/contoso-cluster-01/updates/Microsoft4.2402.1.5/updateRuns/23b779ba-0d52-4a80-8571-45ca74664ec3",
+    "name": "23b779ba-0d52-4a80-8571-45ca74664ec3",
+    "type": "Microsoft.AzureStackHCI/clusters/updates/updateRuns",
+    "location": "eastus",
+    "properties": {
+      "provisioningState": "Succeeded",
+      "state": "InProgress",
+      "timeStarted": "2026-01-28T09:00:00Z",
+      "lastUpdatedTime": "2026-01-28T09:15:00Z",
+      "duration": "PT15M",
+      "progress": {
+        "name": "Update Installation",
+        "description": "Installing Azure Stack HCI 2402.1 Update",
+        "status": "InProgress",
+        "startTimeUtc": "2026-01-28T09:00:00Z",
+        "steps": [
+          {
+            "name": "PreUpdate",
+            "description": "Pre-update health checks",
+            "status": "Success",
+            "startTimeUtc": "2026-01-28T09:00:00Z",
+            "endTimeUtc": "2026-01-28T09:05:00Z"
+          },
+          {
+            "name": "Download",
+            "description": "Downloading update content",
+            "status": "Success",
+            "startTimeUtc": "2026-01-28T09:05:00Z",
+            "endTimeUtc": "2026-01-28T09:10:00Z"
+          },
+          {
+            "name": "Install",
+            "description": "Installing update on cluster nodes",
+            "status": "InProgress",
+            "startTimeUtc": "2026-01-28T09:10:00Z"
+          }
+        ]
+      }
+    }
+  },
+  
+  "azCliExamples": {
+    "_description": "Azure CLI commands using 'az rest' to interact with the Update API",
+    
+    "listClusters": "az rest --method GET --uri \"https://management.azure.com/subscriptions/{subscriptionId}/providers/Microsoft.AzureStackHCI/clusters?api-version=2026-02-01\"",
+    
+    "getCluster": "az rest --method GET --uri \"https://management.azure.com/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.AzureStackHCI/clusters/{clusterName}?api-version=2026-02-01\"",
+    
+    "getUpdateSummary": "az rest --method GET --uri \"https://management.azure.com/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.AzureStackHCI/clusters/{clusterName}/updateSummaries/default?api-version=2026-02-01\"",
+    
+    "listAvailableUpdates": "az rest --method GET --uri \"https://management.azure.com/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.AzureStackHCI/clusters/{clusterName}/updates?api-version=2026-02-01\"",
+    
+    "getSpecificUpdate": "az rest --method GET --uri \"https://management.azure.com/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.AzureStackHCI/clusters/{clusterName}/updates/{updateName}?api-version=2026-02-01\"",
+    
+    "applyUpdate": "az rest --method POST --uri \"https://management.azure.com/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.AzureStackHCI/clusters/{clusterName}/updates/{updateName}/apply?api-version=2026-02-01\"",
+    
+    "listUpdateRuns": "az rest --method GET --uri \"https://management.azure.com/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.AzureStackHCI/clusters/{clusterName}/updates/{updateName}/updateRuns?api-version=2026-02-01\"",
+    
+    "getUpdateRunStatus": "az rest --method GET --uri \"https://management.azure.com/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.AzureStackHCI/clusters/{clusterName}/updates/{updateName}/updateRuns/{updateRunName}?api-version=2026-02-01\""
+  },
+  
+  "validClusterStates": {
+    "_description": "Cluster states relevant to updates",
+    "status": [
+      "NotYetRegistered",
+      "ConnectedRecently",
+      "NotConnectedRecently",
+      "Disconnected",
+      "Error"
+    ],
+    "connectivityStatus": [
+      "NotYetRegistered",
+      "Connected",
+      "NotConnectedRecently",
+      "PartiallyConnected",
+      "Disconnected"
+    ]
+  },
+  
+  "validUpdateSummaryStates": {
+    "_description": "States that indicate update readiness",
+    "readyForUpdate": ["UpdateAvailable"],
+    "updateInProgress": ["UpdateInProgress", "PreparationInProgress"],
+    "completed": ["AppliedSuccessfully"],
+    "error": ["UpdateFailed", "PreparationFailed", "NeedsAttention"]
+  },
+  
+  "validUpdateStates": {
+    "_description": "Individual update states",
+    "canApply": ["Ready", "ReadyToInstall"],
+    "inProgress": ["Preparing", "Installing", "Downloading", "HealthChecking"],
+    "completed": ["Installed"],
+    "error": ["PreparationFailed", "InstallationFailed", "DownloadFailed", "HealthCheckFailed", "Invalid", "Recalled"],
+    "blocked": ["HasPrerequisite", "NotApplicableBecauseAnotherUpdateIsInProgress", "AdditionalContentRequired"]
+  }
+}
