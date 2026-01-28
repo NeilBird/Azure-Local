@@ -122,7 +122,17 @@ az role assignment create `
 
 ## Quick Start
 
-### 1. Import the Module
+### 1. Authenticate to Azure
+
+```powershell
+# Login to Azure (add --tenant <TenantId> if you have multiple tenants)
+az login
+
+# Optionally, set the subscription context
+az account set --subscription "Your-Subscription-Name-or-Id"
+```
+
+### 2. Import the Module
 
 ```powershell
 # Import the module from the current directory
@@ -132,7 +142,7 @@ Import-Module .\AzStackHci.ManageUpdates.psd1
 Import-Module "C:\Path\To\AzureLocal-Manage-Updates-Using-AUM-APIs\AzStackHci.ManageUpdates.psd1"
 ```
 
-### 2. Start an Update on a Single Cluster
+### 3. Start an Update on a Single Cluster
 
 ```powershell
 # Start update on a single cluster (will prompt for confirmation)
@@ -142,7 +152,7 @@ Start-AzureLocalClusterUpdate -ClusterNames "MyCluster01" -ResourceGroupName "My
 Start-AzureLocalClusterUpdate -ClusterNames "MyCluster01" -ResourceGroupName "MyRG" -Force
 ```
 
-### 3. Start Updates on Multiple Clusters
+### 4. Start Updates on Multiple Clusters
 
 ```powershell
 # Update multiple clusters in the same resource group
@@ -152,14 +162,14 @@ Start-AzureLocalClusterUpdate -ClusterNames @("Cluster01", "Cluster02", "Cluster
 Start-AzureLocalClusterUpdate -ClusterNames @("Cluster01", "Cluster02")
 ```
 
-### 4. Start a Specific Update
+### 5. Start a Specific Update
 
 ```powershell
 # Apply a specific update version
 Start-AzureLocalClusterUpdate -ClusterNames "MyCluster01" -UpdateName "Solution12.2601.1002.38"
 ```
 
-### 5. Check Update Progress
+### 6. Check Update Progress
 
 ```powershell
 # Get update run status
