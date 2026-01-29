@@ -141,31 +141,47 @@ $script:ServicePrincipalAuthenticated = $false
 function Connect-AzureLocalServicePrincipal {
     <#
     .SYNOPSIS
-        Authenticates to Azure using a Service Principal for CI/CD automation.
+        Authenticates to Azure using a Service Principal or Managed Identity for CI/CD automation.
     
     .DESCRIPTION
-        Logs into Azure CLI using Service Principal credentials, enabling automated
-        operations in GitHub Actions, Azure DevOps Pipelines, or other CI/CD systems.
+        Logs into Azure CLI using Service Principal credentials or Managed Identity (MSI),
+        enabling automated operations in GitHub Actions, Azure DevOps Pipelines, or other CI/CD systems.
         
-        Credentials can be provided via parameters or environment variables:
+        Authentication methods:
+        1. Managed Identity (-UseManagedIdentity): For Azure-hosted runners/agents with assigned identity
+        2. Service Principal (default): Using credentials from parameters or environment variables
+        
+        Service Principal credentials can be provided via:
         - Parameters: -ServicePrincipalId, -ServicePrincipalSecret, -TenantId
         - Environment variables: AZURE_CLIENT_ID, AZURE_CLIENT_SECRET, AZURE_TENANT_ID
         
-        If already authenticated (interactively or via SP), this function will skip login
+        If already authenticated (interactively or via SP/MSI), this function will skip login
         unless -Force is specified.
+    
+    .PARAMETER UseManagedIdentity
+        Use Managed Identity (MSI) authentication instead of Service Principal.
+        This is useful for Azure-hosted runners, VMs, or Azure Container Instances
+        that have a system-assigned or user-assigned managed identity.
+    
+    .PARAMETER ManagedIdentityClientId
+        Optional. The client ID of a user-assigned managed identity to use.
+        If not specified, the system-assigned managed identity will be used.
     
     .PARAMETER ServicePrincipalId
         The Application (client) ID of the Service Principal. 
         Can also be set via AZURE_CLIENT_ID environment variable.
+        Not used when -UseManagedIdentity is specified.
     
     .PARAMETER ServicePrincipalSecret
         The client secret for the Service Principal.
         Can also be set via AZURE_CLIENT_SECRET environment variable.
         For security, prefer using environment variables in CI/CD.
+        Not used when -UseManagedIdentity is specified.
     
     .PARAMETER TenantId
         The Azure AD tenant ID.
         Can also be set via AZURE_TENANT_ID environment variable.
+        Not used when -UseManagedIdentity is specified.
     
     .PARAMETER Force
         Force re-authentication even if already logged in.
@@ -174,11 +190,19 @@ function Connect-AzureLocalServicePrincipal {
         Returns $true if authentication succeeded, $false otherwise.
     
     .EXAMPLE
-        # Using parameters (not recommended for CI/CD - use env vars instead)
+        # Using Managed Identity (system-assigned) - recommended for Azure-hosted agents
+        Connect-AzureLocalServicePrincipal -UseManagedIdentity
+    
+    .EXAMPLE
+        # Using Managed Identity (user-assigned) with specific client ID
+        Connect-AzureLocalServicePrincipal -UseManagedIdentity -ManagedIdentityClientId "12345678-1234-1234-1234-123456789012"
+    
+    .EXAMPLE
+        # Using Service Principal with parameters (not recommended for CI/CD - use env vars instead)
         Connect-AzureLocalServicePrincipal -ServicePrincipalId $appId -ServicePrincipalSecret $secret -TenantId $tenant
     
     .EXAMPLE
-        # Using environment variables (recommended for CI/CD)
+        # Using environment variables (recommended for CI/CD with Service Principal)
         $env:AZURE_CLIENT_ID = 'your-app-id'
         $env:AZURE_CLIENT_SECRET = 'your-secret'
         $env:AZURE_TENANT_ID = 'your-tenant-id'
@@ -193,23 +217,31 @@ function Connect-AzureLocalServicePrincipal {
         Connect-AzureLocalServicePrincipal
     
     .NOTES
-        The Service Principal requires the following permissions:
+        The Service Principal or Managed Identity requires the following permissions:
         - Microsoft.AzureStackHCI/clusters/read
         - Microsoft.AzureStackHCI/clusters/updates/read
         - Microsoft.AzureStackHCI/clusters/updates/apply/action
         - Microsoft.AzureStackHCI/clusters/updateSummaries/read
         - Microsoft.AzureStackHCI/clusters/updateRuns/read
+        - Microsoft.Resources/subscriptions/resources/read (for Azure Resource Graph queries)
+        - Tag Contributor role (for Set-AzureLocalClusterUpdateRingTag)
     #>
-    [CmdletBinding()]
+    [CmdletBinding(DefaultParameterSetName = 'ServicePrincipal')]
     [OutputType([bool])]
     param(
-        [Parameter(Mandatory = $false)]
+        [Parameter(Mandatory = $true, ParameterSetName = 'ManagedIdentity')]
+        [switch]$UseManagedIdentity,
+
+        [Parameter(Mandatory = $false, ParameterSetName = 'ManagedIdentity')]
+        [string]$ManagedIdentityClientId,
+
+        [Parameter(Mandatory = $false, ParameterSetName = 'ServicePrincipal')]
         [string]$ServicePrincipalId,
 
-        [Parameter(Mandatory = $false)]
+        [Parameter(Mandatory = $false, ParameterSetName = 'ServicePrincipal')]
         [string]$ServicePrincipalSecret,
 
-        [Parameter(Mandatory = $false)]
+        [Parameter(Mandatory = $false, ParameterSetName = 'ServicePrincipal')]
         [string]$TenantId,
 
         [Parameter(Mandatory = $false)]
@@ -226,11 +258,53 @@ function Connect-AzureLocalServicePrincipal {
             }
         }
         catch {
-            # Not authenticated, continue with SP login - this is expected behavior
-            Write-Verbose "No existing Azure CLI session, proceeding with Service Principal authentication"
+            # Not authenticated, continue with login - this is expected behavior
+            Write-Verbose "No existing Azure CLI session, proceeding with authentication"
         }
     }
 
+    # Managed Identity authentication
+    if ($UseManagedIdentity) {
+        Write-Host "Authenticating with Managed Identity..." -ForegroundColor Yellow
+        
+        try {
+            if ($ManagedIdentityClientId) {
+                # User-assigned managed identity
+                Write-Host "Using user-assigned managed identity: $ManagedIdentityClientId" -ForegroundColor Gray
+                $loginResult = az login --identity --username $ManagedIdentityClientId --output none 2>&1
+            }
+            else {
+                # System-assigned managed identity
+                Write-Host "Using system-assigned managed identity" -ForegroundColor Gray
+                $loginResult = az login --identity --output none 2>&1
+            }
+
+            if ($LASTEXITCODE -ne 0) {
+                Write-Error "Managed Identity authentication failed: $loginResult"
+                Write-Error "Ensure this environment has a managed identity assigned and it has the required permissions."
+                return $false
+            }
+
+            # Verify authentication
+            $accountInfo = az account show 2>$null | ConvertFrom-Json
+            if ($LASTEXITCODE -eq 0 -and $accountInfo) {
+                Write-Host "Successfully authenticated with Managed Identity" -ForegroundColor Green
+                Write-Host "Subscription: $($accountInfo.name) ($($accountInfo.id))" -ForegroundColor Gray
+                $script:ManagedIdentityAuthenticated = $true
+                return $true
+            }
+            else {
+                Write-Error "Authentication succeeded but account verification failed."
+                return $false
+            }
+        }
+        catch {
+            Write-Error "Managed Identity authentication error: $($_.Exception.Message)"
+            return $false
+        }
+    }
+
+    # Service Principal authentication (default)
     # Get credentials from parameters or environment variables
     $clientId = if ($ServicePrincipalId) { $ServicePrincipalId } else { $env:AZURE_CLIENT_ID }
     $clientSecret = if ($ServicePrincipalSecret) { $ServicePrincipalSecret } else { $env:AZURE_CLIENT_SECRET }

@@ -1,14 +1,27 @@
 # Azure Local - Managing Updates Module (AzStackHci.ManageUpdates)
 
-**Latest Version:** v0.4.1
+**Latest Version:** v0.4.2
 
-This folder contains the 'AzStackHci.ManageUpdates' PowerShell module for managing updates on Azure Local (Azure Stack HCI) clusters using the Azure Stack HCI REST API. The module supports both interactive use and CI/CD automation via Service Principal authentication.
+This folder contains the 'AzStackHci.ManageUpdates' PowerShell module for managing updates on Azure Local (Azure Stack HCI) clusters using the Azure Stack HCI REST API. The module supports both interactive use and CI/CD automation via Service Principal or Managed Identity authentication.
 
 Azure Stack HCI REST API specification (includes update management endpoints): https://github.com/Azure/azure-rest-api-specs/blob/main/specification/azurestackhci/resource-manager/Microsoft.AzureStackHCI/StackHCI/stable/2025-10-01/hci.json
 
+## What's New in v0.4.2
+
+### 📖 Documentation
+- Verified and documented that **all functions work with all three authentication methods**:
+  1. **Interactive** - Standard user login via `az login`
+  2. **Service Principal** - For CI/CD pipelines using `Connect-AzureLocalServicePrincipal`
+  3. **Managed Identity (MSI)** - For Azure-hosted agents using `Connect-AzureLocalServicePrincipal -UseManagedIdentity`
+
+---
+
 ## What's New in v0.4.1
 
-### 🐛 Bug Fixes
+### � New Features
+- **Managed Identity (MSI) Support**: `Connect-AzureLocalServicePrincipal` now supports Managed Identity authentication with `-UseManagedIdentity` switch, ideal for Azure-hosted runners, VMs, and containers
+
+### �🐛 Bug Fixes
 - **CRITICAL**: Fixed Azure Resource Graph queries in `Get-AzureLocalClusterInventory`, `Start-AzureLocalClusterUpdate`, and `Get-AzureLocalClusterUpdateReadiness` that were returning incorrect resource types (mixed resources like networkInterfaces, virtualHardDisks instead of clusters only). The issue was caused by HERE-STRING query format causing malformed az CLI commands. Queries now use single-line string format.
 - **CRITICAL**: Fixed `Set-AzureLocalClusterUpdateRingTag` failing with JSON deserialization errors when applying tags. Two issues were resolved:
   1. PowerShell/cmd.exe mangling JSON quotes when passed to `az rest --body` - now uses temp file with `@file` syntax
@@ -227,9 +240,15 @@ Get-AzureLocalUpdateRuns -ClusterName "MyCluster01" -ResourceGroupName "MyRG"
 
 ### `Connect-AzureLocalServicePrincipal`
 
-Authenticates to Azure using a Service Principal for CI/CD automation scenarios.
+Authenticates to Azure using a Service Principal or Managed Identity (MSI) for CI/CD automation scenarios.
+
+**Authentication Methods:**
+1. **Managed Identity** (`-UseManagedIdentity`): For Azure-hosted runners, VMs, or containers with an assigned identity
+2. **Service Principal** (default): Using credentials from parameters or environment variables
 
 **Parameters:**
+- `-UseManagedIdentity` (Optional): Use Managed Identity authentication instead of Service Principal
+- `-ManagedIdentityClientId` (Optional): Client ID of a user-assigned managed identity. If not specified, system-assigned identity is used.
 - `-ServicePrincipalId` (Optional): Application (client) ID. Can also use `AZURE_CLIENT_ID` environment variable.
 - `-ServicePrincipalSecret` (Optional): Client secret. Can also use `AZURE_CLIENT_SECRET` environment variable.
 - `-TenantId` (Optional): Azure AD tenant ID. Can also use `AZURE_TENANT_ID` environment variable.
@@ -240,13 +259,19 @@ Authenticates to Azure using a Service Principal for CI/CD automation scenarios.
 **Examples:**
 
 ```powershell
-# Using environment variables (recommended for CI/CD)
+# Using Managed Identity (recommended for Azure-hosted agents/runners)
+Connect-AzureLocalServicePrincipal -UseManagedIdentity
+
+# Using user-assigned Managed Identity with specific client ID
+Connect-AzureLocalServicePrincipal -UseManagedIdentity -ManagedIdentityClientId "12345678-1234-1234-1234-123456789012"
+
+# Using environment variables for Service Principal (recommended for CI/CD)
 $env:AZURE_CLIENT_ID = 'your-app-id'
 $env:AZURE_CLIENT_SECRET = 'your-secret'
 $env:AZURE_TENANT_ID = 'your-tenant-id'
 Connect-AzureLocalServicePrincipal
 
-# Using parameters (not recommended for CI/CD - secrets may be logged)
+# Using parameters for Service Principal (not recommended - secrets may be logged)
 Connect-AzureLocalServicePrincipal -ServicePrincipalId $appId -ServicePrincipalSecret $secret -TenantId $tenant
 ```
 

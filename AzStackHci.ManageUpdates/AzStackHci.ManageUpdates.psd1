@@ -3,7 +3,7 @@
     RootModule = 'AzStackHci.ManageUpdates.psm1'
 
     # Version number of this module.
-    ModuleVersion = '0.4.1'
+    ModuleVersion = '0.4.2'
 
     # Supported PSEditions
     CompatiblePSEditions = @('Desktop', 'Core')
@@ -65,10 +65,16 @@
 
             # ReleaseNotes of this module
             ReleaseNotes = @'
+## Version 0.4.2
+- DOCS: Verified and documented all functions work with three authentication methods: Interactive (az login), Service Principal, and Managed Identity (MSI)
+
 ## Version 0.4.1
-- FIXED: Azure Resource Graph queries in Get-AzureLocalClusterInventory, Start-AzureLocalClusterUpdate, and Get-AzureLocalClusterUpdateReadiness were returning incorrect resource types (mixed resources instead of clusters only) due to HERE-STRING query format causing malformed az CLI commands
-- FIXED: Set-AzureLocalClusterUpdateRingTag failing with JSON deserialization errors when applying tags due to PowerShell/cmd escaping issues (now uses temp file)
+- NEW: Managed Identity (MSI) authentication support via -UseManagedIdentity switch in Connect-AzureLocalServicePrincipal
+- NEW: -ManagedIdentityClientId parameter for user-assigned managed identities
 - NEW: -PassThru switch for Get-AzureLocalClusterInventory to return objects when exporting to CSV
+- FIXED: Azure Resource Graph queries returning incorrect resource types due to HERE-STRING query format
+- FIXED: Set-AzureLocalClusterUpdateRingTag JSON deserialization errors (now uses temp file)
+- FIXED: PowerShell hashtable internal properties being included in JSON body
 - IMPROVED: Get-AzureLocalClusterInventory no longer dumps objects to console when using -ExportCsvPath
 
 ## Version 0.4.0
