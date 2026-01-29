@@ -8,7 +8,7 @@ Azure Stack HCI REST API specification (includes update management endpoints): h
 
 ## What's New in v0.4.2
 
-### ðŸ“– Documentation
+### 📖 Documentation
 - Verified and documented that **all functions work with all three authentication methods**:
   1. **Interactive** - Standard user login via `az login`
   2. **Service Principal** - For CI/CD pipelines using `Connect-AzureLocalServicePrincipal`
@@ -18,16 +18,16 @@ Azure Stack HCI REST API specification (includes update management endpoints): h
 
 ## What's New in v0.4.1
 
-### New Features
+### 🚀 New Features
 - **Managed Identity (MSI) Support**: `Connect-AzureLocalServicePrincipal` now supports Managed Identity authentication with `-UseManagedIdentity` switch, ideal for Azure-hosted runners, VMs, and containers
 
-### Bug Fixes
+### 🐛 Bug Fixes
 - **CRITICAL**: Fixed Azure Resource Graph queries in `Get-AzureLocalClusterInventory`, `Start-AzureLocalClusterUpdate`, and `Get-AzureLocalClusterUpdateReadiness` that were returning incorrect resource types (mixed resources like networkInterfaces, virtualHardDisks instead of clusters only). The issue was caused by HERE-STRING query format causing malformed az CLI commands. Queries now use single-line string format.
 - **CRITICAL**: Fixed `Set-AzureLocalClusterUpdateRingTag` failing with JSON deserialization errors when applying tags. Two issues were resolved:
   1. PowerShell/cmd.exe mangling JSON quotes when passed to `az rest --body` - now uses temp file with `@file` syntax
   2. PowerShell hashtable internal properties (`Keys`, `Values`, etc.) being included in JSON - now uses `[PSCustomObject]` with filtered `NoteProperty` members only
 
-### Improvements
+### ✅ Improvements
 - `Get-AzureLocalClusterInventory` no longer dumps objects to console when using `-ExportCsvPath` (cleaner output with summary and next steps)
 - Added `-PassThru` switch to `Get-AzureLocalClusterInventory` for CI/CD pipelines that need both CSV export AND returned objects
 
@@ -35,13 +35,13 @@ Azure Stack HCI REST API specification (includes update management endpoints): h
 
 ## What's New in v0.4.0
 
-### New Features
+### 🚀 New Features
 - **Cluster Inventory Function**: New `Get-AzureLocalClusterInventory` function queries all clusters and their UpdateRing tag status
 - **CSV-Based Tag Workflow**: Export inventory to CSV, edit UpdateRing values in Excel, then import back to apply tags
 - **CSV Input for Tags**: `Set-AzureLocalClusterUpdateRingTag` now accepts `-InputCsvPath` for bulk tag operations
 - **JUnit XML Export for CI/CD**: Export results to JUnit XML format for visualization in Azure DevOps, GitHub Actions, Jenkins, and other CI/CD tools
 
-### Improvements
+### ✅ Improvements
 - Renamed `-ScopeByTagName` to `-ScopeByUpdateRingTag` (now a switch parameter for clarity)
 - Renamed `-TagValue` to `-UpdateRingValue` for consistency
 - UpdateRing tag queries now use the standardized 'UpdateRing' tag name
