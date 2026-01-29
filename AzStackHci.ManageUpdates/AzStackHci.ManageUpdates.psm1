@@ -2781,11 +2781,15 @@ function Set-AzureLocalClusterUpdateRingTag {
             }
 
             # Build the new tags object (preserve existing tags and add/update UpdateRing)
-            $newTags = @{}
-            if ($currentTags) {
-                # Copy existing tags
+            # Use ordered hashtable and convert to PSCustomObject for clean JSON serialization
+            $newTags = [ordered]@{}
+            if ($currentTags -and $currentTags.PSObject.Properties.Name.Count -gt 0) {
+                # Copy existing tags (only actual tag properties, not PSObject internals)
                 foreach ($prop in $currentTags.PSObject.Properties) {
-                    $newTags[$prop.Name] = $prop.Value
+                    # Skip PowerShell internal properties
+                    if ($prop.MemberType -eq 'NoteProperty') {
+                        $newTags[$prop.Name] = $prop.Value
+                    }
                 }
             }
             $newTags["UpdateRing"] = $currentUpdateRingValue
@@ -2794,9 +2798,11 @@ function Set-AzureLocalClusterUpdateRingTag {
             if ($PSCmdlet.ShouldProcess($resourceId, "Set UpdateRing tag to '$currentUpdateRingValue'")) {
                 Write-Log -Message "Applying UpdateRing tag with value: '$currentUpdateRingValue'..." -Level Info
                 
-                $patchBody = @{
-                    tags = $newTags
-                } | ConvertTo-Json -Compress -Depth 10
+                # Create a clean PSCustomObject for JSON serialization
+                $patchBodyObj = [PSCustomObject]@{
+                    tags = [PSCustomObject]$newTags
+                }
+                $patchBody = $patchBodyObj | ConvertTo-Json -Compress -Depth 10
 
                 # Write body to temp file to avoid PowerShell/cmd JSON escaping issues
                 $tempFile = [System.IO.Path]::GetTempFileName()
