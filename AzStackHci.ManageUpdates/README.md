@@ -1,4 +1,4 @@
-# Azure Local Cluster Update Module
+# Azure Local - Managing Updates Module (AzStackHci.ManageUpdates)
 
 **Latest Version:** v0.4.0
 
