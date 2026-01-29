@@ -17,16 +17,196 @@ Three pipelines are provided for each platform:
 Before using these pipelines, you need:
 
 1. **Azure Subscription** with Azure Local (Azure Stack HCI) clusters
-2. **Service Principal** with appropriate permissions
+2. **Azure Identity** - Service Principal or Managed Identity (see Authentication Options below)
 3. **CI/CD Platform** (GitHub or Azure DevOps)
 
 ---
 
-## Service Principal Setup
+## 🔐 Authentication Options
+
+Microsoft recommends three authentication methods for CI/CD pipelines, listed from **most to least secure**:
+
+| Method | Security | Secrets Required | Best For |
+|--------|----------|------------------|----------|
+| **🥇 OpenID Connect (OIDC)** | ⭐⭐⭐⭐⭐ | None (secretless) | GitHub Actions, Azure DevOps |
+| **🥈 Managed Identity** | ⭐⭐⭐⭐ | None | Self-hosted runners on Azure VMs |
+| **🥉 Service Principal + Secret** | ⭐⭐ | Client Secret | Legacy systems only |
+
+> ⚠️ **Important**: Microsoft recommends **OpenID Connect** over client secrets. Client secrets can expire, be leaked, and require rotation. OIDC uses short-lived tokens with no stored secrets.
+
+---
+
+## 🥇 Option 1: OpenID Connect (OIDC) - Recommended
+
+OIDC uses federated identity credentials - your GitHub/Azure DevOps workflow requests a token from Azure without storing any secrets.
+
+### Benefits
+- ✅ **No secrets to manage or rotate**
+- ✅ **Short-lived tokens** (valid only for workflow execution)
+- ✅ **No risk of secret leakage**
+- ✅ **Audit trail** of token usage
+
+### Step 1: Create the App Registration
+
+```bash
+# Create App Registration (not a full Service Principal)
+az ad app create --display-name "AzureLocal-UpdateAutomation-OIDC"
+
+# Note the appId from output - this is your AZURE_CLIENT_ID
+```
+
+### Step 2: Create Service Principal and Assign Role
+
+```bash
+# Create Service Principal from the App Registration
+az ad sp create --id {app-id-from-step-1}
+
+# Assign Azure Stack HCI Administrator role
+az role assignment create \
+    --assignee {app-id-from-step-1} \
+    --role "Azure Stack HCI Administrator" \
+    --scope "/subscriptions/{your-subscription-id}"
+```
+
+### Step 3: Configure Federated Credentials
+
+#### For GitHub Actions:
+
+```bash
+# Create federated credential for GitHub Actions
+az ad app federated-credential create \
+    --id {app-id-from-step-1} \
+    --parameters '{
+        "name": "GitHubActions-main",
+        "issuer": "https://token.actions.githubusercontent.com",
+        "subject": "repo:{owner}/{repo}:ref:refs/heads/main",
+        "audiences": ["api://AzureADTokenExchange"]
+    }'
+
+# For workflow_dispatch (manual triggers), add another credential:
+az ad app federated-credential create \
+    --id {app-id-from-step-1} \
+    --parameters '{
+        "name": "GitHubActions-workflow-dispatch",
+        "issuer": "https://token.actions.githubusercontent.com",
+        "subject": "repo:{owner}/{repo}:environment:production",
+        "audiences": ["api://AzureADTokenExchange"]
+    }'
+```
+
+**Subject claim patterns:**
+| Trigger | Subject |
+|---------|---------|
+| Branch push | `repo:{owner}/{repo}:ref:refs/heads/{branch}` |
+| PR | `repo:{owner}/{repo}:pull_request` |
+| Environment | `repo:{owner}/{repo}:environment:{env-name}` |
+| Tag | `repo:{owner}/{repo}:ref:refs/tags/{tag}` |
+
+#### For Azure DevOps:
+
+```bash
+# Create federated credential for Azure DevOps
+az ad app federated-credential create \
+    --id {app-id-from-step-1} \
+    --parameters '{
+        "name": "AzureDevOps",
+        "issuer": "https://vstoken.dev.azure.com/{organization-id}",
+        "subject": "sc://{organization}/{project}/{service-connection-name}",
+        "audiences": ["api://AzureADTokenExchange"]
+    }'
+```
+
+### Step 4: Add GitHub Secrets (No Secret Value!)
+
+| Secret Name | Value |
+|-------------|-------|
+| `AZURE_CLIENT_ID` | App Registration ID |
+| `AZURE_TENANT_ID` | Your Entra ID tenant ID |
+| `AZURE_SUBSCRIPTION_ID` | Your subscription ID |
+
+> 📝 **Note**: No `AZURE_CLIENT_SECRET` needed with OIDC!
+
+### Step 5: Update Workflow for OIDC
+
+```yaml
+jobs:
+  update-clusters:
+    runs-on: windows-latest
+    permissions:
+      id-token: write   # Required for OIDC
+      contents: read
+    
+    steps:
+    - name: Azure CLI Login (OIDC)
+      uses: azure/login@v2
+      with:
+        client-id: ${{ secrets.AZURE_CLIENT_ID }}
+        tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+        subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+```
+
+> **Reference**: [Use GitHub Actions with OpenID Connect](https://learn.microsoft.com/en-us/azure/developer/github/connect-from-azure-openid-connect)
+
+---
+
+## 🥈 Option 2: Managed Identity (Self-Hosted Runners)
+
+If you run self-hosted GitHub runners or Azure DevOps agents on Azure VMs, use Managed Identity.
+
+### Step 1: Enable Managed Identity on VM
+
+```bash
+# Enable system-assigned managed identity
+az vm identity assign \
+    --name "runner-vm" \
+    --resource-group "runners-rg"
+```
+
+### Step 2: Assign Role to Managed Identity
+
+```bash
+# Get the principal ID of the managed identity
+az vm show --name "runner-vm" --resource-group "runners-rg" --query identity.principalId -o tsv
+
+# Assign role
+az role assignment create \
+    --assignee {principal-id} \
+    --role "Azure Stack HCI Administrator" \
+    --scope "/subscriptions/{your-subscription-id}"
+```
+
+### Step 3: Use in Pipeline
+
+```yaml
+- name: Azure CLI Login (Managed Identity)
+  uses: azure/login@v2
+  with:
+    auth-type: IDENTITY
+    client-id: ${{ secrets.AZURE_CLIENT_ID }}  # Only for user-assigned identity
+```
+
+Or with the PowerShell module:
+
+```powershell
+Connect-AzureLocalServicePrincipal -UseManagedIdentity
+```
+
+---
+
+## 🥉 Option 3: Service Principal + Client Secret (Legacy)
+
+> ⚠️ **Not Recommended**: Only use this if OIDC and Managed Identity are not available.
+
+### Security Considerations for Client Secrets
+
+If you must use client secrets:
+
+1. **Set short expiration** - Create secrets with 90-day or shorter expiration
+2. **Use environment-level secrets** - More secure than repository secrets for public repos
+3. **Rotate regularly** - Automate secret rotation before expiration
+4. **Limit scope** - Assign least-privilege roles
 
 ### Step 1: Create the Service Principal
-
-Run this command in Azure CLI to create a Service Principal with the required permissions:
 
 ```bash
 # Create Service Principal with Azure Stack HCI Administrator role
@@ -39,28 +219,36 @@ az ad sp create-for-rbac \
 **Save the output** - you'll need these values:
 ```json
 {
-  "appId": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",      // This is AZURE_CLIENT_ID
+  "appId": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",      // AZURE_CLIENT_ID
   "displayName": "AzureLocal-UpdateAutomation",
-  "password": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",       // This is AZURE_CLIENT_SECRET
-  "tenant": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"     // This is AZURE_TENANT_ID
+  "password": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",       // AZURE_CLIENT_SECRET (expires!)
+  "tenant": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"     // AZURE_TENANT_ID
 }
 ```
 
-### Step 2: Grant Additional Permissions (if needed)
+### Step 2: Add All Secrets to GitHub
 
-If you need to query clusters across multiple subscriptions, grant the Service Principal access to each subscription:
+| Secret Name | Value |
+|-------------|-------|
+| `AZURE_CLIENT_ID` | The `appId` from Service Principal creation |
+| `AZURE_CLIENT_SECRET` | The `password` from Service Principal creation |
+| `AZURE_TENANT_ID` | The `tenant` from Service Principal creation |
+| `AZURE_SUBSCRIPTION_ID` | Your subscription ID |
 
-```bash
-# Grant access to additional subscriptions
-az role assignment create \
-    --assignee "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" \
-    --role "Azure Stack HCI Administrator" \
-    --scope "/subscriptions/{additional-subscription-id}"
+### Step 3: Workflow Uses JSON Credentials
+
+```yaml
+- name: Azure CLI Login (Client Secret)
+  uses: azure/login@v2
+  with:
+    creds: '{"clientId":"${{ secrets.AZURE_CLIENT_ID }}","clientSecret":"${{ secrets.AZURE_CLIENT_SECRET }}","subscriptionId":"${{ secrets.AZURE_SUBSCRIPTION_ID }}","tenantId":"${{ secrets.AZURE_TENANT_ID }}"}'
 ```
 
-### Step 3: Verify Permissions
+---
 
-The Service Principal needs these permissions:
+## Required Permissions
+
+Whichever authentication method you choose, the identity needs these permissions:
 
 | Permission | Purpose |
 |------------|---------|
@@ -72,24 +260,40 @@ The Service Principal needs these permissions:
 | `Microsoft.Resources/subscriptions/resources/read` | Query resources via Resource Graph |
 | `Microsoft.Resources/tags/write` | Create/update resource tags |
 
+### Grant Access to Multiple Subscriptions
+
+```bash
+# Grant access to additional subscriptions
+az role assignment create \
+    --assignee "{app-id-or-principal-id}" \
+    --role "Azure Stack HCI Administrator" \
+    --scope "/subscriptions/{additional-subscription-id}"
+```
+
 ---
 
 ## GitHub Actions Setup
 
 ### Step 1: Add Repository Secrets
 
-1. Go to your GitHub repository
-2. Navigate to **Settings** → **Secrets and variables** → **Actions**
-3. Click **New repository secret**
-4. Add the following secrets:
+Based on your chosen authentication method:
 
+**For OIDC (Recommended):**
 | Secret Name | Value |
 |-------------|-------|
-| `AZURE_CLIENT_ID` | The `appId` from Service Principal creation |
-| `AZURE_CLIENT_SECRET` | The `password` from Service Principal creation |
-| `AZURE_TENANT_ID` | The `tenant` from Service Principal creation |
+| `AZURE_CLIENT_ID` | App Registration ID |
+| `AZURE_TENANT_ID` | Entra ID tenant ID |
+| `AZURE_SUBSCRIPTION_ID` | Subscription ID |
 
-![GitHub Secrets Setup](https://docs.github.com/assets/cb-28266/images/help/repository/actions-secrets-and-variables.png)
+**For Client Secret (Legacy):**
+| Secret Name | Value |
+|-------------|-------|
+| `AZURE_CLIENT_ID` | The `appId` from Service Principal |
+| `AZURE_CLIENT_SECRET` | The `password` from Service Principal |
+| `AZURE_TENANT_ID` | The `tenant` from Service Principal |
+| `AZURE_SUBSCRIPTION_ID` | Your subscription ID |
+
+> 💡 **Tip**: For public repositories, use [environment secrets](https://docs.github.com/en/actions/deployment/targeting-different-environments/using-environments-for-deployment#environment-secrets) with required reviewers for additional security.
 
 ### Step 2: Copy Workflow Files
 
@@ -115,7 +319,31 @@ Copy the workflow files from `github-actions/` to your repository's `.github/wor
 
 ## Azure DevOps Setup
 
-### Step 1: Create a Service Connection
+Azure DevOps supports two authentication methods for Service Connections:
+
+| Method | Security | When to Use |
+|--------|----------|-------------|
+| **Workload Identity Federation** | ⭐⭐⭐⭐⭐ | Recommended for all new setups |
+| **Service Principal (manual)** | ⭐⭐ | Legacy - only if federation unavailable |
+
+### Option A: Workload Identity Federation (Recommended)
+
+1. Go to your Azure DevOps project
+2. Navigate to **Project Settings** → **Service connections**
+3. Click **New service connection**
+4. Select **Azure Resource Manager**
+5. Choose **Workload Identity federation (automatic)** 
+6. Select your subscription and resource group scope
+7. Name it `AzureLocal-ServiceConnection`
+8. Click **Save**
+
+Azure DevOps automatically creates the App Registration and federated credential for you.
+
+> 📝 **Note**: This method requires no secrets and uses short-lived tokens.
+
+### Option B: Service Principal (Manual/Legacy)
+
+> ⚠️ **Not recommended** - Only use if Workload Identity Federation is not available.
 
 1. Go to your Azure DevOps project
 2. Navigate to **Project Settings** → **Service connections**

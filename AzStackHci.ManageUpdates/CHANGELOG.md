@@ -5,6 +5,21 @@ All notable changes to the AzStackHci.ManageUpdates module will be documented in
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-01-29
+
+### Security
+- Added comprehensive OpenID Connect (OIDC) documentation for secretless CI/CD authentication
+- Documented authentication methods ranked by security: OIDC (recommended) > Managed Identity > Client Secret
+- GitHub Actions workflows now default to OIDC authentication with `id-token: write` permission
+- Added Azure DevOps Workload Identity Federation setup instructions
+
+### Documentation
+- Added authentication method comparison table with security ratings
+- Updated Quick Start guide with OIDC examples for GitHub Actions
+- Added links to Microsoft documentation for federated credentials setup
+- Documented subject claim patterns for GitHub Actions (branch, PR, environment, tag)
+- Added warning that client secrets are legacy/not recommended
+
 ## [0.4.2] - 2026-01-29
 
 ### Documentation

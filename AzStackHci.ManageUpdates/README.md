@@ -1,10 +1,26 @@
 ﻿# Azure Local - Managing Updates Module (AzStackHci.ManageUpdates)
 
-**Latest Version:** v0.4.2
+**Latest Version:** v0.5.0
 
 This folder contains the 'AzStackHci.ManageUpdates' PowerShell module for managing updates on Azure Local (Azure Stack HCI) clusters using the Azure Stack HCI REST API. The module supports both interactive use and CI/CD automation via Service Principal or Managed Identity authentication.
 
 Azure Stack HCI REST API specification (includes update management endpoints): https://github.com/Azure/azure-rest-api-specs/blob/main/specification/azurestackhci/resource-manager/Microsoft.AzureStackHCI/StackHCI/stable/2025-10-01/hci.json
+
+## What's New in v0.5.0
+
+### 🔐 Security Improvements
+- **OpenID Connect (OIDC) Documentation**: Added comprehensive guidance for secretless authentication using federated credentials
+- **Authentication Best Practices**: Documented three authentication methods ranked by security (OIDC > Managed Identity > Client Secret)
+- **CI/CD Pipeline Updates**: All GitHub Actions workflows now default to OIDC authentication with `id-token: write` permission
+- **Azure DevOps Guidance**: Added Workload Identity Federation setup instructions
+
+### 📖 Documentation
+- Added authentication method comparison table with security ratings
+- Updated Quick Start guide with OIDC examples
+- Added links to Microsoft documentation for federated credentials setup
+- Documented subject claim patterns for GitHub Actions (branch, PR, environment, tag)
+
+---
 
 ## What's New in v0.4.2
 
@@ -168,6 +184,17 @@ az role assignment create `
 
 ### 1. Authenticate to Azure
 
+The module supports three authentication methods. Choose based on your scenario:
+
+| Method | Best For | Secrets Required |
+|--------|----------|------------------|
+| **Interactive** | Manual/ad-hoc use | None (browser login) |
+| **OpenID Connect (OIDC)** | GitHub Actions, Azure DevOps | None (federated) |
+| **Managed Identity** | Azure VMs, self-hosted runners | None (assigned identity) |
+| **Service Principal + Secret** | Legacy systems only | Client Secret |
+
+> ⚠️ **For CI/CD pipelines, Microsoft recommends OpenID Connect (OIDC)** over client secrets. OIDC uses short-lived tokens with no stored secrets. See [Automation-Pipeline-Examples/](Automation-Pipeline-Examples/) for setup instructions.
+
 **Interactive Login (for manual use):**
 ```powershell
 # Login to Azure (add --tenant <TenantId> if you have multiple tenants)
@@ -177,19 +204,39 @@ az login
 az account set --subscription "Your-Subscription-Name-or-Id"
 ```
 
-**Service Principal Login (for CI/CD automation):**
+**Managed Identity Login (for Azure VMs/containers):**
 ```powershell
-# Using environment variables (recommended for pipelines)
+# Import module and authenticate with Managed Identity
+Import-Module .\AzStackHci.ManageUpdates.psd1
+Connect-AzureLocalServicePrincipal -UseManagedIdentity
+
+# For user-assigned managed identity, specify the client ID
+Connect-AzureLocalServicePrincipal -UseManagedIdentity -ManagedIdentityClientId "your-client-id"
+```
+
+**OpenID Connect (OIDC) for CI/CD:**
+```yaml
+# In GitHub Actions - OIDC authentication (no secrets!)
+- name: Azure CLI Login (OIDC)
+  uses: azure/login@v2
+  with:
+    client-id: ${{ secrets.AZURE_CLIENT_ID }}
+    tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+    subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+```
+
+> See [Automation-Pipeline-Examples/README.md](Automation-Pipeline-Examples/README.md) for complete OIDC setup instructions.
+
+**Service Principal + Secret (Legacy - not recommended):**
+```powershell
+# Using environment variables
 $env:AZURE_CLIENT_ID = 'your-app-id'
-$env:AZURE_CLIENT_SECRET = 'your-secret'
+$env:AZURE_CLIENT_SECRET = 'your-secret'  # Secrets can be leaked/expire
 $env:AZURE_TENANT_ID = 'your-tenant-id'
 
 # Import module and authenticate
 Import-Module .\AzStackHci.ManageUpdates.psd1
 Connect-AzureLocalServicePrincipal
-
-# Or use parameters directly (not recommended - prefer env vars)
-Connect-AzureLocalServicePrincipal -ServicePrincipalId $appId -ServicePrincipalSecret $secret -TenantId $tenant
 ```
 
 ### 2. Import the Module

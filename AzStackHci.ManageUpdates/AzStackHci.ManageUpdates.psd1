@@ -3,7 +3,7 @@
     RootModule = 'AzStackHci.ManageUpdates.psm1'
 
     # Version number of this module.
-    ModuleVersion = '0.4.2'
+    ModuleVersion = '0.5.0'
 
     # Supported PSEditions
     CompatiblePSEditions = @('Desktop', 'Core')
@@ -65,6 +65,14 @@
 
             # ReleaseNotes of this module
             ReleaseNotes = @'
+## Version 0.5.0
+- SECURITY: Added comprehensive OpenID Connect (OIDC) documentation for secretless CI/CD authentication
+- SECURITY: Documented authentication methods ranked by security (OIDC > Managed Identity > Client Secret)
+- IMPROVED: GitHub Actions workflows now default to OIDC with id-token: write permission
+- IMPROVED: Added Azure DevOps Workload Identity Federation setup instructions
+- DOCS: Added authentication comparison table with security ratings
+- DOCS: Updated Quick Start with OIDC examples and federated credential setup links
+
 ## Version 0.4.2
 - DOCS: Verified and documented all functions work with three authentication methods: Interactive (az login), Service Principal, and Managed Identity (MSI)
 
