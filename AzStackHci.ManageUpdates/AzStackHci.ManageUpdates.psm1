@@ -3477,16 +3477,21 @@ function Get-AzureLocalClusterInventory {
         If not specified, queries across all accessible subscriptions.
 
     .PARAMETER ExportPath
-        Optional. Path to export the inventory. Supports CSV format.
-        Useful for editing in Excel and then importing back.
+        Optional. Path to export the inventory. Supports CSV and JSON formats.
+        Format is auto-detected from file extension (.csv or .json).
+        CSV is useful for editing in Excel; JSON for CI/CD and API integrations.
 
     .EXAMPLE
         # Get inventory of all clusters across all subscriptions
         Get-AzureLocalClusterInventory
 
     .EXAMPLE
-        # Get inventory and export to CSV for editing
+        # Get inventory and export to CSV for editing in Excel
         Get-AzureLocalClusterInventory -ExportPath "C:\Temp\ClusterInventory.csv"
+
+    .EXAMPLE
+        # Get inventory and export to JSON for CI/CD pipelines
+        Get-AzureLocalClusterInventory -ExportPath "C:\Temp\ClusterInventory.json"
 
     .EXAMPLE
         # Get inventory for a specific subscription
@@ -3504,7 +3509,7 @@ function Get-AzureLocalClusterInventory {
         Write-Host "Found $($inventory.Count) clusters"
 
     .NOTES
-        Version: 0.4.1
+        Version: 0.5.7
         Author: Neil Bird, Microsoft.
     #>
     [CmdletBinding()]
@@ -3629,9 +3634,21 @@ function Get-AzureLocalClusterInventory {
                     $null = New-Item -ItemType Directory -Path $exportDir -Force
                 }
 
-                # Export inventory (without HasUpdateRingTag column for cleaner CSV)
-                $inventory | Select-Object ClusterName, ResourceGroup, SubscriptionId, SubscriptionName, UpdateRing, ResourceId | 
-                    Export-Csv -Path $ExportPath -NoTypeInformation -Force
+                # Determine export format from file extension
+                $extension = [System.IO.Path]::GetExtension($ExportPath).ToLower()
+                $exportData = $inventory | Select-Object ClusterName, ResourceGroup, SubscriptionId, SubscriptionName, UpdateRing, ResourceId
+                
+                switch ($extension) {
+                    '.json' {
+                        $exportData | ConvertTo-Json -Depth 10 | Out-File -FilePath $ExportPath -Encoding UTF8 -Force
+                        Write-Log -Message "Inventory exported to JSON: $ExportPath" -Level Success
+                    }
+                    default {
+                        # Default to CSV for .csv or any other extension
+                        $exportData | Export-Csv -Path $ExportPath -NoTypeInformation -Force
+                        Write-Log -Message "Inventory exported to CSV: $ExportPath" -Level Success
+                    }
+                }
             }
             catch {
                 Write-Log -Message "Failed to export inventory: $($_.Exception.Message)" -Level Error
@@ -3654,16 +3671,22 @@ function Get-AzureLocalClusterInventory {
             }
         }
 
-        # Show export path and next steps if CSV was exported
+        # Show next steps if file was exported
         if ($ExportPath -and (Test-Path -Path $ExportPath)) {
+            $extension = [System.IO.Path]::GetExtension($ExportPath).ToLower()
             Write-Log -Message "" -Level Info
-            Write-Log -Message "Inventory exported to: $ExportPath" -Level Success
-            Write-Log -Message "" -Level Info
-            Write-Log -Message "Next Steps:" -Level Header
-            Write-Log -Message "  1. Open the CSV in Excel" -Level Info
-            Write-Log -Message "  2. Populate the 'UpdateRing' column with values (e.g., 'Wave1', 'Wave2', 'Pilot')" -Level Info
-            Write-Log -Message "  3. Save the CSV file" -Level Info
-            Write-Log -Message "  4. Run: Set-AzureLocalClusterUpdateRingTag -InputCsvPath '$ExportPath'" -Level Info
+            if ($extension -eq '.json') {
+                Write-Log -Message "Next Steps (JSON export):" -Level Header
+                Write-Log -Message "  - Use the JSON file for CI/CD pipelines, API integrations, or CMDB systems" -Level Info
+                Write-Log -Message "  - To apply tags, export to CSV format instead" -Level Info
+            }
+            else {
+                Write-Log -Message "Next Steps (CSV export):" -Level Header
+                Write-Log -Message "  1. Open the CSV in Excel" -Level Info
+                Write-Log -Message "  2. Populate the 'UpdateRing' column with values (e.g., 'Wave1', 'Wave2', 'Pilot')" -Level Info
+                Write-Log -Message "  3. Save the CSV file" -Level Info
+                Write-Log -Message "  4. Run: Set-AzureLocalClusterUpdateRingTag -InputCsvPath '$ExportPath'" -Level Info
+            }
         }
 
         Write-Log -Message "" -Level Info

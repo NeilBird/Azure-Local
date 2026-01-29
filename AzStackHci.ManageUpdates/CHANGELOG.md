@@ -5,6 +5,23 @@ All notable changes to the AzStackHci.ManageUpdates module will be documented in
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.7] - 2026-01-29
+
+### Added
+- **JSON Export for `Get-AzureLocalClusterInventory`**: The function now supports exporting inventory to JSON format in addition to CSV
+  - Format is auto-detected from file extension (`.json` or `.csv`)
+  - JSON export is ideal for CI/CD pipelines, API integrations, and CMDB systems
+  - CSV remains the default for Excel-based tag management workflows
+
+### Example
+```powershell
+# Export to JSON for CI/CD pipelines
+Get-AzureLocalClusterInventory -ExportPath "C:\Reports\inventory.json"
+
+# Export to CSV for Excel editing (unchanged)
+Get-AzureLocalClusterInventory -ExportPath "C:\Reports\inventory.csv"
+```
+
 ## [0.5.6] - 2026-01-29
 
 ### Added - Fleet-Scale Operations

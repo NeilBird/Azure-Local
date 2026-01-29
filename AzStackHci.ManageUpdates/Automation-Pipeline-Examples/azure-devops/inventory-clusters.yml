@@ -59,24 +59,23 @@ stages:
                 
                 $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
                 $csvPath = Join-Path $outputDir "ClusterInventory_$timestamp.csv"
-                
-                # Build parameters
-                $params = @{
-                    ExportPath = $csvPath
-                    PassThru      = $true  # Return objects for pipeline processing
-                }
+                $jsonPath = Join-Path $outputDir "ClusterInventory_$timestamp.json"
                 
                 # Add subscription filter if provided
                 $subFilter = "${{ parameters.subscriptionFilter }}"
+                $subscriptionParam = @{}
                 if ($subFilter -and $subFilter -ne '') {
-                    $params['SubscriptionId'] = $subFilter
+                    $subscriptionParam['SubscriptionId'] = $subFilter
                     Write-Host "Filtering to subscription: $subFilter"
                 } else {
                     Write-Host "Querying all accessible subscriptions"
                 }
                 
-                # Run inventory
-                $inventory = Get-AzureLocalClusterInventory @params
+                # Export to CSV (for Excel workflow)
+                Get-AzureLocalClusterInventory @subscriptionParam -ExportPath $csvPath
+                
+                # Export to JSON (for CI/CD integrations and dashboards)
+                $inventory = Get-AzureLocalClusterInventory @subscriptionParam -ExportPath $jsonPath -PassThru
                 
                 # Output summary
                 Write-Host ""
@@ -85,6 +84,7 @@ stages:
                 Write-Host "========================================" -ForegroundColor Cyan
                 Write-Host "Total Clusters: $($inventory.Count)"
                 Write-Host "CSV exported to: $csvPath"
+                Write-Host "JSON exported to: $jsonPath"
                 
                 # Generate summary for pipeline
                 $withTag = ($inventory | Where-Object { $_.HasUpdateRingTag -eq 'Yes' }).Count

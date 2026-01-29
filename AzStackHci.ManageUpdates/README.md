@@ -1,10 +1,29 @@
 ﻿# Azure Local - Managing Updates Module (AzStackHci.ManageUpdates)
 
-**Latest Version:** v0.5.6
+**Latest Version:** v0.5.7
 
 This folder contains the 'AzStackHci.ManageUpdates' PowerShell module for managing updates on Azure Local (Azure Stack HCI) clusters using the Azure Stack HCI REST API. The module supports both interactive use and CI/CD automation via Service Principal or Managed Identity authentication.
 
 Azure Stack HCI REST API specification (includes update management endpoints): https://github.com/Azure/azure-rest-api-specs/blob/main/specification/azurestackhci/resource-manager/Microsoft.AzureStackHCI/StackHCI/stable/2025-10-01/hci.json
+
+## What's New in v0.5.7
+
+### 📁 JSON Export for Cluster Inventory
+- **`Get-AzureLocalClusterInventory`** now supports JSON export in addition to CSV
+- Format is auto-detected from file extension (`.json` or `.csv`)
+- JSON is ideal for CI/CD pipelines, API integrations, and CMDB systems
+- CSV remains the default and is best for Excel-based workflows
+
+**Example:**
+```powershell
+# Export to JSON for CI/CD pipelines
+Get-AzureLocalClusterInventory -ExportPath "C:\Reports\inventory.json"
+
+# Export to CSV for Excel editing (unchanged)
+Get-AzureLocalClusterInventory -ExportPath "C:\Reports\inventory.csv"
+```
+
+---
 
 ## What's New in v0.5.6 (since v0.5.0)
 
@@ -602,19 +621,20 @@ $runs | Format-Table name, @{L='State';E={$_.properties.state}}, @{L='Started';E
 
 ### `Get-AzureLocalClusterInventory`
 
-Gets an inventory of all Azure Local clusters with their UpdateRing tag status. This function is designed to support a CSV-based workflow for managing update rings.
+Gets an inventory of all Azure Local clusters with their UpdateRing tag status. This function supports both CSV and JSON export formats for different workflows.
 
 **Features:**
 - Queries all Azure Local clusters across all accessible subscriptions using Azure Resource Graph
 - Shows the current UpdateRing tag value for each cluster (or indicates if tag doesn't exist)
 - Retrieves subscription names for better readability
 - Provides summary statistics showing UpdateRing distribution
-- Exports to CSV for editing in Excel and re-importing with `Set-AzureLocalClusterUpdateRingTag`
+- **CSV export**: For editing in Excel and re-importing with `Set-AzureLocalClusterUpdateRingTag`
+- **JSON export**: For CI/CD pipelines, API integrations, dashboards, and CMDB systems
 
 **Parameters:**
 - `-SubscriptionId` (Optional): Limit query to a specific Azure subscription
-- `-ExportPath` (Optional): Export inventory to CSV file for editing
-- `-PassThru` (Optional): Return inventory objects even when exporting to CSV. Useful for CI/CD pipelines that need both the CSV artifact and objects for processing.
+- `-ExportPath` (Optional): Export inventory to CSV or JSON file. Format is auto-detected from file extension (`.csv` or `.json`)
+- `-PassThru` (Optional): Return inventory objects even when exporting. Useful for CI/CD pipelines that need both the file artifact and objects for processing.
 
 **Output Columns:**
 | Column | Description |
@@ -627,7 +647,7 @@ Gets an inventory of all Azure Local clusters with their UpdateRing tag status. 
 | `HasUpdateRingTag` | "Yes" or "No" indicator |
 | `ResourceId` | Full Azure Resource ID |
 
-**CSV Workflow Examples:**
+**CSV Workflow (for Excel editing):**
 
 ```powershell
 # Step 1: Export inventory to CSV
@@ -645,14 +665,26 @@ Set-AzureLocalClusterUpdateRingTag -InputCsvPath "C:\Temp\ClusterInventory.csv"
 Start-AzureLocalClusterUpdate -ScopeByUpdateRingTag -UpdateRingValue "Wave1" -Force
 ```
 
-**CI/CD Pipeline Example (with -PassThru):**
+**JSON Export (for CI/CD and integrations):**
 
 ```powershell
-# Export to CSV AND return objects for pipeline processing
-$inventory = Get-AzureLocalClusterInventory -ExportPath "./artifacts/inventory.csv" -PassThru
+# Export to JSON for API integrations, dashboards, or CMDB systems
+Get-AzureLocalClusterInventory -ExportPath "C:\Reports\inventory.json"
 
-# Use returned objects for pipeline logic
+# Export to JSON AND return objects for pipeline processing
+$inventory = Get-AzureLocalClusterInventory -ExportPath "./artifacts/inventory.json" -PassThru
 Write-Host "Total clusters: $($inventory.Count)"
+```
+
+**CI/CD Pipeline Example (export both formats):**
+
+```powershell
+# Export both CSV and JSON in CI/CD pipelines
+# CSV: For human review and Excel editing workflow
+Get-AzureLocalClusterInventory -ExportPath "./artifacts/inventory.csv"
+
+# JSON: For dashboard integrations and programmatic processing
+$inventory = Get-AzureLocalClusterInventory -ExportPath "./artifacts/inventory.json" -PassThru
 $withoutTag = ($inventory | Where-Object { $_.HasUpdateRingTag -eq 'No' }).Count
 Write-Host "Clusters needing UpdateRing tag: $withoutTag"
 ```
@@ -679,9 +711,9 @@ Inventory Summary:
     Wave1: 2 cluster(s)
     Wave2: 1 cluster(s)
 
-Inventory exported to: C:\Temp\ClusterInventory.csv
+Inventory exported to CSV: C:\Temp\ClusterInventory.csv
 
-Next Steps:
+Next Steps (CSV export):
   1. Open the CSV in Excel
   2. Populate the 'UpdateRing' column with values (e.g., 'Wave1', 'Wave2', 'Pilot')
   3. Save the CSV file

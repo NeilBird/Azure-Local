@@ -481,38 +481,128 @@ Repeat for each pipeline file.
 
 ## Typical Workflow
 
-### Update Deployment Workflow
+### Complete End-to-End Update Deployment
+
+This workflow shows how to use all four pipelines together for a staged update deployment:
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                     Initial Setup                                │
-├─────────────────────────────────────────────────────────────────┤
-│  1. Run "Inventory Clusters" pipeline                           │
-│  2. Download CSV artifact                                        │
-│  3. Edit CSV in Excel - assign UpdateRing values                │
-│  4. Run "Manage UpdateRing Tags" pipeline with edited CSV       │
-└─────────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                     Update Deployment                            │
-├─────────────────────────────────────────────────────────────────┤
-│  5. Run "Apply Updates" for Wave1/Pilot clusters                │
-│  6. Verify updates completed successfully                        │
-│  7. Run "Apply Updates" for Wave2 clusters                      │
-│  8. Verify updates completed successfully                        │
-│  9. Run "Apply Updates" for Production clusters                 │
-└─────────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                     Ongoing Maintenance                          │
-├─────────────────────────────────────────────────────────────────┤
-│  - Schedule "Inventory Clusters" weekly/monthly                 │
-│  - Review inventory for new clusters needing tags               │
-│  - Schedule "Apply Updates" per ring on maintenance windows     │
-└─────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────────────────────┐
+│                              PHASE 1: INITIAL SETUP                                      │
+├─────────────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                          │
+│  ① INVENTORY CLUSTERS                          ② ASSIGN UPDATE RINGS                    │
+│  ┌────────────────────────────┐                ┌────────────────────────────┐           │
+│  │ Run: inventory-clusters.yml│                │ Download CSV from artifacts│           │
+│  │ Output: cluster-inventory/ │───────────────▶│ Edit in Excel:             │           │
+│  │   • inventory.csv          │                │   Cluster01 → Wave1        │           │
+│  │   • inventory.json         │                │   Cluster02 → Wave1        │           │
+│  └────────────────────────────┘                │   Cluster03 → Wave2        │           │
+│                                                │   Cluster04 → Production   │           │
+│                                                └─────────────┬──────────────┘           │
+│                                                              │                           │
+│  ③ APPLY TAGS                                                ▼                           │
+│  ┌────────────────────────────────────────────────────────────────────────┐             │
+│  │ Run: manage-updatering-tags.yml with edited CSV                        │             │
+│  │ Result: All clusters now have UpdateRing tags in Azure                 │             │
+│  └────────────────────────────────────────────────────────────────────────┘             │
+│                                                                                          │
+└─────────────────────────────────────────────────────────────────────────────────────────┘
+                                          │
+                                          ▼
+┌─────────────────────────────────────────────────────────────────────────────────────────┐
+│                              PHASE 2: STAGED UPDATE ROLLOUT                              │
+├─────────────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                          │
+│  WAVE 1 (Pilot)                    WAVE 2                      PRODUCTION               │
+│  Monday 10 PM                      Wednesday 10 PM             Saturday 2 AM            │
+│  ┌─────────────────┐               ┌─────────────────┐         ┌─────────────────┐      │
+│  │ apply-updates   │               │ apply-updates   │         │ apply-updates   │      │
+│  │ UpdateRing=Wave1│               │ UpdateRing=Wave2│         │ UpdateRing=Prod │      │
+│  └────────┬────────┘               └────────┬────────┘         └────────┬────────┘      │
+│           │                                 │                           │               │
+│           ▼                                 ▼                           ▼               │
+│  ┌─────────────────┐               ┌─────────────────┐         ┌─────────────────┐      │
+│  │ ✅ 2 clusters   │               │ ✅ 3 clusters   │         │ ✅ 10 clusters  │      │
+│  │ Duration: 3.5 hrs│──────────────▶│ Duration: ~4 hrs│─────────▶│ Duration: ~4 hrs│      │
+│  │ (validates next)│  (estimates)  │                 │          │                 │      │
+│  └─────────────────┘               └─────────────────┘         └─────────────────┘      │
+│                                                                                          │
+└─────────────────────────────────────────────────────────────────────────────────────────┘
+                                          │
+                                          ▼
+┌─────────────────────────────────────────────────────────────────────────────────────────┐
+│                              PHASE 3: ONGOING MONITORING                                 │
+├─────────────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                          │
+│  DAILY (Automated)                              WEEKLY (Automated)                       │
+│  ┌───────────────────────────────────┐          ┌───────────────────────────────────┐   │
+│  │ fleet-update-status.yml (6 AM UTC)│          │ inventory-clusters.yml (Monday)   │   │
+│  │                                   │          │                                   │   │
+│  │ Outputs:                          │          │ Check for:                        │   │
+│  │ • JUnit XML → CI/CD Dashboard     │          │ • New clusters needing tags       │   │
+│  │ • update-runs.csv → Duration data │          │ • Tag drift or changes            │   │
+│  │ • readiness-status.csv → Health   │          │ • Subscription changes            │   │
+│  └───────────────────────────────────┘          └───────────────────────────────────┘   │
+│                                                                                          │
+│  ⚠️ ALERTS: Configure notifications for test failures in CI/CD platform                 │
+│                                                                                          │
+└─────────────────────────────────────────────────────────────────────────────────────────┘
 ```
+
+### Step-by-Step Instructions
+
+#### Phase 1: Initial Setup (One-time)
+
+1. **Run Inventory Pipeline**
+   ```
+   GitHub: Actions → Inventory Azure Local Clusters → Run workflow
+   Azure DevOps: Pipelines → Inventory Clusters → Run
+   ```
+
+2. **Download and Edit CSV**
+   - Download `ClusterInventory_*.csv` from pipeline artifacts
+   - Open in Excel
+   - Add UpdateRing values to the `UpdateRing` column:
+     | ClusterName | UpdateRing |
+     |-------------|------------|
+     | HCI-Pilot01 | Wave1 |
+     | HCI-Pilot02 | Wave1 |
+     | HCI-Prod01  | Wave2 |
+     | HCI-Critical| Production |
+
+3. **Apply Tags**
+   - Upload modified CSV to repository or provide as input
+   - Run "Manage UpdateRing Tags" pipeline
+   - Verify tags in Azure Portal
+
+#### Phase 2: Update Deployment (Recurring)
+
+4. **Wave1 Updates (Pilot clusters)**
+   - Schedule: Monday 10 PM or manual trigger
+   - Run "Apply Updates" with `UpdateRing = Wave1`
+   - Monitor progress in CI/CD dashboard
+
+5. **Analyze Wave1 Results**
+   - Check duration from `update-runs.csv`
+   - Review any failures before proceeding
+   - Estimate time needed for Wave2/Production
+
+6. **Wave2 and Production Updates**
+   - Use Wave1 duration data to plan maintenance windows
+   - Apply updates to subsequent rings
+   - Monitor each wave before proceeding
+
+#### Phase 3: Ongoing Operations
+
+7. **Enable Automated Monitoring**
+   - Fleet Update Status runs daily at 6 AM UTC
+   - Configure alerts for test failures
+   - Review dashboards for health trends
+
+8. **Periodic Inventory Refresh**
+   - Run inventory weekly/monthly
+   - Identify new clusters needing tags
+   - Update tags as environment changes
 
 ### Fleet Monitoring Workflow
 
@@ -562,6 +652,122 @@ The Fleet Update Status pipeline generates JUnit XML that integrates with CI/CD 
 - Results appear in Tests tab with analytics
 - Configure test trend widgets on dashboards
 - Set up alerts for test failures
+
+---
+
+## Scheduling Updates and Maintenance Windows
+
+### Planning Update Deployments
+
+Azure Local cluster updates can take **2-6+ hours** depending on:
+- Number of nodes in the cluster
+- Update size (solution bundles vs. individual updates)
+- Cluster health and workload during update
+
+**Best Practice:** Use earlier update rings to estimate duration for later waves.
+
+### Using Earlier Rings to Estimate Duration
+
+The `update-runs.csv` output from Fleet Update Status includes duration data. Use Wave1/Pilot results to plan Production maintenance windows:
+
+```powershell
+# After Wave1 completes, analyze durations
+$wave1Runs = Import-Csv "update-runs.csv" | Where-Object { $_.UpdateRing -eq "Wave1" }
+
+# Calculate average and max duration
+$durations = $wave1Runs | Where-Object { $_.Duration -match '\d' } | ForEach-Object {
+    if ($_.Duration -match '([\d.]+)\s*hours') { [double]$matches[1] * 60 }
+    elseif ($_.Duration -match '([\d.]+)\s*minutes') { [double]$matches[1] }
+    else { 0 }
+}
+
+$avgMinutes = ($durations | Measure-Object -Average).Average
+$maxMinutes = ($durations | Measure-Object -Maximum).Maximum
+
+Write-Host "Wave1 Update Duration Analysis:"
+Write-Host "  Average: $([math]::Round($avgMinutes / 60, 1)) hours"
+Write-Host "  Maximum: $([math]::Round($maxMinutes / 60, 1)) hours"
+Write-Host "  Recommended maintenance window: $([math]::Ceiling($maxMinutes * 1.2 / 60)) hours"
+```
+
+### Scheduling Patterns
+
+| Ring | Schedule | Purpose |
+|------|----------|---------|
+| **Canary** | Manual trigger | Test update on 1-2 non-critical clusters |
+| **Pilot/Wave1** | Monday 10 PM | Early adopter clusters, IT-managed workloads |
+| **Wave2** | Wednesday 10 PM | Non-critical production (after Wave1 validates) |
+| **Production** | Saturday 2 AM | Critical workloads during low-usage window |
+
+### GitHub Actions Scheduled Triggers
+
+```yaml
+on:
+  schedule:
+    # Wave1: Monday at 10 PM UTC
+    - cron: '0 22 * * 1'
+  workflow_dispatch:
+    inputs:
+      update_ring:
+        description: 'Update ring to process'
+        required: true
+        default: 'Wave1'
+```
+
+### Azure DevOps Scheduled Triggers
+
+```yaml
+schedules:
+  - cron: '0 22 * * 1'  # Monday 10 PM UTC
+    displayName: 'Wave1 Weekly Update'
+    branches:
+      include:
+        - main
+    always: true  # Run even if no code changes
+```
+
+### Multi-Stage Deployment with Approval Gates
+
+For production-critical environments, add manual approval between waves:
+
+**Azure DevOps:**
+```yaml
+stages:
+  - stage: Wave1
+    jobs:
+      - job: ApplyWave1Updates
+        # ... Wave1 update job
+
+  - stage: ValidateWave1
+    dependsOn: Wave1
+    jobs:
+      - job: WaitForApproval
+        pool: server
+        steps:
+          - task: ManualValidation@0
+            inputs:
+              notifyUsers: 'ops-team@company.com'
+              instructions: 'Review Wave1 update results before proceeding to Wave2'
+
+  - stage: Wave2
+    dependsOn: ValidateWave1
+    # ... Wave2 update job
+```
+
+**GitHub Actions:**
+```yaml
+jobs:
+  wave1:
+    runs-on: windows-latest
+    environment: wave1  # No approval required
+    # ... Wave1 steps
+
+  wave2:
+    needs: wave1
+    runs-on: windows-latest
+    environment: production  # Requires approval (configure in repo settings)
+    # ... Wave2 steps
+```
 
 ---
 

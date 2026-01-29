@@ -74,24 +74,23 @@ jobs:
         
         $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
         $csvPath = Join-Path $outputDir "ClusterInventory_$timestamp.csv"
-        
-        # Build parameters
-        $params = @{
-            ExportPath = $csvPath
-            PassThru      = $true  # Return objects for pipeline processing
-        }
+        $jsonPath = Join-Path $outputDir "ClusterInventory_$timestamp.json"
         
         # Add subscription filter if provided
         $subFilter = "${{ github.event.inputs.subscription_filter }}"
+        $subscriptionParam = @{}
         if ($subFilter -and $subFilter -ne '') {
-            $params['SubscriptionId'] = $subFilter
+            $subscriptionParam['SubscriptionId'] = $subFilter
             Write-Host "Filtering to subscription: $subFilter"
         } else {
             Write-Host "Querying all accessible subscriptions"
         }
         
-        # Run inventory
-        $inventory = Get-AzureLocalClusterInventory @params
+        # Export to CSV (for Excel workflow)
+        Get-AzureLocalClusterInventory @subscriptionParam -ExportPath $csvPath
+        
+        # Export to JSON (for CI/CD integrations and dashboards)
+        $inventory = Get-AzureLocalClusterInventory @subscriptionParam -ExportPath $jsonPath -PassThru
         
         # Output summary
         Write-Host ""
@@ -100,9 +99,11 @@ jobs:
         Write-Host "========================================" -ForegroundColor Cyan
         Write-Host "Total Clusters: $($inventory.Count)"
         Write-Host "CSV exported to: $csvPath"
+        Write-Host "JSON exported to: $jsonPath"
         
         # Set output for next steps
         echo "CSV_PATH=$csvPath" >> $env:GITHUB_OUTPUT
+        echo "JSON_PATH=$jsonPath" >> $env:GITHUB_OUTPUT
         echo "CLUSTER_COUNT=$($inventory.Count)" >> $env:GITHUB_OUTPUT
       id: inventory
     
@@ -110,7 +111,9 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: cluster-inventory
-        path: ./artifacts/*.csv
+        path: |
+          ./artifacts/*.csv
+          ./artifacts/*.json
         retention-days: 30
     
     - name: Summary
