@@ -1,10 +1,20 @@
 ﻿# Azure Local - Managing Updates Module (AzStackHci.ManageUpdates)
 
-**Latest Version:** v0.5.0
+**Latest Version:** v0.5.1
 
 This folder contains the 'AzStackHci.ManageUpdates' PowerShell module for managing updates on Azure Local (Azure Stack HCI) clusters using the Azure Stack HCI REST API. The module supports both interactive use and CI/CD automation via Service Principal or Managed Identity authentication.
 
 Azure Stack HCI REST API specification (includes update management endpoints): https://github.com/Azure/azure-rest-api-specs/blob/main/specification/azurestackhci/resource-manager/Microsoft.AzureStackHCI/StackHCI/stable/2025-10-01/hci.json
+
+## What's New in v0.5.1
+
+### ✅ Improvements
+- **Consistent Logging**: All functions now use `Write-Log` for consistent, timestamped, colored console output
+- **Improved Progress Visibility**: `Get-AzureLocalUpdateRuns`, `Get-AzureLocalClusterUpdateReadiness`, and `Get-AzureLocalClusterInventory` now show detailed progress during API operations
+- **File Logging Support**: When `$script:LogFilePath` is set (automatically during `Start-AzureLocalClusterUpdate`), all functions write to log files
+- **Severity Levels**: Messages use appropriate levels (Info=White, Warning=Yellow, Error=Red, Success=Green, Header=Cyan)
+
+---
 
 ## What's New in v0.5.0
 

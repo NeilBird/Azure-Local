@@ -118,14 +118,14 @@
     Start-AzureLocalClusterUpdate -ScopeByUpdateRingTag -UpdateRingValue "Ring1" -Force -ExportResultsPath "C:\Logs\update-results.xml"
 
 .NOTES
-    Version: 0.4.0
+    Version: 0.5.1
     Author: Neil Bird, Microsoft.
     Requires: Azure CLI (az) installed and authenticated
     API Reference: https://github.com/Azure/azure-rest-api-specs/blob/main/specification/azurestackhci/resource-manager/Microsoft.AzureStackHCI/StackHCI/stable/2025-10-01/hci.json
 #>
 
 # Module constants
-$script:ModuleVersion = '0.4.0'
+$script:ModuleVersion = '0.5.1'
 $script:DefaultApiVersion = '2025-10-01'
 $script:DefaultLogFolder = Join-Path -Path $env:ProgramData -ChildPath 'AzStackHci.ManageUpdates'
 
@@ -563,7 +563,19 @@ function Get-LastUpdateRunErrorSummary {
         }
 
         # Find the most recent failed update run across all updates
-        $latestFailed = $allFailedRuns | Sort-Object { $_.properties.timeStarted } -Descending | Select-Object -First 1
+        # Sort by lastUpdatedTime first (when the run actually failed), fall back to timeStarted
+        $latestFailed = $allFailedRuns | Sort-Object { 
+            # Prefer lastUpdatedTime as it reflects when the failure actually occurred
+            if ($_.properties.lastUpdatedTime) { 
+                [datetime]$_.properties.lastUpdatedTime 
+            } 
+            elseif ($_.properties.timeStarted) { 
+                [datetime]$_.properties.timeStarted 
+            }
+            else { 
+                [datetime]::MinValue 
+            }
+        } -Descending | Select-Object -First 1
         $progress = $latestFailed.properties.progress
 
         if (-not $progress -or -not $progress.steps) {
@@ -1739,6 +1751,8 @@ function Get-AzureLocalUpdateRuns {
         Retrieves update run information for an Azure Local (Azure Stack HCI) cluster.
         Update runs contain the history and status of update operations including
         start time, end time, progress, and any errors that occurred.
+        
+        Returns clean, human-readable objects with key information extracted from the API response.
     .PARAMETER ClusterName
         The name of the Azure Local cluster.
     .PARAMETER ResourceGroupName
@@ -1747,16 +1761,23 @@ function Get-AzureLocalUpdateRuns {
         The Azure subscription ID. If not specified, uses the current subscription context.
     .PARAMETER UpdateName
         Optional. The specific update name to get runs for. If not specified, returns runs for all updates.
+    .PARAMETER Latest
+        Optional. Return only the most recent update run.
+    .PARAMETER Raw
+        Optional. Return the raw API response objects instead of formatted output.
     .PARAMETER ApiVersion
         The Azure REST API version to use. Default is the module's default API version.
     .OUTPUTS
-        PSCustomObject[] - Array of update run objects with properties including state, timeStarted, progress, etc.
+        PSCustomObject[] - Array of update run objects with human-readable properties.
     .EXAMPLE
         Get-AzureLocalUpdateRuns -ClusterName "MyCluster" -ResourceGroupName "MyRG"
-        Gets all update runs for the specified cluster.
+        Gets all update runs for the specified cluster in a human-readable format.
     .EXAMPLE
-        Get-AzureLocalUpdateRuns -ClusterName "MyCluster" -UpdateName "Solution12.2601.1002.38"
-        Gets update runs for a specific update version.
+        Get-AzureLocalUpdateRuns -ClusterName "MyCluster" -Latest
+        Gets only the most recent update run.
+    .EXAMPLE
+        Get-AzureLocalUpdateRuns -ClusterName "MyCluster" -Raw
+        Gets raw API response for programmatic processing.
     #>
     [CmdletBinding()]
     [OutputType([PSCustomObject[]])]
@@ -1774,32 +1795,56 @@ function Get-AzureLocalUpdateRuns {
         [string]$UpdateName,
 
         [Parameter(Mandatory = $false)]
+        [switch]$Latest,
+
+        [Parameter(Mandatory = $false)]
+        [switch]$Raw,
+
+        [Parameter(Mandatory = $false)]
         [string]$ApiVersion = $script:DefaultApiVersion
     )
+
+    Write-Log -Message "" -Level Info
+    Write-Log -Message "========================================" -Level Header
+    Write-Log -Message "Azure Local Cluster Update Runs" -Level Header
+    Write-Log -Message "========================================" -Level Header
+    Write-Log -Message "Cluster: $ClusterName" -Level Info
 
     # Get subscription ID if not provided
     if (-not $SubscriptionId) {
         $SubscriptionId = (az account show --query id -o tsv)
+        Write-Log -Message "Using current subscription: $SubscriptionId" -Level Info
     }
 
     # Get cluster info
+    Write-Log -Message "Looking up cluster resource..." -Level Info
     $clusterInfo = Get-AzureLocalClusterInfo -ClusterName $ClusterName `
         -ResourceGroupName $ResourceGroupName `
         -SubscriptionId $SubscriptionId `
         -ApiVersion $ApiVersion
 
     if (-not $clusterInfo) {
-        Write-Error "Cluster '$ClusterName' not found."
+        Write-Log -Message "Cluster '$ClusterName' not found." -Level Error
         return $null
     }
+    Write-Log -Message "Found cluster: $($clusterInfo.id)" -Level Success
+
+    $allRuns = @()
 
     if ($UpdateName) {
+        Write-Log -Message "Querying update runs for update: $UpdateName" -Level Info
         $uri = "https://management.azure.com$($clusterInfo.id)/updates/$UpdateName/updateRuns?api-version=$ApiVersion"
+        $result = az rest --method GET --uri $uri 2>$null | ConvertFrom-Json
+        if ($LASTEXITCODE -eq 0 -and $result.value) {
+            $allRuns = $result.value
+            Write-Log -Message "Found $($allRuns.Count) update run(s)" -Level Success
+        }
     }
     else {
         # Get all updates first, then get runs for each
-        $updates = Get-AzureLocalAvailableUpdates -ClusterResourceId $clusterInfo.id -ApiVersion $ApiVersion
-        $allRuns = @()
+        Write-Log -Message "Querying available updates..." -Level Info
+        $updates = @(Get-AzureLocalAvailableUpdates -ClusterResourceId $clusterInfo.id -ApiVersion $ApiVersion)
+        Write-Log -Message "Found $($updates.Count) update(s), retrieving run history..." -Level Info
         
         foreach ($update in $updates) {
             $uri = "https://management.azure.com$($clusterInfo.id)/updates/$($update.name)/updateRuns?api-version=$ApiVersion"
@@ -1808,16 +1853,97 @@ function Get-AzureLocalUpdateRuns {
                 $allRuns += $runs.value
             }
         }
-        
+        Write-Log -Message "Found $($allRuns.Count) total update run(s)" -Level Success
+    }
+
+    # Return raw if requested
+    if ($Raw) {
+        if ($Latest) {
+            return $allRuns | Sort-Object { $_.properties.timeStarted } -Descending | Select-Object -First 1
+        }
         return $allRuns
     }
 
-    $result = az rest --method GET --uri $uri 2>$null | ConvertFrom-Json
-    if ($LASTEXITCODE -eq 0 -and $result.value) {
-        return $result.value
+    # Transform to human-readable format
+    $formattedRuns = @()
+    foreach ($run in $allRuns) {
+        $props = $run.properties
+        
+        # Calculate duration
+        $duration = ""
+        if ($props.timeStarted) {
+            $startTime = [datetime]$props.timeStarted
+            if ($props.lastUpdatedTime) {
+                $endTime = [datetime]$props.lastUpdatedTime
+                $durationSpan = $endTime - $startTime
+                if ($durationSpan.TotalHours -ge 1) {
+                    $duration = "{0:N1} hours" -f $durationSpan.TotalHours
+                }
+                else {
+                    $duration = "{0:N0} minutes" -f $durationSpan.TotalMinutes
+                }
+            }
+            elseif ($props.state -eq "InProgress") {
+                $durationSpan = (Get-Date) - $startTime
+                $duration = "{0:N1} hours (running)" -f $durationSpan.TotalHours
+            }
+        }
+
+        # Get current step info
+        $currentStep = ""
+        $progress = ""
+        if ($props.progress -and $props.progress.steps) {
+            $steps = $props.progress.steps
+            $completedSteps = ($steps | Where-Object { $_.status -eq "Success" }).Count
+            $totalSteps = $steps.Count
+            $progress = "$completedSteps/$totalSteps steps"
+            
+            # Find current or failed step
+            $inProgressStep = $steps | Where-Object { $_.status -eq "InProgress" } | Select-Object -First 1
+            $failedStep = $steps | Where-Object { $_.status -in @("Error", "Failed") } | Select-Object -First 1
+            
+            if ($inProgressStep) {
+                $currentStep = $inProgressStep.name
+            }
+            elseif ($failedStep) {
+                $currentStep = "$($failedStep.name) (FAILED)"
+            }
+        }
+
+        # Extract update version from run name (format: "updateRunName/version")
+        $updateVersion = if ($run.name -match '/([^/]+)$') { $matches[1] } else { $run.name }
+
+        $formattedRuns += [PSCustomObject]@{
+            UpdateVersion   = $updateVersion
+            State           = $props.state
+            StartTime       = if ($props.timeStarted) { ([datetime]$props.timeStarted).ToString("yyyy-MM-dd HH:mm") } else { "" }
+            Duration        = $duration
+            Progress        = $progress
+            CurrentStep     = $currentStep
+            Location        = $props.location
+        }
     }
 
-    return @()
+    # Sort by start time (most recent first)
+    $formattedRuns = $formattedRuns | Sort-Object StartTime -Descending
+
+    if ($Latest) {
+        $formattedRuns = $formattedRuns | Select-Object -First 1
+    }
+
+    # Display formatted table
+    if ($formattedRuns.Count -gt 0) {
+        Write-Log -Message "" -Level Info
+        Write-Log -Message "Update Runs for Cluster: $ClusterName" -Level Header
+        Write-Log -Message ("=" * 60) -Level Header
+        $formattedRuns | Format-Table -AutoSize | Out-String | Write-Host
+    }
+    else {
+        Write-Log -Message "" -Level Info
+        Write-Log -Message "No update runs found for cluster '$ClusterName'" -Level Warning
+    }
+
+    return $formattedRuns
 }
 
 function Get-AzureLocalClusterUpdateReadiness {
@@ -1913,11 +2039,11 @@ function Get-AzureLocalClusterUpdateReadiness {
         [string]$ExportCsvPath
     )
 
-    Write-Host ""
-    Write-Host "========================================" -ForegroundColor Cyan
-    Write-Host "Azure Local Cluster Update Readiness Assessment" -ForegroundColor Cyan
-    Write-Host "========================================" -ForegroundColor Cyan
-    Write-Host ""
+    Write-Log -Message "" -Level Info
+    Write-Log -Message "========================================" -Level Header
+    Write-Log -Message "Azure Local Cluster Update Readiness Assessment" -Level Header
+    Write-Log -Message "========================================" -Level Header
+    Write-Log -Message "" -Level Info
 
     # Verify Azure CLI is installed and logged in
     try {
@@ -1925,9 +2051,10 @@ function Get-AzureLocalClusterUpdateReadiness {
         if ($LASTEXITCODE -ne 0) {
             throw "Azure CLI is not logged in. Please run 'az login' first."
         }
+        Write-Log -Message "Azure CLI authentication verified" -Level Success
     }
     catch {
-        Write-Error "Azure CLI is not installed or not logged in. Please install Azure CLI and run 'az login'."
+        Write-Log -Message "Azure CLI is not installed or not logged in. Please install Azure CLI and run 'az login'." -Level Error
         return
     }
 
@@ -1941,7 +2068,7 @@ function Get-AzureLocalClusterUpdateReadiness {
             return
         }
         
-        Write-Host "Querying Azure Resource Graph for clusters with tag 'UpdateRing' = '$UpdateRingValue'..." -ForegroundColor Yellow
+        Write-Log -Message "Querying Azure Resource Graph for clusters with tag 'UpdateRing' = '$UpdateRingValue'..." -Level Info
         
         # Build Azure Resource Graph query - use single line to avoid escaping issues with az CLI
         $argQuery = "resources | where type =~ 'microsoft.azurestackhci/clusters' | where tags['UpdateRing'] =~ '$UpdateRingValue' | project id, name, resourceGroup, subscriptionId, tags"
@@ -1949,18 +2076,18 @@ function Get-AzureLocalClusterUpdateReadiness {
         try {
             $argResult = az graph query -q $argQuery --first 1000 2>&1
             if ($LASTEXITCODE -ne 0) {
-                Write-Error "Azure Resource Graph query failed. Ensure you have the 'az graph' extension installed."
+                Write-Log -Message "Azure Resource Graph query failed. Ensure you have the 'az graph' extension installed." -Level Error
                 return
             }
             
             $clusters = $argResult | ConvertFrom-Json
             
             if (-not $clusters.data -or $clusters.data.Count -eq 0) {
-                Write-Warning "No clusters found with tag 'UpdateRing' = '$UpdateRingValue'"
+                Write-Log -Message "No clusters found with tag 'UpdateRing' = '$UpdateRingValue'" -Level Warning
                 return
             }
             
-            Write-Host "Found $($clusters.data.Count) cluster(s) matching tag criteria" -ForegroundColor Green
+            Write-Log -Message "Found $($clusters.data.Count) cluster(s) matching tag criteria" -Level Success
             foreach ($cluster in $clusters.data) {
                 $clustersToProcess += @{ 
                     ResourceId = $cluster.id
@@ -1971,7 +2098,7 @@ function Get-AzureLocalClusterUpdateReadiness {
             }
         }
         catch {
-            Write-Error "Error querying Azure Resource Graph: $_"
+            Write-Log -Message "Error querying Azure Resource Graph: $_" -Level Error
             return
         }
     }
@@ -2002,9 +2129,9 @@ function Get-AzureLocalClusterUpdateReadiness {
         }
     }
 
-    Write-Host ""
-    Write-Host "Assessing $($clustersToProcess.Count) cluster(s)..." -ForegroundColor Yellow
-    Write-Host ""
+    Write-Log -Message "" -Level Info
+    Write-Log -Message "Assessing $($clustersToProcess.Count) cluster(s)..." -Level Info
+    Write-Log -Message "" -Level Info
 
     # Collect results
     $results = @()
@@ -2013,6 +2140,7 @@ function Get-AzureLocalClusterUpdateReadiness {
     foreach ($cluster in $clustersToProcess) {
         $clusterName = $cluster.Name
         Write-Host "  Checking: $clusterName..." -ForegroundColor Gray -NoNewline
+        Write-Verbose "Processing cluster: $clusterName"
 
         try {
             # Get cluster info
@@ -2054,24 +2182,28 @@ function Get-AzureLocalClusterUpdateReadiness {
             $updateState = if ($updateSummary) { $updateSummary.properties.state } else { "Unknown" }
 
             # Get available updates
-            $availableUpdates = Get-AzureLocalAvailableUpdates -ClusterResourceId $clusterInfo.id -ApiVersion $ApiVersion
-            $readyUpdates = $availableUpdates | Where-Object { $_.properties.state -eq "Ready" }
+            $availableUpdates = @(Get-AzureLocalAvailableUpdates -ClusterResourceId $clusterInfo.id -ApiVersion $ApiVersion)
+            $readyUpdates = @($availableUpdates | Where-Object { $_.properties.state -eq "Ready" })
             
             $availableUpdateNames = ($availableUpdates | ForEach-Object { $_.name }) -join "; "
             $readyUpdateNames = ($readyUpdates | ForEach-Object { $_.name }) -join "; "
             
-            # Determine recommended update (latest ready update)
+            # Determine recommended update (prefer ready updates, fallback to any available)
             $recommendedUpdate = ""
-            if ($readyUpdates -and $readyUpdates.Count -gt 0) {
+            if ($readyUpdates.Count -gt 0) {
                 $recommendedUpdate = ($readyUpdates | Select-Object -First 1).name
                 
-                # Track update version counts
+                # Track update version counts (only for ready updates)
                 if ($updateVersionCounts.ContainsKey($recommendedUpdate)) {
                     $updateVersionCounts[$recommendedUpdate]++
                 }
                 else {
                     $updateVersionCounts[$recommendedUpdate] = 1
                 }
+            }
+            elseif ($availableUpdates.Count -gt 0) {
+                # Fallback: show first available update even if not ready (e.g., downloading)
+                $recommendedUpdate = ($availableUpdates | Select-Object -First 1).name
             }
 
             # Determine if ready for update
@@ -2133,65 +2265,69 @@ function Get-AzureLocalClusterUpdateReadiness {
     }
 
     # Display Summary
-    Write-Host ""
-    Write-Host "========================================" -ForegroundColor Cyan
-    Write-Host "Summary" -ForegroundColor Cyan
-    Write-Host "========================================" -ForegroundColor Cyan
+    Write-Log -Message "" -Level Info
+    Write-Log -Message "========================================" -Level Header
+    Write-Log -Message "Summary" -Level Header
+    Write-Log -Message "========================================" -Level Header
     
     $totalClusters = $results.Count
     $readyClusters = ($results | Where-Object { $_.ReadyForUpdate -eq $true }).Count
     $notReadyClusters = $totalClusters - $readyClusters
     $inProgressClusters = ($results | Where-Object { $_.UpdateState -eq "UpdateInProgress" }).Count
 
-    Write-Host ""
-    Write-Host "Total Clusters Assessed:    $totalClusters" -ForegroundColor White
-    Write-Host "Ready for Update:           $readyClusters" -ForegroundColor Green
-    Write-Host "Not Ready / Other State:    $notReadyClusters" -ForegroundColor $(if ($notReadyClusters -gt 0) { "Yellow" } else { "White" })
-    Write-Host "Update In Progress:         $inProgressClusters" -ForegroundColor $(if ($inProgressClusters -gt 0) { "Yellow" } else { "White" })
+    Write-Log -Message "" -Level Info
+    Write-Log -Message "Total Clusters Assessed:    $totalClusters" -Level Info
+    Write-Log -Message "Ready for Update:           $readyClusters" -Level Success
+    Write-Log -Message "Not Ready / Other State:    $notReadyClusters" -Level $(if ($notReadyClusters -gt 0) { "Warning" } else { "Info" })
+    Write-Log -Message "Update In Progress:         $inProgressClusters" -Level $(if ($inProgressClusters -gt 0) { "Warning" } else { "Info" })
     
     # Show health state breakdown
     $healthFailures = ($results | Where-Object { $_.HealthState -eq "Failure" }).Count
     $healthWarnings = ($results | Where-Object { $_.HealthState -eq "Warning" }).Count
     if ($healthFailures -gt 0 -or $healthWarnings -gt 0) {
-        Write-Host ""
-        Write-Host "Health Check Issues:" -ForegroundColor Cyan
+        Write-Log -Message "" -Level Info
+        Write-Log -Message "Health Check Issues:" -Level Header
         if ($healthFailures -gt 0) {
-            Write-Host "  Critical Failures:        $healthFailures" -ForegroundColor Red
+            Write-Log -Message "  Critical Failures:        $healthFailures" -Level Error
         }
         if ($healthWarnings -gt 0) {
-            Write-Host "  Warnings:                 $healthWarnings" -ForegroundColor Yellow
+            Write-Log -Message "  Warnings:                 $healthWarnings" -Level Warning
         }
     }
 
     # Show most common update versions
     if ($updateVersionCounts.Count -gt 0) {
-        Write-Host ""
-        Write-Host "Available Update Versions (clusters ready to install):" -ForegroundColor Cyan
+        Write-Log -Message "" -Level Info
+        Write-Log -Message "Available Update Versions (clusters ready to install):" -Level Header
         $sortedVersions = $updateVersionCounts.GetEnumerator() | Sort-Object -Property Value -Descending
         foreach ($version in $sortedVersions) {
-            $percentage = [math]::Round(($version.Value / $readyClusters) * 100, 1)
-            Write-Host "  $($version.Key): $($version.Value) cluster(s) ($percentage%)" -ForegroundColor White
+            if ($readyClusters -gt 0) {
+                $percentage = [math]::Round(($version.Value / $readyClusters) * 100, 1)
+                Write-Log -Message "  $($version.Key): $($version.Value) cluster(s) ($percentage%)" -Level Info
+            }
+            else {
+                Write-Log -Message "  $($version.Key): $($version.Value) cluster(s)" -Level Info
+            }
         }
         
         $mostCommonVersion = ($sortedVersions | Select-Object -First 1).Key
-        Write-Host ""
-        Write-Host "Most Common Applicable Update: " -NoNewline -ForegroundColor White
-        Write-Host "$mostCommonVersion" -ForegroundColor Green
+        Write-Log -Message "" -Level Info
+        Write-Log -Message "Most Common Applicable Update: $mostCommonVersion" -Level Success
     }
 
     # Display results table
-    Write-Host ""
-    Write-Host "Detailed Results:" -ForegroundColor Cyan
+    Write-Log -Message "" -Level Info
+    Write-Log -Message "Detailed Results:" -Level Header
     $results | Format-Table ClusterName, ResourceGroup, UpdateState, HealthState, ReadyForUpdate, RecommendedUpdate -AutoSize
     
     # Show clusters with health check failures
     $clustersWithHealthIssues = $results | Where-Object { $_.HealthCheckFailures -ne "" }
     if ($clustersWithHealthIssues.Count -gt 0) {
-        Write-Host ""
-        Write-Host "Clusters with Health Check Issues:" -ForegroundColor Yellow
+        Write-Log -Message "" -Level Info
+        Write-Log -Message "Clusters with Health Check Issues:" -Level Warning
         foreach ($cluster in $clustersWithHealthIssues) {
-            Write-Host "  $($cluster.ClusterName): " -ForegroundColor White -NoNewline
-            Write-Host "$($cluster.HealthCheckFailures)" -ForegroundColor $(if ($cluster.HealthState -eq "Failure") { "Red" } else { "Yellow" })
+            $issueLevel = if ($cluster.HealthState -eq "Failure") { "Error" } else { "Warning" }
+            Write-Log -Message "  $($cluster.ClusterName): $($cluster.HealthCheckFailures)" -Level $issueLevel
         }
     }
 
@@ -2219,7 +2355,7 @@ function Get-AzureLocalClusterUpdateReadiness {
             switch ($extension) {
                 '.csv' {
                     $results | Export-Csv -Path $ExportCsvPath -NoTypeInformation -Encoding UTF8
-                    Write-Host "Results exported to CSV: $ExportCsvPath" -ForegroundColor Green
+                    Write-Log -Message "Results exported to CSV: $ExportCsvPath" -Level Success
                 }
                 '.json' {
                     $exportData = @{
@@ -2230,26 +2366,26 @@ function Get-AzureLocalClusterUpdateReadiness {
                         Results         = $results
                     }
                     $exportData | ConvertTo-Json -Depth 10 | Out-File -FilePath $ExportCsvPath -Encoding UTF8
-                    Write-Host "Results exported to JSON: $ExportCsvPath" -ForegroundColor Green
+                    Write-Log -Message "Results exported to JSON: $ExportCsvPath" -Level Success
                 }
                 '.xml' {
                     Export-ResultsToJUnitXml -Results $junitResults -OutputPath $ExportCsvPath `
                         -TestSuiteName "AzureLocalClusterReadiness" -OperationType "ReadinessCheck"
-                    Write-Host "Results exported to JUnit XML (CI/CD compatible): $ExportCsvPath" -ForegroundColor Green
+                    Write-Log -Message "Results exported to JUnit XML (CI/CD compatible): $ExportCsvPath" -Level Success
                 }
                 default {
                     # Default to CSV for backward compatibility
                     $results | Export-Csv -Path $ExportCsvPath -NoTypeInformation -Encoding UTF8
-                    Write-Host "Results exported to CSV: $ExportCsvPath" -ForegroundColor Green
+                    Write-Log -Message "Results exported to CSV: $ExportCsvPath" -Level Success
                 }
             }
         }
         catch {
-            Write-Error "Failed to export results: $($_.Exception.Message)"
+            Write-Log -Message "Failed to export results: $($_.Exception.Message)" -Level Error
         }
     }
 
-    Write-Host ""
+    Write-Log -Message "" -Level Info
     return $results
 }
 
@@ -2314,11 +2450,11 @@ function Get-AzureLocalClusterInventory {
         [switch]$PassThru
     )
 
-    Write-Host ""
-    Write-Host "========================================" -ForegroundColor Cyan
-    Write-Host "Azure Local Cluster Inventory" -ForegroundColor Cyan
-    Write-Host "========================================" -ForegroundColor Cyan
-    Write-Host ""
+    Write-Log -Message "" -Level Info
+    Write-Log -Message "========================================" -Level Header
+    Write-Log -Message "Azure Local Cluster Inventory" -Level Header
+    Write-Log -Message "========================================" -Level Header
+    Write-Log -Message "" -Level Info
 
     # Verify Azure CLI is installed and logged in
     try {
@@ -2326,19 +2462,20 @@ function Get-AzureLocalClusterInventory {
         if ($LASTEXITCODE -ne 0) {
             throw "Azure CLI is not logged in. Please run 'az login' first."
         }
+        Write-Log -Message "Azure CLI authentication verified" -Level Success
     }
     catch {
-        Write-Error "Azure CLI is not installed or not logged in. Please install Azure CLI and run 'az login'."
+        Write-Log -Message "Azure CLI is not installed or not logged in. Please install Azure CLI and run 'az login'." -Level Error
         return
     }
 
     # Ensure resource-graph extension is installed
     if (-not (Install-AzGraphExtension)) {
-        Write-Error "Failed to install Azure CLI 'resource-graph' extension. Please install manually: az extension add --name resource-graph"
+        Write-Log -Message "Failed to install Azure CLI 'resource-graph' extension. Please install manually: az extension add --name resource-graph" -Level Error
         return
     }
 
-    Write-Host "Querying Azure Resource Graph for all Azure Local clusters..." -ForegroundColor Yellow
+    Write-Log -Message "Querying Azure Resource Graph for all Azure Local clusters..." -Level Info
 
     # Build Azure Resource Graph query - use single line to avoid escaping issues with az CLI
     $argQuery = "resources | where type =~ 'microsoft.azurestackhci/clusters' | project id, name, resourceGroup, subscriptionId, tags | order by name asc"
@@ -2346,29 +2483,29 @@ function Get-AzureLocalClusterInventory {
     try {
         # Build the command with optional subscription filter
         if ($SubscriptionId) {
-            Write-Host "  Filtering to subscription: $SubscriptionId" -ForegroundColor Gray
+            Write-Log -Message "  Filtering to subscription: $SubscriptionId" -Level Verbose
             $argResult = az graph query -q $argQuery --subscriptions $SubscriptionId --first 1000 2>&1
         }
         else {
-            Write-Host "  Querying across all accessible subscriptions" -ForegroundColor Gray
+            Write-Log -Message "  Querying across all accessible subscriptions" -Level Verbose
             $argResult = az graph query -q $argQuery --first 1000 2>&1
         }
 
         if ($LASTEXITCODE -ne 0) {
             $errorMessage = $argResult | Out-String
-            Write-Error "Azure Resource Graph query failed: $errorMessage"
+            Write-Log -Message "Azure Resource Graph query failed: $errorMessage" -Level Error
             return
         }
 
         $clusters = $argResult | ConvertFrom-Json
 
         if (-not $clusters.data -or $clusters.data.Count -eq 0) {
-            Write-Warning "No Azure Local clusters found."
+            Write-Log -Message "No Azure Local clusters found." -Level Warning
             return @()
         }
 
         # Get subscription names for better readability
-        Write-Host "Retrieving subscription details..." -ForegroundColor Yellow
+        Write-Log -Message "Retrieving subscription details..." -Level Info
         $subscriptionMap = @{}
         $uniqueSubIds = $clusters.data | Select-Object -ExpandProperty subscriptionId -Unique
         
@@ -2427,39 +2564,39 @@ function Get-AzureLocalClusterInventory {
                     Export-Csv -Path $ExportCsvPath -NoTypeInformation -Force
             }
             catch {
-                Write-Error "Failed to export inventory: $($_.Exception.Message)"
+                Write-Log -Message "Failed to export inventory: $($_.Exception.Message)" -Level Error
             }
         }
 
         # Display summary at the end
-        Write-Host ""
-        Write-Host "Inventory Summary:" -ForegroundColor Cyan
-        Write-Host "  Total Clusters: $($inventory.Count)" -ForegroundColor White
-        Write-Host "  Clusters with UpdateRing tag: $clustersWithTag" -ForegroundColor $(if ($clustersWithTag -gt 0) { "Green" } else { "Gray" })
-        Write-Host "  Clusters without UpdateRing tag: $clustersWithoutTag" -ForegroundColor $(if ($clustersWithoutTag -gt 0) { "Yellow" } else { "Gray" })
+        Write-Log -Message "" -Level Info
+        Write-Log -Message "Inventory Summary:" -Level Header
+        Write-Log -Message "  Total Clusters: $($inventory.Count)" -Level Info
+        Write-Log -Message "  Clusters with UpdateRing tag: $clustersWithTag" -Level $(if ($clustersWithTag -gt 0) { "Success" } else { "Verbose" })
+        Write-Log -Message "  Clusters without UpdateRing tag: $clustersWithoutTag" -Level $(if ($clustersWithoutTag -gt 0) { "Warning" } else { "Verbose" })
 
         # Group by UpdateRing value
         if ($ringGroups.Count -gt 0) {
-            Write-Host ""
-            Write-Host "  UpdateRing Distribution:" -ForegroundColor White
+            Write-Log -Message "" -Level Info
+            Write-Log -Message "  UpdateRing Distribution:" -Level Info
             foreach ($group in $ringGroups | Sort-Object Name) {
-                Write-Host "    $($group.Name): $($group.Count) cluster(s)" -ForegroundColor Green
+                Write-Log -Message "    $($group.Name): $($group.Count) cluster(s)" -Level Success
             }
         }
 
         # Show export path and next steps if CSV was exported
         if ($ExportCsvPath -and (Test-Path -Path $ExportCsvPath)) {
-            Write-Host ""
-            Write-Host "Inventory exported to: $ExportCsvPath" -ForegroundColor Green
-            Write-Host ""
-            Write-Host "Next Steps:" -ForegroundColor Cyan
-            Write-Host "  1. Open the CSV in Excel" -ForegroundColor White
-            Write-Host "  2. Populate the 'UpdateRing' column with values (e.g., 'Wave1', 'Wave2', 'Pilot')" -ForegroundColor White
-            Write-Host "  3. Save the CSV file" -ForegroundColor White
-            Write-Host "  4. Run: Set-AzureLocalClusterUpdateRingTag -InputCsvPath '$ExportCsvPath'" -ForegroundColor Yellow
+            Write-Log -Message "" -Level Info
+            Write-Log -Message "Inventory exported to: $ExportCsvPath" -Level Success
+            Write-Log -Message "" -Level Info
+            Write-Log -Message "Next Steps:" -Level Header
+            Write-Log -Message "  1. Open the CSV in Excel" -Level Info
+            Write-Log -Message "  2. Populate the 'UpdateRing' column with values (e.g., 'Wave1', 'Wave2', 'Pilot')" -Level Info
+            Write-Log -Message "  3. Save the CSV file" -Level Info
+            Write-Log -Message "  4. Run: Set-AzureLocalClusterUpdateRingTag -InputCsvPath '$ExportCsvPath'" -Level Info
         }
 
-        Write-Host ""
+        Write-Log -Message "" -Level Info
         
         # Return inventory if: no CSV export, OR PassThru is specified
         # This allows CI/CD pipelines to use -PassThru to get objects for processing
@@ -2468,7 +2605,7 @@ function Get-AzureLocalClusterInventory {
         }
     }
     catch {
-        Write-Error "Error querying Azure Resource Graph: $($_.Exception.Message)"
+        Write-Log -Message "Error querying Azure Resource Graph: $($_.Exception.Message)" -Level Error
         return @()
     }
 }

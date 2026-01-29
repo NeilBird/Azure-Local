@@ -3,7 +3,7 @@
     RootModule = 'AzStackHci.ManageUpdates.psm1'
 
     # Version number of this module.
-    ModuleVersion = '0.5.0'
+    ModuleVersion = '0.5.1'
 
     # Supported PSEditions
     CompatiblePSEditions = @('Desktop', 'Core')
@@ -65,6 +65,12 @@
 
             # ReleaseNotes of this module
             ReleaseNotes = @'
+## Version 0.5.1
+- IMPROVED: Consistent Write-Log output across all functions (Get-AzureLocalUpdateRuns, Get-AzureLocalClusterUpdateReadiness, Get-AzureLocalClusterInventory)
+- IMPROVED: Timestamped, colored console output with proper severity levels (Info, Warning, Error, Success, Header)
+- IMPROVED: File logging support when LogFilePath is configured (automatically enabled during Start-AzureLocalClusterUpdate)
+- IMPROVED: Better progress visibility during API operations
+
 ## Version 0.5.0
 - SECURITY: Added comprehensive OpenID Connect (OIDC) documentation for secretless CI/CD authentication
 - SECURITY: Documented authentication methods ranked by security (OIDC > Managed Identity > Client Secret)

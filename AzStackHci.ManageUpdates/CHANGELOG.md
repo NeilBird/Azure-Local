@@ -5,6 +5,22 @@ All notable changes to the AzStackHci.ManageUpdates module will be documented in
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.1] - 2026-01-29
+
+### Improved
+- **Consistent Logging**: All functions now use `Write-Log` for consistent, timestamped, colored console output
+  - `Get-AzureLocalUpdateRuns` - Shows cluster lookup, API queries, and results with proper headers
+  - `Get-AzureLocalClusterUpdateReadiness` - Shows assessment progress with severity-based coloring
+  - `Get-AzureLocalClusterInventory` - Shows query progress and summary with proper formatting
+- **File Logging Support**: When `$script:LogFilePath` is configured, all functions write to log files (automatically enabled during `Start-AzureLocalClusterUpdate`)
+- **Better Progress Visibility**: Users can now see exactly what API operations are happening during function execution
+- **Severity-Based Coloring**: Messages use appropriate levels:
+  - Info (White) - General information
+  - Warning (Yellow) - Non-critical issues
+  - Error (Red) - Critical failures
+  - Success (Green) - Successful operations
+  - Header (Cyan) - Section headers
+
 ## [0.5.0] - 2026-01-29
 
 ### Security
