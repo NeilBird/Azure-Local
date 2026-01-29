@@ -1,0 +1,362 @@
+# Fleet Update Status Monitoring Pipeline
+# This pipeline monitors update status across all Azure Local clusters and generates reports
+#
+# USE CASES:
+# - Daily/weekly health checks on cluster update status
+# - Executive dashboards showing fleet-wide update adoption
+# - Alerting when clusters have update failures
+# - Compliance tracking for update deployments
+#
+# REPORTS GENERATED:
+# - JUnit XML: Shows each cluster as a test case (passed/failed/skipped) in Test tab
+# - CSV: Detailed export for spreadsheet analysis
+# - JSON: Machine-readable format for custom integrations
+#
+# AUTHENTICATION:
+# Uses Workload Identity Federation (OIDC) - recommended for secretless authentication
+# See: https://learn.microsoft.com/en-us/azure/devops/pipelines/library/connect-to-azure?view=azure-devops#create-an-azure-resource-manager-service-connection-using-workload-identity-federation
+
+trigger: none  # Manual or scheduled only
+
+schedules:
+  # Run daily at 6 AM UTC
+  - cron: '0 6 * * *'
+    displayName: 'Daily Fleet Status Check'
+    branches:
+      include:
+        - main
+    always: true  # Run even if no code changes
+
+parameters:
+  - name: scope
+    displayName: 'Scope of clusters to check'
+    type: string
+    default: 'all'
+    values:
+      - 'all'
+      - 'by-update-ring'
+  
+  - name: updateRing
+    displayName: 'UpdateRing tag value (only used when scope=by-update-ring)'
+    type: string
+    default: ''
+  
+  - name: includeUpdateRuns
+    displayName: 'Include recent update run history in report'
+    type: boolean
+    default: true
+
+variables:
+  modulePath: '$(Build.SourcesDirectory)/AzStackHci.ManageUpdates'
+  reportsPath: '$(Build.ArtifactStagingDirectory)/reports'
+
+stages:
+- stage: FleetStatus
+  displayName: 'Collect Fleet Update Status'
+  jobs:
+  - job: CollectStatus
+    displayName: 'Collect and Report Fleet Status'
+    pool:
+      vmImage: 'windows-latest'
+    
+    steps:
+    - checkout: self
+      displayName: 'Checkout repository'
+    
+    # Use Azure CLI task with Workload Identity Federation (OIDC)
+    - task: AzureCLI@2
+      displayName: 'Collect Fleet Update Status'
+      inputs:
+        # Replace with your service connection name
+        azureSubscription: 'YOUR-SERVICE-CONNECTION-NAME'
+        scriptType: 'pscore'
+        scriptLocation: 'inlineScript'
+        inlineScript: |
+          # Install resource-graph extension
+          az extension add --name resource-graph --yes
+          
+          # Import module
+          Import-Module "$(modulePath)/AzStackHci.ManageUpdates.psd1" -Force
+          
+          # Create output directory
+          $outputDir = "$(reportsPath)"
+          New-Item -ItemType Directory -Path $outputDir -Force | Out-Null
+          
+          $scope = "${{ parameters.scope }}"
+          $updateRing = "${{ parameters.updateRing }}"
+          $includeRuns = [System.Convert]::ToBoolean("${{ parameters.includeUpdateRuns }}")
+          
+          Write-Host "========================================" -ForegroundColor Cyan
+          Write-Host "Fleet Update Status Collection" -ForegroundColor Cyan
+          Write-Host "========================================" -ForegroundColor Cyan
+          Write-Host "Scope: $scope"
+          if ($updateRing) { Write-Host "UpdateRing Filter: $updateRing" }
+          Write-Host "Include Update Runs: $includeRuns"
+          Write-Host ""
+          
+          # Step 1: Get cluster inventory
+          Write-Host "Step 1: Getting cluster inventory..." -ForegroundColor Yellow
+          
+          $inventoryCsv = Join-Path $outputDir "cluster-inventory.csv"
+          $inventory = Get-AzureLocalClusterInventory -ExportPath $inventoryCsv -PassThru
+          
+          if (-not $inventory -or $inventory.Count -eq 0) {
+              Write-Warning "No clusters found in inventory"
+              exit 0
+          }
+          
+          Write-Host "Found $($inventory.Count) total cluster(s)" -ForegroundColor Green
+          
+          # Step 2: Get readiness status
+          Write-Host ""
+          Write-Host "Step 2: Checking update readiness..." -ForegroundColor Yellow
+          
+          $readinessParams = @{}
+          
+          if ($scope -eq 'by-update-ring' -and $updateRing) {
+              $readinessParams['ScopeByUpdateRingTag'] = $true
+              $readinessParams['UpdateRingValue'] = $updateRing
+          }
+          else {
+              $resourceIds = $inventory | Select-Object -ExpandProperty ResourceId
+              $readinessParams['ClusterResourceIds'] = $resourceIds
+          }
+          
+          # Export to multiple formats
+          $readinessCsv = Join-Path $outputDir "readiness-status.csv"
+          $readinessJson = Join-Path $outputDir "readiness-status.json"
+          $readinessXml = Join-Path $outputDir "readiness-status.xml"
+          
+          $readiness = Get-AzureLocalClusterUpdateReadiness @readinessParams -ExportPath $readinessCsv
+          
+          # Export to JSON
+          $readinessExport = @{
+              Timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss UTC"
+              TotalClusters = $readiness.Count
+              Summary = @{
+                  Ready = @($readiness | Where-Object { $_.ReadyForUpdate -eq $true }).Count
+                  InProgress = @($readiness | Where-Object { $_.UpdateState -eq "UpdateInProgress" }).Count
+                  HealthFailures = @($readiness | Where-Object { $_.HealthState -eq "Failure" }).Count
+                  NotReady = @($readiness | Where-Object { $_.ReadyForUpdate -ne $true -and $_.UpdateState -ne "UpdateInProgress" }).Count
+              }
+              Clusters = $readiness
+          }
+          $readinessExport | ConvertTo-Json -Depth 10 | Out-File $readinessJson -Encoding UTF8
+          
+          # Step 3: Generate JUnit XML for Azure DevOps Test tab
+          Write-Host ""
+          Write-Host "Step 3: Generating JUnit XML report..." -ForegroundColor Yellow
+          
+          $timestamp = Get-Date -Format "yyyy-MM-ddTHH:mm:ss"
+          $totalTests = $readiness.Count
+          $failures = @($readiness | Where-Object { $_.HealthState -eq "Failure" -or $_.UpdateState -eq "Failed" }).Count
+          $inProgress = @($readiness | Where-Object { $_.UpdateState -eq "UpdateInProgress" }).Count
+          $ready = @($readiness | Where-Object { $_.ReadyForUpdate -eq $true }).Count
+          $upToDate = @($readiness | Where-Object { $_.UpdateState -eq "UpToDate" }).Count
+          
+          $xmlContent = @"
+          <?xml version="1.0" encoding="UTF-8"?>
+          <testsuites>
+            <testsuite name="AzureLocalFleetUpdateStatus" tests="$totalTests" failures="$failures" errors="0" skipped="0" time="0" timestamp="$timestamp">
+          "@
+          
+          foreach ($cluster in $readiness) {
+              $clusterName = $cluster.ClusterName -replace '&', '&amp;' -replace '<', '&lt;' -replace '>', '&gt;'
+              $testName = "UpdateStatus-$clusterName"
+              $className = "AzureLocalFleetUpdateStatus.$($cluster.ResourceGroup)"
+              
+              $status = "passed"
+              $failureMessage = ""
+              
+              if ($cluster.HealthState -eq "Failure" -or $cluster.UpdateState -eq "Failed") {
+                  $status = "failed"
+                  $failureMessage = "Health: $($cluster.HealthState), UpdateState: $($cluster.UpdateState)"
+                  if ($cluster.HealthCheckFailures) {
+                      $failureMessage += ", Issues: $($cluster.HealthCheckFailures -replace '&', '&amp;' -replace '<', '&lt;' -replace '>', '&gt;')"
+                  }
+              }
+              
+              $systemOut = @"
+          Cluster: $($cluster.ClusterName)
+          Resource Group: $($cluster.ResourceGroup)
+          Subscription: $($cluster.SubscriptionId)
+          Update State: $($cluster.UpdateState)
+          Health State: $($cluster.HealthState)
+          Ready for Update: $($cluster.ReadyForUpdate)
+          Recommended Update: $($cluster.RecommendedUpdate)
+          "@
+              $systemOut = $systemOut -replace '&', '&amp;' -replace '<', '&lt;' -replace '>', '&gt;'
+              
+              $xmlContent += @"
+          
+              <testcase name="$testName" classname="$className" time="0">
+                <system-out><![CDATA[$systemOut]]></system-out>
+          "@
+              
+              if ($status -eq "failed") {
+                  $xmlContent += @"
+          
+                <failure message="Cluster has update issues" type="UpdateFailure">$failureMessage</failure>
+          "@
+              }
+              
+              $xmlContent += @"
+          
+              </testcase>
+          "@
+          }
+          
+          $xmlContent += @"
+          
+            </testsuite>
+          </testsuites>
+          "@
+          
+          $xmlContent | Out-File $readinessXml -Encoding UTF8
+          Write-Host "JUnit XML saved to: $readinessXml" -ForegroundColor Green
+          
+          # Step 4: Collect additional fleet data using v0.5.6 fleet-wide capabilities
+          
+          # Step 4a: Get update summary across fleet
+          Write-Host ""
+          Write-Host "Step 4a: Collecting fleet update summaries..." -ForegroundColor Yellow
+          
+          $summaryCsv = Join-Path $outputDir "update-summaries.csv"
+          $summaryParams = @{ ExportPath = $summaryCsv }
+          
+          if ($scope -eq 'by-update-ring' -and $updateRing) {
+              $summaryParams['ScopeByUpdateRingTag'] = $true
+              $summaryParams['UpdateRingValue'] = $updateRing
+          }
+          else {
+              $resourceIds = $inventory | Select-Object -ExpandProperty ResourceId
+              $summaryParams['ClusterResourceIds'] = $resourceIds
+          }
+          
+          $summaries = Get-AzureLocalUpdateSummary @summaryParams
+          Write-Host "Update summaries collected for $($summaries.Count) cluster(s)" -ForegroundColor Green
+          
+          # Step 4b: Get available updates across fleet
+          Write-Host ""
+          Write-Host "Step 4b: Collecting available updates..." -ForegroundColor Yellow
+          
+          $availableCsv = Join-Path $outputDir "available-updates.csv"
+          $availableParams = @{ ExportPath = $availableCsv }
+          
+          if ($scope -eq 'by-update-ring' -and $updateRing) {
+              $availableParams['ScopeByUpdateRingTag'] = $true
+              $availableParams['UpdateRingValue'] = $updateRing
+          }
+          else {
+              $resourceIds = $inventory | Select-Object -ExpandProperty ResourceId
+              $availableParams['ClusterResourceIds'] = $resourceIds
+          }
+          
+          $available = Get-AzureLocalAvailableUpdates @availableParams
+          Write-Host "Found $($available.Count) available update(s) across fleet" -ForegroundColor Green
+          
+          # Step 4c: Optionally collect recent update runs using fleet-wide query
+          if ($includeRuns) {
+              Write-Host ""
+              Write-Host "Step 4c: Collecting recent update run history..." -ForegroundColor Yellow
+              
+              $runsCsv = Join-Path $outputDir "update-runs.csv"
+              $runsParams = @{ Latest = $true; ExportPath = $runsCsv }
+              
+              if ($scope -eq 'by-update-ring' -and $updateRing) {
+                  $runsParams['ScopeByUpdateRingTag'] = $true
+                  $runsParams['UpdateRingValue'] = $updateRing
+              }
+              else {
+                  # Use cluster names from inventory for fleet-wide query
+                  $clusterNames = $inventory | ForEach-Object { $_.ClusterName }
+                  $runsParams['ClusterNames'] = $clusterNames
+              }
+              
+              $allRuns = Get-AzureLocalUpdateRuns @runsParams
+              Write-Host "Update runs collected for $($allRuns.Count) cluster(s)" -ForegroundColor Green
+              
+              # Display summary
+              $succeeded = @($allRuns | Where-Object { $_.State -eq 'Succeeded' }).Count
+              $inProgressRuns = @($allRuns | Where-Object { $_.State -eq 'InProgress' }).Count
+              $failedRuns = @($allRuns | Where-Object { $_.State -eq 'Failed' }).Count
+              Write-Host "  Succeeded: $succeeded, In Progress: $inProgressRuns, Failed: $failedRuns"
+          }
+          
+          # Step 5: Output summary
+          Write-Host ""
+          Write-Host "========================================" -ForegroundColor Cyan
+          Write-Host "Fleet Status Summary" -ForegroundColor Cyan
+          Write-Host "========================================" -ForegroundColor Cyan
+          Write-Host "Total Clusters: $totalTests"
+          Write-Host "Up to Date: $upToDate" -ForegroundColor Green
+          Write-Host "Update In Progress: $inProgress" -ForegroundColor Yellow
+          Write-Host "Ready for Update: $ready" -ForegroundColor Cyan
+          Write-Host "Health Failures: $failures" -ForegroundColor $(if ($failures -gt 0) { "Red" } else { "Green" })
+          
+          # Set pipeline variables
+          Write-Host "##vso[task.setvariable variable=totalClusters;isOutput=true]$totalTests"
+          Write-Host "##vso[task.setvariable variable=upToDate;isOutput=true]$upToDate"
+          Write-Host "##vso[task.setvariable variable=inProgress;isOutput=true]$inProgress"
+          Write-Host "##vso[task.setvariable variable=ready;isOutput=true]$ready"
+          Write-Host "##vso[task.setvariable variable=failures;isOutput=true]$failures"
+          
+          if ($failures -gt 0) {
+              Write-Warning "⚠️ $failures cluster(s) have update failures or health issues!"
+          }
+      name: collect
+    
+    # Publish JUnit test results to Azure DevOps Test tab
+    - task: PublishTestResults@2
+      displayName: 'Publish Fleet Status as Test Results'
+      condition: always()
+      inputs:
+        testResultsFormat: 'JUnit'
+        testResultsFiles: '$(reportsPath)/readiness-status.xml'
+        testRunTitle: 'Fleet Update Status - $(Build.BuildNumber)'
+        mergeTestResults: false
+        failTaskOnFailedTests: false  # Don't fail pipeline on test failures
+    
+    # Publish all reports as artifacts
+    - task: PublishBuildArtifacts@1
+      displayName: 'Publish Fleet Status Reports'
+      condition: always()
+      inputs:
+        PathtoPublish: '$(reportsPath)'
+        ArtifactName: 'FleetStatusReports'
+        publishLocation: 'Container'
+    
+    # Create summary in pipeline
+    - pwsh: |
+        $total = "$(collect.totalClusters)"
+        $upToDate = "$(collect.upToDate)"
+        $inProgress = "$(collect.inProgress)"
+        $ready = "$(collect.ready)"
+        $failures = "$(collect.failures)"
+        
+        Write-Host "##vso[task.uploadsummary]Fleet Status: $total clusters, $upToDate up-to-date, $inProgress in-progress, $ready ready, $failures failures"
+        
+        $summary = @"
+        ## 📊 Fleet Update Status Summary
+        
+        | Metric | Count |
+        |--------|-------|
+        | **Total Clusters** | $total |
+        | **Up to Date** | $upToDate |
+        | **Update In Progress** | $inProgress |
+        | **Ready for Update** | $ready |
+        | **Health Failures** | $failures |
+        
+        ### Reports Available in Artifacts
+        - `readiness-status.csv` - Detailed cluster status
+        - `readiness-status.json` - Machine-readable format
+        - `readiness-status.xml` - JUnit XML (see Tests tab)
+        - `cluster-inventory.csv` - Full cluster inventory
+        - `update-summaries.csv` - Fleet-wide update state summaries
+        - `available-updates.csv` - All available updates across fleet
+        - `update-runs.csv` - Recent update run history
+        "@
+        
+        Write-Host $summary
+      displayName: 'Display Status Summary'
+      condition: always()

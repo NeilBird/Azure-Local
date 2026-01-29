@@ -18,8 +18,12 @@
     Pester output verbosity level. Default: Normal
     - None: No output
     - Normal: Summary and failed tests only (recommended for VS Code)
-    - Detailed: All test names and results (may cause VS Code terminal to hang)
+    - Detailed: All test names and results
     - Diagnostic: Maximum verbosity for debugging
+
+.PARAMETER Full
+    Alias for -Verbosity Detailed. When specified, detailed output is written to a log file
+    instead of the console to prevent VS Code terminal from hanging.
 
 .EXAMPLE
     .\Tests\Invoke-Tests.ps1
@@ -31,11 +35,16 @@
     .\Tests\Invoke-Tests.ps1 -OutputPath "C:\TestResults"
 
 .EXAMPLE
+    .\Tests\Invoke-Tests.ps1 -Full
+    # Runs with detailed verbosity, output saved to log file
+
+.EXAMPLE
     .\Tests\Invoke-Tests.ps1 -Verbosity Detailed
 
 .NOTES
     Requires Pester v5.0 or higher.
-    Optionally requires ReportUnit for HTML generation (will be installed if missing).
+    When using -Full or -Verbosity Detailed/Diagnostic, output is redirected to a log file
+    to prevent VS Code terminal from becoming unresponsive.
 #>
 [CmdletBinding()]
 param(
@@ -47,7 +56,11 @@ param(
 
     [Parameter(Mandatory = $false)]
     [ValidateSet('None', 'Normal', 'Detailed', 'Diagnostic')]
-    [string]$Verbosity = 'Normal'
+    [string]$Verbosity = 'Normal',
+
+    [Parameter(Mandatory = $false)]
+    [Alias('Details')]
+    [switch]$Full
 )
 
 # Ensure output directory exists
@@ -58,12 +71,31 @@ if (-not (Test-Path $OutputPath)) {
 $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
 $nunitPath = Join-Path -Path $OutputPath -ChildPath "TestResults_$timestamp.xml"
 $htmlPath = Join-Path -Path $OutputPath -ChildPath "TestResults_$timestamp.html"
+$logPath = Join-Path -Path $OutputPath -ChildPath "TestResults_$timestamp.log"
+
+# Handle -Full switch (alias for -Verbosity Detailed with log file output)
+$useLogFile = $false
+if ($Full) {
+    $Verbosity = 'Detailed'
+    $useLogFile = $true
+}
+# Also use log file for Detailed/Diagnostic verbosity to prevent VS Code terminal from hanging
+if ($Verbosity -in @('Detailed', 'Diagnostic')) {
+    $useLogFile = $true
+}
 
 Write-Host ""
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host "AzStackHci.ManageUpdates - Pester Tests" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host ""
+
+if ($useLogFile) {
+    Write-Host "NOTE: Using '$Verbosity' verbosity - detailed output will be written to:" -ForegroundColor Yellow
+    Write-Host "      $logPath" -ForegroundColor Yellow
+    Write-Host "      (This prevents VS Code terminal from becoming unresponsive)" -ForegroundColor Yellow
+    Write-Host ""
+}
 
 # Check Pester version
 $pester = Get-Module Pester -ListAvailable | Sort-Object Version -Descending | Select-Object -First 1
@@ -84,16 +116,49 @@ $config.Run.PassThru = $true
 $config.TestResult.Enabled = $true
 $config.TestResult.OutputPath = $nunitPath
 $config.TestResult.OutputFormat = 'NUnitXml'
-$config.Output.Verbosity = $Verbosity  # Default 'Normal' to prevent VS Code terminal from hanging; use -Verbosity Detailed for more info
 $config.CodeCoverage.Enabled = $false  # Can enable if needed
+
+# Set verbosity - when using log file, use Normal for console and capture detailed output separately
+if ($useLogFile) {
+    $config.Output.Verbosity = 'Normal'  # Keep console output minimal
+} else {
+    $config.Output.Verbosity = $Verbosity
+}
 
 Write-Host "Running tests..." -ForegroundColor Cyan
 Write-Host "Test Path: $PSScriptRoot" -ForegroundColor Gray
 Write-Host "Output Path: $OutputPath" -ForegroundColor Gray
+Write-Host "Verbosity: $Verbosity$(if ($useLogFile) { ' (detailed output to log file)' })" -ForegroundColor Gray
 Write-Host ""
 
-# Run tests
-$results = Invoke-Pester -Configuration $config
+# Run tests - capture detailed output to log file if needed
+if ($useLogFile) {
+    # Create a separate config for the log file output
+    $logConfig = New-PesterConfiguration
+    $logConfig.Run.Path = $PSScriptRoot
+    $logConfig.Run.PassThru = $true
+    $logConfig.TestResult.Enabled = $true
+    $logConfig.TestResult.OutputPath = $nunitPath
+    $logConfig.TestResult.OutputFormat = 'NUnitXml'
+    $logConfig.Output.Verbosity = $Verbosity
+    $logConfig.CodeCoverage.Enabled = $false
+    
+    # Run Pester and capture all output to log file
+    Write-Host "Capturing detailed output to log file..." -ForegroundColor Gray
+    $results = Invoke-Pester -Configuration $logConfig *>&1 | Tee-Object -FilePath $logPath
+    # Extract the actual Pester result object from the output
+    $results = $results | Where-Object { $_ -is [Pester.Run] } | Select-Object -Last 1
+    
+    if (-not $results) {
+        # Fallback: run again with PassThru to get results object
+        $config.Output.Verbosity = 'None'
+        $results = Invoke-Pester -Configuration $config
+    }
+    
+    Write-Host "Detailed test output saved to: $logPath" -ForegroundColor Green
+} else {
+    $results = Invoke-Pester -Configuration $config
+}
 
 # Generate HTML report
 Write-Host ""
@@ -453,6 +518,9 @@ Write-Host ""
 Write-Host "Output Files:" -ForegroundColor Cyan
 Write-Host "  NUnit XML: $nunitPath" -ForegroundColor Gray
 Write-Host "  HTML Report: $htmlPath" -ForegroundColor Gray
+if ($useLogFile) {
+    Write-Host "  Detailed Log: $logPath" -ForegroundColor Gray
+}
 Write-Host ""
 
 if ($OpenReport) {

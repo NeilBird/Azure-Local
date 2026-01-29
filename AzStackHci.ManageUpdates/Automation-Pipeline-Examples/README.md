@@ -4,13 +4,14 @@ This folder contains example CI/CD pipelines for automating Azure Local cluster 
 
 ## Overview
 
-Three pipelines are provided for each platform:
+Four pipelines are provided for each platform:
 
 | Pipeline | Description |
 |----------|-------------|
 | **Inventory Clusters** | Queries all Azure Local clusters and exports inventory to CSV with UpdateRing tag status |
 | **Manage UpdateRing Tags** | Creates or updates UpdateRing tags on clusters from a CSV file |
 | **Apply Updates** | Applies updates to clusters filtered by UpdateRing tag value |
+| **Fleet Update Status** | 📊 Monitors update status across entire fleet with JUnit XML reports for dashboards |
 
 ## Prerequisites
 
@@ -436,9 +437,51 @@ Repeat for each pipeline file.
 
 **Use Case:** Execute updates on a specific ring of clusters as part of a staged deployment.
 
+### 4. Fleet Update Status Pipeline
+
+**Purpose:** Monitors and reports on update status across the entire fleet of Azure Local clusters. Ideal for dashboards, compliance tracking, and executive reporting.
+
+**Features:**
+- 📊 **JUnit XML Reports**: Each cluster appears as a test case in GitHub Actions Test tab or Azure DevOps Tests tab
+- 📁 **Multiple Formats**: CSV, JSON, and JUnit XML exports
+- 🔍 **Comprehensive Data**: Inventory, readiness status, update summaries, available updates, and recent update run history
+- 📅 **Scheduled Runs**: Automated daily checks at 6 AM UTC
+- 🏷️ **Flexible Scope**: Filter all clusters or by UpdateRing tag value
+- ⚡ **Efficient Fleet Queries**: Uses v0.5.6 fleet-wide query capabilities (no individual cluster loops)
+
+**Outputs:**
+| Artifact | Description |
+|----------|-------------|
+| `readiness-status.xml` | JUnit XML for CI/CD test visualization (passed=healthy, failed=issues) |
+| `readiness-status.csv` | Detailed cluster status spreadsheet |
+| `readiness-status.json` | Machine-readable format for integrations |
+| `cluster-inventory.csv` | Full cluster inventory |
+| `update-summaries.csv` | Fleet-wide update state summaries from Azure (current state, last updated, etc.) |
+| `available-updates.csv` | All available updates across the fleet with versions and health states |
+| `update-runs.csv` | Recent update run history per cluster (if enabled) |
+
+**Understanding JUnit Test Results:**
+| Test Status | Meaning |
+|-------------|---------|
+| ✅ **Passed** | Cluster is healthy and up-to-date or ready for updates |
+| ❌ **Failed** | Cluster has health failures or update issues requiring attention |
+
+**Dashboard Integration:**
+- **GitHub Actions**: Results appear in the workflow run's "Tests" summary
+- **Azure DevOps**: Results appear in the pipeline's "Tests" tab with trend analytics
+- **Third-party tools**: Import the JUnit XML into any CI/CD dashboard that supports JUnit format
+
+**Use Cases:**
+- Daily health checks on cluster update status
+- Executive dashboards showing fleet-wide update adoption
+- Alerting when clusters have update failures
+- Compliance tracking for update deployments
+
 ---
 
 ## Typical Workflow
+
+### Update Deployment Workflow
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -470,6 +513,55 @@ Repeat for each pipeline file.
 │  - Schedule "Apply Updates" per ring on maintenance windows     │
 └─────────────────────────────────────────────────────────────────┘
 ```
+
+### Fleet Monitoring Workflow
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│              Daily Automated Fleet Monitoring                    │
+├─────────────────────────────────────────────────────────────────┤
+│  "Fleet Update Status" runs daily at 6 AM UTC (scheduled)       │
+│                                                                  │
+│  📊 Outputs (using v0.5.6 fleet-wide queries):                  │
+│  ├── JUnit XML → CI/CD Dashboard (Tests tab)                    │
+│  ├── CSV → Download for spreadsheet analysis                    │
+│  │   • readiness-status.csv (cluster health)                    │
+│  │   • update-summaries.csv (update states)                     │
+│  │   • available-updates.csv (pending updates)                  │
+│  │   • update-runs.csv (run history)                            │
+│  └── JSON → Integration with external tools                     │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+              ┌───────────────┼───────────────┐
+              ▼               ▼               ▼
+    ┌─────────────────┐ ┌─────────────────┐ ┌─────────────────┐
+    │  All Tests Pass │ │ Some Tests Fail │ │   Investigate   │
+    │  ✅ Fleet OK    │ │  ❌ Issues!     │ │   Failures      │
+    └─────────────────┘ └─────────────────┘ └─────────────────┘
+                                                      │
+                                                      ▼
+                              ┌─────────────────────────────────────┐
+                              │  Review test output for details:    │
+                              │  • Cluster name                     │
+                              │  • Update state                     │
+                              │  • Health state                     │
+                              │  • Health check failures            │
+                              └─────────────────────────────────────┘
+```
+
+### Executive Dashboard Integration
+
+The Fleet Update Status pipeline generates JUnit XML that integrates with CI/CD platforms:
+
+**GitHub Actions:**
+- Test results appear in the workflow run summary
+- Failed tests show clusters needing attention
+- Historical trends visible across workflow runs
+
+**Azure DevOps:**
+- Results appear in Tests tab with analytics
+- Configure test trend widgets on dashboards
+- Set up alerts for test failures
 
 ---
 
@@ -518,11 +610,13 @@ Automation-Pipeline-Examples/
 ├── github-actions/
 │   ├── inventory-clusters.yml          # GitHub Actions: Inventory pipeline
 │   ├── manage-updatering-tags.yml      # GitHub Actions: Tag management pipeline
-│   └── apply-updates.yml               # GitHub Actions: Update application pipeline
+│   ├── apply-updates.yml               # GitHub Actions: Update application pipeline
+│   └── fleet-update-status.yml         # GitHub Actions: Fleet status monitoring pipeline
 └── azure-devops/
     ├── inventory-clusters.yml          # Azure DevOps: Inventory pipeline
     ├── manage-updatering-tags.yml      # Azure DevOps: Tag management pipeline
-    └── apply-updates.yml               # Azure DevOps: Update application pipeline
+    ├── apply-updates.yml               # Azure DevOps: Update application pipeline
+    └── fleet-update-status.yml         # Azure DevOps: Fleet status monitoring pipeline
 ```
 
 ---

@@ -3,7 +3,7 @@
     RootModule = 'AzStackHci.ManageUpdates.psm1'
 
     # Version number of this module.
-    ModuleVersion = '0.5.1'
+    ModuleVersion = '0.5.6'
 
     # Supported PSEditions
     CompatiblePSEditions = @('Desktop', 'Core')
@@ -36,7 +36,14 @@
         'Get-AzureLocalUpdateSummary',
         'Get-AzureLocalAvailableUpdates',
         'Get-AzureLocalUpdateRuns',
-        'Set-AzureLocalClusterUpdateRingTag'
+        'Set-AzureLocalClusterUpdateRingTag',
+        # Fleet-Scale Operations (v0.5.6)
+        'Invoke-AzureLocalFleetOperation',
+        'Get-AzureLocalFleetProgress',
+        'Test-AzureLocalFleetHealthGate',
+        'Export-AzureLocalFleetState',
+        'Resume-AzureLocalFleetUpdate',
+        'Stop-AzureLocalFleetUpdate'
     )
 
     # Cmdlets to export from this module, for best performance, do not use wildcards and do not delete the entry, use an empty array if there are no cmdlets to export.
@@ -65,11 +72,24 @@
 
             # ReleaseNotes of this module
             ReleaseNotes = @'
-## Version 0.5.1
-- IMPROVED: Consistent Write-Log output across all functions (Get-AzureLocalUpdateRuns, Get-AzureLocalClusterUpdateReadiness, Get-AzureLocalClusterInventory)
-- IMPROVED: Timestamped, colored console output with proper severity levels (Info, Warning, Error, Success, Header)
-- IMPROVED: File logging support when LogFilePath is configured (automatically enabled during Start-AzureLocalClusterUpdate)
-- IMPROVED: Better progress visibility during API operations
+## Version 0.5.6 - Fleet-Scale Operations
+- NEW: Invoke-AzureLocalFleetOperation - Orchestrates fleet-wide updates with batching (50 clusters/batch), throttling (10 parallel), and retry logic (3 retries with exponential backoff)
+- NEW: Get-AzureLocalFleetProgress - Real-time progress tracking with success/failure percentages and per-cluster status
+- NEW: Test-AzureLocalFleetHealthGate - CI/CD health gate with configurable thresholds (max 5% failure, min 90% success) and wait-for-completion
+- NEW: Export-AzureLocalFleetState - Save operation state to JSON for resume capability
+- NEW: Resume-AzureLocalFleetUpdate - Resume interrupted operations from checkpoint with option to retry failed clusters
+- NEW: Stop-AzureLocalFleetUpdate - Graceful stop with state preservation
+- ENTERPRISE: Designed for managing 1000-3000+ clusters with checkpoint/resume capability
+
+## Version 0.5.5
+- NEW: Get-AzureLocalUpdateSummary now supports multi-cluster queries via -ClusterNames, -ClusterResourceIds, or -ScopeByUpdateRingTag
+- NEW: Get-AzureLocalAvailableUpdates now supports multi-cluster queries via -ClusterNames, -ClusterResourceIds, or -ScopeByUpdateRingTag
+- NEW: Get-AzureLocalUpdateRuns now supports multi-cluster queries via -ClusterNames, -ClusterResourceIds, or -ScopeByUpdateRingTag
+- NEW: All three functions support -ExportPath for CSV, JSON, and JUnit XML export
+- NEW: Fleet Update Status CI/CD pipeline for monitoring update status across entire fleet
+- NEW: JUnit XML reports for CI/CD dashboard integration
+- IMPROVED: Consistent Write-Log output across all functions
+- IMPROVED: File logging support when LogFilePath is configured
 
 ## Version 0.5.0
 - SECURITY: Added comprehensive OpenID Connect (OIDC) documentation for secretless CI/CD authentication
@@ -89,7 +109,7 @@
 - FIXED: Azure Resource Graph queries returning incorrect resource types due to HERE-STRING query format
 - FIXED: Set-AzureLocalClusterUpdateRingTag JSON deserialization errors (now uses temp file)
 - FIXED: PowerShell hashtable internal properties being included in JSON body
-- IMPROVED: Get-AzureLocalClusterInventory no longer dumps objects to console when using -ExportCsvPath
+- IMPROVED: Get-AzureLocalClusterInventory no longer dumps objects to console when using -ExportPath
 
 ## Version 0.4.0
 - NEW: Get-AzureLocalClusterInventory function to query all clusters and their UpdateRing tag status
@@ -99,7 +119,7 @@
 - IMPROVED: Renamed -ScopeByTagName to -ScopeByUpdateRingTag for clarity (now a switch parameter)
 - IMPROVED: Renamed -TagValue to -UpdateRingValue for consistency
 - IMPROVED: UpdateRing tag queries now use hardcoded 'UpdateRing' tag name for consistency
-- IMPROVED: -ExportResultsPath and -ExportCsvPath now support .xml extension for JUnit format
+- IMPROVED: -ExportResultsPath and -ExportPath now support .xml extension for JUnit format
 - FIXED: PSScriptAnalyzer warnings (empty catch blocks, unused variables)
 
 ## Version 0.3.0

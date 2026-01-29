@@ -77,7 +77,7 @@ jobs:
         
         # Build parameters
         $params = @{
-            ExportCsvPath = $csvPath
+            ExportPath = $csvPath
             PassThru      = $true  # Return objects for pipeline processing
         }
         

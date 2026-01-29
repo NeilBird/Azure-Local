@@ -75,7 +75,7 @@ stages:
                 $results = Get-AzureLocalClusterUpdateReadiness `
                     -ScopeByUpdateRingTag `
                     -UpdateRingValue $updateRing `
-                    -ExportCsvPath $csvPath
+                    -ExportPath $csvPath
                 
                 $totalCount = $results.Count
                 $readyCount = ($results | Where-Object { $_.ReadyForUpdate -eq $true }).Count

@@ -5,21 +5,77 @@ All notable changes to the AzStackHci.ManageUpdates module will be documented in
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.5.1] - 2026-01-29
+## [0.5.6] - 2026-01-29
+
+### Added - Fleet-Scale Operations
+New functions for managing updates across fleets of 1000-3000+ clusters:
+
+- **`Invoke-AzureLocalFleetOperation`** - Orchestrates fleet-wide operations with:
+  - Configurable batch processing (default: 50 clusters per batch)
+  - Throttling and rate limiting (default: 10 parallel operations)
+  - Automatic retry with exponential backoff (default: 3 retries)
+  - State checkpointing for resume capability
+  - Operations: ApplyUpdate, CheckReadiness, GetStatus
+
+- **`Get-AzureLocalFleetProgress`** - Real-time progress tracking:
+  - Total, completed, in-progress, failed, pending counts
+  - Success/failure percentages
+  - Per-cluster status details (with -Detailed switch)
+
+- **`Test-AzureLocalFleetHealthGate`** - CI/CD health gate for safe wave deployments:
+  - Maximum failure percentage threshold (default: 5%)
+  - Minimum success percentage threshold (default: 90%)
+  - Wait for completion option with timeout
+  - Returns Pass/Fail for pipeline decisions
+
+- **`Export-AzureLocalFleetState`** - Save operation state for resume:
+  - JSON format with full cluster tracking
+  - Includes run ID, timestamps, and per-cluster status
+
+- **`Resume-AzureLocalFleetUpdate`** - Resume interrupted operations:
+  - Load state from file or object
+  - Option to retry failed clusters
+  - Continues from last checkpoint
+
+- **`Stop-AzureLocalFleetUpdate`** - Graceful stop with state save:
+  - Saves current progress
+  - Does not cancel in-progress cluster updates
+
+### Use Cases
+- **Enterprise Scale**: Process 1000-3000+ clusters with batching
+- **CI/CD Safety**: Health gates prevent cascading failures
+- **Resilience**: Resume capability after pipeline timeouts or interruptions
+- **Visibility**: Real-time progress tracking during long operations
+
+## [0.5.5] - 2026-01-29
+
+### Added
+- **Fleet-Wide Tag Support for All Query Functions**: Three functions now support multi-cluster queries:
+  - `Get-AzureLocalUpdateSummary` - Query update summaries across fleet
+  - `Get-AzureLocalAvailableUpdates` - List available updates across fleet
+  - `Get-AzureLocalUpdateRuns` - Get update run history across fleet
+- **New Parameters for Multi-Cluster Queries**:
+  - `-ClusterNames` - Query multiple clusters by name
+  - `-ClusterResourceIds` - Query multiple clusters by resource ID
+  - `-ScopeByUpdateRingTag` + `-UpdateRingValue` - Query clusters by UpdateRing tag
+  - `-ExportPath` - Export results to CSV, JSON, or JUnit XML format
+- **Fleet Update Status Pipeline**: New `fleet-update-status.yml` CI/CD pipeline for monitoring update status across entire cluster fleet
+  - Available for both GitHub Actions and Azure DevOps
+  - Generates JUnit XML reports for CI/CD dashboard integration
+  - Each cluster appears as a test case (passed=healthy, failed=issues)
+  - Multiple output formats: CSV, JSON, and JUnit XML
+  - Scheduled daily checks at 6 AM UTC (configurable)
+  - Flexible scope: all clusters or filter by UpdateRing tag
+- **Dashboard Integration**: JUnit XML results display in GitHub Actions Tests tab and Azure DevOps Tests tab with trend analytics
 
 ### Improved
 - **Consistent Logging**: All functions now use `Write-Log` for consistent, timestamped, colored console output
-  - `Get-AzureLocalUpdateRuns` - Shows cluster lookup, API queries, and results with proper headers
-  - `Get-AzureLocalClusterUpdateReadiness` - Shows assessment progress with severity-based coloring
-  - `Get-AzureLocalClusterInventory` - Shows query progress and summary with proper formatting
-- **File Logging Support**: When `$script:LogFilePath` is configured, all functions write to log files (automatically enabled during `Start-AzureLocalClusterUpdate`)
-- **Better Progress Visibility**: Users can now see exactly what API operations are happening during function execution
-- **Severity-Based Coloring**: Messages use appropriate levels:
-  - Info (White) - General information
-  - Warning (Yellow) - Non-critical issues
-  - Error (Red) - Critical failures
-  - Success (Green) - Successful operations
-  - Header (Cyan) - Section headers
+- **File Logging Support**: When `$script:LogFilePath` is configured, all functions write to log files
+- **Better Progress Visibility**: Users can see exactly what API operations are happening during function execution
+- **Severity-Based Coloring**: Messages use appropriate levels (Info=White, Warning=Yellow, Error=Red, Success=Green, Header=Cyan)
+- All fleet query functions provide consistent fleet-wide reporting with summaries
+- Export support includes CSV, JSON, and JUnit XML for CI/CD integration
+- **Backward Compatibility**: Single-cluster parameter sets remain unchanged for existing scripts
 
 ## [0.5.0] - 2026-01-29
 
@@ -57,7 +113,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **CRITICAL**: `Set-AzureLocalClusterUpdateRingTag` including PowerShell hashtable internal properties (`Keys`, `Values`) in JSON body. Now uses `[PSCustomObject]` with filtered `NoteProperty` members only.
 
 ### Changed
-- `Get-AzureLocalClusterInventory` no longer dumps objects to console when using `-ExportCsvPath` (cleaner output)
+- `Get-AzureLocalClusterInventory` no longer dumps objects to console when using `-ExportPath` (cleaner output)
 
 ## [0.4.0] - 2026-01-29
 
@@ -72,7 +128,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Renamed `-ScopeByTagName` to `-ScopeByUpdateRingTag` for clarity (now a switch parameter)
 - Renamed `-TagValue` to `-UpdateRingValue` for consistency
 - UpdateRing tag queries now use hardcoded 'UpdateRing' tag name for consistency
-- `-ExportResultsPath` and `-ExportCsvPath` now support `.xml` extension for JUnit format
+- `-ExportResultsPath` and `-ExportPath` now support `.xml` extension for JUnit format
 
 ### Fixed
 - PSScriptAnalyzer warnings (empty catch blocks, unused variables)

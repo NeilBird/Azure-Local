@@ -1,17 +1,89 @@
 ﻿# Azure Local - Managing Updates Module (AzStackHci.ManageUpdates)
 
-**Latest Version:** v0.5.1
+**Latest Version:** v0.5.6
 
 This folder contains the 'AzStackHci.ManageUpdates' PowerShell module for managing updates on Azure Local (Azure Stack HCI) clusters using the Azure Stack HCI REST API. The module supports both interactive use and CI/CD automation via Service Principal or Managed Identity authentication.
 
 Azure Stack HCI REST API specification (includes update management endpoints): https://github.com/Azure/azure-rest-api-specs/blob/main/specification/azurestackhci/resource-manager/Microsoft.AzureStackHCI/StackHCI/stable/2025-10-01/hci.json
 
-## What's New in v0.5.1
+## What's New in v0.5.6 (since v0.5.0)
 
-### ✅ Improvements
+### 🚀 Fleet-Scale Operations (NEW)
+Six new functions for managing updates across fleets of **1000-3000+ clusters**:
+
+| Function | Description |
+|----------|-------------|
+| `Invoke-AzureLocalFleetOperation` | Orchestrates fleet-wide updates with batching, throttling, and retry logic |
+| `Get-AzureLocalFleetProgress` | Real-time progress tracking with success/failure percentages |
+| `Test-AzureLocalFleetHealthGate` | CI/CD health gate to prevent cascading failures between waves |
+| `Export-AzureLocalFleetState` | Save operation state for resume capability |
+| `Resume-AzureLocalFleetUpdate` | Resume interrupted operations from checkpoint |
+| `Stop-AzureLocalFleetUpdate` | Graceful stop with state preservation |
+
+**Enterprise-Scale Features:**
+- 📦 **Batch Processing**: Process clusters in configurable batches (default: 50)
+- 🔄 **Retry Logic**: Automatic retries with exponential backoff (default: 3 retries)
+- 💾 **State Management**: Checkpoint/resume capability for long-running operations
+- 🚦 **Health Gates**: Configurable thresholds (default: max 5% failure, min 90% success)
+- 📊 **Progress Tracking**: Real-time visibility into fleet-wide operations
+
+**Examples:**
+```powershell
+# Start fleet-wide update with batching
+Invoke-AzureLocalFleetOperation -ScopeByUpdateRingTag -UpdateRingValue "Production" `
+    -BatchSize 100 -ThrottleLimit 20 -Force
+
+# Check progress during operation
+Get-AzureLocalFleetProgress -ScopeByUpdateRingTag -UpdateRingValue "Production" -Detailed
+
+# CI/CD health gate between waves
+$gate = Test-AzureLocalFleetHealthGate -ScopeByUpdateRingTag -UpdateRingValue "Wave1" `
+    -MaxFailurePercent 2 -WaitForCompletion
+if (-not $gate.Passed) { exit 1 }
+
+# Resume after interruption
+Resume-AzureLocalFleetUpdate -StateFilePath "C:\Logs\fleet-state.json" -RetryFailed -Force
+```
+
+---
+
+### 🏷️ Fleet-Wide Tag Support for All Query Functions
+Three functions now support tag-based filtering for fleet-wide operations:
+
+| Function | New Capabilities |
+|----------|------------------|
+| `Get-AzureLocalUpdateSummary` | Query summaries across fleet by tag, name, or resource ID |
+| `Get-AzureLocalAvailableUpdates` | List available updates across fleet by tag, name, or resource ID |
+| `Get-AzureLocalUpdateRuns` | Get update run history across fleet by tag, name, or resource ID |
+
+**New Parameters for All Three Functions:**
+- `-ClusterNames` / `-ClusterResourceIds` - Query multiple specific clusters
+- `-ScopeByUpdateRingTag` + `-UpdateRingValue` - Query clusters by UpdateRing tag
+- `-ExportPath` - Export results to CSV, JSON, or JUnit XML (format auto-detected from extension)
+
+**Examples:**
+```powershell
+# Get update summaries for all Wave1 clusters
+Get-AzureLocalUpdateSummary -ScopeByUpdateRingTag -UpdateRingValue "Wave1"
+
+# List available updates across Production clusters, export to CSV
+Get-AzureLocalAvailableUpdates -ScopeByUpdateRingTag -UpdateRingValue "Production" -ExportPath "updates.csv"
+
+# Get latest update run from all Ring2 clusters
+Get-AzureLocalUpdateRuns -ScopeByUpdateRingTag -UpdateRingValue "Ring2" -Latest
+```
+
+### 📊 Fleet Update Status Monitoring
+- **New CI/CD Pipeline**: Added `fleet-update-status.yml` for both GitHub Actions and Azure DevOps
+- **JUnit XML Reports**: Each cluster appears as a test case in CI/CD dashboards (passed=healthy, failed=issues)
+- **Multiple Output Formats**: CSV, JSON, and JUnit XML exports for different use cases
+- **Scheduled Monitoring**: Automated daily checks at 6 AM UTC with configurable scope
+- **Dashboard Integration**: Results appear in GitHub Actions Tests tab and Azure DevOps Tests tab with analytics
+
+### ✅ Consistent Logging & Progress
 - **Consistent Logging**: All functions now use `Write-Log` for consistent, timestamped, colored console output
 - **Improved Progress Visibility**: `Get-AzureLocalUpdateRuns`, `Get-AzureLocalClusterUpdateReadiness`, and `Get-AzureLocalClusterInventory` now show detailed progress during API operations
-- **File Logging Support**: When `$script:LogFilePath` is set (automatically during `Start-AzureLocalClusterUpdate`), all functions write to log files
+- **File Logging Support**: When `$script:LogFilePath` is set, all functions write to log files
 - **Severity Levels**: Messages use appropriate levels (Info=White, Warning=Yellow, Error=Red, Success=Green, Header=Cyan)
 
 ---
@@ -54,7 +126,7 @@ Azure Stack HCI REST API specification (includes update management endpoints): h
   2. PowerShell hashtable internal properties (`Keys`, `Values`, etc.) being included in JSON - now uses `[PSCustomObject]` with filtered `NoteProperty` members only
 
 ### ✅ Improvements
-- `Get-AzureLocalClusterInventory` no longer dumps objects to console when using `-ExportCsvPath` (cleaner output with summary and next steps)
+- `Get-AzureLocalClusterInventory` no longer dumps objects to console when using `-ExportPath` (cleaner output with summary and next steps)
 - Added `-PassThru` switch to `Get-AzureLocalClusterInventory` for CI/CD pipelines that need both CSV export AND returned objects
 
 ---
@@ -71,7 +143,7 @@ Azure Stack HCI REST API specification (includes update management endpoints): h
 - Renamed `-ScopeByTagName` to `-ScopeByUpdateRingTag` (now a switch parameter for clarity)
 - Renamed `-TagValue` to `-UpdateRingValue` for consistency
 - UpdateRing tag queries now use the standardized 'UpdateRing' tag name
-- `-ExportResultsPath` and `-ExportCsvPath` now support `.xml` extension for JUnit format
+- `-ExportResultsPath` and `-ExportPath` now support `.xml` extension for JUnit format
 
 ## Files
 
@@ -386,7 +458,7 @@ Start-AzureLocalClusterUpdate -ScopeByUpdateRingTag -UpdateRingValue "Pilot" -Up
 >    If you want to use `-ScopeByUpdateRingTag` but your clusters don't have `UpdateRing` tags yet, use the [`Get-AzureLocalClusterInventory`](#get-azurelocalclusterinventory) and [`Set-AzureLocalClusterUpdateRingTag`](#set-azurelocalclusterupdateringtag) functions:
 >    ```powershell
 >    # Option 1: Export inventory to CSV, edit in Excel, then import
->    Get-AzureLocalClusterInventory -ExportCsvPath "C:\Temp\ClusterInventory.csv"
+>    Get-AzureLocalClusterInventory -ExportPath "C:\Temp\ClusterInventory.csv"
 >    # Edit the CSV in Excel to populate UpdateRing values, then:
 >    Set-AzureLocalClusterUpdateRingTag -InputCsvPath "C:\Temp\ClusterInventory.csv"
 >    
@@ -416,7 +488,7 @@ Assesses update readiness across Azure Local clusters and provides a summary rep
 
 **Parameters:**
 - `-ClusterNames`, `-ClusterResourceIds`, or `-ScopeByUpdateRingTag`/`-UpdateRingValue` (same as `Start-AzureLocalClusterUpdate`)
-- `-ExportCsvPath` (Optional): Export results to a CSV file
+- `-ExportPath` (Optional): Export results to a CSV file
 
 **Output Columns (and CSV Export):**
 | Column | Description |
@@ -440,7 +512,7 @@ Assesses update readiness across Azure Local clusters and provides a summary rep
 Get-AzureLocalClusterUpdateReadiness -ScopeByUpdateRingTag -UpdateRingValue "Wave1"
 
 # Assess specific clusters and export to CSV
-Get-AzureLocalClusterUpdateReadiness -ClusterNames @("Cluster01", "Cluster02") -ExportCsvPath "C:\Reports\readiness.csv"
+Get-AzureLocalClusterUpdateReadiness -ClusterNames @("Cluster01", "Cluster02") -ExportPath "C:\Reports\readiness.csv"
 
 # Assess clusters by UpdateRing tag across all subscriptions
 Get-AzureLocalClusterUpdateReadiness -ScopeByUpdateRingTag -UpdateRingValue "Production"
@@ -541,7 +613,7 @@ Gets an inventory of all Azure Local clusters with their UpdateRing tag status. 
 
 **Parameters:**
 - `-SubscriptionId` (Optional): Limit query to a specific Azure subscription
-- `-ExportCsvPath` (Optional): Export inventory to CSV file for editing
+- `-ExportPath` (Optional): Export inventory to CSV file for editing
 - `-PassThru` (Optional): Return inventory objects even when exporting to CSV. Useful for CI/CD pipelines that need both the CSV artifact and objects for processing.
 
 **Output Columns:**
@@ -559,7 +631,7 @@ Gets an inventory of all Azure Local clusters with their UpdateRing tag status. 
 
 ```powershell
 # Step 1: Export inventory to CSV
-Get-AzureLocalClusterInventory -ExportCsvPath "C:\Temp\ClusterInventory.csv"
+Get-AzureLocalClusterInventory -ExportPath "C:\Temp\ClusterInventory.csv"
 
 # Step 2: Open the CSV in Excel and populate the 'UpdateRing' column with values like:
 #   - "Wave1", "Wave2", "Wave3" for wave-based deployments
@@ -577,7 +649,7 @@ Start-AzureLocalClusterUpdate -ScopeByUpdateRingTag -UpdateRingValue "Wave1" -Fo
 
 ```powershell
 # Export to CSV AND return objects for pipeline processing
-$inventory = Get-AzureLocalClusterInventory -ExportCsvPath "./artifacts/inventory.csv" -PassThru
+$inventory = Get-AzureLocalClusterInventory -ExportPath "./artifacts/inventory.csv" -PassThru
 
 # Use returned objects for pipeline logic
 Write-Host "Total clusters: $($inventory.Count)"
@@ -655,7 +727,7 @@ Sets or updates the "UpdateRing" tag on Azure Local clusters for organizing upda
 
 ```powershell
 # Import tags from a CSV file (preferred workflow)
-Get-AzureLocalClusterInventory -ExportCsvPath "C:\Temp\ClusterInventory.csv"
+Get-AzureLocalClusterInventory -ExportPath "C:\Temp\ClusterInventory.csv"
 # Edit CSV in Excel to set UpdateRing values, then:
 Set-AzureLocalClusterUpdateRingTag -InputCsvPath "C:\Temp\ClusterInventory.csv"
 
@@ -735,6 +807,408 @@ Cluster01   Created                  Ring1       Success
 Cluster02   Skipped Wave1            Ring1       Skipped
 Cluster03   Skipped                  Ring1       Failed
 ```
+
+---
+
+## Fleet-Scale Operations (v0.5.6)
+
+The following six functions enable enterprise-scale update management across fleets of 1000-3000+ clusters with batching, throttling, retry logic, health gates, and state management.
+
+### `Invoke-AzureLocalFleetOperation`
+
+Orchestrates fleet-wide update operations with enterprise-scale features including batch processing, throttling, and automatic retry with exponential backoff.
+
+**Features:**
+- **Batch Processing**: Process clusters in configurable batches (default: 50 clusters)
+- **Throttling**: Control parallel execution (default: 10 concurrent operations)
+- **Retry Logic**: Automatic retries with exponential backoff (default: 3 retries)
+- **State Management**: Checkpoint/resume capability via state files
+- **Progress Tracking**: Real-time status updates during execution
+
+**Parameters:**
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `-Operation` | String | No | `ApplyUpdate` | Operation to perform: `ApplyUpdate`, `CheckReadiness`, or `GetStatus` |
+| `-ScopeByUpdateRingTag` | Switch | Yes* | - | Target clusters by UpdateRing tag |
+| `-UpdateRingValue` | String | Yes* | - | The UpdateRing tag value to filter by |
+| `-ClusterResourceIds` | String[] | Yes* | - | Explicit list of cluster resource IDs |
+| `-UpdateName` | String | No | - | Specific update version to apply |
+| `-BatchSize` | Int | No | `50` | Clusters per batch (1-500) |
+| `-ThrottleLimit` | Int | No | `10` | Max parallel operations per batch (1-50) |
+| `-DelayBetweenBatchesSeconds` | Int | No | `30` | Seconds to wait between batches (0-600) |
+| `-MaxRetries` | Int | No | `3` | Retry attempts per cluster (0-10) |
+| `-RetryDelaySeconds` | Int | No | `30` | Base delay between retries - uses exponential backoff (5-300) |
+| `-StateFilePath` | String | No | - | Path to save state for resume capability |
+| `-Force` | Switch | No | - | Skip confirmation prompts |
+| `-PassThru` | Switch | No | - | Return the fleet state object |
+
+*One of `-ScopeByUpdateRingTag`/`-UpdateRingValue` OR `-ClusterResourceIds` is required.
+
+**Examples:**
+
+```powershell
+# Start updates on all Wave1 clusters with default settings
+Invoke-AzureLocalFleetOperation -ScopeByUpdateRingTag -UpdateRingValue "Wave1" -Force
+
+# Large fleet with increased batching and parallelism
+Invoke-AzureLocalFleetOperation -ScopeByUpdateRingTag -UpdateRingValue "Production" `
+    -BatchSize 100 -ThrottleLimit 20 -DelayBetweenBatchesSeconds 60 -Force
+
+# Save state for resume capability
+$state = Invoke-AzureLocalFleetOperation -ScopeByUpdateRingTag -UpdateRingValue "Ring1" `
+    -StateFilePath "C:\Logs\ring1-state.json" -Force -PassThru
+
+# Check readiness across fleet (no updates applied)
+Invoke-AzureLocalFleetOperation -ScopeByUpdateRingTag -UpdateRingValue "Canary" `
+    -Operation CheckReadiness
+
+# Apply specific update version
+Invoke-AzureLocalFleetOperation -ScopeByUpdateRingTag -UpdateRingValue "Pilot" `
+    -UpdateName "Solution12.2601.1002.38" -Force
+```
+
+**Sample Output:**
+
+```
+========================================
+Fleet Operation: ApplyUpdate
+Run ID: a1b2c3d4-e5f6-7890-abcd-ef1234567890
+========================================
+Configuration:
+  Batch Size: 50
+  Throttle Limit: 10
+  Delay Between Batches: 30 seconds
+  Max Retries: 3
+
+Querying clusters with UpdateRing = 'Wave1'...
+Total clusters to process: 150
+
+========================================
+Batch 1 of 3 (50 clusters)
+========================================
+Processing: Cluster001
+  ✓ Cluster001 - Succeeded
+Processing: Cluster002
+  ✓ Cluster002 - Succeeded
+...
+
+========================================
+Fleet Operation Complete
+========================================
+Run ID: a1b2c3d4-e5f6-7890-abcd-ef1234567890
+Duration: 45.2 minutes
+Total Clusters: 150
+Succeeded: 147
+Failed: 3
+```
+
+---
+
+### `Get-AzureLocalFleetProgress`
+
+Gets real-time progress of a fleet-wide update operation with aggregated statistics and optional per-cluster details.
+
+**Parameters:**
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `-State` | PSCustomObject | No | - | Fleet operation state object from `Invoke-AzureLocalFleetOperation` |
+| `-ScopeByUpdateRingTag` | Switch | Yes* | - | Query clusters by UpdateRing tag |
+| `-UpdateRingValue` | String | Yes* | - | The UpdateRing tag value to filter by |
+| `-Detailed` | Switch | No | - | Include per-cluster status in output |
+
+*Either `-State` OR `-ScopeByUpdateRingTag`/`-UpdateRingValue` is required.
+
+**Output Properties:**
+| Property | Description |
+|----------|-------------|
+| `Timestamp` | When the progress was checked |
+| `TotalClusters` | Total clusters in scope |
+| `Completed` | Clusters that have finished (succeeded + up to date) |
+| `ProgressPercent` | Completion percentage |
+| `Succeeded` | Clusters where update succeeded |
+| `UpToDate` | Clusters already up to date |
+| `InProgress` | Clusters with updates currently running |
+| `Failed` | Clusters where update failed |
+| `NotStarted` | Clusters not yet processed |
+| `ClusterStatuses` | Per-cluster details (when `-Detailed` used) |
+
+**Examples:**
+
+```powershell
+# Check progress during an operation
+Get-AzureLocalFleetProgress -State $fleetState
+
+# Check progress for all Production clusters
+Get-AzureLocalFleetProgress -ScopeByUpdateRingTag -UpdateRingValue "Production"
+
+# Get detailed per-cluster status
+Get-AzureLocalFleetProgress -ScopeByUpdateRingTag -UpdateRingValue "Wave1" -Detailed
+
+# Monitor in a loop
+while ($true) {
+    $progress = Get-AzureLocalFleetProgress -ScopeByUpdateRingTag -UpdateRingValue "Wave1"
+    if ($progress.InProgress -eq 0) { break }
+    Start-Sleep -Seconds 60
+}
+```
+
+**Sample Output:**
+
+```
+========================================
+Fleet Update Progress Check
+========================================
+
+Checking status of 150 cluster(s)...
+
+Progress Summary:
+  Total Clusters: 150
+  Completed: 135 (90%)
+  - Succeeded: 130
+  - Up to Date: 5
+  In Progress: 10
+  Failed: 3
+  Not Started: 2
+```
+
+---
+
+### `Test-AzureLocalFleetHealthGate`
+
+Evaluates fleet health to determine if it's safe to proceed with additional update waves. Acts as a "gate" in CI/CD pipelines to prevent cascading failures.
+
+**Parameters:**
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `-State` | PSCustomObject | No | - | Fleet operation state to evaluate |
+| `-ScopeByUpdateRingTag` | Switch | Yes* | - | Evaluate clusters by UpdateRing tag |
+| `-UpdateRingValue` | String | Yes* | - | The UpdateRing tag value to filter by |
+| `-MaxFailurePercent` | Int | No | `5` | Maximum allowed failure percentage (0-100) |
+| `-MinSuccessPercent` | Int | No | `90` | Minimum required success percentage (0-100) |
+| `-AllowHealthWarnings` | Switch | No | - | Consider clusters with health warnings as acceptable |
+| `-WaitForCompletion` | Switch | No | - | Wait for in-progress updates to complete before evaluating |
+| `-WaitTimeoutMinutes` | Int | No | `120` | Maximum wait time for completion (minutes) |
+| `-PollIntervalSeconds` | Int | No | `60` | How often to check status while waiting |
+
+*Either `-State` OR `-ScopeByUpdateRingTag`/`-UpdateRingValue` is required.
+
+**Output Properties:**
+| Property | Description |
+|----------|-------------|
+| `Passed` | Boolean - did the gate pass? |
+| `Reason` | Explanation of pass/fail |
+| `TotalClusters` | Total clusters evaluated |
+| `Succeeded` | Clusters that succeeded |
+| `Failed` | Clusters that failed |
+| `InProgress` | Clusters still in progress |
+| `SuccessPercent` | Calculated success rate |
+| `FailurePercent` | Calculated failure rate |
+
+**Examples:**
+
+```powershell
+# Basic health gate check
+Test-AzureLocalFleetHealthGate -ScopeByUpdateRingTag -UpdateRingValue "Canary"
+
+# Strict gate for production (max 2% failure, min 95% success)
+Test-AzureLocalFleetHealthGate -ScopeByUpdateRingTag -UpdateRingValue "Wave1" `
+    -MaxFailurePercent 2 -MinSuccessPercent 95
+
+# Wait for completion before evaluating
+Test-AzureLocalFleetHealthGate -ScopeByUpdateRingTag -UpdateRingValue "Wave1" `
+    -WaitForCompletion -WaitTimeoutMinutes 180
+
+# CI/CD pipeline integration
+$gate = Test-AzureLocalFleetHealthGate -ScopeByUpdateRingTag -UpdateRingValue "Wave1" `
+    -MaxFailurePercent 2 -WaitForCompletion
+if (-not $gate.Passed) {
+    Write-Error "Health gate failed: $($gate.Reason)"
+    exit 1
+}
+# Proceed to Wave2...
+```
+
+**Sample Output (Passed):**
+
+```
+========================================
+Fleet Health Gate Check
+========================================
+Criteria: MaxFailure=5%, MinSuccess=90%
+
+✓ HEALTH GATE PASSED
+  Success Rate: 97.3% (min: 90%)
+  Failure Rate: 2% (max: 5%)
+```
+
+**Sample Output (Failed):**
+
+```
+========================================
+Fleet Health Gate Check
+========================================
+Criteria: MaxFailure=5%, MinSuccess=90%
+
+✗ HEALTH GATE FAILED
+  - Failure rate (8%) exceeds maximum (5%)
+  - 2 cluster(s) have critical health failures
+  Success Rate: 85% (min: 90%)
+  Failure Rate: 8% (max: 5%)
+```
+
+---
+
+### `Export-AzureLocalFleetState`
+
+Exports the current fleet operation state to a JSON file for resume capability, audit trails, and progress tracking across sessions.
+
+**Parameters:**
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `-State` | PSCustomObject | No | - | State object to export. Uses current in-memory state if not provided. |
+| `-Path` | String | No | Auto-generated | File path for the JSON state file |
+
+**Returns:** The path where the state was saved.
+
+**State File Contents:**
+- Run ID and timestamps
+- Operation configuration (batch size, throttle limit, etc.)
+- Total/completed/failed/pending cluster counts
+- Per-cluster status with attempt history and errors
+
+**Examples:**
+
+```powershell
+# Export current state to default location
+Export-AzureLocalFleetState
+
+# Export to specific path
+Export-AzureLocalFleetState -Path "C:\Logs\fleet-state.json"
+
+# Export state from operation
+$state = Invoke-AzureLocalFleetOperation -ScopeByUpdateRingTag -UpdateRingValue "Wave1" -PassThru
+Export-AzureLocalFleetState -State $state -Path "C:\Logs\wave1-checkpoint.json"
+```
+
+**Sample State File:**
+
+```json
+{
+  "RunId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "Operation": "ApplyUpdate",
+  "StartTime": "2026-01-29T10:00:00Z",
+  "TotalClusters": 150,
+  "CompletedCount": 75,
+  "SucceededCount": 73,
+  "FailedCount": 2,
+  "PendingCount": 75,
+  "BatchSize": 50,
+  "Clusters": [
+    {
+      "ClusterName": "Cluster001",
+      "ResourceId": "/subscriptions/.../clusters/Cluster001",
+      "Status": "Succeeded",
+      "Attempts": 1
+    },
+    ...
+  ]
+}
+```
+
+---
+
+### `Resume-AzureLocalFleetUpdate`
+
+Resumes a previously interrupted fleet update operation from a saved state file. Enables recovery from pipeline timeouts, network interruptions, or manual cancellations.
+
+**Parameters:**
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `-StateFilePath` | String | Yes* | - | Path to the saved state file |
+| `-State` | PSCustomObject | Yes* | - | State object loaded via `Import-AzureLocalFleetState` |
+| `-RetryFailed` | Switch | No | - | Also retry clusters that previously failed (not just pending) |
+| `-MaxRetries` | Int | No | `3` | Maximum additional retry attempts for failed clusters (0-10) |
+| `-Force` | Switch | No | - | Skip confirmation prompts |
+| `-PassThru` | Switch | No | - | Return the updated state object |
+
+*Either `-StateFilePath` OR `-State` is required.
+
+**Examples:**
+
+```powershell
+# Resume from state file (process only pending clusters)
+Resume-AzureLocalFleetUpdate -StateFilePath "C:\Logs\fleet-state.json" -Force
+
+# Resume and retry failed clusters
+Resume-AzureLocalFleetUpdate -StateFilePath "C:\Logs\fleet-state.json" -RetryFailed -Force
+
+# Load state manually and resume
+$state = Import-AzureLocalFleetState -Path "C:\Logs\fleet-state.json"
+Resume-AzureLocalFleetUpdate -State $state -RetryFailed -MaxRetries 5 -Force
+```
+
+**Sample Output:**
+
+```
+========================================
+Resuming Fleet Operation
+Original Run ID: a1b2c3d4-e5f6-7890-abcd-ef1234567890
+========================================
+State Summary:
+  Pending: 75
+  Failed: 2
+  Succeeded: 73
+
+Clusters to process: 77
+```
+
+---
+
+### `Stop-AzureLocalFleetUpdate`
+
+Gracefully stops an in-progress fleet update operation after the current batch completes and saves state for later resumption.
+
+> **Note:** This function signals the operation to stop but does NOT cancel individual cluster updates that are already in progress. For emergency cancellation, use Azure Portal or `az` CLI to cancel individual update runs.
+
+**Parameters:**
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `-SaveState` | Switch | No | - | Save the current state to a file before stopping |
+| `-StateFilePath` | String | No | Auto-generated | Path to save the state file |
+
+**Examples:**
+
+```powershell
+# Stop and save state
+Stop-AzureLocalFleetUpdate -SaveState
+
+# Stop and save to specific location
+Stop-AzureLocalFleetUpdate -SaveState -StateFilePath "C:\Logs\fleet-stopped.json"
+```
+
+**Sample Output:**
+
+```
+========================================
+Stopping Fleet Operation
+========================================
+
+State saved to: C:\Logs\fleet-stopped.json
+Use Resume-AzureLocalFleetUpdate to continue later.
+
+Operation Status at Stop:
+  Run ID: a1b2c3d4-e5f6-7890-abcd-ef1234567890
+  Total: 150
+  Completed: 75
+  Succeeded: 73
+  Failed: 2
+  Pending: 75
+
+Fleet operation marked for stop.
+Note: Updates already in progress on individual clusters will continue.
+```
+
+---
 
 ## Logging and Output
 
@@ -937,7 +1411,7 @@ Start-AzureLocalClusterUpdate -ScopeByUpdateRingTag -UpdateRingValue "Ring1" -Fo
 
 # Export readiness check to JUnit XML
 Get-AzureLocalClusterUpdateReadiness -ScopeByUpdateRingTag -UpdateRingValue "Ring1" `
-    -ExportCsvPath "C:\Results\readiness-results.xml"
+    -ExportPath "C:\Results\readiness-results.xml"
 ```
 
 **Supported CI/CD Tools:**

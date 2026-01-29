@@ -34,12 +34,12 @@ Describe 'Module: AzStackHci.ManageUpdates' {
             $script:ModuleInfo | Should -Not -BeNullOrEmpty
         }
 
-        It 'Should have version 0.5.1' {
-            $script:ModuleInfo.Version | Should -Be '0.5.1'
+        It 'Should have version 0.5.6' {
+            $script:ModuleInfo.Version | Should -Be '0.5.6'
         }
 
-        It 'Should export exactly 9 functions' {
-            $script:ModuleInfo.ExportedFunctions.Count | Should -Be 9
+        It 'Should export exactly 15 functions' {
+            $script:ModuleInfo.ExportedFunctions.Count | Should -Be 15
         }
 
         It 'Should export the expected functions' {
@@ -52,7 +52,14 @@ Describe 'Module: AzStackHci.ManageUpdates' {
                 'Get-AzureLocalUpdateRuns',
                 'Get-AzureLocalUpdateSummary',
                 'Set-AzureLocalClusterUpdateRingTag',
-                'Start-AzureLocalClusterUpdate'
+                'Start-AzureLocalClusterUpdate',
+                # Fleet-Scale Operations (v0.5.6)
+                'Invoke-AzureLocalFleetOperation',
+                'Get-AzureLocalFleetProgress',
+                'Test-AzureLocalFleetHealthGate',
+                'Export-AzureLocalFleetState',
+                'Resume-AzureLocalFleetUpdate',
+                'Stop-AzureLocalFleetUpdate'
             )
             
             foreach ($func in $expectedFunctions) {
@@ -199,8 +206,12 @@ Describe 'Function: Get-AzureLocalClusterUpdateReadiness' {
             $command.Parameters.Keys | Should -Contain 'UpdateRingValue'
         }
 
-        It 'Should have ExportCsvPath parameter' {
-            $command.Parameters.Keys | Should -Contain 'ExportCsvPath'
+        It 'Should have ExportPath parameter' {
+            $command.Parameters.Keys | Should -Contain 'ExportPath'
+        }
+
+        It 'Should have ExportFormat parameter' {
+            $command.Parameters.Keys | Should -Contain 'ExportFormat'
         }
 
         It 'Should have ApiVersion parameter with default value' {
@@ -247,8 +258,8 @@ Describe 'Function: Get-AzureLocalClusterInventory' {
             $command.Parameters.Keys | Should -Contain 'SubscriptionId'
         }
 
-        It 'Should have ExportCsvPath parameter' {
-            $command.Parameters.Keys | Should -Contain 'ExportCsvPath'
+        It 'Should have ExportPath parameter' {
+            $command.Parameters.Keys | Should -Contain 'ExportPath'
         }
 
         It 'SubscriptionId should not be mandatory' {
@@ -369,14 +380,41 @@ Describe 'Function: Get-AzureLocalUpdateSummary' {
             $command.Parameters.Keys | Should -Contain 'ClusterResourceId'
         }
 
+        It 'Should have ClusterNames parameter for multi-cluster mode' {
+            $command.Parameters.Keys | Should -Contain 'ClusterNames'
+        }
+
+        It 'Should have ClusterResourceIds parameter for multi-cluster mode' {
+            $command.Parameters.Keys | Should -Contain 'ClusterResourceIds'
+        }
+
+        It 'Should have ScopeByUpdateRingTag parameter' {
+            $command.Parameters.Keys | Should -Contain 'ScopeByUpdateRingTag'
+        }
+
+        It 'Should have UpdateRingValue parameter' {
+            $command.Parameters.Keys | Should -Contain 'UpdateRingValue'
+        }
+
+        It 'Should have ExportPath parameter' {
+            $command.Parameters.Keys | Should -Contain 'ExportPath'
+        }
+
         It 'Should have ApiVersion parameter' {
             $command.Parameters.Keys | Should -Contain 'ApiVersion'
         }
 
-        It 'ClusterResourceId should be mandatory' {
+        It 'ClusterResourceId should be mandatory in SingleCluster parameter set' {
             $param = $command.Parameters['ClusterResourceId']
-            $attr = $param.Attributes | Where-Object { $_.TypeId.Name -eq 'ParameterAttribute' }
+            $attr = $param.Attributes | Where-Object { $_.TypeId.Name -eq 'ParameterAttribute' -and $_.ParameterSetName -eq 'SingleCluster' }
             $attr.Mandatory | Should -Be $true
+        }
+
+        It 'Should have four parameter sets' {
+            $command.ParameterSets.Name | Should -Contain 'SingleCluster'
+            $command.ParameterSets.Name | Should -Contain 'ByName'
+            $command.ParameterSets.Name | Should -Contain 'ByResourceId'
+            $command.ParameterSets.Name | Should -Contain 'ByTag'
         }
     }
 }
@@ -392,14 +430,45 @@ Describe 'Function: Get-AzureLocalAvailableUpdates' {
             $command.Parameters.Keys | Should -Contain 'ClusterResourceId'
         }
 
+        It 'Should have ClusterNames parameter for multi-cluster mode' {
+            $command.Parameters.Keys | Should -Contain 'ClusterNames'
+        }
+
+        It 'Should have ClusterResourceIds parameter for multi-cluster mode' {
+            $command.Parameters.Keys | Should -Contain 'ClusterResourceIds'
+        }
+
+        It 'Should have ScopeByUpdateRingTag parameter' {
+            $command.Parameters.Keys | Should -Contain 'ScopeByUpdateRingTag'
+        }
+
+        It 'Should have UpdateRingValue parameter' {
+            $command.Parameters.Keys | Should -Contain 'UpdateRingValue'
+        }
+
+        It 'Should have ExportPath parameter' {
+            $command.Parameters.Keys | Should -Contain 'ExportPath'
+        }
+
+        It 'Should have ExportFormat parameter' {
+            $command.Parameters.Keys | Should -Contain 'ExportFormat'
+        }
+
         It 'Should have ApiVersion parameter' {
             $command.Parameters.Keys | Should -Contain 'ApiVersion'
         }
 
-        It 'ClusterResourceId should be mandatory' {
+        It 'ClusterResourceId should be mandatory in SingleCluster parameter set' {
             $param = $command.Parameters['ClusterResourceId']
-            $attr = $param.Attributes | Where-Object { $_.TypeId.Name -eq 'ParameterAttribute' }
+            $attr = $param.Attributes | Where-Object { $_.TypeId.Name -eq 'ParameterAttribute' -and $_.ParameterSetName -eq 'SingleCluster' }
             $attr.Mandatory | Should -Be $true
+        }
+
+        It 'Should have four parameter sets' {
+            $command.ParameterSets.Name | Should -Contain 'SingleCluster'
+            $command.ParameterSets.Name | Should -Contain 'ByName'
+            $command.ParameterSets.Name | Should -Contain 'ByResourceId'
+            $command.ParameterSets.Name | Should -Contain 'ByTag'
         }
     }
 }
@@ -415,17 +484,41 @@ Describe 'Function: Get-AzureLocalUpdateRuns' {
             $command.Parameters.Keys | Should -Contain 'ClusterName'
         }
 
+        It 'Should have ClusterNames parameter for multi-cluster mode' {
+            $command.Parameters.Keys | Should -Contain 'ClusterNames'
+        }
+
+        It 'Should have ClusterResourceIds parameter for multi-cluster mode' {
+            $command.Parameters.Keys | Should -Contain 'ClusterResourceIds'
+        }
+
+        It 'Should have ScopeByUpdateRingTag parameter' {
+            $command.Parameters.Keys | Should -Contain 'ScopeByUpdateRingTag'
+        }
+
+        It 'Should have UpdateRingValue parameter' {
+            $command.Parameters.Keys | Should -Contain 'UpdateRingValue'
+        }
+
         It 'Should have UpdateName parameter' {
             $command.Parameters.Keys | Should -Contain 'UpdateName'
+        }
+
+        It 'Should have ExportPath parameter' {
+            $command.Parameters.Keys | Should -Contain 'ExportPath'
+        }
+
+        It 'Should have ExportFormat parameter' {
+            $command.Parameters.Keys | Should -Contain 'ExportFormat'
         }
 
         It 'Should have ApiVersion parameter' {
             $command.Parameters.Keys | Should -Contain 'ApiVersion'
         }
 
-        It 'ClusterName should be mandatory' {
+        It 'ClusterName should be mandatory in SingleCluster parameter set' {
             $param = $command.Parameters['ClusterName']
-            $attr = $param.Attributes | Where-Object { $_.TypeId.Name -eq 'ParameterAttribute' }
+            $attr = $param.Attributes | Where-Object { $_.TypeId.Name -eq 'ParameterAttribute' -and $_.ParameterSetName -eq 'SingleCluster' }
             $attr.Mandatory | Should -Be $true
         }
 
@@ -433,6 +526,13 @@ Describe 'Function: Get-AzureLocalUpdateRuns' {
             $param = $command.Parameters['UpdateName']
             $attr = $param.Attributes | Where-Object { $_.TypeId.Name -eq 'ParameterAttribute' }
             $attr.Mandatory | Should -Be $false
+        }
+
+        It 'Should have four parameter sets' {
+            $command.ParameterSets.Name | Should -Contain 'SingleCluster'
+            $command.ParameterSets.Name | Should -Contain 'ByName'
+            $command.ParameterSets.Name | Should -Contain 'ByResourceId'
+            $command.ParameterSets.Name | Should -Contain 'ByTag'
         }
     }
 }
@@ -596,3 +696,275 @@ Describe 'Module Best Practices' {
         }
     }
 }
+
+#region Fleet-Scale Operations Tests (v0.5.6)
+
+Describe 'Function: Invoke-AzureLocalFleetOperation' {
+    
+    Context 'Parameter Validation' {
+        BeforeAll {
+            $command = Get-Command Invoke-AzureLocalFleetOperation
+        }
+
+        It 'Should have Operation parameter' {
+            $command.Parameters.Keys | Should -Contain 'Operation'
+        }
+
+        It 'Should have valid Operation values' {
+            $command.Parameters['Operation'].Attributes.ValidValues | Should -Contain 'ApplyUpdate'
+            $command.Parameters['Operation'].Attributes.ValidValues | Should -Contain 'CheckReadiness'
+            $command.Parameters['Operation'].Attributes.ValidValues | Should -Contain 'GetStatus'
+        }
+
+        It 'Should have ScopeByUpdateRingTag parameter' {
+            $command.Parameters.Keys | Should -Contain 'ScopeByUpdateRingTag'
+        }
+
+        It 'Should have UpdateRingValue parameter' {
+            $command.Parameters.Keys | Should -Contain 'UpdateRingValue'
+        }
+
+        It 'Should have ClusterResourceIds parameter' {
+            $command.Parameters.Keys | Should -Contain 'ClusterResourceIds'
+        }
+
+        It 'Should have BatchSize parameter with range validation' {
+            $command.Parameters.Keys | Should -Contain 'BatchSize'
+            $attrs = $command.Parameters['BatchSize'].Attributes | Where-Object { $_ -is [System.Management.Automation.ValidateRangeAttribute] }
+            $attrs | Should -Not -BeNullOrEmpty
+        }
+
+        It 'Should have ThrottleLimit parameter with range validation' {
+            $command.Parameters.Keys | Should -Contain 'ThrottleLimit'
+            $attrs = $command.Parameters['ThrottleLimit'].Attributes | Where-Object { $_ -is [System.Management.Automation.ValidateRangeAttribute] }
+            $attrs | Should -Not -BeNullOrEmpty
+        }
+
+        It 'Should have MaxRetries parameter' {
+            $command.Parameters.Keys | Should -Contain 'MaxRetries'
+        }
+
+        It 'Should have StateFilePath parameter' {
+            $command.Parameters.Keys | Should -Contain 'StateFilePath'
+        }
+
+        It 'Should have Force parameter' {
+            $command.Parameters.Keys | Should -Contain 'Force'
+        }
+
+        It 'Should have PassThru parameter' {
+            $command.Parameters.Keys | Should -Contain 'PassThru'
+        }
+    }
+
+    Context 'Parameter Sets' {
+        BeforeAll {
+            $command = Get-Command Invoke-AzureLocalFleetOperation
+        }
+
+        It 'Should have ByTag parameter set' {
+            $command.ParameterSets.Name | Should -Contain 'ByTag'
+        }
+
+        It 'Should have ByResourceId parameter set' {
+            $command.ParameterSets.Name | Should -Contain 'ByResourceId'
+        }
+    }
+}
+
+Describe 'Function: Get-AzureLocalFleetProgress' {
+    
+    Context 'Parameter Validation' {
+        BeforeAll {
+            $command = Get-Command Get-AzureLocalFleetProgress
+        }
+
+        It 'Should have State parameter' {
+            $command.Parameters.Keys | Should -Contain 'State'
+        }
+
+        It 'Should have ScopeByUpdateRingTag parameter' {
+            $command.Parameters.Keys | Should -Contain 'ScopeByUpdateRingTag'
+        }
+
+        It 'Should have UpdateRingValue parameter' {
+            $command.Parameters.Keys | Should -Contain 'UpdateRingValue'
+        }
+
+        It 'Should have Detailed parameter' {
+            $command.Parameters.Keys | Should -Contain 'Detailed'
+        }
+    }
+
+    Context 'Parameter Sets' {
+        BeforeAll {
+            $command = Get-Command Get-AzureLocalFleetProgress
+        }
+
+        It 'Should have ByState parameter set' {
+            $command.ParameterSets.Name | Should -Contain 'ByState'
+        }
+
+        It 'Should have ByTag parameter set' {
+            $command.ParameterSets.Name | Should -Contain 'ByTag'
+        }
+    }
+}
+
+Describe 'Function: Test-AzureLocalFleetHealthGate' {
+    
+    Context 'Parameter Validation' {
+        BeforeAll {
+            $command = Get-Command Test-AzureLocalFleetHealthGate
+        }
+
+        It 'Should have MaxFailurePercent parameter' {
+            $command.Parameters.Keys | Should -Contain 'MaxFailurePercent'
+        }
+
+        It 'Should have MinSuccessPercent parameter' {
+            $command.Parameters.Keys | Should -Contain 'MinSuccessPercent'
+        }
+
+        It 'Should have AllowHealthWarnings parameter' {
+            $command.Parameters.Keys | Should -Contain 'AllowHealthWarnings'
+        }
+
+        It 'Should have WaitForCompletion parameter' {
+            $command.Parameters.Keys | Should -Contain 'WaitForCompletion'
+        }
+
+        It 'Should have WaitTimeoutMinutes parameter' {
+            $command.Parameters.Keys | Should -Contain 'WaitTimeoutMinutes'
+        }
+
+        It 'Should have PollIntervalSeconds parameter' {
+            $command.Parameters.Keys | Should -Contain 'PollIntervalSeconds'
+        }
+
+        It 'MaxFailurePercent should have range validation 0-100' {
+            $attrs = $command.Parameters['MaxFailurePercent'].Attributes | Where-Object { $_ -is [System.Management.Automation.ValidateRangeAttribute] }
+            $attrs | Should -Not -BeNullOrEmpty
+            $attrs.MinRange | Should -Be 0
+            $attrs.MaxRange | Should -Be 100
+        }
+
+        It 'MinSuccessPercent should have range validation 0-100' {
+            $attrs = $command.Parameters['MinSuccessPercent'].Attributes | Where-Object { $_ -is [System.Management.Automation.ValidateRangeAttribute] }
+            $attrs | Should -Not -BeNullOrEmpty
+            $attrs.MinRange | Should -Be 0
+            $attrs.MaxRange | Should -Be 100
+        }
+    }
+}
+
+Describe 'Function: Export-AzureLocalFleetState' {
+    
+    Context 'Parameter Validation' {
+        BeforeAll {
+            $command = Get-Command Export-AzureLocalFleetState
+        }
+
+        It 'Should have State parameter' {
+            $command.Parameters.Keys | Should -Contain 'State'
+        }
+
+        It 'Should have Path parameter' {
+            $command.Parameters.Keys | Should -Contain 'Path'
+        }
+    }
+
+    Context 'OutputType' {
+        It 'Should have OutputType of String' {
+            $outputTypes = (Get-Command Export-AzureLocalFleetState).OutputType
+            $outputTypes.Type.Name | Should -Contain 'String'
+        }
+    }
+}
+
+Describe 'Function: Resume-AzureLocalFleetUpdate' {
+    
+    Context 'Parameter Validation' {
+        BeforeAll {
+            $command = Get-Command Resume-AzureLocalFleetUpdate
+        }
+
+        It 'Should have StateFilePath parameter' {
+            $command.Parameters.Keys | Should -Contain 'StateFilePath'
+        }
+
+        It 'Should have State parameter' {
+            $command.Parameters.Keys | Should -Contain 'State'
+        }
+
+        It 'Should have RetryFailed parameter' {
+            $command.Parameters.Keys | Should -Contain 'RetryFailed'
+        }
+
+        It 'Should have MaxRetries parameter' {
+            $command.Parameters.Keys | Should -Contain 'MaxRetries'
+        }
+
+        It 'Should have Force parameter' {
+            $command.Parameters.Keys | Should -Contain 'Force'
+        }
+
+        It 'Should have PassThru parameter' {
+            $command.Parameters.Keys | Should -Contain 'PassThru'
+        }
+    }
+
+    Context 'Parameter Sets' {
+        BeforeAll {
+            $command = Get-Command Resume-AzureLocalFleetUpdate
+        }
+
+        It 'Should have ByPath parameter set' {
+            $command.ParameterSets.Name | Should -Contain 'ByPath'
+        }
+
+        It 'Should have ByState parameter set' {
+            $command.ParameterSets.Name | Should -Contain 'ByState'
+        }
+    }
+}
+
+Describe 'Function: Stop-AzureLocalFleetUpdate' {
+    
+    Context 'Parameter Validation' {
+        BeforeAll {
+            $command = Get-Command Stop-AzureLocalFleetUpdate
+        }
+
+        It 'Should have SaveState parameter' {
+            $command.Parameters.Keys | Should -Contain 'SaveState'
+        }
+
+        It 'Should have StateFilePath parameter' {
+            $command.Parameters.Keys | Should -Contain 'StateFilePath'
+        }
+    }
+}
+
+Describe 'Fleet Functions: Naming Conventions' {
+    
+    Context 'Noun Prefix Consistency' {
+        It 'All fleet functions should use AzureLocal noun prefix' {
+            $fleetFunctions = @(
+                'Invoke-AzureLocalFleetOperation',
+                'Get-AzureLocalFleetProgress',
+                'Test-AzureLocalFleetHealthGate',
+                'Export-AzureLocalFleetState',
+                'Resume-AzureLocalFleetUpdate',
+                'Stop-AzureLocalFleetUpdate'
+            )
+            
+            foreach ($func in $fleetFunctions) {
+                $noun = $func.Split('-')[1]
+                $noun | Should -BeLike 'AzureLocal*' -Because "$func should use AzureLocal noun prefix"
+            }
+        }
+    }
+}
+
+#endregion Fleet-Scale Operations Tests
