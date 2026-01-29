@@ -3,7 +3,7 @@
     RootModule = 'AzStackHci.ManageUpdates.psm1'
 
     # Version number of this module.
-    ModuleVersion = '0.4.0'
+    ModuleVersion = '0.4.1'
 
     # Supported PSEditions
     CompatiblePSEditions = @('Desktop', 'Core')
@@ -65,6 +65,9 @@
 
             # ReleaseNotes of this module
             ReleaseNotes = @'
+## Version 0.4.1
+- FIXED: Azure Resource Graph queries in Get-AzureLocalClusterInventory, Start-AzureLocalClusterUpdate, and Get-AzureLocalClusterUpdateReadiness were returning incorrect resource types (mixed resources instead of clusters only) due to HERE-STRING query format causing malformed az CLI commands
+
 ## Version 0.4.0
 - NEW: Get-AzureLocalClusterInventory function to query all clusters and their UpdateRing tag status
 - NEW: CSV-based workflow for managing UpdateRing tags (export inventory, edit in Excel, import back)

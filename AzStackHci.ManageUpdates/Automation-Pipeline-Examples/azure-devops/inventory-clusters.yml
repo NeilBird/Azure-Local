@@ -63,6 +63,7 @@ stages:
                 # Build parameters
                 $params = @{
                     ExportCsvPath = $csvPath
+                    PassThru      = $true  # Return objects for pipeline processing
                 }
                 
                 # Add subscription filter if provided

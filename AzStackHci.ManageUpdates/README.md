@@ -1,10 +1,17 @@
 # Azure Local - Managing Updates Module (AzStackHci.ManageUpdates)
 
-**Latest Version:** v0.4.0
+**Latest Version:** v0.4.1
 
 This folder contains the 'AzStackHci.ManageUpdates' PowerShell module for managing updates on Azure Local (Azure Stack HCI) clusters using the Azure Stack HCI REST API. The module supports both interactive use and CI/CD automation via Service Principal authentication.
 
 Azure Stack HCI REST API specification (includes update management endpoints): https://github.com/Azure/azure-rest-api-specs/blob/main/specification/azurestackhci/resource-manager/Microsoft.AzureStackHCI/StackHCI/stable/2025-10-01/hci.json
+
+## What's New in v0.4.1
+
+### 🐛 Bug Fix
+- **CRITICAL**: Fixed Azure Resource Graph queries in `Get-AzureLocalClusterInventory`, `Start-AzureLocalClusterUpdate`, and `Get-AzureLocalClusterUpdateReadiness` that were returning incorrect resource types (mixed resources like networkInterfaces, virtualHardDisks instead of clusters only). The issue was caused by HERE-STRING query format causing malformed az CLI commands. Queries now use single-line string format.
+
+---
 
 ## What's New in v0.4.0
 
@@ -446,6 +453,7 @@ Gets an inventory of all Azure Local clusters with their UpdateRing tag status. 
 **Parameters:**
 - `-SubscriptionId` (Optional): Limit query to a specific Azure subscription
 - `-ExportCsvPath` (Optional): Export inventory to CSV file for editing
+- `-PassThru` (Optional): Return inventory objects even when exporting to CSV. Useful for CI/CD pipelines that need both the CSV artifact and objects for processing.
 
 **Output Columns:**
 | Column | Description |
@@ -474,6 +482,18 @@ Set-AzureLocalClusterUpdateRingTag -InputCsvPath "C:\Temp\ClusterInventory.csv"
 
 # Step 4: Update clusters by their UpdateRing tag
 Start-AzureLocalClusterUpdate -ScopeByUpdateRingTag -UpdateRingValue "Wave1" -Force
+```
+
+**CI/CD Pipeline Example (with -PassThru):**
+
+```powershell
+# Export to CSV AND return objects for pipeline processing
+$inventory = Get-AzureLocalClusterInventory -ExportCsvPath "./artifacts/inventory.csv" -PassThru
+
+# Use returned objects for pipeline logic
+Write-Host "Total clusters: $($inventory.Count)"
+$withoutTag = ($inventory | Where-Object { $_.HasUpdateRingTag -eq 'No' }).Count
+Write-Host "Clusters needing UpdateRing tag: $withoutTag"
 ```
 
 **Sample Output:**

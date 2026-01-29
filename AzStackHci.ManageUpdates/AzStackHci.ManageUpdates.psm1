@@ -915,13 +915,8 @@ function Start-AzureLocalClusterUpdate {
                 throw "Failed to ensure Azure CLI 'resource-graph' extension is available. Please install manually: az extension add --name resource-graph"
             }
             
-            # Build Azure Resource Graph query to find clusters by tag
-            $argQuery = @"
-resources
-| where type =~ 'Microsoft.AzureStackHCI/clusters'
-| where tags['UpdateRing'] =~ '$UpdateRingValue'
-| project id, name, resourceGroup, subscriptionId, tags
-"@
+            # Build Azure Resource Graph query to find clusters by tag - use single line to avoid escaping issues with az CLI
+            $argQuery = "resources | where type =~ 'microsoft.azurestackhci/clusters' | where tags['UpdateRing'] =~ '$UpdateRingValue' | project id, name, resourceGroup, subscriptionId, tags"
             
             Write-Verbose "ARG Query: $argQuery"
             
@@ -1874,12 +1869,8 @@ function Get-AzureLocalClusterUpdateReadiness {
         
         Write-Host "Querying Azure Resource Graph for clusters with tag 'UpdateRing' = '$UpdateRingValue'..." -ForegroundColor Yellow
         
-        $argQuery = @"
-resources
-| where type =~ 'Microsoft.AzureStackHCI/clusters'
-| where tags['UpdateRing'] =~ '$UpdateRingValue'
-| project id, name, resourceGroup, subscriptionId, tags
-"@
+        # Build Azure Resource Graph query - use single line to avoid escaping issues with az CLI
+        $argQuery = "resources | where type =~ 'microsoft.azurestackhci/clusters' | where tags['UpdateRing'] =~ '$UpdateRingValue' | project id, name, resourceGroup, subscriptionId, tags"
         
         try {
             $argResult = az graph query -q $argQuery --first 1000 2>&1
@@ -2227,8 +2218,13 @@ function Get-AzureLocalClusterInventory {
         # Edit the CSV in Excel to populate UpdateRing values
         Set-AzureLocalClusterUpdateRingTag -InputCsvPath "C:\Temp\Inventory.csv"
 
+    .EXAMPLE
+        # CI/CD pipeline: Export to CSV AND return objects for processing
+        $inventory = Get-AzureLocalClusterInventory -ExportCsvPath "C:\Temp\Inventory.csv" -PassThru
+        Write-Host "Found $($inventory.Count) clusters"
+
     .NOTES
-        Version: 0.4.0
+        Version: 0.4.1
         Author: Neil Bird, Microsoft.
     #>
     [CmdletBinding()]
@@ -2238,7 +2234,10 @@ function Get-AzureLocalClusterInventory {
         [string]$SubscriptionId,
 
         [Parameter(Mandatory = $false)]
-        [string]$ExportCsvPath
+        [string]$ExportCsvPath,
+
+        [Parameter(Mandatory = $false)]
+        [switch]$PassThru
     )
 
     Write-Host ""
@@ -2267,13 +2266,8 @@ function Get-AzureLocalClusterInventory {
 
     Write-Host "Querying Azure Resource Graph for all Azure Local clusters..." -ForegroundColor Yellow
 
-    # Build Azure Resource Graph query
-    $argQuery = @"
-resources
-| where type =~ 'Microsoft.AzureStackHCI/clusters'
-| project id, name, resourceGroup, subscriptionId, tags
-| order by name asc
-"@
+    # Build Azure Resource Graph query - use single line to avoid escaping issues with az CLI
+    $argQuery = "resources | where type =~ 'microsoft.azurestackhci/clusters' | project id, name, resourceGroup, subscriptionId, tags | order by name asc"
 
     try {
         # Build the command with optional subscription filter
@@ -2298,9 +2292,6 @@ resources
             Write-Warning "No Azure Local clusters found."
             return @()
         }
-
-        Write-Host "Found $($clusters.data.Count) Azure Local cluster(s)" -ForegroundColor Green
-        Write-Host ""
 
         # Get subscription names for better readability
         Write-Host "Retrieving subscription details..." -ForegroundColor Yellow
@@ -2343,25 +2334,10 @@ resources
             $inventory += $inventoryItem
         }
 
-        # Display summary
-        Write-Host ""
-        Write-Host "Inventory Summary:" -ForegroundColor Cyan
-        Write-Host "  Total Clusters: $($inventory.Count)" -ForegroundColor White
-        
+        # Calculate summary statistics
         $clustersWithTag = ($inventory | Where-Object { $_.HasUpdateRingTag -eq "Yes" }).Count
         $clustersWithoutTag = $inventory.Count - $clustersWithTag
-        Write-Host "  Clusters with UpdateRing tag: $clustersWithTag" -ForegroundColor $(if ($clustersWithTag -gt 0) { "Green" } else { "Gray" })
-        Write-Host "  Clusters without UpdateRing tag: $clustersWithoutTag" -ForegroundColor $(if ($clustersWithoutTag -gt 0) { "Yellow" } else { "Gray" })
-
-        # Group by UpdateRing value
         $ringGroups = $inventory | Where-Object { $_.UpdateRing -ne "" } | Group-Object -Property UpdateRing
-        if ($ringGroups.Count -gt 0) {
-            Write-Host ""
-            Write-Host "  UpdateRing Distribution:" -ForegroundColor White
-            foreach ($group in $ringGroups | Sort-Object Name) {
-                Write-Host "    $($group.Name): $($group.Count) cluster(s)" -ForegroundColor Green
-            }
-        }
 
         # Export to CSV if path specified
         if ($ExportCsvPath) {
@@ -2375,23 +2351,47 @@ resources
                 # Export inventory (without HasUpdateRingTag column for cleaner CSV)
                 $inventory | Select-Object ClusterName, ResourceGroup, SubscriptionId, SubscriptionName, UpdateRing, ResourceId | 
                     Export-Csv -Path $ExportCsvPath -NoTypeInformation -Force
-
-                Write-Host ""
-                Write-Host "Inventory exported to: $ExportCsvPath" -ForegroundColor Green
-                Write-Host ""
-                Write-Host "Next Steps:" -ForegroundColor Cyan
-                Write-Host "  1. Open the CSV in Excel" -ForegroundColor White
-                Write-Host "  2. Populate the 'UpdateRing' column with values (e.g., 'Wave1', 'Wave2', 'Pilot')" -ForegroundColor White
-                Write-Host "  3. Save the CSV file" -ForegroundColor White
-                Write-Host "  4. Run: Set-AzureLocalClusterUpdateRingTag -InputCsvPath '$ExportCsvPath'" -ForegroundColor Yellow
             }
             catch {
                 Write-Error "Failed to export inventory: $($_.Exception.Message)"
             }
         }
 
+        # Display summary at the end
         Write-Host ""
-        return $inventory
+        Write-Host "Inventory Summary:" -ForegroundColor Cyan
+        Write-Host "  Total Clusters: $($inventory.Count)" -ForegroundColor White
+        Write-Host "  Clusters with UpdateRing tag: $clustersWithTag" -ForegroundColor $(if ($clustersWithTag -gt 0) { "Green" } else { "Gray" })
+        Write-Host "  Clusters without UpdateRing tag: $clustersWithoutTag" -ForegroundColor $(if ($clustersWithoutTag -gt 0) { "Yellow" } else { "Gray" })
+
+        # Group by UpdateRing value
+        if ($ringGroups.Count -gt 0) {
+            Write-Host ""
+            Write-Host "  UpdateRing Distribution:" -ForegroundColor White
+            foreach ($group in $ringGroups | Sort-Object Name) {
+                Write-Host "    $($group.Name): $($group.Count) cluster(s)" -ForegroundColor Green
+            }
+        }
+
+        # Show export path and next steps if CSV was exported
+        if ($ExportCsvPath -and (Test-Path -Path $ExportCsvPath)) {
+            Write-Host ""
+            Write-Host "Inventory exported to: $ExportCsvPath" -ForegroundColor Green
+            Write-Host ""
+            Write-Host "Next Steps:" -ForegroundColor Cyan
+            Write-Host "  1. Open the CSV in Excel" -ForegroundColor White
+            Write-Host "  2. Populate the 'UpdateRing' column with values (e.g., 'Wave1', 'Wave2', 'Pilot')" -ForegroundColor White
+            Write-Host "  3. Save the CSV file" -ForegroundColor White
+            Write-Host "  4. Run: Set-AzureLocalClusterUpdateRingTag -InputCsvPath '$ExportCsvPath'" -ForegroundColor Yellow
+        }
+
+        Write-Host ""
+        
+        # Return inventory if: no CSV export, OR PassThru is specified
+        # This allows CI/CD pipelines to use -PassThru to get objects for processing
+        if (-not $ExportCsvPath -or $PassThru) {
+            return $inventory
+        }
     }
     catch {
         Write-Error "Error querying Azure Resource Graph: $($_.Exception.Message)"
