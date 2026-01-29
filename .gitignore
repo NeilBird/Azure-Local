@@ -1,0 +1,23 @@
+# Test Results
+**/TestResults/*.html
+**/TestResults/*.xml
+
+# PowerShell logs
+*.log
+*.transcript.log
+
+# Module output
+**/ProgramData/
+
+# IDE
+.vscode/settings.json
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.temp
+~$*
