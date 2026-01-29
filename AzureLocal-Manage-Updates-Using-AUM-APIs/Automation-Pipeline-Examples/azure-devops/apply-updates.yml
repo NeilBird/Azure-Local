@@ -1,0 +1,312 @@
+# Apply Updates to Azure Local Clusters
+# This pipeline applies updates to clusters filtered by UpdateRing tag value
+
+trigger: none
+
+parameters:
+  - name: updateRing
+    displayName: 'UpdateRing tag value to target'
+    type: string
+    default: 'Wave1'
+    values:
+      - Wave1
+      - Wave2
+      - Wave3
+      - Pilot
+      - Production
+  
+  - name: updateName
+    displayName: 'Specific update version (leave empty for latest ready update)'
+    type: string
+    default: ''
+  
+  - name: dryRun
+    displayName: 'Preview which clusters would be updated (WhatIf mode)'
+    type: boolean
+    default: true
+
+variables:
+  - name: modulePath
+    value: '$(System.DefaultWorkingDirectory)/AzureLocal-Manage-Updates-Using-AUM-APIs'
+
+pool:
+  vmImage: 'windows-latest'
+
+stages:
+  # Stage 1: Check Readiness
+  - stage: CheckReadiness
+    displayName: 'Check Update Readiness'
+    jobs:
+      - job: ReadinessCheck
+        displayName: 'Assess Cluster Readiness'
+        
+        steps:
+          - checkout: self
+            displayName: 'Checkout Repository'
+          
+          - task: AzureCLI@2
+            displayName: 'Install Resource Graph Extension'
+            inputs:
+              azureSubscription: 'AzureLocal-ServiceConnection'  # Update with your service connection name
+              scriptType: 'pscore'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                az extension add --name resource-graph --yes
+          
+          - task: AzureCLI@2
+            displayName: 'Check Cluster Readiness'
+            name: readiness
+            inputs:
+              azureSubscription: 'AzureLocal-ServiceConnection'  # Update with your service connection name
+              scriptType: 'pscore'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                Import-Module "$(modulePath)/AzStackHci.ManageUpdates.psd1" -Force
+                
+                $updateRing = "${{ parameters.updateRing }}"
+                
+                Write-Host "Checking readiness for clusters with UpdateRing = '$updateRing'"
+                
+                # Create output directory
+                $outputDir = "$(Build.ArtifactStagingDirectory)"
+                $csvPath = Join-Path $outputDir "readiness-report.csv"
+                
+                # Run readiness check
+                $results = Get-AzureLocalClusterUpdateReadiness `
+                    -ScopeByUpdateRingTag `
+                    -UpdateRingValue $updateRing `
+                    -ExportCsvPath $csvPath
+                
+                $totalCount = $results.Count
+                $readyCount = ($results | Where-Object { $_.ReadyForUpdate -eq $true }).Count
+                $notReadyCount = $totalCount - $readyCount
+                
+                Write-Host ""
+                Write-Host "========================================" -ForegroundColor Cyan
+                Write-Host "Readiness Summary" -ForegroundColor Cyan
+                Write-Host "========================================" -ForegroundColor Cyan
+                Write-Host "Total Clusters: $totalCount"
+                Write-Host "Ready for Update: $readyCount"
+                Write-Host "Not Ready: $notReadyCount"
+                
+                # Set output variables
+                Write-Host "##vso[task.setvariable variable=TotalCount;isOutput=true]$totalCount"
+                Write-Host "##vso[task.setvariable variable=ReadyCount;isOutput=true]$readyCount"
+                Write-Host "##vso[task.setvariable variable=NotReadyCount;isOutput=true]$notReadyCount"
+                
+                if ($readyCount -eq 0) {
+                    Write-Host "##vso[task.logissue type=warning]No clusters are ready for updates in ring '$updateRing'"
+                }
+          
+          - task: PublishBuildArtifacts@1
+            displayName: 'Publish Readiness Report'
+            inputs:
+              PathtoPublish: '$(Build.ArtifactStagingDirectory)'
+              ArtifactName: 'readiness-report'
+              publishLocation: 'Container'
+
+  # Stage 2: Apply Updates (with approval gate for production)
+  - stage: ApplyUpdates
+    displayName: 'Apply Updates'
+    dependsOn: CheckReadiness
+    condition: and(succeeded(), gt(dependencies.CheckReadiness.outputs['ReadinessCheck.readiness.ReadyCount'], 0))
+    
+    # Optional: Add environment with approval for production rings
+    # Uncomment the following lines to enable manual approval
+    # variables:
+    #   - name: environment
+    #     ${{ if eq(parameters.updateRing, 'Production') }}:
+    #       value: 'Production'
+    #     ${{ else }}:
+    #       value: 'Development'
+    
+    jobs:
+      # Optional: Manual validation job for production
+      # - job: WaitForApproval
+      #   displayName: 'Wait for Approval'
+      #   condition: eq('${{ parameters.updateRing }}', 'Production')
+      #   pool: server
+      #   steps:
+      #     - task: ManualValidation@0
+      #       inputs:
+      #         notifyUsers: 'your-approvers-email@company.com'
+      #         instructions: 'Please review the readiness report and approve to proceed with Production updates.'
+      
+      - job: ApplyClusterUpdates
+        displayName: 'Apply Cluster Updates'
+        # dependsOn: WaitForApproval
+        # condition: or(ne('${{ parameters.updateRing }}', 'Production'), succeeded('WaitForApproval'))
+        
+        variables:
+          readyCount: $[ stageDependencies.CheckReadiness.ReadinessCheck.outputs['readiness.ReadyCount'] ]
+          totalCount: $[ stageDependencies.CheckReadiness.ReadinessCheck.outputs['readiness.TotalCount'] ]
+        
+        steps:
+          - checkout: self
+            displayName: 'Checkout Repository'
+          
+          - task: AzureCLI@2
+            displayName: 'Install Resource Graph Extension'
+            inputs:
+              azureSubscription: 'AzureLocal-ServiceConnection'  # Update with your service connection name
+              scriptType: 'pscore'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                az extension add --name resource-graph --yes
+          
+          - task: AzureCLI@2
+            displayName: 'Apply Updates'
+            name: applyUpdates
+            inputs:
+              azureSubscription: 'AzureLocal-ServiceConnection'  # Update with your service connection name
+              scriptType: 'pscore'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                Import-Module "$(modulePath)/AzStackHci.ManageUpdates.psd1" -Force
+                
+                $updateRing = "${{ parameters.updateRing }}"
+                $updateName = "${{ parameters.updateName }}"
+                $dryRun = [System.Convert]::ToBoolean("${{ parameters.dryRun }}")
+                
+                # Create output directory
+                $outputDir = "$(Build.ArtifactStagingDirectory)"
+                $junitPath = Join-Path $outputDir "update-results.xml"
+                
+                # Build parameters
+                $params = @{
+                    ScopeByUpdateRingTag = $true
+                    UpdateRingValue = $updateRing
+                    Force = $true
+                    LogFolderPath = $outputDir
+                    ExportResultsPath = $junitPath
+                }
+                
+                if ($updateName -and $updateName -ne '') {
+                    $params['UpdateName'] = $updateName
+                    Write-Host "Applying specific update: $updateName"
+                }
+                
+                if ($dryRun) {
+                    $params['WhatIf'] = $true
+                    Write-Host "##vso[task.logissue type=warning]DRY RUN MODE - No updates will be applied"
+                }
+                
+                Write-Host ""
+                Write-Host "========================================" -ForegroundColor Cyan
+                Write-Host "Applying Updates to UpdateRing: $updateRing" -ForegroundColor Cyan
+                Write-Host "========================================" -ForegroundColor Cyan
+                
+                # Run updates
+                $results = Start-AzureLocalClusterUpdate @params
+                
+                Write-Host ""
+                Write-Host "Update operation complete"
+                
+                # Count results
+                $succeeded = ($results | Where-Object { $_.Status -eq 'Started' -or $_.Status -eq 'Success' }).Count
+                $skipped = ($results | Where-Object { $_.Status -eq 'Skipped' }).Count
+                $failed = ($results | Where-Object { $_.Status -eq 'Failed' }).Count
+                
+                Write-Host "##vso[task.setvariable variable=Succeeded;isOutput=true]$succeeded"
+                Write-Host "##vso[task.setvariable variable=Skipped;isOutput=true]$skipped"
+                Write-Host "##vso[task.setvariable variable=Failed;isOutput=true]$failed"
+                
+                if ($failed -gt 0) {
+                    Write-Host "##vso[task.logissue type=error]$failed cluster(s) failed to start updates"
+                }
+          
+          - task: PublishBuildArtifacts@1
+            displayName: 'Publish Update Logs'
+            inputs:
+              PathtoPublish: '$(Build.ArtifactStagingDirectory)'
+              ArtifactName: 'update-logs'
+              publishLocation: 'Container'
+          
+          - task: PublishTestResults@2
+            displayName: 'Publish Test Results'
+            condition: always()
+            inputs:
+              testResultsFormat: 'JUnit'
+              testResultsFiles: '$(Build.ArtifactStagingDirectory)/update-results.xml'
+              testRunTitle: 'Azure Local Cluster Updates - ${{ parameters.updateRing }}'
+          
+          - task: PowerShell@2
+            displayName: 'Generate Summary'
+            inputs:
+              targetType: 'inline'
+              script: |
+                $updateRing = "${{ parameters.updateRing }}"
+                $dryRun = [System.Convert]::ToBoolean("${{ parameters.dryRun }}")
+                $readyCount = "$(readyCount)"
+                $totalCount = "$(totalCount)"
+                
+                $summary = @"
+                # Update Application Summary
+                
+                **Target UpdateRing:** $updateRing
+                
+                ## Readiness
+                
+                | Metric | Count |
+                |--------|-------|
+                | Total Clusters | $totalCount |
+                | Ready for Update | $readyCount |
+                "@
+                
+                if ($dryRun) {
+                    $summary += "`n`n⚠️ **This was a dry run. No updates were applied.**"
+                    $summary += "`n`nRe-run the pipeline with 'Preview' set to false to apply updates."
+                }
+                
+                $summary | Out-File "$(Build.ArtifactStagingDirectory)/summary.md" -Encoding UTF8
+                Write-Host "##vso[task.uploadsummary]$(Build.ArtifactStagingDirectory)/summary.md"
+
+  # Stage 3: Handle no ready clusters
+  - stage: NoClustersReady
+    displayName: 'No Clusters Ready'
+    dependsOn: CheckReadiness
+    condition: and(succeeded(), eq(dependencies.CheckReadiness.outputs['ReadinessCheck.readiness.ReadyCount'], 0))
+    
+    jobs:
+      - job: ReportNoReadyClusters
+        displayName: 'Report Status'
+        
+        variables:
+          totalCount: $[ stageDependencies.CheckReadiness.ReadinessCheck.outputs['readiness.TotalCount'] ]
+        
+        steps:
+          - task: PowerShell@2
+            displayName: 'Generate Report'
+            inputs:
+              targetType: 'inline'
+              script: |
+                $updateRing = "${{ parameters.updateRing }}"
+                $totalCount = "$(totalCount)"
+                
+                Write-Host "##vso[task.logissue type=warning]No clusters are ready for updates in ring '$updateRing'"
+                
+                $summary = @"
+                # No Clusters Ready for Update
+                
+                **Target UpdateRing:** $updateRing
+                "@
+                
+                if ($totalCount -eq 0) {
+                    $summary += "`n`n⚠️ No clusters found with UpdateRing tag value '$updateRing'"
+                } else {
+                    $summary += @"
+                
+                ⚠️ Found $totalCount cluster(s) with UpdateRing='$updateRing', but none are ready for updates.
+                
+                **Possible reasons:**
+                - Clusters may already be up to date
+                - Updates may be in progress
+                - Clusters may have health check failures
+                
+                Download the readiness report artifact for details.
+                "@
+                }
+                
+                $summary | Out-File "$(Build.ArtifactStagingDirectory)/summary.md" -Encoding UTF8 -Force
+                New-Item -ItemType Directory -Path "$(Build.ArtifactStagingDirectory)" -Force | Out-Null
+                Write-Host "##vso[task.uploadsummary]$(Build.ArtifactStagingDirectory)/summary.md"

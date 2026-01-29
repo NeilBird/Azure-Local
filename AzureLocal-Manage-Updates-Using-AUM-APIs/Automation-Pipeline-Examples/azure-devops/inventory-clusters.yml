@@ -1,0 +1,126 @@
+# Inventory Azure Local Clusters
+# This pipeline queries all Azure Local clusters and exports inventory with UpdateRing tag status
+
+trigger: none
+
+schedules:
+  # Run weekly on Monday at 6:00 AM UTC
+  - cron: '0 6 * * 1'
+    displayName: 'Weekly Inventory'
+    branches:
+      include:
+        - main
+    always: true
+
+parameters:
+  - name: subscriptionFilter
+    displayName: 'Subscription ID Filter (leave empty for all subscriptions)'
+    type: string
+    default: ''
+
+variables:
+  - name: modulePath
+    value: '$(System.DefaultWorkingDirectory)/AzureLocal-Manage-Updates-Using-AUM-APIs'
+
+pool:
+  vmImage: 'windows-latest'
+
+stages:
+  - stage: Inventory
+    displayName: 'Inventory Azure Local Clusters'
+    jobs:
+      - job: InventoryClusters
+        displayName: 'Run Cluster Inventory'
+        
+        steps:
+          - checkout: self
+            displayName: 'Checkout Repository'
+          
+          - task: AzureCLI@2
+            displayName: 'Install Resource Graph Extension'
+            inputs:
+              azureSubscription: 'AzureLocal-ServiceConnection'  # Update with your service connection name
+              scriptType: 'pscore'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                az extension add --name resource-graph --yes
+          
+          - task: AzureCLI@2
+            displayName: 'Run Cluster Inventory'
+            inputs:
+              azureSubscription: 'AzureLocal-ServiceConnection'  # Update with your service connection name
+              scriptType: 'pscore'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                Import-Module "$(modulePath)/AzStackHci.ManageUpdates.psd1" -Force
+                
+                # Create output directory
+                $outputDir = "$(Build.ArtifactStagingDirectory)"
+                
+                $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
+                $csvPath = Join-Path $outputDir "ClusterInventory_$timestamp.csv"
+                
+                # Build parameters
+                $params = @{
+                    ExportCsvPath = $csvPath
+                }
+                
+                # Add subscription filter if provided
+                $subFilter = "${{ parameters.subscriptionFilter }}"
+                if ($subFilter -and $subFilter -ne '') {
+                    $params['SubscriptionId'] = $subFilter
+                    Write-Host "Filtering to subscription: $subFilter"
+                } else {
+                    Write-Host "Querying all accessible subscriptions"
+                }
+                
+                # Run inventory
+                $inventory = Get-AzureLocalClusterInventory @params
+                
+                # Output summary
+                Write-Host ""
+                Write-Host "========================================" -ForegroundColor Cyan
+                Write-Host "Inventory Complete" -ForegroundColor Cyan
+                Write-Host "========================================" -ForegroundColor Cyan
+                Write-Host "Total Clusters: $($inventory.Count)"
+                Write-Host "CSV exported to: $csvPath"
+                
+                # Generate summary for pipeline
+                $withTag = ($inventory | Where-Object { $_.HasUpdateRingTag -eq 'Yes' }).Count
+                $withoutTag = ($inventory | Where-Object { $_.HasUpdateRingTag -eq 'No' }).Count
+                
+                Write-Host "##vso[task.setvariable variable=TotalClusters]$($inventory.Count)"
+                Write-Host "##vso[task.setvariable variable=WithTag]$withTag"
+                Write-Host "##vso[task.setvariable variable=WithoutTag]$withoutTag"
+          
+          - task: PublishBuildArtifacts@1
+            displayName: 'Publish Inventory Artifact'
+            inputs:
+              PathtoPublish: '$(Build.ArtifactStagingDirectory)'
+              ArtifactName: 'cluster-inventory'
+              publishLocation: 'Container'
+          
+          - task: PowerShell@2
+            displayName: 'Generate Summary'
+            inputs:
+              targetType: 'inline'
+              script: |
+                Write-Host "##vso[task.uploadsummary]$(Build.ArtifactStagingDirectory)/summary.md"
+                
+                $summary = @"
+                # Cluster Inventory Summary
+                
+                | Metric | Value |
+                |--------|-------|
+                | Total Clusters | $(TotalClusters) |
+                | With UpdateRing Tag | $(WithTag) |
+                | Without UpdateRing Tag | $(WithoutTag) |
+                
+                ## Next Steps
+                
+                1. Download the CSV artifact from this build
+                2. Open in Excel and set UpdateRing values for clusters
+                3. Run the "Manage UpdateRing Tags" pipeline with the updated CSV
+                "@
+                
+                $summary | Out-File "$(Build.ArtifactStagingDirectory)/summary.md" -Encoding UTF8

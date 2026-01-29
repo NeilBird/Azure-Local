@@ -1,0 +1,174 @@
+# Manage UpdateRing Tags
+# This workflow creates or updates UpdateRing tags on Azure Local clusters from a CSV file
+#
+# WORKFLOW:
+#   1. Run the "Inventory Azure Local Clusters" workflow first
+#   2. Download the CSV artifact from that workflow run
+#   3. Edit the CSV in Excel - populate the 'UpdateRing' column with values (e.g., Wave1, Wave2, Production)
+#   4. Commit the edited CSV to your repository (e.g., to a 'config/' folder)
+#   5. Run this workflow and specify the path to your committed CSV file
+#
+# NOTE: GitHub Actions does not support file uploads as workflow inputs.
+#       The edited CSV must be committed to the repository first.
+
+name: Manage UpdateRing Tags
+
+on:
+  workflow_dispatch:
+    inputs:
+      csv_file_path:
+        description: 'Path to edited CSV file in repository (e.g., config/ClusterInventory_Updated.csv)'
+        required: true
+        default: 'config/ClusterUpdateRings.csv'
+      force_overwrite:
+        description: 'Force overwrite existing UpdateRing tags'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
+      dry_run:
+        description: 'Preview changes without applying (WhatIf mode)'
+        required: false
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+
+env:
+  MODULE_PATH: './AzureLocal-Manage-Updates-Using-AUM-APIs'
+
+jobs:
+  manage-tags:
+    name: Manage UpdateRing Tags
+    runs-on: windows-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+    
+    - name: Azure CLI Login
+      uses: azure/login@v2
+      with:
+        creds: '{"clientId":"${{ secrets.AZURE_CLIENT_ID }}","clientSecret":"${{ secrets.AZURE_CLIENT_SECRET }}","subscriptionId":"${{ secrets.AZURE_SUBSCRIPTION_ID }}","tenantId":"${{ secrets.AZURE_TENANT_ID }}"}'
+    
+    - name: Validate CSV File Exists
+      shell: pwsh
+      run: |
+        $csvPath = "${{ github.event.inputs.csv_file_path }}"
+        
+        if (-not (Test-Path $csvPath)) {
+            Write-Host "ERROR: CSV file not found: $csvPath" -ForegroundColor Red
+            Write-Host ""
+            Write-Host "To use this workflow:" -ForegroundColor Yellow
+            Write-Host "1. Run the 'Inventory Azure Local Clusters' workflow first"
+            Write-Host "2. Download the CSV artifact from that workflow run"
+            Write-Host "3. Edit the CSV in Excel - set UpdateRing values for each cluster"
+            Write-Host "4. Commit the edited CSV to your repository"
+            Write-Host "5. Run this workflow with the path to your committed CSV file"
+            Write-Host ""
+            Write-Host "Example: If you committed the file to 'config/ClusterUpdateRings.csv', enter that path."
+            exit 1
+        }
+        
+        Write-Host "Found CSV file: $csvPath"
+        echo "CSV_PATH=$csvPath" >> $env:GITHUB_OUTPUT
+      id: csv-path
+    
+    - name: Validate CSV File
+      shell: pwsh
+      run: |
+        $csvPath = "${{ steps.csv-path.outputs.CSV_PATH }}"
+        $data = Import-Csv $csvPath
+        
+        Write-Host "CSV File: $csvPath"
+        Write-Host "Total Rows: $($data.Count)"
+        
+        # Check required columns
+        $requiredColumns = @('ResourceId', 'UpdateRing')
+        $columns = $data[0].PSObject.Properties.Name
+        
+        foreach ($col in $requiredColumns) {
+            if ($col -notin $columns) {
+                Write-Error "Required column '$col' not found in CSV"
+                exit 1
+            }
+        }
+        
+        # Count rows with UpdateRing values
+        $rowsWithValues = ($data | Where-Object { $_.UpdateRing -and $_.UpdateRing.Trim() -ne '' }).Count
+        Write-Host "Rows with UpdateRing values: $rowsWithValues"
+        
+        if ($rowsWithValues -eq 0) {
+            Write-Warning "No rows have UpdateRing values set. Please edit the CSV and set UpdateRing values before running this pipeline."
+            exit 1
+        }
+    
+    - name: Apply UpdateRing Tags
+      shell: pwsh
+      run: |
+        Import-Module "${{ env.MODULE_PATH }}/AzStackHci.ManageUpdates.psd1" -Force
+        
+        $csvPath = "${{ steps.csv-path.outputs.CSV_PATH }}"
+        $forceOverwrite = "${{ github.event.inputs.force_overwrite }}" -eq "true"
+        $dryRun = "${{ github.event.inputs.dry_run }}" -eq "true"
+        
+        # Create output directory for logs
+        $outputDir = "./artifacts"
+        New-Item -ItemType Directory -Path $outputDir -Force | Out-Null
+        
+        # Build parameters
+        $params = @{
+            InputCsvPath = $csvPath
+            LogFolderPath = $outputDir
+        }
+        
+        if ($forceOverwrite) {
+            $params['Force'] = $true
+            Write-Host "Force mode enabled - will overwrite existing tags"
+        }
+        
+        if ($dryRun) {
+            $params['WhatIf'] = $true
+            Write-Host "DRY RUN MODE - No changes will be applied"
+        }
+        
+        Write-Host ""
+        Write-Host "========================================" -ForegroundColor Cyan
+        Write-Host "Applying UpdateRing Tags" -ForegroundColor Cyan
+        Write-Host "========================================" -ForegroundColor Cyan
+        
+        # Run tag management
+        Set-AzureLocalClusterUpdateRingTag @params
+        
+        Write-Host ""
+        Write-Host "Tag management complete"
+      id: apply-tags
+    
+    - name: Upload Log Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: updatering-tag-logs
+        path: ./artifacts/*
+        retention-days: 30
+    
+    - name: Summary
+      shell: pwsh
+      run: |
+        Write-Host "## UpdateRing Tag Management Summary" >> $env:GITHUB_STEP_SUMMARY
+        Write-Host "" >> $env:GITHUB_STEP_SUMMARY
+        
+        $dryRun = "${{ github.event.inputs.dry_run }}" -eq "true"
+        $forceOverwrite = "${{ github.event.inputs.force_overwrite }}" -eq "true"
+        
+        Write-Host "| Setting | Value |" >> $env:GITHUB_STEP_SUMMARY
+        Write-Host "|---------|-------|" >> $env:GITHUB_STEP_SUMMARY
+        Write-Host "| Dry Run | $dryRun |" >> $env:GITHUB_STEP_SUMMARY
+        Write-Host "| Force Overwrite | $forceOverwrite |" >> $env:GITHUB_STEP_SUMMARY
+        
+        if ($dryRun) {
+            Write-Host "" >> $env:GITHUB_STEP_SUMMARY
+            Write-Host "⚠️ **This was a dry run. No changes were applied.**" >> $env:GITHUB_STEP_SUMMARY
+        }

@@ -3,7 +3,7 @@
     RootModule = 'AzStackHci.ManageUpdates.psm1'
 
     # Version number of this module.
-    ModuleVersion = '0.1.1'
+    ModuleVersion = '0.4.0'
 
     # Supported PSEditions
     CompatiblePSEditions = @('Desktop', 'Core')
@@ -28,12 +28,15 @@
 
     # Functions to export from this module, for best performance, do not use wildcards and do not delete the entry, use an empty array if there are no functions to export.
     FunctionsToExport = @(
+        'Connect-AzureLocalServicePrincipal',
         'Start-AzureLocalClusterUpdate',
+        'Get-AzureLocalClusterUpdateReadiness',
+        'Get-AzureLocalClusterInventory',
         'Get-AzureLocalClusterInfo',
         'Get-AzureLocalUpdateSummary',
         'Get-AzureLocalAvailableUpdates',
         'Get-AzureLocalUpdateRuns',
-        'Write-Log'
+        'Set-AzureLocalClusterUpdateRingTag'
     )
 
     # Cmdlets to export from this module, for best performance, do not use wildcards and do not delete the entry, use an empty array if there are no cmdlets to export.
@@ -49,10 +52,10 @@
     PrivateData = @{
         PSData = @{
             # Tags applied to this module. These help with module discovery in online galleries.
-            Tags = @('Azure', 'AzureLocal', 'AzureStackHCI', 'Updates', 'UpdateManager', 'HCI')
+            Tags = @('Azure', 'AzureLocal', 'AzureStackHCI', 'Updates', 'UpdateManager', 'HCI', 'Automation', 'CICD')
 
             # A URL to the license for this module.
-            LicenseUri = ''
+            LicenseUri = 'https://github.com/NeilBird/Azure-Local/blob/main/LICENSE'
 
             # A URL to the main website for this project.
             ProjectUri = 'https://github.com/NeilBird/Azure-Local'
@@ -62,9 +65,43 @@
 
             # ReleaseNotes of this module
             ReleaseNotes = @'
-## Version 1.0.0
+## Version 0.4.0
+- NEW: Get-AzureLocalClusterInventory function to query all clusters and their UpdateRing tag status
+- NEW: CSV-based workflow for managing UpdateRing tags (export inventory, edit in Excel, import back)
+- NEW: Set-AzureLocalClusterUpdateRingTag now accepts -InputCsvPath parameter for bulk tag operations
+- NEW: JUnit XML export for CI/CD pipeline integration (Azure DevOps, GitHub Actions, Jenkins, GitLab CI)
+- IMPROVED: Renamed -ScopeByTagName to -ScopeByUpdateRingTag for clarity (now a switch parameter)
+- IMPROVED: Renamed -TagValue to -UpdateRingValue for consistency
+- IMPROVED: UpdateRing tag queries now use hardcoded 'UpdateRing' tag name for consistency
+- IMPROVED: -ExportResultsPath and -ExportCsvPath now support .xml extension for JUnit format
+- FIXED: PSScriptAnalyzer warnings (empty catch blocks, unused variables)
+
+## Version 0.3.0
+- NEW: Connect-AzureLocalServicePrincipal function for CI/CD automation (GitHub Actions, Azure DevOps)
+- NEW: Service Principal authentication via parameters or environment variables (AZURE_CLIENT_ID, AZURE_CLIENT_SECRET, AZURE_TENANT_ID)
+- IMPROVED: All functions now have [OutputType()] attributes for better IntelliSense
+- IMPROVED: Centralized API version constant for consistency
+- IMPROVED: Renamed internal function to use approved verb (Install-AzGraphExtension)
+- IMPROVED: Write-Log is now internal only (not exported)
+- IMPROVED: Added #Requires -Version 5.1 statement
+- IMPROVED: Added LicenseUri to manifest for PowerShell Gallery compliance
+- IMPROVED: Added 'Automation' and 'CICD' tags for discoverability
+
+## Version 0.2.0
+- NEW: Set-AzureLocalClusterUpdateRingTag function to manage UpdateRing tags on clusters
+- NEW: Auto-install Azure CLI resource-graph extension for pipeline/automation scenarios
+- NEW: Tag-based cluster filtering using -ScopeByUpdateRingTag and -UpdateRingValue parameters
+- IMPROVED: Health check filtering now shows only Critical and Warning severities (not Informational)
+- IMPROVED: Enhanced CSV diagnostics with health check failures and update run error details
+- IMPROVED: Get-AzureLocalClusterUpdateReadiness now supports tag-based scoping
+- FIX: Corrected API path for querying update run errors
+- Added -Force parameter support for tag operations to overwrite existing tags
+- Comprehensive logging for all tag operations with CSV output
+
+## Version 0.1.0
 - Initial release
 - Start-AzureLocalClusterUpdate: Start updates on one or more Azure Local clusters
+- Get-AzureLocalClusterUpdateReadiness: Assess update readiness with diagnostics
 - Get-AzureLocalClusterInfo: Retrieve cluster information
 - Get-AzureLocalUpdateSummary: Get update summary for a cluster
 - Get-AzureLocalAvailableUpdates: List available updates for a cluster

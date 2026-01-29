@@ -1,0 +1,178 @@
+# Manage UpdateRing Tags
+# This pipeline creates or updates UpdateRing tags on Azure Local clusters from a CSV file
+#
+# WORKFLOW:
+#   1. Run the "Inventory Azure Local Clusters" pipeline first
+#   2. Download the CSV artifact from that pipeline run
+#   3. Edit the CSV in Excel - populate the 'UpdateRing' column with values (e.g., Wave1, Wave2, Production)
+#   4. Commit the edited CSV to your repository (e.g., to a 'config/' folder)
+#   5. Run this pipeline and specify the path to your committed CSV file
+#
+# NOTE: Azure DevOps does not support file uploads as pipeline parameters.
+#       The edited CSV must be committed to the repository first.
+
+trigger: none
+
+parameters:
+  - name: csvFilePath
+    displayName: 'Path to edited CSV file in repository (e.g., config/ClusterUpdateRings.csv)'
+    type: string
+    default: 'config/ClusterUpdateRings.csv'
+  
+  - name: forceOverwrite
+    displayName: 'Force overwrite existing UpdateRing tags'
+    type: boolean
+    default: false
+  
+  - name: dryRun
+    displayName: 'Preview changes without applying (WhatIf mode)'
+    type: boolean
+    default: true
+
+variables:
+  - name: modulePath
+    value: '$(System.DefaultWorkingDirectory)/AzureLocal-Manage-Updates-Using-AUM-APIs'
+
+pool:
+  vmImage: 'windows-latest'
+
+stages:
+  - stage: ManageTags
+    displayName: 'Manage UpdateRing Tags'
+    jobs:
+      - job: ApplyTags
+        displayName: 'Apply UpdateRing Tags'
+        
+        steps:
+          - checkout: self
+            displayName: 'Checkout Repository'
+          
+          - task: PowerShell@2
+            displayName: 'Validate CSV File Exists'
+            inputs:
+              targetType: 'inline'
+              script: |
+                $csvPath = Join-Path "$(System.DefaultWorkingDirectory)" "${{ parameters.csvFilePath }}"
+                
+                if (-not (Test-Path $csvPath)) {
+                    Write-Host "##vso[task.logissue type=error]CSV file not found: ${{ parameters.csvFilePath }}"
+                    Write-Host ""
+                    Write-Host "To use this pipeline:" -ForegroundColor Yellow
+                    Write-Host "1. Run the 'Inventory Azure Local Clusters' pipeline first"
+                    Write-Host "2. Download the CSV artifact from that pipeline run"
+                    Write-Host "3. Edit the CSV in Excel - set UpdateRing values for each cluster"
+                    Write-Host "4. Commit the edited CSV to your repository"
+                    Write-Host "5. Run this pipeline with the path to your committed CSV file"
+                    Write-Host ""
+                    Write-Host "Example: If you committed the file to 'config/ClusterUpdateRings.csv', enter that path."
+                    exit 1
+                }
+                
+                Write-Host "Found CSV file: $csvPath"
+                Write-Host "##vso[task.setvariable variable=CsvPath]$csvPath"
+          
+          - task: PowerShell@2
+            displayName: 'Validate CSV File'
+            inputs:
+              targetType: 'inline'
+              script: |
+                $csvPath = "$(CsvPath)"
+                $data = Import-Csv $csvPath
+                
+                Write-Host "CSV File: $csvPath"
+                Write-Host "Total Rows: $($data.Count)"
+                
+                # Check required columns
+                $requiredColumns = @('ResourceId', 'UpdateRing')
+                $columns = $data[0].PSObject.Properties.Name
+                
+                foreach ($col in $requiredColumns) {
+                    if ($col -notin $columns) {
+                        Write-Error "Required column '$col' not found in CSV"
+                        exit 1
+                    }
+                }
+                
+                # Count rows with UpdateRing values
+                $rowsWithValues = ($data | Where-Object { $_.UpdateRing -and $_.UpdateRing.Trim() -ne '' }).Count
+                Write-Host "Rows with UpdateRing values: $rowsWithValues"
+                
+                if ($rowsWithValues -eq 0) {
+                    Write-Error "No rows have UpdateRing values set. Please edit the CSV and set UpdateRing values before running this pipeline."
+                    exit 1
+                }
+          
+          - task: AzureCLI@2
+            displayName: 'Apply UpdateRing Tags'
+            inputs:
+              azureSubscription: 'AzureLocal-ServiceConnection'  # Update with your service connection name
+              scriptType: 'pscore'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                Import-Module "$(modulePath)/AzStackHci.ManageUpdates.psd1" -Force
+                
+                $csvPath = "$(CsvPath)"
+                $forceOverwrite = [System.Convert]::ToBoolean("${{ parameters.forceOverwrite }}")
+                $dryRun = [System.Convert]::ToBoolean("${{ parameters.dryRun }}")
+                
+                # Create output directory for logs
+                $outputDir = "$(Build.ArtifactStagingDirectory)"
+                
+                # Build parameters
+                $params = @{
+                    InputCsvPath = $csvPath
+                    LogFolderPath = $outputDir
+                }
+                
+                if ($forceOverwrite) {
+                    $params['Force'] = $true
+                    Write-Host "Force mode enabled - will overwrite existing tags"
+                }
+                
+                if ($dryRun) {
+                    $params['WhatIf'] = $true
+                    Write-Host "##vso[task.logissue type=warning]DRY RUN MODE - No changes will be applied"
+                }
+                
+                Write-Host ""
+                Write-Host "========================================" -ForegroundColor Cyan
+                Write-Host "Applying UpdateRing Tags" -ForegroundColor Cyan
+                Write-Host "========================================" -ForegroundColor Cyan
+                
+                # Run tag management
+                Set-AzureLocalClusterUpdateRingTag @params
+                
+                Write-Host ""
+                Write-Host "Tag management complete"
+          
+          - task: PublishBuildArtifacts@1
+            displayName: 'Publish Log Artifacts'
+            inputs:
+              PathtoPublish: '$(Build.ArtifactStagingDirectory)'
+              ArtifactName: 'updatering-tag-logs'
+              publishLocation: 'Container'
+          
+          - task: PowerShell@2
+            displayName: 'Generate Summary'
+            inputs:
+              targetType: 'inline'
+              script: |
+                $dryRun = [System.Convert]::ToBoolean("${{ parameters.dryRun }}")
+                $forceOverwrite = [System.Convert]::ToBoolean("${{ parameters.forceOverwrite }}")
+                
+                $summary = @"
+                # UpdateRing Tag Management Summary
+                
+                | Setting | Value |
+                |---------|-------|
+                | Dry Run | $dryRun |
+                | Force Overwrite | $forceOverwrite |
+                "@
+                
+                if ($dryRun) {
+                    $summary += "`n`n⚠️ **This was a dry run. No changes were applied.**"
+                    $summary += "`n`nRe-run the pipeline with 'Preview changes' set to false to apply changes."
+                }
+                
+                $summary | Out-File "$(Build.ArtifactStagingDirectory)/summary.md" -Encoding UTF8
+                Write-Host "##vso[task.uploadsummary]$(Build.ArtifactStagingDirectory)/summary.md"

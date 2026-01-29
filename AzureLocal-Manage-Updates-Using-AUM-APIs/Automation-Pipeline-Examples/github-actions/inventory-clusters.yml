@@ -1,0 +1,126 @@
+# Inventory Azure Local Clusters
+# This workflow queries all Azure Local clusters and exports inventory with UpdateRing tag status
+
+name: Inventory Azure Local Clusters
+
+on:
+  workflow_dispatch:
+    inputs:
+      subscription_filter:
+        description: 'Subscription ID to filter (leave empty for all subscriptions)'
+        required: false
+        default: ''
+  schedule:
+    # Run weekly on Monday at 6:00 AM UTC
+    - cron: '0 6 * * 1'
+
+env:
+  MODULE_PATH: './AzureLocal-Manage-Updates-Using-AUM-APIs'
+
+jobs:
+  inventory-clusters:
+    name: Inventory Azure Local Clusters
+    runs-on: windows-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+    
+    - name: Azure CLI Login
+      uses: azure/login@v2
+      with:
+        creds: '{"clientId":"${{ secrets.AZURE_CLIENT_ID }}","clientSecret":"${{ secrets.AZURE_CLIENT_SECRET }}","subscriptionId":"${{ secrets.AZURE_SUBSCRIPTION_ID }}","tenantId":"${{ secrets.AZURE_TENANT_ID }}"}'
+    
+    - name: Install Azure CLI Resource Graph Extension
+      shell: pwsh
+      run: |
+        az extension add --name resource-graph --yes
+    
+    - name: Import PowerShell Module
+      shell: pwsh
+      run: |
+        Import-Module "${{ env.MODULE_PATH }}/AzStackHci.ManageUpdates.psd1" -Force
+        Get-Module AzStackHci.ManageUpdates | Format-List Name, Version, Path
+    
+    - name: Run Cluster Inventory
+      shell: pwsh
+      run: |
+        Import-Module "${{ env.MODULE_PATH }}/AzStackHci.ManageUpdates.psd1" -Force
+        
+        # Create output directory
+        $outputDir = "./artifacts"
+        New-Item -ItemType Directory -Path $outputDir -Force | Out-Null
+        
+        $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
+        $csvPath = Join-Path $outputDir "ClusterInventory_$timestamp.csv"
+        
+        # Build parameters
+        $params = @{
+            ExportCsvPath = $csvPath
+        }
+        
+        # Add subscription filter if provided
+        $subFilter = "${{ github.event.inputs.subscription_filter }}"
+        if ($subFilter -and $subFilter -ne '') {
+            $params['SubscriptionId'] = $subFilter
+            Write-Host "Filtering to subscription: $subFilter"
+        } else {
+            Write-Host "Querying all accessible subscriptions"
+        }
+        
+        # Run inventory
+        $inventory = Get-AzureLocalClusterInventory @params
+        
+        # Output summary
+        Write-Host ""
+        Write-Host "========================================" -ForegroundColor Cyan
+        Write-Host "Inventory Complete" -ForegroundColor Cyan
+        Write-Host "========================================" -ForegroundColor Cyan
+        Write-Host "Total Clusters: $($inventory.Count)"
+        Write-Host "CSV exported to: $csvPath"
+        
+        # Set output for next steps
+        echo "CSV_PATH=$csvPath" >> $env:GITHUB_OUTPUT
+        echo "CLUSTER_COUNT=$($inventory.Count)" >> $env:GITHUB_OUTPUT
+      id: inventory
+    
+    - name: Upload Inventory Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: cluster-inventory
+        path: ./artifacts/*.csv
+        retention-days: 30
+    
+    - name: Summary
+      shell: pwsh
+      run: |
+        $csvPath = "${{ steps.inventory.outputs.CSV_PATH }}"
+        if (Test-Path $csvPath) {
+            $data = Import-Csv $csvPath
+            
+            Write-Host "## Cluster Inventory Summary" >> $env:GITHUB_STEP_SUMMARY
+            Write-Host "" >> $env:GITHUB_STEP_SUMMARY
+            Write-Host "| Metric | Value |" >> $env:GITHUB_STEP_SUMMARY
+            Write-Host "|--------|-------|" >> $env:GITHUB_STEP_SUMMARY
+            Write-Host "| Total Clusters | $($data.Count) |" >> $env:GITHUB_STEP_SUMMARY
+            
+            $withTag = ($data | Where-Object { $_.HasUpdateRingTag -eq 'Yes' }).Count
+            $withoutTag = ($data | Where-Object { $_.HasUpdateRingTag -eq 'No' }).Count
+            Write-Host "| With UpdateRing Tag | $withTag |" >> $env:GITHUB_STEP_SUMMARY
+            Write-Host "| Without UpdateRing Tag | $withoutTag |" >> $env:GITHUB_STEP_SUMMARY
+            
+            Write-Host "" >> $env:GITHUB_STEP_SUMMARY
+            Write-Host "### UpdateRing Distribution" >> $env:GITHUB_STEP_SUMMARY
+            Write-Host "" >> $env:GITHUB_STEP_SUMMARY
+            
+            $rings = $data | Where-Object { $_.UpdateRing } | Group-Object UpdateRing
+            if ($rings) {
+                Write-Host "| UpdateRing | Count |" >> $env:GITHUB_STEP_SUMMARY
+                Write-Host "|------------|-------|" >> $env:GITHUB_STEP_SUMMARY
+                foreach ($ring in $rings) {
+                    Write-Host "| $($ring.Name) | $($ring.Count) |" >> $env:GITHUB_STEP_SUMMARY
+                }
+            } else {
+                Write-Host "No UpdateRing tags found." >> $env:GITHUB_STEP_SUMMARY
+            }
+        }
