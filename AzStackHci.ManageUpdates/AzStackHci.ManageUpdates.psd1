@@ -67,6 +67,9 @@
             ReleaseNotes = @'
 ## Version 0.4.1
 - FIXED: Azure Resource Graph queries in Get-AzureLocalClusterInventory, Start-AzureLocalClusterUpdate, and Get-AzureLocalClusterUpdateReadiness were returning incorrect resource types (mixed resources instead of clusters only) due to HERE-STRING query format causing malformed az CLI commands
+- FIXED: Set-AzureLocalClusterUpdateRingTag failing with JSON deserialization errors when applying tags due to PowerShell/cmd escaping issues (now uses temp file)
+- NEW: -PassThru switch for Get-AzureLocalClusterInventory to return objects when exporting to CSV
+- IMPROVED: Get-AzureLocalClusterInventory no longer dumps objects to console when using -ExportCsvPath
 
 ## Version 0.4.0
 - NEW: Get-AzureLocalClusterInventory function to query all clusters and their UpdateRing tag status

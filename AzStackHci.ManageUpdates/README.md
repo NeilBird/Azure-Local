@@ -8,8 +8,13 @@ Azure Stack HCI REST API specification (includes update management endpoints): h
 
 ## What's New in v0.4.1
 
-### 🐛 Bug Fix
+### 🐛 Bug Fixes
 - **CRITICAL**: Fixed Azure Resource Graph queries in `Get-AzureLocalClusterInventory`, `Start-AzureLocalClusterUpdate`, and `Get-AzureLocalClusterUpdateReadiness` that were returning incorrect resource types (mixed resources like networkInterfaces, virtualHardDisks instead of clusters only). The issue was caused by HERE-STRING query format causing malformed az CLI commands. Queries now use single-line string format.
+- **CRITICAL**: Fixed `Set-AzureLocalClusterUpdateRingTag` failing with JSON deserialization errors when applying tags. The issue was caused by PowerShell/cmd.exe mangling JSON quotes when passed to `az rest --body`. Now uses temp file with `@file` syntax to avoid escaping issues.
+
+### ✅ Improvements
+- `Get-AzureLocalClusterInventory` no longer dumps objects to console when using `-ExportCsvPath` (cleaner output with summary and next steps)
+- Added `-PassThru` switch to `Get-AzureLocalClusterInventory` for CI/CD pipelines that need both CSV export AND returned objects
 
 ---
 

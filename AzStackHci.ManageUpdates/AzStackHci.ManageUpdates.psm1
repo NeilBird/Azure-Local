@@ -2796,20 +2796,32 @@ function Set-AzureLocalClusterUpdateRingTag {
                 
                 $patchBody = @{
                     tags = $newTags
-                } | ConvertTo-Json -Compress
+                } | ConvertTo-Json -Compress -Depth 10
 
-                # Use az rest to PATCH the resource
-                $result = az rest --method PATCH --uri $uri --body $patchBody --headers "Content-Type=application/json" 2>&1
-                
-                if ($LASTEXITCODE -eq 0) {
-                    Write-Log -Message "Successfully $($action.ToLower()) UpdateRing tag" -Level Success
-                    $status = "Success"
-                    $message = "UpdateRing tag $($action.ToLower()) successfully"
+                # Write body to temp file to avoid PowerShell/cmd JSON escaping issues
+                $tempFile = [System.IO.Path]::GetTempFileName()
+                try {
+                    $patchBody | Out-File -FilePath $tempFile -Encoding utf8 -NoNewline
+                    
+                    # Use az rest with @file syntax to avoid escaping issues
+                    $result = az rest --method PATCH --uri $uri --body "@$tempFile" --headers "Content-Type=application/json" 2>&1
+                    
+                    if ($LASTEXITCODE -eq 0) {
+                        Write-Log -Message "Successfully $($action.ToLower()) UpdateRing tag" -Level Success
+                        $status = "Success"
+                        $message = "UpdateRing tag $($action.ToLower()) successfully"
+                    }
+                    else {
+                        Write-Log -Message "Failed to apply tag: $result" -Level Error
+                        $status = "Failed"
+                        $message = "Failed to apply tag: $result"
+                    }
                 }
-                else {
-                    Write-Log -Message "Failed to apply tag: $result" -Level Error
-                    $status = "Failed"
-                    $message = "Failed to apply tag: $result"
+                finally {
+                    # Clean up temp file
+                    if (Test-Path $tempFile) {
+                        Remove-Item $tempFile -Force -ErrorAction SilentlyContinue
+                    }
                 }
             }
             else {
