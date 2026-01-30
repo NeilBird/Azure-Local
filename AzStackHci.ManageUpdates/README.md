@@ -63,6 +63,8 @@ The following permissions are required for update operations:
 | List available updates | `Microsoft.AzureStackHCI/clusters/updates/read` |
 | **Start/Apply update** | `Microsoft.AzureStackHCI/clusters/updates/apply/action` |
 | Monitor update runs | `Microsoft.AzureStackHCI/clusters/updateRuns/read` |
+| Query clusters (Resource Graph) | `Microsoft.ResourceGraph/resources/read` |
+| **Read/Write tags** | `Microsoft.Resources/tags/read`, `Microsoft.Resources/tags/write` |
 
 ### Roles That Do NOT Have Update Permissions
 
@@ -80,14 +82,17 @@ If you need a least-privilege custom role specifically for update operations:
 {
   "Name": "Azure Stack HCI Update Operator",
   "IsCustom": true,
-  "Description": "Can view and apply updates on Azure Local clusters",
+  "Description": "Can view and apply updates on Azure Local clusters, manage UpdateRing tags",
   "Actions": [
     "Microsoft.AzureStackHCI/clusters/read",
     "Microsoft.AzureStackHCI/clusters/updateSummaries/read",
     "Microsoft.AzureStackHCI/clusters/updates/read",
     "Microsoft.AzureStackHCI/clusters/updates/apply/action",
     "Microsoft.AzureStackHCI/clusters/updateRuns/read",
-    "Microsoft.Resources/subscriptions/resourceGroups/read"
+    "Microsoft.Resources/subscriptions/resourceGroups/read",
+    "Microsoft.ResourceGraph/resources/read",
+    "Microsoft.Resources/tags/read",
+    "Microsoft.Resources/tags/write"
   ],
   "NotActions": [],
   "DataActions": [],
@@ -109,14 +114,17 @@ az role definition create --role-definition custom-role.json
 {
   "Name": "Azure Stack HCI Update Operator",
   "IsCustom": true,
-  "Description": "Can view and apply updates on Azure Local clusters",
+  "Description": "Can view and apply updates on Azure Local clusters, manage UpdateRing tags",
   "Actions": [
     "Microsoft.AzureStackHCI/clusters/read",
     "Microsoft.AzureStackHCI/clusters/updateSummaries/read",
     "Microsoft.AzureStackHCI/clusters/updates/read",
     "Microsoft.AzureStackHCI/clusters/updates/apply/action",
     "Microsoft.AzureStackHCI/clusters/updateRuns/read",
-    "Microsoft.Resources/subscriptions/resourceGroups/read"
+    "Microsoft.Resources/subscriptions/resourceGroups/read",
+    "Microsoft.ResourceGraph/resources/read",
+    "Microsoft.Resources/tags/read",
+    "Microsoft.Resources/tags/write"
   ],
   "NotActions": [],
   "DataActions": [],
@@ -201,14 +209,24 @@ Import-Module .\AzStackHci.ManageUpdates.psd1
 Connect-AzureLocalServicePrincipal
 ```
 
-### 2. Import the Module
+### 2. Install or Import the Module
 
+**Option A: Install from PowerShell Gallery (Recommended)**
+```powershell
+# Install from PowerShell Gallery
+Install-Module -Name AzStackHci.ManageUpdates -Scope CurrentUser
+
+# Import the module
+Import-Module AzStackHci.ManageUpdates
+```
+
+**Option B: Import from Local Clone**
 ```powershell
 # Import the module from the current directory
 Import-Module .\AzStackHci.ManageUpdates.psd1
 
 # Or import using the full path
-Import-Module "C:\Path\To\AzureLocal-Manage-Updates-Using-AUM-APIs\AzStackHci.ManageUpdates.psd1"
+Import-Module "C:\Path\To\AzStackHci.ManageUpdates\AzStackHci.ManageUpdates.psd1"
 ```
 
 ### 3. Start an Update on a Single Cluster
@@ -244,6 +262,57 @@ Start-AzureLocalClusterUpdate -ClusterNames "MyCluster01" -UpdateName "Solution1
 # Get update run status
 Get-AzureLocalUpdateRuns -ClusterName "MyCluster01" -ResourceGroupName "MyRG"
 ```
+
+### 7. Set Up UpdateRing Tags for Staged Rollouts
+
+UpdateRing tags enable you to organize clusters into deployment waves (e.g., Pilot, Wave1, Production) for staged update rollouts.
+
+**Step 1: Inventory clusters and export to CSV**
+```powershell
+# Get all clusters and their current UpdateRing tags, export to CSV
+Get-AzureLocalClusterInventory -ExportPath "C:\Temp\cluster-inventory.csv"
+```
+
+**Step 2: Edit the CSV file**
+- Open `cluster-inventory.csv` in Excel or a text editor
+- Add or modify the `UpdateRing` column values for each cluster:
+  | ClusterName | UpdateRing |
+  |-------------|------------|
+  | HCI-Pilot01 | Pilot |
+  | HCI-Pilot02 | Pilot |
+  | HCI-Prod01  | Wave1 |
+  | HCI-Prod02  | Wave1 |
+  | HCI-Critical| Production |
+- Save the file
+
+**Step 3: Apply the tags from CSV**
+```powershell
+# Apply UpdateRing tags from the edited CSV
+Set-AzureLocalClusterUpdateRingTag -InputCsvPath "C:\Temp\cluster-inventory.csv"
+
+# Or apply with -Force to skip confirmation
+Set-AzureLocalClusterUpdateRingTag -InputCsvPath "C:\Temp\cluster-inventory.csv" -Force
+```
+
+**Step 4: Verify tags were applied**
+```powershell
+# Re-run inventory to confirm tags
+Get-AzureLocalClusterInventory
+```
+
+**Step 5: Update clusters by UpdateRing**
+```powershell
+# Update all clusters in the "Pilot" ring first
+Start-AzureLocalClusterUpdate -ScopeByUpdateRingTag -UpdateRingValue "Pilot" -Force
+
+# After validation, update Wave1
+Start-AzureLocalClusterUpdate -ScopeByUpdateRingTag -UpdateRingValue "Wave1" -Force
+
+# Finally, update Production
+Start-AzureLocalClusterUpdate -ScopeByUpdateRingTag -UpdateRingValue "Production" -Force
+```
+
+> 📝 **Note**: Tag operations require `Microsoft.Resources/tags/read` and `Microsoft.Resources/tags/write` permissions. Cluster inventory queries require `Microsoft.ResourceGraph/resources/read`. See [RBAC Requirements](#rbac-requirements) for the complete list.
 
 ## Available Functions
 
