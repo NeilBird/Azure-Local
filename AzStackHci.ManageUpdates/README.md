@@ -23,146 +23,7 @@ Get-AzureLocalClusterInventory -ExportPath "C:\Reports\inventory.json"
 Get-AzureLocalClusterInventory -ExportPath "C:\Reports\inventory.csv"
 ```
 
----
-
-## What's New in v0.5.6 (since v0.5.0)
-
-### 🚀 Fleet-Scale Operations (NEW)
-Six new functions for managing updates across fleets of **1000-3000+ clusters**:
-
-| Function | Description |
-|----------|-------------|
-| `Invoke-AzureLocalFleetOperation` | Orchestrates fleet-wide updates with batching, throttling, and retry logic |
-| `Get-AzureLocalFleetProgress` | Real-time progress tracking with success/failure percentages |
-| `Test-AzureLocalFleetHealthGate` | CI/CD health gate to prevent cascading failures between waves |
-| `Export-AzureLocalFleetState` | Save operation state for resume capability |
-| `Resume-AzureLocalFleetUpdate` | Resume interrupted operations from checkpoint |
-| `Stop-AzureLocalFleetUpdate` | Graceful stop with state preservation |
-
-**Enterprise-Scale Features:**
-- 📦 **Batch Processing**: Process clusters in configurable batches (default: 50)
-- 🔄 **Retry Logic**: Automatic retries with exponential backoff (default: 3 retries)
-- 💾 **State Management**: Checkpoint/resume capability for long-running operations
-- 🚦 **Health Gates**: Configurable thresholds (default: max 5% failure, min 90% success)
-- 📊 **Progress Tracking**: Real-time visibility into fleet-wide operations
-
-**Examples:**
-```powershell
-# Start fleet-wide update with batching
-Invoke-AzureLocalFleetOperation -ScopeByUpdateRingTag -UpdateRingValue "Production" `
-    -BatchSize 100 -ThrottleLimit 20 -Force
-
-# Check progress during operation
-Get-AzureLocalFleetProgress -ScopeByUpdateRingTag -UpdateRingValue "Production" -Detailed
-
-# CI/CD health gate between waves
-$gate = Test-AzureLocalFleetHealthGate -ScopeByUpdateRingTag -UpdateRingValue "Wave1" `
-    -MaxFailurePercent 2 -WaitForCompletion
-if (-not $gate.Passed) { exit 1 }
-
-# Resume after interruption
-Resume-AzureLocalFleetUpdate -StateFilePath "C:\Logs\fleet-state.json" -RetryFailed -Force
-```
-
----
-
-### 🏷️ Fleet-Wide Tag Support for All Query Functions
-Three functions now support tag-based filtering for fleet-wide operations:
-
-| Function | New Capabilities |
-|----------|------------------|
-| `Get-AzureLocalUpdateSummary` | Query summaries across fleet by tag, name, or resource ID |
-| `Get-AzureLocalAvailableUpdates` | List available updates across fleet by tag, name, or resource ID |
-| `Get-AzureLocalUpdateRuns` | Get update run history across fleet by tag, name, or resource ID |
-
-**New Parameters for All Three Functions:**
-- `-ClusterNames` / `-ClusterResourceIds` - Query multiple specific clusters
-- `-ScopeByUpdateRingTag` + `-UpdateRingValue` - Query clusters by UpdateRing tag
-- `-ExportPath` - Export results to CSV, JSON, or JUnit XML (format auto-detected from extension)
-
-**Examples:**
-```powershell
-# Get update summaries for all Wave1 clusters
-Get-AzureLocalUpdateSummary -ScopeByUpdateRingTag -UpdateRingValue "Wave1"
-
-# List available updates across Production clusters, export to CSV
-Get-AzureLocalAvailableUpdates -ScopeByUpdateRingTag -UpdateRingValue "Production" -ExportPath "updates.csv"
-
-# Get latest update run from all Ring2 clusters
-Get-AzureLocalUpdateRuns -ScopeByUpdateRingTag -UpdateRingValue "Ring2" -Latest
-```
-
-### 📊 Fleet Update Status Monitoring
-- **New CI/CD Pipeline**: Added `fleet-update-status.yml` for both GitHub Actions and Azure DevOps
-- **JUnit XML Reports**: Each cluster appears as a test case in CI/CD dashboards (passed=healthy, failed=issues)
-- **Multiple Output Formats**: CSV, JSON, and JUnit XML exports for different use cases
-- **Scheduled Monitoring**: Automated daily checks at 6 AM UTC with configurable scope
-- **Dashboard Integration**: Results appear in GitHub Actions Tests tab and Azure DevOps Tests tab with analytics
-
-### ✅ Consistent Logging & Progress
-- **Consistent Logging**: All functions now use `Write-Log` for consistent, timestamped, colored console output
-- **Improved Progress Visibility**: `Get-AzureLocalUpdateRuns`, `Get-AzureLocalClusterUpdateReadiness`, and `Get-AzureLocalClusterInventory` now show detailed progress during API operations
-- **File Logging Support**: When `$script:LogFilePath` is set, all functions write to log files
-- **Severity Levels**: Messages use appropriate levels (Info=White, Warning=Yellow, Error=Red, Success=Green, Header=Cyan)
-
----
-
-## What's New in v0.5.0
-
-### 🔐 Security Improvements
-- **OpenID Connect (OIDC) Documentation**: Added comprehensive guidance for secretless authentication using federated credentials
-- **Authentication Best Practices**: Documented three authentication methods ranked by security (OIDC > Managed Identity > Client Secret)
-- **CI/CD Pipeline Updates**: All GitHub Actions workflows now default to OIDC authentication with `id-token: write` permission
-- **Azure DevOps Guidance**: Added Workload Identity Federation setup instructions
-
-### 📖 Documentation
-- Added authentication method comparison table with security ratings
-- Updated Quick Start guide with OIDC examples
-- Added links to Microsoft documentation for federated credentials setup
-- Documented subject claim patterns for GitHub Actions (branch, PR, environment, tag)
-
----
-
-## What's New in v0.4.2
-
-### 📖 Documentation
-- Verified and documented that **all functions work with all three authentication methods**:
-  1. **Interactive** - Standard user login via `az login`
-  2. **Service Principal** - For CI/CD pipelines using `Connect-AzureLocalServicePrincipal`
-  3. **Managed Identity (MSI)** - For Azure-hosted agents using `Connect-AzureLocalServicePrincipal -UseManagedIdentity`
-
----
-
-## What's New in v0.4.1
-
-### 🚀 New Features
-- **Managed Identity (MSI) Support**: `Connect-AzureLocalServicePrincipal` now supports Managed Identity authentication with `-UseManagedIdentity` switch, ideal for Azure-hosted runners, VMs, and containers
-
-### 🐛 Bug Fixes
-- **CRITICAL**: Fixed Azure Resource Graph queries in `Get-AzureLocalClusterInventory`, `Start-AzureLocalClusterUpdate`, and `Get-AzureLocalClusterUpdateReadiness` that were returning incorrect resource types (mixed resources like networkInterfaces, virtualHardDisks instead of clusters only). The issue was caused by HERE-STRING query format causing malformed az CLI commands. Queries now use single-line string format.
-- **CRITICAL**: Fixed `Set-AzureLocalClusterUpdateRingTag` failing with JSON deserialization errors when applying tags. Two issues were resolved:
-  1. PowerShell/cmd.exe mangling JSON quotes when passed to `az rest --body` - now uses temp file with `@file` syntax
-  2. PowerShell hashtable internal properties (`Keys`, `Values`, etc.) being included in JSON - now uses `[PSCustomObject]` with filtered `NoteProperty` members only
-
-### ✅ Improvements
-- `Get-AzureLocalClusterInventory` no longer dumps objects to console when using `-ExportPath` (cleaner output with summary and next steps)
-- Added `-PassThru` switch to `Get-AzureLocalClusterInventory` for CI/CD pipelines that need both CSV export AND returned objects
-
----
-
-## What's New in v0.4.0
-
-### 🚀 New Features
-- **Cluster Inventory Function**: New `Get-AzureLocalClusterInventory` function queries all clusters and their UpdateRing tag status
-- **CSV-Based Tag Workflow**: Export inventory to CSV, edit UpdateRing values in Excel, then import back to apply tags
-- **CSV Input for Tags**: `Set-AzureLocalClusterUpdateRingTag` now accepts `-InputCsvPath` for bulk tag operations
-- **JUnit XML Export for CI/CD**: Export results to JUnit XML format for visualization in Azure DevOps, GitHub Actions, Jenkins, and other CI/CD tools
-
-### ✅ Improvements
-- Renamed `-ScopeByTagName` to `-ScopeByUpdateRingTag` (now a switch parameter for clarity)
-- Renamed `-TagValue` to `-UpdateRingValue` for consistency
-- UpdateRing tag queries now use the standardized 'UpdateRing' tag name
-- `-ExportResultsPath` and `-ExportPath` now support `.xml` extension for JUnit format
+> 📜 **Previous Release Notes**: See [Release History](#release-history) at the bottom of this document for v0.5.6 and earlier changes.
 
 ## Files
 
@@ -1591,3 +1452,144 @@ Start-AzureLocalClusterUpdate -ClusterNames "MyCluster" -Verbose
 ## License
 
 This code is provided as-is for educational and reference purposes.
+
+---
+
+## Release History
+
+### What's New in v0.5.6 (since v0.5.0)
+
+#### 🚀 Fleet-Scale Operations (NEW)
+Six new functions for managing updates across fleets of **1000-3000+ clusters**:
+
+| Function | Description |
+|----------|-------------|
+| `Invoke-AzureLocalFleetOperation` | Orchestrates fleet-wide updates with batching, throttling, and retry logic |
+| `Get-AzureLocalFleetProgress` | Real-time progress tracking with success/failure percentages |
+| `Test-AzureLocalFleetHealthGate` | CI/CD health gate to prevent cascading failures between waves |
+| `Export-AzureLocalFleetState` | Save operation state for resume capability |
+| `Resume-AzureLocalFleetUpdate` | Resume interrupted operations from checkpoint |
+| `Stop-AzureLocalFleetUpdate` | Graceful stop with state preservation |
+
+**Enterprise-Scale Features:**
+- 📦 **Batch Processing**: Process clusters in configurable batches (default: 50)
+- 🔄 **Retry Logic**: Automatic retries with exponential backoff (default: 3 retries)
+- 💾 **State Management**: Checkpoint/resume capability for long-running operations
+- 🚦 **Health Gates**: Configurable thresholds (default: max 5% failure, min 90% success)
+- 📊 **Progress Tracking**: Real-time visibility into fleet-wide operations
+
+**Examples:**
+```powershell
+# Start fleet-wide update with batching
+Invoke-AzureLocalFleetOperation -ScopeByUpdateRingTag -UpdateRingValue "Production" `
+    -BatchSize 100 -ThrottleLimit 20 -Force
+
+# Check progress during operation
+Get-AzureLocalFleetProgress -ScopeByUpdateRingTag -UpdateRingValue "Production" -Detailed
+
+# CI/CD health gate between waves
+$gate = Test-AzureLocalFleetHealthGate -ScopeByUpdateRingTag -UpdateRingValue "Wave1" `
+    -MaxFailurePercent 2 -WaitForCompletion
+if (-not $gate.Passed) { exit 1 }
+
+# Resume after interruption
+Resume-AzureLocalFleetUpdate -StateFilePath "C:\Logs\fleet-state.json" -RetryFailed -Force
+```
+
+#### 🏷️ Fleet-Wide Tag Support for All Query Functions
+Three functions now support tag-based filtering for fleet-wide operations:
+
+| Function | New Capabilities |
+|----------|------------------|
+| `Get-AzureLocalUpdateSummary` | Query summaries across fleet by tag, name, or resource ID |
+| `Get-AzureLocalAvailableUpdates` | List available updates across fleet by tag, name, or resource ID |
+| `Get-AzureLocalUpdateRuns` | Get update run history across fleet by tag, name, or resource ID |
+
+**New Parameters for All Three Functions:**
+- `-ClusterNames` / `-ClusterResourceIds` - Query multiple specific clusters
+- `-ScopeByUpdateRingTag` + `-UpdateRingValue` - Query clusters by UpdateRing tag
+- `-ExportPath` - Export results to CSV, JSON, or JUnit XML (format auto-detected from extension)
+
+**Examples:**
+```powershell
+# Get update summaries for all Wave1 clusters
+Get-AzureLocalUpdateSummary -ScopeByUpdateRingTag -UpdateRingValue "Wave1"
+
+# List available updates across Production clusters, export to CSV
+Get-AzureLocalAvailableUpdates -ScopeByUpdateRingTag -UpdateRingValue "Production" -ExportPath "updates.csv"
+
+# Get latest update run from all Ring2 clusters
+Get-AzureLocalUpdateRuns -ScopeByUpdateRingTag -UpdateRingValue "Ring2" -Latest
+```
+
+#### 📊 Fleet Update Status Monitoring
+- **New CI/CD Pipeline**: Added `fleet-update-status.yml` for both GitHub Actions and Azure DevOps
+- **JUnit XML Reports**: Each cluster appears as a test case in CI/CD dashboards (passed=healthy, failed=issues)
+- **Multiple Output Formats**: CSV, JSON, and JUnit XML exports for different use cases
+- **Scheduled Monitoring**: Automated daily checks at 6 AM UTC with configurable scope
+- **Dashboard Integration**: Results appear in GitHub Actions Tests tab and Azure DevOps Tests tab with analytics
+
+#### ✅ Consistent Logging & Progress
+- **Consistent Logging**: All functions now use `Write-Log` for consistent, timestamped, colored console output
+- **Improved Progress Visibility**: `Get-AzureLocalUpdateRuns`, `Get-AzureLocalClusterUpdateReadiness`, and `Get-AzureLocalClusterInventory` now show detailed progress during API operations
+- **File Logging Support**: When `$script:LogFilePath` is set, all functions write to log files
+- **Severity Levels**: Messages use appropriate levels (Info=White, Warning=Yellow, Error=Red, Success=Green, Header=Cyan)
+
+---
+
+### What's New in v0.5.0
+
+#### 🔐 Security Improvements
+- **OpenID Connect (OIDC) Documentation**: Added comprehensive guidance for secretless authentication using federated credentials
+- **Authentication Best Practices**: Documented three authentication methods ranked by security (OIDC > Managed Identity > Client Secret)
+- **CI/CD Pipeline Updates**: All GitHub Actions workflows now default to OIDC authentication with `id-token: write` permission
+- **Azure DevOps Guidance**: Added Workload Identity Federation setup instructions
+
+#### 📖 Documentation
+- Added authentication method comparison table with security ratings
+- Updated Quick Start guide with OIDC examples
+- Added links to Microsoft documentation for federated credentials setup
+- Documented subject claim patterns for GitHub Actions (branch, PR, environment, tag)
+
+---
+
+### What's New in v0.4.2
+
+#### 📖 Documentation
+- Verified and documented that **all functions work with all three authentication methods**:
+  1. **Interactive** - Standard user login via `az login`
+  2. **Service Principal** - For CI/CD pipelines using `Connect-AzureLocalServicePrincipal`
+  3. **Managed Identity (MSI)** - For Azure-hosted agents using `Connect-AzureLocalServicePrincipal -UseManagedIdentity`
+
+---
+
+### What's New in v0.4.1
+
+#### 🚀 New Features
+- **Managed Identity (MSI) Support**: `Connect-AzureLocalServicePrincipal` now supports Managed Identity authentication with `-UseManagedIdentity` switch, ideal for Azure-hosted runners, VMs, and containers
+
+#### 🐛 Bug Fixes
+- **CRITICAL**: Fixed Azure Resource Graph queries in `Get-AzureLocalClusterInventory`, `Start-AzureLocalClusterUpdate`, and `Get-AzureLocalClusterUpdateReadiness` that were returning incorrect resource types (mixed resources like networkInterfaces, virtualHardDisks instead of clusters only). The issue was caused by HERE-STRING query format causing malformed az CLI commands. Queries now use single-line string format.
+- **CRITICAL**: Fixed `Set-AzureLocalClusterUpdateRingTag` failing with JSON deserialization errors when applying tags. Two issues were resolved:
+  1. PowerShell/cmd.exe mangling JSON quotes when passed to `az rest --body` - now uses temp file with `@file` syntax
+  2. PowerShell hashtable internal properties (`Keys`, `Values`, etc.) being included in JSON - now uses `[PSCustomObject]` with filtered `NoteProperty` members only
+
+#### ✅ Improvements
+- `Get-AzureLocalClusterInventory` no longer dumps objects to console when using `-ExportPath` (cleaner output with summary and next steps)
+- Added `-PassThru` switch to `Get-AzureLocalClusterInventory` for CI/CD pipelines that need both CSV export AND returned objects
+
+---
+
+### What's New in v0.4.0
+
+#### 🚀 New Features
+- **Cluster Inventory Function**: New `Get-AzureLocalClusterInventory` function queries all clusters and their UpdateRing tag status
+- **CSV-Based Tag Workflow**: Export inventory to CSV, edit UpdateRing values in Excel, then import back to apply tags
+- **CSV Input for Tags**: `Set-AzureLocalClusterUpdateRingTag` now accepts `-InputCsvPath` for bulk tag operations
+- **JUnit XML Export for CI/CD**: Export results to JUnit XML format for visualization in Azure DevOps, GitHub Actions, Jenkins, and other CI/CD tools
+
+#### ✅ Improvements
+- Renamed `-ScopeByTagName` to `-ScopeByUpdateRingTag` (now a switch parameter for clarity)
+- Renamed `-TagValue` to `-UpdateRingValue` for consistency
+- UpdateRing tag queries now use the standardized 'UpdateRing' tag name
+- `-ExportResultsPath` and `-ExportPath` now support `.xml` extension for JUnit format
