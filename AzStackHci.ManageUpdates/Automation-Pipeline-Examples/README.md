@@ -304,6 +304,7 @@ Copy the workflow files from `github-actions/` to your repository's `.github/wor
 .github/
 └── workflows/
     ├── inventory-clusters.yml
+    ├── fleet-update-status.yml
     ├── manage-updatering-tags.yml
     └── apply-updates.yml
 ```
@@ -378,6 +379,14 @@ For additional configuration, create a variable group:
 
 For each pipeline definition in `azure-devops/`:
 
+```
+azure-devops/
+├── inventory-clusters.yml
+├── fleet-update-status.yml
+├── manage-updatering-tags.yml
+└── apply-updates.yml
+```
+
 1. Go to **Pipelines** → **Pipelines**
 2. Click **New pipeline**
 3. Select **Azure Repos Git** (or your repo source)
@@ -386,7 +395,9 @@ For each pipeline definition in `azure-devops/`:
 6. Select the path to the YAML file (e.g., `/Automation-Pipeline-Examples/azure-devops/inventory-clusters.yml`)
 7. Click **Continue** and then **Save** (not Run, unless you want to test immediately)
 
-Repeat for each pipeline file.
+Repeat for each of the 4 pipeline files.
+
+> 📝 **Note**: The pipeline YAML files reference a service connection named `AzureLocal-ServiceConnection`. Either name your service connection to match, or update the `azureSubscription` value in each YAML file to match your service connection name.
 
 ---
 
