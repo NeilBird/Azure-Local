@@ -1,6 +1,6 @@
 ﻿# Azure Local - Managing Updates Module (AzStackHci.ManageUpdates)
 
-> ⚠️ **Disclaimer**: This module is **NOT** a Microsoft supported service offering or product. It is provided as example code only, with no warranty or official support. Refer to the [MIT license](https://github.com/NeilBird/Azure-Local/tree/main?tab=MIT-1-ov-file#readme) for further information.
+> ⚠️ **Disclaimer**: This module is **NOT** a Microsoft supported service offering or product. It is provided as example code only, with no warranty or official support. Refer to the [MIT license](https://github.com/NeilBird/Azure-Local/blob/main/LICENSE) for further information.
 
 **Latest Version:** v0.5.7
 
