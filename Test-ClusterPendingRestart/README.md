@@ -43,6 +43,28 @@ The script supports **parallel processing** using runspaces for improved perform
 | `TestPendingRestart-Module/TestPendingRestart.psd1` | Module manifest |
 | `TestPendingRestart-Module/TestPendingRestart.psm1` | Module with `Test-PendingRestart` and `Write-Log` functions |
 
+## Command Line Installation
+
+Download all required files directly from GitHub using PowerShell:
+
+```powershell
+# Create folder structure
+New-Item -ItemType Directory -Path ".\TestPendingRestart-Module" -Force | Out-Null
+
+# Download the main script
+Invoke-WebRequest -UseBasicParsing -Uri 'https://raw.githubusercontent.com/NeilBird/Azure-Local/refs/heads/main/Test-ClusterPendingRestart/Test-ClusterPendingRestart.ps1' -OutFile .\Test-ClusterPendingRestart.ps1
+
+# Download the module files
+Invoke-WebRequest -UseBasicParsing -Uri 'https://raw.githubusercontent.com/NeilBird/Azure-Local/refs/heads/main/Test-ClusterPendingRestart/TestPendingRestart-Module/TestPendingRestart.psd1' -OutFile .\TestPendingRestart-Module\TestPendingRestart.psd1
+Invoke-WebRequest -UseBasicParsing -Uri 'https://raw.githubusercontent.com/NeilBird/Azure-Local/refs/heads/main/Test-ClusterPendingRestart/TestPendingRestart-Module/TestPendingRestart.psm1' -OutFile .\TestPendingRestart-Module\TestPendingRestart.psm1
+
+# (Optional) Download the README
+Invoke-WebRequest -UseBasicParsing -Uri 'https://raw.githubusercontent.com/NeilBird/Azure-Local/refs/heads/main/Test-ClusterPendingRestart/README.md' -OutFile .\README.md
+
+# Run the script
+.\Test-ClusterPendingRestart.ps1 -ClusterName "MyCluster01" -NoConfirm
+```
+
 ## CSV File Format
 
 The input CSV file must contain a `Cluster` column with cluster names:
