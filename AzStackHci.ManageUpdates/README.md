@@ -1,5 +1,7 @@
 ﻿# Azure Local - Managing Updates Module (AzStackHci.ManageUpdates)
 
+> ⚠️ **Disclaimer**: This module is **NOT** a Microsoft supported service offering or product. It is provided as example code only, with no warranty or official support. Refer to the [MIT license](https://github.com/NeilBird/Azure-Local/tree/main?tab=MIT-1-ov-file#readme) for further information.
+
 **Latest Version:** v0.5.7
 
 This folder contains the 'AzStackHci.ManageUpdates' PowerShell module for managing updates on Azure Local (Azure Stack HCI) clusters using the Azure Stack HCI REST API. The module supports both interactive use and CI/CD automation via Service Principal or Managed Identity authentication.

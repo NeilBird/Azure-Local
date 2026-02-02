@@ -1,5 +1,7 @@
 # CI/CD Pipeline Examples for Azure Local Cluster Update Management
 
+> ⚠️ **Disclaimer**: This module is **NOT** a Microsoft supported service offering or product. It is provided as example code only, with no warranty or official support. Refer to the [MIT license](https://github.com/NeilBird/Azure-Local/tree/main?tab=MIT-1-ov-file#readme) for further information.
+
 This folder contains example CI/CD pipelines for automating Azure Local cluster update management using GitHub Actions and Azure DevOps.
 
 ## Overview
