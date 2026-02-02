@@ -2,7 +2,7 @@
 <#
 .SYNOPSIS
     Author:     Neil Bird, MSFT
-    Version:    0.2.4
+    Version:    0.2.5
     Created:    January 30th 2026
     Updated:    February 2nd 2026
 
@@ -372,10 +372,10 @@ $exportResults = $Results.ToArray() | Select-Object ClusterName, ComputerName, N
 $exportResults | Export-Csv -Path $ExportFileName -NoTypeInformation -Encoding UTF8 -ErrorAction Stop
 
 # Summary
-$successCount = ($Results | Where-Object { $_.CheckSucceeded -eq 'True' }).Count
-$failCount = ($Results | Where-Object { $_.CheckSucceeded -ne 'True' }).Count
-$pendingRestartCount = ($Results | Where-Object { $_.PendingRestart -eq $true }).Count
-$msiInProgressCount = ($Results | Where-Object { $_.MsiInstallationInProgress -eq $true }).Count
+$successCount = @($Results | Where-Object { $_.CheckSucceeded -eq 'True' }).Count
+$failCount = @($Results | Where-Object { $_.CheckSucceeded -ne 'True' }).Count
+$pendingRestartCount = @($Results | Where-Object { [string]$_.PendingRestart -eq 'True' }).Count
+$msiInProgressCount = @($Results | Where-Object { [string]$_.MsiInstallationInProgress -eq 'True' }).Count
 
 Write-Log "=== Summary ===" -Level Complete
 Write-Log "Total nodes checked: $($Results.Count)" -Level Info

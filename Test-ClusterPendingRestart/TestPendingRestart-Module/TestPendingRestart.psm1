@@ -3,7 +3,7 @@
 .SYNOPSIS
     Module:     TestPendingRestart
     Author:     Neil Bird, MSFT
-    Version:    0.2.4
+    Version:    0.2.5
     Created:    January 30th 2026
     Updated:    February 2nd 2026
 
