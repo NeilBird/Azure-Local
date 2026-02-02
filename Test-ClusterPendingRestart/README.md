@@ -1,6 +1,6 @@
 # Azure Local - Cluster Node Pending Restart Check
 
-**Latest Version:** v0.2.5
+**Latest Version:** v0.2.6
 
 > **Disclaimer:** This module is NOT a Microsoft supported service offering or product. It is provided as example code only, with no warranty or official support. Refer to the [MIT License](https://github.com/NeilBird/Azure-Local/blob/main/LICENSE) for further information.
 
@@ -229,8 +229,7 @@ Ensure the following ports are open between the script host and target nodes:
 ## Version History
 
 | Version | Date | Changes |
-|---------|------|---------|
-| 0.2.5 | February 2nd, 2026 | Fixed summary count for MSI installation in progress not displaying (deserialized boolean handling from remote runspaces) |
+|---------|------|---------|| 0.2.6 | February 2nd, 2026 | Enhanced `-Detailed` switch to display diagnostic information in console output (registry paths, timestamps, MSI process details) || 0.2.5 | February 2nd, 2026 | Fixed summary count for MSI installation in progress not displaying (deserialized boolean handling from remote runspaces) |
 | 0.2.4 | February 2nd, 2026 | MSI check no longer sets PendingRestart; combined Success/Errors into CheckSucceeded column; added MSI summary to console output |
 | 0.2.3 | February 2nd, 2026 | Added `-ClusterName` parameter for direct cluster input without CSV |
 | 0.2.2 | February 2nd, 2026 | Added Windows Installer (msiexec) active installation check with `MsiInstallationInProgress` column |

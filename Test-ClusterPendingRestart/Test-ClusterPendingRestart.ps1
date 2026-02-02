@@ -2,7 +2,7 @@
 <#
 .SYNOPSIS
     Author:     Neil Bird, MSFT
-    Version:    0.2.5
+    Version:    0.2.6
     Created:    January 30th 2026
     Updated:    February 2nd 2026
 
@@ -362,6 +362,34 @@ $runspacePool.Dispose()
 
 Write-Log "Completed all node checks" -Level Complete
 #endregion
+
+# Display detailed information if -Detailed switch was used
+if ($Detailed.IsPresent) {
+    Write-Log "=== Detailed Results ===" -Level Info
+    foreach ($result in $Results) {
+        Write-Log "--- $($result.ClusterName) / $($result.ComputerName) ---" -Level Processing
+        Write-Log "  Node State: $($result.NodeState)" -Level Info
+        Write-Log "  Pending Restart: $($result.PendingRestart)" -Level $(if ([string]$result.PendingRestart -eq 'True') { 'Warning' } else { 'Info' })
+        Write-Log "  MSI Installation In Progress: $($result.MsiInstallationInProgress)" -Level $(if ([string]$result.MsiInstallationInProgress -eq 'True') { 'Warning' } else { 'Info' })
+        Write-Log "  Reasons: $(if ($result.Reasons) { $result.Reasons } else { '(none)' })" -Level Info
+        Write-Log "  Check Succeeded: $($result.CheckSucceeded)" -Level $(if ($result.CheckSucceeded -eq 'True') { 'Success' } else { 'Error' })
+        
+        # Display the Details hashtable if present
+        if ($result.Details -and $result.Details.Count -gt 0) {
+            Write-Log "  Diagnostic Details:" -Level Info
+            foreach ($key in $result.Details.Keys) {
+                $detail = $result.Details[$key]
+                if ($detail -is [hashtable]) {
+                    $detailStr = ($detail.GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value)" }) -join ', '
+                    Write-Log "    $key`: $detailStr" -Level Info
+                } else {
+                    Write-Log "    $key`: $detail" -Level Info
+                }
+            }
+        }
+    }
+    Write-Log "" -Level Info
+}
 
 # Export results
 Write-Log "Exporting results to CSV file..." -Level Processing
