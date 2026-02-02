@@ -61,8 +61,11 @@ Invoke-WebRequest -UseBasicParsing -Uri 'https://raw.githubusercontent.com/NeilB
 # (Optional) Download the README
 Invoke-WebRequest -UseBasicParsing -Uri 'https://raw.githubusercontent.com/NeilBird/Azure-Local/refs/heads/main/Test-ClusterPendingRestart/README.md' -OutFile .\README.md
 
-# Run the script
+# Run the script against a single cluster:
 .\Test-ClusterPendingRestart.ps1 -ClusterName "MyCluster01" -NoConfirm
+
+# Run the script against multiple clusters, with cluster name in the "Clusters.csv" file
+.\Test-ClusterPendingRestart.ps1 -CSVFilePath ".\Clusters.csv" -NoConfirm
 ```
 
 ## CSV File Format
