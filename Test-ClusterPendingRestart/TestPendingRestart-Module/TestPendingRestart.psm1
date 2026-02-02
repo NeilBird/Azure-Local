@@ -3,7 +3,7 @@
 .SYNOPSIS
     Module:     TestPendingRestart
     Author:     Neil Bird, MSFT
-    Version:    0.2.3
+    Version:    0.2.4
     Created:    January 30th 2026
     Updated:    February 2nd 2026
 
@@ -360,9 +360,8 @@ function Test-PendingRestart {
                     }
                 }
 
-                if ($msiBlocking) {
-                    $reasons.Add('MSI:InstallerInProgress')
-                }
+                # Note: MSI check does NOT add to $reasons - it's tracked separately in MsiInstallationInProgress
+                # This is because an active MSI doesn't require a restart, it just blocks other MSI operations
 
                 if ($IncludeDetails) {
                     $details['WindowsInstaller'] = $msiBlockingDetails
@@ -371,14 +370,15 @@ function Test-PendingRestart {
                 $errors.Add("Windows Installer check failed: $($_.Exception.Message)")
             }
 
-            # Result object
+            # Result object - CheckSucceeded combines success status with any error messages
+            $checkSucceeded = if ($errors.Count -eq 0) { 'True' } else { "False: $($errors -join '; ')" }
+            
             $result = [pscustomobject]@{
                 ComputerName            = $env:COMPUTERNAME
                 PendingRestart          = ($reasons.Count -gt 0)
                 MsiInstallationInProgress = $msiBlocking
                 Reasons                 = if ($reasons.Count) { $reasons -join '; ' } else { '' }
-                Errors                  = if ($errors.Count) { $errors -join '; ' } else { '' }
-                Success                 = ($errors.Count -eq 0)
+                CheckSucceeded          = $checkSucceeded
             }
             
             if ($IncludeDetails) {

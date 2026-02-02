@@ -2,7 +2,7 @@
 <#
 .SYNOPSIS
     Author:     Neil Bird, MSFT
-    Version:    0.2.3
+    Version:    0.2.4
     Created:    January 30th 2026
     Updated:    February 2nd 2026
 
@@ -284,8 +284,7 @@ ForEach ($cluster in $clusterList) {
                 PendingRestart  = $null
                 MsiInstallationInProgress = $null
                 Reasons         = ''
-                Errors          = "Failed to get cluster nodes: $($_.Exception.Message)"
-                Success         = $false
+                CheckSucceeded  = "False: Failed to get cluster nodes: $($_.Exception.Message)"
             })
         }
     } catch {
@@ -297,8 +296,7 @@ ForEach ($cluster in $clusterList) {
             PendingRestart  = $null
             MsiInstallationInProgress = $null
             Reasons         = ''
-            Errors          = "Failed to connect to cluster: $($_.Exception.Message)"
-            Success         = $false
+            CheckSucceeded  = "False: Failed to connect to cluster: $($_.Exception.Message)"
         })
     }
 }
@@ -327,8 +325,7 @@ foreach ($job in $runspaceJobs) {
                 PendingRestart  = $null
                 MsiInstallationInProgress = $null
                 Reasons         = ''
-                Errors          = 'No result returned from runspace'
-                Success         = $false
+                CheckSucceeded  = 'False: No result returned from runspace'
             })
         }
         
@@ -346,8 +343,7 @@ foreach ($job in $runspaceJobs) {
             PendingRestart  = $null
             MsiInstallationInProgress = $null
             Reasons         = ''
-            Errors          = "Runspace error: $($_.Exception.Message)"
-            Success         = $false
+            CheckSucceeded  = "False: Runspace error: $($_.Exception.Message)"
         })
     } finally {
         # Cleanup
@@ -372,18 +368,20 @@ Write-Log "Exporting results to CSV file..." -Level Processing
 [string]$ExportFileName = Join-Path -Path $OutputPath -ChildPath "Clusters_PendingRestartResults_$(Get-Date -Format 'yyyyMMdd_HHmmss').csv"
 
 # Convert List to array for Export-Csv and exclude Details column (not CSV-friendly)
-$exportResults = $Results.ToArray() | Select-Object ClusterName, ComputerName, NodeState, PendingRestart, MsiInstallationInProgress, Reasons, Errors, Success
+$exportResults = $Results.ToArray() | Select-Object ClusterName, ComputerName, NodeState, PendingRestart, MsiInstallationInProgress, Reasons, CheckSucceeded
 $exportResults | Export-Csv -Path $ExportFileName -NoTypeInformation -Encoding UTF8 -ErrorAction Stop
 
 # Summary
-$successCount = ($Results | Where-Object { $_.Success -eq $true }).Count
-$failCount = ($Results | Where-Object { $_.Success -eq $false }).Count
+$successCount = ($Results | Where-Object { $_.CheckSucceeded -eq 'True' }).Count
+$failCount = ($Results | Where-Object { $_.CheckSucceeded -ne 'True' }).Count
 $pendingRestartCount = ($Results | Where-Object { $_.PendingRestart -eq $true }).Count
+$msiInProgressCount = ($Results | Where-Object { $_.MsiInstallationInProgress -eq $true }).Count
 
 Write-Log "=== Summary ===" -Level Complete
 Write-Log "Total nodes checked: $($Results.Count)" -Level Info
 Write-Log "Successful checks: $successCount" -Level Success
 Write-Log "Failed checks: $failCount" -Level $(if ($failCount -gt 0) { 'Warning' } else { 'Info' })
 Write-Log "Nodes with pending restart: $pendingRestartCount" -Level $(if ($pendingRestartCount -gt 0) { 'Warning' } else { 'Info' })
+Write-Log "Nodes with MSI installation in progress: $msiInProgressCount" -Level $(if ($msiInProgressCount -gt 0) { 'Warning' } else { 'Info' })
 Write-Log "Results exported to CSV file: '$ExportFileName'" -Level Success
 Write-Log "Script execution completed" -Level Complete

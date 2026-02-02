@@ -1,6 +1,6 @@
 # Azure Local - Cluster Node Pending Restart Check
 
-**Latest Version:** v0.2.3
+**Latest Version:** v0.2.4
 
 > **Disclaimer:** This module is NOT a Microsoft supported service offering or product. It is provided as example code only, with no warranty or official support. Refer to the [MIT License](https://github.com/NeilBird/Azure-Local/blob/main/LICENSE) for further information.
 
@@ -133,18 +133,18 @@ The script generates a timestamped CSV file with the following columns:
 | `ClusterName` | Name of the cluster |
 | `ComputerName` | Name of the node |
 | `NodeState` | Cluster node state (Up, Down, Paused, etc.) |
-| `PendingRestart` | True/False indicating if restart is pending |
+| `PendingRestart` | True/False indicating if restart is pending (does not include MSI check) |
 | `MsiInstallationInProgress` | True/False indicating if a Windows Installer (msiexec) operation is active and would block further MSI installs |
 | `Reasons` | Semicolon-separated list of pending restart reasons |
-| `Errors` | Any errors encountered during the check |
-| `Success` | True if check completed without errors |
+| `CheckSucceeded` | "True" if check completed successfully, or "False: <error message>" if failed |
 
 ### Example Output
 
 ```csv
-"ClusterName","ComputerName","NodeState","PendingRestart","MsiInstallationInProgress","Reasons","Errors","Success"
-"CLUSTER01","NODE01","Up","False","False","","","True"
-"CLUSTER01","NODE02","Up","True","True","CBS:RebootPending; MSI:InstallerInProgress","","True"
+"ClusterName","ComputerName","NodeState","PendingRestart","MsiInstallationInProgress","Reasons","CheckSucceeded"
+"CLUSTER01","NODE01","Up","False","False","","True"
+"CLUSTER01","NODE02","Up","False","True","","True"
+"CLUSTER01","NODE03","Up","True","False","CBS:RebootPending","True"
 ```
 
 ### Console Output
@@ -160,6 +160,7 @@ The script provides color-coded console output showing progress and summary:
 [2026-02-02 10:30:05] [SUCCESS]  Successful checks: 2
 [2026-02-02 10:30:05] [INFO]     Failed checks: 0
 [2026-02-02 10:30:05] [INFO]     Nodes with pending restart: 0
+[2026-02-02 10:30:05] [INFO]     Nodes with MSI installation in progress: 0
 ```
 
 ## Pending Restart Indicators
@@ -203,8 +204,7 @@ Ensure the following ports are open between the script host and target nodes:
 ## Version History
 
 | Version | Date | Changes |
-|---------|------|---------|
-| 0.2.3 | February 2nd, 2026 | Added `-ClusterName` parameter for direct cluster input without CSV |
+|---------|------|---------|| 0.2.4 | February 2nd, 2026 | MSI check no longer sets PendingRestart; combined Success/Errors into CheckSucceeded column; added MSI summary to console output || 0.2.3 | February 2nd, 2026 | Added `-ClusterName` parameter for direct cluster input without CSV |
 | 0.2.2 | February 2nd, 2026 | Added Windows Installer (msiexec) active installation check with `MsiInstallationInProgress` column |
 | 0.2.1 | February 2nd, 2026 | Fixed runspace result collection issue |
 | 0.2.0 | January 30th, 2026 | Added parallel processing with runspaces |
