@@ -21,6 +21,7 @@ The script supports **parallel processing** using runspaces for improved perform
   - SCCM/ConfigMgr client reboot pending (if applicable)
   - Azure Local/HCI Cluster-Aware Updating (CAU) state
   - Azure Stack HCI Update state
+  - **Windows Installer (msiexec) active installation** - Can block further MSI operations during updates
 - ✅ Exports results to CSV
 - ✅ Optional detailed diagnostic information
 - ✅ Configurable timeout and credential support
@@ -116,6 +117,7 @@ The script generates a timestamped CSV file with the following columns:
 | `ComputerName` | Name of the node |
 | `NodeState` | Cluster node state (Up, Down, Paused, etc.) |
 | `PendingRestart` | True/False indicating if restart is pending |
+| `MsiInstallationInProgress` | True/False indicating if a Windows Installer (msiexec) operation is active and would block further MSI installs |
 | `Reasons` | Semicolon-separated list of pending restart reasons |
 | `Errors` | Any errors encountered during the check |
 | `Success` | True if check completed without errors |
@@ -123,9 +125,9 @@ The script generates a timestamped CSV file with the following columns:
 ### Example Output
 
 ```csv
-"ClusterName","ComputerName","NodeState","PendingRestart","Reasons","Errors","Success"
-"CLUSTER01","NODE01","Up","False","","","True"
-"CLUSTER01","NODE02","Up","True","CBS:RebootPending; WU:RebootRequired","","True"
+"ClusterName","ComputerName","NodeState","PendingRestart","MsiInstallationInProgress","Reasons","Errors","Success"
+"CLUSTER01","NODE01","Up","False","False","","","True"
+"CLUSTER01","NODE02","Up","True","True","CBS:RebootPending; MSI:InstallerInProgress","","True"
 ```
 
 ### Console Output
@@ -158,6 +160,7 @@ The script checks for the following restart indicators:
 | ConfigMgr:RebootPending | CCM_ClientUtilities WMI | SCCM/ConfigMgr client restart pending |
 | Orchestrator:RebootRequired | `HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Orchestrator\RebootRequired` | Update Orchestrator requires restart |
 | AzureStackHCI:RebootRequired | `HKLM:\SOFTWARE\Microsoft\AzureStack\HCI\Update` | Azure Stack HCI update requires restart |
+| MSI:InstallerInProgress | msiexec process + `HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Installer\InProgress` | Active Windows Installer operation blocks further MSI installs |
 
 ## Troubleshooting
 
@@ -183,8 +186,7 @@ Ensure the following ports are open between the script host and target nodes:
 ## Version History
 
 | Version | Date | Changes |
-|---------|------|---------|
-| 0.2.1 | February 2nd, 2026 | Fixed runspace result collection issue |
+|---------|------|---------|| 0.2.2 | February 2nd, 2026 | Added Windows Installer (msiexec) active installation check || 0.2.1 | February 2nd, 2026 | Fixed runspace result collection issue |
 | 0.2.0 | January 30th, 2026 | Added parallel processing with runspaces |
 | 0.1.0 | January 30th, 2026 | Initial release |
 

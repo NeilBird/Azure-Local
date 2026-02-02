@@ -2,7 +2,7 @@
 <#
 .SYNOPSIS
     Author:     Neil Bird, MSFT
-    Version:    0.2.1
+    Version:    0.2.2
     Created:    January 30th 2026
     Updated:    February 2nd 2026
 
@@ -343,7 +343,7 @@ Write-Log "Exporting results to CSV file..." -Level Processing
 [string]$ExportFileName = Join-Path -Path $OutputPath -ChildPath "Clusters_PendingRestartResults_$(Get-Date -Format 'yyyyMMdd_HHmmss').csv"
 
 # Convert List to array for Export-Csv and exclude Details column (not CSV-friendly)
-$exportResults = $Results.ToArray() | Select-Object ClusterName, ComputerName, NodeState, PendingRestart, Reasons, Errors, Success
+$exportResults = $Results.ToArray() | Select-Object ClusterName, ComputerName, NodeState, PendingRestart, MsiInstallationInProgress, Reasons, Errors, Success
 $exportResults | Export-Csv -Path $ExportFileName -NoTypeInformation -Encoding UTF8 -ErrorAction Stop
 
 # Summary

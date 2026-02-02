@@ -3,15 +3,16 @@
 .SYNOPSIS
     Module:     TestPendingRestart
     Author:     Neil Bird, MSFT
-    Version:    0.2.0
+    Version:    0.2.1
     Created:    January 30th 2026
-    Updated:    January 30th 2026
+    Updated:    February 2nd 2026
 
 .DESCRIPTION
     This module provides functions to test computers for pending restart indicators.
     It checks for common pending restart signals such as Windows Update, Component Based Servicing,
     pending file rename operations, computer rename, domain join/rename signals, SCCM/ConfigMgr
-    client indicators, and Azure Local/HCI-specific indicators (CAU state).
+    client indicators, Azure Local/HCI-specific indicators (CAU state), and active Windows Installer
+    (msiexec) installations that could block further MSI operations.
 
 .NOTES
     Requires PowerShell 5.1 or later.
@@ -298,13 +299,86 @@ function Test-PendingRestart {
                 $errors.Add("Azure Local/HCI check failed: $($_.Exception.Message)")
             }
 
+            # 8) Windows Installer (msiexec) active installation check
+            # An active msiexec installation will block further "msiexec.exe /i <path> /qn" commands
+            try {
+                $msiBlocking = $false
+                $msiBlockingDetails = @{
+                    MsiExecProcesses = @()
+                    MsiServerRunning = $false
+                    InstallerInProgress = $false
+                    CheckedAt = (Get-Date).ToString('o')
+                }
+
+                # Check for active msiexec.exe processes (excluding /V for version queries)
+                $msiProcesses = Get-Process -Name 'msiexec' -ErrorAction SilentlyContinue | 
+                    Where-Object { $_.Id -ne 0 }
+                
+                if ($msiProcesses) {
+                    # Get command line details for each msiexec process to identify active installations
+                    foreach ($proc in $msiProcesses) {
+                        try {
+                            $wmiProc = Get-CimInstance -ClassName Win32_Process -Filter "ProcessId = $($proc.Id)" -ErrorAction SilentlyContinue
+                            $cmdLine = $wmiProc.CommandLine
+                            
+                            # Track all msiexec processes for details
+                            $msiBlockingDetails.MsiExecProcesses += @{
+                                ProcessId = $proc.Id
+                                CommandLine = $cmdLine
+                                StartTime = if ($proc.StartTime) { $proc.StartTime.ToString('o') } else { 'Unknown' }
+                            }
+                            
+                            # Check if this is an active installation (not just the service process)
+                            # The msiexec service runs with /V flag or no arguments
+                            # Active installations typically have /i, /x, /p, /a, or /f flags
+                            if ($cmdLine -and ($cmdLine -match '\s/[ixpaf]\s' -or $cmdLine -match '\s/[ixpaf]"' -or $cmdLine -match '\s/[ixpaf]$')) {
+                                $msiBlocking = $true
+                                $msiBlockingDetails.InstallerInProgress = $true
+                            }
+                        } catch {
+                            # Process may have exited, continue
+                        }
+                    }
+                }
+
+                # Check Windows Installer service state and active install via registry
+                # The _MSIExecute mutex is held during active installations, but checking registry is more reliable remotely
+                $installerPath = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Installer\InProgress'
+                if (Test-Path $installerPath) {
+                    $msiBlocking = $true
+                    $msiBlockingDetails.InstallerInProgress = $true
+                }
+
+                # Check if msiserver service is running (Windows Installer service)
+                $msiService = Get-Service -Name 'msiserver' -ErrorAction SilentlyContinue
+                if ($msiService -and $msiService.Status -eq 'Running') {
+                    $msiBlockingDetails.MsiServerRunning = $true
+                    # Service running alone doesn't mean blocking, but combined with processes it's significant
+                    if ($msiProcesses -and $msiProcesses.Count -gt 1) {
+                        # More than just the service host process suggests active installation
+                        $msiBlocking = $true
+                    }
+                }
+
+                if ($msiBlocking) {
+                    $reasons.Add('MSI:InstallerInProgress')
+                }
+
+                if ($IncludeDetails) {
+                    $details['WindowsInstaller'] = $msiBlockingDetails
+                }
+            } catch {
+                $errors.Add("Windows Installer check failed: $($_.Exception.Message)")
+            }
+
             # Result object
             $result = [pscustomobject]@{
-                ComputerName    = $env:COMPUTERNAME
-                PendingRestart  = ($reasons.Count -gt 0)
-                Reasons         = if ($reasons.Count) { $reasons -join '; ' } else { '' }
-                Errors          = if ($errors.Count) { $errors -join '; ' } else { '' }
-                Success         = ($errors.Count -eq 0)
+                ComputerName            = $env:COMPUTERNAME
+                PendingRestart          = ($reasons.Count -gt 0)
+                MsiInstallationInProgress = $msiBlocking
+                Reasons                 = if ($reasons.Count) { $reasons -join '; ' } else { '' }
+                Errors                  = if ($errors.Count) { $errors -join '; ' } else { '' }
+                Success                 = ($errors.Count -eq 0)
             }
             
             if ($IncludeDetails) {

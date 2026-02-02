@@ -1,7 +1,7 @@
 @{
     # Module identification
     RootModule        = 'TestPendingRestart.psm1'
-    ModuleVersion     = '0.2.0'
+    ModuleVersion     = '0.2.1'
     GUID              = 'a1b2c3d4-e5f6-7890-abcd-ef1234567890'
     
     # Author information
@@ -10,7 +10,7 @@
     Copyright         = '(c) 2026 Microsoft. All rights reserved.'
     
     # Module description
-    Description       = 'PowerShell module to test computers for pending restart indicators. Checks for Windows Update, CBS, pending file renames, computer rename, domain join signals, SCCM/ConfigMgr client indicators, and Azure Local/HCI-specific indicators (CAU state, Azure Stack HCI updates).'
+    Description       = 'PowerShell module to test computers for pending restart indicators. Checks for Windows Update, CBS, pending file renames, computer rename, domain join signals, SCCM/ConfigMgr client indicators, Azure Local/HCI-specific indicators (CAU state, Azure Stack HCI updates), and active Windows Installer (msiexec) installations.'
     
     # Minimum PowerShell version required
     PowerShellVersion = '5.1'
