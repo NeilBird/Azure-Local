@@ -1,5 +1,7 @@
 # Azure Local - Cluster Node Pending Restart Check
 
+**Latest Version:** v0.2.3
+
 > **Disclaimer:** This module is NOT a Microsoft supported service offering or product. It is provided as example code only, with no warranty or official support. Refer to the [MIT License](https://github.com/NeilBird/Azure-Local/blob/main/LICENSE) for further information.
 
 ## Overview
@@ -57,7 +59,8 @@ cluster02,Healthy,UpdateAvailable
 
 | Parameter | Required | Default | Description |
 |-----------|----------|---------|-------------|
-| `-CSVFilePath` | No | Prompts | Path to CSV file containing cluster names |
+| `-ClusterName` | No* | - | Name of one or more clusters to check directly (alias: `-Cluster`) |
+| `-CSVFilePath` | No* | Prompts | Path to CSV file containing cluster names |
 | `-OutputPath` | No | Current directory | Directory where results CSV will be saved |
 | `-Credential` | No | Current user | PSCredential for remote authentication |
 | `-TimeoutSeconds` | No | 30 | Timeout for remote connections (5-300) |
@@ -65,9 +68,23 @@ cluster02,Healthy,UpdateAvailable
 | `-NoConfirm` | No | False | Skip confirmation prompt |
 | `-Detailed` | No | False | Include detailed diagnostic information |
 
+> **Note:** Use either `-ClusterName` OR `-CSVFilePath`. If neither is provided, the script prompts for CSV input.
+
 ## Usage Examples
 
-### Basic Usage (Interactive)
+### Check a Single Cluster
+
+```powershell
+.\Test-ClusterPendingRestart.ps1 -ClusterName "MyCluster01"
+```
+
+### Check Multiple Clusters Directly
+
+```powershell
+.\Test-ClusterPendingRestart.ps1 -ClusterName "Cluster01", "Cluster02", "Cluster03" -NoConfirm
+```
+
+### Basic Usage (Interactive - prompts for CSV)
 
 ```powershell
 .\Test-ClusterPendingRestart.ps1
@@ -186,7 +203,10 @@ Ensure the following ports are open between the script host and target nodes:
 ## Version History
 
 | Version | Date | Changes |
-|---------|------|---------|| 0.2.2 | February 2nd, 2026 | Added Windows Installer (msiexec) active installation check || 0.2.1 | February 2nd, 2026 | Fixed runspace result collection issue |
+|---------|------|---------|
+| 0.2.3 | February 2nd, 2026 | Added `-ClusterName` parameter for direct cluster input without CSV |
+| 0.2.2 | February 2nd, 2026 | Added Windows Installer (msiexec) active installation check with `MsiInstallationInProgress` column |
+| 0.2.1 | February 2nd, 2026 | Fixed runspace result collection issue |
 | 0.2.0 | January 30th, 2026 | Added parallel processing with runspaces |
 | 0.1.0 | January 30th, 2026 | Initial release |
 

@@ -2,18 +2,25 @@
 <#
 .SYNOPSIS
     Author:     Neil Bird, MSFT
-    Version:    0.2.2
+    Version:    0.2.3
     Created:    January 30th 2026
     Updated:    February 2nd 2026
 
 .DESCRIPTION
-    This script checks all nodes in clusters (from a CSV file) for pending restart indicators.
+    This script checks all nodes in clusters for pending restart indicators.
     It connects to each cluster, retrieves the nodes, and checks each node for common pending restart signals.
     Supports parallel processing using runspaces for improved performance on large clusters.
+    
+    You can specify clusters either directly via -ClusterName or from a CSV file via -CSVFilePath.
+
+.PARAMETER ClusterName
+    Optional. Name of one or more clusters to check. Can be a single cluster name or an array of names.
+    Use this parameter for quick checks without needing a CSV file.
+    Alias: -Cluster
 
 .PARAMETER CSVFilePath
-    Optional. Path to the CSV file containing cluster names. If not provided, the script will prompt for input.
-    The CSV file must contain a 'Cluster' column.
+    Optional. Path to the CSV file containing cluster names. If neither -ClusterName nor -CSVFilePath 
+    is provided, the script will prompt for CSV input. The CSV file must contain a 'Cluster' column.
 
 .PARAMETER OutputPath
     Optional. Directory path where results CSV will be saved. Defaults to current directory.
@@ -34,6 +41,14 @@
     Optional. Include detailed diagnostic information in results.
 
 .EXAMPLE
+    .\Test-ClusterPendingRestart.ps1 -ClusterName "MyCluster01"
+    Checks a single cluster for pending restart indicators on all nodes.
+
+.EXAMPLE
+    .\Test-ClusterPendingRestart.ps1 -ClusterName "Cluster01", "Cluster02", "Cluster03" -NoConfirm
+    Checks multiple clusters without confirmation prompt.
+
+.EXAMPLE
     .\Test-ClusterPendingRestart.ps1
     Prompts for CSV file path and runs the pending restart check on all cluster nodes.
 
@@ -46,12 +61,8 @@
     Uses explicit credentials and saves results to specified directory.
 
 .EXAMPLE
-    .\Test-ClusterPendingRestart.ps1 -CSVFilePath "C:\Clusters\clusters.csv" -ThrottleLimit 20 -Detailed
-    Runs with 20 concurrent checks and includes detailed diagnostic information.
-
-.EXAMPLE
-    .\Test-ClusterPendingRestart.ps1 -CSVFilePath "C:\Clusters\clusters.csv" -Credential (Get-Credential) -OutputPath "C:\Results" -NoConfirm
-    Automated run with credentials, custom output path, and no confirmation prompt.
+    .\Test-ClusterPendingRestart.ps1 -ClusterName "MyCluster01" -Credential (Get-Credential) -Detailed
+    Checks a single cluster with explicit credentials and detailed output.
 
 .EXAMPLE
     .\Test-ClusterPendingRestart.ps1 -CSVFilePath "C:\Clusters\clusters.csv" -ThrottleLimit 20 -Detailed -NoConfirm
@@ -74,8 +85,12 @@
 
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory=$false)]
+    [Parameter(Mandatory=$false, ParameterSetName='CSV')]
     [string]$CSVFilePath,
+
+    [Parameter(Mandatory=$false, ParameterSetName='Direct')]
+    [Alias('Cluster')]
+    [string[]]$ClusterName,
 
     [Parameter(Mandatory=$false)]
     [string]$OutputPath = (Get-Location).Path,
@@ -129,34 +144,44 @@ if (-not (Test-Path -Path $OutputPath -PathType Container)) {
 Write-Log "=== Azure Local - Cluster Node Pending Restart Check Script ===" -Level Start
 Write-Log "Script execution started" -Level Info
 
-# Get CSV file path
-if ([string]::IsNullOrWhiteSpace($CSVFilePath)) {
-    Write-Log "Requesting CSV file input..." -Level Processing
-    $CSVFilePath = Read-Host -Prompt "Enter the path to the CSV file containing cluster names: (requires a 'Cluster' column in the CSV file)"
-}
+# Determine input mode: Direct cluster name(s) or CSV file
+$clusterList = @()
 
-Write-Log "Validating CSV file: $CSVFilePath" -Level Processing
-if(-not(Test-Path -Path $CSVFilePath)) {
-    Write-Log "CSV file not found at path: $CSVFilePath" -Level Error
-    exit 1
-}
-
-Write-Log "Importing CSV file..." -Level Processing
-try {
-    $ClusterNames = Import-Csv -Path $CSVFilePath -ErrorAction Stop
-} catch {
-    Write-Log "Failed to import CSV file: $($_.Exception.Message)" -Level Error
-    exit 1
-}
-
-if($ClusterNames.Count -eq 0) {
-    Write-Log "No clusters found in CSV file." -Level Warning
-    exit 1
-} elseif(-not($ClusterNames | Get-Member -Name 'Cluster')) {
-    Write-Log "CSV file does not contain 'Cluster' column." -Level Error
-    exit 1
+if ($ClusterName -and $ClusterName.Count -gt 0) {
+    # Direct cluster name input
+    Write-Log "Using direct cluster input: $($ClusterName.Count) cluster(s) specified" -Level Info
+    $clusterList = $ClusterName
 } else {
-    Write-Log "Successfully imported $($ClusterNames.Count) clusters from CSV file." -Level Success
+    # CSV file input
+    if ([string]::IsNullOrWhiteSpace($CSVFilePath)) {
+        Write-Log "Requesting CSV file input..." -Level Processing
+        $CSVFilePath = Read-Host -Prompt "Enter the path to the CSV file containing cluster names: (requires a 'Cluster' column in the CSV file)"
+    }
+
+    Write-Log "Validating CSV file: $CSVFilePath" -Level Processing
+    if(-not(Test-Path -Path $CSVFilePath)) {
+        Write-Log "CSV file not found at path: $CSVFilePath" -Level Error
+        exit 1
+    }
+
+    Write-Log "Importing CSV file..." -Level Processing
+    try {
+        $csvData = Import-Csv -Path $CSVFilePath -ErrorAction Stop
+    } catch {
+        Write-Log "Failed to import CSV file: $($_.Exception.Message)" -Level Error
+        exit 1
+    }
+
+    if($csvData.Count -eq 0) {
+        Write-Log "No clusters found in CSV file." -Level Warning
+        exit 1
+    } elseif(-not($csvData | Get-Member -Name 'Cluster')) {
+        Write-Log "CSV file does not contain 'Cluster' column." -Level Error
+        exit 1
+    } else {
+        Write-Log "Successfully imported $($csvData.Count) clusters from CSV file." -Level Success
+        $clusterList = $csvData.Cluster
+    }
 }
 
 Write-Log "Starting pending restart checks (this will connect to each node of each cluster)..." -Level Start
@@ -200,28 +225,28 @@ $nodeCheckScript = {
 $runspaceJobs = [System.Collections.Generic.List[hashtable]]::new()
 #endregion
 
-# For each cluster in the CSV file, connect to the cluster, get nodes and queue pending restart checks
+# For each cluster, connect to the cluster, get nodes and queue pending restart checks
 $clusterCount = 0
-$totalClusters = $ClusterNames.Cluster.Count
+$totalClusters = $clusterList.Count
 $totalNodesQueued = 0
 
-ForEach ($ClusterName in $ClusterNames.Cluster) {
+ForEach ($cluster in $clusterList) {
     $clusterCount++
-    Write-Progress -Activity "Processing clusters" -Status "Cluster $clusterCount of $totalClusters`: $ClusterName" -PercentComplete (($clusterCount / $totalClusters) * 100)
-    Write-Log "Processing cluster $clusterCount of $totalClusters`: $ClusterName" -Level Processing
+    Write-Progress -Activity "Processing clusters" -Status "Cluster $clusterCount of $totalClusters`: $cluster" -PercentComplete (($clusterCount / $totalClusters) * 100)
+    Write-Log "Processing cluster $clusterCount of $totalClusters`: $cluster" -Level Processing
     try {
-        Write-Log "Connecting to cluster: $ClusterName" -Level Info
-        $Cluster = Get-Cluster -Name $ClusterName -ErrorAction Stop
-        Write-Log "Successfully connected to cluster: $ClusterName" -Level Success
+        Write-Log "Connecting to cluster: $cluster" -Level Info
+        $ClusterObj = Get-Cluster -Name $cluster -ErrorAction Stop
+        Write-Log "Successfully connected to cluster: $cluster" -Level Success
         try {
-            Write-Log "Retrieving cluster nodes for: $ClusterName" -Level Processing
-            $Nodes = Get-ClusterNode -Cluster ($Cluster).Name -ErrorAction Stop
+            Write-Log "Retrieving cluster nodes for: $cluster" -Level Processing
+            $Nodes = Get-ClusterNode -Cluster ($ClusterObj).Name -ErrorAction Stop
             
             # Build node state map (Up/Paused/Down/etc.)
             $nodeStateMap = @{}
             $Nodes | ForEach-Object { $nodeStateMap[$_.Name.ToUpperInvariant()] = $_.State.ToString() }
             
-            Write-Log "Found $($Nodes.Count) nodes in cluster: $ClusterName - queueing for parallel processing" -Level Info
+            Write-Log "Found $($Nodes.Count) nodes in cluster: $cluster - queueing for parallel processing" -Level Info
             
             ForEach ($Node in $Nodes) {
                 $NodeName = $Node.Name
@@ -232,7 +257,7 @@ ForEach ($ClusterName in $ClusterNames.Cluster) {
                 $powerShell.RunspacePool = $runspacePool
                 [void]$powerShell.AddScript($nodeCheckScript)
                 [void]$powerShell.AddParameter('NodeName', $NodeName)
-                [void]$powerShell.AddParameter('ClusterName', $ClusterName)
+                [void]$powerShell.AddParameter('ClusterName', $cluster)
                 [void]$powerShell.AddParameter('NodeState', $NodeState)
                 [void]$powerShell.AddParameter('ModulePath', $modulePath)
                 [void]$powerShell.AddParameter('Credential', $Credential)
@@ -244,31 +269,33 @@ ForEach ($ClusterName in $ClusterNames.Cluster) {
                     PowerShell = $powerShell
                     Handle     = $powerShell.BeginInvoke()
                     NodeName   = $NodeName
-                    ClusterName = $ClusterName
+                    ClusterName = $cluster
                     NodeState  = $NodeState
                 })
                 $totalNodesQueued++
             }
-            Write-Log "Queued $($Nodes.Count) nodes for cluster: $ClusterName" -Level Success
+            Write-Log "Queued $($Nodes.Count) nodes for cluster: $cluster" -Level Success
         } catch {
-            Write-Log "Failed to get nodes for cluster '$ClusterName': $($_.Exception.Message)" -Level Error
+            Write-Log "Failed to get nodes for cluster '$cluster': $($_.Exception.Message)" -Level Error
             $Results.Add([pscustomobject]@{
-                ClusterName     = $ClusterName
-                ComputerName    = "$ClusterName (nodes unavailable)"
+                ClusterName     = $cluster
+                ComputerName    = "$cluster (nodes unavailable)"
                 NodeState       = 'Unknown'
                 PendingRestart  = $null
+                MsiInstallationInProgress = $null
                 Reasons         = ''
                 Errors          = "Failed to get cluster nodes: $($_.Exception.Message)"
                 Success         = $false
             })
         }
     } catch {
-        Write-Log "Failed to connect to cluster '$ClusterName': $($_.Exception.Message)" -Level Error
+        Write-Log "Failed to connect to cluster '$cluster': $($_.Exception.Message)" -Level Error
         $Results.Add([pscustomobject]@{
-            ClusterName     = $ClusterName
-            ComputerName    = "$ClusterName (cluster unavailable)"
+            ClusterName     = $cluster
+            ComputerName    = "$cluster (cluster unavailable)"
             NodeState       = 'Unknown'
             PendingRestart  = $null
+            MsiInstallationInProgress = $null
             Reasons         = ''
             Errors          = "Failed to connect to cluster: $($_.Exception.Message)"
             Success         = $false
@@ -298,6 +325,7 @@ foreach ($job in $runspaceJobs) {
                 ComputerName    = $job.NodeName
                 NodeState       = $job.NodeState
                 PendingRestart  = $null
+                MsiInstallationInProgress = $null
                 Reasons         = ''
                 Errors          = 'No result returned from runspace'
                 Success         = $false
@@ -316,6 +344,7 @@ foreach ($job in $runspaceJobs) {
             ComputerName    = $job.NodeName
             NodeState       = $job.NodeState
             PendingRestart  = $null
+            MsiInstallationInProgress = $null
             Reasons         = ''
             Errors          = "Runspace error: $($_.Exception.Message)"
             Success         = $false
