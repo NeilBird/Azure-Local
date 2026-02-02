@@ -388,7 +388,6 @@ if ($Detailed.IsPresent) {
             }
         }
     }
-    Write-Log "" -Level Info
 }
 
 # Export results
