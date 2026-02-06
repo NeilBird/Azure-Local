@@ -78,9 +78,12 @@ The script generates a CSV file with the following information for each node:
 
 - **ClusterName**: Name of the cluster
 - **NodeName**: Name of the node
-- **Status**: Success or Fail
+- **Status**: `Success`, `Skipped`, or `Fail`
+  - `Success`: Mitigation applied or not needed (version >= 1.41.0.0)
+  - `Skipped`: AMA Extension not installed on the node
+  - `Fail`: An error occurred during mitigation
 - **Message**: Details about the action taken or error encountered
-- **AMAVersion**: Installed AMA Extension version
+- **AMAVersion**: Installed AMA Extension version (or `N/A` if not installed)
 
 ---
 

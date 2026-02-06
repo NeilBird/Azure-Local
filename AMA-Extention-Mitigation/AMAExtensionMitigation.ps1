@@ -188,12 +188,13 @@ function Invoke-AMAExtensionMitigation {
                 $AMAInstallationFolder = $AMAInstallationFolderSearch.FullName
                 Write-Host "Found AMA Extension installation folder: '$AMAInstallationFolder'"
             } else {
-                Write-Host "Error: AMA Extension installation folder not found." -ForegroundColor Red
+                Write-Host "AMA Extension is not installed on this node - skipping." -ForegroundColor Yellow
                 Write-Host "Completed node: $env:COMPUTERNAME"
                 Return [pscustomobject]@{
-                    NodeName = $env:COMPUTERNAME
-                    Status   = 'Fail'
-                    Message  = 'AMA Extension installation folder not found'
+                    NodeName   = $env:COMPUTERNAME
+                    Status     = 'Skipped'
+                    Message    = 'AMA Extension not installed'
+                    AMAVersion = 'N/A'
                 }
             }
         }
@@ -492,15 +493,17 @@ $Results = Invoke-AMAExtensionMitigation -ClusterList $clusterList
 Write-Log "Exporting results to CSV file..." -Level Processing
 [string]$ExportFileName = Join-Path -Path $OutputPath -ChildPath "AMAExtensionMitigation_Results_$(Get-Date -Format 'yyyyMMdd_HHmmss').csv"
 
-$Results.ToArray() | Export-Csv -Path $ExportFileName -NoTypeInformation -Encoding UTF8 -ErrorAction Stop
+@($Results) | Export-Csv -Path $ExportFileName -NoTypeInformation -Encoding UTF8 -ErrorAction Stop
 
 # Summary
 $successCount = @($Results | Where-Object { $_.Status -eq 'Success' }).Count
-$failCount = @($Results | Where-Object { $_.Status -ne 'Success' }).Count
+$skippedCount = @($Results | Where-Object { $_.Status -eq 'Skipped' }).Count
+$failCount = @($Results | Where-Object { $_.Status -eq 'Fail' }).Count
 
 Write-Log "=== Summary ===" -Level Complete
-Write-Log "Total nodes processed: $($Results.Count)" -Level Info
+Write-Log "Total nodes processed: $(@($Results).Count)" -Level Info
 Write-Log "Successful: $successCount" -Level Success
+Write-Log "Skipped (not installed): $skippedCount" -Level Info
 Write-Log "Failed: $failCount" -Level $(if ($failCount -gt 0) { 'Warning' } else { 'Info' })
 Write-Log "Results exported to CSV file: '$ExportFileName'" -Level Success
 Write-Log "Script execution completed" -Level Complete
