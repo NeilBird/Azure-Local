@@ -169,7 +169,7 @@ function Invoke-AMAExtensionMitigation {
                     Write-Host "Found MetricsExtension.Native.exe process (PID: $($AMAProcess.ProcessId))"
                     # Set the extension path from the process info, for the parent path
                     $AMAExtensionPath = $AMAProcess.ParentPath
-                    Write-Host "Stopping MetricsExtension.Native.exe (PID: $($AMAProcess.ProcessId)) as it is owned by '$AMAProcess.ParentName'..."
+                    Write-Host "Stopping MetricsExtension.Native.exe (PID: $($AMAProcess.ProcessId)) as it is owned by '$($AMAProcess.ParentName)'..."
                     Stop-Process -Id $AMAProcess.ProcessId -Force -ErrorAction Stop
                     # Wait a few seconds to ensure the process has stopped
                     Start-Sleep -Seconds 3
