@@ -288,11 +288,49 @@ function Invoke-AMAExtensionMitigation {
             if(Test-Path -Path $NewFileName -ErrorAction Continue) {
                 Write-Host "MetricsExtension.Native.exe - File already renamed" -ForegroundColor Yellow
                 Write-Host "Mitigation has been already applied" -ForegroundColor Green
+
+                # Restart AMAExtHealthMonitor.exe even though mitigation was already applied
+                $restartMessage = ""
+                try {
+                    $amaHealthMonitor = Get-Process -Name "AMAExtHealthMonitor" -ErrorAction SilentlyContinue
+                    if ($amaHealthMonitor) {
+                        Write-Host "Found AMAExtHealthMonitor.exe process (PID: $($amaHealthMonitor.Id))" -ForegroundColor Cyan
+                        Write-Host "Stopping AMAExtHealthMonitor.exe (PID: $($amaHealthMonitor.Id))..." -ForegroundColor Cyan
+                        $amaHealthMonitor | Stop-Process -Force -ErrorAction Stop
+                        Start-Sleep -Seconds 3
+                        Write-Host "AMAExtHealthMonitor.exe stopped successfully." -ForegroundColor Green
+                    } else {
+                        Write-Host "AMAExtHealthMonitor.exe is not currently running." -ForegroundColor Yellow
+                    }
+
+                    $amaHealthMonitorExe = Join-Path -Path $AMAInstallationFolder -ChildPath "AMAExtHealthMonitor.exe"
+                    if (Test-Path -Path $amaHealthMonitorExe -ErrorAction SilentlyContinue) {
+                        Write-Host "Starting AMAExtHealthMonitor.exe from: $amaHealthMonitorExe" -ForegroundColor Cyan
+                        Start-Process -FilePath $amaHealthMonitorExe -WorkingDirectory $AMAInstallationFolder -ErrorAction Stop
+                        Start-Sleep -Seconds 5
+
+                        $newAmaHealthMonitor = Get-Process -Name "AMAExtHealthMonitor" -ErrorAction SilentlyContinue
+                        if ($newAmaHealthMonitor) {
+                            Write-Host "AMAExtHealthMonitor.exe restarted successfully (New PID: $($newAmaHealthMonitor.Id))" -ForegroundColor Green
+                            $restartMessage = " | AMAExtHealthMonitor.exe restarted (New PID: $($newAmaHealthMonitor.Id))"
+                        } else {
+                            Write-Host "Warning: AMAExtHealthMonitor.exe was started but could not be verified as running." -ForegroundColor Yellow
+                            $restartMessage = " | AMAExtHealthMonitor.exe restart could not be verified"
+                        }
+                    } else {
+                        Write-Host "Warning: AMAExtHealthMonitor.exe not found at: $amaHealthMonitorExe" -ForegroundColor Yellow
+                        $restartMessage = " | AMAExtHealthMonitor.exe not found at expected path"
+                    }
+                } catch {
+                    Write-Host "Error restarting AMAExtHealthMonitor.exe: $($_.Exception.Message)" -ForegroundColor Red
+                    $restartMessage = " | Failed to restart AMAExtHealthMonitor.exe: $($_.Exception.Message)"
+                }
+
                 Write-Host "Completed node: $env:COMPUTERNAME"
                 Return [pscustomobject]@{
                     NodeName       = $env:COMPUTERNAME
                     Status         = 'Success'
-                    Message        = 'Mitigation already applied - file already renamed'
+                    Message        = "Mitigation already applied - file already renamed$restartMessage"
                     AMAVersion     = $AMAVersionFolder.ToString()
                 }
             } else {
@@ -329,11 +367,52 @@ function Invoke-AMAExtensionMitigation {
         # Validate Mitigation was Successful, check if the file has been renamed successfully
         if(Test-Path -Path $NewFileName -ErrorAction Stop) {
             Write-Host "MetricsExtension.Native.exe - File renamed successfully." -ForegroundColor Green
+
+            # Restart AMAExtHealthMonitor.exe to apply the mitigation
+            $restartMessage = ""
+            try {
+                # Get existing AMAExtHealthMonitor.exe process
+                $amaHealthMonitor = Get-Process -Name "AMAExtHealthMonitor" -ErrorAction SilentlyContinue
+                if ($amaHealthMonitor) {
+                    Write-Host "Found AMAExtHealthMonitor.exe process (PID: $($amaHealthMonitor.Id))" -ForegroundColor Cyan
+                    Write-Host "Stopping AMAExtHealthMonitor.exe (PID: $($amaHealthMonitor.Id))..." -ForegroundColor Cyan
+                    $amaHealthMonitor | Stop-Process -Force -ErrorAction Stop
+                    Start-Sleep -Seconds 3
+                    Write-Host "AMAExtHealthMonitor.exe stopped successfully." -ForegroundColor Green
+                } else {
+                    Write-Host "AMAExtHealthMonitor.exe is not currently running." -ForegroundColor Yellow
+                }
+
+                # Restart AMAExtHealthMonitor.exe from the AMA Extension installation folder
+                $amaHealthMonitorExe = Join-Path -Path $AMAInstallationFolder -ChildPath "AMAExtHealthMonitor.exe"
+                if (Test-Path -Path $amaHealthMonitorExe -ErrorAction SilentlyContinue) {
+                    Write-Host "Starting AMAExtHealthMonitor.exe from: $amaHealthMonitorExe" -ForegroundColor Cyan
+                    Start-Process -FilePath $amaHealthMonitorExe -WorkingDirectory $AMAInstallationFolder -ErrorAction Stop
+                    Start-Sleep -Seconds 5
+
+                    # Verify AMAExtHealthMonitor.exe is running and get new PID
+                    $newAmaHealthMonitor = Get-Process -Name "AMAExtHealthMonitor" -ErrorAction SilentlyContinue
+                    if ($newAmaHealthMonitor) {
+                        Write-Host "AMAExtHealthMonitor.exe restarted successfully (New PID: $($newAmaHealthMonitor.Id))" -ForegroundColor Green
+                        $restartMessage = " | AMAExtHealthMonitor.exe restarted (New PID: $($newAmaHealthMonitor.Id))"
+                    } else {
+                        Write-Host "Warning: AMAExtHealthMonitor.exe was started but could not be verified as running." -ForegroundColor Yellow
+                        $restartMessage = " | AMAExtHealthMonitor.exe restart could not be verified"
+                    }
+                } else {
+                    Write-Host "Warning: AMAExtHealthMonitor.exe not found at: $amaHealthMonitorExe" -ForegroundColor Yellow
+                    $restartMessage = " | AMAExtHealthMonitor.exe not found at expected path"
+                }
+            } catch {
+                Write-Host "Error restarting AMAExtHealthMonitor.exe: $($_.Exception.Message)" -ForegroundColor Red
+                $restartMessage = " | Failed to restart AMAExtHealthMonitor.exe: $($_.Exception.Message)"
+            }
+
             Write-Host "Completed node: $env:COMPUTERNAME"
             Return [pscustomobject]@{
                 NodeName       = $env:COMPUTERNAME
                 Status         = 'Success'
-                Message        = 'Mitigation applied successfully - file MetricsExtension.Native.exe renamed to MetricsExtension.Native.exe.org'
+                Message        = "Mitigation applied successfully - file MetricsExtension.Native.exe renamed to MetricsExtension.Native.exe.org$restartMessage"
                 AMAVersion     = $AMAVersionFolder.ToString()
             }
         } else {
