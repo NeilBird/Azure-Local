@@ -151,7 +151,6 @@ function Invoke-AMAExtensionMitigation {
         }
 
         # Main script logic
-        $resultMessage = ""
         
         # Call the function to get MetricsExtension.Native.exe process info
         $AMAProcessInfo = Get-AMAProcessInfo
@@ -201,16 +200,17 @@ function Invoke-AMAExtensionMitigation {
 
         # Get the AMA Extension installation folder, using the process ID, and fallback to folder search, if needed
         if(-not $AMAInstallationFolder) {
-            # AMAInstallationFolder has not set from fom the directory search, use process info: (preferred)
+            # AMAInstallationFolder has not been set from the directory search, use process info: (preferred)
             if($AMAExtensionPath) {
                 $AMAInstallationFolder = Split-Path -Path $AMAExtensionPath -Parent -ErrorAction Stop
             } else {
                 Write-Host "AMA Extension process path not found, and directory search did not yield results." -ForegroundColor Red
                 Write-Host "Completed node: $env:COMPUTERNAME"
                 Return [pscustomobject]@{
-                    NodeName = $env:COMPUTERNAME
-                    Status   = 'Fail'
-                    Message  = 'Unable to determine AMA Extension installation folder'
+                    NodeName   = $env:COMPUTERNAME
+                    Status     = 'Fail'
+                    Message    = 'Unable to determine AMA Extension installation folder'
+                    AMAVersion = 'N/A'
                 }
             }
         }
@@ -219,9 +219,10 @@ function Invoke-AMAExtensionMitigation {
             Write-Host "Error: Unable to determine AMA Extension installation folder." -ForegroundColor Red
             Write-Host "Completed node: $env:COMPUTERNAME"
             Return [pscustomobject]@{
-                NodeName = $env:COMPUTERNAME
-                Status   = 'Fail'
-                Message  = 'Unable to determine AMA Extension installation folder'
+                NodeName   = $env:COMPUTERNAME
+                Status     = 'Fail'
+                Message    = 'Unable to determine AMA Extension installation folder'
+                AMAVersion = 'N/A'
             }
         } else {
             # Successfully determined the installation folder
@@ -350,7 +351,7 @@ function Invoke-AMAExtensionMitigation {
             Write-Host "Debug: Attempting to Rename file: '$FileToRename' to '$NewFileName'"
             try {
                 # Attempt to rename the file:
-                Rename-Item -Path $FileToRename -NewName $NewFileName -ErrorAction Stop
+                Move-Item -Path $FileToRename -Destination $NewFileName -ErrorAction Stop
             } catch {
                 Write-Host "Error renaming file: $_" -ForegroundColor Red
                 Write-Error "MetricsExtension.Native.exe - Failed to rename the file."
