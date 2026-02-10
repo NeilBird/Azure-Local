@@ -12,8 +12,12 @@ The issue occurs when the `MetricsExtension.Native.exe` process (a child of `AMA
 
 1. Connects to each specified cluster and retrieves the cluster nodes
 2. On each node, checks if `MetricsExtension.Native.exe` is running as a child of `AMAExtHealthMonitor.exe`
-3. Stops the process if found and renames the executable from `MetricsExtension.Native.exe` to `MetricsExtension.Native.exe.org`
-4. Exports results to a CSV file with status for each node
+3. Stops the `MetricsExtension.Native.exe` process if found and renames the executable from `MetricsExtension.Native.exe` to `MetricsExtension.Native.exe.org`
+4. Stops the `AMAExtHealthMonitor.exe` process and restarts it from the AMA Extension installation folder
+5. Verifies `AMAExtHealthMonitor.exe` is running and reports the new process ID (PID)
+6. Exports results to a CSV file with status for each node
+
+**Note:** Steps 4-5 are also performed when the mitigation has already been applied (file already renamed) to ensure `AMAExtHealthMonitor.exe` is restarted.
 
 ## Requirements
 
