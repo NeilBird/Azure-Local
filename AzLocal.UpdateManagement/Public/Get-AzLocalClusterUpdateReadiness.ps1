@@ -354,8 +354,8 @@ function Get-AzLocalClusterUpdateReadiness {
                     RecommendedUpdate      = ''
                     HealthCheckFailures    = ''
                     BlockingReasons        = ''
-                    UpdateWindow           = ''
-                    UpdateExclusions       = ''
+                    UpdateStartWindow           = ''
+                    UpdateExclusionsWindow = ''
                 }) | Out-Null
             continue
         }
@@ -515,8 +515,8 @@ function Get-AzLocalClusterUpdateReadiness {
                 else { $updateVersionCounts[$counted] = 1 }
             }
 
-            $uw = if ($clusterTags) { Get-TagValue -Tags $clusterTags -Name $script:UpdateWindowTagName } else { $null }
-            $ue = if ($clusterTags) { Get-TagValue -Tags $clusterTags -Name $script:UpdateExclusionsTagName } else { $null }
+            $uw = if ($clusterTags) { Get-TagValue -Tags $clusterTags -Name $script:UpdateStartWindowTagName } else { $null }
+            $ue = if ($clusterTags) { Get-TagValue -Tags $clusterTags -Name $script:UpdateExclusionsWindowTagName } else { $null }
 
             $results.Add([PSCustomObject]@{
                     ClusterName            = $clusterName
@@ -536,8 +536,8 @@ function Get-AzLocalClusterUpdateReadiness {
                     RecommendedUpdate      = $recommendedUpdate
                     HealthCheckFailures    = $healthCheckFailures
                     BlockingReasons        = ($blockingReasons -join '; ')
-                    UpdateWindow           = if ($uw) { $uw } else { '' }
-                    UpdateExclusions       = if ($ue) { $ue } else { '' }
+                    UpdateStartWindow           = if ($uw) { $uw } else { '' }
+                    UpdateExclusionsWindow = if ($ue) { $ue } else { '' }
                 }) | Out-Null
         }
         catch {
@@ -560,8 +560,8 @@ function Get-AzLocalClusterUpdateReadiness {
                     RecommendedUpdate      = ''
                     HealthCheckFailures    = $_.Exception.Message
                     BlockingReasons        = ''
-                    UpdateWindow           = ''
-                    UpdateExclusions       = ''
+                    UpdateStartWindow           = ''
+                    UpdateExclusionsWindow = ''
                 }) | Out-Null
         }
     }

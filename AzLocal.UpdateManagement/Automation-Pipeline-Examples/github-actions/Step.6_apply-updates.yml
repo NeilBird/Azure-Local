@@ -40,7 +40,7 @@ on:
   #   schedule:
   #     - cron: '0 6 * * *'
   #
-  # The legacy per-UpdateWindow cron pattern still works (one cron per window),
+  # The legacy per-UpdateStartWindow cron pattern still works (one cron per window),
   # but ring resolution then defaults to the workflow_dispatch input default,
   # which is rarely what schedule-triggered runs actually want.
   #
@@ -112,7 +112,7 @@ env:
   # this to the version actually installed and to the latest on PSGallery, and emits a
   # ::notice annotation if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.7.89'
+  GENERATED_AGAINST_MODULE_VERSION: '0.7.90'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): manual workflow_dispatch input >
   # repository variable 'REQUIRED_MODULE_VERSION' > empty (latest).
@@ -153,7 +153,7 @@ jobs:
       # the manual `update_ring` input). When the trigger was `schedule:`, this
       # is a ';'-joined UpdateRing value ready for -UpdateRingValue.
       resolved_update_ring: ${{ steps.resolve-ring.outputs.RESOLVED_UPDATE_RING }}
-      # v0.7.89: ';'-joined allow-list of update names / version strings
+      # v0.7.90: ';'-joined allow-list of update names / version strings
       # resolved from the schema-v2 'allowedUpdateVersions' field of
       # apply-updates-schedule.yml (top-level OR per matched-row, with per-row
       # winning). Empty string when the trigger was workflow_dispatch OR
@@ -443,7 +443,7 @@ jobs:
         INPUT_UPDATE_RING: ${{ needs.check-readiness.outputs.resolved_update_ring }}
         INPUT_UPDATE_NAME: ${{ github.event.inputs.update_name }}
         INPUT_DRY_RUN: ${{ github.event.inputs.dry_run }}
-        # v0.7.89: ';'-joined allow-list resolved from apply-updates-schedule.yml
+        # v0.7.90: ';'-joined allow-list resolved from apply-updates-schedule.yml
         # 'allowedUpdateVersions' (schema v2). Empty for workflow_dispatch or
         # when no allow-list is configured - in either case the cmdlet falls
         # back to "install latest Ready update" (or to -UpdateName when set).
@@ -492,6 +492,7 @@ jobs:
             echo "HEALTH_BLOCKED=0"       >> $env:GITHUB_OUTPUT
             echo "SCHEDULE_BLOCKED=0"     >> $env:GITHUB_OUTPUT
             echo "SIDELOADED_BLOCKED=0"   >> $env:GITHUB_OUTPUT
+            echo "EXCLUDED_BY_TAG=0"      >> $env:GITHUB_OUTPUT
             exit 0
         }
         
@@ -539,6 +540,7 @@ jobs:
         $healthBlocked = ($results | Where-Object { $_.Status -eq 'HealthCheckBlocked' }).Count
         $scheduleBlocked = ($results | Where-Object { $_.Status -eq 'ScheduleBlocked' }).Count
         $sideloadedBlocked = ($results | Where-Object { $_.Status -eq 'SideloadedBlocked' }).Count
+        $excludedByTag = ($results | Where-Object { $_.Status -eq 'ExcludedByTag' }).Count
         
         echo "SUCCEEDED=$succeeded" >> $env:GITHUB_OUTPUT
         echo "SKIPPED=$skipped" >> $env:GITHUB_OUTPUT
@@ -546,6 +548,7 @@ jobs:
         echo "HEALTH_BLOCKED=$healthBlocked" >> $env:GITHUB_OUTPUT
         echo "SCHEDULE_BLOCKED=$scheduleBlocked" >> $env:GITHUB_OUTPUT
         echo "SIDELOADED_BLOCKED=$sideloadedBlocked" >> $env:GITHUB_OUTPUT
+        echo "EXCLUDED_BY_TAG=$excludedByTag" >> $env:GITHUB_OUTPUT
     
     - name: Compute Artifact Timestamp
       if: always()
@@ -684,6 +687,7 @@ jobs:
         $healthBlocked = "${{ steps.apply-updates.outputs.HEALTH_BLOCKED }}"
         $scheduleBlocked = "${{ steps.apply-updates.outputs.SCHEDULE_BLOCKED }}"
         $sideloadedBlocked = "${{ steps.apply-updates.outputs.SIDELOADED_BLOCKED }}"
+        $excludedByTag = "${{ steps.apply-updates.outputs.EXCLUDED_BY_TAG }}"
         $readyCount = "${{ needs.check-readiness.outputs.ready_count }}"
         $totalCount = "${{ needs.check-readiness.outputs.total_count }}"
         
@@ -715,13 +719,15 @@ jobs:
         "| Health Blocked | $healthBlocked |" >> $env:GITHUB_STEP_SUMMARY
         "| Schedule Blocked | $scheduleBlocked |" >> $env:GITHUB_STEP_SUMMARY
         "| Sideloaded Blocked | $sideloadedBlocked |" >> $env:GITHUB_STEP_SUMMARY
+        "| Excluded By Tag | $excludedByTag |" >> $env:GITHUB_STEP_SUMMARY
         
         # Actions Required section - summarize what needs manual attention
         $actionsNeeded = @()
         if ([int]$failed -gt 0) { $actionsNeeded += "- **$failed cluster(s) failed** - Review pipeline logs and cluster health in Azure Portal" }
         if ([int]$healthBlocked -gt 0) { $actionsNeeded += "- **$healthBlocked cluster(s) blocked by health checks** - Resolve critical health failures before retrying" }
-        if ([int]$scheduleBlocked -gt 0) { $actionsNeeded += "- **$scheduleBlocked cluster(s) outside maintenance window** - Updates will proceed when the cluster's UpdateWindow schedule allows, or re-run during the maintenance window" }
+        if ([int]$scheduleBlocked -gt 0) { $actionsNeeded += "- **$scheduleBlocked cluster(s) outside maintenance window** - Updates will proceed when the cluster's UpdateStartWindow schedule allows, or re-run during the maintenance window" }
         if ([int]$sideloadedBlocked -gt 0) { $actionsNeeded += "- **$sideloadedBlocked cluster(s) blocked by UpdateSideloaded=False** - Operator must stage the sideloaded payload and flip the tag to True (or run Reset-AzLocalSideloadedTag) before updates can proceed" }
+        if ([int]$excludedByTag -gt 0) { $actionsNeeded += "- **$excludedByTag cluster(s) excluded by UpdateExcluded=True operator override** - Flip the cluster's UpdateExcluded tag to False (Azure portal or 'az tag update') once the cluster should rejoin automation" }
         
         if ($actionsNeeded.Count -gt 0) {
             "" >> $env:GITHUB_STEP_SUMMARY

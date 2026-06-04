@@ -297,8 +297,9 @@ function Get-AzLocalClusterInventory {
             # function's [ValidatePattern(...)] $UpdateRingValue parameter
             # and throw a validation error for any cluster missing the tag.
             $ringTagValue = Get-TagValue -Tags $cluster.tags -Name 'UpdateRing'
-            $windowTagValue = Get-TagValue -Tags $cluster.tags -Name $script:UpdateWindowTagName
-            $exclusionsTagValue = Get-TagValue -Tags $cluster.tags -Name $script:UpdateExclusionsTagName
+            $windowTagValue = Get-TagValue -Tags $cluster.tags -Name $script:UpdateStartWindowTagName
+            $exclusionsTagValue = Get-TagValue -Tags $cluster.tags -Name $script:UpdateExclusionsWindowTagName
+            $excludedTagValue = Get-TagValue -Tags $cluster.tags -Name $script:UpdateExcludedTagName
             $sideloadedTagValue = Get-TagValue -Tags $cluster.tags -Name $script:UpdateSideloadedTagName
             $versionInProgressTagValue = Get-TagValue -Tags $cluster.tags -Name $script:UpdateVersionInProgressTagName
 
@@ -309,8 +310,9 @@ function Get-AzLocalClusterInventory {
                 SubscriptionName        = $subscriptionMap[$cluster.subscriptionId]
                 UpdateRing              = if ($ringTagValue) { $ringTagValue } else { "" }
                 HasUpdateRingTag        = if ($ringTagValue) { "Yes" } else { "No" }
-                UpdateWindow            = if ($windowTagValue) { $windowTagValue } else { "" }
-                UpdateExclusions        = if ($exclusionsTagValue) { $exclusionsTagValue } else { "" }
+                UpdateStartWindow            = if ($windowTagValue) { $windowTagValue } else { "" }
+                UpdateExclusionsWindow  = if ($exclusionsTagValue) { $exclusionsTagValue } else { "" }
+                UpdateExcluded          = if ($excludedTagValue) { $excludedTagValue } else { "" }
                 UpdateSideloaded        = if ($sideloadedTagValue) { $sideloadedTagValue } else { "" }
                 UpdateVersionInProgress = if ($versionInProgressTagValue) { $versionInProgressTagValue } else { "" }
                 ResourceId              = $cluster.id
@@ -335,7 +337,7 @@ function Get-AzLocalClusterInventory {
 
                 # Determine export format from file extension
                 $extension = [System.IO.Path]::GetExtension($ExportPath).ToLower()
-                $exportData = $inventory | Select-Object ClusterName, ResourceGroup, SubscriptionId, SubscriptionName, UpdateRing, HasUpdateRingTag, UpdateWindow, UpdateExclusions, UpdateSideloaded, UpdateVersionInProgress, ResourceId
+                $exportData = $inventory | Select-Object ClusterName, ResourceGroup, SubscriptionId, SubscriptionName, UpdateRing, HasUpdateRingTag, UpdateStartWindow, UpdateExclusionsWindow, UpdateExcluded, UpdateSideloaded, UpdateVersionInProgress, ResourceId
                 
                 switch ($extension) {
                     '.json' {

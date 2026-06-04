@@ -40,6 +40,8 @@ triggers:
     raiseTicket: true
     severity: 4
     category: "Operator action: stage sideloaded payload"
+  ExcludedByTag:
+    raiseTicket: false   # operator deliberately set UpdateExcluded=True; no ticket by default. Opt-in if you want an audit-trail ticket per excluded cluster per run.
   ScheduleBlocked:
     raiseTicket: false   # schedule-blocked self-resolves; opt-in if you want a ticket
   Skipped:

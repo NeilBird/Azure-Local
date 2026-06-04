@@ -1,16 +1,16 @@
 function ConvertFrom-AzLocalUpdateWindow {
     <#
     .SYNOPSIS
-        Parses an UpdateWindow tag value into structured window objects.
+        Parses an UpdateStartWindow tag value into structured window objects.
     .DESCRIPTION
-        Parses the compact maintenance window syntax used in the UpdateWindow Azure resource tag
+        Parses the compact maintenance window syntax used in the UpdateStartWindow Azure resource tag
         into structured objects suitable for schedule evaluation and display.
 
         Syntax: <days>_<HH:MM>-<HH:MM>[;<days>_<HH:MM>-<HH:MM>]
         Days: Mon,Tue,Wed,Thu,Fri,Sat,Sun (ranges with -), * or Daily for all days
         Times: 24-hour UTC. Overnight wraps supported (22:00-06:00 = wraps to next day).
     .PARAMETER WindowString
-        The UpdateWindow tag value to parse.
+        The UpdateStartWindow tag value to parse.
     .OUTPUTS
         PSCustomObject[] with Days (DayOfWeek[]), StartTime (TimeSpan), EndTime (TimeSpan), Overnight (bool)
     .EXAMPLE
@@ -40,12 +40,12 @@ function ConvertFrom-AzLocalUpdateWindow {
     )
 
     if ([string]::IsNullOrWhiteSpace($WindowString)) {
-        throw "UpdateWindow value cannot be empty."
+        throw "UpdateStartWindow value cannot be empty."
     }
 
     # Azure tag values max 256 chars
     if ($WindowString.Length -gt 256) {
-        throw "UpdateWindow value exceeds Azure tag limit of 256 characters (length: $($WindowString.Length))."
+        throw "UpdateStartWindow value exceeds Azure tag limit of 256 characters (length: $($WindowString.Length))."
     }
 
     $windows = @()

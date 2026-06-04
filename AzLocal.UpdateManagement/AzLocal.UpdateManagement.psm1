@@ -151,7 +151,7 @@ Set-StrictMode -Version 1.0
 # bumps to one but not the other are caught before release. Two consumers:
 #   - Start-AzLocalClusterUpdate emits this in the run log header.
 #   - Get-AzLocalFleetStatusData stamps it into exported fleet-state JSON.
-$script:ModuleVersion = '0.7.89'
+$script:ModuleVersion = '0.7.90'
 $script:DefaultApiVersion = '2025-10-01'
 $script:DefaultLogFolder = Join-Path -Path $env:ProgramData -ChildPath 'AzLocal.UpdateManagement'
 
@@ -197,9 +197,22 @@ $script:ServicePrincipalAuthenticated = $false
 # Module-scope state hoisted from between function definitions during refactor.
 # These declarations must run BEFORE any function body that references them.
 # ---------------------------------------------------------------------------
-$script:UpdateWindowTagName = 'UpdateWindow'
+$script:UpdateStartWindowTagName = 'UpdateStartWindow'
 
-$script:UpdateExclusionsTagName = 'UpdateExclusions'
+# v0.7.90: renamed from 'UpdateExclusions' to 'UpdateExclusionsWindow' for naming
+# consistency with the new UpdateExcluded operator-override gate and the
+# companion UpdateStartWindow tag. Breaking change - clusters with the legacy
+# 'UpdateExclusions' tag are ignored from v0.7.90 onwards; operators must
+# re-tag with 'UpdateExclusionsWindow'.
+$script:UpdateExclusionsWindowTagName = 'UpdateExclusionsWindow'
+
+# v0.7.90: operator-set hard override. When 'True'/'1' (case-insensitive) the
+# cluster is skipped by Start-AzLocalClusterUpdate regardless of UpdateRing
+# scope, UpdateSideloaded state, or UpdateStartWindow / UpdateExclusionsWindow
+# schedule. Set-AzLocalClusterUpdateRingTag stamps the tag with 'False' on
+# any cluster that does not already carry it, so the tag is discoverable in
+# the Azure portal and ready for an operator to flip.
+$script:UpdateExcludedTagName = 'UpdateExcluded'
 
 $script:UpdateSideloadedTagName = 'UpdateSideloaded'
 
@@ -284,7 +297,7 @@ Export-ModuleMember -Function @(
     'Copy-AzLocalItsmSample',
     # Fleet Health Failures (v0.7.65) - 24-hour system health-check failures across the fleet
     'Get-AzLocalFleetHealthFailures',
-    # Apply-Updates Schedule Coverage Advisor (v0.7.65) - compares apply-updates YAML cron(s) to UpdateWindow tags
+    # Apply-Updates Schedule Coverage Advisor (v0.7.65) - compares apply-updates YAML cron(s) to UpdateStartWindow tags
     'Test-AzLocalApplyUpdatesScheduleCoverage',
     # Update Run Failures (v0.7.68) - ARG-only deep-error extraction (9 levels deep) for fleet-scale verbose error information
     'Get-AzLocalUpdateRunFailures',

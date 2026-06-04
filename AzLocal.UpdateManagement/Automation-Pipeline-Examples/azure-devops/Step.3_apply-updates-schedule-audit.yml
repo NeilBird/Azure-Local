@@ -1,23 +1,23 @@
 # Step.3 - Apply-Updates Schedule Coverage Audit Pipeline
 # This pipeline runs the read-only Test-AzLocalApplyUpdatesScheduleCoverage advisor
 # weekly to detect drift between the cron schedule(s) in your apply-updates pipeline
-# YAML and the UpdateWindow tags that operators have placed on Azure Local clusters.
+# YAML and the UpdateStartWindow tags that operators have placed on Azure Local clusters.
 #
 # WHY THIS PIPELINE EXISTS
 # ------------------------
 # Step.6_apply-updates.yml ships with NO default schedule (trigger:none) on purpose, so
 # customers must consciously choose when updates fire. After you have configured
-# UpdateWindow tags on your clusters and added cron entries to Step.6_apply-updates.yml, this
+# UpdateStartWindow tags on your clusters and added cron entries to Step.6_apply-updates.yml, this
 # pipeline is the safety net that catches:
-#   - a new ring tagged with UpdateWindow that no cron in Step.6_apply-updates.yml will reach
-#   - an UpdateWindow tag value that fails to parse (typo / wrong syntax)
+#   - a new ring tagged with UpdateStartWindow that no cron in Step.6_apply-updates.yml will reach
+#   - an UpdateStartWindow tag value that fails to parse (typo / wrong syntax)
 #   - Step.6_apply-updates.yml cron entries that the advisor cannot reason about
 #     (DayOfMonth restrictions, step values) so you can audit them manually
 #
 # REPORTS GENERATED:
 # - Pipeline run summary (uploaded via ##vso[task.uploadsummary]): Audit + Recommend views
 # - JUnit XML: published to the Test Results tab. One <testcase> per (UpdateRing,
-#   UpdateWindow) pair; uncovered pairs become <failure>.
+#   UpdateStartWindow) pair; uncovered pairs become <failure>.
 # - CSV: schedule-coverage-audit.csv + schedule-coverage-matrix.csv
 # - Markdown: schedule-coverage-recommend.md with the ready-to-paste cron block
 #
@@ -53,12 +53,12 @@ parameters:
     default: './apply-updates-schedule.yml'
 
   - name: leadTimeMinutes
-    displayName: 'Minutes before UpdateWindow opens that the pipeline should fire (0-60)'
+    displayName: 'Minutes before UpdateStartWindow opens that the pipeline should fire (0-60)'
     type: number
     default: 5
 
   - name: includeUntagged
-    displayName: 'Surface clusters with no UpdateWindow tag as their own row'
+    displayName: 'Surface clusters with no UpdateStartWindow tag as their own row'
     type: boolean
     default: true
 
@@ -73,7 +73,7 @@ parameters:
     default: false
 
 variables:
-  GENERATED_AGAINST_MODULE_VERSION: '0.7.89'
+  GENERATED_AGAINST_MODULE_VERSION: '0.7.90'
   REQUIRED_MODULE_VERSION: '${{ parameters.moduleVersion }}'
   reportsPath: '$(Build.ArtifactStagingDirectory)/reports'
 
@@ -243,7 +243,7 @@ stages:
               $failures = @($Rows | Where-Object { $_.Status -ne 'Covered' }).Count
               [void]$Sb.AppendLine(("  <testsuite name=`"{0}`" tests=`"{1}`" failures=`"{2}`">" -f (Convert-XmlEscape $SuiteName), $Rows.Count, $failures))
               foreach ($row in $Rows) {
-                  $tcName = ("{0} / {1}" -f $row.UpdateRing, ($(if ($row.UpdateWindow) { $row.UpdateWindow } else { '(no window)' })))
+                  $tcName = ("{0} / {1}" -f $row.UpdateRing, ($(if ($row.UpdateStartWindow) { $row.UpdateStartWindow } else { '(no window)' })))
                   [void]$Sb.AppendLine(("    <testcase classname=`"ScheduleCoverage`" name=`"{0}`">" -f (Convert-XmlEscape $tcName)))
                   if ($row.Status -ne 'Covered') {
                       $issue = Convert-XmlEscape $row.Issue
@@ -291,7 +291,7 @@ stages:
           "##vso[task.setvariable variable=ringMissing;isOutput=true]$($ringMissing.Count)"     | Write-Host
           "##vso[task.setvariable variable=ringOrphan;isOutput=true]$($ringOrphan.Count)"       | Write-Host
           "##vso[task.setvariable variable=haveSchedule;isOutput=true]$([int]$haveSchedule)"    | Write-Host
-          # v0.7.89: surface the schedule file path to the summary step
+          # v0.7.90: surface the schedule file path to the summary step
           # so it can re-load the schedule for the allow-list coverage
           # section (separate pwsh process - module + file have to be
           # re-loaded). Empty when -SchedulePath was not supplied.
@@ -390,10 +390,10 @@ stages:
                 $body += "`n*$EmptyText*`n"
                 return $body
             }
-            $body += "`n| Status | UpdateRing | UpdateWindow | Clusters | Required Cron (UTC) | Recommendation |`n"
+            $body += "`n| Status | UpdateRing | UpdateStartWindow | Clusters | Required Cron (UTC) | Recommendation |`n"
             $body += "|--------|------------|--------------|---------:|----------------------|----------------|`n"
             foreach ($r in ($DetailRows | Select-Object -First 100)) {
-                $body += ('| {0} | {1} | {2} | {3} | {4} | {5} |' -f $r.Status, $r.UpdateRing, $r.UpdateWindow, $r.ClusterCount, $r.RequiredCronUTC, $r.Recommendation) + "`n"
+                $body += ('| {0} | {1} | {2} | {3} | {4} | {5} |' -f $r.Status, $r.UpdateRing, $r.UpdateStartWindow, $r.ClusterCount, $r.RequiredCronUTC, $r.Recommendation) + "`n"
             }
             if ($DetailRows.Count -gt 100) {
                 $body += "`n*Showing first 100 of $($DetailRows.Count); see ``schedule-coverage-audit.csv`` artifact for the full list.*`n"
@@ -407,7 +407,7 @@ stages:
             $md += (Add-DetailTable -Heading '' -DetailRows $scheduleRowsMd -EmptyText 'Schedule and fleet ring sets match - no gaps.')
         }
 
-        # v0.7.89: Allow-list coverage section. When -SchedulePath was
+        # v0.7.90: Allow-list coverage section. When -SchedulePath was
         # supplied, re-load the schedule file (the summary step is a
         # separate pwsh process so we have to import the module + read
         # the schedule here too) and surface the effective

@@ -5,6 +5,49 @@ All notable changes to the AzLocal.UpdateManagement module (renamed from AzStack
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.90] - 2026-06-04
+
+New `UpdateExcluded` operator-override tag + breaking tag renames: `UpdateWindow` -> `UpdateStartWindow` and `UpdateExclusions` -> `UpdateExclusionsWindow`. Pipeline renumber: new `Step.7_monitor-updates` (operational in-flight monitor) inserted between Step.6 apply-updates and the existing daily snapshot pipelines, which shift to `Step.8_fleet-update-status` and `Step.9_fleet-health-status`.
+
+### Added
+
+- **Step.5 (assess-update-readiness) markdown summary redesign** (GH + ADO). Re-ordered into audit-priority sections so blocking findings come first: (1) one-line **header tile** showing `[ATTENTION]` / `[OK]` plus Ready/Not-Ready/Critical counts and scope, (2) **action banner**, (3) summary counts table, (4) **Not-Ready clusters** table (review first - with new `UpdateRing` and `BlockingReasons` columns), (5) **Critical-health clusters** table (cross-linked to Step.4 and Step.9), (6) **per-UpdateRing pivot** breakdown (shown when >1 ring in scope), (7) all-clusters detail table sorted by `UpdateRing` then `ClusterName`, and (8) **cross-links** to Step.4 / Step.6 / Step.7 / Step.9. The job now always fetches `Get-AzLocalClusterInventory` to build the resource-id -> UpdateRing map.
+- **Step.5 combined JUnit XML emission** (GH + ADO). The two existing per-component XMLs (`readiness.xml` + `health-blocking.xml`) are merged into a single `assess-readiness.xml` with a `<testsuites>` root wrapping both `<testsuite>` children. New publisher **"Update Readiness Assessment"** surfaces this combined view as the primary Checks/Tests entry; the existing `[JUnit Debug]` publishers remain for drill-down. Operators get one consolidated view instead of two adjacent entries.
+- **6 new dedicated per-pipeline smoke-test harnesses** in `Tools/`, matching the existing `validate-arg-queries.ps1` style (PASS / PASS-EMPTY / FAIL-SCHEMA / ERROR classification, summary table, exit 1 on any failure): `smoke-test-inventory.ps1` (Step.1), `smoke-test-schedule-audit.ps1` (Step.3), `smoke-test-assess-readiness.ps1` (Step.5 - includes the v0.7.90 merged-JUnit wiring), `smoke-test-monitor-updates.ps1` (Step.7), `smoke-test-fleet-update-status.ps1` (Step.8), `smoke-test-fleet-health-status.ps1` (Step.9). Plus a new coverage matrix: `Tools/SMOKE-COVERAGE.md`.
+- **New `Step.7_monitor-updates.yml` pipeline (GitHub Actions + Azure DevOps).** Operational in-flight monitor distinct from the daily Step.8 snapshot. Reports clusters whose latest update run is currently `InProgress`, with the CURRENT STEP each cluster is on, the PROGRESS (`completed/total steps`), and the ELAPSED DURATION. Long-running runs are flagged via a configurable `long_running_threshold_hours` input (default 6h). Emits `update-monitor.xml` (JUnit, one `<testcase>` per in-flight cluster; `<failure>` when the elapsed duration exceeds the threshold so the Checks/Tests tab shows stuck runs in red) + `update-monitor.csv` + a markdown step summary sorted by elapsed duration descending. Designed for ~30-minute cadence during an active wave (GitHub Actions only - ADO YAML schedules are limited to hourly). Pure pipeline composition over `Get-AzLocalUpdateRuns -Latest` - no new cmdlets required.
+- **New `UpdateExcluded` Azure resource tag** (operator hard override). When set to `True`/`true`/`1` on a cluster, `Start-AzLocalClusterUpdate` skips the cluster with `Status = ExcludedByTag` **regardless of `UpdateRing` scope, `UpdateSideloaded` state, or `UpdateStartWindow` / `UpdateExclusionsWindow` schedule**. Empty/missing tag means no override. Malformed values throw (fail-closed) unless `-Force` is supplied. New gate runs BEFORE the sideloaded and schedule gates so it overrides both.
+- **`Set-AzLocalClusterUpdateRingTag` always stamps `UpdateExcluded=False`** on any cluster that does not already carry the tag, so the tag is discoverable in the Azure portal and ready for an operator to flip to `True` when they need to temporarily exclude a cluster from automation. Existing `True`/`False` values are preserved unless overridden.
+- **New optional parameter `-UpdateExcludedValue` on `Set-AzLocalClusterUpdateRingTag -ClusterResourceIds`** and new CSV column `UpdateExcluded` on the `-InputCsvPath` mode. Accepts `True`/`False`/`1`/`0` (case-insensitive). Mirrors the existing `UpdateStartWindow` / `UpdateExclusionsWindow` plumbing.
+- **New private helpers**: `ConvertFrom-AzLocalUpdateExcluded` (strict parser) and `Test-AzLocalUpdateExcludedAllowed` (gate evaluator).
+- **`Get-AzLocalClusterInventory` CSV/JSON export** now includes an `UpdateExcluded` column (positioned between `UpdateExclusionsWindow` and `UpdateSideloaded`).
+- **Apply-updates pipeline summaries** (Step.6 GH Actions + Azure DevOps) now count and report `ExcludedByTag` clusters alongside `ScheduleBlocked` / `SideloadedBlocked`, with an Actions Required callout pointing operators at the tag.
+
+### Changed
+
+- **Pipeline renumber (BREAKING for any local automation that pins to the old filenames):** the `fleet-update-status` example pipeline becomes `Step.8_fleet-update-status.yml` (was `Step.7`) and `fleet-health-status` becomes `Step.9_fleet-health-status.yml` (was `Step.8`). Inline content of both renamed files is otherwise byte-identical with the v0.7.89 / v0.7.88 versions apart from header self-references. The new monitor pipeline takes the `Step.7` slot. Apply via `Copy-AzLocalPipelineExample -Destination <path> -Update` and then `git rm` the old files locally - the helper does not delete by name.
+- **Step.8 (fleet-update-status, formerly Step.7) - "Overall Fleet Update Status (Version Distribution)" markdown table redesigned to pivot by YYMM** (operator request). The leading column is now `Version` showing the YYMM (e.g. `2511`, `2604`); a new `Update Versions` column lists each distinct full `CurrentVersion` within that YYMM as `<version> x <count>` separated by `<br>` line breaks (e.g. `12.2604.1003.1005 x 12<br>12.2604.1003.1002 x 6<br>12.2604.1003.209 x 2`). `Cluster Count` and `Percentage` are summed across all full versions in the YYMM; `Clusters (first 15 shown only)` is the de-duplicated union of cluster names. Rows are sorted by `Version` (YYMM) **ascending - oldest at top** (was: cluster count descending), with malformed/empty YYMMs grouped under `(unknown)` at the bottom. The underlying `<testsuite name="Fleet Version Distribution">` JUnit XML continues to emit one `<testcase>` per distinct full `CurrentVersion` (unchanged), so machine-readable consumers are unaffected.
+
+### Changed (BREAKING)
+
+- **Tag rename: `UpdateWindow` -> `UpdateStartWindow`**. The module from v0.7.90 onwards only reads `UpdateStartWindow` from cluster tags. Clusters still carrying the legacy `UpdateWindow` tag are silently ignored - their maintenance windows will no longer be honoured. Operators must re-tag (`Set-AzLocalClusterUpdateRingTag` with a CSV that has the new column name, or `az tag update --operation Merge`) before the next apply-updates run. The tag VALUE format (`<days>_<HH:MM>-<HH:MM>` in UTC, semicolon-separated) is unchanged.
+- **Tag rename: `UpdateExclusions` -> `UpdateExclusionsWindow`**. Same migration story: module only reads `UpdateExclusionsWindow` from v0.7.90 onwards; clusters still carrying `UpdateExclusions` lose blackout enforcement until re-tagged. Tag VALUE format (`YYYY-MM-DD/YYYY-MM-DD`, comma-separated, `*` wildcards) is unchanged.
+- **Parameter rename on `Test-AzLocalUpdateScheduleAllowed`**: `-UpdateWindow` -> `-UpdateStartWindow` and `-UpdateExclusions` -> `-UpdateExclusionsWindow`. Any caller passing an old parameter name will fail with a binding error.
+- **Parameter rename on `Set-AzLocalClusterUpdateRingTag -ClusterResourceIds`**: `-UpdateWindowValue` -> `-UpdateStartWindowValue` and `-UpdateExclusionsValue` -> `-UpdateExclusionsWindowValue`. CSV column renames: `UpdateWindow` -> `UpdateStartWindow`, `UpdateExclusions` -> `UpdateExclusionsWindow`.
+- **Property rename on result objects** from `Get-AzLocalClusterInventory`, `Get-AzLocalClusterUpdateReadiness`, and `Get-AzLocalFleetStatusData`: `UpdateWindow` -> `UpdateStartWindow`, `UpdateExclusions` -> `UpdateExclusionsWindow`. Downstream CSV/JSON consumers must update column names.
+
+### Migration
+
+- **Re-tag clusters that currently have `UpdateWindow` and/or `UpdateExclusions` set.** Legacy tag values are NOT auto-copied. Operators must mirror them onto the new tags and then delete the old ones, for example:
+
+  ```pwsh
+  az tag update --resource-id <clusterId> --operation Merge --tags UpdateStartWindow='<existing-UpdateWindow-value>' UpdateExclusionsWindow='<existing-UpdateExclusions-value>'
+  az tag update --resource-id <clusterId> --operation Delete --tags UpdateWindow='<old-value>' UpdateExclusions='<old-value>'
+  ```
+
+  Or re-run `Set-AzLocalClusterUpdateRingTag -InputCsvPath <csv>` with a CSV that has the new `UpdateStartWindow` / `UpdateExclusionsWindow` columns.
+- **Pipelines:** `Copy-AzLocalPipelineExample -Destination <path> -Update` to pick up the renamed CSV columns + new `ExcludedByTag` summary plumbing.
+- The new `UpdateExcluded=False` default-stamp is additive - no operator action required. It just makes the tag visible in the portal so operators can flip it to `True` when they need to temporarily exclude a cluster from automation.
+
 ## [0.7.89] - 2026-05-23
 
 ### Added

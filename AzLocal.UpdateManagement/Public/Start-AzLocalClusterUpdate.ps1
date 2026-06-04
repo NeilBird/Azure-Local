@@ -625,6 +625,90 @@ function Start-AzLocalClusterUpdate {
                 }
                 Write-Log -Message "No critical health issues found - cluster is eligible for update" -Level Success
 
+                # Step 3b0: UpdateExcluded operator-override gate (v0.7.90)
+                # Hard override: when UpdateExcluded=True/1 (case-insensitive) on
+                # the cluster resource, skip the cluster regardless of UpdateRing
+                # scope, UpdateSideloaded state, or UpdateStartWindow / UpdateExclusionsWindow
+                # schedule. This is evaluated BEFORE the sideloaded and schedule
+                # gates so it can override both. Empty/missing tag means no
+                # override (proceed to downstream gates). Malformed values are
+                # fail-closed unless -Force is supplied, matching the
+                # SideloadedBlocked / ScheduleBlocked tag-parse policy.
+                $clusterTags = $clusterInfo.tags
+                $excludedTagValue = Get-TagValue -Tags $clusterTags -Name $script:UpdateExcludedTagName
+
+                if ($excludedTagValue) {
+                    Write-Log -Message "Step 3b0: Checking UpdateExcluded tag..." -Level Info
+                    Write-Log -Message "  UpdateExcluded tag: $excludedTagValue" -Level Info
+
+                    try {
+                        $excludedResult = Test-AzLocalUpdateExcludedAllowed -UpdateExcluded $excludedTagValue
+
+                        if (-not $excludedResult.Allowed) {
+                            Write-Log -Message "Cluster '$clusterName' is blocked by UpdateExcluded tag: $($excludedResult.Reason)" -Level Warning
+                            Write-Log -Message "  Details: $($excludedResult.Details)" -Level Warning
+
+                            $clusterRgName = ($clusterInfo.id -split '/resourceGroups/')[1] -split '/' | Select-Object -First 1
+                            $clusterSubId = ($clusterInfo.id -split '/subscriptions/')[1] -split '/' | Select-Object -First 1
+                            $healthState = if ($updateSummary.properties.healthState) { $updateSummary.properties.healthState } else { "Unknown" }
+
+                            Write-UpdateCsvLog -LogType Skipped `
+                                -ClusterName $clusterName `
+                                -ResourceGroup $clusterRgName `
+                                -SubscriptionId $clusterSubId `
+                                -Message "Update blocked by UpdateExcluded tag: $($excludedResult.Reason). $($excludedResult.Details)" `
+                                -UpdateState $updateSummary.properties.state `
+                                -HealthState $healthState
+
+                            $results.Add([PSCustomObject]@{
+                                ClusterName   = $clusterName
+                                Status        = "ExcludedByTag"
+                                Message       = "$($excludedResult.Reason): $($excludedResult.Details)"
+                                UpdateName    = $null
+                                StartTime     = $clusterStartTime
+                                EndTime       = Get-Date
+                                Duration      = $null
+                            }) | Out-Null
+                            continue
+                        }
+
+                        Write-Log -Message "UpdateExcluded check passed: $($excludedResult.Reason)" -Level Success
+                    }
+                    catch {
+                        if ($Force) {
+                            Write-Log -Message "Warning: Failed to parse UpdateExcluded tag '$excludedTagValue': $($_.Exception.Message)" -Level Warning
+                            Write-Log -Message "  -Force is set; proceeding with update despite malformed UpdateExcluded tag." -Level Warning
+                        }
+                        else {
+                            Write-Log -Message "Failed to parse UpdateExcluded tag for '$clusterName': $($_.Exception.Message)" -Level Error
+                            Write-Log -Message "  Update blocked because the tag could not be evaluated. Re-run with -Force to override." -Level Error
+
+                            $clusterRgName = ($clusterInfo.id -split '/resourceGroups/')[1] -split '/' | Select-Object -First 1
+                            $clusterSubId = ($clusterInfo.id -split '/subscriptions/')[1] -split '/' | Select-Object -First 1
+                            $healthState = if ($updateSummary.properties.healthState) { $updateSummary.properties.healthState } else { "Unknown" }
+
+                            Write-UpdateCsvLog -LogType Skipped `
+                                -ClusterName $clusterName `
+                                -ResourceGroup $clusterRgName `
+                                -SubscriptionId $clusterSubId `
+                                -Message "Update blocked: malformed UpdateExcluded tag value '$excludedTagValue' ($($_.Exception.Message)). Re-run with -Force to override." `
+                                -UpdateState $updateSummary.properties.state `
+                                -HealthState $healthState
+
+                            $results.Add([PSCustomObject]@{
+                                ClusterName   = $clusterName
+                                Status        = "ExcludedByTag"
+                                Message       = "Malformed UpdateExcluded tag value '$excludedTagValue': $($_.Exception.Message). Re-run with -Force to override."
+                                UpdateName    = $null
+                                StartTime     = $clusterStartTime
+                                EndTime       = Get-Date
+                                Duration      = $null
+                            }) | Out-Null
+                            continue
+                        }
+                    }
+                }
+
                 # Step 3b1: Sideloaded-payload gate (v0.7.1)
                 # Honour the UpdateSideloaded tag if present. When set to False/0 the
                 # operator is signalling that no sideloaded content is staged on the
@@ -711,20 +795,20 @@ function Start-AzLocalClusterUpdate {
                 }
 
                 # Step 3c: Schedule/maintenance window validation
-                # Check UpdateWindow and UpdateExclusions tags if present on the cluster resource
+                # Check UpdateStartWindow and UpdateExclusionsWindow tags if present on the cluster resource
                 $clusterTags = $clusterInfo.tags
-                $windowTagValue = if ($clusterTags -and $clusterTags.$($script:UpdateWindowTagName)) { $clusterTags.$($script:UpdateWindowTagName) } else { $null }
-                $exclusionTagValue = if ($clusterTags -and $clusterTags.$($script:UpdateExclusionsTagName)) { $clusterTags.$($script:UpdateExclusionsTagName) } else { $null }
+                $windowTagValue = if ($clusterTags -and $clusterTags.$($script:UpdateStartWindowTagName)) { $clusterTags.$($script:UpdateStartWindowTagName) } else { $null }
+                $exclusionTagValue = if ($clusterTags -and $clusterTags.$($script:UpdateExclusionsWindowTagName)) { $clusterTags.$($script:UpdateExclusionsWindowTagName) } else { $null }
 
                 if ($windowTagValue -or $exclusionTagValue) {
                     Write-Log -Message "Step 3c: Checking maintenance schedule tags..." -Level Info
-                    if ($windowTagValue) { Write-Log -Message "  UpdateWindow tag: $windowTagValue" -Level Info }
-                    if ($exclusionTagValue) { Write-Log -Message "  UpdateExclusions tag: $exclusionTagValue" -Level Info }
+                    if ($windowTagValue) { Write-Log -Message "  UpdateStartWindow tag: $windowTagValue" -Level Info }
+                    if ($exclusionTagValue) { Write-Log -Message "  UpdateExclusionsWindow tag: $exclusionTagValue" -Level Info }
 
                     try {
                         $scheduleResult = Test-AzLocalUpdateScheduleAllowed `
-                            -UpdateWindow $windowTagValue `
-                            -UpdateExclusions $exclusionTagValue
+                            -UpdateStartWindow $windowTagValue `
+                            -UpdateExclusionsWindow $exclusionTagValue
 
                         if (-not $scheduleResult.Allowed) {
                             Write-Log -Message "Cluster '$clusterName' is outside its maintenance schedule: $($scheduleResult.Reason)" -Level Warning
@@ -757,7 +841,7 @@ function Start-AzLocalClusterUpdate {
                         Write-Log -Message "Maintenance schedule check passed: $($scheduleResult.Reason)" -Level Success
                     }
                     catch {
-                        # v0.7.0: malformed UpdateWindow / UpdateExclusions tags
+                        # v0.7.0: malformed UpdateStartWindow / UpdateExclusionsWindow tags
                         # now block the update (fail-closed) unless -Force is
                         # specified. The previous behaviour (always proceed on
                         # parse failure) could cause fleet-wide updates to bypass
@@ -1144,7 +1228,7 @@ function Start-AzLocalClusterUpdate {
         $succeeded = @($results | Where-Object { $_.Status -eq "UpdateStarted" }).Count
         $wouldUpdate = @($results | Where-Object { $_.Status -eq "WouldUpdate" }).Count
         $failed = @($results | Where-Object { $_.Status -in @("Failed", "Error") }).Count
-        $skipped = @($results | Where-Object { $_.Status -in @("Skipped", "NotReady", "NoUpdatesAvailable", "NoReadyUpdates", "NotFound", "UpdateNotFound", "HealthCheckBlocked", "ScheduleBlocked", "SideloadedBlocked") }).Count
+        $skipped = @($results | Where-Object { $_.Status -in @("Skipped", "NotReady", "NoUpdatesAvailable", "NoReadyUpdates", "NotFound", "UpdateNotFound", "HealthCheckBlocked", "ScheduleBlocked", "SideloadedBlocked", "ExcludedByTag") }).Count
 
         Write-Log -Message "Total clusters processed: $totalClusters" -Level Info
         if ($WhatIfPreference) {

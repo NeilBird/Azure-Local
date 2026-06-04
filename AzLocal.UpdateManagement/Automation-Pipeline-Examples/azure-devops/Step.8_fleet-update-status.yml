@@ -1,4 +1,4 @@
-# Step.7 - Fleet Update Status Monitoring Pipeline
+# Step.8 - Fleet Update Status Monitoring Pipeline
 # This pipeline monitors update status across all Azure Local clusters and generates reports
 #
 # USE CASES:
@@ -92,7 +92,7 @@ variables:
   # the version actually installed and to the latest on PSGallery, and emits a warning
   # log if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.7.89'
+  GENERATED_AGAINST_MODULE_VERSION: '0.7.90'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): queue-time parameter > pipeline variable
   # 'REQUIRED_MODULE_VERSION' overridden at queue time > empty (latest).
@@ -552,7 +552,10 @@ stages:
               Write-Warning "Get-AzLocalUpdateRunFailures threw: $($_.Exception.Message). Continuing with empty run-history section."
               $runFailures = @()
           }
-          $runFailures = @($runFailures | Sort-Object StartTime -Descending)
+          # v0.7.90 sort key alignment: order by StartTime DESC, then ClusterName ASC
+          # so CSV / JSON / JUnit / markdown / base64 blob all share the same
+          # canonical ordering (latest run first, ties broken alphabetically).
+          $runFailures = @($runFailures | Sort-Object @{Expression='StartTime';Descending=$true}, @{Expression='ClusterName';Descending=$false})
           $runHistoryCount = $runFailures.Count
           Write-Host "Found $runHistoryCount unresolved Failed update run(s)." -ForegroundColor $(if ($runHistoryCount -gt 0) { 'Yellow' } else { 'Green' })
 
@@ -820,35 +823,62 @@ stages:
             try {
                 $vRows = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($versionDistB64)) | ConvertFrom-Json
                 $versionSection += "### Overall Fleet Update Status (Version Distribution)`n`n"
-                $versionSection += "_One row per distinct ``CurrentVersion`` reported by ``Get-AzLocalClusterUpdateReadiness``. Sorted by cluster count (descending). Percentage is share of the $total cluster(s) in scope._`n`n"
+                $versionSection += "_One row per distinct ``YYMM`` (year-month) derived from ``Get-AzLocalClusterUpdateReadiness.CurrentVersion``. The **Update Versions** column lists the distinct full versions installed within that YYMM with ``<version> x <cluster count>`` per line. Sorted by Version (YYMM) ascending - oldest at top. Percentage is share of the $total cluster(s) in scope._`n`n"
                 if ($supportSource -eq 'Microsoft manifest' -and $latestReleasedYymm) {
-                    $versionSection += "_``SupportStatus`` uses the **rolling 6-month YYMM window anchored on the Microsoft public catalog** ([aka.ms/AzureEdgeUpdates](https://aka.ms/AzureEdgeUpdates)). Latest released YYMM = **$latestReleasedYymm** (``$latestReleasedVersion``); supported window = ``$supportedYymmWin``. As soon as Microsoft publishes a release with a newer YYMM, the window slides forward and the oldest in-window YYMM falls out._`n`n"
-                    $versionSection += "_**Supported** = cluster's YYMM is inside the manifest-anchored window; **Unsupported** = older YYMM; **Unknown** = ``CurrentVersion`` empty or not in ``<prefix>.YYMM.X.X`` form. Always cross-check against the [Azure Local lifecycle cadence](https://learn.microsoft.com/azure/azure-local/update/about-updates-23h2#lifecycle-cadence) and the [Azure Local release information](https://learn.microsoft.com/azure/azure-local/release-information-23h2#about-azure-local-releases) before taking action._`n`n"
+                    $versionSection += "_``Support`` uses the **rolling 6-month YYMM window anchored on the Microsoft public catalog** ([aka.ms/AzureEdgeUpdates](https://aka.ms/AzureEdgeUpdates)). Latest released YYMM = **$latestReleasedYymm** (``$latestReleasedVersion``); supported window = ``$supportedYymmWin``. As soon as Microsoft publishes a release with a newer YYMM, the window slides forward and the oldest in-window YYMM falls out._`n`n"
+                    $versionSection += "_**Supported** = YYMM is inside the manifest-anchored window; **Unsupported** = older YYMM; **Unknown** = ``CurrentVersion`` empty or not in ``<prefix>.YYMM.X.X`` form. Always cross-check against the [Azure Local lifecycle cadence](https://learn.microsoft.com/azure/azure-local/update/about-updates-23h2#lifecycle-cadence) and the [Azure Local release information](https://learn.microsoft.com/azure/azure-local/release-information-23h2#about-azure-local-releases) before taking action._`n`n"
                 } else {
-                    $versionSection += "_``SupportStatus`` falls back to a **fleet-observed heuristic** (aka.ms/AzureEdgeUpdates was unreachable from the agent). **Supported** = YYMM is in the top-6 most-recent distinct YYMM values observed across the fleet (``$supportedYymmWin``); **Unsupported** = older YYMM; **Unknown** = ``CurrentVersion`` empty or not in ``<prefix>.YYMM.X.X`` form. Always cross-check against the [Azure Local lifecycle cadence](https://learn.microsoft.com/azure/azure-local/update/about-updates-23h2#lifecycle-cadence) and the [Azure Local release information](https://learn.microsoft.com/azure/azure-local/release-information-23h2#about-azure-local-releases) before taking action._`n`n"
+                    $versionSection += "_``Support`` falls back to a **fleet-observed heuristic** (aka.ms/AzureEdgeUpdates was unreachable from the agent). **Supported** = YYMM is in the top-6 most-recent distinct YYMM values observed across the fleet (``$supportedYymmWin``); **Unsupported** = older YYMM; **Unknown** = ``CurrentVersion`` empty or not in ``<prefix>.YYMM.X.X`` form. Always cross-check against the [Azure Local lifecycle cadence](https://learn.microsoft.com/azure/azure-local/update/about-updates-23h2#lifecycle-cadence) and the [Azure Local release information](https://learn.microsoft.com/azure/azure-local/release-information-23h2#about-azure-local-releases) before taking action._`n`n"
                 }
-                $versionSection += "| Version | YYMM | Support | Cluster Count | Percentage | Clusters (first 15 shown only) |`n"
-                $versionSection += "|---------|------|---------|---------------|------------|----------------------------------|`n"
-                foreach ($vr in @($vRows)) {
-                    $supportEmoji = switch ($vr.SupportStatus) {
+                $versionSection += "| Version | Update Versions | Support | Cluster Count | Percentage | Clusters (first 15 shown only) |`n"
+                $versionSection += "|---------|-----------------|---------|---------------|------------|----------------------------------|`n"
+                # Group rows by Yymm so the table summarises by year-month with a
+                # nested list of full versions installed within each YYMM. Known
+                # YYMM values sort ascending (oldest at top per operator request);
+                # malformed/empty YYMM rows render last under '(unknown)'.
+                $vRowsAll = @($vRows)
+                $yymmGroups = @($vRowsAll | Group-Object -Property Yymm)
+                $knownGroups   = @($yymmGroups | Where-Object { $_.Name -match '^[0-9]{4}$' } | Sort-Object Name)
+                $unknownGroups = @($yymmGroups | Where-Object { -not ($_.Name -match '^[0-9]{4}$') })
+                $orderedGroups = @($knownGroups) + @($unknownGroups)
+                foreach ($g in $orderedGroups) {
+                    $yymmDisplay = if ([string]::IsNullOrWhiteSpace($g.Name)) { '(unknown)' } else { [string]$g.Name }
+                    # Within a YYMM, newest patch level first (descending full version).
+                    $groupRows = @($g.Group | Sort-Object -Property Version -Descending)
+                    $totalCount = ($groupRows | Measure-Object -Property Count -Sum).Sum
+                    $totalPct   = [math]::Round((($groupRows | Measure-Object -Property Percentage -Sum).Sum), 1)
+                    # All clusters with the same YYMM share the same SupportStatus
+                    # (SupportStatus is derived from YYMM only) so picking the first
+                    # row's value is safe.
+                    $supportStatusForYymm = [string]$groupRows[0].SupportStatus
+                    $supportEmoji = switch ($supportStatusForYymm) {
                         'Supported'   { '✅ Supported' }
                         'Unsupported' { '⚠️ Unsupported' }
                         default       { '❓ Unknown' }
                     }
-                  # Show only the first 15 cluster names so the markdown table
-                  # stays scannable on large fleets. Full list remains in CSV/JSON.
-                  $clusterNames = if ($vr.Clusters) {
-                    @($vr.Clusters -split '; ' | Where-Object { $_ })
-                  } else {
-                    @()
-                  }
-                  $clCell = if ($clusterNames.Count -le 15) {
-                    $clusterNames -join '; '
-                  } else {
-                    (($clusterNames | Select-Object -First 15) -join '; ') + (' ... (+{0} more)' -f ($clusterNames.Count - 15))
-                  }
+                    # Build the multi-line 'Update Versions' cell. Each line is
+                    # '<full version> x <count>'. Markdown tables render '<br>'
+                    # as a line break inside a cell.
+                    $updateVersionsCell = (($groupRows | ForEach-Object {
+                        '{0} x {1}' -f $_.Version, $_.Count
+                    }) -join '<br>')
+                    # Union of cluster names across versions in this YYMM. Each
+                    # cluster appears in exactly one CurrentVersion row, so a
+                    # simple concat + sort -Unique is sufficient.
+                    $clusterNames = @()
+                    foreach ($r in $groupRows) {
+                        if ($r.Clusters) {
+                            $clusterNames += @($r.Clusters -split '; ' | Where-Object { $_ })
+                        }
+                    }
+                    $clusterNames = @($clusterNames | Sort-Object -Unique)
+                    $clCell = if ($clusterNames.Count -le 15) {
+                        $clusterNames -join '; '
+                    } else {
+                        (($clusterNames | Select-Object -First 15) -join '; ') + (' ... (+{0} more)' -f ($clusterNames.Count - 15))
+                    }
                     $clCell = $clCell -replace '\|','\|'
-                    $versionSection += ('| {0} | {1} | {2} | {3} | {4}% | {5} |' -f $vr.Version, $vr.Yymm, $supportEmoji, $vr.Count, $vr.Percentage, $clCell) + "`n"
+                    $versionSection += ('| {0} | {1} | {2} | {3} | {4}% | {5} |' -f $yymmDisplay, $updateVersionsCell, $supportEmoji, $totalCount, $totalPct, $clCell) + "`n"
                 }
                 $versionSection += "`n_Support roll-up: Supported = $supportedClusters cluster(s), Unsupported = $unsupportedClusters, Unknown = $unknownVersionClusters. Anchor source: ``$supportSource``._`n"
                 $versionSection += "_Note: the **Clusters (first 15 shown only)** column is intentionally truncated for readability. Download ``readiness-status.csv`` from artifacts to see the full cluster-name list._`n`n"
@@ -913,11 +943,36 @@ stages:
         if ($runHistoryCount -and ([int]$runHistoryCount) -gt 0 -and $runHistoryB64) {
             try {
                 $rows = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($runHistoryB64)) | ConvertFrom-Json
+                # v0.7.90 dedupe: collapse back-to-back identical failures so a
+                # cluster with N re-runs of the same update that all hit the
+                # same root-cause message shows ONE canonical row (latest run)
+                # plus an 'Earlier failures' block inside the <details>. Group
+                # key = (ClusterName, UpdateName, DeepestErrMsg). Each group's
+                # canonical row is the LATEST StartTime; the other rows are
+                # summarised in a small 'Earlier occurrences' bullet list
+                # appended to the verbose-error <details> block. This keeps the
+                # table scannable on fleets where the same step keeps failing.
+                $groups = @($rows) | Group-Object -Property @{
+                    Expression = { "$($_.ClusterName)|$($_.UpdateName)|$($_.DeepestErrMsg)" }
+                }
+                $renderRows = @()
+                foreach ($g in $groups) {
+                    $ordered = @($g.Group | Sort-Object @{ Expression = 'StartTime'; Descending = $true })
+                    $latest = $ordered[0]
+                    $extras = @($ordered | Select-Object -Skip 1)
+                    $latest | Add-Member -NotePropertyName 'EarlierOccurrences' -NotePropertyValue $extras -Force
+                    $renderRows += $latest
+                }
+                # Preserve top-of-table = latest run across the whole fleet
+                $renderRows = @($renderRows | Sort-Object @{Expression='StartTime';Descending=$true}, @{Expression='ClusterName';Descending=$false})
+                $totalRows  = (@($rows)).Count
+                $groupCount = $renderRows.Count
+                $dedupSuffix = if ($groupCount -lt $totalRows) { " (collapsed $totalRows run(s) into $groupCount unique failure group(s); older same-error reruns are listed inside each row's 'Show error' panel)" } else { '' }
                 $summary += "`n`n### 📜 Update Run History and Error Details`n`n"
-                $summary += "_ARG-first, fleet-scale failure-detail view. Shows up to 25 most recent unresolved Failed update runs (last 30 days). Source cmdlet: ``Get-AzLocalUpdateRunFailures -State Failed -OnlyUnresolved``._`n`n"
+                $summary += "_ARG-first, fleet-scale failure-detail view. Shows up to 25 most recent unresolved Failed update runs (last 30 days). Source cmdlet: ``Get-AzLocalUpdateRunFailures -State Failed -OnlyUnresolved``.$dedupSuffix._`n`n"
                 $summary += "| Cluster Name | Update Name | Update State | Status | Current Step | Verbose Error Details | Duration | Time Started | Last Updated |`n"
                 $summary += "|---|---|---|---|---|---|---|---|---|`n"
-                foreach ($r in @($rows)) {
+                foreach ($r in $renderRows) {
                     $errCell = if ($r.DeepestErrMsg) {
                         $e = [string]$r.DeepestErrMsg
                         # HTML-encode so '<', '>', '&' in stack traces don't get
@@ -927,7 +982,15 @@ stages:
                         # collapsible block.
                         $e = $e -replace '&','&amp;' -replace '<','&lt;' -replace '>','&gt;'
                         $e = $e -replace "`r`n",'<br>' -replace "`n",'<br>' -replace '\|','\|'
-                        '<details><summary>Show error</summary><br><code>' + $e + '</code></details>'
+                        $extraBlock = ''
+                        if ($r.EarlierOccurrences -and @($r.EarlierOccurrences).Count -gt 0) {
+                            $bullets = (@($r.EarlierOccurrences) | ForEach-Object {
+                                $dur = if ($_.Duration) { " (Duration: $($_.Duration))" } else { '' }
+                                "&bull; Started $($_.StartTime), Last updated $($_.LastUpdated)$dur"
+                            }) -join '<br>'
+                            $extraBlock = '<br><br><b>Earlier occurrences with the same error (' + (@($r.EarlierOccurrences).Count) + '):</b><br>' + $bullets
+                        }
+                        '<details><summary>Show error</summary><br><code>' + $e + '</code>' + $extraBlock + '</details>'
                     } else { '_(none)_' }
                     $clusterCell = if ($r.ClusterPortalUrl) { "[$($r.ClusterName)]($($r.ClusterPortalUrl))" } else { $r.ClusterName }
                     $updCell = if ($r.UpdateRunPortalUrl) { "[$($r.UpdateName)]($($r.UpdateRunPortalUrl))" } else { $r.UpdateName }

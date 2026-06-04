@@ -31,7 +31,7 @@
 # Workflow name carries the same Step.N - prefix as the filename so the GitHub
 # Actions sidebar (which sorts workflows alphabetically by this `name:` field)
 # lists the eight pipelines in execution order.
-name: Step.8 - Fleet Health Status
+name: Step.9 - Fleet Health Status
 
 on:
   # BEGIN-AZLOCAL-CUSTOMIZE:schedule-triggers
@@ -77,7 +77,7 @@ on:
       # Set raise_itsm_ticket=true to open ServiceNow incidents from each Critical /
       # Warning health-check failure published by this pipeline. Default is false
       # so existing schedules stay byte-identical until you opt in. The connector reads
-      # the JUnit file Step.7 already produces (./reports/fleet-health-status.xml) and
+      # the JUnit file this pipeline already produces (./reports/fleet-health-status.xml) and
       # the trigger matrix in ./.itsm/azurelocal-itsm.yml. Dedupe granularity is one
       # ticket per (cluster, failing health check) pair - FailureReason is fed into
       # the UpdateName slot of the SHA256 dedupe key.
@@ -115,7 +115,7 @@ env:
   # this to the version actually installed and to the latest on PSGallery, and emits a
   # ::notice annotation if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.7.89'
+  GENERATED_AGAINST_MODULE_VERSION: '0.7.90'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): manual workflow_dispatch input >
   # repository variable 'REQUIRED_MODULE_VERSION' > empty (latest).
@@ -306,7 +306,7 @@ jobs:
                     (Convert-XmlEscape $caseName))
                 # per-testcase <properties> for the ITSM connector.
                 # The dedupe key is SHA256(ClusterResourceId | UpdateName | Category).
-                # Step.7 is not about updates - so we stuff FailureReason into the
+                # Step.9 is not about updates - so we stuff FailureReason into the
                 # UpdateName slot. That gives one ticket per (cluster, failing health
                 # check) pair, which is the intended granularity for fleet-health.
                 $clusterResId = if ($r.PSObject.Properties.Match('ClusterResourceId').Count -gt 0) { [string]$r.ClusterResourceId } else { '' }
@@ -693,7 +693,7 @@ jobs:
       if: ${{ github.event.inputs.raise_itsm_ticket == 'true' }}
       uses: dorny/test-reporter@v3
       with:
-        name: ITSM Tickets (Step.7)
+        name: ITSM Tickets (Step.9)
         path: ./reports/itsm-results.xml
         reporter: java-junit
       continue-on-error: true

@@ -1,15 +1,16 @@
 function ConvertFrom-AzLocalUpdateExclusion {
     <#
     .SYNOPSIS
-        Parses an UpdateExclusions tag value into structured date range objects.
+        Parses an UpdateExclusionsWindow tag value into structured date range objects.
     .DESCRIPTION
-        Parses the exclusion date range syntax used in the UpdateExclusions Azure resource tag.
+        Parses the exclusion date range syntax used in the UpdateExclusionsWindow Azure resource
+        tag (renamed from 'UpdateExclusions' in v0.7.90; tag VALUE format is unchanged).
         Supports wildcards (*) for recurring annual patterns.
 
         Syntax: <start_date>/<end_date>[,<start_date>/<end_date>]
         Dates: YYYY-MM-DD format. * replaces a single digit for recurring patterns.
     .PARAMETER ExclusionString
-        The UpdateExclusions tag value to parse.
+        The UpdateExclusionsWindow tag value to parse.
     .PARAMETER ReferenceDate
         The date to use for resolving wildcards. Defaults to today (UTC).
     .OUTPUTS
@@ -31,11 +32,11 @@ function ConvertFrom-AzLocalUpdateExclusion {
     )
 
     if ([string]::IsNullOrWhiteSpace($ExclusionString)) {
-        throw "UpdateExclusions value cannot be empty."
+        throw "UpdateExclusionsWindow value cannot be empty."
     }
 
     if ($ExclusionString.Length -gt 256) {
-        throw "UpdateExclusions value exceeds Azure tag limit of 256 characters (length: $($ExclusionString.Length))."
+        throw "UpdateExclusionsWindow value exceeds Azure tag limit of 256 characters (length: $($ExclusionString.Length))."
     }
 
     $exclusions = @()

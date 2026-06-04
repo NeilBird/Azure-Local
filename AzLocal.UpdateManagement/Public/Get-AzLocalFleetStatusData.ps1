@@ -217,7 +217,7 @@ function Get-AzLocalFleetStatusData {
                     HasPrerequisiteUpdates = ""; SBEDependency = ""
                     RecommendedUpdate = ""; HealthCheckFailures = ""
                     BlockingReasons = ""
-                    UpdateWindow = ""; UpdateExclusions = ""
+                    UpdateStartWindow = ""; UpdateExclusionsWindow = ""
                 }) | Out-Null
                 $clusterDetails.Add([PSCustomObject]@{
                     ClusterName = $clusterName; ResourceGroup = $rgName
@@ -328,8 +328,8 @@ function Get-AzLocalFleetStatusData {
                 SBEDependency = $sbeDependencyInfo; RecommendedUpdate = $recommendedUpdate
                 HealthCheckFailures = $healthCheckFailures
                 BlockingReasons = ($blockingReasons -join '; ')
-                UpdateWindow = if ($clusterInfo.tags -and $clusterInfo.tags.$($script:UpdateWindowTagName)) { $clusterInfo.tags.$($script:UpdateWindowTagName) } else { "" }
-                UpdateExclusions = if ($clusterInfo.tags -and $clusterInfo.tags.$($script:UpdateExclusionsTagName)) { $clusterInfo.tags.$($script:UpdateExclusionsTagName) } else { "" }
+                UpdateStartWindow = if ($clusterInfo.tags -and $clusterInfo.tags.$($script:UpdateStartWindowTagName)) { $clusterInfo.tags.$($script:UpdateStartWindowTagName) } else { "" }
+                UpdateExclusionsWindow = if ($clusterInfo.tags -and $clusterInfo.tags.$($script:UpdateExclusionsWindowTagName)) { $clusterInfo.tags.$($script:UpdateExclusionsWindowTagName) } else { "" }
             }) | Out-Null
             $clusterDetails.Add([PSCustomObject]@{
                 ClusterName = $clusterName; ResourceGroup = $rgName
@@ -480,7 +480,7 @@ function Get-AzLocalFleetStatusData {
                 HasPrerequisiteUpdates = ""; SBEDependency = ""
                 RecommendedUpdate = ""; HealthCheckFailures = $_.Exception.Message
                 BlockingReasons = ""
-                UpdateWindow = ""; UpdateExclusions = ""
+                UpdateStartWindow = ""; UpdateExclusionsWindow = ""
             }) | Out-Null
             $clusterDetails.Add([PSCustomObject]@{
                 ClusterName = $clusterName; ResourceGroup = $rgName

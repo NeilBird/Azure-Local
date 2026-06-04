@@ -95,7 +95,7 @@ Write-Host ("[ast] {0} top-level function definitions found" -f $topFns.Count)
 # --- 3. Sort, capture inter-function NON-function statements ---
 # IMPORTANT: a previous version of this script only collected FunctionDefinitionAst nodes,
 # which silently dropped 6 non-function top-level statements - notably the
-# $script:DayAbbreviations / $script:UpdateWindowTagName / $script:UpdateSideloadedTagName
+# $script:DayAbbreviations / $script:UpdateStartWindowTagName / $script:UpdateSideloadedTagName
 # / $script:UpdateVersionInProgressTagName / $script:DayMap / $script:FleetOperationState
 # initialisers that were defined BETWEEN function definitions in the monolithic .psm1.
 # We now walk EndBlock.Statements and segregate functions from everything else, then

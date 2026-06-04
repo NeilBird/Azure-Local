@@ -6,7 +6,7 @@ function ConvertFrom-AzLocalCronExpression {
     .DESCRIPTION
         Used by Test-AzLocalApplyUpdatesScheduleCoverage to decide whether a
         cron entry from Step.6_apply-updates.yml covers any of the maintenance windows
-        derived from cluster UpdateWindow tags.
+        derived from cluster UpdateStartWindow tags.
 
         Supports the subset of cron syntax that GitHub Actions and Azure DevOps
         both honour for `schedule:` / `schedules:` blocks:
