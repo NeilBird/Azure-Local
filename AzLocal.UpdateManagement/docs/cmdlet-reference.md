@@ -52,7 +52,7 @@ This table is the canonical index of every public cmdlet the module ships. It is
 | [`Stop-AzLocalFleetUpdate`](#stop-azlocalfleetupdate) | **WRITE** | Azure REST (ARM `POST .../updateRuns/{id}/cancel`) |
 | [`Resume-AzLocalFleetUpdate`](#resume-azlocalfleetupdate) | **WRITE** | Azure REST (ARM `POST .../updateRuns/{id}/retry`) |
 | [`Invoke-AzLocalFleetOperation`](#invoke-azlocalfleetoperation) | **WRITE** | Azure REST (generic per-cluster mutation) |
-| [`Set-AzLocalClusterUpdateRingTag`](#set-azlocalclusterupdateringtag) | **WRITE** | Azure tags (`UpdateRing`, `UpdateWindow`) |
+| [`Set-AzLocalClusterUpdateRingTag`](#set-azlocalclusterupdateringtag) | **WRITE** | Azure tags (`UpdateRing`, `UpdateStartWindow`) |
 | [`Reset-AzLocalSideloadedTag`](#reset-azlocalsideloadedtag) | **WRITE** | Azure tags (`UpdateSideloaded`, `UpdateVersionInProgress`) |
 
 #### Local-only validation and scaffolding
@@ -1080,17 +1080,17 @@ Note: Updates already in progress on individual clusters will continue.
 
 ### `Test-AzLocalUpdateScheduleAllowed`
 
-Master gate that evaluates whether an update is allowed against the `UpdateWindow` (maintenance schedule) and `UpdateWindowExclusions` (blackout periods; renamed from `UpdateExclusions` in v0.7.90) tag values. Exclusions take priority over windows. Returns a structured result with `Allowed`, `Reason`, `WindowOpen`, `ExclusionActive`, and `Details`. Used internally by `Start-AzLocalClusterUpdate` and exposed as a public function so pipelines can pre-flight a wave before triggering the apply step.
+Master gate that evaluates whether an update is allowed against the `UpdateStartWindow` (maintenance schedule) and `UpdateExclusionsWindow` (blackout periods; renamed from `UpdateExclusions` in v0.7.90) tag values. Exclusions take priority over windows. Returns a structured result with `Allowed`, `Reason`, `WindowOpen`, `ExclusionActive`, and `Details`. Used internally by `Start-AzLocalClusterUpdate` and exposed as a public function so pipelines can pre-flight a wave before triggering the apply step.
 
-> **Fail-closed behaviour**: malformed `UpdateWindow` / `UpdateWindowExclusions` tag values cause this function to throw rather than swallow - this is intentional so the calling apply path can block the update unless `-Force` is supplied.
+> **Fail-closed behaviour**: malformed `UpdateStartWindow` / `UpdateExclusionsWindow` tag values cause this function to throw rather than swallow - this is intentional so the calling apply path can block the update unless `-Force` is supplied.
 
 > Note: the separate **`UpdateExcluded`** tag (operator hard override, new in v0.7.90) is evaluated by `Start-AzLocalClusterUpdate` directly in a step BEFORE the schedule gate, not by this function. See the `Start-AzLocalClusterUpdate` entry for the `ExcludedByTag` status.
 
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `-UpdateWindow` | String | No | (none) | The `UpdateWindow` tag value (e.g. `Mon-Fri_22:00-02:00;Sat-Sun_02:00-06:00`). Empty/null = no window restriction. |
-| `-UpdateWindowExclusions` | String | No | (none) | The `UpdateWindowExclusions` tag value (e.g. `2026-12-20/2027-01-03;2027-04-05`). Empty/null = no exclusion restriction. Renamed from `-UpdateExclusions` in v0.7.90. |
+| `-UpdateStartWindow` | String | No | (none) | The `UpdateStartWindow` tag value (e.g. `Mon-Fri_22:00-02:00;Sat-Sun_02:00-06:00`). Empty/null = no window restriction. |
+| `-UpdateExclusionsWindow` | String | No | (none) | The `UpdateExclusionsWindow` tag value (e.g. `2026-12-20/2027-01-03;2027-04-05`). Empty/null = no exclusion restriction. Renamed from `-UpdateExclusions` in v0.7.90. |
 | `-TestTime` | DateTime | No | `(Get-Date).ToUniversalTime()` | UTC time to test against. Local/Unspecified inputs are normalised to UTC automatically. |
 
 **Examples:**
@@ -1098,8 +1098,8 @@ Master gate that evaluates whether an update is allowed against the `UpdateWindo
 ```powershell
 # Pre-flight a wave: would now be allowed?
 $gate = Test-AzLocalUpdateScheduleAllowed `
-    -UpdateWindow 'Sat-Sun_02:00-06:00' `
-    -UpdateWindowExclusions '2026-12-20/2027-01-03'
+    -UpdateStartWindow 'Sat-Sun_02:00-06:00' `
+    -UpdateExclusionsWindow '2026-12-20/2027-01-03'
 
 if (-not $gate.Allowed) {
     Write-Host "Wave blocked: $($gate.Reason) - $($gate.Details)"
@@ -1108,7 +1108,7 @@ if (-not $gate.Allowed) {
 
 # Test a specific UTC point in time (e.g. when the pipeline will run tonight)
 Test-AzLocalUpdateScheduleAllowed `
-    -UpdateWindow 'Mon-Fri_22:00-02:00' `
+    -UpdateStartWindow 'Mon-Fri_22:00-02:00' `
     -TestTime ([DateTime]::UtcNow.AddHours(6))
 ```
 
@@ -1289,9 +1289,9 @@ $summary = Get-AzLocalFleetHealthFailures -View Summary -ExportPath .\reports\fl
 
 *Added in v0.7.65.*
 
-Read-only **schedule-coverage advisor**. Compares the cron schedule(s) declared in your `Step.6_apply-updates.yml` pipeline (GitHub Actions and/or Azure DevOps) to the `UpdateWindow` tag values actually present on your clusters, and flags every `(UpdateRing, UpdateWindow)` pair that no cron in the pipeline will ever reach. Never edits cluster tags. Never edits pipeline YAML. It is the safety net that closes the loop between section 8 of [`Automation-Pipeline-Examples/README.md`](./Automation-Pipeline-Examples/README.md) (the `UpdateWindow` tag is a *gate*, not a *trigger*) and `Test-AzLocalUpdateScheduleAllowed` (the runtime per-cluster gate inside `Start-AzLocalClusterUpdate`).
+Read-only **schedule-coverage advisor**. Compares the cron schedule(s) declared in your `Step.6_apply-updates.yml` pipeline (GitHub Actions and/or Azure DevOps) to the `UpdateStartWindow` tag values actually present on your clusters, and flags every `(UpdateRing, UpdateStartWindow)` pair that no cron in the pipeline will ever reach. Never edits cluster tags. Never edits pipeline YAML. It is the safety net that closes the loop between section 8 of [`Automation-Pipeline-Examples/README.md`](./Automation-Pipeline-Examples/README.md) (the `UpdateStartWindow` tag is a *gate*, not a *trigger*) and `Test-AzLocalUpdateScheduleAllowed` (the runtime per-cluster gate inside `Start-AzLocalClusterUpdate`).
 
-Under the covers it pre-scans the pipeline YAML file(s) with a regex (no `powershell-yaml` dependency), runs a single Azure Resource Graph query against `resources` for clusters with `UpdateWindow` / `UpdateRing` tags, parses each tag value with the same `ConvertFrom-AzLocalUpdateWindow` helper used by the runtime gate, then enumerates every cron fire time over a reference week and compares it to each parsed window (with a configurable lead-time buffer).
+Under the covers it pre-scans the pipeline YAML file(s) with a regex (no `powershell-yaml` dependency), runs a single Azure Resource Graph query against `resources` for clusters with `UpdateStartWindow` / `UpdateRing` tags, parses each tag value with the same `ConvertFrom-AzLocalUpdateWindow` helper used by the runtime gate, then enumerates every cron fire time over a reference week and compares it to each parsed window (with a configurable lead-time buffer).
 
 **Parameters:**
 
@@ -1303,13 +1303,13 @@ Under the covers it pre-scans the pipeline YAML file(s) with a regex (no `powers
 | `-Platform` | String | No | `Both` | `GitHubActions`, `AzureDevOps`, or `Both`. Filters which YAML files are scanned and which cron blocks the Recommend view emits. |
 | `-LeadTimeMinutes` | Int | No | `5` | Range 0-60. How many minutes the cron should fire **before** the window opens (so cluster enumeration + auth completes before `Test-AzLocalUpdateScheduleAllowed` evaluates). |
 | `-UpdateRingTag` | String[] | No | - | Optional. Narrow the audit to one or more `UpdateRing` tag values. |
-| `-IncludeUntagged` | Switch | No | - | Include clusters that have no `UpdateWindow` tag in the Audit view (`Status = NoWindowTag`). |
+| `-IncludeUntagged` | Switch | No | - | Include clusters that have no `UpdateStartWindow` tag in the Audit view (`Status = NoWindowTag`). |
 | `-ExportPath` | String | No | - | Optional `.csv` / `.json` / `.md` path; format auto-detected from extension. `.md` emits the YAML snippet for Recommend, a markdown table for Audit/Matrix. |
 | `-PassThru` | Switch | No | - | Emit objects to the pipeline even when `-ExportPath` is used. |
 
-**Audit view columns:** `UpdateRing`, `UpdateWindow`, `ClusterCount`, `Status`, `Issue`, `Recommendation`, `MatchingCrons`, `RequiredCronUTC`. Rows are ordered by `Status` (Uncovered first), then `ClusterCount desc`.
+**Audit view columns:** `UpdateRing`, `UpdateStartWindow`, `ClusterCount`, `Status`, `Issue`, `Recommendation`, `MatchingCrons`, `RequiredCronUTC`. Rows are ordered by `Status` (Uncovered first), then `ClusterCount desc`.
 
-**Matrix view columns:** `UpdateRing`, `UpdateWindow`, `ClusterCount`, `RequiredCronUTC`, `Segment`, `Days`.
+**Matrix view columns:** `UpdateRing`, `UpdateStartWindow`, `ClusterCount`, `RequiredCronUTC`, `Segment`, `Days`.
 
 **Recommend view columns:** `Platform`, `CronExpression`, `WindowsServed`, `ClustersServed`, `Comment`.
 

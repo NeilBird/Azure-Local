@@ -98,7 +98,7 @@ variables:
   # log if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
   - name: GENERATED_AGAINST_MODULE_VERSION
-    value: '0.7.89'
+    value: '0.7.90'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): queue-time parameter > pipeline variable
   # 'REQUIRED_MODULE_VERSION' overridden at queue time > empty (latest).
@@ -570,7 +570,7 @@ stages:
                     Write-Host "##vso[task.logissue type=warning]$healthBlocked cluster(s) blocked by critical health check failures"
                 }
                 if ($scheduleBlocked -gt 0) {
-                    Write-Host "##vso[task.logissue type=warning]$scheduleBlocked cluster(s) blocked by maintenance schedule (outside UpdateWindow or in UpdateExclusions period)"
+                    Write-Host "##vso[task.logissue type=warning]$scheduleBlocked cluster(s) blocked by maintenance schedule (outside UpdateStartWindow or in UpdateExclusions period)"
                 }
                 if ($sideloadedBlocked -gt 0) {
                     Write-Host "##vso[task.logissue type=warning]$sideloadedBlocked cluster(s) blocked by UpdateSideloaded=False - operator must stage the sideloaded payload and flip the tag (or run Reset-AzLocalSideloadedTag) before updates can proceed"
@@ -732,7 +732,7 @@ stages:
                     
                     if ([int]$failed -gt 0) { $actionsRequired += "- **$failed cluster(s) failed** - Review pipeline logs and cluster health in Azure Portal" }
                     if ([int]$healthBlocked -gt 0) { $actionsRequired += "- **$healthBlocked cluster(s) blocked by health checks** - Resolve critical health failures before retrying" }
-                    if ([int]$scheduleBlocked -gt 0) { $actionsRequired += "- **$scheduleBlocked cluster(s) outside maintenance window** - Updates will proceed when the cluster's UpdateWindow schedule allows, or re-run during the maintenance window" }
+                    if ([int]$scheduleBlocked -gt 0) { $actionsRequired += "- **$scheduleBlocked cluster(s) outside maintenance window** - Updates will proceed when the cluster's UpdateStartWindow schedule allows, or re-run during the maintenance window" }
                     if ([int]$sideloadedBlocked -gt 0) { $actionsRequired += "- **$sideloadedBlocked cluster(s) blocked by UpdateSideloaded=False** - Operator must stage the sideloaded payload and flip the tag to True (or run Reset-AzLocalSideloadedTag) before updates can proceed" }
                     
                     if ($actionsRequired.Count -gt 0) {

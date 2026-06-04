@@ -3,10 +3,10 @@ function Test-AzLocalUpdateWindow {
     .SYNOPSIS
         Tests whether a given time falls within a maintenance window.
     .DESCRIPTION
-        Parses the UpdateWindow tag value and checks if the specified (or current) UTC time
+        Parses the UpdateStartWindow tag value and checks if the specified (or current) UTC time
         falls within any of the defined maintenance windows.
     .PARAMETER WindowString
-        The UpdateWindow tag value to evaluate.
+        The UpdateStartWindow tag value to evaluate.
     .PARAMETER TestTime
         The UTC time to test against. Defaults to current UTC time.
     .OUTPUTS

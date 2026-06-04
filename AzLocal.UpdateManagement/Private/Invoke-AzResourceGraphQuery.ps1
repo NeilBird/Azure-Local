@@ -24,7 +24,7 @@ function Invoke-AzResourceGraphQuery {
         so a multi-line PowerShell here-string KQL would silently be reduced
         to just its first line on the runner. The pre-v0.7.68 behaviour caused
         Test-AzLocalApplyUpdatesScheduleCoverage to silently return all
-        resources (default schema, no UpdateRing/UpdateWindow columns) instead
+        resources (default schema, no UpdateRing/UpdateStartWindow columns) instead
         of the projected cluster rows it asked for; the audit then reported
         zero tagged clusters even when clusters were tagged correctly. The
         normalisation here protects every caller, current and future. KQL is

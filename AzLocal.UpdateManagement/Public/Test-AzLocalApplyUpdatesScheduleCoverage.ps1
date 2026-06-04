@@ -3,13 +3,13 @@ function Test-AzLocalApplyUpdatesScheduleCoverage {
     .SYNOPSIS
         Read-only advisor that compares the cron schedule(s) in your
         apply-updates pipeline YAML to the maintenance windows encoded in your
-        clusters' UpdateWindow tags, and reports any rings whose windows would
+        clusters' UpdateStartWindow tags, and reports any rings whose windows would
         never be reached by the pipeline.
     .DESCRIPTION
         Apply Updates pipelines ship with no default schedule on purpose
         (manual workflow_dispatch / trigger:none) so customers must consciously
         choose when updates fire. This cmdlet helps the operator turn an
-        UpdateWindow tag strategy into the *correct* set of cron entries, and
+        UpdateStartWindow tag strategy into the *correct* set of cron entries, and
         catches drift later (e.g. a new ring tagged with a Saturday window when
         the pipeline only fires Monday).
 
@@ -19,18 +19,18 @@ function Test-AzLocalApplyUpdatesScheduleCoverage {
         optionally parses one or more pipeline YAML files locally.
 
         Views:
-          Audit      - Default. For each distinct (UpdateRing, UpdateWindow) pair
+          Audit      - Default. For each distinct (UpdateRing, UpdateStartWindow) pair
                        in the fleet, report whether the supplied pipeline YAML
                        has at least one cron that would fire during the window.
                        Output columns: Section ('Schedule' for schedule-file gap
                        rows or 'Cron' for cron-coverage rows), UpdateRing,
-                       UpdateWindow, ClusterCount, Status, Issue, Recommendation,
+                       UpdateStartWindow, ClusterCount, Status, Issue, Recommendation,
                        MatchingCrons, RequiredCronUTC. Rows are pre-sorted with
                        Section='Schedule' first (higher blast radius - a missing
                        ring means apply-updates NEVER fires for those clusters),
                        then Section='Cron'. Within each section, the
                        most-actionable Status sorts to the top.
-          Matrix     - Inventory view: every distinct (UpdateRing, UpdateWindow)
+          Matrix     - Inventory view: every distinct (UpdateRing, UpdateStartWindow)
                        pair with cluster count and the cron expression the
                        advisor would generate for it.
           Recommend  - Markdown action-required output for an operator. When
@@ -55,8 +55,8 @@ function Test-AzLocalApplyUpdatesScheduleCoverage {
           Covered                  - at least one cron in the YAML fires during the window
           Uncovered                - no cron in the YAML fires during the window
           PartiallyCovered         - multi-segment window where some segments are covered and others are not
-          NoWindowTag              - cluster(s) have no UpdateWindow tag (only emitted when -IncludeUntagged is supplied)
-          MalformedTag             - the UpdateWindow tag value failed to parse
+          NoWindowTag              - cluster(s) have no UpdateStartWindow tag (only emitted when -IncludeUntagged is supplied)
+          MalformedTag             - the UpdateStartWindow tag value failed to parse
           UnparseableCron          - a cron in the YAML used syntax the advisor cannot evaluate
                                      (e.g. DayOfMonth restrictions, step values); manual review required
           RingMissingFromSchedule  - a ring on at least one cluster's UpdateRing tag has no matching
@@ -72,7 +72,7 @@ function Test-AzLocalApplyUpdatesScheduleCoverage {
         Optional for -View Audit. Path to a single Step.6_apply-updates.yml file, or to
         a folder that contains apply-updates*.yml files (typically the
         Automation-Pipeline-Examples folder of your forked module). Drives the
-        cron-vs-UpdateWindow coverage check. May be supplied together with
+        cron-vs-UpdateStartWindow coverage check. May be supplied together with
         -SchedulePath; at least one of the two is required for -View Audit.
     .PARAMETER SchedulePath
         Optional for -View Audit. Path to a v1 apply-updates-schedule.yml
@@ -101,7 +101,7 @@ function Test-AzLocalApplyUpdatesScheduleCoverage {
         Optional filter: only evaluate clusters whose UpdateRing tag matches one
         of these values. Repeat or comma-separate for multiple rings.
     .PARAMETER IncludeUntagged
-        Include clusters with no UpdateWindow tag as their own 'NoWindowTag' row.
+        Include clusters with no UpdateStartWindow tag as their own 'NoWindowTag' row.
         Off by default to keep the report focused on tagged rings.
     .PARAMETER ExportPath
         Optional output file. Format inferred from extension: .csv, .json, .md.
@@ -212,7 +212,7 @@ function Test-AzLocalApplyUpdatesScheduleCoverage {
         catch { throw "ExportPath is not writable: $($_.Exception.Message)" }
     }
 
-    # 1. Pull every cluster's UpdateRing + UpdateWindow tags via Resource Graph.
+    # 1. Pull every cluster's UpdateRing + UpdateStartWindow tags via Resource Graph.
     # NOTE on multi-line KQL: a here-string with embedded newlines used to be
     # silently truncated to its first line on Windows because az.cmd's CMD
     # argument parser stops at the first CR/LF. That caused this audit to
@@ -230,10 +230,10 @@ resources
     SubscriptionId    = subscriptionId,
     ClusterResourceId = id,
     UpdateRing        = tostring(tags['UpdateRing']),
-    UpdateWindow      = tostring(tags['UpdateWindow'])
+    UpdateStartWindow      = tostring(tags['UpdateStartWindow'])
 "@
 
-    Write-Log -Message "Querying Azure Resource Graph for UpdateRing + UpdateWindow tags across the fleet (View=$View)..." -Level Info
+    Write-Log -Message "Querying Azure Resource Graph for UpdateRing + UpdateStartWindow tags across the fleet (View=$View)..." -Level Info
     try {
         $clusters = if ($SubscriptionId) {
             Invoke-AzResourceGraphQuery -Query $kql -SubscriptionId $SubscriptionId
@@ -268,9 +268,9 @@ resources
         Write-Log -Message "Filtered to UpdateRing in {$($UpdateRingTag -join ',')}: $($clusters.Count) of $before clusters retained." -Level Info
     }
 
-    # 2. Bucket clusters by (UpdateRing, UpdateWindow).
-    $taggedClusters   = @($clusters | Where-Object { -not [string]::IsNullOrWhiteSpace($_.UpdateWindow) })
-    $untaggedClusters = @($clusters | Where-Object {     [string]::IsNullOrWhiteSpace($_.UpdateWindow) })
+    # 2. Bucket clusters by (UpdateRing, UpdateStartWindow).
+    $taggedClusters   = @($clusters | Where-Object { -not [string]::IsNullOrWhiteSpace($_.UpdateStartWindow) })
+    $untaggedClusters = @($clusters | Where-Object {     [string]::IsNullOrWhiteSpace($_.UpdateStartWindow) })
 
     # 2a. Two-way ring diff: schedule.rings vs fleet UpdateRing tags.
     #     Computed BEFORE the switch ($View) so both -View Audit (row emission)
@@ -327,18 +327,18 @@ resources
         }
     }
 
-    $groups = @($taggedClusters | Group-Object -Property @{Expression={ "$($_.UpdateRing)|$($_.UpdateWindow)" }})
+    $groups = @($taggedClusters | Group-Object -Property @{Expression={ "$($_.UpdateRing)|$($_.UpdateStartWindow)" }})
 
     # 3. Resolve each distinct (Ring, Window): parse window, derive required cron.
     $coverageRows = New-Object System.Collections.Generic.List[PSCustomObject]
     foreach ($g in $groups) {
         $first  = $g.Group | Select-Object -First 1
         $ring   = $first.UpdateRing
-        $window = $first.UpdateWindow
+        $window = $first.UpdateStartWindow
 
         $row = [PSCustomObject]@{
             UpdateRing      = if ($ring) { $ring } else { '(none)' }
-            UpdateWindow    = $window
+            UpdateStartWindow    = $window
             ClusterCount    = $g.Count
             ParsedSegments  = $null
             RequiredCrons   = @()
@@ -349,7 +349,7 @@ resources
             # preserve Object[N] shape for any N. Do NOT wrap with @() - that
             # collapses multi-segment windows to a single nested-array row.
             # See user memory note: "return , $arr is INCOMPATIBLE with caller-side @(func) wrap".
-            $row.RequiredCrons = Convert-AzLocalUpdateWindowToCron -UpdateWindow $window -LeadTimeMinutes $LeadTimeMinutes
+            $row.RequiredCrons = Convert-AzLocalUpdateWindowToCron -UpdateStartWindow $window -LeadTimeMinutes $LeadTimeMinutes
         }
         catch {
             $row.ParseError = $_.Exception.Message
@@ -412,7 +412,7 @@ resources
                            else { ($r.RequiredCrons | ForEach-Object { $_.CronExpression }) -join '; ' }
                 $rows.Add([PSCustomObject]@{
                     UpdateRing      = $r.UpdateRing
-                    UpdateWindow    = $r.UpdateWindow
+                    UpdateStartWindow    = $r.UpdateStartWindow
                     ClusterCount    = $r.ClusterCount
                     RequiredCronUTC = $cronStr
                     ParseError      = $r.ParseError
@@ -424,14 +424,14 @@ resources
                 foreach ($ug in $untaggedByRing) {
                     $rows.Add([PSCustomObject]@{
                         UpdateRing      = $ug.Name
-                        UpdateWindow    = ''
+                        UpdateStartWindow    = ''
                         ClusterCount    = $ug.Count
-                        RequiredCronUTC = '(no UpdateWindow tag)'
+                        RequiredCronUTC = '(no UpdateStartWindow tag)'
                         ParseError      = $null
                     })
                 }
             }
-            , @($rows | Sort-Object UpdateRing, UpdateWindow)
+            , @($rows | Sort-Object UpdateRing, UpdateStartWindow)
         }
 
         'Recommend' {
@@ -562,7 +562,7 @@ resources
                 }
                 if ($byCron.Count -gt 0) {
                     $checkIdx++
-                    [void]$fullSb.AppendLine("$checkIdx. **Add missing cron entries** to ``$step5FileLabel`` (Step $checkIdx below). Until each UpdateWindow has at least one cron firing inside its lead-time envelope, Step.5 never wakes up for those clusters even when their ring is eligible today.")
+                    [void]$fullSb.AppendLine("$checkIdx. **Add missing cron entries** to ``$step5FileLabel`` (Step $checkIdx below). Until each UpdateStartWindow has at least one cron firing inside its lead-time envelope, Step.5 never wakes up for those clusters even when their ring is eligible today.")
                 }
                 $checkIdx++
                 [void]$fullSb.AppendLine("$checkIdx. **Commit the edits and re-run this Step.3 pipeline** to confirm all (Ring, Window) pairs are green.")
@@ -630,7 +630,7 @@ resources
                 $prefix = if ($actionCount -gt 1) { " ($actionIdx of $actionCount)" } else { '' }
                 [void]$fullSb.AppendLine("## Action required$prefix - simplify unparseable cron expression(s)")
                 [void]$fullSb.AppendLine()
-                [void]$fullSb.AppendLine("**Why this matters.** The advisor could not statically reason about the following cron line(s) in ``$step5FileLabel``. UpdateWindow coverage for these crons was NOT evaluated, so the cron-coverage recommendation below may over-suggest entries that duplicate what an already-correct-but-unparseable line is doing. Resolve these first.")
+                [void]$fullSb.AppendLine("**Why this matters.** The advisor could not statically reason about the following cron line(s) in ``$step5FileLabel``. UpdateStartWindow coverage for these crons was NOT evaluated, so the cron-coverage recommendation below may over-suggest entries that duplicate what an already-correct-but-unparseable line is doing. Resolve these first.")
                 [void]$fullSb.AppendLine()
                 [void]$fullSb.AppendLine('**Supported syntax:** ``minute`` and ``hour`` may be a literal value, a comma-list, or a range (``a-b``); ``day-of-month`` and ``month`` must be ``*``; ``day-of-week`` may be ``*``, a literal value, a comma-list, or a range. Step values (``*/n``), lists/ranges in ``day-of-month`` or ``month``, and names (``MON``, ``JAN``) are not yet supported - split a complex cron into multiple simpler crons if needed.')
                 [void]$fullSb.AppendLine()
@@ -650,9 +650,9 @@ resources
                 $prefix = if ($actionCount -gt 1) { " ($actionIdx of $actionCount)" } else { '' }
                 [void]$fullSb.AppendLine("## Action required$prefix - cron coverage")
                 [void]$fullSb.AppendLine()
-                [void]$fullSb.AppendLine("**Why this matters.** Step.5 apply-updates is a scheduled pipeline - it only runs when one of its ``cron`` entries fires. ``Test-AzLocalUpdateScheduleAllowed`` then gates each cluster on its per-cluster ``UpdateWindow`` tag. If NO cron fires inside an UpdateWindow's lead-time envelope, the gate is never even reached and the cluster is silently skipped that day.")
+                [void]$fullSb.AppendLine("**Why this matters.** Step.5 apply-updates is a scheduled pipeline - it only runs when one of its ``cron`` entries fires. ``Test-AzLocalUpdateScheduleAllowed`` then gates each cluster on its per-cluster ``UpdateStartWindow`` tag. If NO cron fires inside an UpdateStartWindow's lead-time envelope, the gate is never even reached and the cluster is silently skipped that day.")
                 [void]$fullSb.AppendLine()
-                [void]$fullSb.AppendLine("Each cron below is set to ``LeadTimeMinutes`` minutes BEFORE the start of its UpdateWindow segment so ``Test-AzLocalUpdateScheduleAllowed`` opens the gate exactly when expected. Adjust the value of ``LeadTimeMinutes`` on Step.3 if your fleet needs a different lead time.")
+                [void]$fullSb.AppendLine("Each cron below is set to ``LeadTimeMinutes`` minutes BEFORE the start of its UpdateStartWindow segment so ``Test-AzLocalUpdateScheduleAllowed`` opens the gate exactly when expected. Adjust the value of ``LeadTimeMinutes`` on Step.3 if your fleet needs a different lead time.")
                 [void]$fullSb.AppendLine()
                 [void]$fullSb.AppendLine("### How to fix - edit ``$step5FileLabel``")
                 [void]$fullSb.AppendLine()
@@ -730,11 +730,11 @@ resources
                     $rows.Add([PSCustomObject]@{
                         Section         = 'Cron'
                         UpdateRing      = $r.UpdateRing
-                        UpdateWindow    = $r.UpdateWindow
+                        UpdateStartWindow    = $r.UpdateStartWindow
                         ClusterCount    = $r.ClusterCount
                         Status          = 'MalformedTag'
-                        Issue           = "UpdateWindow tag failed to parse: $($r.ParseError)"
-                        Recommendation  = 'Fix the UpdateWindow tag value. Syntax: <days>_<HH:MM>-<HH:MM>[;...]'
+                        Issue           = "UpdateStartWindow tag failed to parse: $($r.ParseError)"
+                        Recommendation  = 'Fix the UpdateStartWindow tag value. Syntax: <days>_<HH:MM>-<HH:MM>[;...]'
                         MatchingCrons   = @()
                         RequiredCronUTC = ''
                     })
@@ -747,7 +747,7 @@ resources
                 foreach ($req in $r.RequiredCrons) {
                     # Window times in the reference week: convert the segment back to a
                     # (firingDate, windowStart, windowEnd) tuple per firing day.
-                    $parsed = ConvertFrom-AzLocalUpdateWindow -WindowString $r.UpdateWindow |
+                    $parsed = ConvertFrom-AzLocalUpdateWindow -WindowString $r.UpdateStartWindow |
                               Where-Object { $_.Raw -eq $req.Segment } | Select-Object -First 1
                     $covered = $false
                     $matched = New-Object System.Collections.Generic.List[string]
@@ -809,7 +809,7 @@ resources
                 $allRequired = ($segmentStatuses | ForEach-Object { $_.RequiredCron }) -join '; '
                 $issue = switch ($status) {
                     'Covered'          { '' }
-                    'Uncovered'        { "No cron in '$PipelineYamlPath' fires during $($r.UpdateWindow) for ring '$($r.UpdateRing)' ($($r.ClusterCount) cluster(s))." }
+                    'Uncovered'        { "No cron in '$PipelineYamlPath' fires during $($r.UpdateStartWindow) for ring '$($r.UpdateRing)' ($($r.ClusterCount) cluster(s))." }
                     'PartiallyCovered' {
                         $missing = ($segmentStatuses | Where-Object { -not $_.Covered } | ForEach-Object { $_.Segment }) -join '; '
                         "Some window segment(s) are not covered: $missing"
@@ -822,7 +822,7 @@ resources
                 $rows.Add([PSCustomObject]@{
                     Section         = 'Cron'
                     UpdateRing      = $r.UpdateRing
-                    UpdateWindow    = $r.UpdateWindow
+                    UpdateStartWindow    = $r.UpdateStartWindow
                     ClusterCount    = $r.ClusterCount
                     Status          = $status
                     Issue           = $issue
@@ -835,11 +835,11 @@ resources
                 $rows.Add([PSCustomObject]@{
                     Section         = 'Cron'
                     UpdateRing      = '(any)'
-                    UpdateWindow    = ''
+                    UpdateStartWindow    = ''
                     ClusterCount    = $untaggedClusters.Count
                     Status          = 'NoWindowTag'
-                    Issue           = "$($untaggedClusters.Count) cluster(s) have no UpdateWindow tag and will be updated whenever the pipeline runs."
-                    Recommendation  = 'Tag clusters with UpdateWindow=<days>_<HH:MM>-<HH:MM> so the runtime gate (Test-AzLocalUpdateScheduleAllowed) can enforce a maintenance window.'
+                    Issue           = "$($untaggedClusters.Count) cluster(s) have no UpdateStartWindow tag and will be updated whenever the pipeline runs."
+                    Recommendation  = 'Tag clusters with UpdateStartWindow=<days>_<HH:MM>-<HH:MM> so the runtime gate (Test-AzLocalUpdateScheduleAllowed) can enforce a maintenance window.'
                     MatchingCrons   = @()
                     RequiredCronUTC = ''
                 })
@@ -851,7 +851,7 @@ resources
                     $rows.Add([PSCustomObject]@{
                         Section         = 'Cron'
                         UpdateRing      = '(yaml)'
-                        UpdateWindow    = ''
+                        UpdateStartWindow    = ''
                         ClusterCount    = 0
                         Status          = 'UnparseableCron'
                         Issue           = "$($pc.Source.RelativePath):$($pc.Source.LineNumber) '$($pc.Source.CronExpression)' - $($pc.Parsed.ErrorMessage)"
@@ -871,7 +871,7 @@ resources
                     $rows.Add([PSCustomObject]@{
                         Section         = 'Schedule'
                         UpdateRing      = $ring
-                        UpdateWindow    = ''
+                        UpdateStartWindow    = ''
                         ClusterCount    = $clusterCount
                         Status          = 'RingMissingFromSchedule'
                         Issue           = "Ring '$ring' is tagged on $clusterCount cluster(s) but no row in '$SchedulePath' lists it in its `rings` column. Resolve-AzLocalCurrentUpdateRing will NEVER return this ring, so apply-updates will never fire for these cluster(s)."
@@ -884,7 +884,7 @@ resources
                     $rows.Add([PSCustomObject]@{
                         Section         = 'Schedule'
                         UpdateRing      = $ring
-                        UpdateWindow    = ''
+                        UpdateStartWindow    = ''
                         ClusterCount    = 0
                         Status          = 'RingOrphanedInSchedule'
                         Issue           = "Ring '$ring' is listed in '$SchedulePath' but no cluster in the fleet carries an UpdateRing='$ring' tag. The schedule row(s) that reference it will resolve to a ring nothing will match."
@@ -901,7 +901,7 @@ resources
             , @($rows | Sort-Object `
                 @{Expression={ if ($_.Section -eq 'Schedule') {1} else {2} }},
                 @{Expression={ switch ($_.Status) { 'RingMissingFromSchedule' {1} 'RingOrphanedInSchedule' {2} 'Uncovered' {3} 'PartiallyCovered' {4} 'MalformedTag' {5} 'NoWindowTag' {6} 'UnparseableCron' {7} 'Covered' {8} default {9} } }},
-                UpdateRing, UpdateWindow)
+                UpdateRing, UpdateStartWindow)
         }
     }
 
@@ -920,7 +920,7 @@ resources
             Write-Log -Message ("  Rings orphaned in schedule:    {0}" -f $orphans.Count) -Level $(if ($orphans.Count -gt 0) { 'Warning' } else { 'Success' })
         }
         foreach ($u in $uncovered) {
-            Write-Log -Message ("    [{0}] {1} / {2} ({3} cluster(s)) -> {4}" -f $u.Status, $u.UpdateRing, $u.UpdateWindow, $u.ClusterCount, $u.Recommendation) -Level Warning
+            Write-Log -Message ("    [{0}] {1} / {2} ({3} cluster(s)) -> {4}" -f $u.Status, $u.UpdateRing, $u.UpdateStartWindow, $u.ClusterCount, $u.Recommendation) -Level Warning
         }
         foreach ($m in $missing) {
             Write-Log -Message ("    [{0}] {1} ({2} cluster(s)) -> {3}" -f $m.Status, $m.UpdateRing, $m.ClusterCount, $m.Recommendation) -Level Warning
@@ -931,7 +931,7 @@ resources
     }
     elseif ($View -eq 'Matrix') {
         foreach ($m in $output) {
-            Write-Log -Message ("  {0,-16} {1,-30} {2,5} cluster(s) -> {3}" -f $m.UpdateRing, $m.UpdateWindow, $m.ClusterCount, $m.RequiredCronUTC) -Level Info
+            Write-Log -Message ("  {0,-16} {1,-30} {2,5} cluster(s) -> {3}" -f $m.UpdateRing, $m.UpdateStartWindow, $m.ClusterCount, $m.RequiredCronUTC) -Level Info
         }
     }
 

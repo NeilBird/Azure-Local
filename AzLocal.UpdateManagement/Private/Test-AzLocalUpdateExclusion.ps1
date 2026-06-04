@@ -3,10 +3,10 @@ function Test-AzLocalUpdateExclusion {
     .SYNOPSIS
         Tests whether a given date falls within any exclusion (blackout) period.
     .DESCRIPTION
-        Parses the UpdateWindowExclusions tag value and checks if the specified (or current) UTC date
+        Parses the UpdateExclusionsWindow tag value and checks if the specified (or current) UTC date
         falls within any of the defined blackout periods.
     .PARAMETER ExclusionString
-        The UpdateWindowExclusions tag value to evaluate.
+        The UpdateExclusionsWindow tag value to evaluate.
     .PARAMETER TestDate
         The UTC date to test against. Defaults to current UTC date.
     .OUTPUTS

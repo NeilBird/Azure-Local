@@ -88,26 +88,26 @@ If you are new to this module, work through these in order from a regular PowerS
 
 ## What's New in v0.7.90
 
-v0.7.90 ships a new **`UpdateExcluded` operator-override tag** and a **breaking rename**: the existing `UpdateExclusions` schedule tag (date-range blackout periods) is renamed to **`UpdateWindowExclusions`** to make its purpose unambiguous against the new override.
+v0.7.90 ships a new **`UpdateExcluded` operator-override tag** and a **breaking rename**: the existing `UpdateExclusions` schedule tag (date-range blackout periods) is renamed to **`UpdateExclusionsWindow`** to make its purpose unambiguous against the new override.
 
-**New `UpdateExcluded` tag (operator hard override).** When set to `True` / `true` / `1` on a cluster, `Start-AzLocalClusterUpdate` skips that cluster with `Status = ExcludedByTag` **regardless of the `UpdateRing` scope, `UpdateSideloaded` state, or `UpdateWindow` / `UpdateWindowExclusions` schedule**. This is the override an operator reaches for when they need to take a specific cluster out of automation immediately (incident, scheduled hardware maintenance, evidence-preservation hold) without modifying the apply-updates schedule. Empty/missing tag means no override. Malformed values throw (fail-closed) unless `-Force` is supplied (matching the existing `SideloadedBlocked` pattern). The new gate runs BEFORE the sideloaded and schedule gates so it overrides both.
+**New `UpdateExcluded` tag (operator hard override).** When set to `True` / `true` / `1` on a cluster, `Start-AzLocalClusterUpdate` skips that cluster with `Status = ExcludedByTag` **regardless of the `UpdateRing` scope, `UpdateSideloaded` state, or `UpdateStartWindow` / `UpdateExclusionsWindow` schedule**. This is the override an operator reaches for when they need to take a specific cluster out of automation immediately (incident, scheduled hardware maintenance, evidence-preservation hold) without modifying the apply-updates schedule. Empty/missing tag means no override. Malformed values throw (fail-closed) unless `-Force` is supplied (matching the existing `SideloadedBlocked` pattern). The new gate runs BEFORE the sideloaded and schedule gates so it overrides both.
 
 **`Set-AzLocalClusterUpdateRingTag` always stamps `UpdateExcluded=False`** on any cluster that does not already carry the tag. This makes the tag discoverable in the Azure portal so operators can find it and flip it to `True` when needed - without having to remember the exact tag name or syntax. Existing `True`/`False` values are preserved unless overridden via the new `-UpdateExcludedValue` parameter (`ByResourceId` mode) or `UpdateExcluded` CSV column (`InputCsvPath` mode).
 
-**Breaking rename: `UpdateExclusions` -> `UpdateWindowExclusions`.** The tag VALUE format is unchanged (`YYYY-MM-DD/YYYY-MM-DD`, comma-separated, `*` wildcards). From v0.7.90 the module ONLY reads `UpdateWindowExclusions` from cluster tags. Clusters still carrying the legacy `UpdateExclusions` tag are silently ignored - their blackout periods will no longer be honoured. Operators must re-tag before the next apply-updates run. The same rename applies to: the `-UpdateExclusions` parameter on `Test-AzLocalUpdateScheduleAllowed`, the `-UpdateExclusionsValue` parameter on `Set-AzLocalClusterUpdateRingTag`, the CSV column name, and the `UpdateExclusions` property on objects returned by `Get-AzLocalClusterInventory`, `Get-AzLocalClusterUpdateReadiness`, and `Get-AzLocalFleetStatusData`.
+**Breaking rename: `UpdateExclusions` -> `UpdateExclusionsWindow`.** The tag VALUE format is unchanged (`YYYY-MM-DD/YYYY-MM-DD`, comma-separated, `*` wildcards). From v0.7.90 the module ONLY reads `UpdateExclusionsWindow` from cluster tags. Clusters still carrying the legacy `UpdateExclusions` tag are silently ignored - their blackout periods will no longer be honoured. Operators must re-tag before the next apply-updates run. The same rename applies to: the `-UpdateExclusions` parameter on `Test-AzLocalUpdateScheduleAllowed`, the `-UpdateExclusionsValue` parameter on `Set-AzLocalClusterUpdateRingTag`, the CSV column name, and the `UpdateExclusions` property on objects returned by `Get-AzLocalClusterInventory`, `Get-AzLocalClusterUpdateReadiness`, and `Get-AzLocalFleetStatusData`.
 
-**Inventory CSV/JSON now exposes the override.** `Get-AzLocalClusterInventory` adds an `UpdateExcluded` column (positioned between `UpdateWindowExclusions` and `UpdateSideloaded`) so fleet snapshots show every cluster's override state alongside its ring and schedule.
+**Inventory CSV/JSON now exposes the override.** `Get-AzLocalClusterInventory` adds an `UpdateExcluded` column (positioned between `UpdateExclusionsWindow` and `UpdateSideloaded`) so fleet snapshots show every cluster's override state alongside its ring and schedule.
 
 **Apply-updates pipeline summaries** (Step.6 GH Actions + Azure DevOps) now count and report `ExcludedByTag` clusters alongside `ScheduleBlocked` / `SideloadedBlocked`, with an Actions Required callout that points operators at the `UpdateExcluded` tag.
 
 **Migration.** `Install-Module AzLocal.UpdateManagement -Force` (or `Update-Module`). Re-tag clusters that currently have `UpdateExclusions` set - the legacy value is NOT auto-copied:
 
 ```pwsh
-az tag update --resource-id <clusterId> --operation Merge --tags UpdateWindowExclusions='<existing-value>'
+az tag update --resource-id <clusterId> --operation Merge --tags UpdateExclusionsWindow='<existing-value>'
 az tag update --resource-id <clusterId> --operation Delete --tags UpdateExclusions='<existing-value>'
 ```
 
-Or re-run `Set-AzLocalClusterUpdateRingTag -InputCsvPath <csv>` with a CSV that has the new `UpdateWindowExclusions` column. For pipelines, `Copy-AzLocalPipelineExample -Destination <path> -Update` to pick up the renamed CSV column + new `ExcludedByTag` summary plumbing. The new `UpdateExcluded=False` default-stamp is additive - no operator action required.
+Or re-run `Set-AzLocalClusterUpdateRingTag -InputCsvPath <csv>` with a CSV that has the new `UpdateExclusionsWindow` column. For pipelines, `Copy-AzLocalPipelineExample -Destination <path> -Update` to pick up the renamed CSV column + new `ExcludedByTag` summary plumbing. The new `UpdateExcluded=False` default-stamp is additive - no operator action required.
 
 > Previous release notes (v0.7.89 and earlier) have moved into [`docs/release-history.md`](docs/release-history.md), with the v0.7.89 entry retained in the [Release History](#release-history) appendix below for quick reference.
 
@@ -270,15 +270,15 @@ Three Azure resource tags control how clusters are grouped and when updates are 
 | Tag | Purpose | Required? | Set By |
 |-----|---------|-----------|--------|
 | `UpdateRing` | Groups clusters into deployment waves (e.g., Pilot, Wave1, Production) | **Yes** - needed for `-ScopeByUpdateRingTag` | `Set-AzLocalClusterUpdateRingTag` or CSV import |
-| `UpdateWindow` | Defines allowed maintenance windows in UTC (e.g., `Sat-Sun_02:00-06:00`) | Optional | CSV import via `Set-AzLocalClusterUpdateRingTag` |
-| `UpdateWindowExclusions` | Defines blackout/change-freeze periods (e.g., `2026-12-20/2027-01-03`). Renamed from `UpdateExclusions` in v0.7.90 | Optional | CSV import via `Set-AzLocalClusterUpdateRingTag` |
+| `UpdateStartWindow` | Defines allowed maintenance windows in UTC (e.g., `Sat-Sun_02:00-06:00`) | Optional | CSV import via `Set-AzLocalClusterUpdateRingTag` |
+| `UpdateExclusionsWindow` | Defines blackout/change-freeze periods (e.g., `2026-12-20/2027-01-03`). Renamed from `UpdateExclusions` in v0.7.90 | Optional | CSV import via `Set-AzLocalClusterUpdateRingTag` |
 | `UpdateExcluded` (v0.7.90) | Operator hard override. `True` / `1` skips the cluster in `Start-AzLocalClusterUpdate` with `Status = ExcludedByTag` regardless of ring scope, sideloaded state, or schedule | Optional (default-stamped `False` by `Set-AzLocalClusterUpdateRingTag` if absent) | Edit in Azure portal, or CSV import via `Set-AzLocalClusterUpdateRingTag` |
 | `UpdateSideloaded` | Sideloaded-payload gate. Values `True`/`False`/`1`/`0` (case-insensitive). When `False`, `Start-AzLocalClusterUpdate` skips the cluster with `Status = SideloadedBlocked`. Operator-set. | Optional (only used by the sideloaded-payload workflow) | Operator (Azure portal, CLI, or your tagging pipeline). Auto-reset to `False` by `Get-AzLocalUpdateRuns` / `Reset-AzLocalSideloadedTag` after the staged update succeeds. |
 | `UpdateVersionInProgress` | Module-managed companion to `UpdateSideloaded`. Holds the staged update name (e.g. `Solution12.2604.1003.209`). | **Do not set manually.** | Module: written by `Start-AzLocalClusterUpdate` at update start; cleared by `Get-AzLocalUpdateRuns` / `Reset-AzLocalSideloadedTag` once the matching run succeeds. |
 
-> ℹ️ **Tag matching is case-insensitive throughout this module.** Tag *names* (`UpdateRing`, `UpdateWindow`, `UpdateWindowExclusions`, `UpdateExcluded`) and tag *values* (the ring name like `Prod1`, day tokens like `Mon`, the `Daily` keyword, the `True`/`False` override values) are all compared without regard to case. So `prod1`, `Prod1`, and `PROD1` resolve to the same set of clusters via `-ScopeByUpdateRingTag -UpdateRingValue 'Prod1'` (Azure Resource Graph `=~` operator), and `Mon-Fri`, `mon-fri`, and `MON-FRI` parse to the same maintenance window. This applies to every function that scopes clusters by tag, every CSV import path, and the `UpdateWindow` / `UpdateWindowExclusions` parsers. Note: the day tokens themselves still require the strict 3-letter form - `Mon Tue Wed Thu Fri Sat Sun` - case doesn't matter, but `Thur` / `Tues` / `Friday` will be rejected (see the `UpdateWindow` section below for the full table).
+> ℹ️ **Tag matching is case-insensitive throughout this module.** Tag *names* (`UpdateRing`, `UpdateStartWindow`, `UpdateExclusionsWindow`, `UpdateExcluded`) and tag *values* (the ring name like `Prod1`, day tokens like `Mon`, the `Daily` keyword, the `True`/`False` override values) are all compared without regard to case. So `prod1`, `Prod1`, and `PROD1` resolve to the same set of clusters via `-ScopeByUpdateRingTag -UpdateRingValue 'Prod1'` (Azure Resource Graph `=~` operator), and `Mon-Fri`, `mon-fri`, and `MON-FRI` parse to the same maintenance window. This applies to every function that scopes clusters by tag, every CSV import path, and the `UpdateStartWindow` / `UpdateExclusionsWindow` parsers. Note: the day tokens themselves still require the strict 3-letter form - `Mon Tue Wed Thu Fri Sat Sun` - case doesn't matter, but `Thur` / `Tues` / `Friday` will be rejected (see the `UpdateStartWindow` section below for the full table).
 
-> **What happens if you only set `UpdateRing`?** Updates proceed immediately with **no schedule restrictions**. The `UpdateWindow` and `UpdateWindowExclusions` tags are entirely optional - if neither is present on a cluster, the schedule check returns "No schedule restrictions defined" and the update starts as soon as the pipeline runs. Add `UpdateWindow` and `UpdateWindowExclusions` tags when you need to control *when* updates can be applied. The separate `UpdateExcluded` tag (v0.7.90) is the operator hard override: set it to `True` to skip a cluster regardless of every other tag.
+> **What happens if you only set `UpdateRing`?** Updates proceed immediately with **no schedule restrictions**. The `UpdateStartWindow` and `UpdateExclusionsWindow` tags are entirely optional - if neither is present on a cluster, the schedule check returns "No schedule restrictions defined" and the update starts as soon as the pipeline runs. Add `UpdateStartWindow` and `UpdateExclusionsWindow` tags when you need to control *when* updates can be applied. The separate `UpdateExcluded` tag (v0.7.90) is the operator hard override: set it to `True` to skip a cluster regardless of every other tag.
 
 **Step 1: Inventory clusters and export to CSV**
 ```powershell
@@ -286,13 +286,13 @@ Three Azure resource tags control how clusters are grouped and when updates are 
 Get-AzLocalClusterInventory -ExportPath "C:\Temp\cluster-inventory.csv"
 ```
 
-The CSV includes columns for all four tags: `UpdateRing`, `UpdateWindow`, `UpdateWindowExclusions`, and `UpdateExcluded`.
+The CSV includes columns for all four tags: `UpdateRing`, `UpdateStartWindow`, `UpdateExclusionsWindow`, and `UpdateExcluded`.
 
 **Step 2: Edit the CSV in Excel**
 
 Open `cluster-inventory.csv` and populate the tag columns:
 
-| ClusterName | UpdateRing | UpdateWindow | UpdateWindowExclusions | UpdateExcluded |
+| ClusterName | UpdateRing | UpdateStartWindow | UpdateExclusionsWindow | UpdateExcluded |
 |-------------|------------|--------------|------------------|
 | HCI-Pilot01 | Pilot | | |
 | HCI-Pilot02 | Pilot | | |
@@ -301,11 +301,11 @@ Open `cluster-inventory.csv` and populate the tag columns:
 | HCI-Critical| Production | Sat_02:00-06:00 | 20**-12-20/20**-01-03 |
 
 - **UpdateRing** (required): The deployment wave for this cluster
-- **UpdateWindow** (optional): UTC maintenance window. Format: `<days>_<HH:MM>-<HH:MM>`. Multiple windows separated by `;`.
+- **UpdateStartWindow** (optional): UTC maintenance window. Format: `<days>_<HH:MM>-<HH:MM>`. Multiple windows separated by `;`.
 
-  > ⏱️ **Important - `UpdateWindow` controls when an update is allowed to *START*, not how long it takes to complete.** The window is a **start gate** evaluated by `Test-AzLocalUpdateScheduleAllowed` at the moment `Start-AzLocalClusterUpdate` runs. Once the update has started, it runs to completion (or failure) regardless of whether the window is still open - Azure Local update runs are **not** paused, throttled, or aborted when the window closes. A typical Azure Local platform update can take **several hours** on a multi-node cluster (node drains, reboots, firmware/driver/SBE steps, validation), and a "happy path" run with no issues is still measured in hours, not minutes.
+  > ⏱️ **Important - `UpdateStartWindow` controls when an update is allowed to *START*, not how long it takes to complete.** The window is a **start gate** evaluated by `Test-AzLocalUpdateScheduleAllowed` at the moment `Start-AzLocalClusterUpdate` runs. Once the update has started, it runs to completion (or failure) regardless of whether the window is still open - Azure Local update runs are **not** paused, throttled, or aborted when the window closes. A typical Azure Local platform update can take **several hours** on a multi-node cluster (node drains, reboots, firmware/driver/SBE steps, validation), and a "happy path" run with no issues is still measured in hours, not minutes.
   >
-  > **Plan your window to *start* far enough before any hard deadline that the full update can finish before that deadline** - for example, if updates must be complete before a retail store opens at 06:00 local time, or before a manufacturing line starts at 06:00 Mon-Fri, do **not** set `UpdateWindow` to (say) `Mon-Fri_04:00-06:00` and expect the update to be done by 06:00. Set it to start much earlier (e.g. `Sun-Thu_22:00-02:00` for an overnight start the evening before) so the run has enough headroom for the slowest realistic completion time, plus margin for retries and post-update validation. When in doubt, time a representative update on a non-production cluster first and add a safety buffer.
+  > **Plan your window to *start* far enough before any hard deadline that the full update can finish before that deadline** - for example, if updates must be complete before a retail store opens at 06:00 local time, or before a manufacturing line starts at 06:00 Mon-Fri, do **not** set `UpdateStartWindow` to (say) `Mon-Fri_04:00-06:00` and expect the update to be done by 06:00. Set it to start much earlier (e.g. `Sun-Thu_22:00-02:00` for an overnight start the evening before) so the run has enough headroom for the slowest realistic completion time, plus margin for retries and post-update validation. When in doubt, time a representative update on a non-production cluster first and add a safety buffer.
 
 
   **Day tokens** — strict 3-letter abbreviations only (case-insensitive — `Mon`, `mon`, `MON` all work):
@@ -338,7 +338,7 @@ Open `cluster-inventory.csv` and populate the tag columns:
   - `Fri-Mon_22:00-06:00` — Long weekend (Fri/Sat/Sun/Mon nights, with wrap)
 
   > **Tag-value matching is case-insensitive everywhere** — both the day tokens above and the `UpdateRing` value used by `-ScopeByUpdateRingTag -UpdateRingValue 'Prod1'` (resolved via Azure Resource Graph `=~` operator), so `prod1`/`Prod1`/`PROD1` all match the same set of clusters.
-- **UpdateWindowExclusions** (optional; renamed from `UpdateExclusions` in v0.7.90): Change-freeze periods. Format: `YYYY-MM-DD/YYYY-MM-DD`. Multiple ranges separated by `,`. Wildcards with `*` for recurring annual patterns. Examples:
+- **UpdateExclusionsWindow** (optional; renamed from `UpdateExclusions` in v0.7.90): Change-freeze periods. Format: `YYYY-MM-DD/YYYY-MM-DD`. Multiple ranges separated by `,`. Wildcards with `*` for recurring annual patterns. Examples:
   - `2026-12-20/2027-01-03` — Specific date range
   - `20**-12-20/20**-01-03` — Every year, Dec 20 to Jan 3
 
@@ -346,7 +346,7 @@ Save the file.
 
 **Step 3: Apply all tags from CSV**
 ```powershell
-# Apply UpdateRing, UpdateWindow, UpdateWindowExclusions, and UpdateExcluded tags from the edited CSV
+# Apply UpdateRing, UpdateStartWindow, UpdateExclusionsWindow, and UpdateExcluded tags from the edited CSV
 Set-AzLocalClusterUpdateRingTag -InputCsvPath "C:\Temp\cluster-inventory.csv"
 
 # Preview changes first with -WhatIf
@@ -356,7 +356,7 @@ Set-AzLocalClusterUpdateRingTag -InputCsvPath "C:\Temp\cluster-inventory.csv" -W
 Set-AzLocalClusterUpdateRingTag -InputCsvPath "C:\Temp\cluster-inventory.csv" -Force
 ```
 
-The function reads `UpdateWindow`, `UpdateWindowExclusions`, and `UpdateExcluded` columns from the CSV (if present) and sets them alongside the `UpdateRing` tag in a single PATCH operation. Existing tags on the cluster are preserved. If `UpdateExcluded` is absent on the cluster AND not specified in the CSV/parameters, the function default-stamps `UpdateExcluded=False` so the tag is discoverable in the Azure portal.
+The function reads `UpdateStartWindow`, `UpdateExclusionsWindow`, and `UpdateExcluded` columns from the CSV (if present) and sets them alongside the `UpdateRing` tag in a single PATCH operation. Existing tags on the cluster are preserved. If `UpdateExcluded` is absent on the cluster AND not specified in the CSV/parameters, the function default-stamps `UpdateExcluded=False` so the tag is discoverable in the Azure portal.
 
 **Step 4: Verify tags were applied**
 ```powershell
@@ -367,10 +367,10 @@ Get-AzLocalClusterInventory
 **Step 5: Test schedule logic interactively (optional)**
 ```powershell
 # Test if a specific time would be allowed by a maintenance window
-Test-AzLocalUpdateScheduleAllowed -UpdateWindow "Sat-Sun_02:00-06:00" -UpdateWindowExclusions "2026-12-20/2027-01-03"
+Test-AzLocalUpdateScheduleAllowed -UpdateStartWindow "Sat-Sun_02:00-06:00" -UpdateExclusionsWindow "2026-12-20/2027-01-03"
 
 # Test a specific future time
-Test-AzLocalUpdateScheduleAllowed -UpdateWindow "Sat_02:00-06:00" -TestTime ([datetime]"2026-04-19 03:00:00")
+Test-AzLocalUpdateScheduleAllowed -UpdateStartWindow "Sat_02:00-06:00" -TestTime ([datetime]"2026-04-19 03:00:00")
 ```
 
 **Step 6: Update clusters by UpdateRing**
@@ -465,7 +465,7 @@ Before rolling updates to a wave, confirm every cluster in that wave is actually
 
 ```powershell
 # Returns one row per cluster with: ReadyForUpdate, HealthState, UpdateState,
-# HasPrerequisiteUpdates, SBEDependency, UpdateWindow, UpdateWindowExclusions, UpdateExcluded
+# HasPrerequisiteUpdates, SBEDependency, UpdateStartWindow, UpdateExclusionsWindow, UpdateExcluded
 $readiness = Get-AzLocalClusterUpdateReadiness `
     -ScopeByUpdateRingTag -UpdateRingValue 'Wave1' `
     -ExportPath 'C:\Reports\wave1-readiness.csv' -PassThru

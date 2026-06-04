@@ -1982,13 +1982,13 @@ Describe 'Helper Function: Test-AzLocalUpdateScheduleAllowed (Internal)' {
 
     Context 'No restrictions' {
         It 'Returns Allowed=true when no tags are defined' {
-            $result = & (Get-Module $moduleName) { Test-AzLocalUpdateScheduleAllowed -UpdateWindow '' -UpdateWindowExclusions '' }
+            $result = & (Get-Module $moduleName) { Test-AzLocalUpdateScheduleAllowed -UpdateStartWindow '' -UpdateExclusionsWindow '' }
             $result.Allowed | Should -Be $true
             $result.Reason | Should -BeLike '*No schedule restrictions*'
         }
 
         It 'Returns Allowed=true when both tags are null' {
-            $result = & (Get-Module $moduleName) { Test-AzLocalUpdateScheduleAllowed -UpdateWindow $null -UpdateWindowExclusions $null }
+            $result = & (Get-Module $moduleName) { Test-AzLocalUpdateScheduleAllowed -UpdateStartWindow $null -UpdateExclusionsWindow $null }
             $result.Allowed | Should -Be $true
         }
     }
@@ -1996,14 +1996,14 @@ Describe 'Helper Function: Test-AzLocalUpdateScheduleAllowed (Internal)' {
     Context 'Window only' {
         It 'Returns Allowed=true when within maintenance window' {
             $testTime = [datetime]::ParseExact('2026-04-18 03:00', 'yyyy-MM-dd HH:mm', $null)  # Saturday
-            $result = & (Get-Module $moduleName) { param($tt) Test-AzLocalUpdateScheduleAllowed -UpdateWindow 'Sat_02:00-06:00' -TestTime $tt } $testTime
+            $result = & (Get-Module $moduleName) { param($tt) Test-AzLocalUpdateScheduleAllowed -UpdateStartWindow 'Sat_02:00-06:00' -TestTime $tt } $testTime
             $result.Allowed | Should -Be $true
             $result.WindowOpen | Should -Be $true
         }
 
         It 'Returns Allowed=false when outside maintenance window' {
             $testTime = [datetime]::ParseExact('2026-04-18 10:00', 'yyyy-MM-dd HH:mm', $null)  # Saturday
-            $result = & (Get-Module $moduleName) { param($tt) Test-AzLocalUpdateScheduleAllowed -UpdateWindow 'Sat_02:00-06:00' -TestTime $tt } $testTime
+            $result = & (Get-Module $moduleName) { param($tt) Test-AzLocalUpdateScheduleAllowed -UpdateStartWindow 'Sat_02:00-06:00' -TestTime $tt } $testTime
             $result.Allowed | Should -Be $false
             $result.WindowOpen | Should -Be $false
             $result.Reason | Should -BeLike '*Outside maintenance window*'
@@ -2013,7 +2013,7 @@ Describe 'Helper Function: Test-AzLocalUpdateScheduleAllowed (Internal)' {
     Context 'Exclusion only' {
         It 'Returns Allowed=false when in exclusion period' {
             $testTime = [datetime]::ParseExact('2026-12-25 12:00', 'yyyy-MM-dd HH:mm', $null)
-            $result = & (Get-Module $moduleName) { param($tt) Test-AzLocalUpdateScheduleAllowed -UpdateWindowExclusions '2026-12-20/2027-01-03' -TestTime $tt } $testTime
+            $result = & (Get-Module $moduleName) { param($tt) Test-AzLocalUpdateScheduleAllowed -UpdateExclusionsWindow '2026-12-20/2027-01-03' -TestTime $tt } $testTime
             $result.Allowed | Should -Be $false
             $result.ExclusionActive | Should -Be $true
             $result.Reason | Should -BeLike '*exclusion period*'
@@ -2021,7 +2021,7 @@ Describe 'Helper Function: Test-AzLocalUpdateScheduleAllowed (Internal)' {
 
         It 'Returns Allowed=true when not in exclusion period' {
             $testTime = [datetime]::ParseExact('2026-06-15 12:00', 'yyyy-MM-dd HH:mm', $null)
-            $result = & (Get-Module $moduleName) { param($tt) Test-AzLocalUpdateScheduleAllowed -UpdateWindowExclusions '2026-12-20/2027-01-03' -TestTime $tt } $testTime
+            $result = & (Get-Module $moduleName) { param($tt) Test-AzLocalUpdateScheduleAllowed -UpdateExclusionsWindow '2026-12-20/2027-01-03' -TestTime $tt } $testTime
             $result.Allowed | Should -Be $true
         }
     }
@@ -2031,7 +2031,7 @@ Describe 'Helper Function: Test-AzLocalUpdateScheduleAllowed (Internal)' {
             # Saturday Dec 26 at 03:00 - within Sat window but also in exclusion
             $testTime = [datetime]::ParseExact('2026-12-26 03:00', 'yyyy-MM-dd HH:mm', $null)  # Saturday
             $result = & (Get-Module $moduleName) { param($tt)
-                Test-AzLocalUpdateScheduleAllowed -UpdateWindow 'Sat_02:00-06:00' -UpdateWindowExclusions '2026-12-20/2027-01-03' -TestTime $tt
+                Test-AzLocalUpdateScheduleAllowed -UpdateStartWindow 'Sat_02:00-06:00' -UpdateExclusionsWindow '2026-12-20/2027-01-03' -TestTime $tt
             } $testTime
             $result.Allowed | Should -Be $false
             $result.ExclusionActive | Should -Be $true
@@ -2043,7 +2043,7 @@ Describe 'Helper Function: Test-AzLocalUpdateScheduleAllowed (Internal)' {
             # Saturday Apr 18 at 03:00 - within Sat window, no exclusion active
             $testTime = [datetime]::ParseExact('2026-04-18 03:00', 'yyyy-MM-dd HH:mm', $null)  # Saturday
             $result = & (Get-Module $moduleName) { param($tt)
-                Test-AzLocalUpdateScheduleAllowed -UpdateWindow 'Sat_02:00-06:00' -UpdateWindowExclusions '2026-12-20/2027-01-03' -TestTime $tt
+                Test-AzLocalUpdateScheduleAllowed -UpdateStartWindow 'Sat_02:00-06:00' -UpdateExclusionsWindow '2026-12-20/2027-01-03' -TestTime $tt
             } $testTime
             $result.Allowed | Should -Be $true
             $result.WindowOpen | Should -Be $true
@@ -2054,7 +2054,7 @@ Describe 'Helper Function: Test-AzLocalUpdateScheduleAllowed (Internal)' {
             # Saturday Apr 18 at 10:00 - outside Sat window, no exclusion active
             $testTime = [datetime]::ParseExact('2026-04-18 10:00', 'yyyy-MM-dd HH:mm', $null)  # Saturday
             $result = & (Get-Module $moduleName) { param($tt)
-                Test-AzLocalUpdateScheduleAllowed -UpdateWindow 'Sat_02:00-06:00' -UpdateWindowExclusions '2026-12-20/2027-01-03' -TestTime $tt
+                Test-AzLocalUpdateScheduleAllowed -UpdateStartWindow 'Sat_02:00-06:00' -UpdateExclusionsWindow '2026-12-20/2027-01-03' -TestTime $tt
             } $testTime
             $result.Allowed | Should -Be $false
             $result.WindowOpen | Should -Be $false
@@ -2065,7 +2065,7 @@ Describe 'Helper Function: Test-AzLocalUpdateScheduleAllowed (Internal)' {
         It 'Returns all expected properties' {
             $testTime = [datetime]::ParseExact('2026-04-18 03:00', 'yyyy-MM-dd HH:mm', $null)
             $result = & (Get-Module $moduleName) { param($tt)
-                Test-AzLocalUpdateScheduleAllowed -UpdateWindow 'Sat_02:00-06:00' -UpdateWindowExclusions '2026-12-20/2027-01-03' -TestTime $tt
+                Test-AzLocalUpdateScheduleAllowed -UpdateStartWindow 'Sat_02:00-06:00' -UpdateExclusionsWindow '2026-12-20/2027-01-03' -TestTime $tt
             } $testTime
             $result.PSObject.Properties.Name | Should -Contain 'Allowed'
             $result.PSObject.Properties.Name | Should -Contain 'Reason'
@@ -2084,14 +2084,14 @@ Describe 'Function: Test-AzLocalUpdateScheduleAllowed (Exported)' {
             $command.Source | Should -Be 'AzLocal.UpdateManagement'
         }
 
-        It 'Should have UpdateWindow parameter with AllowEmptyString' {
+        It 'Should have UpdateStartWindow parameter with AllowEmptyString' {
             $command = Get-Command Test-AzLocalUpdateScheduleAllowed
-            $command.Parameters.Keys | Should -Contain 'UpdateWindow'
+            $command.Parameters.Keys | Should -Contain 'UpdateStartWindow'
         }
 
-        It 'Should have UpdateWindowExclusions parameter' {
+        It 'Should have UpdateExclusionsWindow parameter' {
             $command = Get-Command Test-AzLocalUpdateScheduleAllowed
-            $command.Parameters.Keys | Should -Contain 'UpdateWindowExclusions'
+            $command.Parameters.Keys | Should -Contain 'UpdateExclusionsWindow'
         }
 
         It 'Should have TestTime parameter' {
@@ -6003,7 +6003,7 @@ Describe 'Function: Test-AzLocalApplyUpdatesScheduleCoverage' {
     Context 'Private helper: Convert-AzLocalUpdateWindowToCron' {
         It 'Sat-Sun_02:00-06:00 with lead 5 -> 55 1 * * 6,0' {
             InModuleScope AzLocal.UpdateManagement {
-                $r = Convert-AzLocalUpdateWindowToCron -UpdateWindow 'Sat-Sun_02:00-06:00' -LeadTimeMinutes 5
+                $r = Convert-AzLocalUpdateWindowToCron -UpdateStartWindow 'Sat-Sun_02:00-06:00' -LeadTimeMinutes 5
                 $r | Should -HaveCount 1
                 $r[0].CronExpression | Should -Be '55 1 * * 6,0'
                 $r[0].FireHour | Should -Be 1
@@ -6014,7 +6014,7 @@ Describe 'Function: Test-AzLocalApplyUpdatesScheduleCoverage' {
 
         It 'Mon-Fri_22:00-04:00 with lead 5 -> 55 21 * * 1-5 (range)' {
             InModuleScope AzLocal.UpdateManagement {
-                $r = Convert-AzLocalUpdateWindowToCron -UpdateWindow 'Mon-Fri_22:00-04:00' -LeadTimeMinutes 5
+                $r = Convert-AzLocalUpdateWindowToCron -UpdateStartWindow 'Mon-Fri_22:00-04:00' -LeadTimeMinutes 5
                 $r | Should -HaveCount 1
                 $r[0].CronExpression | Should -Be '55 21 * * 1-5'
             }
@@ -6022,14 +6022,14 @@ Describe 'Function: Test-AzLocalApplyUpdatesScheduleCoverage' {
 
         It 'Sun_03:00-07:00 with lead 5 -> 55 2 * * 0' {
             InModuleScope AzLocal.UpdateManagement {
-                $r = Convert-AzLocalUpdateWindowToCron -UpdateWindow 'Sun_03:00-07:00' -LeadTimeMinutes 5
+                $r = Convert-AzLocalUpdateWindowToCron -UpdateStartWindow 'Sun_03:00-07:00' -LeadTimeMinutes 5
                 $r[0].CronExpression | Should -Be '55 2 * * 0'
             }
         }
 
         It 'Lead-time wrap: Mon_00:05-04:00 with lead 10 -> 55 23 * * 0 (Sun) with DayShift=$true' {
             InModuleScope AzLocal.UpdateManagement {
-                $r = Convert-AzLocalUpdateWindowToCron -UpdateWindow 'Mon_00:05-04:00' -LeadTimeMinutes 10
+                $r = Convert-AzLocalUpdateWindowToCron -UpdateStartWindow 'Mon_00:05-04:00' -LeadTimeMinutes 10
                 $r[0].CronExpression | Should -Be '55 23 * * 0'
                 $r[0].DayShift | Should -BeTrue
             }
@@ -6037,7 +6037,7 @@ Describe 'Function: Test-AzLocalApplyUpdatesScheduleCoverage' {
 
         It 'Multi-segment window emits one cron per segment' {
             InModuleScope AzLocal.UpdateManagement {
-                $r = Convert-AzLocalUpdateWindowToCron -UpdateWindow 'Mon-Fri_22:00-04:00;Sat-Sun_02:00-10:00' -LeadTimeMinutes 5
+                $r = Convert-AzLocalUpdateWindowToCron -UpdateStartWindow 'Mon-Fri_22:00-04:00;Sat-Sun_02:00-10:00' -LeadTimeMinutes 5
                 $r | Should -HaveCount 2
                 ($r | ForEach-Object CronExpression) -join '|' | Should -Be '55 21 * * 1-5|55 1 * * 6,0'
             }
@@ -6292,9 +6292,9 @@ on:
                 param($tmpYamlDir2)
                 Mock Invoke-AzResourceGraphQuery {
                     @(
-                        [PSCustomObject]@{ ClusterName='c1'; ResourceGroup='r'; SubscriptionId='s'; ClusterResourceId='/s/r/c1'; UpdateRing='Wave1';      UpdateWindow='Sat-Sun_02:00-06:00' },
-                        [PSCustomObject]@{ ClusterName='c2'; ResourceGroup='r'; SubscriptionId='s'; ClusterResourceId='/s/r/c2'; UpdateRing='Wave1';      UpdateWindow='Sat-Sun_02:00-06:00' },
-                        [PSCustomObject]@{ ClusterName='c3'; ResourceGroup='r'; SubscriptionId='s'; ClusterResourceId='/s/r/c3'; UpdateRing='Production'; UpdateWindow='Mon-Fri_22:00-04:00' }
+                        [PSCustomObject]@{ ClusterName='c1'; ResourceGroup='r'; SubscriptionId='s'; ClusterResourceId='/s/r/c1'; UpdateRing='Wave1';      UpdateStartWindow='Sat-Sun_02:00-06:00' },
+                        [PSCustomObject]@{ ClusterName='c2'; ResourceGroup='r'; SubscriptionId='s'; ClusterResourceId='/s/r/c2'; UpdateRing='Wave1';      UpdateStartWindow='Sat-Sun_02:00-06:00' },
+                        [PSCustomObject]@{ ClusterName='c3'; ResourceGroup='r'; SubscriptionId='s'; ClusterResourceId='/s/r/c3'; UpdateRing='Production'; UpdateStartWindow='Mon-Fri_22:00-04:00' }
                     )
                 }
                 $result = Test-AzLocalApplyUpdatesScheduleCoverage -View Audit -PipelineYamlPath $tmpYamlDir2 -PassThru 6>$null
@@ -6311,7 +6311,7 @@ on:
             InModuleScope AzLocal.UpdateManagement {
                 Mock Invoke-AzResourceGraphQuery {
                     @(
-                        [PSCustomObject]@{ ClusterName='c1'; ResourceGroup='r'; SubscriptionId='s'; ClusterResourceId='/s/r/c1'; UpdateRing='Wave1'; UpdateWindow='Sat-Sun_02:00-06:00' }
+                        [PSCustomObject]@{ ClusterName='c1'; ResourceGroup='r'; SubscriptionId='s'; ClusterResourceId='/s/r/c1'; UpdateRing='Wave1'; UpdateStartWindow='Sat-Sun_02:00-06:00' }
                     )
                 }
                 $result = Test-AzLocalApplyUpdatesScheduleCoverage -View Matrix -PassThru 6>$null
@@ -6325,8 +6325,8 @@ on:
             InModuleScope AzLocal.UpdateManagement {
                 Mock Invoke-AzResourceGraphQuery {
                     @(
-                        [PSCustomObject]@{ ClusterName='c1'; ResourceGroup='r'; SubscriptionId='s'; ClusterResourceId='/s/r/c1'; UpdateRing='Pilot'; UpdateWindow='Sat-Sun_02:00-06:00' },
-                        [PSCustomObject]@{ ClusterName='c2'; ResourceGroup='r'; SubscriptionId='s'; ClusterResourceId='/s/r/c2'; UpdateRing='Wave1'; UpdateWindow='Sat-Sun_02:00-06:00' }
+                        [PSCustomObject]@{ ClusterName='c1'; ResourceGroup='r'; SubscriptionId='s'; ClusterResourceId='/s/r/c1'; UpdateRing='Pilot'; UpdateStartWindow='Sat-Sun_02:00-06:00' },
+                        [PSCustomObject]@{ ClusterName='c2'; ResourceGroup='r'; SubscriptionId='s'; ClusterResourceId='/s/r/c2'; UpdateRing='Wave1'; UpdateStartWindow='Sat-Sun_02:00-06:00' }
                     )
                 }
                 $result = Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend -PassThru 6>$null
@@ -6338,24 +6338,24 @@ on:
             }
         }
 
-        It 'Audit: MalformedTag emitted when UpdateWindow tag fails to parse' {
+        It 'Audit: MalformedTag emitted when UpdateStartWindow tag fails to parse' {
             InModuleScope AzLocal.UpdateManagement -Parameters @{ tmpYamlDir2 = $script:tmpYamlDir2 } {
                 param($tmpYamlDir2)
                 Mock Invoke-AzResourceGraphQuery {
-                    @([PSCustomObject]@{ ClusterName='c1'; ResourceGroup='r'; SubscriptionId='s'; ClusterResourceId='/s/r/c1'; UpdateRing='X'; UpdateWindow='NotAWindow' })
+                    @([PSCustomObject]@{ ClusterName='c1'; ResourceGroup='r'; SubscriptionId='s'; ClusterResourceId='/s/r/c1'; UpdateRing='X'; UpdateStartWindow='NotAWindow' })
                 }
                 $result = Test-AzLocalApplyUpdatesScheduleCoverage -View Audit -PipelineYamlPath $tmpYamlDir2 -PassThru 6>$null
                 ($result | Where-Object UpdateRing -eq 'X').Status | Should -Be 'MalformedTag'
             }
         }
 
-        It '-IncludeUntagged surfaces clusters with no UpdateWindow tag' {
+        It '-IncludeUntagged surfaces clusters with no UpdateStartWindow tag' {
             InModuleScope AzLocal.UpdateManagement -Parameters @{ tmpYamlDir2 = $script:tmpYamlDir2 } {
                 param($tmpYamlDir2)
                 Mock Invoke-AzResourceGraphQuery {
                     @(
-                        [PSCustomObject]@{ ClusterName='c1'; ResourceGroup='r'; SubscriptionId='s'; ClusterResourceId='/s/r/c1'; UpdateRing='Wave1'; UpdateWindow='Sat-Sun_02:00-06:00' },
-                        [PSCustomObject]@{ ClusterName='c2'; ResourceGroup='r'; SubscriptionId='s'; ClusterResourceId='/s/r/c2'; UpdateRing='';      UpdateWindow='' }
+                        [PSCustomObject]@{ ClusterName='c1'; ResourceGroup='r'; SubscriptionId='s'; ClusterResourceId='/s/r/c1'; UpdateRing='Wave1'; UpdateStartWindow='Sat-Sun_02:00-06:00' },
+                        [PSCustomObject]@{ ClusterName='c2'; ResourceGroup='r'; SubscriptionId='s'; ClusterResourceId='/s/r/c2'; UpdateRing='';      UpdateStartWindow='' }
                     )
                 }
                 $result = Test-AzLocalApplyUpdatesScheduleCoverage -View Audit -PipelineYamlPath $tmpYamlDir2 -IncludeUntagged -PassThru 6>$null
@@ -6394,8 +6394,8 @@ on:
                 param($multiYamlDir)
                 Mock Invoke-AzResourceGraphQuery {
                     @(
-                        [PSCustomObject]@{ ClusterName='c1'; ResourceGroup='r'; SubscriptionId='s'; ClusterResourceId='/s/r/c1'; UpdateRing='Wave1';      UpdateWindow='Sat-Sun_02:00-06:00' },
-                        [PSCustomObject]@{ ClusterName='c2'; ResourceGroup='r'; SubscriptionId='s'; ClusterResourceId='/s/r/c2'; UpdateRing='Production'; UpdateWindow='Mon-Fri_22:00-04:00' }
+                        [PSCustomObject]@{ ClusterName='c1'; ResourceGroup='r'; SubscriptionId='s'; ClusterResourceId='/s/r/c1'; UpdateRing='Wave1';      UpdateStartWindow='Sat-Sun_02:00-06:00' },
+                        [PSCustomObject]@{ ClusterName='c2'; ResourceGroup='r'; SubscriptionId='s'; ClusterResourceId='/s/r/c2'; UpdateRing='Production'; UpdateStartWindow='Mon-Fri_22:00-04:00' }
                     )
                 }
                 $result = Test-AzLocalApplyUpdatesScheduleCoverage -View Audit -PipelineYamlPath $multiYamlDir -PassThru 6>$null
@@ -6407,12 +6407,12 @@ on:
             }
         }
 
-        It 'Audit: multi-segment UpdateWindow (Mon-Fri_22:00-04:00;Sat-Sun_02:00-10:00) reports both segments parsed' {
+        It 'Audit: multi-segment UpdateStartWindow (Mon-Fri_22:00-04:00;Sat-Sun_02:00-10:00) reports both segments parsed' {
             InModuleScope AzLocal.UpdateManagement -Parameters @{ multiYamlDir = $script:multiYamlDir } {
                 param($multiYamlDir)
                 Mock Invoke-AzResourceGraphQuery {
                     @(
-                        [PSCustomObject]@{ ClusterName='c1'; ResourceGroup='r'; SubscriptionId='s'; ClusterResourceId='/s/r/c1'; UpdateRing='HybridRing'; UpdateWindow='Mon-Fri_22:00-04:00;Sat-Sun_02:00-10:00' }
+                        [PSCustomObject]@{ ClusterName='c1'; ResourceGroup='r'; SubscriptionId='s'; ClusterResourceId='/s/r/c1'; UpdateRing='HybridRing'; UpdateStartWindow='Mon-Fri_22:00-04:00;Sat-Sun_02:00-10:00' }
                     )
                 }
                 $result = Test-AzLocalApplyUpdatesScheduleCoverage -View Audit -PipelineYamlPath $multiYamlDir -PassThru 6>$null
@@ -6424,13 +6424,13 @@ on:
                 # and always report Uncovered (silent false negative).
                 #
                 # Audit view ROLLS multi-segment windows into a single row per
-                # (UpdateRing, UpdateWindow) with all required crons reflected
+                # (UpdateRing, UpdateStartWindow) with all required crons reflected
                 # in RequiredCronUTC (semicolon-separated). This test asserts
                 # both segments are PARSED (visible in RequiredCronUTC) and
                 # both contribute to the rolled-up Status.
                 $hybrid = @($result | Where-Object UpdateRing -eq 'HybridRing')
                 $hybrid | Should -Not -BeNullOrEmpty
-                $hybrid.Count | Should -Be 1 -Because 'multi-segment windows roll into one Audit row per (UpdateRing, UpdateWindow)'
+                $hybrid.Count | Should -Be 1 -Because 'multi-segment windows roll into one Audit row per (UpdateRing, UpdateStartWindow)'
                 # RequiredCronUTC must reflect BOTH segments. If the @() wrap
                 # regression returns the second cron will be missing or the
                 # field will surface as a System.Object[] of array values
@@ -6442,11 +6442,11 @@ on:
             }
         }
 
-        It 'Recommend: multi-segment UpdateWindow emits one row per cron with stable dedupe key' {
+        It 'Recommend: multi-segment UpdateStartWindow emits one row per cron with stable dedupe key' {
             InModuleScope AzLocal.UpdateManagement {
                 Mock Invoke-AzResourceGraphQuery {
                     @(
-                        [PSCustomObject]@{ ClusterName='c1'; ResourceGroup='r'; SubscriptionId='s'; ClusterResourceId='/s/r/c1'; UpdateRing='HybridRing'; UpdateWindow='Mon-Fri_22:00-04:00;Sat-Sun_02:00-10:00' }
+                        [PSCustomObject]@{ ClusterName='c1'; ResourceGroup='r'; SubscriptionId='s'; ClusterResourceId='/s/r/c1'; UpdateRing='HybridRing'; UpdateStartWindow='Mon-Fri_22:00-04:00;Sat-Sun_02:00-10:00' }
                     )
                 }
                 $result = Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend -PassThru 6>$null
@@ -6481,7 +6481,7 @@ on:
                 param($bundleGhDir)
                 Mock Invoke-AzResourceGraphQuery {
                     @(
-                        [PSCustomObject]@{ ClusterName='c1'; ResourceGroup='r'; SubscriptionId='s'; ClusterResourceId='/s/r/c1'; UpdateRing='Wave1'; UpdateWindow='Sat-Sun_02:00-06:00' }
+                        [PSCustomObject]@{ ClusterName='c1'; ResourceGroup='r'; SubscriptionId='s'; ClusterResourceId='/s/r/c1'; UpdateRing='Wave1'; UpdateStartWindow='Sat-Sun_02:00-06:00' }
                     )
                 }
                 { Test-AzLocalApplyUpdatesScheduleCoverage -View Audit -PipelineYamlPath $bundleGhDir -PassThru 6>$null } |
@@ -7986,9 +7986,9 @@ Describe 'Function: Test-AzLocalApplyUpdatesScheduleCoverage - v0.7.70 Section d
         # plus one cluster on Production with a Mon-Fri window that the
         # default empty cron set will NOT cover.
         $script:v7_70_argRows = @(
-            [PSCustomObject]@{ ClusterName='c1'; ResourceGroup='r'; SubscriptionId='s'; ClusterResourceId='/s/r/c1'; UpdateRing='Wave1';      UpdateWindow='Sat-Sun_02:00-06:00' },
-            [PSCustomObject]@{ ClusterName='c2'; ResourceGroup='r'; SubscriptionId='s'; ClusterResourceId='/s/r/c2'; UpdateRing='Wave1';      UpdateWindow='Sat-Sun_02:00-06:00' },
-            [PSCustomObject]@{ ClusterName='c3'; ResourceGroup='r'; SubscriptionId='s'; ClusterResourceId='/s/r/c3'; UpdateRing='Production'; UpdateWindow='Mon-Fri_22:00-04:00' }
+            [PSCustomObject]@{ ClusterName='c1'; ResourceGroup='r'; SubscriptionId='s'; ClusterResourceId='/s/r/c1'; UpdateRing='Wave1';      UpdateStartWindow='Sat-Sun_02:00-06:00' },
+            [PSCustomObject]@{ ClusterName='c2'; ResourceGroup='r'; SubscriptionId='s'; ClusterResourceId='/s/r/c2'; UpdateRing='Wave1';      UpdateStartWindow='Sat-Sun_02:00-06:00' },
+            [PSCustomObject]@{ ClusterName='c3'; ResourceGroup='r'; SubscriptionId='s'; ClusterResourceId='/s/r/c3'; UpdateRing='Production'; UpdateStartWindow='Mon-Fri_22:00-04:00' }
         )
 
         # Empty pipeline YAML directory => zero crons => every window Uncovered.
@@ -8054,7 +8054,7 @@ schedule:
             }
         }
 
-        It 'AS2: Schedule-section rows have empty UpdateWindow + RequiredCronUTC (the ring is the unit, not a window)' {
+        It 'AS2: Schedule-section rows have empty UpdateStartWindow + RequiredCronUTC (the ring is the unit, not a window)' {
             InModuleScope AzLocal.UpdateManagement -Parameters @{
                 yamlDir = $script:v7_70_yamlDir; schedPath = $script:v7_70_schedPath; rows = $script:v7_70_argRows
             } {
@@ -8066,7 +8066,7 @@ schedule:
                 $scheduleRows = $result | Where-Object Section -eq 'Schedule'
                 $scheduleRows | Should -Not -BeNullOrEmpty
                 foreach ($r in $scheduleRows) {
-                    [string]$r.UpdateWindow    | Should -BeNullOrEmpty
+                    [string]$r.UpdateStartWindow    | Should -BeNullOrEmpty
                     [string]$r.RequiredCronUTC | Should -BeNullOrEmpty
                 }
             }

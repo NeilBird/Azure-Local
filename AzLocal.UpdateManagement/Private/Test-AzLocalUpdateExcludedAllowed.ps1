@@ -10,7 +10,7 @@ function Test-AzLocalUpdateExcludedAllowed {
 
         UpdateExcluded is a hard, fleet-level override. When set to True the cluster
         is skipped regardless of UpdateRing scope, UpdateSideloaded state, or
-        UpdateWindow / UpdateWindowExclusions schedule. It is evaluated BEFORE the
+        UpdateStartWindow / UpdateExclusionsWindow schedule. It is evaluated BEFORE the
         sideloaded and schedule gates.
 
         Decision rules:
@@ -50,7 +50,7 @@ function Test-AzLocalUpdateExcludedAllowed {
         return [PSCustomObject]@{
             Allowed    = $false
             Reason     = "UpdateExcluded == True, update is blocked"
-            Details    = "Cluster has UpdateExcluded=True (operator override). This gate overrides UpdateRing scope, UpdateSideloaded state, and UpdateWindow / UpdateWindowExclusions schedule. Flip the tag to False to re-enable automation."
+            Details    = "Cluster has UpdateExcluded=True (operator override). This gate overrides UpdateRing scope, UpdateSideloaded state, and UpdateStartWindow / UpdateExclusionsWindow schedule. Flip the tag to False to re-enable automation."
             TagPresent = $true
             TagValue   = $UpdateExcluded
         }

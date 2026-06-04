@@ -3,7 +3,7 @@ function Convert-AzLocalUpdateWindowToCron {
     .SYNOPSIS
         Derives the recommended cron expression(s) needed to fire an apply-updates
         pipeline at the opening edge of every maintenance window encoded in an
-        UpdateWindow tag value.
+        UpdateStartWindow tag value.
     .DESCRIPTION
         Used by Test-AzLocalApplyUpdatesScheduleCoverage. Reuses the existing
         ConvertFrom-AzLocalUpdateWindow parser, then for each parsed segment:
@@ -21,8 +21,8 @@ function Convert-AzLocalUpdateWindowToCron {
 
         Multi-segment windows like 'Mon-Fri_22:00-04:00;Sat-Sun_02:00-10:00'
         produce one cron string per segment.
-    .PARAMETER UpdateWindow
-        The raw UpdateWindow tag value.
+    .PARAMETER UpdateStartWindow
+        The raw UpdateStartWindow tag value.
     .PARAMETER LeadTimeMinutes
         Minutes before the window opens that the pipeline should fire. Default 5.
     .OUTPUTS
@@ -35,14 +35,14 @@ function Convert-AzLocalUpdateWindowToCron {
             FireHour       - int 0-23
             DayShift       - $true if the lead-time pushed the fire time onto the previous day
     .EXAMPLE
-        Convert-AzLocalUpdateWindowToCron -UpdateWindow 'Sat-Sun_02:00-06:00' -LeadTimeMinutes 5
+        Convert-AzLocalUpdateWindowToCron -UpdateStartWindow 'Sat-Sun_02:00-06:00' -LeadTimeMinutes 5
         # Returns one row, CronExpression = '55 1 * * 6,0'
     #>
     [CmdletBinding()]
     [OutputType([PSCustomObject[]])]
     param(
         [Parameter(Mandatory = $true)]
-        [string]$UpdateWindow,
+        [string]$UpdateStartWindow,
 
         [Parameter(Mandatory = $false)]
         [ValidateRange(0, 60)]
@@ -61,7 +61,7 @@ function Convert-AzLocalUpdateWindowToCron {
         [System.DayOfWeek]::Saturday  = 6
     }
 
-    $parsed = ConvertFrom-AzLocalUpdateWindow -WindowString $UpdateWindow
+    $parsed = ConvertFrom-AzLocalUpdateWindow -WindowString $UpdateStartWindow
 
     $output = New-Object System.Collections.Generic.List[PSCustomObject]
     foreach ($w in $parsed) {

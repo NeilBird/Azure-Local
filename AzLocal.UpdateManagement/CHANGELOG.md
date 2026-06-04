@@ -7,35 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.7.90] - 2026-05-23
 
-New `UpdateExcluded` operator-override tag + breaking rename `UpdateExclusions` -> `UpdateWindowExclusions`.
+New `UpdateExcluded` operator-override tag + breaking tag renames: `UpdateWindow` -> `UpdateStartWindow` and `UpdateExclusions` -> `UpdateExclusionsWindow`.
 
 ### Added
 
-- **New `UpdateExcluded` Azure resource tag** (operator hard override). When set to `True`/`true`/`1` on a cluster, `Start-AzLocalClusterUpdate` skips the cluster with `Status = ExcludedByTag` **regardless of `UpdateRing` scope, `UpdateSideloaded` state, or `UpdateWindow` / `UpdateWindowExclusions` schedule**. Empty/missing tag means no override. Malformed values throw (fail-closed) unless `-Force` is supplied. New gate runs BEFORE the sideloaded and schedule gates so it overrides both.
+- **New `UpdateExcluded` Azure resource tag** (operator hard override). When set to `True`/`true`/`1` on a cluster, `Start-AzLocalClusterUpdate` skips the cluster with `Status = ExcludedByTag` **regardless of `UpdateRing` scope, `UpdateSideloaded` state, or `UpdateStartWindow` / `UpdateExclusionsWindow` schedule**. Empty/missing tag means no override. Malformed values throw (fail-closed) unless `-Force` is supplied. New gate runs BEFORE the sideloaded and schedule gates so it overrides both.
 - **`Set-AzLocalClusterUpdateRingTag` always stamps `UpdateExcluded=False`** on any cluster that does not already carry the tag, so the tag is discoverable in the Azure portal and ready for an operator to flip to `True` when they need to temporarily exclude a cluster from automation. Existing `True`/`False` values are preserved unless overridden.
-- **New optional parameter `-UpdateExcludedValue` on `Set-AzLocalClusterUpdateRingTag -ClusterResourceIds`** and new CSV column `UpdateExcluded` on the `-InputCsvPath` mode. Accepts `True`/`False`/`1`/`0` (case-insensitive). Mirrors the existing `UpdateWindow` / `UpdateWindowExclusions` plumbing.
+- **New optional parameter `-UpdateExcludedValue` on `Set-AzLocalClusterUpdateRingTag -ClusterResourceIds`** and new CSV column `UpdateExcluded` on the `-InputCsvPath` mode. Accepts `True`/`False`/`1`/`0` (case-insensitive). Mirrors the existing `UpdateStartWindow` / `UpdateExclusionsWindow` plumbing.
 - **New private helpers**: `ConvertFrom-AzLocalUpdateExcluded` (strict parser) and `Test-AzLocalUpdateExcludedAllowed` (gate evaluator).
-- **`Get-AzLocalClusterInventory` CSV/JSON export** now includes an `UpdateExcluded` column (positioned between `UpdateWindowExclusions` and `UpdateSideloaded`).
+- **`Get-AzLocalClusterInventory` CSV/JSON export** now includes an `UpdateExcluded` column (positioned between `UpdateExclusionsWindow` and `UpdateSideloaded`).
 - **Apply-updates pipeline summaries** (Step.6 GH Actions + Azure DevOps) now count and report `ExcludedByTag` clusters alongside `ScheduleBlocked` / `SideloadedBlocked`, with an Actions Required callout pointing operators at the tag.
 
 ### Changed (BREAKING)
 
-- **Tag rename: `UpdateExclusions` -> `UpdateWindowExclusions`**. The module from v0.7.90 onwards only reads `UpdateWindowExclusions` from cluster tags. Clusters still carrying the legacy `UpdateExclusions` tag are silently ignored - their blackout periods will no longer be honoured. Operators must re-tag (`Set-AzLocalClusterUpdateRingTag` with a CSV that has the new column name, or `az tag update --operation Merge`) before the next apply-updates run. The tag VALUE format (`YYYY-MM-DD/YYYY-MM-DD`, comma-separated, `*` wildcards) is unchanged.
-- **Parameter rename on `Test-AzLocalUpdateScheduleAllowed`**: `-UpdateExclusions` -> `-UpdateWindowExclusions`. Any caller passing the old parameter name will fail with a binding error.
-- **Parameter rename on `Set-AzLocalClusterUpdateRingTag -ClusterResourceIds`**: `-UpdateExclusionsValue` -> `-UpdateWindowExclusionsValue`. CSV column rename: `UpdateExclusions` -> `UpdateWindowExclusions`.
-- **Property rename on result objects** from `Get-AzLocalClusterInventory`, `Get-AzLocalClusterUpdateReadiness`, and `Get-AzLocalFleetStatusData`: `UpdateExclusions` -> `UpdateWindowExclusions`. Downstream CSV/JSON consumers must update column names.
+- **Tag rename: `UpdateWindow` -> `UpdateStartWindow`**. The module from v0.7.90 onwards only reads `UpdateStartWindow` from cluster tags. Clusters still carrying the legacy `UpdateWindow` tag are silently ignored - their maintenance windows will no longer be honoured. Operators must re-tag (`Set-AzLocalClusterUpdateRingTag` with a CSV that has the new column name, or `az tag update --operation Merge`) before the next apply-updates run. The tag VALUE format (`<days>_<HH:MM>-<HH:MM>` in UTC, semicolon-separated) is unchanged.
+- **Tag rename: `UpdateExclusions` -> `UpdateExclusionsWindow`**. Same migration story: module only reads `UpdateExclusionsWindow` from v0.7.90 onwards; clusters still carrying `UpdateExclusions` lose blackout enforcement until re-tagged. Tag VALUE format (`YYYY-MM-DD/YYYY-MM-DD`, comma-separated, `*` wildcards) is unchanged.
+- **Parameter rename on `Test-AzLocalUpdateScheduleAllowed`**: `-UpdateWindow` -> `-UpdateStartWindow` and `-UpdateExclusions` -> `-UpdateExclusionsWindow`. Any caller passing an old parameter name will fail with a binding error.
+- **Parameter rename on `Set-AzLocalClusterUpdateRingTag -ClusterResourceIds`**: `-UpdateWindowValue` -> `-UpdateStartWindowValue` and `-UpdateExclusionsValue` -> `-UpdateExclusionsWindowValue`. CSV column renames: `UpdateWindow` -> `UpdateStartWindow`, `UpdateExclusions` -> `UpdateExclusionsWindow`.
+- **Property rename on result objects** from `Get-AzLocalClusterInventory`, `Get-AzLocalClusterUpdateReadiness`, and `Get-AzLocalFleetStatusData`: `UpdateWindow` -> `UpdateStartWindow`, `UpdateExclusions` -> `UpdateExclusionsWindow`. Downstream CSV/JSON consumers must update column names.
 
 ### Migration
 
-- **Re-tag clusters that currently have `UpdateExclusions` set.** The legacy tag value is NOT auto-copied. Operators must mirror it onto the new tag and then delete the old one, for example:
+- **Re-tag clusters that currently have `UpdateWindow` and/or `UpdateExclusions` set.** Legacy tag values are NOT auto-copied. Operators must mirror them onto the new tags and then delete the old ones, for example:
 
   ```pwsh
-  az tag update --resource-id <clusterId> --operation Merge --tags UpdateWindowExclusions='<existing-value>'
-  az tag update --resource-id <clusterId> --operation Delete --tags UpdateExclusions='<existing-value>'
+  az tag update --resource-id <clusterId> --operation Merge --tags UpdateStartWindow='<existing-UpdateWindow-value>' UpdateExclusionsWindow='<existing-UpdateExclusions-value>'
+  az tag update --resource-id <clusterId> --operation Delete --tags UpdateWindow='<old-value>' UpdateExclusions='<old-value>'
   ```
 
-  Or re-run `Set-AzLocalClusterUpdateRingTag -InputCsvPath <csv>` with a CSV that has the new `UpdateWindowExclusions` column.
-- **Pipelines:** `Copy-AzLocalPipelineExample -Destination <path> -Update` to pick up the renamed CSV column + new `ExcludedByTag` summary plumbing.
+  Or re-run `Set-AzLocalClusterUpdateRingTag -InputCsvPath <csv>` with a CSV that has the new `UpdateStartWindow` / `UpdateExclusionsWindow` columns.
+- **Pipelines:** `Copy-AzLocalPipelineExample -Destination <path> -Update` to pick up the renamed CSV columns + new `ExcludedByTag` summary plumbing.
 - The new `UpdateExcluded=False` default-stamp is additive - no operator action required. It just makes the tag visible in the portal so operators can flip it to `True` when they need to temporarily exclude a cluster from automation.
 
 ## [0.7.89] - 2026-05-23

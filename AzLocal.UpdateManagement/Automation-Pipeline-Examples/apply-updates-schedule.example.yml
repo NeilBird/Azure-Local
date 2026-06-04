@@ -11,7 +11,7 @@
 #                                   allow-list) to use for that run.
 #   * Step.3_apply-updates-schedule-audit.yml
 #                                 - audits this file against the live
-#                                   fleet (UpdateRing + UpdateWindow
+#                                   fleet (UpdateRing + UpdateStartWindow
 #                                   tags) and emits a two-way coverage
 #                                   delta.
 #
@@ -21,7 +21,7 @@
 #      WHICH UpdateRing tag values are eligible TODAY in UTC.
 #   2. The Step.5 cron schedule (intra-day-grain): says HOW OFTEN the
 #      apply-updates job wakes up (e.g. hourly).
-#   3. Per-cluster `UpdateWindow` tag (minute-grain): says WHEN, during
+#   3. Per-cluster `UpdateStartWindow` tag (minute-grain): says WHEN, during
 #      an eligible day, the actual update is allowed to start.
 #
 # A cron firing that lands on a day with NO matching schedule rows is

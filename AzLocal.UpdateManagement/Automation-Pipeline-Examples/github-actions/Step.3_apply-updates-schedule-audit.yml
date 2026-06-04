@@ -1,23 +1,23 @@
 # Apply-Updates Schedule Coverage Audit
 # This workflow runs the read-only Test-AzLocalApplyUpdatesScheduleCoverage advisor
 # weekly to detect drift between the cron schedule(s) in your apply-updates pipeline
-# YAML and the UpdateWindow tags that operators have placed on Azure Local clusters.
+# YAML and the UpdateStartWindow tags that operators have placed on Azure Local clusters.
 #
 # WHY THIS PIPELINE EXISTS
 # ------------------------
 # Step.6_apply-updates.yml ships with NO default schedule (workflow_dispatch only) on purpose,
 # so customers must consciously choose when updates fire. After you have configured
-# UpdateWindow tags on your clusters and added cron entries to Step.6_apply-updates.yml, this
+# UpdateStartWindow tags on your clusters and added cron entries to Step.6_apply-updates.yml, this
 # pipeline is the safety net that catches:
-#   - a new ring tagged with UpdateWindow that no cron in Step.6_apply-updates.yml will reach
-#   - an UpdateWindow tag value that fails to parse (typo / wrong syntax)
+#   - a new ring tagged with UpdateStartWindow that no cron in Step.6_apply-updates.yml will reach
+#   - an UpdateStartWindow tag value that fails to parse (typo / wrong syntax)
 #   - Step.6_apply-updates.yml cron entries that the advisor cannot reason about
 #     (DayOfMonth restrictions, step values) so you can audit them manually
 #
 # REPORTS GENERATED
 # -----------------
 # - Markdown step summary: human-readable Audit + Matrix views at the top of the run
-# - JUnit XML: one <testcase> per (UpdateRing, UpdateWindow) pair - uncovered pairs
+# - JUnit XML: one <testcase> per (UpdateRing, UpdateStartWindow) pair - uncovered pairs
 #   become <failure>. dorny/test-reporter renders the tree in the run page.
 # - CSV: schedule-coverage-audit.csv with the full Audit view
 # - Markdown: schedule-coverage-recommend.md with the ready-to-paste cron block
@@ -54,11 +54,11 @@ on:
         required: false
         default: '.github/apply-updates-schedule.yml'
       lead_time_minutes:
-        description: 'Minutes before UpdateWindow opens that the pipeline should fire (0-60). Default 5.'
+        description: 'Minutes before UpdateStartWindow opens that the pipeline should fire (0-60). Default 5.'
         required: false
         default: '5'
       include_untagged:
-        description: 'Surface clusters with no UpdateWindow tag as their own row.'
+        description: 'Surface clusters with no UpdateStartWindow tag as their own row.'
         required: false
         default: 'true'
         type: choice
@@ -83,7 +83,7 @@ env:
   # this to the version actually installed and to the latest on PSGallery, and emits a
   # ::notice annotation if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.7.89'
+  GENERATED_AGAINST_MODULE_VERSION: '0.7.90'
   REQUIRED_MODULE_VERSION: ${{ github.event.inputs.module_version || vars.REQUIRED_MODULE_VERSION || '' }}
 
 jobs:
@@ -278,7 +278,7 @@ jobs:
             $failures = @($Rows | Where-Object { $_.Status -ne 'Covered' }).Count
             [void]$Sb.AppendLine(("  <testsuite name=`"{0}`" tests=`"{1}`" failures=`"{2}`">" -f (Convert-XmlEscape $SuiteName), $Rows.Count, $failures))
             foreach ($row in $Rows) {
-                $tcName = ("{0} / {1}" -f $row.UpdateRing, ($(if ($row.UpdateWindow) { $row.UpdateWindow } else { '(no window)' })))
+                $tcName = ("{0} / {1}" -f $row.UpdateRing, ($(if ($row.UpdateStartWindow) { $row.UpdateStartWindow } else { '(no window)' })))
                 [void]$Sb.AppendLine(("    <testcase classname=`"ScheduleCoverage`" name=`"{0}`">" -f (Convert-XmlEscape $tcName)))
                 if ($row.Status -ne 'Covered') {
                     $issue = Convert-XmlEscape $row.Issue
@@ -328,7 +328,7 @@ jobs:
         "UNPARSEABLE=$($unparseable.Count)"   | Out-File -FilePath $env:GITHUB_OUTPUT -Append
         "RING_MISSING=$($ringMissing.Count)"  | Out-File -FilePath $env:GITHUB_OUTPUT -Append
         "RING_ORPHAN=$($ringOrphan.Count)"    | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-        # v0.7.89: surface whether -SchedulePath was supplied + its value
+        # v0.7.90: surface whether -SchedulePath was supplied + its value
         # so the summary step (separate step scope) can render the
         # Schedule (ring-file gap) detail table and the new allow-list
         # coverage section without re-deriving from CSV rows.
@@ -378,7 +378,7 @@ jobs:
         $unparseable = "${{ steps.audit.outputs.UNPARSEABLE }}"
         $ringMissing = "${{ steps.audit.outputs.RING_MISSING }}"
         $ringOrphan  = "${{ steps.audit.outputs.RING_ORPHAN }}"
-        # v0.7.89: pulled forward from the audit step so this summary step
+        # v0.7.90: pulled forward from the audit step so this summary step
         # can render the Schedule (ring-file gap) detail table and the
         # allow-list coverage section. Without this, $haveSchedule was
         # undefined here (separate step scope) and the Schedule diff
@@ -440,10 +440,10 @@ jobs:
                 $body += "`n*$EmptyText*`n"
                 return $body
             }
-            $body += "`n| Status | UpdateRing | UpdateWindow | Clusters | Required Cron (UTC) | Recommendation |`n"
+            $body += "`n| Status | UpdateRing | UpdateStartWindow | Clusters | Required Cron (UTC) | Recommendation |`n"
             $body += "|--------|------------|--------------|---------:|----------------------|----------------|`n"
             foreach ($r in ($DetailRows | Select-Object -First 100)) {
-                $body += ('| {0} | {1} | {2} | {3} | {4} | {5} |' -f $r.Status, $r.UpdateRing, $r.UpdateWindow, $r.ClusterCount, $r.RequiredCronUTC, $r.Recommendation) + "`n"
+                $body += ('| {0} | {1} | {2} | {3} | {4} | {5} |' -f $r.Status, $r.UpdateRing, $r.UpdateStartWindow, $r.ClusterCount, $r.RequiredCronUTC, $r.Recommendation) + "`n"
             }
             if ($DetailRows.Count -gt 100) {
                 $body += "`n*Showing first 100 of $($DetailRows.Count); see ``schedule-coverage-audit.csv`` artifact for the full list.*`n"
@@ -457,7 +457,7 @@ jobs:
             $md += (Add-DetailTable -Heading '' -DetailRows $scheduleRowsMd -EmptyText 'Schedule and fleet ring sets match - no gaps.')
         }
 
-        # v0.7.89: Allow-list coverage section. When -SchedulePath was
+        # v0.7.90: Allow-list coverage section. When -SchedulePath was
         # supplied, re-load the schedule file (the summary step is a
         # separate pwsh process so we have to import the module + read
         # the schedule here too) and surface the effective
@@ -554,7 +554,7 @@ jobs:
         $md += @"
 
         ### Reports Available
-        - ``schedule-coverage-audit.csv`` - one row per (UpdateRing, UpdateWindow) pair
+        - ``schedule-coverage-audit.csv`` - one row per (UpdateRing, UpdateStartWindow) pair
         - ``schedule-coverage-matrix.csv`` - full inventory + required cron per row
         - ``schedule-coverage-recommend.md`` - ready-to-paste cron block (GH + ADO)
         - ``schedule-coverage-audit.xml`` - JUnit XML for CI/CD visualisation

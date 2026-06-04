@@ -628,7 +628,7 @@ function Start-AzLocalClusterUpdate {
                 # Step 3b0: UpdateExcluded operator-override gate (v0.7.90)
                 # Hard override: when UpdateExcluded=True/1 (case-insensitive) on
                 # the cluster resource, skip the cluster regardless of UpdateRing
-                # scope, UpdateSideloaded state, or UpdateWindow / UpdateWindowExclusions
+                # scope, UpdateSideloaded state, or UpdateStartWindow / UpdateExclusionsWindow
                 # schedule. This is evaluated BEFORE the sideloaded and schedule
                 # gates so it can override both. Empty/missing tag means no
                 # override (proceed to downstream gates). Malformed values are
@@ -795,20 +795,20 @@ function Start-AzLocalClusterUpdate {
                 }
 
                 # Step 3c: Schedule/maintenance window validation
-                # Check UpdateWindow and UpdateWindowExclusions tags if present on the cluster resource
+                # Check UpdateStartWindow and UpdateExclusionsWindow tags if present on the cluster resource
                 $clusterTags = $clusterInfo.tags
-                $windowTagValue = if ($clusterTags -and $clusterTags.$($script:UpdateWindowTagName)) { $clusterTags.$($script:UpdateWindowTagName) } else { $null }
-                $exclusionTagValue = if ($clusterTags -and $clusterTags.$($script:UpdateWindowExclusionsTagName)) { $clusterTags.$($script:UpdateWindowExclusionsTagName) } else { $null }
+                $windowTagValue = if ($clusterTags -and $clusterTags.$($script:UpdateStartWindowTagName)) { $clusterTags.$($script:UpdateStartWindowTagName) } else { $null }
+                $exclusionTagValue = if ($clusterTags -and $clusterTags.$($script:UpdateExclusionsWindowTagName)) { $clusterTags.$($script:UpdateExclusionsWindowTagName) } else { $null }
 
                 if ($windowTagValue -or $exclusionTagValue) {
                     Write-Log -Message "Step 3c: Checking maintenance schedule tags..." -Level Info
-                    if ($windowTagValue) { Write-Log -Message "  UpdateWindow tag: $windowTagValue" -Level Info }
-                    if ($exclusionTagValue) { Write-Log -Message "  UpdateWindowExclusions tag: $exclusionTagValue" -Level Info }
+                    if ($windowTagValue) { Write-Log -Message "  UpdateStartWindow tag: $windowTagValue" -Level Info }
+                    if ($exclusionTagValue) { Write-Log -Message "  UpdateExclusionsWindow tag: $exclusionTagValue" -Level Info }
 
                     try {
                         $scheduleResult = Test-AzLocalUpdateScheduleAllowed `
-                            -UpdateWindow $windowTagValue `
-                            -UpdateWindowExclusions $exclusionTagValue
+                            -UpdateStartWindow $windowTagValue `
+                            -UpdateExclusionsWindow $exclusionTagValue
 
                         if (-not $scheduleResult.Allowed) {
                             Write-Log -Message "Cluster '$clusterName' is outside its maintenance schedule: $($scheduleResult.Reason)" -Level Warning
@@ -841,7 +841,7 @@ function Start-AzLocalClusterUpdate {
                         Write-Log -Message "Maintenance schedule check passed: $($scheduleResult.Reason)" -Level Success
                     }
                     catch {
-                        # v0.7.0: malformed UpdateWindow / UpdateWindowExclusions tags
+                        # v0.7.0: malformed UpdateStartWindow / UpdateExclusionsWindow tags
                         # now block the update (fail-closed) unless -Force is
                         # specified. The previous behaviour (always proceed on
                         # parse failure) could cause fleet-wide updates to bypass
