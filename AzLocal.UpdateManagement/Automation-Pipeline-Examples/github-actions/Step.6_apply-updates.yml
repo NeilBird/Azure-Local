@@ -492,6 +492,7 @@ jobs:
             echo "HEALTH_BLOCKED=0"       >> $env:GITHUB_OUTPUT
             echo "SCHEDULE_BLOCKED=0"     >> $env:GITHUB_OUTPUT
             echo "SIDELOADED_BLOCKED=0"   >> $env:GITHUB_OUTPUT
+            echo "EXCLUDED_BY_TAG=0"      >> $env:GITHUB_OUTPUT
             exit 0
         }
         
@@ -539,6 +540,7 @@ jobs:
         $healthBlocked = ($results | Where-Object { $_.Status -eq 'HealthCheckBlocked' }).Count
         $scheduleBlocked = ($results | Where-Object { $_.Status -eq 'ScheduleBlocked' }).Count
         $sideloadedBlocked = ($results | Where-Object { $_.Status -eq 'SideloadedBlocked' }).Count
+        $excludedByTag = ($results | Where-Object { $_.Status -eq 'ExcludedByTag' }).Count
         
         echo "SUCCEEDED=$succeeded" >> $env:GITHUB_OUTPUT
         echo "SKIPPED=$skipped" >> $env:GITHUB_OUTPUT
@@ -546,6 +548,7 @@ jobs:
         echo "HEALTH_BLOCKED=$healthBlocked" >> $env:GITHUB_OUTPUT
         echo "SCHEDULE_BLOCKED=$scheduleBlocked" >> $env:GITHUB_OUTPUT
         echo "SIDELOADED_BLOCKED=$sideloadedBlocked" >> $env:GITHUB_OUTPUT
+        echo "EXCLUDED_BY_TAG=$excludedByTag" >> $env:GITHUB_OUTPUT
     
     - name: Compute Artifact Timestamp
       if: always()
@@ -684,6 +687,7 @@ jobs:
         $healthBlocked = "${{ steps.apply-updates.outputs.HEALTH_BLOCKED }}"
         $scheduleBlocked = "${{ steps.apply-updates.outputs.SCHEDULE_BLOCKED }}"
         $sideloadedBlocked = "${{ steps.apply-updates.outputs.SIDELOADED_BLOCKED }}"
+        $excludedByTag = "${{ steps.apply-updates.outputs.EXCLUDED_BY_TAG }}"
         $readyCount = "${{ needs.check-readiness.outputs.ready_count }}"
         $totalCount = "${{ needs.check-readiness.outputs.total_count }}"
         
@@ -715,6 +719,7 @@ jobs:
         "| Health Blocked | $healthBlocked |" >> $env:GITHUB_STEP_SUMMARY
         "| Schedule Blocked | $scheduleBlocked |" >> $env:GITHUB_STEP_SUMMARY
         "| Sideloaded Blocked | $sideloadedBlocked |" >> $env:GITHUB_STEP_SUMMARY
+        "| Excluded By Tag | $excludedByTag |" >> $env:GITHUB_STEP_SUMMARY
         
         # Actions Required section - summarize what needs manual attention
         $actionsNeeded = @()
@@ -722,6 +727,7 @@ jobs:
         if ([int]$healthBlocked -gt 0) { $actionsNeeded += "- **$healthBlocked cluster(s) blocked by health checks** - Resolve critical health failures before retrying" }
         if ([int]$scheduleBlocked -gt 0) { $actionsNeeded += "- **$scheduleBlocked cluster(s) outside maintenance window** - Updates will proceed when the cluster's UpdateStartWindow schedule allows, or re-run during the maintenance window" }
         if ([int]$sideloadedBlocked -gt 0) { $actionsNeeded += "- **$sideloadedBlocked cluster(s) blocked by UpdateSideloaded=False** - Operator must stage the sideloaded payload and flip the tag to True (or run Reset-AzLocalSideloadedTag) before updates can proceed" }
+        if ([int]$excludedByTag -gt 0) { $actionsNeeded += "- **$excludedByTag cluster(s) excluded by UpdateExcluded=True operator override** - Flip the cluster's UpdateExcluded tag to False (Azure portal or 'az tag update') once the cluster should rejoin automation" }
         
         if ($actionsNeeded.Count -gt 0) {
             "" >> $env:GITHUB_STEP_SUMMARY

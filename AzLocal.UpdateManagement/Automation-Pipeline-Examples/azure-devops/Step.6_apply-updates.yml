@@ -499,6 +499,7 @@ stages:
                     Write-Host "##vso[task.setvariable variable=HealthBlocked;isOutput=true]0"
                     Write-Host "##vso[task.setvariable variable=ScheduleBlocked;isOutput=true]0"
                     Write-Host "##vso[task.setvariable variable=SideloadedBlocked;isOutput=true]0"
+                    Write-Host "##vso[task.setvariable variable=ExcludedByTag;isOutput=true]0"
                     exit 0
                 }
                 
@@ -546,6 +547,7 @@ stages:
                 $healthBlocked = ($results | Where-Object { $_.Status -eq 'HealthCheckBlocked' }).Count
                 $scheduleBlocked = ($results | Where-Object { $_.Status -eq 'ScheduleBlocked' }).Count
                 $sideloadedBlocked = ($results | Where-Object { $_.Status -eq 'SideloadedBlocked' }).Count
+                $excludedByTag = ($results | Where-Object { $_.Status -eq 'ExcludedByTag' }).Count
                 
                 Write-Host "##vso[task.setvariable variable=Succeeded;isOutput=true]$succeeded"
                 Write-Host "##vso[task.setvariable variable=Skipped;isOutput=true]$skipped"
@@ -553,6 +555,7 @@ stages:
                 Write-Host "##vso[task.setvariable variable=HealthBlocked;isOutput=true]$healthBlocked"
                 Write-Host "##vso[task.setvariable variable=ScheduleBlocked;isOutput=true]$scheduleBlocked"
                 Write-Host "##vso[task.setvariable variable=SideloadedBlocked;isOutput=true]$sideloadedBlocked"
+                Write-Host "##vso[task.setvariable variable=ExcludedByTag;isOutput=true]$excludedByTag"
                 
                 if ($failed -gt 0) {
                     # Per-cluster failures are expected in large fleets (day-to-day environmental
@@ -560,20 +563,23 @@ stages:
                     # success for the healthy clusters is not lost. Only promote to a hard error
                     # when the entire batch failed AND nothing started - that indicates a systemic
                     # issue (auth, module, subscription scope) worth failing the stage on.
-                    if ($succeeded -eq 0 -and $skipped -eq 0 -and $healthBlocked -eq 0 -and $scheduleBlocked -eq 0 -and $sideloadedBlocked -eq 0) {
+                    if ($succeeded -eq 0 -and $skipped -eq 0 -and $healthBlocked -eq 0 -and $scheduleBlocked -eq 0 -and $sideloadedBlocked -eq 0 -and $excludedByTag -eq 0) {
                         Write-Host "##vso[task.logissue type=error]All $failed cluster(s) in scope failed to start updates. Review the Azure Local portal, cluster health, and the published update-results.xml for per-cluster detail."
                     } else {
-                        Write-Host "##vso[task.logissue type=warning]$failed cluster(s) failed to start updates. $succeeded succeeded, $skipped skipped, $healthBlocked health-blocked, $scheduleBlocked schedule-blocked, $sideloadedBlocked sideloaded-blocked. See update-results.xml for per-cluster detail."
+                        Write-Host "##vso[task.logissue type=warning]$failed cluster(s) failed to start updates. $succeeded succeeded, $skipped skipped, $healthBlocked health-blocked, $scheduleBlocked schedule-blocked, $sideloadedBlocked sideloaded-blocked, $excludedByTag excluded-by-tag. See update-results.xml for per-cluster detail."
                     }
                 }
                 if ($healthBlocked -gt 0) {
                     Write-Host "##vso[task.logissue type=warning]$healthBlocked cluster(s) blocked by critical health check failures"
                 }
                 if ($scheduleBlocked -gt 0) {
-                    Write-Host "##vso[task.logissue type=warning]$scheduleBlocked cluster(s) blocked by maintenance schedule (outside UpdateStartWindow or in UpdateExclusions period)"
+                    Write-Host "##vso[task.logissue type=warning]$scheduleBlocked cluster(s) blocked by maintenance schedule (outside UpdateStartWindow or in UpdateExclusionsWindow period)"
                 }
                 if ($sideloadedBlocked -gt 0) {
                     Write-Host "##vso[task.logissue type=warning]$sideloadedBlocked cluster(s) blocked by UpdateSideloaded=False - operator must stage the sideloaded payload and flip the tag (or run Reset-AzLocalSideloadedTag) before updates can proceed"
+                }
+                if ($excludedByTag -gt 0) {
+                    Write-Host "##vso[task.logissue type=warning]$excludedByTag cluster(s) excluded by UpdateExcluded=True operator override - flip the UpdateExcluded tag to False (Azure portal or 'az tag update') once the cluster should rejoin automation"
                 }
           
           # compute a UTC timestamp variable so both update-logs and itsm-results share a unique per-run suffix.
@@ -728,12 +734,14 @@ stages:
                     $healthBlocked = "$(applyUpdates.HealthBlocked)"
                     $scheduleBlocked = "$(applyUpdates.ScheduleBlocked)"
                     $sideloadedBlocked = "$(applyUpdates.SideloadedBlocked)"
+                    $excludedByTag = "$(applyUpdates.ExcludedByTag)"
                     $failed = "$(applyUpdates.Failed)"
                     
                     if ([int]$failed -gt 0) { $actionsRequired += "- **$failed cluster(s) failed** - Review pipeline logs and cluster health in Azure Portal" }
                     if ([int]$healthBlocked -gt 0) { $actionsRequired += "- **$healthBlocked cluster(s) blocked by health checks** - Resolve critical health failures before retrying" }
                     if ([int]$scheduleBlocked -gt 0) { $actionsRequired += "- **$scheduleBlocked cluster(s) outside maintenance window** - Updates will proceed when the cluster's UpdateStartWindow schedule allows, or re-run during the maintenance window" }
                     if ([int]$sideloadedBlocked -gt 0) { $actionsRequired += "- **$sideloadedBlocked cluster(s) blocked by UpdateSideloaded=False** - Operator must stage the sideloaded payload and flip the tag to True (or run Reset-AzLocalSideloadedTag) before updates can proceed" }
+                    if ([int]$excludedByTag -gt 0) { $actionsRequired += "- **$excludedByTag cluster(s) excluded by UpdateExcluded=True operator override** - Flip the cluster's UpdateExcluded tag to False (Azure portal or 'az tag update') once the cluster should rejoin automation" }
                     
                     if ($actionsRequired.Count -gt 0) {
                         $summary += "`n`n## Actions Required`n"

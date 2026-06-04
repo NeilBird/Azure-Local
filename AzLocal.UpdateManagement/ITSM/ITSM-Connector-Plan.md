@@ -146,6 +146,8 @@ triggers:
     severity: 4
     category: "Operator action: stage sideloaded payload"
     mirrorTo: []                   # quiet: no Teams/Slack noise for this one
+  ExcludedByTag:
+    raiseTicket: false             # operator-set UpdateExcluded=True; opt-in if you want a per-run audit ticket
   ScheduleBlocked:
     raiseTicket: false             # DEFAULT: schedule-blocked self-resolves
     # If a user wants to opt-in, just flip raiseTicket to true and set:
@@ -286,7 +288,7 @@ ServiceNow does support inbound OAuth 2.0 JWT bearer flow which would let us avo
 
 For each cluster in the run output with `Status in (Started, UpdateStarted, Success, NoUpdatesAvailable)`:
 
-1. Compute the dedupe keys for **every** trigger category (`Failed`, `Error`, `HealthCheckBlocked`, `SideloadedBlocked`, `ScheduleBlocked` if opted-in).
+1. Compute the dedupe keys for **every** trigger category (`Failed`, `Error`, `HealthCheckBlocked`, `SideloadedBlocked`, `ExcludedByTag` if opted-in, `ScheduleBlocked` if opted-in).
 2. Query the ITSM target for open tickets carrying any of those dedupe keys, filtered to `state IN (1, 2, 3)` (New / In Progress / On Hold) and `u_azlocal_source = AzLocal.UpdateManagement`.
 3. For each match:
    - Always add a **work-note comment** with: timestamp, run id, current cluster status, link to GH/ADO run.

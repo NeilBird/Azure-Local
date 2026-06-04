@@ -213,16 +213,22 @@
 
             # ReleaseNotes of this module
             ReleaseNotes = @'
-## Version 0.7.90 - New `UpdateExcluded` operator-override tag + breaking rename `UpdateExclusions` -> `UpdateExclusionsWindow`
+## Version 0.7.90 - New `UpdateExcluded` operator-override tag + breaking rename `UpdateExclusions` -> `UpdateExclusionsWindow` + pipeline renumber + new Step.7 monitor-updates
 
 ### Added
 
+- **New `Step.7_monitor-updates.yml` pipeline (GitHub Actions + Azure DevOps).** Operational in-flight monitor distinct from the daily Step.8 snapshot. Reports clusters whose latest update run is currently `InProgress`, with the CURRENT STEP each cluster is on, the PROGRESS (`completed/total steps`), and the ELAPSED DURATION. Long-running runs are flagged via a configurable `long_running_threshold_hours` input (default 6h). Emits `update-monitor.xml` (JUnit, one `<testcase>` per in-flight cluster; `<failure>` when the elapsed duration exceeds the threshold) + `update-monitor.csv` + a markdown summary sorted by elapsed duration descending. Designed for ~30-min cadence during an active wave (GitHub Actions only - ADO YAML schedules are limited to hourly). Pure pipeline composition over `Get-AzLocalUpdateRuns -Latest` - no new cmdlets required.
 - **New `UpdateExcluded` Azure resource tag** (operator hard override). When set to `True`/`true`/`1` on a cluster, `Start-AzLocalClusterUpdate` skips the cluster with `Status = ExcludedByTag` **regardless of `UpdateRing` scope, `UpdateSideloaded` state, or `UpdateStartWindow` / `UpdateExclusionsWindow` schedule**. Empty/missing tag means no override. Malformed values throw (fail-closed) unless `-Force` is supplied. New gate runs BEFORE the sideloaded and schedule gates so it overrides both.
 - **`Set-AzLocalClusterUpdateRingTag` always stamps `UpdateExcluded=False`** on any cluster that does not already carry the tag, so the tag is discoverable in the Azure portal and ready for an operator to flip to `True` when they need to temporarily exclude a cluster from automation. Existing `True`/`False` values are preserved unless overridden.
 - **New optional parameter `-UpdateExcludedValue` on `Set-AzLocalClusterUpdateRingTag -ClusterResourceIds`** and new CSV column `UpdateExcluded` on the `-InputCsvPath` mode. Accepts `True`/`False`/`1`/`0` (case-insensitive). Mirrors the existing `UpdateStartWindow` / `UpdateExclusionsWindow` plumbing.
 - **New private helpers**: `ConvertFrom-AzLocalUpdateExcluded` (strict parser) and `Test-AzLocalUpdateExcludedAllowed` (gate evaluator).
 - **`Get-AzLocalClusterInventory` CSV/JSON export** now includes an `UpdateExcluded` column (positioned between `UpdateExclusionsWindow` and `UpdateSideloaded`).
 - **Apply-updates pipeline summaries** (Step.6 GH Actions + Azure DevOps) now count and report `ExcludedByTag` clusters alongside `ScheduleBlocked` / `SideloadedBlocked`, with an Actions Required callout pointing operators at the tag.
+
+### Changed
+
+- **Pipeline renumber (BREAKING for any local automation that pins to the old filenames):** `fleet-update-status` becomes `Step.8_fleet-update-status.yml` (was `Step.7`) and `fleet-health-status` becomes `Step.9_fleet-health-status.yml` (was `Step.8`). Inline content is otherwise byte-identical apart from header self-references. The new Step.7 slot is taken by the new monitor pipeline. Apply via `Copy-AzLocalPipelineExample -Destination <path> -Update`, then `git rm` the old files locally.
+- **Step.8 (fleet-update-status, formerly Step.7) "Version Distribution" markdown table pivoted by YYMM.** Leading column is now `Version` (YYMM e.g. `2511`, `2604`). New `Update Versions` column lists each full version in that YYMM as `<version> x <count>` separated by `<br>`. `Cluster Count` / `Percentage` are summed; `Clusters (first 15 shown only)` is the de-duplicated union. Sorted ascending by YYMM (oldest at top); previously sorted by cluster count descending. The underlying `<testsuite name="Fleet Version Distribution">` JUnit XML remains one `<testcase>` per distinct full `CurrentVersion` (unchanged).
 
 ### Changed (BREAKING)
 
@@ -292,52 +298,9 @@ https://github.com/NeilBird/Azure-Local/blob/main/AzLocal.UpdateManagement/CHANG
 For full v0.7.80 release notes see:
 https://github.com/NeilBird/Azure-Local/blob/main/AzLocal.UpdateManagement/CHANGELOG.md
 
-## Version 0.7.79 - Step.5 default schedule enabled
+## Versions 0.7.72 - 0.7.79 (cumulative)
 
-For full v0.7.79 release notes see:
-https://github.com/NeilBird/Azure-Local/blob/main/AzLocal.UpdateManagement/CHANGELOG.md
-
-## Version 0.7.78 - Step.4 blank-field regression fix
-
-For full v0.7.78 release notes see:
-https://github.com/NeilBird/Azure-Local/blob/main/AzLocal.UpdateManagement/CHANGELOG.md
-
-## Version 0.7.77 - Step.4 fleet-connectivity hotfix (ARG JSON parse hardening)
-
-For full v0.7.77 release notes see:
-https://github.com/NeilBird/Azure-Local/blob/main/AzLocal.UpdateManagement/CHANGELOG.md
-
-## Version 0.7.76 - Renamed to -AzLocal* + quality hardening
-
-- Exported/public cmdlets and internal helpers renamed from `-AzureLocal*`
-  to `-AzLocal*` to align with the module name. **Migration:** search-
-  and-replace `-AzureLocal` with `-AzLocal` in your scripts after
-  `Install-Module AzLocal.UpdateManagement -Force`. Module GUID unchanged.
-- Includes targeted hardening from the module review cycle (row-shape
-  safety, health-check dedup, test coverage, docs cleanup, publish
-  hygiene) plus Step.0 pipeline pin parity (drift warning now fires from
-  the first job rather than Step.1). All 18 `Step.{0..8}.yml` templates
-  bump `GENERATED_AGAINST_MODULE_VERSION` `0.7.75` -> `0.7.76`.
-- See `CHANGELOG.md` for the full per-cmdlet rename map and detailed notes.
-
-## Version 0.7.75 - Hardening: Test-AzLocalApplyUpdatesScheduleCoverage auto-detects CI host platform
-
-For full v0.7.75 release notes see:
-https://github.com/NeilBird/Azure-Local/blob/main/AzLocal.UpdateManagement/CHANGELOG.md
-
-## Version 0.7.74 - Bug fix: Get-AzLocalFleetHealthOverview KQL regression (ParserFailure at char 2757) + Step.3 recommendation UX rewrite
-
-For full v0.7.74 release notes see:
-https://github.com/NeilBird/Azure-Local/blob/main/AzLocal.UpdateManagement/CHANGELOG.md
-
-## Version 0.7.73 - Bug fix: Get-AzLocalFleetHealthOverview normalises ARG HealthState values so Step.7 "Healthy Clusters" count is correct (was 0 against any fleet)
-
-For full v0.7.73 release notes see:
-https://github.com/NeilBird/Azure-Local/blob/main/AzLocal.UpdateManagement/CHANGELOG.md
-
-## Version 0.7.72 - Pipeline samples hotfix: Step.1/2/5 GitHub Actions Summary panels now render, AZURE_TENANT_ID secret->variable, pipeline pin bumps
-
-For full v0.7.72 release notes see:
+Step.5 default schedule enabled (0.7.79); Step.4 blank-field regression fix (0.7.78); Step.4 fleet-connectivity hotfix (0.7.77); module rename to `-AzLocal*` + quality hardening (0.7.76); `Test-AzLocalApplyUpdatesScheduleCoverage` CI host auto-detect (0.7.75); `Get-AzLocalFleetHealthOverview` KQL fix + Step.3 recommendation UX rewrite (0.7.74); `Get-AzLocalFleetHealthOverview` HealthState normalisation (0.7.73); pipeline samples hotfix - Step.1/2/5 GH Actions summary panels, `AZURE_TENANT_ID` secret->variable (0.7.72). Full per-version notes:
 https://github.com/NeilBird/Azure-Local/blob/main/AzLocal.UpdateManagement/CHANGELOG.md
 
 ## Older releases

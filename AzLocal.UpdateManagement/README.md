@@ -68,7 +68,7 @@ If you are new to this module, work through these in order from a regular PowerS
 | 5 | Apply the update | [`Start-AzLocalClusterUpdate`](docs/cmdlet-reference.md#start-azlocalclusterupdate) (single cluster or `-ScopeByUpdateRingTag` for a wave) |
 | 6 | Monitor and report | [`Get-AzLocalUpdateRuns`](docs/cmdlet-reference.md#get-azlocalupdateruns), [`Get-AzLocalFleetProgress`](docs/cmdlet-reference.md#get-azlocalfleetprogress), [`New-AzLocalFleetStatusHtmlReport`](docs/cmdlet-reference.md#new-azlocalfleetstatushtmlreport) |
 
-> **For CI/CD?** Skip this table and go straight to [Automation-Pipeline-Examples/README.md](./Automation-Pipeline-Examples/README.md) - it covers OIDC / Managed Identity / Service Principal setup, federated credentials, eight GitHub Actions workflows, and eight Azure DevOps pipelines (including the two pipelines introduced in v0.7.65: `Step.8_fleet-health-status` and `Step.3_apply-updates-schedule-audit`).
+> **For CI/CD?** Skip this table and go straight to [Automation-Pipeline-Examples/README.md](./Automation-Pipeline-Examples/README.md) - it covers OIDC / Managed Identity / Service Principal setup, federated credentials, nine GitHub Actions workflows, and nine Azure DevOps pipelines (the v0.7.90 set includes `Step.7_monitor-updates`, `Step.8_fleet-update-status`, and `Step.9_fleet-health-status`).
 
 ### Common workflows (function-invocation order)
 
@@ -99,6 +99,10 @@ v0.7.90 ships a new **`UpdateExcluded` operator-override tag** and a **breaking 
 **Inventory CSV/JSON now exposes the override.** `Get-AzLocalClusterInventory` adds an `UpdateExcluded` column (positioned between `UpdateExclusionsWindow` and `UpdateSideloaded`) so fleet snapshots show every cluster's override state alongside its ring and schedule.
 
 **Apply-updates pipeline summaries** (Step.6 GH Actions + Azure DevOps) now count and report `ExcludedByTag` clusters alongside `ScheduleBlocked` / `SideloadedBlocked`, with an Actions Required callout that points operators at the `UpdateExcluded` tag.
+
+**Fleet-update-status (now Step.8, formerly Step.7) "Version Distribution" table pivoted by YYMM.** The leading column is now `Version` showing the YYMM (e.g. `2511`, `2604`); a new `Update Versions` column lists each distinct full version installed within that YYMM as `<version> x <count>` separated by `<br>` line breaks (e.g. `12.2604.1003.1005 x 12<br>12.2604.1003.1002 x 6<br>12.2604.1003.209 x 2`). `Cluster Count` and `Percentage` are summed across all full versions in the YYMM; `Clusters (first 15 shown only)` is the de-duplicated union of cluster names. Rows are sorted by `Version` (YYMM) **ascending - oldest at top** (previously: cluster count descending), making mixed-YYMM fleets and YYMM lag easier to spot at a glance. The underlying `<testsuite name="Fleet Version Distribution">` JUnit XML continues to emit one `<testcase>` per distinct full `CurrentVersion` (unchanged), so machine-readable consumers and CI test-reporters are unaffected.
+
+**Pipeline renumber + new Step.7 monitor.** A new `Step.7_monitor-updates.yml` (GitHub Actions + Azure DevOps) reports clusters whose latest update run is currently `InProgress`, with the CURRENT STEP each cluster is on, the PROGRESS (`completed/total steps`), and the ELAPSED DURATION; long-running runs are flagged via a configurable `long_running_threshold_hours` input (default 6h). The two daily snapshot pipelines have shifted accordingly: `Step.7_fleet-update-status` -> `Step.8_fleet-update-status`, `Step.8_fleet-health-status` -> `Step.9_fleet-health-status`. Inline content of the renamed files is otherwise byte-identical apart from header self-references. Apply via `Copy-AzLocalPipelineExample -Destination <path> -Update`, then `git rm` the old files locally.
 
 **Migration.** `Install-Module AzLocal.UpdateManagement -Force` (or `Update-Module`). Re-tag clusters that currently have `UpdateExclusions` set - the legacy value is NOT auto-copied:
 
@@ -265,7 +269,7 @@ Get-AzLocalUpdateRuns -ClusterName "MyCluster01" -ResourceGroupName "MyRG"
 
 ### 7. Set Up Update Management Tags for Staged Rollouts
 
-Three Azure resource tags control how clusters are grouped and when updates are applied:
+The module reads (and in some cases writes) the following Azure resource tags to control how clusters are grouped, when updates are allowed to start, and which clusters are excluded from automation:
 
 | Tag | Purpose | Required? | Set By |
 |-----|---------|-----------|--------|
@@ -293,12 +297,12 @@ The CSV includes columns for all four tags: `UpdateRing`, `UpdateStartWindow`, `
 Open `cluster-inventory.csv` and populate the tag columns:
 
 | ClusterName | UpdateRing | UpdateStartWindow | UpdateExclusionsWindow | UpdateExcluded |
-|-------------|------------|--------------|------------------|
-| HCI-Pilot01 | Pilot | | |
-| HCI-Pilot02 | Pilot | | |
-| HCI-Prod01  | Wave1 | Sat-Sun_02:00-06:00 | 20**-12-20/20**-01-03 |
-| HCI-Prod02  | Wave1 | Sat-Sun_02:00-06:00 | 20**-12-20/20**-01-03 |
-| HCI-Critical| Production | Sat_02:00-06:00 | 20**-12-20/20**-01-03 |
+|-------------|------------|---------------------|------------------------|----------------|
+| HCI-Pilot01 | Pilot      |                     |                        | False          |
+| HCI-Pilot02 | Pilot      |                     |                        | False          |
+| HCI-Prod01  | Wave1      | Sat-Sun_02:00-06:00 | 20**-12-20/20**-01-03  | False          |
+| HCI-Prod02  | Wave1      | Sat-Sun_02:00-06:00 | 20**-12-20/20**-01-03  | False          |
+| HCI-Critical| Production | Sat_02:00-06:00     | 20**-12-20/20**-01-03  | True           |
 
 - **UpdateRing** (required): The deployment wave for this cluster
 - **UpdateStartWindow** (optional): UTC maintenance window. Format: `<days>_<HH:MM>-<HH:MM>`. Multiple windows separated by `;`.
@@ -341,6 +345,7 @@ Open `cluster-inventory.csv` and populate the tag columns:
 - **UpdateExclusionsWindow** (optional; renamed from `UpdateExclusions` in v0.7.90): Change-freeze periods. Format: `YYYY-MM-DD/YYYY-MM-DD`. Multiple ranges separated by `,`. Wildcards with `*` for recurring annual patterns. Examples:
   - `2026-12-20/2027-01-03` — Specific date range
   - `20**-12-20/20**-01-03` — Every year, Dec 20 to Jan 3
+- **UpdateExcluded** (optional; v0.7.90): Operator hard override. Values `True` / `False` / `1` / `0` (case-insensitive). `True` or `1` skips the cluster in `Start-AzLocalClusterUpdate` with `Status = ExcludedByTag`, regardless of `UpdateRing` scope, `UpdateSideloaded` state, or `UpdateStartWindow` / `UpdateExclusionsWindow` schedule. Leave empty or set to `False` to keep the cluster eligible. If the column is absent on a cluster, `Set-AzLocalClusterUpdateRingTag` default-stamps `UpdateExcluded=False` so the tag is visible in the Azure portal and ready to flip when needed.
 
 Save the file.
 

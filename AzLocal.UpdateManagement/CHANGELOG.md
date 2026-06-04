@@ -5,18 +5,24 @@ All notable changes to the AzLocal.UpdateManagement module (renamed from AzStack
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.7.90] - 2026-05-23
+## [0.7.90] - 2026-06-04
 
-New `UpdateExcluded` operator-override tag + breaking tag renames: `UpdateWindow` -> `UpdateStartWindow` and `UpdateExclusions` -> `UpdateExclusionsWindow`.
+New `UpdateExcluded` operator-override tag + breaking tag renames: `UpdateWindow` -> `UpdateStartWindow` and `UpdateExclusions` -> `UpdateExclusionsWindow`. Pipeline renumber: new `Step.7_monitor-updates` (operational in-flight monitor) inserted between Step.6 apply-updates and the existing daily snapshot pipelines, which shift to `Step.8_fleet-update-status` and `Step.9_fleet-health-status`.
 
 ### Added
 
+- **New `Step.7_monitor-updates.yml` pipeline (GitHub Actions + Azure DevOps).** Operational in-flight monitor distinct from the daily Step.8 snapshot. Reports clusters whose latest update run is currently `InProgress`, with the CURRENT STEP each cluster is on, the PROGRESS (`completed/total steps`), and the ELAPSED DURATION. Long-running runs are flagged via a configurable `long_running_threshold_hours` input (default 6h). Emits `update-monitor.xml` (JUnit, one `<testcase>` per in-flight cluster; `<failure>` when the elapsed duration exceeds the threshold so the Checks/Tests tab shows stuck runs in red) + `update-monitor.csv` + a markdown step summary sorted by elapsed duration descending. Designed for ~30-minute cadence during an active wave (GitHub Actions only - ADO YAML schedules are limited to hourly). Pure pipeline composition over `Get-AzLocalUpdateRuns -Latest` - no new cmdlets required.
 - **New `UpdateExcluded` Azure resource tag** (operator hard override). When set to `True`/`true`/`1` on a cluster, `Start-AzLocalClusterUpdate` skips the cluster with `Status = ExcludedByTag` **regardless of `UpdateRing` scope, `UpdateSideloaded` state, or `UpdateStartWindow` / `UpdateExclusionsWindow` schedule**. Empty/missing tag means no override. Malformed values throw (fail-closed) unless `-Force` is supplied. New gate runs BEFORE the sideloaded and schedule gates so it overrides both.
 - **`Set-AzLocalClusterUpdateRingTag` always stamps `UpdateExcluded=False`** on any cluster that does not already carry the tag, so the tag is discoverable in the Azure portal and ready for an operator to flip to `True` when they need to temporarily exclude a cluster from automation. Existing `True`/`False` values are preserved unless overridden.
 - **New optional parameter `-UpdateExcludedValue` on `Set-AzLocalClusterUpdateRingTag -ClusterResourceIds`** and new CSV column `UpdateExcluded` on the `-InputCsvPath` mode. Accepts `True`/`False`/`1`/`0` (case-insensitive). Mirrors the existing `UpdateStartWindow` / `UpdateExclusionsWindow` plumbing.
 - **New private helpers**: `ConvertFrom-AzLocalUpdateExcluded` (strict parser) and `Test-AzLocalUpdateExcludedAllowed` (gate evaluator).
 - **`Get-AzLocalClusterInventory` CSV/JSON export** now includes an `UpdateExcluded` column (positioned between `UpdateExclusionsWindow` and `UpdateSideloaded`).
 - **Apply-updates pipeline summaries** (Step.6 GH Actions + Azure DevOps) now count and report `ExcludedByTag` clusters alongside `ScheduleBlocked` / `SideloadedBlocked`, with an Actions Required callout pointing operators at the tag.
+
+### Changed
+
+- **Pipeline renumber (BREAKING for any local automation that pins to the old filenames):** the `fleet-update-status` example pipeline becomes `Step.8_fleet-update-status.yml` (was `Step.7`) and `fleet-health-status` becomes `Step.9_fleet-health-status.yml` (was `Step.8`). Inline content of both renamed files is otherwise byte-identical with the v0.7.89 / v0.7.88 versions apart from header self-references. The new monitor pipeline takes the `Step.7` slot. Apply via `Copy-AzLocalPipelineExample -Destination <path> -Update` and then `git rm` the old files locally - the helper does not delete by name.
+- **Step.8 (fleet-update-status, formerly Step.7) - "Overall Fleet Update Status (Version Distribution)" markdown table redesigned to pivot by YYMM** (operator request). The leading column is now `Version` showing the YYMM (e.g. `2511`, `2604`); a new `Update Versions` column lists each distinct full `CurrentVersion` within that YYMM as `<version> x <count>` separated by `<br>` line breaks (e.g. `12.2604.1003.1005 x 12<br>12.2604.1003.1002 x 6<br>12.2604.1003.209 x 2`). `Cluster Count` and `Percentage` are summed across all full versions in the YYMM; `Clusters (first 15 shown only)` is the de-duplicated union of cluster names. Rows are sorted by `Version` (YYMM) **ascending - oldest at top** (was: cluster count descending), with malformed/empty YYMMs grouped under `(unknown)` at the bottom. The underlying `<testsuite name="Fleet Version Distribution">` JUnit XML continues to emit one `<testcase>` per distinct full `CurrentVersion` (unchanged), so machine-readable consumers are unaffected.
 
 ### Changed (BREAKING)
 

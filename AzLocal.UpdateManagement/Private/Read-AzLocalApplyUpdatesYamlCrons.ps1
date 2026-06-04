@@ -60,10 +60,10 @@ function Read-AzLocalApplyUpdatesYamlCrons {
         # NOTE: Get-ChildItem -LiteralPath -Recurse -Include silently ignores the
         # -Include filter and returns every recursed file (confirmed in PS 5.1).
         # That caused v0.7.68 to pick up every Step.N_*.yml sibling (Step.1, Step.3,
-        # Step.6, Step.7 all carry their own schedule crons) and treat their crons
-        # as apply-updates crons - garbage in the audit, and on PS 7 the binder
-        # surfaced it as 'Cannot bind argument to parameter Expression because it
-        # is an empty string' once any unparseable capture was reached.
+        # Step.4, Step.7, Step.8, Step.9 all carry their own schedule crons) and treat
+        # their crons as apply-updates crons - garbage in the audit, and on PS 7 the
+        # binder surfaced it as 'Cannot bind argument to parameter Expression because
+        # it is an empty string' once any unparseable capture was reached.
         # Use -Filter (which is honoured under -Recurse) one pattern at a time,
         # then dedupe by FullName.
         $patterns = @(

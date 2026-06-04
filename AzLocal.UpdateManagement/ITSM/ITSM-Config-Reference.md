@@ -54,7 +54,7 @@ storage:   { ... }   # optional (raiseAfterConsecutiveOccurrences)
 
 Top-level keys are JUnit `Status` values produced by `Get-AzLocalUpdateRuns` /
 `Invoke-AzLocalFleetOperation` (e.g. `Failed`, `Error`, `HealthCheckBlocked`,
-`SideloadedBlocked`, `ScheduleBlocked`, `Skipped`, `NotReady`).
+`SideloadedBlocked`, `ExcludedByTag`, `ScheduleBlocked`, `Skipped`, `NotReady`).
 
 | Field | Type | Notes |
 |---|---|---|

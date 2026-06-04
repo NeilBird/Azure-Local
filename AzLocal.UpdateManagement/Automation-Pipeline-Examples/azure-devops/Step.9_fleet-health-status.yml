@@ -1,4 +1,4 @@
-# Step.8 - Fleet Health Status Monitoring Pipeline
+# Step.9 - Fleet Health Status Monitoring Pipeline
 # This pipeline surfaces 24-hour system health-check failures across every Azure Local
 # cluster the service connection can read - including clusters that are already
 # "up to date" with no available updates. The 24-hour health checks continue to run
@@ -75,7 +75,7 @@ parameters:
   # Set raiseItsmTicket=true to open ServiceNow incidents from each Critical /
   # Warning health-check failure published by this pipeline. Default is false
   # so existing schedules stay byte-identical until you opt in. The connector
-  # reads the JUnit file Step.7 already produces (fleet-health-status.xml) and
+  # reads the JUnit file this pipeline already produces (fleet-health-status.xml) and
   # the trigger matrix in ./.itsm/azurelocal-itsm.yml. Dedupe granularity is
   # one ticket per (cluster, failing health check) pair - FailureReason is fed
   # into the UpdateName slot of the SHA256 dedupe key.
@@ -286,7 +286,7 @@ stages:
                       (Convert-XmlEscape $caseName))
                   # per-testcase <properties> for the ITSM connector.
                   # The dedupe key is SHA256(ClusterResourceId | UpdateName | Category).
-                  # Step.7 is not about updates - so we stuff FailureReason into the
+                  # Step.9 is not about updates - so we stuff FailureReason into the
                   # UpdateName slot. That gives one ticket per (cluster, failing health
                   # check) pair, which is the intended granularity for fleet-health.
                   $clusterResId = if ($r.PSObject.Properties.Match('ClusterResourceId').Count -gt 0) { [string]$r.ClusterResourceId } else { '' }
@@ -667,6 +667,6 @@ stages:
       inputs:
         testResultsFormat: 'JUnit'
         testResultsFiles: '$(reportsPath)/itsm-results.xml'
-        testRunTitle: 'ITSM Tickets (Step.7) - $(Build.BuildNumber)'
+        testRunTitle: 'ITSM Tickets (Step.9) - $(Build.BuildNumber)'
         failTaskOnFailedTests: false
 

@@ -12,7 +12,7 @@
 # - Find clusters where Arc agent or ARB has dropped off and updates / management calls will fail
 # - Catch Disconnected physical NICs that still have a real IP (likely cable / driver / port issues -
 #   Disconnected adapters with no IP or APIPA self-assignment are intentionally excluded as noise)
-# - Triage hand-off into ITSM (wired identically to Step.7 / Step.8 - opt-in via parameter)
+# - Triage hand-off into ITSM (wired identically to Step.8 / Step.9 - opt-in via parameter)
 #
 # REPORTS GENERATED:
 # - Pipeline run summary (uploaded via ##vso[task.uploadsummary]): one section per
@@ -49,7 +49,7 @@ name: Step.4 - Fleet Connectivity Status
 trigger: none  # Manual or scheduled only
 
 schedules:
-  # Daily at 05:30 UTC - offset 30 min ahead of Step.7 (06:00) and Step.8 (07:00)
+  # Daily at 05:30 UTC - offset 30 min ahead of Step.8 (06:00) and Step.9 (07:00)
   # so the three fleet-scope read pipelines stagger their ARG calls.
   - cron: '30 5 * * *'
     displayName: 'Daily Fleet Connectivity Check'
@@ -114,7 +114,7 @@ variables:
   # named 'AzureLocal-ITSM-Secrets'. ADO does not allow mixing mapping-form
   # variables with '- group:' entries in the same block, so to enable the
   # group reference convert this entire 'variables:' block to list form (see
-  # Step.8 for the conversion recipe). When raiseItsmTicket=false the Raise
+  # Step.9 for the conversion recipe). When raiseItsmTicket=false the Raise
   # ITSM task is skipped and the secrets are not consulted.
 
 stages:
@@ -487,7 +487,7 @@ stages:
     # ----------------------------------------------------------------------
     # ITSM Connector (ServiceNow auto-raise on connectivity failures)
     # Opt-in (gated on parameters.raiseItsmTicket == true). Mirrors the
-    # Step.7 / Step.8 wiring - reads the JUnit file produced above, uses
+    # Step.8 / Step.9 wiring - reads the JUnit file produced above, uses
     # the same azurelocal-itsm.yml trigger matrix, same dedupe key.
     # ----------------------------------------------------------------------
     - task: PowerShell@2

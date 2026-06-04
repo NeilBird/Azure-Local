@@ -1274,7 +1274,7 @@ $detail  = Get-AzLocalFleetHealthFailures -View Detail  -ExportPath .\reports\fl
 $summary = Get-AzLocalFleetHealthFailures -View Summary -ExportPath .\reports\fleet-health-summary.csv -PassThru
 ```
 
-> **CI/CD**: the bundled `Step.8_fleet-health-status.yml` pipeline samples (GitHub Actions and Azure DevOps) wire this cmdlet into a daily-scheduled run that emits JUnit XML, CSV/JSON exports, and a Markdown step summary. See [Automation-Pipeline-Examples/README.md](./Automation-Pipeline-Examples/README.md).
+> **CI/CD**: the bundled `Step.9_fleet-health-status.yml` pipeline samples (GitHub Actions and Azure DevOps) wire this cmdlet into a daily-scheduled run that emits JUnit XML, CSV/JSON exports, and a Markdown step summary. See [Automation-Pipeline-Examples/README.md](./Automation-Pipeline-Examples/README.md).
 
 **Required permissions** (read-only):
 - `Microsoft.AzureStackHCI/clusters/read`

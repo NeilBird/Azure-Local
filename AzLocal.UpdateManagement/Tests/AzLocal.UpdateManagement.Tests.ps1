@@ -6223,7 +6223,7 @@ on:
 on:
   schedule:
     - cron: '0 7 * * *'
-"@ | Set-Content -Path (Join-Path $regressionDir 'github-actions\Step.8_fleet-health-status.yml') -Encoding ASCII
+"@ | Set-Content -Path (Join-Path $regressionDir 'github-actions\Step.9_fleet-health-status.yml') -Encoding ASCII
                 # Apply-updates file: ships with only commented-out cron examples,
                 # so the reader should return ZERO crons for this folder overall.
                 @"
@@ -6747,7 +6747,7 @@ Describe 'v0.7.66 Artifact download names carry a UTC timestamp suffix' {
 }
 
 Describe 'v0.7.66 Fleet Update Status summary uses status emojis and groups failures first' {
-    # Guards the v0.7.66 UX refresh of Step.7_fleet-update-status.yml summary blocks
+    # Guards the v0.7.66 UX refresh of Step.8_fleet-update-status.yml summary blocks (file was Step.7 prior to v0.7.90 renumber)
     # on both GH and ADO. The summary now uses 'red cross / green tick' emojis
     # instead of '[ok]/[fail]/...' bracket markers, and the per-cluster JUnit
     # block orders failed clusters first.
@@ -6755,12 +6755,12 @@ Describe 'v0.7.66 Fleet Update Status summary uses status emojis and groups fail
     BeforeAll {
         $script:examplesRoot = (Resolve-Path -Path (Join-Path $PSScriptRoot '..\Automation-Pipeline-Examples')).Path
         $script:fleetStatusFiles = @(
-            Join-Path $script:examplesRoot 'github-actions\Step.7_fleet-update-status.yml'
-            Join-Path $script:examplesRoot 'azure-devops\Step.7_fleet-update-status.yml'
+            Join-Path $script:examplesRoot 'github-actions\Step.8_fleet-update-status.yml'
+            Join-Path $script:examplesRoot 'azure-devops\Step.8_fleet-update-status.yml'
         )
     }
 
-    It "Both Step.7_fleet-update-status.yml files contain success and failure status emojis" {
+    It "Both Step.8_fleet-update-status.yml files contain success and failure status emojis" {
         foreach ($yml in $script:fleetStatusFiles) {
             # Must read explicitly as UTF-8; the YAML has no BOM, and PS 5.1
             # Get-Content -Raw without -Encoding defaults to Default (cp1252),
@@ -6777,7 +6777,7 @@ Describe 'v0.7.66 Fleet Update Status summary uses status emojis and groups fail
         }
     }
 
-    It "Both Step.7_fleet-update-status.yml files render a UTC timestamp in the summary heading" {
+    It "Both Step.8_fleet-update-status.yml files render a UTC timestamp in the summary heading" {
         foreach ($yml in $script:fleetStatusFiles) {
             $content = Get-Content -LiteralPath $yml -Raw
             ($content -match 'Fleet Update Status Summary\s*_\(generated \$generatedUtc\)_') | Should -BeTrue -Because "$(Split-Path -Leaf $yml) must include the generated UTC timestamp in the H2 heading"
@@ -6785,7 +6785,7 @@ Describe 'v0.7.66 Fleet Update Status summary uses status emojis and groups fail
         }
     }
 
-    It "Both Step.7_fleet-update-status.yml files bucket failed clusters ahead of passed clusters before emitting the JUnit table" {
+    It "Both Step.8_fleet-update-status.yml files bucket failed clusters ahead of passed clusters before emitting the JUnit table" {
         foreach ($yml in $script:fleetStatusFiles) {
             $content = Get-Content -LiteralPath $yml -Raw
             ($content -match '\$failedClusters')    | Should -BeTrue -Because "$(Split-Path -Leaf $yml) must build a `$failedClusters bucket"
@@ -9084,8 +9084,8 @@ Describe 'v0.7.70 Step.6 "📜 Update Run History and Error Details" JUnit + mar
     BeforeAll {
         $script:examplesRoot = (Resolve-Path -Path (Join-Path $PSScriptRoot '..\Automation-Pipeline-Examples')).Path
         $script:step6Files = @(
-            Join-Path $script:examplesRoot 'github-actions\Step.7_fleet-update-status.yml'
-            Join-Path $script:examplesRoot 'azure-devops\Step.7_fleet-update-status.yml'
+            Join-Path $script:examplesRoot 'github-actions\Step.8_fleet-update-status.yml'
+            Join-Path $script:examplesRoot 'azure-devops\Step.8_fleet-update-status.yml'
         )
     }
 
@@ -9354,8 +9354,8 @@ Describe 'Pipeline contract: Step.6 SupportStatus anchor (v0.7.70 Phase E)' {
     BeforeAll {
         $script:repoRoot = Split-Path -Path $PSScriptRoot -Parent
         $script:step6Files = @(
-            Join-Path -Path $script:repoRoot -ChildPath 'Automation-Pipeline-Examples/github-actions/Step.7_fleet-update-status.yml'
-            Join-Path -Path $script:repoRoot -ChildPath 'Automation-Pipeline-Examples/azure-devops/Step.7_fleet-update-status.yml'
+            Join-Path -Path $script:repoRoot -ChildPath 'Automation-Pipeline-Examples/github-actions/Step.8_fleet-update-status.yml'
+            Join-Path -Path $script:repoRoot -ChildPath 'Automation-Pipeline-Examples/azure-devops/Step.8_fleet-update-status.yml'
         )
     }
 

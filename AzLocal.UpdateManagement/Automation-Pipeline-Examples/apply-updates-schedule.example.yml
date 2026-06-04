@@ -59,26 +59,56 @@ cycleAnchorYear:      2026
 
 # ---- AllowedUpdateVersions (schema v2, MANDATORY top-level) -------
 # >>> ALLOWED-UPDATE-VERSIONS-V2 <<<
-# Fleet-wide allow-list of Azure Local solution-update names or
-# version strings that Step.6 (apply-updates) is permitted to install.
+# Fleet-wide allow-list of Azure Local update identifiers that Step.6
+# (apply-updates) is permitted to install.
 #
 # Default 'Latest' (case-insensitive) is a reserved sentinel meaning
 # 'no constraint - install the latest Ready update on each cluster'
 # (the historic v0.7.88 default). Leave it as 'Latest' to keep that
-# behaviour. When set, Step.6 only installs updates whose `name` OR
-# `properties.version` is an EXACT (case-insensitive) match for one of
-# the entries. If a cluster has no Ready update that matches, that
-# cluster is SKIPPED with status 'NotInAllowList' (strict no-op;
-# never falls back to 'latest').
+# behaviour. When set to an explicit list, Step.6 only installs
+# updates whose `name` OR `properties.version` is an EXACT
+# (case-insensitive) match for one of the entries. If a cluster has
+# no Ready update that matches, that cluster is SKIPPED with status
+# 'NotInAllowList' (strict no-op; never falls back to 'latest').
 #
 # Format: semicolon-separated string (same convention as 'rings:').
 #
-# Typical use - "minimum updates" policy (~4 updates per year, customer
-# ask in v0.7.89): install ONLY the YY04 + YY10 feature updates plus
-# the cumulative updates immediately preceding each feature update
-# (YY03 + YY09). With v2 schema you list those four version strings
-# here once and Step.6 ignores every other 'Ready' update. Example:
-#   allowedUpdateVersions: '10.2603.0.999;10.2604.0.123;10.2609.0.888;10.2610.0.456'
+# WHICH STRING DO I PUT IN HERE? - You can use EITHER the full update
+# `name` (recommended - this is the value the Azure portal Updates
+# blade shows in the 'Name' column) OR the bare `properties.version`
+# string. The matcher checks both columns and accepts either.
+#
+#   Microsoft Solution updates  - name:    'Solution12.2604.1003.1005'
+#                                 version: '12.2604.1003.1005'
+#   OEM SBE (Solution Builder    - name:    'SBE5.0.2603.1522'
+#     Extension) updates           version: '5.0.2603.1522'
+#
+# OEM SBE updates appear in the same Ready-update list as Microsoft
+# Solution updates and are matched by exactly the same rule - the
+# allow-list does NOT care whether the entry is a Solution or an SBE.
+# To pin BOTH the Microsoft solution AND a specific vendor SBE for a
+# given release, list both names in the same allowedUpdateVersions
+# field (example below).
+#
+# Discover valid names per-cluster via:
+#   Get-AzLocalAvailableUpdates -ClusterName <name> -PassThru |
+#     Select-Object ClusterName, UpdateName, UpdateState
+#
+# Typical use - 'minimum updates' policy (~4 updates per year,
+# customer ask in v0.7.89): install ONLY the YY04 + YY10 feature
+# updates plus the cumulative updates immediately preceding each
+# feature update (YY03 + YY09). With v2 schema you list those four
+# update names here once and Step.6 ignores every other 'Ready'
+# update. Example using real Azure Local update names:
+#   allowedUpdateVersions: 'Solution12.2603.1002.15;Solution12.2604.1003.1005;Solution12.2609.1002.XX;Solution12.2610.1003.XX'
+#
+# Mixed Solution + OEM SBE example - allow the YY04 cumulative AND a
+# specific vendor SBE that ships alongside it:
+#   allowedUpdateVersions: 'Solution12.2604.1003.1005;SBE5.0.2603.1522'
+#
+# Bare-version equivalent (no 'Solution' / 'SBE' prefix) - matches
+# via properties.version instead of name:
+#   allowedUpdateVersions: '12.2604.1003.1005;5.0.2603.1522'
 #
 # Per-row override: any schedule row below may set its own
 # `allowedUpdateVersions:` field. Per-row beats top-level; multiple
@@ -143,7 +173,11 @@ schedule:
     # explicitly opt this row out of any fleet-wide allow-list (the
     # row will install the latest Ready update regardless of the
     # top-level setting).
-    # allowedUpdateVersions: '10.2604.0.123;10.2610.0.456'
+    # allowedUpdateVersions: 'Solution12.2604.1003.1005;Solution12.2610.1003.XX'
+    #
+    # Mixed Solution + OEM SBE override (matches both the YY04
+    # cumulative AND a specific vendor SBE that ships alongside it):
+    # allowedUpdateVersions: 'Solution12.2604.1003.1005;SBE5.0.2603.1522'
 
   # Example: ALWAYS-ON canary that runs every Monday throughout the
   # whole 8-week cycle in addition to the phase-specific rows above.

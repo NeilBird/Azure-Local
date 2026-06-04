@@ -1,0 +1,307 @@
+# Step.7 - Monitor In-Flight Updates (Azure DevOps)
+# -----------------------------------------------------------
+# Reports clusters whose latest update run is currently in flight, with the
+# CURRENT STEP each cluster is on and the ELAPSED DURATION of the run. Built
+# for operators who want a 30-minute-cadence "what is happening right now"
+# view, distinct from the daily Step.8 fleet-update-status snapshot which
+# answers "is each cluster up-to-date?".
+#
+# This pipeline is REPORT-ONLY and always succeeds. Long-running runs are
+# surfaced via:
+#   - The pipeline summary tab (markdown uploaded via task.uploadsummary).
+#   - update-monitor.csv (full per-cluster rows for spreadsheet triage).
+#   - update-monitor.xml (JUnit, one <testcase> per in-flight cluster;
+#     <failure> when the elapsed duration exceeds the threshold so the Tests
+#     tab shows stuck runs in red).
+#
+# Data source: Get-AzLocalUpdateRuns -Latest (one row per cluster).
+#
+# AUTHENTICATION:
+# Uses Workload Identity Federation (OIDC) - recommended for secretless authentication.
+# See: https://learn.microsoft.com/en-us/azure/devops/pipelines/library/connect-to-azure?view=azure-devops#create-an-azure-resource-manager-service-connection-using-workload-identity-federation
+
+# BEGIN-AZLOCAL-CUSTOMIZE:schedule-triggers
+# Edits inside this block are preserved across Update-AzLocalPipelineExample
+# module upgrades. Add or modify `schedules:` blocks below.
+trigger: none  # Manual or scheduled only
+
+# Default: no schedule. Uncomment when you have an active wave and want
+# every-30-min snapshots. ADO does not support sub-hour cron in YAML
+# `schedules:` - the lowest cadence is hourly. For sub-hour cadence, use a
+# pipeline trigger from an external scheduler (e.g. an Azure Function) that
+# queues this pipeline via REST.
+# schedules:
+#   - cron: '0 */1 * * *'
+#     displayName: 'Hourly in-flight update monitor'
+#     branches:
+#       include:
+#         - main
+#     always: true
+# END-AZLOCAL-CUSTOMIZE:schedule-triggers
+
+parameters:
+  - name: scope
+    displayName: 'Scope of clusters to monitor'
+    type: string
+    default: 'all'
+    values:
+      - 'all'
+      - 'by-update-ring'
+
+  - name: updateRing
+    # accepts single ring, 'Prod;Ring2' list, or '***' wildcard (three stars - deliberate).
+    displayName: "UpdateRing tag value (only used when scope=by-update-ring). Single, 'Prod;Ring2', or '***'."
+    type: string
+    default: 'Wave1'
+
+  - name: longRunningThresholdHours
+    displayName: 'Flag in-flight runs whose elapsed duration exceeds this many hours.'
+    type: string
+    default: '6'
+
+  - name: moduleVersion
+    displayName: 'Pin AzLocal.UpdateManagement version (empty = latest from PSGallery). See Automation-Pipeline-Examples/README.md section 5 "Optional configuration".'
+    type: string
+    default: ''
+
+variables:
+  GENERATED_AGAINST_MODULE_VERSION: '0.7.90'
+  REQUIRED_MODULE_VERSION: '${{ parameters.moduleVersion }}'
+  reportsPath: '$(Build.ArtifactStagingDirectory)/reports'
+
+stages:
+- stage: MonitorInFlight
+  displayName: 'Monitor In-Flight Update Runs'
+  jobs:
+  - job: Monitor
+    displayName: 'Snapshot in-flight update runs'
+    pool:
+      vmImage: 'windows-latest'
+
+    steps:
+    - checkout: self
+      displayName: 'Checkout repository'
+
+    - task: PowerShell@2
+      displayName: 'Install AzLocal.UpdateManagement from PSGallery'
+      env:
+        REQUIRED_MODULE_VERSION: $(REQUIRED_MODULE_VERSION)
+        GENERATED_AGAINST_MODULE_VERSION: $(GENERATED_AGAINST_MODULE_VERSION)
+      inputs:
+        targetType: 'inline'
+        pwsh: true
+        script: |
+          $ErrorActionPreference = 'Stop'
+          $installArgs = @{ Name = 'AzLocal.UpdateManagement'; Scope = 'CurrentUser'; Force = $true; AllowClobber = $true }
+          if ($env:REQUIRED_MODULE_VERSION) {
+              $installArgs.RequiredVersion = $env:REQUIRED_MODULE_VERSION
+              Write-Host "REQUIRED_MODULE_VERSION is set - pinning install to v$($env:REQUIRED_MODULE_VERSION)."
+          } else {
+              Write-Host "REQUIRED_MODULE_VERSION is empty - installing the latest version from PSGallery (default fix-forward behaviour)."
+          }
+          Install-Module @installArgs
+          Import-Module AzLocal.UpdateManagement -Force
+          $installed = (Get-Module AzLocal.UpdateManagement | Sort-Object Version -Descending | Select-Object -First 1).Version
+          $generated = [version]$env:GENERATED_AGAINST_MODULE_VERSION
+          $latest    = (Find-Module -Name AzLocal.UpdateManagement -Repository PSGallery -ErrorAction SilentlyContinue).Version
+          Write-Host ""
+          Write-Host "Module version summary"
+          Write-Host "  Installed on agent        : $installed"
+          Write-Host "  YAML generated against    : $generated"
+          Write-Host "  Latest on PSGallery       : $(if ($latest) { $latest } else { '(lookup failed - check network)' })"
+          Write-Host ""
+          Get-Module AzLocal.UpdateManagement | Format-List Name, Version, Path
+          if ($installed -lt $generated) {
+              Write-Host "##vso[task.logissue type=warning]AzLocal.UpdateManagement v$installed is OLDER than the version this pipeline YAML was generated against (v$generated). Cmdlets, parameters, or output schemas referenced by this YAML may not exist in v$installed. Set REQUIRED_MODULE_VERSION to v$generated, or refresh the YAML to match the installed module via 'Copy-AzLocalPipelineExample -Platform AzureDevOps -Update'."
+          }
+          if ($installed -gt $generated) {
+              $msg = "Pipeline YAML was generated against AzLocal.UpdateManagement v$generated but the agent installed v$installed. Pipeline steps may have been improved in later releases - to refresh, re-run 'Copy-AzLocalPipelineExample -Destination .\pipelines -Platform AzureDevOps -Update' (you will be prompted per file; add -Confirm:`$false to bypass). Pipeline YAMLs are under git so 'git diff' shows exactly what changed before commit."
+              Write-Host "##vso[task.logissue type=warning]$msg"
+          }
+          if ($latest -and ($latest -gt $installed)) {
+              $msg = "AzLocal.UpdateManagement v$latest is available on PSGallery; this run installed v$installed. Review the module CHANGELOG before bumping REQUIRED_MODULE_VERSION (or clear the pin to install the latest automatically)."
+              Write-Host "##vso[task.logissue type=warning]$msg"
+          }
+
+    - task: AzureCLI@2
+      name: snapshot
+      displayName: 'Snapshot in-flight update runs'
+      inputs:
+        # Replace with your service connection name
+        azureSubscription: 'AzureLocal-ServiceConnection'
+        scriptType: 'pscore'
+        scriptLocation: 'inlineScript'
+        inlineScript: |
+          az extension add --name resource-graph --yes
+          Import-Module AzLocal.UpdateManagement -Force
+
+          $scope = "${{ parameters.scope }}"
+          $updateRing = "${{ parameters.updateRing }}"
+          $thresholdHoursRaw = "${{ parameters.longRunningThresholdHours }}"
+          $thresholdHours = 6
+          if ($thresholdHoursRaw) {
+              [int]$parsed = 0
+              if ([int]::TryParse($thresholdHoursRaw, [ref]$parsed) -and $parsed -gt 0) { $thresholdHours = $parsed }
+          }
+          $thresholdSpan = [TimeSpan]::FromHours($thresholdHours)
+          Write-Host "Long-running threshold: $thresholdHours hour(s)"
+
+          $outputDir = "$(reportsPath)"
+          New-Item -ItemType Directory -Path $outputDir -Force | Out-Null
+          $monitorCsv = Join-Path $outputDir 'update-monitor.csv'
+          $monitorXml = Join-Path $outputDir 'update-monitor.xml'
+          $monitorMd  = Join-Path $outputDir 'update-monitor.md'
+
+          $runs = @()
+          if ($scope -eq 'by-update-ring' -and $updateRing) {
+              Write-Host "Scope: UpdateRing = $updateRing"
+              $runs = @(Get-AzLocalUpdateRuns -ScopeByUpdateRingTag -UpdateRingValue $updateRing -Latest)
+          } else {
+              Write-Host "Scope: all clusters (via inventory)"
+              $inventory = Get-AzLocalClusterInventory -PassThru
+              if (-not $inventory -or $inventory.Count -eq 0) {
+                  Write-Warning 'No clusters found in inventory.'
+                  Write-Host "##vso[task.setvariable variable=inFlight;isOutput=true]0"
+                  Write-Host "##vso[task.setvariable variable=longRunning;isOutput=true]0"
+                  '' | Set-Content -Path $monitorCsv -Encoding utf8
+                  exit 0
+              }
+              $resourceIds = @($inventory | Select-Object -ExpandProperty ResourceId)
+              $runs = @(Get-AzLocalUpdateRuns -ClusterResourceIds $resourceIds -Latest)
+          }
+
+          $now = (Get-Date).ToUniversalTime()
+          $rows = foreach ($r in $runs) {
+              $startDt = $null
+              if ($r.StartTime) {
+                  [datetime]$tmp = [datetime]::MinValue
+                  if ([datetime]::TryParse([string]$r.StartTime, [ref]$tmp)) {
+                      $startDt = [datetime]::SpecifyKind($tmp, [DateTimeKind]::Utc)
+                  }
+              }
+              $elapsed = if ($startDt) { $now - $startDt } else { $null }
+              $elapsedDisplay = if ($elapsed) {
+                  if ($elapsed.TotalDays -ge 1) { ('{0}d {1}h {2}m' -f [int]$elapsed.TotalDays, $elapsed.Hours, $elapsed.Minutes) }
+                  elseif ($elapsed.TotalHours -ge 1) { ('{0}h {1}m' -f [int]$elapsed.TotalHours, $elapsed.Minutes) }
+                  else { ('{0}m' -f [int]$elapsed.TotalMinutes) }
+              } else { '' }
+              $exceeds = if ($elapsed -and ($r.State -eq 'InProgress')) { $elapsed -gt $thresholdSpan } else { $false }
+              [PSCustomObject]@{
+                  ClusterName       = $r.ClusterName
+                  UpdateName        = $r.UpdateName
+                  State             = $r.State
+                  CurrentStep       = $r.CurrentStep
+                  Progress          = $r.Progress
+                  StartTimeUtc      = if ($startDt) { $startDt.ToString('yyyy-MM-dd HH:mm') } else { '' }
+                  ElapsedDisplay    = $elapsedDisplay
+                  ElapsedHours      = if ($elapsed) { [math]::Round($elapsed.TotalHours, 2) } else { '' }
+                  ExceedsThreshold  = $exceeds
+                  ThresholdHours    = $thresholdHours
+                  RunId             = $r.RunId
+                  Duration          = $r.Duration
+                  CurrentStepDetail = $r.CurrentStepDetail
+              }
+          }
+
+          $inFlight = @($rows | Where-Object { $_.State -eq 'InProgress' })
+          $longRunning = @($inFlight | Where-Object { $_.ExceedsThreshold })
+
+          if ($rows -and $rows.Count -gt 0) {
+              $rows | Sort-Object @{Expression='ExceedsThreshold';Descending=$true}, @{Expression='ElapsedHours';Descending=$true}, ClusterName | Export-Csv -Path $monitorCsv -NoTypeInformation -Encoding utf8
+          } else {
+              '' | Set-Content -Path $monitorCsv -Encoding utf8
+          }
+
+          $xmlLines = New-Object 'System.Collections.Generic.List[string]'
+          $xmlLines.Add('<?xml version="1.0" encoding="UTF-8"?>')
+          $xmlLines.Add('<testsuites>')
+          $tests = $inFlight.Count
+          $failures = $longRunning.Count
+          $xmlLines.Add(('  <testsuite name="In-Flight Update Runs" tests="{0}" failures="{1}">' -f $tests, $failures))
+          foreach ($r in ($inFlight | Sort-Object @{Expression='ElapsedHours';Descending=$true})) {
+              $safeName = ($r.ClusterName -replace '[^A-Za-z0-9_.-]', '_')
+              $caseName = "$safeName - $($r.UpdateName) - $($r.CurrentStep)"
+              $caseNameXml = [System.Security.SecurityElement]::Escape($caseName)
+              if ($r.ExceedsThreshold) {
+                  $msg = ('Elapsed {0} exceeds threshold of {1}h. CurrentStep: {2}. Progress: {3}.' -f $r.ElapsedDisplay, $r.ThresholdHours, $r.CurrentStep, $r.Progress)
+                  $msgXml = [System.Security.SecurityElement]::Escape($msg)
+                  $xmlLines.Add(('    <testcase name="{0}" classname="UpdateMonitor">' -f $caseNameXml))
+                  $xmlLines.Add(('      <failure message="{0}" type="LongRunning">{0}</failure>' -f $msgXml))
+                  $xmlLines.Add('    </testcase>')
+              } else {
+                  $xmlLines.Add(('    <testcase name="{0}" classname="UpdateMonitor"/>' -f $caseNameXml))
+              }
+          }
+          $xmlLines.Add('  </testsuite>')
+          $xmlLines.Add('</testsuites>')
+          ($xmlLines -join [Environment]::NewLine) | Set-Content -Path $monitorXml -Encoding utf8
+
+          Write-Host "##vso[task.setvariable variable=inFlight;isOutput=true]$($inFlight.Count)"
+          Write-Host "##vso[task.setvariable variable=longRunning;isOutput=true]$($longRunning.Count)"
+
+          # Markdown summary (uploaded via task.uploadsummary below)
+          $md = New-Object 'System.Collections.Generic.List[string]'
+          $md.Add('## In-Flight Update Monitor')
+          $md.Add('')
+          $scopeLabel = if ($scope -eq 'by-update-ring' -and $updateRing) { "by-update-ring (UpdateRing = $updateRing)" } else { 'all clusters' }
+          $md.Add("**Scope**: $scopeLabel - **Threshold**: ${thresholdHours}h - **Snapshot (UTC)**: $($now.ToString('yyyy-MM-dd HH:mm'))")
+          $md.Add('')
+          $md.Add('| Metric | Count |')
+          $md.Add('|--------|-------|')
+          $md.Add("| Clusters scoped | $($rows.Count) |")
+          $md.Add("| Update runs in flight | $($inFlight.Count) |")
+          $md.Add("| Exceeding ${thresholdHours}h threshold | $($longRunning.Count) |")
+          $md.Add('')
+          if ($inFlight.Count -gt 0) {
+              $md.Add('### In-flight runs (sorted by elapsed, longest first)')
+              $md.Add('')
+              $md.Add('| Cluster | Update | State | Current Step | Progress | Started (UTC) | Elapsed | Threshold |')
+              $md.Add('|---------|--------|-------|--------------|----------|---------------|---------|-----------|')
+              foreach ($r in ($inFlight | Sort-Object @{Expression='ElapsedHours';Descending=$true})) {
+                  $cs = if ($r.CurrentStep) { $r.CurrentStep } else { '-' }
+                  $pg = if ($r.Progress) { $r.Progress } else { '-' }
+                  $flag = if ($r.ExceedsThreshold) { ":warning: >${thresholdHours}h" } else { 'within' }
+                  $md.Add("| $($r.ClusterName) | $($r.UpdateName) | $($r.State) | $cs | $pg | $($r.StartTimeUtc) | $($r.ElapsedDisplay) | $flag |")
+              }
+              $md.Add('')
+              if ($longRunning.Count -gt 0) {
+                  $md.Add("> **Action**: $($longRunning.Count) in-flight run(s) exceed the ${thresholdHours}h threshold. Investigate the Current Step shown above; consult the Azure Local Update Manager portal for the affected cluster(s). The Tests tab shows the same long-running rows as JUnit failures.")
+              } else {
+                  $md.Add("> **All in-flight runs are within the ${thresholdHours}h threshold.**")
+              }
+          } else {
+              $md.Add('### No update runs currently in flight')
+              $md.Add('')
+              $md.Add("No clusters in scope have a latest run in state ``InProgress``. To verify scope, see the artifact CSV (\`update-monitor.csv\`).")
+          }
+          $md.Add('')
+          $md.Add('_Source data: `Get-AzLocalUpdateRuns -Latest`. JUnit emitted as `update-monitor.xml`; full per-cluster rows in `update-monitor.csv`._')
+          ($md -join [Environment]::NewLine) | Set-Content -Path $monitorMd -Encoding utf8
+          Write-Host "##vso[task.uploadsummary]$monitorMd"
+
+    # compute a UTC timestamp variable so every downloadable artifact name is unique per run.
+    - pwsh: |
+        $stamp = (Get-Date).ToUniversalTime().ToString('yyyyMMdd_HHmmss')
+        Write-Host "##vso[task.setvariable variable=artifactStamp;isOutput=true]$stamp"
+        Write-Host "Artifact timestamp: $stamp"
+      displayName: 'Compute Artifact Timestamp'
+      condition: always()
+      name: stamp
+
+    - task: PublishBuildArtifacts@1
+      displayName: 'Publish in-flight monitor reports'
+      condition: always()
+      inputs:
+        PathtoPublish: '$(reportsPath)'
+        ArtifactName: 'azlocal-update-monitor_$(stamp.artifactStamp)'
+        publishLocation: 'Container'
+
+    - task: PublishTestResults@2
+      displayName: 'Publish in-flight monitor JUnit'
+      condition: always()
+      inputs:
+        testResultsFormat: 'JUnit'
+        testResultsFiles: '$(reportsPath)/update-monitor.xml'
+        testRunTitle: 'In-Flight Update Monitor'
+        mergeTestResults: false
+        failTaskOnFailedTests: false

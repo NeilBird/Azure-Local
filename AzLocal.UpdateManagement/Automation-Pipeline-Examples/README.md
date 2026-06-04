@@ -59,8 +59,9 @@ By the end of this guide you will have:
   - **Fleet Connectivity Status** (Step.4, v0.7.79+, enhanced in v0.7.85) - read-only daily snapshot of Arc agent connectivity, physical NIC health, Azure Resource Bridge status, and the node-count reconciliation between cluster `reportedProperties.nodes` and Arc-tagged physical machines. *Scheduled daily 05:30 UTC + manual.*
   - **Assess Update Readiness** (Step.5) - pre-flight, report-only readiness + blocking-health snapshot, published as JUnit XML. *Manual only.*
   - **Apply Updates** (Step.6) - apply updates to a single `UpdateRing` wave at a time, with WhatIf / dry-run support. *Manual only by default - **you must add a schedule** that lines up with your cluster `UpdateStartWindow` tags, see [Appendix A.6](docs/appendix-pipelines.md#a6-apply-updates) and [section 8](#8-scheduling-maintenance-windows-and-change-freeze-periods).*
-  - **Fleet Update Status** (Step.7) - scheduled daily snapshot of fleet update state, surfaced in the Tests tab. *Scheduled daily 06:00 UTC + manual.*
-  - **Fleet Health Status** (Step.8, v0.7.65) - scheduled daily snapshot of 24-hour system health-check failures, surfaced in the Tests tab. *Scheduled daily 07:00 UTC + manual.*
+  - **Monitor In-Flight Updates** (Step.7, v0.7.90) - operational every-30-min snapshot during an active wave: lists each cluster whose latest update run is `InProgress`, with current step, progress (`completed/total steps`), and elapsed duration; flags long-running runs (default >6h) as JUnit failures in the Checks tab. *Manual + optional schedule.*
+  - **Fleet Update Status** (Step.8, formerly Step.7) - scheduled daily snapshot of fleet update state, surfaced in the Tests tab. *Scheduled daily 06:00 UTC + manual.*
+  - **Fleet Health Status** (Step.9, formerly Step.8) - scheduled daily snapshot of 24-hour system health-check failures, surfaced in the Tests tab. *Scheduled daily 07:00 UTC + manual.*
 - An end-to-end "ring-based" rollout pattern: Pilot -> Wave2 -> Production, with each ring gated on the previous wave's success.
 - **Optional**: a ServiceNow integration that opens deduped incidents for clusters whose run status indicates the module's own retries cannot recover (failures, blocking health checks, sideloaded payload missing) - see [section 7](#7-optional-open-itsm-tickets-for-clusters-needing-operator-action).
 
@@ -68,7 +69,7 @@ The pipelines are **fully opt-in additive layers** over the module. The PowerShe
 
 ### 1.1 Why the pipelines are named `Step.N - <description>`
 
-The nine YAMLs ship with a `Step.N_` filename prefix **and** a matching `Step.N - <description>` value in each workflow's `name:` field (GitHub Actions) / header title (Azure DevOps):
+The ten YAMLs ship with a `Step.N_` filename prefix **and** a matching `Step.N - <description>` value in each workflow's `name:` field (GitHub Actions) / header title (Azure DevOps):
 
 | Step | File / Workflow name |
 |---:|---|
@@ -79,10 +80,11 @@ The nine YAMLs ship with a `Step.N_` filename prefix **and** a matching `Step.N 
 | 4 | Step.4 - Fleet Connectivity Status |
 | 5 | Step.5 - Assess Update Readiness |
 | 6 | Step.6 - Apply Updates |
-| 7 | Step.7 - Fleet Update Status |
-| 8 | Step.8 - Fleet Health Status |
+| 7 | Step.7 - Monitor In-Flight Updates (v0.7.90) |
+| 8 | Step.8 - Fleet Update Status |
+| 9 | Step.9 - Fleet Health Status |
 
-- **GitHub Actions**: the Actions sidebar sorts workflows alphabetically by the `name:` field inside the YAML. Because every `name:` starts with `Step.N - `, the sidebar lists the nine workflows in execution order (Step.0 first, Step.8 last) instead of the cosmetically confusing alphabetical scatter (`Apply Updates`, `Apply-Updates Schedule Coverage Audit`, `Assess Update Readiness`, ...).
+- **GitHub Actions**: the Actions sidebar sorts workflows alphabetically by the `name:` field inside the YAML. Because every `name:` starts with `Step.N - `, the sidebar lists the ten workflows in execution order (Step.0 first, Step.9 last) instead of the cosmetically confusing alphabetical scatter (`Apply Updates`, `Apply-Updates Schedule Coverage Audit`, `Assess Update Readiness`, ...).
 - **Azure DevOps**: the Pipelines list sorts by the pipeline **definition name** chosen at *import time* (not by the YAML filename and not by any top-level `name:` field - the `name:` field in an ADO YAML controls the per-run *build number*, not the pipeline display name). When you import each YAML, the import wizard prefills the suggested pipeline name from the YAML's leading title comment; the YAMLs in this repo open with `# Step.N - <description>`, so the suggested name is already correct. **Accept the suggested name** (or paste `Step.N - <description>` yourself), and the Pipelines list will sort in execution order. You can rename a pipeline later via *Pipeline -> Edit -> Settings -> Name*.
 
 If you prefer a different naming scheme (e.g. `00 - Auth`, `01 - Inventory`, ...), just change the `name:` field in each GH Actions YAML and / or pick a different prefix at ADO import time. Nothing else in the module depends on these display names.
@@ -954,7 +956,7 @@ Both platforms expect the YAML files inside this folder to land in a platform-sp
    | `Error: Could not fetch access token for Azure` (no AADSTS code) | The workflow lacks `permissions: id-token: write` or the secrets are missing/misspelt. | Confirm the `permissions:` block is present and run `gh secret list --repo $repo` shows all three `AZURE_*` secrets. |
    | Environment-scoped run hangs in **Waiting for review** | The environment has required-reviewers protection (good!) and is waiting for you to approve. | Approve in the **Actions** tab, or remove required reviewers from the validation run via the environment settings. |
 
-   Once the run is green, leave `Step.0_authentication-test.yml` in place and schedule yourself to re-run it monthly (or whenever you change RBAC / federated credentials / subscription assignments). If you used the `Copy-AzLocalPipelineExample` shortcut, the other eight workflows are already on the default branch - skip to step 4 to run them. Otherwise, proceed to step 2 to copy the remaining workflow files.
+   Once the run is green, leave `Step.0_authentication-test.yml` in place and schedule yourself to re-run it monthly (or whenever you change RBAC / federated credentials / subscription assignments). If you used the `Copy-AzLocalPipelineExample` shortcut, the other nine workflows are already on the default branch - skip to step 4 to run them. Otherwise, proceed to step 2 to copy the remaining workflow files.
 
 2. Copy every file from [`github-actions/`](./github-actions/) into `.github/workflows/` in your repo:
     ```text
@@ -966,11 +968,12 @@ Both platforms expect the YAML files inside this folder to land in a platform-sp
         Step.4_fleet-connectivity-status.yml
         Step.5_assess-update-readiness.yml
         Step.6_apply-updates.yml
-        Step.7_fleet-update-status.yml
-        Step.8_fleet-health-status.yml
+        Step.7_monitor-updates.yml
+        Step.8_fleet-update-status.yml
+        Step.9_fleet-health-status.yml
     ```
 3. Commit and push. The workflows appear in the **Actions** tab.
-4. Each workflow exposes its inputs via the **Run workflow** button (workflow_dispatch). The scheduled triggers (e.g. `Step.4_fleet-connectivity-status.yml` runs daily at 05:30 UTC, `Step.7_fleet-update-status.yml` runs daily at 06:00 UTC, `Step.8_fleet-health-status.yml` runs daily at 07:00 UTC, `Step.3_apply-updates-schedule-audit.yml` runs weekly on Mondays at 05:00 UTC) activate automatically once the file is on the default branch.
+4. Each workflow exposes its inputs via the **Run workflow** button (workflow_dispatch). The scheduled triggers (e.g. `Step.4_fleet-connectivity-status.yml` runs daily at 05:30 UTC, `Step.8_fleet-update-status.yml` runs daily at 06:00 UTC, `Step.9_fleet-health-status.yml` runs daily at 07:00 UTC, `Step.3_apply-updates-schedule-audit.yml` runs weekly on Mondays at 05:00 UTC) activate automatically once the file is on the default branch. `Step.7_monitor-updates.yml` (new in v0.7.90) ships **without** an active schedule - uncomment its `'*/30 * * * *'` cron only when you have a wave in flight.
 
 ### 5.2 Azure DevOps
 
@@ -1039,7 +1042,7 @@ If your change-control process requires you to pin the module version (so a rele
 gh variable set REQUIRED_MODULE_VERSION --body '0.7.60' --repo <owner>/<repo>
 
 # Override for a single manual run, leaving the estate-wide pin untouched:
-gh workflow run Step.7_fleet-update-status.yml -f module_version=0.7.60
+gh workflow run Step.8_fleet-update-status.yml -f module_version=0.7.60
 
 # Clear the estate-wide pin to return to latest:
 gh variable delete REQUIRED_MODULE_VERSION --repo <owner>/<repo>
@@ -1126,9 +1129,15 @@ This is the canonical "nothing wired -> staged rollout working" sequence. Follow
 |       - "Are Arc agents Connected, NICs healthy, Resource Bridges      |
 |          reachable, and does the cluster's node count reconcile        |
 |          with Arc-tagged physical machines?"                           |
-|  6.6  Step.7_fleet-update-status.yml  (scheduled, daily 06:00 UTC)            |
+|  6.6  Step.7_monitor-updates.yml  (manual, optional cron every 30 min)        |
+|       - v0.7.90                                                        |
+|       - "What is happening right now? Which clusters are mid-update,   |
+|          which step are they on, and is anything stuck?" In-flight     |
+|          monitor; flags runs over a configurable threshold (default    |
+|          6h) as JUnit failures.                                        |
+|  6.6  Step.8_fleet-update-status.yml  (scheduled, daily 06:00 UTC)            |
 |       - "Is each cluster up-to-date?"                                  |
-|  6.6  Step.8_fleet-health-status.yml  (scheduled, daily 07:00 UTC) - v0.7.65  |
+|  6.6  Step.9_fleet-health-status.yml  (scheduled, daily 07:00 UTC) - v0.7.65  |
 |       - "Do clusters have actionable health issues even when           |
 |          up-to-date?" Surfaces 24-hour system health-check failures.   |
 |  6.7  Step.3_apply-updates-schedule-audit.yml  (scheduled, weekly Mon 05:00   |
@@ -1195,7 +1204,7 @@ Every pipeline emits one or more artifacts (CSV / Markdown / JUnit XML / HTML). 
                   |                        |                              |                          |
                   v                        v                              v                          v
    +-------------------------+ +---------------------------+ +-------------------------------+ +---------------------------+
-   | Step.7_fleet-update-status.yml | | Step.8_fleet-health-status.yml   | | apply-updates-schedule-audit  | | (Optional) ITSM forwarder |
+   | Step.8_fleet-update-status.yml | | Step.9_fleet-health-status.yml   | | apply-updates-schedule-audit  | | (Optional) ITSM forwarder |
    | daily 06:00 UTC         | | daily 07:00 UTC           | | .yml                          | | (section 7)               |
    | out: fleet-update-      | | out: fleet-health-        | | weekly Mon 05:00 UTC          | | consumes:                 |
    |      status.csv         | |      failures.csv         | | in:  Step.6_apply-updates.yml        | |  - apply-updates-         |
@@ -1334,10 +1343,11 @@ The "steady-state" phase ships **three complementary pipelines**, all read-only,
 | Pipeline | Daily | Answers | Output |
 |----------|-------|---------|--------|
 | `Step.4_fleet-connectivity-status.yml` *(v0.7.79+, enhanced in v0.7.85)* | 05:30 UTC | *"Are all clusters' Arc agents Connected? Are physical NICs healthy? Are Azure Resource Bridges reachable? Does the cluster's reported node count match the Arc-tagged physical machines we see?"* | JUnit + per-scope CSV/JSON + Markdown summary; one test case per cluster, with reconciliation rows that include "How to interpret + act" remediation guidance for any non-zero node-coverage delta |
-| `Step.7_fleet-update-status.yml` | 06:00 UTC | *"Is each cluster up-to-date? Which ones need an apply, which ones are SBE-blocked, which ones failed?"* | JUnit + CSV/JSON + Markdown summary; one test case per cluster |
-| `Step.8_fleet-health-status.yml` *(v0.7.65)* | 07:00 UTC | *"Do clusters have actionable health issues even when up-to-date? What failure reasons hit the most clusters?"* | JUnit + CSV/JSON + Markdown summary; one test case per (cluster, failing 24-hour health check) grouped under Critical / Warning testsuites |
+| `Step.7_monitor-updates.yml` *(v0.7.90)* | Manual / every 30 min (opt-in cron) | *"What is happening right now? Which clusters are mid-update, which step are they on, and is anything stuck?"* | JUnit + CSV + Markdown summary; one test case per in-flight cluster (failure when elapsed > threshold, default 6h) |
+| `Step.8_fleet-update-status.yml` *(formerly Step.7)* | 06:00 UTC | *"Is each cluster up-to-date? Which ones need an apply, which ones are SBE-blocked, which ones failed?"* | JUnit + CSV/JSON + Markdown summary; one test case per cluster |
+| `Step.9_fleet-health-status.yml` *(v0.7.65, formerly Step.8)* | 07:00 UTC | *"Do clusters have actionable health issues even when up-to-date? What failure reasons hit the most clusters?"* | JUnit + CSV/JSON + Markdown summary; one test case per (cluster, failing 24-hour health check) grouped under Critical / Warning testsuites |
 
-The three run in distinct (offset) cron slots so they don't contend for the same agent.
+The four run in distinct (offset) cron slots so they don't contend for the same agent. `Step.7_monitor-updates.yml` ships **without** an active schedule - turn the `'*/30 * * * *'` cron on only during an active wave.
 
 **Fleet Connectivity Status** *(introduced in v0.7.79, enhanced in v0.7.85)* runs daily at 05:30 UTC and answers the upstream question every other steady-state pipeline depends on: *"can the pipeline identity actually see every cluster, every physical node, and every Resource Bridge it is supposed to manage?"* The Step.4 reconciliation table compares each cluster's `reportedProperties.nodes` count against the Arc-tagged physical machines visible in Resource Graph and flags both directions of drift (positive = Arc has more machines than the cluster reports; negative = cluster reports more nodes than Arc can see). The v0.7.85 *"How to interpret + act on a non-zero reconciliation"* subsection in the pipeline summary gives operators per-direction remediation lists and an inline Resource Graph query template for triage. RBAC: `Reader` plus `Microsoft.ResourceGraph/resources/read`, `Microsoft.AzureStackHCI/edgeDevices/read`, `Microsoft.HybridCompute/machines/read`, and `Microsoft.ResourceConnector/appliances/read` - all already in the **`Azure Stack HCI Update Operator`** custom role definition shipped in [section 4.1](#41-custom-role-azure-stack-hci-update-operator).
 
@@ -1618,7 +1628,7 @@ The `apply-updates-schedule.yml` schema v2 adds an `allowedUpdateVersions:` fiel
 
 - **Top-level field is mandatory on schema v2.** Its value is either:
   - The reserved sentinel `'Latest'` (case-insensitive) - meaning "no constraint, install the latest Ready update on each cluster" (the historic v0.7.88 / v1 default). This is what the generator and the schema migrator emit by default.
-  - A semicolon-separated list of explicit update names / version strings, e.g. `'10.2604.0.123;10.2610.0.456'` - clusters only install updates whose name / version matches one of those tokens.
+  - A semicolon-separated list of explicit update identifiers, e.g. `'Solution12.2604.1003.1005;Solution12.2610.1003.XX'` - clusters only install updates whose `name` OR `properties.version` matches one of those tokens (exact, case-insensitive). See [8.4.3](#843-finding-valid-update-names--version-strings) for what to put in this field for Microsoft Solution updates vs OEM SBE (Solution Builder Extension) updates.
 - **Per-row override is optional.** Any row in `schedule:` can carry its own `allowedUpdateVersions:` with either `'Latest'` (explicit opt-out from a fleet-wide allow-list) or its own semicolon-separated list. Per-row values **take precedence over the top-level** for any ring matched by that row.
 - **Mixing `Latest` with explicit values inside a single field is rejected** (e.g. `'Latest;10.2604.0.123'` fails validation). Either you constrain or you don't.
 - **Cross-row UNION semantics.** If two rows match the same `(week, day, ring)` and one row contributes `Latest` while another contributes explicit versions, **`Latest` wins** (the resolved allow-list becomes "no constraint"). This is intentional: an explicit `Latest` on any matching row is the operator saying "I am OK with whatever is Ready on this cluster".
@@ -1654,7 +1664,7 @@ schedule:
     # Per-row override: Production is restricted to the YY04 / YY10
     # feature drops. Cumulative updates are installed on Canary / Ring1
     # earlier in the cycle, but Production waits for the feature build.
-    allowedUpdateVersions: '10.2604.0.123;10.2610.0.456'
+    allowedUpdateVersions: 'Solution12.2604.1003.1005;Solution12.2610.1003.XX'
     notes:        'Production - feature updates only'
 ```
 
@@ -1662,20 +1672,40 @@ What this does:
 
 - `Start-AzLocalClusterUpdate` resolves the current ring via `Resolve-AzLocalCurrentUpdateRing`, which now also returns the effective `AllowedUpdateVersions` for that ring.
 - For Canary / Ring1 clusters: effective allow-list = `Latest`, so the picker installs whatever is Ready.
-- For Production clusters: effective allow-list = `10.2604.0.123;10.2610.0.456`, so the picker only installs updates whose name / version matches one of those two tokens. If neither is Ready, the run is a no-op (logged and skipped, not failed).
+- For Production clusters: effective allow-list = `Solution12.2604.1003.1005;Solution12.2610.1003.XX`, so the picker only installs updates whose `name` or `properties.version` matches one of those two tokens. If neither is Ready, the run is a no-op (logged and skipped with status `NotInAllowList`, not failed).
 
 You can also pass `-AllowedUpdateVersions Latest` (or any explicit list) directly to `Start-AzLocalClusterUpdate` for ad-hoc invocations; that takes precedence over the schedule file.
 
 #### 8.4.3 Finding valid update names / version strings
 
-Two ways:
+The allow-list matcher accepts EITHER the full update `name` (recommended - this is the value the Azure portal shows in the Updates blade `Name` column) OR the bare `properties.version` string. The matcher checks both columns per Ready update and accepts an exact, case-insensitive hit on either one. Both Microsoft Solution updates AND OEM SBE updates appear in the same Ready list and are matched by exactly the same rule - the allow-list does NOT care which kind of update the entry is.
 
-```powershell
-# Programmatic (recommended for pipelines and scripts):
-Get-AzLocalUpdate -Status Ready | Select-Object -Property ClusterName, Name, Version
+| Update type | Example `name` (recommended) | Equivalent `version` |
+|---|---|---|
+| Microsoft Solution update (cumulative / feature) | `Solution12.2604.1003.1005` | `12.2604.1003.1005` |
+| OEM SBE (Solution Builder Extension) update | `SBE5.0.2603.1522` | `5.0.2603.1522` |
+
+To pin both the Microsoft Solution AND a specific vendor SBE for a release, list both names in the same `allowedUpdateVersions:` field:
+
+```yaml
+allowedUpdateVersions: 'Solution12.2604.1003.1005;SBE5.0.2603.1522'
 ```
 
-Or in the **Azure portal**: **Azure Local** -> **\<cluster\>** -> **Updates** -> the **Name** column on each Ready update row is what you put in `allowedUpdateVersions:`. The cmdlet matches either Name or Version (case-insensitive, exact), so either works - we recommend pinning by Name (e.g. `'10.2604.0.123'`).
+Discover the valid names for your fleet two ways:
+
+```powershell
+# Programmatic - per cluster, ARM-direct (works for any single cluster):
+Get-AzLocalAvailableUpdates -ClusterName <cluster> -PassThru |
+    Select-Object ClusterName, UpdateName, UpdateState
+
+# Fleet-scale (ARG-first, all clusters in one query - v0.7.68+):
+Get-AzLocalAvailableUpdates -PassThru |
+    Where-Object { $_.UpdateState -eq 'Ready' } |
+    Sort-Object ClusterName, UpdateName |
+    Format-Table ClusterName, UpdateName, UpdateState
+```
+
+Or in the **Azure portal**: **Azure Local** -> **\<cluster\>** -> **Updates** -> the **Name** column on each Ready update row is what you put in `allowedUpdateVersions:`. We recommend pinning by Name (`Solution12.2604.1003.1005` / `SBE5.0.2603.1522`) - the prefix makes it visually obvious whether an entry pins a Microsoft Solution or an OEM SBE.
 
 #### 8.4.4 Migrating an existing v1 schedule
 
@@ -1820,8 +1850,9 @@ Automation-Pipeline-Examples/
     Step.4_fleet-connectivity-status.yml     # 4. Daily fleet connectivity / Arc / NIC / Resource Bridge snapshot + node-coverage reconciliation (daily 05:30 UTC, v0.7.79+; reconciliation enhanced in v0.7.85).
     Step.5_assess-update-readiness.yml       # 5. Pre-flight readiness report (manual; v0.7.0).
     Step.6_apply-updates.yml                 # 6. Apply updates to one UpdateRing (with optional ITSM step, v0.7.4).
-    Step.7_fleet-update-status.yml           # 7. Scheduled fleet update-status snapshot (daily 06:00 UTC).
-    Step.8_fleet-health-status.yml           # 8. Scheduled fleet 24-hour health-check failure report (daily 07:00 UTC, v0.7.65).
+    Step.7_monitor-updates.yml               # 7. In-flight update monitor: per-cluster current step + elapsed duration; flags long-running runs (manual, optional */30 min cron; v0.7.90).
+    Step.8_fleet-update-status.yml           # 8. Scheduled fleet update-status snapshot (daily 06:00 UTC; formerly Step.7).
+    Step.9_fleet-health-status.yml           # 9. Scheduled fleet 24-hour health-check failure report (daily 07:00 UTC, v0.7.65; formerly Step.8).
   azure-devops/
     Step.0_authentication-test.yml
     Step.1_inventory-clusters.yml
@@ -1830,8 +1861,9 @@ Automation-Pipeline-Examples/
     Step.4_fleet-connectivity-status.yml
     Step.5_assess-update-readiness.yml
     Step.6_apply-updates.yml
-    Step.7_fleet-update-status.yml
-    Step.8_fleet-health-status.yml
+    Step.7_monitor-updates.yml
+    Step.8_fleet-update-status.yml
+    Step.9_fleet-health-status.yml
 ```
 
 ---
