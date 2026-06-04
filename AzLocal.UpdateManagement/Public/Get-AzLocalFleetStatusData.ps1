@@ -217,7 +217,7 @@ function Get-AzLocalFleetStatusData {
                     HasPrerequisiteUpdates = ""; SBEDependency = ""
                     RecommendedUpdate = ""; HealthCheckFailures = ""
                     BlockingReasons = ""
-                    UpdateWindow = ""; UpdateExclusions = ""
+                    UpdateWindow = ""; UpdateWindowExclusions = ""
                 }) | Out-Null
                 $clusterDetails.Add([PSCustomObject]@{
                     ClusterName = $clusterName; ResourceGroup = $rgName
@@ -329,7 +329,7 @@ function Get-AzLocalFleetStatusData {
                 HealthCheckFailures = $healthCheckFailures
                 BlockingReasons = ($blockingReasons -join '; ')
                 UpdateWindow = if ($clusterInfo.tags -and $clusterInfo.tags.$($script:UpdateWindowTagName)) { $clusterInfo.tags.$($script:UpdateWindowTagName) } else { "" }
-                UpdateExclusions = if ($clusterInfo.tags -and $clusterInfo.tags.$($script:UpdateExclusionsTagName)) { $clusterInfo.tags.$($script:UpdateExclusionsTagName) } else { "" }
+                UpdateWindowExclusions = if ($clusterInfo.tags -and $clusterInfo.tags.$($script:UpdateWindowExclusionsTagName)) { $clusterInfo.tags.$($script:UpdateWindowExclusionsTagName) } else { "" }
             }) | Out-Null
             $clusterDetails.Add([PSCustomObject]@{
                 ClusterName = $clusterName; ResourceGroup = $rgName
@@ -480,7 +480,7 @@ function Get-AzLocalFleetStatusData {
                 HasPrerequisiteUpdates = ""; SBEDependency = ""
                 RecommendedUpdate = ""; HealthCheckFailures = $_.Exception.Message
                 BlockingReasons = ""
-                UpdateWindow = ""; UpdateExclusions = ""
+                UpdateWindow = ""; UpdateWindowExclusions = ""
             }) | Out-Null
             $clusterDetails.Add([PSCustomObject]@{
                 ClusterName = $clusterName; ResourceGroup = $rgName

@@ -34,8 +34,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $script:ModuleInfo | Should -Not -BeNullOrEmpty
         }
 
-        It 'Should have version 0.7.89' {
-            $script:ModuleInfo.Version | Should -Be '0.7.89'
+        It 'Should have version 0.7.90' {
+            $script:ModuleInfo.Version | Should -Be '0.7.90'
         }
 
         It 'Module version constants are in sync between .psm1 and .psd1' {
@@ -1982,13 +1982,13 @@ Describe 'Helper Function: Test-AzLocalUpdateScheduleAllowed (Internal)' {
 
     Context 'No restrictions' {
         It 'Returns Allowed=true when no tags are defined' {
-            $result = & (Get-Module $moduleName) { Test-AzLocalUpdateScheduleAllowed -UpdateWindow '' -UpdateExclusions '' }
+            $result = & (Get-Module $moduleName) { Test-AzLocalUpdateScheduleAllowed -UpdateWindow '' -UpdateWindowExclusions '' }
             $result.Allowed | Should -Be $true
             $result.Reason | Should -BeLike '*No schedule restrictions*'
         }
 
         It 'Returns Allowed=true when both tags are null' {
-            $result = & (Get-Module $moduleName) { Test-AzLocalUpdateScheduleAllowed -UpdateWindow $null -UpdateExclusions $null }
+            $result = & (Get-Module $moduleName) { Test-AzLocalUpdateScheduleAllowed -UpdateWindow $null -UpdateWindowExclusions $null }
             $result.Allowed | Should -Be $true
         }
     }
@@ -2013,7 +2013,7 @@ Describe 'Helper Function: Test-AzLocalUpdateScheduleAllowed (Internal)' {
     Context 'Exclusion only' {
         It 'Returns Allowed=false when in exclusion period' {
             $testTime = [datetime]::ParseExact('2026-12-25 12:00', 'yyyy-MM-dd HH:mm', $null)
-            $result = & (Get-Module $moduleName) { param($tt) Test-AzLocalUpdateScheduleAllowed -UpdateExclusions '2026-12-20/2027-01-03' -TestTime $tt } $testTime
+            $result = & (Get-Module $moduleName) { param($tt) Test-AzLocalUpdateScheduleAllowed -UpdateWindowExclusions '2026-12-20/2027-01-03' -TestTime $tt } $testTime
             $result.Allowed | Should -Be $false
             $result.ExclusionActive | Should -Be $true
             $result.Reason | Should -BeLike '*exclusion period*'
@@ -2021,7 +2021,7 @@ Describe 'Helper Function: Test-AzLocalUpdateScheduleAllowed (Internal)' {
 
         It 'Returns Allowed=true when not in exclusion period' {
             $testTime = [datetime]::ParseExact('2026-06-15 12:00', 'yyyy-MM-dd HH:mm', $null)
-            $result = & (Get-Module $moduleName) { param($tt) Test-AzLocalUpdateScheduleAllowed -UpdateExclusions '2026-12-20/2027-01-03' -TestTime $tt } $testTime
+            $result = & (Get-Module $moduleName) { param($tt) Test-AzLocalUpdateScheduleAllowed -UpdateWindowExclusions '2026-12-20/2027-01-03' -TestTime $tt } $testTime
             $result.Allowed | Should -Be $true
         }
     }
@@ -2031,7 +2031,7 @@ Describe 'Helper Function: Test-AzLocalUpdateScheduleAllowed (Internal)' {
             # Saturday Dec 26 at 03:00 - within Sat window but also in exclusion
             $testTime = [datetime]::ParseExact('2026-12-26 03:00', 'yyyy-MM-dd HH:mm', $null)  # Saturday
             $result = & (Get-Module $moduleName) { param($tt)
-                Test-AzLocalUpdateScheduleAllowed -UpdateWindow 'Sat_02:00-06:00' -UpdateExclusions '2026-12-20/2027-01-03' -TestTime $tt
+                Test-AzLocalUpdateScheduleAllowed -UpdateWindow 'Sat_02:00-06:00' -UpdateWindowExclusions '2026-12-20/2027-01-03' -TestTime $tt
             } $testTime
             $result.Allowed | Should -Be $false
             $result.ExclusionActive | Should -Be $true
@@ -2043,7 +2043,7 @@ Describe 'Helper Function: Test-AzLocalUpdateScheduleAllowed (Internal)' {
             # Saturday Apr 18 at 03:00 - within Sat window, no exclusion active
             $testTime = [datetime]::ParseExact('2026-04-18 03:00', 'yyyy-MM-dd HH:mm', $null)  # Saturday
             $result = & (Get-Module $moduleName) { param($tt)
-                Test-AzLocalUpdateScheduleAllowed -UpdateWindow 'Sat_02:00-06:00' -UpdateExclusions '2026-12-20/2027-01-03' -TestTime $tt
+                Test-AzLocalUpdateScheduleAllowed -UpdateWindow 'Sat_02:00-06:00' -UpdateWindowExclusions '2026-12-20/2027-01-03' -TestTime $tt
             } $testTime
             $result.Allowed | Should -Be $true
             $result.WindowOpen | Should -Be $true
@@ -2054,7 +2054,7 @@ Describe 'Helper Function: Test-AzLocalUpdateScheduleAllowed (Internal)' {
             # Saturday Apr 18 at 10:00 - outside Sat window, no exclusion active
             $testTime = [datetime]::ParseExact('2026-04-18 10:00', 'yyyy-MM-dd HH:mm', $null)  # Saturday
             $result = & (Get-Module $moduleName) { param($tt)
-                Test-AzLocalUpdateScheduleAllowed -UpdateWindow 'Sat_02:00-06:00' -UpdateExclusions '2026-12-20/2027-01-03' -TestTime $tt
+                Test-AzLocalUpdateScheduleAllowed -UpdateWindow 'Sat_02:00-06:00' -UpdateWindowExclusions '2026-12-20/2027-01-03' -TestTime $tt
             } $testTime
             $result.Allowed | Should -Be $false
             $result.WindowOpen | Should -Be $false
@@ -2065,7 +2065,7 @@ Describe 'Helper Function: Test-AzLocalUpdateScheduleAllowed (Internal)' {
         It 'Returns all expected properties' {
             $testTime = [datetime]::ParseExact('2026-04-18 03:00', 'yyyy-MM-dd HH:mm', $null)
             $result = & (Get-Module $moduleName) { param($tt)
-                Test-AzLocalUpdateScheduleAllowed -UpdateWindow 'Sat_02:00-06:00' -UpdateExclusions '2026-12-20/2027-01-03' -TestTime $tt
+                Test-AzLocalUpdateScheduleAllowed -UpdateWindow 'Sat_02:00-06:00' -UpdateWindowExclusions '2026-12-20/2027-01-03' -TestTime $tt
             } $testTime
             $result.PSObject.Properties.Name | Should -Contain 'Allowed'
             $result.PSObject.Properties.Name | Should -Contain 'Reason'
@@ -2089,9 +2089,9 @@ Describe 'Function: Test-AzLocalUpdateScheduleAllowed (Exported)' {
             $command.Parameters.Keys | Should -Contain 'UpdateWindow'
         }
 
-        It 'Should have UpdateExclusions parameter' {
+        It 'Should have UpdateWindowExclusions parameter' {
             $command = Get-Command Test-AzLocalUpdateScheduleAllowed
-            $command.Parameters.Keys | Should -Contain 'UpdateExclusions'
+            $command.Parameters.Keys | Should -Contain 'UpdateWindowExclusions'
         }
 
         It 'Should have TestTime parameter' {
@@ -2105,8 +2105,9 @@ Describe 'Integration: Start-AzLocalClusterUpdate Schedule Status' {
     Context 'ScheduleBlocked status in result counting' {
         It 'ScheduleBlocked is included in the skip statuses list' {
             # Verify ScheduleBlocked is in the expected skip statuses used by the end block
-            $skipStatuses = @("Skipped", "NotReady", "NoUpdatesAvailable", "NoReadyUpdates", "NotFound", "UpdateNotFound", "HealthCheckBlocked", "ScheduleBlocked")
+            $skipStatuses = @("Skipped", "NotReady", "NoUpdatesAvailable", "NoReadyUpdates", "NotFound", "UpdateNotFound", "HealthCheckBlocked", "ScheduleBlocked", "SideloadedBlocked", "ExcludedByTag")
             $skipStatuses | Should -Contain "ScheduleBlocked"
+            $skipStatuses | Should -Contain "ExcludedByTag"
         }
     }
 
@@ -4542,6 +4543,114 @@ Describe 'Helper Function: Test-AzLocalUpdateSideloadedAllowed (Internal)' {
     }
     It 'Throws on malformed tag (caller decides fail-closed/-Force)' {
         { & (Get-Module $moduleName) { Test-AzLocalUpdateSideloadedAllowed -UpdateSideloaded 'Yes' } } | Should -Throw '*Invalid UpdateSideloaded*'
+    }
+}
+
+# v0.7.90: UpdateExcluded operator-override gate
+Describe 'Helper Function: ConvertFrom-AzLocalUpdateExcluded (Internal)' {
+    BeforeAll { $moduleName = 'AzLocal.UpdateManagement' }
+
+    Context 'Accepted values' {
+        It 'Returns $true for "True" / "true" / "TRUE"' {
+            (& (Get-Module $moduleName) { ConvertFrom-AzLocalUpdateExcluded -Value 'True' })  | Should -Be $true
+            (& (Get-Module $moduleName) { ConvertFrom-AzLocalUpdateExcluded -Value 'true' })  | Should -Be $true
+            (& (Get-Module $moduleName) { ConvertFrom-AzLocalUpdateExcluded -Value 'TRUE' })  | Should -Be $true
+        }
+        It 'Returns $true for "1"' {
+            (& (Get-Module $moduleName) { ConvertFrom-AzLocalUpdateExcluded -Value '1' }) | Should -Be $true
+        }
+        It 'Returns $false for "False" / "false" / "FALSE"' {
+            (& (Get-Module $moduleName) { ConvertFrom-AzLocalUpdateExcluded -Value 'False' }) | Should -Be $false
+            (& (Get-Module $moduleName) { ConvertFrom-AzLocalUpdateExcluded -Value 'false' }) | Should -Be $false
+            (& (Get-Module $moduleName) { ConvertFrom-AzLocalUpdateExcluded -Value 'FALSE' }) | Should -Be $false
+        }
+        It 'Returns $false for "0"' {
+            (& (Get-Module $moduleName) { ConvertFrom-AzLocalUpdateExcluded -Value '0' }) | Should -Be $false
+        }
+        It 'Trims surrounding whitespace' {
+            (& (Get-Module $moduleName) { ConvertFrom-AzLocalUpdateExcluded -Value '  True  ' }) | Should -Be $true
+        }
+    }
+
+    Context 'Rejected values' {
+        It 'Throws on empty string' {
+            { & (Get-Module $moduleName) { ConvertFrom-AzLocalUpdateExcluded -Value '' } } | Should -Throw '*cannot be empty*'
+        }
+        It 'Throws on Yes / No / Enabled / 2' {
+            { & (Get-Module $moduleName) { ConvertFrom-AzLocalUpdateExcluded -Value 'Yes' } }     | Should -Throw '*Invalid UpdateExcluded*'
+            { & (Get-Module $moduleName) { ConvertFrom-AzLocalUpdateExcluded -Value 'No' } }      | Should -Throw '*Invalid UpdateExcluded*'
+            { & (Get-Module $moduleName) { ConvertFrom-AzLocalUpdateExcluded -Value 'Enabled' } } | Should -Throw '*Invalid UpdateExcluded*'
+            { & (Get-Module $moduleName) { ConvertFrom-AzLocalUpdateExcluded -Value '2' } }       | Should -Throw '*Invalid UpdateExcluded*'
+        }
+    }
+}
+
+Describe 'Helper Function: Test-AzLocalUpdateExcludedAllowed (Internal)' {
+    BeforeAll { $moduleName = 'AzLocal.UpdateManagement' }
+
+    It 'Allowed=$true and TagPresent=$false when tag is empty/null' {
+        $r = & (Get-Module $moduleName) { Test-AzLocalUpdateExcludedAllowed -UpdateExcluded '' }
+        $r.Allowed    | Should -Be $true
+        $r.TagPresent | Should -Be $false
+    }
+    It 'Allowed=$false with clear reason when tag is True (semantics INVERTED vs Sideloaded)' {
+        $r = & (Get-Module $moduleName) { Test-AzLocalUpdateExcludedAllowed -UpdateExcluded 'True' }
+        $r.Allowed    | Should -Be $false
+        $r.TagPresent | Should -Be $true
+        $r.Reason     | Should -BeLike '*UpdateExcluded == True*'
+    }
+    It 'Allowed=$false when tag is 1' {
+        $r = & (Get-Module $moduleName) { Test-AzLocalUpdateExcludedAllowed -UpdateExcluded '1' }
+        $r.Allowed | Should -Be $false
+    }
+    It 'Allowed=$true when tag is False' {
+        $r = & (Get-Module $moduleName) { Test-AzLocalUpdateExcludedAllowed -UpdateExcluded 'False' }
+        $r.Allowed    | Should -Be $true
+        $r.TagPresent | Should -Be $true
+        $r.Reason     | Should -BeLike '*UpdateExcluded == False*'
+    }
+    It 'Allowed=$true when tag is 0' {
+        $r = & (Get-Module $moduleName) { Test-AzLocalUpdateExcludedAllowed -UpdateExcluded '0' }
+        $r.Allowed | Should -Be $true
+    }
+    It 'Throws on malformed tag (caller decides fail-closed/-Force)' {
+        { & (Get-Module $moduleName) { Test-AzLocalUpdateExcludedAllowed -UpdateExcluded 'Yes' } } | Should -Throw '*Invalid UpdateExcluded*'
+    }
+}
+
+Describe 'Integration: Start-AzLocalClusterUpdate ExcludedByTag status (v0.7.90)' {
+    Context 'ExcludedByTag status in result counting' {
+        It 'ExcludedByTag is included in the skip statuses list' {
+            $skipStatuses = @("Skipped", "NotReady", "NoUpdatesAvailable", "NoReadyUpdates", "NotFound", "UpdateNotFound", "HealthCheckBlocked", "ScheduleBlocked", "SideloadedBlocked", "ExcludedByTag")
+            $skipStatuses | Should -Contain "ExcludedByTag"
+        }
+    }
+
+    Context 'JUnit XML export handles ExcludedByTag' {
+        It 'Export-ResultsToJUnitXml should handle ExcludedByTag result' {
+            $testResult = [PSCustomObject]@{
+                ClusterName = 'test-cluster'
+                Status      = 'ExcludedByTag'
+                Message     = 'UpdateExcluded == True, update is blocked'
+                UpdateName  = $null
+                StartTime   = Get-Date
+                EndTime     = Get-Date
+                Duration    = '00:00:01'
+            }
+            $outputPath = Join-Path $env:TEMP "pester-junit-excluded-test-$([Guid]::NewGuid()).xml"
+            try {
+                & (Get-Module 'AzLocal.UpdateManagement') {
+                    param($results, $path)
+                    Export-ResultsToJUnitXml -Results $results -OutputPath $path -TestSuiteName 'Test' -OperationType 'StartUpdate'
+                } @($testResult) $outputPath
+                Test-Path $outputPath | Should -BeTrue
+                $xml = [xml](Get-Content -Path $outputPath -Raw)
+                $xml.testsuites.testsuite.testcase.name | Should -BeLike '*test-cluster*'
+            }
+            finally {
+                if (Test-Path $outputPath) { Remove-Item -Path $outputPath -Force -ErrorAction SilentlyContinue }
+            }
+        }
     }
 }
 

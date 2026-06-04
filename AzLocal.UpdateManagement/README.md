@@ -2,7 +2,7 @@
 
 > ⚠️ **Disclaimer**: This module is **NOT** a Microsoft supported service offering or product. It is provided as example code only, with no warranty or official support. Refer to the [MIT license](https://github.com/NeilBird/Azure-Local/blob/main/LICENSE) for further information.
 
-**Latest Version:** v0.7.89 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.7.89)
+**Latest Version:** v0.7.90 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.7.90)
 
 > 📢 **Renamed in v0.7.3**: this module was previously published as `AzStackHci.ManageUpdates`. The new module name aligns with the Azure Local product name (_Microsoft retired the *Azure Stack HCI* brand in late 2024_). The module GUID is preserved across the rename. If you have the old name installed, run:
 >
@@ -23,7 +23,7 @@ Azure Local REST API specification (includes update management endpoints): https
 **This README (overview + most-recent release notes):**
 
 - [Where to Start](#where-to-start)
-- [What's New in v0.7.89](#whats-new-in-v0789)
+- [What's New in v0.7.90](#whats-new-in-v0790)
 - [Files](#files)
 - [Prerequisites](#prerequisites)
 - [RBAC Requirements](#rbac-requirements) (summary; full reference in [docs/rbac.md](docs/rbac.md))
@@ -86,25 +86,30 @@ If you are new to this module, work through these in order from a regular PowerS
 
 > Most CI/CD pipelines in [Automation-Pipeline-Examples/](Automation-Pipeline-Examples/) are direct implementations of one of these workflows. Start there if you want a copy-pasteable end-to-end pipeline.
 
-## What's New in v0.7.89
+## What's New in v0.7.90
 
-v0.7.89 is a customer-feedback driven feature release: an OPTIONAL `allowedUpdateVersions` allow-list field on `apply-updates-schedule.yml`, supporting both fleet-wide (top-level) and per-row (per-ring) scopes. Customer quote verbatim: *"if a customer only wants to install the 'Minimum number of updates', which is around 4 updates a year, with the YY04 and YY10 being mandatory feature updates, and the cumulative update before each feature update (YY03 and YY09) also sometimes being mandatory, can we have optional logic that we can define in the schema of the `apply-updates-schedule.yml` update, where we can list a specific list of updates that we only want to install, fleet wide, and/or per ring, to allow us to define an `allow list` of updates manually?"* This release ships that ability end-to-end - schema, validator, resolver, picker, schema migration, generator, example, and Step.6 pipeline plumbing (GH + ADO) - while keeping the historic "install the latest Ready update" behaviour unchanged for everyone who doesn't opt in.
+v0.7.90 ships a new **`UpdateExcluded` operator-override tag** and a **breaking rename**: the existing `UpdateExclusions` schedule tag (date-range blackout periods) is renamed to **`UpdateWindowExclusions`** to make its purpose unambiguous against the new override.
 
-**Schema bump v1 -> v2 (additive).** A new optional `allowedUpdateVersions:` field is accepted at the top level (fleet default) and on every individual schedule row (per-ring override). Format mirrors the existing `rings:` convention - a semicolon-separated string of Azure Local solution-update names or `properties.version` strings, e.g. `'10.2604.0.123;10.2610.0.456'`. Matching is EXACT and case-insensitive against BOTH `.name` and `.properties.version` (operators can author either flavour). Empty/whitespace/duplicate-tokens are validator-rejected with location-tagged remediation. Per-row beats top-level; multiple matching rows UNION; rows without the field on a UNION day are "no opinion" (do NOT collapse the UNION). Top-level kicks in only when ZERO matching rows specify the field.
+**New `UpdateExcluded` tag (operator hard override).** When set to `True` / `true` / `1` on a cluster, `Start-AzLocalClusterUpdate` skips that cluster with `Status = ExcludedByTag` **regardless of the `UpdateRing` scope, `UpdateSideloaded` state, or `UpdateWindow` / `UpdateWindowExclusions` schedule**. This is the override an operator reaches for when they need to take a specific cluster out of automation immediately (incident, scheduled hardware maintenance, evidence-preservation hold) without modifying the apply-updates schedule. Empty/missing tag means no override. Malformed values throw (fail-closed) unless `-Force` is supplied (matching the existing `SideloadedBlocked` pattern). The new gate runs BEFORE the sideloaded and schedule gates so it overrides both.
 
-**`Start-AzLocalClusterUpdate -AllowedUpdateVersions [string[]]`.** New optional parameter. When set, restricts the auto-pick pool BEFORE the YYMM-latest selector runs - so the latest update that's IN the allow-list still wins (the picker logic is untouched, just fed a narrower input). When BOTH `-UpdateName` and `-AllowedUpdateVersions` are passed, the explicit `-UpdateName` wins (allow-list logged-and-ignored with a Warning). New result/CSV status `NotInAllowList` is emitted when filtering eliminates every Ready update - the cluster is SKIPPED strictly (the picker never falls back to "latest Ready").
+**`Set-AzLocalClusterUpdateRingTag` always stamps `UpdateExcluded=False`** on any cluster that does not already carry the tag. This makes the tag discoverable in the Azure portal so operators can find it and flip it to `True` when needed - without having to remember the exact tag name or syntax. Existing `True`/`False` values are preserved unless overridden via the new `-UpdateExcludedValue` parameter (`ByResourceId` mode) or `UpdateExcluded` CSV column (`InputCsvPath` mode).
 
-**`Resolve-AzLocalCurrentUpdateRing`** returns three new properties: `AllowedUpdateVersions [string[]]`, `AllowedUpdateVersionsValue [string]` (`;`-joined for env-var bridge), `AllowedUpdateVersionsSource ('row' | 'top-level' | 'none')`. The `Reason` string also appends `AllowedUpdateVersions (<source>): a, b, c.` when an allow-list is in effect, so the resolver's decision is fully auditable in pipeline logs.
+**Breaking rename: `UpdateExclusions` -> `UpdateWindowExclusions`.** The tag VALUE format is unchanged (`YYYY-MM-DD/YYYY-MM-DD`, comma-separated, `*` wildcards). From v0.7.90 the module ONLY reads `UpdateWindowExclusions` from cluster tags. Clusters still carrying the legacy `UpdateExclusions` tag are silently ignored - their blackout periods will no longer be honoured. Operators must re-tag before the next apply-updates run. The same rename applies to: the `-UpdateExclusions` parameter on `Test-AzLocalUpdateScheduleAllowed`, the `-UpdateExclusionsValue` parameter on `Set-AzLocalClusterUpdateRingTag`, the CSV column name, and the `UpdateExclusions` property on objects returned by `Get-AzLocalClusterInventory`, `Get-AzLocalClusterUpdateReadiness`, and `Get-AzLocalFleetStatusData`.
 
-**Schema migration recipe `1 -> 2`** registered in `Private/Convert-AzLocalScheduleSchemaVersion.ps1`. Run `Update-AzLocalApplyUpdatesScheduleConfig -Path <your-schedule>` to migrate an existing v1 file. The recipe is text-surgery (no YAML reflow), idempotent (marker-guarded `# >>> ALLOWED-UPDATE-VERSIONS-V2 <<<`), and additive - it rewrites only the `schemaVersion: 1` line and inserts a documented commented `# allowedUpdateVersions:` example block above `# ---- Schedule entries ----`. Existing schedule rows + customer comments are preserved verbatim.
+**Inventory CSV/JSON now exposes the override.** `Get-AzLocalClusterInventory` adds an `UpdateExcluded` column (positioned between `UpdateWindowExclusions` and `UpdateSideloaded`) so fleet snapshots show every cluster's override state alongside its ring and schedule.
 
-**Step.6 pipelines (GitHub Actions + Azure DevOps).** `check-readiness` resolver task now also exports `RESOLVED_ALLOWED_UPDATE_VERSIONS` (alongside `RESOLVED_UPDATE_RING`). The `Apply Updates` task consumes it via env var, parses to `[string[]]`, and passes through `-AllowedUpdateVersions` to `Start-AzLocalClusterUpdate`. `workflow_dispatch` / non-Schedule build reasons pass empty (manual runs are not subject to the allow-list, preserving historic ad-hoc behaviour for operators). `NotInAllowList` is added to the `skipped` result-counter bucket so per-stage summary KPIs stay correct.
+**Apply-updates pipeline summaries** (Step.6 GH Actions + Azure DevOps) now count and report `ExcludedByTag` clusters alongside `ScheduleBlocked` / `SideloadedBlocked`, with an Actions Required callout that points operators at the `UpdateExcluded` tag.
 
-**Pipeline pin bumps.** All 18 bundled `Step.{0..8}.yml` templates (9 GitHub Actions + 9 Azure DevOps) bump `GENERATED_AGAINST_MODULE_VERSION` from `'0.7.88'` to `'0.7.89'`. Only `Step.6_apply-updates.yml` (both platforms) has inline-script content changes; the other 16 are pin-only bumps.
+**Migration.** `Install-Module AzLocal.UpdateManagement -Force` (or `Update-Module`). Re-tag clusters that currently have `UpdateExclusions` set - the legacy value is NOT auto-copied:
 
-**Migration.** `Install-Module AzLocal.UpdateManagement -Force` (or `Update-Module`). `Start-AzLocalClusterUpdate` gains the optional `-AllowedUpdateVersions` parameter (default = unset = historic "install latest Ready update" unchanged). For pipelines, re-copy the bundled YAMLs with `Copy-AzLocalPipelineExample -Destination <path> -Update`. To opt-in to the allow-list, run `Update-AzLocalApplyUpdatesScheduleConfig -Path <path>` on your existing `apply-updates-schedule.yml`, then hand-edit the new commented `# allowedUpdateVersions:` block (top-level OR per-row, or both). Files left at v1 continue to work; only the new field is rejected on v1.
+```pwsh
+az tag update --resource-id <clusterId> --operation Merge --tags UpdateWindowExclusions='<existing-value>'
+az tag update --resource-id <clusterId> --operation Delete --tags UpdateExclusions='<existing-value>'
+```
 
-> Previous release notes (v0.7.88 and earlier) have moved into [`docs/release-history.md`](docs/release-history.md).
+Or re-run `Set-AzLocalClusterUpdateRingTag -InputCsvPath <csv>` with a CSV that has the new `UpdateWindowExclusions` column. For pipelines, `Copy-AzLocalPipelineExample -Destination <path> -Update` to pick up the renamed CSV column + new `ExcludedByTag` summary plumbing. The new `UpdateExcluded=False` default-stamp is additive - no operator action required.
+
+> Previous release notes (v0.7.89 and earlier) have moved into [`docs/release-history.md`](docs/release-history.md), with the v0.7.89 entry retained in the [Release History](#release-history) appendix below for quick reference.
 
 ## Files
 
@@ -266,13 +271,14 @@ Three Azure resource tags control how clusters are grouped and when updates are 
 |-----|---------|-----------|--------|
 | `UpdateRing` | Groups clusters into deployment waves (e.g., Pilot, Wave1, Production) | **Yes** - needed for `-ScopeByUpdateRingTag` | `Set-AzLocalClusterUpdateRingTag` or CSV import |
 | `UpdateWindow` | Defines allowed maintenance windows in UTC (e.g., `Sat-Sun_02:00-06:00`) | Optional | CSV import via `Set-AzLocalClusterUpdateRingTag` |
-| `UpdateExclusions` | Defines blackout/change-freeze periods (e.g., `2026-12-20/2027-01-03`) | Optional | CSV import via `Set-AzLocalClusterUpdateRingTag` |
+| `UpdateWindowExclusions` | Defines blackout/change-freeze periods (e.g., `2026-12-20/2027-01-03`). Renamed from `UpdateExclusions` in v0.7.90 | Optional | CSV import via `Set-AzLocalClusterUpdateRingTag` |
+| `UpdateExcluded` (v0.7.90) | Operator hard override. `True` / `1` skips the cluster in `Start-AzLocalClusterUpdate` with `Status = ExcludedByTag` regardless of ring scope, sideloaded state, or schedule | Optional (default-stamped `False` by `Set-AzLocalClusterUpdateRingTag` if absent) | Edit in Azure portal, or CSV import via `Set-AzLocalClusterUpdateRingTag` |
 | `UpdateSideloaded` | Sideloaded-payload gate. Values `True`/`False`/`1`/`0` (case-insensitive). When `False`, `Start-AzLocalClusterUpdate` skips the cluster with `Status = SideloadedBlocked`. Operator-set. | Optional (only used by the sideloaded-payload workflow) | Operator (Azure portal, CLI, or your tagging pipeline). Auto-reset to `False` by `Get-AzLocalUpdateRuns` / `Reset-AzLocalSideloadedTag` after the staged update succeeds. |
 | `UpdateVersionInProgress` | Module-managed companion to `UpdateSideloaded`. Holds the staged update name (e.g. `Solution12.2604.1003.209`). | **Do not set manually.** | Module: written by `Start-AzLocalClusterUpdate` at update start; cleared by `Get-AzLocalUpdateRuns` / `Reset-AzLocalSideloadedTag` once the matching run succeeds. |
 
-> ℹ️ **Tag matching is case-insensitive throughout this module.** Tag *names* (`UpdateRing`, `UpdateWindow`, `UpdateExclusions`) and tag *values* (the ring name like `Prod1`, day tokens like `Mon`, the `Daily` keyword) are all compared without regard to case. So `prod1`, `Prod1`, and `PROD1` resolve to the same set of clusters via `-ScopeByUpdateRingTag -UpdateRingValue 'Prod1'` (Azure Resource Graph `=~` operator), and `Mon-Fri`, `mon-fri`, and `MON-FRI` parse to the same maintenance window. This applies to every function that scopes clusters by tag, every CSV import path, and the `UpdateWindow` / `UpdateExclusions` parsers. Note: the day tokens themselves still require the strict 3-letter form — `Mon Tue Wed Thu Fri Sat Sun` — case doesn't matter, but `Thur` / `Tues` / `Friday` will be rejected (see the `UpdateWindow` section below for the full table).
+> ℹ️ **Tag matching is case-insensitive throughout this module.** Tag *names* (`UpdateRing`, `UpdateWindow`, `UpdateWindowExclusions`, `UpdateExcluded`) and tag *values* (the ring name like `Prod1`, day tokens like `Mon`, the `Daily` keyword, the `True`/`False` override values) are all compared without regard to case. So `prod1`, `Prod1`, and `PROD1` resolve to the same set of clusters via `-ScopeByUpdateRingTag -UpdateRingValue 'Prod1'` (Azure Resource Graph `=~` operator), and `Mon-Fri`, `mon-fri`, and `MON-FRI` parse to the same maintenance window. This applies to every function that scopes clusters by tag, every CSV import path, and the `UpdateWindow` / `UpdateWindowExclusions` parsers. Note: the day tokens themselves still require the strict 3-letter form - `Mon Tue Wed Thu Fri Sat Sun` - case doesn't matter, but `Thur` / `Tues` / `Friday` will be rejected (see the `UpdateWindow` section below for the full table).
 
-> **What happens if you only set `UpdateRing`?** Updates proceed immediately with **no schedule restrictions**. The `UpdateWindow` and `UpdateExclusions` tags are entirely optional - if neither is present on a cluster, the schedule check returns "No schedule restrictions defined" and the update starts as soon as the pipeline runs. Add `UpdateWindow` and `UpdateExclusions` tags when you need to control *when* updates can be applied.
+> **What happens if you only set `UpdateRing`?** Updates proceed immediately with **no schedule restrictions**. The `UpdateWindow` and `UpdateWindowExclusions` tags are entirely optional - if neither is present on a cluster, the schedule check returns "No schedule restrictions defined" and the update starts as soon as the pipeline runs. Add `UpdateWindow` and `UpdateWindowExclusions` tags when you need to control *when* updates can be applied. The separate `UpdateExcluded` tag (v0.7.90) is the operator hard override: set it to `True` to skip a cluster regardless of every other tag.
 
 **Step 1: Inventory clusters and export to CSV**
 ```powershell
@@ -280,13 +286,13 @@ Three Azure resource tags control how clusters are grouped and when updates are 
 Get-AzLocalClusterInventory -ExportPath "C:\Temp\cluster-inventory.csv"
 ```
 
-The CSV includes columns for all three tags: `UpdateRing`, `UpdateWindow`, and `UpdateExclusions`.
+The CSV includes columns for all four tags: `UpdateRing`, `UpdateWindow`, `UpdateWindowExclusions`, and `UpdateExcluded`.
 
 **Step 2: Edit the CSV in Excel**
 
 Open `cluster-inventory.csv` and populate the tag columns:
 
-| ClusterName | UpdateRing | UpdateWindow | UpdateExclusions |
+| ClusterName | UpdateRing | UpdateWindow | UpdateWindowExclusions | UpdateExcluded |
 |-------------|------------|--------------|------------------|
 | HCI-Pilot01 | Pilot | | |
 | HCI-Pilot02 | Pilot | | |
@@ -332,7 +338,7 @@ Open `cluster-inventory.csv` and populate the tag columns:
   - `Fri-Mon_22:00-06:00` — Long weekend (Fri/Sat/Sun/Mon nights, with wrap)
 
   > **Tag-value matching is case-insensitive everywhere** — both the day tokens above and the `UpdateRing` value used by `-ScopeByUpdateRingTag -UpdateRingValue 'Prod1'` (resolved via Azure Resource Graph `=~` operator), so `prod1`/`Prod1`/`PROD1` all match the same set of clusters.
-- **UpdateExclusions** (optional): Change-freeze periods. Format: `YYYY-MM-DD/YYYY-MM-DD`. Multiple ranges separated by `,`. Wildcards with `*` for recurring annual patterns. Examples:
+- **UpdateWindowExclusions** (optional; renamed from `UpdateExclusions` in v0.7.90): Change-freeze periods. Format: `YYYY-MM-DD/YYYY-MM-DD`. Multiple ranges separated by `,`. Wildcards with `*` for recurring annual patterns. Examples:
   - `2026-12-20/2027-01-03` — Specific date range
   - `20**-12-20/20**-01-03` — Every year, Dec 20 to Jan 3
 
@@ -340,7 +346,7 @@ Save the file.
 
 **Step 3: Apply all tags from CSV**
 ```powershell
-# Apply UpdateRing, UpdateWindow, and UpdateExclusions tags from the edited CSV
+# Apply UpdateRing, UpdateWindow, UpdateWindowExclusions, and UpdateExcluded tags from the edited CSV
 Set-AzLocalClusterUpdateRingTag -InputCsvPath "C:\Temp\cluster-inventory.csv"
 
 # Preview changes first with -WhatIf
@@ -350,7 +356,7 @@ Set-AzLocalClusterUpdateRingTag -InputCsvPath "C:\Temp\cluster-inventory.csv" -W
 Set-AzLocalClusterUpdateRingTag -InputCsvPath "C:\Temp\cluster-inventory.csv" -Force
 ```
 
-The function reads `UpdateWindow` and `UpdateExclusions` columns from the CSV (if present) and sets them alongside the `UpdateRing` tag in a single PATCH operation. Existing tags on the cluster are preserved.
+The function reads `UpdateWindow`, `UpdateWindowExclusions`, and `UpdateExcluded` columns from the CSV (if present) and sets them alongside the `UpdateRing` tag in a single PATCH operation. Existing tags on the cluster are preserved. If `UpdateExcluded` is absent on the cluster AND not specified in the CSV/parameters, the function default-stamps `UpdateExcluded=False` so the tag is discoverable in the Azure portal.
 
 **Step 4: Verify tags were applied**
 ```powershell
@@ -361,7 +367,7 @@ Get-AzLocalClusterInventory
 **Step 5: Test schedule logic interactively (optional)**
 ```powershell
 # Test if a specific time would be allowed by a maintenance window
-Test-AzLocalUpdateScheduleAllowed -UpdateWindow "Sat-Sun_02:00-06:00" -UpdateExclusions "2026-12-20/2027-01-03"
+Test-AzLocalUpdateScheduleAllowed -UpdateWindow "Sat-Sun_02:00-06:00" -UpdateWindowExclusions "2026-12-20/2027-01-03"
 
 # Test a specific future time
 Test-AzLocalUpdateScheduleAllowed -UpdateWindow "Sat_02:00-06:00" -TestTime ([datetime]"2026-04-19 03:00:00")
@@ -459,7 +465,7 @@ Before rolling updates to a wave, confirm every cluster in that wave is actually
 
 ```powershell
 # Returns one row per cluster with: ReadyForUpdate, HealthState, UpdateState,
-# HasPrerequisiteUpdates, SBEDependency, UpdateWindow, UpdateExclusions
+# HasPrerequisiteUpdates, SBEDependency, UpdateWindow, UpdateWindowExclusions, UpdateExcluded
 $readiness = Get-AzLocalClusterUpdateReadiness `
     -ScopeByUpdateRingTag -UpdateRingValue 'Wave1' `
     -ExportPath 'C:\Reports\wave1-readiness.csv' -PassThru
@@ -569,7 +575,11 @@ This code is provided as-is for educational and reference purposes.
 
 The full What's-New history (v0.7.81 and earlier) has moved to [docs/release-history.md](docs/release-history.md).
 
-The most recent release notes for **v0.7.89** stay above under [`What's New in v0.7.89`](#whats-new-in-v0789).
+The most recent release notes for **v0.7.90** stay above under [`What's New in v0.7.90`](#whats-new-in-v0790).
+
+### What's New in v0.7.89
+
+v0.7.89 was a customer-feedback driven feature release: an OPTIONAL `allowedUpdateVersions` allow-list field on `apply-updates-schedule.yml`, supporting both fleet-wide (top-level) and per-row (per-ring) scopes. New optional parameter `Start-AzLocalClusterUpdate -AllowedUpdateVersions [string[]]`, `Resolve-AzLocalCurrentUpdateRing` returns three new properties (`AllowedUpdateVersions`, `AllowedUpdateVersionsValue`, `AllowedUpdateVersionsSource`), schema migration recipe `1 -> 2` (`Update-AzLocalApplyUpdatesScheduleConfig`), and Step.6 pipeline plumbing (GH + ADO) - while keeping the historic "install the latest Ready update" behaviour unchanged for everyone who doesn't opt in. New result/CSV status `NotInAllowList`. All 18 bundled `Step.{0..8}.yml` templates pin-bumped to `'0.7.89'`. See [docs/release-history.md](docs/release-history.md) for the full v0.7.89 What's-New text.
 
 ---
 

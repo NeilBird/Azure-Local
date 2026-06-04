@@ -36,10 +36,23 @@ function Set-AzLocalClusterUpdateRingTag {
         Format: "<days>_<HH:MM>-<HH:MM>" (e.g. "Mon-Fri_22:00-02:00"). See Test-AzLocalUpdateScheduleAllowed
         for syntax details. Not used with -InputCsvPath (values come from the UpdateWindow column).
     
-    .PARAMETER UpdateExclusionsValue
-        Optional. Value to assign to the "UpdateExclusions" tag when using -ClusterResourceIds.
+    .PARAMETER UpdateWindowExclusionsValue
+        Optional. Value to assign to the "UpdateWindowExclusions" tag when using -ClusterResourceIds.
         Format: "YYYY-MM-DD/YYYY-MM-DD[,...]" (e.g. "2026-12-20/2026-01-05"). Not used with
-        -InputCsvPath (values come from the UpdateExclusions column).
+        -InputCsvPath (values come from the UpdateWindowExclusions column).
+        Renamed from -UpdateExclusionsValue in v0.7.90 (breaking change).
+
+    .PARAMETER UpdateExcludedValue
+        Optional. Value to assign to the "UpdateExcluded" operator-override tag when using
+        -ClusterResourceIds. Accepts 'True', 'False', '1', '0' (case-insensitive). When 'True',
+        Start-AzLocalClusterUpdate will skip the cluster regardless of UpdateRing scope,
+        UpdateSideloaded state, or UpdateWindow / UpdateWindowExclusions schedule.
+        Not used with -InputCsvPath (values come from the UpdateExcluded column).
+        New in v0.7.90.
+
+        Note: regardless of whether this parameter is supplied, this function ALWAYS stamps
+        UpdateExcluded='False' on any cluster that does not already carry the tag, so the
+        tag is discoverable in the Azure portal and ready for an operator to flip to 'True'.
     
     .PARAMETER Force
         If specified, will overwrite existing "UpdateRing" tags. Without this switch,
@@ -65,11 +78,11 @@ function Set-AzLocalClusterUpdateRingTag {
         Set-AzLocalClusterUpdateRingTag -ClusterResourceIds $resourceIds -UpdateRingValue "Ring1"
     
     .EXAMPLE
-        # Set UpdateRing, UpdateWindow, and UpdateExclusions on clusters in one call
+        # Set UpdateRing, UpdateWindow, and UpdateWindowExclusions on clusters in one call
         Set-AzLocalClusterUpdateRingTag -ClusterResourceIds $resourceIds `
             -UpdateRingValue "Wave1" `
             -UpdateWindowValue "Mon-Fri_22:00-02:00" `
-            -UpdateExclusionsValue "2026-12-20/2026-01-05" -Force
+            -UpdateWindowExclusionsValue "2026-12-20/2026-01-05" -Force
     
     .EXAMPLE
         # Force update existing tags from CSV
@@ -110,7 +123,11 @@ function Set-AzLocalClusterUpdateRingTag {
         [string]$UpdateWindowValue,
 
         [Parameter(Mandatory = $false, ParameterSetName = 'ByResourceId')]
-        [string]$UpdateExclusionsValue,
+        [string]$UpdateWindowExclusionsValue,
+
+        [Parameter(Mandatory = $false, ParameterSetName = 'ByResourceId')]
+        [ValidateSet('True', 'False', '1', '0', 'true', 'false', '', IgnoreCase = $true)]
+        [string]$UpdateExcludedValue,
 
         [Parameter(Mandatory = $false)]
         [switch]$Force,
@@ -182,13 +199,15 @@ function Set-AzLocalClusterUpdateRingTag {
             
             Write-Log -Message "Found $($validRows.Count) row(s) with UpdateRing values to process" -Level Info
             
-            # Check for optional UpdateWindow and UpdateExclusions columns
+            # Check for optional UpdateWindow, UpdateWindowExclusions, and UpdateExcluded columns
             $hasUpdateWindowCol = 'UpdateWindow' -in $csvColumns
-            $hasUpdateExclusionsCol = 'UpdateExclusions' -in $csvColumns
-            if ($hasUpdateWindowCol -or $hasUpdateExclusionsCol) {
+            $hasUpdateWindowExclusionsCol = 'UpdateWindowExclusions' -in $csvColumns
+            $hasUpdateExcludedCol = 'UpdateExcluded' -in $csvColumns
+            if ($hasUpdateWindowCol -or $hasUpdateWindowExclusionsCol -or $hasUpdateExcludedCol) {
                 $scheduleColumns = @()
                 if ($hasUpdateWindowCol) { $scheduleColumns += 'UpdateWindow' }
-                if ($hasUpdateExclusionsCol) { $scheduleColumns += 'UpdateExclusions' }
+                if ($hasUpdateWindowExclusionsCol) { $scheduleColumns += 'UpdateWindowExclusions' }
+                if ($hasUpdateExcludedCol) { $scheduleColumns += 'UpdateExcluded' }
                 Write-Log -Message "CSV includes schedule tag columns: $($scheduleColumns -join ', ')" -Level Info
             }
             
@@ -201,8 +220,11 @@ function Set-AzLocalClusterUpdateRingTag {
                 if ($hasUpdateWindowCol -and $row.UpdateWindow -and $row.UpdateWindow.Trim() -ne '') {
                     $entry['UpdateWindowValue'] = $row.UpdateWindow.Trim()
                 }
-                if ($hasUpdateExclusionsCol -and $row.UpdateExclusions -and $row.UpdateExclusions.Trim() -ne '') {
-                    $entry['UpdateExclusionsValue'] = $row.UpdateExclusions.Trim()
+                if ($hasUpdateWindowExclusionsCol -and $row.UpdateWindowExclusions -and $row.UpdateWindowExclusions.Trim() -ne '') {
+                    $entry['UpdateWindowExclusionsValue'] = $row.UpdateWindowExclusions.Trim()
+                }
+                if ($hasUpdateExcludedCol -and $row.UpdateExcluded -and $row.UpdateExcluded.Trim() -ne '') {
+                    $entry['UpdateExcludedValue'] = $row.UpdateExcluded.Trim()
                 }
                 $clustersToTag += $entry
             }
@@ -219,8 +241,11 @@ function Set-AzLocalClusterUpdateRingTag {
         if ($UpdateWindowValue) {
             Write-Log -Message "UpdateWindow value to set: $UpdateWindowValue" -Level Info
         }
-        if ($UpdateExclusionsValue) {
-            Write-Log -Message "UpdateExclusions value to set: $UpdateExclusionsValue" -Level Info
+        if ($UpdateWindowExclusionsValue) {
+            Write-Log -Message "UpdateWindowExclusions value to set: $UpdateWindowExclusionsValue" -Level Info
+        }
+        if ($UpdateExcludedValue) {
+            Write-Log -Message "UpdateExcluded value to set: $UpdateExcludedValue" -Level Info
         }
         
         foreach ($resourceId in $ClusterResourceIds) {
@@ -231,8 +256,11 @@ function Set-AzLocalClusterUpdateRingTag {
             if ($UpdateWindowValue) {
                 $entry['UpdateWindowValue'] = $UpdateWindowValue
             }
-            if ($UpdateExclusionsValue) {
-                $entry['UpdateExclusionsValue'] = $UpdateExclusionsValue
+            if ($UpdateWindowExclusionsValue) {
+                $entry['UpdateWindowExclusionsValue'] = $UpdateWindowExclusionsValue
+            }
+            if ($UpdateExcludedValue) {
+                $entry['UpdateExcludedValue'] = $UpdateExcludedValue
             }
             $clustersToTag += $entry
         }
@@ -422,7 +450,7 @@ function Set-AzLocalClusterUpdateRingTag {
                 # the desired value in the CSV. If the tag is already correct,
                 # this is normal steady-state and should not be flagged as a
                 # warning - we still continue so that adjacent schedule tags
-                # (UpdateWindow, UpdateExclusions) can be reconciled.
+                # (UpdateWindow, UpdateWindowExclusions, UpdateExcluded) can be reconciled.
                 if ($previousTagValue -eq $currentUpdateRingValue) {
                     Write-Log -Message "Existing UpdateRing tag found with value: '$previousTagValue' (matches target)" -Level Info
                 }
@@ -431,8 +459,14 @@ function Set-AzLocalClusterUpdateRingTag {
                 }
 
                 # Determine if we have new schedule tags to set (even if UpdateRing is unchanged)
+                # Includes UpdateExcluded default-stamping: if the tag is absent on the cluster
+                # and no override is supplied, we still need to stamp 'False' so the tag is
+                # discoverable in the portal.
+                $needsExcludedDefaultStamp = (-not $currentTags.PSObject.Properties[$script:UpdateExcludedTagName]) -and (-not $clusterEntry.UpdateExcludedValue)
                 $hasNewScheduleTags = ($clusterEntry.UpdateWindowValue -and (-not $currentTags.PSObject.Properties[$script:UpdateWindowTagName] -or $currentTags.$($script:UpdateWindowTagName) -ne $clusterEntry.UpdateWindowValue)) -or
-                                     ($clusterEntry.UpdateExclusionsValue -and (-not $currentTags.PSObject.Properties[$script:UpdateExclusionsTagName] -or $currentTags.$($script:UpdateExclusionsTagName) -ne $clusterEntry.UpdateExclusionsValue))
+                                     ($clusterEntry.UpdateWindowExclusionsValue -and (-not $currentTags.PSObject.Properties[$script:UpdateWindowExclusionsTagName] -or $currentTags.$($script:UpdateWindowExclusionsTagName) -ne $clusterEntry.UpdateWindowExclusionsValue)) -or
+                                     ($clusterEntry.UpdateExcludedValue -and (-not $currentTags.PSObject.Properties[$script:UpdateExcludedTagName] -or $currentTags.$($script:UpdateExcludedTagName) -ne $clusterEntry.UpdateExcludedValue)) -or
+                                     $needsExcludedDefaultStamp
 
                 if (-not $Force -and -not $hasNewScheduleTags) {
                     Write-Log -Message "Skipping cluster - use -Force to overwrite existing tag" -Level Warning
@@ -480,14 +514,26 @@ function Set-AzLocalClusterUpdateRingTag {
                 UpdateRing = $currentUpdateRingValue
             }
 
-            # Also set UpdateWindow and UpdateExclusions if provided (from CSV or parameters)
+            # Also set UpdateWindow, UpdateWindowExclusions, UpdateExcluded if provided
+            # (from CSV or parameters). Additionally: if UpdateExcluded is absent on the
+            # cluster AND no override is supplied, default-stamp 'False' so the tag is
+            # discoverable in the Azure portal and ready for an operator to flip to 'True'
+            # when they need to temporarily exclude a cluster from automation.
             if ($clusterEntry.UpdateWindowValue) {
                 $tagsToMerge[$script:UpdateWindowTagName] = $clusterEntry.UpdateWindowValue
                 Write-Log -Message "  Will also set $($script:UpdateWindowTagName) tag: $($clusterEntry.UpdateWindowValue)" -Level Info
             }
-            if ($clusterEntry.UpdateExclusionsValue) {
-                $tagsToMerge[$script:UpdateExclusionsTagName] = $clusterEntry.UpdateExclusionsValue
-                Write-Log -Message "  Will also set $($script:UpdateExclusionsTagName) tag: $($clusterEntry.UpdateExclusionsValue)" -Level Info
+            if ($clusterEntry.UpdateWindowExclusionsValue) {
+                $tagsToMerge[$script:UpdateWindowExclusionsTagName] = $clusterEntry.UpdateWindowExclusionsValue
+                Write-Log -Message "  Will also set $($script:UpdateWindowExclusionsTagName) tag: $($clusterEntry.UpdateWindowExclusionsValue)" -Level Info
+            }
+            if ($clusterEntry.UpdateExcludedValue) {
+                $tagsToMerge[$script:UpdateExcludedTagName] = $clusterEntry.UpdateExcludedValue
+                Write-Log -Message "  Will also set $($script:UpdateExcludedTagName) tag: $($clusterEntry.UpdateExcludedValue)" -Level Info
+            }
+            elseif (-not $currentTags.PSObject.Properties[$script:UpdateExcludedTagName]) {
+                $tagsToMerge[$script:UpdateExcludedTagName] = 'False'
+                Write-Log -Message "  Will default-stamp $($script:UpdateExcludedTagName) tag: 'False' (tag absent on cluster)" -Level Info
             }
 
             # Apply the tag using PATCH against the dedicated tags subresource.

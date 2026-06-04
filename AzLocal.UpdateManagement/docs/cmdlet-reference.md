@@ -1080,15 +1080,17 @@ Note: Updates already in progress on individual clusters will continue.
 
 ### `Test-AzLocalUpdateScheduleAllowed`
 
-Master gate that evaluates whether an update is allowed against the `UpdateWindow` (maintenance schedule) and `UpdateExclusions` (blackout periods) tag values. Exclusions take priority over windows. Returns a structured result with `Allowed`, `Reason`, `WindowOpen`, `ExclusionActive`, and `Details`. Used internally by `Start-AzLocalClusterUpdate` and exposed as a public function so pipelines can pre-flight a wave before triggering the apply step.
+Master gate that evaluates whether an update is allowed against the `UpdateWindow` (maintenance schedule) and `UpdateWindowExclusions` (blackout periods; renamed from `UpdateExclusions` in v0.7.90) tag values. Exclusions take priority over windows. Returns a structured result with `Allowed`, `Reason`, `WindowOpen`, `ExclusionActive`, and `Details`. Used internally by `Start-AzLocalClusterUpdate` and exposed as a public function so pipelines can pre-flight a wave before triggering the apply step.
 
-> **Fail-closed behaviour**: malformed `UpdateWindow` / `UpdateExclusions` tag values cause this function to throw rather than swallow - this is intentional so the calling apply path can block the update unless `-Force` is supplied.
+> **Fail-closed behaviour**: malformed `UpdateWindow` / `UpdateWindowExclusions` tag values cause this function to throw rather than swallow - this is intentional so the calling apply path can block the update unless `-Force` is supplied.
+
+> Note: the separate **`UpdateExcluded`** tag (operator hard override, new in v0.7.90) is evaluated by `Start-AzLocalClusterUpdate` directly in a step BEFORE the schedule gate, not by this function. See the `Start-AzLocalClusterUpdate` entry for the `ExcludedByTag` status.
 
 **Parameters:**
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | `-UpdateWindow` | String | No | (none) | The `UpdateWindow` tag value (e.g. `Mon-Fri_22:00-02:00;Sat-Sun_02:00-06:00`). Empty/null = no window restriction. |
-| `-UpdateExclusions` | String | No | (none) | The `UpdateExclusions` tag value (e.g. `2026-12-20/2027-01-03;2027-04-05`). Empty/null = no exclusion restriction. |
+| `-UpdateWindowExclusions` | String | No | (none) | The `UpdateWindowExclusions` tag value (e.g. `2026-12-20/2027-01-03;2027-04-05`). Empty/null = no exclusion restriction. Renamed from `-UpdateExclusions` in v0.7.90. |
 | `-TestTime` | DateTime | No | `(Get-Date).ToUniversalTime()` | UTC time to test against. Local/Unspecified inputs are normalised to UTC automatically. |
 
 **Examples:**
@@ -1097,7 +1099,7 @@ Master gate that evaluates whether an update is allowed against the `UpdateWindo
 # Pre-flight a wave: would now be allowed?
 $gate = Test-AzLocalUpdateScheduleAllowed `
     -UpdateWindow 'Sat-Sun_02:00-06:00' `
-    -UpdateExclusions '2026-12-20/2027-01-03'
+    -UpdateWindowExclusions '2026-12-20/2027-01-03'
 
 if (-not $gate.Allowed) {
     Write-Host "Wave blocked: $($gate.Reason) - $($gate.Details)"

@@ -355,7 +355,7 @@ function Get-AzLocalClusterUpdateReadiness {
                     HealthCheckFailures    = ''
                     BlockingReasons        = ''
                     UpdateWindow           = ''
-                    UpdateExclusions       = ''
+                    UpdateWindowExclusions = ''
                 }) | Out-Null
             continue
         }
@@ -516,7 +516,7 @@ function Get-AzLocalClusterUpdateReadiness {
             }
 
             $uw = if ($clusterTags) { Get-TagValue -Tags $clusterTags -Name $script:UpdateWindowTagName } else { $null }
-            $ue = if ($clusterTags) { Get-TagValue -Tags $clusterTags -Name $script:UpdateExclusionsTagName } else { $null }
+            $ue = if ($clusterTags) { Get-TagValue -Tags $clusterTags -Name $script:UpdateWindowExclusionsTagName } else { $null }
 
             $results.Add([PSCustomObject]@{
                     ClusterName            = $clusterName
@@ -537,7 +537,7 @@ function Get-AzLocalClusterUpdateReadiness {
                     HealthCheckFailures    = $healthCheckFailures
                     BlockingReasons        = ($blockingReasons -join '; ')
                     UpdateWindow           = if ($uw) { $uw } else { '' }
-                    UpdateExclusions       = if ($ue) { $ue } else { '' }
+                    UpdateWindowExclusions = if ($ue) { $ue } else { '' }
                 }) | Out-Null
         }
         catch {
@@ -561,7 +561,7 @@ function Get-AzLocalClusterUpdateReadiness {
                     HealthCheckFailures    = $_.Exception.Message
                     BlockingReasons        = ''
                     UpdateWindow           = ''
-                    UpdateExclusions       = ''
+                    UpdateWindowExclusions = ''
                 }) | Out-Null
         }
     }

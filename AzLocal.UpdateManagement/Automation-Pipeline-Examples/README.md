@@ -54,7 +54,7 @@ By the end of this guide you will have:
 - Nine working pipelines committed to your repo and visible in the Actions / Pipelines UI:
   - **Authentication Validation and Subscription Scope Report** (Step.0) - probe the federated identity end-to-end, emit a JUnit-rendered authentication / scope / Resource Graph report, and capture the subscription set the pipeline identity can read. *Manual only - re-run after every RBAC change.*
   - **Inventory** (Step.1) - enumerate every Azure Local cluster the identity can see and export a CSV. *Scheduled weekly + manual.*
-  - **Manage UpdateRing tags** (Step.2) - bulk-apply `UpdateRing`, `UpdateWindow`, `UpdateExclusions` tags from that CSV. *Manual only.*
+  - **Manage UpdateRing tags** (Step.2) - bulk-apply `UpdateRing`, `UpdateWindow`, `UpdateWindowExclusions`, `UpdateExcluded` tags from that CSV. *Manual only.*
   - **Apply-Updates Schedule Coverage Audit** (Step.3, v0.7.65) - read-only weekly audit that compares the cron(s) in your `apply-updates` pipeline to the `UpdateWindow` tags actually present on your clusters and flags any (UpdateRing, UpdateWindow) pair that no cron will reach. *Scheduled weekly Mon 05:00 UTC + manual.*
   - **Fleet Connectivity Status** (Step.4, v0.7.79+, enhanced in v0.7.85) - read-only daily snapshot of Arc agent connectivity, physical NIC health, Azure Resource Bridge status, and the node-count reconciliation between cluster `reportedProperties.nodes` and Arc-tagged physical machines. *Scheduled daily 05:30 UTC + manual.*
   - **Assess Update Readiness** (Step.5) - pre-flight, report-only readiness + blocking-health snapshot, published as JUnit XML. *Manual only.*
@@ -1108,7 +1108,8 @@ This is the canonical "nothing wired -> staged rollout working" sequence. Follow
                               v
 +-----------------------------------------------------------------------+
 |                          PHASE 2: TAG                                  |
-|  6.2  Edit the CSV (UpdateRing, UpdateWindow, UpdateExclusions)        |
+|  6.2  Edit the CSV (UpdateRing, UpdateWindow,                          |
+|       UpdateWindowExclusions, UpdateExcluded)                          |
 |  6.3  Step.2_manage-updatering-tags.yml                                       |
 +-----------------------------------------------------------------------+
                               v
@@ -1153,7 +1154,8 @@ Every pipeline emits one or more artifacts (CSV / Markdown / JUnit XML / HTML). 
                                             +-------------------------------+
                                             |  Operator: edit CSV           |
                                             |  (UpdateRing / UpdateWindow / |
-                                            |   UpdateExclusions columns)   |
+                                            |   UpdateWindowExclusions,     |
+                                            |   UpdateExcluded columns)     |
                                             +-------------------------------+
                                                           |
                                                           v  in:  cluster-inventory.csv (edited)
@@ -1222,7 +1224,7 @@ Run **Inventory Clusters** with no parameters. It exports a CSV with one row per
 - **GitHub Actions**: *Actions -> Inventory Azure Local Clusters -> Run workflow*.
 - **Azure DevOps**: *Pipelines -> Inventory Clusters -> Run pipeline*.
 
-Download `cluster-inventory.csv` from the run artifacts. It contains `SubscriptionId`, `ResourceGroupName`, `ClusterName`, `ResourceId`, `UpdateRing`, `UpdateWindow`, `UpdateExclusions`, and the sideloaded-workflow columns added in v0.7.1.
+Download `cluster-inventory.csv` from the run artifacts. It contains `SubscriptionId`, `ResourceGroupName`, `ClusterName`, `ResourceId`, `UpdateRing`, `UpdateWindow`, `UpdateWindowExclusions` (renamed from `UpdateExclusions` in v0.7.90), `UpdateExcluded` (new in v0.7.90), and the sideloaded-workflow columns added in v0.7.1.
 
 **What a successful inventory run looks like.** The `Run Cluster Inventory` step prints the discovery summary, the absolute path of the exported CSV under the run artifacts, the `UpdateRing` tag distribution across all clusters, and a "Next Steps" block that points at `Set-AzLocalClusterUpdateRingTag` for the next workflow:
 
@@ -1238,11 +1240,12 @@ Open the CSV and fill in three columns:
 |---|---|---|---|
 | `UpdateRing` | Yes | Free-form (e.g. `Wave1`, `Pilot`, `Production`) | Defines the wave the cluster belongs to. Apply Updates targets one ring at a time. |
 | `UpdateWindow` | No | `<days>_<HH:MM>-<HH:MM>` in UTC, semicolon-separated | Allowed maintenance window. Updates outside it return `ScheduleBlocked`. |
-| `UpdateExclusions` | No | `YYYY-MM-DD/YYYY-MM-DD`, comma-separated. Supports `*` wildcards. | Blackout / change-freeze periods. **Exclusions take priority over windows.** |
+| `UpdateWindowExclusions` (v0.7.90; was `UpdateExclusions`) | No | `YYYY-MM-DD/YYYY-MM-DD`, comma-separated. Supports `*` wildcards. | Blackout / change-freeze periods. **Exclusions take priority over windows.** |
+| `UpdateExcluded` (v0.7.90) | No | `True` / `False` / `1` / `0` (case-insensitive). Default-stamped `False` by `Set-AzLocalClusterUpdateRingTag` if absent. | Operator hard override. `True` makes `Start-AzLocalClusterUpdate` skip the cluster with `Status = ExcludedByTag` regardless of ring scope, sideloaded state, or schedule. |
 
 Example:
 
-| ClusterName | UpdateRing | UpdateWindow | UpdateExclusions |
+| ClusterName | UpdateRing | UpdateWindow | UpdateWindowExclusions | UpdateExcluded |
 |---|---|---|---|
 | HCI-Pilot01 | Wave1 | | |
 | HCI-Pilot02 | Wave1 | | |
@@ -1311,7 +1314,8 @@ The pipeline publishes one test per cluster to the Tests tab and writes per-clus
 |---|---|---|
 | `Started` / `UpdateStarted` / `Success` | Update is running or finished. | None. |
 | `Skipped` | Cluster is up to date or has no ready updates. | None. |
-| `ScheduleBlocked` | Cluster is outside its `UpdateWindow` or inside an `UpdateExclusions` period. | Re-run during the window, or update the tag if the schedule has drifted. |
+| `ScheduleBlocked` | Cluster is outside its `UpdateWindow` or inside an `UpdateWindowExclusions` period. | Re-run during the window, or update the tag if the schedule has drifted. |
+| `ExcludedByTag` (v0.7.90) | The cluster has `UpdateExcluded = True` (operator hard override). | Flip `UpdateExcluded` to `False` on the cluster resource in the Azure portal (or via `az tag update ... --operation Merge --tags UpdateExcluded=False`) once the operator-imposed hold is lifted. Then re-run. |
 | `HealthCheckBlocked` | Cluster has critical health failures. | Remediate per section 6.4. |
 | `SideloadedBlocked` | Cluster has `UpdateSideloaded=False` waiting for an operator to stage the payload. | Stage the payload and flip the tag (or run `Reset-AzLocalSideloadedTag`). |
 | `Failed` / `Error` | The update request returned a non-success response. | Check pipeline logs and the cluster in Azure Portal. |
@@ -1342,7 +1346,7 @@ The three run in distinct (offset) cron slots so they don't contend for the same
 | Artefact | Description |
 |---|---|
 | `readiness-status.xml` | JUnit XML, one cluster per test (`Passed` = healthy + up to date, `Failed` = needs attention, `Failed/HasPrerequisite` = vendor SBE update required first). |
-| `readiness-status.csv` | Spreadsheet view of the same data plus `UpdateWindow`, `UpdateExclusions`, `SBEDependency`. |
+| `readiness-status.csv` | Spreadsheet view of the same data plus `UpdateWindow`, `UpdateWindowExclusions`, `UpdateExcluded`, `SBEDependency`. |
 | `readiness-status.json` | Machine-readable, with summary counts. |
 | `update-summaries.csv` | Update-summary state per cluster from Azure. |
 | `available-updates.csv` | Every available update across the fleet with version + health state. |
@@ -1423,12 +1427,13 @@ Phase 2 (lifecycle close-out via `Sync-AzLocalIncident`) and Phase 3 (Teams + Sl
 
 ## 8. Scheduling, maintenance windows, and change-freeze periods
 
-The `UpdateWindow` and `UpdateExclusions` tags on each cluster control when **Apply Updates** is allowed to start an update.
+The `UpdateWindow` and `UpdateWindowExclusions` tags on each cluster control when **Apply Updates** is allowed to start an update. The separate `UpdateExcluded` tag (v0.7.90) is an operator hard override that skips the cluster regardless of every other tag.
 
 | Tag | Format | Example | Behaviour |
 |---|---|---|---|
 | `UpdateWindow` | `<days>_<HH:MM>-<HH:MM>` (UTC) | `Sat-Sun_02:00-06:00` | Updates only start while current UTC time is inside the window. |
-| `UpdateExclusions` | `YYYY-MM-DD/YYYY-MM-DD`, comma-separated, supports `*` wildcards | `20**-12-20/20**-01-03,2027-06-01/2027-06-10` | No updates start during these dates. **Exclusions override windows.** |
+| `UpdateWindowExclusions` (v0.7.90; was `UpdateExclusions`) | `YYYY-MM-DD/YYYY-MM-DD`, comma-separated, supports `*` wildcards | `20**-12-20/20**-01-03,2027-06-01/2027-06-10` | No updates start during these dates. **Exclusions override windows.** |
+| `UpdateExcluded` (v0.7.90) | `True` / `False` / `1` / `0` (case-insensitive) | `True` | Operator hard override. `True` skips the cluster with `Status = ExcludedByTag` regardless of ring scope, sideloaded state, or schedule. `Set-AzLocalClusterUpdateRingTag` default-stamps `False` on any cluster that doesn't already have the tag. |
 
 > **CRITICAL: the `UpdateWindow` tag is a *gate*, not a *trigger*.** The tag only controls **whether** the Apply Updates pipeline is allowed to start an update on a given cluster when the pipeline is already running. The tag does **not** schedule the pipeline itself. The shipped `Step.6_apply-updates.yml` samples have **`workflow_dispatch` only** (GitHub Actions) / **`trigger: none`** (Azure DevOps) with no `schedule:` / `schedules:` block - which means **if you never trigger the pipeline manually during a window, no updates are ever applied automatically**, no matter what `UpdateWindow` you have tagged on your clusters.
 >
@@ -1440,7 +1445,7 @@ The `UpdateWindow` and `UpdateExclusions` tags on each cluster control when **Ap
 > | `Mon-Fri_22:00-04:00` | `'55 21 * * 1-5'` | `'55 21 * * 1-5'` | Fires weeknights at 21:55 UTC. The overnight wrap is handled by `Test-AzLocalUpdateScheduleAllowed`, you only need one cron per window opening. |
 > | `Sun_03:00-07:00` | `'55 2 * * 0'` | `'55 2 * * 0'` | Single weekly maintenance slot. |
 >
-> Inside the pipeline, `Test-AzLocalUpdateScheduleAllowed` is the per-cluster gate - clusters whose `UpdateWindow` does not cover "now" (or whose `UpdateExclusions` does cover "now") are skipped with `Status = ScheduleBlocked`. Running the pipeline outside any window is therefore safe but wasted - **running it during a window is the only way an update ever starts.**
+> Inside the pipeline, `Test-AzLocalUpdateScheduleAllowed` is the per-cluster gate - clusters whose `UpdateWindow` does not cover "now" (or whose `UpdateWindowExclusions` does cover "now") are skipped with `Status = ScheduleBlocked`. Running the pipeline outside any window is therefore safe but wasted - **running it during a window is the only way an update ever starts.** Separately, clusters with `UpdateExcluded = True` are skipped with `Status = ExcludedByTag` regardless of schedule.
 >
 > **Tip - one pipeline per ring**: if `Pilot` / `Wave1` / `Production` have different windows, the cleanest pattern is to either (a) copy `Step.6_apply-updates.yml` per ring with the ring's own schedule + `update_ring` hard-coded, or (b) keep one YAML but pass `update_ring` via a matrix indexed by cron entry. Sticking with the default "single manual workflow" is fine for ad-hoc / change-controlled estates - in that case the operator manually clicks **Run workflow** at the start of the maintenance window.
 
@@ -1457,7 +1462,7 @@ Test logic interactively before tagging:
 
 ```powershell
 # Right now in UTC?
-Test-AzLocalUpdateScheduleAllowed -UpdateWindow "Sat-Sun_02:00-06:00" -UpdateExclusions "2026-12-20/2027-01-03"
+Test-AzLocalUpdateScheduleAllowed -UpdateWindow "Sat-Sun_02:00-06:00" -UpdateWindowExclusions "2026-12-20/2027-01-03"
 
 # A specific past or future moment
 Test-AzLocalUpdateScheduleAllowed -UpdateWindow "Sat_02:00-06:00" -TestTime ([datetime]"2026-04-19 03:00:00")
@@ -1787,7 +1792,8 @@ The report includes executive summary cards, cluster information, a status table
 | `No clusters found` | Identity does not see the subscription, or clusters are not `Connected`. | Verify the role assignment scope; confirm cluster state in Azure Portal. The resource-graph extension is auto-installed by the pipelines. |
 | `Permission denied applying tags` | Identity is missing `Microsoft.Resources/tags/write`. | Grant per section 4. Same permission covers the v0.7.1 sideloaded-workflow tag writes (`UpdateSideloaded`, `UpdateVersionInProgress`). |
 | `Update failed to start` | Cluster is not in `Ready` state, or another update is in progress. | Check cluster health and update state in Azure Portal; review pipeline logs. |
-| Apply Updates reports `ScheduleBlocked` for an unexpected cluster | Tag is set but the current UTC time is outside the window, or an `UpdateExclusions` blackout is active. | Confirm the tag value with `Test-AzLocalUpdateScheduleAllowed` (section 8). |
+| Apply Updates reports `ScheduleBlocked` for an unexpected cluster | Tag is set but the current UTC time is outside the window, or an `UpdateWindowExclusions` blackout is active. | Confirm the tag value with `Test-AzLocalUpdateScheduleAllowed` (section 8). |
+| Apply Updates reports `ExcludedByTag` for an unexpected cluster (v0.7.90) | The cluster has `UpdateExcluded = True` set as an operator hard override. | Flip `UpdateExcluded` to `False` on the cluster (Azure portal or `az tag update --operation Merge`) once the hold is lifted; re-run the pipeline. |
 | Apply Updates reports `SideloadedBlocked` | Cluster has `UpdateSideloaded=False`. | Operator must stage the sideloaded payload and flip the tag, or run `Reset-AzLocalSideloadedTag` after the next successful run. |
 | Fleet Update Status leaves a cluster's update missing from `update-runs.csv` | Pre-v0.7.2: `cp1252` warnings on `az rest` output corrupted JSON parsing. | Upgrade to v0.7.2+ (`--only-show-errors` is now passed everywhere). |
 | `429 TooManyRequests` from ARM during fleet operations | Throttle limit too high for the subscription topology. | Reduce `throttle_limit`; consider matrix-by-subscription (section 9). |
@@ -1809,7 +1815,7 @@ Automation-Pipeline-Examples/
   github-actions/
     Step.0_authentication-test.yml           # 0. Authentication validation + subscription scope report (manual; v0.7.70).
     Step.1_inventory-clusters.yml            # 1. Inventory (weekly Mon 06:00 UTC + manual).
-    Step.2_manage-updatering-tags.yml        # 2. Apply UpdateRing / UpdateWindow / UpdateExclusions tags (manual).
+    Step.2_manage-updatering-tags.yml        # 2. Apply UpdateRing / UpdateWindow / UpdateWindowExclusions / UpdateExcluded tags (manual).
     Step.3_apply-updates-schedule-audit.yml  # 3. Weekly read-only audit: UpdateWindow tags vs apply-updates cron (Mon 05:00 UTC, v0.7.65).
     Step.4_fleet-connectivity-status.yml     # 4. Daily fleet connectivity / Arc / NIC / Resource Bridge snapshot + node-coverage reconciliation (daily 05:30 UTC, v0.7.79+; reconciliation enhanced in v0.7.85).
     Step.5_assess-update-readiness.yml       # 5. Pre-flight readiness report (manual; v0.7.0).
