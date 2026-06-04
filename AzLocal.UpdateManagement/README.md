@@ -237,6 +237,18 @@ Copy-AzLocalPipelineExample -Destination C:\repos\my-fleet -Platform GitHub
 
 The function prints a short "next steps" summary pointing at the copied README and the platform-specific YAML folder. See [`Automation-Pipeline-Examples/README.md`](Automation-Pipeline-Examples/README.md) for the full step-by-step setup guide.
 
+> 🔄 **Refreshing pipelines after a module upgrade?** Use `Update-AzLocalPipelineExample` instead of `Copy-AzLocalPipelineExample`. It is a marker-aware merge that refreshes everything **outside** the `# BEGIN-AZLOCAL-CUSTOMIZE:<region>` / `# END-AZLOCAL-CUSTOMIZE:<region>` blocks in each YAML and **preserves** everything inside them - so your custom cron schedules (`schedule-triggers`) and ITSM secret bindings (`itsm-secrets` in Step.6) survive the upgrade.
+>
+> ```powershell
+> # Preview what would change
+> Update-AzLocalPipelineExample -Destination .\.github\workflows -Platform GitHub -WhatIf
+>
+> # Apply the upgrade (preserves your AZLOCAL-CUSTOMIZE blocks)
+> Update-AzLocalPipelineExample -Destination .\.github\workflows -Platform GitHub
+> ```
+>
+> Rule of thumb: `Copy-AzLocalPipelineExample` for the **initial drop** (or a deliberate hard reset to the shipped samples); `Update-AzLocalPipelineExample` for **every subsequent module-upgrade refresh** if you have customised the YAMLs. See [Automation-Pipeline-Examples/README.md](Automation-Pipeline-Examples/README.md) ("Preserving operator edits across upgrades") for the marker-region reference and a full migration walkthrough.
+
 ### 3. Start an Update on a Single Cluster
 
 ```powershell
