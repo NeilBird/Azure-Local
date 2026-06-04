@@ -163,6 +163,17 @@ jobs:
           $healthCsv    = Join-Path $outputDir 'health-blocking.csv'
           $healthXml    = Join-Path $outputDir 'health-blocking.xml'
 
+          # Always fetch inventory so we can build a ResourceId -> UpdateRing map
+          # for the per-ring pivot in the markdown summary (cheap ARG round-trip).
+          $inventory = Get-AzLocalClusterInventory -PassThru
+          $ringByResourceId = @{}
+          if ($inventory) {
+              foreach ($inv in $inventory) {
+                  $ringValue = if ($inv.UpdateRing) { [string]$inv.UpdateRing } else { '(no ring tag)' }
+                  $ringByResourceId[$inv.ResourceId] = $ringValue
+              }
+          }
+
           $scopeParams = @{}
           if ($scope -eq 'by-update-ring' -and $updateRing) {
               $scopeParams['ScopeByUpdateRingTag'] = $true
@@ -170,7 +181,6 @@ jobs:
               Write-Host "Scope: UpdateRing = $updateRing"
           } else {
               Write-Host "Scope: all clusters (via inventory)"
-              $inventory = Get-AzLocalClusterInventory -PassThru
               if (-not $inventory -or $inventory.Count -eq 0) {
                   Write-Warning 'No clusters found in inventory.'
                   "NOT_READY=0" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
@@ -218,6 +228,38 @@ jobs:
               -BlockingOnly `
               -ExportPath $healthXml
 
+          # Merge readiness + blocking-health JUnit XMLs into a single combined
+          # report (assess-readiness.xml) so operators get one Checks-tab entry
+          # instead of two. The individual XMLs are still uploaded as artifacts
+          # and still published as [JUnit Debug] entries below for parity.
+          $combinedXml = Join-Path $outputDir 'assess-readiness.xml'
+          try {
+              $readinessDoc = [xml](Get-Content -LiteralPath $readinessXml -Raw)
+              $healthDoc    = [xml](Get-Content -LiteralPath $healthXml -Raw)
+              $combinedDoc  = New-Object System.Xml.XmlDocument
+              $declaration  = $combinedDoc.CreateXmlDeclaration('1.0', 'utf-8', $null)
+              $combinedDoc.AppendChild($declaration) | Out-Null
+              $rootElement  = $combinedDoc.CreateElement('testsuites')
+              $rootElement.SetAttribute('name', 'Update Readiness Assessment')
+              $combinedDoc.AppendChild($rootElement) | Out-Null
+              foreach ($srcDoc in @($readinessDoc, $healthDoc)) {
+                  $suites = if ($srcDoc.DocumentElement.LocalName -eq 'testsuites') {
+                      $srcDoc.DocumentElement.SelectNodes('testsuite')
+                  } else {
+                      ,$srcDoc.DocumentElement
+                  }
+                  foreach ($suite in $suites) {
+                      $imported = $combinedDoc.ImportNode($suite, $true)
+                      $rootElement.AppendChild($imported) | Out-Null
+                  }
+              }
+              $combinedDoc.Save($combinedXml)
+              Write-Host "Combined JUnit report: $combinedXml"
+          }
+          catch {
+              Write-Warning "Failed to build combined JUnit report: $($_.Exception.Message)"
+          }
+
           # Test-AzLocalClusterHealth -PassThru returns one row per cluster
           # (shape: ClusterName, HealthState, Passed, CriticalCount, WarningCount, Failures)
           # NOT a flat list of finding rows. Aggregate from CriticalCount / Failures rather
@@ -233,9 +275,37 @@ jobs:
           "NOT_READY=$notReady"                   | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           "CRITICAL_FAILURES=$clustersWithCritical" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
-          # GitHub step summary
+          # GitHub step summary - audit-order layout:
+          #   1. Header tile (one-line status + scope)
+          #   2. Action banner (Action required / All clear)
+          #   3. Summary counts
+          #   4. Not-Ready cluster table  (blocking findings first)
+          #   5. Critical-health cluster table (blocking findings, second priority)
+          #   6. Per-UpdateRing pivot (only shown when >1 ring in scope)
+          #   7. All-clusters detail table
+          #   8. Cross-links to upstream/downstream pipelines
           $lines = New-Object 'System.Collections.Generic.List[string]'
           $lines.Add('## Update Readiness Assessment')
+          $lines.Add('')
+
+          # 1. Header tile (one-line status, no emoji - ASCII safe)
+          $scopeLabel = $scope
+          if ($updateRing) { $scopeLabel = "$scope (UpdateRing = $updateRing)" }
+          $readyCount = $total - $notReady
+          $statusWord = if ($notReady -gt 0 -or $clustersWithCritical -gt 0) { 'ATTENTION' } else { 'OK' }
+          $lines.Add("**[$statusWord]** $total cluster(s) assessed | $readyCount Ready | $notReady Not Ready | $clustersWithCritical with Critical health failures | Scope: $scopeLabel")
+          $lines.Add('')
+
+          # 2. Action banner
+          if ($notReady -gt 0 -or $clustersWithCritical -gt 0) {
+              $lines.Add("> **Action required**: $notReady cluster(s) not ready and/or $clustersWithCritical cluster(s) with Critical health failures. Review the **Not-Ready** and **Critical-health** sections below first; the CSV artifacts in `azlocal-readiness-assessment-report_*` carry the full per-finding detail. Remediate (hardware vendor SBE / firmware / cluster health) before or alongside the next apply-updates run. **The healthy clusters are safe to proceed** - Step.6_apply-updates.yml is per-cluster scoped.")
+          } else {
+              $lines.Add('> **All clear**: every cluster in scope is ready for update. Safe to proceed with Step.6_apply-updates.yml for this ring.')
+          }
+          $lines.Add('')
+
+          # 3. Summary counts
+          $lines.Add('### Summary counts')
           $lines.Add('')
           $lines.Add('| Metric | Count |')
           $lines.Add('|--------|-------|')
@@ -244,33 +314,81 @@ jobs:
           $lines.Add("| Clusters with Critical health failures | $clustersWithCritical |")
           $lines.Add("| Total Critical findings | $critical |")
           $lines.Add('')
-          $scopeLabel = $scope
-          if ($updateRing) { $scopeLabel = "$scope (UpdateRing = $updateRing)" }
-          $lines.Add("**Scope**: $scopeLabel")
-          $lines.Add('')
-          if ($notReady -gt 0 -or $clustersWithCritical -gt 0) {
-              $lines.Add("> **Action required**: $notReady cluster(s) not ready and/or $clustersWithCritical cluster(s) with Critical health failures. Review the markdown table above and the CSV artifacts first; use the JUnit output in the Checks tab as **diagnostic detail** for CI tooling. Remediate (hardware vendor SBE / firmware / cluster health) before or alongside the next apply-updates run. **The healthy clusters are safe to proceed** - Step.6_apply-updates.yml is per-cluster scoped.")
-          } else {
-              $lines.Add('> **All clear**: every cluster in scope is ready for update. Safe to proceed with Step.6_apply-updates.yml for this ring.')
+
+          # 4. Not-Ready cluster table (blocking findings first)
+          $notReadyRows = @($readiness | Where-Object { $_.ReadyForUpdate -ne $true })
+          if ($notReadyRows.Count -gt 0) {
+              $lines.Add('### Not-Ready clusters (review first)')
+              $lines.Add('')
+              $lines.Add('| Cluster | UpdateRing | Current version | Update state | Health | Blocking reasons |')
+              $lines.Add('|---------|------------|-----------------|--------------|--------|------------------|')
+              foreach ($r in ($notReadyRows | Sort-Object @{Expression={ if ($ringByResourceId.ContainsKey($_.ClusterResourceId)) { $ringByResourceId[$_.ClusterResourceId] } else { 'zzz' } }}, ClusterName)) {
+                  $ring = if ($ringByResourceId.ContainsKey($r.ClusterResourceId)) { $ringByResourceId[$r.ClusterResourceId] } else { '-' }
+                  $cv = if ($r.CurrentVersion) { $r.CurrentVersion } else { '-' }
+                  $br = if ($r.BlockingReasons) { $r.BlockingReasons } else { '-' }
+                  $lines.Add("| $($r.ClusterName) | $ring | $cv | $($r.UpdateState) | $($r.HealthState) | $br |")
+              }
+              $lines.Add('')
           }
 
-          # Per-cluster detail table (installed version is useful for operators even
-          # for clusters that ARE ready, so always include it when we have rows).
+          # 5. Critical-health cluster table
+          $criticalRows = @($health | Where-Object { [int]$_.CriticalCount -gt 0 })
+          if ($criticalRows.Count -gt 0) {
+              $lines.Add('### Critical-health clusters')
+              $lines.Add('')
+              $lines.Add('_Cross-link: see **Step.4_fleet-connectivity-status** for connectivity-class failures and **Step.9_fleet-health-status** for the broader Critical/Warning catalog._')
+              $lines.Add('')
+              $lines.Add('| Cluster | UpdateRing | Health state | Critical | Warning |')
+              $lines.Add('|---------|------------|--------------|----------|---------|')
+              foreach ($r in ($criticalRows | Sort-Object @{Expression={[int]$_.CriticalCount}; Descending=$true}, ClusterName)) {
+                  $invMatch = $inventory | Where-Object { $_.ClusterName -eq $r.ClusterName } | Select-Object -First 1
+                  $ring = if ($invMatch -and $invMatch.UpdateRing) { $invMatch.UpdateRing } else { '-' }
+                  $lines.Add("| $($r.ClusterName) | $ring | $($r.HealthState) | $($r.CriticalCount) | $($r.WarningCount) |")
+              }
+              $lines.Add('')
+          }
+
+          # 6. Per-UpdateRing pivot (only shown when more than one ring in scope)
+          $ringGroups = $readiness | Group-Object @{Expression={ if ($ringByResourceId.ContainsKey($_.ClusterResourceId)) { $ringByResourceId[$_.ClusterResourceId] } else { '(no ring tag)' } }} | Sort-Object Name
+          if (@($ringGroups).Count -gt 1) {
+              $lines.Add('### Per UpdateRing breakdown')
+              $lines.Add('')
+              $lines.Add('| UpdateRing | Total | Ready | Not Ready |')
+              $lines.Add('|------------|-------|-------|-----------|')
+              foreach ($g in $ringGroups) {
+                  $gReady = @($g.Group | Where-Object { $_.ReadyForUpdate -eq $true }).Count
+                  $gNotReady = $g.Count - $gReady
+                  $lines.Add("| $($g.Name) | $($g.Count) | $gReady | $gNotReady |")
+              }
+              $lines.Add('')
+          }
+
+          # 7. All-clusters detail table (kept for completeness; sorted by UpdateRing then ClusterName)
           if ($total -gt 0) {
+              $lines.Add('### All clusters detail')
               $lines.Add('')
-              $lines.Add('### Cluster detail')
-              $lines.Add('')
-              $lines.Add('| Cluster | Current version | Current SBE version | Update state | Health | Ready | Recommended update |')
-              $lines.Add('|---------|-----------------|---------------------|--------------|--------|-------|--------------------|')
-              foreach ($r in $readiness) {
+              $lines.Add('| Cluster | UpdateRing | Current version | Current SBE version | Update state | Health | Ready | Recommended update |')
+              $lines.Add('|---------|------------|-----------------|---------------------|--------------|--------|-------|--------------------|')
+              foreach ($r in ($readiness | Sort-Object @{Expression={ if ($ringByResourceId.ContainsKey($_.ClusterResourceId)) { $ringByResourceId[$_.ClusterResourceId] } else { 'zzz' } }}, ClusterName)) {
+                  $ring = if ($ringByResourceId.ContainsKey($r.ClusterResourceId)) { $ringByResourceId[$r.ClusterResourceId] } else { '-' }
                   $cv  = if ($r.CurrentVersion) { $r.CurrentVersion } else { '-' }
                   $csv = if ($r.PSObject.Properties['CurrentSbeVersion'] -and $r.CurrentSbeVersion) { $r.CurrentSbeVersion } else { '-' }
                   $ru  = if ($r.RecommendedUpdate) { $r.RecommendedUpdate } else { '-' }
-                  $lines.Add("| $($r.ClusterName) | $cv | $csv | $($r.UpdateState) | $($r.HealthState) | $($r.ReadyForUpdate) | $ru |")
+                  $lines.Add("| $($r.ClusterName) | $ring | $cv | $csv | $($r.UpdateState) | $($r.HealthState) | $($r.ReadyForUpdate) | $ru |")
               }
-          }
               $lines.Add('')
-              $lines.Add('_Note: Checks-tab entries prefixed **[JUnit Debug]** are diagnostic mirrors for CI/test tooling. For primary readability, use this summary table and the CSV artifacts._')
+          }
+
+          # 8. Cross-links to other pipelines
+          $lines.Add('### Cross-link to other pipelines')
+          $lines.Add('')
+          $lines.Add('- **Step.4_fleet-connectivity-status** - root-cause Disconnected / Offline / partial-connectivity findings on the Not-Ready and Critical-health rows above.')
+          $lines.Add('- **Step.6_apply-updates** - apply updates to the Ready clusters in this ring (manual workflow_dispatch, or wait for the scheduled cron firing).')
+          $lines.Add('- **Step.7_monitor-updates** - tail in-flight runs once Step.6 has started (auto-trigger on Step.6 completion, or manual).')
+          $lines.Add('- **Step.9_fleet-health-status** - broader Critical / Warning health catalog across the whole fleet (not just blocking-only).')
+          $lines.Add('')
+          $lines.Add('_Note: the **Update Readiness Assessment** entry in the Checks tab is the merged combined view; the [JUnit Debug] entries are diagnostic mirrors for CI/test tooling._')
+
           ($lines -join [Environment]::NewLine) | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
 
       - name: Compute Artifact Timestamp
@@ -291,6 +409,17 @@ jobs:
           name: azlocal-readiness-assessment-report_${{ steps.artifact-stamp.outputs.timestamp }}
           path: ./artifacts/*
           retention-days: 30
+
+      - name: Publish combined readiness assessment (primary)
+        if: always()
+        uses: dorny/test-reporter@v3
+        with:
+          name: 'Update Readiness Assessment'
+          path: ./artifacts/assess-readiness.xml
+          reporter: java-junit
+          list-suites: failed
+          list-tests: failed
+        continue-on-error: true
 
       - name: Publish readiness JUnit diagnostics
         if: always()

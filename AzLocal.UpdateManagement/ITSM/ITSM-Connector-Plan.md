@@ -30,7 +30,7 @@
 ```
 +--------------------------+        +------------------------------+
 | Step.6_apply-updates.yml        |        | New-AzLocalIncident       |
-| Step.7_fleet-update-status.yml  | -----> | (Public)                     |
+| Step.8_fleet-update-status.yml  | -----> | (Public)                     |
 |                          |        | + Sync-AzLocalIncident    |
 | Reads JUnit + CSV        |        |   (lifecycle / Phase 2)      |
 | Runs ITSM step only if   |        +---------------+--------------+
@@ -282,7 +282,7 @@ ServiceNow does support inbound OAuth 2.0 JWT bearer flow which would let us avo
 `Sync-AzLocalIncident` runs in two places:
 
 1. **Inside `Step.6_apply-updates.yml`** after the apply step, when this run succeeded a cluster that had a previous open ticket - close-out happens immediately.
-2. **Inside `Step.7_fleet-update-status.yml`** as a periodic sweep - catches manual recovery, sideloaded successes, schedule-blocked clusters that subsequently updated, etc.
+2. **Inside `Step.8_fleet-update-status.yml`** *(formerly `Step.7_fleet-update-status.yml` - renumbered in v0.7.90 when the new `Step.7_monitor-updates.yml` in-flight monitor was introduced)* as a periodic sweep - catches manual recovery, sideloaded successes, schedule-blocked clusters that subsequently updated, etc.
 
 ### Detection algorithm
 
@@ -403,10 +403,10 @@ AzLocal.UpdateManagement/
         work-note.md
     github-actions/
       Step.6_apply-updates.yml                # gets new optional ITSM step
-      Step.7_fleet-update-status.yml          # gets new optional ITSM + Sync step
+      Step.8_fleet-update-status.yml          # gets new optional ITSM + Sync step (renumbered from Step.7 in v0.7.90)
     azure-devops/
       Step.6_apply-updates.yml                # mirrors GH
-      Step.7_fleet-update-status.yml          # mirrors GH
+      Step.8_fleet-update-status.yml          # mirrors GH (renumbered from Step.7 in v0.7.90)
 ```
 
 ### Refactor mechanics
@@ -507,13 +507,13 @@ New step **after** `Publish Test Results` and **before** `Summary`:
   continue-on-error: true
 ```
 
-### 10.2 `Step.7_fleet-update-status.yml` **(Deferred along with Phase 2)**
+### 10.2 `Step.8_fleet-update-status.yml` *(formerly `Step.7_fleet-update-status.yml` - renumbered in v0.7.90)* **(Deferred along with Phase 2)**
 
 Adds the same `Sync-AzLocalIncident` step (no `New-AzLocalIncident` - that is only for the apply pipeline). Lets a hourly / daily fleet read sweep close out tickets when a cluster recovered between apply runs. Not shipped in v0.7.4.
 
 ### 10.3 Azure DevOps parity
 
-Both ADO `Step.6_apply-updates.yml` and (when Phase 2 lands) `Step.7_fleet-update-status.yml` get exactly the same step structure using `task.logissue` and `PublishTestResults@2` (already in use elsewhere in those YAMLs). Inputs are declared as pipeline parameters with the same names and defaults. v0.7.4 ships only the `Step.6_apply-updates.yml` ITSM step on both GitHub Actions and Azure DevOps; the Sync step is deferred.
+Both ADO `Step.6_apply-updates.yml` and (when Phase 2 lands) `Step.8_fleet-update-status.yml` *(renumbered from `Step.7_fleet-update-status.yml` in v0.7.90)* get exactly the same step structure using `task.logissue` and `PublishTestResults@2` (already in use elsewhere in those YAMLs). Inputs are declared as pipeline parameters with the same names and defaults. v0.7.4 ships only the `Step.6_apply-updates.yml` ITSM step on both GitHub Actions and Azure DevOps; the Sync step is deferred.
 
 ---
 
@@ -592,7 +592,7 @@ These are items I want to confirm before / during implementation. None block sta
 | # | Question | Decision |
 |---|---|---|
 | Q1 | Run-history state for `raiseAfterConsecutiveOccurrences`. | **Resolved.** Three-tier pluggable store (Section 5.4): Azure Blob (default, recommended) -> CI cache (no-Azure-infra fallback) -> localFile (user-managed). Repo-commit-back explicitly rejected: requires `contents: write`, races on concurrent runs, fails on forked-PR triggers. |
-| Q2 | Should `Sync-AzLocalIncident` also reach into `Step.7_fleet-update-status.yml` results when triggered from `Step.6_apply-updates.yml` (cross-pipeline visibility) or stay scoped to the run that called it? | Stay scoped. Cross-pipeline visibility added in v0.7.4 if requested. |
+| Q2 | Should `Sync-AzLocalIncident` also reach into `Step.8_fleet-update-status.yml` *(formerly `Step.7_fleet-update-status.yml` - renumbered in v0.7.90)* results when triggered from `Step.6_apply-updates.yml` (cross-pipeline visibility) or stay scoped to the run that called it? | Stay scoped. Cross-pipeline visibility added in v0.7.4 if requested. |
 | Q3 | When `lifecycle.onSuccessAction = resolve` and the ticket has an `assigned_to` set, should we still resolve? | No. Treat assigned ticket as "human owns it" and only post a work-note. (Encoded in plan above.) |
 | Q4 | Teams Adaptive Card schema version? | 1.4 (broad Teams compatibility, supports Action.OpenUrl). |
 | Q5 | Slack: webhook URL only, or also support `chat.postMessage` with bot token (richer formatting, threading)? | Webhook first (simpler), bot token later. Phase 3 itself is deferred beyond v0.7.4. |
