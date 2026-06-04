@@ -65,7 +65,7 @@ parameters:
     default: ''
 
 variables:
-  GENERATED_AGAINST_MODULE_VERSION: '0.7.90'
+  GENERATED_AGAINST_MODULE_VERSION: '0.7.91'
   REQUIRED_MODULE_VERSION: '${{ parameters.moduleVersion }}'
   reportsPath: '$(Build.ArtifactStagingDirectory)/reports'
 
@@ -272,7 +272,7 @@ stages:
           } else {
               $md.Add('### No update runs currently in flight')
               $md.Add('')
-              $md.Add("No clusters in scope have a latest run in state ``InProgress``. To verify scope, see the artifact CSV (\`update-monitor.csv\`).")
+              $md.Add("No clusters in scope have a latest run in state ``InProgress``. To verify scope, see the artifact CSV (``update-monitor.csv``).")
           }
           $md.Add('')
           $md.Add('_Source data: `Get-AzLocalUpdateRuns -Latest`. JUnit emitted as `update-monitor.xml`; full per-cluster rows in `update-monitor.csv`._')
