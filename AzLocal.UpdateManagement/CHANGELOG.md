@@ -5,6 +5,21 @@ All notable changes to the AzLocal.UpdateManagement module (renamed from AzStack
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.91] - 2026-06-05
+
+Docs/YAML-only patch release. No cmdlet behaviour changes, no schema changes, no breaking changes. Includes one urgent pipeline parser fix (Step.7) plus three cosmetic step-summary fixes (Step.3).
+
+### Fixed
+
+- **Urgent: `Step.7_monitor-updates.yml` (GH Actions + Azure DevOps) - PowerShell 7 parser error breaks the pipeline.** The "No update runs currently in flight" branch contained the literal sequence `\`update-monitor.csv\`` inside a double-quoted PowerShell string. The runner is PowerShell 7, which interprets the backtick that follows the backslash as the start of a `` `u{hex} `` Unicode escape; with no `{` following, the parser throws `The Unicode escape sequence is not valid` at parse time. GitHub Actions parses the whole `run:` block before executing it, so the failure surfaces at the `Import-Module` step with no usable diagnostics. Fixed by switching to the `` `` `` literal-backtick escape already used on the same line for `` ``InProgress`` ``. Operators running v0.7.90 should upgrade or hot-patch the two `Step.7_monitor-updates.yml` files immediately.
+- **`Step.3_apply-updates-schedule-audit.yml` (GH Actions + Azure DevOps) - wrong cmdlet name in the per-ring-overrides tip.** The tip text referenced `Get-AzLocalUpdate -Status Ready`, which does not exist in the module. Replaced with the real exported cmdlet `Get-AzLocalAvailableUpdates`.
+- **`Step.3_apply-updates-schedule-audit.yml` (GH Actions + Azure DevOps) - bogus example version strings in the per-ring-overrides tip.** The previous example showed `10.2604.0.123;10.2610.0.456`, which does not match Azure Local's real update naming and contradicted the canonical example in `apply-updates-schedule.example.yml`. Replaced with the canonical form `Solution12.2604.1003.1005;Solution12.2610.1003.XX`.
+- **`Step.3_apply-updates-schedule-audit.yml` (GH Actions + Azure DevOps) - trailing literal `n` after the closing markdown code-fence.** The PowerShell here-string used `"``````n"` (missing a backtick before `n`), so the rendered job summary showed a stray `n` immediately after the closing ` ``` `. Fixed to emit the closing fence followed by a real newline.
+
+### Migration
+
+- Run `Update-AzLocalPipelineExample -Destination <path>` to refresh the four affected `Step.{3,7}_*.yml` files (two for each step, one per platform). All four fixes are outside `BEGIN-AZLOCAL-CUSTOMIZE` blocks, so any operator schedule customisations are preserved.
+
 ## [0.7.90] - 2026-06-04
 
 New `UpdateExcluded` operator-override tag + breaking tag renames: `UpdateWindow` -> `UpdateStartWindow` and `UpdateExclusions` -> `UpdateExclusionsWindow`. Pipeline renumber: new `Step.7_monitor-updates` (operational in-flight monitor) inserted between Step.6 apply-updates and the existing daily snapshot pipelines, which shift to `Step.8_fleet-update-status` and `Step.9_fleet-health-status`.

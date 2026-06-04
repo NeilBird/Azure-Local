@@ -68,7 +68,7 @@ env:
   # this to the version actually installed and to the latest on PSGallery, and emits a
   # ::notice annotation if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.7.90'
+  GENERATED_AGAINST_MODULE_VERSION: '0.7.91'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): manual workflow_dispatch input >
   # repository variable 'REQUIRED_MODULE_VERSION' > empty (latest).
@@ -301,7 +301,7 @@ jobs:
           } else {
               $md.Add('### No update runs currently in flight')
               $md.Add('')
-              $md.Add("No clusters in scope have a latest run in state ``InProgress``. To verify scope, see the artifact CSV (\`update-monitor.csv\`).")
+              $md.Add("No clusters in scope have a latest run in state ``InProgress``. To verify scope, see the artifact CSV (``update-monitor.csv``).")
           }
           $md.Add('')
           $md.Add('_Source data: `Get-AzLocalUpdateRuns -Latest`. JUnit emitted as `./reports/update-monitor.xml`; full per-cluster rows in `./reports/update-monitor.csv`._')

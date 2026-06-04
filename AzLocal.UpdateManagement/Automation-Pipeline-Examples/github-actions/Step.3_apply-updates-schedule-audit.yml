@@ -83,7 +83,7 @@ env:
   # this to the version actually installed and to the latest on PSGallery, and emits a
   # ::notice annotation if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.7.90'
+  GENERATED_AGAINST_MODULE_VERSION: '0.7.91'
   REQUIRED_MODULE_VERSION: ${{ github.event.inputs.module_version || vars.REQUIRED_MODULE_VERSION || '' }}
 
 jobs:
@@ -524,13 +524,13 @@ jobs:
                     }
 
                     if ($rowsMissingOverride.Count -gt 0) {
-                        $md += "`n> **Tip - per-ring overrides.** Rows above without a row-level ``allowedUpdateVersions:`` inherit the top-level. To enforce a 'minimum updates' policy on a specific ring (e.g. keep Prod on the latest feature drop only - YY04 / YY10 - and skip cumulative updates), add a per-row override. Use ``Get-AzLocalUpdate -Status Ready`` (or the Azure portal -> Azure Local -> Updates) to find valid update names / version strings. Suggested edit sites for this schedule (first 3 inheriting rows):`n"
+                        $md += "`n> **Tip - per-ring overrides.** Rows above without a row-level ``allowedUpdateVersions:`` inherit the top-level. To enforce a 'minimum updates' policy on a specific ring (e.g. keep Prod on the latest feature drop only - YY04 / YY10 - and skip cumulative updates), add a per-row override. Use ``Get-AzLocalAvailableUpdates`` (or the Azure portal -> Azure Local -> Updates) to find valid update names / version strings. Suggested edit sites for this schedule (first 3 inheriting rows):`n"
                         $md += "`n``````yaml`n"
                         foreach ($m in ($rowsMissingOverride | Select-Object -First 3)) {
                             $md += "# Row $($m.Row): rings='$($m.Rings)' weeksInCycle='$($m.WeeksInCycle)' daysOfWeek='$($m.DaysOfWeek)'`n"
-                            $md += "#   allowedUpdateVersions: '10.2604.0.123;10.2610.0.456'`n"
+                            $md += "#   allowedUpdateVersions: 'Solution12.2604.1003.1005;Solution12.2610.1003.XX'`n"
                         }
-                        $md += "``````n"
+                        $md += "`````` `n"
                         if ($rowsMissingOverride.Count -gt 3) {
                             $md += "`n*Showing first 3 of $($rowsMissingOverride.Count) rows that inherit the top-level allow-list.*`n"
                         }
