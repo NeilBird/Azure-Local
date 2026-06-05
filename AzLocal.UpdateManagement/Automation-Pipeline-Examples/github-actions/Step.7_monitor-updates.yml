@@ -29,13 +29,18 @@ on:
   # Content between BEGIN/END markers is preserved by
   # Update-AzLocalPipelineExample across module upgrades.
   #
-  # Default: disabled. Uncomment the cron when you have an active wave and
-  # want every-30-min snapshots. Typical patterns:
-  #   '*/30 * * * *'         every 30 min, 24x7
+  # Default (v0.7.92+): runs 5x/day, every 2 hours across the typical overnight
+  # maintenance window (20:00, 22:00, 00:00, 02:00, 04:00 UTC). GitHub Actions
+  # cron is ALWAYS UTC - adjust the hour list below for your local maintenance
+  # window. Comment the `schedule:` block out entirely to disable.
+  #
+  # Other typical patterns:
+  #   '*/30 * * * *'         every 30 min, 24x7 (busiest)
+  #   '0 */2 * * *'          every 2 hours, 24x7
   #   '*/30 * * * 0,6'       every 30 min, weekends only
   #   '*/15 22-6 * * 0,6'    every 15 min during the weekend maintenance window
-  # schedule:
-  #   - cron: '*/30 * * * *'
+  schedule:
+    - cron: '0 0,2,4,20,22 * * *'
   # END-AZLOCAL-CUSTOMIZE:schedule-triggers
 
   workflow_dispatch:
@@ -68,7 +73,7 @@ env:
   # this to the version actually installed and to the latest on PSGallery, and emits a
   # ::notice annotation if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.7.91'
+  GENERATED_AGAINST_MODULE_VERSION: '0.7.92'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): manual workflow_dispatch input >
   # repository variable 'REQUIRED_MODULE_VERSION' > empty (latest).

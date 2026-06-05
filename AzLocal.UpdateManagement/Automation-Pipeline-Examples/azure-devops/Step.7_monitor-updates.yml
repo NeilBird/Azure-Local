@@ -25,18 +25,21 @@
 # module upgrades. Add or modify `schedules:` blocks below.
 trigger: none  # Manual or scheduled only
 
-# Default: no schedule. Uncomment when you have an active wave and want
-# every-30-min snapshots. ADO does not support sub-hour cron in YAML
-# `schedules:` - the lowest cadence is hourly. For sub-hour cadence, use a
-# pipeline trigger from an external scheduler (e.g. an Azure Function) that
-# queues this pipeline via REST.
-# schedules:
-#   - cron: '0 */1 * * *'
-#     displayName: 'Hourly in-flight update monitor'
-#     branches:
-#       include:
-#         - main
-#     always: true
+# Default (v0.7.92+): runs 5x/day, every 2 hours across the typical overnight
+# maintenance window (20:00, 22:00, 00:00, 02:00, 04:00 UTC). Azure DevOps
+# cron is ALWAYS UTC - adjust the hour list below for your local maintenance
+# window. Comment the `schedules:` block out entirely to disable.
+#
+# ADO does not support sub-hour cron in YAML `schedules:` - the lowest
+# cadence is hourly. For sub-hour cadence, use a pipeline trigger from an
+# external scheduler (e.g. an Azure Function) that queues this pipeline via REST.
+schedules:
+  - cron: '0 0,2,4,20,22 * * *'
+    displayName: 'In-flight update monitor (5x/day, 20-04 UTC every 2h)'
+    branches:
+      include:
+        - main
+    always: true
 # END-AZLOCAL-CUSTOMIZE:schedule-triggers
 
 parameters:
@@ -65,7 +68,7 @@ parameters:
     default: ''
 
 variables:
-  GENERATED_AGAINST_MODULE_VERSION: '0.7.91'
+  GENERATED_AGAINST_MODULE_VERSION: '0.7.92'
   REQUIRED_MODULE_VERSION: '${{ parameters.moduleVersion }}'
   reportsPath: '$(Build.ArtifactStagingDirectory)/reports'
 

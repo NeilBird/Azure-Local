@@ -67,6 +67,40 @@ function Copy-AzLocalPipelineExample {
         Return the [System.IO.DirectoryInfo] of the destination folder. By
         default the function writes only informational messages.
 
+    .PARAMETER SkipStarterSchedule
+        Only meaningful with `-Platform GitHub` or `-Platform AzureDevOps`.
+
+        By default (v0.7.92+) the function ALSO drops a starter
+        `apply-updates-schedule.yml` one level UP from `-Destination` (i.e.
+        the parent of `.github\workflows\` for GitHub, or the parent of
+        the pipelines folder you chose for ADO) when no file already
+        exists at that path. The starter is a verbatim copy of the bundled
+        `apply-updates-schedule.example.yml` and is safe to land alongside
+        a freshly copied Step.6 pipeline (the bundled Step.6 ships with
+        every `cron:` line COMMENTED OUT, so the schedule file cannot
+        cause Step.6 to fire on a `schedule:` trigger until the operator
+        explicitly adds at least one cron entry).
+
+        Two safety rails apply:
+          1. If `apply-updates-schedule.yml` already exists at the target
+             path, it is NEVER overwritten - the function leaves it alone
+             and reports the existing path in the Next-steps summary.
+          2. The starter ships with DEMO ring names (Canary, DevTest,
+             Ring1, Ring2, Prod) which almost certainly do NOT match a
+             real fleet's UpdateRing tag values. The recommended next
+             step (printed in the summary) is to regenerate from the
+             live fleet:
+               New-AzLocalApplyUpdatesScheduleConfig -OutputPath <path> -Force
+
+        Pass `-SkipStarterSchedule` to suppress the copy entirely - the
+        Next-steps summary then prints the pre-v0.7.92 wording reminding
+        the operator to generate the schedule via
+        `New-AzLocalApplyUpdatesScheduleConfig`. Use this in scripted /
+        IaC scenarios where the schedule file is managed independently.
+
+        Has no effect when `-Platform All` is in use (the starter is only
+        relevant for actively-installed CI YAMLs).
+
     .PARAMETER Update
         Allow overwriting destination files that already exist. Without this
         switch the function aborts with a list of conflicting files. With
@@ -121,6 +155,13 @@ function Copy-AzLocalPipelineExample {
         Same as above but without per-file prompts - suitable for scripted /
         CI refresh, typically after a `git diff` review against a fresh copy.
 
+    .EXAMPLE
+        Copy-AzLocalPipelineExample -Destination .\.github\workflows -Platform GitHub -SkipStarterSchedule
+
+        Copy ONLY the GitHub Actions workflow YAMLs - do not drop a starter
+        `apply-updates-schedule.yml`. Use this when the schedule file is
+        already managed independently (IaC, separate repo, generator script).
+
     .NOTES
         Author      : Neil Bird, Microsoft
         Module      : AzLocal.UpdateManagement
@@ -135,6 +176,18 @@ function Copy-AzLocalPipelineExample {
                       controlled refresh path - files are expected to be
                       under git source control so `git diff` provides the
                       safety net.
+        Changed in  : v0.7.92 - for `-Platform GitHub|AzureDevOps` the
+                      function now ALSO drops a starter
+                      `apply-updates-schedule.yml` one level up from
+                      `-Destination` (parent of `.github\workflows\` for
+                      GitHub, parent of the pipelines folder for ADO) when
+                      no file already exists at that path. Existing files
+                      are NEVER overwritten. Pass `-SkipStarterSchedule`
+                      to suppress. The Next-steps summary now reports the
+                      starter status (Copied / Preserved / Skipped) and
+                      points at the live-fleet regenerator
+                      `New-AzLocalApplyUpdatesScheduleConfig -OutputPath
+                      <path> -Force` for the operator's next move.
     #>
     [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'Low')]
     [OutputType([System.IO.DirectoryInfo])]
@@ -151,7 +204,14 @@ function Copy-AzLocalPipelineExample {
         # ShouldContinue prompts per file (bypassable via -Confirm:$false).
         [switch]$Update,
 
-        [switch]$PassThru
+        [switch]$PassThru,
+
+        # v0.7.92: when set, suppress the default starter
+        # apply-updates-schedule.yml copy (Platform=GitHub|AzureDevOps).
+        # Default OFF, i.e. the starter IS copied unless one already
+        # exists at the destination (in which case the existing file is
+        # always preserved, regardless of this switch).
+        [switch]$SkipStarterSchedule
     )
 
     # ------------------------------------------------------------------
@@ -342,7 +402,66 @@ function Copy-AzLocalPipelineExample {
     Write-Verbose "Copied $copiedCount file(s) from '$sourceRoot' to '$targetRoot' (skipped: $skippedCount)."
 
     # ------------------------------------------------------------------
-    # 6. Friendly "what now" summary so the user does not have to open
+    # 6 (v0.7.92). Starter apply-updates-schedule.yml drop.
+    #    Default-on for -Platform GitHub|AzureDevOps; suppressed by
+    #    -SkipStarterSchedule. The starter lands ONE LEVEL UP from the
+    #    pipelines folder (sibling of .github\workflows\ for GitHub, or
+    #    sibling of the ADO pipelines folder) so the schedule file is
+    #    not co-mingled with CI YAMLs. NEVER overwrites an existing
+    #    file - the existing file is always preserved and reported in
+    #    the Next-steps summary. Safe to land alongside Step.6 because
+    #    Step.6 ships with every `cron:` line commented out (verified
+    #    in github-actions/Step.6_apply-updates.yml).
+    # ------------------------------------------------------------------
+    $scheduleSrc        = Join-Path -Path $sourceRoot -ChildPath 'apply-updates-schedule.example.yml'
+    $scheduleDest       = $null
+    $scheduleAction     = $null  # 'Copied' | 'Preserved' | 'Skipped' | 'Missing'
+    if ($Platform -in @('GitHub', 'AzureDevOps') -and -not $SkipStarterSchedule.IsPresent) {
+        $scheduleParent = Split-Path -Parent ($targetRoot.TrimEnd('\','/'))
+        if ([string]::IsNullOrWhiteSpace($scheduleParent)) {
+            # Defensive: if $targetRoot has no parent (e.g. a drive root),
+            # fall back to dropping the schedule alongside the YAMLs.
+            $scheduleParent = $targetRoot
+        }
+        $scheduleDest = Join-Path -Path $scheduleParent -ChildPath 'apply-updates-schedule.yml'
+
+        if (-not (Test-Path -LiteralPath $scheduleSrc -PathType Leaf)) {
+            # Source missing - should never happen in a healthy install but
+            # we record the state so the summary can hint at the cause.
+            $scheduleAction = 'Missing'
+            Write-Warning ("Copy-AzLocalPipelineExample: starter schedule source '{0}' not found; skipping starter copy." -f $scheduleSrc)
+        }
+        elseif (Test-Path -LiteralPath $scheduleDest -PathType Leaf) {
+            # Never overwrite - the operator's tailored file always wins.
+            $scheduleAction = 'Preserved'
+            Write-Verbose ("Copy-AzLocalPipelineExample: starter schedule preserved (already exists at '{0}'); not copied." -f $scheduleDest)
+        }
+        elseif ($PSCmdlet.ShouldProcess($scheduleDest, "Copy starter apply-updates-schedule.yml from '$scheduleSrc'")) {
+            # Create parent on demand (e.g. .github\ may not exist when the
+            # caller created .github\workflows\ via a single -Force New-Item).
+            $newScheduleParent = Split-Path -Parent $scheduleDest
+            if (-not (Test-Path -LiteralPath $newScheduleParent)) {
+                $null = New-Item -ItemType Directory -Path $newScheduleParent -Force -ErrorAction Stop
+            }
+            Copy-Item -LiteralPath $scheduleSrc -Destination $scheduleDest -ErrorAction Stop
+            $scheduleAction = 'Copied'
+        }
+        else {
+            # -WhatIf path or operator declined the prompt.
+            $scheduleAction = 'Skipped'
+        }
+    }
+    elseif ($Platform -in @('GitHub', 'AzureDevOps')) {
+        # -SkipStarterSchedule was explicitly set.
+        $scheduleAction = 'SkippedBySwitch'
+        $scheduleParent = Split-Path -Parent ($targetRoot.TrimEnd('\','/'))
+        if (-not [string]::IsNullOrWhiteSpace($scheduleParent)) {
+            $scheduleDest = Join-Path -Path $scheduleParent -ChildPath 'apply-updates-schedule.yml'
+        }
+    }
+
+    # ------------------------------------------------------------------
+    # 7. Friendly "what now" summary so the user does not have to open
     #    the README first to know what they just copied. Uses Write-Host
     #    (intentional - this is operator-facing UI text, not pipeline
     #    output; per Microsoft guidance Write-Host is appropriate for
@@ -357,8 +476,53 @@ function Copy-AzLocalPipelineExample {
     if ($skippedCount -gt 0) {
         Write-Host ("  Files skipped: {0} (user declined overwrite or -WhatIf)" -f $skippedCount) -ForegroundColor Yellow
     }
+    if ($scheduleAction -eq 'Copied') {
+        Write-Host ("  Starter schedule dropped at: {0}" -f $scheduleDest) -ForegroundColor Green
+    }
+    elseif ($scheduleAction -eq 'Preserved') {
+        Write-Host ("  Starter schedule preserved (existing file): {0}" -f $scheduleDest) -ForegroundColor Yellow
+    }
     Write-Host ""
     Write-Host "Next steps:" -ForegroundColor Cyan
+    # Helper for step 4/5/6 messaging: the schedule sub-message branches
+    # on $scheduleAction so the operator sees exactly what was (or was
+    # not) done with apply-updates-schedule.yml on this invocation.
+    $scheduleHintLines = @()
+    switch ($scheduleAction) {
+        'Copied' {
+            $scheduleHintLines += "     Starter schedule (bundled example) was copied to:"
+            $scheduleHintLines += ("       {0}" -f $scheduleDest)
+            $scheduleHintLines += "     IMPORTANT: the starter ships with DEMO ring names (Canary, DevTest, Ring1, Ring2, Prod). Replace with your fleet's actual UpdateRing tag values - the easiest path is to regenerate from the live fleet, overwriting the demo file:"
+            $scheduleHintLines += ("       New-AzLocalApplyUpdatesScheduleConfig -OutputPath '{0}' -Force" -f $scheduleDest)
+            $scheduleHintLines += "     The starter is safe to leave in place until then - the bundled Step.6 ships with every 'cron:' line commented out, so it cannot fire on a 'schedule:' trigger until you explicitly add a cron entry. Manual workflow_dispatch / queue runs of Step.6 ignore the schedule file entirely (they take UpdateRing verbatim from the run-form input)."
+        }
+        'Preserved' {
+            $scheduleHintLines += "     Existing schedule file preserved at:"
+            $scheduleHintLines += ("       {0}" -f $scheduleDest)
+            $scheduleHintLines += "     To refresh from your current live fleet (overwrites the file):"
+            $scheduleHintLines += ("       New-AzLocalApplyUpdatesScheduleConfig -OutputPath '{0}' -Force" -f $scheduleDest)
+        }
+        'Missing' {
+            $scheduleHintLines += "     Starter schedule source was missing in the module install; generate one from your live fleet:"
+            if ($scheduleDest) {
+                $scheduleHintLines += ("       New-AzLocalApplyUpdatesScheduleConfig -OutputPath '{0}'" -f $scheduleDest)
+            }
+        }
+        'SkippedBySwitch' {
+            $scheduleHintLines += "     -SkipStarterSchedule was set; no schedule file was copied. Generate one from your live fleet via:"
+            if ($scheduleDest) {
+                $scheduleHintLines += ("       New-AzLocalApplyUpdatesScheduleConfig -OutputPath '{0}'" -f $scheduleDest)
+            } else {
+                $scheduleHintLines += "       New-AzLocalApplyUpdatesScheduleConfig -OutputPath .\apply-updates-schedule.yml"
+            }
+        }
+        'Skipped' {
+            $scheduleHintLines += "     Starter schedule was not written (declined or -WhatIf). When ready:"
+            if ($scheduleDest) {
+                $scheduleHintLines += ("       New-AzLocalApplyUpdatesScheduleConfig -OutputPath '{0}'" -f $scheduleDest)
+            }
+        }
+    }
     switch ($Platform) {
         'GitHub' {
             # Detect the canonical .github\workflows\ destination so we can
@@ -374,14 +538,20 @@ function Copy-AzLocalPipelineExample {
             }
             Write-Host "  2. RECOMMENDED: run 'Step.0_authentication-test.yml' FIRST (one-shot) to validate OIDC / RBAC before wiring the other workflows. See section 5.1 of the Automation-Pipeline-Examples README."
             Write-Host "  3. Wire up authentication (OIDC / Workload Identity / Managed Identity / SP) - see section 3 of the README."
-            Write-Host "  4. Optional: enable the ITSM connector by setting 'raise_itsm_ticket=true' (setup in ITSM/README.md)."
+            Write-Host "  4. SCHEDULED Step.6 (apply-updates) requires apply-updates-schedule.yml:" -ForegroundColor Yellow
+            foreach ($line in $scheduleHintLines) { Write-Host $line }
+            Write-Host "     See section 5.1 step 5 + section 8 of the README for the full schema, multi-stage rollouts, and the allowedUpdateVersions allow-list."
+            Write-Host "  5. Optional: enable the ITSM connector by setting 'raise_itsm_ticket=true' (setup in ITSM/README.md)."
         }
         'AzureDevOps' {
             Write-Host ("  1. Commit the YAML files from '{0}' to your Azure Repo." -f $targetRoot)
             Write-Host "  2. RECOMMENDED: import 'Step.0_authentication-test.yml' FIRST (one-shot) to validate the service connection / RBAC before wiring the other pipelines. See section 5.2 of the Automation-Pipeline-Examples README."
             Write-Host "  3. For each remaining YAML: Pipelines -> New pipeline -> Existing Azure Pipelines YAML file -> point at the file -> Save."
             Write-Host "  4. Each pipeline references service connection 'AzureLocal-ServiceConnection' - either name yours to match or edit 'azureSubscription:' in each YAML."
-            Write-Host "  5. Optional: enable the ITSM connector by setting 'raise_itsm_ticket=true' (setup in ITSM/README.md)."
+            Write-Host "  5. SCHEDULED Step.6 (apply-updates) requires apply-updates-schedule.yml:" -ForegroundColor Yellow
+            foreach ($line in $scheduleHintLines) { Write-Host $line }
+            Write-Host "     Step.6 reads APPLY_UPDATES_SCHEDULE_PATH (default './apply-updates-schedule.yml' at repo root). Override the variable in the pipeline if you keep the schedule elsewhere. See section 5.2 step 6 + section 8 of the README."
+            Write-Host "  6. Optional: enable the ITSM connector by setting 'raise_itsm_ticket=true' (setup in ITSM/README.md)."
         }
         default {
             $readmePath = Join-Path -Path $targetRoot -ChildPath 'README.md'

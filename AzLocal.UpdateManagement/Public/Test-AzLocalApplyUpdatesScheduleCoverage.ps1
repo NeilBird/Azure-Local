@@ -62,6 +62,18 @@ function Test-AzLocalApplyUpdatesScheduleCoverage {
           RingMissingFromSchedule  - a ring on at least one cluster's UpdateRing tag has no matching
                                      row in the v1 schedule file (only emitted when -SchedulePath is supplied)
           RingOrphanedInSchedule   - a ring listed in the v1 schedule file's `rings` column does NOT
+                                     match any cluster's UpdateRing tag (schedule row is dead weight,
+                                     not safety-critical, low blast radius)
+          RingMixedWindows         - clusters that share the same UpdateRing tag carry DIFFERENT
+                                     UpdateStartWindow tag values (e.g. two clusters tagged
+                                     UpdateRing=Production but one with UpdateStartWindow=
+                                     Sat-Sun_02:00-06:00 and the other with Mon-Fri_22:00-04:00).
+                                     Informational, not a coverage blocker - the runtime gate
+                                     reads each cluster's own tag, so updates still fire correctly.
+                                     Surfaced so the operator can decide whether to standardise
+                                     the ring (consistency) or keep windows differentiated
+                                     (intentional per-cluster maintenance). Each (Ring, Window)
+                                     pair still gets its own normal coverage row above.
                                      appear on any cluster's UpdateRing tag (only emitted when -SchedulePath is supplied)
     .PARAMETER SubscriptionId
         Optional subscription scope passed to Resource Graph. If omitted, the
@@ -97,6 +109,17 @@ function Test-AzLocalApplyUpdatesScheduleCoverage {
     .PARAMETER LeadTimeMinutes
         How many minutes before each window opens the pipeline should fire so
         that the first cluster's apply step starts inside the window. Default 5.
+    .PARAMETER RecommendFiresPerWindow
+        How many cron entries -View Recommend should emit per UpdateStartWindow
+        segment. Default 2 (the belt-and-braces pattern: opening edge + one
+        mid-window retry capped at +60 minutes after the window opens, so
+        GitHub Actions scheduled-workflow jitter or a transient first-fire
+        failure cannot leave a cluster un-updated for the day). Set to 1 to
+        suppress the retry cron and emit only the opening-edge cron (pre-
+        v0.7.93 back-compat). Range 1-2. Audit semantics are unchanged either
+        way - the audit only requires the opening-edge cron to be matched in
+        the YAML for a (Ring, Window) pair to be 'Covered'; the retry cron is
+        an additional resilience suggestion, never a coverage requirement.
     .PARAMETER UpdateRingTag
         Optional filter: only evaluate clusters whose UpdateRing tag matches one
         of these values. Repeat or comma-separate for multiple rings.
@@ -148,6 +171,10 @@ function Test-AzLocalApplyUpdatesScheduleCoverage {
         [Parameter(Mandatory = $false)]
         [ValidateRange(0, 60)]
         [int]$LeadTimeMinutes = 5,
+
+        [Parameter(Mandatory = $false)]
+        [ValidateRange(1, 2)]
+        [int]$RecommendFiresPerWindow = 2,
 
         [Parameter(Mandatory = $false)]
         [string[]]$UpdateRingTag,
@@ -438,12 +465,28 @@ resources
             # Dedupe required crons across rings; preserve a comment that
             # records which ring(s) drove each cron.
             $byCron = @{}
+            # Build byCron from RECOMMENDATION-tier crons (opening edge +
+            # optional belt-and-braces retry per segment, governed by
+            # -RecommendFiresPerWindow, default 2). Audit's $r.RequiredCrons
+            # is intentionally NOT used here - it carries only opening-edge
+            # crons so the 'Covered' check stays unchanged when retries are
+            # enabled. Re-invoking the helper per row is cheap and keeps the
+            # two concerns (audit vs recommend) cleanly separated.
             foreach ($r in $coverageRows) {
                 if ($r.ParseError) { continue }
-                foreach ($c in $r.RequiredCrons) {
+                $recommendCrons = Convert-AzLocalUpdateWindowToCron `
+                    -UpdateStartWindow $r.UpdateStartWindow `
+                    -LeadTimeMinutes $LeadTimeMinutes `
+                    -FiresPerWindow $RecommendFiresPerWindow
+                foreach ($c in $recommendCrons) {
                     $key = $c.CronExpression
                     if (-not $byCron.ContainsKey($key)) {
-                        $byCron[$key] = @{ Rings = @(); Clusters = 0; Segment = $c.Segment }
+                        $byCron[$key] = @{
+                            Rings    = @()
+                            Clusters = 0
+                            Segment  = $c.Segment
+                            IsRetry  = $c.IsRetry
+                        }
                     }
                     $byCron[$key].Rings += $r.UpdateRing
                     $byCron[$key].Clusters += $r.ClusterCount
@@ -459,7 +502,15 @@ resources
             # block. Pipeline yml ALWAYS pins -Platform to its own host so
             # operators see exactly one block.
             $cronSb = New-Object System.Text.StringBuilder
-            $sortedCronKeys = @($byCron.Keys | Sort-Object)
+            # Sort by Segment first (so the opening and retry crons for the
+            # same window line up visually), then opening-edge before retry
+            # within each segment, then by cron string for determinism.
+            $sortedCronKeys = @(
+                $byCron.Keys |
+                    Sort-Object @{Expression={ $byCron[$_].Segment }},
+                                @{Expression={ [int]$byCron[$_].IsRetry }},
+                                @{Expression={ $_ }}
+            )
             $emitGh = $Platform -in @('GitHubActions','Both')
             $emitAdo = $Platform -in @('AzureDevOps','Both')
 
@@ -474,7 +525,8 @@ resources
                 [void]$cronSb.AppendLine('  schedule:')
                 foreach ($k in $sortedCronKeys) {
                     $entry = $byCron[$k]
-                    [void]$cronSb.AppendLine(("    - cron: '{0}'   # {1} (rings: {2}, {3} cluster(s))" -f $k, $entry.Segment, (($entry.Rings | Sort-Object -Unique) -join ','), $entry.Clusters))
+                    $tier  = if ($entry.IsRetry) { 'retry' } else { 'open' }
+                    [void]$cronSb.AppendLine((("    - cron: '{0}'   # {1} ({2}) (rings: {3}, {4} cluster(s))") -f $k, $entry.Segment, $tier, (($entry.Rings | Sort-Object -Unique) -join ','), $entry.Clusters))
                 }
                 [void]$cronSb.AppendLine('```')
                 if ($emitAdo) {
@@ -490,7 +542,8 @@ resources
                 [void]$cronSb.AppendLine('schedules:')
                 foreach ($k in $sortedCronKeys) {
                     $entry = $byCron[$k]
-                    [void]$cronSb.AppendLine(("  - cron: '{0}'   # {1} (rings: {2}, {3} cluster(s))" -f $k, $entry.Segment, (($entry.Rings | Sort-Object -Unique) -join ','), $entry.Clusters))
+                    $tier  = if ($entry.IsRetry) { 'retry' } else { 'open' }
+                    [void]$cronSb.AppendLine((("  - cron: '{0}'   # {1} ({2}) (rings: {3}, {4} cluster(s))") -f $k, $entry.Segment, $tier, (($entry.Rings | Sort-Object -Unique) -join ','), $entry.Clusters))
                     [void]$cronSb.AppendLine('    displayName: "Apply Updates - covers above window"')
                     [void]$cronSb.AppendLine('    branches:')
                     [void]$cronSb.AppendLine('      include: [ main ]')
@@ -523,7 +576,7 @@ resources
 
             # v0.7.74: human-friendly platform/file labels used by the
             # remediation guidance below. When -Platform is 'Both' we
-            # generalise to "your Step.5 apply-updates pipeline yml".
+            # generalise to "your Step.6 apply-updates pipeline yml".
             $scheduleFileLabel = if ($SchedulePath) { $SchedulePath } else {
                 switch ($Platform) {
                     'GitHubActions' { '.github/apply-updates-schedule.yml' }
@@ -531,7 +584,7 @@ resources
                     default         { 'apply-updates-schedule.yml' }
                 }
             }
-            $step5FileLabel = switch ($Platform) {
+            $step6FileLabel = switch ($Platform) {
                 'GitHubActions' { '.github/workflows/Step.6_apply-updates.yml' }
                 'AzureDevOps'   { '.azuredevops/Step.6_apply-updates.yml' }
                 default         { 'Step.6_apply-updates.yml' }
@@ -550,7 +603,7 @@ resources
                 $checkIdx = 0
                 if ($hasMissing) {
                     $checkIdx++
-                    [void]$fullSb.AppendLine("$checkIdx. **Add missing rings** to ``$scheduleFileLabel`` (Step $checkIdx below). Until each ring tagged on the fleet appears in at least one schedule row, ``Resolve-AzLocalCurrentUpdateRing`` returns nothing for those clusters and Step.5 silently skips them.")
+                    [void]$fullSb.AppendLine("$checkIdx. **Add missing rings** to ``$scheduleFileLabel`` (Step $checkIdx below). Until each ring tagged on the fleet appears in at least one schedule row, ``Resolve-AzLocalCurrentUpdateRing`` returns nothing for those clusters and Step.6 silently skips them.")
                 }
                 if ($hasOrphaned) {
                     $checkIdx++
@@ -558,11 +611,11 @@ resources
                 }
                 if ($hasUnparseable) {
                     $checkIdx++
-                    [void]$fullSb.AppendLine("$checkIdx. **Simplify unparseable cron line(s)** in ``$step5FileLabel`` (Step $checkIdx below). The advisor cannot reason about these, so the cron-coverage recommendation in the next step may over-suggest entries that duplicate what an already-correct-but-unparseable line is doing.")
+                    [void]$fullSb.AppendLine("$checkIdx. **Simplify unparseable cron line(s)** in ``$step6FileLabel`` (Step $checkIdx below). The advisor cannot reason about these, so the cron-coverage recommendation in the next step may over-suggest entries that duplicate what an already-correct-but-unparseable line is doing.")
                 }
                 if ($byCron.Count -gt 0) {
                     $checkIdx++
-                    [void]$fullSb.AppendLine("$checkIdx. **Add missing cron entries** to ``$step5FileLabel`` (Step $checkIdx below). Until each UpdateStartWindow has at least one cron firing inside its lead-time envelope, Step.5 never wakes up for those clusters even when their ring is eligible today.")
+                    [void]$fullSb.AppendLine("$checkIdx. **Add missing cron entries** to ``$step6FileLabel`` (Step $checkIdx below). Until each UpdateStartWindow has at least one cron firing inside its lead-time envelope, Step.6 never wakes up for those clusters even when their ring is eligible today.")
                 }
                 $checkIdx++
                 [void]$fullSb.AppendLine("$checkIdx. **Commit the edits and re-run this Step.3 pipeline** to confirm all (Ring, Window) pairs are green.")
@@ -630,7 +683,7 @@ resources
                 $prefix = if ($actionCount -gt 1) { " ($actionIdx of $actionCount)" } else { '' }
                 [void]$fullSb.AppendLine("## Action required$prefix - simplify unparseable cron expression(s)")
                 [void]$fullSb.AppendLine()
-                [void]$fullSb.AppendLine("**Why this matters.** The advisor could not statically reason about the following cron line(s) in ``$step5FileLabel``. UpdateStartWindow coverage for these crons was NOT evaluated, so the cron-coverage recommendation below may over-suggest entries that duplicate what an already-correct-but-unparseable line is doing. Resolve these first.")
+                [void]$fullSb.AppendLine("**Why this matters.** The advisor could not statically reason about the following cron line(s) in ``$step6FileLabel``. UpdateStartWindow coverage for these crons was NOT evaluated, so the cron-coverage recommendation below may over-suggest entries that duplicate what an already-correct-but-unparseable line is doing. Resolve these first.")
                 [void]$fullSb.AppendLine()
                 [void]$fullSb.AppendLine('**Supported syntax:** ``minute`` and ``hour`` may be a literal value, a comma-list, or a range (``a-b``); ``day-of-month`` and ``month`` must be ``*``; ``day-of-week`` may be ``*``, a literal value, a comma-list, or a range. Step values (``*/n``), lists/ranges in ``day-of-month`` or ``month``, and names (``MON``, ``JAN``) are not yet supported - split a complex cron into multiple simpler crons if needed.')
                 [void]$fullSb.AppendLine()
@@ -650,18 +703,23 @@ resources
                 $prefix = if ($actionCount -gt 1) { " ($actionIdx of $actionCount)" } else { '' }
                 [void]$fullSb.AppendLine("## Action required$prefix - cron coverage")
                 [void]$fullSb.AppendLine()
-                [void]$fullSb.AppendLine("**Why this matters.** Step.5 apply-updates is a scheduled pipeline - it only runs when one of its ``cron`` entries fires. ``Test-AzLocalUpdateScheduleAllowed`` then gates each cluster on its per-cluster ``UpdateStartWindow`` tag. If NO cron fires inside an UpdateStartWindow's lead-time envelope, the gate is never even reached and the cluster is silently skipped that day.")
+                [void]$fullSb.AppendLine("**Why this matters.** Step.6 apply-updates is a scheduled pipeline - it only runs when one of its ``cron`` entries fires. ``Test-AzLocalUpdateScheduleAllowed`` then gates each cluster on its per-cluster ``UpdateStartWindow`` tag. If NO cron fires inside an UpdateStartWindow's lead-time envelope, the gate is never even reached and the cluster is silently skipped that day.")
                 [void]$fullSb.AppendLine()
                 [void]$fullSb.AppendLine("Each cron below is set to ``LeadTimeMinutes`` minutes BEFORE the start of its UpdateStartWindow segment so ``Test-AzLocalUpdateScheduleAllowed`` opens the gate exactly when expected. Adjust the value of ``LeadTimeMinutes`` on Step.3 if your fleet needs a different lead time.")
                 [void]$fullSb.AppendLine()
-                [void]$fullSb.AppendLine("### How to fix - edit ``$step5FileLabel``")
+                if ($RecommendFiresPerWindow -ge 2) {
+                    [void]$fullSb.AppendLine("**Belt-and-braces (default).** Each window emits TWO cron entries - one ``open`` cron LeadTimeMinutes BEFORE the window opens, and one ``retry`` cron INSIDE the window at the lesser of the midpoint or +60 minutes after the window opens. The retry catches the three known failure modes that would otherwise silently skip a cluster for the day: GitHub Actions scheduled-workflow jitter (up to ~15 min, can push the opening cron past a tight window), transient first-fire failures (auth, runner-pool exhaustion, module install hiccup), and a long window that would otherwise have to wait half its duration for a retry (a 24h window retries at +60min, not at +12h). The runtime gate (``Test-AzLocalUpdateScheduleAllowed``) plus the existing in-flight guard ensure clusters whose first run has already started are not re-triggered. Pass ``-RecommendFiresPerWindow 1`` on Step.3 to suppress the retry tier and emit only the opening crons.")
+                    [void]$fullSb.AppendLine()
+                }
+                [void]$fullSb.AppendLine()
+                [void]$fullSb.AppendLine("### How to fix - edit ``$step6FileLabel``")
                 [void]$fullSb.AppendLine()
                 if ($emitGh -and -not $emitAdo) {
                     [void]$fullSb.AppendLine('Replace (or merge with) the existing `on:` block at the top of the workflow:')
                 } elseif ($emitAdo -and -not $emitGh) {
                     [void]$fullSb.AppendLine('Add (or merge with) a top-level `schedules:` block:')
                 } else {
-                    [void]$fullSb.AppendLine('Choose the snippet matching your CI platform and paste/merge into your Step.5 pipeline file:')
+                    [void]$fullSb.AppendLine('Choose the snippet matching your CI platform and paste/merge into your Step.6 pipeline file:')
                 }
                 [void]$fullSb.AppendLine()
                 foreach ($line in ($cronSnippetBody -split "`r?`n")) {
@@ -831,6 +889,39 @@ resources
                     RequiredCronUTC = $allRequired
                 })
             }
+
+            # Same-ring mixed-window detection. Group coverage rows by
+            # UpdateRing; any ring that resolves to >= 2 distinct
+            # UpdateStartWindow values gets a single 'RingMixedWindows'
+            # informational row. Each (Ring, Window) pair already has its
+            # own coverage row above, so this is purely a heads-up to the
+            # operator that the ring's clusters do NOT share a common
+            # maintenance window - it can be intentional, but is more often
+            # a tagging mistake worth surfacing.
+            $mixedGroups = @(
+                $coverageRows |
+                    Where-Object { -not $_.ParseError -and $_.UpdateStartWindow -and $_.UpdateRing } |
+                    Group-Object UpdateRing |
+                    Where-Object {
+                        @($_.Group.UpdateStartWindow | Sort-Object -Unique).Count -ge 2
+                    }
+            )
+            foreach ($mg in $mixedGroups) {
+                $distinctWindows = @($mg.Group.UpdateStartWindow | Sort-Object -Unique)
+                $totalClusters   = ($mg.Group | Measure-Object -Property ClusterCount -Sum).Sum
+                $rows.Add([PSCustomObject]@{
+                    Section         = 'Schedule'
+                    UpdateRing      = $mg.Name
+                    UpdateStartWindow = ($distinctWindows -join ' | ')
+                    ClusterCount    = $totalClusters
+                    Status          = 'RingMixedWindows'
+                    Issue           = "Ring '$($mg.Name)' covers $totalClusters cluster(s) tagged with $($distinctWindows.Count) different UpdateStartWindow values: $($distinctWindows -join '; '). The runtime gate (Test-AzLocalUpdateScheduleAllowed) reads each cluster's own tag so updates still fire correctly, but the ring no longer represents a single maintenance window for operator mental-model purposes."
+                    Recommendation  = "Either (a) standardise the ring by retagging the divergent cluster(s) to a single UpdateStartWindow value (via Azure portal tags, az cli, or your IaC tooling), or (b) split the ring into separate rings (one per window) via Set-AzLocalClusterUpdateRingTag so the apply-updates-schedule.yml row clearly reflects when each cluster updates, or (c) accept the divergence as intentional (e.g. follow-the-sun) and document the rationale in the schedule file's notes column."
+                    MatchingCrons   = @()
+                    RequiredCronUTC = ''
+                })
+            }
+
             if ($IncludeUntagged -and $untaggedClusters.Count -gt 0) {
                 $rows.Add([PSCustomObject]@{
                     Section         = 'Cron'
@@ -900,7 +991,7 @@ resources
             # existing severity precedence (most-actionable rows first).
             , @($rows | Sort-Object `
                 @{Expression={ if ($_.Section -eq 'Schedule') {1} else {2} }},
-                @{Expression={ switch ($_.Status) { 'RingMissingFromSchedule' {1} 'RingOrphanedInSchedule' {2} 'Uncovered' {3} 'PartiallyCovered' {4} 'MalformedTag' {5} 'NoWindowTag' {6} 'UnparseableCron' {7} 'Covered' {8} default {9} } }},
+                @{Expression={ switch ($_.Status) { 'RingMissingFromSchedule' {1} 'RingOrphanedInSchedule' {2} 'RingMixedWindows' {3} 'Uncovered' {4} 'PartiallyCovered' {5} 'MalformedTag' {6} 'NoWindowTag' {7} 'UnparseableCron' {8} 'Covered' {9} default {10} } }},
                 UpdateRing, UpdateStartWindow)
         }
     }
@@ -913,12 +1004,14 @@ resources
         $covered   = @($output | Where-Object { $_.Status -eq 'Covered' })
         $missing   = @($output | Where-Object { $_.Status -eq 'RingMissingFromSchedule' })
         $orphans   = @($output | Where-Object { $_.Status -eq 'RingOrphanedInSchedule' })
+        $mixed     = @($output | Where-Object { $_.Status -eq 'RingMixedWindows' })
         Write-Log -Message ("  Covered (Ring,Window) pairs:   {0}" -f $covered.Count)   -Level Info
         Write-Log -Message ("  Uncovered (Ring,Window) pairs: {0}" -f $uncovered.Count) -Level $(if ($uncovered.Count -gt 0) { 'Warning' } else { 'Success' })
         if (-not [string]::IsNullOrWhiteSpace($SchedulePath)) {
             Write-Log -Message ("  Rings missing from schedule:   {0}" -f $missing.Count) -Level $(if ($missing.Count -gt 0) { 'Warning' } else { 'Success' })
             Write-Log -Message ("  Rings orphaned in schedule:    {0}" -f $orphans.Count) -Level $(if ($orphans.Count -gt 0) { 'Warning' } else { 'Success' })
         }
+        Write-Log -Message ("  Rings with mixed windows:      {0}" -f $mixed.Count)     -Level $(if ($mixed.Count -gt 0) { 'Warning' } else { 'Success' })
         foreach ($u in $uncovered) {
             Write-Log -Message ("    [{0}] {1} / {2} ({3} cluster(s)) -> {4}" -f $u.Status, $u.UpdateRing, $u.UpdateStartWindow, $u.ClusterCount, $u.Recommendation) -Level Warning
         }
@@ -927,6 +1020,9 @@ resources
         }
         foreach ($o in $orphans) {
             Write-Log -Message ("    [{0}] {1} -> {2}" -f $o.Status, $o.UpdateRing, $o.Recommendation) -Level Warning
+        }
+        foreach ($x in $mixed) {
+            Write-Log -Message ("    [{0}] {1} ({2} cluster(s)) -> {3}" -f $x.Status, $x.UpdateRing, $x.ClusterCount, $x.Recommendation) -Level Warning
         }
     }
     elseif ($View -eq 'Matrix') {

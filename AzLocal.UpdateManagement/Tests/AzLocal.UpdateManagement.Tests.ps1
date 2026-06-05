@@ -34,8 +34,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $script:ModuleInfo | Should -Not -BeNullOrEmpty
         }
 
-        It 'Should have version 0.7.91' {
-            $script:ModuleInfo.Version | Should -Be '0.7.91'
+        It 'Should have version 0.7.92' {
+            $script:ModuleInfo.Version | Should -Be '0.7.92'
         }
 
         It 'Module version constants are in sync between .psm1 and .psd1' {
@@ -5814,9 +5814,104 @@ Describe 'Function: Copy-AzLocalPipelineExample' {
         Test-Path $dest | Should -BeTrue
         Test-Path (Join-Path $r.FullName 'README.md') | Should -BeTrue
     }
+
+    # v0.7.92: starter apply-updates-schedule.yml drop (default-on for
+    # -Platform GitHub|AzureDevOps; suppressed by -SkipStarterSchedule).
+    # The starter lands ONE LEVEL UP from -Destination so the schedule
+    # file sits beside .github\workflows\ (GitHub) or the pipelines
+    # folder (ADO) rather than inside it.
+
+    It 'v0.7.92: -SkipStarterSchedule is exposed as a [switch] parameter' {
+        $cmd = Get-Command -Name 'Copy-AzLocalPipelineExample' -ErrorAction Stop
+        $cmd.Parameters.ContainsKey('SkipStarterSchedule') | Should -BeTrue
+        $cmd.Parameters['SkipStarterSchedule'].ParameterType | Should -Be ([switch])
+    }
+
+    It 'v0.7.92: -Platform GitHub default drops starter apply-updates-schedule.yml ONE LEVEL UP from -Destination' {
+        $repoRoot = Join-Path $script:cpDestRoot 'gh-starter-fresh'
+        $dest = Join-Path $repoRoot '.github\workflows'
+        New-Item -Path $dest -ItemType Directory -Force | Out-Null
+
+        Copy-AzLocalPipelineExample -Destination $dest -Platform GitHub 6>$null | Out-Null
+
+        $scheduleDest = Join-Path $repoRoot '.github\apply-updates-schedule.yml'
+        Test-Path $scheduleDest | Should -BeTrue
+        # File content must match the bundled example verbatim (starter copy
+        # is byte-for-byte, no templating).
+        $module = Get-Module -Name 'AzLocal.UpdateManagement' | Sort-Object Version -Descending | Select-Object -First 1
+        $source = Join-Path $module.ModuleBase 'Automation-Pipeline-Examples\apply-updates-schedule.example.yml'
+        (Get-FileHash -LiteralPath $scheduleDest).Hash | Should -Be (Get-FileHash -LiteralPath $source).Hash
+    }
+
+    It 'v0.7.92: -Platform AzureDevOps default drops starter apply-updates-schedule.yml ONE LEVEL UP from -Destination' {
+        $repoRoot = Join-Path $script:cpDestRoot 'ado-starter-fresh'
+        $dest = Join-Path $repoRoot 'pipelines'
+        New-Item -Path $dest -ItemType Directory -Force | Out-Null
+
+        Copy-AzLocalPipelineExample -Destination $dest -Platform AzureDevOps 6>$null | Out-Null
+
+        $scheduleDest = Join-Path $repoRoot 'apply-updates-schedule.yml'
+        Test-Path $scheduleDest | Should -BeTrue
+    }
+
+    It 'v0.7.92: existing apply-updates-schedule.yml at the target is NEVER overwritten by the starter copy' {
+        $repoRoot = Join-Path $script:cpDestRoot 'gh-starter-preserve'
+        $dest = Join-Path $repoRoot '.github\workflows'
+        New-Item -Path $dest -ItemType Directory -Force | Out-Null
+
+        # Pre-seed an operator-tailored schedule file
+        $scheduleDest = Join-Path $repoRoot '.github\apply-updates-schedule.yml'
+        $sentinel = '# OPERATOR SENTINEL - must never be overwritten by Copy-AzLocalPipelineExample'
+        Set-Content -LiteralPath $scheduleDest -Value $sentinel -Encoding ASCII
+
+        Copy-AzLocalPipelineExample -Destination $dest -Platform GitHub 6>$null | Out-Null
+
+        # Sentinel must survive
+        (Get-Content -LiteralPath $scheduleDest -Raw) | Should -Match 'OPERATOR SENTINEL'
+    }
+
+    It 'v0.7.92: -SkipStarterSchedule suppresses the starter copy entirely' {
+        $repoRoot = Join-Path $script:cpDestRoot 'gh-starter-skip'
+        $dest = Join-Path $repoRoot '.github\workflows'
+        New-Item -Path $dest -ItemType Directory -Force | Out-Null
+
+        Copy-AzLocalPipelineExample -Destination $dest -Platform GitHub -SkipStarterSchedule 6>$null | Out-Null
+
+        $scheduleDest = Join-Path $repoRoot '.github\apply-updates-schedule.yml'
+        Test-Path $scheduleDest | Should -BeFalse
+    }
+
+    It 'v0.7.92: -Platform All does NOT drop a starter schedule (only GitHub|AzureDevOps do)' {
+        # Isolate under a fresh parent so earlier tests in this Describe
+        # (notably the GitHub copies that drop a starter ONE LEVEL UP) cannot
+        # leak a sibling apply-updates-schedule.yml into the parent we probe.
+        $parent = Join-Path $script:cpDestRoot 'all-no-starter-parent'
+        New-Item -Path $parent -ItemType Directory -Force | Out-Null
+        $dest = Join-Path $parent 'all-no-starter'
+        New-Item -Path $dest -ItemType Directory -Force | Out-Null
+
+        Copy-AzLocalPipelineExample -Destination $dest 6>$null | Out-Null
+
+        # Default -Platform All copies into a child Automation-Pipeline-Examples
+        # folder under -Destination, so the "one level up" rule (which only
+        # applies to platform-specific copies) does NOT come into play.
+        Test-Path (Join-Path $parent 'apply-updates-schedule.yml') | Should -BeFalse
+        Test-Path (Join-Path $dest 'apply-updates-schedule.yml') | Should -BeFalse
+    }
+
+    It 'v0.7.92: -WhatIf does not write the starter schedule' {
+        $repoRoot = Join-Path $script:cpDestRoot 'gh-starter-whatif'
+        $dest = Join-Path $repoRoot '.github\workflows'
+        New-Item -Path $dest -ItemType Directory -Force | Out-Null
+
+        Copy-AzLocalPipelineExample -Destination $dest -Platform GitHub -WhatIf 6>$null | Out-Null
+
+        $scheduleDest = Join-Path $repoRoot '.github\apply-updates-schedule.yml'
+        Test-Path $scheduleDest | Should -BeFalse
+    }
 }
 
-#endregion Copy-AzLocalPipelineExample (v0.7.4, updated in v0.7.50)
+#endregion Copy-AzLocalPipelineExample (v0.7.4, updated in v0.7.50, v0.7.92)
 
 #region Copy-AzLocalItsmSample (v0.7.50)
 
@@ -6040,6 +6135,94 @@ Describe 'Function: Test-AzLocalApplyUpdatesScheduleCoverage' {
                 $r = Convert-AzLocalUpdateWindowToCron -UpdateStartWindow 'Mon-Fri_22:00-04:00;Sat-Sun_02:00-10:00' -LeadTimeMinutes 5
                 $r | Should -HaveCount 2
                 ($r | ForEach-Object CronExpression) -join '|' | Should -Be '55 21 * * 1-5|55 1 * * 6,0'
+            }
+        }
+    }
+
+    Context 'Private helper: Convert-AzLocalUpdateWindowToCron -FiresPerWindow 2 (belt-and-braces, v0.7.92)' {
+        It 'FiresPerWindow=1 (default) is back-compat: one row per segment, IsRetry=false' {
+            InModuleScope AzLocal.UpdateManagement {
+                $r = Convert-AzLocalUpdateWindowToCron -UpdateStartWindow 'Sat-Sun_02:00-06:00' -LeadTimeMinutes 5
+                $r | Should -HaveCount 1
+                $r[0].IsRetry | Should -BeFalse
+            }
+        }
+
+        It '4h window Sat-Sun_02:00-06:00: open at 01:55, retry at +60min cap (03:00)' {
+            InModuleScope AzLocal.UpdateManagement {
+                $r = Convert-AzLocalUpdateWindowToCron -UpdateStartWindow 'Sat-Sun_02:00-06:00' -LeadTimeMinutes 5 -FiresPerWindow 2
+                $r | Should -HaveCount 2
+                $r[0].CronExpression | Should -Be '55 1 * * 6,0'
+                $r[0].IsRetry | Should -BeFalse
+                $r[1].CronExpression | Should -Be '0 3 * * 6,0'
+                $r[1].IsRetry | Should -BeTrue
+                $r[1].DayShift | Should -BeFalse
+            }
+        }
+
+        It '3h window Mon-Fri_20:00-23:00: open at 19:55, retry at midpoint 21:00 (180/2=90, capped to 60)' {
+            InModuleScope AzLocal.UpdateManagement {
+                $r = Convert-AzLocalUpdateWindowToCron -UpdateStartWindow 'Mon-Fri_20:00-23:00' -LeadTimeMinutes 5 -FiresPerWindow 2
+                $r | Should -HaveCount 2
+                $r[0].CronExpression | Should -Be '55 19 * * 1-5'
+                $r[1].CronExpression | Should -Be '0 21 * * 1-5'
+                $r[1].IsRetry | Should -BeTrue
+            }
+        }
+
+        It '6h overnight Mon-Fri_22:00-04:00: retry at 23:00 (no day shift, window has not crossed midnight yet)' {
+            InModuleScope AzLocal.UpdateManagement {
+                $r = Convert-AzLocalUpdateWindowToCron -UpdateStartWindow 'Mon-Fri_22:00-04:00' -LeadTimeMinutes 5 -FiresPerWindow 2
+                $r | Should -HaveCount 2
+                $r[0].CronExpression | Should -Be '55 21 * * 1-5'
+                $r[1].CronExpression | Should -Be '0 23 * * 1-5'
+                $r[1].IsRetry | Should -BeTrue
+                $r[1].DayShift | Should -BeFalse
+            }
+        }
+
+        It 'Short window Sat_03:00-03:30 (30min): retry at midpoint 03:15' {
+            InModuleScope AzLocal.UpdateManagement {
+                $r = Convert-AzLocalUpdateWindowToCron -UpdateStartWindow 'Sat_03:00-03:30' -LeadTimeMinutes 5 -FiresPerWindow 2
+                $r | Should -HaveCount 2
+                $r[0].CronExpression | Should -Be '55 2 * * 6'
+                $r[1].CronExpression | Should -Be '15 3 * * 6'
+                $r[1].IsRetry | Should -BeTrue
+            }
+        }
+
+        It 'Overnight crossing midnight: Mon_23:30-00:30 retry at 24:00 forward-day-shifts to Tue 00:00' {
+            InModuleScope AzLocal.UpdateManagement {
+                $r = Convert-AzLocalUpdateWindowToCron -UpdateStartWindow 'Mon_23:30-00:30' -LeadTimeMinutes 5 -FiresPerWindow 2
+                $r | Should -HaveCount 2
+                # Open: 23:30 - 5min lead = 23:25 Mon (no shift, still Mon).
+                $r[0].CronExpression | Should -Be '25 23 * * 1'
+                $r[0].DayShift | Should -BeFalse
+                # Retry: 23:30 + 30min midpoint = 24:00 -> 00:00 Tue (forward day shift).
+                $r[1].CronExpression | Should -Be '0 0 * * 2'
+                $r[1].IsRetry | Should -BeTrue
+                $r[1].DayShift | Should -BeTrue
+            }
+        }
+
+        It '24h-style window Mon-Fri_00:00-23:00: retry capped at +60min (01:00, same day, no shift)' {
+            InModuleScope AzLocal.UpdateManagement {
+                $r = Convert-AzLocalUpdateWindowToCron -UpdateStartWindow 'Mon-Fri_00:00-23:00' -LeadTimeMinutes 0 -FiresPerWindow 2
+                $r | Should -HaveCount 2
+                $r[0].CronExpression | Should -Be '0 0 * * 1-5'
+                # 23h = 1380min, midpoint 690min, capped to 60 -> 01:00.
+                $r[1].CronExpression | Should -Be '0 1 * * 1-5'
+                $r[1].IsRetry | Should -BeTrue
+                $r[1].DayShift | Should -BeFalse
+            }
+        }
+
+        It 'Multi-segment window with FiresPerWindow=2 emits TWO rows per segment (4 total)' {
+            InModuleScope AzLocal.UpdateManagement {
+                $r = Convert-AzLocalUpdateWindowToCron -UpdateStartWindow 'Mon-Fri_22:00-04:00;Sat-Sun_02:00-06:00' -LeadTimeMinutes 5 -FiresPerWindow 2
+                $r | Should -HaveCount 4
+                @($r | Where-Object IsRetry -eq $false).Count | Should -Be 2
+                @($r | Where-Object IsRetry -eq $true).Count  | Should -Be 2
             }
         }
     }
@@ -6329,7 +6512,8 @@ on:
                         [PSCustomObject]@{ ClusterName='c2'; ResourceGroup='r'; SubscriptionId='s'; ClusterResourceId='/s/r/c2'; UpdateRing='Wave1'; UpdateStartWindow='Sat-Sun_02:00-06:00' }
                     )
                 }
-                $result = Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend -PassThru 6>$null
+                # Pin to FiresPerWindow=1 (pre-v0.7.92 behaviour) so the single-cron dedupe assertion still holds.
+                $result = Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend -RecommendFiresPerWindow 1 -PassThru 6>$null
                 $result | Should -HaveCount 1
                 $result[0].CronExpression | Should -Be '55 1 * * 6,0'
                 $result[0].ClusterCount   | Should -Be 2
@@ -6360,6 +6544,88 @@ on:
                 }
                 $result = Test-AzLocalApplyUpdatesScheduleCoverage -View Audit -PipelineYamlPath $tmpYamlDir2 -IncludeUntagged -PassThru 6>$null
                 ($result | Where-Object Status -eq 'NoWindowTag').ClusterCount | Should -Be 1
+            }
+        }
+    }
+
+    Context 'Belt-and-braces: -RecommendFiresPerWindow + RingMixedWindows (v0.7.92)' {
+        BeforeAll {
+            $script:beltYamlDir = Join-Path $env:TEMP "schedule-cov-belt-$(Get-Random)"
+            New-Item -ItemType Directory -Path (Join-Path $script:beltYamlDir 'github-actions') -Force | Out-Null
+            # Cover the Sat-Sun opening edge so Audit reports Covered for that ring.
+            @"
+on:
+  schedule:
+    - cron: '55 1 * * 6,0'
+"@ | Set-Content -Path (Join-Path $script:beltYamlDir 'github-actions\Step.6_apply-updates.yml') -Encoding ASCII
+        }
+        AfterAll {
+            Remove-Item -Path $script:beltYamlDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+
+        It 'Recommend default (-RecommendFiresPerWindow=2) emits TWO rows per window (open + retry)' {
+            InModuleScope AzLocal.UpdateManagement {
+                Mock Invoke-AzResourceGraphQuery {
+                    @(
+                        [PSCustomObject]@{ ClusterName='c1'; ResourceGroup='r'; SubscriptionId='s'; ClusterResourceId='/s/r/c1'; UpdateRing='Pilot'; UpdateStartWindow='Sat-Sun_02:00-06:00' }
+                    )
+                }
+                $result = Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend -PassThru 6>$null
+                @($result).Count | Should -Be 2
+                $open  = $result | Where-Object CronExpression -eq '55 1 * * 6,0'
+                $retry = $result | Where-Object CronExpression -eq '0 3 * * 6,0'
+                $open  | Should -Not -BeNullOrEmpty
+                $retry | Should -Not -BeNullOrEmpty
+                $open.Snippet  | Should -Match '\(open\)'
+                $retry.Snippet | Should -Match '\(retry\)'
+            }
+        }
+
+        It 'Recommend with -RecommendFiresPerWindow 1 emits ONLY the opening cron (back-compat)' {
+            InModuleScope AzLocal.UpdateManagement {
+                Mock Invoke-AzResourceGraphQuery {
+                    @(
+                        [PSCustomObject]@{ ClusterName='c1'; ResourceGroup='r'; SubscriptionId='s'; ClusterResourceId='/s/r/c1'; UpdateRing='Pilot'; UpdateStartWindow='Sat-Sun_02:00-06:00' }
+                    )
+                }
+                $result = Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend -RecommendFiresPerWindow 1 -PassThru 6>$null
+                @($result).Count | Should -Be 1
+                $result[0].CronExpression | Should -Be '55 1 * * 6,0'
+            }
+        }
+
+        It 'Audit emits RingMixedWindows when same ring has two different UpdateStartWindow values' {
+            InModuleScope AzLocal.UpdateManagement -Parameters @{ beltYamlDir = $script:beltYamlDir } {
+                param($beltYamlDir)
+                Mock Invoke-AzResourceGraphQuery {
+                    @(
+                        [PSCustomObject]@{ ClusterName='c1'; ResourceGroup='r'; SubscriptionId='s'; ClusterResourceId='/s/r/c1'; UpdateRing='Production'; UpdateStartWindow='Sat-Sun_02:00-06:00' },
+                        [PSCustomObject]@{ ClusterName='c2'; ResourceGroup='r'; SubscriptionId='s'; ClusterResourceId='/s/r/c2'; UpdateRing='Production'; UpdateStartWindow='Mon-Fri_22:00-04:00' }
+                    )
+                }
+                $result = Test-AzLocalApplyUpdatesScheduleCoverage -View Audit -PipelineYamlPath $beltYamlDir -PassThru 6>$null
+                $mixed = @($result | Where-Object Status -eq 'RingMixedWindows')
+                $mixed | Should -HaveCount 1
+                $mixed[0].UpdateRing | Should -Be 'Production'
+                $mixed[0].ClusterCount | Should -Be 2
+                $mixed[0].UpdateStartWindow | Should -Match 'Mon-Fri_22:00-04:00'
+                $mixed[0].UpdateStartWindow | Should -Match 'Sat-Sun_02:00-06:00'
+                # Per-(Ring, Window) coverage rows are also emitted alongside the mixed warning.
+                @($result | Where-Object { $_.UpdateRing -eq 'Production' -and $_.Status -in @('Covered','Uncovered','PartiallyCovered') }).Count | Should -Be 2
+            }
+        }
+
+        It 'Audit does NOT emit RingMixedWindows when each ring has a single UpdateStartWindow' {
+            InModuleScope AzLocal.UpdateManagement -Parameters @{ beltYamlDir = $script:beltYamlDir } {
+                param($beltYamlDir)
+                Mock Invoke-AzResourceGraphQuery {
+                    @(
+                        [PSCustomObject]@{ ClusterName='c1'; ResourceGroup='r'; SubscriptionId='s'; ClusterResourceId='/s/r/c1'; UpdateRing='Pilot';      UpdateStartWindow='Sat-Sun_02:00-06:00' },
+                        [PSCustomObject]@{ ClusterName='c2'; ResourceGroup='r'; SubscriptionId='s'; ClusterResourceId='/s/r/c2'; UpdateRing='Production'; UpdateStartWindow='Mon-Fri_22:00-04:00' }
+                    )
+                }
+                $result = Test-AzLocalApplyUpdatesScheduleCoverage -View Audit -PipelineYamlPath $beltYamlDir -PassThru 6>$null
+                @($result | Where-Object Status -eq 'RingMixedWindows') | Should -HaveCount 0
             }
         }
     }
@@ -6449,7 +6715,8 @@ on:
                         [PSCustomObject]@{ ClusterName='c1'; ResourceGroup='r'; SubscriptionId='s'; ClusterResourceId='/s/r/c1'; UpdateRing='HybridRing'; UpdateStartWindow='Mon-Fri_22:00-04:00;Sat-Sun_02:00-10:00' }
                     )
                 }
-                $result = Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend -PassThru 6>$null
+                # Pin to FiresPerWindow=1 (pre-v0.7.92 behaviour) so the per-segment row count is unambiguous (2 instead of 4 with belt-and-braces).
+                $result = Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend -RecommendFiresPerWindow 1 -PassThru 6>$null
                 # If RequiredCrons collapsed to one nested-array row, Recommend
                 # would emit a single CronExpression equal to a `System.Object[]`
                 # string and the count would be 1. With the fix it should be 2.

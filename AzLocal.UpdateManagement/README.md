@@ -2,7 +2,7 @@
 
 > ⚠️ **Disclaimer**: This module is **NOT** a Microsoft supported service offering or product. It is provided as example code only, with no warranty or official support. Refer to the [MIT license](https://github.com/NeilBird/Azure-Local/blob/main/LICENSE) for further information.
 
-**Latest Version:** v0.7.91 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.7.91)
+**Latest Version:** v0.7.92 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.7.92)
 
 > 📢 **Renamed in v0.7.3**: this module was previously published as `AzStackHci.ManageUpdates`. The new module name aligns with the Azure Local product name (_Microsoft retired the *Azure Stack HCI* brand in late 2024_). The module GUID is preserved across the rename. If you have the old name installed, run:
 >
@@ -23,7 +23,7 @@ Azure Local REST API specification (includes update management endpoints): https
 **This README (overview + most-recent release notes):**
 
 - [Where to Start](#where-to-start)
-- [What's New in v0.7.91](#whats-new-in-v0791)
+- [What's New in v0.7.92](#whats-new-in-v0792)
 - [Files](#files)
 - [Prerequisites](#prerequisites)
 - [RBAC Requirements](#rbac-requirements) (summary; full reference in [docs/rbac.md](docs/rbac.md))
@@ -86,21 +86,82 @@ If you are new to this module, work through these in order from a regular PowerS
 
 > Most CI/CD pipelines in [Automation-Pipeline-Examples/](Automation-Pipeline-Examples/) are direct implementations of one of these workflows. Start there if you want a copy-pasteable end-to-end pipeline.
 
-## What's New in v0.7.91
+## What's New in v0.7.92
 
-Docs/YAML-only patch release. No cmdlet behaviour changes, no schema changes, no breaking changes. Includes one urgent pipeline parser fix and three cosmetic step-summary fixes - all in bundled `Step.{3,7}_*.yml` pipeline examples.
+Docs/YAML-only feature release. No cmdlet behaviour changes, no schema changes, no breaking changes. Four pipelines move (GitHub Actions + Azure DevOps in all cases):
 
-**Urgent: `Step.7_monitor-updates.yml` PowerShell 7 parser error (GH Actions + Azure DevOps).** The "No update runs currently in flight" branch contained the literal sequence `` \`update-monitor.csv\` `` inside a double-quoted PowerShell string. The runner is PowerShell 7, which interprets the backtick following the backslash as the start of a `` `u{hex} `` Unicode escape; with no `{` following, the parser throws `The Unicode escape sequence is not valid` at parse time. GitHub Actions parses the whole `run:` block before executing it, so the failure surfaces at the `Import-Module` step with no usable diagnostics. Fixed by switching to the `` `` `` literal-backtick escape already used on the same line for `` ``InProgress`` ``. **Operators running v0.7.90 should upgrade or hot-patch the two `Step.7_monitor-updates.yml` files immediately.**
+- `Step.9_fleet-health-status.yml` - collapsible per-cluster `Detailed Results` + hyperlinks open in a new tab.
+- `Step.8_fleet-update-status.yml` - hyperlinks open in a new tab.
+- `Step.7_monitor-updates.yml` - active default schedule (5x/day, every 2h overnight).
+- `Step.3_apply-updates-schedule-audit.yml` - summary metric table now reconciles when `IncludeUntagged: true`; Recommend tier now emits **two crons per window by default** (belt-and-braces opening + mid-window retry) controlled by the new `fires_per_window` input; new `RingMixedWindows` informational warning bucket when the same `UpdateRing` carries different `UpdateStartWindow` values.
 
-**Three cosmetic fixes to the Step.3 per-ring-overrides tip block (GH Actions + Azure DevOps).**
+Plus an operator-UX strand: `Copy-AzLocalPipelineExample` now drops a starter `apply-updates-schedule.yml` by default (one level up from `-Destination`, never overwrites; new `-SkipStarterSchedule` opt-out) - the ring-aware schedule file required for scheduled Step.6 runs no longer has to be manually generated before the pipelines work. See [the section below](#apply-updates-scheduleyml---starter-file-now-dropped-by-default-by-copy-azlocalpipelineexample).
 
-- **Wrong cmdlet name.** The tip text referenced `Get-AzLocalUpdate -Status Ready`, which does not exist in the module. Replaced with the real exported cmdlet `Get-AzLocalAvailableUpdates`.
-- **Bogus example version strings.** The previous example showed `10.2604.0.123;10.2610.0.456`, which does not match Azure Local's real update naming and contradicted the canonical example in `apply-updates-schedule.example.yml`. Replaced with the canonical form `Solution12.2604.1003.1005;Solution12.2610.1003.XX`.
-- **Trailing literal `n` after the closing markdown code-fence.** The PowerShell here-string used `` "``````n" `` (missing a backtick before `n`), so the rendered job summary showed a stray `n` immediately after the closing ` ``` `. Fixed to emit the closing fence followed by a real newline.
+### Step.9 - per-cluster collapsible `Detailed Results`
 
-**Migration.** `Install-Module AzLocal.UpdateManagement -Force` (or `Update-Module`). Run `Update-AzLocalPipelineExample -Destination <path>` to refresh the four affected `Step.{3,7}_*.yml` files (two per step, one per platform). All four fixes are outside `BEGIN-AZLOCAL-CUSTOMIZE` blocks, so operator schedule customisations are preserved.
+Previously the section rendered as a single flat table of up to 100 `(cluster x failing-check)` rows, so on a fleet of 20+ unhealthy clusters the table dominated the run summary and operators had to scroll to find a specific cluster. The new layout has one collapsible `<details>` block per cluster. The always-visible `<summary>` line carries:
 
-> Previous release notes (v0.7.90 and earlier) have moved into [`docs/release-history.md`](docs/release-history.md), with the v0.7.90 entry retained in the [Release History](#release-history) appendix below for quick reference.
+- the cluster name (linkified to the Azure portal blade);
+- a severity tally in the form `[Critical] x 5 &nbsp;&middot;&nbsp; [Warning] x 2` (non-zero tiers only, Critical-first); and
+- the most-recent `LastOccurrence` across all that cluster's failing checks.
+
+Expanding the block reveals the existing per-failure mini-table (Severity / Failure Reason / Failure Remediation / Target Resource Name / Target Resource Type / Last Occurrence / Resource Group).
+
+**Worst-affected clusters first.** Cluster ordering now sorts by `CriticalCount` desc, then `WarningCount` desc, then most-recent `LastOccurrence` desc - so the cluster with the most active critical failures rises to the top. Within each cluster, the per-failure rows sort Critical-first then `LastOccurrence` desc.
+
+**Pagination is now per-CLUSTER (not per-ROW).** The previous `first 100 rows` cap could silently truncate the second half of a busy cluster's failures. The new cap shows the first 100 clusters in full; the existing `fleet-health-detail.csv` artifact still carries every row for any cluster that overflows.
+
+**CSV / JSON artifacts unchanged.** `fleet-health-detail.csv`, `fleet-health-summary.csv`, `fleet-health-overview.csv` and their JSON twins all retain the same schema, so any downstream tooling (ITSM, dashboards, etc.) keeps working without changes.
+
+### Step.7 - active default schedule (5x/day, every 2h overnight)
+
+`Step.7_monitor-updates.yml` now ships with an **active** default schedule, so an estate that imports the pipeline gets continuous in-flight visibility immediately without having to remember to enable the cron block. The pipeline runs 5x/day at **20:00, 22:00, 00:00, 02:00, 04:00 UTC** - every 2 hours across the typical overnight maintenance window - in addition to manual `workflow_dispatch` / queue runs.
+
+Previously the schedule block shipped commented-out and required operators to uncomment it per estate. The cron lives inside the existing `BEGIN-AZLOCAL-CUSTOMIZE:schedule-triggers` block, so any local edits (hour-list shifts for a non-UTC maintenance window, weekends-only, sub-hour external triggers, etc.) survive `Update-AzLocalPipelineExample` refreshes. Both GitHub Actions and Azure DevOps interpret cron in UTC - adjust the hour list in the YAML if your maintenance window differs.
+
+### `apply-updates-schedule.yml` - starter file now dropped by default by `Copy-AzLocalPipelineExample`
+
+The ring-aware `apply-updates-schedule.yml` (consumed by Step.6 `apply-updates` and Step.3 `apply-updates-schedule-audit`) is **required for scheduled Step.6 runs** but was previously documented only in section 8 of `Automation-Pipeline-Examples/README.md` and the `apply-updates-schedule.example.yml` header - so operators following the step-by-step setup could finish without realising it was needed. v0.7.92 changes the default behaviour and updates the step-by-step setup:
+
+- **`Copy-AzLocalPipelineExample` now drops a starter `apply-updates-schedule.yml` by default.** For `-Platform GitHub|AzureDevOps` the bundled `apply-updates-schedule.example.yml` is copied to `apply-updates-schedule.yml` ONE LEVEL UP from `-Destination` (sibling of `.github\workflows\` for GitHub, sibling of the pipelines folder for ADO) when no file already exists at that path. **Pre-existing files are NEVER overwritten** - any operator-tailored schedule survives across re-runs. Safe to land alongside the bundled Step.6 because Step.6 ships with every `cron:` line commented out inside the `BEGIN/END-AZLOCAL-CUSTOMIZE:schedule-triggers` markers - it cannot fire on a `schedule:` trigger until at least one cron is uncommented. Manual `workflow_dispatch` / queue runs of Step.6 ignore the schedule file entirely (they take `UpdateRing` verbatim from the run-form input). The starter ships with **DEMO** ring names (`Canary`, `DevTest`, `Ring1`, `Ring2`, `Prod`) that almost never match a real estate's `UpdateRing` tag values - the post-copy summary surfaces the dropped path plus the regenerate-from-live-fleet command `New-AzLocalApplyUpdatesScheduleConfig -OutputPath <path> -Force`. Pass the new `[switch] -SkipStarterSchedule` to suppress the starter copy entirely (e.g. for estates that pre-stage the schedule via separate tooling). Reverses the v0.7.69 design decision that the schedule file should always be operator-generated from live fleet - the new "starter copy + never overwrite + DEMO ring names + regenerate command in the summary" pattern is operator-friendlier without sacrificing the "real schedule must reflect live tag values" intent.
+- **Refreshed inline step in section 5.** Section 5.1 step 5 (GitHub Actions) and section 5.2 step 6 (Azure DevOps) of [`Automation-Pipeline-Examples/README.md`](./Automation-Pipeline-Examples/README.md) document the new default-on starter drop, the never-overwrite safety rail, the DEMO ring names, the `New-AzLocalApplyUpdatesScheduleConfig -OutputPath <path> -Force` regenerate cycle, and the `-SkipStarterSchedule` opt-out. Both cross-link to section 8 for the full schema, multi-stage rollouts, weekly-cycle / ring-eligibility model, and the `allowedUpdateVersions` allow-list (schema v2).
+
+### Step.8 + Step.9 pipeline step summaries - hyperlinks open in a new tab
+
+Every rendered hyperlink in the `Step.8_fleet-update-status.yml` and `Step.9_fleet-health-status.yml` step summaries (GitHub Actions + Azure DevOps) is now emitted as HTML `<a href="..." target="_blank">` so clicking a link opens in a new tab and the operator stays on the pipeline run page. Affected sites:
+
+- **Step.8** - the per-update-run history table's cluster-name and update-run-name cells (Azure portal blade deep-links), plus the three Microsoft Learn / aka.ms references in the version section (`aka.ms/AzureEdgeUpdates`, `about-updates-23h2#lifecycle-cadence`, `release-information-23h2#about-azure-local-releases`).
+- **Step.9** - the overview-table cluster-name cell, the affected-clusters list in the summary block, the per-cluster `<details><summary>` cluster name (linkified to the Azure portal blade), and the per-failure `Failure Remediation` `link` text.
+
+The prose links use `rel="noopener noreferrer"` for standard `target="_blank"` hardening. Step.4 (`fleet-connectivity-status`) was already plain-URL only (URLs flow into the CSV / JUnit Body fields but are not rendered as hyperlinks in the markdown step summary), so it needed no change. CSV / JSON / JUnit artifacts continue to carry plain URL strings - no schema or data shape changes.
+
+### Step.3 schedule-audit summary metric table - reconciles when `IncludeUntagged: true`
+
+The summary metric table at the top of the `Step.3_apply-updates-schedule-audit.yml` step summary (GitHub Actions + Azure DevOps) previously surfaced only 7 of the 8 possible `Status` buckets - the `NoWindowTag` row (clusters with no `UpdateStartWindow` tag, emitted only when `IncludeUntagged: true` is set on the workflow input) was missing. Result: `(Ring, Window) pairs audited` did not equal the sum of the visible bucket counts (for example audited=7 but Covered+Uncovered+... summed to 6) when at least one cluster fell into `NoWindowTag`, which made the table look broken even though the underlying data and the `Audit Detail` table below were correct. v0.7.92 adds the missing `NoWindowTag` row and includes it in the `hasIssues` calculation so the action-required Recommend block surfaces when untagged clusters are present. `Test-AzLocalApplyUpdatesScheduleCoverage` itself is unchanged.
+
+### Step.3 schedule-audit Recommend tier - belt-and-braces (two crons per window) + `RingMixedWindows`
+
+Two related additions to the read-only Step.3 audit pipeline, both layered safely on top of the existing audit semantics ("Covered" / "Uncovered" are unchanged - only the Recommend snippet rendered for operators changes shape, and a new informational status surfaces a divergence that was previously invisible).
+
+**Belt-and-braces: two crons per window by default.** The Recommend view previously emitted **one** cron per `UpdateStartWindow` segment, firing `LeadTimeMinutes` before the window opens. On heavily-loaded GitHub Actions schedules a single cron can be **skipped by jitter (~15 min)** on a tight maintenance window, and a **transient first-fire failure** (auth blip, runner pool exhaustion, module install hiccup) can leave the cluster un-updated for the day with no error. From v0.7.92 the Recommend snippet emits **two** crons per window by default:
+
+1. **`(open)`** - the existing opening-edge cron, fires `LeadTimeMinutes` before the window opens.
+2. **`(retry)`** - a second cron INSIDE the window at the lesser of the **midpoint** or **+60 minutes** after the window opens.
+
+The runtime gate (`Test-AzLocalUpdateScheduleAllowed`) plus the existing in-flight guard prevent double-triggering: the retry cron only does work if the open-edge fire was skipped or failed. Controlled by:
+
+- New `-RecommendFiresPerWindow` parameter on `Test-AzLocalApplyUpdatesScheduleCoverage` (default `2`, range `1-2`).
+- New `fires_per_window` (GH Actions) / `firesPerWindow` (Azure DevOps) workflow input on `Step.3_apply-updates-schedule-audit.yml` (default `2`, choice `1`/`2`) that flows through to the cmdlet.
+
+Pass `1` to disable the retry tier (back-compat for pre-v0.7.92 callers).
+
+**New `RingMixedWindows` informational status.** The Audit view now emits a `Schedule` / `RingMixedWindows` row when 2+ clusters share an `UpdateRing` tag but carry **different** `UpdateStartWindow` values (follow-the-sun, regional rollouts, or tagging mistakes). Each (Ring, Window) pair still gets its own per-pair coverage row above; the runtime gate reads each cluster's own tag so updates still fire correctly. The new bucket surfaces the divergence with a 3-choice recommendation (standardise via `Set-AzLocalClusterUpdateRingTag`, split into separate rings, or accept and document). **Not counted as `Uncovered`** - the pipeline does not gate on it (`$hasIssues` ignores `RingMixedWindows`).
+
+### Migration
+
+`Install-Module AzLocal.UpdateManagement -Force` (or `Update-Module`). Run `Update-AzLocalPipelineExample -Destination <path>` to refresh the `Step.9_*.yml`, `Step.8_*.yml`, `Step.7_*.yml` and `Step.3_*.yml` files. The Step.9 changes sit outside any `BEGIN-AZLOCAL-CUSTOMIZE` block, so operator customisations elsewhere in those pipelines are preserved.
+
+> Previous release notes (v0.7.91 and earlier) have moved into [`docs/release-history.md`](docs/release-history.md), with the v0.7.91 entry retained in the [Release History](#release-history) appendix below for quick reference.
 
 ## Files
 
@@ -311,7 +372,7 @@ Open `cluster-inventory.csv` and populate the tag columns:
   > **Plan your window to *start* far enough before any hard deadline that the full update can finish before that deadline** - for example, if updates must be complete before a retail store opens at 06:00 local time, or before a manufacturing line starts at 06:00 Mon-Fri, do **not** set `UpdateStartWindow` to (say) `Mon-Fri_04:00-06:00` and expect the update to be done by 06:00. Set it to start much earlier (e.g. `Sun-Thu_22:00-02:00` for an overnight start the evening before) so the run has enough headroom for the slowest realistic completion time, plus margin for retries and post-update validation. When in doubt, time a representative update on a non-production cluster first and add a safety buffer.
 
 
-  **Day tokens** — strict 3-letter abbreviations only (case-insensitive — `Mon`, `mon`, `MON` all work):
+  **Day tokens** - strict 3-letter abbreviations only (case-insensitive - `Mon`, `mon`, `MON` all work):
 
   | Token | Day | Token | Day |
   |---|---|---|---|
@@ -321,29 +382,29 @@ Open `cluster-inventory.csv` and populate the tag columns:
   | `Thu` | Thursday | `Daily` / `*` | All days |
 
   **Day specifiers**:
-  - **Range**: `Mon-Fri` (Mon through Fri inclusive), `Sat-Sun`, `Fri-Mon` (wrap-around — Fri, Sat, Sun, Mon)
-  - **Comma list**: `Mon,Wed,Fri` (Monday, Wednesday, Friday only — useful for non-contiguous days)
+  - **Range**: `Mon-Fri` (Mon through Fri inclusive), `Sat-Sun`, `Fri-Mon` (wrap-around - Fri, Sat, Sun, Mon)
+  - **Comma list**: `Mon,Wed,Fri` (Monday, Wednesday, Friday only - useful for non-contiguous days)
   - **Single day**: `Sat`
   - **All days**: `Daily` or `*`
 
-  > ⚠️ Common mistakes: `Thur`, `Tues`, `Mond`, `Friday`, `tuesday-friday` — all rejected. Use the strict 3-letter form: `Thu`, `Tue`, `Mon`, `Fri`, `Tue-Fri`.
+  > ⚠️ Common mistakes: `Thur`, `Tues`, `Mond`, `Friday`, `tuesday-friday` - all rejected. Use the strict 3-letter form: `Thu`, `Tue`, `Mon`, `Fri`, `Tue-Fri`.
 
   **Time format**: 24-hour `HH:MM` UTC. Overnight wraps are supported (`22:00-02:00` means 10 PM today through 2 AM tomorrow).
 
   **Examples**:
-  - `Sat-Sun_02:00-06:00` — Weekends 2-6 AM UTC
-  - `Mon-Fri_22:00-06:00` — Weeknights 10 PM - 6 AM UTC (overnight wrap)
-  - `Mon-Thu_20:00-04:00` — Mon/Tue/Wed/Thu nights 8 PM - 4 AM UTC (excludes Fri night)
-  - `Mon,Wed,Fri_01:00-05:00` — Only Mon/Wed/Fri 1-5 AM UTC (note the **comma list**, not range)
-  - `Sat_22:00-06:00;Sun_22:00-06:00` — Two separate Sat-night and Sun-night windows
-  - `Sat-Sun_00:00-23:59` — Whole weekend
-  - `Daily_02:00-06:00` (or `*_02:00-06:00`) — Every day 2-6 AM UTC
-  - `Fri-Mon_22:00-06:00` — Long weekend (Fri/Sat/Sun/Mon nights, with wrap)
+  - `Sat-Sun_02:00-06:00` - Weekends 2-6 AM UTC
+  - `Mon-Fri_22:00-06:00` - Weeknights 10 PM - 6 AM UTC (overnight wrap)
+  - `Mon-Thu_20:00-04:00` - Mon/Tue/Wed/Thu nights 8 PM - 4 AM UTC (excludes Fri night)
+  - `Mon,Wed,Fri_01:00-05:00` - Only Mon/Wed/Fri 1-5 AM UTC (note the **comma list**, not range)
+  - `Sat_22:00-06:00;Sun_22:00-06:00` - Two separate Sat-night and Sun-night windows
+  - `Sat-Sun_00:00-23:59` - Whole weekend
+  - `Daily_02:00-06:00` (or `*_02:00-06:00`) - Every day 2-6 AM UTC
+  - `Fri-Mon_22:00-06:00` - Long weekend (Fri/Sat/Sun/Mon nights, with wrap)
 
-  > **Tag-value matching is case-insensitive everywhere** — both the day tokens above and the `UpdateRing` value used by `-ScopeByUpdateRingTag -UpdateRingValue 'Prod1'` (resolved via Azure Resource Graph `=~` operator), so `prod1`/`Prod1`/`PROD1` all match the same set of clusters.
+  > **Tag-value matching is case-insensitive everywhere** - both the day tokens above and the `UpdateRing` value used by `-ScopeByUpdateRingTag -UpdateRingValue 'Prod1'` (resolved via Azure Resource Graph `=~` operator), so `prod1`/`Prod1`/`PROD1` all match the same set of clusters.
 - **UpdateExclusionsWindow** (optional; renamed from `UpdateExclusions` in v0.7.90): Change-freeze periods. Format: `YYYY-MM-DD/YYYY-MM-DD`. Multiple ranges separated by `,`. Wildcards with `*` for recurring annual patterns. Examples:
-  - `2026-12-20/2027-01-03` — Specific date range
-  - `20**-12-20/20**-01-03` — Every year, Dec 20 to Jan 3
+  - `2026-12-20/2027-01-03` - Specific date range
+  - `20**-12-20/20**-01-03` - Every year, Dec 20 to Jan 3
 - **UpdateExcluded** (optional; v0.7.90): Operator hard override. Values `True` / `False` / `1` / `0` (case-insensitive). `True` or `1` skips the cluster in `Start-AzLocalClusterUpdate` with `Status = ExcludedByTag`, regardless of `UpdateRing` scope, `UpdateSideloaded` state, or `UpdateStartWindow` / `UpdateExclusionsWindow` schedule. Leave empty or set to `False` to keep the cluster eligible. If the column is absent on a cluster, `Set-AzLocalClusterUpdateRingTag` default-stamps `UpdateExcluded=False` so the tag is visible in the Azure portal and ready to flip when needed.
 
 Save the file.
@@ -579,7 +640,13 @@ This code is provided as-is for educational and reference purposes.
 
 The full What's-New history (v0.7.81 and earlier) has moved to [docs/release-history.md](docs/release-history.md).
 
-The most recent release notes for **v0.7.91** stay above under [`What's New in v0.7.91`](#whats-new-in-v0791).
+The most recent release notes for **v0.7.92** stay above under [`What's New in v0.7.92`](#whats-new-in-v0792).
+
+### What's New in v0.7.91
+
+v0.7.91 was a docs/YAML-only patch release. The headline fix was the urgent `Step.7_monitor-updates.yml` PowerShell 7 parser bug (`The Unicode escape sequence is not valid`) - the runner was failing at the `Import-Module` step on the `no update runs currently in flight` branch on the v0.7.90 release. Fixed by switching the literal-backtick escape (`` \` ``) to the `` `` `` form already used elsewhere in the same line. Also bundled three cosmetic fixes to the Step.3 schedule-audit summary: wrong cmdlet name (`Get-AzLocalUpdate -Status Ready` -> `Get-AzLocalAvailableUpdates`), bogus example version strings (replaced with the canonical `Solution12.2604.1003.1005;Solution12.2610.1003.XX`), and a stray `n` after the closing markdown code-fence (missing backtick in `"``````n"`).
+
+See [CHANGELOG.md](CHANGELOG.md#0791---2026-06-05) for the full v0.7.91 entry.
 
 ### What's New in v0.7.90
 
