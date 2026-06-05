@@ -26,7 +26,7 @@ if (-not $ModulePath) {
 }
 if (-not (Test-Path $ModulePath)) { throw "Module manifest not found at: $ModulePath" }
 if (-not $SchedulePath) {
-    $SchedulePath = Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples\schedule-coverage-example.json'
+    $SchedulePath = Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples\apply-updates-schedule.example.yml'
 }
 if (-not (Test-Path $SchedulePath)) {
     throw "Schedule example file not found at: $SchedulePath - pass -SchedulePath to override"
@@ -112,6 +112,39 @@ try {
             ,(@(Get-Content -LiteralPath $recoMd))
         } `
         -RequiredColumns @()
+
+    # 3a (v0.7.92): -View Recommend with default -RecommendFiresPerWindow=2 (belt-and-braces)
+    #     - every window should emit TWO crons (an `(open)` and a `(retry)`)
+    Test-Cmdlet -Name 'Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend -RecommendFiresPerWindow 2 (belt-and-braces, default)' `
+        -Invoke {
+            $rows = Test-AzLocalApplyUpdatesScheduleCoverage -SchedulePath $SchedulePath -View Recommend -LeadTimeMinutes 60 -Platform GitHubActions -PassThru
+            if (-not $rows) { return @() }
+            $rows = @($rows)
+            $openCount  = @($rows | Where-Object { $_.Snippet -match '\(open\)' }).Count
+            $retryCount = @($rows | Where-Object { $_.Snippet -match '\(retry\)' }).Count
+            Write-Host "  Recommend rows: $($rows.Count) (open snippets: $openCount, retry snippets: $retryCount)" -ForegroundColor Gray
+            if ($rows.Count -gt 0 -and $retryCount -lt 1) {
+                throw "Expected at least one (retry) cron in Recommend snippet when -RecommendFiresPerWindow defaults to 2; saw $retryCount"
+            }
+            $rows
+        } `
+        -RequiredColumns @()
+
+    # 3b (v0.7.92): -View Recommend with -RecommendFiresPerWindow 1 (back-compat)
+    #     - every window should emit ONLY the opening-edge cron (no `(retry)` snippet)
+    Test-Cmdlet -Name 'Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend -RecommendFiresPerWindow 1 (back-compat)' `
+        -Invoke {
+            $rows = Test-AzLocalApplyUpdatesScheduleCoverage -SchedulePath $SchedulePath -View Recommend -RecommendFiresPerWindow 1 -LeadTimeMinutes 60 -Platform GitHubActions -PassThru
+            if (-not $rows) { return @() }
+            $rows = @($rows)
+            $retryCount = @($rows | Where-Object { $_.Snippet -match '\(retry\)' }).Count
+            Write-Host "  Recommend rows: $($rows.Count) (retry snippets: $retryCount - should be 0)" -ForegroundColor Gray
+            if ($retryCount -gt 0) {
+                throw "Expected zero (retry) crons when -RecommendFiresPerWindow 1; saw $retryCount"
+            }
+            $rows
+        } `
+        -RequiredColumns @()
 } finally {
     Remove-Item -Path $tmpDir.FullName -Recurse -Force -ErrorAction SilentlyContinue
 }
@@ -119,6 +152,29 @@ try {
 # 4. Schedule-config parser (Step.3 reads it for its inline schedule-diagnostics block)
 Test-Cmdlet -Name 'Get-AzLocalApplyUpdatesScheduleConfig (parse example)' `
     -Invoke { Get-AzLocalApplyUpdatesScheduleConfig -Path $SchedulePath } `
+    -RequiredColumns @()
+
+# 5 (v0.7.92): default audit also surfaces RingMixedWindows row when the live
+#     fleet has 2+ clusters in the same UpdateRing carrying different
+#     UpdateStartWindow values. The bucket is informational (not gated), so
+#     PASS-EMPTY is acceptable; we only verify the code path runs without
+#     erroring and any emitted RingMixedWindows row carries the expected
+#     shape (joined UpdateStartWindow values with ' | ' separator).
+Test-Cmdlet -Name 'Test-AzLocalApplyUpdatesScheduleCoverage default audit - RingMixedWindows shape (live)' `
+    -Invoke {
+        $rows = @(Test-AzLocalApplyUpdatesScheduleCoverage -SchedulePath $SchedulePath -PassThru)
+        $mixed = @($rows | Where-Object Status -eq 'RingMixedWindows')
+        Write-Host "  Audit rows: $($rows.Count) (RingMixedWindows: $($mixed.Count))" -ForegroundColor Gray
+        foreach ($m in $mixed) {
+            if (-not $m.UpdateRing)   { throw "RingMixedWindows row missing UpdateRing" }
+            if (-not $m.ClusterCount) { throw "RingMixedWindows row missing ClusterCount" }
+            if ($m.UpdateStartWindow -notmatch ' \| ') {
+                throw "RingMixedWindows row UpdateStartWindow '$($m.UpdateStartWindow)' missing expected ' | ' separator"
+            }
+            Write-Host "    Ring='$($m.UpdateRing)' Clusters=$($m.ClusterCount) Windows='$($m.UpdateStartWindow)'" -ForegroundColor Yellow
+        }
+        $rows
+    } `
     -RequiredColumns @()
 
 Write-Host "`n========== Summary ==========" -ForegroundColor Cyan
