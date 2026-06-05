@@ -129,9 +129,13 @@ Every rendered hyperlink in the `Step.8_fleet-update-status.yml` and `Step.9_fle
 
 The prose links use `rel="noopener noreferrer"` for standard `target="_blank"` hardening. Step.4 (`fleet-connectivity-status`) was already plain-URL only (URLs flow into the CSV / JUnit Body fields but are not rendered as hyperlinks in the markdown step summary), so it needed no change. CSV / JSON / JUnit artifacts continue to carry plain URL strings - no schema or data shape changes.
 
+### Step.3 schedule-audit summary metric table - reconciles when `IncludeUntagged: true`
+
+The summary metric table at the top of the `Step.3_apply-updates-schedule-audit.yml` step summary (GitHub Actions + Azure DevOps) previously surfaced only 7 of the 8 possible `Status` buckets - the `NoWindowTag` row (clusters with no `UpdateStartWindow` tag, emitted only when `IncludeUntagged: true` is set on the workflow input) was missing. Result: `(Ring, Window) pairs audited` did not equal the sum of the visible bucket counts (for example audited=7 but Covered+Uncovered+... summed to 6) when at least one cluster fell into `NoWindowTag`, which made the table look broken even though the underlying data and the `Audit Detail` table below were correct. v0.7.92 adds the missing `NoWindowTag` row and includes it in the `hasIssues` calculation so the action-required Recommend block surfaces when untagged clusters are present. `Test-AzLocalApplyUpdatesScheduleCoverage` itself is unchanged.
+
 ### Migration
 
-`Install-Module AzLocal.UpdateManagement -Force` (or `Update-Module`). Run `Update-AzLocalPipelineExample -Destination <path>` to refresh the `Step.9_*.yml`, `Step.8_*.yml` and `Step.7_*.yml` files. The Step.9 changes sit outside any `BEGIN-AZLOCAL-CUSTOMIZE` block, so operator customisations elsewhere in those pipelines are preserved.
+`Install-Module AzLocal.UpdateManagement -Force` (or `Update-Module`). Run `Update-AzLocalPipelineExample -Destination <path>` to refresh the `Step.9_*.yml`, `Step.8_*.yml`, `Step.7_*.yml` and `Step.3_*.yml` files. The Step.9 changes sit outside any `BEGIN-AZLOCAL-CUSTOMIZE` block, so operator customisations elsewhere in those pipelines are preserved.
 
 > Previous release notes (v0.7.91 and earlier) have moved into [`docs/release-history.md`](docs/release-history.md), with the v0.7.91 entry retained in the [Release History](#release-history) appendix below for quick reference.
 

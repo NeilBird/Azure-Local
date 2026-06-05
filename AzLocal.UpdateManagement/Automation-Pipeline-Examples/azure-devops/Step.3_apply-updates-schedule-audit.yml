@@ -225,6 +225,8 @@ stages:
           $partial     = @($auditResult | Where-Object Status -eq 'PartiallyCovered')
           $malformed   = @($auditResult | Where-Object Status -eq 'MalformedTag')
           $unparseable = @($auditResult | Where-Object Status -eq 'UnparseableCron')
+          # -IncludeUntagged bucket: clusters with no UpdateStartWindow tag.
+          $noWindowTag = @($auditResult | Where-Object Status -eq 'NoWindowTag')
           # schedule-file two-way diff buckets.
           $ringMissing = @($auditResult | Where-Object Status -eq 'RingMissingFromSchedule')
           $ringOrphan  = @($auditResult | Where-Object Status -eq 'RingOrphanedInSchedule')
@@ -288,6 +290,7 @@ stages:
           "##vso[task.setvariable variable=partial;isOutput=true]$($partial.Count)"             | Write-Host
           "##vso[task.setvariable variable=malformed;isOutput=true]$($malformed.Count)"         | Write-Host
           "##vso[task.setvariable variable=unparseable;isOutput=true]$($unparseable.Count)"     | Write-Host
+          "##vso[task.setvariable variable=noWindowTag;isOutput=true]$($noWindowTag.Count)"     | Write-Host
           "##vso[task.setvariable variable=ringMissing;isOutput=true]$($ringMissing.Count)"     | Write-Host
           "##vso[task.setvariable variable=ringOrphan;isOutput=true]$($ringOrphan.Count)"       | Write-Host
           "##vso[task.setvariable variable=haveSchedule;isOutput=true]$([int]$haveSchedule)"    | Write-Host
@@ -306,6 +309,7 @@ stages:
           Write-Host "  PartiallyCovered         : $($partial.Count)"
           Write-Host "  MalformedTag             : $($malformed.Count)"
           Write-Host "  UnparseableCron          : $($unparseable.Count)"
+          Write-Host "  NoWindowTag              : $($noWindowTag.Count)"
           Write-Host "  RingMissingFromSchedule  : $($ringMissing.Count)"
           Write-Host "  RingOrphanedInSchedule   : $($ringOrphan.Count)"
 
@@ -333,12 +337,13 @@ stages:
         $partial     = "$(audit.partial)"
         $malformed   = "$(audit.malformed)"
         $unparseable = "$(audit.unparseable)"
+        $noWindowTag = "$(audit.noWindowTag)"
         $ringMissing = "$(audit.ringMissing)"
         $ringOrphan  = "$(audit.ringOrphan)"
         $haveSchedule = ("$(audit.haveSchedule)" -eq '1')
         $schedulePath = "$(audit.schedulePath)"
 
-        Write-Host "##vso[task.uploadsummary]Schedule Coverage: $covered covered, $uncovered uncovered, $partial partial, $malformed malformed, $unparseable unparseable, $ringMissing missing-from-schedule, $ringOrphan orphan-in-schedule"
+        Write-Host "##vso[task.uploadsummary]Schedule Coverage: $covered covered, $uncovered uncovered, $partial partial, $malformed malformed, $unparseable unparseable, $noWindowTag no-window-tag, $ringMissing missing-from-schedule, $ringOrphan orphan-in-schedule"
 
         $rowsPath = Join-Path '$(reportsPath)' 'schedule-coverage-audit.csv'
         $recoPath = Join-Path '$(reportsPath)' 'schedule-coverage-recommend.md'
@@ -350,7 +355,7 @@ stages:
         # the detail table. The Recommend output now ships its own '## Action required - ...'
         # headings (one per kind of fix), numbered '(1 of N)' when more than one applies,
         # so we inline it as-is rather than wrapping it in our own code fence.
-        $hasIssues = (([int]$uncovered) + ([int]$partial) + ([int]$malformed) + ([int]$unparseable) + ([int]$ringMissing) + ([int]$ringOrphan)) -gt 0
+        $hasIssues = (([int]$uncovered) + ([int]$partial) + ([int]$malformed) + ([int]$unparseable) + ([int]$noWindowTag) + ([int]$ringMissing) + ([int]$ringOrphan)) -gt 0
 
         $md = @"
         ## Apply-Updates Schedule Coverage Audit
@@ -363,6 +368,7 @@ stages:
         | **PartiallyCovered** | $partial |
         | **MalformedTag** | $malformed |
         | **UnparseableCron** | $unparseable |
+        | **NoWindowTag** | $noWindowTag |
         | **RingMissingFromSchedule** | $ringMissing |
         | **RingOrphanedInSchedule** | $ringOrphan |
 

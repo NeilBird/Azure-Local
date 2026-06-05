@@ -251,6 +251,8 @@ jobs:
         $partial     = @($audit | Where-Object Status -eq 'PartiallyCovered')
         $malformed   = @($audit | Where-Object Status -eq 'MalformedTag')
         $unparseable = @($audit | Where-Object Status -eq 'UnparseableCron')
+        # -IncludeUntagged bucket: clusters with no UpdateStartWindow tag.
+        $noWindowTag = @($audit | Where-Object Status -eq 'NoWindowTag')
         # schedule-file two-way diff buckets.
         $ringMissing = @($audit | Where-Object Status -eq 'RingMissingFromSchedule')
         $ringOrphan  = @($audit | Where-Object Status -eq 'RingOrphanedInSchedule')
@@ -326,6 +328,7 @@ jobs:
         "PARTIAL=$($partial.Count)"           | Out-File -FilePath $env:GITHUB_OUTPUT -Append
         "MALFORMED=$($malformed.Count)"       | Out-File -FilePath $env:GITHUB_OUTPUT -Append
         "UNPARSEABLE=$($unparseable.Count)"   | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+        "NO_WINDOW_TAG=$($noWindowTag.Count)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
         "RING_MISSING=$($ringMissing.Count)"  | Out-File -FilePath $env:GITHUB_OUTPUT -Append
         "RING_ORPHAN=$($ringOrphan.Count)"    | Out-File -FilePath $env:GITHUB_OUTPUT -Append
         # v0.7.90: surface whether -SchedulePath was supplied + its value
@@ -344,6 +347,7 @@ jobs:
         Write-Host "  PartiallyCovered         : $($partial.Count)"
         Write-Host "  MalformedTag             : $($malformed.Count)"
         Write-Host "  UnparseableCron          : $($unparseable.Count)"
+        Write-Host "  NoWindowTag              : $($noWindowTag.Count)"
         Write-Host "  RingMissingFromSchedule  : $($ringMissing.Count)"
         Write-Host "  RingOrphanedInSchedule   : $($ringOrphan.Count)"
 
@@ -376,6 +380,7 @@ jobs:
         $partial     = "${{ steps.audit.outputs.PARTIAL }}"
         $malformed   = "${{ steps.audit.outputs.MALFORMED }}"
         $unparseable = "${{ steps.audit.outputs.UNPARSEABLE }}"
+        $noWindowTag = "${{ steps.audit.outputs.NO_WINDOW_TAG }}"
         $ringMissing = "${{ steps.audit.outputs.RING_MISSING }}"
         $ringOrphan  = "${{ steps.audit.outputs.RING_ORPHAN }}"
         # v0.7.90: pulled forward from the audit step so this summary step
@@ -400,7 +405,7 @@ jobs:
         # detail table. The Recommend output now ships its own '## Action required - ...'
         # headings (one per kind of fix), numbered '(1 of N)' when more than one applies,
         # so we inline it as-is rather than wrapping it in our own code fence.
-        $hasIssues = (([int]$uncovered) + ([int]$partial) + ([int]$malformed) + ([int]$unparseable) + ([int]$ringMissing) + ([int]$ringOrphan)) -gt 0
+        $hasIssues = (([int]$uncovered) + ([int]$partial) + ([int]$malformed) + ([int]$unparseable) + ([int]$noWindowTag) + ([int]$ringMissing) + ([int]$ringOrphan)) -gt 0
 
         $md = @"
         ## Apply-Updates Schedule Coverage Audit
@@ -413,6 +418,7 @@ jobs:
         | **PartiallyCovered** | $partial |
         | **MalformedTag** | $malformed |
         | **UnparseableCron** | $unparseable |
+        | **NoWindowTag** | $noWindowTag |
         | **RingMissingFromSchedule** | $ringMissing |
         | **RingOrphanedInSchedule** | $ringOrphan |
 
