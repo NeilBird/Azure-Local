@@ -35,6 +35,8 @@ It is written in the same step-by-step style as [`ITSM/README.md`](../ITSM/READM
    - [6.7 Continuous fleet monitoring](#67-continuous-fleet-monitoring)
 7. [Optional: open ITSM tickets for clusters needing operator action](#7-optional-open-itsm-tickets-for-clusters-needing-operator-action)
 8. [Scheduling, maintenance windows, and change-freeze periods](#8-scheduling-maintenance-windows-and-change-freeze-periods)
+   - [8.1 Schedule windows, exclusions, and cron triggers](#81-schedule-windows-exclusions-and-cron-triggers)
+   - [8.2 Multi-stage rollouts with approval gates](#82-multi-stage-rollouts-with-approval-gates)
    - [8.3 End-to-end runbook: Apply-Updates Schedule Coverage Audit](#83-end-to-end-runbook-apply-updates-schedule-coverage-audit)
    - [8.4 Restrict which updates each ring installs (`allowedUpdateVersions`, schema v2)](#84-restrict-which-updates-each-ring-installs-allowedupdateversions-schema-v2)
 9. [Tuning throughput (`-ThrottleLimit`)](#9-tuning-throughput--throttlelimit)
@@ -739,7 +741,7 @@ $adoSpAppId = az ad sp list `
     --query '[0].appId' -o tsv
 ```
 
-Then grant the **`Azure Stack HCI Update Operator`** custom role from [section 3.1](#31-custom-role-azure-stack-hci-update-operator) on the same scope you selected in step 5. If your account cannot create custom roles in this tenant, see the fallback note under [section 4.1 Step 2](#step-2---create-the-service-principal-and-assign-a-role) for the built-in `Azure Stack HCI Administrator` fallback. Re-use the security-group pattern from 3.1 if you prefer:
+Then grant the **`Azure Stack HCI Update Operator`** custom role from [section 3.1](#31-custom-role-azure-stack-hci-update-operator) on the same scope you selected in step 5. If your account cannot create custom roles in this tenant, see the fallback note under [section 4.1, Step 2](#41-github-actions-with-openid-connect-recommended) for the built-in `Azure Stack HCI Administrator` fallback. Re-use the security-group pattern from 3.1 if you prefer:
 
 ```powershell
 # Direct assignment to the auto-created SP
@@ -1469,6 +1471,8 @@ Phase 2 (lifecycle close-out via `Sync-AzLocalIncident`) and Phase 3 (Teams + Sl
 
 ## 8. Scheduling, maintenance windows, and change-freeze periods
 
+### 8.1 Schedule windows, exclusions, and cron triggers
+
 The `UpdateStartWindow` and `UpdateExclusionsWindow` tags on each cluster control when **Apply Updates** is allowed to start an update. The separate `UpdateExcluded` tag (v0.7.90) is an operator hard override that skips the cluster regardless of every other tag.
 
 | Tag | Format | Example | Behaviour |
@@ -1510,7 +1514,7 @@ Test-AzLocalUpdateScheduleAllowed -UpdateStartWindow "Sat-Sun_02:00-06:00" -Upda
 Test-AzLocalUpdateScheduleAllowed -UpdateStartWindow "Sat_02:00-06:00" -TestTime ([datetime]"2026-04-19 03:00:00")
 ```
 
-### Multi-stage rollouts with approval gates
+### 8.2 Multi-stage rollouts with approval gates
 
 For production-critical environments, gate the production wave on the previous wave's success and a human's sign-off.
 
