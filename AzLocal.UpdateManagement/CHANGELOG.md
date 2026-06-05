@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.7.92] - 2026-06-05
 
-Docs/YAML-only feature release. No cmdlet behaviour changes, no schema changes, no breaking changes. The pipelines that move are `Step.9_fleet-health-status.yml` and `Step.7_monitor-updates.yml` (both GitHub Actions + Azure DevOps).
+Docs/YAML-only feature release. No cmdlet behaviour changes, no schema changes, no breaking changes. The pipelines that move are `Step.9_fleet-health-status.yml`, `Step.8_fleet-update-status.yml` and `Step.7_monitor-updates.yml` (all GitHub Actions + Azure DevOps).
 
 ### Changed
 
@@ -20,10 +20,11 @@ Docs/YAML-only feature release. No cmdlet behaviour changes, no schema changes, 
   - `Copy-AzLocalPipelineExample`'s post-copy `Next steps:` summary (both `-Platform GitHub` and `-Platform AzureDevOps`) now includes an explicit yellow-highlighted item: *"REQUIRED FOR SCHEDULED Step.6 (apply-updates): generate the ring-aware schedule from your live fleet - `New-AzLocalApplyUpdatesScheduleConfig -OutputPath ...`"*. The hint clarifies that manual `workflow_dispatch` / queue runs of Step.6 work without the file (they use the `-UpdateRingValue` input), and that the file is deliberately not copied because it must reflect each estate's live `UpdateRing` tag values.
   - New step 5 in section 5.1 (GitHub Actions) and step 6 in section 5.2 (Azure DevOps) walks through the `New-AzLocalApplyUpdatesScheduleConfig` generation, review, and commit cycle. Cross-links to section 8 for the full schema, multi-stage rollouts, weekly-cycle / ring-eligibility model, and the `allowedUpdateVersions` allow-list (schema v2). The bundled `apply-updates-schedule.example.yml` remains documentation only - never copied by `Copy-AzLocalPipelineExample` or `Update-AzLocalPipelineExample`.
   - No behaviour changes to `New-AzLocalApplyUpdatesScheduleConfig` or `Copy-AzLocalPipelineExample` themselves; the existing v0.7.69 design decision (the schedule file is operator-generated from live fleet, not template-copied) is preserved.
+- **Pipeline step-summary hyperlinks now open in a new tab (Step.8 + Step.9, GH Actions + Azure DevOps).** Every rendered hyperlink in `Step.8_fleet-update-status.yml` and `Step.9_fleet-health-status.yml` step summaries - cluster-name cells, update-run-name cells, remediation links, and the Microsoft Learn / aka.ms references in the version section - is now emitted as HTML `<a href="..." target="_blank">` (with `rel="noopener noreferrer"` on the prose links). Clicking a link opens the Azure portal blade or docs page in a new tab so the operator stays on the pipeline run page instead of being navigated away mid-investigation. Step.4 was already plain-URL only (no rendered hyperlinks), so it needed no change. CSV / JSON / JUnit artifacts continue to carry plain URLs - no schema or data shape changes.
 
 ### Migration
 
-`Install-Module AzLocal.UpdateManagement -Force` (or `Update-Module`), then run `Update-AzLocalPipelineExample -Destination <path>` to refresh the `Step.9_*.yml` and `Step.7_*.yml` files. The Step.9 changes sit outside any `BEGIN-AZLOCAL-CUSTOMIZE` block, so operator customisations elsewhere in those pipelines are preserved.
+`Install-Module AzLocal.UpdateManagement -Force` (or `Update-Module`), then run `Update-AzLocalPipelineExample -Destination <path>` to refresh the `Step.9_*.yml`, `Step.8_*.yml` and `Step.7_*.yml` files. The Step.9 changes sit outside any `BEGIN-AZLOCAL-CUSTOMIZE` block, so operator customisations elsewhere in those pipelines are preserved.
 
 ## [0.7.91] - 2026-06-05
 

@@ -88,7 +88,7 @@ If you are new to this module, work through these in order from a regular PowerS
 
 ## What's New in v0.7.92
 
-Docs/YAML-only feature release. No cmdlet behaviour changes, no schema changes, no breaking changes. Two pipelines move: `Step.9_fleet-health-status.yml` (collapsible per-cluster details) and `Step.7_monitor-updates.yml` (active default schedule). GitHub Actions + Azure DevOps in both cases.
+Docs/YAML-only feature release. No cmdlet behaviour changes, no schema changes, no breaking changes. Three pipelines move: `Step.9_fleet-health-status.yml` (collapsible per-cluster details + hyperlinks open in a new tab), `Step.8_fleet-update-status.yml` (hyperlinks open in a new tab), and `Step.7_monitor-updates.yml` (active default schedule). GitHub Actions + Azure DevOps in all cases.
 
 ### Step.9 - per-cluster collapsible `Detailed Results`
 
@@ -120,9 +120,18 @@ The ring-aware `apply-updates-schedule.yml` (consumed by Step.6 `apply-updates` 
 - **New inline step in section 5.** Section 5.1 (GitHub Actions) gains a step 5, section 5.2 (Azure DevOps) gains a step 6, walking through the generation + review + commit cycle. Both cross-link to section 8 for the full schema, multi-stage rollouts, weekly-cycle / ring-eligibility model, and the `allowedUpdateVersions` allow-list (schema v2).
 - **Design preserved.** The bundled `apply-updates-schedule.example.yml` remains documentation only - it is intentionally **not** copied by `Copy-AzLocalPipelineExample` or `Update-AzLocalPipelineExample` (the live file must reflect each estate's actual `UpdateRing` tag values, which only the live-fleet generator can produce).
 
+### Step.8 + Step.9 pipeline step summaries - hyperlinks open in a new tab
+
+Every rendered hyperlink in the `Step.8_fleet-update-status.yml` and `Step.9_fleet-health-status.yml` step summaries (GitHub Actions + Azure DevOps) is now emitted as HTML `<a href="..." target="_blank">` so clicking a link opens in a new tab and the operator stays on the pipeline run page. Affected sites:
+
+- **Step.8** - the per-update-run history table's cluster-name and update-run-name cells (Azure portal blade deep-links), plus the three Microsoft Learn / aka.ms references in the version section (`aka.ms/AzureEdgeUpdates`, `about-updates-23h2#lifecycle-cadence`, `release-information-23h2#about-azure-local-releases`).
+- **Step.9** - the overview-table cluster-name cell, the affected-clusters list in the summary block, the per-cluster `<details><summary>` cluster name (linkified to the Azure portal blade), and the per-failure `Failure Remediation` `link` text.
+
+The prose links use `rel="noopener noreferrer"` for standard `target="_blank"` hardening. Step.4 (`fleet-connectivity-status`) was already plain-URL only (URLs flow into the CSV / JUnit Body fields but are not rendered as hyperlinks in the markdown step summary), so it needed no change. CSV / JSON / JUnit artifacts continue to carry plain URL strings - no schema or data shape changes.
+
 ### Migration
 
-`Install-Module AzLocal.UpdateManagement -Force` (or `Update-Module`). Run `Update-AzLocalPipelineExample -Destination <path>` to refresh the `Step.9_*.yml` and `Step.7_*.yml` files. The Step.9 changes sit outside any `BEGIN-AZLOCAL-CUSTOMIZE` block, so operator customisations elsewhere in those pipelines are preserved.
+`Install-Module AzLocal.UpdateManagement -Force` (or `Update-Module`). Run `Update-AzLocalPipelineExample -Destination <path>` to refresh the `Step.9_*.yml`, `Step.8_*.yml` and `Step.7_*.yml` files. The Step.9 changes sit outside any `BEGIN-AZLOCAL-CUSTOMIZE` block, so operator customisations elsewhere in those pipelines are preserved.
 
 > Previous release notes (v0.7.91 and earlier) have moved into [`docs/release-history.md`](docs/release-history.md), with the v0.7.91 entry retained in the [Release History](#release-history) appendix below for quick reference.
 

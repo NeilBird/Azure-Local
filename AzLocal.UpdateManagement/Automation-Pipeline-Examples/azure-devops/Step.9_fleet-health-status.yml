@@ -455,8 +455,13 @@ stages:
             $md += "`n| Cluster | Health | Update Status | Current Version | SBE Version | Azure Connection | Last Checked | Health Check Age (days) | Node Count |`n"
             $md += "|---------|--------|---------------|------------------|--------------|------------------|---------------|--------------------------|------------|`n"
             foreach ($o in ($overviewRows | Select-Object -First 100)) {
+                # Use HTML anchor with target="_blank" so clicking a portal
+                # link opens in a new tab and the operator does not lose the
+                # pipeline run page they are reviewing. rel="noopener noreferrer"
+                # is the standard hardening recommendation when opening a new
+                # tab from rendered output.
                 $clusterCell = if ($o.ClusterPortalUrl) {
-                    '[{0}]({1})' -f $o.ClusterName, $o.ClusterPortalUrl
+                    '<a href="{1}" target="_blank" rel="noopener noreferrer">{0}</a>' -f $o.ClusterName, $o.ClusterPortalUrl
                 } else {
                     $o.ClusterName
                 }
@@ -498,7 +503,10 @@ stages:
                 $linkedParts = for ($i = 0; $i -lt $names.Count; $i++) {
                     $n = $names[$i]
                     $u = if ($i -lt $urls.Count) { $urls[$i] } else { '' }
-                    if ($u) { '[{0}]({1})' -f $n, $u } else { $n }
+                    # HTML anchor with target="_blank" so portal links open in a
+                    # new tab and don't navigate the operator away from the
+                    # pipeline run page.
+                    if ($u) { '<a href="{1}" target="_blank" rel="noopener noreferrer">{0}</a>' -f $n, $u } else { $n }
                 }
                 $clList = if ($linkedParts.Count -le 10) {
                     $linkedParts -join ', '
@@ -565,8 +573,10 @@ stages:
                 if ($cl.WarningCount  -gt 0) { $sevParts += ('[Warning] x {0}'  -f $cl.WarningCount)  }
                 $sevTally = $sevParts -join ' &nbsp;&middot;&nbsp; '
 
+                # target="_blank" so clicking the cluster name in the <summary>
+                # opens the portal in a new tab and leaves the pipeline run open.
                 $clusterCell = if ($cl.ClusterPortalUrl) {
-                    '<a href="{0}">{1}</a>' -f $cl.ClusterPortalUrl, $cl.ClusterName
+                    '<a href="{0}" target="_blank" rel="noopener noreferrer">{1}</a>' -f $cl.ClusterPortalUrl, $cl.ClusterName
                 } else {
                     $cl.ClusterName
                 }
@@ -579,7 +589,10 @@ stages:
                 foreach ($r in $cl.Rows) {
                     $sevTag = if ($r.Severity -eq 'Critical') { '[Critical]' } else { '[Warning]' }
                     $rem    = if ($r.PSObject.Properties.Match('Remediation').Count -gt 0) { [string]$r.Remediation } else { '' }
-                    $remCell = if ($rem -and $rem.StartsWith('https://')) { '[link]({0})' -f $rem } else { $rem }
+                    # Remediation links open in a new tab so the operator can
+                    # read the Microsoft Learn / docs page without losing the
+                    # pipeline run.
+                    $remCell = if ($rem -and $rem.StartsWith('https://')) { '<a href="{0}" target="_blank" rel="noopener noreferrer">link</a>' -f $rem } else { $rem }
                     $tName = if ($r.PSObject.Properties.Match('TargetResourceName').Count -gt 0) { [string]$r.TargetResourceName } else { '' }
                     $tType = if ($r.PSObject.Properties.Match('TargetResourceType').Count -gt 0) { [string]$r.TargetResourceType } else { '' }
                     $md += ('| {0} | {1} | {2} | {3} | {4} | {5} | {6} |' -f $sevTag, $r.FailureReason, $remCell, $tName, $tType, $r.LastOccurrence, $r.ResourceGroup) + "`n"
