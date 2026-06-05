@@ -88,9 +88,11 @@ If you are new to this module, work through these in order from a regular PowerS
 
 ## What's New in v0.7.92
 
-Docs/YAML-only feature release. No cmdlet behaviour changes, no schema changes, no breaking changes. The only thing that moves is the `Step.9_fleet-health-status.yml` pipeline (GitHub Actions + Azure DevOps) - specifically its `Detailed Results` section in the run-summary markdown.
+Docs/YAML-only feature release. No cmdlet behaviour changes, no schema changes, no breaking changes. Two pipelines move: `Step.9_fleet-health-status.yml` (collapsible per-cluster details) and `Step.7_monitor-updates.yml` (active default schedule). GitHub Actions + Azure DevOps in both cases.
 
-**Per-cluster collapsible `Detailed Results`.** Previously the section rendered as a single flat table of up to 100 `(cluster x failing-check)` rows, so on a fleet of 20+ unhealthy clusters the table dominated the run summary and operators had to scroll to find a specific cluster. The new layout has one collapsible `<details>` block per cluster. The always-visible `<summary>` line carries:
+### Step.9 - per-cluster collapsible `Detailed Results`
+
+Previously the section rendered as a single flat table of up to 100 `(cluster x failing-check)` rows, so on a fleet of 20+ unhealthy clusters the table dominated the run summary and operators had to scroll to find a specific cluster. The new layout has one collapsible `<details>` block per cluster. The always-visible `<summary>` line carries:
 
 - the cluster name (linkified to the Azure portal blade);
 - a severity tally in the form `[Critical] x 5 &nbsp;&middot;&nbsp; [Warning] x 2` (non-zero tiers only, Critical-first); and
@@ -104,7 +106,23 @@ Expanding the block reveals the existing per-failure mini-table (Severity / Fail
 
 **CSV / JSON artifacts unchanged.** `fleet-health-detail.csv`, `fleet-health-summary.csv`, `fleet-health-overview.csv` and their JSON twins all retain the same schema, so any downstream tooling (ITSM, dashboards, etc.) keeps working without changes.
 
-**Migration.** `Install-Module AzLocal.UpdateManagement -Force` (or `Update-Module`). Run `Update-AzLocalPipelineExample -Destination <path>` to refresh the two `Step.9_*.yml` files. The change sits outside any `BEGIN-AZLOCAL-CUSTOMIZE` block, so operator customisations elsewhere in the pipeline are preserved.
+### Step.7 - active default schedule (5x/day, every 2h overnight)
+
+`Step.7_monitor-updates.yml` now ships with an **active** default schedule, so an estate that imports the pipeline gets continuous in-flight visibility immediately without having to remember to enable the cron block. The pipeline runs 5x/day at **20:00, 22:00, 00:00, 02:00, 04:00 UTC** - every 2 hours across the typical overnight maintenance window - in addition to manual `workflow_dispatch` / queue runs.
+
+Previously the schedule block shipped commented-out and required operators to uncomment it per estate. The cron lives inside the existing `BEGIN-AZLOCAL-CUSTOMIZE:schedule-triggers` block, so any local edits (hour-list shifts for a non-UTC maintenance window, weekends-only, sub-hour external triggers, etc.) survive `Update-AzLocalPipelineExample` refreshes. Both GitHub Actions and Azure DevOps interpret cron in UTC - adjust the hour list in the YAML if your maintenance window differs.
+
+### `apply-updates-schedule.yml` - now called out in the step-by-step setup
+
+The ring-aware `apply-updates-schedule.yml` (consumed by Step.6 `apply-updates` and Step.3 `apply-updates-schedule-audit`) is **required for scheduled Step.6 runs** but was previously documented only in section 8 of `Automation-Pipeline-Examples/README.md` and the `apply-updates-schedule.example.yml` header - so operators following the step-by-step setup could finish without realising it was needed. v0.7.92 surfaces it in three places without changing any behaviour:
+
+- **`Copy-AzLocalPipelineExample` post-copy hint.** Both `-Platform GitHub` and `-Platform AzureDevOps` summaries now include an explicit yellow-highlighted Next step: *"REQUIRED FOR SCHEDULED Step.6 (apply-updates): generate the ring-aware schedule from your live fleet - `New-AzLocalApplyUpdatesScheduleConfig -OutputPath ...`"*. The hint clarifies that manual `workflow_dispatch` / queue runs of Step.6 work without the file (they use the `-UpdateRingValue` input).
+- **New inline step in section 5.** Section 5.1 (GitHub Actions) gains a step 5, section 5.2 (Azure DevOps) gains a step 6, walking through the generation + review + commit cycle. Both cross-link to section 8 for the full schema, multi-stage rollouts, weekly-cycle / ring-eligibility model, and the `allowedUpdateVersions` allow-list (schema v2).
+- **Design preserved.** The bundled `apply-updates-schedule.example.yml` remains documentation only - it is intentionally **not** copied by `Copy-AzLocalPipelineExample` or `Update-AzLocalPipelineExample` (the live file must reflect each estate's actual `UpdateRing` tag values, which only the live-fleet generator can produce).
+
+### Migration
+
+`Install-Module AzLocal.UpdateManagement -Force` (or `Update-Module`). Run `Update-AzLocalPipelineExample -Destination <path>` to refresh the `Step.9_*.yml` and `Step.7_*.yml` files. The Step.9 changes sit outside any `BEGIN-AZLOCAL-CUSTOMIZE` block, so operator customisations elsewhere in those pipelines are preserved.
 
 > Previous release notes (v0.7.91 and earlier) have moved into [`docs/release-history.md`](docs/release-history.md), with the v0.7.91 entry retained in the [Release History](#release-history) appendix below for quick reference.
 

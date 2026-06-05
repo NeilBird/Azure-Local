@@ -374,14 +374,20 @@ function Copy-AzLocalPipelineExample {
             }
             Write-Host "  2. RECOMMENDED: run 'Step.0_authentication-test.yml' FIRST (one-shot) to validate OIDC / RBAC before wiring the other workflows. See section 5.1 of the Automation-Pipeline-Examples README."
             Write-Host "  3. Wire up authentication (OIDC / Workload Identity / Managed Identity / SP) - see section 3 of the README."
-            Write-Host "  4. Optional: enable the ITSM connector by setting 'raise_itsm_ticket=true' (setup in ITSM/README.md)."
+            Write-Host "  4. REQUIRED FOR SCHEDULED Step.6 (apply-updates): generate the ring-aware schedule from your live fleet -" -ForegroundColor Yellow
+            Write-Host "       New-AzLocalApplyUpdatesScheduleConfig -OutputPath .\.github\apply-updates-schedule.yml"
+            Write-Host "     This file is NOT copied by Copy-AzLocalPipelineExample by design - it must reflect the actual UpdateRing tag values on YOUR clusters. The generator emits every row commented out; review, uncomment at least one row, then commit. Manual 'workflow_dispatch' runs of Step.6 work without this file (they use the -UpdateRingValue input). See section 5.1 step 5 + section 8 of the README."
+            Write-Host "  5. Optional: enable the ITSM connector by setting 'raise_itsm_ticket=true' (setup in ITSM/README.md)."
         }
         'AzureDevOps' {
             Write-Host ("  1. Commit the YAML files from '{0}' to your Azure Repo." -f $targetRoot)
             Write-Host "  2. RECOMMENDED: import 'Step.0_authentication-test.yml' FIRST (one-shot) to validate the service connection / RBAC before wiring the other pipelines. See section 5.2 of the Automation-Pipeline-Examples README."
             Write-Host "  3. For each remaining YAML: Pipelines -> New pipeline -> Existing Azure Pipelines YAML file -> point at the file -> Save."
             Write-Host "  4. Each pipeline references service connection 'AzureLocal-ServiceConnection' - either name yours to match or edit 'azureSubscription:' in each YAML."
-            Write-Host "  5. Optional: enable the ITSM connector by setting 'raise_itsm_ticket=true' (setup in ITSM/README.md)."
+            Write-Host "  5. REQUIRED FOR SCHEDULED Step.6 (apply-updates): generate the ring-aware schedule from your live fleet -" -ForegroundColor Yellow
+            Write-Host ("       New-AzLocalApplyUpdatesScheduleConfig -OutputPath '{0}\apply-updates-schedule.yml'" -f $targetRoot)
+            Write-Host "     This file is NOT copied by Copy-AzLocalPipelineExample by design - it must reflect the actual UpdateRing tag values on YOUR clusters. The generator emits every row commented out; review, uncomment at least one row, then commit. Manual queue runs of Step.6 work without this file (they use the updateRing parameter). Step.6 reads APPLY_UPDATES_SCHEDULE_PATH (default './apply-updates-schedule.yml'); override the variable if you keep the schedule alongside the YAMLs. See section 5.2 step 6 + section 8 of the README."
+            Write-Host "  6. Optional: enable the ITSM connector by setting 'raise_itsm_ticket=true' (setup in ITSM/README.md)."
         }
         default {
             $readmePath = Join-Path -Path $targetRoot -ChildPath 'README.md'

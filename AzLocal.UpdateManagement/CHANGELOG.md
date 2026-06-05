@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.7.92] - 2026-06-05
 
-Docs/YAML-only feature release. No cmdlet behaviour changes, no schema changes, no breaking changes. The only thing that moves is the `Step.9_fleet-health-status.yml` pipeline (GitHub Actions + Azure DevOps).
+Docs/YAML-only feature release. No cmdlet behaviour changes, no schema changes, no breaking changes. The pipelines that move are `Step.9_fleet-health-status.yml` and `Step.7_monitor-updates.yml` (both GitHub Actions + Azure DevOps).
 
 ### Changed
 
@@ -15,10 +15,15 @@ Docs/YAML-only feature release. No cmdlet behaviour changes, no schema changes, 
 - **Cluster ordering switched to worst-affected first.** Clusters sort by `CriticalCount` desc, then `WarningCount` desc, then most-recent `LastOccurrence` desc - so the cluster with the most active critical failures rises to the top. Within each cluster, the per-failure rows sort Critical-first then `LastOccurrence` desc.
 - **Pagination is now per-CLUSTER (not per-ROW).** The previous `first 100 rows` cap could silently truncate the second half of a busy cluster's failures. The new cap shows the first 100 clusters in full; the existing `fleet-health-detail.csv` artifact still carries every row for any cluster that overflows.
 - **CSV / JSON artifacts unchanged.** `fleet-health-detail.csv`, `fleet-health-summary.csv`, `fleet-health-overview.csv` and their JSON twins all retain the same schema, so any downstream tooling (ITSM, dashboards, etc.) keeps working without changes.
+- **`Step.7_monitor-updates.yml` ships with an active default schedule (GH Actions + Azure DevOps).** Now runs 5x/day at 20:00, 22:00, 00:00, 02:00, 04:00 UTC - every 2 hours across the typical overnight maintenance window - in addition to manual `workflow_dispatch` / queue runs. Previously the schedule block shipped commented-out and required operators to enable it per estate. The cron lives inside the existing `BEGIN-AZLOCAL-CUSTOMIZE:schedule-triggers` block, so any local edits (hour-list shifts for a non-UTC maintenance window, weekends-only, sub-hour external triggers, etc.) survive `Update-AzLocalPipelineExample` refreshes. Both GH Actions and Azure DevOps interpret cron in UTC - adjust the hour list in the YAML if your maintenance window differs.
+- **`Copy-AzLocalPipelineExample` post-copy hint + step-by-step README cover `apply-updates-schedule.yml`.** The ring-aware schedule file consumed by Step.6 (`apply-updates`) and Step.3 (`apply-updates-schedule-audit`) was previously documented only in section 8 of `Automation-Pipeline-Examples/README.md` and inside the `apply-updates-schedule.example.yml` header - so operators following the section 5.1 / 5.2 step-by-step setup could finish the walkthrough without realising it was needed. Three additive changes consolidate this:
+  - `Copy-AzLocalPipelineExample`'s post-copy `Next steps:` summary (both `-Platform GitHub` and `-Platform AzureDevOps`) now includes an explicit yellow-highlighted item: *"REQUIRED FOR SCHEDULED Step.6 (apply-updates): generate the ring-aware schedule from your live fleet - `New-AzLocalApplyUpdatesScheduleConfig -OutputPath ...`"*. The hint clarifies that manual `workflow_dispatch` / queue runs of Step.6 work without the file (they use the `-UpdateRingValue` input), and that the file is deliberately not copied because it must reflect each estate's live `UpdateRing` tag values.
+  - New step 5 in section 5.1 (GitHub Actions) and step 6 in section 5.2 (Azure DevOps) walks through the `New-AzLocalApplyUpdatesScheduleConfig` generation, review, and commit cycle. Cross-links to section 8 for the full schema, multi-stage rollouts, weekly-cycle / ring-eligibility model, and the `allowedUpdateVersions` allow-list (schema v2). The bundled `apply-updates-schedule.example.yml` remains documentation only - never copied by `Copy-AzLocalPipelineExample` or `Update-AzLocalPipelineExample`.
+  - No behaviour changes to `New-AzLocalApplyUpdatesScheduleConfig` or `Copy-AzLocalPipelineExample` themselves; the existing v0.7.69 design decision (the schedule file is operator-generated from live fleet, not template-copied) is preserved.
 
 ### Migration
 
-`Install-Module AzLocal.UpdateManagement -Force` (or `Update-Module`), then run `Update-AzLocalPipelineExample -Destination <path>` to refresh the two `Step.9_*.yml` files. The change sits outside any `BEGIN-AZLOCAL-CUSTOMIZE` block, so operator customisations elsewhere in the pipeline are preserved.
+`Install-Module AzLocal.UpdateManagement -Force` (or `Update-Module`), then run `Update-AzLocalPipelineExample -Destination <path>` to refresh the `Step.9_*.yml` and `Step.7_*.yml` files. The Step.9 changes sit outside any `BEGIN-AZLOCAL-CUSTOMIZE` block, so operator customisations elsewhere in those pipelines are preserved.
 
 ## [0.7.91] - 2026-06-05
 
