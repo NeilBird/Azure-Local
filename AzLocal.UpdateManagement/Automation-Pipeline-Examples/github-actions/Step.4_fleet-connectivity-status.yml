@@ -109,7 +109,7 @@ env:
   # PSGallery, and emits a ::notice annotation if the YAML appears stale -
   # prompting you to refresh via Copy-AzLocalPipelineExample -Update. See
   # Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.7.92'
+  GENERATED_AGAINST_MODULE_VERSION: '0.7.93'
   # Resolution order for the module version pin (leave all unset to install
   # the latest, the default "fix-forward" behaviour): manual workflow_dispatch
   # input > repository variable 'REQUIRED_MODULE_VERSION' > empty (latest).
@@ -268,15 +268,15 @@ jobs:
         $xmlPath = Join-Path $outputDir 'fleet-connectivity-status.xml'
         $sb = New-Object System.Text.StringBuilder
         [void]$sb.AppendLine('<?xml version="1.0" encoding="UTF-8"?>')
-        [void]$sb.AppendFormat('<testsuites name="AzureLocalFleetConnectivity" tests="{0}" failures="{0}">' + "`n", $totalFailures)
+        [void]$sb.AppendFormat('<testsuites name="AzureLocalFleetConnectivity" tests="{0}" failures="{0}" time="0">' + "`n", $totalFailures)
 
         function Add-Suite {
             param([string]$Name, [array]$Failures, [scriptblock]$GetCase, [System.Text.StringBuilder]$Sb)
             if (-not $Failures -or $Failures.Count -eq 0) { return }
-            [void]$Sb.AppendFormat('  <testsuite name="{0}" tests="{1}" failures="{1}">' + "`n", (Convert-XmlEscape $Name), $Failures.Count)
+            [void]$Sb.AppendFormat('  <testsuite name="{0}" tests="{1}" failures="{1}" time="0">' + "`n", (Convert-XmlEscape $Name), $Failures.Count)
             foreach ($r in $Failures) {
                 $c = & $GetCase $r
-                [void]$Sb.AppendFormat('    <testcase classname="{0}" name="{1}">' + "`n", (Convert-XmlEscape $c.Classname), (Convert-XmlEscape $c.Name))
+                [void]$Sb.AppendFormat('    <testcase classname="{0}" name="{1}" time="0">' + "`n", (Convert-XmlEscape $c.Classname), (Convert-XmlEscape $c.Name))
                 [void]$Sb.AppendLine('      <properties>')
                 foreach ($k in $c.Properties.Keys) {
                     [void]$Sb.AppendFormat('        <property name="{0}" value="{1}"/>' + "`n", $k, (Convert-XmlEscape ([string]$c.Properties[$k])))
@@ -405,8 +405,8 @@ jobs:
         }
 
         if ($totalFailures -eq 0) {
-            [void]$sb.AppendLine('  <testsuite name="Fleet Connectivity" tests="1" failures="0">')
-            [void]$sb.AppendLine('    <testcase classname="Fleet Connectivity" name="No connectivity issues across the fleet" />')
+            [void]$sb.AppendLine('  <testsuite name="Fleet Connectivity" tests="1" failures="0" time="0">')
+            [void]$sb.AppendLine('    <testcase classname="Fleet Connectivity" name="No connectivity issues across the fleet" time="0" />')
             [void]$sb.AppendLine('  </testsuite>')
         }
         [void]$sb.AppendLine('</testsuites>')

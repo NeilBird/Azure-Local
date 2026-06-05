@@ -5,6 +5,27 @@ All notable changes to the AzLocal.UpdateManagement module (renamed from AzStack
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.93] - 2026-06-05
+
+Patch release. Pipeline-YAML and tests-only - no cmdlet behaviour changes, no schema changes, no breaking changes.
+
+### Fixed
+
+- **Pipeline JUnit summaries no longer render `NaNms` in the duration column.** Five of the inline JUnit XML writers under `Automation-Pipeline-Examples/{github-actions,azure-devops}/` (Step.0 authentication-test, Step.3 apply-updates-schedule-audit, Step.4 fleet-connectivity-status, Step.7 monitor-updates, Step.9 fleet-health-status) emitted `<testsuite>` and `<testcase>` elements with no `time=` attribute. `dorny/test-reporter` (and most JUnit renderers) parse a missing `time` attribute as `NaN` and print `NaNms` in the summary table's duration column, which also collapsed the Passed/Failed/Skipped column alignment. v0.7.93 adds `time="0"` to every `<testsuites>` / `<testsuite>` / `<testcase>` emission in all 12 affected files (10 inline writers across the five Steps, plus the `<testsuites>` root in Step.8 GH + ADO where the child elements already carried `time="0"`). Step.6 was unaffected - it consumes the module's `Private/Export-ResultsToJUnitXml.ps1` helper, which has always emitted `time=` correctly. No cmdlet code changes; the module helper is unchanged.
+
+### Changed
+
+- **`Test-AzLocalApplyUpdatesScheduleCoverage` `-RecommendFiresPerWindow` help text.** Dropped a `(pre-v0.7.92 back-compat)` parenthetical from the `.PARAMETER` block (and the matching wording in `Step.3_apply-updates-schedule-audit.yml` GH + ADO). The parameter default remains `2` and the behaviour is unchanged - this is a docstring tidy only.
+
+### Added
+
+- **Pester regression guard: every inline JUnit emission must carry a `time=` attribute.** A new `It` block under `Describe 'Module: AzLocal.UpdateManagement'` -> `Context 'Inline JUnit XML emitters carry a numeric time attribute (v0.7.93 NaNms regression)'` statically scans every `*.yml` under `Automation-Pipeline-Examples/` for `<testsuites>` / `<testsuite>` / `<testcase>` lines and asserts each one carries a `time=` attribute. Any future inline writer (or `Update-AzLocalPipelineExample` regression) that drops the attribute fails the suite immediately. The check is a single regex scan plus a Pester `Should -Be 0` on a list of offenders.
+- **Docs: management-group `AssignableScopes` + Azure Policy DINE recipe for scaling the `Azure Stack HCI Update Operator` custom role across many subscriptions.** New section in [`docs/rbac.md`](docs/rbac.md#scaling-assignablescopes-with-management-groups--azure-policy-recommended-for-large-or-growing-estates) walks through the Azure Landing Zones-style pattern: a single MG entry in `AssignableScopes` plus an Azure Policy `deployIfNotExists` assignment at that MG that auto-creates the per-subscription role assignment for the pipeline identity (existing subs picked up by a one-time remediation task; new subs auto-remediated on creation). Includes the role definition JSON with MG scope, the DINE policy definition with nested ARM `roleAssignments` template, the system-assigned-MI grant + remediation commands, the required RBAC at each step, and a trade-offs table vs the per-subscription list. Recommended for estates of more than ~5-10 subscriptions or where new subs are provisioned regularly. The per-subscription `AssignableScopes` list remains the documented fallback for small/static estates or operators without `Owner` / `User Access Administrator` on a management group. Cross-linked from [`Automation-Pipeline-Examples/README.md`](Automation-Pipeline-Examples/README.md) sections 3.1 and 3.2.
+
+### Migration
+
+`Install-Module AzLocal.UpdateManagement -Force` (or `Update-Module`). Run `Update-AzLocalPipelineExample -Destination <path>` to refresh the affected `Step.{0,3,4,7,8,9}_*.yml` files. The injection sites are outside any `BEGIN-AZLOCAL-CUSTOMIZE` block, so operator customisations are preserved.
+
 ## [0.7.92] - 2026-06-05
 
 Docs/YAML-only feature release. No cmdlet behaviour changes, no schema changes, no breaking changes. The pipelines that move are `Step.9_fleet-health-status.yml`, `Step.8_fleet-update-status.yml` and `Step.7_monitor-updates.yml` (all GitHub Actions + Azure DevOps).

@@ -34,8 +34,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $script:ModuleInfo | Should -Not -BeNullOrEmpty
         }
 
-        It 'Should have version 0.7.92' {
-            $script:ModuleInfo.Version | Should -Be '0.7.92'
+        It 'Should have version 0.7.93' {
+            $script:ModuleInfo.Version | Should -Be '0.7.93'
         }
 
         It 'Module version constants are in sync between .psm1 and .psd1' {
@@ -427,6 +427,53 @@ Describe 'Module: AzLocal.UpdateManagement' {
 
             $detail = if ($offenders.Count -gt 0) { $offenders -join [Environment]::NewLine } else { '(no offenders)' }
             $offenders.Count | Should -Be 0 -Because "the schedule-audit pipelines must default pipeline_path/pipelinePath to a consumer-realistic path (.github/workflows or .azure-pipelines), not to the in-source examples folder. Findings:$([Environment]::NewLine)$detail"
+        }
+    }
+
+    Context 'Inline JUnit XML emitters carry a numeric time attribute (v0.7.93 NaNms regression)' {
+        # NaNms regression guard: dorny/test-reporter (and most JUnit
+        # renderers) parse the <testsuite>/<testcase> 'time' attribute as a
+        # number. When the attribute is absent the renderer prints 'NaNms' in
+        # the duration column and the column alignment breaks. The module's
+        # own helper (Private/Export-ResultsToJUnitXml.ps1) emits time=
+        # correctly, but the pipeline YAMLs under Automation-Pipeline-Examples/
+        # hand-roll their own StringBuilder writers (one per Step.X yml) and
+        # five of them (Step.0, Step.3, Step.4, Step.7, Step.9 - both GH and
+        # ADO) shipped without time= on every emission. This test statically
+        # scans every yml for <testsuite>/<testcase> lines and asserts each
+        # carries time=. A single regex check that would have caught all 12
+        # bug sites on day one.
+        It 'Every <testsuites>/<testsuite>/<testcase> emission in every pipeline yml has a time= attribute' {
+            $examplesRoot = Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples'
+            $examplesRoot = (Resolve-Path -Path $examplesRoot).Path
+
+            $ymlFiles = Get-ChildItem -Path $examplesRoot -Recurse -Filter '*.yml' -File
+            $ymlFiles.Count | Should -BeGreaterThan 0 -Because 'sample pipeline YAMLs ship under Automation-Pipeline-Examples/{github-actions,azure-devops}/'
+
+            $offenders = New-Object System.Collections.Generic.List[string]
+            # Matches a JUnit opening tag through its closing '>' or '/>'.
+            # We tolerate backtick-escaped quotes (PowerShell double-quoted
+            # strings inside YAML run: blocks) and bare quotes (single-quoted
+            # PowerShell strings or here-strings).
+            $tagPattern = '<(?:testsuites|testsuite|testcase)\b[^>]*?/?>'
+            foreach ($yml in $ymlFiles) {
+                $relPath = $yml.FullName.Substring($examplesRoot.Length).TrimStart('\','/')
+                $lineNo  = 0
+                foreach ($line in (Get-Content -LiteralPath $yml.FullName)) {
+                    $lineNo++
+                    # Skip pure-comment lines and prose mentions of the tag.
+                    $trim = $line.TrimStart()
+                    if ($trim.StartsWith('#')) { continue }
+                    foreach ($m in [regex]::Matches($line, $tagPattern)) {
+                        if ($m.Value -notmatch 'time=') {
+                            $offenders.Add(("{0}:{1}: missing time= attribute -> {2}" -f $relPath, $lineNo, $m.Value.Trim()))
+                        }
+                    }
+                }
+            }
+
+            $detail = if ($offenders.Count -gt 0) { $offenders -join [Environment]::NewLine } else { '(no offenders)' }
+            $offenders.Count | Should -Be 0 -Because "every <testsuites>/<testsuite>/<testcase> element emitted by an inline pipeline writer must carry a time= attribute (use time=`"0`" if no real duration is measured), otherwise dorny/test-reporter renders 'NaNms' in the duration column of the JUnit summary. Findings:$([Environment]::NewLine)$detail"
         }
     }
 }

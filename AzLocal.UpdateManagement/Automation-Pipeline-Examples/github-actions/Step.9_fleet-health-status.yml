@@ -16,7 +16,7 @@
 # - Markdown step summary: pivoted by FailureReason (top failures by cluster impact),
 #   matching the "Health Check Failures By Reason" view administrators are used to,
 #   and including a per-cluster "Detailed Results" table further down.
-# - JUnit XML (diagnostic mirror): one <testcase> per (cluster, failing health check).
+# - JUnit XML (diagnostic mirror): one <testcase time="0"> per (cluster, failing health check).
 #   dorny test-reporter renders failed Critical checks as <failure> and Warning
 #   checks as <failure type="Warning"> so reviewers can drill from suite ->
 #   cluster -> failure.
@@ -115,7 +115,7 @@ env:
   # this to the version actually installed and to the latest on PSGallery, and emits a
   # ::notice annotation if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.7.92'
+  GENERATED_AGAINST_MODULE_VERSION: '0.7.93'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): manual workflow_dispatch input >
   # repository variable 'REQUIRED_MODULE_VERSION' > empty (latest).
@@ -293,15 +293,15 @@ jobs:
 
         $sb = New-Object System.Text.StringBuilder
         [void]$sb.AppendLine('<?xml version="1.0" encoding="UTF-8"?>')
-        [void]$sb.AppendFormat('<testsuites name="AzureLocalFleetHealthStatus" tests="{0}" failures="{1}">' + "`n", $totalFailures, $totalFailures)
+        [void]$sb.AppendFormat('<testsuites name="AzureLocalFleetHealthStatus" tests="{0}" failures="{1}" time="0">' + "`n", $totalFailures, $totalFailures)
         foreach ($severityLabel in @('Critical','Warning')) {
             $rows = if ($severityLabel -eq 'Critical') { $criticalDetail } else { $warningDetail }
             if (-not $rows -or $rows.Count -eq 0) { continue }
             $suiteName = "[JUnit Debug] $severityLabel Health Failures"
-            [void]$sb.AppendFormat('  <testsuite name="{0}" tests="{1}" failures="{1}">' + "`n", (Convert-XmlEscape $suiteName), $rows.Count)
+            [void]$sb.AppendFormat('  <testsuite name="{0}" tests="{1}" failures="{1}" time="0">' + "`n", (Convert-XmlEscape $suiteName), $rows.Count)
             foreach ($r in $rows) {
                 $caseName = "{0} :: {1}" -f $r.ClusterName, $r.FailureReason
-                [void]$sb.AppendFormat('    <testcase classname="{0}" name="{1}">' + "`n",
+                [void]$sb.AppendFormat('    <testcase classname="{0}" name="{1}" time="0">' + "`n",
                     (Convert-XmlEscape $r.ClusterName),
                     (Convert-XmlEscape $caseName))
                 # per-testcase <properties> for the ITSM connector.
@@ -355,8 +355,8 @@ jobs:
         # When there are zero failures at all, emit a single passing testcase so
         # dorny renders "all green" instead of an empty/broken testsuites file.
         if ($totalFailures -eq 0) {
-            [void]$sb.AppendLine('  <testsuite name="Fleet Health" tests="1" failures="0">')
-            [void]$sb.AppendLine('    <testcase classname="Fleet Health" name="No Critical or Warning health-check failures across the fleet" />')
+            [void]$sb.AppendLine('  <testsuite name="Fleet Health" tests="1" failures="0" time="0">')
+            [void]$sb.AppendLine('    <testcase classname="Fleet Health" name="No Critical or Warning health-check failures across the fleet" time="0" />')
             [void]$sb.AppendLine('  </testsuite>')
         }
         [void]$sb.AppendLine('</testsuites>')
