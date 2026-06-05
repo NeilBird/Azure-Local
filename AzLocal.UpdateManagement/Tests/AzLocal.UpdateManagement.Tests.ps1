@@ -5814,9 +5814,104 @@ Describe 'Function: Copy-AzLocalPipelineExample' {
         Test-Path $dest | Should -BeTrue
         Test-Path (Join-Path $r.FullName 'README.md') | Should -BeTrue
     }
+
+    # v0.7.92: starter apply-updates-schedule.yml drop (default-on for
+    # -Platform GitHub|AzureDevOps; suppressed by -SkipStarterSchedule).
+    # The starter lands ONE LEVEL UP from -Destination so the schedule
+    # file sits beside .github\workflows\ (GitHub) or the pipelines
+    # folder (ADO) rather than inside it.
+
+    It 'v0.7.92: -SkipStarterSchedule is exposed as a [switch] parameter' {
+        $cmd = Get-Command -Name 'Copy-AzLocalPipelineExample' -ErrorAction Stop
+        $cmd.Parameters.ContainsKey('SkipStarterSchedule') | Should -BeTrue
+        $cmd.Parameters['SkipStarterSchedule'].ParameterType | Should -Be ([switch])
+    }
+
+    It 'v0.7.92: -Platform GitHub default drops starter apply-updates-schedule.yml ONE LEVEL UP from -Destination' {
+        $repoRoot = Join-Path $script:cpDestRoot 'gh-starter-fresh'
+        $dest = Join-Path $repoRoot '.github\workflows'
+        New-Item -Path $dest -ItemType Directory -Force | Out-Null
+
+        Copy-AzLocalPipelineExample -Destination $dest -Platform GitHub 6>$null | Out-Null
+
+        $scheduleDest = Join-Path $repoRoot '.github\apply-updates-schedule.yml'
+        Test-Path $scheduleDest | Should -BeTrue
+        # File content must match the bundled example verbatim (starter copy
+        # is byte-for-byte, no templating).
+        $module = Get-Module -Name 'AzLocal.UpdateManagement' | Sort-Object Version -Descending | Select-Object -First 1
+        $source = Join-Path $module.ModuleBase 'Automation-Pipeline-Examples\apply-updates-schedule.example.yml'
+        (Get-FileHash -LiteralPath $scheduleDest).Hash | Should -Be (Get-FileHash -LiteralPath $source).Hash
+    }
+
+    It 'v0.7.92: -Platform AzureDevOps default drops starter apply-updates-schedule.yml ONE LEVEL UP from -Destination' {
+        $repoRoot = Join-Path $script:cpDestRoot 'ado-starter-fresh'
+        $dest = Join-Path $repoRoot 'pipelines'
+        New-Item -Path $dest -ItemType Directory -Force | Out-Null
+
+        Copy-AzLocalPipelineExample -Destination $dest -Platform AzureDevOps 6>$null | Out-Null
+
+        $scheduleDest = Join-Path $repoRoot 'apply-updates-schedule.yml'
+        Test-Path $scheduleDest | Should -BeTrue
+    }
+
+    It 'v0.7.92: existing apply-updates-schedule.yml at the target is NEVER overwritten by the starter copy' {
+        $repoRoot = Join-Path $script:cpDestRoot 'gh-starter-preserve'
+        $dest = Join-Path $repoRoot '.github\workflows'
+        New-Item -Path $dest -ItemType Directory -Force | Out-Null
+
+        # Pre-seed an operator-tailored schedule file
+        $scheduleDest = Join-Path $repoRoot '.github\apply-updates-schedule.yml'
+        $sentinel = '# OPERATOR SENTINEL - must never be overwritten by Copy-AzLocalPipelineExample'
+        Set-Content -LiteralPath $scheduleDest -Value $sentinel -Encoding ASCII
+
+        Copy-AzLocalPipelineExample -Destination $dest -Platform GitHub 6>$null | Out-Null
+
+        # Sentinel must survive
+        (Get-Content -LiteralPath $scheduleDest -Raw) | Should -Match 'OPERATOR SENTINEL'
+    }
+
+    It 'v0.7.92: -SkipStarterSchedule suppresses the starter copy entirely' {
+        $repoRoot = Join-Path $script:cpDestRoot 'gh-starter-skip'
+        $dest = Join-Path $repoRoot '.github\workflows'
+        New-Item -Path $dest -ItemType Directory -Force | Out-Null
+
+        Copy-AzLocalPipelineExample -Destination $dest -Platform GitHub -SkipStarterSchedule 6>$null | Out-Null
+
+        $scheduleDest = Join-Path $repoRoot '.github\apply-updates-schedule.yml'
+        Test-Path $scheduleDest | Should -BeFalse
+    }
+
+    It 'v0.7.92: -Platform All does NOT drop a starter schedule (only GitHub|AzureDevOps do)' {
+        # Isolate under a fresh parent so earlier tests in this Describe
+        # (notably the GitHub copies that drop a starter ONE LEVEL UP) cannot
+        # leak a sibling apply-updates-schedule.yml into the parent we probe.
+        $parent = Join-Path $script:cpDestRoot 'all-no-starter-parent'
+        New-Item -Path $parent -ItemType Directory -Force | Out-Null
+        $dest = Join-Path $parent 'all-no-starter'
+        New-Item -Path $dest -ItemType Directory -Force | Out-Null
+
+        Copy-AzLocalPipelineExample -Destination $dest 6>$null | Out-Null
+
+        # Default -Platform All copies into a child Automation-Pipeline-Examples
+        # folder under -Destination, so the "one level up" rule (which only
+        # applies to platform-specific copies) does NOT come into play.
+        Test-Path (Join-Path $parent 'apply-updates-schedule.yml') | Should -BeFalse
+        Test-Path (Join-Path $dest 'apply-updates-schedule.yml') | Should -BeFalse
+    }
+
+    It 'v0.7.92: -WhatIf does not write the starter schedule' {
+        $repoRoot = Join-Path $script:cpDestRoot 'gh-starter-whatif'
+        $dest = Join-Path $repoRoot '.github\workflows'
+        New-Item -Path $dest -ItemType Directory -Force | Out-Null
+
+        Copy-AzLocalPipelineExample -Destination $dest -Platform GitHub -WhatIf 6>$null | Out-Null
+
+        $scheduleDest = Join-Path $repoRoot '.github\apply-updates-schedule.yml'
+        Test-Path $scheduleDest | Should -BeFalse
+    }
 }
 
-#endregion Copy-AzLocalPipelineExample (v0.7.4, updated in v0.7.50)
+#endregion Copy-AzLocalPipelineExample (v0.7.4, updated in v0.7.50, v0.7.92)
 
 #region Copy-AzLocalItsmSample (v0.7.50)
 

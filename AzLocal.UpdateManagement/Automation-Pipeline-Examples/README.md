@@ -974,16 +974,17 @@ Both platforms expect the YAML files inside this folder to land in a platform-sp
     ```
 3. Commit and push. The workflows appear in the **Actions** tab.
 4. Each workflow exposes its inputs via the **Run workflow** button (workflow_dispatch). The scheduled triggers (e.g. `Step.4_fleet-connectivity-status.yml` runs daily at 05:30 UTC, `Step.7_monitor-updates.yml` runs 5x/day at 20:00, 22:00, 00:00, 02:00, 04:00 UTC (every 2h across the typical overnight maintenance window, v0.7.92+ default - edit the cron in the file if your maintenance window differs), `Step.8_fleet-update-status.yml` runs daily at 06:00 UTC, `Step.9_fleet-health-status.yml` runs daily at 07:00 UTC, `Step.3_apply-updates-schedule-audit.yml` runs weekly on Mondays at 05:00 UTC) activate automatically once the file is on the default branch.
-5. **Generate the ring-aware `apply-updates-schedule.yml`** (required for **scheduled** Step.6 / Step.3 runs; manual `workflow_dispatch` runs of Step.6 work without it because they use the `-UpdateRingValue` input verbatim). This file is **not** copied by `Copy-AzLocalPipelineExample` by design - it must reflect the actual `UpdateRing` tag values present on **your** clusters, so the module generates a strawman from the live fleet:
+5. **Replace the starter `apply-updates-schedule.yml` with one generated from your live fleet** (required for **scheduled** Step.6 / Step.3 runs; manual `workflow_dispatch` runs of Step.6 work without it because they use the `-UpdateRingValue` input verbatim). v0.7.92+ `Copy-AzLocalPipelineExample -Platform GitHub` drops a **starter** `apply-updates-schedule.yml` alongside `.github\workflows\` (i.e. at `.github\apply-updates-schedule.yml`) by default. The starter is a verbatim copy of [`apply-updates-schedule.example.yml`](./apply-updates-schedule.example.yml) and ships with **DEMO** ring names (`Canary`, `DevTest`, `Ring1`, `Ring2`, `Prod`) that almost never match a real estate's `UpdateRing` tag values - regenerate from your live fleet, overwriting the demo file:
 
    ```powershell
-   # Generate a STRAWMAN from your fleet's live UpdateRing tag values.
-   # Every row is emitted COMMENTED OUT - Step.6 (apply-updates) will hard-stop
-   # at the reader until you review and uncomment at least one row.
-   New-AzLocalApplyUpdatesScheduleConfig -OutputPath .\.github\apply-updates-schedule.yml
+   # Regenerate from your fleet's live UpdateRing tag values, overwriting the starter.
+   # -Force is required because the starter file already exists at that path.
+   New-AzLocalApplyUpdatesScheduleConfig -OutputPath .\.github\apply-updates-schedule.yml -Force
    ```
 
-   Review the file, uncomment the rows you want active, then `git add .\.github\apply-updates-schedule.yml ; git commit ; git push`. For the full schema, multi-stage rollouts, weekly-cycle / ring-eligibility model, and the `allowedUpdateVersions` allow-list (schema v2), see [section 8](#8-scheduling-maintenance-windows-and-change-freeze-periods). The reference example file ships at [`apply-updates-schedule.example.yml`](./apply-updates-schedule.example.yml) (documentation only - never copied by `Copy-AzLocalPipelineExample`).
+   Review the regenerated file, uncomment / edit the rows you want active, then `git add .\.github\apply-updates-schedule.yml ; git commit ; git push`. The starter is safe to leave in place until then - the bundled Step.6 ships with every `cron:` line commented out inside the `BEGIN/END-AZLOCAL-CUSTOMIZE:schedule-triggers` markers, so it cannot fire on a `schedule:` trigger until you explicitly add a cron entry. Manual `workflow_dispatch` runs of Step.6 ignore the schedule file entirely (they take `-UpdateRingValue` verbatim from the run-form input).
+
+   **Safety rails**: `Copy-AzLocalPipelineExample` **never overwrites** an existing `apply-updates-schedule.yml` - any operator-tailored schedule you commit is preserved across re-runs. Pass `-SkipStarterSchedule` to suppress the starter copy entirely (e.g. if you pre-stage the schedule via separate tooling). For the full schema, multi-stage rollouts, weekly-cycle / ring-eligibility model, and the `allowedUpdateVersions` allow-list (schema v2), see [section 8](#8-scheduling-maintenance-windows-and-change-freeze-periods).
 
 ### 5.2 Azure DevOps
 
@@ -1030,16 +1031,17 @@ Both platforms expect the YAML files inside this folder to land in a platform-sp
 3. **Pipelines -> New pipeline -> Azure Repos Git -> your repo -> Existing Azure Pipelines YAML file**, then point at the path of each file. Repeat for all eight.
 4. After the pipeline is created, click **Save** (not **Run**) until you are ready to execute.
 5. Each pipeline references a service connection named `AzureLocal-ServiceConnection`. Either name your service connection to match, or change `azureSubscription:` in each YAML.
-6. **Generate the ring-aware `apply-updates-schedule.yml`** (required for **scheduled** Step.6 / Step.3 runs; manual queue runs of Step.6 work without it because they use the `updateRing` parameter verbatim). This file is **not** copied by `Copy-AzLocalPipelineExample` by design - it must reflect the actual `UpdateRing` tag values present on **your** clusters, so the module generates a strawman from the live fleet:
+6. **Replace the starter `apply-updates-schedule.yml` with one generated from your live fleet** (required for **scheduled** Step.6 / Step.3 runs; manual queue runs of Step.6 work without it because they use the `updateRing` parameter verbatim). v0.7.92+ `Copy-AzLocalPipelineExample -Platform AzureDevOps -Destination .\pipelines\` drops a **starter** `apply-updates-schedule.yml` **one level up** from the pipelines folder (i.e. at `.\apply-updates-schedule.yml` at repo root) by default - this separates the config file from the folder that holds the pipeline YAMLs. The starter is a verbatim copy of [`apply-updates-schedule.example.yml`](./apply-updates-schedule.example.yml) and ships with **DEMO** ring names (`Canary`, `DevTest`, `Ring1`, `Ring2`, `Prod`) that almost never match a real estate's `UpdateRing` tag values - regenerate from your live fleet, overwriting the demo file:
 
    ```powershell
-   # Generate a STRAWMAN from your fleet's live UpdateRing tag values.
-   # Every row is emitted COMMENTED OUT - Step.6 (apply-updates) will hard-stop
-   # at the reader until you review and uncomment at least one row.
-   New-AzLocalApplyUpdatesScheduleConfig -OutputPath .\pipelines\apply-updates-schedule.yml
+   # Regenerate from your fleet's live UpdateRing tag values, overwriting the starter.
+   # -Force is required because the starter file already exists at that path.
+   New-AzLocalApplyUpdatesScheduleConfig -OutputPath .\apply-updates-schedule.yml -Force
    ```
 
-   Replace `.\pipelines\` with whatever folder you committed the ADO YAMLs to. Review the generated file, uncomment the rows you want active, then commit and push. Step.6 (ADO) reads the file at `APPLY_UPDATES_SCHEDULE_PATH` (default `./apply-updates-schedule.yml` at repo root) - override the variable to point at the same folder as your YAMLs if you keep them together. For the full schema, multi-stage rollouts, weekly-cycle / ring-eligibility model, and the `allowedUpdateVersions` allow-list (schema v2), see [section 8](#8-scheduling-maintenance-windows-and-change-freeze-periods). The reference example file ships at [`apply-updates-schedule.example.yml`](./apply-updates-schedule.example.yml) (documentation only - never copied by `Copy-AzLocalPipelineExample`).
+   Review the regenerated file, uncomment / edit the rows you want active, then commit and push. Step.6 (ADO) reads the file at `APPLY_UPDATES_SCHEDULE_PATH` (default `./apply-updates-schedule.yml` at repo root, which matches the default starter location) - override the pipeline variable if you keep the schedule elsewhere. The starter is safe to leave in place until then - the bundled Step.6 ships with every `cron:` line commented out inside the `BEGIN/END-AZLOCAL-CUSTOMIZE:schedule-triggers` markers, so it cannot fire on a scheduled trigger until you explicitly add a cron entry. Manual queue runs of Step.6 ignore the schedule file entirely (they take `updateRing` verbatim from the run-form input).
+
+   **Safety rails**: `Copy-AzLocalPipelineExample` **never overwrites** an existing `apply-updates-schedule.yml` - any operator-tailored schedule you commit is preserved across re-runs. Pass `-SkipStarterSchedule` to suppress the starter copy entirely (e.g. if you pre-stage the schedule via separate tooling). For the full schema, multi-stage rollouts, weekly-cycle / ring-eligibility model, and the `allowedUpdateVersions` allow-list (schema v2), see [section 8](#8-scheduling-maintenance-windows-and-change-freeze-periods).
 
 Optional: create a variable group named **`AzureLocal-Config`** in **Pipelines -> Library** for default values (e.g. the default `UpdateRing` for your most-common rollout). The example YAMLs do not require it.
 
