@@ -527,7 +527,7 @@ stages:
         } else {
             # collapsible per-cluster view: one <details> block per cluster. The <summary>
             # carries the cluster name (linkified to portal), a severity tally
-            # ('[Critical] x N  ·  [Warning] x M', non-zero tiers only, Critical first)
+            # ('[Critical] x N  &middot;  [Warning] x M', non-zero tiers only, Critical first)
             # and the most-recent LastOccurrence across all that cluster's rows. The
             # expanded body holds the existing per-failure table.
             #

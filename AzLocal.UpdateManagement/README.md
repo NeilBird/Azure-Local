@@ -372,7 +372,7 @@ Open `cluster-inventory.csv` and populate the tag columns:
   > **Plan your window to *start* far enough before any hard deadline that the full update can finish before that deadline** - for example, if updates must be complete before a retail store opens at 06:00 local time, or before a manufacturing line starts at 06:00 Mon-Fri, do **not** set `UpdateStartWindow` to (say) `Mon-Fri_04:00-06:00` and expect the update to be done by 06:00. Set it to start much earlier (e.g. `Sun-Thu_22:00-02:00` for an overnight start the evening before) so the run has enough headroom for the slowest realistic completion time, plus margin for retries and post-update validation. When in doubt, time a representative update on a non-production cluster first and add a safety buffer.
 
 
-  **Day tokens** — strict 3-letter abbreviations only (case-insensitive — `Mon`, `mon`, `MON` all work):
+  **Day tokens** - strict 3-letter abbreviations only (case-insensitive - `Mon`, `mon`, `MON` all work):
 
   | Token | Day | Token | Day |
   |---|---|---|---|
@@ -382,29 +382,29 @@ Open `cluster-inventory.csv` and populate the tag columns:
   | `Thu` | Thursday | `Daily` / `*` | All days |
 
   **Day specifiers**:
-  - **Range**: `Mon-Fri` (Mon through Fri inclusive), `Sat-Sun`, `Fri-Mon` (wrap-around — Fri, Sat, Sun, Mon)
-  - **Comma list**: `Mon,Wed,Fri` (Monday, Wednesday, Friday only — useful for non-contiguous days)
+  - **Range**: `Mon-Fri` (Mon through Fri inclusive), `Sat-Sun`, `Fri-Mon` (wrap-around - Fri, Sat, Sun, Mon)
+  - **Comma list**: `Mon,Wed,Fri` (Monday, Wednesday, Friday only - useful for non-contiguous days)
   - **Single day**: `Sat`
   - **All days**: `Daily` or `*`
 
-  > ⚠️ Common mistakes: `Thur`, `Tues`, `Mond`, `Friday`, `tuesday-friday` — all rejected. Use the strict 3-letter form: `Thu`, `Tue`, `Mon`, `Fri`, `Tue-Fri`.
+  > ⚠️ Common mistakes: `Thur`, `Tues`, `Mond`, `Friday`, `tuesday-friday` - all rejected. Use the strict 3-letter form: `Thu`, `Tue`, `Mon`, `Fri`, `Tue-Fri`.
 
   **Time format**: 24-hour `HH:MM` UTC. Overnight wraps are supported (`22:00-02:00` means 10 PM today through 2 AM tomorrow).
 
   **Examples**:
-  - `Sat-Sun_02:00-06:00` — Weekends 2-6 AM UTC
-  - `Mon-Fri_22:00-06:00` — Weeknights 10 PM - 6 AM UTC (overnight wrap)
-  - `Mon-Thu_20:00-04:00` — Mon/Tue/Wed/Thu nights 8 PM - 4 AM UTC (excludes Fri night)
-  - `Mon,Wed,Fri_01:00-05:00` — Only Mon/Wed/Fri 1-5 AM UTC (note the **comma list**, not range)
-  - `Sat_22:00-06:00;Sun_22:00-06:00` — Two separate Sat-night and Sun-night windows
-  - `Sat-Sun_00:00-23:59` — Whole weekend
-  - `Daily_02:00-06:00` (or `*_02:00-06:00`) — Every day 2-6 AM UTC
-  - `Fri-Mon_22:00-06:00` — Long weekend (Fri/Sat/Sun/Mon nights, with wrap)
+  - `Sat-Sun_02:00-06:00` - Weekends 2-6 AM UTC
+  - `Mon-Fri_22:00-06:00` - Weeknights 10 PM - 6 AM UTC (overnight wrap)
+  - `Mon-Thu_20:00-04:00` - Mon/Tue/Wed/Thu nights 8 PM - 4 AM UTC (excludes Fri night)
+  - `Mon,Wed,Fri_01:00-05:00` - Only Mon/Wed/Fri 1-5 AM UTC (note the **comma list**, not range)
+  - `Sat_22:00-06:00;Sun_22:00-06:00` - Two separate Sat-night and Sun-night windows
+  - `Sat-Sun_00:00-23:59` - Whole weekend
+  - `Daily_02:00-06:00` (or `*_02:00-06:00`) - Every day 2-6 AM UTC
+  - `Fri-Mon_22:00-06:00` - Long weekend (Fri/Sat/Sun/Mon nights, with wrap)
 
-  > **Tag-value matching is case-insensitive everywhere** — both the day tokens above and the `UpdateRing` value used by `-ScopeByUpdateRingTag -UpdateRingValue 'Prod1'` (resolved via Azure Resource Graph `=~` operator), so `prod1`/`Prod1`/`PROD1` all match the same set of clusters.
+  > **Tag-value matching is case-insensitive everywhere** - both the day tokens above and the `UpdateRing` value used by `-ScopeByUpdateRingTag -UpdateRingValue 'Prod1'` (resolved via Azure Resource Graph `=~` operator), so `prod1`/`Prod1`/`PROD1` all match the same set of clusters.
 - **UpdateExclusionsWindow** (optional; renamed from `UpdateExclusions` in v0.7.90): Change-freeze periods. Format: `YYYY-MM-DD/YYYY-MM-DD`. Multiple ranges separated by `,`. Wildcards with `*` for recurring annual patterns. Examples:
-  - `2026-12-20/2027-01-03` — Specific date range
-  - `20**-12-20/20**-01-03` — Every year, Dec 20 to Jan 3
+  - `2026-12-20/2027-01-03` - Specific date range
+  - `20**-12-20/20**-01-03` - Every year, Dec 20 to Jan 3
 - **UpdateExcluded** (optional; v0.7.90): Operator hard override. Values `True` / `False` / `1` / `0` (case-insensitive). `True` or `1` skips the cluster in `Start-AzLocalClusterUpdate` with `Status = ExcludedByTag`, regardless of `UpdateRing` scope, `UpdateSideloaded` state, or `UpdateStartWindow` / `UpdateExclusionsWindow` schedule. Leave empty or set to `False` to keep the cluster eligible. If the column is absent on a cluster, `Set-AzLocalClusterUpdateRingTag` default-stamps `UpdateExcluded=False` so the tag is visible in the Azure portal and ready to flip when needed.
 
 Save the file.
