@@ -2,7 +2,7 @@
 
 > ⚠️ **Disclaimer**: This module is **NOT** a Microsoft supported service offering or product. It is provided as example code only, with no warranty or official support. Refer to the [MIT license](https://github.com/NeilBird/Azure-Local/blob/main/LICENSE) for further information.
 
-**Latest Version:** v0.7.91 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.7.91)
+**Latest Version:** v0.7.92 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.7.92)
 
 > 📢 **Renamed in v0.7.3**: this module was previously published as `AzStackHci.ManageUpdates`. The new module name aligns with the Azure Local product name (_Microsoft retired the *Azure Stack HCI* brand in late 2024_). The module GUID is preserved across the rename. If you have the old name installed, run:
 >
@@ -23,7 +23,7 @@ Azure Local REST API specification (includes update management endpoints): https
 **This README (overview + most-recent release notes):**
 
 - [Where to Start](#where-to-start)
-- [What's New in v0.7.91](#whats-new-in-v0791)
+- [What's New in v0.7.92](#whats-new-in-v0792)
 - [Files](#files)
 - [Prerequisites](#prerequisites)
 - [RBAC Requirements](#rbac-requirements) (summary; full reference in [docs/rbac.md](docs/rbac.md))
@@ -86,21 +86,27 @@ If you are new to this module, work through these in order from a regular PowerS
 
 > Most CI/CD pipelines in [Automation-Pipeline-Examples/](Automation-Pipeline-Examples/) are direct implementations of one of these workflows. Start there if you want a copy-pasteable end-to-end pipeline.
 
-## What's New in v0.7.91
+## What's New in v0.7.92
 
-Docs/YAML-only patch release. No cmdlet behaviour changes, no schema changes, no breaking changes. Includes one urgent pipeline parser fix and three cosmetic step-summary fixes - all in bundled `Step.{3,7}_*.yml` pipeline examples.
+Docs/YAML-only feature release. No cmdlet behaviour changes, no schema changes, no breaking changes. The only thing that moves is the `Step.9_fleet-health-status.yml` pipeline (GitHub Actions + Azure DevOps) - specifically its `Detailed Results` section in the run-summary markdown.
 
-**Urgent: `Step.7_monitor-updates.yml` PowerShell 7 parser error (GH Actions + Azure DevOps).** The "No update runs currently in flight" branch contained the literal sequence `` \`update-monitor.csv\` `` inside a double-quoted PowerShell string. The runner is PowerShell 7, which interprets the backtick following the backslash as the start of a `` `u{hex} `` Unicode escape; with no `{` following, the parser throws `The Unicode escape sequence is not valid` at parse time. GitHub Actions parses the whole `run:` block before executing it, so the failure surfaces at the `Import-Module` step with no usable diagnostics. Fixed by switching to the `` `` `` literal-backtick escape already used on the same line for `` ``InProgress`` ``. **Operators running v0.7.90 should upgrade or hot-patch the two `Step.7_monitor-updates.yml` files immediately.**
+**Per-cluster collapsible `Detailed Results`.** Previously the section rendered as a single flat table of up to 100 `(cluster x failing-check)` rows, so on a fleet of 20+ unhealthy clusters the table dominated the run summary and operators had to scroll to find a specific cluster. The new layout has one collapsible `<details>` block per cluster. The always-visible `<summary>` line carries:
 
-**Three cosmetic fixes to the Step.3 per-ring-overrides tip block (GH Actions + Azure DevOps).**
+- the cluster name (linkified to the Azure portal blade);
+- a severity tally in the form `[Critical] x 5 &nbsp;&middot;&nbsp; [Warning] x 2` (non-zero tiers only, Critical-first); and
+- the most-recent `LastOccurrence` across all that cluster's failing checks.
 
-- **Wrong cmdlet name.** The tip text referenced `Get-AzLocalUpdate -Status Ready`, which does not exist in the module. Replaced with the real exported cmdlet `Get-AzLocalAvailableUpdates`.
-- **Bogus example version strings.** The previous example showed `10.2604.0.123;10.2610.0.456`, which does not match Azure Local's real update naming and contradicted the canonical example in `apply-updates-schedule.example.yml`. Replaced with the canonical form `Solution12.2604.1003.1005;Solution12.2610.1003.XX`.
-- **Trailing literal `n` after the closing markdown code-fence.** The PowerShell here-string used `` "``````n" `` (missing a backtick before `n`), so the rendered job summary showed a stray `n` immediately after the closing ` ``` `. Fixed to emit the closing fence followed by a real newline.
+Expanding the block reveals the existing per-failure mini-table (Severity / Failure Reason / Failure Remediation / Target Resource Name / Target Resource Type / Last Occurrence / Resource Group).
 
-**Migration.** `Install-Module AzLocal.UpdateManagement -Force` (or `Update-Module`). Run `Update-AzLocalPipelineExample -Destination <path>` to refresh the four affected `Step.{3,7}_*.yml` files (two per step, one per platform). All four fixes are outside `BEGIN-AZLOCAL-CUSTOMIZE` blocks, so operator schedule customisations are preserved.
+**Worst-affected clusters first.** Cluster ordering now sorts by `CriticalCount` desc, then `WarningCount` desc, then most-recent `LastOccurrence` desc - so the cluster with the most active critical failures rises to the top. Within each cluster, the per-failure rows sort Critical-first then `LastOccurrence` desc.
 
-> Previous release notes (v0.7.90 and earlier) have moved into [`docs/release-history.md`](docs/release-history.md), with the v0.7.90 entry retained in the [Release History](#release-history) appendix below for quick reference.
+**Pagination is now per-CLUSTER (not per-ROW).** The previous `first 100 rows` cap could silently truncate the second half of a busy cluster's failures. The new cap shows the first 100 clusters in full; the existing `fleet-health-detail.csv` artifact still carries every row for any cluster that overflows.
+
+**CSV / JSON artifacts unchanged.** `fleet-health-detail.csv`, `fleet-health-summary.csv`, `fleet-health-overview.csv` and their JSON twins all retain the same schema, so any downstream tooling (ITSM, dashboards, etc.) keeps working without changes.
+
+**Migration.** `Install-Module AzLocal.UpdateManagement -Force` (or `Update-Module`). Run `Update-AzLocalPipelineExample -Destination <path>` to refresh the two `Step.9_*.yml` files. The change sits outside any `BEGIN-AZLOCAL-CUSTOMIZE` block, so operator customisations elsewhere in the pipeline are preserved.
+
+> Previous release notes (v0.7.91 and earlier) have moved into [`docs/release-history.md`](docs/release-history.md), with the v0.7.91 entry retained in the [Release History](#release-history) appendix below for quick reference.
 
 ## Files
 
@@ -579,7 +585,13 @@ This code is provided as-is for educational and reference purposes.
 
 The full What's-New history (v0.7.81 and earlier) has moved to [docs/release-history.md](docs/release-history.md).
 
-The most recent release notes for **v0.7.91** stay above under [`What's New in v0.7.91`](#whats-new-in-v0791).
+The most recent release notes for **v0.7.92** stay above under [`What's New in v0.7.92`](#whats-new-in-v0792).
+
+### What's New in v0.7.91
+
+v0.7.91 was a docs/YAML-only patch release. The headline fix was the urgent `Step.7_monitor-updates.yml` PowerShell 7 parser bug (`The Unicode escape sequence is not valid`) - the runner was failing at the `Import-Module` step on the `no update runs currently in flight` branch on the v0.7.90 release. Fixed by switching the literal-backtick escape (`` \` ``) to the `` `` `` form already used elsewhere in the same line. Also bundled three cosmetic fixes to the Step.3 schedule-audit summary: wrong cmdlet name (`Get-AzLocalUpdate -Status Ready` -> `Get-AzLocalAvailableUpdates`), bogus example version strings (replaced with the canonical `Solution12.2604.1003.1005;Solution12.2610.1003.XX`), and a stray `n` after the closing markdown code-fence (missing backtick in `"``````n"`).
+
+See [CHANGELOG.md](CHANGELOG.md#0791---2026-06-05) for the full v0.7.91 entry.
 
 ### What's New in v0.7.90
 

@@ -5,6 +5,21 @@ All notable changes to the AzLocal.UpdateManagement module (renamed from AzStack
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.92] - 2026-06-05
+
+Docs/YAML-only feature release. No cmdlet behaviour changes, no schema changes, no breaking changes. The only thing that moves is the `Step.9_fleet-health-status.yml` pipeline (GitHub Actions + Azure DevOps).
+
+### Changed
+
+- **Step.9 `Detailed Results` table is now a per-cluster `<details>` block.** Previously the section rendered as a single flat table of up to 100 (cluster x failing-check) rows, so on a fleet of 20+ unhealthy clusters the table dominated the run summary and operators had to scroll to find a specific cluster. The new layout has one collapsible block per cluster: the always-visible `<summary>` line carries the cluster name (linkified to the Azure portal blade), a severity tally in `[Critical] x N  &middot;  [Warning] x M` form (non-zero tiers only, Critical first), and the most-recent `LastOccurrence` across all that cluster's failing checks. Expanding the block reveals the existing per-failure mini-table (Severity / Failure Reason / Failure Remediation / Target Resource Name / Target Resource Type / Last Occurrence / Resource Group).
+- **Cluster ordering switched to worst-affected first.** Clusters sort by `CriticalCount` desc, then `WarningCount` desc, then most-recent `LastOccurrence` desc - so the cluster with the most active critical failures rises to the top. Within each cluster, the per-failure rows sort Critical-first then `LastOccurrence` desc.
+- **Pagination is now per-CLUSTER (not per-ROW).** The previous `first 100 rows` cap could silently truncate the second half of a busy cluster's failures. The new cap shows the first 100 clusters in full; the existing `fleet-health-detail.csv` artifact still carries every row for any cluster that overflows.
+- **CSV / JSON artifacts unchanged.** `fleet-health-detail.csv`, `fleet-health-summary.csv`, `fleet-health-overview.csv` and their JSON twins all retain the same schema, so any downstream tooling (ITSM, dashboards, etc.) keeps working without changes.
+
+### Migration
+
+`Install-Module AzLocal.UpdateManagement -Force` (or `Update-Module`), then run `Update-AzLocalPipelineExample -Destination <path>` to refresh the two `Step.9_*.yml` files. The change sits outside any `BEGIN-AZLOCAL-CUSTOMIZE` block, so operator customisations elsewhere in the pipeline are preserved.
+
 ## [0.7.91] - 2026-06-05
 
 Docs/YAML-only patch release. No cmdlet behaviour changes, no schema changes, no breaking changes. Includes one urgent pipeline parser fix (Step.7) plus three cosmetic step-summary fixes (Step.3).

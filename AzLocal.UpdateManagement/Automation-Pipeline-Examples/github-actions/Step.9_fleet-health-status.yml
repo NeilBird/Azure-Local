@@ -115,7 +115,7 @@ env:
   # this to the version actually installed and to the latest on PSGallery, and emits a
   # ::notice annotation if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.7.91'
+  GENERATED_AGAINST_MODULE_VERSION: '0.7.92'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): manual workflow_dispatch input >
   # repository variable 'REQUIRED_MODULE_VERSION' > empty (latest).
@@ -546,26 +546,78 @@ jobs:
         if ($detailRows.Count -eq 0) {
             $md += "`n*No detail rows.*`n"
         } else {
-            # cluster name linkifies to ClusterPortalUrl; +3 columns (Failure Remediation,
-            # Target Resource Name, Target Resource Type). Remediation auto-linkifies when it looks
-            # like a URL ('https://') so docs links are one click away.
-            $md += "`n| Cluster | Severity | Failure Reason | Failure Remediation | Target Resource Name | Target Resource Type | Last Occurrence | Resource Group |`n"
-            $md += "|---------|----------|----------------|---------------------|----------------------|----------------------|------------------|----------------|`n"
-            foreach ($r in ($detailRows | Select-Object -First 100)) {
-                $sevTag      = if ($r.Severity -eq 'Critical') { '[Critical]' } else { '[Warning]' }
-                $clusterCell = if ($r.PSObject.Properties.Match('ClusterPortalUrl').Count -gt 0 -and $r.ClusterPortalUrl) {
-                    '[{0}]({1})' -f $r.ClusterName, $r.ClusterPortalUrl
+            # collapsible per-cluster view: one <details> block per cluster. The <summary>
+            # carries the cluster name (linkified to portal), a severity tally
+            # ('[Critical] x N  ·  [Warning] x M', non-zero tiers only, Critical first)
+            # and the most-recent LastOccurrence across all that cluster's rows. The
+            # expanded body holds the existing per-failure table.
+            #
+            # Cluster ordering: CriticalCount desc, then WarningCount desc, then
+            # most-recent LastOccurrence desc (worst-cluster-first). Within a cluster,
+            # rows sort Critical-first then LastOccurrence desc.
+            #
+            # Cap is per-CLUSTER (not per-row) so no cluster's failures are silently
+            # truncated. CSV artifact always has every row.
+            $md += "`n*Click a cluster to expand its failing health checks. Worst-affected clusters appear first.*`n"
+
+            $detailByCluster = @(
+                $detailRows | Group-Object -Property ClusterName | ForEach-Object {
+                    $rows      = @($_.Group)
+                    $crit      = @($rows | Where-Object { $_.Severity -eq 'Critical' }).Count
+                    $warn      = @($rows | Where-Object { $_.Severity -eq 'Warning'  }).Count
+                    $portalRow = $rows | Where-Object {
+                        $_.PSObject.Properties.Match('ClusterPortalUrl').Count -gt 0 -and $_.ClusterPortalUrl
+                    } | Select-Object -First 1
+                    $lastOcc   = ($rows | Measure-Object -Property LastOccurrence -Maximum).Maximum
+                    [PSCustomObject]@{
+                        ClusterName      = $_.Name
+                        ClusterPortalUrl = if ($portalRow) { [string]$portalRow.ClusterPortalUrl } else { '' }
+                        CriticalCount    = $crit
+                        WarningCount     = $warn
+                        LastOccurrence   = $lastOcc
+                        Rows             = @(
+                            $rows | Sort-Object @{Expression={ if($_.Severity -eq 'Critical'){1}else{2} };Descending=$false},
+                                                @{Expression={$_.LastOccurrence};Descending=$true}
+                        )
+                    }
+                } | Sort-Object @{Expression={$_.CriticalCount};Descending=$true},
+                                @{Expression={$_.WarningCount};Descending=$true},
+                                @{Expression={$_.LastOccurrence};Descending=$true}
+            )
+
+            $totalClusters  = $detailByCluster.Count
+            $clustersToShow = @($detailByCluster | Select-Object -First 100)
+
+            foreach ($cl in $clustersToShow) {
+                $sevParts = @()
+                if ($cl.CriticalCount -gt 0) { $sevParts += ('[Critical] x {0}' -f $cl.CriticalCount) }
+                if ($cl.WarningCount  -gt 0) { $sevParts += ('[Warning] x {0}'  -f $cl.WarningCount)  }
+                $sevTally = $sevParts -join ' &nbsp;&middot;&nbsp; '
+
+                $clusterCell = if ($cl.ClusterPortalUrl) {
+                    '<a href="{0}">{1}</a>' -f $cl.ClusterPortalUrl, $cl.ClusterName
                 } else {
-                    $r.ClusterName
+                    $cl.ClusterName
                 }
-                $rem = if ($r.PSObject.Properties.Match('Remediation').Count -gt 0) { [string]$r.Remediation } else { '' }
-                $remCell = if ($rem -and $rem.StartsWith('https://')) { '[link]({0})' -f $rem } else { $rem }
-                $tName = if ($r.PSObject.Properties.Match('TargetResourceName').Count -gt 0) { [string]$r.TargetResourceName } else { '' }
-                $tType = if ($r.PSObject.Properties.Match('TargetResourceType').Count -gt 0) { [string]$r.TargetResourceType } else { '' }
-                $md += ('| {0} | {1} | {2} | {3} | {4} | {5} | {6} | {7} |' -f $clusterCell, $sevTag, $r.FailureReason, $remCell, $tName, $tType, $r.LastOccurrence, $r.ResourceGroup) + "`n"
+                $lastOccStr = if ($cl.LastOccurrence) { ('{0:yyyy-MM-ddTHH:mm:ssZ}' -f $cl.LastOccurrence) } else { '-' }
+
+                $md += "`n<details>`n"
+                $md += "<summary><strong>$clusterCell</strong> &nbsp;&middot;&nbsp; $sevTally &nbsp;&middot;&nbsp; last $lastOccStr</summary>`n`n"
+                $md += "| Severity | Failure Reason | Failure Remediation | Target Resource Name | Target Resource Type | Last Occurrence | Resource Group |`n"
+                $md += "|----------|----------------|---------------------|----------------------|----------------------|------------------|----------------|`n"
+                foreach ($r in $cl.Rows) {
+                    $sevTag = if ($r.Severity -eq 'Critical') { '[Critical]' } else { '[Warning]' }
+                    $rem    = if ($r.PSObject.Properties.Match('Remediation').Count -gt 0) { [string]$r.Remediation } else { '' }
+                    $remCell = if ($rem -and $rem.StartsWith('https://')) { '[link]({0})' -f $rem } else { $rem }
+                    $tName = if ($r.PSObject.Properties.Match('TargetResourceName').Count -gt 0) { [string]$r.TargetResourceName } else { '' }
+                    $tType = if ($r.PSObject.Properties.Match('TargetResourceType').Count -gt 0) { [string]$r.TargetResourceType } else { '' }
+                    $md += ('| {0} | {1} | {2} | {3} | {4} | {5} | {6} |' -f $sevTag, $r.FailureReason, $remCell, $tName, $tType, $r.LastOccurrence, $r.ResourceGroup) + "`n"
+                }
+                $md += "`n</details>`n"
             }
-            if ($detailRows.Count -gt 100) {
-                $md += "`n*Showing first 100 rows of $($detailRows.Count); see ``fleet-health-detail.csv`` artifact for the full list.*`n"
+
+            if ($totalClusters -gt 100) {
+                $md += "`n*Showing first 100 clusters of $totalClusters; see ``fleet-health-detail.csv`` artifact for the full list.*`n"
             }
         }
 

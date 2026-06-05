@@ -3,7 +3,7 @@
     RootModule = 'AzLocal.UpdateManagement.psm1'
 
     # Version number of this module.
-    ModuleVersion = '0.7.91'
+    ModuleVersion = '0.7.92'
 
     # Supported PSEditions
     CompatiblePSEditions = @('Desktop', 'Core')
@@ -213,16 +213,21 @@
 
             # ReleaseNotes of this module
             ReleaseNotes = @'
+## Version 0.7.92 - Step.9 fleet-health step summary: per-cluster collapsible details with severity tally and last-occurrence rollup
+
+Docs/YAML-only feature release. No cmdlet behaviour changes, no schema changes, no breaking changes. The `Step.9_fleet-health-status.yml` pipeline (GitHub Actions + Azure DevOps) is the only thing that moves.
+
+- **Step.9 `Detailed Results` table is now a per-cluster `<details>` block.** Previously the section rendered as a single flat table of up to 100 (cluster x failing-check) rows - so on a fleet of 20+ unhealthy clusters the table dominated the run summary and operators had to scroll to find a specific cluster. The new layout has one collapsible block per cluster: the always-visible `<summary>` line carries the cluster name (linkified to the Azure portal blade), a severity tally in `[Critical] x N  -  [Warning] x M` form (non-zero tiers only, Critical first), and the most-recent `LastOccurrence` across all that cluster''s failing checks. Expanding the block reveals the existing per-failure mini-table (Severity / Failure Reason / Failure Remediation / Target Resource Name / Target Resource Type / Last Occurrence / Resource Group).
+- **Cluster ordering switched to worst-affected first.** Clusters sort by `CriticalCount` desc, then `WarningCount` desc, then most-recent `LastOccurrence` desc - so the cluster with the most active critical failures rises to the top. Within each cluster, the per-failure rows sort Critical-first then `LastOccurrence` desc.
+- **Pagination is now per-CLUSTER (not per-ROW).** The previous "first 100 rows" cap could silently truncate the second half of a busy cluster''s failures. The new cap shows the first 100 clusters in full; the existing `fleet-health-detail.csv` artifact still carries every row for any cluster that overflows.
+- **CSV / JSON artifacts unchanged.** `fleet-health-detail.csv`, `fleet-health-summary.csv`, `fleet-health-overview.csv` and their JSON twins all retain the same schema, so any downstream tooling (ITSM, dashboards, etc.) keeps working without changes.
+
+Apply via `Update-AzLocalPipelineExample -Destination <path>` to refresh the two `Step.9_*.yml` files. The change sits outside any `BEGIN-AZLOCAL-CUSTOMIZE` block, so operator customisations elsewhere in the pipeline are preserved.
+
 ## Version 0.7.91 - Step.7 monitor-updates parser bug + Step.3 schedule-audit step-summary cosmetic fixes
 
-Docs/YAML-only patch release. No cmdlet behaviour changes. Four bugs are fixed across the bundled pipeline examples.
-
-- **Urgent: `Step.7_monitor-updates.yml` PowerShell 7 parser bug (both GitHub Actions and Azure DevOps).** The "No update runs currently in flight" branch contained the literal sequence `\`update-monitor.csv\`` inside a double-quoted PowerShell string. The runner is PowerShell 7, which interprets the backtick that follows the backslash as the start of a `` `u{hex} `` Unicode escape; with no `{` following, the parser throws `The Unicode escape sequence is not valid`. The pipeline fails at the `Import-Module` step because GitHub Actions parses the entire run-block before executing it. Fixed by switching the literal-backtick escape to the `` `` `` form already used on the same line for `` ``InProgress`` ``. Affects only the v0.7.90 release.
-- **`Step.3_apply-updates-schedule-audit.yml` (both GitHub Actions and Azure DevOps) - wrong cmdlet name in the per-ring-overrides tip.** The tip text referenced `Get-AzLocalUpdate -Status Ready`, which does not exist in the module. Replaced with the real exported cmdlet `Get-AzLocalAvailableUpdates`.
-- **`Step.3_apply-updates-schedule-audit.yml` (both GitHub Actions and Azure DevOps) - bogus example version strings in the per-ring-overrides tip.** The previous example showed `10.2604.0.123;10.2610.0.456`, which does not match Azure Local real update naming. Replaced with the canonical form `Solution12.2604.1003.1005;Solution12.2610.1003.XX`.
-- **`Step.3_apply-updates-schedule-audit.yml` (both GitHub Actions and Azure DevOps) - trailing literal `n` after the closing markdown code-fence.** The PowerShell here-string used `"``````n"` (missing a backtick before `n`), so the rendered job summary showed a stray `n` immediately after the closing ` ``` `. Fixed to emit the closing fence followed by a real newline.
-
-Apply via `Update-AzLocalPipelineExample -Destination <path>` to refresh the four affected pipeline files outside any `BEGIN-AZLOCAL-CUSTOMIZE` blocks.
+For full v0.7.91 release notes see:
+https://github.com/NeilBird/Azure-Local/blob/main/AzLocal.UpdateManagement/CHANGELOG.md
 
 ## Version 0.7.90 - New `UpdateExcluded` operator-override tag + breaking rename `UpdateExclusions` -> `UpdateExclusionsWindow` + pipeline renumber + new Step.7 monitor-updates
 
