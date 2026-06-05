@@ -2,7 +2,7 @@
 
 > ⚠️ **Disclaimer**: This module is **NOT** a Microsoft supported service offering or product. It is provided as example code only, with no warranty or official support. Refer to the [MIT license](https://github.com/NeilBird/Azure-Local/blob/main/LICENSE) for further information.
 
-**Latest Version:** v0.7.92 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.7.92)
+**Latest Version:** v0.7.93 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.7.93)
 
 > 📢 **Renamed in v0.7.3**: this module was previously published as `AzStackHci.ManageUpdates`. The new module name aligns with the Azure Local product name (_Microsoft retired the *Azure Stack HCI* brand in late 2024_). The module GUID is preserved across the rename. If you have the old name installed, run:
 >
@@ -23,7 +23,7 @@ Azure Local REST API specification (includes update management endpoints): https
 **This README (overview + most-recent release notes):**
 
 - [Where to Start](#where-to-start)
-- [What's New in v0.7.92](#whats-new-in-v0792)
+- [What's New in v0.7.93](#whats-new-in-v0793)
 - [Files](#files)
 - [Prerequisites](#prerequisites)
 - [RBAC Requirements](#rbac-requirements) (summary; full reference in [docs/rbac.md](docs/rbac.md))
@@ -86,82 +86,33 @@ If you are new to this module, work through these in order from a regular PowerS
 
 > Most CI/CD pipelines in [Automation-Pipeline-Examples/](Automation-Pipeline-Examples/) are direct implementations of one of these workflows. Start there if you want a copy-pasteable end-to-end pipeline.
 
-## What's New in v0.7.92
+## What's New in v0.7.93
 
-Docs/YAML-only feature release. No cmdlet behaviour changes, no schema changes, no breaking changes. Four pipelines move (GitHub Actions + Azure DevOps in all cases):
+Patch release. Pipeline-YAML and tests-only - no cmdlet behaviour changes, no schema changes, no breaking changes.
 
-- `Step.9_fleet-health-status.yml` - collapsible per-cluster `Detailed Results` + hyperlinks open in a new tab.
-- `Step.8_fleet-update-status.yml` - hyperlinks open in a new tab.
-- `Step.7_monitor-updates.yml` - active default schedule (5x/day, every 2h overnight).
-- `Step.3_apply-updates-schedule-audit.yml` - summary metric table now reconciles when `IncludeUntagged: true`; Recommend tier now emits **two crons per window by default** (belt-and-braces opening + mid-window retry) controlled by the new `fires_per_window` input; new `RingMixedWindows` informational warning bucket when the same `UpdateRing` carries different `UpdateStartWindow` values.
+### Pipeline JUnit summaries no longer render `NaNms` in the duration column
 
-Plus an operator-UX strand: `Copy-AzLocalPipelineExample` now drops a starter `apply-updates-schedule.yml` by default (one level up from `-Destination`, never overwrites; new `-SkipStarterSchedule` opt-out) - the ring-aware schedule file required for scheduled Step.6 runs no longer has to be manually generated before the pipelines work. See [the section below](#apply-updates-scheduleyml---starter-file-now-dropped-by-default-by-copy-azlocalpipelineexample).
+Five of the inline JUnit XML writers under `Automation-Pipeline-Examples/{github-actions,azure-devops}/` (Step.0 `authentication-test`, Step.3 `apply-updates-schedule-audit`, Step.4 `fleet-connectivity-status`, Step.7 `monitor-updates`, Step.9 `fleet-health-status`) emitted `<testsuite>` and `<testcase>` elements with no `time=` attribute. `dorny/test-reporter` (and most JUnit renderers) parse a missing `time` as `NaN`, so the per-step summary table showed `NaNms` in the duration column and the Passed/Failed/Skipped column alignment collapsed alongside it.
 
-### Step.9 - per-cluster collapsible `Detailed Results`
+v0.7.93 adds `time="0"` to every `<testsuites>` / `<testsuite>` / `<testcase>` emission across all 12 affected files (10 inline writers across the five Steps, plus the `<testsuites>` root in Step.8 GH + ADO where the child elements already carried `time="0"`). Step.6 was unaffected - it consumes the module helper `Private/Export-ResultsToJUnitXml.ps1`, which has always emitted `time=` correctly. No cmdlet code changes.
 
-Previously the section rendered as a single flat table of up to 100 `(cluster x failing-check)` rows, so on a fleet of 20+ unhealthy clusters the table dominated the run summary and operators had to scroll to find a specific cluster. The new layout has one collapsible `<details>` block per cluster. The always-visible `<summary>` line carries:
+### Pester regression guard
 
-- the cluster name (linkified to the Azure portal blade);
-- a severity tally in the form `[Critical] x 5 &nbsp;&middot;&nbsp; [Warning] x 2` (non-zero tiers only, Critical-first); and
-- the most-recent `LastOccurrence` across all that cluster's failing checks.
+A new `It` block under `Describe 'Module: AzLocal.UpdateManagement'` -> `Context 'Inline JUnit XML emitters carry a numeric time attribute (v0.7.93 NaNms regression)'` statically scans every `*.yml` under `Automation-Pipeline-Examples/` for `<testsuites>` / `<testsuite>` / `<testcase>` lines and asserts each one carries `time=`. Any future inline writer (or `Update-AzLocalPipelineExample` regression) that drops the attribute fails the suite immediately.
 
-Expanding the block reveals the existing per-failure mini-table (Severity / Failure Reason / Failure Remediation / Target Resource Name / Target Resource Type / Last Occurrence / Resource Group).
+### `Test-AzLocalApplyUpdatesScheduleCoverage` `-RecommendFiresPerWindow` help text
 
-**Worst-affected clusters first.** Cluster ordering now sorts by `CriticalCount` desc, then `WarningCount` desc, then most-recent `LastOccurrence` desc - so the cluster with the most active critical failures rises to the top. Within each cluster, the per-failure rows sort Critical-first then `LastOccurrence` desc.
+Dropped a `(pre-v0.7.92 back-compat)` parenthetical from the `.PARAMETER` block (and the matching wording in `Step.3_apply-updates-schedule-audit.yml` GH + ADO). Parameter default remains `2` and the behaviour is unchanged - docstring tidy only.
 
-**Pagination is now per-CLUSTER (not per-ROW).** The previous `first 100 rows` cap could silently truncate the second half of a busy cluster's failures. The new cap shows the first 100 clusters in full; the existing `fleet-health-detail.csv` artifact still carries every row for any cluster that overflows.
+### Scaling the custom role across many subscriptions: management group + Azure Policy DINE
 
-**CSV / JSON artifacts unchanged.** `fleet-health-detail.csv`, `fleet-health-summary.csv`, `fleet-health-overview.csv` and their JSON twins all retain the same schema, so any downstream tooling (ITSM, dashboards, etc.) keeps working without changes.
-
-### Step.7 - active default schedule (5x/day, every 2h overnight)
-
-`Step.7_monitor-updates.yml` now ships with an **active** default schedule, so an estate that imports the pipeline gets continuous in-flight visibility immediately without having to remember to enable the cron block. The pipeline runs 5x/day at **20:00, 22:00, 00:00, 02:00, 04:00 UTC** - every 2 hours across the typical overnight maintenance window - in addition to manual `workflow_dispatch` / queue runs.
-
-Previously the schedule block shipped commented-out and required operators to uncomment it per estate. The cron lives inside the existing `BEGIN-AZLOCAL-CUSTOMIZE:schedule-triggers` block, so any local edits (hour-list shifts for a non-UTC maintenance window, weekends-only, sub-hour external triggers, etc.) survive `Update-AzLocalPipelineExample` refreshes. Both GitHub Actions and Azure DevOps interpret cron in UTC - adjust the hour list in the YAML if your maintenance window differs.
-
-### `apply-updates-schedule.yml` - starter file now dropped by default by `Copy-AzLocalPipelineExample`
-
-The ring-aware `apply-updates-schedule.yml` (consumed by Step.6 `apply-updates` and Step.3 `apply-updates-schedule-audit`) is **required for scheduled Step.6 runs** but was previously documented only in section 8 of `Automation-Pipeline-Examples/README.md` and the `apply-updates-schedule.example.yml` header - so operators following the step-by-step setup could finish without realising it was needed. v0.7.92 changes the default behaviour and updates the step-by-step setup:
-
-- **`Copy-AzLocalPipelineExample` now drops a starter `apply-updates-schedule.yml` by default.** For `-Platform GitHub|AzureDevOps` the bundled `apply-updates-schedule.example.yml` is copied to `apply-updates-schedule.yml` ONE LEVEL UP from `-Destination` (sibling of `.github\workflows\` for GitHub, sibling of the pipelines folder for ADO) when no file already exists at that path. **Pre-existing files are NEVER overwritten** - any operator-tailored schedule survives across re-runs. Safe to land alongside the bundled Step.6 because Step.6 ships with every `cron:` line commented out inside the `BEGIN/END-AZLOCAL-CUSTOMIZE:schedule-triggers` markers - it cannot fire on a `schedule:` trigger until at least one cron is uncommented. Manual `workflow_dispatch` / queue runs of Step.6 ignore the schedule file entirely (they take `UpdateRing` verbatim from the run-form input). The starter ships with **DEMO** ring names (`Canary`, `DevTest`, `Ring1`, `Ring2`, `Prod`) that almost never match a real estate's `UpdateRing` tag values - the post-copy summary surfaces the dropped path plus the regenerate-from-live-fleet command `New-AzLocalApplyUpdatesScheduleConfig -OutputPath <path> -Force`. Pass the new `[switch] -SkipStarterSchedule` to suppress the starter copy entirely (e.g. for estates that pre-stage the schedule via separate tooling). Reverses the v0.7.69 design decision that the schedule file should always be operator-generated from live fleet - the new "starter copy + never overwrite + DEMO ring names + regenerate command in the summary" pattern is operator-friendlier without sacrificing the "real schedule must reflect live tag values" intent.
-- **Refreshed inline step in section 5.** Section 5.1 step 5 (GitHub Actions) and section 5.2 step 6 (Azure DevOps) of [`Automation-Pipeline-Examples/README.md`](./Automation-Pipeline-Examples/README.md) document the new default-on starter drop, the never-overwrite safety rail, the DEMO ring names, the `New-AzLocalApplyUpdatesScheduleConfig -OutputPath <path> -Force` regenerate cycle, and the `-SkipStarterSchedule` opt-out. Both cross-link to section 8 for the full schema, multi-stage rollouts, weekly-cycle / ring-eligibility model, and the `allowedUpdateVersions` allow-list (schema v2).
-
-### Step.8 + Step.9 pipeline step summaries - hyperlinks open in a new tab
-
-Every rendered hyperlink in the `Step.8_fleet-update-status.yml` and `Step.9_fleet-health-status.yml` step summaries (GitHub Actions + Azure DevOps) is now emitted as HTML `<a href="..." target="_blank">` so clicking a link opens in a new tab and the operator stays on the pipeline run page. Affected sites:
-
-- **Step.8** - the per-update-run history table's cluster-name and update-run-name cells (Azure portal blade deep-links), plus the three Microsoft Learn / aka.ms references in the version section (`aka.ms/AzureEdgeUpdates`, `about-updates-23h2#lifecycle-cadence`, `release-information-23h2#about-azure-local-releases`).
-- **Step.9** - the overview-table cluster-name cell, the affected-clusters list in the summary block, the per-cluster `<details><summary>` cluster name (linkified to the Azure portal blade), and the per-failure `Failure Remediation` `link` text.
-
-The prose links use `rel="noopener noreferrer"` for standard `target="_blank"` hardening. Step.4 (`fleet-connectivity-status`) was already plain-URL only (URLs flow into the CSV / JUnit Body fields but are not rendered as hyperlinks in the markdown step summary), so it needed no change. CSV / JSON / JUnit artifacts continue to carry plain URL strings - no schema or data shape changes.
-
-### Step.3 schedule-audit summary metric table - reconciles when `IncludeUntagged: true`
-
-The summary metric table at the top of the `Step.3_apply-updates-schedule-audit.yml` step summary (GitHub Actions + Azure DevOps) previously surfaced only 7 of the 8 possible `Status` buckets - the `NoWindowTag` row (clusters with no `UpdateStartWindow` tag, emitted only when `IncludeUntagged: true` is set on the workflow input) was missing. Result: `(Ring, Window) pairs audited` did not equal the sum of the visible bucket counts (for example audited=7 but Covered+Uncovered+... summed to 6) when at least one cluster fell into `NoWindowTag`, which made the table look broken even though the underlying data and the `Audit Detail` table below were correct. v0.7.92 adds the missing `NoWindowTag` row and includes it in the `hasIssues` calculation so the action-required Recommend block surfaces when untagged clusters are present. `Test-AzLocalApplyUpdatesScheduleCoverage` itself is unchanged.
-
-### Step.3 schedule-audit Recommend tier - belt-and-braces (two crons per window) + `RingMixedWindows`
-
-Two related additions to the read-only Step.3 audit pipeline, both layered safely on top of the existing audit semantics ("Covered" / "Uncovered" are unchanged - only the Recommend snippet rendered for operators changes shape, and a new informational status surfaces a divergence that was previously invisible).
-
-**Belt-and-braces: two crons per window by default.** The Recommend view previously emitted **one** cron per `UpdateStartWindow` segment, firing `LeadTimeMinutes` before the window opens. On heavily-loaded GitHub Actions schedules a single cron can be **skipped by jitter (~15 min)** on a tight maintenance window, and a **transient first-fire failure** (auth blip, runner pool exhaustion, module install hiccup) can leave the cluster un-updated for the day with no error. From v0.7.92 the Recommend snippet emits **two** crons per window by default:
-
-1. **`(open)`** - the existing opening-edge cron, fires `LeadTimeMinutes` before the window opens.
-2. **`(retry)`** - a second cron INSIDE the window at the lesser of the **midpoint** or **+60 minutes** after the window opens.
-
-The runtime gate (`Test-AzLocalUpdateScheduleAllowed`) plus the existing in-flight guard prevent double-triggering: the retry cron only does work if the open-edge fire was skipped or failed. Controlled by:
-
-- New `-RecommendFiresPerWindow` parameter on `Test-AzLocalApplyUpdatesScheduleCoverage` (default `2`, range `1-2`).
-- New `fires_per_window` (GH Actions) / `firesPerWindow` (Azure DevOps) workflow input on `Step.3_apply-updates-schedule-audit.yml` (default `2`, choice `1`/`2`) that flows through to the cmdlet.
-
-Pass `1` to disable the retry tier (back-compat for pre-v0.7.92 callers).
-
-**New `RingMixedWindows` informational status.** The Audit view now emits a `Schedule` / `RingMixedWindows` row when 2+ clusters share an `UpdateRing` tag but carry **different** `UpdateStartWindow` values (follow-the-sun, regional rollouts, or tagging mistakes). Each (Ring, Window) pair still gets its own per-pair coverage row above; the runtime gate reads each cluster's own tag so updates still fire correctly. The new bucket surfaces the divergence with a 3-choice recommendation (standardise via `Set-AzLocalClusterUpdateRingTag`, split into separate rings, or accept and document). **Not counted as `Uncovered`** - the pipeline does not gate on it (`$hasIssues` ignores `RingMixedWindows`).
+Per-subscription `AssignableScopes` on the `Azure Stack HCI Update Operator` custom role works for a handful of subscriptions but scales poorly: every new sub means another `az role definition update` + `az role assignment create`, the role definition is capped at 2000 entries, and drift is hard to detect. v0.7.93 adds a new section to [`docs/rbac.md`](docs/rbac.md#scaling-assignablescopes-with-management-groups--azure-policy-recommended-for-large-or-growing-estates) that walks through the standard Azure Landing Zones-style alternative: list a single management-group scope in `AssignableScopes` and use an Azure Policy `deployIfNotExists` (DINE) assignment at that MG to auto-create the per-subscription role assignment for the pipeline identity. Existing subs are picked up by a one-time remediation task; new subs are auto-remediated on creation. The section includes the role definition JSON with MG scope, the DINE policy definition with nested ARM `roleAssignments` template, the system-assigned-MI grant + remediation commands, the required RBAC at each step, and a trade-offs table vs the per-subscription list. Cross-linked from [`Automation-Pipeline-Examples/README.md`](Automation-Pipeline-Examples/README.md) sections 3.1 and 3.2. Recommended for estates of more than ~5-10 subscriptions or growing fleets; per-sub list remains the documented fallback. **No cmdlet code changes - documentation only.**
 
 ### Migration
 
-`Install-Module AzLocal.UpdateManagement -Force` (or `Update-Module`). Run `Update-AzLocalPipelineExample -Destination <path>` to refresh the `Step.9_*.yml`, `Step.8_*.yml`, `Step.7_*.yml` and `Step.3_*.yml` files. The Step.9 changes sit outside any `BEGIN-AZLOCAL-CUSTOMIZE` block, so operator customisations elsewhere in those pipelines are preserved.
+`Install-Module AzLocal.UpdateManagement -Force` (or `Update-Module`). Run `Update-AzLocalPipelineExample -Destination <path>` to refresh the affected `Step.{0,3,4,7,8,9}_*.yml` files. The injection sites are outside any `BEGIN-AZLOCAL-CUSTOMIZE` block, so operator customisations elsewhere in those pipelines are preserved.
 
-> Previous release notes (v0.7.91 and earlier) have moved into [`docs/release-history.md`](docs/release-history.md), with the v0.7.91 entry retained in the [Release History](#release-history) appendix below for quick reference.
+> Previous release notes (v0.7.92 and earlier) have moved into [`docs/release-history.md`](docs/release-history.md), with the v0.7.92 entry retained in the [Release History](#release-history) appendix below for quick reference.
 
 ## Files
 
@@ -640,7 +591,19 @@ This code is provided as-is for educational and reference purposes.
 
 The full What's-New history (v0.7.81 and earlier) has moved to [docs/release-history.md](docs/release-history.md).
 
-The most recent release notes for **v0.7.92** stay above under [`What's New in v0.7.92`](#whats-new-in-v0792).
+The most recent release notes for **v0.7.93** stay above under [`What's New in v0.7.93`](#whats-new-in-v0793).
+
+### What's New in v0.7.92
+
+v0.7.92 was a docs/YAML-only feature release: four pipelines moved (GitHub Actions + Azure DevOps in all cases) plus one operator-UX change to `Copy-AzLocalPipelineExample`. No cmdlet behaviour changes, no schema changes, no breaking changes.
+
+- **`Step.9_fleet-health-status.yml`** - per-cluster collapsible `<details>` `Detailed Results` (replaced flat ~100-row `(cluster x check)` table), worst-affected ordering (`CriticalCount` desc -> `WarningCount` desc -> `LastOccurrence` desc), per-cluster pagination instead of per-row, plus hyperlinks open in a new tab.
+- **`Step.8_fleet-update-status.yml`** - rendered hyperlinks (cluster blade deep-links, update-run blade deep-links, `aka.ms`/Microsoft Learn references in the version section) open in a new tab.
+- **`Step.7_monitor-updates.yml`** - default schedule activated (5x/day at 20:00, 22:00, 00:00, 02:00, 04:00 UTC). Previously commented-out.
+- **`Step.3_apply-updates-schedule-audit.yml`** - summary metric table now surfaces the missing `NoWindowTag` bucket so `(Ring, Window) pairs audited` reconciles with the per-bucket sum when `IncludeUntagged: true`. New `-RecommendFiresPerWindow` parameter on `Test-AzLocalApplyUpdatesScheduleCoverage` (default `2`) plus matching `fires_per_window` (GH) / `firesPerWindow` (ADO) workflow input: the Recommend snippet now emits TWO crons per window by default (`(open)` `LeadTimeMinutes` before the window opens + `(retry)` inside the window at midpoint-or-+60min). Pass `1` for pre-v0.7.92 single-cron behaviour. Runtime gate + in-flight guard prevent double-triggering. Also new: `RingMixedWindows` informational `Schedule` status when 2+ clusters share an `UpdateRing` tag but carry different `UpdateStartWindow` values.
+- **`Copy-AzLocalPipelineExample` drops a starter `apply-updates-schedule.yml` by default.** Bundled `apply-updates-schedule.example.yml` is copied to `apply-updates-schedule.yml` one level up from `-Destination` (sibling of `.github\workflows\` for GitHub, sibling of the pipelines folder for ADO) when no file already exists at that path. Pre-existing files are NEVER overwritten. Safe alongside the bundled Step.6 which ships with every `cron:` commented out. New `[switch] -SkipStarterSchedule` opts out.
+
+See [CHANGELOG.md](CHANGELOG.md#0792---2026-06-05) for the full v0.7.92 entry.
 
 ### What's New in v0.7.91
 

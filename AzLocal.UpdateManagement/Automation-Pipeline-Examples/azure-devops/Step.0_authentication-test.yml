@@ -54,7 +54,7 @@ variables:
   # log if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
   - name: GENERATED_AGAINST_MODULE_VERSION
-    value: '0.7.92'
+    value: '0.7.93'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): queue-time parameter > pipeline variable
   # 'REQUIRED_MODULE_VERSION' overridden at queue time > empty (latest).
@@ -203,38 +203,38 @@ stages:
 
                 $xml = [System.Text.StringBuilder]::new()
                 [void]$xml.AppendLine('<?xml version="1.0" encoding="UTF-8"?>')
-                [void]$xml.AppendLine('<testsuites name="Step.0 - Authentication Validation and Subscription Scope Report">')
+                [void]$xml.AppendLine('<testsuites name="Step.0 - Authentication Validation and Subscription Scope Report" time="0">')
 
-                [void]$xml.AppendLine("  <testsuite name=`"&#x1F510; Authentication`" tests=`"3`" failures=`"0`" timestamp=`"$now`">")
-                [void]$xml.AppendLine("    <testcase classname=`"Authentication`" name=`"OIDC token exchange (az account show succeeded)`"><system-out><![CDATA[Tenant: $($account.tenantId)`nSubscription: $($account.name) ($($account.id))`nIdentity: $($account.user.name)]]></system-out></testcase>")
-                [void]$xml.AppendLine("    <testcase classname=`"Authentication`" name=`"Default subscription = $(ConvertTo-XmlSafe $account.name)`" />")
-                [void]$xml.AppendLine("    <testcase classname=`"Authentication`" name=`"Pipeline identity (appId) = $(ConvertTo-XmlSafe $account.user.name)`" />")
+                [void]$xml.AppendLine("  <testsuite name=`"&#x1F510; Authentication`" tests=`"3`" failures=`"0`" timestamp=`"$now`" time=`"0`">")
+                [void]$xml.AppendLine("    <testcase classname=`"Authentication`" name=`"OIDC token exchange (az account show succeeded)`" time=`"0`"><system-out><![CDATA[Tenant: $($account.tenantId)`nSubscription: $($account.name) ($($account.id))`nIdentity: $($account.user.name)]]></system-out></testcase>")
+                [void]$xml.AppendLine("    <testcase classname=`"Authentication`" name=`"Default subscription = $(ConvertTo-XmlSafe $account.name)`" time=`"0`" />")
+                [void]$xml.AppendLine("    <testcase classname=`"Authentication`" name=`"Pipeline identity (appId) = $(ConvertTo-XmlSafe $account.user.name)`" time=`"0`" />")
                 [void]$xml.AppendLine('  </testsuite>')
 
-                [void]$xml.AppendLine("  <testsuite name=`"&#x1F4CB; Subscription Scope (count=$subCount)`" tests=`"$($subCount + 1)`" failures=`"0`" timestamp=`"$now`">")
-                [void]$xml.AppendLine("    <testcase classname=`"SubscriptionScope`" name=`"Count of subscriptions accessible = $subCount`" />")
+                [void]$xml.AppendLine("  <testsuite name=`"&#x1F4CB; Subscription Scope (count=$subCount)`" tests=`"$($subCount + 1)`" failures=`"0`" timestamp=`"$now`" time=`"0`">")
+                [void]$xml.AppendLine("    <testcase classname=`"SubscriptionScope`" name=`"Count of subscriptions accessible = $subCount`" time=`"0`" />")
                 $i = 0
                 foreach ($s in $subs) {
                     $i++
                     $nm = ConvertTo-XmlSafe $s.name
                     $sid = ConvertTo-XmlSafe $s.subscriptionId
                     $st  = ConvertTo-XmlSafe $s.state
-                    [void]$xml.AppendLine("    <testcase classname=`"SubscriptionScope`" name=`"#$i  $nm  ($sid)  [$st]`" />")
+                    [void]$xml.AppendLine("    <testcase classname=`"SubscriptionScope`" name=`"#$i  $nm  ($sid)  [$st]`" time=`"0`" />")
                 }
                 [void]$xml.AppendLine('  </testsuite>')
 
-                [void]$xml.AppendLine("  <testsuite name=`"&#x1F310; Resource Graph Reachability`" tests=`"1`" failures=`"0`" timestamp=`"$now`">")
-                [void]$xml.AppendLine("    <testcase classname=`"ResourceGraph`" name=`"Clusters visible to pipeline identity = $clusterCount`" />")
+                [void]$xml.AppendLine("  <testsuite name=`"&#x1F310; Resource Graph Reachability`" tests=`"1`" failures=`"0`" timestamp=`"$now`" time=`"0`">")
+                [void]$xml.AppendLine("    <testcase classname=`"ResourceGraph`" name=`"Clusters visible to pipeline identity = $clusterCount`" time=`"0`" />")
                 [void]$xml.AppendLine('  </testsuite>')
 
                 # Suite 4: Module Version Drift (informational - never fails)
                 $installedVersion = "$env:INSTALLEDMODULEVERSION"
                 $generatedVersion = "$env:GENERATEDAGAINSTVERSION"
                 $latestVersion    = "$env:LATESTONPSGALLERY"
-                [void]$xml.AppendLine("  <testsuite name=`"&#x1F4E6; Module Version Drift`" tests=`"3`" failures=`"0`" timestamp=`"$now`">")
-                [void]$xml.AppendLine("    <testcase classname=`"ModuleVersion`" name=`"Installed AzLocal.UpdateManagement = $installedVersion`" />")
-                [void]$xml.AppendLine("    <testcase classname=`"ModuleVersion`" name=`"YAML generated against = $generatedVersion`" />")
-                [void]$xml.AppendLine("    <testcase classname=`"ModuleVersion`" name=`"Latest on PSGallery = $(if ($latestVersion) { $latestVersion } else { '(lookup failed)' })`" />")
+                [void]$xml.AppendLine("  <testsuite name=`"&#x1F4E6; Module Version Drift`" tests=`"3`" failures=`"0`" timestamp=`"$now`" time=`"0`">")
+                [void]$xml.AppendLine("    <testcase classname=`"ModuleVersion`" name=`"Installed AzLocal.UpdateManagement = $installedVersion`" time=`"0`" />")
+                [void]$xml.AppendLine("    <testcase classname=`"ModuleVersion`" name=`"YAML generated against = $generatedVersion`" time=`"0`" />")
+                [void]$xml.AppendLine("    <testcase classname=`"ModuleVersion`" name=`"Latest on PSGallery = $(if ($latestVersion) { $latestVersion } else { '(lookup failed)' })`" time=`"0`" />")
                 [void]$xml.AppendLine('  </testsuite>')
 
                 [void]$xml.AppendLine('</testsuites>')

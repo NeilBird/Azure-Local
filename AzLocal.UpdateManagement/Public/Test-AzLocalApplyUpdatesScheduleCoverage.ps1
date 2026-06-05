@@ -115,11 +115,11 @@ function Test-AzLocalApplyUpdatesScheduleCoverage {
         mid-window retry capped at +60 minutes after the window opens, so
         GitHub Actions scheduled-workflow jitter or a transient first-fire
         failure cannot leave a cluster un-updated for the day). Set to 1 to
-        suppress the retry cron and emit only the opening-edge cron (pre-
-        v0.7.93 back-compat). Range 1-2. Audit semantics are unchanged either
-        way - the audit only requires the opening-edge cron to be matched in
-        the YAML for a (Ring, Window) pair to be 'Covered'; the retry cron is
-        an additional resilience suggestion, never a coverage requirement.
+        suppress the retry cron and emit only the opening-edge cron. Range
+        1-2. Audit semantics are unchanged either way - the audit only
+        requires the opening-edge cron to be matched in the YAML for a
+        (Ring, Window) pair to be 'Covered'; the retry cron is an additional
+        resilience suggestion, never a coverage requirement.
     .PARAMETER UpdateRingTag
         Optional filter: only evaluate clusters whose UpdateRing tag matches one
         of these values. Repeat or comma-separate for multiple rings.

@@ -12,7 +12,7 @@
 #     a Threshold column flagging runs that have exceeded the configured
 #     long-running threshold).
 #   - update-monitor.csv (full per-cluster rows for spreadsheet triage).
-#   - update-monitor.xml (JUnit, one <testcase> per in-flight cluster;
+#   - update-monitor.xml (JUnit, one <testcase time="0"> per in-flight cluster;
 #     <failure> when the elapsed duration exceeds the threshold so the
 #     Checks tab shows stuck runs in red).
 #
@@ -73,7 +73,7 @@ env:
   # this to the version actually installed and to the latest on PSGallery, and emits a
   # ::notice annotation if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.7.92'
+  GENERATED_AGAINST_MODULE_VERSION: '0.7.93'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): manual workflow_dispatch input >
   # repository variable 'REQUIRED_MODULE_VERSION' > empty (latest).
@@ -243,14 +243,14 @@ jobs:
               '' | Set-Content -Path $monitorCsv -Encoding utf8
           }
 
-          # JUnit XML - one <testcase> per in-flight cluster; <failure> when threshold exceeded.
+          # JUnit XML - one <testcase time="0"> per in-flight cluster; <failure> when threshold exceeded.
           # If nothing is in flight we still emit a zero-test suite so the publish step works.
           $xmlLines = New-Object 'System.Collections.Generic.List[string]'
           $xmlLines.Add('<?xml version="1.0" encoding="UTF-8"?>')
-          $xmlLines.Add('<testsuites>')
+          $xmlLines.Add('<testsuites time="0">')
           $tests = $inFlight.Count
           $failures = $longRunning.Count
-          $xmlLines.Add(('  <testsuite name="In-Flight Update Runs" tests="{0}" failures="{1}">' -f $tests, $failures))
+          $xmlLines.Add(('  <testsuite name="In-Flight Update Runs" tests="{0}" failures="{1}" time="0">' -f $tests, $failures))
           foreach ($r in ($inFlight | Sort-Object @{Expression='ElapsedHours';Descending=$true})) {
               $safeName = ($r.ClusterName -replace '[^A-Za-z0-9_.-]', '_')
               $caseName = "$safeName - $($r.UpdateName) - $($r.CurrentStep)"
@@ -258,11 +258,11 @@ jobs:
               if ($r.ExceedsThreshold) {
                   $msg = ('Elapsed {0} exceeds threshold of {1}h. CurrentStep: {2}. Progress: {3}.' -f $r.ElapsedDisplay, $r.ThresholdHours, $r.CurrentStep, $r.Progress)
                   $msgXml = [System.Security.SecurityElement]::Escape($msg)
-                  $xmlLines.Add(('    <testcase name="{0}" classname="UpdateMonitor">' -f $caseNameXml))
+                  $xmlLines.Add(('    <testcase name="{0}" classname="UpdateMonitor" time="0">' -f $caseNameXml))
                   $xmlLines.Add(('      <failure message="{0}" type="LongRunning">{0}</failure>' -f $msgXml))
                   $xmlLines.Add('    </testcase>')
               } else {
-                  $xmlLines.Add(('    <testcase name="{0}" classname="UpdateMonitor"/>' -f $caseNameXml))
+                  $xmlLines.Add(('    <testcase name="{0}" classname="UpdateMonitor" time="0"/>' -f $caseNameXml))
               }
           }
           $xmlLines.Add('  </testsuite>')

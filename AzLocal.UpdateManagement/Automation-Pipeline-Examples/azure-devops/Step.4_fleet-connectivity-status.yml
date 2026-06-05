@@ -19,7 +19,7 @@
 #   scope (cluster, ARB, Arc agent, NIC) with portal hyperlinks and emoji severity icons.
 #   NIC section lists only issues (Disconnected with non-APIPA IP); the other three
 #   scopes show the full universe with healthy + failing rows.
-# - JUnit XML: published to the Test Results tab. One <testcase> per failing resource,
+# - JUnit XML: published to the Test Results tab. One <testcase time="0"> per failing resource,
 #   grouped under "Cluster Connectivity" / "Arc Agent Connectivity" /
 #   "Physical NIC Status" / "Azure Resource Bridge" testsuites.
 # - CSV exports per scope: fleet-cluster-connectivity.csv,
@@ -102,7 +102,7 @@ variables:
   # the version actually installed and to the latest on PSGallery, and emits a warning
   # log if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.7.92'
+  GENERATED_AGAINST_MODULE_VERSION: '0.7.93'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): queue-time parameter > pipeline variable
   # 'REQUIRED_MODULE_VERSION' overridden at queue time > empty (latest).
@@ -239,15 +239,15 @@ stages:
           $xmlPath = Join-Path $outputDir 'fleet-connectivity-status.xml'
           $sb = New-Object System.Text.StringBuilder
           [void]$sb.AppendLine('<?xml version="1.0" encoding="UTF-8"?>')
-          [void]$sb.AppendFormat('<testsuites name="AzureLocalFleetConnectivity" tests="{0}" failures="{0}">' + "`n", $totalFailures)
+          [void]$sb.AppendFormat('<testsuites name="AzureLocalFleetConnectivity" tests="{0}" failures="{0}" time="0">' + "`n", $totalFailures)
 
           function Add-Suite {
               param([string]$Name, [array]$Failures, [scriptblock]$GetCase, [System.Text.StringBuilder]$Sb)
               if (-not $Failures -or $Failures.Count -eq 0) { return }
-              [void]$Sb.AppendFormat('  <testsuite name="{0}" tests="{1}" failures="{1}">' + "`n", (Convert-XmlEscape $Name), $Failures.Count)
+              [void]$Sb.AppendFormat('  <testsuite name="{0}" tests="{1}" failures="{1}" time="0">' + "`n", (Convert-XmlEscape $Name), $Failures.Count)
               foreach ($r in $Failures) {
                   $c = & $GetCase $r
-                  [void]$Sb.AppendFormat('    <testcase classname="{0}" name="{1}">' + "`n", (Convert-XmlEscape $c.Classname), (Convert-XmlEscape $c.Name))
+                  [void]$Sb.AppendFormat('    <testcase classname="{0}" name="{1}" time="0">' + "`n", (Convert-XmlEscape $c.Classname), (Convert-XmlEscape $c.Name))
                   [void]$Sb.AppendLine('      <properties>')
                   foreach ($k in $c.Properties.Keys) {
                       [void]$Sb.AppendFormat('        <property name="{0}" value="{1}"/>' + "`n", $k, (Convert-XmlEscape ([string]$c.Properties[$k])))
@@ -376,8 +376,8 @@ stages:
           }
 
           if ($totalFailures -eq 0) {
-              [void]$sb.AppendLine('  <testsuite name="Fleet Connectivity" tests="1" failures="0">')
-              [void]$sb.AppendLine('    <testcase classname="Fleet Connectivity" name="No connectivity issues across the fleet" />')
+              [void]$sb.AppendLine('  <testsuite name="Fleet Connectivity" tests="1" failures="0" time="0">')
+              [void]$sb.AppendLine('    <testcase classname="Fleet Connectivity" name="No connectivity issues across the fleet" time="0" />')
               [void]$sb.AppendLine('  </testsuite>')
           }
           [void]$sb.AppendLine('</testsuites>')

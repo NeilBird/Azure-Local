@@ -175,7 +175,9 @@ This is the least-privilege role that supports every pipeline in this folder. Th
 }
 ```
 
-Add every in-scope subscription ID to `AssignableScopes` before creating the role - a custom role can only be assigned at or below a scope listed here.
+Add every in-scope subscription ID to `AssignableScopes` before creating the role - a custom role can only be assigned at or below a scope listed here. The hard cap is 2000 subscription entries per role definition.
+
+> **Recommended for fleets of more than ~5-10 subscriptions or growing estates: use a single management-group `AssignableScopes` entry + Azure Policy `deployIfNotExists` to auto-assign.** Rather than editing the role definition every time a subscription is added, list **one** management-group scope in `AssignableScopes` (`"/providers/Microsoft.Management/managementGroups/<mg-id>"`) and let an Azure Policy assignment at that MG create the per-subscription role assignment automatically. Existing subscriptions are picked up by a one-time remediation task; new subscriptions are auto-remediated on creation. This is the standard Azure Landing Zones pattern and is described in [`docs/rbac.md` -> Scaling AssignableScopes with management groups + Azure Policy](../docs/rbac.md#scaling-assignablescopes-with-management-groups--azure-policy-recommended-for-large-or-growing-estates). The per-subscription list shown above remains valid for small estates or operators without `Owner` / `User Access Administrator` on a management group.
 
 **Who can run these commands?**
 
@@ -362,6 +364,8 @@ If (1) returns `true` and (2) shows one row with `Azure Stack HCI Update Operato
 ### 3.2 Extending to additional subscriptions
 
 To extend the **custom role** to additional subscriptions (recommended): update `AssignableScopes` on the role definition with `az role definition update` to include the new subscription IDs, then run `az role assignment create` against each new subscription scope - see [section 4.1](#31-custom-role-azure-stack-hci-update-operator) for the full pattern.
+
+> **For fleets of more than ~5-10 subscriptions or growing estates, scale via management groups instead of editing `AssignableScopes` per sub.** Put a single MG entry in `AssignableScopes` and use an Azure Policy `deployIfNotExists` at that MG to auto-create the role assignment on every child subscription. Full recipe (custom role JSON, policy definition, remediation task, required roles) in [`docs/rbac.md` -> Scaling AssignableScopes with management groups + Azure Policy](../docs/rbac.md#scaling-assignablescopes-with-management-groups--azure-policy-recommended-for-large-or-growing-estates). Once the role lists the MG scope, **no role-definition update or `az role assignment create` is needed for new subscriptions** - the policy DINE handles it.
 
 <details><summary>Fallback - only if you assigned the built-in role in section 4 because you could not create a custom role</summary>
 

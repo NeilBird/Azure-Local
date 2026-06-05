@@ -134,7 +134,226 @@ az role definition create --role-definition ./azlocal-update-management-custom-r
 
 > **Note**: Option 2 uses a double-quoted here-string (`@"..."@`) so PowerShell expands `$subId` before writing the JSON to disk. A literal here-string (`@'...'@`) would NOT expand the variable - you would have to substitute the placeholder yourself as in Option 1.
 
-### Updating an existing custom role (v0.7.79 -> v0.7.80)
+### Scaling AssignableScopes with management groups + Azure Policy (recommended for large or growing estates)
+
+The per-subscription `AssignableScopes` pattern above works well for a handful of subscriptions but becomes painful at scale:
+
+- Every time a new subscription is added to the fleet, you must `az role definition update` to extend `AssignableScopes` AND `az role assignment create` for the pipeline identity.
+- The role definition itself has a **hard cap of 2000 entries** in `AssignableScopes`.
+- Drift is hard to detect - a subscription that was provisioned without the assignment silently disappears from the pipeline's reach.
+
+For estates of more than ~5-10 subscriptions, or any estate where new subscriptions are provisioned regularly, scale this out with two standard Azure primitives:
+
+1. **A single management-group entry in `AssignableScopes`** on the custom role definition (custom roles can be assigned at or below any scope listed in `AssignableScopes`, and management-group scopes have been supported since 2020).
+2. **An Azure Policy `deployIfNotExists` (DINE) assignment at that management group** that creates the per-subscription role assignment automatically. Existing subscriptions are picked up by a one-time remediation task; new subscriptions are auto-remediated as they are created. This is the standard Azure Landing Zones pattern.
+
+The result: when a new subscription joins the management group, the pipeline identity gets the `Azure Stack HCI Update Operator` role at that subscription with zero manual steps.
+
+**Step 1 - role definition with a management-group `AssignableScopes`**
+
+Replace the per-subscription entry shown above with one (or more) management-group scope(s). The MG scope must be the **resource path**, NOT just the MG name:
+
+```json
+{
+  "Name": "Azure Stack HCI Update Operator",
+  "IsCustom": true,
+  "Description": "Can view and apply updates on Azure Local clusters, manage UpdateRing tags, and read the fleet-connectivity scopes (Arc machines, edge-device NICs, Azure Resource Bridges) required by Step.4.",
+  "Actions": [
+    "Microsoft.AzureStackHCI/clusters/read",
+    "Microsoft.AzureStackHCI/clusters/updateSummaries/read",
+    "Microsoft.AzureStackHCI/clusters/updates/read",
+    "Microsoft.AzureStackHCI/clusters/updates/apply/action",
+    "Microsoft.AzureStackHCI/clusters/updates/updateRuns/read",
+    "Microsoft.AzureStackHCI/edgeDevices/read",
+    "Microsoft.HybridCompute/machines/read",
+    "Microsoft.HybridCompute/machines/extensions/read",
+    "Microsoft.ResourceConnector/appliances/read",
+    "Microsoft.Resources/subscriptions/resourceGroups/read",
+    "Microsoft.ResourceGraph/resources/read",
+    "Microsoft.Resources/tags/read",
+    "Microsoft.Resources/tags/write"
+  ],
+  "NotActions": [],
+  "DataActions": [],
+  "NotDataActions": [],
+  "AssignableScopes": [
+    "/providers/Microsoft.Management/managementGroups/<your-mg-id>"
+  ]
+}
+```
+
+Create the role exactly as before with `az role definition create --role-definition <file>`. The signed-in identity needs `Microsoft.Authorization/roleDefinitions/write` at the MG (most narrowly granted by **Role Based Access Control Administrator** on the MG).
+
+**Step 2 - capture the role definition ID** (referenced by the policy):
+
+```powershell
+$roleId = az role definition list `
+    --custom-role-only true `
+    --name "Azure Stack HCI Update Operator" `
+    --query "[0].name" -o tsv
+# Returns the role's GUID. The policy references it as:
+# "/providers/Microsoft.Authorization/roleDefinitions/$roleId"
+```
+
+**Step 3 - capture the pipeline identity's object ID** (the principal that the role assignment grants the role TO):
+
+```powershell
+# For a service principal / App Registration:
+$pipelinePrincipalId = az ad sp show --id <appId> --query id -o tsv
+# For a user-assigned managed identity:
+# $pipelinePrincipalId = az identity show -g <rg> -n <mi-name> --query principalId -o tsv
+```
+
+**Step 4 - create the policy definition at the management group**
+
+The `deployIfNotExists` policy below targets `Microsoft.Resources/subscriptions` and, where the named role assignment does not already exist, deploys a subscription-scoped role assignment from a nested ARM template:
+
+```jsonc
+{
+  "properties": {
+    "displayName": "Assign 'Azure Stack HCI Update Operator' to update-automation pipeline",
+    "description": "DeployIfNotExists policy that auto-grants the named custom role to the update-automation pipeline identity on every subscription under the management group it is assigned at.",
+    "mode": "All",
+    "policyType": "Custom",
+    "parameters": {
+      "roleDefinitionId": {
+        "type": "String",
+        "metadata": { "displayName": "Custom role definition resource ID" }
+      },
+      "principalId": {
+        "type": "String",
+        "metadata": { "displayName": "Pipeline identity object ID" }
+      }
+    },
+    "policyRule": {
+      "if": {
+        "field": "type",
+        "equals": "Microsoft.Resources/subscriptions"
+      },
+      "then": {
+        "effect": "deployIfNotExists",
+        "details": {
+          "type": "Microsoft.Authorization/roleAssignments",
+          "roleDefinitionIds": [
+            "[parameters('roleDefinitionId')]"
+          ],
+          "existenceCondition": {
+            "allOf": [
+              { "field": "Microsoft.Authorization/roleAssignments/principalId",
+                "equals": "[parameters('principalId')]" },
+              { "field": "Microsoft.Authorization/roleAssignments/roleDefinitionId",
+                "equals": "[parameters('roleDefinitionId')]" }
+            ]
+          },
+          "deployment": {
+            "properties": {
+              "mode": "Incremental",
+              "parameters": {
+                "roleDefinitionId": { "value": "[parameters('roleDefinitionId')]" },
+                "principalId":      { "value": "[parameters('principalId')]" }
+              },
+              "template": {
+                "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+                "contentVersion": "1.0.0.0",
+                "parameters": {
+                  "roleDefinitionId": { "type": "string" },
+                  "principalId":      { "type": "string" }
+                },
+                "variables": {
+                  "assignmentName": "[guid(subscription().id, parameters('roleDefinitionId'), parameters('principalId'))]"
+                },
+                "resources": [
+                  {
+                    "type": "Microsoft.Authorization/roleAssignments",
+                    "apiVersion": "2022-04-01",
+                    "name": "[variables('assignmentName')]",
+                    "properties": {
+                      "roleDefinitionId": "[parameters('roleDefinitionId')]",
+                      "principalId":      "[parameters('principalId')]",
+                      "principalType":    "ServicePrincipal"
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+Save the file (for example as `assign-azlocal-update-operator-policy.json`) and create the policy definition at the MG:
+
+```powershell
+az policy definition create `
+    --name        "assign-azlocal-update-operator" `
+    --display-name "Assign Azure Stack HCI Update Operator to update-automation pipeline" `
+    --management-group <your-mg-id> `
+    --rules    "./assign-azlocal-update-operator-policy.json" `
+    --mode All
+```
+
+**Step 5 - assign the policy at the management group with a system-assigned managed identity**
+
+DINE policies need a managed identity that can create the role assignments. Azure Policy creates one automatically when you supply `--mi-system-assigned` and `--location`:
+
+```powershell
+$assignment = az policy assignment create `
+    --name "assign-azlocal-update-operator" `
+    --display-name "Assign Azure Stack HCI Update Operator to update-automation pipeline" `
+    --policy "assign-azlocal-update-operator" `
+    --scope "/providers/Microsoft.Management/managementGroups/<your-mg-id>" `
+    --mi-system-assigned `
+    --location <region> `
+    --params @"
+{
+  \"roleDefinitionId\": { \"value\": \"/providers/Microsoft.Authorization/roleDefinitions/$roleId\" },
+  \"principalId\":      { \"value\": \"$pipelinePrincipalId\" }
+}
+"@ -o json | ConvertFrom-Json
+
+# Grant the policy's managed identity rights to create role assignments at the MG.
+# Use User Access Administrator (or Role Based Access Control Administrator) at the MG scope.
+az role assignment create `
+    --assignee-object-id      $assignment.identity.principalId `
+    --assignee-principal-type ServicePrincipal `
+    --role "User Access Administrator" `
+    --scope "/providers/Microsoft.Management/managementGroups/<your-mg-id>"
+```
+
+> **Required permissions for this step**: You need `Owner` or `User Access Administrator` (or `Role Based Access Control Administrator`) at the management-group scope to create the policy assignment AND to grant the policy's MI `User Access Administrator`. This is intentionally a privileged one-time setup - day-to-day onboarding of new subscriptions then requires no RBAC privilege at all (the policy does it).
+
+**Step 6 - remediate existing subscriptions** (one-time):
+
+```powershell
+az policy remediation create `
+    --name "remediate-existing-subs-azlocal-update-operator" `
+    --policy-assignment "/providers/Microsoft.Management/managementGroups/<your-mg-id>/providers/Microsoft.Authorization/policyAssignments/assign-azlocal-update-operator" `
+    --resource-discovery-mode ReEvaluateCompliance
+```
+
+This walks every subscription already under the MG, evaluates compliance, and creates the missing role assignment where required. New subscriptions added to the MG after this point are auto-remediated as they are created (the DINE effect runs on resource create).
+
+**Trade-offs vs the per-subscription `AssignableScopes` list**
+
+| Aspect | Per-subscription `AssignableScopes` list | Management group + Policy DINE |
+|---|---|---|
+| Onboarding a new subscription | `az role definition update` to extend `AssignableScopes`, then `az role assignment create` per sub | Automatic - just move the sub under the MG |
+| Scale cap | 2000 entries per role definition | Effectively unbounded |
+| Standing privilege required | `Microsoft.Authorization/roleDefinitions/write` + `roleAssignments/write` at each subscription, every time | `Owner` / `UAA` at the MG once, then nothing |
+| Drift correction | Manual audit | Automatic - non-compliant subs visible in Policy compliance and re-remediable on demand |
+| Audit surface | RBAC blade per sub | Azure Policy compliance dashboard + Activity Log per subscription |
+| Time-to-onboard | Manual, per-sub | Sub-creation -> policy evaluation (~minutes) |
+
+**When to stick with the per-subscription list:**
+
+- You don't have access to a management group covering the in-scope subscriptions.
+- The estate is small (1-5 subscriptions) and doesn't change.
+- You explicitly want each role grant to be a deliberate manual operation (e.g. for regulatory reasons).
+
+
 
 If you created the custom role against the v0.7.79-or-earlier definition above, you are missing the three new fleet-connectivity reads (`Microsoft.HybridCompute/machines/read`, `Microsoft.AzureStackHCI/edgeDevices/read`, `Microsoft.ResourceConnector/appliances/read`). Update the existing role in place rather than recreating it (recreating it would invalidate the role ID and break every existing role assignment):
 

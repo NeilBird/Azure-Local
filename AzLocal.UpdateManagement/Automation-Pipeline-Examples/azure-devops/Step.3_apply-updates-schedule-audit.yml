@@ -16,7 +16,7 @@
 #
 # REPORTS GENERATED:
 # - Pipeline run summary (uploaded via ##vso[task.uploadsummary]): Audit + Recommend views
-# - JUnit XML: published to the Test Results tab. One <testcase> per (UpdateRing,
+# - JUnit XML: published to the Test Results tab. One <testcase time="0"> per (UpdateRing,
 #   UpdateStartWindow) pair; uncovered pairs become <failure>.
 # - CSV: schedule-coverage-audit.csv + schedule-coverage-matrix.csv
 # - Markdown: schedule-coverage-recommend.md with the ready-to-paste cron block
@@ -58,7 +58,7 @@ parameters:
     default: 5
 
   - name: firesPerWindow
-    displayName: 'Cron entries Recommend should emit per UpdateStartWindow segment. 2 (default, recommended) = belt-and-braces: opening edge + one mid-window retry capped at +60min, so schedule jitter and transient first-fire failures cannot silently skip a cluster for the day. 1 = opening edge only (pre-v0.7.93 back-compat). Audit semantics are unchanged either way.'
+    displayName: 'Cron entries Recommend should emit per UpdateStartWindow segment. 2 (default, recommended) = belt-and-braces: opening edge + one mid-window retry capped at +60min, so schedule jitter and transient first-fire failures cannot silently skip a cluster for the day. 1 = opening edge only. Audit semantics are unchanged either way.'
     type: number
     default: 2
     values:
@@ -81,7 +81,7 @@ parameters:
     default: false
 
 variables:
-  GENERATED_AGAINST_MODULE_VERSION: '0.7.92'
+  GENERATED_AGAINST_MODULE_VERSION: '0.7.93'
   REQUIRED_MODULE_VERSION: '${{ parameters.moduleVersion }}'
   reportsPath: '$(Build.ArtifactStagingDirectory)/reports'
 
@@ -259,10 +259,10 @@ stages:
                   [string]$EmptyPlaceholderName
               )
               $failures = @($Rows | Where-Object { $_.Status -ne 'Covered' }).Count
-              [void]$Sb.AppendLine(("  <testsuite name=`"{0}`" tests=`"{1}`" failures=`"{2}`">" -f (Convert-XmlEscape $SuiteName), $Rows.Count, $failures))
+              [void]$Sb.AppendLine(("  <testsuite name=`"{0}`" tests=`"{1}`" failures=`"{2}`" time=`"0`">" -f (Convert-XmlEscape $SuiteName), $Rows.Count, $failures))
               foreach ($row in $Rows) {
                   $tcName = ("{0} / {1}" -f $row.UpdateRing, ($(if ($row.UpdateStartWindow) { $row.UpdateStartWindow } else { '(no window)' })))
-                  [void]$Sb.AppendLine(("    <testcase classname=`"ScheduleCoverage`" name=`"{0}`">" -f (Convert-XmlEscape $tcName)))
+                  [void]$Sb.AppendLine(("    <testcase classname=`"ScheduleCoverage`" name=`"{0}`" time=`"0`">" -f (Convert-XmlEscape $tcName)))
                   if ($row.Status -ne 'Covered') {
                       $issue = Convert-XmlEscape $row.Issue
                       $reco  = Convert-XmlEscape $row.Recommendation
@@ -271,12 +271,12 @@ stages:
                   [void]$Sb.AppendLine('    </testcase>')
               }
               if ($Rows.Count -eq 0 -and $EmptyPlaceholderName) {
-                  [void]$Sb.AppendLine(("    <testcase classname=`"ScheduleCoverage`" name=`"{0}`" />" -f (Convert-XmlEscape $EmptyPlaceholderName)))
+                  [void]$Sb.AppendLine(("    <testcase classname=`"ScheduleCoverage`" name=`"{0}`" time=`"0`" />" -f (Convert-XmlEscape $EmptyPlaceholderName)))
               }
               [void]$Sb.AppendLine('  </testsuite>')
           }
 
-          # two <testsuite> elements. Schedule (ring-file gap) FIRST -
+          # two <testsuite time="0"> elements. Schedule (ring-file gap) FIRST -
           # higher blast radius; Cron coverage SECOND.
           $scheduleRows = @($auditResult | Where-Object { $_.Section -eq 'Schedule' })
           $cronRows     = @($auditResult | Where-Object { $_.Section -ne 'Schedule' })
@@ -284,7 +284,7 @@ stages:
           $xmlPath = Join-Path $outputDir 'schedule-coverage-audit.xml'
           $sb = New-Object System.Text.StringBuilder
           [void]$sb.AppendLine('<?xml version="1.0" encoding="UTF-8"?>')
-          [void]$sb.AppendLine('<testsuites>')
+          [void]$sb.AppendLine('<testsuites time="0">')
           if ($haveSchedule -or $scheduleRows.Count -gt 0) {
               Write-Suite -Sb $sb `
                   -SuiteName 'Apply-Updates Schedule Coverage - Schedule (ring diff)' `

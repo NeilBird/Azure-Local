@@ -17,7 +17,7 @@
 # REPORTS GENERATED
 # -----------------
 # - Markdown step summary: human-readable Audit + Matrix views at the top of the run
-# - JUnit XML: one <testcase> per (UpdateRing, UpdateStartWindow) pair - uncovered pairs
+# - JUnit XML: one <testcase time="0"> per (UpdateRing, UpdateStartWindow) pair - uncovered pairs
 #   become <failure>. dorny/test-reporter renders the tree in the run page.
 # - CSV: schedule-coverage-audit.csv with the full Audit view
 # - Markdown: schedule-coverage-recommend.md with the ready-to-paste cron block
@@ -58,7 +58,7 @@ on:
         required: false
         default: '5'
       fires_per_window:
-        description: 'Cron entries the Recommend view should emit per UpdateStartWindow segment. 2 (default, recommended) = belt-and-braces: opening edge + one mid-window retry capped at +60min, so GitHub Actions schedule jitter and transient first-fire failures cannot silently skip a cluster for the day. 1 = opening edge only (pre-v0.7.93 back-compat). The runtime gate + in-flight guard prevent double-triggering. Audit semantics are unchanged either way.'
+        description: 'Cron entries the Recommend view should emit per UpdateStartWindow segment. 2 (default, recommended) = belt-and-braces: opening edge + one mid-window retry capped at +60min, so GitHub Actions schedule jitter and transient first-fire failures cannot silently skip a cluster for the day. 1 = opening edge only. The runtime gate + in-flight guard prevent double-triggering. Audit semantics are unchanged either way.'
         required: false
         default: '2'
         type: choice
@@ -91,7 +91,7 @@ env:
   # this to the version actually installed and to the latest on PSGallery, and emits a
   # ::notice annotation if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.7.92'
+  GENERATED_AGAINST_MODULE_VERSION: '0.7.93'
   REQUIRED_MODULE_VERSION: ${{ github.event.inputs.module_version || vars.REQUIRED_MODULE_VERSION || '' }}
 
 jobs:
@@ -275,7 +275,7 @@ jobs:
         $ringMixed   = @($audit | Where-Object Status -eq 'RingMixedWindows')
 
         # ------------------------------------------------------------------
-        # JUnit XML: two <testsuite> elements so the test reporter
+        # JUnit XML: two <testsuite time="0"> elements so the test reporter
         # tree separates schedule-file gap rows (Schedule section) from cron
         # coverage rows (Cron section). Schedule gaps have higher blast
         # radius (apply-updates NEVER fires for those rings), so the suite
@@ -295,10 +295,10 @@ jobs:
                 [string]$EmptyPlaceholderName
             )
             $failures = @($Rows | Where-Object { $_.Status -ne 'Covered' }).Count
-            [void]$Sb.AppendLine(("  <testsuite name=`"{0}`" tests=`"{1}`" failures=`"{2}`">" -f (Convert-XmlEscape $SuiteName), $Rows.Count, $failures))
+            [void]$Sb.AppendLine(("  <testsuite name=`"{0}`" tests=`"{1}`" failures=`"{2}`" time=`"0`">" -f (Convert-XmlEscape $SuiteName), $Rows.Count, $failures))
             foreach ($row in $Rows) {
                 $tcName = ("{0} / {1}" -f $row.UpdateRing, ($(if ($row.UpdateStartWindow) { $row.UpdateStartWindow } else { '(no window)' })))
-                [void]$Sb.AppendLine(("    <testcase classname=`"ScheduleCoverage`" name=`"{0}`">" -f (Convert-XmlEscape $tcName)))
+                [void]$Sb.AppendLine(("    <testcase classname=`"ScheduleCoverage`" name=`"{0}`" time=`"0`">" -f (Convert-XmlEscape $tcName)))
                 if ($row.Status -ne 'Covered') {
                     $issue = Convert-XmlEscape $row.Issue
                     $reco  = Convert-XmlEscape $row.Recommendation
@@ -307,7 +307,7 @@ jobs:
                 [void]$Sb.AppendLine('    </testcase>')
             }
             if ($Rows.Count -eq 0 -and $EmptyPlaceholderName) {
-                [void]$Sb.AppendLine(("    <testcase classname=`"ScheduleCoverage`" name=`"{0}`" />" -f (Convert-XmlEscape $EmptyPlaceholderName)))
+                [void]$Sb.AppendLine(("    <testcase classname=`"ScheduleCoverage`" name=`"{0}`" time=`"0`" />" -f (Convert-XmlEscape $EmptyPlaceholderName)))
             }
             [void]$Sb.AppendLine('  </testsuite>')
         }
@@ -318,7 +318,7 @@ jobs:
         $xmlPath = Join-Path $outputDir 'schedule-coverage-audit.xml'
         $sb = New-Object System.Text.StringBuilder
         [void]$sb.AppendLine('<?xml version="1.0" encoding="UTF-8"?>')
-        [void]$sb.AppendLine('<testsuites>')
+        [void]$sb.AppendLine('<testsuites time="0">')
         # only emit the Schedule suite when -SchedulePath was actually
         # supplied (i.e. there is at least one Schedule row OR the operator
         # provided a schedule file). Otherwise the suite would render as
