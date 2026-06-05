@@ -1584,9 +1584,18 @@ Both default `pipelinePath` to the standard consumer location for the platform: 
 The markdown summary at the top of the run page leads with the counts:
 
 ```
-| (Ring, Window) pairs audited | Covered | Uncovered | PartiallyCovered | MalformedTag | UnparseableCron |
-|---|---|---|---|---|---|
-| 4 | 1 | 2 | 0 | 0 | 0 |
+| Metric                  | Count |
+|-------------------------|-------|
+| (Ring,Window) audited   | 4     |
+| Covered                 | 1     |
+| Uncovered               | 2     |
+| PartiallyCovered        | 0     |
+| MalformedTag            | 0     |
+| UnparseableCron         | 0     |
+| NoWindowTag             | 0     |
+| RingMissingFromSchedule | 0     |
+| RingOrphanedInSchedule  | 0     |
+| RingMixedWindows        | 0     |
 ```
 
 Followed by the per-row detail (Uncovered first):
@@ -1598,19 +1607,38 @@ Followed by the per-row detail (Uncovered first):
 | Covered   | Pilot       | Sat-Sun_02:00-06:00     | 3        | 55 1 * * 6,0        | OK - keep the current schedule. |
 ```
 
-And finally the **ready-to-paste cron block** (Recommend view):
+And finally the **ready-to-paste cron block** (Recommend view). With the default `firesPerWindow: 2`, every window emits **two** cron entries - one tagged `(open)` that fires `leadTimeMinutes` BEFORE the window opens, and one tagged `(retry)` that fires inside the window at the lesser of the window midpoint or +60 min after it opens:
 
 ````yaml
 # --- GitHub Actions: paste under Step.6_apply-updates.yml `on:` ---
 # schedule:
-#   - cron: '55 1 * * 6,0'    # Sat-Sun_02:00-06:00 (rings: Pilot, 3 cluster(s))
-#   - cron: '55 2 * * 0'      # Sun_03:00-07:00     (rings: Production, 312 cluster(s))
-#   - cron: '55 21 * * 1-5'   # Mon-Fri_22:00-04:00 (rings: Wave2, 47 cluster(s))
+#   - cron: '55 1 * * 6,0'    # Sat-Sun_02:00-06:00 (open)  (rings: Pilot, 3 cluster(s))
+#   - cron: '3 3 * * 6,0'     # Sat-Sun_02:00-06:00 (retry) (rings: Pilot, 3 cluster(s))
+#   - cron: '55 2 * * 0'      # Sun_03:00-07:00     (open)  (rings: Production, 312 cluster(s))
+#   - cron: '0 4 * * 0'       # Sun_03:00-07:00     (retry) (rings: Production, 312 cluster(s))
+#   - cron: '55 21 * * 1-5'   # Mon-Fri_22:00-04:00 (open)  (rings: Wave2, 47 cluster(s))
+#   - cron: '0 23 * * 1-5'    # Mon-Fri_22:00-04:00 (retry) (rings: Wave2, 47 cluster(s))
 ````
 
 #### Step 5 - Apply the recommendation
 
 Open `Step.6_apply-updates.yml`, uncomment / paste the recommended `schedule:` (GH) or `schedules:` (ADO) block, and commit. The audit pipeline emits both blocks even when `-Platform Both` is the default - copy the section that matches your CI/CD platform.
+
+#### Why two cron entries per window? (belt-and-braces)
+
+The default `firesPerWindow: 2` on Step.3 is **recommended** because a single cron per window has three known silent-skip modes:
+
+1. **GitHub Actions schedule jitter** - the GH-hosted scheduler can delay a cron trigger by **up to ~15 minutes** during busy periods. On tight maintenance windows (e.g. a 1-hour window starting at 02:00), a heavily-delayed opening cron can land outside the window, the runtime gate (`Test-AzLocalUpdateScheduleAllowed`) returns false, and the cluster is silently skipped that day with no error. Azure DevOps schedules are more punctual but still subject to runner-pool availability.
+2. **Transient first-fire failures** - auth handshake glitches, runner-pool exhaustion, PSGallery hiccups during module install. A single retry from inside the window catches these without operator intervention.
+3. **Long windows wasted half their duration on the retry** if the second cron were placed at the naive midpoint. Capping the retry at **+60 min after the window opens** keeps retries quick: a 24-hour window retries at +60 min, not at +12 hours.
+
+The runtime gate (`Test-AzLocalUpdateScheduleAllowed`) plus the existing in-flight guard ensure clusters whose first run is already in progress are **never** double-triggered by the retry cron - it is purely an additional safety net.
+
+Pass `fires_per_window: '1'` (GitHub) or `firesPerWindow: 1` (ADO) on Step.3 to disable the retry tier and emit only the opening crons. Audit semantics ("Covered" / "Uncovered") are unchanged in either mode - the audit only requires the opening-edge cron to be present in the YAML.
+
+##### Same-Ring, different-Windows (RingMixedWindows)
+
+If two clusters share an `UpdateRing` tag but carry **different** `UpdateStartWindow` values (e.g. follow-the-sun, or a typo), Step.3 emits a separate `Covered` / `Uncovered` row for each (Ring, Window) pair AND a single informational `RingMixedWindows` warning row in the Schedule sub-table. The runtime gate reads each cluster's own tag so updates still fire correctly, but the ring no longer represents a single maintenance window for operator mental-model purposes. The warning row's recommendation lists three resolution choices: (a) standardise the ring to one window, (b) split into separate rings, or (c) accept the divergence and document it in the schedule file's `notes` column. `RingMixedWindows` is **not** counted as an `Uncovered` failure - the pipeline does not gate on it.
 
 #### Step 6 - Re-run the audit to verify
 

@@ -93,7 +93,7 @@ Docs/YAML-only feature release. No cmdlet behaviour changes, no schema changes, 
 - `Step.9_fleet-health-status.yml` - collapsible per-cluster `Detailed Results` + hyperlinks open in a new tab.
 - `Step.8_fleet-update-status.yml` - hyperlinks open in a new tab.
 - `Step.7_monitor-updates.yml` - active default schedule (5x/day, every 2h overnight).
-- `Step.3_apply-updates-schedule-audit.yml` - summary metric table now reconciles when `IncludeUntagged: true`.
+- `Step.3_apply-updates-schedule-audit.yml` - summary metric table now reconciles when `IncludeUntagged: true`; Recommend tier now emits **two crons per window by default** (belt-and-braces opening + mid-window retry) controlled by the new `fires_per_window` input; new `RingMixedWindows` informational warning bucket when the same `UpdateRing` carries different `UpdateStartWindow` values.
 
 Plus an operator-UX strand around `Copy-AzLocalPipelineExample` + the step-by-step setup that explicitly surfaces `apply-updates-schedule.yml` (the ring-aware schedule file required for scheduled Step.6 runs) - see [the section below](#apply-updates-scheduleyml---now-called-out-in-the-step-by-step-setup).
 
@@ -139,6 +139,24 @@ The prose links use `rel="noopener noreferrer"` for standard `target="_blank"` h
 ### Step.3 schedule-audit summary metric table - reconciles when `IncludeUntagged: true`
 
 The summary metric table at the top of the `Step.3_apply-updates-schedule-audit.yml` step summary (GitHub Actions + Azure DevOps) previously surfaced only 7 of the 8 possible `Status` buckets - the `NoWindowTag` row (clusters with no `UpdateStartWindow` tag, emitted only when `IncludeUntagged: true` is set on the workflow input) was missing. Result: `(Ring, Window) pairs audited` did not equal the sum of the visible bucket counts (for example audited=7 but Covered+Uncovered+... summed to 6) when at least one cluster fell into `NoWindowTag`, which made the table look broken even though the underlying data and the `Audit Detail` table below were correct. v0.7.92 adds the missing `NoWindowTag` row and includes it in the `hasIssues` calculation so the action-required Recommend block surfaces when untagged clusters are present. `Test-AzLocalApplyUpdatesScheduleCoverage` itself is unchanged.
+
+### Step.3 schedule-audit Recommend tier - belt-and-braces (two crons per window) + `RingMixedWindows`
+
+Two related additions to the read-only Step.3 audit pipeline, both layered safely on top of the existing audit semantics ("Covered" / "Uncovered" are unchanged - only the Recommend snippet rendered for operators changes shape, and a new informational status surfaces a divergence that was previously invisible).
+
+**Belt-and-braces: two crons per window by default.** The Recommend view previously emitted **one** cron per `UpdateStartWindow` segment, firing `LeadTimeMinutes` before the window opens. On heavily-loaded GitHub Actions schedules a single cron can be **skipped by jitter (~15 min)** on a tight maintenance window, and a **transient first-fire failure** (auth blip, runner pool exhaustion, module install hiccup) can leave the cluster un-updated for the day with no error. From v0.7.92 the Recommend snippet emits **two** crons per window by default:
+
+1. **`(open)`** - the existing opening-edge cron, fires `LeadTimeMinutes` before the window opens.
+2. **`(retry)`** - a second cron INSIDE the window at the lesser of the **midpoint** or **+60 minutes** after the window opens.
+
+The runtime gate (`Test-AzLocalUpdateScheduleAllowed`) plus the existing in-flight guard prevent double-triggering: the retry cron only does work if the open-edge fire was skipped or failed. Controlled by:
+
+- New `-RecommendFiresPerWindow` parameter on `Test-AzLocalApplyUpdatesScheduleCoverage` (default `2`, range `1-2`).
+- New `fires_per_window` (GH Actions) / `firesPerWindow` (Azure DevOps) workflow input on `Step.3_apply-updates-schedule-audit.yml` (default `2`, choice `1`/`2`) that flows through to the cmdlet.
+
+Pass `1` to disable the retry tier (back-compat for pre-v0.7.92 callers).
+
+**New `RingMixedWindows` informational status.** The Audit view now emits a `Schedule` / `RingMixedWindows` row when 2+ clusters share an `UpdateRing` tag but carry **different** `UpdateStartWindow` values (follow-the-sun, regional rollouts, or tagging mistakes). Each (Ring, Window) pair still gets its own per-pair coverage row above; the runtime gate reads each cluster's own tag so updates still fire correctly. The new bucket surfaces the divergence with a 3-choice recommendation (standardise via `Set-AzLocalClusterUpdateRingTag`, split into separate rings, or accept and document). **Not counted as `Uncovered`** - the pipeline does not gate on it (`$hasIssues` ignores `RingMixedWindows`).
 
 ### Migration
 

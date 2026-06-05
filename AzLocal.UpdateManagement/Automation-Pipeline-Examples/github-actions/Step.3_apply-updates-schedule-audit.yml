@@ -57,6 +57,14 @@ on:
         description: 'Minutes before UpdateStartWindow opens that the pipeline should fire (0-60). Default 5.'
         required: false
         default: '5'
+      fires_per_window:
+        description: 'Cron entries the Recommend view should emit per UpdateStartWindow segment. 2 (default, recommended) = belt-and-braces: opening edge + one mid-window retry capped at +60min, so GitHub Actions schedule jitter and transient first-fire failures cannot silently skip a cluster for the day. 1 = opening edge only (pre-v0.7.93 back-compat). The runtime gate + in-flight guard prevent double-triggering. Audit semantics are unchanged either way.'
+        required: false
+        default: '2'
+        type: choice
+        options:
+          - '1'
+          - '2'
       include_untagged:
         description: 'Surface clusters with no UpdateStartWindow tag as their own row.'
         required: false
@@ -161,6 +169,7 @@ jobs:
         INPUT_PIPELINE_PATH:     ${{ github.event.inputs.pipeline_path || '.github/workflows' }}
         INPUT_SCHEDULE_PATH:     ${{ github.event.inputs.schedule_path || '.github/apply-updates-schedule.yml' }}
         INPUT_LEAD_TIME_MINUTES: ${{ github.event.inputs.lead_time_minutes || '5' }}
+        INPUT_FIRES_PER_WINDOW:  ${{ github.event.inputs.fires_per_window || '2' }}
         INPUT_INCLUDE_UNTAGGED:  ${{ github.event.inputs.include_untagged || 'false' }}
         INPUT_DEBUG:             ${{ github.event.inputs.debug || 'false' }}
       run: |
@@ -190,6 +199,7 @@ jobs:
         $pipelinePath = $env:INPUT_PIPELINE_PATH
         $schedulePath = $env:INPUT_SCHEDULE_PATH
         $leadTime     = [int]$env:INPUT_LEAD_TIME_MINUTES
+        $firesPerWin  = [int]$env:INPUT_FIRES_PER_WINDOW
         $includeUnt   = ($env:INPUT_INCLUDE_UNTAGGED -eq 'true')
 
         # pipeline_path is OPTIONAL when schedule_path is set. The audit
@@ -215,6 +225,7 @@ jobs:
         Write-Host "PipelineYamlPath : $(if ($pipelinePath) { $pipelinePath } else { '(skipped - pipeline_path empty)' })"
         Write-Host "SchedulePath     : $(if ($haveSchedule) { $schedulePath } else { '(skipped - schedule_path empty or file missing)' })"
         Write-Host "LeadTimeMinutes  : $leadTime"
+        Write-Host "FiresPerWindow   : $firesPerWin   (1 = opening edge only, 2 = belt-and-braces opening + mid-window retry)"
         Write-Host "IncludeUntagged  : $includeUnt"
         Write-Host ""
 
@@ -228,11 +239,12 @@ jobs:
         # The cmdlet's default is 'Both' (intentional for ad-hoc operator use),
         # so the pipeline yml has to specify which platform it's running on.
         $auditArgs = @{
-            View             = 'Audit'
-            LeadTimeMinutes  = $leadTime
-            ExportPath       = $auditCsv
-            Platform         = 'GitHubActions'
-            PassThru         = $true
+            View                    = 'Audit'
+            LeadTimeMinutes         = $leadTime
+            RecommendFiresPerWindow = $firesPerWin
+            ExportPath              = $auditCsv
+            Platform                = 'GitHubActions'
+            PassThru                = $true
         }
         if ($havePipeline) { $auditArgs.PipelineYamlPath = $pipelinePath }
         if ($haveSchedule) { $auditArgs.SchedulePath     = $schedulePath }
@@ -244,7 +256,7 @@ jobs:
         Test-AzLocalApplyUpdatesScheduleCoverage -View Matrix -LeadTimeMinutes $leadTime -ExportPath $matrixCsv | Out-Null
 
         # Recommend view (markdown snippet) - GitHub Actions only.
-        Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend -LeadTimeMinutes $leadTime -Platform GitHubActions -ExportPath $recoMd | Out-Null
+        Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend -LeadTimeMinutes $leadTime -RecommendFiresPerWindow $firesPerWin -Platform GitHubActions -ExportPath $recoMd | Out-Null
 
         $covered     = @($audit | Where-Object Status -eq 'Covered')
         $uncovered   = @($audit | Where-Object Status -eq 'Uncovered')
@@ -256,6 +268,11 @@ jobs:
         # schedule-file two-way diff buckets.
         $ringMissing = @($audit | Where-Object Status -eq 'RingMissingFromSchedule')
         $ringOrphan  = @($audit | Where-Object Status -eq 'RingOrphanedInSchedule')
+        # v0.7.92: same-ring mixed-window detector. Informational - the runtime
+        # gate reads per-cluster tags so updates still fire, but surfaces a
+        # ring whose clusters disagree on UpdateStartWindow value so the
+        # operator can decide to standardise or split the ring.
+        $ringMixed   = @($audit | Where-Object Status -eq 'RingMixedWindows')
 
         # ------------------------------------------------------------------
         # JUnit XML: two <testsuite> elements so the test reporter
@@ -331,6 +348,7 @@ jobs:
         "NO_WINDOW_TAG=$($noWindowTag.Count)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
         "RING_MISSING=$($ringMissing.Count)"  | Out-File -FilePath $env:GITHUB_OUTPUT -Append
         "RING_ORPHAN=$($ringOrphan.Count)"    | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+        "RING_MIXED=$($ringMixed.Count)"      | Out-File -FilePath $env:GITHUB_OUTPUT -Append
         # v0.7.90: surface whether -SchedulePath was supplied + its value
         # so the summary step (separate step scope) can render the
         # Schedule (ring-file gap) detail table and the new allow-list
@@ -350,6 +368,7 @@ jobs:
         Write-Host "  NoWindowTag              : $($noWindowTag.Count)"
         Write-Host "  RingMissingFromSchedule  : $($ringMissing.Count)"
         Write-Host "  RingOrphanedInSchedule   : $($ringOrphan.Count)"
+        Write-Host "  RingMixedWindows         : $($ringMixed.Count)"
 
     - name: Compute Artifact Timestamp
       if: always()
@@ -383,6 +402,7 @@ jobs:
         $noWindowTag = "${{ steps.audit.outputs.NO_WINDOW_TAG }}"
         $ringMissing = "${{ steps.audit.outputs.RING_MISSING }}"
         $ringOrphan  = "${{ steps.audit.outputs.RING_ORPHAN }}"
+        $ringMixed   = "${{ steps.audit.outputs.RING_MIXED }}"
         # v0.7.90: pulled forward from the audit step so this summary step
         # can render the Schedule (ring-file gap) detail table and the
         # allow-list coverage section. Without this, $haveSchedule was
@@ -421,6 +441,7 @@ jobs:
         | **NoWindowTag** | $noWindowTag |
         | **RingMissingFromSchedule** | $ringMissing |
         | **RingOrphanedInSchedule** | $ringOrphan |
+        | **RingMixedWindows** | $ringMixed |
 
         "@
 

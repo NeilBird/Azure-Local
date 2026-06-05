@@ -57,6 +57,14 @@ parameters:
     type: number
     default: 5
 
+  - name: firesPerWindow
+    displayName: 'Cron entries Recommend should emit per UpdateStartWindow segment. 2 (default, recommended) = belt-and-braces: opening edge + one mid-window retry capped at +60min, so schedule jitter and transient first-fire failures cannot silently skip a cluster for the day. 1 = opening edge only (pre-v0.7.93 back-compat). Audit semantics are unchanged either way.'
+    type: number
+    default: 2
+    values:
+      - 1
+      - 2
+
   - name: includeUntagged
     displayName: 'Surface clusters with no UpdateStartWindow tag as their own row'
     type: boolean
@@ -147,6 +155,7 @@ stages:
           $pipelinePath = "${{ parameters.pipelinePath }}"
           $schedulePath = "${{ parameters.schedulePath }}"
           $leadTime     = [int]"${{ parameters.leadTimeMinutes }}"
+          $firesPerWin  = [int]"${{ parameters.firesPerWindow }}"
           $includeUnt   = ${{ lower(parameters.includeUntagged) }}
           $debug        = ('${{ parameters.debug }}' -ieq 'true')
 
@@ -192,6 +201,7 @@ stages:
           Write-Host "PipelineYamlPath : $(if ($pipelinePath) { $pipelinePath } else { '(skipped - pipelinePath empty)' })"
           Write-Host "SchedulePath     : $(if ($haveSchedule) { $schedulePath } else { '(skipped - schedulePath empty or file missing)' })"
           Write-Host "LeadTimeMinutes  : $leadTime"
+          Write-Host "FiresPerWindow   : $firesPerWin   (1 = opening edge only, 2 = belt-and-braces opening + mid-window retry)"
           Write-Host "IncludeUntagged  : $includeUnt"
           Write-Host ""
 
@@ -205,11 +215,12 @@ stages:
           # The cmdlet's default is 'Both' (intentional for ad-hoc operator use),
           # so the pipeline yml has to specify which platform it's running on.
           $auditArgs = @{
-              View             = 'Audit'
-              LeadTimeMinutes  = $leadTime
-              ExportPath       = $auditCsv
-              Platform         = 'AzureDevOps'
-              PassThru         = $true
+              View                    = 'Audit'
+              LeadTimeMinutes         = $leadTime
+              RecommendFiresPerWindow = $firesPerWin
+              ExportPath              = $auditCsv
+              Platform                = 'AzureDevOps'
+              PassThru                = $true
           }
           if ($havePipeline) { $auditArgs.PipelineYamlPath = $pipelinePath }
           if ($haveSchedule) { $auditArgs.SchedulePath     = $schedulePath }
@@ -218,7 +229,7 @@ stages:
           if (-not $auditResult) { $auditResult = @() }
 
           Test-AzLocalApplyUpdatesScheduleCoverage -View Matrix -LeadTimeMinutes $leadTime -ExportPath $matrixCsv | Out-Null
-          Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend -LeadTimeMinutes $leadTime -Platform AzureDevOps -ExportPath $recoMd | Out-Null
+          Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend -LeadTimeMinutes $leadTime -RecommendFiresPerWindow $firesPerWin -Platform AzureDevOps -ExportPath $recoMd | Out-Null
 
           $covered     = @($auditResult | Where-Object Status -eq 'Covered')
           $uncovered   = @($auditResult | Where-Object Status -eq 'Uncovered')
@@ -230,6 +241,11 @@ stages:
           # schedule-file two-way diff buckets.
           $ringMissing = @($auditResult | Where-Object Status -eq 'RingMissingFromSchedule')
           $ringOrphan  = @($auditResult | Where-Object Status -eq 'RingOrphanedInSchedule')
+          # v0.7.92: same-ring mixed-window detector. Informational - the runtime
+          # gate reads per-cluster tags so updates still fire, but surfaces a
+          # ring whose clusters disagree on UpdateStartWindow value so the
+          # operator can decide to standardise or split the ring.
+          $ringMixed   = @($auditResult | Where-Object Status -eq 'RingMixedWindows')
 
           function Convert-XmlEscape([string]$s) {
               if ($null -eq $s) { return '' }
@@ -293,6 +309,7 @@ stages:
           "##vso[task.setvariable variable=noWindowTag;isOutput=true]$($noWindowTag.Count)"     | Write-Host
           "##vso[task.setvariable variable=ringMissing;isOutput=true]$($ringMissing.Count)"     | Write-Host
           "##vso[task.setvariable variable=ringOrphan;isOutput=true]$($ringOrphan.Count)"       | Write-Host
+          "##vso[task.setvariable variable=ringMixed;isOutput=true]$($ringMixed.Count)"         | Write-Host
           "##vso[task.setvariable variable=haveSchedule;isOutput=true]$([int]$haveSchedule)"    | Write-Host
           # v0.7.90: surface the schedule file path to the summary step
           # so it can re-load the schedule for the allow-list coverage
@@ -312,6 +329,7 @@ stages:
           Write-Host "  NoWindowTag              : $($noWindowTag.Count)"
           Write-Host "  RingMissingFromSchedule  : $($ringMissing.Count)"
           Write-Host "  RingOrphanedInSchedule   : $($ringOrphan.Count)"
+          Write-Host "  RingMixedWindows         : $($ringMixed.Count)"
 
     # compute a UTC timestamp variable so every downloadable artifact name is unique per run.
     - pwsh: |
@@ -340,10 +358,11 @@ stages:
         $noWindowTag = "$(audit.noWindowTag)"
         $ringMissing = "$(audit.ringMissing)"
         $ringOrphan  = "$(audit.ringOrphan)"
+        $ringMixed   = "$(audit.ringMixed)"
         $haveSchedule = ("$(audit.haveSchedule)" -eq '1')
         $schedulePath = "$(audit.schedulePath)"
 
-        Write-Host "##vso[task.uploadsummary]Schedule Coverage: $covered covered, $uncovered uncovered, $partial partial, $malformed malformed, $unparseable unparseable, $noWindowTag no-window-tag, $ringMissing missing-from-schedule, $ringOrphan orphan-in-schedule"
+        Write-Host "##vso[task.uploadsummary]Schedule Coverage: $covered covered, $uncovered uncovered, $partial partial, $malformed malformed, $unparseable unparseable, $noWindowTag no-window-tag, $ringMissing missing-from-schedule, $ringOrphan orphan-in-schedule, $ringMixed mixed-windows"
 
         $rowsPath = Join-Path '$(reportsPath)' 'schedule-coverage-audit.csv'
         $recoPath = Join-Path '$(reportsPath)' 'schedule-coverage-recommend.md'
@@ -371,6 +390,7 @@ stages:
         | **NoWindowTag** | $noWindowTag |
         | **RingMissingFromSchedule** | $ringMissing |
         | **RingOrphanedInSchedule** | $ringOrphan |
+        | **RingMixedWindows** | $ringMixed |
 
         "@
 

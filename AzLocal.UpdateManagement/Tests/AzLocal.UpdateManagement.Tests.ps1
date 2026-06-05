@@ -6044,6 +6044,94 @@ Describe 'Function: Test-AzLocalApplyUpdatesScheduleCoverage' {
         }
     }
 
+    Context 'Private helper: Convert-AzLocalUpdateWindowToCron -FiresPerWindow 2 (belt-and-braces, v0.7.92)' {
+        It 'FiresPerWindow=1 (default) is back-compat: one row per segment, IsRetry=false' {
+            InModuleScope AzLocal.UpdateManagement {
+                $r = Convert-AzLocalUpdateWindowToCron -UpdateStartWindow 'Sat-Sun_02:00-06:00' -LeadTimeMinutes 5
+                $r | Should -HaveCount 1
+                $r[0].IsRetry | Should -BeFalse
+            }
+        }
+
+        It '4h window Sat-Sun_02:00-06:00: open at 01:55, retry at +60min cap (03:00)' {
+            InModuleScope AzLocal.UpdateManagement {
+                $r = Convert-AzLocalUpdateWindowToCron -UpdateStartWindow 'Sat-Sun_02:00-06:00' -LeadTimeMinutes 5 -FiresPerWindow 2
+                $r | Should -HaveCount 2
+                $r[0].CronExpression | Should -Be '55 1 * * 6,0'
+                $r[0].IsRetry | Should -BeFalse
+                $r[1].CronExpression | Should -Be '0 3 * * 6,0'
+                $r[1].IsRetry | Should -BeTrue
+                $r[1].DayShift | Should -BeFalse
+            }
+        }
+
+        It '3h window Mon-Fri_20:00-23:00: open at 19:55, retry at midpoint 21:00 (180/2=90, capped to 60)' {
+            InModuleScope AzLocal.UpdateManagement {
+                $r = Convert-AzLocalUpdateWindowToCron -UpdateStartWindow 'Mon-Fri_20:00-23:00' -LeadTimeMinutes 5 -FiresPerWindow 2
+                $r | Should -HaveCount 2
+                $r[0].CronExpression | Should -Be '55 19 * * 1-5'
+                $r[1].CronExpression | Should -Be '0 21 * * 1-5'
+                $r[1].IsRetry | Should -BeTrue
+            }
+        }
+
+        It '6h overnight Mon-Fri_22:00-04:00: retry at 23:00 (no day shift, window has not crossed midnight yet)' {
+            InModuleScope AzLocal.UpdateManagement {
+                $r = Convert-AzLocalUpdateWindowToCron -UpdateStartWindow 'Mon-Fri_22:00-04:00' -LeadTimeMinutes 5 -FiresPerWindow 2
+                $r | Should -HaveCount 2
+                $r[0].CronExpression | Should -Be '55 21 * * 1-5'
+                $r[1].CronExpression | Should -Be '0 23 * * 1-5'
+                $r[1].IsRetry | Should -BeTrue
+                $r[1].DayShift | Should -BeFalse
+            }
+        }
+
+        It 'Short window Sat_03:00-03:30 (30min): retry at midpoint 03:15' {
+            InModuleScope AzLocal.UpdateManagement {
+                $r = Convert-AzLocalUpdateWindowToCron -UpdateStartWindow 'Sat_03:00-03:30' -LeadTimeMinutes 5 -FiresPerWindow 2
+                $r | Should -HaveCount 2
+                $r[0].CronExpression | Should -Be '55 2 * * 6'
+                $r[1].CronExpression | Should -Be '15 3 * * 6'
+                $r[1].IsRetry | Should -BeTrue
+            }
+        }
+
+        It 'Overnight crossing midnight: Mon_23:30-00:30 retry at 24:00 forward-day-shifts to Tue 00:00' {
+            InModuleScope AzLocal.UpdateManagement {
+                $r = Convert-AzLocalUpdateWindowToCron -UpdateStartWindow 'Mon_23:30-00:30' -LeadTimeMinutes 5 -FiresPerWindow 2
+                $r | Should -HaveCount 2
+                # Open: 23:30 - 5min lead = 23:25 Mon (no shift, still Mon).
+                $r[0].CronExpression | Should -Be '25 23 * * 1'
+                $r[0].DayShift | Should -BeFalse
+                # Retry: 23:30 + 30min midpoint = 24:00 -> 00:00 Tue (forward day shift).
+                $r[1].CronExpression | Should -Be '0 0 * * 2'
+                $r[1].IsRetry | Should -BeTrue
+                $r[1].DayShift | Should -BeTrue
+            }
+        }
+
+        It '24h-style window Mon-Fri_00:00-23:00: retry capped at +60min (01:00, same day, no shift)' {
+            InModuleScope AzLocal.UpdateManagement {
+                $r = Convert-AzLocalUpdateWindowToCron -UpdateStartWindow 'Mon-Fri_00:00-23:00' -LeadTimeMinutes 0 -FiresPerWindow 2
+                $r | Should -HaveCount 2
+                $r[0].CronExpression | Should -Be '0 0 * * 1-5'
+                # 23h = 1380min, midpoint 690min, capped to 60 -> 01:00.
+                $r[1].CronExpression | Should -Be '0 1 * * 1-5'
+                $r[1].IsRetry | Should -BeTrue
+                $r[1].DayShift | Should -BeFalse
+            }
+        }
+
+        It 'Multi-segment window with FiresPerWindow=2 emits TWO rows per segment (4 total)' {
+            InModuleScope AzLocal.UpdateManagement {
+                $r = Convert-AzLocalUpdateWindowToCron -UpdateStartWindow 'Mon-Fri_22:00-04:00;Sat-Sun_02:00-06:00' -LeadTimeMinutes 5 -FiresPerWindow 2
+                $r | Should -HaveCount 4
+                @($r | Where-Object IsRetry -eq $false).Count | Should -Be 2
+                @($r | Where-Object IsRetry -eq $true).Count  | Should -Be 2
+            }
+        }
+    }
+
     Context 'Private helper: ConvertFrom-AzLocalCronExpression' {
         It 'Parses 55 1 * * 6,0 and enumerates 2 fire times in the reference week' {
             InModuleScope AzLocal.UpdateManagement {
@@ -6329,7 +6417,8 @@ on:
                         [PSCustomObject]@{ ClusterName='c2'; ResourceGroup='r'; SubscriptionId='s'; ClusterResourceId='/s/r/c2'; UpdateRing='Wave1'; UpdateStartWindow='Sat-Sun_02:00-06:00' }
                     )
                 }
-                $result = Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend -PassThru 6>$null
+                # Pin to FiresPerWindow=1 (pre-v0.7.92 behaviour) so the single-cron dedupe assertion still holds.
+                $result = Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend -RecommendFiresPerWindow 1 -PassThru 6>$null
                 $result | Should -HaveCount 1
                 $result[0].CronExpression | Should -Be '55 1 * * 6,0'
                 $result[0].ClusterCount   | Should -Be 2
@@ -6360,6 +6449,88 @@ on:
                 }
                 $result = Test-AzLocalApplyUpdatesScheduleCoverage -View Audit -PipelineYamlPath $tmpYamlDir2 -IncludeUntagged -PassThru 6>$null
                 ($result | Where-Object Status -eq 'NoWindowTag').ClusterCount | Should -Be 1
+            }
+        }
+    }
+
+    Context 'Belt-and-braces: -RecommendFiresPerWindow + RingMixedWindows (v0.7.92)' {
+        BeforeAll {
+            $script:beltYamlDir = Join-Path $env:TEMP "schedule-cov-belt-$(Get-Random)"
+            New-Item -ItemType Directory -Path (Join-Path $script:beltYamlDir 'github-actions') -Force | Out-Null
+            # Cover the Sat-Sun opening edge so Audit reports Covered for that ring.
+            @"
+on:
+  schedule:
+    - cron: '55 1 * * 6,0'
+"@ | Set-Content -Path (Join-Path $script:beltYamlDir 'github-actions\Step.6_apply-updates.yml') -Encoding ASCII
+        }
+        AfterAll {
+            Remove-Item -Path $script:beltYamlDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+
+        It 'Recommend default (-RecommendFiresPerWindow=2) emits TWO rows per window (open + retry)' {
+            InModuleScope AzLocal.UpdateManagement {
+                Mock Invoke-AzResourceGraphQuery {
+                    @(
+                        [PSCustomObject]@{ ClusterName='c1'; ResourceGroup='r'; SubscriptionId='s'; ClusterResourceId='/s/r/c1'; UpdateRing='Pilot'; UpdateStartWindow='Sat-Sun_02:00-06:00' }
+                    )
+                }
+                $result = Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend -PassThru 6>$null
+                @($result).Count | Should -Be 2
+                $open  = $result | Where-Object CronExpression -eq '55 1 * * 6,0'
+                $retry = $result | Where-Object CronExpression -eq '0 3 * * 6,0'
+                $open  | Should -Not -BeNullOrEmpty
+                $retry | Should -Not -BeNullOrEmpty
+                $open.Snippet  | Should -Match '\(open\)'
+                $retry.Snippet | Should -Match '\(retry\)'
+            }
+        }
+
+        It 'Recommend with -RecommendFiresPerWindow 1 emits ONLY the opening cron (back-compat)' {
+            InModuleScope AzLocal.UpdateManagement {
+                Mock Invoke-AzResourceGraphQuery {
+                    @(
+                        [PSCustomObject]@{ ClusterName='c1'; ResourceGroup='r'; SubscriptionId='s'; ClusterResourceId='/s/r/c1'; UpdateRing='Pilot'; UpdateStartWindow='Sat-Sun_02:00-06:00' }
+                    )
+                }
+                $result = Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend -RecommendFiresPerWindow 1 -PassThru 6>$null
+                @($result).Count | Should -Be 1
+                $result[0].CronExpression | Should -Be '55 1 * * 6,0'
+            }
+        }
+
+        It 'Audit emits RingMixedWindows when same ring has two different UpdateStartWindow values' {
+            InModuleScope AzLocal.UpdateManagement -Parameters @{ beltYamlDir = $script:beltYamlDir } {
+                param($beltYamlDir)
+                Mock Invoke-AzResourceGraphQuery {
+                    @(
+                        [PSCustomObject]@{ ClusterName='c1'; ResourceGroup='r'; SubscriptionId='s'; ClusterResourceId='/s/r/c1'; UpdateRing='Production'; UpdateStartWindow='Sat-Sun_02:00-06:00' },
+                        [PSCustomObject]@{ ClusterName='c2'; ResourceGroup='r'; SubscriptionId='s'; ClusterResourceId='/s/r/c2'; UpdateRing='Production'; UpdateStartWindow='Mon-Fri_22:00-04:00' }
+                    )
+                }
+                $result = Test-AzLocalApplyUpdatesScheduleCoverage -View Audit -PipelineYamlPath $beltYamlDir -PassThru 6>$null
+                $mixed = @($result | Where-Object Status -eq 'RingMixedWindows')
+                $mixed | Should -HaveCount 1
+                $mixed[0].UpdateRing | Should -Be 'Production'
+                $mixed[0].ClusterCount | Should -Be 2
+                $mixed[0].UpdateStartWindow | Should -Match 'Mon-Fri_22:00-04:00'
+                $mixed[0].UpdateStartWindow | Should -Match 'Sat-Sun_02:00-06:00'
+                # Per-(Ring, Window) coverage rows are also emitted alongside the mixed warning.
+                @($result | Where-Object { $_.UpdateRing -eq 'Production' -and $_.Status -in @('Covered','Uncovered','PartiallyCovered') }).Count | Should -Be 2
+            }
+        }
+
+        It 'Audit does NOT emit RingMixedWindows when each ring has a single UpdateStartWindow' {
+            InModuleScope AzLocal.UpdateManagement -Parameters @{ beltYamlDir = $script:beltYamlDir } {
+                param($beltYamlDir)
+                Mock Invoke-AzResourceGraphQuery {
+                    @(
+                        [PSCustomObject]@{ ClusterName='c1'; ResourceGroup='r'; SubscriptionId='s'; ClusterResourceId='/s/r/c1'; UpdateRing='Pilot';      UpdateStartWindow='Sat-Sun_02:00-06:00' },
+                        [PSCustomObject]@{ ClusterName='c2'; ResourceGroup='r'; SubscriptionId='s'; ClusterResourceId='/s/r/c2'; UpdateRing='Production'; UpdateStartWindow='Mon-Fri_22:00-04:00' }
+                    )
+                }
+                $result = Test-AzLocalApplyUpdatesScheduleCoverage -View Audit -PipelineYamlPath $beltYamlDir -PassThru 6>$null
+                @($result | Where-Object Status -eq 'RingMixedWindows') | Should -HaveCount 0
             }
         }
     }
@@ -6449,7 +6620,8 @@ on:
                         [PSCustomObject]@{ ClusterName='c1'; ResourceGroup='r'; SubscriptionId='s'; ClusterResourceId='/s/r/c1'; UpdateRing='HybridRing'; UpdateStartWindow='Mon-Fri_22:00-04:00;Sat-Sun_02:00-10:00' }
                     )
                 }
-                $result = Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend -PassThru 6>$null
+                # Pin to FiresPerWindow=1 (pre-v0.7.92 behaviour) so the per-segment row count is unambiguous (2 instead of 4 with belt-and-braces).
+                $result = Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend -RecommendFiresPerWindow 1 -PassThru 6>$null
                 # If RequiredCrons collapsed to one nested-array row, Recommend
                 # would emit a single CronExpression equal to a `System.Object[]`
                 # string and the count would be 1. With the fix it should be 2.
