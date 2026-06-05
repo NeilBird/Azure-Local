@@ -30,9 +30,9 @@ It is written in the same step-by-step style as [`ITSM/README.md`](../ITSM/READM
    - [6.2 Plan update rings, windows, and exclusions](#62-plan-update-rings-windows-and-exclusions)
    - [6.3 Apply tags](#63-apply-tags)
    - [6.4 Pre-flight readiness assessment](#64-pre-flight-readiness-assessment)
-   - [6.5 Apply updates - one wave at a time](#65-apply-updates---one-wave-at-a-time)
-   - [6.6 Continuous fleet monitoring](#66-continuous-fleet-monitoring)
-   - [6.7 Schedule coverage drift detection (new in v0.7.65)](#67-schedule-coverage-drift-detection-new-in-v0765)
+   - [6.5 Generate `apply-updates-schedule.yml` from your live fleet](#65-generate-apply-updates-scheduleyml-from-your-live-fleet)
+   - [6.6 Apply updates - one wave at a time](#66-apply-updates---one-wave-at-a-time)
+   - [6.7 Continuous fleet monitoring](#67-continuous-fleet-monitoring)
 7. [Optional: open ITSM tickets for clusters needing operator action](#7-optional-open-itsm-tickets-for-clusters-needing-operator-action)
 8. [Scheduling, maintenance windows, and change-freeze periods](#8-scheduling-maintenance-windows-and-change-freeze-periods)
    - [8.3 End-to-end runbook: Apply-Updates Schedule Coverage Audit](#83-end-to-end-runbook-apply-updates-schedule-coverage-audit)
@@ -1330,7 +1330,31 @@ Common failure classes and where to fix them (the module *detects* blockers, it 
 
 If you do want a hard go / no-go gate (typical for first production wave), have a downstream workflow read the job outputs `not_ready` and `critical_failures` and apply your own tolerance threshold there.
 
-### 6.5 Apply updates - one wave at a time
+### 6.5 Generate `apply-updates-schedule.yml` from your live fleet
+
+`Copy-AzLocalPipelineExample` (run earlier when you wired the pipelines into your repo - see [section 5](#5-wire-the-pipeline-files-into-your-repo)) dropped a **starter** `apply-updates-schedule.yml` next to your pipelines on first copy - GitHub Actions: `.github\apply-updates-schedule.yml`, Azure DevOps: `.\apply-updates-schedule.yml` at repo root. That starter ships with **DEMO** ring names (`Canary`, `DevTest`, `Ring1`, `Ring2`, `Prod`) that almost never match a real estate's `UpdateRing` tag values. Now that section 6.3 has tagged your clusters, regenerate the file so the rings, windows, and `allowedUpdateVersions` reflect the live fleet:
+
+```powershell
+# GitHub Actions
+New-AzLocalApplyUpdatesScheduleConfig -OutputPath .\.github\apply-updates-schedule.yml -Force
+
+# Azure DevOps (default starter location, repo root)
+New-AzLocalApplyUpdatesScheduleConfig -OutputPath .\apply-updates-schedule.yml -Force
+```
+
+The cmdlet inspects every `UpdateRing` and `UpdateStartWindow` tag on the clusters the pipeline identity can read, then emits a schema v2 schedule with one block per distinct ring plus a Recommend / cron snippet inside `Step.6_apply-updates.yml`'s `BEGIN/END-AZLOCAL-CUSTOMIZE:schedule-triggers` marker block. Review the generated file, uncomment the rows you want active, then commit and push.
+
+**Why this step matters**: the schedule file is **required for scheduled Step.6 / Step.3 runs**. Manual `workflow_dispatch` (GitHub) / queue (Azure DevOps) runs of Step.6 work without it - they take `update_ring` / `updateRing` verbatim from the run-form input - but anything cron-triggered (the steady-state Step.6 wave kicks, the Step.3 weekly drift audit) reads ring eligibility from this file.
+
+**Safety rails**:
+
+- `Copy-AzLocalPipelineExample` **never overwrites** an existing `apply-updates-schedule.yml` - any operator-tailored schedule already committed is preserved across re-runs.
+- The bundled Step.6 ships with every `cron:` line commented out inside the `BEGIN/END-AZLOCAL-CUSTOMIZE:schedule-triggers` markers, so Step.6 cannot fire on a `schedule:` trigger until at least one cron is explicitly uncommented - the DEMO starter is safe to leave in place until you regenerate.
+- Pass `-SkipStarterSchedule` to `Copy-AzLocalPipelineExample` to suppress the starter drop entirely (e.g. for estates that pre-stage the schedule via separate tooling).
+
+For the full schema, multi-stage rollouts, weekly-cycle / ring-eligibility model, and the `allowedUpdateVersions` allow-list (schema v2), see [section 8](#8-scheduling-maintenance-windows-and-change-freeze-periods). The weekly drift detector (`Step.3_apply-updates-schedule-audit.yml`) that catches `(UpdateRing, UpdateStartWindow)` tag combinations no cron in Step.6 will ever reach is summarised in section 6.7 (full runbook in [section 8.3](#83-end-to-end-runbook-apply-updates-schedule-coverage-audit)).
+
+### 6.6 Apply updates - one wave at a time
 
 For each ring in turn (Wave1 -> validate -> Wave2 -> validate -> Production), run **Apply Updates** with:
 
@@ -1360,7 +1384,7 @@ For tighter control around production rollouts, add a manual approval gate betwe
 - **Azure DevOps**: a separate stage with a `ManualValidation@0` step (the `Step.6_apply-updates.yml` shipped here includes a commented-out `WaitForApproval` block ready to enable).
 - **GitHub Actions**: an `environment:` on the production job with required reviewers, configured in *Settings -> Environments*.
 
-### 6.6 Continuous fleet monitoring
+### 6.7 Continuous fleet monitoring
 
 The "steady-state" phase ships **three complementary pipelines**, all read-only, all scheduled, designed to be run together as your daily fleet operations baseline:
 
@@ -1384,7 +1408,7 @@ The four run in distinct (offset) cron slots so they don't contend for the same 
 | `readiness-status.json` | Machine-readable, with summary counts. |
 | `update-summaries.csv` | Update-summary state per cluster from Azure. |
 | `available-updates.csv` | Every available update across the fleet with version + health state. |
-| `update-runs.csv` | Recent run history per cluster (durations, failure summaries) - this is what section 6.5's "size the next maintenance window" advice consumes. |
+| `update-runs.csv` | Recent run history per cluster (durations, failure summaries) - this is what section 6.6's "size the next maintenance window" advice consumes. |
 
 **Fleet Health Status** *(new in v0.7.65)* runs daily at 07:00 UTC and surfaces the **24-hour system health-check failures** across every cluster the service connection can read - including clusters that are already "up to date". The 24-hour health checks continue to run on the cluster independently of update activity, so this pipeline is the dedicated place to triage fleet-wide health issues that exist OUTSIDE the update workflow.
 
@@ -1402,23 +1426,7 @@ It calls the new [`Get-AzLocalFleetHealthFailures`](../README.md#get-azlocalflee
 
 Configure your CI/CD platform's alerting on the JUnit failures - GitHub Actions surfaces them in the run summary and Azure DevOps shows them in the Tests tab with trend analytics.
 
-### 6.7 Schedule coverage drift detection *(new in v0.7.65)*
-
-`Step.3_apply-updates-schedule-audit.yml` runs the read-only [`Test-AzLocalApplyUpdatesScheduleCoverage`](../README.md#test-azlocalapplyupdatesschedulecoverage) cmdlet weekly on Mondays at 05:00 UTC and answers:
-
-> *"Is there any `(UpdateRing, UpdateStartWindow)` tag combination in my fleet that no cron in `Step.6_apply-updates.yml` will ever reach?"*
-
-This is the safety net that catches drift between the cron schedule(s) you committed to `Step.6_apply-updates.yml` and the `UpdateStartWindow` tags that operators tag onto new clusters. It is intentionally **read-only** - it never edits cluster tags and never modifies pipeline YAML.
-
-| Artefact | Description |
-|---|---|
-| `schedule-coverage-audit.xml` | JUnit XML, one `<testcase>` per `(UpdateRing, UpdateStartWindow)` pair. Uncovered / partially covered / malformed pairs become `<failure>`. Use the Tests tab to alert on regressions. |
-| `schedule-coverage-audit.csv` | Same data in spreadsheet form. Columns: `Status`, `UpdateRing`, `UpdateStartWindow`, `ClusterCount`, `RequiredCronUTC`, `Issue`, `Recommendation`, `MatchingCrons`. |
-| `schedule-coverage-matrix.csv` | Pure inventory view: every distinct `(UpdateRing, UpdateStartWindow)` pair with the cron expression the advisor would generate for it. |
-| `schedule-coverage-recommend.md` | Ready-to-paste GH Actions + Azure DevOps cron blocks that cover every distinct `UpdateStartWindow` tag value in the fleet. |
-| Markdown step / run summary | Tables for all of the above, headlined by `Covered` / `Uncovered` / `PartiallyCovered` / `MalformedTag` / `UnparseableCron` counts. |
-
-**See also**: the [end-to-end runbook in section 8.3](#83-end-to-end-runbook-apply-updates-schedule-coverage-audit) walks through the full loop (tag a cluster -> see drift -> paste recommended cron -> re-run audit and watch it turn green).
+**Plus weekly: `Step.3_apply-updates-schedule-audit.yml`** (read-only, runs Mondays at 05:00 UTC by default) catches drift between the cron schedule(s) committed to `Step.6_apply-updates.yml` and the `UpdateRing` / `UpdateStartWindow` tags that operators apply to new clusters. It emits a JUnit + CSV + Markdown "Recommend" snippet that pastes straight back into Step.6 to close any coverage gap. **For the full audit runbook (tag a cluster -> see drift -> paste recommended cron -> re-run and watch it turn green), see [section 8.3](#83-end-to-end-runbook-apply-updates-schedule-coverage-audit).**
 
 ---
 
