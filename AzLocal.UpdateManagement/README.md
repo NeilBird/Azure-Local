@@ -88,7 +88,14 @@ If you are new to this module, work through these in order from a regular PowerS
 
 ## What's New in v0.7.92
 
-Docs/YAML-only feature release. No cmdlet behaviour changes, no schema changes, no breaking changes. Three pipelines move: `Step.9_fleet-health-status.yml` (collapsible per-cluster details + hyperlinks open in a new tab), `Step.8_fleet-update-status.yml` (hyperlinks open in a new tab), and `Step.7_monitor-updates.yml` (active default schedule). GitHub Actions + Azure DevOps in all cases.
+Docs/YAML-only feature release. No cmdlet behaviour changes, no schema changes, no breaking changes. Four pipelines move (GitHub Actions + Azure DevOps in all cases):
+
+- `Step.9_fleet-health-status.yml` - collapsible per-cluster `Detailed Results` + hyperlinks open in a new tab.
+- `Step.8_fleet-update-status.yml` - hyperlinks open in a new tab.
+- `Step.7_monitor-updates.yml` - active default schedule (5x/day, every 2h overnight).
+- `Step.3_apply-updates-schedule-audit.yml` - summary metric table now reconciles when `IncludeUntagged: true`.
+
+Plus an operator-UX strand around `Copy-AzLocalPipelineExample` + the step-by-step setup that explicitly surfaces `apply-updates-schedule.yml` (the ring-aware schedule file required for scheduled Step.6 runs) - see [the section below](#apply-updates-scheduleyml---now-called-out-in-the-step-by-step-setup).
 
 ### Step.9 - per-cluster collapsible `Detailed Results`
 
