@@ -2,7 +2,7 @@
 
 > ⚠️ **Disclaimer**: This module is **NOT** a Microsoft supported service offering or product. It is provided as example code only, with no warranty or official support. Refer to the [MIT license](https://github.com/NeilBird/Azure-Local/blob/main/LICENSE) for further information.
 
-**Latest Version:** v0.7.93 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.7.93)
+**Latest Version:** v0.7.94 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.7.94)
 
 > 📢 **Renamed in v0.7.3**: this module was previously published as `AzStackHci.ManageUpdates`. The new module name aligns with the Azure Local product name (_Microsoft retired the *Azure Stack HCI* brand in late 2024_). The module GUID is preserved across the rename. If you have the old name installed, run:
 >
@@ -23,7 +23,7 @@ Azure Local REST API specification (includes update management endpoints): https
 **This README (overview + most-recent release notes):**
 
 - [Where to Start](#where-to-start)
-- [What's New in v0.7.93](#whats-new-in-v0793)
+- [What's New in v0.7.94](#whats-new-in-v0794)
 - [Files](#files)
 - [Prerequisites](#prerequisites)
 - [RBAC Requirements](#rbac-requirements) (summary; full reference in [docs/rbac.md](docs/rbac.md))
@@ -86,33 +86,25 @@ If you are new to this module, work through these in order from a regular PowerS
 
 > Most CI/CD pipelines in [Automation-Pipeline-Examples/](Automation-Pipeline-Examples/) are direct implementations of one of these workflows. Start there if you want a copy-pasteable end-to-end pipeline.
 
-## What's New in v0.7.93
+## What's New in v0.7.94
 
-Patch release. Pipeline-YAML and tests-only - no cmdlet behaviour changes, no schema changes, no breaking changes.
+Hotfix release. Pipeline-YAML-only - no cmdlet behaviour changes, no schema changes, no breaking changes.
 
-### Pipeline JUnit summaries no longer render `NaNms` in the duration column
+### `Step.7_monitor-updates.yml` - missing `-PassThru` caused silent `0 in-flight` snapshots
 
-Five of the inline JUnit XML writers under `Automation-Pipeline-Examples/{github-actions,azure-devops}/` (Step.0 `authentication-test`, Step.3 `apply-updates-schedule-audit`, Step.4 `fleet-connectivity-status`, Step.7 `monitor-updates`, Step.9 `fleet-health-status`) emitted `<testsuite>` and `<testcase>` elements with no `time=` attribute. `dorny/test-reporter` (and most JUnit renderers) parse a missing `time` as `NaN`, so the per-step summary table showed `NaNms` in the duration column and the Passed/Failed/Skipped column alignment collapsed alongside it.
+Both `Step.7_monitor-updates.yml` variants (GitHub Actions + Azure DevOps) called `Get-AzLocalUpdateRuns -ClusterResourceIds $ids -Latest` (and the `-ScopeByUpdateRingTag -Latest` branch) without `-PassThru`. In multi-cluster mode the cmdlet writes its formatted results to the host via `Format-Table | Out-Host` and only returns them to the pipeline when `-PassThru` is set, so the consuming pipelines silently received an empty `$runs` array on every scheduled run.
 
-v0.7.93 adds `time="0"` to every `<testsuites>` / `<testsuite>` / `<testcase>` emission across all 12 affected files (10 inline writers across the five Steps, plus the `<testsuites>` root in Step.8 GH + ADO where the child elements already carried `time="0"`). Step.6 was unaffected - it consumes the module helper `Private/Export-ResultsToJUnitXml.ps1`, which has always emitted `time=` correctly. No cmdlet code changes.
+**Symptom**: a fleet with a single update run stuck `InProgress` for 19+ days - well past the 6h `long_running_threshold_hours` - rendered as `Clusters scoped: 0 / Update runs in flight: 0 / Exceeding 6h threshold: 0` with the "No update runs currently in flight" branch and a 404-byte empty CSV. Step.7 exists specifically to surface long-running runs and was missing the exact case it was built to catch.
 
-### Pester regression guard
+Fixed by adding `-PassThru -SkipSideloadedReset` to both `Get-AzLocalUpdateRuns` invocations in each of the two `Step.7_monitor-updates.yml` files. `-SkipSideloadedReset` is included because this is a read-only observability pipeline and must not mutate cluster tags via the cmdlet's default `UpdateSideloaded` auto-reset behaviour.
 
-A new `It` block under `Describe 'Module: AzLocal.UpdateManagement'` -> `Context 'Inline JUnit XML emitters carry a numeric time attribute (v0.7.93 NaNms regression)'` statically scans every `*.yml` under `Automation-Pipeline-Examples/` for `<testsuites>` / `<testsuite>` / `<testcase>` lines and asserts each one carries `time=`. Any future inline writer (or `Update-AzLocalPipelineExample` regression) that drops the attribute fails the suite immediately.
-
-### `Test-AzLocalApplyUpdatesScheduleCoverage` `-RecommendFiresPerWindow` help text
-
-Dropped a `(pre-v0.7.92 back-compat)` parenthetical from the `.PARAMETER` block (and the matching wording in `Step.3_apply-updates-schedule-audit.yml` GH + ADO). Parameter default remains `2` and the behaviour is unchanged - docstring tidy only.
-
-### Scaling the custom role across many subscriptions: management group + Azure Policy DINE
-
-Per-subscription `AssignableScopes` on the `Azure Stack HCI Update Operator` custom role works for a handful of subscriptions but scales poorly: every new sub means another `az role definition update` + `az role assignment create`, the role definition is capped at 2000 entries, and drift is hard to detect. v0.7.93 adds a new section to [`docs/rbac.md`](docs/rbac.md#scaling-assignablescopes-with-management-groups--azure-policy-recommended-for-large-or-growing-estates) that walks through the standard Azure Landing Zones-style alternative: list a single management-group scope in `AssignableScopes` and use an Azure Policy `deployIfNotExists` (DINE) assignment at that MG to auto-create the per-subscription role assignment for the pipeline identity. Existing subs are picked up by a one-time remediation task; new subs are auto-remediated on creation. The section includes the role definition JSON with MG scope, the DINE policy definition with nested ARM `roleAssignments` template, the system-assigned-MI grant + remediation commands, the required RBAC at each step, and a trade-offs table vs the per-subscription list. Cross-linked from [`Automation-Pipeline-Examples/README.md`](Automation-Pipeline-Examples/README.md) sections 3.1 and 3.2. Recommended for estates of more than ~5-10 subscriptions or growing fleets; per-sub list remains the documented fallback. **No cmdlet code changes - documentation only.**
+Verified against a 20-cluster fleet with one `InProgress` run: post-fix Step.7 correctly reports `Clusters scoped: 20 / Update runs in flight: 1 / Exceeding 6h threshold: 1` with the affected cluster row and its elapsed duration. Step.8, the `Tools/smoke-test-*.ps1` harnesses, and the Pester suite already used `-PassThru` correctly, so they were never affected.
 
 ### Migration
 
-`Install-Module AzLocal.UpdateManagement -Force` (or `Update-Module`). Run `Update-AzLocalPipelineExample -Destination <path>` to refresh the affected `Step.{0,3,4,7,8,9}_*.yml` files. The injection sites are outside any `BEGIN-AZLOCAL-CUSTOMIZE` block, so operator customisations elsewhere in those pipelines are preserved.
+`Install-Module AzLocal.UpdateManagement -Force` (or `Update-Module`). Run `Update-AzLocalPipelineExample -Destination <path>` to refresh the two affected `Step.7_monitor-updates.yml` files (GitHub Actions + Azure DevOps). The fix sits outside any `BEGIN-AZLOCAL-CUSTOMIZE` block, so operator customisations elsewhere in those pipelines are preserved.
 
-> Previous release notes (v0.7.92 and earlier) have moved into [`docs/release-history.md`](docs/release-history.md), with the v0.7.92 entry retained in the [Release History](#release-history) appendix below for quick reference.
+> Previous release notes (v0.7.93 and earlier) have moved into [`docs/release-history.md`](docs/release-history.md), with the v0.7.93 entry retained in the [Release History](#release-history) appendix below for quick reference.
 
 ## Files
 
@@ -591,7 +583,18 @@ This code is provided as-is for educational and reference purposes.
 
 The full What's-New history (v0.7.81 and earlier) has moved to [docs/release-history.md](docs/release-history.md).
 
-The most recent release notes for **v0.7.93** stay above under [`What's New in v0.7.93`](#whats-new-in-v0793).
+The most recent release notes for **v0.7.94** stay above under [`What's New in v0.7.94`](#whats-new-in-v0794).
+
+### What's New in v0.7.93
+
+v0.7.93 was a pipeline-YAML + tests-only patch release. No cmdlet behaviour changes, no schema changes, no breaking changes.
+
+- **Fixed: pipeline JUnit summaries no longer render `NaNms` in the duration column.** Five inline JUnit XML writers under `Automation-Pipeline-Examples/{github-actions,azure-devops}/` (Step.0 `authentication-test`, Step.3 `apply-updates-schedule-audit`, Step.4 `fleet-connectivity-status`, Step.7 `monitor-updates`, Step.9 `fleet-health-status`) emitted `<testsuite>` / `<testcase>` without a `time=` attribute. `dorny/test-reporter` parsed that as `NaN` and printed `NaNms`, also collapsing the column alignment. v0.7.93 added `time="0"` to every emission across all 12 affected files.
+- **Added: Pester regression guard.** New `It` block under `Context 'Inline JUnit XML emitters carry a numeric time attribute (v0.7.93 NaNms regression)'` statically scans every `*.yml` under `Automation-Pipeline-Examples/` and asserts each `<testsuites>` / `<testsuite>` / `<testcase>` carries `time=`.
+- **Changed: `Test-AzLocalApplyUpdatesScheduleCoverage` `-RecommendFiresPerWindow` help text** dropped a `(pre-v0.7.92 back-compat)` parenthetical. Parameter default remains `2` and behaviour is unchanged - docstring tidy only.
+- **Added: `docs/rbac.md` - management-group `AssignableScopes` + Azure Policy DINE recipe** for scaling the `Azure Stack HCI Update Operator` custom role across many subscriptions. New section walks through the Azure Landing Zones-style alternative to a per-subscription `AssignableScopes` list: one MG scope in `AssignableScopes` plus an Azure Policy `deployIfNotExists` at that MG to auto-create the per-subscription role assignment for the pipeline identity. Cross-linked from `Automation-Pipeline-Examples/README.md` sections 3.1 and 3.2.
+
+See [CHANGELOG.md](CHANGELOG.md#0793---2026-06-05) for the full v0.7.93 entry.
 
 ### What's New in v0.7.92
 

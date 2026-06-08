@@ -5,6 +5,18 @@ All notable changes to the AzLocal.UpdateManagement module (renamed from AzStack
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.94] - 2026-06-08
+
+Hotfix release. Pipeline-YAML-only - no cmdlet behaviour changes, no schema changes, no breaking changes.
+
+### Fixed
+
+- **`Step.7_monitor-updates.yml` (GitHub Actions + Azure DevOps) - missing `-PassThru` on `Get-AzLocalUpdateRuns` caused every scheduled monitor run to report `0 in-flight / 0 long-running` even when clusters had update runs stuck `InProgress`.** Both Step.7 variants called `Get-AzLocalUpdateRuns -ClusterResourceIds $ids -Latest` (and `-ScopeByUpdateRingTag -Latest`) without `-PassThru`. In multi-cluster mode the cmdlet writes its formatted results to the host via `Format-Table | Out-Host` and only returns them to the pipeline when `-PassThru` is set, so the consuming pipelines silently received an empty `$runs` array. Symptom in the wild: a fleet with a single update run stuck `InProgress` for 19+ days (well past the 6h `long_running_threshold_hours`) rendered as `Clusters scoped: 0 / Update runs in flight: 0 / Exceeding 6h threshold: 0` with the `No update runs currently in flight` branch and a 404-byte empty CSV - completely missing the long-running run the pipeline exists to surface. Fixed by adding `-PassThru -SkipSideloadedReset` to both `Get-AzLocalUpdateRuns` invocations in each of the two `Step.7_monitor-updates.yml` files. `-SkipSideloadedReset` is included because this is a read-only observability pipeline and must not mutate cluster tags via the cmdlet's default `UpdateSideloaded` auto-reset behaviour. Verified against a 20-cluster fleet with one InProgress run: post-fix Step.7 correctly reports `Clusters scoped: 20 / Update runs in flight: 1 / Exceeding 6h threshold: 1` with the affected cluster row and its elapsed duration. No module code changes; Step.8, the smoke tests, and the Pester suite already used `-PassThru` correctly.
+
+### Migration
+
+`Install-Module AzLocal.UpdateManagement -Force` (or `Update-Module`). Run `Update-AzLocalPipelineExample -Destination <path>` to refresh the two affected `Step.7_monitor-updates.yml` files (GitHub Actions + Azure DevOps). The fix sits outside any `BEGIN-AZLOCAL-CUSTOMIZE` block, so operator customisations elsewhere in those pipelines are preserved.
+
 ## [0.7.93] - 2026-06-05
 
 Patch release. Pipeline-YAML and tests-only - no cmdlet behaviour changes, no schema changes, no breaking changes.
