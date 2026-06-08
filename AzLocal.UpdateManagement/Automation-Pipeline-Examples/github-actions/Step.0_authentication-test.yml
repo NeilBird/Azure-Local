@@ -48,6 +48,14 @@
 name: Step.0 - Authentication Validation and Subscription Scope Report
 
 on:
+  # BEGIN-AZLOCAL-CUSTOMIZE:schedule-triggers
+  # Add `schedule:` cron blocks here to enable automated runs, e.g.:
+  #   schedule:
+  #     - cron: '0 6 * * 1'  # Mondays at 06:00 UTC
+  # Content between BEGIN/END markers is preserved by
+  # Update-AzLocalPipelineExample across module upgrades.
+  # END-AZLOCAL-CUSTOMIZE:schedule-triggers
+
   workflow_dispatch:
     inputs:
       environment:
@@ -70,7 +78,7 @@ env:
   # this to the version actually installed and to the latest on PSGallery, and emits a
   # ::notice annotation if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample. See Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.7.94'
+  GENERATED_AGAINST_MODULE_VERSION: '0.7.95'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): manual workflow_dispatch input >
   # repository variable 'REQUIRED_MODULE_VERSION' > empty (latest).

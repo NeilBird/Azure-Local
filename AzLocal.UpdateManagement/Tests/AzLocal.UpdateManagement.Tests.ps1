@@ -34,8 +34,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $script:ModuleInfo | Should -Not -BeNullOrEmpty
         }
 
-        It 'Should have version 0.7.94' {
-            $script:ModuleInfo.Version | Should -Be '0.7.94'
+        It 'Should have version 0.7.95' {
+            $script:ModuleInfo.Version | Should -Be '0.7.95'
         }
 
         It 'Module version constants are in sync between .psm1 and .psd1' {
@@ -7543,6 +7543,83 @@ Describe 'Function: Update-AzLocalPipelineExample' {
                 (Get-Content -Raw -LiteralPath $destFile) | Should -Match 'BEGIN-AZLOCAL-CUSTOMIZE:schedule-triggers'
             }
             finally { Remove-Item -Path $temp -Recurse -Force -ErrorAction SilentlyContinue }
+        }
+    }
+
+    # v0.7.95: Pin-only short-circuit. When BOTH files are marker-free and
+    # the only line-level difference is the GENERATED_AGAINST_MODULE_VERSION
+    # pin (mechanically bumped on every release), the cmdlet refreshes the
+    # pin in place without requiring -Force. We exercise this by mocking
+    # Get-Module so the cmdlet resolves its source folder to a fake module
+    # base under TestDrive containing a single MARKER-FREE synthetic YAML.
+    Context 'Pin-only short-circuit (v0.7.95): marker-free YAML with only GENERATED_AGAINST_MODULE_VERSION drift is auto-bumped without -Force' {
+        BeforeAll {
+            $script:upePinFakeRoot   = Join-Path $TestDrive 'upe-pin-fake-module-base'
+            $script:upePinFakeSrcDir = Join-Path $script:upePinFakeRoot 'Automation-Pipeline-Examples\github-actions'
+            New-Item -ItemType Directory -Path $script:upePinFakeSrcDir -Force | Out-Null
+            $script:upePinSrcYaml = @"
+name: Synthetic Pin-Only Test
+on:
+  workflow_dispatch:
+env:
+  GENERATED_AGAINST_MODULE_VERSION: '0.7.95'
+  REQUIRED_MODULE_VERSION: ''
+jobs:
+  do-it:
+    runs-on: windows-latest
+    steps:
+      - run: Write-Host 'hi'
+"@
+            [System.IO.File]::WriteAllText(
+                (Join-Path $script:upePinFakeSrcDir 'Step.99_synthetic.yml'),
+                $script:upePinSrcYaml,
+                [System.Text.UTF8Encoding]::new($false))
+        }
+
+        It 'Bumps the pin in place and reports Action=Updated-PinOnly without -Force' {
+            $destDir = Join-Path $TestDrive 'upe-pin-dest-bump'
+            New-Item -ItemType Directory -Path $destDir -Force | Out-Null
+            $destFile = Join-Path $destDir 'Step.99_synthetic.yml'
+            $destText = $script:upePinSrcYaml -replace "'0\.7\.95'","'0.7.50'"
+            [System.IO.File]::WriteAllText($destFile, $destText, [System.Text.UTF8Encoding]::new($false))
+
+            $fakeRoot = $script:upePinFakeRoot
+            $row = InModuleScope AzLocal.UpdateManagement -Parameters @{ FakeRoot = $fakeRoot; DestDir = $destDir } {
+                param($FakeRoot, $DestDir)
+                Mock Get-Module -ParameterFilter { $Name -eq 'AzLocal.UpdateManagement' } -MockWith {
+                    [PSCustomObject]@{ Name = 'AzLocal.UpdateManagement'; Version = [version]'9.9.9'; ModuleBase = $FakeRoot }
+                }
+                $r = Update-AzLocalPipelineExample -Destination $DestDir -Platform GitHub -PassThru -Confirm:$false
+                $r | Where-Object { $_.File -like '*Step.99_synthetic.yml' }
+            }
+            $row.Action | Should -Be 'Updated-PinOnly'
+            $newContent = [System.IO.File]::ReadAllText($destFile, [System.Text.UTF8Encoding]::new($false))
+            $newContent | Should -Match "GENERATED_AGAINST_MODULE_VERSION: '0\.7\.95'"
+            $newContent | Should -Not -Match "GENERATED_AGAINST_MODULE_VERSION: '0\.7\.50'"
+        }
+
+        It 'Marker-free YAML with non-pin divergence still emits Skipped-NeedsForce' {
+            $destDir = Join-Path $TestDrive 'upe-pin-dest-noforce'
+            New-Item -ItemType Directory -Path $destDir -Force | Out-Null
+            $destFile = Join-Path $destDir 'Step.99_synthetic.yml'
+            # Differs by pin AND by an added trailing comment - non-pin diff.
+            $destText = ($script:upePinSrcYaml -replace "'0\.7\.95'","'0.7.50'") + "`n# operator hand-edit`n"
+            [System.IO.File]::WriteAllText($destFile, $destText, [System.Text.UTF8Encoding]::new($false))
+
+            $fakeRoot = $script:upePinFakeRoot
+            $row = InModuleScope AzLocal.UpdateManagement -Parameters @{ FakeRoot = $fakeRoot; DestDir = $destDir } {
+                param($FakeRoot, $DestDir)
+                Mock Get-Module -ParameterFilter { $Name -eq 'AzLocal.UpdateManagement' } -MockWith {
+                    [PSCustomObject]@{ Name = 'AzLocal.UpdateManagement'; Version = [version]'9.9.9'; ModuleBase = $FakeRoot }
+                }
+                $r = Update-AzLocalPipelineExample -Destination $DestDir -Platform GitHub -PassThru -Confirm:$false 3>$null
+                $r | Where-Object { $_.File -like '*Step.99_synthetic.yml' }
+            }
+            $row.Action | Should -Be 'Skipped-NeedsForce'
+            # Dest file unchanged: original (older) pin AND hand-edit comment must both still be present.
+            $afterContent = [System.IO.File]::ReadAllText($destFile, [System.Text.UTF8Encoding]::new($false))
+            $afterContent | Should -Match "GENERATED_AGAINST_MODULE_VERSION: '0\.7\.50'"
+            $afterContent | Should -Match 'operator hand-edit'
         }
     }
 }

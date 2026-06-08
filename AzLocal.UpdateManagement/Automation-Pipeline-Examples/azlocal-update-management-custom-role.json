@@ -21,6 +21,6 @@
   "DataActions": [],
   "NotDataActions": [],
   "AssignableScopes": [
-    "/subscriptions/<your-subscription-id>"
+    "/providers/Microsoft.Management/managementGroups/<your-mg-id>"
   ]
 }

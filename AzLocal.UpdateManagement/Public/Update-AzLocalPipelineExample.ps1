@@ -58,7 +58,15 @@ function Update-AzLocalPipelineExample {
             file is overwritten and the customer is expected to re-apply
             any edits manually.
           - If both files have no markers at all and they differ, the
-            cmdlet refuses to write unless -Force is supplied.
+            cmdlet refuses to write unless -Force is supplied - EXCEPT
+            when the only line-level difference is the
+            GENERATED_AGAINST_MODULE_VERSION pin (added in v0.7.95).
+            That field is mechanically bumped on every module release and
+            is not an operator customisation surface, so a pin-only diff
+            is auto-refreshed and reported as 'Updated-PinOnly' without
+            requiring -Force. Handles both the single-line GitHub Actions
+            shape ('GENERATED_AGAINST_MODULE_VERSION: \'X\'') and the
+            two-line Azure DevOps name/value shape.
           - File encoding on write is UTF-8 WITHOUT BOM (the GitHub
             Actions / Azure DevOps YAML convention).
           - The cmdlet uses Get-Content -Raw and preserves whatever line
@@ -90,9 +98,9 @@ function Update-AzLocalPipelineExample {
     .OUTPUTS
         PSCustomObject[] (with -PassThru) - one row per source file with:
             File              - destination path
-            Action            - 'Created' | 'Updated' | 'Unchanged'
-                                | 'Overwritten' | 'Skipped-NeedsForce'
-                                | 'Skipped-NoChange'
+            Action            - 'Created' | 'Updated' | 'Updated-PinOnly'
+                                | 'Unchanged' | 'Overwritten'
+                                | 'Skipped-NeedsForce' | 'Skipped-NoChange'
             PreservedMarkers  - [string[]] marker names whose body was
                                 preserved from the destination
             NewMarkers        - [string[]] marker names introduced in this
@@ -238,6 +246,34 @@ function Update-AzLocalPipelineExample {
         if (-not $hasSrcMarkers -and -not $hasDestMarkers) {
             if ($srcText -eq $destText) {
                 $row.Action = 'Unchanged'
+                [void]$results.Add($row)
+                continue
+            }
+            # 3c.i. Pin-only short-circuit (v0.7.95): if the ONLY content
+            # difference is the GENERATED_AGAINST_MODULE_VERSION pin
+            # (mechanically bumped on every release, not an operator
+            # customisation surface), refresh it in place without -Force.
+            # Normalise the pin to a placeholder in BOTH texts and compare;
+            # equal-after-normalisation means the pin is the only diff.
+            # Pattern matches both the single-line GitHub Actions shape
+            # ('GENERATED_AGAINST_MODULE_VERSION: ''X''') and the two-line
+            # Azure DevOps name/value shape ('- name: GENERATED_..., value: ''X''').
+            $pinPattern = "(?m)(?:^\s*GENERATED_AGAINST_MODULE_VERSION\s*:\s*'[^']+'|^\s*-?\s*name\s*:\s*GENERATED_AGAINST_MODULE_VERSION\s*\r?\n\s*value\s*:\s*'[^']+')"
+            $pinPlaceholder = "__AZLOCAL_PIN_PLACEHOLDER__"
+            $srcNorm  = [regex]::Replace($srcText,  $pinPattern, { param($m) [regex]::Replace($m.Value, "'[^']+'", "'$pinPlaceholder'") })
+            $destNorm = [regex]::Replace($destText, $pinPattern, { param($m) [regex]::Replace($m.Value, "'[^']+'", "'$pinPlaceholder'") })
+            if ($srcNorm -eq $destNorm) {
+                # Pin is the only line that changed. Extract both values
+                # for the success log line, then write src verbatim.
+                $srcPinMatch  = [regex]::Match($srcText,  $pinPattern)
+                $destPinMatch = [regex]::Match($destText, $pinPattern)
+                $srcPinValue  = if ($srcPinMatch.Success)  { ([regex]::Match($srcPinMatch.Value,  "'([^']+)'")).Groups[1].Value } else { '?' }
+                $destPinValue = if ($destPinMatch.Success) { ([regex]::Match($destPinMatch.Value, "'([^']+)'")).Groups[1].Value } else { '?' }
+                if ($PSCmdlet.ShouldProcess($destFile, "Bump GENERATED_AGAINST_MODULE_VERSION from '$destPinValue' to '$srcPinValue' (pin-only diff)")) {
+                    Write-Utf8NoBomFile -Path $destFile -Content $srcText
+                    Write-Log -Message "  Updated : $($srcFile.Name), pin-only ('$destPinValue' -> '$srcPinValue')" -Level Success
+                }
+                $row.Action = 'Updated-PinOnly'
                 [void]$results.Add($row)
                 continue
             }
