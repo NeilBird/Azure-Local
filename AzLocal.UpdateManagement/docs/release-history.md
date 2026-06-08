@@ -4,7 +4,22 @@
 >
 > **For older releases**, this is the canonical reference; the main README intentionally stays slim so the most recent block is easy to find.
 >
-> **For v0.7.96 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0796) `What's New in v0.7.96` section.
+> **For v0.7.97 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0797) `What's New in v0.7.97` section.
+
+---
+
+### What's New in v0.7.97
+
+v0.7.97 is a documentation-only follow-up to v0.7.96. The three Markdown files that ship inside the published PSGallery `.nupkg` under the module folder were refreshed to mirror the v0.7.96 module behaviour. Consumers who installed v0.7.96 fresh saw stale Step.7 + Step.8 narrative in those in-package docs because they were updated AFTER `Publish-Module.ps1` ran. v0.7.97 republishes the package with the aligned docs.
+
+**No code anywhere in the module, no inline-script changes in any Step.{0..9}.yml template.** Only the `GENERATED_AGAINST_MODULE_VERSION` pin moves from `'0.7.96'` to `'0.7.97'` across all 20 bundled templates (10 GitHub Actions + 10 Azure DevOps).
+
+- **`Automation-Pipeline-Examples/README.md` (CI/CD runbook):** section-1 Step.7 bullet now mentions the new `Status` + `ErrorMessage` columns, the `StepError` JUnit failure type, the always-shown Failed-runs block, portal-linked Cluster / Update Name cells, and the new `STEP_ERRORED` / `UNRESOLVED_FAILURES` `GITHUB_OUTPUT` values. Step.8 bullet now mentions `NeedsAttention` promotion into the `Update Failed` bucket, the new `Action Required` bucket for `PreparationFailed`, and `PreparationInProgress` folding into `Update In Progress`.
+- **`Automation-Pipeline-Examples/docs/appendix-pipelines.md` (per-step pipeline reference):** Step 7 and Step 8 tables refreshed: the `Purpose`, `Artefacts`, `Exit conditions`, and `Introduced` rows now describe the new columns, JUnit failure types, the bucket cascade, the `primaryActionRequired` JUnit attribute, `ACTION_REQUIRED` output, `Summary.UpdateFailures` + `Summary.ActionRequired` JSON keys, and the portal-linked markdown cells. A duplicate `Exit conditions` row on Step 7 was removed.
+- **`docs/release-history.md` (this file):** current-release pointer bumped from v0.7.89 to v0.7.97; the v0.7.96 entry was already prepended in PR #66 (commit `c395ed3`).
+- **All 18 bundled `Step.{0..9}.yml` templates** bumped `GENERATED_AGAINST_MODULE_VERSION` from `'0.7.96'` to `'0.7.97'`. Pin-only; no inline-script content changes.
+
+This release also closes a process gap: the in-package docs (the three files listed above) ship inside the PSGallery `.nupkg` because `Publish-Module.ps1` only strips `Tests/`, `Tools/`, `Module-reviews/`, and root-level non-README `*.md`. The `Automation-Pipeline-Examples/` tree and the `docs/` folder ride along with the manifest, so any time their content is updated AFTER a publish, a republish is required for consumers to see the aligned narrative. v0.7.97 also adds this verification to the maintainer-facing `docs/RELEASE-PROCESS.md` and the version-bump checklist.
 
 ---
 

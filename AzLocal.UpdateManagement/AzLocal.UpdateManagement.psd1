@@ -3,7 +3,7 @@
     RootModule = 'AzLocal.UpdateManagement.psm1'
 
     # Version number of this module.
-    ModuleVersion = '0.7.96'
+    ModuleVersion = '0.7.97'
 
     # Supported PSEditions
     CompatiblePSEditions = @('Desktop', 'Core')
@@ -215,17 +215,21 @@
 
             # ReleaseNotes of this module
             ReleaseNotes = @'
+## Version 0.7.97 - In-package documentation follow-up to v0.7.96 (no code or YAML run-block changes)
+
+Documentation-only release. The three Markdown files that ship inside the published PSGallery .nupkg under the module folder were refreshed to mirror the v0.7.96 module behaviour - `Automation-Pipeline-Examples/README.md`, `Automation-Pipeline-Examples/docs/appendix-pipelines.md`, and `docs/release-history.md`. Consumers who installed v0.7.96 fresh saw stale Step.7 + Step.8 narrative in those in-package docs because they were updated AFTER `Publish-Module.ps1` ran. v0.7.97 republishes the package with the aligned docs. No code anywhere in the module, no inline-script changes in any Step.{0..9}.yml template - only the `GENERATED_AGAINST_MODULE_VERSION` pin moves from `''0.7.96''` to `''0.7.97''` across all 20 bundled templates.
+
+- **`Automation-Pipeline-Examples/README.md` (CI/CD runbook):** section-1 Step.7 bullet now mentions the new Status + ErrorMessage columns, the StepError JUnit failure type, the always-shown Failed-runs block, portal-linked Cluster/Update cells, and the new STEP_ERRORED / UNRESOLVED_FAILURES `GITHUB_OUTPUT` values. Step.8 bullet now mentions NeedsAttention promotion into Update Failed, the new Action Required bucket for PreparationFailed, and PreparationInProgress folding into Update In Progress.
+- **`Automation-Pipeline-Examples/docs/appendix-pipelines.md` (per-step pipeline reference):** Step 7 and Step 8 tables refreshed - Purpose, Artefacts, Exit conditions, and Introduced rows now describe the new columns, JUnit failure types, the bucket cascade, the primaryActionRequired attribute, ACTION_REQUIRED output, Summary.UpdateFailures + Summary.ActionRequired JSON keys, and the portal-linked markdown cells.
+- **`docs/release-history.md` (canonical release history):** current-release pointer bumped from v0.7.89 to v0.7.97; new `### What''s New in v0.7.96` entry prepended (mirrors the v0.7.96 README block).
+- **All 18 bundled `Step.{0..9}.yml` templates (9 GitHub Actions + 9 Azure DevOps) bump `GENERATED_AGAINST_MODULE_VERSION` from `''0.7.96''` to `''0.7.97''`.** Pin-only; no inline-script content changes anywhere.
+
+Apply via `Install-Module AzLocal.UpdateManagement -Force` (or `Update-Module`). If you only consume the cmdlets there is no behaviour change vs v0.7.96 - this is a docs-correctness republish. If you have copied the bundled YAMLs into your CI repo via `Update-AzLocalPipelineExample`, re-run it to refresh the version pin (pin-only short-circuit from v0.7.95 means `-Force` is not required).
+
 ## Version 0.7.96 - LENS-workbook parity: Status field, ErrorMessage column, StepError JUnit type, always-show unresolved Failed, Step.8 ActionRequired bucket
 
-Operator-visibility release. Rolls every LENS Update Manager workbook signal into the module + pipelines so operators no longer have to click into the Azure portal to triage stuck or failed runs. No breaking changes (additive fields only).
-
-- **Added: `Get-AzLocalUpdateRuns` now surfaces `Status` (the workbook''s 7-value `properties.progress.status` vocab: Success / Error / InProgress / NotStarted / Skipped / Cancelled / Unknown) alongside the existing `State` field (`properties.state`: Succeeded / Failed / InProgress).** Status is independent from State - a run can be `State=InProgress` while `Status=Error` (per-step error, run not yet abandoned). The new combination is the key signal that drives Step.7''s new StepError JUnit type. Backed by a new private `Format-AzLocalUpdateRun` field and propagated through both the multi-cluster and no-runs paths of `Get-AzLocalUpdateRuns`.
-- **Added: `ErrorMessage` column on every update-run row.** Backed by a new `Get-DeepestErrorMessage` private helper that walks the `properties.progress.steps[]` tree (up to depth 9, matching the workbook''s coalesce(e9Msg..e1Msg) pattern) and returns the deepest non-empty `errorMessage` from any step with `status` in (Error, Failed). Operators see the actual portal error text directly in the pipeline CSV + markdown summary instead of having to deep-link into the cluster blade.
-- **Reworked: Step.7 `monitor-updates.yml` (GitHub Actions + Azure DevOps).** New JUnit failure type `StepError` fires whenever `Status=Error && State=InProgress` - this is the signal the Arizona "Start update" 18-day stuck-step case was missing. The "Recently-failed" markdown table is replaced by "Failed runs (unresolved)" which **always** lists every cluster whose latest run is `State=Failed` (since `-Latest` already returns one row per cluster, any Failed latest run IS unresolved by definition - no age window). Recent-failure highlighting is now a `:fire: last Nh` flag column. New `Progress Status` column on the in-flight table; new `ErrorMessage` column on the failed table (220-char truncated in markdown, full in CSV). TSG blockquote now links both MS Learn ("Troubleshoot updates") and the GitHub TSG. JUnit failure-type vocabulary: `StepError, LongRunningStep, LongRunningOverall, RecentFailure`.
-- **Reworked: Step.8 `fleet-update-status.yml` (GitHub Actions + Azure DevOps).** The `properties.state` values `PreparationFailed` and `NeedsAttention` previously fell into the catch-all "Other / Needs Investigation" bucket and were invisible to operators. v0.7.96 promotes them to first-class signals (mirrors the LENS workbook''s `state` filter): `NeedsAttention` joins the existing **Update Failed** bucket (terminal failure, retry path); `PreparationFailed` gets its own new **Action Required** bucket (operator must remediate before the run can be re-armed). `PreparationInProgress` is now counted under **Update In Progress** (was previously dropped into Other). The `failures` total in the JUnit critical-health pass/fail now includes both new states, so the pipeline correctly turns RED when any of (Failed / UpdateFailed / NeedsAttention / PreparationFailed) is present. New JUnit testsuite property `primaryActionRequired`; new pipeline output `ACTION_REQUIRED` / `$(collect.actionRequired)`; new "Action Required" row in the Primary Status markdown table and host summary; new Actions Required prose entry explaining the PreparationFailed remediation path. The JUnit per-cluster testcase `failureType` is now `PreparationFailed` when applicable (vs the generic `UpdateFailure`) so downstream ITSM connectors can route the ticket differently.
-- **`Get-DeepestErrorMessage`** is added to `NestedModules` in the psd1 between `Get-DeepestActiveStep` and `Get-ExportFormat`. It''s a private helper (not exported) - operators consume it indirectly via the new `ErrorMessage` field on `Get-AzLocalUpdateRuns` output.
-
-Apply via `Install-Module AzLocal.UpdateManagement -Force` (or `Update-Module`). Run `Update-AzLocalPipelineExample -Destination <path>` to refresh both `Step.7_monitor-updates.yml` and `Step.8_fleet-update-status.yml`. Both files sit outside any `BEGIN-AZLOCAL-CUSTOMIZE` block, so operator schedule customisations elsewhere in those pipelines are preserved.
+For full v0.7.96 release notes see:
+https://github.com/NeilBird/Azure-Local/blob/main/AzLocal.UpdateManagement/CHANGELOG.md
 
 ## Version 0.7.95 - Update-AzLocalPipelineExample pin-only short-circuit + Step.0/Step.1 marker blocks
 

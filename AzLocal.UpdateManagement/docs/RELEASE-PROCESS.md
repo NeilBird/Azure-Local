@@ -16,6 +16,20 @@ In the steps below, `<candidate>` is the version being released (for example `1.
     (A Pester guardrail in Tests/AzLocal.UpdateManagement.Tests.ps1
     enforces this; see "Pester guardrails" below.)
  4. Update CHANGELOG.md with a new entry for <candidate>.
+ 4a. REFRESH IN-PACKAGE DOCS BEFORE PUBLISH. The following Markdown files
+    ship inside the published PSGallery .nupkg (Publish-Module.ps1 only
+    strips Tests/, Tools/, Publish-Module.ps1, and root-level non-README
+    *.md - everything else under the module folder is retained). Any time
+    a candidate changes pipeline behaviour, refresh:
+      - docs/release-history.md  (current-release pointer + new entry)
+      - Automation-Pipeline-Examples/README.md  (section-1 step bullets,
+        section 13 file layout, scheduled-triggers paragraph)
+      - Automation-Pipeline-Examples/docs/appendix-pipelines.md  (per-step
+        Purpose / Inputs / Artefacts / Exit conditions / Introduced rows)
+      - ITSM/README.md  (only if ITSM wiring changed)
+    Skipping this step ships consumer-visible stale docs that can only be
+    corrected by a follow-up republish - see the v0.7.97 release entry
+    for the case study.
  5. Run the full Pester suite. Must be green before publish.
  6. Publish to PowerShell Gallery: .\Publish-Module.ps1
  7. IMMEDIATELY unlist the published candidate in PowerShell Gallery
