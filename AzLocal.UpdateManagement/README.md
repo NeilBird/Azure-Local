@@ -2,7 +2,7 @@
 
 > ⚠️ **Disclaimer**: This module is **NOT** a Microsoft supported service offering or product. It is provided as example code only, with no warranty or official support. Refer to the [MIT license](https://github.com/NeilBird/Azure-Local/blob/main/LICENSE) for further information.
 
-**Latest Version:** v0.7.95 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.7.95)
+**Latest Version:** v0.7.97 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.7.97)
 
 > 📢 **Renamed in v0.7.3**: this module was previously published as `AzStackHci.ManageUpdates`. The new module name aligns with the Azure Local product name (_Microsoft retired the *Azure Stack HCI* brand in late 2024_). The module GUID is preserved across the rename. If you have the old name installed, run:
 >
@@ -23,7 +23,7 @@ Azure Local REST API specification (includes update management endpoints): https
 **This README (overview + most-recent release notes):**
 
 - [Where to Start](#where-to-start)
-- [What's New in v0.7.95](#whats-new-in-v0795)
+- [What's New in v0.7.97](#whats-new-in-v0797)
 - [Files](#files)
 - [Prerequisites](#prerequisites)
 - [RBAC Requirements](#rbac-requirements) (summary; full reference in [docs/rbac.md](docs/rbac.md))
@@ -86,63 +86,26 @@ If you are new to this module, work through these in order from a regular PowerS
 
 > Most CI/CD pipelines in [Automation-Pipeline-Examples/](Automation-Pipeline-Examples/) are direct implementations of one of these workflows. Start there if you want a copy-pasteable end-to-end pipeline.
 
-## What's New in v0.7.95
+## What's New in v0.7.97
 
-Quality-of-life release. Removes the recurring friction where `Update-AzLocalPipelineExample` silently skipped Step.0 / Step.1 YAMLs on every module bump. No cmdlet behaviour changes affecting other functions, no schema changes, no breaking changes.
+**Documentation-only release.** The three Markdown files that ship inside the published PSGallery `.nupkg` under the module folder were refreshed to mirror the v0.7.96 module behaviour. Consumers who installed v0.7.96 fresh saw stale Step.7 + Step.8 narrative in those in-package docs because they were updated AFTER `Publish-Module.ps1` ran. v0.7.97 republishes the package with the aligned docs.
 
-### Why this release exists
+**No code anywhere in the module, no inline-script changes in any Step.{0..9}.yml template.** Only the `GENERATED_AGAINST_MODULE_VERSION` pin moves from `'0.7.96'` to `'0.7.97'` across all 20 bundled templates (10 GitHub Actions + 10 Azure DevOps).
 
-Step.0 (`authentication-test`) and Step.1 (`inventory-clusters`) shipped without any `# BEGIN-AZLOCAL-CUSTOMIZE` markers, but the bundled `GENERATED_AGAINST_MODULE_VERSION` pin gets mechanically bumped on every release. `Update-AzLocalPipelineExample` correctly treated this as "diverged from bundled sample, no markers to merge on" and refused to write without `-Force`. The downstream effect: customers had to either run `-Force` on every upgrade (and risk losing local hand-edits) or skip those two files indefinitely. v0.7.95 fixes the root cause two complementary ways.
+### What changed
 
-### (a) `schedule-triggers` marker blocks on Step.0 and Step.1 (GitHub Actions + Azure DevOps)
-
-All four bundled YAMLs now ship with a `# BEGIN-AZLOCAL-CUSTOMIZE:schedule-triggers` / `# END-AZLOCAL-CUSTOMIZE:schedule-triggers` block:
-
-- **Step.0** - markers wrap an empty schedule template; commented-out example shows how to enable a cron.
-- **Step.1** - markers wrap the existing `cron: '0 6 * * 1'` weekly inventory schedule (and the `schedules:` block with `displayName: 'Weekly Inventory'` on the Azure DevOps variant), so any operator change to the cron survives subsequent merges.
-
-With markers in place, future operator schedule edits are preserved by `Update-AzLocalPipelineExample` via its existing branch 3f (both files marker-aware merge).
-
-### (b) Pin-only short-circuit in `Update-AzLocalPipelineExample`
-
-New code path in branch 3c (both files marker-free): when the ONLY line-level difference between the bundled YAML and the destination YAML is the `GENERATED_AGAINST_MODULE_VERSION` pin - a mechanically-bumped release metadata field, not an operator customisation surface - the cmdlet refreshes the pin in place without requiring `-Force` and reports a new `Action='Updated-PinOnly'` in the `-PassThru` output. Handles both pipeline shapes:
-
-- **GitHub Actions** single-line `GENERATED_AGAINST_MODULE_VERSION: '0.7.95'`.
-- **Azure DevOps** two-line `- name: GENERATED_AGAINST_MODULE_VERSION` + `value: '0.7.95'`.
-
-If the destination has ANY non-pin divergence outside markers (e.g. a hand-edited comment), the cmdlet still emits `Skipped-NeedsForce` exactly as before - the safety contract for non-trivial divergence is unchanged.
-
-### One-time `-Force` migration for Step.0 / Step.1 destinations
-
-The v0.7.94 -> v0.7.95 upgrade still requires `-Force` for Step.0 / Step.1 destinations that don't yet have markers - they fall into branch 3d (`src has markers, dest doesn't`) which still refuses to write without `-Force`, because synthesising marker boundaries from an unmarked file would risk losing operator content. All subsequent upgrades are smooth - branch 3f preserves marker bodies, branch 3c bumps the pin in place, neither needs `-Force`.
-
-```powershell
-# One-time upgrade refresh for Step.0 + Step.1 destinations:
-Update-AzLocalPipelineExample -Destination .\.github\workflows -Platform GitHub -Force
-# Or per-file if you've customised them:
-Update-AzLocalPipelineExample -Destination .\.github\workflows -Platform GitHub -Name Step.0_authentication-test.yml,Step.1_inventory-clusters.yml -Force
-```
-
-### Pester guards
-
-Two new regression cases under `Describe 'Function: Update-AzLocalPipelineExample'` exercise branch 3c.i end-to-end via a mocked `Get-Module` that resolves the cmdlet's source folder to a fake module install under `TestDrive` containing a single marker-free synthetic YAML: one asserts the pin-only auto-bump fires (`Action='Updated-PinOnly'`, no `-Force` needed, pin rewritten); the other asserts non-pin divergence still emits `Skipped-NeedsForce` with the destination file unchanged.
-
-### (c) `Automation-Pipeline-Examples/README.md` + `docs/appendix-pipelines.md` ergonomics restructure
-
-Three docs-only changes that shipped alongside the cmdlet fixes above:
-
-- **Section 1.1 pipeline-inventory table is now fully hyperlinked.** Each `Step.N` pipeline name in the at-a-glance table links to its dedicated `Step N -` section in [`Automation-Pipeline-Examples/docs/appendix-pipelines.md`](Automation-Pipeline-Examples/docs/appendix-pipelines.md) (Purpose / Inputs / Trigger / Cmdlets invoked / Depends on / Artefacts / When to run / RBAC / Exit conditions / ITSM). No more guess-and-scroll through a 2000-line README to find what Step.4 actually does.
-- **Section 3 RBAC restructured around the recommended assignment path.** The MG + Azure Policy `deployIfNotExists` pattern (auto-assigns the custom role on every present and future subscription under a management group) is now the default in new **section 3.2** with a 6-step summary and a cross-link to the full recipe in [`docs/rbac.md`](docs/rbac.md). The manual per-subscription assignment workflow has been moved to new **section 3.3** ("Manual / per-subscription alternative (legacy)") with all its existing detail (assign command, error tables, security-group delegation tip, verify-the-grant probes, PIM gotcha, migration tip, built-in-role fallback) preserved verbatim. The bundled [`azlocal-update-management-custom-role.json`](Automation-Pipeline-Examples/azlocal-update-management-custom-role.json) now defaults its `AssignableScopes` to a management-group placeholder (`/providers/Microsoft.Management/managementGroups/<your-mg-id>`) so the recommended path works out of the box; the legacy per-sub path takes one line of edit.
-- **`docs/appendix-pipelines.md` enterprise-grading pass.** All 10 per-pipeline H3 sections renamed from the academic `A.N <Title>` form to the operator-facing `Step N - <Title>` form (matching the bundled `Step.N_*.yml` filenames and the workflow `name:` fields shown in the GitHub Actions sidebar / Azure DevOps Pipelines list). Each of the 10 sections gained four new rows: **Cmdlets invoked**, **Depends on**, **Exit conditions**, and **ITSM**. The **ITSM** row makes ServiceNow auto-raise coverage explicit per pipeline: Step 4 / Step 6 / Step 8 / Step 9 ship the opt-in `raise_itsm_ticket` (GitHub Actions) / `raiseItsmTicket` (Azure DevOps) input + the four ITSM toggles + the `Get-AzLocalItsmConfig` post-job step; Step 0 / Step 1 / Step 2 / Step 3 / Step 5 / Step 7 do not, with a one-line rationale per section so silence is no longer ambiguous. Step 8 and Step 9 `Inputs` rows were also corrected to list the four ITSM toggles inline (previously only the `Cmdlets invoked` row hinted at ITSM support). The misleading "separate tag-management identity" guidance was also removed from section 3 of the parent README - the bundled pipelines use a single identity per platform (one `AZURE_CLIENT_ID` for GitHub Actions, one service connection for Azure DevOps), so a separate-identity recipe was unimplementable as written.
-- **Step 5 + parent README section 8.1.1 - recommended Step.5 pre-flight schedule (per ring).** Because `Step.5_assess-update-readiness.yml` ships without a `schedule:` block (the `update_ring` input is required and no single value is universally correct), the appendix's `Step 5 - Assess Update Readiness` section now closes with a **RECOMMENDED CUSTOMISATION** blockquote explaining the per-ring scheduling pattern + a small lead-time table (12-24h for <=10 clusters, 24-48h for 10-50, 48-72h for 50+ clusters). The parent `Automation-Pipeline-Examples/README.md` gains matching **new section 8.1.1 "Recommended Step.5 pre-flight schedule (per ring)"** with a worked GitHub Actions multi-cron snippet, an explicit cron-trigger-cannot-supply-`inputs:` callout (so the recommended pattern is one `Step.5_*.yml` per ring, each with its own per-ring cron), and an always-green caveat (a silently-empty `readiness.xml` from an `update_ring` typo never produces a red-build email - check the Tests tab / wire the JUnit reporter into your existing CI status surface). Calls out the known Step.3 audit gap: the Step.3 coverage audit only validates Step.6 cron-to-`UpdateStartWindow` coverage; it does not audit Step.5-to-Step.6 lead-time pairing, so pair Step.5 + Step.6 cron edits in the same PR for human review.
-
-No anchor breakage: `### 3.1 Custom role: ...` is preserved verbatim (referenced from 8+ places across both READMEs). The deleted old `### 3.2 Extending to additional subscriptions` content is absorbed inline into 3.3 (the new MG+DINE path makes a dedicated "extending" section obsolete - new subs auto-onboard).
+- **`Automation-Pipeline-Examples/README.md` (CI/CD runbook).** Section-1 Step.7 bullet now mentions the new `Status` + `ErrorMessage` columns, the `StepError` JUnit failure type, the always-shown Failed-runs block, portal-linked Cluster / Update Name cells, and the new `STEP_ERRORED` / `UNRESOLVED_FAILURES` `GITHUB_OUTPUT` values. Step.8 bullet now mentions `NeedsAttention` promotion into the `Update Failed` bucket, the new `Action Required` bucket for `PreparationFailed`, and `PreparationInProgress` folding into `Update In Progress`.
+- **`Automation-Pipeline-Examples/docs/appendix-pipelines.md` (per-step pipeline reference).** Step 7 and Step 8 tables refreshed: the `Purpose`, `Artefacts`, `Exit conditions`, and `Introduced` rows now describe the new columns, JUnit failure types, the bucket cascade (`Update Failed > Action Required > Health Failure > SBE Prerequisite Blocked > Update In Progress > Ready for Update > Up to Date > Needs Investigation`), the `primaryActionRequired` JUnit attribute, `ACTION_REQUIRED` output, `Summary.UpdateFailures` + `Summary.ActionRequired` JSON keys, and the portal-linked markdown cells. A duplicate `Exit conditions` row on Step 7 was removed as part of the refresh.
+- **`docs/release-history.md` (canonical release history).** Current-release pointer bumped from v0.7.89 to v0.7.97; new `### What's New in v0.7.96` entry prepended (mirrors the v0.7.96 README block now relocated to the [Release History](#release-history) appendix below).
+- **All 18 bundled `Step.{0..9}.yml` templates** bump `GENERATED_AGAINST_MODULE_VERSION` from `'0.7.96'` to `'0.7.97'`. Pin-only; no inline-script content changes.
 
 ### Migration summary
 
-`Install-Module AzLocal.UpdateManagement -Force` (or `Update-Module`). Run `Update-AzLocalPipelineExample -Destination <path>` to refresh. The first run after upgrade may require `-Force` for Step.0 / Step.1 if those destinations don't yet have markers; subsequent runs do not.
+For cmdlet consumers: `Install-Module AzLocal.UpdateManagement -Force` (or `Update-Module`). No cmdlet behaviour change vs v0.7.96.
 
-> Previous release notes (v0.7.94 and earlier) have moved into the [Release History](#release-history) appendix below, with full text retained in [`docs/release-history.md`](docs/release-history.md) and [`CHANGELOG.md`](CHANGELOG.md).
+For CI/CD pipeline consumers: re-run `Update-AzLocalPipelineExample -Destination <path>` to refresh the `GENERATED_AGAINST_MODULE_VERSION` pin (pin-only short-circuit from v0.7.95 means `-Force` is not required).
+
+> Previous release notes (v0.7.96 and earlier) have moved into the [Release History](#release-history) appendix below, with full text retained in [`docs/release-history.md`](docs/release-history.md) and [`CHANGELOG.md`](CHANGELOG.md).
 
 ## Files
 
@@ -621,7 +584,19 @@ This code is provided as-is for educational and reference purposes.
 
 The full What's-New history (v0.7.81 and earlier) has moved to [docs/release-history.md](docs/release-history.md).
 
-The most recent release notes for **v0.7.95** stay above under [`What's New in v0.7.95`](#whats-new-in-v0795).
+The most recent release notes for **v0.7.97** stay above under [`What's New in v0.7.97`](#whats-new-in-v0797).
+
+### What's New in v0.7.96
+
+Operator-visibility release. Rolled every Azure portal Update Manager signal into the module + pipelines so operators no longer had to click into the Azure portal to triage stuck or failed runs. No breaking changes (additive fields only). Triggered by an Arizona cluster that sat 18+ days on the "Start update" step where the existing `State=InProgress` signal made it invisible to Step.7 long-running checks. `Get-AzLocalUpdateRuns` gained two new fields - `Status` (the 7-value `properties.progress.status` vocabulary: `Success` / `Error` / `InProgress` / `NotStarted` / `Skipped` / `Cancelled` / `Unknown`) and `ErrorMessage` (the deepest non-empty `errorMessage` walked from the `properties.progress.steps[]` tree, via a new `Get-DeepestErrorMessage` private helper that recurses up to depth 9). Step.7 `monitor-updates.yml` got a new JUnit failure type `StepError` (fires when `Status=Error && State=InProgress` - the Arizona stuck-step signal), replaced the "Recently-failed" table with an always-shown "Failed runs (unresolved)" block, added `Progress Status` + `ErrorMessage` columns, MS Learn TSG link, new `STEP_ERRORED` / `UNRESOLVED_FAILURES` outputs, and portal-linked Cluster / Update Name cells. Step.8 `fleet-update-status.yml` promoted `PreparationFailed` and `NeedsAttention` from the catch-all "Other" bucket to first-class signals: `NeedsAttention` joined `Update Failed`, `PreparationFailed` got its own new `Action Required` bucket with separate remediation prose, and `PreparationInProgress` was counted under `Update In Progress`. New JUnit testsuite `primaryActionRequired` property, new `ACTION_REQUIRED` output, new `Summary.UpdateFailures` + `Summary.ActionRequired` keys in `readiness-status.json`, per-cluster JUnit `failureType='PreparationFailed'` for ITSM routing.
+
+See [CHANGELOG.md](CHANGELOG.md#0796---2026-06-09) for the full v0.7.96 entry.
+
+### What's New in v0.7.95
+
+v0.7.95 was a quality-of-life release that fixed `Update-AzLocalPipelineExample` silently skipping Step.0 / Step.1 YAMLs on every module bump (added `# BEGIN-AZLOCAL-CUSTOMIZE:schedule-triggers` marker blocks to those four bundled YAMLs + a pin-only short-circuit in `Update-AzLocalPipelineExample` branch 3c so `GENERATED_AGAINST_MODULE_VERSION` bumps no longer require `-Force`). Also restructured `Automation-Pipeline-Examples/README.md` section 3 (RBAC) around the recommended MG + Azure Policy `deployIfNotExists` path and renamed `docs/appendix-pipelines.md` per-pipeline sections from `A.N` to `Step N -` with new `Cmdlets invoked` / `Depends on` / `Exit conditions` / `ITSM` rows on each.
+
+See [CHANGELOG.md](CHANGELOG.md#0795---2026-06-08) for the full v0.7.95 entry.
 
 ### What's New in v0.7.94
 

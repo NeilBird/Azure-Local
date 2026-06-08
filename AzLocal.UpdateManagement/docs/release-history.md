@@ -4,7 +4,38 @@
 >
 > **For older releases**, this is the canonical reference; the main README intentionally stays slim so the most recent block is easy to find.
 >
-> **For v0.7.89 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0789) `What's New in v0.7.89` section.
+> **For v0.7.97 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0797) `What's New in v0.7.97` section.
+
+---
+
+### What's New in v0.7.97
+
+v0.7.97 is a documentation-only follow-up to v0.7.96. The three Markdown files that ship inside the published PSGallery `.nupkg` under the module folder were refreshed to mirror the v0.7.96 module behaviour. Consumers who installed v0.7.96 fresh saw stale Step.7 + Step.8 narrative in those in-package docs because they were updated AFTER `Publish-Module.ps1` ran. v0.7.97 republishes the package with the aligned docs.
+
+**No code anywhere in the module, no inline-script changes in any Step.{0..9}.yml template.** Only the `GENERATED_AGAINST_MODULE_VERSION` pin moves from `'0.7.96'` to `'0.7.97'` across all 20 bundled templates (10 GitHub Actions + 10 Azure DevOps).
+
+- **`Automation-Pipeline-Examples/README.md` (CI/CD runbook):** section-1 Step.7 bullet now mentions the new `Status` + `ErrorMessage` columns, the `StepError` JUnit failure type, the always-shown Failed-runs block, portal-linked Cluster / Update Name cells, and the new `STEP_ERRORED` / `UNRESOLVED_FAILURES` `GITHUB_OUTPUT` values. Step.8 bullet now mentions `NeedsAttention` promotion into the `Update Failed` bucket, the new `Action Required` bucket for `PreparationFailed`, and `PreparationInProgress` folding into `Update In Progress`.
+- **`Automation-Pipeline-Examples/docs/appendix-pipelines.md` (per-step pipeline reference):** Step 7 and Step 8 tables refreshed: the `Purpose`, `Artefacts`, `Exit conditions`, and `Introduced` rows now describe the new columns, JUnit failure types, the bucket cascade, the `primaryActionRequired` JUnit attribute, `ACTION_REQUIRED` output, `Summary.UpdateFailures` + `Summary.ActionRequired` JSON keys, and the portal-linked markdown cells. A duplicate `Exit conditions` row on Step 7 was removed.
+- **`docs/release-history.md` (this file):** current-release pointer bumped from v0.7.89 to v0.7.97; the v0.7.96 entry was already prepended in PR #66 (commit `c395ed3`).
+- **All 18 bundled `Step.{0..9}.yml` templates** bumped `GENERATED_AGAINST_MODULE_VERSION` from `'0.7.96'` to `'0.7.97'`. Pin-only; no inline-script content changes.
+
+This release also closes a process gap: the in-package docs (the three files listed above) ship inside the PSGallery `.nupkg` because `Publish-Module.ps1` only strips `Tests/`, `Tools/`, `Module-reviews/`, and root-level non-README `*.md`. The `Automation-Pipeline-Examples/` tree and the `docs/` folder ride along with the manifest, so any time their content is updated AFTER a publish, a republish is required for consumers to see the aligned narrative. v0.7.97 also adds this verification to the maintainer-facing `docs/RELEASE-PROCESS.md` and the version-bump checklist.
+
+---
+
+### What's New in v0.7.96
+
+v0.7.96 is a focused operator-visibility release driven by a side-by-side comparison of the bundled Step.7 + Step.8 pipelines against the Azure portal Update Manager view used by the Azure Local product team. Three gaps were closed in lock-step: the in-flight monitor (`Step.7 monitor-updates`) now surfaces the `Status` column and the deepest nested `errorMessage` for every in-flight run, plus a new `StepError` JUnit failure type that fires on stuck-but-still-fresh runs (the Arizona-shaped case where a step has been in `Status='Error'` for 19+ days but the run's overall elapsed time is still under `long_running_threshold_hours`); the daily snapshot (`Step.8 fleet-update-status`) reworks the Primary Status bucket cascade to align with the Azure portal Update Manager `state` filter by promoting `NeedsAttention` into the `Update Failed` bucket, adding a new `Action Required` bucket for `PreparationFailed` (with its own actionable guidance because the run never started so re-arming is required), and folding `PreparationInProgress` into `Update In Progress`; and both pipelines now render Cluster Name and Update Name cells in their markdown summaries as `<a href="https://portal.azure.com/...">` deep-links to the cluster's Updates blade and the single-instance update-run history view, matching the Azure portal's hyperlink behaviour.
+
+**New `Status` + `ErrorMessage` columns on every update run.** `Format-AzLocalUpdateRun` now emits both columns derived from `properties.progress.status` and the deepest `errorMessage` walked from the nested `properties.progress.steps[]` tree (uses a `coalesce(e9Msg..e1Msg)` recursion via the new private `Get-DeepestErrorMessage` helper that walks all 9 nesting levels of the ARM steps tree). The columns appear in `update-monitor.csv`, the in-flight markdown table, the always-shown Failed-runs block, and the `update-runs.csv` artefact emitted by Step 8.
+
+**Step.7 new `StepError` JUnit failure type.** Runs whose deepest step status is `Error` but whose overall elapsed time is below `long_running_threshold_hours` (default 6h) now generate a JUnit `<failure failureType='StepError'>` entry so they surface in the Checks tab WITHOUT needing the long-running threshold to fire. Two new `GITHUB_OUTPUT` values support this: `STEP_ERRORED` (count of runs that hit a step error inside the threshold) and `UNRESOLVED_FAILURES` (count of Failed runs surfaced from `Get-AzLocalUpdateRunFailures`). The always-shown Failed-runs block in the Step.7 markdown summary carries an MS Learn TSG link.
+
+**Step.8 new `Action Required` Primary Status bucket.** The Primary Status bucket cascade is now `Update Failed > Action Required > Health Failure > SBE Prerequisite Blocked > Update In Progress > Ready for Update > Up to Date > Needs Investigation`. `PreparationFailed` lands in the new `Action Required` row with separate actionable prose. Surfaces via: (1) new `<property name="primaryActionRequired" value="$stActionRequired"/>` JUnit attribute on the primary testsuite; (2) per-testcase `failureType='PreparationFailed'` instead of the generic `UpdateFailure`; (3) new `ACTION_REQUIRED` `GITHUB_OUTPUT` (`actionRequired` pipeline variable in ADO); (4) `Summary.UpdateFailures` + `Summary.ActionRequired` rolled-up bucket counts in `readiness-status.json`; (5) new "Action Required (PreparationFailed)" row in the Primary Status markdown table with its own callout.
+
+**Portal deep-links in both Step.7 and Step.8 markdown tables.** Cluster Name cells render as `<a href="https://portal.azure.com/#@/resource{ClusterResourceId}/updates">ClusterName</a>` and Update Name cells render as `<a href="https://portal.azure.com/#view/Microsoft_AzureStackHCI_PortalExtension/SingleInstanceHistoryDetails.ReactView/resourceId/{enc}/updateName/{name}/updateRunName/{runId}/refresh~/false">UpdateName</a>`. Verified working in the Arizona + Orlando smoke tests this release cycle.
+
+8 new Pester tests added (4 covering `Format-AzLocalUpdateRun` Status + ErrorMessage emission, 4 covering `Get-DeepestErrorMessage` recursive walk semantics including the L3-deepest case used in production). Full suite green at 794 / 0 / 1. All 18 bundled `Step.{0..8}.yml` templates bumped `GENERATED_AGAINST_MODULE_VERSION` from `'0.7.95'` to `'0.7.96'`; the GH Step.8 `run:` block measures 17,877 chars (under the repo's 18,000-char ceiling guard).
 
 ---
 

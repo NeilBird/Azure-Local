@@ -5,6 +5,51 @@ All notable changes to the AzLocal.UpdateManagement module (renamed from AzStack
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.97] - 2026-06-08
+
+Documentation-only release. The three Markdown files that ship inside the published PSGallery `.nupkg` under the module folder were refreshed to mirror the v0.7.96 module behaviour. Consumers who installed v0.7.96 fresh saw stale Step.7 + Step.8 narrative in those in-package docs because they were updated AFTER `Publish-Module.ps1` ran. v0.7.97 republishes the package with the aligned docs.
+
+**No code anywhere in the module, no inline-script changes in any Step.{0..9}.yml template** - only the `GENERATED_AGAINST_MODULE_VERSION` pin moves from `'0.7.96'` to `'0.7.97'` across all 20 bundled templates (10 GitHub Actions + 10 Azure DevOps).
+
+### Changed
+
+- **`Automation-Pipeline-Examples/README.md` (CI/CD runbook).** Section-1 Step.7 bullet now mentions the new `Status` + `ErrorMessage` columns, the `StepError` JUnit failure type, the always-shown Failed-runs block, portal-linked Cluster / Update Name cells, and the new `STEP_ERRORED` / `UNRESOLVED_FAILURES` `GITHUB_OUTPUT` values. Step.8 bullet now mentions `NeedsAttention` promotion into the `Update Failed` bucket, the new `Action Required` bucket for `PreparationFailed`, and `PreparationInProgress` folding into `Update In Progress`. Both bullets carry portal-linked markdown cells on Cluster Name / Update Name from v0.7.96.
+- **`Automation-Pipeline-Examples/docs/appendix-pipelines.md` (per-step pipeline reference).** Step 7 and Step 8 tables refreshed: the `Purpose`, `Artefacts`, `Exit conditions`, and `Introduced` rows now describe the new columns, JUnit failure types, the bucket cascade (`Update Failed > Action Required > Health Failure > SBE Prerequisite Blocked > Update In Progress > Ready for Update > Up to Date > Needs Investigation`), the `primaryActionRequired` JUnit attribute, `ACTION_REQUIRED` output, `Summary.UpdateFailures` + `Summary.ActionRequired` JSON keys, and the portal-linked markdown cells. A duplicate `Exit conditions` row on Step 7 was removed as part of the refresh.
+- **`docs/release-history.md` (canonical release history).** Current-release pointer bumped from v0.7.89 to v0.7.97; new `### What's New in v0.7.96` entry prepended (mirrors the v0.7.96 README block).
+- **All 18 bundled `Step.{0..9}.yml` templates (9 GitHub Actions + 9 Azure DevOps)** bumped `GENERATED_AGAINST_MODULE_VERSION` from `'0.7.96'` to `'0.7.97'`. Pin-only; no inline-script content changes.
+
+### Migration
+
+For cmdlet consumers: `Install-Module AzLocal.UpdateManagement -Force` (or `Update-Module`). No cmdlet behaviour change vs v0.7.96.
+
+For CI/CD pipeline consumers: re-run `Update-AzLocalPipelineExample -Destination <path>` to refresh the `GENERATED_AGAINST_MODULE_VERSION` pin (pin-only short-circuit from v0.7.95 means `-Force` is not required).
+
+## [0.7.96] - 2026-06-09
+
+Operator-visibility release. Rolls every Azure portal Update Manager signal into the module + pipelines so operators no longer have to click into the Azure portal to triage stuck or failed runs. No breaking changes (additive fields only). Triggered by the Arizona cluster that sat 18+ days on the "Start update" step where the existing `State=InProgress` signal made it invisible to Step.7 long-running checks.
+
+### Added
+
+- **`Get-AzLocalUpdateRuns` now surfaces `Status`** - the 7-value `properties.progress.status` vocabulary (`Success` / `Error` / `InProgress` / `NotStarted` / `Skipped` / `Cancelled` / `Unknown`) alongside the existing `State` field (`properties.state`: `Succeeded` / `Failed` / `InProgress`). The two fields are independent: a run can be `State=InProgress` while `Status=Error` (per-step error surfaced, run not yet abandoned). The combination is the key signal that drives Step.7's new `StepError` JUnit type. Backed by a new private field on `Format-AzLocalUpdateRun` and propagated through both the multi-cluster and no-runs paths of `Get-AzLocalUpdateRuns`.
+- **`Get-AzLocalUpdateRuns` now surfaces `ErrorMessage`** - the deepest non-empty `errorMessage` walked from the `properties.progress.steps[]` tree. Backed by a new `Get-DeepestErrorMessage` private helper that recurses up to depth 9, mirroring the workbook's `coalesce(e9Msg..e1Msg)` pattern, and returns the deepest text from any step with `status` in (`Error`, `Failed`). Operators see the actual portal error text directly in the pipeline CSV + markdown summary instead of having to deep-link into the cluster blade.
+- **New private helper `Get-DeepestErrorMessage`** registered in `NestedModules` in the psd1 between `Get-DeepestActiveStep` and `Get-ExportFormat`. Not exported - operators consume it indirectly via the new `ErrorMessage` field.
+
+### Changed
+
+- **`Step.7_monitor-updates.yml` (GitHub Actions + Azure DevOps) reworked.** New JUnit failure type `StepError` fires whenever `Status=Error && State=InProgress` - this is the signal that the Arizona "Start update" 18-day stuck-step case was missing. The "Recently-failed" markdown table is replaced by "Failed runs (unresolved)" which **always** lists every cluster whose latest run is `State=Failed` (since `-Latest` already returns one row per cluster, any Failed latest run IS unresolved by definition - no age window). Recent-failure highlighting is now a `:fire: last Nh` flag column. New `Progress Status` column on the in-flight table; new `ErrorMessage` column on the failed-runs table (220-char truncated in markdown, full in CSV). TSG blockquote now links both [MS Learn](https://learn.microsoft.com/azure/azure-local/update/update-troubleshooting-23h2) and the GitHub TSG. JUnit failure-type vocabulary: `StepError`, `LongRunningStep`, `LongRunningOverall`, `RecentFailure`. New job outputs `STEP_ERRORED` / `stepErrored` and `UNRESOLVED_FAILURES` / `unresolvedFailures` for downstream consumption.
+- **`Step.8_fleet-update-status.yml` (GitHub Actions + Azure DevOps) reworked.** The `properties.state` values `PreparationFailed` and `NeedsAttention` previously fell into the catch-all "Other / Needs Investigation" bucket and were invisible to operators. v0.7.96 promotes them to first-class signals (matches the Azure portal Update Manager `state` filter):
+  - `NeedsAttention` joins the existing **Update Failed** bucket (terminal failure, retry path).
+  - `PreparationFailed` gets its own new **Action Required** bucket (operator must remediate before the run can be re-armed).
+  - `PreparationInProgress` is now counted under **Update In Progress** (was previously dropped into Other).
+  - The `failures` total in the JUnit critical-health pass/fail now includes both new states, so the pipeline correctly turns RED when any of (`Failed` / `UpdateFailed` / `NeedsAttention` / `PreparationFailed`) is present.
+  - New JUnit testsuite property `primaryActionRequired`; new pipeline output `ACTION_REQUIRED` (GH) / `$(collect.actionRequired)` (ADO); new "Action Required" row in the Primary Status markdown table and host summary; new "Actions Required" prose entry explaining the PreparationFailed remediation path.
+  - The JUnit per-cluster `testcase failureType` is now `PreparationFailed` when applicable (vs the generic `UpdateFailure`) so downstream ITSM connectors can route the ticket differently.
+  - New `Summary.UpdateFailures` and `Summary.ActionRequired` counts on the `readiness-status.json` artefact.
+
+### Migration
+
+Apply via `Install-Module AzLocal.UpdateManagement -Force` (or `Update-Module`). Run `Update-AzLocalPipelineExample -Destination <path>` to refresh both `Step.7_monitor-updates.yml` and `Step.8_fleet-update-status.yml`. Both files sit outside any `BEGIN-AZLOCAL-CUSTOMIZE` block, so operator schedule customisations elsewhere in those pipelines are preserved.
+
 ## [0.7.95] - 2026-06-08
 
 Quality-of-life release. Removes the recurring friction where `Update-AzLocalPipelineExample` silently skipped Step.0 / Step.1 YAMLs on every module bump. No cmdlet behaviour changes affecting other functions, no schema changes, no breaking changes.

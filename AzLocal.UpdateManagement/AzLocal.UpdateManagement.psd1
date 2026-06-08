@@ -3,7 +3,7 @@
     RootModule = 'AzLocal.UpdateManagement.psm1'
 
     # Version number of this module.
-    ModuleVersion = '0.7.95'
+    ModuleVersion = '0.7.97'
 
     # Supported PSEditions
     CompatiblePSEditions = @('Desktop', 'Core')
@@ -53,6 +53,8 @@
         'Private/Get-AzLocalPipelineCustomiseMarkers.ps1',
         'Private/Get-AzLocalRunEndTime.ps1',
         'Private/Get-CurrentStepPath.ps1',
+        'Private/Get-DeepestActiveStep.ps1',
+        'Private/Get-DeepestErrorMessage.ps1',
         'Private/Get-ExportFormat.ps1',
         'Private/Get-HealthCheckFailureSummary.ps1',
         'Private/Get-LastUpdateRunErrorSummary.ps1',
@@ -213,19 +215,31 @@
 
             # ReleaseNotes of this module
             ReleaseNotes = @'
+## Version 0.7.97 - In-package documentation follow-up to v0.7.96 (no code or YAML run-block changes)
+
+Documentation-only release. The three Markdown files that ship inside the published PSGallery .nupkg under the module folder were refreshed to mirror the v0.7.96 module behaviour - `Automation-Pipeline-Examples/README.md`, `Automation-Pipeline-Examples/docs/appendix-pipelines.md`, and `docs/release-history.md`. Consumers who installed v0.7.96 fresh saw stale Step.7 + Step.8 narrative in those in-package docs because they were updated AFTER `Publish-Module.ps1` ran. v0.7.97 republishes the package with the aligned docs. No code anywhere in the module, no inline-script changes in any Step.{0..9}.yml template - only the `GENERATED_AGAINST_MODULE_VERSION` pin moves from `''0.7.96''` to `''0.7.97''` across all 20 bundled templates.
+
+- **`Automation-Pipeline-Examples/README.md` (CI/CD runbook):** section-1 Step.7 bullet now mentions the new Status + ErrorMessage columns, the StepError JUnit failure type, the always-shown Failed-runs block, portal-linked Cluster/Update cells, and the new STEP_ERRORED / UNRESOLVED_FAILURES `GITHUB_OUTPUT` values. Step.8 bullet now mentions NeedsAttention promotion into Update Failed, the new Action Required bucket for PreparationFailed, and PreparationInProgress folding into Update In Progress.
+- **`Automation-Pipeline-Examples/docs/appendix-pipelines.md` (per-step pipeline reference):** Step 7 and Step 8 tables refreshed - Purpose, Artefacts, Exit conditions, and Introduced rows now describe the new columns, JUnit failure types, the bucket cascade, the primaryActionRequired attribute, ACTION_REQUIRED output, Summary.UpdateFailures + Summary.ActionRequired JSON keys, and the portal-linked markdown cells.
+- **`docs/release-history.md` (canonical release history):** current-release pointer bumped from v0.7.89 to v0.7.97; new `### What''s New in v0.7.96` entry prepended (mirrors the v0.7.96 README block).
+- **All 18 bundled `Step.{0..9}.yml` templates (9 GitHub Actions + 9 Azure DevOps) bump `GENERATED_AGAINST_MODULE_VERSION` from `''0.7.96''` to `''0.7.97''`.** Pin-only; no inline-script content changes anywhere.
+
+Apply via `Install-Module AzLocal.UpdateManagement -Force` (or `Update-Module`). If you only consume the cmdlets there is no behaviour change vs v0.7.96 - this is a docs-correctness republish. If you have copied the bundled YAMLs into your CI repo via `Update-AzLocalPipelineExample`, re-run it to refresh the version pin (pin-only short-circuit from v0.7.95 means `-Force` is not required).
+
+## Version 0.7.96 - Portal-parity: Status field, ErrorMessage column, StepError JUnit type, always-show unresolved Failed, Step.8 ActionRequired bucket
+
+For full v0.7.96 release notes see:
+https://github.com/NeilBird/Azure-Local/blob/main/AzLocal.UpdateManagement/CHANGELOG.md
+
 ## Version 0.7.95 - Update-AzLocalPipelineExample pin-only short-circuit + Step.0/Step.1 marker blocks
 
-Quality-of-life release. Eliminates the "module bump silently skipped my Step.0/Step.1 YAMLs" friction. No breaking changes.
-
-- **Fixed: `Update-AzLocalPipelineExample` skipping Step.0/Step.1 on every release.** Step.0 (`authentication-test`) and Step.1 (`inventory-clusters`) shipped without any `BEGIN-AZLOCAL-CUSTOMIZE` markers, but the bundled `GENERATED_AGAINST_MODULE_VERSION` pin is mechanically bumped on every release. The cmdlet treated this as "diverged, no markers to merge on" and refused to write without `-Force`. v0.7.95 fixes it both ways: **(a)** added `# BEGIN-AZLOCAL-CUSTOMIZE:schedule-triggers` blocks to all four bundled YAMLs (Step.0 GH + ADO, Step.1 GH + ADO) so future operator schedule edits survive merges - for Step.0 the markers wrap an empty template, for Step.1 they wrap the existing `cron: ''0 6 * * 1''` weekly inventory schedule; **(b)** added a pin-only short-circuit to `Update-AzLocalPipelineExample` branch 3c - when BOTH files are marker-free AND the only line-level difference is the `GENERATED_AGAINST_MODULE_VERSION` pin (a release metadata field, not an operator customisation surface), the cmdlet refreshes it in place without `-Force` and reports `Action=''Updated-PinOnly''`. Handles both the single-line GitHub Actions shape and the two-line Azure DevOps name/value shape. **One-time `-Force` migration**: the v0.7.94 -> v0.7.95 upgrade still requires `-Force` for Step.0/Step.1 destinations that don''t yet have markers (branch 3d - src has markers, dest doesn''t); all subsequent upgrades are smooth.
-- **Added: two Pester regression cases** under `Describe ''Function: Update-AzLocalPipelineExample''` exercise the new branch 3c.i (pin-only auto-bump without `-Force`; non-pin divergence still emits `Skipped-NeedsForce`). They use a mocked `Get-Module` so the cmdlet resolves to a fake module install under `TestDrive` containing a single marker-free synthetic YAML, exercising the new code path end-to-end.
-- **Docs: `Automation-Pipeline-Examples/README.md` + `docs/appendix-pipelines.md` ergonomics restructure.** (a) Section 1.1 pipeline-inventory table is fully hyperlinked - each `Step.N` row links to its `Step N -` section in `docs/appendix-pipelines.md`. (b) Section 3 RBAC reorganised around the recommended assignment path: MG + Azure Policy `deployIfNotExists` is the new default in **3.2** (6-step summary + cross-link to the full recipe in `docs/rbac.md`); the manual per-subscription workflow moved to new **3.3** ("Manual / per-subscription alternative (legacy)") with all detail preserved (assign command, error tables, security-group delegation tip, verify-the-grant probes, PIM gotcha, migration tip, built-in-role fallback). Bundled `azlocal-update-management-custom-role.json` default `AssignableScopes` flipped to a management-group placeholder so the recommended path works out of the box. (c) `docs/appendix-pipelines.md` overhaul: 10 sections renamed `A.N` -> `Step N -` (parent README anchors updated); each gained `Cmdlets invoked` + `Depends on` + `Exit conditions` + `ITSM` rows (ITSM row makes ServiceNow auto-raise coverage explicit per pipeline - Step 4/6/8/9 ship it; Step 0/1/2/3/5/7 do not). Step 8/9 `Inputs` rows now list the four ITSM toggles. Step 5 also gets a RECOMMENDED CUSTOMISATION block (per-ring cron, 12-72h ahead of Step 6); parent README adds 8.1.1 with the lead-time table.
+For full v0.7.95 release notes see:
+https://github.com/NeilBird/Azure-Local/blob/main/AzLocal.UpdateManagement/CHANGELOG.md
 
 ## Version 0.7.94 - Step.7 monitor-updates hotfix: missing -PassThru caused silent "0 in-flight" snapshots
 
-Hotfix release. Pipeline-YAML-only - no cmdlet behaviour changes, no schema changes, no breaking changes.
-
-- **Fixed: `Step.7_monitor-updates.yml` (GitHub Actions + Azure DevOps) - missing `-PassThru` on `Get-AzLocalUpdateRuns` caused every scheduled monitor run to report `0 in-flight / 0 long-running` even when clusters had update runs stuck `InProgress`.** Both Step.7 variants called `Get-AzLocalUpdateRuns -ClusterResourceIds $ids -Latest` (and the `-ScopeByUpdateRingTag -Latest` branch) without `-PassThru`. In multi-cluster mode the cmdlet writes its formatted results to the host via `Format-Table | Out-Host` and only returns them to the pipeline when `-PassThru` is set, so the consuming pipelines silently received an empty `$runs` array. Symptom: a fleet with a single update run stuck `InProgress` for 19+ days (well past the 6h `long_running_threshold_hours`) rendered as `Clusters scoped: 0 / Update runs in flight: 0 / Exceeding 6h threshold: 0` with the `No update runs currently in flight` branch and a 404-byte empty CSV - completely missing the long-running run the pipeline exists to surface. Fixed by adding `-PassThru -SkipSideloadedReset` to both `Get-AzLocalUpdateRuns` invocations in each of the two `Step.7_monitor-updates.yml` files. `-SkipSideloadedReset` is included because this is a read-only observability pipeline and must not mutate cluster tags via the cmdlet's default `UpdateSideloaded` auto-reset behaviour. Verified against a 20-cluster fleet with one InProgress run: post-fix Step.7 correctly reports `Clusters scoped: 20 / Update runs in flight: 1 / Exceeding 6h threshold: 1`. Step.8, the smoke tests, and the Pester suite already used `-PassThru` correctly.
+For full v0.7.94 release notes see:
+https://github.com/NeilBird/Azure-Local/blob/main/AzLocal.UpdateManagement/CHANGELOG.md
 
 Apply via `Install-Module AzLocal.UpdateManagement -Force` (or `Update-Module`). Run `Update-AzLocalPipelineExample -Destination <path>` to refresh the two affected `Step.7_monitor-updates.yml` files. The fix sits outside any `BEGIN-AZLOCAL-CUSTOMIZE` block, so operator customisations elsewhere in those pipelines are preserved.
 

@@ -34,6 +34,13 @@ function Format-AzLocalUpdateRun {
     $currentStep = ""
     $currentStepDetail = ""
     $progress = ""
+    $stepStartTimeDisplay = ""
+    $stepElapsedDisplay = ""
+    # Surfaced separately from State (v0.7.96) - exposes the portal 'Status' filter value.
+    # Operationally critical: a run can sit at State=InProgress for days while progress.status
+    # already shows 'Error', telling the operator a step has errored and the run is stuck.
+    $progressStatus = if ($props.progress -and $props.progress.PSObject.Properties['status']) { [string]$props.progress.status } else { '' }
+    $errorMessage = ''
     if ($props.progress -and $props.progress.steps) {
         $steps = $props.progress.steps
         # Wrap in @() so .Count returns 0 (not $null) when no step matches -- previously the
@@ -61,6 +68,37 @@ function Format-AzLocalUpdateRun {
                 $currentStepDetail = "$currentStepDetail - Critical health issues must be resolved before updates can proceed"
             }
         }
+
+        # Per-step elapsed (v0.7.96): walk to the deepest InProgress/Failed step and surface its
+        # startTimeUtc + computed elapsed. This is the primary "is something stuck?" signal for
+        # large-node clusters where overall-run duration alone is unreliable (a 16-node legitimate
+        # run can easily exceed 8h while every individual step ticks along normally).
+        $deepestActive = Get-DeepestActiveStep -Steps $steps
+
+        # Deepest non-empty errorMessage from any Error/Failed step in the tree (v0.7.96).
+        # Uses a coalesce(e8Msg..e1Msg) recursion so operators see the actual leaf failure
+        # (e.g. CAU exception) rather than the generic parent step name.
+        $errorMessage = Get-DeepestErrorMessage -Steps $steps
+        if ($deepestActive -and $deepestActive.PSObject.Properties['startTimeUtc'] -and $deepestActive.startTimeUtc) {
+            try {
+                $stepStartDt = [datetime]::SpecifyKind(([datetime]$deepestActive.startTimeUtc).ToUniversalTime(), [DateTimeKind]::Utc)
+                $stepStartTimeDisplay = $stepStartDt.ToString('yyyy-MM-dd HH:mm')
+                $stepSpan = $null
+                if ($props.state -eq 'InProgress' -and $deepestActive.status -eq 'InProgress') {
+                    $stepSpan = (Get-Date).ToUniversalTime() - $stepStartDt
+                    $human = Format-AzLocalDurationHuman -Value $stepSpan
+                    if ($human) { $stepElapsedDisplay = "$human (running)" }
+                }
+                elseif ($deepestActive.PSObject.Properties['endTimeUtc'] -and $deepestActive.endTimeUtc) {
+                    try {
+                        $stepEndDt = [datetime]::SpecifyKind(([datetime]$deepestActive.endTimeUtc).ToUniversalTime(), [DateTimeKind]::Utc)
+                        $stepSpan = $stepEndDt - $stepStartDt
+                        $human = Format-AzLocalDurationHuman -Value $stepSpan
+                        if ($human) { $stepElapsedDisplay = $human }
+                    } catch { $null = $_ <# malformed endTimeUtc on deepest step; leave step elapsed blank #> }
+                }
+            } catch { $null = $_ <# malformed startTimeUtc on deepest step; leave step start/elapsed blank #> }
+        }
     }
 
     $updateNameExtracted = ""
@@ -79,13 +117,18 @@ function Format-AzLocalUpdateRun {
     $result = [PSCustomObject]@{
         UpdateName        = $updateNameExtracted
         RunId             = $runId
+        RunResourceId     = if ($run.PSObject.Properties['id']) { [string]$run.id } else { '' }
         State             = $props.state
+        Status            = $progressStatus
         StartTime         = if ($props.timeStarted) { ([datetime]$props.timeStarted).ToString("yyyy-MM-dd HH:mm") } else { "" }
         EndTime           = $endTimeDisplay
         Duration          = $duration
         Progress          = $progress
         CurrentStep       = $currentStep
         CurrentStepDetail = $currentStepDetail
+        StepStartTime     = $stepStartTimeDisplay
+        StepElapsed       = $stepElapsedDisplay
+        ErrorMessage      = $errorMessage
         Location          = $props.location
     }
 

@@ -109,7 +109,7 @@ env:
   # PSGallery, and emits a ::notice annotation if the YAML appears stale -
   # prompting you to refresh via Copy-AzLocalPipelineExample -Update. See
   # Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.7.95'
+  GENERATED_AGAINST_MODULE_VERSION: '0.7.97'
   # Resolution order for the module version pin (leave all unset to install
   # the latest, the default "fix-forward" behaviour): manual workflow_dispatch
   # input > repository variable 'REQUIRED_MODULE_VERSION' > empty (latest).
@@ -373,9 +373,9 @@ jobs:
             $sev = Get-ArbSeverity $r.ArbStatus
             $portal = "https://portal.azure.com/#@/resource$($r.ArbId)"
             # ClusterId / ClusterName may be a comma-separated list when the
-            # ARB's resource group hosts multiple HCI clusters (LENS-style
-            # multi-cluster-per-RG collapse). Use the first cluster for the
-            # portal URL and keep the full list in the body / properties.
+            # ARB's resource group hosts multiple HCI clusters (multi-cluster-
+            # per-RG collapse). Use the first cluster for the portal URL and
+            # keep the full list in the body / properties.
             # NOTE: the [string[]] cast is required - without it, when
             # Where-Object yields a single scalar, the if-as-expression
             # collapses $clusterIdList to a bare [string] and indexing it
