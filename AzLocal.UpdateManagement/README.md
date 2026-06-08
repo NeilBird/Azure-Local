@@ -2,7 +2,7 @@
 
 > ⚠️ **Disclaimer**: This module is **NOT** a Microsoft supported service offering or product. It is provided as example code only, with no warranty or official support. Refer to the [MIT license](https://github.com/NeilBird/Azure-Local/blob/main/LICENSE) for further information.
 
-**Latest Version:** v0.7.94 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.7.94)
+**Latest Version:** v0.7.95 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.7.95)
 
 > 📢 **Renamed in v0.7.3**: this module was previously published as `AzStackHci.ManageUpdates`. The new module name aligns with the Azure Local product name (_Microsoft retired the *Azure Stack HCI* brand in late 2024_). The module GUID is preserved across the rename. If you have the old name installed, run:
 >
@@ -23,7 +23,7 @@ Azure Local REST API specification (includes update management endpoints): https
 **This README (overview + most-recent release notes):**
 
 - [Where to Start](#where-to-start)
-- [What's New in v0.7.94](#whats-new-in-v0794)
+- [What's New in v0.7.95](#whats-new-in-v0795)
 - [Files](#files)
 - [Prerequisites](#prerequisites)
 - [RBAC Requirements](#rbac-requirements) (summary; full reference in [docs/rbac.md](docs/rbac.md))
@@ -86,25 +86,52 @@ If you are new to this module, work through these in order from a regular PowerS
 
 > Most CI/CD pipelines in [Automation-Pipeline-Examples/](Automation-Pipeline-Examples/) are direct implementations of one of these workflows. Start there if you want a copy-pasteable end-to-end pipeline.
 
-## What's New in v0.7.94
+## What's New in v0.7.95
 
-Hotfix release. Pipeline-YAML-only - no cmdlet behaviour changes, no schema changes, no breaking changes.
+Quality-of-life release. Removes the recurring friction where `Update-AzLocalPipelineExample` silently skipped Step.0 / Step.1 YAMLs on every module bump. No cmdlet behaviour changes affecting other functions, no schema changes, no breaking changes.
 
-### `Step.7_monitor-updates.yml` - missing `-PassThru` caused silent `0 in-flight` snapshots
+### Why this release exists
 
-Both `Step.7_monitor-updates.yml` variants (GitHub Actions + Azure DevOps) called `Get-AzLocalUpdateRuns -ClusterResourceIds $ids -Latest` (and the `-ScopeByUpdateRingTag -Latest` branch) without `-PassThru`. In multi-cluster mode the cmdlet writes its formatted results to the host via `Format-Table | Out-Host` and only returns them to the pipeline when `-PassThru` is set, so the consuming pipelines silently received an empty `$runs` array on every scheduled run.
+Step.0 (`authentication-test`) and Step.1 (`inventory-clusters`) shipped without any `# BEGIN-AZLOCAL-CUSTOMIZE` markers, but the bundled `GENERATED_AGAINST_MODULE_VERSION` pin gets mechanically bumped on every release. `Update-AzLocalPipelineExample` correctly treated this as "diverged from bundled sample, no markers to merge on" and refused to write without `-Force`. The downstream effect: customers had to either run `-Force` on every upgrade (and risk losing local hand-edits) or skip those two files indefinitely. v0.7.95 fixes the root cause two complementary ways.
 
-**Symptom**: a fleet with a single update run stuck `InProgress` for 19+ days - well past the 6h `long_running_threshold_hours` - rendered as `Clusters scoped: 0 / Update runs in flight: 0 / Exceeding 6h threshold: 0` with the "No update runs currently in flight" branch and a 404-byte empty CSV. Step.7 exists specifically to surface long-running runs and was missing the exact case it was built to catch.
+### (a) `schedule-triggers` marker blocks on Step.0 and Step.1 (GitHub Actions + Azure DevOps)
 
-Fixed by adding `-PassThru -SkipSideloadedReset` to both `Get-AzLocalUpdateRuns` invocations in each of the two `Step.7_monitor-updates.yml` files. `-SkipSideloadedReset` is included because this is a read-only observability pipeline and must not mutate cluster tags via the cmdlet's default `UpdateSideloaded` auto-reset behaviour.
+All four bundled YAMLs now ship with a `# BEGIN-AZLOCAL-CUSTOMIZE:schedule-triggers` / `# END-AZLOCAL-CUSTOMIZE:schedule-triggers` block:
 
-Verified against a 20-cluster fleet with one `InProgress` run: post-fix Step.7 correctly reports `Clusters scoped: 20 / Update runs in flight: 1 / Exceeding 6h threshold: 1` with the affected cluster row and its elapsed duration. Step.8, the `Tools/smoke-test-*.ps1` harnesses, and the Pester suite already used `-PassThru` correctly, so they were never affected.
+- **Step.0** - markers wrap an empty schedule template; commented-out example shows how to enable a cron.
+- **Step.1** - markers wrap the existing `cron: '0 6 * * 1'` weekly inventory schedule (and the `schedules:` block with `displayName: 'Weekly Inventory'` on the Azure DevOps variant), so any operator change to the cron survives subsequent merges.
 
-### Migration
+With markers in place, future operator schedule edits are preserved by `Update-AzLocalPipelineExample` via its existing branch 3f (both files marker-aware merge).
 
-`Install-Module AzLocal.UpdateManagement -Force` (or `Update-Module`). Run `Update-AzLocalPipelineExample -Destination <path>` to refresh the two affected `Step.7_monitor-updates.yml` files (GitHub Actions + Azure DevOps). The fix sits outside any `BEGIN-AZLOCAL-CUSTOMIZE` block, so operator customisations elsewhere in those pipelines are preserved.
+### (b) Pin-only short-circuit in `Update-AzLocalPipelineExample`
 
-> Previous release notes (v0.7.93 and earlier) have moved into [`docs/release-history.md`](docs/release-history.md), with the v0.7.93 entry retained in the [Release History](#release-history) appendix below for quick reference.
+New code path in branch 3c (both files marker-free): when the ONLY line-level difference between the bundled YAML and the destination YAML is the `GENERATED_AGAINST_MODULE_VERSION` pin - a mechanically-bumped release metadata field, not an operator customisation surface - the cmdlet refreshes the pin in place without requiring `-Force` and reports a new `Action='Updated-PinOnly'` in the `-PassThru` output. Handles both pipeline shapes:
+
+- **GitHub Actions** single-line `GENERATED_AGAINST_MODULE_VERSION: '0.7.95'`.
+- **Azure DevOps** two-line `- name: GENERATED_AGAINST_MODULE_VERSION` + `value: '0.7.95'`.
+
+If the destination has ANY non-pin divergence outside markers (e.g. a hand-edited comment), the cmdlet still emits `Skipped-NeedsForce` exactly as before - the safety contract for non-trivial divergence is unchanged.
+
+### One-time `-Force` migration for Step.0 / Step.1 destinations
+
+The v0.7.94 -> v0.7.95 upgrade still requires `-Force` for Step.0 / Step.1 destinations that don't yet have markers - they fall into branch 3d (`src has markers, dest doesn't`) which still refuses to write without `-Force`, because synthesising marker boundaries from an unmarked file would risk losing operator content. All subsequent upgrades are smooth - branch 3f preserves marker bodies, branch 3c bumps the pin in place, neither needs `-Force`.
+
+```powershell
+# One-time upgrade refresh for Step.0 + Step.1 destinations:
+Update-AzLocalPipelineExample -Destination .\.github\workflows -Platform GitHub -Force
+# Or per-file if you've customised them:
+Update-AzLocalPipelineExample -Destination .\.github\workflows -Platform GitHub -Name Step.0_authentication-test.yml,Step.1_inventory-clusters.yml -Force
+```
+
+### Pester guards
+
+Two new regression cases under `Describe 'Function: Update-AzLocalPipelineExample'` exercise branch 3c.i end-to-end via a mocked `Get-Module` that resolves the cmdlet's source folder to a fake module install under `TestDrive` containing a single marker-free synthetic YAML: one asserts the pin-only auto-bump fires (`Action='Updated-PinOnly'`, no `-Force` needed, pin rewritten); the other asserts non-pin divergence still emits `Skipped-NeedsForce` with the destination file unchanged.
+
+### Migration summary
+
+`Install-Module AzLocal.UpdateManagement -Force` (or `Update-Module`). Run `Update-AzLocalPipelineExample -Destination <path>` to refresh. The first run after upgrade may require `-Force` for Step.0 / Step.1 if those destinations don't yet have markers; subsequent runs do not.
+
+> Previous release notes (v0.7.94 and earlier) have moved into the [Release History](#release-history) appendix below, with full text retained in [`docs/release-history.md`](docs/release-history.md) and [`CHANGELOG.md`](CHANGELOG.md).
 
 ## Files
 
@@ -583,7 +610,15 @@ This code is provided as-is for educational and reference purposes.
 
 The full What's-New history (v0.7.81 and earlier) has moved to [docs/release-history.md](docs/release-history.md).
 
-The most recent release notes for **v0.7.94** stay above under [`What's New in v0.7.94`](#whats-new-in-v0794).
+The most recent release notes for **v0.7.95** stay above under [`What's New in v0.7.95`](#whats-new-in-v0795).
+
+### What's New in v0.7.94
+
+v0.7.94 was a pipeline-YAML-only hotfix release. No cmdlet behaviour changes, no schema changes, no breaking changes.
+
+- **Fixed: `Step.7_monitor-updates.yml` (GitHub Actions + Azure DevOps) - missing `-PassThru` on `Get-AzLocalUpdateRuns` caused every scheduled monitor run to report `0 in-flight / 0 long-running` even when clusters had update runs stuck `InProgress`.** Both Step.7 variants called `Get-AzLocalUpdateRuns -ClusterResourceIds $ids -Latest` (and the `-ScopeByUpdateRingTag -Latest` branch) without `-PassThru`. In multi-cluster mode the cmdlet writes its formatted results to the host via `Format-Table | Out-Host` and only returns them to the pipeline when `-PassThru` is set, so the consuming pipelines silently received an empty `$runs` array. Fixed by adding `-PassThru -SkipSideloadedReset` to both `Get-AzLocalUpdateRuns` invocations in each of the two `Step.7_monitor-updates.yml` files.
+
+See [CHANGELOG.md](CHANGELOG.md#0794---2026-06-08) for the full v0.7.94 entry.
 
 ### What's New in v0.7.93
 

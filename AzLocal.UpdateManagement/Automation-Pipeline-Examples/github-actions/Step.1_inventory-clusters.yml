@@ -33,16 +33,21 @@ on:
         description: 'Pin AzLocal.UpdateManagement version (empty = latest from PSGallery). See Automation-Pipeline-Examples/README.md section 5 "Optional configuration".'
         required: false
         default: ''
+  # BEGIN-AZLOCAL-CUSTOMIZE:schedule-triggers
+  # Content between BEGIN/END markers is preserved by
+  # Update-AzLocalPipelineExample across module upgrades. Edit the cron
+  # below or add more `- cron:` entries to suit your maintenance windows.
   schedule:
     # Run weekly on Monday at 6:00 AM UTC
     - cron: '0 6 * * 1'
+  # END-AZLOCAL-CUSTOMIZE:schedule-triggers
 
 env:
   # Module version this workflow YAML was generated against. The install step compares
   # this to the version actually installed and to the latest on PSGallery, and emits a
   # ::notice annotation if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample. See Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.7.94'
+  GENERATED_AGAINST_MODULE_VERSION: '0.7.95'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): manual workflow_dispatch input >
   # repository variable 'REQUIRED_MODULE_VERSION' > empty (latest).

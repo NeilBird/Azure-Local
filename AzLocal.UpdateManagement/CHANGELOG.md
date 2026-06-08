@@ -5,6 +5,32 @@ All notable changes to the AzLocal.UpdateManagement module (renamed from AzStack
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.95] - 2026-06-08
+
+Quality-of-life release. Removes the recurring friction where `Update-AzLocalPipelineExample` silently skipped Step.0 / Step.1 YAMLs on every module bump. No cmdlet behaviour changes affecting other functions, no schema changes, no breaking changes.
+
+### Fixed
+
+- **`Update-AzLocalPipelineExample` was skipping Step.0 / Step.1 YAMLs on every release.** Step.0 (`authentication-test`) and Step.1 (`inventory-clusters`) shipped without any `# BEGIN-AZLOCAL-CUSTOMIZE` markers, but the bundled `GENERATED_AGAINST_MODULE_VERSION` pin gets mechanically bumped on every release. The cmdlet correctly treated this as "diverged from bundled sample, no markers to merge on" and refused to write without `-Force`. Customers had to either run `-Force` on every upgrade (and risk losing local hand-edits) or skip those two files indefinitely. Fixed two complementary ways - see Added below.
+
+### Added
+
+- **`schedule-triggers` marker blocks on all four bundled Step.0 / Step.1 YAMLs (GitHub Actions + Azure DevOps).** Step.0 markers wrap an empty schedule template with a commented-out cron example; Step.1 markers wrap the existing `cron: '0 6 * * 1'` weekly inventory schedule (and the Azure DevOps `schedules:` block with `displayName: 'Weekly Inventory'`). Operator schedule edits to either file now survive subsequent `Update-AzLocalPipelineExample` merges via the existing marker-aware branch 3f.
+- **Pin-only short-circuit in `Update-AzLocalPipelineExample` branch 3c.** When BOTH files are marker-free AND the only line-level difference is the `GENERATED_AGAINST_MODULE_VERSION` pin (a release metadata field, not an operator customisation surface), the cmdlet refreshes the pin in place without `-Force` and reports a new `Action='Updated-PinOnly'` in the `-PassThru` output. The regex normalisation handles both shapes: GitHub Actions single-line `GENERATED_AGAINST_MODULE_VERSION: '0.7.95'` and Azure DevOps two-line `- name: GENERATED_AGAINST_MODULE_VERSION` + `value: '0.7.95'`. Any non-pin divergence outside markers still emits `Skipped-NeedsForce` exactly as before - the safety contract for non-trivial divergence is unchanged.
+- **Two Pester regression cases** under `Describe 'Function: Update-AzLocalPipelineExample'` exercise the new branch 3c.i end-to-end via a mocked `Get-Module` that resolves the cmdlet's source folder to a fake module install under `TestDrive` containing a single marker-free synthetic YAML. One asserts the pin-only auto-bump fires (`Action='Updated-PinOnly'`, no `-Force` needed, pin rewritten in the destination); the other asserts non-pin divergence still emits `Skipped-NeedsForce` with the destination file untouched.
+- **`.OUTPUTS` documentation update** in the `Update-AzLocalPipelineExample` comment-based help: the documented `Action` enum now includes `'Updated-PinOnly'`. The `Safety:` section in `.DESCRIPTION` documents the carve-out.
+
+### Migration
+
+The v0.7.94 -> v0.7.95 upgrade still requires `-Force` for Step.0 / Step.1 destinations that don't yet have markers - they fall into branch 3d (`src has markers, dest doesn't`) which still refuses to write without `-Force`, because synthesising marker boundaries from an unmarked file would risk losing operator content. All subsequent upgrades are smooth.
+
+```powershell
+# One-time upgrade refresh for Step.0 + Step.1 destinations:
+Update-AzLocalPipelineExample -Destination .\.github\workflows -Platform GitHub -Force
+```
+
+All 20 bundled `Step.{0..9}.yml` templates pin-bumped to `'0.7.95'`.
+
 ## [0.7.94] - 2026-06-08
 
 Hotfix release. Pipeline-YAML-only - no cmdlet behaviour changes, no schema changes, no breaking changes.

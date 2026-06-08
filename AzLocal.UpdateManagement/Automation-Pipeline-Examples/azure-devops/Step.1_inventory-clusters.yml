@@ -10,6 +10,10 @@
 #   - UpdateVersionInProgress (module-managed; do not edit): staged update name
 #   See main module README, section "Sideloaded Payload Workflow".
 
+# BEGIN-AZLOCAL-CUSTOMIZE:schedule-triggers
+# Content between BEGIN/END markers is preserved by Update-AzLocalPipelineExample
+# across module upgrades. Edit the cron below or add more `- cron:` entries
+# to suit your maintenance windows.
 trigger: none
 
 schedules:
@@ -20,6 +24,7 @@ schedules:
       include:
         - main
     always: true
+# END-AZLOCAL-CUSTOMIZE:schedule-triggers
 
 parameters:
   - name: subscriptionFilter
@@ -37,7 +42,7 @@ variables:
   # log if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
   - name: GENERATED_AGAINST_MODULE_VERSION
-    value: '0.7.94'
+    value: '0.7.95'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): queue-time parameter > pipeline variable
   # 'REQUIRED_MODULE_VERSION' overridden at queue time > empty (latest).

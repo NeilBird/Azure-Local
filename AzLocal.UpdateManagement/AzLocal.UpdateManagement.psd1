@@ -3,7 +3,7 @@
     RootModule = 'AzLocal.UpdateManagement.psm1'
 
     # Version number of this module.
-    ModuleVersion = '0.7.94'
+    ModuleVersion = '0.7.95'
 
     # Supported PSEditions
     CompatiblePSEditions = @('Desktop', 'Core')
@@ -213,6 +213,15 @@
 
             # ReleaseNotes of this module
             ReleaseNotes = @'
+## Version 0.7.95 - Update-AzLocalPipelineExample pin-only short-circuit + Step.0/Step.1 marker blocks
+
+Quality-of-life release. Eliminates the "module bump silently skipped my Step.0/Step.1 YAMLs" friction. No breaking changes.
+
+- **Fixed: `Update-AzLocalPipelineExample` skipping Step.0/Step.1 on every release.** Step.0 (`authentication-test`) and Step.1 (`inventory-clusters`) shipped without any `BEGIN-AZLOCAL-CUSTOMIZE` markers, but the bundled `GENERATED_AGAINST_MODULE_VERSION` pin is mechanically bumped on every release. The cmdlet treated this as "diverged, no markers to merge on" and refused to write without `-Force`. v0.7.95 fixes it both ways: **(a)** added `# BEGIN-AZLOCAL-CUSTOMIZE:schedule-triggers` blocks to all four bundled YAMLs (Step.0 GH + ADO, Step.1 GH + ADO) so future operator schedule edits survive merges - for Step.0 the markers wrap an empty template, for Step.1 they wrap the existing `cron: ''0 6 * * 1''` weekly inventory schedule; **(b)** added a pin-only short-circuit to `Update-AzLocalPipelineExample` branch 3c - when BOTH files are marker-free AND the only line-level difference is the `GENERATED_AGAINST_MODULE_VERSION` pin (a release metadata field, not an operator customisation surface), the cmdlet refreshes it in place without `-Force` and reports `Action=''Updated-PinOnly''`. Handles both the single-line GitHub Actions shape and the two-line Azure DevOps name/value shape. **One-time `-Force` migration**: the v0.7.94 -> v0.7.95 upgrade still requires `-Force` for Step.0/Step.1 destinations that don''t yet have markers (branch 3d - src has markers, dest doesn''t); all subsequent upgrades are smooth.
+- **Added: two Pester regression cases** under `Describe ''Function: Update-AzLocalPipelineExample''` exercise the new branch 3c.i (pin-only auto-bump without `-Force`; non-pin divergence still emits `Skipped-NeedsForce`). They use a mocked `Get-Module` so the cmdlet resolves to a fake module install under `TestDrive` containing a single marker-free synthetic YAML, exercising the new code path end-to-end.
+
+Apply via `Install-Module AzLocal.UpdateManagement -Force` (or `Update-Module`). Run `Update-AzLocalPipelineExample -Destination <path>` to refresh. The first run after upgrade may require `-Force` if Step.0/Step.1 destinations don''t yet have markers; subsequent runs do not.
+
 ## Version 0.7.94 - Step.7 monitor-updates hotfix: missing -PassThru caused silent "0 in-flight" snapshots
 
 Hotfix release. Pipeline-YAML-only - no cmdlet behaviour changes, no schema changes, no breaking changes.
@@ -223,14 +232,8 @@ Apply via `Install-Module AzLocal.UpdateManagement -Force` (or `Update-Module`).
 
 ## Version 0.7.93 - Pipeline JUnit summaries: fix NaNms in duration column (+ Pester regression guard)
 
-Patch release. Pipeline-YAML and tests-only - no cmdlet behaviour changes, no schema changes, no breaking changes.
-
-- **Fixed: pipeline JUnit summaries no longer render `NaNms` in the duration column.** Five of the inline JUnit XML writers under `Automation-Pipeline-Examples/{github-actions,azure-devops}/` (Step.0 authentication-test, Step.3 apply-updates-schedule-audit, Step.4 fleet-connectivity-status, Step.7 monitor-updates, Step.9 fleet-health-status) emitted `<testsuite>` / `<testcase>` elements without a `time=` attribute. `dorny/test-reporter` (and most JUnit renderers) parse a missing `time` as `NaN` and print `NaNms`, which also broke the Passed/Failed/Skipped column alignment. v0.7.93 adds `time="0"` to every `<testsuites>` / `<testsuite>` / `<testcase>` emission across all 12 affected files (10 inline writers across the five Steps, plus the `<testsuites>` root in Step.8 GH + ADO where the child elements already carried `time="0"`). Step.6 was unaffected - it uses the module helper `Private/Export-ResultsToJUnitXml.ps1` which has always emitted `time=` correctly.
-- **Added: Pester regression guard.** New `It` block under `Describe ''Module: AzLocal.UpdateManagement'' -> Context ''Inline JUnit XML emitters carry a numeric time attribute (v0.7.93 NaNms regression)''` statically scans every `*.yml` under `Automation-Pipeline-Examples/` for `<testsuites>` / `<testsuite>` / `<testcase>` lines and asserts each one carries `time=`. Any future inline writer that drops the attribute fails the suite immediately.
-- **Changed: `Test-AzLocalApplyUpdatesScheduleCoverage` `-RecommendFiresPerWindow` help text.** Dropped a `(pre-v0.7.92 back-compat)` parenthetical from the `.PARAMETER` block (and the matching wording in `Step.3_apply-updates-schedule-audit.yml` GH + ADO). Parameter default remains `2`, behaviour unchanged - docstring tidy only.
-- **Added: docs/rbac.md - management group `AssignableScopes` + Azure Policy DINE recipe** for scaling the `Azure Stack HCI Update Operator` custom role across many subscriptions. New section walks through the Azure Landing Zones-style alternative to a per-subscription `AssignableScopes` list: one MG entry in `AssignableScopes` plus an Azure Policy `deployIfNotExists` assignment at that MG that auto-creates the per-subscription role assignment for the pipeline identity (existing subs picked up by a one-time remediation task; new subs auto-remediated on creation). Includes the role JSON with MG scope, the full DINE policy definition with nested ARM template, the system-assigned-MI grant + remediation commands, required RBAC per step, and a trade-offs table. Recommended for estates of more than ~5-10 subscriptions or growing fleets; per-sub list remains the documented fallback. Cross-linked from `Automation-Pipeline-Examples/README.md` sections 3.1 and 3.2. No cmdlet code changes - documentation only.
-
-Apply via `Install-Module AzLocal.UpdateManagement -Force` (or `Update-Module`). Run `Update-AzLocalPipelineExample -Destination <path>` to refresh the affected `Step.{0,3,4,7,8,9}_*.yml` files. The injection sites are outside any `BEGIN-AZLOCAL-CUSTOMIZE` block, so operator customisations are preserved.
+For full v0.7.93 release notes see:
+https://github.com/NeilBird/Azure-Local/blob/main/AzLocal.UpdateManagement/CHANGELOG.md
 
 ## Version 0.7.92 - Step.9 fleet-health step summary: per-cluster collapsible details + Step.7 monitor-updates default schedule (5x/day, every 2h overnight) + pipeline step-summary hyperlinks open in a new tab + Step.3 schedule-audit belt-and-braces retry crons + `RingMixedWindows` warning
 
