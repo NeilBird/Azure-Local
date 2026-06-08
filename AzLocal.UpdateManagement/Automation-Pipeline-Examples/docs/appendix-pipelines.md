@@ -134,7 +134,7 @@ The table below is the ground truth for what each shipped YAML does **out of the
 > | Medium (10-50 clusters) | 24-48 hours ahead | `'0 2 * * 4'` (Thu 02:00 ahead of a Sat 02:00 Step 6) | Lets you raise tickets / engage cluster owners on per-cluster issues before the weekend. |
 > | Large (50+ clusters) | 48-72 hours ahead | `'0 2 * * 3'` (Wed 02:00 ahead of a Sat 02:00 Step 6) | Allows time to escalate, swap clusters into a deferral ring (`UpdateExcluded=True`), or stage parallel mitigation. |
 >
-> **Known gap**: the Step 3 schedule-coverage audit currently validates Step 6 cron-to-`UpdateStartWindow` coverage only - it does **not** audit whether each Step 5 cron is correctly anchored to a Step 6 cron. Pair Step 5 and Step 6 cron edits in the same PR so the lead-time relationship is reviewable. The end-to-end runbook in the parent README's [section 8.1.1](../README.md#811-recommended-step-5-pre-flight-schedule-per-ring) has worked examples for the most common ring layouts.
+> **Known gap**: the Step 3 schedule-coverage audit currently validates Step 6 cron-to-`UpdateStartWindow` coverage only - it does **not** audit whether each Step 5 cron is correctly anchored to a Step 6 cron. Pair Step 5 and Step 6 cron edits in the same PR so the lead-time relationship is reviewable. The end-to-end runbook in the parent README's [section 8.1.1](../README.md#811-recommended-step5-pre-flight-schedule-per-ring) has worked examples for the most common ring layouts.
 
 ## Step 6 - Apply Updates
 
