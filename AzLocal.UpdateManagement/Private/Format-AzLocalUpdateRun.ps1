@@ -36,7 +36,7 @@ function Format-AzLocalUpdateRun {
     $progress = ""
     $stepStartTimeDisplay = ""
     $stepElapsedDisplay = ""
-    # Surfaced separately from State (v0.7.96) - mirrors the LENS-Workbook 'Status' filter.
+    # Surfaced separately from State (v0.7.96) - exposes the portal 'Status' filter value.
     # Operationally critical: a run can sit at State=InProgress for days while progress.status
     # already shows 'Error', telling the operator a step has errored and the run is stuck.
     $progressStatus = if ($props.progress -and $props.progress.PSObject.Properties['status']) { [string]$props.progress.status } else { '' }
@@ -76,8 +76,8 @@ function Format-AzLocalUpdateRun {
         $deepestActive = Get-DeepestActiveStep -Steps $steps
 
         # Deepest non-empty errorMessage from any Error/Failed step in the tree (v0.7.96).
-        # Mirrors the LENS-Workbook coalesce(e8Msg..e1Msg) pattern so operators see the actual
-        # leaf failure (e.g. CAU exception) rather than the generic parent step name.
+        # Uses a coalesce(e8Msg..e1Msg) recursion so operators see the actual leaf failure
+        # (e.g. CAU exception) rather than the generic parent step name.
         $errorMessage = Get-DeepestErrorMessage -Steps $steps
         if ($deepestActive -and $deepestActive.PSObject.Properties['startTimeUtc'] -and $deepestActive.startTimeUtc) {
             try {

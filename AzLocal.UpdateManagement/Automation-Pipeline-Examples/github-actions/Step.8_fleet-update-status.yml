@@ -274,8 +274,8 @@ jobs:
         #            OR SBE prerequisite blocked
         #   PASSED = everything else
         # v0.7.96: PreparationFailed + NeedsAttention previously fell into the 'Other' bucket and
-        # were invisible to operators. They are now first-class failure signals (matches the LENS
-        # Update Manager workbook 'state' filter).
+        # were invisible to operators. They are now first-class failure signals (matches the
+        # Azure portal Update Manager 'state' filter).
         $failureStates = @('Failed','UpdateFailed','NeedsAttention','PreparationFailed')
         $failures = @($readiness | Where-Object { $_.HealthState -eq "Failure" -or ($_.UpdateState -in $failureStates) -or $_.HasPrerequisiteUpdates -ne "" }).Count
         $criticalHealthPassed = $totalTests - $failures

@@ -226,7 +226,7 @@ Documentation-only release. The three Markdown files that ship inside the publis
 
 Apply via `Install-Module AzLocal.UpdateManagement -Force` (or `Update-Module`). If you only consume the cmdlets there is no behaviour change vs v0.7.96 - this is a docs-correctness republish. If you have copied the bundled YAMLs into your CI repo via `Update-AzLocalPipelineExample`, re-run it to refresh the version pin (pin-only short-circuit from v0.7.95 means `-Force` is not required).
 
-## Version 0.7.96 - LENS-workbook parity: Status field, ErrorMessage column, StepError JUnit type, always-show unresolved Failed, Step.8 ActionRequired bucket
+## Version 0.7.96 - Portal-parity: Status field, ErrorMessage column, StepError JUnit type, always-show unresolved Failed, Step.8 ActionRequired bucket
 
 For full v0.7.96 release notes see:
 https://github.com/NeilBird/Azure-Local/blob/main/AzLocal.UpdateManagement/CHANGELOG.md

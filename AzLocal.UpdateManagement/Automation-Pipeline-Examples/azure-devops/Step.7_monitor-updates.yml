@@ -260,8 +260,8 @@ stages:
               $hasStepError = ($progressStatus -eq 'Error' -and $r.State -eq 'InProgress')
               # Portal links (v0.7.96): cluster -> .../updates blade; update run -> the
               # AzureStackHCI portal extension SingleInstanceHistoryDetails ReactView.
-              # Pattern verified against the official Azure/AzureLocal-LENS-Workbook
-              # Update Progress workbook so URLs match what the portal builds itself.
+              # URL pattern verified against the Azure portal Update Manager view so
+              # the rendered links match what the portal builds itself.
               $clusterPortalUrl = if ($r.ClusterResourceId) { 'https://portal.azure.com/#@/resource' + [string]$r.ClusterResourceId + '/updates' } else { '' }
               $updateRunPortalUrl = ''
               if ($r.PSObject.Properties['RunResourceId'] -and $r.RunResourceId -and $r.ClusterResourceId) {

@@ -5,10 +5,10 @@ function Get-DeepestErrorMessage {
     .DESCRIPTION
         The ARM payload nests errorMessage on whichever leaf actually threw. Older parents in the
         chain may carry a duplicate or summarised message, or no message at all. This helper
-        mirrors the LENS-Workbook coalesce(e8Msg..e1Msg) pattern: walk the tree, prefer the
-        deepest non-empty errorMessage on an Error/Failed-status step. Used by
-        Format-AzLocalUpdateRun in v0.7.96 to surface a dedicated ErrorMessage column so
-        operators can triage failed runs without clicking through to the Azure portal.
+        applies a coalesce(e8Msg..e1Msg) pattern: walk the tree, prefer the deepest non-empty
+        errorMessage on an Error/Failed-status step. Used by Format-AzLocalUpdateRun in v0.7.96
+        to surface a dedicated ErrorMessage column so operators can triage failed runs without
+        clicking through to the Azure portal.
     .NOTES
         Returns an empty string when no error message is found (callers can if-guard cheaply).
     #>
