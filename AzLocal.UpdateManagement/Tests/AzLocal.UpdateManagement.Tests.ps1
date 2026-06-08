@@ -34,8 +34,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $script:ModuleInfo | Should -Not -BeNullOrEmpty
         }
 
-        It 'Should have version 0.7.95' {
-            $script:ModuleInfo.Version | Should -Be '0.7.95'
+        It 'Should have version 0.7.96' {
+            $script:ModuleInfo.Version | Should -Be '0.7.96'
         }
 
         It 'Module version constants are in sync between .psm1 and .psd1' {
@@ -1125,6 +1125,174 @@ Describe 'Helper Function: Format-AzLocalUpdateRun (Internal)' {
             $f = Format-AzLocalUpdateRun -run $run -clusterName 'c1'
             $f.EndTime | Should -BeNullOrEmpty
             $f.Duration | Should -Match 'running'
+        }
+    }
+
+    It 'Should surface Status from properties.progress.status (v0.7.96)' {
+        InModuleScope AzLocal.UpdateManagement {
+            $run = [PSCustomObject]@{
+                id         = '/subscriptions/x/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/c1/updates/Solution12.2604/updateRuns/r1'
+                name       = 'r1'
+                properties = [PSCustomObject]@{
+                    state           = 'InProgress'
+                    timeStarted     = (Get-Date).AddMinutes(-30).ToUniversalTime().ToString('o')
+                    lastUpdatedTime = $null
+                    duration        = $null
+                    progress        = [PSCustomObject]@{
+                        status = 'Error'
+                        steps  = @([PSCustomObject]@{ name = 'Start update'; status = 'Error'; errorMessage = '' })
+                    }
+                    location        = 'eastus'
+                }
+            }
+            $f = Format-AzLocalUpdateRun -run $run -clusterName 'c1'
+            $f.Status | Should -Be 'Error'
+            $f.State  | Should -Be 'InProgress'
+        }
+    }
+
+    It 'Should leave Status empty when progress has no status field (v0.7.96)' {
+        InModuleScope AzLocal.UpdateManagement {
+            $run = [PSCustomObject]@{
+                id         = '/subscriptions/x/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/c1/updates/Solution12.2604/updateRuns/r2'
+                name       = 'r2'
+                properties = [PSCustomObject]@{
+                    state           = 'Succeeded'
+                    timeStarted     = '2026-04-24T16:10:24Z'
+                    lastUpdatedTime = '2026-04-24T17:10:24Z'
+                    duration        = 'PT1H'
+                    progress        = [PSCustomObject]@{
+                        endTimeUtc = '2026-04-24T17:10:24Z'
+                        steps      = @([PSCustomObject]@{ name = 'Step1'; status = 'Success' })
+                    }
+                    location        = 'eastus'
+                }
+            }
+            $f = Format-AzLocalUpdateRun -run $run -clusterName 'c1'
+            $f.Status | Should -BeNullOrEmpty
+        }
+    }
+
+    It 'Should walk steps tree to find deepest ErrorMessage (v0.7.96)' {
+        InModuleScope AzLocal.UpdateManagement {
+            $run = [PSCustomObject]@{
+                id         = '/subscriptions/x/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/c1/updates/Solution12.2604/updateRuns/r3'
+                name       = 'r3'
+                properties = [PSCustomObject]@{
+                    state           = 'Failed'
+                    timeStarted     = '2026-04-24T16:10:24Z'
+                    lastUpdatedTime = '2026-04-24T17:10:24Z'
+                    duration        = 'PT1H'
+                    progress        = [PSCustomObject]@{
+                        status = 'Error'
+                        steps  = @(
+                            [PSCustomObject]@{
+                                name         = 'Outer'
+                                status       = 'Failed'
+                                errorMessage = 'outer rolled-up'
+                                steps        = @(
+                                    [PSCustomObject]@{
+                                        name         = 'Inner'
+                                        status       = 'Error'
+                                        errorMessage = 'deep root cause message'
+                                    }
+                                )
+                            }
+                        )
+                    }
+                    location        = 'eastus'
+                }
+            }
+            $f = Format-AzLocalUpdateRun -run $run -clusterName 'c1'
+            $f.ErrorMessage | Should -Be 'deep root cause message'
+        }
+    }
+
+    It 'Should leave ErrorMessage empty when no step is Error/Failed (v0.7.96)' {
+        InModuleScope AzLocal.UpdateManagement {
+            $run = [PSCustomObject]@{
+                id         = '/subscriptions/x/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/c1/updates/Solution12.2604/updateRuns/r4'
+                name       = 'r4'
+                properties = [PSCustomObject]@{
+                    state           = 'InProgress'
+                    timeStarted     = (Get-Date).AddMinutes(-30).ToUniversalTime().ToString('o')
+                    lastUpdatedTime = $null
+                    duration        = $null
+                    progress        = [PSCustomObject]@{
+                        status = 'InProgress'
+                        steps  = @([PSCustomObject]@{ name = 'Step1'; status = 'InProgress' })
+                    }
+                    location        = 'eastus'
+                }
+            }
+            $f = Format-AzLocalUpdateRun -run $run -clusterName 'c1'
+            $f.ErrorMessage | Should -BeNullOrEmpty
+        }
+    }
+}
+
+Describe 'Helper Function: Get-DeepestErrorMessage (Internal)' {
+
+    It 'Should return empty string when steps array is empty' {
+        InModuleScope AzLocal.UpdateManagement {
+            (Get-DeepestErrorMessage -Steps @()) | Should -BeNullOrEmpty
+        }
+    }
+
+    It 'Should return empty string when no step has Error/Failed status' {
+        InModuleScope AzLocal.UpdateManagement {
+            $steps = @(
+                [PSCustomObject]@{ name = 's1'; status = 'Success';    errorMessage = 'ignored' },
+                [PSCustomObject]@{ name = 's2'; status = 'InProgress'; errorMessage = 'ignored' }
+            )
+            (Get-DeepestErrorMessage -Steps $steps) | Should -BeNullOrEmpty
+        }
+    }
+
+    It 'Should prefer the deepest Error/Failed message over an outer one' {
+        InModuleScope AzLocal.UpdateManagement {
+            $steps = @(
+                [PSCustomObject]@{
+                    name         = 'L1'
+                    status       = 'Failed'
+                    errorMessage = 'L1 message'
+                    steps        = @(
+                        [PSCustomObject]@{
+                            name         = 'L2'
+                            status       = 'Error'
+                            errorMessage = 'L2 message'
+                            steps        = @(
+                                [PSCustomObject]@{
+                                    name         = 'L3'
+                                    status       = 'Error'
+                                    errorMessage = 'L3 deepest'
+                                }
+                            )
+                        }
+                    )
+                }
+            )
+            (Get-DeepestErrorMessage -Steps $steps) | Should -Be 'L3 deepest'
+        }
+    }
+
+    It 'Should fall back to outer message when deepest Error step has no errorMessage' {
+        InModuleScope AzLocal.UpdateManagement {
+            $steps = @(
+                [PSCustomObject]@{
+                    name         = 'L1'
+                    status       = 'Failed'
+                    errorMessage = 'L1 message'
+                    steps        = @(
+                        [PSCustomObject]@{
+                            name         = 'L2'
+                            status       = 'Error'
+                            errorMessage = ''
+                        }
+                    )
+                }
+            )
+            (Get-DeepestErrorMessage -Steps $steps) | Should -Be 'L1 message'
         }
     }
 }

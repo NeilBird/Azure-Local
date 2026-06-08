@@ -92,7 +92,7 @@ variables:
   # the version actually installed and to the latest on PSGallery, and emits a warning
   # log if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.7.95'
+  GENERATED_AGAINST_MODULE_VERSION: '0.7.96'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): queue-time parameter > pipeline variable
   # 'REQUIRED_MODULE_VERSION' overridden at queue time > empty (latest).
@@ -243,10 +243,12 @@ stages:
               TotalClusters = $readiness.Count
               Summary = @{
                   Ready = @($readiness | Where-Object { $_.ReadyForUpdate -eq $true }).Count
-                  InProgress = @($readiness | Where-Object { $_.UpdateState -eq "UpdateInProgress" }).Count
+                  InProgress = @($readiness | Where-Object { $_.UpdateState -in @("UpdateInProgress","PreparationInProgress") }).Count
                   HealthFailures = @($readiness | Where-Object { $_.HealthState -eq "Failure" }).Count
+                  UpdateFailures = @($readiness | Where-Object { $_.UpdateState -in @("Failed","UpdateFailed","NeedsAttention") }).Count
+                  ActionRequired = @($readiness | Where-Object { $_.UpdateState -eq "PreparationFailed" }).Count
                   HasPrerequisite = $hasPrerequisite
-                  NotReady = @($readiness | Where-Object { $_.ReadyForUpdate -ne $true -and $_.UpdateState -ne "UpdateInProgress" }).Count
+                  NotReady = @($readiness | Where-Object { $_.ReadyForUpdate -ne $true -and ($_.UpdateState -notin @("UpdateInProgress","PreparationInProgress")) }).Count
               }
               Clusters = $readiness
           }
@@ -260,15 +262,27 @@ stages:
           $totalTests = $readiness.Count
 
           # Critical Health Status (this is what the JUnit XML pass/fail represents):
-          #   FAILED = HealthState=Failure OR UpdateState=Failed OR SBE prerequisite blocked
+          #   FAILED = HealthState=Failure OR UpdateState in (Failed,UpdateFailed,NeedsAttention,PreparationFailed)
+          #            OR SBE prerequisite blocked
           #   PASSED = everything else
-          $failures = @($readiness | Where-Object { $_.HealthState -eq "Failure" -or $_.UpdateState -eq "Failed" -or $_.HasPrerequisiteUpdates -ne "" }).Count
+          # v0.7.96: PreparationFailed + NeedsAttention previously fell into the 'Other' bucket and
+          # were invisible to operators. They are now first-class failure signals (matches the LENS
+          # Update Manager workbook 'state' filter).
+          $failureStates = @('Failed','UpdateFailed','NeedsAttention','PreparationFailed')
+          $failures = @($readiness | Where-Object { $_.HealthState -eq "Failure" -or ($_.UpdateState -in $failureStates) -or $_.HasPrerequisiteUpdates -ne "" }).Count
           $criticalHealthPassed = $totalTests - $failures
 
           # Mutually-exclusive primary status buckets so the summary table rows
           # always sum to Total Clusters. Priority cascade (first match wins):
-          #   UpdateFailed > HealthFailure > SbeBlocked > InProgress > ReadyForUpdate > UpToDate > Other
+          #   UpdateFailed > ActionRequired > HealthFailure > SbeBlocked > InProgress > ReadyForUpdate > UpToDate > Other
+          # v0.7.96 vocab (sourced from properties.state of the updatesummaries ARM resource):
+          #   AppliedSuccessfully / UpToDate    -> Up to date (success)
+          #   UpdateAvailable + ReadyForUpdate  -> Ready for update
+          #   UpdateInProgress / PreparationInProgress -> In progress
+          #   UpdateFailed / Failed / NeedsAttention  -> Update failed (terminal failure, retry path)
+          #   PreparationFailed                 -> Action required (operator must remediate before retry)
           $stUpdateFailed = 0
+          $stActionRequired = 0
           $stHealthFailure = 0
           $stSbeBlocked = 0
           $stInProgress = 0
@@ -276,10 +290,11 @@ stages:
           $stUpToDate = 0
           $stOther = 0
           foreach ($c in $readiness) {
-              if ($c.UpdateState -eq 'Failed') { $stUpdateFailed++ }
+              if ($c.UpdateState -in @('Failed','UpdateFailed','NeedsAttention')) { $stUpdateFailed++ }
+              elseif ($c.UpdateState -eq 'PreparationFailed') { $stActionRequired++ }
               elseif ($c.HealthState -eq 'Failure') { $stHealthFailure++ }
               elseif ($c.HasPrerequisiteUpdates) { $stSbeBlocked++ }
-              elseif ($c.UpdateState -eq 'UpdateInProgress') { $stInProgress++ }
+              elseif ($c.UpdateState -in @('UpdateInProgress','PreparationInProgress')) { $stInProgress++ }
               elseif ($c.ReadyForUpdate -eq $true) { $stReadyForUpdate++ }
               elseif ($c.UpdateState -in @('UpToDate','AppliedSuccessfully')) { $stUpToDate++ }
               else { $stOther++ }
@@ -428,6 +443,7 @@ stages:
                 <property name="criticalHealthPassed" value="$criticalHealthPassed"/>
                 <property name="criticalHealthFailed" value="$failures"/>
                 <property name="primaryUpdateFailed" value="$stUpdateFailed"/>
+                <property name="primaryActionRequired" value="$stActionRequired"/>
                 <property name="primaryHealthFailure" value="$stHealthFailure"/>
                 <property name="primarySbeBlocked" value="$stSbeBlocked"/>
                 <property name="primaryInProgress" value="$stInProgress"/>
@@ -443,7 +459,7 @@ stages:
           $failedClusters = @()
           $passedClusters = @()
           foreach ($cluster in $readiness) {
-              if ($cluster.HealthState -eq "Failure" -or $cluster.UpdateState -eq "Failed" -or ($cluster.HasPrerequisiteUpdates -ne "")) {
+              if ($cluster.HealthState -eq "Failure" -or ($cluster.UpdateState -in $failureStates) -or ($cluster.HasPrerequisiteUpdates -ne "")) {
                   $failedClusters += $cluster
               } else {
                   $passedClusters += $cluster
@@ -460,9 +476,9 @@ stages:
               $failureMessage = ""
               $failureType = "UpdateFailure"
               
-              if ($cluster.HealthState -eq "Failure" -or $cluster.UpdateState -eq "Failed") {
+              if ($cluster.HealthState -eq "Failure" -or ($cluster.UpdateState -in $failureStates)) {
                   $status = "failed"
-                  $failureType = "UpdateFailure"
+                  $failureType = if ($cluster.UpdateState -eq 'PreparationFailed') { "PreparationFailed" } else { "UpdateFailure" }
                   $failureMessage = "UpdateState: $($cluster.UpdateState), Health: $($cluster.HealthState)"
                   if ($cluster.HealthCheckFailures) {
                       $failureMessage += ", Issues: $($cluster.HealthCheckFailures -replace '&', '&amp;' -replace '<', '&lt;' -replace '>', '&gt;')"
@@ -702,7 +718,8 @@ stages:
           Write-Host "  Update In Progress: $stInProgress" -ForegroundColor Yellow
           Write-Host "  SBE Prerequisite Blocked: $stSbeBlocked" -ForegroundColor $(if ($stSbeBlocked -gt 0) { 'Yellow' } else { 'Green' })
           Write-Host "  Health Failure: $stHealthFailure" -ForegroundColor $(if ($stHealthFailure -gt 0) { 'Red' } else { 'Green' })
-          Write-Host "  Update Failed: $stUpdateFailed" -ForegroundColor $(if ($stUpdateFailed -gt 0) { 'Red' } else { 'Green' })
+          Write-Host "  Update Failed (Failed/UpdateFailed/NeedsAttention): $stUpdateFailed" -ForegroundColor $(if ($stUpdateFailed -gt 0) { 'Red' } else { 'Green' })
+          Write-Host "  Action Required (PreparationFailed): $stActionRequired" -ForegroundColor $(if ($stActionRequired -gt 0) { 'Red' } else { 'Green' })
           Write-Host "  Needs Investigation: $stOther" -ForegroundColor $(if ($stOther -gt 0) { 'Yellow' } else { 'Green' })
 
           # Set pipeline variables
@@ -715,6 +732,7 @@ stages:
           Write-Host "##vso[task.setvariable variable=sbeBlocked;isOutput=true]$stSbeBlocked"
           Write-Host "##vso[task.setvariable variable=healthFailure;isOutput=true]$stHealthFailure"
           Write-Host "##vso[task.setvariable variable=updateFailed;isOutput=true]$stUpdateFailed"
+          Write-Host "##vso[task.setvariable variable=actionRequired;isOutput=true]$stActionRequired"
           Write-Host "##vso[task.setvariable variable=needsInvestigation;isOutput=true]$stOther"
           Write-Host "##vso[task.setvariable variable=failures;isOutput=true]$failures"
           Write-Host "##vso[task.setvariable variable=hasPrerequisite;isOutput=true]$hasPrerequisite"
@@ -799,6 +817,7 @@ stages:
         $sbeBlocked = "$(collect.sbeBlocked)"
         $healthFailure = "$(collect.healthFailure)"
         $updateFailed = "$(collect.updateFailed)"
+        $actionRequired = "$(collect.actionRequired)"
         $needsInvestigation = "$(collect.needsInvestigation)"
         $failures = "$(collect.failures)"
         $hasPrerequisite = "$(collect.hasPrerequisite)"
@@ -909,16 +928,18 @@ stages:
         | **Update In Progress** | $inProgress | 🔄 |
         | **SBE Prerequisite Blocked** | $sbeBlocked | $(if ([int]$sbeBlocked -gt 0) { '🟡' } else { '✅' }) |
         | **Health Failure** (HealthState=Failure) | $healthFailure | $(if ([int]$healthFailure -gt 0) { '❌' } else { '✅' }) |
-        | **Update Failed** (UpdateState=Failed) | $updateFailed | $(if ([int]$updateFailed -gt 0) { '❌' } else { '✅' }) |
+        | **Update Failed** (Failed / UpdateFailed / NeedsAttention) | $updateFailed | $(if ([int]$updateFailed -gt 0) { '❌' } else { '✅' }) |
+        | **Action Required** (PreparationFailed) | $actionRequired | $(if ([int]$actionRequired -gt 0) { '❌' } else { '✅' }) |
         | **Needs Investigation** | $needsInvestigation | $(if ([int]$needsInvestigation -gt 0) { '⚠️' } else { '✅' }) |
 
         Priority cascade used to bucket each cluster exactly once:
-        Update Failed > Health Failure > SBE Prerequisite Blocked > Update In Progress > Ready for Update > Up to Date > Needs Investigation.
+        Update Failed > Action Required > Health Failure > SBE Prerequisite Blocked > Update In Progress > Ready for Update > Up to Date > Needs Investigation.
         "@
 
         # Actions Required section
         $actionsRequired = @()
-        if ([int]$updateFailed -gt 0) { $actionsRequired += "- **$updateFailed cluster(s) have UpdateState=Failed** - Review the most recent update run in Azure Portal and the ``update-runs.csv`` artifact for the failure detail." }
+        if ([int]$updateFailed -gt 0) { $actionsRequired += "- **$updateFailed cluster(s) have UpdateState in (Failed, UpdateFailed, NeedsAttention)** - Review the most recent update run in Azure Portal and the ``update-runs.csv`` artifact for the failure detail." }
+        if ([int]$actionRequired -gt 0) { $actionsRequired += "- **$actionRequired cluster(s) have UpdateState=PreparationFailed** - Update preparation hit a blocker before the run started. Inspect the cluster activity log (most common: prerequisite-check failure, missing SBE content, ARB extension drift). Resolve before re-arming the update." }
         if ([int]$healthFailure -gt 0) { $actionsRequired += "- **$healthFailure cluster(s) have HealthState=Failure** - Resolve critical health check issues in Azure Portal before retrying any updates." }
         if ([int]$hasPrerequisite -gt 0) { $actionsRequired += "- **$hasPrerequisite cluster(s) blocked by SBE prerequisite** - Install the required Solution Builder Extension (SBE) update from the hardware vendor. See ``available-updates.csv`` for vendor details." }
 

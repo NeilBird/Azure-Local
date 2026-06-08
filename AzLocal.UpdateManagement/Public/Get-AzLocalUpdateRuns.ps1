@@ -452,13 +452,18 @@ $updateNameClause
                     ClusterResourceId = $cluster.ResourceId
                     UpdateName        = $formatted.UpdateName
                     RunId             = $formatted.RunId
+                    RunResourceId     = $formatted.RunResourceId
                     State             = $formatted.State
+                    Status            = $formatted.Status
                     StartTime         = $formatted.StartTime
                     EndTime           = $formatted.EndTime
                     Duration          = $formatted.Duration
-                    Progress          = $formatted.Progress
+                    Progress           = $formatted.Progress
                     CurrentStep       = $formatted.CurrentStep
                     CurrentStepDetail = $formatted.CurrentStepDetail
+                    StepStartTime     = $formatted.StepStartTime
+                    StepElapsed       = $formatted.StepElapsed
+                    ErrorMessage      = $formatted.ErrorMessage
                     Location          = $formatted.Location
                 }
             }
@@ -482,13 +487,18 @@ $updateNameClause
                         ClusterResourceId = $cluster.ResourceId
                         UpdateName        = 'None'
                         RunId             = ''
+                        RunResourceId     = ''
                         State             = 'No Runs'
+                        Status            = ''
                         StartTime         = ''
                         EndTime           = ''
                         Duration          = ''
                         Progress          = ''
                         CurrentStep       = ''
                         CurrentStepDetail = ''
+                        StepStartTime     = ''
+                        StepElapsed       = ''
+                        ErrorMessage      = ''
                         Location          = ''
                     })
             }
