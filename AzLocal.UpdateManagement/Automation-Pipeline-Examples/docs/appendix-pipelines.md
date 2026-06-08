@@ -1,144 +1,207 @@
-# Pipeline reference (Appendix A)
+# Pipeline reference
 
-> **What you will find here:** A one-row-per-pipeline reference index for every bundled `Step.*.yml` workflow (GitHub Actions + Azure DevOps twins), with a one-line summary of the job, its triggers, the cmdlets it invokes, and the artefacts it produces. Use this as the at-a-glance index after you have read the per-step runbook in the main pipeline [README.md](../README.md).
+> **What you will find here:** A one-row-per-pipeline reference index for every bundled `Step.*.yml` workflow (GitHub Actions + Azure DevOps twins), with a one-line summary of the job, its triggers, the cmdlets it invokes, what it depends on, and the artefacts it produces. Use this as the at-a-glance reference card after you have read the per-step runbook in the main pipeline [README.md](../README.md).
+
+Each pipeline section heading below uses **`Step N - <description>`** to mirror its bundled YAML filename `Step.N_<description>.yml` exactly. The **Pipeline** column header in the at-a-glance table below is the column label; the `Step N -` form is the operator-facing identifier used everywhere else - workflow `name:` fields, ADO pipeline names, the parent README's section 1.1 table, and these section headings. The execution order in the [end-to-end runbook](../README.md#6-end-to-end-runbook-bring-an-estate-online) is operational and not strictly numerical - read it for the recommended sequence.
 
 ---
 
-## Appendix A: Pipeline reference
-
-This appendix summarises each pipeline's inputs and outputs without duplicating the YAML.
-
-### Default triggers and schedules (at a glance)
+## Default triggers and schedules (at a glance)
 
 The table below is the ground truth for what each shipped YAML does **out of the box**. Four of the ten pipelines (`fleet-connectivity-status`, `fleet-update-status`, `fleet-health-status`, `apply-updates-schedule-audit`) and one optional (`inventory-clusters` weekly) are pre-wired with `schedule:` (GH) / `schedules:` (ADO) blocks. The remaining five (`authentication-test`, `manage-updatering-tags`, `assess-update-readiness`, `apply-updates`, `monitor-updates`) are manual-only by design (`monitor-updates` ships a commented-out `*/30 * * * *` cron sample for in-wave use).
 
 | Pipeline | GitHub Actions trigger | Azure DevOps trigger | Notes |
 |---|---|---|---|
-| `authentication-test` (v0.7.70) | `workflow_dispatch` only | `trigger: none` (manual only) | Run on initial wiring + after every RBAC / federated-credential / subscription change. Recommended monthly cadence; add your own `schedule:` block if you want it automated. |
-| `inventory-clusters` | `workflow_dispatch` + `schedule: cron '0 6 * * 1'` (Mondays 06:00 UTC) | `trigger: none` + `schedules: cron '0 6 * * 1'` | Weekly drift detection. Edit the cron to change cadence. |
-| `manage-updatering-tags` | `workflow_dispatch` only | `trigger: none` (manual only) | Runs on-demand whenever you edit the CSV. |
-| `apply-updates-schedule-audit` (v0.7.65) | `workflow_dispatch` + `schedule: cron '0 5 * * 1'` (Mondays 05:00 UTC) | `trigger: none` + `schedules: cron '0 5 * * 1'` | Weekly read-only drift advisor: compares apply-updates cron(s) to `UpdateStartWindow` tags. Runs before the daily fleet pipelines so its annotations are first on Monday mornings. |
-| `fleet-connectivity-status` (v0.7.79+; reconciliation enhanced in v0.7.85) | `workflow_dispatch` + `schedule: cron '30 5 * * *'` (daily 05:30 UTC) | `trigger: none` + `schedules: cron '30 5 * * *'` | Daily fleet connectivity / Arc / NIC / Resource Bridge snapshot with bidirectional node-coverage reconciliation. Runs 30 min before `fleet-update-status` so connectivity issues are visible upstream of update reporting. |
-| `assess-update-readiness` | `workflow_dispatch` only | `trigger: none` (manual only) | Run on demand before each Apply Updates window, or wire your own schedule. |
-| `apply-updates` | `workflow_dispatch` only | `trigger: none` (manual only) | **No schedule shipped** - see the warning in A.6 below. The cluster `UpdateStartWindow` / `UpdateExclusionsWindow` tags only gate updates *while the pipeline is running*; they do **not** start the pipeline. |
-| `monitor-updates` (v0.7.90) | `workflow_dispatch` only (commented-out `schedule: cron '*/30 * * * *'` sample shipped) | `trigger: none` only (commented-out `schedules: cron '*/30 * * * *'` sample shipped) | In-flight update progress / long-running-run flag. Disabled by default to avoid 48 idle runs/day between waves. Uncomment the cron when a wave is active. |
-| `fleet-update-status` (table pivot in v0.7.90) | `workflow_dispatch` + `schedule: cron '0 6 * * *'` (daily 06:00 UTC) | `trigger: none` + `schedules: cron '0 6 * * *'` | Daily fleet update snapshot. Renumbered to `Step.8_*.yml` in v0.7.90 (was `Step.7_*.yml`). |
-| `fleet-health-status` (v0.7.65) | `workflow_dispatch` + `schedule: cron '0 7 * * *'` (daily 07:00 UTC) | `trigger: none` + `schedules: cron '0 7 * * *'` | Daily 24-hour health-check snapshot. Offset by one hour from `fleet-update-status` to avoid contention. Renumbered to `Step.9_*.yml` in v0.7.90 (was `Step.8_*.yml`). |
+| Step 0 - `authentication-test` | `workflow_dispatch` only | `trigger: none` (manual only) | Run on initial wiring + after every RBAC / federated-credential / subscription change. Recommended monthly cadence; add your own `schedule:` block if you want it automated. |
+| Step 1 - `inventory-clusters` | `workflow_dispatch` + `schedule: cron '0 6 * * 1'` (Mondays 06:00 UTC) | `trigger: none` + `schedules: cron '0 6 * * 1'` | Weekly drift detection. Edit the cron to change cadence. |
+| Step 2 - `manage-updatering-tags` | `workflow_dispatch` only | `trigger: none` (manual only) | Runs on-demand whenever you edit the CSV. |
+| Step 3 - `apply-updates-schedule-audit` | `workflow_dispatch` + `schedule: cron '0 5 * * 1'` (Mondays 05:00 UTC) | `trigger: none` + `schedules: cron '0 5 * * 1'` | Weekly read-only drift advisor: compares apply-updates cron(s) to `UpdateStartWindow` tags. Runs before the daily fleet pipelines so its annotations are first on Monday mornings. |
+| Step 4 - `fleet-connectivity-status` | `workflow_dispatch` + `schedule: cron '30 5 * * *'` (daily 05:30 UTC) | `trigger: none` + `schedules: cron '30 5 * * *'` | Daily fleet connectivity / Arc / NIC / Resource Bridge snapshot with bidirectional node-coverage reconciliation. Runs 30 min before `fleet-update-status` so connectivity issues are visible upstream of update reporting. |
+| Step 5 - `assess-update-readiness` | `workflow_dispatch` only | `trigger: none` (manual only) | **Recommended customisation** - schedule per ring 12-72h before the matching Step 6 `UpdateStartWindow` (see [Step 5 - Assess Update Readiness](#step-5---assess-update-readiness) below for the per-ring pattern + lead-time table). Always-green at pipeline level; per-cluster readiness gaps surface as JUnit `<failure>` entries. |
+| Step 6 - `apply-updates` | `workflow_dispatch` only | `trigger: none` (manual only) | **No schedule shipped** - see the warning in [Step 6 - Apply Updates](#step-6---apply-updates) below. The cluster `UpdateStartWindow` / `UpdateExclusionsWindow` tags only gate updates *while the pipeline is running*; they do **not** start the pipeline. |
+| Step 7 - `monitor-updates` | `workflow_dispatch` only (commented-out `schedule: cron '*/30 * * * *'` sample shipped) | `trigger: none` only (commented-out `schedules: cron '*/30 * * * *'` sample shipped) | In-flight update progress / long-running-run flag. Disabled by default to avoid 48 idle runs/day between waves. Uncomment the cron when a wave is active. |
+| Step 8 - `fleet-update-status` | `workflow_dispatch` + `schedule: cron '0 6 * * *'` (daily 06:00 UTC) | `trigger: none` + `schedules: cron '0 6 * * *'` | Daily fleet update snapshot. |
+| Step 9 - `fleet-health-status` | `workflow_dispatch` + `schedule: cron '0 7 * * *'` (daily 07:00 UTC) | `trigger: none` + `schedules: cron '0 7 * * *'` | Daily 24-hour health-check snapshot. Offset by one hour from `fleet-update-status` to avoid contention. |
 
 > **All times are UTC.** GitHub Actions and Azure DevOps schedules both run on UTC; convert from your local timezone when picking cron values. Both platforms can delay scheduled runs by several minutes during high-load periods - do not rely on second-precision alignment.
 >
 > **GitHub Actions only**: scheduled workflows are **automatically disabled after 60 days of repository inactivity** (no commits, PRs, or issue activity). Re-enable them via the Actions UI or run any push. Azure DevOps schedules do not have this auto-disable behaviour.
 
-> **Numbering convention:** the A.N sub-sections below mirror the `Step.N_*.yml` filenames 1:1 (e.g. A.4 = `Step.4_fleet-connectivity-status.yml`). The execution order in the [end-to-end runbook](../README.md#6-end-to-end-runbook-bring-an-estate-online) is operational, not numerical - read it for the recommended sequence.
+> **Common conventions for every row below**: `Cmdlets invoked` lists only AzLocal.UpdateManagement cmdlets the YAML calls directly (helper cmdlets they themselves call transitively are documented in each cmdlet's section of the module-level [`README.md`](../../README.md)). `Depends on` lists upstream pipelines whose output is consumed or whose work must be in place before this pipeline runs - `None` means the pipeline is self-contained. `Exit conditions` describes what a non-success YAML run state means in practice; per-cluster issues are always surfaced as JUnit `<failure>` entries rather than failing the whole pipeline unless noted otherwise. `ITSM` indicates whether the bundled YAMLs ship with the opt-in ServiceNow auto-raise connector (`Get-AzLocalItsmConfig` + per-failure ticket creation gated on the `raise_itsm_ticket` / `raiseItsmTicket` input); only Step 4, Step 6, Step 8, and Step 9 ship it - the matrix config lives at `./.itsm/azurelocal-itsm.yml` (see [`Automation-Pipeline-Examples/ITSM/`](../ITSM/) for the full recipe).
 
-### A.0 Authentication Validation and Subscription Scope Report (v0.7.70)
+---
+
+## Step 0 - Authentication Validation and Subscription Scope Report
 
 | Aspect | Value |
 |---|---|
 | **Purpose** | End-to-end probe of the federated identity, the Azure RBAC role assignment, and the subscriptions the pipeline identity can read. Emits a JUnit-rendered Authentication / Subscription Scope / Resource Graph Reachability report and the full subscription set (`subscriptions.csv` + `subscriptions.json`) so you can detect silent scope drift (a new tenant SP suddenly seeing more or fewer subscriptions than yesterday) before downstream fleet reports under- or over-count clusters. |
 | **Inputs** | `environment` (optional - GitHub Actions only; leave blank to test the branch-scoped federated credential), `module_version` (optional). |
 | **Trigger** | Manual only (`workflow_dispatch` / **Run pipeline** button). No schedule shipped - run it on initial wiring, after every RBAC / federated-credential / subscription change, and on a recommended monthly cadence. Add your own `schedule:` / `schedules:` block if you want it automated. |
+| **Cmdlets invoked** | None (uses the `az` CLI directly for the auth / Resource Graph probes). |
+| **Depends on** | None. This is the first pipeline that must run on a freshly-wired identity. |
 | **Artefacts** | `auth-report.xml` (JUnit, one `<testcase>` per probe), `subscriptions.json`, `subscriptions.csv`, markdown step / run summary with the subscription detail table. |
-| **When to run** | First, before importing any of the other eight pipelines. Re-run after every RBAC change, federated-credential change, service-connection change, or subscription move. Re-run monthly as a baseline scope-drift check. |
+| **When to run** | First, before importing any of the other nine pipelines. Re-run after every RBAC change, federated-credential change, service-connection change, or subscription move. Re-run monthly as a baseline scope-drift check. |
 | **RBAC** | Whatever the pipeline identity has - the probe itself is read-only and intentionally surfaces both over- and under-grants. |
+| **Exit conditions** | Pipeline run is green only when every probe passes. A red run means the identity, its role assignment, or its subscription scope is wrong - downstream pipelines will give nonsense results until this passes. |
+| **ITSM** | Not supported - this is an identity-only probe with no per-cluster failure surface to dispatch on. |
+| **Introduced** | v0.7.70. |
 
-### A.1 Inventory Clusters
+## Step 1 - Inventory Clusters
 
 | Aspect | Value |
 |---|---|
-| **Purpose** | Enumerate every Azure Local cluster the identity can see and export to CSV. |
+| **Purpose** | Enumerate every Azure Local cluster the identity can see and export to CSV. Establishes the baseline cluster list and current tag values for every downstream pipeline. |
 | **Inputs** | None. |
-| **Trigger** | Manual (`workflow_dispatch` / **Run pipeline** button) **plus** weekly scheduled run on Mondays at 06:00 UTC (`cron '0 6 * * 1'`). Edit the cron in the YAML to change the day / time. |
+| **Trigger** | Manual (`workflow_dispatch` / **Run pipeline** button) **plus** weekly scheduled run on Mondays at 06:00 UTC (`cron '0 6 * * 1'`). Edit the cron in the YAML (inside the `# BEGIN-AZLOCAL-CUSTOMIZE:schedule-triggers` block) to change the day / time. |
+| **Cmdlets invoked** | `Get-AzLocalClusterInventory`. |
+| **Depends on** | Step 0 should be green at least once before relying on this output (otherwise the cluster list may be silently scoped to the wrong subscription set). |
 | **Artefacts** | `cluster-inventory.csv` (one row per cluster, includes current `UpdateRing` / `UpdateStartWindow` / `UpdateExclusionsWindow` / `UpdateExcluded` and sideloaded-workflow tags). |
-| **When to run** | First run of a new estate; periodically (default weekly) to detect new clusters or tag drift. |
+| **When to run** | First run of a new estate; periodically (default weekly) to detect new clusters or tag drift. The CSV is the input artefact for Step 2 (UpdateRing tag bulk-apply). |
+| **RBAC** | Read-only. Covered by the `Azure Stack HCI Update Operator` custom role (`Microsoft.AzureStackHCI/clusters/read`, `Microsoft.ResourceGraph/resources/read`, `Microsoft.Resources/tags/read`). |
+| **Exit conditions** | Pipeline run is green when the inventory query succeeds and at least one cluster is returned. An empty inventory on a non-empty estate is a red flag for scope drift - re-run Step 0. |
+| **ITSM** | Not supported - inventory snapshot has no per-cluster failure surface to ticket on. |
 
-### A.2 Manage UpdateRing Tags
+## Step 2 - Manage UpdateRing Tags
 
 | Aspect | Value |
 |---|---|
 | **Purpose** | Bulk-apply `UpdateRing`, `UpdateStartWindow`, `UpdateExclusionsWindow`, and `UpdateExcluded` tags from a CSV. Default-stamps `UpdateExcluded=False` on any cluster that does not already carry the tag (v0.7.90) so the operator hard-override is always discoverable in the Azure portal. |
 | **Inputs** | `csv_path` (required). |
 | **Trigger** | Manual only (`workflow_dispatch` / **Run pipeline** button). No schedule shipped - this is a deliberate change-controlled operation that should follow a CSV edit + review. Add a `schedule:` / `schedules:` block if your CSV is auto-generated and you want periodic re-application. |
-| **Artefacts** | Pipeline log with added / updated / unchanged counts per cluster. |
+| **Cmdlets invoked** | `Set-AzLocalClusterUpdateRingTag`. |
+| **Depends on** | Step 1 produces the input CSV (the operator typically downloads `cluster-inventory.csv`, edits ring / window / exclusion values in a PR, then re-uploads it as the input to this pipeline). |
+| **Artefacts** | Pipeline log with added / updated / unchanged counts per cluster. No file artefacts - the tags themselves are the output. |
 | **When to run** | After editing the inventory CSV; whenever ring membership or maintenance windows change. |
+| **RBAC** | Write to tags only. The built-in **Tag Contributor** role on the cluster scope is sufficient (`Microsoft.Resources/tags/*`). Since v0.7.65, `Set-AzLocalClusterUpdateRingTag` writes via `Microsoft.Resources/tags/default` PATCH, so the broader `Microsoft.AzureStackHCI/clusters/write` is not required. |
+| **Exit conditions** | Pipeline run is green when every CSV row is processed (added / updated / unchanged). Per-cluster tag-write failures surface in the run log; the pipeline does not currently fail on per-row errors. Re-run after triaging is safe (the cmdlet is idempotent). |
+| **ITSM** | Not supported - tag-write operation is operator-driven and idempotent; per-row failures are surfaced in the run log for direct triage rather than ticketed. |
 
-### A.3 Apply-Updates Schedule Coverage Audit (v0.7.65)
+## Step 3 - Apply-Updates Schedule Coverage Audit
 
 | Aspect | Value |
 |---|---|
-| **Purpose** | Read-only advisor that compares the cron schedule(s) in your `Step.6_apply-updates.yml` to the `UpdateStartWindow` tag values present on your clusters, and flags any `(UpdateRing, UpdateStartWindow)` pair that no cron in `Step.6_apply-updates.yml` will ever reach. Never edits tags or YAML. Calls the [`Test-AzLocalApplyUpdatesScheduleCoverage`](../README.md#test-azlocalapplyupdatesschedulecoverage) cmdlet under the covers. |
+| **Purpose** | Read-only advisor that compares the cron schedule(s) in your `Step.6_apply-updates.yml` to the `UpdateStartWindow` tag values present on your clusters, and flags any `(UpdateRing, UpdateStartWindow)` pair that no cron in `Step.6_apply-updates.yml` will ever reach. Never edits tags or YAML. |
 | **Inputs** | `pipeline_path` (file or folder; default `.github/workflows` on GitHub Actions, `.azure-pipelines` on Azure DevOps - the standard consumer locations for the bundled `Step.6_apply-updates.yml` sample), `lead_time_minutes` (0-60, default 5), `include_untagged` (default false), `module_version` (optional). |
 | **Trigger** | Manual (`workflow_dispatch` / **Run pipeline** button) **plus** scheduled weekly on Mondays at 05:00 UTC (`cron '0 5 * * 1'`). Deliberately runs before the daily `fleet-connectivity-status` (05:30 UTC), `fleet-update-status` (06:00 UTC), and `fleet-health-status` (07:00 UTC) pipelines so its drift annotations land at the top of the operator's Monday-morning inbox. Edit the cron in the YAML to change cadence. |
+| **Cmdlets invoked** | `Test-AzLocalApplyUpdatesScheduleCoverage`, `Get-AzLocalApplyUpdatesScheduleConfig` (when a `schedule.yml` is present in the repo). |
+| **Depends on** | Step 1 (cluster inventory + `UpdateStartWindow` tags), Step 2 (tags applied) for non-trivial output. Runs fine on an empty fleet but the audit is meaningless. |
 | **Artefacts** | `schedule-coverage-audit.xml` (JUnit, one `<testcase>` per `(UpdateRing, UpdateStartWindow)` pair, uncovered = `<failure>`), `schedule-coverage-audit.csv` (full Audit view with `Status` / `Recommendation` columns), `schedule-coverage-matrix.csv` (every distinct `(Ring, Window)` pair with its required cron), `schedule-coverage-recommend.md` (ready-to-paste GH Actions + Azure DevOps cron blocks), markdown step summary. |
 | **When to run** | Hands-off scheduled. Trigger manually whenever you have just tagged a new ring or changed a maintenance window - see the [end-to-end runbook in section 8.3](../README.md#83-end-to-end-runbook-apply-updates-schedule-coverage-audit). |
-| **RBAC** | Read-only - same as A.1 (`Reader` on the cluster scope plus `Microsoft.ResourceGraph/resources/read`). No write actions are ever taken. |
+| **RBAC** | Read-only - `Reader` on the cluster scope plus `Microsoft.ResourceGraph/resources/read`. No write actions are ever taken. Covered by the `Azure Stack HCI Update Operator` custom role. |
+| **Exit conditions** | Pipeline run is always green - uncovered `(Ring, Window)` pairs surface as JUnit `<failure>` entries in the Tests tab so they are visible without failing the whole run. |
+| **ITSM** | Not supported - schedule coverage drift is a one-time YAML-edit fix, not a per-incident triage queue. |
+| **Introduced** | v0.7.65. |
 
-### A.4 Fleet Connectivity Status (v0.7.79+; reconciliation enhanced in v0.7.85)
+## Step 4 - Fleet Connectivity Status
 
 | Aspect | Value |
 |---|---|
-| **Purpose** | Daily fleet-wide read-only snapshot of Arc agent connectivity, physical NIC inventory + status histogram, Azure Resource Bridge reachability, and a **bidirectional node-coverage reconciliation** between each cluster's `reportedProperties.nodes` and the Arc-tagged physical machines visible in Resource Graph. The v0.7.85 release added the *"How to interpret + act on a non-zero reconciliation"* subsection in the pipeline summary with per-direction remediation lists (positive delta = Arc has more machines than the cluster reports; negative delta = cluster reports more nodes than Arc can see) and an inline Resource Graph query template for triage. Calls the [`Get-AzLocalFleetConnectivityStatus`](../../README.md#get-azlocalfleetconnectivitystatus) cmdlet under the covers. |
+| **Purpose** | Daily fleet-wide read-only snapshot of Arc agent connectivity, physical NIC inventory + status histogram, Azure Resource Bridge reachability, and a **bidirectional node-coverage reconciliation** between each cluster's `reportedProperties.nodes` and the Arc-tagged physical machines visible in Resource Graph. The v0.7.85 release added the *"How to interpret + act on a non-zero reconciliation"* subsection in the pipeline summary with per-direction remediation lists (positive delta = Arc has more machines than the cluster reports; negative delta = cluster reports more nodes than Arc can see) and an inline Resource Graph query template for triage. |
 | **Inputs** | `subscription_ids` (optional - comma-separated; defaults to every subscription the federated identity can read), `module_version` (optional). v0.7.4-style ITSM toggles are also exposed: `raise_itsm_ticket`, `itsm_config_path`, `itsm_dry_run`, `itsm_force_create` (all optional, default off). |
 | **Trigger** | Manual (`workflow_dispatch` / **Run pipeline** button) **plus** scheduled daily at 05:30 UTC (`cron '30 5 * * *'`). Deliberately runs 30 minutes before `fleet-update-status` (06:00 UTC) so connectivity issues are visible upstream of update reporting. Edit the cron in the YAML to change cadence. |
+| **Cmdlets invoked** | `Get-AzLocalFleetConnectivityStatus`. When ITSM is enabled: `Get-AzLocalItsmConfig`. |
+| **Depends on** | None directly. Step 0 should be green at least once so the subscription scope is trusted. This is the upstream "can we see the fleet at all?" probe that other fleet pipelines silently rely on. |
 | **Artefacts** | `fleet-connectivity-status.xml` (JUnit, one `<testcase>` per cluster), `fleet-cluster-connectivity.csv` (per-cluster reconciliation), `fleet-arc-status-summary.csv` (per-cluster Arc agent counts), `fleet-arc-non-connected-machines.csv` (per-machine triage list), `fleet-physical-nics.csv` (NIC issues only), `fleet-physical-nic-all.csv` (full NIC inventory), `fleet-physical-nic-stats.csv` (histogram by `NicType` + `NicStatus`), `fleet-arb-status.csv` (Azure Resource Bridge state), markdown job summary including the *"How to interpret + act on a non-zero reconciliation"* guidance subsection. |
-| **When to run** | Hands-off scheduled. Trigger manually whenever the apply-updates chain returns "zero ready clusters" or the fleet count drops unexpectedly - Step.4 is the upstream "can we see the fleet at all?" probe. |
-| **RBAC** | Read-only - `Reader` plus `Microsoft.ResourceGraph/resources/read`, `Microsoft.AzureStackHCI/edgeDevices/read`, `Microsoft.HybridCompute/machines/read`, and `Microsoft.ResourceConnector/appliances/read`. All four already live in the **`Azure Stack HCI Update Operator`** custom role definition shipped in [section 4.1](../README.md#41-custom-role-azure-stack-hci-update-operator). |
+| **When to run** | Hands-off scheduled. Trigger manually whenever the apply-updates chain returns "zero ready clusters" or the fleet count drops unexpectedly - Step 4 is the upstream "can we see the fleet at all?" probe. |
+| **RBAC** | Read-only - `Reader` plus `Microsoft.ResourceGraph/resources/read`, `Microsoft.AzureStackHCI/edgeDevices/read`, `Microsoft.HybridCompute/machines/read`, and `Microsoft.ResourceConnector/appliances/read`. All four already live in the **`Azure Stack HCI Update Operator`** custom role definition shipped in [section 3.1](../README.md#31-custom-role-azure-stack-hci-update-operator). |
+| **Exit conditions** | Pipeline run is green when the snapshot completes. Per-cluster connectivity issues surface as JUnit `<failure>` entries; non-zero reconciliation deltas surface in the markdown summary with remediation guidance. |
+| **ITSM** | Supported (opt-in via `raise_itsm_ticket=true` / `raiseItsmTicket=true`). When enabled, one ServiceNow incident is raised per cluster with an Arc-disconnected machine or non-zero reconciliation delta; dedupe key is per-cluster + reason via the matrix at `./.itsm/azurelocal-itsm.yml`. `itsm_dry_run` builds payloads without creating tickets; `itsm_force_create` bypasses dedupe. |
+| **Introduced** | v0.7.79 (reconciliation enhanced in v0.7.85). |
 
-### A.5 Assess Update Readiness
+## Step 5 - Assess Update Readiness
 
 | Aspect | Value |
 |---|---|
-| **Purpose** | Pre-flight, report-only readiness + blocking-health snapshot for a single `UpdateRing`. **Always succeeds** - per-cluster failures show up as JUnit test failures. |
+| **Purpose** | Pre-flight, report-only readiness + blocking-health snapshot for a single `UpdateRing`. **Always succeeds** - per-cluster failures show up as JUnit test failures rather than failing the whole run. |
 | **Inputs** | `update_ring` (required), `throttle_limit` (optional). |
-| **Trigger** | Manual only (`workflow_dispatch` / **Run pipeline** button). No schedule shipped. To run automatically (e.g. 24-48 hours ahead of every Apply Updates window), add a `schedule:` / `schedules:` block to the YAML - for example `cron '0 6 * * 5'` to run every Friday at 06:00 UTC ahead of weekend maintenance windows. |
+| **Trigger** | **Manual only by default** (`workflow_dispatch` / **Run pipeline** button). **No schedule is shipped** because the `update_ring` input is required and there is no single ring value that would be correct for every consumer. See the **recommended customisation note below** for the per-ring scheduling pattern + lead-time guidance. |
+| **Cmdlets invoked** | `Get-AzLocalClusterInventory`, `Get-AzLocalClusterUpdateReadiness`, `Test-AzLocalClusterHealth`. |
+| **Depends on** | Step 1 (an `UpdateRing` tag must exist on at least one cluster to scope the readiness query) and Step 2 (to apply that tag at scale). |
 | **Artefacts** | `readiness.xml`, `readiness.csv`, `health-blocking.xml`, `health-blocking.csv`. |
-| **When to run** | Before an Apply Updates run; or on a schedule a day or two ahead of the maintenance window. |
+| **When to run** | 12-72 hours before each Step 6 wave for the same ring (12-24h for small rings, 48-72h for large rings of 50+ clusters) - long enough for an operator to triage any `<failure>` entries before the maintenance window opens, short enough that the readiness signal is still fresh. See the **recommended customisation note below** for the cron pattern. |
+| **RBAC** | Read-only. Covered by the `Azure Stack HCI Update Operator` custom role. |
+| **Exit conditions** | Pipeline run is always green - per-cluster readiness gaps and blocking health checks surface as JUnit `<failure>` entries in the Tests tab. **Caveat**: because the pipeline never goes red, a silently-empty `readiness.xml` (e.g. ring tag typo, zero clusters in scope) will not generate a red email - check the Tests tab / `readiness.xml` artefact after each run, or wire the JUnit reporter into your existing CI status surface. |
+| **ITSM** | Not supported - this is a pre-flight gate intended for operator review before the Step 6 wave; readiness gaps surface as JUnit `<failure>` entries and feed the Step 6 ITSM dispatch downstream rather than raising tickets here. |
 
-### A.6 Apply Updates
+> **RECOMMENDED CUSTOMISATION: schedule Step 5 per ring, 12-72h ahead of the matching Step 6 cron.** Unlike Step 6 (which silently does nothing if you forget to schedule it), Step 5 is *recommended* rather than *mandatory* - Step 6 does its own internal `Get-AzLocalClusterUpdateReadiness` per-cluster pre-flight, so skipping Step 5 will not break the apply step. What you lose by skipping it is the **human review window** - the chance to see "12 clusters in Ring2 have blocking health checks" and intervene before the maintenance window starts.
+>
+> Because `update_ring` is a required input there is no single bundled cron - **add one `schedule:` (GitHub Actions) / `schedules:` (Azure DevOps) entry per ring you intend to patch**, each setting `update_ring:` via the workflow inputs (GH Actions `with:` / ADO `parameters:`). Anchor each Step 5 cron to the matching Step 6 cron (same days, earlier by the lead time):
+>
+> | Ring size | Recommended Step 5 lead time | Step 5 cron (UTC, anchoring on a Step 6 Sat 02:00 window) | Rationale |
+> |---|---|---|---|
+> | Small (<= 10 clusters) | 12-24 hours ahead | `'0 2 * * 5'` (Fri 02:00 ahead of a Sat 02:00 Step 6) | Enough to triage a handful of `<failure>` entries; fresh enough that the health signal is still meaningful at apply time. |
+> | Medium (10-50 clusters) | 24-48 hours ahead | `'0 2 * * 4'` (Thu 02:00 ahead of a Sat 02:00 Step 6) | Lets you raise tickets / engage cluster owners on per-cluster issues before the weekend. |
+> | Large (50+ clusters) | 48-72 hours ahead | `'0 2 * * 3'` (Wed 02:00 ahead of a Sat 02:00 Step 6) | Allows time to escalate, swap clusters into a deferral ring (`UpdateExcluded=True`), or stage parallel mitigation. |
+>
+> **Known gap**: the Step 3 schedule-coverage audit currently validates Step 6 cron-to-`UpdateStartWindow` coverage only - it does **not** audit whether each Step 5 cron is correctly anchored to a Step 6 cron. Pair Step 5 and Step 6 cron edits in the same PR so the lead-time relationship is reviewable. The end-to-end runbook in the parent README's [section 8.1.1](../README.md#811-recommended-step-5-pre-flight-schedule-per-ring) has worked examples for the most common ring layouts.
+
+## Step 6 - Apply Updates
 
 | Aspect | Value |
 |---|---|
-| **Purpose** | Apply updates to clusters filtered by `UpdateRing` tag value. |
+| **Purpose** | Apply updates to clusters filtered by `UpdateRing` tag value. The actual mutation step; every other pipeline in this folder is either preparation, monitoring, or reporting. |
 | **Inputs** | `update_ring` (required), `update_name` (optional - leave blank for latest), `dry_run` (optional), `throttle_limit` (optional). **v0.7.4 adds** `raise_itsm_ticket`, `itsm_config_path`, `itsm_dry_run`, `itsm_force_create` (all optional, defaults preserve existing behaviour). |
 | **Trigger** | **Manual only by default** (`workflow_dispatch` / **Run pipeline** button). **No schedule is shipped** - you must add one. See the **mandatory customisation note below** and the schedule-alignment guidance in [section 8](../README.md#8-scheduling-maintenance-windows-and-change-freeze-periods). |
+| **Cmdlets invoked** | `Get-AzLocalApplyUpdatesScheduleConfig`, `Get-AzLocalClusterUpdateReadiness`, `Start-AzLocalClusterUpdate`. When ITSM is enabled: `Get-AzLocalItsmConfig`. |
+| **Depends on** | Step 1 (`UpdateRing` tags present), Step 5 (readiness reviewed for the wave). Step 3 (schedule coverage audit) should be green so the cron(s) that start this pipeline actually fire at every tagged `UpdateStartWindow`. |
 | **Artefacts** | `update-results.xml` (JUnit, one cluster per test), `update-logs/*` (CSV + detail). When ITSM is enabled: `itsm-results.csv`, `itsm-results.xml`. |
 | **When to run** | During the maintenance window for each ring, after the readiness assessment is reviewed. |
+| **RBAC** | Write to clusters required. Covered by the `Azure Stack HCI Update Operator` custom role (`Microsoft.AzureStackHCI/clusters/updates/apply/action` + cluster-update reads). |
+| **Exit conditions** | Pipeline run is green when every in-scope cluster either succeeds or is correctly classified as `ScheduleBlocked` / `SideloadedBlocked` / `ExcludedByTag` (these are skips, not failures). Per-cluster update failures surface as JUnit `<failure>` entries; long-running runs are tracked by Step 7. |
+| **ITSM** | Supported (opt-in via `raise_itsm_ticket=true` / `raiseItsmTicket=true`). When enabled, one ServiceNow incident is raised per cluster whose update run finished with a failure state; classification skips (`ScheduleBlocked` / `SideloadedBlocked` / `ExcludedByTag`) do not generate tickets. `itsm_dry_run` builds payloads without creating tickets; `itsm_force_create` bypasses dedupe. |
 
 > **MANDATORY CUSTOMISATION: the Apply Updates pipeline does not ship with a schedule.** The cluster `UpdateStartWindow` / `UpdateExclusionsWindow` tags **only gate updates *while the pipeline is already running***; they do **not** start the pipeline. If you (a) use `UpdateStartWindow` tags to define when updates may be installed and (b) leave the shipped `Step.6_apply-updates.yml` with `workflow_dispatch` only (GH) / `trigger: none` (ADO), **no updates will ever be applied automatically** - the pipeline will simply never start during the window.
 >
 > Add a `schedule:` (GitHub Actions) / `schedules:` (Azure DevOps) block to `Step.6_apply-updates.yml` that fires at (or a few minutes before) the start of every `UpdateStartWindow` you have tagged. One cron entry per distinct window value. Worked examples and the per-cluster scheduling model are in [section 8](../README.md#8-scheduling-maintenance-windows-and-change-freeze-periods).
 >
-> Pipeline summaries (Step.6 GH Actions + Azure DevOps) classify per-cluster skips as `ScheduleBlocked` (outside `UpdateStartWindow` or inside `UpdateExclusionsWindow`), `SideloadedBlocked` (`UpdateSideloaded=False` on a sideloaded-workflow cluster) and, new in v0.7.90, `ExcludedByTag` (`UpdateExcluded=True` operator hard override). The Actions Required callout points operators at the `UpdateExcluded` tag when one or more clusters are intentionally held out of automation.
+> Pipeline summaries (Step 6 GH Actions + Azure DevOps) classify per-cluster skips as `ScheduleBlocked` (outside `UpdateStartWindow` or inside `UpdateExclusionsWindow`), `SideloadedBlocked` (`UpdateSideloaded=False` on a sideloaded-workflow cluster) and, new in v0.7.90, `ExcludedByTag` (`UpdateExcluded=True` operator hard override). The Actions Required callout points operators at the `UpdateExcluded` tag when one or more clusters are intentionally held out of automation.
 
-### A.7 Monitor In-Flight Updates (v0.7.90)
+## Step 7 - Monitor In-Flight Updates
 
 | Aspect | Value |
 |---|---|
 | **Purpose** | In-flight observability for an active update wave. Reports clusters whose latest update run is currently `InProgress` with the CURRENT STEP each cluster is on, the PROGRESS (`completed/total steps`), and the ELAPSED DURATION. Long-running runs are flagged via the `long_running_threshold_hours` input (default 6h) so an operator can spot a stuck cluster without waiting for the next daily `fleet-update-status` snapshot. **No new ARM calls**: data source is `Get-AzLocalUpdateRuns -Latest` (one row per cluster) - the same call already made by `fleet-update-status`. |
 | **Inputs** | `scope` (`all-clusters` (default) or `by-update-ring`), `update_ring` (only used when `scope=by-update-ring`; single ring, `Prod;Ring2` semicolon-list, or `***` wildcard), `long_running_threshold_hours` (0-48, default 6), `module_version` (optional). |
 | **Trigger** | **Manual only by default** (`workflow_dispatch` / **Run pipeline** button). A commented-out `schedule: cron '*/30 * * * *'` (GH) / `schedules: cron '*/30 * * * *'` (ADO) sample is shipped inside the `# BEGIN-AZLOCAL-CUSTOMIZE:schedule-triggers` block - uncomment it for the duration of an active wave, then re-comment it once the wave drains, so you do not generate 48 empty runs per day between waves. |
+| **Cmdlets invoked** | `Get-AzLocalUpdateRuns`, `Get-AzLocalClusterInventory` (used for ring-scope mode). |
+| **Depends on** | Step 6 must be active (at least one `InProgress` run) for the output to be non-empty. Runs cleanly on an empty fleet (reports "no in-flight runs"). |
 | **Artefacts** | `update-monitor.xml` (JUnit, one `<testcase>` per in-flight cluster with current step + progress + elapsed duration in the failure message when over threshold), `update-monitor.csv` (full per-cluster rows), markdown job summary with the in-flight table and long-running flag column. |
-| **When to run** | While a wave is active (manually, or via the commented cron). The two daily snapshot pipelines (`Step.8_fleet-update-status`, `Step.9_fleet-health-status`) remain the steady-state daily reports; this pipeline is purpose-built for the "is the apply-updates run I started two hours ago still progressing?" question that those daily snapshots cannot answer between runs. |
-| **RBAC** | Read-only - same as A.1 / A.8 (`Reader` on the cluster scope, plus the cluster-update API read paths already enumerated in the `Azure Stack HCI Update Operator` custom role). |
+| **When to run** | While a wave is active (manually, or via the commented cron). The two daily snapshot pipelines (Step 8 and Step 9) remain the steady-state daily reports; this pipeline is purpose-built for the "is the apply-updates run I started two hours ago still progressing?" question that those daily snapshots cannot answer between runs. |
+| **RBAC** | Read-only - `Reader` on the cluster scope, plus the cluster-update API read paths already enumerated in the `Azure Stack HCI Update Operator` custom role. |
+| **Exit conditions** | Pipeline run is green when the snapshot completes. Long-running runs (over `long_running_threshold_hours`) surface as JUnit `<failure>` entries so they appear in the Tests / Checks tab without failing the whole pipeline. |
+| **ITSM** | Not supported - in-flight monitor exists to be a fast feedback loop during an active wave; long-running runs surface as JUnit `<failure>` entries for the operator on call, and post-wave failures are picked up + ticketed by the daily Step 8 snapshot. |
+| **Introduced** | v0.7.90. |
 
-### A.8 Fleet Update Status (table pivot in v0.7.90; formerly A.7)
+## Step 8 - Fleet Update Status
 
 | Aspect | Value |
 |---|---|
 | **Purpose** | Daily fleet-wide snapshot of cluster update state. Read-only. **v0.7.90 pivots the Version Distribution markdown table by YYMM** (leading column `Version` = `2511`, `2604`, ...; new `Update Versions` column lists each distinct full version installed within that YYMM as `<version> x <count>` separated by `<br>`; rows sorted ascending by YYMM so the oldest YYMM is at the top). The underlying `<testsuite name="Fleet Version Distribution">` JUnit XML is unchanged - still one `<testcase>` per distinct full `CurrentVersion` - so machine-readable consumers and CI test-reporters are unaffected. |
-| **Inputs** | Scope (`-AllClusters` or `-ScopeByUpdateRingTag`), `throttle_limit` (optional). |
+| **Inputs** | Scope (`-AllClusters` or `-ScopeByUpdateRingTag`), `throttle_limit` (optional). v0.7.4-style ITSM toggles are also exposed: `raise_itsm_ticket`, `itsm_config_path`, `itsm_dry_run`, `itsm_force_create` (all optional, default off). |
 | **Trigger** | Manual (`workflow_dispatch` / **Run pipeline** button) **plus** scheduled daily at 06:00 UTC (`cron '0 6 * * *'`). Edit the cron in the YAML to change cadence. |
+| **Cmdlets invoked** | `Get-AzLocalClusterInventory`, `Get-AzLocalClusterUpdateReadiness`, `Get-AzLocalUpdateSummary`, `Get-AzLocalAvailableUpdates`, `Get-AzLocalUpdateRuns`, `Get-AzLocalUpdateRunFailures`, `Get-AzLocalLatestSolutionVersion`. When ITSM is enabled: `Get-AzLocalItsmConfig`. |
+| **Depends on** | None directly. Best-quality output when Step 4 (connectivity) has run earlier the same morning, since clusters Arc can't see won't appear in the readiness or update-summary results. |
 | **Artefacts** | `readiness-status.xml` / `.csv` / `.json`, `cluster-inventory.csv`, `update-summaries.csv`, `available-updates.csv`, `update-runs.csv`. |
 | **When to run** | Hands-off scheduled. Trigger manually for ad-hoc reporting. |
+| **RBAC** | Read-only. Covered by the `Azure Stack HCI Update Operator` custom role. |
+| **Exit conditions** | Pipeline run is green when the snapshot completes. Per-cluster issues (outdated version, failed run history) surface as JUnit `<failure>` entries. |
+| **ITSM** | Supported (opt-in via `raise_itsm_ticket=true` / `raiseItsmTicket=true`). When enabled, one ServiceNow incident is raised per unresolved failed update run picked up by the daily snapshot; dedupe key combines cluster + update version + failure reason via `./.itsm/azurelocal-itsm.yml`. `itsm_dry_run` builds payloads without creating tickets; `itsm_force_create` bypasses dedupe. |
 
-### A.9 Fleet Health Status (v0.7.65; formerly A.8)
+## Step 9 - Fleet Health Status
 
 | Aspect | Value |
 |---|---|
 | **Purpose** | Daily fleet-wide snapshot of **24-hour system health-check failures** surfaced by every Azure Local cluster the identity can see. **Independent of update activity** - clusters that are "up to date" can still surface Critical / Warning issues that need operator triage. Read-only. |
-| **Inputs** | `severity` (optional - `Critical`, `Warning`, or `All`; default `All`), `update_ring_tag` (optional - narrow to one wave), `throttle_limit` (optional). |
+| **Inputs** | `severity` (optional - `Critical`, `Warning`, or `All`; default `All`), `update_ring_tag` (optional - narrow to one wave), `throttle_limit` (optional). v0.7.4-style ITSM toggles are also exposed: `raise_itsm_ticket`, `itsm_config_path`, `itsm_dry_run`, `itsm_force_create` (all optional, default off). |
 | **Trigger** | Manual (`workflow_dispatch` / **Run pipeline** button) **plus** scheduled daily at 07:00 UTC (`cron '0 7 * * *'`). Deliberately offset by one hour from `fleet-update-status` (06:00 UTC) to avoid agent and ARM contention. Edit the cron in the YAML to change cadence. |
+| **Cmdlets invoked** | `Get-AzLocalFleetHealthFailures`, `Get-AzLocalFleetHealthOverview`. When ITSM is enabled: `Get-AzLocalItsmConfig`. |
+| **Depends on** | None directly. Best-quality output when Step 4 (connectivity) has run earlier the same morning. |
 | **Artefacts** | `fleet-health-status.xml` (JUnit, one `<testcase>` per failing check, grouped under `Critical Health Failures` / `Warning Health Failures` testsuites), `fleet-health-detail.csv` (one row per failing check), `fleet-health-summary.csv` (aggregated by `FailureReason` + `Severity`), markdown job summary. |
 | **When to run** | Hands-off scheduled. Trigger manually for ad-hoc fleet-wide health triage outside the daily schedule, especially after operational events (capacity changes, network maintenance, certificate rotations) where health-check failures are expected to spike. |
+| **RBAC** | Read-only. Covered by the `Azure Stack HCI Update Operator` custom role. |
+| **Exit conditions** | Pipeline run is green when the snapshot completes. Critical and Warning health-check failures surface as JUnit `<failure>` entries grouped by severity. |
+| **ITSM** | Supported (opt-in via `raise_itsm_ticket=true` / `raiseItsmTicket=true`). When enabled, one ServiceNow incident is raised per Critical or Warning health-check failure picked up by the daily snapshot; dedupe key combines cluster + `FailureReason` + `Severity` via `./.itsm/azurelocal-itsm.yml`. `itsm_dry_run` builds payloads without creating tickets; `itsm_force_create` bypasses dedupe. |
+| **Introduced** | v0.7.65. |
 
 ---
