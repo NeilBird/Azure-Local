@@ -178,10 +178,14 @@ jobs:
           $monitorXml = Join-Path $outputDir 'update-monitor.xml'
 
           # Build cluster scope. -Latest returns one row per cluster.
+          # -PassThru is REQUIRED: without it Get-AzLocalUpdateRuns only writes formatted output to
+          # the host and returns nothing to the pipeline, silently producing an empty $runs and a
+          # 0/0/0 monitor snapshot even when there are in-flight runs. -SkipSideloadedReset is set
+          # because this is a read-only observability pipeline and must not mutate cluster tags.
           $runs = @()
           if ($scope -eq 'by-update-ring' -and $updateRing) {
               Write-Host "Scope: UpdateRing = $updateRing"
-              $runs = @(Get-AzLocalUpdateRuns -ScopeByUpdateRingTag -UpdateRingValue $updateRing -Latest)
+              $runs = @(Get-AzLocalUpdateRuns -ScopeByUpdateRingTag -UpdateRingValue $updateRing -Latest -PassThru -SkipSideloadedReset)
           } else {
               Write-Host "Scope: all clusters (via inventory)"
               $inventory = Get-AzLocalClusterInventory -PassThru
@@ -194,7 +198,7 @@ jobs:
                   exit 0
               }
               $resourceIds = @($inventory | Select-Object -ExpandProperty ResourceId)
-              $runs = @(Get-AzLocalUpdateRuns -ClusterResourceIds $resourceIds -Latest)
+              $runs = @(Get-AzLocalUpdateRuns -ClusterResourceIds $resourceIds -Latest -PassThru -SkipSideloadedReset)
           }
 
           # Project + enrich. Parse StartTime ("yyyy-MM-dd HH:mm" from Format-AzLocalUpdateRun)
