@@ -4,7 +4,23 @@
 >
 > **For older releases**, this is the canonical reference; the main README intentionally stays slim so the most recent block is easy to find.
 >
-> **For v0.7.89 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0789) `What's New in v0.7.89` section.
+> **For v0.7.96 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0796) `What's New in v0.7.96` section.
+
+---
+
+### What's New in v0.7.96
+
+v0.7.96 is a focused operator-visibility release driven by a side-by-side comparison of the bundled Step.7 + Step.8 pipelines against the LENS update-readiness workbook used by the Azure Local product team. Three gaps were closed in lock-step: the in-flight monitor (`Step.7 monitor-updates`) now surfaces the LENS-vocab `Status` column and the deepest nested `errorMessage` for every in-flight run, plus a new `StepError` JUnit failure type that fires on stuck-but-still-fresh runs (the Arizona-shaped case where a step has been in `Status='Error'` for 19+ days but the run's overall elapsed time is still under `long_running_threshold_hours`); the daily snapshot (`Step.8 fleet-update-status`) reworks the Primary Status bucket cascade to align with the LENS workbook by promoting `NeedsAttention` into the `Update Failed` bucket, adding a new `Action Required` bucket for `PreparationFailed` (with its own actionable guidance because the run never started so re-arming is required), and folding `PreparationInProgress` into `Update In Progress`; and both pipelines now render Cluster Name and Update Name cells in their markdown summaries as `<a href="https://portal.azure.com/...">` deep-links to the cluster's Updates blade and the single-instance update-run history view, matching the LENS-workbook hyperlink behaviour.
+
+**New `Status` + `ErrorMessage` columns on every update run.** `Format-AzLocalUpdateRun` now emits both columns derived from `properties.progress.status` and the deepest `errorMessage` walked from the nested `properties.progress.steps[]` tree (mirrors the LENS-Workbook `coalesce(e9Msg..e1Msg)` pattern via the new private `Get-DeepestErrorMessage` helper that recursively walks all 9 nesting levels of the ARM steps tree). The columns appear in `update-monitor.csv`, the in-flight markdown table, the always-shown Failed-runs block, and the `update-runs.csv` artefact emitted by Step 8.
+
+**Step.7 new `StepError` JUnit failure type.** Runs whose deepest step status is `Error` but whose overall elapsed time is below `long_running_threshold_hours` (default 6h) now generate a JUnit `<failure failureType='StepError'>` entry so they surface in the Checks tab WITHOUT needing the long-running threshold to fire. Two new `GITHUB_OUTPUT` values support this: `STEP_ERRORED` (count of runs that hit a step error inside the threshold) and `UNRESOLVED_FAILURES` (count of Failed runs surfaced from `Get-AzLocalUpdateRunFailures`). The always-shown Failed-runs block in the Step.7 markdown summary carries an MS Learn TSG link.
+
+**Step.8 new `Action Required` Primary Status bucket.** The Primary Status bucket cascade is now `Update Failed > Action Required > Health Failure > SBE Prerequisite Blocked > Update In Progress > Ready for Update > Up to Date > Needs Investigation`. `PreparationFailed` lands in the new `Action Required` row with separate actionable prose. Surfaces via: (1) new `<property name="primaryActionRequired" value="$stActionRequired"/>` JUnit attribute on the primary testsuite; (2) per-testcase `failureType='PreparationFailed'` instead of the generic `UpdateFailure`; (3) new `ACTION_REQUIRED` `GITHUB_OUTPUT` (`actionRequired` pipeline variable in ADO); (4) `Summary.UpdateFailures` + `Summary.ActionRequired` rolled-up bucket counts in `readiness-status.json`; (5) new "Action Required (PreparationFailed)" row in the Primary Status markdown table with its own callout.
+
+**Portal deep-links in both Step.7 and Step.8 markdown tables.** Cluster Name cells render as `<a href="https://portal.azure.com/#@/resource{ClusterResourceId}/updates">ClusterName</a>` and Update Name cells render as `<a href="https://portal.azure.com/#view/Microsoft_AzureStackHCI_PortalExtension/SingleInstanceHistoryDetails.ReactView/resourceId/{enc}/updateName/{name}/updateRunName/{runId}/refresh~/false">UpdateName</a>`. Verified working in the Arizona + Orlando smoke tests this release cycle.
+
+8 new Pester tests added (4 covering `Format-AzLocalUpdateRun` Status + ErrorMessage emission, 4 covering `Get-DeepestErrorMessage` recursive walk semantics including the L3-deepest case used in production). Full suite green at 794 / 0 / 1. All 18 bundled `Step.{0..8}.yml` templates bumped `GENERATED_AGAINST_MODULE_VERSION` from `'0.7.95'` to `'0.7.96'`; the GH Step.8 `run:` block measures 17,877 chars (under the repo's 18,000-char ceiling guard).
 
 ---
 
