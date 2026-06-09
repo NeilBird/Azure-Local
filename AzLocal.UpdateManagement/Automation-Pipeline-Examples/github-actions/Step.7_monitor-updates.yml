@@ -71,6 +71,10 @@ on:
         description: 'Surface FAILED runs whose End time falls within the last N hours (default 24). Set to 0 to disable.'
         required: false
         default: '24'
+      critical_elapsed_days:
+        description: 'CRITICAL tier for overall-elapsed (v0.7.98+, default 7 days). In-flight runs older than this get a :rotating_light: chip; older than 2x this get a :skull: chip. Strongest visual signal that human intervention is needed - a 19-day-stuck run will no longer be hidden behind a single "step errored" chip.'
+        required: false
+        default: '7'
       module_version:
         description: 'Pin AzLocal.UpdateManagement version (empty = latest from PSGallery). See Automation-Pipeline-Examples/README.md section 5 "Optional configuration".'
         required: false
@@ -81,7 +85,7 @@ env:
   # this to the version actually installed and to the latest on PSGallery, and emits a
   # ::notice annotation if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.7.97'
+  GENERATED_AGAINST_MODULE_VERSION: '0.7.98'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): manual workflow_dispatch input >
   # repository variable 'REQUIRED_MODULE_VERSION' > empty (latest).
@@ -171,6 +175,7 @@ jobs:
           INPUT_THRESHOLD_HOURS: ${{ github.event.inputs.long_running_threshold_hours }}
           INPUT_STEP_THRESHOLD_HOURS: ${{ github.event.inputs.long_running_step_hours }}
           INPUT_RECENT_FAILURE_WINDOW_HOURS: ${{ github.event.inputs.recent_failure_window_hours }}
+          INPUT_CRITICAL_ELAPSED_DAYS: ${{ github.event.inputs.critical_elapsed_days }}
         run: |
           Import-Module AzLocal.UpdateManagement -Force
 
@@ -196,9 +201,20 @@ jobs:
               [int]$parsedRf = 0
               if ([int]::TryParse($env:INPUT_RECENT_FAILURE_WINDOW_HOURS, [ref]$parsedRf) -and $parsedRf -ge 0) { $failureWindowHours = $parsedRf }
           }
+          # CRITICAL tier for overall-elapsed (v0.7.98+). Pure visual escalation - JUnit + counts
+          # are unaffected. Runs older than $criticalElapsedDays days get a :rotating_light: run
+          # chip; older than 2x that get :skull:. Defaults: 7 days CRIT, 14 days SKULL.
+          $criticalElapsedDays = 7
+          if ($env:INPUT_CRITICAL_ELAPSED_DAYS) {
+              [int]$parsedCe = 0
+              if ([int]::TryParse($env:INPUT_CRITICAL_ELAPSED_DAYS, [ref]$parsedCe) -and $parsedCe -gt 0) { $criticalElapsedDays = $parsedCe }
+          }
           $thresholdSpan = [TimeSpan]::FromHours($thresholdHours)
           $stepThresholdSpan = [TimeSpan]::FromHours($stepThresholdHours)
-          Write-Host ("Thresholds: per-step={0}h (primary), overall={1}h (backstop), recent-failure-window={2}h" -f $stepThresholdHours, $thresholdHours, $failureWindowHours)
+          $stepCritSpan = [TimeSpan]::FromHours($stepThresholdHours * 2)
+          $criticalElapsedSpan = [TimeSpan]::FromDays($criticalElapsedDays)
+          $skullElapsedSpan = [TimeSpan]::FromDays($criticalElapsedDays * 2)
+          Write-Host ("Thresholds: per-step={0}h (warn) / {1}h (crit), overall={2}h (warn) / {3}d (crit) / {4}d (skull), recent-failure-window={5}h" -f $stepThresholdHours, ($stepThresholdHours * 2), $thresholdHours, $criticalElapsedDays, ($criticalElapsedDays * 2), $failureWindowHours)
 
           $outputDir = './reports'
           New-Item -ItemType Directory -Path $outputDir -Force | Out-Null
@@ -303,6 +319,76 @@ jobs:
                       $updateRunPortalUrl = 'https://portal.azure.com/#view/Microsoft_AzureStackHCI_PortalExtension/SingleInstanceHistoryDetails.ReactView/resourceId/' + $encClusterId + '/updateName/' + $rm.Groups[1].Value + '/updateRunName/' + $rm.Groups[2].Value + '/refresh~/false'
                   }
               }
+              # Severity classification (v0.7.98). Three independent signals + a numeric score:
+              #   StepSeverity : none -> warn (>stepThresholdHours) -> crit (>2x stepThresholdHours)
+              #   RunSeverity  : none -> warn (>thresholdHours) -> crit (>criticalElapsedDays days) -> skull (>2x days)
+              #   StateIcon / StatusIcon : at-a-glance scan icons (rendered into the markdown cells)
+              #   SeverityScore : single numeric sort key combining ALL signals - replaces the
+              #                   priority-collapsed sort tuple so a 19-day-stuck step-errored row
+              #                   beats a 3h step-elapsed warn (was previously hidden because the
+              #                   Flag column collapsed to one chip and lost the run-elapsed signal).
+              $stepSeverity = 'none'
+              if ($stepElapsed -and $r.State -eq 'InProgress') {
+                  if ($stepElapsed -gt $stepCritSpan) { $stepSeverity = 'crit' }
+                  elseif ($stepElapsed -gt $stepThresholdSpan) { $stepSeverity = 'warn' }
+              }
+              $runSeverity = 'none'
+              if ($elapsed -and $r.State -eq 'InProgress') {
+                  if ($elapsed -gt $skullElapsedSpan) { $runSeverity = 'skull' }
+                  elseif ($elapsed -gt $criticalElapsedSpan) { $runSeverity = 'crit' }
+                  elseif ($elapsed -gt $thresholdSpan) { $runSeverity = 'warn' }
+              }
+              $stateIcon = switch ($r.State) {
+                  'InProgress' { ':large_blue_circle:' }
+                  'Succeeded'  { ':large_green_circle:' }
+                  'Failed'     { ':red_circle:' }
+                  'NotStarted' { ':white_circle:' }
+                  default      { ':grey_question:' }
+              }
+              $statusIcon = switch ($progressStatus) {
+                  'Success'    { ':white_check_mark:' }
+                  'Error'      { ':x:' }
+                  'InProgress' { ':hourglass_flowing_sand:' }
+                  'Skipped'    { ':no_entry:' }
+                  'Cancelled'  { ':fast_forward:' }
+                  default      { '' }
+              }
+              # Chip stack - shows ALL signals that apply (no priority-collapse). Pipe-escaped for
+              # markdown table safety; rendered as <br>-separated chips inside one Flag cell.
+              $chipList = New-Object 'System.Collections.Generic.List[string]'
+              if ($hasStepError) { $chipList.Add(':rotating_light: step errored') | Out-Null }
+              if ($stepSeverity -eq 'crit') { $chipList.Add((':rotating_light: step >{0}h' -f ($stepThresholdHours * 2))) | Out-Null }
+              elseif ($stepSeverity -eq 'warn') { $chipList.Add((':warning: step >{0}h' -f $stepThresholdHours)) | Out-Null }
+              if ($runSeverity -eq 'skull') { $chipList.Add((':skull: run >{0}d' -f ($criticalElapsedDays * 2))) | Out-Null }
+              elseif ($runSeverity -eq 'crit') { $chipList.Add((':rotating_light: run >{0}d' -f $criticalElapsedDays)) | Out-Null }
+              elseif ($runSeverity -eq 'warn') { $chipList.Add((':warning: run >{0}h' -f $thresholdHours)) | Out-Null }
+              if ($chipList.Count -eq 0 -and $r.State -eq 'InProgress') { $chipList.Add('within') | Out-Null }
+              $flagDisplay = ($chipList -join '<br>')
+              # SeverityScore - bigger = worse. StepError tops the scale; Failed-latest is just
+              # below; skull > crit > warn; tiebreaker is elapsed hours / 24 (days). All Within
+              # rows tie at 0 + days; ClusterName is the secondary alphabetical sort.
+              $severityScore = 0.0
+              if ($hasStepError) { $severityScore += 1000 }
+              if ($r.State -eq 'Failed') { $severityScore += 800 }
+              if ($runSeverity -eq 'skull') { $severityScore += 500 }
+              elseif ($runSeverity -eq 'crit') { $severityScore += 300 }
+              elseif ($runSeverity -eq 'warn') { $severityScore += 50 }
+              if ($stepSeverity -eq 'crit') { $severityScore += 200 }
+              elseif ($stepSeverity -eq 'warn') { $severityScore += 30 }
+              $elapsedHoursForScore = if ($elapsed) { $elapsed.TotalHours } else { 0 }
+              $severityScore += [math]::Round($elapsedHoursForScore / 24, 2)
+              # v0.7.98: surface a meaningful per-row JUnit time= so the Test Reporter
+              # widget stops rendering "0ms" totals. For in-flight rows we report how long
+              # the run has been going (now - startDt). For unresolved-failed rows with both
+              # start and end timestamps we report the actual run duration (end - start).
+              # Anything else falls back to 0 (no usable timestamps).
+              $runDurationSeconds = 0
+              if ($r.State -ne 'InProgress' -and $startDt -and $endDt) {
+                  $runDurationSeconds = [int][math]::Round(($endDt - $startDt).TotalSeconds, 0)
+              } elseif ($elapsed) {
+                  $runDurationSeconds = [int][math]::Round($elapsed.TotalSeconds, 0)
+              }
+              if ($runDurationSeconds -lt 0) { $runDurationSeconds = 0 }
               [PSCustomObject]@{
                   ClusterName       = $r.ClusterName
                   ClusterPortalUrl  = $clusterPortalUrl
@@ -326,6 +412,14 @@ jobs:
                   IsUnresolvedFailure = $isUnresolvedFailure
                   ThresholdHours    = $thresholdHours
                   StepThresholdHours = $stepThresholdHours
+                  CriticalElapsedDays = $criticalElapsedDays
+                  StepSeverity      = $stepSeverity
+                  RunSeverity       = $runSeverity
+                  StateIcon         = $stateIcon
+                  StatusIcon        = $statusIcon
+                  Flags             = $flagDisplay
+                  SeverityScore     = $severityScore
+                  RunDurationSeconds = $runDurationSeconds
                   RunId             = $r.RunId
                   RunResourceId     = if ($r.PSObject.Properties['RunResourceId']) { $r.RunResourceId } else { '' }
                   ClusterResourceId = $r.ClusterResourceId
@@ -344,7 +438,7 @@ jobs:
 
           # CSV (always emit, even if empty, so the artifact step has a file)
           if ($rows -and $rows.Count -gt 0) {
-              $rows | Sort-Object @{Expression='HasStepError';Descending=$true}, @{Expression='ExceedsStepThreshold';Descending=$true}, @{Expression='ExceedsThreshold';Descending=$true}, @{Expression='IsUnresolvedFailure';Descending=$true}, @{Expression='StepElapsedHours';Descending=$true}, @{Expression='ElapsedHours';Descending=$true}, ClusterName | Export-Csv -Path $monitorCsv -NoTypeInformation -Encoding utf8
+              $rows | Sort-Object @{Expression='SeverityScore';Descending=$true}, ClusterName | Export-Csv -Path $monitorCsv -NoTypeInformation -Encoding utf8
           } else {
               '' | Set-Content -Path $monitorCsv -Encoding utf8
           }
@@ -360,14 +454,20 @@ jobs:
           # Empty suite (no in-flight + no unresolved failures) still emits valid XML so the publish step works.
           $xmlLines = New-Object 'System.Collections.Generic.List[string]'
           $xmlLines.Add('<?xml version="1.0" encoding="UTF-8"?>')
-          $xmlLines.Add('<testsuites time="0">')
+          # v0.7.98: testsuite time = sum of testcase times = total wall-clock seconds across all
+          # in-flight + unresolved-failed runs. Replaces the previous time="0" which made the GitHub
+          # Test Reporter widget render "0ms" totals (visually meaningless).
+          $totalSuiteSeconds = 0
+          foreach ($r in $inFlight) { $totalSuiteSeconds += [int]$r.RunDurationSeconds }
+          foreach ($r in $unresolvedFailed) { $totalSuiteSeconds += [int]$r.RunDurationSeconds }
+          $xmlLines.Add(('<testsuites time="{0}">' -f $totalSuiteSeconds))
           $tests = $inFlight.Count + $unresolvedFailed.Count
           # A single run can trigger ANY combination of StepError + LongRunningStep + LongRunningOverall
           # - we emit the highest-priority match as ONE failure per testcase, so $failures matches the
           # testcase count of actually-failing rows (not the union of failure flags).
           $failures = @($inFlight | Where-Object { $_.HasStepError -or $_.ExceedsStepThreshold -or $_.ExceedsThreshold }).Count + $unresolvedFailed.Count
-          $xmlLines.Add(('  <testsuite name="Update Run Monitor" tests="{0}" failures="{1}" time="0">' -f $tests, $failures))
-          foreach ($r in ($inFlight | Sort-Object @{Expression='HasStepError';Descending=$true}, @{Expression='ExceedsStepThreshold';Descending=$true}, @{Expression='StepElapsedHours';Descending=$true}, @{Expression='ElapsedHours';Descending=$true})) {
+          $xmlLines.Add(('  <testsuite name="Update Run Monitor" tests="{0}" failures="{1}" time="{2}">' -f $tests, $failures, $totalSuiteSeconds))
+          foreach ($r in ($inFlight | Sort-Object @{Expression='SeverityScore';Descending=$true}, ClusterName)) {
               $safeName = ($r.ClusterName -replace '[^A-Za-z0-9_.-]', '_')
               $caseName = "$safeName - $($r.UpdateName) - $($r.CurrentStep)"
               $caseNameXml = [System.Security.SecurityElement]::Escape($caseName)
@@ -375,23 +475,23 @@ jobs:
                   $errSnippet = if ($r.ErrorMessage) { $r.ErrorMessage } else { '(no errorMessage on deepest failed step)' }
                   $msg = ('Progress status is Error (state still InProgress) - step is stuck. CurrentStep: {0}. StepElapsed: {1}. ErrorMessage: {2}' -f $r.CurrentStep, $r.StepElapsedDisplay, $errSnippet)
                   $msgXml = [System.Security.SecurityElement]::Escape($msg)
-                  $xmlLines.Add(('    <testcase name="{0}" classname="UpdateMonitor" time="0">' -f $caseNameXml))
+                  $xmlLines.Add(('    <testcase name="{0}" classname="UpdateMonitor" time="{1}">' -f $caseNameXml, $r.RunDurationSeconds))
                   $xmlLines.Add(('      <failure message="{0}" type="StepError">{0}</failure>' -f $msgXml))
                   $xmlLines.Add('    </testcase>')
               } elseif ($r.ExceedsStepThreshold) {
                   $msg = ('Current step elapsed {0} exceeds per-step threshold of {1}h. CurrentStep: {2}. Overall elapsed: {3}. Progress: {4}.' -f $r.StepElapsedDisplay, $r.StepThresholdHours, $r.CurrentStep, $r.ElapsedDisplay, $r.Progress)
                   $msgXml = [System.Security.SecurityElement]::Escape($msg)
-                  $xmlLines.Add(('    <testcase name="{0}" classname="UpdateMonitor" time="0">' -f $caseNameXml))
+                  $xmlLines.Add(('    <testcase name="{0}" classname="UpdateMonitor" time="{1}">' -f $caseNameXml, $r.RunDurationSeconds))
                   $xmlLines.Add(('      <failure message="{0}" type="LongRunningStep">{0}</failure>' -f $msgXml))
                   $xmlLines.Add('    </testcase>')
               } elseif ($r.ExceedsThreshold) {
                   $msg = ('Overall elapsed {0} exceeds backstop threshold of {1}h (current step within {2}h per-step budget). CurrentStep: {3}. Progress: {4}.' -f $r.ElapsedDisplay, $r.ThresholdHours, $r.StepThresholdHours, $r.CurrentStep, $r.Progress)
                   $msgXml = [System.Security.SecurityElement]::Escape($msg)
-                  $xmlLines.Add(('    <testcase name="{0}" classname="UpdateMonitor" time="0">' -f $caseNameXml))
+                  $xmlLines.Add(('    <testcase name="{0}" classname="UpdateMonitor" time="{1}">' -f $caseNameXml, $r.RunDurationSeconds))
                   $xmlLines.Add(('      <failure message="{0}" type="LongRunningOverall">{0}</failure>' -f $msgXml))
                   $xmlLines.Add('    </testcase>')
               } else {
-                  $xmlLines.Add(('    <testcase name="{0}" classname="UpdateMonitor" time="0"/>' -f $caseNameXml))
+                  $xmlLines.Add(('    <testcase name="{0}" classname="UpdateMonitor" time="{1}"/>' -f $caseNameXml, $r.RunDurationSeconds))
               }
           }
           foreach ($r in ($unresolvedFailed | Sort-Object @{Expression='EndTimeUtc';Descending=$true})) {
@@ -401,7 +501,7 @@ jobs:
               $detail = if ($r.ErrorMessage) { $r.ErrorMessage } elseif ($r.CurrentStepDetail) { $r.CurrentStepDetail } else { $r.CurrentStep }
               $msg = ('Run failed at {0} UTC. Step: {1}. Detail: {2}.' -f $r.EndTimeUtc, $r.CurrentStep, $detail)
               $msgXml = [System.Security.SecurityElement]::Escape($msg)
-              $xmlLines.Add(('    <testcase name="{0}" classname="UpdateMonitor" time="0">' -f $caseNameXml))
+              $xmlLines.Add(('    <testcase name="{0}" classname="UpdateMonitor" time="{1}">' -f $caseNameXml, $r.RunDurationSeconds))
               $xmlLines.Add(('      <failure message="{0}" type="RecentFailure">{0}</failure>' -f $msgXml))
               $xmlLines.Add('    </testcase>')
           }
@@ -421,8 +521,34 @@ jobs:
           $md = New-Object 'System.Collections.Generic.List[string]'
           $md.Add('## In-Flight Update Monitor')
           $md.Add('')
+          # Top-of-summary status badge (v0.7.98) - single at-a-glance verdict for the whole
+          # scope. Critical when ANY stuck-step error, skull/crit run-elapsed, or unresolved
+          # Failed latest; Warn when any warn-tier signal; Healthy otherwise.
+          $hasCritical = ($stepErrored.Count -gt 0) -or $unresolvedFailed.Count -gt 0 -or @($inFlight | Where-Object { $_.RunSeverity -eq 'skull' -or $_.RunSeverity -eq 'crit' -or $_.StepSeverity -eq 'crit' }).Count -gt 0
+          $hasWarn = @($inFlight | Where-Object { $_.StepSeverity -eq 'warn' -or $_.RunSeverity -eq 'warn' }).Count -gt 0
+          $statusBadge = if ($hasCritical) {
+              $crits = @()
+              if ($stepErrored.Count -gt 0) { $crits += "$($stepErrored.Count) stuck step error(s)" }
+              $skullCount = @($inFlight | Where-Object { $_.RunSeverity -eq 'skull' }).Count
+              $critRunCount = @($inFlight | Where-Object { $_.RunSeverity -eq 'crit' }).Count
+              $critStepCount = @($inFlight | Where-Object { $_.StepSeverity -eq 'crit' }).Count
+              if ($skullCount -gt 0)   { $crits += "$skullCount run(s) > $($criticalElapsedDays * 2)d" }
+              if ($critRunCount -gt 0) { $crits += "$critRunCount run(s) > ${criticalElapsedDays}d" }
+              if ($critStepCount -gt 0){ $crits += "$critStepCount step(s) > $($stepThresholdHours * 2)h" }
+              if ($unresolvedFailed.Count -gt 0) { $crits += "$($unresolvedFailed.Count) unresolved failure(s)" }
+              ':red_circle: **Fleet Status: CRITICAL** - ' + ($crits -join ', ')
+          } elseif ($hasWarn) {
+              $warnCount = @($inFlight | Where-Object { $_.StepSeverity -eq 'warn' -or $_.RunSeverity -eq 'warn' }).Count
+              ":yellow_circle: **Fleet Status: WARN** - $warnCount long-running run(s)"
+          } elseif ($inFlight.Count -gt 0) {
+              ":green_circle: **Fleet Status: HEALTHY** - $($inFlight.Count) in-flight run(s) within all thresholds"
+          } else {
+              ':white_circle: **Fleet Status: IDLE** - no update runs currently in flight'
+          }
+          $md.Add($statusBadge)
+          $md.Add('')
           $scopeLabel = if ($scope -eq 'by-update-ring' -and $updateRing) { "by-update-ring (UpdateRing = $updateRing)" } else { 'all clusters' }
-          $md.Add("**Scope**: $scopeLabel - **Per-step threshold**: ${stepThresholdHours}h (primary) - **Overall threshold**: ${thresholdHours}h (backstop) - **Recent-failure window**: ${failureWindowHours}h - **Snapshot (UTC)**: $($now.ToString('yyyy-MM-dd HH:mm'))")
+          $md.Add("**Scope**: $scopeLabel - **Per-step warn/crit**: ${stepThresholdHours}h / $($stepThresholdHours * 2)h - **Overall warn/crit/skull**: ${thresholdHours}h / ${criticalElapsedDays}d / $($criticalElapsedDays * 2)d - **Recent-failure window**: ${failureWindowHours}h - **Snapshot (UTC)**: $($now.ToString('yyyy-MM-dd HH:mm'))")
           $md.Add('')
           $md.Add('| Metric | Count |')
           $md.Add('|--------|-------|')
@@ -437,24 +563,32 @@ jobs:
           }
           $md.Add('')
           if ($inFlight.Count -gt 0) {
-              $md.Add('### In-flight runs (sorted by step elapsed, longest first)')
+              $md.Add('### In-flight runs (sorted by severity score, worst first)')
               $md.Add('')
-              $md.Add('| Cluster | Update | State | Progress Status | Current Step | Progress | Step Started (UTC) | Step Elapsed | Run Started (UTC) | Run Elapsed | Flag |')
-              $md.Add('|---------|--------|-------|-----------------|--------------|----------|--------------------|--------------|-------------------|-------------|------|')
-              foreach ($r in ($inFlight | Sort-Object @{Expression='HasStepError';Descending=$true}, @{Expression='ExceedsStepThreshold';Descending=$true}, @{Expression='StepElapsedHours';Descending=$true}, @{Expression='ElapsedHours';Descending=$true})) {
+              $md.Add('| Cluster | Update | State | Progress Status | Current Step | Progress | Step Started (UTC) | Step Elapsed | Run Started (UTC) | Run Elapsed | Flags |')
+              $md.Add('|---------|--------|-------|-----------------|--------------|----------|--------------------|--------------|-------------------|-------------|-------|')
+              foreach ($r in ($inFlight | Sort-Object @{Expression='SeverityScore';Descending=$true}, ClusterName)) {
                   $cs = if ($r.CurrentStep) { $r.CurrentStep } else { '-' }
                   $pg = if ($r.Progress) { $r.Progress } else { '-' }
                   $stepStart = if ($r.StepStartTimeUtc) { $r.StepStartTimeUtc } else { '-' }
-                  $stepEl = if ($r.StepElapsedDisplay) { $r.StepElapsedDisplay } else { '-' }
-                  $statusCell = if ($r.Status) { $r.Status } else { '-' }
-                  $flag = if ($r.HasStepError) { ":rotating_light: step errored" }
-                          elseif ($r.ExceedsStepThreshold) { ":warning: step >${stepThresholdHours}h" }
-                          elseif ($r.ExceedsThreshold) { ":warning: run >${thresholdHours}h" }
-                          else { 'within' }
+                  # Per-cell icons (v0.7.98). State + Status get inline icons; Step/Run elapsed
+                  # cells get a severity prefix so the worst rows are scannable without reading
+                  # the Flags column. Avoid nested inline-if expressions - they parse but at
+                  # runtime PowerShell treats the inner (if ...) as a command call ("'if' is not
+                  # recognized as the name of a cmdlet"). Use elseif chains instead.
+                  $stateCell = if ($r.StateIcon) { "$($r.StateIcon) $($r.State)" } else { [string]$r.State }
+                  $statusCell = if (-not $r.Status) { '-' }
+                                elseif ($r.StatusIcon) { "$($r.StatusIcon) $($r.Status)" }
+                                else { [string]$r.Status }
+                  $stepElPrefix = switch ($r.StepSeverity) { 'crit' { ':rotating_light: ' } 'warn' { ':warning: ' } default { '' } }
+                  $runElPrefix  = switch ($r.RunSeverity)  { 'skull' { ':skull: ' } 'crit' { ':rotating_light: ' } 'warn' { ':warning: ' } default { '' } }
+                  $stepEl = if ($r.StepElapsedDisplay) { $stepElPrefix + $r.StepElapsedDisplay } else { '-' }
+                  $runEl  = if ($r.ElapsedDisplay)     { $runElPrefix + $r.ElapsedDisplay }      else { '-' }
+                  $flagCell = if ($r.Flags) { $r.Flags } else { '-' }
                   # target=_blank so links open in a new tab (preserves the workflow summary tab).
                   $clusterCell = if ($r.ClusterPortalUrl) { '<a href="' + $r.ClusterPortalUrl + '" target="_blank" rel="noopener">' + $r.ClusterName + '</a>' } else { $r.ClusterName }
                   $updateCell  = if ($r.UpdateRunPortalUrl) { '<a href="' + $r.UpdateRunPortalUrl + '" target="_blank" rel="noopener">' + $r.UpdateName + '</a>' } else { $r.UpdateName }
-                  $md.Add("| $clusterCell | $updateCell | $($r.State) | $statusCell | $cs | $pg | $stepStart | $stepEl | $($r.StartTimeUtc) | $($r.ElapsedDisplay) | $flag |")
+                  $md.Add("| $clusterCell | $updateCell | $stateCell | $statusCell | $cs | $pg | $stepStart | $stepEl | $($r.StartTimeUtc) | $runEl | $flagCell |")
               }
               $md.Add('')
           } else {
@@ -466,17 +600,26 @@ jobs:
           if ($unresolvedFailed.Count -gt 0) {
               $md.Add('### Failed runs (latest run is Failed, unresolved - shown regardless of age)')
               $md.Add('')
-              $md.Add('| Cluster | Update | Ended (UTC) | Failed Step | Error / Detail | Recent |')
-              $md.Add('|---------|--------|-------------|-------------|----------------|--------|')
+              $md.Add('| Cluster | Update | Ended (UTC) | Failed Step | Verbose Error Details | Recent |')
+              $md.Add('|---------|--------|-------------|-------------|-----------------------|--------|')
               foreach ($r in ($unresolvedFailed | Sort-Object @{Expression='EndTimeUtc';Descending=$true})) {
                   $cs = if ($r.CurrentStep) { $r.CurrentStep } else { '-' }
-                  $rawDetail = if ($r.ErrorMessage) { $r.ErrorMessage } elseif ($r.CurrentStepDetail) { $r.CurrentStepDetail } else { '-' }
-                  if ($rawDetail.Length -gt 220) { $rawDetail = $rawDetail.Substring(0, 220) + ' ...' }
-                  $detail = ($rawDetail -replace '\|', '\|') -replace '\r?\n', ' '
+                  # Verbose error column (v0.7.98) - mirror Step.8 pattern: full error body inside
+                  # a <details> collapsible so the row stays compact but operators can expand for
+                  # the entire stack trace. HTML-encode <, >, & so embedded markup doesn't render
+                  # as tags; escape pipes; collapse newlines to <br> so multi-line traces stay
+                  # readable inside the panel. CurrentStepDetail is used when ErrorMessage is
+                  # empty (older runs without the deep-error projection).
+                  $rawDetail = if ($r.ErrorMessage) { [string]$r.ErrorMessage } elseif ($r.CurrentStepDetail) { [string]$r.CurrentStepDetail } else { '' }
+                  $detailCell = if ([string]::IsNullOrWhiteSpace($rawDetail)) { '_(no error detail)_' } else {
+                      $e = $rawDetail -replace '&','&amp;' -replace '<','&lt;' -replace '>','&gt;'
+                      $e = $e -replace "`r`n",'<br>' -replace "`n",'<br>' -replace '\|','\|'
+                      '<details><summary>Show error</summary><br><code>' + $e + '</code></details>'
+                  }
                   $recentTag = if ($r.IsRecentFailure) { ":fire: last ${failureWindowHours}h" } else { '-' }
                   $clusterCell = if ($r.ClusterPortalUrl) { '<a href="' + $r.ClusterPortalUrl + '" target="_blank" rel="noopener">' + $r.ClusterName + '</a>' } else { $r.ClusterName }
                   $updateCell  = if ($r.UpdateRunPortalUrl) { '<a href="' + $r.UpdateRunPortalUrl + '" target="_blank" rel="noopener">' + $r.UpdateName + '</a>' } else { $r.UpdateName }
-                  $md.Add("| $clusterCell | $updateCell | $($r.EndTimeUtc) | $cs | $detail | $recentTag |")
+                  $md.Add("| $clusterCell | $updateCell | $($r.EndTimeUtc) | $cs | $detailCell | $recentTag |")
               }
               $md.Add('')
           }

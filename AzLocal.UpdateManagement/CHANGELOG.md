@@ -5,6 +5,33 @@ All notable changes to the AzLocal.UpdateManagement module (renamed from AzStack
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.98] - 2026-06-09
+
+Step.7 monitor-updates pipeline UX rewrite plus a JUnit `time=` fix that covers Step.7 and Step.8's Update Run History testsuite. The only files that changed are the four monitor / fleet-status pipeline templates (`github-actions/Step.7_monitor-updates.yml`, `azure-devops/Step.7_monitor-updates.yml`, `github-actions/Step.8_fleet-update-status.yml`, `azure-devops/Step.8_fleet-update-status.yml`) plus the bundled-template `GENERATED_AGAINST_MODULE_VERSION` pin bump. No public-cmdlet changes.
+
+### Step.7 monitor-updates UX overhaul
+
+- **Severity tiers + composite `SeverityScore` sort.** Each in-flight / unresolved-failed row is scored on `StepError severity x 1000 + RunSeverity x 100 + elapsed-hours bucket` and the job-summary table sorts highest-severity first. Stuck step errors and runs > 14 days appear at the top regardless of cluster name alphabetical order.
+- **Per-cell icons (`StateIcon`, `StatusIcon`) + horizontal chip stack** (`STEP-STUCK`, `RUN-STUCK`, `UNRESOLVED`, `RECENT-FAIL`) replace the previous single-status column. Each chip is its own column-width so long flag lists do not squash the cluster name column.
+- **Fleet status badge** at the top of the job summary collapses the worst row across the fleet into a single `CRITICAL / WARN / OK` line (e.g. `CRITICAL - 1 stuck step error(s), 1 run(s) > 14d, 1 step(s) > 4h`).
+- **Collapsible Verbose Error block** wraps each failed step's `errorMessage` in `<details><summary>Verbose error</summary>...</details>` so the table stays readable but the full error is one click away.
+- **Smoke-validated** against a synthetic 4-cluster fleet (stuck step, > 14d run, > 4h step, normal in-flight); badge wording and chip stack order match the severity cascade.
+
+### JUnit `time=` populated (Step.7 + Step.8 Update Run History)
+
+- Previously every `<testcase>` and `<testsuite>` element emitted `time="0"`, which caused GitHub Test Reporter / Azure DevOps Tests tab to render `"5 tests were completed in 0ms"` regardless of actual run duration.
+- **Step.7**: each in-flight / unresolved-failed row now computes `RunDurationSeconds` as `end - start` for completed / failed runs and current elapsed for in-flight runs, then emits it on both the `<testsuite time="..">` (sum) and `<testcase time="..">` (per row).
+- **Step.8 `Update Run History and Error Details` testsuite**: each `<testcase>` now emits `time` = `DurationMinutes * 60` (DurationMinutes comes from KQL `datetime_diff('minute', EndTime, StartTime)` via `Get-AzLocalUpdateRunFailures`).
+- Other Step.8 testsuites (`FleetVersionDistribution`, `AzureLocalFleetUpdateStatus`) intentionally stay at `time="0"` - those are instantaneous snapshot projections and carrying a synthetic duration would be misleading.
+
+### Pipeline template version pin
+
+- All 20 bundled `Step.{0..9}.yml` templates (10 GitHub Actions + 10 Azure DevOps) bump `GENERATED_AGAINST_MODULE_VERSION` from `'0.7.97'` to `'0.7.98'`.
+
+### How to consume
+
+`Install-Module AzLocal.UpdateManagement -Force` (or `Update-Module`). If you have copied the Step.7 or Step.8 YAMLs into your CI repo via `Update-AzLocalPipelineExample`, re-run it to pick up the new UX and the populated `time=` attributes.
+
 ## [0.7.97] - 2026-06-08
 
 Documentation-only release. The three Markdown files that ship inside the published PSGallery `.nupkg` under the module folder were refreshed to mirror the v0.7.96 module behaviour. Consumers who installed v0.7.96 fresh saw stale Step.7 + Step.8 narrative in those in-package docs because they were updated AFTER `Publish-Module.ps1` ran. v0.7.97 republishes the package with the aligned docs.

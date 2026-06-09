@@ -104,7 +104,7 @@ env:
   # this to the version actually installed and to the latest on PSGallery, and emits a
   # ::notice annotation if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.7.97'
+  GENERATED_AGAINST_MODULE_VERSION: '0.7.98'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): manual workflow_dispatch input >
   # repository variable 'REQUIRED_MODULE_VERSION' > empty (latest).
@@ -602,7 +602,19 @@ jobs:
             $runFailures | ConvertTo-Json -Depth 4 | Out-File $runHistoryJson -Encoding UTF8
         }
 
-        $xmlContent += "  <testsuite name=`"📜 Update Run History and Error Details`" tests=`"$runHistoryCount`" failures=`"$runHistoryCount`" errors=`"0`" skipped=`"0`" time=`"0`" timestamp=`"$timestamp`">`n"
+        # v0.7.98: sum the per-row duration so the Update Run History testsuite reports a
+        # meaningful time= (was time="0"). Get-AzLocalUpdateRunFailures exposes DurationMinutes
+        # (numeric, from KQL datetime_diff('minute', EndTime, StartTime)). Convert to seconds and
+        # treat null/missing as 0.
+        $runHistoryTotalSeconds = 0
+        foreach ($f in $runFailures) {
+            if ($f.PSObject.Properties['DurationMinutes'] -and $null -ne $f.DurationMinutes) {
+                [int]$rowSec = [int][math]::Round([double]$f.DurationMinutes * 60, 0)
+                if ($rowSec -lt 0) { $rowSec = 0 }
+                $runHistoryTotalSeconds += $rowSec
+            }
+        }
+        $xmlContent += "  <testsuite name=`"📜 Update Run History and Error Details`" tests=`"$runHistoryCount`" failures=`"$runHistoryCount`" errors=`"0`" skipped=`"0`" time=`"$runHistoryTotalSeconds`" timestamp=`"$timestamp`">`n"
         $xmlContent += "    <properties>`n"
         $xmlContent += "      <property name=`"description`" value=`"Verbose error details for each unresolved Failed update run (ARG-first, fleet-scale).`"/>`n"
         $xmlContent += "      <property name=`"sourceCmdlet`" value=`"Get-AzLocalUpdateRunFailures -State Failed -OnlyUnresolved -Since (Get-Date).AddDays(-30)`"/>`n"
@@ -630,8 +642,15 @@ jobs:
             $tcSysOut   = "Cluster: $fcName`nUpdate: $fuName`nUpdate State: Failed`nStatus: $fStatus`nCurrent Step: $fCurStep`nDuration: $fDuration`nTime Started: $fStart`nLast Updated: $fLast`nError Category: $fCategory`nPortal Link: $fPortal"
             if ($f.StackTracePreview) { $tcSysOut += "`nStack Trace Preview: $fStackEsc" }
             $tcSysOut   = $tcSysOut -replace '&','&amp;' -replace '<','&lt;' -replace '>','&gt;'
+            # v0.7.98: per-testcase time = run duration in seconds (DurationMinutes * 60). 0 only
+            # when StartTime/EndTime were null (rare; KQL leaves DurationMinutes null in that case).
+            [int]$tcSeconds = 0
+            if ($f.PSObject.Properties['DurationMinutes'] -and $null -ne $f.DurationMinutes) {
+                $tcSeconds = [int][math]::Round([double]$f.DurationMinutes * 60, 0)
+                if ($tcSeconds -lt 0) { $tcSeconds = 0 }
+            }
 
-            $xmlContent += "`n    <testcase name=`"$tcName`" classname=`"$tcClass`" time=`"0`">`n"
+            $xmlContent += "`n    <testcase name=`"$tcName`" classname=`"$tcClass`" time=`"$tcSeconds`">`n"
             # properties for the ITSM connector dedupe key plus extended context
             # (UpdateRunPortalUrl, ClusterPortalUrl, CurrentStep,
             # Duration, ErrorCategory) so the optional incident-body template
