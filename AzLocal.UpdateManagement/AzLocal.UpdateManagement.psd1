@@ -221,17 +221,19 @@
 
             # ReleaseNotes of this module
             ReleaseNotes = @'
-## Version 0.8.2 - Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend snippet now embeds a `# All cron times below are UTC` comment + emits an `Indent tip` blockquote warning operators about IDE auto-indent-on-paste; five new internal pipeline-host helpers (Get/Set/Add/Write-AzLocalPipeline*) laid down as foundations for the upcoming executable-YAML refactor
+## Version 0.8.2 - Test-AzLocalApplyUpdatesScheduleCoverage operator-UX release: -View Recommend snippet embeds `# All cron times below are UTC` comment + `Indent tip` blockquote; -View Audit `NoWindowTag` row now names affected clusters grouped by `UpdateRing` + sorts AFTER Covered; Step.3 GH/ADO Allow-list section trimmed; five new internal pipeline-host helpers (Get/Set/Add/Write-AzLocalPipeline*) laid down as foundations for the upcoming executable-YAML refactor
 
 Operator-experience release. No public API changes; no output-shape changes that break existing scripts.
 
-- **`Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend` paste-time pain points fixed** in the advisor's emitted snippet:
+- **`Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend` paste-time pain points fixed** in the advisor''s emitted snippet:
   1. The snippet now embeds a `# All cron times below are UTC ...` comment directly above `schedule:` (GitHub) and `schedules:` (Azure DevOps). Both platforms evaluate `cron:` in UTC regardless of repo / runner / agent timezone, but operators repeatedly burned time converting from a local-time mental model. The comment makes the snippet self-documenting once pasted into `Step.6_apply-updates.yml`.
   2. The advisor now emits a `> **Indent tip.**` blockquote directly above the snippet. The GH snippet is intentionally at 2-space indent (so `schedule:` is a sibling of the existing `workflow_dispatch:` under `on:`); pasting with the cursor sitting inside the `# BEGIN-AZLOCAL-CUSTOMIZE:schedule-triggers` comment block causes VS Code (and JetBrains IDEs) to silently double the indent, producing the YAML error *"All mapping items must start at the same column"*. The blockquote explains the cause and how to recover.
+- **`Test-AzLocalApplyUpdatesScheduleCoverage -View Audit` `NoWindowTag` row is now actionable on its own**: the recommendation lists the first 15 affected cluster names grouped by their `UpdateRing` tag (or `(none)` when both tags are missing), e.g. `Prod -> hci-syd-01, hci-syd-02; Wave1 -> hci-mel-01 (+3 more) (showing first 15 of 42)`. The issue text is clarified to say the `UpdateStartWindow` tag is optional (the runtime gate only enforces a window when the tag is set, so untagged clusters are not a blocker), and the row sorts AFTER `Covered` (rank 10 instead of 7) so these informational rows do not push real coverage gaps off-screen.
+- **Step.3 Allow-list section trimmed in both GH and ADO scaffolds**: the `Allow-list coverage (schema v2)` subsection no longer emits the verbose `> Tip - per-ring overrides` paragraph + 3-row example block. Inheriting the top-level allow-list IS the expected steady state for most fleets; the verbose tip was misleading operators into thinking they had to add overrides. The new shape is a one-line steady-state confirmation plus a dedicated `### How to fix - edit $schedulePath` subsection (naming the schedule file) and a single-row YAML example for the case where an operator wants to PIN a ring to a specific update (e.g. keep Prod on YY04/YY10 feature drops only).
 - **Five new internal pipeline-host helpers added** (not exported, no user-visible effect in v0.8.2): `Get-AzLocalPipelineHost`, `Set-AzLocalPipelineOutput`, `Add-AzLocalPipelineStepSummary`, `Write-AzLocalPipelineNotice`, `Write-AzLocalPipelineWarning`. They abstract over GitHub Actions vs Azure DevOps output channels (`$env:GITHUB_OUTPUT` vs `##vso[task.setvariable]`, etc.). 23 new Pester assertions cover the three host modes (GitHub via `$env:GITHUB_ACTIONS`, AzureDevOps via `$env:TF_BUILD`, Local fallback).
 - **GENERATED_AGAINST_MODULE_VERSION** pin moves from ''0.8.1'' to ''0.8.2'' across all 20 bundled `Step.{0..9}.yml` templates.
 
-Apply via `Install-Module AzLocal.UpdateManagement -Force` (or `Update-Module`). Re-run `Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend` once to pick up the new self-documenting snippet (cron values unchanged from v0.8.1).
+Apply via `Install-Module AzLocal.UpdateManagement -Force` (or `Update-Module`). Re-run `Test-AzLocalApplyUpdatesScheduleCoverage` once to pick up (a) the new self-documenting `-View Recommend` snippet (cron values unchanged from v0.8.1), and (b) the enriched `-View Audit` `NoWindowTag` recommendation.
 
 ## Version 0.8.1 - Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend GH snippet emits ONLY the `schedule:` block (no `on:` / `workflow_dispatch:` lines) so it can be pasted straight into Step.6_apply-updates.yml without producing a duplicate-key YAML error
 
@@ -248,106 +250,9 @@ https://github.com/NeilBird/Azure-Local/blob/main/AzLocal.UpdateManagement/CHANG
 For full v0.7.99 release notes see:
 https://github.com/NeilBird/Azure-Local/blob/main/AzLocal.UpdateManagement/CHANGELOG.md
 
-## Version 0.7.98 - Step.7 monitor-updates UX overhaul (severity tiers, chip stacks, fleet badge, per-cell icons) + Step.7/Step.8 JUnit `time=` populated with real run elapsed seconds
+## Versions 0.7.72 - 0.7.98 (cumulative)
 
-For full v0.7.98 release notes see:
-https://github.com/NeilBird/Azure-Local/blob/main/AzLocal.UpdateManagement/CHANGELOG.md
-
-## Version 0.7.97 - In-package documentation follow-up to v0.7.96 (no code or YAML run-block changes)
-
-For full v0.7.97 release notes see:
-https://github.com/NeilBird/Azure-Local/blob/main/AzLocal.UpdateManagement/CHANGELOG.md
-
-## Version 0.7.96 - Portal-parity: Status field, ErrorMessage column, StepError JUnit type, always-show unresolved Failed, Step.8 ActionRequired bucket
-
-For full v0.7.96 release notes see:
-https://github.com/NeilBird/Azure-Local/blob/main/AzLocal.UpdateManagement/CHANGELOG.md
-
-## Version 0.7.95 - Update-AzLocalPipelineExample pin-only short-circuit + Step.0/Step.1 marker blocks
-
-For full v0.7.95 release notes see:
-https://github.com/NeilBird/Azure-Local/blob/main/AzLocal.UpdateManagement/CHANGELOG.md
-
-## Version 0.7.94 - Step.7 monitor-updates hotfix: missing -PassThru caused silent "0 in-flight" snapshots
-
-For full v0.7.94 release notes see:
-https://github.com/NeilBird/Azure-Local/blob/main/AzLocal.UpdateManagement/CHANGELOG.md
-
-Apply via `Install-Module AzLocal.UpdateManagement -Force` (or `Update-Module`). Run `Update-AzLocalPipelineExample -Destination <path>` to refresh the two affected `Step.7_monitor-updates.yml` files. The fix sits outside any `BEGIN-AZLOCAL-CUSTOMIZE` block, so operator customisations elsewhere in those pipelines are preserved.
-
-## Version 0.7.93 - Pipeline JUnit summaries: fix NaNms in duration column (+ Pester regression guard)
-
-For full v0.7.93 release notes see:
-https://github.com/NeilBird/Azure-Local/blob/main/AzLocal.UpdateManagement/CHANGELOG.md
-
-## Version 0.7.92 - Step.9 fleet-health step summary: per-cluster collapsible details + Step.7 monitor-updates default schedule (5x/day, every 2h overnight) + pipeline step-summary hyperlinks open in a new tab + Step.3 schedule-audit belt-and-braces retry crons + `RingMixedWindows` warning
-
-For full v0.7.92 release notes see:
-https://github.com/NeilBird/Azure-Local/blob/main/AzLocal.UpdateManagement/CHANGELOG.md
-
-## Version 0.7.91 - Step.7 monitor-updates parser bug + Step.3 schedule-audit step-summary cosmetic fixes
-
-For full v0.7.91 release notes see:
-https://github.com/NeilBird/Azure-Local/blob/main/AzLocal.UpdateManagement/CHANGELOG.md
-
-## Version 0.7.90 - New `UpdateExcluded` operator-override tag + breaking rename `UpdateExclusions` -> `UpdateExclusionsWindow` + pipeline renumber + new Step.7 monitor-updates
-
-For full v0.7.90 release notes see:
-https://github.com/NeilBird/Azure-Local/blob/main/AzLocal.UpdateManagement/CHANGELOG.md
-
-## Version 0.7.89 - Apply-updates schedule schema v2: mandatory `allowedUpdateVersions` allow-list with `Latest` sentinel
-
-For full v0.7.89 release notes see:
-https://github.com/NeilBird/Azure-Local/blob/main/AzLocal.UpdateManagement/CHANGELOG.md
-
-## Version 0.7.88 - Step.8 fleet-health step-summary readability polish (section reorder + column rename)
-
-For full v0.7.88 release notes see:
-https://github.com/NeilBird/Azure-Local/blob/main/AzLocal.UpdateManagement/CHANGELOG.md
-
-## Version 0.7.87 - Extract Step.4 fleet-connectivity summary renderer to module function + 21K-cap Pester regression guard
-
-For full v0.7.87 release notes see:
-https://github.com/NeilBird/Azure-Local/blob/main/AzLocal.UpdateManagement/CHANGELOG.md
-
-## Version 0.7.86 - Documentation follow-up: Automation-Pipeline-Examples README + appendix refreshed for the 9-step pipeline set
-
-For full v0.7.86 release notes see:
-https://github.com/NeilBird/Azure-Local/blob/main/AzLocal.UpdateManagement/CHANGELOG.md
-
-## Version 0.7.85 - Step.4 reconciliation table: bidirectional interpretation + actionable guidance
-
-For full v0.7.85 release notes see:
-https://github.com/NeilBird/Azure-Local/blob/main/AzLocal.UpdateManagement/CHANGELOG.md
-
-## Version 0.7.84 - HOTFIX: Get-AzLocalFleetConnectivityStatus correctness (3 bugs) + cross-call ARG throttle cooldown
-
-For full v0.7.84 release notes see:
-https://github.com/NeilBird/Azure-Local/blob/main/AzLocal.UpdateManagement/CHANGELOG.md
-
-## Version 0.7.83 - HOTFIX: Step.4 ARB [char].Trim() bug on single-cluster ClusterId
-
-For full v0.7.83 release notes see:
-https://github.com/NeilBird/Azure-Local/blob/main/AzLocal.UpdateManagement/CHANGELOG.md
-
-## Version 0.7.82 - Bundled custom-role JSON artifact
-
-For full v0.7.82 release notes see:
-https://github.com/NeilBird/Azure-Local/blob/main/AzLocal.UpdateManagement/CHANGELOG.md
-
-## Version 0.7.81 - Pipeline RBAC guidance: custom role first
-
-For full v0.7.81 release notes see:
-https://github.com/NeilBird/Azure-Local/blob/main/AzLocal.UpdateManagement/CHANGELOG.md
-
-## Version 0.7.80 - RBAC custom role: fleet-connectivity reads
-
-For full v0.7.80 release notes see:
-https://github.com/NeilBird/Azure-Local/blob/main/AzLocal.UpdateManagement/CHANGELOG.md
-
-## Versions 0.7.72 - 0.7.79 (cumulative)
-
-Step.5 default schedule enabled (0.7.79); Step.4 blank-field regression fix (0.7.78); Step.4 fleet-connectivity hotfix (0.7.77); module rename to `-AzLocal*` + quality hardening (0.7.76); `Test-AzLocalApplyUpdatesScheduleCoverage` CI host auto-detect (0.7.75); `Get-AzLocalFleetHealthOverview` KQL fix + Step.3 recommendation UX rewrite (0.7.74); `Get-AzLocalFleetHealthOverview` HealthState normalisation (0.7.73); pipeline samples hotfix - Step.1/2/5 GH Actions summary panels, `AZURE_TENANT_ID` secret->variable (0.7.72). Full per-version notes:
+Step.7 monitor-updates UX overhaul - severity tiers, chip stacks, fleet badge, per-cell icons + Step.7/Step.8 JUnit `time=` populated (0.7.98); in-package documentation follow-up to v0.7.96 (0.7.97); portal-parity - Status field, ErrorMessage column, StepError JUnit type, always-show unresolved Failed, Step.8 ActionRequired bucket (0.7.96); Update-AzLocalPipelineExample pin-only short-circuit + Step.0/Step.1 marker blocks (0.7.95); Step.7 monitor-updates hotfix - missing -PassThru caused silent "0 in-flight" snapshots (0.7.94); pipeline JUnit summaries - fix NaNms in duration column + Pester regression guard (0.7.93); Step.9 fleet-health step summary per-cluster collapsible details + Step.7 default schedule (5x/day) + Step.3 belt-and-braces retry crons + `RingMixedWindows` warning (0.7.92); Step.7 monitor-updates parser bug + Step.3 schedule-audit cosmetic fixes (0.7.91); new `UpdateExcluded` operator-override tag + breaking rename `UpdateExclusions` -> `UpdateExclusionsWindow` + pipeline renumber + new Step.7 monitor-updates (0.7.90); apply-updates schedule schema v2 - mandatory `allowedUpdateVersions` allow-list with `Latest` sentinel (0.7.89); Step.8 fleet-health step-summary readability polish (0.7.88); extract Step.4 fleet-connectivity summary renderer to module function + 21K-cap Pester regression guard (0.7.87); Automation-Pipeline-Examples README + appendix refreshed for 9-step pipeline set (0.7.86); Step.4 reconciliation table bidirectional interpretation (0.7.85); Get-AzLocalFleetConnectivityStatus hotfix - 3 bugs + ARG throttle cooldown (0.7.84); Step.4 ARB [char].Trim() hotfix on single-cluster ClusterId (0.7.83); bundled custom-role JSON artifact (0.7.82); pipeline RBAC guidance - custom role first (0.7.81); RBAC custom role fleet-connectivity reads (0.7.80); Step.5 default schedule enabled (0.7.79); Step.4 blank-field regression fix (0.7.78); Step.4 fleet-connectivity hotfix (0.7.77); module rename to `-AzLocal*` + quality hardening (0.7.76); Test-AzLocalApplyUpdatesScheduleCoverage CI host auto-detect (0.7.75); Get-AzLocalFleetHealthOverview KQL fix + Step.3 recommendation UX rewrite (0.7.74); Get-AzLocalFleetHealthOverview HealthState normalisation (0.7.73); pipeline samples hotfix - Step.1/2/5 GH Actions summary panels + AZURE_TENANT_ID secret->variable (0.7.72). Full per-version notes:
 https://github.com/NeilBird/Azure-Local/blob/main/AzLocal.UpdateManagement/CHANGELOG.md
 
 ## Older releases
