@@ -2,7 +2,7 @@
 
 > ⚠️ **Disclaimer**: This module is **NOT** a Microsoft supported service offering or product. It is provided as example code only, with no warranty or official support. Refer to the [MIT license](https://github.com/NeilBird/Azure-Local/blob/main/LICENSE) for further information.
 
-**Latest Version:** v0.8.0 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.8.0)
+**Latest Version:** v0.8.1 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.8.1)
 
 > 📢 **Renamed in v0.7.3**: this module was previously published as `AzStackHci.ManageUpdates`. The new module name aligns with the Azure Local product name (_Microsoft retired the *Azure Stack HCI* brand in late 2024_). The module GUID is preserved across the rename. If you have the old name installed, run:
 >
@@ -23,7 +23,7 @@ Azure Local REST API specification (includes update management endpoints): https
 **This README (overview + most-recent release notes):**
 
 - [Where to Start](#where-to-start)
-- [What's New in v0.8.0](#whats-new-in-v080)
+- [What's New in v0.8.1](#whats-new-in-v081)
 - [Files](#files)
 - [Prerequisites](#prerequisites)
 - [RBAC Requirements](#rbac-requirements) (summary; full reference in [docs/rbac.md](docs/rbac.md))
@@ -86,42 +86,36 @@ If you are new to this module, work through these in order from a regular PowerS
 
 > Most CI/CD pipelines in [Automation-Pipeline-Examples/](Automation-Pipeline-Examples/) are direct implementations of one of these workflows. Start there if you want a copy-pasteable end-to-end pipeline.
 
-## What's New in v0.8.0
+## What's New in v0.8.1
 
-**Patch release rolling up three follow-ups to v0.7.99 plus Step.2 UX fixes.** No public API changes. `Set-AzLocalClusterUpdateRingTag -PassThru` gains two new enum values (`Action='NoChange'` and `Status='AlreadyInSync'`) to distinguish steady-state clusters from genuinely-skipped ones; existing scripts that switch on `Created`/`Updated`/`Skipped`/`Failed` continue to work, with already-in-sync clusters now surfacing under the new bucket rather than spurious `Skipped`.
+**Docs-and-snippet correctness release.** No public API or output-shape changes. Fixes the `Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend` GitHub-Actions snippet so its output can be pasted straight into `Step.6_apply-updates.yml` without producing a duplicate-key YAML error.
 
-### Step.2 manage-updatering-tags - UX fixes
+### `Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend` GH snippet is now copy-paste-safe into `Step.6_apply-updates.yml`
 
-- **No more misleading "use -Force to overwrite" warnings on steady-state clusters.** The skip branch now distinguishes between (a) cluster is already in the desired state -> `Info` log `All managed tags already match desired state - no action needed` and new `Action='NoChange' / Status='AlreadyInSync'` row, and (b) cluster's existing `UpdateRing` actually differs from target -> still emits the `Warning` + `-Force` hint (unchanged from prior releases, message now names both values).
-- **`-Force` short-circuits when there's nothing to change.** Saves a redundant ARM PATCH per cluster on already-clean fleets. Logged as `Action='NoChange' / Status='AlreadyInSync'` with message `All managed tags already match desired state; -Force PATCH skipped (no-op).` Behaviour when there IS something to change is unchanged.
-- **Step.2 GitHub Actions + Azure DevOps job summaries now include the per-cluster result breakdown.** Previously the run-level summary tab only showed a 2-row settings table (`Dry Run` / `Force Overwrite`); operators had to drill into the apply step's raw log to see what actually happened per cluster. Both platforms now capture `-PassThru` into a `UpdateRingTag_Results.json` artifact sidecar and the Summary step emits a counts table (Total / Created / Updated / Already in sync / Skipped / Failed) plus a collapsible per-cluster details block. Parity with the Step.3 / Step.5 / Step.6 / Step.8 summary patterns.
-- **Cmdlet summary section** gains the `Already in sync (no change needed):` tally line; the existing `Skipped (existing tag, no -Force):` line is correctly renamed `Skipped (UpdateRing differs, no -Force):`.
+Pre-v0.8.1 the GitHub-flavoured `-View Recommend` snippet emitted a full `on:` + `workflow_dispatch:` + `schedule:` block, and the prose instructed the operator to "Replace (or merge with) the existing `on:` block at the top of the workflow". `Step.6_apply-updates.yml` already declares `workflow_dispatch:` with a rich `inputs:` block (`update_ring`, `update_name`, `dry_run`, `raise_itsm_ticket`, `itsm_config_path`, `itsm_dry_run`, `itsm_force_create`, `module_version`) that the manual `Run workflow` button depends on. Operators who pasted the snippet alongside the existing block (rather than wholesale-replacing it - and losing the `inputs:`) ended up with two top-level `workflow_dispatch:` keys, and GitHub Actions rejects that at parse time with `'workflow_dispatch' is already defined`.
 
-### Step.7 monitor-updates - form-default regressions fixed (both platforms)
-
-- **`criticalElapsedDays` form-default fixed `7` -> `3`.** The v0.7.99 release lowered the CRITICAL overall-elapsed tier from 7 to 3 days. The inline script default (`$criticalElapsedDays = 3`) and the help-text ("default 3 days") were updated correctly, but the `workflow_dispatch` input default value (GH) / pipeline-parameter default value (ADO) on the form itself was left at `'7'`. When an operator triggered the workflow and left the input untouched, the non-empty form-default `'7'` was passed in via `INPUT_CRITICAL_ELAPSED_DAYS`, the override branch fired, and the threshold silently reverted to the old 7 days - undoing the v0.7.99 behaviour change.
-- **`updateRing` form-default fixed `'Wave1'` -> `''` (empty).** Aligns Step.7 with Step.8 + Step.9, which already use `default: ''`. The downstream guard `if ($scope -eq 'by-update-ring' -and $updateRing)` honours empty as "no filter", so behaviour is unchanged on the default `scope=all` path. Removes the misleading "Wave1" value that suggested a real tenant-specific default existed when the operator switched to `scope=by-update-ring`.
-
-### Repo-hygiene guard - `Tests/Pii-Guard.Tests.ps1`
-
-- **New Pester guard** that scans every file under `Tests/` on each run and fails the build if it finds emails, `.onmicrosoft.com` tenant UPN domains, GUIDs in identity contexts (`tenantId` / `clientId` / `objectId` / `principalId` / `applicationId`), or real public IPv4 addresses outside an explicit allow-list.
-- Auto-excluded: RFC1918 / loopback / link-local / CGNAT / RFC5737 doc ranges / RFC2544 benchmarking / multicast / subnet-mask shapes / well-known public DNS (Google, Cloudflare, Quad9, OpenDNS). The trailing word-boundary on the IPv4 regex excludes version-string false-positives such as SbeVersion `4.5.6.7-RegressionMarker`.
-- Allow-list seeded with the three synthetic GUID fixtures already confirmed safe.
-
-### Publish-Module.ps1 excludes maintainer-only `RELEASE-PROCESS.md`
-
-- `Publish-Module.ps1` now strips `docs/RELEASE-PROCESS.md` at staging time. That file is a maintainer-facing release checklist (its own opening line states "Consumers do not need to read it") and has no runtime value to module consumers. Repo copy on GitHub remains for maintainer reference; it no longer ships inside every installed module folder.
-
-### Pin and version drift
-
-- `GENERATED_AGAINST_MODULE_VERSION` moves from `0.7.99` to `0.8.0` across all 20 bundled `Step.{0..9}.yml` templates (GH Actions + Azure DevOps).
-- Drift-sync test asserts `$script:ModuleVersion` (psm1) == `ModuleVersion` (psd1) == `Should -Be '0.8.0'` (test) - any drift fails CI.
+- The GH snippet now emits ONLY the `schedule:` block:
+  ```yaml
+    schedule:
+      - cron: '0 22 * * 6'
+      - cron: '0 22 * * 0'
+  ```
+  The 2-space `schedule:` indent + 4-space cron indent match the existing nesting inside the `# BEGIN-AZLOCAL-CUSTOMIZE:schedule-triggers` / `# END-AZLOCAL-CUSTOMIZE:schedule-triggers` markers in `Step.6_apply-updates.yml`. Paste it as-is - no hand-editing required.
+- **Updated "How to fix" prose.** The advisory now says: *"Add (or merge with) the following `schedule:` block under the existing `on:` key. Place it inside the BEGIN/END-AZLOCAL-CUSTOMIZE:schedule-triggers markers so it survives `Update-AzLocalPipelineExample` refreshes. Do NOT add a second `workflow_dispatch:` line - Step.6 already declares one with the `update_ring` / `dry_run` / ITSM / `module_version` inputs that the manual Run workflow button needs."* Azure DevOps snippet shape (top-level `schedules:`) is unchanged.
+- **Four updated `AS7`-`AS10` Pester assertions** in `Tests/AzLocal.UpdateManagement.Tests.ps1` swap the GH-snippet detector regex from `'workflow_dispatch'` to `'(?m)^\s*schedule:\s*$'`. The singular `schedule:` key on its own line is GH-Actions-unique (ADO uses the plural `schedules:` at column 0); the swap keeps the same auto-detect / `-Platform Both` override semantics in tests while reflecting that `workflow_dispatch` is no longer emitted.
 
 ### Migration summary
 
-For cmdlet consumers: `Install-Module AzLocal.UpdateManagement -Force` (or `Update-Module`). No code changes required. Scripts that switch on the `-PassThru` `Status` field continue to work; if you want to display steady-state clusters separately from genuinely-skipped ones, add an `AlreadyInSync` bucket to your display logic. For CI/CD pipeline consumers: re-run `Update-AzLocalPipelineExample -Destination <path>` to pick up the Step.7 form-default fixes, the new Step.2 summary breakdown + per-cluster details, and the new pin. If you left the Step.7 form-default `criticalElapsedDays` untouched in v0.7.99, behaviour will now correctly match the documented 3-day threshold.
+- For cmdlet consumers: `Install-Module AzLocal.UpdateManagement -Force` (or `Update-Module`). No code changes required.
+- For operators who have ALREADY pasted the v0.8.0-flavoured snippet into `Step.6_apply-updates.yml` and seen `'workflow_dispatch' is already defined`: either re-run `Update-AzLocalPipelineExample -Destination <path>` to refresh Step.6 from the v0.8.1 template and re-run `Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend`, OR manually delete the duplicate empty `workflow_dispatch:` line from Step.6.
+- The cron *values* recommended by the advisor have not changed; only the surrounding YAML structure.
 
-> Previous release notes (v0.7.99 and earlier) have moved into the [Release History](#release-history) appendix below, with full text retained in [`docs/release-history.md`](docs/release-history.md) and [`CHANGELOG.md`](CHANGELOG.md).
+### Pin and version drift
+
+- `GENERATED_AGAINST_MODULE_VERSION` moves from `0.8.0` to `0.8.1` across all 20 bundled `Step.{0..9}.yml` templates (GH Actions + Azure DevOps).
+- Drift-sync test asserts `$script:ModuleVersion` (psm1) == `ModuleVersion` (psd1) == `Should -Be '0.8.1'` (test) - any drift fails CI.
+
+> Previous release notes (v0.8.0 and earlier) have moved into the [Release History](#release-history) appendix below, with full text retained in [`docs/release-history.md`](docs/release-history.md) and [`CHANGELOG.md`](CHANGELOG.md).
 
 ## Files
 
@@ -600,7 +594,13 @@ This code is provided as-is for educational and reference purposes.
 
 The full What's-New history (v0.7.81 and earlier) has moved to [docs/release-history.md](docs/release-history.md).
 
-The most recent release notes for **v0.8.0** stay above under [`What's New in v0.8.0`](#whats-new-in-v080).
+The most recent release notes for **v0.8.1** stay above under [`What's New in v0.8.1`](#whats-new-in-v081).
+
+### What's New in v0.8.0
+
+**Patch release rolling up three follow-ups to v0.7.99 plus Step.2 UX fixes.** No public API changes. `Set-AzLocalClusterUpdateRingTag -PassThru` gains two new enum values (`Action='NoChange'` and `Status='AlreadyInSync'`) to distinguish steady-state clusters from genuinely-skipped ones. Step.7 form-defaults fixed (`criticalElapsedDays` `7`->`3`; `updateRing` `'Wave1'`->`''`) so the v0.7.99 behaviour change actually takes effect when operators leave the form untouched. New `Tests/Pii-Guard.Tests.ps1` repo-hygiene guard. `Publish-Module.ps1` excludes maintainer-only `docs/RELEASE-PROCESS.md` from the published `.nupkg`.
+
+See [CHANGELOG.md](CHANGELOG.md#080---2026-06-09) for the full v0.8.0 entry.
 
 ### What's New in v0.7.99
 

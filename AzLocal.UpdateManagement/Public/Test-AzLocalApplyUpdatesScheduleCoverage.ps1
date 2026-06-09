@@ -516,12 +516,18 @@ resources
 
             if ($emitGh) {
                 if ($emitAdo) {
-                    [void]$cronSb.AppendLine('### GitHub Actions - paste under the `on:` key in Step.6_apply-updates.yml')
+                    [void]$cronSb.AppendLine('### GitHub Actions - paste under the existing `on:` key in Step.6_apply-updates.yml')
                     [void]$cronSb.AppendLine()
                 }
+                # v0.8.1: emit ONLY the `schedule:` block (no surrounding `on:`/`workflow_dispatch:`
+                # lines) so the snippet can be pasted as-is under the existing `on:` key of
+                # Step.6_apply-updates.yml. Step.6 already declares `workflow_dispatch:` with a
+                # rich `inputs:` block (update_ring, dry_run, ITSM, module_version) - emitting a
+                # second bare `workflow_dispatch:` here produced a duplicate top-level key and
+                # GH rejected the workflow ("'workflow_dispatch' is already defined"). The
+                # 2-space `schedule:` indent + 4-space cron indent matches the existing nesting
+                # inside the `BEGIN/END-AZLOCAL-CUSTOMIZE:schedule-triggers` markers.
                 [void]$cronSb.AppendLine('```yaml')
-                [void]$cronSb.AppendLine('on:')
-                [void]$cronSb.AppendLine('  workflow_dispatch:')
                 [void]$cronSb.AppendLine('  schedule:')
                 foreach ($k in $sortedCronKeys) {
                     $entry = $byCron[$k]
@@ -715,11 +721,11 @@ resources
                 [void]$fullSb.AppendLine("### How to fix - edit ``$step6FileLabel``")
                 [void]$fullSb.AppendLine()
                 if ($emitGh -and -not $emitAdo) {
-                    [void]$fullSb.AppendLine('Replace (or merge with) the existing `on:` block at the top of the workflow:')
+                    [void]$fullSb.AppendLine('Add (or merge with) the following `schedule:` block under the existing `on:` key. Place it inside the `# BEGIN-AZLOCAL-CUSTOMIZE:schedule-triggers` / `# END-AZLOCAL-CUSTOMIZE:schedule-triggers` markers so it survives `Update-AzLocalPipelineExample` refreshes. **Do NOT add a second `workflow_dispatch:` line** - Step.6 already declares one with the `update_ring` / `dry_run` / ITSM / `module_version` inputs that the manual `Run workflow` button needs:')
                 } elseif ($emitAdo -and -not $emitGh) {
                     [void]$fullSb.AppendLine('Add (or merge with) a top-level `schedules:` block:')
                 } else {
-                    [void]$fullSb.AppendLine('Choose the snippet matching your CI platform and paste/merge into your Step.6 pipeline file:')
+                    [void]$fullSb.AppendLine('Choose the snippet matching your CI platform and paste/merge into your Step.6 pipeline file. For GitHub Actions, paste the `schedule:` block under the existing `on:` key (do NOT add a second `workflow_dispatch:` - Step.6 already declares one). For Azure DevOps, paste the `schedules:` block at the top level.')
                 }
                 [void]$fullSb.AppendLine()
                 foreach ($line in ($cronSnippetBody -split "`r?`n")) {

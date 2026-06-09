@@ -5,6 +5,37 @@ All notable changes to the AzLocal.UpdateManagement module (renamed from AzStack
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.1] - 2026-06-09
+
+Docs-and-snippet correctness release. No public API or output-shape changes - existing scripts and pipelines continue to work without modification.
+
+### `Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend` GH-Actions snippet is now copy-paste-safe into `Step.6_apply-updates.yml`
+
+Pre-v0.8.1 the GitHub-flavoured `-View Recommend` snippet emitted a full `on:` + `workflow_dispatch:` + `schedule:` block and the prose instructed the operator to "Replace (or merge with) the existing `on:` block". `Step.6_apply-updates.yml` already declares `workflow_dispatch:` with a rich `inputs:` block (`update_ring`, `update_name`, `dry_run`, `raise_itsm_ticket`, `itsm_config_path`, `itsm_dry_run`, `itsm_force_create`, `module_version`) that the manual `Run workflow` button depends on. Operators who pasted the snippet alongside the existing block (rather than wholesale-replacing it - and losing the inputs) ended up with two top-level `workflow_dispatch:` keys, which GitHub Actions rejects at parse time with `'workflow_dispatch' is already defined`.
+
+- The GH snippet now emits ONLY the `schedule:` block:
+  ```yaml
+    schedule:
+      - cron: '0 22 * * 6'
+      - cron: '0 22 * * 0'
+  ```
+  - 2-space `schedule:` indent + 4-space cron indent match the existing nesting inside the `# BEGIN-AZLOCAL-CUSTOMIZE:schedule-triggers` / `# END-AZLOCAL-CUSTOMIZE:schedule-triggers` markers in `Step.6_apply-updates.yml`. Paste it as-is - operators no longer need to hand-edit the snippet to fit.
+- **Updated "How to fix" prose.** The advisory now says: *"Add (or merge with) the following `schedule:` block under the existing `on:` key. Place it inside the BEGIN/END-AZLOCAL-CUSTOMIZE:schedule-triggers markers so it survives `Update-AzLocalPipelineExample` refreshes. Do NOT add a second `workflow_dispatch:` line - Step.6 already declares one with the `update_ring` / `dry_run` / ITSM / `module_version` inputs that the manual Run workflow button needs."* Azure DevOps snippet shape (top-level `schedules:`) is unchanged.
+- **Four updated `AS7`-`AS10` Pester assertions** in `Tests/AzLocal.UpdateManagement.Tests.ps1` swap the GH-snippet detector regex from `'workflow_dispatch'` to `'(?m)^\s*schedule:\s*$'`. The singular `schedule:` key on its own line is GH-Actions-unique (ADO uses the plural `schedules:` at column 0); the swap keeps the same auto-detect / `-Platform Both` override semantics in tests while reflecting that `workflow_dispatch` is no longer emitted by the snippet.
+
+### Migration
+
+- For cmdlet consumers: `Install-Module AzLocal.UpdateManagement -Force` (or `Update-Module`). No code changes required.
+- For operators who have ALREADY pasted the v0.8.0-flavoured snippet into `Step.6_apply-updates.yml` and seen the duplicate-key error:
+  1. Either `Update-AzLocalPipelineExample -Destination <path>` to refresh Step.6 from the v0.8.1 template and then re-run `Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend` for the new snippet shape.
+  2. Or manually delete the duplicate empty `workflow_dispatch:` line from Step.6.
+- For consumers of the v0.8.0 cron-coverage advisor output: re-run the advisor once on v0.8.1 to pick up the new snippet (the cron *values* haven't changed; only the surrounding YAML structure).
+
+### Pin and version drift
+
+- `GENERATED_AGAINST_MODULE_VERSION` moves from `0.8.0` to `0.8.1` across all 20 bundled Step.*.yml templates (GH Actions + Azure DevOps).
+- Drift-sync test asserts `$script:ModuleVersion` (psm1) == `ModuleVersion` (psd1) == `Should -Be '0.8.1'` (test) - any drift fails CI.
+
 ## [0.8.0] - 2026-06-09
 
 Patch release rolling up three follow-ups to v0.7.99 plus Step.2 UX fixes. No public API changes. `Set-AzLocalClusterUpdateRingTag -PassThru` gains two new enum values (`Action='NoChange'` and `Status='AlreadyInSync'`) to distinguish steady-state clusters from genuinely-skipped ones; existing scripts that switch on `Created`/`Updated`/`Skipped`/`Failed` continue to work, with already-in-sync clusters surfacing under the new bucket rather than spurious `Skipped`.

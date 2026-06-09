@@ -3,7 +3,7 @@
     RootModule = 'AzLocal.UpdateManagement.psm1'
 
     # Version number of this module.
-    ModuleVersion = '0.8.0'
+    ModuleVersion = '0.8.1'
 
     # Supported PSEditions
     CompatiblePSEditions = @('Desktop', 'Core')
@@ -215,17 +215,27 @@
 
             # ReleaseNotes of this module
             ReleaseNotes = @'
+## Version 0.8.1 - Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend GH snippet emits ONLY the `schedule:` block (no `on:` / `workflow_dispatch:` lines) so it can be pasted straight into Step.6_apply-updates.yml without producing a duplicate-key YAML error
+
+Docs-and-snippet correctness release. No public API or output-shape changes - existing scripts and pipelines continue to work without modification.
+
+- **`Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend` GH-Actions snippet is now copy-paste-safe into `Step.6_apply-updates.yml`.** Pre-v0.8.1 the GitHub-flavoured recommendation emitted a full `on:` + `workflow_dispatch:` + `schedule:` block, with prose telling the operator to "Replace (or merge with) the existing `on:` block". Step.6 already declares `workflow_dispatch:` with a rich `inputs:` block (`update_ring`, `update_name`, `dry_run`, `raise_itsm_ticket`, `itsm_config_path`, `itsm_dry_run`, `itsm_force_create`, `module_version`) that the manual `Run workflow` button depends on. Operators who pasted the snippet alongside the existing block (rather than wholesale-replacing it - and losing the inputs) ended up with two top-level `workflow_dispatch:` keys, which GitHub Actions rejects at parse time (`''workflow_dispatch'' is already defined`). Now the snippet emits ONLY:
+  ```yaml
+    schedule:
+      - cron: ''0 22 * * 6''
+      - cron: ''0 22 * * 0''
+  ```
+  - 2-space `schedule:` indent + 4-space cron indent match the existing nesting inside the `# BEGIN-AZLOCAL-CUSTOMIZE:schedule-triggers` / `# END-AZLOCAL-CUSTOMIZE:schedule-triggers` markers in `Step.6_apply-updates.yml`. Paste it as-is - operators no longer need to hand-edit the snippet to fit.
+- **Updated "How to fix" prose.** The advisory now says: *"Add (or merge with) the following `schedule:` block under the existing `on:` key. Place it inside the BEGIN/END-AZLOCAL-CUSTOMIZE:schedule-triggers markers so it survives `Update-AzLocalPipelineExample` refreshes. Do NOT add a second `workflow_dispatch:` line - Step.6 already declares one with the `update_ring` / `dry_run` / ITSM / `module_version` inputs that the manual Run workflow button needs."* Azure DevOps snippet shape (top-level `schedules:`) is unchanged.
+- **Four updated AS7-AS10 Pester assertions in `Tests/AzLocal.UpdateManagement.Tests.ps1`** swap the GH-snippet detector regex from `''workflow_dispatch''` to `''(?m)^\s*schedule:\s*$''`. The singular `schedule:` key on its own line is GH-Actions-unique (ADO uses the plural `schedules:` at column 0); the swap keeps the same auto-detect / override semantics in tests while reflecting that `workflow_dispatch` is no longer emitted by the snippet.
+- **GENERATED_AGAINST_MODULE_VERSION** pin moves from ''0.8.0'' to ''0.8.1'' across all 20 bundled templates.
+
+Apply via `Install-Module AzLocal.UpdateManagement -Force` (or `Update-Module`). Operators who have ALREADY pasted the v0.8.0-flavoured snippet into Step.6 and seen the duplicate-key error can either (a) `Update-AzLocalPipelineExample -Destination <path>` to refresh Step.6 and then re-run `Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend` for the new snippet, or (b) manually delete the duplicate empty `workflow_dispatch:` line from Step.6.
+
 ## Version 0.8.0 - Step.7 form-default regressions fixed (criticalElapsedDays 7->3, updateRing Wave1->empty) + Pii-Guard.Tests.ps1 (repo-hygiene guard) + Publish-Module.ps1 excludes maintainer-only RELEASE-PROCESS.md
 
-Patch release rolling up three follow-ups to v0.7.99. No public API or output-shape changes - existing scripts and pipelines continue to work without modification.
-
-- **Step.7 monitor-updates: `criticalElapsedDays` form-default fixed 7 -> 3.** The v0.7.99 release lowered the CRITICAL overall-elapsed tier from 7 to 3 days. The inline script default and help-text were updated correctly, but the `workflow_dispatch` / pipeline-parameter default value on the input itself was left at ''7''. When an operator triggered the workflow and left the input untouched, the non-empty form-default ''7'' was passed in via `INPUT_CRITICAL_ELAPSED_DAYS`, the override branch fired, and the threshold silently reverted to the old 7 days - undoing the v0.7.99 behaviour change. Now matches the help-text (''3'').
-- **Step.7 monitor-updates: `updateRing` form-default fixed ''Wave1'' -> '''' (empty).** Aligns with Step.8 + Step.9, which already use `default: ''''`. The downstream guard `if ($scope -eq ''by-update-ring'' -and $updateRing)` honours empty as ''no filter'', so behaviour is unchanged for the default `scope=all` path. Removes the misleading ''Wave1'' value that suggested a real tenant-specific default existed.
-- **New `Tests/Pii-Guard.Tests.ps1` repo-hygiene guard.** Pester now scans every file under `Tests/` on each run and fails the build if it finds emails, `.onmicrosoft.com` tenant UPN domains, GUIDs in identity contexts (tenantId / clientId / objectId / principalId / applicationId), or real public IPv4 addresses outside an explicit allow-list. RFC1918 / loopback / link-local / CGNAT / RFC5737 doc / multicast / subnet-mask shapes / well-known public DNS are auto-excluded, as are version-string false-positives like `4.5.6.7-RegressionMarker`. Catches accidental PII commits to a public repo at PR time rather than after-the-fact.
-- **`Publish-Module.ps1` excludes `docs/RELEASE-PROCESS.md` from the published `.nupkg`.** That file is a maintainer-only release checklist (its own opening line states ''Consumers do not need to read it'') and has no runtime value. Repo copy on GitHub stays for maintainer reference; consumers no longer ship it inside every installed module folder.
-- **GENERATED_AGAINST_MODULE_VERSION** pin moves from ''0.7.99'' to ''0.8.0'' across all 20 bundled templates.
-
-Apply via `Install-Module AzLocal.UpdateManagement -Force` (or `Update-Module`). If you have copied the Step.7 YAML into your CI repo via `Update-AzLocalPipelineExample`, re-run it to pick up the form-default corrections - otherwise the form will keep showing ''7'' and ''Wave1''.
+For full v0.8.0 release notes see:
+https://github.com/NeilBird/Azure-Local/blob/main/AzLocal.UpdateManagement/CHANGELOG.md
 
 ## Version 0.7.99 - Property/Summary renames (AvailableUpdates -> AllAvailableUpdates, AvailableUpdatesCount -> ActionableUpdatesCount, Ready/NotReady Summary -> ReadyForUpdate/UpToDate/NotReadyForUpdate) + Step.7 CRITICAL elapsed-days 7->3 + artifact zip names prefixed with step.X-
 
