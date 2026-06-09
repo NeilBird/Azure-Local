@@ -43,7 +43,7 @@ schedules:
 
 parameters:
   - name: pipelinePath
-    displayName: 'Path (file or folder) to Step.6_apply-updates.yml to audit, repo-relative. Leave empty to audit ONLY the schedulePath (schedule file). Default `.azure-pipelines` matches the standard Azure DevOps consumer layout; for repos that keep Step.6_apply-updates.yml at the repo root pass `.`'
+    displayName: 'Path (file or folder) to Step.6_apply-updates.yml to audit, repo-relative. REQUIRED so the Recommend view can diff its proposed crons against what is already present in Step.6 and only emit a snippet for the truly missing entries. Default `.azure-pipelines` matches the standard Azure DevOps consumer layout; for repos that keep Step.6_apply-updates.yml at the repo root pass `.`'
     type: string
     default: '.azure-pipelines'
 
@@ -81,7 +81,7 @@ parameters:
     default: false
 
 variables:
-  GENERATED_AGAINST_MODULE_VERSION: '0.8.2'
+  GENERATED_AGAINST_MODULE_VERSION: '0.8.3'
   REQUIRED_MODULE_VERSION: '${{ parameters.moduleVersion }}'
   reportsPath: '$(Build.ArtifactStagingDirectory)/reports'
 
@@ -178,18 +178,17 @@ stages:
               Write-Host "##[endgroup]"
           }
 
-          # pipelinePath is OPTIONAL when schedulePath is set. The audit
-          # cmdlet requires at least one of -PipelineYamlPath / -SchedulePath; if
-          # both are blank, fall through to the original pipeline-yaml-only check
-          # to keep the original error message.
+          # v0.8.3: pipelinePath is REQUIRED so Recommend can diff its
+          # proposed crons against what's already in Step.6 and only emit a
+          # snippet for the truly missing entries. schedulePath stays optional
+          # (it drives the ring-file two-way diff). ADO parameters: blocks have
+          # no 'required:' keyword, so validate at runtime instead.
           $havePipeline = -not [string]::IsNullOrWhiteSpace($pipelinePath)
           $haveSchedule = -not [string]::IsNullOrWhiteSpace($schedulePath) -and (Test-Path -LiteralPath $schedulePath)
-          if ($haveSchedule -and -not $havePipeline) {
-              Write-Host "PipelineYamlPath is empty - auditing schedule file only ('$schedulePath')"
-              $pipelinePath = $null
-              $havePipeline = $false
+          if (-not $havePipeline) {
+              throw "pipelinePath parameter is required. Set it to the folder containing Step.6_apply-updates.yml (default '.azure-pipelines' matches the standard consumer layout). The Recommend view diffs its proposed crons against this file - leaving it empty would make every recommendation a false positive."
           }
-          elseif ($havePipeline -and -not (Test-Path -LiteralPath $pipelinePath)) {
+          if (-not (Test-Path -LiteralPath $pipelinePath)) {
               $candidates = @('.azure-pipelines', 'pipelines', '.github/workflows', '.') | Where-Object { Test-Path -LiteralPath $_ }
               $hint = if ($candidates) { "Common locations that DO exist in this repo: $($candidates -join ', '). Re-queue the pipeline and override the 'pipelinePath' parameter." } else { "No common pipeline folders (.azure-pipelines, pipelines, .github/workflows, repo root) were found - commit your Step.6_apply-updates.yml first, or set 'pipelinePath' to wherever you keep it." }
               throw "PipelineYamlPath '$pipelinePath' does not exist on the agent. $hint"
@@ -229,7 +228,17 @@ stages:
           if (-not $auditResult) { $auditResult = @() }
 
           Test-AzLocalApplyUpdatesScheduleCoverage -View Matrix -LeadTimeMinutes $leadTime -ExportPath $matrixCsv | Out-Null
-          Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend -LeadTimeMinutes $leadTime -RecommendFiresPerWindow $firesPerWin -Platform AzureDevOps -ExportPath $recoMd | Out-Null
+          # v0.8.3: pass -PipelineYamlPath so Recommend diff-prunes crons
+          # already present in Step.6 and only emits the truly missing ones.
+          $recoArgs = @{
+              View                    = 'Recommend'
+              LeadTimeMinutes         = $leadTime
+              RecommendFiresPerWindow = $firesPerWin
+              Platform                = 'AzureDevOps'
+              ExportPath              = $recoMd
+          }
+          if ($havePipeline) { $recoArgs.PipelineYamlPath = $pipelinePath }
+          Test-AzLocalApplyUpdatesScheduleCoverage @recoArgs | Out-Null
 
           $covered     = @($auditResult | Where-Object Status -eq 'Covered')
           $uncovered   = @($auditResult | Where-Object Status -eq 'Uncovered')
@@ -456,7 +465,7 @@ stages:
                     $md += "`n*This schedule is on schema v1. Schema v2 adds ``allowedUpdateVersions`` for fleet-wide + per-ring update allow-lists (e.g. enforce a 'minimum updates' policy on Prod). Migrate the file with:*`n"
                     $md += "`n``````powershell`n"
                     $md += "Update-AzLocalApplyUpdatesScheduleConfig -Path '$schedulePath' -SchemaMigrate`n"
-                    $md += "``````n"
+                    $md += "```````n"
                 } else {
                     $topAllow = @($sched.AllowedUpdateVersions)
                     $topIsLatest = ($topAllow.Count -eq 1 -and $topAllow[0] -eq 'Latest')
@@ -501,14 +510,14 @@ stages:
 
                     if ($rowsMissingOverride.Count -gt 0) {
                         $md += "`n*$($rowsMissingOverride.Count) row(s) inherit the top-level allow-list. This is fine when you want each ring to install the latest Ready update as soon as it is available.*`n"
-                        $md += "`n### How to fix - edit ``$schedulePath```n"
-                        $md += "`n*Only needed if you want to PIN a ring to a specific update (e.g. keep Prod on the latest feature drop only - YY04 / YY10 - and skip cumulative updates between feature drops).* Add ``allowedUpdateVersions:`` to the row that covers the ring you want to pin. Use ``Get-AzLocalAvailableUpdates`` (or the Azure portal -> Azure Local -> Updates) to find valid update names / version strings.`n"
+                        $md += "`n### Optional - pin a ring to a specific update in ``$schedulePath```n"
+                        $md += "`n*Only needed if you want to PIN a ring to a specific update (e.g. keep Prod on the latest feature drop only - YY04 / YY10 - and skip cumulative updates between feature drops). This is NOT a fix for the cron-coverage or ring-diff sections above - those have their own 'Action required' blocks.* Add ``allowedUpdateVersions:`` to the row that covers the ring you want to pin. Use ``Get-AzLocalAvailableUpdates`` (or the Azure portal -> Azure Local -> Updates) to find valid update names / version strings.`n"
                         $md += "`n``````yaml`n"
                         $md += "- weeksInCycle: '*'`n"
                         $md += "  daysOfWeek:   'Tue,Wed,Thu'`n"
                         $md += "  rings:        'Prod'`n"
                         $md += "  allowedUpdateVersions: 'Solution12.2604.1003.1005;Solution12.2610.1003.XX'`n"
-                        $md += "``````n"
+                        $md += "```````n"
                     } else {
                         $md += "`n*Every schedule row has an explicit ``allowedUpdateVersions:`` override - no inheritance from the top-level default.*`n"
                     }

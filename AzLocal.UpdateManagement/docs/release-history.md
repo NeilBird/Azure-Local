@@ -4,7 +4,7 @@
 >
 > **For older releases**, this is the canonical reference; the main README intentionally stays slim so the most recent block is easy to find.
 >
-> **For v0.8.2 (the current release)**, see the main [README.md](../README.md#whats-new-in-v082) `What's New in v0.8.2` section.
+> **For v0.8.3 (the current release)**, see the main [README.md](../README.md#whats-new-in-v083) `What's New in v0.8.3` section.
 
 ---
 

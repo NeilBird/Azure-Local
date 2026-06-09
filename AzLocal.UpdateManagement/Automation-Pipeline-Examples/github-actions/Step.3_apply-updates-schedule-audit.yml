@@ -46,8 +46,8 @@ on:
   workflow_dispatch:
     inputs:
       pipeline_path:
-        description: 'Path (file or folder) to Step.6_apply-updates.yml to audit, repo-relative. Leave empty to audit ONLY the schedule_path (schedule file). Default `.github/workflows` matches the standard GitHub Actions consumer layout where you paste the bundled `Step.6_apply-updates.yml` sample.'
-        required: false
+        description: 'Path (file or folder) to Step.6_apply-updates.yml to audit, repo-relative. Required so the Recommend view can diff its proposed crons against what is already present in Step.6 and only emit a snippet for the truly missing entries. Default `.github/workflows` matches the standard GitHub Actions consumer layout where you paste the bundled `Step.6_apply-updates.yml` sample.'
+        required: true
         default: '.github/workflows'
       schedule_path:
         description: 'Path to apply-updates-schedule.yml. When set, the audit also reports RingMissingFromSchedule (fleet ring with no schedule row) and RingOrphanedInSchedule (schedule ring no cluster carries). Leave empty to skip the schedule-file two-way diff.'
@@ -91,7 +91,7 @@ env:
   # this to the version actually installed and to the latest on PSGallery, and emits a
   # ::notice annotation if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.8.2'
+  GENERATED_AGAINST_MODULE_VERSION: '0.8.3'
   REQUIRED_MODULE_VERSION: ${{ github.event.inputs.module_version || vars.REQUIRED_MODULE_VERSION || '' }}
 
 jobs:
@@ -202,18 +202,19 @@ jobs:
         $firesPerWin  = [int]$env:INPUT_FIRES_PER_WINDOW
         $includeUnt   = ($env:INPUT_INCLUDE_UNTAGGED -eq 'true')
 
-        # pipeline_path is OPTIONAL when schedule_path is set. The audit
-        # cmdlet requires at least one of -PipelineYamlPath / -SchedulePath; if
-        # both are blank, fall through to the original pipeline-yaml-only check
-        # to keep the original error message.
+        # v0.8.3: pipeline_path is REQUIRED so Recommend can diff its
+        # proposed crons against what's already in Step.6 and only emit a
+        # snippet for the truly missing entries. Schedule_path stays optional
+        # (it drives the ring-file two-way diff). Defence-in-depth: even
+        # though the workflow_dispatch input is required:true, validate at
+        # runtime as well in case the workflow is invoked via the schedule
+        # trigger (which uses the input defaults).
         $havePipeline = -not [string]::IsNullOrWhiteSpace($pipelinePath)
         $haveSchedule = -not [string]::IsNullOrWhiteSpace($schedulePath) -and (Test-Path -LiteralPath $schedulePath)
-        if ($haveSchedule -and -not $havePipeline) {
-            Write-Host "PipelineYamlPath is empty - auditing schedule file only ('$schedulePath')"
-            $pipelinePath = $null
-            $havePipeline = $false
+        if (-not $havePipeline) {
+            throw "pipeline_path is required. Set it to the folder containing Step.6_apply-updates.yml (default '.github/workflows' matches the standard consumer layout). The Recommend view diffs its proposed crons against this file - leaving it empty would make every recommendation a false positive."
         }
-        elseif ($havePipeline -and -not (Test-Path -LiteralPath $pipelinePath)) {
+        if (-not (Test-Path -LiteralPath $pipelinePath)) {
             $candidates = @('.github/workflows', '.azure-pipelines', 'pipelines', '.') | Where-Object { Test-Path -LiteralPath $_ }
             $hint = if ($candidates) { "Common locations that DO exist in this repo: $($candidates -join ', '). Re-run via 'Run workflow' on the Actions tab and set the 'pipeline_path' input." } else { "No common pipeline folders (.github/workflows, .azure-pipelines, pipelines, repo root) were found in this repo - commit your Step.6_apply-updates.yml first, or set 'pipeline_path' to wherever you keep it." }
             throw "PipelineYamlPath '$pipelinePath' does not exist on the runner. $hint"
@@ -256,7 +257,17 @@ jobs:
         Test-AzLocalApplyUpdatesScheduleCoverage -View Matrix -LeadTimeMinutes $leadTime -ExportPath $matrixCsv | Out-Null
 
         # Recommend view (markdown snippet) - GitHub Actions only.
-        Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend -LeadTimeMinutes $leadTime -RecommendFiresPerWindow $firesPerWin -Platform GitHubActions -ExportPath $recoMd | Out-Null
+        # v0.8.3: pass -PipelineYamlPath so Recommend diff-prunes crons
+        # already present in Step.6 and only emits the truly missing ones.
+        $recoArgs = @{
+            View                    = 'Recommend'
+            LeadTimeMinutes         = $leadTime
+            RecommendFiresPerWindow = $firesPerWin
+            Platform                = 'GitHubActions'
+            ExportPath              = $recoMd
+        }
+        if ($havePipeline) { $recoArgs.PipelineYamlPath = $pipelinePath }
+        Test-AzLocalApplyUpdatesScheduleCoverage @recoArgs | Out-Null
 
         $covered     = @($audit | Where-Object Status -eq 'Covered')
         $uncovered   = @($audit | Where-Object Status -eq 'Uncovered')
@@ -507,7 +518,7 @@ jobs:
                     $md += "`n*This schedule is on schema v1. Schema v2 adds ``allowedUpdateVersions`` for fleet-wide + per-ring update allow-lists (e.g. enforce a 'minimum updates' policy on Prod). Migrate the file with:*`n"
                     $md += "`n``````powershell`n"
                     $md += "Update-AzLocalApplyUpdatesScheduleConfig -Path '$schedulePath' -SchemaMigrate`n"
-                    $md += "``````n"
+                    $md += "```````n"
                 } else {
                     $topAllow = @($sched.AllowedUpdateVersions)
                     $topIsLatest = ($topAllow.Count -eq 1 -and $topAllow[0] -eq 'Latest')
@@ -552,14 +563,14 @@ jobs:
 
                     if ($rowsMissingOverride.Count -gt 0) {
                         $md += "`n*$($rowsMissingOverride.Count) row(s) inherit the top-level allow-list. This is fine when you want each ring to install the latest Ready update as soon as it is available.*`n"
-                        $md += "`n### How to fix - edit ``$schedulePath```n"
-                        $md += "`n*Only needed if you want to PIN a ring to a specific update (e.g. keep Prod on the latest feature drop only - YY04 / YY10 - and skip cumulative updates between feature drops).* Add ``allowedUpdateVersions:`` to the row that covers the ring you want to pin. Use ``Get-AzLocalAvailableUpdates`` (or the Azure portal -> Azure Local -> Updates) to find valid update names / version strings.`n"
+                        $md += "`n### Optional - pin a ring to a specific update in ``$schedulePath```n"
+                        $md += "`n*Only needed if you want to PIN a ring to a specific update (e.g. keep Prod on the latest feature drop only - YY04 / YY10 - and skip cumulative updates between feature drops). This is NOT a fix for the cron-coverage or ring-diff sections above - those have their own 'Action required' blocks.* Add ``allowedUpdateVersions:`` to the row that covers the ring you want to pin. Use ``Get-AzLocalAvailableUpdates`` (or the Azure portal -> Azure Local -> Updates) to find valid update names / version strings.`n"
                         $md += "`n``````yaml`n"
                         $md += "- weeksInCycle: '*'`n"
                         $md += "  daysOfWeek:   'Tue,Wed,Thu'`n"
                         $md += "  rings:        'Prod'`n"
                         $md += "  allowedUpdateVersions: 'Solution12.2604.1003.1005;Solution12.2610.1003.XX'`n"
-                        $md += "``````n"
+                        $md += "```````n"
                     } else {
                         $md += "`n*Every schedule row has an explicit ``allowedUpdateVersions:`` override - no inheritance from the top-level default.*`n"
                     }

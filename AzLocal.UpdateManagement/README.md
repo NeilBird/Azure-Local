@@ -2,7 +2,7 @@
 
 > ⚠️ **Disclaimer**: This module is **NOT** a Microsoft supported service offering or product. It is provided as example code only, with no warranty or official support. Refer to the [MIT license](https://github.com/NeilBird/Azure-Local/blob/main/LICENSE) for further information.
 
-**Latest Version:** v0.8.2 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.8.2)
+**Latest Version:** v0.8.3 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.8.3)
 
 > 📢 **Renamed in v0.7.3**: this module was previously published as `AzStackHci.ManageUpdates`. The new module name aligns with the Azure Local product name (_Microsoft retired the *Azure Stack HCI* brand in late 2024_). The module GUID is preserved across the rename. If you have the old name installed, run:
 >
@@ -23,6 +23,7 @@ Azure Local REST API specification (includes update management endpoints): https
 **This README (overview + most-recent release notes):**
 
 - [Where to Start](#where-to-start)
+- [What's New in v0.8.3](#whats-new-in-v083)
 - [What's New in v0.8.2](#whats-new-in-v082)
 - [Files](#files)
 - [Prerequisites](#prerequisites)
@@ -86,42 +87,20 @@ If you are new to this module, work through these in order from a regular PowerS
 
 > Most CI/CD pipelines in [Automation-Pipeline-Examples/](Automation-Pipeline-Examples/) are direct implementations of one of these workflows. Start there if you want a copy-pasteable end-to-end pipeline.
 
-## What's New in v0.8.2
+## What's New in v0.8.3
 
-**Operator-experience release for `Test-AzLocalApplyUpdatesScheduleCoverage`.** No public API changes; no output-shape changes that break existing scripts. Two paste-time pain points in the `-View Recommend` snippet are fixed, the `-View Audit` `NoWindowTag` row now names affected clusters, and the Step.3 Allow-list section is trimmed in both GH and ADO scaffolds.
+**Step.3 advisor accuracy + readability fixes.** No public API removed. One cmdlet behaviour change: `Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend` now diff-prunes against an existing Step.6 yml when `-PipelineYamlPath` is supplied, so the snippet under "Action required - cron coverage" lists only the crons that are TRULY missing from the supplied pipeline yaml. Pre-v0.8.3 the Recommend snippet was built purely from cluster tags + `Convert-AzLocalUpdateWindowToCron`, so steady-state fleets received an "Action required" header that re-emitted the same cron lines already present in `Step.6_apply-updates.yml`, and operators pasted duplicates.
 
-### Paste-time pain points fixed in the `-View Recommend` snippet
+Four Step.3 yml defects fixed:
 
-1. **"All cron times below are UTC" comment is now embedded in both the GH and ADO snippets.** GitHub Actions and Azure DevOps both evaluate `cron:` in UTC regardless of repository, runner, or agent timezone, but operators repeatedly burned time converting from a local-time mental model and ended up with windows that fired hours offset from their intent. The advisor now prepends a `# All cron times below are UTC ...` comment line directly above `schedule:` (GH) and `schedules:` (ADO) so the snippet is self-documenting once pasted into `Step.6_apply-updates.yml`.
-2. **"Indent tip" callout above the snippet warns about IDE auto-indent-on-paste.** The GH snippet is intentionally at 2-space indent (so `schedule:` is a sibling of the existing `workflow_dispatch:` under `on:`). When operators paste it with the cursor sitting inside the `# BEGIN-AZLOCAL-CUSTOMIZE:schedule-triggers` / `# END-AZLOCAL-CUSTOMIZE:schedule-triggers` comment block, VS Code (and JetBrains IDEs) silently double the indent, producing the YAML error *"All mapping items must start at the same column"*. The advisor now emits a `> **Indent tip.**` blockquote directly above the snippet that explains the cause, instructs the operator to paste at column 0, and tells them how to recover (delete two leading spaces from every pasted line) if they already hit it.
+1. **`pipeline_path` / `pipelinePath` is now REQUIRED.** GitHub Actions input gets `required: true`; Azure DevOps adds a runtime throw with a clear error pointing to common pipeline folders. The silent schedule-only fall-through is gone - without a `pipeline_path` the new diff-prune would have no Step.6 to diff against and every Recommend run would be a false positive. `schedule_path` / `schedulePath` stays optional.
+2. **Step.3 yml now passes `-PipelineYamlPath` to the Recommend invocation.** Pre-v0.8.3 the Recommend call was always made without `-PipelineYamlPath`, so even after the cmdlet supported the diff-prune the snippet would still be the un-pruned full set. Both Step.3 templates now build a `$recoArgs` splat that includes `PipelineYamlPath = $pipelinePath`.
+3. **"How to fix - edit `$schedulePath`" heading reframed.** v0.8.2 emitted a sub-heading that operators read as "the fix for the higher-blast-radius cron-coverage or ring-diff sections is to edit `$schedulePath`", but it was only ever about the OPTIONAL `allowedUpdateVersions:` pin. The heading is now `### Optional - pin a ring to a specific update in `$schedulePath`` and the body explicitly says *"This is NOT a fix for the cron-coverage or ring-diff sections above."*
+4. **Closing-fence typo fix.** Both Step.3 templates had `$md += "``````n"` in two places. In PowerShell double-quoted strings, six backticks = three literal backticks but the trailing `n` becomes a literal `n` (not a newline) because the backticks all pair up before reaching it. Result: the rendered markdown showed `` ``` `` followed by a literal `n` and the subsequent paragraphs got swept into the code block. Fixed to seven backticks + `n` at all four sites.
 
-### `-View Audit` `NoWindowTag` row is now actionable on its own
+`GENERATED_AGAINST_MODULE_VERSION` bumped from `0.8.2` to `0.8.3` across all 20 bundled `Step.{0..9}.yml` templates.
 
-Pre-v0.8.2 the row showed a generic *"Tag clusters with `UpdateStartWindow=<days>_<HH:MM>-<HH:MM>`"* nudge that left operators cross-referencing the matrix CSV to find the offenders. The advisor now names the first 15 affected cluster names grouped by their `UpdateRing` tag (or `(none)` when both tags are missing), e.g. `Prod -> hci-syd-01, hci-syd-02; Wave1 -> hci-mel-01 (+3 more) (showing first 15 of 42)`. The row's issue text is clarified to say the tag is *optional* (the runtime gate only enforces a window when it is set), and the row sorts AFTER `Covered` (rank 10 instead of 7) so it is treated as informational cleanup rather than a blocker.
-
-### Step.3 Allow-list section trimmed in both GH and ADO scaffolds
-
-The `Allow-list coverage (schema v2)` subsection no longer emits the verbose `> Tip - per-ring overrides` paragraph + 3-row example block that v0.8.1 produced. Inheriting the top-level allow-list IS the expected steady state for most fleets (install Latest as soon as Ready); the verbose tip was misleading operators into thinking they had to add overrides. The new shape is a one-line steady-state confirmation plus a dedicated `### How to fix - edit $schedulePath` subsection (naming the schedule file) and a single-row YAML example showing how to PIN a ring to a specific update (e.g. keep Prod on the latest feature drop only - YY04 / YY10 - and skip cumulative updates between feature drops).
-
-### `Azure Stack HCI Update Operator` custom-role Description rewritten to drop module-internal jargon
-
-The custom-role Description shipped into the Azure RBAC plane (visible in the Azure portal **Custom roles** blade, in `az role definition list` / `Get-AzRoleDefinition` output, and in any RBAC audit/governance tooling) previously read *"...read the fleet-connectivity scopes (Arc machines, edge-device NICs, Azure Resource Bridges) required by Step.4"*. `Step.4` is a module-private concept and meaningless to anyone outside `AzLocal.UpdateManagement`. The new Description reads *"Can read and apply Azure Local cluster updates, manage UpdateRing tags, and read the fleet-connectivity inventory (Arc-enabled machines, edge-device NICs, Azure Resource Bridges) needed to assess pre-update connectivity."* Same RBAC grant (`Actions[]`, `NotActions[]`, `DataActions[]`, `AssignableScopes[]` byte-identical), so operators with the role already deployed need no action; the next `az role definition update --role-definition ./azlocal-update-management-custom-role.json` will refresh the Description. Updated in lockstep across all 6 sites that ship/document the role.
-
-### Module foundations for the upcoming executable-YAML refactor
-
-Five new internal (Private) helpers - `Get-AzLocalPipelineHost`, `Set-AzLocalPipelineOutput`, `Add-AzLocalPipelineStepSummary`, `Write-AzLocalPipelineNotice`, `Write-AzLocalPipelineWarning` - abstract over the host-specific quirks of GitHub Actions vs Azure DevOps output channels (`$env:GITHUB_OUTPUT` vs `##vso[task.setvariable]`, `$env:GITHUB_STEP_SUMMARY` vs `##vso[task.uploadsummary]`, `::notice/::warning` vs `##vso[task.logissue]`). These are not exported and have no user-visible effect in v0.8.2 - they are foundations for the upcoming per-Step `Export-*` / `Invoke-*` cmdlets that will move inline `run: |` PowerShell out of the `Step.{0..9}.yml` files and into the module proper. 23 new Pester assertions cover the three host modes (GitHub auto-detect via `$env:GITHUB_ACTIONS='true'`, Azure DevOps via `$env:TF_BUILD='True'`, Local fallback) and the byte-identical contracts of each emitted logging-command syntax.
-
-### Migration
-
-- `Install-Module AzLocal.UpdateManagement -Force` (or `Update-Module`). No code changes required.
-- Re-run `Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend` once to pick up the new self-documenting snippet (the cron *values* are unchanged from v0.8.1; only the surrounding comment and prose changed).
-
-### Pin and version drift
-
-- `GENERATED_AGAINST_MODULE_VERSION` moves from `0.8.1` to `0.8.2` across all 20 bundled `Step.{0..9}.yml` templates (GH Actions + Azure DevOps).
-- Drift-sync test asserts `$script:ModuleVersion` (psm1) == `ModuleVersion` (psd1) == `Should -Be '0.8.2'` (test) - any drift fails CI.
-
-> Previous release notes (v0.8.1 and earlier) have moved into the [Release History](#release-history) appendix below, with full text retained in [`docs/release-history.md`](docs/release-history.md) and [`CHANGELOG.md`](CHANGELOG.md).
+See [CHANGELOG.md](CHANGELOG.md#083---2026-06-11) for the full v0.8.3 entry.
 
 ## Files
 
@@ -600,7 +579,13 @@ This code is provided as-is for educational and reference purposes.
 
 The full What's-New history (v0.7.81 and earlier) has moved to [docs/release-history.md](docs/release-history.md).
 
-The most recent release notes for **v0.8.2** stay above under [`What's New in v0.8.2`](#whats-new-in-v082).
+The most recent release notes for **v0.8.3** stay above under [`What's New in v0.8.3`](#whats-new-in-v083).
+
+### What's New in v0.8.2
+
+**Operator-experience release for `Test-AzLocalApplyUpdatesScheduleCoverage`.** Two paste-time pain points fixed in the `-View Recommend` snippet (UTC-comment embedded above `schedule:`/`schedules:`; new `> **Indent tip.**` blockquote above the snippet warns about IDE auto-indent-on-paste doubling the `schedule:` indent). `-View Audit` `NoWindowTag` row now names the first 15 affected cluster names grouped by `UpdateRing` instead of a generic nudge. Step.3 Allow-list section trimmed in both GH and ADO scaffolds. Five new internal (Private) helpers `Get-AzLocalPipelineHost`, `Set-AzLocalPipelineOutput`, `Add-AzLocalPipelineStepSummary`, `Write-AzLocalPipelineNotice`, `Write-AzLocalPipelineWarning` lay foundations for the upcoming executable-YAML refactor. `Azure Stack HCI Update Operator` custom-role Description rewritten to drop module-internal jargon (same RBAC grant, no operator action required). `GENERATED_AGAINST_MODULE_VERSION` bumped to `0.8.2` across all 20 bundled `Step.{0..9}.yml` templates.
+
+See [CHANGELOG.md](CHANGELOG.md#082---2026-06-10) for the full v0.8.2 entry.
 
 ### What's New in v0.8.1
 

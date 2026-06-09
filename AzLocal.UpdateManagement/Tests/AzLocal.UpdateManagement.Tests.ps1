@@ -34,8 +34,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $script:ModuleInfo | Should -Not -BeNullOrEmpty
         }
 
-        It 'Should have version 0.8.2' {
-            $script:ModuleInfo.Version | Should -Be '0.8.2'
+        It 'Should have version 0.8.3' {
+            $script:ModuleInfo.Version | Should -Be '0.8.3'
         }
 
         It 'Module version constants are in sync between .psm1 and .psd1' {
@@ -7028,6 +7028,77 @@ on:
         }
     }
 
+    Context 'v0.8.3 - Recommend diff-prunes crons already present in -PipelineYamlPath' {
+        # Pre-v0.8.3 Recommend built its snippet purely from cluster tags via
+        # Convert-AzLocalUpdateWindowToCron, so on a steady-state fleet where
+        # Step.6 already contained the recommended crons, the advisor re-emitted
+        # the same cron lines under an "Action required - cron coverage" header.
+        # Operators read it as "Step.3 is telling me to add these again" and
+        # pasted duplicates. v0.8.3 hoists the yaml-read out of the Audit-only
+        # guard so Recommend can also read existing crons, and prunes any
+        # recommended cron whose expression matches one already present.
+
+        BeforeAll {
+            $script:pruneYamlDir = Join-Path $env:TEMP "schedule-cov-prune-$(Get-Random)"
+            New-Item -ItemType Directory -Path (Join-Path $script:pruneYamlDir 'github-actions') -Force | Out-Null
+            # Pre-existing Step.6 already covers the Sat-Sun_02:00-06:00 opening
+            # edge (cron '55 1 * * 6,0' = 5 min before 02:00 UTC on Sat+Sun).
+            # With FiresPerWindow=1, Recommend would propose ONLY '55 1 * * 6,0';
+            # diff-prune should drop it -> zero recommended rows.
+            @"
+on:
+  schedule:
+    - cron: '55 1 * * 6,0'
+"@ | Set-Content -Path (Join-Path $script:pruneYamlDir 'github-actions\Step.6_apply-updates.yml') -Encoding ASCII
+        }
+        AfterAll {
+            Remove-Item -Path $script:pruneYamlDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+
+        It 'Recommend WITH -PipelineYamlPath prunes the recommended cron when it is already present (FiresPerWindow=1)' {
+            InModuleScope AzLocal.UpdateManagement -Parameters @{ pruneYamlDir = $script:pruneYamlDir } {
+                param($pruneYamlDir)
+                Mock Invoke-AzResourceGraphQuery {
+                    @(
+                        [PSCustomObject]@{ ClusterName='c1'; ResourceGroup='r'; SubscriptionId='s'; ClusterResourceId='/s/r/c1'; UpdateRing='Pilot'; UpdateStartWindow='Sat-Sun_02:00-06:00' }
+                    )
+                }
+                $result = Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend -RecommendFiresPerWindow 1 -PipelineYamlPath $pruneYamlDir -PassThru 6>$null
+                @($result).Count | Should -Be 0 -Because 'the only recommended cron (55 1 * * 6,0) is already present in the supplied Step.6 yml'
+            }
+        }
+
+        It 'Recommend WITHOUT -PipelineYamlPath emits the full (un-pruned) set (back-compat)' {
+            InModuleScope AzLocal.UpdateManagement {
+                Mock Invoke-AzResourceGraphQuery {
+                    @(
+                        [PSCustomObject]@{ ClusterName='c1'; ResourceGroup='r'; SubscriptionId='s'; ClusterResourceId='/s/r/c1'; UpdateRing='Pilot'; UpdateStartWindow='Sat-Sun_02:00-06:00' }
+                    )
+                }
+                $result = Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend -RecommendFiresPerWindow 1 -PassThru 6>$null
+                @($result).Count | Should -Be 1
+                $result[0].CronExpression | Should -Be '55 1 * * 6,0'
+            }
+        }
+
+        It 'Recommend WITH -PipelineYamlPath emits only the missing cron when only ONE of two recommended crons is already present (FiresPerWindow=2)' {
+            InModuleScope AzLocal.UpdateManagement -Parameters @{ pruneYamlDir = $script:pruneYamlDir } {
+                param($pruneYamlDir)
+                Mock Invoke-AzResourceGraphQuery {
+                    @(
+                        [PSCustomObject]@{ ClusterName='c1'; ResourceGroup='r'; SubscriptionId='s'; ClusterResourceId='/s/r/c1'; UpdateRing='Pilot'; UpdateStartWindow='Sat-Sun_02:00-06:00' }
+                    )
+                }
+                # FiresPerWindow=2 emits opening (55 1 * * 6,0) + retry (0 3 * * 6,0).
+                # The pre-existing yml only has the opening, so retry remains.
+                $result = Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend -RecommendFiresPerWindow 2 -PipelineYamlPath $pruneYamlDir -PassThru 6>$null
+                @($result).Count | Should -Be 1 -Because 'opening cron already present, retry remains'
+                $result[0].CronExpression | Should -Be '0 3 * * 6,0'
+                $result[0].Snippet        | Should -Match '\(retry\)'
+            }
+        }
+    }
+
     Context 'Integration: shipped Automation-Pipeline-Examples bundle (v0.7.69)' {
         # End-to-end smoke against the actual YAMLs published to PSGallery as
         # part of the module. This is the gap that let v0.7.68 ship with the
@@ -8928,19 +8999,26 @@ Describe 'Step.3 pipeline scaffolds - v0.8.2 Allow-list section shape' {
 
     Context 'YAML emits the trimmed Allow-list subsection (no verbose Tip / 3-row example block)' {
 
-        It '[<Platform>] emits the new How-to-fix schedulePath subsection and drops the verbose Tip block' -ForEach @(
+        It '[<Platform>] emits the reframed Optional pin-a-ring subsection and drops the verbose Tip block' -ForEach @(
             @{ Platform='GitHub'; YamlPath=(Join-Path $PSScriptRoot '..\Automation-Pipeline-Examples\github-actions\Step.3_apply-updates-schedule-audit.yml') }
             @{ Platform='ADO';    YamlPath=(Join-Path $PSScriptRoot '..\Automation-Pipeline-Examples\azure-devops\Step.3_apply-updates-schedule-audit.yml') }
         ) {
             Test-Path $YamlPath | Should -BeTrue
             $raw = Get-Content -Raw -LiteralPath $YamlPath
-            # New shape present
-            $raw | Should -Match '### How to fix - edit ``\$schedulePath``'
+            # v0.8.3 shape: heading is explicitly scoped to the OPTIONAL pin
+            # use case (the v0.8.2 heading sounded like a general 'fix this
+            # file' instruction even though it only covers allowedUpdateVersions).
+            $raw | Should -Match '### Optional - pin a ring to a specific update in ``\$schedulePath``'
             $raw | Should -Match 'inherit the top-level allow-list'
             $raw | Should -Match 'install the latest Ready update as soon as it is available'
+            # v0.8.3: explicitly disclaim that this is NOT the cron-coverage or ring-diff fix.
+            $raw | Should -Match 'This is NOT a fix for the cron-coverage or ring-diff sections above'
             # Verbose v0.8.1 shape removed
             $raw | Should -Not -Match 'Tip - per-ring overrides'
             $raw | Should -Not -Match 'Showing first 3 of'
+            # v0.8.2 heading shape is gone (was a confusing 'How to fix' that
+            # operators read as covering the missing-from-schedule case).
+            $raw | Should -Not -Match '### How to fix - edit ``\$schedulePath``'
         }
     }
 }
