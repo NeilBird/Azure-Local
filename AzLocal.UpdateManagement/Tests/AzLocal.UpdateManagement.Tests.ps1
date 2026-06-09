@@ -531,13 +531,17 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $offenders.Count | Should -Be 0 -Because "every GitHub Actions yml install step must append the v0.8.4 version banner to GITHUB_STEP_SUMMARY. Missing from: $detail"
         }
 
-        It 'Every Azure DevOps yml install site contains the version banner string (Step.6 has 2)' {
+        It 'Every Azure DevOps yml install site contains the version banner string (Step.6 second install deliberately skips upload to avoid duplicate banner)' {
             $adoRoot = Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples\azure-devops'
             $adoRoot = (Resolve-Path -Path $adoRoot).Path
             $ymlFiles = Get-ChildItem -Path $adoRoot -Filter 'Step.*.yml' -File
 
             $bannerPattern = [regex]::Escape('Pipeline YAML v$generated | Module v$installed installed')
             $totalSites = 0
+            # Every Step.X.yml emits exactly ONE banner to the build Summary.
+            # Step.6 has TWO install steps (CheckReadiness + ApplyUpdates) but
+            # the second one deliberately skips ##vso[task.uploadsummary] so the
+            # banner does not appear twice in the rendered Summary.
             $perFileExpect = @{
                 'Step.0_authentication-test.yml'         = 1
                 'Step.1_inventory-clusters.yml'          = 1
@@ -545,7 +549,7 @@ Describe 'Module: AzLocal.UpdateManagement' {
                 'Step.3_apply-updates-schedule-audit.yml' = 1
                 'Step.4_fleet-connectivity-status.yml'   = 1
                 'Step.5_assess-update-readiness.yml'     = 1
-                'Step.6_apply-updates.yml'               = 2
+                'Step.6_apply-updates.yml'               = 1
                 'Step.7_monitor-updates.yml'             = 1
                 'Step.8_fleet-update-status.yml'         = 1
                 'Step.9_fleet-health-status.yml'         = 1
@@ -564,8 +568,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
             }
 
             $detail = if ($offenders.Count -gt 0) { $offenders -join [Environment]::NewLine } else { '(no mismatches)' }
-            $offenders.Count | Should -Be 0 -Because "every ADO yml install step must append the v0.8.4 version banner via ##vso[task.uploadsummary]. Step.6 has 2 install steps (check-readiness + apply-updates) so it carries 2 banner emits; the other 9 carry 1 each, for 11 total. Findings:$([Environment]::NewLine)$detail"
-            $totalSites | Should -Be 11 -Because "total ADO install-step banner emits should be 11 (10 yml + 1 extra for Step.6's second install step)"
+            $offenders.Count | Should -Be 0 -Because "every ADO yml uploads exactly 1 version banner to the build Summary via ##vso[task.uploadsummary]. Step.6 has 2 install steps but the second (ApplyUpdates stage) deliberately skips the upload so the banner is not duplicated. Findings:$([Environment]::NewLine)$detail"
+            $totalSites | Should -Be 10 -Because "total ADO Summary banner emits should be 10 (1 per yml; Step.6's second install step skips upload)"
         }
     }
 
@@ -628,9 +632,11 @@ Describe 'Module: AzLocal.UpdateManagement' {
 
         It 'No currently-shipping doc references the bare pre-v0.8.4 role name without "(custom)" suffix' {
             # Allowlist: CHANGELOG.md and docs/release-history.md describe
-            # historical releases and are preserved verbatim. Module-level
-            # README.md's "Version history" sections (lines mentioning v0.8.2,
-            # v0.7.65 etc. release notes content) are also historical.
+            # historical releases and are preserved verbatim. The migration-tip
+            # blockquote in Automation-Pipeline-Examples/README.md intentionally
+            # quotes the pre-rename Name verbatim so consumers understand what
+            # is being renamed - lines that contain 'pre-v0.8.4' are explicit
+            # migration documentation and excluded from the check.
             $examplesRoot = Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples'
             $examplesRoot = (Resolve-Path -Path $examplesRoot).Path
             $docsRoot     = Join-Path -Path $PSScriptRoot -ChildPath '..\docs'
@@ -649,13 +655,15 @@ Describe 'Module: AzLocal.UpdateManagement' {
                     $lineNo++
                     # Match the bare role name only when NOT followed by ' (custom)'
                     if ($line -match 'Azure Stack HCI Update Operator(?! \(custom\))') {
+                        # Allow explicit migration-tip references that document the rename.
+                        if ($line -match 'pre-v0\.8\.4') { continue }
                         $offenders.Add(("{0}:{1}: {2}" -f $relPath, $lineNo, $line.Trim()))
                     }
                 }
             }
 
             $detail = if ($offenders.Count -gt 0) { $offenders -join [Environment]::NewLine } else { '(no offenders)' }
-            $offenders.Count | Should -Be 0 -Because "currently-shipping docs (Automation-Pipeline-Examples/**/*.md + docs/*.md except release-history.md) must reference the renamed role as 'Azure Stack HCI Update Operator (custom)'. Findings:$([Environment]::NewLine)$detail"
+            $offenders.Count | Should -Be 0 -Because "currently-shipping docs (Automation-Pipeline-Examples/**/*.md + docs/*.md except release-history.md) must reference the renamed role as 'Azure Stack HCI Update Operator (custom)' - except in migration-tip lines that contain 'pre-v0.8.4'. Findings:$([Environment]::NewLine)$detail"
         }
     }
 }
