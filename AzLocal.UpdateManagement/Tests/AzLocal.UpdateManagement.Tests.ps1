@@ -34,8 +34,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $script:ModuleInfo | Should -Not -BeNullOrEmpty
         }
 
-        It 'Should have version 0.8.0' {
-            $script:ModuleInfo.Version | Should -Be '0.8.0'
+        It 'Should have version 0.8.1' {
+            $script:ModuleInfo.Version | Should -Be '0.8.1'
         }
 
         It 'Module version constants are in sync between .psm1 and .psd1' {
@@ -8753,9 +8753,15 @@ schedule:
                     -View Recommend -PipelineYamlPath $yamlDir -SchedulePath $schedPath -PassThru 6>$null
 
                 $snippet = ($rec | Select-Object -First 1).Snippet
-                $snippet | Should -Match 'workflow_dispatch'
-                $snippet | Should -Not -Match 'displayName: "Apply Updates - covers above window"' `
-                    -Because 'GH-host auto-detect must suppress the ADO snippet'
+                # v0.8.1: GH snippet no longer emits a bare `workflow_dispatch:` (that caused
+                # duplicate-key YAML in Step.6 which already has its own workflow_dispatch with
+                # inputs:). Discriminator: use the GH-only "How to fix" prose, which contains
+                # the literal substring 'Do NOT add a second' (no longer present in ADO branch).
+                # The previous regex `(?m)^\s*schedule:\s*$` collided with the embedded
+                # apply-updates-schedule.yml skeleton (which has `schedule:` at column 0 by schema).
+                $snippet | Should -Match 'Do NOT add a second'
+                $snippet | Should -Not -Match 'Add \(or merge with\) a top-level' `
+                    -Because 'GH-host auto-detect must suppress the ADO `schedules:` block prose'
             }
         }
 
@@ -8770,9 +8776,9 @@ schedule:
                     -View Recommend -PipelineYamlPath $yamlDir -SchedulePath $schedPath -PassThru 6>$null
 
                 $snippet = ($rec | Select-Object -First 1).Snippet
-                $snippet | Should -Match 'displayName: "Apply Updates - covers above window"'
-                $snippet | Should -Not -Match 'workflow_dispatch' `
-                    -Because 'ADO-host auto-detect must suppress the GH snippet'
+                $snippet | Should -Match 'Add \(or merge with\) a top-level'
+                $snippet | Should -Not -Match 'Do NOT add a second' `
+                    -Because 'ADO-host auto-detect must suppress the GH `workflow_dispatch:` warning prose'
             }
         }
 
@@ -8787,7 +8793,10 @@ schedule:
                     -View Recommend -PipelineYamlPath $yamlDir -SchedulePath $schedPath -Platform Both -PassThru 6>$null
 
                 $snippet = ($rec | Select-Object -First 1).Snippet
-                $snippet | Should -Match 'workflow_dispatch'
+                # -Platform Both -> 'Choose the snippet matching your CI platform' prose AND
+                # both per-platform snippets are emitted (GH cron block has no displayName;
+                # ADO cron block has displayName lines).
+                $snippet | Should -Match 'Choose the snippet matching your CI platform'
                 $snippet | Should -Match 'displayName: "Apply Updates - covers above window"' `
                     -Because 'an explicit caller -Platform Both must suppress auto-detect (caller wins)'
             }
@@ -8804,7 +8813,7 @@ schedule:
                     -View Recommend -PipelineYamlPath $yamlDir -SchedulePath $schedPath -PassThru 6>$null
 
                 $snippet = ($rec | Select-Object -First 1).Snippet
-                $snippet | Should -Match 'workflow_dispatch' `
+                $snippet | Should -Match 'Choose the snippet matching your CI platform' `
                     -Because 'interactive operator wants both snippets to compare'
                 $snippet | Should -Match 'displayName: "Apply Updates - covers above window"' `
                     -Because 'interactive operator wants both snippets to compare'

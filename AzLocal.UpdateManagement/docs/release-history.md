@@ -4,9 +4,25 @@
 >
 > **For older releases**, this is the canonical reference; the main README intentionally stays slim so the most recent block is easy to find.
 >
-> **For v0.8.0 (the current release)**, see the main [README.md](../README.md#whats-new-in-v080) `What's New in v0.8.0` section.
+> **For v0.8.1 (the current release)**, see the main [README.md](../README.md#whats-new-in-v081) `What's New in v0.8.1` section.
 
 ---
+
+### What's New in v0.8.1
+
+v0.8.1 is a docs-and-snippet correctness release. No public API or output-shape changes - existing scripts and pipelines continue to work without modification.
+
+**`Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend` GH-Actions snippet is now copy-paste-safe into `Step.6_apply-updates.yml`.** Pre-v0.8.1 the GitHub-flavoured snippet emitted a full `on:` + `workflow_dispatch:` + `schedule:` block and instructed the operator to "Replace (or merge with) the existing `on:` block". `Step.6_apply-updates.yml` already declares `workflow_dispatch:` with a rich `inputs:` block (`update_ring`, `update_name`, `dry_run`, `raise_itsm_ticket`, `itsm_config_path`, `itsm_dry_run`, `itsm_force_create`, `module_version`) that the manual `Run workflow` button depends on. Operators who pasted the snippet alongside the existing block ended up with two top-level `workflow_dispatch:` keys, which GitHub Actions rejects at parse time (`'workflow_dispatch' is already defined`). The GH snippet now emits ONLY the `schedule:` block (2-space `schedule:` indent + 4-space cron indent) so it pastes as-is under the existing `on:` key, inside the `# BEGIN-AZLOCAL-CUSTOMIZE:schedule-triggers` / `# END-AZLOCAL-CUSTOMIZE:schedule-triggers` markers. Azure DevOps snippet shape (top-level `schedules:`) is unchanged.
+
+**Updated "How to fix" prose** explicitly tells operators to add (not replace) the `schedule:` block under the existing `on:` key, place it inside the BEGIN/END-AZLOCAL-CUSTOMIZE markers so it survives `Update-AzLocalPipelineExample` refreshes, and explicitly NOT to add a second `workflow_dispatch:` line.
+
+**Four updated `AS7`-`AS10` Pester assertions** in `Tests/AzLocal.UpdateManagement.Tests.ps1` swap the GH-snippet detector regex from `'workflow_dispatch'` to `'(?m)^\s*schedule:\s*$'` (the singular `schedule:` key on its own line is GH-Actions-unique; ADO emits the plural `schedules:` at column 0).
+
+**Migration:** for operators who have ALREADY pasted the v0.8.0-flavoured snippet into `Step.6_apply-updates.yml` and seen the duplicate-key error: either `Update-AzLocalPipelineExample -Destination <path>` to refresh Step.6 and re-run `Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend`, or manually delete the duplicate empty `workflow_dispatch:` line from Step.6.
+
+**All 20 bundled `Step.{0..9}.yml` templates** bump `GENERATED_AGAINST_MODULE_VERSION` from `'0.8.0'` to `'0.8.1'`.
+
+See [CHANGELOG.md](../CHANGELOG.md#081---2026-06-09) for the full v0.8.1 entry.
 
 ### What's New in v0.8.0
 
