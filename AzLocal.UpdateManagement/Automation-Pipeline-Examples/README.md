@@ -160,7 +160,7 @@ The recommended MG default is shown in the JSON below. Whichever path you pick, 
 {
   "Name": "Azure Stack HCI Update Operator",
   "IsCustom": true,
-  "Description": "Can view and apply updates on Azure Local clusters, manage UpdateRing tags, and read the fleet-connectivity scopes (Arc machines, edge-device NICs, Azure Resource Bridges) required by Step.4.",
+  "Description": "Can read and apply Azure Local cluster updates, manage UpdateRing tags, and read the fleet-connectivity inventory (Arc-enabled machines, edge-device NICs, Azure Resource Bridges) needed to assess pre-update connectivity.",
   "Actions": [
     "Microsoft.AzureStackHCI/clusters/read",
     "Microsoft.AzureStackHCI/clusters/updateSummaries/read",
@@ -228,7 +228,7 @@ az role definition create --role-definition ./azlocal-update-management-custom-r
 {
   "Name": "Azure Stack HCI Update Operator",
   "IsCustom": true,
-  "Description": "Can view and apply updates on Azure Local clusters, manage UpdateRing tags, and read the fleet-connectivity scopes (Arc machines, edge-device NICs, Azure Resource Bridges) required by Step.4.",
+  "Description": "Can read and apply Azure Local cluster updates, manage UpdateRing tags, and read the fleet-connectivity inventory (Arc-enabled machines, edge-device NICs, Azure Resource Bridges) needed to assess pre-update connectivity.",
   "Actions": [
     "Microsoft.AzureStackHCI/clusters/read",
     "Microsoft.AzureStackHCI/clusters/updateSummaries/read",
