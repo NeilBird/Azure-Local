@@ -54,6 +54,12 @@ $RemovePaths = @(
     # consolidation that moved review files under this folder
     # (commit 1230f7b).
     'Module-reviews'
+    # Maintainer-only release runbook. The file itself states
+    # "This document is the maintainer-facing release checklist.
+    # Consumers do not need to read it." - it has no runtime value
+    # and should not take up space inside every user's installed
+    # module folder. Repo copy on GitHub remains the reference.
+    'docs\RELEASE-PROCESS.md'
 )
 
 foreach ($relativePath in $RemovePaths) {
