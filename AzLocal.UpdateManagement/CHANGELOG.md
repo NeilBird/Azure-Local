@@ -26,6 +26,13 @@ Operator-experience release for `Test-AzLocalApplyUpdatesScheduleCoverage -View 
 - **New `### How to fix - edit \`$schedulePath\`` subsection** names the schedule file directly and explains that `allowedUpdateVersions:` overrides are only needed when an operator wants to PIN a ring to a specific update (e.g. keep Prod on the latest feature drop only - YY04 / YY10 - and skip cumulative updates between feature drops). Followed by a single-row YAML example.
 - **6 new Pester assertions** lock in the new shape: both Step.3 scaffolds emit the trimmed one-liner and the `How to fix - edit $schedulePath` heading, AND do NOT emit `Tip - per-ring overrides` / `Showing first 3 of` (the verbose v0.8.1 markers).
 
+### `Azure Stack HCI Update Operator` custom-role Description rewritten to drop module-internal jargon
+
+- The custom-role Description shipped into the Azure RBAC plane (visible in the Azure portal **Custom roles** blade, in `az role definition list` / `Get-AzRoleDefinition` output, and in any RBAC audit/governance tooling) previously read *"...read the fleet-connectivity scopes (Arc machines, edge-device NICs, Azure Resource Bridges) required by Step.4"*. `Step.4` is a module-private concept and meaningless to anyone outside `AzLocal.UpdateManagement`.
+- **New Description**: *"Can read and apply Azure Local cluster updates, manage UpdateRing tags, and read the fleet-connectivity inventory (Arc-enabled machines, edge-device NICs, Azure Resource Bridges) needed to assess pre-update connectivity."*
+- **Same RBAC grant** - `Actions[]`, `NotActions[]`, `DataActions[]`, `AssignableScopes[]` are byte-identical. Operators with the role already deployed need no action; the next `az role definition update --role-definition ./azlocal-update-management-custom-role.json` will refresh the Description.
+- **Updated in lockstep across all 6 sites** that ship/document the role: the bundled `Automation-Pipeline-Examples/azlocal-update-management-custom-role.json` file (consumed by `az role definition create`), the two inline JSON blocks in `Automation-Pipeline-Examples/README.md` section 4.1, and the three inline JSON blocks in `docs/rbac.md` (first JSON block + Option 2 here-string + management-group-scope variant).
+
 ### Module foundations for the upcoming executable-YAML refactor
 
 - Five new internal (Private) helpers added: `Get-AzLocalPipelineHost`, `Set-AzLocalPipelineOutput`, `Add-AzLocalPipelineStepSummary`, `Write-AzLocalPipelineNotice`, `Write-AzLocalPipelineWarning`.
