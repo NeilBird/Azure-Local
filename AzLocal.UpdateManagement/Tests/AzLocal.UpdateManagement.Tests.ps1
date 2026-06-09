@@ -34,8 +34,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $script:ModuleInfo | Should -Not -BeNullOrEmpty
         }
 
-        It 'Should have version 0.8.1' {
-            $script:ModuleInfo.Version | Should -Be '0.8.1'
+        It 'Should have version 0.8.2' {
+            $script:ModuleInfo.Version | Should -Be '0.8.2'
         }
 
         It 'Module version constants are in sync between .psm1 and .psd1' {
@@ -6784,6 +6784,65 @@ on:
                 ($result | Where-Object Status -eq 'NoWindowTag').ClusterCount | Should -Be 1
             }
         }
+
+        It 'v0.8.2: -IncludeUntagged Recommendation lists cluster names grouped by UpdateRing (first 15)' {
+            InModuleScope AzLocal.UpdateManagement -Parameters @{ tmpYamlDir2 = $script:tmpYamlDir2 } {
+                param($tmpYamlDir2)
+                Mock Invoke-AzResourceGraphQuery {
+                    @(
+                        [PSCustomObject]@{ ClusterName='cl-cnry-01'; ResourceGroup='r'; SubscriptionId='s'; ClusterResourceId='/s/r/cl-cnry-01'; UpdateRing='Canary'; UpdateStartWindow='' },
+                        [PSCustomObject]@{ ClusterName='cl-cnry-02'; ResourceGroup='r'; SubscriptionId='s'; ClusterResourceId='/s/r/cl-cnry-02'; UpdateRing='Canary'; UpdateStartWindow='' },
+                        [PSCustomObject]@{ ClusterName='cl-prd-01';  ResourceGroup='r'; SubscriptionId='s'; ClusterResourceId='/s/r/cl-prd-01';  UpdateRing='Prod';   UpdateStartWindow='' },
+                        [PSCustomObject]@{ ClusterName='cl-tst-99';  ResourceGroup='r'; SubscriptionId='s'; ClusterResourceId='/s/r/cl-tst-99';  UpdateRing='';       UpdateStartWindow='' }
+                    )
+                }
+                $result = Test-AzLocalApplyUpdatesScheduleCoverage -View Audit -PipelineYamlPath $tmpYamlDir2 -IncludeUntagged -PassThru 6>$null
+                $row = $result | Where-Object Status -eq 'NoWindowTag'
+                $row | Should -Not -BeNullOrEmpty
+                $row.ClusterCount | Should -Be 4
+                $row.Recommendation | Should -Match 'Grouped by UpdateRing'
+                $row.Recommendation | Should -Match 'Canary -> cl-cnry-01, cl-cnry-02'
+                $row.Recommendation | Should -Match 'Prod -> cl-prd-01'
+                $row.Recommendation | Should -Match '\(none\) -> cl-tst-99'
+                $row.Issue | Should -Match 'optional'
+            }
+        }
+
+        It 'v0.8.2: NoWindowTag Recommendation caps the cluster list at 15 and appends "(showing first 15 of N)"' {
+            InModuleScope AzLocal.UpdateManagement -Parameters @{ tmpYamlDir2 = $script:tmpYamlDir2 } {
+                param($tmpYamlDir2)
+                Mock Invoke-AzResourceGraphQuery {
+                    1..20 | ForEach-Object {
+                        [PSCustomObject]@{ ClusterName=("cl-{0:D2}" -f $_); ResourceGroup='r'; SubscriptionId='s'; ClusterResourceId="/s/r/cl-$_"; UpdateRing='Prod'; UpdateStartWindow='' }
+                    }
+                }
+                $result = Test-AzLocalApplyUpdatesScheduleCoverage -View Audit -PipelineYamlPath $tmpYamlDir2 -IncludeUntagged -PassThru 6>$null
+                $row = $result | Where-Object Status -eq 'NoWindowTag'
+                $row.ClusterCount | Should -Be 20
+                $row.Recommendation | Should -Match 'showing first 15 of 20'
+                # Only the first 15 cluster names should appear in the Recommendation
+                $row.Recommendation | Should -Match 'cl-15'
+                $row.Recommendation | Should -Not -Match 'cl-16'
+            }
+        }
+
+        It 'v0.8.2: NoWindowTag sorts AFTER Covered rows (informational, not blocking)' {
+            InModuleScope AzLocal.UpdateManagement -Parameters @{ tmpYamlDir2 = $script:tmpYamlDir2 } {
+                param($tmpYamlDir2)
+                Mock Invoke-AzResourceGraphQuery {
+                    @(
+                        [PSCustomObject]@{ ClusterName='c1'; ResourceGroup='r'; SubscriptionId='s'; ClusterResourceId='/s/r/c1'; UpdateRing='Wave1'; UpdateStartWindow='Sat-Sun_02:00-06:00' },
+                        [PSCustomObject]@{ ClusterName='c2'; ResourceGroup='r'; SubscriptionId='s'; ClusterResourceId='/s/r/c2'; UpdateRing='Wave2'; UpdateStartWindow='Sat-Sun_02:00-06:00' },
+                        [PSCustomObject]@{ ClusterName='c3'; ResourceGroup='r'; SubscriptionId='s'; ClusterResourceId='/s/r/c3'; UpdateRing='';      UpdateStartWindow='' }
+                    )
+                }
+                $result = Test-AzLocalApplyUpdatesScheduleCoverage -View Audit -PipelineYamlPath $tmpYamlDir2 -IncludeUntagged -PassThru 6>$null
+                $cronSection = @($result | Where-Object Section -eq 'Cron')
+                $cronSection.Count | Should -BeGreaterThan 1
+                # NoWindowTag must be the LAST row in the Cron section
+                $cronSection[-1].Status | Should -Be 'NoWindowTag'
+            }
+        }
     }
 
     Context 'Belt-and-braces: -RecommendFiresPerWindow + RingMixedWindows (v0.7.92)' {
@@ -8762,6 +8821,11 @@ schedule:
                 $snippet | Should -Match 'Do NOT add a second'
                 $snippet | Should -Not -Match 'Add \(or merge with\) a top-level' `
                     -Because 'GH-host auto-detect must suppress the ADO `schedules:` block prose'
+                # v0.8.2: indent-tip paste guidance must appear in every
+                # GH Recommend output - operators kept pasting the snippet inside the
+                # BEGIN/END comment block and tripping VS Code's auto-indent-on-paste, which
+                # produced "All mapping items must start at the same column" YAML errors.
+                $snippet | Should -Match 'Indent tip'
             }
         }
 
@@ -8848,6 +8912,35 @@ Describe 'Step.3 pipeline scaffolds - v0.7.70 dual JUnit testsuite emission' {
             $raw = Get-Content -Raw -LiteralPath $adoYaml
             $raw | Should -Match 'Schedule \(ring diff\)'
             $raw | Should -Match 'Cron coverage'
+        }
+    }
+}
+
+# -----------------------------------------------------------------------------
+# v0.8.2 - Step.3 Allow-list section: trimmed Tip + 'How to fix' subsection
+# -----------------------------------------------------------------------------
+# v0.8.2 replaces the verbose 'Tip - per-ring overrides' paragraph and the
+# 3-row example block with a short steady-state one-liner + a dedicated
+# '### How to fix - edit `<scheduleFile>`' subsection naming the schedule
+# file. Both GH and ADO Step.3 templates emit the new shape.
+
+Describe 'Step.3 pipeline scaffolds - v0.8.2 Allow-list section shape' {
+
+    Context 'YAML emits the trimmed Allow-list subsection (no verbose Tip / 3-row example block)' {
+
+        It '[<Platform>] emits the new How-to-fix schedulePath subsection and drops the verbose Tip block' -ForEach @(
+            @{ Platform='GitHub'; YamlPath=(Join-Path $PSScriptRoot '..\Automation-Pipeline-Examples\github-actions\Step.3_apply-updates-schedule-audit.yml') }
+            @{ Platform='ADO';    YamlPath=(Join-Path $PSScriptRoot '..\Automation-Pipeline-Examples\azure-devops\Step.3_apply-updates-schedule-audit.yml') }
+        ) {
+            Test-Path $YamlPath | Should -BeTrue
+            $raw = Get-Content -Raw -LiteralPath $YamlPath
+            # New shape present
+            $raw | Should -Match '### How to fix - edit ``\$schedulePath``'
+            $raw | Should -Match 'inherit the top-level allow-list'
+            $raw | Should -Match 'install the latest Ready update as soon as it is available'
+            # Verbose v0.8.1 shape removed
+            $raw | Should -Not -Match 'Tip - per-ring overrides'
+            $raw | Should -Not -Match 'Showing first 3 of'
         }
     }
 }
@@ -11270,3 +11363,277 @@ Describe 'Regression v0.7.87: bundled GitHub Actions YAML run: blocks stay under
 }
 
 #endregion v0.7.87: New-AzLocalFleetConnectivityStatusSummary (renderer extraction) + 21K-cap regression guard
+
+#region v0.8.2: Pipeline host abstraction (foundations for the upcoming executable-YAML refactor)
+# These five private helpers are the foundation for the per-Step Export-/Invoke- cmdlets
+# that replace the inline `run: |` PowerShell in Step.0-Step.9 YAML files. Each helper
+# must produce BYTE-IDENTICAL output to the inline scripts it replaces; these tests
+# pin that contract.
+
+Describe 'Pipeline output helpers: Get-AzLocalPipelineHost' {
+
+    BeforeEach {
+        # Snapshot env vars we mutate so each test starts clean.
+        $script:_savedGhActions = $env:GITHUB_ACTIONS
+        $script:_savedTfBuild   = $env:TF_BUILD
+        Remove-Item Env:\GITHUB_ACTIONS -ErrorAction SilentlyContinue
+        Remove-Item Env:\TF_BUILD       -ErrorAction SilentlyContinue
+    }
+    AfterEach {
+        if ($null -ne $script:_savedGhActions) { $env:GITHUB_ACTIONS = $script:_savedGhActions } else { Remove-Item Env:\GITHUB_ACTIONS -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_savedTfBuild)   { $env:TF_BUILD       = $script:_savedTfBuild   } else { Remove-Item Env:\TF_BUILD       -ErrorAction SilentlyContinue }
+    }
+
+    It "returns 'GitHub' when GITHUB_ACTIONS is 'true'" {
+        $env:GITHUB_ACTIONS = 'true'
+        InModuleScope AzLocal.UpdateManagement { Get-AzLocalPipelineHost } | Should -Be 'GitHub'
+    }
+
+    It "returns 'AzureDevOps' when TF_BUILD is 'True'" {
+        $env:TF_BUILD = 'True'
+        InModuleScope AzLocal.UpdateManagement { Get-AzLocalPipelineHost } | Should -Be 'AzureDevOps'
+    }
+
+    It "GITHUB_ACTIONS=true wins over TF_BUILD=true (GH self-hosted on ADO agent edge case)" {
+        $env:GITHUB_ACTIONS = 'true'
+        $env:TF_BUILD       = 'True'
+        InModuleScope AzLocal.UpdateManagement { Get-AzLocalPipelineHost } | Should -Be 'GitHub'
+    }
+
+    It "returns 'Local' when neither host env var is set" {
+        InModuleScope AzLocal.UpdateManagement { Get-AzLocalPipelineHost } | Should -Be 'Local'
+    }
+
+    It "treats TF_BUILD as case-insensitive (ADO runner has historically used 'True' and 'true')" {
+        $env:TF_BUILD = 'true'
+        InModuleScope AzLocal.UpdateManagement { Get-AzLocalPipelineHost } | Should -Be 'AzureDevOps'
+    }
+}
+
+Describe 'Pipeline output helpers: Set-AzLocalPipelineOutput' {
+
+    BeforeEach {
+        $script:_savedGhActions = $env:GITHUB_ACTIONS
+        $script:_savedTfBuild   = $env:TF_BUILD
+        $script:_savedGhOutput  = $env:GITHUB_OUTPUT
+        Remove-Item Env:\GITHUB_ACTIONS -ErrorAction SilentlyContinue
+        Remove-Item Env:\TF_BUILD       -ErrorAction SilentlyContinue
+        Remove-Item Env:\GITHUB_OUTPUT  -ErrorAction SilentlyContinue
+        $script:_ghOutputFile = Join-Path -Path $env:TEMP -ChildPath ("ph0-gh-output-{0}.txt" -f ([Guid]::NewGuid()))
+    }
+    AfterEach {
+        if ($null -ne $script:_savedGhActions) { $env:GITHUB_ACTIONS = $script:_savedGhActions } else { Remove-Item Env:\GITHUB_ACTIONS -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_savedTfBuild)   { $env:TF_BUILD       = $script:_savedTfBuild   } else { Remove-Item Env:\TF_BUILD       -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_savedGhOutput)  { $env:GITHUB_OUTPUT  = $script:_savedGhOutput  } else { Remove-Item Env:\GITHUB_OUTPUT  -ErrorAction SilentlyContinue }
+        Remove-Item -LiteralPath $script:_ghOutputFile -ErrorAction SilentlyContinue
+    }
+
+    It 'GitHub: appends "Name=Value" line to $GITHUB_OUTPUT file' {
+        $env:GITHUB_ACTIONS = 'true'
+        $env:GITHUB_OUTPUT  = $script:_ghOutputFile
+        InModuleScope AzLocal.UpdateManagement { Set-AzLocalPipelineOutput -Name 'READY_COUNT' -Value '7' }
+        $content = Get-Content -LiteralPath $script:_ghOutputFile -Raw
+        $content | Should -Match '(^|\n)READY_COUNT=7(\r?\n)?$'
+    }
+
+    It 'GitHub: appends (not overwrites) across multiple calls' {
+        $env:GITHUB_ACTIONS = 'true'
+        $env:GITHUB_OUTPUT  = $script:_ghOutputFile
+        InModuleScope AzLocal.UpdateManagement {
+            Set-AzLocalPipelineOutput -Name 'A' -Value '1'
+            Set-AzLocalPipelineOutput -Name 'B' -Value '2'
+        }
+        $lines = Get-Content -LiteralPath $script:_ghOutputFile
+        @($lines) | Should -Contain 'A=1'
+        @($lines) | Should -Contain 'B=2'
+    }
+
+    It 'GitHub: throws when GITHUB_OUTPUT env var is unset (corrupt runner)' {
+        $env:GITHUB_ACTIONS = 'true'
+        # GITHUB_OUTPUT deliberately unset
+        { InModuleScope AzLocal.UpdateManagement { Set-AzLocalPipelineOutput -Name 'X' -Value '1' } } | Should -Throw '*GITHUB_OUTPUT*'
+    }
+
+    It 'AzureDevOps: emits exact ##vso[task.setvariable] line (step-scoped)' {
+        $env:TF_BUILD = 'True'
+        $captured = & {
+            InModuleScope AzLocal.UpdateManagement { Set-AzLocalPipelineOutput -Name 'READY_COUNT' -Value '7' }
+        } 6>&1 4>&1 *>&1
+        ($captured -join "`n") | Should -Match '##vso\[task\.setvariable variable=READY_COUNT;isOutput=false\]7'
+    }
+
+    It 'AzureDevOps: -CrossJob switches isOutput to true' {
+        $env:TF_BUILD = 'True'
+        $captured = & {
+            InModuleScope AzLocal.UpdateManagement { Set-AzLocalPipelineOutput -Name 'RESOLVED_UPDATE_RING' -Value 'Ring1' -CrossJob }
+        } *>&1
+        ($captured -join "`n") | Should -Match '##vso\[task\.setvariable variable=RESOLVED_UPDATE_RING;isOutput=true\]Ring1'
+    }
+
+    It 'Local: writes [pipeline-output] prefix line' {
+        $captured = & {
+            InModuleScope AzLocal.UpdateManagement { Set-AzLocalPipelineOutput -Name 'X' -Value '42' }
+        } *>&1
+        ($captured -join "`n") | Should -Match '\[pipeline-output\] X=42'
+    }
+
+    It 'throws on multi-line value (parser would break GitHub_OUTPUT format)' {
+        $env:GITHUB_ACTIONS = 'true'
+        $env:GITHUB_OUTPUT  = $script:_ghOutputFile
+        $bad = "line1`nline2"
+        { InModuleScope AzLocal.UpdateManagement -Parameters @{ Bad = $bad } { param($Bad) Set-AzLocalPipelineOutput -Name 'BAD' -Value $Bad } } |
+            Should -Throw '*multi-line*'
+    }
+
+    It 'empty-string Value is allowed (some output vars are intentionally empty)' {
+        $env:GITHUB_ACTIONS = 'true'
+        $env:GITHUB_OUTPUT  = $script:_ghOutputFile
+        { InModuleScope AzLocal.UpdateManagement { Set-AzLocalPipelineOutput -Name 'OPT' -Value '' } } | Should -Not -Throw
+        (Get-Content -LiteralPath $script:_ghOutputFile -Raw) | Should -Match '(^|\n)OPT=(\r?\n)?$'
+    }
+}
+
+Describe 'Pipeline output helpers: Add-AzLocalPipelineStepSummary' {
+
+    BeforeEach {
+        $script:_savedGhActions = $env:GITHUB_ACTIONS
+        $script:_savedTfBuild   = $env:TF_BUILD
+        $script:_savedGhSummary = $env:GITHUB_STEP_SUMMARY
+        $script:_savedStaging   = $env:BUILD_ARTIFACTSTAGINGDIRECTORY
+        Remove-Item Env:\GITHUB_ACTIONS              -ErrorAction SilentlyContinue
+        Remove-Item Env:\TF_BUILD                    -ErrorAction SilentlyContinue
+        Remove-Item Env:\GITHUB_STEP_SUMMARY         -ErrorAction SilentlyContinue
+        Remove-Item Env:\BUILD_ARTIFACTSTAGINGDIRECTORY -ErrorAction SilentlyContinue
+        $script:_ghSummaryFile = Join-Path -Path $env:TEMP -ChildPath ("ph0-gh-summary-{0}.md" -f ([Guid]::NewGuid()))
+        $script:_adoStaging    = Join-Path -Path $env:TEMP -ChildPath ("ph0-ado-staging-{0}" -f ([Guid]::NewGuid()))
+        New-Item -ItemType Directory -Path $script:_adoStaging -Force | Out-Null
+    }
+    AfterEach {
+        if ($null -ne $script:_savedGhActions) { $env:GITHUB_ACTIONS = $script:_savedGhActions } else { Remove-Item Env:\GITHUB_ACTIONS -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_savedTfBuild)   { $env:TF_BUILD       = $script:_savedTfBuild   } else { Remove-Item Env:\TF_BUILD -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_savedGhSummary) { $env:GITHUB_STEP_SUMMARY = $script:_savedGhSummary } else { Remove-Item Env:\GITHUB_STEP_SUMMARY -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_savedStaging)   { $env:BUILD_ARTIFACTSTAGINGDIRECTORY = $script:_savedStaging } else { Remove-Item Env:\BUILD_ARTIFACTSTAGINGDIRECTORY -ErrorAction SilentlyContinue }
+        Remove-Item -LiteralPath $script:_ghSummaryFile -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $script:_adoStaging    -Recurse -Force -ErrorAction SilentlyContinue
+    }
+
+    It 'GitHub: appends markdown to $GITHUB_STEP_SUMMARY and returns the path' {
+        $env:GITHUB_ACTIONS       = 'true'
+        $env:GITHUB_STEP_SUMMARY  = $script:_ghSummaryFile
+        $expected = $script:_ghSummaryFile
+        $returned = InModuleScope AzLocal.UpdateManagement -Parameters @{ md = "# Heading`nbody" } { param($md) Add-AzLocalPipelineStepSummary -Markdown $md }
+        $returned | Should -Be $expected
+        (Get-Content -LiteralPath $expected -Raw) | Should -Match '# Heading'
+    }
+
+    It 'AzureDevOps: writes to per-task file under BUILD_ARTIFACTSTAGINGDIRECTORY and emits uploadsummary directive ONCE' {
+        $env:TF_BUILD = 'True'
+        $env:BUILD_ARTIFACTSTAGINGDIRECTORY = $script:_adoStaging
+        $name = 'phase0-test-summary.md'
+
+        # First call - should emit ##vso[task.uploadsummary]
+        $firstOutput = & {
+            $r = InModuleScope AzLocal.UpdateManagement -Parameters @{ md = '## first'; name = $name } { param($md, $name) Add-AzLocalPipelineStepSummary -Markdown $md -SummaryFileName $name }
+            Write-Host "RETURNED=$r"
+        } *>&1
+        ($firstOutput -join "`n") | Should -Match '##vso\[task\.uploadsummary\]'
+        ($firstOutput -join "`n") | Should -Match ("RETURNED=" + [regex]::Escape((Join-Path $script:_adoStaging $name)))
+
+        # Second call to SAME file - should append but NOT re-emit uploadsummary
+        $secondOutput = & {
+            InModuleScope AzLocal.UpdateManagement -Parameters @{ md = '## second'; name = $name } { param($md, $name) Add-AzLocalPipelineStepSummary -Markdown $md -SummaryFileName $name } | Out-Null
+        } *>&1
+        ($secondOutput -join "`n") | Should -Not -Match '##vso\[task\.uploadsummary\]'
+
+        $file = Join-Path $script:_adoStaging $name
+        $content = Get-Content -LiteralPath $file -Raw
+        $content | Should -Match '## first'
+        $content | Should -Match '## second'
+    }
+
+    It 'AzureDevOps: falls back to AGENT_TEMPDIRECTORY when BUILD_ARTIFACTSTAGINGDIRECTORY is unset' {
+        $env:TF_BUILD = 'True'
+        $env:AGENT_TEMPDIRECTORY = $script:_adoStaging
+        try {
+            $name = ("ph0-fallback-{0}.md" -f ([Guid]::NewGuid()))
+            $returned = InModuleScope AzLocal.UpdateManagement -Parameters @{ md = 'x'; name = $name } { param($md, $name) Add-AzLocalPipelineStepSummary -Markdown $md -SummaryFileName $name }
+            $returned | Should -Be (Join-Path $script:_adoStaging $name)
+        } finally {
+            Remove-Item Env:\AGENT_TEMPDIRECTORY -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'Local: writes to $env:TEMP and returns the path' {
+        $name = ("ph0-local-{0}.md" -f ([Guid]::NewGuid()))
+        $returned = InModuleScope AzLocal.UpdateManagement -Parameters @{ md = 'hello'; name = $name } { param($md, $name) Add-AzLocalPipelineStepSummary -Markdown $md -SummaryFileName $name }
+        try {
+            $returned | Should -Be (Join-Path $env:TEMP $name)
+            (Get-Content -LiteralPath $returned -Raw) | Should -Match 'hello'
+        } finally {
+            Remove-Item -LiteralPath $returned -ErrorAction SilentlyContinue
+        }
+    }
+}
+
+Describe 'Pipeline output helpers: Write-AzLocalPipelineNotice / Write-AzLocalPipelineWarning' {
+
+    BeforeEach {
+        $script:_savedGhActions = $env:GITHUB_ACTIONS
+        $script:_savedTfBuild   = $env:TF_BUILD
+        Remove-Item Env:\GITHUB_ACTIONS -ErrorAction SilentlyContinue
+        Remove-Item Env:\TF_BUILD       -ErrorAction SilentlyContinue
+    }
+    AfterEach {
+        if ($null -ne $script:_savedGhActions) { $env:GITHUB_ACTIONS = $script:_savedGhActions } else { Remove-Item Env:\GITHUB_ACTIONS -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_savedTfBuild)   { $env:TF_BUILD       = $script:_savedTfBuild   } else { Remove-Item Env:\TF_BUILD -ErrorAction SilentlyContinue }
+    }
+
+    It "GitHub notice: emits '::notice title=X::Msg' with %0A newline encoding" {
+        $env:GITHUB_ACTIONS = 'true'
+        $captured = & {
+            InModuleScope AzLocal.UpdateManagement { Write-AzLocalPipelineNotice -Title 'ModuleDrift' -Message "line1`nline2" }
+        } *>&1
+        ($captured -join "`n") | Should -Match '::notice title=ModuleDrift::line1%0Aline2'
+    }
+
+    It "GitHub warning: emits '::warning title=X::Msg' with %0A newline encoding" {
+        $env:GITHUB_ACTIONS = 'true'
+        $captured = & {
+            InModuleScope AzLocal.UpdateManagement { Write-AzLocalPipelineWarning -Title 'HealthGate' -Message "alpha`nbeta" }
+        } *>&1
+        ($captured -join "`n") | Should -Match '::warning title=HealthGate::alpha%0Abeta'
+    }
+
+    It "AzureDevOps notice: maps to plain '[notice] Title: Msg' (no native severity tier)" {
+        $env:TF_BUILD = 'True'
+        $captured = & {
+            InModuleScope AzLocal.UpdateManagement { Write-AzLocalPipelineNotice -Title 'X' -Message 'Y' }
+        } *>&1
+        ($captured -join "`n") | Should -Match '\[notice\] X: Y'
+    }
+
+    It "AzureDevOps warning: emits ##vso[task.logissue type=warning]Title: Msg" {
+        $env:TF_BUILD = 'True'
+        $captured = & {
+            InModuleScope AzLocal.UpdateManagement { Write-AzLocalPipelineWarning -Title 'X' -Message 'Y' }
+        } *>&1
+        ($captured -join "`n") | Should -Match '##vso\[task\.logissue type=warning\]X: Y'
+    }
+
+    It 'Local notice: writes [notice] prefix to Write-Host stream' {
+        $captured = & {
+            InModuleScope AzLocal.UpdateManagement { Write-AzLocalPipelineNotice -Title 'X' -Message 'Y' }
+        } *>&1
+        ($captured -join "`n") | Should -Match '\[notice\] X: Y'
+    }
+
+    It 'Local warning: writes via Write-Warning stream (visible to operators in interactive shells)' {
+        $captured = & {
+            InModuleScope AzLocal.UpdateManagement { Write-AzLocalPipelineWarning -Title 'X' -Message 'Y' }
+        } 3>&1 *>&1
+        ($captured -join "`n") | Should -Match 'X: Y'
+    }
+}
+
+#endregion v0.8.2: Pipeline host abstraction
+

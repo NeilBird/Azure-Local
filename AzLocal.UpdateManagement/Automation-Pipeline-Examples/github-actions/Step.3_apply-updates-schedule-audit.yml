@@ -91,7 +91,7 @@ env:
   # this to the version actually installed and to the latest on PSGallery, and emits a
   # ::notice annotation if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.8.1'
+  GENERATED_AGAINST_MODULE_VERSION: '0.8.2'
   REQUIRED_MODULE_VERSION: ${{ github.event.inputs.module_version || vars.REQUIRED_MODULE_VERSION || '' }}
 
 jobs:
@@ -551,16 +551,15 @@ jobs:
                     }
 
                     if ($rowsMissingOverride.Count -gt 0) {
-                        $md += "`n> **Tip - per-ring overrides.** Rows above without a row-level ``allowedUpdateVersions:`` inherit the top-level. To enforce a 'minimum updates' policy on a specific ring (e.g. keep Prod on the latest feature drop only - YY04 / YY10 - and skip cumulative updates), add a per-row override. Use ``Get-AzLocalAvailableUpdates`` (or the Azure portal -> Azure Local -> Updates) to find valid update names / version strings. Suggested edit sites for this schedule (first 3 inheriting rows):`n"
+                        $md += "`n*$($rowsMissingOverride.Count) row(s) inherit the top-level allow-list. This is fine when you want each ring to install the latest Ready update as soon as it is available.*`n"
+                        $md += "`n### How to fix - edit ``$schedulePath```n"
+                        $md += "`n*Only needed if you want to PIN a ring to a specific update (e.g. keep Prod on the latest feature drop only - YY04 / YY10 - and skip cumulative updates between feature drops).* Add ``allowedUpdateVersions:`` to the row that covers the ring you want to pin. Use ``Get-AzLocalAvailableUpdates`` (or the Azure portal -> Azure Local -> Updates) to find valid update names / version strings.`n"
                         $md += "`n``````yaml`n"
-                        foreach ($m in ($rowsMissingOverride | Select-Object -First 3)) {
-                            $md += "# Row $($m.Row): rings='$($m.Rings)' weeksInCycle='$($m.WeeksInCycle)' daysOfWeek='$($m.DaysOfWeek)'`n"
-                            $md += "#   allowedUpdateVersions: 'Solution12.2604.1003.1005;Solution12.2610.1003.XX'`n"
-                        }
-                        $md += "`````` `n"
-                        if ($rowsMissingOverride.Count -gt 3) {
-                            $md += "`n*Showing first 3 of $($rowsMissingOverride.Count) rows that inherit the top-level allow-list.*`n"
-                        }
+                        $md += "- weeksInCycle: '*'`n"
+                        $md += "  daysOfWeek:   'Tue,Wed,Thu'`n"
+                        $md += "  rings:        'Prod'`n"
+                        $md += "  allowedUpdateVersions: 'Solution12.2604.1003.1005;Solution12.2610.1003.XX'`n"
+                        $md += "``````n"
                     } else {
                         $md += "`n*Every schedule row has an explicit ``allowedUpdateVersions:`` override - no inheritance from the top-level default.*`n"
                     }

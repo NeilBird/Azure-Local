@@ -5,6 +5,51 @@ All notable changes to the AzLocal.UpdateManagement module (renamed from AzStack
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.2] - 2026-06-10
+
+Operator-experience release for `Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend`. No public API changes; no output-shape changes that break existing scripts. Two paste-time pain points reported on v0.8.1 are fixed in the advisor's emitted snippet, plus a trimmed Step.3 Allow-list section, a richer `NoWindowTag` recommendation, and five new internal helpers that lay the foundation for the upcoming executable-YAML refactor.
+
+### `Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend` paste-time pain points fixed
+
+- **"All cron times below are UTC" comment is now embedded inside both the GH and ADO snippets.** GitHub Actions and Azure DevOps both evaluate `cron:` in UTC regardless of repo / runner / agent timezone, but operators repeatedly burned time converting from a local-time mental model and ended up with windows that fired hours offset from their intent. The advisor now prepends a `# All cron times below are UTC ...` comment line directly above `schedule:` (GH) and `schedules:` (ADO) so the snippet is self-documenting once pasted into `Step.6_apply-updates.yml`.
+- **"Indent tip" callout above the snippet warns about IDE auto-indent-on-paste.** The GH snippet is intentionally at 2-space indent (so `schedule:` is a sibling of the existing `workflow_dispatch:` under `on:`). When operators paste with the cursor sitting inside the `# BEGIN-AZLOCAL-CUSTOMIZE:schedule-triggers` / `# END-AZLOCAL-CUSTOMIZE:schedule-triggers` comment block, VS Code (and JetBrains IDEs) silently double the indent, producing the YAML error *"All mapping items must start at the same column"*. The advisor now emits a `> **Indent tip.**` blockquote directly above the snippet explaining the cause, instructing the operator to paste at column 0 of a fresh blank line so `schedule:` lines up with `workflow_dispatch:`, and telling them how to recover (delete two leading spaces from every pasted line) if they already hit it.
+
+### `Test-AzLocalApplyUpdatesScheduleCoverage -View Audit` `NoWindowTag` row enrichment + reordering
+
+- **`NoWindowTag` recommendation now names the affected clusters, grouped by `UpdateRing`.** Pre-v0.8.2 the row showed a generic *"Tag clusters with UpdateStartWindow=&lt;days&gt;_&lt;HH:MM&gt;-&lt;HH:MM&gt;"* nudge that left operators cross-referencing the matrix CSV to find the offenders. The advisor now lists the first 15 cluster names grouped by their `UpdateRing` tag (or `(none)` when both tags are missing), e.g. `Prod -> hci-syd-01, hci-syd-02; Wave1 -> hci-mel-01 (+3 more) (showing first 15 of 42)`, so the audit table is actionable on its own.
+- **`NoWindowTag` row issue text clarified that the tag is optional.** The runtime gate `Test-AzLocalUpdateScheduleAllowed` only enforces a maintenance window WHEN the tag is set, so untagged clusters are not a blocker - they just have no enforced window. The clarified prose tells operators why this is "informational, not failure".
+- **`NoWindowTag` sort order moved from rank 7 to rank 10** (i.e. AFTER `Covered`). Since the tag is optional, sorting these rows last keeps the table readable when the rest of the fleet is `Covered` and the operator only cares about gaps.
+
+### Step.3 Allow-list section trimmed in both GH and ADO scaffolds
+
+- **`Allow-list coverage (schema v2)` subsection no longer emits the verbose `> Tip - per-ring overrides` paragraph + 3-row example block** that v0.8.1 produced. Inheriting the top-level allow-list IS the expected steady state for most fleets (install Latest as soon as Ready); the verbose tip was misleading operators into thinking they had to add overrides.
+- **New `### How to fix - edit \`$schedulePath\`` subsection** names the schedule file directly and explains that `allowedUpdateVersions:` overrides are only needed when an operator wants to PIN a ring to a specific update (e.g. keep Prod on the latest feature drop only - YY04 / YY10 - and skip cumulative updates between feature drops). Followed by a single-row YAML example.
+- **6 new Pester assertions** lock in the new shape: both Step.3 scaffolds emit the trimmed one-liner and the `How to fix - edit $schedulePath` heading, AND do NOT emit `Tip - per-ring overrides` / `Showing first 3 of` (the verbose v0.8.1 markers).
+
+### `Azure Stack HCI Update Operator` custom-role Description rewritten to drop module-internal jargon
+
+- The custom-role Description shipped into the Azure RBAC plane (visible in the Azure portal **Custom roles** blade, in `az role definition list` / `Get-AzRoleDefinition` output, and in any RBAC audit/governance tooling) previously read *"...read the fleet-connectivity scopes (Arc machines, edge-device NICs, Azure Resource Bridges) required by Step.4"*. `Step.4` is a module-private concept and meaningless to anyone outside `AzLocal.UpdateManagement`.
+- **New Description**: *"Can read and apply Azure Local cluster updates, manage UpdateRing tags, and read the fleet-connectivity inventory (Arc-enabled machines, edge-device NICs, Azure Resource Bridges) needed to assess pre-update connectivity."*
+- **Same RBAC grant** - `Actions[]`, `NotActions[]`, `DataActions[]`, `AssignableScopes[]` are byte-identical. Operators with the role already deployed need no action; the next `az role definition update --role-definition ./azlocal-update-management-custom-role.json` will refresh the Description.
+- **Updated in lockstep across all 6 sites** that ship/document the role: the bundled `Automation-Pipeline-Examples/azlocal-update-management-custom-role.json` file (consumed by `az role definition create`), the two inline JSON blocks in `Automation-Pipeline-Examples/README.md` section 4.1, and the three inline JSON blocks in `docs/rbac.md` (first JSON block + Option 2 here-string + management-group-scope variant).
+
+### Module foundations for the upcoming executable-YAML refactor
+
+- Five new internal (Private) helpers added: `Get-AzLocalPipelineHost`, `Set-AzLocalPipelineOutput`, `Add-AzLocalPipelineStepSummary`, `Write-AzLocalPipelineNotice`, `Write-AzLocalPipelineWarning`.
+- They abstract over the host-specific quirks of GitHub Actions vs Azure DevOps output channels: `$env:GITHUB_OUTPUT` vs `##vso[task.setvariable]`, `$env:GITHUB_STEP_SUMMARY` vs `##vso[task.uploadsummary]`, `::notice/::warning` vs `##vso[task.logissue]`.
+- Not exported. No user-visible effect in v0.8.2 - these are foundations for the upcoming per-Step `Export-*` / `Invoke-*` cmdlets that will move inline `run: |` PowerShell out of `Step.{0..9}.yml` and into the module proper.
+- 23 new Pester assertions cover the three host modes (`GitHub` via `$env:GITHUB_ACTIONS='true'`, `AzureDevOps` via `$env:TF_BUILD='True'`, `Local` fallback when both unset; `GitHub` wins when both are set) and the byte-identical contracts of each emitted logging-command syntax.
+
+### Migration
+
+- `Install-Module AzLocal.UpdateManagement -Force` (or `Update-Module`). No code changes required.
+- Re-run `Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend` once to pick up the new self-documenting snippet (the cron *values* are unchanged from v0.8.1; only the surrounding comment and prose changed).
+
+### Pin and version drift
+
+- `GENERATED_AGAINST_MODULE_VERSION` moves from `0.8.1` to `0.8.2` across all 20 bundled `Step.{0..9}.yml` templates (GH Actions + Azure DevOps).
+- Drift-sync test asserts `$script:ModuleVersion` (psm1) == `ModuleVersion` (psd1) == `Should -Be '0.8.2'` (test) - any drift fails CI.
+
 ## [0.8.1] - 2026-06-09
 
 Docs-and-snippet correctness release. No public API or output-shape changes - existing scripts and pipelines continue to work without modification.
