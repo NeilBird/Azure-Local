@@ -9497,7 +9497,7 @@ Describe 'Function: Get-AzLocalFleetHealthOverview - v0.7.70 (ARG-first fleet he
                             HealthStatus         = 'Healthy'
                             UpdateStatus         = 'AppliedSuccessfully'
                             CurrentVersion       = '12.2503.0'
-                            SbeVersion           = '4.1.2.0'
+                            SbeVersion           = '4.1.2.0-Marker'
                             AzureConnection      = 'Connected'
                             LastChecked          = '2026-05-16T08:00:00Z'
                             HealthResultsAgeDays = 0
