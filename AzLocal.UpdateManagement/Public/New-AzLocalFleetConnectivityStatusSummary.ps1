@@ -322,7 +322,7 @@ function New-AzLocalFleetConnectivityStatusSummary {
     [void]$sb.AppendLine('| Source | Count | Notes |')
     [void]$sb.AppendLine('|--------|-------|-------|')
     [void]$sb.AppendLine("| Clusters in scope | $clusterTotal | One row per ``microsoft.azurestackhci/clusters`` resource |")
-    [void]$sb.AppendLine("| Cluster-reported node count (sum) | $clusterNodeSum | Sum of ``array_length(properties.reportedProperties.nodes)`` across all clusters (the ``nodes`` array - NOT a non-existent ``nodeCount`` field; pre-v0.7.84 used the wrong property name) |")
+    [void]$sb.AppendLine("| Cluster-reported node count (sum) | $clusterNodeSum | Sum of ``array_length(properties.reportedProperties.nodes)`` across all clusters |")
     [void]$sb.AppendLine("| Arc-tagged physical nodes | $arcTotal | Count of ``microsoft.hybridcompute/machines`` with ``properties.detectedProperties.cloudprovider=AzSHCI`` and ``kind!=HCI``. **NOT** a join against ``cluster.reportedProperties.nodes`` - it is the raw Arc-side count and can be greater OR less than the Cluster-reported sum |")
     [void]$sb.AppendLine("| Node coverage delta | $nodeCoverageDelta | (Cluster-reported) - (Arc-tagged). **Positive** = clusters claim more nodes than Arc has (Arc-onboarding lag / deleted Arc resource / missing ``AzSHCI`` provider tag / stale ``cluster.reportedProperties.nodes`` array). **Negative** = Arc has more ``AzSHCI``-tagged machines than clusters claim (orphan/decommissioned Arc resource / pre-staged node not yet joined / mis-tagged non-cluster machine). See 'How to interpret + act' below |")
     [void]$sb.AppendLine("| ARBs in scope | $arbTotal | One row per ``resourceconnector/appliances`` (multi-cluster-per-RG collapsed via summarize/make_set) |")

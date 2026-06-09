@@ -34,8 +34,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $script:ModuleInfo | Should -Not -BeNullOrEmpty
         }
 
-        It 'Should have version 0.7.99' {
-            $script:ModuleInfo.Version | Should -Be '0.7.99'
+        It 'Should have version 0.8.0' {
+            $script:ModuleInfo.Version | Should -Be '0.8.0'
         }
 
         It 'Module version constants are in sync between .psm1 and .psd1' {
@@ -831,6 +831,29 @@ Describe 'Function: Set-AzLocalClusterUpdateRingTag' {
 
         It 'Still emits Warning when the existing UpdateRing tag differs from the target' {
             $script:setRingSource | Should -Match "differs from target.*-Level\s+Warning"
+        }
+
+        It 'Steady-state skip path logs Info (not Warning) when UpdateRing matches AND no schedule diff' {
+            # The misleading "use -Force to overwrite" warning previously fired even when
+            # the cluster had nothing to overwrite (UpdateRing already correct, schedule
+            # tags already correct). The skip branch now splits on $previousTagValue eq target.
+            $script:setRingSource | Should -Match 'All managed tags already match desired state.*-Level\s+Info'
+            $script:setRingSource | Should -Match '\$action\s*=\s*"NoChange"'
+            $script:setRingSource | Should -Match '\$status\s*=\s*"AlreadyInSync"'
+        }
+
+        It 'Overwrite-blocked skip path still emits Warning + -Force hint when UpdateRing differs and no schedule diff' {
+            $script:setRingSource | Should -Match 'UpdateRing differs from target.*use -Force.*-Level\s+Warning'
+        }
+
+        It 'Summary section tallies AlreadyInSync as its own bucket' {
+            $script:setRingSource | Should -Match '\$alreadyInSync\s*=\s*@\(\$results\s*\|\s*Where-Object\s*\{\s*\$_\.Status\s*-eq\s*"AlreadyInSync"\s*\}\)\.Count'
+            $script:setRingSource | Should -Match 'Already in sync \(no change needed\):'
+        }
+
+        It 'Force mode short-circuits when all managed tags already match (no wasted PATCH)' {
+            $script:setRingSource | Should -Match 'Force mode enabled but all managed tags already match desired state'
+            $script:setRingSource | Should -Match '-Force PATCH skipped'
         }
     }
 }

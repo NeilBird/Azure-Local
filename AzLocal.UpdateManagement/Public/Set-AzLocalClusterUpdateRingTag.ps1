@@ -469,15 +469,27 @@ function Set-AzLocalClusterUpdateRingTag {
                                      $needsExcludedDefaultStamp
 
                 if (-not $Force -and -not $hasNewScheduleTags) {
-                    Write-Log -Message "Skipping cluster - use -Force to overwrite existing tag" -Level Warning
-                    $action = "Skipped"
-                    $status = "Skipped"
-                    $message = "Existing UpdateRing tag present (value: $previousTagValue). Use -Force to overwrite."
-                    
+                    # Two distinct steady-state paths:
+                    #   (a) UpdateRing matches AND no schedule diff -> truly nothing to do; Info, not Warning.
+                    #   (b) UpdateRing differs AND no schedule diff -> overwrite blocked; Warning + -Force hint.
+                    if ($previousTagValue -eq $currentUpdateRingValue) {
+                        Write-Log -Message "All managed tags already match desired state - no action needed" -Level Info
+                        $action = "NoChange"
+                        $status = "AlreadyInSync"
+                        $message = "All managed tags (UpdateRing, UpdateStartWindow, UpdateExclusionsWindow, UpdateExcluded) already match desired state."
+                    }
+                    else {
+                        Write-Log -Message "Skipping cluster - UpdateRing differs from target; use -Force to overwrite existing tag" -Level Warning
+                        $action = "Skipped"
+                        $status = "Skipped"
+                        $message = "Existing UpdateRing tag (value: $previousTagValue) differs from target ($currentUpdateRingValue). Use -Force to overwrite."
+                    }
+
                     # Write to CSV
-                    $csvLine = "`"$clusterName`",`"$resourceGroup`",`"$subscriptionId`",`"$resourceId`",`"$action`",`"$previousTagValue`",`"$currentUpdateRingValue`",`"$status`",`"$message`""
+                    $escapedMessage = $message -replace '"', '""'
+                    $csvLine = "`"$clusterName`",`"$resourceGroup`",`"$subscriptionId`",`"$resourceId`",`"$action`",`"$previousTagValue`",`"$currentUpdateRingValue`",`"$status`",`"$escapedMessage`""
                     Add-Content -Path $csvLogPath -Value $csvLine -WhatIf:$false
-                    
+
                     $results += [PSCustomObject]@{
                         ClusterName      = $clusterName
                         ResourceGroup    = $resourceGroup
@@ -496,6 +508,34 @@ function Set-AzLocalClusterUpdateRingTag {
                     $action = "Updated"
                 }
                 else {
+                    # Force mode. Still short-circuit when there is literally nothing to write -
+                    # UpdateRing already matches AND no schedule diff AND no missing default-stamp.
+                    # Saves a redundant ARM PATCH per cluster on already-clean fleets.
+                    if ($previousTagValue -eq $currentUpdateRingValue -and -not $hasNewScheduleTags) {
+                        Write-Log -Message "Force mode enabled but all managed tags already match desired state - no PATCH needed" -Level Info
+                        $action = "NoChange"
+                        $status = "AlreadyInSync"
+                        $message = "All managed tags already match desired state; -Force PATCH skipped (no-op)."
+
+                        # Write to CSV
+                        $escapedMessage = $message -replace '"', '""'
+                        $csvLine = "`"$clusterName`",`"$resourceGroup`",`"$subscriptionId`",`"$resourceId`",`"$action`",`"$previousTagValue`",`"$currentUpdateRingValue`",`"$status`",`"$escapedMessage`""
+                        Add-Content -Path $csvLogPath -Value $csvLine -WhatIf:$false
+
+                        $results += [PSCustomObject]@{
+                            ClusterName      = $clusterName
+                            ResourceGroup    = $resourceGroup
+                            SubscriptionId   = $subscriptionId
+                            ResourceId       = $resourceId
+                            Action           = $action
+                            PreviousTagValue = $previousTagValue
+                            NewTagValue      = $currentUpdateRingValue
+                            Status           = $status
+                            Message          = $message
+                        }
+                        continue
+                    }
+
                     Write-Log -Message "Force mode enabled - will update existing tag" -Level Info
                     $action = "Updated"
                 }
@@ -637,13 +677,15 @@ function Set-AzLocalClusterUpdateRingTag {
     
     $created = @($results | Where-Object { $_.Action -eq "Created" -and $_.Status -eq "Success" }).Count
     $updated = @($results | Where-Object { $_.Action -eq "Updated" -and $_.Status -eq "Success" }).Count
+    $alreadyInSync = @($results | Where-Object { $_.Status -eq "AlreadyInSync" }).Count
     $skipped = @($results | Where-Object { $_.Status -eq "Skipped" }).Count
     $failed = @($results | Where-Object { $_.Status -eq "Failed" }).Count
-    
+
     Write-Log -Message "Total clusters processed: $($results.Count)" -Level Info
     Write-Log -Message "Tags created: $created" -Level $(if ($created -gt 0) { "Success" } else { "Info" })
     Write-Log -Message "Tags updated: $updated" -Level $(if ($updated -gt 0) { "Success" } else { "Info" })
-    Write-Log -Message "Skipped (existing tag, no -Force): $skipped" -Level $(if ($skipped -gt 0) { "Warning" } else { "Info" })
+    Write-Log -Message "Already in sync (no change needed): $alreadyInSync" -Level Info
+    Write-Log -Message "Skipped (UpdateRing differs, no -Force): $skipped" -Level $(if ($skipped -gt 0) { "Warning" } else { "Info" })
     Write-Log -Message "Failed: $failed" -Level $(if ($failed -gt 0) { "Error" } else { "Info" })
     Write-Log -Message "" -Level Info
     Write-Log -Message "CSV log saved to: $csvLogPath" -Level Info

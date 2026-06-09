@@ -64,7 +64,7 @@ env:
   # this to the version actually installed and to the latest on PSGallery, and emits a
   # ::notice annotation if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.7.99'
+  GENERATED_AGAINST_MODULE_VERSION: '0.8.0'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): manual workflow_dispatch input >
   # repository variable 'REQUIRED_MODULE_VERSION' > empty (latest).
@@ -278,10 +278,23 @@ jobs:
         Write-Host "========================================" -ForegroundColor Cyan
         Write-Host "Applying UpdateRing Tags" -ForegroundColor Cyan
         Write-Host "========================================" -ForegroundColor Cyan
-        
-        # Run tag management
-        Set-AzLocalClusterUpdateRingTag @params
-        
+
+        # Run tag management. -PassThru returns the per-cluster results so the
+        # Summary step can build a breakdown table rather than parroting only
+        # the workflow inputs back at the operator.
+        $results = Set-AzLocalClusterUpdateRingTag @params -PassThru
+
+        # Persist results to a JSON sidecar so the Summary step (separate shell)
+        # can read them. Lives in the same artifacts folder that gets uploaded.
+        $resultsJsonPath = Join-Path $outputDir 'UpdateRingTag_Results.json'
+        if ($null -ne $results) {
+            @($results) | ConvertTo-Json -Depth 5 | Out-File -FilePath $resultsJsonPath -Encoding utf8
+            Write-Host "Wrote $($results.Count) per-cluster result row(s) to: $resultsJsonPath"
+        } else {
+            '[]' | Out-File -FilePath $resultsJsonPath -Encoding utf8
+            Write-Host "No per-cluster results returned (empty CSV?). Wrote empty array to: $resultsJsonPath"
+        }
+
         Write-Host ""
         Write-Host "Tag management complete"
       id: apply-tags
@@ -311,15 +324,66 @@ jobs:
       run: |
         "## UpdateRing Tag Management Summary" >> $env:GITHUB_STEP_SUMMARY
         "" >> $env:GITHUB_STEP_SUMMARY
-        
+
         $dryRun = $env:INPUT_DRY_RUN -eq "true"
         $forceOverwrite = $env:INPUT_FORCE_OVERWRITE -eq "true"
-        
+
         "| Setting | Value |" >> $env:GITHUB_STEP_SUMMARY
         "|---------|-------|" >> $env:GITHUB_STEP_SUMMARY
         "| Dry Run | $dryRun |" >> $env:GITHUB_STEP_SUMMARY
         "| Force Overwrite | $forceOverwrite |" >> $env:GITHUB_STEP_SUMMARY
-        
+
+        # Per-cluster results breakdown - read the JSON sidecar the apply step wrote.
+        # See AzLocal.UpdateManagement Set-AzLocalClusterUpdateRingTag -PassThru schema.
+        $resultsJsonPath = './artifacts/UpdateRingTag_Results.json'
+        if (Test-Path $resultsJsonPath) {
+            $results = @(Get-Content -Raw -Path $resultsJsonPath | ConvertFrom-Json)
+            $total         = $results.Count
+            $created       = @($results | Where-Object { $_.Action -eq 'Created'  -and $_.Status -eq 'Success'       }).Count
+            $updated       = @($results | Where-Object { $_.Action -eq 'Updated'  -and $_.Status -eq 'Success'       }).Count
+            $alreadyInSync = @($results | Where-Object { $_.Status -eq 'AlreadyInSync' }).Count
+            $skipped       = @($results | Where-Object { $_.Status -eq 'Skipped'       }).Count
+            $failed        = @($results | Where-Object { $_.Status -eq 'Failed'        }).Count
+            $whatIf        = @($results | Where-Object { $_.Status -eq 'WhatIf'        }).Count
+
+            "" >> $env:GITHUB_STEP_SUMMARY
+            "### Result breakdown" >> $env:GITHUB_STEP_SUMMARY
+            "" >> $env:GITHUB_STEP_SUMMARY
+            "| Outcome | Count |" >> $env:GITHUB_STEP_SUMMARY
+            "|---------|------:|" >> $env:GITHUB_STEP_SUMMARY
+            "| Total clusters processed | $total |" >> $env:GITHUB_STEP_SUMMARY
+            "| Tags created             | $created |" >> $env:GITHUB_STEP_SUMMARY
+            "| Tags updated             | $updated |" >> $env:GITHUB_STEP_SUMMARY
+            "| Already in sync (no-op)  | $alreadyInSync |" >> $env:GITHUB_STEP_SUMMARY
+            "| Skipped (UpdateRing differs, no -Force) | $skipped |" >> $env:GITHUB_STEP_SUMMARY
+            if ($whatIf -gt 0) {
+                "| WhatIf (dry-run preview) | $whatIf |" >> $env:GITHUB_STEP_SUMMARY
+            }
+            "| Failed                   | $failed |" >> $env:GITHUB_STEP_SUMMARY
+
+            if ($total -gt 0) {
+                "" >> $env:GITHUB_STEP_SUMMARY
+                "<details><summary>Per-cluster results ($total rows)</summary>" >> $env:GITHUB_STEP_SUMMARY
+                "" >> $env:GITHUB_STEP_SUMMARY
+                "| Cluster | Action | Previous | New | Status | Message |" >> $env:GITHUB_STEP_SUMMARY
+                "|---------|--------|----------|-----|--------|---------|" >> $env:GITHUB_STEP_SUMMARY
+                foreach ($r in $results) {
+                    $cn  = ($r.ClusterName      | ForEach-Object { "$_" }) -replace '\|','\|'
+                    $act = ($r.Action           | ForEach-Object { "$_" }) -replace '\|','\|'
+                    $pv  = ($r.PreviousTagValue | ForEach-Object { "$_" }) -replace '\|','\|'
+                    $nv  = ($r.NewTagValue      | ForEach-Object { "$_" }) -replace '\|','\|'
+                    $st  = ($r.Status           | ForEach-Object { "$_" }) -replace '\|','\|'
+                    $msg = ($r.Message          | ForEach-Object { "$_" }) -replace '\|','\|' -replace '\r?\n',' '
+                    "| $cn | $act | $pv | $nv | $st | $msg |" >> $env:GITHUB_STEP_SUMMARY
+                }
+                "" >> $env:GITHUB_STEP_SUMMARY
+                "</details>" >> $env:GITHUB_STEP_SUMMARY
+            }
+        } else {
+            "" >> $env:GITHUB_STEP_SUMMARY
+            "_No per-cluster results JSON found at $resultsJsonPath - apply step may have failed before producing results._" >> $env:GITHUB_STEP_SUMMARY
+        }
+
         if ($dryRun) {
             "" >> $env:GITHUB_STEP_SUMMARY
             "**This was a dry run. No changes were applied.**" >> $env:GITHUB_STEP_SUMMARY

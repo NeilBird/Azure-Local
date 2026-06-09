@@ -58,13 +58,13 @@ on:
         # or '***' (three stars - deliberate, not a typo) to match every cluster that HAS the UpdateRing tag set.
         description: "UpdateRing tag value (only used when scope=by-update-ring). Single ring, 'Prod;Ring2', or '***'."
         required: false
-        default: 'Wave1'
+        default: ''
       long_running_step_hours:
-        description: 'PRIMARY signal (v0.7.96+). Flag in-flight runs whose CURRENT STEP has been running longer than this many hours (default 2). More accurate than overall-run elapsed for large clusters where a legitimate 12-node run can exceed 6-8h while each individual step ticks along normally.'
+        description: 'PRIMARY stuck-step signal. Flag in-flight runs whose CURRENT STEP has been running longer than this many hours (default 2). More accurate than overall-run elapsed for large clusters where a legitimate 12-node run can exceed 6-8h while each individual step ticks along normally.'
         required: false
         default: '2'
       long_running_threshold_hours:
-        description: 'Belt-and-braces overall-elapsed flag (default 24, demoted from 6 in v0.7.96). Useful as a backstop for very long-stuck runs; per-step elapsed (long_running_step_hours) is now the primary stuck-run signal.'
+        description: 'Belt-and-braces overall-elapsed flag (default 24h). Useful as a backstop for very long-stuck runs; per-step elapsed (long_running_step_hours) is the primary stuck-run signal.'
         required: false
         default: '24'
       recent_failure_window_hours:
@@ -72,9 +72,9 @@ on:
         required: false
         default: '24'
       critical_elapsed_days:
-        description: 'CRITICAL tier for overall-elapsed (v0.7.99+, default 3 days). In-flight runs older than this get a :rotating_light: chip; older than 2x this get a :skull: chip. Strongest visual signal that human intervention is needed - a 19-day-stuck run will no longer be hidden behind a single "step errored" chip.'
+        description: 'CRITICAL tier for overall-elapsed (default 3 days). In-flight runs older than this get a :rotating_light: chip; older than 2x this get a :skull: chip. Strongest visual signal that human intervention is needed - a 19-day-stuck run will no longer be hidden behind a single "step errored" chip.'
         required: false
-        default: '7'
+        default: '3'
       module_version:
         description: 'Pin AzLocal.UpdateManagement version (empty = latest from PSGallery). See Automation-Pipeline-Examples/README.md section 5 "Optional configuration".'
         required: false
@@ -85,7 +85,7 @@ env:
   # this to the version actually installed and to the latest on PSGallery, and emits a
   # ::notice annotation if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.7.99'
+  GENERATED_AGAINST_MODULE_VERSION: '0.8.0'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): manual workflow_dispatch input >
   # repository variable 'REQUIRED_MODULE_VERSION' > empty (latest).

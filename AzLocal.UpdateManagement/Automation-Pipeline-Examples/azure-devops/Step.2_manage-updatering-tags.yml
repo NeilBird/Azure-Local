@@ -45,7 +45,7 @@ variables:
   # log if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
   - name: GENERATED_AGAINST_MODULE_VERSION
-    value: '0.7.99'
+    value: '0.8.0'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): queue-time parameter > pipeline variable
   # 'REQUIRED_MODULE_VERSION' overridden at queue time > empty (latest).
@@ -243,10 +243,24 @@ stages:
                 Write-Host "========================================" -ForegroundColor Cyan
                 Write-Host "Applying UpdateRing Tags" -ForegroundColor Cyan
                 Write-Host "========================================" -ForegroundColor Cyan
-                
-                # Run tag management
-                Set-AzLocalClusterUpdateRingTag @params
-                
+
+                # Run tag management. -PassThru returns the per-cluster results so
+                # the Summary task can build a breakdown table rather than parroting
+                # only the pipeline inputs back at the operator.
+                $results = Set-AzLocalClusterUpdateRingTag @params -PassThru
+
+                # Persist results to a JSON sidecar so the Summary task (separate
+                # PowerShell process) can read them. Lives in the artifact staging
+                # dir that gets published.
+                $resultsJsonPath = Join-Path $outputDir 'UpdateRingTag_Results.json'
+                if ($null -ne $results) {
+                    @($results) | ConvertTo-Json -Depth 5 | Out-File -FilePath $resultsJsonPath -Encoding utf8
+                    Write-Host "Wrote $($results.Count) per-cluster result row(s) to: $resultsJsonPath"
+                } else {
+                    '[]' | Out-File -FilePath $resultsJsonPath -Encoding utf8
+                    Write-Host "No per-cluster results returned (empty CSV?). Wrote empty array to: $resultsJsonPath"
+                }
+
                 Write-Host ""
                 Write-Host "Tag management complete"
           
@@ -273,21 +287,74 @@ stages:
               script: |
                 $dryRun = [System.Convert]::ToBoolean("${{ parameters.dryRun }}")
                 $forceOverwrite = [System.Convert]::ToBoolean("${{ parameters.forceOverwrite }}")
-                
-                $summary = @"
-                # UpdateRing Tag Management Summary
-                
-                | Setting | Value |
-                |---------|-------|
-                | Dry Run | $dryRun |
-                | Force Overwrite | $forceOverwrite |
-                "@
-                
-                if ($dryRun) {
-                    $summary += "`n`n**This was a dry run. No changes were applied.**"
-                    $summary += "`n`nRe-run the pipeline with 'Preview changes' set to false to apply changes."
+
+                $lines = New-Object System.Collections.Generic.List[string]
+                [void]$lines.Add('# UpdateRing Tag Management Summary')
+                [void]$lines.Add('')
+                [void]$lines.Add('| Setting | Value |')
+                [void]$lines.Add('|---------|-------|')
+                [void]$lines.Add("| Dry Run | $dryRun |")
+                [void]$lines.Add("| Force Overwrite | $forceOverwrite |")
+
+                # Per-cluster results breakdown - read the JSON sidecar the apply task wrote.
+                # See AzLocal.UpdateManagement Set-AzLocalClusterUpdateRingTag -PassThru schema.
+                $resultsJsonPath = Join-Path '$(Build.ArtifactStagingDirectory)' 'UpdateRingTag_Results.json'
+                if (Test-Path $resultsJsonPath) {
+                    $results = @(Get-Content -Raw -Path $resultsJsonPath | ConvertFrom-Json)
+                    $total         = $results.Count
+                    $created       = @($results | Where-Object { $_.Action -eq 'Created'  -and $_.Status -eq 'Success'       }).Count
+                    $updated       = @($results | Where-Object { $_.Action -eq 'Updated'  -and $_.Status -eq 'Success'       }).Count
+                    $alreadyInSync = @($results | Where-Object { $_.Status -eq 'AlreadyInSync' }).Count
+                    $skipped       = @($results | Where-Object { $_.Status -eq 'Skipped'       }).Count
+                    $failed        = @($results | Where-Object { $_.Status -eq 'Failed'        }).Count
+                    $whatIf        = @($results | Where-Object { $_.Status -eq 'WhatIf'        }).Count
+
+                    [void]$lines.Add('')
+                    [void]$lines.Add('## Result breakdown')
+                    [void]$lines.Add('')
+                    [void]$lines.Add('| Outcome | Count |')
+                    [void]$lines.Add('|---------|------:|')
+                    [void]$lines.Add("| Total clusters processed | $total |")
+                    [void]$lines.Add("| Tags created             | $created |")
+                    [void]$lines.Add("| Tags updated             | $updated |")
+                    [void]$lines.Add("| Already in sync (no-op)  | $alreadyInSync |")
+                    [void]$lines.Add("| Skipped (UpdateRing differs, no -Force) | $skipped |")
+                    if ($whatIf -gt 0) {
+                        [void]$lines.Add("| WhatIf (dry-run preview) | $whatIf |")
+                    }
+                    [void]$lines.Add("| Failed                   | $failed |")
+
+                    if ($total -gt 0) {
+                        [void]$lines.Add('')
+                        [void]$lines.Add("<details><summary>Per-cluster results ($total rows)</summary>")
+                        [void]$lines.Add('')
+                        [void]$lines.Add('| Cluster | Action | Previous | New | Status | Message |')
+                        [void]$lines.Add('|---------|--------|----------|-----|--------|---------|')
+                        foreach ($r in $results) {
+                            $cn  = ("$($r.ClusterName)")      -replace '\|','\|'
+                            $act = ("$($r.Action)")           -replace '\|','\|'
+                            $pv  = ("$($r.PreviousTagValue)") -replace '\|','\|'
+                            $nv  = ("$($r.NewTagValue)")      -replace '\|','\|'
+                            $st  = ("$($r.Status)")           -replace '\|','\|'
+                            $msg = ("$($r.Message)")          -replace '\|','\|' -replace '\r?\n',' '
+                            [void]$lines.Add("| $cn | $act | $pv | $nv | $st | $msg |")
+                        }
+                        [void]$lines.Add('')
+                        [void]$lines.Add('</details>')
+                    }
+                } else {
+                    [void]$lines.Add('')
+                    [void]$lines.Add("_No per-cluster results JSON found at $resultsJsonPath - apply step may have failed before producing results._")
                 }
-                
-                $summary | Out-File "$(Build.ArtifactStagingDirectory)/summary.md" -Encoding UTF8
-                Write-Host "##vso[task.uploadsummary]$(Build.ArtifactStagingDirectory)/summary.md"
+
+                if ($dryRun) {
+                    [void]$lines.Add('')
+                    [void]$lines.Add('**This was a dry run. No changes were applied.**')
+                    [void]$lines.Add('')
+                    [void]$lines.Add("Re-run the pipeline with 'Preview changes' set to false to apply changes.")
+                }
+
+                $summaryPath = '$(Build.ArtifactStagingDirectory)/summary.md'
+                $lines -join [Environment]::NewLine | Out-File $summaryPath -Encoding UTF8
+                Write-Host "##vso[task.uploadsummary]$summaryPath"
 

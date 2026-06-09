@@ -4,9 +4,30 @@
 >
 > **For older releases**, this is the canonical reference; the main README intentionally stays slim so the most recent block is easy to find.
 >
-> **For v0.7.99 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0799) `What's New in v0.7.99` section.
+> **For v0.8.0 (the current release)**, see the main [README.md](../README.md#whats-new-in-v080) `What's New in v0.8.0` section.
 
 ---
+
+### What's New in v0.8.0
+
+v0.8.0 is a patch release rolling up three follow-ups to v0.7.99 plus Step.2 UX fixes. No public API changes. `Set-AzLocalClusterUpdateRingTag -PassThru` gains two new enum values (`Action='NoChange'` and `Status='AlreadyInSync'`) to distinguish steady-state clusters from genuinely-skipped ones; existing scripts that switch on `Created`/`Updated`/`Skipped`/`Failed` continue to work, with already-in-sync clusters now surfacing under the new bucket rather than spurious `Skipped`.
+
+**Step.2 `Set-AzLocalClusterUpdateRingTag` UX cleanup.** Three operator-visible fixes:
+- The skip branch no longer logs a misleading `Warning` + "use -Force to overwrite" hint for clusters that are already in the desired state. Steady-state clusters now log an `Info` line (`All managed tags already match desired state - no action needed`) and are tallied separately as `Already in sync (no change needed):`. The `Warning` path is preserved for the genuine case (`UpdateRing` differs from target AND no schedule diff).
+- `-Force` short-circuits when all managed tags already match desired state - saves a redundant ARM PATCH per cluster on already-clean fleets. Behaviour when there IS something to change is unchanged.
+- Step.2 GitHub Actions + Azure DevOps job summaries now include a per-cluster result breakdown (counts table + collapsible per-cluster details), at parity with Step.3/5/6/8. Previously the run-level summary only showed the 2-row settings table.
+
+**Step.7 `criticalElapsedDays` form-default fixed `7` -> `3`.** The v0.7.99 release lowered the CRITICAL overall-elapsed tier from 7 to 3 days. The inline script default (`$criticalElapsedDays = 3`) and the help-text ("default 3 days") were updated correctly, but the `workflow_dispatch` input default value (GH) / pipeline-parameter default value (ADO) on the form itself was left at `'7'`. When an operator triggered the workflow and left the input untouched, the non-empty form-default `'7'` was passed in via `INPUT_CRITICAL_ELAPSED_DAYS`, the override branch fired, and the threshold silently reverted to the old 7 days - undoing the v0.7.99 behaviour change.
+
+**Step.7 `updateRing` form-default fixed `'Wave1'` -> `''` (empty).** Aligns Step.7 with Step.8 + Step.9, which already use `default: ''`. The downstream guard `if ($scope -eq 'by-update-ring' -and $updateRing)` honours empty as "no filter", so behaviour is unchanged on the default `scope=all` path. Removes the misleading "Wave1" value that suggested a real tenant-specific default existed when the operator switched to `scope=by-update-ring`.
+
+**New `Tests/Pii-Guard.Tests.ps1` repo-hygiene guard.** Pester now scans every file under `Tests/` on each run and fails the build if it finds emails, `.onmicrosoft.com` tenant UPN domains, GUIDs in identity contexts (`tenantId` / `clientId` / `objectId` / `principalId` / `applicationId`), or real public IPv4 addresses outside an explicit allow-list. RFC1918 / loopback / link-local / CGNAT / RFC5737 doc / multicast / subnet-mask shapes / well-known public DNS are auto-excluded. Catches accidental PII commits to a public repo at PR time rather than after-the-fact.
+
+**`Publish-Module.ps1` excludes `docs/RELEASE-PROCESS.md` from the published `.nupkg`.** That file is a maintainer-only release checklist (its own opening line states "Consumers do not need to read it") and has no runtime value. Repo copy on GitHub stays for maintainer reference; consumers no longer ship it inside every installed module folder.
+
+**All 20 bundled `Step.{0..9}.yml` templates** bump `GENERATED_AGAINST_MODULE_VERSION` from `'0.7.99'` to `'0.8.0'`.
+
+See [CHANGELOG.md](../CHANGELOG.md#080---2026-06-09) for the full v0.8.0 entry.
 
 ### What's New in v0.7.99
 

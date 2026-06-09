@@ -3,7 +3,7 @@
     RootModule = 'AzLocal.UpdateManagement.psm1'
 
     # Version number of this module.
-    ModuleVersion = '0.7.99'
+    ModuleVersion = '0.8.0'
 
     # Supported PSEditions
     CompatiblePSEditions = @('Desktop', 'Core')
@@ -215,21 +215,22 @@
 
             # ReleaseNotes of this module
             ReleaseNotes = @'
-## Version 0.7.99 - Property/Summary renames (AvailableUpdates -> AllAvailableUpdates, AvailableUpdatesCount -> ActionableUpdatesCount, Ready/NotReady Summary -> ReadyForUpdate/NotReadyForUpdate + new UpToDate bucket) + Step.7 CRITICAL elapsed-days default 7 -> 3 + artifact zip names prefixed with step.X-
+## Version 0.8.0 - Step.7 form-default regressions fixed (criticalElapsedDays 7->3, updateRing Wave1->empty) + Pii-Guard.Tests.ps1 (repo-hygiene guard) + Publish-Module.ps1 excludes maintainer-only RELEASE-PROCESS.md
 
-Breaking property renames in the readiness/summary cmdlets to remove a long-standing semantic confusion, plus a Step.7 default tightening and an artifact-naming cleanup. All bundled pipeline YAMLs were updated to consume the new output shapes.
+Patch release rolling up three follow-ups to v0.7.99. No public API or output-shape changes - existing scripts and pipelines continue to work without modification.
 
-- **`Get-AzLocalUpdateSummary`: `AvailableUpdatesCount` -> `ActionableUpdatesCount`.** The column counted only ACTIONABLE updates (Ready / NotReady), not the full available-updates inventory. The new name removes the ambiguity. Internal logic, ARM source field, and per-cluster output are unchanged.
-- **`Get-AzLocalClusterUpdateReadiness` + `Get-AzLocalFleetStatusData`: `AvailableUpdates` -> `AllAvailableUpdates`.** Property now reads clearly as "every available update, every state". No semantic change; same content as before.
-- **`Get-AzLocalClusterUpdateReadiness` Summary: 2-bucket -> 3-bucket model.** The console `Ready for Update` / `Not Ready / Other State` summary and the JSON export (`ClustersReady`/`ClustersNotReady`) become three buckets: `Ready for Update` (`ClustersReadyForUpdate`), `Up to Date` (`ClustersUpToDate`, new), and `Not Ready for Update` (`ClustersNotReadyForUpdate`). Clusters with `UpdateState in (UpToDate, AppliedSuccessfully)` AND no remaining available updates were previously rolled into `NotReady`, which falsely flagged a healthy fleet as needing attention. They now have their own bucket.
-- **Pipeline consumers updated in lock-step.** Step.5 (`assess-update-readiness`) and Step.8 (`fleet-update-status`) markdown + JSON now surface the 3-bucket model in both GH Actions and Azure DevOps mirrors. `readiness-status.json` Summary keys renamed to `ReadyForUpdate` / `UpToDate` / `NotReadyForUpdate`. Step.8 markdown vocabulary (already `Up to Date` / `Ready for Update`) is unchanged.
-- **Step.7 monitor-updates: CRITICAL elapsed-days default 7 -> 3 (skull threshold 14 -> 6).** Operator preference to surface stuck runs sooner. Override unchanged: pass `criticalElapsedDays: <N>` via workflow_dispatch / pipeline params for fleets with multi-week SBE-prerequisite cascades. Affects both GH Actions and ADO Step.7 templates.
-- **Step.7 testsuite-level `time=` zeroed.** Per-testcase `time=` still carries real per-run elapsed seconds (v0.7.98 behaviour preserved). The suite-level wrapper now emits `time="0"` rather than summing five unrelated wall-clock ages (~88 days in a typical fleet snapshot) which was misleading.
-- **Artifact zip names prefixed with `step.X-`.** All 20 bundled pipeline templates now emit artifact zips named `azlocal-step.X-<purpose>_yyyyMMdd_HHmmss` (was `azlocal-<purpose>_yyyyMMdd_HHmmss`). Operators downloading multiple artifacts in one session can now tell at a glance which Step.* produced each zip. Pester guard upgraded to assert the `^azlocal-step\.\d+-` prefix.
-- **Docs**: `Automation-Pipeline-Examples/README.md` section 1.1 Step.N table gains direct GH Actions + Azure DevOps YAML column links; section 9 (ThrottleLimit) trimmed of stale v0.7.68 historical narrative. `docs/cmdlet-reference.md` reflects the property and Summary renames.
-- **GENERATED_AGAINST_MODULE_VERSION** pin moves from ''0.7.98'' to ''0.7.99'' across all 20 bundled templates.
+- **Step.7 monitor-updates: `criticalElapsedDays` form-default fixed 7 -> 3.** The v0.7.99 release lowered the CRITICAL overall-elapsed tier from 7 to 3 days. The inline script default and help-text were updated correctly, but the `workflow_dispatch` / pipeline-parameter default value on the input itself was left at ''7''. When an operator triggered the workflow and left the input untouched, the non-empty form-default ''7'' was passed in via `INPUT_CRITICAL_ELAPSED_DAYS`, the override branch fired, and the threshold silently reverted to the old 7 days - undoing the v0.7.99 behaviour change. Now matches the help-text (''3'').
+- **Step.7 monitor-updates: `updateRing` form-default fixed ''Wave1'' -> '''' (empty).** Aligns with Step.8 + Step.9, which already use `default: ''''`. The downstream guard `if ($scope -eq ''by-update-ring'' -and $updateRing)` honours empty as ''no filter'', so behaviour is unchanged for the default `scope=all` path. Removes the misleading ''Wave1'' value that suggested a real tenant-specific default existed.
+- **New `Tests/Pii-Guard.Tests.ps1` repo-hygiene guard.** Pester now scans every file under `Tests/` on each run and fails the build if it finds emails, `.onmicrosoft.com` tenant UPN domains, GUIDs in identity contexts (tenantId / clientId / objectId / principalId / applicationId), or real public IPv4 addresses outside an explicit allow-list. RFC1918 / loopback / link-local / CGNAT / RFC5737 doc / multicast / subnet-mask shapes / well-known public DNS are auto-excluded, as are version-string false-positives like `4.5.6.7-RegressionMarker`. Catches accidental PII commits to a public repo at PR time rather than after-the-fact.
+- **`Publish-Module.ps1` excludes `docs/RELEASE-PROCESS.md` from the published `.nupkg`.** That file is a maintainer-only release checklist (its own opening line states ''Consumers do not need to read it'') and has no runtime value. Repo copy on GitHub stays for maintainer reference; consumers no longer ship it inside every installed module folder.
+- **GENERATED_AGAINST_MODULE_VERSION** pin moves from ''0.7.99'' to ''0.8.0'' across all 20 bundled templates.
 
-Apply via `Install-Module AzLocal.UpdateManagement -Force` (or `Update-Module`). If you have copied any of the Step.5 / Step.7 / Step.8 YAMLs into your CI repo via `Update-AzLocalPipelineExample`, re-run it to pick up the renamed properties and the artifact-prefix change.
+Apply via `Install-Module AzLocal.UpdateManagement -Force` (or `Update-Module`). If you have copied the Step.7 YAML into your CI repo via `Update-AzLocalPipelineExample`, re-run it to pick up the form-default corrections - otherwise the form will keep showing ''7'' and ''Wave1''.
+
+## Version 0.7.99 - Property/Summary renames (AvailableUpdates -> AllAvailableUpdates, AvailableUpdatesCount -> ActionableUpdatesCount, Ready/NotReady Summary -> ReadyForUpdate/UpToDate/NotReadyForUpdate) + Step.7 CRITICAL elapsed-days 7->3 + artifact zip names prefixed with step.X-
+
+For full v0.7.99 release notes see:
+https://github.com/NeilBird/Azure-Local/blob/main/AzLocal.UpdateManagement/CHANGELOG.md
 
 ## Version 0.7.98 - Step.7 monitor-updates UX overhaul (severity tiers, chip stacks, fleet badge, per-cell icons) + Step.7/Step.8 JUnit `time=` populated with real run elapsed seconds
 

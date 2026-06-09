@@ -2,7 +2,7 @@
 
 > ⚠️ **Disclaimer**: This module is **NOT** a Microsoft supported service offering or product. It is provided as example code only, with no warranty or official support. Refer to the [MIT license](https://github.com/NeilBird/Azure-Local/blob/main/LICENSE) for further information.
 
-**Latest Version:** v0.7.99 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.7.99)
+**Latest Version:** v0.8.0 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.8.0)
 
 > 📢 **Renamed in v0.7.3**: this module was previously published as `AzStackHci.ManageUpdates`. The new module name aligns with the Azure Local product name (_Microsoft retired the *Azure Stack HCI* brand in late 2024_). The module GUID is preserved across the rename. If you have the old name installed, run:
 >
@@ -23,7 +23,7 @@ Azure Local REST API specification (includes update management endpoints): https
 **This README (overview + most-recent release notes):**
 
 - [Where to Start](#where-to-start)
-- [What's New in v0.7.99](#whats-new-in-v0799)
+- [What's New in v0.8.0](#whats-new-in-v080)
 - [Files](#files)
 - [Prerequisites](#prerequisites)
 - [RBAC Requirements](#rbac-requirements) (summary; full reference in [docs/rbac.md](docs/rbac.md))
@@ -86,52 +86,42 @@ If you are new to this module, work through these in order from a regular PowerS
 
 > Most CI/CD pipelines in [Automation-Pipeline-Examples/](Automation-Pipeline-Examples/) are direct implementations of one of these workflows. Start there if you want a copy-pasteable end-to-end pipeline.
 
-## What's New in v0.7.99
+## What's New in v0.8.0
 
-**Breaking property and Summary renames in the readiness / fleet-status cmdlets** to remove a long-standing semantic ambiguity, plus a Step.7 CRITICAL elapsed-days default tightening (7 -> 3) and an artifact-naming cleanup (every pipeline zip is now prefixed with `step.X-` so operators can tell at a glance which Step.* emitted it). All 20 bundled pipeline YAMLs were updated to consume the new output shapes; the `GENERATED_AGAINST_MODULE_VERSION` pin moves to `0.7.99` on every template.
+**Patch release rolling up three follow-ups to v0.7.99 plus Step.2 UX fixes.** No public API changes. `Set-AzLocalClusterUpdateRingTag -PassThru` gains two new enum values (`Action='NoChange'` and `Status='AlreadyInSync'`) to distinguish steady-state clusters from genuinely-skipped ones; existing scripts that switch on `Created`/`Updated`/`Skipped`/`Failed` continue to work, with already-in-sync clusters now surfacing under the new bucket rather than spurious `Skipped`.
 
-### Breaking renames - readiness / fleet-status output shape
+### Step.2 manage-updatering-tags - UX fixes
 
-- **`Get-AzLocalUpdateSummary`**: `AvailableUpdatesCount` -> **`ActionableUpdatesCount`**. The column only counted ACTIONABLE updates (Ready / NotReady), not the full available-updates inventory; the new name removes the ambiguity. ARM source field and per-cluster output are unchanged.
-- **`Get-AzLocalClusterUpdateReadiness`** and **`Get-AzLocalFleetStatusData`**: `AvailableUpdates` -> **`AllAvailableUpdates`**. Property now reads clearly as "every available update, every state". Same content as before.
-- **`Get-AzLocalClusterUpdateReadiness` Summary: 2-bucket -> 3-bucket model.** Console output and JSON export both gain a `Up to Date` bucket distinct from `Not Ready for Update`. Previously, healthy clusters with `UpdateState in (UpToDate, AppliedSuccessfully)` and no remaining available updates were rolled into the `NotReady` total, which falsely flagged an updated fleet as needing attention. They now have their own bucket.
-  - Console: `Ready for Update` / `Not Ready / Other State` -> `Ready for Update` / **`Up to Date`** (new) / `Not Ready for Update`.
-  - JSON `Summary`: `ClustersReady` / `ClustersNotReady` -> `ClustersReadyForUpdate` / **`ClustersUpToDate`** (new) / `ClustersNotReadyForUpdate`.
-- The cmdlet name `Get-AzLocalAvailableUpdates` is unchanged - only output properties on other cmdlets were renamed.
+- **No more misleading "use -Force to overwrite" warnings on steady-state clusters.** The skip branch now distinguishes between (a) cluster is already in the desired state -> `Info` log `All managed tags already match desired state - no action needed` and new `Action='NoChange' / Status='AlreadyInSync'` row, and (b) cluster's existing `UpdateRing` actually differs from target -> still emits the `Warning` + `-Force` hint (unchanged from prior releases, message now names both values).
+- **`-Force` short-circuits when there's nothing to change.** Saves a redundant ARM PATCH per cluster on already-clean fleets. Logged as `Action='NoChange' / Status='AlreadyInSync'` with message `All managed tags already match desired state; -Force PATCH skipped (no-op).` Behaviour when there IS something to change is unchanged.
+- **Step.2 GitHub Actions + Azure DevOps job summaries now include the per-cluster result breakdown.** Previously the run-level summary tab only showed a 2-row settings table (`Dry Run` / `Force Overwrite`); operators had to drill into the apply step's raw log to see what actually happened per cluster. Both platforms now capture `-PassThru` into a `UpdateRingTag_Results.json` artifact sidecar and the Summary step emits a counts table (Total / Created / Updated / Already in sync / Skipped / Failed) plus a collapsible per-cluster details block. Parity with the Step.3 / Step.5 / Step.6 / Step.8 summary patterns.
+- **Cmdlet summary section** gains the `Already in sync (no change needed):` tally line; the existing `Skipped (existing tag, no -Force):` line is correctly renamed `Skipped (UpdateRing differs, no -Force):`.
 
-### Pipeline consumers updated in lock-step
+### Step.7 monitor-updates - form-default regressions fixed (both platforms)
 
-- **Step.5 `assess-update-readiness.yml`** (GH + ADO) computes and surfaces the 3-bucket model in the console banner, the markdown step summary, and the per-UpdateRing pivot table.
-- **Step.8 `fleet-update-status.yml`** (GH + ADO) `readiness-status.json` `Summary` keys renamed to `ReadyForUpdate` / `UpToDate` / `NotReadyForUpdate`. `NotReadyForUpdate` now excludes both InProgress AND UpToDate clusters.
-- **`Automation-Pipeline-Examples/.itsm/azurelocal-itsm.yml`** is unchanged - the `NotReady` key there maps a per-run `Status` value emitted by `Start-AzLocalClusterUpdate.ps1`, which is a separate (and stable) contract.
+- **`criticalElapsedDays` form-default fixed `7` -> `3`.** The v0.7.99 release lowered the CRITICAL overall-elapsed tier from 7 to 3 days. The inline script default (`$criticalElapsedDays = 3`) and the help-text ("default 3 days") were updated correctly, but the `workflow_dispatch` input default value (GH) / pipeline-parameter default value (ADO) on the form itself was left at `'7'`. When an operator triggered the workflow and left the input untouched, the non-empty form-default `'7'` was passed in via `INPUT_CRITICAL_ELAPSED_DAYS`, the override branch fired, and the threshold silently reverted to the old 7 days - undoing the v0.7.99 behaviour change.
+- **`updateRing` form-default fixed `'Wave1'` -> `''` (empty).** Aligns Step.7 with Step.8 + Step.9, which already use `default: ''`. The downstream guard `if ($scope -eq 'by-update-ring' -and $updateRing)` honours empty as "no filter", so behaviour is unchanged on the default `scope=all` path. Removes the misleading "Wave1" value that suggested a real tenant-specific default existed when the operator switched to `scope=by-update-ring`.
 
-### Step.7 CRITICAL elapsed-days default 7 -> 3
+### Repo-hygiene guard - `Tests/Pii-Guard.Tests.ps1`
 
-- `criticalElapsedDays` default lowered from `7` to `3` in both `github-actions/Step.7_monitor-updates.yml` and `azure-devops/Step.7_monitor-updates.yml`. The skull (rotating-light) threshold (2x CRITICAL) consequently lowers from `14` to `6` days. Operator rationale: a 7-day update run already feels long; surface stuck runs with the CRITICAL severity tier sooner.
-- Override path unchanged: pass `criticalElapsedDays: <N>` via workflow_dispatch (GH) / pipeline params (ADO) for fleets with multi-week SBE-prerequisite cascades.
+- **New Pester guard** that scans every file under `Tests/` on each run and fails the build if it finds emails, `.onmicrosoft.com` tenant UPN domains, GUIDs in identity contexts (`tenantId` / `clientId` / `objectId` / `principalId` / `applicationId`), or real public IPv4 addresses outside an explicit allow-list.
+- Auto-excluded: RFC1918 / loopback / link-local / CGNAT / RFC5737 doc ranges / RFC2544 benchmarking / multicast / subnet-mask shapes / well-known public DNS (Google, Cloudflare, Quad9, OpenDNS). The trailing word-boundary on the IPv4 regex excludes version-string false-positives such as SbeVersion `4.5.6.7-RegressionMarker`.
+- Allow-list seeded with the three synthetic GUID fixtures already confirmed safe.
 
-### Step.7 testsuite-level `time=` zeroed
+### Publish-Module.ps1 excludes maintainer-only `RELEASE-PROCESS.md`
 
-- Per-testcase `time=` continues to carry real per-run elapsed seconds (v0.7.98 behaviour preserved). The suite-level wrapper now emits `time="0"` rather than summing five unrelated wall-clock ages (~88 days in a typical fleet snapshot) which inflated GitHub Test Reporter's `"ran in"` timestamp.
+- `Publish-Module.ps1` now strips `docs/RELEASE-PROCESS.md` at staging time. That file is a maintainer-facing release checklist (its own opening line states "Consumers do not need to read it") and has no runtime value to module consumers. Repo copy on GitHub remains for maintainer reference; it no longer ships inside every installed module folder.
 
-### Artifact zip names now carry the producing Step number
+### Pin and version drift
 
-- Every bundled pipeline template's artifact zip moves from `azlocal-<purpose>_yyyyMMdd_HHmmss` to **`azlocal-step.X-<purpose>_yyyyMMdd_HHmmss`** where X matches the Step.* filename. Operators downloading several artifacts in one session can now tell at a glance which Step.* produced each zip without unzipping.
-- The Pester guard for the artifact-name convention was upgraded from a generic `azlocal-` prefix check to require the `^azlocal-step\.\d+-` regex shape; new templates that forget the `step.X-` prefix will fail the unit test.
-
-### Documentation refresh
-
-- `Automation-Pipeline-Examples/README.md` section 1.1 Step.N table gains two new columns linking directly to the GH Actions and Azure DevOps source YAML for each step.
-- `Automation-Pipeline-Examples/README.md` section 9 (ThrottleLimit) trimmed of the stale v0.7.68 historical-removal narrative.
-- `docs/cmdlet-reference.md` property table reflects the property and Summary renames.
+- `GENERATED_AGAINST_MODULE_VERSION` moves from `0.7.99` to `0.8.0` across all 20 bundled `Step.{0..9}.yml` templates (GH Actions + Azure DevOps).
+- Drift-sync test asserts `$script:ModuleVersion` (psm1) == `ModuleVersion` (psd1) == `Should -Be '0.8.0'` (test) - any drift fails CI.
 
 ### Migration summary
 
-For cmdlet consumers: `Install-Module AzLocal.UpdateManagement -Force` (or `Update-Module`). Update any downstream consumers of `Get-AzLocalUpdateSummary.AvailableUpdatesCount` to `.ActionableUpdatesCount`, and any consumers of `Get-AzLocalClusterUpdateReadiness.AvailableUpdates` / `Get-AzLocalFleetStatusData.AvailableUpdates` to `.AllAvailableUpdates`.
+For cmdlet consumers: `Install-Module AzLocal.UpdateManagement -Force` (or `Update-Module`). No code changes required. Scripts that switch on the `-PassThru` `Status` field continue to work; if you want to display steady-state clusters separately from genuinely-skipped ones, add an `AlreadyInSync` bucket to your display logic. For CI/CD pipeline consumers: re-run `Update-AzLocalPipelineExample -Destination <path>` to pick up the Step.7 form-default fixes, the new Step.2 summary breakdown + per-cluster details, and the new pin. If you left the Step.7 form-default `criticalElapsedDays` untouched in v0.7.99, behaviour will now correctly match the documented 3-day threshold.
 
-For CI/CD pipeline consumers: re-run `Update-AzLocalPipelineExample -Destination <path>` to pick up the renamed JSON Summary keys, the new `step.X-` artifact prefix, and the tightened Step.7 CRITICAL default. If you have downstream consumers of `readiness-status.json`, update them to read `ReadyForUpdate` / `UpToDate` / `NotReadyForUpdate` instead of `Ready` / `NotReady`.
-
-> Previous release notes (v0.7.98 and earlier) have moved into the [Release History](#release-history) appendix below, with full text retained in [`docs/release-history.md`](docs/release-history.md) and [`CHANGELOG.md`](CHANGELOG.md).
+> Previous release notes (v0.7.99 and earlier) have moved into the [Release History](#release-history) appendix below, with full text retained in [`docs/release-history.md`](docs/release-history.md) and [`CHANGELOG.md`](CHANGELOG.md).
 
 ## Files
 
@@ -610,7 +600,13 @@ This code is provided as-is for educational and reference purposes.
 
 The full What's-New history (v0.7.81 and earlier) has moved to [docs/release-history.md](docs/release-history.md).
 
-The most recent release notes for **v0.7.99** stay above under [`What's New in v0.7.99`](#whats-new-in-v0799).
+The most recent release notes for **v0.8.0** stay above under [`What's New in v0.8.0`](#whats-new-in-v080).
+
+### What's New in v0.7.99
+
+**Breaking property and Summary renames in the readiness / fleet-status cmdlets** plus a Step.7 CRITICAL elapsed-days default tightening (7 -> 3) and an artifact-naming cleanup. `Get-AzLocalUpdateSummary.AvailableUpdatesCount` -> `ActionableUpdatesCount`; `Get-AzLocalClusterUpdateReadiness.AvailableUpdates` and `Get-AzLocalFleetStatusData.AvailableUpdates` -> `AllAvailableUpdates`. Readiness Summary went 2-bucket -> 3-bucket with a new `Up to Date` bucket distinct from `Not Ready for Update`; JSON keys: `ClustersReadyForUpdate` / `ClustersUpToDate` (new) / `ClustersNotReadyForUpdate`. Step.5 + Step.8 pipelines (GH + ADO) updated in lock-step. Every artifact zip now prefixed with `azlocal-step.X-` so operators can identify which Step.* produced it without unzipping. `GENERATED_AGAINST_MODULE_VERSION` pin moved to `0.7.99` across all 20 bundled templates.
+
+See [CHANGELOG.md](CHANGELOG.md#0799---2026-06-09) for the full v0.7.99 entry.
 
 ### What's New in v0.7.98
 
