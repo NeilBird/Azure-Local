@@ -58,7 +58,7 @@ on:
         # or '***' (three stars - deliberate, not a typo) to match every cluster that HAS the UpdateRing tag set.
         description: "UpdateRing tag value (only used when scope=by-update-ring). Single ring, 'Prod;Ring2', or '***'."
         required: false
-        default: 'Wave1'
+        default: ''
       long_running_step_hours:
         description: 'PRIMARY signal (v0.7.96+). Flag in-flight runs whose CURRENT STEP has been running longer than this many hours (default 2). More accurate than overall-run elapsed for large clusters where a legitimate 12-node run can exceed 6-8h while each individual step ticks along normally.'
         required: false
@@ -74,7 +74,7 @@ on:
       critical_elapsed_days:
         description: 'CRITICAL tier for overall-elapsed (v0.7.99+, default 3 days). In-flight runs older than this get a :rotating_light: chip; older than 2x this get a :skull: chip. Strongest visual signal that human intervention is needed - a 19-day-stuck run will no longer be hidden behind a single "step errored" chip.'
         required: false
-        default: '7'
+        default: '3'
       module_version:
         description: 'Pin AzLocal.UpdateManagement version (empty = latest from PSGallery). See Automation-Pipeline-Examples/README.md section 5 "Optional configuration".'
         required: false

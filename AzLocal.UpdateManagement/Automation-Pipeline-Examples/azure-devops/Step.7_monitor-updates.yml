@@ -55,7 +55,7 @@ parameters:
     # accepts single ring, 'Prod;Ring2' list, or '***' wildcard (three stars - deliberate).
     displayName: "UpdateRing tag value (only used when scope=by-update-ring). Single, 'Prod;Ring2', or '***'."
     type: string
-    default: 'Wave1'
+    default: ''
 
   - name: longRunningStepHours
     displayName: 'PRIMARY signal (v0.7.96+). Flag in-flight runs whose CURRENT STEP has been running longer than this many hours.'
@@ -75,7 +75,7 @@ parameters:
   - name: criticalElapsedDays
     displayName: 'CRITICAL tier for overall-elapsed (v0.7.99+, default 3 days). Runs older than this get a :rotating_light: chip; older than 2x get a :skull: chip - strongest visual signal that human intervention is needed.'
     type: string
-    default: '7'
+    default: '3'
 
   - name: moduleVersion
     displayName: 'Pin AzLocal.UpdateManagement version (empty = latest from PSGallery). See Automation-Pipeline-Examples/README.md section 5 "Optional configuration".'
