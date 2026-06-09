@@ -3,7 +3,7 @@
     RootModule = 'AzLocal.UpdateManagement.psm1'
 
     # Version number of this module.
-    ModuleVersion = '0.8.4'
+    ModuleVersion = '0.8.5'
 
     # Supported PSEditions
     CompatiblePSEditions = @('Desktop', 'Core')
@@ -103,6 +103,7 @@
         'Public/Copy-AzLocalPipelineExample.ps1',
         'Public/Export-AzLocalFleetState.ps1',
         'Public/Get-AzLocalApplyUpdatesScheduleConfig.ps1',
+        'Public/Get-AzLocalApplyUpdatesScheduleCycleCalendar.ps1',
         'Public/Get-AzLocalApplyUpdatesScheduleNextFirings.ps1',
         'Public/Get-AzLocalAvailableUpdates.ps1',
         'Public/Get-AzLocalClusterInfo.ps1',
@@ -185,6 +186,8 @@
         'Get-AzLocalApplyUpdatesScheduleNextFirings',
         'New-AzLocalApplyUpdatesScheduleConfig',
         'Update-AzLocalApplyUpdatesScheduleConfig',
+        # Cycle Calendar (v0.8.5) - human-readable per-day projection of the resolver for one full cycle (or any -Days horizon), variable cycle length safe, year-boundary safe, per-ring 'next eligible date' summary
+        'Get-AzLocalApplyUpdatesScheduleCycleCalendar',
         # Fleet Health Overview (v0.7.70) - one row per cluster, ARG-first projection of cluster + updateSummaries (fleet-scale)
         'Get-AzLocalFleetHealthOverview',
         # Latest Released Solution Version (v0.7.70) - public manifest probe (aka.ms/AzureEdgeUpdates) that anchors the rolling YYMM support window

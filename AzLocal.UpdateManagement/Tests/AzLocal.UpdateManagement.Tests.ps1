@@ -251,6 +251,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
                 'Update-AzLocalApplyUpdatesScheduleConfig',
                 'Resolve-AzLocalCurrentUpdateRing',
                 'Get-AzLocalApplyUpdatesScheduleNextFirings',
+                # Cycle Calendar (v0.8.5) - human-readable per-day projection + per-ring summary
+                'Get-AzLocalApplyUpdatesScheduleCycleCalendar',
                 # Fleet Health Overview (v0.7.70) - ARG-first projection of cluster + updateSummaries
                 'Get-AzLocalFleetHealthOverview',
                 # Latest Released Solution Version (v0.7.70 Phase E) - public manifest probe (aka.ms/AzureEdgeUpdates) anchoring the rolling YYMM support window in Step.6
@@ -12168,4 +12170,353 @@ Describe 'Pipeline output helpers: Write-AzLocalPipelineNotice / Write-AzLocalPi
 }
 
 #endregion v0.8.2: Pipeline host abstraction
+
+#region v0.8.5: Get-AzLocalApplyUpdatesScheduleCycleCalendar
+
+Describe 'v0.8.5 Apply-Updates Schedule: Get-AzLocalApplyUpdatesScheduleCycleCalendar (object pipeline)' {
+    BeforeAll {
+        $script:cc_tmp = Join-Path $TestDrive 'cycle-cal-obj'
+        New-Item -ItemType Directory -Path $script:cc_tmp -Force | Out-Null
+
+        # 4-week cycle anchored at ISO W1 2026; mirrors the v0.7.69 resolver
+        # fixture so cycle math is identical and we can assert by row.
+        $p = Join-Path $script:cc_tmp 'cycle4.yml'
+        $body = @'
+schemaVersion: 1
+cycleWeeks: 4
+cycleAnchorISOWeek: 1
+cycleAnchorYear: 2026
+schedule:
+  - weeksInCycle: '1'
+    daysOfWeek: 'Mon'
+    rings: 'Canary'
+  - weeksInCycle: '2'
+    daysOfWeek: 'Mon'
+    rings: 'Ring1'
+  - weeksInCycle: '3,4'
+    daysOfWeek: 'Mon'
+    rings: 'Prod'
+  - weeksInCycle: '*'
+    daysOfWeek: 'Fri'
+    rings: 'Canary;Ring1'
+'@
+        Set-Content -LiteralPath $p -Value $body -Encoding utf8
+        $script:cc_cfg4 = Get-AzLocalApplyUpdatesScheduleConfig -Path $p
+
+        # Monday of ISO W1 2026 (anchor day in UTC) - same computation as the
+        # v0.7.69 resolver tests so the fixtures stay consistent.
+        $jan4 = [datetime]::new(2026, 1, 4, 0, 0, 0, [DateTimeKind]::Utc)
+        $script:cc_wk1Mon = $jan4.AddDays(-1 * ((($jan4.DayOfWeek.value__ + 6) % 7)))
+    }
+
+    It 'Default -Days = CycleWeeks * 7 for a 4-week cycle (28 rows)' {
+        $r = Get-AzLocalApplyUpdatesScheduleCycleCalendar -Schedule $script:cc_cfg4 -StartDate $script:cc_wk1Mon
+        @($r).Count | Should -Be 28
+    }
+
+    It 'Each row carries the new v0.8.5 shape (CycleWeekLabel, IsCycleWrap, IsDeadDay, AllowedUpdateVersions*)' {
+        $r = Get-AzLocalApplyUpdatesScheduleCycleCalendar -Schedule $script:cc_cfg4 -StartDate $script:cc_wk1Mon -Days 1
+        $row = $r[0]
+        $row.PSObject.Properties.Name | Should -Contain 'DateUtc'
+        $row.PSObject.Properties.Name | Should -Contain 'DayOfWeekName'
+        $row.PSObject.Properties.Name | Should -Contain 'CycleWeek'
+        $row.PSObject.Properties.Name | Should -Contain 'CycleWeeksTotal'
+        $row.PSObject.Properties.Name | Should -Contain 'CycleWeekLabel'
+        $row.PSObject.Properties.Name | Should -Contain 'IsCycleWrap'
+        $row.PSObject.Properties.Name | Should -Contain 'Rings'
+        $row.PSObject.Properties.Name | Should -Contain 'UpdateRingValue'
+        $row.PSObject.Properties.Name | Should -Contain 'AllowedUpdateVersions'
+        $row.PSObject.Properties.Name | Should -Contain 'AllowedUpdateVersionsValue'
+        $row.PSObject.Properties.Name | Should -Contain 'AllowedUpdateVersionsSource'
+        $row.PSObject.Properties.Name | Should -Contain 'MatchedRowCount'
+        $row.PSObject.Properties.Name | Should -Contain 'IsDeadDay'
+        $row.PSObject.Properties.Name | Should -Contain 'Reason'
+    }
+
+    It 'CycleWeeksTotal equals Schedule.CycleWeeks on every row' {
+        $r = Get-AzLocalApplyUpdatesScheduleCycleCalendar -Schedule $script:cc_cfg4 -StartDate $script:cc_wk1Mon
+        ($r | Where-Object { $_.CycleWeeksTotal -ne 4 }).Count | Should -Be 0
+    }
+
+    It 'Day-0 row resolves to week-1 Monday Canary in the 4-week fixture' {
+        $r = Get-AzLocalApplyUpdatesScheduleCycleCalendar -Schedule $script:cc_cfg4 -StartDate $script:cc_wk1Mon -Days 1
+        $r[0].CycleWeek       | Should -Be 1
+        $r[0].UpdateRingValue | Should -Be 'Canary'
+        $r[0].IsDeadDay       | Should -Be $false
+        @($r[0].Rings).Count  | Should -Be 1
+    }
+
+    It 'IsDeadDay is $true on no-match days (Tuesday in the 4-week fixture)' {
+        $r = Get-AzLocalApplyUpdatesScheduleCycleCalendar -Schedule $script:cc_cfg4 -StartDate $script:cc_wk1Mon -Days 2
+        $r[1].IsDeadDay       | Should -Be $true
+        @($r[1].Rings).Count  | Should -Be 0
+        $r[1].UpdateRingValue | Should -BeNullOrEmpty
+    }
+
+    It 'UNION semantics: Friday in week 1 returns both Canary and Ring1 from overlapping rows' {
+        # Friday is day +4 from Monday of W1
+        $r = Get-AzLocalApplyUpdatesScheduleCycleCalendar -Schedule $script:cc_cfg4 -StartDate $script:cc_wk1Mon.AddDays(4) -Days 1
+        @($r[0].Rings).Count | Should -Be 2
+        $r[0].Rings          | Should -Contain 'Canary'
+        $r[0].Rings          | Should -Contain 'Ring1'
+        $r[0].UpdateRingValue | Should -Be 'Canary;Ring1'
+    }
+
+    It 'IsCycleWrap is $true on the first Monday of cycle-week 1 after week 4' {
+        # Full cycle from W1 Monday: 28 rows. Day 28 is the next Monday and CycleWeek rolls back to 1.
+        $r = Get-AzLocalApplyUpdatesScheduleCycleCalendar -Schedule $script:cc_cfg4 -StartDate $script:cc_wk1Mon -Days 29
+        # Day 27 (index 27 => start + 27 days = next-cycle Monday) was the wrap day.
+        $wrapRow = $r[28]   # 28 days after start = next cycle Monday
+        $wrapRow.CycleWeek      | Should -Be 1
+        $wrapRow.IsCycleWrap    | Should -Be $true
+        $wrapRow.CycleWeekLabel | Should -Match 'cycle wraps'
+        # Non-wrap rows should have IsCycleWrap = $false
+        ($r[0].IsCycleWrap)     | Should -Be $false
+    }
+
+    It 'Variable cycle length: 52-week cycle returns 364 rows by default and crosses the calendar-year boundary cleanly' {
+        $p52 = Join-Path $script:cc_tmp 'cycle52.yml'
+        $body52 = @'
+schemaVersion: 1
+cycleWeeks: 52
+cycleAnchorISOWeek: 1
+cycleAnchorYear: 2024
+schedule:
+  - weeksInCycle: '*'
+    daysOfWeek: 'Mon'
+    rings: 'Canary'
+'@
+        Set-Content -LiteralPath $p52 -Value $body52 -Encoding utf8
+        $cfg52 = Get-AzLocalApplyUpdatesScheduleConfig -Path $p52
+        # Project from a Monday inside ISO W50 2024 so the horizon crosses
+        # into the next calendar year - exercises the year-boundary path.
+        $start = [datetime]::new(2024, 12, 9, 0, 0, 0, [DateTimeKind]::Utc)  # Mon W50 2024
+        $r = Get-AzLocalApplyUpdatesScheduleCycleCalendar -Schedule $cfg52 -StartDate $start
+        @($r).Count | Should -Be 364
+        # No row should have an empty Reason or unresolved year-boundary state - resolver must keep returning rows.
+        ($r | Where-Object { -not $_.PSObject.Properties['CycleWeek'] }).Count | Should -Be 0
+        # The horizon must straddle two calendar years.
+        ($r | Where-Object { $_.DateUtc.Year -eq 2024 }).Count | Should -BeGreaterThan 0
+        ($r | Where-Object { $_.DateUtc.Year -eq 2025 }).Count | Should -BeGreaterThan 0
+    }
+
+    It '8-week cycle starting partway through week 8 wraps to week 1 within the default horizon' {
+        $p8 = Join-Path $script:cc_tmp 'cycle8.yml'
+        $body8 = @'
+schemaVersion: 1
+cycleWeeks: 8
+cycleAnchorISOWeek: 1
+cycleAnchorYear: 2026
+schedule:
+  - weeksInCycle: '1'
+    daysOfWeek: 'Mon'
+    rings: 'Canary'
+  - weeksInCycle: '8'
+    daysOfWeek: 'Mon'
+    rings: 'Prod'
+'@
+        Set-Content -LiteralPath $p8 -Value $body8 -Encoding utf8
+        $cfg8 = Get-AzLocalApplyUpdatesScheduleConfig -Path $p8
+        # Pick a Monday in cycle-week 8 (week 8 of an 8-week anchor-at-W1 cycle starts at week 8 = Mon 2026-02-23).
+        $w8Mon = $script:cc_wk1Mon.AddDays(7 * 7)
+        $r = Get-AzLocalApplyUpdatesScheduleCycleCalendar -Schedule $cfg8 -StartDate $w8Mon
+        @($r).Count | Should -Be 56  # 8 * 7
+        $r[0].CycleWeek    | Should -Be 8
+        $r[0].UpdateRingValue | Should -Be 'Prod'
+        # Day +7 = the wrap Monday
+        $r[7].CycleWeek    | Should -Be 1
+        $r[7].IsCycleWrap  | Should -Be $true
+        $r[7].UpdateRingValue | Should -Be 'Canary'
+        # The remaining rows include weeks 2-7 with no schedule rows = dead days, plus another week-8 Monday at end
+        ($r | Where-Object { $_.CycleWeek -eq 1 -and $_.UpdateRingValue -eq 'Canary' }).Count | Should -BeGreaterOrEqual 1
+    }
+
+    It 'Multi-cycle horizon: -Days greater than one cycle iterates the cycle multiple times' {
+        $days = 4 * 7 * 2  # two full 4-week cycles = 56 days
+        $r = Get-AzLocalApplyUpdatesScheduleCycleCalendar -Schedule $script:cc_cfg4 -StartDate $script:cc_wk1Mon -Days $days
+        @($r).Count | Should -Be $days
+        # Two wrap rows expected when iterating two full cycles (one at start of cycle 2, one at start of cycle 3 which is outside the horizon).
+        ($r | Where-Object { $_.IsCycleWrap }).Count | Should -BeGreaterOrEqual 1
+    }
+
+    It 'Throws on Schedule with invalid CycleWeeks of 0 (defensive guard)' {
+        $bad = [pscustomobject]@{ CycleWeeks = 0; Schedule = @() }
+        { Get-AzLocalApplyUpdatesScheduleCycleCalendar -Schedule $bad } |
+            Should -Throw -ExpectedMessage '*CycleWeeks must be >= 1*'
+    }
+}
+
+Describe 'v0.8.5 Apply-Updates Schedule: Get-AzLocalApplyUpdatesScheduleCycleCalendar (markdown)' {
+    BeforeAll {
+        $script:ccmd_tmp = Join-Path $TestDrive 'cycle-cal-md'
+        New-Item -ItemType Directory -Path $script:ccmd_tmp -Force | Out-Null
+
+        # Minimal CLEAN-fleet schedule: a single ring on a single day per
+        # cycle. Used by the regression test that pins 'markdown emitted even
+        # when there are zero advisor findings'.
+        $p = Join-Path $script:ccmd_tmp 'clean.yml'
+        $body = @'
+schemaVersion: 1
+cycleWeeks: 2
+cycleAnchorISOWeek: 1
+cycleAnchorYear: 2026
+schedule:
+  - weeksInCycle: '*'
+    daysOfWeek: 'Mon'
+    rings: 'Canary'
+'@
+        Set-Content -LiteralPath $p -Value $body -Encoding utf8
+        $script:ccmd_clean = Get-AzLocalApplyUpdatesScheduleConfig -Path $p
+
+        # Multi-row schedule used to exercise UNION rendering + per-ring summary.
+        $p2 = Join-Path $script:ccmd_tmp 'multi.yml'
+        $body2 = @'
+schemaVersion: 1
+cycleWeeks: 4
+cycleAnchorISOWeek: 1
+cycleAnchorYear: 2026
+schedule:
+  - weeksInCycle: '1'
+    daysOfWeek: 'Mon'
+    rings: 'Canary'
+  - weeksInCycle: '2'
+    daysOfWeek: 'Mon'
+    rings: 'Ring1'
+  - weeksInCycle: '3,4'
+    daysOfWeek: 'Mon'
+    rings: 'Prod'
+  - weeksInCycle: '*'
+    daysOfWeek: 'Fri'
+    rings: 'Canary;Ring1'
+'@
+        Set-Content -LiteralPath $p2 -Value $body2 -Encoding utf8
+        $script:ccmd_multi = Get-AzLocalApplyUpdatesScheduleConfig -Path $p2
+
+        $jan4 = [datetime]::new(2026, 1, 4, 0, 0, 0, [DateTimeKind]::Utc)
+        $script:ccmd_wk1Mon = $jan4.AddDays(-1 * ((($jan4.DayOfWeek.value__ + 6) % 7)))
+    }
+
+    It '-AsMarkdown returns a single string (not an array)' {
+        $md = Get-AzLocalApplyUpdatesScheduleCycleCalendar -Schedule $script:ccmd_clean -StartDate $script:ccmd_wk1Mon -AsMarkdown
+        $md | Should -BeOfType ([string])
+    }
+
+    It '-AsMarkdown emits the ## Cycle calendar heading' {
+        $md = Get-AzLocalApplyUpdatesScheduleCycleCalendar -Schedule $script:ccmd_clean -StartDate $script:ccmd_wk1Mon -AsMarkdown
+        $md | Should -Match '## Cycle calendar'
+    }
+
+    It '-AsMarkdown emits the day-by-day table header (no ClusterRingCounts variant)' {
+        $md = Get-AzLocalApplyUpdatesScheduleCycleCalendar -Schedule $script:ccmd_clean -StartDate $script:ccmd_wk1Mon -AsMarkdown
+        $md | Should -Match '\| Date \(UTC\) \| Day \| CycleWeek \| Eligible rings \| AllowedUpdateVersions \|'
+    }
+
+    It 'REGRESSION: -AsMarkdown returns the calendar even when the fleet has zero findings (v0.8.4 silent-drop bug)' {
+        # The v0.8.4 bug: cycle calendar was hidden when Test-AzLocalApplyUpdatesScheduleCoverage
+        # had no advisor findings AND no ClusterCsvPath. The new cmdlet is
+        # fully decoupled from advisor findings - the calendar MUST render
+        # purely based on the schedule object passed in.
+        $md = Get-AzLocalApplyUpdatesScheduleCycleCalendar -Schedule $script:ccmd_clean -StartDate $script:ccmd_wk1Mon -AsMarkdown
+        $md             | Should -Not -BeNullOrEmpty
+        $md             | Should -Match '## Cycle calendar'
+        # 14 day rows for a 2-week default cycle: 14 lines that start with a yyyy-MM-dd in the table.
+        ([regex]::Matches($md, '\| 2026-01-\d{2} \|')).Count | Should -BeGreaterOrEqual 14
+    }
+
+    It '-IncludePerRingSummary adds the ### Per-ring projection section' {
+        $md = Get-AzLocalApplyUpdatesScheduleCycleCalendar -Schedule $script:ccmd_multi -StartDate $script:ccmd_wk1Mon -AsMarkdown -IncludePerRingSummary
+        $md | Should -Match '### Per-ring projection'
+        $md | Should -Match '\| UpdateRing \| Next eligible \| Eligible days \(count\) \| All eligible dates \|'
+        # All four scheduled rings should appear in the per-ring table.
+        $md | Should -Match '\| `Canary` \|'
+        $md | Should -Match '\| `Ring1` \|'
+        $md | Should -Match '\| `Prod` \|'
+    }
+
+    It 'UNION rendering: overlap day shows multiple rings comma-separated' {
+        # Friday of W1 in the multi fixture: Canary + Ring1
+        $md = Get-AzLocalApplyUpdatesScheduleCycleCalendar -Schedule $script:ccmd_multi -StartDate $script:ccmd_wk1Mon -Days 5 -AsMarkdown
+        $fridayDate = $script:ccmd_wk1Mon.AddDays(4).ToString('yyyy-MM-dd')
+        # Both ring names should appear on the same row.
+        $md | Should -Match "$fridayDate.*Canary.*Ring1|$fridayDate.*Ring1.*Canary"
+    }
+
+    It '-ClusterRingCounts adds a Clusters in ring(s) column on the calendar table' {
+        $counts = @{ Canary = 3; Ring1 = 2; Prod = 9 }
+        $md = Get-AzLocalApplyUpdatesScheduleCycleCalendar -Schedule $script:ccmd_multi -StartDate $script:ccmd_wk1Mon -AsMarkdown -ClusterRingCounts $counts
+        $md | Should -Match '\| Date \(UTC\) \| Day \| CycleWeek \| Eligible rings \| Clusters in ring\(s\) \| AllowedUpdateVersions \|'
+        # Day-0 (W1 Monday) has Canary -> count of 3 should appear in the row cell
+        $w1MonStr = $script:ccmd_wk1Mon.ToString('yyyy-MM-dd')
+        $md | Should -Match "$w1MonStr.*``Canary``: 3"
+    }
+
+    It '-ClusterRingCounts on an overlap day shows per-ring counts plus a (total: N) aggregate' {
+        $counts = @{ Canary = 3; Ring1 = 2; Prod = 9 }
+        $md = Get-AzLocalApplyUpdatesScheduleCycleCalendar -Schedule $script:ccmd_multi -StartDate $script:ccmd_wk1Mon -Days 5 -AsMarkdown -ClusterRingCounts $counts
+        # Friday of W1: Canary + Ring1, total = 5
+        $md | Should -Match 'total: 5'
+    }
+
+    It '-ClusterRingCounts with -IncludePerRingSummary adds Cluster count column on the per-ring projection table' {
+        $counts = @{ Canary = 3; Ring1 = 2; Prod = 9 }
+        $md = Get-AzLocalApplyUpdatesScheduleCycleCalendar -Schedule $script:ccmd_multi -StartDate $script:ccmd_wk1Mon -AsMarkdown -IncludePerRingSummary -ClusterRingCounts $counts
+        $md | Should -Match '\| UpdateRing \| Cluster count \| Next eligible \| Eligible days \(count\) \| All eligible dates \|'
+        # Each ring row should carry its count.
+        $md | Should -Match '\| `Canary` \| 3 \|'
+        $md | Should -Match '\| `Ring1` \| 2 \|'
+        $md | Should -Match '\| `Prod` \| 9 \|'
+    }
+
+    It '-ClusterRingCounts omitted: the legacy 5-column calendar header is used' {
+        $md = Get-AzLocalApplyUpdatesScheduleCycleCalendar -Schedule $script:ccmd_multi -StartDate $script:ccmd_wk1Mon -AsMarkdown
+        # Must NOT contain the 6-column header.
+        ($md -match '\| Clusters in ring\(s\) \|') | Should -Be $false
+    }
+
+    It '-ClusterRingCounts is case-insensitive (canary == Canary)' {
+        $counts = @{ canary = 7 }
+        $md = Get-AzLocalApplyUpdatesScheduleCycleCalendar -Schedule $script:ccmd_clean -StartDate $script:ccmd_wk1Mon -AsMarkdown -ClusterRingCounts $counts
+        $w1MonStr = $script:ccmd_wk1Mon.ToString('yyyy-MM-dd')
+        $md | Should -Match "$w1MonStr.*``Canary``: 7"
+    }
+
+    It '-ClusterRingCounts on dead days shows the dead-day cell' {
+        $counts = @{ Canary = 3 }
+        # Day-1 (Tuesday) in the clean fixture is a dead day.
+        $md = Get-AzLocalApplyUpdatesScheduleCycleCalendar -Schedule $script:ccmd_clean -StartDate $script:ccmd_wk1Mon -Days 2 -AsMarkdown -ClusterRingCounts $counts
+        $tueStr = $script:ccmd_wk1Mon.AddDays(1).ToString('yyyy-MM-dd')
+        $md | Should -Match "$tueStr.*_\(0 - dead day\)_"
+    }
+
+    It 'Cycle-wrap row renders the (cycle wraps) annotation in CycleWeek cell' {
+        $md = Get-AzLocalApplyUpdatesScheduleCycleCalendar -Schedule $script:ccmd_multi -StartDate $script:ccmd_wk1Mon -Days 29 -AsMarkdown
+        $md | Should -Match 'cycle wraps'
+    }
+
+    It 'Year-boundary safe: a 1-week cycle projected across new year does not break markdown' {
+        $p1 = Join-Path $script:ccmd_tmp 'cycle1.yml'
+        $body1 = @'
+schemaVersion: 1
+cycleWeeks: 1
+cycleAnchorISOWeek: 1
+cycleAnchorYear: 2024
+schedule:
+  - weeksInCycle: '*'
+    daysOfWeek: 'Mon-Fri'
+    rings: 'Canary'
+'@
+        Set-Content -LiteralPath $p1 -Value $body1 -Encoding utf8
+        $cfg1 = Get-AzLocalApplyUpdatesScheduleConfig -Path $p1
+        # Project from a date that straddles end-of-2024 -> 2025
+        $start = [datetime]::new(2024, 12, 29, 0, 0, 0, [DateTimeKind]::Utc)
+        $md = Get-AzLocalApplyUpdatesScheduleCycleCalendar -Schedule $cfg1 -StartDate $start -Days 14 -AsMarkdown
+        $md | Should -Not -BeNullOrEmpty
+        $md | Should -Match '## Cycle calendar'
+        # Both 2024 and 2025 dates must appear in the rendered table.
+        $md | Should -Match '\| 2024-12-'
+        $md | Should -Match '\| 2025-01-'
+    }
+}
+
+#endregion v0.8.5: Get-AzLocalApplyUpdatesScheduleCycleCalendar
 
