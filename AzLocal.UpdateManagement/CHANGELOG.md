@@ -5,6 +5,48 @@ All notable changes to the AzLocal.UpdateManagement module (renamed from AzStack
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-06-09
+
+Patch release rolling up three follow-ups to v0.7.99 plus Step.2 UX fixes. No public API changes. `Set-AzLocalClusterUpdateRingTag -PassThru` gains two new enum values (`Action='NoChange'` and `Status='AlreadyInSync'`) to distinguish steady-state clusters from genuinely-skipped ones; existing scripts that switch on `Created`/`Updated`/`Skipped`/`Failed` continue to work, with already-in-sync clusters surfacing under the new bucket rather than spurious `Skipped`.
+
+### Step.2 manage-updatering-tags - operator-visible UX fixes
+
+- **`Set-AzLocalClusterUpdateRingTag` no longer logs misleading "use -Force to overwrite" warnings on clusters that are already in the desired state.** The skip branch now splits on whether the existing `UpdateRing` tag matches the target:
+  - **All managed tags already match** (`UpdateRing`, `UpdateStartWindow`, `UpdateExclusionsWindow`, `UpdateExcluded`) -> `Info` log "All managed tags already match desired state - no action needed". New `Action='NoChange'` / `Status='AlreadyInSync'` row in CSV log and `-PassThru` results.
+  - **`UpdateRing` differs from target** AND no schedule diff -> still emits `Warning` + "Use -Force to overwrite" hint (unchanged from prior releases). Message clarified to name both values: `Existing UpdateRing tag (value: X) differs from target (Y).`
+- **`-Force` now short-circuits when all managed tags already match desired state.** Saves a redundant ARM PATCH per cluster on already-clean fleets. Logged as `Action='NoChange' / Status='AlreadyInSync'` with message `All managed tags already match desired state; -Force PATCH skipped (no-op).` Behaviour when there IS something to change is unchanged.
+- **Summary section gains an `Already in sync (no change needed):` line** alongside the existing Created/Updated/Skipped/Failed tallies. The `Skipped (existing tag, no -Force):` line is now correctly named `Skipped (UpdateRing differs, no -Force):`.
+- **Step.2 GitHub Actions + Azure DevOps job summaries surface the per-cluster result breakdown.** Previously the run-level summary tab only showed a 2-row settings table (`Dry Run` / `Force Overwrite`); the per-cluster `Format-Table` was only visible by drilling into the `Apply UpdateRing Tags` step's raw log. Both platforms now:
+  - Capture `-PassThru` from `Set-AzLocalClusterUpdateRingTag` into a `UpdateRingTag_Results.json` artifact sidecar.
+  - Emit a **result breakdown table** (Total / Created / Updated / Already in sync / Skipped / WhatIf / Failed) to the job summary.
+  - Emit a collapsible `<details>` block with the full per-cluster table (Cluster / Action / Previous / New / Status / Message).
+- **Four new Pester source-level assertions** (`Tests/AzLocal.UpdateManagement.Tests.ps1`, Set-AzLocalClusterUpdateRingTag context) pin the new logging / status contract, the `Force` no-op short-circuit, and the `AlreadyInSync` summary bucket.
+
+### Step.7 monitor-updates - form-default regressions fixed (both platforms)
+
+- **`criticalElapsedDays` form-default fixed `7` -> `3`.** The v0.7.99 release lowered the CRITICAL overall-elapsed tier from 7 to 3 days. The inline script default (`$criticalElapsedDays = 3`) and the help-text ("default 3 days") were updated correctly, but the `workflow_dispatch` input default value (GH) / pipeline-parameter default value (ADO) on the form itself was left at `'7'`. When an operator triggered the workflow and left the input untouched, the non-empty form-default `'7'` was passed in via `INPUT_CRITICAL_ELAPSED_DAYS`, the override branch fired, and the threshold silently reverted to the old 7 days - undoing the v0.7.99 behaviour change.
+- **`updateRing` form-default fixed `'Wave1'` -> `''` (empty).** Aligns Step.7 with Step.8 + Step.9, which already use `default: ''`. The downstream guard `if ($scope -eq 'by-update-ring' -and $updateRing)` honours empty as "no filter", so behaviour is unchanged on the default `scope=all` path. Removes the misleading "Wave1" value that suggested a real tenant-specific default existed when the operator switched to `scope=by-update-ring`.
+
+### Repo-hygiene guard - `Tests/Pii-Guard.Tests.ps1`
+
+- **New Pester guard** that scans every file under `Tests/` on each run and fails the build if it finds emails, `.onmicrosoft.com` tenant UPN domains, GUIDs in identity contexts (`tenantId` / `clientId` / `objectId` / `principalId` / `applicationId`), or real public IPv4 addresses outside an explicit allow-list.
+- Auto-excluded: RFC1918 / loopback / link-local / CGNAT / RFC5737 doc ranges / RFC2544 benchmarking / multicast / subnet-mask shapes / well-known public DNS (Google, Cloudflare, Quad9, OpenDNS). The trailing word-boundary on the IPv4 regex excludes version-string false-positives such as SbeVersion `4.5.6.7-RegressionMarker`.
+- Allow-list seeded with the three synthetic GUID fixtures already confirmed safe (sub ID `fbaf508b...`, RunId `add1f87d...`, action-plan ID `1084e062...`).
+- One inert fixture rename in `Tests/AzLocal.UpdateManagement.Tests.ps1`: `SbeVersion = '4.1.2.0'` -> `'4.1.2.0-Marker'` (the BS8 schema test only inspects property names, so the value change is a no-op).
+
+### Publish-Module.ps1 - exclude maintainer-only `RELEASE-PROCESS.md`
+
+- `Publish-Module.ps1` now strips `docs/RELEASE-PROCESS.md` at staging time. That file is a maintainer-facing release checklist (its own opening line states "Consumers do not need to read it") and has no runtime value to module consumers. Repo copy on GitHub remains for maintainer reference; it no longer ships inside every installed module folder.
+
+### Pin and version drift
+
+- `GENERATED_AGAINST_MODULE_VERSION` moves from `0.7.99` to `0.8.0` across all 20 bundled Step.*.yml templates (GH Actions + Azure DevOps).
+- Drift-sync test asserts `$script:ModuleVersion` (psm1) == `ModuleVersion` (psd1) == `Should -Be '0.8.0'` (test) - any drift fails CI.
+
+### Pester baseline
+
+- Total: ~833 passed / 0 failed / 1 skipped (added 3 new assertions covering the Step.2 AlreadyInSync skip-branch split, summary tally bucket, and -Force no-op short-circuit, on top of the new Pii-Guard.Tests.ps1 block added in this release).
+
 ## [0.7.99] - 2026-06-09
 
 Breaking property and Summary renames in the readiness / fleet-status cmdlets to remove a long-standing semantic ambiguity, plus a Step.7 CRITICAL elapsed-days default tightening (7 -> 3) and an artifact-naming cleanup (every pipeline zip is now prefixed with `step.X-` so operators can tell at a glance which Step.* emitted it). All 20 bundled pipeline YAMLs were updated to consume the new output shapes; the `GENERATED_AGAINST_MODULE_VERSION` pin moves to `0.7.99` on every template.

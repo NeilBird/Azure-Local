@@ -568,9 +568,11 @@ Sets or updates the "UpdateRing" tag on Azure Local clusters for organizing upda
 - **NEW**: Accepts CSV file input for bulk tag operations (`-InputCsvPath`)
 - Validates that Resource IDs are valid `microsoft.azurestackhci/clusters` resources
 - Checks if clusters already have an "UpdateRing" tag before applying
-- Warns and skips clusters with existing tags unless `-Force` is specified
+- Steady-state clusters (existing tag value already matches the target) are logged as `AlreadyInSync` / `NoChange` and skipped silently - no warning, no ARM PATCH
+- Clusters whose existing `UpdateRing` tag value differs from the target are warned and skipped unless `-Force` is specified
+- `-Force` short-circuits when all managed tags already match desired state (no wasted ARM PATCH on already-clean fleets)
 - Logs previous tag values when updating with `-Force`
-- Outputs results to a timestamped CSV log file
+- Outputs results to a timestamped CSV log file; opt-in `-PassThru` returns the same rows as objects for pipeline consumption
 
 **Parameters:**
 - `-InputCsvPath` (Required*): Path to CSV file with ResourceId and UpdateRing columns. Use with output from `Get-AzLocalClusterInventory`.
@@ -587,10 +589,10 @@ Sets or updates the "UpdateRing" tag on Azure Local clusters for organizing upda
 | `ResourceGroup` | Resource group containing the cluster |
 | `SubscriptionId` | Azure subscription ID |
 | `ResourceId` | Full Azure Resource ID |
-| `Action` | Action taken: "Created", "Updated", "Skipped", or "Error" |
+| `Action` | Action taken: `Created`, `Updated`, `NoChange`, `Skipped`, or `Error` |
 | `PreviousTagValue` | Previous tag value (if updating existing tag) |
 | `NewTagValue` | New tag value being set |
-| `Status` | Result status: "Success", "Failed", "Skipped", or "WhatIf" |
+| `Status` | Result status: `Success`, `AlreadyInSync`, `Failed`, `Skipped`, or `WhatIf` |
 | `Message` | Detailed status message |
 
 **Examples:**
@@ -659,7 +661,15 @@ Target UpdateRing: Wave2
 ----------------------------------------
 Cluster: Cluster02
 Existing UpdateRing tag found with value: 'Wave1'
-Skipping cluster - use -Force to overwrite existing tag
+Skipping cluster - UpdateRing differs from target; use -Force to overwrite existing tag
+
+----------------------------------------
+Processing: /subscriptions/xxx/resourceGroups/RG3/providers/Microsoft.AzureStackHCI/clusters/Cluster03
+Target UpdateRing: Wave1
+----------------------------------------
+Cluster: Cluster03
+Existing UpdateRing tag found with value: 'Wave1'
+All managed tags already match desired state - no action needed
 
 ========================================
 Summary
@@ -668,14 +678,15 @@ Summary
 Total clusters processed: 3
 Tags created: 1
 Tags updated: 0
-Skipped (existing tag, no -Force): 1
-Failed: 1
+Already in sync (no change needed): 1
+Skipped (UpdateRing differs, no -Force): 1
+Failed: 0
 
-ClusterName Action  PreviousTagValue NewTagValue Status
------------ ------  ---------------- ----------- ------
-Cluster01   Created                  Ring1       Success
-Cluster02   Skipped Wave1            Ring1       Skipped
-Cluster03   Skipped                  Ring1       Failed
+ClusterName Action   PreviousTagValue NewTagValue Status
+----------- ------   ---------------- ----------- ------
+Cluster01   Created                   Wave1       Success
+Cluster02   Skipped  Wave1            Wave2       Skipped
+Cluster03   NoChange Wave1            Wave1       AlreadyInSync
 ```
 
 ---
