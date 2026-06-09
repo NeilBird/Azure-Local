@@ -2,7 +2,7 @@
 
 > ⚠️ **Disclaimer**: This module is **NOT** a Microsoft supported service offering or product. It is provided as example code only, with no warranty or official support. Refer to the [MIT license](https://github.com/NeilBird/Azure-Local/blob/main/LICENSE) for further information.
 
-**Latest Version:** v0.8.1 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.8.1)
+**Latest Version:** v0.8.2 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.8.2)
 
 > 📢 **Renamed in v0.7.3**: this module was previously published as `AzStackHci.ManageUpdates`. The new module name aligns with the Azure Local product name (_Microsoft retired the *Azure Stack HCI* brand in late 2024_). The module GUID is preserved across the rename. If you have the old name installed, run:
 >
@@ -23,7 +23,7 @@ Azure Local REST API specification (includes update management endpoints): https
 **This README (overview + most-recent release notes):**
 
 - [Where to Start](#where-to-start)
-- [What's New in v0.8.1](#whats-new-in-v081)
+- [What's New in v0.8.2](#whats-new-in-v082)
 - [Files](#files)
 - [Prerequisites](#prerequisites)
 - [RBAC Requirements](#rbac-requirements) (summary; full reference in [docs/rbac.md](docs/rbac.md))
@@ -86,36 +86,30 @@ If you are new to this module, work through these in order from a regular PowerS
 
 > Most CI/CD pipelines in [Automation-Pipeline-Examples/](Automation-Pipeline-Examples/) are direct implementations of one of these workflows. Start there if you want a copy-pasteable end-to-end pipeline.
 
-## What's New in v0.8.1
+## What's New in v0.8.2
 
-**Docs-and-snippet correctness release.** No public API or output-shape changes. Fixes the `Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend` GitHub-Actions snippet so its output can be pasted straight into `Step.6_apply-updates.yml` without producing a duplicate-key YAML error.
+**Operator-experience release for `Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend`.** No public API changes; no output-shape changes that break existing scripts. Two paste-time pain points reported on v0.8.1 are fixed in the advisor's emitted snippet.
 
-### `Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend` GH snippet is now copy-paste-safe into `Step.6_apply-updates.yml`
+### Paste-time pain points fixed in the `-View Recommend` snippet
 
-Pre-v0.8.1 the GitHub-flavoured `-View Recommend` snippet emitted a full `on:` + `workflow_dispatch:` + `schedule:` block, and the prose instructed the operator to "Replace (or merge with) the existing `on:` block at the top of the workflow". `Step.6_apply-updates.yml` already declares `workflow_dispatch:` with a rich `inputs:` block (`update_ring`, `update_name`, `dry_run`, `raise_itsm_ticket`, `itsm_config_path`, `itsm_dry_run`, `itsm_force_create`, `module_version`) that the manual `Run workflow` button depends on. Operators who pasted the snippet alongside the existing block (rather than wholesale-replacing it - and losing the `inputs:`) ended up with two top-level `workflow_dispatch:` keys, and GitHub Actions rejects that at parse time with `'workflow_dispatch' is already defined`.
+1. **"All cron times below are UTC" comment is now embedded in both the GH and ADO snippets.** GitHub Actions and Azure DevOps both evaluate `cron:` in UTC regardless of repository, runner, or agent timezone, but operators repeatedly burned time converting from a local-time mental model and ended up with windows that fired hours offset from their intent. The advisor now prepends a `# All cron times below are UTC ...` comment line directly above `schedule:` (GH) and `schedules:` (ADO) so the snippet is self-documenting once pasted into `Step.6_apply-updates.yml`.
+2. **"Indent tip" callout above the snippet warns about IDE auto-indent-on-paste.** The GH snippet is intentionally at 2-space indent (so `schedule:` is a sibling of the existing `workflow_dispatch:` under `on:`). When operators paste it with the cursor sitting inside the `# BEGIN-AZLOCAL-CUSTOMIZE:schedule-triggers` / `# END-AZLOCAL-CUSTOMIZE:schedule-triggers` comment block, VS Code (and JetBrains IDEs) silently double the indent, producing the YAML error *"All mapping items must start at the same column"*. The advisor now emits a `> **Indent tip.**` blockquote directly above the snippet that explains the cause, instructs the operator to paste at column 0, and tells them how to recover (delete two leading spaces from every pasted line) if they already hit it.
 
-- The GH snippet now emits ONLY the `schedule:` block:
-  ```yaml
-    schedule:
-      - cron: '0 22 * * 6'
-      - cron: '0 22 * * 0'
-  ```
-  The 2-space `schedule:` indent + 4-space cron indent match the existing nesting inside the `# BEGIN-AZLOCAL-CUSTOMIZE:schedule-triggers` / `# END-AZLOCAL-CUSTOMIZE:schedule-triggers` markers in `Step.6_apply-updates.yml`. Paste it as-is - no hand-editing required.
-- **Updated "How to fix" prose.** The advisory now says: *"Add (or merge with) the following `schedule:` block under the existing `on:` key. Place it inside the BEGIN/END-AZLOCAL-CUSTOMIZE:schedule-triggers markers so it survives `Update-AzLocalPipelineExample` refreshes. Do NOT add a second `workflow_dispatch:` line - Step.6 already declares one with the `update_ring` / `dry_run` / ITSM / `module_version` inputs that the manual Run workflow button needs."* Azure DevOps snippet shape (top-level `schedules:`) is unchanged.
-- **Four updated `AS7`-`AS10` Pester assertions** in `Tests/AzLocal.UpdateManagement.Tests.ps1` swap the GH-snippet detector regex from `'workflow_dispatch'` to `'(?m)^\s*schedule:\s*$'`. The singular `schedule:` key on its own line is GH-Actions-unique (ADO uses the plural `schedules:` at column 0); the swap keeps the same auto-detect / `-Platform Both` override semantics in tests while reflecting that `workflow_dispatch` is no longer emitted.
+### Module foundations for the upcoming executable-YAML refactor
 
-### Migration summary
+Five new internal (Private) helpers - `Get-AzLocalPipelineHost`, `Set-AzLocalPipelineOutput`, `Add-AzLocalPipelineStepSummary`, `Write-AzLocalPipelineNotice`, `Write-AzLocalPipelineWarning` - abstract over the host-specific quirks of GitHub Actions vs Azure DevOps output channels (`$env:GITHUB_OUTPUT` vs `##vso[task.setvariable]`, `$env:GITHUB_STEP_SUMMARY` vs `##vso[task.uploadsummary]`, `::notice/::warning` vs `##vso[task.logissue]`). These are not exported and have no user-visible effect in v0.8.2 - they are foundations for the upcoming per-Step `Export-*` / `Invoke-*` cmdlets that will move inline `run: |` PowerShell out of the `Step.{0..9}.yml` files and into the module proper. 23 new Pester assertions cover the three host modes (GitHub auto-detect via `$env:GITHUB_ACTIONS='true'`, Azure DevOps via `$env:TF_BUILD='True'`, Local fallback) and the byte-identical contracts of each emitted logging-command syntax.
 
-- For cmdlet consumers: `Install-Module AzLocal.UpdateManagement -Force` (or `Update-Module`). No code changes required.
-- For operators who have ALREADY pasted the v0.8.0-flavoured snippet into `Step.6_apply-updates.yml` and seen `'workflow_dispatch' is already defined`: either re-run `Update-AzLocalPipelineExample -Destination <path>` to refresh Step.6 from the v0.8.1 template and re-run `Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend`, OR manually delete the duplicate empty `workflow_dispatch:` line from Step.6.
-- The cron *values* recommended by the advisor have not changed; only the surrounding YAML structure.
+### Migration
+
+- `Install-Module AzLocal.UpdateManagement -Force` (or `Update-Module`). No code changes required.
+- Re-run `Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend` once to pick up the new self-documenting snippet (the cron *values* are unchanged from v0.8.1; only the surrounding comment and prose changed).
 
 ### Pin and version drift
 
-- `GENERATED_AGAINST_MODULE_VERSION` moves from `0.8.0` to `0.8.1` across all 20 bundled `Step.{0..9}.yml` templates (GH Actions + Azure DevOps).
-- Drift-sync test asserts `$script:ModuleVersion` (psm1) == `ModuleVersion` (psd1) == `Should -Be '0.8.1'` (test) - any drift fails CI.
+- `GENERATED_AGAINST_MODULE_VERSION` moves from `0.8.1` to `0.8.2` across all 20 bundled `Step.{0..9}.yml` templates (GH Actions + Azure DevOps).
+- Drift-sync test asserts `$script:ModuleVersion` (psm1) == `ModuleVersion` (psd1) == `Should -Be '0.8.2'` (test) - any drift fails CI.
 
-> Previous release notes (v0.8.0 and earlier) have moved into the [Release History](#release-history) appendix below, with full text retained in [`docs/release-history.md`](docs/release-history.md) and [`CHANGELOG.md`](CHANGELOG.md).
+> Previous release notes (v0.8.1 and earlier) have moved into the [Release History](#release-history) appendix below, with full text retained in [`docs/release-history.md`](docs/release-history.md) and [`CHANGELOG.md`](CHANGELOG.md).
 
 ## Files
 
@@ -594,7 +588,13 @@ This code is provided as-is for educational and reference purposes.
 
 The full What's-New history (v0.7.81 and earlier) has moved to [docs/release-history.md](docs/release-history.md).
 
-The most recent release notes for **v0.8.1** stay above under [`What's New in v0.8.1`](#whats-new-in-v081).
+The most recent release notes for **v0.8.2** stay above under [`What's New in v0.8.2`](#whats-new-in-v082).
+
+### What's New in v0.8.1
+
+**Docs-and-snippet correctness release.** Fixed the `Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend` GitHub-Actions snippet so it can be pasted straight into `Step.6_apply-updates.yml` without producing the `'workflow_dispatch' is already defined` parse error. The GH snippet now emits ONLY the `schedule:` block (2-space `schedule:` indent + 4-space cron indent) so it slots straight under the existing `on:` key inside the `# BEGIN-AZLOCAL-CUSTOMIZE:schedule-triggers` markers. Azure DevOps snippet shape (top-level `schedules:`) unchanged. Four `AS7`-`AS10` Pester assertions updated to detect the new `(?m)^\s*schedule:\s*$` shape. `GENERATED_AGAINST_MODULE_VERSION` pin moved to `0.7.99` -> `0.8.0` -> `0.8.1` across all 20 bundled templates.
+
+See [CHANGELOG.md](CHANGELOG.md#081---2026-06-09) for the full v0.8.1 entry.
 
 ### What's New in v0.8.0
 

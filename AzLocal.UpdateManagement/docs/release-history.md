@@ -4,9 +4,26 @@
 >
 > **For older releases**, this is the canonical reference; the main README intentionally stays slim so the most recent block is easy to find.
 >
-> **For v0.8.1 (the current release)**, see the main [README.md](../README.md#whats-new-in-v081) `What's New in v0.8.1` section.
+> **For v0.8.2 (the current release)**, see the main [README.md](../README.md#whats-new-in-v082) `What's New in v0.8.2` section.
 
 ---
+
+### What's New in v0.8.2
+
+v0.8.2 is an operator-experience release for `Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend`. No public API changes; no output-shape changes that break existing scripts.
+
+**Paste-time pain points fixed in the `-View Recommend` snippet.** Two reports on v0.8.1 are addressed:
+
+1. The advisor's emitted snippet now embeds a `# All cron times below are UTC ...` comment directly above `schedule:` (GH) and `schedules:` (ADO). Both platforms evaluate `cron:` in UTC regardless of repo / runner / agent timezone, but operators repeatedly burned time converting from a local-time mental model and ended up firing windows hours offset from their intent. The comment makes the snippet self-documenting once pasted into `Step.6_apply-updates.yml`.
+2. The advisor now emits a `> **Indent tip.**` blockquote directly above the snippet. The GH snippet is intentionally at 2-space indent (so `schedule:` is a sibling of the existing `workflow_dispatch:` under `on:`); operators who pasted with the cursor sitting inside the `# BEGIN-AZLOCAL-CUSTOMIZE:schedule-triggers` comment block saw VS Code (and JetBrains IDEs) silently double the indent, producing the YAML error *"All mapping items must start at the same column"*. The blockquote explains the cause, instructs the operator to paste at column 0 of a fresh blank line so `schedule:` lines up with `workflow_dispatch:`, and tells them how to recover (delete two leading spaces from every pasted line) if they already hit it.
+
+**Module foundations for the upcoming executable-YAML refactor.** Five new internal (Private) helpers - `Get-AzLocalPipelineHost`, `Set-AzLocalPipelineOutput`, `Add-AzLocalPipelineStepSummary`, `Write-AzLocalPipelineNotice`, `Write-AzLocalPipelineWarning` - abstract over the host-specific quirks of GitHub Actions vs Azure DevOps output channels (`$env:GITHUB_OUTPUT` vs `##vso[task.setvariable]`, `$env:GITHUB_STEP_SUMMARY` vs `##vso[task.uploadsummary]`, `::notice`/`::warning` vs `##vso[task.logissue]`). Not exported and no user-visible effect in v0.8.2 - they are foundations for the upcoming per-Step `Export-*` / `Invoke-*` cmdlets that will move inline `run: |` PowerShell out of the `Step.{0..9}.yml` files and into the module proper. 23 new Pester assertions cover the three host modes (GitHub auto-detect, Azure DevOps via `$env:TF_BUILD`, Local fallback) and the byte-identical contracts of each emitted logging-command syntax.
+
+**Migration:** `Install-Module AzLocal.UpdateManagement -Force` (or `Update-Module`). Re-run `Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend` once to pick up the new self-documenting snippet (the cron *values* are unchanged from v0.8.1; only the surrounding comment and prose changed).
+
+**All 20 bundled `Step.{0..9}.yml` templates** bump `GENERATED_AGAINST_MODULE_VERSION` from `'0.8.1'` to `'0.8.2'`.
+
+See [CHANGELOG.md](../CHANGELOG.md#082---2026-06-10) for the full v0.8.2 entry.
 
 ### What's New in v0.8.1
 

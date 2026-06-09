@@ -527,7 +527,12 @@ resources
                 # GH rejected the workflow ("'workflow_dispatch' is already defined"). The
                 # 2-space `schedule:` indent + 4-space cron indent matches the existing nesting
                 # inside the `BEGIN/END-AZLOCAL-CUSTOMIZE:schedule-triggers` markers.
+                # v0.8.2: prepend a "# All cron times are UTC" comment line so the snippet
+                # is self-documenting once pasted - GitHub Actions and Azure DevOps both
+                # evaluate cron in UTC regardless of repo / agent / branch timezone, and
+                # operators repeatedly burn time converting from a local-time mental model.
                 [void]$cronSb.AppendLine('```yaml')
+                [void]$cronSb.AppendLine('  # All cron times below are UTC (GitHub Actions evaluates schedule: in UTC regardless of repo or runner timezone)')
                 [void]$cronSb.AppendLine('  schedule:')
                 foreach ($k in $sortedCronKeys) {
                     $entry = $byCron[$k]
@@ -545,6 +550,7 @@ resources
                     [void]$cronSb.AppendLine()
                 }
                 [void]$cronSb.AppendLine('```yaml')
+                [void]$cronSb.AppendLine('# All cron times below are UTC (Azure DevOps evaluates schedules: in UTC regardless of repo or agent timezone)')
                 [void]$cronSb.AppendLine('schedules:')
                 foreach ($k in $sortedCronKeys) {
                     $entry = $byCron[$k]
@@ -727,6 +733,13 @@ resources
                 } else {
                     [void]$fullSb.AppendLine('Choose the snippet matching your CI platform and paste/merge into your Step.6 pipeline file. For GitHub Actions, paste the `schedule:` block under the existing `on:` key (do NOT add a second `workflow_dispatch:` - Step.6 already declares one). For Azure DevOps, paste the `schedules:` block at the top level.')
                 }
+                [void]$fullSb.AppendLine()
+                # v0.8.2: paste-tip - the snippet below is at 2-space indent (sibling of
+                # `workflow_dispatch:`). VS Code (and JetBrains) "auto-indent on paste" can
+                # double the indent when the cursor sits on a non-empty line inside the
+                # BEGIN/END markers, producing "All mapping items must start at the same
+                # column" YAML errors. Hint operators to paste at column 0.
+                [void]$fullSb.AppendLine('> **Indent tip.** The snippet below is at 2-space indent (`schedule:` is a sibling of the existing `workflow_dispatch:`). VS Code''s "auto-indent on paste" can silently double the indent if your cursor sits inside the BEGIN/END comment block. **Paste at column 0 of a fresh blank line, then verify `schedule:` lines up with `workflow_dispatch:`.** If you see a YAML error like *"All mapping items must start at the same column"*, this is the cause - delete two leading spaces from every line of the pasted block.')
                 [void]$fullSb.AppendLine()
                 foreach ($line in ($cronSnippetBody -split "`r?`n")) {
                     [void]$fullSb.AppendLine($line)
