@@ -6784,6 +6784,65 @@ on:
                 ($result | Where-Object Status -eq 'NoWindowTag').ClusterCount | Should -Be 1
             }
         }
+
+        It 'v0.8.2: -IncludeUntagged Recommendation lists cluster names grouped by UpdateRing (first 15)' {
+            InModuleScope AzLocal.UpdateManagement -Parameters @{ tmpYamlDir2 = $script:tmpYamlDir2 } {
+                param($tmpYamlDir2)
+                Mock Invoke-AzResourceGraphQuery {
+                    @(
+                        [PSCustomObject]@{ ClusterName='cl-cnry-01'; ResourceGroup='r'; SubscriptionId='s'; ClusterResourceId='/s/r/cl-cnry-01'; UpdateRing='Canary'; UpdateStartWindow='' },
+                        [PSCustomObject]@{ ClusterName='cl-cnry-02'; ResourceGroup='r'; SubscriptionId='s'; ClusterResourceId='/s/r/cl-cnry-02'; UpdateRing='Canary'; UpdateStartWindow='' },
+                        [PSCustomObject]@{ ClusterName='cl-prd-01';  ResourceGroup='r'; SubscriptionId='s'; ClusterResourceId='/s/r/cl-prd-01';  UpdateRing='Prod';   UpdateStartWindow='' },
+                        [PSCustomObject]@{ ClusterName='cl-tst-99';  ResourceGroup='r'; SubscriptionId='s'; ClusterResourceId='/s/r/cl-tst-99';  UpdateRing='';       UpdateStartWindow='' }
+                    )
+                }
+                $result = Test-AzLocalApplyUpdatesScheduleCoverage -View Audit -PipelineYamlPath $tmpYamlDir2 -IncludeUntagged -PassThru 6>$null
+                $row = $result | Where-Object Status -eq 'NoWindowTag'
+                $row | Should -Not -BeNullOrEmpty
+                $row.ClusterCount | Should -Be 4
+                $row.Recommendation | Should -Match 'Grouped by UpdateRing'
+                $row.Recommendation | Should -Match 'Canary -> cl-cnry-01, cl-cnry-02'
+                $row.Recommendation | Should -Match 'Prod -> cl-prd-01'
+                $row.Recommendation | Should -Match '\(none\) -> cl-tst-99'
+                $row.Issue | Should -Match 'optional'
+            }
+        }
+
+        It 'v0.8.2: NoWindowTag Recommendation caps the cluster list at 15 and appends "(showing first 15 of N)"' {
+            InModuleScope AzLocal.UpdateManagement -Parameters @{ tmpYamlDir2 = $script:tmpYamlDir2 } {
+                param($tmpYamlDir2)
+                Mock Invoke-AzResourceGraphQuery {
+                    1..20 | ForEach-Object {
+                        [PSCustomObject]@{ ClusterName=("cl-{0:D2}" -f $_); ResourceGroup='r'; SubscriptionId='s'; ClusterResourceId="/s/r/cl-$_"; UpdateRing='Prod'; UpdateStartWindow='' }
+                    }
+                }
+                $result = Test-AzLocalApplyUpdatesScheduleCoverage -View Audit -PipelineYamlPath $tmpYamlDir2 -IncludeUntagged -PassThru 6>$null
+                $row = $result | Where-Object Status -eq 'NoWindowTag'
+                $row.ClusterCount | Should -Be 20
+                $row.Recommendation | Should -Match 'showing first 15 of 20'
+                # Only the first 15 cluster names should appear in the Recommendation
+                $row.Recommendation | Should -Match 'cl-15'
+                $row.Recommendation | Should -Not -Match 'cl-16'
+            }
+        }
+
+        It 'v0.8.2: NoWindowTag sorts AFTER Covered rows (informational, not blocking)' {
+            InModuleScope AzLocal.UpdateManagement -Parameters @{ tmpYamlDir2 = $script:tmpYamlDir2 } {
+                param($tmpYamlDir2)
+                Mock Invoke-AzResourceGraphQuery {
+                    @(
+                        [PSCustomObject]@{ ClusterName='c1'; ResourceGroup='r'; SubscriptionId='s'; ClusterResourceId='/s/r/c1'; UpdateRing='Wave1'; UpdateStartWindow='Sat-Sun_02:00-06:00' },
+                        [PSCustomObject]@{ ClusterName='c2'; ResourceGroup='r'; SubscriptionId='s'; ClusterResourceId='/s/r/c2'; UpdateRing='Wave2'; UpdateStartWindow='Sat-Sun_02:00-06:00' },
+                        [PSCustomObject]@{ ClusterName='c3'; ResourceGroup='r'; SubscriptionId='s'; ClusterResourceId='/s/r/c3'; UpdateRing='';      UpdateStartWindow='' }
+                    )
+                }
+                $result = Test-AzLocalApplyUpdatesScheduleCoverage -View Audit -PipelineYamlPath $tmpYamlDir2 -IncludeUntagged -PassThru 6>$null
+                $cronSection = @($result | Where-Object Section -eq 'Cron')
+                $cronSection.Count | Should -BeGreaterThan 1
+                # NoWindowTag must be the LAST row in the Cron section
+                $cronSection[-1].Status | Should -Be 'NoWindowTag'
+            }
+        }
     }
 
     Context 'Belt-and-braces: -RecommendFiresPerWindow + RingMixedWindows (v0.7.92)' {
@@ -8853,6 +8912,35 @@ Describe 'Step.3 pipeline scaffolds - v0.7.70 dual JUnit testsuite emission' {
             $raw = Get-Content -Raw -LiteralPath $adoYaml
             $raw | Should -Match 'Schedule \(ring diff\)'
             $raw | Should -Match 'Cron coverage'
+        }
+    }
+}
+
+# -----------------------------------------------------------------------------
+# v0.8.2 - Step.3 Allow-list section: trimmed Tip + 'How to fix' subsection
+# -----------------------------------------------------------------------------
+# v0.8.2 replaces the verbose 'Tip - per-ring overrides' paragraph and the
+# 3-row example block with a short steady-state one-liner + a dedicated
+# '### How to fix - edit `<scheduleFile>`' subsection naming the schedule
+# file. Both GH and ADO Step.3 templates emit the new shape.
+
+Describe 'Step.3 pipeline scaffolds - v0.8.2 Allow-list section shape' {
+
+    Context 'YAML emits the trimmed Allow-list subsection (no verbose Tip / 3-row example block)' {
+
+        It '[<Platform>] emits the new How-to-fix schedulePath subsection and drops the verbose Tip block' -ForEach @(
+            @{ Platform='GitHub'; YamlPath=(Join-Path $PSScriptRoot '..\Automation-Pipeline-Examples\github-actions\Step.3_apply-updates-schedule-audit.yml') }
+            @{ Platform='ADO';    YamlPath=(Join-Path $PSScriptRoot '..\Automation-Pipeline-Examples\azure-devops\Step.3_apply-updates-schedule-audit.yml') }
+        ) {
+            Test-Path $YamlPath | Should -BeTrue
+            $raw = Get-Content -Raw -LiteralPath $YamlPath
+            # New shape present
+            $raw | Should -Match '### How to fix - edit ``\$schedulePath``'
+            $raw | Should -Match 'inherit the top-level allow-list'
+            $raw | Should -Match 'install the latest Ready update as soon as it is available'
+            # Verbose v0.8.1 shape removed
+            $raw | Should -Not -Match 'Tip - per-ring overrides'
+            $raw | Should -Not -Match 'Showing first 3 of'
         }
     }
 }

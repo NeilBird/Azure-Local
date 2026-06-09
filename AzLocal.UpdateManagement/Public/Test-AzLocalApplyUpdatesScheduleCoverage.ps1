@@ -942,14 +942,33 @@ resources
             }
 
             if ($IncludeUntagged -and $untaggedClusters.Count -gt 0) {
+                # v0.8.2: enrich the recommendation with the first 15 untagged
+                # cluster names grouped by their UpdateRing tag (or '(none)'
+                # when both tags are missing) so operators can fix the most
+                # common 'forgot to tag' state directly from the audit table
+                # without cross-referencing the matrix CSV.
+                $untaggedByRing = $untaggedClusters | Group-Object -Property @{Expression={ if ([string]::IsNullOrWhiteSpace($_.UpdateRing)) { '(none)' } else { $_.UpdateRing.Trim() } }} | Sort-Object Name
+                $sampleSegments = New-Object System.Collections.Generic.List[string]
+                $shown = 0
+                foreach ($g in $untaggedByRing) {
+                    if ($shown -ge 15) { break }
+                    $takeFromThis = [Math]::Min($g.Count, 15 - $shown)
+                    $clusterNames = ($g.Group | Select-Object -First $takeFromThis | ForEach-Object { $_.ClusterName }) -join ', '
+                    $extra = if ($g.Count -gt $takeFromThis) { " (+$($g.Count - $takeFromThis) more)" } else { '' }
+                    $sampleSegments.Add("$($g.Name) -> $clusterNames$extra")
+                    $shown += $takeFromThis
+                }
+                $listSuffix = if ($untaggedClusters.Count -gt 15) { " (showing first 15 of $($untaggedClusters.Count))" } else { '' }
+                $recPrefix  = "Tag the cluster(s) below with UpdateStartWindow=<days>_<HH:MM>-<HH:MM> (e.g. 'Mon-Fri_22:00-06:00') so the runtime gate (Test-AzLocalUpdateScheduleAllowed) can enforce a maintenance window. Grouped by UpdateRing${listSuffix}: "
+                $recBody    = $sampleSegments -join '; '
                 $rows.Add([PSCustomObject]@{
                     Section         = 'Cron'
                     UpdateRing      = '(any)'
                     UpdateStartWindow    = ''
                     ClusterCount    = $untaggedClusters.Count
                     Status          = 'NoWindowTag'
-                    Issue           = "$($untaggedClusters.Count) cluster(s) have no UpdateStartWindow tag and will be updated whenever the pipeline runs."
-                    Recommendation  = 'Tag clusters with UpdateStartWindow=<days>_<HH:MM>-<HH:MM> so the runtime gate (Test-AzLocalUpdateScheduleAllowed) can enforce a maintenance window.'
+                    Issue           = "$($untaggedClusters.Count) cluster(s) have no UpdateStartWindow tag and will be updated whenever the pipeline runs (the UpdateStartWindow tag is optional, but without it the runtime gate cannot enforce a maintenance window)."
+                    Recommendation  = ($recPrefix + $recBody + '.')
                     MatchingCrons   = @()
                     RequiredCronUTC = ''
                 })
@@ -1008,9 +1027,14 @@ resources
             # two sub-tables come out pre-grouped for renderers that read the
             # collection top-to-bottom. Within each section, ordering keeps the
             # existing severity precedence (most-actionable rows first).
+            # v0.8.2: NoWindowTag bumped from 7 (above Covered) to 10 (after
+            # Covered). NoWindowTag is informational - the UpdateStartWindow
+            # tag is optional, so this row is a 'recommended cleanup' rather
+            # than a blocker. Sorting it last keeps the table readable when
+            # the rest of the fleet is Covered.
             , @($rows | Sort-Object `
                 @{Expression={ if ($_.Section -eq 'Schedule') {1} else {2} }},
-                @{Expression={ switch ($_.Status) { 'RingMissingFromSchedule' {1} 'RingOrphanedInSchedule' {2} 'RingMixedWindows' {3} 'Uncovered' {4} 'PartiallyCovered' {5} 'MalformedTag' {6} 'NoWindowTag' {7} 'UnparseableCron' {8} 'Covered' {9} default {10} } }},
+                @{Expression={ switch ($_.Status) { 'RingMissingFromSchedule' {1} 'RingOrphanedInSchedule' {2} 'RingMixedWindows' {3} 'Uncovered' {4} 'PartiallyCovered' {5} 'MalformedTag' {6} 'UnparseableCron' {7} 'Covered' {8} 'NoWindowTag' {10} default {9} } }},
                 UpdateRing, UpdateStartWindow)
         }
     }

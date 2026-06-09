@@ -7,12 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.8.2] - 2026-06-10
 
-Operator-experience release for `Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend`. No public API changes; no output-shape changes that break existing scripts. Two paste-time pain points reported on v0.8.1 are fixed in the advisor's emitted snippet, plus five new internal helpers that lay the foundation for the upcoming executable-YAML refactor.
+Operator-experience release for `Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend`. No public API changes; no output-shape changes that break existing scripts. Two paste-time pain points reported on v0.8.1 are fixed in the advisor's emitted snippet, plus a trimmed Step.3 Allow-list section, a richer `NoWindowTag` recommendation, and five new internal helpers that lay the foundation for the upcoming executable-YAML refactor.
 
 ### `Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend` paste-time pain points fixed
 
 - **"All cron times below are UTC" comment is now embedded inside both the GH and ADO snippets.** GitHub Actions and Azure DevOps both evaluate `cron:` in UTC regardless of repo / runner / agent timezone, but operators repeatedly burned time converting from a local-time mental model and ended up with windows that fired hours offset from their intent. The advisor now prepends a `# All cron times below are UTC ...` comment line directly above `schedule:` (GH) and `schedules:` (ADO) so the snippet is self-documenting once pasted into `Step.6_apply-updates.yml`.
 - **"Indent tip" callout above the snippet warns about IDE auto-indent-on-paste.** The GH snippet is intentionally at 2-space indent (so `schedule:` is a sibling of the existing `workflow_dispatch:` under `on:`). When operators paste with the cursor sitting inside the `# BEGIN-AZLOCAL-CUSTOMIZE:schedule-triggers` / `# END-AZLOCAL-CUSTOMIZE:schedule-triggers` comment block, VS Code (and JetBrains IDEs) silently double the indent, producing the YAML error *"All mapping items must start at the same column"*. The advisor now emits a `> **Indent tip.**` blockquote directly above the snippet explaining the cause, instructing the operator to paste at column 0 of a fresh blank line so `schedule:` lines up with `workflow_dispatch:`, and telling them how to recover (delete two leading spaces from every pasted line) if they already hit it.
+
+### `Test-AzLocalApplyUpdatesScheduleCoverage -View Audit` `NoWindowTag` row enrichment + reordering
+
+- **`NoWindowTag` recommendation now names the affected clusters, grouped by `UpdateRing`.** Pre-v0.8.2 the row showed a generic *"Tag clusters with UpdateStartWindow=&lt;days&gt;_&lt;HH:MM&gt;-&lt;HH:MM&gt;"* nudge that left operators cross-referencing the matrix CSV to find the offenders. The advisor now lists the first 15 cluster names grouped by their `UpdateRing` tag (or `(none)` when both tags are missing), e.g. `Prod -> hci-syd-01, hci-syd-02; Wave1 -> hci-mel-01 (+3 more) (showing first 15 of 42)`, so the audit table is actionable on its own.
+- **`NoWindowTag` row issue text clarified that the tag is optional.** The runtime gate `Test-AzLocalUpdateScheduleAllowed` only enforces a maintenance window WHEN the tag is set, so untagged clusters are not a blocker - they just have no enforced window. The clarified prose tells operators why this is "informational, not failure".
+- **`NoWindowTag` sort order moved from rank 7 to rank 10** (i.e. AFTER `Covered`). Since the tag is optional, sorting these rows last keeps the table readable when the rest of the fleet is `Covered` and the operator only cares about gaps.
+
+### Step.3 Allow-list section trimmed in both GH and ADO scaffolds
+
+- **`Allow-list coverage (schema v2)` subsection no longer emits the verbose `> Tip - per-ring overrides` paragraph + 3-row example block** that v0.8.1 produced. Inheriting the top-level allow-list IS the expected steady state for most fleets (install Latest as soon as Ready); the verbose tip was misleading operators into thinking they had to add overrides.
+- **New `### How to fix - edit \`$schedulePath\`` subsection** names the schedule file directly and explains that `allowedUpdateVersions:` overrides are only needed when an operator wants to PIN a ring to a specific update (e.g. keep Prod on the latest feature drop only - YY04 / YY10 - and skip cumulative updates between feature drops). Followed by a single-row YAML example.
+- **6 new Pester assertions** lock in the new shape: both Step.3 scaffolds emit the trimmed one-liner and the `How to fix - edit $schedulePath` heading, AND do NOT emit `Tip - per-ring overrides` / `Showing first 3 of` (the verbose v0.8.1 markers).
 
 ### Module foundations for the upcoming executable-YAML refactor
 

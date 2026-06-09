@@ -88,12 +88,20 @@ If you are new to this module, work through these in order from a regular PowerS
 
 ## What's New in v0.8.2
 
-**Operator-experience release for `Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend`.** No public API changes; no output-shape changes that break existing scripts. Two paste-time pain points reported on v0.8.1 are fixed in the advisor's emitted snippet.
+**Operator-experience release for `Test-AzLocalApplyUpdatesScheduleCoverage`.** No public API changes; no output-shape changes that break existing scripts. Two paste-time pain points in the `-View Recommend` snippet are fixed, the `-View Audit` `NoWindowTag` row now names affected clusters, and the Step.3 Allow-list section is trimmed in both GH and ADO scaffolds.
 
 ### Paste-time pain points fixed in the `-View Recommend` snippet
 
 1. **"All cron times below are UTC" comment is now embedded in both the GH and ADO snippets.** GitHub Actions and Azure DevOps both evaluate `cron:` in UTC regardless of repository, runner, or agent timezone, but operators repeatedly burned time converting from a local-time mental model and ended up with windows that fired hours offset from their intent. The advisor now prepends a `# All cron times below are UTC ...` comment line directly above `schedule:` (GH) and `schedules:` (ADO) so the snippet is self-documenting once pasted into `Step.6_apply-updates.yml`.
 2. **"Indent tip" callout above the snippet warns about IDE auto-indent-on-paste.** The GH snippet is intentionally at 2-space indent (so `schedule:` is a sibling of the existing `workflow_dispatch:` under `on:`). When operators paste it with the cursor sitting inside the `# BEGIN-AZLOCAL-CUSTOMIZE:schedule-triggers` / `# END-AZLOCAL-CUSTOMIZE:schedule-triggers` comment block, VS Code (and JetBrains IDEs) silently double the indent, producing the YAML error *"All mapping items must start at the same column"*. The advisor now emits a `> **Indent tip.**` blockquote directly above the snippet that explains the cause, instructs the operator to paste at column 0, and tells them how to recover (delete two leading spaces from every pasted line) if they already hit it.
+
+### `-View Audit` `NoWindowTag` row is now actionable on its own
+
+Pre-v0.8.2 the row showed a generic *"Tag clusters with `UpdateStartWindow=<days>_<HH:MM>-<HH:MM>`"* nudge that left operators cross-referencing the matrix CSV to find the offenders. The advisor now names the first 15 affected cluster names grouped by their `UpdateRing` tag (or `(none)` when both tags are missing), e.g. `Prod -> hci-syd-01, hci-syd-02; Wave1 -> hci-mel-01 (+3 more) (showing first 15 of 42)`. The row's issue text is clarified to say the tag is *optional* (the runtime gate only enforces a window when it is set), and the row sorts AFTER `Covered` (rank 10 instead of 7) so it is treated as informational cleanup rather than a blocker.
+
+### Step.3 Allow-list section trimmed in both GH and ADO scaffolds
+
+The `Allow-list coverage (schema v2)` subsection no longer emits the verbose `> Tip - per-ring overrides` paragraph + 3-row example block that v0.8.1 produced. Inheriting the top-level allow-list IS the expected steady state for most fleets (install Latest as soon as Ready); the verbose tip was misleading operators into thinking they had to add overrides. The new shape is a one-line steady-state confirmation plus a dedicated `### How to fix - edit $schedulePath` subsection (naming the schedule file) and a single-row YAML example showing how to PIN a ring to a specific update (e.g. keep Prod on the latest feature drop only - YY04 / YY10 - and skip cumulative updates between feature drops).
 
 ### Module foundations for the upcoming executable-YAML refactor
 
