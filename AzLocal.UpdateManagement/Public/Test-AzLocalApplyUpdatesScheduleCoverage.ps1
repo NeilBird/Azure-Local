@@ -384,13 +384,19 @@ resources
         $coverageRows.Add($row)
     }
 
-    # 4. If Audit: load YAML crons and check coverage.
-    #    -PipelineYamlPath is optional now (it can be omitted when only the
+    # 4. If Audit or Recommend: load YAML crons.
+    #    Audit needs them for the coverage check; Recommend needs them
+    #    so it can DIFF the recommended set against what is already
+    #    present in Step.6 and only emit a "How to fix" snippet for the
+    #    crons that are actually missing (v0.8.3 - prior versions always
+    #    emitted the full canonical block which was unreadable on
+    #    multi-ring fleets where most crons were already in place).
+    #    -PipelineYamlPath is optional (it can be omitted when only the
     #    -SchedulePath two-way ring diff is wanted), so the YAML read is
     #    guarded.
     $yamlCrons        = @()
     $parsedYamlCrons  = @()
-    if ($View -eq 'Audit' -and -not [string]::IsNullOrWhiteSpace($PipelineYamlPath)) {
+    if ($View -in 'Audit','Recommend' -and -not [string]::IsNullOrWhiteSpace($PipelineYamlPath)) {
         # Read-AzLocalApplyUpdatesYamlCrons returns via `return , $arr` to
         # preserve Object[N] shape. Do NOT wrap with @() - that collapses
         # multi-cron YAML files (or any N != 1 result) to a single nested-array
@@ -490,6 +496,31 @@ resources
                     }
                     $byCron[$key].Rings += $r.UpdateRing
                     $byCron[$key].Clusters += $r.ClusterCount
+                }
+            }
+
+            # v0.8.3: diff-prune. When -PipelineYamlPath is supplied (Step.3
+            # always supplies it), drop any recommended cron whose expression
+            # already exists in the parsed Step.6 yml. Keeps the "How to fix"
+            # snippet a true edit-list (only what's actually missing) instead
+            # of the full canonical block. Crons in $parsedYamlCrons that are
+            # invalid / complex are NOT considered "already present" - the
+            # Unparseable section asks the operator to rewrite those, and we
+            # do NOT want to silently assume they cover the same window. When
+            # $byCron is empty after pruning AND $actionCount is 0 (no other
+            # findings), the Recommend output is an empty string and the
+            # caller (Step.3 yml summary step) skips inlining it.
+            $alreadyPresentCrons = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::Ordinal)
+            if ($parsedYamlCrons.Count -gt 0) {
+                foreach ($pc in $parsedYamlCrons) {
+                    if ($pc.Parsed.IsValid -and -not $pc.Parsed.IsComplex) {
+                        [void]$alreadyPresentCrons.Add($pc.Source.CronExpression.Trim())
+                    }
+                }
+                $keysToRemove = @($byCron.Keys | Where-Object { $alreadyPresentCrons.Contains($_) })
+                foreach ($k in $keysToRemove) { [void]$byCron.Remove($k) }
+                if ($keysToRemove.Count -gt 0) {
+                    Write-Log -Message "Recommend: pruned $($keysToRemove.Count) cron(s) already present in '$PipelineYamlPath' - $($byCron.Count) cron(s) remain to add." -Level Info
                 }
             }
 

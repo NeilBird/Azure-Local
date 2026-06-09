@@ -5,6 +5,41 @@ All notable changes to the AzLocal.UpdateManagement module (renamed from AzStack
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.3] - 2026-06-11
+
+Step.3 advisor accuracy + readability fixes. No public API removed; one cmdlet behaviour change (Recommend now diff-prunes against an existing Step.6 yml when `-PipelineYamlPath` is supplied). Four operator-reported defects in the Step.3 `Test-AzLocalApplyUpdatesScheduleCoverage` output are addressed.
+
+### `Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend` is now a true diff (not a re-emit of the full canonical block)
+
+- **Recommend now drops any cron expression that already exists in `-PipelineYamlPath`.** Pre-v0.8.3 the Recommend snippet was built purely from cluster `UpdateStartWindow` tags + `Convert-AzLocalUpdateWindowToCron`, so on a fleet where Step.6 already contained the recommended crons (the steady state after running Step.3 once) the advisor re-emitted the same 8-10 cron lines under an "Action required - cron coverage" header. Operators read it as "Step.3 is telling me to add these again" and pasted duplicates. Now the cmdlet reads the supplied `-PipelineYamlPath`, parses the cron entries via the same `Read-AzLocalApplyUpdatesYamlCrons` helper as Audit uses, and prunes every recommended cron whose expression matches one already present. Only the truly missing crons land in the snippet. When no crons remain post-prune AND there are no other findings, the Recommend output is empty (no false-positive "Action required" header).
+- **Step.3 GH + ADO yml now pass `-PipelineYamlPath` to the Recommend invocation.** Pre-v0.8.3 the `-View Recommend ... -ExportPath $recoMd` call was always made without `-PipelineYamlPath`, so even after the cmdlet supported the diff-prune the snippet would have been the un-pruned full set. Both Step.3 templates now build `$recoArgs` and pass `PipelineYamlPath = $pipelinePath` when supplied.
+- **Pre-existing crons that the parser cannot reason about (`IsComplex` / `IsValid=$false`) are NOT considered "already present".** The Unparseable section asks the operator to rewrite those, and we do NOT want to silently assume they cover the same window as a recommended cron.
+
+### Step.3 GH + ADO yml: `pipeline_path` / `pipelinePath` is now REQUIRED
+
+- **GitHub Actions: `pipeline_path` input is now `required: true`** (default unchanged: `.github/workflows`). The schedule-only fall-through ("Leave empty to audit ONLY the schedule_path") is removed; an empty `pipeline_path` now throws with a clear error pointing to common pipeline folders that DO exist in the repo. Without this, the diff-prune above would have no Step.6 to diff against and every Recommend run would be a false positive.
+- **Azure DevOps: `pipelinePath` parameter description now says REQUIRED** (ADO `parameters:` blocks have no `required:` keyword, so validation is at runtime). Same throw + same hint message as the GitHub side.
+- **`schedule_path` / `schedulePath` stays optional** - it drives the ring-file two-way diff and is independent of the cron-coverage diff.
+
+### Step.3 yml: `### How to fix - edit ``$schedulePath``` heading reframed
+
+- The v0.8.2 Allow-list section emitted a sub-heading `### How to fix - edit ``$schedulePath``` whenever any schedule row inherited the top-level allow-list. Operators read this as "the fix for the higher-blast-radius cron-coverage or ring-diff sections is to edit `$schedulePath`", but it was only ever about the OPTIONAL `allowedUpdateVersions:` pin (e.g. keeping Prod on the latest feature drop only). The heading is now `### Optional - pin a ring to a specific update in ``$schedulePath``` and the body explicitly says *"This is NOT a fix for the cron-coverage or ring-diff sections above - those have their own 'Action required' blocks."*
+
+### Step.3 yml: closing fence bug fix (markdown rendering)
+
+- Both Step.3 templates had `$md += "``````n"` in two places (after the schema-v1 migrate snippet and after the `allowedUpdateVersions:` example yaml). In PowerShell double-quoted strings, six backticks = three literal backticks but the trailing `n` becomes a literal `n` (not a newline) because the backticks all pair up before reaching it. Result: the rendered markdown showed `` ``` `` followed by a literal `n` and the subsequent paragraphs got swept into the code block. Fixed to seven backticks + `n` (= three literal backticks + newline). Four sites total (GH x2, ADO x2).
+
+### Pester tests updated
+
+- `Module: AzLocal.UpdateManagement / Module Load / Should have version` bumped to `0.8.3`.
+- `Step.3 pipeline scaffolds - v0.8.2 Allow-list section shape` Describe block updated to assert the new reframed heading (`### Optional - pin a ring to a specific update in ``$schedulePath```) and the disclaimer line, and to ASSERT-NOT the old v0.8.2 `### How to fix - edit ``$schedulePath``` shape.
+- New Pester tests added under the existing `Function: Test-AzLocalApplyUpdatesScheduleCoverage` Describe block to cover the diff-prune behaviour (recommended cron pruned when already present in supplied Step.6 yml; full set emitted when `-PipelineYamlPath` is not supplied).
+
+### Version pin bumped across all 20 bundled `Step.{0..9}.yml` templates
+
+- `GENERATED_AGAINST_MODULE_VERSION` moves from `0.8.2` to `0.8.3` across all 20 bundled `Step.{0..9}.yml` files (10 GitHub Actions + 10 Azure DevOps). The install step's drift annotation continues to surface stale YAML to operators.
+- `$script:ModuleVersion` (psm1) == `ModuleVersion` (psd1) == `'0.8.3'` (test assertion); the drift guard introduced in v0.7.67 enforces this.
+
 ## [0.8.2] - 2026-06-10
 
 Operator-experience release for `Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend`. No public API changes; no output-shape changes that break existing scripts. Two paste-time pain points reported on v0.8.1 are fixed in the advisor's emitted snippet, plus a trimmed Step.3 Allow-list section, a richer `NoWindowTag` recommendation, and five new internal helpers that lay the foundation for the upcoming executable-YAML refactor.
