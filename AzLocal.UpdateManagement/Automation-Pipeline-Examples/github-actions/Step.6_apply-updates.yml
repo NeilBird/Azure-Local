@@ -112,7 +112,7 @@ env:
   # this to the version actually installed and to the latest on PSGallery, and emits a
   # ::notice annotation if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.8.3'
+  GENERATED_AGAINST_MODULE_VERSION: '0.8.4'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): manual workflow_dispatch input >
   # repository variable 'REQUIRED_MODULE_VERSION' > empty (latest).
@@ -122,6 +122,15 @@ env:
   # is `schedule:`. Override via repository variable APPLY_UPDATES_SCHEDULE_PATH
   # if you keep the schedule outside `.github/`.
   APPLY_UPDATES_SCHEDULE_PATH: ${{ vars.APPLY_UPDATES_SCHEDULE_PATH || './.github/apply-updates-schedule.yml' }}
+  # v0.8.4 - opt this workflow into Node.js 24 for all JavaScript actions
+  # (actions/checkout, actions/download-artifact, actions/upload-artifact,
+  # azure/login, dorny/test-reporter, etc). Per GitHub's 2025-09-19 deprecation
+  # notice, Node 20 is forced off by default on 2026-06-16 and removed from
+  # the runner on 2026-09-16. Setting this env var now silences the deprecation
+  # warnings and exercises Node 24 ahead of the cut-over. To temporarily opt
+  # back out after the cut-over, set ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true.
+  # See https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 # prevent overlapping apply-updates runs from racing on the same
 # fleet. cancel-in-progress=false means a newly-triggered run queues behind an
@@ -233,6 +242,26 @@ jobs:
             $msg = "AzLocal.UpdateManagement v$latest is available on PSGallery; this run installed v$installed. Review the module CHANGELOG before bumping REQUIRED_MODULE_VERSION (or clear the pin to install the latest automatically)."
             Write-Host "::notice title=Newer AzLocal.UpdateManagement version available on PSGallery::$msg"
         }
+
+        # v0.8.4 - one-line version banner emitted to the rendered Step
+        # Summary so the YAML version (GENERATED_AGAINST_MODULE_VERSION), the
+        # module version actually loaded on the runner, the PSGallery latest,
+        # and the REQUIRED_MODULE_VERSION pin status are visible at the top
+        # of every run summary without scrolling the agent log. Same data is
+        # also echoed to the console above as 'Module version summary'.
+        # Emitted from the check-readiness install step only (the apply-updates
+        # install step in the same workflow deliberately skips this to avoid
+        # duplicating the banner in the rendered summary).
+        $pin       = if ($env:REQUIRED_MODULE_VERSION) { "pinned to v$($env:REQUIRED_MODULE_VERSION)" } else { 'latest (fix-forward)' }
+        $latestStr = if ($latest) { "v$latest" } else { '(PSGallery lookup failed)' }
+        $verdict   = if ($installed -lt $generated) { 'YAML newer than module - check REQUIRED_MODULE_VERSION' }
+                     elseif ($installed -gt $generated) { 'YAML older than module - run Copy-AzLocalPipelineExample -Update' }
+                     elseif ($latest -and ($latest -gt $installed)) { 'newer module available on PSGallery' }
+                     else { 'in sync' }
+        if ($env:GITHUB_STEP_SUMMARY) {
+            "_Pipeline YAML v$generated | Module v$installed installed ($pin) | PSGallery latest $latestStr | $verdict_" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+            "" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+        }
     
     # Resolve the UpdateRing for THIS firing.
     #   - workflow_dispatch  -> use the operator's manual input verbatim (back-compat).
@@ -336,6 +365,40 @@ jobs:
         
         echo "READY_COUNT=$readyCount" >> $env:GITHUB_OUTPUT
         echo "TOTAL_COUNT=$totalCount" >> $env:GITHUB_OUTPUT
+
+        # v0.8.4 - Enhancement D: per-cluster readiness markdown table.
+        # Surfaces *which* clusters were assessed, their state, and why each
+        # cluster was/wasn't handed to apply-updates - directly in the Step
+        # Summary so operators don't have to dig into raw agent logs.
+        if ($env:GITHUB_STEP_SUMMARY) {
+            $notReadyCount = $totalCount - $readyCount
+            "## Cluster Readiness ($updateRing)"                  >> $env:GITHUB_STEP_SUMMARY
+            ""                                                     >> $env:GITHUB_STEP_SUMMARY
+            "**Total:** $totalCount &nbsp;|&nbsp; **Ready:** $readyCount &nbsp;|&nbsp; **Not Ready:** $notReadyCount" >> $env:GITHUB_STEP_SUMMARY
+            ""                                                     >> $env:GITHUB_STEP_SUMMARY
+            "| Cluster | Current Version | Update State | Health | Ready? | Recommended Update | Blocking Reasons |" >> $env:GITHUB_STEP_SUMMARY
+            "|---|---|---|---|---|---|---|"                         >> $env:GITHUB_STEP_SUMMARY
+            $rowCap = 100
+            $rendered = 0
+            foreach ($r in ($results | Sort-Object @{Expression={[bool]$_.ReadyForUpdate}; Descending=$true}, ClusterName)) {
+                if ($rendered -ge $rowCap) { break }
+                $readyIcon = if ($r.ReadyForUpdate -eq $true) { '✅' } else { '⛔' }
+                $healthVal = "$($r.HealthState)"
+                $healthCell = switch -Regex ($healthVal) { '^Success$' { "✅ $healthVal" } '^Warning$' { "⚠️ $healthVal" } '^Failure$' { "❌ $healthVal" } default { $healthVal } }
+                $blocking = "$($r.BlockingReasons)"
+                if ($blocking.Length -gt 200) { $blocking = $blocking.Substring(0, 197) + '...' }
+                $blocking = $blocking -replace '\|','\|' -replace '\r?\n',' '
+                $reco = if ($r.RecommendedUpdate) { '`' + $r.RecommendedUpdate + '`' } else { '-' }
+                $curr = if ($r.CurrentVersion) { '`' + $r.CurrentVersion + '`' } else { '-' }
+                "| ``$($r.ClusterName)`` | $curr | $($r.UpdateState) | $healthCell | $readyIcon | $reco | $blocking |" >> $env:GITHUB_STEP_SUMMARY
+                $rendered++
+            }
+            if ($totalCount -gt $rowCap) {
+                ""                                                                                   >> $env:GITHUB_STEP_SUMMARY
+                "_Showing first $rowCap of $totalCount clusters. Download the readiness-report.csv artifact for the full list._" >> $env:GITHUB_STEP_SUMMARY
+            }
+            ""                                                                                       >> $env:GITHUB_STEP_SUMMARY
+        }
     
     - name: Compute Artifact Timestamp
       if: always()
@@ -549,6 +612,15 @@ jobs:
         echo "SCHEDULE_BLOCKED=$scheduleBlocked" >> $env:GITHUB_OUTPUT
         echo "SIDELOADED_BLOCKED=$sideloadedBlocked" >> $env:GITHUB_OUTPUT
         echo "EXCLUDED_BY_TAG=$excludedByTag" >> $env:GITHUB_OUTPUT
+
+        # v0.8.4 - Enhancement D: persist per-cluster apply results to JSON so
+        # the downstream Summary step can render a markdown table without
+        # depending on the (truncated, JSON-unfriendly) step output stream.
+        $applyJsonPath = Join-Path $outputDir 'apply-results.json'
+        @($results) | Select-Object ClusterName, Status, UpdateName, Duration, Message |
+            ConvertTo-Json -Depth 4 |
+            Out-File -FilePath $applyJsonPath -Encoding utf8 -Force
+        Write-Host "Wrote per-cluster apply results to $applyJsonPath"
     
     - name: Compute Artifact Timestamp
       if: always()
@@ -720,6 +792,71 @@ jobs:
         "| Schedule Blocked | $scheduleBlocked |" >> $env:GITHUB_STEP_SUMMARY
         "| Sideloaded Blocked | $sideloadedBlocked |" >> $env:GITHUB_STEP_SUMMARY
         "| Excluded By Tag | $excludedByTag |" >> $env:GITHUB_STEP_SUMMARY
+
+        # v0.8.4 - Enhancement D: per-cluster action table from apply-results.json
+        # (written by the apply-updates step) - shows operators exactly what
+        # happened to each cluster handed to apply, without log-diving.
+        $applyJson = './artifacts/apply-results.json'
+        if (Test-Path $applyJson) {
+            $applyRows = @(Get-Content -Raw -Path $applyJson | ConvertFrom-Json)
+            if ($applyRows.Count -gt 0) {
+                "" >> $env:GITHUB_STEP_SUMMARY
+                "### Cluster Actions ($($applyRows.Count) cluster(s))" >> $env:GITHUB_STEP_SUMMARY
+                "" >> $env:GITHUB_STEP_SUMMARY
+                "| Cluster | Status | Update | Duration | Message |" >> $env:GITHUB_STEP_SUMMARY
+                "|---|---|---|---|---|"                              >> $env:GITHUB_STEP_SUMMARY
+                $startedStates = @('UpdateStarted','Started','Success')
+                $blockedStates = @('HealthCheckBlocked','ScheduleBlocked','SideloadedBlocked','ExcludedByTag','NotConnected')
+                $failedStates  = @('Failed','Error','NotFound')
+                foreach ($r in ($applyRows | Sort-Object Status, ClusterName)) {
+                    $st = "$($r.Status)"
+                    $icon = if ($startedStates -contains $st) { '✅' } elseif ($failedStates -contains $st) { '❌' } elseif ($blockedStates -contains $st) { '⛔' } else { '⏭️' }
+                    $upd  = if ($r.UpdateName) { '`' + $r.UpdateName + '`' } else { '-' }
+                    $dur  = if ($r.Duration) { "$($r.Duration)" } else { '-' }
+                    $msg  = "$($r.Message)"
+                    if ($msg.Length -gt 180) { $msg = $msg.Substring(0, 177) + '...' }
+                    $msg  = $msg -replace '\|','\|' -replace '\r?\n',' '
+                    "| ``$($r.ClusterName)`` | $icon $st | $upd | $dur | $msg |" >> $env:GITHUB_STEP_SUMMARY
+                }
+                "" >> $env:GITHUB_STEP_SUMMARY
+            }
+        }
+
+        # v0.8.4 - Enhancement D: per-cluster table for clusters NOT handed to
+        # apply (filtered out by the readiness gate). Reads readiness-report.csv
+        # written by the check-readiness job.
+        $readinessCsvPath = './artifacts/readiness-report.csv'
+        if (Test-Path $readinessCsvPath) {
+            $blockedRows = @(Import-Csv -Path $readinessCsvPath | Where-Object { $_.ReadyForUpdate -ne 'True' })
+            if ($blockedRows.Count -gt 0) {
+                "" >> $env:GITHUB_STEP_SUMMARY
+                "### Clusters Skipped at Readiness Gate ($($blockedRows.Count) cluster(s))" >> $env:GITHUB_STEP_SUMMARY
+                "" >> $env:GITHUB_STEP_SUMMARY
+                "_These clusters were assessed by Check Update Readiness but not handed to Apply Updates. Resolve the listed blocking reasons (or wait for them to clear) then re-run the workflow._" >> $env:GITHUB_STEP_SUMMARY
+                "" >> $env:GITHUB_STEP_SUMMARY
+                "| Cluster | Update State | Health | Current Version | Recommended | Blocking Reasons |" >> $env:GITHUB_STEP_SUMMARY
+                "|---|---|---|---|---|---|"                                                              >> $env:GITHUB_STEP_SUMMARY
+                $skipCap = 100
+                $skipShown = 0
+                foreach ($b in ($blockedRows | Sort-Object UpdateState, ClusterName)) {
+                    if ($skipShown -ge $skipCap) { break }
+                    $blocking = "$($b.BlockingReasons)"
+                    if ($blocking.Length -gt 200) { $blocking = $blocking.Substring(0, 197) + '...' }
+                    $blocking = $blocking -replace '\|','\|' -replace '\r?\n',' '
+                    $reco = if ($b.RecommendedUpdate) { '`' + $b.RecommendedUpdate + '`' } else { '-' }
+                    $curr = if ($b.CurrentVersion) { '`' + $b.CurrentVersion + '`' } else { '-' }
+                    $hSt  = "$($b.HealthState)"
+                    $hCell = switch -Regex ($hSt) { '^Success$' { "✅ $hSt" } '^Warning$' { "⚠️ $hSt" } '^Failure$' { "❌ $hSt" } default { $hSt } }
+                    "| ``$($b.ClusterName)`` | $($b.UpdateState) | $hCell | $curr | $reco | $blocking |" >> $env:GITHUB_STEP_SUMMARY
+                    $skipShown++
+                }
+                if ($blockedRows.Count -gt $skipCap) {
+                    "" >> $env:GITHUB_STEP_SUMMARY
+                    "_Showing first $skipCap of $($blockedRows.Count) skipped clusters. Download the readiness-report.csv artifact for the full list._" >> $env:GITHUB_STEP_SUMMARY
+                }
+                "" >> $env:GITHUB_STEP_SUMMARY
+            }
+        }
         
         # Actions Required section - summarize what needs manual attention
         $actionsNeeded = @()

@@ -80,6 +80,18 @@ function Test-AzLocalApplyUpdatesScheduleCoverage {
         query runs against every subscription the caller can read.
     .PARAMETER View
         'Audit' (default), 'Matrix', or 'Recommend'.
+    .PARAMETER ClusterCsvPath
+        Path to the source-controlled cluster inventory CSV (the file Step.2
+        consumes to apply UpdateRing/UpdateStartWindow tags - default location
+        `config/ClusterUpdateRings.csv`). When supplied, the Recommend view
+        emits a `NoWindowTag remediation` section: for each cluster that has
+        an UpdateRing tag but no UpdateStartWindow tag, the advisor proposes
+        a peer-derived UpdateStartWindow value (the most common value used by
+        other clusters in the same UpdateRing) and tells the operator which
+        row of the CSV to edit. Lookup is keyed on ResourceId
+        (case-insensitive) with a ClusterName+ResourceGroup fallback for
+        older CSVs that pre-date the ResourceId column.
+
     .PARAMETER PipelineYamlPath
         Optional for -View Audit. Path to a single Step.6_apply-updates.yml file, or to
         a folder that contains apply-updates*.yml files (typically the
@@ -183,6 +195,9 @@ function Test-AzLocalApplyUpdatesScheduleCoverage {
         [switch]$IncludeUntagged,
 
         [Parameter(Mandatory = $false)]
+        [string]$ClusterCsvPath,
+
+        [Parameter(Mandatory = $false)]
         [string]$ExportPath,
 
         [Parameter(Mandatory = $false)]
@@ -234,6 +249,14 @@ function Test-AzLocalApplyUpdatesScheduleCoverage {
             throw "SchedulePath must point at a single apply-updates-schedule.yml file, not a folder: $SchedulePath"
         }
     }
+    if ($ClusterCsvPath) {
+        if (-not (Test-Path -LiteralPath $ClusterCsvPath)) {
+            throw "ClusterCsvPath not found: $ClusterCsvPath"
+        }
+        if ((Get-Item -LiteralPath $ClusterCsvPath).PSIsContainer) {
+            throw "ClusterCsvPath must point at a single CSV file, not a folder: $ClusterCsvPath"
+        }
+    }
     if ($ExportPath) {
         try { Test-ExportPathWritable -Path $ExportPath | Out-Null }
         catch { throw "ExportPath is not writable: $($_.Exception.Message)" }
@@ -252,12 +275,13 @@ function Test-AzLocalApplyUpdatesScheduleCoverage {
 resources
 | where type =~ 'microsoft.azurestackhci/clusters'
 | project
-    ClusterName       = name,
-    ResourceGroup     = resourceGroup,
-    SubscriptionId    = subscriptionId,
-    ClusterResourceId = id,
-    UpdateRing        = tostring(tags['UpdateRing']),
-    UpdateStartWindow      = tostring(tags['UpdateStartWindow'])
+    ClusterName            = name,
+    ResourceGroup          = resourceGroup,
+    SubscriptionId         = subscriptionId,
+    ClusterResourceId      = id,
+    UpdateRing             = tostring(tags['UpdateRing']),
+    UpdateStartWindow      = tostring(tags['UpdateStartWindow']),
+    UpdateExclusionsWindow = tostring(tags['UpdateExclusionsWindow'])
 "@
 
     Write-Log -Message "Querying Azure Resource Graph for UpdateRing + UpdateStartWindow tags across the fleet (View=$View)..." -Level Info
@@ -310,6 +334,7 @@ resources
     $missingFromSchedule  = @()
     $orphanedInSchedule   = @()
     $scheduleDiffComputed = $false
+    $scheduleCfg          = $null
     if (-not [string]::IsNullOrWhiteSpace($SchedulePath)) {
         try {
             $scheduleCfg = Get-AzLocalApplyUpdatesScheduleConfig -Path $SchedulePath
@@ -352,6 +377,43 @@ resources
         if ($missingFromSchedule.Count -eq 0 -and $orphanedInSchedule.Count -eq 0) {
             Write-Log -Message "Two-way ring diff: schedule and fleet ring sets match." -Level Success
         }
+    }
+
+    # 2b. (v0.8.4) Cluster CSV lookup for NoWindowTag remediation.
+    #     Reads ClusterUpdateRings.csv (the same file Step.2 consumes) and
+    #     builds an OrdinalIgnoreCase HashSet keyed on ResourceId, plus a
+    #     fallback HashSet keyed on ClusterName + ResourceGroup for older
+    #     CSVs that pre-date the ResourceId column. Each entry maps to the
+    #     CSV row's UpdateStartWindow value (which is usually blank for the
+    #     clusters that show up as NoWindowTag in the audit).
+    $csvByResourceId  = $null
+    $csvByNameAndRg   = $null
+    $csvRowCount      = 0
+    $csvHasResourceId = $false
+    if ($ClusterCsvPath) {
+        try {
+            $csvRows = @(Import-Csv -LiteralPath $ClusterCsvPath)
+        }
+        catch {
+            throw "Failed to read ClusterCsvPath '$ClusterCsvPath': $($_.Exception.Message)"
+        }
+        $csvByResourceId = New-Object 'System.Collections.Generic.Dictionary[string,object]' ([System.StringComparer]::OrdinalIgnoreCase)
+        $csvByNameAndRg  = New-Object 'System.Collections.Generic.Dictionary[string,object]' ([System.StringComparer]::OrdinalIgnoreCase)
+        $csvHasResourceId = ($csvRows.Count -gt 0) -and ($csvRows[0].PSObject.Properties.Match('ResourceId').Count -gt 0)
+        foreach ($row in $csvRows) {
+            $csvRowCount++
+            if ($csvHasResourceId -and -not [string]::IsNullOrWhiteSpace($row.ResourceId)) {
+                $rid = $row.ResourceId.Trim()
+                if (-not $csvByResourceId.ContainsKey($rid)) { $csvByResourceId[$rid] = $row }
+            }
+            $cn = if ($row.PSObject.Properties.Match('ClusterName').Count -gt 0) { [string]$row.ClusterName } else { '' }
+            $rg = if ($row.PSObject.Properties.Match('ResourceGroup').Count -gt 0) { [string]$row.ResourceGroup } else { '' }
+            if (-not [string]::IsNullOrWhiteSpace($cn) -and -not [string]::IsNullOrWhiteSpace($rg)) {
+                $key = "$($cn.Trim())|$($rg.Trim())"
+                if (-not $csvByNameAndRg.ContainsKey($key)) { $csvByNameAndRg[$key] = $row }
+            }
+        }
+        Write-Log -Message "ClusterCsvPath '$ClusterCsvPath': loaded $csvRowCount row(s). ResourceId column $(if ($csvHasResourceId) { 'present' } else { 'NOT present - falling back to ClusterName+ResourceGroup matching' })." -Level Info
     }
 
     $groups = @($taggedClusters | Group-Object -Property @{Expression={ "$($_.UpdateRing)|$($_.UpdateStartWindow)" }})
@@ -614,7 +676,13 @@ resources
             $hasOrphaned      = $scheduleDiffComputed -and $orphanedInSchedule.Count  -gt 0
             $unparseableCrons = @($parsedYamlCrons | Where-Object { -not $_.Parsed.IsValid -or $_.Parsed.IsComplex })
             $hasUnparseable   = $unparseableCrons.Count -gt 0
-            $actionCount      = @($hasMissing, $hasOrphaned, $hasUnparseable, ($byCron.Count -gt 0)) | Where-Object { $_ } | Measure-Object | Select-Object -ExpandProperty Count
+            # v0.8.4: NoWindowTag remediation section is emitted in Recommend
+            # ONLY when -ClusterCsvPath was supplied (operator needs a place
+            # to send the edits). Without the CSV, the existing Audit-table
+            # Recommendation column already covers the basic "tag these
+            # clusters" guidance, so we do not duplicate it here.
+            $hasNoWindowTag   = $ClusterCsvPath -and $untaggedClusters.Count -gt 0
+            $actionCount      = @($hasMissing, $hasOrphaned, $hasUnparseable, ($byCron.Count -gt 0), $hasNoWindowTag) | Where-Object { $_ } | Measure-Object | Select-Object -ExpandProperty Count
             $actionIdx        = 0
 
             # v0.7.74: human-friendly platform/file labels used by the
@@ -659,6 +727,10 @@ resources
                 if ($byCron.Count -gt 0) {
                     $checkIdx++
                     [void]$fullSb.AppendLine("$checkIdx. **Add missing cron entries** to ``$step6FileLabel`` (Step $checkIdx below). Until each UpdateStartWindow has at least one cron firing inside its lead-time envelope, Step.6 never wakes up for those clusters even when their ring is eligible today.")
+                }
+                if ($hasNoWindowTag) {
+                    $checkIdx++
+                    [void]$fullSb.AppendLine("$checkIdx. **Edit ``$ClusterCsvPath`` to fill in the missing ``UpdateStartWindow`` value(s)** (Step $checkIdx below) and re-run Step.2 to apply the tags to Azure. Until each cluster has an ``UpdateStartWindow`` tag, ``Test-AzLocalUpdateScheduleAllowed`` denies it and Step.6 silently skips that cluster every day.")
                 }
                 $checkIdx++
                 [void]$fullSb.AppendLine("$checkIdx. **Commit the edits and re-run this Step.3 pipeline** to confirm all (Ring, Window) pairs are green.")
@@ -775,6 +847,160 @@ resources
                 foreach ($line in ($cronSnippetBody -split "`r?`n")) {
                     [void]$fullSb.AppendLine($line)
                 }
+            }
+
+            # v0.8.4 - Enhancement A: NoWindowTag CSV remediation.
+            # Emitted only when -ClusterCsvPath was supplied. For each cluster
+            # with an UpdateRing tag but no UpdateStartWindow tag, suggest a
+            # peer-derived value (mode of peers' UpdateStartWindow in same
+            # ring) and tell the operator which row of the CSV to edit (or
+            # to re-run Step.1 if the cluster is absent from the CSV).
+            if ($hasNoWindowTag) {
+                $actionIdx++
+                $prefix = if ($actionCount -gt 1) { " ($actionIdx of $actionCount)" } else { '' }
+                [void]$fullSb.AppendLine("## Action required$prefix - NoWindowTag remediation")
+                [void]$fullSb.AppendLine()
+                [void]$fullSb.AppendLine("**Why this matters.** The cluster(s) listed below have an ``UpdateRing`` tag but NO ``UpdateStartWindow`` tag. ``Test-AzLocalUpdateScheduleAllowed`` denies any cluster with a missing or malformed ``UpdateStartWindow`` tag (fail-closed), so Step.6 silently skips them every day - they will never receive an update until the tag is set.")
+                [void]$fullSb.AppendLine()
+                [void]$fullSb.AppendLine("The advisor proposes a peer-derived value for each cluster (the most common ``UpdateStartWindow`` already used by other clusters in the same ``UpdateRing``). Review the suggestion, edit ``$ClusterCsvPath``, commit, and re-run Step.2 to apply the tags to Azure.")
+                [void]$fullSb.AppendLine()
+                [void]$fullSb.AppendLine("### How to fix - edit ``$ClusterCsvPath``")
+                [void]$fullSb.AppendLine()
+                [void]$fullSb.AppendLine('| Cluster | ResourceGroup | UpdateRing | Suggested UpdateStartWindow | Source | CSV row |')
+                [void]$fullSb.AppendLine('|---|---|---|---|---|---|')
+                $noWindowSorted = $untaggedClusters | Sort-Object @{Expression={ if ($_.UpdateRing) { $_.UpdateRing } else { '~' } }}, @{Expression={$_.ClusterName}}
+                foreach ($nwt in $noWindowSorted) {
+                    $ring = if ($nwt.UpdateRing) { $nwt.UpdateRing.Trim() } else { '' }
+                    $suggested   = ''
+                    $sourceLabel = ''
+                    if ([string]::IsNullOrWhiteSpace($ring)) {
+                        $suggested   = '(none)'
+                        $sourceLabel = 'Cluster has no `UpdateRing` tag - tag it via Step.2 first, then re-run this audit.'
+                    } else {
+                        $peers = @($taggedClusters | Where-Object { $_.UpdateRing -and ($_.UpdateRing.Trim() -ieq $ring) })
+                        if ($peers.Count -eq 0) {
+                            $suggested   = '(none)'
+                            $sourceLabel = "No other cluster carries ``UpdateRing=$ring``; pick a value matching your maintenance policy (e.g. ``Mon-Fri_22:00-06:00``)."
+                        } else {
+                            $peerByValue = @($peers | Group-Object -Property UpdateStartWindow | Sort-Object @{Expression='Count';Descending=$true}, @{Expression='Name';Descending=$false})
+                            $top         = $peerByValue[0]
+                            $suggested   = $top.Name
+                            if ($peerByValue.Count -eq 1) {
+                                if ($peers.Count -eq 1) {
+                                    $sourceLabel = "Only peer in ``$ring`` (``$($peers[0].ClusterName)``) uses this value."
+                                } else {
+                                    $names = (($peers | Sort-Object ClusterName | Select-Object -First 5 | ForEach-Object { '``' + $_.ClusterName + '``' }) -join ', ')
+                                    $more  = if ($peers.Count -gt 5) { ", +$($peers.Count - 5) more" } else { '' }
+                                    $sourceLabel = "All $($peers.Count) peer(s) in ``$ring`` use this value ($names$more)."
+                                }
+                            } else {
+                                $alts = (($peerByValue | Select-Object -Skip 1 | ForEach-Object { "``$($_.Name)`` ($($_.Count))" }) -join ', ')
+                                $sourceLabel = "$($top.Count) of $($peers.Count) peer(s) in ``$ring`` use ``$($top.Name)``. Alternatives: $alts."
+                            }
+                        }
+                    }
+                    $csvOutcome = ''
+                    $rid        = if ($nwt.PSObject.Properties.Match('ClusterResourceId').Count -gt 0) { [string]$nwt.ClusterResourceId } else { '' }
+                    $found      = $false
+                    if ($csvHasResourceId -and $rid -and $csvByResourceId.ContainsKey($rid)) {
+                        $found      = $true
+                        $csvOutcome = 'Found (matched by **ResourceId**) - edit the `UpdateStartWindow` cell on this row.'
+                    } else {
+                        $key = "$($nwt.ClusterName)|$($nwt.ResourceGroup)"
+                        if ($csvByNameAndRg -and $csvByNameAndRg.ContainsKey($key)) {
+                            $found      = $true
+                            $csvOutcome = 'Found (matched by **ClusterName+ResourceGroup**) - edit the `UpdateStartWindow` cell on this row. Consider re-running Step.1 to regenerate the CSV with a `ResourceId` column for unambiguous matching.'
+                        }
+                    }
+                    if (-not $found) {
+                        $csvOutcome = "**Not in CSV.** Re-run Step.1 to regenerate the cluster inventory artifact, unzip it, and replace ``$ClusterCsvPath`` in source control with the artifact's CSV. The new row will appear with a blank ``UpdateStartWindow`` cell - fill it in with the suggested value above, then commit and re-run Step.2."
+                    }
+                    $clusterEsc = ($nwt.ClusterName  -replace '\|','\|')
+                    $rgEsc      = ($nwt.ResourceGroup -replace '\|','\|')
+                    $ringEsc    = ($ring             -replace '\|','\|')
+                    $suggEsc    = ($suggested        -replace '\|','\|')
+                    $srcEsc     = ($sourceLabel      -replace '\|','\|')
+                    $csvEsc     = ($csvOutcome       -replace '\|','\|')
+                    [void]$fullSb.AppendLine("| ``$clusterEsc`` | ``$rgEsc`` | ``$ringEsc`` | ``$suggEsc`` | $srcEsc | $csvEsc |")
+                }
+                [void]$fullSb.AppendLine()
+                [void]$fullSb.AppendLine('**Format reminder.** `UpdateStartWindow` values are `DaysOfWeek_HH:MM-HH:MM` with hyphenated weekday ranges and 24-hour times. Examples: `Mon-Fri_22:00-06:00` (weekday overnights), `Sat-Sun_08:00-20:00` (weekend daytime), `Sun_03:00-05:00` (single day). Multiple windows on one cluster are comma-separated.')
+                [void]$fullSb.AppendLine()
+            }
+
+            # v0.8.4 - Enhancement B: Cycle calendar (informational).
+            # One row per UTC day for one full cycle (CycleWeeks * 7) starting
+            # today. Re-uses Resolve-AzLocalCurrentUpdateRing so cycle-week,
+            # UNION, and AllowedUpdateVersions math is identical to runtime.
+            if ($scheduleCfg) {
+                $calCycleWeeks = [int]$scheduleCfg.CycleWeeks
+                $lookaheadDays = $calCycleWeeks * 7
+                $startDay      = [datetime]::UtcNow.Date
+                $scheduleFileLabelShort = [System.IO.Path]::GetFileName($SchedulePath)
+                [void]$fullSb.AppendLine()
+                [void]$fullSb.AppendLine("## Cycle calendar - next $lookaheadDays day(s) (one full $calCycleWeeks-week cycle)")
+                [void]$fullSb.AppendLine()
+                [void]$fullSb.AppendLine("**What this shows.** For each UTC day starting today, the table lists which ``UpdateRing`` value(s) ``Resolve-AzLocalCurrentUpdateRing`` would return given your ``$scheduleFileLabelShort``. Use it to verify ring coverage matches your policy and to spot dead days where no ring is eligible. Days where multiple schedule rows match are UNIONed (all eligible rings shown, deduplicated). The ``AllowedUpdateVersions`` column shows the effective allow-list for that day (empty = no constraint).")
+                [void]$fullSb.AppendLine()
+                [void]$fullSb.AppendLine('| Date (UTC) | Day | CycleWeek | Eligible rings | AllowedUpdateVersions |')
+                [void]$fullSb.AppendLine('|---|---|---|---|---|')
+                $prevCycleWeek = $null
+                for ($i = 0; $i -lt $lookaheadDays; $i++) {
+                    $d = $startDay.AddDays($i)
+                    try {
+                        $r = Resolve-AzLocalCurrentUpdateRing -Schedule $scheduleCfg -Now $d
+                    } catch {
+                        [void]$fullSb.AppendLine("| $($d.ToString('yyyy-MM-dd')) | ? | ? | _(resolver error: $($_.Exception.Message -replace '\|','\|'))_ | - |")
+                        continue
+                    }
+                    $ringsCell = if ($r.Rings -and @($r.Rings).Count -gt 0) { (@($r.Rings) | ForEach-Object { '``' + $_ + '``' }) -join ', ' } else { '_(none - dead day)_' }
+                    $allowCell = if ($r.AllowedUpdateVersions -and @($r.AllowedUpdateVersions).Count -gt 0) { (@($r.AllowedUpdateVersions) | ForEach-Object { '``' + $_ + '``' }) -join ', ' } else { '_(no constraint)_' }
+                    $cycleCell = "$($r.CycleWeek) of $calCycleWeeks"
+                    if ($null -ne $prevCycleWeek -and $r.CycleWeek -eq 1 -and $prevCycleWeek -eq $calCycleWeeks) {
+                        $cycleCell = "**1** of $calCycleWeeks _(cycle wraps)_"
+                    }
+                    $prevCycleWeek = $r.CycleWeek
+                    [void]$fullSb.AppendLine("| $($d.ToString('yyyy-MM-dd')) | $($r.DayOfWeekName) | $cycleCell | $ringsCell | $allowCell |")
+                }
+                [void]$fullSb.AppendLine()
+            }
+
+            # v0.8.4 - Enhancement C: Configured exclusion windows summary.
+            # Groups tagged clusters by (UpdateRing, UpdateExclusionsWindow)
+            # so operators can spot inconsistent or missing blackout windows
+            # across a ring.
+            $exclusionClusters = @($clusters | Where-Object { -not [string]::IsNullOrWhiteSpace($_.UpdateExclusionsWindow) })
+            if ($exclusionClusters.Count -gt 0) {
+                [void]$fullSb.AppendLine()
+                [void]$fullSb.AppendLine('## Configured exclusion windows (UpdateExclusionsWindow tag)')
+                [void]$fullSb.AppendLine()
+                [void]$fullSb.AppendLine('**What this shows.** Clusters with an ``UpdateExclusionsWindow`` tag (e.g. ``2025-12-10/2026-01-06`` for a holiday blackout). ``Test-AzLocalUpdateScheduleAllowed`` denies a cluster while UTC ``now`` falls inside any of its exclusion windows, regardless of ring eligibility. Use this table to spot rings where some clusters have a blackout configured and others do not - that often indicates drift.')
+                [void]$fullSb.AppendLine()
+                [void]$fullSb.AppendLine('| UpdateRing | UpdateExclusionsWindow | Cluster count | Clusters |')
+                [void]$fullSb.AppendLine('|---|---|---|---|')
+                $exGroups = $exclusionClusters | Group-Object -Property @{Expression={ "$($_.UpdateRing)|$($_.UpdateExclusionsWindow)" }}
+                $sortedGroups = $exGroups | Sort-Object @{Expression={ ($_.Group | Select-Object -First 1).UpdateRing }}, @{Expression={ ($_.Group | Select-Object -First 1).UpdateExclusionsWindow }}
+                foreach ($g in $sortedGroups) {
+                    $first = $g.Group | Select-Object -First 1
+                    $ring  = if ($first.UpdateRing) { $first.UpdateRing } else { '(none)' }
+                    $win   = $first.UpdateExclusionsWindow
+                    $names = (($g.Group | Sort-Object ClusterName | Select-Object -First 10 | ForEach-Object { '``' + $_.ClusterName + '``' }) -join ', ')
+                    $more  = if ($g.Count -gt 10) { ", +$($g.Count - 10) more" } else { '' }
+                    $ringEsc = ($ring -replace '\|','\|')
+                    $winEsc  = ($win  -replace '\|','\|')
+                    [void]$fullSb.AppendLine("| ``$ringEsc`` | ``$winEsc`` | $($g.Count) | $names$more |")
+                }
+                $untaggedExcl = @($clusters | Where-Object { [string]::IsNullOrWhiteSpace($_.UpdateExclusionsWindow) })
+                if ($untaggedExcl.Count -gt 0) {
+                    $byRing = $untaggedExcl | Group-Object -Property @{Expression={ if ($_.UpdateRing) { $_.UpdateRing } else { '(none)' } }}
+                    [void]$fullSb.AppendLine()
+                    [void]$fullSb.AppendLine('**Clusters with NO `UpdateExclusionsWindow` tag** (will never be blacked out by this mechanism):')
+                    [void]$fullSb.AppendLine()
+                    foreach ($g in ($byRing | Sort-Object Name)) {
+                        [void]$fullSb.AppendLine("- **$($g.Name)** - $($g.Count) cluster(s)")
+                    }
+                }
+                [void]$fullSb.AppendLine()
             }
 
             $snippet = $fullSb.ToString()

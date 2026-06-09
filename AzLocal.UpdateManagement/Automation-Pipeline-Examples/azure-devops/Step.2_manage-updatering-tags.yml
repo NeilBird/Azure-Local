@@ -45,7 +45,7 @@ variables:
   # log if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
   - name: GENERATED_AGAINST_MODULE_VERSION
-    value: '0.8.3'
+    value: '0.8.4'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): queue-time parameter > pipeline variable
   # 'REQUIRED_MODULE_VERSION' overridden at queue time > empty (latest).
@@ -206,6 +206,22 @@ stages:
                     $msg = "AzLocal.UpdateManagement v$latest is available on PSGallery; this run installed v$installed. Review the module CHANGELOG before bumping REQUIRED_MODULE_VERSION (or clear the pin to install the latest automatically)."
                     Write-Host "##vso[task.logissue type=warning]$msg"
                 }
+
+                # v0.8.4 - one-line version banner uploaded to the build run
+                # Summary so the YAML version (GENERATED_AGAINST_MODULE_VERSION),
+                # the module version actually loaded on the agent, the PSGallery
+                # latest, and the REQUIRED_MODULE_VERSION pin status are visible
+                # at the top of every run summary without scrolling the agent
+                # log. Same data is also echoed to the console above.
+                $pin       = if ($env:REQUIRED_MODULE_VERSION) { "pinned to v$($env:REQUIRED_MODULE_VERSION)" } else { 'latest (fix-forward)' }
+                $latestStr = if ($latest) { "v$latest" } else { '(PSGallery lookup failed)' }
+                $verdict   = if ($installed -lt $generated) { 'YAML newer than module - check REQUIRED_MODULE_VERSION' }
+                             elseif ($installed -gt $generated) { 'YAML older than module - run Copy-AzLocalPipelineExample -Update' }
+                             elseif ($latest -and ($latest -gt $installed)) { 'newer module available on PSGallery' }
+                             else { 'in sync' }
+                $bannerPath = Join-Path $env:BUILD_ARTIFACTSTAGINGDIRECTORY 'module-version-banner.md'
+                "_Pipeline YAML v$generated | Module v$installed installed ($pin) | PSGallery latest $latestStr | $verdict_" | Out-File -FilePath $bannerPath -Encoding utf8
+                Write-Host "##vso[task.uploadsummary]$bannerPath"
           
           - task: AzureCLI@2
             displayName: 'Apply UpdateRing Tags'

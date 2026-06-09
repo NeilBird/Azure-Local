@@ -70,6 +70,11 @@ parameters:
     type: boolean
     default: true
 
+  - name: clusterCsvPath
+    displayName: 'Path to the source-controlled cluster inventory CSV (the same file Step.2 consumes - default `config/ClusterUpdateRings.csv`). When set, the Recommend view emits a NoWindowTag remediation section: for each cluster missing an UpdateStartWindow tag, the advisor proposes a peer-derived value and tells the operator which row of the CSV to edit (or to re-run Step.1 if the cluster is absent from the CSV). Leave empty to skip the CSV-driven remediation.'
+    type: string
+    default: 'config/ClusterUpdateRings.csv'
+
   - name: moduleVersion
     displayName: 'Pin AzLocal.UpdateManagement version (empty = latest from PSGallery). See Automation-Pipeline-Examples/README.md section 5 "Optional configuration".'
     type: string
@@ -81,7 +86,7 @@ parameters:
     default: false
 
 variables:
-  GENERATED_AGAINST_MODULE_VERSION: '0.8.3'
+  GENERATED_AGAINST_MODULE_VERSION: '0.8.4'
   REQUIRED_MODULE_VERSION: '${{ parameters.moduleVersion }}'
   reportsPath: '$(Build.ArtifactStagingDirectory)/reports'
 
@@ -136,6 +141,22 @@ stages:
               Write-Host "##vso[task.logissue type=warning]AzLocal.UpdateManagement v$latest is available on PSGallery; this run installed v$installed."
           }
 
+          # v0.8.4 - one-line version banner uploaded to the build run
+          # Summary so the YAML version (GENERATED_AGAINST_MODULE_VERSION),
+          # the module version actually loaded on the agent, the PSGallery
+          # latest, and the REQUIRED_MODULE_VERSION pin status are visible
+          # at the top of every run summary without scrolling the agent
+          # log. Same data is also echoed to the console above.
+          $pin       = if ($env:REQUIRED_MODULE_VERSION) { "pinned to v$($env:REQUIRED_MODULE_VERSION)" } else { 'latest (fix-forward)' }
+          $latestStr = if ($latest) { "v$latest" } else { '(PSGallery lookup failed)' }
+          $verdict   = if ($installed -lt $generated) { 'YAML newer than module - check REQUIRED_MODULE_VERSION' }
+                       elseif ($installed -gt $generated) { 'YAML older than module - run Copy-AzLocalPipelineExample -Update' }
+                       elseif ($latest -and ($latest -gt $installed)) { 'newer module available on PSGallery' }
+                       else { 'in sync' }
+          $bannerPath = Join-Path $env:BUILD_ARTIFACTSTAGINGDIRECTORY 'module-version-banner.md'
+          "_Pipeline YAML v$generated | Module v$installed installed ($pin) | PSGallery latest $latestStr | $verdict_" | Out-File -FilePath $bannerPath -Encoding utf8
+          Write-Host "##vso[task.uploadsummary]$bannerPath"
+
     - task: AzureCLI@2
       displayName: 'Run Schedule Coverage Audit'
       name: audit
@@ -157,6 +178,7 @@ stages:
           $leadTime     = [int]"${{ parameters.leadTimeMinutes }}"
           $firesPerWin  = [int]"${{ parameters.firesPerWindow }}"
           $includeUnt   = ${{ lower(parameters.includeUntagged) }}
+          $clusterCsv   = "${{ parameters.clusterCsvPath }}"
           $debug        = ('${{ parameters.debug }}' -ieq 'true')
 
           # Debug toggle: flips Verbose/Debug preferences and emits a
@@ -185,6 +207,11 @@ stages:
           # no 'required:' keyword, so validate at runtime instead.
           $havePipeline = -not [string]::IsNullOrWhiteSpace($pipelinePath)
           $haveSchedule = -not [string]::IsNullOrWhiteSpace($schedulePath) -and (Test-Path -LiteralPath $schedulePath)
+          # v0.8.4: clusterCsvPath is optional. If the file is missing on the agent
+          # we skip the NoWindowTag remediation section quietly (vs throwing) so the
+          # pipeline keeps emitting the legacy advisor output for repos that don't
+          # version-control a cluster CSV yet.
+          $haveCsv      = -not [string]::IsNullOrWhiteSpace($clusterCsv) -and (Test-Path -LiteralPath $clusterCsv)
           if (-not $havePipeline) {
               throw "pipelinePath parameter is required. Set it to the folder containing Step.6_apply-updates.yml (default '.azure-pipelines' matches the standard consumer layout). The Recommend view diffs its proposed crons against this file - leaving it empty would make every recommendation a false positive."
           }
@@ -202,6 +229,7 @@ stages:
           Write-Host "LeadTimeMinutes  : $leadTime"
           Write-Host "FiresPerWindow   : $firesPerWin   (1 = opening edge only, 2 = belt-and-braces opening + mid-window retry)"
           Write-Host "IncludeUntagged  : $includeUnt"
+          Write-Host "ClusterCsvPath   : $(if ($haveCsv) { $clusterCsv } else { '(skipped - clusterCsvPath empty or file missing)' })"
           Write-Host ""
 
           $auditCsv  = Join-Path $outputDir 'schedule-coverage-audit.csv'
@@ -224,12 +252,16 @@ stages:
           if ($havePipeline) { $auditArgs.PipelineYamlPath = $pipelinePath }
           if ($haveSchedule) { $auditArgs.SchedulePath     = $schedulePath }
           if ($includeUnt)   { $auditArgs.IncludeUntagged  = $true }
+          if ($haveCsv)      { $auditArgs.ClusterCsvPath   = $clusterCsv }
           $auditResult = Test-AzLocalApplyUpdatesScheduleCoverage @auditArgs
           if (-not $auditResult) { $auditResult = @() }
 
           Test-AzLocalApplyUpdatesScheduleCoverage -View Matrix -LeadTimeMinutes $leadTime -ExportPath $matrixCsv | Out-Null
           # v0.8.3: pass -PipelineYamlPath so Recommend diff-prunes crons
           # already present in Step.6 and only emits the truly missing ones.
+          # v0.8.4: also pass -SchedulePath (so the Cycle calendar +
+          # Configured exclusion windows informational sections render) and
+          # -ClusterCsvPath (so the NoWindowTag remediation section renders).
           $recoArgs = @{
               View                    = 'Recommend'
               LeadTimeMinutes         = $leadTime
@@ -238,6 +270,8 @@ stages:
               ExportPath              = $recoMd
           }
           if ($havePipeline) { $recoArgs.PipelineYamlPath = $pipelinePath }
+          if ($haveSchedule) { $recoArgs.SchedulePath     = $schedulePath }
+          if ($haveCsv)      { $recoArgs.ClusterCsvPath   = $clusterCsv }
           Test-AzLocalApplyUpdatesScheduleCoverage @recoArgs | Out-Null
 
           $covered     = @($auditResult | Where-Object Status -eq 'Covered')

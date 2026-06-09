@@ -14,7 +14,7 @@ It is written in the same step-by-step style as [`ITSM/README.md`](../ITSM/READM
    - [1.1 Why the pipelines are named `Step.N - <description>`](#11-why-the-pipelines-are-named-stepn---description)
 2. [Prerequisites](#2-prerequisites)
 3. [Required Azure permissions](#3-required-azure-permissions)
-   - [3.1 Custom role: `Azure Stack HCI Update Operator`](#31-custom-role-azure-stack-hci-update-operator)
+   - [3.1 Custom role: `Azure Stack HCI Update Operator (custom)`](#31-custom-role-azure-stack-hci-update-operator-custom)
    - [3.2 Recommended: assign at scale via Azure Policy DINE on a management group](#32-recommended-assign-at-scale-via-azure-policy-dine-on-a-management-group)
    - [3.3 Manual / per-subscription alternative (legacy)](#33-manual--per-subscription-alternative-legacy)
 4. [Choose your CI/CD platform and authentication](#4-choose-your-cicd-platform-and-authentication)
@@ -115,7 +115,7 @@ You do **not** need any cluster-side prerequisites for the inventory, tag-manage
 
 ## 3. Required Azure permissions
 
-The identity created in section 4 needs the following permissions on every subscription that contains clusters in scope. The **`Azure Stack HCI Update Operator`** custom role in [section 3.1](#31-custom-role-azure-stack-hci-update-operator) below grants exactly these actions and nothing else - **this is the recommended grant for every environment, including labs and PoCs**. Once the role exists, assign it at scale via the recommended [Azure Policy DINE on a management group](#32-recommended-assign-at-scale-via-azure-policy-dine-on-a-management-group) (auto-onboards every present and future subscription under the MG) or, for small / static estates, via the [manual per-subscription alternative](#33-manual--per-subscription-alternative-legacy). The built-in **Azure Stack HCI Administrator** role is a permissive fallback that also covers all of these actions, but it over-grants well beyond what the pipelines exercise; use it only when your account cannot create a custom role in the tenant (see the fallback notes in section 4).
+The identity created in section 4 needs the following permissions on every subscription that contains clusters in scope. The **`Azure Stack HCI Update Operator (custom)`** custom role in [section 3.1](#31-custom-role-azure-stack-hci-update-operator-custom) below grants exactly these actions and nothing else - **this is the recommended grant for every environment, including labs and PoCs**. Once the role exists, assign it at scale via the recommended [Azure Policy DINE on a management group](#32-recommended-assign-at-scale-via-azure-policy-dine-on-a-management-group) (auto-onboards every present and future subscription under the MG) or, for small / static estates, via the [manual per-subscription alternative](#33-manual--per-subscription-alternative-legacy). The built-in **Azure Stack HCI Administrator** role is a permissive fallback that also covers all of these actions, but it over-grants well beyond what the pipelines exercise; use it only when your account cannot create a custom role in the tenant (see the fallback notes in section 4).
 
 | Permission | Used by |
 |---|---|
@@ -137,7 +137,7 @@ If you opt in to the ITSM connector with Key Vault-sourced secrets, the identity
 
 > **Tag-management identity (Manage UpdateRing Tags pipeline)** can use the built-in **Tag Contributor** role on its own - it grants exactly `Microsoft.Resources/tags/*` and nothing else. Since v0.7.65, `Set-AzLocalClusterUpdateRingTag` writes tags via the dedicated `Microsoft.Resources/tags/default` PATCH endpoint, so the broader `microsoft.azurestackhci/clusters/write` action (full cluster Contributor) is **not** required for tag changes.
 
-### 3.1 Custom role: `Azure Stack HCI Update Operator`
+### 3.1 Custom role: `Azure Stack HCI Update Operator (custom)`
 
 This is the least-privilege role that supports every pipeline in this folder. The same definition is documented in the module-level [`AzLocal.UpdateManagement/README.md`](../README.md#permissions-required-for-update-operations) and is reproduced here so this folder is self-contained.
 
@@ -158,9 +158,9 @@ The recommended MG default is shown in the JSON below. Whichever path you pick, 
 
 ```json
 {
-  "Name": "Azure Stack HCI Update Operator",
+  "Name": "Azure Stack HCI Update Operator (custom)",
   "IsCustom": true,
-  "Description": "Can read and apply Azure Local cluster updates, manage UpdateRing tags, and read the fleet-connectivity inventory (Arc-enabled machines, edge-device NICs, Azure Resource Bridges) needed to assess pre-update connectivity.",
+  "Description": "Customer-managed custom role - reference by roleDefinitionId (GUID) in automation rather than by name to remain stable if Microsoft later ships a built-in role with a similar display name. Can read and apply Azure Local cluster updates, manage UpdateRing tags, and read the fleet-connectivity inventory (Arc-enabled machines, edge-device NICs, Azure Resource Bridges) needed to assess pre-update connectivity.",
   "Actions": [
     "Microsoft.AzureStackHCI/clusters/read",
     "Microsoft.AzureStackHCI/clusters/updateSummaries/read",
@@ -226,9 +226,9 @@ az role definition create --role-definition ./azlocal-update-management-custom-r
 # Option 2 - inline create with an expanding PowerShell here-string ($mgId is interpolated)
 @"
 {
-  "Name": "Azure Stack HCI Update Operator",
+  "Name": "Azure Stack HCI Update Operator (custom)",
   "IsCustom": true,
-  "Description": "Can read and apply Azure Local cluster updates, manage UpdateRing tags, and read the fleet-connectivity inventory (Arc-enabled machines, edge-device NICs, Azure Resource Bridges) needed to assess pre-update connectivity.",
+  "Description": "Customer-managed custom role - reference by roleDefinitionId (GUID) in automation rather than by name to remain stable if Microsoft later ships a built-in role with a similar display name. Can read and apply Azure Local cluster updates, manage UpdateRing tags, and read the fleet-connectivity inventory (Arc-enabled machines, edge-device NICs, Azure Resource Bridges) needed to assess pre-update connectivity.",
   "Actions": [
     "Microsoft.AzureStackHCI/clusters/read",
     "Microsoft.AzureStackHCI/clusters/updateSummaries/read",
@@ -263,10 +263,12 @@ az role definition create --role-definition ./azlocal-update-management-custom-r
 | Error | Cause | Fix |
 |---|---|---|
 | `(AuthorizationFailed) ... does not have authorization to perform action 'Microsoft.Authorization/roleDefinitions/write'` | The signed-in identity is not **Owner**, **User Access Administrator**, or **Role Based Access Control Administrator** at the scope in `AssignableScopes` (the management group for the MG path, or the subscription for the per-sub path). | Have an MG / subscription Owner grant you **Role Based Access Control Administrator** at that scope (least privilege), or ask them to run the command for you. See "Who can run these commands?" above. |
-| `RoleDefinitionWithSameNameExists` | A role definition with `Name = "Azure Stack HCI Update Operator"` already exists in the tenant. | Use `az role definition update --role-definition ./azlocal-update-management-custom-role.json` instead of `create`, or pick a unique `Name`. |
+| `RoleDefinitionWithSameNameExists` | A role definition with `Name = "Azure Stack HCI Update Operator (custom)"` already exists in the tenant. | Use `az role definition update --role-definition ./azlocal-update-management-custom-role.json` instead of `create`, or pick a unique `Name`. |
 | `Readonly attribute type will be ignored in class ... RoleDefinition` (warning, not an error) | Cosmetic Azure CLI warning emitted by the Python SDK when it sees a read-only field in the JSON; the command still succeeds. | Safe to ignore. |
 
 Assignment-time errors (`(AuthorizationFailed) ... 'Microsoft.Authorization/roleAssignments/write'`, `AssignableScopeNotUnderRoleDefinitionScope`) are covered in [section 3.3](#33-manual--per-subscription-alternative-legacy) - the MG + DINE path in [section 3.2](#32-recommended-assign-at-scale-via-azure-policy-dine-on-a-management-group) sidesteps both because Azure Policy's managed identity creates the assignments.
+
+> **Migration tip - upgrading from a pre-v0.8.4 role name (no downtime, GUID preserved):** Earlier module versions shipped the role with `"Name": "Azure Stack HCI Update Operator"` (no `(custom)` suffix). v0.8.4 renamed it to `"Azure Stack HCI Update Operator (custom)"` so the role's customer-managed status is obvious in the Azure portal **Custom roles** blade and never collides with a future Microsoft built-in of the same name. **Rename in place** with `az role definition update --role-definition ./azlocal-update-management-custom-role.json` (the role is identified by its GUID, not its display name, so the same definition with a new `Name` updates the existing role rather than creating a duplicate). The role's GUID and every existing role assignment - users, security groups, service principals, managed identities, at any scope - are preserved unchanged; only the display name shown in Azure portal / `az role definition list` / `Get-AzRoleDefinition` changes. **Pipelines see zero downtime.** Do NOT use `az role assignment create --role "Azure Stack HCI Update Operator (custom)"` to assign by display name in automation - reference roles by `roleDefinitionId` (the GUID) instead, which is stable across renames and avoids collision risk if Microsoft ever ships a built-in with the same display name (built-ins always take precedence in display-name lookups).
 
 **Example: AuthorizationFailed when creating the role**
 
@@ -298,8 +300,8 @@ The fix is **not** to escalate to Global Administrator (an Entra ID role, see no
 
 **Sequence at a glance** (full recipe in [`docs/rbac.md` -> Scaling AssignableScopes with management groups + Azure Policy](../docs/rbac.md#scaling-assignablescopes-with-management-groups--azure-policy-recommended-for-large-or-growing-estates)):
 
-1. **Create the role** with the management-group `AssignableScopes` shown in [section 3.1](#31-custom-role-azure-stack-hci-update-operator) above (the JSON's default). This is the **prerequisite** for step 4 - the policy definition references the role by ID.
-2. Capture `$roleId` (`az role definition list --custom-role-only true --name "Azure Stack HCI Update Operator" --query "[0].name" -o tsv`).
+1. **Create the role** with the management-group `AssignableScopes` shown in [section 3.1](#31-custom-role-azure-stack-hci-update-operator-custom) above (the JSON's default). This is the **prerequisite** for step 4 - the policy definition references the role by ID.
+2. Capture `$roleId` (`az role definition list --custom-role-only true --name "Azure Stack HCI Update Operator (custom)" --query "[0].name" -o tsv`).
 3. Capture the pipeline identity's `principalId` (`az ad sp show --id <appId> --query id -o tsv` for an SP / app registration, or `az identity show -g <rg> -n <mi-name> --query principalId -o tsv` for a user-assigned managed identity).
 4. Create the DINE policy definition at the MG (`az policy definition create --management-group <mg-id> --rules ./assign-azlocal-update-operator-policy.json --mode All`) - full `deployIfNotExists` JSON in the rbac.md recipe.
 5. Assign the policy at the MG with a system-assigned managed identity, and grant the MI `User Access Administrator` at the MG (`az policy assignment create --mi-system-assigned ...` + `az role assignment create --role "User Access Administrator" --scope "/providers/Microsoft.Management/managementGroups/<mg-id>"`).
@@ -317,14 +319,14 @@ The per-subscription assignment path retained for small / static estates and for
 
 **Re-scope the role definition to subscriptions** (one time, only if you skipped 3.2's MG default):
 
-Replace the `AssignableScopes` value in [`./azlocal-update-management-custom-role.json`](./azlocal-update-management-custom-role.json) with one or more `/subscriptions/<sub-id>` entries (hard cap 2000), then create the role with `az role definition create` per [section 3.1](#31-custom-role-azure-stack-hci-update-operator). The `$subId` capture comment in section 3.1's "Create the role" snippet shows the per-sub variant of Options 1 and 2.
+Replace the `AssignableScopes` value in [`./azlocal-update-management-custom-role.json`](./azlocal-update-management-custom-role.json) with one or more `/subscriptions/<sub-id>` entries (hard cap 2000), then create the role with `az role definition create` per [section 3.1](#31-custom-role-azure-stack-hci-update-operator-custom). The `$subId` capture comment in section 3.1's "Create the role" snippet shows the per-sub variant of Options 1 and 2.
 
 **Assign the custom role to the pipeline identity (per subscription):**
 
 ```bash
 az role assignment create `
     --assignee <appId-or-principalId> `
-    --role    "Azure Stack HCI Update Operator" `
+    --role    "Azure Stack HCI Update Operator (custom)" `
     --scope   "/subscriptions/<your-subscription-id>"
 ```
 
@@ -344,7 +346,7 @@ The role definition can be created successfully (often by a platform / RBAC admi
 ```text
 az role assignment create `
     --assignee xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx `
-    --role    "Azure Stack HCI Update Operator" `
+    --role    "Azure Stack HCI Update Operator (custom)" `
     --scope   "/subscriptions/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
 (AuthorizationFailed) The client 'joe.bloggs@contoso.com' with object id 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx'
 does not have authorization to perform action 'Microsoft.Authorization/roleAssignments/write' over scope
@@ -353,7 +355,7 @@ or the scope is invalid. If access was recently granted, please refresh your cre
 Code: AuthorizationFailed
 ```
 
-Same remediation as the create case in 3.1: have a subscription Owner grant the operator **Role Based Access Control Administrator** on the target subscription (least privilege - covers both `roleDefinitions/write` and `roleAssignments/write`), or have that admin run the `az role assignment create` step on the operator's behalf. **Role Based Access Control Administrator** can additionally be scoped with [conditions](https://learn.microsoft.com/azure/role-based-access-control/role-assignments-conditions-overview) that restrict which roles the holder can assign (e.g. "only `Azure Stack HCI Update Operator`"), which is the cleanest way to delegate this single role grant without handing out broader RBAC powers.
+Same remediation as the create case in 3.1: have a subscription Owner grant the operator **Role Based Access Control Administrator** on the target subscription (least privilege - covers both `roleDefinitions/write` and `roleAssignments/write`), or have that admin run the `az role assignment create` step on the operator's behalf. **Role Based Access Control Administrator** can additionally be scoped with [conditions](https://learn.microsoft.com/azure/role-based-access-control/role-assignments-conditions-overview) that restrict which roles the holder can assign (e.g. "only `Azure Stack HCI Update Operator (custom)`"), which is the cleanest way to delegate this single role grant without handing out broader RBAC powers.
 
 **Tip - delegate via a security group (recommended for >1 identity)**
 
@@ -374,7 +376,7 @@ $groupId = az ad group create `
 az role assignment create `
     --assignee-object-id      $groupId `
     --assignee-principal-type Group `
-    --role  "Azure Stack HCI Update Operator" `
+    --role  "Azure Stack HCI Update Operator (custom)" `
     --scope "/subscriptions/$subId"
 
 # 3. Add the pipeline's SP (and any other identities) to the group - the only ongoing op.
@@ -408,11 +410,11 @@ az role assignment list `
     -o table
 ```
 
-If (1) returns `true` and (2) shows one row with `Azure Stack HCI Update Operator` / `Group` / your subscription scope, the chain is wired correctly and the pipeline SP has the role via the group.
+If (1) returns `true` and (2) shows one row with `Azure Stack HCI Update Operator (custom)` / `Group` / your subscription scope, the chain is wired correctly and the pipeline SP has the role via the group.
 
 > **PIM gotcha - empty list output**: `az role assignment list` requires `Microsoft.Authorization/roleAssignments/read` on the scope. If you originally received `Owner` / `User Access Administrator` / `Role Based Access Control Administrator` via PIM and the activation window has lapsed, the `list` calls **return nothing silently** (no 403) - and the (1) `group member check` call still works because it goes through Microsoft Graph, not Azure RBAC. If (1) is `true` but (2) is empty, you have **not** lost the grant - you have lost your own read permission. Re-activate the PIM role (Portal: **Entra ID -> Identity Governance -> Privileged Identity Management -> My roles -> Azure resources -> Activate** against the subscription) and the list calls will repopulate. The pipeline SP is unaffected either way - the first workflow run is the real end-to-end test.
 
-> **Migration tip (built-in -> custom role, no downtime)**: If you started with the built-in `Azure Stack HCI Administrator` role from the section 4 fallback and have since obtained the rights to create custom roles, migrate by (1) creating the `Azure Stack HCI Update Operator` custom role per [section 3.1](#31-custom-role-azure-stack-hci-update-operator), (2) assigning the custom role at the same scope as the built-in assignment, (3) running a pipeline to verify the custom role works, and (4) removing the built-in assignment with `az role assignment delete --assignee <appId> --role "Azure Stack HCI Administrator" --scope "/subscriptions/<your-subscription-id>"`. The pipelines see no downtime because the custom role is active before the built-in one is removed.
+> **Migration tip (built-in -> custom role, no downtime)**: If you started with the built-in `Azure Stack HCI Administrator` role from the section 4 fallback and have since obtained the rights to create custom roles, migrate by (1) creating the `Azure Stack HCI Update Operator (custom)` custom role per [section 3.1](#31-custom-role-azure-stack-hci-update-operator-custom), (2) assigning the custom role at the same scope as the built-in assignment, (3) running a pipeline to verify the custom role works, and (4) removing the built-in assignment with `az role assignment delete --assignee <appId> --role "Azure Stack HCI Administrator" --scope "/subscriptions/<your-subscription-id>"`. The pipelines see no downtime because the custom role is active before the built-in one is removed.
 
 <details><summary>Built-in role fallback - only if you assigned the built-in role in section 4 because you could not create a custom role</summary>
 
@@ -465,12 +467,12 @@ First create the Service Principal:
 az ad sp create --id <appId-from-step-1>
 ```
 
-Assign the least-privilege **`Azure Stack HCI Update Operator`** custom role. This grants the Service Principal only the actions the nine pipelines need (read clusters, read/apply updates, read update runs, read/write tags, Resource Graph queries, plus the Arc / edgeDevice / Resource Bridge reads that Step.4 Fleet Connectivity Status calls). The full JSON role definition and `az role definition create` command live in [section 3 above](#3-required-azure-permissions) - run that block once per tenant first, then assign:
+Assign the least-privilege **`Azure Stack HCI Update Operator (custom)`** custom role. This grants the Service Principal only the actions the nine pipelines need (read clusters, read/apply updates, read update runs, read/write tags, Resource Graph queries, plus the Arc / edgeDevice / Resource Bridge reads that Step.4 Fleet Connectivity Status calls). The full JSON role definition and `az role definition create` command live in [section 3 above](#3-required-azure-permissions) - run that block once per tenant first, then assign:
 
 ```bash
 az role assignment create `
     --assignee <appId-from-step-1> `
-    --role    "Azure Stack HCI Update Operator" `
+    --role    "Azure Stack HCI Update Operator (custom)" `
     --scope   "/subscriptions/<your-subscription-id>"
 ```
 
@@ -478,7 +480,7 @@ For multi-subscription estates, run the `role assignment create` step once per s
 
 <details><summary>Fallback - only if your account cannot create custom roles in this tenant</summary>
 
-Creating a custom role requires `Microsoft.Authorization/roleDefinitions/write` (granted by **Owner**, **User Access Administrator**, or **Role Based Access Control Administrator** - see [section 3.1](#31-custom-role-azure-stack-hci-update-operator)). If you cannot get one of those granted at the target subscription scope - even via a one-time delegation from a subscription Owner - assign the built-in **`Azure Stack HCI Administrator`** role as a temporary fallback. It over-grants for pipeline use (broad cluster-management operations far beyond what the pipelines exercise), so plan to migrate to the custom role as soon as the rights are available (see the migration tip at the end of [section 3.1](#31-custom-role-azure-stack-hci-update-operator)):
+Creating a custom role requires `Microsoft.Authorization/roleDefinitions/write` (granted by **Owner**, **User Access Administrator**, or **Role Based Access Control Administrator** - see [section 3.1](#31-custom-role-azure-stack-hci-update-operator-custom)). If you cannot get one of those granted at the target subscription scope - even via a one-time delegation from a subscription Owner - assign the built-in **`Azure Stack HCI Administrator`** role as a temporary fallback. It over-grants for pipeline use (broad cluster-management operations far beyond what the pipelines exercise), so plan to migrate to the custom role as soon as the rights are available (see the migration tip at the end of [section 3.1](#31-custom-role-azure-stack-hci-update-operator-custom)):
 
 ```bash
 az role assignment create `
@@ -792,13 +794,13 @@ $adoSpAppId = az ad sp list `
     --query '[0].appId' -o tsv
 ```
 
-Then grant the **`Azure Stack HCI Update Operator`** custom role from [section 3.1](#31-custom-role-azure-stack-hci-update-operator) on the same scope you selected in step 5. If your account cannot create custom roles in this tenant, see the fallback note under [section 4.1, Step 2](#41-github-actions-with-openid-connect-recommended) for the built-in `Azure Stack HCI Administrator` fallback. Re-use the security-group pattern from 3.1 if you prefer:
+Then grant the **`Azure Stack HCI Update Operator (custom)`** custom role from [section 3.1](#31-custom-role-azure-stack-hci-update-operator-custom) on the same scope you selected in step 5. If your account cannot create custom roles in this tenant, see the fallback note under [section 4.1, Step 2](#41-github-actions-with-openid-connect-recommended) for the built-in `Azure Stack HCI Administrator` fallback. Re-use the security-group pattern from 3.1 if you prefer:
 
 ```powershell
 # Direct assignment to the auto-created SP
 az role assignment create `
     --assignee $adoSpAppId `
-    --role    "Azure Stack HCI Update Operator" `
+    --role    "Azure Stack HCI Update Operator (custom)" `
     --scope   "/subscriptions/$subId"
 
 # OR (recommended): add it to the operators security group so the group's role is inherited
@@ -831,7 +833,7 @@ az vm identity assign --name runner-vm --resource-group runners-rg
 $principalId = az vm show -n runner-vm -g runners-rg --query identity.principalId -o tsv
 az role assignment create `
     --assignee $principalId `
-    --role    "Azure Stack HCI Update Operator" `
+    --role    "Azure Stack HCI Update Operator (custom)" `
     --scope   "/subscriptions/<your-subscription-id>"
 
 # Fallback - ONLY if your account cannot create custom roles in this tenant (over-grants for pipeline use):
@@ -861,7 +863,7 @@ Connect-AzLocalServicePrincipal -UseManagedIdentity
 
 Use this **only** if OIDC and Workload Identity Federation are unavailable.
 
-Create the SP first, then assign the custom role from [section 3.1](#31-custom-role-azure-stack-hci-update-operator) so the legacy client-secret identity is still least-privilege:
+Create the SP first, then assign the custom role from [section 3.1](#31-custom-role-azure-stack-hci-update-operator-custom) so the legacy client-secret identity is still least-privilege:
 
 ```bash
 # Create SP without assigning any role yet
@@ -870,7 +872,7 @@ az ad sp create-for-rbac --name "AzureLocal-UpdateAutomation" --skip-assignment
 # Assign the custom role (after running the role-definition create from section 3.1)
 az role assignment create `
     --assignee <appId-from-create-for-rbac> `
-    --role    "Azure Stack HCI Update Operator" `
+    --role    "Azure Stack HCI Update Operator (custom)" `
     --scope   "/subscriptions/<your-subscription-id>"
 
 # Fallback - ONLY if your account cannot create custom roles in this tenant (over-grants for pipeline use):
@@ -991,7 +993,7 @@ Both platforms expect the YAML files inside this folder to land in a platform-sp
    --- role assignments for AZURE_CLIENT_ID ---
    Principal              Role                              Scope
    ---------------------  --------------------------------  -------------------------------------
-   <appId>                Azure Stack HCI Update Operator   /subscriptions/<sub-guid>
+   <appId>                Azure Stack HCI Update Operator (custom)   /subscriptions/<sub-guid>
    --- can the SP list Azure Local clusters? ---
    Name           ResourceGroup           SubscriptionId
    -------------  ----------------------  ----------------
@@ -1064,7 +1066,7 @@ Both platforms expect the YAML files inside this folder to land in a platform-sp
    --- 2. role assignments ---
    Principal              Role                              Scope
    ---------------------  --------------------------------  -------------------------------------
-   <appId>                Azure Stack HCI Update Operator   /subscriptions/<sub-guid>
+   <appId>                Azure Stack HCI Update Operator (custom)   /subscriptions/<sub-guid>
    --- 3. Resource Graph ---
    Name           ResourceGroup           SubscriptionId
    -------------  ----------------------  ----------------
@@ -1450,7 +1452,7 @@ The "steady-state" phase ships **three complementary pipelines**, all read-only,
 
 The four run in distinct (offset) cron slots so they don't contend for the same agent. `Step.7_monitor-updates.yml` ships **without** an active schedule - turn the `'*/30 * * * *'` cron on only during an active wave.
 
-**Fleet Connectivity Status** *(introduced in v0.7.79, enhanced in v0.7.85)* runs daily at 05:30 UTC and answers the upstream question every other steady-state pipeline depends on: *"can the pipeline identity actually see every cluster, every physical node, and every Resource Bridge it is supposed to manage?"* The Step.4 reconciliation table compares each cluster's `reportedProperties.nodes` count against the Arc-tagged physical machines visible in Resource Graph and flags both directions of drift (positive = Arc has more machines than the cluster reports; negative = cluster reports more nodes than Arc can see). The v0.7.85 *"How to interpret + act on a non-zero reconciliation"* subsection in the pipeline summary gives operators per-direction remediation lists and an inline Resource Graph query template for triage. RBAC: `Reader` plus `Microsoft.ResourceGraph/resources/read`, `Microsoft.AzureStackHCI/edgeDevices/read`, `Microsoft.HybridCompute/machines/read`, and `Microsoft.ResourceConnector/appliances/read` - all already in the **`Azure Stack HCI Update Operator`** custom role definition shipped in [section 3.1](#31-custom-role-azure-stack-hci-update-operator).
+**Fleet Connectivity Status** *(introduced in v0.7.79, enhanced in v0.7.85)* runs daily at 05:30 UTC and answers the upstream question every other steady-state pipeline depends on: *"can the pipeline identity actually see every cluster, every physical node, and every Resource Bridge it is supposed to manage?"* The Step.4 reconciliation table compares each cluster's `reportedProperties.nodes` count against the Arc-tagged physical machines visible in Resource Graph and flags both directions of drift (positive = Arc has more machines than the cluster reports; negative = cluster reports more nodes than Arc can see). The v0.7.85 *"How to interpret + act on a non-zero reconciliation"* subsection in the pipeline summary gives operators per-direction remediation lists and an inline Resource Graph query template for triage. RBAC: `Reader` plus `Microsoft.ResourceGraph/resources/read`, `Microsoft.AzureStackHCI/edgeDevices/read`, `Microsoft.HybridCompute/machines/read`, and `Microsoft.ResourceConnector/appliances/read` - all already in the **`Azure Stack HCI Update Operator (custom)`** custom role definition shipped in [section 3.1](#31-custom-role-azure-stack-hci-update-operator-custom).
 
 **Fleet Update Status** is scheduled to run daily at 06:00 UTC once you push the YAML. It does no writes - it builds a fleet-wide JUnit + CSV + JSON snapshot for dashboards and alerting.
 
@@ -1938,7 +1940,7 @@ The report includes executive summary cards, cluster information, a status table
 
 ## 11. Security model
 
-- **Least privilege** - the role list in section 3 is the minimum. The `Azure Stack HCI Update Operator` custom role in [section 3.1](#31-custom-role-azure-stack-hci-update-operator) is the default grant for every environment, including labs and PoCs. The built-in `Azure Stack HCI Administrator` role is treated only as a fallback for tenants where the operator cannot create custom roles, and over-grants beyond what the pipelines exercise; migrate to the custom role as soon as the rights become available (see the migration tip at the end of section 3.1).
+- **Least privilege** - the role list in section 3 is the minimum. The `Azure Stack HCI Update Operator (custom)` custom role in [section 3.1](#31-custom-role-azure-stack-hci-update-operator-custom) is the default grant for every environment, including labs and PoCs. The built-in `Azure Stack HCI Administrator` role is treated only as a fallback for tenants where the operator cannot create custom roles, and over-grants beyond what the pipelines exercise; migrate to the custom role as soon as the rights become available (see the migration tip at the end of section 3.1).
 - **OIDC / Workload Identity Federation** is the default authentication path. No client secret is stored, federated subject claims bind tokens to your repo / project, and tokens are short-lived.
 - **Per-job `permissions:` blocks (GitHub Actions)** - every shipped GitHub Actions workflow declares its own `permissions:` block at the job level (e.g. `id-token: write`, `contents: read`, `checks: write` only where needed). This is intentional. Do **not** lift those blocks to the top-level `permissions:` of the workflow file when you copy a sample into your repo: per-job permissions are the security-recommended shape because they (a) limit token scope to exactly the job that needs the write, and (b) let you keep `id-token: write` off any read-only summary jobs. If you set repo-default permissions to **Read repository contents and packages permissions** under *Settings -> Actions -> General -> Workflow permissions* (the recommended hardening), the per-job `permissions:` blocks already declare every write the samples need, so the default-read posture is non-blocking.
 - **No raw secrets in pipeline YAML or config.** ITSM secrets (when enabled) resolve from Azure Key Vault or CI-native secrets; bearer tokens live in agent memory only.

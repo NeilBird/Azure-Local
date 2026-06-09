@@ -47,11 +47,20 @@ env:
   # this to the version actually installed and to the latest on PSGallery, and emits a
   # ::notice annotation if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample. See Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.8.3'
+  GENERATED_AGAINST_MODULE_VERSION: '0.8.4'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): manual workflow_dispatch input >
   # repository variable 'REQUIRED_MODULE_VERSION' > empty (latest).
   REQUIRED_MODULE_VERSION: ${{ github.event.inputs.module_version || vars.REQUIRED_MODULE_VERSION || '' }}
+  # v0.8.4 - opt this workflow into Node.js 24 for all JavaScript actions
+  # (actions/checkout, actions/download-artifact, actions/upload-artifact,
+  # azure/login, dorny/test-reporter, etc). Per GitHub's 2025-09-19 deprecation
+  # notice Node 20 is forced off by default on 2026-06-16 and removed from the
+  # runner on 2026-09-16. Setting this env var silences the deprecation warnings
+  # and exercises Node 24 ahead of the cut-over. To temporarily opt back out,
+  # set ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true.
+  # https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   inventory-clusters:
@@ -132,6 +141,23 @@ jobs:
         if ($latest -and ($latest -gt $installed)) {
             $msg = "AzLocal.UpdateManagement v$latest is available on PSGallery; this run installed v$installed. Review the module CHANGELOG before bumping REQUIRED_MODULE_VERSION (or clear the pin to install the latest automatically)."
             Write-Host "::notice title=Newer AzLocal.UpdateManagement version available on PSGallery::$msg"
+        }
+
+        # v0.8.4 - one-line version banner emitted to the rendered Step
+        # Summary so the YAML version (GENERATED_AGAINST_MODULE_VERSION), the
+        # module version actually loaded on the runner, the PSGallery latest,
+        # and the REQUIRED_MODULE_VERSION pin status are visible at the top
+        # of every run summary without scrolling the agent log. Same data is
+        # also echoed to the console above as 'Module version summary'.
+        $pin       = if ($env:REQUIRED_MODULE_VERSION) { "pinned to v$($env:REQUIRED_MODULE_VERSION)" } else { 'latest (fix-forward)' }
+        $latestStr = if ($latest) { "v$latest" } else { '(PSGallery lookup failed)' }
+        $verdict   = if ($installed -lt $generated) { 'YAML newer than module - check REQUIRED_MODULE_VERSION' }
+                     elseif ($installed -gt $generated) { 'YAML older than module - run Copy-AzLocalPipelineExample -Update' }
+                     elseif ($latest -and ($latest -gt $installed)) { 'newer module available on PSGallery' }
+                     else { 'in sync' }
+        if ($env:GITHUB_STEP_SUMMARY) {
+            "_Pipeline YAML v$generated | Module v$installed installed ($pin) | PSGallery latest $latestStr | $verdict_" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+            "" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
         }
     
     - name: Run Cluster Inventory

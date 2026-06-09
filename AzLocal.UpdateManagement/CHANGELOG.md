@@ -5,6 +5,76 @@ All notable changes to the AzLocal.UpdateManagement module (renamed from AzStack
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.4] - 2026-06-18
+
+Step.3 advisor enhancement release. No public API removed; one new optional parameter on `Test-AzLocalApplyUpdatesScheduleCoverage` (`-ClusterCsvPath`); three new Recommend-view sections that render when their respective inputs are supplied. All v0.8.3 behaviour preserved unchanged.
+
+### `Test-AzLocalApplyUpdatesScheduleCoverage` - Enhancement A: NoWindowTag CSV-driven remediation (new `-ClusterCsvPath` parameter)
+
+- **New optional parameter `-ClusterCsvPath <path>`** points at the source-controlled cluster inventory CSV (the file Step.2 consumes - default `config/ClusterUpdateRings.csv`). When supplied, `-View Recommend` emits a new `## Action required - NoWindowTag remediation` section.
+- **For each cluster with an `UpdateRing` tag but no `UpdateStartWindow` tag**, the advisor proposes a peer-derived `UpdateStartWindow` value: it groups peers (other clusters in the same `UpdateRing`) by their `UpdateStartWindow` value, picks the mode, and emits a source label explaining the choice. Four cases:
+  - **No peers** (cluster is first of its ring): `No other cluster carries UpdateRing=X; pick a value matching your maintenance policy`.
+  - **Sole peer**: `Only peer in X (ClusterY) uses this value`.
+  - **Unanimous N peers**: `All N peer(s) in X use this value (clusterA, clusterB, ...)`.
+  - **Mixed M of N peers**: `M of N peer(s) in X use 'Mon-Fri_22:00-06:00'. Alternatives: 'Sat-Sun_08:00-20:00' (2)`.
+- **CSV lookup is keyed on `ResourceId` first, with a `ClusterName + ResourceGroup` fallback** for older CSVs that pre-date the `ResourceId` column. Lookups are `OrdinalIgnoreCase`. Three CSV outcomes:
+  - **Found by `ResourceId`**: tells the operator to edit the `UpdateStartWindow` cell on that row.
+  - **Found by `ClusterName + ResourceGroup`**: same fix instruction + nudge to re-run Step.1 to regenerate the CSV with a `ResourceId` column for unambiguous matching.
+  - **Not in CSV**: tells the operator to re-run Step.1 to regenerate the cluster inventory artifact, unzip it, and replace the source-controlled CSV with the artifact's CSV. The new row will appear with a blank `UpdateStartWindow` cell - fill it in with the suggested value above, commit, and re-run Step.2.
+- **ARG query also projects `UpdateExclusionsWindow`** (additional `tostring(tags['UpdateExclusionsWindow'])` column) so Enhancement C below has data to render.
+
+### `Test-AzLocalApplyUpdatesScheduleCoverage` - Enhancement B: Cycle calendar (informational, auto-renders when `-SchedulePath` supplied)
+
+- **New `## Cycle calendar - next N day(s)` section** renders one row per UTC day for one full cycle (`CycleWeeks * 7` days starting today). Each row shows Date (UTC), Day-of-week, CycleWeek (`X of N`, with **`1` of N _(cycle wraps)_** annotation on the wrap row), Eligible rings (UNION of all matching schedule rows, deduplicated), and effective `AllowedUpdateVersions` (or `_(no constraint)_` when empty).
+- **Re-uses `Resolve-AzLocalCurrentUpdateRing` per-day** so cycle-week math, UNION semantics, and AllowedUpdateVersions precedence are identical to runtime - no duplicate ISO-8601 / week-arithmetic logic that could drift away from the resolver.
+- **Use cases**: verify ring coverage matches your maintenance policy; spot dead days where no ring is eligible (often a sign that a schedule row was deleted by mistake); preview the AllowedUpdateVersions pin a Prod ring will see on a specific date; understand exactly when the cycle wraps so you can align your customer-comms calendar.
+
+### `Test-AzLocalApplyUpdatesScheduleCoverage` - Enhancement C: Configured exclusion windows summary (informational, auto-renders when any cluster has a non-empty `UpdateExclusionsWindow` tag)
+
+- **New `## Configured exclusion windows (UpdateExclusionsWindow tag)` section** groups tagged clusters by `(UpdateRing, UpdateExclusionsWindow)` and renders a rollup table (cluster count + first 10 cluster names + `+N more`).
+- **Plus a per-ring breakdown of clusters that have NO `UpdateExclusionsWindow` tag** so operators can spot drift where some clusters in a ring have a holiday blackout configured (e.g. `2025-12-10/2026-01-06`) and others do not.
+
+### Step.3 GH + ADO yml updates
+
+- **New `cluster_csv_path` / `clusterCsvPath` input** (default `config/ClusterUpdateRings.csv`). Validates the file exists at job time - missing file skips Enhancement A quietly (vs throwing) so repos that don't version-control a cluster CSV yet keep getting the legacy advisor output.
+- **Both yml templates now also pass `-SchedulePath` to the `-View Recommend` invocation** so Enhancements B+C render in the Step Summary. Pre-v0.8.4 the Recommend call only passed `-PipelineYamlPath`, which meant the cmdlet could not render the cycle calendar or exclusion-windows sections even though `-SchedulePath` was already validated for the Audit invocation in the same job.
+- **Banner line** added: `ClusterCsvPath   : ...` (or `(skipped - cluster_csv_path empty or file missing)`).
+
+### Pester tests updated
+
+- `Module: AzLocal.UpdateManagement / Module Load / Should have version` drift test bumped to `0.8.4`.
+- New It blocks under `Function: Test-AzLocalApplyUpdatesScheduleCoverage` covering ResourceId lookup, ClusterName+ResourceGroup fallback, not-found "re-run Step.1" messaging, peer-derivation modes (unanimous / majority / sole peer / no peers), cycle-calendar math at year boundary + cycle-wrap rendering + UNION row rendering, and exclusion-windows rollup grouping.
+- New drift tests asserting the `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24` opt-in is present in all 10 GitHub Actions yml; the `Pipeline YAML v` banner string is present in all 10 GH install steps and all 11 ADO install sites (Step.6 has 2: check-readiness + apply-updates); the `### Cluster Actions` and `### Clusters Skipped at Readiness Gate` headers are present in the Step.6 Summary on both platforms; the new RBAC role display name `Azure Stack HCI Update Operator (custom)` is present in the bundled JSON, `Automation-Pipeline-Examples/README.md`, and `docs/rbac.md`; and the bare pre-v0.8.4 name no longer appears in any currently-shipping doc (CHANGELOG and `docs/release-history.md` are excluded - they describe past releases).
+
+### Step.6 Enhancement D - per-cluster Step Summary in `apply-updates` (GitHub Actions + Azure DevOps)
+
+- **`apply-updates` step now persists `apply-results.json`** to the artifact-staging dir (`./artifacts/` on GH, `$(Build.ArtifactStagingDirectory)` on ADO). Selects `ClusterName, Status, UpdateName, Duration, Message` from `Start-AzLocalClusterUpdate -PassThru` and writes UTF-8 JSON; the downstream Summary step reads it without depending on the (truncated, JSON-unfriendly) GHA step-output / ADO task-output variable stream.
+- **`### Cluster Actions` per-cluster table** appended to the Step Summary on both platforms - one row per cluster handed to apply, with icon + Status + `UpdateName` + `Duration` + `Message` (truncated to 180 chars, pipes escaped, newlines folded). Sorted by Status then ClusterName. Icons: white-check-mark for Started/Success states, X for Failed/Error/NotFound, no-entry for *Blocked / NotConnected, next-track for any other Skipped/NotInAllowList outcome.
+- **`### Clusters Skipped at Readiness Gate` per-cluster table** appended to the Summary on both platforms - one row per cluster filtered out by Step.6 check-readiness (`ReadyForUpdate != 'True'`). Reads `readiness-report.csv` written by the CheckReadiness stage. Surfaces Cluster, UpdateState, Health (icon + state), CurrentVersion, RecommendedUpdate, BlockingReasons. Caps at first 100 rows for very large fleets and emits a "Showing first 100 of N" footer pointing operators at the full CSV artifact.
+- **Why this matters**: pre-v0.8.4 the Step.6 Summary surfaced only fleet-level counts (Succeeded / Skipped / Failed / *Blocked). For a 20+ cluster fleet, identifying which specific cluster failed or which clusters were schedule-blocked required downloading the JUnit artifact and parsing it. Enhancement D puts the per-cluster verdict directly in the Run/Build Summary that operators already open first.
+
+### Node.js 24 opt-in across all 10 GitHub Actions yml
+
+- **`FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true`** added to the workflow-level `env:` block of all 10 bundled GitHub Actions templates. GitHub announced Node.js 20 deprecation for JavaScript actions; this opt-in tells the runner to execute all `actions/*@v*` JavaScript actions under Node 24 before the platform-wide migration date arrives. Zero-risk - the env var is an explicit opt-in mechanism documented by GitHub and is silently ignored on older runner images.
+- **Why now**: lets early-adopter operators surface any per-action Node 24 incompatibility (test-reporter, upload-artifact, etc.) on a controlled timeline against the bundled examples, rather than every workflow flipping at GitHub's enforced cutover.
+
+### Version banner appended to every install step (GitHub Actions + Azure DevOps)
+
+- **`_Pipeline YAML v<generated> | Module v<installed> installed (<pin>) | PSGallery latest <latestStr> | <verdict>_`** is now appended to the Step Summary (GH) / Build Summary (ADO) by every install step across both platforms: 10 GH yml + 11 ADO install sites (Step.6 has 2: check-readiness install and apply-updates install). `<pin>` is `pinned to v...` when `REQUIRED_MODULE_VERSION` is set, or `latest (fix-forward)` when blank. `<verdict>` is one of `in sync` / `YAML newer than module - check REQUIRED_MODULE_VERSION` / `YAML older than module - run Copy-AzLocalPipelineExample -Update` / `newer module available on PSGallery`.
+- **Persists across both rendered Summary surfaces** (`$env:GITHUB_STEP_SUMMARY` on GH; `##vso[task.uploadsummary]` on ADO) so operators see the version triple at a glance without scrolling agent output.
+- **Why this matters**: pre-v0.8.4 the install step emitted version-drift warnings via `::notice` (GH) / `##vso[task.logissue]` (ADO) which surface in annotations / per-step logs but not in the cross-pipeline Summary view that fleet operators open first. The banner makes "what version actually ran" obvious from the Summary, eliminating "the YAML in my repo is too old" / "the module on PSGallery has a fix already" investigation lag.
+
+### RBAC custom role renamed: `Azure Stack HCI Update Operator` -> `Azure Stack HCI Update Operator (custom)`
+
+- **The `Name` field of the bundled `azlocal-update-management-custom-role.json` role definition** is renamed from `"Azure Stack HCI Update Operator"` to `"Azure Stack HCI Update Operator (custom)"`. Rationale: the `(custom)` suffix makes the role's customer-managed status obvious in the Azure portal **Custom roles** blade, in `az role definition list` output, and in any RBAC audit / governance tooling, and pre-empts any future collision with a Microsoft built-in of the same brand name.
+- **The role's `Description` field** gains a preamble: *"Customer-managed custom role - reference by roleDefinitionId (GUID) in automation rather than by name to remain stable if Microsoft later ships a built-in role with a similar display name."* The existing capability description ("Can read and apply Azure Local cluster updates, manage UpdateRing tags, ...") is preserved verbatim after the preamble. `Actions[]`, `NotActions[]`, `DataActions[]`, `AssignableScopes[]` are byte-identical to v0.8.3.
+- **Documentation updated in lockstep**: section header, TOC anchor, every `az role assignment create --role "..."`, every inline JSON block, every reference paragraph, and every cross-link anchor (`#31-custom-role-azure-stack-hci-update-operator-custom`) across `Automation-Pipeline-Examples/README.md` (23 name refs + 11 anchor refs), `Automation-Pipeline-Examples/docs/appendix-pipelines.md` (8 + 1), `docs/rbac.md` (10 name refs in 3 inline JSON blocks + section header + Azure portal nav path + assignment commands + DINE policy display name), and the top-level `README.md` permissions paragraph. `CHANGELOG.md` and `docs/release-history.md` historical entries for past releases are preserved verbatim (they describe what shipped at the time).
+- **Migration tip (existing tenants - no downtime, GUID preserved)**: `az role definition update --role-definition ./azlocal-update-management-custom-role.json` performs an in-place rename. The role's GUID and every existing role assignment - users, security groups, service principals, managed identities, at any scope - are preserved unchanged; only the display name shown in Azure portal / `az role definition list` / `Get-AzRoleDefinition` changes. **Pipelines see zero downtime.** Do NOT reference the role by display name in `az role assignment create --role "..."` calls used by automation - reference by `roleDefinitionId` (the GUID) instead, which is stable across renames and avoids built-in vs custom display-name collisions (Azure resolves display-name lookups against built-in roles first).
+
+### Version pin bumped across all 20 bundled `Step.{0..9}.yml` templates
+
+- `GENERATED_AGAINST_MODULE_VERSION` moves from `0.8.3` to `0.8.4` across all 20 bundled `Step.{0..9}.yml` files (10 GitHub Actions + 10 Azure DevOps). The install step's drift annotation continues to surface stale YAML to operators.
+
 ## [0.8.3] - 2026-06-11
 
 Step.3 advisor accuracy + readability fixes. No public API removed; one cmdlet behaviour change (Recommend now diff-prunes against an existing Step.6 yml when `-PipelineYamlPath` is supplied). Four operator-reported defects in the Step.3 `Test-AzLocalApplyUpdatesScheduleCoverage` output are addressed.
