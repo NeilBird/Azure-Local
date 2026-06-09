@@ -34,8 +34,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $script:ModuleInfo | Should -Not -BeNullOrEmpty
         }
 
-        It 'Should have version 0.7.98' {
-            $script:ModuleInfo.Version | Should -Be '0.7.98'
+        It 'Should have version 0.7.99' {
+            $script:ModuleInfo.Version | Should -Be '0.7.99'
         }
 
         It 'Module version constants are in sync between .psm1 and .psd1' {
@@ -7126,7 +7126,7 @@ Describe 'v0.7.66 Artifact download names carry a UTC timestamp suffix' {
         $script:examplesRoot = (Resolve-Path -Path (Join-Path $PSScriptRoot '..\Automation-Pipeline-Examples')).Path
     }
 
-    It 'GitHub Actions: every upload-artifact step uses a timestamped name and azlocal- prefix' {
+    It 'GitHub Actions: every upload-artifact step uses a timestamped name and azlocal-step.X- prefix' {
         $ghDir   = Join-Path $script:examplesRoot 'github-actions'
         $ghFiles = Get-ChildItem -Path $ghDir -Filter '*.yml' -File
         $offenders = New-Object System.Collections.Generic.List[string]
@@ -7136,8 +7136,8 @@ Describe 'v0.7.66 Artifact download names carry a UTC timestamp suffix' {
             $rxArtifact = [regex]::new("(?ms)uses:\s*actions/upload-artifact@[^\r\n]+\r?\n\s*with:\s*\r?\n\s*name:\s*([^\r\n]+)")
             foreach ($m in $rxArtifact.Matches($content)) {
                 $name = $m.Groups[1].Value.Trim().Trim("'""")
-                if ($name -notmatch 'azlocal-') {
-                    $offenders.Add("$($yml.Name): upload-artifact name '$name' missing azlocal- prefix")
+                if ($name -notmatch '^azlocal-step\.\d+-') {
+                    $offenders.Add("$($yml.Name): upload-artifact name '$name' missing azlocal-step.<digit>- prefix (v0.7.99+)")
                 }
                 if ($name -notmatch '\$\{\{\s*steps\.[^}]+\.outputs\.timestamp\s*\}\}') {
                     $offenders.Add("$($yml.Name): upload-artifact name '$name' missing steps.<id>.outputs.timestamp suffix")
@@ -7145,10 +7145,10 @@ Describe 'v0.7.66 Artifact download names carry a UTC timestamp suffix' {
             }
         }
         $detail = if ($offenders.Count -gt 0) { $offenders -join [Environment]::NewLine } else { '(no offenders)' }
-        $offenders.Count | Should -Be 0 -Because "every actions/upload-artifact step must carry an azlocal-* name with steps.<id>.outputs.timestamp. Findings:$([Environment]::NewLine)$detail"
+        $offenders.Count | Should -Be 0 -Because "every actions/upload-artifact step must carry an azlocal-step.X-* name with steps.<id>.outputs.timestamp. Findings:$([Environment]::NewLine)$detail"
     }
 
-    It 'Azure DevOps: every PublishBuildArtifacts / PublishPipelineArtifact uses a timestamped name and azlocal- prefix' {
+    It 'Azure DevOps: every PublishBuildArtifacts / PublishPipelineArtifact uses a timestamped name and azlocal-step.X- prefix' {
         $adoDir   = Join-Path $script:examplesRoot 'azure-devops'
         $adoFiles = Get-ChildItem -Path $adoDir -Filter '*.yml' -File
         $offenders = New-Object System.Collections.Generic.List[string]
@@ -7159,8 +7159,8 @@ Describe 'v0.7.66 Artifact download names carry a UTC timestamp suffix' {
             foreach ($m in $rxAdo.Matches($content)) {
                 $key  = $m.Groups[1].Value
                 $name = $m.Groups[2].Value
-                if ($name -notmatch '^azlocal-') {
-                    $offenders.Add("$($yml.Name): ${key} '$name' missing azlocal- prefix")
+                if ($name -notmatch '^azlocal-step\.\d+-') {
+                    $offenders.Add("$($yml.Name): ${key} '$name' missing azlocal-step.<digit>- prefix (v0.7.99+)")
                 }
                 # Accept either the in-stage step-output form (`$(stamp.artifactStamp)`)
                 # OR a cross-stage variable that ends in `ArtifactStamp)`, which is
@@ -7172,7 +7172,7 @@ Describe 'v0.7.66 Artifact download names carry a UTC timestamp suffix' {
             }
         }
         $detail = if ($offenders.Count -gt 0) { $offenders -join [Environment]::NewLine } else { '(no offenders)' }
-        $offenders.Count | Should -Be 0 -Because "every PublishBuildArtifacts/PublishPipelineArtifact ArtifactName must be azlocal-*_`$(stamp.artifactStamp). Findings:$([Environment]::NewLine)$detail"
+        $offenders.Count | Should -Be 0 -Because "every PublishBuildArtifacts/PublishPipelineArtifact ArtifactName must be azlocal-step.X-*_`$(stamp.artifactStamp). Findings:$([Environment]::NewLine)$detail"
     }
 
     It 'GitHub Actions: legacy non-stamped artifact names are gone' {

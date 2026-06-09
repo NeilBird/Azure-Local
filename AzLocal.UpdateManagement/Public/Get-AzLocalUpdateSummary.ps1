@@ -4,7 +4,7 @@ function Get-AzLocalUpdateSummary {
         Gets the update summary for one or more Azure Local clusters.
     .DESCRIPTION
         Retrieves the update summary for Azure Local (Azure Stack HCI) clusters.
-        The summary includes the current update state, available updates count,
+        The summary includes the current update state, actionable updates count,
         health check results, and other update-related status information.
         
         Supports multiple input methods:
@@ -287,7 +287,7 @@ function Get-AzLocalUpdateSummary {
                 CurrentVersion        = ''
                 LastUpdated           = ''
                 LastChecked           = ''
-                AvailableUpdatesCount = 0
+                ActionableUpdatesCount = 0
             }) | Out-Null
             continue
         }
@@ -313,7 +313,7 @@ function Get-AzLocalUpdateSummary {
             CurrentVersion        = if ($props.currentVersion) { [string]$props.currentVersion } else { '' }
             LastUpdated           = $lastUpdatedFmt
             LastChecked           = $lastCheckedFmt
-            AvailableUpdatesCount = $availableUpdates
+            ActionableUpdatesCount = $availableUpdates
         }
 
         if ($state -eq 'UpdateAvailable' -or $state -eq 'Ready') {
@@ -354,7 +354,7 @@ function Get-AzLocalUpdateSummary {
     # Display results table
     Write-Log -Message "" -Level Info
     Write-Log -Message "Detailed Results:" -Level Header
-    $results | Format-Table ClusterName, ResourceGroup, UpdateState, HealthState, CurrentVersion, AvailableUpdatesCount -AutoSize | Out-Host
+    $results | Format-Table ClusterName, ResourceGroup, UpdateState, HealthState, CurrentVersion, ActionableUpdatesCount -AutoSize | Out-Host
 
     # Export if path specified
     if ($ExportPath) {

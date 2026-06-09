@@ -76,20 +76,20 @@ The pipelines are **fully opt-in additive layers** over the module. The PowerShe
 
 The ten YAMLs ship with a `Step.N_` filename prefix **and** a matching `Step.N - <description>` value in each workflow's `name:` field (GitHub Actions) / header title (Azure DevOps):
 
-Each row's name links to the matching `Step N -` section in [`docs/appendix-pipelines.md`](docs/appendix-pipelines.md), which documents what every pipeline does, the cmdlets it calls, its inputs / outputs / dependencies, the RBAC and exit conditions, and the emitted artefacts.
+Each row's name links to the matching `Step N -` section in [`docs/appendix-pipelines.md`](docs/appendix-pipelines.md), which documents what every pipeline does, the cmdlets it calls, its inputs / outputs / dependencies, the RBAC and exit conditions, and the emitted artefacts. The **GH Actions** and **Azure DevOps** columns link directly to the source YAML for each platform.
 
-| Step | File / Workflow name |
-|---:|---|
-| 0 | [Step.0 - Authentication Validation and Subscription Scope Report](docs/appendix-pipelines.md#step-0---authentication-validation-and-subscription-scope-report) |
-| 1 | [Step.1 - Inventory Azure Local Clusters](docs/appendix-pipelines.md#step-1---inventory-clusters) |
-| 2 | [Step.2 - Manage UpdateRing Tags](docs/appendix-pipelines.md#step-2---manage-updatering-tags) |
-| 3 | [Step.3 - Apply-Updates Schedule Coverage Audit](docs/appendix-pipelines.md#step-3---apply-updates-schedule-coverage-audit) |
-| 4 | [Step.4 - Fleet Connectivity Status](docs/appendix-pipelines.md#step-4---fleet-connectivity-status) |
-| 5 | [Step.5 - Assess Update Readiness](docs/appendix-pipelines.md#step-5---assess-update-readiness) |
-| 6 | [Step.6 - Apply Updates](docs/appendix-pipelines.md#step-6---apply-updates) |
-| 7 | [Step.7 - Monitor In-Flight Updates](docs/appendix-pipelines.md#step-7---monitor-in-flight-updates) |
-| 8 | [Step.8 - Fleet Update Status](docs/appendix-pipelines.md#step-8---fleet-update-status) |
-| 9 | [Step.9 - Fleet Health Status](docs/appendix-pipelines.md#step-9---fleet-health-status) |
+| Step | File / Workflow name | GH Actions | Azure DevOps |
+|---:|---|---|---|
+| 0 | [Step.0 - Authentication Validation and Subscription Scope Report](docs/appendix-pipelines.md#step-0---authentication-validation-and-subscription-scope-report) | [`Step.0_authentication-test.yml`](github-actions/Step.0_authentication-test.yml) | [`Step.0_authentication-test.yml`](azure-devops/Step.0_authentication-test.yml) |
+| 1 | [Step.1 - Inventory Azure Local Clusters](docs/appendix-pipelines.md#step-1---inventory-clusters) | [`Step.1_inventory-clusters.yml`](github-actions/Step.1_inventory-clusters.yml) | [`Step.1_inventory-clusters.yml`](azure-devops/Step.1_inventory-clusters.yml) |
+| 2 | [Step.2 - Manage UpdateRing Tags](docs/appendix-pipelines.md#step-2---manage-updatering-tags) | [`Step.2_manage-updatering-tags.yml`](github-actions/Step.2_manage-updatering-tags.yml) | [`Step.2_manage-updatering-tags.yml`](azure-devops/Step.2_manage-updatering-tags.yml) |
+| 3 | [Step.3 - Apply-Updates Schedule Coverage Audit](docs/appendix-pipelines.md#step-3---apply-updates-schedule-coverage-audit) | [`Step.3_apply-updates-schedule-audit.yml`](github-actions/Step.3_apply-updates-schedule-audit.yml) | [`Step.3_apply-updates-schedule-audit.yml`](azure-devops/Step.3_apply-updates-schedule-audit.yml) |
+| 4 | [Step.4 - Fleet Connectivity Status](docs/appendix-pipelines.md#step-4---fleet-connectivity-status) | [`Step.4_fleet-connectivity-status.yml`](github-actions/Step.4_fleet-connectivity-status.yml) | [`Step.4_fleet-connectivity-status.yml`](azure-devops/Step.4_fleet-connectivity-status.yml) |
+| 5 | [Step.5 - Assess Update Readiness](docs/appendix-pipelines.md#step-5---assess-update-readiness) | [`Step.5_assess-update-readiness.yml`](github-actions/Step.5_assess-update-readiness.yml) | [`Step.5_assess-update-readiness.yml`](azure-devops/Step.5_assess-update-readiness.yml) |
+| 6 | [Step.6 - Apply Updates](docs/appendix-pipelines.md#step-6---apply-updates) | [`Step.6_apply-updates.yml`](github-actions/Step.6_apply-updates.yml) | [`Step.6_apply-updates.yml`](azure-devops/Step.6_apply-updates.yml) |
+| 7 | [Step.7 - Monitor In-Flight Updates](docs/appendix-pipelines.md#step-7---monitor-in-flight-updates) | [`Step.7_monitor-updates.yml`](github-actions/Step.7_monitor-updates.yml) | [`Step.7_monitor-updates.yml`](azure-devops/Step.7_monitor-updates.yml) |
+| 8 | [Step.8 - Fleet Update Status](docs/appendix-pipelines.md#step-8---fleet-update-status) | [`Step.8_fleet-update-status.yml`](github-actions/Step.8_fleet-update-status.yml) | [`Step.8_fleet-update-status.yml`](azure-devops/Step.8_fleet-update-status.yml) |
+| 9 | [Step.9 - Fleet Health Status](docs/appendix-pipelines.md#step-9---fleet-health-status) | [`Step.9_fleet-health-status.yml`](github-actions/Step.9_fleet-health-status.yml) | [`Step.9_fleet-health-status.yml`](azure-devops/Step.9_fleet-health-status.yml) |
 
 - **GitHub Actions**: the Actions sidebar sorts workflows alphabetically by the `name:` field inside the YAML. Because every `name:` starts with `Step.N - `, the sidebar lists the ten workflows in execution order (Step.0 first, Step.9 last) instead of the cosmetically confusing alphabetical scatter (`Apply Updates`, `Apply-Updates Schedule Coverage Audit`, `Assess Update Readiness`, ...).
 - **Azure DevOps**: the Pipelines list sorts by the pipeline **definition name** chosen at *import time* (not by the YAML filename and not by any top-level `name:` field - the `name:` field in an ADO YAML controls the per-run *build number*, not the pipeline display name). When you import each YAML, the import wizard prefills the suggested pipeline name from the YAML's leading title comment; the YAMLs in this repo open with `# Step.N - <description>`, so the suggested name is already correct. **Accept the suggested name** (or paste `Step.N - <description>` yourself), and the Pipelines list will sort in execution order. You can rename a pipeline later via *Pipeline -> Edit -> Settings -> Name*.
@@ -1885,35 +1885,21 @@ After migration the file is a strict superset of v1 - every cluster still resolv
 
 ## 9. Tuning throughput (`-ThrottleLimit`)
 
-**v0.7.68 removed `-ThrottleLimit` from every fleet-scale read cmdlet.** Those cmdlets are now single-batch Azure Resource Graph queries - one ARG call per cmdlet invocation, regardless of fleet size - so the flag had no effect on read throughput and its presence misled operators into thinking they could tune it. The removed-from list:
-
-| Function | `-ThrottleLimit` in v0.7.68 | Replacement back-end | Used by pipeline |
-|---|---|---|---|
-| `Get-AzLocalUpdateSummary` | **Removed** | Single ARG batch read | Fleet Update Status. |
-| `Get-AzLocalAvailableUpdates` | **Removed** | Single ARG batch read | Apply Updates (pre-check), Assess Update Readiness. |
-| `Get-AzLocalClusterUpdateReadiness` | **Removed** | Single ARG batch read | Apply Updates (pre-check), Fleet Update Status, Assess Update Readiness. |
-| `Test-AzLocalClusterHealth` | **Removed** | Single ARG batch read (HCI health checks) | Assess Update Readiness, Fleet Health Status. |
-| `Get-AzLocalFleetProgress` | **Removed** | Single ARG batch read | Step.6 Fleet Update Status (JUnit emitter). |
-| `Get-AzLocalFleetStatusData` | **Removed** | Single ARG batch read | Step.6 Fleet Update Status, `New-AzLocalFleetStatusHtmlReport`. |
-| `New-AzLocalFleetStatusHtmlReport` | **Removed** | Single ARG batch read | Standalone report. |
-| `Get-AzLocalUpdateRuns` | **Removed** | Single ARG batch read against `microsoft.azurestackhci/clusters/updates/updateruns` | Step.6 Fleet Update Status. |
-| `Get-AzLocalUpdateRunFailures` (new in v0.7.68) | n/a (ARG-only) | Single ARG batch read with 9-deep `mv-expand` | Step.5 Apply Updates post-mortem, ad-hoc triage. |
-
-All shipped pipeline YAMLs were updated to stop passing `-ThrottleLimit` to these cmdlets. **If you had passed `throttle_limit` on the workflow input or as a `-ThrottleLimit` argument to any of the above, you can remove it** - the value was already a silent no-op against ARG, and v0.7.68 surfaces the change loudly by failing parameter binding for any caller still passing it.
+**As of v0.7.68, no fleet-scale read cmdlet exposes `-ThrottleLimit`.** Every read-side cmdlet (`Get-AzLocalUpdateSummary`, `Get-AzLocalAvailableUpdates`, `Get-AzLocalClusterUpdateReadiness`, `Test-AzLocalClusterHealth`, `Get-AzLocalFleetProgress`, `Get-AzLocalFleetStatusData`, `New-AzLocalFleetStatusHtmlReport`, `Get-AzLocalUpdateRuns`, `Get-AzLocalUpdateRunFailures`) is a single-batch Azure Resource Graph query - one ARG call per cmdlet invocation, regardless of fleet size - so the flag had no effect on read throughput. Pipelines no longer pass it. Any `throttle_limit` input you may have on an older fork of these YAMLs can be removed safely.
 
 ### Where `-ThrottleLimit` still applies
 
-Only the **apply-side fan-out** still uses any form of parallelism control, because applying updates legitimately is a per-cluster ARM PUT and benefits from controlled parallelism:
+Only the **apply-side fan-out** still uses parallelism control, because applying updates is a per-cluster ARM PUT and benefits from bounded concurrency:
 
 | Function | `-ThrottleLimit` exposed | Used by pipeline |
 |---|---|---|
-| `Start-AzLocalClusterUpdate` (apply-side fleet ops) | Internal via `Invoke-FleetJobsInParallel`; no user-facing `-ThrottleLimit` parameter. | Step.5 Apply Updates. |
+| `Start-AzLocalClusterUpdate` (apply-side fleet ops) | Internal via `Invoke-FleetJobsInParallel`; no user-facing `-ThrottleLimit` parameter. | Step.6 Apply Updates. |
 
-For Step.5 Apply Updates, the apply-side parallelism is bounded internally by the module's own job-pool helper; there is no operator-facing throttle knob to tune.
+The apply-side parallelism is bounded internally by the module's own job-pool helper; there is no operator-facing throttle knob to tune.
 
 ### Throttling on the read side (ARG 429 / `Retry-After`)
 
-Even though the cmdlets are now single-batch reads, Azure Resource Graph has per-tenant rate limits. `Invoke-AzResourceGraphQuery` (the helper behind every ARG-first cmdlet) now retries on HTTP 429 - it inspects the `Retry-After` response header when present and otherwise applies bounded exponential backoff capped at the documented ARG throttling envelope. Large fleet sweeps no longer fall over at the throttling boundary.
+Azure Resource Graph has per-tenant rate limits. `Invoke-AzResourceGraphQuery` (the helper behind every ARG-first cmdlet) retries on HTTP 429 - it inspects the `Retry-After` response header when present and otherwise applies bounded exponential backoff capped at the documented ARG throttling envelope. Large fleet sweeps no longer fall over at the throttling boundary.
 
 If you see ARG-side `429 TooManyRequests` in the verbose logs from `Invoke-AzResourceGraphQuery`, the most common causes are: (a) running every pipeline on the same cron tick (stagger schedules at least 2-3 minutes apart), and (b) running multiple read pipelines from the same identity in a tight loop during development (add `Start-Sleep -Seconds 30` between iterations of an interactive harness).
 

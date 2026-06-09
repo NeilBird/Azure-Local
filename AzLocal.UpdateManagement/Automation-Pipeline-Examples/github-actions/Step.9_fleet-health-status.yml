@@ -115,7 +115,7 @@ env:
   # this to the version actually installed and to the latest on PSGallery, and emits a
   # ::notice annotation if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.7.98'
+  GENERATED_AGAINST_MODULE_VERSION: '0.7.99'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): manual workflow_dispatch input >
   # repository variable 'REQUIRED_MODULE_VERSION' > empty (latest).
@@ -418,7 +418,7 @@ jobs:
     - name: Upload Fleet Health Reports
       uses: actions/upload-artifact@v6
       with:
-        name: azlocal-fleet-health-status-report_${{ steps.artifact-stamp.outputs.timestamp }}
+        name: azlocal-step.9-fleet-health-status-report_${{ steps.artifact-stamp.outputs.timestamp }}
         path: ./reports/
         retention-days: 90
 
@@ -749,7 +749,7 @@ jobs:
       if: ${{ github.event.inputs.raise_itsm_ticket == 'true' }}
       uses: actions/upload-artifact@v6
       with:
-        name: azlocal-fleet-health-status-itsm-results_${{ steps.artifact-stamp.outputs.timestamp }}
+        name: azlocal-step.9-fleet-health-status-itsm-results_${{ steps.artifact-stamp.outputs.timestamp }}
         path: ./reports/itsm-*.*
         retention-days: 30
       continue-on-error: true

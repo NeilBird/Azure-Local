@@ -81,7 +81,7 @@ parameters:
     default: false
 
 variables:
-  GENERATED_AGAINST_MODULE_VERSION: '0.7.98'
+  GENERATED_AGAINST_MODULE_VERSION: '0.7.99'
   REQUIRED_MODULE_VERSION: '${{ parameters.moduleVersion }}'
   reportsPath: '$(Build.ArtifactStagingDirectory)/reports'
 
@@ -345,7 +345,7 @@ stages:
       condition: always()
       inputs:
         PathtoPublish: '$(reportsPath)'
-        ArtifactName: 'azlocal-apply-updates-schedule-audit-report_$(stamp.artifactStamp)'
+        ArtifactName: 'azlocal-step.3-apply-updates-schedule-audit-report_$(stamp.artifactStamp)'
         publishLocation: 'Container'
 
     - pwsh: |

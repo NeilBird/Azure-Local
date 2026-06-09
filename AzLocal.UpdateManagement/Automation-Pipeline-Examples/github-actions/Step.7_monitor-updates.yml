@@ -72,7 +72,7 @@ on:
         required: false
         default: '24'
       critical_elapsed_days:
-        description: 'CRITICAL tier for overall-elapsed (v0.7.98+, default 7 days). In-flight runs older than this get a :rotating_light: chip; older than 2x this get a :skull: chip. Strongest visual signal that human intervention is needed - a 19-day-stuck run will no longer be hidden behind a single "step errored" chip.'
+        description: 'CRITICAL tier for overall-elapsed (v0.7.99+, default 3 days). In-flight runs older than this get a :rotating_light: chip; older than 2x this get a :skull: chip. Strongest visual signal that human intervention is needed - a 19-day-stuck run will no longer be hidden behind a single "step errored" chip.'
         required: false
         default: '7'
       module_version:
@@ -85,7 +85,7 @@ env:
   # this to the version actually installed and to the latest on PSGallery, and emits a
   # ::notice annotation if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.7.98'
+  GENERATED_AGAINST_MODULE_VERSION: '0.7.99'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): manual workflow_dispatch input >
   # repository variable 'REQUIRED_MODULE_VERSION' > empty (latest).
@@ -201,10 +201,10 @@ jobs:
               [int]$parsedRf = 0
               if ([int]::TryParse($env:INPUT_RECENT_FAILURE_WINDOW_HOURS, [ref]$parsedRf) -and $parsedRf -ge 0) { $failureWindowHours = $parsedRf }
           }
-          # CRITICAL tier for overall-elapsed (v0.7.98+). Pure visual escalation - JUnit + counts
+          # CRITICAL tier for overall-elapsed (v0.7.99+). Pure visual escalation - JUnit + counts
           # are unaffected. Runs older than $criticalElapsedDays days get a :rotating_light: run
-          # chip; older than 2x that get :skull:. Defaults: 7 days CRIT, 14 days SKULL.
-          $criticalElapsedDays = 7
+          # chip; older than 2x that get :skull:. Defaults: 3 days CRIT, 6 days SKULL.
+          $criticalElapsedDays = 3
           if ($env:INPUT_CRITICAL_ELAPSED_DAYS) {
               [int]$parsedCe = 0
               if ([int]::TryParse($env:INPUT_CRITICAL_ELAPSED_DAYS, [ref]$parsedCe) -and $parsedCe -gt 0) { $criticalElapsedDays = $parsedCe }
@@ -454,19 +454,16 @@ jobs:
           # Empty suite (no in-flight + no unresolved failures) still emits valid XML so the publish step works.
           $xmlLines = New-Object 'System.Collections.Generic.List[string]'
           $xmlLines.Add('<?xml version="1.0" encoding="UTF-8"?>')
-          # v0.7.98: testsuite time = sum of testcase times = total wall-clock seconds across all
-          # in-flight + unresolved-failed runs. Replaces the previous time="0" which made the GitHub
-          # Test Reporter widget render "0ms" totals (visually meaningless).
-          $totalSuiteSeconds = 0
-          foreach ($r in $inFlight) { $totalSuiteSeconds += [int]$r.RunDurationSeconds }
-          foreach ($r in $unresolvedFailed) { $totalSuiteSeconds += [int]$r.RunDurationSeconds }
-          $xmlLines.Add(('<testsuites time="{0}">' -f $totalSuiteSeconds))
+          # v0.7.99: testsuite/testsuites time="0". Per-testcase time= IS still surfaced (gives
+          # the Test Reporter widget meaningful per-row durations), but summing wall-clock ages
+          # across 5 unrelated stuck runs (e.g. ~88 days) is misleading at the suite header.
+          $xmlLines.Add('<testsuites time="0">')
           $tests = $inFlight.Count + $unresolvedFailed.Count
           # A single run can trigger ANY combination of StepError + LongRunningStep + LongRunningOverall
           # - we emit the highest-priority match as ONE failure per testcase, so $failures matches the
           # testcase count of actually-failing rows (not the union of failure flags).
           $failures = @($inFlight | Where-Object { $_.HasStepError -or $_.ExceedsStepThreshold -or $_.ExceedsThreshold }).Count + $unresolvedFailed.Count
-          $xmlLines.Add(('  <testsuite name="Update Run Monitor" tests="{0}" failures="{1}" time="{2}">' -f $tests, $failures, $totalSuiteSeconds))
+          $xmlLines.Add(('  <testsuite name="Update Run Monitor" tests="{0}" failures="{1}" time="0">' -f $tests, $failures))
           foreach ($r in ($inFlight | Sort-Object @{Expression='SeverityScore';Descending=$true}, ClusterName)) {
               $safeName = ($r.ClusterName -replace '[^A-Za-z0-9_.-]', '_')
               $caseName = "$safeName - $($r.UpdateName) - $($r.CurrentStep)"
@@ -657,7 +654,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v6
         with:
-          name: azlocal-update-monitor_${{ steps.artifact-stamp.outputs.timestamp }}
+          name: azlocal-step.7-update-monitor_${{ steps.artifact-stamp.outputs.timestamp }}
           path: ./reports/*
           retention-days: 14
 

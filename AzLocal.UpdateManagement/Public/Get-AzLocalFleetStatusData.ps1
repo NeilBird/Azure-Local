@@ -213,7 +213,7 @@ function Get-AzLocalFleetStatusData {
                 $readiness.Add([PSCustomObject]@{
                     ClusterName = $clusterName; ResourceGroup = $rgName; SubscriptionId = $subId
                     ClusterState = "Not Found"; UpdateState = "N/A"; HealthState = "N/A"
-                    ReadyForUpdate = $false; AvailableUpdates = ""; ReadyUpdates = ""
+                    ReadyForUpdate = $false; AllAvailableUpdates = ""; ReadyUpdates = ""
                     HasPrerequisiteUpdates = ""; SBEDependency = ""
                     RecommendedUpdate = ""; HealthCheckFailures = ""
                     BlockingReasons = ""
@@ -323,7 +323,7 @@ function Get-AzLocalFleetStatusData {
             $readiness.Add([PSCustomObject]@{
                 ClusterName = $clusterName; ResourceGroup = $rgName; SubscriptionId = $subId
                 ClusterState = $clusterState; UpdateState = $updateState; HealthState = $healthState
-                ReadyForUpdate = $isReady; AvailableUpdates = $availableUpdateNames
+                ReadyForUpdate = $isReady; AllAvailableUpdates = $availableUpdateNames
                 ReadyUpdates = $readyUpdateNames; HasPrerequisiteUpdates = $prereqUpdateNames
                 SBEDependency = $sbeDependencyInfo; RecommendedUpdate = $recommendedUpdate
                 HealthCheckFailures = $healthCheckFailures
@@ -476,7 +476,7 @@ function Get-AzLocalFleetStatusData {
             $readiness.Add([PSCustomObject]@{
                 ClusterName = $clusterName; ResourceGroup = $rgName; SubscriptionId = $subId
                 ClusterState = "Error"; UpdateState = "Error"; HealthState = "Error"
-                ReadyForUpdate = $false; AvailableUpdates = ""; ReadyUpdates = ""
+                ReadyForUpdate = $false; AllAvailableUpdates = ""; ReadyUpdates = ""
                 HasPrerequisiteUpdates = ""; SBEDependency = ""
                 RecommendedUpdate = ""; HealthCheckFailures = $_.Exception.Message
                 BlockingReasons = ""

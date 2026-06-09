@@ -112,7 +112,7 @@ env:
   # this to the version actually installed and to the latest on PSGallery, and emits a
   # ::notice annotation if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.7.98'
+  GENERATED_AGAINST_MODULE_VERSION: '0.7.99'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): manual workflow_dispatch input >
   # repository variable 'REQUIRED_MODULE_VERSION' > empty (latest).
@@ -147,7 +147,7 @@ jobs:
       # surface the timestamped readiness-artifact name so the downstream
       # apply-updates job can download it (cross-job step outputs are not visible -
       # everything passed to the next job has to go through the job 'outputs' map).
-      readiness_artifact: azlocal-apply-updates-readiness-report_${{ steps.artifact-stamp.outputs.timestamp }}
+      readiness_artifact: azlocal-step.6-apply-updates-readiness-report_${{ steps.artifact-stamp.outputs.timestamp }}
       # the ring(s) the schedule resolver picked for this firing.
       # Empty when the trigger was workflow_dispatch (downstream falls back to
       # the manual `update_ring` input). When the trigger was `schedule:`, this
@@ -351,7 +351,7 @@ jobs:
     - name: Upload Readiness Report
       uses: actions/upload-artifact@v6
       with:
-        name: azlocal-apply-updates-readiness-report_${{ steps.artifact-stamp.outputs.timestamp }}
+        name: azlocal-step.6-apply-updates-readiness-report_${{ steps.artifact-stamp.outputs.timestamp }}
         path: ./artifacts/readiness-report.csv
         retention-days: 30
 
@@ -564,7 +564,7 @@ jobs:
     - name: Upload Update Logs
       uses: actions/upload-artifact@v6
       with:
-        name: azlocal-apply-updates-logs_${{ steps.artifact-stamp.outputs.timestamp }}
+        name: azlocal-step.6-apply-updates-logs_${{ steps.artifact-stamp.outputs.timestamp }}
         path: ./artifacts/*
         retention-days: 30
     
@@ -659,7 +659,7 @@ jobs:
       if: ${{ github.event.inputs.raise_itsm_ticket == 'true' }}
       uses: actions/upload-artifact@v6
       with:
-        name: azlocal-apply-updates-itsm-results_${{ steps.artifact-stamp.outputs.timestamp }}
+        name: azlocal-step.6-apply-updates-itsm-results_${{ steps.artifact-stamp.outputs.timestamp }}
         path: ./artifacts/itsm-*.*
         retention-days: 30
       continue-on-error: true
