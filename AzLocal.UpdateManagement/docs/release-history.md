@@ -4,9 +4,21 @@
 >
 > **For older releases**, this is the canonical reference; the main README intentionally stays slim so the most recent block is easy to find.
 >
-> **For v0.7.97 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0797) `What's New in v0.7.97` section.
+> **For v0.7.98 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0798) `What's New in v0.7.98` section.
 
 ---
+
+### What's New in v0.7.98
+
+v0.7.98 is a pipeline-template UX release. The Step.7 in-flight update monitor pipelines (`Step.7_monitor-updates.yml` in both `github-actions/` and `azure-devops/`) get a UX overhaul so stuck and critical runs surface immediately, and the Step.7 + Step.8 JUnit emitters now populate `time=` with real run elapsed seconds. No public-cmdlet changes.
+
+**Step.7 UX overhaul.** Each row is now scored on a composite `SeverityScore` (`StepError severity x 1000 + RunSeverity x 100 + elapsed-hours bucket`), the job summary opens with a single `CRITICAL / WARN / OK` fleet status badge (e.g. `CRITICAL - 1 stuck step error(s), 1 run(s) > 14d, 1 step(s) > 4h`), each row carries per-cell `StateIcon` + `StatusIcon` icons and a horizontal chip stack of flags (`STEP-STUCK`, `RUN-STUCK`, `UNRESOLVED`, `RECENT-FAIL`), and each failed step's `errorMessage` is wrapped in a collapsible `<details><summary>Verbose error</summary>...</details>` block.
+
+**JUnit `time=` populated (Step.7 + Step.8).** Previously every `<testcase>` and `<testsuite>` emitted `time="0"`, which made GitHub Test Reporter render `"5 tests were completed in 0ms"`. Step.7 now computes per-run elapsed seconds (`end - start` for completed / failed, current elapsed for in-flight). Step.8's `Update Run History and Error Details` testsuite now emits `time` = `DurationMinutes * 60` per row. Other Step.8 testsuites (`FleetVersionDistribution`, `AzureLocalFleetUpdateStatus`) intentionally stay at `time="0"` - they are instantaneous snapshot projections.
+
+**All 20 bundled `Step.{0..9}.yml` templates** bump `GENERATED_AGAINST_MODULE_VERSION` from `'0.7.97'` to `'0.7.98'`.
+
+See [CHANGELOG.md](../CHANGELOG.md#0798---2026-06-09) for the full v0.7.98 entry.
 
 ### What's New in v0.7.97
 

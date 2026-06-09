@@ -3,7 +3,7 @@
     RootModule = 'AzLocal.UpdateManagement.psm1'
 
     # Version number of this module.
-    ModuleVersion = '0.7.97'
+    ModuleVersion = '0.7.98'
 
     # Supported PSEditions
     CompatiblePSEditions = @('Desktop', 'Core')
@@ -215,16 +215,23 @@
 
             # ReleaseNotes of this module
             ReleaseNotes = @'
+## Version 0.7.98 - Step.7 monitor-updates UX overhaul (severity tiers, chip stacks, fleet badge, per-cell icons) + Step.7/Step.8 JUnit `time=` populated with real run elapsed seconds
+
+In-flight update monitor (Step.7) gets a UX rewrite so stuck and critical runs surface immediately. The two monitor pipelines (`github-actions/Step.7_monitor-updates.yml`, `azure-devops/Step.7_monitor-updates.yml`) and the two fleet-status pipelines (`Step.8_fleet-update-status.yml` in both folders) are the only template files that changed.
+
+- **Step.7 severity tiers + composite sort.** Each in-flight or unresolved-failed row is now scored on a composite `SeverityScore` (StepError severity x 1000 + RunSeverity x 100 + elapsed-hours bucket). The job-summary table sorts highest-severity first, so the rows that need operator attention sit at the top regardless of cluster name.
+- **Per-cell icons + chip stack.** Each row now renders a `StateIcon`, `StatusIcon`, and a horizontal chip stack of flags (`STEP-STUCK`, `RUN-STUCK`, `UNRESOLVED`, `RECENT-FAIL`) instead of a single status string. The chip stack is one column-width per flag so the cluster name column does not get squashed by long flag lists.
+- **Fleet status badge.** The job summary now opens with a single `CRITICAL / WARN / OK` badge that summarises the worst row across the entire fleet (e.g. `CRITICAL - 1 stuck step error(s), 1 run(s) > 14d, 1 step(s) > 4h`). Operators can scan a 20-cluster fleet's status in one glance.
+- **Collapsible Verbose Error block.** Each failed step's `errorMessage` is now wrapped in `<details><summary>Verbose error</summary>...</details>` so the table stays readable but the full error text is one click away.
+- **JUnit `time=` populated (Step.7 + Step.8 Update Run History).** Previously every `<testcase>` and `<testsuite>` emitted `time="0"`, which made GitHub Test Reporter render `5 tests were completed in 0ms`. Step.7 now computes per-run elapsed seconds (end-start for completed/failed, current elapsed for in-flight) and Step.8's `Update Run History and Error Details` testsuite now uses `DurationMinutes * 60` per row. Other Step.8 testsuites (FleetVersionDistribution, AzureLocalFleetUpdateStatus) intentionally stay at `time="0"` - those are instantaneous snapshot projections.
+- **No module-code changes.** This is a pipeline-template release. The `Step.{0..9}.yml` `GENERATED_AGAINST_MODULE_VERSION` pin moves from `''0.7.97''` to `''0.7.98''` across all 20 bundled templates.
+
+Apply via `Install-Module AzLocal.UpdateManagement -Force` (or `Update-Module`). If you have copied the Step.7 or Step.8 YAMLs into your CI repo via `Update-AzLocalPipelineExample`, re-run it to pick up the new UX and `time=` fix.
+
 ## Version 0.7.97 - In-package documentation follow-up to v0.7.96 (no code or YAML run-block changes)
 
-Documentation-only release. The three Markdown files that ship inside the published PSGallery .nupkg under the module folder were refreshed to mirror the v0.7.96 module behaviour - `Automation-Pipeline-Examples/README.md`, `Automation-Pipeline-Examples/docs/appendix-pipelines.md`, and `docs/release-history.md`. Consumers who installed v0.7.96 fresh saw stale Step.7 + Step.8 narrative in those in-package docs because they were updated AFTER `Publish-Module.ps1` ran. v0.7.97 republishes the package with the aligned docs. No code anywhere in the module, no inline-script changes in any Step.{0..9}.yml template - only the `GENERATED_AGAINST_MODULE_VERSION` pin moves from `''0.7.96''` to `''0.7.97''` across all 20 bundled templates.
-
-- **`Automation-Pipeline-Examples/README.md` (CI/CD runbook):** section-1 Step.7 bullet now mentions the new Status + ErrorMessage columns, the StepError JUnit failure type, the always-shown Failed-runs block, portal-linked Cluster/Update cells, and the new STEP_ERRORED / UNRESOLVED_FAILURES `GITHUB_OUTPUT` values. Step.8 bullet now mentions NeedsAttention promotion into Update Failed, the new Action Required bucket for PreparationFailed, and PreparationInProgress folding into Update In Progress.
-- **`Automation-Pipeline-Examples/docs/appendix-pipelines.md` (per-step pipeline reference):** Step 7 and Step 8 tables refreshed - Purpose, Artefacts, Exit conditions, and Introduced rows now describe the new columns, JUnit failure types, the bucket cascade, the primaryActionRequired attribute, ACTION_REQUIRED output, Summary.UpdateFailures + Summary.ActionRequired JSON keys, and the portal-linked markdown cells.
-- **`docs/release-history.md` (canonical release history):** current-release pointer bumped from v0.7.89 to v0.7.97; new `### What''s New in v0.7.96` entry prepended (mirrors the v0.7.96 README block).
-- **All 18 bundled `Step.{0..9}.yml` templates (9 GitHub Actions + 9 Azure DevOps) bump `GENERATED_AGAINST_MODULE_VERSION` from `''0.7.96''` to `''0.7.97''`.** Pin-only; no inline-script content changes anywhere.
-
-Apply via `Install-Module AzLocal.UpdateManagement -Force` (or `Update-Module`). If you only consume the cmdlets there is no behaviour change vs v0.7.96 - this is a docs-correctness republish. If you have copied the bundled YAMLs into your CI repo via `Update-AzLocalPipelineExample`, re-run it to refresh the version pin (pin-only short-circuit from v0.7.95 means `-Force` is not required).
+For full v0.7.97 release notes see:
+https://github.com/NeilBird/Azure-Local/blob/main/AzLocal.UpdateManagement/CHANGELOG.md
 
 ## Version 0.7.96 - Portal-parity: Status field, ErrorMessage column, StepError JUnit type, always-show unresolved Failed, Step.8 ActionRequired bucket
 

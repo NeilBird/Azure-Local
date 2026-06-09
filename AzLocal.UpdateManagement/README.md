@@ -2,7 +2,7 @@
 
 > ⚠️ **Disclaimer**: This module is **NOT** a Microsoft supported service offering or product. It is provided as example code only, with no warranty or official support. Refer to the [MIT license](https://github.com/NeilBird/Azure-Local/blob/main/LICENSE) for further information.
 
-**Latest Version:** v0.7.97 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.7.97)
+**Latest Version:** v0.7.98 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.7.98)
 
 > 📢 **Renamed in v0.7.3**: this module was previously published as `AzStackHci.ManageUpdates`. The new module name aligns with the Azure Local product name (_Microsoft retired the *Azure Stack HCI* brand in late 2024_). The module GUID is preserved across the rename. If you have the old name installed, run:
 >
@@ -23,7 +23,7 @@ Azure Local REST API specification (includes update management endpoints): https
 **This README (overview + most-recent release notes):**
 
 - [Where to Start](#where-to-start)
-- [What's New in v0.7.97](#whats-new-in-v0797)
+- [What's New in v0.7.98](#whats-new-in-v0798)
 - [Files](#files)
 - [Prerequisites](#prerequisites)
 - [RBAC Requirements](#rbac-requirements) (summary; full reference in [docs/rbac.md](docs/rbac.md))
@@ -86,26 +86,35 @@ If you are new to this module, work through these in order from a regular PowerS
 
 > Most CI/CD pipelines in [Automation-Pipeline-Examples/](Automation-Pipeline-Examples/) are direct implementations of one of these workflows. Start there if you want a copy-pasteable end-to-end pipeline.
 
-## What's New in v0.7.97
+## What's New in v0.7.98
 
-**Documentation-only release.** The three Markdown files that ship inside the published PSGallery `.nupkg` under the module folder were refreshed to mirror the v0.7.96 module behaviour. Consumers who installed v0.7.96 fresh saw stale Step.7 + Step.8 narrative in those in-package docs because they were updated AFTER `Publish-Module.ps1` ran. v0.7.97 republishes the package with the aligned docs.
+**Step.7 monitor-updates UX overhaul + Step.7 / Step.8 JUnit `time=` populated with real run elapsed seconds.** Only the four monitor / fleet-status pipeline templates changed (`github-actions/Step.7_monitor-updates.yml`, `azure-devops/Step.7_monitor-updates.yml`, and the matching `Step.8_fleet-update-status.yml` pair) plus the bundled-template `GENERATED_AGAINST_MODULE_VERSION` pin bump. No public-cmdlet changes.
 
-**No code anywhere in the module, no inline-script changes in any Step.{0..9}.yml template.** Only the `GENERATED_AGAINST_MODULE_VERSION` pin moves from `'0.7.96'` to `'0.7.97'` across all 20 bundled templates (10 GitHub Actions + 10 Azure DevOps).
+### Step.7 monitor-updates UX overhaul
 
-### What changed
+- **Severity tiers + composite `SeverityScore` sort.** Each in-flight / unresolved-failed row is scored on `StepError severity x 1000 + RunSeverity x 100 + elapsed-hours bucket` and the job-summary table sorts highest-severity first. Stuck step errors and runs > 14 days appear at the top regardless of cluster alphabetical order.
+- **Per-cell icons (`StateIcon`, `StatusIcon`) + horizontal chip stack** (`STEP-STUCK`, `RUN-STUCK`, `UNRESOLVED`, `RECENT-FAIL`) replace the previous single-status column. Each chip is its own column-width so long flag lists no longer squash the cluster name column.
+- **Fleet status badge** at the top of the job summary collapses the worst row across the fleet into a single `CRITICAL / WARN / OK` line (e.g. `CRITICAL - 1 stuck step error(s), 1 run(s) > 14d, 1 step(s) > 4h`). Operators can scan a 20-cluster fleet's status in one glance.
+- **Collapsible Verbose Error block.** Each failed step's `errorMessage` is now wrapped in `<details><summary>Verbose error</summary>...</details>` so the table stays readable but the full error text is one click away.
 
-- **`Automation-Pipeline-Examples/README.md` (CI/CD runbook).** Section-1 Step.7 bullet now mentions the new `Status` + `ErrorMessage` columns, the `StepError` JUnit failure type, the always-shown Failed-runs block, portal-linked Cluster / Update Name cells, and the new `STEP_ERRORED` / `UNRESOLVED_FAILURES` `GITHUB_OUTPUT` values. Step.8 bullet now mentions `NeedsAttention` promotion into the `Update Failed` bucket, the new `Action Required` bucket for `PreparationFailed`, and `PreparationInProgress` folding into `Update In Progress`.
-- **`Automation-Pipeline-Examples/docs/appendix-pipelines.md` (per-step pipeline reference).** Step 7 and Step 8 tables refreshed: the `Purpose`, `Artefacts`, `Exit conditions`, and `Introduced` rows now describe the new columns, JUnit failure types, the bucket cascade (`Update Failed > Action Required > Health Failure > SBE Prerequisite Blocked > Update In Progress > Ready for Update > Up to Date > Needs Investigation`), the `primaryActionRequired` JUnit attribute, `ACTION_REQUIRED` output, `Summary.UpdateFailures` + `Summary.ActionRequired` JSON keys, and the portal-linked markdown cells. A duplicate `Exit conditions` row on Step 7 was removed as part of the refresh.
-- **`docs/release-history.md` (canonical release history).** Current-release pointer bumped from v0.7.89 to v0.7.97; new `### What's New in v0.7.96` entry prepended (mirrors the v0.7.96 README block now relocated to the [Release History](#release-history) appendix below).
-- **All 18 bundled `Step.{0..9}.yml` templates** bump `GENERATED_AGAINST_MODULE_VERSION` from `'0.7.96'` to `'0.7.97'`. Pin-only; no inline-script content changes.
+### JUnit `time=` populated (Step.7 + Step.8 Update Run History)
+
+- Previously every `<testcase>` and `<testsuite>` in Step.7 and the Step.8 Update Run History block emitted `time="0"`, which caused GitHub Test Reporter / Azure DevOps Tests tab to render `"5 tests were completed in 0ms"` regardless of real run duration.
+- **Step.7**: each in-flight / unresolved-failed row computes `RunDurationSeconds` (`end - start` for completed / failed; current elapsed for in-flight) and emits it on both the per-row `<testcase time="..">` and the rolled-up `<testsuite time="..">`.
+- **Step.8 `Update Run History and Error Details` testsuite**: each `<testcase>` now emits `time` = `DurationMinutes * 60` (`DurationMinutes` comes from KQL `datetime_diff('minute', EndTime, StartTime)` via `Get-AzLocalUpdateRunFailures`).
+- Other Step.8 testsuites (`FleetVersionDistribution`, `AzureLocalFleetUpdateStatus`) intentionally stay at `time="0"` - they are instantaneous snapshot projections and a synthetic duration would be misleading.
+
+### Pipeline template version pin
+
+- All 20 bundled `Step.{0..9}.yml` templates (10 GitHub Actions + 10 Azure DevOps) bump `GENERATED_AGAINST_MODULE_VERSION` from `'0.7.97'` to `'0.7.98'`.
 
 ### Migration summary
 
-For cmdlet consumers: `Install-Module AzLocal.UpdateManagement -Force` (or `Update-Module`). No cmdlet behaviour change vs v0.7.96.
+For cmdlet consumers: `Install-Module AzLocal.UpdateManagement -Force` (or `Update-Module`). No cmdlet behaviour change vs v0.7.97.
 
-For CI/CD pipeline consumers: re-run `Update-AzLocalPipelineExample -Destination <path>` to refresh the `GENERATED_AGAINST_MODULE_VERSION` pin (pin-only short-circuit from v0.7.95 means `-Force` is not required).
+For CI/CD pipeline consumers: re-run `Update-AzLocalPipelineExample -Destination <path>` to pick up the new Step.7 UX and the populated `time=` attributes on Step.7 / Step.8 JUnit. The pin-only short-circuit from v0.7.95 means `-Force` is not required for unchanged steps.
 
-> Previous release notes (v0.7.96 and earlier) have moved into the [Release History](#release-history) appendix below, with full text retained in [`docs/release-history.md`](docs/release-history.md) and [`CHANGELOG.md`](CHANGELOG.md).
+> Previous release notes (v0.7.97 and earlier) have moved into the [Release History](#release-history) appendix below, with full text retained in [`docs/release-history.md`](docs/release-history.md) and [`CHANGELOG.md`](CHANGELOG.md).
 
 ## Files
 
@@ -584,7 +593,13 @@ This code is provided as-is for educational and reference purposes.
 
 The full What's-New history (v0.7.81 and earlier) has moved to [docs/release-history.md](docs/release-history.md).
 
-The most recent release notes for **v0.7.97** stay above under [`What's New in v0.7.97`](#whats-new-in-v0797).
+The most recent release notes for **v0.7.98** stay above under [`What's New in v0.7.98`](#whats-new-in-v0798).
+
+### What's New in v0.7.97
+
+In-package documentation follow-up to v0.7.96 (no code or YAML run-block changes). The three Markdown files that ship inside the published PSGallery `.nupkg` under the module folder (`Automation-Pipeline-Examples/README.md`, `Automation-Pipeline-Examples/docs/appendix-pipelines.md`, `docs/release-history.md`) were refreshed to mirror the v0.7.96 module behaviour. Only the `GENERATED_AGAINST_MODULE_VERSION` pin changed across all 20 bundled templates (`'0.7.96'` -> `'0.7.97'`).
+
+See [CHANGELOG.md](CHANGELOG.md#0797---2026-06-08) for the full v0.7.97 entry.
 
 ### What's New in v0.7.96
 
