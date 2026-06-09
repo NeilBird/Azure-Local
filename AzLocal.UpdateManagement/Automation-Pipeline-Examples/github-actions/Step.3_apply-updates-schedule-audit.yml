@@ -73,6 +73,10 @@ on:
         options:
           - 'false'
           - 'true'
+      cluster_csv_path:
+        description: 'Path to the source-controlled cluster inventory CSV (the same file Step.2 consumes - default `config/ClusterUpdateRings.csv`). When set, the Recommend view emits a NoWindowTag remediation section: for each cluster missing an UpdateStartWindow tag, the advisor proposes a peer-derived value and tells the operator which row of the CSV to edit (or to re-run Step.1 if the cluster is absent from the CSV). Leave empty to skip the CSV-driven remediation.'
+        required: false
+        default: 'config/ClusterUpdateRings.csv'
       module_version:
         description: 'Pin AzLocal.UpdateManagement version (empty = latest from PSGallery). See Automation-Pipeline-Examples/README.md section 5 "Optional configuration".'
         required: false
@@ -91,8 +95,17 @@ env:
   # this to the version actually installed and to the latest on PSGallery, and emits a
   # ::notice annotation if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.8.3'
+  GENERATED_AGAINST_MODULE_VERSION: '0.8.4'
   REQUIRED_MODULE_VERSION: ${{ github.event.inputs.module_version || vars.REQUIRED_MODULE_VERSION || '' }}
+  # v0.8.4 - opt this workflow into Node.js 24 for all JavaScript actions
+  # (actions/checkout, actions/download-artifact, actions/upload-artifact,
+  # azure/login, dorny/test-reporter, etc). Per GitHub's 2025-09-19 deprecation
+  # notice Node 20 is forced off by default on 2026-06-16 and removed from the
+  # runner on 2026-09-16. Setting this env var silences the deprecation warnings
+  # and exercises Node 24 ahead of the cut-over. To temporarily opt back out,
+  # set ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true.
+  # https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   audit:
@@ -162,6 +175,23 @@ jobs:
             Write-Host "::notice title=Newer AzLocal.UpdateManagement version available on PSGallery::$msg"
         }
 
+        # v0.8.4 - one-line version banner emitted to the rendered Step
+        # Summary so the YAML version (GENERATED_AGAINST_MODULE_VERSION), the
+        # module version actually loaded on the runner, the PSGallery latest,
+        # and the REQUIRED_MODULE_VERSION pin status are visible at the top
+        # of every run summary without scrolling the agent log. Same data is
+        # also echoed to the console above as 'Module version summary'.
+        $pin       = if ($env:REQUIRED_MODULE_VERSION) { "pinned to v$($env:REQUIRED_MODULE_VERSION)" } else { 'latest (fix-forward)' }
+        $latestStr = if ($latest) { "v$latest" } else { '(PSGallery lookup failed)' }
+        $verdict   = if ($installed -lt $generated) { 'YAML newer than module - check REQUIRED_MODULE_VERSION' }
+                     elseif ($installed -gt $generated) { 'YAML older than module - run Copy-AzLocalPipelineExample -Update' }
+                     elseif ($latest -and ($latest -gt $installed)) { 'newer module available on PSGallery' }
+                     else { 'in sync' }
+        if ($env:GITHUB_STEP_SUMMARY) {
+            "_Pipeline YAML v$generated | Module v$installed installed ($pin) | PSGallery latest $latestStr | $verdict_" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+            "" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+        }
+
     - name: Run Schedule Coverage Audit
       shell: pwsh
       id: audit
@@ -171,6 +201,7 @@ jobs:
         INPUT_LEAD_TIME_MINUTES: ${{ github.event.inputs.lead_time_minutes || '5' }}
         INPUT_FIRES_PER_WINDOW:  ${{ github.event.inputs.fires_per_window || '2' }}
         INPUT_INCLUDE_UNTAGGED:  ${{ github.event.inputs.include_untagged || 'false' }}
+        INPUT_CLUSTER_CSV_PATH:  ${{ github.event.inputs.cluster_csv_path || 'config/ClusterUpdateRings.csv' }}
         INPUT_DEBUG:             ${{ github.event.inputs.debug || 'false' }}
       run: |
         $ErrorActionPreference = 'Stop'
@@ -201,6 +232,7 @@ jobs:
         $leadTime     = [int]$env:INPUT_LEAD_TIME_MINUTES
         $firesPerWin  = [int]$env:INPUT_FIRES_PER_WINDOW
         $includeUnt   = ($env:INPUT_INCLUDE_UNTAGGED -eq 'true')
+        $clusterCsv   = $env:INPUT_CLUSTER_CSV_PATH
 
         # v0.8.3: pipeline_path is REQUIRED so Recommend can diff its
         # proposed crons against what's already in Step.6 and only emit a
@@ -211,6 +243,11 @@ jobs:
         # trigger (which uses the input defaults).
         $havePipeline = -not [string]::IsNullOrWhiteSpace($pipelinePath)
         $haveSchedule = -not [string]::IsNullOrWhiteSpace($schedulePath) -and (Test-Path -LiteralPath $schedulePath)
+        # v0.8.4: cluster_csv_path is optional. If the file is missing on the runner
+        # we skip the NoWindowTag remediation section quietly (vs throwing) so the
+        # workflow keeps emitting the legacy advisor output for repos that don't
+        # version-control a cluster CSV yet.
+        $haveCsv      = -not [string]::IsNullOrWhiteSpace($clusterCsv) -and (Test-Path -LiteralPath $clusterCsv)
         if (-not $havePipeline) {
             throw "pipeline_path is required. Set it to the folder containing Step.6_apply-updates.yml (default '.github/workflows' matches the standard consumer layout). The Recommend view diffs its proposed crons against this file - leaving it empty would make every recommendation a false positive."
         }
@@ -228,6 +265,7 @@ jobs:
         Write-Host "LeadTimeMinutes  : $leadTime"
         Write-Host "FiresPerWindow   : $firesPerWin   (1 = opening edge only, 2 = belt-and-braces opening + mid-window retry)"
         Write-Host "IncludeUntagged  : $includeUnt"
+        Write-Host "ClusterCsvPath   : $(if ($haveCsv) { $clusterCsv } else { '(skipped - cluster_csv_path empty or file missing)' })"
         Write-Host ""
 
         $auditCsv  = Join-Path $outputDir 'schedule-coverage-audit.csv'
@@ -250,6 +288,7 @@ jobs:
         if ($havePipeline) { $auditArgs.PipelineYamlPath = $pipelinePath }
         if ($haveSchedule) { $auditArgs.SchedulePath     = $schedulePath }
         if ($includeUnt)   { $auditArgs.IncludeUntagged  = $true }
+        if ($haveCsv)      { $auditArgs.ClusterCsvPath   = $clusterCsv }
         $audit = Test-AzLocalApplyUpdatesScheduleCoverage @auditArgs
         if (-not $audit) { $audit = @() }
 
@@ -259,6 +298,9 @@ jobs:
         # Recommend view (markdown snippet) - GitHub Actions only.
         # v0.8.3: pass -PipelineYamlPath so Recommend diff-prunes crons
         # already present in Step.6 and only emits the truly missing ones.
+        # v0.8.4: also pass -SchedulePath (so the Cycle calendar +
+        # Configured exclusion windows informational sections render) and
+        # -ClusterCsvPath (so the NoWindowTag remediation section renders).
         $recoArgs = @{
             View                    = 'Recommend'
             LeadTimeMinutes         = $leadTime
@@ -267,6 +309,8 @@ jobs:
             ExportPath              = $recoMd
         }
         if ($havePipeline) { $recoArgs.PipelineYamlPath = $pipelinePath }
+        if ($haveSchedule) { $recoArgs.SchedulePath     = $schedulePath }
+        if ($haveCsv)      { $recoArgs.ClusterCsvPath   = $clusterCsv }
         Test-AzLocalApplyUpdatesScheduleCoverage @recoArgs | Out-Null
 
         $covered     = @($audit | Where-Object Status -eq 'Covered')

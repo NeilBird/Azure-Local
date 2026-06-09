@@ -34,8 +34,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $script:ModuleInfo | Should -Not -BeNullOrEmpty
         }
 
-        It 'Should have version 0.8.3' {
-            $script:ModuleInfo.Version | Should -Be '0.8.3'
+        It 'Should have version 0.8.4' {
+            $script:ModuleInfo.Version | Should -Be '0.8.4'
         }
 
         It 'Module version constants are in sync between .psm1 and .psd1' {
@@ -474,6 +474,196 @@ Describe 'Module: AzLocal.UpdateManagement' {
 
             $detail = if ($offenders.Count -gt 0) { $offenders -join [Environment]::NewLine } else { '(no offenders)' }
             $offenders.Count | Should -Be 0 -Because "every <testsuites>/<testsuite>/<testcase> element emitted by an inline pipeline writer must carry a time= attribute (use time=`"0`" if no real duration is measured), otherwise dorny/test-reporter renders 'NaNms' in the duration column of the JUnit summary. Findings:$([Environment]::NewLine)$detail"
+        }
+    }
+
+    Context 'v0.8.4 Node.js 24 opt-in across all GitHub Actions yml' {
+        # v0.8.4: every bundled GitHub Actions workflow declares the
+        # FORCE_JAVASCRIPT_ACTIONS_TO_NODE24 env var at the workflow level
+        # so JavaScript actions (actions/checkout, azure/login,
+        # actions/upload-artifact, dorny/test-reporter, etc.) execute under
+        # Node 24 ahead of GitHub's platform-wide cutover. This drift test
+        # guards against a future Copy-AzLocalPipelineExample / refresh
+        # silently dropping the opt-in from any of the 10 yml templates.
+        It 'Every GitHub Actions yml declares FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true at workflow scope' {
+            $ghRoot = Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples\github-actions'
+            $ghRoot = (Resolve-Path -Path $ghRoot).Path
+
+            $ymlFiles = Get-ChildItem -Path $ghRoot -Filter 'Step.*.yml' -File
+            $ymlFiles.Count | Should -BeGreaterOrEqual 10 -Because 'all 10 Step.{0..9}.yml templates are expected under Automation-Pipeline-Examples/github-actions/'
+
+            $offenders = New-Object System.Collections.Generic.List[string]
+            foreach ($yml in $ymlFiles) {
+                $content = Get-Content -LiteralPath $yml.FullName -Raw
+                if ($content -notmatch 'FORCE_JAVASCRIPT_ACTIONS_TO_NODE24\s*:\s*(?:true|''true''|"true")') {
+                    $offenders.Add($yml.Name)
+                }
+            }
+
+            $detail = if ($offenders.Count -gt 0) { $offenders -join ', ' } else { '(none)' }
+            $offenders.Count | Should -Be 0 -Because "every GitHub Actions yml under Automation-Pipeline-Examples/github-actions/ must declare FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true so JavaScript actions execute under Node 24 ahead of GitHub's platform-wide deprecation cutover. Missing from: $detail"
+        }
+    }
+
+    Context 'v0.8.4 module-version banner across every install step' {
+        # v0.8.4: every install step in every bundled pipeline yml (GH + ADO)
+        # emits a "Pipeline YAML v<g> | Module v<i> installed (<pin>) |
+        # PSGallery latest <l> | <verdict>" banner to the rendered Summary
+        # (GITHUB_STEP_SUMMARY on GH, ##vso[task.uploadsummary] on ADO).
+        # This makes the version triple obvious in the Summary view fleet
+        # operators open first, rather than buried in annotations.
+        # Expected sites: 10 GH yml + 11 ADO sites (Step.6 ADO has 2 install
+        # steps: check-readiness + apply-updates).
+        It 'Every GitHub Actions install step contains the version banner string' {
+            $ghRoot = Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples\github-actions'
+            $ghRoot = (Resolve-Path -Path $ghRoot).Path
+            $ymlFiles = Get-ChildItem -Path $ghRoot -Filter 'Step.*.yml' -File
+
+            $offenders = New-Object System.Collections.Generic.List[string]
+            foreach ($yml in $ymlFiles) {
+                $content = Get-Content -LiteralPath $yml.FullName -Raw
+                if ($content -notmatch [regex]::Escape('Pipeline YAML v$generated | Module v$installed installed')) {
+                    $offenders.Add($yml.Name)
+                }
+            }
+
+            $detail = if ($offenders.Count -gt 0) { $offenders -join ', ' } else { '(none)' }
+            $offenders.Count | Should -Be 0 -Because "every GitHub Actions yml install step must append the v0.8.4 version banner to GITHUB_STEP_SUMMARY. Missing from: $detail"
+        }
+
+        It 'Every Azure DevOps yml install site contains the version banner string (Step.6 second install deliberately skips upload to avoid duplicate banner)' {
+            $adoRoot = Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples\azure-devops'
+            $adoRoot = (Resolve-Path -Path $adoRoot).Path
+            $ymlFiles = Get-ChildItem -Path $adoRoot -Filter 'Step.*.yml' -File
+
+            $bannerPattern = [regex]::Escape('Pipeline YAML v$generated | Module v$installed installed')
+            $totalSites = 0
+            # Every Step.X.yml emits exactly ONE banner to the build Summary.
+            # Step.6 has TWO install steps (CheckReadiness + ApplyUpdates) but
+            # the second one deliberately skips ##vso[task.uploadsummary] so the
+            # banner does not appear twice in the rendered Summary.
+            $perFileExpect = @{
+                'Step.0_authentication-test.yml'         = 1
+                'Step.1_inventory-clusters.yml'          = 1
+                'Step.2_manage-updatering-tags.yml'      = 1
+                'Step.3_apply-updates-schedule-audit.yml' = 1
+                'Step.4_fleet-connectivity-status.yml'   = 1
+                'Step.5_assess-update-readiness.yml'     = 1
+                'Step.6_apply-updates.yml'               = 1
+                'Step.7_monitor-updates.yml'             = 1
+                'Step.8_fleet-update-status.yml'         = 1
+                'Step.9_fleet-health-status.yml'         = 1
+            }
+            $offenders = New-Object System.Collections.Generic.List[string]
+            foreach ($yml in $ymlFiles) {
+                $content = Get-Content -LiteralPath $yml.FullName -Raw
+                $count = ([regex]::Matches($content, $bannerPattern)).Count
+                $totalSites += $count
+                if ($perFileExpect.ContainsKey($yml.Name)) {
+                    $want = $perFileExpect[$yml.Name]
+                    if ($count -ne $want) {
+                        $offenders.Add(("{0}: expected {1} banner emit(s), found {2}" -f $yml.Name, $want, $count))
+                    }
+                }
+            }
+
+            $detail = if ($offenders.Count -gt 0) { $offenders -join [Environment]::NewLine } else { '(no mismatches)' }
+            $offenders.Count | Should -Be 0 -Because "every ADO yml uploads exactly 1 version banner to the build Summary via ##vso[task.uploadsummary]. Step.6 has 2 install steps but the second (ApplyUpdates stage) deliberately skips the upload so the banner is not duplicated. Findings:$([Environment]::NewLine)$detail"
+            $totalSites | Should -Be 10 -Because "total ADO Summary banner emits should be 10 (1 per yml; Step.6's second install step skips upload)"
+        }
+    }
+
+    Context 'v0.8.4 Step.6 Enhancement D per-cluster Step Summary headers' {
+        # v0.8.4: Step.6 apply-updates Summary on both platforms includes
+        # two new per-cluster tables: '### Cluster Actions' (read from
+        # apply-results.json written by the apply-updates step) and
+        # '### Clusters Skipped at Readiness Gate' (read from
+        # readiness-report.csv written by the check-readiness stage).
+        It 'GitHub Actions Step.6 yml contains both per-cluster table headers and apply-results.json persist' {
+            $yml = Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples\github-actions\Step.6_apply-updates.yml'
+            $yml = (Resolve-Path -Path $yml).Path
+            $content = Get-Content -LiteralPath $yml -Raw
+            $content | Should -Match 'apply-results\.json' -Because 'Step.6 apply-updates step must persist apply-results.json so Summary can render Cluster Actions table'
+            $content | Should -Match '### Cluster Actions' -Because 'Step.6 Summary must render the per-cluster Cluster Actions table'
+            $content | Should -Match '### Clusters Skipped at Readiness Gate' -Because 'Step.6 Summary must render the per-cluster Clusters Skipped at Readiness Gate table'
+        }
+
+        It 'Azure DevOps Step.6 yml contains both per-cluster table headers and apply-results.json persist' {
+            $yml = Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples\azure-devops\Step.6_apply-updates.yml'
+            $yml = (Resolve-Path -Path $yml).Path
+            $content = Get-Content -LiteralPath $yml -Raw
+            $content | Should -Match 'apply-results\.json' -Because 'ADO Step.6 apply-updates step must persist apply-results.json'
+            $content | Should -Match '### Cluster Actions' -Because 'ADO Step.6 Generate Summary must render the Cluster Actions table'
+            $content | Should -Match '### Clusters Skipped at Readiness Gate' -Because 'ADO Step.6 Generate Summary must render the Clusters Skipped at Readiness Gate table'
+        }
+    }
+
+    Context 'v0.8.4 RBAC custom role display name rename' {
+        # v0.8.4: the bundled custom role definition is renamed from
+        # 'Azure Stack HCI Update Operator' to
+        # 'Azure Stack HCI Update Operator (custom)' so the role's
+        # customer-managed status is obvious in the Azure portal and pre-empts
+        # collision with any future Microsoft built-in of the same brand name.
+        # All currently-shipping docs (bundled JSON + Automation-Pipeline-Examples
+        # README + Automation-Pipeline-Examples appendix + docs/rbac.md +
+        # top-level README) must use the new name. CHANGELOG.md and
+        # docs/release-history.md historical entries are intentionally
+        # preserved verbatim (they describe what shipped at the time).
+        It 'Bundled custom role JSON Name field is "Azure Stack HCI Update Operator (custom)"' {
+            $jsonPath = Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples\azlocal-update-management-custom-role.json'
+            $jsonPath = (Resolve-Path -Path $jsonPath).Path
+            $role = Get-Content -LiteralPath $jsonPath -Raw | ConvertFrom-Json
+            $role.Name | Should -BeExactly 'Azure Stack HCI Update Operator (custom)'
+        }
+
+        It 'New role display name appears in Automation-Pipeline-Examples/README.md, docs/rbac.md, and the top-level README' {
+            $repoRoot = Join-Path -Path $PSScriptRoot -ChildPath '..'
+            $files = @(
+                'Automation-Pipeline-Examples\README.md',
+                'docs\rbac.md',
+                'README.md'
+            )
+            foreach ($f in $files) {
+                $full = Join-Path -Path $repoRoot -ChildPath $f
+                $content = Get-Content -LiteralPath $full -Raw
+                $content | Should -Match 'Azure Stack HCI Update Operator \(custom\)' -Because "$f must reference the new role display name"
+            }
+        }
+
+        It 'No currently-shipping doc references the bare pre-v0.8.4 role name without "(custom)" suffix' {
+            # Allowlist: CHANGELOG.md and docs/release-history.md describe
+            # historical releases and are preserved verbatim. The migration-tip
+            # blockquote in Automation-Pipeline-Examples/README.md intentionally
+            # quotes the pre-rename Name verbatim so consumers understand what
+            # is being renamed - lines that contain 'pre-v0.8.4' are explicit
+            # migration documentation and excluded from the check.
+            $examplesRoot = Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples'
+            $examplesRoot = (Resolve-Path -Path $examplesRoot).Path
+            $docsRoot     = Join-Path -Path $PSScriptRoot -ChildPath '..\docs'
+            $docsRoot     = (Resolve-Path -Path $docsRoot).Path
+
+            $files = @()
+            $files += Get-ChildItem -Path $examplesRoot -Recurse -Include '*.md' -File
+            $files += Get-ChildItem -Path $docsRoot     -Recurse -Include '*.md' -File |
+                Where-Object { $_.Name -ne 'release-history.md' }
+
+            $offenders = New-Object System.Collections.Generic.List[string]
+            foreach ($f in $files) {
+                $relPath = $f.FullName.Substring((Split-Path $examplesRoot -Parent).Length).TrimStart('\','/')
+                $lineNo = 0
+                foreach ($line in (Get-Content -LiteralPath $f.FullName)) {
+                    $lineNo++
+                    # Match the bare role name only when NOT followed by ' (custom)'
+                    if ($line -match 'Azure Stack HCI Update Operator(?! \(custom\))') {
+                        # Allow explicit migration-tip references that document the rename.
+                        if ($line -match 'pre-v0\.8\.4') { continue }
+                        $offenders.Add(("{0}:{1}: {2}" -f $relPath, $lineNo, $line.Trim()))
+                    }
+                }
+            }
+
+            $detail = if ($offenders.Count -gt 0) { $offenders -join [Environment]::NewLine } else { '(no offenders)' }
+            $offenders.Count | Should -Be 0 -Because "currently-shipping docs (Automation-Pipeline-Examples/**/*.md + docs/*.md except release-history.md) must reference the renamed role as 'Azure Stack HCI Update Operator (custom)' - except in migration-tip lines that contain 'pre-v0.8.4'. Findings:$([Environment]::NewLine)$detail"
         }
     }
 }
@@ -7095,6 +7285,270 @@ on:
                 @($result).Count | Should -Be 1 -Because 'opening cron already present, retry remains'
                 $result[0].CronExpression | Should -Be '0 3 * * 6,0'
                 $result[0].Snippet        | Should -Match '\(retry\)'
+            }
+        }
+    }
+
+    Context 'v0.8.4 - Enhancement A: NoWindowTag CSV remediation (-ClusterCsvPath)' {
+        # When -ClusterCsvPath is supplied, the Recommend view emits a new
+        # "## Action required - NoWindowTag remediation" section: for each
+        # cluster with an UpdateRing tag but no UpdateStartWindow tag, the
+        # advisor proposes a peer-derived UpdateStartWindow (mode of peers
+        # in the same ring) and looks up the cluster in the CSV by
+        # ResourceId (case-insensitive), falling back to ClusterName+RG.
+
+        BeforeAll {
+            $script:nwtDir = Join-Path $env:TEMP "schedule-cov-nwt-$(Get-Random)"
+            New-Item -ItemType Directory -Path (Join-Path $script:nwtDir 'github-actions') -Force | Out-Null
+            # Minimal Step.6 yml so -PipelineYamlPath validates and Recommend
+            # has something to diff against (we are not testing the cron
+            # section here - the focus is the NoWindowTag remediation block).
+            @"
+on:
+  workflow_dispatch:
+"@ | Set-Content -Path (Join-Path $script:nwtDir 'github-actions\Step.6_apply-updates.yml') -Encoding ASCII
+
+            # CSV WITH ResourceId column: 4 clusters. One peer (cA) in Ring1
+            # with a real UpdateStartWindow; one orphan target (cB) in Ring1
+            # with blank UpdateStartWindow; one peer (cC) in Ring2; and one
+            # cluster (cD) in CSV that is NOT in ARG (irrelevant - should not
+            # appear in remediation table).
+            $script:nwtCsvWithRid = Join-Path $script:nwtDir 'with-rid.csv'
+            @'
+ClusterName,ResourceGroup,SubscriptionId,UpdateRing,UpdateStartWindow,UpdateExclusionsWindow,ResourceId
+cA,rg1,s1,Ring1,Mon-Fri_22:00-06:00,,/subscriptions/s1/resourceGroups/rg1/providers/Microsoft.AzureStackHCI/clusters/cA
+cB,rg1,s1,Ring1,,,/subscriptions/s1/resourceGroups/rg1/providers/Microsoft.AzureStackHCI/clusters/cB
+cC,rg2,s2,Ring2,Sat-Sun_08:00-20:00,,/subscriptions/s2/resourceGroups/rg2/providers/Microsoft.AzureStackHCI/clusters/cC
+cD,rg9,s9,Ring9,,,/subscriptions/s9/resourceGroups/rg9/providers/Microsoft.AzureStackHCI/clusters/cD
+'@ | Set-Content -Path $script:nwtCsvWithRid -Encoding ASCII
+
+            # CSV WITHOUT ResourceId column: forces ClusterName+ResourceGroup
+            # fallback path.
+            $script:nwtCsvNoRid = Join-Path $script:nwtDir 'no-rid.csv'
+            @'
+ClusterName,ResourceGroup,SubscriptionId,UpdateRing,UpdateStartWindow
+cA,rg1,s1,Ring1,Mon-Fri_22:00-06:00
+cB,rg1,s1,Ring1,
+'@ | Set-Content -Path $script:nwtCsvNoRid -Encoding ASCII
+        }
+        AfterAll {
+            Remove-Item -Path $script:nwtDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+
+        It 'Recommend emits NoWindowTag remediation section with peer-derived value when -ClusterCsvPath supplied (ResourceId match)' {
+            InModuleScope AzLocal.UpdateManagement -Parameters @{ nwtDir = $script:nwtDir; csv = $script:nwtCsvWithRid } {
+                param($nwtDir, $csv)
+                Mock Invoke-AzResourceGraphQuery {
+                    @(
+                        # peer cA - tagged
+                        [PSCustomObject]@{ ClusterName='cA'; ResourceGroup='rg1'; SubscriptionId='s1'; ClusterResourceId='/subscriptions/s1/resourceGroups/rg1/providers/Microsoft.AzureStackHCI/clusters/cA'; UpdateRing='Ring1'; UpdateStartWindow='Mon-Fri_22:00-06:00'; UpdateExclusionsWindow='' }
+                        # NoWindowTag target cB - same ring as cA, no window
+                        [PSCustomObject]@{ ClusterName='cB'; ResourceGroup='rg1'; SubscriptionId='s1'; ClusterResourceId='/subscriptions/s1/resourceGroups/rg1/providers/Microsoft.AzureStackHCI/clusters/cB'; UpdateRing='Ring1'; UpdateStartWindow=''; UpdateExclusionsWindow='' }
+                    )
+                }
+                $out = Join-Path $nwtDir 'reco.md'
+                Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend -PipelineYamlPath (Join-Path $nwtDir 'github-actions') -ClusterCsvPath $csv -ExportPath $out 6>$null | Out-Null
+                $md = Get-Content -Path $out -Raw
+                $md | Should -Match 'NoWindowTag remediation'
+                $md | Should -Match '`Mon-Fri_22:00-06:00`'
+                $md | Should -Match 'matched by \*\*ResourceId\*\*'
+                $md | Should -Match 'Only peer in `Ring1` \(`cA`\)'
+            }
+        }
+
+        It 'Recommend falls back to ClusterName+ResourceGroup matching when CSV has no ResourceId column' {
+            InModuleScope AzLocal.UpdateManagement -Parameters @{ nwtDir = $script:nwtDir; csv = $script:nwtCsvNoRid } {
+                param($nwtDir, $csv)
+                Mock Invoke-AzResourceGraphQuery {
+                    @(
+                        [PSCustomObject]@{ ClusterName='cA'; ResourceGroup='rg1'; SubscriptionId='s1'; ClusterResourceId='/subscriptions/s1/resourceGroups/rg1/providers/Microsoft.AzureStackHCI/clusters/cA'; UpdateRing='Ring1'; UpdateStartWindow='Mon-Fri_22:00-06:00'; UpdateExclusionsWindow='' }
+                        [PSCustomObject]@{ ClusterName='cB'; ResourceGroup='rg1'; SubscriptionId='s1'; ClusterResourceId='/subscriptions/s1/resourceGroups/rg1/providers/Microsoft.AzureStackHCI/clusters/cB'; UpdateRing='Ring1'; UpdateStartWindow=''; UpdateExclusionsWindow='' }
+                    )
+                }
+                $out = Join-Path $nwtDir 'reco-norid.md'
+                Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend -PipelineYamlPath (Join-Path $nwtDir 'github-actions') -ClusterCsvPath $csv -ExportPath $out 6>$null | Out-Null
+                $md = Get-Content -Path $out -Raw
+                $md | Should -Match 'matched by \*\*ClusterName\+ResourceGroup\*\*'
+                $md | Should -Match 'consider re-running Step\.1'
+            }
+        }
+
+        It 'Recommend emits "Not in CSV" + re-run Step.1 messaging when cluster is absent from CSV' {
+            InModuleScope AzLocal.UpdateManagement -Parameters @{ nwtDir = $script:nwtDir; csv = $script:nwtCsvWithRid } {
+                param($nwtDir, $csv)
+                Mock Invoke-AzResourceGraphQuery {
+                    @(
+                        # cA is in CSV (peer); cZ is NOT in CSV at all
+                        [PSCustomObject]@{ ClusterName='cA'; ResourceGroup='rg1'; SubscriptionId='s1'; ClusterResourceId='/subscriptions/s1/resourceGroups/rg1/providers/Microsoft.AzureStackHCI/clusters/cA'; UpdateRing='Ring1'; UpdateStartWindow='Mon-Fri_22:00-06:00'; UpdateExclusionsWindow='' }
+                        [PSCustomObject]@{ ClusterName='cZ'; ResourceGroup='rg5'; SubscriptionId='s5'; ClusterResourceId='/subscriptions/s5/resourceGroups/rg5/providers/Microsoft.AzureStackHCI/clusters/cZ'; UpdateRing='Ring1'; UpdateStartWindow=''; UpdateExclusionsWindow='' }
+                    )
+                }
+                $out = Join-Path $nwtDir 'reco-notin.md'
+                Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend -PipelineYamlPath (Join-Path $nwtDir 'github-actions') -ClusterCsvPath $csv -ExportPath $out 6>$null | Out-Null
+                $md = Get-Content -Path $out -Raw
+                $md | Should -Match '\*\*Not in CSV\.\*\*'
+                $md | Should -Match 're-run Step\.1'
+                $md | Should -Match 'replace `[^`]+` in source control with the artifact'
+            }
+        }
+
+        It 'Recommend reports majority-mode peer-derivation source when peers disagree' {
+            InModuleScope AzLocal.UpdateManagement -Parameters @{ nwtDir = $script:nwtDir; csv = $script:nwtCsvWithRid } {
+                param($nwtDir, $csv)
+                Mock Invoke-AzResourceGraphQuery {
+                    @(
+                        [PSCustomObject]@{ ClusterName='p1'; ResourceGroup='rg1'; SubscriptionId='s1'; ClusterResourceId='/subscriptions/s1/resourceGroups/rg1/providers/Microsoft.AzureStackHCI/clusters/p1'; UpdateRing='Ring1'; UpdateStartWindow='Mon-Fri_22:00-06:00'; UpdateExclusionsWindow='' }
+                        [PSCustomObject]@{ ClusterName='p2'; ResourceGroup='rg1'; SubscriptionId='s1'; ClusterResourceId='/subscriptions/s1/resourceGroups/rg1/providers/Microsoft.AzureStackHCI/clusters/p2'; UpdateRing='Ring1'; UpdateStartWindow='Mon-Fri_22:00-06:00'; UpdateExclusionsWindow='' }
+                        [PSCustomObject]@{ ClusterName='p3'; ResourceGroup='rg1'; SubscriptionId='s1'; ClusterResourceId='/subscriptions/s1/resourceGroups/rg1/providers/Microsoft.AzureStackHCI/clusters/p3'; UpdateRing='Ring1'; UpdateStartWindow='Sat-Sun_08:00-20:00'; UpdateExclusionsWindow='' }
+                        [PSCustomObject]@{ ClusterName='target'; ResourceGroup='rg1'; SubscriptionId='s1'; ClusterResourceId='/subscriptions/s1/resourceGroups/rg1/providers/Microsoft.AzureStackHCI/clusters/target'; UpdateRing='Ring1'; UpdateStartWindow=''; UpdateExclusionsWindow='' }
+                    )
+                }
+                $out = Join-Path $nwtDir 'reco-mixed.md'
+                Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend -PipelineYamlPath (Join-Path $nwtDir 'github-actions') -ClusterCsvPath $csv -ExportPath $out 6>$null | Out-Null
+                $md = Get-Content -Path $out -Raw
+                $md | Should -Match '2 of 3 peer\(s\) in `Ring1` use `Mon-Fri_22:00-06:00`'
+                $md | Should -Match 'Alternatives: `Sat-Sun_08:00-20:00` \(1\)'
+            }
+        }
+
+        It 'Recommend does NOT emit NoWindowTag remediation section when -ClusterCsvPath is omitted' {
+            InModuleScope AzLocal.UpdateManagement -Parameters @{ nwtDir = $script:nwtDir } {
+                param($nwtDir)
+                Mock Invoke-AzResourceGraphQuery {
+                    @(
+                        [PSCustomObject]@{ ClusterName='cA'; ResourceGroup='rg1'; SubscriptionId='s1'; ClusterResourceId='/subscriptions/s1/resourceGroups/rg1/providers/Microsoft.AzureStackHCI/clusters/cA'; UpdateRing='Ring1'; UpdateStartWindow='Mon-Fri_22:00-06:00'; UpdateExclusionsWindow='' }
+                        [PSCustomObject]@{ ClusterName='cB'; ResourceGroup='rg1'; SubscriptionId='s1'; ClusterResourceId='/subscriptions/s1/resourceGroups/rg1/providers/Microsoft.AzureStackHCI/clusters/cB'; UpdateRing='Ring1'; UpdateStartWindow=''; UpdateExclusionsWindow='' }
+                    )
+                }
+                $out = Join-Path $nwtDir 'reco-nocsv.md'
+                Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend -PipelineYamlPath (Join-Path $nwtDir 'github-actions') -ExportPath $out 6>$null | Out-Null
+                $md = Get-Content -Path $out -Raw -ErrorAction SilentlyContinue
+                if ($md) { $md | Should -Not -Match 'NoWindowTag remediation' }
+            }
+        }
+    }
+
+    Context 'v0.8.4 - Enhancement B: Cycle calendar (auto-renders when -SchedulePath supplied)' {
+
+        BeforeAll {
+            $script:calDir = Join-Path $env:TEMP "schedule-cov-cal-$(Get-Random)"
+            New-Item -ItemType Directory -Path (Join-Path $script:calDir 'github-actions') -Force | Out-Null
+            @"
+on:
+  workflow_dispatch:
+"@ | Set-Content -Path (Join-Path $script:calDir 'github-actions\Step.6_apply-updates.yml') -Encoding ASCII
+
+            # Minimal schema-v2 schedule: 2-week cycle, Ring1 in week 1
+            # (Mon-Fri), Ring2 in week 2 (Mon-Fri). No allowedUpdateVersions.
+            $script:calSchedule = Join-Path $script:calDir 'apply-updates-schedule.yml'
+            @"
+schemaVersion: 2
+cycleWeeks: 2
+cycleAnchorISOWeek: 1
+cycleAnchorYear: 2024
+allowedUpdateVersions: 'Latest'
+schedule:
+  - weeksInCycle: '1'
+    daysOfWeek:   'Mon-Fri'
+    rings:        'Ring1'
+    notes:        'week-1 ring1'
+  - weeksInCycle: '2'
+    daysOfWeek:   'Mon-Fri'
+    rings:        'Ring2'
+    notes:        'week-2 ring2'
+"@ | Set-Content -Path $script:calSchedule -Encoding ASCII
+        }
+        AfterAll {
+            Remove-Item -Path $script:calDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+
+        It 'Recommend emits Cycle calendar section when -SchedulePath is supplied' {
+            InModuleScope AzLocal.UpdateManagement -Parameters @{ calDir = $script:calDir; schedule = $script:calSchedule } {
+                param($calDir, $schedule)
+                Mock Invoke-AzResourceGraphQuery {
+                    @(
+                        [PSCustomObject]@{ ClusterName='c1'; ResourceGroup='rg1'; SubscriptionId='s1'; ClusterResourceId='/s/r/c1'; UpdateRing='Ring1'; UpdateStartWindow='Mon-Fri_22:00-06:00'; UpdateExclusionsWindow='' }
+                        [PSCustomObject]@{ ClusterName='c2'; ResourceGroup='rg1'; SubscriptionId='s1'; ClusterResourceId='/s/r/c2'; UpdateRing='Ring2'; UpdateStartWindow='Mon-Fri_22:00-06:00'; UpdateExclusionsWindow='' }
+                    )
+                }
+                $out = Join-Path $calDir 'reco-cal.md'
+                Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend -PipelineYamlPath (Join-Path $calDir 'github-actions') -SchedulePath $schedule -ExportPath $out 6>$null | Out-Null
+                $md = Get-Content -Path $out -Raw
+                $md | Should -Match 'Cycle calendar - next 14 day\(s\) \(one full 2-week cycle\)'
+                $md | Should -Match '\| Date \(UTC\) \| Day \| CycleWeek \| Eligible rings \| AllowedUpdateVersions \|'
+                # Should have 14 data rows
+                $rowCount = ([regex]::Matches($md, '(?m)^\|\s*\d{4}-\d{2}-\d{2}\s*\|')).Count
+                $rowCount | Should -Be 14
+                # At least one row should reference Ring1 and one Ring2
+                $md | Should -Match '`Ring1`'
+                $md | Should -Match '`Ring2`'
+                # At least one row should be marked as cycle-wrap (week 1 immediately after week 2 OR vice versa within 14 days)
+                $md | Should -Match '_\(cycle wraps\)_'
+            }
+        }
+
+        It 'Recommend does NOT emit Cycle calendar when -SchedulePath is omitted' {
+            InModuleScope AzLocal.UpdateManagement -Parameters @{ calDir = $script:calDir } {
+                param($calDir)
+                Mock Invoke-AzResourceGraphQuery {
+                    @(
+                        [PSCustomObject]@{ ClusterName='c1'; ResourceGroup='rg1'; SubscriptionId='s1'; ClusterResourceId='/s/r/c1'; UpdateRing='Ring1'; UpdateStartWindow='Mon-Fri_22:00-06:00'; UpdateExclusionsWindow='' }
+                    )
+                }
+                $out = Join-Path $calDir 'reco-nocal.md'
+                Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend -PipelineYamlPath (Join-Path $calDir 'github-actions') -ExportPath $out 6>$null | Out-Null
+                $md = Get-Content -Path $out -Raw -ErrorAction SilentlyContinue
+                if ($md) { $md | Should -Not -Match 'Cycle calendar' }
+            }
+        }
+    }
+
+    Context 'v0.8.4 - Enhancement C: Configured exclusion windows summary' {
+
+        BeforeAll {
+            $script:exclDir = Join-Path $env:TEMP "schedule-cov-excl-$(Get-Random)"
+            New-Item -ItemType Directory -Path (Join-Path $script:exclDir 'github-actions') -Force | Out-Null
+            @"
+on:
+  workflow_dispatch:
+"@ | Set-Content -Path (Join-Path $script:exclDir 'github-actions\Step.6_apply-updates.yml') -Encoding ASCII
+        }
+        AfterAll {
+            Remove-Item -Path $script:exclDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+
+        It 'Recommend emits Configured exclusion windows section when at least one cluster has the tag' {
+            InModuleScope AzLocal.UpdateManagement -Parameters @{ exclDir = $script:exclDir } {
+                param($exclDir)
+                Mock Invoke-AzResourceGraphQuery {
+                    @(
+                        [PSCustomObject]@{ ClusterName='c1'; ResourceGroup='rg1'; SubscriptionId='s1'; ClusterResourceId='/s/r/c1'; UpdateRing='Prod'; UpdateStartWindow='Mon-Fri_22:00-06:00'; UpdateExclusionsWindow='2025-12-10/2026-01-06' }
+                        [PSCustomObject]@{ ClusterName='c2'; ResourceGroup='rg1'; SubscriptionId='s1'; ClusterResourceId='/s/r/c2'; UpdateRing='Prod'; UpdateStartWindow='Mon-Fri_22:00-06:00'; UpdateExclusionsWindow='2025-12-10/2026-01-06' }
+                        [PSCustomObject]@{ ClusterName='c3'; ResourceGroup='rg1'; SubscriptionId='s1'; ClusterResourceId='/s/r/c3'; UpdateRing='Prod'; UpdateStartWindow='Mon-Fri_22:00-06:00'; UpdateExclusionsWindow='' }
+                    )
+                }
+                $out = Join-Path $exclDir 'reco-excl.md'
+                Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend -PipelineYamlPath (Join-Path $exclDir 'github-actions') -ExportPath $out 6>$null | Out-Null
+                $md = Get-Content -Path $out -Raw
+                $md | Should -Match 'Configured exclusion windows \(UpdateExclusionsWindow tag\)'
+                $md | Should -Match '`2025-12-10/2026-01-06`'
+                $md | Should -Match 'Clusters with NO `UpdateExclusionsWindow` tag'
+                $md | Should -Match '\*\*Prod\*\* - 1 cluster\(s\)'
+            }
+        }
+
+        It 'Recommend does NOT emit Configured exclusion windows when no cluster has the tag' {
+            InModuleScope AzLocal.UpdateManagement -Parameters @{ exclDir = $script:exclDir } {
+                param($exclDir)
+                Mock Invoke-AzResourceGraphQuery {
+                    @(
+                        [PSCustomObject]@{ ClusterName='c1'; ResourceGroup='rg1'; SubscriptionId='s1'; ClusterResourceId='/s/r/c1'; UpdateRing='Prod'; UpdateStartWindow='Mon-Fri_22:00-06:00'; UpdateExclusionsWindow='' }
+                    )
+                }
+                $out = Join-Path $exclDir 'reco-noexcl.md'
+                Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend -PipelineYamlPath (Join-Path $exclDir 'github-actions') -ExportPath $out 6>$null | Out-Null
+                $md = Get-Content -Path $out -Raw -ErrorAction SilentlyContinue
+                if ($md) { $md | Should -Not -Match 'Configured exclusion windows' }
             }
         }
     }

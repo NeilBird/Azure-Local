@@ -1,7 +1,7 @@
 {
-  "Name": "Azure Stack HCI Update Operator",
+  "Name": "Azure Stack HCI Update Operator (custom)",
   "IsCustom": true,
-  "Description": "Can read and apply Azure Local cluster updates, manage UpdateRing tags, and read the fleet-connectivity inventory (Arc-enabled machines, edge-device NICs, Azure Resource Bridges) needed to assess pre-update connectivity.",
+  "Description": "Customer-managed custom role - reference by roleDefinitionId (GUID) in automation rather than by name to remain stable if Microsoft later ships a built-in role with a similar display name. Can read and apply Azure Local cluster updates, manage UpdateRing tags, and read the fleet-connectivity inventory (Arc-enabled machines, edge-device NICs, Azure Resource Bridges) needed to assess pre-update connectivity.",
   "Actions": [
     "Microsoft.AzureStackHCI/clusters/read",
     "Microsoft.AzureStackHCI/clusters/updateSummaries/read",

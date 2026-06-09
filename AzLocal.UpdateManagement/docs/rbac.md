@@ -45,7 +45,7 @@ The following permissions are required for update + fleet-connectivity operation
 | Azure Stack HCI VM Reader | Read-only access to VMs, no cluster update permissions |
 | Contributor (generic) | Does not include `Microsoft.AzureStackHCI` permissions by default |
 
-### Custom "Azure Stack HCI Update Operator" Role Definition (Least Privilege)
+### Custom "Azure Stack HCI Update Operator (custom)" Role Definition (Least Privilege)
 
 If you need a least-privilege custom role specifically for update operations:
 
@@ -55,9 +55,9 @@ If you need a least-privilege custom role specifically for update operations:
 
 ```json
 {
-  "Name": "Azure Stack HCI Update Operator",
+  "Name": "Azure Stack HCI Update Operator (custom)",
   "IsCustom": true,
-  "Description": "Can read and apply Azure Local cluster updates, manage UpdateRing tags, and read the fleet-connectivity inventory (Arc-enabled machines, edge-device NICs, Azure Resource Bridges) needed to assess pre-update connectivity.",
+  "Description": "Customer-managed custom role - reference by roleDefinitionId (GUID) in automation rather than by name to remain stable if Microsoft later ships a built-in role with a similar display name. Can read and apply Azure Local cluster updates, manage UpdateRing tags, and read the fleet-connectivity inventory (Arc-enabled machines, edge-device NICs, Azure Resource Bridges) needed to assess pre-update connectivity.",
   "Actions": [
     "Microsoft.AzureStackHCI/clusters/read",
     "Microsoft.AzureStackHCI/clusters/updateSummaries/read",
@@ -102,9 +102,9 @@ az role definition create --role-definition ./azlocal-update-management-custom-r
 # Option 2: Create the file and role in one step using PowerShell (expanding here-string - $subId is interpolated)
 @"
 {
-  "Name": "Azure Stack HCI Update Operator",
+  "Name": "Azure Stack HCI Update Operator (custom)",
   "IsCustom": true,
-  "Description": "Can read and apply Azure Local cluster updates, manage UpdateRing tags, and read the fleet-connectivity inventory (Arc-enabled machines, edge-device NICs, Azure Resource Bridges) needed to assess pre-update connectivity.",
+  "Description": "Customer-managed custom role - reference by roleDefinitionId (GUID) in automation rather than by name to remain stable if Microsoft later ships a built-in role with a similar display name. Can read and apply Azure Local cluster updates, manage UpdateRing tags, and read the fleet-connectivity inventory (Arc-enabled machines, edge-device NICs, Azure Resource Bridges) needed to assess pre-update connectivity.",
   "Actions": [
     "Microsoft.AzureStackHCI/clusters/read",
     "Microsoft.AzureStackHCI/clusters/updateSummaries/read",
@@ -147,7 +147,7 @@ For estates of more than ~5-10 subscriptions, or any estate where new subscripti
 1. **A single management-group entry in `AssignableScopes`** on the custom role definition (custom roles can be assigned at or below any scope listed in `AssignableScopes`, and management-group scopes have been supported since 2020).
 2. **An Azure Policy `deployIfNotExists` (DINE) assignment at that management group** that creates the per-subscription role assignment automatically. Existing subscriptions are picked up by a one-time remediation task; new subscriptions are auto-remediated as they are created. This is the standard Azure Landing Zones pattern.
 
-The result: when a new subscription joins the management group, the pipeline identity gets the `Azure Stack HCI Update Operator` role at that subscription with zero manual steps.
+The result: when a new subscription joins the management group, the pipeline identity gets the `Azure Stack HCI Update Operator (custom)` role at that subscription with zero manual steps.
 
 **Step 1 - role definition with a management-group `AssignableScopes`**
 
@@ -155,9 +155,9 @@ Replace the per-subscription entry shown above with one (or more) management-gro
 
 ```json
 {
-  "Name": "Azure Stack HCI Update Operator",
+  "Name": "Azure Stack HCI Update Operator (custom)",
   "IsCustom": true,
-  "Description": "Can read and apply Azure Local cluster updates, manage UpdateRing tags, and read the fleet-connectivity inventory (Arc-enabled machines, edge-device NICs, Azure Resource Bridges) needed to assess pre-update connectivity.",
+  "Description": "Customer-managed custom role - reference by roleDefinitionId (GUID) in automation rather than by name to remain stable if Microsoft later ships a built-in role with a similar display name. Can read and apply Azure Local cluster updates, manage UpdateRing tags, and read the fleet-connectivity inventory (Arc-enabled machines, edge-device NICs, Azure Resource Bridges) needed to assess pre-update connectivity.",
   "Actions": [
     "Microsoft.AzureStackHCI/clusters/read",
     "Microsoft.AzureStackHCI/clusters/updateSummaries/read",
@@ -189,7 +189,7 @@ Create the role exactly as before with `az role definition create --role-definit
 ```powershell
 $roleId = az role definition list `
     --custom-role-only true `
-    --name "Azure Stack HCI Update Operator" `
+    --name "Azure Stack HCI Update Operator (custom)" `
     --query "[0].name" -o tsv
 # Returns the role's GUID. The policy references it as:
 # "/providers/Microsoft.Authorization/roleDefinitions/$roleId"
@@ -211,7 +211,7 @@ The `deployIfNotExists` policy below targets `Microsoft.Resources/subscriptions`
 ```jsonc
 {
   "properties": {
-    "displayName": "Assign 'Azure Stack HCI Update Operator' to update-automation pipeline",
+    "displayName": "Assign 'Azure Stack HCI Update Operator (custom)' to update-automation pipeline",
     "description": "DeployIfNotExists policy that auto-grants the named custom role to the update-automation pipeline identity on every subscription under the management group it is assigned at.",
     "mode": "All",
     "policyType": "Custom",
@@ -289,7 +289,7 @@ Save the file (for example as `assign-azlocal-update-operator-policy.json`) and 
 ```powershell
 az policy definition create `
     --name        "assign-azlocal-update-operator" `
-    --display-name "Assign Azure Stack HCI Update Operator to update-automation pipeline" `
+    --display-name "Assign Azure Stack HCI Update Operator (custom) to update-automation pipeline" `
     --management-group <your-mg-id> `
     --rules    "./assign-azlocal-update-operator-policy.json" `
     --mode All
@@ -302,7 +302,7 @@ DINE policies need a managed identity that can create the role assignments. Azur
 ```powershell
 $assignment = az policy assignment create `
     --name "assign-azlocal-update-operator" `
-    --display-name "Assign Azure Stack HCI Update Operator to update-automation pipeline" `
+    --display-name "Assign Azure Stack HCI Update Operator (custom) to update-automation pipeline" `
     --policy "assign-azlocal-update-operator" `
     --scope "/providers/Microsoft.Management/managementGroups/<your-mg-id>" `
     --mi-system-assigned `
@@ -363,7 +363,7 @@ If you created the custom role against the v0.7.79-or-earlier definition above, 
 az role definition update --role-definition ./azlocal-update-management-custom-role.json
 ```
 
-You can also use the Azure portal: Subscription > Access control (IAM) > Roles > "Azure Stack HCI Update Operator" > Clone/Edit > Permissions > add the three reads. Avoid the "Delete and recreate" path - it changes the role's GUID and unassigns every principal currently using it.
+You can also use the Azure portal: Subscription > Access control (IAM) > Roles > "Azure Stack HCI Update Operator (custom)" > Clone/Edit > Permissions > add the three reads. Avoid the "Delete and recreate" path - it changes the role's GUID and unassigns every principal currently using it.
 
 ### Assigning a Role
 

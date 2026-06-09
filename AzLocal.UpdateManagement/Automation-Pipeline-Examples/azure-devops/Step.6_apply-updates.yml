@@ -98,7 +98,7 @@ variables:
   # log if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
   - name: GENERATED_AGAINST_MODULE_VERSION
-    value: '0.8.3'
+    value: '0.8.4'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): queue-time parameter > pipeline variable
   # 'REQUIRED_MODULE_VERSION' overridden at queue time > empty (latest).
@@ -182,6 +182,22 @@ stages:
                     $msg = "AzLocal.UpdateManagement v$latest is available on PSGallery; this run installed v$installed. Review the module CHANGELOG before bumping REQUIRED_MODULE_VERSION (or clear the pin to install the latest automatically)."
                     Write-Host "##vso[task.logissue type=warning]$msg"
                 }
+
+                # v0.8.4 - one-line version banner uploaded to the build run
+                # Summary so the YAML version (GENERATED_AGAINST_MODULE_VERSION),
+                # the module version actually loaded on the agent, the PSGallery
+                # latest, and the REQUIRED_MODULE_VERSION pin status are visible
+                # at the top of every run summary without scrolling the agent
+                # log. Same data is also echoed to the console above.
+                $pin       = if ($env:REQUIRED_MODULE_VERSION) { "pinned to v$($env:REQUIRED_MODULE_VERSION)" } else { 'latest (fix-forward)' }
+                $latestStr = if ($latest) { "v$latest" } else { '(PSGallery lookup failed)' }
+                $verdict   = if ($installed -lt $generated) { 'YAML newer than module - check REQUIRED_MODULE_VERSION' }
+                             elseif ($installed -gt $generated) { 'YAML older than module - run Copy-AzLocalPipelineExample -Update' }
+                             elseif ($latest -and ($latest -gt $installed)) { 'newer module available on PSGallery' }
+                             else { 'in sync' }
+                $bannerPath = Join-Path $env:BUILD_ARTIFACTSTAGINGDIRECTORY 'module-version-banner.md'
+                "_Pipeline YAML v$generated | Module v$installed installed ($pin) | PSGallery latest $latestStr | $verdict_" | Out-File -FilePath $bannerPath -Encoding utf8
+                Write-Host "##vso[task.uploadsummary]$bannerPath"
           
           # Resolve the UpdateRing for THIS firing.
           #   - $(Build.Reason) in 'Manual','IndividualCI','BatchedCI','PullRequest','Manual'
@@ -304,6 +320,40 @@ stages:
                 if ($readyCount -eq 0) {
                     Write-Host "##vso[task.logissue type=warning]No clusters are ready for updates in ring '$updateRing'"
                 }
+
+                # v0.8.4 - Enhancement D: per-cluster readiness markdown table
+                # uploaded as the stage's Build Summary - surfaces which
+                # clusters were assessed, their state, and why each cluster
+                # was/wasn't handed to ApplyUpdates without log-diving.
+                $sb = New-Object System.Text.StringBuilder
+                [void]$sb.AppendLine("# Cluster Readiness ($updateRing)")
+                [void]$sb.AppendLine()
+                [void]$sb.AppendLine("**Total:** $totalCount &nbsp;|&nbsp; **Ready:** $readyCount &nbsp;|&nbsp; **Not Ready:** $notReadyCount")
+                [void]$sb.AppendLine()
+                [void]$sb.AppendLine('| Cluster | Current Version | Update State | Health | Ready? | Recommended Update | Blocking Reasons |')
+                [void]$sb.AppendLine('|---|---|---|---|---|---|---|')
+                $rowCap = 100
+                $rendered = 0
+                foreach ($r in ($results | Sort-Object @{Expression={[bool]$_.ReadyForUpdate}; Descending=$true}, ClusterName)) {
+                    if ($rendered -ge $rowCap) { break }
+                    $readyIcon = if ($r.ReadyForUpdate -eq $true) { '✅' } else { '⛔' }
+                    $hSt = "$($r.HealthState)"
+                    $hCell = switch -Regex ($hSt) { '^Success$' { "✅ $hSt" } '^Warning$' { "⚠️ $hSt" } '^Failure$' { "❌ $hSt" } default { $hSt } }
+                    $blocking = "$($r.BlockingReasons)"
+                    if ($blocking.Length -gt 200) { $blocking = $blocking.Substring(0, 197) + '...' }
+                    $blocking = $blocking -replace '\|','\|' -replace '\r?\n',' '
+                    $reco = if ($r.RecommendedUpdate) { '`' + $r.RecommendedUpdate + '`' } else { '-' }
+                    $curr = if ($r.CurrentVersion) { '`' + $r.CurrentVersion + '`' } else { '-' }
+                    [void]$sb.AppendLine("| ``$($r.ClusterName)`` | $curr | $($r.UpdateState) | $hCell | $readyIcon | $reco | $blocking |")
+                    $rendered++
+                }
+                if ($totalCount -gt $rowCap) {
+                    [void]$sb.AppendLine()
+                    [void]$sb.AppendLine("_Showing first $rowCap of $totalCount clusters. Download the readiness-report.csv artifact for the full list._")
+                }
+                $readinessSummaryPath = Join-Path $outputDir 'readiness-summary.md'
+                $sb.ToString() | Out-File -FilePath $readinessSummaryPath -Encoding UTF8 -Force
+                Write-Host "##vso[task.uploadsummary]$readinessSummaryPath"
           
           # compute a UTC timestamp variable so every downloadable artifact name is unique per run.
           - pwsh: |
@@ -423,6 +473,16 @@ stages:
                     $msg = "AzLocal.UpdateManagement v$latest is available on PSGallery; this run installed v$installed. Review the module CHANGELOG before bumping REQUIRED_MODULE_VERSION (or clear the pin to install the latest automatically)."
                     Write-Host "##vso[task.logissue type=warning]$msg"
                 }
+
+                # v0.8.4 - one-line version banner uploaded to the build run
+                # Summary so the YAML version (GENERATED_AGAINST_MODULE_VERSION),
+                # the module version actually loaded on the agent, the PSGallery
+                # latest, and the REQUIRED_MODULE_VERSION pin status are visible
+                # at the top of every run summary without scrolling the agent
+                # log. Same data is also echoed to the console above. Emitted
+                # from the check-readiness install step in the previous stage;
+                # this apply-updates install step deliberately skips the upload
+                # to avoid duplicating the banner in the rendered summary.
           
           # Download the readiness CSV produced by the CheckReadiness stage
           # so the apply step operates on the readiness gate's decision rather than
@@ -556,6 +616,15 @@ stages:
                 Write-Host "##vso[task.setvariable variable=ScheduleBlocked;isOutput=true]$scheduleBlocked"
                 Write-Host "##vso[task.setvariable variable=SideloadedBlocked;isOutput=true]$sideloadedBlocked"
                 Write-Host "##vso[task.setvariable variable=ExcludedByTag;isOutput=true]$excludedByTag"
+
+                # v0.8.4 - Enhancement D: persist per-cluster apply results to JSON so
+                # the downstream Generate Summary step can render a markdown table without
+                # depending on the (truncated, JSON-unfriendly) task output variable stream.
+                $applyJsonPath = Join-Path $outputDir 'apply-results.json'
+                @($results) | Select-Object ClusterName, Status, UpdateName, Duration, Message |
+                    ConvertTo-Json -Depth 4 |
+                    Out-File -FilePath $applyJsonPath -Encoding utf8 -Force
+                Write-Host "Wrote per-cluster apply results to $applyJsonPath"
                 
                 if ($failed -gt 0) {
                     # Per-cluster failures are expected in large fleets (day-to-day environmental
@@ -746,6 +815,63 @@ stages:
                     if ($actionsRequired.Count -gt 0) {
                         $summary += "`n`n## Actions Required`n"
                         $summary += ($actionsRequired -join "`n")
+                    }
+                }
+
+                # v0.8.4 - Enhancement D: per-cluster action table from apply-results.json
+                # (written by the apply-updates step) - shows operators exactly what
+                # happened to each cluster handed to apply, without log-diving.
+                $applyJson = Join-Path $env:BUILD_ARTIFACTSTAGINGDIRECTORY 'apply-results.json'
+                if (Test-Path $applyJson) {
+                    $applyRows = @(Get-Content -Raw -Path $applyJson | ConvertFrom-Json)
+                    if ($applyRows.Count -gt 0) {
+                        $startedStates = @('UpdateStarted','Started','Success')
+                        $blockedStates = @('HealthCheckBlocked','ScheduleBlocked','SideloadedBlocked','ExcludedByTag','NotConnected')
+                        $failedStates  = @('Failed','Error','NotFound')
+                        $summary += "`n`n### Cluster Actions ($($applyRows.Count) cluster(s))`n`n"
+                        $summary += "| Cluster | Status | Update | Duration | Message |`n"
+                        $summary += "|---|---|---|---|---|`n"
+                        foreach ($r in ($applyRows | Sort-Object Status, ClusterName)) {
+                            $st = "$($r.Status)"
+                            $icon = if ($startedStates -contains $st) { ':white_check_mark:' } elseif ($failedStates -contains $st) { ':x:' } elseif ($blockedStates -contains $st) { ':no_entry:' } else { ':next_track_button:' }
+                            $upd  = if ($r.UpdateName) { '`' + $r.UpdateName + '`' } else { '-' }
+                            $dur  = if ($r.Duration) { "$($r.Duration)" } else { '-' }
+                            $msg  = "$($r.Message)"
+                            if ($msg.Length -gt 180) { $msg = $msg.Substring(0, 177) + '...' }
+                            $msg  = $msg -replace '\|','\|' -replace '\r?\n',' '
+                            $summary += "| ``$($r.ClusterName)`` | $icon $st | $upd | $dur | $msg |`n"
+                        }
+                    }
+                }
+
+                # v0.8.4 - Enhancement D: per-cluster table for clusters NOT handed to
+                # apply (filtered out by the readiness gate). Reads readiness-report.csv
+                # downloaded from the CheckReadiness stage artifact at the start of this job.
+                $readinessCsvPath = Join-Path $env:BUILD_ARTIFACTSTAGINGDIRECTORY 'readiness-report.csv'
+                if (Test-Path $readinessCsvPath) {
+                    $blockedRows = @(Import-Csv -Path $readinessCsvPath | Where-Object { $_.ReadyForUpdate -ne 'True' })
+                    if ($blockedRows.Count -gt 0) {
+                        $summary += "`n`n### Clusters Skipped at Readiness Gate ($($blockedRows.Count) cluster(s))`n`n"
+                        $summary += "_These clusters were assessed by Check Update Readiness but not handed to Apply Updates. Resolve the listed blocking reasons (or wait for them to clear) then re-run the pipeline._`n`n"
+                        $summary += "| Cluster | Update State | Health | Current Version | Recommended | Blocking Reasons |`n"
+                        $summary += "|---|---|---|---|---|---|`n"
+                        $skipCap = 100
+                        $skipShown = 0
+                        foreach ($b in ($blockedRows | Sort-Object UpdateState, ClusterName)) {
+                            if ($skipShown -ge $skipCap) { break }
+                            $blocking = "$($b.BlockingReasons)"
+                            if ($blocking.Length -gt 200) { $blocking = $blocking.Substring(0, 197) + '...' }
+                            $blocking = $blocking -replace '\|','\|' -replace '\r?\n',' '
+                            $reco = if ($b.RecommendedUpdate) { '`' + $b.RecommendedUpdate + '`' } else { '-' }
+                            $curr = if ($b.CurrentVersion) { '`' + $b.CurrentVersion + '`' } else { '-' }
+                            $hSt  = "$($b.HealthState)"
+                            $hCell = switch -Regex ($hSt) { '^Success$' { ":white_check_mark: $hSt" } '^Warning$' { ":warning: $hSt" } '^Failure$' { ":x: $hSt" } default { $hSt } }
+                            $summary += "| ``$($b.ClusterName)`` | $($b.UpdateState) | $hCell | $curr | $reco | $blocking |`n"
+                            $skipShown++
+                        }
+                        if ($blockedRows.Count -gt $skipCap) {
+                            $summary += "`n_Showing first $skipCap of $($blockedRows.Count) skipped clusters. Download the readiness-report artifact for the full list._`n"
+                        }
                     }
                 }
                 

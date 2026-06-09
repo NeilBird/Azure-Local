@@ -2,7 +2,7 @@
 
 > ⚠️ **Disclaimer**: This module is **NOT** a Microsoft supported service offering or product. It is provided as example code only, with no warranty or official support. Refer to the [MIT license](https://github.com/NeilBird/Azure-Local/blob/main/LICENSE) for further information.
 
-**Latest Version:** v0.8.3 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.8.3)
+**Latest Version:** v0.8.4 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.8.4)
 
 > 📢 **Renamed in v0.7.3**: this module was previously published as `AzStackHci.ManageUpdates`. The new module name aligns with the Azure Local product name (_Microsoft retired the *Azure Stack HCI* brand in late 2024_). The module GUID is preserved across the rename. If you have the old name installed, run:
 >
@@ -23,7 +23,7 @@ Azure Local REST API specification (includes update management endpoints): https
 **This README (overview + most-recent release notes):**
 
 - [Where to Start](#where-to-start)
-- [What's New in v0.8.3](#whats-new-in-v083)
+- [What's New in v0.8.4](#whats-new-in-v084)
 - [What's New in v0.8.2](#whats-new-in-v082)
 - [Files](#files)
 - [Prerequisites](#prerequisites)
@@ -87,20 +87,27 @@ If you are new to this module, work through these in order from a regular PowerS
 
 > Most CI/CD pipelines in [Automation-Pipeline-Examples/](Automation-Pipeline-Examples/) are direct implementations of one of these workflows. Start there if you want a copy-pasteable end-to-end pipeline.
 
-## What's New in v0.8.3
+## What's New in v0.8.4
 
-**Step.3 advisor accuracy + readability fixes.** No public API removed. One cmdlet behaviour change: `Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend` now diff-prunes against an existing Step.6 yml when `-PipelineYamlPath` is supplied, so the snippet under "Action required - cron coverage" lists only the crons that are TRULY missing from the supplied pipeline yaml. Pre-v0.8.3 the Recommend snippet was built purely from cluster tags + `Convert-AzLocalUpdateWindowToCron`, so steady-state fleets received an "Action required" header that re-emitted the same cron lines already present in `Step.6_apply-updates.yml`, and operators pasted duplicates.
+**Step.3 advisor enhancements.** Three new sections in `Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend`. No public API removed; one new optional parameter on the cmdlet (`-ClusterCsvPath`).
 
-Four Step.3 yml defects fixed:
+1. **NoWindowTag CSV-driven remediation (new `-ClusterCsvPath` parameter).** When the operator supplies the path to the source-controlled cluster inventory CSV (the file Step.2 consumes - default `config/ClusterUpdateRings.csv`), the Recommend view emits a new `## Action required - NoWindowTag remediation` section. For each cluster that has an `UpdateRing` tag but no `UpdateStartWindow` tag, the advisor proposes a peer-derived value (mode of peers' `UpdateStartWindow` in the same ring), explains the choice (unanimous / majority / sole peer / no peers), then looks up the cluster in the CSV - case-insensitive on `ResourceId` first, falling back to `ClusterName + ResourceGroup`. If found, tells the operator which row's `UpdateStartWindow` cell to edit; if not found, tells the operator to re-run Step.1 to regenerate the cluster inventory artifact and replace the source-controlled CSV with it.
+2. **Cycle calendar (informational, auto-renders when `-SchedulePath` supplied).** A new `## Cycle calendar - next N day(s)` table renders one row per UTC day for one full cycle (`CycleWeeks * 7` days starting today). Each row shows Date, Day-of-week, CycleWeek (`X of N`, with `(cycle wraps)` annotation on the wrap row), Eligible rings (UNION of all matching schedule rows), and effective `AllowedUpdateVersions`. Re-uses `Resolve-AzLocalCurrentUpdateRing` per-day so cycle-week, UNION, and allow-list math is identical to runtime. Lets operators verify ring coverage matches their maintenance policy and spot dead days where no ring is eligible.
+3. **Configured exclusion windows summary (informational, auto-renders when at least one cluster has a non-empty `UpdateExclusionsWindow` tag).** A new `## Configured exclusion windows (UpdateExclusionsWindow tag)` section groups tagged clusters by `(UpdateRing, UpdateExclusionsWindow)` and renders a rollup table. Plus a per-ring breakdown of clusters that have NO `UpdateExclusionsWindow` tag, so operators can spot drift where some clusters in a ring have a blackout configured and others do not.
 
-1. **`pipeline_path` / `pipelinePath` is now REQUIRED.** GitHub Actions input gets `required: true`; Azure DevOps adds a runtime throw with a clear error pointing to common pipeline folders. The silent schedule-only fall-through is gone - without a `pipeline_path` the new diff-prune would have no Step.6 to diff against and every Recommend run would be a false positive. `schedule_path` / `schedulePath` stays optional.
-2. **Step.3 yml now passes `-PipelineYamlPath` to the Recommend invocation.** Pre-v0.8.3 the Recommend call was always made without `-PipelineYamlPath`, so even after the cmdlet supported the diff-prune the snippet would still be the un-pruned full set. Both Step.3 templates now build a `$recoArgs` splat that includes `PipelineYamlPath = $pipelinePath`.
-3. **"How to fix - edit `$schedulePath`" heading reframed.** v0.8.2 emitted a sub-heading that operators read as "the fix for the higher-blast-radius cron-coverage or ring-diff sections is to edit `$schedulePath`", but it was only ever about the OPTIONAL `allowedUpdateVersions:` pin. The heading is now `### Optional - pin a ring to a specific update in `$schedulePath`` and the body explicitly says *"This is NOT a fix for the cron-coverage or ring-diff sections above."*
-4. **Closing-fence typo fix.** Both Step.3 templates had `$md += "``````n"` in two places. In PowerShell double-quoted strings, six backticks = three literal backticks but the trailing `n` becomes a literal `n` (not a newline) because the backticks all pair up before reaching it. Result: the rendered markdown showed `` ``` `` followed by a literal `n` and the subsequent paragraphs got swept into the code block. Fixed to seven backticks + `n` at all four sites.
+Step.3 GH + ADO yml templates gain a new `cluster_csv_path` / `clusterCsvPath` input (default `config/ClusterUpdateRings.csv`) and now also pass `-SchedulePath` to the Recommend invocation so Enhancements 2+3 render in the Step Summary. ARG query also fetches `UpdateExclusionsWindow` so Enhancement 3 has data to render.
 
-`GENERATED_AGAINST_MODULE_VERSION` bumped from `0.8.2` to `0.8.3` across all 20 bundled `Step.{0..9}.yml` templates.
+**Step.6 Enhancement D - per-cluster Step Summary in `apply-updates` (GitHub Actions + Azure DevOps).** The `apply-updates` step now persists `apply-results.json` to the artifact-staging dir and the downstream Summary step renders two new per-cluster tables: `### Cluster Actions` (one row per cluster handed to apply - icon + Status + UpdateName + Duration + Message, sorted by Status then ClusterName) and `### Clusters Skipped at Readiness Gate` (one row per cluster filtered out by Step.6 check-readiness, reading `readiness-report.csv` from the CheckReadiness stage - shows Cluster, UpdateState, Health, CurrentVersion, RecommendedUpdate, BlockingReasons, capped at first 100 rows for large fleets). Eliminates the need to download and parse the JUnit artifact to identify which specific cluster failed or which clusters were schedule-blocked.
 
-See [CHANGELOG.md](CHANGELOG.md#083---2026-06-11) for the full v0.8.3 entry.
+**Node.js 24 opt-in across all 10 GitHub Actions yml.** Workflow-level `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true` env var added to every bundled GitHub Actions template, letting early-adopter operators surface any per-action Node 24 incompatibility on their own timeline ahead of GitHub's platform-wide cutover.
+
+**Version banner appended to every install step (GitHub Actions + Azure DevOps).** `_Pipeline YAML v<generated> | Module v<installed> installed (<pin>) | PSGallery latest <latestStr> | <verdict>_` is now appended to the Step Summary (GH) / Build Summary (ADO) by every install step on both platforms - one banner per yml across all 20 bundled `Step.{0..9}.yml` templates (Step.6 ADO has 2 install steps but the second deliberately skips upload to avoid duplicating the banner). Surfaces "what version actually ran" in the Summary view fleet operators open first, eliminating "the YAML in my repo is too old" investigation lag.
+
+**RBAC custom role renamed: `Azure Stack HCI Update Operator` -> `Azure Stack HCI Update Operator (custom)`.** The bundled `azlocal-update-management-custom-role.json` role definition is renamed to make the role's customer-managed status obvious and pre-empt any future collision with a Microsoft built-in of the same brand name. `Actions[]` / `NotActions[]` / `DataActions[]` / `AssignableScopes[]` are byte-identical to v0.8.3. **Existing tenants upgrade in place** with `az role definition update --role-definition ./azlocal-update-management-custom-role.json` - the role's GUID and every existing role assignment are preserved; only the display name changes. **Pipelines see zero downtime.** Documentation updated in lockstep across the bundled JSON, `Automation-Pipeline-Examples/README.md` (section header, TOC, 23 references, 11 anchor links), `Automation-Pipeline-Examples/docs/appendix-pipelines.md` (8 references, 1 anchor link), and `docs/rbac.md` (10 references in 3 inline JSON blocks plus assignment commands and DINE policy display name). When referencing the role from automation, prefer `roleDefinitionId` (the GUID) over display name - the GUID is stable across renames and avoids built-in vs custom display-name collision risk.
+
+`GENERATED_AGAINST_MODULE_VERSION` bumped from `0.8.3` to `0.8.4` across all 20 bundled `Step.{0..9}.yml` templates.
+
+See [CHANGELOG.md](CHANGELOG.md#084---2026-06-18) for the full v0.8.4 entry.
 
 ## Files
 
@@ -129,7 +136,7 @@ The module needs a small number of Azure RBAC roles depending on what you call i
 | Setting / clearing ring tags (`Set-AzLocalClusterUpdateRingTag`) | `Tag Contributor` + `Reader` (or any role with `Microsoft.Resources/tags/write`) | Subscription or Resource Group |
 | Resource Graph fleet queries | `Reader` on every subscription you want included | Subscription |
 
-A least-privilege custom role definition (`Azure Stack HCI Update Operator`) and the exact `actions:` list are documented in [docs/rbac.md](docs/rbac.md), along with `az role assignment create` recipes for OIDC federated credentials, Managed Identity, and Service Principal authentication.
+A least-privilege custom role definition (`Azure Stack HCI Update Operator (custom)`) and the exact `actions:` list are documented in [docs/rbac.md](docs/rbac.md), along with `az role assignment create` recipes for OIDC federated credentials, Managed Identity, and Service Principal authentication.
 ## Quick Start
 
 ### 1. Authenticate to Azure
@@ -579,7 +586,11 @@ This code is provided as-is for educational and reference purposes.
 
 The full What's-New history (v0.7.81 and earlier) has moved to [docs/release-history.md](docs/release-history.md).
 
-The most recent release notes for **v0.8.3** stay above under [`What's New in v0.8.3`](#whats-new-in-v083).
+The most recent release notes for **v0.8.4** stay above under [`What's New in v0.8.4`](#whats-new-in-v084).
+
+### What's New in v0.8.3
+
+**Step.3 advisor accuracy + readability fixes.** Recommend now diff-prunes against `-PipelineYamlPath` (no more false-positive "Action required - cron coverage" on steady-state fleets); Step.3 GH/ADO yml `pipeline_path`/`pipelinePath` is now REQUIRED; Step.3 yml now passes `-PipelineYamlPath` to the Recommend invocation; Allow-list heading reframed; closing-fence typo fixed. See [CHANGELOG.md](CHANGELOG.md#083---2026-06-11) for the full v0.8.3 entry.
 
 ### What's New in v0.8.2
 
