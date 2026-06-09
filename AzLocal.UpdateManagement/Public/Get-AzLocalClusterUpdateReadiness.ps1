@@ -347,7 +347,7 @@ function Get-AzLocalClusterUpdateReadiness {
                     CurrentVersion         = ''
                     CurrentSbeVersion      = ''
                     ReadyForUpdate         = $false
-                    AvailableUpdates       = ''
+                    AllAvailableUpdates    = ''
                     ReadyUpdates           = ''
                     HasPrerequisiteUpdates = ''
                     SBEDependency          = ''
@@ -529,7 +529,7 @@ function Get-AzLocalClusterUpdateReadiness {
                     CurrentVersion         = $currentVersion
                     CurrentSbeVersion      = $currentSbeVersion
                     ReadyForUpdate         = $isReady
-                    AvailableUpdates       = $availableUpdateNames
+                    AllAvailableUpdates    = $availableUpdateNames
                     ReadyUpdates           = $readyUpdateNames
                     HasPrerequisiteUpdates = $prereqUpdateNames
                     SBEDependency          = $sbeDependencyInfo
@@ -553,7 +553,7 @@ function Get-AzLocalClusterUpdateReadiness {
                     CurrentVersion         = ''
                     CurrentSbeVersion      = ''
                     ReadyForUpdate         = $false
-                    AvailableUpdates       = ''
+                    AllAvailableUpdates    = ''
                     ReadyUpdates           = ''
                     HasPrerequisiteUpdates = ''
                     SBEDependency          = ''
@@ -573,16 +573,26 @@ function Get-AzLocalClusterUpdateReadiness {
     Write-Log -Message "========================================" -Level Header
     
     $totalClusters = $results.Count
-    $readyClusters = @($results | Where-Object { $_.ReadyForUpdate -eq $true }).Count
-    $notReadyClusters = $totalClusters - $readyClusters
+    $readyForUpdateClusters = @($results | Where-Object { $_.ReadyForUpdate -eq $true }).Count
+    # v0.7.99: UpToDate is now its own bucket (was previously rolled into NotReady).
+    # A cluster is UpToDate when its UpdateState is UpToDate/AppliedSuccessfully AND it
+    # has no remaining available updates to install. Previous reporting buried these in
+    # the catch-all NotReady total even though no action was required.
+    $upToDateClusters = @($results | Where-Object {
+            $_.ReadyForUpdate -ne $true -and
+            $_.UpdateState -in @('UpToDate', 'AppliedSuccessfully') -and
+            [string]::IsNullOrEmpty([string]$_.AllAvailableUpdates)
+        }).Count
+    $notReadyForUpdateClusters = $totalClusters - $readyForUpdateClusters - $upToDateClusters
     $inProgressClusters = @($results | Where-Object { $_.UpdateState -eq "UpdateInProgress" }).Count
     $prereqClusters = @($results | Where-Object { $_.HasPrerequisiteUpdates -ne "" }).Count
     $blockedClusters = @($results | Where-Object { $_.PSObject.Properties['BlockingReasons'] -and $_.BlockingReasons -ne "" }).Count
 
     Write-Log -Message "" -Level Info
     Write-Log -Message "Total Clusters Assessed:    $totalClusters" -Level Info
-    Write-Log -Message "Ready for Update:           $readyClusters" -Level Success
-    Write-Log -Message "Not Ready / Other State:    $notReadyClusters" -Level $(if ($notReadyClusters -gt 0) { "Warning" } else { "Info" })
+    Write-Log -Message "Ready for Update:           $readyForUpdateClusters" -Level Success
+    Write-Log -Message "Up to Date:                 $upToDateClusters" -Level $(if ($upToDateClusters -gt 0) { 'Success' } else { 'Info' })
+    Write-Log -Message "Not Ready for Update:       $notReadyForUpdateClusters" -Level $(if ($notReadyForUpdateClusters -gt 0) { "Warning" } else { "Info" })
     Write-Log -Message "Update In Progress:         $inProgressClusters" -Level $(if ($inProgressClusters -gt 0) { "Warning" } else { "Info" })
     if ($blockedClusters -gt 0) {
         Write-Log -Message "Blocked by Readiness Gate:  $blockedClusters (see BlockingReasons column)" -Level Error
@@ -622,8 +632,8 @@ function Get-AzLocalClusterUpdateReadiness {
         Write-Log -Message "Available Update Versions (clusters ready to install):" -Level Header
         $sortedVersions = $updateVersionCounts.GetEnumerator() | Sort-Object -Property Value -Descending
         foreach ($version in $sortedVersions) {
-            if ($readyClusters -gt 0) {
-                $percentage = [math]::Round(($version.Value / $readyClusters) * 100, 1)
+            if ($readyForUpdateClusters -gt 0) {
+                $percentage = [math]::Round(($version.Value / $readyForUpdateClusters) * 100, 1)
                 Write-Log -Message "  $($version.Key): $($version.Value) cluster(s) ($percentage%)" -Level Info
             }
             else {
@@ -690,11 +700,12 @@ function Get-AzLocalClusterUpdateReadiness {
                 }
                 'Json' {
                     $exportData = @{
-                        Timestamp       = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-                        TotalClusters   = $totalClusters
-                        ClustersReady   = $readyClusters
-                        ClustersNotReady = $notReadyClusters
-                        Results         = $results
+                        Timestamp                  = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+                        TotalClusters              = $totalClusters
+                        ClustersReadyForUpdate     = $readyForUpdateClusters
+                        ClustersUpToDate           = $upToDateClusters
+                        ClustersNotReadyForUpdate  = $notReadyForUpdateClusters
+                        Results                    = $results
                     }
                     Write-Utf8NoBomFile -Path $ExportPath -Content ($exportData | ConvertTo-Json -Depth 10)
                     Write-Log -Message "Results exported to JSON: $ExportPath" -Level Success

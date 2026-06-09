@@ -261,7 +261,7 @@ Assesses update readiness across Azure Local clusters and provides a summary rep
 | `UpdateState` | Current update state (e.g., "UpdateAvailable", "NeedsAttention") |
 | `HealthState` | Health check state: "Success", "Warning", "Failure", or "InProgress" |
 | `ReadyForUpdate` | Boolean indicating if the cluster is ready for updates |
-| `AvailableUpdates` | List of available update names |
+| `AllAvailableUpdates` | All available update names (every state - Ready, NotReady, Installed, etc.). _Renamed from `AvailableUpdates` in v0.7.99._ |
 | `ReadyUpdates` | List of updates in "Ready" state |
 | `RecommendedUpdate` | The recommended (latest) ready update |
 | `HealthCheckFailures` | Summary of failed health checks with severity |
@@ -300,7 +300,8 @@ Summary
 
 Total Clusters Assessed:    5
 Ready for Update:           3
-Not Ready / Other State:    2
+Up to Date:                 0
+Not Ready for Update:       2
 Update In Progress:         1
 
 Health Check Issues:

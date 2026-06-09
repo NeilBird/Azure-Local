@@ -98,7 +98,7 @@ variables:
   # log if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
   - name: GENERATED_AGAINST_MODULE_VERSION
-    value: '0.7.98'
+    value: '0.7.99'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): queue-time parameter > pipeline variable
   # 'REQUIRED_MODULE_VERSION' overridden at queue time > empty (latest).
@@ -318,7 +318,7 @@ stages:
             displayName: 'Publish Readiness Report'
             inputs:
               PathtoPublish: '$(Build.ArtifactStagingDirectory)'
-              ArtifactName: 'azlocal-apply-updates-readiness-report_$(stamp.artifactStamp)'
+              ArtifactName: 'azlocal-step.6-apply-updates-readiness-report_$(stamp.artifactStamp)'
               publishLocation: 'Container'
 
   # Stage 2: Apply Updates (with approval gate for production)
@@ -434,7 +434,7 @@ stages:
               source: 'current'
               # artifact name now carries a UTC timestamp - rebuild via the
               # readinessArtifactStamp variable mapped from the CheckReadiness stage.
-              artifact: 'azlocal-apply-updates-readiness-report_$(readinessArtifactStamp)'
+              artifact: 'azlocal-step.6-apply-updates-readiness-report_$(readinessArtifactStamp)'
               path: '$(Build.ArtifactStagingDirectory)'
           
           - task: AzureCLI@2
@@ -595,7 +595,7 @@ stages:
             displayName: 'Publish Update Logs'
             inputs:
               PathtoPublish: '$(Build.ArtifactStagingDirectory)'
-              ArtifactName: 'azlocal-apply-updates-logs_$(stamp.artifactStamp)'
+              ArtifactName: 'azlocal-step.6-apply-updates-logs_$(stamp.artifactStamp)'
               publishLocation: 'Container'
           
           - task: PublishTestResults@2
@@ -686,7 +686,7 @@ stages:
             condition: and(always(), eq('${{ parameters.raiseItsmTicket }}', 'true'))
             inputs:
               PathtoPublish: '$(Build.ArtifactStagingDirectory)'
-              ArtifactName: 'azlocal-apply-updates-itsm-results_$(stamp.artifactStamp)'
+              ArtifactName: 'azlocal-step.6-apply-updates-itsm-results_$(stamp.artifactStamp)'
               publishLocation: 'Container'
             continueOnError: true
 

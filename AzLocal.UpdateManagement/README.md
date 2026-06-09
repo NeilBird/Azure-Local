@@ -2,7 +2,7 @@
 
 > ⚠️ **Disclaimer**: This module is **NOT** a Microsoft supported service offering or product. It is provided as example code only, with no warranty or official support. Refer to the [MIT license](https://github.com/NeilBird/Azure-Local/blob/main/LICENSE) for further information.
 
-**Latest Version:** v0.7.98 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.7.98)
+**Latest Version:** v0.7.99 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.7.99)
 
 > 📢 **Renamed in v0.7.3**: this module was previously published as `AzStackHci.ManageUpdates`. The new module name aligns with the Azure Local product name (_Microsoft retired the *Azure Stack HCI* brand in late 2024_). The module GUID is preserved across the rename. If you have the old name installed, run:
 >
@@ -23,7 +23,7 @@ Azure Local REST API specification (includes update management endpoints): https
 **This README (overview + most-recent release notes):**
 
 - [Where to Start](#where-to-start)
-- [What's New in v0.7.98](#whats-new-in-v0798)
+- [What's New in v0.7.99](#whats-new-in-v0799)
 - [Files](#files)
 - [Prerequisites](#prerequisites)
 - [RBAC Requirements](#rbac-requirements) (summary; full reference in [docs/rbac.md](docs/rbac.md))
@@ -86,35 +86,52 @@ If you are new to this module, work through these in order from a regular PowerS
 
 > Most CI/CD pipelines in [Automation-Pipeline-Examples/](Automation-Pipeline-Examples/) are direct implementations of one of these workflows. Start there if you want a copy-pasteable end-to-end pipeline.
 
-## What's New in v0.7.98
+## What's New in v0.7.99
 
-**Step.7 monitor-updates UX overhaul + Step.7 / Step.8 JUnit `time=` populated with real run elapsed seconds.** Only the four monitor / fleet-status pipeline templates changed (`github-actions/Step.7_monitor-updates.yml`, `azure-devops/Step.7_monitor-updates.yml`, and the matching `Step.8_fleet-update-status.yml` pair) plus the bundled-template `GENERATED_AGAINST_MODULE_VERSION` pin bump. No public-cmdlet changes.
+**Breaking property and Summary renames in the readiness / fleet-status cmdlets** to remove a long-standing semantic ambiguity, plus a Step.7 CRITICAL elapsed-days default tightening (7 -> 3) and an artifact-naming cleanup (every pipeline zip is now prefixed with `step.X-` so operators can tell at a glance which Step.* emitted it). All 20 bundled pipeline YAMLs were updated to consume the new output shapes; the `GENERATED_AGAINST_MODULE_VERSION` pin moves to `0.7.99` on every template.
 
-### Step.7 monitor-updates UX overhaul
+### Breaking renames - readiness / fleet-status output shape
 
-- **Severity tiers + composite `SeverityScore` sort.** Each in-flight / unresolved-failed row is scored on `StepError severity x 1000 + RunSeverity x 100 + elapsed-hours bucket` and the job-summary table sorts highest-severity first. Stuck step errors and runs > 14 days appear at the top regardless of cluster alphabetical order.
-- **Per-cell icons (`StateIcon`, `StatusIcon`) + horizontal chip stack** (`STEP-STUCK`, `RUN-STUCK`, `UNRESOLVED`, `RECENT-FAIL`) replace the previous single-status column. Each chip is its own column-width so long flag lists no longer squash the cluster name column.
-- **Fleet status badge** at the top of the job summary collapses the worst row across the fleet into a single `CRITICAL / WARN / OK` line (e.g. `CRITICAL - 1 stuck step error(s), 1 run(s) > 14d, 1 step(s) > 4h`). Operators can scan a 20-cluster fleet's status in one glance.
-- **Collapsible Verbose Error block.** Each failed step's `errorMessage` is now wrapped in `<details><summary>Verbose error</summary>...</details>` so the table stays readable but the full error text is one click away.
+- **`Get-AzLocalUpdateSummary`**: `AvailableUpdatesCount` -> **`ActionableUpdatesCount`**. The column only counted ACTIONABLE updates (Ready / NotReady), not the full available-updates inventory; the new name removes the ambiguity. ARM source field and per-cluster output are unchanged.
+- **`Get-AzLocalClusterUpdateReadiness`** and **`Get-AzLocalFleetStatusData`**: `AvailableUpdates` -> **`AllAvailableUpdates`**. Property now reads clearly as "every available update, every state". Same content as before.
+- **`Get-AzLocalClusterUpdateReadiness` Summary: 2-bucket -> 3-bucket model.** Console output and JSON export both gain a `Up to Date` bucket distinct from `Not Ready for Update`. Previously, healthy clusters with `UpdateState in (UpToDate, AppliedSuccessfully)` and no remaining available updates were rolled into the `NotReady` total, which falsely flagged an updated fleet as needing attention. They now have their own bucket.
+  - Console: `Ready for Update` / `Not Ready / Other State` -> `Ready for Update` / **`Up to Date`** (new) / `Not Ready for Update`.
+  - JSON `Summary`: `ClustersReady` / `ClustersNotReady` -> `ClustersReadyForUpdate` / **`ClustersUpToDate`** (new) / `ClustersNotReadyForUpdate`.
+- The cmdlet name `Get-AzLocalAvailableUpdates` is unchanged - only output properties on other cmdlets were renamed.
 
-### JUnit `time=` populated (Step.7 + Step.8 Update Run History)
+### Pipeline consumers updated in lock-step
 
-- Previously every `<testcase>` and `<testsuite>` in Step.7 and the Step.8 Update Run History block emitted `time="0"`, which caused GitHub Test Reporter / Azure DevOps Tests tab to render `"5 tests were completed in 0ms"` regardless of real run duration.
-- **Step.7**: each in-flight / unresolved-failed row computes `RunDurationSeconds` (`end - start` for completed / failed; current elapsed for in-flight) and emits it on both the per-row `<testcase time="..">` and the rolled-up `<testsuite time="..">`.
-- **Step.8 `Update Run History and Error Details` testsuite**: each `<testcase>` now emits `time` = `DurationMinutes * 60` (`DurationMinutes` comes from KQL `datetime_diff('minute', EndTime, StartTime)` via `Get-AzLocalUpdateRunFailures`).
-- Other Step.8 testsuites (`FleetVersionDistribution`, `AzureLocalFleetUpdateStatus`) intentionally stay at `time="0"` - they are instantaneous snapshot projections and a synthetic duration would be misleading.
+- **Step.5 `assess-update-readiness.yml`** (GH + ADO) computes and surfaces the 3-bucket model in the console banner, the markdown step summary, and the per-UpdateRing pivot table.
+- **Step.8 `fleet-update-status.yml`** (GH + ADO) `readiness-status.json` `Summary` keys renamed to `ReadyForUpdate` / `UpToDate` / `NotReadyForUpdate`. `NotReadyForUpdate` now excludes both InProgress AND UpToDate clusters.
+- **`Automation-Pipeline-Examples/.itsm/azurelocal-itsm.yml`** is unchanged - the `NotReady` key there maps a per-run `Status` value emitted by `Start-AzLocalClusterUpdate.ps1`, which is a separate (and stable) contract.
 
-### Pipeline template version pin
+### Step.7 CRITICAL elapsed-days default 7 -> 3
 
-- All 20 bundled `Step.{0..9}.yml` templates (10 GitHub Actions + 10 Azure DevOps) bump `GENERATED_AGAINST_MODULE_VERSION` from `'0.7.97'` to `'0.7.98'`.
+- `criticalElapsedDays` default lowered from `7` to `3` in both `github-actions/Step.7_monitor-updates.yml` and `azure-devops/Step.7_monitor-updates.yml`. The skull (rotating-light) threshold (2x CRITICAL) consequently lowers from `14` to `6` days. Operator rationale: a 7-day update run already feels long; surface stuck runs with the CRITICAL severity tier sooner.
+- Override path unchanged: pass `criticalElapsedDays: <N>` via workflow_dispatch (GH) / pipeline params (ADO) for fleets with multi-week SBE-prerequisite cascades.
+
+### Step.7 testsuite-level `time=` zeroed
+
+- Per-testcase `time=` continues to carry real per-run elapsed seconds (v0.7.98 behaviour preserved). The suite-level wrapper now emits `time="0"` rather than summing five unrelated wall-clock ages (~88 days in a typical fleet snapshot) which inflated GitHub Test Reporter's `"ran in"` timestamp.
+
+### Artifact zip names now carry the producing Step number
+
+- Every bundled pipeline template's artifact zip moves from `azlocal-<purpose>_yyyyMMdd_HHmmss` to **`azlocal-step.X-<purpose>_yyyyMMdd_HHmmss`** where X matches the Step.* filename. Operators downloading several artifacts in one session can now tell at a glance which Step.* produced each zip without unzipping.
+- The Pester guard for the artifact-name convention was upgraded from a generic `azlocal-` prefix check to require the `^azlocal-step\.\d+-` regex shape; new templates that forget the `step.X-` prefix will fail the unit test.
+
+### Documentation refresh
+
+- `Automation-Pipeline-Examples/README.md` section 1.1 Step.N table gains two new columns linking directly to the GH Actions and Azure DevOps source YAML for each step.
+- `Automation-Pipeline-Examples/README.md` section 9 (ThrottleLimit) trimmed of the stale v0.7.68 historical-removal narrative.
+- `docs/cmdlet-reference.md` property table reflects the property and Summary renames.
 
 ### Migration summary
 
-For cmdlet consumers: `Install-Module AzLocal.UpdateManagement -Force` (or `Update-Module`). No cmdlet behaviour change vs v0.7.97.
+For cmdlet consumers: `Install-Module AzLocal.UpdateManagement -Force` (or `Update-Module`). Update any downstream consumers of `Get-AzLocalUpdateSummary.AvailableUpdatesCount` to `.ActionableUpdatesCount`, and any consumers of `Get-AzLocalClusterUpdateReadiness.AvailableUpdates` / `Get-AzLocalFleetStatusData.AvailableUpdates` to `.AllAvailableUpdates`.
 
-For CI/CD pipeline consumers: re-run `Update-AzLocalPipelineExample -Destination <path>` to pick up the new Step.7 UX and the populated `time=` attributes on Step.7 / Step.8 JUnit. The pin-only short-circuit from v0.7.95 means `-Force` is not required for unchanged steps.
+For CI/CD pipeline consumers: re-run `Update-AzLocalPipelineExample -Destination <path>` to pick up the renamed JSON Summary keys, the new `step.X-` artifact prefix, and the tightened Step.7 CRITICAL default. If you have downstream consumers of `readiness-status.json`, update them to read `ReadyForUpdate` / `UpToDate` / `NotReadyForUpdate` instead of `Ready` / `NotReady`.
 
-> Previous release notes (v0.7.97 and earlier) have moved into the [Release History](#release-history) appendix below, with full text retained in [`docs/release-history.md`](docs/release-history.md) and [`CHANGELOG.md`](CHANGELOG.md).
+> Previous release notes (v0.7.98 and earlier) have moved into the [Release History](#release-history) appendix below, with full text retained in [`docs/release-history.md`](docs/release-history.md) and [`CHANGELOG.md`](CHANGELOG.md).
 
 ## Files
 
@@ -593,7 +610,13 @@ This code is provided as-is for educational and reference purposes.
 
 The full What's-New history (v0.7.81 and earlier) has moved to [docs/release-history.md](docs/release-history.md).
 
-The most recent release notes for **v0.7.98** stay above under [`What's New in v0.7.98`](#whats-new-in-v0798).
+The most recent release notes for **v0.7.99** stay above under [`What's New in v0.7.99`](#whats-new-in-v0799).
+
+### What's New in v0.7.98
+
+**Step.7 monitor-updates UX overhaul + Step.7 / Step.8 JUnit `time=` populated with real run elapsed seconds.** Only the four monitor / fleet-status pipeline templates changed (`github-actions/Step.7_monitor-updates.yml`, `azure-devops/Step.7_monitor-updates.yml`, and the matching `Step.8_fleet-update-status.yml` pair) plus the bundled-template `GENERATED_AGAINST_MODULE_VERSION` pin bump. No public-cmdlet changes. Severity tiers + composite `SeverityScore` sort surface stuck step errors and runs > 14 days at the top of the Step.7 table; per-cell icons + a horizontal chip stack replace the single-status column; a fleet status badge collapses the worst row into a single `CRITICAL / WARN / OK` line; per-step `errorMessage` is collapsed under `<details><summary>Verbose error</summary>...</details>`. JUnit `time=` for Step.7 in-flight / unresolved-failed rows is real run duration (was always 0); Step.8 Update Run History `<testcase time="..">` now equals `DurationMinutes * 60` from `Get-AzLocalUpdateRunFailures`.
+
+See [CHANGELOG.md](CHANGELOG.md#0798---2026-06-09) for the full v0.7.98 entry.
 
 ### What's New in v0.7.97
 

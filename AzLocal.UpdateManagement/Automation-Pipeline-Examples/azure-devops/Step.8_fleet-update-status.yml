@@ -92,7 +92,7 @@ variables:
   # the version actually installed and to the latest on PSGallery, and emits a warning
   # log if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.7.98'
+  GENERATED_AGAINST_MODULE_VERSION: '0.7.99'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): queue-time parameter > pipeline variable
   # 'REQUIRED_MODULE_VERSION' overridden at queue time > empty (latest).
@@ -242,13 +242,25 @@ stages:
               Timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss UTC"
               TotalClusters = $readiness.Count
               Summary = @{
-                  Ready = @($readiness | Where-Object { $_.ReadyForUpdate -eq $true }).Count
-                  InProgress = @($readiness | Where-Object { $_.UpdateState -in @("UpdateInProgress","PreparationInProgress") }).Count
-                  HealthFailures = @($readiness | Where-Object { $_.HealthState -eq "Failure" }).Count
-                  UpdateFailures = @($readiness | Where-Object { $_.UpdateState -in @("Failed","UpdateFailed","NeedsAttention") }).Count
-                  ActionRequired = @($readiness | Where-Object { $_.UpdateState -eq "PreparationFailed" }).Count
-                  HasPrerequisite = $hasPrerequisite
-                  NotReady = @($readiness | Where-Object { $_.ReadyForUpdate -ne $true -and ($_.UpdateState -notin @("UpdateInProgress","PreparationInProgress")) }).Count
+                  # v0.7.99: 3-bucket model (ReadyForUpdate / UpToDate / NotReadyForUpdate)
+                  # matches the renamed Get-AzLocalClusterUpdateReadiness Summary buckets.
+                  # NotReadyForUpdate now excludes both InProgress AND UpToDate clusters.
+                  ReadyForUpdate    = @($readiness | Where-Object { $_.ReadyForUpdate -eq $true }).Count
+                  UpToDate          = @($readiness | Where-Object {
+                          $_.ReadyForUpdate -ne $true -and
+                          $_.UpdateState -in @('UpToDate','AppliedSuccessfully') -and
+                          [string]::IsNullOrEmpty([string]$_.AllAvailableUpdates)
+                      }).Count
+                  InProgress        = @($readiness | Where-Object { $_.UpdateState -in @("UpdateInProgress","PreparationInProgress") }).Count
+                  HealthFailures    = @($readiness | Where-Object { $_.HealthState -eq "Failure" }).Count
+                  UpdateFailures    = @($readiness | Where-Object { $_.UpdateState -in @("Failed","UpdateFailed","NeedsAttention") }).Count
+                  ActionRequired    = @($readiness | Where-Object { $_.UpdateState -eq "PreparationFailed" }).Count
+                  HasPrerequisite   = $hasPrerequisite
+                  NotReadyForUpdate = @($readiness | Where-Object {
+                          $_.ReadyForUpdate -ne $true -and
+                          ($_.UpdateState -notin @("UpdateInProgress","PreparationInProgress")) -and
+                          -not ($_.UpdateState -in @('UpToDate','AppliedSuccessfully') -and [string]::IsNullOrEmpty([string]$_.AllAvailableUpdates))
+                      }).Count
               }
               Clusters = $readiness
           }
@@ -822,7 +834,7 @@ stages:
       condition: always()
       inputs:
         PathtoPublish: '$(reportsPath)'
-        ArtifactName: 'azlocal-fleet-update-status-report_$(stamp.artifactStamp)'
+        ArtifactName: 'azlocal-step.8-fleet-update-status-report_$(stamp.artifactStamp)'
         publishLocation: 'Container'
     
     # Create summary in pipeline
@@ -1168,7 +1180,7 @@ stages:
       condition: and(always(), eq('${{ parameters.raiseItsmTicket }}', 'true'))
       inputs:
         PathtoPublish: '$(reportsPath)'
-        ArtifactName: 'azlocal-fleet-update-status-itsm-results_$(stamp.artifactStamp)'
+        ArtifactName: 'azlocal-step.8-fleet-update-status-itsm-results_$(stamp.artifactStamp)'
         publishLocation: 'Container'
       continueOnError: true
 

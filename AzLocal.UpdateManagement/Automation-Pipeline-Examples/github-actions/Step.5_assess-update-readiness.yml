@@ -65,7 +65,7 @@ env:
   # this to the version actually installed and to the latest on PSGallery, and emits a
   # ::notice annotation if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.7.98'
+  GENERATED_AGAINST_MODULE_VERSION: '0.7.99'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): manual workflow_dispatch input >
   # repository variable 'REQUIRED_MODULE_VERSION' > empty (latest).
@@ -204,11 +204,21 @@ jobs:
           $null = Get-AzLocalClusterUpdateReadiness @scopeParams `
               -ExportPath $readinessXml
 
-          $notReady = @($readiness | Where-Object { $_.ReadyForUpdate -ne $true }).Count
+          # v0.7.99: 3-bucket model matches Get-AzLocalClusterUpdateReadiness Summary.
+          # UpToDate clusters are no longer rolled into NotReady - they're now a distinct bucket.
+          $readyForUpdate = @($readiness | Where-Object { $_.ReadyForUpdate -eq $true }).Count
+          $upToDate = @($readiness | Where-Object {
+                  $_.ReadyForUpdate -ne $true -and
+                  $_.UpdateState -in @('UpToDate', 'AppliedSuccessfully') -and
+                  [string]::IsNullOrEmpty([string]$_.AllAvailableUpdates)
+              }).Count
           $total = @($readiness).Count
+          $notReady = $total - $readyForUpdate - $upToDate
 
           Write-Host ''
           Write-Host "Total clusters in scope: $total"
+          Write-Host "Ready for update      : $readyForUpdate"
+          Write-Host "Up to date            : $upToDate"
           Write-Host "Not ready for update  : $notReady"
 
           Write-Host ''
@@ -291,14 +301,13 @@ jobs:
           # 1. Header tile (one-line status, no emoji - ASCII safe)
           $scopeLabel = $scope
           if ($updateRing) { $scopeLabel = "$scope (UpdateRing = $updateRing)" }
-          $readyCount = $total - $notReady
           $statusWord = if ($notReady -gt 0 -or $clustersWithCritical -gt 0) { 'ATTENTION' } else { 'OK' }
-          $lines.Add("**[$statusWord]** $total cluster(s) assessed | $readyCount Ready | $notReady Not Ready | $clustersWithCritical with Critical health failures | Scope: $scopeLabel")
+          $lines.Add("**[$statusWord]** $total cluster(s) assessed | $readyForUpdate Ready for Update | $upToDate Up to Date | $notReady Not Ready for Update | $clustersWithCritical with Critical health failures | Scope: $scopeLabel")
           $lines.Add('')
 
           # 2. Action banner
           if ($notReady -gt 0 -or $clustersWithCritical -gt 0) {
-              $lines.Add("> **Action required**: $notReady cluster(s) not ready and/or $clustersWithCritical cluster(s) with Critical health failures. Review the **Not-Ready** and **Critical-health** sections below first; the CSV artifacts in `azlocal-readiness-assessment-report_*` carry the full per-finding detail. Remediate (hardware vendor SBE / firmware / cluster health) before or alongside the next apply-updates run. **The healthy clusters are safe to proceed** - Step.6_apply-updates.yml is per-cluster scoped.")
+              $lines.Add("> **Action required**: $notReady cluster(s) not ready and/or $clustersWithCritical cluster(s) with Critical health failures. Review the **Not-Ready** and **Critical-health** sections below first; the CSV artifacts in `azlocal-step.5-readiness-assessment-report_*` carry the full per-finding detail. Remediate (hardware vendor SBE / firmware / cluster health) before or alongside the next apply-updates run. **The healthy clusters are safe to proceed** - Step.6_apply-updates.yml is per-cluster scoped.")
           } else {
               $lines.Add('> **All clear**: every cluster in scope is ready for update. Safe to proceed with Step.6_apply-updates.yml for this ring.')
           }
@@ -310,6 +319,8 @@ jobs:
           $lines.Add('| Metric | Count |')
           $lines.Add('|--------|-------|')
           $lines.Add("| Total clusters in scope | $total |")
+          $lines.Add("| Ready for update | $readyForUpdate |")
+          $lines.Add("| Up to date | $upToDate |")
           $lines.Add("| Not ready for update | $notReady |")
           $lines.Add("| Clusters with Critical health failures | $clustersWithCritical |")
           $lines.Add("| Total Critical findings | $critical |")
@@ -353,12 +364,17 @@ jobs:
           if (@($ringGroups).Count -gt 1) {
               $lines.Add('### Per UpdateRing breakdown')
               $lines.Add('')
-              $lines.Add('| UpdateRing | Total | Ready | Not Ready |')
-              $lines.Add('|------------|-------|-------|-----------|')
+              $lines.Add('| UpdateRing | Total | Ready for Update | Up to Date | Not Ready for Update |')
+              $lines.Add('|------------|-------|------------------|------------|----------------------|')
               foreach ($g in $ringGroups) {
                   $gReady = @($g.Group | Where-Object { $_.ReadyForUpdate -eq $true }).Count
-                  $gNotReady = $g.Count - $gReady
-                  $lines.Add("| $($g.Name) | $($g.Count) | $gReady | $gNotReady |")
+                  $gUpToDate = @($g.Group | Where-Object {
+                          $_.ReadyForUpdate -ne $true -and
+                          $_.UpdateState -in @('UpToDate', 'AppliedSuccessfully') -and
+                          [string]::IsNullOrEmpty([string]$_.AllAvailableUpdates)
+                      }).Count
+                  $gNotReady = $g.Count - $gReady - $gUpToDate
+                  $lines.Add("| $($g.Name) | $($g.Count) | $gReady | $gUpToDate | $gNotReady |")
               }
               $lines.Add('')
           }
@@ -406,7 +422,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v6
         with:
-          name: azlocal-readiness-assessment-report_${{ steps.artifact-stamp.outputs.timestamp }}
+          name: azlocal-step.5-readiness-assessment-report_${{ steps.artifact-stamp.outputs.timestamp }}
           path: ./artifacts/*
           retention-days: 30
 

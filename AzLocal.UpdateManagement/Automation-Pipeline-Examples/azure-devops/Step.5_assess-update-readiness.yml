@@ -63,7 +63,7 @@ variables:
   # the version actually installed and to the latest on PSGallery, and emits a warning
   # log if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.7.98'
+  GENERATED_AGAINST_MODULE_VERSION: '0.7.99'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): queue-time parameter > pipeline variable
   # 'REQUIRED_MODULE_VERSION' overridden at queue time > empty (latest).
@@ -187,11 +187,21 @@ stages:
                 $null = Get-AzLocalClusterUpdateReadiness @scopeParams `
                     -ExportPath $readinessXml
 
-                $notReady = @($readiness | Where-Object { $_.ReadyForUpdate -ne $true }).Count
+                # v0.7.99: 3-bucket model matches Get-AzLocalClusterUpdateReadiness Summary.
+                # UpToDate clusters are no longer rolled into NotReady - they're now a distinct bucket.
+                $readyForUpdate = @($readiness | Where-Object { $_.ReadyForUpdate -eq $true }).Count
+                $upToDate = @($readiness | Where-Object {
+                        $_.ReadyForUpdate -ne $true -and
+                        $_.UpdateState -in @('UpToDate', 'AppliedSuccessfully') -and
+                        [string]::IsNullOrEmpty([string]$_.AllAvailableUpdates)
+                    }).Count
                 $total = @($readiness).Count
+                $notReady = $total - $readyForUpdate - $upToDate
 
                 Write-Host ''
                 Write-Host "Total clusters in scope: $total"
+                Write-Host "Ready for update      : $readyForUpdate"
+                Write-Host "Up to date            : $upToDate"
                 Write-Host "Not ready for update  : $notReady"
 
                 Write-Host ''
@@ -272,14 +282,13 @@ stages:
                 # 1. Header tile (ASCII safe - no emoji)
                 $scopeLabel = $scope
                 if ($updateRing) { $scopeLabel = "$scope (UpdateRing = $updateRing)" }
-                $readyCount = $total - $notReady
                 $statusWord = if ($notReady -gt 0 -or $clustersWithCritical -gt 0) { 'ATTENTION' } else { 'OK' }
-                $summaryLines.Add("**[$statusWord]** $total cluster(s) assessed | $readyCount Ready | $notReady Not Ready | $clustersWithCritical with Critical health failures | Scope: $scopeLabel")
+                $summaryLines.Add("**[$statusWord]** $total cluster(s) assessed | $readyForUpdate Ready for Update | $upToDate Up to Date | $notReady Not Ready for Update | $clustersWithCritical with Critical health failures | Scope: $scopeLabel")
                 $summaryLines.Add('')
 
                 # 2. Action banner
                 if ($notReady -gt 0 -or $clustersWithCritical -gt 0) {
-                    $summaryLines.Add("**Action required**: $notReady cluster(s) not ready and/or $clustersWithCritical cluster(s) with Critical health failures. Review the **Not-Ready** and **Critical-health** sections below first; the CSV artifacts in azlocal-readiness-assessment-report_* carry the full per-finding detail. Remediate (hardware vendor SBE / firmware / cluster health) before or alongside the next apply-updates run. **The healthy clusters are safe to proceed** - Step.6_apply-updates.yml is per-cluster scoped.")
+                    $summaryLines.Add("**Action required**: $notReady cluster(s) not ready and/or $clustersWithCritical cluster(s) with Critical health failures. Review the **Not-Ready** and **Critical-health** sections below first; the CSV artifacts in azlocal-step.5-readiness-assessment-report_* carry the full per-finding detail. Remediate (hardware vendor SBE / firmware / cluster health) before or alongside the next apply-updates run. **The healthy clusters are safe to proceed** - Step.6_apply-updates.yml is per-cluster scoped.")
                 } else {
                     $summaryLines.Add('**All clear**: every cluster in scope is ready for update. Safe to proceed with apply-updates for this ring.')
                 }
@@ -291,6 +300,8 @@ stages:
                 $summaryLines.Add('| Metric | Count |')
                 $summaryLines.Add('|--------|-------|')
                 $summaryLines.Add("| Total clusters in scope | $total |")
+                $summaryLines.Add("| Ready for update | $readyForUpdate |")
+                $summaryLines.Add("| Up to date | $upToDate |")
                 $summaryLines.Add("| Not ready for update | $notReady |")
                 $summaryLines.Add("| Clusters with Critical health failures | $clustersWithCritical |")
                 $summaryLines.Add("| Total Critical findings | $critical |")
@@ -334,12 +345,17 @@ stages:
                 if (@($ringGroups).Count -gt 1) {
                     $summaryLines.Add('## Per UpdateRing breakdown')
                     $summaryLines.Add('')
-                    $summaryLines.Add('| UpdateRing | Total | Ready | Not Ready |')
-                    $summaryLines.Add('|------------|-------|-------|-----------|')
+                    $summaryLines.Add('| UpdateRing | Total | Ready for Update | Up to Date | Not Ready for Update |')
+                    $summaryLines.Add('|------------|-------|------------------|------------|----------------------|')
                     foreach ($g in $ringGroups) {
                         $gReady = @($g.Group | Where-Object { $_.ReadyForUpdate -eq $true }).Count
-                        $gNotReady = $g.Count - $gReady
-                        $summaryLines.Add("| $($g.Name) | $($g.Count) | $gReady | $gNotReady |")
+                        $gUpToDate = @($g.Group | Where-Object {
+                                $_.ReadyForUpdate -ne $true -and
+                                $_.UpdateState -in @('UpToDate', 'AppliedSuccessfully') -and
+                                [string]::IsNullOrEmpty([string]$_.AllAvailableUpdates)
+                            }).Count
+                        $gNotReady = $g.Count - $gReady - $gUpToDate
+                        $summaryLines.Add("| $($g.Name) | $($g.Count) | $gReady | $gUpToDate | $gNotReady |")
                     }
                     $summaryLines.Add('')
                 }
@@ -418,5 +434,5 @@ stages:
             condition: always()
             inputs:
               targetPath: '$(artifactsPath)'
-              artifact: 'azlocal-readiness-assessment-report_$(stamp.artifactStamp)'
+              artifact: 'azlocal-step.5-readiness-assessment-report_$(stamp.artifactStamp)'
 

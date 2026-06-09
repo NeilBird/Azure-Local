@@ -4,9 +4,31 @@
 >
 > **For older releases**, this is the canonical reference; the main README intentionally stays slim so the most recent block is easy to find.
 >
-> **For v0.7.98 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0798) `What's New in v0.7.98` section.
+> **For v0.7.99 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0799) `What's New in v0.7.99` section.
 
 ---
+
+### What's New in v0.7.99
+
+v0.7.99 is a breaking-rename release for the readiness / fleet-status cmdlets plus a Step.7 default tightening and an artifact-naming cleanup. All 20 bundled pipeline YAMLs were updated to consume the new output shapes.
+
+**Property renames.** `Get-AzLocalUpdateSummary.AvailableUpdatesCount` -> `ActionableUpdatesCount` (the column only ever counted Ready + NotReady, not the full inventory). `Get-AzLocalClusterUpdateReadiness.AvailableUpdates` -> `AllAvailableUpdates`. `Get-AzLocalFleetStatusData.AvailableUpdates` -> `AllAvailableUpdates`. Same content, clearer names. The cmdlet name `Get-AzLocalAvailableUpdates` is unchanged.
+
+**Readiness Summary: 2-bucket -> 3-bucket model.** `Get-AzLocalClusterUpdateReadiness`'s console block and JSON export both gain a `Up to Date` bucket distinct from `Not Ready for Update`. Previously clusters with `UpdateState in (UpToDate, AppliedSuccessfully)` and no remaining available updates were rolled into the `NotReady` total, which falsely flagged a healthy fleet as needing attention. Console labels: `Ready for Update` / `Up to Date` (new) / `Not Ready for Update`. JSON `Summary` keys: `ClustersReadyForUpdate` / `ClustersUpToDate` (new) / `ClustersNotReadyForUpdate`.
+
+**Step.5 + Step.8 pipelines updated** (both GH Actions and Azure DevOps) to compute and surface the 3-bucket model and to consume the renamed `AllAvailableUpdates` property. `readiness-status.json` `Summary` keys move to `ReadyForUpdate` / `UpToDate` / `NotReadyForUpdate`. `Automation-Pipeline-Examples/.itsm/azurelocal-itsm.yml` is unchanged - the `NotReady` key there maps a per-run `Status` value from `Start-AzLocalClusterUpdate.ps1`, which is a separate (and stable) contract.
+
+**Step.7 CRITICAL elapsed-days default 7 -> 3.** Skull (rotating-light) threshold (2x CRITICAL) consequently lowers from 14 to 6 days. Override via `criticalElapsedDays: <N>` workflow_dispatch / pipeline param.
+
+**Step.7 testsuite-level `time=` zeroed.** Per-testcase `time=` continues to carry real per-run elapsed seconds (v0.7.98 behaviour preserved). The suite-level wrapper now emits `time="0"` rather than summing five unrelated wall-clock ages.
+
+**Artifact zip names now carry the producing Step number.** Every bundled template's artifact zip moves from `azlocal-<purpose>_yyyyMMdd_HHmmss` to `azlocal-step.X-<purpose>_yyyyMMdd_HHmmss`. The Pester guard for the artifact-name convention now requires the `^azlocal-step\.\d+-` regex shape.
+
+**Docs.** `Automation-Pipeline-Examples/README.md` section 1.1 Step.N table gains direct GH Actions + Azure DevOps YAML column links; section 9 (ThrottleLimit) trimmed of stale v0.7.68 historical narrative. `docs/cmdlet-reference.md` reflects the property and Summary renames.
+
+**All 20 bundled `Step.{0..9}.yml` templates** bump `GENERATED_AGAINST_MODULE_VERSION` from `'0.7.98'` to `'0.7.99'`.
+
+See [CHANGELOG.md](../CHANGELOG.md#0799---2026-06-09) for the full v0.7.99 entry.
 
 ### What's New in v0.7.98
 

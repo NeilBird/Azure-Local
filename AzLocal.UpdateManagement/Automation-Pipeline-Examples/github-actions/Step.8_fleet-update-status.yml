@@ -104,7 +104,7 @@ env:
   # this to the version actually installed and to the latest on PSGallery, and emits a
   # ::notice annotation if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.7.98'
+  GENERATED_AGAINST_MODULE_VERSION: '0.7.99'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): manual workflow_dispatch input >
   # repository variable 'REQUIRED_MODULE_VERSION' > empty (latest).
@@ -249,13 +249,25 @@ jobs:
             Timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss UTC"
             TotalClusters = $readiness.Count
             Summary = @{
-                Ready = ($readiness | Where-Object { $_.ReadyForUpdate -eq $true }).Count
-                InProgress = ($readiness | Where-Object { $_.UpdateState -in @("UpdateInProgress","PreparationInProgress") }).Count
-                HealthFailures = ($readiness | Where-Object { $_.HealthState -eq "Failure" }).Count
-                UpdateFailures = ($readiness | Where-Object { $_.UpdateState -in @("Failed","UpdateFailed","NeedsAttention") }).Count
-                ActionRequired = ($readiness | Where-Object { $_.UpdateState -eq "PreparationFailed" }).Count
-                HasPrerequisite = $hasPrerequisite
-                NotReady = ($readiness | Where-Object { $_.ReadyForUpdate -ne $true -and ($_.UpdateState -notin @("UpdateInProgress","PreparationInProgress")) }).Count
+                # v0.7.99: 3-bucket model (ReadyForUpdate / UpToDate / NotReadyForUpdate)
+                # matches the renamed Get-AzLocalClusterUpdateReadiness Summary buckets.
+                # NotReadyForUpdate now excludes both InProgress AND UpToDate clusters.
+                ReadyForUpdate    = ($readiness | Where-Object { $_.ReadyForUpdate -eq $true }).Count
+                UpToDate          = ($readiness | Where-Object {
+                        $_.ReadyForUpdate -ne $true -and
+                        $_.UpdateState -in @('UpToDate','AppliedSuccessfully') -and
+                        [string]::IsNullOrEmpty([string]$_.AllAvailableUpdates)
+                    }).Count
+                InProgress        = ($readiness | Where-Object { $_.UpdateState -in @("UpdateInProgress","PreparationInProgress") }).Count
+                HealthFailures    = ($readiness | Where-Object { $_.HealthState -eq "Failure" }).Count
+                UpdateFailures    = ($readiness | Where-Object { $_.UpdateState -in @("Failed","UpdateFailed","NeedsAttention") }).Count
+                ActionRequired    = ($readiness | Where-Object { $_.UpdateState -eq "PreparationFailed" }).Count
+                HasPrerequisite   = $hasPrerequisite
+                NotReadyForUpdate = ($readiness | Where-Object {
+                        $_.ReadyForUpdate -ne $true -and
+                        ($_.UpdateState -notin @("UpdateInProgress","PreparationInProgress")) -and
+                        -not ($_.UpdateState -in @('UpToDate','AppliedSuccessfully') -and [string]::IsNullOrEmpty([string]$_.AllAvailableUpdates))
+                    }).Count
             }
             Clusters = $readiness
         }
@@ -531,7 +543,7 @@ jobs:
             $systemOut += "Update State: $($cluster.UpdateState)`n"
             $systemOut += "Health State: $($cluster.HealthState)`n"
             $systemOut += "Ready for Update: $($cluster.ReadyForUpdate)`n"
-            $systemOut += "Available Updates: $($cluster.AvailableUpdates)`n"
+            $systemOut += "All Available Updates: $($cluster.AllAvailableUpdates)`n"
             $systemOut += "Ready Updates: $($cluster.ReadyUpdates)`n"
             $systemOut += "Has Prerequisite Updates: $($cluster.HasPrerequisiteUpdates)`n"
             $systemOut += "SBE Dependency: $($cluster.SBEDependency)`n"
@@ -828,7 +840,7 @@ jobs:
       id: artifact-stamp
       shell: pwsh
       # every downloadable artifact gets a UTC timestamp suffix so multiple runs on
-      # the same day produce distinct zip names (e.g. azlocal-fleet-update-status-report_20260518_143217.zip).
+      # the same day produce distinct zip names (e.g. azlocal-step.8-fleet-update-status-report_20260518_143217.zip).
       run: |
         $stamp = (Get-Date).ToUniversalTime().ToString('yyyyMMdd_HHmmss')
         "timestamp=$stamp" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
@@ -837,7 +849,7 @@ jobs:
     - name: Upload Fleet Status Reports
       uses: actions/upload-artifact@v6
       with:
-        name: azlocal-fleet-update-status-report_${{ steps.artifact-stamp.outputs.timestamp }}
+        name: azlocal-step.8-fleet-update-status-report_${{ steps.artifact-stamp.outputs.timestamp }}
         path: ./reports/
         retention-days: 90
     
@@ -1164,7 +1176,7 @@ jobs:
       if: ${{ github.event.inputs.raise_itsm_ticket == 'true' }}
       uses: actions/upload-artifact@v6
       with:
-        name: azlocal-fleet-update-status-itsm-results_${{ steps.artifact-stamp.outputs.timestamp }}
+        name: azlocal-step.8-fleet-update-status-itsm-results_${{ steps.artifact-stamp.outputs.timestamp }}
         path: ./reports/itsm-*.*
         retention-days: 30
       continue-on-error: true
