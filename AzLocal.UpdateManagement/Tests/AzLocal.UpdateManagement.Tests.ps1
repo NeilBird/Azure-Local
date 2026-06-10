@@ -212,8 +212,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $content | Should -Not -Match 'function\s+Convert-ScheduleRow' -Because "Step.3 $Platform must not contain inline schedule-row helpers (removed in v0.8.5)"
         }
 
-        It 'Should export exactly 48 functions' {
-            $script:ModuleInfo.ExportedFunctions.Count | Should -Be 48
+        It 'Should export exactly 49 functions' {
+            $script:ModuleInfo.ExportedFunctions.Count | Should -Be 49
         }
 
         It 'Should export the expected functions' {
@@ -291,7 +291,9 @@ Describe 'Module: AzLocal.UpdateManagement' {
                 # Thin-YAML Step.4 (v0.8.5) - Fleet Connectivity Status (Cluster/Arc/NIC/ARB severity classification + JUnit + markdown + 12 step outputs)
                 'Export-AzLocalFleetConnectivityStatusReport',
                 # Thin-YAML Step.3 (v0.8.5) - Apply-Updates Schedule Coverage Audit (Audit + Matrix + Recommend views + 2-suite JUnit + allow-list section + always-on cycle calendar + 12 step outputs)
-                'Export-AzLocalApplyUpdatesScheduleAudit'
+                'Export-AzLocalApplyUpdatesScheduleAudit',
+                # Thin-YAML Step.9 (v0.8.5) - Fleet Health Status (Detail + Summary + Overview + 2-suite JUnit + KPI / Overview / By-Reason / per-cluster collapsible markdown + 8 step outputs)
+                'Export-AzLocalFleetHealthStatusReport'
             )
             
             foreach ($func in $expectedFunctions) {
@@ -10200,8 +10202,8 @@ Describe 'Function: Get-AzLocalFleetHealthOverview - v0.7.70 (ARG-first fleet he
             $cmd.CommandType | Should -Be 'Function'
         }
 
-        It 'BS7: Module exports exactly 48 functions (was 47 after Step.4 thin-YAML port; Step.3 thin-YAML port adds Export-AzLocalApplyUpdatesScheduleAudit)' {
-            (Get-Module AzLocal.UpdateManagement).ExportedFunctions.Count | Should -Be 48
+        It 'BS7: Module exports exactly 49 functions (was 48 after Step.3 thin-YAML port; Step.9 thin-YAML port adds Export-AzLocalFleetHealthStatusReport)' {
+            (Get-Module AzLocal.UpdateManagement).ExportedFunctions.Count | Should -Be 49
         }
     }
 
@@ -14583,6 +14585,216 @@ Describe 'Thin-YAML Step.8: Export-AzLocalFleetUpdateStatusReport' {
 }
 
 #endregion v0.8.5: Export-AzLocalFleetUpdateStatusReport
+
+
+#region v0.8.5: Export-AzLocalFleetHealthStatusReport (Step.9 thin-YAML port)
+
+Describe 'Thin-YAML Step.9: Export-AzLocalFleetHealthStatusReport' {
+
+    BeforeEach {
+        $script:_s9_savedGhActions = $env:GITHUB_ACTIONS
+        $script:_s9_savedTfBuild   = $env:TF_BUILD
+        $script:_s9_savedGhOutput  = $env:GITHUB_OUTPUT
+        $script:_s9_savedGhSummary = $env:GITHUB_STEP_SUMMARY
+        $script:_s9_savedAdoStage  = $env:BUILD_ARTIFACTSTAGINGDIRECTORY
+        Remove-Item Env:\GITHUB_ACTIONS                 -ErrorAction SilentlyContinue
+        Remove-Item Env:\TF_BUILD                       -ErrorAction SilentlyContinue
+        Remove-Item Env:\GITHUB_OUTPUT                  -ErrorAction SilentlyContinue
+        Remove-Item Env:\GITHUB_STEP_SUMMARY            -ErrorAction SilentlyContinue
+        Remove-Item Env:\BUILD_ARTIFACTSTAGINGDIRECTORY -ErrorAction SilentlyContinue
+
+        $script:_s9_outDir        = Join-Path -Path $env:TEMP -ChildPath ("s9-out-{0}"        -f ([Guid]::NewGuid()))
+        $script:_s9_ghOutputFile  = Join-Path -Path $env:TEMP -ChildPath ("s9-gh-output-{0}"  -f ([Guid]::NewGuid()))
+        $script:_s9_ghSummaryFile = Join-Path -Path $env:TEMP -ChildPath ("s9-gh-summary-{0}.md" -f ([Guid]::NewGuid()))
+        New-Item -ItemType Directory -Path $script:_s9_outDir        -Force | Out-Null
+        New-Item -ItemType File      -Path $script:_s9_ghOutputFile  -Force | Out-Null
+        New-Item -ItemType File      -Path $script:_s9_ghSummaryFile -Force | Out-Null
+
+        $script:_s9_now = [datetime]::SpecifyKind([datetime]'2026-06-10T12:00:00', [DateTimeKind]::Utc)
+    }
+
+    AfterEach {
+        if ($null -ne $script:_s9_savedGhActions) { $env:GITHUB_ACTIONS                 = $script:_s9_savedGhActions } else { Remove-Item Env:\GITHUB_ACTIONS                 -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_s9_savedTfBuild)   { $env:TF_BUILD                       = $script:_s9_savedTfBuild   } else { Remove-Item Env:\TF_BUILD                       -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_s9_savedGhOutput)  { $env:GITHUB_OUTPUT                  = $script:_s9_savedGhOutput  } else { Remove-Item Env:\GITHUB_OUTPUT                  -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_s9_savedGhSummary) { $env:GITHUB_STEP_SUMMARY            = $script:_s9_savedGhSummary } else { Remove-Item Env:\GITHUB_STEP_SUMMARY            -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_s9_savedAdoStage)  { $env:BUILD_ARTIFACTSTAGINGDIRECTORY = $script:_s9_savedAdoStage  } else { Remove-Item Env:\BUILD_ARTIFACTSTAGINGDIRECTORY -ErrorAction SilentlyContinue }
+        foreach ($p in @($script:_s9_ghOutputFile, $script:_s9_ghSummaryFile)) {
+            if ($p -and (Test-Path -LiteralPath $p)) { Remove-Item -LiteralPath $p -Force -ErrorAction SilentlyContinue }
+        }
+        if ($script:_s9_outDir -and (Test-Path -LiteralPath $script:_s9_outDir)) {
+            Remove-Item -LiteralPath $script:_s9_outDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'Empty fleet emits zero-valued step outputs, placeholder JUnit testcase, and PassThru with zero counts' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s9_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s9_ghSummaryFile
+        $global:_s9_payload = @{ Detail = @(); Overview = @(); OutDir = $script:_s9_outDir; Now = $script:_s9_now }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalFleetHealthFailures { @($global:_s9_payload.Detail) }
+            Mock Get-AzLocalFleetHealthOverview { @($global:_s9_payload.Overview) }
+            Export-AzLocalFleetHealthStatusReport -OutputDirectory $global:_s9_payload.OutDir -Now $global:_s9_payload.Now -PassThru
+        }
+        $result.TotalFailures   | Should -Be 0
+        $result.CriticalCount   | Should -Be 0
+        $result.WarningCount    | Should -Be 0
+        $result.DistinctReasons | Should -Be 0
+        $result.OverviewRows    | Should -Be 0
+        Test-Path -LiteralPath $result.XmlPath | Should -BeTrue
+        $xml = [System.IO.File]::ReadAllText($result.XmlPath)
+        $xml | Should -Match '<testsuites name="AzureLocalFleetHealthStatus"'
+        $xml | Should -Match 'No Critical or Warning health-check failures'
+        $out = Get-Content -LiteralPath $script:_s9_ghOutputFile -Raw
+        $out | Should -Match 'total_failures=0'
+        $out | Should -Match 'critical_count=0'
+        $out | Should -Match 'warning_count=0'
+    }
+
+    It 'Critical+Warning mixed fleet emits one testcase per failing check, correct bucket counts, and target=_blank portal links in the markdown summary' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s9_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s9_ghSummaryFile
+        $alphaResId = '/subscriptions/s1/resourceGroups/rg1/providers/Microsoft.AzureStackHCI/clusters/alpha'
+        $bravoResId = '/subscriptions/s1/resourceGroups/rg2/providers/Microsoft.AzureStackHCI/clusters/bravo'
+        $alphaPortal = "https://portal.azure.com/#@/resource$alphaResId"
+        $bravoPortal = "https://portal.azure.com/#@/resource$bravoResId"
+        $global:_s9_payload = @{
+            Detail = @(
+                [pscustomobject]@{ ClusterName='alpha'; Severity='Critical'; FailureReason='ClusterCertExpiry'; Description='Cluster certificate expiring soon'; Remediation='https://aka.ms/azurelocal-cert-renew'; LastOccurrence=$script:_s9_now.AddHours(-3); ResourceGroup='rg1'; SubscriptionId='s1'; ClusterResourceId=$alphaResId; ClusterPortalUrl=$alphaPortal; TargetResourceName='ClusterCert'; TargetResourceType='Microsoft.AzureStackHCI/clusters' }
+                [pscustomobject]@{ ClusterName='alpha'; Severity='Warning';  FailureReason='ArbExtensionDrift'; Description='ARB extension version drift detected'; Remediation='Reinstall ARB extension'; LastOccurrence=$script:_s9_now.AddHours(-1); ResourceGroup='rg1'; SubscriptionId='s1'; ClusterResourceId=$alphaResId; ClusterPortalUrl=$alphaPortal; TargetResourceName='ArbExtension'; TargetResourceType='Microsoft.HybridCompute/machines/extensions' }
+                [pscustomobject]@{ ClusterName='bravo'; Severity='Critical'; FailureReason='ClusterCertExpiry'; Description='Cluster certificate expiring soon'; Remediation='https://aka.ms/azurelocal-cert-renew'; LastOccurrence=$script:_s9_now.AddHours(-2); ResourceGroup='rg2'; SubscriptionId='s1'; ClusterResourceId=$bravoResId; ClusterPortalUrl=$bravoPortal; TargetResourceName='ClusterCert'; TargetResourceType='Microsoft.AzureStackHCI/clusters' }
+            )
+            Overview = @(
+                [pscustomobject]@{ ClusterName='alpha'; ClusterPortalUrl=$alphaPortal; HealthStatus='Critical'; UpdateStatus='UpToDate'; CurrentVersion='12.2510.0.123'; SbeVersion='Vendor1-1.2.3'; AzureConnection='Connected'; LastChecked=$script:_s9_now.AddHours(-1); HealthResultsAgeDays=0; NodeCount=4 }
+                [pscustomobject]@{ ClusterName='bravo'; ClusterPortalUrl=$bravoPortal; HealthStatus='Critical'; UpdateStatus='UpToDate'; CurrentVersion='12.2510.0.123'; SbeVersion='Vendor1-1.2.3'; AzureConnection='Connected'; LastChecked=$script:_s9_now.AddHours(-2); HealthResultsAgeDays=0; NodeCount=4 }
+                [pscustomobject]@{ ClusterName='charlie'; ClusterPortalUrl="https://portal.azure.com/#@/resource/subscriptions/s1/resourceGroups/rg3/providers/Microsoft.AzureStackHCI/clusters/charlie"; HealthStatus='Healthy'; UpdateStatus='UpToDate'; CurrentVersion='12.2510.0.123'; SbeVersion='Vendor1-1.2.3'; AzureConnection='Connected'; LastChecked=$script:_s9_now.AddHours(-1); HealthResultsAgeDays=0; NodeCount=4 }
+            )
+            OutDir = $script:_s9_outDir; Now = $script:_s9_now
+        }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalFleetHealthFailures { @($global:_s9_payload.Detail) }
+            Mock Get-AzLocalFleetHealthOverview { @($global:_s9_payload.Overview) }
+            Export-AzLocalFleetHealthStatusReport -OutputDirectory $global:_s9_payload.OutDir -Now $global:_s9_payload.Now -PassThru
+        }
+        $result.TotalClusters   | Should -Be 2   # alpha + bravo
+        $result.TotalFailures   | Should -Be 3
+        $result.CriticalCount   | Should -Be 2
+        $result.WarningCount    | Should -Be 1
+        $result.DistinctReasons | Should -Be 2   # ClusterCertExpiry + ArbExtensionDrift
+        $result.OverviewRows    | Should -Be 3
+        $result.HealthyClusters | Should -Be 1
+        $result.TotalInSub      | Should -Be 3
+        $xml = [System.IO.File]::ReadAllText($result.XmlPath)
+        # Both severity suites are emitted
+        $xml | Should -Match '\[JUnit Debug\] Critical Health Failures'
+        $xml | Should -Match '\[JUnit Debug\] Warning Health Failures'
+        # ITSM <properties> on each testcase
+        $xml | Should -Match '<property name="ClusterName" value="alpha" />'
+        $xml | Should -Match '<property name="UpdateName" value="ClusterCertExpiry" />'
+        $xml | Should -Match '<property name="Severity" value="Critical" />'
+        # Markdown summary: target=_blank on cluster portal link
+        $summary = Get-Content -Raw -LiteralPath $script:_s9_ghSummaryFile
+        $summary | Should -Match '### Fleet Health Overview'
+        $summary | Should -Match '<a href="https://portal\.azure\.com[^"]*alpha[^"]*" target="_blank" rel="noopener noreferrer">alpha</a>'
+        $summary | Should -Match '### Health Check Failures By Reason'
+        $summary | Should -Match '### Detailed Results'
+        # KPI table values
+        $summary | Should -Match '\| \*\*Total Failing Checks\*\* \| 3 \|'
+        $summary | Should -Match '\| \*\*Critical\*\* \| 2 \|'
+        $summary | Should -Match '\| \*\*Warning\*\* \| 1 \|'
+        $summary | Should -Match '\| \*\*Healthy Clusters\*\* \| 1 \|'
+        # step outputs
+        $out = Get-Content -LiteralPath $script:_s9_ghOutputFile -Raw
+        $out | Should -Match 'total_failures=3'
+        $out | Should -Match 'critical_count=2'
+        $out | Should -Match 'distinct_reasons=2'
+        $out | Should -Match 'healthy_clusters=1'
+        $out | Should -Match 'total_in_sub=3'
+    }
+
+    It 'Scope by-update-ring forwards UpdateRing as -UpdateRingTag to both source cmdlets' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s9_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s9_ghSummaryFile
+        $global:_s9_payload = @{ OutDir = $script:_s9_outDir; Now = $script:_s9_now }
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalFleetHealthFailures { @() }
+            Mock Get-AzLocalFleetHealthOverview { @() }
+            Export-AzLocalFleetHealthStatusReport -OutputDirectory $global:_s9_payload.OutDir -Now $global:_s9_payload.Now -Scope 'by-update-ring' -UpdateRing 'Prod' | Out-Null
+            Should -Invoke -CommandName Get-AzLocalFleetHealthFailures -Times 1 -Exactly -ParameterFilter { $UpdateRingTag -eq 'Prod' }
+            Should -Invoke -CommandName Get-AzLocalFleetHealthOverview -Times 1 -Exactly -ParameterFilter { $UpdateRingTag -eq 'Prod' }
+        }
+    }
+
+    It 'Severity filter forwards to Get-AzLocalFleetHealthFailures' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s9_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s9_ghSummaryFile
+        $global:_s9_payload = @{ OutDir = $script:_s9_outDir; Now = $script:_s9_now }
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalFleetHealthFailures { @() }
+            Mock Get-AzLocalFleetHealthOverview { @() }
+            Export-AzLocalFleetHealthStatusReport -OutputDirectory $global:_s9_payload.OutDir -Now $global:_s9_payload.Now -Severity 'Critical' | Out-Null
+            Should -Invoke -CommandName Get-AzLocalFleetHealthFailures -Times 1 -Exactly -ParameterFilter { $Severity -eq 'Critical' }
+        }
+    }
+
+    It 'Azure DevOps host defaults OutputDirectory to BUILD_ARTIFACTSTAGINGDIRECTORY\reports' {
+        $tempStage = Join-Path -Path $env:TEMP -ChildPath ("s9-ado-stage-{0}" -f ([Guid]::NewGuid()))
+        New-Item -ItemType Directory -Path $tempStage -Force | Out-Null
+        try {
+            $env:TF_BUILD = 'True'
+            $env:BUILD_ARTIFACTSTAGINGDIRECTORY = $tempStage
+            $global:_s9_payload = @{ Detail = @(); Overview = @(); Now = $script:_s9_now }
+            $result = InModuleScope AzLocal.UpdateManagement {
+                Mock Get-AzLocalFleetHealthFailures { @() }
+                Mock Get-AzLocalFleetHealthOverview { @() }
+                Export-AzLocalFleetHealthStatusReport -Now $global:_s9_payload.Now -PassThru
+            }
+            $expected = Join-Path -Path $tempStage -ChildPath 'reports'
+            $result.XmlPath | Should -BeLike "$expected*"
+        }
+        finally {
+            if (Test-Path -LiteralPath $tempStage) { Remove-Item -LiteralPath $tempStage -Recurse -Force -ErrorAction SilentlyContinue }
+        }
+    }
+
+    It 'Summary view orders Critical-first then by ClusterCount desc' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s9_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s9_ghSummaryFile
+        $global:_s9_payload = @{
+            # 3 distinct (reason, severity) groups:
+            #   Reason=A Sev=Warning  ClusterCount=3  -> rank by severity puts this 3rd
+            #   Reason=B Sev=Critical ClusterCount=1  -> rank by severity puts this 1st (Critical+lower count, but severity wins)
+            #   Reason=C Sev=Critical ClusterCount=2  -> rank by severity 1st-tier; count desc puts this above B
+            Detail = @(
+                [pscustomobject]@{ ClusterName='c1'; Severity='Warning';  FailureReason='A'; LastOccurrence=$script:_s9_now; ClusterPortalUrl='https://portal/c1' }
+                [pscustomobject]@{ ClusterName='c2'; Severity='Warning';  FailureReason='A'; LastOccurrence=$script:_s9_now; ClusterPortalUrl='https://portal/c2' }
+                [pscustomobject]@{ ClusterName='c3'; Severity='Warning';  FailureReason='A'; LastOccurrence=$script:_s9_now; ClusterPortalUrl='https://portal/c3' }
+                [pscustomobject]@{ ClusterName='c4'; Severity='Critical'; FailureReason='B'; LastOccurrence=$script:_s9_now; ClusterPortalUrl='https://portal/c4' }
+                [pscustomobject]@{ ClusterName='c5'; Severity='Critical'; FailureReason='C'; LastOccurrence=$script:_s9_now; ClusterPortalUrl='https://portal/c5' }
+                [pscustomobject]@{ ClusterName='c6'; Severity='Critical'; FailureReason='C'; LastOccurrence=$script:_s9_now; ClusterPortalUrl='https://portal/c6' }
+            )
+            Overview = @()
+            OutDir = $script:_s9_outDir; Now = $script:_s9_now
+        }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalFleetHealthFailures { @($global:_s9_payload.Detail) }
+            Mock Get-AzLocalFleetHealthOverview { @($global:_s9_payload.Overview) }
+            Export-AzLocalFleetHealthStatusReport -OutputDirectory $global:_s9_payload.OutDir -Now $global:_s9_payload.Now -PassThru
+        }
+        $result.SummaryRows.Count                 | Should -Be 3
+        $result.SummaryRows[0].FailureReason      | Should -Be 'C'  # Critical, ClusterCount=2
+        $result.SummaryRows[0].Severity           | Should -Be 'Critical'
+        $result.SummaryRows[1].FailureReason      | Should -Be 'B'  # Critical, ClusterCount=1
+        $result.SummaryRows[2].FailureReason      | Should -Be 'A'  # Warning
+    }
+}
+
+#endregion v0.8.5: Export-AzLocalFleetHealthStatusReport
 
 
 #region v0.8.5: Export-AzLocalClusterUpdateReadinessReport
