@@ -1,0 +1,116 @@
+name: AzLocal.UpdateManagement - Pester
+
+# Runs the AzLocal.UpdateManagement Pester unit suite on every PR + push to main
+# that touches the module. Live-tagged Azure integration tests are excluded
+# (they need az login + the AdaptiveCloudLab subscription and are gated by
+# -IncludeLive in the local Invoke-Tests.ps1).
+#
+# Runner choice: windows-latest is required so the tests exercise the same
+# Windows PowerShell 5.1 + .NET 4.x surface that the published module targets.
+# Cost mitigation: path-filtered to AzLocal.UpdateManagement/** only, and only
+# fires on the three useful PR activities (opened, synchronize, reopened).
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'AzLocal.UpdateManagement/**'
+      - '.github/workflows/AzLocal.UpdateManagement-pester.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'AzLocal.UpdateManagement/**'
+      - '.github/workflows/AzLocal.UpdateManagement-pester.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: azlocal-updatemanagement-pester-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  checks: write
+  pull-requests: write
+
+jobs:
+  pester:
+    name: Pester (Windows PowerShell 5.1)
+    runs-on: windows-latest
+    timeout-minutes: 20
+
+    defaults:
+      run:
+        shell: powershell
+        working-directory: AzLocal.UpdateManagement
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show PowerShell + Pester baseline
+        run: |
+          $PSVersionTable | Format-List | Out-String | Write-Host
+          Get-Module Pester -ListAvailable | Select-Object Name, Version, Path | Format-Table -AutoSize | Out-String | Write-Host
+
+      - name: Install Pester 5.x
+        run: |
+          $needed = $true
+          $installed = Get-Module Pester -ListAvailable | Where-Object { $_.Version -ge [version]'5.0.0' } | Sort-Object Version -Descending | Select-Object -First 1
+          if ($installed) {
+            Write-Host "Pester $($installed.Version) already available at $($installed.Path)"
+            $needed = $false
+          }
+          if ($needed) {
+            Write-Host 'Installing Pester 5.x from PSGallery (CurrentUser scope)'
+            Install-Module Pester -MinimumVersion 5.5.0 -Force -SkipPublisherCheck -Scope CurrentUser
+          }
+          Import-Module Pester -MinimumVersion 5.0.0 -Force
+          (Get-Module Pester).Version | Write-Host
+
+      - name: Import module (smoke test)
+        run: |
+          Get-Module AzLocal.UpdateManagement -All | Remove-Module -Force -ErrorAction SilentlyContinue
+          Import-Module .\AzLocal.UpdateManagement.psd1 -Force -ErrorAction Stop
+          $m = Get-Module AzLocal.UpdateManagement
+          Write-Host "Loaded module $($m.Name) $($m.Version) with $($m.ExportedFunctions.Count) exported functions"
+
+      - name: Run Pester (unit suite, Live excluded)
+        run: |
+          New-Item -ItemType Directory -Path Tests\TestResults -Force | Out-Null
+          Get-Module AzLocal.UpdateManagement -All | Remove-Module -Force -ErrorAction SilentlyContinue
+          $config = New-PesterConfiguration
+          $config.Run.Path = '.\Tests'
+          $config.Run.PassThru = $true
+          $config.Run.Exit = $false
+          $config.Filter.ExcludeTag = @('Live')
+          $config.TestResult.Enabled = $true
+          $config.TestResult.OutputPath = 'Tests\TestResults\pester-junit.xml'
+          # JUnitXml is supported by Pester 5.4+ and is consumable by
+          # dorny/test-reporter with reporter=jest-junit below.
+          $config.TestResult.OutputFormat = 'JUnitXml'
+          $config.Output.Verbosity = 'Normal'
+          $result = Invoke-Pester -Configuration $config
+          "Passed=$($result.PassedCount) Failed=$($result.FailedCount) Skipped=$($result.SkippedCount) Duration=$($result.Duration)" | Tee-Object -FilePath Tests\TestResults\summary.txt
+          if ($result.FailedCount -gt 0) {
+            $result.Failed | ForEach-Object { "FAIL: $($_.ExpandedPath) :: $($_.ErrorRecord.Exception.Message)" } | Out-File Tests\TestResults\failures.txt
+            Write-Error "Pester reported $($result.FailedCount) failing test(s)."
+            exit 1
+          }
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pester-results-${{ github.run_id }}
+          path: AzLocal.UpdateManagement/Tests/TestResults/
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Publish test report (PR check)
+        if: always() && github.event_name == 'pull_request'
+        uses: dorny/test-reporter@v1
+        with:
+          name: AzLocal.UpdateManagement Pester
+          path: AzLocal.UpdateManagement/Tests/TestResults/pester-junit.xml
+          reporter: jest-junit
+          fail-on-error: false
