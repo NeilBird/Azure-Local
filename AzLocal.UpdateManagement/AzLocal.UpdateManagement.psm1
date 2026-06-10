@@ -326,5 +326,7 @@ Export-ModuleMember -Function @(
     # Thin-YAML Step.2 (v0.8.5) - UpdateRing tag management workload (validates CSV, applies tags via Set-AzLocalClusterUpdateRingTag, writes JSON sidecar + step summary)
     'Set-AzLocalClusterUpdateRingTagFromCsv',
     # Thin-YAML Step.7 (v0.8.5) - In-flight update-run monitor (CSV + JUnit + markdown + 6 step outputs)
-    'Export-AzLocalUpdateRunMonitorReport'
+    'Export-AzLocalUpdateRunMonitorReport',
+    # Thin-YAML Step.8 (v0.8.5) - Fleet update status snapshot (inventory + readiness + version distribution + 3-suite JUnit + markdown + 22 step outputs)
+    'Export-AzLocalFleetUpdateStatusReport'
 )

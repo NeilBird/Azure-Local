@@ -199,8 +199,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $content | Should -Match '\$data\.ArbRows' -Because "Step.4 $Platform must assign `$data.ArbRows from cmdlet output"
         }
 
-        It 'Should export exactly 44 functions' {
-            $script:ModuleInfo.ExportedFunctions.Count | Should -Be 44
+        It 'Should export exactly 45 functions' {
+            $script:ModuleInfo.ExportedFunctions.Count | Should -Be 45
         }
 
         It 'Should export the expected functions' {
@@ -270,7 +270,9 @@ Describe 'Module: AzLocal.UpdateManagement' {
                 # Thin-YAML Step.2 (v0.8.5) - UpdateRing tag management workload (CSV validation + apply via Set-AzLocalClusterUpdateRingTag + JSON sidecar + step summary)
                 'Set-AzLocalClusterUpdateRingTagFromCsv',
                 # Thin-YAML Step.7 (v0.8.5) - In-flight update-run monitor (CSV + JUnit + step summary + 6 step outputs)
-                'Export-AzLocalUpdateRunMonitorReport'
+                'Export-AzLocalUpdateRunMonitorReport',
+                # Thin-YAML Step.8 (v0.8.5) - Fleet update status snapshot (inventory + readiness + version distribution + 3-suite JUnit + step summary + 22 step outputs)
+                'Export-AzLocalFleetUpdateStatusReport'
             )
             
             foreach ($func in $expectedFunctions) {
@@ -7957,55 +7959,6 @@ Describe 'v0.7.66 Artifact download names carry a UTC timestamp suffix' {
     }
 }
 
-Describe 'v0.7.66 Fleet Update Status summary uses status emojis and groups failures first' {
-    # Guards the v0.7.66 UX refresh of Step.8_fleet-update-status.yml summary blocks (file was Step.7 prior to v0.7.90 renumber)
-    # on both GH and ADO. The summary now uses 'red cross / green tick' emojis
-    # instead of '[ok]/[fail]/...' bracket markers, and the per-cluster JUnit
-    # block orders failed clusters first.
-
-    BeforeAll {
-        $script:examplesRoot = (Resolve-Path -Path (Join-Path $PSScriptRoot '..\Automation-Pipeline-Examples')).Path
-        $script:fleetStatusFiles = @(
-            Join-Path $script:examplesRoot 'github-actions\Step.8_fleet-update-status.yml'
-            Join-Path $script:examplesRoot 'azure-devops\Step.8_fleet-update-status.yml'
-        )
-    }
-
-    It "Both Step.8_fleet-update-status.yml files contain success and failure status emojis" {
-        foreach ($yml in $script:fleetStatusFiles) {
-            # Must read explicitly as UTF-8; the YAML has no BOM, and PS 5.1
-            # Get-Content -Raw without -Encoding defaults to Default (cp1252),
-            # which mangles multi-byte glyphs like U+2705 into 3 separate chars.
-            $content = [System.IO.File]::ReadAllText($yml, [System.Text.UTF8Encoding]::new($false))
-            # PowerShell here strings to dodge Unicode source-file confusion in this test:
-            $tick  = [string]::new([char[]]@(0x2705))            # white-heavy-check-mark
-            $cross = [string]::new([char[]]@(0x274C))            # cross-mark
-            ($content -match [regex]::Escape($tick))  | Should -BeTrue  -Because "$(Split-Path -Leaf $yml) must use the U+2705 success emoji in its summary"
-            ($content -match [regex]::Escape($cross)) | Should -BeTrue  -Because "$(Split-Path -Leaf $yml) must use the U+274C failure emoji in its summary"
-            # Legacy bracket markers must be gone:
-            ($content -match '\[ok\]')    | Should -BeFalse -Because "$(Split-Path -Leaf $yml) must no longer use the '[ok]' bracket marker"
-            ($content -match '\[fail\]')  | Should -BeFalse -Because "$(Split-Path -Leaf $yml) must no longer use the '[fail]' bracket marker"
-        }
-    }
-
-    It "Both Step.8_fleet-update-status.yml files render a UTC timestamp in the summary heading" {
-        foreach ($yml in $script:fleetStatusFiles) {
-            $content = Get-Content -LiteralPath $yml -Raw
-            ($content -match 'Fleet Update Status Summary\s*_\(generated \$generatedUtc\)_') | Should -BeTrue -Because "$(Split-Path -Leaf $yml) must include the generated UTC timestamp in the H2 heading"
-            ($content -match 'generatedUtc\s*=\s*\(Get-Date\)\.ToUniversalTime\(\)') | Should -BeTrue -Because "$(Split-Path -Leaf $yml) must compute generatedUtc with ToUniversalTime()"
-        }
-    }
-
-    It "Both Step.8_fleet-update-status.yml files bucket failed clusters ahead of passed clusters before emitting the JUnit table" {
-        foreach ($yml in $script:fleetStatusFiles) {
-            $content = Get-Content -LiteralPath $yml -Raw
-            ($content -match '\$failedClusters')    | Should -BeTrue -Because "$(Split-Path -Leaf $yml) must build a `$failedClusters bucket"
-            ($content -match '\$passedClusters')    | Should -BeTrue -Because "$(Split-Path -Leaf $yml) must build a `$passedClusters bucket"
-            ($content -match '\$orderedClusters\s*=\s*@\(\$failedClusters') | Should -BeTrue -Because "$(Split-Path -Leaf $yml) must concatenate failed-first, then passed, into `$orderedClusters"
-        }
-    }
-}
-
 Describe 'v0.7.66 Pipeline update_ring inputs document multi-value and wildcard support' {
     BeforeAll {
         $script:examplesRoot = (Resolve-Path -Path (Join-Path $PSScriptRoot '..\Automation-Pipeline-Examples')).Path
@@ -10255,8 +10208,8 @@ Describe 'Function: Get-AzLocalFleetHealthOverview - v0.7.70 (ARG-first fleet he
             $cmd.CommandType | Should -Be 'Function'
         }
 
-        It 'BS7: Module exports exactly 44 functions (was 43 after Step.2 thin-YAML port; Step.7 thin-YAML port adds Export-AzLocalUpdateRunMonitorReport)' {
-            (Get-Module AzLocal.UpdateManagement).ExportedFunctions.Count | Should -Be 44
+        It 'BS7: Module exports exactly 45 functions (was 44 after Step.7 thin-YAML port; Step.8 thin-YAML port adds Export-AzLocalFleetUpdateStatusReport)' {
+            (Get-Module AzLocal.UpdateManagement).ExportedFunctions.Count | Should -Be 45
         }
     }
 
@@ -10413,57 +10366,6 @@ Describe 'Function: Get-AzLocalUpdateRunFailures - v0.7.70 fleet-scale failure-d
                 $rows = Get-AzLocalUpdateRunFailures -State Failed 6>$null
                 $rows[0].CurrentStep | Should -Be 'VerifyNCResources'
             }
-        }
-    }
-}
-
-Describe 'v0.7.70 Step.6 "📜 Update Run History and Error Details" JUnit + markdown wiring' {
-
-    BeforeAll {
-        $script:examplesRoot = (Resolve-Path -Path (Join-Path $PSScriptRoot '..\Automation-Pipeline-Examples')).Path
-        $script:step6Files = @(
-            Join-Path $script:examplesRoot 'github-actions\Step.8_fleet-update-status.yml'
-            Join-Path $script:examplesRoot 'azure-devops\Step.8_fleet-update-status.yml'
-        )
-    }
-
-    It 'BS13: Both Step.6 YAML files emit the new "📜 Update Run History and Error Details" testsuite name' {
-        foreach ($yml in $script:step6Files) {
-            $content = [System.IO.File]::ReadAllText($yml, [System.Text.UTF8Encoding]::new($false))
-            # U+1F4DC SCROLL emoji
-            $scroll = [string]::new([System.Text.Encoding]::UTF32.GetChars([System.BitConverter]::GetBytes(0x1F4DC)))
-            ($content.Contains($scroll + ' Update Run History and Error Details')) | Should -BeTrue -Because "$(Split-Path -Leaf $yml) must declare the new testsuite name with the scroll emoji"
-        }
-    }
-
-    It 'BS14: Both Step.6 YAML files call Get-AzLocalUpdateRunFailures -State Failed -OnlyUnresolved' {
-        foreach ($yml in $script:step6Files) {
-            $content = Get-Content -LiteralPath $yml -Raw
-            ($content -match 'Get-AzLocalUpdateRunFailures\s+-State\s+Failed\s+-OnlyUnresolved') | Should -BeTrue -Because "$(Split-Path -Leaf $yml) must drive the new section from the cmdlet with -State Failed -OnlyUnresolved"
-        }
-    }
-
-    It 'BS15: Both Step.6 YAML files export update-run-history.csv and update-run-history.json' {
-        foreach ($yml in $script:step6Files) {
-            $content = Get-Content -LiteralPath $yml -Raw
-            $content | Should -Match 'update-run-history\.csv'
-            $content | Should -Match 'update-run-history\.json'
-        }
-    }
-
-    It 'BS16: Both Step.6 YAML files render the markdown table heading and use the 9-column failure-detail layout' {
-        foreach ($yml in $script:step6Files) {
-            $content = [System.IO.File]::ReadAllText($yml, [System.Text.UTF8Encoding]::new($false))
-            $content | Should -Match 'Cluster Name \| Update Name \| Update State \| Status \| Current Step \| Verbose Error Details \| Duration \| Time Started \| Last Updated'
-        }
-    }
-
-    It 'BS17: Both Step.6 YAML files surface a runHistoryCount output for downstream gating' {
-        foreach ($yml in $script:step6Files) {
-            $content = Get-Content -LiteralPath $yml -Raw
-            # GH-actions uses RUN_HISTORY_COUNT; ADO uses runHistoryCount.
-            $hasOutput = ($content -match 'RUN_HISTORY_COUNT=') -or ($content -match 'variable=runHistoryCount;')
-            $hasOutput | Should -BeTrue -Because "$(Split-Path -Leaf $yml) must export runHistoryCount so downstream steps can render the markdown table"
         }
     }
 }
@@ -10683,38 +10585,6 @@ Describe 'Function: Get-AzLocalLatestSolutionVersion (v0.7.70 Phase E)' {
         It 'Rejects -SupportWindowMonths above 24' {
             { Get-AzLocalLatestSolutionVersion -SupportWindowMonths 25 } |
                 Should -Throw '*greater than the maximum*'
-        }
-    }
-}
-
-Describe 'Pipeline contract: Step.6 SupportStatus anchor (v0.7.70 Phase E)' {
-
-    BeforeAll {
-        $script:repoRoot = Split-Path -Path $PSScriptRoot -Parent
-        $script:step6Files = @(
-            Join-Path -Path $script:repoRoot -ChildPath 'Automation-Pipeline-Examples/github-actions/Step.8_fleet-update-status.yml'
-            Join-Path -Path $script:repoRoot -ChildPath 'Automation-Pipeline-Examples/azure-devops/Step.8_fleet-update-status.yml'
-        )
-    }
-
-    It 'Both Step.6 YAML files invoke Get-AzLocalLatestSolutionVersion' {
-        foreach ($yml in $script:step6Files) {
-            $content = Get-Content -LiteralPath $yml -Raw
-            $content | Should -Match 'Get-AzLocalLatestSolutionVersion' -Because "$(Split-Path -Leaf $yml) must call the Microsoft-manifest probe to anchor the SupportStatus window"
-        }
-    }
-
-    It 'Both Step.6 YAML files surface a supportSource property in JUnit' {
-        foreach ($yml in $script:step6Files) {
-            $content = Get-Content -LiteralPath $yml -Raw
-            $content | Should -Match 'supportSource' -Because "$(Split-Path -Leaf $yml) must emit the SupportSource flag so consumers can tell manifest-anchored from fleet-observed windows apart"
-        }
-    }
-
-    It 'Both Step.6 YAML files wrap the manifest probe in try/catch with a fleet-observed fallback' {
-        foreach ($yml in $script:step6Files) {
-            $content = Get-Content -LiteralPath $yml -Raw
-            $content | Should -Match 'fleet-observed' -Because "$(Split-Path -Leaf $yml) must fall back to fleet-observed top-6 when the manifest is unreachable"
         }
     }
 }
@@ -12953,6 +12823,59 @@ Describe 'Thin-YAML shared helper: New-AzLocalPipelineJUnitXml' {
         }
         ([regex]::Matches($xml, 'timestamp="2026-06-10T12:34:56"')).Count | Should -Be 2
     }
+
+    # v0.8.5 Step.8 - Properties hashtable support (suite + testcase)
+    It 'Emits suite-level <properties> block when Suites contains a Properties hashtable' {
+        $xml = InModuleScope AzLocal.UpdateManagement {
+            New-AzLocalPipelineJUnitXml -TestSuitesName 'demo' -Suites @(
+                @{
+                    Name       = 'S'
+                    Properties = ([ordered]@{ testCategory = 'FleetVersionDistribution'; totalClusters = 42 })
+                    TestCases  = @(@{ Name = 'tc' })
+                }
+            )
+        }
+        $xml | Should -Match '<properties>'
+        $xml | Should -Match '<property name="testCategory" value="FleetVersionDistribution" />'
+        $xml | Should -Match '<property name="totalClusters" value="42" />'
+        $xml | Should -Match '</properties>'
+    }
+
+    It 'Emits testcase-level <properties> block when a TestCase contains a Properties hashtable' {
+        $xml = InModuleScope AzLocal.UpdateManagement {
+            New-AzLocalPipelineJUnitXml -TestSuitesName 'demo' -Suites @(
+                @{
+                    Name      = 'S'
+                    TestCases = @(@{
+                        Name       = 'cluster-alpha'
+                        Properties = ([ordered]@{
+                            ClusterName       = 'alpha'
+                            ClusterResourceId = '/subscriptions/s1/resourceGroups/rg1/providers/Microsoft.AzureStackHCI/clusters/alpha'
+                            Status            = 'UpdateFailure'
+                        })
+                    })
+                }
+            )
+        }
+        $xml | Should -Match '<property name="ClusterName" value="alpha" />'
+        $xml | Should -Match '<property name="ClusterResourceId" value="/subscriptions/s1/resourceGroups/rg1/providers/Microsoft.AzureStackHCI/clusters/alpha" />'
+        $xml | Should -Match '<property name="Status" value="UpdateFailure" />'
+    }
+
+    It 'XML-escapes special characters in property keys and values' {
+        $xml = InModuleScope AzLocal.UpdateManagement {
+            New-AzLocalPipelineJUnitXml -TestSuitesName 'demo' -Suites @(
+                @{
+                    Name      = 'S'
+                    TestCases = @(@{
+                        Name       = 'tc'
+                        Properties = ([ordered]@{ 'Key&"<>' = 'val<a>&"' })
+                    })
+                }
+            )
+        }
+        $xml | Should -Match '<property name="Key&amp;&quot;&lt;&gt;" value="val&lt;a&gt;&amp;&quot;" />'
+    }
 }
 
 #endregion v0.8.5: New-AzLocalPipelineJUnitXml
@@ -14128,3 +14051,502 @@ Describe 'Thin-YAML Step.7: Export-AzLocalUpdateRunMonitorReport' {
 }
 
 #endregion v0.8.5: Export-AzLocalUpdateRunMonitorReport
+
+#region v0.8.5: Export-AzLocalFleetUpdateStatusReport (Step.8 thin-YAML port)
+
+Describe 'Thin-YAML Step.8: Export-AzLocalFleetUpdateStatusReport' {
+
+    BeforeEach {
+        $script:_s8_savedGhActions = $env:GITHUB_ACTIONS
+        $script:_s8_savedTfBuild   = $env:TF_BUILD
+        $script:_s8_savedGhOutput  = $env:GITHUB_OUTPUT
+        $script:_s8_savedGhSummary = $env:GITHUB_STEP_SUMMARY
+        $script:_s8_savedAdoStage  = $env:BUILD_ARTIFACTSTAGINGDIRECTORY
+        Remove-Item Env:\GITHUB_ACTIONS                 -ErrorAction SilentlyContinue
+        Remove-Item Env:\TF_BUILD                       -ErrorAction SilentlyContinue
+        Remove-Item Env:\GITHUB_OUTPUT                  -ErrorAction SilentlyContinue
+        Remove-Item Env:\GITHUB_STEP_SUMMARY            -ErrorAction SilentlyContinue
+        Remove-Item Env:\BUILD_ARTIFACTSTAGINGDIRECTORY -ErrorAction SilentlyContinue
+
+        $script:_s8_outDir        = Join-Path -Path $env:TEMP -ChildPath ("s8-out-{0}"        -f ([Guid]::NewGuid()))
+        $script:_s8_ghOutputFile  = Join-Path -Path $env:TEMP -ChildPath ("s8-gh-output-{0}"  -f ([Guid]::NewGuid()))
+        $script:_s8_ghSummaryFile = Join-Path -Path $env:TEMP -ChildPath ("s8-gh-summary-{0}.md" -f ([Guid]::NewGuid()))
+        New-Item -ItemType Directory -Path $script:_s8_outDir       -Force | Out-Null
+        New-Item -ItemType File      -Path $script:_s8_ghOutputFile  -Force | Out-Null
+        New-Item -ItemType File      -Path $script:_s8_ghSummaryFile -Force | Out-Null
+
+        $script:_s8_now = [datetime]::SpecifyKind([datetime]'2026-06-10T12:00:00', [DateTimeKind]::Utc)
+    }
+
+    AfterEach {
+        if ($null -ne $script:_s8_savedGhActions) { $env:GITHUB_ACTIONS                 = $script:_s8_savedGhActions } else { Remove-Item Env:\GITHUB_ACTIONS                 -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_s8_savedTfBuild)   { $env:TF_BUILD                       = $script:_s8_savedTfBuild   } else { Remove-Item Env:\TF_BUILD                       -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_s8_savedGhOutput)  { $env:GITHUB_OUTPUT                  = $script:_s8_savedGhOutput  } else { Remove-Item Env:\GITHUB_OUTPUT                  -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_s8_savedGhSummary) { $env:GITHUB_STEP_SUMMARY            = $script:_s8_savedGhSummary } else { Remove-Item Env:\GITHUB_STEP_SUMMARY            -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_s8_savedAdoStage)  { $env:BUILD_ARTIFACTSTAGINGDIRECTORY = $script:_s8_savedAdoStage  } else { Remove-Item Env:\BUILD_ARTIFACTSTAGINGDIRECTORY -ErrorAction SilentlyContinue }
+        foreach ($p in @($script:_s8_ghOutputFile, $script:_s8_ghSummaryFile)) {
+            if ($p -and (Test-Path -LiteralPath $p)) { Remove-Item -LiteralPath $p -Force -ErrorAction SilentlyContinue }
+        }
+        if ($script:_s8_outDir -and (Test-Path -LiteralPath $script:_s8_outDir)) {
+            Remove-Item -LiteralPath $script:_s8_outDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'Empty fleet emits empty JUnit XML, zero-valued step outputs, and PassThru with zero counts' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s8_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s8_ghSummaryFile
+        $global:_s8_payload = @{ Inventory = @(); OutDir = $script:_s8_outDir; Now = $script:_s8_now }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory       { @($global:_s8_payload.Inventory) }
+            Mock Get-AzLocalClusterUpdateReadiness { @() }
+            Mock Get-AzLocalLatestSolutionVersion  { throw 'not used in empty path' }
+            Mock Get-AzLocalUpdateSummary          { @() }
+            Mock Get-AzLocalAvailableUpdates       { @() }
+            Mock Get-AzLocalUpdateRuns             { @() }
+            Mock Get-AzLocalUpdateRunFailures      { @() }
+            Export-AzLocalFleetUpdateStatusReport -OutputDirectory $global:_s8_payload.OutDir -Now $global:_s8_payload.Now -PassThru
+        }
+        $result.TotalClusters | Should -Be 0
+        $result.CriticalHealthFailed | Should -Be 0
+        $result.RunHistoryCount | Should -Be 0
+        Test-Path -LiteralPath $result.XmlPath | Should -BeTrue
+        $xml = [System.IO.File]::ReadAllText($result.XmlPath)
+        $xml | Should -Match '<testsuites name="Fleet Update Status"'
+        # zero-output guarantees for downstream steps
+        $out = Get-Content -LiteralPath $script:_s8_ghOutputFile -Raw
+        $out | Should -Match 'total_clusters=0'
+        $out | Should -Match 'critical_health_failed=0'
+    }
+
+    It 'Single healthy cluster produces 1 testcase per suite, criticalHealthPassed=1, no actions required' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s8_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s8_ghSummaryFile
+        $global:_s8_payload = @{
+            Inventory = @(
+                [pscustomobject]@{ ClusterName='alpha'; ResourceId='/subscriptions/s1/resourceGroups/rg1/providers/Microsoft.AzureStackHCI/clusters/alpha' }
+            )
+            Readiness = @(
+                [pscustomobject]@{
+                    ClusterName='alpha'; ResourceGroup='rg1'; SubscriptionId='s1'
+                    ResourceId='/subscriptions/s1/resourceGroups/rg1/providers/Microsoft.AzureStackHCI/clusters/alpha'
+                    UpdateState='UpToDate'; HealthState='Success'; ReadyForUpdate=$false
+                    HasPrerequisiteUpdates=''; AllAvailableUpdates=''; ReadyUpdates=''; SBEDependency=''
+                    RecommendedUpdate=''; CurrentVersion='12.2510.0.123'
+                }
+            )
+            Manifest = [pscustomobject]@{ SupportedYYMMs=@('2510','2509','2508','2507','2506','2505'); LatestYYMM='2510'; LatestVersion='12.2510.0.999'; ManifestFetchedAt=(Get-Date).ToUniversalTime() }
+            OutDir = $script:_s8_outDir; Now = $script:_s8_now
+        }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory       { @($global:_s8_payload.Inventory) }
+            Mock Get-AzLocalClusterUpdateReadiness { @($global:_s8_payload.Readiness) }
+            Mock Get-AzLocalLatestSolutionVersion  { $global:_s8_payload.Manifest }
+            Mock Get-AzLocalUpdateSummary          { @() }
+            Mock Get-AzLocalAvailableUpdates       { @() }
+            Mock Get-AzLocalUpdateRuns             { @() }
+            Mock Get-AzLocalUpdateRunFailures      { @() }
+            Export-AzLocalFleetUpdateStatusReport -OutputDirectory $global:_s8_payload.OutDir -Now $global:_s8_payload.Now -PassThru
+        }
+        $result.TotalClusters | Should -Be 1
+        $result.CriticalHealthPassed | Should -Be 1
+        $result.CriticalHealthFailed | Should -Be 0
+        $result.UpToDateCount | Should -Be 1
+        $result.SupportSource | Should -Be 'Microsoft manifest'
+        $result.SupportedClusters | Should -Be 1
+        $result.UnsupportedClusters | Should -Be 0
+    }
+
+    It 'UpdateFailed cluster emits a failure testcase and increments update_failed step output' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s8_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s8_ghSummaryFile
+        $global:_s8_payload = @{
+            Inventory = @([pscustomobject]@{ ClusterName='beta'; ResourceId='/subscriptions/s1/resourceGroups/rg2/providers/Microsoft.AzureStackHCI/clusters/beta' })
+            Readiness = @(
+                [pscustomobject]@{
+                    ClusterName='beta'; ResourceGroup='rg2'; SubscriptionId='s1'
+                    ResourceId='/subscriptions/s1/resourceGroups/rg2/providers/Microsoft.AzureStackHCI/clusters/beta'
+                    UpdateState='Failed'; HealthState='Success'; ReadyForUpdate=$false
+                    HasPrerequisiteUpdates=''; AllAvailableUpdates='12.2510.0.999'; ReadyUpdates=''; SBEDependency=''
+                    RecommendedUpdate='12.2510.0.999'; CurrentVersion='12.2509.0.0'; HealthCheckFailures=''
+                }
+            )
+            Manifest = [pscustomobject]@{ SupportedYYMMs=@('2510'); LatestYYMM='2510'; LatestVersion='12.2510.0.999'; ManifestFetchedAt=(Get-Date).ToUniversalTime() }
+            OutDir = $script:_s8_outDir; Now = $script:_s8_now
+        }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory       { @($global:_s8_payload.Inventory) }
+            Mock Get-AzLocalClusterUpdateReadiness { @($global:_s8_payload.Readiness) }
+            Mock Get-AzLocalLatestSolutionVersion  { $global:_s8_payload.Manifest }
+            Mock Get-AzLocalUpdateSummary          { @() }
+            Mock Get-AzLocalAvailableUpdates       { @() }
+            Mock Get-AzLocalUpdateRuns             { @() }
+            Mock Get-AzLocalUpdateRunFailures      { @() }
+            Export-AzLocalFleetUpdateStatusReport -OutputDirectory $global:_s8_payload.OutDir -Now $global:_s8_payload.Now -PassThru
+        }
+        $result.UpdateFailedCount | Should -Be 1
+        $result.CriticalHealthFailed | Should -Be 1
+        $xml = [System.IO.File]::ReadAllText($result.XmlPath)
+        $xml | Should -Match '<failure message="Critical Health Status: Failed" type="UpdateFailure">'
+        $out = Get-Content -LiteralPath $script:_s8_ghOutputFile -Raw
+        $out | Should -Match 'update_failed=1'
+    }
+
+    It 'PreparationFailed cluster is classified as ActionRequired (priority cascade)' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s8_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s8_ghSummaryFile
+        $global:_s8_payload = @{
+            Inventory = @([pscustomobject]@{ ClusterName='gamma'; ResourceId='/subscriptions/s1/resourceGroups/rg3/providers/Microsoft.AzureStackHCI/clusters/gamma' })
+            Readiness = @(
+                [pscustomobject]@{
+                    ClusterName='gamma'; ResourceGroup='rg3'; SubscriptionId='s1'
+                    ResourceId='/subscriptions/s1/resourceGroups/rg3/providers/Microsoft.AzureStackHCI/clusters/gamma'
+                    UpdateState='PreparationFailed'; HealthState='Success'; ReadyForUpdate=$false
+                    HasPrerequisiteUpdates=''; AllAvailableUpdates=''; ReadyUpdates=''; SBEDependency=''
+                    RecommendedUpdate=''; CurrentVersion='12.2510.0.123'
+                }
+            )
+            Manifest = [pscustomobject]@{ SupportedYYMMs=@('2510'); LatestYYMM='2510'; LatestVersion='12.2510.0.999'; ManifestFetchedAt=(Get-Date).ToUniversalTime() }
+            OutDir = $script:_s8_outDir; Now = $script:_s8_now
+        }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory       { @($global:_s8_payload.Inventory) }
+            Mock Get-AzLocalClusterUpdateReadiness { @($global:_s8_payload.Readiness) }
+            Mock Get-AzLocalLatestSolutionVersion  { $global:_s8_payload.Manifest }
+            Mock Get-AzLocalUpdateSummary          { @() }
+            Mock Get-AzLocalAvailableUpdates       { @() }
+            Mock Get-AzLocalUpdateRuns             { @() }
+            Mock Get-AzLocalUpdateRunFailures      { @() }
+            Export-AzLocalFleetUpdateStatusReport -OutputDirectory $global:_s8_payload.OutDir -Now $global:_s8_payload.Now -PassThru
+        }
+        $result.ActionRequiredCount | Should -Be 1
+        $result.UpdateFailedCount | Should -Be 0
+        $result.CriticalHealthFailed | Should -Be 1
+    }
+
+    It 'HealthFailure cluster increments health_failure but not update_failed' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s8_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s8_ghSummaryFile
+        $global:_s8_payload = @{
+            Inventory = @([pscustomobject]@{ ClusterName='delta'; ResourceId='/subscriptions/s1/resourceGroups/rg4/providers/Microsoft.AzureStackHCI/clusters/delta' })
+            Readiness = @(
+                [pscustomobject]@{
+                    ClusterName='delta'; ResourceGroup='rg4'; SubscriptionId='s1'
+                    ResourceId='/subscriptions/s1/resourceGroups/rg4/providers/Microsoft.AzureStackHCI/clusters/delta'
+                    UpdateState='UpToDate'; HealthState='Failure'; ReadyForUpdate=$false
+                    HasPrerequisiteUpdates=''; AllAvailableUpdates=''; ReadyUpdates=''; SBEDependency=''
+                    RecommendedUpdate=''; CurrentVersion='12.2510.0.0'; HealthCheckFailures='NodeOffline'
+                }
+            )
+            Manifest = [pscustomobject]@{ SupportedYYMMs=@('2510'); LatestYYMM='2510'; LatestVersion='12.2510.0.999'; ManifestFetchedAt=(Get-Date).ToUniversalTime() }
+            OutDir = $script:_s8_outDir; Now = $script:_s8_now
+        }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory       { @($global:_s8_payload.Inventory) }
+            Mock Get-AzLocalClusterUpdateReadiness { @($global:_s8_payload.Readiness) }
+            Mock Get-AzLocalLatestSolutionVersion  { $global:_s8_payload.Manifest }
+            Mock Get-AzLocalUpdateSummary          { @() }
+            Mock Get-AzLocalAvailableUpdates       { @() }
+            Mock Get-AzLocalUpdateRuns             { @() }
+            Mock Get-AzLocalUpdateRunFailures      { @() }
+            Export-AzLocalFleetUpdateStatusReport -OutputDirectory $global:_s8_payload.OutDir -Now $global:_s8_payload.Now -PassThru
+        }
+        $result.HealthFailureCount | Should -Be 1
+        $result.UpdateFailedCount  | Should -Be 0
+        $result.CriticalHealthFailed | Should -Be 1
+    }
+
+    It 'SBE prerequisite blocked cluster is classified as SbeBlocked' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s8_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s8_ghSummaryFile
+        $global:_s8_payload = @{
+            Inventory = @([pscustomobject]@{ ClusterName='epsilon'; ResourceId='/subscriptions/s1/resourceGroups/rg5/providers/Microsoft.AzureStackHCI/clusters/epsilon' })
+            Readiness = @(
+                [pscustomobject]@{
+                    ClusterName='epsilon'; ResourceGroup='rg5'; SubscriptionId='s1'
+                    ResourceId='/subscriptions/s1/resourceGroups/rg5/providers/Microsoft.AzureStackHCI/clusters/epsilon'
+                    UpdateState='UpToDate'; HealthState='Success'; ReadyForUpdate=$false
+                    HasPrerequisiteUpdates='SolutionBuilderExtension-Dell-1.0'; AllAvailableUpdates=''; ReadyUpdates=''; SBEDependency='Dell'
+                    RecommendedUpdate=''; CurrentVersion='12.2510.0.0'
+                }
+            )
+            Manifest = [pscustomobject]@{ SupportedYYMMs=@('2510'); LatestYYMM='2510'; LatestVersion='12.2510.0.999'; ManifestFetchedAt=(Get-Date).ToUniversalTime() }
+            OutDir = $script:_s8_outDir; Now = $script:_s8_now
+        }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory       { @($global:_s8_payload.Inventory) }
+            Mock Get-AzLocalClusterUpdateReadiness { @($global:_s8_payload.Readiness) }
+            Mock Get-AzLocalLatestSolutionVersion  { $global:_s8_payload.Manifest }
+            Mock Get-AzLocalUpdateSummary          { @() }
+            Mock Get-AzLocalAvailableUpdates       { @() }
+            Mock Get-AzLocalUpdateRuns             { @() }
+            Mock Get-AzLocalUpdateRunFailures      { @() }
+            Export-AzLocalFleetUpdateStatusReport -OutputDirectory $global:_s8_payload.OutDir -Now $global:_s8_payload.Now -PassThru
+        }
+        $result.SbeBlockedCount | Should -Be 1
+        $result.HasPrerequisiteCount | Should -Be 1
+        $result.CriticalHealthFailed | Should -Be 1
+    }
+
+    It 'Version distribution falls back to fleet-observed top-6 YYMM when manifest probe throws' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s8_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s8_ghSummaryFile
+        $global:_s8_payload = @{
+            Inventory = @([pscustomobject]@{ ClusterName='zeta'; ResourceId='/subscriptions/s1/resourceGroups/rg6/providers/Microsoft.AzureStackHCI/clusters/zeta' })
+            Readiness = @(
+                [pscustomobject]@{
+                    ClusterName='zeta'; ResourceGroup='rg6'; SubscriptionId='s1'
+                    ResourceId='/subscriptions/s1/resourceGroups/rg6/providers/Microsoft.AzureStackHCI/clusters/zeta'
+                    UpdateState='UpToDate'; HealthState='Success'; ReadyForUpdate=$false
+                    HasPrerequisiteUpdates=''; AllAvailableUpdates=''; ReadyUpdates=''; SBEDependency=''
+                    RecommendedUpdate=''; CurrentVersion='12.2509.0.0'
+                }
+            )
+            OutDir = $script:_s8_outDir; Now = $script:_s8_now
+        }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory       { @($global:_s8_payload.Inventory) }
+            Mock Get-AzLocalClusterUpdateReadiness { @($global:_s8_payload.Readiness) }
+            Mock Get-AzLocalLatestSolutionVersion  { throw 'simulated manifest fetch failure' }
+            Mock Get-AzLocalUpdateSummary          { @() }
+            Mock Get-AzLocalAvailableUpdates       { @() }
+            Mock Get-AzLocalUpdateRuns             { @() }
+            Mock Get-AzLocalUpdateRunFailures      { @() }
+            Export-AzLocalFleetUpdateStatusReport -OutputDirectory $global:_s8_payload.OutDir -Now $global:_s8_payload.Now -PassThru
+        }
+        $result.SupportSource | Should -Be 'fleet-observed'
+        $result.SupportedClusters | Should -Be 1   # 2509 is in the fleet-observed window
+        $result.LatestReleasedYymm | Should -BeNullOrEmpty
+    }
+
+    It 'Unresolved Failed update runs flow into RunHistoryCount + dedicated JUnit suite' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s8_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s8_ghSummaryFile
+        $start = $script:_s8_now.AddHours(-3)
+        $end   = $script:_s8_now.AddHours(-1)
+        $global:_s8_payload = @{
+            Inventory = @([pscustomobject]@{ ClusterName='eta'; ResourceId='/subscriptions/s1/resourceGroups/rg7/providers/Microsoft.AzureStackHCI/clusters/eta' })
+            Readiness = @(
+                [pscustomobject]@{
+                    ClusterName='eta'; ResourceGroup='rg7'; SubscriptionId='s1'
+                    ResourceId='/subscriptions/s1/resourceGroups/rg7/providers/Microsoft.AzureStackHCI/clusters/eta'
+                    UpdateState='Failed'; HealthState='Success'; ReadyForUpdate=$false
+                    HasPrerequisiteUpdates=''; AllAvailableUpdates=''; ReadyUpdates=''; SBEDependency=''
+                    RecommendedUpdate=''; CurrentVersion='12.2510.0.0'; HealthCheckFailures=''
+                }
+            )
+            Manifest = [pscustomobject]@{ SupportedYYMMs=@('2510'); LatestYYMM='2510'; LatestVersion='12.2510.0.999'; ManifestFetchedAt=(Get-Date).ToUniversalTime() }
+            Failures = @(
+                [pscustomobject]@{
+                    ClusterName='eta'; ClusterResourceId='/subscriptions/s1/resourceGroups/rg7/providers/Microsoft.AzureStackHCI/clusters/eta'
+                    UpdateName='12.2510.0.999'; State='Failed'; Status='Failed'; CurrentStep='ApplyNodeUpdate'
+                    Duration='02:00:00'; DurationMinutes=120.0; StartTime=$start; LastUpdated=$end
+                    DeepestStepName='ApplyNodeUpdate'; ErrorCategory='NodeReboot'
+                    DeepestErrMsg='Node reboot timed out after 30 minutes'
+                    UpdateRunPortalUrl='https://portal.azure.com/run/1'; RunId='run-1'; StackTracePreview=''
+                }
+            )
+            OutDir = $script:_s8_outDir; Now = $script:_s8_now
+        }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory       { @($global:_s8_payload.Inventory) }
+            Mock Get-AzLocalClusterUpdateReadiness { @($global:_s8_payload.Readiness) }
+            Mock Get-AzLocalLatestSolutionVersion  { $global:_s8_payload.Manifest }
+            Mock Get-AzLocalUpdateSummary          { @() }
+            Mock Get-AzLocalAvailableUpdates       { @() }
+            Mock Get-AzLocalUpdateRuns             { @() }
+            Mock Get-AzLocalUpdateRunFailures      { @($global:_s8_payload.Failures) }
+            Export-AzLocalFleetUpdateStatusReport -OutputDirectory $global:_s8_payload.OutDir -Now $global:_s8_payload.Now -PassThru
+        }
+        $result.RunHistoryCount | Should -Be 1
+        Test-Path -LiteralPath $result.RunHistoryCsvPath  | Should -BeTrue
+        Test-Path -LiteralPath $result.RunHistoryJsonPath | Should -BeTrue
+        $xml = [System.IO.File]::ReadAllText($result.XmlPath)
+        $xml | Should -Match 'Update Run History and Error Details'
+        $xml | Should -Match 'NodeReboot'
+        $xml | Should -Match 'Node reboot timed out after 30 minutes'
+        $out = Get-Content -LiteralPath $script:_s8_ghOutputFile -Raw
+        $out | Should -Match 'run_history_count=1'
+    }
+
+    It '-IncludeUpdateRuns:$false skips the Get-AzLocalUpdateRuns step' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s8_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s8_ghSummaryFile
+        $global:_s8_payload = @{
+            Inventory = @([pscustomobject]@{ ClusterName='theta'; ResourceId='/subscriptions/s1/resourceGroups/rg8/providers/Microsoft.AzureStackHCI/clusters/theta' })
+            Readiness = @(
+                [pscustomobject]@{
+                    ClusterName='theta'; ResourceGroup='rg8'; SubscriptionId='s1'
+                    ResourceId='/subscriptions/s1/resourceGroups/rg8/providers/Microsoft.AzureStackHCI/clusters/theta'
+                    UpdateState='UpToDate'; HealthState='Success'; ReadyForUpdate=$false
+                    HasPrerequisiteUpdates=''; AllAvailableUpdates=''; ReadyUpdates=''; SBEDependency=''
+                    RecommendedUpdate=''; CurrentVersion='12.2510.0.0'
+                }
+            )
+            Manifest = [pscustomobject]@{ SupportedYYMMs=@('2510'); LatestYYMM='2510'; LatestVersion='12.2510.0.999'; ManifestFetchedAt=(Get-Date).ToUniversalTime() }
+            OutDir = $script:_s8_outDir; Now = $script:_s8_now
+        }
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory       { @($global:_s8_payload.Inventory) }
+            Mock Get-AzLocalClusterUpdateReadiness { @($global:_s8_payload.Readiness) }
+            Mock Get-AzLocalLatestSolutionVersion  { $global:_s8_payload.Manifest }
+            Mock Get-AzLocalUpdateSummary          { @() }
+            Mock Get-AzLocalAvailableUpdates       { @() }
+            Mock Get-AzLocalUpdateRuns             { throw 'should not be called when IncludeUpdateRuns is $false' }
+            Mock Get-AzLocalUpdateRunFailures      { @() }
+            { Export-AzLocalFleetUpdateStatusReport -OutputDirectory $global:_s8_payload.OutDir -Now $global:_s8_payload.Now -IncludeUpdateRuns:$false } | Should -Not -Throw
+            Assert-MockCalled Get-AzLocalUpdateRuns -Times 0 -Exactly -Scope It
+        }
+    }
+
+    It 'Scope=by-update-ring passes ScopeByUpdateRingTag + UpdateRingValue to Get-AzLocalClusterUpdateReadiness' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s8_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s8_ghSummaryFile
+        $global:_s8_payload = @{
+            Inventory = @([pscustomobject]@{ ClusterName='iota'; ResourceId='/subscriptions/s1/resourceGroups/rg9/providers/Microsoft.AzureStackHCI/clusters/iota' })
+            Readiness = @(
+                [pscustomobject]@{
+                    ClusterName='iota'; ResourceGroup='rg9'; SubscriptionId='s1'
+                    ResourceId='/subscriptions/s1/resourceGroups/rg9/providers/Microsoft.AzureStackHCI/clusters/iota'
+                    UpdateState='UpToDate'; HealthState='Success'; ReadyForUpdate=$false
+                    HasPrerequisiteUpdates=''; AllAvailableUpdates=''; ReadyUpdates=''; SBEDependency=''
+                    RecommendedUpdate=''; CurrentVersion='12.2510.0.0'
+                }
+            )
+            Manifest = [pscustomobject]@{ SupportedYYMMs=@('2510'); LatestYYMM='2510'; LatestVersion='12.2510.0.999'; ManifestFetchedAt=(Get-Date).ToUniversalTime() }
+            OutDir = $script:_s8_outDir; Now = $script:_s8_now
+        }
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory       { @($global:_s8_payload.Inventory) }
+            Mock Get-AzLocalClusterUpdateReadiness { @($global:_s8_payload.Readiness) }
+            Mock Get-AzLocalLatestSolutionVersion  { $global:_s8_payload.Manifest }
+            Mock Get-AzLocalUpdateSummary          { @() }
+            Mock Get-AzLocalAvailableUpdates       { @() }
+            Mock Get-AzLocalUpdateRuns             { @() }
+            Mock Get-AzLocalUpdateRunFailures      { @() }
+            Export-AzLocalFleetUpdateStatusReport -OutputDirectory $global:_s8_payload.OutDir -Now $global:_s8_payload.Now -Scope 'by-update-ring' -UpdateRing 'Prod' | Out-Null
+            Assert-MockCalled Get-AzLocalClusterUpdateReadiness -Times 1 -Exactly -Scope It -ParameterFilter {
+                $ScopeByUpdateRingTag -eq $true -and $UpdateRingValue -eq 'Prod'
+            }
+        }
+    }
+
+    It 'ADO host (TF_BUILD=true) resolves default OutputDirectory to $BUILD_ARTIFACTSTAGINGDIRECTORY/reports' {
+        $adoStage = Join-Path -Path $env:TEMP -ChildPath ("s8-ado-stage-{0}" -f ([Guid]::NewGuid()))
+        New-Item -ItemType Directory -Path $adoStage -Force | Out-Null
+        try {
+            $env:TF_BUILD                       = 'True'
+            $env:BUILD_ARTIFACTSTAGINGDIRECTORY = $adoStage
+            $global:_s8_payload = @{ Inventory = @(); Now = $script:_s8_now }
+            $result = InModuleScope AzLocal.UpdateManagement {
+                Mock Get-AzLocalClusterInventory       { @($global:_s8_payload.Inventory) }
+                Mock Get-AzLocalClusterUpdateReadiness { @() }
+                Mock Get-AzLocalLatestSolutionVersion  { throw 'unused in empty path' }
+                Mock Get-AzLocalUpdateSummary          { @() }
+                Mock Get-AzLocalAvailableUpdates       { @() }
+                Mock Get-AzLocalUpdateRuns             { @() }
+                Mock Get-AzLocalUpdateRunFailures      { @() }
+                Export-AzLocalFleetUpdateStatusReport -Now $global:_s8_payload.Now -PassThru
+            }
+            $expected = Join-Path -Path $adoStage -ChildPath 'reports'
+            $result.XmlPath           | Should -Be (Join-Path -Path $expected -ChildPath 'readiness-status.xml')
+            $result.ReadinessJsonPath | Should -Be (Join-Path -Path $expected -ChildPath 'readiness-status.json')
+        }
+        finally {
+            if (Test-Path -LiteralPath $adoStage) { Remove-Item -LiteralPath $adoStage -Recurse -Force -ErrorAction SilentlyContinue }
+        }
+    }
+
+    It 'PassThru object includes all 22 step-output values plus generated file paths' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s8_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s8_ghSummaryFile
+        $global:_s8_payload = @{
+            Inventory = @([pscustomobject]@{ ClusterName='kappa'; ResourceId='/subscriptions/s1/resourceGroups/rg10/providers/Microsoft.AzureStackHCI/clusters/kappa' })
+            Readiness = @(
+                [pscustomobject]@{
+                    ClusterName='kappa'; ResourceGroup='rg10'; SubscriptionId='s1'
+                    ResourceId='/subscriptions/s1/resourceGroups/rg10/providers/Microsoft.AzureStackHCI/clusters/kappa'
+                    UpdateState='UpToDate'; HealthState='Success'; ReadyForUpdate=$false
+                    HasPrerequisiteUpdates=''; AllAvailableUpdates=''; ReadyUpdates=''; SBEDependency=''
+                    RecommendedUpdate=''; CurrentVersion='12.2510.0.0'
+                }
+            )
+            Manifest = [pscustomobject]@{ SupportedYYMMs=@('2510'); LatestYYMM='2510'; LatestVersion='12.2510.0.999'; ManifestFetchedAt=(Get-Date).ToUniversalTime() }
+            OutDir = $script:_s8_outDir; Now = $script:_s8_now
+        }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory       { @($global:_s8_payload.Inventory) }
+            Mock Get-AzLocalClusterUpdateReadiness { @($global:_s8_payload.Readiness) }
+            Mock Get-AzLocalLatestSolutionVersion  { $global:_s8_payload.Manifest }
+            Mock Get-AzLocalUpdateSummary          { @() }
+            Mock Get-AzLocalAvailableUpdates       { @() }
+            Mock Get-AzLocalUpdateRuns             { @() }
+            Mock Get-AzLocalUpdateRunFailures      { @() }
+            Export-AzLocalFleetUpdateStatusReport -OutputDirectory $global:_s8_payload.OutDir -Now $global:_s8_payload.Now -PassThru
+        }
+        $expectedProps = @(
+            'TotalClusters','CriticalHealthPassed','CriticalHealthFailed',
+            'UpdateFailedCount','ActionRequiredCount','HealthFailureCount','SbeBlockedCount',
+            'InProgressCount','ReadyForUpdateCount','UpToDateCount','NeedsInvestigationCount',
+            'HasPrerequisiteCount','RunHistoryCount','VersionDistCount',
+            'SupportedClusters','UnsupportedClusters','UnknownVersionClusters',
+            'SupportedYymmWindow','SupportSource','LatestReleasedYymm','LatestReleasedVersion',
+            'InventoryCsvPath','ReadinessCsvPath','ReadinessJsonPath','XmlPath',
+            'SummariesCsvPath','AvailableCsvPath','RunsCsvPath','RunHistoryCsvPath','RunHistoryJsonPath',
+            'SummaryPath','Rows','RunHistoryRows','VersionDistribution'
+        )
+        foreach ($p in $expectedProps) {
+            $result.PSObject.Properties.Name | Should -Contain $p
+        }
+    }
+
+    It 'JUnit XML carries suite-level <properties> for the AzureLocalFleetUpdateStatus suite (per-cluster ITSM dedupe keys)' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s8_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s8_ghSummaryFile
+        $global:_s8_payload = @{
+            Inventory = @([pscustomobject]@{ ClusterName='lambda'; ResourceId='/subscriptions/s1/resourceGroups/rg11/providers/Microsoft.AzureStackHCI/clusters/lambda' })
+            Readiness = @(
+                [pscustomobject]@{
+                    ClusterName='lambda'; ResourceGroup='rg11'; SubscriptionId='s1'
+                    ResourceId='/subscriptions/s1/resourceGroups/rg11/providers/Microsoft.AzureStackHCI/clusters/lambda'
+                    UpdateState='Failed'; HealthState='Success'; ReadyForUpdate=$false
+                    HasPrerequisiteUpdates=''; AllAvailableUpdates=''; ReadyUpdates=''; SBEDependency=''
+                    RecommendedUpdate='12.2510.0.999'; CurrentVersion='12.2509.0.0'; HealthCheckFailures=''
+                }
+            )
+            Manifest = [pscustomobject]@{ SupportedYYMMs=@('2510'); LatestYYMM='2510'; LatestVersion='12.2510.0.999'; ManifestFetchedAt=(Get-Date).ToUniversalTime() }
+            OutDir = $script:_s8_outDir; Now = $script:_s8_now
+        }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory       { @($global:_s8_payload.Inventory) }
+            Mock Get-AzLocalClusterUpdateReadiness { @($global:_s8_payload.Readiness) }
+            Mock Get-AzLocalLatestSolutionVersion  { $global:_s8_payload.Manifest }
+            Mock Get-AzLocalUpdateSummary          { @() }
+            Mock Get-AzLocalAvailableUpdates       { @() }
+            Mock Get-AzLocalUpdateRuns             { @() }
+            Mock Get-AzLocalUpdateRunFailures      { @() }
+            Export-AzLocalFleetUpdateStatusReport -OutputDirectory $global:_s8_payload.OutDir -Now $global:_s8_payload.Now -PassThru
+        }
+        $xml = [System.IO.File]::ReadAllText($result.XmlPath)
+        # Per-testcase properties (required by ITSM dedupe key in New-AzLocalIncident)
+        $xml | Should -Match '<property name="ClusterName" value="lambda" />'
+        $xml | Should -Match '<property name="ClusterResourceId" value="/subscriptions/s1/resourceGroups/rg11/providers/Microsoft.AzureStackHCI/clusters/lambda" />'
+        $xml | Should -Match '<property name="UpdateName" value="12.2510.0.999" />'
+        $xml | Should -Match '<property name="Status" value="UpdateFailure" />'
+        # Suite-level properties on AzureLocalFleetUpdateStatus
+        $xml | Should -Match '<property name="testCategory" value="CriticalHealthStatus" />'
+    }
+}
+
+#endregion v0.8.5: Export-AzLocalFleetUpdateStatusReport

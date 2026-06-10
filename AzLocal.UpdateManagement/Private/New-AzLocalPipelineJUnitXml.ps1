@@ -36,6 +36,9 @@ function New-AzLocalPipelineJUnitXml {
           Name        [string]   (required) testsuite name attribute
           ClassName   [string]   (optional) default classname for testcases
                                  that omit their own ClassName
+          Properties  [hashtable|ordered] (optional) emits a suite-level
+                                 <properties><property name="K" value="V"/></properties>
+                                 block. Use [ordered] to preserve insertion order.
           TestCases   [object[]] (required) array of testcase hashtables
 
         Each testcase hashtable recognises:
@@ -45,6 +48,10 @@ function New-AzLocalPipelineJUnitXml {
                                  the suite Name
           Time        [double]   (optional) testcase time attribute (seconds);
                                  default 0
+          Properties  [hashtable|ordered] (optional) emits a per-testcase
+                                 <properties> block (e.g. dedupe keys consumed
+                                 by the ITSM connector: ClusterName,
+                                 ClusterResourceId, UpdateName, Status, ...).
           SystemOut   [string]   (optional) wraps in <system-out><![CDATA[...]]></system-out>
           SystemErr   [string]   (optional) wraps in <system-err><![CDATA[...]]></system-err>
           Failure     [hashtable] (optional) emits <failure message="..." type="...">body</failure>;
@@ -115,6 +122,29 @@ function New-AzLocalPipelineJUnitXml {
         $Text -replace '&', '&amp;' -replace '<', '&lt;' -replace '>', '&gt;' -replace '"', '&quot;' -replace "'", '&apos;'
     }
 
+    $emitProperties = {
+        param($PropTable, [string]$Indent)
+        if (-not $PropTable) { return '' }
+        $entries = @()
+        if ($PropTable -is [System.Collections.IDictionary]) {
+            foreach ($k in $PropTable.Keys) {
+                $entries += ,@($k, $PropTable[$k])
+            }
+        }
+        else { return '' }
+        if ($entries.Count -eq 0) { return '' }
+        $pb = [System.Text.StringBuilder]::new()
+        [void]$pb.AppendLine($Indent + '<properties>')
+        foreach ($e in $entries) {
+            $kEsc = & $xmlEscape ([string]$e[0])
+            $vEsc = & $xmlEscape ([string]$e[1])
+            [void]$pb.AppendLine($Indent + "  <property name=`"$kEsc`" value=`"$vEsc`" />")
+        }
+        [void]$pb.Append($Indent + '</properties>')
+        $pb.AppendLine() | Out-Null
+        return $pb.ToString()
+    }
+
     $now = $Timestamp.ToString('yyyy-MM-ddTHH:mm:ss')
     $totalTimeAcrossSuites = 0.0
 
@@ -152,11 +182,13 @@ function New-AzLocalPipelineJUnitXml {
             }
             $suiteTime += $tcTime
 
+            $hasProps = $tc.ContainsKey('Properties') -and $tc.Properties
             $hasChild = ($tc.ContainsKey('Failure') -and $tc.Failure) -or `
                         ($tc.ContainsKey('Error') -and $tc.Error) -or `
                         ($tc.ContainsKey('Skipped')) -or `
                         ($tc.ContainsKey('SystemOut') -and $tc.SystemOut) -or `
-                        ($tc.ContainsKey('SystemErr') -and $tc.SystemErr)
+                        ($tc.ContainsKey('SystemErr') -and $tc.SystemErr) -or `
+                        $hasProps
 
             if (-not $hasChild) {
                 [void]$caseBlocks.AppendLine("    <testcase classname=`"$tcClassEsc`" name=`"$tcName`" time=`"$tcTime`" />")
@@ -164,6 +196,11 @@ function New-AzLocalPipelineJUnitXml {
             }
 
             [void]$caseBlocks.AppendLine("    <testcase classname=`"$tcClassEsc`" name=`"$tcName`" time=`"$tcTime`">")
+
+            if ($hasProps) {
+                $propsXml = & $emitProperties $tc.Properties '      '
+                if ($propsXml) { [void]$caseBlocks.Append($propsXml) }
+            }
 
             if ($tc.ContainsKey('Failure') -and $tc.Failure) {
                 $tcFailures++
@@ -210,6 +247,10 @@ function New-AzLocalPipelineJUnitXml {
 
         $totalTimeAcrossSuites += $suiteTime
         [void]$suiteBlocks.AppendLine("  <testsuite name=`"$suiteName`" tests=`"$tcCount`" failures=`"$tcFailures`" errors=`"$tcErrors`" skipped=`"$tcSkipped`" timestamp=`"$now`" time=`"$suiteTime`">")
+        if ($suite.ContainsKey('Properties') -and $suite.Properties) {
+            $suitePropsXml = & $emitProperties $suite.Properties '    '
+            if ($suitePropsXml) { [void]$suiteBlocks.Append($suitePropsXml) }
+        }
         [void]$suiteBlocks.Append($caseBlocks.ToString())
         [void]$suiteBlocks.AppendLine('  </testsuite>')
     }

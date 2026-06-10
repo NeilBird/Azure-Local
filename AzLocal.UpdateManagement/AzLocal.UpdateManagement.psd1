@@ -148,7 +148,9 @@
         # Thin-YAML Step.2 (v0.8.5) - UpdateRing tag management workload (CSV validation + apply + JSON sidecar + step summary)
         'Public/Set-AzLocalClusterUpdateRingTagFromCsv.ps1',
         # Thin-YAML Step.7 (v0.8.5) - In-flight update-run monitor (severity scoring + CSV + JUnit + step summary + 6 step outputs)
-        'Public/Export-AzLocalUpdateRunMonitorReport.ps1'
+        'Public/Export-AzLocalUpdateRunMonitorReport.ps1',
+        # Thin-YAML Step.8 (v0.8.5) - Fleet update status (inventory + readiness + version distribution + 3-suite JUnit XML + step summary + 22 step outputs)
+        'Public/Export-AzLocalFleetUpdateStatusReport.ps1'
     )
 
     FunctionsToExport = @(
@@ -217,7 +219,9 @@
         # Thin-YAML Step.2 (v0.8.5) - UpdateRing tag management workload (validates CSV, applies tags via Set-AzLocalClusterUpdateRingTag, writes JSON sidecar + step summary)
         'Set-AzLocalClusterUpdateRingTagFromCsv',
         # Thin-YAML Step.7 (v0.8.5) - In-flight update-run monitor (calls Get-AzLocalUpdateRuns -Latest -PassThru, classifies by per-step + overall elapsed + progress-status, writes CSV + JUnit XML + markdown step summary + 6 step outputs)
-        'Export-AzLocalUpdateRunMonitorReport'
+        'Export-AzLocalUpdateRunMonitorReport',
+        # Thin-YAML Step.8 (v0.8.5) - Fleet-wide Azure Local update status snapshot (inventory + readiness + Microsoft-manifest-anchored version distribution + 3-suite JUnit XML + supplementary CSVs + markdown step summary + 22 step outputs; replaces the ~830-line inline 'Collect Fleet Update Status' + 'Create Status Summary' blocks in Step.8_fleet-update-status.yml on both platforms)
+        'Export-AzLocalFleetUpdateStatusReport'
     )
 
     # Cmdlets to export from this module, for best performance, do not use wildcards and do not delete the entry, use an empty array if there are no cmdlets to export.
