@@ -111,6 +111,30 @@ jobs:
             exit 1
           }
 
+      - name: Strip UTF-8 BOM from JUnit XML
+        # Windows PowerShell 5.1's UTF-8 writer (which Pester uses for the
+        # JUnit output) emits a 3-byte BOM. The EnricoMi publish-test-results
+        # action's lxml parser rejects it with: "Start tag expected, '<' not
+        # found, line 1, column 1" / "missing toplevel element". Re-write the
+        # file without BOM (read with BOM-aware UTF-8, write with BOM-less
+        # UTF-8). Idempotent: if the file is already BOM-less this is a no-op.
+        if: always()
+        run: |
+          $xml = 'Tests\TestResults\pester-junit.xml'
+          if (Test-Path -LiteralPath $xml) {
+            $bytes = [System.IO.File]::ReadAllBytes($xml)
+            $hasBom = ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF)
+            if ($hasBom) {
+              $text = [System.IO.File]::ReadAllText($xml, [System.Text.UTF8Encoding]::new($true))
+              [System.IO.File]::WriteAllText($xml, $text, [System.Text.UTF8Encoding]::new($false))
+              Write-Host "Stripped UTF-8 BOM from $xml (was $($bytes.Length) bytes, now $((Get-Item -LiteralPath $xml).Length) bytes)"
+            } else {
+              Write-Host "$xml has no BOM; nothing to strip."
+            }
+          } else {
+            Write-Host "$xml not found; skipping BOM strip."
+          }
+
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v4
