@@ -6210,7 +6210,13 @@ Describe 'Function: Copy-AzLocalPipelineExample' {
         # The function reads from (Get-Module AzLocal.UpdateManagement).ModuleBase
         # which during test runs resolves to the repo module root, so the real
         # Automation-Pipeline-Examples/ folder under the repo is the test source.
-        $script:cpDestRoot = Join-Path $env:TEMP "azlocal-cpe-$([guid]::NewGuid().Guid.Substring(0,8))"
+        # NOTE: resolve $env:TEMP to its canonical long-form path so the test
+        # comparisons below survive runners where $env:TEMP returns an 8.3
+        # short-name (e.g. GitHub-hosted: C:\Users\RUNNER~1\AppData\Local\Temp).
+        # Copy-AzLocalPipelineExample returns DirectoryInfo.FullName in long form
+        # so without this normalisation the string-equality assertions fail in CI.
+        $tempLong = (Get-Item -LiteralPath $env:TEMP).FullName
+        $script:cpDestRoot = Join-Path $tempLong "azlocal-cpe-$([guid]::NewGuid().Guid.Substring(0,8))"
         New-Item -Path $script:cpDestRoot -ItemType Directory -Force | Out-Null
     }
 
@@ -6511,7 +6517,11 @@ Describe 'Function: Copy-AzLocalPipelineExample' {
 
 Describe 'Function: Copy-AzLocalItsmSample' {
     BeforeAll {
-        $script:itsmDestRoot = Join-Path $env:TEMP "azlocal-itsm-$([guid]::NewGuid().Guid.Substring(0,8))"
+        # See Copy-AzLocalPipelineExample BeforeAll: normalise $env:TEMP to its
+        # canonical long-form path so the FullName string-equality assertions
+        # survive runners where $env:TEMP returns an 8.3 short name (CI).
+        $tempLong = (Get-Item -LiteralPath $env:TEMP).FullName
+        $script:itsmDestRoot = Join-Path $tempLong "azlocal-itsm-$([guid]::NewGuid().Guid.Substring(0,8))"
         New-Item -Path $script:itsmDestRoot -ItemType Directory -Force | Out-Null
     }
 

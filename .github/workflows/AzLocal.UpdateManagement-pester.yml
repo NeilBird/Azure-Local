@@ -67,6 +67,20 @@ jobs:
           Import-Module Pester -MinimumVersion 5.0.0 -Force
           (Get-Module Pester).Version | Write-Host
 
+      - name: Install powershell-yaml
+        # Required by one Describe block ('ITSM: Get-AzLocalItsmConfig normalises
+        # non-Hashtable YAML dictionaries') which Mock-overrides ConvertFrom-Yaml.
+        # Mock can only intercept commands that exist, so the source module must
+        # be present even though no actual YAML parsing happens at test time.
+        run: |
+          if (-not (Get-Module powershell-yaml -ListAvailable)) {
+            Write-Host 'Installing powershell-yaml from PSGallery (CurrentUser scope)'
+            Install-Module powershell-yaml -Force -SkipPublisherCheck -Scope CurrentUser
+          } else {
+            Write-Host 'powershell-yaml already available'
+          }
+          (Get-Module powershell-yaml -ListAvailable | Select-Object -First 1).Version | Write-Host
+
       - name: Import module (smoke test)
         run: |
           Get-Module AzLocal.UpdateManagement -All | Remove-Module -Force -ErrorAction SilentlyContinue
@@ -107,10 +121,15 @@ jobs:
           retention-days: 14
 
       - name: Publish test report (PR check)
+        # EnricoMi/publish-unit-test-result-action understands Pester's
+        # JUnitXml output natively. dorny/test-reporter was rejected because
+        # its 'jest-junit' parser threw `stackTrace.split is not a function`
+        # on Pester's stackTrace shape (Pester serialises it as a multi-line
+        # string array, not the single-string shape jest produces).
         if: always() && github.event_name == 'pull_request'
-        uses: dorny/test-reporter@v1
+        uses: EnricoMi/publish-unit-test-result-action/windows@v2
         with:
-          name: AzLocal.UpdateManagement Pester
-          path: AzLocal.UpdateManagement/Tests/TestResults/pester-junit.xml
-          reporter: jest-junit
-          fail-on-error: false
+          check_name: AzLocal.UpdateManagement Pester
+          junit_files: AzLocal.UpdateManagement/Tests/TestResults/pester-junit.xml
+          comment_mode: off
+          ignore_runs: true
