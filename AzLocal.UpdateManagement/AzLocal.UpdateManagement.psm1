@@ -328,5 +328,7 @@ Export-ModuleMember -Function @(
     # Thin-YAML Step.7 (v0.8.5) - In-flight update-run monitor (CSV + JUnit + markdown + 6 step outputs)
     'Export-AzLocalUpdateRunMonitorReport',
     # Thin-YAML Step.8 (v0.8.5) - Fleet update status snapshot (inventory + readiness + version distribution + 3-suite JUnit + markdown + 22 step outputs)
-    'Export-AzLocalFleetUpdateStatusReport'
+    'Export-AzLocalFleetUpdateStatusReport',
+    # Thin-YAML Step.5 (v0.8.5) - Pre-flight Update Readiness Assessment (readiness + blocking-health JUnit + combined JUnit + 8-section markdown + 2 step outputs)
+    'Export-AzLocalClusterUpdateReadinessReport'
 )

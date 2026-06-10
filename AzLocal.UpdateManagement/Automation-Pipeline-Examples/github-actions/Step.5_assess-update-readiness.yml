@@ -25,6 +25,12 @@
 #
 # Remediation of Critical health failures is out of scope for this module - see the module
 # README "Assess Readiness and Health BEFORE Applying Updates" section for pointers.
+#
+# v0.8.5 thin-YAML: the inline run: | body (inventory + scope-param construction +
+# Get-AzLocalClusterUpdateReadiness + Test-AzLocalClusterHealth + combined JUnit XML
+# merge + 8-section markdown summary + step outputs) is now the
+# Export-AzLocalClusterUpdateReadinessReport Public cmdlet. This yml is condensed
+# to a few lines per step; the full workload (and its Pester tests) live in the module.
 
 # Workflow name carries the same Step.N - prefix as the filename so the GitHub
 # Actions sidebar (which sorts workflows alphabetically by this `name:` field)
@@ -89,8 +95,13 @@ jobs:
       contents: read
       checks: write
     outputs:
-      not_ready: ${{ steps.gate.outputs.NOT_READY }}
-      critical_failures: ${{ steps.gate.outputs.CRITICAL_FAILURES }}
+      # v0.8.5 thin-YAML: keys align byte-for-byte with the lowercase output
+      # names emitted by Export-AzLocalClusterUpdateReadinessReport (which uses
+      # Set-AzLocalPipelineOutput under the hood). ADO is case-sensitive on
+      # task.setvariable lookups; GH is case-insensitive but the lowercase
+      # form is the canonical one used by every v0.8.5+ Step.* cmdlet.
+      not_ready: ${{ steps.gate.outputs.not_ready }}
+      critical_failures: ${{ steps.gate.outputs.critical_failures }}
 
     steps:
       - name: Checkout repository
@@ -116,7 +127,10 @@ jobs:
         run: az extension add --name resource-graph --yes
 
       - name: Install AzLocal.UpdateManagement from PSGallery
+        # v0.8.5 thin-YAML: drift detection + banner + step outputs are all
+        # produced by Add-AzLocalPipelineVersionBanner (Public cmdlet).
         shell: pwsh
+        id: module-version
         run: |
           $ErrorActionPreference = 'Stop'
           $installArgs = @{ Name = 'AzLocal.UpdateManagement'; Scope = 'CurrentUser'; Force = $true; AllowClobber = $true }
@@ -128,310 +142,37 @@ jobs:
           }
           Install-Module @installArgs
           Import-Module AzLocal.UpdateManagement -Force
-          $installed = (Get-Module AzLocal.UpdateManagement | Sort-Object Version -Descending | Select-Object -First 1).Version
-          $generated = [version]$env:GENERATED_AGAINST_MODULE_VERSION
-          $latest    = (Find-Module -Name AzLocal.UpdateManagement -Repository PSGallery -ErrorAction SilentlyContinue).Version
-          Write-Host ""
-          Write-Host "Module version summary"
-          Write-Host "  Installed on runner       : $installed"
-          Write-Host "  YAML generated against    : $generated"
-          Write-Host "  Latest on PSGallery       : $(if ($latest) { $latest } else { '(lookup failed - check network)' })"
-          Write-Host ""
-          Get-Module AzLocal.UpdateManagement | Format-List Name, Version, Path
-          # Drift signal 0: the module installed at runtime is OLDER than the version this YAML was generated against. Cmdlets, parameters, or output schemas referenced by this YAML may not exist in the installed module - emitted as a warning because this is the most likely cause of a hard runtime failure later in the job.
-          if ($installed -lt $generated) {
-              $msg = "AzLocal.UpdateManagement v$installed is OLDER than the version this workflow YAML was generated against (v$generated). Cmdlets, parameters, or output schemas referenced by this YAML may not exist in v$installed. Set REQUIRED_MODULE_VERSION to v$generated, or refresh the YAML to match the installed module via 'Copy-AzLocalPipelineExample -Destination .\.github\workflows -Platform GitHub -Update'."
-              Write-Host "::warning title=AzLocal.UpdateManagement is older than workflow YAML expects::$msg"
-          }
-          if ($installed -gt $generated) {
-              $msg = "Workflow YAML was generated against AzLocal.UpdateManagement v$generated but the runner installed v$installed. Pipeline steps may have been improved in later releases - to refresh, re-run 'Copy-AzLocalPipelineExample -Destination .\.github\workflows -Platform GitHub -Update' (you will be prompted per file; add -Confirm:`$false to bypass). Pipeline YAMLs are under git so 'git diff' shows exactly what changed before commit."
-              Write-Host "::notice title=Workflow YAML may be stale::$msg"
-          }
-          if ($latest -and ($latest -gt $installed)) {
-              $msg = "AzLocal.UpdateManagement v$latest is available on PSGallery; this run installed v$installed. Review the module CHANGELOG before bumping REQUIRED_MODULE_VERSION (or clear the pin to install the latest automatically)."
-              Write-Host "::notice title=Newer AzLocal.UpdateManagement version available on PSGallery::$msg"
-          }
-
-          # v0.8.4 - one-line version banner emitted to the rendered Step
-          # Summary so the YAML version (GENERATED_AGAINST_MODULE_VERSION), the
-          # module version actually loaded on the runner, the PSGallery latest,
-          # and the REQUIRED_MODULE_VERSION pin status are visible at the top
-          # of every run summary without scrolling the agent log. Same data is
-          # also echoed to the console above as 'Module version summary'.
-          $pin       = if ($env:REQUIRED_MODULE_VERSION) { "pinned to v$($env:REQUIRED_MODULE_VERSION)" } else { 'latest (fix-forward)' }
-          $latestStr = if ($latest) { "v$latest" } else { '(PSGallery lookup failed)' }
-          $verdict   = if ($installed -lt $generated) { 'YAML newer than module - check REQUIRED_MODULE_VERSION' }
-                       elseif ($installed -gt $generated) { 'YAML older than module - run Copy-AzLocalPipelineExample -Update' }
-                       elseif ($latest -and ($latest -gt $installed)) { 'newer module available on PSGallery' }
-                       else { 'in sync' }
-          if ($env:GITHUB_STEP_SUMMARY) {
-              "_Pipeline YAML v$generated | Module v$installed installed ($pin) | PSGallery latest $latestStr | $verdict_" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
-              "" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
-          }
+          Add-AzLocalPipelineVersionBanner `
+              -GeneratedAgainstVersion $env:GENERATED_AGAINST_MODULE_VERSION `
+              -PinnedVersion $env:REQUIRED_MODULE_VERSION
 
       - name: Run readiness + blocking health checks
+        # v0.8.5 thin-YAML: the inline run block (inventory + scope param
+        # construction + Get-AzLocalClusterUpdateReadiness CSV/XML +
+        # Test-AzLocalClusterHealth -BlockingOnly CSV/XML + combined JUnit
+        # merge + 8-section markdown step summary + the two step outputs
+        # (NOT_READY / CRITICAL_FAILURES, now lowercase not_ready /
+        # critical_failures) has been condensed into the Public cmdlet
+        # Export-AzLocalClusterUpdateReadinessReport. The cmdlet writes
+        # ./artifacts/{readiness,health-blocking,assess-readiness}.{csv,xml},
+        # emits the markdown summary via GITHUB_STEP_SUMMARY, and sets the
+        # two step outputs.
         id: gate
         shell: pwsh
         env:
           INPUT_SCOPE: ${{ github.event.inputs.scope }}
           INPUT_UPDATE_RING: ${{ github.event.inputs.update_ring }}
+          INSTALLED_MODULE_VERSION: ${{ steps.module-version.outputs.installed_module_version }}
         run: |
+          $ErrorActionPreference = 'Stop'
           Import-Module AzLocal.UpdateManagement -Force
-
-          $scope = $env:INPUT_SCOPE
-          $updateRing = $env:INPUT_UPDATE_RING
-
-          $outputDir = './artifacts'
-          New-Item -ItemType Directory -Path $outputDir -Force | Out-Null
-
-          $readinessCsv = Join-Path $outputDir 'readiness.csv'
-          $readinessXml = Join-Path $outputDir 'readiness.xml'
-          $healthCsv    = Join-Path $outputDir 'health-blocking.csv'
-          $healthXml    = Join-Path $outputDir 'health-blocking.xml'
-
-          # Always fetch inventory so we can build a ResourceId -> UpdateRing map
-          # for the per-ring pivot in the markdown summary (cheap ARG round-trip).
-          $inventory = Get-AzLocalClusterInventory -PassThru
-          $ringByResourceId = @{}
-          if ($inventory) {
-              foreach ($inv in $inventory) {
-                  $ringValue = if ($inv.UpdateRing) { [string]$inv.UpdateRing } else { '(no ring tag)' }
-                  $ringByResourceId[$inv.ResourceId] = $ringValue
-              }
+          $params = @{
+              Scope                  = if ($env:INPUT_SCOPE) { $env:INPUT_SCOPE } else { 'all' }
+              OutputDirectory        = './artifacts'
+              InstalledModuleVersion = $env:INSTALLED_MODULE_VERSION
           }
-
-          $scopeParams = @{}
-          if ($scope -eq 'by-update-ring' -and $updateRing) {
-              $scopeParams['ScopeByUpdateRingTag'] = $true
-              $scopeParams['UpdateRingValue']      = $updateRing
-              Write-Host "Scope: UpdateRing = $updateRing"
-          } else {
-              Write-Host "Scope: all clusters (via inventory)"
-              if (-not $inventory -or $inventory.Count -eq 0) {
-                  Write-Warning 'No clusters found in inventory.'
-                  "NOT_READY=0" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-                  "CRITICAL_FAILURES=0" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-                  exit 0
-              }
-              $scopeParams['ClusterResourceIds'] = @($inventory | Select-Object -ExpandProperty ResourceId)
-          }
-
-          Write-Host ''
-          Write-Host '========================================' -ForegroundColor Cyan
-          Write-Host 'Step 1: Readiness (Get-AzLocalClusterUpdateReadiness)' -ForegroundColor Cyan
-          Write-Host '========================================' -ForegroundColor Cyan
-
-          # CSV for humans
-          $readiness = Get-AzLocalClusterUpdateReadiness @scopeParams `
-              -ExportPath $readinessCsv `
-              -PassThru
-
-          # JUnit XML for the test reporter (ExportPath .xml auto-detects JUnitXml)
-          $null = Get-AzLocalClusterUpdateReadiness @scopeParams `
-              -ExportPath $readinessXml
-
-          # v0.7.99: 3-bucket model matches Get-AzLocalClusterUpdateReadiness Summary.
-          # UpToDate clusters are no longer rolled into NotReady - they're now a distinct bucket.
-          $readyForUpdate = @($readiness | Where-Object { $_.ReadyForUpdate -eq $true }).Count
-          $upToDate = @($readiness | Where-Object {
-                  $_.ReadyForUpdate -ne $true -and
-                  $_.UpdateState -in @('UpToDate', 'AppliedSuccessfully') -and
-                  [string]::IsNullOrEmpty([string]$_.AllAvailableUpdates)
-              }).Count
-          $total = @($readiness).Count
-          $notReady = $total - $readyForUpdate - $upToDate
-
-          Write-Host ''
-          Write-Host "Total clusters in scope: $total"
-          Write-Host "Ready for update      : $readyForUpdate"
-          Write-Host "Up to date            : $upToDate"
-          Write-Host "Not ready for update  : $notReady"
-
-          Write-Host ''
-          Write-Host '========================================' -ForegroundColor Cyan
-          Write-Host 'Step 2: Blocking health (Test-AzLocalClusterHealth -BlockingOnly)' -ForegroundColor Cyan
-          Write-Host '========================================' -ForegroundColor Cyan
-
-          # Reuse the same scope. -UpdateSummary skip-fetch is not available here because the
-          # per-cluster summaries are private to Get-AzLocalClusterUpdateReadiness; a fresh
-          # call is cheap and keeps the function self-contained.
-          $health = Test-AzLocalClusterHealth @scopeParams `
-              -BlockingOnly `
-              -ExportPath $healthCsv `
-              -PassThru
-
-          $null = Test-AzLocalClusterHealth @scopeParams `
-              -BlockingOnly `
-              -ExportPath $healthXml
-
-          # Merge readiness + blocking-health JUnit XMLs into a single combined
-          # report (assess-readiness.xml) so operators get one Checks-tab entry
-          # instead of two. The individual XMLs are still uploaded as artifacts
-          # and still published as [JUnit Debug] entries below for parity.
-          $combinedXml = Join-Path $outputDir 'assess-readiness.xml'
-          try {
-              $readinessDoc = [xml](Get-Content -LiteralPath $readinessXml -Raw)
-              $healthDoc    = [xml](Get-Content -LiteralPath $healthXml -Raw)
-              $combinedDoc  = New-Object System.Xml.XmlDocument
-              $declaration  = $combinedDoc.CreateXmlDeclaration('1.0', 'utf-8', $null)
-              $combinedDoc.AppendChild($declaration) | Out-Null
-              $rootElement  = $combinedDoc.CreateElement('testsuites')
-              $rootElement.SetAttribute('name', 'Update Readiness Assessment')
-              $combinedDoc.AppendChild($rootElement) | Out-Null
-              foreach ($srcDoc in @($readinessDoc, $healthDoc)) {
-                  $suites = if ($srcDoc.DocumentElement.LocalName -eq 'testsuites') {
-                      $srcDoc.DocumentElement.SelectNodes('testsuite')
-                  } else {
-                      ,$srcDoc.DocumentElement
-                  }
-                  foreach ($suite in $suites) {
-                      $imported = $combinedDoc.ImportNode($suite, $true)
-                      $rootElement.AppendChild($imported) | Out-Null
-                  }
-              }
-              $combinedDoc.Save($combinedXml)
-              Write-Host "Combined JUnit report: $combinedXml"
-          }
-          catch {
-              Write-Warning "Failed to build combined JUnit report: $($_.Exception.Message)"
-          }
-
-          # Test-AzLocalClusterHealth -PassThru returns one row per cluster
-          # (shape: ClusterName, HealthState, Passed, CriticalCount, WarningCount, Failures)
-          # NOT a flat list of finding rows. Aggregate from CriticalCount / Failures rather
-          # than filtering on a non-existent Severity property (which silently returned 0).
-          $criticalSum = ($health | Measure-Object -Property CriticalCount -Sum).Sum
-          $critical = if ($criticalSum) { [int]$criticalSum } else { 0 }
-          $clustersWithCritical = @($health | Where-Object { [int]$_.CriticalCount -gt 0 }).Count
-
-          Write-Host ''
-          Write-Host "Critical findings      : $critical"
-          Write-Host "Clusters with Critical : $clustersWithCritical"
-
-          "NOT_READY=$notReady"                   | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          "CRITICAL_FAILURES=$clustersWithCritical" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-
-          # GitHub step summary - audit-order layout:
-          #   1. Header tile (one-line status + scope)
-          #   2. Action banner (Action required / All clear)
-          #   3. Summary counts
-          #   4. Not-Ready cluster table  (blocking findings first)
-          #   5. Critical-health cluster table (blocking findings, second priority)
-          #   6. Per-UpdateRing pivot (only shown when >1 ring in scope)
-          #   7. All-clusters detail table
-          #   8. Cross-links to upstream/downstream pipelines
-          $lines = New-Object 'System.Collections.Generic.List[string]'
-          $lines.Add('## Update Readiness Assessment')
-          $lines.Add('')
-
-          # 1. Header tile (one-line status, no emoji - ASCII safe)
-          $scopeLabel = $scope
-          if ($updateRing) { $scopeLabel = "$scope (UpdateRing = $updateRing)" }
-          $statusWord = if ($notReady -gt 0 -or $clustersWithCritical -gt 0) { 'ATTENTION' } else { 'OK' }
-          $lines.Add("**[$statusWord]** $total cluster(s) assessed | $readyForUpdate Ready for Update | $upToDate Up to Date | $notReady Not Ready for Update | $clustersWithCritical with Critical health failures | Scope: $scopeLabel")
-          $lines.Add('')
-
-          # 2. Action banner
-          if ($notReady -gt 0 -or $clustersWithCritical -gt 0) {
-              $lines.Add("> **Action required**: $notReady cluster(s) not ready and/or $clustersWithCritical cluster(s) with Critical health failures. Review the **Not-Ready** and **Critical-health** sections below first; the CSV artifacts in `azlocal-step.5-readiness-assessment-report_*` carry the full per-finding detail. Remediate (hardware vendor SBE / firmware / cluster health) before or alongside the next apply-updates run. **The healthy clusters are safe to proceed** - Step.6_apply-updates.yml is per-cluster scoped.")
-          } else {
-              $lines.Add('> **All clear**: every cluster in scope is ready for update. Safe to proceed with Step.6_apply-updates.yml for this ring.')
-          }
-          $lines.Add('')
-
-          # 3. Summary counts
-          $lines.Add('### Summary counts')
-          $lines.Add('')
-          $lines.Add('| Metric | Count |')
-          $lines.Add('|--------|-------|')
-          $lines.Add("| Total clusters in scope | $total |")
-          $lines.Add("| Ready for update | $readyForUpdate |")
-          $lines.Add("| Up to date | $upToDate |")
-          $lines.Add("| Not ready for update | $notReady |")
-          $lines.Add("| Clusters with Critical health failures | $clustersWithCritical |")
-          $lines.Add("| Total Critical findings | $critical |")
-          $lines.Add('')
-
-          # 4. Not-Ready cluster table (blocking findings first)
-          $notReadyRows = @($readiness | Where-Object { $_.ReadyForUpdate -ne $true })
-          if ($notReadyRows.Count -gt 0) {
-              $lines.Add('### Not-Ready clusters (review first)')
-              $lines.Add('')
-              $lines.Add('| Cluster | UpdateRing | Current version | Update state | Health | Blocking reasons |')
-              $lines.Add('|---------|------------|-----------------|--------------|--------|------------------|')
-              foreach ($r in ($notReadyRows | Sort-Object @{Expression={ if ($ringByResourceId.ContainsKey($_.ClusterResourceId)) { $ringByResourceId[$_.ClusterResourceId] } else { 'zzz' } }}, ClusterName)) {
-                  $ring = if ($ringByResourceId.ContainsKey($r.ClusterResourceId)) { $ringByResourceId[$r.ClusterResourceId] } else { '-' }
-                  $cv = if ($r.CurrentVersion) { $r.CurrentVersion } else { '-' }
-                  $br = if ($r.BlockingReasons) { $r.BlockingReasons } else { '-' }
-                  $lines.Add("| $($r.ClusterName) | $ring | $cv | $($r.UpdateState) | $($r.HealthState) | $br |")
-              }
-              $lines.Add('')
-          }
-
-          # 5. Critical-health cluster table
-          $criticalRows = @($health | Where-Object { [int]$_.CriticalCount -gt 0 })
-          if ($criticalRows.Count -gt 0) {
-              $lines.Add('### Critical-health clusters')
-              $lines.Add('')
-              $lines.Add('_Cross-link: see **Step.4_fleet-connectivity-status** for connectivity-class failures and **Step.9_fleet-health-status** for the broader Critical/Warning catalog._')
-              $lines.Add('')
-              $lines.Add('| Cluster | UpdateRing | Health state | Critical | Warning |')
-              $lines.Add('|---------|------------|--------------|----------|---------|')
-              foreach ($r in ($criticalRows | Sort-Object @{Expression={[int]$_.CriticalCount}; Descending=$true}, ClusterName)) {
-                  $invMatch = $inventory | Where-Object { $_.ClusterName -eq $r.ClusterName } | Select-Object -First 1
-                  $ring = if ($invMatch -and $invMatch.UpdateRing) { $invMatch.UpdateRing } else { '-' }
-                  $lines.Add("| $($r.ClusterName) | $ring | $($r.HealthState) | $($r.CriticalCount) | $($r.WarningCount) |")
-              }
-              $lines.Add('')
-          }
-
-          # 6. Per-UpdateRing pivot (only shown when more than one ring in scope)
-          $ringGroups = $readiness | Group-Object @{Expression={ if ($ringByResourceId.ContainsKey($_.ClusterResourceId)) { $ringByResourceId[$_.ClusterResourceId] } else { '(no ring tag)' } }} | Sort-Object Name
-          if (@($ringGroups).Count -gt 1) {
-              $lines.Add('### Per UpdateRing breakdown')
-              $lines.Add('')
-              $lines.Add('| UpdateRing | Total | Ready for Update | Up to Date | Not Ready for Update |')
-              $lines.Add('|------------|-------|------------------|------------|----------------------|')
-              foreach ($g in $ringGroups) {
-                  $gReady = @($g.Group | Where-Object { $_.ReadyForUpdate -eq $true }).Count
-                  $gUpToDate = @($g.Group | Where-Object {
-                          $_.ReadyForUpdate -ne $true -and
-                          $_.UpdateState -in @('UpToDate', 'AppliedSuccessfully') -and
-                          [string]::IsNullOrEmpty([string]$_.AllAvailableUpdates)
-                      }).Count
-                  $gNotReady = $g.Count - $gReady - $gUpToDate
-                  $lines.Add("| $($g.Name) | $($g.Count) | $gReady | $gUpToDate | $gNotReady |")
-              }
-              $lines.Add('')
-          }
-
-          # 7. All-clusters detail table (kept for completeness; sorted by UpdateRing then ClusterName)
-          if ($total -gt 0) {
-              $lines.Add('### All clusters detail')
-              $lines.Add('')
-              $lines.Add('| Cluster | UpdateRing | Current version | Current SBE version | Update state | Health | Ready | Recommended update |')
-              $lines.Add('|---------|------------|-----------------|---------------------|--------------|--------|-------|--------------------|')
-              foreach ($r in ($readiness | Sort-Object @{Expression={ if ($ringByResourceId.ContainsKey($_.ClusterResourceId)) { $ringByResourceId[$_.ClusterResourceId] } else { 'zzz' } }}, ClusterName)) {
-                  $ring = if ($ringByResourceId.ContainsKey($r.ClusterResourceId)) { $ringByResourceId[$r.ClusterResourceId] } else { '-' }
-                  $cv  = if ($r.CurrentVersion) { $r.CurrentVersion } else { '-' }
-                  $csv = if ($r.PSObject.Properties['CurrentSbeVersion'] -and $r.CurrentSbeVersion) { $r.CurrentSbeVersion } else { '-' }
-                  $ru  = if ($r.RecommendedUpdate) { $r.RecommendedUpdate } else { '-' }
-                  $lines.Add("| $($r.ClusterName) | $ring | $cv | $csv | $($r.UpdateState) | $($r.HealthState) | $($r.ReadyForUpdate) | $ru |")
-              }
-              $lines.Add('')
-          }
-
-          # 8. Cross-links to other pipelines
-          $lines.Add('### Cross-link to other pipelines')
-          $lines.Add('')
-          $lines.Add('- **Step.4_fleet-connectivity-status** - root-cause Disconnected / Offline / partial-connectivity findings on the Not-Ready and Critical-health rows above.')
-          $lines.Add('- **Step.6_apply-updates** - apply updates to the Ready clusters in this ring (manual workflow_dispatch, or wait for the scheduled cron firing).')
-          $lines.Add('- **Step.7_monitor-updates** - tail in-flight runs once Step.6 has started (auto-trigger on Step.6 completion, or manual).')
-          $lines.Add('- **Step.9_fleet-health-status** - broader Critical / Warning health catalog across the whole fleet (not just blocking-only).')
-          $lines.Add('')
-          $lines.Add('_Note: the **Update Readiness Assessment** entry in the Checks tab is the merged combined view; the [JUnit Debug] entries are diagnostic mirrors for CI/test tooling._')
-
-          ($lines -join [Environment]::NewLine) | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+          if ($env:INPUT_UPDATE_RING) { $params['UpdateRing'] = $env:INPUT_UPDATE_RING }
+          Export-AzLocalClusterUpdateReadinessReport @params
 
       - name: Compute Artifact Timestamp
         if: always()
@@ -484,4 +225,3 @@ jobs:
           list-suites: failed
           list-tests: failed
         continue-on-error: true
-

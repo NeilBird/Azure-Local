@@ -200,7 +200,7 @@ Describe 'Module: AzLocal.UpdateManagement' {
         }
 
         It 'Should export exactly 45 functions' {
-            $script:ModuleInfo.ExportedFunctions.Count | Should -Be 45
+            $script:ModuleInfo.ExportedFunctions.Count | Should -Be 46
         }
 
         It 'Should export the expected functions' {
@@ -272,7 +272,9 @@ Describe 'Module: AzLocal.UpdateManagement' {
                 # Thin-YAML Step.7 (v0.8.5) - In-flight update-run monitor (CSV + JUnit + step summary + 6 step outputs)
                 'Export-AzLocalUpdateRunMonitorReport',
                 # Thin-YAML Step.8 (v0.8.5) - Fleet update status snapshot (inventory + readiness + version distribution + 3-suite JUnit + step summary + 22 step outputs)
-                'Export-AzLocalFleetUpdateStatusReport'
+                'Export-AzLocalFleetUpdateStatusReport',
+                # Thin-YAML Step.5 (v0.8.5) - Pre-flight Update Readiness Assessment (readiness + blocking-health JUnit + combined JUnit + 8-section markdown + 2 step outputs)
+                'Export-AzLocalClusterUpdateReadinessReport'
             )
             
             foreach ($func in $expectedFunctions) {
@@ -10209,7 +10211,7 @@ Describe 'Function: Get-AzLocalFleetHealthOverview - v0.7.70 (ARG-first fleet he
         }
 
         It 'BS7: Module exports exactly 45 functions (was 44 after Step.7 thin-YAML port; Step.8 thin-YAML port adds Export-AzLocalFleetUpdateStatusReport)' {
-            (Get-Module AzLocal.UpdateManagement).ExportedFunctions.Count | Should -Be 45
+            (Get-Module AzLocal.UpdateManagement).ExportedFunctions.Count | Should -Be 46
         }
     }
 
@@ -14550,3 +14552,299 @@ Describe 'Thin-YAML Step.8: Export-AzLocalFleetUpdateStatusReport' {
 }
 
 #endregion v0.8.5: Export-AzLocalFleetUpdateStatusReport
+
+
+#region v0.8.5: Export-AzLocalClusterUpdateReadinessReport
+Describe 'Thin-YAML Step.5: Export-AzLocalClusterUpdateReadinessReport' {
+
+    BeforeEach {
+        $script:_s5_savedGhActions = $env:GITHUB_ACTIONS
+        $script:_s5_savedTfBuild   = $env:TF_BUILD
+        $script:_s5_savedGhOutput  = $env:GITHUB_OUTPUT
+        $script:_s5_savedGhSummary = $env:GITHUB_STEP_SUMMARY
+        $script:_s5_savedAdoStage  = $env:BUILD_ARTIFACTSTAGINGDIRECTORY
+        Remove-Item Env:\GITHUB_ACTIONS                 -ErrorAction SilentlyContinue
+        Remove-Item Env:\TF_BUILD                       -ErrorAction SilentlyContinue
+        Remove-Item Env:\GITHUB_OUTPUT                  -ErrorAction SilentlyContinue
+        Remove-Item Env:\GITHUB_STEP_SUMMARY            -ErrorAction SilentlyContinue
+        Remove-Item Env:\BUILD_ARTIFACTSTAGINGDIRECTORY -ErrorAction SilentlyContinue
+
+        $script:_s5_outDir        = Join-Path -Path $env:TEMP -ChildPath ("s5-out-{0}"        -f ([Guid]::NewGuid()))
+        $script:_s5_ghOutputFile  = Join-Path -Path $env:TEMP -ChildPath ("s5-gh-output-{0}"  -f ([Guid]::NewGuid()))
+        $script:_s5_ghSummaryFile = Join-Path -Path $env:TEMP -ChildPath ("s5-gh-summary-{0}.md" -f ([Guid]::NewGuid()))
+        New-Item -ItemType Directory -Path $script:_s5_outDir       -Force | Out-Null
+        New-Item -ItemType File      -Path $script:_s5_ghOutputFile  -Force | Out-Null
+        New-Item -ItemType File      -Path $script:_s5_ghSummaryFile -Force | Out-Null
+    }
+
+    AfterEach {
+        if ($null -ne $script:_s5_savedGhActions) { $env:GITHUB_ACTIONS                 = $script:_s5_savedGhActions } else { Remove-Item Env:\GITHUB_ACTIONS                 -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_s5_savedTfBuild)   { $env:TF_BUILD                       = $script:_s5_savedTfBuild   } else { Remove-Item Env:\TF_BUILD                       -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_s5_savedGhOutput)  { $env:GITHUB_OUTPUT                  = $script:_s5_savedGhOutput  } else { Remove-Item Env:\GITHUB_OUTPUT                  -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_s5_savedGhSummary) { $env:GITHUB_STEP_SUMMARY            = $script:_s5_savedGhSummary } else { Remove-Item Env:\GITHUB_STEP_SUMMARY            -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_s5_savedAdoStage)  { $env:BUILD_ARTIFACTSTAGINGDIRECTORY = $script:_s5_savedAdoStage  } else { Remove-Item Env:\BUILD_ARTIFACTSTAGINGDIRECTORY -ErrorAction SilentlyContinue }
+        foreach ($p in @($script:_s5_ghOutputFile, $script:_s5_ghSummaryFile)) {
+            if ($p -and (Test-Path -LiteralPath $p)) { Remove-Item -LiteralPath $p -Force -ErrorAction SilentlyContinue }
+        }
+        if ($script:_s5_outDir -and (Test-Path -LiteralPath $script:_s5_outDir)) {
+            Remove-Item -LiteralPath $script:_s5_outDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'Empty inventory short-circuits with IDLE markdown, zero outputs, and PassThru with zero counts' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s5_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s5_ghSummaryFile
+        $global:_s5_payload = @{ Inventory = @(); OutDir = $script:_s5_outDir }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory       { @($global:_s5_payload.Inventory) }
+            Mock Get-AzLocalClusterUpdateReadiness { throw 'should not be called on empty path' }
+            Mock Test-AzLocalClusterHealth         { throw 'should not be called on empty path' }
+            Export-AzLocalClusterUpdateReadinessReport -OutputDirectory $global:_s5_payload.OutDir -PassThru
+        }
+        $result.TotalCount           | Should -Be 0
+        $result.ReadyForUpdateCount  | Should -Be 0
+        $result.UpToDateCount        | Should -Be 0
+        $result.NotReadyCount        | Should -Be 0
+        $result.CriticalFindings     | Should -Be 0
+        $result.ClustersWithCritical | Should -Be 0
+        $out = Get-Content -LiteralPath $script:_s5_ghOutputFile -Raw
+        $out | Should -Match 'not_ready=0'
+        $out | Should -Match 'critical_failures=0'
+        $summary = Get-Content -LiteralPath $script:_s5_ghSummaryFile -Raw
+        $summary | Should -Match '\[IDLE\]'
+    }
+
+    It 'Scope=all forwards ClusterResourceIds from inventory to Get-AzLocalClusterUpdateReadiness' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s5_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s5_ghSummaryFile
+        $global:_s5_payload = @{
+            Inventory = @(
+                [pscustomobject]@{ ClusterName='alpha'; ResourceId='/subscriptions/s1/resourceGroups/rg1/providers/Microsoft.AzureStackHCI/clusters/alpha'; UpdateRing='Wave1' }
+            )
+            Readiness = @(
+                [pscustomobject]@{
+                    ClusterName='alpha'; ClusterResourceId='/subscriptions/s1/resourceGroups/rg1/providers/Microsoft.AzureStackHCI/clusters/alpha'
+                    UpdateState='UpToDate'; HealthState='Success'; ReadyForUpdate=$false
+                    AllAvailableUpdates=''; CurrentVersion='12.2510.0.0'; RecommendedUpdate=''; BlockingReasons=''
+                }
+            )
+            Health = @([pscustomobject]@{ ClusterName='alpha'; HealthState='Success'; Passed=$true; CriticalCount=0; WarningCount=0; Failures='' })
+            OutDir = $script:_s5_outDir
+        }
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory       { @($global:_s5_payload.Inventory) }
+            Mock Get-AzLocalClusterUpdateReadiness { @($global:_s5_payload.Readiness) }
+            Mock Test-AzLocalClusterHealth         { @($global:_s5_payload.Health) }
+            Export-AzLocalClusterUpdateReadinessReport -OutputDirectory $global:_s5_payload.OutDir -Scope 'all' | Out-Null
+            Assert-MockCalled Get-AzLocalClusterUpdateReadiness -Times 2 -Exactly -Scope It -ParameterFilter {
+                $ClusterResourceIds -and $ClusterResourceIds[0] -like '*/clusters/alpha'
+            }
+        }
+    }
+
+    It 'Scope=by-update-ring forwards ScopeByUpdateRingTag + UpdateRingValue' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s5_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s5_ghSummaryFile
+        $global:_s5_payload = @{
+            Inventory = @([pscustomobject]@{ ClusterName='beta'; ResourceId='/subscriptions/s1/resourceGroups/rg2/providers/Microsoft.AzureStackHCI/clusters/beta'; UpdateRing='Prod' })
+            Readiness = @(
+                [pscustomobject]@{
+                    ClusterName='beta'; ClusterResourceId='/subscriptions/s1/resourceGroups/rg2/providers/Microsoft.AzureStackHCI/clusters/beta'
+                    UpdateState='UpToDate'; HealthState='Success'; ReadyForUpdate=$false
+                    AllAvailableUpdates=''; CurrentVersion='12.2510.0.0'; RecommendedUpdate=''; BlockingReasons=''
+                }
+            )
+            Health = @([pscustomobject]@{ ClusterName='beta'; HealthState='Success'; Passed=$true; CriticalCount=0; WarningCount=0; Failures='' })
+            OutDir = $script:_s5_outDir
+        }
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory       { @($global:_s5_payload.Inventory) }
+            Mock Get-AzLocalClusterUpdateReadiness { @($global:_s5_payload.Readiness) }
+            Mock Test-AzLocalClusterHealth         { @($global:_s5_payload.Health) }
+            Export-AzLocalClusterUpdateReadinessReport -OutputDirectory $global:_s5_payload.OutDir -Scope 'by-update-ring' -UpdateRing 'Prod' | Out-Null
+            Assert-MockCalled Get-AzLocalClusterUpdateReadiness -Times 2 -Exactly -Scope It -ParameterFilter {
+                $ScopeByUpdateRingTag -eq $true -and $UpdateRingValue -eq 'Prod'
+            }
+        }
+    }
+
+    It '3-bucket counts: 1 ready, 1 uptodate, 1 notready' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s5_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s5_ghSummaryFile
+        $global:_s5_payload = @{
+            Inventory = @(
+                [pscustomobject]@{ ClusterName='ready';   ResourceId='/subscriptions/s1/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/ready';   UpdateRing='Wave1' }
+                [pscustomobject]@{ ClusterName='uptd';    ResourceId='/subscriptions/s1/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/uptd';    UpdateRing='Wave1' }
+                [pscustomobject]@{ ClusterName='notrdy';  ResourceId='/subscriptions/s1/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/notrdy';  UpdateRing='Wave1' }
+            )
+            Readiness = @(
+                [pscustomobject]@{ ClusterName='ready';  ClusterResourceId='/subscriptions/s1/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/ready';
+                                  UpdateState='UpdateAvailable'; HealthState='Success'; ReadyForUpdate=$true;  AllAvailableUpdates='12.2510.0.999'; CurrentVersion='12.2509.0.0'; RecommendedUpdate='12.2510.0.999'; BlockingReasons='' }
+                [pscustomobject]@{ ClusterName='uptd';   ClusterResourceId='/subscriptions/s1/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/uptd';
+                                  UpdateState='UpToDate';        HealthState='Success'; ReadyForUpdate=$false; AllAvailableUpdates='';              CurrentVersion='12.2510.0.0'; RecommendedUpdate='';              BlockingReasons='' }
+                [pscustomobject]@{ ClusterName='notrdy'; ClusterResourceId='/subscriptions/s1/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/notrdy';
+                                  UpdateState='Failed';          HealthState='Failure'; ReadyForUpdate=$false; AllAvailableUpdates='12.2510.0.999'; CurrentVersion='12.2509.0.0'; RecommendedUpdate='12.2510.0.999'; BlockingReasons='Critical Health Status: Failed' }
+            )
+            Health = @(
+                [pscustomobject]@{ ClusterName='ready';  HealthState='Success'; Passed=$true;  CriticalCount=0; WarningCount=0; Failures='' }
+                [pscustomobject]@{ ClusterName='uptd';   HealthState='Success'; Passed=$true;  CriticalCount=0; WarningCount=0; Failures='' }
+                [pscustomobject]@{ ClusterName='notrdy'; HealthState='Failure'; Passed=$false; CriticalCount=2; WarningCount=1; Failures='NodeOffline; StorageDegraded' }
+            )
+            OutDir = $script:_s5_outDir
+        }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory       { @($global:_s5_payload.Inventory) }
+            Mock Get-AzLocalClusterUpdateReadiness { @($global:_s5_payload.Readiness) }
+            Mock Test-AzLocalClusterHealth         { @($global:_s5_payload.Health) }
+            Export-AzLocalClusterUpdateReadinessReport -OutputDirectory $global:_s5_payload.OutDir -PassThru
+        }
+        $result.TotalCount           | Should -Be 3
+        $result.ReadyForUpdateCount  | Should -Be 1
+        $result.UpToDateCount        | Should -Be 1
+        $result.NotReadyCount        | Should -Be 1
+        $result.CriticalFindings     | Should -Be 2
+        $result.ClustersWithCritical | Should -Be 1
+        $out = Get-Content -LiteralPath $script:_s5_ghOutputFile -Raw
+        $out | Should -Match 'not_ready=1'
+        $out | Should -Match 'critical_failures=1'
+    }
+
+    It 'Combined assess-readiness.xml merges both testsuites under the Update Readiness Assessment root' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s5_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s5_ghSummaryFile
+        $global:_s5_payload = @{
+            Inventory = @([pscustomobject]@{ ClusterName='gamma'; ResourceId='/subscriptions/s1/resourceGroups/rg3/providers/Microsoft.AzureStackHCI/clusters/gamma'; UpdateRing='Wave1' })
+            Readiness = @(
+                [pscustomobject]@{ ClusterName='gamma'; ClusterResourceId='/subscriptions/s1/resourceGroups/rg3/providers/Microsoft.AzureStackHCI/clusters/gamma'
+                                   UpdateState='UpToDate'; HealthState='Success'; ReadyForUpdate=$false
+                                   AllAvailableUpdates=''; CurrentVersion='12.2510.0.0'; RecommendedUpdate=''; BlockingReasons='' }
+            )
+            Health = @([pscustomobject]@{ ClusterName='gamma'; HealthState='Success'; Passed=$true; CriticalCount=0; WarningCount=0; Failures='' })
+            OutDir = $script:_s5_outDir
+        }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory       { @($global:_s5_payload.Inventory) }
+            Mock Get-AzLocalClusterUpdateReadiness { @($global:_s5_payload.Readiness) }
+            Mock Test-AzLocalClusterHealth         { @($global:_s5_payload.Health) }
+            Export-AzLocalClusterUpdateReadinessReport -OutputDirectory $global:_s5_payload.OutDir -PassThru
+        }
+        Test-Path -LiteralPath $result.CombinedXmlPath | Should -BeTrue
+        $xml = [System.IO.File]::ReadAllText($result.CombinedXmlPath)
+        $xml | Should -Match '<testsuites name="Update Readiness Assessment"'
+        $xml | Should -Match '<testsuite'
+    }
+
+    It 'PassThru object exposes all 13 documented properties' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s5_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s5_ghSummaryFile
+        $global:_s5_payload = @{
+            Inventory = @([pscustomobject]@{ ClusterName='delta'; ResourceId='/subscriptions/s1/resourceGroups/rg4/providers/Microsoft.AzureStackHCI/clusters/delta'; UpdateRing='Wave1' })
+            Readiness = @([pscustomobject]@{ ClusterName='delta'; ClusterResourceId='/subscriptions/s1/resourceGroups/rg4/providers/Microsoft.AzureStackHCI/clusters/delta'
+                                              UpdateState='UpToDate'; HealthState='Success'; ReadyForUpdate=$false
+                                              AllAvailableUpdates=''; CurrentVersion='12.2510.0.0'; RecommendedUpdate=''; BlockingReasons='' })
+            Health = @([pscustomobject]@{ ClusterName='delta'; HealthState='Success'; Passed=$true; CriticalCount=0; WarningCount=0; Failures='' })
+            OutDir = $script:_s5_outDir
+        }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory       { @($global:_s5_payload.Inventory) }
+            Mock Get-AzLocalClusterUpdateReadiness { @($global:_s5_payload.Readiness) }
+            Mock Test-AzLocalClusterHealth         { @($global:_s5_payload.Health) }
+            Export-AzLocalClusterUpdateReadinessReport -OutputDirectory $global:_s5_payload.OutDir -PassThru
+        }
+        $expectedProps = @(
+            'TotalCount','ReadyForUpdateCount','UpToDateCount','NotReadyCount',
+            'CriticalFindings','ClustersWithCritical','ReadinessRows','HealthRows',
+            'ReadinessCsvPath','ReadinessXmlPath','HealthCsvPath','HealthXmlPath','CombinedXmlPath'
+        )
+        foreach ($p in $expectedProps) {
+            $result.PSObject.Properties.Name | Should -Contain $p
+        }
+    }
+
+    It 'ADO host (TF_BUILD=true) resolves default OutputDirectory to BUILD_ARTIFACTSTAGINGDIRECTORY' {
+        $adoStage = Join-Path -Path $env:TEMP -ChildPath ("s5-ado-stage-{0}" -f ([Guid]::NewGuid()))
+        New-Item -ItemType Directory -Path $adoStage -Force | Out-Null
+        try {
+            $env:TF_BUILD                       = 'True'
+            $env:BUILD_ARTIFACTSTAGINGDIRECTORY = $adoStage
+            $global:_s5_payload = @{ Inventory = @() }
+            $result = InModuleScope AzLocal.UpdateManagement {
+                Mock Get-AzLocalClusterInventory       { @($global:_s5_payload.Inventory) }
+                Mock Get-AzLocalClusterUpdateReadiness { throw 'unused on empty path' }
+                Mock Test-AzLocalClusterHealth         { throw 'unused on empty path' }
+                Export-AzLocalClusterUpdateReadinessReport -PassThru
+            }
+            $result.ReadinessCsvPath | Should -Be (Join-Path -Path $adoStage -ChildPath 'readiness.csv')
+            $result.CombinedXmlPath  | Should -Be (Join-Path -Path $adoStage -ChildPath 'assess-readiness.xml')
+        }
+        finally {
+            if (Test-Path -LiteralPath $adoStage) { Remove-Item -LiteralPath $adoStage -Recurse -Force -ErrorAction SilentlyContinue }
+        }
+    }
+
+    It 'Per-UpdateRing pivot section appears when more than one ring is in scope' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s5_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s5_ghSummaryFile
+        $global:_s5_payload = @{
+            Inventory = @(
+                [pscustomobject]@{ ClusterName='c1'; ResourceId='/subscriptions/s1/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/c1'; UpdateRing='Wave1' }
+                [pscustomobject]@{ ClusterName='c2'; ResourceId='/subscriptions/s1/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/c2'; UpdateRing='Wave2' }
+            )
+            Readiness = @(
+                [pscustomobject]@{ ClusterName='c1'; ClusterResourceId='/subscriptions/s1/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/c1'
+                                   UpdateState='UpToDate'; HealthState='Success'; ReadyForUpdate=$false
+                                   AllAvailableUpdates=''; CurrentVersion='12.2510.0.0'; RecommendedUpdate=''; BlockingReasons='' }
+                [pscustomobject]@{ ClusterName='c2'; ClusterResourceId='/subscriptions/s1/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/c2'
+                                   UpdateState='UpdateAvailable'; HealthState='Success'; ReadyForUpdate=$true
+                                   AllAvailableUpdates='12.2510.0.999'; CurrentVersion='12.2509.0.0'; RecommendedUpdate='12.2510.0.999'; BlockingReasons='' }
+            )
+            Health = @(
+                [pscustomobject]@{ ClusterName='c1'; HealthState='Success'; Passed=$true; CriticalCount=0; WarningCount=0; Failures='' }
+                [pscustomobject]@{ ClusterName='c2'; HealthState='Success'; Passed=$true; CriticalCount=0; WarningCount=0; Failures='' }
+            )
+            OutDir = $script:_s5_outDir
+        }
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory       { @($global:_s5_payload.Inventory) }
+            Mock Get-AzLocalClusterUpdateReadiness { @($global:_s5_payload.Readiness) }
+            Mock Test-AzLocalClusterHealth         { @($global:_s5_payload.Health) }
+            Export-AzLocalClusterUpdateReadinessReport -OutputDirectory $global:_s5_payload.OutDir | Out-Null
+        }
+        $summary = Get-Content -LiteralPath $script:_s5_ghSummaryFile -Raw
+        $summary | Should -Match 'Per UpdateRing breakdown'
+        $summary | Should -Match 'Wave1'
+        $summary | Should -Match 'Wave2'
+    }
+
+    It 'OK header tile appears when all clusters are ready and no Critical findings' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s5_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s5_ghSummaryFile
+        $global:_s5_payload = @{
+            Inventory = @([pscustomobject]@{ ClusterName='ok1'; ResourceId='/subscriptions/s1/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/ok1'; UpdateRing='Wave1' })
+            Readiness = @([pscustomobject]@{ ClusterName='ok1'; ClusterResourceId='/subscriptions/s1/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/ok1'
+                                              UpdateState='UpdateAvailable'; HealthState='Success'; ReadyForUpdate=$true
+                                              AllAvailableUpdates='12.2510.0.999'; CurrentVersion='12.2509.0.0'; RecommendedUpdate='12.2510.0.999'; BlockingReasons='' })
+            Health = @([pscustomobject]@{ ClusterName='ok1'; HealthState='Success'; Passed=$true; CriticalCount=0; WarningCount=0; Failures='' })
+            OutDir = $script:_s5_outDir
+        }
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory       { @($global:_s5_payload.Inventory) }
+            Mock Get-AzLocalClusterUpdateReadiness { @($global:_s5_payload.Readiness) }
+            Mock Test-AzLocalClusterHealth         { @($global:_s5_payload.Health) }
+            Export-AzLocalClusterUpdateReadinessReport -OutputDirectory $global:_s5_payload.OutDir | Out-Null
+        }
+        $summary = Get-Content -LiteralPath $script:_s5_ghSummaryFile -Raw
+        $summary | Should -Match '\[OK\]'
+        $summary | Should -Match 'All clear'
+    }
+}
+
+#endregion v0.8.5: Export-AzLocalClusterUpdateReadinessReport
