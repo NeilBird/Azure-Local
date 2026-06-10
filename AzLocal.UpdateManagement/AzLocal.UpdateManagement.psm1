@@ -324,5 +324,7 @@ Export-ModuleMember -Function @(
     # Thin-YAML Step.1 (v0.8.5) - Cluster inventory workload (condenses the inline run: | block in Step.1_inventory-clusters.yml on both platforms; writes timestamped + canonical CSV, JSON, README, and step summary)
     'Invoke-AzLocalClusterInventory',
     # Thin-YAML Step.2 (v0.8.5) - UpdateRing tag management workload (validates CSV, applies tags via Set-AzLocalClusterUpdateRingTag, writes JSON sidecar + step summary)
-    'Set-AzLocalClusterUpdateRingTagFromCsv'
+    'Set-AzLocalClusterUpdateRingTagFromCsv',
+    # Thin-YAML Step.7 (v0.8.5) - In-flight update-run monitor (CSV + JUnit + markdown + 6 step outputs)
+    'Export-AzLocalUpdateRunMonitorReport'
 )

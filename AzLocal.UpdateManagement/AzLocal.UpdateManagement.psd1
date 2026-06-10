@@ -146,7 +146,9 @@
         # Thin-YAML Step.1 (v0.8.5) - Cluster inventory + canonical CSV + operator README + step summary
         'Public/Invoke-AzLocalClusterInventory.ps1',
         # Thin-YAML Step.2 (v0.8.5) - UpdateRing tag management workload (CSV validation + apply + JSON sidecar + step summary)
-        'Public/Set-AzLocalClusterUpdateRingTagFromCsv.ps1'
+        'Public/Set-AzLocalClusterUpdateRingTagFromCsv.ps1',
+        # Thin-YAML Step.7 (v0.8.5) - In-flight update-run monitor (severity scoring + CSV + JUnit + step summary + 6 step outputs)
+        'Public/Export-AzLocalUpdateRunMonitorReport.ps1'
     )
 
     FunctionsToExport = @(
@@ -213,7 +215,9 @@
         # Thin-YAML Step.1 (v0.8.5) - Cluster inventory workload (condenses the inline run: | block in Step.1_inventory-clusters.yml on both platforms; writes timestamped + canonical CSV, JSON, README, and step summary)
         'Invoke-AzLocalClusterInventory',
         # Thin-YAML Step.2 (v0.8.5) - UpdateRing tag management workload (validates CSV, applies tags via Set-AzLocalClusterUpdateRingTag, writes JSON sidecar + step summary)
-        'Set-AzLocalClusterUpdateRingTagFromCsv'
+        'Set-AzLocalClusterUpdateRingTagFromCsv',
+        # Thin-YAML Step.7 (v0.8.5) - In-flight update-run monitor (calls Get-AzLocalUpdateRuns -Latest -PassThru, classifies by per-step + overall elapsed + progress-status, writes CSV + JUnit XML + markdown step summary + 6 step outputs)
+        'Export-AzLocalUpdateRunMonitorReport'
     )
 
     # Cmdlets to export from this module, for best performance, do not use wildcards and do not delete the entry, use an empty array if there are no cmdlets to export.

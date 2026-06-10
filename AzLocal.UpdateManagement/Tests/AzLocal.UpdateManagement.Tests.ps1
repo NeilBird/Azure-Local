@@ -199,8 +199,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $content | Should -Match '\$data\.ArbRows' -Because "Step.4 $Platform must assign `$data.ArbRows from cmdlet output"
         }
 
-        It 'Should export exactly 43 functions' {
-            $script:ModuleInfo.ExportedFunctions.Count | Should -Be 43
+        It 'Should export exactly 44 functions' {
+            $script:ModuleInfo.ExportedFunctions.Count | Should -Be 44
         }
 
         It 'Should export the expected functions' {
@@ -268,7 +268,9 @@ Describe 'Module: AzLocal.UpdateManagement' {
                 # Thin-YAML Step.1 (v0.8.5) - Cluster inventory workload (timestamped + canonical CSV, JSON, README, step summary)
                 'Invoke-AzLocalClusterInventory',
                 # Thin-YAML Step.2 (v0.8.5) - UpdateRing tag management workload (CSV validation + apply via Set-AzLocalClusterUpdateRingTag + JSON sidecar + step summary)
-                'Set-AzLocalClusterUpdateRingTagFromCsv'
+                'Set-AzLocalClusterUpdateRingTagFromCsv',
+                # Thin-YAML Step.7 (v0.8.5) - In-flight update-run monitor (CSV + JUnit + step summary + 6 step outputs)
+                'Export-AzLocalUpdateRunMonitorReport'
             )
             
             foreach ($func in $expectedFunctions) {
@@ -10253,8 +10255,8 @@ Describe 'Function: Get-AzLocalFleetHealthOverview - v0.7.70 (ARG-first fleet he
             $cmd.CommandType | Should -Be 'Function'
         }
 
-        It 'BS7: Module exports exactly 43 functions (was 42 after Step.1 thin-YAML port; Step.2 thin-YAML port adds Set-AzLocalClusterUpdateRingTagFromCsv)' {
-            (Get-Module AzLocal.UpdateManagement).ExportedFunctions.Count | Should -Be 43
+        It 'BS7: Module exports exactly 44 functions (was 43 after Step.2 thin-YAML port; Step.7 thin-YAML port adds Export-AzLocalUpdateRunMonitorReport)' {
+            (Get-Module AzLocal.UpdateManagement).ExportedFunctions.Count | Should -Be 44
         }
     }
 
@@ -13686,3 +13688,443 @@ beta,/subscriptions/s1/resourceGroups/rg2/providers/Microsoft.AzureStackHCI/clus
 #endregion v0.8.5: Set-AzLocalClusterUpdateRingTagFromCsv
 
 
+
+#region v0.8.5: Export-AzLocalUpdateRunMonitorReport (Step.7 thin-YAML port)
+
+Describe 'Thin-YAML Step.7: Export-AzLocalUpdateRunMonitorReport' {
+
+    BeforeEach {
+        $script:_s7_savedGhActions = $env:GITHUB_ACTIONS
+        $script:_s7_savedTfBuild   = $env:TF_BUILD
+        $script:_s7_savedGhOutput  = $env:GITHUB_OUTPUT
+        $script:_s7_savedGhSummary = $env:GITHUB_STEP_SUMMARY
+        $script:_s7_savedAdoStage  = $env:BUILD_ARTIFACTSTAGINGDIRECTORY
+        Remove-Item Env:\GITHUB_ACTIONS                 -ErrorAction SilentlyContinue
+        Remove-Item Env:\TF_BUILD                       -ErrorAction SilentlyContinue
+        Remove-Item Env:\GITHUB_OUTPUT                  -ErrorAction SilentlyContinue
+        Remove-Item Env:\GITHUB_STEP_SUMMARY            -ErrorAction SilentlyContinue
+        Remove-Item Env:\BUILD_ARTIFACTSTAGINGDIRECTORY -ErrorAction SilentlyContinue
+
+        $script:_s7_outDir        = Join-Path -Path $env:TEMP -ChildPath ("s7-out-{0}"        -f ([Guid]::NewGuid()))
+        $script:_s7_ghOutputFile  = Join-Path -Path $env:TEMP -ChildPath ("s7-gh-output-{0}"  -f ([Guid]::NewGuid()))
+        $script:_s7_ghSummaryFile = Join-Path -Path $env:TEMP -ChildPath ("s7-gh-summary-{0}.md" -f ([Guid]::NewGuid()))
+        New-Item -ItemType Directory -Path $script:_s7_outDir       -Force | Out-Null
+        New-Item -ItemType File      -Path $script:_s7_ghOutputFile  -Force | Out-Null
+        New-Item -ItemType File      -Path $script:_s7_ghSummaryFile -Force | Out-Null
+
+        # Deterministic snapshot time for elapsed comparisons.
+        $script:_s7_now = [datetime]::SpecifyKind([datetime]'2026-06-10T12:00:00', [DateTimeKind]::Utc)
+
+        # Default inventory: three clusters.
+        $script:_s7_inventory = @(
+            [pscustomobject]@{ ClusterName = 'alpha'; ResourceId = '/subscriptions/s1/resourceGroups/rg1/providers/Microsoft.AzureStackHCI/clusters/alpha' }
+            [pscustomobject]@{ ClusterName = 'beta';  ResourceId = '/subscriptions/s1/resourceGroups/rg2/providers/Microsoft.AzureStackHCI/clusters/beta'  }
+            [pscustomobject]@{ ClusterName = 'gamma'; ResourceId = '/subscriptions/s1/resourceGroups/rg3/providers/Microsoft.AzureStackHCI/clusters/gamma' }
+        )
+    }
+
+    AfterEach {
+        if ($null -ne $script:_s7_savedGhActions) { $env:GITHUB_ACTIONS                 = $script:_s7_savedGhActions } else { Remove-Item Env:\GITHUB_ACTIONS                 -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_s7_savedTfBuild)   { $env:TF_BUILD                       = $script:_s7_savedTfBuild   } else { Remove-Item Env:\TF_BUILD                       -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_s7_savedGhOutput)  { $env:GITHUB_OUTPUT                  = $script:_s7_savedGhOutput  } else { Remove-Item Env:\GITHUB_OUTPUT                  -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_s7_savedGhSummary) { $env:GITHUB_STEP_SUMMARY            = $script:_s7_savedGhSummary } else { Remove-Item Env:\GITHUB_STEP_SUMMARY            -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_s7_savedAdoStage)  { $env:BUILD_ARTIFACTSTAGINGDIRECTORY = $script:_s7_savedAdoStage  } else { Remove-Item Env:\BUILD_ARTIFACTSTAGINGDIRECTORY -ErrorAction SilentlyContinue }
+        foreach ($p in @($script:_s7_ghOutputFile, $script:_s7_ghSummaryFile)) {
+            if ($p -and (Test-Path -LiteralPath $p)) { Remove-Item -LiteralPath $p -Force -ErrorAction SilentlyContinue }
+        }
+        if ($script:_s7_outDir -and (Test-Path -LiteralPath $script:_s7_outDir)) {
+            Remove-Item -LiteralPath $script:_s7_outDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'Empty fleet emits all-zero step outputs, empty CSV + JUnit, and idle status badge' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s7_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s7_ghSummaryFile
+        $global:_s7_payload = @{ Inventory = @(); Runs = @(); Now = $script:_s7_now; OutDir = $script:_s7_outDir }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory { @($global:_s7_payload.Inventory) }
+            Mock Get-AzLocalUpdateRuns       { @($global:_s7_payload.Runs) }
+            Export-AzLocalUpdateRunMonitorReport -OutputDirectory $global:_s7_payload.OutDir -Now $global:_s7_payload.Now -PassThru
+        }
+        $result.InFlightCount          | Should -Be 0
+        $result.LongRunningCount       | Should -Be 0
+        $result.LongRunningStepCount   | Should -Be 0
+        $result.StepErroredCount       | Should -Be 0
+        $result.UnresolvedFailureCount | Should -Be 0
+        $result.RecentFailureCount     | Should -Be 0
+        @($result.Rows).Count          | Should -Be 0
+        Test-Path -LiteralPath $result.CsvPath | Should -BeTrue
+        Test-Path -LiteralPath $result.XmlPath | Should -BeTrue
+        $outputs = Get-Content -Raw -LiteralPath $script:_s7_ghOutputFile
+        $outputs | Should -Match 'in_flight=0'
+        $outputs | Should -Match 'long_running=0'
+        $outputs | Should -Match 'long_running_step=0'
+        $outputs | Should -Match 'step_errored=0'
+        $outputs | Should -Match 'recent_failures=0'
+        $outputs | Should -Match 'unresolved_failures=0'
+        $summary = Get-Content -Raw -LiteralPath $script:_s7_ghSummaryFile
+        $summary | Should -Match 'Fleet Status: IDLE'
+    }
+
+    It 'Single in-flight run within thresholds: InFlightCount=1, no warn/crit chips, status HEALTHY' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s7_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s7_ghSummaryFile
+        $runs = @(
+            [pscustomobject]@{
+                ClusterName       = 'alpha'
+                ClusterResourceId = $script:_s7_inventory[0].ResourceId
+                UpdateName        = '12.2509.1.21'
+                State             = 'InProgress'
+                Status            = 'InProgress'
+                CurrentStep       = 'Run Update Health Checks'
+                Progress          = '40%'
+                StartTime         = $script:_s7_now.AddMinutes(-30).ToString('yyyy-MM-ddTHH:mm:ss')   # 30m elapsed
+                StepStartTime     = $script:_s7_now.AddMinutes(-30).ToString('yyyy-MM-ddTHH:mm:ss')   # well within 2h
+                EndTime           = $null
+                RunId             = 'r1'
+                RunResourceId     = ($script:_s7_inventory[0].ResourceId + '/updates/12.2509.1.21/updateRuns/r1')
+            }
+        )
+        $global:_s7_payload = @{ Inventory = $script:_s7_inventory; Runs = $runs; Now = $script:_s7_now; OutDir = $script:_s7_outDir }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory { @($global:_s7_payload.Inventory) }
+            Mock Get-AzLocalUpdateRuns       { @($global:_s7_payload.Runs) }
+            Export-AzLocalUpdateRunMonitorReport -OutputDirectory $global:_s7_payload.OutDir -Now $global:_s7_payload.Now -PassThru
+        }
+        $result.InFlightCount        | Should -Be 1
+        $result.LongRunningCount     | Should -Be 0
+        $result.LongRunningStepCount | Should -Be 0
+        $result.StepErroredCount     | Should -Be 0
+        $row = @($result.Rows)[0]
+        $row.State                | Should -Be 'InProgress'
+        $row.StepSeverity         | Should -Be 'none'
+        $row.RunSeverity          | Should -Be 'none'
+        $row.Flags                | Should -Be 'within'
+        $row.ExceedsThreshold     | Should -BeFalse
+        $row.ExceedsStepThreshold | Should -BeFalse
+        $summary = Get-Content -Raw -LiteralPath $script:_s7_ghSummaryFile
+        $summary | Should -Match 'Fleet Status: HEALTHY'
+        $outputs = Get-Content -Raw -LiteralPath $script:_s7_ghOutputFile
+        $outputs | Should -Match 'in_flight=1'
+    }
+
+    It 'Per-step warn: step elapsed > LongRunningStepHours flags warn chip and LongRunningStepCount=1' {
+        $runs = @(
+            [pscustomobject]@{
+                ClusterName       = 'beta'
+                ClusterResourceId = $script:_s7_inventory[1].ResourceId
+                UpdateName        = '12.2509.1.21'
+                State             = 'InProgress'
+                Status            = 'InProgress'
+                CurrentStep       = 'Update Node 2'
+                Progress          = '60%'
+                StartTime         = $script:_s7_now.AddHours(-4).ToString('yyyy-MM-ddTHH:mm:ss')      # 4h overall (within 24h backstop)
+                StepStartTime     = $script:_s7_now.AddHours(-3).ToString('yyyy-MM-ddTHH:mm:ss')      # 3h step elapsed (> 2h warn, < 4h crit)
+                EndTime           = $null
+                RunId             = 'r2'
+                RunResourceId     = ($script:_s7_inventory[1].ResourceId + '/updates/12.2509.1.21/updateRuns/r2')
+            }
+        )
+        $global:_s7_payload = @{ Inventory = $script:_s7_inventory; Runs = $runs; Now = $script:_s7_now; OutDir = $script:_s7_outDir }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory { @($global:_s7_payload.Inventory) }
+            Mock Get-AzLocalUpdateRuns       { @($global:_s7_payload.Runs) }
+            Export-AzLocalUpdateRunMonitorReport -OutputDirectory $global:_s7_payload.OutDir -Now $global:_s7_payload.Now -LongRunningStepHours 2 -LongRunningThresholdHours 24 -PassThru
+        }
+        $result.InFlightCount        | Should -Be 1
+        $result.LongRunningStepCount | Should -Be 1
+        $result.LongRunningCount     | Should -Be 0
+        $row = @($result.Rows)[0]
+        $row.ExceedsStepThreshold | Should -BeTrue
+        $row.ExceedsThreshold     | Should -BeFalse
+        $row.StepSeverity         | Should -Be 'warn'
+        $row.RunSeverity          | Should -Be 'none'
+        $row.Flags                | Should -Match 'step >2h'
+    }
+
+    It 'Step error (progressStatus=Error while State=InProgress): StepErroredCount=1, severity score elevated' {
+        $runs = @(
+            [pscustomobject]@{
+                ClusterName       = 'gamma'
+                ClusterResourceId = $script:_s7_inventory[2].ResourceId
+                UpdateName        = '12.2509.1.21'
+                State             = 'InProgress'
+                Status            = 'Error'                                          # stuck step
+                CurrentStep       = 'Run Pre Update Validation'
+                Progress          = '15%'
+                StartTime         = $script:_s7_now.AddHours(-1).ToString('yyyy-MM-ddTHH:mm:ss')
+                StepStartTime     = $script:_s7_now.AddMinutes(-30).ToString('yyyy-MM-ddTHH:mm:ss')
+                EndTime           = $null
+                RunId             = 'r3'
+                RunResourceId     = ($script:_s7_inventory[2].ResourceId + '/updates/12.2509.1.21/updateRuns/r3')
+                ErrorMessage      = 'Health check NetworkATC.SwitchEmbeddedTeaming failed.'
+            }
+        )
+        $global:_s7_payload = @{ Inventory = $script:_s7_inventory; Runs = $runs; Now = $script:_s7_now; OutDir = $script:_s7_outDir }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory { @($global:_s7_payload.Inventory) }
+            Mock Get-AzLocalUpdateRuns       { @($global:_s7_payload.Runs) }
+            Export-AzLocalUpdateRunMonitorReport -OutputDirectory $global:_s7_payload.OutDir -Now $global:_s7_payload.Now -PassThru
+        }
+        $result.InFlightCount    | Should -Be 1
+        $result.StepErroredCount | Should -Be 1
+        $row = @($result.Rows)[0]
+        $row.HasStepError | Should -BeTrue
+        $row.Flags        | Should -Match 'step errored'
+        $row.SeverityScore | Should -BeGreaterThan 999
+        $xml = [xml](Get-Content -Raw -LiteralPath $result.XmlPath)
+        $failedCases = @($xml.SelectNodes('//testcase[failure]'))
+        $failedCases.Count | Should -BeGreaterOrEqual 1
+        $failedCases[0].failure.type | Should -Be 'StepError'
+    }
+
+    It 'Unresolved failure (latest run is Failed) surfaces in UnresolvedFailureCount and JUnit' {
+        $runs = @(
+            [pscustomobject]@{
+                ClusterName       = 'alpha'
+                ClusterResourceId = $script:_s7_inventory[0].ResourceId
+                UpdateName        = '12.2509.1.21'
+                State             = 'Failed'
+                Status            = 'Error'
+                CurrentStep       = 'Restart Cluster Node'
+                Progress          = ''
+                StartTime         = $script:_s7_now.AddHours(-10).ToString('yyyy-MM-ddTHH:mm:ss')
+                StepStartTime     = $script:_s7_now.AddHours(-9).ToString('yyyy-MM-ddTHH:mm:ss')
+                EndTime           = $script:_s7_now.AddHours(-8).ToString('yyyy-MM-ddTHH:mm:ss')      # 8h ago - within 24h recent window
+                RunId             = 'r4'
+                RunResourceId     = ($script:_s7_inventory[0].ResourceId + '/updates/12.2509.1.21/updateRuns/r4')
+                ErrorMessage      = 'Node failed to restart within timeout.'
+                CurrentStepDetail = 'Step failed.'
+            }
+        )
+        $global:_s7_payload = @{ Inventory = $script:_s7_inventory; Runs = $runs; Now = $script:_s7_now; OutDir = $script:_s7_outDir }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory { @($global:_s7_payload.Inventory) }
+            Mock Get-AzLocalUpdateRuns       { @($global:_s7_payload.Runs) }
+            Export-AzLocalUpdateRunMonitorReport -OutputDirectory $global:_s7_payload.OutDir -Now $global:_s7_payload.Now -PassThru
+        }
+        $result.InFlightCount          | Should -Be 0
+        $result.UnresolvedFailureCount | Should -Be 1
+        $result.RecentFailureCount     | Should -Be 1
+        $row = @($result.Rows)[0]
+        $row.IsUnresolvedFailure | Should -BeTrue
+        $row.IsRecentFailure     | Should -BeTrue
+        $xml = [xml](Get-Content -Raw -LiteralPath $result.XmlPath)
+        $failedCases = @($xml.SelectNodes('//testcase[failure]'))
+        $failedCases.Count | Should -BeGreaterOrEqual 1
+        ($failedCases | ForEach-Object { $_.failure.type }) | Should -Contain 'RecentFailure'
+    }
+
+    It 'RecentFailureWindowHours=0 disables recent flag but unresolved still surfaces' {
+        $runs = @(
+            [pscustomobject]@{
+                ClusterName       = 'beta'
+                ClusterResourceId = $script:_s7_inventory[1].ResourceId
+                UpdateName        = '12.2509.1.21'
+                State             = 'Failed'
+                Status            = 'Error'
+                CurrentStep       = 'Apply Update'
+                Progress          = ''
+                StartTime         = $script:_s7_now.AddHours(-5).ToString('yyyy-MM-ddTHH:mm:ss')
+                StepStartTime     = $script:_s7_now.AddHours(-4).ToString('yyyy-MM-ddTHH:mm:ss')
+                EndTime           = $script:_s7_now.AddHours(-3).ToString('yyyy-MM-ddTHH:mm:ss')
+                RunId             = 'r5'
+                RunResourceId     = ($script:_s7_inventory[1].ResourceId + '/updates/12.2509.1.21/updateRuns/r5')
+                ErrorMessage      = 'CAU error.'
+                CurrentStepDetail = ''
+            }
+        )
+        $global:_s7_payload = @{ Inventory = $script:_s7_inventory; Runs = $runs; Now = $script:_s7_now; OutDir = $script:_s7_outDir }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory { @($global:_s7_payload.Inventory) }
+            Mock Get-AzLocalUpdateRuns       { @($global:_s7_payload.Runs) }
+            Export-AzLocalUpdateRunMonitorReport -OutputDirectory $global:_s7_payload.OutDir -Now $global:_s7_payload.Now -RecentFailureWindowHours 0 -PassThru
+        }
+        $result.UnresolvedFailureCount | Should -Be 1
+        $result.RecentFailureCount     | Should -Be 0
+        $row = @($result.Rows)[0]
+        $row.IsUnresolvedFailure | Should -BeTrue
+        $row.IsRecentFailure     | Should -BeFalse
+    }
+
+    It 'Scope=by-update-ring skips Get-AzLocalClusterInventory and queries by tag' {
+        $runs = @(
+            [pscustomobject]@{
+                ClusterName       = 'alpha'
+                ClusterResourceId = $script:_s7_inventory[0].ResourceId
+                UpdateName        = '12.2509.1.21'
+                State             = 'InProgress'
+                Status            = 'InProgress'
+                CurrentStep       = 'Apply Update'
+                Progress          = '50%'
+                StartTime         = $script:_s7_now.AddMinutes(-15).ToString('yyyy-MM-ddTHH:mm:ss')
+                StepStartTime     = $script:_s7_now.AddMinutes(-15).ToString('yyyy-MM-ddTHH:mm:ss')
+                EndTime           = $null
+                RunId             = 'r6'
+                RunResourceId     = ($script:_s7_inventory[0].ResourceId + '/updates/12.2509.1.21/updateRuns/r6')
+            }
+        )
+        $global:_s7_payload = @{ Inventory = $script:_s7_inventory; Runs = $runs; Now = $script:_s7_now; OutDir = $script:_s7_outDir }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory { throw 'Should NOT be called when Scope=by-update-ring' }
+            Mock Get-AzLocalUpdateRuns       { @($global:_s7_payload.Runs) } -ParameterFilter { $ScopeByUpdateRingTag -eq $true -and $UpdateRingValue -eq 'Canary' }
+            $r = Export-AzLocalUpdateRunMonitorReport -OutputDirectory $global:_s7_payload.OutDir -Now $global:_s7_payload.Now -Scope 'by-update-ring' -UpdateRing 'Canary' -PassThru
+            Should -Invoke Get-AzLocalClusterInventory -Times 0 -Exactly
+            Should -Invoke Get-AzLocalUpdateRuns       -Times 1 -Exactly -ParameterFilter { $ScopeByUpdateRingTag -eq $true -and $UpdateRingValue -eq 'Canary' }
+            $r
+        }
+        $result.InFlightCount | Should -Be 1
+    }
+
+    It 'CSV is sorted by SeverityScore descending (worst first), and contains all rows' {
+        $runs = @(
+            [pscustomobject]@{
+                ClusterName       = 'lowsev'
+                ClusterResourceId = $script:_s7_inventory[0].ResourceId
+                UpdateName        = 'U1'
+                State             = 'InProgress'
+                Status            = 'InProgress'
+                CurrentStep       = 'Init'
+                Progress          = '5%'
+                StartTime         = $script:_s7_now.AddMinutes(-10).ToString('yyyy-MM-ddTHH:mm:ss')
+                StepStartTime     = $script:_s7_now.AddMinutes(-10).ToString('yyyy-MM-ddTHH:mm:ss')
+                EndTime           = $null
+                RunId             = 'rA'
+                RunResourceId     = ($script:_s7_inventory[0].ResourceId + '/updates/U1/updateRuns/rA')
+            }
+            [pscustomobject]@{
+                ClusterName       = 'highsev'
+                ClusterResourceId = $script:_s7_inventory[1].ResourceId
+                UpdateName        = 'U2'
+                State             = 'InProgress'
+                Status            = 'Error'                                          # stuck step => 1000 + extras
+                CurrentStep       = 'Run Pre Update Validation'
+                Progress          = '10%'
+                StartTime         = $script:_s7_now.AddHours(-2).ToString('yyyy-MM-ddTHH:mm:ss')
+                StepStartTime     = $script:_s7_now.AddHours(-1).ToString('yyyy-MM-ddTHH:mm:ss')
+                EndTime           = $null
+                RunId             = 'rB'
+                RunResourceId     = ($script:_s7_inventory[1].ResourceId + '/updates/U2/updateRuns/rB')
+                ErrorMessage      = 'health check fail'
+            }
+        )
+        $global:_s7_payload = @{ Inventory = $script:_s7_inventory; Runs = $runs; Now = $script:_s7_now; OutDir = $script:_s7_outDir }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory { @($global:_s7_payload.Inventory) }
+            Mock Get-AzLocalUpdateRuns       { @($global:_s7_payload.Runs) }
+            Export-AzLocalUpdateRunMonitorReport -OutputDirectory $global:_s7_payload.OutDir -Now $global:_s7_payload.Now -PassThru
+        }
+        $csv = @(Import-Csv -LiteralPath $result.CsvPath)
+        $csv.Count                | Should -Be 2
+        $csv[0].ClusterName       | Should -Be 'highsev'     # higher SeverityScore first
+        $csv[1].ClusterName       | Should -Be 'lowsev'
+    }
+
+    It 'JUnit XML is well-formed and contains a testcase per in-flight + per unresolved failure' {
+        $runs = @(
+            [pscustomobject]@{
+                ClusterName       = 'alpha'
+                ClusterResourceId = $script:_s7_inventory[0].ResourceId
+                UpdateName        = 'U1'
+                State             = 'InProgress'
+                Status            = 'InProgress'
+                CurrentStep       = 'Apply Update'
+                Progress          = '40%'
+                StartTime         = $script:_s7_now.AddMinutes(-20).ToString('yyyy-MM-ddTHH:mm:ss')
+                StepStartTime     = $script:_s7_now.AddMinutes(-20).ToString('yyyy-MM-ddTHH:mm:ss')
+                EndTime           = $null
+                RunId             = 'rA'
+                RunResourceId     = ($script:_s7_inventory[0].ResourceId + '/updates/U1/updateRuns/rA')
+            }
+            [pscustomobject]@{
+                ClusterName       = 'beta'
+                ClusterResourceId = $script:_s7_inventory[1].ResourceId
+                UpdateName        = 'U1'
+                State             = 'Failed'
+                Status            = 'Error'
+                CurrentStep       = 'Apply Update'
+                Progress          = ''
+                StartTime         = $script:_s7_now.AddHours(-6).ToString('yyyy-MM-ddTHH:mm:ss')
+                StepStartTime     = $script:_s7_now.AddHours(-5).ToString('yyyy-MM-ddTHH:mm:ss')
+                EndTime           = $script:_s7_now.AddHours(-4).ToString('yyyy-MM-ddTHH:mm:ss')
+                RunId             = 'rB'
+                RunResourceId     = ($script:_s7_inventory[1].ResourceId + '/updates/U1/updateRuns/rB')
+                ErrorMessage      = 'CAU failure'
+            }
+        )
+        $global:_s7_payload = @{ Inventory = $script:_s7_inventory; Runs = $runs; Now = $script:_s7_now; OutDir = $script:_s7_outDir }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory { @($global:_s7_payload.Inventory) }
+            Mock Get-AzLocalUpdateRuns       { @($global:_s7_payload.Runs) }
+            Export-AzLocalUpdateRunMonitorReport -OutputDirectory $global:_s7_payload.OutDir -Now $global:_s7_payload.Now -PassThru
+        }
+        Test-Path -LiteralPath $result.XmlPath | Should -BeTrue
+        $xml = [xml](Get-Content -Raw -LiteralPath $result.XmlPath)
+        $cases = @($xml.SelectNodes('//testcase'))
+        $cases.Count | Should -Be 2
+        # The in-flight case must NOT have <failure> (within thresholds), the unresolved must HAVE one.
+        ($cases | Where-Object { $_.classname -eq 'UpdateMonitor' }).Count | Should -Be 2
+        $failed = @($cases | Where-Object { $_.failure })
+        $failed.Count | Should -Be 1
+        $failed[0].failure.type | Should -Be 'RecentFailure'
+    }
+
+    It 'Markdown step summary contains required headings, metric table, and footer module version' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s7_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s7_ghSummaryFile
+        $runs = @(
+            [pscustomobject]@{
+                ClusterName       = 'alpha'
+                ClusterResourceId = $script:_s7_inventory[0].ResourceId
+                UpdateName        = 'U1'
+                State             = 'InProgress'
+                Status            = 'InProgress'
+                CurrentStep       = 'Apply Update'
+                Progress          = '40%'
+                StartTime         = $script:_s7_now.AddMinutes(-20).ToString('yyyy-MM-ddTHH:mm:ss')
+                StepStartTime     = $script:_s7_now.AddMinutes(-20).ToString('yyyy-MM-ddTHH:mm:ss')
+                EndTime           = $null
+                RunId             = 'rA'
+                RunResourceId     = ($script:_s7_inventory[0].ResourceId + '/updates/U1/updateRuns/rA')
+            }
+        )
+        $global:_s7_payload = @{ Inventory = $script:_s7_inventory; Runs = $runs; Now = $script:_s7_now; OutDir = $script:_s7_outDir }
+        [void](InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory { @($global:_s7_payload.Inventory) }
+            Mock Get-AzLocalUpdateRuns       { @($global:_s7_payload.Runs) }
+            Export-AzLocalUpdateRunMonitorReport -OutputDirectory $global:_s7_payload.OutDir -Now $global:_s7_payload.Now -InstalledModuleVersion '0.8.5' -PassThru
+        })
+        $summary = Get-Content -Raw -LiteralPath $script:_s7_ghSummaryFile
+        $summary | Should -Match '## In-Flight Update Monitor'
+        $summary | Should -Match 'Fleet Status: HEALTHY'
+        $summary | Should -Match '\| Metric \| Count \|'
+        $summary | Should -Match '\| Update runs in flight \| 1 \|'
+        $summary | Should -Match '### In-flight runs'
+        $summary | Should -Match '_Generated by AzLocal.UpdateManagement v0\.8\.5\._'
+    }
+
+    It 'Defaults OutputDirectory to BUILD_ARTIFACTSTAGINGDIRECTORY when on Azure DevOps host' {
+        $adoStage = Join-Path -Path $env:TEMP -ChildPath ("s7-ado-stage-{0}" -f ([Guid]::NewGuid()))
+        New-Item -ItemType Directory -Path $adoStage -Force | Out-Null
+        try {
+            $env:TF_BUILD = 'true'
+            $env:BUILD_ARTIFACTSTAGINGDIRECTORY = $adoStage
+            $global:_s7_payload = @{ Inventory = @(); Runs = @(); Now = $script:_s7_now }
+            $result = InModuleScope AzLocal.UpdateManagement {
+                Mock Get-AzLocalClusterInventory { @($global:_s7_payload.Inventory) }
+                Mock Get-AzLocalUpdateRuns       { @($global:_s7_payload.Runs) }
+                Export-AzLocalUpdateRunMonitorReport -Now $global:_s7_payload.Now -PassThru
+            }
+            $result.CsvPath | Should -Be (Join-Path -Path $adoStage -ChildPath 'update-monitor.csv')
+            $result.XmlPath | Should -Be (Join-Path -Path $adoStage -ChildPath 'update-monitor.xml')
+        }
+        finally {
+            if (Test-Path -LiteralPath $adoStage) { Remove-Item -LiteralPath $adoStage -Recurse -Force -ErrorAction SilentlyContinue }
+        }
+    }
+}
+
+#endregion v0.8.5: Export-AzLocalUpdateRunMonitorReport
