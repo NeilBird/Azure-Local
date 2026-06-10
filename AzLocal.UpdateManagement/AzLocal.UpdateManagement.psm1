@@ -307,6 +307,8 @@ Export-ModuleMember -Function @(
     'Get-AzLocalApplyUpdatesScheduleNextFirings',
     'New-AzLocalApplyUpdatesScheduleConfig',
     'Update-AzLocalApplyUpdatesScheduleConfig',
+    # Cycle Calendar (v0.8.5) - human-readable per-day projection of the resolver for one full cycle (or any -Days horizon), variable cycle length safe, year-boundary safe, per-ring 'next eligible date' summary
+    'Get-AzLocalApplyUpdatesScheduleCycleCalendar',
     # Fleet Health Overview (v0.7.70) - one row per cluster, ARG-first projection of cluster + updateSummaries
     'Get-AzLocalFleetHealthOverview',
     # Latest Released Solution Version (v0.7.70 Phase E) - public manifest probe (aka.ms/AzureEdgeUpdates) that anchors the rolling YYMM support window in Step.6
@@ -314,5 +316,7 @@ Export-ModuleMember -Function @(
     # Fleet Connectivity Status (v0.7.79) - 4-scope connectivity audit: cluster, Arc agent, physical NIC, ARB
     'Get-AzLocalFleetConnectivityStatus',
     # Fleet Connectivity Status Summary Renderer (v0.7.87) - markdown step-summary builder used by Step.4 GH+ADO pipelines
-    'New-AzLocalFleetConnectivityStatusSummary'
+    'New-AzLocalFleetConnectivityStatusSummary',
+    # Thin-YAML pipeline foundation (v0.8.5) - install-step version banner + drift annotations + step outputs (condenses ~50-line inline block in every Step.*.yml)
+    'Add-AzLocalPipelineVersionBanner'
 )

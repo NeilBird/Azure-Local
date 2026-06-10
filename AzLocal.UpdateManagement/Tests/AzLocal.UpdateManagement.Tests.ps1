@@ -34,8 +34,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $script:ModuleInfo | Should -Not -BeNullOrEmpty
         }
 
-        It 'Should have version 0.8.4' {
-            $script:ModuleInfo.Version | Should -Be '0.8.4'
+        It 'Should have version 0.8.5' {
+            $script:ModuleInfo.Version | Should -Be '0.8.5'
         }
 
         It 'Module version constants are in sync between .psm1 and .psd1' {
@@ -199,8 +199,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $content | Should -Match '\$data\.ArbRows' -Because "Step.4 $Platform must assign `$data.ArbRows from cmdlet output"
         }
 
-        It 'Should export exactly 38 functions' {
-            $script:ModuleInfo.ExportedFunctions.Count | Should -Be 38
+        It 'Should export exactly 40 functions' {
+            $script:ModuleInfo.ExportedFunctions.Count | Should -Be 40
         }
 
         It 'Should export the expected functions' {
@@ -260,7 +260,9 @@ Describe 'Module: AzLocal.UpdateManagement' {
                 # Fleet Connectivity Status (v0.7.79) - 4-scope connectivity audit: cluster, Arc agent, physical NIC, ARB
                 'Get-AzLocalFleetConnectivityStatus',
                 # Fleet Connectivity Status Summary Renderer (v0.7.87) - markdown step-summary builder used by Step.4 GH+ADO pipelines
-                'New-AzLocalFleetConnectivityStatusSummary'
+                'New-AzLocalFleetConnectivityStatusSummary',
+                # Thin-YAML pipeline foundation (v0.8.5) - install-step version banner + drift annotations + step outputs
+                'Add-AzLocalPipelineVersionBanner'
             )
             
             foreach ($func in $expectedFunctions) {
@@ -597,6 +599,91 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $content | Should -Match 'apply-results\.json' -Because 'ADO Step.6 apply-updates step must persist apply-results.json'
             $content | Should -Match '### Cluster Actions' -Because 'ADO Step.6 Generate Summary must render the Cluster Actions table'
             $content | Should -Match '### Clusters Skipped at Readiness Gate' -Because 'ADO Step.6 Generate Summary must render the Clusters Skipped at Readiness Gate table'
+        }
+    }
+
+    Context 'v0.8.5 Step.6 manual schedule-file input' {
+        # v0.8.5: Step.6 (GH + ADO) gains two manual-run inputs that let an
+        # operator trigger the apply-updates pipeline by hand BUT have it
+        # resolve UpdateRing + AllowedUpdateVersions from apply-updates-schedule.yml
+        # exactly as a scheduled run would (use_schedule_file / useScheduleFile),
+        # optionally for a future UTC date (resolve_for_date_utc / resolveForDateUtc)
+        # to preview a future cycleWeek/dayOfWeek. The pre-existing manual ring-name
+        # path must still work verbatim when the new input is false (back-compat),
+        # and the resolver must throw a helpful error when BOTH paths are empty.
+        BeforeAll {
+            $script:S6Gh  = (Resolve-Path (Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples\github-actions\Step.6_apply-updates.yml')).Path
+            $script:S6Ado = (Resolve-Path (Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples\azure-devops\Step.6_apply-updates.yml')).Path
+            $script:S6GhContent  = Get-Content -LiteralPath $script:S6Gh  -Raw
+            $script:S6AdoContent = Get-Content -LiteralPath $script:S6Ado -Raw
+        }
+
+        It 'GH Step.6 declares the use_schedule_file workflow_dispatch input (boolean choice)' {
+            $script:S6GhContent | Should -Match '(?m)^\s*use_schedule_file:\s*$' -Because 'v0.8.5 GH Step.6 must declare the new use_schedule_file input under workflow_dispatch.inputs'
+            $script:S6GhContent | Should -Match "use_schedule_file:[\s\S]{0,400}?type:\s*choice[\s\S]{0,200}?-\s*'false'[\s\S]{0,100}?-\s*'true'" -Because 'use_schedule_file must be a choice between false and true'
+        }
+
+        It 'GH Step.6 declares the resolve_for_date_utc workflow_dispatch input' {
+            $script:S6GhContent | Should -Match '(?m)^\s*resolve_for_date_utc:\s*$' -Because 'v0.8.5 GH Step.6 must declare the new resolve_for_date_utc input'
+            $script:S6GhContent | Should -Match "resolve_for_date_utc:[\s\S]{0,400}?default:\s*''" -Because 'resolve_for_date_utc must default to empty (today UTC)'
+        }
+
+        It 'GH Step.6 update_ring is NO LONGER required (v0.8.5 drops required:true so use_schedule_file=true can stand alone)' {
+            # match the update_ring block specifically, capturing through the next blank line / next input
+            if ($script:S6GhContent -match "update_ring:\s*[\s\S]{0,800}?(?:\n\s*\n|\n      \w)") {
+                $block = $Matches[0]
+                $block | Should -Not -Match 'required:\s*true' -Because 'update_ring must NOT have required:true in v0.8.5 - use_schedule_file=true is an alternative path'
+            } else {
+                throw 'Could not locate update_ring block in GH Step.6'
+            }
+        }
+
+        It 'GH Step.6 resolver step exposes USE_SCHEDULE_FILE and RESOLVE_FOR_DATE_UTC env vars' {
+            $script:S6GhContent | Should -Match 'USE_SCHEDULE_FILE:\s*\$\{\{\s*github\.event\.inputs\.use_schedule_file\s*\}\}'
+            $script:S6GhContent | Should -Match 'RESOLVE_FOR_DATE_UTC:\s*\$\{\{\s*github\.event\.inputs\.resolve_for_date_utc\s*\}\}'
+        }
+
+        It 'GH Step.6 resolver script passes -Now $resolveAt to Resolve-AzLocalCurrentUpdateRing' {
+            $script:S6GhContent | Should -Match 'Resolve-AzLocalCurrentUpdateRing\s+-Schedule\s+\$cfg\s+-Now\s+\$resolveAt' -Because 'manual-with-schedule-file path must be able to resolve for a future UTC date'
+        }
+
+        It 'GH Step.6 resolver throws when workflow_dispatch + use_schedule_file=false + empty update_ring' {
+            $script:S6GhContent | Should -Match "workflow_dispatch with use_schedule_file=false requires the update_ring input to be non-empty"
+        }
+
+        It 'GH Step.6 resolver parses resolve_for_date_utc as yyyy-MM-dd and throws on invalid format' {
+            $script:S6GhContent | Should -Match "ParseExact[\s\S]{0,300}?'yyyy-MM-dd'" -Because 'resolve_for_date_utc must be parsed in yyyy-MM-dd format'
+            # Single-quoted regex - prevents PowerShell from interpolating $env:RESOLVE_FOR_DATE_UTC at test-run time
+            $script:S6GhContent | Should -Match 'resolve_for_date_utc=''\$\(\$env:RESOLVE_FOR_DATE_UTC\)'' is not a valid date'
+        }
+
+        It 'ADO Step.6 declares the useScheduleFile boolean parameter' {
+            $script:S6AdoContent | Should -Match '(?m)^\s*-\s*name:\s*useScheduleFile' -Because 'v0.8.5 ADO Step.6 must declare the new useScheduleFile parameter'
+            $script:S6AdoContent | Should -Match "useScheduleFile[\s\S]{0,400}?type:\s*boolean[\s\S]{0,200}?default:\s*false" -Because 'useScheduleFile must be a boolean defaulting to false'
+        }
+
+        It 'ADO Step.6 declares the resolveForDateUtc string parameter' {
+            $script:S6AdoContent | Should -Match '(?m)^\s*-\s*name:\s*resolveForDateUtc'
+            $script:S6AdoContent | Should -Match "resolveForDateUtc[\s\S]{0,400}?default:\s*''"
+        }
+
+        It 'ADO Step.6 resolveRing task exposes USE_SCHEDULE_FILE and RESOLVE_FOR_DATE_UTC env vars' {
+            $script:S6AdoContent | Should -Match 'USE_SCHEDULE_FILE:\s*\$\{\{\s*parameters\.useScheduleFile\s*\}\}'
+            $script:S6AdoContent | Should -Match 'RESOLVE_FOR_DATE_UTC:\s*\$\{\{\s*parameters\.resolveForDateUtc\s*\}\}'
+        }
+
+        It 'ADO Step.6 resolveRing script passes -Now $resolveAt to Resolve-AzLocalCurrentUpdateRing' {
+            $script:S6AdoContent | Should -Match 'Resolve-AzLocalCurrentUpdateRing\s+-Schedule\s+\$cfg\s+-Now\s+\$resolveAt'
+        }
+
+        It 'ADO Step.6 resolveRing throws when manual + useScheduleFile=false + empty updateRing' {
+            $script:S6AdoContent | Should -Match "with useScheduleFile=false requires the updateRing parameter to be non-empty"
+        }
+
+        It 'ADO Step.6 resolveRing parses resolveForDateUtc as yyyy-MM-dd and throws on invalid format' {
+            $script:S6AdoContent | Should -Match "ParseExact[\s\S]{0,300}?'yyyy-MM-dd'"
+            # Single-quoted regex - prevents PowerShell from interpolating $env:RESOLVE_FOR_DATE_UTC at test-run time
+            $script:S6AdoContent | Should -Match 'resolveForDateUtc=''\$\(\$env:RESOLVE_FOR_DATE_UTC\)'' is not a valid date'
         }
     }
 
@@ -7476,8 +7563,8 @@ schedule:
                 $out = Join-Path $calDir 'reco-cal.md'
                 Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend -PipelineYamlPath (Join-Path $calDir 'github-actions') -SchedulePath $schedule -ExportPath $out 6>$null | Out-Null
                 $md = Get-Content -Path $out -Raw
-                $md | Should -Match 'Cycle calendar - next 14 day\(s\) \(one full 2-week cycle\)'
-                $md | Should -Match '\| Date \(UTC\) \| Day \| CycleWeek \| Eligible rings \| AllowedUpdateVersions \|'
+                $md | Should -Match 'Cycle calendar - next 14 day\(s\) \(cycle length: 2 week\(s\)\)'
+                $md | Should -Match '\| Date \(UTC\) \| Day \| CycleWeek \| Eligible rings \|( Clusters in ring\(s\) \|)? AllowedUpdateVersions \|'
                 # Should have 14 data rows
                 $rowCount = ([regex]::Matches($md, '(?m)^\|\s*\d{4}-\d{2}-\d{2}\s*\|')).Count
                 $rowCount | Should -Be 14
@@ -10135,8 +10222,8 @@ Describe 'Function: Get-AzLocalFleetHealthOverview - v0.7.70 (ARG-first fleet he
             $cmd.CommandType | Should -Be 'Function'
         }
 
-        It 'BS7: Module exports exactly 38 functions (was 37 in v0.7.86 before New-AzLocalFleetConnectivityStatusSummary was added in v0.7.87)' {
-            (Get-Module AzLocal.UpdateManagement).ExportedFunctions.Count | Should -Be 38
+        It 'BS7: Module exports exactly 40 functions (was 39 in v0.8.5 before Add-AzLocalPipelineVersionBanner thin-YAML foundation was added)' {
+            (Get-Module AzLocal.UpdateManagement).ExportedFunctions.Count | Should -Be 40
         }
     }
 
@@ -12171,6 +12258,201 @@ Describe 'Pipeline output helpers: Write-AzLocalPipelineNotice / Write-AzLocalPi
 
 #endregion v0.8.2: Pipeline host abstraction
 
+#region v0.8.5: Add-AzLocalPipelineVersionBanner (thin-YAML foundation)
+
+Describe 'Thin-YAML foundation: Add-AzLocalPipelineVersionBanner' {
+
+    BeforeEach {
+        $script:_savedGhActions = $env:GITHUB_ACTIONS
+        $script:_savedTfBuild   = $env:TF_BUILD
+        $script:_savedGhOutput  = $env:GITHUB_OUTPUT
+        $script:_savedGhSummary = $env:GITHUB_STEP_SUMMARY
+        $script:_savedAdoStage  = $env:BUILD_ARTIFACTSTAGINGDIRECTORY
+        Remove-Item Env:\GITHUB_ACTIONS                  -ErrorAction SilentlyContinue
+        Remove-Item Env:\TF_BUILD                        -ErrorAction SilentlyContinue
+        Remove-Item Env:\GITHUB_OUTPUT                   -ErrorAction SilentlyContinue
+        Remove-Item Env:\GITHUB_STEP_SUMMARY             -ErrorAction SilentlyContinue
+        Remove-Item Env:\BUILD_ARTIFACTSTAGINGDIRECTORY  -ErrorAction SilentlyContinue
+
+        $script:_ghOutputFile  = Join-Path -Path $env:TEMP -ChildPath ("vb-gh-output-{0}"  -f ([Guid]::NewGuid()))
+        $script:_ghSummaryFile = Join-Path -Path $env:TEMP -ChildPath ("vb-gh-summary-{0}.md" -f ([Guid]::NewGuid()))
+        $script:_adoStageDir   = Join-Path -Path $env:TEMP -ChildPath ("vb-ado-stage-{0}" -f ([Guid]::NewGuid()))
+        New-Item -ItemType File      -Path $script:_ghOutputFile  -Force | Out-Null
+        New-Item -ItemType File      -Path $script:_ghSummaryFile -Force | Out-Null
+        New-Item -ItemType Directory -Path $script:_adoStageDir   -Force | Out-Null
+    }
+    AfterEach {
+        if ($null -ne $script:_savedGhActions) { $env:GITHUB_ACTIONS                 = $script:_savedGhActions } else { Remove-Item Env:\GITHUB_ACTIONS                 -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_savedTfBuild)   { $env:TF_BUILD                       = $script:_savedTfBuild   } else { Remove-Item Env:\TF_BUILD                       -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_savedGhOutput)  { $env:GITHUB_OUTPUT                  = $script:_savedGhOutput  } else { Remove-Item Env:\GITHUB_OUTPUT                  -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_savedGhSummary) { $env:GITHUB_STEP_SUMMARY            = $script:_savedGhSummary } else { Remove-Item Env:\GITHUB_STEP_SUMMARY            -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_savedAdoStage)  { $env:BUILD_ARTIFACTSTAGINGDIRECTORY = $script:_savedAdoStage  } else { Remove-Item Env:\BUILD_ARTIFACTSTAGINGDIRECTORY -ErrorAction SilentlyContinue }
+        Remove-Item -LiteralPath $script:_ghOutputFile,$script:_ghSummaryFile -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $script:_adoStageDir -Recurse -Force          -ErrorAction SilentlyContinue
+    }
+
+    It 'throws ValidatePattern when -GeneratedAgainstVersion is not a SemVer string' {
+        { InModuleScope AzLocal.UpdateManagement { Add-AzLocalPipelineVersionBanner -GeneratedAgainstVersion 'not-a-version' -SkipPSGalleryQuery } } |
+            Should -Throw
+    }
+
+    It 'in-sync verdict when installed == generated and PSGallery skipped (PassThru)' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_ghSummaryFile
+        $info = InModuleScope AzLocal.UpdateManagement {
+            $real = (Get-Module AzLocal.UpdateManagement | Sort-Object Version -Descending | Select-Object -First 1).Version.ToString()
+            Add-AzLocalPipelineVersionBanner -GeneratedAgainstVersion $real -SkipPSGalleryQuery -PassThru
+        }
+        $info.Verdict           | Should -Be 'in sync'
+        $info.PinStatus         | Should -Be 'latest (fix-forward)'
+        $info.LatestOnPSGallery | Should -BeNullOrEmpty
+        $info.InstalledVersion        | Should -BeOfType ([version])
+        $info.GeneratedAgainstVersion | Should -BeOfType ([version])
+    }
+
+    It "PinnedVersion populated -> PinStatus says 'pinned to vX.Y.Z'" {
+        $info = InModuleScope AzLocal.UpdateManagement {
+            $real = (Get-Module AzLocal.UpdateManagement | Sort-Object Version -Descending | Select-Object -First 1).Version.ToString()
+            Add-AzLocalPipelineVersionBanner -GeneratedAgainstVersion $real -PinnedVersion '0.8.5' -SkipPSGalleryQuery -PassThru
+        }
+        $info.PinStatus | Should -Be 'pinned to v0.8.5'
+    }
+
+    It "PinnedVersion empty string -> PinStatus says 'latest (fix-forward)'" {
+        $info = InModuleScope AzLocal.UpdateManagement {
+            $real = (Get-Module AzLocal.UpdateManagement | Sort-Object Version -Descending | Select-Object -First 1).Version.ToString()
+            Add-AzLocalPipelineVersionBanner -GeneratedAgainstVersion $real -PinnedVersion '' -SkipPSGalleryQuery -PassThru
+        }
+        $info.PinStatus | Should -Be 'latest (fix-forward)'
+    }
+
+    It 'GitHub: emits installed_module_version + generated_against_version + latest_on_psgallery step outputs' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_ghSummaryFile
+        InModuleScope AzLocal.UpdateManagement {
+            $real = (Get-Module AzLocal.UpdateManagement | Sort-Object Version -Descending | Select-Object -First 1).Version.ToString()
+            Add-AzLocalPipelineVersionBanner -GeneratedAgainstVersion $real -SkipPSGalleryQuery
+        }
+        $contents = Get-Content -LiteralPath $script:_ghOutputFile -Raw
+        $contents | Should -Match '(?m)^installed_module_version=\d+\.\d+\.\d+'
+        $contents | Should -Match '(?m)^generated_against_version=\d+\.\d+\.\d+'
+        $contents | Should -Match '(?m)^latest_on_psgallery=\s*$'
+    }
+
+    It 'GitHub: appends a one-line banner row to $env:GITHUB_STEP_SUMMARY (markdown italics + pipes)' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_ghSummaryFile
+        InModuleScope AzLocal.UpdateManagement {
+            $real = (Get-Module AzLocal.UpdateManagement | Sort-Object Version -Descending | Select-Object -First 1).Version.ToString()
+            Add-AzLocalPipelineVersionBanner -GeneratedAgainstVersion $real -SkipPSGalleryQuery
+        }
+        $md = Get-Content -LiteralPath $script:_ghSummaryFile -Raw
+        $md | Should -Match '_Pipeline YAML v\d+\.\d+\.\d+ \| Module v\d+\.\d+\.\d+ installed \(.+?\) \| PSGallery latest .+? \| .+?_'
+    }
+
+    It 'YAML newer than module -> WARNING annotation on GH' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_ghSummaryFile
+        $captured = & {
+            InModuleScope AzLocal.UpdateManagement {
+                Add-AzLocalPipelineVersionBanner -GeneratedAgainstVersion '99.99.99' -SkipPSGalleryQuery
+            }
+        } *>&1
+        ($captured -join "`n") | Should -Match '::warning title=AzLocal\.UpdateManagement is older than workflow YAML expects::'
+    }
+
+    It 'YAML older than module -> NOTICE annotation on GH' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_ghSummaryFile
+        $captured = & {
+            InModuleScope AzLocal.UpdateManagement {
+                Add-AzLocalPipelineVersionBanner -GeneratedAgainstVersion '0.0.1' -SkipPSGalleryQuery
+            }
+        } *>&1
+        ($captured -join "`n") | Should -Match '::notice title=Workflow YAML may be stale::'
+    }
+
+    It 'PassThru verdict -> "YAML newer than module" when installed < generated' {
+        $info = InModuleScope AzLocal.UpdateManagement {
+            Add-AzLocalPipelineVersionBanner -GeneratedAgainstVersion '99.99.99' -SkipPSGalleryQuery -PassThru
+        }
+        $info.Verdict | Should -Match 'YAML newer than module'
+    }
+
+    It 'PassThru verdict -> "YAML older than module" when installed > generated' {
+        $info = InModuleScope AzLocal.UpdateManagement {
+            Add-AzLocalPipelineVersionBanner -GeneratedAgainstVersion '0.0.1' -SkipPSGalleryQuery -PassThru
+        }
+        $info.Verdict | Should -Match 'YAML older than module'
+    }
+
+    It 'Find-Module failure is swallowed (returns $null latest, no throw)' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_ghSummaryFile
+        $info = InModuleScope AzLocal.UpdateManagement {
+            Mock -ModuleName AzLocal.UpdateManagement -CommandName Find-Module -MockWith { throw 'simulated PSGallery outage' }
+            $real = (Get-Module AzLocal.UpdateManagement | Sort-Object Version -Descending | Select-Object -First 1).Version.ToString()
+            Add-AzLocalPipelineVersionBanner -GeneratedAgainstVersion $real -PassThru
+        }
+        $info.LatestOnPSGallery | Should -BeNullOrEmpty
+        $info.Verdict           | Should -Be 'in sync'
+    }
+
+    It "newer module on PSGallery -> NOTICE annotation + verdict 'newer module available on PSGallery'" {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_ghSummaryFile
+        $script:_capturedInfo = $null
+        $captured = & {
+            $script:_capturedInfo = InModuleScope AzLocal.UpdateManagement {
+                Mock -ModuleName AzLocal.UpdateManagement -CommandName Find-Module -MockWith {
+                    [PSCustomObject]@{ Name = 'AzLocal.UpdateManagement'; Version = [version]'99.99.99' }
+                }
+                $real = (Get-Module AzLocal.UpdateManagement | Sort-Object Version -Descending | Select-Object -First 1).Version.ToString()
+                Add-AzLocalPipelineVersionBanner -GeneratedAgainstVersion $real -PassThru
+            }
+        } *>&1
+        $script:_capturedInfo.Verdict           | Should -Be 'newer module available on PSGallery'
+        $script:_capturedInfo.LatestOnPSGallery | Should -Be ([version]'99.99.99')
+        ($captured -join "`n") | Should -Match '::notice title=Newer AzLocal\.UpdateManagement version available on PSGallery::'
+    }
+
+    It 'AzureDevOps: emits ##vso[task.setvariable...] style step outputs' {
+        $env:TF_BUILD                       = 'True'
+        $env:BUILD_ARTIFACTSTAGINGDIRECTORY = $script:_adoStageDir
+        $captured = & {
+            InModuleScope AzLocal.UpdateManagement {
+                $real = (Get-Module AzLocal.UpdateManagement | Sort-Object Version -Descending | Select-Object -First 1).Version.ToString()
+                Add-AzLocalPipelineVersionBanner -GeneratedAgainstVersion $real -SkipPSGalleryQuery
+            }
+        } *>&1
+        $joined = $captured -join "`n"
+        $joined | Should -Match '##vso\[task\.setvariable variable=installed_module_version;isOutput=false\]\d+\.\d+\.\d+'
+        $joined | Should -Match '##vso\[task\.setvariable variable=generated_against_version;isOutput=false\]\d+\.\d+\.\d+'
+    }
+
+    It 'Local: writes [pipeline-output] lines for the three outputs' {
+        $captured = & {
+            InModuleScope AzLocal.UpdateManagement {
+                $real = (Get-Module AzLocal.UpdateManagement | Sort-Object Version -Descending | Select-Object -First 1).Version.ToString()
+                Add-AzLocalPipelineVersionBanner -GeneratedAgainstVersion $real -SkipPSGalleryQuery
+            }
+        } *>&1
+        $joined = $captured -join "`n"
+        $joined | Should -Match '\[pipeline-output\] installed_module_version=\d+\.\d+\.\d+'
+        $joined | Should -Match '\[pipeline-output\] generated_against_version=\d+\.\d+\.\d+'
+        $joined | Should -Match '\[pipeline-output\] latest_on_psgallery='
+    }
+}
+
+#endregion v0.8.5: Add-AzLocalPipelineVersionBanner (thin-YAML foundation)
+
 #region v0.8.5: Get-AzLocalApplyUpdatesScheduleCycleCalendar
 
 Describe 'v0.8.5 Apply-Updates Schedule: Get-AzLocalApplyUpdatesScheduleCycleCalendar (object pipeline)' {
@@ -12328,7 +12610,8 @@ schedule:
         $r[7].IsCycleWrap  | Should -Be $true
         $r[7].UpdateRingValue | Should -Be 'Canary'
         # The remaining rows include weeks 2-7 with no schedule rows = dead days, plus another week-8 Monday at end
-        ($r | Where-Object { $_.CycleWeek -eq 1 -and $_.UpdateRingValue -eq 'Canary' }).Count | Should -BeGreaterOrEqual 1
+        # @() wrap forces .Count to exist even when filter yields 0 or 1 elements
+        @($r | Where-Object { $_.CycleWeek -eq 1 -and $_.UpdateRingValue -eq 'Canary' }).Count | Should -BeGreaterOrEqual 1
     }
 
     It 'Multi-cycle horizon: -Days greater than one cycle iterates the cycle multiple times' {
@@ -12336,7 +12619,7 @@ schedule:
         $r = Get-AzLocalApplyUpdatesScheduleCycleCalendar -Schedule $script:cc_cfg4 -StartDate $script:cc_wk1Mon -Days $days
         @($r).Count | Should -Be $days
         # Two wrap rows expected when iterating two full cycles (one at start of cycle 2, one at start of cycle 3 which is outside the horizon).
-        ($r | Where-Object { $_.IsCycleWrap }).Count | Should -BeGreaterOrEqual 1
+        @($r | Where-Object { $_.IsCycleWrap }).Count | Should -BeGreaterOrEqual 1
     }
 
     It 'Throws on Schedule with invalid CycleWeeks of 0 (defensive guard)' {
@@ -12419,8 +12702,8 @@ schedule:
         $md = Get-AzLocalApplyUpdatesScheduleCycleCalendar -Schedule $script:ccmd_clean -StartDate $script:ccmd_wk1Mon -AsMarkdown
         $md             | Should -Not -BeNullOrEmpty
         $md             | Should -Match '## Cycle calendar'
-        # 14 day rows for a 2-week default cycle: 14 lines that start with a yyyy-MM-dd in the table.
-        ([regex]::Matches($md, '\| 2026-01-\d{2} \|')).Count | Should -BeGreaterOrEqual 14
+        # 14 day rows for a 2-week default cycle. The horizon may straddle 2025-12 and 2026-01 depending on the anchor Monday, so accept any yyyy-MM-dd prefix.
+        ([regex]::Matches($md, '\| \d{4}-\d{2}-\d{2} \|')).Count | Should -BeGreaterOrEqual 14
     }
 
     It '-IncludePerRingSummary adds the ### Per-ring projection section' {
