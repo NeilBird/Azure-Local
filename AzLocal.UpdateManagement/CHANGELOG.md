@@ -5,6 +5,73 @@ All notable changes to the AzLocal.UpdateManagement module (renamed from AzStack
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.5] - 2026-06-09
+
+Step.3 cycle-calendar refactor + regression fix release. Adds one new Public cmdlet (`Get-AzLocalApplyUpdatesScheduleCycleCalendar`) and two new Step.6 manual-run inputs that let an operator trigger apply-updates by hand BUT resolve UpdateRing + AllowedUpdateVersions from `apply-updates-schedule.yml` exactly as a scheduled run would. No public API removed; no parameter changes on existing cmdlets. The v0.8.4 cycle-calendar silent-drop bug in `Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend` is fixed at the architectural level (decoupled from the advisor's findings gate).
+
+### New Step.6 manual schedule-file inputs (`use_schedule_file` / `useScheduleFile` + `resolve_for_date_utc` / `resolveForDateUtc`)
+
+- **Problem**: in v0.8.4 and earlier, a manual `workflow_dispatch` / "Run pipeline" of Step.6 ALWAYS used the operator's `update_ring` / `updateRing` parameter verbatim and ignored `apply-updates-schedule.yml`. Operators wanting to (a) test a schedule change before the next scheduled tick, (b) re-run a missed scheduled day, or (c) preview a future cycleWeek/dayOfWeek had no clean way to do so - they had to hand-mirror what the resolver would have picked.
+- **Fix - GH `workflow_dispatch.inputs`**:
+  - `use_schedule_file` (choice `'false'`/`'true'`, default `'false'`) - "Resolve UpdateRing & AllowedUpdateVersions from apply-updates-schedule.yml (as a scheduled run would). Overrides update_ring."
+  - `resolve_for_date_utc` (string, default `''`, format `YYYY-MM-DD`) - "Only used when use_schedule_file=true. Date (UTC) to resolve the schedule for. Empty = today UTC. Useful for previewing a future cycleWeek/dayOfWeek."
+  - `update_ring` is no longer `required: true` - either supply it, OR set `use_schedule_file=true`. The resolver throws a helpful error if BOTH are empty.
+- **Fix - ADO `parameters`**: symmetric `useScheduleFile` (boolean, default `false`) and `resolveForDateUtc` (string, default `''`) parameters, with the same 4-branch resolver decision tree in `resolveRing`.
+- **Resolver decision tree (both platforms)**:
+  1. Manual trigger + `use_schedule_file=false` -> use manual ring verbatim (back-compat, identical to v0.8.4).
+  2. Manual trigger + `use_schedule_file=true` -> read schedule file, run `Resolve-AzLocalCurrentUpdateRing -Schedule $cfg -Now $resolveAt` for today UTC (or `resolve_for_date_utc` when set). Uses ring + AllowedUpdateVersions exactly as a scheduled run would.
+  3. Manual trigger + `use_schedule_file=false` + `update_ring` empty -> throw with remediation pointing at both alternatives.
+  4. Scheduled trigger -> unchanged (reads schedule for UTC now).
+- **`resolve_for_date_utc` parsing**: `[datetime]::ParseExact` against `'yyyy-MM-dd'` with `AssumeUniversal | AdjustToUniversal` so the date is treated as UTC regardless of agent timezone. Invalid format throws a helpful error.
+- **No change to scheduled runs**: scheduled `cron:` / `schedules:` firings still resolve via the schedule file for the current UTC moment (path 4) - no behaviour change.
+- **Pester guard**: 12 new It blocks under `Context 'v0.8.5 Step.6 manual schedule-file input'` cover both GH and ADO yml: new input declarations, `update_ring` no longer required, resolver script env-var wiring, `-Now $resolveAt` plumbing through to `Resolve-AzLocalCurrentUpdateRing`, the both-empty throw, and the `yyyy-MM-dd` parsing + invalid-format throw.
+
+### New Public cmdlet `Get-AzLocalApplyUpdatesScheduleCycleCalendar`
+
+- **Projects an `apply-updates-schedule.yml` configuration forward across the calendar** - one row per UTC day - and emits either a structured object pipeline (default) or a fully-rendered markdown block (`-AsMarkdown`).
+- **Parameters**:
+  - `-Schedule <PSCustomObject>` (mandatory) - pre-loaded schedule object (the same `$scheduleCfg` Test-...Coverage already builds via `Get-AzLocalApplyUpdatesSchedule`).
+  - `-StartDate <datetime>` - default UTC today.
+  - `-Days <int>` - default = `CycleWeeks * 7` (one full cycle). ValidateRange 1-3650.
+  - `-AsMarkdown` - switch. Without it: object pipeline. With it: full markdown block including `## Cycle calendar - next N day(s) (one full N-week cycle)` heading + per-day table + optional `### Per-ring projection` section.
+  - `-IncludePerRingSummary` - switch. Adds a per-ring projection table after the per-day calendar (next eligible UTC date per ring + all eligible dates inside the horizon).
+  - `-ClusterRingCounts <hashtable>` - case-insensitive map (`@{ Std='5'; Canary='3'; Prod='12' }`-shape). When supplied, the per-day table gains a 6th column `Clusters in ring(s)` (e.g. `3+12 (total: 15)` for UNION rows, `5` for single-ring days, blank for dead days), and the per-ring projection table gains a `Cluster count` column.
+- **Object output (per day)**: `DateUtc, DayOfWeekName, CycleWeek, CycleWeeksTotal, CycleWeekLabel, IsCycleWrap, Rings, UpdateRingValue, AllowedUpdateVersions, AllowedUpdateVersionsValue, AllowedUpdateVersionsSource, MatchedRowCount, IsDeadDay, Reason`. `Rings` is the UNION of all matching schedule rows for that day (deduplicated, `OrdinalIgnoreCase`). `IsCycleWrap=$true` on the day where `prev CycleWeek = CycleWeeksTotal` AND `current CycleWeek = 1`.
+- **Re-uses `Resolve-AzLocalCurrentUpdateRing` per-day** so cycle-week math, UNION semantics, and AllowedUpdateVersions precedence remain identical to runtime - no duplicate ISO-8601 / week-arithmetic logic to drift away from the resolver.
+- **Variable cycle length safe** (4 / 8 / 52 weeks all tested via Pester) and **year-boundary safe** (W52 -> W1 wrap on the cycle-anchor week is correctly annotated; W53 years projected correctly).
+- **Defensive**: throws when `Schedule.CycleWeeks` is 0 or missing.
+
+### Regression fix: v0.8.4 cycle calendar silently dropped on healthy fleets
+
+- **Symptom**: in v0.8.4, Step.3 GH/ADO Summary on a fleet with zero advisor findings did NOT include the cycle-calendar table even though `-SchedulePath` was supplied.
+- **Root cause**: the v0.8.4 Enhancement B cycle-calendar block lived inside `Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend`'s snippet builder, AFTER the "any findings?" gate. When there were no findings, the `$fullSb` snippet was empty, and the Step.3 yml `if ($hasIssues -and $reco)` / `if (-not $hasIssues -and $reco)` branches at lines 503/630 both fire only when `$reco` is non-empty - so the calendar quietly disappeared on healthy fleets.
+- **Fix**: the new cmdlet is invoked unconditionally whenever `$scheduleCfg` is parsed, so `$reco` is never empty when `-SchedulePath` is supplied - one of the two existing yml branches always fires. NO structural Step.3 yml change required beyond the version bump.
+- **Regression guard**: new Pester test `REGRESSION: -AsMarkdown returns the calendar even when the fleet has zero findings (v0.8.4 silent-drop bug)` asserts the markdown is non-empty and contains the `## Cycle calendar` heading even when the fleet input is empty.
+
+### `Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend` Enhancement B now delegates to the new cmdlet
+
+- The v0.8.4 inline cycle-calendar block (~37 lines, lines 931-967) in `Test-AzLocalApplyUpdatesScheduleCoverage.ps1` is replaced by a single call: `Get-AzLocalApplyUpdatesScheduleCycleCalendar -Schedule $scheduleCfg -AsMarkdown -IncludePerRingSummary -ClusterRingCounts $ringCountMap`. Wrapped in `try { ... } catch { ... }` with a `_Cycle calendar unavailable: $($_.Exception.Message)_` fallback line so a malformed schedule on a single fleet doesn't break Step.3 for the whole job.
+- `$ringCountMap` is built from the live tagged `$clusters` (already in scope from the earlier ARG query) - iterates each `$c.UpdateRing.Trim()` and increments the map. The cmdlet itself stays pure (no CSV / Azure I/O) so it remains unit-testable from a synthetic schedule object.
+
+### New: per-ring projection section (`-IncludePerRingSummary`)
+
+- Renders a `### Per-ring projection` section after the per-day table. One row per ring with: ring name, next eligible UTC date inside the horizon (or `(none)`), all eligible UTC dates inside the horizon (comma-separated, first 10 + `+N more` for very long lists), and `Cluster count` (when `-ClusterRingCounts` is supplied).
+- Step.3 yml passes `-IncludePerRingSummary` so the section always appears on healthy fleets.
+
+### Pester suite updates
+
+- `Module: AzLocal.UpdateManagement / Module Load / Should have version` drift test bumped to `'0.8.5'`.
+- New drift assertion asserts `Get-AzLocalApplyUpdatesScheduleCycleCalendar` is present in `FunctionsToExport`.
+- Two new Describe blocks (`v0.8.5 ... (object pipeline)` + `v0.8.5 ... (markdown)`) under `#region v0.8.5: Get-AzLocalApplyUpdatesScheduleCycleCalendar` cover ~28 It blocks:
+  - **Object pipeline** (11): default `Days` math, row shape, `CycleWeeksTotal` invariant, day-0 resolution, `IsDeadDay` on no-match, UNION semantics on multi-row Friday, `IsCycleWrap` on `W8 -> W1` rollover, 52-week cycle 364 rows + year boundary, 8-week cycle with wrap, multi-cycle horizon, defensive `CycleWeeks=0` throw.
+  - **Markdown** (~17): output type `[string]`, `## Cycle calendar` heading present, 5-column header (no `-ClusterRingCounts`), 6-column header (with `-ClusterRingCounts`), regression guard for v0.8.4 silent-drop, `### Per-ring projection` section structure, UNION row rendering, ClusterRingCounts column variants (single ring, multi-ring `(total: N)`, case-insensitive key match, dead-day blank), cycle-wrap `_(cycle wraps)_` annotation, year-boundary safe with 1-week cycle.
+- Expected baseline shift: 882 / 0 / 1 (pre) -> ~910 / 0 / 1 (post).
+
+### Version pin bumped across all 20 bundled `Step.{0..9}.yml` templates
+
+- `GENERATED_AGAINST_MODULE_VERSION` moves from `0.8.4` to `0.8.5` across all 20 bundled `Step.{0..9}.yml` files (10 GitHub Actions + 10 Azure DevOps). The install-step drift annotation continues to surface stale YAML to operators.
+- `$script:ModuleVersion` (psm1) == `ModuleVersion` (psd1) == `'0.8.5'` (test assertion); the drift guard introduced in v0.7.67 enforces this.
+
 ## [0.8.4] - 2026-06-18
 
 Step.3 advisor enhancement release. No public API removed; one new optional parameter on `Test-AzLocalApplyUpdatesScheduleCoverage` (`-ClusterCsvPath`); three new Recommend-view sections that render when their respective inputs are supplied. All v0.8.3 behaviour preserved unchanged.
