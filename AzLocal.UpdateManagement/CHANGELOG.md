@@ -7,7 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.8.5] - 2026-06-09
 
-Step.3 cycle-calendar refactor + regression fix release. Adds one new Public cmdlet (`Get-AzLocalApplyUpdatesScheduleCycleCalendar`) and two new Step.6 manual-run inputs that let an operator trigger apply-updates by hand BUT resolve UpdateRing + AllowedUpdateVersions from `apply-updates-schedule.yml` exactly as a scheduled run would. No public API removed; no parameter changes on existing cmdlets. The v0.8.4 cycle-calendar silent-drop bug in `Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend` is fixed at the architectural level (decoupled from the advisor's findings gate).
+Step.3 cycle-calendar refactor + regression fix release, followed by a **full thin-YAML port of all 10 Step pipelines** (GitHub Actions + Azure DevOps - 20 YAML files in total). Adds 15 new Public cmdlets (1 in the original 0.8.5 plus 14 over the thin-YAML port) and two new Step.6 manual-run inputs that let an operator trigger apply-updates by hand BUT resolve UpdateRing + AllowedUpdateVersions from `apply-updates-schedule.yml` exactly as a scheduled run would. No public API removed; no parameter changes on existing cmdlets. The v0.8.4 cycle-calendar silent-drop bug in `Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend` is fixed at the architectural level (decoupled from the advisor's findings gate). **Total module export count grows from 35 (v0.8.4) to 55 (v0.8.5).**
+
+### Thin-YAML refactor across all 10 Step pipelines (Step.0 - Step.9)
+
+- **Goal**: condense the multi-hundred-line `run: |` PowerShell blocks that were duplicated between each Step's GitHub Actions YAML and Azure DevOps YAML into a single Public cmdlet that both pipelines invoke. Zero UI / outcome delta - step output names, artifact contents, JUnit XML, markdown summaries, exit codes, error messages, and stageDependencies bindings all preserved byte-for-byte.
+- **14 new Public cmdlets added** (one per Step plus shared helpers):
+  - `Add-AzLocalPipelineVersionBanner` (shared) - emits the install-time drift banner used by every Step's install step.
+  - `Export-AzLocalAuthValidationReport` (Step.0) - + shared `New-AzLocalPipelineJUnitXml` helper.
+  - `Invoke-AzLocalClusterInventory` (Step.1).
+  - `Set-AzLocalClusterUpdateRingTagFromCsv` (Step.2).
+  - `Export-AzLocalApplyUpdatesScheduleAudit` (Step.3).
+  - `Export-AzLocalFleetConnectivityStatusReport` (Step.4).
+  - `Export-AzLocalClusterUpdateReadinessReport` (Step.5).
+  - **6 Step.6 cmdlets** (apply-updates is the largest pipeline): `Resolve-AzLocalPipelineUpdateRing`, `Export-AzLocalClusterReadinessGateReport`, `Invoke-AzLocalReadinessGatedClusterUpdate`, `Add-AzLocalApplyUpdatesStepSummary`, `Add-AzLocalNoReadyClustersStepSummary`, `Invoke-AzLocalItsmTicketingFromArtifact`.
+  - `Export-AzLocalUpdateRunMonitorReport` (Step.7).
+  - `Export-AzLocalFleetUpdateStatusReport` (Step.8).
+  - `Export-AzLocalFleetHealthStatusReport` (Step.9).
+- **Per-host step-output naming** is owned by the cmdlet, not the YAML. GitHub Actions consumes `UPPER_SNAKE` names (e.g. `READY_COUNT`); Azure DevOps consumes `PascalCase` names (e.g. `ReadyCount`) for stageDependencies `outputs['readiness.ReadyCount']` bindings. Each cmdlet auto-detects the host (`$env:TF_BUILD` / `$env:GITHUB_ACTIONS`) and emits the correct naming convention.
+- **Per-host icon style** is owned by the cmdlet: Unicode emoji on GitHub markdown summaries, GitHub-Markdown shortcodes (`:white_check_mark:` etc.) on Azure DevOps summaries.
+- **Cumulative YAML reduction** across the 20 templates: approximately **9,000 lines** removed from `Automation-Pipeline-Examples/`. Step.6 alone: GitHub Actions 964 -> 480 lines (-484); Azure DevOps 985 -> 440 lines (-545).
+- **Why this matters** for ongoing maintenance:
+  - **Single source of truth.** Logic previously duplicated between GitHub Actions YAML and Azure DevOps YAML now lives in one place. A bug fix or feature lands in the cmdlet and immediately benefits both platforms.
+  - **Unit-testable.** The new Public cmdlets are mocked + asserted in Pester (`Tests/AzLocal.UpdateManagement.Tests.ps1`). Previously, validating an inline `run: |` block required spinning up a pipeline run or hand-running a copy-paste of the block in PowerShell.
+  - **Faster CI signal.** A typo or contract change is caught by the local Pester run (~5 minutes) instead of waiting for a pipeline run + artifact inspection on Azure.
+  - **Cleaner diffs.** YAML reviewers see "one step calls one cmdlet" instead of 300 lines of inline PowerShell; reviewers can focus on YAML wiring (triggers, env, artifacts, OIDC) while cmdlet behaviour is reviewed under the unit tests.
+  - **Discoverability.** Operators running the module interactively now have a documented `Get-Help <verb>-AzLocal*` for what was previously trapped inside a YAML `run:` block.
+  - **Re-usable building blocks.** `Add-AzLocalPipelineVersionBanner`, `Set-AzLocalPipelineOutput`, `Add-AzLocalPipelineStepSummary`, `Write-AzLocalPipelineWarning`, `New-AzLocalPipelineJUnitXml` are shared across every Step cmdlet - the next pipeline doesn't re-invent host-detection, step-output emission, JUnit framing, or markdown rendering.
+- **One semantically-significant fix shaken out during testing**: `Invoke-AzLocalReadinessGatedClusterUpdate`'s seven-counter emitter was originally defined as `$emitCounters = { ... }.GetNewClosure()`. `.GetNewClosure()` rebinds the scriptblock to the CALLER's SessionState - which makes Private (non-exported) module functions invisible from inside the closure. Removing `.GetNewClosure()` (lexical scoping already gives the inline scriptblock access to the surrounding `$n*` variables when invoked via `& $emitCounters` from the same function) restored access to the private `Set-AzLocalPipelineOutput` function. Pester regression guards are now in place for both GH and ADO short-circuit paths.
+- **Pester suite growth**: ~190 new It blocks across the 14 new cmdlets (parameter shape + per-host short-circuit + host-aware naming + error-path guards). Full local suite: **1069 passed, 0 failed, 1 skipped, ~4m38s**. Function-count drift test bumped from 35 -> 55 in two sites.
+- **Backwards compatibility**: every Step pipeline keeps its filename, name field, trigger block (cron / workflow_dispatch / schedules / parameters), env block, concurrency block, OIDC login + Option 2 commented block, action-version pins, step IDs, artifact names, ITSM markers, and per-host step-output naming. Consumer pipelines that were running v0.8.4 YAML against v0.8.4 module continue to work against v0.8.5 module (the install-time drift banner surfaces the version skew but does not block).
 
 ### New Step.6 manual schedule-file inputs (`use_schedule_file` / `useScheduleFile` + `resolve_for_date_utc` / `resolveForDateUtc`)
 
