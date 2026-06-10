@@ -14040,6 +14040,47 @@ Describe 'Thin-YAML Step.7: Export-AzLocalUpdateRunMonitorReport' {
             if (Test-Path -LiteralPath $adoStage) { Remove-Item -LiteralPath $adoStage -Recurse -Force -ErrorAction SilentlyContinue }
         }
     }
+
+    It 'In-flight runs table renders Cluster and Update cells as target=_blank links so they do NOT navigate away from the pipeline output' {
+        # Regression guard: the In-flight runs (and Failed runs) tables MUST
+        # render Cluster + Update cells as <a href="..." target="_blank"
+        # rel="noopener">...</a> so operators clicking through to the Azure
+        # portal from the pipeline run summary keep the pipeline tab open.
+        # The cmdlet honours both ClusterPortalUrl and UpdateRunPortalUrl - so
+        # both must be present on the source row AND surface in the rendered
+        # markdown summary.
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s7_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s7_ghSummaryFile
+        $runs = @(
+            [pscustomobject]@{
+                ClusterName       = 'alpha'
+                ClusterResourceId = $script:_s7_inventory[0].ResourceId
+                UpdateName        = '12.2509.1.21'
+                State             = 'InProgress'
+                Status            = 'InProgress'
+                CurrentStep       = 'Run Stage Cluster Update'
+                Progress          = '45%'
+                StartTime         = $script:_s7_now.AddHours(-3).ToString('yyyy-MM-ddTHH:mm:ss')
+                StepStartTime     = $script:_s7_now.AddMinutes(-45).ToString('yyyy-MM-ddTHH:mm:ss')
+                EndTime           = $null
+                RunId             = 'r-link'
+                RunResourceId     = ($script:_s7_inventory[0].ResourceId + '/updates/12.2509.1.21/updateRuns/r-link')
+            }
+        )
+        $global:_s7_payload = @{ Inventory = $script:_s7_inventory; Runs = $runs; Now = $script:_s7_now; OutDir = $script:_s7_outDir }
+        $null = InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory { @($global:_s7_payload.Inventory) }
+            Mock Get-AzLocalUpdateRuns       { @($global:_s7_payload.Runs) }
+            Export-AzLocalUpdateRunMonitorReport -OutputDirectory $global:_s7_payload.OutDir -Now $global:_s7_payload.Now -PassThru
+        }
+        $summary = Get-Content -Raw -LiteralPath $script:_s7_ghSummaryFile
+        $summary | Should -Match '### In-flight runs'
+        # Cluster cell renders as target=_blank link with rel=noopener
+        $summary | Should -Match '<a href="https://portal\.azure\.com/#@/resource[^"]*alpha[^"]*" target="_blank" rel="noopener">alpha</a>'
+        # Update cell renders as target=_blank link with rel=noopener
+        $summary | Should -Match '<a href="https://portal\.azure\.com/#view/Microsoft_AzureStackHCI_PortalExtension/SingleInstanceHistoryDetails[^"]*" target="_blank" rel="noopener">12\.2509\.1\.21</a>'
+    }
 }
 
 #endregion v0.8.5: Export-AzLocalUpdateRunMonitorReport
