@@ -180,7 +180,7 @@ Describe 'Module: AzLocal.UpdateManagement' {
             }
         }
 
-        It 'Step.4 pipeline templates call Get-AzLocalFleetConnectivityStatus (v0.7.79 migration)' -ForEach @(
+        It 'Step.4 pipeline templates call Export-AzLocalFleetConnectivityStatusReport (v0.8.5 thin-YAML)' -ForEach @(
             @{ Platform = 'github-actions'; Path = '..\Automation-Pipeline-Examples\github-actions\Step.4_fleet-connectivity-status.yml' }
             @{ Platform = 'azure-devops';   Path = '..\Automation-Pipeline-Examples\azure-devops\Step.4_fleet-connectivity-status.yml' }
         ) {
@@ -188,19 +188,15 @@ Describe 'Module: AzLocal.UpdateManagement' {
             Test-Path $yamlPath | Should -BeTrue -Because "Step.4 template for $Platform must exist at $yamlPath"
             $content = Get-Content -Path $yamlPath -Raw
 
-            # v0.7.79 migration guard: inline KQL + Invoke-ArgQuery replaced by module cmdlet.
-            $content | Should -Match 'Get-AzLocalFleetConnectivityStatus' -Because "Step.4 $Platform must call the module cmdlet (v0.7.79 migration)"
+            # v0.8.5 thin-YAML guard: the ~255-line inline collection block
+            # was replaced by the single Export-AzLocalFleetConnectivityStatusReport call.
+            $content | Should -Match 'Export-AzLocalFleetConnectivityStatusReport' -Because "Step.4 $Platform must call the v0.8.5 thin-YAML cmdlet"
             $content | Should -Not -Match 'function Invoke-ArgQuery' -Because "Step.4 $Platform must not contain inline Invoke-ArgQuery (removed in v0.7.79)"
-
-            # Cmdlet output properties must be assigned to pipeline variables.
-            $content | Should -Match '\$data\.ClusterRows' -Because "Step.4 $Platform must assign `$data.ClusterRows from cmdlet output"
-            $content | Should -Match '\$data\.ArcSummary' -Because "Step.4 $Platform must assign `$data.ArcSummary from cmdlet output"
-            $content | Should -Match '\$data\.NicIssues' -Because "Step.4 $Platform must assign `$data.NicIssues from cmdlet output"
-            $content | Should -Match '\$data\.ArbRows' -Because "Step.4 $Platform must assign `$data.ArbRows from cmdlet output"
+            $content | Should -Not -Match '\$data\.ClusterRows' -Because "Step.4 $Platform must not still wire raw cmdlet rowsets into the yml - the cmdlet emits step outputs instead (v0.8.5)"
         }
 
         It 'Should export exactly 45 functions' {
-            $script:ModuleInfo.ExportedFunctions.Count | Should -Be 46
+            $script:ModuleInfo.ExportedFunctions.Count | Should -Be 47
         }
 
         It 'Should export the expected functions' {
@@ -274,7 +270,9 @@ Describe 'Module: AzLocal.UpdateManagement' {
                 # Thin-YAML Step.8 (v0.8.5) - Fleet update status snapshot (inventory + readiness + version distribution + 3-suite JUnit + step summary + 22 step outputs)
                 'Export-AzLocalFleetUpdateStatusReport',
                 # Thin-YAML Step.5 (v0.8.5) - Pre-flight Update Readiness Assessment (readiness + blocking-health JUnit + combined JUnit + 8-section markdown + 2 step outputs)
-                'Export-AzLocalClusterUpdateReadinessReport'
+                'Export-AzLocalClusterUpdateReadinessReport',
+                # Thin-YAML Step.4 (v0.8.5) - Fleet Connectivity Status (Cluster/Arc/NIC/ARB severity classification + JUnit + markdown + 12 step outputs)
+                'Export-AzLocalFleetConnectivityStatusReport'
             )
             
             foreach ($func in $expectedFunctions) {
@@ -10211,7 +10209,7 @@ Describe 'Function: Get-AzLocalFleetHealthOverview - v0.7.70 (ARG-first fleet he
         }
 
         It 'BS7: Module exports exactly 45 functions (was 44 after Step.7 thin-YAML port; Step.8 thin-YAML port adds Export-AzLocalFleetUpdateStatusReport)' {
-            (Get-Module AzLocal.UpdateManagement).ExportedFunctions.Count | Should -Be 46
+            (Get-Module AzLocal.UpdateManagement).ExportedFunctions.Count | Should -Be 47
         }
     }
 
@@ -14727,6 +14725,20 @@ Describe 'Thin-YAML Step.5: Export-AzLocalClusterUpdateReadinessReport' {
             Health = @([pscustomobject]@{ ClusterName='gamma'; HealthState='Success'; Passed=$true; CriticalCount=0; WarningCount=0; Failures='' })
             OutDir = $script:_s5_outDir
         }
+        # Pre-create the per-cmdlet JUnit XML files so the cmdlet's
+        # combined-XML merge has something to read. The mocks below cannot
+        # write to $ExportPath inside a Pester Mock body reliably (Pester
+        # rebinds parameter scopes), so we materialize the inputs here.
+        $readinessXmlContent = @'
+<?xml version="1.0" encoding="utf-8"?>
+<testsuites name="Update Readiness"><testsuite name="Update Readiness" tests="1" failures="0"><testcase classname="Cluster Update Readiness" name="gamma" time="0"/></testsuite></testsuites>
+'@
+        $healthXmlContent = @'
+<?xml version="1.0" encoding="utf-8"?>
+<testsuites name="Cluster Health"><testsuite name="Cluster Health (Blocking)" tests="1" failures="0"><testcase classname="Cluster Health (Blocking)" name="gamma" time="0"/></testsuite></testsuites>
+'@
+        [System.IO.File]::WriteAllText((Join-Path $script:_s5_outDir 'readiness.xml'),       $readinessXmlContent, [System.Text.UTF8Encoding]::new($false))
+        [System.IO.File]::WriteAllText((Join-Path $script:_s5_outDir 'health-blocking.xml'), $healthXmlContent,    [System.Text.UTF8Encoding]::new($false))
         $result = InModuleScope AzLocal.UpdateManagement {
             Mock Get-AzLocalClusterInventory       { @($global:_s5_payload.Inventory) }
             Mock Get-AzLocalClusterUpdateReadiness { @($global:_s5_payload.Readiness) }
@@ -14848,3 +14860,310 @@ Describe 'Thin-YAML Step.5: Export-AzLocalClusterUpdateReadinessReport' {
 }
 
 #endregion v0.8.5: Export-AzLocalClusterUpdateReadinessReport
+
+#region v0.8.5: Export-AzLocalFleetConnectivityStatusReport
+Describe 'Thin-YAML Step.4: Export-AzLocalFleetConnectivityStatusReport' {
+
+    BeforeAll {
+        # Pester v5: the Describe body runs in DISCOVERY phase only - so a
+        # function defined there is not visible to It bodies (which run
+        # in RUN phase). Defining inside BeforeAll with script: scope keeps
+        # this helper callable from every It block in the Describe.
+        function script:New-S4HealthyData {
+            return [pscustomobject]@{
+                ClusterRows = @(
+                    [pscustomobject]@{
+                        ClusterName='alpha'; ClusterId='/subscriptions/s1/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/alpha'
+                        ConnectivityStatus='Connected'; ClusterStatus='Connected'; NodeCount=2; ResourceGroup='rg'; Location='eastus'; SubscriptionId='s1'
+                    }
+                )
+                ArcSummary = @(
+                    [pscustomobject]@{ AgentStatus='Connected'; Count=2 }
+                )
+                NonConnectedMachines = @()
+                NicIssues            = @()
+                NicAll               = @(
+                    [pscustomobject]@{ NodeName='node1'; NicName='nic0'; NicType='Physical'; NicStatus='Up'; DriverVersion='1.0'; Ip4Address='10.0.0.1'; InterfaceDescription='Test NIC'; ClusterName='alpha' }
+                )
+                NicStats = @(
+                    [pscustomobject]@{ NicType='Physical'; NicStatus='Up'; Count=2 }
+                )
+                ArbRows = @(
+                    [pscustomobject]@{ ClusterName='alpha'; ClusterId='/subscriptions/s1/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/alpha'
+                        ArbName='arb-alpha'; ArbId='/subscriptions/s1/resourceGroups/rg/providers/Microsoft.ResourceConnector/appliances/arb-alpha'
+                        ArbStatus='Running'; LastModified='2025-01-01T00:00:00Z'; DaysSinceLastModified=10; ResourceGroup='rg' }
+                )
+            }
+        }
+    }
+
+    BeforeEach {
+        $script:_s4_savedGhActions = $env:GITHUB_ACTIONS
+        $script:_s4_savedTfBuild   = $env:TF_BUILD
+        $script:_s4_savedGhOutput  = $env:GITHUB_OUTPUT
+        $script:_s4_savedGhSummary = $env:GITHUB_STEP_SUMMARY
+        $script:_s4_savedAdoStage  = $env:BUILD_ARTIFACTSTAGINGDIRECTORY
+        Remove-Item Env:\GITHUB_ACTIONS                 -ErrorAction SilentlyContinue
+        Remove-Item Env:\TF_BUILD                       -ErrorAction SilentlyContinue
+        Remove-Item Env:\GITHUB_OUTPUT                  -ErrorAction SilentlyContinue
+        Remove-Item Env:\GITHUB_STEP_SUMMARY            -ErrorAction SilentlyContinue
+        Remove-Item Env:\BUILD_ARTIFACTSTAGINGDIRECTORY -ErrorAction SilentlyContinue
+
+        $script:_s4_outDir        = Join-Path -Path $env:TEMP -ChildPath ("s4-out-{0}"           -f ([Guid]::NewGuid()))
+        $script:_s4_ghOutputFile  = Join-Path -Path $env:TEMP -ChildPath ("s4-gh-output-{0}"     -f ([Guid]::NewGuid()))
+        $script:_s4_ghSummaryFile = Join-Path -Path $env:TEMP -ChildPath ("s4-gh-summary-{0}.md" -f ([Guid]::NewGuid()))
+        New-Item -ItemType Directory -Path $script:_s4_outDir        -Force | Out-Null
+        New-Item -ItemType File      -Path $script:_s4_ghOutputFile  -Force | Out-Null
+        New-Item -ItemType File      -Path $script:_s4_ghSummaryFile -Force | Out-Null
+    }
+
+    AfterEach {
+        if ($null -ne $script:_s4_savedGhActions) { $env:GITHUB_ACTIONS                 = $script:_s4_savedGhActions } else { Remove-Item Env:\GITHUB_ACTIONS                 -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_s4_savedTfBuild)   { $env:TF_BUILD                       = $script:_s4_savedTfBuild   } else { Remove-Item Env:\TF_BUILD                       -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_s4_savedGhOutput)  { $env:GITHUB_OUTPUT                  = $script:_s4_savedGhOutput  } else { Remove-Item Env:\GITHUB_OUTPUT                  -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_s4_savedGhSummary) { $env:GITHUB_STEP_SUMMARY            = $script:_s4_savedGhSummary } else { Remove-Item Env:\GITHUB_STEP_SUMMARY            -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_s4_savedAdoStage)  { $env:BUILD_ARTIFACTSTAGINGDIRECTORY = $script:_s4_savedAdoStage  } else { Remove-Item Env:\BUILD_ARTIFACTSTAGINGDIRECTORY -ErrorAction SilentlyContinue }
+        foreach ($p in @($script:_s4_ghOutputFile, $script:_s4_ghSummaryFile)) {
+            if ($p -and (Test-Path -LiteralPath $p)) { Remove-Item -LiteralPath $p -Force -ErrorAction SilentlyContinue }
+        }
+        if ($script:_s4_outDir -and (Test-Path -LiteralPath $script:_s4_outDir)) {
+            Remove-Item -LiteralPath $script:_s4_outDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'All-green fleet emits a synthetic passing Fleet Connectivity suite, zero outputs, and PassThru zero failures' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s4_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s4_ghSummaryFile
+        $env:_S4_OUTDIR          = $script:_s4_outDir
+        $global:_s4_payload = New-S4HealthyData
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalFleetConnectivityStatus { $global:_s4_payload }
+            Export-AzLocalFleetConnectivityStatusReport -OutputDirectory $env:_S4_OUTDIR -PassThru
+        }
+        $result.TotalFailures | Should -Be 0
+        $result.CriticalCount | Should -Be 0
+        $result.WarningCount  | Should -Be 0
+        $result.ClusterTotal  | Should -Be 1
+        $xml = Get-Content -LiteralPath $result.JUnitXmlPath -Raw
+        $xml | Should -Match '<testsuite name="Fleet Connectivity"'
+        $xml | Should -Match 'No connectivity issues across the fleet'
+        $out = Get-Content -LiteralPath $script:_s4_ghOutputFile -Raw
+        $out | Should -Match 'total_failures=0'
+        $out | Should -Match 'critical_count=0'
+        $out | Should -Match 'warning_count=0'
+    }
+
+    It 'Critical cluster Disconnected emits Cluster Connectivity suite + outputs' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s4_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s4_ghSummaryFile
+        $env:_S4_OUTDIR          = $script:_s4_outDir
+        $global:_s4_payload = New-S4HealthyData
+        $global:_s4_payload.ClusterRows = @(
+            [pscustomobject]@{
+                ClusterName='broken'; ClusterId='/subscriptions/s1/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/broken'
+                ConnectivityStatus='Disconnected'; ClusterStatus='NotYetRegistered'; NodeCount=3; ResourceGroup='rg'; Location='eastus'; SubscriptionId='s1'
+            }
+        )
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalFleetConnectivityStatus { $global:_s4_payload }
+            Export-AzLocalFleetConnectivityStatusReport -OutputDirectory $env:_S4_OUTDIR -PassThru
+        }
+        $result.ClusterFail   | Should -Be 1
+        $result.CriticalCount | Should -Be 1
+        $result.WarningCount  | Should -Be 0
+        $result.TotalFailures | Should -Be 1
+        $xml = Get-Content -LiteralPath $result.JUnitXmlPath -Raw
+        $xml | Should -Match '<testsuite name="Cluster Connectivity"'
+        $xml | Should -Match 'Cluster .{0,30}broken'
+        $xml | Should -Match '<failure[^>]*type="Critical"'
+        $xml | Should -Match '<property name="ClusterResourceId"'
+        $out = Get-Content -LiteralPath $script:_s4_ghOutputFile -Raw
+        $out | Should -Match 'cluster_fail=1'
+        $out | Should -Match 'critical_count=1'
+        $out | Should -Match 'total_failures=1'
+    }
+
+    It 'Critical Arc agent Disconnected emits Arc Agent Connectivity suite + outputs' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s4_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s4_ghSummaryFile
+        $env:_S4_OUTDIR          = $script:_s4_outDir
+        $global:_s4_payload = New-S4HealthyData
+        $global:_s4_payload.NonConnectedMachines = @(
+            [pscustomobject]@{
+                ClusterName='alpha'; ClusterId='/subscriptions/s1/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/alpha'
+                NodeName='nodeA'; AgentStatus='Disconnected'
+                MachineId='/subscriptions/s1/resourceGroups/rg/providers/Microsoft.HybridCompute/machines/nodeA'
+                LastStatusChange='2025-01-10T05:00:00Z'; OsSku='Server'; OsVersion='25398'; ClusterVersion='12.2510.0.0'; AgentVersion='1.45'
+                ResourceGroup='rg'; SubscriptionId='s1'
+            }
+        )
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalFleetConnectivityStatus { $global:_s4_payload }
+            Export-AzLocalFleetConnectivityStatusReport -OutputDirectory $env:_S4_OUTDIR -PassThru
+        }
+        $result.ArcFail       | Should -Be 1
+        $result.CriticalCount | Should -Be 1
+        $xml = Get-Content -LiteralPath $result.JUnitXmlPath -Raw
+        $xml | Should -Match '<testsuite name="Arc Agent Connectivity"'
+        $xml | Should -Match 'Machine .{0,30}nodeA'
+    }
+
+    It 'Critical NIC Disconnected emits Physical NIC Status suite + outputs' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s4_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s4_ghSummaryFile
+        $env:_S4_OUTDIR          = $script:_s4_outDir
+        $global:_s4_payload = New-S4HealthyData
+        $global:_s4_payload.NicIssues = @(
+            [pscustomobject]@{
+                ClusterName='alpha'; NodeName='nodeA'; NicName='Ethernet 3'; NicStatus='Disconnected'
+                InterfaceDescription='Mellanox ConnectX-4 Lx'; DriverVersion='2.50.21512.0'; Ip4Address='10.0.0.5'
+                MachineId='/subscriptions/s1/resourceGroups/rg/providers/Microsoft.HybridCompute/machines/nodeA'
+            }
+        )
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalFleetConnectivityStatus { $global:_s4_payload }
+            Export-AzLocalFleetConnectivityStatusReport -OutputDirectory $env:_S4_OUTDIR -PassThru
+        }
+        $result.NicFail       | Should -Be 1
+        $result.CriticalCount | Should -Be 1
+        $xml = Get-Content -LiteralPath $result.JUnitXmlPath -Raw
+        $xml | Should -Match '<testsuite name="Physical NIC Status"'
+        $xml | Should -Match 'NIC .{0,30}Ethernet 3'
+    }
+
+    It 'ARB Offline emits Azure Resource Bridge suite + handles multi-cluster ClusterId comma list' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s4_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s4_ghSummaryFile
+        $env:_S4_OUTDIR          = $script:_s4_outDir
+        $global:_s4_payload = New-S4HealthyData
+        $multi = '/subscriptions/s1/resourceGroups/shared/providers/Microsoft.AzureStackHCI/clusters/clusA, /subscriptions/s1/resourceGroups/shared/providers/Microsoft.AzureStackHCI/clusters/clusB'
+        $global:_s4_payload.ArbRows = @(
+            [pscustomobject]@{
+                ClusterName='clusA, clusB'; ClusterId=$multi
+                ArbName='arb-shared'
+                ArbId='/subscriptions/s1/resourceGroups/shared/providers/Microsoft.ResourceConnector/appliances/arb-shared'
+                ArbStatus='Offline'; LastModified='2025-01-01T00:00:00Z'; DaysSinceLastModified=42; ResourceGroup='shared'
+            }
+        )
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalFleetConnectivityStatus { $global:_s4_payload }
+            Export-AzLocalFleetConnectivityStatusReport -OutputDirectory $env:_S4_OUTDIR -PassThru
+        }
+        $result.ArbFail       | Should -Be 1
+        $result.CriticalCount | Should -Be 1
+        $xml = Get-Content -LiteralPath $result.JUnitXmlPath -Raw
+        $xml | Should -Match '<testsuite name="Azure Resource Bridge"'
+        $xml | Should -Match 'multi-cluster RG; 2 clusters'
+        # Primary cluster id (first of split) is the one used for portal link.
+        $xml | Should -Match 'clusters/clusA"'
+    }
+
+    It 'Mixed Critical + Warning severities sum correctly into outputs' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s4_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s4_ghSummaryFile
+        $env:_S4_OUTDIR          = $script:_s4_outDir
+        $global:_s4_payload = New-S4HealthyData
+        # 1 Critical cluster (Disconnected) + 1 Warning cluster (NotConnected = neither healthy nor confirmed-bad)
+        $global:_s4_payload.ClusterRows = @(
+            [pscustomobject]@{ ClusterName='c1'; ClusterId='/subscriptions/s1/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/c1'
+                ConnectivityStatus='Disconnected'; ClusterStatus='Failed'; NodeCount=2; ResourceGroup='rg'; Location='eastus'; SubscriptionId='s1' }
+            [pscustomobject]@{ ClusterName='c2'; ClusterId='/subscriptions/s1/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/c2'
+                ConnectivityStatus='NotConnected'; ClusterStatus='NotYetRegistered'; NodeCount=4; ResourceGroup='rg'; Location='eastus'; SubscriptionId='s1' }
+        )
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalFleetConnectivityStatus { $global:_s4_payload }
+            Export-AzLocalFleetConnectivityStatusReport -OutputDirectory $env:_S4_OUTDIR -PassThru
+        }
+        $result.ClusterFail   | Should -Be 2
+        $result.CriticalCount | Should -Be 1
+        $result.WarningCount  | Should -Be 1
+        $result.TotalFailures | Should -Be 2
+        $out = Get-Content -LiteralPath $script:_s4_ghOutputFile -Raw
+        $out | Should -Match 'total_failures=2'
+        $out | Should -Match 'critical_count=1'
+        $out | Should -Match 'warning_count=1'
+    }
+
+    It 'ADO host resolves OutputDirectory to BUILD_ARTIFACTSTAGINGDIRECTORY when not explicitly passed' {
+        $env:TF_BUILD = 'True'
+        $adoStage = Join-Path -Path $env:TEMP -ChildPath ("s4-ado-{0}" -f ([Guid]::NewGuid()))
+        New-Item -ItemType Directory -Path $adoStage -Force | Out-Null
+        $env:BUILD_ARTIFACTSTAGINGDIRECTORY = $adoStage
+        try {
+            $global:_s4_payload = New-S4HealthyData
+            $result = InModuleScope AzLocal.UpdateManagement {
+                Mock Get-AzLocalFleetConnectivityStatus { $global:_s4_payload }
+                Export-AzLocalFleetConnectivityStatusReport -PassThru
+            }
+            $result.JUnitXmlPath | Should -BeLike "$adoStage*"
+            $result.SummaryPath  | Should -BeLike "$adoStage*"
+        }
+        finally {
+            if (Test-Path -LiteralPath $adoStage) {
+                Remove-Item -LiteralPath $adoStage -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It 'SubscriptionFilter (comma list) forwards the FIRST sub-id to Get-AzLocalFleetConnectivityStatus' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s4_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s4_ghSummaryFile
+        $env:_S4_OUTDIR          = $script:_s4_outDir
+        $global:_s4_payload = New-S4HealthyData
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalFleetConnectivityStatus { $global:_s4_payload }
+            Export-AzLocalFleetConnectivityStatusReport `
+                -OutputDirectory $env:_S4_OUTDIR `
+                -SubscriptionFilter '11111111-1111-1111-1111-111111111111, 22222222-2222-2222-2222-222222222222' | Out-Null
+            Assert-MockCalled Get-AzLocalFleetConnectivityStatus -Times 1 -Exactly -Scope It -ParameterFilter {
+                $SubscriptionId -eq '11111111-1111-1111-1111-111111111111'
+            }
+        }
+    }
+
+    It 'PassThru exposes all 25 documented properties' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s4_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s4_ghSummaryFile
+        $env:_S4_OUTDIR          = $script:_s4_outDir
+        $global:_s4_payload = New-S4HealthyData
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalFleetConnectivityStatus { $global:_s4_payload }
+            Export-AzLocalFleetConnectivityStatusReport -OutputDirectory $env:_S4_OUTDIR -PassThru
+        }
+        $expectedProperties = @(
+            'ClusterTotal','ClusterFail','ArcTotal','ArcFail','NicTotal','NicFail','NicAllTotal',
+            'ArbTotal','ArbFail','TotalFailures','CriticalCount','WarningCount',
+            'ClusterRows','ArcSummary','NonConnectedMachines','NicIssues','NicAll','NicStats','ArbRows',
+            'ClusterFailures','ArcFailures','NicFailures','ArbFailures',
+            'JUnitXmlPath','SummaryPath'
+        )
+        foreach ($p in $expectedProperties) {
+            $result.PSObject.Properties.Name | Should -Contain $p
+        }
+    }
+
+    It 'Markdown summary is appended to GITHUB_STEP_SUMMARY on GitHub Actions host' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s4_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s4_ghSummaryFile
+        $env:_S4_OUTDIR          = $script:_s4_outDir
+        $global:_s4_payload = New-S4HealthyData
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalFleetConnectivityStatus { $global:_s4_payload }
+            Export-AzLocalFleetConnectivityStatusReport -OutputDirectory $env:_S4_OUTDIR | Out-Null
+        }
+        $summary = Get-Content -LiteralPath $script:_s4_ghSummaryFile -Raw
+        # The shared renderer emits markdown with section headers we can grep.
+        $summary | Should -Not -BeNullOrEmpty
+        $summary.Length | Should -BeGreaterThan 100
+    }
+}
+#endregion v0.8.5: Export-AzLocalFleetConnectivityStatusReport

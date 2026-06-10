@@ -227,12 +227,12 @@ function New-AzLocalFleetConnectivityStatusSummary {
         $nicStatCsv = Join-Path -Path $ReportsPath -ChildPath 'fleet-physical-nic-stats.csv'
         $arbCsv     = Join-Path -Path $ReportsPath -ChildPath 'fleet-arb-status.csv'
 
-        $ClusterRows = if (Test-Path -LiteralPath $clusterCsv) { @(Import-Csv -Path $clusterCsv) } else { @() }
-        $ArcSummary  = if (Test-Path -LiteralPath $arcSumCsv)  { @(Import-Csv -Path $arcSumCsv)  } else { @() }
-        $ArcRows     = if (Test-Path -LiteralPath $arcCsv)     { @(Import-Csv -Path $arcCsv)     } else { @() }
-        $NicRows     = if (Test-Path -LiteralPath $nicCsv)     { @(Import-Csv -Path $nicCsv)     } else { @() }
-        $NicStats    = if (Test-Path -LiteralPath $nicStatCsv) { @(Import-Csv -Path $nicStatCsv) } else { @() }
-        $ArbRows     = if (Test-Path -LiteralPath $arbCsv)     { @(Import-Csv -Path $arbCsv)     } else { @() }
+        if (Test-Path -LiteralPath $clusterCsv) { $ClusterRows = @(Import-Csv -Path $clusterCsv) } else { $ClusterRows = @() }
+        if (Test-Path -LiteralPath $arcSumCsv)  { $ArcSummary  = @(Import-Csv -Path $arcSumCsv)  } else { $ArcSummary  = @() }
+        if (Test-Path -LiteralPath $arcCsv)     { $ArcRows     = @(Import-Csv -Path $arcCsv)     } else { $ArcRows     = @() }
+        if (Test-Path -LiteralPath $nicCsv)     { $NicRows     = @(Import-Csv -Path $nicCsv)     } else { $NicRows     = @() }
+        if (Test-Path -LiteralPath $nicStatCsv) { $NicStats    = @(Import-Csv -Path $nicStatCsv) } else { $NicStats    = @() }
+        if (Test-Path -LiteralPath $arbCsv)     { $ArbRows     = @(Import-Csv -Path $arbCsv)     } else { $ArbRows     = @() }
     }
 
     # ------------------------------------------------------------------
@@ -287,8 +287,14 @@ function New-AzLocalFleetConnectivityStatusSummary {
     })
 
     # Reconciliation counts.
-    $clusterNodeSum = ($ClusterRows | Measure-Object -Property NodeCount -Sum).Sum
-    if ($null -eq $clusterNodeSum) { $clusterNodeSum = 0 }
+    $clusterNodeSum = 0
+    foreach ($row in $ClusterRows) {
+        if ($row -and $row.PSObject.Properties['NodeCount']) {
+            $n = $row.NodeCount
+            if ($n -is [int] -or $n -is [long] -or $n -is [double]) { $clusterNodeSum += [int]$n }
+            elseif ($n -is [string] -and $n.Length -gt 0) { $tmp = 0; if ([int]::TryParse($n, [ref]$tmp)) { $clusterNodeSum += $tmp } }
+        }
+    }
     $clustersWithArb    = @($ClusterRows | Where-Object { $_.ClusterId -and $arbByClusterId.ContainsKey($_.ClusterId.ToLowerInvariant()) }).Count
     $clustersWithoutArb = [math]::Max(0, $ClusterRows.Count - $clustersWithArb)
     $nodeCoverageDelta  = [int]$clusterNodeSum - [int]$arcTotal
