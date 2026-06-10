@@ -340,11 +340,21 @@ extensibilityresources
     $arbRows = @($arbRaw | ForEach-Object {
         $a  = $_
         $rg = ([string]$a.resourceGroup).ToLowerInvariant()
-        $matched = if ($clustersByRg.ContainsKey($rg)) { @($clustersByRg[$rg]) } else { @() }
+        # v0.8.6-fix3: when the RG has no matching cluster, do NOT use @($null) -
+        # PowerShell's @() wrap on a $null produces an Object[1] containing $null
+        # (not an empty array), so $matched.Count is 1 and downstream $_.ClusterName
+        # fails with PropertyNotFoundException. Branch explicitly on ContainsKey
+        # and emit @() for the miss case.
+        if ($clustersByRg.ContainsKey($rg)) {
+            $matched = @($clustersByRg[$rg])
+        } else {
+            $matched = @()
+        }
+        $matchedCount = $matched.Count
 
-        $clusterName   = if ($matched.Count -gt 0) { ($matched | ForEach-Object { $_.ClusterName })   -join ', ' } else { '(no cluster)' }
-        $clusterId     = if ($matched.Count -gt 0) { ($matched | ForEach-Object { $_.ClusterId })     -join ', ' } else { '' }
-        $clusterStatus = if ($matched.Count -gt 0) { ($matched | ForEach-Object { $_.ClusterStatus }) -join ', ' } else { '' }
+        $clusterName   = if ($matchedCount -gt 0) { ($matched | ForEach-Object { $_.ClusterName })   -join ', ' } else { '(no cluster)' }
+        $clusterId     = if ($matchedCount -gt 0) { ($matched | ForEach-Object { $_.ClusterId })     -join ', ' } else { '' }
+        $clusterStatus = if ($matchedCount -gt 0) { ($matched | ForEach-Object { $_.ClusterStatus }) -join ', ' } else { '' }
 
         $status = CoerceStr (Get-NestedProp $a 'properties.status') 'Unknown'
         # Read the extended top-level column first, fall back to systemData.lastModifiedAt

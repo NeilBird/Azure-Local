@@ -283,7 +283,10 @@ function Export-AzLocalFleetHealthStatusReport {
     if ($Scope -eq 'by-update-ring' -and $UpdateRing) { $argSplat['UpdateRingTag'] = $UpdateRing }
 
     Write-Host "Step 1: Collecting fleet health failure rows (Detail view)..." -ForegroundColor Yellow
-    $detail = @(Get-AzLocalFleetHealthFailures -View Detail @argSplat -ExportPath $detailCsv -PassThru)
+    # NOTE: Get-AzLocalFleetHealthFailures uses unary-comma return (`return , $output`).
+    # Direct assignment only - never @() wrap, or the entire row set collapses to Object[1].
+    $detail = Get-AzLocalFleetHealthFailures -View Detail @argSplat -ExportPath $detailCsv -PassThru
+    if ($null -eq $detail) { $detail = @() }
     if (-not $detail) { $detail = @() }
     $detail | ConvertTo-Json -Depth 6 | Out-File -FilePath $detailJson -Encoding utf8
     Write-Host "Found $($detail.Count) failing health-check entry/entries." -ForegroundColor Green
@@ -328,7 +331,10 @@ function Export-AzLocalFleetHealthStatusReport {
     Write-Host "Step 2: Collecting fleet health overview rows (one per cluster)..." -ForegroundColor Yellow
     $overviewArgs = @{}
     if ($Scope -eq 'by-update-ring' -and $UpdateRing) { $overviewArgs['UpdateRingTag'] = $UpdateRing }
-    $overview = @(Get-AzLocalFleetHealthOverview @overviewArgs -ExportPath $overviewCsv -PassThru)
+    # NOTE: Get-AzLocalFleetHealthOverview uses unary-comma return (`return , $output`).
+    # Direct assignment only - never @() wrap, or the entire row set collapses to Object[1].
+    $overview = Get-AzLocalFleetHealthOverview @overviewArgs -ExportPath $overviewCsv -PassThru
+    if ($null -eq $overview) { $overview = @() }
     if (-not $overview) { $overview = @() }
     $overview | ConvertTo-Json -Depth 6 | Out-File -FilePath $overviewJson -Encoding utf8
     Write-Host "Overview rows: $($overview.Count)." -ForegroundColor Green

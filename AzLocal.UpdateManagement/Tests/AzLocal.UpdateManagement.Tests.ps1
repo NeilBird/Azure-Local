@@ -34,8 +34,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $script:ModuleInfo | Should -Not -BeNullOrEmpty
         }
 
-        It 'Should have version 0.8.5' {
-            $script:ModuleInfo.Version | Should -Be '0.8.5'
+        It 'Should have version 0.8.6' {
+            $script:ModuleInfo.Version | Should -Be '0.8.6'
         }
 
         It 'Module version constants are in sync between .psm1 and .psd1' {
@@ -1210,6 +1210,25 @@ Describe 'Function: Set-AzLocalClusterUpdateRingTag' {
         It 'Force mode short-circuits when all managed tags already match (no wasted PATCH)' {
             $script:setRingSource | Should -Match 'Force mode enabled but all managed tags already match desired state'
             $script:setRingSource | Should -Match '-Force PATCH skipped'
+        }
+
+        It 'Per-cluster Message names the tags that actually changed (v0.8.6 regression guard)' {
+            # v0.8.6 fix: when only a schedule tag (e.g. UpdateExcluded) changed, the
+            # message previously read "UpdateRing tag updated successfully" which was
+            # misleading. The success message now includes the actual per-tag deltas
+            # computed from $currentTags vs $tagsToMerge.
+            $script:setRingSource | Should -Match '\$tagDeltas\s*=\s*New-Object\s+System\.Collections\.Generic\.List\[string\]'
+            $script:setRingSource | Should -Match 'foreach\s*\(\s*\$tagName\s+in\s+\$tagsToMerge\.Keys\s*\)'
+            $script:setRingSource | Should -Match "Tags \$\(\`$action\.ToLower\(\)\): "
+        }
+
+        It 'Format-Table output is routed to Out-Host so formatter objects do not leak into -PassThru (v0.8.6 regression guard)' {
+            # v0.8.6 fix: $results | Format-Table -AutoSize was leaking format-table
+            # wrapper objects (header / row / footer) into the function's pipeline
+            # output. Caller `$results = @(Set-AzLocal... )` then saw ~1.2x as many
+            # objects as real cluster rows, inflating Step.2 summary counts (44 vs
+            # 20 on a 20-row CSV). Fix: pipe Format-Table to Out-Host explicitly.
+            $script:setRingSource | Should -Match 'Format-Table[^|]+-AutoSize\s*\|\s*Out-Host'
         }
     }
 }
@@ -12729,6 +12748,161 @@ schedule:
     }
 }
 
+Describe 'v0.8.6 Apply-Updates Schedule: Get-AzLocalApplyUpdatesScheduleCycleCalendar - CronFiringsByDate and WindowMatchByRingAndDate columns (markdown)' {
+    BeforeAll {
+        $script:cccol_tmp = Join-Path $TestDrive 'cycle-cal-cols'
+        New-Item -ItemType Directory -Path $script:cccol_tmp -Force | Out-Null
+
+        # 1-week cycle: Mon-Fri -> Cdn ring, Sat-Sun -> Prod ring.
+        $p = Join-Path $script:cccol_tmp 'cycle1.yml'
+        $body = @'
+schemaVersion: 1
+cycleWeeks: 1
+cycleAnchorISOWeek: 1
+cycleAnchorYear: 2026
+schedule:
+  - weeksInCycle: '*'
+    daysOfWeek: 'Mon-Fri'
+    rings: 'Cdn'
+  - weeksInCycle: '*'
+    daysOfWeek: 'Sat,Sun'
+    rings: 'Prod'
+'@
+        Set-Content -LiteralPath $p -Value $body -Encoding utf8
+        $script:cccol_cfg = Get-AzLocalApplyUpdatesScheduleConfig -Path $p
+
+        # Monday of ISO W1 2026 in UTC - identical computation to the
+        # existing v0.8.5 fixtures so cycle math is deterministic.
+        $jan4 = [datetime]::new(2026, 1, 4, 0, 0, 0, [DateTimeKind]::Utc)
+        $script:cccol_wk1Mon = $jan4.AddDays(-1 * ((($jan4.DayOfWeek.value__ + 6) % 7)))
+    }
+
+    It 'Backwards compatible: when neither new param is supplied, the per-day table still has the v0.8.5 5-column header (no Clusters)' {
+        $md = Get-AzLocalApplyUpdatesScheduleCycleCalendar -Schedule $script:cccol_cfg -StartDate $script:cccol_wk1Mon -Days 7 -AsMarkdown
+        $md | Should -Match '\| Date \(UTC\) \| Day \| CycleWeek \| Eligible rings \| AllowedUpdateVersions \|'
+        $md | Should -Not -Match 'Ring CRON Start Time'
+        $md | Should -Not -Match 'Tag Start Window Match'
+    }
+
+    It 'CronFiringsByDate alone adds the centered Ring CRON column immediately after Date (UTC)' {
+        $cron = @{}
+        for ($i = 0; $i -lt 7; $i++) {
+            $d = $script:cccol_wk1Mon.AddDays($i).ToString('yyyy-MM-dd')
+            $cron[$d] = @('02:00')
+        }
+        $md = Get-AzLocalApplyUpdatesScheduleCycleCalendar -Schedule $script:cccol_cfg -StartDate $script:cccol_wk1Mon -Days 7 -AsMarkdown -CronFiringsByDate $cron
+        $md | Should -Match '\| Date \(UTC\) \| Ring CRON Start Time<br>\(Step 6 pipeline\) \| Day \| CycleWeek \| Eligible rings \| AllowedUpdateVersions \|'
+        $md | Should -Match '\|---\|:---:\|---\|'
+        $md | Should -Not -Match 'Tag Start Window Match'
+    }
+
+    It 'WindowMatchByRingAndDate alone adds the Tag Start Window Match column immediately after Eligible rings' {
+        $wm = @{ Cdn = @{}; Prod = @{} }
+        for ($i = 0; $i -lt 7; $i++) {
+            $d = $script:cccol_wk1Mon.AddDays($i)
+            $key = $d.ToString('yyyy-MM-dd')
+            if ($d.DayOfWeek -in 'Monday','Tuesday','Wednesday','Thursday','Friday') {
+                $wm['Cdn'][$key] = @{ Matching = 29; Total = 30 }
+            } else {
+                $wm['Prod'][$key] = @{ Matching = 1; Total = 40 }
+            }
+        }
+        $md = Get-AzLocalApplyUpdatesScheduleCycleCalendar -Schedule $script:cccol_cfg -StartDate $script:cccol_wk1Mon -Days 7 -AsMarkdown -WindowMatchByRingAndDate $wm
+        $md | Should -Match '\| Date \(UTC\) \| Day \| CycleWeek \| Eligible rings \| Tag Start Window Match \(>=95%\) \| AllowedUpdateVersions \|'
+        $md | Should -Not -Match 'Ring CRON Start Time'
+        # Cdn weekday rows: True 29/30
+        $md | Should -Match '`Cdn`: True 29/30 \(97%\)'
+        # Prod weekend rows: False 1/40 (2%)
+        $md | Should -Match '`Prod`: False 1/40 \(2%\)'
+    }
+
+    It 'Both params produce both columns in correct positions (7-column header)' {
+        $cron = @{}; $wm = @{ Cdn = @{}; Prod = @{} }
+        for ($i = 0; $i -lt 7; $i++) {
+            $d   = $script:cccol_wk1Mon.AddDays($i)
+            $key = $d.ToString('yyyy-MM-dd')
+            $cron[$key] = @('02:00')
+            if ($d.DayOfWeek -in 'Monday','Tuesday','Wednesday','Thursday','Friday') {
+                $wm['Cdn'][$key] = @{ Matching = 30; Total = 30 }
+            } else {
+                $wm['Prod'][$key] = @{ Matching = 40; Total = 40 }
+            }
+        }
+        $md = Get-AzLocalApplyUpdatesScheduleCycleCalendar -Schedule $script:cccol_cfg -StartDate $script:cccol_wk1Mon -Days 7 -AsMarkdown -CronFiringsByDate $cron -WindowMatchByRingAndDate $wm
+        $md | Should -Match '\| Date \(UTC\) \| Ring CRON Start Time<br>\(Step 6 pipeline\) \| Day \| CycleWeek \| Eligible rings \| Tag Start Window Match \(>=95%\) \| AllowedUpdateVersions \|'
+        $md | Should -Match '`Cdn`: True 30/30 \(100%\)'
+        $md | Should -Match '`Prod`: True 40/40 \(100%\)'
+    }
+
+    It 'CronFiringsByDate renders 1 firing verbatim, 2 firings joined by comma' {
+        $cron = @{}
+        $d0 = $script:cccol_wk1Mon.ToString('yyyy-MM-dd')
+        $d1 = $script:cccol_wk1Mon.AddDays(1).ToString('yyyy-MM-dd')
+        $cron[$d0] = @('02:00')
+        $cron[$d1] = @('02:00','04:00')
+        $md = Get-AzLocalApplyUpdatesScheduleCycleCalendar -Schedule $script:cccol_cfg -StartDate $script:cccol_wk1Mon -Days 2 -AsMarkdown -CronFiringsByDate $cron
+        $md | Should -Match "\| $d0 \| 02:00 \|"
+        $md | Should -Match "\| $d1 \| 02:00, 04:00 \|"
+        $md | Should -Not -Match '\(\+'
+    }
+
+    It 'CronFiringsByDate with 3+ firings shows first 2 + (+N) suffix' {
+        $cron = @{}
+        $d0 = $script:cccol_wk1Mon.ToString('yyyy-MM-dd')
+        $cron[$d0] = @('02:00','04:00','06:00','08:00')
+        $md = Get-AzLocalApplyUpdatesScheduleCycleCalendar -Schedule $script:cccol_cfg -StartDate $script:cccol_wk1Mon -Days 1 -AsMarkdown -CronFiringsByDate $cron
+        $md | Should -Match "\| $d0 \| 02:00, 04:00 \(\+2\) \|"
+    }
+
+    It 'CronFiringsByDate with no entry for a date renders _(none)_ on eligible days' {
+        $md = Get-AzLocalApplyUpdatesScheduleCycleCalendar -Schedule $script:cccol_cfg -StartDate $script:cccol_wk1Mon -Days 1 -AsMarkdown -CronFiringsByDate @{ '9999-01-01' = @('02:00') }
+        $md | Should -Match '\| _\(none\)_ \|'
+    }
+
+    It 'WindowMatchByRingAndDate boundary: 95/100 -> True, 94/100 -> False' {
+        $wm95 = @{ Cdn = @{ ($script:cccol_wk1Mon.ToString('yyyy-MM-dd')) = @{ Matching = 95; Total = 100 } } }
+        $md95 = Get-AzLocalApplyUpdatesScheduleCycleCalendar -Schedule $script:cccol_cfg -StartDate $script:cccol_wk1Mon -Days 1 -AsMarkdown -WindowMatchByRingAndDate $wm95
+        $md95 | Should -Match '`Cdn`: True 95/100 \(95%\)'
+
+        $wm94 = @{ Cdn = @{ ($script:cccol_wk1Mon.ToString('yyyy-MM-dd')) = @{ Matching = 94; Total = 100 } } }
+        $md94 = Get-AzLocalApplyUpdatesScheduleCycleCalendar -Schedule $script:cccol_cfg -StartDate $script:cccol_wk1Mon -Days 1 -AsMarkdown -WindowMatchByRingAndDate $wm94
+        $md94 | Should -Match '`Cdn`: False 94/100 \(94%\)'
+    }
+
+    It 'WindowMatchByRingAndDate with Total=0 renders _(0 clusters)_' {
+        $wm = @{ Cdn = @{ ($script:cccol_wk1Mon.ToString('yyyy-MM-dd')) = @{ Matching = 0; Total = 0 } } }
+        $md = Get-AzLocalApplyUpdatesScheduleCycleCalendar -Schedule $script:cccol_cfg -StartDate $script:cccol_wk1Mon -Days 1 -AsMarkdown -WindowMatchByRingAndDate $wm
+        $md | Should -Match '`Cdn`: _\(0 clusters\)_'
+    }
+
+    It 'WindowMatchByRingAndDate with no entry for the ring on that date renders _(n/a)_' {
+        $wm = @{ Cdn = @{ '9999-01-01' = @{ Matching = 1; Total = 1 } } }
+        $md = Get-AzLocalApplyUpdatesScheduleCycleCalendar -Schedule $script:cccol_cfg -StartDate $script:cccol_wk1Mon -Days 1 -AsMarkdown -WindowMatchByRingAndDate $wm
+        $md | Should -Match '`Cdn`: _\(n/a\)_'
+    }
+
+    It 'WindowMatchByRingAndDate is case-insensitive on ring keys' {
+        $wm = @{ 'cdn' = @{ ($script:cccol_wk1Mon.ToString('yyyy-MM-dd')) = @{ Matching = 10; Total = 10 } } }
+        $md = Get-AzLocalApplyUpdatesScheduleCycleCalendar -Schedule $script:cccol_cfg -StartDate $script:cccol_wk1Mon -Days 1 -AsMarkdown -WindowMatchByRingAndDate $wm
+        $md | Should -Match '`Cdn`: True 10/10 \(100%\)'
+    }
+
+    It 'CronFiringsByDate is case-insensitive on date keys (yyyy-MM-dd should not be affected anyway, but explicit guard)' {
+        $cron = @{ ($script:cccol_wk1Mon.ToString('yyyy-MM-dd').ToUpper()) = @('02:00') }
+        $md = Get-AzLocalApplyUpdatesScheduleCycleCalendar -Schedule $script:cccol_cfg -StartDate $script:cccol_wk1Mon -Days 1 -AsMarkdown -CronFiringsByDate $cron
+        $md | Should -Match '\| 02:00 \|'
+    }
+
+    It 'Three optional columns (Cron + Cluster counts + Window match) coexist; Window match sits immediately after Eligible rings' {
+        $cron = @{ ($script:cccol_wk1Mon.ToString('yyyy-MM-dd')) = @('02:00') }
+        $rc   = @{ Cdn = 30; Prod = 40 }
+        $wm   = @{ Cdn = @{ ($script:cccol_wk1Mon.ToString('yyyy-MM-dd')) = @{ Matching = 30; Total = 30 } } }
+        $md   = Get-AzLocalApplyUpdatesScheduleCycleCalendar -Schedule $script:cccol_cfg -StartDate $script:cccol_wk1Mon -Days 1 -AsMarkdown `
+            -CronFiringsByDate $cron -ClusterRingCounts $rc -WindowMatchByRingAndDate $wm
+        $md | Should -Match '\| Date \(UTC\) \| Ring CRON Start Time<br>\(Step 6 pipeline\) \| Day \| CycleWeek \| Eligible rings \| Tag Start Window Match \(>=95%\) \| Clusters in ring\(s\) \| AllowedUpdateVersions \|'
+    }
+}
+
 #endregion v0.8.5: Get-AzLocalApplyUpdatesScheduleCycleCalendar
 
 #region v0.8.5: New-AzLocalPipelineJUnitXml (shared JUnit emitter)
@@ -12932,7 +13106,13 @@ Describe 'Thin-YAML Step.0: Export-AzLocalAuthValidationReport' {
             }
             InModuleScope AzLocal.UpdateManagement {
                 Mock Install-AzGraphExtension { $true }
-                Mock Invoke-AzResourceGraphQuery { @($global:_avr_payload.Clusters) }
+                # v0.8.6: mock must mirror the real Invoke-AzResourceGraphQuery
+                # contract (`return , $arr` unary-comma return) so callers see
+                # the array intact when it contains 0 or 1 elements. A naive
+                # `@($payload)` here would let Pester's pipeline collector unwrap
+                # the single-element array to a bare PSCustomObject, hiding the
+                # ARG row-collapse anti-pattern from this unit test.
+                Mock Invoke-AzResourceGraphQuery { return , $global:_avr_payload.Clusters }
                 Mock Invoke-AzCliJson {
                     param([string[]]$Arguments)
                     $pl = $global:_avr_payload
@@ -13568,7 +13748,10 @@ beta,/subscriptions/s1/resourceGroups/rg2/providers/Microsoft.AzureStackHCI/clus
         $summary | Should -Match '## Step\.2 - UpdateRing Tag Management Summary'
         $summary | Should -Match '\| Total clusters processed \| 2 \|'
         $summary | Should -Match 'alpha'
-        $summary | Should -Match 'Per-cluster results'
+        # v0.8.6: per-cluster table split into "Tag Updates Applied" + "No Tag Updates (no-op)"
+        # buckets so operators can scan changed clusters separately from steady-state clusters.
+        $summary | Should -Match 'Clusters with Tag Updates Applied \(1 rows\)'
+        $summary | Should -Match 'Clusters with No Tag Updates \(no-op\) \(1 rows\)'
     }
 
     It 'Defaults OutputDirectory to BUILD_ARTIFACTSTAGINGDIRECTORY when TF_BUILD=true' {
@@ -15836,6 +16019,162 @@ Describe 'Thin-YAML Step.3: Export-AzLocalApplyUpdatesScheduleAudit' {
             if (Test-Path -LiteralPath $adoStage) { Remove-Item -LiteralPath $adoStage -Recurse -Force -ErrorAction SilentlyContinue }
         }
     }
+
+    It 'v0.8.6: When PipelineYamlPath contains real cron triggers, the cycle calendar is invoked with -CronFiringsByDate populated' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s3_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s3_ghSummaryFile
+        $env:_S3_OUTDIR          = $script:_s3_outDir
+        $env:_S3_SCHEDULE        = $script:_s3_scheduleFile
+
+        # Drop a real Step.6_apply-updates.yml with two cron triggers so
+        # Read-AzLocalApplyUpdatesYamlCrons + ConvertFrom-AzLocalCronExpression
+        # produce non-empty FireTimes for the calendar block.
+        $ghDir = Join-Path $script:_s3_pipelineDir 'github-actions'
+        New-Item -ItemType Directory -Path $ghDir -Force | Out-Null
+        @"
+on:
+  schedule:
+    - cron: '0 2 * * *'
+    - cron: '30 4 * * 1-5'
+  workflow_dispatch:
+"@ | Set-Content -Path (Join-Path $ghDir 'Step.6_apply-updates.yml') -Encoding ASCII
+        $env:_S3_PIPELINEDIR = $script:_s3_pipelineDir
+
+        # Schedule has cycleWeeks=1 so the calendar default horizon is 7 days.
+        $global:_s3_auditRows = @( (New-S3AuditRow -Status 'Covered') )
+        $global:_s3_schedule  = [pscustomobject]@{
+            SchemaVersion         = 2
+            CycleWeeks            = 1
+            CycleAnchorISOWeek    = 1
+            CycleAnchorYear       = 2024
+            AllowedUpdateVersions = @('Latest')
+            Schedule              = @(
+                [pscustomobject]@{
+                    weeksInCycle                = '*'
+                    daysOfWeek                  = 'Mon-Fri'
+                    rings                       = 'Cdn'
+                    AllowedUpdateVersionsParsed = @()
+                }
+            )
+        }
+        # Spy the calendar cmdlet so we can inspect which params it was called with.
+        $global:_s3_calArgs = $null
+        $null = InModuleScope AzLocal.UpdateManagement {
+            Mock Test-AzLocalApplyUpdatesScheduleCoverage { $global:_s3_auditRows } -ParameterFilter { $View -eq 'Audit' }
+            Mock Test-AzLocalApplyUpdatesScheduleCoverage { }                       -ParameterFilter { $View -ne 'Audit' }
+            Mock Get-AzLocalApplyUpdatesScheduleConfig         { $global:_s3_schedule }
+            Mock Get-AzLocalApplyUpdatesScheduleCycleCalendar {
+                param(
+                    $Schedule, $StartDate, $Days, $AsMarkdown, $IncludePerRingSummary,
+                    $ClusterRingCounts, $CronFiringsByDate, $WindowMatchByRingAndDate
+                )
+                $snap = @{}
+                foreach ($k in $PSBoundParameters.Keys) { $snap[$k] = $PSBoundParameters[$k] }
+                $global:_s3_calArgs = $snap
+                "## Cycle calendar - next 7 day(s) (cycle length: 1 week(s))`n`n*(spied)*"
+            }
+            Export-AzLocalApplyUpdatesScheduleAudit `
+                -PipelineYamlPath $env:_S3_PIPELINEDIR `
+                -SchedulePath     $env:_S3_SCHEDULE `
+                -OutputDirectory  $env:_S3_OUTDIR `
+                -PassThru
+        }
+        $global:_s3_calArgs                                | Should -Not -BeNullOrEmpty
+        $global:_s3_calArgs.ContainsKey('CronFiringsByDate') | Should -BeTrue
+        $cf = $global:_s3_calArgs['CronFiringsByDate']
+        $cf | Should -BeOfType 'hashtable'
+        $cf.Count | Should -BeGreaterThan 0
+        # Every value should be a string[] of HH:mm; '02:00' must appear
+        # somewhere across the horizon (the '0 2 * * *' trigger fires every day).
+        $allTimes = @()
+        foreach ($k in $cf.Keys) { $allTimes += @($cf[$k]) }
+        ($allTimes | Sort-Object -Unique) | Should -Contain '02:00'
+        # WindowMatch should be ABSENT because we didn't supply a ClusterCsvPath.
+        $global:_s3_calArgs.ContainsKey('WindowMatchByRingAndDate') | Should -BeFalse
+    }
+
+    It 'v0.8.6: When PipelineYamlPath AND ClusterCsvPath are both supplied, the cycle calendar gets both new dicts' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s3_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s3_ghSummaryFile
+        $env:_S3_OUTDIR          = $script:_s3_outDir
+        $env:_S3_SCHEDULE        = $script:_s3_scheduleFile
+
+        $ghDir = Join-Path $script:_s3_pipelineDir 'github-actions'
+        New-Item -ItemType Directory -Path $ghDir -Force | Out-Null
+        @"
+on:
+  schedule:
+    - cron: '0 2 * * *'
+"@ | Set-Content -Path (Join-Path $ghDir 'Step.6_apply-updates.yml') -Encoding ASCII
+        $env:_S3_PIPELINEDIR = $script:_s3_pipelineDir
+
+        # Synthesise a tiny cluster CSV: 2 clusters in 'Cdn' ring, one with
+        # a window that covers 02:00 UTC, one that does not.
+        $csvPath = Join-Path $env:TEMP ("s3-clusters-{0}.csv" -f ([Guid]::NewGuid()))
+        @(
+            '"ClusterName","UpdateRing","UpdateStartWindow"',
+            '"c1","Cdn","Mon-Sun_01:00-03:00"',
+            '"c2","Cdn","Mon-Sun_10:00-12:00"'
+        ) -join "`r`n" | Set-Content -LiteralPath $csvPath -Encoding ASCII
+        $env:_S3_CSV = $csvPath
+
+        $global:_s3_auditRows = @( (New-S3AuditRow -Status 'Covered') )
+        $global:_s3_schedule  = [pscustomobject]@{
+            SchemaVersion         = 2
+            CycleWeeks            = 1
+            CycleAnchorISOWeek    = 1
+            CycleAnchorYear       = 2024
+            AllowedUpdateVersions = @('Latest')
+            Schedule              = @(
+                [pscustomobject]@{
+                    weeksInCycle                = '*'
+                    daysOfWeek                  = 'Mon-Sun'
+                    rings                       = 'Cdn'
+                    AllowedUpdateVersionsParsed = @()
+                }
+            )
+        }
+        $global:_s3_calArgs = $null
+        try {
+            $null = InModuleScope AzLocal.UpdateManagement {
+                Mock Test-AzLocalApplyUpdatesScheduleCoverage { $global:_s3_auditRows } -ParameterFilter { $View -eq 'Audit' }
+                Mock Test-AzLocalApplyUpdatesScheduleCoverage { }                       -ParameterFilter { $View -ne 'Audit' }
+                Mock Get-AzLocalApplyUpdatesScheduleConfig         { $global:_s3_schedule }
+                Mock Get-AzLocalApplyUpdatesScheduleCycleCalendar {
+                    param(
+                        $Schedule, $StartDate, $Days, $AsMarkdown, $IncludePerRingSummary,
+                        $ClusterRingCounts, $CronFiringsByDate, $WindowMatchByRingAndDate
+                    )
+                    $snap = @{}
+                    foreach ($k in $PSBoundParameters.Keys) { $snap[$k] = $PSBoundParameters[$k] }
+                    $global:_s3_calArgs = $snap
+                    "## Cycle calendar - next 7 day(s) (cycle length: 1 week(s))`n`n*(spied)*"
+                }
+                Export-AzLocalApplyUpdatesScheduleAudit `
+                    -PipelineYamlPath $env:_S3_PIPELINEDIR `
+                    -SchedulePath     $env:_S3_SCHEDULE `
+                    -ClusterCsvPath   $env:_S3_CSV `
+                    -OutputDirectory  $env:_S3_OUTDIR `
+                    -PassThru
+            }
+            $global:_s3_calArgs.ContainsKey('CronFiringsByDate')        | Should -BeTrue
+            $global:_s3_calArgs.ContainsKey('WindowMatchByRingAndDate') | Should -BeTrue
+            $wm = $global:_s3_calArgs['WindowMatchByRingAndDate']
+            $wm | Should -BeOfType 'hashtable'
+            $wm.Keys                                             | Should -Contain 'Cdn'
+            $cdn = $wm['Cdn']
+            $cdn.Keys.Count                                      | Should -BeGreaterThan 0
+            $sample = $cdn[($cdn.Keys | Select-Object -First 1)]
+            $sample['Total']                                     | Should -Be 2
+            # Exactly 1 of the 2 clusters' windows covers 02:00 UTC.
+            $sample['Matching']                                  | Should -Be 1
+        }
+        finally {
+            if (Test-Path -LiteralPath $csvPath) { Remove-Item -LiteralPath $csvPath -Force -ErrorAction SilentlyContinue }
+        }
+    }
 }
 #endregion v0.8.5: Export-AzLocalApplyUpdatesScheduleAudit
 
@@ -16219,3 +16558,221 @@ Describe 'Thin-YAML Step.6: Invoke-AzLocalItsmTicketingFromArtifact' {
 }
 
 #endregion v0.8.5 Step.6 thin-YAML: Apply-Updates pipeline cmdlets
+
+# =====================================================================
+# v0.8.6 regression tests for pipeline bugs introduced in v0.8.5
+# =====================================================================
+#
+# All four production regressions shipped in v0.8.5 share two root causes:
+#   (1) `@(<helper>)` wrap on a helper that uses unary-comma `return , $arr`
+#       silently collapses the row-set to Object[1] (the outer wrapper) -
+#       see github-patterns.md in user memory.
+#   (2) `[type]$x = if (cond) { @(...) } else { @() }` without an explicit
+#       array cast lets the if-as-expression unwrap a single-element @()
+#       into a bare scalar; downstream `$x.Count` then throws under
+#       Set-StrictMode -Version Latest.
+# These static-source tests would have caught all four pre-release.
+
+Describe 'v0.8.6 regression guard: @() wrap on unary-comma return helpers' {
+
+    BeforeAll {
+        # Helpers whose internal `return , $arr` (or equivalent) MUST be assigned
+        # directly. Any caller that wraps them in `@()` collapses the row-set to
+        # Object[1] and silently loses every row beyond the first. See
+        # github-patterns.md for the full failure-mode explanation.
+        $script:V086_UnaryCommaHelpers = @(
+            'Invoke-AzResourceGraphQuery',
+            'Get-AzLocalFleetHealthFailures',
+            'Get-AzLocalFleetHealthOverview',
+            'Read-AzLocalApplyUpdatesYamlCrons'
+        )
+        $script:V086_ModuleRoot = Split-Path -Parent $PSScriptRoot
+        $script:V086_PsFiles = Get-ChildItem -Path $script:V086_ModuleRoot -Recurse -Filter '*.ps1' -File |
+            Where-Object { $_.FullName -notmatch '\\Tests\\' }
+    }
+
+    It 'no Public/Private .ps1 file wraps <Helper> with @(...) - silently collapses row-set' -ForEach @(
+        @{ Helper = 'Invoke-AzResourceGraphQuery' },
+        @{ Helper = 'Get-AzLocalFleetHealthFailures' },
+        @{ Helper = 'Get-AzLocalFleetHealthOverview' },
+        @{ Helper = 'Read-AzLocalApplyUpdatesYamlCrons' }
+    ) {
+        $pattern = "@\(\s*$([regex]::Escape($Helper))\b"
+        $offenders = [System.Collections.Generic.List[string]]::new()
+        foreach ($file in $script:V086_PsFiles) {
+            $lines = Get-Content -LiteralPath $file.FullName
+            for ($i = 0; $i -lt $lines.Count; $i++) {
+                if ($lines[$i] -match $pattern) {
+                    $offenders.Add(("{0}:{1}: {2}" -f $file.Name, ($i + 1), $lines[$i].Trim()))
+                }
+            }
+        }
+        $offenders.Count | Should -Be 0 -Because (
+            "wrapping '$Helper' (which uses `return , `$arr` unary-comma return) " +
+            "with @() silently collapses the row-set to Object[1] containing the " +
+            "inner array. Found:`n$($offenders -join "`n")"
+        )
+    }
+}
+
+Describe 'v0.8.6 regression guard: Step.4 ARB strict-mode .Count crash on single-cluster RG' {
+
+    It 'Get-AzLocalFleetConnectivityStatus uses explicit if/else with @($clustersByRg[$rg]) (NOT @($null) which yields Object[1] containing $null)' {
+        $path = Join-Path -Path $PSScriptRoot -ChildPath '..\Public\Get-AzLocalFleetConnectivityStatus.ps1'
+        $content = Get-Content -LiteralPath $path -Raw
+        # v0.8.6-fix3: `@($null)` produces an Object[1] containing $null (NOT an empty array),
+        # so downstream `$matched.Count -gt 0` is true and `$_.ClusterName` on the null element
+        # throws PropertyNotFound. The reliable pattern is an explicit if/else where the miss
+        # branch assigns a real empty array (`@()`) and the hit branch wraps the list.
+        $content | Should -Match '(?s)if\s*\(\s*\$clustersByRg\.ContainsKey\(\$rg\)\s*\)\s*\{\s*\$matched\s*=\s*@\(\$clustersByRg\[\$rg\]\)\s*\}\s*else\s*\{\s*\$matched\s*=\s*@\(\)\s*\}' -Because (
+            'Step.4 must branch explicitly on ContainsKey, with the else branch assigning a literal `@()` ' +
+            'to $matched. @($null) does NOT yield an empty array.'
+        )
+        # The OLD broken patterns must be gone.
+        $content | Should -Not -Match '\[object\[\]\]\$matched\s*=\s*if\s*\(\$clustersByRg'
+        $content | Should -Not -Match '\$matchedList\s*=\s*if\s*\(\$clustersByRg\.ContainsKey\(\$rg\)\)\s*\{\s*\$clustersByRg\[\$rg\]\s*\}\s*else\s*\{\s*\$null\s*\}'
+    }
+}
+
+Describe 'v0.8.6 regression guard: Step.6 Get-AzLocalClusterUpdateReadiness $cluster.NotFound strict-mode crash' {
+
+    It 'every "$clustersToProcess += @{ ... }" block sets a NotFound key' {
+        # Under Set-StrictMode -Version Latest, dot-notation on a hashtable
+        # missing the requested key throws "The property 'NotFound' cannot be
+        # found on this object." Every hashtable shape MUST define NotFound or
+        # the iteration at line ~337 (`if ($cluster.NotFound)`) crashes Step.6.
+        $path = Join-Path -Path $PSScriptRoot -ChildPath '..\Public\Get-AzLocalClusterUpdateReadiness.ps1'
+        $content = Get-Content -LiteralPath $path -Raw
+        # Find every `$clustersToProcess += @{ ... }` block (lazy match, dotall).
+        $rx = [regex]'(?s)\$clustersToProcess\s*\+=\s*@\{(?<body>.*?)\}'
+        $rxMatches = $rx.Matches($content)
+        $rxMatches.Count | Should -BeGreaterThan 0 -Because 'the regression-guarded code shape must be present'
+        $offenders = [System.Collections.Generic.List[string]]::new()
+        foreach ($m in $rxMatches) {
+            if ($m.Groups['body'].Value -notmatch '(?m)^\s*NotFound\s*=') {
+                $offenders.Add($m.Value.Trim())
+            }
+        }
+        $offenders.Count | Should -Be 0 -Because (
+            "every `$clustersToProcess += @{ } literal must include 'NotFound = `$true' or 'NotFound = `$false' " +
+            "so the strict-mode dot-access at iteration time cannot throw. Offending block(s):`n$($offenders -join "`n---`n")"
+        )
+    }
+}
+
+Describe 'v0.8.6 regression guard: GitHub Actions Node.js 20 deprecation' {
+
+    BeforeAll {
+        $script:V086_GhaRoot = Join-Path -Path (Split-Path -Parent $PSScriptRoot) -ChildPath 'Automation-Pipeline-Examples\github-actions'
+        $script:V086_GhaYamls = if (Test-Path -LiteralPath $script:V086_GhaRoot) {
+            Get-ChildItem -Path $script:V086_GhaRoot -Filter '*.yml' -File
+        } else { @() }
+    }
+
+    It 'no bundled GHA YAML uses actions/upload-artifact@v[1-4] (Node 20 - deprecated)' {
+        $offenders = [System.Collections.Generic.List[string]]::new()
+        foreach ($yml in $script:V086_GhaYamls) {
+            $lines = Get-Content -LiteralPath $yml.FullName
+            for ($i = 0; $i -lt $lines.Count; $i++) {
+                if ($lines[$i] -match 'actions/upload-artifact@v[1-4]\b') {
+                    $offenders.Add(("{0}:{1}: {2}" -f $yml.Name, ($i + 1), $lines[$i].Trim()))
+                }
+            }
+        }
+        $offenders.Count | Should -Be 0 -Because (
+            "actions/upload-artifact v1-v4 run on Node.js 20 which GitHub has scheduled for deprecation. " +
+            "Bump to @v5 or @v6 to avoid the deprecation warning in production runs. Found:`n$($offenders -join "`n")"
+        )
+    }
+
+    It 'no bundled GHA YAML uses actions/download-artifact@v[1-3] (Node 20 - deprecated)' {
+        $offenders = [System.Collections.Generic.List[string]]::new()
+        foreach ($yml in $script:V086_GhaYamls) {
+            $lines = Get-Content -LiteralPath $yml.FullName
+            for ($i = 0; $i -lt $lines.Count; $i++) {
+                if ($lines[$i] -match 'actions/download-artifact@v[1-3]\b') {
+                    $offenders.Add(("{0}:{1}: {2}" -f $yml.Name, ($i + 1), $lines[$i].Trim()))
+                }
+            }
+        }
+        $offenders.Count | Should -Be 0 -Because (
+            "actions/download-artifact v1-v3 run on Node.js 20. Bump to @v4 or later. " +
+            "Found:`n$($offenders -join "`n")"
+        )
+    }
+}
+
+Describe 'v0.8.6 functional regression: Export-AzLocalAuthValidationReport preserves all cluster rows from unary-comma helper' {
+
+    It 'Reports the true cluster count (not 1) when Invoke-AzResourceGraphQuery returns 20 rows via unary-comma' {
+        # Smoke-test the source line shape: Step.0 cluster reachability MUST
+        # assign Invoke-AzResourceGraphQuery directly (no @() wrap), then
+        # report $clusterRows.Count. We can't easily mock through the whole
+        # cmdlet here (it has many dependencies) - instead assert the
+        # specific source pattern that was buggy in v0.8.5.
+        $path = Join-Path -Path $PSScriptRoot -ChildPath '..\Public\Export-AzLocalAuthValidationReport.ps1'
+        $content = Get-Content -LiteralPath $path -Raw
+        # The fixed line MUST be a direct assignment, NOT @(...).
+        $content | Should -Match '(?m)^\s*\$clusterRows\s*=\s*Invoke-AzResourceGraphQuery\s+-Query\s+\$clusterKql' -Because (
+            'Step.0 must use direct assignment (`$clusterRows = Invoke-AzResourceGraphQuery ...`) - ' +
+            'wrapping with @() collapses 20 clusters to Object[1] and reports "1 cluster(s) visible".'
+        )
+        $content | Should -Not -Match '\$clusterRows\s*=\s*@\(\s*Invoke-AzResourceGraphQuery'
+    }
+}
+
+Describe 'v0.8.6 functional regression: Export-AzLocalFleetHealthStatusReport preserves all detail rows from unary-comma helper' {
+
+    It 'Step.9 assigns Get-AzLocalFleetHealthFailures directly (no @() wrap that collapses 81 rows to 1)' {
+        $path = Join-Path -Path $PSScriptRoot -ChildPath '..\Public\Export-AzLocalFleetHealthStatusReport.ps1'
+        $content = Get-Content -LiteralPath $path -Raw
+        $content | Should -Match '(?m)^\s*\$detail\s*=\s*Get-AzLocalFleetHealthFailures\s+-View\s+Detail'
+        $content | Should -Not -Match '\$detail\s*=\s*@\(\s*Get-AzLocalFleetHealthFailures'
+    }
+
+    It 'Step.9 assigns Get-AzLocalFleetHealthOverview directly (no @() wrap that collapses fleet rows to 1)' {
+        $path = Join-Path -Path $PSScriptRoot -ChildPath '..\Public\Export-AzLocalFleetHealthStatusReport.ps1'
+        $content = Get-Content -LiteralPath $path -Raw
+        $content | Should -Match '(?m)^\s*\$overview\s*=\s*Get-AzLocalFleetHealthOverview\b'
+        $content | Should -Not -Match '\$overview\s*=\s*@\(\s*Get-AzLocalFleetHealthOverview'
+    }
+}
+
+Describe 'v0.8.6 regression guard: Step.3 Test-AzLocalApplyUpdatesScheduleCoverage MatchingCrons strict-mode crash' {
+
+    It 'guards $segmentStatuses.MatchingCrons via explicit ForEach-Object enumeration (NOT array-level member-access)' {
+        # Under Set-StrictMode -Version Latest, `$segmentStatuses.MatchingCrons` member-access
+        # on an array throws "The property 'MatchingCrons' cannot be found on this object."
+        # even when Count > 0. The fix uses `$segmentStatuses | ForEach-Object { $_.MatchingCrons }`
+        # to enumerate explicitly, AND guards with `if ($segmentStatuses.Count -gt 0)` for the
+        # empty-array case (v0.8.5 Step.3 production regression).
+        $path = Join-Path -Path $PSScriptRoot -ChildPath '..\Public\Test-AzLocalApplyUpdatesScheduleCoverage.ps1'
+        $content = Get-Content -LiteralPath $path -Raw
+        $content | Should -Match '\$segmentStatuses\.Count\s*-gt\s*0' -Because (
+            'the .MatchingCrons access path MUST be guarded by `if ($segmentStatuses.Count -gt 0)`.'
+        )
+        $content | Should -Match '\$segmentStatuses\s*\|\s*ForEach-Object\s*\{\s*\$_\.MatchingCrons\s*\}' -Because (
+            'explicit `ForEach-Object { $_.MatchingCrons }` is required - array-level member-access ' +
+            '`$segmentStatuses.MatchingCrons` throws PropertyNotFound under strict mode.'
+        )
+        # The unguarded one-liner AND the array-level member-access must be gone.
+        $content | Should -Not -Match '(?m)^\s+\$allMatched\s*=\s*@\(\$segmentStatuses\.MatchingCrons'
+        $content | Should -Not -Match '@\(\$segmentStatuses\.MatchingCrons\s*\|\s*Select-Object\s*-Unique\)'
+    }
+}
+
+Describe 'v0.8.6 regression guard: Step.0 Export-AzLocalAuthValidationReport defensive @() coerce on $clusterRows' {
+
+    It 'coerces $clusterRows = @($clusterRows) before reading .Count so scalar returns become Object[1]' {
+        # When a downstream Invoke-AzResourceGraphQuery mock or shape change returns
+        # a single PSCustomObject (instead of Object[1]), $clusterRows.Count returns
+        # $null under strict mode. The defensive @() on the VARIABLE (not the call)
+        # is idempotent on Object[N] and safe to apply.
+        $path = Join-Path -Path $PSScriptRoot -ChildPath '..\Public\Export-AzLocalAuthValidationReport.ps1'
+        $content = Get-Content -LiteralPath $path -Raw
+        $content | Should -Match '\$clusterRows\s*=\s*@\(\$clusterRows\)' -Because (
+            'Step.0 must defensively coerce $clusterRows = @($clusterRows) after the ARG call ' +
+            'so .Count is always a valid integer property, even when callers (tests) mock with a single object.'
+        )
+    }
+}

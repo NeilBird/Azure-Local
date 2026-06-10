@@ -576,6 +576,20 @@ function Set-AzLocalClusterUpdateRingTag {
                 Write-Log -Message "  Will default-stamp $($script:UpdateExcludedTagName) tag: 'False' (tag absent on cluster)" -Level Info
             }
 
+            # Compute the actual per-tag deltas so the per-cluster Message in the
+            # summary names the tags that genuinely changed (not always "UpdateRing").
+            # When only a schedule tag (e.g. UpdateExcluded) differs we want the
+            # message to read "UpdateExcluded: 'False' -> 'True'" rather than the
+            # misleading "UpdateRing tag updated successfully".
+            $tagDeltas = New-Object System.Collections.Generic.List[string]
+            foreach ($tagName in $tagsToMerge.Keys) {
+                $newVal = [string]$tagsToMerge[$tagName]
+                $oldVal = if ($currentTags.PSObject.Properties[$tagName]) { [string]$currentTags.$tagName } else { '<absent>' }
+                if ($oldVal -ne $newVal) {
+                    $tagDeltas.Add(("{0}: '{1}' -> '{2}'" -f $tagName, $oldVal, $newVal))
+                }
+            }
+
             # Apply the tag using PATCH against the dedicated tags subresource.
             # Using /providers/Microsoft.Resources/tags/default (api-version 2021-04-01)
             # narrows the required RBAC from `microsoft.azurestackhci/clusters/write`
@@ -608,7 +622,12 @@ function Set-AzLocalClusterUpdateRingTag {
                     if ($LASTEXITCODE -eq 0) {
                         Write-Log -Message "Successfully $($action.ToLower()) UpdateRing tag" -Level Success
                         $status = "Success"
-                        $message = "UpdateRing tag $($action.ToLower()) successfully"
+                        if ($tagDeltas.Count -gt 0) {
+                            $message = "Tags $($action.ToLower()): " + ($tagDeltas -join '; ')
+                        }
+                        else {
+                            $message = "UpdateRing tag $($action.ToLower()) successfully"
+                        }
                     }
                     else {
                         $scrubbed = ConvertTo-ScrubbedCliOutput -Text ($result | Out-String).Trim()
@@ -626,7 +645,12 @@ function Set-AzLocalClusterUpdateRingTag {
             }
             else {
                 $status = "WhatIf"
-                $message = "Would $($action.ToLower()) UpdateRing tag"
+                if ($tagDeltas.Count -gt 0) {
+                    $message = "Would $($action.ToLower()) tags: " + ($tagDeltas -join '; ')
+                }
+                else {
+                    $message = "Would $($action.ToLower()) UpdateRing tag"
+                }
             }
 
             # Write to CSV
@@ -691,9 +715,15 @@ function Set-AzLocalClusterUpdateRingTag {
     Write-Log -Message "CSV log saved to: $csvLogPath" -Level Info
     Write-Log -Message "========================================" -Level Header
 
-    # Display results table
+    # Display results table.
+    # IMPORTANT: pipe to Out-Host so the Format-Table format objects (header /
+    # row / footer wrappers) never leak into the function's pipeline output.
+    # Without -Out-Host they would mix with `return $results` under -PassThru
+    # and the caller's `$results = @(Set-AzLocalClusterUpdateRingTag ...)` would
+    # see ~1.2x as many objects as real cluster rows, inflating `.Count` in
+    # downstream summaries (Step.2 v0.8.6 regression).
     Write-Host ""
-    $results | Format-Table ClusterName, Action, PreviousTagValue, NewTagValue, Status -AutoSize
+    $results | Format-Table ClusterName, Action, PreviousTagValue, NewTagValue, Status -AutoSize | Out-Host
     
     if ($PassThru) {
         return $results

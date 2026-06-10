@@ -557,11 +557,152 @@ function Export-AzLocalApplyUpdatesScheduleAudit {
     # ---- Cycle calendar - ALWAYS when -SchedulePath supplied --------------
     # v0.8.5 fix for the v0.8.4 $hasIssues-gate regression where the
     # calendar silently disappeared from clean-fleet runs.
+    # v0.8.6 enrichment: when PipelineYamlPath (always) and ClusterCsvPath
+    # (optional) are available, build two extra columns:
+    #   * "Ring CRON Start Time (Step 6 pipeline)" - per-day UTC firing
+    #     times projected from Step.6 cron triggers.
+    #   * "Tag Start Window Match (>=95%)" - per (ring, date) pair: do
+    #     >=95% of clusters in the ring have an UpdateStartWindow tag
+    #     that covers AT LEAST ONE Step.6 cron firing on that date?
+    # Both columns are pure render-time data computed here (Azure I/O
+    # / file I/O lives in this caller, not the cycle-calendar cmdlet).
     if ($haveSchedule) {
         $calendarMd = $null
+        $cronFiringsByDate        = $null
+        $windowMatchByRingAndDate = $null
         try {
             $schedForCalendar = if ($sched) { $sched } else { Get-AzLocalApplyUpdatesScheduleConfig -Path $SchedulePath -ErrorAction Stop }
-            $calendarMd = Get-AzLocalApplyUpdatesScheduleCycleCalendar -Schedule $schedForCalendar -AsMarkdown -IncludePerRingSummary -ErrorAction Stop
+
+            # Build cron firings per UTC date across the cycle-calendar's
+            # default horizon (CycleWeeks * 7 days, mirroring the cmdlet's
+            # default $Days). Best-effort: parse failures degrade gracefully
+            # to "no firings" rather than aborting the whole calendar.
+            try {
+                $cronFireRows = New-Object System.Collections.Generic.List[psobject]
+                # NOTE: Read-AzLocalApplyUpdatesYamlCrons uses unary-comma return; direct assignment only (no @() wrap).
+                $cronTriggers = Read-AzLocalApplyUpdatesYamlCrons -Path $PipelineYamlPath -ErrorAction Stop
+                foreach ($ct in $cronTriggers) {
+                    try {
+                        $parsed = ConvertFrom-AzLocalCronExpression -Expression $ct.CronExpression -ErrorAction Stop
+                        if ($parsed.IsValid -and -not $parsed.IsComplex) {
+                            foreach ($ft in @($parsed.FireTimes)) {
+                                $cronFireRows.Add([pscustomobject]@{
+                                    DayOfWeek = $ft.DayOfWeek
+                                    Time      = $ft.TimeOfDay
+                                }) | Out-Null
+                            }
+                        }
+                    }
+                    catch {
+                        Write-Verbose "Cron parse failed for '$($ct.CronExpression)': $($_.Exception.Message)"
+                    }
+                }
+
+                $horizonDays = [int]$schedForCalendar.CycleWeeks * 7
+                if ($horizonDays -lt 7) { $horizonDays = 7 }
+                $startDay = [datetime]::SpecifyKind([datetime]::UtcNow.Date, [DateTimeKind]::Utc)
+
+                $cronFiringsByDate = @{}
+                for ($i = 0; $i -lt $horizonDays; $i++) {
+                    $d   = $startDay.AddDays($i)
+                    $dow = $d.DayOfWeek
+                    $fires = @(
+                        $cronFireRows |
+                            Where-Object { $_.DayOfWeek -eq $dow } |
+                            ForEach-Object { ($_.Time).ToString('hh\:mm') }
+                    ) | Sort-Object -Unique
+                    $cronFiringsByDate[$d.ToString('yyyy-MM-dd')] = @($fires)
+                }
+
+                # Window-match column needs cluster CSV input.
+                if ($haveCsv) {
+                    $clusters = @(Import-Csv -LiteralPath $ClusterCsvPath -ErrorAction Stop)
+
+                    # Pre-parse each cluster's UpdateStartWindow once.
+                    $ringsToClusters = New-Object 'System.Collections.Generic.Dictionary[string,System.Collections.Generic.List[psobject]]' ([System.StringComparer]::OrdinalIgnoreCase)
+                    foreach ($c in $clusters) {
+                        $ring = ''
+                        if ($c.PSObject.Properties.Name -contains 'UpdateRing' -and $null -ne $c.UpdateRing) {
+                            $ring = ([string]$c.UpdateRing).Trim()
+                        }
+                        if ([string]::IsNullOrWhiteSpace($ring)) { continue }
+                        $winStr = ''
+                        if ($c.PSObject.Properties.Name -contains 'UpdateStartWindow' -and $null -ne $c.UpdateStartWindow) {
+                            $winStr = ([string]$c.UpdateStartWindow).Trim()
+                        }
+                        $segments = @()
+                        if (-not [string]::IsNullOrWhiteSpace($winStr)) {
+                            try { $segments = @(ConvertFrom-AzLocalUpdateWindow -WindowString $winStr -ErrorAction Stop) }
+                            catch { $segments = @() }
+                        }
+                        if (-not $ringsToClusters.ContainsKey($ring)) {
+                            $ringsToClusters[$ring] = New-Object System.Collections.Generic.List[psobject]
+                        }
+                        $ringsToClusters[$ring].Add([pscustomobject]@{ Segments = $segments }) | Out-Null
+                    }
+
+                    $windowMatchByRingAndDate = @{}
+                    for ($i = 0; $i -lt $horizonDays; $i++) {
+                        $d       = $startDay.AddDays($i)
+                        $dow     = $d.DayOfWeek
+                        $prevDow = $d.AddDays(-1).DayOfWeek
+                        $dKey    = $d.ToString('yyyy-MM-dd')
+                        $firesToday = @(
+                            $cronFireRows |
+                                Where-Object { $_.DayOfWeek -eq $dow } |
+                                ForEach-Object { $_.Time }
+                        )
+                        if ($firesToday.Count -eq 0) { continue }
+                        foreach ($ring in $ringsToClusters.Keys) {
+                            $clist = @($ringsToClusters[$ring])
+                            $tot   = $clist.Count
+                            $mat   = 0
+                            foreach ($cw in $clist) {
+                                $hit = $false
+                                foreach ($seg in @($cw.Segments)) {
+                                    $segDays = @($seg.Days)
+                                    if ($seg.Overnight) {
+                                        # Two cases for overnight windows:
+                                        # (a) opens today before midnight -> fires today >= StartTime,
+                                        # (b) opened yesterday and still active -> fires today < EndTime.
+                                        foreach ($ft in $firesToday) {
+                                            if ($segDays -contains $dow     -and $ft -ge $seg.StartTime) { $hit = $true; break }
+                                            if ($segDays -contains $prevDow -and $ft -lt $seg.EndTime)   { $hit = $true; break }
+                                        }
+                                    }
+                                    else {
+                                        if (-not ($segDays -contains $dow)) { continue }
+                                        foreach ($ft in $firesToday) {
+                                            if ($ft -ge $seg.StartTime -and $ft -lt $seg.EndTime) { $hit = $true; break }
+                                        }
+                                    }
+                                    if ($hit) { break }
+                                }
+                                if ($hit) { $mat++ }
+                            }
+                            if ($tot -gt 0) {
+                                if (-not $windowMatchByRingAndDate.ContainsKey($ring)) { $windowMatchByRingAndDate[$ring] = @{} }
+                                $windowMatchByRingAndDate[$ring][$dKey] = @{ Matching = $mat; Total = $tot }
+                            }
+                        }
+                    }
+                }
+            }
+            catch {
+                Write-Warning "Failed to build cycle-calendar enrichment columns: $($_.Exception.Message)"
+                $cronFiringsByDate        = $null
+                $windowMatchByRingAndDate = $null
+            }
+
+            $calArgs = @{
+                Schedule              = $schedForCalendar
+                AsMarkdown            = $true
+                IncludePerRingSummary = $true
+                ErrorAction           = 'Stop'
+            }
+            if ($cronFiringsByDate)        { $calArgs.CronFiringsByDate        = $cronFiringsByDate }
+            if ($windowMatchByRingAndDate) { $calArgs.WindowMatchByRingAndDate = $windowMatchByRingAndDate }
+            $calendarMd = Get-AzLocalApplyUpdatesScheduleCycleCalendar @calArgs
         }
         catch {
             $calendarMd = $null
