@@ -53,9 +53,27 @@ on:
       update_ring:
         # accepts a single ring (Wave1), a semicolon-delimited list (Prod;Ring2),
         # or '***' (three stars - deliberate, not a typo) to match every cluster that HAS the UpdateRing tag set.
-        description: "UpdateRing tag value (e.g. 'Wave1', 'Prod;Ring2', or '***' for ALL clusters)."
-        required: true
+        # v0.8.5: no longer required - leave empty AND set use_schedule_file=true to resolve from apply-updates-schedule.yml instead.
+        description: "UpdateRing tag value (e.g. 'Wave1', 'Prod;Ring2', or '***' for ALL clusters). Ignored when use_schedule_file=true."
+        required: false
         default: 'Wave1'
+      # v0.8.5 - manual override that runs the ring/AllowedUpdateVersions resolver
+      # against apply-updates-schedule.yml exactly as a scheduled firing would.
+      # Use this to (a) test a schedule change before the next cron tick, (b) re-run
+      # a missed scheduled day, or (c) preview a future cycleWeek/dayOfWeek via the
+      # resolve_for_date_utc input below.
+      use_schedule_file:
+        description: 'Resolve UpdateRing & AllowedUpdateVersions from apply-updates-schedule.yml (as a scheduled run would). Overrides update_ring.'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
+      resolve_for_date_utc:
+        description: "Only used when use_schedule_file=true. Date (UTC, YYYY-MM-DD) to resolve the schedule for. Empty = today UTC. Useful for previewing a future cycleWeek/dayOfWeek."
+        required: false
+        default: ''
       update_name:
         description: 'Specific update version to apply (leave empty for latest ready update)'
         required: false
@@ -264,8 +282,11 @@ jobs:
         }
     
     # Resolve the UpdateRing for THIS firing.
-    #   - workflow_dispatch  -> use the operator's manual input verbatim (back-compat).
-    #   - schedule (cron)    -> read apply-updates-schedule.yml and run the resolver.
+    #   - workflow_dispatch + use_schedule_file=false  -> use the operator's manual input verbatim (back-compat).
+    #   - workflow_dispatch + use_schedule_file=true   -> read apply-updates-schedule.yml and run the resolver
+    #                                                     (optionally for a future date via resolve_for_date_utc).
+    #   - schedule (cron)                               -> read apply-updates-schedule.yml and run the resolver
+    #                                                     for the current UTC moment.
     # The resolved value is exported as both an env var (for later steps in this
     # job) and a step output (for cross-job consumption by apply-updates).
     - name: Resolve UpdateRing from schedule
@@ -273,24 +294,54 @@ jobs:
       shell: pwsh
       env:
         INPUT_UPDATE_RING: ${{ github.event.inputs.update_ring }}
+        USE_SCHEDULE_FILE: ${{ github.event.inputs.use_schedule_file }}
+        RESOLVE_FOR_DATE_UTC: ${{ github.event.inputs.resolve_for_date_utc }}
         TRIGGER_EVENT: ${{ github.event_name }}
       run: |
         Import-Module AzLocal.UpdateManagement -Force
         $resolved = ''
         $resolvedAllow = ''
-        if ($env:TRIGGER_EVENT -eq 'workflow_dispatch') {
+        $useScheduleFile = ($env:USE_SCHEDULE_FILE -eq 'true')
+        $isManual = ($env:TRIGGER_EVENT -eq 'workflow_dispatch')
+
+        if ($isManual -and -not $useScheduleFile) {
+            # back-compat path: manual ring verbatim, schedule file ignored.
+            if ([string]::IsNullOrWhiteSpace($env:INPUT_UPDATE_RING)) {
+                throw "workflow_dispatch with use_schedule_file=false requires the update_ring input to be non-empty. Either supply update_ring (e.g. 'Wave1', 'Prod;Ring2', or '***'), OR set use_schedule_file=true to resolve from apply-updates-schedule.yml."
+            }
             $resolved = $env:INPUT_UPDATE_RING
-            Write-Host "Trigger='workflow_dispatch' - using manual input UpdateRing='$resolved' (schedule file ignored). AllowedUpdateVersions is not applied for manual runs - the cmdlet's default 'latest Ready update' (or -update_name input) is used."
+            Write-Host "Trigger='workflow_dispatch', use_schedule_file=false - using manual input UpdateRing='$resolved' (schedule file ignored). AllowedUpdateVersions is not applied for manual runs - the cmdlet's default 'latest Ready update' (or -update_name input) is used."
         }
         else {
+            # schedule trigger OR manual-with-schedule-file: same resolver pipeline.
             $schedulePath = $env:APPLY_UPDATES_SCHEDULE_PATH
             if (-not $schedulePath) { $schedulePath = './.github/apply-updates-schedule.yml' }
-            Write-Host "Trigger='$($env:TRIGGER_EVENT)' - resolving UpdateRing from schedule file '$schedulePath' (UTC now)."
+            $resolveAt = [datetime]::UtcNow
+            $modeLabel = "Trigger='$($env:TRIGGER_EVENT)'"
+            if ($isManual -and $useScheduleFile) {
+                $modeLabel = "Trigger='workflow_dispatch', use_schedule_file=true"
+                if (-not [string]::IsNullOrWhiteSpace($env:RESOLVE_FOR_DATE_UTC)) {
+                    try {
+                        $resolveAt = [datetime]::ParseExact($env:RESOLVE_FOR_DATE_UTC.Trim(), 'yyyy-MM-dd', [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::AssumeUniversal -bor [System.Globalization.DateTimeStyles]::AdjustToUniversal)
+                    }
+                    catch {
+                        throw "resolve_for_date_utc='$($env:RESOLVE_FOR_DATE_UTC)' is not a valid date. Use YYYY-MM-DD (e.g. 2026-07-15), or leave empty to resolve for today (UTC)."
+                    }
+                    Write-Host "$modeLabel - resolving UpdateRing from schedule file '$schedulePath' for date $($resolveAt.ToString('yyyy-MM-dd')) UTC (PREVIEW - operator-supplied date)."
+                }
+                else {
+                    Write-Host "$modeLabel - resolving UpdateRing from schedule file '$schedulePath' for today UTC."
+                }
+            }
+            else {
+                Write-Host "$modeLabel - resolving UpdateRing from schedule file '$schedulePath' (UTC now)."
+            }
             if (-not (Test-Path -LiteralPath $schedulePath)) {
-                throw "apply-updates-schedule.yml not found at '$schedulePath'. The apply-updates pipeline was triggered by a schedule event but no schedule file is present. Generate a STRAWMAN from your fleet via: New-AzLocalApplyUpdatesScheduleConfig -OutputPath '$schedulePath' (then review and UNCOMMENT at least one row before re-running). Set repository variable APPLY_UPDATES_SCHEDULE_PATH to point elsewhere if you keep the schedule outside .github/."
+                $hint = if ($isManual) { "workflow_dispatch with use_schedule_file=true requires a schedule file at this path." } else { "The apply-updates pipeline was triggered by a schedule event but no schedule file is present." }
+                throw "apply-updates-schedule.yml not found at '$schedulePath'. $hint Generate a STRAWMAN from your fleet via: New-AzLocalApplyUpdatesScheduleConfig -OutputPath '$schedulePath' (then review and UNCOMMENT at least one row before re-running). Set repository variable APPLY_UPDATES_SCHEDULE_PATH to point elsewhere if you keep the schedule outside .github/."
             }
             $cfg = Get-AzLocalApplyUpdatesScheduleConfig -Path $schedulePath
-            $decision = Resolve-AzLocalCurrentUpdateRing -Schedule $cfg
+            $decision = Resolve-AzLocalCurrentUpdateRing -Schedule $cfg -Now $resolveAt
             Write-Host "Resolver decision: $($decision.Reason)"
             if ($decision.Rings -and $decision.Rings.Count -gt 0) {
                 $resolved = $decision.UpdateRingValue
@@ -304,7 +355,7 @@ jobs:
                 }
             }
             else {
-                Write-Host "::notice title=No UpdateRing scheduled for today::$($decision.Reason)"
+                Write-Host "::notice title=No UpdateRing scheduled for this firing::$($decision.Reason)"
                 Write-Host "Setting resolved UpdateRing to empty - check-readiness will report ready_count=0 and apply-updates will be skipped cleanly."
                 $resolved = ''
             }

@@ -49,10 +49,26 @@ parameters:
     # or '***' (three stars - deliberate, not a typo) to match every cluster that HAS the UpdateRing tag set.
     # The 'values:' enum was removed in to allow these new forms; type=string
     # still gives users a free-text editor in the ADO run dialog.
-    displayName: "UpdateRing tag value (single 'Wave1', list 'Prod;Ring2', or '***' for ALL)"
+    # v0.8.5: ignored when useScheduleFile=true (the resolver reads the schedule file instead).
+    displayName: "UpdateRing tag value (single 'Wave1', list 'Prod;Ring2', or '***' for ALL). Ignored when useScheduleFile=true."
     type: string
     default: 'Wave1'
-  
+
+  # v0.8.5 - manual override that runs the ring/AllowedUpdateVersions resolver against
+  # apply-updates-schedule.yml exactly as a scheduled firing would. Use this to
+  # (a) test a schedule change before the next scheduled tick, (b) re-run a missed
+  # scheduled day, or (c) preview a future cycleWeek/dayOfWeek via the
+  # resolveForDateUtc parameter below.
+  - name: useScheduleFile
+    displayName: 'Resolve UpdateRing & AllowedUpdateVersions from apply-updates-schedule.yml (as a scheduled run would). Overrides updateRing.'
+    type: boolean
+    default: false
+
+  - name: resolveForDateUtc
+    displayName: 'Only used when useScheduleFile=true. Date (UTC, YYYY-MM-DD) to resolve the schedule for. Empty = today UTC. Useful for previewing a future cycleWeek/dayOfWeek.'
+    type: string
+    default: ''
+
   - name: updateName
     displayName: 'Specific update version (leave empty for latest ready update)'
     type: string
@@ -200,10 +216,14 @@ stages:
                 Write-Host "##vso[task.uploadsummary]$bannerPath"
           
           # Resolve the UpdateRing for THIS firing.
-          #   - $(Build.Reason) in 'Manual','IndividualCI','BatchedCI','PullRequest','Manual'
+          #   - $(Build.Reason) != 'Schedule' AND useScheduleFile=false
           #       -> use the operator's parameter input verbatim (back-compat).
+          #   - $(Build.Reason) != 'Schedule' AND useScheduleFile=true  (v0.8.5)
+          #       -> read apply-updates-schedule.yml and run the resolver
+          #          (optionally for a future date via resolveForDateUtc).
           #   - $(Build.Reason) = 'Schedule'
-          #       -> read apply-updates-schedule.yml and run the resolver.
+          #       -> read apply-updates-schedule.yml and run the resolver for the
+          #          current UTC moment.
           # The resolved value is exported as a task output variable
           # (resolveRing.RESOLVED_UPDATE_RING) for consumption later in this job
           # and via stageDependencies in the ApplyUpdates stage.
@@ -212,6 +232,8 @@ stages:
             name: resolveRing
             env:
               MANUAL_UPDATE_RING: ${{ parameters.updateRing }}
+              USE_SCHEDULE_FILE: ${{ parameters.useScheduleFile }}
+              RESOLVE_FOR_DATE_UTC: ${{ parameters.resolveForDateUtc }}
               APPLY_UPDATES_SCHEDULE_PATH: $(APPLY_UPDATES_SCHEDULE_PATH)
               BUILD_REASON: $(Build.Reason)
             inputs:
@@ -222,19 +244,47 @@ stages:
                 Import-Module AzLocal.UpdateManagement -Force
                 $resolved      = ''
                 $resolvedAllow = ''
-                if ($env:BUILD_REASON -ne 'Schedule') {
+                $useScheduleFile = ($env:USE_SCHEDULE_FILE -eq 'True' -or $env:USE_SCHEDULE_FILE -eq 'true')
+                $isManual = ($env:BUILD_REASON -ne 'Schedule')
+
+                if ($isManual -and -not $useScheduleFile) {
+                    # back-compat path: manual ring verbatim, schedule file ignored.
+                    if ([string]::IsNullOrWhiteSpace($env:MANUAL_UPDATE_RING)) {
+                        throw "Build.Reason='$($env:BUILD_REASON)' with useScheduleFile=false requires the updateRing parameter to be non-empty. Either supply updateRing (e.g. 'Wave1', 'Prod;Ring2', or '***'), OR set useScheduleFile=true to resolve from apply-updates-schedule.yml."
+                    }
                     $resolved = $env:MANUAL_UPDATE_RING
-                    Write-Host "Build.Reason='$($env:BUILD_REASON)' - using manual parameter UpdateRing='$resolved' (schedule file ignored). AllowedUpdateVersions is not applied for manual runs - the cmdlet's default 'latest Ready update' (or -updateName parameter) is used."
+                    Write-Host "Build.Reason='$($env:BUILD_REASON)', useScheduleFile=false - using manual parameter UpdateRing='$resolved' (schedule file ignored). AllowedUpdateVersions is not applied for manual runs - the cmdlet's default 'latest Ready update' (or -updateName parameter) is used."
                 }
                 else {
+                    # schedule trigger OR manual-with-schedule-file: same resolver pipeline.
                     $schedulePath = $env:APPLY_UPDATES_SCHEDULE_PATH
                     if (-not $schedulePath) { $schedulePath = './apply-updates-schedule.yml' }
-                    Write-Host "Build.Reason='Schedule' - resolving UpdateRing from schedule file '$schedulePath' (UTC now)."
+                    $resolveAt = [datetime]::UtcNow
+                    $modeLabel = "Build.Reason='$($env:BUILD_REASON)'"
+                    if ($isManual -and $useScheduleFile) {
+                        $modeLabel = "Build.Reason='$($env:BUILD_REASON)', useScheduleFile=true"
+                        if (-not [string]::IsNullOrWhiteSpace($env:RESOLVE_FOR_DATE_UTC)) {
+                            try {
+                                $resolveAt = [datetime]::ParseExact($env:RESOLVE_FOR_DATE_UTC.Trim(), 'yyyy-MM-dd', [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::AssumeUniversal -bor [System.Globalization.DateTimeStyles]::AdjustToUniversal)
+                            }
+                            catch {
+                                throw "resolveForDateUtc='$($env:RESOLVE_FOR_DATE_UTC)' is not a valid date. Use YYYY-MM-DD (e.g. 2026-07-15), or leave empty to resolve for today (UTC)."
+                            }
+                            Write-Host "$modeLabel - resolving UpdateRing from schedule file '$schedulePath' for date $($resolveAt.ToString('yyyy-MM-dd')) UTC (PREVIEW - operator-supplied date)."
+                        }
+                        else {
+                            Write-Host "$modeLabel - resolving UpdateRing from schedule file '$schedulePath' for today UTC."
+                        }
+                    }
+                    else {
+                        Write-Host "$modeLabel - resolving UpdateRing from schedule file '$schedulePath' (UTC now)."
+                    }
                     if (-not (Test-Path -LiteralPath $schedulePath)) {
-                        throw "apply-updates-schedule.yml not found at '$schedulePath'. The apply-updates pipeline was triggered by a scheduled run but no schedule file is present. Generate a STRAWMAN from your fleet via: New-AzLocalApplyUpdatesScheduleConfig -OutputPath '$schedulePath' (then review and UNCOMMENT at least one row before re-running). Override APPLY_UPDATES_SCHEDULE_PATH at queue time if you keep the schedule elsewhere."
+                        $hint = if ($isManual) { "Build.Reason='$($env:BUILD_REASON)' with useScheduleFile=true requires a schedule file at this path." } else { "The apply-updates pipeline was triggered by a scheduled run but no schedule file is present." }
+                        throw "apply-updates-schedule.yml not found at '$schedulePath'. $hint Generate a STRAWMAN from your fleet via: New-AzLocalApplyUpdatesScheduleConfig -OutputPath '$schedulePath' (then review and UNCOMMENT at least one row before re-running). Override APPLY_UPDATES_SCHEDULE_PATH at queue time if you keep the schedule elsewhere."
                     }
                     $cfg = Get-AzLocalApplyUpdatesScheduleConfig -Path $schedulePath
-                    $decision = Resolve-AzLocalCurrentUpdateRing -Schedule $cfg
+                    $decision = Resolve-AzLocalCurrentUpdateRing -Schedule $cfg -Now $resolveAt
                     Write-Host "Resolver decision: $($decision.Reason)"
                     if ($decision.Rings -and $decision.Rings.Count -gt 0) {
                         $resolved = $decision.UpdateRingValue
@@ -248,7 +298,7 @@ stages:
                         }
                     }
                     else {
-                        Write-Host "##vso[task.logissue type=warning]No UpdateRing scheduled for today: $($decision.Reason)"
+                        Write-Host "##vso[task.logissue type=warning]No UpdateRing scheduled for this firing: $($decision.Reason)"
                         Write-Host "Setting resolved UpdateRing to empty - the readiness task will report ReadyCount=0 and the ApplyUpdates stage will be skipped cleanly."
                         $resolved = ''
                     }
