@@ -39,6 +39,12 @@
 # AUTHENTICATION:
 # Uses OpenID Connect (OIDC) - recommended for secretless authentication
 # See: https://learn.microsoft.com/en-us/azure/developer/github/connect-from-azure-openid-connect
+#
+# v0.8.5 thin-YAML: the inline run: | body (data collection +
+# severity classification + JUnit XML generation + markdown summary +
+# step outputs) is now the Export-AzLocalFleetConnectivityStatusReport
+# Public cmdlet. This yml is condensed to a few lines per step; the
+# full workload (and its Pester tests) live in the module.
 
 # Workflow name carries the same Step.N - prefix as the filename so the GitHub
 # Actions sidebar (which sorts workflows alphabetically by this `name:` field)
@@ -109,7 +115,7 @@ env:
   # PSGallery, and emits a ::notice annotation if the YAML appears stale -
   # prompting you to refresh via Copy-AzLocalPipelineExample -Update. See
   # Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.8.4'
+  GENERATED_AGAINST_MODULE_VERSION: '0.8.5'
   # Resolution order for the module version pin (leave all unset to install
   # the latest, the default "fix-forward" behaviour): manual workflow_dispatch
   # input > repository variable 'REQUIRED_MODULE_VERSION' > empty (latest).
@@ -132,6 +138,24 @@ jobs:
       id-token: write
       contents: read
       checks: write  # Required for test reporter
+    outputs:
+      # v0.8.5 thin-YAML: keys align byte-for-byte with the lowercase output
+      # names emitted by Export-AzLocalFleetConnectivityStatusReport (via
+      # Set-AzLocalPipelineOutput). ADO is case-sensitive on task.setvariable
+      # lookups; GH is case-insensitive but lowercase is the canonical v0.8.5+
+      # convention.
+      cluster_total:  ${{ steps.fleet-connectivity.outputs.cluster_total }}
+      cluster_fail:   ${{ steps.fleet-connectivity.outputs.cluster_fail }}
+      arc_total:      ${{ steps.fleet-connectivity.outputs.arc_total }}
+      arc_fail:       ${{ steps.fleet-connectivity.outputs.arc_fail }}
+      nic_total:      ${{ steps.fleet-connectivity.outputs.nic_total }}
+      nic_fail:       ${{ steps.fleet-connectivity.outputs.nic_fail }}
+      nic_all_total:  ${{ steps.fleet-connectivity.outputs.nic_all_total }}
+      arb_total:      ${{ steps.fleet-connectivity.outputs.arb_total }}
+      arb_fail:       ${{ steps.fleet-connectivity.outputs.arb_fail }}
+      total_failures: ${{ steps.fleet-connectivity.outputs.total_failures }}
+      critical_count: ${{ steps.fleet-connectivity.outputs.critical_count }}
+      warning_count:  ${{ steps.fleet-connectivity.outputs.warning_count }}
 
     steps:
     - name: Checkout repository
@@ -155,11 +179,13 @@ jobs:
 
     - name: Install Azure CLI Resource Graph Extension
       shell: pwsh
-      run: |
-        az extension add --name resource-graph --yes
+      run: az extension add --name resource-graph --yes
 
     - name: Install AzLocal.UpdateManagement from PSGallery
+      # v0.8.5 thin-YAML: drift detection + banner + step outputs are all
+      # produced by Add-AzLocalPipelineVersionBanner (Public cmdlet).
       shell: pwsh
+      id: module-version
       run: |
         $ErrorActionPreference = 'Stop'
         $installArgs = @{ Name = 'AzLocal.UpdateManagement'; Scope = 'CurrentUser'; Force = $true; AllowClobber = $true }
@@ -171,299 +197,36 @@ jobs:
         }
         Install-Module @installArgs
         Import-Module AzLocal.UpdateManagement -Force
-        $installed = (Get-Module AzLocal.UpdateManagement | Sort-Object Version -Descending | Select-Object -First 1).Version
-        $generated = [version]$env:GENERATED_AGAINST_MODULE_VERSION
-        $latest    = (Find-Module -Name AzLocal.UpdateManagement -Repository PSGallery -ErrorAction SilentlyContinue).Version
-        Write-Host ""
-        Write-Host "Module version summary"
-        Write-Host "  Installed on runner       : $installed"
-        Write-Host "  YAML generated against    : $generated"
-        Write-Host "  Latest on PSGallery       : $(if ($latest) { $latest } else { '(lookup failed - check network)' })"
-        Write-Host ""
-        if ($installed -lt $generated) {
-            $msg = "AzLocal.UpdateManagement v$installed is OLDER than the version this workflow YAML was generated against (v$generated). Cmdlets, parameters, or output schemas referenced by this YAML may not exist in v$installed. Set REQUIRED_MODULE_VERSION to v$generated, or refresh the YAML to match the installed module via 'Copy-AzLocalPipelineExample -Destination .\.github\workflows -Platform GitHub -Update'."
-            Write-Host "::warning title=AzLocal.UpdateManagement is older than workflow YAML expects::$msg"
-        }
-        if ($installed -gt $generated) {
-            $msg = "Workflow YAML was generated against AzLocal.UpdateManagement v$generated but the runner installed v$installed. Refresh via 'Copy-AzLocalPipelineExample -Destination .\.github\workflows -Platform GitHub -Update'."
-            Write-Host "::notice title=Workflow YAML may be stale::$msg"
-        }
-        if ($latest -and ($latest -gt $installed)) {
-            $msg = "AzLocal.UpdateManagement v$latest is available on PSGallery; this run installed v$installed."
-            Write-Host "::notice title=Newer AzLocal.UpdateManagement version available on PSGallery::$msg"
-        }
-
-        # v0.8.4 - one-line version banner emitted to the rendered Step
-        # Summary so the YAML version (GENERATED_AGAINST_MODULE_VERSION), the
-        # module version actually loaded on the runner, the PSGallery latest,
-        # and the REQUIRED_MODULE_VERSION pin status are visible at the top
-        # of every run summary without scrolling the agent log. Same data is
-        # also echoed to the console above as 'Module version summary'.
-        $pin       = if ($env:REQUIRED_MODULE_VERSION) { "pinned to v$($env:REQUIRED_MODULE_VERSION)" } else { 'latest (fix-forward)' }
-        $latestStr = if ($latest) { "v$latest" } else { '(PSGallery lookup failed)' }
-        $verdict   = if ($installed -lt $generated) { 'YAML newer than module - check REQUIRED_MODULE_VERSION' }
-                     elseif ($installed -gt $generated) { 'YAML older than module - run Copy-AzLocalPipelineExample -Update' }
-                     elseif ($latest -and ($latest -gt $installed)) { 'newer module available on PSGallery' }
-                     else { 'in sync' }
-        if ($env:GITHUB_STEP_SUMMARY) {
-            "_Pipeline YAML v$generated | Module v$installed installed ($pin) | PSGallery latest $latestStr | $verdict_" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
-            "" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
-        }
+        Add-AzLocalPipelineVersionBanner `
+            -GeneratedAgainstVersion $env:GENERATED_AGAINST_MODULE_VERSION `
+            -PinnedVersion $env:REQUIRED_MODULE_VERSION
 
     - name: Collect Fleet Connectivity Data
+      # v0.8.5 thin-YAML: the inline run body (5 ARG queries via
+      # Get-AzLocalFleetConnectivityStatus + per-scope severity
+      # classification + ~200-line inline JUnit StringBuilder +
+      # markdown summary render + 12 step outputs) has been condensed
+      # into the Public cmdlet Export-AzLocalFleetConnectivityStatusReport.
+      # The cmdlet writes ./reports/{7-csv,7-json,fleet-connectivity-status.xml},
+      # emits the markdown summary via GITHUB_STEP_SUMMARY (using the
+      # shared New-AzLocalFleetConnectivityStatusSummary renderer), and
+      # sets the 12 lowercase step outputs (cluster_total, cluster_fail,
+      # arc_total, arc_fail, nic_total, nic_fail, nic_all_total,
+      # arb_total, arb_fail, total_failures, critical_count, warning_count).
       shell: pwsh
       id: fleet-connectivity
       env:
         INPUT_SUBSCRIPTION_FILTER: ${{ github.event.inputs.subscription_filter }}
+        INSTALLED_MODULE_VERSION: ${{ steps.module-version.outputs.installed_module_version }}
       run: |
         $ErrorActionPreference = 'Stop'
-
-        $outputDir = "./reports"
-        New-Item -ItemType Directory -Path $outputDir -Force | Out-Null
-
-        # Optional subscription filter - passed as SubscriptionId to the module
-        # cmdlet. Leave empty to query every subscription visible to the runner.
-        $invokeArgs = @{ ExportPath = $outputDir; PassThru = $true }
-        $subFilterRaw = $env:INPUT_SUBSCRIPTION_FILTER
-        if ($subFilterRaw) {
-            $subList = $subFilterRaw -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ }
-            if ($subList -and $subList.Count -gt 0) {
-                $invokeArgs['SubscriptionId'] = $subList[0]
-                Write-Host "Subscription filter active (first sub): $($subList[0])"
-            }
+        Import-Module AzLocal.UpdateManagement -Force
+        $params = @{
+            OutputDirectory        = './reports'
+            InstalledModuleVersion = $env:INSTALLED_MODULE_VERSION
         }
-        if (-not $invokeArgs.ContainsKey('SubscriptionId')) {
-            Write-Host "Subscription filter empty - scanning all subscriptions visible to the federated identity."
-        }
-
-        Write-Host "========================================"
-        Write-Host "Fleet Connectivity Status Collection"
-        Write-Host "========================================"
-
-        # Collect all four connectivity scopes via the module cmdlet.
-        # Runs 5 ARG queries, processes results client-side, and exports
-        # 7 CSV + 7 JSON files to $outputDir.
-        $data        = Get-AzLocalFleetConnectivityStatus @invokeArgs
-        $clusterRows = $data.ClusterRows
-        $arcSummary  = $data.ArcSummary
-        $arcRows     = $data.NonConnectedMachines
-        $nicRows     = $data.NicIssues
-        $nicAllRows  = $data.NicAll
-        $nicStats    = $data.NicStats
-        $arbRows     = $data.ArbRows
-        
-        Write-Host "Fleet Connectivity Collection complete:"
-        Write-Host "  Clusters : $($clusterRows.Count) total"
-        Write-Host "  Arc agents: $($arcSummary.Count) distinct status value(s); $($arcRows.Count) NOT 'Connected'"
-        Write-Host "  Physical NIC issues: $($nicRows.Count) (Disconnected with non-APIPA IP)"
-        Write-Host "  NIC inventory (full): $($nicAllRows.Count) total NICs across $($nicStats.Count) NicType+NicStatus groups"
-        Write-Host "  ARB appliances: $($arbRows.Count)"
-
-        # ------------------------------------------------------------------
-        # JUnit XML pivoted by Severity -> Scope -> Resource. Critical =
-        # confirmed disconnected/offline. Warning = expired/partial/unknown.
-        # Passing testcases are emitted for the "all green" case so dorny
-        # renders a green banner rather than an empty file.
-        # ------------------------------------------------------------------
-        function Convert-XmlEscape([string]$s) {
-            if ($null -eq $s) { return '' }
-            ($s.Replace('&','&amp;').Replace('<','&lt;').Replace('>','&gt;').Replace('"','&quot;').Replace("'",'&apos;'))
-        }
-
-        # Severity classifiers (case-insensitive). "Connected", "ConnectedRecently",
-        # "Running", "Up" = healthy. Disconnected / Offline / Expired = Critical.
-        # Anything else (Unknown / NotSpecified / NotConnected with no
-        # lastStatusChange) = Warning.
-        function Get-ClusterSeverity { param($s) switch -Regex ($s) { '^(Connected|ConnectedRecently)$' { 'Pass'; break } '^(Disconnected|Expired|Offline|Error)$' { 'Critical'; break } default { 'Warning' } } }
-        function Get-ArcSeverity     { param($s) switch -Regex ($s) { '^(Connected)$'                   { 'Pass'; break } '^(Disconnected|Expired|Offline|Error)$' { 'Critical'; break } default { 'Warning' } } }
-        function Get-NicSeverity     { param($s) switch -Regex ($s) { '^(Connected|Up)$'                { 'Pass'; break } '^(Disconnected|Down|Disabled)$'         { 'Critical'; break } default { 'Warning' } } }
-        function Get-ArbSeverity     { param($s) switch -Regex ($s) { '^(Running)$'                     { 'Pass'; break } '^(Offline|Failed)$'                    { 'Critical'; break } default { 'Warning' } } }
-
-        $clusterFail = @($clusterRows | Where-Object { (Get-ClusterSeverity $_.ConnectivityStatus) -ne 'Pass' })
-        $arcFail     = @($arcRows     | Where-Object { (Get-ArcSeverity     $_.AgentStatus)         -ne 'Pass' })
-        $nicFail     = @($nicRows     | Where-Object { (Get-NicSeverity     $_.NicStatus)           -ne 'Pass' })
-        $arbFail     = @($arbRows     | Where-Object { (Get-ArbSeverity     $_.ArbStatus)           -ne 'Pass' })
-
-        $totalFailures  = $clusterFail.Count + $arcFail.Count + $nicFail.Count + $arbFail.Count
-        $criticalCount  = @($clusterFail | Where-Object { (Get-ClusterSeverity $_.ConnectivityStatus) -eq 'Critical' }).Count `
-                        + @($arcFail     | Where-Object { (Get-ArcSeverity     $_.AgentStatus)         -eq 'Critical' }).Count `
-                        + @($nicFail     | Where-Object { (Get-NicSeverity     $_.NicStatus)           -eq 'Critical' }).Count `
-                        + @($arbFail     | Where-Object { (Get-ArbSeverity     $_.ArbStatus)           -eq 'Critical' }).Count
-        $warningCount   = $totalFailures - $criticalCount
-
-        $xmlPath = Join-Path $outputDir 'fleet-connectivity-status.xml'
-        $sb = New-Object System.Text.StringBuilder
-        [void]$sb.AppendLine('<?xml version="1.0" encoding="UTF-8"?>')
-        [void]$sb.AppendFormat('<testsuites name="AzureLocalFleetConnectivity" tests="{0}" failures="{0}" time="0">' + "`n", $totalFailures)
-
-        function Add-Suite {
-            param([string]$Name, [array]$Failures, [scriptblock]$GetCase, [System.Text.StringBuilder]$Sb)
-            if (-not $Failures -or $Failures.Count -eq 0) { return }
-            [void]$Sb.AppendFormat('  <testsuite name="{0}" tests="{1}" failures="{1}" time="0">' + "`n", (Convert-XmlEscape $Name), $Failures.Count)
-            foreach ($r in $Failures) {
-                $c = & $GetCase $r
-                [void]$Sb.AppendFormat('    <testcase classname="{0}" name="{1}" time="0">' + "`n", (Convert-XmlEscape $c.Classname), (Convert-XmlEscape $c.Name))
-                [void]$Sb.AppendLine('      <properties>')
-                foreach ($k in $c.Properties.Keys) {
-                    [void]$Sb.AppendFormat('        <property name="{0}" value="{1}"/>' + "`n", $k, (Convert-XmlEscape ([string]$c.Properties[$k])))
-                }
-                [void]$Sb.AppendLine('      </properties>')
-                [void]$Sb.AppendFormat('      <failure type="{0}" message="{1}">{2}</failure>' + "`n", (Convert-XmlEscape $c.Severity), (Convert-XmlEscape $c.Message), (Convert-XmlEscape $c.Body))
-                [void]$Sb.AppendLine('    </testcase>')
-            }
-            [void]$Sb.AppendLine('  </testsuite>')
-        }
-
-        Add-Suite -Name 'Cluster Connectivity' -Failures $clusterFail -Sb $sb -GetCase {
-            param($r)
-            $sev = Get-ClusterSeverity $r.ConnectivityStatus
-            $portal = "https://portal.azure.com/#@/resource$($r.ClusterId)"
-            return [PSCustomObject]@{
-                Classname  = $r.ClusterName
-                Name       = "Cluster '$($r.ClusterName)' :: ConnectivityStatus=$($r.ConnectivityStatus)"
-                Severity   = $sev
-                Message    = "Cluster connectivity is '$($r.ConnectivityStatus)' (cluster.status='$($r.ClusterStatus)')"
-                Body       = "ResourceGroup: $($r.ResourceGroup)`nSubscriptionId: $($r.SubscriptionId)`nClusterPortalUrl: $portal"
-                Properties = @{
-                    ClusterName        = $r.ClusterName
-                    ClusterResourceId  = $r.ClusterId
-                    UpdateName         = "ClusterConnectivity=$($r.ConnectivityStatus)"
-                    Status             = $sev
-                    FailureReason      = "Cluster connectivity '$($r.ConnectivityStatus)'"
-                    Severity           = $sev
-                    ClusterPortalUrl   = $portal
-                    TargetResourceName = $r.ClusterName
-                    TargetResourceType = 'microsoft.azurestackhci/clusters'
-                }
-            }
-        }
-
-        Add-Suite -Name 'Arc Agent Connectivity' -Failures $arcFail -Sb $sb -GetCase {
-            param($r)
-            $sev = Get-ArcSeverity $r.AgentStatus
-            $portal = "https://portal.azure.com/#@/resource$($r.MachineId)"
-            return [PSCustomObject]@{
-                Classname  = $r.ClusterName
-                Name       = "Machine '$($r.NodeName)' :: Status=$($r.AgentStatus)"
-                Severity   = $sev
-                Message    = "Machine '$($r.NodeName)' has Arc agent status '$($r.AgentStatus)' (last status change: $($r.LastStatusChange))"
-                Body       = ("ClusterName: $($r.ClusterName)`n" +
-                              "AgentStatus: $($r.AgentStatus)`n" +
-                              "OS SKU: $($r.OsSku)`n" +
-                              "OS Version: $($r.OsVersion)`n" +
-                              "Cluster Version: $($r.ClusterVersion)`n" +
-                              "AgentVersion: $($r.AgentVersion)`n" +
-                              "Disconnected Since (lastStatusChange): $($r.LastStatusChange)`n" +
-                              "ResourceGroup: $($r.ResourceGroup)`n" +
-                              "MachineId: $($r.MachineId)")
-                Properties = @{
-                    ClusterName        = $r.ClusterName
-                    ClusterResourceId  = $r.ClusterId
-                    UpdateName         = "ArcAgent=$($r.AgentStatus) [$($r.NodeName)]"
-                    Status             = $sev
-                    FailureReason      = "Arc agent '$($r.AgentStatus)' on machine '$($r.NodeName)'"
-                    Severity           = $sev
-                    ClusterPortalUrl   = $portal
-                    TargetResourceName = $r.NodeName
-                    TargetResourceType = 'microsoft.hybridcompute/machines'
-                }
-            }
-        }
-
-        Add-Suite -Name 'Physical NIC Status' -Failures $nicFail -Sb $sb -GetCase {
-            param($r)
-            $sev = Get-NicSeverity $r.NicStatus
-            $portal = "https://portal.azure.com/#@/resource$($r.MachineId)"
-            return [PSCustomObject]@{
-                Classname  = $r.ClusterName
-                Name       = "NIC '$($r.NicName)' on '$($r.NodeName)' :: NicStatus=$($r.NicStatus)"
-                Severity   = $sev
-                Message    = "Physical NIC '$($r.NicName)' on node '$($r.NodeName)' reports status '$($r.NicStatus)'"
-                Body       = "ClusterName: $($r.ClusterName)`nInterface: $($r.InterfaceDescription)`nDriverVersion: $($r.DriverVersion)`nIp4Address: $($r.Ip4Address)`nMachineId: $($r.MachineId)"
-                Properties = @{
-                    ClusterName        = $r.ClusterName
-                    ClusterResourceId  = ''
-                    UpdateName         = "PhysicalNic=$($r.NicStatus) [$($r.NodeName)/$($r.NicName)]"
-                    Status             = $sev
-                    FailureReason      = "Physical NIC '$($r.NicName)' status '$($r.NicStatus)' on node '$($r.NodeName)'"
-                    Severity           = $sev
-                    ClusterPortalUrl   = $portal
-                    TargetResourceName = "$($r.NodeName)/$($r.NicName)"
-                    TargetResourceType = 'microsoft.azurestackhci/edgedevices/nicDetails'
-                }
-            }
-        }
-
-        Add-Suite -Name 'Azure Resource Bridge' -Failures $arbFail -Sb $sb -GetCase {
-            param($r)
-            $sev = Get-ArbSeverity $r.ArbStatus
-            $portal = "https://portal.azure.com/#@/resource$($r.ArbId)"
-            # ClusterId / ClusterName may be a comma-separated list when the
-            # ARB's resource group hosts multiple HCI clusters (multi-cluster-
-            # per-RG collapse). Use the first cluster for the portal URL and
-            # keep the full list in the body / properties.
-            # NOTE: the [string[]] cast is required - without it, when
-            # Where-Object yields a single scalar, the if-as-expression
-            # collapses $clusterIdList to a bare [string] and indexing it
-            # returns a [char] (no Trim() method).
-            [string[]]$clusterIdList = if ($r.ClusterId) { ($r.ClusterId -split ',\s*') | Where-Object { $_ } } else { @() }
-            $primaryClusterId = if ($clusterIdList.Count -gt 0) { ([string]$clusterIdList[0]).Trim() } else { '' }
-            $clusterPortal = if ($primaryClusterId) { "https://portal.azure.com/#@/resource$primaryClusterId" } else { '' }
-            $multiClusterNote = if ($clusterIdList.Count -gt 1) { " (multi-cluster RG; $($clusterIdList.Count) clusters)" } else { '' }
-            return [PSCustomObject]@{
-                Classname  = if ($r.ClusterName) { $r.ClusterName } else { '(no cluster mapping)' }
-                Name       = "ARB '$($r.ArbName)' :: ArbStatus=$($r.ArbStatus)"
-                Severity   = $sev
-                Message    = "Azure Resource Bridge '$($r.ArbName)' is '$($r.ArbStatus)' (days since lastModified=$($r.DaysSinceLastModified))$multiClusterNote"
-                Body       = "ClusterName: $($r.ClusterName)`nArbId: $($r.ArbId)`nLastModified: $($r.LastModified)`nDaysSinceLastModified: $($r.DaysSinceLastModified)`nClusterPortalUrl: $clusterPortal"
-                Properties = @{
-                    ClusterName        = if ($r.ClusterName) { $r.ClusterName } else { '' }
-                    ClusterResourceId  = if ($primaryClusterId) { $primaryClusterId } else { '' }
-                    UpdateName         = "ARB=$($r.ArbStatus) [$($r.ArbName)]"
-                    Status             = $sev
-                    FailureReason      = "ARB '$($r.ArbName)' status '$($r.ArbStatus)'$multiClusterNote"
-                    Severity           = $sev
-                    ClusterPortalUrl   = $clusterPortal
-                    TargetResourceName = $r.ArbName
-                    TargetResourceType = 'microsoft.resourceconnector/appliances'
-                }
-            }
-        }
-
-        if ($totalFailures -eq 0) {
-            [void]$sb.AppendLine('  <testsuite name="Fleet Connectivity" tests="1" failures="0" time="0">')
-            [void]$sb.AppendLine('    <testcase classname="Fleet Connectivity" name="No connectivity issues across the fleet" time="0" />')
-            [void]$sb.AppendLine('  </testsuite>')
-        }
-        [void]$sb.AppendLine('</testsuites>')
-        $sb.ToString() | Out-File -FilePath $xmlPath -Encoding utf8
-
-        # Step outputs consumed by the markdown summary step below.
-        # Arc totals come from the status-summary histogram so the markdown
-        # table can show <Connected count> healthy + <total non-connected>.
-        $arcTotalMachines = ($arcSummary | Measure-Object -Property Count -Sum).Sum
-        if ($null -eq $arcTotalMachines) { $arcTotalMachines = 0 }
-        "CLUSTER_TOTAL=$($clusterRows.Count)"      | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-        "CLUSTER_FAIL=$($clusterFail.Count)"       | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-        "ARC_TOTAL=$arcTotalMachines"              | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-        "ARC_FAIL=$($arcRows.Count)"               | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-        "NIC_TOTAL=$($nicRows.Count)"              | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-        "NIC_FAIL=$($nicFail.Count)"               | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-        "NIC_ALL_TOTAL=$($nicAllRows.Count)"       | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-        "ARB_TOTAL=$($arbRows.Count)"              | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-        "ARB_FAIL=$($arbFail.Count)"               | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-        "TOTAL_FAILURES=$totalFailures"            | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-        "CRITICAL_COUNT=$criticalCount"            | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-        "WARNING_COUNT=$warningCount"              | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-
-        Write-Host ""
-        Write-Host "Fleet Connectivity Collection complete:"
-        Write-Host "  Clusters : $($clusterRows.Count) total ($($clusterFail.Count) failing)"
-        Write-Host "  Arc agents: $arcTotalMachines machine(s) across $($arcSummary.Count) distinct status value(s); $($arcRows.Count) NOT 'Connected'"
-        Write-Host "  Physical NIC issues: $($nicRows.Count) (Disconnected with non-APIPA IP - 'Up' adapters and adapters without a real IP are filtered as noise)"
-        Write-Host "  NIC inventory (full): $($nicAllRows.Count) total NICs across $($nicStats.Count) NicType+NicStatus groups"
-        Write-Host "  ARB appliances: $($arbRows.Count) total ($($arbFail.Count) failing)"
-        Write-Host "  TOTAL FAILURES: $totalFailures (Critical=$criticalCount, Warning=$warningCount)"
+        if ($env:INPUT_SUBSCRIPTION_FILTER) { $params['SubscriptionFilter'] = $env:INPUT_SUBSCRIPTION_FILTER }
+        Export-AzLocalFleetConnectivityStatusReport @params
 
     - name: Compute Artifact Timestamp
       if: always()
@@ -475,61 +238,16 @@ jobs:
         Write-Host "Artifact timestamp: $stamp"
 
     - name: Upload Fleet Connectivity Reports
+      if: always()
       uses: actions/upload-artifact@v6
       with:
         name: azlocal-step.4-fleet-connectivity-status-report_${{ steps.artifact-stamp.outputs.timestamp }}
         path: ./reports/
         retention-days: 90
 
-    # Create the markdown summary FIRST so it appears at the top of the GitHub
-    # Actions run summary view. Publish Test Results (dorny) runs AFTER.
-    - name: Create Fleet Connectivity Summary
-      if: always()
-      shell: pwsh
-      # NOTE: step outputs are surfaced via step-level `env:` (NOT `${{ }}` inside the
-      # `run:` body) so GitHub Actions does NOT treat the whole `run:` block as a single
-      # expression. The `run:` body has no `${{ }}` substitutions, so it is plain content
-      # and is NOT bound by the 21,000-char expression-length cap that bit v0.7.85.
-      env:
-        CLUSTER_TOTAL:  ${{ steps.fleet-connectivity.outputs.CLUSTER_TOTAL }}
-        CLUSTER_FAIL:   ${{ steps.fleet-connectivity.outputs.CLUSTER_FAIL }}
-        ARC_TOTAL:      ${{ steps.fleet-connectivity.outputs.ARC_TOTAL }}
-        ARC_FAIL:       ${{ steps.fleet-connectivity.outputs.ARC_FAIL }}
-        NIC_TOTAL:      ${{ steps.fleet-connectivity.outputs.NIC_TOTAL }}
-        NIC_FAIL:       ${{ steps.fleet-connectivity.outputs.NIC_FAIL }}
-        ARB_TOTAL:      ${{ steps.fleet-connectivity.outputs.ARB_TOTAL }}
-        ARB_FAIL:       ${{ steps.fleet-connectivity.outputs.ARB_FAIL }}
-        TOTAL_FAILURES: ${{ steps.fleet-connectivity.outputs.TOTAL_FAILURES }}
-        CRITICAL_COUNT: ${{ steps.fleet-connectivity.outputs.CRITICAL_COUNT }}
-        WARNING_COUNT:  ${{ steps.fleet-connectivity.outputs.WARNING_COUNT }}
-      run: |
-        # Build the markdown step summary by calling the module renderer
-        # function. All long-form content (markdown tables, the
-        # 'How to interpret + act on a non-zero reconciliation' subsection,
-        # KQL examples, etc.) lives in the function body, NOT inline here.
-        # This keeps the `run:` block far below GitHub's 21,000-char
-        # expression-length cap (which the v0.7.85 prose growth tripped
-        # in v0.7.86) AND gives both this pipeline and the ADO twin a
-        # single source of truth for the summary layout.
-        $counts = @{
-            ClusterTotal   = $env:CLUSTER_TOTAL
-            ClusterFail    = $env:CLUSTER_FAIL
-            ArcTotal       = $env:ARC_TOTAL
-            ArcFail        = $env:ARC_FAIL
-            NicTotal       = $env:NIC_TOTAL
-            NicFail        = $env:NIC_FAIL
-            ArbTotal       = $env:ARB_TOTAL
-            ArbFail        = $env:ARB_FAIL
-            TotalFailures  = $env:TOTAL_FAILURES
-            CriticalCount  = $env:CRITICAL_COUNT
-            WarningCount   = $env:WARNING_COUNT
-        }
-        $md = New-AzLocalFleetConnectivityStatusSummary -ReportsPath './reports' -Counts $counts
-        $md | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
-
-    # Publish JUnit test results AFTER the markdown summary so the summary
-    # tables are the first thing visible. list-suites/list-tests=failed keeps
-    # the expansion compact for large fleets.
+    # Publish JUnit test results AFTER the cmdlet (which writes the markdown
+    # summary first) so the summary tables are the first thing visible.
+    # list-suites/list-tests=failed keeps the expansion compact for large fleets.
     - name: Publish JUnit Diagnostic Results
       uses: dorny/test-reporter@v3
       if: always()
@@ -626,4 +344,3 @@ jobs:
         path: ./reports/itsm-results.xml
         reporter: java-junit
       continue-on-error: true
-

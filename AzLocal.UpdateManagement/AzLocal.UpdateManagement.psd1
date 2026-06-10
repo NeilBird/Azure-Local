@@ -3,7 +3,7 @@
     RootModule = 'AzLocal.UpdateManagement.psm1'
 
     # Version number of this module.
-    ModuleVersion = '0.8.4'
+    ModuleVersion = '0.8.5'
 
     # Supported PSEditions
     CompatiblePSEditions = @('Desktop', 'Core')
@@ -96,6 +96,8 @@
         'Private/Add-AzLocalPipelineStepSummary.ps1',
         'Private/Write-AzLocalPipelineNotice.ps1',
         'Private/Write-AzLocalPipelineWarning.ps1',
+        # Generic JUnit XML emitter shared by every Public Step.* cmdlet (v0.8.5)
+        'Private/New-AzLocalPipelineJUnitXml.ps1',
 
         # Public exported functions
         'Public/Connect-AzLocalServicePrincipal.ps1',
@@ -103,6 +105,7 @@
         'Public/Copy-AzLocalPipelineExample.ps1',
         'Public/Export-AzLocalFleetState.ps1',
         'Public/Get-AzLocalApplyUpdatesScheduleConfig.ps1',
+        'Public/Get-AzLocalApplyUpdatesScheduleCycleCalendar.ps1',
         'Public/Get-AzLocalApplyUpdatesScheduleNextFirings.ps1',
         'Public/Get-AzLocalAvailableUpdates.ps1',
         'Public/Get-AzLocalClusterInfo.ps1',
@@ -135,7 +138,34 @@
         'Public/Update-AzLocalApplyUpdatesScheduleConfig.ps1',
         'Public/Update-AzLocalPipelineExample.ps1',
         'Public/Get-AzLocalFleetConnectivityStatus.ps1',
-        'Public/New-AzLocalFleetConnectivityStatusSummary.ps1'
+        'Public/New-AzLocalFleetConnectivityStatusSummary.ps1',
+        # Thin-YAML pipeline foundation (v0.8.5)
+        'Public/Add-AzLocalPipelineVersionBanner.ps1',
+        # Thin-YAML Step.0 (v0.8.5) - Authentication validation + subscription scope + cluster reachability
+        'Public/Export-AzLocalAuthValidationReport.ps1',
+        # Thin-YAML Step.1 (v0.8.5) - Cluster inventory + canonical CSV + operator README + step summary
+        'Public/Invoke-AzLocalClusterInventory.ps1',
+        # Thin-YAML Step.2 (v0.8.5) - UpdateRing tag management workload (CSV validation + apply + JSON sidecar + step summary)
+        'Public/Set-AzLocalClusterUpdateRingTagFromCsv.ps1',
+        # Thin-YAML Step.7 (v0.8.5) - In-flight update-run monitor (severity scoring + CSV + JUnit + step summary + 6 step outputs)
+        'Public/Export-AzLocalUpdateRunMonitorReport.ps1',
+        # Thin-YAML Step.8 (v0.8.5) - Fleet update status (inventory + readiness + version distribution + 3-suite JUnit XML + step summary + 22 step outputs)
+        'Public/Export-AzLocalFleetUpdateStatusReport.ps1',
+        # Thin-YAML Step.5 (v0.8.5) - Pre-flight Update Readiness Assessment (readiness + blocking-health JUnit + combined JUnit + 8-section markdown summary + 2 step outputs)
+        'Public/Export-AzLocalClusterUpdateReadinessReport.ps1',
+        # Thin-YAML Step.4 (v0.8.5) - Fleet Connectivity Status (Cluster/Arc/NIC/ARB severity classification + JUnit XML via shared helper + markdown summary + 12 step outputs)
+        'Public/Export-AzLocalFleetConnectivityStatusReport.ps1',
+        # Thin-YAML Step.3 (v0.8.5) - Apply-Updates Schedule Coverage Audit (Audit + Matrix + Recommend views + 2-suite JUnit XML + 12-row summary table + allow-list section + always-on cycle calendar + 12 step outputs)
+        'Public/Export-AzLocalApplyUpdatesScheduleAudit.ps1',
+        # Thin-YAML Step.9 (v0.8.5) - Fleet Health Status (Detail + in-process Summary + Overview + 2-suite JUnit XML + 4-section markdown + 8 step outputs; condenses ~600-line inline run: | block in Step.9_fleet-health-status.yml on both platforms)
+        'Public/Export-AzLocalFleetHealthStatusReport.ps1',
+        # Thin-YAML Step.6 (v0.8.5) - Apply-Updates pipeline (resolve UpdateRing from schedule + readiness gate report + readiness-gated apply + per-host apply-updates step summary + no-clusters-ready step summary + ITSM ticketing from JUnit artifact; condenses ~6 inline run: | blocks across both Step.6_apply-updates.yml pipelines into 6 testable Public cmdlets)
+        'Public/Resolve-AzLocalPipelineUpdateRing.ps1',
+        'Public/Export-AzLocalClusterReadinessGateReport.ps1',
+        'Public/Invoke-AzLocalReadinessGatedClusterUpdate.ps1',
+        'Public/Add-AzLocalApplyUpdatesStepSummary.ps1',
+        'Public/Add-AzLocalNoReadyClustersStepSummary.ps1',
+        'Public/Invoke-AzLocalItsmTicketingFromArtifact.ps1'
     )
 
     FunctionsToExport = @(
@@ -185,6 +215,8 @@
         'Get-AzLocalApplyUpdatesScheduleNextFirings',
         'New-AzLocalApplyUpdatesScheduleConfig',
         'Update-AzLocalApplyUpdatesScheduleConfig',
+        # Cycle Calendar (v0.8.5) - human-readable per-day projection of the resolver for one full cycle (or any -Days horizon), variable cycle length safe, year-boundary safe, per-ring 'next eligible date' summary
+        'Get-AzLocalApplyUpdatesScheduleCycleCalendar',
         # Fleet Health Overview (v0.7.70) - one row per cluster, ARG-first projection of cluster + updateSummaries (fleet-scale)
         'Get-AzLocalFleetHealthOverview',
         # Latest Released Solution Version (v0.7.70) - public manifest probe (aka.ms/AzureEdgeUpdates) that anchors the rolling YYMM support window
@@ -192,7 +224,34 @@
         # Fleet Connectivity Status (v0.7.79) - 4-scope connectivity audit: cluster, Arc agent, physical NIC, ARB
         'Get-AzLocalFleetConnectivityStatus',
         # Fleet Connectivity Status Summary Renderer (v0.7.87) - markdown step-summary builder used by Step.4 GH+ADO pipelines
-        'New-AzLocalFleetConnectivityStatusSummary'
+        'New-AzLocalFleetConnectivityStatusSummary',
+        # Thin-YAML pipeline foundation (v0.8.5) - install-step version banner + drift annotations + step outputs (condenses ~50-line inline block in every Step.*.yml)
+        'Add-AzLocalPipelineVersionBanner',
+        # Thin-YAML Step.0 (v0.8.5) - Authentication validation + subscription scope + cluster reachability (condenses ~200-line inline run: | block in Step.0_authentication-test.yml on both platforms)
+        'Export-AzLocalAuthValidationReport',
+        # Thin-YAML Step.1 (v0.8.5) - Cluster inventory workload (condenses the inline run: | block in Step.1_inventory-clusters.yml on both platforms; writes timestamped + canonical CSV, JSON, README, and step summary)
+        'Invoke-AzLocalClusterInventory',
+        # Thin-YAML Step.2 (v0.8.5) - UpdateRing tag management workload (validates CSV, applies tags via Set-AzLocalClusterUpdateRingTag, writes JSON sidecar + step summary)
+        'Set-AzLocalClusterUpdateRingTagFromCsv',
+        # Thin-YAML Step.7 (v0.8.5) - In-flight update-run monitor (calls Get-AzLocalUpdateRuns -Latest -PassThru, classifies by per-step + overall elapsed + progress-status, writes CSV + JUnit XML + markdown step summary + 6 step outputs)
+        'Export-AzLocalUpdateRunMonitorReport',
+        # Thin-YAML Step.8 (v0.8.5) - Fleet-wide Azure Local update status snapshot (inventory + readiness + Microsoft-manifest-anchored version distribution + 3-suite JUnit XML + supplementary CSVs + markdown step summary + 22 step outputs; replaces the ~830-line inline 'Collect Fleet Update Status' + 'Create Status Summary' blocks in Step.8_fleet-update-status.yml on both platforms)
+        'Export-AzLocalFleetUpdateStatusReport',
+        # Thin-YAML Step.5 (v0.8.5) - Pre-flight Update Readiness Assessment (calls Get-AzLocalClusterUpdateReadiness + Test-AzLocalClusterHealth -BlockingOnly, writes per-check CSV + JUnit XML, merges into combined assess-readiness.xml, emits 8-section markdown step summary + 2 step outputs; replaces the ~280-line inline 'Run readiness + blocking health checks' block in Step.5_assess-update-readiness.yml on both platforms)
+        'Export-AzLocalClusterUpdateReadinessReport',
+        # Thin-YAML Step.4 (v0.8.5) - Fleet Connectivity Status (calls Get-AzLocalFleetConnectivityStatus, classifies severity across Cluster/Arc/NIC/ARB scopes, emits JUnit XML via shared New-AzLocalPipelineJUnitXml helper, renders markdown via shared New-AzLocalFleetConnectivityStatusSummary, emits 12 lowercase step outputs; replaces the ~255-line inline 'Collect Fleet Connectivity Data' block in Step.4_fleet-connectivity-status.yml on both platforms)
+        'Export-AzLocalFleetConnectivityStatusReport',
+        # Thin-YAML Step.3 (v0.8.5) - Apply-Updates Schedule Coverage Audit (calls Test-AzLocalApplyUpdatesScheduleCoverage Audit + Matrix + Recommend, builds 2-suite JUnit XML via shared New-AzLocalPipelineJUnitXml helper, renders summary table + Schedule/Cron detail tables + allow-list coverage + always-on Cycle calendar via Get-AzLocalApplyUpdatesScheduleCycleCalendar; emits 12 lowercase step outputs; replaces the ~220-line inline 'Run Schedule Coverage Audit' + ~210-line inline 'Create Schedule Coverage Summary' blocks in Step.3_apply-updates-schedule-audit.yml on both platforms; ALWAYS renders the Cycle calendar when -SchedulePath is supplied, fixing the v0.8.4 hasIssues-gate regression that silently dropped the calendar on clean-fleet runs)
+        'Export-AzLocalApplyUpdatesScheduleAudit',
+        # Thin-YAML Step.9 (v0.8.5) - Fleet Health Status (calls Get-AzLocalFleetHealthFailures Detail + Get-AzLocalFleetHealthOverview, computes Summary view in-process, builds 2-suite JUnit XML via shared New-AzLocalPipelineJUnitXml helper, renders KPI / Overview / By-Reason / per-cluster collapsible markdown; emits 8 lowercase step outputs; replaces the ~600-line inline 'Collect Fleet Health Status' + 'Create Fleet Health Summary' blocks in Step.9_fleet-health-status.yml on both platforms)
+        'Export-AzLocalFleetHealthStatusReport',
+        # Thin-YAML Step.6 (v0.8.5) - Apply-Updates pipeline (6 cmdlets that condense ~430 lines of inline run: | blocks across both Step.6_apply-updates.yml pipelines into testable, host-aware Public cmdlets; preserves byte-for-byte parity of all markdown summaries, per-host icon literals, and ADO task.logissue warning/error lines)
+        'Resolve-AzLocalPipelineUpdateRing',
+        'Export-AzLocalClusterReadinessGateReport',
+        'Invoke-AzLocalReadinessGatedClusterUpdate',
+        'Add-AzLocalApplyUpdatesStepSummary',
+        'Add-AzLocalNoReadyClustersStepSummary',
+        'Invoke-AzLocalItsmTicketingFromArtifact'
     )
 
     # Cmdlets to export from this module, for best performance, do not use wildcards and do not delete the entry, use an empty array if there are no cmdlets to export.
@@ -221,20 +280,19 @@
 
             # ReleaseNotes of this module
             ReleaseNotes = @'
-## Version 0.8.4 - Step.3 advisor enhancements (NoWindowTag CSV remediation + Cycle calendar + Exclusion windows summary) + Step.6 per-cluster Step Summary + Node 24 opt-in + version banner on every install step + RBAC custom role renamed to `Azure Stack HCI Update Operator (custom)`
+## Version 0.8.5 - New Public cmdlet `Get-AzLocalApplyUpdatesScheduleCycleCalendar` + Step.6 manual schedule-file inputs + Step.3 cycle-calendar regression fix + per-ring cluster-count column
 
-Step.3 advisor enhancement release. No public API removed. One new optional parameter on `Test-AzLocalApplyUpdatesScheduleCoverage`: `-ClusterCsvPath <path>`. Two new informational sections on `-View Recommend` that render whenever `-SchedulePath` is supplied (Step.3 yml now passes it). All v0.8.3 behaviour preserved unchanged.
+Step.3 cycle-calendar refactor + regression fix release. One new Public cmdlet, two new Step.6 manual-run inputs. No other public API removed; no parameter changes on existing cmdlets. The v0.8.4 cycle-calendar silent-drop bug in `Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend` is fixed at the architectural level (decoupled from the advisor's findings gate).
 
-- **Enhancement A - NoWindowTag CSV remediation (new `-ClusterCsvPath` parameter).** When the operator supplies the path to the source-controlled cluster inventory CSV (the file Step.2 consumes - default `config/ClusterUpdateRings.csv`), `-View Recommend` emits a new `## Action required - NoWindowTag remediation` section. For each cluster that has an `UpdateRing` tag but no `UpdateStartWindow` tag, the advisor proposes a **peer-derived `UpdateStartWindow` value** (mode of peers' values in the same ring) plus a source label explaining the choice (unanimous / majority / sole peer / no peers). It then looks up the cluster in the CSV - **case-insensitive on `ResourceId` first, falling back to `ClusterName + ResourceGroup`** for older CSVs that pre-date the `ResourceId` column - and tells the operator either to edit the `UpdateStartWindow` cell on that row, or (if the cluster is absent from the CSV) to re-run Step.1 to regenerate the inventory artifact and replace the source-controlled CSV with it. ARG query also projects `UpdateExclusionsWindow` so the new Enhancement C section has data to render.
-- **Enhancement B - Cycle calendar (informational, auto-emits when `-SchedulePath` is supplied).** A new `## Cycle calendar - next N day(s)` table renders one row per UTC day for one full cycle (`CycleWeeks * 7` days starting today). Each row shows Date, Day-of-week, CycleWeek (`X of N`, with `(cycle wraps)` annotation on the wrap row), Eligible rings (UNION of all matching schedule rows), and effective `AllowedUpdateVersions` (or `_(no constraint)_`). Re-uses `Resolve-AzLocalCurrentUpdateRing` per-day so cycle-week, UNION, and allow-list math is identical to runtime - no duplicate ISO-8601 / week-arithmetic logic to drift. Lets operators verify ring coverage matches policy and spot dead days where no ring is eligible.
-- **Enhancement C - Configured exclusion windows summary (informational, auto-emits when at least one cluster has a non-empty `UpdateExclusionsWindow` tag).** A new `## Configured exclusion windows (UpdateExclusionsWindow tag)` section groups tagged clusters by `(UpdateRing, UpdateExclusionsWindow)` and renders a rollup table (cluster count + first 10 cluster names + `+N more`). Plus a per-ring breakdown of clusters that have NO `UpdateExclusionsWindow` tag (so operators can spot drift where some clusters in a ring have a blackout configured and others do not).
-- **Step.3 GH + ADO yml: new `cluster_csv_path` / `clusterCsvPath` input** (default `config/ClusterUpdateRings.csv`). Validates the file exists at job time - missing file skips Enhancement A quietly (vs throwing) so repos that don't version-control a cluster CSV yet keep getting the legacy advisor output. Both yml templates now also pass `-SchedulePath` to the `-View Recommend` invocation so Enhancements B+C render in the Step Summary.
-- **Pester suite updates**: drift-sync test bumped to `'0.8.4'`; new It blocks for CSV-lookup paths, peer-derivation modes, cycle-calendar math + cycle-wrap rendering + UNION rows, and exclusion-windows rollup grouping.
-- **Step.6 Enhancement D - per-cluster Step Summary in `apply-updates` (GH + ADO).** `apply-updates` step persists `apply-results.json`; Summary renders new `### Cluster Actions` (icon + Status + UpdateName + Duration + Message per cluster handed to apply) + `### Clusters Skipped at Readiness Gate` (reads `readiness-report.csv`, capped at 100 rows). Eliminates JUnit-artifact downloads to identify per-cluster outcomes.
-- **Node.js 24 opt-in across all 10 GH yml.** `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true` at workflow level, ahead of GitHub's platform-wide cutover.
-- **Version banner appended to every install step** - one banner per yml across all 20 bundled `Step.{0..9}.yml` templates (Step.6 ADO has 2 install steps but the second deliberately skips upload to avoid duplicating the banner): `_Pipeline YAML v<g> | Module v<i> installed (<pin>) | PSGallery latest <l> | <verdict>_` rendered in the Summary view, eliminating "is my YAML / module out of date?" investigation lag.
-- **RBAC custom role renamed: `Azure Stack HCI Update Operator` -> `Azure Stack HCI Update Operator (custom)`.** Bundled JSON `Name` updated; `Actions[]` byte-identical to v0.8.3. Existing tenants: `az role definition update --role-definition ./azlocal-update-management-custom-role.json` is an in-place rename - GUID + every existing role assignment preserved; zero pipeline downtime. Reference by `roleDefinitionId` (GUID) in automation, not display name.
-- **All 20 bundled `Step.{0..9}.yml` templates** bump `GENERATED_AGAINST_MODULE_VERSION` from `'0.8.3'` to `'0.8.4'`.
+- **NEW Step.6 manual schedule-file inputs.** GH `workflow_dispatch.inputs` gains `use_schedule_file` (choice false/true) + `resolve_for_date_utc` (string, YYYY-MM-DD); ADO `parameters` gains symmetric `useScheduleFile` (boolean) + `resolveForDateUtc` (string). When `use_schedule_file=true` on a manual run, the resolver reads `apply-updates-schedule.yml` and runs `Resolve-AzLocalCurrentUpdateRing -Schedule $cfg -Now $resolveAt` (today UTC, or the operator-supplied date) - exactly as a scheduled run would. Use this to test a schedule change before the next tick, re-run a missed scheduled day, or preview a future cycleWeek/dayOfWeek. `update_ring` is no longer `required: true` - either supply it OR set `use_schedule_file=true`. The resolver throws a helpful error if BOTH are empty. Back-compat: manual runs with `use_schedule_file=false` use the manual ring verbatim (v0.8.4 behaviour). Scheduled firings are unchanged.
+
+- **NEW Public cmdlet `Get-AzLocalApplyUpdatesScheduleCycleCalendar`.** Projects an `apply-updates-schedule.yml` configuration forward across the calendar - one row per UTC day - and emits either a structured object pipeline (default) or a fully-rendered markdown block (`-AsMarkdown`). Parameters: `-Schedule <PSCustomObject>` (mandatory), `-StartDate <datetime>` (default UTC today), `-Days <int>` (default = `CycleWeeks * 7`; ValidateRange 1-3650), `-AsMarkdown`, `-IncludePerRingSummary`, `-ClusterRingCounts <hashtable>`. Object output per day: `DateUtc, DayOfWeekName, CycleWeek, CycleWeeksTotal, CycleWeekLabel, IsCycleWrap, Rings, UpdateRingValue, AllowedUpdateVersions, AllowedUpdateVersionsSource, MatchedRowCount, IsDeadDay, Reason`. Re-uses `Resolve-AzLocalCurrentUpdateRing` per-day so cycle-week math, UNION semantics, and AllowedUpdateVersions precedence stay identical to runtime. Variable cycle length safe (4 / 8 / 52 weeks tested) and year-boundary safe (W52 -> W1 wrap, W53 years).
+- **REGRESSION FIX: v0.8.4 cycle calendar silently dropped on healthy fleets.** In v0.8.4 the Enhancement B cycle-calendar block lived inside the Recommend snippet builder, AFTER the "any findings?" gate; on a fleet with zero findings the snippet was empty and Step.3 yml `if ($hasIssues -and $reco)` / `if (-not $hasIssues -and $reco)` branches both fire only when `$reco` is non-empty - so the calendar quietly disappeared. The new cmdlet is invoked unconditionally whenever `$scheduleCfg` is parsed, so the calendar always renders. NO Step.3 yml structural change beyond the version bump.
+- **NEW: `Clusters in ring(s)` calendar column + `Cluster count` per-ring projection column** (via new `-ClusterRingCounts` hashtable). When supplied, the per-day table gains a 6th column (`3+12 (total: 15)` for UNION rows, `5` for single-ring days, blank for dead days), and the optional `### Per-ring projection` section gains a `Cluster count` column. Lookups are `OrdinalIgnoreCase`. Step.3 builds the map from the live tagged `$clusters` already in scope; the cmdlet itself stays pure (no CSV / Azure I/O).
+- **NEW: optional `### Per-ring projection` section (`-IncludePerRingSummary`).** Row per ring with next eligible UTC date + all eligible dates inside the horizon (with cluster count column when `-ClusterRingCounts` is supplied). Step.3 yml passes `-IncludePerRingSummary` so the section always appears.
+- **`Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend` Enhancement B now delegates to the new cmdlet.** The v0.8.4 inline cycle-calendar block (~37 lines) is replaced by a single `Get-AzLocalApplyUpdatesScheduleCycleCalendar -Schedule $scheduleCfg -AsMarkdown -IncludePerRingSummary -ClusterRingCounts $ringCountMap` call, wrapped in `try/catch` with a `_Cycle calendar unavailable: ..._` fallback line.
+- **Pester suite updates**: drift-sync test bumped to `'0.8.5'`; new drift assertion asserts `Get-AzLocalApplyUpdatesScheduleCycleCalendar` is exported; ~28 new It blocks across two new Describe blocks cover object-pipeline shape, default Days math, day-0 resolution, IsDeadDay, UNION rendering, IsCycleWrap on rollover, 52-week / 8-week / 1-week cycles, multi-cycle horizon, defensive `CycleWeeks=0` throw, markdown heading + 5-column / 6-column header variants, the v0.8.4 silent-drop regression guard, ClusterRingCounts UNION + dead-day rendering, case-insensitive ring lookup, cycle-wrap annotation, year-boundary safety. Expected baseline: 882/0/1 -> ~910/0/1.
+- **All 20 bundled `Step.{0..9}.yml` templates** bump `GENERATED_AGAINST_MODULE_VERSION` from `'0.8.4'` to `'0.8.5'`.
 
 ## Version 0.8.3 - Test-AzLocalApplyUpdatesScheduleCoverage Step.3 advisor accuracy + readability fixes: Recommend now diff-prunes against `-PipelineYamlPath`, Step.3 yml `pipeline_path` REQUIRED, Allow-list heading reframed, closing-fence typo fixed
 

@@ -49,10 +49,26 @@ parameters:
     # or '***' (three stars - deliberate, not a typo) to match every cluster that HAS the UpdateRing tag set.
     # The 'values:' enum was removed in to allow these new forms; type=string
     # still gives users a free-text editor in the ADO run dialog.
-    displayName: "UpdateRing tag value (single 'Wave1', list 'Prod;Ring2', or '***' for ALL)"
+    # v0.8.5: ignored when useScheduleFile=true (the resolver reads the schedule file instead).
+    displayName: "UpdateRing tag value (single 'Wave1', list 'Prod;Ring2', or '***' for ALL). Ignored when useScheduleFile=true."
     type: string
     default: 'Wave1'
-  
+
+  # v0.8.5 - manual override that runs the ring/AllowedUpdateVersions resolver against
+  # apply-updates-schedule.yml exactly as a scheduled firing would. Use this to
+  # (a) test a schedule change before the next scheduled tick, (b) re-run a missed
+  # scheduled day, or (c) preview a future cycleWeek/dayOfWeek via the
+  # resolveForDateUtc parameter below.
+  - name: useScheduleFile
+    displayName: 'Resolve UpdateRing & AllowedUpdateVersions from apply-updates-schedule.yml (as a scheduled run would). Overrides updateRing.'
+    type: boolean
+    default: false
+
+  - name: resolveForDateUtc
+    displayName: 'Only used when useScheduleFile=true. Date (UTC, YYYY-MM-DD) to resolve the schedule for. Empty = today UTC. Useful for previewing a future cycleWeek/dayOfWeek.'
+    type: string
+    default: ''
+
   - name: updateName
     displayName: 'Specific update version (leave empty for latest ready update)'
     type: string
@@ -98,7 +114,7 @@ variables:
   # log if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
   - name: GENERATED_AGAINST_MODULE_VERSION
-    value: '0.8.4'
+    value: '0.8.5'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): queue-time parameter > pipeline variable
   # 'REQUIRED_MODULE_VERSION' overridden at queue time > empty (latest).
@@ -127,11 +143,11 @@ stages:
     jobs:
       - job: ReadinessCheck
         displayName: 'Assess Cluster Readiness'
-        
+
         steps:
           - checkout: self
             displayName: 'Checkout Repository'
-          
+
           - task: AzureCLI@2
             displayName: 'Install Resource Graph Extension'
             inputs:
@@ -140,7 +156,8 @@ stages:
               scriptLocation: 'inlineScript'
               inlineScript: |
                 az extension add --name resource-graph --yes
-          
+
+          # v0.8.5 thin-YAML - install + drift detection + version banner via shared helper.
           - task: PowerShell@2
             displayName: 'Install AzLocal.UpdateManagement from PSGallery'
             env:
@@ -152,110 +169,36 @@ stages:
               script: |
                 $ErrorActionPreference = 'Stop'
                 $installArgs = @{ Name = 'AzLocal.UpdateManagement'; Scope = 'CurrentUser'; Force = $true; AllowClobber = $true }
-                if ($env:REQUIRED_MODULE_VERSION) {
-                    $installArgs.RequiredVersion = $env:REQUIRED_MODULE_VERSION
-                    Write-Host "REQUIRED_MODULE_VERSION is set - pinning install to v$($env:REQUIRED_MODULE_VERSION)."
-                } else {
-                    Write-Host "REQUIRED_MODULE_VERSION is empty - installing the latest version from PSGallery (default fix-forward behaviour)."
-                }
+                if ($env:REQUIRED_MODULE_VERSION) { $installArgs.RequiredVersion = $env:REQUIRED_MODULE_VERSION }
                 Install-Module @installArgs
                 Import-Module AzLocal.UpdateManagement -Force
-                $installed = (Get-Module AzLocal.UpdateManagement | Sort-Object Version -Descending | Select-Object -First 1).Version
-                $generated = [version]$env:GENERATED_AGAINST_MODULE_VERSION
-                $latest    = (Find-Module -Name AzLocal.UpdateManagement -Repository PSGallery -ErrorAction SilentlyContinue).Version
-                Write-Host ""
-                Write-Host "Module version summary"
-                Write-Host "  Installed on agent        : $installed"
-                Write-Host "  YAML generated against    : $generated"
-                Write-Host "  Latest on PSGallery       : $(if ($latest) { $latest } else { '(lookup failed - check network)' })"
-                Write-Host ""
-                Get-Module AzLocal.UpdateManagement | Format-List Name, Version, Path
-                # Drift signal 0: the module installed at runtime is OLDER than the version this YAML was generated against. Cmdlets, parameters, or output schemas referenced by this YAML may not exist in the installed module - emitted as a warning because this is the most likely cause of a hard runtime failure later in the job.
-                if ($installed -lt $generated) {
-                    Write-Host "##vso[task.logissue type=warning]AzLocal.UpdateManagement v$installed is OLDER than the version this pipeline YAML was generated against (v$generated). Cmdlets, parameters, or output schemas referenced by this YAML may not exist in v$installed. Set REQUIRED_MODULE_VERSION to v$generated, or refresh the YAML to match the installed module via 'Copy-AzLocalPipelineExample -Platform AzureDevOps -Update'."
-                }
-                if ($installed -gt $generated) {
-                    $msg = "Pipeline YAML was generated against AzLocal.UpdateManagement v$generated but the agent installed v$installed. Pipeline steps may have been improved in later releases - to refresh, re-run 'Copy-AzLocalPipelineExample -Destination .\pipelines -Platform AzureDevOps -Update' (you will be prompted per file; add -Confirm:`$false to bypass). Pipeline YAMLs are under git so 'git diff' shows exactly what changed before commit."
-                    Write-Host "##vso[task.logissue type=warning]$msg"
-                }
-                if ($latest -and ($latest -gt $installed)) {
-                    $msg = "AzLocal.UpdateManagement v$latest is available on PSGallery; this run installed v$installed. Review the module CHANGELOG before bumping REQUIRED_MODULE_VERSION (or clear the pin to install the latest automatically)."
-                    Write-Host "##vso[task.logissue type=warning]$msg"
-                }
+                Add-AzLocalPipelineVersionBanner -GeneratedAgainstVersion $env:GENERATED_AGAINST_MODULE_VERSION
 
-                # v0.8.4 - one-line version banner uploaded to the build run
-                # Summary so the YAML version (GENERATED_AGAINST_MODULE_VERSION),
-                # the module version actually loaded on the agent, the PSGallery
-                # latest, and the REQUIRED_MODULE_VERSION pin status are visible
-                # at the top of every run summary without scrolling the agent
-                # log. Same data is also echoed to the console above.
-                $pin       = if ($env:REQUIRED_MODULE_VERSION) { "pinned to v$($env:REQUIRED_MODULE_VERSION)" } else { 'latest (fix-forward)' }
-                $latestStr = if ($latest) { "v$latest" } else { '(PSGallery lookup failed)' }
-                $verdict   = if ($installed -lt $generated) { 'YAML newer than module - check REQUIRED_MODULE_VERSION' }
-                             elseif ($installed -gt $generated) { 'YAML older than module - run Copy-AzLocalPipelineExample -Update' }
-                             elseif ($latest -and ($latest -gt $installed)) { 'newer module available on PSGallery' }
-                             else { 'in sync' }
-                $bannerPath = Join-Path $env:BUILD_ARTIFACTSTAGINGDIRECTORY 'module-version-banner.md'
-                "_Pipeline YAML v$generated | Module v$installed installed ($pin) | PSGallery latest $latestStr | $verdict_" | Out-File -FilePath $bannerPath -Encoding utf8
-                Write-Host "##vso[task.uploadsummary]$bannerPath"
-          
-          # Resolve the UpdateRing for THIS firing.
-          #   - $(Build.Reason) in 'Manual','IndividualCI','BatchedCI','PullRequest','Manual'
-          #       -> use the operator's parameter input verbatim (back-compat).
-          #   - $(Build.Reason) = 'Schedule'
-          #       -> read apply-updates-schedule.yml and run the resolver.
-          # The resolved value is exported as a task output variable
-          # (resolveRing.RESOLVED_UPDATE_RING) for consumption later in this job
-          # and via stageDependencies in the ApplyUpdates stage.
+          # v0.8.5 thin-YAML - Resolve UpdateRing (+ AllowedUpdateVersions) from
+          # schedule file (or pass manual input through verbatim). Emits two task
+          # output variables (resolveRing.RESOLVED_UPDATE_RING /
+          # resolveRing.RESOLVED_ALLOWED_UPDATE_VERSIONS) for stageDependencies binding.
           - task: PowerShell@2
             displayName: 'Resolve UpdateRing from schedule'
             name: resolveRing
             env:
               MANUAL_UPDATE_RING: ${{ parameters.updateRing }}
+              USE_SCHEDULE_FILE: ${{ parameters.useScheduleFile }}
+              RESOLVE_FOR_DATE_UTC: ${{ parameters.resolveForDateUtc }}
               APPLY_UPDATES_SCHEDULE_PATH: $(APPLY_UPDATES_SCHEDULE_PATH)
               BUILD_REASON: $(Build.Reason)
             inputs:
               targetType: 'inline'
               pwsh: true
               script: |
-                $ErrorActionPreference = 'Stop'
                 Import-Module AzLocal.UpdateManagement -Force
-                $resolved      = ''
-                $resolvedAllow = ''
-                if ($env:BUILD_REASON -ne 'Schedule') {
-                    $resolved = $env:MANUAL_UPDATE_RING
-                    Write-Host "Build.Reason='$($env:BUILD_REASON)' - using manual parameter UpdateRing='$resolved' (schedule file ignored). AllowedUpdateVersions is not applied for manual runs - the cmdlet's default 'latest Ready update' (or -updateName parameter) is used."
-                }
-                else {
-                    $schedulePath = $env:APPLY_UPDATES_SCHEDULE_PATH
-                    if (-not $schedulePath) { $schedulePath = './apply-updates-schedule.yml' }
-                    Write-Host "Build.Reason='Schedule' - resolving UpdateRing from schedule file '$schedulePath' (UTC now)."
-                    if (-not (Test-Path -LiteralPath $schedulePath)) {
-                        throw "apply-updates-schedule.yml not found at '$schedulePath'. The apply-updates pipeline was triggered by a scheduled run but no schedule file is present. Generate a STRAWMAN from your fleet via: New-AzLocalApplyUpdatesScheduleConfig -OutputPath '$schedulePath' (then review and UNCOMMENT at least one row before re-running). Override APPLY_UPDATES_SCHEDULE_PATH at queue time if you keep the schedule elsewhere."
-                    }
-                    $cfg = Get-AzLocalApplyUpdatesScheduleConfig -Path $schedulePath
-                    $decision = Resolve-AzLocalCurrentUpdateRing -Schedule $cfg
-                    Write-Host "Resolver decision: $($decision.Reason)"
-                    if ($decision.Rings -and $decision.Rings.Count -gt 0) {
-                        $resolved = $decision.UpdateRingValue
-                        Write-Host "Resolved UpdateRing='$resolved' (cycleWeek=$($decision.CycleWeek), dayOfWeek=$($decision.DayOfWeekName))."
-                        if ($decision.AllowedUpdateVersions -and $decision.AllowedUpdateVersions.Count -gt 0) {
-                            $resolvedAllow = $decision.AllowedUpdateVersionsValue
-                            Write-Host "Resolved AllowedUpdateVersions ($($decision.AllowedUpdateVersionsSource)): $resolvedAllow"
-                        }
-                        else {
-                            Write-Host "Resolved AllowedUpdateVersions: <none> - apply-updates will install the latest Ready update on each cluster."
-                        }
-                    }
-                    else {
-                        Write-Host "##vso[task.logissue type=warning]No UpdateRing scheduled for today: $($decision.Reason)"
-                        Write-Host "Setting resolved UpdateRing to empty - the readiness task will report ReadyCount=0 and the ApplyUpdates stage will be skipped cleanly."
-                        $resolved = ''
-                    }
-                }
-                Write-Host "##vso[task.setvariable variable=RESOLVED_UPDATE_RING;isOutput=true]$resolved"
-                Write-Host "##vso[task.setvariable variable=RESOLVED_ALLOWED_UPDATE_VERSIONS;isOutput=true]$resolvedAllow"
-          
+                $params = @{ ManualUpdateRing = $env:MANUAL_UPDATE_RING; ResolveForDateUtc = $env:RESOLVE_FOR_DATE_UTC }
+                if ($env:USE_SCHEDULE_FILE -eq 'True' -or $env:USE_SCHEDULE_FILE -eq 'true') { $params['UseScheduleFile'] = $true }
+                Resolve-AzLocalPipelineUpdateRing @params
+
+          # v0.8.5 thin-YAML - readiness gate query + step outputs (PascalCase
+          # on ADO so stageDependencies binding works) + per-cluster markdown
+          # summary uploaded as stage Build Summary.
           - task: AzureCLI@2
             displayName: 'Check Cluster Readiness'
             name: readiness
@@ -272,89 +215,8 @@ stages:
               scriptLocation: 'inlineScript'
               inlineScript: |
                 Import-Module AzLocal.UpdateManagement -Force
-                
-                $updateRing = $env:RESOLVED_UPDATE_RING
-                
-                # empty UpdateRing means the schedule resolver found
-                # no row matching the current UTC day. Report zero clusters
-                # and exit 0 - the ApplyUpdates stage is gated on ReadyCount>0
-                # and will skip cleanly.
-                if ([string]::IsNullOrWhiteSpace($updateRing)) {
-                    Write-Host "No UpdateRing scheduled for this firing - skipping readiness check."
-                    Write-Host "##vso[task.setvariable variable=TotalCount;isOutput=true]0"
-                    Write-Host "##vso[task.setvariable variable=ReadyCount;isOutput=true]0"
-                    Write-Host "##vso[task.setvariable variable=NotReadyCount;isOutput=true]0"
-                    exit 0
-                }
-                
-                Write-Host "Checking readiness for clusters with UpdateRing = '$updateRing'"
-                
-                # Create output directory
-                $outputDir = "$(Build.ArtifactStagingDirectory)"
-                $csvPath = Join-Path $outputDir "readiness-report.csv"
-                
-                # Run readiness check
-                $results = Get-AzLocalClusterUpdateReadiness `
-                    -ScopeByUpdateRingTag `
-                    -UpdateRingValue $updateRing `
-                    -ExportPath $csvPath `
-                    -PassThru
-                
-                $totalCount = $results.Count
-                $readyCount = ($results | Where-Object { $_.ReadyForUpdate -eq $true }).Count
-                $notReadyCount = $totalCount - $readyCount
-                
-                Write-Host ""
-                Write-Host "========================================" -ForegroundColor Cyan
-                Write-Host "Readiness Summary" -ForegroundColor Cyan
-                Write-Host "========================================" -ForegroundColor Cyan
-                Write-Host "Total Clusters: $totalCount"
-                Write-Host "Ready for Update: $readyCount"
-                Write-Host "Not Ready: $notReadyCount"
-                
-                # Set output variables
-                Write-Host "##vso[task.setvariable variable=TotalCount;isOutput=true]$totalCount"
-                Write-Host "##vso[task.setvariable variable=ReadyCount;isOutput=true]$readyCount"
-                Write-Host "##vso[task.setvariable variable=NotReadyCount;isOutput=true]$notReadyCount"
-                
-                if ($readyCount -eq 0) {
-                    Write-Host "##vso[task.logissue type=warning]No clusters are ready for updates in ring '$updateRing'"
-                }
+                Export-AzLocalClusterReadinessGateReport -UpdateRing $env:RESOLVED_UPDATE_RING -OutputDirectory "$(Build.ArtifactStagingDirectory)"
 
-                # v0.8.4 - Enhancement D: per-cluster readiness markdown table
-                # uploaded as the stage's Build Summary - surfaces which
-                # clusters were assessed, their state, and why each cluster
-                # was/wasn't handed to ApplyUpdates without log-diving.
-                $sb = New-Object System.Text.StringBuilder
-                [void]$sb.AppendLine("# Cluster Readiness ($updateRing)")
-                [void]$sb.AppendLine()
-                [void]$sb.AppendLine("**Total:** $totalCount &nbsp;|&nbsp; **Ready:** $readyCount &nbsp;|&nbsp; **Not Ready:** $notReadyCount")
-                [void]$sb.AppendLine()
-                [void]$sb.AppendLine('| Cluster | Current Version | Update State | Health | Ready? | Recommended Update | Blocking Reasons |')
-                [void]$sb.AppendLine('|---|---|---|---|---|---|---|')
-                $rowCap = 100
-                $rendered = 0
-                foreach ($r in ($results | Sort-Object @{Expression={[bool]$_.ReadyForUpdate}; Descending=$true}, ClusterName)) {
-                    if ($rendered -ge $rowCap) { break }
-                    $readyIcon = if ($r.ReadyForUpdate -eq $true) { '✅' } else { '⛔' }
-                    $hSt = "$($r.HealthState)"
-                    $hCell = switch -Regex ($hSt) { '^Success$' { "✅ $hSt" } '^Warning$' { "⚠️ $hSt" } '^Failure$' { "❌ $hSt" } default { $hSt } }
-                    $blocking = "$($r.BlockingReasons)"
-                    if ($blocking.Length -gt 200) { $blocking = $blocking.Substring(0, 197) + '...' }
-                    $blocking = $blocking -replace '\|','\|' -replace '\r?\n',' '
-                    $reco = if ($r.RecommendedUpdate) { '`' + $r.RecommendedUpdate + '`' } else { '-' }
-                    $curr = if ($r.CurrentVersion) { '`' + $r.CurrentVersion + '`' } else { '-' }
-                    [void]$sb.AppendLine("| ``$($r.ClusterName)`` | $curr | $($r.UpdateState) | $hCell | $readyIcon | $reco | $blocking |")
-                    $rendered++
-                }
-                if ($totalCount -gt $rowCap) {
-                    [void]$sb.AppendLine()
-                    [void]$sb.AppendLine("_Showing first $rowCap of $totalCount clusters. Download the readiness-report.csv artifact for the full list._")
-                }
-                $readinessSummaryPath = Join-Path $outputDir 'readiness-summary.md'
-                $sb.ToString() | Out-File -FilePath $readinessSummaryPath -Encoding UTF8 -Force
-                Write-Host "##vso[task.uploadsummary]$readinessSummaryPath"
-          
           # compute a UTC timestamp variable so every downloadable artifact name is unique per run.
           - pwsh: |
               $stamp = (Get-Date).ToUniversalTime().ToString('yyyyMMdd_HHmmss')
@@ -376,7 +238,7 @@ stages:
     displayName: 'Apply Updates'
     dependsOn: CheckReadiness
     condition: and(succeeded(), gt(dependencies.CheckReadiness.outputs['ReadinessCheck.readiness.ReadyCount'], 0))
-    
+
     # Optional: Add environment with approval for production rings
     # Uncomment the following lines to enable manual approval
     # variables:
@@ -385,7 +247,7 @@ stages:
     #       value: 'Production'
     #     ${{ else }}:
     #       value: 'Development'
-    
+
     jobs:
       # Optional: Manual validation job for production
       # - job: WaitForApproval
@@ -397,12 +259,12 @@ stages:
       #       inputs:
       #         notifyUsers: 'your-approvers-email@company.com'
       #         instructions: 'Please review the readiness report and approve to proceed with Production updates.'
-      
+
       - job: ApplyClusterUpdates
         displayName: 'Apply Cluster Updates'
         # dependsOn: WaitForApproval
         # condition: or(ne('${{ parameters.updateRing }}', 'Production'), succeeded('WaitForApproval'))
-        
+
         variables:
           readyCount: $[ stageDependencies.CheckReadiness.ReadinessCheck.outputs['readiness.ReadyCount'] ]
           totalCount: $[ stageDependencies.CheckReadiness.ReadinessCheck.outputs['readiness.TotalCount'] ]
@@ -418,11 +280,11 @@ stages:
           # schema-v2 'allowedUpdateVersions' field. Empty when build was not a
           # Schedule firing or when no allow-list is configured.
           resolvedAllowedUpdateVersions: $[ stageDependencies.CheckReadiness.ReadinessCheck.outputs['resolveRing.RESOLVED_ALLOWED_UPDATE_VERSIONS'] ]
-        
+
         steps:
           - checkout: self
             displayName: 'Checkout Repository'
-          
+
           - task: AzureCLI@2
             displayName: 'Install Resource Graph Extension'
             inputs:
@@ -431,59 +293,27 @@ stages:
               scriptLocation: 'inlineScript'
               inlineScript: |
                 az extension add --name resource-graph --yes
-          
+
+          # v0.8.5 thin-YAML - apply-updates stage re-installs the module (each
+          # agent run is fresh). The version-banner upload is deliberately
+          # skipped here (already emitted by the CheckReadiness install step)
+          # to avoid duplicating the banner in the rendered run summary.
           - task: PowerShell@2
             displayName: 'Install AzLocal.UpdateManagement from PSGallery'
             env:
               REQUIRED_MODULE_VERSION: $(REQUIRED_MODULE_VERSION)
-              GENERATED_AGAINST_MODULE_VERSION: $(GENERATED_AGAINST_MODULE_VERSION)
             inputs:
               targetType: 'inline'
               pwsh: true
               script: |
                 $ErrorActionPreference = 'Stop'
                 $installArgs = @{ Name = 'AzLocal.UpdateManagement'; Scope = 'CurrentUser'; Force = $true; AllowClobber = $true }
-                if ($env:REQUIRED_MODULE_VERSION) {
-                    $installArgs.RequiredVersion = $env:REQUIRED_MODULE_VERSION
-                    Write-Host "REQUIRED_MODULE_VERSION is set - pinning install to v$($env:REQUIRED_MODULE_VERSION)."
-                } else {
-                    Write-Host "REQUIRED_MODULE_VERSION is empty - installing the latest version from PSGallery (default fix-forward behaviour)."
-                }
+                if ($env:REQUIRED_MODULE_VERSION) { $installArgs.RequiredVersion = $env:REQUIRED_MODULE_VERSION }
                 Install-Module @installArgs
                 Import-Module AzLocal.UpdateManagement -Force
                 $installed = (Get-Module AzLocal.UpdateManagement | Sort-Object Version -Descending | Select-Object -First 1).Version
-                $generated = [version]$env:GENERATED_AGAINST_MODULE_VERSION
-                $latest    = (Find-Module -Name AzLocal.UpdateManagement -Repository PSGallery -ErrorAction SilentlyContinue).Version
-                Write-Host ""
-                Write-Host "Module version summary"
-                Write-Host "  Installed on agent        : $installed"
-                Write-Host "  YAML generated against    : $generated"
-                Write-Host "  Latest on PSGallery       : $(if ($latest) { $latest } else { '(lookup failed - check network)' })"
-                Write-Host ""
-                Get-Module AzLocal.UpdateManagement | Format-List Name, Version, Path
-                # Drift signal 0: the module installed at runtime is OLDER than the version this YAML was generated against. Cmdlets, parameters, or output schemas referenced by this YAML may not exist in the installed module - emitted as a warning because this is the most likely cause of a hard runtime failure later in the job.
-                if ($installed -lt $generated) {
-                    Write-Host "##vso[task.logissue type=warning]AzLocal.UpdateManagement v$installed is OLDER than the version this pipeline YAML was generated against (v$generated). Cmdlets, parameters, or output schemas referenced by this YAML may not exist in v$installed. Set REQUIRED_MODULE_VERSION to v$generated, or refresh the YAML to match the installed module via 'Copy-AzLocalPipelineExample -Platform AzureDevOps -Update'."
-                }
-                if ($installed -gt $generated) {
-                    $msg = "Pipeline YAML was generated against AzLocal.UpdateManagement v$generated but the agent installed v$installed. Pipeline steps may have been improved in later releases - to refresh, re-run 'Copy-AzLocalPipelineExample -Destination .\pipelines -Platform AzureDevOps -Update' (you will be prompted per file; add -Confirm:`$false to bypass). Pipeline YAMLs are under git so 'git diff' shows exactly what changed before commit."
-                    Write-Host "##vso[task.logissue type=warning]$msg"
-                }
-                if ($latest -and ($latest -gt $installed)) {
-                    $msg = "AzLocal.UpdateManagement v$latest is available on PSGallery; this run installed v$installed. Review the module CHANGELOG before bumping REQUIRED_MODULE_VERSION (or clear the pin to install the latest automatically)."
-                    Write-Host "##vso[task.logissue type=warning]$msg"
-                }
+                Write-Host "Installed AzLocal.UpdateManagement v$installed on ApplyUpdates stage agent."
 
-                # v0.8.4 - one-line version banner uploaded to the build run
-                # Summary so the YAML version (GENERATED_AGAINST_MODULE_VERSION),
-                # the module version actually loaded on the agent, the PSGallery
-                # latest, and the REQUIRED_MODULE_VERSION pin status are visible
-                # at the top of every run summary without scrolling the agent
-                # log. Same data is also echoed to the console above. Emitted
-                # from the check-readiness install step in the previous stage;
-                # this apply-updates install step deliberately skips the upload
-                # to avoid duplicating the banner in the rendered summary.
-          
           # Download the readiness CSV produced by the CheckReadiness stage
           # so the apply step operates on the readiness gate's decision rather than
           # re-discovering clusters by tag. Apply still re-validates each cluster
@@ -496,7 +326,13 @@ stages:
               # readinessArtifactStamp variable mapped from the CheckReadiness stage.
               artifact: 'azlocal-step.6-apply-updates-readiness-report_$(readinessArtifactStamp)'
               path: '$(Build.ArtifactStagingDirectory)'
-          
+
+          # v0.8.5 thin-YAML - readiness-gated apply via shared helper. Validates
+          # CSV (requires ClusterResourceId column, v0.7.62+), fans out to
+          # Start-AzLocalClusterUpdate, emits 7 PascalCase task output variables
+          # (Succeeded, Skipped, Failed, HealthBlocked, ScheduleBlocked,
+          # SideloadedBlocked, ExcludedByTag) for stageDependencies / summary
+          # binding, and writes apply-results.json next to update-results.xml.
           - task: AzureCLI@2
             displayName: 'Apply Updates'
             name: applyUpdates
@@ -520,137 +356,16 @@ stages:
               scriptLocation: 'inlineScript'
               inlineScript: |
                 Import-Module AzLocal.UpdateManagement -Force
-                
-                $updateRing = $env:RESOLVED_UPDATE_RING
-                $updateName = "${{ parameters.updateName }}"
-                $dryRun = [System.Convert]::ToBoolean("${{ parameters.dryRun }}")
-                $allowedUpdateVersions = @()
-                if (-not [string]::IsNullOrWhiteSpace($env:RESOLVED_ALLOWED_UPDATE_VERSIONS)) {
-                    $allowedUpdateVersions = @($env:RESOLVED_ALLOWED_UPDATE_VERSIONS -split ';' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
-                }
-                
-                # Create output directory
-                $outputDir = "$(Build.ArtifactStagingDirectory)"
-                $junitPath = Join-Path $outputDir "update-results.xml"
-                
-                # Read the readiness CSV from the CheckReadiness stage and
-                # extract the ARM resource IDs of clusters marked ReadyForUpdate=True.
-                # The ClusterResourceId column was added to
-                # Get-AzLocalClusterUpdateReadiness output in specifically
-                # to make this hand-off explicit and exact (no second tag query,
-                # no drift between the two stages' scopes).
-                $readinessCsv = Join-Path $outputDir 'readiness-report.csv'
-                if (-not (Test-Path $readinessCsv)) {
-                    throw "Readiness CSV not found at '$readinessCsv'. The CheckReadiness stage did not publish a readiness-report artifact - cannot determine which clusters to apply."
-                }
-                $readinessRows = @(Import-Csv -Path $readinessCsv)
-                if ($readinessRows.Count -gt 0 -and -not ($readinessRows[0].PSObject.Properties.Name -contains 'ClusterResourceId')) {
-                    throw "Readiness CSV at '$readinessCsv' is missing the 'ClusterResourceId' column. This column was added in AzLocal.UpdateManagement v0.7.62. Re-run CheckReadiness with v0.7.62+ or refresh this pipeline YAML via Copy-AzLocalPipelineExample -Update."
-                }
-                $readyResourceIds = @($readinessRows |
-                    Where-Object { $_.ReadyForUpdate -eq 'True' -and $_.ClusterResourceId } |
-                    ForEach-Object { $_.ClusterResourceId })
-                Write-Host "Readiness CSV: $($readinessRows.Count) row(s), $($readyResourceIds.Count) marked ReadyForUpdate=True."
-                if ($readyResourceIds.Count -eq 0) {
-                    Write-Host "##vso[task.logissue type=warning]Readiness CSV reports zero clusters with ReadyForUpdate=True - nothing to apply."
-                    Write-Host "##vso[task.setvariable variable=Succeeded;isOutput=true]0"
-                    Write-Host "##vso[task.setvariable variable=Skipped;isOutput=true]0"
-                    Write-Host "##vso[task.setvariable variable=Failed;isOutput=true]0"
-                    Write-Host "##vso[task.setvariable variable=HealthBlocked;isOutput=true]0"
-                    Write-Host "##vso[task.setvariable variable=ScheduleBlocked;isOutput=true]0"
-                    Write-Host "##vso[task.setvariable variable=SideloadedBlocked;isOutput=true]0"
-                    Write-Host "##vso[task.setvariable variable=ExcludedByTag;isOutput=true]0"
-                    exit 0
-                }
-                
-                # Build parameters - use -ClusterResourceIds (the readiness gate's
-                # decision) rather than -ScopeByUpdateRingTag (which would re-discover
-                # the full ring and force apply to re-evaluate already-blocked clusters).
                 $params = @{
-                    ClusterResourceIds = $readyResourceIds
-                    Force = $true
-                    LogFolderPath = $outputDir
-                    ExportResultsPath = $junitPath
+                    ReadinessCsvPath      = "$(Build.ArtifactStagingDirectory)/readiness-report.csv"
+                    UpdateRing            = $env:RESOLVED_UPDATE_RING
+                    UpdateName            = "${{ parameters.updateName }}"
+                    AllowedUpdateVersions = $env:RESOLVED_ALLOWED_UPDATE_VERSIONS
+                    OutputDirectory       = "$(Build.ArtifactStagingDirectory)"
                 }
-                
-                if ($updateName -and $updateName -ne '') {
-                    $params['UpdateName'] = $updateName
-                    Write-Host "Applying specific update: $updateName"
-                }
+                if ([System.Convert]::ToBoolean("${{ parameters.dryRun }}")) { $params['DryRun'] = $true }
+                Invoke-AzLocalReadinessGatedClusterUpdate @params
 
-                if ($allowedUpdateVersions.Count -gt 0) {
-                    $params['AllowedUpdateVersions'] = $allowedUpdateVersions
-                    Write-Host "AllowedUpdateVersions allow-list (schema v2): [$($allowedUpdateVersions -join ', ')]. Clusters with no Ready update matching the list will be skipped with status 'NotInAllowList'."
-                }
-                
-                if ($dryRun) {
-                    $params['WhatIf'] = $true
-                    Write-Host "##vso[task.logissue type=warning]DRY RUN MODE - No updates will be applied"
-                }
-                
-                Write-Host ""
-                Write-Host "========================================" -ForegroundColor Cyan
-                Write-Host "Applying Updates to UpdateRing: $updateRing" -ForegroundColor Cyan
-                Write-Host "  Clusters (from readiness CSV): $($readyResourceIds.Count)" -ForegroundColor Cyan
-                Write-Host "========================================" -ForegroundColor Cyan
-                
-                # Run updates
-                $results = Start-AzLocalClusterUpdate @params -PassThru
-                
-                Write-Host ""
-                Write-Host "Update operation complete"
-                
-                # Count results
-                $succeeded = ($results | Where-Object { $_.Status -eq 'Started' -or $_.Status -eq 'Success' -or $_.Status -eq 'UpdateStarted' }).Count
-                $skipped = ($results | Where-Object { $_.Status -in @('Skipped', 'NotReady', 'NoUpdatesAvailable', 'NoReadyUpdates', 'NotFound', 'UpdateNotFound', 'NotInAllowList') }).Count
-                $failed = ($results | Where-Object { $_.Status -in @('Failed', 'Error') }).Count
-                $healthBlocked = ($results | Where-Object { $_.Status -eq 'HealthCheckBlocked' }).Count
-                $scheduleBlocked = ($results | Where-Object { $_.Status -eq 'ScheduleBlocked' }).Count
-                $sideloadedBlocked = ($results | Where-Object { $_.Status -eq 'SideloadedBlocked' }).Count
-                $excludedByTag = ($results | Where-Object { $_.Status -eq 'ExcludedByTag' }).Count
-                
-                Write-Host "##vso[task.setvariable variable=Succeeded;isOutput=true]$succeeded"
-                Write-Host "##vso[task.setvariable variable=Skipped;isOutput=true]$skipped"
-                Write-Host "##vso[task.setvariable variable=Failed;isOutput=true]$failed"
-                Write-Host "##vso[task.setvariable variable=HealthBlocked;isOutput=true]$healthBlocked"
-                Write-Host "##vso[task.setvariable variable=ScheduleBlocked;isOutput=true]$scheduleBlocked"
-                Write-Host "##vso[task.setvariable variable=SideloadedBlocked;isOutput=true]$sideloadedBlocked"
-                Write-Host "##vso[task.setvariable variable=ExcludedByTag;isOutput=true]$excludedByTag"
-
-                # v0.8.4 - Enhancement D: persist per-cluster apply results to JSON so
-                # the downstream Generate Summary step can render a markdown table without
-                # depending on the (truncated, JSON-unfriendly) task output variable stream.
-                $applyJsonPath = Join-Path $outputDir 'apply-results.json'
-                @($results) | Select-Object ClusterName, Status, UpdateName, Duration, Message |
-                    ConvertTo-Json -Depth 4 |
-                    Out-File -FilePath $applyJsonPath -Encoding utf8 -Force
-                Write-Host "Wrote per-cluster apply results to $applyJsonPath"
-                
-                if ($failed -gt 0) {
-                    # Per-cluster failures are expected in large fleets (day-to-day environmental
-                    # issues on a small subset of clusters). Log as a warning so the partial
-                    # success for the healthy clusters is not lost. Only promote to a hard error
-                    # when the entire batch failed AND nothing started - that indicates a systemic
-                    # issue (auth, module, subscription scope) worth failing the stage on.
-                    if ($succeeded -eq 0 -and $skipped -eq 0 -and $healthBlocked -eq 0 -and $scheduleBlocked -eq 0 -and $sideloadedBlocked -eq 0 -and $excludedByTag -eq 0) {
-                        Write-Host "##vso[task.logissue type=error]All $failed cluster(s) in scope failed to start updates. Review the Azure Local portal, cluster health, and the published update-results.xml for per-cluster detail."
-                    } else {
-                        Write-Host "##vso[task.logissue type=warning]$failed cluster(s) failed to start updates. $succeeded succeeded, $skipped skipped, $healthBlocked health-blocked, $scheduleBlocked schedule-blocked, $sideloadedBlocked sideloaded-blocked, $excludedByTag excluded-by-tag. See update-results.xml for per-cluster detail."
-                    }
-                }
-                if ($healthBlocked -gt 0) {
-                    Write-Host "##vso[task.logissue type=warning]$healthBlocked cluster(s) blocked by critical health check failures"
-                }
-                if ($scheduleBlocked -gt 0) {
-                    Write-Host "##vso[task.logissue type=warning]$scheduleBlocked cluster(s) blocked by maintenance schedule (outside UpdateStartWindow or in UpdateExclusionsWindow period)"
-                }
-                if ($sideloadedBlocked -gt 0) {
-                    Write-Host "##vso[task.logissue type=warning]$sideloadedBlocked cluster(s) blocked by UpdateSideloaded=False - operator must stage the sideloaded payload and flip the tag (or run Reset-AzLocalSideloadedTag) before updates can proceed"
-                }
-                if ($excludedByTag -gt 0) {
-                    Write-Host "##vso[task.logissue type=warning]$excludedByTag cluster(s) excluded by UpdateExcluded=True operator override - flip the UpdateExcluded tag to False (Azure portal or 'az tag update') once the cluster should rejoin automation"
-                }
-          
           # compute a UTC timestamp variable so both update-logs and itsm-results share a unique per-run suffix.
           - pwsh: |
               $stamp = (Get-Date).ToUniversalTime().ToString('yyyyMMdd_HHmmss')
@@ -666,7 +381,7 @@ stages:
               PathtoPublish: '$(Build.ArtifactStagingDirectory)'
               ArtifactName: 'azlocal-step.6-apply-updates-logs_$(stamp.artifactStamp)'
               publishLocation: 'Container'
-          
+
           - task: PublishTestResults@2
             displayName: 'Publish Update JUnit Diagnostics'
             condition: always()
@@ -674,7 +389,7 @@ stages:
               testResultsFormat: 'JUnit'
               testResultsFiles: '$(Build.ArtifactStagingDirectory)/update-results.xml'
               testRunTitle: '[JUnit Debug] Azure Local Cluster Updates - ${{ parameters.updateRing }}'
-          
+
           # --------------------------------------------------------------
           # ITSM Connector (ServiceNow)
           # Fully opt-in. Runs AFTER PublishTestResults so the apply stage
@@ -693,6 +408,10 @@ stages:
                     Install-Module powershell-yaml -Scope CurrentUser -Force -AllowClobber
                 }
 
+          # v0.8.5 thin-YAML - ITSM ticketing via Invoke-AzLocalItsmTicketingFromArtifact.
+          # Wrapper auto-populates RunMetadata from ADO env vars and short-circuits
+          # if ConfigPath or InputArtifactPath are missing (same behaviour as the
+          # prior inline block).
           - task: AzureCLI@2
             displayName: 'Raise ITSM tickets'
             name: itsm
@@ -714,41 +433,14 @@ stages:
               scriptLocation: 'inlineScript'
               inlineScript: |
                 Import-Module AzLocal.UpdateManagement -Force
-
-                $configPath = "${{ parameters.itsmConfigPath }}"
-                $dryRun     = [System.Convert]::ToBoolean("${{ parameters.itsmDryRun }}")
-                $force      = [System.Convert]::ToBoolean("${{ parameters.itsmForceCreate }}")
-
-                if (-not (Test-Path $configPath)) {
-                    Write-Host "##vso[task.logissue type=warning]ITSM config not found at '$configPath' - skipping ticket creation."
-                    exit 0
-                }
-
-                $cfg = Get-AzLocalItsmConfig -Path $configPath
-
-                $junitInput = "$(Build.ArtifactStagingDirectory)/update-results.xml"
-                if (-not (Test-Path $junitInput)) {
-                    Write-Host "##vso[task.logissue type=warning]No update-results.xml found at '$junitInput' - skipping ticket creation."
-                    exit 0
-                }
-
                 $params = @{
-                    InputArtifactPath = $junitInput
-                    Config            = $cfg
-                    RunMetadata       = @{
-                        Platform = 'azure-devops'
-                        RunId    = $env:BUILD_BUILDID
-                        RunUrl   = "$($env:SYSTEM_COLLECTIONURI)$($env:SYSTEM_TEAMPROJECT)/_build/results?buildId=$($env:BUILD_BUILDID)"
-                        Branch   = $env:BUILD_SOURCEBRANCH
-                    }
-                    DryRun            = $dryRun
-                    ForceCreate       = $force
-                    ExportPath        = "$(Build.ArtifactStagingDirectory)/itsm-results.csv"
-                    ExportJUnitPath   = "$(Build.ArtifactStagingDirectory)/itsm-results.xml"
+                    ConfigPath        = "${{ parameters.itsmConfigPath }}"
+                    InputArtifactPath = "$(Build.ArtifactStagingDirectory)/update-results.xml"
+                    ExportDirectory   = "$(Build.ArtifactStagingDirectory)"
                 }
-
-                $results = New-AzLocalIncident @params
-                $results | Format-Table ClusterName, Action, TicketId, Severity -AutoSize
+                if ([System.Convert]::ToBoolean("${{ parameters.itsmDryRun }}"))      { $params['DryRun']      = $true }
+                if ([System.Convert]::ToBoolean("${{ parameters.itsmForceCreate }}")) { $params['ForceCreate'] = $true }
+                Invoke-AzLocalItsmTicketingFromArtifact @params
 
           - task: PublishBuildArtifacts@1
             displayName: 'Publish ITSM Artefacts'
@@ -768,168 +460,78 @@ stages:
               testRunTitle: 'ITSM Tickets - ${{ parameters.updateRing }}'
               failTaskOnFailedTests: false
 
+          # v0.8.5 thin-YAML - Update Application Summary via shared helper.
+          # Reads apply-results.json + readiness-report.csv from the artifact
+          # staging directory and renders the readiness KPI table, results KPI
+          # table, cluster-actions table, skipped-at-readiness-gate table, and
+          # Actions Required bullets. ADO icon style = GitHub-Markdown shortcodes.
           - task: PowerShell@2
             displayName: 'Generate Summary'
             env:
               RESOLVED_UPDATE_RING: $(resolvedUpdateRing)
             inputs:
               targetType: 'inline'
+              pwsh: true
               script: |
-                $updateRing = $env:RESOLVED_UPDATE_RING
-                $dryRun = [System.Convert]::ToBoolean("${{ parameters.dryRun }}")
-                $readyCount = "$(readyCount)"
-                $totalCount = "$(totalCount)"
-                
-                $summary = @"
-                # Update Application Summary
-                
-                **Target UpdateRing:** $updateRing
-                
-                ## Readiness
-                
-                | Metric | Count |
-                |--------|-------|
-                | Total Clusters | $totalCount |
-                | Ready for Update | $readyCount |
-                "@
-                
-                if ($dryRun) {
-                    $summary += "`n`n**This was a dry run. No updates were applied.**"
-                    $summary += "`n`nRe-run the pipeline with 'Preview' set to false to apply updates."
+                Import-Module AzLocal.UpdateManagement -Force
+                $params = @{
+                    UpdateRing           = $env:RESOLVED_UPDATE_RING
+                    TotalCount           = "$(totalCount)"
+                    ReadyCount           = "$(readyCount)"
+                    Succeeded            = "$(applyUpdates.Succeeded)"
+                    Skipped              = "$(applyUpdates.Skipped)"
+                    Failed               = "$(applyUpdates.Failed)"
+                    HealthBlocked        = "$(applyUpdates.HealthBlocked)"
+                    ScheduleBlocked      = "$(applyUpdates.ScheduleBlocked)"
+                    SideloadedBlocked    = "$(applyUpdates.SideloadedBlocked)"
+                    ExcludedByTag        = "$(applyUpdates.ExcludedByTag)"
+                    ApplyResultsJsonPath = "$(Build.ArtifactStagingDirectory)/apply-results.json"
+                    ReadinessCsvPath     = "$(Build.ArtifactStagingDirectory)/readiness-report.csv"
                 }
-                else {
-                    # Add Actions Required section for non-dry-run
-                    $actionsRequired = @()
-                    $healthBlocked = "$(applyUpdates.HealthBlocked)"
-                    $scheduleBlocked = "$(applyUpdates.ScheduleBlocked)"
-                    $sideloadedBlocked = "$(applyUpdates.SideloadedBlocked)"
-                    $excludedByTag = "$(applyUpdates.ExcludedByTag)"
-                    $failed = "$(applyUpdates.Failed)"
-                    
-                    if ([int]$failed -gt 0) { $actionsRequired += "- **$failed cluster(s) failed** - Review pipeline logs and cluster health in Azure Portal" }
-                    if ([int]$healthBlocked -gt 0) { $actionsRequired += "- **$healthBlocked cluster(s) blocked by health checks** - Resolve critical health failures before retrying" }
-                    if ([int]$scheduleBlocked -gt 0) { $actionsRequired += "- **$scheduleBlocked cluster(s) outside maintenance window** - Updates will proceed when the cluster's UpdateStartWindow schedule allows, or re-run during the maintenance window" }
-                    if ([int]$sideloadedBlocked -gt 0) { $actionsRequired += "- **$sideloadedBlocked cluster(s) blocked by UpdateSideloaded=False** - Operator must stage the sideloaded payload and flip the tag to True (or run Reset-AzLocalSideloadedTag) before updates can proceed" }
-                    if ([int]$excludedByTag -gt 0) { $actionsRequired += "- **$excludedByTag cluster(s) excluded by UpdateExcluded=True operator override** - Flip the cluster's UpdateExcluded tag to False (Azure portal or 'az tag update') once the cluster should rejoin automation" }
-                    
-                    if ($actionsRequired.Count -gt 0) {
-                        $summary += "`n`n## Actions Required`n"
-                        $summary += ($actionsRequired -join "`n")
-                    }
-                }
-
-                # v0.8.4 - Enhancement D: per-cluster action table from apply-results.json
-                # (written by the apply-updates step) - shows operators exactly what
-                # happened to each cluster handed to apply, without log-diving.
-                $applyJson = Join-Path $env:BUILD_ARTIFACTSTAGINGDIRECTORY 'apply-results.json'
-                if (Test-Path $applyJson) {
-                    $applyRows = @(Get-Content -Raw -Path $applyJson | ConvertFrom-Json)
-                    if ($applyRows.Count -gt 0) {
-                        $startedStates = @('UpdateStarted','Started','Success')
-                        $blockedStates = @('HealthCheckBlocked','ScheduleBlocked','SideloadedBlocked','ExcludedByTag','NotConnected')
-                        $failedStates  = @('Failed','Error','NotFound')
-                        $summary += "`n`n### Cluster Actions ($($applyRows.Count) cluster(s))`n`n"
-                        $summary += "| Cluster | Status | Update | Duration | Message |`n"
-                        $summary += "|---|---|---|---|---|`n"
-                        foreach ($r in ($applyRows | Sort-Object Status, ClusterName)) {
-                            $st = "$($r.Status)"
-                            $icon = if ($startedStates -contains $st) { ':white_check_mark:' } elseif ($failedStates -contains $st) { ':x:' } elseif ($blockedStates -contains $st) { ':no_entry:' } else { ':next_track_button:' }
-                            $upd  = if ($r.UpdateName) { '`' + $r.UpdateName + '`' } else { '-' }
-                            $dur  = if ($r.Duration) { "$($r.Duration)" } else { '-' }
-                            $msg  = "$($r.Message)"
-                            if ($msg.Length -gt 180) { $msg = $msg.Substring(0, 177) + '...' }
-                            $msg  = $msg -replace '\|','\|' -replace '\r?\n',' '
-                            $summary += "| ``$($r.ClusterName)`` | $icon $st | $upd | $dur | $msg |`n"
-                        }
-                    }
-                }
-
-                # v0.8.4 - Enhancement D: per-cluster table for clusters NOT handed to
-                # apply (filtered out by the readiness gate). Reads readiness-report.csv
-                # downloaded from the CheckReadiness stage artifact at the start of this job.
-                $readinessCsvPath = Join-Path $env:BUILD_ARTIFACTSTAGINGDIRECTORY 'readiness-report.csv'
-                if (Test-Path $readinessCsvPath) {
-                    $blockedRows = @(Import-Csv -Path $readinessCsvPath | Where-Object { $_.ReadyForUpdate -ne 'True' })
-                    if ($blockedRows.Count -gt 0) {
-                        $summary += "`n`n### Clusters Skipped at Readiness Gate ($($blockedRows.Count) cluster(s))`n`n"
-                        $summary += "_These clusters were assessed by Check Update Readiness but not handed to Apply Updates. Resolve the listed blocking reasons (or wait for them to clear) then re-run the pipeline._`n`n"
-                        $summary += "| Cluster | Update State | Health | Current Version | Recommended | Blocking Reasons |`n"
-                        $summary += "|---|---|---|---|---|---|`n"
-                        $skipCap = 100
-                        $skipShown = 0
-                        foreach ($b in ($blockedRows | Sort-Object UpdateState, ClusterName)) {
-                            if ($skipShown -ge $skipCap) { break }
-                            $blocking = "$($b.BlockingReasons)"
-                            if ($blocking.Length -gt 200) { $blocking = $blocking.Substring(0, 197) + '...' }
-                            $blocking = $blocking -replace '\|','\|' -replace '\r?\n',' '
-                            $reco = if ($b.RecommendedUpdate) { '`' + $b.RecommendedUpdate + '`' } else { '-' }
-                            $curr = if ($b.CurrentVersion) { '`' + $b.CurrentVersion + '`' } else { '-' }
-                            $hSt  = "$($b.HealthState)"
-                            $hCell = switch -Regex ($hSt) { '^Success$' { ":white_check_mark: $hSt" } '^Warning$' { ":warning: $hSt" } '^Failure$' { ":x: $hSt" } default { $hSt } }
-                            $summary += "| ``$($b.ClusterName)`` | $($b.UpdateState) | $hCell | $curr | $reco | $blocking |`n"
-                            $skipShown++
-                        }
-                        if ($blockedRows.Count -gt $skipCap) {
-                            $summary += "`n_Showing first $skipCap of $($blockedRows.Count) skipped clusters. Download the readiness-report artifact for the full list._`n"
-                        }
-                    }
-                }
-                
-                $summary | Out-File "$(Build.ArtifactStagingDirectory)/summary.md" -Encoding UTF8
-                Write-Host "##vso[task.uploadsummary]$(Build.ArtifactStagingDirectory)/summary.md"
+                if ([System.Convert]::ToBoolean("${{ parameters.dryRun }}")) { $params['DryRun'] = $true }
+                Add-AzLocalApplyUpdatesStepSummary @params
 
   # Stage 3: Handle no ready clusters
   - stage: NoClustersReady
     displayName: 'No Clusters Ready'
     dependsOn: CheckReadiness
     condition: and(succeeded(), eq(dependencies.CheckReadiness.outputs['ReadinessCheck.readiness.ReadyCount'], 0))
-    
+
     jobs:
       - job: ReportNoReadyClusters
         displayName: 'Report Status'
-        
+
         variables:
           totalCount: $[ stageDependencies.CheckReadiness.ReadinessCheck.outputs['readiness.TotalCount'] ]
           # report the resolved ring (not the raw parameter input) so
           # scheduled runs surface the actual ring the resolver picked.
           resolvedUpdateRing: $[ stageDependencies.CheckReadiness.ReadinessCheck.outputs['resolveRing.RESOLVED_UPDATE_RING'] ]
-        
+
         steps:
+          # Module install is required so the no-clusters-ready summary helper is
+          # available on this stage's agent.
+          - task: PowerShell@2
+            displayName: 'Install AzLocal.UpdateManagement from PSGallery'
+            env:
+              REQUIRED_MODULE_VERSION: $(REQUIRED_MODULE_VERSION)
+            inputs:
+              targetType: 'inline'
+              pwsh: true
+              script: |
+                $ErrorActionPreference = 'Stop'
+                $installArgs = @{ Name = 'AzLocal.UpdateManagement'; Scope = 'CurrentUser'; Force = $true; AllowClobber = $true }
+                if ($env:REQUIRED_MODULE_VERSION) { $installArgs.RequiredVersion = $env:REQUIRED_MODULE_VERSION }
+                Install-Module @installArgs
+                Import-Module AzLocal.UpdateManagement -Force
+
+          # v0.8.5 thin-YAML - No-clusters-ready summary via shared helper.
           - task: PowerShell@2
             displayName: 'Generate Report'
             env:
               RESOLVED_UPDATE_RING: $(resolvedUpdateRing)
             inputs:
               targetType: 'inline'
+              pwsh: true
               script: |
-                $updateRing = $env:RESOLVED_UPDATE_RING
-                $totalCount = "$(totalCount)"
-                
-                Write-Host "##vso[task.logissue type=warning]No clusters are ready for updates in ring '$updateRing'"
-                
-                $summary = @"
-                # No Clusters Ready for Update
-                
-                **Target UpdateRing:** $updateRing
-                "@
-                
-                if ($totalCount -eq 0) {
-                    $summary += "`n`n No clusters found with UpdateRing tag value '$updateRing'"
-                } else {
-                    $summary += @"
-                
-                 Found $totalCount cluster(s) with UpdateRing='$updateRing', but none are ready for updates.
-                
-                **Possible reasons:**
-                - Clusters may already be up to date
-                - Updates may be in progress
-                - Clusters may have health check failures
-                
-                Download the readiness report artifact for details.
-                "@
-                }
-                
-                $summary | Out-File "$(Build.ArtifactStagingDirectory)/summary.md" -Encoding UTF8 -Force
-                New-Item -ItemType Directory -Path "$(Build.ArtifactStagingDirectory)" -Force | Out-Null
-                Write-Host "##vso[task.uploadsummary]$(Build.ArtifactStagingDirectory)/summary.md"
-
+                Import-Module AzLocal.UpdateManagement -Force
+                Add-AzLocalNoReadyClustersStepSummary -UpdateRing $env:RESOLVED_UPDATE_RING -TotalCount "$(totalCount)"

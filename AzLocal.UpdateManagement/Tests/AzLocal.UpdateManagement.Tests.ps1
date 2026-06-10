@@ -34,8 +34,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $script:ModuleInfo | Should -Not -BeNullOrEmpty
         }
 
-        It 'Should have version 0.8.4' {
-            $script:ModuleInfo.Version | Should -Be '0.8.4'
+        It 'Should have version 0.8.5' {
+            $script:ModuleInfo.Version | Should -Be '0.8.5'
         }
 
         It 'Module version constants are in sync between .psm1 and .psd1' {
@@ -180,7 +180,7 @@ Describe 'Module: AzLocal.UpdateManagement' {
             }
         }
 
-        It 'Step.4 pipeline templates call Get-AzLocalFleetConnectivityStatus (v0.7.79 migration)' -ForEach @(
+        It 'Step.4 pipeline templates call Export-AzLocalFleetConnectivityStatusReport (v0.8.5 thin-YAML)' -ForEach @(
             @{ Platform = 'github-actions'; Path = '..\Automation-Pipeline-Examples\github-actions\Step.4_fleet-connectivity-status.yml' }
             @{ Platform = 'azure-devops';   Path = '..\Automation-Pipeline-Examples\azure-devops\Step.4_fleet-connectivity-status.yml' }
         ) {
@@ -188,19 +188,32 @@ Describe 'Module: AzLocal.UpdateManagement' {
             Test-Path $yamlPath | Should -BeTrue -Because "Step.4 template for $Platform must exist at $yamlPath"
             $content = Get-Content -Path $yamlPath -Raw
 
-            # v0.7.79 migration guard: inline KQL + Invoke-ArgQuery replaced by module cmdlet.
-            $content | Should -Match 'Get-AzLocalFleetConnectivityStatus' -Because "Step.4 $Platform must call the module cmdlet (v0.7.79 migration)"
+            # v0.8.5 thin-YAML guard: the ~255-line inline collection block
+            # was replaced by the single Export-AzLocalFleetConnectivityStatusReport call.
+            $content | Should -Match 'Export-AzLocalFleetConnectivityStatusReport' -Because "Step.4 $Platform must call the v0.8.5 thin-YAML cmdlet"
             $content | Should -Not -Match 'function Invoke-ArgQuery' -Because "Step.4 $Platform must not contain inline Invoke-ArgQuery (removed in v0.7.79)"
-
-            # Cmdlet output properties must be assigned to pipeline variables.
-            $content | Should -Match '\$data\.ClusterRows' -Because "Step.4 $Platform must assign `$data.ClusterRows from cmdlet output"
-            $content | Should -Match '\$data\.ArcSummary' -Because "Step.4 $Platform must assign `$data.ArcSummary from cmdlet output"
-            $content | Should -Match '\$data\.NicIssues' -Because "Step.4 $Platform must assign `$data.NicIssues from cmdlet output"
-            $content | Should -Match '\$data\.ArbRows' -Because "Step.4 $Platform must assign `$data.ArbRows from cmdlet output"
+            $content | Should -Not -Match '\$data\.ClusterRows' -Because "Step.4 $Platform must not still wire raw cmdlet rowsets into the yml - the cmdlet emits step outputs instead (v0.8.5)"
         }
 
-        It 'Should export exactly 38 functions' {
-            $script:ModuleInfo.ExportedFunctions.Count | Should -Be 38
+        It 'Step.3 pipeline templates call Export-AzLocalApplyUpdatesScheduleAudit (v0.8.5 thin-YAML)' -ForEach @(
+            @{ Platform = 'github-actions'; Path = '..\Automation-Pipeline-Examples\github-actions\Step.3_apply-updates-schedule-audit.yml' }
+            @{ Platform = 'azure-devops';   Path = '..\Automation-Pipeline-Examples\azure-devops\Step.3_apply-updates-schedule-audit.yml' }
+        ) {
+            $yamlPath = Join-Path -Path $PSScriptRoot -ChildPath $Path
+            Test-Path $yamlPath | Should -BeTrue -Because "Step.3 template for $Platform must exist at $yamlPath"
+            $content = Get-Content -Path $yamlPath -Raw
+
+            # v0.8.5 thin-YAML guard: the ~220-line inline 'Run Schedule
+            # Coverage Audit' block + ~210-line inline 'Create Schedule
+            # Coverage Summary' block were replaced by a single call to
+            # Export-AzLocalApplyUpdatesScheduleAudit.
+            $content | Should -Match 'Export-AzLocalApplyUpdatesScheduleAudit' -Because "Step.3 $Platform must call the v0.8.5 thin-YAML cmdlet"
+            $content | Should -Not -Match 'Test-AzLocalApplyUpdatesScheduleCoverage[^\.]+-View\s+Audit' -Because "Step.3 $Platform must not call the advisor inline - the cmdlet does all 3 views internally (v0.8.5)"
+            $content | Should -Not -Match 'function\s+Convert-ScheduleRow' -Because "Step.3 $Platform must not contain inline schedule-row helpers (removed in v0.8.5)"
+        }
+
+        It 'Should export exactly 55 functions' {
+            $script:ModuleInfo.ExportedFunctions.Count | Should -Be 55
         }
 
         It 'Should export the expected functions' {
@@ -251,6 +264,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
                 'Update-AzLocalApplyUpdatesScheduleConfig',
                 'Resolve-AzLocalCurrentUpdateRing',
                 'Get-AzLocalApplyUpdatesScheduleNextFirings',
+                # Cycle Calendar (v0.8.5) - human-readable per-day projection + per-ring summary
+                'Get-AzLocalApplyUpdatesScheduleCycleCalendar',
                 # Fleet Health Overview (v0.7.70) - ARG-first projection of cluster + updateSummaries
                 'Get-AzLocalFleetHealthOverview',
                 # Latest Released Solution Version (v0.7.70 Phase E) - public manifest probe (aka.ms/AzureEdgeUpdates) anchoring the rolling YYMM support window in Step.6
@@ -258,7 +273,34 @@ Describe 'Module: AzLocal.UpdateManagement' {
                 # Fleet Connectivity Status (v0.7.79) - 4-scope connectivity audit: cluster, Arc agent, physical NIC, ARB
                 'Get-AzLocalFleetConnectivityStatus',
                 # Fleet Connectivity Status Summary Renderer (v0.7.87) - markdown step-summary builder used by Step.4 GH+ADO pipelines
-                'New-AzLocalFleetConnectivityStatusSummary'
+                'New-AzLocalFleetConnectivityStatusSummary',
+                # Thin-YAML pipeline foundation (v0.8.5) - install-step version banner + drift annotations + step outputs
+                'Add-AzLocalPipelineVersionBanner',
+                # Thin-YAML Step.0 (v0.8.5) - Authentication validation + subscription scope + cluster reachability
+                'Export-AzLocalAuthValidationReport',
+                # Thin-YAML Step.1 (v0.8.5) - Cluster inventory workload (timestamped + canonical CSV, JSON, README, step summary)
+                'Invoke-AzLocalClusterInventory',
+                # Thin-YAML Step.2 (v0.8.5) - UpdateRing tag management workload (CSV validation + apply via Set-AzLocalClusterUpdateRingTag + JSON sidecar + step summary)
+                'Set-AzLocalClusterUpdateRingTagFromCsv',
+                # Thin-YAML Step.7 (v0.8.5) - In-flight update-run monitor (CSV + JUnit + step summary + 6 step outputs)
+                'Export-AzLocalUpdateRunMonitorReport',
+                # Thin-YAML Step.8 (v0.8.5) - Fleet update status snapshot (inventory + readiness + version distribution + 3-suite JUnit + step summary + 22 step outputs)
+                'Export-AzLocalFleetUpdateStatusReport',
+                # Thin-YAML Step.5 (v0.8.5) - Pre-flight Update Readiness Assessment (readiness + blocking-health JUnit + combined JUnit + 8-section markdown + 2 step outputs)
+                'Export-AzLocalClusterUpdateReadinessReport',
+                # Thin-YAML Step.4 (v0.8.5) - Fleet Connectivity Status (Cluster/Arc/NIC/ARB severity classification + JUnit + markdown + 12 step outputs)
+                'Export-AzLocalFleetConnectivityStatusReport',
+                # Thin-YAML Step.3 (v0.8.5) - Apply-Updates Schedule Coverage Audit (Audit + Matrix + Recommend views + 2-suite JUnit + allow-list section + always-on cycle calendar + 12 step outputs)
+                'Export-AzLocalApplyUpdatesScheduleAudit',
+                # Thin-YAML Step.9 (v0.8.5) - Fleet Health Status (Detail + Summary + Overview + 2-suite JUnit + KPI / Overview / By-Reason / per-cluster collapsible markdown + 8 step outputs)
+                'Export-AzLocalFleetHealthStatusReport',
+                # Thin-YAML Step.6 (v0.8.5) - Apply-Updates pipeline (schedule resolver + readiness gate report + readiness-gated apply + apply-summary + no-ready-clusters summary + ITSM ticketing from JUnit artifact)
+                'Resolve-AzLocalPipelineUpdateRing',
+                'Export-AzLocalClusterReadinessGateReport',
+                'Invoke-AzLocalReadinessGatedClusterUpdate',
+                'Add-AzLocalApplyUpdatesStepSummary',
+                'Add-AzLocalNoReadyClustersStepSummary',
+                'Invoke-AzLocalItsmTicketingFromArtifact'
             )
             
             foreach ($func in $expectedFunctions) {
@@ -371,16 +413,24 @@ Describe 'Module: AzLocal.UpdateManagement' {
                 $installsModule = $content -match 'Install-Module\s+@installArgs'
                 if (-not $installsModule) { continue }
 
-                # The drift guard has two equally valid emitter shapes:
-                #   GH Actions: '::warning title=AzLocal.UpdateManagement is older than workflow YAML expects'
-                #   Azure DevOps: '##vso[task.logissue type=warning]AzLocal.UpdateManagement v$installed is OLDER'
-                # Both are anchored on the '$installed -lt $generated' comparison.
+                # The drift guard has three equally valid emitter shapes:
+                #   GH Actions inline: '::warning title=AzLocal.UpdateManagement is older than workflow YAML expects'
+                #   Azure DevOps inline: '##vso[task.logissue type=warning]AzLocal.UpdateManagement v$installed is OLDER'
+                #   v0.8.5 thin-YAML: Add-AzLocalPipelineVersionBanner (Public cmdlet that performs
+                #                     the '$installed -lt $generated' comparison internally and emits
+                #                     the warning via Write-AzLocalPipelineWarning).
                 $hasComparison = $content -match '\$installed\s+-lt\s+\$generated'
+                # Ignore the cmdlet name when it appears only inside a YAML comment
+                # (lines beginning with optional whitespace then '#').
+                $cmdletInvocationLines = ($content -split "`r?`n") | Where-Object {
+                    ($_ -notmatch '^\s*#') -and ($_ -match 'Add-AzLocalPipelineVersionBanner')
+                }
+                $hasCmdlet = ($cmdletInvocationLines.Count -gt 0)
 
                 $relPath = $yml.FullName.Substring($examplesRoot.Length).TrimStart('\','/')
 
-                if (-not $hasComparison) {
-                    $issues.Add("${relPath}: installs the module but is MISSING the 'installed -lt generated' drift guard")
+                if ((-not $hasComparison) -and (-not $hasCmdlet)) {
+                    $issues.Add("${relPath}: installs the module but is MISSING the 'installed -lt generated' drift guard (neither inline comparison nor Add-AzLocalPipelineVersionBanner call found)")
                 }
             }
 
@@ -512,23 +562,27 @@ Describe 'Module: AzLocal.UpdateManagement' {
         # (GITHUB_STEP_SUMMARY on GH, ##vso[task.uploadsummary] on ADO).
         # This makes the version triple obvious in the Summary view fleet
         # operators open first, rather than buried in annotations.
-        # Expected sites: 10 GH yml + 11 ADO sites (Step.6 ADO has 2 install
-        # steps: check-readiness + apply-updates).
+        # v0.8.5 thin-YAML: ports replace the ~50-line inline banner block
+        # with a single Add-AzLocalPipelineVersionBanner call (Public cmdlet
+        # that produces the same banner string internally). Either form is
+        # acceptable for these guards.
         It 'Every GitHub Actions install step contains the version banner string' {
             $ghRoot = Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples\github-actions'
             $ghRoot = (Resolve-Path -Path $ghRoot).Path
             $ymlFiles = Get-ChildItem -Path $ghRoot -Filter 'Step.*.yml' -File
 
+            $bannerLiteral = [regex]::Escape('Pipeline YAML v$generated | Module v$installed installed')
+            $cmdletCall    = [regex]::Escape('Add-AzLocalPipelineVersionBanner')
             $offenders = New-Object System.Collections.Generic.List[string]
             foreach ($yml in $ymlFiles) {
                 $content = Get-Content -LiteralPath $yml.FullName -Raw
-                if ($content -notmatch [regex]::Escape('Pipeline YAML v$generated | Module v$installed installed')) {
+                if (($content -notmatch $bannerLiteral) -and ($content -notmatch $cmdletCall)) {
                     $offenders.Add($yml.Name)
                 }
             }
 
             $detail = if ($offenders.Count -gt 0) { $offenders -join ', ' } else { '(none)' }
-            $offenders.Count | Should -Be 0 -Because "every GitHub Actions yml install step must append the v0.8.4 version banner to GITHUB_STEP_SUMMARY. Missing from: $detail"
+            $offenders.Count | Should -Be 0 -Because "every GitHub Actions yml install step must either inline the v0.8.4 banner string or call Add-AzLocalPipelineVersionBanner (v0.8.5 thin-YAML). Missing from: $detail"
         }
 
         It 'Every Azure DevOps yml install site contains the version banner string (Step.6 second install deliberately skips upload to avoid duplicate banner)' {
@@ -537,11 +591,15 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $ymlFiles = Get-ChildItem -Path $adoRoot -Filter 'Step.*.yml' -File
 
             $bannerPattern = [regex]::Escape('Pipeline YAML v$generated | Module v$installed installed')
+            $cmdletPattern = [regex]::Escape('Add-AzLocalPipelineVersionBanner')
             $totalSites = 0
             # Every Step.X.yml emits exactly ONE banner to the build Summary.
             # Step.6 has TWO install steps (CheckReadiness + ApplyUpdates) but
             # the second one deliberately skips ##vso[task.uploadsummary] so the
             # banner does not appear twice in the rendered Summary.
+            # v0.8.5 thin-YAML: ported YAMLs replace the inline banner block
+            # with one Add-AzLocalPipelineVersionBanner call - count either
+            # form as a banner emit.
             $perFileExpect = @{
                 'Step.0_authentication-test.yml'         = 1
                 'Step.1_inventory-clusters.yml'          = 1
@@ -557,44 +615,152 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $offenders = New-Object System.Collections.Generic.List[string]
             foreach ($yml in $ymlFiles) {
                 $content = Get-Content -LiteralPath $yml.FullName -Raw
-                $count = ([regex]::Matches($content, $bannerPattern)).Count
+                # Count cmdlet hits only on non-comment lines so a comment that
+                # mentions Add-AzLocalPipelineVersionBanner does not double-count.
+                $nonCommentLines = ($content -split "`r?`n") | Where-Object { $_ -notmatch '^\s*#' }
+                $nonCommentText  = $nonCommentLines -join "`n"
+                $bannerHits = ([regex]::Matches($nonCommentText, $bannerPattern)).Count
+                $cmdletHits = ([regex]::Matches($nonCommentText, $cmdletPattern)).Count
+                # The cmdlet call produces 1 banner per invocation; the inline
+                # block produces 1 banner per Out-File of the literal. Count
+                # both signals as banner emits.
+                $count = $bannerHits + $cmdletHits
                 $totalSites += $count
                 if ($perFileExpect.ContainsKey($yml.Name)) {
                     $want = $perFileExpect[$yml.Name]
                     if ($count -ne $want) {
-                        $offenders.Add(("{0}: expected {1} banner emit(s), found {2}" -f $yml.Name, $want, $count))
+                        $offenders.Add(("{0}: expected {1} banner emit(s), found {2} (inline={3}, cmdlet={4})" -f $yml.Name, $want, $count, $bannerHits, $cmdletHits))
                     }
                 }
             }
 
             $detail = if ($offenders.Count -gt 0) { $offenders -join [Environment]::NewLine } else { '(no mismatches)' }
-            $offenders.Count | Should -Be 0 -Because "every ADO yml uploads exactly 1 version banner to the build Summary via ##vso[task.uploadsummary]. Step.6 has 2 install steps but the second (ApplyUpdates stage) deliberately skips the upload so the banner is not duplicated. Findings:$([Environment]::NewLine)$detail"
+            $offenders.Count | Should -Be 0 -Because "every ADO yml uploads exactly 1 version banner to the build Summary - via ##vso[task.uploadsummary] for the v0.8.4 inline form, or via Add-AzLocalPipelineVersionBanner for the v0.8.5 thin-YAML form. Step.6 has 2 install steps but the second (ApplyUpdates stage) deliberately skips the upload so the banner is not duplicated. Findings:$([Environment]::NewLine)$detail"
             $totalSites | Should -Be 10 -Because "total ADO Summary banner emits should be 10 (1 per yml; Step.6's second install step skips upload)"
         }
     }
 
-    Context 'v0.8.4 Step.6 Enhancement D per-cluster Step Summary headers' {
-        # v0.8.4: Step.6 apply-updates Summary on both platforms includes
-        # two new per-cluster tables: '### Cluster Actions' (read from
-        # apply-results.json written by the apply-updates step) and
-        # '### Clusters Skipped at Readiness Gate' (read from
-        # readiness-report.csv written by the check-readiness stage).
-        It 'GitHub Actions Step.6 yml contains both per-cluster table headers and apply-results.json persist' {
+    Context 'v0.8.5 Step.6 thin-YAML: apply-updates pipeline calls shared cmdlets' {
+        # v0.8.5 thin-YAML port: the inline run: / inline scripts that
+        # previously rendered the per-cluster 'Cluster Actions' and
+        # 'Clusters Skipped at Readiness Gate' tables (and persisted
+        # apply-results.json next to update-results.xml) were moved into the
+        # public cmdlets Add-AzLocalApplyUpdatesStepSummary and
+        # Invoke-AzLocalReadinessGatedClusterUpdate. The behaviour that
+        # produces apply-results.json + both per-cluster tables is preserved
+        # byte-for-byte by the cmdlets - this guard asserts the YAMLs invoke
+        # the cmdlets that produce that output (the per-cluster table
+        # content is asserted in the cmdlet-level Pester suite).
+        It 'GitHub Actions Step.6 yml invokes Invoke-AzLocalReadinessGatedClusterUpdate (writes apply-results.json) and Add-AzLocalApplyUpdatesStepSummary (renders both per-cluster tables)' {
             $yml = Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples\github-actions\Step.6_apply-updates.yml'
             $yml = (Resolve-Path -Path $yml).Path
             $content = Get-Content -LiteralPath $yml -Raw
-            $content | Should -Match 'apply-results\.json' -Because 'Step.6 apply-updates step must persist apply-results.json so Summary can render Cluster Actions table'
-            $content | Should -Match '### Cluster Actions' -Because 'Step.6 Summary must render the per-cluster Cluster Actions table'
-            $content | Should -Match '### Clusters Skipped at Readiness Gate' -Because 'Step.6 Summary must render the per-cluster Clusters Skipped at Readiness Gate table'
+            $content | Should -Match 'Invoke-AzLocalReadinessGatedClusterUpdate' -Because 'Step.6 GH apply-updates step must call the readiness-gated apply cmdlet (which writes apply-results.json)'
+            $content | Should -Match 'Add-AzLocalApplyUpdatesStepSummary' -Because 'Step.6 GH Summary step must call the apply-updates step-summary cmdlet (which renders the Cluster Actions + Clusters Skipped at Readiness Gate tables)'
+            $content | Should -Match 'ApplyResultsJsonPath\s*=\s*''\./artifacts/apply-results\.json''' -Because 'Step.6 GH Summary must pass the apply-results.json path so the per-cluster Cluster Actions table can be rendered from it'
+            $content | Should -Match 'ReadinessCsvPath\s*=\s*''\./artifacts/readiness-report\.csv''' -Because 'Step.6 GH Summary must pass the readiness-report.csv path so the Clusters Skipped at Readiness Gate table can be rendered from it'
         }
 
-        It 'Azure DevOps Step.6 yml contains both per-cluster table headers and apply-results.json persist' {
+        It 'Azure DevOps Step.6 yml invokes Invoke-AzLocalReadinessGatedClusterUpdate (writes apply-results.json) and Add-AzLocalApplyUpdatesStepSummary (renders both per-cluster tables)' {
             $yml = Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples\azure-devops\Step.6_apply-updates.yml'
             $yml = (Resolve-Path -Path $yml).Path
             $content = Get-Content -LiteralPath $yml -Raw
-            $content | Should -Match 'apply-results\.json' -Because 'ADO Step.6 apply-updates step must persist apply-results.json'
-            $content | Should -Match '### Cluster Actions' -Because 'ADO Step.6 Generate Summary must render the Cluster Actions table'
-            $content | Should -Match '### Clusters Skipped at Readiness Gate' -Because 'ADO Step.6 Generate Summary must render the Clusters Skipped at Readiness Gate table'
+            $content | Should -Match 'Invoke-AzLocalReadinessGatedClusterUpdate' -Because 'ADO Step.6 apply-updates task must call the readiness-gated apply cmdlet'
+            $content | Should -Match 'Add-AzLocalApplyUpdatesStepSummary' -Because 'ADO Step.6 Generate Summary task must call the apply-updates step-summary cmdlet'
+            $content | Should -Match 'ApplyResultsJsonPath\s*=\s*"\$\(Build\.ArtifactStagingDirectory\)/apply-results\.json"' -Because 'ADO Step.6 Summary must pass apply-results.json so the Cluster Actions table can be rendered'
+            $content | Should -Match 'ReadinessCsvPath\s*=\s*"\$\(Build\.ArtifactStagingDirectory\)/readiness-report\.csv"' -Because 'ADO Step.6 Summary must pass readiness-report.csv so the Clusters Skipped at Readiness Gate table can be rendered'
+        }
+
+        It 'GitHub Actions Step.6 yml invokes the schedule-resolver, readiness-gate, no-ready, and ITSM cmdlets in their respective steps' {
+            $yml = Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples\github-actions\Step.6_apply-updates.yml'
+            $yml = (Resolve-Path -Path $yml).Path
+            $content = Get-Content -LiteralPath $yml -Raw
+            $content | Should -Match 'Resolve-AzLocalPipelineUpdateRing'        -Because 'Step.6 GH resolve-ring step must call Resolve-AzLocalPipelineUpdateRing (replaces the ~80-line inline resolver script)'
+            $content | Should -Match 'Export-AzLocalClusterReadinessGateReport' -Because 'Step.6 GH readiness step must call Export-AzLocalClusterReadinessGateReport (replaces the ~80-line inline readiness gate script)'
+            $content | Should -Match 'Add-AzLocalNoReadyClustersStepSummary'    -Because 'Step.6 GH no-clusters-ready job must call Add-AzLocalNoReadyClustersStepSummary (replaces the ~25-line inline summary script)'
+            $content | Should -Match 'Invoke-AzLocalItsmTicketingFromArtifact'  -Because 'Step.6 GH Raise ITSM tickets step must call Invoke-AzLocalItsmTicketingFromArtifact (replaces the ~45-line inline ITSM script)'
+        }
+
+        It 'Azure DevOps Step.6 yml invokes the schedule-resolver, readiness-gate, no-ready, and ITSM cmdlets in their respective tasks' {
+            $yml = Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples\azure-devops\Step.6_apply-updates.yml'
+            $yml = (Resolve-Path -Path $yml).Path
+            $content = Get-Content -LiteralPath $yml -Raw
+            $content | Should -Match 'Resolve-AzLocalPipelineUpdateRing'
+            $content | Should -Match 'Export-AzLocalClusterReadinessGateReport'
+            $content | Should -Match 'Add-AzLocalNoReadyClustersStepSummary'
+            $content | Should -Match 'Invoke-AzLocalItsmTicketingFromArtifact'
+        }
+    }
+
+    Context 'v0.8.5 Step.6 manual schedule-file input' {
+        # v0.8.5: Step.6 (GH + ADO) gains two manual-run inputs that let an
+        # operator trigger the apply-updates pipeline by hand BUT have it
+        # resolve UpdateRing + AllowedUpdateVersions from apply-updates-schedule.yml
+        # exactly as a scheduled run would (use_schedule_file / useScheduleFile),
+        # optionally for a future UTC date (resolve_for_date_utc / resolveForDateUtc)
+        # to preview a future cycleWeek/dayOfWeek. The pre-existing manual ring-name
+        # path must still work verbatim when the new input is false (back-compat),
+        # and the resolver must throw a helpful error when BOTH paths are empty.
+        BeforeAll {
+            $script:S6Gh  = (Resolve-Path (Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples\github-actions\Step.6_apply-updates.yml')).Path
+            $script:S6Ado = (Resolve-Path (Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples\azure-devops\Step.6_apply-updates.yml')).Path
+            $script:S6GhContent  = Get-Content -LiteralPath $script:S6Gh  -Raw
+            $script:S6AdoContent = Get-Content -LiteralPath $script:S6Ado -Raw
+        }
+
+        It 'GH Step.6 declares the use_schedule_file workflow_dispatch input (boolean choice)' {
+            $script:S6GhContent | Should -Match '(?m)^\s*use_schedule_file:\s*$' -Because 'v0.8.5 GH Step.6 must declare the new use_schedule_file input under workflow_dispatch.inputs'
+            $script:S6GhContent | Should -Match "use_schedule_file:[\s\S]{0,400}?type:\s*choice[\s\S]{0,200}?-\s*'false'[\s\S]{0,100}?-\s*'true'" -Because 'use_schedule_file must be a choice between false and true'
+        }
+
+        It 'GH Step.6 declares the resolve_for_date_utc workflow_dispatch input' {
+            $script:S6GhContent | Should -Match '(?m)^\s*resolve_for_date_utc:\s*$' -Because 'v0.8.5 GH Step.6 must declare the new resolve_for_date_utc input'
+            $script:S6GhContent | Should -Match "resolve_for_date_utc:[\s\S]{0,400}?default:\s*''" -Because 'resolve_for_date_utc must default to empty (today UTC)'
+        }
+
+        It 'GH Step.6 update_ring is NO LONGER required (v0.8.5 drops required:true so use_schedule_file=true can stand alone)' {
+            # match the update_ring block specifically, capturing through the next blank line / next input
+            if ($script:S6GhContent -match "update_ring:\s*[\s\S]{0,800}?(?:\n\s*\n|\n      \w)") {
+                $block = $Matches[0]
+                $block | Should -Not -Match 'required:\s*true' -Because 'update_ring must NOT have required:true in v0.8.5 - use_schedule_file=true is an alternative path'
+            } else {
+                throw 'Could not locate update_ring block in GH Step.6'
+            }
+        }
+
+        It 'GH Step.6 resolver step exposes USE_SCHEDULE_FILE and RESOLVE_FOR_DATE_UTC env vars' {
+            $script:S6GhContent | Should -Match 'USE_SCHEDULE_FILE:\s*\$\{\{\s*github\.event\.inputs\.use_schedule_file\s*\}\}'
+            $script:S6GhContent | Should -Match 'RESOLVE_FOR_DATE_UTC:\s*\$\{\{\s*github\.event\.inputs\.resolve_for_date_utc\s*\}\}'
+        }
+
+        It 'GH Step.6 resolver step invokes Resolve-AzLocalPipelineUpdateRing (v0.8.5 thin-YAML)' {
+            # The ~80-line inline resolver block was replaced by a single
+            # Resolve-AzLocalPipelineUpdateRing call. The cmdlet preserves
+            # all prior behaviours byte-for-byte (back-compat manual ring,
+            # schedule-file resolve, future-date preview via -ResolveForDateUtc,
+            # hard-throw on missing schedule, per-host notice/warning when
+            # no row matches today). Those behaviours are asserted in the
+            # cmdlet-level Pester suite, not here.
+            $script:S6GhContent | Should -Match 'Resolve-AzLocalPipelineUpdateRing' -Because 'Step.6 GH resolver step must call the v0.8.5 thin-YAML cmdlet'
+        }
+
+        It 'ADO Step.6 declares the useScheduleFile boolean parameter' {
+            $script:S6AdoContent | Should -Match '(?m)^\s*-\s*name:\s*useScheduleFile' -Because 'v0.8.5 ADO Step.6 must declare the new useScheduleFile parameter'
+            $script:S6AdoContent | Should -Match "useScheduleFile[\s\S]{0,400}?type:\s*boolean[\s\S]{0,200}?default:\s*false" -Because 'useScheduleFile must be a boolean defaulting to false'
+        }
+
+        It 'ADO Step.6 declares the resolveForDateUtc string parameter' {
+            $script:S6AdoContent | Should -Match '(?m)^\s*-\s*name:\s*resolveForDateUtc'
+            $script:S6AdoContent | Should -Match "resolveForDateUtc[\s\S]{0,400}?default:\s*''"
+        }
+
+        It 'ADO Step.6 resolveRing task exposes USE_SCHEDULE_FILE and RESOLVE_FOR_DATE_UTC env vars' {
+            $script:S6AdoContent | Should -Match 'USE_SCHEDULE_FILE:\s*\$\{\{\s*parameters\.useScheduleFile\s*\}\}'
+            $script:S6AdoContent | Should -Match 'RESOLVE_FOR_DATE_UTC:\s*\$\{\{\s*parameters\.resolveForDateUtc\s*\}\}'
+        }
+
+        It 'ADO Step.6 resolveRing task invokes Resolve-AzLocalPipelineUpdateRing (v0.8.5 thin-YAML)' {
+            $script:S6AdoContent | Should -Match 'Resolve-AzLocalPipelineUpdateRing' -Because 'ADO Step.6 resolveRing task must call the v0.8.5 thin-YAML cmdlet'
         }
     }
 
@@ -6044,7 +6210,13 @@ Describe 'Function: Copy-AzLocalPipelineExample' {
         # The function reads from (Get-Module AzLocal.UpdateManagement).ModuleBase
         # which during test runs resolves to the repo module root, so the real
         # Automation-Pipeline-Examples/ folder under the repo is the test source.
-        $script:cpDestRoot = Join-Path $env:TEMP "azlocal-cpe-$([guid]::NewGuid().Guid.Substring(0,8))"
+        # NOTE: resolve $env:TEMP to its canonical long-form path so the test
+        # comparisons below survive runners where $env:TEMP returns an 8.3
+        # short-name (e.g. GitHub-hosted: C:\Users\RUNNER~1\AppData\Local\Temp).
+        # Copy-AzLocalPipelineExample returns DirectoryInfo.FullName in long form
+        # so without this normalisation the string-equality assertions fail in CI.
+        $tempLong = (Get-Item -LiteralPath $env:TEMP).FullName
+        $script:cpDestRoot = Join-Path $tempLong "azlocal-cpe-$([guid]::NewGuid().Guid.Substring(0,8))"
         New-Item -Path $script:cpDestRoot -ItemType Directory -Force | Out-Null
     }
 
@@ -6345,7 +6517,11 @@ Describe 'Function: Copy-AzLocalPipelineExample' {
 
 Describe 'Function: Copy-AzLocalItsmSample' {
     BeforeAll {
-        $script:itsmDestRoot = Join-Path $env:TEMP "azlocal-itsm-$([guid]::NewGuid().Guid.Substring(0,8))"
+        # See Copy-AzLocalPipelineExample BeforeAll: normalise $env:TEMP to its
+        # canonical long-form path so the FullName string-equality assertions
+        # survive runners where $env:TEMP returns an 8.3 short name (CI).
+        $tempLong = (Get-Item -LiteralPath $env:TEMP).FullName
+        $script:itsmDestRoot = Join-Path $tempLong "azlocal-itsm-$([guid]::NewGuid().Guid.Substring(0,8))"
         New-Item -Path $script:itsmDestRoot -ItemType Directory -Force | Out-Null
     }
 
@@ -7474,8 +7650,8 @@ schedule:
                 $out = Join-Path $calDir 'reco-cal.md'
                 Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend -PipelineYamlPath (Join-Path $calDir 'github-actions') -SchedulePath $schedule -ExportPath $out 6>$null | Out-Null
                 $md = Get-Content -Path $out -Raw
-                $md | Should -Match 'Cycle calendar - next 14 day\(s\) \(one full 2-week cycle\)'
-                $md | Should -Match '\| Date \(UTC\) \| Day \| CycleWeek \| Eligible rings \| AllowedUpdateVersions \|'
+                $md | Should -Match 'Cycle calendar - next 14 day\(s\) \(cycle length: 2 week\(s\)\)'
+                $md | Should -Match '\| Date \(UTC\) \| Day \| CycleWeek \| Eligible rings \|( Clusters in ring\(s\) \|)? AllowedUpdateVersions \|'
                 # Should have 14 data rows
                 $rowCount = ([regex]::Matches($md, '(?m)^\|\s*\d{4}-\d{2}-\d{2}\s*\|')).Count
                 $rowCount | Should -Be 14
@@ -7835,55 +8011,6 @@ Describe 'v0.7.66 Artifact download names carry a UTC timestamp suffix' {
     }
 }
 
-Describe 'v0.7.66 Fleet Update Status summary uses status emojis and groups failures first' {
-    # Guards the v0.7.66 UX refresh of Step.8_fleet-update-status.yml summary blocks (file was Step.7 prior to v0.7.90 renumber)
-    # on both GH and ADO. The summary now uses 'red cross / green tick' emojis
-    # instead of '[ok]/[fail]/...' bracket markers, and the per-cluster JUnit
-    # block orders failed clusters first.
-
-    BeforeAll {
-        $script:examplesRoot = (Resolve-Path -Path (Join-Path $PSScriptRoot '..\Automation-Pipeline-Examples')).Path
-        $script:fleetStatusFiles = @(
-            Join-Path $script:examplesRoot 'github-actions\Step.8_fleet-update-status.yml'
-            Join-Path $script:examplesRoot 'azure-devops\Step.8_fleet-update-status.yml'
-        )
-    }
-
-    It "Both Step.8_fleet-update-status.yml files contain success and failure status emojis" {
-        foreach ($yml in $script:fleetStatusFiles) {
-            # Must read explicitly as UTF-8; the YAML has no BOM, and PS 5.1
-            # Get-Content -Raw without -Encoding defaults to Default (cp1252),
-            # which mangles multi-byte glyphs like U+2705 into 3 separate chars.
-            $content = [System.IO.File]::ReadAllText($yml, [System.Text.UTF8Encoding]::new($false))
-            # PowerShell here strings to dodge Unicode source-file confusion in this test:
-            $tick  = [string]::new([char[]]@(0x2705))            # white-heavy-check-mark
-            $cross = [string]::new([char[]]@(0x274C))            # cross-mark
-            ($content -match [regex]::Escape($tick))  | Should -BeTrue  -Because "$(Split-Path -Leaf $yml) must use the U+2705 success emoji in its summary"
-            ($content -match [regex]::Escape($cross)) | Should -BeTrue  -Because "$(Split-Path -Leaf $yml) must use the U+274C failure emoji in its summary"
-            # Legacy bracket markers must be gone:
-            ($content -match '\[ok\]')    | Should -BeFalse -Because "$(Split-Path -Leaf $yml) must no longer use the '[ok]' bracket marker"
-            ($content -match '\[fail\]')  | Should -BeFalse -Because "$(Split-Path -Leaf $yml) must no longer use the '[fail]' bracket marker"
-        }
-    }
-
-    It "Both Step.8_fleet-update-status.yml files render a UTC timestamp in the summary heading" {
-        foreach ($yml in $script:fleetStatusFiles) {
-            $content = Get-Content -LiteralPath $yml -Raw
-            ($content -match 'Fleet Update Status Summary\s*_\(generated \$generatedUtc\)_') | Should -BeTrue -Because "$(Split-Path -Leaf $yml) must include the generated UTC timestamp in the H2 heading"
-            ($content -match 'generatedUtc\s*=\s*\(Get-Date\)\.ToUniversalTime\(\)') | Should -BeTrue -Because "$(Split-Path -Leaf $yml) must compute generatedUtc with ToUniversalTime()"
-        }
-    }
-
-    It "Both Step.8_fleet-update-status.yml files bucket failed clusters ahead of passed clusters before emitting the JUnit table" {
-        foreach ($yml in $script:fleetStatusFiles) {
-            $content = Get-Content -LiteralPath $yml -Raw
-            ($content -match '\$failedClusters')    | Should -BeTrue -Because "$(Split-Path -Leaf $yml) must build a `$failedClusters bucket"
-            ($content -match '\$passedClusters')    | Should -BeTrue -Because "$(Split-Path -Leaf $yml) must build a `$passedClusters bucket"
-            ($content -match '\$orderedClusters\s*=\s*@\(\$failedClusters') | Should -BeTrue -Because "$(Split-Path -Leaf $yml) must concatenate failed-first, then passed, into `$orderedClusters"
-        }
-    }
-}
-
 Describe 'v0.7.66 Pipeline update_ring inputs document multi-value and wildcard support' {
     BeforeAll {
         $script:examplesRoot = (Resolve-Path -Path (Join-Path $PSScriptRoot '..\Automation-Pipeline-Examples')).Path
@@ -7915,38 +8042,24 @@ Describe 'v0.7.66 Pipeline update_ring inputs document multi-value and wildcard 
 #region v0.7.67 CI/CD parity + doc-drift regression suite
 
 Describe 'v0.7.67 schedule-audit zero-row JUnit parity' {
-    # v0.7.67 regression guard: Step.3_apply-updates-schedule-audit.yml previously
-    # behaved differently across CI platforms when the fleet had no tagged
-    # clusters. Azure DevOps emitted a passing testcase ("No tagged clusters
-    # found - nothing to audit") so the run rendered as passed (1/1) in the
-    # Tests tab. GitHub Actions wrote an EMPTY <testsuite>, which
-    # dorny/test-reporter surfaced as "no tests found" - indistinguishable
-    # from a broken reporter step. v0.7.67 brings the GH workflow into parity
-    # by writing the same passing testcase for the zero-row case. This test
-    # guards both files so neither side regresses.
+    # v0.7.67 regression guard: when the fleet has no tagged clusters, the
+    # schedule-audit cmdlet must emit a passing zero-row testcase named
+    # 'No tagged clusters found - nothing to audit' so dorny/test-reporter
+    # (GH) and Azure DevOps Test Results render a clean pass instead of
+    # 'no tests found'. v0.8.5 thin-YAML refactor moved the wiring from
+    # inline YAML into the Public cmdlet Export-AzLocalApplyUpdatesScheduleAudit;
+    # the cmdlet calls New-AzLocalPipelineJUnitXml with the suites array that
+    # carries the empty-placeholder testcase. Both CI platforms now share the
+    # same cmdlet so a single assertion against the cmdlet guards both sides.
     BeforeAll {
-        $script:examplesRoot = (Resolve-Path -Path (Join-Path $PSScriptRoot '..\Automation-Pipeline-Examples')).Path
+        $script:cmdletPath = (Resolve-Path -Path (Join-Path $PSScriptRoot '..\Public\Export-AzLocalApplyUpdatesScheduleAudit.ps1')).Path
     }
 
-    It 'GitHub Actions schedule-audit YAML emits the zero-row testcase' {
-        $yml = Join-Path $script:examplesRoot 'github-actions\Step.3_apply-updates-schedule-audit.yml'
-        Test-Path -LiteralPath $yml | Should -BeTrue -Because "the GH schedule-audit YAML should exist at $yml"
-        $content = Get-Content -LiteralPath $yml -Raw
-        # v0.7.70: zero-row JUnit emission was refactored into a Write-Suite helper
-        # with -EmptyPlaceholderName. The semantic guarantee (zero-row testcase is
-        # emitted with this exact name) is preserved; the literal <testcase> string
-        # is now built at runtime from the helper template.
-        $content | Should -Match "-EmptyPlaceholderName 'No tagged clusters found - nothing to audit'" -Because 'v0.7.67/v0.7.70 wire the zero-row JUnit testcase via Write-Suite -EmptyPlaceholderName in the GH schedule-audit YAML'
-        $content | Should -Match 'classname=`"ScheduleCoverage`" name=`"\{0\}`"' -Because 'the Write-Suite helper must build the testcase line with classname="ScheduleCoverage" and a {0} placeholder for the name'
-    }
-
-    It 'Azure DevOps schedule-audit YAML still emits the zero-row testcase' {
-        $yml = Join-Path $script:examplesRoot 'azure-devops\Step.3_apply-updates-schedule-audit.yml'
-        Test-Path -LiteralPath $yml | Should -BeTrue -Because "the ADO schedule-audit YAML should exist at $yml"
-        $content = Get-Content -LiteralPath $yml -Raw
-        # See GH note above - same refactor applies.
-        $content | Should -Match "-EmptyPlaceholderName 'No tagged clusters found - nothing to audit'" -Because 'the ADO schedule-audit YAML must wire the zero-row JUnit testcase via Write-Suite -EmptyPlaceholderName since v0.7.0; v0.7.70 must not regress it'
-        $content | Should -Match 'classname=`"ScheduleCoverage`" name=`"\{0\}`"' -Because 'the Write-Suite helper must build the testcase line with classname="ScheduleCoverage" and a {0} placeholder for the name'
+    It 'Schedule-audit cmdlet wires the zero-row testcase with the canonical name' {
+        Test-Path -LiteralPath $script:cmdletPath | Should -BeTrue -Because "the Step.3 cmdlet should exist at $script:cmdletPath"
+        $content = Get-Content -LiteralPath $script:cmdletPath -Raw
+        $content | Should -Match "Name\s*=\s*'No tagged clusters found - nothing to audit'" -Because 'v0.8.5 must keep the zero-row placeholder testcase Name so both GH and ADO render the same passing case when no clusters carry UpdateStartWindow tags'
+        $content | Should -Match "ClassName\s*=\s*'ScheduleCoverage'" -Because 'the placeholder testcase must declare classname=ScheduleCoverage so test-reporter groups it under the Schedule (ring diff) suite'
     }
 }
 
@@ -7982,37 +8095,25 @@ Describe 'v0.7.67 doc drift - old UpdateRing regex' {
 }
 
 Describe 'v0.7.67 schedule-audit summary - cron fixes first when issues exist' {
-    # Phase 4.3: when Uncovered / PartiallyCovered / MalformedTag / UnparseableCron > 0,
-    # the schedule-audit pipelines must surface the recommended cron block ABOVE the
-    # detail table so operators can act without scrolling. Guardrail asserts that both
-    # YAMLs carry the conditional structure (hasIssues + 'Action required' header).
-    $moduleRoot = Split-Path $PSScriptRoot -Parent
-    $yamlCases = @(
-        @{
-            Platform = 'github-actions'
-            YamlPath = (Join-Path $moduleRoot 'Automation-Pipeline-Examples\github-actions\Step.3_apply-updates-schedule-audit.yml')
-        }
-        @{
-            Platform = 'azure-devops'
-            YamlPath = (Join-Path $moduleRoot 'Automation-Pipeline-Examples\azure-devops\Step.3_apply-updates-schedule-audit.yml')
-        }
-    )
-
-    It '[<Platform>] schedule-audit YAML emits recommendation before audit detail when issues exist' -ForEach $yamlCases {
-        Test-Path $YamlPath | Should -BeTrue -Because "expected schedule-audit YAML at $YamlPath"
-        $content = Get-Content -Path $YamlPath -Raw
-        $content | Should -Match '\$hasIssues\s*=\s*\(\(\[int\]\$uncovered\)' -Because 'Phase 4.3 / v0.7.70 conditional must compute $hasIssues from the issue counts.'
-        # v0.7.70: the 'Action required - ...' header literals moved into the
-        # -View Recommend cmdlet output ($reco), so the YAML no longer contains
-        # them verbatim. The structural guarantee (recommendation BEFORE detail
-        # when $hasIssues) is preserved by the 'if ($hasIssues -and $reco) { $md = $reco + $md }'
-        # block which prepends $reco to the summary markdown.
-        $content | Should -Match 'if\s*\(\s*\$hasIssues\s+-and\s+\$reco\s*\)' -Because 'v0.7.70 must keep the hasIssues+reco conditional so the Recommend block is prepended above the audit detail table.'
-        $idxRecoBlock      = $content.IndexOf('if ($hasIssues -and $reco)')
-        $idxAuditDetail    = $content.IndexOf('### Audit Detail')
-        $idxRecoBlock      | Should -BeGreaterThan -1
-        $idxAuditDetail    | Should -BeGreaterThan -1
-        $idxRecoBlock      | Should -BeLessThan $idxAuditDetail -Because 'When issues exist, the conditional that prepends the Recommend output must appear earlier in the summary script than the detail table emission.'
+    # Phase 4.3 / v0.7.70 guarantee: when Uncovered / PartiallyCovered /
+    # MalformedTag / UnparseableCron > 0, the schedule-audit pipelines must
+    # surface the recommended cron block ABOVE the detail table so operators
+    # can act without scrolling. v0.8.5 thin-YAML refactor moved the
+    # hasIssues + recommendation-prepend logic into the Public cmdlet
+    # Export-AzLocalApplyUpdatesScheduleAudit. This guardrail asserts the
+    # cmdlet computes $hasIssues, conditionally prepends the Recommend output,
+    # and that the prepend block appears BEFORE the audit detail emission.
+    It 'Schedule-audit cmdlet prepends the recommendation above audit detail when issues exist' {
+        $cmdletPath = (Resolve-Path -Path (Join-Path $PSScriptRoot '..\Public\Export-AzLocalApplyUpdatesScheduleAudit.ps1')).Path
+        Test-Path -LiteralPath $cmdletPath | Should -BeTrue -Because "the Step.3 cmdlet should exist at $cmdletPath"
+        $content = Get-Content -LiteralPath $cmdletPath -Raw
+        $content | Should -Match '\$hasIssues\s*=\s*\(\$uncovered\.Count' -Because 'v0.8.5 must compute $hasIssues from the issue counts so the recommendation gate stays driven by uncovered/partial/malformed/unparseable totals.'
+        $content | Should -Match 'if\s*\(\s*\$hasIssues\s+-and\s+\$recoContent\s*\)' -Because 'v0.8.5 must keep the hasIssues+recoContent conditional so the Recommend block is prepended above the audit detail table.'
+        $idxRecoBlock   = $content.IndexOf('if ($hasIssues -and $recoContent)')
+        $idxAuditDetail = $content.IndexOf('### Audit Detail')
+        $idxRecoBlock   | Should -BeGreaterThan -1
+        $idxAuditDetail | Should -BeGreaterThan -1
+        $idxRecoBlock   | Should -BeLessThan $idxAuditDetail -Because 'The conditional that prepends the Recommend output must appear earlier in the cmdlet body than the detail table emission so the rendered markdown puts the cron fix at the top.'
     }
 }
 
@@ -9421,22 +9522,19 @@ schedule:
 
 Describe 'Step.3 pipeline scaffolds - v0.7.70 dual JUnit testsuite emission' {
 
-    Context 'AS7 - YAML scaffolds reference both Schedule and Cron suite names' {
+    Context 'AS7 - Step.3 cmdlet references both Schedule and Cron suite names' {
 
-        It 'Step.3 GitHub Actions YAML contains both "Schedule (ring diff)" and "Cron coverage" suite names' {
-            $ghYaml = Join-Path $PSScriptRoot '..\Automation-Pipeline-Examples\github-actions\Step.3_apply-updates-schedule-audit.yml'
-            Test-Path $ghYaml | Should -BeTrue
-            $raw = Get-Content -Raw -LiteralPath $ghYaml
-            $raw | Should -Match 'Schedule \(ring diff\)'
-            $raw | Should -Match 'Cron coverage'
-        }
-
-        It 'Step.3 Azure DevOps YAML contains both "Schedule (ring diff)" and "Cron coverage" suite names' {
-            $adoYaml = Join-Path $PSScriptRoot '..\Automation-Pipeline-Examples\azure-devops\Step.3_apply-updates-schedule-audit.yml'
-            Test-Path $adoYaml | Should -BeTrue
-            $raw = Get-Content -Raw -LiteralPath $adoYaml
-            $raw | Should -Match 'Schedule \(ring diff\)'
-            $raw | Should -Match 'Cron coverage'
+        # v0.8.5 thin-YAML refactor moved the dual <testsuite> emission from
+        # the inline YAML into the Public cmdlet
+        # Export-AzLocalApplyUpdatesScheduleAudit, which builds a $Suites array
+        # and hands it to New-AzLocalPipelineJUnitXml. The cmdlet is the single
+        # source for both GH and ADO platforms so one assertion guards both.
+        It 'Step.3 cmdlet declares both "Schedule (ring diff)" and "Cron coverage" suite names' {
+            $cmdletPath = (Resolve-Path -Path (Join-Path $PSScriptRoot '..\Public\Export-AzLocalApplyUpdatesScheduleAudit.ps1')).Path
+            Test-Path -LiteralPath $cmdletPath | Should -BeTrue -Because "the Step.3 cmdlet should exist at $cmdletPath"
+            $raw = Get-Content -Raw -LiteralPath $cmdletPath
+            $raw | Should -Match 'Schedule \(ring diff\)' -Because 'the cmdlet must emit a Schedule (ring diff) JUnit suite for the ring-file two-way diff results'
+            $raw | Should -Match 'Cron coverage' -Because 'the cmdlet must emit a Cron coverage JUnit suite for the (UpdateRing, UpdateStartWindow) coverage results'
         }
     }
 }
@@ -9451,18 +9549,20 @@ Describe 'Step.3 pipeline scaffolds - v0.7.70 dual JUnit testsuite emission' {
 
 Describe 'Step.3 pipeline scaffolds - v0.8.2 Allow-list section shape' {
 
-    Context 'YAML emits the trimmed Allow-list subsection (no verbose Tip / 3-row example block)' {
+    Context 'Step.3 cmdlet emits the trimmed Allow-list subsection (no verbose Tip / 3-row example block)' {
 
-        It '[<Platform>] emits the reframed Optional pin-a-ring subsection and drops the verbose Tip block' -ForEach @(
-            @{ Platform='GitHub'; YamlPath=(Join-Path $PSScriptRoot '..\Automation-Pipeline-Examples\github-actions\Step.3_apply-updates-schedule-audit.yml') }
-            @{ Platform='ADO';    YamlPath=(Join-Path $PSScriptRoot '..\Automation-Pipeline-Examples\azure-devops\Step.3_apply-updates-schedule-audit.yml') }
-        ) {
-            Test-Path $YamlPath | Should -BeTrue
-            $raw = Get-Content -Raw -LiteralPath $YamlPath
+        # v0.8.5 thin-YAML refactor moved the allow-list markdown emission
+        # from inline YAML into the Public cmdlet. Both GH and ADO ymls now
+        # call the same cmdlet, so the section-shape guarantee is asserted
+        # once against the cmdlet source.
+        It 'Step.3 cmdlet emits the reframed Optional pin-a-ring subsection and drops the verbose Tip block' {
+            $cmdletPath = (Resolve-Path -Path (Join-Path $PSScriptRoot '..\Public\Export-AzLocalApplyUpdatesScheduleAudit.ps1')).Path
+            Test-Path -LiteralPath $cmdletPath | Should -BeTrue -Because "the Step.3 cmdlet should exist at $cmdletPath"
+            $raw = Get-Content -Raw -LiteralPath $cmdletPath
             # v0.8.3 shape: heading is explicitly scoped to the OPTIONAL pin
             # use case (the v0.8.2 heading sounded like a general 'fix this
             # file' instruction even though it only covers allowedUpdateVersions).
-            $raw | Should -Match '### Optional - pin a ring to a specific update in ``\$schedulePath``'
+            $raw | Should -Match '### Optional - pin a ring to a specific update in'
             $raw | Should -Match 'inherit the top-level allow-list'
             $raw | Should -Match 'install the latest Ready update as soon as it is available'
             # v0.8.3: explicitly disclaim that this is NOT the cron-coverage or ring-diff fix.
@@ -10133,8 +10233,8 @@ Describe 'Function: Get-AzLocalFleetHealthOverview - v0.7.70 (ARG-first fleet he
             $cmd.CommandType | Should -Be 'Function'
         }
 
-        It 'BS7: Module exports exactly 38 functions (was 37 in v0.7.86 before New-AzLocalFleetConnectivityStatusSummary was added in v0.7.87)' {
-            (Get-Module AzLocal.UpdateManagement).ExportedFunctions.Count | Should -Be 38
+        It 'BS7: Module exports exactly 55 functions (was 49 after Step.9 thin-YAML port; Step.6 thin-YAML port adds 6 apply-updates pipeline cmdlets)' {
+            (Get-Module AzLocal.UpdateManagement).ExportedFunctions.Count | Should -Be 55
         }
     }
 
@@ -10291,57 +10391,6 @@ Describe 'Function: Get-AzLocalUpdateRunFailures - v0.7.70 fleet-scale failure-d
                 $rows = Get-AzLocalUpdateRunFailures -State Failed 6>$null
                 $rows[0].CurrentStep | Should -Be 'VerifyNCResources'
             }
-        }
-    }
-}
-
-Describe 'v0.7.70 Step.6 "📜 Update Run History and Error Details" JUnit + markdown wiring' {
-
-    BeforeAll {
-        $script:examplesRoot = (Resolve-Path -Path (Join-Path $PSScriptRoot '..\Automation-Pipeline-Examples')).Path
-        $script:step6Files = @(
-            Join-Path $script:examplesRoot 'github-actions\Step.8_fleet-update-status.yml'
-            Join-Path $script:examplesRoot 'azure-devops\Step.8_fleet-update-status.yml'
-        )
-    }
-
-    It 'BS13: Both Step.6 YAML files emit the new "📜 Update Run History and Error Details" testsuite name' {
-        foreach ($yml in $script:step6Files) {
-            $content = [System.IO.File]::ReadAllText($yml, [System.Text.UTF8Encoding]::new($false))
-            # U+1F4DC SCROLL emoji
-            $scroll = [string]::new([System.Text.Encoding]::UTF32.GetChars([System.BitConverter]::GetBytes(0x1F4DC)))
-            ($content.Contains($scroll + ' Update Run History and Error Details')) | Should -BeTrue -Because "$(Split-Path -Leaf $yml) must declare the new testsuite name with the scroll emoji"
-        }
-    }
-
-    It 'BS14: Both Step.6 YAML files call Get-AzLocalUpdateRunFailures -State Failed -OnlyUnresolved' {
-        foreach ($yml in $script:step6Files) {
-            $content = Get-Content -LiteralPath $yml -Raw
-            ($content -match 'Get-AzLocalUpdateRunFailures\s+-State\s+Failed\s+-OnlyUnresolved') | Should -BeTrue -Because "$(Split-Path -Leaf $yml) must drive the new section from the cmdlet with -State Failed -OnlyUnresolved"
-        }
-    }
-
-    It 'BS15: Both Step.6 YAML files export update-run-history.csv and update-run-history.json' {
-        foreach ($yml in $script:step6Files) {
-            $content = Get-Content -LiteralPath $yml -Raw
-            $content | Should -Match 'update-run-history\.csv'
-            $content | Should -Match 'update-run-history\.json'
-        }
-    }
-
-    It 'BS16: Both Step.6 YAML files render the markdown table heading and use the 9-column failure-detail layout' {
-        foreach ($yml in $script:step6Files) {
-            $content = [System.IO.File]::ReadAllText($yml, [System.Text.UTF8Encoding]::new($false))
-            $content | Should -Match 'Cluster Name \| Update Name \| Update State \| Status \| Current Step \| Verbose Error Details \| Duration \| Time Started \| Last Updated'
-        }
-    }
-
-    It 'BS17: Both Step.6 YAML files surface a runHistoryCount output for downstream gating' {
-        foreach ($yml in $script:step6Files) {
-            $content = Get-Content -LiteralPath $yml -Raw
-            # GH-actions uses RUN_HISTORY_COUNT; ADO uses runHistoryCount.
-            $hasOutput = ($content -match 'RUN_HISTORY_COUNT=') -or ($content -match 'variable=runHistoryCount;')
-            $hasOutput | Should -BeTrue -Because "$(Split-Path -Leaf $yml) must export runHistoryCount so downstream steps can render the markdown table"
         }
     }
 }
@@ -10561,38 +10610,6 @@ Describe 'Function: Get-AzLocalLatestSolutionVersion (v0.7.70 Phase E)' {
         It 'Rejects -SupportWindowMonths above 24' {
             { Get-AzLocalLatestSolutionVersion -SupportWindowMonths 25 } |
                 Should -Throw '*greater than the maximum*'
-        }
-    }
-}
-
-Describe 'Pipeline contract: Step.6 SupportStatus anchor (v0.7.70 Phase E)' {
-
-    BeforeAll {
-        $script:repoRoot = Split-Path -Path $PSScriptRoot -Parent
-        $script:step6Files = @(
-            Join-Path -Path $script:repoRoot -ChildPath 'Automation-Pipeline-Examples/github-actions/Step.8_fleet-update-status.yml'
-            Join-Path -Path $script:repoRoot -ChildPath 'Automation-Pipeline-Examples/azure-devops/Step.8_fleet-update-status.yml'
-        )
-    }
-
-    It 'Both Step.6 YAML files invoke Get-AzLocalLatestSolutionVersion' {
-        foreach ($yml in $script:step6Files) {
-            $content = Get-Content -LiteralPath $yml -Raw
-            $content | Should -Match 'Get-AzLocalLatestSolutionVersion' -Because "$(Split-Path -Leaf $yml) must call the Microsoft-manifest probe to anchor the SupportStatus window"
-        }
-    }
-
-    It 'Both Step.6 YAML files surface a supportSource property in JUnit' {
-        foreach ($yml in $script:step6Files) {
-            $content = Get-Content -LiteralPath $yml -Raw
-            $content | Should -Match 'supportSource' -Because "$(Split-Path -Leaf $yml) must emit the SupportSource flag so consumers can tell manifest-anchored from fleet-observed windows apart"
-        }
-    }
-
-    It 'Both Step.6 YAML files wrap the manifest probe in try/catch with a fleet-observed fallback' {
-        foreach ($yml in $script:step6Files) {
-            $content = Get-Content -LiteralPath $yml -Raw
-            $content | Should -Match 'fleet-observed' -Because "$(Split-Path -Leaf $yml) must fall back to fleet-observed top-6 when the manifest is unreachable"
         }
     }
 }
@@ -12169,3 +12186,4036 @@ Describe 'Pipeline output helpers: Write-AzLocalPipelineNotice / Write-AzLocalPi
 
 #endregion v0.8.2: Pipeline host abstraction
 
+#region v0.8.5: Add-AzLocalPipelineVersionBanner (thin-YAML foundation)
+
+Describe 'Thin-YAML foundation: Add-AzLocalPipelineVersionBanner' {
+
+    BeforeEach {
+        $script:_savedGhActions = $env:GITHUB_ACTIONS
+        $script:_savedTfBuild   = $env:TF_BUILD
+        $script:_savedGhOutput  = $env:GITHUB_OUTPUT
+        $script:_savedGhSummary = $env:GITHUB_STEP_SUMMARY
+        $script:_savedAdoStage  = $env:BUILD_ARTIFACTSTAGINGDIRECTORY
+        Remove-Item Env:\GITHUB_ACTIONS                  -ErrorAction SilentlyContinue
+        Remove-Item Env:\TF_BUILD                        -ErrorAction SilentlyContinue
+        Remove-Item Env:\GITHUB_OUTPUT                   -ErrorAction SilentlyContinue
+        Remove-Item Env:\GITHUB_STEP_SUMMARY             -ErrorAction SilentlyContinue
+        Remove-Item Env:\BUILD_ARTIFACTSTAGINGDIRECTORY  -ErrorAction SilentlyContinue
+
+        $script:_ghOutputFile  = Join-Path -Path $env:TEMP -ChildPath ("vb-gh-output-{0}"  -f ([Guid]::NewGuid()))
+        $script:_ghSummaryFile = Join-Path -Path $env:TEMP -ChildPath ("vb-gh-summary-{0}.md" -f ([Guid]::NewGuid()))
+        $script:_adoStageDir   = Join-Path -Path $env:TEMP -ChildPath ("vb-ado-stage-{0}" -f ([Guid]::NewGuid()))
+        New-Item -ItemType File      -Path $script:_ghOutputFile  -Force | Out-Null
+        New-Item -ItemType File      -Path $script:_ghSummaryFile -Force | Out-Null
+        New-Item -ItemType Directory -Path $script:_adoStageDir   -Force | Out-Null
+    }
+    AfterEach {
+        if ($null -ne $script:_savedGhActions) { $env:GITHUB_ACTIONS                 = $script:_savedGhActions } else { Remove-Item Env:\GITHUB_ACTIONS                 -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_savedTfBuild)   { $env:TF_BUILD                       = $script:_savedTfBuild   } else { Remove-Item Env:\TF_BUILD                       -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_savedGhOutput)  { $env:GITHUB_OUTPUT                  = $script:_savedGhOutput  } else { Remove-Item Env:\GITHUB_OUTPUT                  -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_savedGhSummary) { $env:GITHUB_STEP_SUMMARY            = $script:_savedGhSummary } else { Remove-Item Env:\GITHUB_STEP_SUMMARY            -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_savedAdoStage)  { $env:BUILD_ARTIFACTSTAGINGDIRECTORY = $script:_savedAdoStage  } else { Remove-Item Env:\BUILD_ARTIFACTSTAGINGDIRECTORY -ErrorAction SilentlyContinue }
+        Remove-Item -LiteralPath $script:_ghOutputFile,$script:_ghSummaryFile -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $script:_adoStageDir -Recurse -Force          -ErrorAction SilentlyContinue
+    }
+
+    It 'throws ValidatePattern when -GeneratedAgainstVersion is not a SemVer string' {
+        { InModuleScope AzLocal.UpdateManagement { Add-AzLocalPipelineVersionBanner -GeneratedAgainstVersion 'not-a-version' -SkipPSGalleryQuery } } |
+            Should -Throw
+    }
+
+    It 'in-sync verdict when installed == generated and PSGallery skipped (PassThru)' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_ghSummaryFile
+        $info = InModuleScope AzLocal.UpdateManagement {
+            $real = (Get-Module AzLocal.UpdateManagement | Sort-Object Version -Descending | Select-Object -First 1).Version.ToString()
+            Add-AzLocalPipelineVersionBanner -GeneratedAgainstVersion $real -SkipPSGalleryQuery -PassThru
+        }
+        $info.Verdict           | Should -Be 'in sync'
+        $info.PinStatus         | Should -Be 'latest (fix-forward)'
+        $info.LatestOnPSGallery | Should -BeNullOrEmpty
+        $info.InstalledVersion        | Should -BeOfType ([version])
+        $info.GeneratedAgainstVersion | Should -BeOfType ([version])
+    }
+
+    It "PinnedVersion populated -> PinStatus says 'pinned to vX.Y.Z'" {
+        $info = InModuleScope AzLocal.UpdateManagement {
+            $real = (Get-Module AzLocal.UpdateManagement | Sort-Object Version -Descending | Select-Object -First 1).Version.ToString()
+            Add-AzLocalPipelineVersionBanner -GeneratedAgainstVersion $real -PinnedVersion '0.8.5' -SkipPSGalleryQuery -PassThru
+        }
+        $info.PinStatus | Should -Be 'pinned to v0.8.5'
+    }
+
+    It "PinnedVersion empty string -> PinStatus says 'latest (fix-forward)'" {
+        $info = InModuleScope AzLocal.UpdateManagement {
+            $real = (Get-Module AzLocal.UpdateManagement | Sort-Object Version -Descending | Select-Object -First 1).Version.ToString()
+            Add-AzLocalPipelineVersionBanner -GeneratedAgainstVersion $real -PinnedVersion '' -SkipPSGalleryQuery -PassThru
+        }
+        $info.PinStatus | Should -Be 'latest (fix-forward)'
+    }
+
+    It 'GitHub: emits installed_module_version + generated_against_version + latest_on_psgallery step outputs' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_ghSummaryFile
+        InModuleScope AzLocal.UpdateManagement {
+            $real = (Get-Module AzLocal.UpdateManagement | Sort-Object Version -Descending | Select-Object -First 1).Version.ToString()
+            Add-AzLocalPipelineVersionBanner -GeneratedAgainstVersion $real -SkipPSGalleryQuery
+        }
+        $contents = Get-Content -LiteralPath $script:_ghOutputFile -Raw
+        $contents | Should -Match '(?m)^installed_module_version=\d+\.\d+\.\d+'
+        $contents | Should -Match '(?m)^generated_against_version=\d+\.\d+\.\d+'
+        $contents | Should -Match '(?m)^latest_on_psgallery=\s*$'
+    }
+
+    It 'GitHub: appends a one-line banner row to $env:GITHUB_STEP_SUMMARY (markdown italics + pipes)' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_ghSummaryFile
+        InModuleScope AzLocal.UpdateManagement {
+            $real = (Get-Module AzLocal.UpdateManagement | Sort-Object Version -Descending | Select-Object -First 1).Version.ToString()
+            Add-AzLocalPipelineVersionBanner -GeneratedAgainstVersion $real -SkipPSGalleryQuery
+        }
+        $md = Get-Content -LiteralPath $script:_ghSummaryFile -Raw
+        $md | Should -Match '_Pipeline YAML v\d+\.\d+\.\d+ \| Module v\d+\.\d+\.\d+ installed \(.+?\) \| PSGallery latest .+? \| .+?_'
+    }
+
+    It 'YAML newer than module -> WARNING annotation on GH' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_ghSummaryFile
+        $captured = & {
+            InModuleScope AzLocal.UpdateManagement {
+                Add-AzLocalPipelineVersionBanner -GeneratedAgainstVersion '99.99.99' -SkipPSGalleryQuery
+            }
+        } *>&1
+        ($captured -join "`n") | Should -Match '::warning title=AzLocal\.UpdateManagement is older than workflow YAML expects::'
+    }
+
+    It 'YAML older than module -> NOTICE annotation on GH' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_ghSummaryFile
+        $captured = & {
+            InModuleScope AzLocal.UpdateManagement {
+                Add-AzLocalPipelineVersionBanner -GeneratedAgainstVersion '0.0.1' -SkipPSGalleryQuery
+            }
+        } *>&1
+        ($captured -join "`n") | Should -Match '::notice title=Workflow YAML may be stale::'
+    }
+
+    It 'PassThru verdict -> "YAML newer than module" when installed < generated' {
+        $info = InModuleScope AzLocal.UpdateManagement {
+            Add-AzLocalPipelineVersionBanner -GeneratedAgainstVersion '99.99.99' -SkipPSGalleryQuery -PassThru
+        }
+        $info.Verdict | Should -Match 'YAML newer than module'
+    }
+
+    It 'PassThru verdict -> "YAML older than module" when installed > generated' {
+        $info = InModuleScope AzLocal.UpdateManagement {
+            Add-AzLocalPipelineVersionBanner -GeneratedAgainstVersion '0.0.1' -SkipPSGalleryQuery -PassThru
+        }
+        $info.Verdict | Should -Match 'YAML older than module'
+    }
+
+    It 'Find-Module failure is swallowed (returns $null latest, no throw)' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_ghSummaryFile
+        $info = InModuleScope AzLocal.UpdateManagement {
+            Mock -ModuleName AzLocal.UpdateManagement -CommandName Find-Module -MockWith { throw 'simulated PSGallery outage' }
+            $real = (Get-Module AzLocal.UpdateManagement | Sort-Object Version -Descending | Select-Object -First 1).Version.ToString()
+            Add-AzLocalPipelineVersionBanner -GeneratedAgainstVersion $real -PassThru
+        }
+        $info.LatestOnPSGallery | Should -BeNullOrEmpty
+        $info.Verdict           | Should -Be 'in sync'
+    }
+
+    It "newer module on PSGallery -> NOTICE annotation + verdict 'newer module available on PSGallery'" {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_ghSummaryFile
+        $script:_capturedInfo = $null
+        $captured = & {
+            $script:_capturedInfo = InModuleScope AzLocal.UpdateManagement {
+                Mock -ModuleName AzLocal.UpdateManagement -CommandName Find-Module -MockWith {
+                    [PSCustomObject]@{ Name = 'AzLocal.UpdateManagement'; Version = [version]'99.99.99' }
+                }
+                $real = (Get-Module AzLocal.UpdateManagement | Sort-Object Version -Descending | Select-Object -First 1).Version.ToString()
+                Add-AzLocalPipelineVersionBanner -GeneratedAgainstVersion $real -PassThru
+            }
+        } *>&1
+        $script:_capturedInfo.Verdict           | Should -Be 'newer module available on PSGallery'
+        $script:_capturedInfo.LatestOnPSGallery | Should -Be ([version]'99.99.99')
+        ($captured -join "`n") | Should -Match '::notice title=Newer AzLocal\.UpdateManagement version available on PSGallery::'
+    }
+
+    It 'AzureDevOps: emits ##vso[task.setvariable...] style step outputs' {
+        $env:TF_BUILD                       = 'True'
+        $env:BUILD_ARTIFACTSTAGINGDIRECTORY = $script:_adoStageDir
+        $captured = & {
+            InModuleScope AzLocal.UpdateManagement {
+                $real = (Get-Module AzLocal.UpdateManagement | Sort-Object Version -Descending | Select-Object -First 1).Version.ToString()
+                Add-AzLocalPipelineVersionBanner -GeneratedAgainstVersion $real -SkipPSGalleryQuery
+            }
+        } *>&1
+        $joined = $captured -join "`n"
+        $joined | Should -Match '##vso\[task\.setvariable variable=installed_module_version;isOutput=false\]\d+\.\d+\.\d+'
+        $joined | Should -Match '##vso\[task\.setvariable variable=generated_against_version;isOutput=false\]\d+\.\d+\.\d+'
+    }
+
+    It 'Local: writes [pipeline-output] lines for the three outputs' {
+        $captured = & {
+            InModuleScope AzLocal.UpdateManagement {
+                $real = (Get-Module AzLocal.UpdateManagement | Sort-Object Version -Descending | Select-Object -First 1).Version.ToString()
+                Add-AzLocalPipelineVersionBanner -GeneratedAgainstVersion $real -SkipPSGalleryQuery
+            }
+        } *>&1
+        $joined = $captured -join "`n"
+        $joined | Should -Match '\[pipeline-output\] installed_module_version=\d+\.\d+\.\d+'
+        $joined | Should -Match '\[pipeline-output\] generated_against_version=\d+\.\d+\.\d+'
+        $joined | Should -Match '\[pipeline-output\] latest_on_psgallery='
+    }
+}
+
+#endregion v0.8.5: Add-AzLocalPipelineVersionBanner (thin-YAML foundation)
+
+#region v0.8.5: Get-AzLocalApplyUpdatesScheduleCycleCalendar
+
+Describe 'v0.8.5 Apply-Updates Schedule: Get-AzLocalApplyUpdatesScheduleCycleCalendar (object pipeline)' {
+    BeforeAll {
+        $script:cc_tmp = Join-Path $TestDrive 'cycle-cal-obj'
+        New-Item -ItemType Directory -Path $script:cc_tmp -Force | Out-Null
+
+        # 4-week cycle anchored at ISO W1 2026; mirrors the v0.7.69 resolver
+        # fixture so cycle math is identical and we can assert by row.
+        $p = Join-Path $script:cc_tmp 'cycle4.yml'
+        $body = @'
+schemaVersion: 1
+cycleWeeks: 4
+cycleAnchorISOWeek: 1
+cycleAnchorYear: 2026
+schedule:
+  - weeksInCycle: '1'
+    daysOfWeek: 'Mon'
+    rings: 'Canary'
+  - weeksInCycle: '2'
+    daysOfWeek: 'Mon'
+    rings: 'Ring1'
+  - weeksInCycle: '3,4'
+    daysOfWeek: 'Mon'
+    rings: 'Prod'
+  - weeksInCycle: '*'
+    daysOfWeek: 'Fri'
+    rings: 'Canary;Ring1'
+'@
+        Set-Content -LiteralPath $p -Value $body -Encoding utf8
+        $script:cc_cfg4 = Get-AzLocalApplyUpdatesScheduleConfig -Path $p
+
+        # Monday of ISO W1 2026 (anchor day in UTC) - same computation as the
+        # v0.7.69 resolver tests so the fixtures stay consistent.
+        $jan4 = [datetime]::new(2026, 1, 4, 0, 0, 0, [DateTimeKind]::Utc)
+        $script:cc_wk1Mon = $jan4.AddDays(-1 * ((($jan4.DayOfWeek.value__ + 6) % 7)))
+    }
+
+    It 'Default -Days = CycleWeeks * 7 for a 4-week cycle (28 rows)' {
+        $r = Get-AzLocalApplyUpdatesScheduleCycleCalendar -Schedule $script:cc_cfg4 -StartDate $script:cc_wk1Mon
+        @($r).Count | Should -Be 28
+    }
+
+    It 'Each row carries the new v0.8.5 shape (CycleWeekLabel, IsCycleWrap, IsDeadDay, AllowedUpdateVersions*)' {
+        $r = Get-AzLocalApplyUpdatesScheduleCycleCalendar -Schedule $script:cc_cfg4 -StartDate $script:cc_wk1Mon -Days 1
+        $row = $r[0]
+        $row.PSObject.Properties.Name | Should -Contain 'DateUtc'
+        $row.PSObject.Properties.Name | Should -Contain 'DayOfWeekName'
+        $row.PSObject.Properties.Name | Should -Contain 'CycleWeek'
+        $row.PSObject.Properties.Name | Should -Contain 'CycleWeeksTotal'
+        $row.PSObject.Properties.Name | Should -Contain 'CycleWeekLabel'
+        $row.PSObject.Properties.Name | Should -Contain 'IsCycleWrap'
+        $row.PSObject.Properties.Name | Should -Contain 'Rings'
+        $row.PSObject.Properties.Name | Should -Contain 'UpdateRingValue'
+        $row.PSObject.Properties.Name | Should -Contain 'AllowedUpdateVersions'
+        $row.PSObject.Properties.Name | Should -Contain 'AllowedUpdateVersionsValue'
+        $row.PSObject.Properties.Name | Should -Contain 'AllowedUpdateVersionsSource'
+        $row.PSObject.Properties.Name | Should -Contain 'MatchedRowCount'
+        $row.PSObject.Properties.Name | Should -Contain 'IsDeadDay'
+        $row.PSObject.Properties.Name | Should -Contain 'Reason'
+    }
+
+    It 'CycleWeeksTotal equals Schedule.CycleWeeks on every row' {
+        $r = Get-AzLocalApplyUpdatesScheduleCycleCalendar -Schedule $script:cc_cfg4 -StartDate $script:cc_wk1Mon
+        ($r | Where-Object { $_.CycleWeeksTotal -ne 4 }).Count | Should -Be 0
+    }
+
+    It 'Day-0 row resolves to week-1 Monday Canary in the 4-week fixture' {
+        $r = Get-AzLocalApplyUpdatesScheduleCycleCalendar -Schedule $script:cc_cfg4 -StartDate $script:cc_wk1Mon -Days 1
+        $r[0].CycleWeek       | Should -Be 1
+        $r[0].UpdateRingValue | Should -Be 'Canary'
+        $r[0].IsDeadDay       | Should -Be $false
+        @($r[0].Rings).Count  | Should -Be 1
+    }
+
+    It 'IsDeadDay is $true on no-match days (Tuesday in the 4-week fixture)' {
+        $r = Get-AzLocalApplyUpdatesScheduleCycleCalendar -Schedule $script:cc_cfg4 -StartDate $script:cc_wk1Mon -Days 2
+        $r[1].IsDeadDay       | Should -Be $true
+        @($r[1].Rings).Count  | Should -Be 0
+        $r[1].UpdateRingValue | Should -BeNullOrEmpty
+    }
+
+    It 'UNION semantics: Friday in week 1 returns both Canary and Ring1 from overlapping rows' {
+        # Friday is day +4 from Monday of W1
+        $r = Get-AzLocalApplyUpdatesScheduleCycleCalendar -Schedule $script:cc_cfg4 -StartDate $script:cc_wk1Mon.AddDays(4) -Days 1
+        @($r[0].Rings).Count | Should -Be 2
+        $r[0].Rings          | Should -Contain 'Canary'
+        $r[0].Rings          | Should -Contain 'Ring1'
+        $r[0].UpdateRingValue | Should -Be 'Canary;Ring1'
+    }
+
+    It 'IsCycleWrap is $true on the first Monday of cycle-week 1 after week 4' {
+        # Full cycle from W1 Monday: 28 rows. Day 28 is the next Monday and CycleWeek rolls back to 1.
+        $r = Get-AzLocalApplyUpdatesScheduleCycleCalendar -Schedule $script:cc_cfg4 -StartDate $script:cc_wk1Mon -Days 29
+        # Day 27 (index 27 => start + 27 days = next-cycle Monday) was the wrap day.
+        $wrapRow = $r[28]   # 28 days after start = next cycle Monday
+        $wrapRow.CycleWeek      | Should -Be 1
+        $wrapRow.IsCycleWrap    | Should -Be $true
+        $wrapRow.CycleWeekLabel | Should -Match 'cycle wraps'
+        # Non-wrap rows should have IsCycleWrap = $false
+        ($r[0].IsCycleWrap)     | Should -Be $false
+    }
+
+    It 'Variable cycle length: 52-week cycle returns 364 rows by default and crosses the calendar-year boundary cleanly' {
+        $p52 = Join-Path $script:cc_tmp 'cycle52.yml'
+        $body52 = @'
+schemaVersion: 1
+cycleWeeks: 52
+cycleAnchorISOWeek: 1
+cycleAnchorYear: 2024
+schedule:
+  - weeksInCycle: '*'
+    daysOfWeek: 'Mon'
+    rings: 'Canary'
+'@
+        Set-Content -LiteralPath $p52 -Value $body52 -Encoding utf8
+        $cfg52 = Get-AzLocalApplyUpdatesScheduleConfig -Path $p52
+        # Project from a Monday inside ISO W50 2024 so the horizon crosses
+        # into the next calendar year - exercises the year-boundary path.
+        $start = [datetime]::new(2024, 12, 9, 0, 0, 0, [DateTimeKind]::Utc)  # Mon W50 2024
+        $r = Get-AzLocalApplyUpdatesScheduleCycleCalendar -Schedule $cfg52 -StartDate $start
+        @($r).Count | Should -Be 364
+        # No row should have an empty Reason or unresolved year-boundary state - resolver must keep returning rows.
+        ($r | Where-Object { -not $_.PSObject.Properties['CycleWeek'] }).Count | Should -Be 0
+        # The horizon must straddle two calendar years.
+        ($r | Where-Object { $_.DateUtc.Year -eq 2024 }).Count | Should -BeGreaterThan 0
+        ($r | Where-Object { $_.DateUtc.Year -eq 2025 }).Count | Should -BeGreaterThan 0
+    }
+
+    It '8-week cycle starting partway through week 8 wraps to week 1 within the default horizon' {
+        $p8 = Join-Path $script:cc_tmp 'cycle8.yml'
+        $body8 = @'
+schemaVersion: 1
+cycleWeeks: 8
+cycleAnchorISOWeek: 1
+cycleAnchorYear: 2026
+schedule:
+  - weeksInCycle: '1'
+    daysOfWeek: 'Mon'
+    rings: 'Canary'
+  - weeksInCycle: '8'
+    daysOfWeek: 'Mon'
+    rings: 'Prod'
+'@
+        Set-Content -LiteralPath $p8 -Value $body8 -Encoding utf8
+        $cfg8 = Get-AzLocalApplyUpdatesScheduleConfig -Path $p8
+        # Pick a Monday in cycle-week 8 (week 8 of an 8-week anchor-at-W1 cycle starts at week 8 = Mon 2026-02-23).
+        $w8Mon = $script:cc_wk1Mon.AddDays(7 * 7)
+        $r = Get-AzLocalApplyUpdatesScheduleCycleCalendar -Schedule $cfg8 -StartDate $w8Mon
+        @($r).Count | Should -Be 56  # 8 * 7
+        $r[0].CycleWeek    | Should -Be 8
+        $r[0].UpdateRingValue | Should -Be 'Prod'
+        # Day +7 = the wrap Monday
+        $r[7].CycleWeek    | Should -Be 1
+        $r[7].IsCycleWrap  | Should -Be $true
+        $r[7].UpdateRingValue | Should -Be 'Canary'
+        # The remaining rows include weeks 2-7 with no schedule rows = dead days, plus another week-8 Monday at end
+        # @() wrap forces .Count to exist even when filter yields 0 or 1 elements
+        @($r | Where-Object { $_.CycleWeek -eq 1 -and $_.UpdateRingValue -eq 'Canary' }).Count | Should -BeGreaterOrEqual 1
+    }
+
+    It 'Multi-cycle horizon: -Days greater than one cycle iterates the cycle multiple times' {
+        $days = 4 * 7 * 2  # two full 4-week cycles = 56 days
+        $r = Get-AzLocalApplyUpdatesScheduleCycleCalendar -Schedule $script:cc_cfg4 -StartDate $script:cc_wk1Mon -Days $days
+        @($r).Count | Should -Be $days
+        # Two wrap rows expected when iterating two full cycles (one at start of cycle 2, one at start of cycle 3 which is outside the horizon).
+        @($r | Where-Object { $_.IsCycleWrap }).Count | Should -BeGreaterOrEqual 1
+    }
+
+    It 'Throws on Schedule with invalid CycleWeeks of 0 (defensive guard)' {
+        $bad = [pscustomobject]@{ CycleWeeks = 0; Schedule = @() }
+        { Get-AzLocalApplyUpdatesScheduleCycleCalendar -Schedule $bad } |
+            Should -Throw -ExpectedMessage '*CycleWeeks must be >= 1*'
+    }
+}
+
+Describe 'v0.8.5 Apply-Updates Schedule: Get-AzLocalApplyUpdatesScheduleCycleCalendar (markdown)' {
+    BeforeAll {
+        $script:ccmd_tmp = Join-Path $TestDrive 'cycle-cal-md'
+        New-Item -ItemType Directory -Path $script:ccmd_tmp -Force | Out-Null
+
+        # Minimal CLEAN-fleet schedule: a single ring on a single day per
+        # cycle. Used by the regression test that pins 'markdown emitted even
+        # when there are zero advisor findings'.
+        $p = Join-Path $script:ccmd_tmp 'clean.yml'
+        $body = @'
+schemaVersion: 1
+cycleWeeks: 2
+cycleAnchorISOWeek: 1
+cycleAnchorYear: 2026
+schedule:
+  - weeksInCycle: '*'
+    daysOfWeek: 'Mon'
+    rings: 'Canary'
+'@
+        Set-Content -LiteralPath $p -Value $body -Encoding utf8
+        $script:ccmd_clean = Get-AzLocalApplyUpdatesScheduleConfig -Path $p
+
+        # Multi-row schedule used to exercise UNION rendering + per-ring summary.
+        $p2 = Join-Path $script:ccmd_tmp 'multi.yml'
+        $body2 = @'
+schemaVersion: 1
+cycleWeeks: 4
+cycleAnchorISOWeek: 1
+cycleAnchorYear: 2026
+schedule:
+  - weeksInCycle: '1'
+    daysOfWeek: 'Mon'
+    rings: 'Canary'
+  - weeksInCycle: '2'
+    daysOfWeek: 'Mon'
+    rings: 'Ring1'
+  - weeksInCycle: '3,4'
+    daysOfWeek: 'Mon'
+    rings: 'Prod'
+  - weeksInCycle: '*'
+    daysOfWeek: 'Fri'
+    rings: 'Canary;Ring1'
+'@
+        Set-Content -LiteralPath $p2 -Value $body2 -Encoding utf8
+        $script:ccmd_multi = Get-AzLocalApplyUpdatesScheduleConfig -Path $p2
+
+        $jan4 = [datetime]::new(2026, 1, 4, 0, 0, 0, [DateTimeKind]::Utc)
+        $script:ccmd_wk1Mon = $jan4.AddDays(-1 * ((($jan4.DayOfWeek.value__ + 6) % 7)))
+    }
+
+    It '-AsMarkdown returns a single string (not an array)' {
+        $md = Get-AzLocalApplyUpdatesScheduleCycleCalendar -Schedule $script:ccmd_clean -StartDate $script:ccmd_wk1Mon -AsMarkdown
+        $md | Should -BeOfType ([string])
+    }
+
+    It '-AsMarkdown emits the ## Cycle calendar heading' {
+        $md = Get-AzLocalApplyUpdatesScheduleCycleCalendar -Schedule $script:ccmd_clean -StartDate $script:ccmd_wk1Mon -AsMarkdown
+        $md | Should -Match '## Cycle calendar'
+    }
+
+    It '-AsMarkdown emits the day-by-day table header (no ClusterRingCounts variant)' {
+        $md = Get-AzLocalApplyUpdatesScheduleCycleCalendar -Schedule $script:ccmd_clean -StartDate $script:ccmd_wk1Mon -AsMarkdown
+        $md | Should -Match '\| Date \(UTC\) \| Day \| CycleWeek \| Eligible rings \| AllowedUpdateVersions \|'
+    }
+
+    It 'REGRESSION: -AsMarkdown returns the calendar even when the fleet has zero findings (v0.8.4 silent-drop bug)' {
+        # The v0.8.4 bug: cycle calendar was hidden when Test-AzLocalApplyUpdatesScheduleCoverage
+        # had no advisor findings AND no ClusterCsvPath. The new cmdlet is
+        # fully decoupled from advisor findings - the calendar MUST render
+        # purely based on the schedule object passed in.
+        $md = Get-AzLocalApplyUpdatesScheduleCycleCalendar -Schedule $script:ccmd_clean -StartDate $script:ccmd_wk1Mon -AsMarkdown
+        $md             | Should -Not -BeNullOrEmpty
+        $md             | Should -Match '## Cycle calendar'
+        # 14 day rows for a 2-week default cycle. The horizon may straddle 2025-12 and 2026-01 depending on the anchor Monday, so accept any yyyy-MM-dd prefix.
+        ([regex]::Matches($md, '\| \d{4}-\d{2}-\d{2} \|')).Count | Should -BeGreaterOrEqual 14
+    }
+
+    It '-IncludePerRingSummary adds the ### Per-ring projection section' {
+        $md = Get-AzLocalApplyUpdatesScheduleCycleCalendar -Schedule $script:ccmd_multi -StartDate $script:ccmd_wk1Mon -AsMarkdown -IncludePerRingSummary
+        $md | Should -Match '### Per-ring projection'
+        $md | Should -Match '\| UpdateRing \| Next eligible \| Eligible days \(count\) \| All eligible dates \|'
+        # All four scheduled rings should appear in the per-ring table.
+        $md | Should -Match '\| `Canary` \|'
+        $md | Should -Match '\| `Ring1` \|'
+        $md | Should -Match '\| `Prod` \|'
+    }
+
+    It 'UNION rendering: overlap day shows multiple rings comma-separated' {
+        # Friday of W1 in the multi fixture: Canary + Ring1
+        $md = Get-AzLocalApplyUpdatesScheduleCycleCalendar -Schedule $script:ccmd_multi -StartDate $script:ccmd_wk1Mon -Days 5 -AsMarkdown
+        $fridayDate = $script:ccmd_wk1Mon.AddDays(4).ToString('yyyy-MM-dd')
+        # Both ring names should appear on the same row.
+        $md | Should -Match "$fridayDate.*Canary.*Ring1|$fridayDate.*Ring1.*Canary"
+    }
+
+    It '-ClusterRingCounts adds a Clusters in ring(s) column on the calendar table' {
+        $counts = @{ Canary = 3; Ring1 = 2; Prod = 9 }
+        $md = Get-AzLocalApplyUpdatesScheduleCycleCalendar -Schedule $script:ccmd_multi -StartDate $script:ccmd_wk1Mon -AsMarkdown -ClusterRingCounts $counts
+        $md | Should -Match '\| Date \(UTC\) \| Day \| CycleWeek \| Eligible rings \| Clusters in ring\(s\) \| AllowedUpdateVersions \|'
+        # Day-0 (W1 Monday) has Canary -> count of 3 should appear in the row cell
+        $w1MonStr = $script:ccmd_wk1Mon.ToString('yyyy-MM-dd')
+        $md | Should -Match "$w1MonStr.*``Canary``: 3"
+    }
+
+    It '-ClusterRingCounts on an overlap day shows per-ring counts plus a (total: N) aggregate' {
+        $counts = @{ Canary = 3; Ring1 = 2; Prod = 9 }
+        $md = Get-AzLocalApplyUpdatesScheduleCycleCalendar -Schedule $script:ccmd_multi -StartDate $script:ccmd_wk1Mon -Days 5 -AsMarkdown -ClusterRingCounts $counts
+        # Friday of W1: Canary + Ring1, total = 5
+        $md | Should -Match 'total: 5'
+    }
+
+    It '-ClusterRingCounts with -IncludePerRingSummary adds Cluster count column on the per-ring projection table' {
+        $counts = @{ Canary = 3; Ring1 = 2; Prod = 9 }
+        $md = Get-AzLocalApplyUpdatesScheduleCycleCalendar -Schedule $script:ccmd_multi -StartDate $script:ccmd_wk1Mon -AsMarkdown -IncludePerRingSummary -ClusterRingCounts $counts
+        $md | Should -Match '\| UpdateRing \| Cluster count \| Next eligible \| Eligible days \(count\) \| All eligible dates \|'
+        # Each ring row should carry its count.
+        $md | Should -Match '\| `Canary` \| 3 \|'
+        $md | Should -Match '\| `Ring1` \| 2 \|'
+        $md | Should -Match '\| `Prod` \| 9 \|'
+    }
+
+    It '-ClusterRingCounts omitted: the legacy 5-column calendar header is used' {
+        $md = Get-AzLocalApplyUpdatesScheduleCycleCalendar -Schedule $script:ccmd_multi -StartDate $script:ccmd_wk1Mon -AsMarkdown
+        # Must NOT contain the 6-column header.
+        ($md -match '\| Clusters in ring\(s\) \|') | Should -Be $false
+    }
+
+    It '-ClusterRingCounts is case-insensitive (canary == Canary)' {
+        $counts = @{ canary = 7 }
+        $md = Get-AzLocalApplyUpdatesScheduleCycleCalendar -Schedule $script:ccmd_clean -StartDate $script:ccmd_wk1Mon -AsMarkdown -ClusterRingCounts $counts
+        $w1MonStr = $script:ccmd_wk1Mon.ToString('yyyy-MM-dd')
+        $md | Should -Match "$w1MonStr.*``Canary``: 7"
+    }
+
+    It '-ClusterRingCounts on dead days shows the dead-day cell' {
+        $counts = @{ Canary = 3 }
+        # Day-1 (Tuesday) in the clean fixture is a dead day.
+        $md = Get-AzLocalApplyUpdatesScheduleCycleCalendar -Schedule $script:ccmd_clean -StartDate $script:ccmd_wk1Mon -Days 2 -AsMarkdown -ClusterRingCounts $counts
+        $tueStr = $script:ccmd_wk1Mon.AddDays(1).ToString('yyyy-MM-dd')
+        $md | Should -Match "$tueStr.*_\(0 - dead day\)_"
+    }
+
+    It 'Cycle-wrap row renders the (cycle wraps) annotation in CycleWeek cell' {
+        $md = Get-AzLocalApplyUpdatesScheduleCycleCalendar -Schedule $script:ccmd_multi -StartDate $script:ccmd_wk1Mon -Days 29 -AsMarkdown
+        $md | Should -Match 'cycle wraps'
+    }
+
+    It 'Year-boundary safe: a 1-week cycle projected across new year does not break markdown' {
+        $p1 = Join-Path $script:ccmd_tmp 'cycle1.yml'
+        $body1 = @'
+schemaVersion: 1
+cycleWeeks: 1
+cycleAnchorISOWeek: 1
+cycleAnchorYear: 2024
+schedule:
+  - weeksInCycle: '*'
+    daysOfWeek: 'Mon-Fri'
+    rings: 'Canary'
+'@
+        Set-Content -LiteralPath $p1 -Value $body1 -Encoding utf8
+        $cfg1 = Get-AzLocalApplyUpdatesScheduleConfig -Path $p1
+        # Project from a date that straddles end-of-2024 -> 2025
+        $start = [datetime]::new(2024, 12, 29, 0, 0, 0, [DateTimeKind]::Utc)
+        $md = Get-AzLocalApplyUpdatesScheduleCycleCalendar -Schedule $cfg1 -StartDate $start -Days 14 -AsMarkdown
+        $md | Should -Not -BeNullOrEmpty
+        $md | Should -Match '## Cycle calendar'
+        # Both 2024 and 2025 dates must appear in the rendered table.
+        $md | Should -Match '\| 2024-12-'
+        $md | Should -Match '\| 2025-01-'
+    }
+}
+
+#endregion v0.8.5: Get-AzLocalApplyUpdatesScheduleCycleCalendar
+
+#region v0.8.5: New-AzLocalPipelineJUnitXml (shared JUnit emitter)
+
+Describe 'Thin-YAML shared helper: New-AzLocalPipelineJUnitXml' {
+
+    It 'Emits a well-formed XML document with the xml declaration and testsuites wrapper' {
+        $xml = InModuleScope AzLocal.UpdateManagement {
+            New-AzLocalPipelineJUnitXml -TestSuitesName 'demo' -Suites @(
+                @{ Name = 'S1'; TestCases = @(@{ Name = 'tc' }) }
+            )
+        }
+        $xml | Should -Match '^<\?xml version="1\.0" encoding="UTF-8"\?>'
+        $xml | Should -Match '<testsuites name="demo"'
+        $xml | Should -Match '</testsuites>'
+    }
+
+    It 'Computes per-suite tests/failures/errors/skipped attributes from the testcase array' {
+        $xml = InModuleScope AzLocal.UpdateManagement {
+            New-AzLocalPipelineJUnitXml -TestSuitesName 'demo' -Suites @(
+                @{
+                    Name = 'S'
+                    TestCases = @(
+                        @{ Name = 'pass1' }
+                        @{ Name = 'fail1'; Failure = @{ Message = 'boom' } }
+                        @{ Name = 'err1'; Error = @{ Message = 'oops' } }
+                        @{ Name = 'skip1'; Skipped = 'because' }
+                    )
+                }
+            )
+        }
+        $xml | Should -Match '<testsuite name="S" tests="4" failures="1" errors="1" skipped="1"'
+    }
+
+    It 'Emits a self-closing testcase element when the testcase has no children' {
+        $xml = InModuleScope AzLocal.UpdateManagement {
+            New-AzLocalPipelineJUnitXml -TestSuitesName 'demo' -Suites @(
+                @{ Name = 'S'; TestCases = @(@{ Name = 'lonely' }) }
+            )
+        }
+        $xml | Should -Match '<testcase classname="S" name="lonely" time="0" />'
+    }
+
+    It 'Wraps SystemOut content in a CDATA section' {
+        $xml = InModuleScope AzLocal.UpdateManagement {
+            New-AzLocalPipelineJUnitXml -TestSuitesName 'demo' -Suites @(
+                @{ Name = 'S'; TestCases = @(@{ Name = 'tc'; SystemOut = 'line1`nline2' }) }
+            )
+        }
+        $xml | Should -Match '<system-out><!\[CDATA\['
+        $xml | Should -Match '\]\]></system-out>'
+    }
+
+    It 'Emits failure element with CDATA body when Failure has a Body property' {
+        $xml = InModuleScope AzLocal.UpdateManagement {
+            New-AzLocalPipelineJUnitXml -TestSuitesName 'demo' -Suites @(
+                @{ Name = 'S'; TestCases = @(@{ Name = 'tc'; Failure = @{ Message = 'm'; Type = 'T'; Body = 'trace' } }) }
+            )
+        }
+        $xml | Should -Match '<failure message="m" type="T"><!\[CDATA\[trace\]\]></failure>'
+    }
+
+    It 'Self-closes failure / error elements when no Body is provided' {
+        $xml = InModuleScope AzLocal.UpdateManagement {
+            New-AzLocalPipelineJUnitXml -TestSuitesName 'demo' -Suites @(
+                @{ Name = 'S'; TestCases = @(
+                    @{ Name = 'f'; Failure = @{ Message = 'm' } }
+                    @{ Name = 'e'; Error   = @{ Message = 'e' } }
+                ) }
+            )
+        }
+        $xml | Should -Match '<failure message="m" type="AssertionError" />'
+        $xml | Should -Match '<error message="e" type="Error" />'
+    }
+
+    It 'XML-escapes special characters in suite/testcase names and Failure messages' {
+        $xml = InModuleScope AzLocal.UpdateManagement {
+            New-AzLocalPipelineJUnitXml -TestSuitesName 'demo & <data>' -Suites @(
+                @{
+                    Name = 'A & B'
+                    TestCases = @(
+                        @{ Name = 'name "quoted"' ; Failure = @{ Message = 'a<b>c' } }
+                    )
+                }
+            )
+        }
+        $xml | Should -Match 'demo &amp; &lt;data&gt;'
+        $xml | Should -Match 'A &amp; B'
+        $xml | Should -Match 'name &quot;quoted&quot;'
+        $xml | Should -Match 'a&lt;b&gt;c'
+    }
+
+    It 'Writes the XML to disk (UTF-8 no BOM) when -OutputPath is supplied' {
+        $tmpPath = Join-Path -Path $TestDrive -ChildPath 'sample-junit.xml'
+        $xml = InModuleScope AzLocal.UpdateManagement -Parameters @{ TmpPath = $tmpPath } {
+            param($TmpPath)
+            New-AzLocalPipelineJUnitXml -TestSuitesName 'demo' -OutputPath $TmpPath -Suites @(
+                @{ Name = 'S'; TestCases = @(@{ Name = 'tc' }) }
+            )
+        }
+        Test-Path -LiteralPath $tmpPath | Should -BeTrue
+        $bytes = [System.IO.File]::ReadAllBytes($tmpPath)
+        # No UTF-8 BOM (EF BB BF) at the start.
+        ($bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) | Should -BeFalse
+        $diskContent = [System.IO.File]::ReadAllText($tmpPath)
+        $diskContent | Should -Be $xml
+    }
+
+    It 'Honours the -Timestamp parameter on every <testsuite timestamp="..."> attribute' {
+        $fixed = [datetime]::new(2026, 6, 10, 12, 34, 56)
+        $xml = InModuleScope AzLocal.UpdateManagement -Parameters @{ Fixed = $fixed } {
+            param($Fixed)
+            New-AzLocalPipelineJUnitXml -TestSuitesName 'demo' -Timestamp $Fixed -Suites @(
+                @{ Name = 'S1'; TestCases = @(@{ Name = 'tc1' }) }
+                @{ Name = 'S2'; TestCases = @(@{ Name = 'tc2' }) }
+            )
+        }
+        ([regex]::Matches($xml, 'timestamp="2026-06-10T12:34:56"')).Count | Should -Be 2
+    }
+
+    # v0.8.5 Step.8 - Properties hashtable support (suite + testcase)
+    It 'Emits suite-level <properties> block when Suites contains a Properties hashtable' {
+        $xml = InModuleScope AzLocal.UpdateManagement {
+            New-AzLocalPipelineJUnitXml -TestSuitesName 'demo' -Suites @(
+                @{
+                    Name       = 'S'
+                    Properties = ([ordered]@{ testCategory = 'FleetVersionDistribution'; totalClusters = 42 })
+                    TestCases  = @(@{ Name = 'tc' })
+                }
+            )
+        }
+        $xml | Should -Match '<properties>'
+        $xml | Should -Match '<property name="testCategory" value="FleetVersionDistribution" />'
+        $xml | Should -Match '<property name="totalClusters" value="42" />'
+        $xml | Should -Match '</properties>'
+    }
+
+    It 'Emits testcase-level <properties> block when a TestCase contains a Properties hashtable' {
+        $xml = InModuleScope AzLocal.UpdateManagement {
+            New-AzLocalPipelineJUnitXml -TestSuitesName 'demo' -Suites @(
+                @{
+                    Name      = 'S'
+                    TestCases = @(@{
+                        Name       = 'cluster-alpha'
+                        Properties = ([ordered]@{
+                            ClusterName       = 'alpha'
+                            ClusterResourceId = '/subscriptions/s1/resourceGroups/rg1/providers/Microsoft.AzureStackHCI/clusters/alpha'
+                            Status            = 'UpdateFailure'
+                        })
+                    })
+                }
+            )
+        }
+        $xml | Should -Match '<property name="ClusterName" value="alpha" />'
+        $xml | Should -Match '<property name="ClusterResourceId" value="/subscriptions/s1/resourceGroups/rg1/providers/Microsoft.AzureStackHCI/clusters/alpha" />'
+        $xml | Should -Match '<property name="Status" value="UpdateFailure" />'
+    }
+
+    It 'XML-escapes special characters in property keys and values' {
+        $xml = InModuleScope AzLocal.UpdateManagement {
+            New-AzLocalPipelineJUnitXml -TestSuitesName 'demo' -Suites @(
+                @{
+                    Name      = 'S'
+                    TestCases = @(@{
+                        Name       = 'tc'
+                        Properties = ([ordered]@{ 'Key&"<>' = 'val<a>&"' })
+                    })
+                }
+            )
+        }
+        $xml | Should -Match '<property name="Key&amp;&quot;&lt;&gt;" value="val&lt;a&gt;&amp;&quot;" />'
+    }
+}
+
+#endregion v0.8.5: New-AzLocalPipelineJUnitXml
+
+#region v0.8.5: Export-AzLocalAuthValidationReport (Step.0 thin-YAML port)
+
+Describe 'Thin-YAML Step.0: Export-AzLocalAuthValidationReport' {
+
+    BeforeAll {
+        # Test helper: drives the cmdlet against a fixed account / subs /
+        # clusters / roles payload by mocking Invoke-AzCliJson +
+        # Invoke-AzResourceGraphQuery + Install-AzGraphExtension inside the
+        # module scope. Defined in script: scope so it survives Pester v5
+        # discovery -> run phase split.
+        function script:Invoke-Step0Cmdlet {
+            param(
+                [hashtable]$Params = @{},
+                [object]$Account,
+                [object[]]$Subs,
+                [object[]]$Clusters,
+                [object[]]$RoleRows
+            )
+            $global:_avr_payload = @{
+                Account  = $Account
+                Subs     = $Subs
+                Clusters = $Clusters
+                Roles    = $RoleRows
+                Params   = $Params
+            }
+            InModuleScope AzLocal.UpdateManagement {
+                Mock Install-AzGraphExtension { $true }
+                Mock Invoke-AzResourceGraphQuery { @($global:_avr_payload.Clusters) }
+                Mock Invoke-AzCliJson {
+                    param([string[]]$Arguments)
+                    $pl = $global:_avr_payload
+                    if ($Arguments[0] -eq 'account' -and $Arguments[1] -eq 'show') {
+                        return [pscustomobject]@{ Ok = $true; Data = $pl.Account; Error = $null }
+                    }
+                    if ($Arguments[0] -eq 'role' -and $Arguments[1] -eq 'assignment') {
+                        return [pscustomobject]@{ Ok = $true; Data = $pl.Roles; Error = $null }
+                    }
+                    if ($Arguments[0] -eq 'account' -and $Arguments[1] -eq 'list') {
+                        return [pscustomobject]@{ Ok = $true; Data = $pl.Subs; Error = $null }
+                    }
+                    return [pscustomobject]@{ Ok = $false; Data = $null; Error = "unmocked az: $($Arguments -join ' ')" }
+                }
+                $callParams = $global:_avr_payload.Params
+                Export-AzLocalAuthValidationReport @callParams
+            }
+        }
+    }
+
+    BeforeEach {
+        $script:_avr_savedGhActions = $env:GITHUB_ACTIONS
+        $script:_avr_savedTfBuild   = $env:TF_BUILD
+        $script:_avr_savedGhOutput  = $env:GITHUB_OUTPUT
+        $script:_avr_savedGhSummary = $env:GITHUB_STEP_SUMMARY
+        $script:_avr_savedAdoStage  = $env:BUILD_ARTIFACTSTAGINGDIRECTORY
+        Remove-Item Env:\GITHUB_ACTIONS                  -ErrorAction SilentlyContinue
+        Remove-Item Env:\TF_BUILD                        -ErrorAction SilentlyContinue
+        Remove-Item Env:\GITHUB_OUTPUT                   -ErrorAction SilentlyContinue
+        Remove-Item Env:\GITHUB_STEP_SUMMARY             -ErrorAction SilentlyContinue
+        Remove-Item Env:\BUILD_ARTIFACTSTAGINGDIRECTORY  -ErrorAction SilentlyContinue
+
+        $script:_avr_ghOutputFile  = Join-Path -Path $env:TEMP -ChildPath ("avr-gh-output-{0}"  -f ([Guid]::NewGuid()))
+        $script:_avr_ghSummaryFile = Join-Path -Path $env:TEMP -ChildPath ("avr-gh-summary-{0}.md" -f ([Guid]::NewGuid()))
+        $script:_avr_adoStageDir   = Join-Path -Path $env:TEMP -ChildPath ("avr-ado-stage-{0}" -f ([Guid]::NewGuid()))
+        $script:_avr_reportDir     = Join-Path -Path $env:TEMP -ChildPath ("avr-report-{0}"    -f ([Guid]::NewGuid()))
+        New-Item -ItemType File      -Path $script:_avr_ghOutputFile  -Force | Out-Null
+        New-Item -ItemType File      -Path $script:_avr_ghSummaryFile -Force | Out-Null
+        New-Item -ItemType Directory -Path $script:_avr_adoStageDir   -Force | Out-Null
+        New-Item -ItemType Directory -Path $script:_avr_reportDir     -Force | Out-Null
+
+        # Synthetic Azure responses shared across the It blocks (mutable; tests
+        # that need a non-empty fleet / multi-sub setup override these).
+        $script:_avr_account = [pscustomobject]@{
+            name     = 'My Subscription'
+            id       = '00000000-0000-0000-0000-000000000000'
+            tenantId = '00000000-0000-0000-0000-000000000000'
+            user     = [pscustomobject]@{ name = 'app-id-from-cli' }
+        }
+        $script:_avr_subs = @(
+            [pscustomobject]@{ name = 'Alpha'; subscriptionId = 'sub-aaa'; tenantId = 'ten-1'; state = 'Enabled' }
+            [pscustomobject]@{ name = 'Beta';  subscriptionId = 'sub-bbb'; tenantId = 'ten-1'; state = 'Enabled' }
+        )
+        $script:_avr_clusters = @(
+            [pscustomobject]@{ name = 'cluster-a'; resourceGroup = 'rg1'; subscriptionId = 'sub-aaa' }
+        )
+        $script:_avr_roleRows = @(
+            [pscustomobject]@{ roleDefinitionName = 'Reader'; principalType = 'ServicePrincipal'; scope = '/subscriptions/sub-aaa' }
+        )
+    }
+    AfterEach {
+        if ($null -ne $script:_avr_savedGhActions) { $env:GITHUB_ACTIONS                 = $script:_avr_savedGhActions } else { Remove-Item Env:\GITHUB_ACTIONS                 -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_avr_savedTfBuild)   { $env:TF_BUILD                       = $script:_avr_savedTfBuild   } else { Remove-Item Env:\TF_BUILD                       -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_avr_savedGhOutput)  { $env:GITHUB_OUTPUT                  = $script:_avr_savedGhOutput  } else { Remove-Item Env:\GITHUB_OUTPUT                  -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_avr_savedGhSummary) { $env:GITHUB_STEP_SUMMARY            = $script:_avr_savedGhSummary } else { Remove-Item Env:\GITHUB_STEP_SUMMARY            -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_avr_savedAdoStage)  { $env:BUILD_ARTIFACTSTAGINGDIRECTORY = $script:_avr_savedAdoStage  } else { Remove-Item Env:\BUILD_ARTIFACTSTAGINGDIRECTORY -ErrorAction SilentlyContinue }
+
+        # File cleanup is best-effort; TestDrive cleans automatically anyway.
+        Remove-Item -Path $script:_avr_ghOutputFile, $script:_avr_ghSummaryFile -Force -ErrorAction SilentlyContinue
+        Remove-Item -Path $script:_avr_adoStageDir, $script:_avr_reportDir      -Force -Recurse -ErrorAction SilentlyContinue
+    }
+
+    It 'Local host: returns PassThru object with the expected shape' {
+        $params = @{ ReportDirectory = $script:_avr_reportDir; PassThru = $true }
+        $result = Invoke-Step0Cmdlet -Params $params -Account $script:_avr_account -Subs $script:_avr_subs -Clusters $script:_avr_clusters -RoleRows $script:_avr_roleRows
+        $result | Should -Not -BeNullOrEmpty
+        $result.PSObject.Properties.Name | Should -Contain 'Account'
+        $result.PSObject.Properties.Name | Should -Contain 'SubscriptionCount'
+        $result.PSObject.Properties.Name | Should -Contain 'Subscriptions'
+        $result.PSObject.Properties.Name | Should -Contain 'ClusterCount'
+        $result.PSObject.Properties.Name | Should -Contain 'AuthValid'
+        $result.PSObject.Properties.Name | Should -Contain 'JUnitXmlPath'
+        $result.PSObject.Properties.Name | Should -Contain 'SubscriptionsJsonPath'
+        $result.PSObject.Properties.Name | Should -Contain 'SubscriptionsCsvPath'
+        $result.SubscriptionCount | Should -Be 2
+        $result.ClusterCount      | Should -Be 1
+        $result.AuthValid         | Should -BeTrue
+    }
+
+    It 'Local host: writes JUnit XML, subscriptions.json, subscriptions.csv to the report dir' {
+        $params = @{ ReportDirectory = $script:_avr_reportDir; PassThru = $true }
+        $result = Invoke-Step0Cmdlet -Params $params -Account $script:_avr_account -Subs $script:_avr_subs -Clusters $script:_avr_clusters -RoleRows $script:_avr_roleRows
+        Test-Path -LiteralPath $result.JUnitXmlPath          | Should -BeTrue
+        Test-Path -LiteralPath $result.SubscriptionsJsonPath | Should -BeTrue
+        Test-Path -LiteralPath $result.SubscriptionsCsvPath  | Should -BeTrue
+        # JUnit XML must include all 3 always-on suites.
+        $xml = Get-Content -LiteralPath $result.JUnitXmlPath -Raw
+        $xml | Should -Match 'Authentication'
+        $xml | Should -Match 'Subscription Scope \(count=2\)'
+        $xml | Should -Match 'Resource Graph Reachability'
+        # Subscription artifact contents.
+        $csv = Get-Content -LiteralPath $result.SubscriptionsCsvPath -Raw
+        $csv | Should -Match 'Alpha'
+        $csv | Should -Match 'Beta'
+    }
+
+    It 'JUnit XML includes the Module Version Drift suite ONLY when version metadata is supplied' {
+        $paramsWith = @{ ReportDirectory = $script:_avr_reportDir; PassThru = $true; InstalledModuleVersion = '0.8.5'; GeneratedAgainstVersion = '0.8.5'; LatestOnPSGallery = '0.8.5' }
+        $resultWith = Invoke-Step0Cmdlet -Params $paramsWith -Account $script:_avr_account -Subs $script:_avr_subs -Clusters $script:_avr_clusters -RoleRows $script:_avr_roleRows
+        (Get-Content -LiteralPath $resultWith.JUnitXmlPath -Raw) | Should -Match 'Module Version Drift'
+
+        # Wipe and re-run WITHOUT the drift inputs - same dir, file is overwritten.
+        Remove-Item -LiteralPath $resultWith.JUnitXmlPath -Force
+        $paramsNo = @{ ReportDirectory = $script:_avr_reportDir; PassThru = $true }
+        $resultNo = Invoke-Step0Cmdlet -Params $paramsNo -Account $script:_avr_account -Subs $script:_avr_subs -Clusters $script:_avr_clusters -RoleRows $script:_avr_roleRows
+        (Get-Content -LiteralPath $resultNo.JUnitXmlPath -Raw) | Should -Not -Match 'Module Version Drift'
+    }
+
+    It 'GitHub host: writes step-summary markdown to GITHUB_STEP_SUMMARY and step outputs to GITHUB_OUTPUT' {
+        $env:GITHUB_ACTIONS       = 'true'
+        $env:GITHUB_OUTPUT        = $script:_avr_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY  = $script:_avr_ghSummaryFile
+        $params = @{ ReportDirectory = $script:_avr_reportDir; PassThru = $true }
+        [void](Invoke-Step0Cmdlet -Params $params -Account $script:_avr_account -Subs $script:_avr_subs -Clusters $script:_avr_clusters -RoleRows $script:_avr_roleRows)
+        # Summary file should now contain the rendered markdown.
+        $summary = Get-Content -LiteralPath $script:_avr_ghSummaryFile -Raw
+        $summary | Should -Match '## Step\.0 - Authentication Validation and Subscription Scope Report'
+        $summary | Should -Match '### Count of subscriptions accessible = 2'
+        $summary | Should -Match 'Alpha'
+        $summary | Should -Match 'Beta'
+        # Step outputs: all three keys present.
+        $outputs = Get-Content -LiteralPath $script:_avr_ghOutputFile -Raw
+        $outputs | Should -Match 'subscription_count=2'
+        $outputs | Should -Match 'cluster_count=1'
+        $outputs | Should -Match 'auth_valid=true'
+    }
+
+    It 'AzureDevOps host: uses BUILD_ARTIFACTSTAGINGDIRECTORY for the default report dir and emits ##vso[task.uploadsummary]' {
+        $env:TF_BUILD                       = 'True'
+        $env:BUILD_ARTIFACTSTAGINGDIRECTORY = $script:_avr_adoStageDir
+        # Capture the console stream so we can scan for the ##vso directive.
+        $captured = & {
+            $params = @{ PassThru = $true }
+            Invoke-Step0Cmdlet -Params $params -Account $script:_avr_account -Subs $script:_avr_subs -Clusters $script:_avr_clusters -RoleRows $script:_avr_roleRows
+        } *>&1
+        $joined = $captured -join "`n"
+        $joined | Should -Match '##vso\[task\.uploadsummary\]'
+        $joined | Should -Match '##vso\[task\.setvariable variable=subscription_count'
+        $joined | Should -Match '##vso\[task\.setvariable variable=cluster_count'
+        $joined | Should -Match '##vso\[task\.setvariable variable=auth_valid'
+        # Default report dir on ADO is $BUILD_ARTIFACTSTAGINGDIRECTORY\auth-report
+        $expectedReportDir = Join-Path $script:_avr_adoStageDir 'auth-report'
+        Test-Path -LiteralPath (Join-Path $expectedReportDir 'auth-report.xml') | Should -BeTrue
+        Test-Path -LiteralPath (Join-Path $expectedReportDir 'subscriptions.json') | Should -BeTrue
+    }
+
+    It 'Empty fleet: ClusterCount = 0 and JUnit XML still renders the Resource Graph suite' {
+        $params = @{ ReportDirectory = $script:_avr_reportDir; PassThru = $true }
+        $result = Invoke-Step0Cmdlet -Params $params -Account $script:_avr_account -Subs $script:_avr_subs -Clusters @() -RoleRows $script:_avr_roleRows
+        $result.ClusterCount | Should -Be 0
+        $xml = Get-Content -LiteralPath $result.JUnitXmlPath -Raw
+        $xml | Should -Match 'Clusters visible to pipeline identity = 0'
+    }
+
+    It 'Empty subscription list: SubscriptionCount = 0, AuthValid = $false, subscription suite has 1 testcase' {
+        $params = @{ ReportDirectory = $script:_avr_reportDir; PassThru = $true }
+        $result = Invoke-Step0Cmdlet -Params $params -Account $script:_avr_account -Subs @() -Clusters $script:_avr_clusters -RoleRows @()
+        $result.SubscriptionCount | Should -Be 0
+        $result.AuthValid         | Should -BeFalse
+        $xml = Get-Content -LiteralPath $result.JUnitXmlPath -Raw
+        # Subscription Scope suite has exactly one testcase (the count row).
+        $xml | Should -Match 'Subscription Scope \(count=0\).*tests="1"'
+    }
+
+    It 'Multi-subscription: each subscription row appears in the JUnit XML and the markdown roster' {
+        $multi = @(
+            [pscustomobject]@{ name = 'A'; subscriptionId = 's1'; tenantId = 't1'; state = 'Enabled' }
+            [pscustomobject]@{ name = 'B'; subscriptionId = 's2'; tenantId = 't1'; state = 'Enabled' }
+            [pscustomobject]@{ name = 'C'; subscriptionId = 's3'; tenantId = 't1'; state = 'Disabled' }
+        )
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_avr_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_avr_ghSummaryFile
+        $params = @{ ReportDirectory = $script:_avr_reportDir; PassThru = $true }
+        $result = Invoke-Step0Cmdlet -Params $params -Account $script:_avr_account -Subs $multi -Clusters $script:_avr_clusters -RoleRows $script:_avr_roleRows
+        $result.SubscriptionCount | Should -Be 3
+        $summary = Get-Content -LiteralPath $script:_avr_ghSummaryFile -Raw
+        $summary | Should -Match '\| 1 \| A \| `s1`'
+        $summary | Should -Match '\| 2 \| B \| `s2`'
+        $summary | Should -Match '\| 3 \| C \| `s3`'
+    }
+
+    It 'Throws a helpful error when az account show fails' {
+        $global:_avr_payload = @{ Subs = @(); Clusters = @(); Roles = @() }
+        InModuleScope AzLocal.UpdateManagement -Parameters @{ ReportDirectory = $script:_avr_reportDir } {
+            param($ReportDirectory)
+            Mock Install-AzGraphExtension { $true }
+            Mock Invoke-AzResourceGraphQuery { @() }
+            Mock Invoke-AzCliJson {
+                param([string[]]$Arguments)
+                if ($Arguments[0] -eq 'account' -and $Arguments[1] -eq 'show') {
+                    return [pscustomobject]@{ Ok = $false; Data = $null; Error = 'AADSTS70021: No matching federated identity record found.' }
+                }
+                return [pscustomobject]@{ Ok = $true; Data = @(); Error = $null }
+            }
+            { Export-AzLocalAuthValidationReport -ReportDirectory $ReportDirectory } |
+                Should -Throw -ExpectedMessage '*az account show failed*AADSTS70021*'
+        }
+    }
+}
+
+#endregion v0.8.5: Export-AzLocalAuthValidationReport
+
+#region v0.8.5: Invoke-AzLocalClusterInventory (Step.1 thin-YAML port)
+
+Describe 'Thin-YAML Step.1: Invoke-AzLocalClusterInventory' {
+
+    BeforeAll {
+        # Test helper: drives the cmdlet against a fixed inventory payload
+        # by mocking Get-AzLocalClusterInventory inside the module scope.
+        # The mock writes the CSV file (when -ExportPath is supplied) so
+        # the cmdlet's canonical-CSV copy path is exercised the same way
+        # it is in production. Defined in script: scope so it survives
+        # the Pester v5 discovery -> run phase split.
+        function script:Invoke-Step1Cmdlet {
+            param(
+                [hashtable]$Params = @{},
+                [object[]]$Inventory
+            )
+            $global:_inv_payload = @{
+                Inventory     = $Inventory
+                LastCallParams = $null
+            }
+            InModuleScope AzLocal.UpdateManagement {
+                Mock Get-AzLocalClusterInventory {
+                    # Record which parameters Invoke-AzLocalClusterInventory passed through.
+                    $global:_inv_payload.LastCallParams = $PSBoundParameters
+                    if ($PSBoundParameters.ContainsKey('ExportPath') -and $PSBoundParameters['ExportPath']) {
+                        $exportPath = $PSBoundParameters['ExportPath']
+                        $rows = $global:_inv_payload.Inventory
+                        if ($null -ne $rows -and @($rows).Count -gt 0) {
+                            @($rows) | Export-Csv -LiteralPath $exportPath -NoTypeInformation -Encoding UTF8
+                        }
+                    }
+                    return @($global:_inv_payload.Inventory)
+                }
+                $callParams = $global:_inv_payload.Params
+                if ($null -eq $callParams) { $callParams = @{} }
+                Invoke-AzLocalClusterInventory @callParams
+            }
+        }
+    }
+
+    BeforeEach {
+        $script:_inv_savedGhActions = $env:GITHUB_ACTIONS
+        $script:_inv_savedTfBuild   = $env:TF_BUILD
+        $script:_inv_savedGhOutput  = $env:GITHUB_OUTPUT
+        $script:_inv_savedGhSummary = $env:GITHUB_STEP_SUMMARY
+        $script:_inv_savedAdoStage  = $env:BUILD_ARTIFACTSTAGINGDIRECTORY
+        Remove-Item Env:\GITHUB_ACTIONS                  -ErrorAction SilentlyContinue
+        Remove-Item Env:\TF_BUILD                        -ErrorAction SilentlyContinue
+        Remove-Item Env:\GITHUB_OUTPUT                   -ErrorAction SilentlyContinue
+        Remove-Item Env:\GITHUB_STEP_SUMMARY             -ErrorAction SilentlyContinue
+        Remove-Item Env:\BUILD_ARTIFACTSTAGINGDIRECTORY  -ErrorAction SilentlyContinue
+
+        $script:_inv_ghOutputFile  = Join-Path -Path $env:TEMP -ChildPath ("inv-gh-output-{0}"  -f ([Guid]::NewGuid()))
+        $script:_inv_ghSummaryFile = Join-Path -Path $env:TEMP -ChildPath ("inv-gh-summary-{0}.md" -f ([Guid]::NewGuid()))
+        $script:_inv_adoStageDir   = Join-Path -Path $env:TEMP -ChildPath ("inv-ado-stage-{0}" -f ([Guid]::NewGuid()))
+        $script:_inv_outDir        = Join-Path -Path $env:TEMP -ChildPath ("inv-out-{0}"       -f ([Guid]::NewGuid()))
+        New-Item -ItemType File      -Path $script:_inv_ghOutputFile  -Force | Out-Null
+        New-Item -ItemType File      -Path $script:_inv_ghSummaryFile -Force | Out-Null
+        New-Item -ItemType Directory -Path $script:_inv_adoStageDir   -Force | Out-Null
+        New-Item -ItemType Directory -Path $script:_inv_outDir        -Force | Out-Null
+
+        # Synthetic fleet shared across the It blocks.
+        $script:_inv_fleet = @(
+            [pscustomobject]@{ ClusterName = 'alpha'; ResourceGroup = 'rg1'; SubscriptionId = 's1'; SubscriptionName = 'Sub A'; UpdateRing = 'Canary';     HasUpdateRingTag = 'Yes'; UpdateStartWindow = ''; UpdateExclusions = ''; UpdateSideloaded = ''; UpdateVersionInProgress = ''; ResourceId = '/subscriptions/s1/resourceGroups/rg1/providers/Microsoft.AzureStackHCI/clusters/alpha' }
+            [pscustomobject]@{ ClusterName = 'bravo'; ResourceGroup = 'rg1'; SubscriptionId = 's1'; SubscriptionName = 'Sub A'; UpdateRing = 'Pilot';      HasUpdateRingTag = 'Yes'; UpdateStartWindow = ''; UpdateExclusions = ''; UpdateSideloaded = ''; UpdateVersionInProgress = ''; ResourceId = '/subscriptions/s1/resourceGroups/rg1/providers/Microsoft.AzureStackHCI/clusters/bravo' }
+            [pscustomobject]@{ ClusterName = 'charlie'; ResourceGroup = 'rg2'; SubscriptionId = 's2'; SubscriptionName = 'Sub B'; UpdateRing = 'Production'; HasUpdateRingTag = 'Yes'; UpdateStartWindow = ''; UpdateExclusions = ''; UpdateSideloaded = ''; UpdateVersionInProgress = ''; ResourceId = '/subscriptions/s2/resourceGroups/rg2/providers/Microsoft.AzureStackHCI/clusters/charlie' }
+            [pscustomobject]@{ ClusterName = 'delta'; ResourceGroup = 'rg2'; SubscriptionId = 's2'; SubscriptionName = 'Sub B'; UpdateRing = '';            HasUpdateRingTag = 'No';  UpdateStartWindow = ''; UpdateExclusions = ''; UpdateSideloaded = ''; UpdateVersionInProgress = ''; ResourceId = '/subscriptions/s2/resourceGroups/rg2/providers/Microsoft.AzureStackHCI/clusters/delta' }
+        )
+    }
+    AfterEach {
+        if ($null -ne $script:_inv_savedGhActions) { $env:GITHUB_ACTIONS                 = $script:_inv_savedGhActions } else { Remove-Item Env:\GITHUB_ACTIONS                 -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_inv_savedTfBuild)   { $env:TF_BUILD                       = $script:_inv_savedTfBuild   } else { Remove-Item Env:\TF_BUILD                       -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_inv_savedGhOutput)  { $env:GITHUB_OUTPUT                  = $script:_inv_savedGhOutput  } else { Remove-Item Env:\GITHUB_OUTPUT                  -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_inv_savedGhSummary) { $env:GITHUB_STEP_SUMMARY            = $script:_inv_savedGhSummary } else { Remove-Item Env:\GITHUB_STEP_SUMMARY            -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_inv_savedAdoStage)  { $env:BUILD_ARTIFACTSTAGINGDIRECTORY = $script:_inv_savedAdoStage  } else { Remove-Item Env:\BUILD_ARTIFACTSTAGINGDIRECTORY -ErrorAction SilentlyContinue }
+
+        Remove-Item -Path $script:_inv_ghOutputFile, $script:_inv_ghSummaryFile -Force -ErrorAction SilentlyContinue
+        Remove-Item -Path $script:_inv_adoStageDir, $script:_inv_outDir         -Force -Recurse -ErrorAction SilentlyContinue
+    }
+
+    It 'Local host: returns PassThru object with the expected shape' {
+        $global:_inv_payload = @{ Inventory = $script:_inv_fleet; LastCallParams = $null; Params = @{ OutputDirectory = $script:_inv_outDir; PassThru = $true } }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory {
+                if ($PSBoundParameters.ContainsKey('ExportPath') -and $PSBoundParameters['ExportPath']) {
+                    @($global:_inv_payload.Inventory) | Export-Csv -LiteralPath $PSBoundParameters['ExportPath'] -NoTypeInformation -Encoding UTF8
+                }
+                @($global:_inv_payload.Inventory)
+            }
+            $p = $global:_inv_payload.Params
+            Invoke-AzLocalClusterInventory @p
+        }
+        $result | Should -Not -BeNullOrEmpty
+        $result.PSObject.Properties.Name | Should -Contain 'ClusterCount'
+        $result.PSObject.Properties.Name | Should -Contain 'WithTagCount'
+        $result.PSObject.Properties.Name | Should -Contain 'WithoutTagCount'
+        $result.PSObject.Properties.Name | Should -Contain 'CsvPath'
+        $result.PSObject.Properties.Name | Should -Contain 'JsonPath'
+        $result.PSObject.Properties.Name | Should -Contain 'CanonicalCsvPath'
+        $result.PSObject.Properties.Name | Should -Contain 'ReadmePath'
+        $result.PSObject.Properties.Name | Should -Contain 'Clusters'
+        $result.PSObject.Properties.Name | Should -Contain 'UpdateRingDistribution'
+        $result.ClusterCount    | Should -Be 4
+        $result.WithTagCount    | Should -Be 3
+        $result.WithoutTagCount | Should -Be 1
+    }
+
+    It 'Writes timestamped CSV, JSON, canonical CSV, and README to the output dir' {
+        $global:_inv_payload = @{ Inventory = $script:_inv_fleet; Params = @{ OutputDirectory = $script:_inv_outDir; PassThru = $true; Timestamp = [datetime]'2099-01-02T03:04:05' } }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory {
+                if ($PSBoundParameters.ContainsKey('ExportPath') -and $PSBoundParameters['ExportPath']) {
+                    @($global:_inv_payload.Inventory) | Export-Csv -LiteralPath $PSBoundParameters['ExportPath'] -NoTypeInformation -Encoding UTF8
+                }
+                @($global:_inv_payload.Inventory)
+            }
+            $p = $global:_inv_payload.Params
+            Invoke-AzLocalClusterInventory @p
+        }
+        Test-Path -LiteralPath $result.CsvPath          | Should -BeTrue
+        Test-Path -LiteralPath $result.JsonPath         | Should -BeTrue
+        Test-Path -LiteralPath $result.CanonicalCsvPath | Should -BeTrue
+        Test-Path -LiteralPath $result.ReadmePath       | Should -BeTrue
+        # Filenames carry the explicit timestamp.
+        $result.CsvPath  | Should -Match 'ClusterInventory_20990102_030405\.csv$'
+        $result.JsonPath | Should -Match 'ClusterInventory_20990102_030405\.json$'
+        # Canonical CSV uses the well-known name expected by Step.2.
+        Split-Path -Path $result.CanonicalCsvPath -Leaf | Should -Be 'ClusterUpdateRings.csv'
+        # JSON round-trips back into the same shape.
+        $json = Get-Content -LiteralPath $result.JsonPath -Raw | ConvertFrom-Json
+        @($json).Count | Should -Be 4
+    }
+
+    It 'Empty fleet: writes header-only canonical CSV so Step.2 has a file to read' {
+        $global:_inv_payload = @{ Inventory = @(); Params = @{ OutputDirectory = $script:_inv_outDir; PassThru = $true } }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory { @() }
+            $p = $global:_inv_payload.Params
+            Invoke-AzLocalClusterInventory @p
+        }
+        $result.ClusterCount | Should -Be 0
+        Test-Path -LiteralPath $result.CanonicalCsvPath | Should -BeTrue
+        $canonical = Get-Content -LiteralPath $result.CanonicalCsvPath -Raw
+        $canonical | Should -Match 'ClusterName,ResourceGroup,SubscriptionId'
+        # No data rows beyond the header.
+        ($canonical -split "`n" | Where-Object { $_.Trim() }).Count | Should -Be 1
+    }
+
+    It 'GitHub host: writes step-summary markdown to GITHUB_STEP_SUMMARY and step outputs to GITHUB_OUTPUT' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_inv_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_inv_ghSummaryFile
+        $global:_inv_payload = @{ Inventory = $script:_inv_fleet; Params = @{ OutputDirectory = $script:_inv_outDir; PassThru = $true } }
+        [void](InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory {
+                if ($PSBoundParameters.ContainsKey('ExportPath') -and $PSBoundParameters['ExportPath']) {
+                    @($global:_inv_payload.Inventory) | Export-Csv -LiteralPath $PSBoundParameters['ExportPath'] -NoTypeInformation -Encoding UTF8
+                }
+                @($global:_inv_payload.Inventory)
+            }
+            $p = $global:_inv_payload.Params
+            Invoke-AzLocalClusterInventory @p
+        })
+        $summary = Get-Content -LiteralPath $script:_inv_ghSummaryFile -Raw
+        $summary | Should -Match '## Step\.1 - Cluster Inventory'
+        $summary | Should -Match '\| Total Clusters \| 4 \|'
+        $summary | Should -Match '\| With UpdateRing Tag \| 3 \|'
+        $summary | Should -Match '\| Without UpdateRing Tag \| 1 \|'
+        $summary | Should -Match '### UpdateRing Distribution'
+        $summary | Should -Match '\| Canary \| 1 \|'
+        $summary | Should -Match '\| Pilot \| 1 \|'
+        $summary | Should -Match '\| Production \| 1 \|'
+
+        $outputs = Get-Content -LiteralPath $script:_inv_ghOutputFile -Raw
+        $outputs | Should -Match 'cluster_count=4'
+        $outputs | Should -Match 'with_tag_count=3'
+        $outputs | Should -Match 'without_tag_count=1'
+        $outputs | Should -Match 'csv_path='
+    }
+
+    It 'AzureDevOps host: uses BUILD_ARTIFACTSTAGINGDIRECTORY for the default output dir and emits ##vso[task.setvariable]' {
+        $env:TF_BUILD                       = 'True'
+        $env:BUILD_ARTIFACTSTAGINGDIRECTORY = $script:_inv_adoStageDir
+        $global:_inv_payload = @{ Inventory = $script:_inv_fleet; Params = @{ PassThru = $true } }
+        $captured = & {
+            InModuleScope AzLocal.UpdateManagement {
+                Mock Get-AzLocalClusterInventory {
+                    if ($PSBoundParameters.ContainsKey('ExportPath') -and $PSBoundParameters['ExportPath']) {
+                        @($global:_inv_payload.Inventory) | Export-Csv -LiteralPath $PSBoundParameters['ExportPath'] -NoTypeInformation -Encoding UTF8
+                    }
+                    @($global:_inv_payload.Inventory)
+                }
+                $p = $global:_inv_payload.Params
+                Invoke-AzLocalClusterInventory @p
+            }
+        } *>&1
+        $joined = $captured -join "`n"
+        $joined | Should -Match '##vso\[task\.setvariable variable=cluster_count'
+        $joined | Should -Match '##vso\[task\.setvariable variable=with_tag_count'
+        $joined | Should -Match '##vso\[task\.setvariable variable=without_tag_count'
+        $joined | Should -Match '##vso\[task\.setvariable variable=csv_path'
+        # Default output dir on ADO is BUILD_ARTIFACTSTAGINGDIRECTORY itself.
+        Test-Path -LiteralPath (Join-Path $script:_inv_adoStageDir 'ClusterUpdateRings.csv')   | Should -BeTrue
+        Test-Path -LiteralPath (Join-Path $script:_inv_adoStageDir 'README_Instructions.txt')  | Should -BeTrue
+    }
+
+    It 'SubscriptionFilter is passed through as -SubscriptionId to Get-AzLocalClusterInventory' {
+        $global:_inv_payload = @{ Inventory = $script:_inv_fleet; Params = @{ OutputDirectory = $script:_inv_outDir; SubscriptionFilter = 'sub-xyz'; PassThru = $true } }
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory {
+                param($SubscriptionId, $ExportPath, [switch]$PassThru)
+                if ($ExportPath) {
+                    @($global:_inv_payload.Inventory) | Export-Csv -LiteralPath $ExportPath -NoTypeInformation -Encoding UTF8
+                }
+                @($global:_inv_payload.Inventory)
+            }
+            $p = $global:_inv_payload.Params
+            [void](Invoke-AzLocalClusterInventory @p)
+            Should -Invoke Get-AzLocalClusterInventory -Times 1 -Exactly -ParameterFilter { $SubscriptionId -eq 'sub-xyz' -and $PassThru }
+        }
+    }
+
+    It 'UpdateRing distribution is sorted by name and excludes empty rings' {
+        $global:_inv_payload = @{ Inventory = $script:_inv_fleet; Params = @{ OutputDirectory = $script:_inv_outDir; PassThru = $true } }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory {
+                if ($PSBoundParameters.ContainsKey('ExportPath') -and $PSBoundParameters['ExportPath']) {
+                    @($global:_inv_payload.Inventory) | Export-Csv -LiteralPath $PSBoundParameters['ExportPath'] -NoTypeInformation -Encoding UTF8
+                }
+                @($global:_inv_payload.Inventory)
+            }
+            $p = $global:_inv_payload.Params
+            Invoke-AzLocalClusterInventory @p
+        }
+        $names = @($result.UpdateRingDistribution | ForEach-Object { $_.Name })
+        $names.Count | Should -Be 3
+        $names       | Should -Be @('Canary', 'Pilot', 'Production')
+        # 'delta' had no UpdateRing - it must NOT appear in the distribution.
+        $names       | Should -Not -Contain ''
+    }
+
+    It 'Single-cluster fleet: counts are 1 / 0 or 1 / 1, no array-shape collapse' {
+        $singleTagged = @(
+            [pscustomobject]@{ ClusterName = 'only-one'; ResourceGroup = 'rg'; SubscriptionId = 's'; SubscriptionName = 'S'; UpdateRing = 'Wave1'; HasUpdateRingTag = 'Yes'; UpdateStartWindow = ''; UpdateExclusions = ''; UpdateSideloaded = ''; UpdateVersionInProgress = ''; ResourceId = '/r' }
+        )
+        $global:_inv_payload = @{ Inventory = $singleTagged; Params = @{ OutputDirectory = $script:_inv_outDir; PassThru = $true } }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory {
+                if ($PSBoundParameters.ContainsKey('ExportPath') -and $PSBoundParameters['ExportPath']) {
+                    @($global:_inv_payload.Inventory) | Export-Csv -LiteralPath $PSBoundParameters['ExportPath'] -NoTypeInformation -Encoding UTF8
+                }
+                @($global:_inv_payload.Inventory)
+            }
+            $p = $global:_inv_payload.Params
+            Invoke-AzLocalClusterInventory @p
+        }
+        $result.ClusterCount    | Should -Be 1
+        $result.WithTagCount    | Should -Be 1
+        $result.WithoutTagCount | Should -Be 0
+        @($result.UpdateRingDistribution).Count | Should -Be 1
+    }
+}
+
+#endregion v0.8.5: Invoke-AzLocalClusterInventory
+
+#region v0.8.5: Set-AzLocalClusterUpdateRingTagFromCsv (Step.2 thin-YAML port)
+
+Describe 'Thin-YAML Step.2: Set-AzLocalClusterUpdateRingTagFromCsv' {
+
+    BeforeEach {
+        $script:_s2_savedGhActions = $env:GITHUB_ACTIONS
+        $script:_s2_savedTfBuild   = $env:TF_BUILD
+        $script:_s2_savedGhOutput  = $env:GITHUB_OUTPUT
+        $script:_s2_savedGhSummary = $env:GITHUB_STEP_SUMMARY
+        $script:_s2_savedAdoStage  = $env:BUILD_ARTIFACTSTAGINGDIRECTORY
+        Remove-Item Env:\GITHUB_ACTIONS                  -ErrorAction SilentlyContinue
+        Remove-Item Env:\TF_BUILD                        -ErrorAction SilentlyContinue
+        Remove-Item Env:\GITHUB_OUTPUT                   -ErrorAction SilentlyContinue
+        Remove-Item Env:\GITHUB_STEP_SUMMARY             -ErrorAction SilentlyContinue
+        Remove-Item Env:\BUILD_ARTIFACTSTAGINGDIRECTORY  -ErrorAction SilentlyContinue
+
+        $script:_s2_ghOutputFile  = Join-Path -Path $env:TEMP -ChildPath ("s2-gh-output-{0}"  -f ([Guid]::NewGuid()))
+        $script:_s2_ghSummaryFile = Join-Path -Path $env:TEMP -ChildPath ("s2-gh-summary-{0}.md" -f ([Guid]::NewGuid()))
+        $script:_s2_adoStageDir   = Join-Path -Path $env:TEMP -ChildPath ("s2-ado-stage-{0}" -f ([Guid]::NewGuid()))
+        $script:_s2_outDir        = Join-Path -Path $env:TEMP -ChildPath ("s2-out-{0}"       -f ([Guid]::NewGuid()))
+        $script:_s2_csvDir        = Join-Path -Path $env:TEMP -ChildPath ("s2-csv-{0}"       -f ([Guid]::NewGuid()))
+        New-Item -ItemType File      -Path $script:_s2_ghOutputFile  -Force | Out-Null
+        New-Item -ItemType File      -Path $script:_s2_ghSummaryFile -Force | Out-Null
+        New-Item -ItemType Directory -Path $script:_s2_adoStageDir   -Force | Out-Null
+        New-Item -ItemType Directory -Path $script:_s2_outDir        -Force | Out-Null
+        New-Item -ItemType Directory -Path $script:_s2_csvDir        -Force | Out-Null
+
+        # Synthetic CSV: three rows, two with UpdateRing values, one blank (skipped).
+        $script:_s2_csvPath = Join-Path -Path $script:_s2_csvDir -ChildPath 'ClusterUpdateRings.csv'
+        @"
+ClusterName,ResourceGroup,SubscriptionId,UpdateRing,ResourceId
+alpha,rg1,s1,Canary,/subscriptions/s1/resourceGroups/rg1/providers/Microsoft.AzureStackHCI/clusters/alpha
+beta,rg2,s1,Production,/subscriptions/s1/resourceGroups/rg2/providers/Microsoft.AzureStackHCI/clusters/beta
+gamma,rg3,s1,,/subscriptions/s1/resourceGroups/rg3/providers/Microsoft.AzureStackHCI/clusters/gamma
+"@ | Set-Content -LiteralPath $script:_s2_csvPath -Encoding UTF8
+
+        # Default mock results: 1 created, 1 already-in-sync.
+        $script:_s2_results = @(
+            [pscustomobject]@{ ClusterName = 'alpha'; Action = 'Created'; PreviousTagValue = ''; NewTagValue = 'Canary';     Status = 'Success';       Message = 'Tag created' }
+            [pscustomobject]@{ ClusterName = 'beta';  Action = 'NoChange'; PreviousTagValue = 'Production'; NewTagValue = 'Production'; Status = 'AlreadyInSync'; Message = 'Already in sync' }
+        )
+    }
+
+    AfterEach {
+        if ($null -ne $script:_s2_savedGhActions)  { $env:GITHUB_ACTIONS                  = $script:_s2_savedGhActions } else { Remove-Item Env:\GITHUB_ACTIONS                 -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_s2_savedTfBuild)    { $env:TF_BUILD                        = $script:_s2_savedTfBuild   } else { Remove-Item Env:\TF_BUILD                       -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_s2_savedGhOutput)   { $env:GITHUB_OUTPUT                   = $script:_s2_savedGhOutput  } else { Remove-Item Env:\GITHUB_OUTPUT                  -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_s2_savedGhSummary)  { $env:GITHUB_STEP_SUMMARY             = $script:_s2_savedGhSummary } else { Remove-Item Env:\GITHUB_STEP_SUMMARY            -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_s2_savedAdoStage)   { $env:BUILD_ARTIFACTSTAGINGDIRECTORY  = $script:_s2_savedAdoStage  } else { Remove-Item Env:\BUILD_ARTIFACTSTAGINGDIRECTORY -ErrorAction SilentlyContinue }
+        foreach ($p in @($script:_s2_ghOutputFile, $script:_s2_ghSummaryFile)) {
+            if ($p -and (Test-Path -LiteralPath $p)) { Remove-Item -LiteralPath $p -Force -ErrorAction SilentlyContinue }
+        }
+        foreach ($d in @($script:_s2_adoStageDir, $script:_s2_outDir, $script:_s2_csvDir)) {
+            if ($d -and (Test-Path -LiteralPath $d)) { Remove-Item -LiteralPath $d -Recurse -Force -ErrorAction SilentlyContinue }
+        }
+    }
+
+    It 'PassThru returns counts + ResultsJsonPath + Results' {
+        $global:_s2_payload = @{ Results = $script:_s2_results; Params = @{ InputCsvPath = $script:_s2_csvPath; OutputDirectory = $script:_s2_outDir; PassThru = $true } }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Set-AzLocalClusterUpdateRingTag { @($global:_s2_payload.Results) }
+            $p = $global:_s2_payload.Params
+            Set-AzLocalClusterUpdateRingTagFromCsv @p
+        }
+        $result                       | Should -Not -BeNullOrEmpty
+        $result.TotalCount            | Should -Be 2
+        $result.CreatedCount          | Should -Be 1
+        $result.AlreadyInSyncCount    | Should -Be 1
+        $result.UpdatedCount          | Should -Be 0
+        $result.SkippedCount          | Should -Be 0
+        $result.FailedCount           | Should -Be 0
+        $result.WhatIfCount           | Should -Be 0
+        $result.ResultsJsonPath       | Should -Match 'UpdateRingTag_Results\.json$'
+        @($result.Results).Count      | Should -Be 2
+    }
+
+    It 'Writes UpdateRingTag_Results.json sidecar with per-cluster rows' {
+        $global:_s2_payload = @{ Results = $script:_s2_results; Params = @{ InputCsvPath = $script:_s2_csvPath; OutputDirectory = $script:_s2_outDir; PassThru = $true } }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Set-AzLocalClusterUpdateRingTag { @($global:_s2_payload.Results) }
+            $p = $global:_s2_payload.Params
+            Set-AzLocalClusterUpdateRingTagFromCsv @p
+        }
+        Test-Path -LiteralPath $result.ResultsJsonPath | Should -BeTrue
+        $sidecar = Get-Content -Raw -LiteralPath $result.ResultsJsonPath | ConvertFrom-Json
+        @($sidecar).Count            | Should -Be 2
+        @($sidecar)[0].ClusterName   | Should -Be 'alpha'
+        @($sidecar)[0].Action        | Should -Be 'Created'
+        @($sidecar)[1].Status        | Should -Be 'AlreadyInSync'
+    }
+
+    It 'Empty results array still writes a valid empty JSON sidecar' {
+        $global:_s2_payload = @{ Results = @(); Params = @{ InputCsvPath = $script:_s2_csvPath; OutputDirectory = $script:_s2_outDir; PassThru = $true } }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Set-AzLocalClusterUpdateRingTag { @() }
+            $p = $global:_s2_payload.Params
+            Set-AzLocalClusterUpdateRingTagFromCsv @p
+        }
+        $result.TotalCount | Should -Be 0
+        Test-Path -LiteralPath $result.ResultsJsonPath | Should -BeTrue
+        $parsed = Get-Content -Raw -LiteralPath $result.ResultsJsonPath | ConvertFrom-Json
+        @($parsed).Count | Should -Be 0
+    }
+
+    It 'Throws with operator-recovery guidance when CSV path does not exist' {
+        $missingPath = Join-Path -Path $script:_s2_csvDir -ChildPath 'does-not-exist.csv'
+        InModuleScope AzLocal.UpdateManagement -Parameters @{ MissingPath = $missingPath; OutDir = $script:_s2_outDir } {
+            param($MissingPath, $OutDir)
+            { Set-AzLocalClusterUpdateRingTagFromCsv -InputCsvPath $MissingPath -OutputDirectory $OutDir } |
+                Should -Throw -ExpectedMessage "*CSV file not found at path: $MissingPath*"
+        }
+    }
+
+    It 'Throws when CSV is missing required UpdateRing column' {
+        $badCsv = Join-Path -Path $script:_s2_csvDir -ChildPath 'missing-column.csv'
+        "ClusterName,ResourceId`r`nalpha,/subscriptions/s1/resourceGroups/rg1/providers/Microsoft.AzureStackHCI/clusters/alpha" |
+            Set-Content -LiteralPath $badCsv -Encoding UTF8
+        InModuleScope AzLocal.UpdateManagement -Parameters @{ BadCsv = $badCsv; OutDir = $script:_s2_outDir } {
+            param($BadCsv, $OutDir)
+            { Set-AzLocalClusterUpdateRingTagFromCsv -InputCsvPath $BadCsv -OutputDirectory $OutDir } |
+                Should -Throw -ExpectedMessage "*Required column 'UpdateRing' not found*"
+        }
+    }
+
+    It 'Throws when CSV has zero rows with UpdateRing values set' {
+        $blankCsv = Join-Path -Path $script:_s2_csvDir -ChildPath 'all-blank.csv'
+        @"
+ClusterName,ResourceId,UpdateRing
+alpha,/subscriptions/s1/resourceGroups/rg1/providers/Microsoft.AzureStackHCI/clusters/alpha,
+beta,/subscriptions/s1/resourceGroups/rg2/providers/Microsoft.AzureStackHCI/clusters/beta,
+"@ | Set-Content -LiteralPath $blankCsv -Encoding UTF8
+        InModuleScope AzLocal.UpdateManagement -Parameters @{ BlankCsv = $blankCsv; OutDir = $script:_s2_outDir } {
+            param($BlankCsv, $OutDir)
+            { Set-AzLocalClusterUpdateRingTagFromCsv -InputCsvPath $BlankCsv -OutputDirectory $OutDir } |
+                Should -Throw -ExpectedMessage '*No rows have UpdateRing values set*'
+        }
+    }
+
+    It 'Emits GitHub Actions step outputs and step summary when GITHUB_ACTIONS=true' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s2_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s2_ghSummaryFile
+        $global:_s2_payload = @{ Results = $script:_s2_results; Params = @{ InputCsvPath = $script:_s2_csvPath; OutputDirectory = $script:_s2_outDir; PassThru = $true } }
+        [void](InModuleScope AzLocal.UpdateManagement {
+            Mock Set-AzLocalClusterUpdateRingTag { @($global:_s2_payload.Results) }
+            $p = $global:_s2_payload.Params
+            Set-AzLocalClusterUpdateRingTagFromCsv @p
+        })
+        $outputs = Get-Content -LiteralPath $script:_s2_ghOutputFile -Raw
+        $outputs | Should -Match 'total_count=2'
+        $outputs | Should -Match 'created_count=1'
+        $outputs | Should -Match 'already_in_sync_count=1'
+        $outputs | Should -Match 'results_json_path='
+        $summary = Get-Content -LiteralPath $script:_s2_ghSummaryFile -Raw
+        $summary | Should -Match '## Step\.2 - UpdateRing Tag Management Summary'
+        $summary | Should -Match '\| Total clusters processed \| 2 \|'
+        $summary | Should -Match 'alpha'
+        $summary | Should -Match 'Per-cluster results'
+    }
+
+    It 'Defaults OutputDirectory to BUILD_ARTIFACTSTAGINGDIRECTORY when TF_BUILD=true' {
+        $env:TF_BUILD = 'true'
+        $env:BUILD_ARTIFACTSTAGINGDIRECTORY = $script:_s2_adoStageDir
+        $global:_s2_payload = @{ Results = $script:_s2_results; Params = @{ InputCsvPath = $script:_s2_csvPath; PassThru = $true } }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Set-AzLocalClusterUpdateRingTag { @($global:_s2_payload.Results) }
+            $p = $global:_s2_payload.Params
+            Set-AzLocalClusterUpdateRingTagFromCsv @p
+        }
+        $result.ResultsJsonPath | Should -Be (Join-Path -Path $script:_s2_adoStageDir -ChildPath 'UpdateRingTag_Results.json')
+        Test-Path -LiteralPath $result.ResultsJsonPath | Should -BeTrue
+    }
+
+    It 'Propagates -Force to Set-AzLocalClusterUpdateRingTag' {
+        $global:_s2_payload = @{ Results = $script:_s2_results; Params = @{ InputCsvPath = $script:_s2_csvPath; OutputDirectory = $script:_s2_outDir; Force = $true; PassThru = $true } }
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Set-AzLocalClusterUpdateRingTag { @($global:_s2_payload.Results) }
+            $p = $global:_s2_payload.Params
+            [void](Set-AzLocalClusterUpdateRingTagFromCsv @p)
+            Should -Invoke Set-AzLocalClusterUpdateRingTag -Times 1 -Exactly -ParameterFilter { $Force -eq $true -and $PassThru }
+        }
+    }
+
+    It 'Propagates -WhatIf to Set-AzLocalClusterUpdateRingTag (dry-run preview)' {
+        $whatIfResults = @(
+            [pscustomobject]@{ ClusterName = 'alpha'; Action = 'Created'; PreviousTagValue = ''; NewTagValue = 'Canary';     Status = 'WhatIf'; Message = 'Would create' }
+            [pscustomobject]@{ ClusterName = 'beta';  Action = 'Updated'; PreviousTagValue = 'Pilot'; NewTagValue = 'Production'; Status = 'WhatIf'; Message = 'Would update' }
+        )
+        $global:_s2_payload = @{ Results = $whatIfResults; Params = @{ InputCsvPath = $script:_s2_csvPath; OutputDirectory = $script:_s2_outDir; WhatIf = $true; PassThru = $true } }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Set-AzLocalClusterUpdateRingTag { @($global:_s2_payload.Results) }
+            $p = $global:_s2_payload.Params
+            Set-AzLocalClusterUpdateRingTagFromCsv @p
+        }
+        $result.WhatIfCount | Should -Be 2
+        $result.CreatedCount | Should -Be 0
+        $result.UpdatedCount | Should -Be 0
+    }
+
+    It 'Tallies failed + skipped + updated counts independently' {
+        $mixed = @(
+            [pscustomobject]@{ ClusterName = 'a'; Action = 'Created';  PreviousTagValue = '';      NewTagValue = 'R1'; Status = 'Success';       Message = 'ok' }
+            [pscustomobject]@{ ClusterName = 'b'; Action = 'Updated';  PreviousTagValue = 'R0';    NewTagValue = 'R1'; Status = 'Success';       Message = 'ok' }
+            [pscustomobject]@{ ClusterName = 'c'; Action = 'NoChange'; PreviousTagValue = 'R1';    NewTagValue = 'R1'; Status = 'AlreadyInSync'; Message = 'ok' }
+            [pscustomobject]@{ ClusterName = 'd'; Action = 'Skipped';  PreviousTagValue = 'R2';    NewTagValue = 'R1'; Status = 'Skipped';       Message = 'no force' }
+            [pscustomobject]@{ ClusterName = 'e'; Action = 'Created';  PreviousTagValue = '';      NewTagValue = 'R1'; Status = 'Failed';        Message = 'rbac denied' }
+        )
+        $global:_s2_payload = @{ Results = $mixed; Params = @{ InputCsvPath = $script:_s2_csvPath; OutputDirectory = $script:_s2_outDir; PassThru = $true } }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Set-AzLocalClusterUpdateRingTag { @($global:_s2_payload.Results) }
+            $p = $global:_s2_payload.Params
+            Set-AzLocalClusterUpdateRingTagFromCsv @p
+        }
+        $result.TotalCount         | Should -Be 5
+        $result.CreatedCount       | Should -Be 1
+        $result.UpdatedCount       | Should -Be 1
+        $result.AlreadyInSyncCount | Should -Be 1
+        $result.SkippedCount       | Should -Be 1
+        $result.FailedCount        | Should -Be 1
+    }
+}
+
+#endregion v0.8.5: Set-AzLocalClusterUpdateRingTagFromCsv
+
+
+
+#region v0.8.5: Export-AzLocalUpdateRunMonitorReport (Step.7 thin-YAML port)
+
+Describe 'Thin-YAML Step.7: Export-AzLocalUpdateRunMonitorReport' {
+
+    BeforeEach {
+        $script:_s7_savedGhActions = $env:GITHUB_ACTIONS
+        $script:_s7_savedTfBuild   = $env:TF_BUILD
+        $script:_s7_savedGhOutput  = $env:GITHUB_OUTPUT
+        $script:_s7_savedGhSummary = $env:GITHUB_STEP_SUMMARY
+        $script:_s7_savedAdoStage  = $env:BUILD_ARTIFACTSTAGINGDIRECTORY
+        Remove-Item Env:\GITHUB_ACTIONS                 -ErrorAction SilentlyContinue
+        Remove-Item Env:\TF_BUILD                       -ErrorAction SilentlyContinue
+        Remove-Item Env:\GITHUB_OUTPUT                  -ErrorAction SilentlyContinue
+        Remove-Item Env:\GITHUB_STEP_SUMMARY            -ErrorAction SilentlyContinue
+        Remove-Item Env:\BUILD_ARTIFACTSTAGINGDIRECTORY -ErrorAction SilentlyContinue
+
+        $script:_s7_outDir        = Join-Path -Path $env:TEMP -ChildPath ("s7-out-{0}"        -f ([Guid]::NewGuid()))
+        $script:_s7_ghOutputFile  = Join-Path -Path $env:TEMP -ChildPath ("s7-gh-output-{0}"  -f ([Guid]::NewGuid()))
+        $script:_s7_ghSummaryFile = Join-Path -Path $env:TEMP -ChildPath ("s7-gh-summary-{0}.md" -f ([Guid]::NewGuid()))
+        New-Item -ItemType Directory -Path $script:_s7_outDir       -Force | Out-Null
+        New-Item -ItemType File      -Path $script:_s7_ghOutputFile  -Force | Out-Null
+        New-Item -ItemType File      -Path $script:_s7_ghSummaryFile -Force | Out-Null
+
+        # Deterministic snapshot time for elapsed comparisons.
+        $script:_s7_now = [datetime]::SpecifyKind([datetime]'2026-06-10T12:00:00', [DateTimeKind]::Utc)
+
+        # Default inventory: three clusters.
+        $script:_s7_inventory = @(
+            [pscustomobject]@{ ClusterName = 'alpha'; ResourceId = '/subscriptions/s1/resourceGroups/rg1/providers/Microsoft.AzureStackHCI/clusters/alpha' }
+            [pscustomobject]@{ ClusterName = 'beta';  ResourceId = '/subscriptions/s1/resourceGroups/rg2/providers/Microsoft.AzureStackHCI/clusters/beta'  }
+            [pscustomobject]@{ ClusterName = 'gamma'; ResourceId = '/subscriptions/s1/resourceGroups/rg3/providers/Microsoft.AzureStackHCI/clusters/gamma' }
+        )
+    }
+
+    AfterEach {
+        if ($null -ne $script:_s7_savedGhActions) { $env:GITHUB_ACTIONS                 = $script:_s7_savedGhActions } else { Remove-Item Env:\GITHUB_ACTIONS                 -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_s7_savedTfBuild)   { $env:TF_BUILD                       = $script:_s7_savedTfBuild   } else { Remove-Item Env:\TF_BUILD                       -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_s7_savedGhOutput)  { $env:GITHUB_OUTPUT                  = $script:_s7_savedGhOutput  } else { Remove-Item Env:\GITHUB_OUTPUT                  -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_s7_savedGhSummary) { $env:GITHUB_STEP_SUMMARY            = $script:_s7_savedGhSummary } else { Remove-Item Env:\GITHUB_STEP_SUMMARY            -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_s7_savedAdoStage)  { $env:BUILD_ARTIFACTSTAGINGDIRECTORY = $script:_s7_savedAdoStage  } else { Remove-Item Env:\BUILD_ARTIFACTSTAGINGDIRECTORY -ErrorAction SilentlyContinue }
+        foreach ($p in @($script:_s7_ghOutputFile, $script:_s7_ghSummaryFile)) {
+            if ($p -and (Test-Path -LiteralPath $p)) { Remove-Item -LiteralPath $p -Force -ErrorAction SilentlyContinue }
+        }
+        if ($script:_s7_outDir -and (Test-Path -LiteralPath $script:_s7_outDir)) {
+            Remove-Item -LiteralPath $script:_s7_outDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'Empty fleet emits all-zero step outputs, empty CSV + JUnit, and idle status badge' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s7_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s7_ghSummaryFile
+        $global:_s7_payload = @{ Inventory = @(); Runs = @(); Now = $script:_s7_now; OutDir = $script:_s7_outDir }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory { @($global:_s7_payload.Inventory) }
+            Mock Get-AzLocalUpdateRuns       { @($global:_s7_payload.Runs) }
+            Export-AzLocalUpdateRunMonitorReport -OutputDirectory $global:_s7_payload.OutDir -Now $global:_s7_payload.Now -PassThru
+        }
+        $result.InFlightCount          | Should -Be 0
+        $result.LongRunningCount       | Should -Be 0
+        $result.LongRunningStepCount   | Should -Be 0
+        $result.StepErroredCount       | Should -Be 0
+        $result.UnresolvedFailureCount | Should -Be 0
+        $result.RecentFailureCount     | Should -Be 0
+        @($result.Rows).Count          | Should -Be 0
+        Test-Path -LiteralPath $result.CsvPath | Should -BeTrue
+        Test-Path -LiteralPath $result.XmlPath | Should -BeTrue
+        $outputs = Get-Content -Raw -LiteralPath $script:_s7_ghOutputFile
+        $outputs | Should -Match 'in_flight=0'
+        $outputs | Should -Match 'long_running=0'
+        $outputs | Should -Match 'long_running_step=0'
+        $outputs | Should -Match 'step_errored=0'
+        $outputs | Should -Match 'recent_failures=0'
+        $outputs | Should -Match 'unresolved_failures=0'
+        $summary = Get-Content -Raw -LiteralPath $script:_s7_ghSummaryFile
+        $summary | Should -Match 'Fleet Status: IDLE'
+    }
+
+    It 'Single in-flight run within thresholds: InFlightCount=1, no warn/crit chips, status HEALTHY' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s7_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s7_ghSummaryFile
+        $runs = @(
+            [pscustomobject]@{
+                ClusterName       = 'alpha'
+                ClusterResourceId = $script:_s7_inventory[0].ResourceId
+                UpdateName        = '12.2509.1.21'
+                State             = 'InProgress'
+                Status            = 'InProgress'
+                CurrentStep       = 'Run Update Health Checks'
+                Progress          = '40%'
+                StartTime         = $script:_s7_now.AddMinutes(-30).ToString('yyyy-MM-ddTHH:mm:ss')   # 30m elapsed
+                StepStartTime     = $script:_s7_now.AddMinutes(-30).ToString('yyyy-MM-ddTHH:mm:ss')   # well within 2h
+                EndTime           = $null
+                RunId             = 'r1'
+                RunResourceId     = ($script:_s7_inventory[0].ResourceId + '/updates/12.2509.1.21/updateRuns/r1')
+            }
+        )
+        $global:_s7_payload = @{ Inventory = $script:_s7_inventory; Runs = $runs; Now = $script:_s7_now; OutDir = $script:_s7_outDir }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory { @($global:_s7_payload.Inventory) }
+            Mock Get-AzLocalUpdateRuns       { @($global:_s7_payload.Runs) }
+            Export-AzLocalUpdateRunMonitorReport -OutputDirectory $global:_s7_payload.OutDir -Now $global:_s7_payload.Now -PassThru
+        }
+        $result.InFlightCount        | Should -Be 1
+        $result.LongRunningCount     | Should -Be 0
+        $result.LongRunningStepCount | Should -Be 0
+        $result.StepErroredCount     | Should -Be 0
+        $row = @($result.Rows)[0]
+        $row.State                | Should -Be 'InProgress'
+        $row.StepSeverity         | Should -Be 'none'
+        $row.RunSeverity          | Should -Be 'none'
+        $row.Flags                | Should -Be 'within'
+        $row.ExceedsThreshold     | Should -BeFalse
+        $row.ExceedsStepThreshold | Should -BeFalse
+        $summary = Get-Content -Raw -LiteralPath $script:_s7_ghSummaryFile
+        $summary | Should -Match 'Fleet Status: HEALTHY'
+        $outputs = Get-Content -Raw -LiteralPath $script:_s7_ghOutputFile
+        $outputs | Should -Match 'in_flight=1'
+    }
+
+    It 'Per-step warn: step elapsed > LongRunningStepHours flags warn chip and LongRunningStepCount=1' {
+        $runs = @(
+            [pscustomobject]@{
+                ClusterName       = 'beta'
+                ClusterResourceId = $script:_s7_inventory[1].ResourceId
+                UpdateName        = '12.2509.1.21'
+                State             = 'InProgress'
+                Status            = 'InProgress'
+                CurrentStep       = 'Update Node 2'
+                Progress          = '60%'
+                StartTime         = $script:_s7_now.AddHours(-4).ToString('yyyy-MM-ddTHH:mm:ss')      # 4h overall (within 24h backstop)
+                StepStartTime     = $script:_s7_now.AddHours(-3).ToString('yyyy-MM-ddTHH:mm:ss')      # 3h step elapsed (> 2h warn, < 4h crit)
+                EndTime           = $null
+                RunId             = 'r2'
+                RunResourceId     = ($script:_s7_inventory[1].ResourceId + '/updates/12.2509.1.21/updateRuns/r2')
+            }
+        )
+        $global:_s7_payload = @{ Inventory = $script:_s7_inventory; Runs = $runs; Now = $script:_s7_now; OutDir = $script:_s7_outDir }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory { @($global:_s7_payload.Inventory) }
+            Mock Get-AzLocalUpdateRuns       { @($global:_s7_payload.Runs) }
+            Export-AzLocalUpdateRunMonitorReport -OutputDirectory $global:_s7_payload.OutDir -Now $global:_s7_payload.Now -LongRunningStepHours 2 -LongRunningThresholdHours 24 -PassThru
+        }
+        $result.InFlightCount        | Should -Be 1
+        $result.LongRunningStepCount | Should -Be 1
+        $result.LongRunningCount     | Should -Be 0
+        $row = @($result.Rows)[0]
+        $row.ExceedsStepThreshold | Should -BeTrue
+        $row.ExceedsThreshold     | Should -BeFalse
+        $row.StepSeverity         | Should -Be 'warn'
+        $row.RunSeverity          | Should -Be 'none'
+        $row.Flags                | Should -Match 'step >2h'
+    }
+
+    It 'Step error (progressStatus=Error while State=InProgress): StepErroredCount=1, severity score elevated' {
+        $runs = @(
+            [pscustomobject]@{
+                ClusterName       = 'gamma'
+                ClusterResourceId = $script:_s7_inventory[2].ResourceId
+                UpdateName        = '12.2509.1.21'
+                State             = 'InProgress'
+                Status            = 'Error'                                          # stuck step
+                CurrentStep       = 'Run Pre Update Validation'
+                Progress          = '15%'
+                StartTime         = $script:_s7_now.AddHours(-1).ToString('yyyy-MM-ddTHH:mm:ss')
+                StepStartTime     = $script:_s7_now.AddMinutes(-30).ToString('yyyy-MM-ddTHH:mm:ss')
+                EndTime           = $null
+                RunId             = 'r3'
+                RunResourceId     = ($script:_s7_inventory[2].ResourceId + '/updates/12.2509.1.21/updateRuns/r3')
+                ErrorMessage      = 'Health check NetworkATC.SwitchEmbeddedTeaming failed.'
+            }
+        )
+        $global:_s7_payload = @{ Inventory = $script:_s7_inventory; Runs = $runs; Now = $script:_s7_now; OutDir = $script:_s7_outDir }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory { @($global:_s7_payload.Inventory) }
+            Mock Get-AzLocalUpdateRuns       { @($global:_s7_payload.Runs) }
+            Export-AzLocalUpdateRunMonitorReport -OutputDirectory $global:_s7_payload.OutDir -Now $global:_s7_payload.Now -PassThru
+        }
+        $result.InFlightCount    | Should -Be 1
+        $result.StepErroredCount | Should -Be 1
+        $row = @($result.Rows)[0]
+        $row.HasStepError | Should -BeTrue
+        $row.Flags        | Should -Match 'step errored'
+        $row.SeverityScore | Should -BeGreaterThan 999
+        $xml = [xml](Get-Content -Raw -LiteralPath $result.XmlPath)
+        $failedCases = @($xml.SelectNodes('//testcase[failure]'))
+        $failedCases.Count | Should -BeGreaterOrEqual 1
+        $failedCases[0].failure.type | Should -Be 'StepError'
+    }
+
+    It 'Unresolved failure (latest run is Failed) surfaces in UnresolvedFailureCount and JUnit' {
+        $runs = @(
+            [pscustomobject]@{
+                ClusterName       = 'alpha'
+                ClusterResourceId = $script:_s7_inventory[0].ResourceId
+                UpdateName        = '12.2509.1.21'
+                State             = 'Failed'
+                Status            = 'Error'
+                CurrentStep       = 'Restart Cluster Node'
+                Progress          = ''
+                StartTime         = $script:_s7_now.AddHours(-10).ToString('yyyy-MM-ddTHH:mm:ss')
+                StepStartTime     = $script:_s7_now.AddHours(-9).ToString('yyyy-MM-ddTHH:mm:ss')
+                EndTime           = $script:_s7_now.AddHours(-8).ToString('yyyy-MM-ddTHH:mm:ss')      # 8h ago - within 24h recent window
+                RunId             = 'r4'
+                RunResourceId     = ($script:_s7_inventory[0].ResourceId + '/updates/12.2509.1.21/updateRuns/r4')
+                ErrorMessage      = 'Node failed to restart within timeout.'
+                CurrentStepDetail = 'Step failed.'
+            }
+        )
+        $global:_s7_payload = @{ Inventory = $script:_s7_inventory; Runs = $runs; Now = $script:_s7_now; OutDir = $script:_s7_outDir }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory { @($global:_s7_payload.Inventory) }
+            Mock Get-AzLocalUpdateRuns       { @($global:_s7_payload.Runs) }
+            Export-AzLocalUpdateRunMonitorReport -OutputDirectory $global:_s7_payload.OutDir -Now $global:_s7_payload.Now -PassThru
+        }
+        $result.InFlightCount          | Should -Be 0
+        $result.UnresolvedFailureCount | Should -Be 1
+        $result.RecentFailureCount     | Should -Be 1
+        $row = @($result.Rows)[0]
+        $row.IsUnresolvedFailure | Should -BeTrue
+        $row.IsRecentFailure     | Should -BeTrue
+        $xml = [xml](Get-Content -Raw -LiteralPath $result.XmlPath)
+        $failedCases = @($xml.SelectNodes('//testcase[failure]'))
+        $failedCases.Count | Should -BeGreaterOrEqual 1
+        ($failedCases | ForEach-Object { $_.failure.type }) | Should -Contain 'RecentFailure'
+    }
+
+    It 'RecentFailureWindowHours=0 disables recent flag but unresolved still surfaces' {
+        $runs = @(
+            [pscustomobject]@{
+                ClusterName       = 'beta'
+                ClusterResourceId = $script:_s7_inventory[1].ResourceId
+                UpdateName        = '12.2509.1.21'
+                State             = 'Failed'
+                Status            = 'Error'
+                CurrentStep       = 'Apply Update'
+                Progress          = ''
+                StartTime         = $script:_s7_now.AddHours(-5).ToString('yyyy-MM-ddTHH:mm:ss')
+                StepStartTime     = $script:_s7_now.AddHours(-4).ToString('yyyy-MM-ddTHH:mm:ss')
+                EndTime           = $script:_s7_now.AddHours(-3).ToString('yyyy-MM-ddTHH:mm:ss')
+                RunId             = 'r5'
+                RunResourceId     = ($script:_s7_inventory[1].ResourceId + '/updates/12.2509.1.21/updateRuns/r5')
+                ErrorMessage      = 'CAU error.'
+                CurrentStepDetail = ''
+            }
+        )
+        $global:_s7_payload = @{ Inventory = $script:_s7_inventory; Runs = $runs; Now = $script:_s7_now; OutDir = $script:_s7_outDir }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory { @($global:_s7_payload.Inventory) }
+            Mock Get-AzLocalUpdateRuns       { @($global:_s7_payload.Runs) }
+            Export-AzLocalUpdateRunMonitorReport -OutputDirectory $global:_s7_payload.OutDir -Now $global:_s7_payload.Now -RecentFailureWindowHours 0 -PassThru
+        }
+        $result.UnresolvedFailureCount | Should -Be 1
+        $result.RecentFailureCount     | Should -Be 0
+        $row = @($result.Rows)[0]
+        $row.IsUnresolvedFailure | Should -BeTrue
+        $row.IsRecentFailure     | Should -BeFalse
+    }
+
+    It 'Scope=by-update-ring skips Get-AzLocalClusterInventory and queries by tag' {
+        $runs = @(
+            [pscustomobject]@{
+                ClusterName       = 'alpha'
+                ClusterResourceId = $script:_s7_inventory[0].ResourceId
+                UpdateName        = '12.2509.1.21'
+                State             = 'InProgress'
+                Status            = 'InProgress'
+                CurrentStep       = 'Apply Update'
+                Progress          = '50%'
+                StartTime         = $script:_s7_now.AddMinutes(-15).ToString('yyyy-MM-ddTHH:mm:ss')
+                StepStartTime     = $script:_s7_now.AddMinutes(-15).ToString('yyyy-MM-ddTHH:mm:ss')
+                EndTime           = $null
+                RunId             = 'r6'
+                RunResourceId     = ($script:_s7_inventory[0].ResourceId + '/updates/12.2509.1.21/updateRuns/r6')
+            }
+        )
+        $global:_s7_payload = @{ Inventory = $script:_s7_inventory; Runs = $runs; Now = $script:_s7_now; OutDir = $script:_s7_outDir }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory { throw 'Should NOT be called when Scope=by-update-ring' }
+            Mock Get-AzLocalUpdateRuns       { @($global:_s7_payload.Runs) } -ParameterFilter { $ScopeByUpdateRingTag -eq $true -and $UpdateRingValue -eq 'Canary' }
+            $r = Export-AzLocalUpdateRunMonitorReport -OutputDirectory $global:_s7_payload.OutDir -Now $global:_s7_payload.Now -Scope 'by-update-ring' -UpdateRing 'Canary' -PassThru
+            Should -Invoke Get-AzLocalClusterInventory -Times 0 -Exactly
+            Should -Invoke Get-AzLocalUpdateRuns       -Times 1 -Exactly -ParameterFilter { $ScopeByUpdateRingTag -eq $true -and $UpdateRingValue -eq 'Canary' }
+            $r
+        }
+        $result.InFlightCount | Should -Be 1
+    }
+
+    It 'CSV is sorted by SeverityScore descending (worst first), and contains all rows' {
+        $runs = @(
+            [pscustomobject]@{
+                ClusterName       = 'lowsev'
+                ClusterResourceId = $script:_s7_inventory[0].ResourceId
+                UpdateName        = 'U1'
+                State             = 'InProgress'
+                Status            = 'InProgress'
+                CurrentStep       = 'Init'
+                Progress          = '5%'
+                StartTime         = $script:_s7_now.AddMinutes(-10).ToString('yyyy-MM-ddTHH:mm:ss')
+                StepStartTime     = $script:_s7_now.AddMinutes(-10).ToString('yyyy-MM-ddTHH:mm:ss')
+                EndTime           = $null
+                RunId             = 'rA'
+                RunResourceId     = ($script:_s7_inventory[0].ResourceId + '/updates/U1/updateRuns/rA')
+            }
+            [pscustomobject]@{
+                ClusterName       = 'highsev'
+                ClusterResourceId = $script:_s7_inventory[1].ResourceId
+                UpdateName        = 'U2'
+                State             = 'InProgress'
+                Status            = 'Error'                                          # stuck step => 1000 + extras
+                CurrentStep       = 'Run Pre Update Validation'
+                Progress          = '10%'
+                StartTime         = $script:_s7_now.AddHours(-2).ToString('yyyy-MM-ddTHH:mm:ss')
+                StepStartTime     = $script:_s7_now.AddHours(-1).ToString('yyyy-MM-ddTHH:mm:ss')
+                EndTime           = $null
+                RunId             = 'rB'
+                RunResourceId     = ($script:_s7_inventory[1].ResourceId + '/updates/U2/updateRuns/rB')
+                ErrorMessage      = 'health check fail'
+            }
+        )
+        $global:_s7_payload = @{ Inventory = $script:_s7_inventory; Runs = $runs; Now = $script:_s7_now; OutDir = $script:_s7_outDir }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory { @($global:_s7_payload.Inventory) }
+            Mock Get-AzLocalUpdateRuns       { @($global:_s7_payload.Runs) }
+            Export-AzLocalUpdateRunMonitorReport -OutputDirectory $global:_s7_payload.OutDir -Now $global:_s7_payload.Now -PassThru
+        }
+        $csv = @(Import-Csv -LiteralPath $result.CsvPath)
+        $csv.Count                | Should -Be 2
+        $csv[0].ClusterName       | Should -Be 'highsev'     # higher SeverityScore first
+        $csv[1].ClusterName       | Should -Be 'lowsev'
+    }
+
+    It 'JUnit XML is well-formed and contains a testcase per in-flight + per unresolved failure' {
+        $runs = @(
+            [pscustomobject]@{
+                ClusterName       = 'alpha'
+                ClusterResourceId = $script:_s7_inventory[0].ResourceId
+                UpdateName        = 'U1'
+                State             = 'InProgress'
+                Status            = 'InProgress'
+                CurrentStep       = 'Apply Update'
+                Progress          = '40%'
+                StartTime         = $script:_s7_now.AddMinutes(-20).ToString('yyyy-MM-ddTHH:mm:ss')
+                StepStartTime     = $script:_s7_now.AddMinutes(-20).ToString('yyyy-MM-ddTHH:mm:ss')
+                EndTime           = $null
+                RunId             = 'rA'
+                RunResourceId     = ($script:_s7_inventory[0].ResourceId + '/updates/U1/updateRuns/rA')
+            }
+            [pscustomobject]@{
+                ClusterName       = 'beta'
+                ClusterResourceId = $script:_s7_inventory[1].ResourceId
+                UpdateName        = 'U1'
+                State             = 'Failed'
+                Status            = 'Error'
+                CurrentStep       = 'Apply Update'
+                Progress          = ''
+                StartTime         = $script:_s7_now.AddHours(-6).ToString('yyyy-MM-ddTHH:mm:ss')
+                StepStartTime     = $script:_s7_now.AddHours(-5).ToString('yyyy-MM-ddTHH:mm:ss')
+                EndTime           = $script:_s7_now.AddHours(-4).ToString('yyyy-MM-ddTHH:mm:ss')
+                RunId             = 'rB'
+                RunResourceId     = ($script:_s7_inventory[1].ResourceId + '/updates/U1/updateRuns/rB')
+                ErrorMessage      = 'CAU failure'
+            }
+        )
+        $global:_s7_payload = @{ Inventory = $script:_s7_inventory; Runs = $runs; Now = $script:_s7_now; OutDir = $script:_s7_outDir }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory { @($global:_s7_payload.Inventory) }
+            Mock Get-AzLocalUpdateRuns       { @($global:_s7_payload.Runs) }
+            Export-AzLocalUpdateRunMonitorReport -OutputDirectory $global:_s7_payload.OutDir -Now $global:_s7_payload.Now -PassThru
+        }
+        Test-Path -LiteralPath $result.XmlPath | Should -BeTrue
+        $xml = [xml](Get-Content -Raw -LiteralPath $result.XmlPath)
+        $cases = @($xml.SelectNodes('//testcase'))
+        $cases.Count | Should -Be 2
+        # The in-flight case must NOT have <failure> (within thresholds), the unresolved must HAVE one.
+        ($cases | Where-Object { $_.classname -eq 'UpdateMonitor' }).Count | Should -Be 2
+        $failed = @($cases | Where-Object { $_.failure })
+        $failed.Count | Should -Be 1
+        $failed[0].failure.type | Should -Be 'RecentFailure'
+    }
+
+    It 'Markdown step summary contains required headings, metric table, and footer module version' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s7_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s7_ghSummaryFile
+        $runs = @(
+            [pscustomobject]@{
+                ClusterName       = 'alpha'
+                ClusterResourceId = $script:_s7_inventory[0].ResourceId
+                UpdateName        = 'U1'
+                State             = 'InProgress'
+                Status            = 'InProgress'
+                CurrentStep       = 'Apply Update'
+                Progress          = '40%'
+                StartTime         = $script:_s7_now.AddMinutes(-20).ToString('yyyy-MM-ddTHH:mm:ss')
+                StepStartTime     = $script:_s7_now.AddMinutes(-20).ToString('yyyy-MM-ddTHH:mm:ss')
+                EndTime           = $null
+                RunId             = 'rA'
+                RunResourceId     = ($script:_s7_inventory[0].ResourceId + '/updates/U1/updateRuns/rA')
+            }
+        )
+        $global:_s7_payload = @{ Inventory = $script:_s7_inventory; Runs = $runs; Now = $script:_s7_now; OutDir = $script:_s7_outDir }
+        [void](InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory { @($global:_s7_payload.Inventory) }
+            Mock Get-AzLocalUpdateRuns       { @($global:_s7_payload.Runs) }
+            Export-AzLocalUpdateRunMonitorReport -OutputDirectory $global:_s7_payload.OutDir -Now $global:_s7_payload.Now -InstalledModuleVersion '0.8.5' -PassThru
+        })
+        $summary = Get-Content -Raw -LiteralPath $script:_s7_ghSummaryFile
+        $summary | Should -Match '## In-Flight Update Monitor'
+        $summary | Should -Match 'Fleet Status: HEALTHY'
+        $summary | Should -Match '\| Metric \| Count \|'
+        $summary | Should -Match '\| Update runs in flight \| 1 \|'
+        $summary | Should -Match '### In-flight runs'
+        $summary | Should -Match '_Generated by AzLocal.UpdateManagement v0\.8\.5\._'
+    }
+
+    It 'Defaults OutputDirectory to BUILD_ARTIFACTSTAGINGDIRECTORY when on Azure DevOps host' {
+        $adoStage = Join-Path -Path $env:TEMP -ChildPath ("s7-ado-stage-{0}" -f ([Guid]::NewGuid()))
+        New-Item -ItemType Directory -Path $adoStage -Force | Out-Null
+        try {
+            $env:TF_BUILD = 'true'
+            $env:BUILD_ARTIFACTSTAGINGDIRECTORY = $adoStage
+            $global:_s7_payload = @{ Inventory = @(); Runs = @(); Now = $script:_s7_now }
+            $result = InModuleScope AzLocal.UpdateManagement {
+                Mock Get-AzLocalClusterInventory { @($global:_s7_payload.Inventory) }
+                Mock Get-AzLocalUpdateRuns       { @($global:_s7_payload.Runs) }
+                Export-AzLocalUpdateRunMonitorReport -Now $global:_s7_payload.Now -PassThru
+            }
+            $result.CsvPath | Should -Be (Join-Path -Path $adoStage -ChildPath 'update-monitor.csv')
+            $result.XmlPath | Should -Be (Join-Path -Path $adoStage -ChildPath 'update-monitor.xml')
+        }
+        finally {
+            if (Test-Path -LiteralPath $adoStage) { Remove-Item -LiteralPath $adoStage -Recurse -Force -ErrorAction SilentlyContinue }
+        }
+    }
+
+    It 'In-flight runs table renders Cluster and Update cells as target=_blank links so they do NOT navigate away from the pipeline output' {
+        # Regression guard: the In-flight runs (and Failed runs) tables MUST
+        # render Cluster + Update cells as <a href="..." target="_blank"
+        # rel="noopener">...</a> so operators clicking through to the Azure
+        # portal from the pipeline run summary keep the pipeline tab open.
+        # The cmdlet honours both ClusterPortalUrl and UpdateRunPortalUrl - so
+        # both must be present on the source row AND surface in the rendered
+        # markdown summary.
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s7_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s7_ghSummaryFile
+        $runs = @(
+            [pscustomobject]@{
+                ClusterName       = 'alpha'
+                ClusterResourceId = $script:_s7_inventory[0].ResourceId
+                UpdateName        = '12.2509.1.21'
+                State             = 'InProgress'
+                Status            = 'InProgress'
+                CurrentStep       = 'Run Stage Cluster Update'
+                Progress          = '45%'
+                StartTime         = $script:_s7_now.AddHours(-3).ToString('yyyy-MM-ddTHH:mm:ss')
+                StepStartTime     = $script:_s7_now.AddMinutes(-45).ToString('yyyy-MM-ddTHH:mm:ss')
+                EndTime           = $null
+                RunId             = 'r-link'
+                RunResourceId     = ($script:_s7_inventory[0].ResourceId + '/updates/12.2509.1.21/updateRuns/r-link')
+            }
+        )
+        $global:_s7_payload = @{ Inventory = $script:_s7_inventory; Runs = $runs; Now = $script:_s7_now; OutDir = $script:_s7_outDir }
+        $null = InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory { @($global:_s7_payload.Inventory) }
+            Mock Get-AzLocalUpdateRuns       { @($global:_s7_payload.Runs) }
+            Export-AzLocalUpdateRunMonitorReport -OutputDirectory $global:_s7_payload.OutDir -Now $global:_s7_payload.Now -PassThru
+        }
+        $summary = Get-Content -Raw -LiteralPath $script:_s7_ghSummaryFile
+        $summary | Should -Match '### In-flight runs'
+        # Cluster cell renders as target=_blank link with rel=noopener
+        $summary | Should -Match '<a href="https://portal\.azure\.com/#@/resource[^"]*alpha[^"]*" target="_blank" rel="noopener">alpha</a>'
+        # Update cell renders as target=_blank link with rel=noopener
+        $summary | Should -Match '<a href="https://portal\.azure\.com/#view/Microsoft_AzureStackHCI_PortalExtension/SingleInstanceHistoryDetails[^"]*" target="_blank" rel="noopener">12\.2509\.1\.21</a>'
+    }
+}
+
+#endregion v0.8.5: Export-AzLocalUpdateRunMonitorReport
+
+#region v0.8.5: Export-AzLocalFleetUpdateStatusReport (Step.8 thin-YAML port)
+
+Describe 'Thin-YAML Step.8: Export-AzLocalFleetUpdateStatusReport' {
+
+    BeforeEach {
+        $script:_s8_savedGhActions = $env:GITHUB_ACTIONS
+        $script:_s8_savedTfBuild   = $env:TF_BUILD
+        $script:_s8_savedGhOutput  = $env:GITHUB_OUTPUT
+        $script:_s8_savedGhSummary = $env:GITHUB_STEP_SUMMARY
+        $script:_s8_savedAdoStage  = $env:BUILD_ARTIFACTSTAGINGDIRECTORY
+        Remove-Item Env:\GITHUB_ACTIONS                 -ErrorAction SilentlyContinue
+        Remove-Item Env:\TF_BUILD                       -ErrorAction SilentlyContinue
+        Remove-Item Env:\GITHUB_OUTPUT                  -ErrorAction SilentlyContinue
+        Remove-Item Env:\GITHUB_STEP_SUMMARY            -ErrorAction SilentlyContinue
+        Remove-Item Env:\BUILD_ARTIFACTSTAGINGDIRECTORY -ErrorAction SilentlyContinue
+
+        $script:_s8_outDir        = Join-Path -Path $env:TEMP -ChildPath ("s8-out-{0}"        -f ([Guid]::NewGuid()))
+        $script:_s8_ghOutputFile  = Join-Path -Path $env:TEMP -ChildPath ("s8-gh-output-{0}"  -f ([Guid]::NewGuid()))
+        $script:_s8_ghSummaryFile = Join-Path -Path $env:TEMP -ChildPath ("s8-gh-summary-{0}.md" -f ([Guid]::NewGuid()))
+        New-Item -ItemType Directory -Path $script:_s8_outDir       -Force | Out-Null
+        New-Item -ItemType File      -Path $script:_s8_ghOutputFile  -Force | Out-Null
+        New-Item -ItemType File      -Path $script:_s8_ghSummaryFile -Force | Out-Null
+
+        $script:_s8_now = [datetime]::SpecifyKind([datetime]'2026-06-10T12:00:00', [DateTimeKind]::Utc)
+    }
+
+    AfterEach {
+        if ($null -ne $script:_s8_savedGhActions) { $env:GITHUB_ACTIONS                 = $script:_s8_savedGhActions } else { Remove-Item Env:\GITHUB_ACTIONS                 -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_s8_savedTfBuild)   { $env:TF_BUILD                       = $script:_s8_savedTfBuild   } else { Remove-Item Env:\TF_BUILD                       -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_s8_savedGhOutput)  { $env:GITHUB_OUTPUT                  = $script:_s8_savedGhOutput  } else { Remove-Item Env:\GITHUB_OUTPUT                  -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_s8_savedGhSummary) { $env:GITHUB_STEP_SUMMARY            = $script:_s8_savedGhSummary } else { Remove-Item Env:\GITHUB_STEP_SUMMARY            -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_s8_savedAdoStage)  { $env:BUILD_ARTIFACTSTAGINGDIRECTORY = $script:_s8_savedAdoStage  } else { Remove-Item Env:\BUILD_ARTIFACTSTAGINGDIRECTORY -ErrorAction SilentlyContinue }
+        foreach ($p in @($script:_s8_ghOutputFile, $script:_s8_ghSummaryFile)) {
+            if ($p -and (Test-Path -LiteralPath $p)) { Remove-Item -LiteralPath $p -Force -ErrorAction SilentlyContinue }
+        }
+        if ($script:_s8_outDir -and (Test-Path -LiteralPath $script:_s8_outDir)) {
+            Remove-Item -LiteralPath $script:_s8_outDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'Empty fleet emits empty JUnit XML, zero-valued step outputs, and PassThru with zero counts' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s8_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s8_ghSummaryFile
+        $global:_s8_payload = @{ Inventory = @(); OutDir = $script:_s8_outDir; Now = $script:_s8_now }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory       { @($global:_s8_payload.Inventory) }
+            Mock Get-AzLocalClusterUpdateReadiness { @() }
+            Mock Get-AzLocalLatestSolutionVersion  { throw 'not used in empty path' }
+            Mock Get-AzLocalUpdateSummary          { @() }
+            Mock Get-AzLocalAvailableUpdates       { @() }
+            Mock Get-AzLocalUpdateRuns             { @() }
+            Mock Get-AzLocalUpdateRunFailures      { @() }
+            Export-AzLocalFleetUpdateStatusReport -OutputDirectory $global:_s8_payload.OutDir -Now $global:_s8_payload.Now -PassThru
+        }
+        $result.TotalClusters | Should -Be 0
+        $result.CriticalHealthFailed | Should -Be 0
+        $result.RunHistoryCount | Should -Be 0
+        Test-Path -LiteralPath $result.XmlPath | Should -BeTrue
+        $xml = [System.IO.File]::ReadAllText($result.XmlPath)
+        $xml | Should -Match '<testsuites name="Fleet Update Status"'
+        # zero-output guarantees for downstream steps
+        $out = Get-Content -LiteralPath $script:_s8_ghOutputFile -Raw
+        $out | Should -Match 'total_clusters=0'
+        $out | Should -Match 'critical_health_failed=0'
+    }
+
+    It 'Single healthy cluster produces 1 testcase per suite, criticalHealthPassed=1, no actions required' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s8_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s8_ghSummaryFile
+        $global:_s8_payload = @{
+            Inventory = @(
+                [pscustomobject]@{ ClusterName='alpha'; ResourceId='/subscriptions/s1/resourceGroups/rg1/providers/Microsoft.AzureStackHCI/clusters/alpha' }
+            )
+            Readiness = @(
+                [pscustomobject]@{
+                    ClusterName='alpha'; ResourceGroup='rg1'; SubscriptionId='s1'
+                    ResourceId='/subscriptions/s1/resourceGroups/rg1/providers/Microsoft.AzureStackHCI/clusters/alpha'
+                    UpdateState='UpToDate'; HealthState='Success'; ReadyForUpdate=$false
+                    HasPrerequisiteUpdates=''; AllAvailableUpdates=''; ReadyUpdates=''; SBEDependency=''
+                    RecommendedUpdate=''; CurrentVersion='12.2510.0.123'
+                }
+            )
+            Manifest = [pscustomobject]@{ SupportedYYMMs=@('2510','2509','2508','2507','2506','2505'); LatestYYMM='2510'; LatestVersion='12.2510.0.999'; ManifestFetchedAt=(Get-Date).ToUniversalTime() }
+            OutDir = $script:_s8_outDir; Now = $script:_s8_now
+        }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory       { @($global:_s8_payload.Inventory) }
+            Mock Get-AzLocalClusterUpdateReadiness { @($global:_s8_payload.Readiness) }
+            Mock Get-AzLocalLatestSolutionVersion  { $global:_s8_payload.Manifest }
+            Mock Get-AzLocalUpdateSummary          { @() }
+            Mock Get-AzLocalAvailableUpdates       { @() }
+            Mock Get-AzLocalUpdateRuns             { @() }
+            Mock Get-AzLocalUpdateRunFailures      { @() }
+            Export-AzLocalFleetUpdateStatusReport -OutputDirectory $global:_s8_payload.OutDir -Now $global:_s8_payload.Now -PassThru
+        }
+        $result.TotalClusters | Should -Be 1
+        $result.CriticalHealthPassed | Should -Be 1
+        $result.CriticalHealthFailed | Should -Be 0
+        $result.UpToDateCount | Should -Be 1
+        $result.SupportSource | Should -Be 'Microsoft manifest'
+        $result.SupportedClusters | Should -Be 1
+        $result.UnsupportedClusters | Should -Be 0
+    }
+
+    It 'UpdateFailed cluster emits a failure testcase and increments update_failed step output' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s8_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s8_ghSummaryFile
+        $global:_s8_payload = @{
+            Inventory = @([pscustomobject]@{ ClusterName='beta'; ResourceId='/subscriptions/s1/resourceGroups/rg2/providers/Microsoft.AzureStackHCI/clusters/beta' })
+            Readiness = @(
+                [pscustomobject]@{
+                    ClusterName='beta'; ResourceGroup='rg2'; SubscriptionId='s1'
+                    ResourceId='/subscriptions/s1/resourceGroups/rg2/providers/Microsoft.AzureStackHCI/clusters/beta'
+                    UpdateState='Failed'; HealthState='Success'; ReadyForUpdate=$false
+                    HasPrerequisiteUpdates=''; AllAvailableUpdates='12.2510.0.999'; ReadyUpdates=''; SBEDependency=''
+                    RecommendedUpdate='12.2510.0.999'; CurrentVersion='12.2509.0.0'; HealthCheckFailures=''
+                }
+            )
+            Manifest = [pscustomobject]@{ SupportedYYMMs=@('2510'); LatestYYMM='2510'; LatestVersion='12.2510.0.999'; ManifestFetchedAt=(Get-Date).ToUniversalTime() }
+            OutDir = $script:_s8_outDir; Now = $script:_s8_now
+        }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory       { @($global:_s8_payload.Inventory) }
+            Mock Get-AzLocalClusterUpdateReadiness { @($global:_s8_payload.Readiness) }
+            Mock Get-AzLocalLatestSolutionVersion  { $global:_s8_payload.Manifest }
+            Mock Get-AzLocalUpdateSummary          { @() }
+            Mock Get-AzLocalAvailableUpdates       { @() }
+            Mock Get-AzLocalUpdateRuns             { @() }
+            Mock Get-AzLocalUpdateRunFailures      { @() }
+            Export-AzLocalFleetUpdateStatusReport -OutputDirectory $global:_s8_payload.OutDir -Now $global:_s8_payload.Now -PassThru
+        }
+        $result.UpdateFailedCount | Should -Be 1
+        $result.CriticalHealthFailed | Should -Be 1
+        $xml = [System.IO.File]::ReadAllText($result.XmlPath)
+        $xml | Should -Match '<failure message="Critical Health Status: Failed" type="UpdateFailure">'
+        $out = Get-Content -LiteralPath $script:_s8_ghOutputFile -Raw
+        $out | Should -Match 'update_failed=1'
+    }
+
+    It 'PreparationFailed cluster is classified as ActionRequired (priority cascade)' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s8_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s8_ghSummaryFile
+        $global:_s8_payload = @{
+            Inventory = @([pscustomobject]@{ ClusterName='gamma'; ResourceId='/subscriptions/s1/resourceGroups/rg3/providers/Microsoft.AzureStackHCI/clusters/gamma' })
+            Readiness = @(
+                [pscustomobject]@{
+                    ClusterName='gamma'; ResourceGroup='rg3'; SubscriptionId='s1'
+                    ResourceId='/subscriptions/s1/resourceGroups/rg3/providers/Microsoft.AzureStackHCI/clusters/gamma'
+                    UpdateState='PreparationFailed'; HealthState='Success'; ReadyForUpdate=$false
+                    HasPrerequisiteUpdates=''; AllAvailableUpdates=''; ReadyUpdates=''; SBEDependency=''
+                    RecommendedUpdate=''; CurrentVersion='12.2510.0.123'
+                }
+            )
+            Manifest = [pscustomobject]@{ SupportedYYMMs=@('2510'); LatestYYMM='2510'; LatestVersion='12.2510.0.999'; ManifestFetchedAt=(Get-Date).ToUniversalTime() }
+            OutDir = $script:_s8_outDir; Now = $script:_s8_now
+        }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory       { @($global:_s8_payload.Inventory) }
+            Mock Get-AzLocalClusterUpdateReadiness { @($global:_s8_payload.Readiness) }
+            Mock Get-AzLocalLatestSolutionVersion  { $global:_s8_payload.Manifest }
+            Mock Get-AzLocalUpdateSummary          { @() }
+            Mock Get-AzLocalAvailableUpdates       { @() }
+            Mock Get-AzLocalUpdateRuns             { @() }
+            Mock Get-AzLocalUpdateRunFailures      { @() }
+            Export-AzLocalFleetUpdateStatusReport -OutputDirectory $global:_s8_payload.OutDir -Now $global:_s8_payload.Now -PassThru
+        }
+        $result.ActionRequiredCount | Should -Be 1
+        $result.UpdateFailedCount | Should -Be 0
+        $result.CriticalHealthFailed | Should -Be 1
+    }
+
+    It 'HealthFailure cluster increments health_failure but not update_failed' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s8_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s8_ghSummaryFile
+        $global:_s8_payload = @{
+            Inventory = @([pscustomobject]@{ ClusterName='delta'; ResourceId='/subscriptions/s1/resourceGroups/rg4/providers/Microsoft.AzureStackHCI/clusters/delta' })
+            Readiness = @(
+                [pscustomobject]@{
+                    ClusterName='delta'; ResourceGroup='rg4'; SubscriptionId='s1'
+                    ResourceId='/subscriptions/s1/resourceGroups/rg4/providers/Microsoft.AzureStackHCI/clusters/delta'
+                    UpdateState='UpToDate'; HealthState='Failure'; ReadyForUpdate=$false
+                    HasPrerequisiteUpdates=''; AllAvailableUpdates=''; ReadyUpdates=''; SBEDependency=''
+                    RecommendedUpdate=''; CurrentVersion='12.2510.0.0'; HealthCheckFailures='NodeOffline'
+                }
+            )
+            Manifest = [pscustomobject]@{ SupportedYYMMs=@('2510'); LatestYYMM='2510'; LatestVersion='12.2510.0.999'; ManifestFetchedAt=(Get-Date).ToUniversalTime() }
+            OutDir = $script:_s8_outDir; Now = $script:_s8_now
+        }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory       { @($global:_s8_payload.Inventory) }
+            Mock Get-AzLocalClusterUpdateReadiness { @($global:_s8_payload.Readiness) }
+            Mock Get-AzLocalLatestSolutionVersion  { $global:_s8_payload.Manifest }
+            Mock Get-AzLocalUpdateSummary          { @() }
+            Mock Get-AzLocalAvailableUpdates       { @() }
+            Mock Get-AzLocalUpdateRuns             { @() }
+            Mock Get-AzLocalUpdateRunFailures      { @() }
+            Export-AzLocalFleetUpdateStatusReport -OutputDirectory $global:_s8_payload.OutDir -Now $global:_s8_payload.Now -PassThru
+        }
+        $result.HealthFailureCount | Should -Be 1
+        $result.UpdateFailedCount  | Should -Be 0
+        $result.CriticalHealthFailed | Should -Be 1
+    }
+
+    It 'SBE prerequisite blocked cluster is classified as SbeBlocked' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s8_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s8_ghSummaryFile
+        $global:_s8_payload = @{
+            Inventory = @([pscustomobject]@{ ClusterName='epsilon'; ResourceId='/subscriptions/s1/resourceGroups/rg5/providers/Microsoft.AzureStackHCI/clusters/epsilon' })
+            Readiness = @(
+                [pscustomobject]@{
+                    ClusterName='epsilon'; ResourceGroup='rg5'; SubscriptionId='s1'
+                    ResourceId='/subscriptions/s1/resourceGroups/rg5/providers/Microsoft.AzureStackHCI/clusters/epsilon'
+                    UpdateState='UpToDate'; HealthState='Success'; ReadyForUpdate=$false
+                    HasPrerequisiteUpdates='SolutionBuilderExtension-Dell-1.0'; AllAvailableUpdates=''; ReadyUpdates=''; SBEDependency='Dell'
+                    RecommendedUpdate=''; CurrentVersion='12.2510.0.0'
+                }
+            )
+            Manifest = [pscustomobject]@{ SupportedYYMMs=@('2510'); LatestYYMM='2510'; LatestVersion='12.2510.0.999'; ManifestFetchedAt=(Get-Date).ToUniversalTime() }
+            OutDir = $script:_s8_outDir; Now = $script:_s8_now
+        }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory       { @($global:_s8_payload.Inventory) }
+            Mock Get-AzLocalClusterUpdateReadiness { @($global:_s8_payload.Readiness) }
+            Mock Get-AzLocalLatestSolutionVersion  { $global:_s8_payload.Manifest }
+            Mock Get-AzLocalUpdateSummary          { @() }
+            Mock Get-AzLocalAvailableUpdates       { @() }
+            Mock Get-AzLocalUpdateRuns             { @() }
+            Mock Get-AzLocalUpdateRunFailures      { @() }
+            Export-AzLocalFleetUpdateStatusReport -OutputDirectory $global:_s8_payload.OutDir -Now $global:_s8_payload.Now -PassThru
+        }
+        $result.SbeBlockedCount | Should -Be 1
+        $result.HasPrerequisiteCount | Should -Be 1
+        $result.CriticalHealthFailed | Should -Be 1
+    }
+
+    It 'Version distribution falls back to fleet-observed top-6 YYMM when manifest probe throws' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s8_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s8_ghSummaryFile
+        $global:_s8_payload = @{
+            Inventory = @([pscustomobject]@{ ClusterName='zeta'; ResourceId='/subscriptions/s1/resourceGroups/rg6/providers/Microsoft.AzureStackHCI/clusters/zeta' })
+            Readiness = @(
+                [pscustomobject]@{
+                    ClusterName='zeta'; ResourceGroup='rg6'; SubscriptionId='s1'
+                    ResourceId='/subscriptions/s1/resourceGroups/rg6/providers/Microsoft.AzureStackHCI/clusters/zeta'
+                    UpdateState='UpToDate'; HealthState='Success'; ReadyForUpdate=$false
+                    HasPrerequisiteUpdates=''; AllAvailableUpdates=''; ReadyUpdates=''; SBEDependency=''
+                    RecommendedUpdate=''; CurrentVersion='12.2509.0.0'
+                }
+            )
+            OutDir = $script:_s8_outDir; Now = $script:_s8_now
+        }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory       { @($global:_s8_payload.Inventory) }
+            Mock Get-AzLocalClusterUpdateReadiness { @($global:_s8_payload.Readiness) }
+            Mock Get-AzLocalLatestSolutionVersion  { throw 'simulated manifest fetch failure' }
+            Mock Get-AzLocalUpdateSummary          { @() }
+            Mock Get-AzLocalAvailableUpdates       { @() }
+            Mock Get-AzLocalUpdateRuns             { @() }
+            Mock Get-AzLocalUpdateRunFailures      { @() }
+            Export-AzLocalFleetUpdateStatusReport -OutputDirectory $global:_s8_payload.OutDir -Now $global:_s8_payload.Now -PassThru
+        }
+        $result.SupportSource | Should -Be 'fleet-observed'
+        $result.SupportedClusters | Should -Be 1   # 2509 is in the fleet-observed window
+        $result.LatestReleasedYymm | Should -BeNullOrEmpty
+    }
+
+    It 'Unresolved Failed update runs flow into RunHistoryCount + dedicated JUnit suite' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s8_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s8_ghSummaryFile
+        $start = $script:_s8_now.AddHours(-3)
+        $end   = $script:_s8_now.AddHours(-1)
+        $global:_s8_payload = @{
+            Inventory = @([pscustomobject]@{ ClusterName='eta'; ResourceId='/subscriptions/s1/resourceGroups/rg7/providers/Microsoft.AzureStackHCI/clusters/eta' })
+            Readiness = @(
+                [pscustomobject]@{
+                    ClusterName='eta'; ResourceGroup='rg7'; SubscriptionId='s1'
+                    ResourceId='/subscriptions/s1/resourceGroups/rg7/providers/Microsoft.AzureStackHCI/clusters/eta'
+                    UpdateState='Failed'; HealthState='Success'; ReadyForUpdate=$false
+                    HasPrerequisiteUpdates=''; AllAvailableUpdates=''; ReadyUpdates=''; SBEDependency=''
+                    RecommendedUpdate=''; CurrentVersion='12.2510.0.0'; HealthCheckFailures=''
+                }
+            )
+            Manifest = [pscustomobject]@{ SupportedYYMMs=@('2510'); LatestYYMM='2510'; LatestVersion='12.2510.0.999'; ManifestFetchedAt=(Get-Date).ToUniversalTime() }
+            Failures = @(
+                [pscustomobject]@{
+                    ClusterName='eta'; ClusterResourceId='/subscriptions/s1/resourceGroups/rg7/providers/Microsoft.AzureStackHCI/clusters/eta'
+                    UpdateName='12.2510.0.999'; State='Failed'; Status='Failed'; CurrentStep='ApplyNodeUpdate'
+                    Duration='02:00:00'; DurationMinutes=120.0; StartTime=$start; LastUpdated=$end
+                    DeepestStepName='ApplyNodeUpdate'; ErrorCategory='NodeReboot'
+                    DeepestErrMsg='Node reboot timed out after 30 minutes'
+                    UpdateRunPortalUrl='https://portal.azure.com/run/1'; RunId='run-1'; StackTracePreview=''
+                }
+            )
+            OutDir = $script:_s8_outDir; Now = $script:_s8_now
+        }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory       { @($global:_s8_payload.Inventory) }
+            Mock Get-AzLocalClusterUpdateReadiness { @($global:_s8_payload.Readiness) }
+            Mock Get-AzLocalLatestSolutionVersion  { $global:_s8_payload.Manifest }
+            Mock Get-AzLocalUpdateSummary          { @() }
+            Mock Get-AzLocalAvailableUpdates       { @() }
+            Mock Get-AzLocalUpdateRuns             { @() }
+            Mock Get-AzLocalUpdateRunFailures      { @($global:_s8_payload.Failures) }
+            Export-AzLocalFleetUpdateStatusReport -OutputDirectory $global:_s8_payload.OutDir -Now $global:_s8_payload.Now -PassThru
+        }
+        $result.RunHistoryCount | Should -Be 1
+        Test-Path -LiteralPath $result.RunHistoryCsvPath  | Should -BeTrue
+        Test-Path -LiteralPath $result.RunHistoryJsonPath | Should -BeTrue
+        $xml = [System.IO.File]::ReadAllText($result.XmlPath)
+        $xml | Should -Match 'Update Run History and Error Details'
+        $xml | Should -Match 'NodeReboot'
+        $xml | Should -Match 'Node reboot timed out after 30 minutes'
+        $out = Get-Content -LiteralPath $script:_s8_ghOutputFile -Raw
+        $out | Should -Match 'run_history_count=1'
+    }
+
+    It '-IncludeUpdateRuns:$false skips the Get-AzLocalUpdateRuns step' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s8_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s8_ghSummaryFile
+        $global:_s8_payload = @{
+            Inventory = @([pscustomobject]@{ ClusterName='theta'; ResourceId='/subscriptions/s1/resourceGroups/rg8/providers/Microsoft.AzureStackHCI/clusters/theta' })
+            Readiness = @(
+                [pscustomobject]@{
+                    ClusterName='theta'; ResourceGroup='rg8'; SubscriptionId='s1'
+                    ResourceId='/subscriptions/s1/resourceGroups/rg8/providers/Microsoft.AzureStackHCI/clusters/theta'
+                    UpdateState='UpToDate'; HealthState='Success'; ReadyForUpdate=$false
+                    HasPrerequisiteUpdates=''; AllAvailableUpdates=''; ReadyUpdates=''; SBEDependency=''
+                    RecommendedUpdate=''; CurrentVersion='12.2510.0.0'
+                }
+            )
+            Manifest = [pscustomobject]@{ SupportedYYMMs=@('2510'); LatestYYMM='2510'; LatestVersion='12.2510.0.999'; ManifestFetchedAt=(Get-Date).ToUniversalTime() }
+            OutDir = $script:_s8_outDir; Now = $script:_s8_now
+        }
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory       { @($global:_s8_payload.Inventory) }
+            Mock Get-AzLocalClusterUpdateReadiness { @($global:_s8_payload.Readiness) }
+            Mock Get-AzLocalLatestSolutionVersion  { $global:_s8_payload.Manifest }
+            Mock Get-AzLocalUpdateSummary          { @() }
+            Mock Get-AzLocalAvailableUpdates       { @() }
+            Mock Get-AzLocalUpdateRuns             { throw 'should not be called when IncludeUpdateRuns is $false' }
+            Mock Get-AzLocalUpdateRunFailures      { @() }
+            { Export-AzLocalFleetUpdateStatusReport -OutputDirectory $global:_s8_payload.OutDir -Now $global:_s8_payload.Now -IncludeUpdateRuns:$false } | Should -Not -Throw
+            Assert-MockCalled Get-AzLocalUpdateRuns -Times 0 -Exactly -Scope It
+        }
+    }
+
+    It 'Scope=by-update-ring passes ScopeByUpdateRingTag + UpdateRingValue to Get-AzLocalClusterUpdateReadiness' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s8_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s8_ghSummaryFile
+        $global:_s8_payload = @{
+            Inventory = @([pscustomobject]@{ ClusterName='iota'; ResourceId='/subscriptions/s1/resourceGroups/rg9/providers/Microsoft.AzureStackHCI/clusters/iota' })
+            Readiness = @(
+                [pscustomobject]@{
+                    ClusterName='iota'; ResourceGroup='rg9'; SubscriptionId='s1'
+                    ResourceId='/subscriptions/s1/resourceGroups/rg9/providers/Microsoft.AzureStackHCI/clusters/iota'
+                    UpdateState='UpToDate'; HealthState='Success'; ReadyForUpdate=$false
+                    HasPrerequisiteUpdates=''; AllAvailableUpdates=''; ReadyUpdates=''; SBEDependency=''
+                    RecommendedUpdate=''; CurrentVersion='12.2510.0.0'
+                }
+            )
+            Manifest = [pscustomobject]@{ SupportedYYMMs=@('2510'); LatestYYMM='2510'; LatestVersion='12.2510.0.999'; ManifestFetchedAt=(Get-Date).ToUniversalTime() }
+            OutDir = $script:_s8_outDir; Now = $script:_s8_now
+        }
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory       { @($global:_s8_payload.Inventory) }
+            Mock Get-AzLocalClusterUpdateReadiness { @($global:_s8_payload.Readiness) }
+            Mock Get-AzLocalLatestSolutionVersion  { $global:_s8_payload.Manifest }
+            Mock Get-AzLocalUpdateSummary          { @() }
+            Mock Get-AzLocalAvailableUpdates       { @() }
+            Mock Get-AzLocalUpdateRuns             { @() }
+            Mock Get-AzLocalUpdateRunFailures      { @() }
+            Export-AzLocalFleetUpdateStatusReport -OutputDirectory $global:_s8_payload.OutDir -Now $global:_s8_payload.Now -Scope 'by-update-ring' -UpdateRing 'Prod' | Out-Null
+            Assert-MockCalled Get-AzLocalClusterUpdateReadiness -Times 1 -Exactly -Scope It -ParameterFilter {
+                $ScopeByUpdateRingTag -eq $true -and $UpdateRingValue -eq 'Prod'
+            }
+        }
+    }
+
+    It 'ADO host (TF_BUILD=true) resolves default OutputDirectory to $BUILD_ARTIFACTSTAGINGDIRECTORY/reports' {
+        $adoStage = Join-Path -Path $env:TEMP -ChildPath ("s8-ado-stage-{0}" -f ([Guid]::NewGuid()))
+        New-Item -ItemType Directory -Path $adoStage -Force | Out-Null
+        try {
+            $env:TF_BUILD                       = 'True'
+            $env:BUILD_ARTIFACTSTAGINGDIRECTORY = $adoStage
+            $global:_s8_payload = @{ Inventory = @(); Now = $script:_s8_now }
+            $result = InModuleScope AzLocal.UpdateManagement {
+                Mock Get-AzLocalClusterInventory       { @($global:_s8_payload.Inventory) }
+                Mock Get-AzLocalClusterUpdateReadiness { @() }
+                Mock Get-AzLocalLatestSolutionVersion  { throw 'unused in empty path' }
+                Mock Get-AzLocalUpdateSummary          { @() }
+                Mock Get-AzLocalAvailableUpdates       { @() }
+                Mock Get-AzLocalUpdateRuns             { @() }
+                Mock Get-AzLocalUpdateRunFailures      { @() }
+                Export-AzLocalFleetUpdateStatusReport -Now $global:_s8_payload.Now -PassThru
+            }
+            $expected = Join-Path -Path $adoStage -ChildPath 'reports'
+            $result.XmlPath           | Should -Be (Join-Path -Path $expected -ChildPath 'readiness-status.xml')
+            $result.ReadinessJsonPath | Should -Be (Join-Path -Path $expected -ChildPath 'readiness-status.json')
+        }
+        finally {
+            if (Test-Path -LiteralPath $adoStage) { Remove-Item -LiteralPath $adoStage -Recurse -Force -ErrorAction SilentlyContinue }
+        }
+    }
+
+    It 'PassThru object includes all 22 step-output values plus generated file paths' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s8_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s8_ghSummaryFile
+        $global:_s8_payload = @{
+            Inventory = @([pscustomobject]@{ ClusterName='kappa'; ResourceId='/subscriptions/s1/resourceGroups/rg10/providers/Microsoft.AzureStackHCI/clusters/kappa' })
+            Readiness = @(
+                [pscustomobject]@{
+                    ClusterName='kappa'; ResourceGroup='rg10'; SubscriptionId='s1'
+                    ResourceId='/subscriptions/s1/resourceGroups/rg10/providers/Microsoft.AzureStackHCI/clusters/kappa'
+                    UpdateState='UpToDate'; HealthState='Success'; ReadyForUpdate=$false
+                    HasPrerequisiteUpdates=''; AllAvailableUpdates=''; ReadyUpdates=''; SBEDependency=''
+                    RecommendedUpdate=''; CurrentVersion='12.2510.0.0'
+                }
+            )
+            Manifest = [pscustomobject]@{ SupportedYYMMs=@('2510'); LatestYYMM='2510'; LatestVersion='12.2510.0.999'; ManifestFetchedAt=(Get-Date).ToUniversalTime() }
+            OutDir = $script:_s8_outDir; Now = $script:_s8_now
+        }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory       { @($global:_s8_payload.Inventory) }
+            Mock Get-AzLocalClusterUpdateReadiness { @($global:_s8_payload.Readiness) }
+            Mock Get-AzLocalLatestSolutionVersion  { $global:_s8_payload.Manifest }
+            Mock Get-AzLocalUpdateSummary          { @() }
+            Mock Get-AzLocalAvailableUpdates       { @() }
+            Mock Get-AzLocalUpdateRuns             { @() }
+            Mock Get-AzLocalUpdateRunFailures      { @() }
+            Export-AzLocalFleetUpdateStatusReport -OutputDirectory $global:_s8_payload.OutDir -Now $global:_s8_payload.Now -PassThru
+        }
+        $expectedProps = @(
+            'TotalClusters','CriticalHealthPassed','CriticalHealthFailed',
+            'UpdateFailedCount','ActionRequiredCount','HealthFailureCount','SbeBlockedCount',
+            'InProgressCount','ReadyForUpdateCount','UpToDateCount','NeedsInvestigationCount',
+            'HasPrerequisiteCount','RunHistoryCount','VersionDistCount',
+            'SupportedClusters','UnsupportedClusters','UnknownVersionClusters',
+            'SupportedYymmWindow','SupportSource','LatestReleasedYymm','LatestReleasedVersion',
+            'InventoryCsvPath','ReadinessCsvPath','ReadinessJsonPath','XmlPath',
+            'SummariesCsvPath','AvailableCsvPath','RunsCsvPath','RunHistoryCsvPath','RunHistoryJsonPath',
+            'SummaryPath','Rows','RunHistoryRows','VersionDistribution'
+        )
+        foreach ($p in $expectedProps) {
+            $result.PSObject.Properties.Name | Should -Contain $p
+        }
+    }
+
+    It 'JUnit XML carries suite-level <properties> for the AzureLocalFleetUpdateStatus suite (per-cluster ITSM dedupe keys)' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s8_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s8_ghSummaryFile
+        $global:_s8_payload = @{
+            Inventory = @([pscustomobject]@{ ClusterName='lambda'; ResourceId='/subscriptions/s1/resourceGroups/rg11/providers/Microsoft.AzureStackHCI/clusters/lambda' })
+            Readiness = @(
+                [pscustomobject]@{
+                    ClusterName='lambda'; ResourceGroup='rg11'; SubscriptionId='s1'
+                    ResourceId='/subscriptions/s1/resourceGroups/rg11/providers/Microsoft.AzureStackHCI/clusters/lambda'
+                    UpdateState='Failed'; HealthState='Success'; ReadyForUpdate=$false
+                    HasPrerequisiteUpdates=''; AllAvailableUpdates=''; ReadyUpdates=''; SBEDependency=''
+                    RecommendedUpdate='12.2510.0.999'; CurrentVersion='12.2509.0.0'; HealthCheckFailures=''
+                }
+            )
+            Manifest = [pscustomobject]@{ SupportedYYMMs=@('2510'); LatestYYMM='2510'; LatestVersion='12.2510.0.999'; ManifestFetchedAt=(Get-Date).ToUniversalTime() }
+            OutDir = $script:_s8_outDir; Now = $script:_s8_now
+        }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory       { @($global:_s8_payload.Inventory) }
+            Mock Get-AzLocalClusterUpdateReadiness { @($global:_s8_payload.Readiness) }
+            Mock Get-AzLocalLatestSolutionVersion  { $global:_s8_payload.Manifest }
+            Mock Get-AzLocalUpdateSummary          { @() }
+            Mock Get-AzLocalAvailableUpdates       { @() }
+            Mock Get-AzLocalUpdateRuns             { @() }
+            Mock Get-AzLocalUpdateRunFailures      { @() }
+            Export-AzLocalFleetUpdateStatusReport -OutputDirectory $global:_s8_payload.OutDir -Now $global:_s8_payload.Now -PassThru
+        }
+        $xml = [System.IO.File]::ReadAllText($result.XmlPath)
+        # Per-testcase properties (required by ITSM dedupe key in New-AzLocalIncident)
+        $xml | Should -Match '<property name="ClusterName" value="lambda" />'
+        $xml | Should -Match '<property name="ClusterResourceId" value="/subscriptions/s1/resourceGroups/rg11/providers/Microsoft.AzureStackHCI/clusters/lambda" />'
+        $xml | Should -Match '<property name="UpdateName" value="12.2510.0.999" />'
+        $xml | Should -Match '<property name="Status" value="UpdateFailure" />'
+        # Suite-level properties on AzureLocalFleetUpdateStatus
+        $xml | Should -Match '<property name="testCategory" value="CriticalHealthStatus" />'
+    }
+}
+
+#endregion v0.8.5: Export-AzLocalFleetUpdateStatusReport
+
+
+#region v0.8.5: Export-AzLocalFleetHealthStatusReport (Step.9 thin-YAML port)
+
+Describe 'Thin-YAML Step.9: Export-AzLocalFleetHealthStatusReport' {
+
+    BeforeEach {
+        $script:_s9_savedGhActions = $env:GITHUB_ACTIONS
+        $script:_s9_savedTfBuild   = $env:TF_BUILD
+        $script:_s9_savedGhOutput  = $env:GITHUB_OUTPUT
+        $script:_s9_savedGhSummary = $env:GITHUB_STEP_SUMMARY
+        $script:_s9_savedAdoStage  = $env:BUILD_ARTIFACTSTAGINGDIRECTORY
+        Remove-Item Env:\GITHUB_ACTIONS                 -ErrorAction SilentlyContinue
+        Remove-Item Env:\TF_BUILD                       -ErrorAction SilentlyContinue
+        Remove-Item Env:\GITHUB_OUTPUT                  -ErrorAction SilentlyContinue
+        Remove-Item Env:\GITHUB_STEP_SUMMARY            -ErrorAction SilentlyContinue
+        Remove-Item Env:\BUILD_ARTIFACTSTAGINGDIRECTORY -ErrorAction SilentlyContinue
+
+        $script:_s9_outDir        = Join-Path -Path $env:TEMP -ChildPath ("s9-out-{0}"        -f ([Guid]::NewGuid()))
+        $script:_s9_ghOutputFile  = Join-Path -Path $env:TEMP -ChildPath ("s9-gh-output-{0}"  -f ([Guid]::NewGuid()))
+        $script:_s9_ghSummaryFile = Join-Path -Path $env:TEMP -ChildPath ("s9-gh-summary-{0}.md" -f ([Guid]::NewGuid()))
+        New-Item -ItemType Directory -Path $script:_s9_outDir        -Force | Out-Null
+        New-Item -ItemType File      -Path $script:_s9_ghOutputFile  -Force | Out-Null
+        New-Item -ItemType File      -Path $script:_s9_ghSummaryFile -Force | Out-Null
+
+        $script:_s9_now = [datetime]::SpecifyKind([datetime]'2026-06-10T12:00:00', [DateTimeKind]::Utc)
+    }
+
+    AfterEach {
+        if ($null -ne $script:_s9_savedGhActions) { $env:GITHUB_ACTIONS                 = $script:_s9_savedGhActions } else { Remove-Item Env:\GITHUB_ACTIONS                 -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_s9_savedTfBuild)   { $env:TF_BUILD                       = $script:_s9_savedTfBuild   } else { Remove-Item Env:\TF_BUILD                       -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_s9_savedGhOutput)  { $env:GITHUB_OUTPUT                  = $script:_s9_savedGhOutput  } else { Remove-Item Env:\GITHUB_OUTPUT                  -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_s9_savedGhSummary) { $env:GITHUB_STEP_SUMMARY            = $script:_s9_savedGhSummary } else { Remove-Item Env:\GITHUB_STEP_SUMMARY            -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_s9_savedAdoStage)  { $env:BUILD_ARTIFACTSTAGINGDIRECTORY = $script:_s9_savedAdoStage  } else { Remove-Item Env:\BUILD_ARTIFACTSTAGINGDIRECTORY -ErrorAction SilentlyContinue }
+        foreach ($p in @($script:_s9_ghOutputFile, $script:_s9_ghSummaryFile)) {
+            if ($p -and (Test-Path -LiteralPath $p)) { Remove-Item -LiteralPath $p -Force -ErrorAction SilentlyContinue }
+        }
+        if ($script:_s9_outDir -and (Test-Path -LiteralPath $script:_s9_outDir)) {
+            Remove-Item -LiteralPath $script:_s9_outDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'Empty fleet emits zero-valued step outputs, placeholder JUnit testcase, and PassThru with zero counts' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s9_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s9_ghSummaryFile
+        $global:_s9_payload = @{ Detail = @(); Overview = @(); OutDir = $script:_s9_outDir; Now = $script:_s9_now }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalFleetHealthFailures { @($global:_s9_payload.Detail) }
+            Mock Get-AzLocalFleetHealthOverview { @($global:_s9_payload.Overview) }
+            Export-AzLocalFleetHealthStatusReport -OutputDirectory $global:_s9_payload.OutDir -Now $global:_s9_payload.Now -PassThru
+        }
+        $result.TotalFailures   | Should -Be 0
+        $result.CriticalCount   | Should -Be 0
+        $result.WarningCount    | Should -Be 0
+        $result.DistinctReasons | Should -Be 0
+        $result.OverviewRows    | Should -Be 0
+        Test-Path -LiteralPath $result.XmlPath | Should -BeTrue
+        $xml = [System.IO.File]::ReadAllText($result.XmlPath)
+        $xml | Should -Match '<testsuites name="AzureLocalFleetHealthStatus"'
+        $xml | Should -Match 'No Critical or Warning health-check failures'
+        $out = Get-Content -LiteralPath $script:_s9_ghOutputFile -Raw
+        $out | Should -Match 'total_failures=0'
+        $out | Should -Match 'critical_count=0'
+        $out | Should -Match 'warning_count=0'
+    }
+
+    It 'Critical+Warning mixed fleet emits one testcase per failing check, correct bucket counts, and target=_blank portal links in the markdown summary' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s9_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s9_ghSummaryFile
+        $alphaResId = '/subscriptions/s1/resourceGroups/rg1/providers/Microsoft.AzureStackHCI/clusters/alpha'
+        $bravoResId = '/subscriptions/s1/resourceGroups/rg2/providers/Microsoft.AzureStackHCI/clusters/bravo'
+        $alphaPortal = "https://portal.azure.com/#@/resource$alphaResId"
+        $bravoPortal = "https://portal.azure.com/#@/resource$bravoResId"
+        $global:_s9_payload = @{
+            Detail = @(
+                [pscustomobject]@{ ClusterName='alpha'; Severity='Critical'; FailureReason='ClusterCertExpiry'; Description='Cluster certificate expiring soon'; Remediation='https://aka.ms/azurelocal-cert-renew'; LastOccurrence=$script:_s9_now.AddHours(-3); ResourceGroup='rg1'; SubscriptionId='s1'; ClusterResourceId=$alphaResId; ClusterPortalUrl=$alphaPortal; TargetResourceName='ClusterCert'; TargetResourceType='Microsoft.AzureStackHCI/clusters' }
+                [pscustomobject]@{ ClusterName='alpha'; Severity='Warning';  FailureReason='ArbExtensionDrift'; Description='ARB extension version drift detected'; Remediation='Reinstall ARB extension'; LastOccurrence=$script:_s9_now.AddHours(-1); ResourceGroup='rg1'; SubscriptionId='s1'; ClusterResourceId=$alphaResId; ClusterPortalUrl=$alphaPortal; TargetResourceName='ArbExtension'; TargetResourceType='Microsoft.HybridCompute/machines/extensions' }
+                [pscustomobject]@{ ClusterName='bravo'; Severity='Critical'; FailureReason='ClusterCertExpiry'; Description='Cluster certificate expiring soon'; Remediation='https://aka.ms/azurelocal-cert-renew'; LastOccurrence=$script:_s9_now.AddHours(-2); ResourceGroup='rg2'; SubscriptionId='s1'; ClusterResourceId=$bravoResId; ClusterPortalUrl=$bravoPortal; TargetResourceName='ClusterCert'; TargetResourceType='Microsoft.AzureStackHCI/clusters' }
+            )
+            Overview = @(
+                [pscustomobject]@{ ClusterName='alpha'; ClusterPortalUrl=$alphaPortal; HealthStatus='Critical'; UpdateStatus='UpToDate'; CurrentVersion='12.2510.0.123'; SbeVersion='Vendor1-1.2.3'; AzureConnection='Connected'; LastChecked=$script:_s9_now.AddHours(-1); HealthResultsAgeDays=0; NodeCount=4 }
+                [pscustomobject]@{ ClusterName='bravo'; ClusterPortalUrl=$bravoPortal; HealthStatus='Critical'; UpdateStatus='UpToDate'; CurrentVersion='12.2510.0.123'; SbeVersion='Vendor1-1.2.3'; AzureConnection='Connected'; LastChecked=$script:_s9_now.AddHours(-2); HealthResultsAgeDays=0; NodeCount=4 }
+                [pscustomobject]@{ ClusterName='charlie'; ClusterPortalUrl="https://portal.azure.com/#@/resource/subscriptions/s1/resourceGroups/rg3/providers/Microsoft.AzureStackHCI/clusters/charlie"; HealthStatus='Healthy'; UpdateStatus='UpToDate'; CurrentVersion='12.2510.0.123'; SbeVersion='Vendor1-1.2.3'; AzureConnection='Connected'; LastChecked=$script:_s9_now.AddHours(-1); HealthResultsAgeDays=0; NodeCount=4 }
+            )
+            OutDir = $script:_s9_outDir; Now = $script:_s9_now
+        }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalFleetHealthFailures { @($global:_s9_payload.Detail) }
+            Mock Get-AzLocalFleetHealthOverview { @($global:_s9_payload.Overview) }
+            Export-AzLocalFleetHealthStatusReport -OutputDirectory $global:_s9_payload.OutDir -Now $global:_s9_payload.Now -PassThru
+        }
+        $result.TotalClusters   | Should -Be 2   # alpha + bravo
+        $result.TotalFailures   | Should -Be 3
+        $result.CriticalCount   | Should -Be 2
+        $result.WarningCount    | Should -Be 1
+        $result.DistinctReasons | Should -Be 2   # ClusterCertExpiry + ArbExtensionDrift
+        $result.OverviewRows    | Should -Be 3
+        $result.HealthyClusters | Should -Be 1
+        $result.TotalInSub      | Should -Be 3
+        $xml = [System.IO.File]::ReadAllText($result.XmlPath)
+        # Both severity suites are emitted
+        $xml | Should -Match '\[JUnit Debug\] Critical Health Failures'
+        $xml | Should -Match '\[JUnit Debug\] Warning Health Failures'
+        # ITSM <properties> on each testcase
+        $xml | Should -Match '<property name="ClusterName" value="alpha" />'
+        $xml | Should -Match '<property name="UpdateName" value="ClusterCertExpiry" />'
+        $xml | Should -Match '<property name="Severity" value="Critical" />'
+        # Markdown summary: target=_blank on cluster portal link
+        $summary = Get-Content -Raw -LiteralPath $script:_s9_ghSummaryFile
+        $summary | Should -Match '### Fleet Health Overview'
+        $summary | Should -Match '<a href="https://portal\.azure\.com[^"]*alpha[^"]*" target="_blank" rel="noopener noreferrer">alpha</a>'
+        $summary | Should -Match '### Health Check Failures By Reason'
+        $summary | Should -Match '### Detailed Results'
+        # KPI table values
+        $summary | Should -Match '\| \*\*Total Failing Checks\*\* \| 3 \|'
+        $summary | Should -Match '\| \*\*Critical\*\* \| 2 \|'
+        $summary | Should -Match '\| \*\*Warning\*\* \| 1 \|'
+        $summary | Should -Match '\| \*\*Healthy Clusters\*\* \| 1 \|'
+        # step outputs
+        $out = Get-Content -LiteralPath $script:_s9_ghOutputFile -Raw
+        $out | Should -Match 'total_failures=3'
+        $out | Should -Match 'critical_count=2'
+        $out | Should -Match 'distinct_reasons=2'
+        $out | Should -Match 'healthy_clusters=1'
+        $out | Should -Match 'total_in_sub=3'
+    }
+
+    It 'Scope by-update-ring forwards UpdateRing as -UpdateRingTag to both source cmdlets' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s9_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s9_ghSummaryFile
+        $global:_s9_payload = @{ OutDir = $script:_s9_outDir; Now = $script:_s9_now }
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalFleetHealthFailures { @() }
+            Mock Get-AzLocalFleetHealthOverview { @() }
+            Export-AzLocalFleetHealthStatusReport -OutputDirectory $global:_s9_payload.OutDir -Now $global:_s9_payload.Now -Scope 'by-update-ring' -UpdateRing 'Prod' | Out-Null
+            Should -Invoke -CommandName Get-AzLocalFleetHealthFailures -Times 1 -Exactly -ParameterFilter { $UpdateRingTag -eq 'Prod' }
+            Should -Invoke -CommandName Get-AzLocalFleetHealthOverview -Times 1 -Exactly -ParameterFilter { $UpdateRingTag -eq 'Prod' }
+        }
+    }
+
+    It 'Severity filter forwards to Get-AzLocalFleetHealthFailures' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s9_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s9_ghSummaryFile
+        $global:_s9_payload = @{ OutDir = $script:_s9_outDir; Now = $script:_s9_now }
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalFleetHealthFailures { @() }
+            Mock Get-AzLocalFleetHealthOverview { @() }
+            Export-AzLocalFleetHealthStatusReport -OutputDirectory $global:_s9_payload.OutDir -Now $global:_s9_payload.Now -Severity 'Critical' | Out-Null
+            Should -Invoke -CommandName Get-AzLocalFleetHealthFailures -Times 1 -Exactly -ParameterFilter { $Severity -eq 'Critical' }
+        }
+    }
+
+    It 'Azure DevOps host defaults OutputDirectory to BUILD_ARTIFACTSTAGINGDIRECTORY\reports' {
+        $tempStage = Join-Path -Path $env:TEMP -ChildPath ("s9-ado-stage-{0}" -f ([Guid]::NewGuid()))
+        New-Item -ItemType Directory -Path $tempStage -Force | Out-Null
+        try {
+            $env:TF_BUILD = 'True'
+            $env:BUILD_ARTIFACTSTAGINGDIRECTORY = $tempStage
+            $global:_s9_payload = @{ Detail = @(); Overview = @(); Now = $script:_s9_now }
+            $result = InModuleScope AzLocal.UpdateManagement {
+                Mock Get-AzLocalFleetHealthFailures { @() }
+                Mock Get-AzLocalFleetHealthOverview { @() }
+                Export-AzLocalFleetHealthStatusReport -Now $global:_s9_payload.Now -PassThru
+            }
+            $expected = Join-Path -Path $tempStage -ChildPath 'reports'
+            $result.XmlPath | Should -BeLike "$expected*"
+        }
+        finally {
+            if (Test-Path -LiteralPath $tempStage) { Remove-Item -LiteralPath $tempStage -Recurse -Force -ErrorAction SilentlyContinue }
+        }
+    }
+
+    It 'Summary view orders Critical-first then by ClusterCount desc' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s9_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s9_ghSummaryFile
+        $global:_s9_payload = @{
+            # 3 distinct (reason, severity) groups:
+            #   Reason=A Sev=Warning  ClusterCount=3  -> rank by severity puts this 3rd
+            #   Reason=B Sev=Critical ClusterCount=1  -> rank by severity puts this 1st (Critical+lower count, but severity wins)
+            #   Reason=C Sev=Critical ClusterCount=2  -> rank by severity 1st-tier; count desc puts this above B
+            Detail = @(
+                [pscustomobject]@{ ClusterName='c1'; Severity='Warning';  FailureReason='A'; LastOccurrence=$script:_s9_now; ClusterPortalUrl='https://portal/c1' }
+                [pscustomobject]@{ ClusterName='c2'; Severity='Warning';  FailureReason='A'; LastOccurrence=$script:_s9_now; ClusterPortalUrl='https://portal/c2' }
+                [pscustomobject]@{ ClusterName='c3'; Severity='Warning';  FailureReason='A'; LastOccurrence=$script:_s9_now; ClusterPortalUrl='https://portal/c3' }
+                [pscustomobject]@{ ClusterName='c4'; Severity='Critical'; FailureReason='B'; LastOccurrence=$script:_s9_now; ClusterPortalUrl='https://portal/c4' }
+                [pscustomobject]@{ ClusterName='c5'; Severity='Critical'; FailureReason='C'; LastOccurrence=$script:_s9_now; ClusterPortalUrl='https://portal/c5' }
+                [pscustomobject]@{ ClusterName='c6'; Severity='Critical'; FailureReason='C'; LastOccurrence=$script:_s9_now; ClusterPortalUrl='https://portal/c6' }
+            )
+            Overview = @()
+            OutDir = $script:_s9_outDir; Now = $script:_s9_now
+        }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalFleetHealthFailures { @($global:_s9_payload.Detail) }
+            Mock Get-AzLocalFleetHealthOverview { @($global:_s9_payload.Overview) }
+            Export-AzLocalFleetHealthStatusReport -OutputDirectory $global:_s9_payload.OutDir -Now $global:_s9_payload.Now -PassThru
+        }
+        $result.SummaryRows.Count                 | Should -Be 3
+        $result.SummaryRows[0].FailureReason      | Should -Be 'C'  # Critical, ClusterCount=2
+        $result.SummaryRows[0].Severity           | Should -Be 'Critical'
+        $result.SummaryRows[1].FailureReason      | Should -Be 'B'  # Critical, ClusterCount=1
+        $result.SummaryRows[2].FailureReason      | Should -Be 'A'  # Warning
+    }
+}
+
+#endregion v0.8.5: Export-AzLocalFleetHealthStatusReport
+
+
+#region v0.8.5: Export-AzLocalClusterUpdateReadinessReport
+Describe 'Thin-YAML Step.5: Export-AzLocalClusterUpdateReadinessReport' {
+
+    BeforeEach {
+        $script:_s5_savedGhActions = $env:GITHUB_ACTIONS
+        $script:_s5_savedTfBuild   = $env:TF_BUILD
+        $script:_s5_savedGhOutput  = $env:GITHUB_OUTPUT
+        $script:_s5_savedGhSummary = $env:GITHUB_STEP_SUMMARY
+        $script:_s5_savedAdoStage  = $env:BUILD_ARTIFACTSTAGINGDIRECTORY
+        Remove-Item Env:\GITHUB_ACTIONS                 -ErrorAction SilentlyContinue
+        Remove-Item Env:\TF_BUILD                       -ErrorAction SilentlyContinue
+        Remove-Item Env:\GITHUB_OUTPUT                  -ErrorAction SilentlyContinue
+        Remove-Item Env:\GITHUB_STEP_SUMMARY            -ErrorAction SilentlyContinue
+        Remove-Item Env:\BUILD_ARTIFACTSTAGINGDIRECTORY -ErrorAction SilentlyContinue
+
+        $script:_s5_outDir        = Join-Path -Path $env:TEMP -ChildPath ("s5-out-{0}"        -f ([Guid]::NewGuid()))
+        $script:_s5_ghOutputFile  = Join-Path -Path $env:TEMP -ChildPath ("s5-gh-output-{0}"  -f ([Guid]::NewGuid()))
+        $script:_s5_ghSummaryFile = Join-Path -Path $env:TEMP -ChildPath ("s5-gh-summary-{0}.md" -f ([Guid]::NewGuid()))
+        New-Item -ItemType Directory -Path $script:_s5_outDir       -Force | Out-Null
+        New-Item -ItemType File      -Path $script:_s5_ghOutputFile  -Force | Out-Null
+        New-Item -ItemType File      -Path $script:_s5_ghSummaryFile -Force | Out-Null
+    }
+
+    AfterEach {
+        if ($null -ne $script:_s5_savedGhActions) { $env:GITHUB_ACTIONS                 = $script:_s5_savedGhActions } else { Remove-Item Env:\GITHUB_ACTIONS                 -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_s5_savedTfBuild)   { $env:TF_BUILD                       = $script:_s5_savedTfBuild   } else { Remove-Item Env:\TF_BUILD                       -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_s5_savedGhOutput)  { $env:GITHUB_OUTPUT                  = $script:_s5_savedGhOutput  } else { Remove-Item Env:\GITHUB_OUTPUT                  -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_s5_savedGhSummary) { $env:GITHUB_STEP_SUMMARY            = $script:_s5_savedGhSummary } else { Remove-Item Env:\GITHUB_STEP_SUMMARY            -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_s5_savedAdoStage)  { $env:BUILD_ARTIFACTSTAGINGDIRECTORY = $script:_s5_savedAdoStage  } else { Remove-Item Env:\BUILD_ARTIFACTSTAGINGDIRECTORY -ErrorAction SilentlyContinue }
+        foreach ($p in @($script:_s5_ghOutputFile, $script:_s5_ghSummaryFile)) {
+            if ($p -and (Test-Path -LiteralPath $p)) { Remove-Item -LiteralPath $p -Force -ErrorAction SilentlyContinue }
+        }
+        if ($script:_s5_outDir -and (Test-Path -LiteralPath $script:_s5_outDir)) {
+            Remove-Item -LiteralPath $script:_s5_outDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'Empty inventory short-circuits with IDLE markdown, zero outputs, and PassThru with zero counts' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s5_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s5_ghSummaryFile
+        $global:_s5_payload = @{ Inventory = @(); OutDir = $script:_s5_outDir }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory       { @($global:_s5_payload.Inventory) }
+            Mock Get-AzLocalClusterUpdateReadiness { throw 'should not be called on empty path' }
+            Mock Test-AzLocalClusterHealth         { throw 'should not be called on empty path' }
+            Export-AzLocalClusterUpdateReadinessReport -OutputDirectory $global:_s5_payload.OutDir -PassThru
+        }
+        $result.TotalCount           | Should -Be 0
+        $result.ReadyForUpdateCount  | Should -Be 0
+        $result.UpToDateCount        | Should -Be 0
+        $result.NotReadyCount        | Should -Be 0
+        $result.CriticalFindings     | Should -Be 0
+        $result.ClustersWithCritical | Should -Be 0
+        $out = Get-Content -LiteralPath $script:_s5_ghOutputFile -Raw
+        $out | Should -Match 'not_ready=0'
+        $out | Should -Match 'critical_failures=0'
+        $summary = Get-Content -LiteralPath $script:_s5_ghSummaryFile -Raw
+        $summary | Should -Match '\[IDLE\]'
+    }
+
+    It 'Scope=all forwards ClusterResourceIds from inventory to Get-AzLocalClusterUpdateReadiness' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s5_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s5_ghSummaryFile
+        $global:_s5_payload = @{
+            Inventory = @(
+                [pscustomobject]@{ ClusterName='alpha'; ResourceId='/subscriptions/s1/resourceGroups/rg1/providers/Microsoft.AzureStackHCI/clusters/alpha'; UpdateRing='Wave1' }
+            )
+            Readiness = @(
+                [pscustomobject]@{
+                    ClusterName='alpha'; ClusterResourceId='/subscriptions/s1/resourceGroups/rg1/providers/Microsoft.AzureStackHCI/clusters/alpha'
+                    UpdateState='UpToDate'; HealthState='Success'; ReadyForUpdate=$false
+                    AllAvailableUpdates=''; CurrentVersion='12.2510.0.0'; RecommendedUpdate=''; BlockingReasons=''
+                }
+            )
+            Health = @([pscustomobject]@{ ClusterName='alpha'; HealthState='Success'; Passed=$true; CriticalCount=0; WarningCount=0; Failures='' })
+            OutDir = $script:_s5_outDir
+        }
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory       { @($global:_s5_payload.Inventory) }
+            Mock Get-AzLocalClusterUpdateReadiness { @($global:_s5_payload.Readiness) }
+            Mock Test-AzLocalClusterHealth         { @($global:_s5_payload.Health) }
+            Export-AzLocalClusterUpdateReadinessReport -OutputDirectory $global:_s5_payload.OutDir -Scope 'all' | Out-Null
+            Assert-MockCalled Get-AzLocalClusterUpdateReadiness -Times 2 -Exactly -Scope It -ParameterFilter {
+                $ClusterResourceIds -and $ClusterResourceIds[0] -like '*/clusters/alpha'
+            }
+        }
+    }
+
+    It 'Scope=by-update-ring forwards ScopeByUpdateRingTag + UpdateRingValue' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s5_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s5_ghSummaryFile
+        $global:_s5_payload = @{
+            Inventory = @([pscustomobject]@{ ClusterName='beta'; ResourceId='/subscriptions/s1/resourceGroups/rg2/providers/Microsoft.AzureStackHCI/clusters/beta'; UpdateRing='Prod' })
+            Readiness = @(
+                [pscustomobject]@{
+                    ClusterName='beta'; ClusterResourceId='/subscriptions/s1/resourceGroups/rg2/providers/Microsoft.AzureStackHCI/clusters/beta'
+                    UpdateState='UpToDate'; HealthState='Success'; ReadyForUpdate=$false
+                    AllAvailableUpdates=''; CurrentVersion='12.2510.0.0'; RecommendedUpdate=''; BlockingReasons=''
+                }
+            )
+            Health = @([pscustomobject]@{ ClusterName='beta'; HealthState='Success'; Passed=$true; CriticalCount=0; WarningCount=0; Failures='' })
+            OutDir = $script:_s5_outDir
+        }
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory       { @($global:_s5_payload.Inventory) }
+            Mock Get-AzLocalClusterUpdateReadiness { @($global:_s5_payload.Readiness) }
+            Mock Test-AzLocalClusterHealth         { @($global:_s5_payload.Health) }
+            Export-AzLocalClusterUpdateReadinessReport -OutputDirectory $global:_s5_payload.OutDir -Scope 'by-update-ring' -UpdateRing 'Prod' | Out-Null
+            Assert-MockCalled Get-AzLocalClusterUpdateReadiness -Times 2 -Exactly -Scope It -ParameterFilter {
+                $ScopeByUpdateRingTag -eq $true -and $UpdateRingValue -eq 'Prod'
+            }
+        }
+    }
+
+    It '3-bucket counts: 1 ready, 1 uptodate, 1 notready' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s5_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s5_ghSummaryFile
+        $global:_s5_payload = @{
+            Inventory = @(
+                [pscustomobject]@{ ClusterName='ready';   ResourceId='/subscriptions/s1/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/ready';   UpdateRing='Wave1' }
+                [pscustomobject]@{ ClusterName='uptd';    ResourceId='/subscriptions/s1/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/uptd';    UpdateRing='Wave1' }
+                [pscustomobject]@{ ClusterName='notrdy';  ResourceId='/subscriptions/s1/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/notrdy';  UpdateRing='Wave1' }
+            )
+            Readiness = @(
+                [pscustomobject]@{ ClusterName='ready';  ClusterResourceId='/subscriptions/s1/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/ready';
+                                  UpdateState='UpdateAvailable'; HealthState='Success'; ReadyForUpdate=$true;  AllAvailableUpdates='12.2510.0.999'; CurrentVersion='12.2509.0.0'; RecommendedUpdate='12.2510.0.999'; BlockingReasons='' }
+                [pscustomobject]@{ ClusterName='uptd';   ClusterResourceId='/subscriptions/s1/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/uptd';
+                                  UpdateState='UpToDate';        HealthState='Success'; ReadyForUpdate=$false; AllAvailableUpdates='';              CurrentVersion='12.2510.0.0'; RecommendedUpdate='';              BlockingReasons='' }
+                [pscustomobject]@{ ClusterName='notrdy'; ClusterResourceId='/subscriptions/s1/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/notrdy';
+                                  UpdateState='Failed';          HealthState='Failure'; ReadyForUpdate=$false; AllAvailableUpdates='12.2510.0.999'; CurrentVersion='12.2509.0.0'; RecommendedUpdate='12.2510.0.999'; BlockingReasons='Critical Health Status: Failed' }
+            )
+            Health = @(
+                [pscustomobject]@{ ClusterName='ready';  HealthState='Success'; Passed=$true;  CriticalCount=0; WarningCount=0; Failures='' }
+                [pscustomobject]@{ ClusterName='uptd';   HealthState='Success'; Passed=$true;  CriticalCount=0; WarningCount=0; Failures='' }
+                [pscustomobject]@{ ClusterName='notrdy'; HealthState='Failure'; Passed=$false; CriticalCount=2; WarningCount=1; Failures='NodeOffline; StorageDegraded' }
+            )
+            OutDir = $script:_s5_outDir
+        }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory       { @($global:_s5_payload.Inventory) }
+            Mock Get-AzLocalClusterUpdateReadiness { @($global:_s5_payload.Readiness) }
+            Mock Test-AzLocalClusterHealth         { @($global:_s5_payload.Health) }
+            Export-AzLocalClusterUpdateReadinessReport -OutputDirectory $global:_s5_payload.OutDir -PassThru
+        }
+        $result.TotalCount           | Should -Be 3
+        $result.ReadyForUpdateCount  | Should -Be 1
+        $result.UpToDateCount        | Should -Be 1
+        $result.NotReadyCount        | Should -Be 1
+        $result.CriticalFindings     | Should -Be 2
+        $result.ClustersWithCritical | Should -Be 1
+        $out = Get-Content -LiteralPath $script:_s5_ghOutputFile -Raw
+        $out | Should -Match 'not_ready=1'
+        $out | Should -Match 'critical_failures=1'
+    }
+
+    It 'Combined assess-readiness.xml merges both testsuites under the Update Readiness Assessment root' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s5_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s5_ghSummaryFile
+        $global:_s5_payload = @{
+            Inventory = @([pscustomobject]@{ ClusterName='gamma'; ResourceId='/subscriptions/s1/resourceGroups/rg3/providers/Microsoft.AzureStackHCI/clusters/gamma'; UpdateRing='Wave1' })
+            Readiness = @(
+                [pscustomobject]@{ ClusterName='gamma'; ClusterResourceId='/subscriptions/s1/resourceGroups/rg3/providers/Microsoft.AzureStackHCI/clusters/gamma'
+                                   UpdateState='UpToDate'; HealthState='Success'; ReadyForUpdate=$false
+                                   AllAvailableUpdates=''; CurrentVersion='12.2510.0.0'; RecommendedUpdate=''; BlockingReasons='' }
+            )
+            Health = @([pscustomobject]@{ ClusterName='gamma'; HealthState='Success'; Passed=$true; CriticalCount=0; WarningCount=0; Failures='' })
+            OutDir = $script:_s5_outDir
+        }
+        # Pre-create the per-cmdlet JUnit XML files so the cmdlet's
+        # combined-XML merge has something to read. The mocks below cannot
+        # write to $ExportPath inside a Pester Mock body reliably (Pester
+        # rebinds parameter scopes), so we materialize the inputs here.
+        $readinessXmlContent = @'
+<?xml version="1.0" encoding="utf-8"?>
+<testsuites name="Update Readiness"><testsuite name="Update Readiness" tests="1" failures="0"><testcase classname="Cluster Update Readiness" name="gamma" time="0"/></testsuite></testsuites>
+'@
+        $healthXmlContent = @'
+<?xml version="1.0" encoding="utf-8"?>
+<testsuites name="Cluster Health"><testsuite name="Cluster Health (Blocking)" tests="1" failures="0"><testcase classname="Cluster Health (Blocking)" name="gamma" time="0"/></testsuite></testsuites>
+'@
+        [System.IO.File]::WriteAllText((Join-Path $script:_s5_outDir 'readiness.xml'),       $readinessXmlContent, [System.Text.UTF8Encoding]::new($false))
+        [System.IO.File]::WriteAllText((Join-Path $script:_s5_outDir 'health-blocking.xml'), $healthXmlContent,    [System.Text.UTF8Encoding]::new($false))
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory       { @($global:_s5_payload.Inventory) }
+            Mock Get-AzLocalClusterUpdateReadiness { @($global:_s5_payload.Readiness) }
+            Mock Test-AzLocalClusterHealth         { @($global:_s5_payload.Health) }
+            Export-AzLocalClusterUpdateReadinessReport -OutputDirectory $global:_s5_payload.OutDir -PassThru
+        }
+        Test-Path -LiteralPath $result.CombinedXmlPath | Should -BeTrue
+        $xml = [System.IO.File]::ReadAllText($result.CombinedXmlPath)
+        $xml | Should -Match '<testsuites name="Update Readiness Assessment"'
+        $xml | Should -Match '<testsuite'
+    }
+
+    It 'PassThru object exposes all 13 documented properties' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s5_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s5_ghSummaryFile
+        $global:_s5_payload = @{
+            Inventory = @([pscustomobject]@{ ClusterName='delta'; ResourceId='/subscriptions/s1/resourceGroups/rg4/providers/Microsoft.AzureStackHCI/clusters/delta'; UpdateRing='Wave1' })
+            Readiness = @([pscustomobject]@{ ClusterName='delta'; ClusterResourceId='/subscriptions/s1/resourceGroups/rg4/providers/Microsoft.AzureStackHCI/clusters/delta'
+                                              UpdateState='UpToDate'; HealthState='Success'; ReadyForUpdate=$false
+                                              AllAvailableUpdates=''; CurrentVersion='12.2510.0.0'; RecommendedUpdate=''; BlockingReasons='' })
+            Health = @([pscustomobject]@{ ClusterName='delta'; HealthState='Success'; Passed=$true; CriticalCount=0; WarningCount=0; Failures='' })
+            OutDir = $script:_s5_outDir
+        }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory       { @($global:_s5_payload.Inventory) }
+            Mock Get-AzLocalClusterUpdateReadiness { @($global:_s5_payload.Readiness) }
+            Mock Test-AzLocalClusterHealth         { @($global:_s5_payload.Health) }
+            Export-AzLocalClusterUpdateReadinessReport -OutputDirectory $global:_s5_payload.OutDir -PassThru
+        }
+        $expectedProps = @(
+            'TotalCount','ReadyForUpdateCount','UpToDateCount','NotReadyCount',
+            'CriticalFindings','ClustersWithCritical','ReadinessRows','HealthRows',
+            'ReadinessCsvPath','ReadinessXmlPath','HealthCsvPath','HealthXmlPath','CombinedXmlPath'
+        )
+        foreach ($p in $expectedProps) {
+            $result.PSObject.Properties.Name | Should -Contain $p
+        }
+    }
+
+    It 'ADO host (TF_BUILD=true) resolves default OutputDirectory to BUILD_ARTIFACTSTAGINGDIRECTORY' {
+        $adoStage = Join-Path -Path $env:TEMP -ChildPath ("s5-ado-stage-{0}" -f ([Guid]::NewGuid()))
+        New-Item -ItemType Directory -Path $adoStage -Force | Out-Null
+        try {
+            $env:TF_BUILD                       = 'True'
+            $env:BUILD_ARTIFACTSTAGINGDIRECTORY = $adoStage
+            $global:_s5_payload = @{ Inventory = @() }
+            $result = InModuleScope AzLocal.UpdateManagement {
+                Mock Get-AzLocalClusterInventory       { @($global:_s5_payload.Inventory) }
+                Mock Get-AzLocalClusterUpdateReadiness { throw 'unused on empty path' }
+                Mock Test-AzLocalClusterHealth         { throw 'unused on empty path' }
+                Export-AzLocalClusterUpdateReadinessReport -PassThru
+            }
+            $result.ReadinessCsvPath | Should -Be (Join-Path -Path $adoStage -ChildPath 'readiness.csv')
+            $result.CombinedXmlPath  | Should -Be (Join-Path -Path $adoStage -ChildPath 'assess-readiness.xml')
+        }
+        finally {
+            if (Test-Path -LiteralPath $adoStage) { Remove-Item -LiteralPath $adoStage -Recurse -Force -ErrorAction SilentlyContinue }
+        }
+    }
+
+    It 'Per-UpdateRing pivot section appears when more than one ring is in scope' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s5_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s5_ghSummaryFile
+        $global:_s5_payload = @{
+            Inventory = @(
+                [pscustomobject]@{ ClusterName='c1'; ResourceId='/subscriptions/s1/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/c1'; UpdateRing='Wave1' }
+                [pscustomobject]@{ ClusterName='c2'; ResourceId='/subscriptions/s1/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/c2'; UpdateRing='Wave2' }
+            )
+            Readiness = @(
+                [pscustomobject]@{ ClusterName='c1'; ClusterResourceId='/subscriptions/s1/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/c1'
+                                   UpdateState='UpToDate'; HealthState='Success'; ReadyForUpdate=$false
+                                   AllAvailableUpdates=''; CurrentVersion='12.2510.0.0'; RecommendedUpdate=''; BlockingReasons='' }
+                [pscustomobject]@{ ClusterName='c2'; ClusterResourceId='/subscriptions/s1/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/c2'
+                                   UpdateState='UpdateAvailable'; HealthState='Success'; ReadyForUpdate=$true
+                                   AllAvailableUpdates='12.2510.0.999'; CurrentVersion='12.2509.0.0'; RecommendedUpdate='12.2510.0.999'; BlockingReasons='' }
+            )
+            Health = @(
+                [pscustomobject]@{ ClusterName='c1'; HealthState='Success'; Passed=$true; CriticalCount=0; WarningCount=0; Failures='' }
+                [pscustomobject]@{ ClusterName='c2'; HealthState='Success'; Passed=$true; CriticalCount=0; WarningCount=0; Failures='' }
+            )
+            OutDir = $script:_s5_outDir
+        }
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory       { @($global:_s5_payload.Inventory) }
+            Mock Get-AzLocalClusterUpdateReadiness { @($global:_s5_payload.Readiness) }
+            Mock Test-AzLocalClusterHealth         { @($global:_s5_payload.Health) }
+            Export-AzLocalClusterUpdateReadinessReport -OutputDirectory $global:_s5_payload.OutDir | Out-Null
+        }
+        $summary = Get-Content -LiteralPath $script:_s5_ghSummaryFile -Raw
+        $summary | Should -Match 'Per UpdateRing breakdown'
+        $summary | Should -Match 'Wave1'
+        $summary | Should -Match 'Wave2'
+    }
+
+    It 'OK header tile appears when all clusters are ready and no Critical findings' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s5_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s5_ghSummaryFile
+        $global:_s5_payload = @{
+            Inventory = @([pscustomobject]@{ ClusterName='ok1'; ResourceId='/subscriptions/s1/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/ok1'; UpdateRing='Wave1' })
+            Readiness = @([pscustomobject]@{ ClusterName='ok1'; ClusterResourceId='/subscriptions/s1/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/ok1'
+                                              UpdateState='UpdateAvailable'; HealthState='Success'; ReadyForUpdate=$true
+                                              AllAvailableUpdates='12.2510.0.999'; CurrentVersion='12.2509.0.0'; RecommendedUpdate='12.2510.0.999'; BlockingReasons='' })
+            Health = @([pscustomobject]@{ ClusterName='ok1'; HealthState='Success'; Passed=$true; CriticalCount=0; WarningCount=0; Failures='' })
+            OutDir = $script:_s5_outDir
+        }
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory       { @($global:_s5_payload.Inventory) }
+            Mock Get-AzLocalClusterUpdateReadiness { @($global:_s5_payload.Readiness) }
+            Mock Test-AzLocalClusterHealth         { @($global:_s5_payload.Health) }
+            Export-AzLocalClusterUpdateReadinessReport -OutputDirectory $global:_s5_payload.OutDir | Out-Null
+        }
+        $summary = Get-Content -LiteralPath $script:_s5_ghSummaryFile -Raw
+        $summary | Should -Match '\[OK\]'
+        $summary | Should -Match 'All clear'
+    }
+}
+
+#endregion v0.8.5: Export-AzLocalClusterUpdateReadinessReport
+
+#region v0.8.5: Export-AzLocalFleetConnectivityStatusReport
+Describe 'Thin-YAML Step.4: Export-AzLocalFleetConnectivityStatusReport' {
+
+    BeforeAll {
+        # Pester v5: the Describe body runs in DISCOVERY phase only - so a
+        # function defined there is not visible to It bodies (which run
+        # in RUN phase). Defining inside BeforeAll with script: scope keeps
+        # this helper callable from every It block in the Describe.
+        function script:New-S4HealthyData {
+            return [pscustomobject]@{
+                ClusterRows = @(
+                    [pscustomobject]@{
+                        ClusterName='alpha'; ClusterId='/subscriptions/s1/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/alpha'
+                        ConnectivityStatus='Connected'; ClusterStatus='Connected'; NodeCount=2; ResourceGroup='rg'; Location='eastus'; SubscriptionId='s1'
+                    }
+                )
+                ArcSummary = @(
+                    [pscustomobject]@{ AgentStatus='Connected'; Count=2 }
+                )
+                NonConnectedMachines = @()
+                NicIssues            = @()
+                NicAll               = @(
+                    [pscustomobject]@{ NodeName='node1'; NicName='nic0'; NicType='Physical'; NicStatus='Up'; DriverVersion='1.0'; Ip4Address='10.0.0.1'; InterfaceDescription='Test NIC'; ClusterName='alpha' }
+                )
+                NicStats = @(
+                    [pscustomobject]@{ NicType='Physical'; NicStatus='Up'; Count=2 }
+                )
+                ArbRows = @(
+                    [pscustomobject]@{ ClusterName='alpha'; ClusterId='/subscriptions/s1/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/alpha'
+                        ArbName='arb-alpha'; ArbId='/subscriptions/s1/resourceGroups/rg/providers/Microsoft.ResourceConnector/appliances/arb-alpha'
+                        ArbStatus='Running'; LastModified='2025-01-01T00:00:00Z'; DaysSinceLastModified=10; ResourceGroup='rg' }
+                )
+            }
+        }
+    }
+
+    BeforeEach {
+        $script:_s4_savedGhActions = $env:GITHUB_ACTIONS
+        $script:_s4_savedTfBuild   = $env:TF_BUILD
+        $script:_s4_savedGhOutput  = $env:GITHUB_OUTPUT
+        $script:_s4_savedGhSummary = $env:GITHUB_STEP_SUMMARY
+        $script:_s4_savedAdoStage  = $env:BUILD_ARTIFACTSTAGINGDIRECTORY
+        Remove-Item Env:\GITHUB_ACTIONS                 -ErrorAction SilentlyContinue
+        Remove-Item Env:\TF_BUILD                       -ErrorAction SilentlyContinue
+        Remove-Item Env:\GITHUB_OUTPUT                  -ErrorAction SilentlyContinue
+        Remove-Item Env:\GITHUB_STEP_SUMMARY            -ErrorAction SilentlyContinue
+        Remove-Item Env:\BUILD_ARTIFACTSTAGINGDIRECTORY -ErrorAction SilentlyContinue
+
+        $script:_s4_outDir        = Join-Path -Path $env:TEMP -ChildPath ("s4-out-{0}"           -f ([Guid]::NewGuid()))
+        $script:_s4_ghOutputFile  = Join-Path -Path $env:TEMP -ChildPath ("s4-gh-output-{0}"     -f ([Guid]::NewGuid()))
+        $script:_s4_ghSummaryFile = Join-Path -Path $env:TEMP -ChildPath ("s4-gh-summary-{0}.md" -f ([Guid]::NewGuid()))
+        New-Item -ItemType Directory -Path $script:_s4_outDir        -Force | Out-Null
+        New-Item -ItemType File      -Path $script:_s4_ghOutputFile  -Force | Out-Null
+        New-Item -ItemType File      -Path $script:_s4_ghSummaryFile -Force | Out-Null
+    }
+
+    AfterEach {
+        if ($null -ne $script:_s4_savedGhActions) { $env:GITHUB_ACTIONS                 = $script:_s4_savedGhActions } else { Remove-Item Env:\GITHUB_ACTIONS                 -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_s4_savedTfBuild)   { $env:TF_BUILD                       = $script:_s4_savedTfBuild   } else { Remove-Item Env:\TF_BUILD                       -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_s4_savedGhOutput)  { $env:GITHUB_OUTPUT                  = $script:_s4_savedGhOutput  } else { Remove-Item Env:\GITHUB_OUTPUT                  -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_s4_savedGhSummary) { $env:GITHUB_STEP_SUMMARY            = $script:_s4_savedGhSummary } else { Remove-Item Env:\GITHUB_STEP_SUMMARY            -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_s4_savedAdoStage)  { $env:BUILD_ARTIFACTSTAGINGDIRECTORY = $script:_s4_savedAdoStage  } else { Remove-Item Env:\BUILD_ARTIFACTSTAGINGDIRECTORY -ErrorAction SilentlyContinue }
+        foreach ($p in @($script:_s4_ghOutputFile, $script:_s4_ghSummaryFile)) {
+            if ($p -and (Test-Path -LiteralPath $p)) { Remove-Item -LiteralPath $p -Force -ErrorAction SilentlyContinue }
+        }
+        if ($script:_s4_outDir -and (Test-Path -LiteralPath $script:_s4_outDir)) {
+            Remove-Item -LiteralPath $script:_s4_outDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'All-green fleet emits a synthetic passing Fleet Connectivity suite, zero outputs, and PassThru zero failures' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s4_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s4_ghSummaryFile
+        $env:_S4_OUTDIR          = $script:_s4_outDir
+        $global:_s4_payload = New-S4HealthyData
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalFleetConnectivityStatus { $global:_s4_payload }
+            Export-AzLocalFleetConnectivityStatusReport -OutputDirectory $env:_S4_OUTDIR -PassThru
+        }
+        $result.TotalFailures | Should -Be 0
+        $result.CriticalCount | Should -Be 0
+        $result.WarningCount  | Should -Be 0
+        $result.ClusterTotal  | Should -Be 1
+        $xml = Get-Content -LiteralPath $result.JUnitXmlPath -Raw
+        $xml | Should -Match '<testsuite name="Fleet Connectivity"'
+        $xml | Should -Match 'No connectivity issues across the fleet'
+        $out = Get-Content -LiteralPath $script:_s4_ghOutputFile -Raw
+        $out | Should -Match 'total_failures=0'
+        $out | Should -Match 'critical_count=0'
+        $out | Should -Match 'warning_count=0'
+    }
+
+    It 'Critical cluster Disconnected emits Cluster Connectivity suite + outputs' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s4_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s4_ghSummaryFile
+        $env:_S4_OUTDIR          = $script:_s4_outDir
+        $global:_s4_payload = New-S4HealthyData
+        $global:_s4_payload.ClusterRows = @(
+            [pscustomobject]@{
+                ClusterName='broken'; ClusterId='/subscriptions/s1/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/broken'
+                ConnectivityStatus='Disconnected'; ClusterStatus='NotYetRegistered'; NodeCount=3; ResourceGroup='rg'; Location='eastus'; SubscriptionId='s1'
+            }
+        )
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalFleetConnectivityStatus { $global:_s4_payload }
+            Export-AzLocalFleetConnectivityStatusReport -OutputDirectory $env:_S4_OUTDIR -PassThru
+        }
+        $result.ClusterFail   | Should -Be 1
+        $result.CriticalCount | Should -Be 1
+        $result.WarningCount  | Should -Be 0
+        $result.TotalFailures | Should -Be 1
+        $xml = Get-Content -LiteralPath $result.JUnitXmlPath -Raw
+        $xml | Should -Match '<testsuite name="Cluster Connectivity"'
+        $xml | Should -Match 'Cluster .{0,30}broken'
+        $xml | Should -Match '<failure[^>]*type="Critical"'
+        $xml | Should -Match '<property name="ClusterResourceId"'
+        $out = Get-Content -LiteralPath $script:_s4_ghOutputFile -Raw
+        $out | Should -Match 'cluster_fail=1'
+        $out | Should -Match 'critical_count=1'
+        $out | Should -Match 'total_failures=1'
+    }
+
+    It 'Critical Arc agent Disconnected emits Arc Agent Connectivity suite + outputs' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s4_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s4_ghSummaryFile
+        $env:_S4_OUTDIR          = $script:_s4_outDir
+        $global:_s4_payload = New-S4HealthyData
+        $global:_s4_payload.NonConnectedMachines = @(
+            [pscustomobject]@{
+                ClusterName='alpha'; ClusterId='/subscriptions/s1/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/alpha'
+                NodeName='nodeA'; AgentStatus='Disconnected'
+                MachineId='/subscriptions/s1/resourceGroups/rg/providers/Microsoft.HybridCompute/machines/nodeA'
+                LastStatusChange='2025-01-10T05:00:00Z'; OsSku='Server'; OsVersion='25398'; ClusterVersion='12.2510.0.0'; AgentVersion='1.45'
+                ResourceGroup='rg'; SubscriptionId='s1'
+            }
+        )
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalFleetConnectivityStatus { $global:_s4_payload }
+            Export-AzLocalFleetConnectivityStatusReport -OutputDirectory $env:_S4_OUTDIR -PassThru
+        }
+        $result.ArcFail       | Should -Be 1
+        $result.CriticalCount | Should -Be 1
+        $xml = Get-Content -LiteralPath $result.JUnitXmlPath -Raw
+        $xml | Should -Match '<testsuite name="Arc Agent Connectivity"'
+        $xml | Should -Match 'Machine .{0,30}nodeA'
+    }
+
+    It 'Critical NIC Disconnected emits Physical NIC Status suite + outputs' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s4_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s4_ghSummaryFile
+        $env:_S4_OUTDIR          = $script:_s4_outDir
+        $global:_s4_payload = New-S4HealthyData
+        $global:_s4_payload.NicIssues = @(
+            [pscustomobject]@{
+                ClusterName='alpha'; NodeName='nodeA'; NicName='Ethernet 3'; NicStatus='Disconnected'
+                InterfaceDescription='Mellanox ConnectX-4 Lx'; DriverVersion='2.50.21512.0'; Ip4Address='10.0.0.5'
+                MachineId='/subscriptions/s1/resourceGroups/rg/providers/Microsoft.HybridCompute/machines/nodeA'
+            }
+        )
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalFleetConnectivityStatus { $global:_s4_payload }
+            Export-AzLocalFleetConnectivityStatusReport -OutputDirectory $env:_S4_OUTDIR -PassThru
+        }
+        $result.NicFail       | Should -Be 1
+        $result.CriticalCount | Should -Be 1
+        $xml = Get-Content -LiteralPath $result.JUnitXmlPath -Raw
+        $xml | Should -Match '<testsuite name="Physical NIC Status"'
+        $xml | Should -Match 'NIC .{0,30}Ethernet 3'
+    }
+
+    It 'ARB Offline emits Azure Resource Bridge suite + handles multi-cluster ClusterId comma list' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s4_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s4_ghSummaryFile
+        $env:_S4_OUTDIR          = $script:_s4_outDir
+        $global:_s4_payload = New-S4HealthyData
+        $multi = '/subscriptions/s1/resourceGroups/shared/providers/Microsoft.AzureStackHCI/clusters/clusA, /subscriptions/s1/resourceGroups/shared/providers/Microsoft.AzureStackHCI/clusters/clusB'
+        $global:_s4_payload.ArbRows = @(
+            [pscustomobject]@{
+                ClusterName='clusA, clusB'; ClusterId=$multi
+                ArbName='arb-shared'
+                ArbId='/subscriptions/s1/resourceGroups/shared/providers/Microsoft.ResourceConnector/appliances/arb-shared'
+                ArbStatus='Offline'; LastModified='2025-01-01T00:00:00Z'; DaysSinceLastModified=42; ResourceGroup='shared'
+            }
+        )
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalFleetConnectivityStatus { $global:_s4_payload }
+            Export-AzLocalFleetConnectivityStatusReport -OutputDirectory $env:_S4_OUTDIR -PassThru
+        }
+        $result.ArbFail       | Should -Be 1
+        $result.CriticalCount | Should -Be 1
+        $xml = Get-Content -LiteralPath $result.JUnitXmlPath -Raw
+        $xml | Should -Match '<testsuite name="Azure Resource Bridge"'
+        $xml | Should -Match 'multi-cluster RG; 2 clusters'
+        # Primary cluster id (first of split) is the one used for portal link.
+        $xml | Should -Match 'clusters/clusA"'
+    }
+
+    It 'Mixed Critical + Warning severities sum correctly into outputs' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s4_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s4_ghSummaryFile
+        $env:_S4_OUTDIR          = $script:_s4_outDir
+        $global:_s4_payload = New-S4HealthyData
+        # 1 Critical cluster (Disconnected) + 1 Warning cluster (NotConnected = neither healthy nor confirmed-bad)
+        $global:_s4_payload.ClusterRows = @(
+            [pscustomobject]@{ ClusterName='c1'; ClusterId='/subscriptions/s1/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/c1'
+                ConnectivityStatus='Disconnected'; ClusterStatus='Failed'; NodeCount=2; ResourceGroup='rg'; Location='eastus'; SubscriptionId='s1' }
+            [pscustomobject]@{ ClusterName='c2'; ClusterId='/subscriptions/s1/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/c2'
+                ConnectivityStatus='NotConnected'; ClusterStatus='NotYetRegistered'; NodeCount=4; ResourceGroup='rg'; Location='eastus'; SubscriptionId='s1' }
+        )
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalFleetConnectivityStatus { $global:_s4_payload }
+            Export-AzLocalFleetConnectivityStatusReport -OutputDirectory $env:_S4_OUTDIR -PassThru
+        }
+        $result.ClusterFail   | Should -Be 2
+        $result.CriticalCount | Should -Be 1
+        $result.WarningCount  | Should -Be 1
+        $result.TotalFailures | Should -Be 2
+        $out = Get-Content -LiteralPath $script:_s4_ghOutputFile -Raw
+        $out | Should -Match 'total_failures=2'
+        $out | Should -Match 'critical_count=1'
+        $out | Should -Match 'warning_count=1'
+    }
+
+    It 'ADO host resolves OutputDirectory to BUILD_ARTIFACTSTAGINGDIRECTORY when not explicitly passed' {
+        $env:TF_BUILD = 'True'
+        $adoStage = Join-Path -Path $env:TEMP -ChildPath ("s4-ado-{0}" -f ([Guid]::NewGuid()))
+        New-Item -ItemType Directory -Path $adoStage -Force | Out-Null
+        $env:BUILD_ARTIFACTSTAGINGDIRECTORY = $adoStage
+        try {
+            $global:_s4_payload = New-S4HealthyData
+            $result = InModuleScope AzLocal.UpdateManagement {
+                Mock Get-AzLocalFleetConnectivityStatus { $global:_s4_payload }
+                Export-AzLocalFleetConnectivityStatusReport -PassThru
+            }
+            $result.JUnitXmlPath | Should -BeLike "$adoStage*"
+            $result.SummaryPath  | Should -BeLike "$adoStage*"
+        }
+        finally {
+            if (Test-Path -LiteralPath $adoStage) {
+                Remove-Item -LiteralPath $adoStage -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It 'SubscriptionFilter (comma list) forwards the FIRST sub-id to Get-AzLocalFleetConnectivityStatus' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s4_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s4_ghSummaryFile
+        $env:_S4_OUTDIR          = $script:_s4_outDir
+        $global:_s4_payload = New-S4HealthyData
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalFleetConnectivityStatus { $global:_s4_payload }
+            Export-AzLocalFleetConnectivityStatusReport `
+                -OutputDirectory $env:_S4_OUTDIR `
+                -SubscriptionFilter '11111111-1111-1111-1111-111111111111, 22222222-2222-2222-2222-222222222222' | Out-Null
+            Assert-MockCalled Get-AzLocalFleetConnectivityStatus -Times 1 -Exactly -Scope It -ParameterFilter {
+                $SubscriptionId -eq '11111111-1111-1111-1111-111111111111'
+            }
+        }
+    }
+
+    It 'PassThru exposes all 25 documented properties' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s4_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s4_ghSummaryFile
+        $env:_S4_OUTDIR          = $script:_s4_outDir
+        $global:_s4_payload = New-S4HealthyData
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalFleetConnectivityStatus { $global:_s4_payload }
+            Export-AzLocalFleetConnectivityStatusReport -OutputDirectory $env:_S4_OUTDIR -PassThru
+        }
+        $expectedProperties = @(
+            'ClusterTotal','ClusterFail','ArcTotal','ArcFail','NicTotal','NicFail','NicAllTotal',
+            'ArbTotal','ArbFail','TotalFailures','CriticalCount','WarningCount',
+            'ClusterRows','ArcSummary','NonConnectedMachines','NicIssues','NicAll','NicStats','ArbRows',
+            'ClusterFailures','ArcFailures','NicFailures','ArbFailures',
+            'JUnitXmlPath','SummaryPath'
+        )
+        foreach ($p in $expectedProperties) {
+            $result.PSObject.Properties.Name | Should -Contain $p
+        }
+    }
+
+    It 'Markdown summary is appended to GITHUB_STEP_SUMMARY on GitHub Actions host' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s4_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s4_ghSummaryFile
+        $env:_S4_OUTDIR          = $script:_s4_outDir
+        $global:_s4_payload = New-S4HealthyData
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalFleetConnectivityStatus { $global:_s4_payload }
+            Export-AzLocalFleetConnectivityStatusReport -OutputDirectory $env:_S4_OUTDIR | Out-Null
+        }
+        $summary = Get-Content -LiteralPath $script:_s4_ghSummaryFile -Raw
+        # The shared renderer emits markdown with section headers we can grep.
+        $summary | Should -Not -BeNullOrEmpty
+        $summary.Length | Should -BeGreaterThan 100
+    }
+}
+#endregion v0.8.5: Export-AzLocalFleetConnectivityStatusReport
+
+#region v0.8.5: Export-AzLocalApplyUpdatesScheduleAudit
+Describe 'Thin-YAML Step.3: Export-AzLocalApplyUpdatesScheduleAudit' {
+
+    BeforeAll {
+        # Helper builders. Defined inside BeforeAll with script: scope so
+        # they are visible from It bodies (Pester v5 discovery/run split).
+        function script:New-S3AuditRow {
+            param(
+                [string]$Status            = 'Covered',
+                [string]$Section           = 'Cron',
+                [string]$UpdateRing        = 'Wave1',
+                [string]$UpdateStartWindow = 'Sat 01:00 +60',
+                [int]   $ClusterCount      = 1,
+                [string]$Issue             = '',
+                [string]$Recommendation    = '',
+                [string]$RequiredCronUTC   = '0 1 * * 6'
+            )
+            [pscustomobject]@{
+                Status            = $Status
+                Section           = $Section
+                UpdateRing        = $UpdateRing
+                UpdateStartWindow = $UpdateStartWindow
+                ClusterCount      = $ClusterCount
+                Issue             = $Issue
+                Recommendation    = $Recommendation
+                RequiredCronUTC   = $RequiredCronUTC
+            }
+        }
+        function script:New-S3ScheduleV2 {
+            [pscustomobject]@{
+                SchemaVersion         = 2
+                CycleWeeks            = 4
+                AllowedUpdateVersions = @('Latest')
+                Schedule              = @(
+                    [pscustomobject]@{
+                        weeksInCycle               = '1'
+                        daysOfWeek                 = 'Sat'
+                        rings                      = 'Wave1'
+                        AllowedUpdateVersionsParsed = @()
+                    }
+                )
+            }
+        }
+        function script:New-S3ScheduleV1 {
+            [pscustomobject]@{
+                SchemaVersion = 1
+                CycleWeeks    = 4
+                Schedule      = @(
+                    [pscustomobject]@{
+                        weeksInCycle = '1'
+                        daysOfWeek   = 'Sat'
+                        rings        = 'Wave1'
+                    }
+                )
+            }
+        }
+    }
+
+    BeforeEach {
+        $script:_s3_savedGhActions = $env:GITHUB_ACTIONS
+        $script:_s3_savedTfBuild   = $env:TF_BUILD
+        $script:_s3_savedGhOutput  = $env:GITHUB_OUTPUT
+        $script:_s3_savedGhSummary = $env:GITHUB_STEP_SUMMARY
+        $script:_s3_savedAdoStage  = $env:BUILD_ARTIFACTSTAGINGDIRECTORY
+        Remove-Item Env:\GITHUB_ACTIONS                 -ErrorAction SilentlyContinue
+        Remove-Item Env:\TF_BUILD                       -ErrorAction SilentlyContinue
+        Remove-Item Env:\GITHUB_OUTPUT                  -ErrorAction SilentlyContinue
+        Remove-Item Env:\GITHUB_STEP_SUMMARY            -ErrorAction SilentlyContinue
+        Remove-Item Env:\BUILD_ARTIFACTSTAGINGDIRECTORY -ErrorAction SilentlyContinue
+
+        $script:_s3_outDir        = Join-Path -Path $env:TEMP -ChildPath ("s3-out-{0}"           -f ([Guid]::NewGuid()))
+        $script:_s3_ghOutputFile  = Join-Path -Path $env:TEMP -ChildPath ("s3-gh-output-{0}"     -f ([Guid]::NewGuid()))
+        $script:_s3_ghSummaryFile = Join-Path -Path $env:TEMP -ChildPath ("s3-gh-summary-{0}.md" -f ([Guid]::NewGuid()))
+        $script:_s3_pipelineDir   = Join-Path -Path $env:TEMP -ChildPath ("s3-pipeline-{0}"      -f ([Guid]::NewGuid()))
+        $script:_s3_scheduleFile  = Join-Path -Path $env:TEMP -ChildPath ("s3-schedule-{0}.yml"  -f ([Guid]::NewGuid()))
+        New-Item -ItemType Directory -Path $script:_s3_outDir        -Force | Out-Null
+        New-Item -ItemType Directory -Path $script:_s3_pipelineDir   -Force | Out-Null
+        New-Item -ItemType File      -Path $script:_s3_ghOutputFile  -Force | Out-Null
+        New-Item -ItemType File      -Path $script:_s3_ghSummaryFile -Force | Out-Null
+        # Cmdlet only Test-Path the SchedulePath; the mocked Get-...Config / CycleCalendar do the parsing.
+        Set-Content -LiteralPath $script:_s3_scheduleFile -Value 'schemaVersion: 2' -Encoding ASCII
+    }
+
+    AfterEach {
+        if ($null -ne $script:_s3_savedGhActions) { $env:GITHUB_ACTIONS                 = $script:_s3_savedGhActions } else { Remove-Item Env:\GITHUB_ACTIONS                 -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_s3_savedTfBuild)   { $env:TF_BUILD                       = $script:_s3_savedTfBuild   } else { Remove-Item Env:\TF_BUILD                       -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_s3_savedGhOutput)  { $env:GITHUB_OUTPUT                  = $script:_s3_savedGhOutput  } else { Remove-Item Env:\GITHUB_OUTPUT                  -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_s3_savedGhSummary) { $env:GITHUB_STEP_SUMMARY            = $script:_s3_savedGhSummary } else { Remove-Item Env:\GITHUB_STEP_SUMMARY            -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_s3_savedAdoStage)  { $env:BUILD_ARTIFACTSTAGINGDIRECTORY = $script:_s3_savedAdoStage  } else { Remove-Item Env:\BUILD_ARTIFACTSTAGINGDIRECTORY -ErrorAction SilentlyContinue }
+        foreach ($p in @($script:_s3_ghOutputFile, $script:_s3_ghSummaryFile, $script:_s3_scheduleFile)) {
+            if ($p -and (Test-Path -LiteralPath $p)) { Remove-Item -LiteralPath $p -Force -ErrorAction SilentlyContinue }
+        }
+        foreach ($d in @($script:_s3_outDir, $script:_s3_pipelineDir)) {
+            if ($d -and (Test-Path -LiteralPath $d)) { Remove-Item -LiteralPath $d -Recurse -Force -ErrorAction SilentlyContinue }
+        }
+    }
+
+    It 'Clean fleet WITH -SchedulePath: emits 12 outputs, 2-suite passing JUnit, and ALWAYS renders the Cycle Calendar (v0.8.4 regression guard)' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s3_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s3_ghSummaryFile
+        $env:_S3_OUTDIR          = $script:_s3_outDir
+        $env:_S3_PIPELINEDIR     = $script:_s3_pipelineDir
+        $env:_S3_SCHEDULE        = $script:_s3_scheduleFile
+
+        $global:_s3_auditRows = @( (New-S3AuditRow -Status 'Covered') )
+        $global:_s3_schedule  = New-S3ScheduleV2
+
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Test-AzLocalApplyUpdatesScheduleCoverage { $global:_s3_auditRows } -ParameterFilter { $View -eq 'Audit' }
+            Mock Test-AzLocalApplyUpdatesScheduleCoverage { }                       -ParameterFilter { $View -ne 'Audit' }
+            Mock Get-AzLocalApplyUpdatesScheduleConfig         { $global:_s3_schedule }
+            Mock Get-AzLocalApplyUpdatesScheduleCycleCalendar  { "### Cycle Calendar`n`n*(synthetic calendar markdown)*" }
+            Export-AzLocalApplyUpdatesScheduleAudit `
+                -PipelineYamlPath $env:_S3_PIPELINEDIR `
+                -SchedulePath     $env:_S3_SCHEDULE `
+                -OutputDirectory  $env:_S3_OUTDIR `
+                -PassThru
+        }
+
+        $result.TotalRows    | Should -Be 1
+        $result.Covered      | Should -Be 1
+        $result.Uncovered    | Should -Be 0
+        $result.HaveSchedule | Should -BeTrue
+        # Outputs
+        $out = Get-Content -LiteralPath $script:_s3_ghOutputFile -Raw
+        $out | Should -Match 'total_rows=1'
+        $out | Should -Match 'covered=1'
+        $out | Should -Match 'uncovered=0'
+        $out | Should -Match 'have_schedule=True'
+        $out | Should -Match 'schedule_path='
+        # JUnit: clean fleet -> both suites present (Schedule + Cron) with synthetic passing test cases
+        Test-Path -LiteralPath $result.JUnitXmlPath | Should -BeTrue
+        $xml = Get-Content -LiteralPath $result.JUnitXmlPath -Raw
+        $xml | Should -Match 'Apply-Updates Schedule Coverage - Schedule \(ring diff\)'
+        $xml | Should -Match 'Apply-Updates Schedule Coverage - Cron coverage'
+        $xml | Should -Not -Match '<failure'
+        # Calendar MUST render on clean fleet when -SchedulePath supplied (the v0.8.4 regression guard)
+        $summary = Get-Content -LiteralPath $script:_s3_ghSummaryFile -Raw
+        $summary | Should -Match 'Cycle Calendar'
+        $summary | Should -Match 'synthetic calendar markdown'
+    }
+
+    It 'Uncovered cron row produces a <failure> in the Cron coverage suite + non-zero uncovered output' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s3_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s3_ghSummaryFile
+        $env:_S3_OUTDIR          = $script:_s3_outDir
+        $env:_S3_PIPELINEDIR     = $script:_s3_pipelineDir
+
+        $global:_s3_auditRows = @( (New-S3AuditRow -Status 'Uncovered' -Issue 'No cron entry matches Sat 01:00 +60' -Recommendation 'Add 55 0 * * 6 to Step.6_apply-updates.yml') )
+
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Test-AzLocalApplyUpdatesScheduleCoverage { $global:_s3_auditRows } -ParameterFilter { $View -eq 'Audit' }
+            Mock Test-AzLocalApplyUpdatesScheduleCoverage { }                       -ParameterFilter { $View -ne 'Audit' }
+            Export-AzLocalApplyUpdatesScheduleAudit `
+                -PipelineYamlPath $env:_S3_PIPELINEDIR `
+                -OutputDirectory  $env:_S3_OUTDIR `
+                -PassThru
+        }
+        $result.Uncovered | Should -Be 1
+        $xml = Get-Content -LiteralPath $result.JUnitXmlPath -Raw
+        $xml | Should -Match '<testsuite name="Apply-Updates Schedule Coverage - Cron coverage"'
+        $xml | Should -Match '<failure[^>]*type="Uncovered"'
+        $out = Get-Content -LiteralPath $script:_s3_ghOutputFile -Raw
+        $out | Should -Match 'uncovered=1'
+    }
+
+    It 'PartiallyCovered status increments the partial output and emits a <failure>' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s3_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s3_ghSummaryFile
+        $env:_S3_OUTDIR          = $script:_s3_outDir
+        $env:_S3_PIPELINEDIR     = $script:_s3_pipelineDir
+
+        $global:_s3_auditRows = @( (New-S3AuditRow -Status 'PartiallyCovered') )
+
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Test-AzLocalApplyUpdatesScheduleCoverage { $global:_s3_auditRows } -ParameterFilter { $View -eq 'Audit' }
+            Mock Test-AzLocalApplyUpdatesScheduleCoverage { }                       -ParameterFilter { $View -ne 'Audit' }
+            Export-AzLocalApplyUpdatesScheduleAudit -PipelineYamlPath $env:_S3_PIPELINEDIR -OutputDirectory $env:_S3_OUTDIR -PassThru
+        }
+        $result.Partial | Should -Be 1
+        $out = Get-Content -LiteralPath $script:_s3_ghOutputFile -Raw
+        $out | Should -Match 'partial=1'
+        $xml = Get-Content -LiteralPath $result.JUnitXmlPath -Raw
+        $xml | Should -Match '<failure[^>]*type="PartiallyCovered"'
+    }
+
+    It 'MalformedTag + UnparseableCron each surface as their own status outputs' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s3_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s3_ghSummaryFile
+        $env:_S3_OUTDIR          = $script:_s3_outDir
+        $env:_S3_PIPELINEDIR     = $script:_s3_pipelineDir
+
+        $global:_s3_auditRows = @(
+            (New-S3AuditRow -Status 'MalformedTag'    -UpdateStartWindow 'BadTag')
+            (New-S3AuditRow -Status 'UnparseableCron' -UpdateStartWindow 'Sat 25:99')
+        )
+
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Test-AzLocalApplyUpdatesScheduleCoverage { $global:_s3_auditRows } -ParameterFilter { $View -eq 'Audit' }
+            Mock Test-AzLocalApplyUpdatesScheduleCoverage { }                       -ParameterFilter { $View -ne 'Audit' }
+            Export-AzLocalApplyUpdatesScheduleAudit -PipelineYamlPath $env:_S3_PIPELINEDIR -OutputDirectory $env:_S3_OUTDIR -PassThru
+        }
+        $result.Malformed   | Should -Be 1
+        $result.Unparseable | Should -Be 1
+        $out = Get-Content -LiteralPath $script:_s3_ghOutputFile -Raw
+        $out | Should -Match 'malformed=1'
+        $out | Should -Match 'unparseable=1'
+    }
+
+    It 'NoWindowTag with ClusterCsvPath populates the no_window_tag output' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s3_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s3_ghSummaryFile
+        $env:_S3_OUTDIR          = $script:_s3_outDir
+        $env:_S3_PIPELINEDIR     = $script:_s3_pipelineDir
+        $clusterCsv = Join-Path -Path $env:TEMP -ChildPath ("s3-clusters-{0}.csv" -f ([Guid]::NewGuid()))
+        Set-Content -LiteralPath $clusterCsv -Value 'ClusterName,Ring' -Encoding ASCII
+        $env:_S3_CSV = $clusterCsv
+
+        $global:_s3_auditRows = @( (New-S3AuditRow -Status 'NoWindowTag' -UpdateRing 'Wave1' -UpdateStartWindow '') )
+
+        try {
+            $result = InModuleScope AzLocal.UpdateManagement {
+                Mock Test-AzLocalApplyUpdatesScheduleCoverage { $global:_s3_auditRows } -ParameterFilter { $View -eq 'Audit' }
+                Mock Test-AzLocalApplyUpdatesScheduleCoverage { }                       -ParameterFilter { $View -ne 'Audit' }
+                Export-AzLocalApplyUpdatesScheduleAudit `
+                    -PipelineYamlPath $env:_S3_PIPELINEDIR `
+                    -ClusterCsvPath   $env:_S3_CSV `
+                    -IncludeUntagged `
+                    -OutputDirectory  $env:_S3_OUTDIR `
+                    -PassThru
+            }
+            $result.NoWindowTag | Should -Be 1
+            $out = Get-Content -LiteralPath $script:_s3_ghOutputFile -Raw
+            $out | Should -Match 'no_window_tag=1'
+        }
+        finally {
+            if (Test-Path -LiteralPath $clusterCsv) { Remove-Item -LiteralPath $clusterCsv -Force -ErrorAction SilentlyContinue }
+        }
+    }
+
+    It 'RingMissingFromSchedule routes the row to the Schedule (ring diff) suite' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s3_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s3_ghSummaryFile
+        $env:_S3_OUTDIR          = $script:_s3_outDir
+        $env:_S3_PIPELINEDIR     = $script:_s3_pipelineDir
+        $env:_S3_SCHEDULE        = $script:_s3_scheduleFile
+
+        $global:_s3_auditRows = @( (New-S3AuditRow -Status 'RingMissingFromSchedule' -Section 'Schedule' -UpdateRing 'Wave9' -UpdateStartWindow '') )
+        $global:_s3_schedule  = New-S3ScheduleV2
+
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Test-AzLocalApplyUpdatesScheduleCoverage { $global:_s3_auditRows } -ParameterFilter { $View -eq 'Audit' }
+            Mock Test-AzLocalApplyUpdatesScheduleCoverage { }                       -ParameterFilter { $View -ne 'Audit' }
+            Mock Get-AzLocalApplyUpdatesScheduleConfig         { $global:_s3_schedule }
+            Mock Get-AzLocalApplyUpdatesScheduleCycleCalendar  { '' }
+            Export-AzLocalApplyUpdatesScheduleAudit `
+                -PipelineYamlPath $env:_S3_PIPELINEDIR `
+                -SchedulePath     $env:_S3_SCHEDULE `
+                -OutputDirectory  $env:_S3_OUTDIR `
+                -PassThru
+        }
+        $result.RingMissing | Should -Be 1
+        $xml = Get-Content -LiteralPath $result.JUnitXmlPath -Raw
+        $xml | Should -Match '<testsuite name="Apply-Updates Schedule Coverage - Schedule \(ring diff\)"'
+        $xml | Should -Match '<failure[^>]*type="RingMissingFromSchedule"'
+        $out = Get-Content -LiteralPath $script:_s3_ghOutputFile -Raw
+        $out | Should -Match 'ring_missing=1'
+    }
+
+    It 'RingOrphanedInSchedule + RingMixedWindows each populate their own outputs' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s3_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s3_ghSummaryFile
+        $env:_S3_OUTDIR          = $script:_s3_outDir
+        $env:_S3_PIPELINEDIR     = $script:_s3_pipelineDir
+        $env:_S3_SCHEDULE        = $script:_s3_scheduleFile
+
+        $global:_s3_auditRows = @(
+            (New-S3AuditRow -Status 'RingOrphanedInSchedule' -Section 'Schedule' -UpdateRing 'WaveOrphan')
+            (New-S3AuditRow -Status 'RingMixedWindows'       -Section 'Cron'     -UpdateRing 'Wave1')
+        )
+        $global:_s3_schedule  = New-S3ScheduleV2
+
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Test-AzLocalApplyUpdatesScheduleCoverage { $global:_s3_auditRows } -ParameterFilter { $View -eq 'Audit' }
+            Mock Test-AzLocalApplyUpdatesScheduleCoverage { }                       -ParameterFilter { $View -ne 'Audit' }
+            Mock Get-AzLocalApplyUpdatesScheduleConfig         { $global:_s3_schedule }
+            Mock Get-AzLocalApplyUpdatesScheduleCycleCalendar  { '' }
+            Export-AzLocalApplyUpdatesScheduleAudit `
+                -PipelineYamlPath $env:_S3_PIPELINEDIR `
+                -SchedulePath     $env:_S3_SCHEDULE `
+                -OutputDirectory  $env:_S3_OUTDIR `
+                -PassThru
+        }
+        $result.RingOrphan | Should -Be 1
+        $result.RingMixed  | Should -Be 1
+        $out = Get-Content -LiteralPath $script:_s3_ghOutputFile -Raw
+        $out | Should -Match 'ring_orphan=1'
+        $out | Should -Match 'ring_mixed=1'
+    }
+
+    It 'Schema v1 schedule emits a migration nudge (not the per-row table)' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s3_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s3_ghSummaryFile
+        $env:_S3_OUTDIR          = $script:_s3_outDir
+        $env:_S3_PIPELINEDIR     = $script:_s3_pipelineDir
+        $env:_S3_SCHEDULE        = $script:_s3_scheduleFile
+
+        $global:_s3_auditRows = @( (New-S3AuditRow -Status 'Covered') )
+        $global:_s3_schedule  = New-S3ScheduleV1
+
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Test-AzLocalApplyUpdatesScheduleCoverage { $global:_s3_auditRows } -ParameterFilter { $View -eq 'Audit' }
+            Mock Test-AzLocalApplyUpdatesScheduleCoverage { }                       -ParameterFilter { $View -ne 'Audit' }
+            Mock Get-AzLocalApplyUpdatesScheduleConfig         { $global:_s3_schedule }
+            Mock Get-AzLocalApplyUpdatesScheduleCycleCalendar  { '' }
+            Export-AzLocalApplyUpdatesScheduleAudit `
+                -PipelineYamlPath $env:_S3_PIPELINEDIR `
+                -SchedulePath     $env:_S3_SCHEDULE `
+                -OutputDirectory  $env:_S3_OUTDIR | Out-Null
+        }
+        $summary = Get-Content -LiteralPath $script:_s3_ghSummaryFile -Raw
+        $summary | Should -Match 'Allow-list coverage \(schema v1\)'
+        $summary | Should -Match 'Update-AzLocalApplyUpdatesScheduleConfig.*-SchemaMigrate'
+        $summary | Should -Not -Match 'Top-level fleet default'
+    }
+
+    It 'Schema v2 schedule emits the per-row Effective allowedUpdateVersions table' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s3_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s3_ghSummaryFile
+        $env:_S3_OUTDIR          = $script:_s3_outDir
+        $env:_S3_PIPELINEDIR     = $script:_s3_pipelineDir
+        $env:_S3_SCHEDULE        = $script:_s3_scheduleFile
+
+        $global:_s3_auditRows = @( (New-S3AuditRow -Status 'Covered') )
+        $global:_s3_schedule  = New-S3ScheduleV2
+
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Test-AzLocalApplyUpdatesScheduleCoverage { $global:_s3_auditRows } -ParameterFilter { $View -eq 'Audit' }
+            Mock Test-AzLocalApplyUpdatesScheduleCoverage { }                       -ParameterFilter { $View -ne 'Audit' }
+            Mock Get-AzLocalApplyUpdatesScheduleConfig         { $global:_s3_schedule }
+            Mock Get-AzLocalApplyUpdatesScheduleCycleCalendar  { '' }
+            Export-AzLocalApplyUpdatesScheduleAudit `
+                -PipelineYamlPath $env:_S3_PIPELINEDIR `
+                -SchedulePath     $env:_S3_SCHEDULE `
+                -OutputDirectory  $env:_S3_OUTDIR | Out-Null
+        }
+        $summary = Get-Content -LiteralPath $script:_s3_ghSummaryFile -Raw
+        $summary | Should -Match 'Allow-list coverage \(schema v2\)'
+        $summary | Should -Match 'Top-level fleet default'
+        $summary | Should -Match '\| Row \| weeksInCycle \| daysOfWeek \| rings \| Effective allowedUpdateVersions \|'
+    }
+
+    It 'PipelineYamlPath that does not exist throws a descriptive error' {
+        $missing = Join-Path -Path $env:TEMP -ChildPath ("s3-missing-{0}" -f ([Guid]::NewGuid()))
+        $env:_S3_OUTDIR  = $script:_s3_outDir
+        $env:_S3_MISSING = $missing
+        InModuleScope AzLocal.UpdateManagement {
+            { Export-AzLocalApplyUpdatesScheduleAudit -PipelineYamlPath $env:_S3_MISSING -OutputDirectory $env:_S3_OUTDIR } |
+                Should -Throw -ExpectedMessage "*PipelineYamlPath*does not exist*"
+        }
+    }
+
+    It 'ADO host resolves OutputDirectory to BUILD_ARTIFACTSTAGINGDIRECTORY when not explicitly passed' {
+        $env:TF_BUILD = 'True'
+        $adoStage = Join-Path -Path $env:TEMP -ChildPath ("s3-ado-{0}" -f ([Guid]::NewGuid()))
+        New-Item -ItemType Directory -Path $adoStage -Force | Out-Null
+        $env:BUILD_ARTIFACTSTAGINGDIRECTORY = $adoStage
+        $env:_S3_PIPELINEDIR = $script:_s3_pipelineDir
+
+        $global:_s3_auditRows = @( (New-S3AuditRow -Status 'Covered') )
+        try {
+            $result = InModuleScope AzLocal.UpdateManagement {
+                Mock Test-AzLocalApplyUpdatesScheduleCoverage { $global:_s3_auditRows } -ParameterFilter { $View -eq 'Audit' }
+                Mock Test-AzLocalApplyUpdatesScheduleCoverage { }                       -ParameterFilter { $View -ne 'Audit' }
+                Export-AzLocalApplyUpdatesScheduleAudit -PipelineYamlPath $env:_S3_PIPELINEDIR -PassThru
+            }
+            $result.JUnitXmlPath | Should -BeLike "$adoStage*"
+            $result.SummaryPath  | Should -BeLike "$adoStage*"
+        }
+        finally {
+            if (Test-Path -LiteralPath $adoStage) { Remove-Item -LiteralPath $adoStage -Recurse -Force -ErrorAction SilentlyContinue }
+        }
+    }
+}
+#endregion v0.8.5: Export-AzLocalApplyUpdatesScheduleAudit
+
+#region v0.8.5 Step.6 thin-YAML: Apply-Updates pipeline cmdlets
+# -----------------------------------------------------------------------------
+# v0.8.5 - Step.6 thin-YAML port: six new public cmdlets that own the
+# behaviour previously hand-rolled inline in the Step.6 GH + ADO YAMLs.
+# These tests cover the cross-cutting invariants the YAMLs depend on:
+#   - parameter shape (exists + types + mandatory flags)
+#   - per-host step-output naming (UPPER_SNAKE on GH, PascalCase on ADO)
+#   - empty-input short-circuits (no clusters / no schedule row)
+#   - host-aware icon style in the apply summary
+# Engine behaviours (Get-AzLocalClusterUpdateReadiness, Start-AzLocalClusterUpdate,
+# New-AzLocalIncident, Resolve-AzLocalCurrentUpdateRing) are mocked so the
+# tests stay pure and offline.
+# -----------------------------------------------------------------------------
+
+Describe 'Thin-YAML Step.6: Resolve-AzLocalPipelineUpdateRing' {
+
+    BeforeAll {
+        $script:S6PriorTfBuild        = $env:TF_BUILD
+        $script:S6PriorGhActions      = $env:GITHUB_ACTIONS
+        $script:S6PriorGhOutput       = $env:GITHUB_OUTPUT
+        $script:S6PriorGhEnv          = $env:GITHUB_ENV
+        $script:S6PriorBuildArtStage  = $env:BUILD_ARTIFACTSTAGINGDIRECTORY
+        $script:S6PriorGhStepSummary  = $env:GITHUB_STEP_SUMMARY
+        $script:S6TmpRoot             = Join-Path -Path $env:TEMP -ChildPath ("s6-cmdlet-{0}" -f ([Guid]::NewGuid()))
+        New-Item -ItemType Directory -Path $script:S6TmpRoot -Force | Out-Null
+    }
+
+    AfterAll {
+        $env:TF_BUILD                       = $script:S6PriorTfBuild
+        $env:GITHUB_ACTIONS                 = $script:S6PriorGhActions
+        $env:GITHUB_OUTPUT                  = $script:S6PriorGhOutput
+        $env:GITHUB_ENV                     = $script:S6PriorGhEnv
+        $env:BUILD_ARTIFACTSTAGINGDIRECTORY = $script:S6PriorBuildArtStage
+        $env:GITHUB_STEP_SUMMARY            = $script:S6PriorGhStepSummary
+        if ($script:S6TmpRoot -and (Test-Path -LiteralPath $script:S6TmpRoot)) {
+            Remove-Item -LiteralPath $script:S6TmpRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    BeforeEach {
+        # Default to Local host (no GH / ADO env vars); each test opts in.
+        Remove-Item Env:TF_BUILD                       -ErrorAction SilentlyContinue
+        Remove-Item Env:GITHUB_ACTIONS                 -ErrorAction SilentlyContinue
+        Remove-Item Env:GITHUB_OUTPUT                  -ErrorAction SilentlyContinue
+        Remove-Item Env:GITHUB_ENV                     -ErrorAction SilentlyContinue
+        Remove-Item Env:BUILD_ARTIFACTSTAGINGDIRECTORY -ErrorAction SilentlyContinue
+        Remove-Item Env:GITHUB_STEP_SUMMARY            -ErrorAction SilentlyContinue
+    }
+
+    Context 'Parameter shape' {
+        BeforeAll { $script:S6CmdR = Get-Command Resolve-AzLocalPipelineUpdateRing }
+
+        It 'Has parameter ManualUpdateRing'    { $script:S6CmdR.Parameters.Keys | Should -Contain 'ManualUpdateRing' }
+        It 'Has parameter UseScheduleFile'     { $script:S6CmdR.Parameters.Keys | Should -Contain 'UseScheduleFile' }
+        It 'Has parameter SchedulePath'        { $script:S6CmdR.Parameters.Keys | Should -Contain 'SchedulePath' }
+        It 'Has parameter ResolveForDateUtc'   { $script:S6CmdR.Parameters.Keys | Should -Contain 'ResolveForDateUtc' }
+        It 'Has parameter Trigger'             { $script:S6CmdR.Parameters.Keys | Should -Contain 'Trigger' }
+        It 'Has parameter PassThru (switch)'   {
+            $script:S6CmdR.Parameters.Keys | Should -Contain 'PassThru'
+            $script:S6CmdR.Parameters['PassThru'].ParameterType.Name | Should -Be 'SwitchParameter'
+        }
+    }
+
+    Context 'Manual back-compat path (no schedule file)' {
+        It 'Returns ManualUpdateRing verbatim when Trigger=Manual and UseScheduleFile not set' {
+            $info = Resolve-AzLocalPipelineUpdateRing -Trigger Manual -ManualUpdateRing 'Wave1' -PassThru
+            $info.ResolvedUpdateRing            | Should -Be 'Wave1'
+            $info.ResolvedAllowedUpdateVersions | Should -Be ''
+            $info.IsManual                      | Should -BeTrue
+            $info.UseScheduleFile               | Should -BeFalse
+        }
+
+        It 'Throws when Trigger=Manual + UseScheduleFile not set + empty ManualUpdateRing' {
+            { Resolve-AzLocalPipelineUpdateRing -Trigger Manual -ManualUpdateRing '' } |
+                Should -Throw -ExpectedMessage "*requires -ManualUpdateRing to be non-empty*"
+        }
+    }
+
+    Context 'Invalid ResolveForDateUtc' {
+        It 'Throws on malformed YYYY-MM-DD' {
+            { Resolve-AzLocalPipelineUpdateRing -Trigger Manual -ManualUpdateRing 'Wave1' -UseScheduleFile -ResolveForDateUtc '07-15-2026' } |
+                Should -Throw -ExpectedMessage "*not a valid date*"
+        }
+    }
+}
+
+Describe 'Thin-YAML Step.6: Export-AzLocalClusterReadinessGateReport' {
+
+    BeforeAll {
+        $script:S6_2PriorTfBuild        = $env:TF_BUILD
+        $script:S6_2PriorGhActions      = $env:GITHUB_ACTIONS
+        $script:S6_2PriorGhOutput       = $env:GITHUB_OUTPUT
+        $script:S6_2PriorGhStepSummary  = $env:GITHUB_STEP_SUMMARY
+        $script:S6_2TmpRoot             = Join-Path -Path $env:TEMP -ChildPath ("s6-cmdlet-readiness-{0}" -f ([Guid]::NewGuid()))
+        New-Item -ItemType Directory -Path $script:S6_2TmpRoot -Force | Out-Null
+    }
+
+    AfterAll {
+        $env:TF_BUILD            = $script:S6_2PriorTfBuild
+        $env:GITHUB_ACTIONS      = $script:S6_2PriorGhActions
+        $env:GITHUB_OUTPUT       = $script:S6_2PriorGhOutput
+        $env:GITHUB_STEP_SUMMARY = $script:S6_2PriorGhStepSummary
+        if ($script:S6_2TmpRoot -and (Test-Path -LiteralPath $script:S6_2TmpRoot)) {
+            Remove-Item -LiteralPath $script:S6_2TmpRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    BeforeEach {
+        Remove-Item Env:TF_BUILD            -ErrorAction SilentlyContinue
+        Remove-Item Env:GITHUB_ACTIONS      -ErrorAction SilentlyContinue
+        Remove-Item Env:GITHUB_OUTPUT       -ErrorAction SilentlyContinue
+        Remove-Item Env:GITHUB_STEP_SUMMARY -ErrorAction SilentlyContinue
+    }
+
+    Context 'Parameter shape' {
+        BeforeAll { $script:S6CmdE = Get-Command Export-AzLocalClusterReadinessGateReport }
+
+        It 'Has parameter UpdateRing'          { $script:S6CmdE.Parameters.Keys | Should -Contain 'UpdateRing' }
+        It 'Has parameter OutputDirectory'     { $script:S6CmdE.Parameters.Keys | Should -Contain 'OutputDirectory' }
+        It 'Has parameter ReadinessCsvFileName'{ $script:S6CmdE.Parameters.Keys | Should -Contain 'ReadinessCsvFileName' }
+        It 'Has parameter MaxRows'             { $script:S6CmdE.Parameters.Keys | Should -Contain 'MaxRows' }
+        It 'Has parameter SummaryFileName'     { $script:S6CmdE.Parameters.Keys | Should -Contain 'SummaryFileName' }
+        It 'Has parameter PassThru (switch)'   {
+            $script:S6CmdE.Parameters.Keys | Should -Contain 'PassThru'
+            $script:S6CmdE.Parameters['PassThru'].ParameterType.Name | Should -Be 'SwitchParameter'
+        }
+    }
+
+    Context 'Empty-ring short-circuit (no clusters scanned, zero counters emitted)' {
+        It 'GitHub host emits READY_COUNT=0 / TOTAL_COUNT=0 / NOT_READY_COUNT=0 to GITHUB_OUTPUT' {
+            $env:GITHUB_ACTIONS = 'true'
+            $env:GITHUB_OUTPUT  = Join-Path $script:S6_2TmpRoot 'gh-empty-output.txt'
+            $env:GITHUB_STEP_SUMMARY = Join-Path $script:S6_2TmpRoot 'gh-empty-summary.md'
+            $outDir = Join-Path $script:S6_2TmpRoot 'gh-empty-artifacts'
+            New-Item -ItemType Directory -Path $outDir -Force | Out-Null
+
+            $info = Export-AzLocalClusterReadinessGateReport -UpdateRing '' -OutputDirectory $outDir -PassThru
+            $info.ReadyCount    | Should -Be 0
+            $info.TotalCount    | Should -Be 0
+            $info.NotReadyCount | Should -Be 0
+            $outFile = Get-Content -LiteralPath $env:GITHUB_OUTPUT -Raw
+            $outFile | Should -Match 'READY_COUNT=0'
+            $outFile | Should -Match 'TOTAL_COUNT=0'
+            $outFile | Should -Match 'NOT_READY_COUNT=0'
+            $outFile | Should -Not -Match 'ReadyCount=0' -Because 'GH host must emit UPPER_SNAKE names, not PascalCase'
+        }
+
+        It 'Azure DevOps host emits PascalCase ReadyCount/TotalCount/NotReadyCount via ##vso[task.setvariable]' {
+            $env:TF_BUILD = 'True'
+            $outDir = Join-Path $script:S6_2TmpRoot 'ado-empty-artifacts'
+            New-Item -ItemType Directory -Path $outDir -Force | Out-Null
+
+            $writeHostOutput = & {
+                Export-AzLocalClusterReadinessGateReport -UpdateRing '' -OutputDirectory $outDir
+            } *>&1 | Out-String
+            $writeHostOutput | Should -Match '##vso\[task\.setvariable variable=ReadyCount;isOutput=true\]0'
+            $writeHostOutput | Should -Match '##vso\[task\.setvariable variable=TotalCount;isOutput=true\]0'
+            $writeHostOutput | Should -Match '##vso\[task\.setvariable variable=NotReadyCount;isOutput=true\]0'
+            $writeHostOutput | Should -Not -Match 'READY_COUNT=' -Because 'ADO host must not emit UPPER_SNAKE for these counters - the ADO YAML stageDependencies binding uses PascalCase'
+        }
+    }
+}
+
+Describe 'Thin-YAML Step.6: Invoke-AzLocalReadinessGatedClusterUpdate' {
+
+    BeforeAll {
+        $script:S6_3PriorTfBuild        = $env:TF_BUILD
+        $script:S6_3PriorGhActions      = $env:GITHUB_ACTIONS
+        $script:S6_3PriorGhOutput       = $env:GITHUB_OUTPUT
+        $script:S6_3PriorGhStepSummary  = $env:GITHUB_STEP_SUMMARY
+        $script:S6_3TmpRoot             = Join-Path -Path $env:TEMP -ChildPath ("s6-cmdlet-apply-{0}" -f ([Guid]::NewGuid()))
+        New-Item -ItemType Directory -Path $script:S6_3TmpRoot -Force | Out-Null
+    }
+
+    AfterAll {
+        $env:TF_BUILD            = $script:S6_3PriorTfBuild
+        $env:GITHUB_ACTIONS      = $script:S6_3PriorGhActions
+        $env:GITHUB_OUTPUT       = $script:S6_3PriorGhOutput
+        $env:GITHUB_STEP_SUMMARY = $script:S6_3PriorGhStepSummary
+        if ($script:S6_3TmpRoot -and (Test-Path -LiteralPath $script:S6_3TmpRoot)) {
+            Remove-Item -LiteralPath $script:S6_3TmpRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    BeforeEach {
+        Remove-Item Env:TF_BUILD            -ErrorAction SilentlyContinue
+        Remove-Item Env:GITHUB_ACTIONS      -ErrorAction SilentlyContinue
+        Remove-Item Env:GITHUB_OUTPUT       -ErrorAction SilentlyContinue
+        Remove-Item Env:GITHUB_STEP_SUMMARY -ErrorAction SilentlyContinue
+    }
+
+    Context 'Parameter shape' {
+        BeforeAll { $script:S6CmdI = Get-Command Invoke-AzLocalReadinessGatedClusterUpdate }
+
+        It 'Has mandatory parameter ReadinessCsvPath' {
+            $p = $script:S6CmdI.Parameters['ReadinessCsvPath']
+            $p | Should -Not -BeNullOrEmpty
+            ($p.Attributes | Where-Object { $_ -is [System.Management.Automation.ParameterAttribute] } | Select-Object -First 1).Mandatory | Should -BeTrue
+        }
+        It 'Has parameter UpdateRing'            { $script:S6CmdI.Parameters.Keys | Should -Contain 'UpdateRing' }
+        It 'Has parameter UpdateName'            { $script:S6CmdI.Parameters.Keys | Should -Contain 'UpdateName' }
+        It 'Has parameter DryRun (switch)'       {
+            $script:S6CmdI.Parameters.Keys | Should -Contain 'DryRun'
+            $script:S6CmdI.Parameters['DryRun'].ParameterType.Name | Should -Be 'SwitchParameter'
+        }
+        It 'Has parameter AllowedUpdateVersions' { $script:S6CmdI.Parameters.Keys | Should -Contain 'AllowedUpdateVersions' }
+        It 'Has parameter OutputDirectory'       { $script:S6CmdI.Parameters.Keys | Should -Contain 'OutputDirectory' }
+        It 'Has parameter JUnitFileName'         { $script:S6CmdI.Parameters.Keys | Should -Contain 'JUnitFileName' }
+        It 'Has parameter ApplyResultsJsonFileName' { $script:S6CmdI.Parameters.Keys | Should -Contain 'ApplyResultsJsonFileName' }
+        It 'Has parameter PassThru (switch)'     {
+            $script:S6CmdI.Parameters.Keys | Should -Contain 'PassThru'
+            $script:S6CmdI.Parameters['PassThru'].ParameterType.Name | Should -Be 'SwitchParameter'
+        }
+    }
+
+    Context 'Empty-ready short-circuit (zero counters emitted, no apply attempted)' {
+        It 'Azure DevOps host emits PascalCase counter names when CSV has zero ready rows' {
+            $env:TF_BUILD = 'True'
+            $outDir = Join-Path $script:S6_3TmpRoot 'ado-empty-ready'
+            New-Item -ItemType Directory -Path $outDir -Force | Out-Null
+            $csv = Join-Path $outDir 'readiness-report.csv'
+            # Headers (incl. ClusterResourceId) but no Ready=True rows
+            @'
+ClusterName,ClusterResourceId,ReadyForUpdate,UpdateState,HealthState,BlockingReasons,CurrentVersion,RecommendedUpdate
+foo,/subscriptions/x/resourceGroups/y/providers/Microsoft.AzureStackHCI/clusters/foo,False,NotReady,Failure,Unhealthy,12.2511.0.301,
+'@ | Out-File -FilePath $csv -Encoding utf8 -Force
+
+            $writeHostOutput = & {
+                Invoke-AzLocalReadinessGatedClusterUpdate -ReadinessCsvPath $csv -UpdateRing 'Wave1' -OutputDirectory $outDir
+            } *>&1 | Out-String
+            $writeHostOutput | Should -Match '##vso\[task\.setvariable variable=Succeeded;isOutput=true\]0'
+            $writeHostOutput | Should -Match '##vso\[task\.setvariable variable=Skipped;isOutput=true\]0'
+            $writeHostOutput | Should -Match '##vso\[task\.setvariable variable=Failed;isOutput=true\]0'
+            $writeHostOutput | Should -Match '##vso\[task\.setvariable variable=HealthBlocked;isOutput=true\]0'
+            $writeHostOutput | Should -Match '##vso\[task\.setvariable variable=ScheduleBlocked;isOutput=true\]0'
+            $writeHostOutput | Should -Match '##vso\[task\.setvariable variable=SideloadedBlocked;isOutput=true\]0'
+            $writeHostOutput | Should -Match '##vso\[task\.setvariable variable=ExcludedByTag;isOutput=true\]0'
+        }
+
+        It 'GitHub host emits UPPER_SNAKE counter names to GITHUB_OUTPUT when CSV has zero ready rows' {
+            $env:GITHUB_ACTIONS = 'true'
+            $env:GITHUB_OUTPUT  = Join-Path $script:S6_3TmpRoot 'gh-empty-ready-output.txt'
+            $outDir = Join-Path $script:S6_3TmpRoot 'gh-empty-ready'
+            New-Item -ItemType Directory -Path $outDir -Force | Out-Null
+            $csv = Join-Path $outDir 'readiness-report.csv'
+            @'
+ClusterName,ClusterResourceId,ReadyForUpdate,UpdateState,HealthState,BlockingReasons,CurrentVersion,RecommendedUpdate
+foo,/subscriptions/x/resourceGroups/y/providers/Microsoft.AzureStackHCI/clusters/foo,False,NotReady,Failure,Unhealthy,12.2511.0.301,
+'@ | Out-File -FilePath $csv -Encoding utf8 -Force
+
+            Invoke-AzLocalReadinessGatedClusterUpdate -ReadinessCsvPath $csv -UpdateRing 'Wave1' -OutputDirectory $outDir | Out-Null
+            $outFile = Get-Content -LiteralPath $env:GITHUB_OUTPUT -Raw
+            foreach ($n in 'SUCCEEDED','SKIPPED','FAILED','HEALTH_BLOCKED','SCHEDULE_BLOCKED','SIDELOADED_BLOCKED','EXCLUDED_BY_TAG') {
+                $outFile | Should -Match "$n=0"
+            }
+        }
+    }
+
+    Context 'Missing ClusterResourceId column (v0.7.62 contract)' {
+        It 'Throws when readiness CSV is missing the ClusterResourceId column' {
+            $env:TF_BUILD = 'True'
+            $outDir = Join-Path $script:S6_3TmpRoot 'missing-col'
+            New-Item -ItemType Directory -Path $outDir -Force | Out-Null
+            $csv = Join-Path $outDir 'readiness-report.csv'
+            @'
+ClusterName,ReadyForUpdate,UpdateState,HealthState,BlockingReasons
+foo,True,Ready,Success,
+'@ | Out-File -FilePath $csv -Encoding utf8 -Force
+
+            { Invoke-AzLocalReadinessGatedClusterUpdate -ReadinessCsvPath $csv -UpdateRing 'Wave1' -OutputDirectory $outDir } |
+                Should -Throw -ExpectedMessage "*ClusterResourceId*"
+        }
+    }
+}
+
+Describe 'Thin-YAML Step.6: Add-AzLocalApplyUpdatesStepSummary' {
+
+    Context 'Parameter shape' {
+        BeforeAll { $script:S6CmdS = Get-Command Add-AzLocalApplyUpdatesStepSummary }
+
+        It 'Has mandatory parameter UpdateRing' {
+            $p = $script:S6CmdS.Parameters['UpdateRing']
+            $p | Should -Not -BeNullOrEmpty
+            ($p.Attributes | Where-Object { $_ -is [System.Management.Automation.ParameterAttribute] } | Select-Object -First 1).Mandatory | Should -BeTrue
+        }
+        It 'Has parameter DryRun (switch)' {
+            $script:S6CmdS.Parameters.Keys | Should -Contain 'DryRun'
+            $script:S6CmdS.Parameters['DryRun'].ParameterType.Name | Should -Be 'SwitchParameter'
+        }
+        It 'Has counter parameters TotalCount/ReadyCount/Succeeded/Skipped/Failed/HealthBlocked/ScheduleBlocked/SideloadedBlocked/ExcludedByTag' {
+            foreach ($n in 'TotalCount','ReadyCount','Succeeded','Skipped','Failed','HealthBlocked','ScheduleBlocked','SideloadedBlocked','ExcludedByTag') {
+                $script:S6CmdS.Parameters.Keys | Should -Contain $n -Because "Add-AzLocalApplyUpdatesStepSummary must expose $n"
+            }
+        }
+        It 'Has parameter ApplyResultsJsonPath' { $script:S6CmdS.Parameters.Keys | Should -Contain 'ApplyResultsJsonPath' }
+        It 'Has parameter ReadinessCsvPath'     { $script:S6CmdS.Parameters.Keys | Should -Contain 'ReadinessCsvPath' }
+        It 'Has parameter SummaryFileName'      { $script:S6CmdS.Parameters.Keys | Should -Contain 'SummaryFileName' }
+        It 'Has parameter PassThru (switch)'    {
+            $script:S6CmdS.Parameters.Keys | Should -Contain 'PassThru'
+            $script:S6CmdS.Parameters['PassThru'].ParameterType.Name | Should -Be 'SwitchParameter'
+        }
+    }
+}
+
+Describe 'Thin-YAML Step.6: Add-AzLocalNoReadyClustersStepSummary' {
+
+    Context 'Parameter shape' {
+        BeforeAll { $script:S6CmdN = Get-Command Add-AzLocalNoReadyClustersStepSummary }
+
+        It 'Has mandatory parameter UpdateRing' {
+            $p = $script:S6CmdN.Parameters['UpdateRing']
+            $p | Should -Not -BeNullOrEmpty
+            ($p.Attributes | Where-Object { $_ -is [System.Management.Automation.ParameterAttribute] } | Select-Object -First 1).Mandatory | Should -BeTrue
+        }
+        It 'Has parameter TotalCount'       { $script:S6CmdN.Parameters.Keys | Should -Contain 'TotalCount' }
+        It 'Has parameter SummaryFileName'  { $script:S6CmdN.Parameters.Keys | Should -Contain 'SummaryFileName' }
+        It 'Has parameter PassThru (switch)' {
+            $script:S6CmdN.Parameters.Keys | Should -Contain 'PassThru'
+            $script:S6CmdN.Parameters['PassThru'].ParameterType.Name | Should -Be 'SwitchParameter'
+        }
+    }
+}
+
+Describe 'Thin-YAML Step.6: Invoke-AzLocalItsmTicketingFromArtifact' {
+
+    BeforeAll {
+        $script:S6_6PriorTfBuild = $env:TF_BUILD
+        $script:S6_6PriorGhActions = $env:GITHUB_ACTIONS
+        $script:S6_6TmpRoot = Join-Path -Path $env:TEMP -ChildPath ("s6-cmdlet-itsm-{0}" -f ([Guid]::NewGuid()))
+        New-Item -ItemType Directory -Path $script:S6_6TmpRoot -Force | Out-Null
+    }
+
+    AfterAll {
+        $env:TF_BUILD       = $script:S6_6PriorTfBuild
+        $env:GITHUB_ACTIONS = $script:S6_6PriorGhActions
+        if ($script:S6_6TmpRoot -and (Test-Path -LiteralPath $script:S6_6TmpRoot)) {
+            Remove-Item -LiteralPath $script:S6_6TmpRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    BeforeEach {
+        Remove-Item Env:TF_BUILD       -ErrorAction SilentlyContinue
+        Remove-Item Env:GITHUB_ACTIONS -ErrorAction SilentlyContinue
+    }
+
+    Context 'Parameter shape' {
+        BeforeAll { $script:S6CmdT = Get-Command Invoke-AzLocalItsmTicketingFromArtifact }
+
+        It 'Has mandatory parameter ConfigPath' {
+            $p = $script:S6CmdT.Parameters['ConfigPath']
+            $p | Should -Not -BeNullOrEmpty
+            ($p.Attributes | Where-Object { $_ -is [System.Management.Automation.ParameterAttribute] } | Select-Object -First 1).Mandatory | Should -BeTrue
+        }
+        It 'Has parameter InputArtifactPath' { $script:S6CmdT.Parameters.Keys | Should -Contain 'InputArtifactPath' }
+        It 'Has parameter ExportDirectory'   { $script:S6CmdT.Parameters.Keys | Should -Contain 'ExportDirectory' }
+        It 'Has parameter ExportCsvFileName' { $script:S6CmdT.Parameters.Keys | Should -Contain 'ExportCsvFileName' }
+        It 'Has parameter ExportJUnitFileName' { $script:S6CmdT.Parameters.Keys | Should -Contain 'ExportJUnitFileName' }
+        It 'Has parameter DryRun (switch)'   {
+            $script:S6CmdT.Parameters.Keys | Should -Contain 'DryRun'
+            $script:S6CmdT.Parameters['DryRun'].ParameterType.Name | Should -Be 'SwitchParameter'
+        }
+        It 'Has parameter ForceCreate (switch)' {
+            $script:S6CmdT.Parameters.Keys | Should -Contain 'ForceCreate'
+            $script:S6CmdT.Parameters['ForceCreate'].ParameterType.Name | Should -Be 'SwitchParameter'
+        }
+        It 'Has parameter PassThru (switch)' {
+            $script:S6CmdT.Parameters.Keys | Should -Contain 'PassThru'
+            $script:S6CmdT.Parameters['PassThru'].ParameterType.Name | Should -Be 'SwitchParameter'
+        }
+    }
+
+    Context 'Short-circuits on missing prerequisites' {
+        It 'Returns without error when ConfigPath does not exist (does NOT throw)' {
+            $missing = Join-Path $script:S6_6TmpRoot 'no-such-config.yml'
+            { Invoke-AzLocalItsmTicketingFromArtifact -ConfigPath $missing -InputArtifactPath (Join-Path $script:S6_6TmpRoot 'whatever.xml') } | Should -Not -Throw
+        }
+    }
+}
+
+#endregion v0.8.5 Step.6 thin-YAML: Apply-Updates pipeline cmdlets

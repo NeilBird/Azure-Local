@@ -95,7 +95,7 @@ env:
   # this to the version actually installed and to the latest on PSGallery, and emits a
   # ::notice annotation if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.8.4'
+  GENERATED_AGAINST_MODULE_VERSION: '0.8.5'
   REQUIRED_MODULE_VERSION: ${{ github.event.inputs.module_version || vars.REQUIRED_MODULE_VERSION || '' }}
   # v0.8.4 - opt this workflow into Node.js 24 for all JavaScript actions
   # (actions/checkout, actions/download-artifact, actions/upload-artifact,
@@ -115,6 +115,24 @@ jobs:
       id-token: write
       contents: read
       checks: write   # Required for test reporter
+    outputs:
+      # v0.8.5 thin-YAML: keys align byte-for-byte with the lowercase output
+      # names emitted by Export-AzLocalApplyUpdatesScheduleAudit (via
+      # Set-AzLocalPipelineOutput). ADO is case-sensitive on task.setvariable
+      # lookups; GH is case-insensitive but lowercase is the canonical v0.8.5+
+      # convention.
+      total_rows:     ${{ steps.audit.outputs.total_rows }}
+      covered:        ${{ steps.audit.outputs.covered }}
+      uncovered:      ${{ steps.audit.outputs.uncovered }}
+      partial:        ${{ steps.audit.outputs.partial }}
+      malformed:      ${{ steps.audit.outputs.malformed }}
+      unparseable:    ${{ steps.audit.outputs.unparseable }}
+      no_window_tag:  ${{ steps.audit.outputs.no_window_tag }}
+      ring_missing:   ${{ steps.audit.outputs.ring_missing }}
+      ring_orphan:    ${{ steps.audit.outputs.ring_orphan }}
+      ring_mixed:     ${{ steps.audit.outputs.ring_mixed }}
+      have_schedule:  ${{ steps.audit.outputs.have_schedule }}
+      schedule_path:  ${{ steps.audit.outputs.schedule_path }}
 
     steps:
     - name: Checkout repository
@@ -141,7 +159,12 @@ jobs:
         az extension add --name resource-graph --yes
 
     - name: Install AzLocal.UpdateManagement from PSGallery
+      # v0.8.5 thin-YAML: the drift-detection + version-banner block is
+      # produced by Add-AzLocalPipelineVersionBanner (Public cmdlet); the
+      # cmdlet writes the version banner to GITHUB_STEP_SUMMARY and emits
+      # the installed_module_version step output consumed by the next step.
       shell: pwsh
+      id: module-version
       run: |
         $ErrorActionPreference = 'Stop'
         $installArgs = @{ Name = 'AzLocal.UpdateManagement'; Scope = 'CurrentUser'; Force = $true; AllowClobber = $true }
@@ -153,46 +176,27 @@ jobs:
         }
         Install-Module @installArgs
         Import-Module AzLocal.UpdateManagement -Force
-        $installed = (Get-Module AzLocal.UpdateManagement | Sort-Object Version -Descending | Select-Object -First 1).Version
-        $generated = [version]$env:GENERATED_AGAINST_MODULE_VERSION
-        $latest    = (Find-Module -Name AzLocal.UpdateManagement -Repository PSGallery -ErrorAction SilentlyContinue).Version
-        Write-Host ""
-        Write-Host "Module version summary"
-        Write-Host "  Installed on runner       : $installed"
-        Write-Host "  YAML generated against    : $generated"
-        Write-Host "  Latest on PSGallery       : $(if ($latest) { $latest } else { '(lookup failed - check network)' })"
-        # Drift signal 0: the module installed at runtime is OLDER than the version this YAML was generated against. Cmdlets, parameters, or output schemas referenced by this YAML may not exist in the installed module - emitted as a warning because this is the most likely cause of a hard runtime failure later in the job.
-        if ($installed -lt $generated) {
-            $msg = "AzLocal.UpdateManagement v$installed is OLDER than the version this workflow YAML was generated against (v$generated). Cmdlets, parameters, or output schemas referenced by this YAML may not exist in v$installed. Set REQUIRED_MODULE_VERSION to v$generated, or refresh the YAML to match the installed module via 'Copy-AzLocalPipelineExample -Destination .\.github\workflows -Platform GitHub -Update'."
-            Write-Host "::warning title=AzLocal.UpdateManagement is older than workflow YAML expects::$msg"
-        }
-        if ($installed -gt $generated) {
-            $msg = "Workflow YAML was generated against AzLocal.UpdateManagement v$generated but the runner installed v$installed. Refresh via 'Copy-AzLocalPipelineExample -Destination .\.github\workflows -Platform GitHub -Update'."
-            Write-Host "::notice title=Workflow YAML may be stale::$msg"
-        }
-        if ($latest -and ($latest -gt $installed)) {
-            $msg = "AzLocal.UpdateManagement v$latest is available on PSGallery; this run installed v$installed."
-            Write-Host "::notice title=Newer AzLocal.UpdateManagement version available on PSGallery::$msg"
-        }
-
-        # v0.8.4 - one-line version banner emitted to the rendered Step
-        # Summary so the YAML version (GENERATED_AGAINST_MODULE_VERSION), the
-        # module version actually loaded on the runner, the PSGallery latest,
-        # and the REQUIRED_MODULE_VERSION pin status are visible at the top
-        # of every run summary without scrolling the agent log. Same data is
-        # also echoed to the console above as 'Module version summary'.
-        $pin       = if ($env:REQUIRED_MODULE_VERSION) { "pinned to v$($env:REQUIRED_MODULE_VERSION)" } else { 'latest (fix-forward)' }
-        $latestStr = if ($latest) { "v$latest" } else { '(PSGallery lookup failed)' }
-        $verdict   = if ($installed -lt $generated) { 'YAML newer than module - check REQUIRED_MODULE_VERSION' }
-                     elseif ($installed -gt $generated) { 'YAML older than module - run Copy-AzLocalPipelineExample -Update' }
-                     elseif ($latest -and ($latest -gt $installed)) { 'newer module available on PSGallery' }
-                     else { 'in sync' }
-        if ($env:GITHUB_STEP_SUMMARY) {
-            "_Pipeline YAML v$generated | Module v$installed installed ($pin) | PSGallery latest $latestStr | $verdict_" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
-            "" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
-        }
+        Add-AzLocalPipelineVersionBanner `
+            -GeneratedAgainstVersion $env:GENERATED_AGAINST_MODULE_VERSION `
+            -PinnedVersion $env:REQUIRED_MODULE_VERSION
 
     - name: Run Schedule Coverage Audit
+      # v0.8.5 thin-YAML: the inline body (~220-line 'Run Schedule
+      # Coverage Audit' + ~210-line 'Create Schedule Coverage Summary'
+      # blocks: 3 calls to Test-AzLocalApplyUpdatesScheduleCoverage,
+      # inline JUnit StringBuilder, 12-row markdown summary, schedule-row
+      # detail tables, allow-list coverage v1/v2 sections, cycle calendar
+      # render, and 12 step outputs) is now the Public cmdlet
+      # Export-AzLocalApplyUpdatesScheduleAudit. The cmdlet writes the
+      # 4 ./reports/schedule-coverage-* artifacts, pushes the markdown
+      # summary via GITHUB_STEP_SUMMARY, and sets the 12 lowercase step
+      # outputs (total_rows, covered, uncovered, partial, malformed,
+      # unparseable, no_window_tag, ring_missing, ring_orphan, ring_mixed,
+      # have_schedule, schedule_path) via Set-AzLocalPipelineOutput.
+      # **v0.8.5 fix**: the cycle calendar now renders UNCONDITIONALLY
+      # whenever -SchedulePath is supplied, eliminating the v0.8.4
+      # ``$hasIssues``-gate regression that silently dropped the calendar
+      # on clean-fleet runs.
       shell: pwsh
       id: audit
       env:
@@ -203,234 +207,40 @@ jobs:
         INPUT_INCLUDE_UNTAGGED:  ${{ github.event.inputs.include_untagged || 'false' }}
         INPUT_CLUSTER_CSV_PATH:  ${{ github.event.inputs.cluster_csv_path || 'config/ClusterUpdateRings.csv' }}
         INPUT_DEBUG:             ${{ github.event.inputs.debug || 'false' }}
+        INSTALLED_MODULE_VERSION: ${{ steps.module-version.outputs.installed_module_version }}
       run: |
         $ErrorActionPreference = 'Stop'
         Import-Module AzLocal.UpdateManagement -Force
 
-        # Debug toggle: flips Verbose/Debug preferences and emits a
-        # one-shot environment snapshot so operators can self-triage without
-        # needing a code change. Default OFF to keep normal runs concise.
         if ($env:INPUT_DEBUG -eq 'true') {
             $VerbosePreference = 'Continue'
             $DebugPreference   = 'Continue'
             Write-Host "::group::Debug environment"
             Write-Host "PSVersion                : $($PSVersionTable.PSVersion)"
             Write-Host "PSEdition                : $($PSVersionTable.PSEdition)"
-            Write-Host "OS                       : $($PSVersionTable.OS)"
             $mod = Get-Module AzLocal.UpdateManagement | Sort-Object Version -Descending | Select-Object -First 1
             Write-Host "AzLocal.UpdateManagement : v$($mod.Version) (path: $($mod.Path))"
-            Write-Host "VerbosePreference        : $VerbosePreference"
-            Write-Host "DebugPreference          : $DebugPreference"
             Write-Host "::endgroup::"
         }
 
-        $outputDir = "./reports"
-        New-Item -ItemType Directory -Path $outputDir -Force | Out-Null
-
-        $pipelinePath = $env:INPUT_PIPELINE_PATH
-        $schedulePath = $env:INPUT_SCHEDULE_PATH
-        $leadTime     = [int]$env:INPUT_LEAD_TIME_MINUTES
-        $firesPerWin  = [int]$env:INPUT_FIRES_PER_WINDOW
-        $includeUnt   = ($env:INPUT_INCLUDE_UNTAGGED -eq 'true')
-        $clusterCsv   = $env:INPUT_CLUSTER_CSV_PATH
-
-        # v0.8.3: pipeline_path is REQUIRED so Recommend can diff its
-        # proposed crons against what's already in Step.6 and only emit a
-        # snippet for the truly missing entries. Schedule_path stays optional
-        # (it drives the ring-file two-way diff). Defence-in-depth: even
-        # though the workflow_dispatch input is required:true, validate at
-        # runtime as well in case the workflow is invoked via the schedule
-        # trigger (which uses the input defaults).
-        $havePipeline = -not [string]::IsNullOrWhiteSpace($pipelinePath)
-        $haveSchedule = -not [string]::IsNullOrWhiteSpace($schedulePath) -and (Test-Path -LiteralPath $schedulePath)
-        # v0.8.4: cluster_csv_path is optional. If the file is missing on the runner
-        # we skip the NoWindowTag remediation section quietly (vs throwing) so the
-        # workflow keeps emitting the legacy advisor output for repos that don't
-        # version-control a cluster CSV yet.
-        $haveCsv      = -not [string]::IsNullOrWhiteSpace($clusterCsv) -and (Test-Path -LiteralPath $clusterCsv)
-        if (-not $havePipeline) {
-            throw "pipeline_path is required. Set it to the folder containing Step.6_apply-updates.yml (default '.github/workflows' matches the standard consumer layout). The Recommend view diffs its proposed crons against this file - leaving it empty would make every recommendation a false positive."
-        }
-        if (-not (Test-Path -LiteralPath $pipelinePath)) {
-            $candidates = @('.github/workflows', '.azure-pipelines', 'pipelines', '.') | Where-Object { Test-Path -LiteralPath $_ }
-            $hint = if ($candidates) { "Common locations that DO exist in this repo: $($candidates -join ', '). Re-run via 'Run workflow' on the Actions tab and set the 'pipeline_path' input." } else { "No common pipeline folders (.github/workflows, .azure-pipelines, pipelines, repo root) were found in this repo - commit your Step.6_apply-updates.yml first, or set 'pipeline_path' to wherever you keep it." }
-            throw "PipelineYamlPath '$pipelinePath' does not exist on the runner. $hint"
-        }
-
-        Write-Host "========================================"
-        Write-Host "Apply-Updates Schedule Coverage Audit"
-        Write-Host "========================================"
-        Write-Host "PipelineYamlPath : $(if ($pipelinePath) { $pipelinePath } else { '(skipped - pipeline_path empty)' })"
-        Write-Host "SchedulePath     : $(if ($haveSchedule) { $schedulePath } else { '(skipped - schedule_path empty or file missing)' })"
-        Write-Host "LeadTimeMinutes  : $leadTime"
-        Write-Host "FiresPerWindow   : $firesPerWin   (1 = opening edge only, 2 = belt-and-braces opening + mid-window retry)"
-        Write-Host "IncludeUntagged  : $includeUnt"
-        Write-Host "ClusterCsvPath   : $(if ($haveCsv) { $clusterCsv } else { '(skipped - cluster_csv_path empty or file missing)' })"
-        Write-Host ""
-
-        $auditCsv  = Join-Path $outputDir 'schedule-coverage-audit.csv'
-        $recoMd    = Join-Path $outputDir 'schedule-coverage-recommend.md'
-        $matrixCsv = Join-Path $outputDir 'schedule-coverage-matrix.csv'
-
-        # v0.7.74: pin -Platform GitHubActions so the Recommend snippet ONLY
-        # emits the GitHub Actions cron block (not the ADO `schedules:` block,
-        # which would be irrelevant noise in a GitHub Actions Step Summary).
-        # The cmdlet's default is 'Both' (intentional for ad-hoc operator use),
-        # so the pipeline yml has to specify which platform it's running on.
-        $auditArgs = @{
-            View                    = 'Audit'
-            LeadTimeMinutes         = $leadTime
-            RecommendFiresPerWindow = $firesPerWin
-            ExportPath              = $auditCsv
+        $params = @{
+            PipelineYamlPath        = $env:INPUT_PIPELINE_PATH
+            LeadTimeMinutes         = [int]$env:INPUT_LEAD_TIME_MINUTES
+            RecommendFiresPerWindow = [int]$env:INPUT_FIRES_PER_WINDOW
             Platform                = 'GitHubActions'
-            PassThru                = $true
+            OutputDirectory         = './reports'
+            InstalledModuleVersion  = $env:INSTALLED_MODULE_VERSION
         }
-        if ($havePipeline) { $auditArgs.PipelineYamlPath = $pipelinePath }
-        if ($haveSchedule) { $auditArgs.SchedulePath     = $schedulePath }
-        if ($includeUnt)   { $auditArgs.IncludeUntagged  = $true }
-        if ($haveCsv)      { $auditArgs.ClusterCsvPath   = $clusterCsv }
-        $audit = Test-AzLocalApplyUpdatesScheduleCoverage @auditArgs
-        if (-not $audit) { $audit = @() }
+        if ($env:INPUT_SCHEDULE_PATH)    { $params['SchedulePath'] = $env:INPUT_SCHEDULE_PATH }
+        if ($env:INPUT_CLUSTER_CSV_PATH) { $params['ClusterCsvPath'] = $env:INPUT_CLUSTER_CSV_PATH }
+        if ($env:INPUT_INCLUDE_UNTAGGED -eq 'true') { $params['IncludeUntagged'] = $true }
 
-        # Matrix view (CSV only).
-        Test-AzLocalApplyUpdatesScheduleCoverage -View Matrix -LeadTimeMinutes $leadTime -ExportPath $matrixCsv | Out-Null
-
-        # Recommend view (markdown snippet) - GitHub Actions only.
-        # v0.8.3: pass -PipelineYamlPath so Recommend diff-prunes crons
-        # already present in Step.6 and only emits the truly missing ones.
-        # v0.8.4: also pass -SchedulePath (so the Cycle calendar +
-        # Configured exclusion windows informational sections render) and
-        # -ClusterCsvPath (so the NoWindowTag remediation section renders).
-        $recoArgs = @{
-            View                    = 'Recommend'
-            LeadTimeMinutes         = $leadTime
-            RecommendFiresPerWindow = $firesPerWin
-            Platform                = 'GitHubActions'
-            ExportPath              = $recoMd
-        }
-        if ($havePipeline) { $recoArgs.PipelineYamlPath = $pipelinePath }
-        if ($haveSchedule) { $recoArgs.SchedulePath     = $schedulePath }
-        if ($haveCsv)      { $recoArgs.ClusterCsvPath   = $clusterCsv }
-        Test-AzLocalApplyUpdatesScheduleCoverage @recoArgs | Out-Null
-
-        $covered     = @($audit | Where-Object Status -eq 'Covered')
-        $uncovered   = @($audit | Where-Object Status -eq 'Uncovered')
-        $partial     = @($audit | Where-Object Status -eq 'PartiallyCovered')
-        $malformed   = @($audit | Where-Object Status -eq 'MalformedTag')
-        $unparseable = @($audit | Where-Object Status -eq 'UnparseableCron')
-        # -IncludeUntagged bucket: clusters with no UpdateStartWindow tag.
-        $noWindowTag = @($audit | Where-Object Status -eq 'NoWindowTag')
-        # schedule-file two-way diff buckets.
-        $ringMissing = @($audit | Where-Object Status -eq 'RingMissingFromSchedule')
-        $ringOrphan  = @($audit | Where-Object Status -eq 'RingOrphanedInSchedule')
-        # v0.7.92: same-ring mixed-window detector. Informational - the runtime
-        # gate reads per-cluster tags so updates still fire, but surfaces a
-        # ring whose clusters disagree on UpdateStartWindow value so the
-        # operator can decide to standardise or split the ring.
-        $ringMixed   = @($audit | Where-Object Status -eq 'RingMixedWindows')
-
-        # ------------------------------------------------------------------
-        # JUnit XML: two <testsuite time="0"> elements so the test reporter
-        # tree separates schedule-file gap rows (Schedule section) from cron
-        # coverage rows (Cron section). Schedule gaps have higher blast
-        # radius (apply-updates NEVER fires for those rings), so the suite
-        # comes FIRST. Uncovered, PartiallyCovered, MalformedTag,
-        # UnparseableCron, RingMissingFromSchedule, RingOrphanedInSchedule
-        # all become <failure>; Covered passes.
-        # ------------------------------------------------------------------
-        function Convert-XmlEscape([string]$s) {
-            if ($null -eq $s) { return '' }
-            ($s.Replace('&','&amp;').Replace('<','&lt;').Replace('>','&gt;').Replace('"','&quot;').Replace("'",'&apos;'))
-        }
-        function Write-Suite {
-            param(
-                [System.Text.StringBuilder]$Sb,
-                [string]$SuiteName,
-                [object[]]$Rows,
-                [string]$EmptyPlaceholderName
-            )
-            $failures = @($Rows | Where-Object { $_.Status -ne 'Covered' }).Count
-            [void]$Sb.AppendLine(("  <testsuite name=`"{0}`" tests=`"{1}`" failures=`"{2}`" time=`"0`">" -f (Convert-XmlEscape $SuiteName), $Rows.Count, $failures))
-            foreach ($row in $Rows) {
-                $tcName = ("{0} / {1}" -f $row.UpdateRing, ($(if ($row.UpdateStartWindow) { $row.UpdateStartWindow } else { '(no window)' })))
-                [void]$Sb.AppendLine(("    <testcase classname=`"ScheduleCoverage`" name=`"{0}`" time=`"0`">" -f (Convert-XmlEscape $tcName)))
-                if ($row.Status -ne 'Covered') {
-                    $issue = Convert-XmlEscape $row.Issue
-                    $reco  = Convert-XmlEscape $row.Recommendation
-                    [void]$Sb.AppendLine(("      <failure type=`"{0}`" message=`"{1}`">Recommendation: {2}{3}Cluster count: {4}</failure>" -f $row.Status, $issue, $reco, [Environment]::NewLine, $row.ClusterCount))
-                }
-                [void]$Sb.AppendLine('    </testcase>')
-            }
-            if ($Rows.Count -eq 0 -and $EmptyPlaceholderName) {
-                [void]$Sb.AppendLine(("    <testcase classname=`"ScheduleCoverage`" name=`"{0}`" time=`"0`" />" -f (Convert-XmlEscape $EmptyPlaceholderName)))
-            }
-            [void]$Sb.AppendLine('  </testsuite>')
-        }
-
-        $scheduleRows = @($audit | Where-Object { $_.Section -eq 'Schedule' })
-        $cronRows     = @($audit | Where-Object { $_.Section -ne 'Schedule' })
-
-        $xmlPath = Join-Path $outputDir 'schedule-coverage-audit.xml'
-        $sb = New-Object System.Text.StringBuilder
-        [void]$sb.AppendLine('<?xml version="1.0" encoding="UTF-8"?>')
-        [void]$sb.AppendLine('<testsuites time="0">')
-        # only emit the Schedule suite when -SchedulePath was actually
-        # supplied (i.e. there is at least one Schedule row OR the operator
-        # provided a schedule file). Otherwise the suite would render as
-        # "no tests found" with no actionable signal.
-        if ($haveSchedule -or $scheduleRows.Count -gt 0) {
-            Write-Suite -Sb $sb `
-                -SuiteName 'Apply-Updates Schedule Coverage - Schedule (ring diff)' `
-                -Rows $scheduleRows `
-                -EmptyPlaceholderName 'Schedule and fleet ring sets match - no gaps.'
-        }
-        if ($cronRows.Count -gt 0 -or -not $haveSchedule) {
-            Write-Suite -Sb $sb `
-                -SuiteName 'Apply-Updates Schedule Coverage - Cron coverage' `
-                -Rows $cronRows `
-                -EmptyPlaceholderName 'No tagged clusters found - nothing to audit'
-        }
-        [void]$sb.AppendLine('</testsuites>')
-        [System.IO.File]::WriteAllText($xmlPath, $sb.ToString(), [System.Text.UTF8Encoding]::new($false))
-
-        # Step outputs for the summary step.
-        "TOTAL_ROWS=$($audit.Count)"          | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-        "COVERED=$($covered.Count)"           | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-        "UNCOVERED=$($uncovered.Count)"       | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-        "PARTIAL=$($partial.Count)"           | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-        "MALFORMED=$($malformed.Count)"       | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-        "UNPARSEABLE=$($unparseable.Count)"   | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-        "NO_WINDOW_TAG=$($noWindowTag.Count)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-        "RING_MISSING=$($ringMissing.Count)"  | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-        "RING_ORPHAN=$($ringOrphan.Count)"    | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-        "RING_MIXED=$($ringMixed.Count)"      | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-        # v0.7.90: surface whether -SchedulePath was supplied + its value
-        # so the summary step (separate step scope) can render the
-        # Schedule (ring-file gap) detail table and the new allow-list
-        # coverage section without re-deriving from CSV rows.
-        "HAVE_SCHEDULE=$([string]$haveSchedule)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-        if ($haveSchedule) {
-            "SCHEDULE_PATH=$schedulePath" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-        }
-
-        Write-Host ""
-        Write-Host "Audit complete:"
-        Write-Host "  Covered                  : $($covered.Count)"
-        Write-Host "  Uncovered                : $($uncovered.Count)"
-        Write-Host "  PartiallyCovered         : $($partial.Count)"
-        Write-Host "  MalformedTag             : $($malformed.Count)"
-        Write-Host "  UnparseableCron          : $($unparseable.Count)"
-        Write-Host "  NoWindowTag              : $($noWindowTag.Count)"
-        Write-Host "  RingMissingFromSchedule  : $($ringMissing.Count)"
-        Write-Host "  RingOrphanedInSchedule   : $($ringOrphan.Count)"
-        Write-Host "  RingMixedWindows         : $($ringMixed.Count)"
+        Export-AzLocalApplyUpdatesScheduleAudit @params
 
     - name: Compute Artifact Timestamp
       if: always()
       id: artifact-stamp
       shell: pwsh
-      # every downloadable artifact gets a UTC timestamp suffix so multiple runs on
-      # the same day produce distinct zip names. UTC keeps Azure DevOps + GitHub Actions in sync.
       run: |
         $stamp = (Get-Date).ToUniversalTime().ToString('yyyyMMdd_HHmmss')
         "timestamp=$stamp" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
@@ -443,207 +253,6 @@ jobs:
         name: azlocal-step.3-apply-updates-schedule-audit-report_${{ steps.artifact-stamp.outputs.timestamp }}
         path: ./reports/
         retention-days: 90
-
-    - name: Create Schedule Coverage Summary
-      if: always()
-      shell: pwsh
-      run: |
-        $total       = "${{ steps.audit.outputs.TOTAL_ROWS }}"
-        $covered     = "${{ steps.audit.outputs.COVERED }}"
-        $uncovered   = "${{ steps.audit.outputs.UNCOVERED }}"
-        $partial     = "${{ steps.audit.outputs.PARTIAL }}"
-        $malformed   = "${{ steps.audit.outputs.MALFORMED }}"
-        $unparseable = "${{ steps.audit.outputs.UNPARSEABLE }}"
-        $noWindowTag = "${{ steps.audit.outputs.NO_WINDOW_TAG }}"
-        $ringMissing = "${{ steps.audit.outputs.RING_MISSING }}"
-        $ringOrphan  = "${{ steps.audit.outputs.RING_ORPHAN }}"
-        $ringMixed   = "${{ steps.audit.outputs.RING_MIXED }}"
-        # v0.7.90: pulled forward from the audit step so this summary step
-        # can render the Schedule (ring-file gap) detail table and the
-        # allow-list coverage section. Without this, $haveSchedule was
-        # undefined here (separate step scope) and the Schedule diff
-        # table silently disappeared from the GitHub Step Summary.
-        $haveSchedule = ("${{ steps.audit.outputs.HAVE_SCHEDULE }}" -eq 'True')
-        $schedulePath = "${{ steps.audit.outputs.SCHEDULE_PATH }}"
-
-        $rows = @()
-        if (Test-Path './reports/schedule-coverage-audit.csv') {
-            $rows = @(Import-Csv -Path './reports/schedule-coverage-audit.csv')
-        }
-        $reco = ''
-        if (Test-Path './reports/schedule-coverage-recommend.md') {
-            $reco = Get-Content -Path './reports/schedule-coverage-recommend.md' -Raw
-        }
-
-        # when there is at least one issue row, surface the action-required
-        # markdown at the TOP of the summary so operators can act without scrolling past the
-        # detail table. The Recommend output now ships its own '## Action required - ...'
-        # headings (one per kind of fix), numbered '(1 of N)' when more than one applies,
-        # so we inline it as-is rather than wrapping it in our own code fence.
-        $hasIssues = (([int]$uncovered) + ([int]$partial) + ([int]$malformed) + ([int]$unparseable) + ([int]$noWindowTag) + ([int]$ringMissing) + ([int]$ringOrphan)) -gt 0
-
-        $md = @"
-        ## Apply-Updates Schedule Coverage Audit
-
-        | Metric | Count |
-        |--------|-------|
-        | **(Ring, Window) pairs audited** | $total |
-        | **Covered** | $covered |
-        | **Uncovered** | $uncovered |
-        | **PartiallyCovered** | $partial |
-        | **MalformedTag** | $malformed |
-        | **UnparseableCron** | $unparseable |
-        | **NoWindowTag** | $noWindowTag |
-        | **RingMissingFromSchedule** | $ringMissing |
-        | **RingOrphanedInSchedule** | $ringOrphan |
-        | **RingMixedWindows** | $ringMixed |
-
-        "@
-
-        if ($hasIssues -and $reco) {
-            $md += "`n" + $reco + "`n"
-        }
-
-        # split Audit Detail into two sub-tables. Schedule rows
-        # (RingMissingFromSchedule / RingOrphanedInSchedule) come FIRST -
-        # higher blast radius because a missing-from-schedule ring means
-        # apply-updates NEVER fires for those clusters. The Schedule
-        # sub-table is rendered whenever -SchedulePath was supplied (so
-        # operators see the "no gaps" confirmation) OR whenever any
-        # Schedule-section rows are present (defensive fallback in case
-        # $haveSchedule didn't make it across step scopes).
-        $scheduleRowsMd = @($rows | Where-Object { $_.Section -eq 'Schedule' })
-        $cronRowsMd     = @($rows | Where-Object { $_.Section -ne 'Schedule' })
-
-        function Add-DetailTable {
-            param([string]$Heading, [object[]]$DetailRows, [string]$EmptyText)
-            $body = "`n$Heading`n"
-            if ($DetailRows.Count -eq 0) {
-                $body += "`n*$EmptyText*`n"
-                return $body
-            }
-            $body += "`n| Status | UpdateRing | UpdateStartWindow | Clusters | Required Cron (UTC) | Recommendation |`n"
-            $body += "|--------|------------|--------------|---------:|----------------------|----------------|`n"
-            foreach ($r in ($DetailRows | Select-Object -First 100)) {
-                $body += ('| {0} | {1} | {2} | {3} | {4} | {5} |' -f $r.Status, $r.UpdateRing, $r.UpdateStartWindow, $r.ClusterCount, $r.RequiredCronUTC, $r.Recommendation) + "`n"
-            }
-            if ($DetailRows.Count -gt 100) {
-                $body += "`n*Showing first 100 of $($DetailRows.Count); see ``schedule-coverage-audit.csv`` artifact for the full list.*`n"
-            }
-            return $body
-        }
-
-        if ($haveSchedule -or $scheduleRowsMd.Count -gt 0) {
-            $md += "`n### Audit Detail - Schedule (ring-file gap)`n"
-            $md += "`n> **Higher blast radius.** A ``RingMissingFromSchedule`` row means apply-updates will NEVER fire on those clusters until you either add the ring to ``apply-updates-schedule.yml`` or retag them onto an existing scheduled ring.`n"
-            $md += (Add-DetailTable -Heading '' -DetailRows $scheduleRowsMd -EmptyText 'Schedule and fleet ring sets match - no gaps.')
-        }
-
-        # v0.7.90: Allow-list coverage section. When -SchedulePath was
-        # supplied, re-load the schedule file (the summary step is a
-        # separate pwsh process so we have to import the module + read
-        # the schedule here too) and surface the effective
-        # 'allowedUpdateVersions' for each schedule row. For schema v1
-        # we just nudge the operator to migrate. For schema v2 we
-        # render a per-row table and recommend per-ring override
-        # snippets for rows that inherit the top-level default. Wrapped
-        # in try/catch so a malformed schedule never blocks the summary.
-        if ($haveSchedule -and -not [string]::IsNullOrWhiteSpace($schedulePath) -and (Test-Path -LiteralPath $schedulePath)) {
-            try {
-                Import-Module AzLocal.UpdateManagement -Force -ErrorAction Stop
-                $sched = Get-AzLocalApplyUpdatesScheduleConfig -Path $schedulePath -ErrorAction Stop
-            } catch {
-                $sched = $null
-                $md += "`n### Allow-list coverage`n`n*Could not load schedule file ``$schedulePath`` for allow-list analysis: $($_.Exception.Message)*`n"
-            }
-            if ($sched) {
-                $md += "`n### Allow-list coverage (schema v$($sched.SchemaVersion))`n"
-                if ($sched.SchemaVersion -lt 2) {
-                    $md += "`n*This schedule is on schema v1. Schema v2 adds ``allowedUpdateVersions`` for fleet-wide + per-ring update allow-lists (e.g. enforce a 'minimum updates' policy on Prod). Migrate the file with:*`n"
-                    $md += "`n``````powershell`n"
-                    $md += "Update-AzLocalApplyUpdatesScheduleConfig -Path '$schedulePath' -SchemaMigrate`n"
-                    $md += "```````n"
-                } else {
-                    $topAllow = @($sched.AllowedUpdateVersions)
-                    $topIsLatest = ($topAllow.Count -eq 1 -and $topAllow[0] -eq 'Latest')
-                    if ($topIsLatest) {
-                        $topLabel = "``Latest`` _(no constraint - install the latest Ready update on each cluster)_"
-                    } else {
-                        $topLabel = "``$($topAllow -join '; ')`` _(explicit allow-list - clusters only install matching updates)_"
-                    }
-                    $md += "`n**Top-level fleet default:** $topLabel`n"
-
-                    $md += "`n| Row | weeksInCycle | daysOfWeek | rings | Effective allowedUpdateVersions |`n"
-                    $md += "|----:|--------------|------------|-------|---------------------------------|`n"
-                    $rowsMissingOverride = New-Object System.Collections.Generic.List[object]
-                    $rowIdx = 0
-                    foreach ($r in @($sched.Schedule)) {
-                        $rowIdx++
-                        $rowAllow = @()
-                        if ($r.PSObject.Properties.Match('AllowedUpdateVersionsParsed').Count -and $r.AllowedUpdateVersionsParsed) {
-                            $rowAllow = @($r.AllowedUpdateVersionsParsed)
-                        }
-                        if ($rowAllow.Count -gt 0) {
-                            if ($rowAllow.Count -eq 1 -and $rowAllow[0] -eq 'Latest') {
-                                $effLabel = "``Latest`` _(row override: no constraint)_"
-                            } else {
-                                $effLabel = "``$($rowAllow -join '; ')`` _(row override)_"
-                            }
-                        } else {
-                            if ($topIsLatest) {
-                                $effLabel = "``Latest`` _(inherits top-level - no constraint)_"
-                            } else {
-                                $effLabel = "``$($topAllow -join '; ')`` _(inherits top-level)_"
-                            }
-                            $rowsMissingOverride.Add([pscustomobject]@{
-                                Row          = $rowIdx
-                                WeeksInCycle = $r.weeksInCycle
-                                DaysOfWeek   = $r.daysOfWeek
-                                Rings        = $r.rings
-                            })
-                        }
-                        $md += ('| {0} | {1} | {2} | {3} | {4} |' -f $rowIdx, $r.weeksInCycle, $r.daysOfWeek, $r.rings, $effLabel) + "`n"
-                    }
-
-                    if ($rowsMissingOverride.Count -gt 0) {
-                        $md += "`n*$($rowsMissingOverride.Count) row(s) inherit the top-level allow-list. This is fine when you want each ring to install the latest Ready update as soon as it is available.*`n"
-                        $md += "`n### Optional - pin a ring to a specific update in ``$schedulePath```n"
-                        $md += "`n*Only needed if you want to PIN a ring to a specific update (e.g. keep Prod on the latest feature drop only - YY04 / YY10 - and skip cumulative updates between feature drops). This is NOT a fix for the cron-coverage or ring-diff sections above - those have their own 'Action required' blocks.* Add ``allowedUpdateVersions:`` to the row that covers the ring you want to pin. Use ``Get-AzLocalAvailableUpdates`` (or the Azure portal -> Azure Local -> Updates) to find valid update names / version strings.`n"
-                        $md += "`n``````yaml`n"
-                        $md += "- weeksInCycle: '*'`n"
-                        $md += "  daysOfWeek:   'Tue,Wed,Thu'`n"
-                        $md += "  rings:        'Prod'`n"
-                        $md += "  allowedUpdateVersions: 'Solution12.2604.1003.1005;Solution12.2610.1003.XX'`n"
-                        $md += "```````n"
-                    } else {
-                        $md += "`n*Every schedule row has an explicit ``allowedUpdateVersions:`` override - no inheritance from the top-level default.*`n"
-                    }
-                }
-            }
-        }
-
-        $md += (Add-DetailTable -Heading '### Audit Detail - Cron coverage (Uncovered / Partial / Malformed first)' -DetailRows $cronRowsMd -EmptyText 'No tagged clusters found - nothing to audit.')
-
-        # When there are no issues, still print the recommendation block at the bottom for
-        # operators who want the canonical cron list as a reference. When there are issues
-        # we already printed it at the top so skip the duplicate.
-        if (-not $hasIssues -and $reco) {
-            $md += "`n### Reference - Recommended schedule (copy into Step.6_apply-updates.yml)`n"
-            $md += "`n" + $reco + "`n"
-        }
-
-        $md += @"
-
-        ### Reports Available
-        - ``schedule-coverage-audit.csv`` - one row per (UpdateRing, UpdateStartWindow) pair
-        - ``schedule-coverage-matrix.csv`` - full inventory + required cron per row
-        - ``schedule-coverage-recommend.md`` - ready-to-paste cron block (GH + ADO)
-        - ``schedule-coverage-audit.xml`` - JUnit XML for CI/CD visualisation
-
-        *Generated at $(Get-Date -Format "yyyy-MM-dd HH:mm:ss UTC")*
-        "@
-
-        $md | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
 
     - name: Publish Test Results
       uses: dorny/test-reporter@v3

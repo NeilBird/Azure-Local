@@ -151,7 +151,7 @@ Set-StrictMode -Version 1.0
 # bumps to one but not the other are caught before release. Two consumers:
 #   - Start-AzLocalClusterUpdate emits this in the run log header.
 #   - Get-AzLocalFleetStatusData stamps it into exported fleet-state JSON.
-$script:ModuleVersion = '0.8.4'
+$script:ModuleVersion = '0.8.5'
 $script:DefaultApiVersion = '2025-10-01'
 $script:DefaultLogFolder = Join-Path -Path $env:ProgramData -ChildPath 'AzLocal.UpdateManagement'
 
@@ -307,6 +307,8 @@ Export-ModuleMember -Function @(
     'Get-AzLocalApplyUpdatesScheduleNextFirings',
     'New-AzLocalApplyUpdatesScheduleConfig',
     'Update-AzLocalApplyUpdatesScheduleConfig',
+    # Cycle Calendar (v0.8.5) - human-readable per-day projection of the resolver for one full cycle (or any -Days horizon), variable cycle length safe, year-boundary safe, per-ring 'next eligible date' summary
+    'Get-AzLocalApplyUpdatesScheduleCycleCalendar',
     # Fleet Health Overview (v0.7.70) - one row per cluster, ARG-first projection of cluster + updateSummaries
     'Get-AzLocalFleetHealthOverview',
     # Latest Released Solution Version (v0.7.70 Phase E) - public manifest probe (aka.ms/AzureEdgeUpdates) that anchors the rolling YYMM support window in Step.6
@@ -314,5 +316,32 @@ Export-ModuleMember -Function @(
     # Fleet Connectivity Status (v0.7.79) - 4-scope connectivity audit: cluster, Arc agent, physical NIC, ARB
     'Get-AzLocalFleetConnectivityStatus',
     # Fleet Connectivity Status Summary Renderer (v0.7.87) - markdown step-summary builder used by Step.4 GH+ADO pipelines
-    'New-AzLocalFleetConnectivityStatusSummary'
+    'New-AzLocalFleetConnectivityStatusSummary',
+    # Thin-YAML pipeline foundation (v0.8.5) - install-step version banner + drift annotations + step outputs (condenses ~50-line inline block in every Step.*.yml)
+    'Add-AzLocalPipelineVersionBanner',
+    # Thin-YAML Step.0 (v0.8.5) - Authentication validation + subscription scope + cluster reachability (condenses ~200-line inline run: | block in Step.0_authentication-test.yml on both platforms)
+    'Export-AzLocalAuthValidationReport',
+    # Thin-YAML Step.1 (v0.8.5) - Cluster inventory workload (condenses the inline run: | block in Step.1_inventory-clusters.yml on both platforms; writes timestamped + canonical CSV, JSON, README, and step summary)
+    'Invoke-AzLocalClusterInventory',
+    # Thin-YAML Step.2 (v0.8.5) - UpdateRing tag management workload (validates CSV, applies tags via Set-AzLocalClusterUpdateRingTag, writes JSON sidecar + step summary)
+    'Set-AzLocalClusterUpdateRingTagFromCsv',
+    # Thin-YAML Step.7 (v0.8.5) - In-flight update-run monitor (CSV + JUnit + markdown + 6 step outputs)
+    'Export-AzLocalUpdateRunMonitorReport',
+    # Thin-YAML Step.8 (v0.8.5) - Fleet update status snapshot (inventory + readiness + version distribution + 3-suite JUnit + markdown + 22 step outputs)
+    'Export-AzLocalFleetUpdateStatusReport',
+    # Thin-YAML Step.5 (v0.8.5) - Pre-flight Update Readiness Assessment (readiness + blocking-health JUnit + combined JUnit + 8-section markdown + 2 step outputs)
+    'Export-AzLocalClusterUpdateReadinessReport',
+    # Thin-YAML Step.4 (v0.8.5) - Fleet Connectivity Status (Cluster/Arc/NIC/ARB severity classification + JUnit + markdown + 12 step outputs)
+    'Export-AzLocalFleetConnectivityStatusReport',
+    # Thin-YAML Step.3 (v0.8.5) - Apply-Updates Schedule Coverage Audit (Audit + Matrix + Recommend views + 2-suite JUnit + allow-list section + always-on cycle calendar + 12 step outputs)
+    'Export-AzLocalApplyUpdatesScheduleAudit',
+    # Thin-YAML Step.9 (v0.8.5) - Fleet Health Status (Detail + Summary + Overview + 2-suite JUnit + KPI / Overview / By-Reason / per-cluster collapsible markdown + 8 step outputs)
+    'Export-AzLocalFleetHealthStatusReport',
+    # Thin-YAML Step.6 (v0.8.5) - Apply-Updates pipeline (6 cmdlets condensing ~430 lines of inline run: | blocks across both Step.6_apply-updates.yml pipelines)
+    'Resolve-AzLocalPipelineUpdateRing',
+    'Export-AzLocalClusterReadinessGateReport',
+    'Invoke-AzLocalReadinessGatedClusterUpdate',
+    'Add-AzLocalApplyUpdatesStepSummary',
+    'Add-AzLocalNoReadyClustersStepSummary',
+    'Invoke-AzLocalItsmTicketingFromArtifact'
 )

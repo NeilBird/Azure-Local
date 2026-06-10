@@ -59,7 +59,7 @@ variables:
   # log if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
   - name: GENERATED_AGAINST_MODULE_VERSION
-    value: '0.8.4'
+    value: '0.8.5'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): queue-time parameter > pipeline variable
   # 'REQUIRED_MODULE_VERSION' overridden at queue time > empty (latest).
@@ -83,13 +83,15 @@ stages:
         steps:
           - task: PowerShell@2
             displayName: 'Install AzLocal.UpdateManagement from PSGallery'
-            # Step.0 itself does not call the module (the auth/RBAC/ARG probes
-            # below use raw az CLI), but installing the module here gives operators
-            # an early, consistent drift signal *before* the rest of the seven
-            # pipelines run. If this step warns that the YAML is stale or the
-            # installed module is older than expected, refresh the YAMLs via
-            # Copy-AzLocalPipelineExample -Platform AzureDevOps -Update and re-run -
-            # same pattern as Step.1+.
+            # Step.0 itself relies on the module (Export-AzLocalAuthValidationReport
+            # runs the four auth/RBAC/ARG probes); installing here also gives
+            # operators an early, consistent drift signal *before* the rest of
+            # the seven pipelines run. If the banner reports the YAML is stale
+            # or the installed module is older than expected, refresh the
+            # YAMLs via Copy-AzLocalPipelineExample -Platform AzureDevOps -Update
+            # and re-run.
+            # v0.8.5 thin-YAML: drift detection + banner + step outputs are all
+            # produced by Add-AzLocalPipelineVersionBanner (Public cmdlet).
             env:
               REQUIRED_MODULE_VERSION: $(REQUIRED_MODULE_VERSION)
               GENERATED_AGAINST_MODULE_VERSION: $(GENERATED_AGAINST_MODULE_VERSION)
@@ -107,51 +109,16 @@ stages:
                 }
                 Install-Module @installArgs
                 Import-Module AzLocal.UpdateManagement -Force
-                # Get-Module can return multiple entries when nested modules are loaded - pick the highest version.
-                $installed = (Get-Module AzLocal.UpdateManagement | Sort-Object Version -Descending | Select-Object -First 1).Version
-                $generated = [version]$env:GENERATED_AGAINST_MODULE_VERSION
-                $latest    = (Find-Module -Name AzLocal.UpdateManagement -Repository PSGallery -ErrorAction SilentlyContinue).Version
-                Write-Host ""
-                Write-Host "Module version summary"
-                Write-Host "  Installed on agent        : $installed"
-                Write-Host "  YAML generated against    : $generated"
-                Write-Host "  Latest on PSGallery       : $(if ($latest) { $latest } else { '(lookup failed - check network)' })"
-                Write-Host ""
-                Get-Module AzLocal.UpdateManagement | Format-List Name, Version, Path
-                # Drift signal 0: the module installed at runtime is OLDER than the version this YAML was generated against. Cmdlets, parameters, or output schemas referenced by this YAML may not exist in the installed module - emitted as a warning because this is the most likely cause of a hard runtime failure later in the job.
-                if ($installed -lt $generated) {
-                    Write-Host "##vso[task.logissue type=warning]AzLocal.UpdateManagement v$installed is OLDER than the version this pipeline YAML was generated against (v$generated). Cmdlets, parameters, or output schemas referenced by this YAML may not exist in v$installed. Set REQUIRED_MODULE_VERSION to v$generated, or refresh the YAML to match the installed module via 'Copy-AzLocalPipelineExample -Platform AzureDevOps -Update'."
-                }
-                if ($installed -gt $generated) {
-                    $msg = "Pipeline YAML was generated against AzLocal.UpdateManagement v$generated but the agent installed v$installed. Pipeline steps may have been improved in later releases - to refresh, re-run 'Copy-AzLocalPipelineExample -Destination .\pipelines -Platform AzureDevOps -Update' (you will be prompted per file; add -Confirm:`$false to bypass). Pipeline YAMLs are under git so 'git diff' shows exactly what changed before commit."
-                    Write-Host "##vso[task.logissue type=warning]$msg"
-                }
-                if ($latest -and ($latest -gt $installed)) {
-                    $msg = "AzLocal.UpdateManagement v$latest is available on PSGallery; this run installed v$installed. Review the module CHANGELOG before bumping REQUIRED_MODULE_VERSION (or clear the pin to install the latest automatically)."
-                    Write-Host "##vso[task.logissue type=warning]$msg"
-                }
-
-                # v0.8.4 - one-line version banner uploaded to the build run
-                # Summary so the YAML version (GENERATED_AGAINST_MODULE_VERSION),
-                # the module version actually loaded on the agent, the PSGallery
-                # latest, and the REQUIRED_MODULE_VERSION pin status are visible
-                # at the top of every run summary without scrolling the agent
-                # log. Same data is also echoed to the console above.
-                $pin       = if ($env:REQUIRED_MODULE_VERSION) { "pinned to v$($env:REQUIRED_MODULE_VERSION)" } else { 'latest (fix-forward)' }
-                $latestStr = if ($latest) { "v$latest" } else { '(PSGallery lookup failed)' }
-                $verdict   = if ($installed -lt $generated) { 'YAML newer than module - check REQUIRED_MODULE_VERSION' }
-                             elseif ($installed -gt $generated) { 'YAML older than module - run Copy-AzLocalPipelineExample -Update' }
-                             elseif ($latest -and ($latest -gt $installed)) { 'newer module available on PSGallery' }
-                             else { 'in sync' }
-                $bannerPath = Join-Path $env:BUILD_ARTIFACTSTAGINGDIRECTORY 'module-version-banner.md'
-                "_Pipeline YAML v$generated | Module v$installed installed ($pin) | PSGallery latest $latestStr | $verdict_" | Out-File -FilePath $bannerPath -Encoding utf8
-                Write-Host "##vso[task.uploadsummary]$bannerPath"
-
-                # Persist the three versions so the report step (below) can include them
-                # in the JUnit XML + markdown summary alongside the auth/RBAC checks.
-                Write-Host "##vso[task.setvariable variable=installedModuleVersion;isOutput=false]$installed"
-                Write-Host "##vso[task.setvariable variable=generatedAgainstVersion;isOutput=false]$generated"
-                Write-Host "##vso[task.setvariable variable=latestOnPsGallery;isOutput=false]$(if ($latest) { $latest } else { '' })"
+                $banner = Add-AzLocalPipelineVersionBanner `
+                    -GeneratedAgainstVersion $env:GENERATED_AGAINST_MODULE_VERSION `
+                    -PinnedVersion $env:REQUIRED_MODULE_VERSION `
+                    -PassThru
+                # Forward to ADO job-scoped variables so the report step (below) can
+                # surface the three versions in its JUnit + markdown summary.
+                $latestStr = if ($banner.LatestOnPSGallery) { $banner.LatestOnPSGallery } else { '' }
+                Write-Host "##vso[task.setvariable variable=installedModuleVersion;isOutput=false]$($banner.InstalledVersion)"
+                Write-Host "##vso[task.setvariable variable=generatedAgainstVersion;isOutput=false]$($banner.GeneratedAgainstVersion)"
+                Write-Host "##vso[task.setvariable variable=latestOnPsGallery;isOutput=false]$latestStr"
 
           - task: AzureCLI@2
             displayName: 'Collect Authentication and Subscription Scope Report'
@@ -159,145 +126,24 @@ stages:
               azureSubscription: 'AzureLocal-ServiceConnection'  # Update if your service connection has a different name.
               scriptType: 'pscore'
               scriptLocation: 'inlineScript'
+              # v0.8.5 thin-YAML: the ~200-line inline run block (az probes,
+              # XML scaffolding, markdown summary, ##vso writes) has been
+              # condensed into the Public cmdlet Export-AzLocalAuthValidationReport.
+              # The cmdlet performs all four probes (az account show / role
+              # assignment list / az account list / Resource Graph query),
+              # writes the JUnit XML + subscriptions.json + subscriptions.csv,
+              # uploads the markdown summary via ##vso[task.uploadsummary],
+              # and emits the three pipeline variables (subscription_count,
+              # cluster_count, auth_valid) via Set-AzLocalPipelineOutput.
               inlineScript: |
                 $ErrorActionPreference = 'Stop'
+                Import-Module AzLocal.UpdateManagement -Force
                 $reportDir = Join-Path $env:BUILD_ARTIFACTSTAGINGDIRECTORY 'auth-report'
-                New-Item -ItemType Directory -Path $reportDir -Force | Out-Null
-
-                Write-Host '--- 1. az account show (proves service-connection auth) ---'
-                $accountJson = az account show -o json
-                if ($LASTEXITCODE -ne 0) { throw "az account show failed (exit $LASTEXITCODE)" }
-                $account = $accountJson | ConvertFrom-Json
-                $account | Format-List name, id, tenantId, user
-
-                Write-Host ''
-                Write-Host '--- 2. role assignments for the service connection identity (proves RBAC grant) ---'
-                $appId = az account show --query user.name -o tsv
-                Write-Host "Service connection identity (appId): $appId"
-                az role assignment list `
-                    --assignee $appId `
-                    --all `
-                    -o table
-
-                Write-Host ''
-                Write-Host '--- 3. Subscription Scope: enumerating all subscriptions visible to the pipeline identity ---'
-                $subsJson = az account list --refresh --query "[].{name:name, subscriptionId:id, tenantId:tenantId, state:state}" -o json
-                if ($LASTEXITCODE -ne 0) { throw "az account list failed (exit $LASTEXITCODE)" }
-                $subs = @($subsJson | ConvertFrom-Json | Sort-Object name)
-                $subCount = $subs.Count
-                Write-Host "Count of subscriptions accessible = $subCount"
-                $subs | Format-Table @{N='#';E={[array]::IndexOf($subs,$_)+1}}, name, subscriptionId, state -AutoSize
-
-                $subs | ConvertTo-Json -Depth 4 | Out-File "$reportDir/subscriptions.json" -Encoding utf8
-                $subs | Select-Object name, subscriptionId, tenantId, state |
-                    Export-Csv "$reportDir/subscriptions.csv" -NoTypeInformation -Encoding utf8
-
-                Write-Host ''
-                Write-Host '--- 4. Resource Graph query (proves cluster reachability) ---'
-                az extension add --name resource-graph --yes --only-show-errors | Out-Null
-                $clusterJson = az graph query `
-                    -q "resources | where type =~ 'microsoft.azurestackhci/clusters' | project name, resourceGroup, subscriptionId" `
-                    --first 1000 `
-                    -o json
-                $clusterRows = @()
-                if ($LASTEXITCODE -eq 0 -and $clusterJson) {
-                    $parsed = $clusterJson | ConvertFrom-Json
-                    if ($parsed -is [System.Collections.IEnumerable] -and -not ($parsed -is [string])) {
-                        $clusterRows = @($parsed)
-                    } elseif ($parsed.data) {
-                        $clusterRows = @($parsed.data)
-                    }
-                }
-                $clusterCount = $clusterRows.Count
-                Write-Host "Clusters visible to the pipeline identity = $clusterCount"
-                if ($clusterCount -gt 0) {
-                    $clusterRows | Select-Object -First 10 | Format-Table -AutoSize
-                }
-
-                # ------------------------------------------------------------------
-                # Emit JUnit XML
-                # ------------------------------------------------------------------
-                $now = Get-Date -Format 'yyyy-MM-ddTHH:mm:ss'
-                function ConvertTo-XmlSafe([string]$s) {
-                    if ($null -eq $s) { return '' }
-                    $s -replace '&','&amp;' -replace '<','&lt;' -replace '>','&gt;' -replace '"','&quot;'
-                }
-
-                $xml = [System.Text.StringBuilder]::new()
-                [void]$xml.AppendLine('<?xml version="1.0" encoding="UTF-8"?>')
-                [void]$xml.AppendLine('<testsuites name="Step.0 - Authentication Validation and Subscription Scope Report" time="0">')
-
-                [void]$xml.AppendLine("  <testsuite name=`"&#x1F510; Authentication`" tests=`"3`" failures=`"0`" timestamp=`"$now`" time=`"0`">")
-                [void]$xml.AppendLine("    <testcase classname=`"Authentication`" name=`"OIDC token exchange (az account show succeeded)`" time=`"0`"><system-out><![CDATA[Tenant: $($account.tenantId)`nSubscription: $($account.name) ($($account.id))`nIdentity: $($account.user.name)]]></system-out></testcase>")
-                [void]$xml.AppendLine("    <testcase classname=`"Authentication`" name=`"Default subscription = $(ConvertTo-XmlSafe $account.name)`" time=`"0`" />")
-                [void]$xml.AppendLine("    <testcase classname=`"Authentication`" name=`"Pipeline identity (appId) = $(ConvertTo-XmlSafe $account.user.name)`" time=`"0`" />")
-                [void]$xml.AppendLine('  </testsuite>')
-
-                [void]$xml.AppendLine("  <testsuite name=`"&#x1F4CB; Subscription Scope (count=$subCount)`" tests=`"$($subCount + 1)`" failures=`"0`" timestamp=`"$now`" time=`"0`">")
-                [void]$xml.AppendLine("    <testcase classname=`"SubscriptionScope`" name=`"Count of subscriptions accessible = $subCount`" time=`"0`" />")
-                $i = 0
-                foreach ($s in $subs) {
-                    $i++
-                    $nm = ConvertTo-XmlSafe $s.name
-                    $sid = ConvertTo-XmlSafe $s.subscriptionId
-                    $st  = ConvertTo-XmlSafe $s.state
-                    [void]$xml.AppendLine("    <testcase classname=`"SubscriptionScope`" name=`"#$i  $nm  ($sid)  [$st]`" time=`"0`" />")
-                }
-                [void]$xml.AppendLine('  </testsuite>')
-
-                [void]$xml.AppendLine("  <testsuite name=`"&#x1F310; Resource Graph Reachability`" tests=`"1`" failures=`"0`" timestamp=`"$now`" time=`"0`">")
-                [void]$xml.AppendLine("    <testcase classname=`"ResourceGraph`" name=`"Clusters visible to pipeline identity = $clusterCount`" time=`"0`" />")
-                [void]$xml.AppendLine('  </testsuite>')
-
-                # Suite 4: Module Version Drift (informational - never fails)
-                $installedVersion = "$env:INSTALLEDMODULEVERSION"
-                $generatedVersion = "$env:GENERATEDAGAINSTVERSION"
-                $latestVersion    = "$env:LATESTONPSGALLERY"
-                [void]$xml.AppendLine("  <testsuite name=`"&#x1F4E6; Module Version Drift`" tests=`"3`" failures=`"0`" timestamp=`"$now`" time=`"0`">")
-                [void]$xml.AppendLine("    <testcase classname=`"ModuleVersion`" name=`"Installed AzLocal.UpdateManagement = $installedVersion`" time=`"0`" />")
-                [void]$xml.AppendLine("    <testcase classname=`"ModuleVersion`" name=`"YAML generated against = $generatedVersion`" time=`"0`" />")
-                [void]$xml.AppendLine("    <testcase classname=`"ModuleVersion`" name=`"Latest on PSGallery = $(if ($latestVersion) { $latestVersion } else { '(lookup failed)' })`" time=`"0`" />")
-                [void]$xml.AppendLine('  </testsuite>')
-
-                [void]$xml.AppendLine('</testsuites>')
-                $xmlPath = "$reportDir/auth-report.xml"
-                [System.IO.File]::WriteAllText($xmlPath, $xml.ToString(), [System.Text.UTF8Encoding]::new($false))
-                Write-Host "JUnit XML written to: $xmlPath"
-
-                # ------------------------------------------------------------------
-                # Emit markdown summary for the ADO run Summary tab
-                # ------------------------------------------------------------------
-                $md = [System.Text.StringBuilder]::new()
-                [void]$md.AppendLine('## Step.0 - Authentication Validation and Subscription Scope Report')
-                [void]$md.AppendLine('')
-                [void]$md.AppendLine('| Check | Result |')
-                [void]$md.AppendLine('|---|---|')
-                [void]$md.AppendLine("| Authentication (Workload Identity Federation) | :white_check_mark: working |")
-                [void]$md.AppendLine("| Default Subscription | $($account.name) (``$($account.id)``) |")
-                [void]$md.AppendLine("| Tenant | ``$($account.tenantId)`` |")
-                [void]$md.AppendLine("| Pipeline identity (appId) | ``$($account.user.name)`` |")
-                [void]$md.AppendLine("| Resource Graph reachability | :white_check_mark: $clusterCount cluster(s) visible |")
-                [void]$md.AppendLine("| AzLocal.UpdateManagement (installed) | ``$installedVersion`` |")
-                [void]$md.AppendLine("| AzLocal.UpdateManagement (YAML generated against) | ``$generatedVersion`` |")
-                [void]$md.AppendLine("| AzLocal.UpdateManagement (latest on PSGallery) | ``$(if ($latestVersion) { $latestVersion } else { '(lookup failed)' })`` |")
-                [void]$md.AppendLine('')
-                [void]$md.AppendLine("### Count of subscriptions accessible = $subCount")
-                [void]$md.AppendLine('')
-                [void]$md.AppendLine('| # | Subscription Name | Subscription ID | Tenant ID | State |')
-                [void]$md.AppendLine('|---|---|---|---|---|')
-                $i = 0
-                foreach ($s in $subs) {
-                    $i++
-                    [void]$md.AppendLine("| $i | $($s.name) | ``$($s.subscriptionId)`` | ``$($s.tenantId)`` | $($s.state) |")
-                }
-                [void]$md.AppendLine('')
-                [void]$md.AppendLine("*Generated at $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss UTC')*")
-                $summaryPath = Join-Path $env:BUILD_ARTIFACTSTAGINGDIRECTORY 'auth-report-summary.md'
-                $md.ToString() | Out-File -FilePath $summaryPath -Encoding utf8
-                Write-Host "##vso[task.uploadsummary]$summaryPath"
-
-                Write-Host "##vso[task.setvariable variable=subscriptionCount;isOutput=false]$subCount"
-                Write-Host "##vso[task.setvariable variable=clusterCount;isOutput=false]$clusterCount"
+                Export-AzLocalAuthValidationReport `
+                    -ReportDirectory         $reportDir `
+                    -InstalledModuleVersion  "$(installedModuleVersion)" `
+                    -GeneratedAgainstVersion "$(generatedAgainstVersion)" `
+                    -LatestOnPSGallery       "$(latestOnPsGallery)"
 
           - task: PublishTestResults@2
             displayName: 'Publish Authentication Validation JUnit Diagnostics'

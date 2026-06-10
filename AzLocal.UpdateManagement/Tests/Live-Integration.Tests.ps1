@@ -368,3 +368,148 @@ Describe 'Live-Integration: Get-AzLocalFleetConnectivityStatus (v0.7.79)' -Tag '
     }
 }
 
+Describe 'Live-Integration: Export-*Report cmdlets emit non-empty artifacts (v0.8.5 thin-YAML wrappers)' -Tag 'Live' -Skip:$SkipLive {
+    # v0.8.5: One read-only round-trip per non-destructive Export-* cmdlet
+    # added by the thin-YAML refactor. Asserts the cmdlet produces the
+    # documented artifact files (CSV / JSON / JUnit XML / markdown) and the
+    # -PassThru payload exposes the documented top-level properties. The
+    # destructive cmdlets Invoke-AzLocalReadinessGatedClusterUpdate and
+    # Set-AzLocalClusterUpdateRingTagFromCsv are deliberately NOT covered
+    # here - they need a scratch-cluster fixture pattern (tracked as a
+    # follow-up: "Live-Integration coverage for destructive v0.8.5 cmdlets").
+    #
+    # Each It block uses a per-test temp OutputDirectory and cleans it up in
+    # a finally{} so the runner workspace stays tidy even on failure.
+
+    BeforeAll {
+        $script:liveExportRoot = Join-Path (Get-Item -LiteralPath $env:TEMP).FullName "azlocal-live-exp-$([guid]::NewGuid().Guid.Substring(0,8))"
+        New-Item -ItemType Directory -Path $script:liveExportRoot -Force | Out-Null
+    }
+
+    AfterAll {
+        if ($script:liveExportRoot -and (Test-Path -LiteralPath $script:liveExportRoot)) {
+            Remove-Item -LiteralPath $script:liveExportRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It '[Step.0] Export-AzLocalAuthValidationReport emits JSON + CSV + JUnit XML and PassThru exposes documented properties' {
+        $outDir = Join-Path $script:liveExportRoot "s0-$([guid]::NewGuid().Guid.Substring(0,8))"
+        $r = Export-AzLocalAuthValidationReport -ReportDirectory $outDir -PassThru -ErrorAction Stop
+        $r | Should -Not -BeNullOrEmpty
+        $r.AuthValid              | Should -BeTrue
+        $r.SubscriptionCount      | Should -BeGreaterThan 0
+        $r.ClusterCount           | Should -BeGreaterThan 0
+        Test-Path -LiteralPath $r.JUnitXmlPath          | Should -BeTrue -Because 'Step.0 must emit the JUnit XML'
+        Test-Path -LiteralPath $r.SubscriptionsJsonPath | Should -BeTrue -Because 'Step.0 must emit the subscriptions JSON'
+        Test-Path -LiteralPath $r.SubscriptionsCsvPath  | Should -BeTrue -Because 'Step.0 must emit the subscriptions CSV'
+        (Get-Item -LiteralPath $r.JUnitXmlPath).Length          | Should -BeGreaterThan 0
+        (Get-Item -LiteralPath $r.SubscriptionsJsonPath).Length | Should -BeGreaterThan 0
+    }
+
+    It '[Step.3] Export-AzLocalApplyUpdatesScheduleAudit emits audit + matrix CSV, recommend MD, JUnit XML and PassThru exposes counts' {
+        $modRoot = Split-Path -Path (Get-Module AzLocal.UpdateManagement | Select-Object -First 1).Path -Parent
+        $schedule = Join-Path $modRoot 'Automation-Pipeline-Examples\apply-updates-schedule.example.yml'
+        $pipelineYml = Join-Path $modRoot 'Automation-Pipeline-Examples\github-actions\Step.3_apply-updates-schedule-audit.yml'
+        Test-Path -LiteralPath $schedule    | Should -BeTrue -Because 'bundled schedule example must exist'
+        Test-Path -LiteralPath $pipelineYml | Should -BeTrue -Because 'bundled Step.3 pipeline yml must exist'
+
+        $outDir = Join-Path $script:liveExportRoot "s3-$([guid]::NewGuid().Guid.Substring(0,8))"
+        $r = Export-AzLocalApplyUpdatesScheduleAudit `
+                -OutputDirectory $outDir `
+                -PipelineYamlPath $pipelineYml `
+                -SchedulePath $schedule `
+                -Platform GitHubActions `
+                -PassThru -ErrorAction Stop
+        $r | Should -Not -BeNullOrEmpty
+        $r.TotalRows | Should -BeGreaterThan 0
+        Test-Path -LiteralPath $r.AuditCsvPath    | Should -BeTrue
+        Test-Path -LiteralPath $r.MatrixCsvPath   | Should -BeTrue
+        Test-Path -LiteralPath $r.RecommendMdPath | Should -BeTrue
+        Test-Path -LiteralPath $r.JUnitXmlPath    | Should -BeTrue
+        (Get-Item -LiteralPath $r.AuditCsvPath).Length | Should -BeGreaterThan 0
+    }
+
+    It '[Step.4] Export-AzLocalFleetConnectivityStatusReport emits artifacts and PassThru exposes counts + rollups' {
+        $outDir = Join-Path $script:liveExportRoot "s4-$([guid]::NewGuid().Guid.Substring(0,8))"
+        $r = Export-AzLocalFleetConnectivityStatusReport -OutputDirectory $outDir -PassThru -ErrorAction Stop
+        $r | Should -Not -BeNullOrEmpty
+        $r.ClusterTotal | Should -BeGreaterThan 0
+        $r.PSObject.Properties.Name | Should -Contain 'ArcSummary'
+        $r.PSObject.Properties.Name | Should -Contain 'NicStats'
+        $r.PSObject.Properties.Name | Should -Contain 'JUnitXmlPath'
+        Test-Path -LiteralPath $r.JUnitXmlPath | Should -BeTrue
+        Test-Path -LiteralPath $r.SummaryPath  | Should -BeTrue
+    }
+
+    It '[Step.5] Export-AzLocalClusterUpdateReadinessReport emits readiness + health artifacts and PassThru exposes counts' {
+        $outDir = Join-Path $script:liveExportRoot "s5-$([guid]::NewGuid().Guid.Substring(0,8))"
+        $r = Export-AzLocalClusterUpdateReadinessReport -OutputDirectory $outDir -Scope all -PassThru -ErrorAction Stop
+        $r | Should -Not -BeNullOrEmpty
+        $r.TotalCount | Should -BeGreaterThan 0
+        Test-Path -LiteralPath $r.ReadinessCsvPath | Should -BeTrue
+        Test-Path -LiteralPath $r.ReadinessXmlPath | Should -BeTrue
+        Test-Path -LiteralPath $r.CombinedXmlPath  | Should -BeTrue
+        (Get-Item -LiteralPath $r.ReadinessCsvPath).Length | Should -BeGreaterThan 0
+    }
+
+    It '[Step.6] Export-AzLocalClusterReadinessGateReport short-circuits cleanly when -UpdateRing is empty (no-op, read-only)' {
+        # Empty -UpdateRing is the documented short-circuit. The cmdlet does
+        # NOT call Get-AzLocalClusterUpdateReadiness and does NOT trigger any
+        # update; it just emits zero counts. This is the only safe Live test
+        # for Step.6 - the populated-ring path overlaps Step.5 coverage and
+        # the apply-updates side (Invoke-AzLocalReadinessGatedClusterUpdate)
+        # is deliberately deferred (destructive).
+        $outDir = Join-Path $script:liveExportRoot "s6-$([guid]::NewGuid().Guid.Substring(0,8))"
+        $r = Export-AzLocalClusterReadinessGateReport -OutputDirectory $outDir -UpdateRing '' -PassThru -ErrorAction Stop
+        $r | Should -Not -BeNullOrEmpty
+        $r.TotalCount    | Should -Be 0
+        $r.ReadyCount    | Should -Be 0
+        $r.NotReadyCount | Should -Be 0
+        $r.UpdateRing    | Should -BeNullOrEmpty
+        $r.Results       | Should -BeNullOrEmpty
+    }
+
+    It '[Step.7] Export-AzLocalUpdateRunMonitorReport emits CSV + JUnit XML and PassThru exposes the in-flight + failure counts' {
+        $outDir = Join-Path $script:liveExportRoot "s7-$([guid]::NewGuid().Guid.Substring(0,8))"
+        $r = Export-AzLocalUpdateRunMonitorReport -OutputDirectory $outDir -Scope all -PassThru -ErrorAction Stop
+        $r | Should -Not -BeNullOrEmpty
+        $r.PSObject.Properties.Name | Should -Contain 'InFlightCount'
+        $r.PSObject.Properties.Name | Should -Contain 'UnresolvedFailureCount'
+        $r.PSObject.Properties.Name | Should -Contain 'CsvPath'
+        $r.PSObject.Properties.Name | Should -Contain 'XmlPath'
+        Test-Path -LiteralPath $r.CsvPath | Should -BeTrue
+        Test-Path -LiteralPath $r.XmlPath | Should -BeTrue
+    }
+
+    It '[Step.8] Export-AzLocalFleetUpdateStatusReport emits inventory + readiness + run-history artifacts and PassThru exposes version-distribution counts' {
+        $outDir = Join-Path $script:liveExportRoot "s8-$([guid]::NewGuid().Guid.Substring(0,8))"
+        $r = Export-AzLocalFleetUpdateStatusReport -OutputDirectory $outDir -Scope all -PassThru -ErrorAction Stop
+        $r | Should -Not -BeNullOrEmpty
+        $r.TotalClusters | Should -BeGreaterThan 0
+        $r.PSObject.Properties.Name | Should -Contain 'VersionDistCount'
+        $r.PSObject.Properties.Name | Should -Contain 'InventoryCsvPath'
+        $r.PSObject.Properties.Name | Should -Contain 'ReadinessCsvPath'
+        $r.PSObject.Properties.Name | Should -Contain 'XmlPath'
+        Test-Path -LiteralPath $r.InventoryCsvPath | Should -BeTrue
+        Test-Path -LiteralPath $r.ReadinessCsvPath | Should -BeTrue
+        Test-Path -LiteralPath $r.XmlPath          | Should -BeTrue
+        (Get-Item -LiteralPath $r.InventoryCsvPath).Length | Should -BeGreaterThan 0
+    }
+
+    It '[Step.9] Export-AzLocalFleetHealthStatusReport emits overview + detail + summary artifacts and PassThru exposes failure counts' {
+        $outDir = Join-Path $script:liveExportRoot "s9-$([guid]::NewGuid().Guid.Substring(0,8))"
+        $r = Export-AzLocalFleetHealthStatusReport -OutputDirectory $outDir -Scope all -Severity All -PassThru -ErrorAction Stop
+        $r | Should -Not -BeNullOrEmpty
+        $r.TotalClusters | Should -BeGreaterThan 0
+        $r.PSObject.Properties.Name | Should -Contain 'CriticalCount'
+        $r.PSObject.Properties.Name | Should -Contain 'WarningCount'
+        $r.PSObject.Properties.Name | Should -Contain 'DetailCsvPath'
+        $r.PSObject.Properties.Name | Should -Contain 'OverviewCsvPath'
+        $r.PSObject.Properties.Name | Should -Contain 'XmlPath'
+        Test-Path -LiteralPath $r.OverviewCsvPath  | Should -BeTrue
+        Test-Path -LiteralPath $r.OverviewJsonPath | Should -BeTrue
+        Test-Path -LiteralPath $r.XmlPath          | Should -BeTrue
+        (Get-Item -LiteralPath $r.OverviewCsvPath).Length | Should -BeGreaterThan 0
+    }
+}
+

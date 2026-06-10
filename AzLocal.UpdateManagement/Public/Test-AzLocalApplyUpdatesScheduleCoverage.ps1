@@ -928,41 +928,38 @@ resources
                 [void]$fullSb.AppendLine()
             }
 
-            # v0.8.4 - Enhancement B: Cycle calendar (informational).
-            # One row per UTC day for one full cycle (CycleWeeks * 7) starting
-            # today. Re-uses Resolve-AzLocalCurrentUpdateRing so cycle-week,
-            # UNION, and AllowedUpdateVersions math is identical to runtime.
+            # v0.8.5 - Cycle calendar (informational).
+            # Delegated to Get-AzLocalApplyUpdatesScheduleCycleCalendar so the
+            # per-day projection, ISO-week math, UNION semantics, and
+            # per-ring summary live in one cmdlet that Step.3 yml also
+            # calls directly (unconditionally) to avoid the v0.8.4 silent-
+            # drop bug where this section was lost on clean fleets.
+            #
+            # Build a ring -> tagged-cluster-count map from the live tag
+            # scan ($clusters already has UpdateRing populated) and pass
+            # it to the cmdlet so the calendar surfaces 'Clusters in
+            # ring(s)' per day and 'Cluster count' per ring. The cmdlet
+            # itself does no CSV / Azure I/O.
             if ($scheduleCfg) {
-                $calCycleWeeks = [int]$scheduleCfg.CycleWeeks
-                $lookaheadDays = $calCycleWeeks * 7
-                $startDay      = [datetime]::UtcNow.Date
-                $scheduleFileLabelShort = [System.IO.Path]::GetFileName($SchedulePath)
-                [void]$fullSb.AppendLine()
-                [void]$fullSb.AppendLine("## Cycle calendar - next $lookaheadDays day(s) (one full $calCycleWeeks-week cycle)")
-                [void]$fullSb.AppendLine()
-                [void]$fullSb.AppendLine("**What this shows.** For each UTC day starting today, the table lists which ``UpdateRing`` value(s) ``Resolve-AzLocalCurrentUpdateRing`` would return given your ``$scheduleFileLabelShort``. Use it to verify ring coverage matches your policy and to spot dead days where no ring is eligible. Days where multiple schedule rows match are UNIONed (all eligible rings shown, deduplicated). The ``AllowedUpdateVersions`` column shows the effective allow-list for that day (empty = no constraint).")
-                [void]$fullSb.AppendLine()
-                [void]$fullSb.AppendLine('| Date (UTC) | Day | CycleWeek | Eligible rings | AllowedUpdateVersions |')
-                [void]$fullSb.AppendLine('|---|---|---|---|---|')
-                $prevCycleWeek = $null
-                for ($i = 0; $i -lt $lookaheadDays; $i++) {
-                    $d = $startDay.AddDays($i)
-                    try {
-                        $r = Resolve-AzLocalCurrentUpdateRing -Schedule $scheduleCfg -Now $d
-                    } catch {
-                        [void]$fullSb.AppendLine("| $($d.ToString('yyyy-MM-dd')) | ? | ? | _(resolver error: $($_.Exception.Message -replace '\|','\|'))_ | - |")
-                        continue
+                $ringCountMap = @{}
+                foreach ($c in @($clusters)) {
+                    if ($c.UpdateRing -and -not [string]::IsNullOrWhiteSpace($c.UpdateRing)) {
+                        $rname = $c.UpdateRing.Trim()
+                        if ($ringCountMap.ContainsKey($rname)) {
+                            $ringCountMap[$rname] = [int]$ringCountMap[$rname] + 1
+                        } else {
+                            $ringCountMap[$rname] = 1
+                        }
                     }
-                    $ringsCell = if ($r.Rings -and @($r.Rings).Count -gt 0) { (@($r.Rings) | ForEach-Object { '``' + $_ + '``' }) -join ', ' } else { '_(none - dead day)_' }
-                    $allowCell = if ($r.AllowedUpdateVersions -and @($r.AllowedUpdateVersions).Count -gt 0) { (@($r.AllowedUpdateVersions) | ForEach-Object { '``' + $_ + '``' }) -join ', ' } else { '_(no constraint)_' }
-                    $cycleCell = "$($r.CycleWeek) of $calCycleWeeks"
-                    if ($null -ne $prevCycleWeek -and $r.CycleWeek -eq 1 -and $prevCycleWeek -eq $calCycleWeeks) {
-                        $cycleCell = "**1** of $calCycleWeeks _(cycle wraps)_"
-                    }
-                    $prevCycleWeek = $r.CycleWeek
-                    [void]$fullSb.AppendLine("| $($d.ToString('yyyy-MM-dd')) | $($r.DayOfWeekName) | $cycleCell | $ringsCell | $allowCell |")
                 }
                 [void]$fullSb.AppendLine()
+                try {
+                    $calendarMd = Get-AzLocalApplyUpdatesScheduleCycleCalendar -Schedule $scheduleCfg -AsMarkdown -IncludePerRingSummary -ClusterRingCounts $ringCountMap
+                    if (-not [string]::IsNullOrWhiteSpace($calendarMd)) { [void]$fullSb.AppendLine($calendarMd) }
+                } catch {
+                    [void]$fullSb.AppendLine("_Cycle calendar unavailable: $($_.Exception.Message)_")
+                    [void]$fullSb.AppendLine()
+                }
             }
 
             # v0.8.4 - Enhancement C: Configured exclusion windows summary.
