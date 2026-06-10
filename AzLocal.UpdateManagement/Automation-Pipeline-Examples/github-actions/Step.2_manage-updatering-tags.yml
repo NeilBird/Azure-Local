@@ -119,102 +119,35 @@ jobs:
       shell: pwsh
       env:
         INPUT_CSV_FILE_PATH: ${{ github.event.inputs.csv_file_path }}
+      # v0.8.5 thin-YAML: the existence + missing-file operator messaging is
+      # now produced by Set-AzLocalClusterUpdateRingTagFromCsv itself. This
+      # step still runs first to fail fast (and to surface the path) before
+      # we spend time installing the module.
       run: |
         $csvPath = $env:INPUT_CSV_FILE_PATH
-        
         if (-not (Test-Path $csvPath)) {
             Write-Host "ERROR: CSV file not found at path: $csvPath" -ForegroundColor Red
+            Write-Host "The full TWO-STAGE operator workflow guidance will be emitted by"
+            Write-Host "Set-AzLocalClusterUpdateRingTagFromCsv when the Apply step runs."
             Write-Host ""
-            Write-Host "===========================================================================" -ForegroundColor Yellow
-            Write-Host " UpdateRing tagging is a TWO-STAGE workflow. You must run the inventory" -ForegroundColor Yellow
-            Write-Host " workflow first, edit the CSV, commit it, then re-run THIS workflow." -ForegroundColor Yellow
-            Write-Host "===========================================================================" -ForegroundColor Yellow
+            Write-Host "Quick recap:"
+            Write-Host "  1. Run Step.1 (Inventory) and download/edit/commit the CSV."
+            Write-Host "  2. Re-run this Step.2 with csv_file_path pointing to the committed CSV."
             Write-Host ""
-            Write-Host "STEP 1 - Generate the cluster inventory (one-off, then on demand)" -ForegroundColor Cyan
-            Write-Host "  a. Go to the 'Actions' tab in this repository."
-            Write-Host "  b. Open the workflow named 'Inventory Azure Local Clusters'"
-            Write-Host "     (file: .github/workflows/Step.1_inventory-clusters.yml)."
-            Write-Host "  c. Click 'Run workflow' and wait for the run to finish successfully."
-            Write-Host "  d. On the completed run page, scroll to the 'Artifacts' section and"
-            Write-Host "     download the artifact named 'cluster-inventory'."
-            Write-Host "  e. Unzip it locally. You will get 'ClusterUpdateRings.csv' (the one"
-            Write-Host "     to edit), a timestamped audit copy, a .json copy, and a"
-            Write-Host "     'README_Instructions.txt' file that mirrors these instructions."
-            Write-Host ""
-            Write-Host "STEP 2 - Edit the CSV in Excel" -ForegroundColor Cyan
-            Write-Host "  a. Open 'ClusterUpdateRings.csv' in Excel."
-            Write-Host "  b. For each cluster row, fill in the 'UpdateRing' column with the wave"
-            Write-Host "     name you want that cluster to belong to. Examples:"
-            Write-Host "       Canary, Pilot, Production"
-            Write-Host "       (or your own scheme, e.g. Wave1, Wave2, Wave3 / Dev, Test, Prod)."
-            Write-Host "  c. Leave the 'UpdateRing' column EMPTY for any cluster you do not want"
-            Write-Host "     this run to tag - those rows will be skipped."
-            Write-Host "  d. Save as CSV (UTF-8). Do not change other columns or column order."
-            Write-Host "  e. Do NOT rename the file - keep it as 'ClusterUpdateRings.csv' so"
-            Write-Host "     the default 'csv_file_path' below picks it up."
-            Write-Host ""
-            Write-Host "STEP 3 - Commit the edited CSV to this repository" -ForegroundColor Cyan
-            Write-Host "  a. Copy the edited CSV into a stable location in this repo, for example:"
-            Write-Host "       config/ClusterUpdateRings.csv"
-            Write-Host "  b. Commit and push it (PR review optional but recommended)."
-            Write-Host "  c. The path you commit it to is what you will pass as 'csv_file_path'"
-            Write-Host "     on the next run of this workflow."
-            Write-Host ""
-            Write-Host "STEP 4 - Re-run THIS workflow ('Manage UpdateRing Tags')" -ForegroundColor Cyan
-            Write-Host "  a. Click 'Run workflow' on this workflow."
-            Write-Host "  b. Set 'csv_file_path' to the path you committed in step 3"
-            Write-Host "     (default is 'config/ClusterUpdateRings.csv')."
-            Write-Host "  c. RECOMMENDED FIRST RUN: leave 'dry_run' = true to preview which tags"
-            Write-Host "     would be set/changed, without modifying any Azure resources."
-            Write-Host "  d. Once the preview looks correct, re-run with 'dry_run' = false to"
-            Write-Host "     apply the tags. Use 'force' = true only if you need to overwrite"
-            Write-Host "     existing UpdateRing values already set on a cluster."
-            Write-Host ""
-            Write-Host "Documentation:" -ForegroundColor Yellow
+            Write-Host "Docs:"
             Write-Host "  AzLocal.UpdateManagement/README.md - 'Update Rings' section"
             Write-Host "  AzLocal.UpdateManagement/Automation-Pipeline-Examples/README.md"
-            Write-Host ""
-            Write-Host "The path you supplied ('$csvPath') does not exist in the checked-out" -ForegroundColor Red
-            Write-Host "branch of this repository. Did you forget to commit the CSV, point at" -ForegroundColor Red
-            Write-Host "the wrong branch on 'Run workflow', or mistype the path?" -ForegroundColor Red
             exit 1
         }
-        
         Write-Host "Found CSV file: $csvPath"
         echo "CSV_PATH=$csvPath" >> $env:GITHUB_OUTPUT
       id: csv-path
-    
-    - name: Validate CSV File
-      shell: pwsh
-      run: |
-        $csvPath = "${{ steps.csv-path.outputs.CSV_PATH }}"
-        $data = Import-Csv $csvPath
-        
-        Write-Host "CSV File: $csvPath"
-        Write-Host "Total Rows: $($data.Count)"
-        
-        # Check required columns
-        $requiredColumns = @('ResourceId', 'UpdateRing')
-        $columns = $data[0].PSObject.Properties.Name
-        
-        foreach ($col in $requiredColumns) {
-            if ($col -notin $columns) {
-                Write-Error "Required column '$col' not found in CSV"
-                exit 1
-            }
-        }
-        
-        # Count rows with UpdateRing values
-        $rowsWithValues = ($data | Where-Object { $_.UpdateRing -and $_.UpdateRing.Trim() -ne '' }).Count
-        Write-Host "Rows with UpdateRing values: $rowsWithValues"
-        
-        if ($rowsWithValues -eq 0) {
-            Write-Warning "No rows have UpdateRing values set. Please edit the CSV and set UpdateRing values before running this pipeline."
-            exit 1
-        }
-    
+
     - name: Install AzLocal.UpdateManagement from PSGallery
+      # v0.8.5 thin-YAML: drift detection + banner + step outputs are all
+      # produced by Add-AzLocalPipelineVersionBanner (Public cmdlet).
       shell: pwsh
+      id: module-version
       run: |
         $ErrorActionPreference = 'Stop'
         $installArgs = @{ Name = 'AzLocal.UpdateManagement'; Scope = 'CurrentUser'; Force = $true; AllowClobber = $true }
@@ -226,105 +159,42 @@ jobs:
         }
         Install-Module @installArgs
         Import-Module AzLocal.UpdateManagement -Force
-        $installed = (Get-Module AzLocal.UpdateManagement | Sort-Object Version -Descending | Select-Object -First 1).Version
-        $generated = [version]$env:GENERATED_AGAINST_MODULE_VERSION
-        $latest    = (Find-Module -Name AzLocal.UpdateManagement -Repository PSGallery -ErrorAction SilentlyContinue).Version
-        Write-Host ""
-        Write-Host "Module version summary"
-        Write-Host "  Installed on runner       : $installed"
-        Write-Host "  YAML generated against    : $generated"
-        Write-Host "  Latest on PSGallery       : $(if ($latest) { $latest } else { '(lookup failed - check network)' })"
-        Write-Host ""
-        Get-Module AzLocal.UpdateManagement | Format-List Name, Version, Path
-        # Drift signal 0: the module installed at runtime is OLDER than the version this YAML was generated against. Cmdlets, parameters, or output schemas referenced by this YAML may not exist in the installed module - emitted as a warning because this is the most likely cause of a hard runtime failure later in the job.
-        if ($installed -lt $generated) {
-            $msg = "AzLocal.UpdateManagement v$installed is OLDER than the version this workflow YAML was generated against (v$generated). Cmdlets, parameters, or output schemas referenced by this YAML may not exist in v$installed. Set REQUIRED_MODULE_VERSION to v$generated, or refresh the YAML to match the installed module via 'Copy-AzLocalPipelineExample -Destination .\.github\workflows -Platform GitHub -Update'."
-            Write-Host "::warning title=AzLocal.UpdateManagement is older than workflow YAML expects::$msg"
-        }
-        if ($installed -gt $generated) {
-            $msg = "Workflow YAML was generated against AzLocal.UpdateManagement v$generated but the runner installed v$installed. Pipeline steps may have been improved in later releases - to refresh, re-run 'Copy-AzLocalPipelineExample -Destination .\.github\workflows -Platform GitHub -Update' (you will be prompted per file; add -Confirm:`$false to bypass). Pipeline YAMLs are under git so 'git diff' shows exactly what changed before commit."
-            Write-Host "::notice title=Workflow YAML may be stale::$msg"
-        }
-        if ($latest -and ($latest -gt $installed)) {
-            $msg = "AzLocal.UpdateManagement v$latest is available on PSGallery; this run installed v$installed. Review the module CHANGELOG before bumping REQUIRED_MODULE_VERSION (or clear the pin to install the latest automatically)."
-            Write-Host "::notice title=Newer AzLocal.UpdateManagement version available on PSGallery::$msg"
-        }
+        Add-AzLocalPipelineVersionBanner `
+            -GeneratedAgainstVersion $env:GENERATED_AGAINST_MODULE_VERSION `
+            -PinnedVersion $env:REQUIRED_MODULE_VERSION
 
-        # v0.8.4 - one-line version banner emitted to the rendered Step
-        # Summary so the YAML version (GENERATED_AGAINST_MODULE_VERSION), the
-        # module version actually loaded on the runner, the PSGallery latest,
-        # and the REQUIRED_MODULE_VERSION pin status are visible at the top
-        # of every run summary without scrolling the agent log. Same data is
-        # also echoed to the console above as 'Module version summary'.
-        $pin       = if ($env:REQUIRED_MODULE_VERSION) { "pinned to v$($env:REQUIRED_MODULE_VERSION)" } else { 'latest (fix-forward)' }
-        $latestStr = if ($latest) { "v$latest" } else { '(PSGallery lookup failed)' }
-        $verdict   = if ($installed -lt $generated) { 'YAML newer than module - check REQUIRED_MODULE_VERSION' }
-                     elseif ($installed -gt $generated) { 'YAML older than module - run Copy-AzLocalPipelineExample -Update' }
-                     elseif ($latest -and ($latest -gt $installed)) { 'newer module available on PSGallery' }
-                     else { 'in sync' }
-        if ($env:GITHUB_STEP_SUMMARY) {
-            "_Pipeline YAML v$generated | Module v$installed installed ($pin) | PSGallery latest $latestStr | $verdict_" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
-            "" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
-        }
-    
     - name: Apply UpdateRing Tags
+      id: apply-tags
       shell: pwsh
       env:
-        INPUT_FORCE_OVERWRITE: ${{ github.event.inputs.force_overwrite }}
-        INPUT_DRY_RUN: ${{ github.event.inputs.dry_run }}
+        INPUT_CSV_FILE_PATH:      ${{ steps.csv-path.outputs.CSV_PATH }}
+        INPUT_FORCE_OVERWRITE:    ${{ github.event.inputs.force_overwrite }}
+        INPUT_DRY_RUN:            ${{ github.event.inputs.dry_run }}
+        INSTALLED_MODULE_VERSION: ${{ steps.module-version.outputs.installed_module_version }}
+      # v0.8.5 thin-YAML: the inline run block (CSV column validation,
+      # Set-AzLocalClusterUpdateRingTag invocation, JSON sidecar write,
+      # outcome tallies, and the GITHUB_STEP_SUMMARY breakdown) has been
+      # condensed into the Public cmdlet
+      # Set-AzLocalClusterUpdateRingTagFromCsv. The cmdlet writes
+      # UpdateRingTag_Results.json to -OutputDirectory, emits the markdown
+      # step summary via GITHUB_STEP_SUMMARY, and sets the eight step
+      # outputs (total_count, created_count, updated_count,
+      # already_in_sync_count, skipped_count, failed_count, whatif_count,
+      # results_json_path).
       run: |
         $ErrorActionPreference = 'Stop'
         Import-Module AzLocal.UpdateManagement -Force
-        
-        $csvPath = "${{ steps.csv-path.outputs.CSV_PATH }}"
-        $forceOverwrite = $env:INPUT_FORCE_OVERWRITE -eq "true"
-        $dryRun = $env:INPUT_DRY_RUN -eq "true"
-        
-        # Create output directory for logs
-        $outputDir = "./artifacts"
-        New-Item -ItemType Directory -Path $outputDir -Force | Out-Null
-        
-        # Build parameters
+        $forceOverwrite = $env:INPUT_FORCE_OVERWRITE -eq 'true'
+        $dryRun         = $env:INPUT_DRY_RUN -eq 'true'
         $params = @{
-            InputCsvPath = $csvPath
-            LogFolderPath = $outputDir
+            InputCsvPath           = $env:INPUT_CSV_FILE_PATH
+            OutputDirectory        = './artifacts'
+            InstalledModuleVersion = $env:INSTALLED_MODULE_VERSION
         }
-        
-        if ($forceOverwrite) {
-            $params['Force'] = $true
-            Write-Host "Force mode enabled - will overwrite existing tags"
-        }
-        
-        if ($dryRun) {
-            $params['WhatIf'] = $true
-            Write-Host "DRY RUN MODE - No changes will be applied"
-        }
-        
-        Write-Host ""
-        Write-Host "========================================" -ForegroundColor Cyan
-        Write-Host "Applying UpdateRing Tags" -ForegroundColor Cyan
-        Write-Host "========================================" -ForegroundColor Cyan
+        if ($forceOverwrite) { $params['Force']  = $true }
+        if ($dryRun)         { $params['WhatIf'] = $true }
+        Set-AzLocalClusterUpdateRingTagFromCsv @params
 
-        # Run tag management. -PassThru returns the per-cluster results so the
-        # Summary step can build a breakdown table rather than parroting only
-        # the workflow inputs back at the operator.
-        $results = Set-AzLocalClusterUpdateRingTag @params -PassThru
-
-        # Persist results to a JSON sidecar so the Summary step (separate shell)
-        # can read them. Lives in the same artifacts folder that gets uploaded.
-        $resultsJsonPath = Join-Path $outputDir 'UpdateRingTag_Results.json'
-        if ($null -ne $results) {
-            @($results) | ConvertTo-Json -Depth 5 | Out-File -FilePath $resultsJsonPath -Encoding utf8
-            Write-Host "Wrote $($results.Count) per-cluster result row(s) to: $resultsJsonPath"
-        } else {
-            '[]' | Out-File -FilePath $resultsJsonPath -Encoding utf8
-            Write-Host "No per-cluster results returned (empty CSV?). Wrote empty array to: $resultsJsonPath"
-        }
-
-        Write-Host ""
-        Write-Host "Tag management complete"
-      id: apply-tags
-    
     - name: Compute Artifact Timestamp
       id: artifact-stamp
       shell: pwsh
@@ -341,77 +211,4 @@ jobs:
         name: azlocal-step.2-updatering-tag-logs_${{ steps.artifact-stamp.outputs.timestamp }}
         path: ./artifacts/*
         retention-days: 30
-    
-    - name: Summary
-      shell: pwsh
-      env:
-        INPUT_DRY_RUN: ${{ github.event.inputs.dry_run }}
-        INPUT_FORCE_OVERWRITE: ${{ github.event.inputs.force_overwrite }}
-      run: |
-        "## UpdateRing Tag Management Summary" >> $env:GITHUB_STEP_SUMMARY
-        "" >> $env:GITHUB_STEP_SUMMARY
-
-        $dryRun = $env:INPUT_DRY_RUN -eq "true"
-        $forceOverwrite = $env:INPUT_FORCE_OVERWRITE -eq "true"
-
-        "| Setting | Value |" >> $env:GITHUB_STEP_SUMMARY
-        "|---------|-------|" >> $env:GITHUB_STEP_SUMMARY
-        "| Dry Run | $dryRun |" >> $env:GITHUB_STEP_SUMMARY
-        "| Force Overwrite | $forceOverwrite |" >> $env:GITHUB_STEP_SUMMARY
-
-        # Per-cluster results breakdown - read the JSON sidecar the apply step wrote.
-        # See AzLocal.UpdateManagement Set-AzLocalClusterUpdateRingTag -PassThru schema.
-        $resultsJsonPath = './artifacts/UpdateRingTag_Results.json'
-        if (Test-Path $resultsJsonPath) {
-            $results = @(Get-Content -Raw -Path $resultsJsonPath | ConvertFrom-Json)
-            $total         = $results.Count
-            $created       = @($results | Where-Object { $_.Action -eq 'Created'  -and $_.Status -eq 'Success'       }).Count
-            $updated       = @($results | Where-Object { $_.Action -eq 'Updated'  -and $_.Status -eq 'Success'       }).Count
-            $alreadyInSync = @($results | Where-Object { $_.Status -eq 'AlreadyInSync' }).Count
-            $skipped       = @($results | Where-Object { $_.Status -eq 'Skipped'       }).Count
-            $failed        = @($results | Where-Object { $_.Status -eq 'Failed'        }).Count
-            $whatIf        = @($results | Where-Object { $_.Status -eq 'WhatIf'        }).Count
-
-            "" >> $env:GITHUB_STEP_SUMMARY
-            "### Result breakdown" >> $env:GITHUB_STEP_SUMMARY
-            "" >> $env:GITHUB_STEP_SUMMARY
-            "| Outcome | Count |" >> $env:GITHUB_STEP_SUMMARY
-            "|---------|------:|" >> $env:GITHUB_STEP_SUMMARY
-            "| Total clusters processed | $total |" >> $env:GITHUB_STEP_SUMMARY
-            "| Tags created             | $created |" >> $env:GITHUB_STEP_SUMMARY
-            "| Tags updated             | $updated |" >> $env:GITHUB_STEP_SUMMARY
-            "| Already in sync (no-op)  | $alreadyInSync |" >> $env:GITHUB_STEP_SUMMARY
-            "| Skipped (UpdateRing differs, no -Force) | $skipped |" >> $env:GITHUB_STEP_SUMMARY
-            if ($whatIf -gt 0) {
-                "| WhatIf (dry-run preview) | $whatIf |" >> $env:GITHUB_STEP_SUMMARY
-            }
-            "| Failed                   | $failed |" >> $env:GITHUB_STEP_SUMMARY
-
-            if ($total -gt 0) {
-                "" >> $env:GITHUB_STEP_SUMMARY
-                "<details><summary>Per-cluster results ($total rows)</summary>" >> $env:GITHUB_STEP_SUMMARY
-                "" >> $env:GITHUB_STEP_SUMMARY
-                "| Cluster | Action | Previous | New | Status | Message |" >> $env:GITHUB_STEP_SUMMARY
-                "|---------|--------|----------|-----|--------|---------|" >> $env:GITHUB_STEP_SUMMARY
-                foreach ($r in $results) {
-                    $cn  = ($r.ClusterName      | ForEach-Object { "$_" }) -replace '\|','\|'
-                    $act = ($r.Action           | ForEach-Object { "$_" }) -replace '\|','\|'
-                    $pv  = ($r.PreviousTagValue | ForEach-Object { "$_" }) -replace '\|','\|'
-                    $nv  = ($r.NewTagValue      | ForEach-Object { "$_" }) -replace '\|','\|'
-                    $st  = ($r.Status           | ForEach-Object { "$_" }) -replace '\|','\|'
-                    $msg = ($r.Message          | ForEach-Object { "$_" }) -replace '\|','\|' -replace '\r?\n',' '
-                    "| $cn | $act | $pv | $nv | $st | $msg |" >> $env:GITHUB_STEP_SUMMARY
-                }
-                "" >> $env:GITHUB_STEP_SUMMARY
-                "</details>" >> $env:GITHUB_STEP_SUMMARY
-            }
-        } else {
-            "" >> $env:GITHUB_STEP_SUMMARY
-            "_No per-cluster results JSON found at $resultsJsonPath - apply step may have failed before producing results._" >> $env:GITHUB_STEP_SUMMARY
-        }
-
-        if ($dryRun) {
-            "" >> $env:GITHUB_STEP_SUMMARY
-            "**This was a dry run. No changes were applied.**" >> $env:GITHUB_STEP_SUMMARY
-        }
 

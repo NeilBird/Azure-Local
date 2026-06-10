@@ -68,105 +68,36 @@ stages:
           
           - task: PowerShell@2
             displayName: 'Validate CSV File Exists'
+            # v0.8.5 thin-YAML: the full TWO-STAGE operator workflow guidance
+            # is now emitted by Set-AzLocalClusterUpdateRingTagFromCsv when
+            # the Apply task runs. This task still fails fast (and surfaces
+            # the path) before we spend time installing the module.
             inputs:
               targetType: 'inline'
               script: |
                 $csvPath = Join-Path "$(System.DefaultWorkingDirectory)" "${{ parameters.csvFilePath }}"
-                
                 if (-not (Test-Path $csvPath)) {
                     Write-Host "##vso[task.logissue type=error]CSV file not found: ${{ parameters.csvFilePath }}"
+                    Write-Host "The full TWO-STAGE operator workflow guidance will be emitted by"
+                    Write-Host "Set-AzLocalClusterUpdateRingTagFromCsv when the Apply task runs."
                     Write-Host ""
-                    Write-Host "===========================================================================" -ForegroundColor Yellow
-                    Write-Host " UpdateRing tagging is a TWO-STAGE pipeline. You must run the inventory" -ForegroundColor Yellow
-                    Write-Host " pipeline first, edit the CSV, commit it, then re-run THIS pipeline." -ForegroundColor Yellow
-                    Write-Host "===========================================================================" -ForegroundColor Yellow
+                    Write-Host "Quick recap:"
+                    Write-Host "  1. Run Step.1 (Inventory) and download/edit/commit the CSV."
+                    Write-Host "  2. Re-run this Step.2 with csvFilePath pointing to the committed CSV."
                     Write-Host ""
-                    Write-Host "STEP 1 - Generate the cluster inventory (one-off, then on demand)" -ForegroundColor Cyan
-                    Write-Host "  a. Open Azure DevOps Pipelines in this project."
-                    Write-Host "  b. Run the pipeline named 'Inventory Azure Local Clusters'"
-                    Write-Host "     (file: azure-pipelines/Step.1_inventory-clusters.yml or similar)."
-                    Write-Host "  c. Wait for the run to finish successfully."
-                    Write-Host "  d. On the completed run summary, open the published artifact"
-                    Write-Host "     named 'cluster-inventory' and download it."
-                    Write-Host "  e. Extract it locally. You will get 'ClusterUpdateRings.csv' (the"
-                    Write-Host "     one to edit), a timestamped audit copy, a .json copy, and a"
-                    Write-Host "     'README_Instructions.txt' file that mirrors these instructions."
-                    Write-Host ""
-                    Write-Host "STEP 2 - Edit the CSV in Excel" -ForegroundColor Cyan
-                    Write-Host "  a. Open 'ClusterUpdateRings.csv' in Excel."
-                    Write-Host "  b. For each cluster row, fill in the 'UpdateRing' column with the wave"
-                    Write-Host "     name you want that cluster to belong to. Examples:"
-                    Write-Host "       Canary, Pilot, Production"
-                    Write-Host "       (or your own scheme, e.g. Wave1, Wave2, Wave3 / Dev, Test, Prod)."
-                    Write-Host "  c. Leave the 'UpdateRing' column EMPTY for any cluster you do not want"
-                    Write-Host "     this run to tag - those rows will be skipped."
-                    Write-Host "  d. Save as CSV (UTF-8). Do not change other columns or column order."
-                    Write-Host "  e. Do NOT rename the file - keep it as 'ClusterUpdateRings.csv' so"
-                    Write-Host "     the default 'csvFilePath' below picks it up."
-                    Write-Host ""
-                    Write-Host "STEP 3 - Commit the edited CSV to this repository" -ForegroundColor Cyan
-                    Write-Host "  a. Copy the edited CSV into a stable location in this repo, for example:"
-                    Write-Host "       config/ClusterUpdateRings.csv"
-                    Write-Host "  b. Commit and push it (PR review optional but recommended)."
-                    Write-Host "  c. The path you commit it to is what you will pass as 'csvFilePath'"
-                    Write-Host "     on the next run of this pipeline."
-                    Write-Host ""
-                    Write-Host "STEP 4 - Re-run THIS pipeline ('Manage UpdateRing Tags')" -ForegroundColor Cyan
-                    Write-Host "  a. Click 'Run pipeline' on this pipeline."
-                    Write-Host "  b. Set 'csvFilePath' to the path you committed in step 3"
-                    Write-Host "     (default is 'config/ClusterUpdateRings.csv')."
-                    Write-Host "  c. RECOMMENDED FIRST RUN: leave 'dryRun' = true to preview which tags"
-                    Write-Host "     would be set/changed, without modifying any Azure resources."
-                    Write-Host "  d. Once the preview looks correct, re-run with 'dryRun' = false to"
-                    Write-Host "     apply the tags. Use 'force' = true only if you need to overwrite"
-                    Write-Host "     existing UpdateRing values already set on a cluster."
-                    Write-Host ""
-                    Write-Host "Documentation:" -ForegroundColor Yellow
+                    Write-Host "Docs:"
                     Write-Host "  AzLocal.UpdateManagement/README.md - 'Update Rings' section"
                     Write-Host "  AzLocal.UpdateManagement/Automation-Pipeline-Examples/README.md"
-                    Write-Host ""
-                    Write-Host "The path you supplied ('${{ parameters.csvFilePath }}') does not exist" -ForegroundColor Red
-                    Write-Host "in the checked-out branch of this repository. Did you forget to commit" -ForegroundColor Red
-                    Write-Host "the CSV, point at the wrong branch on 'Run pipeline', or mistype it?" -ForegroundColor Red
                     exit 1
                 }
-                
                 Write-Host "Found CSV file: $csvPath"
                 Write-Host "##vso[task.setvariable variable=CsvPath]$csvPath"
-          
-          - task: PowerShell@2
-            displayName: 'Validate CSV File'
-            inputs:
-              targetType: 'inline'
-              script: |
-                $csvPath = "$(CsvPath)"
-                $data = Import-Csv $csvPath
-                
-                Write-Host "CSV File: $csvPath"
-                Write-Host "Total Rows: $($data.Count)"
-                
-                # Check required columns
-                $requiredColumns = @('ResourceId', 'UpdateRing')
-                $columns = $data[0].PSObject.Properties.Name
-                
-                foreach ($col in $requiredColumns) {
-                    if ($col -notin $columns) {
-                        Write-Error "Required column '$col' not found in CSV"
-                        exit 1
-                    }
-                }
-                
-                # Count rows with UpdateRing values
-                $rowsWithValues = ($data | Where-Object { $_.UpdateRing -and $_.UpdateRing.Trim() -ne '' }).Count
-                Write-Host "Rows with UpdateRing values: $rowsWithValues"
-                
-                if ($rowsWithValues -eq 0) {
-                    Write-Error "No rows have UpdateRing values set. Please edit the CSV and set UpdateRing values before running this pipeline."
-                    exit 1
-                }
-          
+
           - task: PowerShell@2
             displayName: 'Install AzLocal.UpdateManagement from PSGallery'
+            name: moduleVersionStep
+            # v0.8.5 thin-YAML: drift detection + banner + step outputs are
+            # all produced by Add-AzLocalPipelineVersionBanner (Public cmdlet).
             env:
               REQUIRED_MODULE_VERSION: $(REQUIRED_MODULE_VERSION)
               GENERATED_AGAINST_MODULE_VERSION: $(GENERATED_AGAINST_MODULE_VERSION)
@@ -184,102 +115,38 @@ stages:
                 }
                 Install-Module @installArgs
                 Import-Module AzLocal.UpdateManagement -Force
-                $installed = (Get-Module AzLocal.UpdateManagement | Sort-Object Version -Descending | Select-Object -First 1).Version
-                $generated = [version]$env:GENERATED_AGAINST_MODULE_VERSION
-                $latest    = (Find-Module -Name AzLocal.UpdateManagement -Repository PSGallery -ErrorAction SilentlyContinue).Version
-                Write-Host ""
-                Write-Host "Module version summary"
-                Write-Host "  Installed on agent        : $installed"
-                Write-Host "  YAML generated against    : $generated"
-                Write-Host "  Latest on PSGallery       : $(if ($latest) { $latest } else { '(lookup failed - check network)' })"
-                Write-Host ""
-                Get-Module AzLocal.UpdateManagement | Format-List Name, Version, Path
-                # Drift signal 0: the module installed at runtime is OLDER than the version this YAML was generated against. Cmdlets, parameters, or output schemas referenced by this YAML may not exist in the installed module - emitted as a warning because this is the most likely cause of a hard runtime failure later in the job.
-                if ($installed -lt $generated) {
-                    Write-Host "##vso[task.logissue type=warning]AzLocal.UpdateManagement v$installed is OLDER than the version this pipeline YAML was generated against (v$generated). Cmdlets, parameters, or output schemas referenced by this YAML may not exist in v$installed. Set REQUIRED_MODULE_VERSION to v$generated, or refresh the YAML to match the installed module via 'Copy-AzLocalPipelineExample -Platform AzureDevOps -Update'."
-                }
-                if ($installed -gt $generated) {
-                    $msg = "Pipeline YAML was generated against AzLocal.UpdateManagement v$generated but the agent installed v$installed. Pipeline steps may have been improved in later releases - to refresh, re-run 'Copy-AzLocalPipelineExample -Destination .\pipelines -Platform AzureDevOps -Update' (you will be prompted per file; add -Confirm:`$false to bypass). Pipeline YAMLs are under git so 'git diff' shows exactly what changed before commit."
-                    Write-Host "##vso[task.logissue type=warning]$msg"
-                }
-                if ($latest -and ($latest -gt $installed)) {
-                    $msg = "AzLocal.UpdateManagement v$latest is available on PSGallery; this run installed v$installed. Review the module CHANGELOG before bumping REQUIRED_MODULE_VERSION (or clear the pin to install the latest automatically)."
-                    Write-Host "##vso[task.logissue type=warning]$msg"
-                }
+                Add-AzLocalPipelineVersionBanner `
+                    -GeneratedAgainstVersion $env:GENERATED_AGAINST_MODULE_VERSION `
+                    -PinnedVersion $env:REQUIRED_MODULE_VERSION
 
-                # v0.8.4 - one-line version banner uploaded to the build run
-                # Summary so the YAML version (GENERATED_AGAINST_MODULE_VERSION),
-                # the module version actually loaded on the agent, the PSGallery
-                # latest, and the REQUIRED_MODULE_VERSION pin status are visible
-                # at the top of every run summary without scrolling the agent
-                # log. Same data is also echoed to the console above.
-                $pin       = if ($env:REQUIRED_MODULE_VERSION) { "pinned to v$($env:REQUIRED_MODULE_VERSION)" } else { 'latest (fix-forward)' }
-                $latestStr = if ($latest) { "v$latest" } else { '(PSGallery lookup failed)' }
-                $verdict   = if ($installed -lt $generated) { 'YAML newer than module - check REQUIRED_MODULE_VERSION' }
-                             elseif ($installed -gt $generated) { 'YAML older than module - run Copy-AzLocalPipelineExample -Update' }
-                             elseif ($latest -and ($latest -gt $installed)) { 'newer module available on PSGallery' }
-                             else { 'in sync' }
-                $bannerPath = Join-Path $env:BUILD_ARTIFACTSTAGINGDIRECTORY 'module-version-banner.md'
-                "_Pipeline YAML v$generated | Module v$installed installed ($pin) | PSGallery latest $latestStr | $verdict_" | Out-File -FilePath $bannerPath -Encoding utf8
-                Write-Host "##vso[task.uploadsummary]$bannerPath"
-          
           - task: AzureCLI@2
             displayName: 'Apply UpdateRing Tags'
+            # v0.8.5 thin-YAML: the inline Set-AzLocalClusterUpdateRingTag
+            # invocation, JSON sidecar write, and Generate Summary task have
+            # been condensed into the Public cmdlet
+            # Set-AzLocalClusterUpdateRingTagFromCsv. The cmdlet writes
+            # UpdateRingTag_Results.json into -OutputDirectory, emits the
+            # markdown step summary via ##vso[task.uploadsummary], and
+            # surfaces the eight pipeline variables (total_count,
+            # created_count, updated_count, already_in_sync_count,
+            # skipped_count, failed_count, whatif_count, results_json_path).
             inputs:
               azureSubscription: 'AzureLocal-ServiceConnection'  # Update with your service connection name
               scriptType: 'pscore'
               scriptLocation: 'inlineScript'
               inlineScript: |
                 Import-Module AzLocal.UpdateManagement -Force
-                
-                $csvPath = "$(CsvPath)"
                 $forceOverwrite = [System.Convert]::ToBoolean("${{ parameters.forceOverwrite }}")
-                $dryRun = [System.Convert]::ToBoolean("${{ parameters.dryRun }}")
-                
-                # Create output directory for logs
-                $outputDir = "$(Build.ArtifactStagingDirectory)"
-                
-                # Build parameters
+                $dryRun         = [System.Convert]::ToBoolean("${{ parameters.dryRun }}")
                 $params = @{
-                    InputCsvPath = $csvPath
-                    LogFolderPath = $outputDir
+                    InputCsvPath           = "$(CsvPath)"
+                    OutputDirectory        = "$(Build.ArtifactStagingDirectory)"
+                    InstalledModuleVersion = "$(moduleVersionStep.installed_module_version)"
                 }
-                
-                if ($forceOverwrite) {
-                    $params['Force'] = $true
-                    Write-Host "Force mode enabled - will overwrite existing tags"
-                }
-                
-                if ($dryRun) {
-                    $params['WhatIf'] = $true
-                    Write-Host "##vso[task.logissue type=warning]DRY RUN MODE - No changes will be applied"
-                }
-                
-                Write-Host ""
-                Write-Host "========================================" -ForegroundColor Cyan
-                Write-Host "Applying UpdateRing Tags" -ForegroundColor Cyan
-                Write-Host "========================================" -ForegroundColor Cyan
+                if ($forceOverwrite) { $params['Force']  = $true }
+                if ($dryRun)         { $params['WhatIf'] = $true }
+                Set-AzLocalClusterUpdateRingTagFromCsv @params
 
-                # Run tag management. -PassThru returns the per-cluster results so
-                # the Summary task can build a breakdown table rather than parroting
-                # only the pipeline inputs back at the operator.
-                $results = Set-AzLocalClusterUpdateRingTag @params -PassThru
-
-                # Persist results to a JSON sidecar so the Summary task (separate
-                # PowerShell process) can read them. Lives in the artifact staging
-                # dir that gets published.
-                $resultsJsonPath = Join-Path $outputDir 'UpdateRingTag_Results.json'
-                if ($null -ne $results) {
-                    @($results) | ConvertTo-Json -Depth 5 | Out-File -FilePath $resultsJsonPath -Encoding utf8
-                    Write-Host "Wrote $($results.Count) per-cluster result row(s) to: $resultsJsonPath"
-                } else {
-                    '[]' | Out-File -FilePath $resultsJsonPath -Encoding utf8
-                    Write-Host "No per-cluster results returned (empty CSV?). Wrote empty array to: $resultsJsonPath"
-                }
-
-                Write-Host ""
-                Write-Host "Tag management complete"
-          
           # compute a UTC timestamp variable so every downloadable artifact name is unique per run.
           - pwsh: |
               $stamp = (Get-Date).ToUniversalTime().ToString('yyyyMMdd_HHmmss')
@@ -295,82 +162,4 @@ stages:
               PathtoPublish: '$(Build.ArtifactStagingDirectory)'
               ArtifactName: 'azlocal-step.2-updatering-tag-logs_$(stamp.artifactStamp)'
               publishLocation: 'Container'
-          
-          - task: PowerShell@2
-            displayName: 'Generate Summary'
-            inputs:
-              targetType: 'inline'
-              script: |
-                $dryRun = [System.Convert]::ToBoolean("${{ parameters.dryRun }}")
-                $forceOverwrite = [System.Convert]::ToBoolean("${{ parameters.forceOverwrite }}")
-
-                $lines = New-Object System.Collections.Generic.List[string]
-                [void]$lines.Add('# UpdateRing Tag Management Summary')
-                [void]$lines.Add('')
-                [void]$lines.Add('| Setting | Value |')
-                [void]$lines.Add('|---------|-------|')
-                [void]$lines.Add("| Dry Run | $dryRun |")
-                [void]$lines.Add("| Force Overwrite | $forceOverwrite |")
-
-                # Per-cluster results breakdown - read the JSON sidecar the apply task wrote.
-                # See AzLocal.UpdateManagement Set-AzLocalClusterUpdateRingTag -PassThru schema.
-                $resultsJsonPath = Join-Path '$(Build.ArtifactStagingDirectory)' 'UpdateRingTag_Results.json'
-                if (Test-Path $resultsJsonPath) {
-                    $results = @(Get-Content -Raw -Path $resultsJsonPath | ConvertFrom-Json)
-                    $total         = $results.Count
-                    $created       = @($results | Where-Object { $_.Action -eq 'Created'  -and $_.Status -eq 'Success'       }).Count
-                    $updated       = @($results | Where-Object { $_.Action -eq 'Updated'  -and $_.Status -eq 'Success'       }).Count
-                    $alreadyInSync = @($results | Where-Object { $_.Status -eq 'AlreadyInSync' }).Count
-                    $skipped       = @($results | Where-Object { $_.Status -eq 'Skipped'       }).Count
-                    $failed        = @($results | Where-Object { $_.Status -eq 'Failed'        }).Count
-                    $whatIf        = @($results | Where-Object { $_.Status -eq 'WhatIf'        }).Count
-
-                    [void]$lines.Add('')
-                    [void]$lines.Add('## Result breakdown')
-                    [void]$lines.Add('')
-                    [void]$lines.Add('| Outcome | Count |')
-                    [void]$lines.Add('|---------|------:|')
-                    [void]$lines.Add("| Total clusters processed | $total |")
-                    [void]$lines.Add("| Tags created             | $created |")
-                    [void]$lines.Add("| Tags updated             | $updated |")
-                    [void]$lines.Add("| Already in sync (no-op)  | $alreadyInSync |")
-                    [void]$lines.Add("| Skipped (UpdateRing differs, no -Force) | $skipped |")
-                    if ($whatIf -gt 0) {
-                        [void]$lines.Add("| WhatIf (dry-run preview) | $whatIf |")
-                    }
-                    [void]$lines.Add("| Failed                   | $failed |")
-
-                    if ($total -gt 0) {
-                        [void]$lines.Add('')
-                        [void]$lines.Add("<details><summary>Per-cluster results ($total rows)</summary>")
-                        [void]$lines.Add('')
-                        [void]$lines.Add('| Cluster | Action | Previous | New | Status | Message |')
-                        [void]$lines.Add('|---------|--------|----------|-----|--------|---------|')
-                        foreach ($r in $results) {
-                            $cn  = ("$($r.ClusterName)")      -replace '\|','\|'
-                            $act = ("$($r.Action)")           -replace '\|','\|'
-                            $pv  = ("$($r.PreviousTagValue)") -replace '\|','\|'
-                            $nv  = ("$($r.NewTagValue)")      -replace '\|','\|'
-                            $st  = ("$($r.Status)")           -replace '\|','\|'
-                            $msg = ("$($r.Message)")          -replace '\|','\|' -replace '\r?\n',' '
-                            [void]$lines.Add("| $cn | $act | $pv | $nv | $st | $msg |")
-                        }
-                        [void]$lines.Add('')
-                        [void]$lines.Add('</details>')
-                    }
-                } else {
-                    [void]$lines.Add('')
-                    [void]$lines.Add("_No per-cluster results JSON found at $resultsJsonPath - apply step may have failed before producing results._")
-                }
-
-                if ($dryRun) {
-                    [void]$lines.Add('')
-                    [void]$lines.Add('**This was a dry run. No changes were applied.**')
-                    [void]$lines.Add('')
-                    [void]$lines.Add("Re-run the pipeline with 'Preview changes' set to false to apply changes.")
-                }
-
-                $summaryPath = '$(Build.ArtifactStagingDirectory)/summary.md'
-                $lines -join [Environment]::NewLine | Out-File $summaryPath -Encoding UTF8
-                Write-Host "##vso[task.uploadsummary]$summaryPath"
 

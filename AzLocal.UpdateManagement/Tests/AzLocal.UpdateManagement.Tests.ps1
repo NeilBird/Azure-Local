@@ -199,8 +199,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $content | Should -Match '\$data\.ArbRows' -Because "Step.4 $Platform must assign `$data.ArbRows from cmdlet output"
         }
 
-        It 'Should export exactly 42 functions' {
-            $script:ModuleInfo.ExportedFunctions.Count | Should -Be 42
+        It 'Should export exactly 43 functions' {
+            $script:ModuleInfo.ExportedFunctions.Count | Should -Be 43
         }
 
         It 'Should export the expected functions' {
@@ -266,7 +266,9 @@ Describe 'Module: AzLocal.UpdateManagement' {
                 # Thin-YAML Step.0 (v0.8.5) - Authentication validation + subscription scope + cluster reachability
                 'Export-AzLocalAuthValidationReport',
                 # Thin-YAML Step.1 (v0.8.5) - Cluster inventory workload (timestamped + canonical CSV, JSON, README, step summary)
-                'Invoke-AzLocalClusterInventory'
+                'Invoke-AzLocalClusterInventory',
+                # Thin-YAML Step.2 (v0.8.5) - UpdateRing tag management workload (CSV validation + apply via Set-AzLocalClusterUpdateRingTag + JSON sidecar + step summary)
+                'Set-AzLocalClusterUpdateRingTagFromCsv'
             )
             
             foreach ($func in $expectedFunctions) {
@@ -10251,8 +10253,8 @@ Describe 'Function: Get-AzLocalFleetHealthOverview - v0.7.70 (ARG-first fleet he
             $cmd.CommandType | Should -Be 'Function'
         }
 
-        It 'BS7: Module exports exactly 42 functions (was 41 after Step.0 thin-YAML port; Step.1 thin-YAML port adds Invoke-AzLocalClusterInventory)' {
-            (Get-Module AzLocal.UpdateManagement).ExportedFunctions.Count | Should -Be 42
+        It 'BS7: Module exports exactly 43 functions (was 42 after Step.1 thin-YAML port; Step.2 thin-YAML port adds Set-AzLocalClusterUpdateRingTagFromCsv)' {
+            (Get-Module AzLocal.UpdateManagement).ExportedFunctions.Count | Should -Be 43
         }
     }
 
@@ -13458,5 +13460,229 @@ Describe 'Thin-YAML Step.1: Invoke-AzLocalClusterInventory' {
 }
 
 #endregion v0.8.5: Invoke-AzLocalClusterInventory
+
+#region v0.8.5: Set-AzLocalClusterUpdateRingTagFromCsv (Step.2 thin-YAML port)
+
+Describe 'Thin-YAML Step.2: Set-AzLocalClusterUpdateRingTagFromCsv' {
+
+    BeforeEach {
+        $script:_s2_savedGhActions = $env:GITHUB_ACTIONS
+        $script:_s2_savedTfBuild   = $env:TF_BUILD
+        $script:_s2_savedGhOutput  = $env:GITHUB_OUTPUT
+        $script:_s2_savedGhSummary = $env:GITHUB_STEP_SUMMARY
+        $script:_s2_savedAdoStage  = $env:BUILD_ARTIFACTSTAGINGDIRECTORY
+        Remove-Item Env:\GITHUB_ACTIONS                  -ErrorAction SilentlyContinue
+        Remove-Item Env:\TF_BUILD                        -ErrorAction SilentlyContinue
+        Remove-Item Env:\GITHUB_OUTPUT                   -ErrorAction SilentlyContinue
+        Remove-Item Env:\GITHUB_STEP_SUMMARY             -ErrorAction SilentlyContinue
+        Remove-Item Env:\BUILD_ARTIFACTSTAGINGDIRECTORY  -ErrorAction SilentlyContinue
+
+        $script:_s2_ghOutputFile  = Join-Path -Path $env:TEMP -ChildPath ("s2-gh-output-{0}"  -f ([Guid]::NewGuid()))
+        $script:_s2_ghSummaryFile = Join-Path -Path $env:TEMP -ChildPath ("s2-gh-summary-{0}.md" -f ([Guid]::NewGuid()))
+        $script:_s2_adoStageDir   = Join-Path -Path $env:TEMP -ChildPath ("s2-ado-stage-{0}" -f ([Guid]::NewGuid()))
+        $script:_s2_outDir        = Join-Path -Path $env:TEMP -ChildPath ("s2-out-{0}"       -f ([Guid]::NewGuid()))
+        $script:_s2_csvDir        = Join-Path -Path $env:TEMP -ChildPath ("s2-csv-{0}"       -f ([Guid]::NewGuid()))
+        New-Item -ItemType File      -Path $script:_s2_ghOutputFile  -Force | Out-Null
+        New-Item -ItemType File      -Path $script:_s2_ghSummaryFile -Force | Out-Null
+        New-Item -ItemType Directory -Path $script:_s2_adoStageDir   -Force | Out-Null
+        New-Item -ItemType Directory -Path $script:_s2_outDir        -Force | Out-Null
+        New-Item -ItemType Directory -Path $script:_s2_csvDir        -Force | Out-Null
+
+        # Synthetic CSV: three rows, two with UpdateRing values, one blank (skipped).
+        $script:_s2_csvPath = Join-Path -Path $script:_s2_csvDir -ChildPath 'ClusterUpdateRings.csv'
+        @"
+ClusterName,ResourceGroup,SubscriptionId,UpdateRing,ResourceId
+alpha,rg1,s1,Canary,/subscriptions/s1/resourceGroups/rg1/providers/Microsoft.AzureStackHCI/clusters/alpha
+beta,rg2,s1,Production,/subscriptions/s1/resourceGroups/rg2/providers/Microsoft.AzureStackHCI/clusters/beta
+gamma,rg3,s1,,/subscriptions/s1/resourceGroups/rg3/providers/Microsoft.AzureStackHCI/clusters/gamma
+"@ | Set-Content -LiteralPath $script:_s2_csvPath -Encoding UTF8
+
+        # Default mock results: 1 created, 1 already-in-sync.
+        $script:_s2_results = @(
+            [pscustomobject]@{ ClusterName = 'alpha'; Action = 'Created'; PreviousTagValue = ''; NewTagValue = 'Canary';     Status = 'Success';       Message = 'Tag created' }
+            [pscustomobject]@{ ClusterName = 'beta';  Action = 'NoChange'; PreviousTagValue = 'Production'; NewTagValue = 'Production'; Status = 'AlreadyInSync'; Message = 'Already in sync' }
+        )
+    }
+
+    AfterEach {
+        if ($null -ne $script:_s2_savedGhActions)  { $env:GITHUB_ACTIONS                  = $script:_s2_savedGhActions } else { Remove-Item Env:\GITHUB_ACTIONS                 -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_s2_savedTfBuild)    { $env:TF_BUILD                        = $script:_s2_savedTfBuild   } else { Remove-Item Env:\TF_BUILD                       -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_s2_savedGhOutput)   { $env:GITHUB_OUTPUT                   = $script:_s2_savedGhOutput  } else { Remove-Item Env:\GITHUB_OUTPUT                  -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_s2_savedGhSummary)  { $env:GITHUB_STEP_SUMMARY             = $script:_s2_savedGhSummary } else { Remove-Item Env:\GITHUB_STEP_SUMMARY            -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_s2_savedAdoStage)   { $env:BUILD_ARTIFACTSTAGINGDIRECTORY  = $script:_s2_savedAdoStage  } else { Remove-Item Env:\BUILD_ARTIFACTSTAGINGDIRECTORY -ErrorAction SilentlyContinue }
+        foreach ($p in @($script:_s2_ghOutputFile, $script:_s2_ghSummaryFile)) {
+            if ($p -and (Test-Path -LiteralPath $p)) { Remove-Item -LiteralPath $p -Force -ErrorAction SilentlyContinue }
+        }
+        foreach ($d in @($script:_s2_adoStageDir, $script:_s2_outDir, $script:_s2_csvDir)) {
+            if ($d -and (Test-Path -LiteralPath $d)) { Remove-Item -LiteralPath $d -Recurse -Force -ErrorAction SilentlyContinue }
+        }
+    }
+
+    It 'PassThru returns counts + ResultsJsonPath + Results' {
+        $global:_s2_payload = @{ Results = $script:_s2_results; Params = @{ InputCsvPath = $script:_s2_csvPath; OutputDirectory = $script:_s2_outDir; PassThru = $true } }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Set-AzLocalClusterUpdateRingTag { @($global:_s2_payload.Results) }
+            $p = $global:_s2_payload.Params
+            Set-AzLocalClusterUpdateRingTagFromCsv @p
+        }
+        $result                       | Should -Not -BeNullOrEmpty
+        $result.TotalCount            | Should -Be 2
+        $result.CreatedCount          | Should -Be 1
+        $result.AlreadyInSyncCount    | Should -Be 1
+        $result.UpdatedCount          | Should -Be 0
+        $result.SkippedCount          | Should -Be 0
+        $result.FailedCount           | Should -Be 0
+        $result.WhatIfCount           | Should -Be 0
+        $result.ResultsJsonPath       | Should -Match 'UpdateRingTag_Results\.json$'
+        @($result.Results).Count      | Should -Be 2
+    }
+
+    It 'Writes UpdateRingTag_Results.json sidecar with per-cluster rows' {
+        $global:_s2_payload = @{ Results = $script:_s2_results; Params = @{ InputCsvPath = $script:_s2_csvPath; OutputDirectory = $script:_s2_outDir; PassThru = $true } }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Set-AzLocalClusterUpdateRingTag { @($global:_s2_payload.Results) }
+            $p = $global:_s2_payload.Params
+            Set-AzLocalClusterUpdateRingTagFromCsv @p
+        }
+        Test-Path -LiteralPath $result.ResultsJsonPath | Should -BeTrue
+        $sidecar = Get-Content -Raw -LiteralPath $result.ResultsJsonPath | ConvertFrom-Json
+        @($sidecar).Count            | Should -Be 2
+        @($sidecar)[0].ClusterName   | Should -Be 'alpha'
+        @($sidecar)[0].Action        | Should -Be 'Created'
+        @($sidecar)[1].Status        | Should -Be 'AlreadyInSync'
+    }
+
+    It 'Empty results array still writes a valid empty JSON sidecar' {
+        $global:_s2_payload = @{ Results = @(); Params = @{ InputCsvPath = $script:_s2_csvPath; OutputDirectory = $script:_s2_outDir; PassThru = $true } }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Set-AzLocalClusterUpdateRingTag { @() }
+            $p = $global:_s2_payload.Params
+            Set-AzLocalClusterUpdateRingTagFromCsv @p
+        }
+        $result.TotalCount | Should -Be 0
+        Test-Path -LiteralPath $result.ResultsJsonPath | Should -BeTrue
+        $parsed = Get-Content -Raw -LiteralPath $result.ResultsJsonPath | ConvertFrom-Json
+        @($parsed).Count | Should -Be 0
+    }
+
+    It 'Throws with operator-recovery guidance when CSV path does not exist' {
+        $missingPath = Join-Path -Path $script:_s2_csvDir -ChildPath 'does-not-exist.csv'
+        InModuleScope AzLocal.UpdateManagement -Parameters @{ MissingPath = $missingPath; OutDir = $script:_s2_outDir } {
+            param($MissingPath, $OutDir)
+            { Set-AzLocalClusterUpdateRingTagFromCsv -InputCsvPath $MissingPath -OutputDirectory $OutDir } |
+                Should -Throw -ExpectedMessage "*CSV file not found at path: $MissingPath*"
+        }
+    }
+
+    It 'Throws when CSV is missing required UpdateRing column' {
+        $badCsv = Join-Path -Path $script:_s2_csvDir -ChildPath 'missing-column.csv'
+        "ClusterName,ResourceId`r`nalpha,/subscriptions/s1/resourceGroups/rg1/providers/Microsoft.AzureStackHCI/clusters/alpha" |
+            Set-Content -LiteralPath $badCsv -Encoding UTF8
+        InModuleScope AzLocal.UpdateManagement -Parameters @{ BadCsv = $badCsv; OutDir = $script:_s2_outDir } {
+            param($BadCsv, $OutDir)
+            { Set-AzLocalClusterUpdateRingTagFromCsv -InputCsvPath $BadCsv -OutputDirectory $OutDir } |
+                Should -Throw -ExpectedMessage "*Required column 'UpdateRing' not found*"
+        }
+    }
+
+    It 'Throws when CSV has zero rows with UpdateRing values set' {
+        $blankCsv = Join-Path -Path $script:_s2_csvDir -ChildPath 'all-blank.csv'
+        @"
+ClusterName,ResourceId,UpdateRing
+alpha,/subscriptions/s1/resourceGroups/rg1/providers/Microsoft.AzureStackHCI/clusters/alpha,
+beta,/subscriptions/s1/resourceGroups/rg2/providers/Microsoft.AzureStackHCI/clusters/beta,
+"@ | Set-Content -LiteralPath $blankCsv -Encoding UTF8
+        InModuleScope AzLocal.UpdateManagement -Parameters @{ BlankCsv = $blankCsv; OutDir = $script:_s2_outDir } {
+            param($BlankCsv, $OutDir)
+            { Set-AzLocalClusterUpdateRingTagFromCsv -InputCsvPath $BlankCsv -OutputDirectory $OutDir } |
+                Should -Throw -ExpectedMessage '*No rows have UpdateRing values set*'
+        }
+    }
+
+    It 'Emits GitHub Actions step outputs and step summary when GITHUB_ACTIONS=true' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s2_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s2_ghSummaryFile
+        $global:_s2_payload = @{ Results = $script:_s2_results; Params = @{ InputCsvPath = $script:_s2_csvPath; OutputDirectory = $script:_s2_outDir; PassThru = $true } }
+        [void](InModuleScope AzLocal.UpdateManagement {
+            Mock Set-AzLocalClusterUpdateRingTag { @($global:_s2_payload.Results) }
+            $p = $global:_s2_payload.Params
+            Set-AzLocalClusterUpdateRingTagFromCsv @p
+        })
+        $outputs = Get-Content -LiteralPath $script:_s2_ghOutputFile -Raw
+        $outputs | Should -Match 'total_count=2'
+        $outputs | Should -Match 'created_count=1'
+        $outputs | Should -Match 'already_in_sync_count=1'
+        $outputs | Should -Match 'results_json_path='
+        $summary = Get-Content -LiteralPath $script:_s2_ghSummaryFile -Raw
+        $summary | Should -Match '## Step\.2 - UpdateRing Tag Management Summary'
+        $summary | Should -Match '\| Total clusters processed \| 2 \|'
+        $summary | Should -Match 'alpha'
+        $summary | Should -Match 'Per-cluster results'
+    }
+
+    It 'Defaults OutputDirectory to BUILD_ARTIFACTSTAGINGDIRECTORY when TF_BUILD=true' {
+        $env:TF_BUILD = 'true'
+        $env:BUILD_ARTIFACTSTAGINGDIRECTORY = $script:_s2_adoStageDir
+        $global:_s2_payload = @{ Results = $script:_s2_results; Params = @{ InputCsvPath = $script:_s2_csvPath; PassThru = $true } }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Set-AzLocalClusterUpdateRingTag { @($global:_s2_payload.Results) }
+            $p = $global:_s2_payload.Params
+            Set-AzLocalClusterUpdateRingTagFromCsv @p
+        }
+        $result.ResultsJsonPath | Should -Be (Join-Path -Path $script:_s2_adoStageDir -ChildPath 'UpdateRingTag_Results.json')
+        Test-Path -LiteralPath $result.ResultsJsonPath | Should -BeTrue
+    }
+
+    It 'Propagates -Force to Set-AzLocalClusterUpdateRingTag' {
+        $global:_s2_payload = @{ Results = $script:_s2_results; Params = @{ InputCsvPath = $script:_s2_csvPath; OutputDirectory = $script:_s2_outDir; Force = $true; PassThru = $true } }
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Set-AzLocalClusterUpdateRingTag { @($global:_s2_payload.Results) }
+            $p = $global:_s2_payload.Params
+            [void](Set-AzLocalClusterUpdateRingTagFromCsv @p)
+            Should -Invoke Set-AzLocalClusterUpdateRingTag -Times 1 -Exactly -ParameterFilter { $Force -eq $true -and $PassThru }
+        }
+    }
+
+    It 'Propagates -WhatIf to Set-AzLocalClusterUpdateRingTag (dry-run preview)' {
+        $whatIfResults = @(
+            [pscustomobject]@{ ClusterName = 'alpha'; Action = 'Created'; PreviousTagValue = ''; NewTagValue = 'Canary';     Status = 'WhatIf'; Message = 'Would create' }
+            [pscustomobject]@{ ClusterName = 'beta';  Action = 'Updated'; PreviousTagValue = 'Pilot'; NewTagValue = 'Production'; Status = 'WhatIf'; Message = 'Would update' }
+        )
+        $global:_s2_payload = @{ Results = $whatIfResults; Params = @{ InputCsvPath = $script:_s2_csvPath; OutputDirectory = $script:_s2_outDir; WhatIf = $true; PassThru = $true } }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Set-AzLocalClusterUpdateRingTag { @($global:_s2_payload.Results) }
+            $p = $global:_s2_payload.Params
+            Set-AzLocalClusterUpdateRingTagFromCsv @p
+        }
+        $result.WhatIfCount | Should -Be 2
+        $result.CreatedCount | Should -Be 0
+        $result.UpdatedCount | Should -Be 0
+    }
+
+    It 'Tallies failed + skipped + updated counts independently' {
+        $mixed = @(
+            [pscustomobject]@{ ClusterName = 'a'; Action = 'Created';  PreviousTagValue = '';      NewTagValue = 'R1'; Status = 'Success';       Message = 'ok' }
+            [pscustomobject]@{ ClusterName = 'b'; Action = 'Updated';  PreviousTagValue = 'R0';    NewTagValue = 'R1'; Status = 'Success';       Message = 'ok' }
+            [pscustomobject]@{ ClusterName = 'c'; Action = 'NoChange'; PreviousTagValue = 'R1';    NewTagValue = 'R1'; Status = 'AlreadyInSync'; Message = 'ok' }
+            [pscustomobject]@{ ClusterName = 'd'; Action = 'Skipped';  PreviousTagValue = 'R2';    NewTagValue = 'R1'; Status = 'Skipped';       Message = 'no force' }
+            [pscustomobject]@{ ClusterName = 'e'; Action = 'Created';  PreviousTagValue = '';      NewTagValue = 'R1'; Status = 'Failed';        Message = 'rbac denied' }
+        )
+        $global:_s2_payload = @{ Results = $mixed; Params = @{ InputCsvPath = $script:_s2_csvPath; OutputDirectory = $script:_s2_outDir; PassThru = $true } }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Set-AzLocalClusterUpdateRingTag { @($global:_s2_payload.Results) }
+            $p = $global:_s2_payload.Params
+            Set-AzLocalClusterUpdateRingTagFromCsv @p
+        }
+        $result.TotalCount         | Should -Be 5
+        $result.CreatedCount       | Should -Be 1
+        $result.UpdatedCount       | Should -Be 1
+        $result.AlreadyInSyncCount | Should -Be 1
+        $result.SkippedCount       | Should -Be 1
+        $result.FailedCount        | Should -Be 1
+    }
+}
+
+#endregion v0.8.5: Set-AzLocalClusterUpdateRingTagFromCsv
 
 
