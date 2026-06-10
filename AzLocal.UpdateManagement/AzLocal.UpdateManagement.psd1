@@ -96,6 +96,8 @@
         'Private/Add-AzLocalPipelineStepSummary.ps1',
         'Private/Write-AzLocalPipelineNotice.ps1',
         'Private/Write-AzLocalPipelineWarning.ps1',
+        # Generic JUnit XML emitter shared by every Public Step.* cmdlet (v0.8.5)
+        'Private/New-AzLocalPipelineJUnitXml.ps1',
 
         # Public exported functions
         'Public/Connect-AzLocalServicePrincipal.ps1',
@@ -138,7 +140,9 @@
         'Public/Get-AzLocalFleetConnectivityStatus.ps1',
         'Public/New-AzLocalFleetConnectivityStatusSummary.ps1',
         # Thin-YAML pipeline foundation (v0.8.5)
-        'Public/Add-AzLocalPipelineVersionBanner.ps1'
+        'Public/Add-AzLocalPipelineVersionBanner.ps1',
+        # Thin-YAML Step.0 (v0.8.5) - Authentication validation + subscription scope + cluster reachability
+        'Public/Export-AzLocalAuthValidationReport.ps1'
     )
 
     FunctionsToExport = @(
@@ -199,7 +203,9 @@
         # Fleet Connectivity Status Summary Renderer (v0.7.87) - markdown step-summary builder used by Step.4 GH+ADO pipelines
         'New-AzLocalFleetConnectivityStatusSummary',
         # Thin-YAML pipeline foundation (v0.8.5) - install-step version banner + drift annotations + step outputs (condenses ~50-line inline block in every Step.*.yml)
-        'Add-AzLocalPipelineVersionBanner'
+        'Add-AzLocalPipelineVersionBanner',
+        # Thin-YAML Step.0 (v0.8.5) - Authentication validation + subscription scope + cluster reachability (condenses ~200-line inline run: | block in Step.0_authentication-test.yml on both platforms)
+        'Export-AzLocalAuthValidationReport'
     )
 
     # Cmdlets to export from this module, for best performance, do not use wildcards and do not delete the entry, use an empty array if there are no cmdlets to export.

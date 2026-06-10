@@ -199,8 +199,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $content | Should -Match '\$data\.ArbRows' -Because "Step.4 $Platform must assign `$data.ArbRows from cmdlet output"
         }
 
-        It 'Should export exactly 40 functions' {
-            $script:ModuleInfo.ExportedFunctions.Count | Should -Be 40
+        It 'Should export exactly 41 functions' {
+            $script:ModuleInfo.ExportedFunctions.Count | Should -Be 41
         }
 
         It 'Should export the expected functions' {
@@ -262,7 +262,9 @@ Describe 'Module: AzLocal.UpdateManagement' {
                 # Fleet Connectivity Status Summary Renderer (v0.7.87) - markdown step-summary builder used by Step.4 GH+ADO pipelines
                 'New-AzLocalFleetConnectivityStatusSummary',
                 # Thin-YAML pipeline foundation (v0.8.5) - install-step version banner + drift annotations + step outputs
-                'Add-AzLocalPipelineVersionBanner'
+                'Add-AzLocalPipelineVersionBanner',
+                # Thin-YAML Step.0 (v0.8.5) - Authentication validation + subscription scope + cluster reachability
+                'Export-AzLocalAuthValidationReport'
             )
             
             foreach ($func in $expectedFunctions) {
@@ -375,16 +377,24 @@ Describe 'Module: AzLocal.UpdateManagement' {
                 $installsModule = $content -match 'Install-Module\s+@installArgs'
                 if (-not $installsModule) { continue }
 
-                # The drift guard has two equally valid emitter shapes:
-                #   GH Actions: '::warning title=AzLocal.UpdateManagement is older than workflow YAML expects'
-                #   Azure DevOps: '##vso[task.logissue type=warning]AzLocal.UpdateManagement v$installed is OLDER'
-                # Both are anchored on the '$installed -lt $generated' comparison.
+                # The drift guard has three equally valid emitter shapes:
+                #   GH Actions inline: '::warning title=AzLocal.UpdateManagement is older than workflow YAML expects'
+                #   Azure DevOps inline: '##vso[task.logissue type=warning]AzLocal.UpdateManagement v$installed is OLDER'
+                #   v0.8.5 thin-YAML: Add-AzLocalPipelineVersionBanner (Public cmdlet that performs
+                #                     the '$installed -lt $generated' comparison internally and emits
+                #                     the warning via Write-AzLocalPipelineWarning).
                 $hasComparison = $content -match '\$installed\s+-lt\s+\$generated'
+                # Ignore the cmdlet name when it appears only inside a YAML comment
+                # (lines beginning with optional whitespace then '#').
+                $cmdletInvocationLines = ($content -split "`r?`n") | Where-Object {
+                    ($_ -notmatch '^\s*#') -and ($_ -match 'Add-AzLocalPipelineVersionBanner')
+                }
+                $hasCmdlet = ($cmdletInvocationLines.Count -gt 0)
 
                 $relPath = $yml.FullName.Substring($examplesRoot.Length).TrimStart('\','/')
 
-                if (-not $hasComparison) {
-                    $issues.Add("${relPath}: installs the module but is MISSING the 'installed -lt generated' drift guard")
+                if ((-not $hasComparison) -and (-not $hasCmdlet)) {
+                    $issues.Add("${relPath}: installs the module but is MISSING the 'installed -lt generated' drift guard (neither inline comparison nor Add-AzLocalPipelineVersionBanner call found)")
                 }
             }
 
@@ -516,23 +526,27 @@ Describe 'Module: AzLocal.UpdateManagement' {
         # (GITHUB_STEP_SUMMARY on GH, ##vso[task.uploadsummary] on ADO).
         # This makes the version triple obvious in the Summary view fleet
         # operators open first, rather than buried in annotations.
-        # Expected sites: 10 GH yml + 11 ADO sites (Step.6 ADO has 2 install
-        # steps: check-readiness + apply-updates).
+        # v0.8.5 thin-YAML: ports replace the ~50-line inline banner block
+        # with a single Add-AzLocalPipelineVersionBanner call (Public cmdlet
+        # that produces the same banner string internally). Either form is
+        # acceptable for these guards.
         It 'Every GitHub Actions install step contains the version banner string' {
             $ghRoot = Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples\github-actions'
             $ghRoot = (Resolve-Path -Path $ghRoot).Path
             $ymlFiles = Get-ChildItem -Path $ghRoot -Filter 'Step.*.yml' -File
 
+            $bannerLiteral = [regex]::Escape('Pipeline YAML v$generated | Module v$installed installed')
+            $cmdletCall    = [regex]::Escape('Add-AzLocalPipelineVersionBanner')
             $offenders = New-Object System.Collections.Generic.List[string]
             foreach ($yml in $ymlFiles) {
                 $content = Get-Content -LiteralPath $yml.FullName -Raw
-                if ($content -notmatch [regex]::Escape('Pipeline YAML v$generated | Module v$installed installed')) {
+                if (($content -notmatch $bannerLiteral) -and ($content -notmatch $cmdletCall)) {
                     $offenders.Add($yml.Name)
                 }
             }
 
             $detail = if ($offenders.Count -gt 0) { $offenders -join ', ' } else { '(none)' }
-            $offenders.Count | Should -Be 0 -Because "every GitHub Actions yml install step must append the v0.8.4 version banner to GITHUB_STEP_SUMMARY. Missing from: $detail"
+            $offenders.Count | Should -Be 0 -Because "every GitHub Actions yml install step must either inline the v0.8.4 banner string or call Add-AzLocalPipelineVersionBanner (v0.8.5 thin-YAML). Missing from: $detail"
         }
 
         It 'Every Azure DevOps yml install site contains the version banner string (Step.6 second install deliberately skips upload to avoid duplicate banner)' {
@@ -541,11 +555,15 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $ymlFiles = Get-ChildItem -Path $adoRoot -Filter 'Step.*.yml' -File
 
             $bannerPattern = [regex]::Escape('Pipeline YAML v$generated | Module v$installed installed')
+            $cmdletPattern = [regex]::Escape('Add-AzLocalPipelineVersionBanner')
             $totalSites = 0
             # Every Step.X.yml emits exactly ONE banner to the build Summary.
             # Step.6 has TWO install steps (CheckReadiness + ApplyUpdates) but
             # the second one deliberately skips ##vso[task.uploadsummary] so the
             # banner does not appear twice in the rendered Summary.
+            # v0.8.5 thin-YAML: ported YAMLs replace the inline banner block
+            # with one Add-AzLocalPipelineVersionBanner call - count either
+            # form as a banner emit.
             $perFileExpect = @{
                 'Step.0_authentication-test.yml'         = 1
                 'Step.1_inventory-clusters.yml'          = 1
@@ -561,18 +579,27 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $offenders = New-Object System.Collections.Generic.List[string]
             foreach ($yml in $ymlFiles) {
                 $content = Get-Content -LiteralPath $yml.FullName -Raw
-                $count = ([regex]::Matches($content, $bannerPattern)).Count
+                # Count cmdlet hits only on non-comment lines so a comment that
+                # mentions Add-AzLocalPipelineVersionBanner does not double-count.
+                $nonCommentLines = ($content -split "`r?`n") | Where-Object { $_ -notmatch '^\s*#' }
+                $nonCommentText  = $nonCommentLines -join "`n"
+                $bannerHits = ([regex]::Matches($nonCommentText, $bannerPattern)).Count
+                $cmdletHits = ([regex]::Matches($nonCommentText, $cmdletPattern)).Count
+                # The cmdlet call produces 1 banner per invocation; the inline
+                # block produces 1 banner per Out-File of the literal. Count
+                # both signals as banner emits.
+                $count = $bannerHits + $cmdletHits
                 $totalSites += $count
                 if ($perFileExpect.ContainsKey($yml.Name)) {
                     $want = $perFileExpect[$yml.Name]
                     if ($count -ne $want) {
-                        $offenders.Add(("{0}: expected {1} banner emit(s), found {2}" -f $yml.Name, $want, $count))
+                        $offenders.Add(("{0}: expected {1} banner emit(s), found {2} (inline={3}, cmdlet={4})" -f $yml.Name, $want, $count, $bannerHits, $cmdletHits))
                     }
                 }
             }
 
             $detail = if ($offenders.Count -gt 0) { $offenders -join [Environment]::NewLine } else { '(no mismatches)' }
-            $offenders.Count | Should -Be 0 -Because "every ADO yml uploads exactly 1 version banner to the build Summary via ##vso[task.uploadsummary]. Step.6 has 2 install steps but the second (ApplyUpdates stage) deliberately skips the upload so the banner is not duplicated. Findings:$([Environment]::NewLine)$detail"
+            $offenders.Count | Should -Be 0 -Because "every ADO yml uploads exactly 1 version banner to the build Summary - via ##vso[task.uploadsummary] for the v0.8.4 inline form, or via Add-AzLocalPipelineVersionBanner for the v0.8.5 thin-YAML form. Step.6 has 2 install steps but the second (ApplyUpdates stage) deliberately skips the upload so the banner is not duplicated. Findings:$([Environment]::NewLine)$detail"
             $totalSites | Should -Be 10 -Because "total ADO Summary banner emits should be 10 (1 per yml; Step.6's second install step skips upload)"
         }
     }
@@ -10222,8 +10249,8 @@ Describe 'Function: Get-AzLocalFleetHealthOverview - v0.7.70 (ARG-first fleet he
             $cmd.CommandType | Should -Be 'Function'
         }
 
-        It 'BS7: Module exports exactly 40 functions (was 39 in v0.8.5 before Add-AzLocalPipelineVersionBanner thin-YAML foundation was added)' {
-            (Get-Module AzLocal.UpdateManagement).ExportedFunctions.Count | Should -Be 40
+        It 'BS7: Module exports exactly 41 functions (was 40 in v0.8.5 before Export-AzLocalAuthValidationReport Step.0 thin-YAML port was added)' {
+            (Get-Module AzLocal.UpdateManagement).ExportedFunctions.Count | Should -Be 41
         }
     }
 
@@ -12802,4 +12829,367 @@ schedule:
 }
 
 #endregion v0.8.5: Get-AzLocalApplyUpdatesScheduleCycleCalendar
+
+#region v0.8.5: New-AzLocalPipelineJUnitXml (shared JUnit emitter)
+
+Describe 'Thin-YAML shared helper: New-AzLocalPipelineJUnitXml' {
+
+    It 'Emits a well-formed XML document with the xml declaration and testsuites wrapper' {
+        $xml = InModuleScope AzLocal.UpdateManagement {
+            New-AzLocalPipelineJUnitXml -TestSuitesName 'demo' -Suites @(
+                @{ Name = 'S1'; TestCases = @(@{ Name = 'tc' }) }
+            )
+        }
+        $xml | Should -Match '^<\?xml version="1\.0" encoding="UTF-8"\?>'
+        $xml | Should -Match '<testsuites name="demo"'
+        $xml | Should -Match '</testsuites>'
+    }
+
+    It 'Computes per-suite tests/failures/errors/skipped attributes from the testcase array' {
+        $xml = InModuleScope AzLocal.UpdateManagement {
+            New-AzLocalPipelineJUnitXml -TestSuitesName 'demo' -Suites @(
+                @{
+                    Name = 'S'
+                    TestCases = @(
+                        @{ Name = 'pass1' }
+                        @{ Name = 'fail1'; Failure = @{ Message = 'boom' } }
+                        @{ Name = 'err1'; Error = @{ Message = 'oops' } }
+                        @{ Name = 'skip1'; Skipped = 'because' }
+                    )
+                }
+            )
+        }
+        $xml | Should -Match '<testsuite name="S" tests="4" failures="1" errors="1" skipped="1"'
+    }
+
+    It 'Emits a self-closing testcase element when the testcase has no children' {
+        $xml = InModuleScope AzLocal.UpdateManagement {
+            New-AzLocalPipelineJUnitXml -TestSuitesName 'demo' -Suites @(
+                @{ Name = 'S'; TestCases = @(@{ Name = 'lonely' }) }
+            )
+        }
+        $xml | Should -Match '<testcase classname="S" name="lonely" time="0" />'
+    }
+
+    It 'Wraps SystemOut content in a CDATA section' {
+        $xml = InModuleScope AzLocal.UpdateManagement {
+            New-AzLocalPipelineJUnitXml -TestSuitesName 'demo' -Suites @(
+                @{ Name = 'S'; TestCases = @(@{ Name = 'tc'; SystemOut = 'line1`nline2' }) }
+            )
+        }
+        $xml | Should -Match '<system-out><!\[CDATA\['
+        $xml | Should -Match '\]\]></system-out>'
+    }
+
+    It 'Emits failure element with CDATA body when Failure has a Body property' {
+        $xml = InModuleScope AzLocal.UpdateManagement {
+            New-AzLocalPipelineJUnitXml -TestSuitesName 'demo' -Suites @(
+                @{ Name = 'S'; TestCases = @(@{ Name = 'tc'; Failure = @{ Message = 'm'; Type = 'T'; Body = 'trace' } }) }
+            )
+        }
+        $xml | Should -Match '<failure message="m" type="T"><!\[CDATA\[trace\]\]></failure>'
+    }
+
+    It 'Self-closes failure / error elements when no Body is provided' {
+        $xml = InModuleScope AzLocal.UpdateManagement {
+            New-AzLocalPipelineJUnitXml -TestSuitesName 'demo' -Suites @(
+                @{ Name = 'S'; TestCases = @(
+                    @{ Name = 'f'; Failure = @{ Message = 'm' } }
+                    @{ Name = 'e'; Error   = @{ Message = 'e' } }
+                ) }
+            )
+        }
+        $xml | Should -Match '<failure message="m" type="AssertionError" />'
+        $xml | Should -Match '<error message="e" type="Error" />'
+    }
+
+    It 'XML-escapes special characters in suite/testcase names and Failure messages' {
+        $xml = InModuleScope AzLocal.UpdateManagement {
+            New-AzLocalPipelineJUnitXml -TestSuitesName 'demo & <data>' -Suites @(
+                @{
+                    Name = 'A & B'
+                    TestCases = @(
+                        @{ Name = 'name "quoted"' ; Failure = @{ Message = 'a<b>c' } }
+                    )
+                }
+            )
+        }
+        $xml | Should -Match 'demo &amp; &lt;data&gt;'
+        $xml | Should -Match 'A &amp; B'
+        $xml | Should -Match 'name &quot;quoted&quot;'
+        $xml | Should -Match 'a&lt;b&gt;c'
+    }
+
+    It 'Writes the XML to disk (UTF-8 no BOM) when -OutputPath is supplied' {
+        $tmpPath = Join-Path -Path $TestDrive -ChildPath 'sample-junit.xml'
+        $xml = InModuleScope AzLocal.UpdateManagement -Parameters @{ TmpPath = $tmpPath } {
+            param($TmpPath)
+            New-AzLocalPipelineJUnitXml -TestSuitesName 'demo' -OutputPath $TmpPath -Suites @(
+                @{ Name = 'S'; TestCases = @(@{ Name = 'tc' }) }
+            )
+        }
+        Test-Path -LiteralPath $tmpPath | Should -BeTrue
+        $bytes = [System.IO.File]::ReadAllBytes($tmpPath)
+        # No UTF-8 BOM (EF BB BF) at the start.
+        ($bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) | Should -BeFalse
+        $diskContent = [System.IO.File]::ReadAllText($tmpPath)
+        $diskContent | Should -Be $xml
+    }
+
+    It 'Honours the -Timestamp parameter on every <testsuite timestamp="..."> attribute' {
+        $fixed = [datetime]::new(2026, 6, 10, 12, 34, 56)
+        $xml = InModuleScope AzLocal.UpdateManagement -Parameters @{ Fixed = $fixed } {
+            param($Fixed)
+            New-AzLocalPipelineJUnitXml -TestSuitesName 'demo' -Timestamp $Fixed -Suites @(
+                @{ Name = 'S1'; TestCases = @(@{ Name = 'tc1' }) }
+                @{ Name = 'S2'; TestCases = @(@{ Name = 'tc2' }) }
+            )
+        }
+        ([regex]::Matches($xml, 'timestamp="2026-06-10T12:34:56"')).Count | Should -Be 2
+    }
+}
+
+#endregion v0.8.5: New-AzLocalPipelineJUnitXml
+
+#region v0.8.5: Export-AzLocalAuthValidationReport (Step.0 thin-YAML port)
+
+Describe 'Thin-YAML Step.0: Export-AzLocalAuthValidationReport' {
+
+    BeforeAll {
+        # Test helper: drives the cmdlet against a fixed account / subs /
+        # clusters / roles payload by mocking Invoke-AzCliJson +
+        # Invoke-AzResourceGraphQuery + Install-AzGraphExtension inside the
+        # module scope. Defined in script: scope so it survives Pester v5
+        # discovery -> run phase split.
+        function script:Invoke-Step0Cmdlet {
+            param(
+                [hashtable]$Params = @{},
+                [object]$Account,
+                [object[]]$Subs,
+                [object[]]$Clusters,
+                [object[]]$RoleRows
+            )
+            $global:_avr_payload = @{
+                Account  = $Account
+                Subs     = $Subs
+                Clusters = $Clusters
+                Roles    = $RoleRows
+                Params   = $Params
+            }
+            InModuleScope AzLocal.UpdateManagement {
+                Mock Install-AzGraphExtension { $true }
+                Mock Invoke-AzResourceGraphQuery { @($global:_avr_payload.Clusters) }
+                Mock Invoke-AzCliJson {
+                    param([string[]]$Arguments)
+                    $pl = $global:_avr_payload
+                    if ($Arguments[0] -eq 'account' -and $Arguments[1] -eq 'show') {
+                        return [pscustomobject]@{ Ok = $true; Data = $pl.Account; Error = $null }
+                    }
+                    if ($Arguments[0] -eq 'role' -and $Arguments[1] -eq 'assignment') {
+                        return [pscustomobject]@{ Ok = $true; Data = $pl.Roles; Error = $null }
+                    }
+                    if ($Arguments[0] -eq 'account' -and $Arguments[1] -eq 'list') {
+                        return [pscustomobject]@{ Ok = $true; Data = $pl.Subs; Error = $null }
+                    }
+                    return [pscustomobject]@{ Ok = $false; Data = $null; Error = "unmocked az: $($Arguments -join ' ')" }
+                }
+                $callParams = $global:_avr_payload.Params
+                Export-AzLocalAuthValidationReport @callParams
+            }
+        }
+    }
+
+    BeforeEach {
+        $script:_avr_savedGhActions = $env:GITHUB_ACTIONS
+        $script:_avr_savedTfBuild   = $env:TF_BUILD
+        $script:_avr_savedGhOutput  = $env:GITHUB_OUTPUT
+        $script:_avr_savedGhSummary = $env:GITHUB_STEP_SUMMARY
+        $script:_avr_savedAdoStage  = $env:BUILD_ARTIFACTSTAGINGDIRECTORY
+        Remove-Item Env:\GITHUB_ACTIONS                  -ErrorAction SilentlyContinue
+        Remove-Item Env:\TF_BUILD                        -ErrorAction SilentlyContinue
+        Remove-Item Env:\GITHUB_OUTPUT                   -ErrorAction SilentlyContinue
+        Remove-Item Env:\GITHUB_STEP_SUMMARY             -ErrorAction SilentlyContinue
+        Remove-Item Env:\BUILD_ARTIFACTSTAGINGDIRECTORY  -ErrorAction SilentlyContinue
+
+        $script:_avr_ghOutputFile  = Join-Path -Path $env:TEMP -ChildPath ("avr-gh-output-{0}"  -f ([Guid]::NewGuid()))
+        $script:_avr_ghSummaryFile = Join-Path -Path $env:TEMP -ChildPath ("avr-gh-summary-{0}.md" -f ([Guid]::NewGuid()))
+        $script:_avr_adoStageDir   = Join-Path -Path $env:TEMP -ChildPath ("avr-ado-stage-{0}" -f ([Guid]::NewGuid()))
+        $script:_avr_reportDir     = Join-Path -Path $env:TEMP -ChildPath ("avr-report-{0}"    -f ([Guid]::NewGuid()))
+        New-Item -ItemType File      -Path $script:_avr_ghOutputFile  -Force | Out-Null
+        New-Item -ItemType File      -Path $script:_avr_ghSummaryFile -Force | Out-Null
+        New-Item -ItemType Directory -Path $script:_avr_adoStageDir   -Force | Out-Null
+        New-Item -ItemType Directory -Path $script:_avr_reportDir     -Force | Out-Null
+
+        # Synthetic Azure responses shared across the It blocks (mutable; tests
+        # that need a non-empty fleet / multi-sub setup override these).
+        $script:_avr_account = [pscustomobject]@{
+            name     = 'My Subscription'
+            id       = '00000000-0000-0000-0000-000000000000'
+            tenantId = '00000000-0000-0000-0000-000000000000'
+            user     = [pscustomobject]@{ name = 'app-id-from-cli' }
+        }
+        $script:_avr_subs = @(
+            [pscustomobject]@{ name = 'Alpha'; subscriptionId = 'sub-aaa'; tenantId = 'ten-1'; state = 'Enabled' }
+            [pscustomobject]@{ name = 'Beta';  subscriptionId = 'sub-bbb'; tenantId = 'ten-1'; state = 'Enabled' }
+        )
+        $script:_avr_clusters = @(
+            [pscustomobject]@{ name = 'cluster-a'; resourceGroup = 'rg1'; subscriptionId = 'sub-aaa' }
+        )
+        $script:_avr_roleRows = @(
+            [pscustomobject]@{ roleDefinitionName = 'Reader'; principalType = 'ServicePrincipal'; scope = '/subscriptions/sub-aaa' }
+        )
+    }
+    AfterEach {
+        if ($null -ne $script:_avr_savedGhActions) { $env:GITHUB_ACTIONS                 = $script:_avr_savedGhActions } else { Remove-Item Env:\GITHUB_ACTIONS                 -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_avr_savedTfBuild)   { $env:TF_BUILD                       = $script:_avr_savedTfBuild   } else { Remove-Item Env:\TF_BUILD                       -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_avr_savedGhOutput)  { $env:GITHUB_OUTPUT                  = $script:_avr_savedGhOutput  } else { Remove-Item Env:\GITHUB_OUTPUT                  -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_avr_savedGhSummary) { $env:GITHUB_STEP_SUMMARY            = $script:_avr_savedGhSummary } else { Remove-Item Env:\GITHUB_STEP_SUMMARY            -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_avr_savedAdoStage)  { $env:BUILD_ARTIFACTSTAGINGDIRECTORY = $script:_avr_savedAdoStage  } else { Remove-Item Env:\BUILD_ARTIFACTSTAGINGDIRECTORY -ErrorAction SilentlyContinue }
+
+        # File cleanup is best-effort; TestDrive cleans automatically anyway.
+        Remove-Item -Path $script:_avr_ghOutputFile, $script:_avr_ghSummaryFile -Force -ErrorAction SilentlyContinue
+        Remove-Item -Path $script:_avr_adoStageDir, $script:_avr_reportDir      -Force -Recurse -ErrorAction SilentlyContinue
+    }
+
+    It 'Local host: returns PassThru object with the expected shape' {
+        $params = @{ ReportDirectory = $script:_avr_reportDir; PassThru = $true }
+        $result = Invoke-Step0Cmdlet -Params $params -Account $script:_avr_account -Subs $script:_avr_subs -Clusters $script:_avr_clusters -RoleRows $script:_avr_roleRows
+        $result | Should -Not -BeNullOrEmpty
+        $result.PSObject.Properties.Name | Should -Contain 'Account'
+        $result.PSObject.Properties.Name | Should -Contain 'SubscriptionCount'
+        $result.PSObject.Properties.Name | Should -Contain 'Subscriptions'
+        $result.PSObject.Properties.Name | Should -Contain 'ClusterCount'
+        $result.PSObject.Properties.Name | Should -Contain 'AuthValid'
+        $result.PSObject.Properties.Name | Should -Contain 'JUnitXmlPath'
+        $result.PSObject.Properties.Name | Should -Contain 'SubscriptionsJsonPath'
+        $result.PSObject.Properties.Name | Should -Contain 'SubscriptionsCsvPath'
+        $result.SubscriptionCount | Should -Be 2
+        $result.ClusterCount      | Should -Be 1
+        $result.AuthValid         | Should -BeTrue
+    }
+
+    It 'Local host: writes JUnit XML, subscriptions.json, subscriptions.csv to the report dir' {
+        $params = @{ ReportDirectory = $script:_avr_reportDir; PassThru = $true }
+        $result = Invoke-Step0Cmdlet -Params $params -Account $script:_avr_account -Subs $script:_avr_subs -Clusters $script:_avr_clusters -RoleRows $script:_avr_roleRows
+        Test-Path -LiteralPath $result.JUnitXmlPath          | Should -BeTrue
+        Test-Path -LiteralPath $result.SubscriptionsJsonPath | Should -BeTrue
+        Test-Path -LiteralPath $result.SubscriptionsCsvPath  | Should -BeTrue
+        # JUnit XML must include all 3 always-on suites.
+        $xml = Get-Content -LiteralPath $result.JUnitXmlPath -Raw
+        $xml | Should -Match 'Authentication'
+        $xml | Should -Match 'Subscription Scope \(count=2\)'
+        $xml | Should -Match 'Resource Graph Reachability'
+        # Subscription artifact contents.
+        $csv = Get-Content -LiteralPath $result.SubscriptionsCsvPath -Raw
+        $csv | Should -Match 'Alpha'
+        $csv | Should -Match 'Beta'
+    }
+
+    It 'JUnit XML includes the Module Version Drift suite ONLY when version metadata is supplied' {
+        $paramsWith = @{ ReportDirectory = $script:_avr_reportDir; PassThru = $true; InstalledModuleVersion = '0.8.5'; GeneratedAgainstVersion = '0.8.5'; LatestOnPSGallery = '0.8.5' }
+        $resultWith = Invoke-Step0Cmdlet -Params $paramsWith -Account $script:_avr_account -Subs $script:_avr_subs -Clusters $script:_avr_clusters -RoleRows $script:_avr_roleRows
+        (Get-Content -LiteralPath $resultWith.JUnitXmlPath -Raw) | Should -Match 'Module Version Drift'
+
+        # Wipe and re-run WITHOUT the drift inputs - same dir, file is overwritten.
+        Remove-Item -LiteralPath $resultWith.JUnitXmlPath -Force
+        $paramsNo = @{ ReportDirectory = $script:_avr_reportDir; PassThru = $true }
+        $resultNo = Invoke-Step0Cmdlet -Params $paramsNo -Account $script:_avr_account -Subs $script:_avr_subs -Clusters $script:_avr_clusters -RoleRows $script:_avr_roleRows
+        (Get-Content -LiteralPath $resultNo.JUnitXmlPath -Raw) | Should -Not -Match 'Module Version Drift'
+    }
+
+    It 'GitHub host: writes step-summary markdown to GITHUB_STEP_SUMMARY and step outputs to GITHUB_OUTPUT' {
+        $env:GITHUB_ACTIONS       = 'true'
+        $env:GITHUB_OUTPUT        = $script:_avr_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY  = $script:_avr_ghSummaryFile
+        $params = @{ ReportDirectory = $script:_avr_reportDir; PassThru = $true }
+        [void](Invoke-Step0Cmdlet -Params $params -Account $script:_avr_account -Subs $script:_avr_subs -Clusters $script:_avr_clusters -RoleRows $script:_avr_roleRows)
+        # Summary file should now contain the rendered markdown.
+        $summary = Get-Content -LiteralPath $script:_avr_ghSummaryFile -Raw
+        $summary | Should -Match '## Step\.0 - Authentication Validation and Subscription Scope Report'
+        $summary | Should -Match '### Count of subscriptions accessible = 2'
+        $summary | Should -Match 'Alpha'
+        $summary | Should -Match 'Beta'
+        # Step outputs: all three keys present.
+        $outputs = Get-Content -LiteralPath $script:_avr_ghOutputFile -Raw
+        $outputs | Should -Match 'subscription_count=2'
+        $outputs | Should -Match 'cluster_count=1'
+        $outputs | Should -Match 'auth_valid=true'
+    }
+
+    It 'AzureDevOps host: uses BUILD_ARTIFACTSTAGINGDIRECTORY for the default report dir and emits ##vso[task.uploadsummary]' {
+        $env:TF_BUILD                       = 'True'
+        $env:BUILD_ARTIFACTSTAGINGDIRECTORY = $script:_avr_adoStageDir
+        # Capture the console stream so we can scan for the ##vso directive.
+        $captured = & {
+            $params = @{ PassThru = $true }
+            Invoke-Step0Cmdlet -Params $params -Account $script:_avr_account -Subs $script:_avr_subs -Clusters $script:_avr_clusters -RoleRows $script:_avr_roleRows
+        } *>&1
+        $joined = $captured -join "`n"
+        $joined | Should -Match '##vso\[task\.uploadsummary\]'
+        $joined | Should -Match '##vso\[task\.setvariable variable=subscription_count'
+        $joined | Should -Match '##vso\[task\.setvariable variable=cluster_count'
+        $joined | Should -Match '##vso\[task\.setvariable variable=auth_valid'
+        # Default report dir on ADO is $BUILD_ARTIFACTSTAGINGDIRECTORY\auth-report
+        $expectedReportDir = Join-Path $script:_avr_adoStageDir 'auth-report'
+        Test-Path -LiteralPath (Join-Path $expectedReportDir 'auth-report.xml') | Should -BeTrue
+        Test-Path -LiteralPath (Join-Path $expectedReportDir 'subscriptions.json') | Should -BeTrue
+    }
+
+    It 'Empty fleet: ClusterCount = 0 and JUnit XML still renders the Resource Graph suite' {
+        $params = @{ ReportDirectory = $script:_avr_reportDir; PassThru = $true }
+        $result = Invoke-Step0Cmdlet -Params $params -Account $script:_avr_account -Subs $script:_avr_subs -Clusters @() -RoleRows $script:_avr_roleRows
+        $result.ClusterCount | Should -Be 0
+        $xml = Get-Content -LiteralPath $result.JUnitXmlPath -Raw
+        $xml | Should -Match 'Clusters visible to pipeline identity = 0'
+    }
+
+    It 'Empty subscription list: SubscriptionCount = 0, AuthValid = $false, subscription suite has 1 testcase' {
+        $params = @{ ReportDirectory = $script:_avr_reportDir; PassThru = $true }
+        $result = Invoke-Step0Cmdlet -Params $params -Account $script:_avr_account -Subs @() -Clusters $script:_avr_clusters -RoleRows @()
+        $result.SubscriptionCount | Should -Be 0
+        $result.AuthValid         | Should -BeFalse
+        $xml = Get-Content -LiteralPath $result.JUnitXmlPath -Raw
+        # Subscription Scope suite has exactly one testcase (the count row).
+        $xml | Should -Match 'Subscription Scope \(count=0\).*tests="1"'
+    }
+
+    It 'Multi-subscription: each subscription row appears in the JUnit XML and the markdown roster' {
+        $multi = @(
+            [pscustomobject]@{ name = 'A'; subscriptionId = 's1'; tenantId = 't1'; state = 'Enabled' }
+            [pscustomobject]@{ name = 'B'; subscriptionId = 's2'; tenantId = 't1'; state = 'Enabled' }
+            [pscustomobject]@{ name = 'C'; subscriptionId = 's3'; tenantId = 't1'; state = 'Disabled' }
+        )
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_avr_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_avr_ghSummaryFile
+        $params = @{ ReportDirectory = $script:_avr_reportDir; PassThru = $true }
+        $result = Invoke-Step0Cmdlet -Params $params -Account $script:_avr_account -Subs $multi -Clusters $script:_avr_clusters -RoleRows $script:_avr_roleRows
+        $result.SubscriptionCount | Should -Be 3
+        $summary = Get-Content -LiteralPath $script:_avr_ghSummaryFile -Raw
+        $summary | Should -Match '\| 1 \| A \| `s1`'
+        $summary | Should -Match '\| 2 \| B \| `s2`'
+        $summary | Should -Match '\| 3 \| C \| `s3`'
+    }
+
+    It 'Throws a helpful error when az account show fails' {
+        $global:_avr_payload = @{ Subs = @(); Clusters = @(); Roles = @() }
+        InModuleScope AzLocal.UpdateManagement -Parameters @{ ReportDirectory = $script:_avr_reportDir } {
+            param($ReportDirectory)
+            Mock Install-AzGraphExtension { $true }
+            Mock Invoke-AzResourceGraphQuery { @() }
+            Mock Invoke-AzCliJson {
+                param([string[]]$Arguments)
+                if ($Arguments[0] -eq 'account' -and $Arguments[1] -eq 'show') {
+                    return [pscustomobject]@{ Ok = $false; Data = $null; Error = 'AADSTS70021: No matching federated identity record found.' }
+                }
+                return [pscustomobject]@{ Ok = $true; Data = @(); Error = $null }
+            }
+            { Export-AzLocalAuthValidationReport -ReportDirectory $ReportDirectory } |
+                Should -Throw -ExpectedMessage '*az account show failed*AADSTS70021*'
+        }
+    }
+}
+
+#endregion v0.8.5: Export-AzLocalAuthValidationReport
+
 

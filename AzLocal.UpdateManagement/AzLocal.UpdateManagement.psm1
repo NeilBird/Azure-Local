@@ -318,5 +318,7 @@ Export-ModuleMember -Function @(
     # Fleet Connectivity Status Summary Renderer (v0.7.87) - markdown step-summary builder used by Step.4 GH+ADO pipelines
     'New-AzLocalFleetConnectivityStatusSummary',
     # Thin-YAML pipeline foundation (v0.8.5) - install-step version banner + drift annotations + step outputs (condenses ~50-line inline block in every Step.*.yml)
-    'Add-AzLocalPipelineVersionBanner'
+    'Add-AzLocalPipelineVersionBanner',
+    # Thin-YAML Step.0 (v0.8.5) - Authentication validation + subscription scope + cluster reachability (condenses ~200-line inline run: | block in Step.0_authentication-test.yml on both platforms)
+    'Export-AzLocalAuthValidationReport'
 )
