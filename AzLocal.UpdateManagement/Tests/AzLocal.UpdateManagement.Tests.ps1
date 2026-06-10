@@ -212,8 +212,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $content | Should -Not -Match 'function\s+Convert-ScheduleRow' -Because "Step.3 $Platform must not contain inline schedule-row helpers (removed in v0.8.5)"
         }
 
-        It 'Should export exactly 49 functions' {
-            $script:ModuleInfo.ExportedFunctions.Count | Should -Be 49
+        It 'Should export exactly 55 functions' {
+            $script:ModuleInfo.ExportedFunctions.Count | Should -Be 55
         }
 
         It 'Should export the expected functions' {
@@ -293,7 +293,14 @@ Describe 'Module: AzLocal.UpdateManagement' {
                 # Thin-YAML Step.3 (v0.8.5) - Apply-Updates Schedule Coverage Audit (Audit + Matrix + Recommend views + 2-suite JUnit + allow-list section + always-on cycle calendar + 12 step outputs)
                 'Export-AzLocalApplyUpdatesScheduleAudit',
                 # Thin-YAML Step.9 (v0.8.5) - Fleet Health Status (Detail + Summary + Overview + 2-suite JUnit + KPI / Overview / By-Reason / per-cluster collapsible markdown + 8 step outputs)
-                'Export-AzLocalFleetHealthStatusReport'
+                'Export-AzLocalFleetHealthStatusReport',
+                # Thin-YAML Step.6 (v0.8.5) - Apply-Updates pipeline (schedule resolver + readiness gate report + readiness-gated apply + apply-summary + no-ready-clusters summary + ITSM ticketing from JUnit artifact)
+                'Resolve-AzLocalPipelineUpdateRing',
+                'Export-AzLocalClusterReadinessGateReport',
+                'Invoke-AzLocalReadinessGatedClusterUpdate',
+                'Add-AzLocalApplyUpdatesStepSummary',
+                'Add-AzLocalNoReadyClustersStepSummary',
+                'Invoke-AzLocalItsmTicketingFromArtifact'
             )
             
             foreach ($func in $expectedFunctions) {
@@ -633,28 +640,55 @@ Describe 'Module: AzLocal.UpdateManagement' {
         }
     }
 
-    Context 'v0.8.4 Step.6 Enhancement D per-cluster Step Summary headers' {
-        # v0.8.4: Step.6 apply-updates Summary on both platforms includes
-        # two new per-cluster tables: '### Cluster Actions' (read from
-        # apply-results.json written by the apply-updates step) and
-        # '### Clusters Skipped at Readiness Gate' (read from
-        # readiness-report.csv written by the check-readiness stage).
-        It 'GitHub Actions Step.6 yml contains both per-cluster table headers and apply-results.json persist' {
+    Context 'v0.8.5 Step.6 thin-YAML: apply-updates pipeline calls shared cmdlets' {
+        # v0.8.5 thin-YAML port: the inline run: / inline scripts that
+        # previously rendered the per-cluster 'Cluster Actions' and
+        # 'Clusters Skipped at Readiness Gate' tables (and persisted
+        # apply-results.json next to update-results.xml) were moved into the
+        # public cmdlets Add-AzLocalApplyUpdatesStepSummary and
+        # Invoke-AzLocalReadinessGatedClusterUpdate. The behaviour that
+        # produces apply-results.json + both per-cluster tables is preserved
+        # byte-for-byte by the cmdlets - this guard asserts the YAMLs invoke
+        # the cmdlets that produce that output (the per-cluster table
+        # content is asserted in the cmdlet-level Pester suite).
+        It 'GitHub Actions Step.6 yml invokes Invoke-AzLocalReadinessGatedClusterUpdate (writes apply-results.json) and Add-AzLocalApplyUpdatesStepSummary (renders both per-cluster tables)' {
             $yml = Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples\github-actions\Step.6_apply-updates.yml'
             $yml = (Resolve-Path -Path $yml).Path
             $content = Get-Content -LiteralPath $yml -Raw
-            $content | Should -Match 'apply-results\.json' -Because 'Step.6 apply-updates step must persist apply-results.json so Summary can render Cluster Actions table'
-            $content | Should -Match '### Cluster Actions' -Because 'Step.6 Summary must render the per-cluster Cluster Actions table'
-            $content | Should -Match '### Clusters Skipped at Readiness Gate' -Because 'Step.6 Summary must render the per-cluster Clusters Skipped at Readiness Gate table'
+            $content | Should -Match 'Invoke-AzLocalReadinessGatedClusterUpdate' -Because 'Step.6 GH apply-updates step must call the readiness-gated apply cmdlet (which writes apply-results.json)'
+            $content | Should -Match 'Add-AzLocalApplyUpdatesStepSummary' -Because 'Step.6 GH Summary step must call the apply-updates step-summary cmdlet (which renders the Cluster Actions + Clusters Skipped at Readiness Gate tables)'
+            $content | Should -Match 'ApplyResultsJsonPath\s*=\s*''\./artifacts/apply-results\.json''' -Because 'Step.6 GH Summary must pass the apply-results.json path so the per-cluster Cluster Actions table can be rendered from it'
+            $content | Should -Match 'ReadinessCsvPath\s*=\s*''\./artifacts/readiness-report\.csv''' -Because 'Step.6 GH Summary must pass the readiness-report.csv path so the Clusters Skipped at Readiness Gate table can be rendered from it'
         }
 
-        It 'Azure DevOps Step.6 yml contains both per-cluster table headers and apply-results.json persist' {
+        It 'Azure DevOps Step.6 yml invokes Invoke-AzLocalReadinessGatedClusterUpdate (writes apply-results.json) and Add-AzLocalApplyUpdatesStepSummary (renders both per-cluster tables)' {
             $yml = Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples\azure-devops\Step.6_apply-updates.yml'
             $yml = (Resolve-Path -Path $yml).Path
             $content = Get-Content -LiteralPath $yml -Raw
-            $content | Should -Match 'apply-results\.json' -Because 'ADO Step.6 apply-updates step must persist apply-results.json'
-            $content | Should -Match '### Cluster Actions' -Because 'ADO Step.6 Generate Summary must render the Cluster Actions table'
-            $content | Should -Match '### Clusters Skipped at Readiness Gate' -Because 'ADO Step.6 Generate Summary must render the Clusters Skipped at Readiness Gate table'
+            $content | Should -Match 'Invoke-AzLocalReadinessGatedClusterUpdate' -Because 'ADO Step.6 apply-updates task must call the readiness-gated apply cmdlet'
+            $content | Should -Match 'Add-AzLocalApplyUpdatesStepSummary' -Because 'ADO Step.6 Generate Summary task must call the apply-updates step-summary cmdlet'
+            $content | Should -Match 'ApplyResultsJsonPath\s*=\s*"\$\(Build\.ArtifactStagingDirectory\)/apply-results\.json"' -Because 'ADO Step.6 Summary must pass apply-results.json so the Cluster Actions table can be rendered'
+            $content | Should -Match 'ReadinessCsvPath\s*=\s*"\$\(Build\.ArtifactStagingDirectory\)/readiness-report\.csv"' -Because 'ADO Step.6 Summary must pass readiness-report.csv so the Clusters Skipped at Readiness Gate table can be rendered'
+        }
+
+        It 'GitHub Actions Step.6 yml invokes the schedule-resolver, readiness-gate, no-ready, and ITSM cmdlets in their respective steps' {
+            $yml = Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples\github-actions\Step.6_apply-updates.yml'
+            $yml = (Resolve-Path -Path $yml).Path
+            $content = Get-Content -LiteralPath $yml -Raw
+            $content | Should -Match 'Resolve-AzLocalPipelineUpdateRing'        -Because 'Step.6 GH resolve-ring step must call Resolve-AzLocalPipelineUpdateRing (replaces the ~80-line inline resolver script)'
+            $content | Should -Match 'Export-AzLocalClusterReadinessGateReport' -Because 'Step.6 GH readiness step must call Export-AzLocalClusterReadinessGateReport (replaces the ~80-line inline readiness gate script)'
+            $content | Should -Match 'Add-AzLocalNoReadyClustersStepSummary'    -Because 'Step.6 GH no-clusters-ready job must call Add-AzLocalNoReadyClustersStepSummary (replaces the ~25-line inline summary script)'
+            $content | Should -Match 'Invoke-AzLocalItsmTicketingFromArtifact'  -Because 'Step.6 GH Raise ITSM tickets step must call Invoke-AzLocalItsmTicketingFromArtifact (replaces the ~45-line inline ITSM script)'
+        }
+
+        It 'Azure DevOps Step.6 yml invokes the schedule-resolver, readiness-gate, no-ready, and ITSM cmdlets in their respective tasks' {
+            $yml = Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples\azure-devops\Step.6_apply-updates.yml'
+            $yml = (Resolve-Path -Path $yml).Path
+            $content = Get-Content -LiteralPath $yml -Raw
+            $content | Should -Match 'Resolve-AzLocalPipelineUpdateRing'
+            $content | Should -Match 'Export-AzLocalClusterReadinessGateReport'
+            $content | Should -Match 'Add-AzLocalNoReadyClustersStepSummary'
+            $content | Should -Match 'Invoke-AzLocalItsmTicketingFromArtifact'
         }
     }
 
@@ -699,18 +733,15 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $script:S6GhContent | Should -Match 'RESOLVE_FOR_DATE_UTC:\s*\$\{\{\s*github\.event\.inputs\.resolve_for_date_utc\s*\}\}'
         }
 
-        It 'GH Step.6 resolver script passes -Now $resolveAt to Resolve-AzLocalCurrentUpdateRing' {
-            $script:S6GhContent | Should -Match 'Resolve-AzLocalCurrentUpdateRing\s+-Schedule\s+\$cfg\s+-Now\s+\$resolveAt' -Because 'manual-with-schedule-file path must be able to resolve for a future UTC date'
-        }
-
-        It 'GH Step.6 resolver throws when workflow_dispatch + use_schedule_file=false + empty update_ring' {
-            $script:S6GhContent | Should -Match "workflow_dispatch with use_schedule_file=false requires the update_ring input to be non-empty"
-        }
-
-        It 'GH Step.6 resolver parses resolve_for_date_utc as yyyy-MM-dd and throws on invalid format' {
-            $script:S6GhContent | Should -Match "ParseExact[\s\S]{0,300}?'yyyy-MM-dd'" -Because 'resolve_for_date_utc must be parsed in yyyy-MM-dd format'
-            # Single-quoted regex - prevents PowerShell from interpolating $env:RESOLVE_FOR_DATE_UTC at test-run time
-            $script:S6GhContent | Should -Match 'resolve_for_date_utc=''\$\(\$env:RESOLVE_FOR_DATE_UTC\)'' is not a valid date'
+        It 'GH Step.6 resolver step invokes Resolve-AzLocalPipelineUpdateRing (v0.8.5 thin-YAML)' {
+            # The ~80-line inline resolver block was replaced by a single
+            # Resolve-AzLocalPipelineUpdateRing call. The cmdlet preserves
+            # all prior behaviours byte-for-byte (back-compat manual ring,
+            # schedule-file resolve, future-date preview via -ResolveForDateUtc,
+            # hard-throw on missing schedule, per-host notice/warning when
+            # no row matches today). Those behaviours are asserted in the
+            # cmdlet-level Pester suite, not here.
+            $script:S6GhContent | Should -Match 'Resolve-AzLocalPipelineUpdateRing' -Because 'Step.6 GH resolver step must call the v0.8.5 thin-YAML cmdlet'
         }
 
         It 'ADO Step.6 declares the useScheduleFile boolean parameter' {
@@ -728,18 +759,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $script:S6AdoContent | Should -Match 'RESOLVE_FOR_DATE_UTC:\s*\$\{\{\s*parameters\.resolveForDateUtc\s*\}\}'
         }
 
-        It 'ADO Step.6 resolveRing script passes -Now $resolveAt to Resolve-AzLocalCurrentUpdateRing' {
-            $script:S6AdoContent | Should -Match 'Resolve-AzLocalCurrentUpdateRing\s+-Schedule\s+\$cfg\s+-Now\s+\$resolveAt'
-        }
-
-        It 'ADO Step.6 resolveRing throws when manual + useScheduleFile=false + empty updateRing' {
-            $script:S6AdoContent | Should -Match "with useScheduleFile=false requires the updateRing parameter to be non-empty"
-        }
-
-        It 'ADO Step.6 resolveRing parses resolveForDateUtc as yyyy-MM-dd and throws on invalid format' {
-            $script:S6AdoContent | Should -Match "ParseExact[\s\S]{0,300}?'yyyy-MM-dd'"
-            # Single-quoted regex - prevents PowerShell from interpolating $env:RESOLVE_FOR_DATE_UTC at test-run time
-            $script:S6AdoContent | Should -Match 'resolveForDateUtc=''\$\(\$env:RESOLVE_FOR_DATE_UTC\)'' is not a valid date'
+        It 'ADO Step.6 resolveRing task invokes Resolve-AzLocalPipelineUpdateRing (v0.8.5 thin-YAML)' {
+            $script:S6AdoContent | Should -Match 'Resolve-AzLocalPipelineUpdateRing' -Because 'ADO Step.6 resolveRing task must call the v0.8.5 thin-YAML cmdlet'
         }
     }
 
@@ -10202,8 +10223,8 @@ Describe 'Function: Get-AzLocalFleetHealthOverview - v0.7.70 (ARG-first fleet he
             $cmd.CommandType | Should -Be 'Function'
         }
 
-        It 'BS7: Module exports exactly 49 functions (was 48 after Step.3 thin-YAML port; Step.9 thin-YAML port adds Export-AzLocalFleetHealthStatusReport)' {
-            (Get-Module AzLocal.UpdateManagement).ExportedFunctions.Count | Should -Be 49
+        It 'BS7: Module exports exactly 55 functions (was 49 after Step.9 thin-YAML port; Step.6 thin-YAML port adds 6 apply-updates pipeline cmdlets)' {
+            (Get-Module AzLocal.UpdateManagement).ExportedFunctions.Count | Should -Be 55
         }
     }
 
@@ -15807,3 +15828,384 @@ Describe 'Thin-YAML Step.3: Export-AzLocalApplyUpdatesScheduleAudit' {
     }
 }
 #endregion v0.8.5: Export-AzLocalApplyUpdatesScheduleAudit
+
+#region v0.8.5 Step.6 thin-YAML: Apply-Updates pipeline cmdlets
+# -----------------------------------------------------------------------------
+# v0.8.5 - Step.6 thin-YAML port: six new public cmdlets that own the
+# behaviour previously hand-rolled inline in the Step.6 GH + ADO YAMLs.
+# These tests cover the cross-cutting invariants the YAMLs depend on:
+#   - parameter shape (exists + types + mandatory flags)
+#   - per-host step-output naming (UPPER_SNAKE on GH, PascalCase on ADO)
+#   - empty-input short-circuits (no clusters / no schedule row)
+#   - host-aware icon style in the apply summary
+# Engine behaviours (Get-AzLocalClusterUpdateReadiness, Start-AzLocalClusterUpdate,
+# New-AzLocalIncident, Resolve-AzLocalCurrentUpdateRing) are mocked so the
+# tests stay pure and offline.
+# -----------------------------------------------------------------------------
+
+Describe 'Thin-YAML Step.6: Resolve-AzLocalPipelineUpdateRing' {
+
+    BeforeAll {
+        $script:S6PriorTfBuild        = $env:TF_BUILD
+        $script:S6PriorGhActions      = $env:GITHUB_ACTIONS
+        $script:S6PriorGhOutput       = $env:GITHUB_OUTPUT
+        $script:S6PriorGhEnv          = $env:GITHUB_ENV
+        $script:S6PriorBuildArtStage  = $env:BUILD_ARTIFACTSTAGINGDIRECTORY
+        $script:S6PriorGhStepSummary  = $env:GITHUB_STEP_SUMMARY
+        $script:S6TmpRoot             = Join-Path -Path $env:TEMP -ChildPath ("s6-cmdlet-{0}" -f ([Guid]::NewGuid()))
+        New-Item -ItemType Directory -Path $script:S6TmpRoot -Force | Out-Null
+    }
+
+    AfterAll {
+        $env:TF_BUILD                       = $script:S6PriorTfBuild
+        $env:GITHUB_ACTIONS                 = $script:S6PriorGhActions
+        $env:GITHUB_OUTPUT                  = $script:S6PriorGhOutput
+        $env:GITHUB_ENV                     = $script:S6PriorGhEnv
+        $env:BUILD_ARTIFACTSTAGINGDIRECTORY = $script:S6PriorBuildArtStage
+        $env:GITHUB_STEP_SUMMARY            = $script:S6PriorGhStepSummary
+        if ($script:S6TmpRoot -and (Test-Path -LiteralPath $script:S6TmpRoot)) {
+            Remove-Item -LiteralPath $script:S6TmpRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    BeforeEach {
+        # Default to Local host (no GH / ADO env vars); each test opts in.
+        Remove-Item Env:TF_BUILD                       -ErrorAction SilentlyContinue
+        Remove-Item Env:GITHUB_ACTIONS                 -ErrorAction SilentlyContinue
+        Remove-Item Env:GITHUB_OUTPUT                  -ErrorAction SilentlyContinue
+        Remove-Item Env:GITHUB_ENV                     -ErrorAction SilentlyContinue
+        Remove-Item Env:BUILD_ARTIFACTSTAGINGDIRECTORY -ErrorAction SilentlyContinue
+        Remove-Item Env:GITHUB_STEP_SUMMARY            -ErrorAction SilentlyContinue
+    }
+
+    Context 'Parameter shape' {
+        BeforeAll { $script:S6CmdR = Get-Command Resolve-AzLocalPipelineUpdateRing }
+
+        It 'Has parameter ManualUpdateRing'    { $script:S6CmdR.Parameters.Keys | Should -Contain 'ManualUpdateRing' }
+        It 'Has parameter UseScheduleFile'     { $script:S6CmdR.Parameters.Keys | Should -Contain 'UseScheduleFile' }
+        It 'Has parameter SchedulePath'        { $script:S6CmdR.Parameters.Keys | Should -Contain 'SchedulePath' }
+        It 'Has parameter ResolveForDateUtc'   { $script:S6CmdR.Parameters.Keys | Should -Contain 'ResolveForDateUtc' }
+        It 'Has parameter Trigger'             { $script:S6CmdR.Parameters.Keys | Should -Contain 'Trigger' }
+        It 'Has parameter PassThru (switch)'   {
+            $script:S6CmdR.Parameters.Keys | Should -Contain 'PassThru'
+            $script:S6CmdR.Parameters['PassThru'].ParameterType.Name | Should -Be 'SwitchParameter'
+        }
+    }
+
+    Context 'Manual back-compat path (no schedule file)' {
+        It 'Returns ManualUpdateRing verbatim when Trigger=Manual and UseScheduleFile not set' {
+            $info = Resolve-AzLocalPipelineUpdateRing -Trigger Manual -ManualUpdateRing 'Wave1' -PassThru
+            $info.ResolvedUpdateRing            | Should -Be 'Wave1'
+            $info.ResolvedAllowedUpdateVersions | Should -Be ''
+            $info.IsManual                      | Should -BeTrue
+            $info.UseScheduleFile               | Should -BeFalse
+        }
+
+        It 'Throws when Trigger=Manual + UseScheduleFile not set + empty ManualUpdateRing' {
+            { Resolve-AzLocalPipelineUpdateRing -Trigger Manual -ManualUpdateRing '' } |
+                Should -Throw -ExpectedMessage "*requires -ManualUpdateRing to be non-empty*"
+        }
+    }
+
+    Context 'Invalid ResolveForDateUtc' {
+        It 'Throws on malformed YYYY-MM-DD' {
+            { Resolve-AzLocalPipelineUpdateRing -Trigger Manual -ManualUpdateRing 'Wave1' -UseScheduleFile -ResolveForDateUtc '07-15-2026' } |
+                Should -Throw -ExpectedMessage "*not a valid date*"
+        }
+    }
+}
+
+Describe 'Thin-YAML Step.6: Export-AzLocalClusterReadinessGateReport' {
+
+    BeforeAll {
+        $script:S6_2PriorTfBuild        = $env:TF_BUILD
+        $script:S6_2PriorGhActions      = $env:GITHUB_ACTIONS
+        $script:S6_2PriorGhOutput       = $env:GITHUB_OUTPUT
+        $script:S6_2PriorGhStepSummary  = $env:GITHUB_STEP_SUMMARY
+        $script:S6_2TmpRoot             = Join-Path -Path $env:TEMP -ChildPath ("s6-cmdlet-readiness-{0}" -f ([Guid]::NewGuid()))
+        New-Item -ItemType Directory -Path $script:S6_2TmpRoot -Force | Out-Null
+    }
+
+    AfterAll {
+        $env:TF_BUILD            = $script:S6_2PriorTfBuild
+        $env:GITHUB_ACTIONS      = $script:S6_2PriorGhActions
+        $env:GITHUB_OUTPUT       = $script:S6_2PriorGhOutput
+        $env:GITHUB_STEP_SUMMARY = $script:S6_2PriorGhStepSummary
+        if ($script:S6_2TmpRoot -and (Test-Path -LiteralPath $script:S6_2TmpRoot)) {
+            Remove-Item -LiteralPath $script:S6_2TmpRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    BeforeEach {
+        Remove-Item Env:TF_BUILD            -ErrorAction SilentlyContinue
+        Remove-Item Env:GITHUB_ACTIONS      -ErrorAction SilentlyContinue
+        Remove-Item Env:GITHUB_OUTPUT       -ErrorAction SilentlyContinue
+        Remove-Item Env:GITHUB_STEP_SUMMARY -ErrorAction SilentlyContinue
+    }
+
+    Context 'Parameter shape' {
+        BeforeAll { $script:S6CmdE = Get-Command Export-AzLocalClusterReadinessGateReport }
+
+        It 'Has parameter UpdateRing'          { $script:S6CmdE.Parameters.Keys | Should -Contain 'UpdateRing' }
+        It 'Has parameter OutputDirectory'     { $script:S6CmdE.Parameters.Keys | Should -Contain 'OutputDirectory' }
+        It 'Has parameter ReadinessCsvFileName'{ $script:S6CmdE.Parameters.Keys | Should -Contain 'ReadinessCsvFileName' }
+        It 'Has parameter MaxRows'             { $script:S6CmdE.Parameters.Keys | Should -Contain 'MaxRows' }
+        It 'Has parameter SummaryFileName'     { $script:S6CmdE.Parameters.Keys | Should -Contain 'SummaryFileName' }
+        It 'Has parameter PassThru (switch)'   {
+            $script:S6CmdE.Parameters.Keys | Should -Contain 'PassThru'
+            $script:S6CmdE.Parameters['PassThru'].ParameterType.Name | Should -Be 'SwitchParameter'
+        }
+    }
+
+    Context 'Empty-ring short-circuit (no clusters scanned, zero counters emitted)' {
+        It 'GitHub host emits READY_COUNT=0 / TOTAL_COUNT=0 / NOT_READY_COUNT=0 to GITHUB_OUTPUT' {
+            $env:GITHUB_ACTIONS = 'true'
+            $env:GITHUB_OUTPUT  = Join-Path $script:S6_2TmpRoot 'gh-empty-output.txt'
+            $env:GITHUB_STEP_SUMMARY = Join-Path $script:S6_2TmpRoot 'gh-empty-summary.md'
+            $outDir = Join-Path $script:S6_2TmpRoot 'gh-empty-artifacts'
+            New-Item -ItemType Directory -Path $outDir -Force | Out-Null
+
+            $info = Export-AzLocalClusterReadinessGateReport -UpdateRing '' -OutputDirectory $outDir -PassThru
+            $info.ReadyCount    | Should -Be 0
+            $info.TotalCount    | Should -Be 0
+            $info.NotReadyCount | Should -Be 0
+            $outFile = Get-Content -LiteralPath $env:GITHUB_OUTPUT -Raw
+            $outFile | Should -Match 'READY_COUNT=0'
+            $outFile | Should -Match 'TOTAL_COUNT=0'
+            $outFile | Should -Match 'NOT_READY_COUNT=0'
+            $outFile | Should -Not -Match 'ReadyCount=0' -Because 'GH host must emit UPPER_SNAKE names, not PascalCase'
+        }
+
+        It 'Azure DevOps host emits PascalCase ReadyCount/TotalCount/NotReadyCount via ##vso[task.setvariable]' {
+            $env:TF_BUILD = 'True'
+            $outDir = Join-Path $script:S6_2TmpRoot 'ado-empty-artifacts'
+            New-Item -ItemType Directory -Path $outDir -Force | Out-Null
+
+            $writeHostOutput = & {
+                Export-AzLocalClusterReadinessGateReport -UpdateRing '' -OutputDirectory $outDir
+            } *>&1 | Out-String
+            $writeHostOutput | Should -Match '##vso\[task\.setvariable variable=ReadyCount;isOutput=true\]0'
+            $writeHostOutput | Should -Match '##vso\[task\.setvariable variable=TotalCount;isOutput=true\]0'
+            $writeHostOutput | Should -Match '##vso\[task\.setvariable variable=NotReadyCount;isOutput=true\]0'
+            $writeHostOutput | Should -Not -Match 'READY_COUNT=' -Because 'ADO host must not emit UPPER_SNAKE for these counters - the ADO YAML stageDependencies binding uses PascalCase'
+        }
+    }
+}
+
+Describe 'Thin-YAML Step.6: Invoke-AzLocalReadinessGatedClusterUpdate' {
+
+    BeforeAll {
+        $script:S6_3PriorTfBuild        = $env:TF_BUILD
+        $script:S6_3PriorGhActions      = $env:GITHUB_ACTIONS
+        $script:S6_3PriorGhOutput       = $env:GITHUB_OUTPUT
+        $script:S6_3PriorGhStepSummary  = $env:GITHUB_STEP_SUMMARY
+        $script:S6_3TmpRoot             = Join-Path -Path $env:TEMP -ChildPath ("s6-cmdlet-apply-{0}" -f ([Guid]::NewGuid()))
+        New-Item -ItemType Directory -Path $script:S6_3TmpRoot -Force | Out-Null
+    }
+
+    AfterAll {
+        $env:TF_BUILD            = $script:S6_3PriorTfBuild
+        $env:GITHUB_ACTIONS      = $script:S6_3PriorGhActions
+        $env:GITHUB_OUTPUT       = $script:S6_3PriorGhOutput
+        $env:GITHUB_STEP_SUMMARY = $script:S6_3PriorGhStepSummary
+        if ($script:S6_3TmpRoot -and (Test-Path -LiteralPath $script:S6_3TmpRoot)) {
+            Remove-Item -LiteralPath $script:S6_3TmpRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    BeforeEach {
+        Remove-Item Env:TF_BUILD            -ErrorAction SilentlyContinue
+        Remove-Item Env:GITHUB_ACTIONS      -ErrorAction SilentlyContinue
+        Remove-Item Env:GITHUB_OUTPUT       -ErrorAction SilentlyContinue
+        Remove-Item Env:GITHUB_STEP_SUMMARY -ErrorAction SilentlyContinue
+    }
+
+    Context 'Parameter shape' {
+        BeforeAll { $script:S6CmdI = Get-Command Invoke-AzLocalReadinessGatedClusterUpdate }
+
+        It 'Has mandatory parameter ReadinessCsvPath' {
+            $p = $script:S6CmdI.Parameters['ReadinessCsvPath']
+            $p | Should -Not -BeNullOrEmpty
+            ($p.Attributes | Where-Object { $_ -is [System.Management.Automation.ParameterAttribute] } | Select-Object -First 1).Mandatory | Should -BeTrue
+        }
+        It 'Has parameter UpdateRing'            { $script:S6CmdI.Parameters.Keys | Should -Contain 'UpdateRing' }
+        It 'Has parameter UpdateName'            { $script:S6CmdI.Parameters.Keys | Should -Contain 'UpdateName' }
+        It 'Has parameter DryRun (switch)'       {
+            $script:S6CmdI.Parameters.Keys | Should -Contain 'DryRun'
+            $script:S6CmdI.Parameters['DryRun'].ParameterType.Name | Should -Be 'SwitchParameter'
+        }
+        It 'Has parameter AllowedUpdateVersions' { $script:S6CmdI.Parameters.Keys | Should -Contain 'AllowedUpdateVersions' }
+        It 'Has parameter OutputDirectory'       { $script:S6CmdI.Parameters.Keys | Should -Contain 'OutputDirectory' }
+        It 'Has parameter JUnitFileName'         { $script:S6CmdI.Parameters.Keys | Should -Contain 'JUnitFileName' }
+        It 'Has parameter ApplyResultsJsonFileName' { $script:S6CmdI.Parameters.Keys | Should -Contain 'ApplyResultsJsonFileName' }
+        It 'Has parameter PassThru (switch)'     {
+            $script:S6CmdI.Parameters.Keys | Should -Contain 'PassThru'
+            $script:S6CmdI.Parameters['PassThru'].ParameterType.Name | Should -Be 'SwitchParameter'
+        }
+    }
+
+    Context 'Empty-ready short-circuit (zero counters emitted, no apply attempted)' {
+        It 'Azure DevOps host emits PascalCase counter names when CSV has zero ready rows' {
+            $env:TF_BUILD = 'True'
+            $outDir = Join-Path $script:S6_3TmpRoot 'ado-empty-ready'
+            New-Item -ItemType Directory -Path $outDir -Force | Out-Null
+            $csv = Join-Path $outDir 'readiness-report.csv'
+            # Headers (incl. ClusterResourceId) but no Ready=True rows
+            @'
+ClusterName,ClusterResourceId,ReadyForUpdate,UpdateState,HealthState,BlockingReasons,CurrentVersion,RecommendedUpdate
+foo,/subscriptions/x/resourceGroups/y/providers/Microsoft.AzureStackHCI/clusters/foo,False,NotReady,Failure,Unhealthy,12.2511.0.301,
+'@ | Out-File -FilePath $csv -Encoding utf8 -Force
+
+            $writeHostOutput = & {
+                Invoke-AzLocalReadinessGatedClusterUpdate -ReadinessCsvPath $csv -UpdateRing 'Wave1' -OutputDirectory $outDir
+            } *>&1 | Out-String
+            $writeHostOutput | Should -Match '##vso\[task\.setvariable variable=Succeeded;isOutput=true\]0'
+            $writeHostOutput | Should -Match '##vso\[task\.setvariable variable=Skipped;isOutput=true\]0'
+            $writeHostOutput | Should -Match '##vso\[task\.setvariable variable=Failed;isOutput=true\]0'
+            $writeHostOutput | Should -Match '##vso\[task\.setvariable variable=HealthBlocked;isOutput=true\]0'
+            $writeHostOutput | Should -Match '##vso\[task\.setvariable variable=ScheduleBlocked;isOutput=true\]0'
+            $writeHostOutput | Should -Match '##vso\[task\.setvariable variable=SideloadedBlocked;isOutput=true\]0'
+            $writeHostOutput | Should -Match '##vso\[task\.setvariable variable=ExcludedByTag;isOutput=true\]0'
+        }
+
+        It 'GitHub host emits UPPER_SNAKE counter names to GITHUB_OUTPUT when CSV has zero ready rows' {
+            $env:GITHUB_ACTIONS = 'true'
+            $env:GITHUB_OUTPUT  = Join-Path $script:S6_3TmpRoot 'gh-empty-ready-output.txt'
+            $outDir = Join-Path $script:S6_3TmpRoot 'gh-empty-ready'
+            New-Item -ItemType Directory -Path $outDir -Force | Out-Null
+            $csv = Join-Path $outDir 'readiness-report.csv'
+            @'
+ClusterName,ClusterResourceId,ReadyForUpdate,UpdateState,HealthState,BlockingReasons,CurrentVersion,RecommendedUpdate
+foo,/subscriptions/x/resourceGroups/y/providers/Microsoft.AzureStackHCI/clusters/foo,False,NotReady,Failure,Unhealthy,12.2511.0.301,
+'@ | Out-File -FilePath $csv -Encoding utf8 -Force
+
+            Invoke-AzLocalReadinessGatedClusterUpdate -ReadinessCsvPath $csv -UpdateRing 'Wave1' -OutputDirectory $outDir | Out-Null
+            $outFile = Get-Content -LiteralPath $env:GITHUB_OUTPUT -Raw
+            foreach ($n in 'SUCCEEDED','SKIPPED','FAILED','HEALTH_BLOCKED','SCHEDULE_BLOCKED','SIDELOADED_BLOCKED','EXCLUDED_BY_TAG') {
+                $outFile | Should -Match "$n=0"
+            }
+        }
+    }
+
+    Context 'Missing ClusterResourceId column (v0.7.62 contract)' {
+        It 'Throws when readiness CSV is missing the ClusterResourceId column' {
+            $env:TF_BUILD = 'True'
+            $outDir = Join-Path $script:S6_3TmpRoot 'missing-col'
+            New-Item -ItemType Directory -Path $outDir -Force | Out-Null
+            $csv = Join-Path $outDir 'readiness-report.csv'
+            @'
+ClusterName,ReadyForUpdate,UpdateState,HealthState,BlockingReasons
+foo,True,Ready,Success,
+'@ | Out-File -FilePath $csv -Encoding utf8 -Force
+
+            { Invoke-AzLocalReadinessGatedClusterUpdate -ReadinessCsvPath $csv -UpdateRing 'Wave1' -OutputDirectory $outDir } |
+                Should -Throw -ExpectedMessage "*ClusterResourceId*"
+        }
+    }
+}
+
+Describe 'Thin-YAML Step.6: Add-AzLocalApplyUpdatesStepSummary' {
+
+    Context 'Parameter shape' {
+        BeforeAll { $script:S6CmdS = Get-Command Add-AzLocalApplyUpdatesStepSummary }
+
+        It 'Has mandatory parameter UpdateRing' {
+            $p = $script:S6CmdS.Parameters['UpdateRing']
+            $p | Should -Not -BeNullOrEmpty
+            ($p.Attributes | Where-Object { $_ -is [System.Management.Automation.ParameterAttribute] } | Select-Object -First 1).Mandatory | Should -BeTrue
+        }
+        It 'Has parameter DryRun (switch)' {
+            $script:S6CmdS.Parameters.Keys | Should -Contain 'DryRun'
+            $script:S6CmdS.Parameters['DryRun'].ParameterType.Name | Should -Be 'SwitchParameter'
+        }
+        It 'Has counter parameters TotalCount/ReadyCount/Succeeded/Skipped/Failed/HealthBlocked/ScheduleBlocked/SideloadedBlocked/ExcludedByTag' {
+            foreach ($n in 'TotalCount','ReadyCount','Succeeded','Skipped','Failed','HealthBlocked','ScheduleBlocked','SideloadedBlocked','ExcludedByTag') {
+                $script:S6CmdS.Parameters.Keys | Should -Contain $n -Because "Add-AzLocalApplyUpdatesStepSummary must expose $n"
+            }
+        }
+        It 'Has parameter ApplyResultsJsonPath' { $script:S6CmdS.Parameters.Keys | Should -Contain 'ApplyResultsJsonPath' }
+        It 'Has parameter ReadinessCsvPath'     { $script:S6CmdS.Parameters.Keys | Should -Contain 'ReadinessCsvPath' }
+        It 'Has parameter SummaryFileName'      { $script:S6CmdS.Parameters.Keys | Should -Contain 'SummaryFileName' }
+        It 'Has parameter PassThru (switch)'    {
+            $script:S6CmdS.Parameters.Keys | Should -Contain 'PassThru'
+            $script:S6CmdS.Parameters['PassThru'].ParameterType.Name | Should -Be 'SwitchParameter'
+        }
+    }
+}
+
+Describe 'Thin-YAML Step.6: Add-AzLocalNoReadyClustersStepSummary' {
+
+    Context 'Parameter shape' {
+        BeforeAll { $script:S6CmdN = Get-Command Add-AzLocalNoReadyClustersStepSummary }
+
+        It 'Has mandatory parameter UpdateRing' {
+            $p = $script:S6CmdN.Parameters['UpdateRing']
+            $p | Should -Not -BeNullOrEmpty
+            ($p.Attributes | Where-Object { $_ -is [System.Management.Automation.ParameterAttribute] } | Select-Object -First 1).Mandatory | Should -BeTrue
+        }
+        It 'Has parameter TotalCount'       { $script:S6CmdN.Parameters.Keys | Should -Contain 'TotalCount' }
+        It 'Has parameter SummaryFileName'  { $script:S6CmdN.Parameters.Keys | Should -Contain 'SummaryFileName' }
+        It 'Has parameter PassThru (switch)' {
+            $script:S6CmdN.Parameters.Keys | Should -Contain 'PassThru'
+            $script:S6CmdN.Parameters['PassThru'].ParameterType.Name | Should -Be 'SwitchParameter'
+        }
+    }
+}
+
+Describe 'Thin-YAML Step.6: Invoke-AzLocalItsmTicketingFromArtifact' {
+
+    BeforeAll {
+        $script:S6_6PriorTfBuild = $env:TF_BUILD
+        $script:S6_6PriorGhActions = $env:GITHUB_ACTIONS
+        $script:S6_6TmpRoot = Join-Path -Path $env:TEMP -ChildPath ("s6-cmdlet-itsm-{0}" -f ([Guid]::NewGuid()))
+        New-Item -ItemType Directory -Path $script:S6_6TmpRoot -Force | Out-Null
+    }
+
+    AfterAll {
+        $env:TF_BUILD       = $script:S6_6PriorTfBuild
+        $env:GITHUB_ACTIONS = $script:S6_6PriorGhActions
+        if ($script:S6_6TmpRoot -and (Test-Path -LiteralPath $script:S6_6TmpRoot)) {
+            Remove-Item -LiteralPath $script:S6_6TmpRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    BeforeEach {
+        Remove-Item Env:TF_BUILD       -ErrorAction SilentlyContinue
+        Remove-Item Env:GITHUB_ACTIONS -ErrorAction SilentlyContinue
+    }
+
+    Context 'Parameter shape' {
+        BeforeAll { $script:S6CmdT = Get-Command Invoke-AzLocalItsmTicketingFromArtifact }
+
+        It 'Has mandatory parameter ConfigPath' {
+            $p = $script:S6CmdT.Parameters['ConfigPath']
+            $p | Should -Not -BeNullOrEmpty
+            ($p.Attributes | Where-Object { $_ -is [System.Management.Automation.ParameterAttribute] } | Select-Object -First 1).Mandatory | Should -BeTrue
+        }
+        It 'Has parameter InputArtifactPath' { $script:S6CmdT.Parameters.Keys | Should -Contain 'InputArtifactPath' }
+        It 'Has parameter ExportDirectory'   { $script:S6CmdT.Parameters.Keys | Should -Contain 'ExportDirectory' }
+        It 'Has parameter ExportCsvFileName' { $script:S6CmdT.Parameters.Keys | Should -Contain 'ExportCsvFileName' }
+        It 'Has parameter ExportJUnitFileName' { $script:S6CmdT.Parameters.Keys | Should -Contain 'ExportJUnitFileName' }
+        It 'Has parameter DryRun (switch)'   {
+            $script:S6CmdT.Parameters.Keys | Should -Contain 'DryRun'
+            $script:S6CmdT.Parameters['DryRun'].ParameterType.Name | Should -Be 'SwitchParameter'
+        }
+        It 'Has parameter ForceCreate (switch)' {
+            $script:S6CmdT.Parameters.Keys | Should -Contain 'ForceCreate'
+            $script:S6CmdT.Parameters['ForceCreate'].ParameterType.Name | Should -Be 'SwitchParameter'
+        }
+        It 'Has parameter PassThru (switch)' {
+            $script:S6CmdT.Parameters.Keys | Should -Contain 'PassThru'
+            $script:S6CmdT.Parameters['PassThru'].ParameterType.Name | Should -Be 'SwitchParameter'
+        }
+    }
+
+    Context 'Short-circuits on missing prerequisites' {
+        It 'Returns without error when ConfigPath does not exist (does NOT throw)' {
+            $missing = Join-Path $script:S6_6TmpRoot 'no-such-config.yml'
+            { Invoke-AzLocalItsmTicketingFromArtifact -ConfigPath $missing -InputArtifactPath (Join-Path $script:S6_6TmpRoot 'whatever.xml') } | Should -Not -Throw
+        }
+    }
+}
+
+#endregion v0.8.5 Step.6 thin-YAML: Apply-Updates pipeline cmdlets

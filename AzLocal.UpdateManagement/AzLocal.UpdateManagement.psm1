@@ -336,5 +336,12 @@ Export-ModuleMember -Function @(
     # Thin-YAML Step.3 (v0.8.5) - Apply-Updates Schedule Coverage Audit (Audit + Matrix + Recommend views + 2-suite JUnit + allow-list section + always-on cycle calendar + 12 step outputs)
     'Export-AzLocalApplyUpdatesScheduleAudit',
     # Thin-YAML Step.9 (v0.8.5) - Fleet Health Status (Detail + Summary + Overview + 2-suite JUnit + KPI / Overview / By-Reason / per-cluster collapsible markdown + 8 step outputs)
-    'Export-AzLocalFleetHealthStatusReport'
+    'Export-AzLocalFleetHealthStatusReport',
+    # Thin-YAML Step.6 (v0.8.5) - Apply-Updates pipeline (6 cmdlets condensing ~430 lines of inline run: | blocks across both Step.6_apply-updates.yml pipelines)
+    'Resolve-AzLocalPipelineUpdateRing',
+    'Export-AzLocalClusterReadinessGateReport',
+    'Invoke-AzLocalReadinessGatedClusterUpdate',
+    'Add-AzLocalApplyUpdatesStepSummary',
+    'Add-AzLocalNoReadyClustersStepSummary',
+    'Invoke-AzLocalItsmTicketingFromArtifact'
 )

@@ -158,7 +158,14 @@
         # Thin-YAML Step.3 (v0.8.5) - Apply-Updates Schedule Coverage Audit (Audit + Matrix + Recommend views + 2-suite JUnit XML + 12-row summary table + allow-list section + always-on cycle calendar + 12 step outputs)
         'Public/Export-AzLocalApplyUpdatesScheduleAudit.ps1',
         # Thin-YAML Step.9 (v0.8.5) - Fleet Health Status (Detail + in-process Summary + Overview + 2-suite JUnit XML + 4-section markdown + 8 step outputs; condenses ~600-line inline run: | block in Step.9_fleet-health-status.yml on both platforms)
-        'Public/Export-AzLocalFleetHealthStatusReport.ps1'
+        'Public/Export-AzLocalFleetHealthStatusReport.ps1',
+        # Thin-YAML Step.6 (v0.8.5) - Apply-Updates pipeline (resolve UpdateRing from schedule + readiness gate report + readiness-gated apply + per-host apply-updates step summary + no-clusters-ready step summary + ITSM ticketing from JUnit artifact; condenses ~6 inline run: | blocks across both Step.6_apply-updates.yml pipelines into 6 testable Public cmdlets)
+        'Public/Resolve-AzLocalPipelineUpdateRing.ps1',
+        'Public/Export-AzLocalClusterReadinessGateReport.ps1',
+        'Public/Invoke-AzLocalReadinessGatedClusterUpdate.ps1',
+        'Public/Add-AzLocalApplyUpdatesStepSummary.ps1',
+        'Public/Add-AzLocalNoReadyClustersStepSummary.ps1',
+        'Public/Invoke-AzLocalItsmTicketingFromArtifact.ps1'
     )
 
     FunctionsToExport = @(
@@ -237,7 +244,14 @@
         # Thin-YAML Step.3 (v0.8.5) - Apply-Updates Schedule Coverage Audit (calls Test-AzLocalApplyUpdatesScheduleCoverage Audit + Matrix + Recommend, builds 2-suite JUnit XML via shared New-AzLocalPipelineJUnitXml helper, renders summary table + Schedule/Cron detail tables + allow-list coverage + always-on Cycle calendar via Get-AzLocalApplyUpdatesScheduleCycleCalendar; emits 12 lowercase step outputs; replaces the ~220-line inline 'Run Schedule Coverage Audit' + ~210-line inline 'Create Schedule Coverage Summary' blocks in Step.3_apply-updates-schedule-audit.yml on both platforms; ALWAYS renders the Cycle calendar when -SchedulePath is supplied, fixing the v0.8.4 hasIssues-gate regression that silently dropped the calendar on clean-fleet runs)
         'Export-AzLocalApplyUpdatesScheduleAudit',
         # Thin-YAML Step.9 (v0.8.5) - Fleet Health Status (calls Get-AzLocalFleetHealthFailures Detail + Get-AzLocalFleetHealthOverview, computes Summary view in-process, builds 2-suite JUnit XML via shared New-AzLocalPipelineJUnitXml helper, renders KPI / Overview / By-Reason / per-cluster collapsible markdown; emits 8 lowercase step outputs; replaces the ~600-line inline 'Collect Fleet Health Status' + 'Create Fleet Health Summary' blocks in Step.9_fleet-health-status.yml on both platforms)
-        'Export-AzLocalFleetHealthStatusReport'
+        'Export-AzLocalFleetHealthStatusReport',
+        # Thin-YAML Step.6 (v0.8.5) - Apply-Updates pipeline (6 cmdlets that condense ~430 lines of inline run: | blocks across both Step.6_apply-updates.yml pipelines into testable, host-aware Public cmdlets; preserves byte-for-byte parity of all markdown summaries, per-host icon literals, and ADO task.logissue warning/error lines)
+        'Resolve-AzLocalPipelineUpdateRing',
+        'Export-AzLocalClusterReadinessGateReport',
+        'Invoke-AzLocalReadinessGatedClusterUpdate',
+        'Add-AzLocalApplyUpdatesStepSummary',
+        'Add-AzLocalNoReadyClustersStepSummary',
+        'Invoke-AzLocalItsmTicketingFromArtifact'
     )
 
     # Cmdlets to export from this module, for best performance, do not use wildcards and do not delete the entry, use an empty array if there are no cmdlets to export.
