@@ -199,8 +199,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $content | Should -Match '\$data\.ArbRows' -Because "Step.4 $Platform must assign `$data.ArbRows from cmdlet output"
         }
 
-        It 'Should export exactly 41 functions' {
-            $script:ModuleInfo.ExportedFunctions.Count | Should -Be 41
+        It 'Should export exactly 42 functions' {
+            $script:ModuleInfo.ExportedFunctions.Count | Should -Be 42
         }
 
         It 'Should export the expected functions' {
@@ -264,7 +264,9 @@ Describe 'Module: AzLocal.UpdateManagement' {
                 # Thin-YAML pipeline foundation (v0.8.5) - install-step version banner + drift annotations + step outputs
                 'Add-AzLocalPipelineVersionBanner',
                 # Thin-YAML Step.0 (v0.8.5) - Authentication validation + subscription scope + cluster reachability
-                'Export-AzLocalAuthValidationReport'
+                'Export-AzLocalAuthValidationReport',
+                # Thin-YAML Step.1 (v0.8.5) - Cluster inventory workload (timestamped + canonical CSV, JSON, README, step summary)
+                'Invoke-AzLocalClusterInventory'
             )
             
             foreach ($func in $expectedFunctions) {
@@ -10249,8 +10251,8 @@ Describe 'Function: Get-AzLocalFleetHealthOverview - v0.7.70 (ARG-first fleet he
             $cmd.CommandType | Should -Be 'Function'
         }
 
-        It 'BS7: Module exports exactly 41 functions (was 40 in v0.8.5 before Export-AzLocalAuthValidationReport Step.0 thin-YAML port was added)' {
-            (Get-Module AzLocal.UpdateManagement).ExportedFunctions.Count | Should -Be 41
+        It 'BS7: Module exports exactly 42 functions (was 41 after Step.0 thin-YAML port; Step.1 thin-YAML port adds Invoke-AzLocalClusterInventory)' {
+            (Get-Module AzLocal.UpdateManagement).ExportedFunctions.Count | Should -Be 42
         }
     }
 
@@ -13191,5 +13193,270 @@ Describe 'Thin-YAML Step.0: Export-AzLocalAuthValidationReport' {
 }
 
 #endregion v0.8.5: Export-AzLocalAuthValidationReport
+
+#region v0.8.5: Invoke-AzLocalClusterInventory (Step.1 thin-YAML port)
+
+Describe 'Thin-YAML Step.1: Invoke-AzLocalClusterInventory' {
+
+    BeforeAll {
+        # Test helper: drives the cmdlet against a fixed inventory payload
+        # by mocking Get-AzLocalClusterInventory inside the module scope.
+        # The mock writes the CSV file (when -ExportPath is supplied) so
+        # the cmdlet's canonical-CSV copy path is exercised the same way
+        # it is in production. Defined in script: scope so it survives
+        # the Pester v5 discovery -> run phase split.
+        function script:Invoke-Step1Cmdlet {
+            param(
+                [hashtable]$Params = @{},
+                [object[]]$Inventory
+            )
+            $global:_inv_payload = @{
+                Inventory     = $Inventory
+                LastCallParams = $null
+            }
+            InModuleScope AzLocal.UpdateManagement {
+                Mock Get-AzLocalClusterInventory {
+                    # Record which parameters Invoke-AzLocalClusterInventory passed through.
+                    $global:_inv_payload.LastCallParams = $PSBoundParameters
+                    if ($PSBoundParameters.ContainsKey('ExportPath') -and $PSBoundParameters['ExportPath']) {
+                        $exportPath = $PSBoundParameters['ExportPath']
+                        $rows = $global:_inv_payload.Inventory
+                        if ($null -ne $rows -and @($rows).Count -gt 0) {
+                            @($rows) | Export-Csv -LiteralPath $exportPath -NoTypeInformation -Encoding UTF8
+                        }
+                    }
+                    return @($global:_inv_payload.Inventory)
+                }
+                $callParams = $global:_inv_payload.Params
+                if ($null -eq $callParams) { $callParams = @{} }
+                Invoke-AzLocalClusterInventory @callParams
+            }
+        }
+    }
+
+    BeforeEach {
+        $script:_inv_savedGhActions = $env:GITHUB_ACTIONS
+        $script:_inv_savedTfBuild   = $env:TF_BUILD
+        $script:_inv_savedGhOutput  = $env:GITHUB_OUTPUT
+        $script:_inv_savedGhSummary = $env:GITHUB_STEP_SUMMARY
+        $script:_inv_savedAdoStage  = $env:BUILD_ARTIFACTSTAGINGDIRECTORY
+        Remove-Item Env:\GITHUB_ACTIONS                  -ErrorAction SilentlyContinue
+        Remove-Item Env:\TF_BUILD                        -ErrorAction SilentlyContinue
+        Remove-Item Env:\GITHUB_OUTPUT                   -ErrorAction SilentlyContinue
+        Remove-Item Env:\GITHUB_STEP_SUMMARY             -ErrorAction SilentlyContinue
+        Remove-Item Env:\BUILD_ARTIFACTSTAGINGDIRECTORY  -ErrorAction SilentlyContinue
+
+        $script:_inv_ghOutputFile  = Join-Path -Path $env:TEMP -ChildPath ("inv-gh-output-{0}"  -f ([Guid]::NewGuid()))
+        $script:_inv_ghSummaryFile = Join-Path -Path $env:TEMP -ChildPath ("inv-gh-summary-{0}.md" -f ([Guid]::NewGuid()))
+        $script:_inv_adoStageDir   = Join-Path -Path $env:TEMP -ChildPath ("inv-ado-stage-{0}" -f ([Guid]::NewGuid()))
+        $script:_inv_outDir        = Join-Path -Path $env:TEMP -ChildPath ("inv-out-{0}"       -f ([Guid]::NewGuid()))
+        New-Item -ItemType File      -Path $script:_inv_ghOutputFile  -Force | Out-Null
+        New-Item -ItemType File      -Path $script:_inv_ghSummaryFile -Force | Out-Null
+        New-Item -ItemType Directory -Path $script:_inv_adoStageDir   -Force | Out-Null
+        New-Item -ItemType Directory -Path $script:_inv_outDir        -Force | Out-Null
+
+        # Synthetic fleet shared across the It blocks.
+        $script:_inv_fleet = @(
+            [pscustomobject]@{ ClusterName = 'alpha'; ResourceGroup = 'rg1'; SubscriptionId = 's1'; SubscriptionName = 'Sub A'; UpdateRing = 'Canary';     HasUpdateRingTag = 'Yes'; UpdateStartWindow = ''; UpdateExclusions = ''; UpdateSideloaded = ''; UpdateVersionInProgress = ''; ResourceId = '/subscriptions/s1/resourceGroups/rg1/providers/Microsoft.AzureStackHCI/clusters/alpha' }
+            [pscustomobject]@{ ClusterName = 'bravo'; ResourceGroup = 'rg1'; SubscriptionId = 's1'; SubscriptionName = 'Sub A'; UpdateRing = 'Pilot';      HasUpdateRingTag = 'Yes'; UpdateStartWindow = ''; UpdateExclusions = ''; UpdateSideloaded = ''; UpdateVersionInProgress = ''; ResourceId = '/subscriptions/s1/resourceGroups/rg1/providers/Microsoft.AzureStackHCI/clusters/bravo' }
+            [pscustomobject]@{ ClusterName = 'charlie'; ResourceGroup = 'rg2'; SubscriptionId = 's2'; SubscriptionName = 'Sub B'; UpdateRing = 'Production'; HasUpdateRingTag = 'Yes'; UpdateStartWindow = ''; UpdateExclusions = ''; UpdateSideloaded = ''; UpdateVersionInProgress = ''; ResourceId = '/subscriptions/s2/resourceGroups/rg2/providers/Microsoft.AzureStackHCI/clusters/charlie' }
+            [pscustomobject]@{ ClusterName = 'delta'; ResourceGroup = 'rg2'; SubscriptionId = 's2'; SubscriptionName = 'Sub B'; UpdateRing = '';            HasUpdateRingTag = 'No';  UpdateStartWindow = ''; UpdateExclusions = ''; UpdateSideloaded = ''; UpdateVersionInProgress = ''; ResourceId = '/subscriptions/s2/resourceGroups/rg2/providers/Microsoft.AzureStackHCI/clusters/delta' }
+        )
+    }
+    AfterEach {
+        if ($null -ne $script:_inv_savedGhActions) { $env:GITHUB_ACTIONS                 = $script:_inv_savedGhActions } else { Remove-Item Env:\GITHUB_ACTIONS                 -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_inv_savedTfBuild)   { $env:TF_BUILD                       = $script:_inv_savedTfBuild   } else { Remove-Item Env:\TF_BUILD                       -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_inv_savedGhOutput)  { $env:GITHUB_OUTPUT                  = $script:_inv_savedGhOutput  } else { Remove-Item Env:\GITHUB_OUTPUT                  -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_inv_savedGhSummary) { $env:GITHUB_STEP_SUMMARY            = $script:_inv_savedGhSummary } else { Remove-Item Env:\GITHUB_STEP_SUMMARY            -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_inv_savedAdoStage)  { $env:BUILD_ARTIFACTSTAGINGDIRECTORY = $script:_inv_savedAdoStage  } else { Remove-Item Env:\BUILD_ARTIFACTSTAGINGDIRECTORY -ErrorAction SilentlyContinue }
+
+        Remove-Item -Path $script:_inv_ghOutputFile, $script:_inv_ghSummaryFile -Force -ErrorAction SilentlyContinue
+        Remove-Item -Path $script:_inv_adoStageDir, $script:_inv_outDir         -Force -Recurse -ErrorAction SilentlyContinue
+    }
+
+    It 'Local host: returns PassThru object with the expected shape' {
+        $global:_inv_payload = @{ Inventory = $script:_inv_fleet; LastCallParams = $null; Params = @{ OutputDirectory = $script:_inv_outDir; PassThru = $true } }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory {
+                if ($PSBoundParameters.ContainsKey('ExportPath') -and $PSBoundParameters['ExportPath']) {
+                    @($global:_inv_payload.Inventory) | Export-Csv -LiteralPath $PSBoundParameters['ExportPath'] -NoTypeInformation -Encoding UTF8
+                }
+                @($global:_inv_payload.Inventory)
+            }
+            $p = $global:_inv_payload.Params
+            Invoke-AzLocalClusterInventory @p
+        }
+        $result | Should -Not -BeNullOrEmpty
+        $result.PSObject.Properties.Name | Should -Contain 'ClusterCount'
+        $result.PSObject.Properties.Name | Should -Contain 'WithTagCount'
+        $result.PSObject.Properties.Name | Should -Contain 'WithoutTagCount'
+        $result.PSObject.Properties.Name | Should -Contain 'CsvPath'
+        $result.PSObject.Properties.Name | Should -Contain 'JsonPath'
+        $result.PSObject.Properties.Name | Should -Contain 'CanonicalCsvPath'
+        $result.PSObject.Properties.Name | Should -Contain 'ReadmePath'
+        $result.PSObject.Properties.Name | Should -Contain 'Clusters'
+        $result.PSObject.Properties.Name | Should -Contain 'UpdateRingDistribution'
+        $result.ClusterCount    | Should -Be 4
+        $result.WithTagCount    | Should -Be 3
+        $result.WithoutTagCount | Should -Be 1
+    }
+
+    It 'Writes timestamped CSV, JSON, canonical CSV, and README to the output dir' {
+        $global:_inv_payload = @{ Inventory = $script:_inv_fleet; Params = @{ OutputDirectory = $script:_inv_outDir; PassThru = $true; Timestamp = [datetime]'2099-01-02T03:04:05' } }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory {
+                if ($PSBoundParameters.ContainsKey('ExportPath') -and $PSBoundParameters['ExportPath']) {
+                    @($global:_inv_payload.Inventory) | Export-Csv -LiteralPath $PSBoundParameters['ExportPath'] -NoTypeInformation -Encoding UTF8
+                }
+                @($global:_inv_payload.Inventory)
+            }
+            $p = $global:_inv_payload.Params
+            Invoke-AzLocalClusterInventory @p
+        }
+        Test-Path -LiteralPath $result.CsvPath          | Should -BeTrue
+        Test-Path -LiteralPath $result.JsonPath         | Should -BeTrue
+        Test-Path -LiteralPath $result.CanonicalCsvPath | Should -BeTrue
+        Test-Path -LiteralPath $result.ReadmePath       | Should -BeTrue
+        # Filenames carry the explicit timestamp.
+        $result.CsvPath  | Should -Match 'ClusterInventory_20990102_030405\.csv$'
+        $result.JsonPath | Should -Match 'ClusterInventory_20990102_030405\.json$'
+        # Canonical CSV uses the well-known name expected by Step.2.
+        Split-Path -Path $result.CanonicalCsvPath -Leaf | Should -Be 'ClusterUpdateRings.csv'
+        # JSON round-trips back into the same shape.
+        $json = Get-Content -LiteralPath $result.JsonPath -Raw | ConvertFrom-Json
+        @($json).Count | Should -Be 4
+    }
+
+    It 'Empty fleet: writes header-only canonical CSV so Step.2 has a file to read' {
+        $global:_inv_payload = @{ Inventory = @(); Params = @{ OutputDirectory = $script:_inv_outDir; PassThru = $true } }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory { @() }
+            $p = $global:_inv_payload.Params
+            Invoke-AzLocalClusterInventory @p
+        }
+        $result.ClusterCount | Should -Be 0
+        Test-Path -LiteralPath $result.CanonicalCsvPath | Should -BeTrue
+        $canonical = Get-Content -LiteralPath $result.CanonicalCsvPath -Raw
+        $canonical | Should -Match 'ClusterName,ResourceGroup,SubscriptionId'
+        # No data rows beyond the header.
+        ($canonical -split "`n" | Where-Object { $_.Trim() }).Count | Should -Be 1
+    }
+
+    It 'GitHub host: writes step-summary markdown to GITHUB_STEP_SUMMARY and step outputs to GITHUB_OUTPUT' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_inv_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_inv_ghSummaryFile
+        $global:_inv_payload = @{ Inventory = $script:_inv_fleet; Params = @{ OutputDirectory = $script:_inv_outDir; PassThru = $true } }
+        [void](InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory {
+                if ($PSBoundParameters.ContainsKey('ExportPath') -and $PSBoundParameters['ExportPath']) {
+                    @($global:_inv_payload.Inventory) | Export-Csv -LiteralPath $PSBoundParameters['ExportPath'] -NoTypeInformation -Encoding UTF8
+                }
+                @($global:_inv_payload.Inventory)
+            }
+            $p = $global:_inv_payload.Params
+            Invoke-AzLocalClusterInventory @p
+        })
+        $summary = Get-Content -LiteralPath $script:_inv_ghSummaryFile -Raw
+        $summary | Should -Match '## Step\.1 - Cluster Inventory'
+        $summary | Should -Match '\| Total Clusters \| 4 \|'
+        $summary | Should -Match '\| With UpdateRing Tag \| 3 \|'
+        $summary | Should -Match '\| Without UpdateRing Tag \| 1 \|'
+        $summary | Should -Match '### UpdateRing Distribution'
+        $summary | Should -Match '\| Canary \| 1 \|'
+        $summary | Should -Match '\| Pilot \| 1 \|'
+        $summary | Should -Match '\| Production \| 1 \|'
+
+        $outputs = Get-Content -LiteralPath $script:_inv_ghOutputFile -Raw
+        $outputs | Should -Match 'cluster_count=4'
+        $outputs | Should -Match 'with_tag_count=3'
+        $outputs | Should -Match 'without_tag_count=1'
+        $outputs | Should -Match 'csv_path='
+    }
+
+    It 'AzureDevOps host: uses BUILD_ARTIFACTSTAGINGDIRECTORY for the default output dir and emits ##vso[task.setvariable]' {
+        $env:TF_BUILD                       = 'True'
+        $env:BUILD_ARTIFACTSTAGINGDIRECTORY = $script:_inv_adoStageDir
+        $global:_inv_payload = @{ Inventory = $script:_inv_fleet; Params = @{ PassThru = $true } }
+        $captured = & {
+            InModuleScope AzLocal.UpdateManagement {
+                Mock Get-AzLocalClusterInventory {
+                    if ($PSBoundParameters.ContainsKey('ExportPath') -and $PSBoundParameters['ExportPath']) {
+                        @($global:_inv_payload.Inventory) | Export-Csv -LiteralPath $PSBoundParameters['ExportPath'] -NoTypeInformation -Encoding UTF8
+                    }
+                    @($global:_inv_payload.Inventory)
+                }
+                $p = $global:_inv_payload.Params
+                Invoke-AzLocalClusterInventory @p
+            }
+        } *>&1
+        $joined = $captured -join "`n"
+        $joined | Should -Match '##vso\[task\.setvariable variable=cluster_count'
+        $joined | Should -Match '##vso\[task\.setvariable variable=with_tag_count'
+        $joined | Should -Match '##vso\[task\.setvariable variable=without_tag_count'
+        $joined | Should -Match '##vso\[task\.setvariable variable=csv_path'
+        # Default output dir on ADO is BUILD_ARTIFACTSTAGINGDIRECTORY itself.
+        Test-Path -LiteralPath (Join-Path $script:_inv_adoStageDir 'ClusterUpdateRings.csv')   | Should -BeTrue
+        Test-Path -LiteralPath (Join-Path $script:_inv_adoStageDir 'README_Instructions.txt')  | Should -BeTrue
+    }
+
+    It 'SubscriptionFilter is passed through as -SubscriptionId to Get-AzLocalClusterInventory' {
+        $global:_inv_payload = @{ Inventory = $script:_inv_fleet; Params = @{ OutputDirectory = $script:_inv_outDir; SubscriptionFilter = 'sub-xyz'; PassThru = $true } }
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory {
+                param($SubscriptionId, $ExportPath, [switch]$PassThru)
+                if ($ExportPath) {
+                    @($global:_inv_payload.Inventory) | Export-Csv -LiteralPath $ExportPath -NoTypeInformation -Encoding UTF8
+                }
+                @($global:_inv_payload.Inventory)
+            }
+            $p = $global:_inv_payload.Params
+            [void](Invoke-AzLocalClusterInventory @p)
+            Should -Invoke Get-AzLocalClusterInventory -Times 1 -Exactly -ParameterFilter { $SubscriptionId -eq 'sub-xyz' -and $PassThru }
+        }
+    }
+
+    It 'UpdateRing distribution is sorted by name and excludes empty rings' {
+        $global:_inv_payload = @{ Inventory = $script:_inv_fleet; Params = @{ OutputDirectory = $script:_inv_outDir; PassThru = $true } }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory {
+                if ($PSBoundParameters.ContainsKey('ExportPath') -and $PSBoundParameters['ExportPath']) {
+                    @($global:_inv_payload.Inventory) | Export-Csv -LiteralPath $PSBoundParameters['ExportPath'] -NoTypeInformation -Encoding UTF8
+                }
+                @($global:_inv_payload.Inventory)
+            }
+            $p = $global:_inv_payload.Params
+            Invoke-AzLocalClusterInventory @p
+        }
+        $names = @($result.UpdateRingDistribution | ForEach-Object { $_.Name })
+        $names.Count | Should -Be 3
+        $names       | Should -Be @('Canary', 'Pilot', 'Production')
+        # 'delta' had no UpdateRing - it must NOT appear in the distribution.
+        $names       | Should -Not -Contain ''
+    }
+
+    It 'Single-cluster fleet: counts are 1 / 0 or 1 / 1, no array-shape collapse' {
+        $singleTagged = @(
+            [pscustomobject]@{ ClusterName = 'only-one'; ResourceGroup = 'rg'; SubscriptionId = 's'; SubscriptionName = 'S'; UpdateRing = 'Wave1'; HasUpdateRingTag = 'Yes'; UpdateStartWindow = ''; UpdateExclusions = ''; UpdateSideloaded = ''; UpdateVersionInProgress = ''; ResourceId = '/r' }
+        )
+        $global:_inv_payload = @{ Inventory = $singleTagged; Params = @{ OutputDirectory = $script:_inv_outDir; PassThru = $true } }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory {
+                if ($PSBoundParameters.ContainsKey('ExportPath') -and $PSBoundParameters['ExportPath']) {
+                    @($global:_inv_payload.Inventory) | Export-Csv -LiteralPath $PSBoundParameters['ExportPath'] -NoTypeInformation -Encoding UTF8
+                }
+                @($global:_inv_payload.Inventory)
+            }
+            $p = $global:_inv_payload.Params
+            Invoke-AzLocalClusterInventory @p
+        }
+        $result.ClusterCount    | Should -Be 1
+        $result.WithTagCount    | Should -Be 1
+        $result.WithoutTagCount | Should -Be 0
+        @($result.UpdateRingDistribution).Count | Should -Be 1
+    }
+}
+
+#endregion v0.8.5: Invoke-AzLocalClusterInventory
 
 

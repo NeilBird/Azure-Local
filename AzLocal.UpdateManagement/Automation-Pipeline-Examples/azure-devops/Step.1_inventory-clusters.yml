@@ -74,6 +74,8 @@ stages:
           
           - task: PowerShell@2
             displayName: 'Install AzLocal.UpdateManagement from PSGallery'
+            # v0.8.5 thin-YAML: drift detection + banner + step outputs are all
+            # produced by Add-AzLocalPipelineVersionBanner (Public cmdlet).
             env:
               REQUIRED_MODULE_VERSION: $(REQUIRED_MODULE_VERSION)
               GENERATED_AGAINST_MODULE_VERSION: $(GENERATED_AGAINST_MODULE_VERSION)
@@ -91,196 +93,35 @@ stages:
                 }
                 Install-Module @installArgs
                 Import-Module AzLocal.UpdateManagement -Force
-                # Get-Module can return multiple entries when nested modules are loaded - pick the highest version.
-                $installed = (Get-Module AzLocal.UpdateManagement | Sort-Object Version -Descending | Select-Object -First 1).Version
-                $generated = [version]$env:GENERATED_AGAINST_MODULE_VERSION
-                $latest    = (Find-Module -Name AzLocal.UpdateManagement -Repository PSGallery -ErrorAction SilentlyContinue).Version
-                Write-Host ""
-                Write-Host "Module version summary"
-                Write-Host "  Installed on agent        : $installed"
-                Write-Host "  YAML generated against    : $generated"
-                Write-Host "  Latest on PSGallery       : $(if ($latest) { $latest } else { '(lookup failed - check network)' })"
-                Write-Host ""
-                Get-Module AzLocal.UpdateManagement | Format-List Name, Version, Path
-                # Drift signal 0: the module installed at runtime is OLDER than the version this YAML was generated against. Cmdlets, parameters, or output schemas referenced by this YAML may not exist in the installed module - emitted as a warning because this is the most likely cause of a hard runtime failure later in the job.
-                if ($installed -lt $generated) {
-                    Write-Host "##vso[task.logissue type=warning]AzLocal.UpdateManagement v$installed is OLDER than the version this pipeline YAML was generated against (v$generated). Cmdlets, parameters, or output schemas referenced by this YAML may not exist in v$installed. Set REQUIRED_MODULE_VERSION to v$generated, or refresh the YAML to match the installed module via 'Copy-AzLocalPipelineExample -Platform AzureDevOps -Update'."
-                }
-                if ($installed -gt $generated) {
-                    $msg = "Pipeline YAML was generated against AzLocal.UpdateManagement v$generated but the agent installed v$installed. Pipeline steps may have been improved in later releases - to refresh, re-run 'Copy-AzLocalPipelineExample -Destination .\pipelines -Platform AzureDevOps -Update' (you will be prompted per file; add -Confirm:`$false to bypass). Pipeline YAMLs are under git so 'git diff' shows exactly what changed before commit."
-                    Write-Host "##vso[task.logissue type=warning]$msg"
-                }
-                if ($latest -and ($latest -gt $installed)) {
-                    $msg = "AzLocal.UpdateManagement v$latest is available on PSGallery; this run installed v$installed. Review the module CHANGELOG before bumping REQUIRED_MODULE_VERSION (or clear the pin to install the latest automatically)."
-                    Write-Host "##vso[task.logissue type=warning]$msg"
-                }
+                $banner = Add-AzLocalPipelineVersionBanner `
+                    -GeneratedAgainstVersion $env:GENERATED_AGAINST_MODULE_VERSION `
+                    -PinnedVersion $env:REQUIRED_MODULE_VERSION `
+                    -PassThru
+                # Forward to ADO job-scoped variables so the inventory step (below)
+                # can stamp the installed module version into README_Instructions.txt.
+                Write-Host "##vso[task.setvariable variable=installedModuleVersion;isOutput=false]$($banner.InstalledVersion)"
 
-                # v0.8.4 - one-line version banner uploaded to the build run
-                # Summary so the YAML version (GENERATED_AGAINST_MODULE_VERSION),
-                # the module version actually loaded on the agent, the PSGallery
-                # latest, and the REQUIRED_MODULE_VERSION pin status are visible
-                # at the top of every run summary without scrolling the agent
-                # log. Same data is also echoed to the console above.
-                $pin       = if ($env:REQUIRED_MODULE_VERSION) { "pinned to v$($env:REQUIRED_MODULE_VERSION)" } else { 'latest (fix-forward)' }
-                $latestStr = if ($latest) { "v$latest" } else { '(PSGallery lookup failed)' }
-                $verdict   = if ($installed -lt $generated) { 'YAML newer than module - check REQUIRED_MODULE_VERSION' }
-                             elseif ($installed -gt $generated) { 'YAML older than module - run Copy-AzLocalPipelineExample -Update' }
-                             elseif ($latest -and ($latest -gt $installed)) { 'newer module available on PSGallery' }
-                             else { 'in sync' }
-                $bannerPath = Join-Path $env:BUILD_ARTIFACTSTAGINGDIRECTORY 'module-version-banner.md'
-                "_Pipeline YAML v$generated | Module v$installed installed ($pin) | PSGallery latest $latestStr | $verdict_" | Out-File -FilePath $bannerPath -Encoding utf8
-                Write-Host "##vso[task.uploadsummary]$bannerPath"
-          
           - task: AzureCLI@2
             displayName: 'Run Cluster Inventory'
             inputs:
               azureSubscription: 'AzureLocal-ServiceConnection'  # Update with your service connection name
               scriptType: 'pscore'
               scriptLocation: 'inlineScript'
+              # v0.8.5 thin-YAML: the inline run block (inventory query, dual
+              # CSV/JSON export, canonical CSV copy, README_Instructions.txt,
+              # per-pipeline summary, separate 'Generate Summary' task) has
+              # been condensed into the Public cmdlet
+              # Invoke-AzLocalClusterInventory. The cmdlet writes the four
+              # artifacts to -OutputDirectory, emits the markdown summary via
+              # ##vso[task.uploadsummary], and sets the four step outputs.
               inlineScript: |
+                $ErrorActionPreference = 'Stop'
                 Import-Module AzLocal.UpdateManagement -Force
-                
-                # Create output directory
-                $outputDir = "$(Build.ArtifactStagingDirectory)"
-                
-                $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
-                $csvPath = Join-Path $outputDir "ClusterInventory_$timestamp.csv"
-                $jsonPath = Join-Path $outputDir "ClusterInventory_$timestamp.json"
-                
-                # Add subscription filter if provided
-                $subFilter = "${{ parameters.subscriptionFilter }}"
-                $subscriptionParam = @{}
-                if ($subFilter -and $subFilter -ne '') {
-                    $subscriptionParam['SubscriptionId'] = $subFilter
-                    Write-Host "Filtering to subscription: $subFilter"
-                } else {
-                    Write-Host "Querying all accessible subscriptions"
-                }
-                
-                # Export to CSV (for Excel workflow)
-                Get-AzLocalClusterInventory @subscriptionParam -ExportPath $csvPath
-                
-                # Export to JSON (for CI/CD integrations and dashboards)
-                $inventory = Get-AzLocalClusterInventory @subscriptionParam -ExportPath $jsonPath -PassThru
-                
-                # Output summary
-                Write-Host ""
-                Write-Host "========================================" -ForegroundColor Cyan
-                Write-Host "Inventory Complete" -ForegroundColor Cyan
-                Write-Host "========================================" -ForegroundColor Cyan
-                Write-Host "Total Clusters: $($inventory.Count)"
-                Write-Host "CSV exported to: $csvPath"
-                Write-Host "JSON exported to: $jsonPath"
-                
-                # ---- Canonical no-timestamp copy expected by 'Manage UpdateRing Tags' ----
-                $canonicalCsvPath = Join-Path $outputDir "ClusterUpdateRings.csv"
-                Copy-Item -Path $csvPath -Destination $canonicalCsvPath -Force
-                Write-Host "Canonical copy created: $canonicalCsvPath (edit this one)"
-                
-                # ---- README_Instructions.txt explaining what to do with the CSV ----
-                $installedVersion = (Get-Module AzLocal.UpdateManagement | Sort-Object Version -Descending | Select-Object -First 1).Version
-                $generatedUtc = (Get-Date).ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss 'UTC'")
-                $readmePath = Join-Path $outputDir "README_Instructions.txt"
-                $readme = @'
-                ========================================================================
-                 Cluster Inventory - Next Steps
-                 AzLocal.UpdateManagement (UpdateRing tagging workflow)
-                ========================================================================
+                Invoke-AzLocalClusterInventory `
+                    -OutputDirectory       "$(Build.ArtifactStagingDirectory)" `
+                    -SubscriptionFilter    "${{ parameters.subscriptionFilter }}" `
+                    -InstalledModuleVersion "$(installedModuleVersion)"
 
-                This ZIP contains the cluster inventory generated by the
-                'Inventory Azure Local Clusters' pipeline. Use it to assign each
-                cluster to an update wave (UpdateRing tag), then commit the result
-                back into your repository so the 'Manage UpdateRing Tags' pipeline
-                can apply the tags to Azure.
-
-                ------------------------------------------------------------------------
-                FILES IN THIS ARTIFACT
-                ------------------------------------------------------------------------
-
-                  ClusterUpdateRings.csv
-                      <-- EDIT THIS FILE. Canonical name expected by the 'Manage
-                          UpdateRing Tags' pipeline's default csvFilePath parameter
-                          ('config/ClusterUpdateRings.csv').
-
-                  ClusterInventory_<timestamp>.csv
-                      Audit / historical copy of this run's inventory. Do NOT edit -
-                      keep it so you can diff future inventory runs against this
-                      snapshot.
-
-                  ClusterInventory_<timestamp>.json
-                      Machine-readable copy for dashboards / custom integrations.
-
-                  README_Instructions.txt
-                      This file.
-
-                ------------------------------------------------------------------------
-                STEP 1 - Open ClusterUpdateRings.csv in Excel
-                ------------------------------------------------------------------------
-
-                  - For each cluster row, fill in the 'UpdateRing' column with the
-                    wave name you want that cluster to belong to. Examples:
-                        Canary, Pilot, Production
-                        (or your own scheme, e.g. Wave1, Wave2, Wave3 / Dev, Test, Prod)
-                  - Leave the 'UpdateRing' column EMPTY for any cluster you do not
-                    want this run to tag - those rows will be skipped.
-                  - Save as CSV (UTF-8). Do not change other columns or column order.
-                  - Do NOT rename the file. Keep it as 'ClusterUpdateRings.csv' so
-                    the 'Manage UpdateRing Tags' pipeline's default path picks it up.
-
-                ------------------------------------------------------------------------
-                STEP 2 - Commit ClusterUpdateRings.csv into your ops repository
-                ------------------------------------------------------------------------
-
-                  - Recommended path:   config/ClusterUpdateRings.csv
-                  - Commit and push (PR review optional but recommended).
-                  - The repo path you commit it to is what you will pass as
-                    'csvFilePath' on the next run of the 'Manage UpdateRing Tags'
-                    pipeline.
-
-                ------------------------------------------------------------------------
-                STEP 3 - Run the 'Manage UpdateRing Tags' pipeline
-                ------------------------------------------------------------------------
-
-                  - Open Azure DevOps Pipelines and trigger 'Manage UpdateRing Tags'
-                    via 'Run pipeline'.
-                  - Set 'csvFilePath' to the path you committed in STEP 2
-                    (default is 'config/ClusterUpdateRings.csv').
-                  - RECOMMENDED FIRST RUN: leave 'dryRun' = true. The pipeline
-                    will preview which tags would be set/changed without modifying
-                    any Azure resources.
-                  - Once the preview looks correct, re-run with 'dryRun' = false
-                    to apply the tags. Use 'force' = true only if you need to
-                    overwrite existing UpdateRing values already set on a cluster.
-
-                ------------------------------------------------------------------------
-                DOCUMENTATION
-                ------------------------------------------------------------------------
-
-                  Pipeline examples README (online):
-                    https://github.com/NeilBird/Azure-Local/blob/main/AzLocal.UpdateManagement/Automation-Pipeline-Examples/README.md
-
-                  Module README (online):
-                    https://github.com/NeilBird/Azure-Local/blob/main/AzLocal.UpdateManagement/README.md
-
-                  Module on the PowerShell Gallery:
-                    https://www.powershellgallery.com/packages/AzLocal.UpdateManagement
-
-                Generated by AzLocal.UpdateManagement v__MODULE_VERSION__
-                Run timestamp (UTC): __TIMESTAMP__
-                ========================================================================
-                '@
-                $readme = $readme.Replace('__MODULE_VERSION__', "$installedVersion").Replace('__TIMESTAMP__', $generatedUtc)
-                Set-Content -Path $readmePath -Value $readme -Encoding ASCII
-                Write-Host "Instructions written to: $readmePath"
-                
-                # Generate summary for pipeline
-                $withTag = ($inventory | Where-Object { $_.HasUpdateRingTag -eq 'Yes' }).Count
-                $withoutTag = ($inventory | Where-Object { $_.HasUpdateRingTag -eq 'No' }).Count
-                
-                Write-Host "##vso[task.setvariable variable=TotalClusters]$($inventory.Count)"
-                Write-Host "##vso[task.setvariable variable=WithTag]$withTag"
-                Write-Host "##vso[task.setvariable variable=WithoutTag]$withoutTag"
-          
           # compute a UTC timestamp variable so every downloadable artifact name is unique per run.
           - pwsh: |
               $stamp = (Get-Date).ToUniversalTime().ToString('yyyyMMdd_HHmmss')
@@ -296,29 +137,4 @@ stages:
               PathtoPublish: '$(Build.ArtifactStagingDirectory)'
               ArtifactName: 'azlocal-step.1-cluster-inventory_$(stamp.artifactStamp)'
               publishLocation: 'Container'
-          
-          - task: PowerShell@2
-            displayName: 'Generate Summary'
-            inputs:
-              targetType: 'inline'
-              script: |
-                Write-Host "##vso[task.uploadsummary]$(Build.ArtifactStagingDirectory)/summary.md"
-                
-                $summary = @"
-                # Cluster Inventory Summary
-                
-                | Metric | Value |
-                |--------|-------|
-                | Total Clusters | $(TotalClusters) |
-                | With UpdateRing Tag | $(WithTag) |
-                | Without UpdateRing Tag | $(WithoutTag) |
-                
-                ## Next Steps
-                
-                1. Download the CSV artifact from this build
-                2. Open in Excel and set UpdateRing values for clusters
-                3. Run the "Manage UpdateRing Tags" pipeline with the updated CSV
-                "@
-                
-                $summary | Out-File "$(Build.ArtifactStagingDirectory)/summary.md" -Encoding UTF8
 

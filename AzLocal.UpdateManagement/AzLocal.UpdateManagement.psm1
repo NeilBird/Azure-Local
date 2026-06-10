@@ -320,5 +320,7 @@ Export-ModuleMember -Function @(
     # Thin-YAML pipeline foundation (v0.8.5) - install-step version banner + drift annotations + step outputs (condenses ~50-line inline block in every Step.*.yml)
     'Add-AzLocalPipelineVersionBanner',
     # Thin-YAML Step.0 (v0.8.5) - Authentication validation + subscription scope + cluster reachability (condenses ~200-line inline run: | block in Step.0_authentication-test.yml on both platforms)
-    'Export-AzLocalAuthValidationReport'
+    'Export-AzLocalAuthValidationReport',
+    # Thin-YAML Step.1 (v0.8.5) - Cluster inventory workload (condenses the inline run: | block in Step.1_inventory-clusters.yml on both platforms; writes timestamped + canonical CSV, JSON, README, and step summary)
+    'Invoke-AzLocalClusterInventory'
 )
