@@ -250,12 +250,22 @@ function Export-AzLocalAuthValidationReport {
     $clusterKql = "resources | where type =~ 'microsoft.azurestackhci/clusters' | project name, resourceGroup, subscriptionId"
     $clusterRows = @()
     try {
-        $clusterRows = @(Invoke-AzResourceGraphQuery -Query $clusterKql -First $MaxClusters -ErrorAction Stop)
+        # NOTE: Invoke-AzResourceGraphQuery uses unary-comma return (`return , $allRows.ToArray()`).
+        # Direct assignment only - never @() wrap on the call itself, or the entire row set
+        # collapses to Object[1] and `Resource Graph reachability` reports `1 cluster(s) visible`
+        # no matter the real count.
+        $clusterRows = Invoke-AzResourceGraphQuery -Query $clusterKql -First $MaxClusters -ErrorAction Stop
+        if ($null -eq $clusterRows) { $clusterRows = @() }
     }
     catch {
         Write-Warning "Cluster ARG query failed: $($_.Exception.Message)"
         $clusterRows = @()
     }
+    # v0.8.6: defensive @() on the VARIABLE (not on the helper call) - idempotent
+    # on Object[N], turns a bare scalar into Object[1]. Needed when a mock or a
+    # future helper-return shape change emits a single PSCustomObject; without
+    # this $clusterRows.Count returns $null under strict mode.
+    $clusterRows  = @($clusterRows)
     $clusterCount = $clusterRows.Count
     Write-Host "Clusters visible to the pipeline identity = $clusterCount"
     if ($clusterCount -gt 0) {

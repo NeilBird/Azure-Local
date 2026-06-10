@@ -312,11 +312,16 @@ function Export-AzLocalFleetConnectivityStatusReport {
             $sev    = & $getArbSeverity $r.ArbStatus
             $portal = "https://portal.azure.com/#@/resource$($r.ArbId)"
             # ClusterId / ClusterName may be a comma-separated list when the
-            # ARB's resource group hosts multiple HCI clusters. The [string[]]
-            # cast is required - without it, when Where-Object yields a single
-            # scalar, the if-as-expression collapses $clusterIdList to a bare
-            # [string] and indexing it returns a [char] (no Trim() method).
-            [string[]]$clusterIdList = if ($r.ClusterId) { ($r.ClusterId -split ',\s*') | Where-Object { $_ } } else { @() }
+            # ARB's resource group hosts multiple HCI clusters. The explicit
+            # if/else assignment with @() wrap on the VARIABLE is required -
+            # `[string[]]$x = if (...) { ... } else { @() }` is NOT sufficient
+            # under Set-StrictMode -Version Latest when the inner pipeline yields
+            # a single scalar (v0.8.6-fix3 - same fix pattern as Step.4's $matched).
+            if ($r.ClusterId) {
+                $clusterIdList = @(($r.ClusterId -split ',\s*') | Where-Object { $_ })
+            } else {
+                $clusterIdList = @()
+            }
             $primaryClusterId = if ($clusterIdList.Count -gt 0) { ([string]$clusterIdList[0]).Trim() } else { '' }
             $clusterPortal    = if ($primaryClusterId) { "https://portal.azure.com/#@/resource$primaryClusterId" } else { '' }
             $multiClusterNote = if ($clusterIdList.Count -gt 1) { " (multi-cluster RG; $($clusterIdList.Count) clusters)" } else { '' }

@@ -158,6 +158,7 @@ function Get-AzLocalClusterUpdateReadiness {
                     SubscriptionId = $cluster.subscriptionId
                     Tags           = $cluster.tags
                     Properties     = $cluster.properties
+                    NotFound       = $false
                 }
             }
         }
@@ -197,6 +198,7 @@ function Get-AzLocalClusterUpdateReadiness {
                     SubscriptionId = $cluster.subscriptionId
                     Tags           = $cluster.tags
                     Properties     = $cluster.properties
+                    NotFound       = $false
                 }
             }
             else {
@@ -249,6 +251,7 @@ function Get-AzLocalClusterUpdateReadiness {
                     SubscriptionId = $cluster.subscriptionId
                     Tags           = $cluster.tags
                     Properties     = $cluster.properties
+                    NotFound       = $false
                 }
             }
             else {

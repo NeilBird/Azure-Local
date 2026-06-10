@@ -1136,7 +1136,14 @@ resources
                 $status = if ($coveredCount -eq 0) { 'Uncovered' }
                           elseif ($coveredCount -eq $segmentStatuses.Count) { 'Covered' }
                           else { 'PartiallyCovered' }
-                $allMatched = @($segmentStatuses.MatchingCrons | Select-Object -Unique)
+                # v0.8.6-fix3: explicitly enumerate with ForEach-Object instead of
+                # relying on `$segmentStatuses.MatchingCrons` member-enumeration.
+                # Under Set-StrictMode -Version Latest, even with .Count > 0, the
+                # array-level `.MatchingCrons` access throws PropertyNotFound
+                # ("The property 'MatchingCrons' cannot be found on this object").
+                $allMatched = if ($segmentStatuses.Count -gt 0) {
+                    @($segmentStatuses | ForEach-Object { $_.MatchingCrons } | Select-Object -Unique)
+                } else { @() }
                 $allRequired = ($segmentStatuses | ForEach-Object { $_.RequiredCron }) -join '; '
                 $issue = switch ($status) {
                     'Covered'          { '' }

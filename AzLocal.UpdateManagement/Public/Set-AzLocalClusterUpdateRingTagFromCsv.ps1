@@ -221,6 +221,14 @@ function Set-AzLocalClusterUpdateRingTagFromCsv {
 
     $results = @(Set-AzLocalClusterUpdateRingTag @applyParams)
 
+    # Defence-in-depth: filter to only per-cluster result objects so any stray
+    # Format-Table formatter objects (header / row / footer wrappers) from
+    # older module versions cannot inflate $results.Count. A genuine result row
+    # always exposes a ClusterName string property; formatter objects do not.
+    $results = @($results | Where-Object {
+        $_ -and $_.PSObject.Properties['ClusterName'] -and $_.ClusterName -is [string]
+    })
+
     # ----- 5. JSON sidecar ---------------------------------------------
     $resultsJsonPath = Join-Path -Path $OutputDirectory -ChildPath $ResultsJsonFileName
     if ($results.Count -gt 0) {
@@ -287,22 +295,57 @@ function Set-AzLocalClusterUpdateRingTagFromCsv {
     }
     [void]$sb.AppendLine(("| Failed                   | {0} |" -f $failed))
     if ($total -gt 0) {
-        [void]$sb.AppendLine('')
-        [void]$sb.AppendLine(("<details><summary>Per-cluster results ({0} rows)</summary>" -f $total))
-        [void]$sb.AppendLine('')
-        [void]$sb.AppendLine('| Cluster | Action | Previous | New | Status | Message |')
-        [void]$sb.AppendLine('|---------|--------|----------|-----|--------|---------|')
-        foreach ($r in $results) {
-            $cn  = ([string]$r.ClusterName)      -replace '\|','\|'
-            $act = ([string]$r.Action)           -replace '\|','\|'
-            $pv  = ([string]$r.PreviousTagValue) -replace '\|','\|'
-            $nv  = ([string]$r.NewTagValue)      -replace '\|','\|'
-            $st  = ([string]$r.Status)           -replace '\|','\|'
-            $msg = (([string]$r.Message)         -replace '\|','\|') -replace '\r?\n',' '
-            [void]$sb.AppendLine(("| {0} | {1} | {2} | {3} | {4} | {5} |" -f $cn, $act, $pv, $nv, $st, $msg))
+        # Bucket the per-cluster results so the summary UI is easier to scan:
+        #   - "Tag Updates Applied" : rows that actually changed at least one
+        #     managed tag (Status=Success or WhatIf).
+        #   - "No Tag Updates (no-op)" : steady-state rows where every managed
+        #     tag already matched desired state (Status=AlreadyInSync).
+        #   - "Skipped / Failed" : rows that need operator attention.
+        $appliedRows = @($results | Where-Object { $_.Status -eq 'Success' -or $_.Status -eq 'WhatIf' })
+        $noopRows    = @($results | Where-Object { $_.Status -eq 'AlreadyInSync' })
+        $issueRows   = @($results | Where-Object { $_.Status -eq 'Skipped' -or $_.Status -eq 'Failed' })
+
+        $renderRows = {
+            param($rows)
+            [void]$sb.AppendLine('| Cluster | Action | Previous | New | Status | Message |')
+            [void]$sb.AppendLine('|---------|--------|----------|-----|--------|---------|')
+            foreach ($r in $rows) {
+                $cn  = ([string]$r.ClusterName)      -replace '\|','\|'
+                $act = ([string]$r.Action)           -replace '\|','\|'
+                $pv  = ([string]$r.PreviousTagValue) -replace '\|','\|'
+                $nv  = ([string]$r.NewTagValue)      -replace '\|','\|'
+                $st  = ([string]$r.Status)           -replace '\|','\|'
+                $msg = (([string]$r.Message)         -replace '\|','\|') -replace '\r?\n',' '
+                [void]$sb.AppendLine(("| {0} | {1} | {2} | {3} | {4} | {5} |" -f $cn, $act, $pv, $nv, $st, $msg))
+            }
         }
-        [void]$sb.AppendLine('')
-        [void]$sb.AppendLine('</details>')
+
+        if ($appliedRows.Count -gt 0) {
+            [void]$sb.AppendLine('')
+            [void]$sb.AppendLine(("<details open><summary>Clusters with Tag Updates Applied ({0} rows)</summary>" -f $appliedRows.Count))
+            [void]$sb.AppendLine('')
+            & $renderRows $appliedRows
+            [void]$sb.AppendLine('')
+            [void]$sb.AppendLine('</details>')
+        }
+
+        if ($issueRows.Count -gt 0) {
+            [void]$sb.AppendLine('')
+            [void]$sb.AppendLine(("<details open><summary>Clusters Skipped or Failed ({0} rows)</summary>" -f $issueRows.Count))
+            [void]$sb.AppendLine('')
+            & $renderRows $issueRows
+            [void]$sb.AppendLine('')
+            [void]$sb.AppendLine('</details>')
+        }
+
+        if ($noopRows.Count -gt 0) {
+            [void]$sb.AppendLine('')
+            [void]$sb.AppendLine(("<details><summary>Clusters with No Tag Updates (no-op) ({0} rows)</summary>" -f $noopRows.Count))
+            [void]$sb.AppendLine('')
+            & $renderRows $noopRows
+            [void]$sb.AppendLine('')
+            [void]$sb.AppendLine('</details>')
+        }
     }
     if ($WhatIfPreference) {
         [void]$sb.AppendLine('')
