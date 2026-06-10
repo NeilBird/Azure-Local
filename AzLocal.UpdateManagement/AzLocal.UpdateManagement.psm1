@@ -332,5 +332,7 @@ Export-ModuleMember -Function @(
     # Thin-YAML Step.5 (v0.8.5) - Pre-flight Update Readiness Assessment (readiness + blocking-health JUnit + combined JUnit + 8-section markdown + 2 step outputs)
     'Export-AzLocalClusterUpdateReadinessReport',
     # Thin-YAML Step.4 (v0.8.5) - Fleet Connectivity Status (Cluster/Arc/NIC/ARB severity classification + JUnit + markdown + 12 step outputs)
-    'Export-AzLocalFleetConnectivityStatusReport'
+    'Export-AzLocalFleetConnectivityStatusReport',
+    # Thin-YAML Step.3 (v0.8.5) - Apply-Updates Schedule Coverage Audit (Audit + Matrix + Recommend views + 2-suite JUnit + allow-list section + always-on cycle calendar + 12 step outputs)
+    'Export-AzLocalApplyUpdatesScheduleAudit'
 )

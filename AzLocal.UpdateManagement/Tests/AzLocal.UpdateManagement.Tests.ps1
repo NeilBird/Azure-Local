@@ -195,8 +195,25 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $content | Should -Not -Match '\$data\.ClusterRows' -Because "Step.4 $Platform must not still wire raw cmdlet rowsets into the yml - the cmdlet emits step outputs instead (v0.8.5)"
         }
 
-        It 'Should export exactly 45 functions' {
-            $script:ModuleInfo.ExportedFunctions.Count | Should -Be 47
+        It 'Step.3 pipeline templates call Export-AzLocalApplyUpdatesScheduleAudit (v0.8.5 thin-YAML)' -ForEach @(
+            @{ Platform = 'github-actions'; Path = '..\Automation-Pipeline-Examples\github-actions\Step.3_apply-updates-schedule-audit.yml' }
+            @{ Platform = 'azure-devops';   Path = '..\Automation-Pipeline-Examples\azure-devops\Step.3_apply-updates-schedule-audit.yml' }
+        ) {
+            $yamlPath = Join-Path -Path $PSScriptRoot -ChildPath $Path
+            Test-Path $yamlPath | Should -BeTrue -Because "Step.3 template for $Platform must exist at $yamlPath"
+            $content = Get-Content -Path $yamlPath -Raw
+
+            # v0.8.5 thin-YAML guard: the ~220-line inline 'Run Schedule
+            # Coverage Audit' block + ~210-line inline 'Create Schedule
+            # Coverage Summary' block were replaced by a single call to
+            # Export-AzLocalApplyUpdatesScheduleAudit.
+            $content | Should -Match 'Export-AzLocalApplyUpdatesScheduleAudit' -Because "Step.3 $Platform must call the v0.8.5 thin-YAML cmdlet"
+            $content | Should -Not -Match 'Test-AzLocalApplyUpdatesScheduleCoverage[^\.]+-View\s+Audit' -Because "Step.3 $Platform must not call the advisor inline - the cmdlet does all 3 views internally (v0.8.5)"
+            $content | Should -Not -Match 'function\s+Convert-ScheduleRow' -Because "Step.3 $Platform must not contain inline schedule-row helpers (removed in v0.8.5)"
+        }
+
+        It 'Should export exactly 48 functions' {
+            $script:ModuleInfo.ExportedFunctions.Count | Should -Be 48
         }
 
         It 'Should export the expected functions' {
@@ -272,7 +289,9 @@ Describe 'Module: AzLocal.UpdateManagement' {
                 # Thin-YAML Step.5 (v0.8.5) - Pre-flight Update Readiness Assessment (readiness + blocking-health JUnit + combined JUnit + 8-section markdown + 2 step outputs)
                 'Export-AzLocalClusterUpdateReadinessReport',
                 # Thin-YAML Step.4 (v0.8.5) - Fleet Connectivity Status (Cluster/Arc/NIC/ARB severity classification + JUnit + markdown + 12 step outputs)
-                'Export-AzLocalFleetConnectivityStatusReport'
+                'Export-AzLocalFleetConnectivityStatusReport',
+                # Thin-YAML Step.3 (v0.8.5) - Apply-Updates Schedule Coverage Audit (Audit + Matrix + Recommend views + 2-suite JUnit + allow-list section + always-on cycle calendar + 12 step outputs)
+                'Export-AzLocalApplyUpdatesScheduleAudit'
             )
             
             foreach ($func in $expectedFunctions) {
@@ -7990,38 +8009,24 @@ Describe 'v0.7.66 Pipeline update_ring inputs document multi-value and wildcard 
 #region v0.7.67 CI/CD parity + doc-drift regression suite
 
 Describe 'v0.7.67 schedule-audit zero-row JUnit parity' {
-    # v0.7.67 regression guard: Step.3_apply-updates-schedule-audit.yml previously
-    # behaved differently across CI platforms when the fleet had no tagged
-    # clusters. Azure DevOps emitted a passing testcase ("No tagged clusters
-    # found - nothing to audit") so the run rendered as passed (1/1) in the
-    # Tests tab. GitHub Actions wrote an EMPTY <testsuite>, which
-    # dorny/test-reporter surfaced as "no tests found" - indistinguishable
-    # from a broken reporter step. v0.7.67 brings the GH workflow into parity
-    # by writing the same passing testcase for the zero-row case. This test
-    # guards both files so neither side regresses.
+    # v0.7.67 regression guard: when the fleet has no tagged clusters, the
+    # schedule-audit cmdlet must emit a passing zero-row testcase named
+    # 'No tagged clusters found - nothing to audit' so dorny/test-reporter
+    # (GH) and Azure DevOps Test Results render a clean pass instead of
+    # 'no tests found'. v0.8.5 thin-YAML refactor moved the wiring from
+    # inline YAML into the Public cmdlet Export-AzLocalApplyUpdatesScheduleAudit;
+    # the cmdlet calls New-AzLocalPipelineJUnitXml with the suites array that
+    # carries the empty-placeholder testcase. Both CI platforms now share the
+    # same cmdlet so a single assertion against the cmdlet guards both sides.
     BeforeAll {
-        $script:examplesRoot = (Resolve-Path -Path (Join-Path $PSScriptRoot '..\Automation-Pipeline-Examples')).Path
+        $script:cmdletPath = (Resolve-Path -Path (Join-Path $PSScriptRoot '..\Public\Export-AzLocalApplyUpdatesScheduleAudit.ps1')).Path
     }
 
-    It 'GitHub Actions schedule-audit YAML emits the zero-row testcase' {
-        $yml = Join-Path $script:examplesRoot 'github-actions\Step.3_apply-updates-schedule-audit.yml'
-        Test-Path -LiteralPath $yml | Should -BeTrue -Because "the GH schedule-audit YAML should exist at $yml"
-        $content = Get-Content -LiteralPath $yml -Raw
-        # v0.7.70: zero-row JUnit emission was refactored into a Write-Suite helper
-        # with -EmptyPlaceholderName. The semantic guarantee (zero-row testcase is
-        # emitted with this exact name) is preserved; the literal <testcase> string
-        # is now built at runtime from the helper template.
-        $content | Should -Match "-EmptyPlaceholderName 'No tagged clusters found - nothing to audit'" -Because 'v0.7.67/v0.7.70 wire the zero-row JUnit testcase via Write-Suite -EmptyPlaceholderName in the GH schedule-audit YAML'
-        $content | Should -Match 'classname=`"ScheduleCoverage`" name=`"\{0\}`"' -Because 'the Write-Suite helper must build the testcase line with classname="ScheduleCoverage" and a {0} placeholder for the name'
-    }
-
-    It 'Azure DevOps schedule-audit YAML still emits the zero-row testcase' {
-        $yml = Join-Path $script:examplesRoot 'azure-devops\Step.3_apply-updates-schedule-audit.yml'
-        Test-Path -LiteralPath $yml | Should -BeTrue -Because "the ADO schedule-audit YAML should exist at $yml"
-        $content = Get-Content -LiteralPath $yml -Raw
-        # See GH note above - same refactor applies.
-        $content | Should -Match "-EmptyPlaceholderName 'No tagged clusters found - nothing to audit'" -Because 'the ADO schedule-audit YAML must wire the zero-row JUnit testcase via Write-Suite -EmptyPlaceholderName since v0.7.0; v0.7.70 must not regress it'
-        $content | Should -Match 'classname=`"ScheduleCoverage`" name=`"\{0\}`"' -Because 'the Write-Suite helper must build the testcase line with classname="ScheduleCoverage" and a {0} placeholder for the name'
+    It 'Schedule-audit cmdlet wires the zero-row testcase with the canonical name' {
+        Test-Path -LiteralPath $script:cmdletPath | Should -BeTrue -Because "the Step.3 cmdlet should exist at $script:cmdletPath"
+        $content = Get-Content -LiteralPath $script:cmdletPath -Raw
+        $content | Should -Match "Name\s*=\s*'No tagged clusters found - nothing to audit'" -Because 'v0.8.5 must keep the zero-row placeholder testcase Name so both GH and ADO render the same passing case when no clusters carry UpdateStartWindow tags'
+        $content | Should -Match "ClassName\s*=\s*'ScheduleCoverage'" -Because 'the placeholder testcase must declare classname=ScheduleCoverage so test-reporter groups it under the Schedule (ring diff) suite'
     }
 }
 
@@ -8057,37 +8062,25 @@ Describe 'v0.7.67 doc drift - old UpdateRing regex' {
 }
 
 Describe 'v0.7.67 schedule-audit summary - cron fixes first when issues exist' {
-    # Phase 4.3: when Uncovered / PartiallyCovered / MalformedTag / UnparseableCron > 0,
-    # the schedule-audit pipelines must surface the recommended cron block ABOVE the
-    # detail table so operators can act without scrolling. Guardrail asserts that both
-    # YAMLs carry the conditional structure (hasIssues + 'Action required' header).
-    $moduleRoot = Split-Path $PSScriptRoot -Parent
-    $yamlCases = @(
-        @{
-            Platform = 'github-actions'
-            YamlPath = (Join-Path $moduleRoot 'Automation-Pipeline-Examples\github-actions\Step.3_apply-updates-schedule-audit.yml')
-        }
-        @{
-            Platform = 'azure-devops'
-            YamlPath = (Join-Path $moduleRoot 'Automation-Pipeline-Examples\azure-devops\Step.3_apply-updates-schedule-audit.yml')
-        }
-    )
-
-    It '[<Platform>] schedule-audit YAML emits recommendation before audit detail when issues exist' -ForEach $yamlCases {
-        Test-Path $YamlPath | Should -BeTrue -Because "expected schedule-audit YAML at $YamlPath"
-        $content = Get-Content -Path $YamlPath -Raw
-        $content | Should -Match '\$hasIssues\s*=\s*\(\(\[int\]\$uncovered\)' -Because 'Phase 4.3 / v0.7.70 conditional must compute $hasIssues from the issue counts.'
-        # v0.7.70: the 'Action required - ...' header literals moved into the
-        # -View Recommend cmdlet output ($reco), so the YAML no longer contains
-        # them verbatim. The structural guarantee (recommendation BEFORE detail
-        # when $hasIssues) is preserved by the 'if ($hasIssues -and $reco) { $md = $reco + $md }'
-        # block which prepends $reco to the summary markdown.
-        $content | Should -Match 'if\s*\(\s*\$hasIssues\s+-and\s+\$reco\s*\)' -Because 'v0.7.70 must keep the hasIssues+reco conditional so the Recommend block is prepended above the audit detail table.'
-        $idxRecoBlock      = $content.IndexOf('if ($hasIssues -and $reco)')
-        $idxAuditDetail    = $content.IndexOf('### Audit Detail')
-        $idxRecoBlock      | Should -BeGreaterThan -1
-        $idxAuditDetail    | Should -BeGreaterThan -1
-        $idxRecoBlock      | Should -BeLessThan $idxAuditDetail -Because 'When issues exist, the conditional that prepends the Recommend output must appear earlier in the summary script than the detail table emission.'
+    # Phase 4.3 / v0.7.70 guarantee: when Uncovered / PartiallyCovered /
+    # MalformedTag / UnparseableCron > 0, the schedule-audit pipelines must
+    # surface the recommended cron block ABOVE the detail table so operators
+    # can act without scrolling. v0.8.5 thin-YAML refactor moved the
+    # hasIssues + recommendation-prepend logic into the Public cmdlet
+    # Export-AzLocalApplyUpdatesScheduleAudit. This guardrail asserts the
+    # cmdlet computes $hasIssues, conditionally prepends the Recommend output,
+    # and that the prepend block appears BEFORE the audit detail emission.
+    It 'Schedule-audit cmdlet prepends the recommendation above audit detail when issues exist' {
+        $cmdletPath = (Resolve-Path -Path (Join-Path $PSScriptRoot '..\Public\Export-AzLocalApplyUpdatesScheduleAudit.ps1')).Path
+        Test-Path -LiteralPath $cmdletPath | Should -BeTrue -Because "the Step.3 cmdlet should exist at $cmdletPath"
+        $content = Get-Content -LiteralPath $cmdletPath -Raw
+        $content | Should -Match '\$hasIssues\s*=\s*\(\$uncovered\.Count' -Because 'v0.8.5 must compute $hasIssues from the issue counts so the recommendation gate stays driven by uncovered/partial/malformed/unparseable totals.'
+        $content | Should -Match 'if\s*\(\s*\$hasIssues\s+-and\s+\$recoContent\s*\)' -Because 'v0.8.5 must keep the hasIssues+recoContent conditional so the Recommend block is prepended above the audit detail table.'
+        $idxRecoBlock   = $content.IndexOf('if ($hasIssues -and $recoContent)')
+        $idxAuditDetail = $content.IndexOf('### Audit Detail')
+        $idxRecoBlock   | Should -BeGreaterThan -1
+        $idxAuditDetail | Should -BeGreaterThan -1
+        $idxRecoBlock   | Should -BeLessThan $idxAuditDetail -Because 'The conditional that prepends the Recommend output must appear earlier in the cmdlet body than the detail table emission so the rendered markdown puts the cron fix at the top.'
     }
 }
 
@@ -9496,22 +9489,19 @@ schedule:
 
 Describe 'Step.3 pipeline scaffolds - v0.7.70 dual JUnit testsuite emission' {
 
-    Context 'AS7 - YAML scaffolds reference both Schedule and Cron suite names' {
+    Context 'AS7 - Step.3 cmdlet references both Schedule and Cron suite names' {
 
-        It 'Step.3 GitHub Actions YAML contains both "Schedule (ring diff)" and "Cron coverage" suite names' {
-            $ghYaml = Join-Path $PSScriptRoot '..\Automation-Pipeline-Examples\github-actions\Step.3_apply-updates-schedule-audit.yml'
-            Test-Path $ghYaml | Should -BeTrue
-            $raw = Get-Content -Raw -LiteralPath $ghYaml
-            $raw | Should -Match 'Schedule \(ring diff\)'
-            $raw | Should -Match 'Cron coverage'
-        }
-
-        It 'Step.3 Azure DevOps YAML contains both "Schedule (ring diff)" and "Cron coverage" suite names' {
-            $adoYaml = Join-Path $PSScriptRoot '..\Automation-Pipeline-Examples\azure-devops\Step.3_apply-updates-schedule-audit.yml'
-            Test-Path $adoYaml | Should -BeTrue
-            $raw = Get-Content -Raw -LiteralPath $adoYaml
-            $raw | Should -Match 'Schedule \(ring diff\)'
-            $raw | Should -Match 'Cron coverage'
+        # v0.8.5 thin-YAML refactor moved the dual <testsuite> emission from
+        # the inline YAML into the Public cmdlet
+        # Export-AzLocalApplyUpdatesScheduleAudit, which builds a $Suites array
+        # and hands it to New-AzLocalPipelineJUnitXml. The cmdlet is the single
+        # source for both GH and ADO platforms so one assertion guards both.
+        It 'Step.3 cmdlet declares both "Schedule (ring diff)" and "Cron coverage" suite names' {
+            $cmdletPath = (Resolve-Path -Path (Join-Path $PSScriptRoot '..\Public\Export-AzLocalApplyUpdatesScheduleAudit.ps1')).Path
+            Test-Path -LiteralPath $cmdletPath | Should -BeTrue -Because "the Step.3 cmdlet should exist at $cmdletPath"
+            $raw = Get-Content -Raw -LiteralPath $cmdletPath
+            $raw | Should -Match 'Schedule \(ring diff\)' -Because 'the cmdlet must emit a Schedule (ring diff) JUnit suite for the ring-file two-way diff results'
+            $raw | Should -Match 'Cron coverage' -Because 'the cmdlet must emit a Cron coverage JUnit suite for the (UpdateRing, UpdateStartWindow) coverage results'
         }
     }
 }
@@ -9526,18 +9516,20 @@ Describe 'Step.3 pipeline scaffolds - v0.7.70 dual JUnit testsuite emission' {
 
 Describe 'Step.3 pipeline scaffolds - v0.8.2 Allow-list section shape' {
 
-    Context 'YAML emits the trimmed Allow-list subsection (no verbose Tip / 3-row example block)' {
+    Context 'Step.3 cmdlet emits the trimmed Allow-list subsection (no verbose Tip / 3-row example block)' {
 
-        It '[<Platform>] emits the reframed Optional pin-a-ring subsection and drops the verbose Tip block' -ForEach @(
-            @{ Platform='GitHub'; YamlPath=(Join-Path $PSScriptRoot '..\Automation-Pipeline-Examples\github-actions\Step.3_apply-updates-schedule-audit.yml') }
-            @{ Platform='ADO';    YamlPath=(Join-Path $PSScriptRoot '..\Automation-Pipeline-Examples\azure-devops\Step.3_apply-updates-schedule-audit.yml') }
-        ) {
-            Test-Path $YamlPath | Should -BeTrue
-            $raw = Get-Content -Raw -LiteralPath $YamlPath
+        # v0.8.5 thin-YAML refactor moved the allow-list markdown emission
+        # from inline YAML into the Public cmdlet. Both GH and ADO ymls now
+        # call the same cmdlet, so the section-shape guarantee is asserted
+        # once against the cmdlet source.
+        It 'Step.3 cmdlet emits the reframed Optional pin-a-ring subsection and drops the verbose Tip block' {
+            $cmdletPath = (Resolve-Path -Path (Join-Path $PSScriptRoot '..\Public\Export-AzLocalApplyUpdatesScheduleAudit.ps1')).Path
+            Test-Path -LiteralPath $cmdletPath | Should -BeTrue -Because "the Step.3 cmdlet should exist at $cmdletPath"
+            $raw = Get-Content -Raw -LiteralPath $cmdletPath
             # v0.8.3 shape: heading is explicitly scoped to the OPTIONAL pin
             # use case (the v0.8.2 heading sounded like a general 'fix this
             # file' instruction even though it only covers allowedUpdateVersions).
-            $raw | Should -Match '### Optional - pin a ring to a specific update in ``\$schedulePath``'
+            $raw | Should -Match '### Optional - pin a ring to a specific update in'
             $raw | Should -Match 'inherit the top-level allow-list'
             $raw | Should -Match 'install the latest Ready update as soon as it is available'
             # v0.8.3: explicitly disclaim that this is NOT the cron-coverage or ring-diff fix.
@@ -10208,8 +10200,8 @@ Describe 'Function: Get-AzLocalFleetHealthOverview - v0.7.70 (ARG-first fleet he
             $cmd.CommandType | Should -Be 'Function'
         }
 
-        It 'BS7: Module exports exactly 45 functions (was 44 after Step.7 thin-YAML port; Step.8 thin-YAML port adds Export-AzLocalFleetUpdateStatusReport)' {
-            (Get-Module AzLocal.UpdateManagement).ExportedFunctions.Count | Should -Be 47
+        It 'BS7: Module exports exactly 48 functions (was 47 after Step.4 thin-YAML port; Step.3 thin-YAML port adds Export-AzLocalApplyUpdatesScheduleAudit)' {
+            (Get-Module AzLocal.UpdateManagement).ExportedFunctions.Count | Should -Be 48
         }
     }
 
@@ -15167,3 +15159,398 @@ Describe 'Thin-YAML Step.4: Export-AzLocalFleetConnectivityStatusReport' {
     }
 }
 #endregion v0.8.5: Export-AzLocalFleetConnectivityStatusReport
+
+#region v0.8.5: Export-AzLocalApplyUpdatesScheduleAudit
+Describe 'Thin-YAML Step.3: Export-AzLocalApplyUpdatesScheduleAudit' {
+
+    BeforeAll {
+        # Helper builders. Defined inside BeforeAll with script: scope so
+        # they are visible from It bodies (Pester v5 discovery/run split).
+        function script:New-S3AuditRow {
+            param(
+                [string]$Status            = 'Covered',
+                [string]$Section           = 'Cron',
+                [string]$UpdateRing        = 'Wave1',
+                [string]$UpdateStartWindow = 'Sat 01:00 +60',
+                [int]   $ClusterCount      = 1,
+                [string]$Issue             = '',
+                [string]$Recommendation    = '',
+                [string]$RequiredCronUTC   = '0 1 * * 6'
+            )
+            [pscustomobject]@{
+                Status            = $Status
+                Section           = $Section
+                UpdateRing        = $UpdateRing
+                UpdateStartWindow = $UpdateStartWindow
+                ClusterCount      = $ClusterCount
+                Issue             = $Issue
+                Recommendation    = $Recommendation
+                RequiredCronUTC   = $RequiredCronUTC
+            }
+        }
+        function script:New-S3ScheduleV2 {
+            [pscustomobject]@{
+                SchemaVersion         = 2
+                CycleWeeks            = 4
+                AllowedUpdateVersions = @('Latest')
+                Schedule              = @(
+                    [pscustomobject]@{
+                        weeksInCycle               = '1'
+                        daysOfWeek                 = 'Sat'
+                        rings                      = 'Wave1'
+                        AllowedUpdateVersionsParsed = @()
+                    }
+                )
+            }
+        }
+        function script:New-S3ScheduleV1 {
+            [pscustomobject]@{
+                SchemaVersion = 1
+                CycleWeeks    = 4
+                Schedule      = @(
+                    [pscustomobject]@{
+                        weeksInCycle = '1'
+                        daysOfWeek   = 'Sat'
+                        rings        = 'Wave1'
+                    }
+                )
+            }
+        }
+    }
+
+    BeforeEach {
+        $script:_s3_savedGhActions = $env:GITHUB_ACTIONS
+        $script:_s3_savedTfBuild   = $env:TF_BUILD
+        $script:_s3_savedGhOutput  = $env:GITHUB_OUTPUT
+        $script:_s3_savedGhSummary = $env:GITHUB_STEP_SUMMARY
+        $script:_s3_savedAdoStage  = $env:BUILD_ARTIFACTSTAGINGDIRECTORY
+        Remove-Item Env:\GITHUB_ACTIONS                 -ErrorAction SilentlyContinue
+        Remove-Item Env:\TF_BUILD                       -ErrorAction SilentlyContinue
+        Remove-Item Env:\GITHUB_OUTPUT                  -ErrorAction SilentlyContinue
+        Remove-Item Env:\GITHUB_STEP_SUMMARY            -ErrorAction SilentlyContinue
+        Remove-Item Env:\BUILD_ARTIFACTSTAGINGDIRECTORY -ErrorAction SilentlyContinue
+
+        $script:_s3_outDir        = Join-Path -Path $env:TEMP -ChildPath ("s3-out-{0}"           -f ([Guid]::NewGuid()))
+        $script:_s3_ghOutputFile  = Join-Path -Path $env:TEMP -ChildPath ("s3-gh-output-{0}"     -f ([Guid]::NewGuid()))
+        $script:_s3_ghSummaryFile = Join-Path -Path $env:TEMP -ChildPath ("s3-gh-summary-{0}.md" -f ([Guid]::NewGuid()))
+        $script:_s3_pipelineDir   = Join-Path -Path $env:TEMP -ChildPath ("s3-pipeline-{0}"      -f ([Guid]::NewGuid()))
+        $script:_s3_scheduleFile  = Join-Path -Path $env:TEMP -ChildPath ("s3-schedule-{0}.yml"  -f ([Guid]::NewGuid()))
+        New-Item -ItemType Directory -Path $script:_s3_outDir        -Force | Out-Null
+        New-Item -ItemType Directory -Path $script:_s3_pipelineDir   -Force | Out-Null
+        New-Item -ItemType File      -Path $script:_s3_ghOutputFile  -Force | Out-Null
+        New-Item -ItemType File      -Path $script:_s3_ghSummaryFile -Force | Out-Null
+        # Cmdlet only Test-Path the SchedulePath; the mocked Get-...Config / CycleCalendar do the parsing.
+        Set-Content -LiteralPath $script:_s3_scheduleFile -Value 'schemaVersion: 2' -Encoding ASCII
+    }
+
+    AfterEach {
+        if ($null -ne $script:_s3_savedGhActions) { $env:GITHUB_ACTIONS                 = $script:_s3_savedGhActions } else { Remove-Item Env:\GITHUB_ACTIONS                 -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_s3_savedTfBuild)   { $env:TF_BUILD                       = $script:_s3_savedTfBuild   } else { Remove-Item Env:\TF_BUILD                       -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_s3_savedGhOutput)  { $env:GITHUB_OUTPUT                  = $script:_s3_savedGhOutput  } else { Remove-Item Env:\GITHUB_OUTPUT                  -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_s3_savedGhSummary) { $env:GITHUB_STEP_SUMMARY            = $script:_s3_savedGhSummary } else { Remove-Item Env:\GITHUB_STEP_SUMMARY            -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_s3_savedAdoStage)  { $env:BUILD_ARTIFACTSTAGINGDIRECTORY = $script:_s3_savedAdoStage  } else { Remove-Item Env:\BUILD_ARTIFACTSTAGINGDIRECTORY -ErrorAction SilentlyContinue }
+        foreach ($p in @($script:_s3_ghOutputFile, $script:_s3_ghSummaryFile, $script:_s3_scheduleFile)) {
+            if ($p -and (Test-Path -LiteralPath $p)) { Remove-Item -LiteralPath $p -Force -ErrorAction SilentlyContinue }
+        }
+        foreach ($d in @($script:_s3_outDir, $script:_s3_pipelineDir)) {
+            if ($d -and (Test-Path -LiteralPath $d)) { Remove-Item -LiteralPath $d -Recurse -Force -ErrorAction SilentlyContinue }
+        }
+    }
+
+    It 'Clean fleet WITH -SchedulePath: emits 12 outputs, 2-suite passing JUnit, and ALWAYS renders the Cycle Calendar (v0.8.4 regression guard)' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s3_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s3_ghSummaryFile
+        $env:_S3_OUTDIR          = $script:_s3_outDir
+        $env:_S3_PIPELINEDIR     = $script:_s3_pipelineDir
+        $env:_S3_SCHEDULE        = $script:_s3_scheduleFile
+
+        $global:_s3_auditRows = @( (New-S3AuditRow -Status 'Covered') )
+        $global:_s3_schedule  = New-S3ScheduleV2
+
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Test-AzLocalApplyUpdatesScheduleCoverage { $global:_s3_auditRows } -ParameterFilter { $View -eq 'Audit' }
+            Mock Test-AzLocalApplyUpdatesScheduleCoverage { }                       -ParameterFilter { $View -ne 'Audit' }
+            Mock Get-AzLocalApplyUpdatesScheduleConfig         { $global:_s3_schedule }
+            Mock Get-AzLocalApplyUpdatesScheduleCycleCalendar  { "### Cycle Calendar`n`n*(synthetic calendar markdown)*" }
+            Export-AzLocalApplyUpdatesScheduleAudit `
+                -PipelineYamlPath $env:_S3_PIPELINEDIR `
+                -SchedulePath     $env:_S3_SCHEDULE `
+                -OutputDirectory  $env:_S3_OUTDIR `
+                -PassThru
+        }
+
+        $result.TotalRows    | Should -Be 1
+        $result.Covered      | Should -Be 1
+        $result.Uncovered    | Should -Be 0
+        $result.HaveSchedule | Should -BeTrue
+        # Outputs
+        $out = Get-Content -LiteralPath $script:_s3_ghOutputFile -Raw
+        $out | Should -Match 'total_rows=1'
+        $out | Should -Match 'covered=1'
+        $out | Should -Match 'uncovered=0'
+        $out | Should -Match 'have_schedule=True'
+        $out | Should -Match 'schedule_path='
+        # JUnit: clean fleet -> both suites present (Schedule + Cron) with synthetic passing test cases
+        Test-Path -LiteralPath $result.JUnitXmlPath | Should -BeTrue
+        $xml = Get-Content -LiteralPath $result.JUnitXmlPath -Raw
+        $xml | Should -Match 'Apply-Updates Schedule Coverage - Schedule \(ring diff\)'
+        $xml | Should -Match 'Apply-Updates Schedule Coverage - Cron coverage'
+        $xml | Should -Not -Match '<failure'
+        # Calendar MUST render on clean fleet when -SchedulePath supplied (the v0.8.4 regression guard)
+        $summary = Get-Content -LiteralPath $script:_s3_ghSummaryFile -Raw
+        $summary | Should -Match 'Cycle Calendar'
+        $summary | Should -Match 'synthetic calendar markdown'
+    }
+
+    It 'Uncovered cron row produces a <failure> in the Cron coverage suite + non-zero uncovered output' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s3_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s3_ghSummaryFile
+        $env:_S3_OUTDIR          = $script:_s3_outDir
+        $env:_S3_PIPELINEDIR     = $script:_s3_pipelineDir
+
+        $global:_s3_auditRows = @( (New-S3AuditRow -Status 'Uncovered' -Issue 'No cron entry matches Sat 01:00 +60' -Recommendation 'Add 55 0 * * 6 to Step.6_apply-updates.yml') )
+
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Test-AzLocalApplyUpdatesScheduleCoverage { $global:_s3_auditRows } -ParameterFilter { $View -eq 'Audit' }
+            Mock Test-AzLocalApplyUpdatesScheduleCoverage { }                       -ParameterFilter { $View -ne 'Audit' }
+            Export-AzLocalApplyUpdatesScheduleAudit `
+                -PipelineYamlPath $env:_S3_PIPELINEDIR `
+                -OutputDirectory  $env:_S3_OUTDIR `
+                -PassThru
+        }
+        $result.Uncovered | Should -Be 1
+        $xml = Get-Content -LiteralPath $result.JUnitXmlPath -Raw
+        $xml | Should -Match '<testsuite name="Apply-Updates Schedule Coverage - Cron coverage"'
+        $xml | Should -Match '<failure[^>]*type="Uncovered"'
+        $out = Get-Content -LiteralPath $script:_s3_ghOutputFile -Raw
+        $out | Should -Match 'uncovered=1'
+    }
+
+    It 'PartiallyCovered status increments the partial output and emits a <failure>' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s3_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s3_ghSummaryFile
+        $env:_S3_OUTDIR          = $script:_s3_outDir
+        $env:_S3_PIPELINEDIR     = $script:_s3_pipelineDir
+
+        $global:_s3_auditRows = @( (New-S3AuditRow -Status 'PartiallyCovered') )
+
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Test-AzLocalApplyUpdatesScheduleCoverage { $global:_s3_auditRows } -ParameterFilter { $View -eq 'Audit' }
+            Mock Test-AzLocalApplyUpdatesScheduleCoverage { }                       -ParameterFilter { $View -ne 'Audit' }
+            Export-AzLocalApplyUpdatesScheduleAudit -PipelineYamlPath $env:_S3_PIPELINEDIR -OutputDirectory $env:_S3_OUTDIR -PassThru
+        }
+        $result.Partial | Should -Be 1
+        $out = Get-Content -LiteralPath $script:_s3_ghOutputFile -Raw
+        $out | Should -Match 'partial=1'
+        $xml = Get-Content -LiteralPath $result.JUnitXmlPath -Raw
+        $xml | Should -Match '<failure[^>]*type="PartiallyCovered"'
+    }
+
+    It 'MalformedTag + UnparseableCron each surface as their own status outputs' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s3_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s3_ghSummaryFile
+        $env:_S3_OUTDIR          = $script:_s3_outDir
+        $env:_S3_PIPELINEDIR     = $script:_s3_pipelineDir
+
+        $global:_s3_auditRows = @(
+            (New-S3AuditRow -Status 'MalformedTag'    -UpdateStartWindow 'BadTag')
+            (New-S3AuditRow -Status 'UnparseableCron' -UpdateStartWindow 'Sat 25:99')
+        )
+
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Test-AzLocalApplyUpdatesScheduleCoverage { $global:_s3_auditRows } -ParameterFilter { $View -eq 'Audit' }
+            Mock Test-AzLocalApplyUpdatesScheduleCoverage { }                       -ParameterFilter { $View -ne 'Audit' }
+            Export-AzLocalApplyUpdatesScheduleAudit -PipelineYamlPath $env:_S3_PIPELINEDIR -OutputDirectory $env:_S3_OUTDIR -PassThru
+        }
+        $result.Malformed   | Should -Be 1
+        $result.Unparseable | Should -Be 1
+        $out = Get-Content -LiteralPath $script:_s3_ghOutputFile -Raw
+        $out | Should -Match 'malformed=1'
+        $out | Should -Match 'unparseable=1'
+    }
+
+    It 'NoWindowTag with ClusterCsvPath populates the no_window_tag output' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s3_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s3_ghSummaryFile
+        $env:_S3_OUTDIR          = $script:_s3_outDir
+        $env:_S3_PIPELINEDIR     = $script:_s3_pipelineDir
+        $clusterCsv = Join-Path -Path $env:TEMP -ChildPath ("s3-clusters-{0}.csv" -f ([Guid]::NewGuid()))
+        Set-Content -LiteralPath $clusterCsv -Value 'ClusterName,Ring' -Encoding ASCII
+        $env:_S3_CSV = $clusterCsv
+
+        $global:_s3_auditRows = @( (New-S3AuditRow -Status 'NoWindowTag' -UpdateRing 'Wave1' -UpdateStartWindow '') )
+
+        try {
+            $result = InModuleScope AzLocal.UpdateManagement {
+                Mock Test-AzLocalApplyUpdatesScheduleCoverage { $global:_s3_auditRows } -ParameterFilter { $View -eq 'Audit' }
+                Mock Test-AzLocalApplyUpdatesScheduleCoverage { }                       -ParameterFilter { $View -ne 'Audit' }
+                Export-AzLocalApplyUpdatesScheduleAudit `
+                    -PipelineYamlPath $env:_S3_PIPELINEDIR `
+                    -ClusterCsvPath   $env:_S3_CSV `
+                    -IncludeUntagged `
+                    -OutputDirectory  $env:_S3_OUTDIR `
+                    -PassThru
+            }
+            $result.NoWindowTag | Should -Be 1
+            $out = Get-Content -LiteralPath $script:_s3_ghOutputFile -Raw
+            $out | Should -Match 'no_window_tag=1'
+        }
+        finally {
+            if (Test-Path -LiteralPath $clusterCsv) { Remove-Item -LiteralPath $clusterCsv -Force -ErrorAction SilentlyContinue }
+        }
+    }
+
+    It 'RingMissingFromSchedule routes the row to the Schedule (ring diff) suite' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s3_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s3_ghSummaryFile
+        $env:_S3_OUTDIR          = $script:_s3_outDir
+        $env:_S3_PIPELINEDIR     = $script:_s3_pipelineDir
+        $env:_S3_SCHEDULE        = $script:_s3_scheduleFile
+
+        $global:_s3_auditRows = @( (New-S3AuditRow -Status 'RingMissingFromSchedule' -Section 'Schedule' -UpdateRing 'Wave9' -UpdateStartWindow '') )
+        $global:_s3_schedule  = New-S3ScheduleV2
+
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Test-AzLocalApplyUpdatesScheduleCoverage { $global:_s3_auditRows } -ParameterFilter { $View -eq 'Audit' }
+            Mock Test-AzLocalApplyUpdatesScheduleCoverage { }                       -ParameterFilter { $View -ne 'Audit' }
+            Mock Get-AzLocalApplyUpdatesScheduleConfig         { $global:_s3_schedule }
+            Mock Get-AzLocalApplyUpdatesScheduleCycleCalendar  { '' }
+            Export-AzLocalApplyUpdatesScheduleAudit `
+                -PipelineYamlPath $env:_S3_PIPELINEDIR `
+                -SchedulePath     $env:_S3_SCHEDULE `
+                -OutputDirectory  $env:_S3_OUTDIR `
+                -PassThru
+        }
+        $result.RingMissing | Should -Be 1
+        $xml = Get-Content -LiteralPath $result.JUnitXmlPath -Raw
+        $xml | Should -Match '<testsuite name="Apply-Updates Schedule Coverage - Schedule \(ring diff\)"'
+        $xml | Should -Match '<failure[^>]*type="RingMissingFromSchedule"'
+        $out = Get-Content -LiteralPath $script:_s3_ghOutputFile -Raw
+        $out | Should -Match 'ring_missing=1'
+    }
+
+    It 'RingOrphanedInSchedule + RingMixedWindows each populate their own outputs' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s3_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s3_ghSummaryFile
+        $env:_S3_OUTDIR          = $script:_s3_outDir
+        $env:_S3_PIPELINEDIR     = $script:_s3_pipelineDir
+        $env:_S3_SCHEDULE        = $script:_s3_scheduleFile
+
+        $global:_s3_auditRows = @(
+            (New-S3AuditRow -Status 'RingOrphanedInSchedule' -Section 'Schedule' -UpdateRing 'WaveOrphan')
+            (New-S3AuditRow -Status 'RingMixedWindows'       -Section 'Cron'     -UpdateRing 'Wave1')
+        )
+        $global:_s3_schedule  = New-S3ScheduleV2
+
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Test-AzLocalApplyUpdatesScheduleCoverage { $global:_s3_auditRows } -ParameterFilter { $View -eq 'Audit' }
+            Mock Test-AzLocalApplyUpdatesScheduleCoverage { }                       -ParameterFilter { $View -ne 'Audit' }
+            Mock Get-AzLocalApplyUpdatesScheduleConfig         { $global:_s3_schedule }
+            Mock Get-AzLocalApplyUpdatesScheduleCycleCalendar  { '' }
+            Export-AzLocalApplyUpdatesScheduleAudit `
+                -PipelineYamlPath $env:_S3_PIPELINEDIR `
+                -SchedulePath     $env:_S3_SCHEDULE `
+                -OutputDirectory  $env:_S3_OUTDIR `
+                -PassThru
+        }
+        $result.RingOrphan | Should -Be 1
+        $result.RingMixed  | Should -Be 1
+        $out = Get-Content -LiteralPath $script:_s3_ghOutputFile -Raw
+        $out | Should -Match 'ring_orphan=1'
+        $out | Should -Match 'ring_mixed=1'
+    }
+
+    It 'Schema v1 schedule emits a migration nudge (not the per-row table)' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s3_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s3_ghSummaryFile
+        $env:_S3_OUTDIR          = $script:_s3_outDir
+        $env:_S3_PIPELINEDIR     = $script:_s3_pipelineDir
+        $env:_S3_SCHEDULE        = $script:_s3_scheduleFile
+
+        $global:_s3_auditRows = @( (New-S3AuditRow -Status 'Covered') )
+        $global:_s3_schedule  = New-S3ScheduleV1
+
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Test-AzLocalApplyUpdatesScheduleCoverage { $global:_s3_auditRows } -ParameterFilter { $View -eq 'Audit' }
+            Mock Test-AzLocalApplyUpdatesScheduleCoverage { }                       -ParameterFilter { $View -ne 'Audit' }
+            Mock Get-AzLocalApplyUpdatesScheduleConfig         { $global:_s3_schedule }
+            Mock Get-AzLocalApplyUpdatesScheduleCycleCalendar  { '' }
+            Export-AzLocalApplyUpdatesScheduleAudit `
+                -PipelineYamlPath $env:_S3_PIPELINEDIR `
+                -SchedulePath     $env:_S3_SCHEDULE `
+                -OutputDirectory  $env:_S3_OUTDIR | Out-Null
+        }
+        $summary = Get-Content -LiteralPath $script:_s3_ghSummaryFile -Raw
+        $summary | Should -Match 'Allow-list coverage \(schema v1\)'
+        $summary | Should -Match 'Update-AzLocalApplyUpdatesScheduleConfig.*-SchemaMigrate'
+        $summary | Should -Not -Match 'Top-level fleet default'
+    }
+
+    It 'Schema v2 schedule emits the per-row Effective allowedUpdateVersions table' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s3_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s3_ghSummaryFile
+        $env:_S3_OUTDIR          = $script:_s3_outDir
+        $env:_S3_PIPELINEDIR     = $script:_s3_pipelineDir
+        $env:_S3_SCHEDULE        = $script:_s3_scheduleFile
+
+        $global:_s3_auditRows = @( (New-S3AuditRow -Status 'Covered') )
+        $global:_s3_schedule  = New-S3ScheduleV2
+
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Test-AzLocalApplyUpdatesScheduleCoverage { $global:_s3_auditRows } -ParameterFilter { $View -eq 'Audit' }
+            Mock Test-AzLocalApplyUpdatesScheduleCoverage { }                       -ParameterFilter { $View -ne 'Audit' }
+            Mock Get-AzLocalApplyUpdatesScheduleConfig         { $global:_s3_schedule }
+            Mock Get-AzLocalApplyUpdatesScheduleCycleCalendar  { '' }
+            Export-AzLocalApplyUpdatesScheduleAudit `
+                -PipelineYamlPath $env:_S3_PIPELINEDIR `
+                -SchedulePath     $env:_S3_SCHEDULE `
+                -OutputDirectory  $env:_S3_OUTDIR | Out-Null
+        }
+        $summary = Get-Content -LiteralPath $script:_s3_ghSummaryFile -Raw
+        $summary | Should -Match 'Allow-list coverage \(schema v2\)'
+        $summary | Should -Match 'Top-level fleet default'
+        $summary | Should -Match '\| Row \| weeksInCycle \| daysOfWeek \| rings \| Effective allowedUpdateVersions \|'
+    }
+
+    It 'PipelineYamlPath that does not exist throws a descriptive error' {
+        $missing = Join-Path -Path $env:TEMP -ChildPath ("s3-missing-{0}" -f ([Guid]::NewGuid()))
+        $env:_S3_OUTDIR  = $script:_s3_outDir
+        $env:_S3_MISSING = $missing
+        InModuleScope AzLocal.UpdateManagement {
+            { Export-AzLocalApplyUpdatesScheduleAudit -PipelineYamlPath $env:_S3_MISSING -OutputDirectory $env:_S3_OUTDIR } |
+                Should -Throw -ExpectedMessage "*PipelineYamlPath*does not exist*"
+        }
+    }
+
+    It 'ADO host resolves OutputDirectory to BUILD_ARTIFACTSTAGINGDIRECTORY when not explicitly passed' {
+        $env:TF_BUILD = 'True'
+        $adoStage = Join-Path -Path $env:TEMP -ChildPath ("s3-ado-{0}" -f ([Guid]::NewGuid()))
+        New-Item -ItemType Directory -Path $adoStage -Force | Out-Null
+        $env:BUILD_ARTIFACTSTAGINGDIRECTORY = $adoStage
+        $env:_S3_PIPELINEDIR = $script:_s3_pipelineDir
+
+        $global:_s3_auditRows = @( (New-S3AuditRow -Status 'Covered') )
+        try {
+            $result = InModuleScope AzLocal.UpdateManagement {
+                Mock Test-AzLocalApplyUpdatesScheduleCoverage { $global:_s3_auditRows } -ParameterFilter { $View -eq 'Audit' }
+                Mock Test-AzLocalApplyUpdatesScheduleCoverage { }                       -ParameterFilter { $View -ne 'Audit' }
+                Export-AzLocalApplyUpdatesScheduleAudit -PipelineYamlPath $env:_S3_PIPELINEDIR -PassThru
+            }
+            $result.JUnitXmlPath | Should -BeLike "$adoStage*"
+            $result.SummaryPath  | Should -BeLike "$adoStage*"
+        }
+        finally {
+            if (Test-Path -LiteralPath $adoStage) { Remove-Item -LiteralPath $adoStage -Recurse -Force -ErrorAction SilentlyContinue }
+        }
+    }
+}
+#endregion v0.8.5: Export-AzLocalApplyUpdatesScheduleAudit
