@@ -88,6 +88,15 @@ env:
   # which is the default "fix-forward" behaviour): manual workflow_dispatch input >
   # repository variable 'REQUIRED_MODULE_VERSION' > empty (latest).
   REQUIRED_MODULE_VERSION: ${{ github.event.inputs.module_version || vars.REQUIRED_MODULE_VERSION || '' }}
+  # v0.8.4 - opt this workflow into Node.js 24 for all JavaScript actions
+  # (actions/checkout, actions/download-artifact, actions/upload-artifact,
+  # azure/login, dorny/test-reporter, etc). Per GitHub's 2025-09-19 deprecation
+  # notice Node 20 is forced off by default on 2026-06-16 and removed from the
+  # runner on 2026-09-16. Setting this env var silences the deprecation warnings
+  # and exercises Node 24 ahead of the cut-over. To temporarily opt back out,
+  # set ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true.
+  # https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   # Path to the ring-aware apply-updates-schedule.yml (relative to repo root). The
   # planner reads it to find each cluster's next apply window. Override via repository
   # variable APPLY_UPDATES_SCHEDULE_PATH if you keep the schedule outside `.github/`.

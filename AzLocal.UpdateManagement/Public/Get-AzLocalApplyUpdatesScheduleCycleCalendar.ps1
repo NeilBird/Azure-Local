@@ -65,9 +65,9 @@ function Get-AzLocalApplyUpdatesScheduleCycleCalendar {
     .PARAMETER CronFiringsByDate
         Optional hashtable mapping 'yyyy-MM-dd' (UTC) date strings to a
         sorted, deduplicated [string[]] of 'HH:mm' UTC firing times that
-        the Step.6 apply-updates pipeline cron(s) will produce on that
+        the apply-updates pipeline cron(s) will produce on that
         date. When supplied AND -AsMarkdown is set, the per-day calendar
-        table gains a centered "Ring CRON Start Time (Step 7 pipeline)"
+        table gains a centered "Ring CRON Start Time (apply-updates pipeline)"
         column immediately after "Date (UTC)". The cell renders up to 2
         firing times verbatim; any additional firings beyond the first 2
         are summarised as "(+N)" (e.g. "02:00, 04:00 (+1)" when there
@@ -340,7 +340,7 @@ function Get-AzLocalApplyUpdatesScheduleCycleCalendar {
     $alignCells  = New-Object System.Collections.Generic.List[string]
     [void]$headerCells.Add('Date (UTC)'); [void]$alignCells.Add('---')
     if ($hasCronFirings) {
-        [void]$headerCells.Add('Ring CRON Start Time<br>(Step 7 pipeline)')
+        [void]$headerCells.Add('Ring CRON Start Time<br>(apply-updates pipeline)')
         [void]$alignCells.Add(':---:')
     }
     [void]$headerCells.Add('Day');             [void]$alignCells.Add('---')

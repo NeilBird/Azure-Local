@@ -143,7 +143,7 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $match.Groups['v'].Value | Should -Be $manifestVersion -Because 'the first "## Version X.Y.Z" heading in psd1 ReleaseNotes must match the manifest ModuleVersion - did you forget to prepend the new release section?'
         }
 
-        It 'All bundled <Platform> Step.[1-7]_*.yml pipeline samples pin GENERATED_AGAINST_MODULE_VERSION to manifest ModuleVersion' -ForEach @(
+        It 'All bundled <Platform> *.yml pipeline samples pin GENERATED_AGAINST_MODULE_VERSION to manifest ModuleVersion' -ForEach @(
             @{ Platform = 'github-actions' }
             @{ Platform = 'azure-devops' }
         ) {
@@ -153,17 +153,16 @@ Describe 'Module: AzLocal.UpdateManagement' {
             # GENERATED_AGAINST_MODULE_VERSION constant. Operators who run
             # Update-AzLocalPipelineExample after the upgrade get YAMLs
             # that disagree with the module they just installed. Every
-            # Step.[1-7]_*.yml sample (both platforms) must pin to the
-            # current manifest ModuleVersion. Step.0_authentication-test.yml
-            # is exempt - it does not consume the module so the pin is
-            # intentionally absent.
+            # bundled *.yml sample (both platforms) must pin to the current
+            # manifest ModuleVersion. v0.8.7 de-numbered the filenames and
+            # authentication-test.yml now also consumes the module, so every
+            # sample (no exemptions) carries the pin.
             $manifestPath = Join-Path -Path $PSScriptRoot -ChildPath '..\AzLocal.UpdateManagement.psd1'
             $manifestVersion = (Import-PowerShellDataFile -Path $manifestPath).ModuleVersion
             $samplesDir = Join-Path -Path $PSScriptRoot -ChildPath "..\Automation-Pipeline-Examples\$Platform"
             Test-Path $samplesDir | Should -BeTrue -Because "the $Platform sample folder must exist at $samplesDir"
-            $yamls = @(Get-ChildItem -Path $samplesDir -Filter 'Step.*.yml' -File |
-                       Where-Object { $_.Name -notlike 'Step.0_*' })
-            $yamls.Count | Should -BeGreaterThan 0 -Because "$samplesDir must ship at least one Step.[1-7]_*.yml sample"
+            $yamls = @(Get-ChildItem -Path $samplesDir -Filter '*.yml' -File)
+            $yamls.Count | Should -BeGreaterThan 0 -Because "$samplesDir must ship at least one *.yml sample"
             # GitHub Actions form (single line):
             #   GENERATED_AGAINST_MODULE_VERSION: '0.7.71'
             # Azure DevOps form (two lines under a `variables:` list entry):
@@ -180,12 +179,12 @@ Describe 'Module: AzLocal.UpdateManagement' {
             }
         }
 
-        It 'Step.4 pipeline templates call Export-AzLocalFleetConnectivityStatusReport (v0.8.5 thin-YAML)' -ForEach @(
-            @{ Platform = 'github-actions'; Path = '..\Automation-Pipeline-Examples\github-actions\Step.4_fleet-connectivity-status.yml' }
-            @{ Platform = 'azure-devops';   Path = '..\Automation-Pipeline-Examples\azure-devops\Step.4_fleet-connectivity-status.yml' }
+        It 'fleet-connectivity-status pipeline templates call Export-AzLocalFleetConnectivityStatusReport (v0.8.5 thin-YAML)' -ForEach @(
+            @{ Platform = 'github-actions'; Path = '..\Automation-Pipeline-Examples\github-actions\fleet-connectivity-status.yml' }
+            @{ Platform = 'azure-devops';   Path = '..\Automation-Pipeline-Examples\azure-devops\fleet-connectivity-status.yml' }
         ) {
             $yamlPath = Join-Path -Path $PSScriptRoot -ChildPath $Path
-            Test-Path $yamlPath | Should -BeTrue -Because "Step.4 template for $Platform must exist at $yamlPath"
+            Test-Path $yamlPath | Should -BeTrue -Because "fleet-connectivity-status template for $Platform must exist at $yamlPath"
             $content = Get-Content -Path $yamlPath -Raw
 
             # v0.8.5 thin-YAML guard: the ~255-line inline collection block
@@ -195,12 +194,12 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $content | Should -Not -Match '\$data\.ClusterRows' -Because "Step.4 $Platform must not still wire raw cmdlet rowsets into the yml - the cmdlet emits step outputs instead (v0.8.5)"
         }
 
-        It 'Step.3 pipeline templates call Export-AzLocalApplyUpdatesScheduleAudit (v0.8.5 thin-YAML)' -ForEach @(
-            @{ Platform = 'github-actions'; Path = '..\Automation-Pipeline-Examples\github-actions\Step.3_apply-updates-schedule-audit.yml' }
-            @{ Platform = 'azure-devops';   Path = '..\Automation-Pipeline-Examples\azure-devops\Step.3_apply-updates-schedule-audit.yml' }
+        It 'apply-updates-schedule-audit pipeline templates call Export-AzLocalApplyUpdatesScheduleAudit (v0.8.5 thin-YAML)' -ForEach @(
+            @{ Platform = 'github-actions'; Path = '..\Automation-Pipeline-Examples\github-actions\apply-updates-schedule-audit.yml' }
+            @{ Platform = 'azure-devops';   Path = '..\Automation-Pipeline-Examples\azure-devops\apply-updates-schedule-audit.yml' }
         ) {
             $yamlPath = Join-Path -Path $PSScriptRoot -ChildPath $Path
-            Test-Path $yamlPath | Should -BeTrue -Because "Step.3 template for $Platform must exist at $yamlPath"
+            Test-Path $yamlPath | Should -BeTrue -Because "apply-updates-schedule-audit template for $Platform must exist at $yamlPath"
             $content = Get-Content -Path $yamlPath -Raw
 
             # v0.8.5 thin-YAML guard: the ~220-line inline 'Run Schedule
@@ -300,7 +299,13 @@ Describe 'Module: AzLocal.UpdateManagement' {
                 'Invoke-AzLocalReadinessGatedClusterUpdate',
                 'Add-AzLocalApplyUpdatesStepSummary',
                 'Add-AzLocalNoReadyClustersStepSummary',
-                'Invoke-AzLocalItsmTicketingFromArtifact'
+                'Invoke-AzLocalItsmTicketingFromArtifact',
+                # On-Prem Sideloading Automation (v0.8.7) - catalog refresh + plan resolution + readiness-gated sideload apply + status report + step summary
+                'Update-AzLocalSideloadCatalog',
+                'Resolve-AzLocalSideloadPlan',
+                'Invoke-AzLocalSideloadUpdate',
+                'Export-AzLocalSideloadStatusReport',
+                'Add-AzLocalSideloadStepSummary'
             )
             
             foreach ($func in $expectedFunctions) {
@@ -444,23 +449,23 @@ Describe 'Module: AzLocal.UpdateManagement' {
     }
 
     Context 'Schedule-audit pipeline_path default is consumer-friendly (v0.7.66 regression)' {
-        # v0.7.66 regression guard: Step.3_apply-updates-schedule-audit.yml (GH + ADO)
+        # v0.7.66 regression guard: apply-updates-schedule-audit.yml (GH + ADO)
         # shipped with a default pipeline_path of
         # 'AzLocal.UpdateManagement/Automation-Pipeline-Examples' - a path that
         # only exists in this module's source repo. In a consumer repo (where
-        # Step.7_apply-updates.yml lives under .github/workflows or .azure-pipelines),
+        # apply-updates.yml lives under .github/workflows or .azure-pipelines),
         # the default-trigger run failed with
         #   PipelineYamlPath '...' does not exist on the runner
         # before the schedule advisor could emit JUnit XML. The defaults are
         # now '.github/workflows' on GH and '.azure-pipelines' on ADO.
         # This test guards both files from ever regressing to the in-source path.
-        It 'Neither Step.3_apply-updates-schedule-audit.yml defaults to the in-source examples folder' {
+        It 'Neither apply-updates-schedule-audit.yml defaults to the in-source examples folder' {
             $examplesRoot = Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples'
             $examplesRoot = (Resolve-Path -Path $examplesRoot).Path
 
             $auditYamls = @(
-                Join-Path $examplesRoot 'github-actions\Step.3_apply-updates-schedule-audit.yml'
-                Join-Path $examplesRoot 'azure-devops\Step.3_apply-updates-schedule-audit.yml'
+                Join-Path $examplesRoot 'github-actions\apply-updates-schedule-audit.yml'
+                Join-Path $examplesRoot 'azure-devops\apply-updates-schedule-audit.yml'
             )
 
             $offenders = New-Object System.Collections.Generic.List[string]
@@ -539,8 +544,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $ghRoot = Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples\github-actions'
             $ghRoot = (Resolve-Path -Path $ghRoot).Path
 
-            $ymlFiles = Get-ChildItem -Path $ghRoot -Filter 'Step.*.yml' -File
-            $ymlFiles.Count | Should -BeGreaterOrEqual 10 -Because 'all 10 Step.{0..9}.yml templates are expected under Automation-Pipeline-Examples/github-actions/'
+            $ymlFiles = Get-ChildItem -Path $ghRoot -Filter '*.yml' -File
+            $ymlFiles.Count | Should -BeGreaterOrEqual 11 -Because 'all 11 de-numbered pipeline templates are expected under Automation-Pipeline-Examples/github-actions/'
 
             $offenders = New-Object System.Collections.Generic.List[string]
             foreach ($yml in $ymlFiles) {
@@ -569,7 +574,7 @@ Describe 'Module: AzLocal.UpdateManagement' {
         It 'Every GitHub Actions install step contains the version banner string' {
             $ghRoot = Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples\github-actions'
             $ghRoot = (Resolve-Path -Path $ghRoot).Path
-            $ymlFiles = Get-ChildItem -Path $ghRoot -Filter 'Step.*.yml' -File
+            $ymlFiles = Get-ChildItem -Path $ghRoot -Filter '*.yml' -File
 
             $bannerLiteral = [regex]::Escape('Pipeline YAML v$generated | Module v$installed installed')
             $cmdletCall    = [regex]::Escape('Add-AzLocalPipelineVersionBanner')
@@ -588,7 +593,7 @@ Describe 'Module: AzLocal.UpdateManagement' {
         It 'Every Azure DevOps yml install site contains the version banner string (Step.6 second install deliberately skips upload to avoid duplicate banner)' {
             $adoRoot = Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples\azure-devops'
             $adoRoot = (Resolve-Path -Path $adoRoot).Path
-            $ymlFiles = Get-ChildItem -Path $adoRoot -Filter 'Step.*.yml' -File
+            $ymlFiles = Get-ChildItem -Path $adoRoot -Filter '*.yml' -File
 
             $bannerPattern = [regex]::Escape('Pipeline YAML v$generated | Module v$installed installed')
             $cmdletPattern = [regex]::Escape('Add-AzLocalPipelineVersionBanner')
@@ -601,16 +606,17 @@ Describe 'Module: AzLocal.UpdateManagement' {
             # with one Add-AzLocalPipelineVersionBanner call - count either
             # form as a banner emit.
             $perFileExpect = @{
-                'Step.0_authentication-test.yml'         = 1
-                'Step.1_inventory-clusters.yml'          = 1
-                'Step.2_manage-updatering-tags.yml'      = 1
-                'Step.3_apply-updates-schedule-audit.yml' = 1
-                'Step.4_fleet-connectivity-status.yml'   = 1
-                'Step.5_assess-update-readiness.yml'     = 1
-                'Step.7_apply-updates.yml'               = 1
-                'Step.8_monitor-updates.yml'             = 1
-                'Step.9_fleet-update-status.yml'         = 1
-                'Step.10_fleet-health-status.yml'         = 1
+                'authentication-test.yml'          = 1
+                'inventory-clusters.yml'           = 1
+                'manage-updatering-tags.yml'       = 1
+                'apply-updates-schedule-audit.yml' = 1
+                'fleet-connectivity-status.yml'    = 1
+                'assess-update-readiness.yml'      = 1
+                'apply-updates.yml'                = 1
+                'monitor-updates.yml'              = 1
+                'fleet-update-status.yml'          = 1
+                'fleet-health-status.yml'          = 1
+                'sideload-updates.yml'             = 1
             }
             $offenders = New-Object System.Collections.Generic.List[string]
             foreach ($yml in $ymlFiles) {
@@ -636,7 +642,7 @@ Describe 'Module: AzLocal.UpdateManagement' {
 
             $detail = if ($offenders.Count -gt 0) { $offenders -join [Environment]::NewLine } else { '(no mismatches)' }
             $offenders.Count | Should -Be 0 -Because "every ADO yml uploads exactly 1 version banner to the build Summary - via ##vso[task.uploadsummary] for the v0.8.4 inline form, or via Add-AzLocalPipelineVersionBanner for the v0.8.5 thin-YAML form. Step.6 has 2 install steps but the second (ApplyUpdates stage) deliberately skips the upload so the banner is not duplicated. Findings:$([Environment]::NewLine)$detail"
-            $totalSites | Should -Be 10 -Because "total ADO Summary banner emits should be 10 (1 per yml; Step.6's second install step skips upload)"
+            $totalSites | Should -Be 11 -Because "total ADO Summary banner emits should be 11 (1 per yml; the apply-updates pipeline's second install step skips upload)"
         }
     }
 
@@ -652,7 +658,7 @@ Describe 'Module: AzLocal.UpdateManagement' {
         # the cmdlets that produce that output (the per-cluster table
         # content is asserted in the cmdlet-level Pester suite).
         It 'GitHub Actions Step.6 yml invokes Invoke-AzLocalReadinessGatedClusterUpdate (writes apply-results.json) and Add-AzLocalApplyUpdatesStepSummary (renders both per-cluster tables)' {
-            $yml = Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples\github-actions\Step.7_apply-updates.yml'
+            $yml = Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples\github-actions\apply-updates.yml'
             $yml = (Resolve-Path -Path $yml).Path
             $content = Get-Content -LiteralPath $yml -Raw
             $content | Should -Match 'Invoke-AzLocalReadinessGatedClusterUpdate' -Because 'Step.6 GH apply-updates step must call the readiness-gated apply cmdlet (which writes apply-results.json)'
@@ -662,7 +668,7 @@ Describe 'Module: AzLocal.UpdateManagement' {
         }
 
         It 'Azure DevOps Step.6 yml invokes Invoke-AzLocalReadinessGatedClusterUpdate (writes apply-results.json) and Add-AzLocalApplyUpdatesStepSummary (renders both per-cluster tables)' {
-            $yml = Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples\azure-devops\Step.7_apply-updates.yml'
+            $yml = Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples\azure-devops\apply-updates.yml'
             $yml = (Resolve-Path -Path $yml).Path
             $content = Get-Content -LiteralPath $yml -Raw
             $content | Should -Match 'Invoke-AzLocalReadinessGatedClusterUpdate' -Because 'ADO Step.6 apply-updates task must call the readiness-gated apply cmdlet'
@@ -672,7 +678,7 @@ Describe 'Module: AzLocal.UpdateManagement' {
         }
 
         It 'GitHub Actions Step.6 yml invokes the schedule-resolver, readiness-gate, no-ready, and ITSM cmdlets in their respective steps' {
-            $yml = Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples\github-actions\Step.7_apply-updates.yml'
+            $yml = Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples\github-actions\apply-updates.yml'
             $yml = (Resolve-Path -Path $yml).Path
             $content = Get-Content -LiteralPath $yml -Raw
             $content | Should -Match 'Resolve-AzLocalPipelineUpdateRing'        -Because 'Step.6 GH resolve-ring step must call Resolve-AzLocalPipelineUpdateRing (replaces the ~80-line inline resolver script)'
@@ -682,7 +688,7 @@ Describe 'Module: AzLocal.UpdateManagement' {
         }
 
         It 'Azure DevOps Step.6 yml invokes the schedule-resolver, readiness-gate, no-ready, and ITSM cmdlets in their respective tasks' {
-            $yml = Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples\azure-devops\Step.7_apply-updates.yml'
+            $yml = Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples\azure-devops\apply-updates.yml'
             $yml = (Resolve-Path -Path $yml).Path
             $content = Get-Content -LiteralPath $yml -Raw
             $content | Should -Match 'Resolve-AzLocalPipelineUpdateRing'
@@ -702,8 +708,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
         # path must still work verbatim when the new input is false (back-compat),
         # and the resolver must throw a helpful error when BOTH paths are empty.
         BeforeAll {
-            $script:S6Gh  = (Resolve-Path (Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples\github-actions\Step.7_apply-updates.yml')).Path
-            $script:S6Ado = (Resolve-Path (Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples\azure-devops\Step.7_apply-updates.yml')).Path
+            $script:S6Gh  = (Resolve-Path (Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples\github-actions\apply-updates.yml')).Path
+            $script:S6Ado = (Resolve-Path (Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples\azure-devops\apply-updates.yml')).Path
             $script:S6GhContent  = Get-Content -LiteralPath $script:S6Gh  -Raw
             $script:S6AdoContent = Get-Content -LiteralPath $script:S6Ado -Raw
         }
@@ -6268,7 +6274,7 @@ Describe 'Function: Copy-AzLocalPipelineExample' {
         # YAMLs landed directly in $dest
         $yamls = @(Get-ChildItem -LiteralPath $dest -Filter '*.yml' -File)
         $yamls.Count | Should -BeGreaterThan 0
-        $yamls.Name | Should -Contain 'Step.0_authentication-test.yml'
+        $yamls.Name | Should -Contain 'authentication-test.yml'
 
         # No platform-named subfolder, no Automation-Pipeline-Examples wrapper
         Test-Path (Join-Path $dest 'github-actions') | Should -BeFalse
@@ -6290,7 +6296,7 @@ Describe 'Function: Copy-AzLocalPipelineExample' {
 
         $yamls = @(Get-ChildItem -LiteralPath $dest -Filter '*.yml' -File)
         $yamls.Count | Should -BeGreaterThan 0
-        $yamls.Name | Should -Contain 'Step.0_authentication-test.yml'
+        $yamls.Name | Should -Contain 'authentication-test.yml'
 
         Test-Path (Join-Path $dest 'azure-devops')   | Should -BeFalse
         Test-Path (Join-Path $dest 'github-actions') | Should -BeFalse
@@ -6338,7 +6344,7 @@ Describe 'Function: Copy-AzLocalPipelineExample' {
         Copy-AzLocalPipelineExample -Destination $dest -Platform GitHub 6>$null | Out-Null
 
         # Mutate one destination file so we can prove it gets overwritten
-        $target = Join-Path $dest 'Step.0_authentication-test.yml'
+        $target = Join-Path $dest 'authentication-test.yml'
         $sentinel = '# SENTINEL - if this comment survives, -Update did not overwrite'
         Set-Content -LiteralPath $target -Value $sentinel -Encoding ASCII
         (Get-Content -LiteralPath $target -Raw) | Should -Match 'SENTINEL'
@@ -6380,7 +6386,7 @@ Describe 'Function: Copy-AzLocalPipelineExample' {
 
         # Seed and then mutate
         Copy-AzLocalPipelineExample -Destination $dest -Platform GitHub 6>$null | Out-Null
-        $target = Join-Path $dest 'Step.0_authentication-test.yml'
+        $target = Join-Path $dest 'authentication-test.yml'
         $sentinel = '# WHATIF SENTINEL - -WhatIf must preserve this'
         Set-Content -LiteralPath $target -Value $sentinel -Encoding ASCII
 
@@ -8360,14 +8366,14 @@ Describe 'Function: Update-AzLocalPipelineExample' {
     }
 
     Context 'Marker-aware merge preserves destination customisations' {
-        It 'Replaces the schedule-triggers body with the destination body in Step.7_apply-updates.yml' {
+        It 'Replaces the schedule-triggers body with the destination body in apply-updates.yml' {
             $temp = Join-Path $env:TEMP "upe-merge-$([guid]::NewGuid())"
             New-Item -ItemType Directory -Path $temp -Force | Out-Null
             try {
-                # 1. Copy the bundled Step.7_apply-updates.yml to the destination.
-                $src = Join-Path $script:UpePlatformSrcGh 'Step.7_apply-updates.yml'
+                # 1. Copy the bundled apply-updates.yml to the destination.
+                $src = Join-Path $script:UpePlatformSrcGh 'apply-updates.yml'
                 Copy-Item -Path $src -Destination $temp
-                $destFile = Join-Path $temp 'Step.7_apply-updates.yml'
+                $destFile = Join-Path $temp 'apply-updates.yml'
 
                 # 2. Inject a customer cron INSIDE the schedule-triggers marker block.
                 $customerBody = "`r`n  schedule:`r`n    - cron: '0 22 * * 6'  # Wave1 SatNight22UTC`r`n  "
@@ -8384,7 +8390,7 @@ Describe 'Function: Update-AzLocalPipelineExample' {
 
                 # 3. Run the cmdlet. Source body should be REPLACED with customer body.
                 $r = Update-AzLocalPipelineExample -Destination $temp -Platform GitHub -PassThru -Confirm:$false
-                $row = $r | Where-Object { $_.File -like '*Step.7_apply-updates.yml' }
+                $row = $r | Where-Object { $_.File -like '*apply-updates.yml' }
                 $row.Action            | Should -Match 'Updated|Unchanged'
                 # Customer cron MUST survive
                 $newText = [System.IO.File]::ReadAllText($destFile, [System.Text.UTF8Encoding]::new($false))
@@ -8413,11 +8419,11 @@ Describe 'Function: Update-AzLocalPipelineExample' {
             New-Item -ItemType Directory -Path $temp -Force | Out-Null
             try {
                 # Place a stripped-down YAML at dest with NO markers, same filename as a bundled file.
-                $destFile = Join-Path $temp 'Step.7_apply-updates.yml'
+                $destFile = Join-Path $temp 'apply-updates.yml'
                 'name: legacy file with no markers' | Set-Content -LiteralPath $destFile -Encoding utf8
 
                 $r = Update-AzLocalPipelineExample -Destination $temp -Platform GitHub -PassThru -Confirm:$false 3>$null
-                $row = $r | Where-Object { $_.File -like '*Step.7_apply-updates.yml' }
+                $row = $r | Where-Object { $_.File -like '*apply-updates.yml' }
                 $row.Action | Should -Be 'Skipped-NeedsForce'
                 # Dest file unchanged
                 (Get-Content -Raw -LiteralPath $destFile) | Should -Match 'legacy file with no markers'
@@ -8428,11 +8434,11 @@ Describe 'Function: Update-AzLocalPipelineExample' {
             $temp = Join-Path $env:TEMP "upe-firstmig-force-$([guid]::NewGuid())"
             New-Item -ItemType Directory -Path $temp -Force | Out-Null
             try {
-                $destFile = Join-Path $temp 'Step.7_apply-updates.yml'
+                $destFile = Join-Path $temp 'apply-updates.yml'
                 'name: legacy file with no markers' | Set-Content -LiteralPath $destFile -Encoding utf8
 
                 $r = Update-AzLocalPipelineExample -Destination $temp -Platform GitHub -PassThru -Force -Confirm:$false 3>$null
-                $row = $r | Where-Object { $_.File -like '*Step.7_apply-updates.yml' }
+                $row = $r | Where-Object { $_.File -like '*apply-updates.yml' }
                 $row.Action | Should -Be 'Overwritten'
                 $row.NewMarkers | Should -Contain 'schedule-triggers'
                 (Get-Content -Raw -LiteralPath $destFile) | Should -Match 'BEGIN-AZLOCAL-CUSTOMIZE:schedule-triggers'
@@ -10252,8 +10258,8 @@ Describe 'Function: Get-AzLocalFleetHealthOverview - v0.7.70 (ARG-first fleet he
             $cmd.CommandType | Should -Be 'Function'
         }
 
-        It 'BS7: Module exports exactly 55 functions (was 49 after Step.9 thin-YAML port; Step.6 thin-YAML port adds 6 apply-updates pipeline cmdlets)' {
-            (Get-Module AzLocal.UpdateManagement).ExportedFunctions.Count | Should -Be 55
+        It 'BS7: Module exports exactly 60 functions (was 55 after Step.6 thin-YAML port; v0.8.7 sideload automation adds 5 cmdlets)' {
+            (Get-Module AzLocal.UpdateManagement).ExportedFunctions.Count | Should -Be 60
         }
     }
 
@@ -10642,8 +10648,8 @@ Describe 'Smoke test: Step.4 pipeline cmdlet migration (v0.7.79)' {
     BeforeAll {
         $script:repoRoot = Split-Path -Path $PSScriptRoot -Parent
         $script:step4Files = @(
-            Join-Path -Path $script:repoRoot -ChildPath 'Automation-Pipeline-Examples/github-actions/Step.4_fleet-connectivity-status.yml'
-            Join-Path -Path $script:repoRoot -ChildPath 'Automation-Pipeline-Examples/azure-devops/Step.4_fleet-connectivity-status.yml'
+            Join-Path -Path $script:repoRoot -ChildPath 'Automation-Pipeline-Examples/github-actions/fleet-connectivity-status.yml'
+            Join-Path -Path $script:repoRoot -ChildPath 'Automation-Pipeline-Examples/azure-devops/fleet-connectivity-status.yml'
         )
     }
 
@@ -10689,8 +10695,8 @@ Describe 'Regression v0.7.83: Step.4 ARB inline script handles single-cluster Cl
     BeforeAll {
         $script:repoRoot = Split-Path -Path $PSScriptRoot -Parent
         $script:step4Cases = @(
-            @{ Platform = 'github-actions'; Path = (Join-Path -Path $script:repoRoot -ChildPath 'Automation-Pipeline-Examples/github-actions/Step.4_fleet-connectivity-status.yml') }
-            @{ Platform = 'azure-devops';   Path = (Join-Path -Path $script:repoRoot -ChildPath 'Automation-Pipeline-Examples/azure-devops/Step.4_fleet-connectivity-status.yml') }
+            @{ Platform = 'github-actions'; Path = (Join-Path -Path $script:repoRoot -ChildPath 'Automation-Pipeline-Examples/github-actions/fleet-connectivity-status.yml') }
+            @{ Platform = 'azure-devops';   Path = (Join-Path -Path $script:repoRoot -ChildPath 'Automation-Pipeline-Examples/azure-devops/fleet-connectivity-status.yml') }
         )
     }
 
@@ -11912,7 +11918,7 @@ Describe 'Regression v0.7.87: bundled GitHub Actions YAML run: blocks stay under
     }
 
     It 'Step.4 GH YAML uses the new renderer function (no inline 22 KB markdown)' {
-        $step4 = Join-Path -Path $script:ghActionsDir -ChildPath 'Step.4_fleet-connectivity-status.yml'
+        $step4 = Join-Path -Path $script:ghActionsDir -ChildPath 'fleet-connectivity-status.yml'
         $raw   = Get-Content -LiteralPath $step4 -Raw
         $raw | Should -Match 'New-AzLocalFleetConnectivityStatusSummary' `
             -Because 'Step.4 must call the v0.7.87 renderer function rather than inlining the markdown summary'
@@ -11921,7 +11927,7 @@ Describe 'Regression v0.7.87: bundled GitHub Actions YAML run: blocks stay under
     }
 
     It 'Step.4 ADO YAML uses the new renderer function (no inline 22 KB markdown)' {
-        $step4 = Join-Path -Path $script:repoRootForCap -ChildPath 'Automation-Pipeline-Examples/azure-devops/Step.4_fleet-connectivity-status.yml'
+        $step4 = Join-Path -Path $script:repoRootForCap -ChildPath 'Automation-Pipeline-Examples/azure-devops/fleet-connectivity-status.yml'
         $raw   = Get-Content -LiteralPath $step4 -Raw
         $raw | Should -Match 'New-AzLocalFleetConnectivityStatusSummary' `
             -Because 'Step.4 ADO must call the same v0.7.87 renderer function as the GH twin'
@@ -12791,7 +12797,7 @@ schedule:
             $cron[$d] = @('02:00')
         }
         $md = Get-AzLocalApplyUpdatesScheduleCycleCalendar -Schedule $script:cccol_cfg -StartDate $script:cccol_wk1Mon -Days 7 -AsMarkdown -CronFiringsByDate $cron
-        $md | Should -Match '\| Date \(UTC\) \| Ring CRON Start Time<br>\(Step 6 pipeline\) \| Day \| CycleWeek \| Eligible rings \| AllowedUpdateVersions \|'
+        $md | Should -Match '\| Date \(UTC\) \| Ring CRON Start Time<br>\(apply-updates pipeline\) \| Day \| CycleWeek \| Eligible rings \| AllowedUpdateVersions \|'
         $md | Should -Match '\|---\|:---:\|---\|'
         $md | Should -Not -Match 'Tag Start Window Match'
     }
@@ -12829,7 +12835,7 @@ schedule:
             }
         }
         $md = Get-AzLocalApplyUpdatesScheduleCycleCalendar -Schedule $script:cccol_cfg -StartDate $script:cccol_wk1Mon -Days 7 -AsMarkdown -CronFiringsByDate $cron -WindowMatchByRingAndDate $wm
-        $md | Should -Match '\| Date \(UTC\) \| Ring CRON Start Time<br>\(Step 6 pipeline\) \| Day \| CycleWeek \| Eligible rings \| Tag Start Window Match \(>=95%\) \| AllowedUpdateVersions \|'
+        $md | Should -Match '\| Date \(UTC\) \| Ring CRON Start Time<br>\(apply-updates pipeline\) \| Day \| CycleWeek \| Eligible rings \| Tag Start Window Match \(>=95%\) \| AllowedUpdateVersions \|'
         $md | Should -Match '`Cdn`: True 30/30 \(100%\)'
         $md | Should -Match '`Prod`: True 40/40 \(100%\)'
     }
@@ -12899,7 +12905,7 @@ schedule:
         $wm   = @{ Cdn = @{ ($script:cccol_wk1Mon.ToString('yyyy-MM-dd')) = @{ Matching = 30; Total = 30 } } }
         $md   = Get-AzLocalApplyUpdatesScheduleCycleCalendar -Schedule $script:cccol_cfg -StartDate $script:cccol_wk1Mon -Days 1 -AsMarkdown `
             -CronFiringsByDate $cron -ClusterRingCounts $rc -WindowMatchByRingAndDate $wm
-        $md | Should -Match '\| Date \(UTC\) \| Ring CRON Start Time<br>\(Step 6 pipeline\) \| Day \| CycleWeek \| Eligible rings \| Tag Start Window Match \(>=95%\) \| Clusters in ring\(s\) \| AllowedUpdateVersions \|'
+        $md | Should -Match '\| Date \(UTC\) \| Ring CRON Start Time<br>\(apply-updates pipeline\) \| Day \| CycleWeek \| Eligible rings \| Tag Start Window Match \(>=95%\) \| Clusters in ring\(s\) \| AllowedUpdateVersions \|'
     }
 }
 

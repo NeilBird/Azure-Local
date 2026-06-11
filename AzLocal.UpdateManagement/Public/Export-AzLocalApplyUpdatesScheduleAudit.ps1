@@ -578,7 +578,7 @@ function Export-AzLocalApplyUpdatesScheduleAudit {
     # calendar silently disappeared from clean-fleet runs.
     # v0.8.6 enrichment: when PipelineYamlPath (always) and ClusterCsvPath
     # (optional) are available, build two extra columns:
-    #   * "Ring CRON Start Time (Step 7 pipeline)" - per-day UTC firing
+    #   * "Ring CRON Start Time (apply-updates pipeline)" - per-day UTC firing
     #     times projected from Step.6 cron triggers.
     #   * "Tag Start Window Match (>=95%)" - per (ring, date) pair: do
     #     >=95% of clusters in the ring have an UpdateStartWindow tag
