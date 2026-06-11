@@ -83,7 +83,7 @@ env:
   # this to the version actually installed and to the latest on PSGallery, and emits a
   # ::notice annotation if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.8.7'
+  GENERATED_AGAINST_MODULE_VERSION: '0.8.71'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): manual workflow_dispatch input >
   # repository variable 'REQUIRED_MODULE_VERSION' > empty (latest).
@@ -97,10 +97,11 @@ env:
   # set ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true.
   # https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-  # Path to the ring-aware apply-updates-schedule.yml (relative to repo root). The
-  # planner reads it to find each cluster's next apply window. Override via repository
-  # variable APPLY_UPDATES_SCHEDULE_PATH if you keep the schedule outside `.github/`.
-  APPLY_UPDATES_SCHEDULE_PATH: ${{ vars.APPLY_UPDATES_SCHEDULE_PATH || './.github/apply-updates-schedule.yml' }}
+  # Path to the ring-aware apply-updates-schedule.yml (relative to repo root). Defaults
+  # to `config/` so it sits alongside the auth-map + catalog (this is where
+  # Copy-AzLocalPipelineExample drops the starter). The planner reads it to find each
+  # cluster's next apply window. Override the variable to relocate it.
+  APPLY_UPDATES_SCHEDULE_PATH: ${{ vars.APPLY_UPDATES_SCHEDULE_PATH || './config/apply-updates-schedule.yml' }}
 
   # ---- Sideload configuration (repository Variables, vars.*) ----
   # Master gate. The job is skipped unless this is the literal string 'true'.

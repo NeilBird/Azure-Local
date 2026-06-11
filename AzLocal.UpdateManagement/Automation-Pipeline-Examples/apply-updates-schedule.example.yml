@@ -5,11 +5,11 @@
 # This is the single source of truth for "which UpdateRing(s) is/are
 # eligible to apply updates on a given UTC date". It is consumed by:
 #
-#   * Step.7_apply-updates.yml    - reads it at every cron firing and
+#   * apply-updates.yml           - reads it at every cron firing and
 #                                   resolves the UpdateRingValue (and,
 #                                   schema v2+, the AllowedUpdateVersions
 #                                   allow-list) to use for that run.
-#   * Step.3_apply-updates-schedule-audit.yml
+#   * apply-updates-schedule-audit.yml
 #                                 - audits this file against the live
 #                                   fleet (UpdateRing + UpdateStartWindow
 #                                   tags) and emits a two-way coverage
@@ -32,7 +32,7 @@
 # missing, Step.5 throws with the exact remediation command.
 #
 # Generate a starter file from your current fleet via:
-#   New-AzLocalApplyUpdatesScheduleConfig -OutputPath .\.github\apply-updates-schedule.yml
+#   New-AzLocalApplyUpdatesScheduleConfig -OutputPath .\config\apply-updates-schedule.yml
 # =====================================================================
 
 schemaVersion: 2

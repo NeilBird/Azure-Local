@@ -3,7 +3,7 @@
     RootModule = 'AzLocal.UpdateManagement.psm1'
 
     # Version number of this module.
-    ModuleVersion = '0.8.7'
+    ModuleVersion = '0.8.71'
 
     # Supported PSEditions
     CompatiblePSEditions = @('Desktop', 'Core')
@@ -307,6 +307,13 @@
 
             # ReleaseNotes of this module
             ReleaseNotes = @'
+## Version 0.8.71 - Patch: JUnit export strict-mode crash fix + sideload schedule-path default corrected + pipeline doc-string filenames de-numbered. No public API or export-count change (still 60).
+
+- **FIX (production)**: `Export-ResultsToJUnitXml` no longer throws `The property 'CurrentState' cannot be found on this object` under `Set-StrictMode -Version Latest` when an apply run emits an `UpdateStarted` success row that lacks `CurrentState`/`Progress`. All bare property reads are now guarded with `PSObject.Properties[...]`.
+- **FIX**: GitHub Actions `sideload-updates.yml` `APPLY_UPDATES_SCHEDULE_PATH` default corrected from `./.github/apply-updates-schedule.yml` to `./config/apply-updates-schedule.yml`, so it matches where `Copy-AzLocalPipelineExample` drops the starter (alongside the auth-map + catalog).
+- **FIX**: De-numbered stale `Step.N_*.yml` filename references in pipeline header comments / input descriptions (apply-updates-schedule-audit, assess-update-readiness, authentication-test, and the schedule starter example). The files were renamed in v0.8.7; these doc strings now name the current files (`apply-updates.yml`, `authentication-test.yml`, etc.).
+- **All bundled pipeline templates** bump `GENERATED_AGAINST_MODULE_VERSION` from `'0.8.7'` to `'0.8.71'`.
+
 ## Version 0.8.7 - On-prem solution-update sideloading automation (new Step.6 pipeline + 5 new Public cmdlets) + pipeline filenames de-numbered (rename-aware Update) + breaking display-step renumber. Module export count grows 55 -> 60.
 
 Adds opt-in, off-by-default on-prem sideloading for Azure Local clusters that cannot pull solution updates from Azure directly. A new self-hosted Step.6 pipeline (`sideload-updates.yml`) robocopies update media to each cluster's import share, verifies the SHA256 over WinRM, runs Add-SolutionUpdate, and flips `UpdateSideloaded=True` for the downstream apply. It is driven as a re-entrant state machine on a frequent CRON; the multi-hour copy runs in a detached Windows Scheduled Task so no single pipeline run is long-lived.

@@ -5,6 +5,20 @@ All notable changes to the AzLocal.UpdateManagement module (renamed from AzStack
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.71] - 2026-06-11
+
+Patch release. Fixes a production strict-mode crash in JUnit export, corrects the GitHub Actions sideload schedule-path default, and de-numbers stale `Step.N_*.yml` filename references left behind in pipeline doc strings after the v0.8.7 rename. No public API or export-count change (still 60).
+
+### Fixed
+
+- **`Export-ResultsToJUnitXml` strict-mode crash (production)** - a live Apply Updates run failed with `Failed to export results: The property 'CurrentState' cannot be found on this object`. An `UpdateStarted` success row legitimately lacks `CurrentState`/`Progress`, but both the failure and success/default branches read those properties unguarded, which throws under `Set-StrictMode -Version Latest`. All bare reads (`CurrentState`, `Progress`, `UpdateName`) are now guarded with `if ($result.PSObject.Properties['<name>'] -and ...)`, matching the existing `StartTime`/`EndTime` pattern. Regression test added.
+- **Sideload schedule-path default** - GitHub Actions `sideload-updates.yml` had `APPLY_UPDATES_SCHEDULE_PATH` defaulting to `./.github/apply-updates-schedule.yml`. Corrected to `./config/apply-updates-schedule.yml` so it matches where `Copy-AzLocalPipelineExample` drops the starter (alongside the auth-map and catalog, which already defaulted to `config/`).
+- **Stale pipeline doc-string filenames** - de-numbered `Step.N_*.yml` references in header comments and input descriptions for `apply-updates-schedule-audit.yml`, `assess-update-readiness.yml`, `authentication-test.yml` (both platforms) and the `apply-updates-schedule.example.yml` starter. v0.8.7 renamed the files; these doc strings now name the current files (`apply-updates.yml`, `authentication-test.yml`, `apply-updates-schedule-audit.yml`).
+
+### Changed
+
+- All bundled pipeline templates bump `GENERATED_AGAINST_MODULE_VERSION` from `'0.8.7'` to `'0.8.71'`.
+
 ## [0.8.7] - 2026-06-11
 
 On-prem solution-update sideloading automation release. Adds an opt-in, off-by-default workflow for Azure Local clusters that cannot pull solution updates from Azure directly: a new self-hosted Step.6 pipeline (`sideload-updates.yml`) robocopies update media to each cluster's import share, verifies the SHA256 over WinRM, runs `Add-SolutionUpdate`, and flips the `UpdateSideloaded=True` cluster tag so the downstream apply (now Step.7) picks it up. The long-running copy executes in a detached Windows Scheduled Task and is driven as a re-entrant state machine on a frequent CRON, so no individual pipeline run is long-lived. **This release de-numbers all bundled pipeline filenames and renumbers four display steps (BREAKING for any consumer that pins on the old `Step.N_*.yml` filenames).** Module export count grows 55 -> 60.
