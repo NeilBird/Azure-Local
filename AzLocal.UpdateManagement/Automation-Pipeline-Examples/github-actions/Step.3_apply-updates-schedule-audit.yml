@@ -208,6 +208,10 @@ jobs:
         INPUT_CLUSTER_CSV_PATH:  ${{ github.event.inputs.cluster_csv_path || 'config/ClusterUpdateRings.csv' }}
         INPUT_DEBUG:             ${{ github.event.inputs.debug || 'false' }}
         INSTALLED_MODULE_VERSION: ${{ steps.module-version.outputs.installed_module_version }}
+        # v0.8.7 sideload advisor (opt-in). When SIDELOAD_UPDATES=true the audit
+        # appends a "Recommended sideload schedule" section. Inert when unset/false.
+        SIDELOAD_UPDATES:        ${{ vars.SIDELOAD_UPDATES || 'false' }}
+        SIDELOAD_LEAD_DAYS:      ${{ vars.SIDELOAD_LEAD_DAYS || '7' }}
       run: |
         $ErrorActionPreference = 'Stop'
         Import-Module AzLocal.UpdateManagement -Force

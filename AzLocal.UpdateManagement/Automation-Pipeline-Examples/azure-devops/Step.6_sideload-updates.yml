@@ -1,0 +1,248 @@
+# Step.6 - Sideload Updates (Opt-in, on-prem self-hosted agent)
+#
+# OPT-IN, OFF BY DEFAULT. This pipeline automates the on-prem sideloading of
+# Azure Local solution-update media for clusters that cannot pull updates from
+# Azure directly. It is the NEW Step.6 introduced in v0.8.7; the former Step.6
+# (Apply Updates) is now Step.7.
+#
+# WHY A SELF-HOSTED AGENT:
+#   The agent must sit on the SAME network as the target Azure Local clusters so
+#   it can (a) Robocopy the CombinedSolutionBundle to each cluster's
+#   infrastructure `import` SMB share and (b) PowerShell-remote (WinRM) into a
+#   cluster node to verify the SHA256 and run Add-SolutionUpdate. Microsoft-hosted
+#   agents cannot reach the on-prem fabric, so this pipeline targets a self-hosted
+#   AGENT in an agent POOL, selected by the `azlocal-sideload` demand.
+#
+# RE-ENTRANT STATE MACHINE:
+#   Each run advances every in-scope cluster by ONE state transition and exits.
+#   The multi-hour copy itself runs in a detached Windows Scheduled Task, so no
+#   pipeline run is ever long-lived. Drive this on a frequent CRON (e.g. every
+#   30 minutes) so the state machine progresses Copying -> Copied -> Verified ->
+#   Imported across successive short runs. Re-running is always safe.
+#
+# GATE: the whole job is skipped unless the pipeline variable
+#   SIDELOAD_UPDATES == 'true'. When unset/false this file is inert.
+#
+# AUTHENTICATION:
+#   - Azure CLI context (ARG fleet read via 'az graph query' + UpdateSideloaded
+#     tag flip via 'az rest') is provided by the AzureCLI@2 task's Workload
+#     Identity Federation service connection.
+#   - Az PowerShell context (Get-AzKeyVaultSecret for the WinRM credential) is
+#     established inside the script from the federated token that
+#     addSpnToEnvironment exposes. For a secret-based service principal or a
+#     self-hosted agent managed identity, replace that Connect-AzAccount line per
+#     the SIDELOAD_KV_AUTH variable (see inline comments).
+#   - Cluster WinRM remoting uses an Active Directory [pscredential] built from
+#     two Key Vault secrets named in the sideload auth-map row (NOT the pipeline
+#     identity).
+
+# BEGIN-AZLOCAL-CUSTOMIZE:schedule-triggers
+# Edits inside this block are preserved across Update-AzLocalPipelineExample
+# module upgrades. Add or modify `schedules:` blocks below.
+trigger: none  # Manual or scheduled only
+
+# NO default schedule ships out-of-the-box (this pipeline requires an on-prem
+# self-hosted agent that most projects do not have). Once your agent is online in
+# a pool that satisfies the `azlocal-sideload` demand, UNCOMMENT the schedule
+# below to drive the re-entrant state machine. A frequent poll (every 30 min)
+# lets a single short run advance the multi-hour copy without staying alive.
+#
+# schedules:
+#   - cron: '*/30 * * * *'   # every 30 minutes - advance/report sideload state
+#     displayName: 'Sideload state machine poll'
+#     branches:
+#       include:
+#         - main
+#     always: true
+# END-AZLOCAL-CUSTOMIZE:schedule-triggers
+
+parameters:
+  - name: updateRing
+    # accepts a single ring, 'Prod;Ring2' list, or '***' wildcard (three stars - deliberate).
+    displayName: "UpdateRing tag value to scope the plan ('Wave1', 'Prod;Ring2', or '***' for ALL rings)."
+    type: string
+    default: '***'
+
+  - name: dryRun
+    displayName: 'Preview the plan + transitions without staging media, registering tasks, or flipping tags (WhatIf).'
+    type: boolean
+    default: true
+
+  - name: moduleVersion
+    displayName: 'Pin AzLocal.UpdateManagement version (empty = latest from PSGallery). See Automation-Pipeline-Examples/README.md section 5 "Optional configuration".'
+    type: string
+    default: ''
+
+variables:
+  # Module version this YAML was generated against. The install step compares this to
+  # the version actually installed and to the latest on PSGallery, and emits a warning
+  # log if the YAML appears stale - prompting you to refresh via
+  # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
+  GENERATED_AGAINST_MODULE_VERSION: '0.8.7'
+  # Resolution order for the module version pin (leave all unset to install the latest,
+  # which is the default "fix-forward" behaviour): queue-time parameter > pipeline variable
+  # 'REQUIRED_MODULE_VERSION' overridden at queue time > empty (latest).
+  REQUIRED_MODULE_VERSION: '${{ parameters.moduleVersion }}'
+  reportsPath: '$(Build.ArtifactStagingDirectory)/reports'
+
+  # ---- Sideload configuration (set these as PIPELINE VARIABLES or via a variable group) ----
+  # Master gate. The stage is skipped unless this is the literal string 'true'.
+  #   SIDELOAD_UPDATES: 'true'
+  # Shared UNC root that ALL agents can read+write (state\, logs\, cache\):
+  #   SIDELOAD_STATE_ROOT: '\\\\fileserver\\azlocal-sideload'
+  #   SIDELOAD_CACHE_ROOT: ''   # defaults (in the cmdlet) to <state-root>\cache
+  #   SIDELOAD_AUTH_MAP_PATH: './sideload-auth-map.csv'
+  #   SIDELOAD_CATALOG_PATH: './sideload-catalog.yml'
+  #   SIDELOAD_LEAD_DAYS: '7'
+  #   SIDELOAD_ROBOCOPY_SWITCHES: '/R:5 /W:30'
+  #   SIDELOAD_HEARTBEAT_STALE_MINUTES: '60'
+  #   SIDELOAD_REMOTING_FQDN_SUFFIX: ''   # e.g. '.corp.contoso.com'
+  #   APPLY_UPDATES_SCHEDULE_PATH: './.azuredevops/apply-updates-schedule.yml'
+  #   SIDELOAD_KV_AUTH: 'oidc'   # oidc | managedidentity | serviceprincipal
+
+stages:
+- stage: Sideload
+  displayName: 'Step.6 - Sideload Updates (Opt-in)'
+  # Master opt-in gate: do nothing unless SIDELOAD_UPDATES is explicitly 'true'.
+  condition: eq(variables['SIDELOAD_UPDATES'], 'true')
+  jobs:
+  - job: AdvanceSideload
+    displayName: 'Advance Sideload State Machine'
+    # Requires an on-prem self-hosted AGENT (Azure DevOps terminology) on the same
+    # network as the clusters, in a POOL whose agents advertise the `azlocal-sideload`
+    # capability. Replace '<your-self-hosted-pool>' with your pool name.
+    pool:
+      name: '<your-self-hosted-pool>'
+      demands:
+        - azlocal-sideload
+
+    steps:
+    - checkout: self
+      displayName: 'Checkout repository'
+
+    - task: PowerShell@2
+      displayName: 'Install AzLocal.UpdateManagement from PSGallery'
+      name: moduleVersion
+      env:
+        REQUIRED_MODULE_VERSION: $(REQUIRED_MODULE_VERSION)
+        GENERATED_AGAINST_MODULE_VERSION: $(GENERATED_AGAINST_MODULE_VERSION)
+      inputs:
+        targetType: 'inline'
+        pwsh: true
+        script: |
+          $ErrorActionPreference = 'Stop'
+          $installArgs = @{ Name = 'AzLocal.UpdateManagement'; Scope = 'CurrentUser'; Force = $true; AllowClobber = $true }
+          if ($env:REQUIRED_MODULE_VERSION) {
+              $installArgs.RequiredVersion = $env:REQUIRED_MODULE_VERSION
+              Write-Host "REQUIRED_MODULE_VERSION is set - pinning install to v$($env:REQUIRED_MODULE_VERSION)."
+          } else {
+              Write-Host "REQUIRED_MODULE_VERSION is empty - installing the latest version from PSGallery (default fix-forward behaviour)."
+          }
+          Install-Module @installArgs
+          Import-Module AzLocal.UpdateManagement -Force
+          Add-AzLocalPipelineVersionBanner `
+              -GeneratedAgainstVersion $env:GENERATED_AGAINST_MODULE_VERSION `
+              -PinnedVersion $env:REQUIRED_MODULE_VERSION
+
+    - task: AzureCLI@2
+      displayName: 'Advance Sideload State Machine'
+      env:
+        INPUT_UPDATE_RING: ${{ parameters.updateRing }}
+        INPUT_DRY_RUN: ${{ parameters.dryRun }}
+        APPLY_UPDATES_SCHEDULE_PATH: $(APPLY_UPDATES_SCHEDULE_PATH)
+        SIDELOAD_STATE_ROOT: $(SIDELOAD_STATE_ROOT)
+        SIDELOAD_CACHE_ROOT: $(SIDELOAD_CACHE_ROOT)
+        SIDELOAD_AUTH_MAP_PATH: $(SIDELOAD_AUTH_MAP_PATH)
+        SIDELOAD_CATALOG_PATH: $(SIDELOAD_CATALOG_PATH)
+        SIDELOAD_LEAD_DAYS: $(SIDELOAD_LEAD_DAYS)
+        SIDELOAD_ROBOCOPY_SWITCHES: $(SIDELOAD_ROBOCOPY_SWITCHES)
+        SIDELOAD_HEARTBEAT_STALE_MINUTES: $(SIDELOAD_HEARTBEAT_STALE_MINUTES)
+        SIDELOAD_REMOTING_FQDN_SUFFIX: $(SIDELOAD_REMOTING_FQDN_SUFFIX)
+        reportsPath: $(reportsPath)
+      inputs:
+        azureSubscription: 'AzureLocal-ServiceConnection'  # Update with your service connection name
+        scriptType: 'pscore'
+        scriptLocation: 'inlineScript'
+        # addSpnToEnvironment exposes $env:servicePrincipalId / $env:idToken /
+        # $env:tenantId so we can also light up an Az PowerShell context for the
+        # Key Vault secret read (Get-AzKeyVaultSecret).
+        addSpnToEnvironment: true
+        inlineScript: |
+          $ErrorActionPreference = 'Stop'
+          Import-Module AzLocal.UpdateManagement -Force
+
+          if ([string]::IsNullOrWhiteSpace($env:SIDELOAD_STATE_ROOT)) {
+              throw "SIDELOAD_STATE_ROOT is not set. Configure the shared UNC state root pipeline variable before running this pipeline."
+          }
+
+          # Establish an Az PowerShell context for the Key Vault credential read.
+          # WIF service connection -> federated token. For a secret-based service
+          # principal use -ServicePrincipal -Credential; for a self-hosted agent
+          # managed identity use Connect-AzAccount -Identity (per SIDELOAD_KV_AUTH).
+          if ($env:idToken -and $env:servicePrincipalId -and $env:tenantId) {
+              Connect-AzAccount -ServicePrincipal `
+                  -ApplicationId $env:servicePrincipalId `
+                  -Tenant $env:tenantId `
+                  -FederatedToken $env:idToken | Out-Null
+          }
+
+          # 1. Resolve the per-cluster plan (read-only).
+          $planParams = @{
+              SchedulePath = $env:APPLY_UPDATES_SCHEDULE_PATH
+              AuthMapPath  = $env:SIDELOAD_AUTH_MAP_PATH
+              CatalogPath  = $env:SIDELOAD_CATALOG_PATH
+              LeadDays     = [int]$env:SIDELOAD_LEAD_DAYS
+          }
+          if ($env:INPUT_UPDATE_RING)             { $planParams['UpdateRingValue'] = $env:INPUT_UPDATE_RING }
+          if ($env:SIDELOAD_REMOTING_FQDN_SUFFIX) { $planParams['FqdnSuffix']      = $env:SIDELOAD_REMOTING_FQDN_SUFFIX }
+          $plan = @(Resolve-AzLocalSideloadPlan @planParams)
+          Write-Host ("Resolved {0} cluster plan row(s)." -f $plan.Count)
+
+          # 2. Advance the re-entrant state machine by one transition per cluster.
+          $applyParams = @{
+              Plan        = $plan
+              StateRoot   = $env:SIDELOAD_STATE_ROOT
+              ErrorAction = 'Stop'
+          }
+          if ($env:SIDELOAD_CACHE_ROOT)              { $applyParams['CacheRoot']             = $env:SIDELOAD_CACHE_ROOT }
+          if ($env:SIDELOAD_ROBOCOPY_SWITCHES)       { $applyParams['RobocopySwitches']      = $env:SIDELOAD_ROBOCOPY_SWITCHES }
+          if ($env:SIDELOAD_HEARTBEAT_STALE_MINUTES) { $applyParams['HeartbeatStaleMinutes'] = [int]$env:SIDELOAD_HEARTBEAT_STALE_MINUTES }
+          if ($env:INPUT_DRY_RUN -eq 'true' -or $env:INPUT_DRY_RUN -eq 'True') {
+              $applyParams['WhatIf'] = $true
+              Write-Host 'DRY RUN MODE - no media staged, no tasks registered, no tags flipped.'
+          }
+          $results = @(Invoke-AzLocalSideloadUpdate @applyParams)
+          Write-Host ("Processed {0} cluster(s)." -f $results.Count)
+
+          # 3. Render the status report (markdown step summary + JUnit XML + sideload-status.md).
+          New-Item -ItemType Directory -Path $env:reportsPath -Force | Out-Null
+          $report = Add-AzLocalSideloadStepSummary -StateRoot $env:SIDELOAD_STATE_ROOT -Plan $plan -OutputPath $env:reportsPath
+
+          if ($report.HasFailures) {
+              Write-Host '##vso[task.logissue type=warning]One or more clusters are in a Failed state or have plan errors - see the Sideload status report.'
+          }
+
+    - pwsh: |
+        $stamp = (Get-Date).ToUniversalTime().ToString('yyyyMMdd_HHmmss')
+        Write-Host "##vso[task.setvariable variable=artifactStamp;isOutput=true]$stamp"
+        Write-Host "Artifact timestamp: $stamp"
+      displayName: 'Compute Artifact Timestamp'
+      condition: always()
+      name: stamp
+
+    - task: PublishBuildArtifacts@1
+      displayName: 'Publish Sideload Reports'
+      condition: always()
+      inputs:
+        PathtoPublish: '$(reportsPath)'
+        ArtifactName: 'azlocal-step.6-sideload-updates-report_$(stamp.artifactStamp)'
+        publishLocation: 'Container'
+
+    - task: PublishTestResults@2
+      displayName: 'Publish Sideload Status as Test Results'
+      condition: always()
+      inputs:
+        testResultsFormat: 'JUnit'
+        testResultsFiles: '$(reportsPath)/sideload-junit.xml'
+        testRunTitle: 'Sideload Update - $(Build.BuildNumber)'
+        failTaskOnFailedTests: false

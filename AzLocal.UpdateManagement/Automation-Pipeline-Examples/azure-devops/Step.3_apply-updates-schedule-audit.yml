@@ -89,6 +89,11 @@ variables:
   GENERATED_AGAINST_MODULE_VERSION: '0.8.6'
   REQUIRED_MODULE_VERSION: '${{ parameters.moduleVersion }}'
   reportsPath: '$(Build.ArtifactStagingDirectory)/reports'
+  # v0.8.7 sideload advisor defaults. Override at the pipeline / variable-group
+  # level (set SIDELOAD_UPDATES=true to enable the recommended-sideload-schedule
+  # section). Defaults keep the audit byte-identical to v0.8.6 when unset.
+  SIDELOAD_UPDATES: 'false'
+  SIDELOAD_LEAD_DAYS: '7'
 
 stages:
 - stage: ScheduleCoverage
@@ -156,6 +161,10 @@ stages:
         INPUT_DEBUG:             ${{ lower(parameters.debug) }}
         INSTALLED_MODULE_VERSION: $(moduleVersion.installed_module_version)
         REPORTS_PATH: $(reportsPath)
+        # v0.8.7 sideload advisor (opt-in). When SIDELOAD_UPDATES=true the audit
+        # appends a "Recommended sideload schedule" section. Inert when unset/false.
+        SIDELOAD_UPDATES: $(SIDELOAD_UPDATES)
+        SIDELOAD_LEAD_DAYS: $(SIDELOAD_LEAD_DAYS)
       inputs:
         # Replace with your service connection name
         azureSubscription: 'AzureLocal-ServiceConnection'  # Update with your service connection name
