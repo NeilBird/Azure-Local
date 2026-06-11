@@ -51,6 +51,8 @@
         'Private/Get-AzLocalItsmTriggerDecision.ps1',
         'Private/Get-AzLocalModuleRootManifestPath.ps1',
         'Private/Get-AzLocalPipelineCustomiseMarkers.ps1',
+        'Private/Get-AzLocalPipelineId.ps1',
+        'Private/Get-AzLocalPipelineManifest.ps1',
         'Private/Get-AzLocalRunEndTime.ps1',
         'Private/Get-CurrentStepPath.ps1',
         'Private/Get-DeepestActiveStep.ps1',

@@ -1,3 +1,4 @@
+# AZLOCAL-PIPELINE-ID: assess-update-readiness
 # Step.5 - Assess Update Readiness (Pre-flight go/no-go gate)
 # --------------------------------------------------
 # Runs Get-AzLocalClusterUpdateReadiness and Test-AzLocalClusterHealth -BlockingOnly

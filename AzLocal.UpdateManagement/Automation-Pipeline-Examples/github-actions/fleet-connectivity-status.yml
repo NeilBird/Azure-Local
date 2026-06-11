@@ -1,3 +1,4 @@
+# AZLOCAL-PIPELINE-ID: fleet-connectivity-status
 # Fleet Connectivity Status Monitoring
 # This workflow surfaces network-connectivity issues across every Azure Local
 # cluster the service principal can read - four scopes in one pipeline:

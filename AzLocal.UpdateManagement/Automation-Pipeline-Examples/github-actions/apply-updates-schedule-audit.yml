@@ -1,3 +1,4 @@
+# AZLOCAL-PIPELINE-ID: apply-updates-schedule-audit
 # Apply-Updates Schedule Coverage Audit
 # This workflow runs the read-only Test-AzLocalApplyUpdatesScheduleCoverage advisor
 # weekly to detect drift between the cron schedule(s) in your apply-updates pipeline

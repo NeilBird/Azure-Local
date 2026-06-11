@@ -1,28 +1,21 @@
-# Fleet Health Status Monitoring
-# This workflow surfaces 24-hour system health-check failures across every Azure Local
-# cluster the service principal can read - including clusters that are already
-# "up to date" with no available updates. The 24-hour health checks continue to run
-# on the cluster even when no update is in flight, so this pipeline is the dedicated
-# place to triage fleet-wide health issues that exist OUTSIDE the update workflow.
+# AZLOCAL-PIPELINE-ID: fleet-update-status
+# Fleet Update Status Monitoring
+# This workflow monitors update status across all Azure Local clusters and generates reports
 #
 # USE CASES:
-# - Daily / weekly fleet-wide critical & warning health audit
-# - Executive dashboard: "which failure reason hits the most clusters?"
-# - Compliance tracking for cluster health, independent of update activity
-# - Triage hand-off into ITSM: the JUnit XML and CSV exports are ready-made
-#   incident payloads
+# - Daily/weekly health checks on cluster update status
+# - Executive dashboards showing fleet-wide update adoption
+# - Alerting when clusters have update failures
+# - Compliance tracking for update deployments
 #
 # REPORTS GENERATED:
-# - Markdown step summary: pivoted by FailureReason (top failures by cluster impact),
-#   matching the "Health Check Failures By Reason" view administrators are used to,
-#   and including a per-cluster "Detailed Results" table further down.
-# - JUnit XML (diagnostic mirror): one <testcase time="0"> per (cluster, failing health check).
-#   dorny test-reporter renders failed Critical checks as <failure> and Warning
-#   checks as <failure type="Warning"> so reviewers can drill from suite ->
-#   cluster -> failure.
-# - CSV (detail):  fleet-health-detail.csv  - one row per (cluster, failing check)
-# - CSV (summary): fleet-health-summary.csv - one row per (FailureReason, Severity)
-# - JSON: same shape, machine-readable for downstream automation
+# - JUnit XML: Shows each cluster as a test case (passed/failed/skipped) for CI/CD visualization
+#   (testcase bodies now include `Start Time:` and `End Time:` lines per cluster).
+# - CSV: Detailed export for spreadsheet analysis (includes `EndTime` column sourced
+#   from properties.progress.endTimeUtc, with fallback to properties.lastUpdatedTime - blank for InProgress runs).
+# - HTML report (Recent Update Run History section): includes `End Time` column for the
+#   aggregated multi-attempt row.
+# - JSON: Machine-readable format for custom integrations
 #
 # AUTHENTICATION:
 # Uses OpenID Connect (OIDC) - recommended for secretless authentication
@@ -31,16 +24,15 @@
 # Workflow name carries the same Step.N - prefix as the filename so the GitHub
 # Actions sidebar (which sorts workflows alphabetically by this `name:` field)
 # lists the eight pipelines in execution order.
-name: Step.10 - Fleet Health Status
+name: Step.9 - Fleet Update Status
 
 on:
   # BEGIN-AZLOCAL-CUSTOMIZE:schedule-triggers
   # Edits inside this block are preserved across Update-AzLocalPipelineExample
   # module upgrades. Add or modify `schedule:` cron blocks below.
-  # Run on schedule (e.g., daily at 7 AM UTC, offset from Fleet Update Status so the two
-  # do not start their CLI shell-outs in the same minute).
+  # Run on schedule (e.g., daily at 6 AM UTC)
   schedule:
-    - cron: '0 7 * * *'  # Daily at 7:00 AM UTC
+    - cron: '0 6 * * *'  # Daily at 6:00 AM UTC
   # END-AZLOCAL-CUSTOMIZE:schedule-triggers
 
   # Manual trigger with options
@@ -60,29 +52,27 @@ on:
         description: "UpdateRing tag value (only used when scope=by-update-ring). Single ring, 'Prod;Ring2', or '***'."
         required: false
         default: ''
-      severity:
-        description: 'Severity filter applied at Resource Graph (default All = Critical + Warning; Informational is always excluded).'
+      include_update_runs:
+        description: 'Include recent update run history in report'
         required: false
-        default: 'All'
+        default: 'true'
         type: choice
         options:
-          - 'All'
-          - 'Critical'
-          - 'Warning'
+          - 'true'
+          - 'false'
       module_version:
         description: 'Pin AzLocal.UpdateManagement version (empty = latest from PSGallery). See Automation-Pipeline-Examples/README.md section 5 "Optional configuration".'
         required: false
         default: ''
-      # --- ITSM Connector (ServiceNow auto-raise on fleet-health failures) ---
-      # Set raise_itsm_ticket=true to open ServiceNow incidents from each Critical /
-      # Warning health-check failure published by this pipeline. Default is false
+      # --- ITSM Connector (ServiceNow auto-raise on fleet-update-status) ---
+      # Set raise_itsm_ticket=true to open ServiceNow incidents from each unresolved
+      # Failed update run reported by the '📜 Update Run History and Error Details'
+      # testsuite (and any failed AzureLocalFleetUpdateStatus row). Default is false
       # so existing schedules stay byte-identical until you opt in. The connector reads
-      # the JUnit file this pipeline already produces (./reports/fleet-health-status.xml) and
-      # the trigger matrix in ./.itsm/azurelocal-itsm.yml. Dedupe granularity is one
-      # ticket per (cluster, failing health check) pair - FailureReason is fed into
-      # the UpdateName slot of the SHA256 dedupe key.
+      # the JUnit file Step.7 already produces (./reports/readiness-status.xml) and
+      # the trigger matrix in ./.itsm/azurelocal-itsm.yml.
       raise_itsm_ticket:
-        description: 'Open ITSM tickets (ServiceNow) for fleet-health failures'
+        description: 'Open ITSM tickets (ServiceNow) for fleet-update-status failures'
         required: false
         default: 'false'
         type: choice
@@ -131,18 +121,18 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
-  fleet-health:
-    name: Collect Fleet Health Status
+  fleet-status:
+    name: Collect Fleet Update Status
     runs-on: windows-latest
     permissions:
       id-token: write
       contents: read
       checks: write  # Required for test reporter
-
+    
     steps:
     - name: Checkout repository
       uses: actions/checkout@v5
-
+    
     # OIDC Authentication - recommended
     - name: Azure CLI Login (OIDC)
       uses: azure/login@v3
@@ -158,12 +148,12 @@ jobs:
         # the per-row `subscriptionId` returned by ARG).
         # Set it via: gh variable set AZURE_SUBSCRIPTION_ID --body <subId>
         subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
-
+    
     - name: Install Azure CLI Resource Graph Extension
       shell: pwsh
       run: |
         az extension add --name resource-graph --yes
-
+    
     - name: Install AzLocal.UpdateManagement from PSGallery
       # v0.8.5 thin-YAML: drift detection + banner + step outputs are all
       # produced by Add-AzLocalPipelineVersionBanner (Public cmdlet).
@@ -183,83 +173,84 @@ jobs:
         Add-AzLocalPipelineVersionBanner `
             -GeneratedAgainstVersion $env:GENERATED_AGAINST_MODULE_VERSION `
             -PinnedVersion $env:REQUIRED_MODULE_VERSION
-
-    - name: Collect Fleet Health Status
-      # v0.8.5 thin-YAML: the inline run block (Get-AzLocalFleetHealthFailures
-      # Detail view + in-process Group-Object summary roll-up +
-      # Get-AzLocalFleetHealthOverview + 2-suite JUnit XML emission +
-      # 4-section markdown step summary written to GITHUB_STEP_SUMMARY +
-      # 8 step outputs) has been condensed into the Public cmdlet
-      # Export-AzLocalFleetHealthStatusReport. The cmdlet writes
-      # ./reports/*.{json,csv,xml} for the upload-artifact step and sets the
-      # 8 step outputs consumed by downstream jobs (e.g. ITSM connector).
-      id: fleet-health
+    
+    - name: Collect Fleet Update Status
+      # v0.8.5 thin-YAML: the inline run block (cluster inventory, readiness
+      # cascade, version distribution with Microsoft-manifest support window,
+      # 3-suite JUnit XML, supplementary CSV/JSON exports, run history collection,
+      # 22 step outputs, and the full markdown step summary written to
+      # GITHUB_STEP_SUMMARY) has been condensed into the Public cmdlet
+      # Export-AzLocalFleetUpdateStatusReport. The cmdlet writes
+      # ./reports/*.{json,csv,xml} for the upload-artifact step and sets all
+      # 22 step outputs consumed by downstream jobs (e.g. ITSM connector).
+      id: fleet-status
       shell: pwsh
       env:
         INPUT_SCOPE: ${{ github.event.inputs.scope || 'all' }}
         INPUT_UPDATE_RING: ${{ github.event.inputs.update_ring }}
-        INPUT_SEVERITY: ${{ github.event.inputs.severity || 'All' }}
+        INPUT_INCLUDE_UPDATE_RUNS: ${{ github.event.inputs.include_update_runs || 'true' }}
         INSTALLED_MODULE_VERSION: ${{ steps.module-version.outputs.installed_module_version }}
       run: |
         $ErrorActionPreference = 'Stop'
         Import-Module AzLocal.UpdateManagement -Force
         $params = @{
             Scope                  = if ($env:INPUT_SCOPE) { $env:INPUT_SCOPE } else { 'all' }
-            Severity               = if ($env:INPUT_SEVERITY) { $env:INPUT_SEVERITY } else { 'All' }
+            IncludeUpdateRuns      = ($env:INPUT_INCLUDE_UPDATE_RUNS -ne 'false')
             InstalledModuleVersion = $env:INSTALLED_MODULE_VERSION
         }
         if ($env:INPUT_UPDATE_RING) { $params['UpdateRing'] = $env:INPUT_UPDATE_RING }
-        Export-AzLocalFleetHealthStatusReport @params
-
+        Export-AzLocalFleetUpdateStatusReport @params
+    
     - name: Compute Artifact Timestamp
       if: always()
       id: artifact-stamp
       shell: pwsh
       # every downloadable artifact gets a UTC timestamp suffix so multiple runs on
-      # the same day produce distinct zip names.
+      # the same day produce distinct zip names (e.g. azlocal-step.9-fleet-update-status-report_20260518_143217.zip).
       run: |
         $stamp = (Get-Date).ToUniversalTime().ToString('yyyyMMdd_HHmmss')
         "timestamp=$stamp" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
         Write-Host "Artifact timestamp: $stamp"
 
-    - name: Upload Fleet Health Reports
+    - name: Upload Fleet Status Reports
       uses: actions/upload-artifact@v6
       with:
-        name: azlocal-step.10-fleet-health-status-report_${{ steps.artifact-stamp.outputs.timestamp }}
+        name: azlocal-step.9-fleet-update-status-report_${{ steps.artifact-stamp.outputs.timestamp }}
         path: ./reports/
         retention-days: 90
-
-    # Create the markdown summary FIRST so it appears at the top of the GitHub
-    # Actions run summary view. Publish Test Results (dorny) runs AFTER and is
-    # configured with list-suites/list-tests=failed so the testsuite expansion
-    # stays compact for large fleets (only failing rows are rendered).
-    - name: Publish JUnit Diagnostic Results
+    
+    # Publish JUnit test results AFTER the markdown summary so the "Fleet
+    # Update Status Summary" tables are the first thing visible on the run
+    # page. dorny renders its testsuite expansion below; list-suites and
+    # list-tests are set to "failed" so the expansion stays compact even
+    # for fleets with 200+ clusters (only failing rows are shown).
+    - name: Publish Test Results
       uses: dorny/test-reporter@v3
       if: always()
       with:
-        name: Fleet Health Status JUnit Debug
-        path: ./reports/fleet-health-status.xml
+        name: Fleet Update Status Report
+        path: ./reports/readiness-status.xml
         reporter: java-junit
-        fail-on-error: false   # Don't fail the action on health failures
+        fail-on-error: false  # Don't fail the action on test failures
         list-suites: failed    # collapse passing suites (compact view for large fleets)
         list-tests: failed     # within failed suites, only render failed tests
 
     # ----------------------------------------------------------------------
-    # ITSM Connector (ServiceNow auto-raise on fleet-health failures)
+    # ITSM Connector (ServiceNow auto-raise on fleet failures)
     #
     # Fully opt-in (gated on inputs.raise_itsm_ticket == 'true'). Runs AFTER
     # the JUnit file is uploaded + test results published, so a) failing
-    # checks are already surfaced via dorny/test-reporter and the run
+    # clusters are already surfaced via dorny/test-reporter and the run
     # summary, and b) the ITSM action is strictly additive - failures here
-    # never affect the fleet-health-status exit code.
+    # never affect the fleet-update-status exit code.
     #
-    # Reads the same fleet-health-status.xml that powers the run summary.
-    # The JUnit emitter writes per-testcase <properties> (ClusterName /
-    # ClusterResourceId / UpdateName=FailureReason / Status=Severity /
-    # FailureReason / Severity / ClusterPortalUrl / TargetResourceName /
-    # TargetResourceType) so New-AzLocalIncident can compute the SHA256
-    # dedupe key (one ticket per cluster + failing check) and the Mustache
-    # body template can deep-link straight into the cluster blade.
+    # Reads the same readiness-status.xml that powers the run summary. The
+    # JUnit emitter writes per-testcase <properties> (ClusterName /
+    # ClusterResourceId / UpdateName / Status / ErrorCategory /
+    # CurrentStep / Duration / UpdateRunPortalUrl / ClusterPortalUrl) so
+    # New-AzLocalIncident can compute the SHA256 dedupe key and the
+    # Mustache body template can deep-link straight into the Azure portal
+    # SingleInstanceHistoryDetails ReactView for the failed update run.
     # ----------------------------------------------------------------------
     - name: Install powershell-yaml (ITSM config parser)
       if: ${{ github.event.inputs.raise_itsm_ticket == 'true' }}
@@ -299,9 +290,9 @@ jobs:
 
         $cfg = Get-AzLocalItsmConfig -Path $configPath
 
-        $junitInput = './reports/fleet-health-status.xml'
+        $junitInput = './reports/readiness-status.xml'
         if (-not (Test-Path $junitInput)) {
-            Write-Host "::warning::No fleet-health-status.xml found at '$junitInput' - skipping ticket creation."
+            Write-Host "::warning::No readiness-status.xml found at '$junitInput' - skipping ticket creation."
             exit 0
         }
 
@@ -327,7 +318,7 @@ jobs:
       if: ${{ github.event.inputs.raise_itsm_ticket == 'true' }}
       uses: actions/upload-artifact@v6
       with:
-        name: azlocal-step.10-fleet-health-status-itsm-results_${{ steps.artifact-stamp.outputs.timestamp }}
+        name: azlocal-step.9-fleet-update-status-itsm-results_${{ steps.artifact-stamp.outputs.timestamp }}
         path: ./reports/itsm-*.*
         retention-days: 30
       continue-on-error: true
@@ -336,7 +327,7 @@ jobs:
       if: ${{ github.event.inputs.raise_itsm_ticket == 'true' }}
       uses: dorny/test-reporter@v3
       with:
-        name: ITSM Tickets (Step.10)
+        name: ITSM Tickets (Step.9)
         path: ./reports/itsm-results.xml
         reporter: java-junit
       continue-on-error: true

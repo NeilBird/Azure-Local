@@ -1,54 +1,32 @@
-# Step.4 - Fleet Connectivity Status Monitoring Pipeline
-# This pipeline surfaces network-connectivity issues across every Azure Local
-# cluster the service connection can read - four scopes in one pipeline:
-#
-#   1. Cluster Connectivity   - is the cluster reachable from Azure (properties.connectivityStatus)?
-#   2. Arc Agent (per node)   - is each physical node's Arc-enabled-server agent Connected?
-#   3. Physical NIC issues    - Disconnected adapters with a real (non-APIPA) IP
-#   4. Azure Resource Bridge  - is each cluster's ARB appliance Running (and how long offline if not)?
+# AZLOCAL-PIPELINE-ID: fleet-health-status
+# Step.10 - Fleet Health Status Monitoring Pipeline
+# This pipeline surfaces 24-hour system health-check failures across every Azure Local
+# cluster the service connection can read - including clusters that are already
+# "up to date" with no available updates. The 24-hour health checks continue to run
+# on the cluster even when no update is in flight, so this pipeline is the dedicated
+# place to triage fleet-wide health issues that exist OUTSIDE the update workflow.
 #
 # USE CASES:
-# - Daily/scheduled fleet-wide network-connectivity audit
-# - Find clusters where Arc agent or ARB has dropped off and updates / management calls will fail
-# - Catch Disconnected physical NICs that still have a real IP (likely cable / driver / port issues -
-#   Disconnected adapters with no IP or APIPA self-assignment are intentionally excluded as noise)
-# - Triage hand-off into ITSM (wired identically to Step.9 / Step.10 - opt-in via parameter)
+# - Daily / weekly fleet-wide Critical & Warning health audit
+# - Executive dashboard: "which failure reason hits the most clusters?"
+# - Compliance tracking for cluster health, independent of update activity
+# - Triage hand-off into ITSM: the JUnit XML and CSV exports are ready-made
+#   incident payloads
 #
 # REPORTS GENERATED:
-# - Pipeline run summary (uploaded via ##vso[task.uploadsummary]): one section per
-#   scope (cluster, ARB, Arc agent, NIC) with portal hyperlinks and emoji severity icons.
-#   NIC section lists only issues (Disconnected with non-APIPA IP); the other three
-#   scopes show the full universe with healthy + failing rows.
-# - JUnit XML: published to the Test Results tab. One <testcase time="0"> per failing resource,
-#   grouped under "Cluster Connectivity" / "Arc Agent Connectivity" /
-#   "Physical NIC Status" / "Azure Resource Bridge" testsuites.
-# - CSV exports per scope: fleet-cluster-connectivity.csv,
-#   fleet-arc-status-summary.csv, fleet-arc-non-connected-machines.csv,
-#   fleet-physical-nics.csv (issues only), fleet-physical-nic-all.csv (full
-#   unfiltered NIC inventory - all NICs, Physical+Virtual, all statuses),
-#   fleet-physical-nic-stats.csv (NIC histogram by NicType+NicStatus),
-#   fleet-arb-status.csv
-# - JSON copies (same shape, machine-readable)
-#
-# DATA SOURCE:
-# All four sections execute Azure Resource Graph queries directly via the
-# `az graph query` CLI (the `resource-graph` extension is installed below). No
-# per-cluster Az SDK or REST shell-outs - the entire job is ARG-only and runs
-# in seconds even on multi-hundred-cluster fleets.
+# - Pipeline run summary (uploaded via ##vso[task.uploadsummary]): pivoted by
+#   FailureReason (top failures by cluster impact), with a per-cluster "Detailed
+#   Results" table further down.
+# - JUnit XML (diagnostic mirror): published to the Test Results tab.
+#   One <testcase time="0"> per (cluster, failing health check), grouped under
+#   "[JUnit Debug] Critical Health Failures" /
+#   "[JUnit Debug] Warning Health Failures" testsuites for two-level drill-down.
+# - CSV (detail):  fleet-health-detail.csv  - one row per (cluster, failing check)
+# - CSV (summary): fleet-health-summary.csv - one row per (FailureReason, Severity)
+# - JSON: same shape, machine-readable for downstream automation
 #
 # AUTHENTICATION:
 # Uses Workload Identity Federation (OIDC) - recommended for secretless authentication.
-#
-# v0.8.5 thin-YAML: the inline inlineScript body (5 ARG queries via
-# Get-AzLocalFleetConnectivityStatus + per-scope severity classification +
-# ~200-line inline JUnit StringBuilder + markdown summary render + 12 output
-# variables) is now the Export-AzLocalFleetConnectivityStatusReport Public
-# cmdlet. This yml is condensed to a few lines per step; the full workload
-# (and its Pester tests) live in the module.
-
-# Pipeline display name carries the same Step.N - prefix as the filename so the
-# ADO pipelines list (sorts by `name:` field) lists pipelines in execution order.
-name: Step.4 - Fleet Connectivity Status
 
 # BEGIN-AZLOCAL-CUSTOMIZE:schedule-triggers
 # Edits inside this block are preserved across Update-AzLocalPipelineExample
@@ -56,10 +34,9 @@ name: Step.4 - Fleet Connectivity Status
 trigger: none  # Manual or scheduled only
 
 schedules:
-  # Daily at 05:30 UTC - offset 30 min ahead of Step.9 (06:00) and Step.10 (07:00)
-  # so the three fleet-scope read pipelines stagger their ARG calls.
-  - cron: '30 5 * * *'
-    displayName: 'Daily Fleet Connectivity Check'
+  # Run daily at 7 AM UTC (offset from fleet-update-status which runs at 06:00)
+  - cron: '0 7 * * *'
+    displayName: 'Daily Fleet Health Check'
     branches:
       include:
         - main
@@ -67,25 +44,44 @@ schedules:
 # END-AZLOCAL-CUSTOMIZE:schedule-triggers
 
 parameters:
-  - name: subscriptionFilter
-    displayName: 'Optional Azure subscription ID(s) to constrain the ARG query (comma-separated). Leave empty to scan every subscription the federated identity can read.'
+  - name: scope
+    displayName: 'Scope of clusters to check'
+    type: string
+    default: 'all'
+    values:
+      - 'all'
+      - 'by-update-ring'
+
+  - name: updateRing
+    # accepts single ring, 'Prod;Ring2' list, or '***' wildcard (three stars - deliberate).
+    displayName: "UpdateRing tag value (only used when scope=by-update-ring). Single, 'Prod;Ring2', or '***'."
     type: string
     default: ''
+
+  - name: severity
+    displayName: 'Severity filter at Resource Graph (default All = Critical + Warning; Informational always excluded)'
+    type: string
+    default: 'All'
+    values:
+      - 'All'
+      - 'Critical'
+      - 'Warning'
 
   - name: moduleVersion
     displayName: 'Pin AzLocal.UpdateManagement version (empty = latest from PSGallery). See Automation-Pipeline-Examples/README.md section 5 "Optional configuration".'
     type: string
     default: ''
 
-  # --- ITSM Connector (ServiceNow auto-raise on connectivity failures) ---
+  # --- ITSM Connector (ServiceNow auto-raise on fleet-health failures) ---
   # Set raiseItsmTicket=true to open ServiceNow incidents from each Critical /
-  # Warning connectivity failure published by this pipeline. Default is false
+  # Warning health-check failure published by this pipeline. Default is false
   # so existing schedules stay byte-identical until you opt in. The connector
-  # reads the JUnit file this pipeline produces (fleet-connectivity-status.xml)
-  # and the trigger matrix in ./.itsm/azurelocal-itsm.yml. Dedupe granularity is
-  # one ticket per (cluster, failing resource) pair.
+  # reads the JUnit file this pipeline already produces (fleet-health-status.xml) and
+  # the trigger matrix in ./.itsm/azurelocal-itsm.yml. Dedupe granularity is
+  # one ticket per (cluster, failing health check) pair - FailureReason is fed
+  # into the UpdateName slot of the SHA256 dedupe key.
   - name: raiseItsmTicket
-    displayName: 'Open ITSM tickets (ServiceNow) for connectivity failures'
+    displayName: 'Open ITSM tickets (ServiceNow) for fleet-health failures'
     type: boolean
     default: false
 
@@ -115,21 +111,29 @@ variables:
   # 'REQUIRED_MODULE_VERSION' overridden at queue time > empty (latest).
   REQUIRED_MODULE_VERSION: '${{ parameters.moduleVersion }}'
   reportsPath: '$(Build.ArtifactStagingDirectory)/reports'
-  # ITSM connector. When raiseItsmTicket=true the Raise ITSM task below
-  # references $(ITSM_SN_INSTANCE_URL), $(ITSM_SN_CLIENT_ID),
+  # ITSM connector. When raiseItsmTicket=true the Raise ITSM
+  # task below references $(ITSM_SN_INSTANCE_URL), $(ITSM_SN_CLIENT_ID),
   # $(ITSM_SN_CLIENT_SECRET). The simplest binding is an ADO variable group
   # named 'AzureLocal-ITSM-Secrets'. ADO does not allow mixing mapping-form
   # variables with '- group:' entries in the same block, so to enable the
-  # group reference convert this entire 'variables:' block to list form (see
-  # Step.10 for the conversion recipe). When raiseItsmTicket=false the Raise
-  # ITSM task is skipped and the secrets are not consulted.
+  # group reference convert this entire 'variables:' block to list form:
+  #   variables:
+  #     - name: GENERATED_AGAINST_MODULE_VERSION
+  #       value: '0.7.78'
+  #     - name: REQUIRED_MODULE_VERSION
+  #       value: '${{ parameters.moduleVersion }}'
+  #     - name: reportsPath
+  #       value: '$(Build.ArtifactStagingDirectory)/reports'
+  #     - group: AzureLocal-ITSM-Secrets
+  # When raiseItsmTicket=false the Raise ITSM task is skipped and the secrets
+  # are not consulted, so the conversion is only required for opt-in users.
 
 stages:
-- stage: FleetConnectivity
-  displayName: 'Collect Fleet Connectivity Status'
+- stage: FleetHealth
+  displayName: 'Collect Fleet Health Status'
   jobs:
-  - job: CollectConnectivity
-    displayName: 'Collect and Report Fleet Connectivity'
+  - job: CollectHealth
+    displayName: 'Collect and Report Fleet Health'
     pool:
       vmImage: 'windows-latest'
 
@@ -139,8 +143,8 @@ stages:
 
     - task: PowerShell@2
       displayName: 'Install AzLocal.UpdateManagement from PSGallery'
-      # v0.8.5 thin-YAML: drift detection + banner + output variables are
-      # all produced by Add-AzLocalPipelineVersionBanner (Public cmdlet).
+      # v0.8.5 thin-YAML: drift detection + banner + step outputs are all
+      # produced by Add-AzLocalPipelineVersionBanner (Public cmdlet).
       name: moduleVersion
       env:
         REQUIRED_MODULE_VERSION: $(REQUIRED_MODULE_VERSION)
@@ -163,25 +167,23 @@ stages:
               -GeneratedAgainstVersion $env:GENERATED_AGAINST_MODULE_VERSION `
               -PinnedVersion $env:REQUIRED_MODULE_VERSION
 
+
     - task: AzureCLI@2
-      displayName: 'Collect Fleet Connectivity Data'
-      # v0.8.5 thin-YAML: the inline inlineScript body (5 ARG queries via
-      # Get-AzLocalFleetConnectivityStatus + per-scope severity classification +
-      # ~200-line inline JUnit StringBuilder + markdown summary render + 12
-      # output variables, named uppercase CLUSTER_TOTAL etc.) has been
-      # condensed into the Public cmdlet
-      # Export-AzLocalFleetConnectivityStatusReport. The cmdlet writes
-      # $(reportsPath)/{7-csv,7-json,fleet-connectivity-status.xml}, emits the
-      # markdown summary via task.uploadsummary (using the shared
-      # New-AzLocalFleetConnectivityStatusSummary renderer), and sets the 12
-      # lowercase output variables on the `collect` task.
+      displayName: 'Collect Fleet Health Status'
+      # v0.8.5 thin-YAML: the inline run block (Get-AzLocalFleetHealthFailures
+      # Detail view + in-process Group-Object summary roll-up +
+      # Get-AzLocalFleetHealthOverview + 2-suite JUnit XML emission +
+      # 4-section markdown step summary written via ##vso[task.uploadsummary] +
+      # 8 step outputs) has been condensed into the Public cmdlet
+      # Export-AzLocalFleetHealthStatusReport. The cmdlet writes
+      # $(reportsPath)/*.{json,csv,xml} for downstream Publish + ITSM steps.
       name: collect
       env:
-        INPUT_SUBSCRIPTION_FILTER: ${{ parameters.subscriptionFilter }}
+        INPUT_SCOPE: ${{ parameters.scope }}
+        INPUT_UPDATE_RING: ${{ parameters.updateRing }}
+        INPUT_SEVERITY: ${{ parameters.severity }}
         INSTALLED_MODULE_VERSION: $(moduleVersion.installed_module_version)
-        REPORTS_PATH: $(reportsPath)
       inputs:
-        # Replace with your service connection name
         azureSubscription: 'AzureLocal-ServiceConnection'  # Update with your service connection name
         scriptType: 'pscore'
         scriptLocation: 'inlineScript'
@@ -190,46 +192,62 @@ stages:
           az extension add --name resource-graph --yes
           Import-Module AzLocal.UpdateManagement -Force
           $params = @{
-              OutputDirectory        = $env:REPORTS_PATH
+              Scope                  = if ($env:INPUT_SCOPE) { $env:INPUT_SCOPE } else { 'all' }
+              Severity               = if ($env:INPUT_SEVERITY) { $env:INPUT_SEVERITY } else { 'All' }
+              OutputDirectory        = "$(reportsPath)"
               InstalledModuleVersion = $env:INSTALLED_MODULE_VERSION
           }
-          if ($env:INPUT_SUBSCRIPTION_FILTER) { $params['SubscriptionFilter'] = $env:INPUT_SUBSCRIPTION_FILTER }
-          Export-AzLocalFleetConnectivityStatusReport @params
+          if ($env:INPUT_UPDATE_RING) { $params['UpdateRing'] = $env:INPUT_UPDATE_RING }
+          Export-AzLocalFleetHealthStatusReport @params
 
+
+    # compute a UTC timestamp variable so every downloadable artifact name is unique per run.
     - pwsh: |
         $stamp = (Get-Date).ToUniversalTime().ToString('yyyyMMdd_HHmmss')
         Write-Host "##vso[task.setvariable variable=artifactStamp;isOutput=true]$stamp"
         Write-Host "Artifact timestamp: $stamp"
-      name: stamp
       displayName: 'Compute Artifact Timestamp'
       condition: always()
+      name: stamp
 
+    # Publish artifacts first (lightweight), then summary, then JUnit. Summary
+    # is uploaded via ##vso[task.uploadsummary] in the next step, which makes it
+    # the first thing visible on the run extensions tab.
     - task: PublishBuildArtifacts@1
-      displayName: 'Publish Fleet Connectivity Reports'
+      displayName: 'Publish Fleet Health Reports'
       condition: always()
       inputs:
         PathtoPublish: '$(reportsPath)'
-        ArtifactName: 'azlocal-step.4-fleet-connectivity-status-report_$(stamp.artifactStamp)'
+        ArtifactName: 'azlocal-step.10-fleet-health-status-report_$(stamp.artifactStamp)'
         publishLocation: 'Container'
 
-    # Publish JUnit test results AFTER the cmdlet (which writes the markdown
-    # summary first). Mirrors the GitHub Actions twin
-    # (dorny/test-reporter@v3 there; PublishTestResults@2 here).
+    # Publish JUnit test results LAST so the Test Results tab is populated but the
+    # markdown summary above is the first thing visible on the run extensions view.
     - task: PublishTestResults@2
-      displayName: 'Publish Fleet Connectivity JUnit Diagnostics'
+      displayName: 'Publish Fleet Health JUnit Diagnostics'
       condition: always()
       inputs:
         testResultsFormat: 'JUnit'
-        testResultsFiles: '$(reportsPath)/fleet-connectivity-status.xml'
-        testRunTitle: '[JUnit Debug] Fleet Connectivity Status - $(Build.BuildNumber)'
+        testResultsFiles: '$(reportsPath)/fleet-health-status.xml'
+        testRunTitle: 'Fleet Health Status [JUnit Debug] - $(Build.BuildNumber)'
         mergeTestResults: false
-        failTaskOnFailedTests: false  # Do not fail pipeline on connectivity failures
+        failTaskOnFailedTests: false  # Don't fail pipeline on health failures
 
     # ----------------------------------------------------------------------
-    # ITSM Connector (ServiceNow auto-raise on connectivity failures)
-    # Opt-in (gated on parameters.raiseItsmTicket == true). Mirrors the
-    # Step.9 / Step.10 wiring - reads the JUnit file produced above, uses
-    # the same azurelocal-itsm.yml trigger matrix, same dedupe key.
+    # ITSM Connector (ServiceNow auto-raise on fleet-health failures)
+    #
+    # Fully opt-in (gated on parameters.raiseItsmTicket == true). Runs AFTER
+    # PublishTestResults so the fleet-health-status surfaces its own results
+    # first; ITSM is strictly additive - failures here never affect the
+    # pipeline exit code.
+    #
+    # Reads the same fleet-health-status.xml that powers the run summary.
+    # The JUnit emitter writes per-testcase <properties> (ClusterName /
+    # ClusterResourceId / UpdateName=FailureReason / Status=Severity /
+    # FailureReason / Severity / ClusterPortalUrl / TargetResourceName /
+    # TargetResourceType) so New-AzLocalIncident can compute the SHA256
+    # dedupe key (one ticket per cluster + failing check) and the Mustache
+    # body template can deep-link straight into the cluster blade.
     # ----------------------------------------------------------------------
     - task: PowerShell@2
       displayName: 'Install powershell-yaml (ITSM config parser)'
@@ -262,12 +280,11 @@ stages:
         scriptType: 'pscore'
         scriptLocation: 'inlineScript'
         inlineScript: |
-          $ErrorActionPreference = 'Stop'
           Import-Module AzLocal.UpdateManagement -Force
 
           $configPath = "${{ parameters.itsmConfigPath }}"
-          $dryRun     = [bool]::Parse("${{ parameters.itsmDryRun }}")
-          $force      = [bool]::Parse("${{ parameters.itsmForceCreate }}")
+          $dryRun     = [System.Convert]::ToBoolean("${{ parameters.itsmDryRun }}")
+          $force      = [System.Convert]::ToBoolean("${{ parameters.itsmForceCreate }}")
 
           if (-not (Test-Path $configPath)) {
               Write-Host "##vso[task.logissue type=warning]ITSM config not found at '$configPath' - skipping ticket creation."
@@ -276,9 +293,9 @@ stages:
 
           $cfg = Get-AzLocalItsmConfig -Path $configPath
 
-          $junitInput = "$(reportsPath)/fleet-connectivity-status.xml"
+          $junitInput = "$(reportsPath)/fleet-health-status.xml"
           if (-not (Test-Path $junitInput)) {
-              Write-Host "##vso[task.logissue type=warning]No fleet-connectivity-status.xml found at '$junitInput' - skipping ticket creation."
+              Write-Host "##vso[task.logissue type=warning]No fleet-health-status.xml found at '$junitInput' - skipping ticket creation."
               exit 0
           }
 
@@ -288,7 +305,7 @@ stages:
               RunMetadata       = @{
                   Platform = 'azure-devops'
                   RunId    = $env:BUILD_BUILDID
-                  RunUrl   = "$env:SYSTEM_COLLECTIONURI$env:SYSTEM_TEAMPROJECT/_build/results?buildId=$env:BUILD_BUILDID"
+                  RunUrl   = "$($env:SYSTEM_COLLECTIONURI)$($env:SYSTEM_TEAMPROJECT)/_build/results?buildId=$($env:BUILD_BUILDID)"
                   Branch   = $env:BUILD_SOURCEBRANCH
               }
               DryRun            = $dryRun
@@ -303,19 +320,17 @@ stages:
     - task: PublishBuildArtifacts@1
       displayName: 'Publish ITSM Artefacts'
       condition: and(always(), eq('${{ parameters.raiseItsmTicket }}', 'true'))
-      continueOnError: true
       inputs:
         PathtoPublish: '$(reportsPath)'
-        ArtifactName: 'azlocal-step.4-fleet-connectivity-status-itsm-results_$(stamp.artifactStamp)'
+        ArtifactName: 'azlocal-step.10-fleet-health-status-itsm-results_$(stamp.artifactStamp)'
         publishLocation: 'Container'
+      continueOnError: true
 
     - task: PublishTestResults@2
       displayName: 'Publish ITSM Test Results'
       condition: and(always(), eq('${{ parameters.raiseItsmTicket }}', 'true'))
-      continueOnError: true
       inputs:
         testResultsFormat: 'JUnit'
         testResultsFiles: '$(reportsPath)/itsm-results.xml'
-        testRunTitle: 'ITSM Tickets (Step.4) - $(Build.BuildNumber)'
-        mergeTestResults: false
+        testRunTitle: 'ITSM Tickets (Step.10) - $(Build.BuildNumber)'
         failTaskOnFailedTests: false

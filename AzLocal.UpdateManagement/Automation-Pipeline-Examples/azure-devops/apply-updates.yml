@@ -1,3 +1,4 @@
+# AZLOCAL-PIPELINE-ID: apply-updates
 # Step.7 - Apply Updates to Azure Local Clusters
 # This pipeline applies updates to clusters filtered by UpdateRing tag value
 

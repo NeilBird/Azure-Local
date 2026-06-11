@@ -1,3 +1,4 @@
+# AZLOCAL-PIPELINE-ID: apply-updates
 # Apply Updates to Azure Local Clusters
 # This workflow applies updates to clusters filtered by UpdateRing tag value
 #

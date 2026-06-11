@@ -1,3 +1,4 @@
+# AZLOCAL-PIPELINE-ID: manage-updatering-tags
 # Manage UpdateRing Tags
 # This workflow creates or updates UpdateRing tags on Azure Local clusters from a CSV file
 #

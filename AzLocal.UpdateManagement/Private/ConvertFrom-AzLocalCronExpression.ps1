@@ -5,7 +5,7 @@ function ConvertFrom-AzLocalCronExpression {
         reference week (Sunday 00:00 -> Saturday 23:59 UTC).
     .DESCRIPTION
         Used by Test-AzLocalApplyUpdatesScheduleCoverage to decide whether a
-        cron entry from Step.7_apply-updates.yml covers any of the maintenance windows
+        cron entry from apply-updates.yml covers any of the maintenance windows
         derived from cluster UpdateStartWindow tags.
 
         Supports the subset of cron syntax that GitHub Actions and Azure DevOps

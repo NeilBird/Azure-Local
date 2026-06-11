@@ -76,9 +76,9 @@ function Copy-AzLocalPipelineExample {
         the pipelines folder you chose for ADO) when no file already
         exists at that path. The starter is a verbatim copy of the bundled
         `apply-updates-schedule.example.yml` and is safe to land alongside
-        a freshly copied Step.6 pipeline (the bundled Step.6 ships with
-        every `cron:` line COMMENTED OUT, so the schedule file cannot
-        cause Step.6 to fire on a `schedule:` trigger until the operator
+        a freshly copied `apply-updates` pipeline (the bundled pipeline ships
+        with every `cron:` line COMMENTED OUT, so the schedule file cannot
+        cause `apply-updates` to fire on a `schedule:` trigger until the operator
         explicitly adds at least one cron entry).
 
         Two safety rails apply:

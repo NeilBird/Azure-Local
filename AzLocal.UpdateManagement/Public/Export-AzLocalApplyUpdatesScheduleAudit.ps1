@@ -795,7 +795,7 @@ function Export-AzLocalApplyUpdatesScheduleAudit {
         [void]$md.Add('')
         [void]$md.Add("`SIDELOAD_UPDATES` is enabled, so media must be pre-staged on each cluster **$leadDays day(s)** before its apply window opens. The on-prem **Step.6 - Sideload Update** pipeline is re-entrant: drive it on a frequent poll cron and its planner uses `SIDELOAD_LEAD_DAYS=$leadDays` to decide when each cluster is due.")
         [void]$md.Add('')
-        [void]$md.Add('Recommended Step.6 poll cron (every 30 minutes) - paste into the `schedule:`/`schedules:` block of `Step.6_sideload-updates.yml`:')
+        [void]$md.Add('Recommended Step.6 poll cron (every 30 minutes) - paste into the `schedule:`/`schedules:` block of `sideload-updates.yml`:')
         [void]$md.Add('')
         [void]$md.Add('```')
         [void]$md.Add('*/30 * * * *')

@@ -1,3 +1,4 @@
+# AZLOCAL-PIPELINE-ID: sideload-updates
 # Sideload Updates (Opt-in, on-prem self-hosted runner)
 #
 # OPT-IN, OFF BY DEFAULT. This workflow automates the on-prem sideloading of

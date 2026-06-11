@@ -28,10 +28,22 @@ function Update-AzLocalPipelineExample {
 
         Per source YAML the cmdlet:
 
-          1. Locates the matching destination file under -Destination.
+          1. Locates the matching destination file under -Destination BY
+             STABLE LOGICAL ID (v0.8.7), not by filename. Each bundled YAML
+             carries a '# AZLOCAL-PIPELINE-ID: <id>' header comment; the
+             cmdlet matches a destination file by (a) the canonical filename,
+             else (b) a destination YAML whose embedded ID equals the source
+             ID, else (c) a legacy 'Step.N_<base>.yml' alias filename recorded
+             in the bundled pipeline manifest. A (b)/(c) match whose filename
+             differs from the canonical name is RENAMED on disk to the
+             canonical name as part of the merge, carrying the customer's
+             marker bodies (e.g. schedule CRONs) forward. This means a module
+             release that renames or renumbers a pipeline is no longer a
+             breaking change - the customer's CRONs follow the pipeline.
              - Net-new files in the source set are CREATED (full copy).
-             - Files present at -Destination but not in the source set are
-               left untouched (orphaned customer-only files survive).
+             - Files present at -Destination but not in the source set (and
+               not matched by ID/alias) are left untouched (orphaned
+               customer-only files survive).
 
           2. Parses both files for marker pairs. For every marker name found
              in BOTH files the destination body (the lines between BEGIN and
@@ -97,10 +109,18 @@ function Update-AzLocalPipelineExample {
 
     .OUTPUTS
         PSCustomObject[] (with -PassThru) - one row per source file with:
-            File              - destination path
+            File              - destination path (always the CANONICAL,
+                                de-numbered filename)
             Action            - 'Created' | 'Updated' | 'Updated-PinOnly'
-                                | 'Unchanged' | 'Overwritten'
+                                | 'Renamed' | 'Unchanged' | 'Overwritten'
                                 | 'Skipped-NeedsForce' | 'Skipped-NoChange'
+            RenamedFrom       - legacy filename the destination file was
+                                matched under and renamed FROM (e.g.
+                                'Step.7_apply-updates.yml'), or $null when no
+                                rename occurred. A non-null value means the
+                                file was physically renamed to the canonical
+                                name; if Action is also 'Updated'/'Overwritten'
+                                the content was refreshed in the same pass.
             PreservedMarkers  - [string[]] marker names whose body was
                                 preserved from the destination
             NewMarkers        - [string[]] marker names introduced in this
@@ -193,8 +213,23 @@ function Update-AzLocalPipelineExample {
     Write-Log -Message "Update-AzLocalPipelineExample: comparing bundled $Platform samples in '$platformSrc' against destination '$destResolved'." -Level Info
 
     # ------------------------------------------------------------------
-    # 3. Build the list of source YAMLs. Match on exact filename at the
-    #    destination so renames stay the caller's responsibility.
+    # 3. Build the list of source YAMLs and the rename-aware matching maps.
+    #
+    #    v0.8.7: pipelines are matched to their destination counterpart by
+    #    STABLE LOGICAL ID (the '# AZLOCAL-PIPELINE-ID:' header comment), not
+    #    by filename. This lets the cmdlet follow a pipeline across a filename
+    #    rename or a Step.N renumber WITHOUT stranding the customer's
+    #    BEGIN/END-AZLOCAL-CUSTOMIZE marker bodies (e.g. their schedule CRONs).
+    #
+    #    Resolution order for each source file's destination match:
+    #      (a) canonical filename present at -Destination, else
+    #      (b) a destination *.yml whose embedded AZLOCAL-PIPELINE-ID equals
+    #          the source ID (the customer renamed it, or it is a newer copy),
+    #          else
+    #      (c) a legacy 'Step.N_<base>.yml' alias filename listed in the
+    #          manifest (a pre-v0.8.7 copy that predates the ID comment).
+    #    A (b)/(c) match whose filename differs from the canonical name is
+    #    RENAMED on disk to the canonical name after the marker-aware merge.
     # ------------------------------------------------------------------
     $srcFiles = @(Get-ChildItem -LiteralPath $platformSrc -Filter '*.yml' -File -ErrorAction Stop)
     if ($srcFiles.Count -eq 0) {
@@ -202,23 +237,97 @@ function Update-AzLocalPipelineExample {
         return
     }
 
+    # Manifest: logical ID -> canonical filename + legacy alias filenames.
+    $manifest = @(Get-AzLocalPipelineManifest)
+
+    # Pre-scan the destination folder once, indexing any *.yml that carries an
+    # AZLOCAL-PIPELINE-ID comment by that ID (first occurrence wins). Used for
+    # resolution path (b).
+    $destIdMap = @{}
+    foreach ($destYml in @(Get-ChildItem -LiteralPath $destResolved -Filter '*.yml' -File -ErrorAction SilentlyContinue)) {
+        try {
+            $destYmlText = [System.IO.File]::ReadAllText($destYml.FullName, [System.Text.UTF8Encoding]::new($false))
+            $destYmlId   = Get-AzLocalPipelineId -Text $destYmlText
+            if ($destYmlId -and -not $destIdMap.ContainsKey($destYmlId)) {
+                $destIdMap[$destYmlId] = $destYml.FullName
+            }
+        }
+        catch {
+            Write-Verbose "Update-AzLocalPipelineExample: could not read '$($destYml.FullName)' during ID pre-scan: $($_.Exception.Message)"
+        }
+    }
+
     $results = New-Object System.Collections.Generic.List[pscustomobject]
 
     foreach ($srcFile in $srcFiles) {
+        # Canonical destination path = the bundled (already de-numbered)
+        # filename dropped into -Destination. This is always the WRITE target.
         $destFile = Join-Path -Path $destResolved -ChildPath $srcFile.Name
+
+        # Resolve the source pipeline's logical ID. Prefer the embedded
+        # AZLOCAL-PIPELINE-ID comment; fall back to the de-numbered base name.
+        $srcText = [System.IO.File]::ReadAllText($srcFile.FullName, [System.Text.UTF8Encoding]::new($false))
+        $srcId   = Get-AzLocalPipelineId -Text $srcText
+        if (-not $srcId) {
+            $srcId = [System.IO.Path]::GetFileNameWithoutExtension($srcFile.Name)
+        }
 
         $row = [PSCustomObject]@{
             File             = $destFile
             Action           = ''
+            RenamedFrom      = $null
             PreservedMarkers = @()
             NewMarkers       = @()
             RemovedMarkers   = @()
         }
 
+        # Resolve the EXISTING destination representation to merge FROM.
+        #   (a) canonical filename, (b) ID match, (c) alias filename.
+        # $existingDestFile is the READ source; $destFile stays the WRITE
+        # target. When they differ, this is a rename.
+        $existingDestFile = $null
+        $renamedFrom      = $null
+        if (Test-Path -LiteralPath $destFile) {
+            $existingDestFile = $destFile
+            # If a canonical file exists AND a legacy alias also lingers, the
+            # alias is a stale orphan from a prior layout. Flag it (do not
+            # touch it - the canonical file is authoritative).
+            foreach ($mEntry in @($manifest | Where-Object { $_.Id -eq $srcId })) {
+                foreach ($aliasName in $mEntry.Aliases) {
+                    $aliasPath = Join-Path -Path $destResolved -ChildPath $aliasName
+                    if ((Test-Path -LiteralPath $aliasPath) -and ($aliasPath -ne $destFile)) {
+                        Write-Log -Message "  Note    : '$aliasName' is a stale orphan (canonical '$($srcFile.Name)' already present). Safe to delete." -Level Warning
+                    }
+                }
+            }
+        }
+        elseif ($destIdMap.ContainsKey($srcId)) {
+            $existingDestFile = $destIdMap[$srcId]
+            $renamedFrom      = Split-Path -Leaf $existingDestFile
+        }
+        else {
+            foreach ($mEntry in @($manifest | Where-Object { $_.Id -eq $srcId })) {
+                foreach ($aliasName in $mEntry.Aliases) {
+                    $aliasPath = Join-Path -Path $destResolved -ChildPath $aliasName
+                    if (Test-Path -LiteralPath $aliasPath) {
+                        $existingDestFile = $aliasPath
+                        $renamedFrom      = $aliasName
+                        break
+                    }
+                }
+                if ($existingDestFile) { break }
+            }
+        }
+
+        if ($renamedFrom) {
+            $row.RenamedFrom = $renamedFrom
+            Write-Log -Message "  Rename  : '$renamedFrom' -> '$($srcFile.Name)' (matched by pipeline ID '$srcId'). Marker bodies (e.g. schedule CRONs) will be carried over." -Level Warning
+            Write-Log -Message "            Platform note: renaming a workflow/pipeline file resets its run history grouping and can break branch-protection required status checks (GitHub) or orphan the pipeline definition until you re-point it at the new YAML path (Azure DevOps). Re-point/re-register after this run." -Level Warning
+        }
+
         # 3a. Net-new file: simple copy. -------------------------------
-        if (-not (Test-Path -LiteralPath $destFile)) {
+        if (-not $existingDestFile) {
             if ($PSCmdlet.ShouldProcess($destFile, "Create new file from bundled sample")) {
-                $srcText = [System.IO.File]::ReadAllText($srcFile.FullName, [System.Text.UTF8Encoding]::new($false))
                 Write-Utf8NoBomFile -Path $destFile -Content $srcText
                 $row.Action = 'Created'
                 $srcMarkers = Get-AzLocalPipelineCustomiseMarkers -Text $srcText
@@ -232,9 +341,9 @@ function Update-AzLocalPipelineExample {
             continue
         }
 
-        # 3b. File exists. Read both ----------------------------------
-        $srcText  = [System.IO.File]::ReadAllText($srcFile.FullName, [System.Text.UTF8Encoding]::new($false))
-        $destText = [System.IO.File]::ReadAllText($destFile,           [System.Text.UTF8Encoding]::new($false))
+        # 3b. File exists. Read the existing (possibly aliased) destination
+        #     representation. $srcText was already read above.
+        $destText = [System.IO.File]::ReadAllText($existingDestFile, [System.Text.UTF8Encoding]::new($false))
 
         $srcMarkers  = Get-AzLocalPipelineCustomiseMarkers -Text $srcText
         $destMarkers = Get-AzLocalPipelineCustomiseMarkers -Text $destText
@@ -245,7 +354,18 @@ function Update-AzLocalPipelineExample {
         # 3c. Both files marker-free -> straight diff/overwrite path. -
         if (-not $hasSrcMarkers -and -not $hasDestMarkers) {
             if ($srcText -eq $destText) {
-                $row.Action = 'Unchanged'
+                if ($renamedFrom) {
+                    # Content identical but the file is at a legacy name -> rename to canonical.
+                    if ($PSCmdlet.ShouldProcess($destFile, "Rename '$renamedFrom' -> '$($srcFile.Name)' (content identical)")) {
+                        Write-Utf8NoBomFile -Path $destFile -Content $srcText
+                        if (($existingDestFile -ne $destFile) -and (Test-Path -LiteralPath $existingDestFile)) { Remove-Item -LiteralPath $existingDestFile -Force }
+                        Write-Log -Message "  Renamed : '$renamedFrom' -> '$($srcFile.Name)' (content identical)" -Level Success
+                    }
+                    $row.Action = 'Renamed'
+                }
+                else {
+                    $row.Action = 'Unchanged'
+                }
                 [void]$results.Add($row)
                 continue
             }
@@ -271,6 +391,7 @@ function Update-AzLocalPipelineExample {
                 $destPinValue = if ($destPinMatch.Success) { ([regex]::Match($destPinMatch.Value, "'([^']+)'")).Groups[1].Value } else { '?' }
                 if ($PSCmdlet.ShouldProcess($destFile, "Bump GENERATED_AGAINST_MODULE_VERSION from '$destPinValue' to '$srcPinValue' (pin-only diff)")) {
                     Write-Utf8NoBomFile -Path $destFile -Content $srcText
+                    if ($renamedFrom -and ($existingDestFile -ne $destFile) -and (Test-Path -LiteralPath $existingDestFile)) { Remove-Item -LiteralPath $existingDestFile -Force }
                     Write-Log -Message "  Updated : $($srcFile.Name), pin-only ('$destPinValue' -> '$srcPinValue')" -Level Success
                 }
                 $row.Action = 'Updated-PinOnly'
@@ -285,6 +406,7 @@ function Update-AzLocalPipelineExample {
             }
             if ($PSCmdlet.ShouldProcess($destFile, "Overwrite (no markers, -Force supplied)")) {
                 Write-Utf8NoBomFile -Path $destFile -Content $srcText
+                if ($renamedFrom -and ($existingDestFile -ne $destFile) -and (Test-Path -LiteralPath $existingDestFile)) { Remove-Item -LiteralPath $existingDestFile -Force }
                 Write-Log -Message "  Overwritten (forced): $($srcFile.Name)" -Level Warning
             }
             $row.Action = 'Overwritten'
@@ -304,6 +426,7 @@ function Update-AzLocalPipelineExample {
             }
             if ($PSCmdlet.ShouldProcess($destFile, "First-migration overwrite (destination has no markers, -Force supplied)")) {
                 Write-Utf8NoBomFile -Path $destFile -Content $srcText
+                if ($renamedFrom -and ($existingDestFile -ne $destFile) -and (Test-Path -LiteralPath $existingDestFile)) { Remove-Item -LiteralPath $existingDestFile -Force }
                 Write-Log -Message "  Overwritten (first migration): $($srcFile.Name) - re-apply any customisations now." -Level Warning
             }
             $row.Action = 'Overwritten'
@@ -325,6 +448,7 @@ function Update-AzLocalPipelineExample {
             }
             if ($PSCmdlet.ShouldProcess($destFile, "Overwrite (markers removed by upgrade, -Force supplied)")) {
                 Write-Utf8NoBomFile -Path $destFile -Content $srcText
+                if ($renamedFrom -and ($existingDestFile -ne $destFile) -and (Test-Path -LiteralPath $existingDestFile)) { Remove-Item -LiteralPath $existingDestFile -Force }
                 Write-Log -Message "  Overwritten (markers removed): $($srcFile.Name) - destination marker bodies discarded." -Level Warning
             }
             $row.Action = 'Overwritten'
@@ -363,17 +487,31 @@ function Update-AzLocalPipelineExample {
         $row.RemovedMarkers   = @($destMarkers.Keys | Where-Object { -not $srcMarkers.ContainsKey($_) })
 
         if ($merged -eq $destText) {
-            $row.Action = 'Unchanged'
+            if ($renamedFrom) {
+                # Merged content identical to the destination but the file is
+                # at a legacy name -> rename to canonical (carries markers).
+                if ($PSCmdlet.ShouldProcess($destFile, "Rename '$renamedFrom' -> '$($srcFile.Name)' (merged content identical)")) {
+                    Write-Utf8NoBomFile -Path $destFile -Content $merged
+                    if (($existingDestFile -ne $destFile) -and (Test-Path -LiteralPath $existingDestFile)) { Remove-Item -LiteralPath $existingDestFile -Force }
+                    Write-Log -Message "  Renamed : '$renamedFrom' -> '$($srcFile.Name)' (merged content identical, markers preserved)" -Level Success
+                }
+                $row.Action = 'Renamed'
+            }
+            else {
+                $row.Action = 'Unchanged'
+            }
             [void]$results.Add($row)
             continue
         }
 
         if ($PSCmdlet.ShouldProcess($destFile, "Update YAML (preserve $($preserved.Count) marker block(s))")) {
             Write-Utf8NoBomFile -Path $destFile -Content $merged
+            if ($renamedFrom -and ($existingDestFile -ne $destFile) -and (Test-Path -LiteralPath $existingDestFile)) { Remove-Item -LiteralPath $existingDestFile -Force }
             $kept     = if ($preserved.Count -gt 0) { ", preserved=$([string]::Join(',', $preserved))" } else { '' }
             $added    = if ($row.NewMarkers.Count  -gt 0) { ", new=$([string]::Join(',', $row.NewMarkers))" }     else { '' }
             $removed  = if ($row.RemovedMarkers.Count -gt 0) { ", removed=$([string]::Join(',', $row.RemovedMarkers))" } else { '' }
-            Write-Log -Message "  Updated : $($srcFile.Name)${kept}${added}${removed}" -Level Success
+            $renamed  = if ($renamedFrom) { ", renamedFrom=$renamedFrom" } else { '' }
+            Write-Log -Message "  Updated : $($srcFile.Name)${kept}${added}${removed}${renamed}" -Level Success
         }
         $row.Action = 'Updated'
         [void]$results.Add($row)

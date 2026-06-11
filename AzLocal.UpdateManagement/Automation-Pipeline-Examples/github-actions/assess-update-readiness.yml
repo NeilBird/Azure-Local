@@ -1,80 +1,67 @@
-# Monitor In-Flight Updates (operational monitoring snapshot)
-# -----------------------------------------------------------
-# Reports clusters whose latest update run is currently in flight, with the
-# CURRENT STEP each cluster is on and the ELAPSED DURATION of the run. Built
-# for operators who want a 30-minute-cadence "what is happening right now"
-# view, distinct from the daily Step.9 fleet-update-status snapshot which
-# answers "is each cluster up-to-date?".
+# AZLOCAL-PIPELINE-ID: assess-update-readiness
+# Assess Update Readiness (Pre-flight go/no-go gate)
+# --------------------------------------------------
+# Runs Get-AzLocalClusterUpdateReadiness and Test-AzLocalClusterHealth -BlockingOnly
+# against a target UpdateRing (or the whole fleet) BEFORE Step.7_apply-updates.yml runs.
 #
-# This workflow is REPORT-ONLY and always succeeds. Long-running runs are
-# surfaced via:
-#   - The markdown step summary (sorted by elapsed duration descending, with
-#     a Threshold column flagging runs that have exceeded the configured
-#     long-running threshold).
-#   - update-monitor.csv (full per-cluster rows for spreadsheet triage).
-#   - update-monitor.xml (JUnit, one <testcase time="0"> per in-flight cluster;
-#     <failure> when the elapsed duration exceeds the threshold so the
-#     Checks tab shows stuck runs in red).
+# Outputs two JUnit XML diagnostic artifacts consumed by the Actions test reporter:
+#   - readiness.xml       (one test per cluster; fails if ReadyForUpdate = $false)
+#   - health-blocking.xml (one test per cluster; fails if any Critical health failure exists)
 #
-# Data source: Get-AzLocalUpdateRuns -Latest (one row per cluster). No new
-# cmdlets required - this is a pure pipeline composition.
+# CSV artifacts are also attached for spreadsheet triage:
+#   - readiness.csv
+#   - health-blocking.csv
+#
+# This workflow is REPORT-ONLY and always succeeds. It surfaces not-ready / unhealthy
+# clusters via the JUnit diagnostic output (Checks tab), the CSV artifacts, and the step
+# summary - but it does NOT block downstream runs. In large fleets, day-to-day
+# environmental issues (transient storage noise, a single node out, etc.) routinely affect
+# a small subset of clusters; blocking the entire wave for one unhealthy cluster is rarely
+# the desired behavior. Step.7_apply-updates.yml is itself per-cluster scoped, so clusters that
+# are not ready will simply no-op there too.
+#
+# If you want a hard pass/fail signal for a chained gate, read the job outputs
+# (not_ready, critical_failures) from a downstream workflow via `workflow_run` and apply
+# your own tolerance threshold there.
+#
+# Remediation of Critical health failures is out of scope for this module - see the module
+# README "Assess Readiness and Health BEFORE Applying Updates" section for pointers.
+#
+# v0.8.5 thin-YAML: the inline run: | body (inventory + scope-param construction +
+# Get-AzLocalClusterUpdateReadiness + Test-AzLocalClusterHealth + combined JUnit XML
+# merge + 8-section markdown summary + step outputs) is now the
+# Export-AzLocalClusterUpdateReadinessReport Public cmdlet. This yml is condensed
+# to a few lines per step; the full workload (and its Pester tests) live in the module.
 
 # Workflow name carries the same Step.N - prefix as the filename so the GitHub
 # Actions sidebar (which sorts workflows alphabetically by this `name:` field)
-# lists the pipelines in execution order.
-name: Step.8 - Monitor In-Flight Updates
+# lists the eight pipelines in execution order.
+name: Step.5 - Assess Update Readiness
 
 on:
   # BEGIN-AZLOCAL-CUSTOMIZE:schedule-triggers
   # Content between BEGIN/END markers is preserved by
   # Update-AzLocalPipelineExample across module upgrades.
-  #
-  # Default (v0.7.92+): runs 5x/day, every 2 hours across the typical overnight
-  # maintenance window (20:00, 22:00, 00:00, 02:00, 04:00 UTC). GitHub Actions
-  # cron is ALWAYS UTC - adjust the hour list below for your local maintenance
-  # window. Comment the `schedule:` block out entirely to disable.
-  #
-  # Other typical patterns:
-  #   '*/30 * * * *'         every 30 min, 24x7 (busiest)
-  #   '0 */2 * * *'          every 2 hours, 24x7
-  #   '*/30 * * * 0,6'       every 30 min, weekends only
-  #   '*/15 22-6 * * 0,6'    every 15 min during the weekend maintenance window
   schedule:
-    - cron: '0 0,2,4,20,22 * * *'
+    - cron: '0 7 * * *'  # Daily at 07:00 UTC
   # END-AZLOCAL-CUSTOMIZE:schedule-triggers
 
   workflow_dispatch:
     inputs:
       scope:
-        description: 'Scope of clusters to monitor'
+        description: 'Scope of clusters to check'
         required: true
-        default: 'all'
+        default: 'by-update-ring'
         type: choice
         options:
-          - 'all'
           - 'by-update-ring'
+          - 'all'
       update_ring:
         # accepts a single ring (Wave1), a semicolon-delimited list (Prod;Ring2),
         # or '***' (three stars - deliberate, not a typo) to match every cluster that HAS the UpdateRing tag set.
         description: "UpdateRing tag value (only used when scope=by-update-ring). Single ring, 'Prod;Ring2', or '***'."
         required: false
-        default: ''
-      long_running_step_hours:
-        description: 'PRIMARY stuck-step signal. Flag in-flight runs whose CURRENT STEP has been running longer than this many hours (default 2). More accurate than overall-run elapsed for large clusters where a legitimate 12-node run can exceed 6-8h while each individual step ticks along normally.'
-        required: false
-        default: '2'
-      long_running_threshold_hours:
-        description: 'Belt-and-braces overall-elapsed flag (default 24h). Useful as a backstop for very long-stuck runs; per-step elapsed (long_running_step_hours) is the primary stuck-run signal.'
-        required: false
-        default: '24'
-      recent_failure_window_hours:
-        description: 'Surface FAILED runs whose End time falls within the last N hours (default 24). Set to 0 to disable.'
-        required: false
-        default: '24'
-      critical_elapsed_days:
-        description: 'CRITICAL tier for overall-elapsed (default 3 days). In-flight runs older than this get a :rotating_light: chip; older than 2x this get a :skull: chip. Strongest visual signal that human intervention is needed - a 19-day-stuck run will no longer be hidden behind a single "step errored" chip.'
-        required: false
-        default: '3'
+        default: 'Wave1'
       module_version:
         description: 'Pin AzLocal.UpdateManagement version (empty = latest from PSGallery). See Automation-Pipeline-Examples/README.md section 5 "Optional configuration".'
         required: false
@@ -101,8 +88,8 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
-  monitor:
-    name: Monitor in-flight update runs
+  assess:
+    name: Assess readiness + blocking health
     runs-on: windows-latest
     permissions:
       id-token: write
@@ -110,16 +97,12 @@ jobs:
       checks: write
     outputs:
       # v0.8.5 thin-YAML: keys align byte-for-byte with the lowercase output
-      # names emitted by Export-AzLocalUpdateRunMonitorReport (which uses
+      # names emitted by Export-AzLocalClusterUpdateReadinessReport (which uses
       # Set-AzLocalPipelineOutput under the hood). ADO is case-sensitive on
       # task.setvariable lookups; GH is case-insensitive but the lowercase
       # form is the canonical one used by every v0.8.5+ Step.* cmdlet.
-      in_flight: ${{ steps.snapshot.outputs.in_flight }}
-      long_running: ${{ steps.snapshot.outputs.long_running }}
-      long_running_step: ${{ steps.snapshot.outputs.long_running_step }}
-      step_errored: ${{ steps.snapshot.outputs.step_errored }}
-      recent_failures: ${{ steps.snapshot.outputs.recent_failures }}
-      unresolved_failures: ${{ steps.snapshot.outputs.unresolved_failures }}
+      not_ready: ${{ steps.gate.outputs.not_ready }}
+      critical_failures: ${{ steps.gate.outputs.critical_failures }}
 
     steps:
       - name: Checkout repository
@@ -164,47 +147,40 @@ jobs:
               -GeneratedAgainstVersion $env:GENERATED_AGAINST_MODULE_VERSION `
               -PinnedVersion $env:REQUIRED_MODULE_VERSION
 
-      - name: Snapshot in-flight update runs
-        # v0.8.5 thin-YAML: the inline run block (cluster scope query
-        # via Get-AzLocalUpdateRuns -Latest -PassThru, severity
-        # classification, per-cluster CSV, JUnit XML, the six step
-        # outputs, and the markdown step summary with status badge +
-        # in-flight + unresolved-failed tables) has been condensed into
-        # the Public cmdlet Export-AzLocalUpdateRunMonitorReport. The
-        # cmdlet writes ./reports/update-monitor.csv + .xml, emits the
-        # markdown summary via GITHUB_STEP_SUMMARY, and sets the six
-        # step outputs (in_flight, long_running, long_running_step,
-        # step_errored, recent_failures, unresolved_failures).
-        id: snapshot
+      - name: Run readiness + blocking health checks
+        # v0.8.5 thin-YAML: the inline run block (inventory + scope param
+        # construction + Get-AzLocalClusterUpdateReadiness CSV/XML +
+        # Test-AzLocalClusterHealth -BlockingOnly CSV/XML + combined JUnit
+        # merge + 8-section markdown step summary + the two step outputs
+        # (NOT_READY / CRITICAL_FAILURES, now lowercase not_ready /
+        # critical_failures) has been condensed into the Public cmdlet
+        # Export-AzLocalClusterUpdateReadinessReport. The cmdlet writes
+        # ./artifacts/{readiness,health-blocking,assess-readiness}.{csv,xml},
+        # emits the markdown summary via GITHUB_STEP_SUMMARY, and sets the
+        # two step outputs.
+        id: gate
         shell: pwsh
         env:
           INPUT_SCOPE: ${{ github.event.inputs.scope }}
           INPUT_UPDATE_RING: ${{ github.event.inputs.update_ring }}
-          INPUT_THRESHOLD_HOURS: ${{ github.event.inputs.long_running_threshold_hours }}
-          INPUT_STEP_THRESHOLD_HOURS: ${{ github.event.inputs.long_running_step_hours }}
-          INPUT_RECENT_FAILURE_WINDOW_HOURS: ${{ github.event.inputs.recent_failure_window_hours }}
-          INPUT_CRITICAL_ELAPSED_DAYS: ${{ github.event.inputs.critical_elapsed_days }}
           INSTALLED_MODULE_VERSION: ${{ steps.module-version.outputs.installed_module_version }}
         run: |
           $ErrorActionPreference = 'Stop'
           Import-Module AzLocal.UpdateManagement -Force
           $params = @{
               Scope                  = if ($env:INPUT_SCOPE) { $env:INPUT_SCOPE } else { 'all' }
-              OutputDirectory        = './reports'
+              OutputDirectory        = './artifacts'
               InstalledModuleVersion = $env:INSTALLED_MODULE_VERSION
           }
           if ($env:INPUT_UPDATE_RING) { $params['UpdateRing'] = $env:INPUT_UPDATE_RING }
-          [int]$parsed = 0
-          if ([int]::TryParse([string]$env:INPUT_STEP_THRESHOLD_HOURS, [ref]$parsed) -and $parsed -gt 0)        { $params['LongRunningStepHours']      = $parsed }
-          if ([int]::TryParse([string]$env:INPUT_THRESHOLD_HOURS, [ref]$parsed) -and $parsed -gt 0)             { $params['LongRunningThresholdHours'] = $parsed }
-          if ([int]::TryParse([string]$env:INPUT_RECENT_FAILURE_WINDOW_HOURS, [ref]$parsed) -and $parsed -ge 0) { $params['RecentFailureWindowHours']  = $parsed }
-          if ([int]::TryParse([string]$env:INPUT_CRITICAL_ELAPSED_DAYS, [ref]$parsed) -and $parsed -gt 0)       { $params['CriticalElapsedDays']       = $parsed }
-          Export-AzLocalUpdateRunMonitorReport @params
+          Export-AzLocalClusterUpdateReadinessReport @params
 
       - name: Compute Artifact Timestamp
         if: always()
         id: artifact-stamp
         shell: pwsh
+        # every downloadable artifact gets a UTC timestamp suffix so multiple runs on
+        # the same day produce distinct zip names.
         run: |
           $stamp = (Get-Date).ToUniversalTime().ToString('yyyyMMdd_HHmmss')
           "timestamp=$stamp" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
@@ -214,16 +190,38 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v6
         with:
-          name: azlocal-step.8-update-monitor_${{ steps.artifact-stamp.outputs.timestamp }}
-          path: ./reports/*
-          retention-days: 14
+          name: azlocal-step.5-readiness-assessment-report_${{ steps.artifact-stamp.outputs.timestamp }}
+          path: ./artifacts/*
+          retention-days: 30
 
-      - name: Publish Update Monitor JUnit
+      - name: Publish combined readiness assessment (primary)
         if: always()
         uses: dorny/test-reporter@v3
         with:
-          name: 'In-Flight Update Monitor'
-          path: ./reports/update-monitor.xml
+          name: 'Update Readiness Assessment'
+          path: ./artifacts/assess-readiness.xml
+          reporter: java-junit
+          list-suites: failed
+          list-tests: failed
+        continue-on-error: true
+
+      - name: Publish readiness JUnit diagnostics
+        if: always()
+        uses: dorny/test-reporter@v3
+        with:
+          name: '[JUnit Debug] Readiness (one test per cluster)'
+          path: ./artifacts/readiness.xml
+          reporter: java-junit
+          list-suites: failed
+          list-tests: failed
+        continue-on-error: true
+
+      - name: Publish blocking-health JUnit diagnostics
+        if: always()
+        uses: dorny/test-reporter@v3
+        with:
+          name: '[JUnit Debug] Blocking Health Checks (one test per cluster)'
+          path: ./artifacts/health-blocking.xml
           reporter: java-junit
           list-suites: failed
           list-tests: failed

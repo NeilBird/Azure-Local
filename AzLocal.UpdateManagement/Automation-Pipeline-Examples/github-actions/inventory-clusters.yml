@@ -1,3 +1,4 @@
+# AZLOCAL-PIPELINE-ID: inventory-clusters
 # Inventory Azure Local Clusters
 # This workflow queries all Azure Local clusters and exports inventory with UpdateRing tag status
 #
