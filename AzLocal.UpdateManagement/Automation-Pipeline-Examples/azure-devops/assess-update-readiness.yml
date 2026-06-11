@@ -2,7 +2,7 @@
 # Step.5 - Assess Update Readiness (Pre-flight go/no-go gate)
 # --------------------------------------------------
 # Runs Get-AzLocalClusterUpdateReadiness and Test-AzLocalClusterHealth -BlockingOnly
-# against a target UpdateRing (or the whole fleet) BEFORE Step.7_apply-updates.yml runs.
+# against a target UpdateRing (or the whole fleet) BEFORE apply-updates.yml runs.
 #
 # Publishes two JUnit XML diagnostic results to the Azure DevOps Tests tab:
 #   - readiness.xml       (one test per cluster; fails if ReadyForUpdate = $false)
@@ -15,7 +15,7 @@
 # does NOT block downstream runs. In large fleets, day-to-day environmental issues
 # (transient storage noise, a single node out, etc.) routinely affect a small subset of
 # clusters; blocking the entire wave for one unhealthy cluster is rarely the desired
-# behavior. Step.7_apply-updates.yml is itself per-cluster scoped, so clusters that are not
+# behavior. apply-updates.yml is itself per-cluster scoped, so clusters that are not
 # ready will simply no-op there too.
 #
 # If you want a hard pass/fail signal for a chained gate, read the output variables
@@ -70,7 +70,7 @@ variables:
   # the version actually installed and to the latest on PSGallery, and emits a warning
   # log if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.8.7'
+  GENERATED_AGAINST_MODULE_VERSION: '0.8.71'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): queue-time parameter > pipeline variable
   # 'REQUIRED_MODULE_VERSION' overridden at queue time > empty (latest).

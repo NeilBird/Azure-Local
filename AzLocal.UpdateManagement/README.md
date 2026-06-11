@@ -2,7 +2,7 @@
 
 > ⚠️ **Disclaimer**: This module is **NOT** a Microsoft supported service offering or product. It is provided as example code only, with no warranty or official support. Refer to the [MIT license](https://github.com/NeilBird/Azure-Local/blob/main/LICENSE) for further information.
 
-**Latest Version:** v0.8.7 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.8.7)
+**Latest Version:** v0.8.71 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.8.71)
 
 > 📢 **Renamed in v0.7.3**: this module was previously published as `AzStackHci.ManageUpdates`. The new module name aligns with the Azure Local product name (_Microsoft retired the *Azure Stack HCI* brand in late 2024_). The module GUID is preserved across the rename. If you have the old name installed, run:
 >
@@ -23,6 +23,7 @@ Azure Local REST API specification (includes update management endpoints): https
 **This README (overview + most-recent release notes):**
 
 - [Where to Start](#where-to-start)
+- [What's New in v0.8.71](#whats-new-in-v0871)
 - [What's New in v0.8.7](#whats-new-in-v087)
 - [What's New in v0.8.4](#whats-new-in-v084)
 - [Files](#files)
@@ -87,21 +88,17 @@ If you are new to this module, work through these in order from a regular PowerS
 
 > Most CI/CD pipelines in [Automation-Pipeline-Examples/](Automation-Pipeline-Examples/) are direct implementations of one of these workflows. Start there if you want a copy-pasteable end-to-end pipeline.
 
-## What's New in v0.8.7
+## What's New in v0.8.71
 
-**On-prem solution-update sideloading automation: new self-hosted Step.6 pipeline + 5 new Public cmdlets + de-numbered pipeline filenames.** Adds an opt-in, off-by-default workflow for Azure Local clusters that cannot pull solution updates from Azure directly. The new Step.6 pipeline (`sideload-updates.yml`) robocopies update media to each cluster's import share, verifies the SHA256 over WinRM, runs `Add-SolutionUpdate`, and flips the `UpdateSideloaded=True` tag so the downstream apply (now Step.7) picks it up. The multi-hour copy runs in a detached Windows Scheduled Task and the pipeline is driven as a re-entrant state machine on a frequent CRON, so no individual run is long-lived. **Module export count grows 55 -> 60.**
+**Patch release: JUnit export strict-mode crash fix + sideload schedule-path default corrected + de-numbered stale pipeline doc-string filenames.** No public API or export-count change (still 60).
 
-1. **5 new Public cmdlets**: `Update-AzLocalSideloadCatalog`, `Resolve-AzLocalSideloadPlan`, `Invoke-AzLocalSideloadUpdate`, `Export-AzLocalSideloadStatusReport`, `Add-AzLocalSideloadStepSummary`.
-2. **New Step.6 sideload pipeline** (`sideload-updates.yml`, GitHub Actions + Azure DevOps), opt-in via the `SIDELOAD_UPDATES` repository variable. Targets a self-hosted runner (`runs-on: [self-hosted, azlocal-sideload]`) on GitHub / a self-hosted agent pool (`pool: { name, demands: azlocal-sideload }`) on Azure DevOps. Manual dispatch plus a `*/30` CRON poll advances the state machine (Planned -> Copying -> Copied -> Verified -> Imported -> SideloadFlagged). See [Automation-Pipeline-Examples/docs/sideload.md](Automation-Pipeline-Examples/docs/sideload.md) + [sideload-robocopy.md](Automation-Pipeline-Examples/docs/sideload-robocopy.md).
-3. **BREAKING - pipeline filenames de-numbered.** The `Step.N_` filename prefix is removed (e.g. `Step.7_apply-updates.yml` -> `apply-updates.yml`); the in-pipeline `Step.N - ` display names are unchanged. `Update-AzLocalPipelineExample` is now rename-aware: it matches each destination pipeline by a stable logical id (embedded `# AZLOCAL-PIPELINE-ID:` marker, with legacy-filename aliases) and AUTO-RENAMES any older `Step.N_*.yml` to the new name while preserving your `BEGIN/END-AZLOCAL-CUSTOMIZE` CRON edits (emits a `RenamedFrom` result + a required-check warning).
-4. **BREAKING - display-step renumber** to make room for sideload at Step.6: apply-updates 6 -> 7, monitor-updates 7 -> 8, fleet-update-status 8 -> 9, fleet-health-status 9 -> 10.
-5. **Sideload-aware existing steps**: Step.1 inventory can emit the `UpdateAuthAccountId` column (`-IncludeSideloadColumns`, auto-enabled from `SIDELOAD_UPDATES`); Step.2 tag management can set `UpdateAuthAccountId` from CSV; Step.3 advisor can emit a recommended sideload CRON (apply window minus `SIDELOAD_LEAD_DAYS`). Byte-identical output when sideload is off.
-6. **Fixed**: the in-flight monitor "Current Step" column always showed the top-level wrapper step ("Start update"). `Format-AzLocalUpdateRun` and `Get-AzLocalFleetStatusData` now walk to the deepest active step (`Get-DeepestActiveStep`), matching the standard update-progress output.
-7. **BREAKING - all operator config relocated to a repo-root `config/` folder.** Every operator-authored config file - `ClusterUpdateRings.csv`, `apply-updates-schedule.yml`, `sideload-auth-map.csv`, `sideload-catalog.yml` - now lives in a single `config/` folder at the repo root, with the **identical path on GitHub Actions and Azure DevOps**. The starter `apply-updates-schedule.yml` moves here from its v0.7.92 location (`.github/` / repo root), and every pipeline default (`APPLY_UPDATES_SCHEDULE_PATH`, `SIDELOAD_AUTH_MAP_PATH`, `SIDELOAD_CATALOG_PATH`, ring-CSV paths) now points at `config/`. `Copy-AzLocalPipelineExample` seeds these starters into `config/` (never overwriting); `Update-AzLocalPipelineExample` refreshes only the pipeline YAMLs and leaves `config/` untouched.
+1. **Fixed (production)**: `Export-ResultsToJUnitXml` no longer throws `The property 'CurrentState' cannot be found on this object` under `Set-StrictMode -Version Latest` when an Apply Updates run emits an `UpdateStarted` success row that legitimately lacks `CurrentState`/`Progress`. The bare property reads (`CurrentState`, `Progress`, `UpdateName`) are now guarded with `PSObject.Properties[...]`, matching the existing `StartTime`/`EndTime` pattern. Regression test added.
+2. **Fixed**: GitHub Actions `sideload-updates.yml` `APPLY_UPDATES_SCHEDULE_PATH` default corrected from `./.github/apply-updates-schedule.yml` to `./config/apply-updates-schedule.yml`, so it matches where `Copy-AzLocalPipelineExample` drops the starter (alongside the auth-map and catalog, which already defaulted to `config/`).
+3. **Fixed**: de-numbered stale `Step.N_*.yml` filename references in pipeline header comments and input descriptions (`apply-updates-schedule-audit.yml`, `assess-update-readiness.yml`, `authentication-test.yml` on both platforms, and the `apply-updates-schedule.example.yml` starter). v0.8.7 renamed the files; these doc strings now name the current files (`apply-updates.yml`, `authentication-test.yml`, `apply-updates-schedule-audit.yml`).
 
-`GENERATED_AGAINST_MODULE_VERSION` bumped from `0.8.6` to `0.8.7` across all bundled pipeline templates.
+`GENERATED_AGAINST_MODULE_VERSION` bumped from `0.8.7` to `0.8.71` across all bundled pipeline templates.
 
-See [CHANGELOG.md](CHANGELOG.md#087---2026-06-11) for the full v0.8.7 entry. See [CHANGELOG.md](CHANGELOG.md#086---2026-06-10) for the v0.8.6 entry.
+See [CHANGELOG.md](CHANGELOG.md#0871---2026-06-11) for the full v0.8.71 entry. See [`What's New in v0.8.7`](#whats-new-in-v087) in the Release History section below for the previous release.
 
 ## Files
 
@@ -580,7 +577,13 @@ This code is provided as-is for educational and reference purposes.
 
 The full What's-New history (v0.7.81 and earlier) has moved to [docs/release-history.md](docs/release-history.md).
 
-The most recent release notes for **v0.8.7** stay above under [`What's New in v0.8.7`](#whats-new-in-v087).
+The most recent release notes for **v0.8.71** stay above under [`What's New in v0.8.71`](#whats-new-in-v0871).
+
+### What's New in v0.8.7
+
+**On-prem solution-update sideloading automation: new self-hosted Step.6 pipeline + 5 new Public cmdlets + de-numbered pipeline filenames.** Adds an opt-in, off-by-default workflow for Azure Local clusters that cannot pull solution updates from Azure directly: a new Step.6 pipeline (`sideload-updates.yml`) robocopies update media to each cluster's import share, verifies the SHA256 over WinRM, runs `Add-SolutionUpdate`, and flips the `UpdateSideloaded=True` tag so the downstream apply (now Step.7) picks it up. The 5 new cmdlets are `Update-AzLocalSideloadCatalog`, `Resolve-AzLocalSideloadPlan`, `Invoke-AzLocalSideloadUpdate`, `Export-AzLocalSideloadStatusReport`, `Add-AzLocalSideloadStepSummary`. BREAKING: bundled pipeline filenames are de-numbered (`Step.7_apply-updates.yml` -> `apply-updates.yml`, etc.; `Update-AzLocalPipelineExample` is now rename-aware), four display steps renumber to make room for sideload at Step.6, and all operator config relocates to a repo-root `config/` folder. Module export count grows 55 -> 60.
+
+See [CHANGELOG.md](CHANGELOG.md#087---2026-06-11) for the full v0.8.7 entry.
 
 ### What's New in v0.8.6
 

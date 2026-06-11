@@ -6,13 +6,13 @@
 #
 # WHY THIS PIPELINE EXISTS
 # ------------------------
-# Step.7_apply-updates.yml ships with NO default schedule (workflow_dispatch only) on purpose,
+# apply-updates.yml ships with NO default schedule (workflow_dispatch only) on purpose,
 # so customers must consciously choose when updates fire. After you have configured
-# UpdateStartWindow tags on your clusters and added cron entries to Step.7_apply-updates.yml, this
+# UpdateStartWindow tags on your clusters and added cron entries to apply-updates.yml, this
 # pipeline is the safety net that catches:
-#   - a new ring tagged with UpdateStartWindow that no cron in Step.7_apply-updates.yml will reach
+#   - a new ring tagged with UpdateStartWindow that no cron in apply-updates.yml will reach
 #   - an UpdateStartWindow tag value that fails to parse (typo / wrong syntax)
-#   - Step.7_apply-updates.yml cron entries that the advisor cannot reason about
+#   - apply-updates.yml cron entries that the advisor cannot reason about
 #     (DayOfMonth restrictions, step values) so you can audit them manually
 #
 # REPORTS GENERATED
@@ -47,7 +47,7 @@ on:
   workflow_dispatch:
     inputs:
       pipeline_path:
-        description: 'Path (file or folder) to Step.7_apply-updates.yml to audit, repo-relative. Required so the Recommend view can diff its proposed crons against what is already present in Step.7 and only emit a snippet for the truly missing entries. Default `.github/workflows` matches the standard GitHub Actions consumer layout where you paste the bundled `Step.7_apply-updates.yml` sample.'
+        description: 'Path (file or folder) to apply-updates.yml to audit, repo-relative. Required so the Recommend view can diff its proposed crons against what is already present in apply-updates.yml and only emit a snippet for the truly missing entries. Default `.github/workflows` matches the standard GitHub Actions consumer layout where you paste the bundled `apply-updates.yml` sample.'
         required: true
         default: '.github/workflows'
       schedule_path:
@@ -96,7 +96,7 @@ env:
   # this to the version actually installed and to the latest on PSGallery, and emits a
   # ::notice annotation if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.8.7'
+  GENERATED_AGAINST_MODULE_VERSION: '0.8.71'
   REQUIRED_MODULE_VERSION: ${{ github.event.inputs.module_version || vars.REQUIRED_MODULE_VERSION || '' }}
   # v0.8.4 - opt this workflow into Node.js 24 for all JavaScript actions
   # (actions/checkout, actions/download-artifact, actions/upload-artifact,
