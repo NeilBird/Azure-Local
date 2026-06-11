@@ -79,6 +79,9 @@
         'Private/Resolve-WildcardDate.ps1',
         'Private/Resolve-WildcardDateRange.ps1',
         'Private/Set-AzLocalClusterTagsMerge.ps1',
+        # On-prem solution-update sideloading automation (v0.8.7)
+        'Private/Get-AzLocalSideloadAuthMap.ps1',
+        'Private/Get-AzLocalSideloadCatalog.ps1',
         'Private/Test-AzCliAvailable.ps1',
         'Private/Test-AzLocalAllowedUpdateVersionsString.ps1',
         'Private/Test-AzLocalUpdateExclusion.ps1',
@@ -139,6 +142,8 @@
         'Public/Update-AzLocalPipelineExample.ps1',
         'Public/Get-AzLocalFleetConnectivityStatus.ps1',
         'Public/New-AzLocalFleetConnectivityStatusSummary.ps1',
+        # On-prem solution-update sideloading automation (v0.8.7) - catalog maintenance
+        'Public/Update-AzLocalSideloadCatalog.ps1',
         # Thin-YAML pipeline foundation (v0.8.5)
         'Public/Add-AzLocalPipelineVersionBanner.ps1',
         # Thin-YAML Step.0 (v0.8.5) - Authentication validation + subscription scope + cluster reachability
@@ -251,7 +256,9 @@
         'Invoke-AzLocalReadinessGatedClusterUpdate',
         'Add-AzLocalApplyUpdatesStepSummary',
         'Add-AzLocalNoReadyClustersStepSummary',
-        'Invoke-AzLocalItsmTicketingFromArtifact'
+        'Invoke-AzLocalItsmTicketingFromArtifact',
+        # On-prem solution-update sideloading automation (v0.8.7)
+        'Update-AzLocalSideloadCatalog'
     )
 
     # Cmdlets to export from this module, for best performance, do not use wildcards and do not delete the entry, use an empty array if there are no cmdlets to export.

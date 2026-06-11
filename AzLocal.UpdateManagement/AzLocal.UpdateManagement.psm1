@@ -218,6 +218,12 @@ $script:UpdateSideloadedTagName = 'UpdateSideloaded'
 
 $script:UpdateVersionInProgressTagName = 'UpdateVersionInProgress'
 
+# v0.8.7: numeric account id (1-3 digits, e.g. 001) that maps a cluster to a
+# row in the sideload auth-map CSV (Key Vault + remoting settings) used by the
+# on-prem solution-update sideloading automation. Written/exported by Step.1
+# and Step.2 only when SIDELOAD_UPDATES is enabled; absent otherwise.
+$script:UpdateAuthAccountIdTagName = 'UpdateAuthAccountId'
+
 # Current apply-updates-schedule.yml schema version produced + consumed by
 # this module. Incremented when a non-additive change to the schedule file
 # format ships. Customer files on a LOWER version are auto-migrated by
@@ -343,5 +349,7 @@ Export-ModuleMember -Function @(
     'Invoke-AzLocalReadinessGatedClusterUpdate',
     'Add-AzLocalApplyUpdatesStepSummary',
     'Add-AzLocalNoReadyClustersStepSummary',
-    'Invoke-AzLocalItsmTicketingFromArtifact'
+    'Invoke-AzLocalItsmTicketingFromArtifact',
+    # On-prem solution-update sideloading automation (v0.8.7)
+    'Update-AzLocalSideloadCatalog'
 )
