@@ -49,14 +49,21 @@ function Format-AzLocalUpdateRun {
         $totalSteps = @($steps).Count
         $progress = "$completedSteps/$totalSteps steps"
 
-        $inProgressStep = $steps | Where-Object { $_.status -eq "InProgress" } | Select-Object -First 1
-        $failedStep = $steps | Where-Object { $_.status -in @("Error", "Failed") } | Select-Object -First 1
-
-        if ($inProgressStep) {
-            $currentStep = $inProgressStep.name
-        }
-        elseif ($failedStep) {
-            $currentStep = "$($failedStep.name) (FAILED)"
+        # Resolve the deepest InProgress/Error/Failed step in the nested progress tree.
+        # The top-level steps array only exposes a coarse wrapper step (e.g. "Start update")
+        # that stays InProgress for the entire run, so selecting the first InProgress/Failed
+        # step from that level alone always reported the wrapper as the "current step".
+        # Walking to the deepest active step keeps CurrentStep consistent with
+        # CurrentStepDetail and the standard update-progress output, both of which already
+        # traverse the full tree.
+        $deepestActive = Get-DeepestActiveStep -Steps $steps
+        if ($deepestActive) {
+            if ($deepestActive.status -in @("Error", "Failed")) {
+                $currentStep = "$($deepestActive.name) (FAILED)"
+            }
+            else {
+                $currentStep = $deepestActive.name
+            }
         }
 
         $currentStepDetail = Get-CurrentStepPath -Steps $steps -IncludeErrorMessage
@@ -69,11 +76,11 @@ function Format-AzLocalUpdateRun {
             }
         }
 
-        # Per-step elapsed (v0.7.96): walk to the deepest InProgress/Failed step and surface its
-        # startTimeUtc + computed elapsed. This is the primary "is something stuck?" signal for
-        # large-node clusters where overall-run duration alone is unreliable (a 16-node legitimate
-        # run can easily exceed 8h while every individual step ticks along normally).
-        $deepestActive = Get-DeepestActiveStep -Steps $steps
+        # Per-step elapsed (v0.7.96): use the deepest InProgress/Failed step (resolved above)
+        # and surface its startTimeUtc + computed elapsed. This is the primary "is something
+        # stuck?" signal for large-node clusters where overall-run duration alone is unreliable
+        # (a 16-node legitimate run can easily exceed 8h while every individual step ticks along
+        # normally).
 
         # Deepest non-empty errorMessage from any Error/Failed step in the tree (v0.7.96).
         # Uses a coalesce(e8Msg..e1Msg) recursion so operators see the actual leaf failure

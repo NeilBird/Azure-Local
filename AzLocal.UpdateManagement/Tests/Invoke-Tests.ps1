@@ -151,6 +151,11 @@ Write-Host "Output Path: $OutputPath" -ForegroundColor Gray
 Write-Host "Verbosity: $Verbosity$(if ($useLogFile) { ' (detailed output to log file)' })" -ForegroundColor Gray
 Write-Host ""
 
+# Wall-clock stopwatch: capture the WHOLE run (Pester discovery + execution),
+# not just $results.Duration, so the persisted ledger reflects real elapsed
+# time an operator/CI experiences. Appended to test-run-timings.csv at the end.
+$runStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+
 # Run tests - capture detailed output to log file if needed
 if ($useLogFile) {
     # Create a separate config for the log file output
@@ -555,6 +560,22 @@ if ($useLogFile) {
     Write-Host "  Detailed Log: $logPath" -ForegroundColor Gray
 }
 Write-Host ""
+
+# Record wall-clock timing to the git-tracked ledger (Tests/test-run-timings.csv)
+# so suite duration is tracked over time. Best-effort - never fail the run on a
+# ledger write error.
+$runStopwatch.Stop()
+try {
+    $timingRow = & (Join-Path -Path $PSScriptRoot -ChildPath 'Add-PesterRunTiming.ps1') `
+        -Result $results `
+        -WallClockSeconds $runStopwatch.Elapsed.TotalSeconds `
+        -Runner 'Invoke-Tests.ps1'
+    Write-Host "Wall-clock: $($timingRow.WallClockSeconds)s (Pester $($timingRow.PesterDurationSeconds)s, discovery $($timingRow.DiscoverySeconds)s) - recorded to test-run-timings.csv" -ForegroundColor Gray
+    Write-Host ""
+}
+catch {
+    Write-Warning "Could not append to test-run-timings.csv: $($_.Exception.Message)"
+}
 
 if ($OpenReport) {
     Write-Host "Opening HTML report..." -ForegroundColor Cyan

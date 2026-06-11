@@ -1,3 +1,4 @@
+# AZLOCAL-PIPELINE-ID: apply-updates
 # Apply Updates to Azure Local Clusters
 # This workflow applies updates to clusters filtered by UpdateRing tag value
 #
@@ -11,12 +12,12 @@
 # Workflow name carries the same Step.N - prefix as the filename so the GitHub
 # Actions sidebar (which sorts workflows alphabetically by this `name:` field)
 # lists the eight pipelines in execution order.
-name: Step.6 - Apply Updates
+name: Step.7 - Apply Updates
 
 on:
   # BEGIN-AZLOCAL-CUSTOMIZE:schedule-triggers
   # PREFERRED PATTERN - drive automated update runs from a ring-aware
-  # schedule file (apply-updates-schedule.yml at the repo root by default),
+  # schedule file (config/apply-updates-schedule.yml by default),
   # not from per-window crons.
   #
   # How it works:
@@ -31,7 +32,7 @@ on:
   #      at New-AzLocalApplyUpdatesScheduleConfig.
   #
   # Generate a STRAWMAN schedule file from your fleet via:
-  #   New-AzLocalApplyUpdatesScheduleConfig -OutputPath .\.github\apply-updates-schedule.yml
+  #   New-AzLocalApplyUpdatesScheduleConfig -OutputPath .\config\apply-updates-schedule.yml
   # Every row is commented out by default - review and uncomment to activate.
   #
   # Recommended cron: once per day at a low-traffic time (the resolver is
@@ -130,7 +131,7 @@ env:
   # this to the version actually installed and to the latest on PSGallery, and emits a
   # ::notice annotation if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.8.6'
+  GENERATED_AGAINST_MODULE_VERSION: '0.8.7'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): manual workflow_dispatch input >
   # repository variable 'REQUIRED_MODULE_VERSION' > empty (latest).
@@ -139,7 +140,7 @@ env:
   # root). The resolver step in check-readiness reads this file when the trigger
   # is `schedule:`. Override via repository variable APPLY_UPDATES_SCHEDULE_PATH
   # if you keep the schedule outside `.github/`.
-  APPLY_UPDATES_SCHEDULE_PATH: ${{ vars.APPLY_UPDATES_SCHEDULE_PATH || './.github/apply-updates-schedule.yml' }}
+  APPLY_UPDATES_SCHEDULE_PATH: ${{ vars.APPLY_UPDATES_SCHEDULE_PATH || './config/apply-updates-schedule.yml' }}
   # v0.8.4 - opt this workflow into Node.js 24 for all JavaScript actions
   # (actions/checkout, actions/download-artifact, actions/upload-artifact,
   # azure/login, dorny/test-reporter, etc). Per GitHub's 2025-09-19 deprecation
@@ -174,7 +175,7 @@ jobs:
       # surface the timestamped readiness-artifact name so the downstream
       # apply-updates job can download it (cross-job step outputs are not visible -
       # everything passed to the next job has to go through the job 'outputs' map).
-      readiness_artifact: azlocal-step.6-apply-updates-readiness-report_${{ steps.artifact-stamp.outputs.timestamp }}
+      readiness_artifact: azlocal-step.7-apply-updates-readiness-report_${{ steps.artifact-stamp.outputs.timestamp }}
       # the ring(s) the schedule resolver picked for this firing.
       # Empty when the trigger was workflow_dispatch (downstream falls back to
       # the manual `update_ring` input). When the trigger was `schedule:`, this
@@ -273,7 +274,7 @@ jobs:
     - name: Upload Readiness Report
       uses: actions/upload-artifact@v6
       with:
-        name: azlocal-step.6-apply-updates-readiness-report_${{ steps.artifact-stamp.outputs.timestamp }}
+        name: azlocal-step.7-apply-updates-readiness-report_${{ steps.artifact-stamp.outputs.timestamp }}
         path: ./artifacts/readiness-report.csv
         retention-days: 30
 
@@ -396,7 +397,7 @@ jobs:
     - name: Upload Update Logs
       uses: actions/upload-artifact@v6
       with:
-        name: azlocal-step.6-apply-updates-logs_${{ steps.artifact-stamp.outputs.timestamp }}
+        name: azlocal-step.7-apply-updates-logs_${{ steps.artifact-stamp.outputs.timestamp }}
         path: ./artifacts/*
         retention-days: 30
 
@@ -466,7 +467,7 @@ jobs:
       if: ${{ github.event.inputs.raise_itsm_ticket == 'true' }}
       uses: actions/upload-artifact@v6
       with:
-        name: azlocal-step.6-apply-updates-itsm-results_${{ steps.artifact-stamp.outputs.timestamp }}
+        name: azlocal-step.7-apply-updates-itsm-results_${{ steps.artifact-stamp.outputs.timestamp }}
         path: ./artifacts/itsm-*.*
         retention-days: 30
       continue-on-error: true

@@ -117,13 +117,13 @@ function Export-ResultsToJUnitXml {
                 [void]$xmlBuilder.AppendLine("Cluster: $clusterName")
                 [void]$xmlBuilder.AppendLine("Status: $($result.Status)")
                 [void]$xmlBuilder.AppendLine("Message: $message")
-                if ($result.UpdateName) {
+                if ($result.PSObject.Properties['UpdateName'] -and $result.UpdateName) {
                     [void]$xmlBuilder.AppendLine("Update: $(ConvertTo-XmlSafeString $result.UpdateName)")
                 }
-                if ($result.CurrentState) {
+                if ($result.PSObject.Properties['CurrentState'] -and $result.CurrentState) {
                     [void]$xmlBuilder.AppendLine("Current State: $(ConvertTo-XmlSafeString $result.CurrentState)")
                 }
-                if ($result.Progress) {
+                if ($result.PSObject.Properties['Progress'] -and $result.Progress) {
                     [void]$xmlBuilder.AppendLine("Progress: $($result.Progress)")
                 }
                 if ($result.PSObject.Properties['StartTime'] -and $result.StartTime) {
@@ -168,13 +168,13 @@ function Export-ResultsToJUnitXml {
                 if ($result.Message) {
                     [void]$xmlBuilder.AppendLine("Message: $(ConvertTo-XmlSafeString $result.Message)")
                 }
-                if ($result.UpdateName) {
+                if ($result.PSObject.Properties['UpdateName'] -and $result.UpdateName) {
                     [void]$xmlBuilder.AppendLine("Update: $(ConvertTo-XmlSafeString $result.UpdateName)")
                 }
-                if ($result.CurrentState) {
+                if ($result.PSObject.Properties['CurrentState'] -and $result.CurrentState) {
                     [void]$xmlBuilder.AppendLine("Final State: $(ConvertTo-XmlSafeString $result.CurrentState)")
                 }
-                if ($result.Progress) {
+                if ($result.PSObject.Properties['Progress'] -and $result.Progress) {
                     [void]$xmlBuilder.AppendLine("Progress: $($result.Progress)")
                 }
                 if ($result.PSObject.Properties['StartTime'] -and $result.StartTime) {

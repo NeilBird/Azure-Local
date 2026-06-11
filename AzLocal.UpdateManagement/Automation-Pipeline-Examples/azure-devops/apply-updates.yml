@@ -1,9 +1,10 @@
-# Step.6 - Apply Updates to Azure Local Clusters
+# AZLOCAL-PIPELINE-ID: apply-updates
+# Step.7 - Apply Updates to Azure Local Clusters
 # This pipeline applies updates to clusters filtered by UpdateRing tag value
 
 # BEGIN-AZLOCAL-CUSTOMIZE:schedule-triggers
 # PREFERRED PATTERN - drive automated update runs from a ring-aware
-# schedule file (apply-updates-schedule.yml at the repo root by default),
+# schedule file (config/apply-updates-schedule.yml by default),
 # not from per-window crons.
 #
 # How it works:
@@ -20,7 +21,7 @@
 #      New-AzLocalApplyUpdatesScheduleConfig.
 #
 # Generate a STRAWMAN schedule file from your fleet via:
-#   New-AzLocalApplyUpdatesScheduleConfig -OutputPath .\apply-updates-schedule.yml
+#   New-AzLocalApplyUpdatesScheduleConfig -OutputPath .\config\apply-updates-schedule.yml
 # Every row is commented out by default - review and uncomment to activate.
 #
 # Concurrency: ADO has no first-class YAML concurrency block; use Pipeline
@@ -114,7 +115,7 @@ variables:
   # log if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
   - name: GENERATED_AGAINST_MODULE_VERSION
-    value: '0.8.6'
+    value: '0.8.7'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): queue-time parameter > pipeline variable
   # 'REQUIRED_MODULE_VERSION' overridden at queue time > empty (latest).
@@ -122,10 +123,12 @@ variables:
     value: '${{ parameters.moduleVersion }}'
   # Path to the ring-aware apply-updates-schedule.yml (relative to repo
   # root). The 'Resolve UpdateRing from schedule' task reads this file when
-  # $(Build.Reason)='Schedule'. Override at queue time if you keep the schedule
-  # outside the repo root.
+  # $(Build.Reason)='Schedule'. Default 'config/apply-updates-schedule.yml'
+  # matches where Copy-AzLocalPipelineExample drops the starter, alongside
+  # config/ClusterUpdateRings.csv. Override at queue time if you keep the
+  # schedule elsewhere.
   - name: APPLY_UPDATES_SCHEDULE_PATH
-    value: './apply-updates-schedule.yml'
+    value: './config/apply-updates-schedule.yml'
   # ITSM connector. Uncomment the group reference once you
   # have created a variable group named 'AzureLocal-ITSM-Secrets' containing:
   #   ITSM_SN_INSTANCE_URL, ITSM_SN_CLIENT_ID, ITSM_SN_CLIENT_SECRET
@@ -230,7 +233,7 @@ stages:
             displayName: 'Publish Readiness Report'
             inputs:
               PathtoPublish: '$(Build.ArtifactStagingDirectory)'
-              ArtifactName: 'azlocal-step.6-apply-updates-readiness-report_$(stamp.artifactStamp)'
+              ArtifactName: 'azlocal-step.7-apply-updates-readiness-report_$(stamp.artifactStamp)'
               publishLocation: 'Container'
 
   # Stage 2: Apply Updates (with approval gate for production)
@@ -324,7 +327,7 @@ stages:
               source: 'current'
               # artifact name now carries a UTC timestamp - rebuild via the
               # readinessArtifactStamp variable mapped from the CheckReadiness stage.
-              artifact: 'azlocal-step.6-apply-updates-readiness-report_$(readinessArtifactStamp)'
+              artifact: 'azlocal-step.7-apply-updates-readiness-report_$(readinessArtifactStamp)'
               path: '$(Build.ArtifactStagingDirectory)'
 
           # v0.8.5 thin-YAML - readiness-gated apply via shared helper. Validates
@@ -379,7 +382,7 @@ stages:
             displayName: 'Publish Update Logs'
             inputs:
               PathtoPublish: '$(Build.ArtifactStagingDirectory)'
-              ArtifactName: 'azlocal-step.6-apply-updates-logs_$(stamp.artifactStamp)'
+              ArtifactName: 'azlocal-step.7-apply-updates-logs_$(stamp.artifactStamp)'
               publishLocation: 'Container'
 
           - task: PublishTestResults@2
@@ -447,7 +450,7 @@ stages:
             condition: and(always(), eq('${{ parameters.raiseItsmTicket }}', 'true'))
             inputs:
               PathtoPublish: '$(Build.ArtifactStagingDirectory)'
-              ArtifactName: 'azlocal-step.6-apply-updates-itsm-results_$(stamp.artifactStamp)'
+              ArtifactName: 'azlocal-step.7-apply-updates-itsm-results_$(stamp.artifactStamp)'
               publishLocation: 'Container'
             continueOnError: true
 

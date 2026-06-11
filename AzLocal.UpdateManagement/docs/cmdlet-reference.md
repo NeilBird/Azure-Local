@@ -1286,7 +1286,7 @@ $detail  = Get-AzLocalFleetHealthFailures -View Detail  -ExportPath .\reports\fl
 $summary = Get-AzLocalFleetHealthFailures -View Summary -ExportPath .\reports\fleet-health-summary.csv -PassThru
 ```
 
-> **CI/CD**: the bundled `Step.9_fleet-health-status.yml` pipeline samples (GitHub Actions and Azure DevOps) wire this cmdlet into a daily-scheduled run that emits JUnit XML, CSV/JSON exports, and a Markdown step summary. See [Automation-Pipeline-Examples/README.md](./Automation-Pipeline-Examples/README.md).
+> **CI/CD**: the bundled `fleet-health-status.yml` pipeline samples (GitHub Actions and Azure DevOps) wire this cmdlet into a daily-scheduled run that emits JUnit XML, CSV/JSON exports, and a Markdown step summary. See [Automation-Pipeline-Examples/README.md](./Automation-Pipeline-Examples/README.md).
 
 **Required permissions** (read-only):
 - `Microsoft.AzureStackHCI/clusters/read`
@@ -1301,7 +1301,7 @@ $summary = Get-AzLocalFleetHealthFailures -View Summary -ExportPath .\reports\fl
 
 *Added in v0.7.65.*
 
-Read-only **schedule-coverage advisor**. Compares the cron schedule(s) declared in your `Step.6_apply-updates.yml` pipeline (GitHub Actions and/or Azure DevOps) to the `UpdateStartWindow` tag values actually present on your clusters, and flags every `(UpdateRing, UpdateStartWindow)` pair that no cron in the pipeline will ever reach. Never edits cluster tags. Never edits pipeline YAML. It is the safety net that closes the loop between section 8 of [`Automation-Pipeline-Examples/README.md`](./Automation-Pipeline-Examples/README.md) (the `UpdateStartWindow` tag is a *gate*, not a *trigger*) and `Test-AzLocalUpdateScheduleAllowed` (the runtime per-cluster gate inside `Start-AzLocalClusterUpdate`).
+Read-only **schedule-coverage advisor**. Compares the cron schedule(s) declared in your `apply-updates.yml` pipeline (GitHub Actions and/or Azure DevOps) to the `UpdateStartWindow` tag values actually present on your clusters, and flags every `(UpdateRing, UpdateStartWindow)` pair that no cron in the pipeline will ever reach. Never edits cluster tags. Never edits pipeline YAML. It is the safety net that closes the loop between section 8 of [`Automation-Pipeline-Examples/README.md`](./Automation-Pipeline-Examples/README.md) (the `UpdateStartWindow` tag is a *gate*, not a *trigger*) and `Test-AzLocalUpdateScheduleAllowed` (the runtime per-cluster gate inside `Start-AzLocalClusterUpdate`).
 
 Under the covers it pre-scans the pipeline YAML file(s) with a regex (no `powershell-yaml` dependency), runs a single Azure Resource Graph query against `resources` for clusters with `UpdateStartWindow` / `UpdateRing` tags, parses each tag value with the same `ConvertFrom-AzLocalUpdateWindow` helper used by the runtime gate, then enumerates every cron fire time over a reference week and compares it to each parsed window (with a configurable lead-time buffer).
 
@@ -1311,7 +1311,7 @@ Under the covers it pre-scans the pipeline YAML file(s) with a regex (no `powers
 |---|---|---|---|---|
 | `-SubscriptionId` | String | No | All accessible | Optional. Limit the ARG query to a single subscription. |
 | `-View` | String | No | `Audit` | `Audit` (one row per `(Ring, Window)` pair with `Covered` / `Uncovered` / `PartiallyCovered` / `MalformedTag` / `NoWindowTag` / `UnparseableCron` status + remediation), `Matrix` (every distinct `(Ring, Window)` pair with the cron expression the advisor would generate for it), or `Recommend` (ready-to-paste GH Actions + Azure DevOps cron blocks). |
-| `-PipelineYamlPath` | String | Audit only | - | Path to `Step.6_apply-updates.yml` file(s) or a folder containing them. Required when `-View Audit`. |
+| `-PipelineYamlPath` | String | Audit only | - | Path to `apply-updates.yml` file(s) or a folder containing them. Required when `-View Audit`. |
 | `-Platform` | String | No | `Both` | `GitHubActions`, `AzureDevOps`, or `Both`. Filters which YAML files are scanned and which cron blocks the Recommend view emits. |
 | `-LeadTimeMinutes` | Int | No | `5` | Range 0-60. How many minutes the cron should fire **before** the window opens (so cluster enumeration + auth completes before `Test-AzLocalUpdateScheduleAllowed` evaluates). |
 | `-UpdateRingTag` | String[] | No | - | Optional. Narrow the audit to one or more `UpdateRing` tag values. |
@@ -1334,7 +1334,7 @@ Test-AzLocalApplyUpdatesScheduleCoverage `
 
 # Audit only the GitHub Actions sample, with a 10-minute lead time
 Test-AzLocalApplyUpdatesScheduleCoverage `
-    -PipelineYamlPath .\.github\workflows\Step.6_apply-updates.yml `
+    -PipelineYamlPath .\.github\workflows\apply-updates.yml `
     -Platform GitHubActions `
     -LeadTimeMinutes 10
 
@@ -1350,7 +1350,7 @@ $matrix = Test-AzLocalApplyUpdatesScheduleCoverage -View Matrix -ExportPath .\sc
 $rec    = Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend -ExportPath .\schedule-coverage-recommend.md -PassThru
 ```
 
-> **CI/CD**: the bundled `Step.3_apply-updates-schedule-audit.yml` pipeline samples (GitHub Actions and Azure DevOps) wire this cmdlet into a weekly-scheduled run (Mon 05:00 UTC) that emits JUnit XML, three CSV/MD exports, and a Markdown step summary. Full end-to-end runbook in [`Automation-Pipeline-Examples/README.md` section 8.3](./Automation-Pipeline-Examples/README.md#83-end-to-end-runbook-apply-updates-schedule-coverage-audit).
+> **CI/CD**: the bundled `apply-updates-schedule-audit.yml` pipeline samples (GitHub Actions and Azure DevOps) wire this cmdlet into a weekly-scheduled run (Mon 05:00 UTC) that emits JUnit XML, three CSV/MD exports, and a Markdown step summary. Full end-to-end runbook in [`Automation-Pipeline-Examples/README.md` section 8.3](./Automation-Pipeline-Examples/README.md#83-end-to-end-runbook-apply-updates-schedule-coverage-audit).
 
 **Required permissions** (read-only):
 - `Microsoft.Resources/subscriptions/resourceGroups/read`

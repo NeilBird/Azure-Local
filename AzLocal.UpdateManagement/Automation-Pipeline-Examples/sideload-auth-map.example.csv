@@ -1,0 +1,30 @@
+# ---------------------------------------------------------------------------
+# Sideload auth-map (v0.8.7 on-prem solution-update sideloading automation)
+# ---------------------------------------------------------------------------
+# Maps the per-cluster numeric 'UpdateAuthAccountId' tag to the Key Vault that
+# holds the Active Directory credential (stored as TWO separate secrets:
+# username + password) used to PowerShell-remote into the cluster, plus
+# optional remoting overrides.
+#
+# Columns:
+#   UpdateAuthAccountId  REQUIRED  numeric 1-3 digits (e.g. 001). MUST match the
+#                                  cluster 'UpdateAuthAccountId' tag exactly.
+#   KeyVaultName         REQUIRED  Key Vault holding the credential secrets.
+#   UsernameSecretName   REQUIRED  KV secret with the username. UPN form
+#                                  ('svc-sideload@corp.contoso.com') recommended;
+#                                  'CORP\svc-sideload' also works.
+#   PasswordSecretName   REQUIRED  KV secret with the password.
+#   RemotingTargetFqdn   optional  explicit FQDN to remote to (overrides the
+#                                  cluster-name + suffix resolution).
+#   FqdnSuffix           optional  per-row DNS suffix appended to the cluster
+#                                  name (e.g. .corp.contoso.com).
+#   AuthMechanism        optional  WinRM auth: Kerberos | Negotiate | Default.
+#   ImportSharePath      optional  override for the cluster infrastructure
+#                                  'import' UNC share.
+#
+# DUPLICATE UpdateAuthAccountId values are a HARD ERROR in the sideload pipeline.
+# Lines beginning with '#' are header documentation only; remove before use or
+# keep the single real header row below.
+UpdateAuthAccountId,KeyVaultName,UsernameSecretName,PasswordSecretName,RemotingTargetFqdn,FqdnSuffix,AuthMechanism,ImportSharePath
+001,kv-azlocal-prod,sideload-username-site1,sideload-password-site1,,.corp.contoso.com,Kerberos,
+002,kv-azlocal-prod,sideload-username-site2,sideload-password-site2,cluster02.dmz.contoso.com,,Negotiate,

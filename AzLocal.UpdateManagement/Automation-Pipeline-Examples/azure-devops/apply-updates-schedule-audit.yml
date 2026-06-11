@@ -1,3 +1,4 @@
+# AZLOCAL-PIPELINE-ID: apply-updates-schedule-audit
 # Step.3 - Apply-Updates Schedule Coverage Audit Pipeline
 # This pipeline runs the read-only Test-AzLocalApplyUpdatesScheduleCoverage advisor
 # weekly to detect drift between the cron schedule(s) in your apply-updates pipeline
@@ -5,13 +6,13 @@
 #
 # WHY THIS PIPELINE EXISTS
 # ------------------------
-# Step.6_apply-updates.yml ships with NO default schedule (trigger:none) on purpose, so
+# Step.7_apply-updates.yml ships with NO default schedule (trigger:none) on purpose, so
 # customers must consciously choose when updates fire. After you have configured
-# UpdateStartWindow tags on your clusters and added cron entries to Step.6_apply-updates.yml, this
+# UpdateStartWindow tags on your clusters and added cron entries to Step.7_apply-updates.yml, this
 # pipeline is the safety net that catches:
-#   - a new ring tagged with UpdateStartWindow that no cron in Step.6_apply-updates.yml will reach
+#   - a new ring tagged with UpdateStartWindow that no cron in Step.7_apply-updates.yml will reach
 #   - an UpdateStartWindow tag value that fails to parse (typo / wrong syntax)
-#   - Step.6_apply-updates.yml cron entries that the advisor cannot reason about
+#   - Step.7_apply-updates.yml cron entries that the advisor cannot reason about
 #     (DayOfMonth restrictions, step values) so you can audit them manually
 #
 # REPORTS GENERATED:
@@ -43,14 +44,14 @@ schedules:
 
 parameters:
   - name: pipelinePath
-    displayName: 'Path (file or folder) to Step.6_apply-updates.yml to audit, repo-relative. REQUIRED so the Recommend view can diff its proposed crons against what is already present in Step.6 and only emit a snippet for the truly missing entries. Default `.azure-pipelines` matches the standard Azure DevOps consumer layout; for repos that keep Step.6_apply-updates.yml at the repo root pass `.`'
+    displayName: 'Path (file or folder) to Step.7_apply-updates.yml to audit, repo-relative. REQUIRED so the Recommend view can diff its proposed crons against what is already present in Step.7 and only emit a snippet for the truly missing entries. Default `.azure-pipelines` matches the standard Azure DevOps consumer layout; for repos that keep Step.7_apply-updates.yml at the repo root pass `.`'
     type: string
     default: '.azure-pipelines'
 
   - name: schedulePath
     displayName: 'Path to apply-updates-schedule.yml. When set, the audit also reports RingMissingFromSchedule (fleet ring with no schedule row) and RingOrphanedInSchedule (schedule ring no cluster carries). Leave empty to skip the schedule-file two-way diff.'
     type: string
-    default: './apply-updates-schedule.yml'
+    default: './config/apply-updates-schedule.yml'
 
   - name: leadTimeMinutes
     displayName: 'Minutes before UpdateStartWindow opens that the pipeline should fire (0-60)'
@@ -86,9 +87,14 @@ parameters:
     default: false
 
 variables:
-  GENERATED_AGAINST_MODULE_VERSION: '0.8.6'
+  GENERATED_AGAINST_MODULE_VERSION: '0.8.7'
   REQUIRED_MODULE_VERSION: '${{ parameters.moduleVersion }}'
   reportsPath: '$(Build.ArtifactStagingDirectory)/reports'
+  # v0.8.7 sideload advisor defaults. Override at the pipeline / variable-group
+  # level (set SIDELOAD_UPDATES=true to enable the recommended-sideload-schedule
+  # section). Defaults keep the audit byte-identical to v0.8.6 when unset.
+  SIDELOAD_UPDATES: 'false'
+  SIDELOAD_LEAD_DAYS: '7'
 
 stages:
 - stage: ScheduleCoverage
@@ -156,6 +162,10 @@ stages:
         INPUT_DEBUG:             ${{ lower(parameters.debug) }}
         INSTALLED_MODULE_VERSION: $(moduleVersion.installed_module_version)
         REPORTS_PATH: $(reportsPath)
+        # v0.8.7 sideload advisor (opt-in). When SIDELOAD_UPDATES=true the audit
+        # appends a "Recommended sideload schedule" section. Inert when unset/false.
+        SIDELOAD_UPDATES: $(SIDELOAD_UPDATES)
+        SIDELOAD_LEAD_DAYS: $(SIDELOAD_LEAD_DAYS)
       inputs:
         # Replace with your service connection name
         azureSubscription: 'AzureLocal-ServiceConnection'  # Update with your service connection name

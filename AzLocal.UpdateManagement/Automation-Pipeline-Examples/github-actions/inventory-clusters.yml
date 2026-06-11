@@ -1,5 +1,15 @@
-# Manage UpdateRing Tags
-# This workflow creates or updates UpdateRing tags on Azure Local clusters from a CSV file
+# AZLOCAL-PIPELINE-ID: inventory-clusters
+# Inventory Azure Local Clusters
+# This workflow queries all Azure Local clusters and exports inventory with UpdateRing tag status
+#
+# OUTPUT COLUMNS:
+#   ClusterName, ResourceGroup, SubscriptionId, SubscriptionName,
+#   UpdateRing, HasUpdateRingTag, UpdateStartWindow, UpdateExclusions,
+#   UpdateSideloaded, UpdateVersionInProgress, ResourceId
+#
+#   - UpdateSideloaded (operator-set): True/False/1/0 - sideloaded-payload gate
+#   - UpdateVersionInProgress (module-managed; do not edit): staged update name
+#   See main module README, section "Sideloaded Payload Workflow".
 #
 # AUTHENTICATION OPTIONS:
 # This workflow supports two authentication methods:
@@ -7,64 +17,38 @@
 # 2. Client Secret - LEGACY - Requires AZURE_CLIENT_SECRET (see commented section)
 #
 # For OIDC setup, see: https://learn.microsoft.com/en-us/azure/developer/github/connect-from-azure-openid-connect
-#
-# WORKFLOW:
-#   1. Run the "Inventory Azure Local Clusters" workflow first
-#   2. Download the CSV artifact from that workflow run
-#   3. Edit the CSV in Excel - populate the 'UpdateRing' column with values (e.g., Wave1, Wave2, Production)
-#   4. Commit the edited CSV to your repository (e.g., to a 'config/' folder)
-#   5. Run this workflow and specify the path to your committed CSV file
-#
-# NOTE: GitHub Actions does not support file uploads as workflow inputs.
-#       The edited CSV must be committed to the repository first.
 
 # Workflow name carries the same Step.N - prefix as the filename so the GitHub
 # Actions sidebar (which sorts workflows alphabetically by this `name:` field)
 # lists the eight pipelines in execution order.
-name: Step.2 - Manage UpdateRing Tags
+name: Step.1 - Inventory Azure Local Clusters
 
 on:
-  # BEGIN-AZLOCAL-CUSTOMIZE:schedule-triggers
-  # Add `schedule:` cron blocks here to enable automated runs, e.g.:
-  #   schedule:
-  #     - cron: '0 6 * * 1'  # Mondays at 06:00 UTC
-  # Content between BEGIN/END markers is preserved by
-  # Update-AzLocalPipelineExample across module upgrades.
-  # END-AZLOCAL-CUSTOMIZE:schedule-triggers
-
   workflow_dispatch:
     inputs:
-      csv_file_path:
-        description: 'Path to edited CSV file in repository (e.g., config/ClusterInventory_Updated.csv)'
-        required: true
-        default: 'config/ClusterUpdateRings.csv'
-      force_overwrite:
-        description: 'Force overwrite existing UpdateRing tags'
+      subscription_filter:
+        description: 'Subscription ID to filter (leave empty for all subscriptions)'
         required: false
-        default: 'false'
-        type: choice
-        options:
-          - 'false'
-          - 'true'
-      dry_run:
-        description: 'Preview changes without applying (WhatIf mode)'
-        required: false
-        default: 'true'
-        type: choice
-        options:
-          - 'true'
-          - 'false'
+        default: ''
       module_version:
         description: 'Pin AzLocal.UpdateManagement version (empty = latest from PSGallery). See Automation-Pipeline-Examples/README.md section 5 "Optional configuration".'
         required: false
         default: ''
+  # BEGIN-AZLOCAL-CUSTOMIZE:schedule-triggers
+  # Content between BEGIN/END markers is preserved by
+  # Update-AzLocalPipelineExample across module upgrades. Edit the cron
+  # below or add more `- cron:` entries to suit your maintenance windows.
+  schedule:
+    # Run weekly on Monday at 6:00 AM UTC
+    - cron: '0 6 * * 1'
+  # END-AZLOCAL-CUSTOMIZE:schedule-triggers
 
 env:
   # Module version this workflow YAML was generated against. The install step compares
   # this to the version actually installed and to the latest on PSGallery, and emits a
   # ::notice annotation if the YAML appears stale - prompting you to refresh via
-  # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.8.6'
+  # Copy-AzLocalPipelineExample. See Automation-Pipeline-Examples/README.md section 5.
+  GENERATED_AGAINST_MODULE_VERSION: '0.8.7'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): manual workflow_dispatch input >
   # repository variable 'REQUIRED_MODULE_VERSION' > empty (latest).
@@ -80,8 +64,8 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
-  manage-tags:
-    name: Manage UpdateRing Tags
+  inventory-clusters:
+    name: Inventory Azure Local Clusters
     runs-on: windows-latest
     # Required for OIDC authentication
     permissions:
@@ -115,34 +99,11 @@ jobs:
     #   with:
     #     creds: '{"clientId":"${{ secrets.AZURE_CLIENT_ID }}","clientSecret":"${{ secrets.AZURE_CLIENT_SECRET }}","subscriptionId":"${{ vars.AZURE_SUBSCRIPTION_ID }}","tenantId":"${{ vars.AZURE_TENANT_ID }}"}'
     
-    - name: Validate CSV File Exists
+    - name: Install Azure CLI Resource Graph Extension
       shell: pwsh
-      env:
-        INPUT_CSV_FILE_PATH: ${{ github.event.inputs.csv_file_path }}
-      # v0.8.5 thin-YAML: the existence + missing-file operator messaging is
-      # now produced by Set-AzLocalClusterUpdateRingTagFromCsv itself. This
-      # step still runs first to fail fast (and to surface the path) before
-      # we spend time installing the module.
       run: |
-        $csvPath = $env:INPUT_CSV_FILE_PATH
-        if (-not (Test-Path $csvPath)) {
-            Write-Host "ERROR: CSV file not found at path: $csvPath" -ForegroundColor Red
-            Write-Host "The full TWO-STAGE operator workflow guidance will be emitted by"
-            Write-Host "Set-AzLocalClusterUpdateRingTagFromCsv when the Apply step runs."
-            Write-Host ""
-            Write-Host "Quick recap:"
-            Write-Host "  1. Run Step.1 (Inventory) and download/edit/commit the CSV."
-            Write-Host "  2. Re-run this Step.2 with csv_file_path pointing to the committed CSV."
-            Write-Host ""
-            Write-Host "Docs:"
-            Write-Host "  AzLocal.UpdateManagement/README.md - 'Update Rings' section"
-            Write-Host "  AzLocal.UpdateManagement/Automation-Pipeline-Examples/README.md"
-            exit 1
-        }
-        Write-Host "Found CSV file: $csvPath"
-        echo "CSV_PATH=$csvPath" >> $env:GITHUB_OUTPUT
-      id: csv-path
-
+        az extension add --name resource-graph --yes
+    
     - name: Install AzLocal.UpdateManagement from PSGallery
       # v0.8.5 thin-YAML: drift detection + banner + step outputs are all
       # produced by Add-AzLocalPipelineVersionBanner (Public cmdlet).
@@ -163,37 +124,27 @@ jobs:
             -GeneratedAgainstVersion $env:GENERATED_AGAINST_MODULE_VERSION `
             -PinnedVersion $env:REQUIRED_MODULE_VERSION
 
-    - name: Apply UpdateRing Tags
-      id: apply-tags
+    - name: Run Cluster Inventory
+      id: inventory
       shell: pwsh
       env:
-        INPUT_CSV_FILE_PATH:      ${{ steps.csv-path.outputs.CSV_PATH }}
-        INPUT_FORCE_OVERWRITE:    ${{ github.event.inputs.force_overwrite }}
-        INPUT_DRY_RUN:            ${{ github.event.inputs.dry_run }}
-        INSTALLED_MODULE_VERSION: ${{ steps.module-version.outputs.installed_module_version }}
-      # v0.8.5 thin-YAML: the inline run block (CSV column validation,
-      # Set-AzLocalClusterUpdateRingTag invocation, JSON sidecar write,
-      # outcome tallies, and the GITHUB_STEP_SUMMARY breakdown) has been
-      # condensed into the Public cmdlet
-      # Set-AzLocalClusterUpdateRingTagFromCsv. The cmdlet writes
-      # UpdateRingTag_Results.json to -OutputDirectory, emits the markdown
-      # step summary via GITHUB_STEP_SUMMARY, and sets the eight step
-      # outputs (total_count, created_count, updated_count,
-      # already_in_sync_count, skipped_count, failed_count, whatif_count,
-      # results_json_path).
+        INPUT_SUBSCRIPTION_FILTER: ${{ github.event.inputs.subscription_filter }}
+        INSTALLED_MODULE_VERSION:  ${{ steps.module-version.outputs.installed_module_version }}
+      # v0.8.5 thin-YAML: the inline run block (inventory query, dual
+      # CSV/JSON export, canonical CSV copy, README_Instructions.txt,
+      # step outputs, separate "Summary" step) has been condensed into
+      # the Public cmdlet Invoke-AzLocalClusterInventory. The cmdlet
+      # writes the four artifacts to -OutputDirectory, emits the
+      # markdown step summary via GITHUB_STEP_SUMMARY, and sets the
+      # four step outputs (cluster_count, with_tag_count,
+      # without_tag_count, csv_path).
       run: |
         $ErrorActionPreference = 'Stop'
         Import-Module AzLocal.UpdateManagement -Force
-        $forceOverwrite = $env:INPUT_FORCE_OVERWRITE -eq 'true'
-        $dryRun         = $env:INPUT_DRY_RUN -eq 'true'
-        $params = @{
-            InputCsvPath           = $env:INPUT_CSV_FILE_PATH
-            OutputDirectory        = './artifacts'
-            InstalledModuleVersion = $env:INSTALLED_MODULE_VERSION
-        }
-        if ($forceOverwrite) { $params['Force']  = $true }
-        if ($dryRun)         { $params['WhatIf'] = $true }
-        Set-AzLocalClusterUpdateRingTagFromCsv @params
+        Invoke-AzLocalClusterInventory `
+            -OutputDirectory       './artifacts' `
+            -SubscriptionFilter    $env:INPUT_SUBSCRIPTION_FILTER `
+            -InstalledModuleVersion $env:INSTALLED_MODULE_VERSION
 
     - name: Compute Artifact Timestamp
       id: artifact-stamp
@@ -205,10 +156,13 @@ jobs:
         "timestamp=$stamp" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
         Write-Host "Artifact timestamp: $stamp"
 
-    - name: Upload Log Artifacts
+    - name: Upload Inventory Artifact
       uses: actions/upload-artifact@v6
       with:
-        name: azlocal-step.2-updatering-tag-logs_${{ steps.artifact-stamp.outputs.timestamp }}
-        path: ./artifacts/*
+        name: azlocal-step.1-cluster-inventory_${{ steps.artifact-stamp.outputs.timestamp }}
+        path: |
+          ./artifacts/*.csv
+          ./artifacts/*.json
+          ./artifacts/README_Instructions.txt
         retention-days: 30
 

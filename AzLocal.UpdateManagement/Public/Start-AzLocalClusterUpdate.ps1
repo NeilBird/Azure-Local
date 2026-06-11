@@ -1007,86 +1007,73 @@ function Start-AzLocalClusterUpdate {
                 # strips 'Latest' before calling this cmdlet (emits empty
                 # to the env var), but be defensive in case an operator
                 # invokes -AllowedUpdateVersions Latest manually.
-                $allowListEffective = @($AllowedUpdateVersions | Where-Object {
-                    -not [string]::IsNullOrWhiteSpace([string]$_)
-                })
-                $allowOnlyLatest = ($allowListEffective.Count -gt 0) -and (
-                    -not (@($allowListEffective | Where-Object {
-                        -not [string]::Equals([string]$_, 'Latest', [System.StringComparison]::OrdinalIgnoreCase)
-                    }).Count -gt 0)
-                )
-                if ($allowOnlyLatest) {
+                #
+                # v0.8.7: the allow-list filter + latest-by-YYMM auto-pick is
+                # centralised in the Private helper Select-AzLocalNextUpdateForCluster
+                # so the on-prem sideloading automation resolves the SAME "next
+                # update". All logging / CSV / result-object side effects below
+                # are preserved byte-for-byte from the original inline block.
+                $selection = Select-AzLocalNextUpdateForCluster -ReadyUpdates $readyUpdates -AllowedUpdateVersions $AllowedUpdateVersions -UpdateName $UpdateName
+
+                if ($selection.AllowOnlyLatest) {
                     Write-Log -Message "AllowedUpdateVersions = 'Latest' (no-constraint sentinel) - skipping allow-list filter for cluster '$clusterName'; will install the latest Ready update." -Level Info
                 }
-                if ($allowListEffective.Count -gt 0 -and -not $allowOnlyLatest) {
-                    if ($UpdateName) {
-                        Write-Log -Message ("Both -UpdateName ('$UpdateName') and -AllowedUpdateVersions ({0} entries) were supplied for cluster '$clusterName'. -UpdateName takes precedence; allow-list is logged-and-ignored for this cluster." -f @($AllowedUpdateVersions).Count) -Level Warning
-                    }
-                    else {
-                        $allowSet = New-Object System.Collections.Generic.HashSet[string] ([System.StringComparer]::OrdinalIgnoreCase)
-                        foreach ($a in @($AllowedUpdateVersions)) {
-                            $sa = [string]$a
-                            if (-not [string]::IsNullOrWhiteSpace($sa)) { [void]$allowSet.Add($sa.Trim()) }
-                        }
-                        $filtered = @($readyUpdates | Where-Object {
-                            ($_.name -and $allowSet.Contains([string]$_.name)) -or
-                            ($_.properties -and $_.properties.version -and $allowSet.Contains([string]$_.properties.version))
-                        })
-                        $allowDisplay = (@($allowSet) -join ', ')
-                        if ($filtered.Count -eq 0) {
-                            $readyDisplay = (@($readyUpdates | ForEach-Object { "$($_.name) (v$($_.properties.version))" }) -join '; ')
-                            Write-Log -Message "Cluster '$clusterName': none of the $($readyUpdates.Count) Ready update(s) match the AllowedUpdateVersions allow-list. Allow-list: [$allowDisplay]. Available Ready: [$readyDisplay]. Skipping cluster (status='NotInAllowList')." -Level Warning
+                $allowListActive = ($selection.AllowListEffective.Count -gt 0 -and -not $selection.AllowOnlyLatest)
+                if ($allowListActive -and $UpdateName) {
+                    Write-Log -Message ("Both -UpdateName ('$UpdateName') and -AllowedUpdateVersions ({0} entries) were supplied for cluster '$clusterName'. -UpdateName takes precedence; allow-list is logged-and-ignored for this cluster." -f @($AllowedUpdateVersions).Count) -Level Warning
+                }
 
-                            # Parse Resource Group and Subscription ID from cluster resource ID
-                            $clusterRgName = ($clusterInfo.id -split '/resourceGroups/')[1] -split '/' | Select-Object -First 1
-                            $clusterSubId  = ($clusterInfo.id -split '/subscriptions/')[1]  -split '/' | Select-Object -First 1
-                            $healthState   = if ($updateSummary.properties.healthState) { $updateSummary.properties.healthState } else { "Unknown" }
-                            Write-UpdateCsvLog -LogType Skipped `
-                                -ClusterName $clusterName `
-                                -ResourceGroup $clusterRgName `
-                                -SubscriptionId $clusterSubId `
-                                -Message "Update skipped - no Ready update matches AllowedUpdateVersions allow-list [$allowDisplay]. Available Ready: $readyDisplay" `
-                                -UpdateState $updateSummary.properties.state `
-                                -HealthState $healthState
+                if ($selection.Reason -eq 'NotInAllowList') {
+                    $allowDisplay = $selection.AllowDisplay
+                    $readyDisplay = $selection.ReadyDisplay
+                    Write-Log -Message "Cluster '$clusterName': none of the $($readyUpdates.Count) Ready update(s) match the AllowedUpdateVersions allow-list. Allow-list: [$allowDisplay]. Available Ready: [$readyDisplay]. Skipping cluster (status='NotInAllowList')." -Level Warning
 
-                            $results.Add([PSCustomObject]@{
-                                ClusterName   = $clusterName
-                                Status        = "NotInAllowList"
-                                Message       = "No Ready update matches AllowedUpdateVersions allow-list [$allowDisplay]"
-                                UpdateName    = $null
-                                StartTime     = $clusterStartTime
-                                EndTime       = Get-Date
-                                Duration      = $null
-                            }) | Out-Null
-                            continue
-                        }
-                        Write-Log -Message "AllowedUpdateVersions filter kept $($filtered.Count)/$($readyUpdates.Count) Ready update(s) for cluster '$clusterName'. Allow-list: [$allowDisplay]." -Level Info
-                        $readyUpdates = $filtered
-                    }
+                    # Parse Resource Group and Subscription ID from cluster resource ID
+                    $clusterRgName = ($clusterInfo.id -split '/resourceGroups/')[1] -split '/' | Select-Object -First 1
+                    $clusterSubId  = ($clusterInfo.id -split '/subscriptions/')[1]  -split '/' | Select-Object -First 1
+                    $healthState   = if ($updateSummary.properties.healthState) { $updateSummary.properties.healthState } else { "Unknown" }
+                    Write-UpdateCsvLog -LogType Skipped `
+                        -ClusterName $clusterName `
+                        -ResourceGroup $clusterRgName `
+                        -SubscriptionId $clusterSubId `
+                        -Message "Update skipped - no Ready update matches AllowedUpdateVersions allow-list [$allowDisplay]. Available Ready: $readyDisplay" `
+                        -UpdateState $updateSummary.properties.state `
+                        -HealthState $healthState
+
+                    $results.Add([PSCustomObject]@{
+                        ClusterName   = $clusterName
+                        Status        = "NotInAllowList"
+                        Message       = "No Ready update matches AllowedUpdateVersions allow-list [$allowDisplay]"
+                        UpdateName    = $null
+                        StartTime     = $clusterStartTime
+                        EndTime       = Get-Date
+                        Duration      = $null
+                    }) | Out-Null
+                    continue
+                }
+
+                if ($allowListActive -and -not $UpdateName) {
+                    Write-Log -Message "AllowedUpdateVersions filter kept $($selection.FilteredUpdates.Count)/$($readyUpdates.Count) Ready update(s) for cluster '$clusterName'. Allow-list: [$($selection.AllowDisplay)]." -Level Info
                 }
 
                 # Step 5: Select update to apply
                 Write-Log -Message "Step 5: Selecting update to apply..." -Level Info
-                $selectedUpdate = $null
-                if ($UpdateName) {
-                    $selectedUpdate = $readyUpdates | Where-Object { $_.name -eq $UpdateName }
-                    if (-not $selectedUpdate) {
-                        Write-Log -Message "Specified update '$UpdateName' not found or not in Ready state for cluster '$clusterName'." -Level Warning
-                        $results.Add([PSCustomObject]@{
-                            ClusterName   = $clusterName
-                            Status        = "UpdateNotFound"
-                            Message       = "Specified update '$UpdateName' not found or not ready"
-                            UpdateName    = $UpdateName
-                            StartTime     = $clusterStartTime
-                            EndTime       = Get-Date
-                            Duration      = $null
-                        }) | Out-Null
-                        continue
-                    }
+                if ($selection.Reason -eq 'UpdateNotFound') {
+                    Write-Log -Message "Specified update '$UpdateName' not found or not in Ready state for cluster '$clusterName'." -Level Warning
+                    $results.Add([PSCustomObject]@{
+                        ClusterName   = $clusterName
+                        Status        = "UpdateNotFound"
+                        Message       = "Specified update '$UpdateName' not found or not ready"
+                        UpdateName    = $UpdateName
+                        StartTime     = $clusterStartTime
+                        EndTime       = Get-Date
+                        Duration      = $null
+                    }) | Out-Null
+                    continue
                 }
-                else {
+                $selectedUpdate = $selection.SelectedUpdate
+                if (-not $UpdateName) {
                     # Select the latest ready update by YYMM version from the update name
-                    $selectedUpdate = Get-LatestUpdateByYYMM -Updates $readyUpdates
                     Write-Log -Message "Auto-selected latest update: $($selectedUpdate.name)" -Level Info
                 }
 

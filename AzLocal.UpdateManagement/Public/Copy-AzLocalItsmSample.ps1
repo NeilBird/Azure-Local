@@ -36,7 +36,7 @@ function Copy-AzLocalItsmSample {
         committed to a repository alongside the workflow / pipeline YAMLs
         copied by `Copy-AzLocalPipelineExample`. The default
         `-Destination` is `.\.itsm` - the relative path that both
-        `Step.6_apply-updates.yml` workflows default `itsm_config_path` /
+        `apply-updates.yml` workflows default `itsm_config_path` /
         `itsmConfigPath` to (resolved relative to the repo root at job
         runtime).
 

@@ -9,11 +9,15 @@ function Read-AzLocalApplyUpdatesYamlCrons {
 
         Discovery rules:
           - If Path is a file, scan that file.
-          - If Path is a directory, recursively find files matching any of
-            'Step.6_apply-updates*.yml', 'Step.6_apply-updates*.yaml',
-            'apply-updates*.yml', or 'apply-updates*.yaml'.
-            (The 'Step.5_' prefix is the v0.7.68+ shipped name; the un-prefixed
-             form is the legacy name still supported for backwards compatibility.)
+          - If Path is a directory, recursively scan every *.yml / *.yaml and
+            keep only the apply-updates pipeline, identified by its stable
+            '# AZLOCAL-PIPELINE-ID: apply-updates' header comment (v0.8.7+).
+            Files that lack the ID comment (pre-v0.8.7 copies) fall back to a
+            filename match: 'apply-updates*.yml/.yaml', optionally carrying a
+            legacy 'Step.N_' prefix - but the de-numbered sibling
+            'apply-updates-schedule-audit.yml' (the Step.3 audit pipeline,
+            which has its own poll crons) is explicitly EXCLUDED so its crons
+            are never mistaken for apply-updates windows.
 
         Platform is inferred from the parent directory name when the YAML is
         under .../github-actions/ or .../azure-devops/. Falls back to the
@@ -57,24 +61,30 @@ function Read-AzLocalApplyUpdatesYamlCrons {
 
     $item = Get-Item -LiteralPath $Path
     $files = if ($item.PSIsContainer) {
-        # NOTE: Get-ChildItem -LiteralPath -Recurse -Include silently ignores the
-        # -Include filter and returns every recursed file (confirmed in PS 5.1).
-        # That caused v0.7.68 to pick up every Step.N_*.yml sibling (Step.1, Step.3,
-        # Step.4, Step.7, Step.8, Step.9 all carry their own schedule crons) and treat
-        # their crons as apply-updates crons - garbage in the audit, and on PS 7 the
-        # binder surfaced it as 'Cannot bind argument to parameter Expression because
-        # it is an empty string' once any unparseable capture was reached.
-        # Use -Filter (which is honoured under -Recurse) one pattern at a time,
-        # then dedupe by FullName.
-        $patterns = @(
-            'Step.6_apply-updates*.yml',
-            'Step.6_apply-updates*.yaml',
-            'apply-updates*.yml',
-            'apply-updates*.yaml'
-        )
-        $hits = @()
-        foreach ($pattern in $patterns) {
-            $hits += @(Get-ChildItem -Path $item.FullName -Recurse -File -Filter $pattern -ErrorAction SilentlyContinue)
+        # v0.8.7: identify the apply-updates pipeline by its stable
+        # AZLOCAL-PIPELINE-ID header comment rather than a filename glob. The
+        # previous 'apply-updates*.yml' wildcard now collides with the
+        # de-numbered Step.3 audit pipeline ('apply-updates-schedule-audit.yml')
+        # and would wrongly ingest its poll crons. Recurse all YAML, then keep
+        # only ID == 'apply-updates'; for pre-ID copies fall back to a filename
+        # match that explicitly excludes the schedule-audit sibling.
+        $allYaml = @(Get-ChildItem -Path $item.FullName -Recurse -File -ErrorAction SilentlyContinue |
+                        Where-Object { $_.Extension -in @('.yml', '.yaml') })
+        $hits = New-Object System.Collections.Generic.List[System.IO.FileInfo]
+        foreach ($yf in $allYaml) {
+            $ymlText = $null
+            try { $ymlText = [System.IO.File]::ReadAllText($yf.FullName, [System.Text.UTF8Encoding]::new($false)) } catch { $ymlText = $null }
+            $ymlId = if ($ymlText) { Get-AzLocalPipelineId -Text $ymlText } else { $null }
+            if ($ymlId) {
+                if ($ymlId -eq 'apply-updates') { $hits.Add($yf) | Out-Null }
+                # ID present but not apply-updates -> deliberately skipped.
+            }
+            elseif ($yf.Name -match '(?i)^(Step\.\d+_)?apply-updates.*\.(yml|yaml)$' -and
+                    $yf.Name -notmatch '(?i)apply-updates-schedule-audit') {
+                # Pre-v0.8.7 copy with no ID comment: name-based fallback,
+                # excluding the schedule-audit pipeline.
+                $hits.Add($yf) | Out-Null
+            }
         }
         @($hits | Sort-Object FullName -Unique)
     }

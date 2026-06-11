@@ -43,6 +43,14 @@ function Get-AzLocalClusterInventory {
         Format is auto-detected from file extension (.csv or .json).
         CSV is useful for editing in Excel; JSON for CI/CD and API integrations.
 
+    .PARAMETER IncludeSideloadColumns
+        Optional. When set, adds the numeric 'UpdateAuthAccountId' tag value as
+        an extra column (placed just before ResourceId) in both the returned
+        objects and the CSV/JSON export. Used by the opt-in on-prem sideload
+        workflow (Step.6) so Step.1 / Step.2 can round-trip the per-cluster
+        auth-map account id. When NOT set, the column is omitted entirely and
+        the output is byte-identical to prior versions.
+
     .EXAMPLE
         # Get inventory of all clusters across all subscriptions
         Get-AzLocalClusterInventory
@@ -112,7 +120,10 @@ function Get-AzLocalClusterInventory {
         [string]$ExportPath,
 
         [Parameter(Mandatory = $false)]
-        [switch]$PassThru
+        [switch]$PassThru,
+
+        [Parameter(Mandatory = $false)]
+        [switch]$IncludeSideloadColumns
     )
 
     # Pre-flight: Validate export path is writable before expensive operations
@@ -303,20 +314,29 @@ function Get-AzLocalClusterInventory {
             $sideloadedTagValue = Get-TagValue -Tags $cluster.tags -Name $script:UpdateSideloadedTagName
             $versionInProgressTagValue = Get-TagValue -Tags $cluster.tags -Name $script:UpdateVersionInProgressTagName
 
-            $inventoryItem = [PSCustomObject]@{
+            # Build the per-cluster inventory item via an ordered hashtable so the
+            # optional sideload UpdateAuthAccountId column can be inserted just
+            # before ResourceId without disturbing the column order/output of the
+            # default (sideload-off) path - which must remain byte-identical.
+            $itemProps = [ordered]@{
                 ClusterName             = $cluster.name
                 ResourceGroup           = $cluster.resourceGroup
                 SubscriptionId          = $cluster.subscriptionId
                 SubscriptionName        = $subscriptionMap[$cluster.subscriptionId]
                 UpdateRing              = if ($ringTagValue) { $ringTagValue } else { "" }
                 HasUpdateRingTag        = if ($ringTagValue) { "Yes" } else { "No" }
-                UpdateStartWindow            = if ($windowTagValue) { $windowTagValue } else { "" }
+                UpdateStartWindow       = if ($windowTagValue) { $windowTagValue } else { "" }
                 UpdateExclusionsWindow  = if ($exclusionsTagValue) { $exclusionsTagValue } else { "" }
                 UpdateExcluded          = if ($excludedTagValue) { $excludedTagValue } else { "" }
                 UpdateSideloaded        = if ($sideloadedTagValue) { $sideloadedTagValue } else { "" }
                 UpdateVersionInProgress = if ($versionInProgressTagValue) { $versionInProgressTagValue } else { "" }
-                ResourceId              = $cluster.id
             }
+            if ($IncludeSideloadColumns) {
+                $authIdTagValue = Get-TagValue -Tags $cluster.tags -Name $script:UpdateAuthAccountIdTagName
+                $itemProps['UpdateAuthAccountId'] = if ($authIdTagValue) { $authIdTagValue } else { "" }
+            }
+            $itemProps['ResourceId'] = $cluster.id
+            $inventoryItem = [PSCustomObject]$itemProps
             $inventory += $inventoryItem
         }
 
@@ -337,7 +357,10 @@ function Get-AzLocalClusterInventory {
 
                 # Determine export format from file extension
                 $extension = [System.IO.Path]::GetExtension($ExportPath).ToLower()
-                $exportData = $inventory | Select-Object ClusterName, ResourceGroup, SubscriptionId, SubscriptionName, UpdateRing, HasUpdateRingTag, UpdateStartWindow, UpdateExclusionsWindow, UpdateExcluded, UpdateSideloaded, UpdateVersionInProgress, ResourceId
+                $selectColumns = @('ClusterName', 'ResourceGroup', 'SubscriptionId', 'SubscriptionName', 'UpdateRing', 'HasUpdateRingTag', 'UpdateStartWindow', 'UpdateExclusionsWindow', 'UpdateExcluded', 'UpdateSideloaded', 'UpdateVersionInProgress')
+                if ($IncludeSideloadColumns) { $selectColumns += 'UpdateAuthAccountId' }
+                $selectColumns += 'ResourceId'
+                $exportData = $inventory | Select-Object $selectColumns
                 
                 switch ($extension) {
                     '.json' {

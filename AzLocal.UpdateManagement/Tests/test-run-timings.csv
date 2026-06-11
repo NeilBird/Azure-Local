@@ -1,0 +1,4 @@
+TimestampUtc,ModuleVersion,Total,Passed,Failed,Skipped,WallClockSeconds,PesterDurationSeconds,DiscoverySeconds,Runner,PSVersion
+"2026-06-11T13:38:20Z","0.8.7","1100","1099","0","1","99.93","98.61","3.19","chat-detached","5.1.26100.8655"
+"2026-06-11T13:57:31Z","0.8.7","1101","1100","0","1","110.68","109.47","6.38","chat-detached","5.1.26100.8655"
+"2026-06-11T14:00:42Z","0.8.7","1101","1100","0","1","116.06","114.86","2.7","chat-detached","5.1.26100.8655"

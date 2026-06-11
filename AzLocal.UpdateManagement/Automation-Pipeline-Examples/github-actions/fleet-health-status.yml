@@ -1,3 +1,4 @@
+# AZLOCAL-PIPELINE-ID: fleet-health-status
 # Fleet Health Status Monitoring
 # This workflow surfaces 24-hour system health-check failures across every Azure Local
 # cluster the service principal can read - including clusters that are already
@@ -31,7 +32,7 @@
 # Workflow name carries the same Step.N - prefix as the filename so the GitHub
 # Actions sidebar (which sorts workflows alphabetically by this `name:` field)
 # lists the eight pipelines in execution order.
-name: Step.9 - Fleet Health Status
+name: Step.10 - Fleet Health Status
 
 on:
   # BEGIN-AZLOCAL-CUSTOMIZE:schedule-triggers
@@ -115,7 +116,7 @@ env:
   # this to the version actually installed and to the latest on PSGallery, and emits a
   # ::notice annotation if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.8.6'
+  GENERATED_AGAINST_MODULE_VERSION: '0.8.7'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): manual workflow_dispatch input >
   # repository variable 'REQUIRED_MODULE_VERSION' > empty (latest).
@@ -225,7 +226,7 @@ jobs:
     - name: Upload Fleet Health Reports
       uses: actions/upload-artifact@v6
       with:
-        name: azlocal-step.9-fleet-health-status-report_${{ steps.artifact-stamp.outputs.timestamp }}
+        name: azlocal-step.10-fleet-health-status-report_${{ steps.artifact-stamp.outputs.timestamp }}
         path: ./reports/
         retention-days: 90
 
@@ -327,7 +328,7 @@ jobs:
       if: ${{ github.event.inputs.raise_itsm_ticket == 'true' }}
       uses: actions/upload-artifact@v6
       with:
-        name: azlocal-step.9-fleet-health-status-itsm-results_${{ steps.artifact-stamp.outputs.timestamp }}
+        name: azlocal-step.10-fleet-health-status-itsm-results_${{ steps.artifact-stamp.outputs.timestamp }}
         path: ./reports/itsm-*.*
         retention-days: 30
       continue-on-error: true
@@ -336,7 +337,7 @@ jobs:
       if: ${{ github.event.inputs.raise_itsm_ticket == 'true' }}
       uses: dorny/test-reporter@v3
       with:
-        name: ITSM Tickets (Step.9)
+        name: ITSM Tickets (Step.10)
         path: ./reports/itsm-results.xml
         reporter: java-junit
       continue-on-error: true

@@ -1,3 +1,4 @@
+# AZLOCAL-PIPELINE-ID: fleet-connectivity-status
 # Fleet Connectivity Status Monitoring
 # This workflow surfaces network-connectivity issues across every Azure Local
 # cluster the service principal can read - four scopes in one pipeline:
@@ -12,7 +13,7 @@
 # - Find clusters where Arc agent or ARB has dropped off and updates / management calls will fail
 # - Catch Disconnected physical NICs that still have a real IP (likely cable / driver / port issues -
 #   Disconnected adapters with no IP or APIPA self-assignment are intentionally excluded as noise)
-# - Triage hand-off into ITSM (wired identically to Step.8 / Step.9 - opt-in via input)
+# - Triage hand-off into ITSM (wired identically to Step.9 / Step.10 - opt-in via input)
 #
 # REPORTS GENERATED:
 # - Markdown step summary: one section per scope (cluster, ARB, Arc agents, NICs)
@@ -55,7 +56,7 @@ on:
   # BEGIN-AZLOCAL-CUSTOMIZE:schedule-triggers
   # Edits inside this block are preserved across Update-AzLocalPipelineExample
   # module upgrades. Add or modify `schedule:` cron blocks below.
-  # Daily at 05:30 UTC - offset 30 min ahead of Step.8 (06:00) and Step.9 (07:00)
+  # Daily at 05:30 UTC - offset 30 min ahead of Step.9 (06:00) and Step.10 (07:00)
   # so the three fleet-scope read pipelines stagger their ARG calls.
   schedule:
     - cron: '30 5 * * *'  # Daily at 05:30 UTC
@@ -115,7 +116,7 @@ env:
   # PSGallery, and emits a ::notice annotation if the YAML appears stale -
   # prompting you to refresh via Copy-AzLocalPipelineExample -Update. See
   # Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.8.6'
+  GENERATED_AGAINST_MODULE_VERSION: '0.8.7'
   # Resolution order for the module version pin (leave all unset to install
   # the latest, the default "fix-forward" behaviour): manual workflow_dispatch
   # input > repository variable 'REQUIRED_MODULE_VERSION' > empty (latest).
@@ -262,7 +263,7 @@ jobs:
     # ----------------------------------------------------------------------
     # ITSM Connector (ServiceNow auto-raise on connectivity failures)
     # Opt-in (gated on inputs.raise_itsm_ticket == 'true'). Mirrors the
-    # Step.8 / Step.9 wiring - reads the JUnit file produced above, uses
+    # Step.9 / Step.10 wiring - reads the JUnit file produced above, uses
     # the same azurelocal-itsm.yml trigger matrix, same dedupe key.
     # ----------------------------------------------------------------------
     - name: Install powershell-yaml (ITSM config parser)

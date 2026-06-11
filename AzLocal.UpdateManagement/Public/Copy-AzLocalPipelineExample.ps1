@@ -70,15 +70,20 @@ function Copy-AzLocalPipelineExample {
     .PARAMETER SkipStarterSchedule
         Only meaningful with `-Platform GitHub` or `-Platform AzureDevOps`.
 
-        By default (v0.7.92+) the function ALSO drops a starter
-        `apply-updates-schedule.yml` one level UP from `-Destination` (i.e.
-        the parent of `.github\workflows\` for GitHub, or the parent of
-        the pipelines folder you chose for ADO) when no file already
-        exists at that path. The starter is a verbatim copy of the bundled
+        By default (v0.7.92+; relocated to `config\` in v0.8.7) the
+        function ALSO drops a starter `apply-updates-schedule.yml` into a
+        `config\` folder at the REPO ROOT - the same folder as the
+        documented `config/ClusterUpdateRings.csv` that Step.2 consumes, so
+        all operator-authored config sits together and the path is
+        IDENTICAL on GitHub and Azure DevOps. The repo root is resolved from
+        `-Destination`: two levels up for the canonical GitHub layout
+        (`.github\workflows`), one level up otherwise. The starter is only
+        written when no file already exists at `config\apply-updates-schedule.yml`.
+        The starter is a verbatim copy of the bundled
         `apply-updates-schedule.example.yml` and is safe to land alongside
-        a freshly copied Step.6 pipeline (the bundled Step.6 ships with
-        every `cron:` line COMMENTED OUT, so the schedule file cannot
-        cause Step.6 to fire on a `schedule:` trigger until the operator
+        a freshly copied `apply-updates` pipeline (the bundled pipeline ships
+        with every `cron:` line COMMENTED OUT, so the schedule file cannot
+        cause `apply-updates` to fire on a `schedule:` trigger until the operator
         explicitly adds at least one cron entry).
 
         Two safety rails apply:
@@ -100,6 +105,29 @@ function Copy-AzLocalPipelineExample {
 
         Has no effect when `-Platform All` is in use (the starter is only
         relevant for actively-installed CI YAMLs).
+
+    .PARAMETER SkipStarterSideloadConfig
+        Only meaningful with `-Platform GitHub` or `-Platform AzureDevOps`.
+
+        By default (v0.8.7+) the function ALSO drops two starter on-prem
+        sideloading config files into the SAME `config\` folder as the
+        starter schedule and the ring CSV (one path, both platforms):
+          - `sideload-auth-map.csv`  - header row + guidance comments only.
+          - `sideload-catalog.yml`   - `schemaVersion` + an empty `packages:`
+                                       list.
+
+        Both starters are HEADER / SKELETON ONLY (no demo data rows), so they
+        are inert even if `SIDELOAD_UPDATES` is flipped to `true` before they
+        are populated: an empty auth-map produces an `UnknownAuthAccountId`
+        status and an empty catalog produces `NoCatalogEntry` - neither
+        performs a Key Vault lookup or stages any media. The Step.6 sideload
+        pipeline is itself hard-gated OFF unless `SIDELOAD_UPDATES == 'true'`,
+        so the files have zero effect for operators who never opt in.
+
+        As with the starter schedule, existing files are NEVER overwritten.
+
+        Pass `-SkipStarterSideloadConfig` to suppress the drop entirely. Has
+        no effect when `-Platform All` is in use.
 
     .PARAMETER Update
         Allow overwriting destination files that already exist. Without this
@@ -188,6 +216,21 @@ function Copy-AzLocalPipelineExample {
                       points at the live-fleet regenerator
                       `New-AzLocalApplyUpdatesScheduleConfig -OutputPath
                       <path> -Force` for the operator's next move.
+        Changed in  : v0.8.7 - for `-Platform GitHub|AzureDevOps` ALL starter
+                      operator config now lands in a `config\` folder at the
+                      repo root (one path on both platforms, matching the
+                      documented `config/ClusterUpdateRings.csv`). The starter
+                      `apply-updates-schedule.yml` MOVED here from its v0.7.92
+                      location (parent of `.github\workflows\` / pipelines
+                      folder). The function now ALSO drops two starter on-prem
+                      sideloading config files (`sideload-auth-map.csv` +
+                      `sideload-catalog.yml`, header/skeleton only) into the
+                      same `config\` folder. Existing files are NEVER
+                      overwritten. Pass `-SkipStarterSchedule` /
+                      `-SkipStarterSideloadConfig` to suppress. The sideload
+                      starters are inert until populated AND
+                      `SIDELOAD_UPDATES=true`, so they are safe for operators
+                      who never sideload.
     #>
     [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'Low')]
     [OutputType([System.IO.DirectoryInfo])]
@@ -211,7 +254,13 @@ function Copy-AzLocalPipelineExample {
         # Default OFF, i.e. the starter IS copied unless one already
         # exists at the destination (in which case the existing file is
         # always preserved, regardless of this switch).
-        [switch]$SkipStarterSchedule
+        [switch]$SkipStarterSchedule,
+
+        # v0.8.7: when set, suppress the default starter sideload-config
+        # drop (sideload-auth-map.csv + sideload-catalog.yml) for
+        # Platform=GitHub|AzureDevOps. Default OFF. Existing files are
+        # always preserved regardless of this switch.
+        [switch]$SkipStarterSideloadConfig
     )
 
     # ------------------------------------------------------------------
@@ -402,28 +451,48 @@ function Copy-AzLocalPipelineExample {
     Write-Verbose "Copied $copiedCount file(s) from '$sourceRoot' to '$targetRoot' (skipped: $skippedCount)."
 
     # ------------------------------------------------------------------
-    # 6 (v0.7.92). Starter apply-updates-schedule.yml drop.
+    # 6 (v0.7.92, relocated to config\ in v0.8.7). Starter
+    #    apply-updates-schedule.yml drop.
     #    Default-on for -Platform GitHub|AzureDevOps; suppressed by
-    #    -SkipStarterSchedule. The starter lands ONE LEVEL UP from the
-    #    pipelines folder (sibling of .github\workflows\ for GitHub, or
-    #    sibling of the ADO pipelines folder) so the schedule file is
-    #    not co-mingled with CI YAMLs. NEVER overwrites an existing
-    #    file - the existing file is always preserved and reported in
-    #    the Next-steps summary. Safe to land alongside Step.6 because
-    #    Step.6 ships with every `cron:` line commented out (verified
-    #    in github-actions/Step.6_apply-updates.yml).
+    #    -SkipStarterSchedule. The starter lands in a `config\` folder at
+    #    the REPO ROOT (the same location as the documented
+    #    `config/ClusterUpdateRings.csv` that Step.2 consumes), so ALL
+    #    operator-authored config (ring CSV, schedule, sideload auth-map +
+    #    catalog) sits together in one folder and the path is IDENTICAL on
+    #    GitHub and Azure DevOps. NEVER overwrites an existing file - the
+    #    existing file is always preserved and reported in the Next-steps
+    #    summary. Safe to land alongside Step.6 because Step.6 ships with
+    #    every `cron:` line commented out.
+    #
+    #    Repo-root resolution: for the canonical GitHub layout
+    #    (`-Destination .github\workflows`) the repo root is TWO levels up
+    #    (so config\ lands next to .github\, not inside it). For Azure
+    #    DevOps (and any other layout) it is ONE level up from the
+    #    pipelines folder. In both cases config\ ends up at the repo root.
     # ------------------------------------------------------------------
+    $configDir = $null
+    if ($Platform -in @('GitHub', 'AzureDevOps')) {
+        $trimmedTarget = $targetRoot.TrimEnd('\', '/')
+        $oneLevelUp = Split-Path -Parent $trimmedTarget
+        if ($Platform -eq 'GitHub' -and ($trimmedTarget -match '[\\/]\.github[\\/]workflows$')) {
+            # .github\workflows -> step up past .github to the repo root.
+            $repoRoot = Split-Path -Parent $oneLevelUp
+        }
+        else {
+            $repoRoot = $oneLevelUp
+        }
+        if ([string]::IsNullOrWhiteSpace($repoRoot)) {
+            # Defensive: drive root or no parent - fall back to the target.
+            $repoRoot = $trimmedTarget
+        }
+        $configDir = Join-Path -Path $repoRoot -ChildPath 'config'
+    }
+
     $scheduleSrc        = Join-Path -Path $sourceRoot -ChildPath 'apply-updates-schedule.example.yml'
     $scheduleDest       = $null
     $scheduleAction     = $null  # 'Copied' | 'Preserved' | 'Skipped' | 'Missing'
     if ($Platform -in @('GitHub', 'AzureDevOps') -and -not $SkipStarterSchedule.IsPresent) {
-        $scheduleParent = Split-Path -Parent ($targetRoot.TrimEnd('\','/'))
-        if ([string]::IsNullOrWhiteSpace($scheduleParent)) {
-            # Defensive: if $targetRoot has no parent (e.g. a drive root),
-            # fall back to dropping the schedule alongside the YAMLs.
-            $scheduleParent = $targetRoot
-        }
-        $scheduleDest = Join-Path -Path $scheduleParent -ChildPath 'apply-updates-schedule.yml'
+        $scheduleDest = Join-Path -Path $configDir -ChildPath 'apply-updates-schedule.yml'
 
         if (-not (Test-Path -LiteralPath $scheduleSrc -PathType Leaf)) {
             # Source missing - should never happen in a healthy install but
@@ -437,8 +506,7 @@ function Copy-AzLocalPipelineExample {
             Write-Verbose ("Copy-AzLocalPipelineExample: starter schedule preserved (already exists at '{0}'); not copied." -f $scheduleDest)
         }
         elseif ($PSCmdlet.ShouldProcess($scheduleDest, "Copy starter apply-updates-schedule.yml from '$scheduleSrc'")) {
-            # Create parent on demand (e.g. .github\ may not exist when the
-            # caller created .github\workflows\ via a single -Force New-Item).
+            # Create the config\ folder on demand.
             $newScheduleParent = Split-Path -Parent $scheduleDest
             if (-not (Test-Path -LiteralPath $newScheduleParent)) {
                 $null = New-Item -ItemType Directory -Path $newScheduleParent -Force -ErrorAction Stop
@@ -454,14 +522,84 @@ function Copy-AzLocalPipelineExample {
     elseif ($Platform -in @('GitHub', 'AzureDevOps')) {
         # -SkipStarterSchedule was explicitly set.
         $scheduleAction = 'SkippedBySwitch'
-        $scheduleParent = Split-Path -Parent ($targetRoot.TrimEnd('\','/'))
-        if (-not [string]::IsNullOrWhiteSpace($scheduleParent)) {
-            $scheduleDest = Join-Path -Path $scheduleParent -ChildPath 'apply-updates-schedule.yml'
+        if ($configDir) {
+            $scheduleDest = Join-Path -Path $configDir -ChildPath 'apply-updates-schedule.yml'
+        }
+    }
+
+    # ------------------------------------------------------------------
+    # 6b (v0.8.7). Starter on-prem sideloading config drop
+    #    (sideload-auth-map.csv + sideload-catalog.yml). Default-on for
+    #    -Platform GitHub|AzureDevOps; suppressed by
+    #    -SkipStarterSideloadConfig. Lands in the SAME `config\` folder as
+    #    the starter schedule and the ring CSV, so all operator config files
+    #    sit together at the repo root. Both files are HEADER / SKELETON
+    #    ONLY (no demo data rows), so they are inert even if SIDELOAD_UPDATES
+    #    is flipped on before they are populated: an empty auth-map yields
+    #    UnknownAuthAccountId and an empty catalog yields NoCatalogEntry -
+    #    neither performs a Key Vault lookup nor stages media. The Step.6
+    #    sideload pipeline is itself hard-gated OFF unless
+    #    SIDELOAD_UPDATES == 'true'. NEVER overwrites an existing file.
+    # ------------------------------------------------------------------
+    $sideloadAuthMapDest  = $null
+    $sideloadCatalogDest  = $null
+    $sideloadConfigAction = $null   # 'Copied' | 'Preserved' | 'Skipped' | 'SkippedBySwitch'
+    if ($Platform -in @('GitHub', 'AzureDevOps')) {
+        $sideloadAuthMapDest = Join-Path -Path $configDir -ChildPath 'sideload-auth-map.csv'
+        $sideloadCatalogDest = Join-Path -Path $configDir -ChildPath 'sideload-catalog.yml'
+
+        if ($SkipStarterSideloadConfig.IsPresent) {
+            $sideloadConfigAction = 'SkippedBySwitch'
+        }
+        else {
+            # Header / skeleton starter content (NOT a copy of the worked
+            # .example files, which carry demo rows). ASCII-only so
+            # Set-Content -Encoding ASCII writes no BOM.
+            $authMapStarter = @(
+                '# Sideload auth-map starter (v0.8.7 on-prem sideloading). Worked example:'
+                '#   Automation-Pipeline-Examples/sideload-auth-map.example.csv'
+                "# Lines starting with '#' are stripped at runtime by Get-AzLocalSideloadAuthMap;"
+                '# the first non-comment line is the CSV header. UpdateAuthAccountId must be'
+                '# numeric (1-3 digits) and unique. The first four columns are required.'
+                'UpdateAuthAccountId,KeyVaultName,UsernameSecretName,PasswordSecretName,RemotingTargetFqdn,FqdnSuffix,AuthMechanism,ImportSharePath'
+            )
+            $catalogStarter = @(
+                '# Sideload catalog starter (v0.8.7 on-prem sideloading). Worked example:'
+                '#   Automation-Pipeline-Examples/sideload-catalog.example.yml'
+                '# Run Update-AzLocalSideloadCatalog to populate Solution rows from the'
+                '# Microsoft Learn offline-updates table; add OEM SBE rows manually.'
+                'schemaVersion: 1'
+                'packages:'
+            )
+
+            $sideloadWroteAny = $false
+            $sideloadPreservedAny = $false
+            foreach ($drop in @(
+                @{ Dest = $sideloadAuthMapDest; Content = $authMapStarter; Label = 'sideload-auth-map.csv' }
+                @{ Dest = $sideloadCatalogDest; Content = $catalogStarter; Label = 'sideload-catalog.yml' }
+            )) {
+                if (Test-Path -LiteralPath $drop.Dest -PathType Leaf) {
+                    $sideloadPreservedAny = $true
+                    Write-Verbose ("Copy-AzLocalPipelineExample: starter {0} preserved (already exists at '{1}')." -f $drop.Label, $drop.Dest)
+                }
+                elseif ($PSCmdlet.ShouldProcess($drop.Dest, ("Write starter {0}" -f $drop.Label))) {
+                    $dropParent = Split-Path -Parent $drop.Dest
+                    if (-not (Test-Path -LiteralPath $dropParent)) {
+                        $null = New-Item -ItemType Directory -Path $dropParent -Force -ErrorAction Stop
+                    }
+                    Set-Content -LiteralPath $drop.Dest -Value $drop.Content -Encoding ASCII -ErrorAction Stop
+                    $sideloadWroteAny = $true
+                }
+            }
+            if ($sideloadWroteAny)          { $sideloadConfigAction = 'Copied' }
+            elseif ($sideloadPreservedAny)  { $sideloadConfigAction = 'Preserved' }
+            else                            { $sideloadConfigAction = 'Skipped' }
         }
     }
 
     # ------------------------------------------------------------------
     # 7. Friendly "what now" summary so the user does not have to open
+
     #    the README first to know what they just copied. Uses Write-Host
     #    (intentional - this is operator-facing UI text, not pipeline
     #    output; per Microsoft guidance Write-Host is appropriate for
@@ -481,6 +619,13 @@ function Copy-AzLocalPipelineExample {
     }
     elseif ($scheduleAction -eq 'Preserved') {
         Write-Host ("  Starter schedule preserved (existing file): {0}" -f $scheduleDest) -ForegroundColor Yellow
+    }
+    if ($sideloadConfigAction -eq 'Copied') {
+        Write-Host ("  Starter sideload config dropped at: {0}" -f $sideloadAuthMapDest) -ForegroundColor Green
+        Write-Host ("                                      {0}" -f $sideloadCatalogDest) -ForegroundColor Green
+    }
+    elseif ($sideloadConfigAction -eq 'Preserved') {
+        Write-Host "  Starter sideload config preserved (existing sideload-auth-map.csv / sideload-catalog.yml left untouched)" -ForegroundColor Yellow
     }
     Write-Host ""
     Write-Host "Next steps:" -ForegroundColor Cyan
@@ -523,6 +668,16 @@ function Copy-AzLocalPipelineExample {
             }
         }
     }
+    # Optional sideload (Step.6) sub-message - only emitted when a starter
+    # sideload config was dropped or already exists. Sideloading is OFF by
+    # default (SIDELOAD_UPDATES gate), so this is purely informational.
+    $sideloadHintLines = @()
+    if ($sideloadConfigAction -in @('Copied', 'Preserved')) {
+        $sideloadHintLines += "  *. OPTIONAL on-prem sideloading (Step.6, OFF by default): two starter config files are in place:"
+        if ($sideloadAuthMapDest) { $sideloadHintLines += ("       {0}" -f $sideloadAuthMapDest) }
+        if ($sideloadCatalogDest) { $sideloadHintLines += ("       {0}" -f $sideloadCatalogDest) }
+        $sideloadHintLines += "     Populate both, set repository variable SIDELOAD_UPDATES=true, then dry-run the sideload-updates pipeline. Until then they are inert. See Automation-Pipeline-Examples/docs/sideload.md."
+    }
     switch ($Platform) {
         'GitHub' {
             # Detect the canonical .github\workflows\ destination so we can
@@ -542,6 +697,7 @@ function Copy-AzLocalPipelineExample {
             foreach ($line in $scheduleHintLines) { Write-Host $line }
             Write-Host "     See section 5.1 step 5 + section 8 of the README for the full schema, multi-stage rollouts, and the allowedUpdateVersions allow-list."
             Write-Host "  5. Optional: enable the ITSM connector by setting 'raise_itsm_ticket=true' (setup in ITSM/README.md)."
+            foreach ($line in $sideloadHintLines) { Write-Host $line }
         }
         'AzureDevOps' {
             Write-Host ("  1. Commit the YAML files from '{0}' to your Azure Repo." -f $targetRoot)
@@ -550,8 +706,9 @@ function Copy-AzLocalPipelineExample {
             Write-Host "  4. Each pipeline references service connection 'AzureLocal-ServiceConnection' - either name yours to match or edit 'azureSubscription:' in each YAML."
             Write-Host "  5. SCHEDULED Step.6 (apply-updates) requires apply-updates-schedule.yml:" -ForegroundColor Yellow
             foreach ($line in $scheduleHintLines) { Write-Host $line }
-            Write-Host "     Step.6 reads APPLY_UPDATES_SCHEDULE_PATH (default './apply-updates-schedule.yml' at repo root). Override the variable in the pipeline if you keep the schedule elsewhere. See section 5.2 step 6 + section 8 of the README."
+            Write-Host "     Step.7 reads APPLY_UPDATES_SCHEDULE_PATH (default './config/apply-updates-schedule.yml'). Override the variable in the pipeline if you keep the schedule elsewhere. See section 5.2 step 6 + section 8 of the README."
             Write-Host "  6. Optional: enable the ITSM connector by setting 'raise_itsm_ticket=true' (setup in ITSM/README.md)."
+            foreach ($line in $sideloadHintLines) { Write-Host $line }
         }
         default {
             $readmePath = Join-Path -Path $targetRoot -ChildPath 'README.md'

@@ -73,7 +73,7 @@ function Export-AzLocalApplyUpdatesScheduleAudit {
         `$env:BUILD_ARTIFACTSTAGINGDIRECTORY` (Azure DevOps).
 
     .PARAMETER PipelineYamlPath
-        Path (file or folder) to Step.6_apply-updates.yml. REQUIRED so
+        Path (file or folder) to Step.7_apply-updates.yml. REQUIRED so
         the Recommend view can diff its proposed crons against what is
         already in Step.6 and only emit a snippet for the truly missing
         entries.
@@ -123,6 +123,18 @@ function Export-AzLocalApplyUpdatesScheduleAudit {
         Per-task markdown summary filename used by
         `Add-AzLocalPipelineStepSummary` on Azure DevOps and Local hosts.
         Default 'schedule-coverage-summary.md'.
+
+    .PARAMETER SideloadEnabled
+        Opt-in switch for the v0.8.7 "Recommended sideload schedule" section.
+        When not explicitly bound, it is resolved from the SIDELOAD_UPDATES
+        environment variable (true/1/yes/on => enabled). When disabled the
+        section is omitted entirely and the audit is byte-identical to v0.8.6.
+
+    .PARAMETER SideloadLeadDays
+        How many days before a ring's apply window the media should already be
+        sideloaded (drives the recommended sideload kickoff cron = apply firing
+        shifted back this many days). When not explicitly bound it is resolved
+        from the SIDELOAD_LEAD_DAYS environment variable, defaulting to 7.
 
     .PARAMETER InstalledModuleVersion
         Optional [string] used in the markdown footer
@@ -207,6 +219,13 @@ function Export-AzLocalApplyUpdatesScheduleAudit {
         [string]$SummaryFileName = 'schedule-coverage-summary.md',
 
         [Parameter(Mandatory = $false)]
+        [bool]$SideloadEnabled,
+
+        [Parameter(Mandatory = $false)]
+        [ValidateRange(0, 365)]
+        [int]$SideloadLeadDays = 7,
+
+        [Parameter(Mandatory = $false)]
         [AllowEmptyString()]
         [AllowNull()]
         [string]$InstalledModuleVersion,
@@ -233,7 +252,7 @@ function Export-AzLocalApplyUpdatesScheduleAudit {
     }
 
     if (-not (Test-Path -LiteralPath $PipelineYamlPath)) {
-        throw "PipelineYamlPath '$PipelineYamlPath' does not exist. Set it to the folder containing Step.6_apply-updates.yml (e.g. '.github/workflows' or '.azure-pipelines') so the Recommend view can diff its proposed crons against the existing file."
+        throw "PipelineYamlPath '$PipelineYamlPath' does not exist. Set it to the folder containing Step.7_apply-updates.yml (e.g. '.github/workflows' or '.azure-pipelines') so the Recommend view can diff its proposed crons against the existing file."
     }
 
     $haveSchedule = $false
@@ -548,7 +567,7 @@ function Export-AzLocalApplyUpdatesScheduleAudit {
     & $addDetailTable '### Audit Detail - Cron coverage (Uncovered / Partial / Malformed first)' $cronRows 'No tagged clusters found - nothing to audit.'
 
     if (-not $hasIssues -and $recoContent) {
-        [void]$md.Add('### Reference - Recommended schedule (copy into Step.6_apply-updates.yml)')
+        [void]$md.Add('### Reference - Recommended schedule (copy into Step.7_apply-updates.yml)')
         [void]$md.Add('')
         [void]$md.Add($recoContent)
         [void]$md.Add('')
@@ -559,7 +578,7 @@ function Export-AzLocalApplyUpdatesScheduleAudit {
     # calendar silently disappeared from clean-fleet runs.
     # v0.8.6 enrichment: when PipelineYamlPath (always) and ClusterCsvPath
     # (optional) are available, build two extra columns:
-    #   * "Ring CRON Start Time (Step 6 pipeline)" - per-day UTC firing
+    #   * "Ring CRON Start Time (apply-updates pipeline)" - per-day UTC firing
     #     times projected from Step.6 cron triggers.
     #   * "Tag Start Window Match (>=95%)" - per (ring, date) pair: do
     #     >=95% of clusters in the ring have an UpdateStartWindow tag
@@ -712,6 +731,106 @@ function Export-AzLocalApplyUpdatesScheduleAudit {
             [void]$md.Add($calendarMd)
             [void]$md.Add('')
         }
+    }
+
+    # ---- Recommended sideload schedule (Step.6, opt-in v0.8.7) ------------
+    # Gated on SIDELOAD_UPDATES (parameter override -> env var). When disabled
+    # the section is omitted and the audit output is byte-identical to v0.8.6.
+    # The on-prem Step.6 sideload pipeline is re-entrant and driven by a
+    # frequent poll cron; its planner uses SIDELOAD_LEAD_DAYS to decide when a
+    # cluster is "due". This section reuses the apply-window crons already read
+    # from PipelineYamlPath to recommend, per apply firing, the EARLIEST weekly
+    # cron at which staging should begin (apply firing shifted back LeadDays).
+    #
+    # NOTE: the local accumulator is deliberately NOT named $sideloadEnabled -
+    # PowerShell variable names are CASE-INSENSITIVE, so $sideloadEnabled would
+    # alias the [bool]$SideloadEnabled parameter and clobber the bound value to
+    # $false on the first assignment (silent: -SideloadEnabled $true then
+    # rendered nothing while only the env-var path worked).
+    $emitSideloadSection = $false
+    if ($PSBoundParameters.ContainsKey('SideloadEnabled')) {
+        $emitSideloadSection = $SideloadEnabled
+    }
+    elseif ($env:SIDELOAD_UPDATES) {
+        $emitSideloadSection = (([string]$env:SIDELOAD_UPDATES).Trim().ToLowerInvariant() -in @('true', '1', 'yes', 'on'))
+    }
+    $sideloadScheduleIncluded = $false
+    if ($emitSideloadSection) {
+        $leadDays = $SideloadLeadDays
+        if (-not $PSBoundParameters.ContainsKey('SideloadLeadDays') -and $env:SIDELOAD_LEAD_DAYS) {
+            $parsedLead = 0
+            if ([int]::TryParse((([string]$env:SIDELOAD_LEAD_DAYS).Trim()), [ref]$parsedLead) -and $parsedLead -ge 0 -and $parsedLead -le 365) {
+                $leadDays = $parsedLead
+            }
+        }
+
+        # Distinct apply-window weekly firings (DayOfWeek + TimeOfDay) from the
+        # apply pipeline crons. Read-AzLocalApplyUpdatesYamlCrons uses a
+        # unary-comma return - direct assignment only (NEVER @() wrap).
+        $applyFirings = New-Object 'System.Collections.Generic.List[psobject]'
+        try {
+            $sideloadCronTriggers = Read-AzLocalApplyUpdatesYamlCrons -Path $PipelineYamlPath -ErrorAction Stop
+            foreach ($sct in $sideloadCronTriggers) {
+                try {
+                    $sparsed = ConvertFrom-AzLocalCronExpression -Expression $sct.CronExpression -ErrorAction Stop
+                    if ($sparsed.IsValid -and -not $sparsed.IsComplex) {
+                        foreach ($sft in @($sparsed.FireTimes)) {
+                            $applyFirings.Add([pscustomobject]@{
+                                DayOfWeek = [int]$sft.DayOfWeek
+                                TimeOfDay = $sft.TimeOfDay
+                            }) | Out-Null
+                        }
+                    }
+                }
+                catch {
+                    Write-Verbose "Sideload section: cron parse failed for '$($sct.CronExpression)': $($_.Exception.Message)"
+                }
+            }
+        }
+        catch {
+            Write-Warning "Failed to read apply-updates crons for the sideload schedule recommendation: $($_.Exception.Message)"
+        }
+
+        [void]$md.Add('### Recommended sideload schedule (Step.6 - opt-in)')
+        [void]$md.Add('')
+        [void]$md.Add("`SIDELOAD_UPDATES` is enabled, so media must be pre-staged on each cluster **$leadDays day(s)** before its apply window opens. The on-prem **Step.6 - Sideload Update** pipeline is re-entrant: drive it on a frequent poll cron and its planner uses `SIDELOAD_LEAD_DAYS=$leadDays` to decide when each cluster is due.")
+        [void]$md.Add('')
+        [void]$md.Add('Recommended Step.6 poll cron (every 30 minutes) - paste into the `schedule:`/`schedules:` block of `sideload-updates.yml`:')
+        [void]$md.Add('')
+        [void]$md.Add('```')
+        [void]$md.Add('*/30 * * * *')
+        [void]$md.Add('```')
+        [void]$md.Add('')
+
+        # Build a distinct, ordered list of apply firings.
+        $distinctFirings = @(
+            $applyFirings |
+                Sort-Object DayOfWeek, TimeOfDay -Unique
+        )
+        if ($distinctFirings.Count -gt 0) {
+            $dayNames = @('Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat')
+            [void]$md.Add("Per apply-window firing, the EARLIEST weekly cron at which staging should begin (apply firing shifted back $leadDays day(s)):")
+            [void]$md.Add('')
+            [void]$md.Add('| Apply firing (UTC) | Lead (days) | Begin-staging (UTC) | Sideload kickoff cron |')
+            [void]$md.Add('|--------------------|------------:|---------------------|-----------------------|')
+            foreach ($f in $distinctFirings) {
+                $applyDow = [int]$f.DayOfWeek
+                $hhmm = ([timespan]$f.TimeOfDay).ToString('hh\:mm')
+                $minute = ([timespan]$f.TimeOfDay).Minutes
+                $hour = ([timespan]$f.TimeOfDay).Hours
+                $shiftedDow = ((($applyDow - ($leadDays % 7)) % 7) + 7) % 7
+                $kickoffCron = ('{0} {1} * * {2}' -f $minute, $hour, $shiftedDow)
+                [void]$md.Add(('| {0} {1} | {2} | {3} {1} | `{4}` |' -f $dayNames[$applyDow], $hhmm, $leadDays, $dayNames[$shiftedDow], $kickoffCron))
+            }
+            [void]$md.Add('')
+            [void]$md.Add('> The kickoff cron is the EARLIEST point staging could start for that window. The re-entrant Step.6 pipeline (frequent poll) advances the multi-hour copy from that point; you do NOT need a separate cron per ring.')
+            [void]$md.Add('')
+        }
+        else {
+            [void]$md.Add('> No simple weekly apply-window firings were found in the pipeline YAML, so a per-window kickoff cron could not be derived. Drive Step.6 on the recommended poll cron above; its planner will stage each cluster `SIDELOAD_LEAD_DAYS` days before its apply window.')
+            [void]$md.Add('')
+        }
+        $sideloadScheduleIncluded = $true
     }
 
     [void]$md.Add('### Reports Available')

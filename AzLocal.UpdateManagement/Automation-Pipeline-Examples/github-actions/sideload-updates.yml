@@ -1,0 +1,273 @@
+# AZLOCAL-PIPELINE-ID: sideload-updates
+# Sideload Updates (Opt-in, on-prem self-hosted runner)
+#
+# OPT-IN, OFF BY DEFAULT. This workflow automates the on-prem sideloading of
+# Azure Local solution-update media for clusters that cannot pull updates from
+# Azure directly. It is the NEW Step.6 introduced in v0.8.7; the former Step.6
+# (Apply Updates) is now Step.7.
+#
+# WHY A SELF-HOSTED RUNNER:
+#   The runner must sit on the SAME network as the target Azure Local clusters
+#   so it can (a) Robocopy the CombinedSolutionBundle to each cluster's
+#   infrastructure `import` SMB share and (b) PowerShell-remote (WinRM) into a
+#   cluster node to verify the SHA256 and run Add-SolutionUpdate. GitHub-hosted
+#   runners cannot reach the on-prem fabric, so this pipeline targets a
+#   self-hosted runner labelled `azlocal-sideload`.
+#
+# RE-ENTRANT STATE MACHINE:
+#   Each run advances every in-scope cluster by ONE state transition and exits.
+#   The multi-hour copy itself runs in a detached Windows Scheduled Task, so no
+#   pipeline run is ever long-lived. Drive this on a frequent CRON (e.g. every
+#   30 minutes) so the state machine progresses Copying -> Copied -> Verified ->
+#   Imported across successive short runs. Re-running is always safe.
+#
+# GATE: the whole job is skipped unless the repository variable
+#   SIDELOAD_UPDATES == 'true'. When unset/false this file is inert.
+#
+# AUTHENTICATION:
+#   - Azure (ARG fleet read + Key Vault secret read + UpdateSideloaded tag flip):
+#     azure/login OIDC by default. enable-AzPSSession=true is REQUIRED because
+#     the Key Vault secrets are read via Get-AzKeyVaultSecret (Az PowerShell).
+#     For on-prem runners where OIDC is not viable, switch to managed identity
+#     or a service principal per the SIDELOAD_KV_AUTH variable (see comments).
+#   - Cluster WinRM remoting: an Active Directory [pscredential] built from two
+#     Key Vault secrets named in the sideload auth-map row (NOT the pipeline
+#     identity). The detached copy Scheduled Task runs as the runner service
+#     account (needs UNC rights to the shared cache + cluster import share).
+
+# Workflow name carries the same Step.N - prefix as the filename so the GitHub
+# Actions sidebar (which sorts workflows alphabetically by this `name:` field)
+# lists the pipelines in execution order.
+name: Step.6 - Sideload Updates (Opt-in)
+
+on:
+  # BEGIN-AZLOCAL-CUSTOMIZE:schedule-triggers
+  # Edits inside this block are preserved across Update-AzLocalPipelineExample
+  # module upgrades.
+  #
+  # NO default schedule ships out-of-the-box (this pipeline requires an on-prem
+  # self-hosted runner that most repos do not have). Once your `azlocal-sideload`
+  # runner is online, UNCOMMENT the cron below to drive the re-entrant state
+  # machine. A frequent poll (every 30 min) lets a single short run advance the
+  # multi-hour copy without staying alive. The Step.3 schedule-coverage audit can
+  # recommend a lead-time-aware cron (apply window minus SIDELOAD_LEAD_DAYS).
+  #
+  # schedule:
+  #   - cron: '*/30 * * * *'   # every 30 minutes - advance/report sideload state
+  # END-AZLOCAL-CUSTOMIZE:schedule-triggers
+
+  workflow_dispatch:
+    inputs:
+      update_ring:
+        # accepts a single ring (Wave1), a semicolon-delimited list (Prod;Ring2),
+        # or '***' (three stars - deliberate, not a typo) to match every cluster
+        # that HAS the UpdateRing tag set.
+        description: "UpdateRing tag value to scope the plan ('Wave1', 'Prod;Ring2', or '***' for ALL rings)."
+        required: false
+        default: '***'
+      dry_run:
+        description: 'Preview the plan + transitions without staging media, registering tasks, or flipping tags (WhatIf).'
+        required: false
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+      module_version:
+        description: 'Pin AzLocal.UpdateManagement version (empty = latest from PSGallery). See Automation-Pipeline-Examples/README.md section 5 "Optional configuration".'
+        required: false
+        default: ''
+
+env:
+  # Module version this workflow YAML was generated against. The install step compares
+  # this to the version actually installed and to the latest on PSGallery, and emits a
+  # ::notice annotation if the YAML appears stale - prompting you to refresh via
+  # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
+  GENERATED_AGAINST_MODULE_VERSION: '0.8.7'
+  # Resolution order for the module version pin (leave all unset to install the latest,
+  # which is the default "fix-forward" behaviour): manual workflow_dispatch input >
+  # repository variable 'REQUIRED_MODULE_VERSION' > empty (latest).
+  REQUIRED_MODULE_VERSION: ${{ github.event.inputs.module_version || vars.REQUIRED_MODULE_VERSION || '' }}
+  # v0.8.4 - opt this workflow into Node.js 24 for all JavaScript actions
+  # (actions/checkout, actions/download-artifact, actions/upload-artifact,
+  # azure/login, dorny/test-reporter, etc). Per GitHub's 2025-09-19 deprecation
+  # notice Node 20 is forced off by default on 2026-06-16 and removed from the
+  # runner on 2026-09-16. Setting this env var silences the deprecation warnings
+  # and exercises Node 24 ahead of the cut-over. To temporarily opt back out,
+  # set ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true.
+  # https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  # Path to the ring-aware apply-updates-schedule.yml (relative to repo root). The
+  # planner reads it to find each cluster's next apply window. Override via repository
+  # variable APPLY_UPDATES_SCHEDULE_PATH if you keep the schedule outside `.github/`.
+  APPLY_UPDATES_SCHEDULE_PATH: ${{ vars.APPLY_UPDATES_SCHEDULE_PATH || './.github/apply-updates-schedule.yml' }}
+
+  # ---- Sideload configuration (repository Variables, vars.*) ----
+  # Master gate. The job is skipped unless this is the literal string 'true'.
+  SIDELOAD_UPDATES: ${{ vars.SIDELOAD_UPDATES || 'false' }}
+  # Shared UNC root that ALL runners/agents can read+write: holds state\, logs\, cache\.
+  SIDELOAD_STATE_ROOT: ${{ vars.SIDELOAD_STATE_ROOT || '' }}
+  # Shared verified media cache. Defaults (in the cmdlet) to <state-root>\cache.
+  SIDELOAD_CACHE_ROOT: ${{ vars.SIDELOAD_CACHE_ROOT || '' }}
+  # Path to the sideload auth-map CSV (UpdateAuthAccountId -> Key Vault + secret names).
+  # Defaults to `config/` so it sits alongside apply-updates-schedule.yml and
+  # ClusterUpdateRings.csv (this is where Copy-AzLocalPipelineExample drops the
+  # starter). Override the variable to relocate it.
+  SIDELOAD_AUTH_MAP_PATH: ${{ vars.SIDELOAD_AUTH_MAP_PATH || './config/sideload-auth-map.csv' }}
+  # Path to the committed sideload catalog YAML (Version -> DownloadUri/Sha256).
+  # Defaults to `config/` alongside the auth-map + schedule. Override to relocate.
+  SIDELOAD_CATALOG_PATH: ${{ vars.SIDELOAD_CATALOG_PATH || './config/sideload-catalog.yml' }}
+  # Days before a cluster's next apply window that media should be sideloaded.
+  SIDELOAD_LEAD_DAYS: ${{ vars.SIDELOAD_LEAD_DAYS || '7' }}
+  # Extra robocopy switches for the detached copy worker (throttling / retries).
+  SIDELOAD_ROBOCOPY_SWITCHES: ${{ vars.SIDELOAD_ROBOCOPY_SWITCHES || '/R:5 /W:30' }}
+  # Minutes after which a Copying heartbeat is considered stale (dead runner) and re-driven.
+  SIDELOAD_HEARTBEAT_STALE_MINUTES: ${{ vars.SIDELOAD_HEARTBEAT_STALE_MINUTES || '60' }}
+  # Global FQDN suffix appended to a cluster name to form the WinRM host when the
+  # auth-map row does not override it (e.g. '.corp.contoso.com'). Empty = bare name.
+  SIDELOAD_REMOTING_FQDN_SUFFIX: ${{ vars.SIDELOAD_REMOTING_FQDN_SUFFIX || '' }}
+  # Key Vault auth mode for the on-prem runner: oidc | managedidentity | serviceprincipal.
+  SIDELOAD_KV_AUTH: ${{ vars.SIDELOAD_KV_AUTH || 'oidc' }}
+
+# Prevent overlapping sideload runs from racing on the same shared state.
+# cancel-in-progress=false queues a newly-triggered run behind an in-flight one.
+concurrency:
+  group: sideload-updates-${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  sideload:
+    name: Advance Sideload State Machine
+    # Requires an on-prem self-hosted RUNNER (GitHub Actions terminology) on the
+    # same network as the clusters, registered with the `azlocal-sideload` label
+    # (use a dedicated runner group to restrict which repos can target it).
+    runs-on: [self-hosted, azlocal-sideload]
+    # Master opt-in gate: do nothing unless SIDELOAD_UPDATES is explicitly 'true'.
+    if: ${{ vars.SIDELOAD_UPDATES == 'true' }}
+    permissions:
+      id-token: write
+      contents: read
+      checks: write  # Required for the test reporter
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v5
+
+    # Azure auth. enable-AzPSSession=true sets up BOTH the az CLI context (ARG +
+    # az rest tag writes) AND the Az PowerShell context (Get-AzKeyVaultSecret).
+    #
+    # SIDELOAD_KV_AUTH alternatives for on-prem runners where OIDC is not viable:
+    #   - managedidentity: replace this step with
+    #       run: Connect-AzAccount -Identity
+    #   - serviceprincipal: store AZURE_CLIENT_SECRET as a repo secret and use
+    #       azure/login with creds, or Connect-AzAccount -ServicePrincipal -Credential ...
+    - name: Azure Login (OIDC + Az PowerShell session)
+      uses: azure/login@v3
+      with:
+        client-id: ${{ secrets.AZURE_CLIENT_ID }}
+        tenant-id: ${{ vars.AZURE_TENANT_ID }}
+        subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+        enable-AzPSSession: true
+
+    - name: Install Azure CLI Resource Graph Extension
+      shell: pwsh
+      run: |
+        az extension add --name resource-graph --yes
+
+    - name: Install AzLocal.UpdateManagement from PSGallery
+      shell: pwsh
+      id: module-version
+      run: |
+        $ErrorActionPreference = 'Stop'
+        $installArgs = @{ Name = 'AzLocal.UpdateManagement'; Scope = 'CurrentUser'; Force = $true; AllowClobber = $true }
+        if ($env:REQUIRED_MODULE_VERSION) {
+            $installArgs.RequiredVersion = $env:REQUIRED_MODULE_VERSION
+            Write-Host "REQUIRED_MODULE_VERSION is set - pinning install to v$($env:REQUIRED_MODULE_VERSION)."
+        } else {
+            Write-Host "REQUIRED_MODULE_VERSION is empty - installing the latest version from PSGallery (default fix-forward behaviour)."
+        }
+        Install-Module @installArgs
+        Import-Module AzLocal.UpdateManagement -Force
+        Add-AzLocalPipelineVersionBanner `
+            -GeneratedAgainstVersion $env:GENERATED_AGAINST_MODULE_VERSION `
+            -PinnedVersion $env:REQUIRED_MODULE_VERSION
+
+    - name: Advance Sideload State Machine
+      id: sideload
+      shell: pwsh
+      env:
+        INPUT_UPDATE_RING: ${{ github.event.inputs.update_ring || '***' }}
+        INPUT_DRY_RUN: ${{ github.event.inputs.dry_run || 'true' }}
+      run: |
+        $ErrorActionPreference = 'Stop'
+        Import-Module AzLocal.UpdateManagement -Force
+
+        if ([string]::IsNullOrWhiteSpace($env:SIDELOAD_STATE_ROOT)) {
+            throw "SIDELOAD_STATE_ROOT is not set. Configure the shared UNC state root repository variable before running this pipeline."
+        }
+
+        # 1. Resolve the per-cluster plan (read-only).
+        $planParams = @{
+            SchedulePath = $env:APPLY_UPDATES_SCHEDULE_PATH
+            AuthMapPath  = $env:SIDELOAD_AUTH_MAP_PATH
+            CatalogPath  = $env:SIDELOAD_CATALOG_PATH
+            LeadDays     = [int]$env:SIDELOAD_LEAD_DAYS
+        }
+        if ($env:INPUT_UPDATE_RING)             { $planParams['UpdateRingValue'] = $env:INPUT_UPDATE_RING }
+        if ($env:SIDELOAD_REMOTING_FQDN_SUFFIX) { $planParams['FqdnSuffix']      = $env:SIDELOAD_REMOTING_FQDN_SUFFIX }
+        $plan = @(Resolve-AzLocalSideloadPlan @planParams)
+        Write-Host ("Resolved {0} cluster plan row(s)." -f $plan.Count)
+
+        # 2. Advance the re-entrant state machine by one transition per cluster.
+        $applyParams = @{
+            Plan         = $plan
+            StateRoot    = $env:SIDELOAD_STATE_ROOT
+            ErrorAction  = 'Stop'
+        }
+        if ($env:SIDELOAD_CACHE_ROOT)             { $applyParams['CacheRoot']             = $env:SIDELOAD_CACHE_ROOT }
+        if ($env:SIDELOAD_ROBOCOPY_SWITCHES)      { $applyParams['RobocopySwitches']      = $env:SIDELOAD_ROBOCOPY_SWITCHES }
+        if ($env:SIDELOAD_HEARTBEAT_STALE_MINUTES) { $applyParams['HeartbeatStaleMinutes'] = [int]$env:SIDELOAD_HEARTBEAT_STALE_MINUTES }
+        if ($env:INPUT_DRY_RUN -eq 'true') {
+            $applyParams['WhatIf'] = $true
+            Write-Host 'DRY RUN MODE - no media staged, no tasks registered, no tags flipped.'
+        }
+        $results = @(Invoke-AzLocalSideloadUpdate @applyParams)
+        Write-Host ("Processed {0} cluster(s)." -f $results.Count)
+
+        # 3. Render the status report (markdown step summary + JUnit XML + sideload-status.md).
+        New-Item -ItemType Directory -Path ./reports -Force | Out-Null
+        $report = Add-AzLocalSideloadStepSummary -StateRoot $env:SIDELOAD_STATE_ROOT -Plan $plan -OutputPath ./reports
+
+        if ($report.HasFailures) {
+            Write-Host '::warning::One or more clusters are in a Failed state or have plan errors - see the Sideload status report.'
+        }
+
+    - name: Compute Artifact Timestamp
+      if: always()
+      id: artifact-stamp
+      shell: pwsh
+      # every downloadable artifact gets a UTC timestamp suffix so multiple runs on
+      # the same day produce distinct zip names.
+      run: |
+        $stamp = (Get-Date).ToUniversalTime().ToString('yyyyMMdd_HHmmss')
+        "timestamp=$stamp" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+        Write-Host "Artifact timestamp: $stamp"
+
+    - name: Upload Sideload Reports
+      if: always()
+      uses: actions/upload-artifact@v6
+      with:
+        name: azlocal-step.6-sideload-updates-report_${{ steps.artifact-stamp.outputs.timestamp }}
+        path: ./reports/
+        retention-days: 90
+
+    - name: Publish Test Results
+      uses: dorny/test-reporter@v3
+      if: always()
+      with:
+        name: Sideload Update Report
+        path: ./reports/sideload-junit.xml
+        reporter: java-junit
+        fail-on-error: false
+        list-suites: failed
+        list-tests: failed

@@ -53,6 +53,14 @@ function Set-AzLocalClusterUpdateRingTag {
         Note: regardless of whether this parameter is supplied, this function ALWAYS stamps
         UpdateExcluded='False' on any cluster that does not already carry the tag, so the
         tag is discoverable in the Azure portal and ready for an operator to flip to 'True'.
+
+    .PARAMETER UpdateAuthAccountIdValue
+        Optional. Numeric (1-3 digit) value to assign to the "UpdateAuthAccountId" tag when
+        using -ClusterResourceIds. This tag maps the cluster to a row in the on-prem sideload
+        auth-map (sideload-auth-map.csv) used by the opt-in Step.6 sideload workflow. Must
+        match ^\d{1,3}$ (e.g. '001') - non-numeric values are rejected. Not used with
+        -InputCsvPath (values come from the optional UpdateAuthAccountId column). When the
+        column/value is absent, no UpdateAuthAccountId tag is written. New in v0.8.7.
     
     .PARAMETER Force
         If specified, will overwrite existing "UpdateRing" tags. Without this switch,
@@ -129,6 +137,10 @@ function Set-AzLocalClusterUpdateRingTag {
         [ValidateSet('True', 'False', '1', '0', 'true', 'false', '', IgnoreCase = $true)]
         [string]$UpdateExcludedValue,
 
+        [Parameter(Mandatory = $false, ParameterSetName = 'ByResourceId')]
+        [ValidatePattern('^(\d{1,3})?$')]
+        [string]$UpdateAuthAccountIdValue,
+
         [Parameter(Mandatory = $false)]
         [switch]$Force,
 
@@ -203,11 +215,13 @@ function Set-AzLocalClusterUpdateRingTag {
             $hasUpdateStartWindowCol = 'UpdateStartWindow' -in $csvColumns
             $hasUpdateExclusionsWindowCol = 'UpdateExclusionsWindow' -in $csvColumns
             $hasUpdateExcludedCol = 'UpdateExcluded' -in $csvColumns
-            if ($hasUpdateStartWindowCol -or $hasUpdateExclusionsWindowCol -or $hasUpdateExcludedCol) {
+            $hasUpdateAuthAccountIdCol = 'UpdateAuthAccountId' -in $csvColumns
+            if ($hasUpdateStartWindowCol -or $hasUpdateExclusionsWindowCol -or $hasUpdateExcludedCol -or $hasUpdateAuthAccountIdCol) {
                 $scheduleColumns = @()
                 if ($hasUpdateStartWindowCol) { $scheduleColumns += 'UpdateStartWindow' }
                 if ($hasUpdateExclusionsWindowCol) { $scheduleColumns += 'UpdateExclusionsWindow' }
                 if ($hasUpdateExcludedCol) { $scheduleColumns += 'UpdateExcluded' }
+                if ($hasUpdateAuthAccountIdCol) { $scheduleColumns += 'UpdateAuthAccountId' }
                 Write-Log -Message "CSV includes schedule tag columns: $($scheduleColumns -join ', ')" -Level Info
             }
             
@@ -225,6 +239,9 @@ function Set-AzLocalClusterUpdateRingTag {
                 }
                 if ($hasUpdateExcludedCol -and $row.UpdateExcluded -and $row.UpdateExcluded.Trim() -ne '') {
                     $entry['UpdateExcludedValue'] = $row.UpdateExcluded.Trim()
+                }
+                if ($hasUpdateAuthAccountIdCol -and $row.UpdateAuthAccountId -and $row.UpdateAuthAccountId.Trim() -ne '') {
+                    $entry['UpdateAuthAccountIdValue'] = $row.UpdateAuthAccountId.Trim()
                 }
                 $clustersToTag += $entry
             }
@@ -247,6 +264,9 @@ function Set-AzLocalClusterUpdateRingTag {
         if ($UpdateExcludedValue) {
             Write-Log -Message "UpdateExcluded value to set: $UpdateExcludedValue" -Level Info
         }
+        if ($UpdateAuthAccountIdValue) {
+            Write-Log -Message "UpdateAuthAccountId value to set: $UpdateAuthAccountIdValue" -Level Info
+        }
         
         foreach ($resourceId in $ClusterResourceIds) {
             $entry = @{
@@ -261,6 +281,9 @@ function Set-AzLocalClusterUpdateRingTag {
             }
             if ($UpdateExcludedValue) {
                 $entry['UpdateExcludedValue'] = $UpdateExcludedValue
+            }
+            if ($UpdateAuthAccountIdValue) {
+                $entry['UpdateAuthAccountIdValue'] = $UpdateAuthAccountIdValue
             }
             $clustersToTag += $entry
         }
@@ -466,6 +489,7 @@ function Set-AzLocalClusterUpdateRingTag {
                 $hasNewScheduleTags = ($clusterEntry.UpdateStartWindowValue -and (-not $currentTags.PSObject.Properties[$script:UpdateStartWindowTagName] -or $currentTags.$($script:UpdateStartWindowTagName) -ne $clusterEntry.UpdateStartWindowValue)) -or
                                      ($clusterEntry.UpdateExclusionsWindowValue -and (-not $currentTags.PSObject.Properties[$script:UpdateExclusionsWindowTagName] -or $currentTags.$($script:UpdateExclusionsWindowTagName) -ne $clusterEntry.UpdateExclusionsWindowValue)) -or
                                      ($clusterEntry.UpdateExcludedValue -and (-not $currentTags.PSObject.Properties[$script:UpdateExcludedTagName] -or $currentTags.$($script:UpdateExcludedTagName) -ne $clusterEntry.UpdateExcludedValue)) -or
+                                     ($clusterEntry.UpdateAuthAccountIdValue -and (-not $currentTags.PSObject.Properties[$script:UpdateAuthAccountIdTagName] -or $currentTags.$($script:UpdateAuthAccountIdTagName) -ne $clusterEntry.UpdateAuthAccountIdValue)) -or
                                      $needsExcludedDefaultStamp
 
                 if (-not $Force -and -not $hasNewScheduleTags) {
@@ -574,6 +598,19 @@ function Set-AzLocalClusterUpdateRingTag {
             elseif (-not $currentTags.PSObject.Properties[$script:UpdateExcludedTagName]) {
                 $tagsToMerge[$script:UpdateExcludedTagName] = 'False'
                 Write-Log -Message "  Will default-stamp $($script:UpdateExcludedTagName) tag: 'False' (tag absent on cluster)" -Level Info
+            }
+
+            # Sideload auth-map account id (opt-in Step.6 workflow). Validate it is
+            # numeric (1-3 digits) before writing - a non-numeric value would never
+            # match a sideload-auth-map.csv row. An invalid value throws and is
+            # surfaced as a per-cluster Failed result by the surrounding catch.
+            if ($clusterEntry.UpdateAuthAccountIdValue) {
+                $authIdToWrite = ([string]$clusterEntry.UpdateAuthAccountIdValue).Trim()
+                if ($authIdToWrite -notmatch '^\d{1,3}$') {
+                    throw "Invalid UpdateAuthAccountId '$authIdToWrite' for cluster '$clusterName' - must be numeric (1-3 digits, e.g. 001)."
+                }
+                $tagsToMerge[$script:UpdateAuthAccountIdTagName] = $authIdToWrite
+                Write-Log -Message "  Will also set $($script:UpdateAuthAccountIdTagName) tag: $authIdToWrite" -Level Info
             }
 
             # Compute the actual per-tag deltas so the per-cluster Message in the

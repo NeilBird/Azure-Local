@@ -6,7 +6,7 @@ function Resolve-AzLocalPipelineUpdateRing {
         manual input or apply-updates-schedule.yml.
     .DESCRIPTION
         v0.8.5 Step.6 thin-YAML helper. Replaces the ~80-line inline `run:`
-        block that lived in both Step.6_apply-updates.yml pipelines (GitHub
+        block that lived in both Step.7_apply-updates.yml pipelines (GitHub
         Actions + Azure DevOps).
 
         Three resolution paths:

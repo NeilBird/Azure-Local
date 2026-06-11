@@ -93,7 +93,7 @@ function Test-AzLocalApplyUpdatesScheduleCoverage {
         older CSVs that pre-date the ResourceId column.
 
     .PARAMETER PipelineYamlPath
-        Optional for -View Audit. Path to a single Step.6_apply-updates.yml file, or to
+        Optional for -View Audit. Path to a single Step.7_apply-updates.yml file, or to
         a folder that contains apply-updates*.yml files (typically the
         Automation-Pipeline-Examples folder of your forked module). Drives the
         cron-vs-UpdateStartWindow coverage check. May be supplied together with
@@ -236,7 +236,7 @@ function Test-AzLocalApplyUpdatesScheduleCoverage {
     if ($View -eq 'Audit' -and
         [string]::IsNullOrWhiteSpace($PipelineYamlPath) -and
         [string]::IsNullOrWhiteSpace($SchedulePath)) {
-        throw "-View 'Audit' requires at least one of -PipelineYamlPath or -SchedulePath. Point -PipelineYamlPath at Step.6_apply-updates.yml (or the Automation-Pipeline-Examples folder) and/or -SchedulePath at your apply-updates-schedule.yml."
+        throw "-View 'Audit' requires at least one of -PipelineYamlPath or -SchedulePath. Point -PipelineYamlPath at Step.7_apply-updates.yml (or the Automation-Pipeline-Examples folder) and/or -SchedulePath at your apply-updates-schedule.yml."
     }
     if ($PipelineYamlPath -and -not (Test-Path -LiteralPath $PipelineYamlPath)) {
         throw "PipelineYamlPath not found: $PipelineYamlPath"
@@ -609,12 +609,12 @@ resources
 
             if ($emitGh) {
                 if ($emitAdo) {
-                    [void]$cronSb.AppendLine('### GitHub Actions - paste under the existing `on:` key in Step.6_apply-updates.yml')
+                    [void]$cronSb.AppendLine('### GitHub Actions - paste under the existing `on:` key in Step.7_apply-updates.yml')
                     [void]$cronSb.AppendLine()
                 }
                 # v0.8.1: emit ONLY the `schedule:` block (no surrounding `on:`/`workflow_dispatch:`
                 # lines) so the snippet can be pasted as-is under the existing `on:` key of
-                # Step.6_apply-updates.yml. Step.6 already declares `workflow_dispatch:` with a
+                # Step.7_apply-updates.yml. Step.7 already declares `workflow_dispatch:` with a
                 # rich `inputs:` block (update_ring, dry_run, ITSM, module_version) - emitting a
                 # second bare `workflow_dispatch:` here produced a duplicate top-level key and
                 # GH rejected the workflow ("'workflow_dispatch' is already defined"). The
@@ -639,7 +639,7 @@ resources
             }
             if ($emitAdo) {
                 if ($emitGh) {
-                    [void]$cronSb.AppendLine('### Azure DevOps - paste at the top level of Step.6_apply-updates.yml')
+                    [void]$cronSb.AppendLine('### Azure DevOps - paste at the top level of Step.7_apply-updates.yml')
                     [void]$cronSb.AppendLine()
                 }
                 [void]$cronSb.AppendLine('```yaml')
@@ -696,9 +696,9 @@ resources
                 }
             }
             $step6FileLabel = switch ($Platform) {
-                'GitHubActions' { '.github/workflows/Step.6_apply-updates.yml' }
-                'AzureDevOps'   { '.azuredevops/Step.6_apply-updates.yml' }
-                default         { 'Step.6_apply-updates.yml' }
+                'GitHubActions' { '.github/workflows/Step.7_apply-updates.yml' }
+                'AzureDevOps'   { '.azuredevops/Step.7_apply-updates.yml' }
+                default         { 'Step.7_apply-updates.yml' }
             }
 
             $fullSb = New-Object System.Text.StringBuilder
@@ -830,11 +830,11 @@ resources
                 [void]$fullSb.AppendLine("### How to fix - edit ``$step6FileLabel``")
                 [void]$fullSb.AppendLine()
                 if ($emitGh -and -not $emitAdo) {
-                    [void]$fullSb.AppendLine('Add (or merge with) the following `schedule:` block under the existing `on:` key. Place it inside the `# BEGIN-AZLOCAL-CUSTOMIZE:schedule-triggers` / `# END-AZLOCAL-CUSTOMIZE:schedule-triggers` markers so it survives `Update-AzLocalPipelineExample` refreshes. **Do NOT add a second `workflow_dispatch:` line** - Step.6 already declares one with the `update_ring` / `dry_run` / ITSM / `module_version` inputs that the manual `Run workflow` button needs:')
+                    [void]$fullSb.AppendLine('Add (or merge with) the following `schedule:` block under the existing `on:` key. Place it inside the `# BEGIN-AZLOCAL-CUSTOMIZE:schedule-triggers` / `# END-AZLOCAL-CUSTOMIZE:schedule-triggers` markers so it survives `Update-AzLocalPipelineExample` refreshes. **Do NOT add a second `workflow_dispatch:` line** - Step.7 already declares one with the `update_ring` / `dry_run` / ITSM / `module_version` inputs that the manual `Run workflow` button needs:')
                 } elseif ($emitAdo -and -not $emitGh) {
                     [void]$fullSb.AppendLine('Add (or merge with) a top-level `schedules:` block:')
                 } else {
-                    [void]$fullSb.AppendLine('Choose the snippet matching your CI platform and paste/merge into your Step.6 pipeline file. For GitHub Actions, paste the `schedule:` block under the existing `on:` key (do NOT add a second `workflow_dispatch:` - Step.6 already declares one). For Azure DevOps, paste the `schedules:` block at the top level.')
+                    [void]$fullSb.AppendLine('Choose the snippet matching your CI platform and paste/merge into your Step.6 pipeline file. For GitHub Actions, paste the `schedule:` block under the existing `on:` key (do NOT add a second `workflow_dispatch:` - Step.7 already declares one). For Azure DevOps, paste the `schedules:` block at the top level.')
                 }
                 [void]$fullSb.AppendLine()
                 # v0.8.2: paste-tip - the snippet below is at 2-space indent (sibling of

@@ -9,7 +9,7 @@ function Export-AzLocalUpdateRunMonitorReport {
 
     .DESCRIPTION
         Phase 1 (v0.8.5) of the thin-YAML refactor. Condenses the inline
-        `run: |` body of the v0.8.4 Step.7_monitor-updates.yml (GitHub
+        `run: |` body of the v0.8.4 Step.8_monitor-updates.yml (GitHub
         Actions + Azure DevOps) into a single cmdlet call so the
         per-platform yml shrinks to a few lines and the workload becomes
         unit-testable against a synthetic Get-AzLocalUpdateRuns result.

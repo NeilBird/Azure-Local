@@ -7,7 +7,7 @@ function Export-AzLocalClusterReadinessGateReport {
         per-cluster readiness markdown table to the run summary.
     .DESCRIPTION
         v0.8.5 Step.6 thin-YAML helper. Replaces the ~80-line inline `run:`
-        block that lived in both Step.6_apply-updates.yml pipelines.
+        block that lived in both Step.7_apply-updates.yml pipelines.
 
         Behaviour matches the prior inline block byte-for-byte:
           - When -UpdateRing is empty/whitespace (no schedule row matched

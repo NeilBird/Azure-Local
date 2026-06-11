@@ -5,6 +5,69 @@ All notable changes to the AzLocal.UpdateManagement module (renamed from AzStack
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.7] - 2026-06-11
+
+On-prem solution-update sideloading automation release. Adds an opt-in, off-by-default workflow for Azure Local clusters that cannot pull solution updates from Azure directly: a new self-hosted Step.6 pipeline (`sideload-updates.yml`) robocopies update media to each cluster's import share, verifies the SHA256 over WinRM, runs `Add-SolutionUpdate`, and flips the `UpdateSideloaded=True` cluster tag so the downstream apply (now Step.7) picks it up. The long-running copy executes in a detached Windows Scheduled Task and is driven as a re-entrant state machine on a frequent CRON, so no individual pipeline run is long-lived. **This release de-numbers all bundled pipeline filenames and renumbers four display steps (BREAKING for any consumer that pins on the old `Step.N_*.yml` filenames).** Module export count grows 55 -> 60.
+
+### New Public cmdlets (5)
+
+- **`Update-AzLocalSideloadCatalog`** - validates / refreshes the sideload catalog (Solution and OEM SBE `packageType` entries) used to resolve which update media to stage.
+- **`Resolve-AzLocalSideloadPlan`** - resolves the per-cluster sideload plan (target media, import share, current state) from inventory + catalog.
+- **`Invoke-AzLocalSideloadUpdate`** - the re-entrant state-machine driver (Planned -> Copying -> Copied -> Verified -> Imported -> SideloadFlagged); spawns / re-attaches the detached robocopy Scheduled Task, verifies SHA256 over WinRM, runs `Add-SolutionUpdate`, and sets `UpdateSideloaded=True`.
+- **`Export-AzLocalSideloadStatusReport`** - emits the per-cluster sideload status CSV + JUnit XML + step outputs for the Step.6 pipeline.
+- **`Add-AzLocalSideloadStepSummary`** - renders the Step.6 markdown step summary (per-state table + shared-state contract + exit conditions).
+
+### New Step.6 sideload pipeline
+
+- **`sideload-updates.yml`** (GitHub Actions + Azure DevOps), opt-in via the `SIDELOAD_UPDATES` repository variable. Targets a self-hosted runner (`runs-on: [self-hosted, azlocal-sideload]`) on GitHub / a self-hosted agent pool (`pool: { name, demands: azlocal-sideload }`) on Azure DevOps. Manual `workflow_dispatch` plus a `*/30` CRON poll so the state machine can advance between runs.
+- Catalog (Solution + OEM SBE), shared-UNC state for multi-runner coordination, a Key Vault-sourced AD credential for cluster WinRM, and robocopy throttling (`SIDELOAD_ROBOCOPY_SWITCHES`) are documented in `Automation-Pipeline-Examples/docs/sideload.md` and `sideload-robocopy.md`.
+
+### BREAKING - pipeline filenames de-numbered
+
+- The `Step.N_` filename prefix has been removed from every bundled pipeline (e.g. `Step.7_apply-updates.yml` -> `apply-updates.yml`). The in-pipeline `Step.N - ` **display** names are unchanged, so the operator-facing step ordering is preserved. Stable filenames mean future reorders become pure display-name edits.
+- **`Update-AzLocalPipelineExample` is now rename-aware.** It matches each destination pipeline by a stable logical id (embedded `# AZLOCAL-PIPELINE-ID:` marker on line 1, with legacy-filename aliases) rather than by filename, and AUTO-RENAMES any older `Step.N_*.yml` on disk to the new de-numbered name while preserving the consumer's `BEGIN/END-AZLOCAL-CUSTOMIZE` CRON edits. It emits a `RenamedFrom` result field and a GitHub/Azure DevOps required-check warning when a rename occurs.
+
+### BREAKING - display-step renumber
+
+To make room for sideload at Step.6, four display steps shift up by one: apply-updates 6 -> 7, monitor-updates 7 -> 8, fleet-update-status 8 -> 9, fleet-health-status 9 -> 10.
+
+### Sideload-aware existing steps
+
+- **Step.1 inventory** can emit the `UpdateAuthAccountId` column (`-IncludeSideloadColumns`, auto-enabled when `SIDELOAD_UPDATES` is set). Byte-identical output when sideload is off.
+- **Step.2 tag management** can set the `UpdateAuthAccountId` tag from CSV.
+- **Step.3 schedule advisor** can emit a recommended sideload CRON (the apply window minus `SIDELOAD_LEAD_DAYS`) when sideloading is enabled.
+
+### BREAKING - all operator config relocated to a repo-root `config/` folder
+
+- Every operator-authored configuration file now lives in a single **`config/` folder at the repo root**, with the **identical path on GitHub Actions and Azure DevOps**. This consolidates around the convention already established for the ring CSV (`config/ClusterUpdateRings.csv`) and eliminates the previous `.github/`-vs-repo-root divergence. The four files are: `config/ClusterUpdateRings.csv`, `config/apply-updates-schedule.yml`, `config/sideload-auth-map.csv`, and `config/sideload-catalog.yml`.
+- **The starter `apply-updates-schedule.yml` has moved** from its v0.7.92 location (`.github/apply-updates-schedule.yml` on GitHub / repo root on Azure DevOps) to `config/apply-updates-schedule.yml` on both platforms. The `apply-updates.yml` (Step.7) and `apply-updates-schedule-audit.yml` (Step.3) defaults for `APPLY_UPDATES_SCHEDULE_PATH` / `schedule_path` / `schedulePath` now point at `config/apply-updates-schedule.yml`.
+
+### Scaffolding - starter sideload config drop
+
+- **`Copy-AzLocalPipelineExample`** now drops two header-only starter config files alongside the starter `apply-updates-schedule.yml` in the repo-root **`config/`** folder when `-Platform GitHub` or `-Platform AzureDevOps` is used: `sideload-auth-map.csv` (CSV header row only) and `sideload-catalog.yml` (`schemaVersion: 1` + empty `packages:`). They land at `config/sideload-auth-map.csv` and `config/sideload-catalog.yml` - the same path on both platforms. Both are skeleton-only (no demo credential rows or media entries), so they parse to an empty auth-map / empty catalog and remain inert even if `SIDELOAD_UPDATES` is flipped on before they are populated. An existing file is **never** overwritten. Suppress with the new `-SkipStarterSideloadConfig` switch. The `sideload-updates.yml` `SIDELOAD_AUTH_MAP_PATH` / `SIDELOAD_CATALOG_PATH` defaults (both platforms) now point at `./config/` to match where the starters land.
+- **`Update-AzLocalPipelineExample` does not touch `config/`.** It only refreshes the bundled pipeline YAMLs (matched by logical `# AZLOCAL-PIPELINE-ID:` marker), so all operator-owned config in `config/` is preserved across module upgrades.
+
+### Schema migration - sideload catalog framework
+
+- **New `sideload-catalog.yml` schema-migration framework**, symmetric with the existing `apply-updates-schedule.yml` one. Adds `$script:SideloadCatalogSchemaCurrentVersion` (currently `1`), a private text-surgery migration engine (`Private/Convert-AzLocalSideloadCatalogSchemaVersion.ps1`) with an EMPTY per-hop recipe table at v1, and a `-SchemaMigrate` parameter set on `Update-AzLocalSideloadCatalog` that migrates an existing catalog in place (backing the original up as `<name>.v<old>.old.yml`, preserving operator comments + OEM `SBE` entries verbatim, honouring `-WhatIf`/`-Confirm`, returning a `{ Action, FromVersion, ToVersion, BackupPath, Hops[] }` result). `Get-AzLocalSideloadCatalog` now reads the top-level `schemaVersion` and REFUSES to parse a catalog written by a newer module (missing `schemaVersion` is tolerated as v1 for back-compat). No behaviour change at v1 - the framework is wired up so the first non-additive catalog format change is a small, well-tested recipe addition.
+- **Doc fix**: corrected stale references in `Convert-AzLocalScheduleSchemaVersion.ps1` and the `.psm1` that named `Update-AzLocalPipelineExample` as the schedule schema migrator; the actual migrator is `Update-AzLocalApplyUpdatesScheduleConfig`.
+
+
+### Testing - sideload smoke coverage + wall-clock timing ledger
+
+- **New Step.6 sideload smoke coverage.** Added `Tools/smoke-test-sideload-plan.ps1` (a dedicated, sequence-faithful harness) plus a `Resolve-AzLocalSideloadPlan` section in the unified `Tools/validate-arg-queries.ps1`. A single `Resolve-AzLocalSideloadPlan` call exercises the whole Step.6 read path - the schedule parser, the private auth-map + catalog parsers, and the live cluster ARG query - so any ARG-query regression, parser drift, or plan-row schema change is caught locally before the `sideload-updates.yml` pipeline runs. The auth-map and catalog are operator-authored config (no bundled live example), so the harness synthesises minimal valid temp files and points the planner at the bundled `apply-updates-schedule.example.yml`. On a fleet with no `UpdateAuthAccountId`-tagged clusters the plan is legitimately empty (recorded as `PASS-EMPTY`) - still validating that the ARG query parsed/executed and all three config parsers ran without throwing. `Tools/SMOKE-COVERAGE.md` gains the sideload row and a "no fleet tags required" note.
+- **Wall-clock timing is now recorded to a git-tracked ledger.** A new shared helper `Tests/Add-PesterRunTiming.ps1` appends one row per full-suite run to `Tests/test-run-timings.csv` (timestamp, module version, total/passed/failed/skipped, wall-clock seconds, Pester execution seconds, discovery seconds, runner label, PS version). `Tests/Invoke-Tests.ps1` wraps the run in a stopwatch and calls the helper at the end. Tracking suite duration over time makes wall-clock regressions visible and informs whether the eventual test-file split for parallelism is worth it.
+
+### Fixed
+
+- **Step.6 Apply Updates logged "Failed to export results: The property 'CurrentState' cannot be found on this object" after a successful update start.** The JUnit XML exporter (`Export-ResultsToJUnitXml`) used bare property access (`if ($result.CurrentState)` / `if ($result.Progress)` / `if ($result.UpdateName)`) in both the failure and success branches. The `UpdateStarted` success-row shape emitted by `Start-AzLocalClusterUpdate` has no `CurrentState` or `Progress` property, so under `Set-StrictMode -Version Latest` the success branch threw when exporting to `.xml` - the update itself started fine, only the results export failed. All three accesses in both branches now guard with `$result.PSObject.Properties['...']` (matching the existing `StartTime`/`EndTime` pattern). Adds a regression test that exports a `CurrentState`-less `UpdateStarted` row and asserts no throw.
+- **In-flight monitor "Current Step" column always showed the top-level wrapper step (e.g. "Start update").** `Format-AzLocalUpdateRun` (and the duplicate logic in `Get-AzLocalFleetStatusData`) selected `CurrentStep` from the **top-level** `properties.progress.steps` array only. Azure Local nests a coarse wrapper step that stays `InProgress` for the entire run, so the Step.8 monitor (`Export-AzLocalUpdateRunMonitorReport`) and fleet-status report always rendered the wrapper name instead of the real current activity. Both paths now reuse `Get-DeepestActiveStep` to walk to the deepest `InProgress`/`Error`/`Failed` leaf (preserving the `(FAILED)` suffix), making `CurrentStep` consistent with `CurrentStepDetail` / `Get-CurrentStepPath` and the standard update-progress output. Adds two `Format-AzLocalUpdateRun` regression tests.
+
+### Versioning / tests
+
+- `ModuleVersion` 0.8.6 -> 0.8.7 (`.psd1` + `.psm1`). Export count assertion 55 -> 60.
+- All bundled pipeline templates bump `GENERATED_AGAINST_MODULE_VERSION` from `'0.8.6'` to `'0.8.7'`.
+
 ## [0.8.6] - 2026-06-10
 
 Step.3 cycle-calendar enrichment release. Adds two opt-in columns to the per-day `## Cycle calendar` markdown table produced by `Get-AzLocalApplyUpdatesScheduleCycleCalendar` and auto-wires them from `Export-AzLocalApplyUpdatesScheduleAudit` so operators can see (a) which Step.6 cron firing times will fire on each calendar day and (b) what fraction of clusters in the ring(s) eligible on that day have an `UpdateStartWindow` tag that actually covers at least one of those firings. **Also fixes six production regressions introduced by the v0.8.5 thin-YAML port (Step.0, Step.3, Step.4 x2, Step.6, Step.9) and adds Pester guards so the same anti-patterns cannot ship again.** No public API removed; no existing parameter changed; no behavioural change on callers that do NOT supply the new dictionaries. Same module export count as v0.8.5 (55).

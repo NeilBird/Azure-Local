@@ -19,6 +19,7 @@ exercised in a real GHA / ADO run.
 | `Step.4_fleet-connectivity-status.yml` | `Get-AzLocalFleetConnectivityStatus` | [validate-arg-queries.ps1](validate-arg-queries.ps1) | [smoke-test-connectivity-status.ps1](smoke-test-connectivity-status.ps1) |
 | `Step.5_assess-update-readiness.yml` | `Get-AzLocalClusterInventory`, `Get-AzLocalClusterUpdateReadiness`, `Test-AzLocalClusterHealth -BlockingOnly` | [validate-arg-queries.ps1](validate-arg-queries.ps1) | [smoke-test-assess-readiness.ps1](smoke-test-assess-readiness.ps1) |
 | `Step.6_apply-updates.yml` | `Get-AzLocalClusterUpdateReadiness` (read), `Start-AzStackHciUpdate` (write) | [validate-arg-queries.ps1](validate-arg-queries.ps1) covers the read | n/a (write path; readiness already covered) |
+| `sideload-updates.yml` (v0.8.7 Step.6) | `Resolve-AzLocalSideloadPlan` (read; wraps the schedule, auth-map + catalog parsers and the cluster ARG query), `Invoke-AzLocalSideloadUpdate` (write) | [validate-arg-queries.ps1](validate-arg-queries.ps1) covers the planner read | [smoke-test-sideload-plan.ps1](smoke-test-sideload-plan.ps1) |
 | `Step.7_monitor-updates.yml` (v0.7.90) | `Get-AzLocalClusterInventory`, `Get-AzLocalUpdateRuns -Latest` | [validate-arg-queries.ps1](validate-arg-queries.ps1) | [smoke-test-monitor-updates.ps1](smoke-test-monitor-updates.ps1) |
 | `Step.8_fleet-update-status.yml` | `Get-AzLocalClusterInventory`, `Get-AzLocalClusterUpdateReadiness`, `Get-AzLocalLatestSolutionVersion`, `Get-AzLocalUpdateRunFailures`, `Get-AzLocalUpdateSummary`, `Get-AzLocalAvailableUpdates`, `Get-AzLocalUpdateRuns -Latest` | [validate-arg-queries.ps1](validate-arg-queries.ps1) | [smoke-test-fleet-update-status.ps1](smoke-test-fleet-update-status.ps1) |
 | `Step.9_fleet-health-status.yml` | `Get-AzLocalFleetHealthOverview`, `Get-AzLocalFleetHealthFailures -View Detail` | [validate-arg-queries.ps1](validate-arg-queries.ps1) | [smoke-test-fleet-health-status.ps1](smoke-test-fleet-health-status.ps1) |
@@ -56,6 +57,23 @@ Exit code is `1` if any section is `FAIL-SCHEMA` or `ERROR`, `0` otherwise.
 - Signed-in identity has at least `Reader` on the target subscription(s)
 - Pass `-SubscriptionId` to override the default subscription (or use
   `az account set --subscription <id>` beforehand)
+
+### Sideloading (Step.6) - no fleet tags required
+
+`smoke-test-sideload-plan.ps1` and the `Resolve-AzLocalSideloadPlan` section in
+`validate-arg-queries.ps1` synthesise their own minimal auth-map + catalog temp
+files (the auth-map and catalog are operator-authored config, not ARG sources,
+so there is no bundled live example). They point the planner at the bundled
+`apply-updates-schedule.example.yml`.
+
+If the fleet has **no clusters tagged with `UpdateAuthAccountId`** (the normal
+state before an operator opts a cluster in to sideloading), the planner returns
+**zero rows**, which is recorded as **`PASS-EMPTY`**. That is the expected,
+healthy result and still validates the full Step.6 read path: the cluster ARG
+query parsed + executed, and the schedule / auth-map / catalog parsers ran
+without throwing. A `PASS` (rows + required columns present) only appears once
+real `UpdateAuthAccountId` tags exist in the fleet.
+
 
 ## Adding a new pipeline
 

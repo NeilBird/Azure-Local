@@ -34,8 +34,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $script:ModuleInfo | Should -Not -BeNullOrEmpty
         }
 
-        It 'Should have version 0.8.6' {
-            $script:ModuleInfo.Version | Should -Be '0.8.6'
+        It 'Should have version 0.8.7' {
+            $script:ModuleInfo.Version | Should -Be '0.8.7'
         }
 
         It 'Module version constants are in sync between .psm1 and .psd1' {
@@ -143,7 +143,7 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $match.Groups['v'].Value | Should -Be $manifestVersion -Because 'the first "## Version X.Y.Z" heading in psd1 ReleaseNotes must match the manifest ModuleVersion - did you forget to prepend the new release section?'
         }
 
-        It 'All bundled <Platform> Step.[1-7]_*.yml pipeline samples pin GENERATED_AGAINST_MODULE_VERSION to manifest ModuleVersion' -ForEach @(
+        It 'All bundled <Platform> *.yml pipeline samples pin GENERATED_AGAINST_MODULE_VERSION to manifest ModuleVersion' -ForEach @(
             @{ Platform = 'github-actions' }
             @{ Platform = 'azure-devops' }
         ) {
@@ -153,17 +153,16 @@ Describe 'Module: AzLocal.UpdateManagement' {
             # GENERATED_AGAINST_MODULE_VERSION constant. Operators who run
             # Update-AzLocalPipelineExample after the upgrade get YAMLs
             # that disagree with the module they just installed. Every
-            # Step.[1-7]_*.yml sample (both platforms) must pin to the
-            # current manifest ModuleVersion. Step.0_authentication-test.yml
-            # is exempt - it does not consume the module so the pin is
-            # intentionally absent.
+            # bundled *.yml sample (both platforms) must pin to the current
+            # manifest ModuleVersion. v0.8.7 de-numbered the filenames and
+            # authentication-test.yml now also consumes the module, so every
+            # sample (no exemptions) carries the pin.
             $manifestPath = Join-Path -Path $PSScriptRoot -ChildPath '..\AzLocal.UpdateManagement.psd1'
             $manifestVersion = (Import-PowerShellDataFile -Path $manifestPath).ModuleVersion
             $samplesDir = Join-Path -Path $PSScriptRoot -ChildPath "..\Automation-Pipeline-Examples\$Platform"
             Test-Path $samplesDir | Should -BeTrue -Because "the $Platform sample folder must exist at $samplesDir"
-            $yamls = @(Get-ChildItem -Path $samplesDir -Filter 'Step.*.yml' -File |
-                       Where-Object { $_.Name -notlike 'Step.0_*' })
-            $yamls.Count | Should -BeGreaterThan 0 -Because "$samplesDir must ship at least one Step.[1-7]_*.yml sample"
+            $yamls = @(Get-ChildItem -Path $samplesDir -Filter '*.yml' -File)
+            $yamls.Count | Should -BeGreaterThan 0 -Because "$samplesDir must ship at least one *.yml sample"
             # GitHub Actions form (single line):
             #   GENERATED_AGAINST_MODULE_VERSION: '0.7.71'
             # Azure DevOps form (two lines under a `variables:` list entry):
@@ -180,12 +179,12 @@ Describe 'Module: AzLocal.UpdateManagement' {
             }
         }
 
-        It 'Step.4 pipeline templates call Export-AzLocalFleetConnectivityStatusReport (v0.8.5 thin-YAML)' -ForEach @(
-            @{ Platform = 'github-actions'; Path = '..\Automation-Pipeline-Examples\github-actions\Step.4_fleet-connectivity-status.yml' }
-            @{ Platform = 'azure-devops';   Path = '..\Automation-Pipeline-Examples\azure-devops\Step.4_fleet-connectivity-status.yml' }
+        It 'fleet-connectivity-status pipeline templates call Export-AzLocalFleetConnectivityStatusReport (v0.8.5 thin-YAML)' -ForEach @(
+            @{ Platform = 'github-actions'; Path = '..\Automation-Pipeline-Examples\github-actions\fleet-connectivity-status.yml' }
+            @{ Platform = 'azure-devops';   Path = '..\Automation-Pipeline-Examples\azure-devops\fleet-connectivity-status.yml' }
         ) {
             $yamlPath = Join-Path -Path $PSScriptRoot -ChildPath $Path
-            Test-Path $yamlPath | Should -BeTrue -Because "Step.4 template for $Platform must exist at $yamlPath"
+            Test-Path $yamlPath | Should -BeTrue -Because "fleet-connectivity-status template for $Platform must exist at $yamlPath"
             $content = Get-Content -Path $yamlPath -Raw
 
             # v0.8.5 thin-YAML guard: the ~255-line inline collection block
@@ -195,12 +194,12 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $content | Should -Not -Match '\$data\.ClusterRows' -Because "Step.4 $Platform must not still wire raw cmdlet rowsets into the yml - the cmdlet emits step outputs instead (v0.8.5)"
         }
 
-        It 'Step.3 pipeline templates call Export-AzLocalApplyUpdatesScheduleAudit (v0.8.5 thin-YAML)' -ForEach @(
-            @{ Platform = 'github-actions'; Path = '..\Automation-Pipeline-Examples\github-actions\Step.3_apply-updates-schedule-audit.yml' }
-            @{ Platform = 'azure-devops';   Path = '..\Automation-Pipeline-Examples\azure-devops\Step.3_apply-updates-schedule-audit.yml' }
+        It 'apply-updates-schedule-audit pipeline templates call Export-AzLocalApplyUpdatesScheduleAudit (v0.8.5 thin-YAML)' -ForEach @(
+            @{ Platform = 'github-actions'; Path = '..\Automation-Pipeline-Examples\github-actions\apply-updates-schedule-audit.yml' }
+            @{ Platform = 'azure-devops';   Path = '..\Automation-Pipeline-Examples\azure-devops\apply-updates-schedule-audit.yml' }
         ) {
             $yamlPath = Join-Path -Path $PSScriptRoot -ChildPath $Path
-            Test-Path $yamlPath | Should -BeTrue -Because "Step.3 template for $Platform must exist at $yamlPath"
+            Test-Path $yamlPath | Should -BeTrue -Because "apply-updates-schedule-audit template for $Platform must exist at $yamlPath"
             $content = Get-Content -Path $yamlPath -Raw
 
             # v0.8.5 thin-YAML guard: the ~220-line inline 'Run Schedule
@@ -212,8 +211,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $content | Should -Not -Match 'function\s+Convert-ScheduleRow' -Because "Step.3 $Platform must not contain inline schedule-row helpers (removed in v0.8.5)"
         }
 
-        It 'Should export exactly 55 functions' {
-            $script:ModuleInfo.ExportedFunctions.Count | Should -Be 55
+        It 'Should export exactly 60 functions' {
+            $script:ModuleInfo.ExportedFunctions.Count | Should -Be 60
         }
 
         It 'Should export the expected functions' {
@@ -300,7 +299,13 @@ Describe 'Module: AzLocal.UpdateManagement' {
                 'Invoke-AzLocalReadinessGatedClusterUpdate',
                 'Add-AzLocalApplyUpdatesStepSummary',
                 'Add-AzLocalNoReadyClustersStepSummary',
-                'Invoke-AzLocalItsmTicketingFromArtifact'
+                'Invoke-AzLocalItsmTicketingFromArtifact',
+                # On-Prem Sideloading Automation (v0.8.7) - catalog refresh + plan resolution + readiness-gated sideload apply + status report + step summary
+                'Update-AzLocalSideloadCatalog',
+                'Resolve-AzLocalSideloadPlan',
+                'Invoke-AzLocalSideloadUpdate',
+                'Export-AzLocalSideloadStatusReport',
+                'Add-AzLocalSideloadStepSummary'
             )
             
             foreach ($func in $expectedFunctions) {
@@ -444,23 +449,23 @@ Describe 'Module: AzLocal.UpdateManagement' {
     }
 
     Context 'Schedule-audit pipeline_path default is consumer-friendly (v0.7.66 regression)' {
-        # v0.7.66 regression guard: Step.3_apply-updates-schedule-audit.yml (GH + ADO)
+        # v0.7.66 regression guard: apply-updates-schedule-audit.yml (GH + ADO)
         # shipped with a default pipeline_path of
         # 'AzLocal.UpdateManagement/Automation-Pipeline-Examples' - a path that
         # only exists in this module's source repo. In a consumer repo (where
-        # Step.6_apply-updates.yml lives under .github/workflows or .azure-pipelines),
+        # apply-updates.yml lives under .github/workflows or .azure-pipelines),
         # the default-trigger run failed with
         #   PipelineYamlPath '...' does not exist on the runner
         # before the schedule advisor could emit JUnit XML. The defaults are
         # now '.github/workflows' on GH and '.azure-pipelines' on ADO.
         # This test guards both files from ever regressing to the in-source path.
-        It 'Neither Step.3_apply-updates-schedule-audit.yml defaults to the in-source examples folder' {
+        It 'Neither apply-updates-schedule-audit.yml defaults to the in-source examples folder' {
             $examplesRoot = Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples'
             $examplesRoot = (Resolve-Path -Path $examplesRoot).Path
 
             $auditYamls = @(
-                Join-Path $examplesRoot 'github-actions\Step.3_apply-updates-schedule-audit.yml'
-                Join-Path $examplesRoot 'azure-devops\Step.3_apply-updates-schedule-audit.yml'
+                Join-Path $examplesRoot 'github-actions\apply-updates-schedule-audit.yml'
+                Join-Path $examplesRoot 'azure-devops\apply-updates-schedule-audit.yml'
             )
 
             $offenders = New-Object System.Collections.Generic.List[string]
@@ -539,8 +544,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $ghRoot = Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples\github-actions'
             $ghRoot = (Resolve-Path -Path $ghRoot).Path
 
-            $ymlFiles = Get-ChildItem -Path $ghRoot -Filter 'Step.*.yml' -File
-            $ymlFiles.Count | Should -BeGreaterOrEqual 10 -Because 'all 10 Step.{0..9}.yml templates are expected under Automation-Pipeline-Examples/github-actions/'
+            $ymlFiles = Get-ChildItem -Path $ghRoot -Filter '*.yml' -File
+            $ymlFiles.Count | Should -BeGreaterOrEqual 11 -Because 'all 11 de-numbered pipeline templates are expected under Automation-Pipeline-Examples/github-actions/'
 
             $offenders = New-Object System.Collections.Generic.List[string]
             foreach ($yml in $ymlFiles) {
@@ -569,7 +574,7 @@ Describe 'Module: AzLocal.UpdateManagement' {
         It 'Every GitHub Actions install step contains the version banner string' {
             $ghRoot = Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples\github-actions'
             $ghRoot = (Resolve-Path -Path $ghRoot).Path
-            $ymlFiles = Get-ChildItem -Path $ghRoot -Filter 'Step.*.yml' -File
+            $ymlFiles = Get-ChildItem -Path $ghRoot -Filter '*.yml' -File
 
             $bannerLiteral = [regex]::Escape('Pipeline YAML v$generated | Module v$installed installed')
             $cmdletCall    = [regex]::Escape('Add-AzLocalPipelineVersionBanner')
@@ -588,7 +593,7 @@ Describe 'Module: AzLocal.UpdateManagement' {
         It 'Every Azure DevOps yml install site contains the version banner string (Step.6 second install deliberately skips upload to avoid duplicate banner)' {
             $adoRoot = Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples\azure-devops'
             $adoRoot = (Resolve-Path -Path $adoRoot).Path
-            $ymlFiles = Get-ChildItem -Path $adoRoot -Filter 'Step.*.yml' -File
+            $ymlFiles = Get-ChildItem -Path $adoRoot -Filter '*.yml' -File
 
             $bannerPattern = [regex]::Escape('Pipeline YAML v$generated | Module v$installed installed')
             $cmdletPattern = [regex]::Escape('Add-AzLocalPipelineVersionBanner')
@@ -601,16 +606,17 @@ Describe 'Module: AzLocal.UpdateManagement' {
             # with one Add-AzLocalPipelineVersionBanner call - count either
             # form as a banner emit.
             $perFileExpect = @{
-                'Step.0_authentication-test.yml'         = 1
-                'Step.1_inventory-clusters.yml'          = 1
-                'Step.2_manage-updatering-tags.yml'      = 1
-                'Step.3_apply-updates-schedule-audit.yml' = 1
-                'Step.4_fleet-connectivity-status.yml'   = 1
-                'Step.5_assess-update-readiness.yml'     = 1
-                'Step.6_apply-updates.yml'               = 1
-                'Step.7_monitor-updates.yml'             = 1
-                'Step.8_fleet-update-status.yml'         = 1
-                'Step.9_fleet-health-status.yml'         = 1
+                'authentication-test.yml'          = 1
+                'inventory-clusters.yml'           = 1
+                'manage-updatering-tags.yml'       = 1
+                'apply-updates-schedule-audit.yml' = 1
+                'fleet-connectivity-status.yml'    = 1
+                'assess-update-readiness.yml'      = 1
+                'apply-updates.yml'                = 1
+                'monitor-updates.yml'              = 1
+                'fleet-update-status.yml'          = 1
+                'fleet-health-status.yml'          = 1
+                'sideload-updates.yml'             = 1
             }
             $offenders = New-Object System.Collections.Generic.List[string]
             foreach ($yml in $ymlFiles) {
@@ -636,7 +642,7 @@ Describe 'Module: AzLocal.UpdateManagement' {
 
             $detail = if ($offenders.Count -gt 0) { $offenders -join [Environment]::NewLine } else { '(no mismatches)' }
             $offenders.Count | Should -Be 0 -Because "every ADO yml uploads exactly 1 version banner to the build Summary - via ##vso[task.uploadsummary] for the v0.8.4 inline form, or via Add-AzLocalPipelineVersionBanner for the v0.8.5 thin-YAML form. Step.6 has 2 install steps but the second (ApplyUpdates stage) deliberately skips the upload so the banner is not duplicated. Findings:$([Environment]::NewLine)$detail"
-            $totalSites | Should -Be 10 -Because "total ADO Summary banner emits should be 10 (1 per yml; Step.6's second install step skips upload)"
+            $totalSites | Should -Be 11 -Because "total ADO Summary banner emits should be 11 (1 per yml; the apply-updates pipeline's second install step skips upload)"
         }
     }
 
@@ -652,7 +658,7 @@ Describe 'Module: AzLocal.UpdateManagement' {
         # the cmdlets that produce that output (the per-cluster table
         # content is asserted in the cmdlet-level Pester suite).
         It 'GitHub Actions Step.6 yml invokes Invoke-AzLocalReadinessGatedClusterUpdate (writes apply-results.json) and Add-AzLocalApplyUpdatesStepSummary (renders both per-cluster tables)' {
-            $yml = Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples\github-actions\Step.6_apply-updates.yml'
+            $yml = Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples\github-actions\apply-updates.yml'
             $yml = (Resolve-Path -Path $yml).Path
             $content = Get-Content -LiteralPath $yml -Raw
             $content | Should -Match 'Invoke-AzLocalReadinessGatedClusterUpdate' -Because 'Step.6 GH apply-updates step must call the readiness-gated apply cmdlet (which writes apply-results.json)'
@@ -662,7 +668,7 @@ Describe 'Module: AzLocal.UpdateManagement' {
         }
 
         It 'Azure DevOps Step.6 yml invokes Invoke-AzLocalReadinessGatedClusterUpdate (writes apply-results.json) and Add-AzLocalApplyUpdatesStepSummary (renders both per-cluster tables)' {
-            $yml = Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples\azure-devops\Step.6_apply-updates.yml'
+            $yml = Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples\azure-devops\apply-updates.yml'
             $yml = (Resolve-Path -Path $yml).Path
             $content = Get-Content -LiteralPath $yml -Raw
             $content | Should -Match 'Invoke-AzLocalReadinessGatedClusterUpdate' -Because 'ADO Step.6 apply-updates task must call the readiness-gated apply cmdlet'
@@ -672,7 +678,7 @@ Describe 'Module: AzLocal.UpdateManagement' {
         }
 
         It 'GitHub Actions Step.6 yml invokes the schedule-resolver, readiness-gate, no-ready, and ITSM cmdlets in their respective steps' {
-            $yml = Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples\github-actions\Step.6_apply-updates.yml'
+            $yml = Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples\github-actions\apply-updates.yml'
             $yml = (Resolve-Path -Path $yml).Path
             $content = Get-Content -LiteralPath $yml -Raw
             $content | Should -Match 'Resolve-AzLocalPipelineUpdateRing'        -Because 'Step.6 GH resolve-ring step must call Resolve-AzLocalPipelineUpdateRing (replaces the ~80-line inline resolver script)'
@@ -682,7 +688,7 @@ Describe 'Module: AzLocal.UpdateManagement' {
         }
 
         It 'Azure DevOps Step.6 yml invokes the schedule-resolver, readiness-gate, no-ready, and ITSM cmdlets in their respective tasks' {
-            $yml = Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples\azure-devops\Step.6_apply-updates.yml'
+            $yml = Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples\azure-devops\apply-updates.yml'
             $yml = (Resolve-Path -Path $yml).Path
             $content = Get-Content -LiteralPath $yml -Raw
             $content | Should -Match 'Resolve-AzLocalPipelineUpdateRing'
@@ -702,8 +708,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
         # path must still work verbatim when the new input is false (back-compat),
         # and the resolver must throw a helpful error when BOTH paths are empty.
         BeforeAll {
-            $script:S6Gh  = (Resolve-Path (Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples\github-actions\Step.6_apply-updates.yml')).Path
-            $script:S6Ado = (Resolve-Path (Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples\azure-devops\Step.6_apply-updates.yml')).Path
+            $script:S6Gh  = (Resolve-Path (Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples\github-actions\apply-updates.yml')).Path
+            $script:S6Ado = (Resolve-Path (Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples\azure-devops\apply-updates.yml')).Path
             $script:S6GhContent  = Get-Content -LiteralPath $script:S6Gh  -Raw
             $script:S6AdoContent = Get-Content -LiteralPath $script:S6Ado -Raw
         }
@@ -1625,6 +1631,80 @@ Describe 'Helper Function: Format-AzLocalUpdateRun (Internal)' {
             }
             $f = Format-AzLocalUpdateRun -run $run -clusterName 'c1'
             $f.ErrorMessage | Should -BeNullOrEmpty
+        }
+    }
+
+    It 'CurrentStep reflects the deepest InProgress step, not the top-level wrapper (Step.7 monitor fix)' {
+        InModuleScope AzLocal.UpdateManagement {
+            # Real Azure Local progress trees nest a coarse top-level wrapper step
+            # (e.g. "Start update") that stays InProgress for the whole run. CurrentStep
+            # must dig to the deepest active leaf so the in-flight monitor shows the real
+            # current activity instead of always showing the wrapper name.
+            $run = [PSCustomObject]@{
+                id         = '/subscriptions/x/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/c1/updates/Solution12.2604/updateRuns/rDeep'
+                name       = 'rDeep'
+                properties = [PSCustomObject]@{
+                    state           = 'InProgress'
+                    timeStarted     = (Get-Date).AddMinutes(-30).ToUniversalTime().ToString('o')
+                    lastUpdatedTime = $null
+                    duration        = $null
+                    progress        = [PSCustomObject]@{
+                        status = 'InProgress'
+                        steps  = @(
+                            [PSCustomObject]@{
+                                name   = 'Start update'
+                                status = 'InProgress'
+                                steps  = @(
+                                    [PSCustomObject]@{
+                                        name   = 'Update Cluster'
+                                        status = 'InProgress'
+                                        steps  = @(
+                                            [PSCustomObject]@{ name = 'Update Node 2'; status = 'InProgress' }
+                                        )
+                                    }
+                                )
+                            }
+                        )
+                    }
+                    location        = 'eastus'
+                }
+            }
+            $f = Format-AzLocalUpdateRun -run $run -clusterName 'c1'
+            $f.CurrentStep | Should -Be 'Update Node 2'
+        }
+    }
+
+    It 'CurrentStep reflects the deepest Failed step with (FAILED) suffix, not the top-level wrapper (Step.7 monitor fix)' {
+        InModuleScope AzLocal.UpdateManagement {
+            $run = [PSCustomObject]@{
+                id         = '/subscriptions/x/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/c1/updates/Solution12.2604/updateRuns/rDeepFail'
+                name       = 'rDeepFail'
+                properties = [PSCustomObject]@{
+                    state           = 'Failed'
+                    timeStarted     = '2026-04-24T16:10:24Z'
+                    lastUpdatedTime = '2026-04-24T17:10:24Z'
+                    duration        = 'PT1H'
+                    progress        = [PSCustomObject]@{
+                        status = 'Error'
+                        steps  = @(
+                            [PSCustomObject]@{
+                                name   = 'Start update'
+                                status = 'Error'
+                                steps  = @(
+                                    [PSCustomObject]@{
+                                        name         = 'Run Pre Update Validation'
+                                        status       = 'Error'
+                                        errorMessage = 'validation failed'
+                                    }
+                                )
+                            }
+                        )
+                    }
+                    location        = 'eastus'
+                }
+            }
+            $f = Format-AzLocalUpdateRun -run $run -clusterName 'c1'
+            $f.CurrentStep | Should -Be 'Run Pre Update Validation (FAILED)'
         }
     }
 }
@@ -2781,6 +2861,45 @@ Describe 'Integration: Start-AzLocalClusterUpdate Schedule Status' {
                 $failure = $testCase.SelectSingleNode('failure')
                 $failure | Should -Not -BeNullOrEmpty
                 $failure.type | Should -Be 'SideloadedBlocked'
+            }
+            finally {
+                if (Test-Path $outputPath) { Remove-Item $outputPath -Force }
+            }
+        }
+
+        It 'Export-ResultsToJUnitXml should not throw on an UpdateStarted row lacking CurrentState/Progress (v0.8.7)' {
+            # Regression: the UpdateStarted success shape emitted by
+            # Start-AzLocalClusterUpdate has no CurrentState or Progress
+            # property. Under Set-StrictMode -Version Latest the success
+            # (default) branch's bare 'if ($result.CurrentState)' /
+            # 'if ($result.Progress)' threw "The property 'CurrentState'
+            # cannot be found on this object", surfacing as
+            # "Failed to export results: ..." in the Apply Updates step.
+            $testResult = [PSCustomObject]@{
+                ClusterName = 'London'
+                Status      = 'UpdateStarted'
+                Message     = 'Update initiated successfully'
+                UpdateName  = 'Solution12.2605.1003.210'
+                StartTime   = Get-Date
+                EndTime     = Get-Date
+                Duration    = '00:00:14'
+            }
+            $outputPath = Join-Path $env:TEMP "pester-junit-updatestarted-$([Guid]::NewGuid()).xml"
+            try {
+                {
+                    & (Get-Module 'AzLocal.UpdateManagement') {
+                        param($results, $path)
+                        Export-ResultsToJUnitXml -Results $results -OutputPath $path -TestSuiteName 'Test' -OperationType 'StartUpdate'
+                    } @($testResult) $outputPath
+                } | Should -Not -Throw
+
+                $outputPath | Should -Exist
+                $xml = [xml](Get-Content $outputPath -Raw)
+                $testCase = $xml.SelectSingleNode('//testcase')
+                $testCase | Should -Not -BeNullOrEmpty
+                # Success row renders as <system-out>, not <failure>/<skipped>/<error>.
+                $testCase.SelectSingleNode('system-out') | Should -Not -BeNullOrEmpty
+                $testCase.SelectSingleNode('failure')     | Should -BeNullOrEmpty
             }
             finally {
                 if (Test-Path $outputPath) { Remove-Item $outputPath -Force }
@@ -6268,7 +6387,7 @@ Describe 'Function: Copy-AzLocalPipelineExample' {
         # YAMLs landed directly in $dest
         $yamls = @(Get-ChildItem -LiteralPath $dest -Filter '*.yml' -File)
         $yamls.Count | Should -BeGreaterThan 0
-        $yamls.Name | Should -Contain 'Step.0_authentication-test.yml'
+        $yamls.Name | Should -Contain 'authentication-test.yml'
 
         # No platform-named subfolder, no Automation-Pipeline-Examples wrapper
         Test-Path (Join-Path $dest 'github-actions') | Should -BeFalse
@@ -6290,7 +6409,7 @@ Describe 'Function: Copy-AzLocalPipelineExample' {
 
         $yamls = @(Get-ChildItem -LiteralPath $dest -Filter '*.yml' -File)
         $yamls.Count | Should -BeGreaterThan 0
-        $yamls.Name | Should -Contain 'Step.0_authentication-test.yml'
+        $yamls.Name | Should -Contain 'authentication-test.yml'
 
         Test-Path (Join-Path $dest 'azure-devops')   | Should -BeFalse
         Test-Path (Join-Path $dest 'github-actions') | Should -BeFalse
@@ -6338,7 +6457,7 @@ Describe 'Function: Copy-AzLocalPipelineExample' {
         Copy-AzLocalPipelineExample -Destination $dest -Platform GitHub 6>$null | Out-Null
 
         # Mutate one destination file so we can prove it gets overwritten
-        $target = Join-Path $dest 'Step.0_authentication-test.yml'
+        $target = Join-Path $dest 'authentication-test.yml'
         $sentinel = '# SENTINEL - if this comment survives, -Update did not overwrite'
         Set-Content -LiteralPath $target -Value $sentinel -Encoding ASCII
         (Get-Content -LiteralPath $target -Raw) | Should -Match 'SENTINEL'
@@ -6380,7 +6499,7 @@ Describe 'Function: Copy-AzLocalPipelineExample' {
 
         # Seed and then mutate
         Copy-AzLocalPipelineExample -Destination $dest -Platform GitHub 6>$null | Out-Null
-        $target = Join-Path $dest 'Step.0_authentication-test.yml'
+        $target = Join-Path $dest 'authentication-test.yml'
         $sentinel = '# WHATIF SENTINEL - -WhatIf must preserve this'
         Set-Content -LiteralPath $target -Value $sentinel -Encoding ASCII
 
@@ -6436,9 +6555,9 @@ Describe 'Function: Copy-AzLocalPipelineExample' {
 
     # v0.7.92: starter apply-updates-schedule.yml drop (default-on for
     # -Platform GitHub|AzureDevOps; suppressed by -SkipStarterSchedule).
-    # The starter lands ONE LEVEL UP from -Destination so the schedule
-    # file sits beside .github\workflows\ (GitHub) or the pipelines
-    # folder (ADO) rather than inside it.
+    # v0.8.7 relocates the starter into a repo-root `config\` folder so the
+    # schedule sits beside config\ClusterUpdateRings.csv - the IDENTICAL
+    # path on GitHub and Azure DevOps.
 
     It 'v0.7.92: -SkipStarterSchedule is exposed as a [switch] parameter' {
         $cmd = Get-Command -Name 'Copy-AzLocalPipelineExample' -ErrorAction Stop
@@ -6446,14 +6565,14 @@ Describe 'Function: Copy-AzLocalPipelineExample' {
         $cmd.Parameters['SkipStarterSchedule'].ParameterType | Should -Be ([switch])
     }
 
-    It 'v0.7.92: -Platform GitHub default drops starter apply-updates-schedule.yml ONE LEVEL UP from -Destination' {
+    It 'v0.8.7: -Platform GitHub default drops starter apply-updates-schedule.yml into repo-root config folder' {
         $repoRoot = Join-Path $script:cpDestRoot 'gh-starter-fresh'
         $dest = Join-Path $repoRoot '.github\workflows'
         New-Item -Path $dest -ItemType Directory -Force | Out-Null
 
         Copy-AzLocalPipelineExample -Destination $dest -Platform GitHub 6>$null | Out-Null
 
-        $scheduleDest = Join-Path $repoRoot '.github\apply-updates-schedule.yml'
+        $scheduleDest = Join-Path $repoRoot 'config\apply-updates-schedule.yml'
         Test-Path $scheduleDest | Should -BeTrue
         # File content must match the bundled example verbatim (starter copy
         # is byte-for-byte, no templating).
@@ -6462,14 +6581,14 @@ Describe 'Function: Copy-AzLocalPipelineExample' {
         (Get-FileHash -LiteralPath $scheduleDest).Hash | Should -Be (Get-FileHash -LiteralPath $source).Hash
     }
 
-    It 'v0.7.92: -Platform AzureDevOps default drops starter apply-updates-schedule.yml ONE LEVEL UP from -Destination' {
+    It 'v0.8.7: -Platform AzureDevOps default drops starter apply-updates-schedule.yml into repo-root config folder' {
         $repoRoot = Join-Path $script:cpDestRoot 'ado-starter-fresh'
         $dest = Join-Path $repoRoot 'pipelines'
         New-Item -Path $dest -ItemType Directory -Force | Out-Null
 
         Copy-AzLocalPipelineExample -Destination $dest -Platform AzureDevOps 6>$null | Out-Null
 
-        $scheduleDest = Join-Path $repoRoot 'apply-updates-schedule.yml'
+        $scheduleDest = Join-Path $repoRoot 'config\apply-updates-schedule.yml'
         Test-Path $scheduleDest | Should -BeTrue
     }
 
@@ -6479,7 +6598,8 @@ Describe 'Function: Copy-AzLocalPipelineExample' {
         New-Item -Path $dest -ItemType Directory -Force | Out-Null
 
         # Pre-seed an operator-tailored schedule file
-        $scheduleDest = Join-Path $repoRoot '.github\apply-updates-schedule.yml'
+        $scheduleDest = Join-Path $repoRoot 'config\apply-updates-schedule.yml'
+        New-Item -Path (Split-Path -Parent $scheduleDest) -ItemType Directory -Force | Out-Null
         $sentinel = '# OPERATOR SENTINEL - must never be overwritten by Copy-AzLocalPipelineExample'
         Set-Content -LiteralPath $scheduleDest -Value $sentinel -Encoding ASCII
 
@@ -6496,7 +6616,7 @@ Describe 'Function: Copy-AzLocalPipelineExample' {
 
         Copy-AzLocalPipelineExample -Destination $dest -Platform GitHub -SkipStarterSchedule 6>$null | Out-Null
 
-        $scheduleDest = Join-Path $repoRoot '.github\apply-updates-schedule.yml'
+        $scheduleDest = Join-Path $repoRoot 'config\apply-updates-schedule.yml'
         Test-Path $scheduleDest | Should -BeFalse
     }
 
@@ -6525,8 +6645,122 @@ Describe 'Function: Copy-AzLocalPipelineExample' {
 
         Copy-AzLocalPipelineExample -Destination $dest -Platform GitHub -WhatIf 6>$null | Out-Null
 
-        $scheduleDest = Join-Path $repoRoot '.github\apply-updates-schedule.yml'
+        $scheduleDest = Join-Path $repoRoot 'config\apply-updates-schedule.yml'
         Test-Path $scheduleDest | Should -BeFalse
+    }
+
+    # v0.8.7: starter on-prem sideloading config drop (sideload-auth-map.csv
+    # + sideload-catalog.yml). Default-on for -Platform GitHub|AzureDevOps;
+    # suppressed by -SkipStarterSideloadConfig. Lands in the SAME repo-root
+    # `config\` folder as the starter schedule and the ring CSV - the
+    # IDENTICAL path on GitHub and Azure DevOps. Both files are
+    # header/skeleton only (no demo data rows), so they parse to an empty
+    # auth-map / empty catalog.
+
+    It 'v0.8.7: -SkipStarterSideloadConfig is exposed as a [switch] parameter' {
+        $cmd = Get-Command -Name 'Copy-AzLocalPipelineExample' -ErrorAction Stop
+        $cmd.Parameters.ContainsKey('SkipStarterSideloadConfig') | Should -BeTrue
+        $cmd.Parameters['SkipStarterSideloadConfig'].ParameterType | Should -Be ([switch])
+    }
+
+    It 'v0.8.7: -Platform GitHub default drops starter sideload config into repo-root config folder' {
+        $repoRoot = Join-Path $script:cpDestRoot 'gh-sideload-fresh'
+        $dest = Join-Path $repoRoot '.github\workflows'
+        New-Item -Path $dest -ItemType Directory -Force | Out-Null
+
+        Copy-AzLocalPipelineExample -Destination $dest -Platform GitHub 6>$null | Out-Null
+
+        Test-Path (Join-Path $repoRoot 'config\sideload-auth-map.csv') | Should -BeTrue
+        Test-Path (Join-Path $repoRoot 'config\sideload-catalog.yml')  | Should -BeTrue
+    }
+
+    It 'v0.8.7: -Platform AzureDevOps default drops starter sideload config into repo-root config folder' {
+        $repoRoot = Join-Path $script:cpDestRoot 'ado-sideload-fresh'
+        $dest = Join-Path $repoRoot 'pipelines'
+        New-Item -Path $dest -ItemType Directory -Force | Out-Null
+
+        Copy-AzLocalPipelineExample -Destination $dest -Platform AzureDevOps 6>$null | Out-Null
+
+        Test-Path (Join-Path $repoRoot 'config\sideload-auth-map.csv') | Should -BeTrue
+        Test-Path (Join-Path $repoRoot 'config\sideload-catalog.yml')  | Should -BeTrue
+    }
+
+    It 'v0.8.7: starter auth-map is header-only and parses to an EMPTY auth-map (no demo rows)' {
+        $repoRoot = Join-Path $script:cpDestRoot 'gh-sideload-parse'
+        $dest = Join-Path $repoRoot '.github\workflows'
+        New-Item -Path $dest -ItemType Directory -Force | Out-Null
+
+        Copy-AzLocalPipelineExample -Destination $dest -Platform GitHub 6>$null | Out-Null
+
+        $authMapPath = Join-Path $repoRoot 'config\sideload-auth-map.csv'
+        $catalogPath = Join-Path $repoRoot 'config\sideload-catalog.yml'
+
+        # The starter must carry NO demo credential data (so it is inert even
+        # if SIDELOAD_UPDATES is flipped on before the operator fills it in).
+        $authRaw = Get-Content -Raw -LiteralPath $authMapPath
+        $authRaw | Should -Match 'UpdateAuthAccountId,KeyVaultName'
+        $authRaw | Should -Not -Match 'kv-azlocal'
+
+        $map = InModuleScope AzLocal.UpdateManagement -Parameters @{ P = $authMapPath } {
+            param($P)
+            Get-AzLocalSideloadAuthMap -Path $P
+        }
+        $map.Keys.Count | Should -Be 0
+
+        $catalog = InModuleScope AzLocal.UpdateManagement -Parameters @{ P = $catalogPath } {
+            param($P)
+            @(Get-AzLocalSideloadCatalog -Path $P)
+        }
+        $catalog.Count | Should -Be 0
+    }
+
+    It 'v0.8.7: existing sideload config at the target is NEVER overwritten by the starter drop' {
+        $repoRoot = Join-Path $script:cpDestRoot 'gh-sideload-preserve'
+        $dest = Join-Path $repoRoot '.github\workflows'
+        New-Item -Path $dest -ItemType Directory -Force | Out-Null
+        New-Item -Path (Join-Path $repoRoot 'config') -ItemType Directory -Force | Out-Null
+
+        $authMapPath = Join-Path $repoRoot 'config\sideload-auth-map.csv'
+        $sentinel = '# OPERATOR SENTINEL - must never be overwritten'
+        Set-Content -LiteralPath $authMapPath -Value $sentinel -Encoding ASCII
+
+        Copy-AzLocalPipelineExample -Destination $dest -Platform GitHub 6>$null | Out-Null
+
+        (Get-Content -LiteralPath $authMapPath -Raw) | Should -Match 'OPERATOR SENTINEL'
+    }
+
+    It 'v0.8.7: -SkipStarterSideloadConfig suppresses the sideload starter drop entirely' {
+        $repoRoot = Join-Path $script:cpDestRoot 'gh-sideload-skip'
+        $dest = Join-Path $repoRoot '.github\workflows'
+        New-Item -Path $dest -ItemType Directory -Force | Out-Null
+
+        Copy-AzLocalPipelineExample -Destination $dest -Platform GitHub -SkipStarterSideloadConfig 6>$null | Out-Null
+
+        Test-Path (Join-Path $repoRoot 'config\sideload-auth-map.csv') | Should -BeFalse
+        Test-Path (Join-Path $repoRoot 'config\sideload-catalog.yml')  | Should -BeFalse
+    }
+
+    It 'v0.8.7: -Platform All does NOT drop sideload starter config (only GitHub|AzureDevOps do)' {
+        $parent = Join-Path $script:cpDestRoot 'all-no-sideload-parent'
+        New-Item -Path $parent -ItemType Directory -Force | Out-Null
+        $dest = Join-Path $parent 'all-no-sideload'
+        New-Item -Path $dest -ItemType Directory -Force | Out-Null
+
+        Copy-AzLocalPipelineExample -Destination $dest 6>$null | Out-Null
+
+        Test-Path (Join-Path $parent 'sideload-auth-map.csv') | Should -BeFalse
+        Test-Path (Join-Path $dest   'sideload-auth-map.csv') | Should -BeFalse
+    }
+
+    It 'v0.8.7: -WhatIf does not write the sideload starter config' {
+        $repoRoot = Join-Path $script:cpDestRoot 'gh-sideload-whatif'
+        $dest = Join-Path $repoRoot '.github\workflows'
+        New-Item -Path $dest -ItemType Directory -Force | Out-Null
+
+        Copy-AzLocalPipelineExample -Destination $dest -Platform GitHub -WhatIf 6>$null | Out-Null
+
+        Test-Path (Join-Path $repoRoot 'config\sideload-auth-map.csv') | Should -BeFalse
+        Test-Path (Join-Path $repoRoot 'config\sideload-catalog.yml')  | Should -BeFalse
     }
 }
 
@@ -6970,7 +7204,7 @@ on:
   schedule:
     - cron: '55 1 * * 6,0'
     - cron: "0 22 * * 5"
-"@ | Set-Content -Path (Join-Path $script:tmpYamlDir 'github-actions\Step.6_apply-updates.yml') -Encoding ASCII
+"@ | Set-Content -Path (Join-Path $script:tmpYamlDir 'github-actions\Step.7_apply-updates.yml') -Encoding ASCII
             @"
 trigger: none
 schedules:
@@ -6978,7 +7212,7 @@ schedules:
     displayName: Weekday early-morning
     branches:
       include: [ main ]
-"@ | Set-Content -Path (Join-Path $script:tmpYamlDir 'azure-devops\Step.6_apply-updates.yml') -Encoding ASCII
+"@ | Set-Content -Path (Join-Path $script:tmpYamlDir 'azure-devops\Step.7_apply-updates.yml') -Encoding ASCII
         }
         AfterAll {
             Remove-Item -Path $script:tmpYamlDir -Recurse -Force -ErrorAction SilentlyContinue
@@ -7029,7 +7263,7 @@ on:
 on:
   schedule:
     - cron: '0 7 * * *'
-"@ | Set-Content -Path (Join-Path $regressionDir 'github-actions\Step.9_fleet-health-status.yml') -Encoding ASCII
+"@ | Set-Content -Path (Join-Path $regressionDir 'github-actions\Step.10_fleet-health-status.yml') -Encoding ASCII
                 # Apply-updates file: ships with only commented-out cron examples,
                 # so the reader should return ZERO crons for this folder overall.
                 @"
@@ -7037,7 +7271,7 @@ on:
   workflow_dispatch:
   # schedule:
   #   - cron: '0 22 * * 6'
-"@ | Set-Content -Path (Join-Path $regressionDir 'github-actions\Step.6_apply-updates.yml') -Encoding ASCII
+"@ | Set-Content -Path (Join-Path $regressionDir 'github-actions\Step.7_apply-updates.yml') -Encoding ASCII
 
                 InModuleScope AzLocal.UpdateManagement -Parameters @{ dir = $regressionDir } {
                     param($dir)
@@ -7063,7 +7297,7 @@ on:
   schedule:
     - cron: '   '
     - cron: '0 22 * * 6'
-"@ | Set-Content -Path (Join-Path $emptyDir 'github-actions\Step.6_apply-updates.yml') -Encoding ASCII
+"@ | Set-Content -Path (Join-Path $emptyDir 'github-actions\Step.7_apply-updates.yml') -Encoding ASCII
 
                 InModuleScope AzLocal.UpdateManagement -Parameters @{ dir = $emptyDir } {
                     param($dir)
@@ -7087,7 +7321,7 @@ on:
 on:
   schedule:
     - cron: '50 1 * * 6,0'
-"@ | Set-Content -Path (Join-Path $script:tmpYamlDir2 'github-actions\Step.6_apply-updates.yml') -Encoding ASCII
+"@ | Set-Content -Path (Join-Path $script:tmpYamlDir2 'github-actions\Step.7_apply-updates.yml') -Encoding ASCII
         }
         AfterAll {
             Remove-Item -Path $script:tmpYamlDir2 -Recurse -Force -ErrorAction SilentlyContinue
@@ -7239,7 +7473,7 @@ on:
 on:
   schedule:
     - cron: '55 1 * * 6,0'
-"@ | Set-Content -Path (Join-Path $script:beltYamlDir 'github-actions\Step.6_apply-updates.yml') -Encoding ASCII
+"@ | Set-Content -Path (Join-Path $script:beltYamlDir 'github-actions\Step.7_apply-updates.yml') -Encoding ASCII
         }
         AfterAll {
             Remove-Item -Path $script:beltYamlDir -Recurse -Force -ErrorAction SilentlyContinue
@@ -7331,7 +7565,7 @@ on:
   schedule:
     - cron: '50 1 * * 6,0'
     - cron: '55 21 * * 1-5'
-"@ | Set-Content -Path (Join-Path $script:multiYamlDir 'github-actions\Step.6_apply-updates.yml') -Encoding ASCII
+"@ | Set-Content -Path (Join-Path $script:multiYamlDir 'github-actions\Step.7_apply-updates.yml') -Encoding ASCII
         }
         AfterAll {
             Remove-Item -Path $script:multiYamlDir -Recurse -Force -ErrorAction SilentlyContinue
@@ -7434,7 +7668,7 @@ on:
 on:
   schedule:
     - cron: '55 1 * * 6,0'
-"@ | Set-Content -Path (Join-Path $script:pruneYamlDir 'github-actions\Step.6_apply-updates.yml') -Encoding ASCII
+"@ | Set-Content -Path (Join-Path $script:pruneYamlDir 'github-actions\Step.7_apply-updates.yml') -Encoding ASCII
         }
         AfterAll {
             Remove-Item -Path $script:pruneYamlDir -Recurse -Force -ErrorAction SilentlyContinue
@@ -7501,7 +7735,7 @@ on:
             @"
 on:
   workflow_dispatch:
-"@ | Set-Content -Path (Join-Path $script:nwtDir 'github-actions\Step.6_apply-updates.yml') -Encoding ASCII
+"@ | Set-Content -Path (Join-Path $script:nwtDir 'github-actions\Step.7_apply-updates.yml') -Encoding ASCII
 
             # CSV WITH ResourceId column: 4 clusters. One peer (cA) in Ring1
             # with a real UpdateStartWindow; one orphan target (cB) in Ring1
@@ -7631,7 +7865,7 @@ cB,rg1,s1,Ring1,
             @"
 on:
   workflow_dispatch:
-"@ | Set-Content -Path (Join-Path $script:calDir 'github-actions\Step.6_apply-updates.yml') -Encoding ASCII
+"@ | Set-Content -Path (Join-Path $script:calDir 'github-actions\Step.7_apply-updates.yml') -Encoding ASCII
 
             # Minimal schema-v2 schedule: 2-week cycle, Ring1 in week 1
             # (Mon-Fri), Ring2 in week 2 (Mon-Fri). No allowedUpdateVersions.
@@ -7706,7 +7940,7 @@ schedule:
             @"
 on:
   workflow_dispatch:
-"@ | Set-Content -Path (Join-Path $script:exclDir 'github-actions\Step.6_apply-updates.yml') -Encoding ASCII
+"@ | Set-Content -Path (Join-Path $script:exclDir 'github-actions\Step.7_apply-updates.yml') -Encoding ASCII
         }
         AfterAll {
             Remove-Item -Path $script:exclDir -Recurse -Force -ErrorAction SilentlyContinue
@@ -7752,7 +7986,7 @@ on:
         # End-to-end smoke against the actual YAMLs published to PSGallery as
         # part of the module. This is the gap that let v0.7.68 ship with the
         # -LiteralPath/-Include glob regression: unit tests only fed the reader
-        # synthetic Step.6_apply-updates.yml files in isolation, never a real
+        # synthetic Step.7_apply-updates.yml files in isolation, never a real
         # multi-pipeline folder. Running the audit against the bundle now
         # guarantees that no future change re-introduces a glob that also picks
         # up sibling Step.N_*.yml schedule triggers.
@@ -7777,7 +8011,7 @@ on:
             InModuleScope AzLocal.UpdateManagement -Parameters @{ bundleGhDir = $script:bundleGhDir } {
                 param($bundleGhDir)
                 $r = Read-AzLocalApplyUpdatesYamlCrons -Path $bundleGhDir
-                @($r).Count | Should -Be 0 -Because 'the shipped Step.6_apply-updates.yml ships with only commented cron examples, and the reader must NOT pick up crons from sibling Step.N pipelines'
+                @($r).Count | Should -Be 0 -Because 'the shipped Step.7_apply-updates.yml ships with only commented cron examples, and the reader must NOT pick up crons from sibling Step.N pipelines'
             }
         }
     }
@@ -7966,7 +8200,7 @@ Describe 'v0.7.66 Artifact download names carry a UTC timestamp suffix' {
                 }
                 # Accept either the in-stage step-output form (`$(stamp.artifactStamp)`)
                 # OR a cross-stage variable that ends in `ArtifactStamp)`, which is
-                # how `Step.6_apply-updates.yml` consumes the CheckReadiness stage's stamp
+                # how `Step.7_apply-updates.yml` consumes the CheckReadiness stage's stamp
                 # via the `readinessArtifactStamp` mapped variable.
                 if ($name -notmatch '\$\(.+?[Aa]rtifactStamp\)') {
                     $offenders.Add("$($yml.Name): ${key} '$name' missing a `$(...artifactStamp) suffix")
@@ -8360,14 +8594,14 @@ Describe 'Function: Update-AzLocalPipelineExample' {
     }
 
     Context 'Marker-aware merge preserves destination customisations' {
-        It 'Replaces the schedule-triggers body with the destination body in Step.6_apply-updates.yml' {
+        It 'Replaces the schedule-triggers body with the destination body in apply-updates.yml' {
             $temp = Join-Path $env:TEMP "upe-merge-$([guid]::NewGuid())"
             New-Item -ItemType Directory -Path $temp -Force | Out-Null
             try {
-                # 1. Copy the bundled Step.6_apply-updates.yml to the destination.
-                $src = Join-Path $script:UpePlatformSrcGh 'Step.6_apply-updates.yml'
+                # 1. Copy the bundled apply-updates.yml to the destination.
+                $src = Join-Path $script:UpePlatformSrcGh 'apply-updates.yml'
                 Copy-Item -Path $src -Destination $temp
-                $destFile = Join-Path $temp 'Step.6_apply-updates.yml'
+                $destFile = Join-Path $temp 'apply-updates.yml'
 
                 # 2. Inject a customer cron INSIDE the schedule-triggers marker block.
                 $customerBody = "`r`n  schedule:`r`n    - cron: '0 22 * * 6'  # Wave1 SatNight22UTC`r`n  "
@@ -8384,7 +8618,7 @@ Describe 'Function: Update-AzLocalPipelineExample' {
 
                 # 3. Run the cmdlet. Source body should be REPLACED with customer body.
                 $r = Update-AzLocalPipelineExample -Destination $temp -Platform GitHub -PassThru -Confirm:$false
-                $row = $r | Where-Object { $_.File -like '*Step.6_apply-updates.yml' }
+                $row = $r | Where-Object { $_.File -like '*apply-updates.yml' }
                 $row.Action            | Should -Match 'Updated|Unchanged'
                 # Customer cron MUST survive
                 $newText = [System.IO.File]::ReadAllText($destFile, [System.Text.UTF8Encoding]::new($false))
@@ -8413,11 +8647,11 @@ Describe 'Function: Update-AzLocalPipelineExample' {
             New-Item -ItemType Directory -Path $temp -Force | Out-Null
             try {
                 # Place a stripped-down YAML at dest with NO markers, same filename as a bundled file.
-                $destFile = Join-Path $temp 'Step.6_apply-updates.yml'
+                $destFile = Join-Path $temp 'apply-updates.yml'
                 'name: legacy file with no markers' | Set-Content -LiteralPath $destFile -Encoding utf8
 
                 $r = Update-AzLocalPipelineExample -Destination $temp -Platform GitHub -PassThru -Confirm:$false 3>$null
-                $row = $r | Where-Object { $_.File -like '*Step.6_apply-updates.yml' }
+                $row = $r | Where-Object { $_.File -like '*apply-updates.yml' }
                 $row.Action | Should -Be 'Skipped-NeedsForce'
                 # Dest file unchanged
                 (Get-Content -Raw -LiteralPath $destFile) | Should -Match 'legacy file with no markers'
@@ -8428,11 +8662,11 @@ Describe 'Function: Update-AzLocalPipelineExample' {
             $temp = Join-Path $env:TEMP "upe-firstmig-force-$([guid]::NewGuid())"
             New-Item -ItemType Directory -Path $temp -Force | Out-Null
             try {
-                $destFile = Join-Path $temp 'Step.6_apply-updates.yml'
+                $destFile = Join-Path $temp 'apply-updates.yml'
                 'name: legacy file with no markers' | Set-Content -LiteralPath $destFile -Encoding utf8
 
                 $r = Update-AzLocalPipelineExample -Destination $temp -Platform GitHub -PassThru -Force -Confirm:$false 3>$null
-                $row = $r | Where-Object { $_.File -like '*Step.6_apply-updates.yml' }
+                $row = $r | Where-Object { $_.File -like '*apply-updates.yml' }
                 $row.Action | Should -Be 'Overwritten'
                 $row.NewMarkers | Should -Contain 'schedule-triggers'
                 (Get-Content -Raw -LiteralPath $destFile) | Should -Match 'BEGIN-AZLOCAL-CUSTOMIZE:schedule-triggers'
@@ -9283,7 +9517,7 @@ Describe 'Function: Test-AzLocalApplyUpdatesScheduleCoverage - v0.7.70 Section d
         @"
 on:
   workflow_dispatch:
-"@ | Set-Content -Path (Join-Path $script:v7_70_yamlDir 'github-actions\Step.6_apply-updates.yml') -Encoding ASCII
+"@ | Set-Content -Path (Join-Path $script:v7_70_yamlDir 'github-actions\Step.7_apply-updates.yml') -Encoding ASCII
 
         # Schedule file that knows about Pilot + Wave1 but is MISSING 'Production'
         # (which is tagged on c3) and ORPHANS 'Pilot' (which no cluster carries).
@@ -10252,8 +10486,8 @@ Describe 'Function: Get-AzLocalFleetHealthOverview - v0.7.70 (ARG-first fleet he
             $cmd.CommandType | Should -Be 'Function'
         }
 
-        It 'BS7: Module exports exactly 55 functions (was 49 after Step.9 thin-YAML port; Step.6 thin-YAML port adds 6 apply-updates pipeline cmdlets)' {
-            (Get-Module AzLocal.UpdateManagement).ExportedFunctions.Count | Should -Be 55
+        It 'BS7: Module exports exactly 60 functions (was 55 after Step.6 thin-YAML port; v0.8.7 sideload automation adds 5 cmdlets)' {
+            (Get-Module AzLocal.UpdateManagement).ExportedFunctions.Count | Should -Be 60
         }
     }
 
@@ -10642,8 +10876,8 @@ Describe 'Smoke test: Step.4 pipeline cmdlet migration (v0.7.79)' {
     BeforeAll {
         $script:repoRoot = Split-Path -Path $PSScriptRoot -Parent
         $script:step4Files = @(
-            Join-Path -Path $script:repoRoot -ChildPath 'Automation-Pipeline-Examples/github-actions/Step.4_fleet-connectivity-status.yml'
-            Join-Path -Path $script:repoRoot -ChildPath 'Automation-Pipeline-Examples/azure-devops/Step.4_fleet-connectivity-status.yml'
+            Join-Path -Path $script:repoRoot -ChildPath 'Automation-Pipeline-Examples/github-actions/fleet-connectivity-status.yml'
+            Join-Path -Path $script:repoRoot -ChildPath 'Automation-Pipeline-Examples/azure-devops/fleet-connectivity-status.yml'
         )
     }
 
@@ -10689,8 +10923,8 @@ Describe 'Regression v0.7.83: Step.4 ARB inline script handles single-cluster Cl
     BeforeAll {
         $script:repoRoot = Split-Path -Path $PSScriptRoot -Parent
         $script:step4Cases = @(
-            @{ Platform = 'github-actions'; Path = (Join-Path -Path $script:repoRoot -ChildPath 'Automation-Pipeline-Examples/github-actions/Step.4_fleet-connectivity-status.yml') }
-            @{ Platform = 'azure-devops';   Path = (Join-Path -Path $script:repoRoot -ChildPath 'Automation-Pipeline-Examples/azure-devops/Step.4_fleet-connectivity-status.yml') }
+            @{ Platform = 'github-actions'; Path = (Join-Path -Path $script:repoRoot -ChildPath 'Automation-Pipeline-Examples/github-actions/fleet-connectivity-status.yml') }
+            @{ Platform = 'azure-devops';   Path = (Join-Path -Path $script:repoRoot -ChildPath 'Automation-Pipeline-Examples/azure-devops/fleet-connectivity-status.yml') }
         )
     }
 
@@ -11912,7 +12146,7 @@ Describe 'Regression v0.7.87: bundled GitHub Actions YAML run: blocks stay under
     }
 
     It 'Step.4 GH YAML uses the new renderer function (no inline 22 KB markdown)' {
-        $step4 = Join-Path -Path $script:ghActionsDir -ChildPath 'Step.4_fleet-connectivity-status.yml'
+        $step4 = Join-Path -Path $script:ghActionsDir -ChildPath 'fleet-connectivity-status.yml'
         $raw   = Get-Content -LiteralPath $step4 -Raw
         $raw | Should -Match 'New-AzLocalFleetConnectivityStatusSummary' `
             -Because 'Step.4 must call the v0.7.87 renderer function rather than inlining the markdown summary'
@@ -11921,7 +12155,7 @@ Describe 'Regression v0.7.87: bundled GitHub Actions YAML run: blocks stay under
     }
 
     It 'Step.4 ADO YAML uses the new renderer function (no inline 22 KB markdown)' {
-        $step4 = Join-Path -Path $script:repoRootForCap -ChildPath 'Automation-Pipeline-Examples/azure-devops/Step.4_fleet-connectivity-status.yml'
+        $step4 = Join-Path -Path $script:repoRootForCap -ChildPath 'Automation-Pipeline-Examples/azure-devops/fleet-connectivity-status.yml'
         $raw   = Get-Content -LiteralPath $step4 -Raw
         $raw | Should -Match 'New-AzLocalFleetConnectivityStatusSummary' `
             -Because 'Step.4 ADO must call the same v0.7.87 renderer function as the GH twin'
@@ -12791,7 +13025,7 @@ schedule:
             $cron[$d] = @('02:00')
         }
         $md = Get-AzLocalApplyUpdatesScheduleCycleCalendar -Schedule $script:cccol_cfg -StartDate $script:cccol_wk1Mon -Days 7 -AsMarkdown -CronFiringsByDate $cron
-        $md | Should -Match '\| Date \(UTC\) \| Ring CRON Start Time<br>\(Step 6 pipeline\) \| Day \| CycleWeek \| Eligible rings \| AllowedUpdateVersions \|'
+        $md | Should -Match '\| Date \(UTC\) \| Ring CRON Start Time<br>\(apply-updates pipeline\) \| Day \| CycleWeek \| Eligible rings \| AllowedUpdateVersions \|'
         $md | Should -Match '\|---\|:---:\|---\|'
         $md | Should -Not -Match 'Tag Start Window Match'
     }
@@ -12829,7 +13063,7 @@ schedule:
             }
         }
         $md = Get-AzLocalApplyUpdatesScheduleCycleCalendar -Schedule $script:cccol_cfg -StartDate $script:cccol_wk1Mon -Days 7 -AsMarkdown -CronFiringsByDate $cron -WindowMatchByRingAndDate $wm
-        $md | Should -Match '\| Date \(UTC\) \| Ring CRON Start Time<br>\(Step 6 pipeline\) \| Day \| CycleWeek \| Eligible rings \| Tag Start Window Match \(>=95%\) \| AllowedUpdateVersions \|'
+        $md | Should -Match '\| Date \(UTC\) \| Ring CRON Start Time<br>\(apply-updates pipeline\) \| Day \| CycleWeek \| Eligible rings \| Tag Start Window Match \(>=95%\) \| AllowedUpdateVersions \|'
         $md | Should -Match '`Cdn`: True 30/30 \(100%\)'
         $md | Should -Match '`Prod`: True 40/40 \(100%\)'
     }
@@ -12899,7 +13133,7 @@ schedule:
         $wm   = @{ Cdn = @{ ($script:cccol_wk1Mon.ToString('yyyy-MM-dd')) = @{ Matching = 30; Total = 30 } } }
         $md   = Get-AzLocalApplyUpdatesScheduleCycleCalendar -Schedule $script:cccol_cfg -StartDate $script:cccol_wk1Mon -Days 1 -AsMarkdown `
             -CronFiringsByDate $cron -ClusterRingCounts $rc -WindowMatchByRingAndDate $wm
-        $md | Should -Match '\| Date \(UTC\) \| Ring CRON Start Time<br>\(Step 6 pipeline\) \| Day \| CycleWeek \| Eligible rings \| Tag Start Window Match \(>=95%\) \| Clusters in ring\(s\) \| AllowedUpdateVersions \|'
+        $md | Should -Match '\| Date \(UTC\) \| Ring CRON Start Time<br>\(apply-updates pipeline\) \| Day \| CycleWeek \| Eligible rings \| Tag Start Window Match \(>=95%\) \| Clusters in ring\(s\) \| AllowedUpdateVersions \|'
     }
 }
 
@@ -15777,7 +16011,7 @@ Describe 'Thin-YAML Step.3: Export-AzLocalApplyUpdatesScheduleAudit' {
         $env:_S3_OUTDIR          = $script:_s3_outDir
         $env:_S3_PIPELINEDIR     = $script:_s3_pipelineDir
 
-        $global:_s3_auditRows = @( (New-S3AuditRow -Status 'Uncovered' -Issue 'No cron entry matches Sat 01:00 +60' -Recommendation 'Add 55 0 * * 6 to Step.6_apply-updates.yml') )
+        $global:_s3_auditRows = @( (New-S3AuditRow -Status 'Uncovered' -Issue 'No cron entry matches Sat 01:00 +60' -Recommendation 'Add 55 0 * * 6 to Step.7_apply-updates.yml') )
 
         $result = InModuleScope AzLocal.UpdateManagement {
             Mock Test-AzLocalApplyUpdatesScheduleCoverage { $global:_s3_auditRows } -ParameterFilter { $View -eq 'Audit' }
@@ -16027,7 +16261,7 @@ Describe 'Thin-YAML Step.3: Export-AzLocalApplyUpdatesScheduleAudit' {
         $env:_S3_OUTDIR          = $script:_s3_outDir
         $env:_S3_SCHEDULE        = $script:_s3_scheduleFile
 
-        # Drop a real Step.6_apply-updates.yml with two cron triggers so
+        # Drop a real Step.7_apply-updates.yml with two cron triggers so
         # Read-AzLocalApplyUpdatesYamlCrons + ConvertFrom-AzLocalCronExpression
         # produce non-empty FireTimes for the calendar block.
         $ghDir = Join-Path $script:_s3_pipelineDir 'github-actions'
@@ -16038,7 +16272,7 @@ on:
     - cron: '0 2 * * *'
     - cron: '30 4 * * 1-5'
   workflow_dispatch:
-"@ | Set-Content -Path (Join-Path $ghDir 'Step.6_apply-updates.yml') -Encoding ASCII
+"@ | Set-Content -Path (Join-Path $ghDir 'Step.7_apply-updates.yml') -Encoding ASCII
         $env:_S3_PIPELINEDIR = $script:_s3_pipelineDir
 
         # Schedule has cycleWeeks=1 so the calendar default horizon is 7 days.
@@ -16107,7 +16341,7 @@ on:
 on:
   schedule:
     - cron: '0 2 * * *'
-"@ | Set-Content -Path (Join-Path $ghDir 'Step.6_apply-updates.yml') -Encoding ASCII
+"@ | Set-Content -Path (Join-Path $ghDir 'Step.7_apply-updates.yml') -Encoding ASCII
         $env:_S3_PIPELINEDIR = $script:_s3_pipelineDir
 
         # Synthesise a tiny cluster CSV: 2 clusters in 'Cdn' ring, one with
@@ -16776,3 +17010,509 @@ Describe 'v0.8.6 regression guard: Step.0 Export-AzLocalAuthValidationReport def
         )
     }
 }
+
+#region On-Prem Sideloading Automation (v0.8.7) - behaviour tests for the 5 new public cmdlets
+
+Describe 'Sideload (v0.8.7): Update-AzLocalSideloadCatalog' {
+
+    Context 'Offline HTML parsing + catalog merge' {
+
+        It 'Parses CombinedSolutionBundle rows from offline HTML and writes a reviewable catalog' {
+            $catalogPath = Join-Path $env:TEMP ("azlocal-sideload-catalog-{0}.yml" -f ([Guid]::NewGuid()))
+            try {
+                $html = @'
+<table>
+  <tr><td><a href="https://download.contoso.com/CombinedSolutionBundle.12.2605.1003.210.zip">12.2605.1003.210</a></td>
+      <td>26100.4061</td>
+      <td>SHA256: ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789. Availability date: 2026-05-15</td></tr>
+</table>
+'@
+                $result = Update-AzLocalSideloadCatalog -Path $catalogPath -Html $html -Confirm:$false
+
+                $result | Should -Not -BeNullOrEmpty
+                @($result).Count | Should -Be 1
+                $result[0].Version | Should -Be '12.2605.1003.210'
+                $result[0].PackageType | Should -Be 'Solution'
+                $result[0].OsBuild | Should -Be '26100.4061'
+                $result[0].DownloadUri | Should -Be 'https://download.contoso.com/CombinedSolutionBundle.12.2605.1003.210.zip'
+                $result[0].Sha256 | Should -Be 'ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789'
+                $result[0].AvailabilityDate | Should -Be '2026-05-15'
+
+                Test-Path -LiteralPath $catalogPath | Should -BeTrue
+                $written = Get-Content -LiteralPath $catalogPath -Raw
+                $written | Should -Match "version: '12\.2605\.1003\.210'"
+                $written | Should -Match 'packageType: Solution'
+            }
+            finally {
+                Remove-Item -LiteralPath $catalogPath -Force -ErrorAction SilentlyContinue
+            }
+        }
+
+        It 'Preserves existing SBE (OEM) entries while merging Solution rows' {
+            $catalogPath = Join-Path $env:TEMP ("azlocal-sideload-catalog-{0}.yml" -f ([Guid]::NewGuid()))
+            try {
+                # Seed an SBE entry the operator authored by hand.
+                $seed = @'
+schemaVersion: 1
+packages:
+  - version: '12.2605.1003.210'
+    packageType: SBE
+    sourceFolder: '\\fileserver\sbe\contoso'
+    sha256: '1111111111111111111111111111111111111111111111111111111111111111'
+'@
+                Set-Content -LiteralPath $catalogPath -Value $seed -Encoding ASCII
+
+                $html = @'
+<a href="https://download.contoso.com/CombinedSolutionBundle.12.2606.0.99.zip">12.2606.0.99</a>
+<span>SHA256 2222222222222222222222222222222222222222222222222222222222222222 Availability date: 2026-06-01</span>
+'@
+                $result = Update-AzLocalSideloadCatalog -Path $catalogPath -Html $html -Confirm:$false
+
+                # SBE entry preserved + new Solution entry appended.
+                $sbe = @($result | Where-Object { $_.PackageType -eq 'SBE' })
+                $sbe.Count | Should -Be 1
+                $sbe[0].Version | Should -Be '12.2605.1003.210'
+
+                $sol = @($result | Where-Object { $_.PackageType -eq 'Solution' -and $_.Version -eq '12.2606.0.99' })
+                $sol.Count | Should -Be 1
+                $sol[0].DownloadUri | Should -Match 'CombinedSolutionBundle\.12\.2606\.0\.99\.zip'
+            }
+            finally {
+                Remove-Item -LiteralPath $catalogPath -Force -ErrorAction SilentlyContinue
+            }
+        }
+
+        It 'Does not write the catalog under -WhatIf' {
+            $catalogPath = Join-Path $env:TEMP ("azlocal-sideload-catalog-{0}.yml" -f ([Guid]::NewGuid()))
+            try {
+                $html = '<a href="https://download.contoso.com/CombinedSolutionBundle.12.2605.1003.210.zip">12.2605.1003.210</a>'
+                $null = Update-AzLocalSideloadCatalog -Path $catalogPath -Html $html -WhatIf
+                Test-Path -LiteralPath $catalogPath | Should -BeFalse -Because '-WhatIf must not write the catalog file'
+            }
+            finally {
+                Remove-Item -LiteralPath $catalogPath -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    Context 'Schema migration (-SchemaMigrate)' {
+
+        It '-SchemaMigrate is exposed as a [switch] parameter' {
+            $cmd = Get-Command -Name 'Update-AzLocalSideloadCatalog' -ErrorAction Stop
+            $cmd.Parameters.ContainsKey('SchemaMigrate') | Should -BeTrue
+            $cmd.Parameters['SchemaMigrate'].ParameterType | Should -Be ([switch])
+        }
+
+        It 'Migrating a v1 catalog is a no-op (already on the current schema) and leaves the file untouched' {
+            $catalogPath = Join-Path $env:TEMP ("azlocal-sideload-catalog-{0}.yml" -f ([Guid]::NewGuid()))
+            try {
+                $seed = @'
+# Operator comment that must survive
+schemaVersion: 1
+packages:
+  - version: 'DellSBE-4.1.2412.1'
+    packageType: SBE
+    sourceFolder: '\\fileserver\sbe\Dell\4.1.2412.1'
+'@
+                Set-Content -LiteralPath $catalogPath -Value $seed -Encoding ASCII
+                $before = Get-Content -LiteralPath $catalogPath -Raw
+
+                $result = Update-AzLocalSideloadCatalog -Path $catalogPath -SchemaMigrate -Confirm:$false
+
+                $result.Action | Should -Be 'Unchanged-SchemaCurrent'
+                $result.FromVersion | Should -Be 1
+                $result.ToVersion | Should -Be 1
+                $result.BackupPath | Should -BeNullOrEmpty
+                # File content unchanged; no backup written.
+                (Get-Content -LiteralPath $catalogPath -Raw) | Should -Be $before
+                $base = [System.IO.Path]::GetFileNameWithoutExtension($catalogPath)
+                Test-Path -LiteralPath (Join-Path (Split-Path -Parent $catalogPath) ($base + '.v1.old.yml')) | Should -BeFalse
+            }
+            finally {
+                Remove-Item -LiteralPath $catalogPath -Force -ErrorAction SilentlyContinue
+            }
+        }
+
+        It '-SchemaMigrate on a missing file throws a clear error' {
+            $missing = Join-Path $env:TEMP ("azlocal-sideload-missing-{0}.yml" -f ([Guid]::NewGuid()))
+            { Update-AzLocalSideloadCatalog -Path $missing -SchemaMigrate -Confirm:$false } |
+                Should -Throw -ExpectedMessage '*catalog file not found*'
+        }
+    }
+}
+
+Describe 'Sideload (v0.8.7): catalog schema framework' {
+
+    It 'Get-AzLocalSideloadCatalog REFUSES a catalog written by a newer module (higher schemaVersion)' {
+        $catalogPath = Join-Path $env:TEMP ("azlocal-sideload-future-{0}.yml" -f ([Guid]::NewGuid()))
+        try {
+            $seed = @'
+schemaVersion: 99
+packages:
+  - version: '12.2605.1003.210'
+    packageType: Solution
+    downloadUri: 'https://contoso/CombinedSolutionBundle.zip'
+    sha256: 'ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789'
+'@
+            Set-Content -LiteralPath $catalogPath -Value $seed -Encoding ASCII
+            {
+                InModuleScope AzLocal.UpdateManagement -Parameters @{ P = $catalogPath } {
+                    param($P)
+                    Get-AzLocalSideloadCatalog -Path $P
+                }
+            } | Should -Throw -ExpectedMessage '*only supports up to*'
+        }
+        finally {
+            Remove-Item -LiteralPath $catalogPath -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'Get-AzLocalSideloadCatalog tolerates a MISSING schemaVersion (treated as v1) and parses packages' {
+        $catalogPath = Join-Path $env:TEMP ("azlocal-sideload-nosv-{0}.yml" -f ([Guid]::NewGuid()))
+        try {
+            $seed = @'
+packages:
+  - version: 'DellSBE-4.1.2412.1'
+    packageType: SBE
+    sourceFolder: '\\fileserver\sbe\Dell\4.1.2412.1'
+'@
+            Set-Content -LiteralPath $catalogPath -Value $seed -Encoding ASCII
+            $pkgs = @(InModuleScope AzLocal.UpdateManagement -Parameters @{ P = $catalogPath } {
+                param($P)
+                Get-AzLocalSideloadCatalog -Path $P
+            })
+            $pkgs.Count | Should -Be 1
+            $pkgs[0].Version | Should -Be 'DellSBE-4.1.2412.1'
+        }
+        finally {
+            Remove-Item -LiteralPath $catalogPath -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'Convert-AzLocalSideloadCatalogSchemaVersion is a no-op at the current schema version' {
+        $r = InModuleScope AzLocal.UpdateManagement {
+            $text = "schemaVersion: $($script:SideloadCatalogSchemaCurrentVersion)`r`npackages:`r`n"
+            Convert-AzLocalSideloadCatalogSchemaVersion -Text $text
+        }
+        $r.Migrated | Should -BeFalse
+        $r.Hops.Count | Should -Be 0
+    }
+
+    It 'Convert-AzLocalSideloadCatalogSchemaVersion throws a wired-up error when a hop is missing (empty recipe table at v1)' {
+        {
+            InModuleScope AzLocal.UpdateManagement {
+                # Force a target one above current; the v1 recipe table is empty
+                # so the engine must report the missing '1->2' hop.
+                Convert-AzLocalSideloadCatalogSchemaVersion -Text "schemaVersion: 1`r`npackages:`r`n" -TargetSchemaVersion 2
+            }
+        } | Should -Throw -ExpectedMessage "*no migration recipe registered for '1->2'*"
+    }
+}
+
+Describe 'Sideload (v0.8.7): Resolve-AzLocalSideloadPlan' {
+
+    It 'Flags clusters whose UpdateAuthAccountId is not in the auth map' {
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalApplyUpdatesScheduleConfig { [PSCustomObject]@{} }
+            Mock Get-AzLocalSideloadAuthMap { @{} }   # empty -> any account id is unknown
+            Mock Get-AzLocalSideloadCatalog { @() }
+            Mock ConvertTo-AzLocalUpdateRingKqlFilter { '' }
+            Mock Get-AzLocalApplyUpdatesScheduleNextFirings { @() }
+            Mock Invoke-AzResourceGraphQuery {
+                @([PSCustomObject]@{
+                        id             = '/subscriptions/s/clusters/c1'
+                        name           = 'cluster1'
+                        resourceGroup  = 'rg1'
+                        subscriptionId = 's'
+                        tags           = [PSCustomObject]@{ UpdateAuthAccountId = 'missing-acct'; UpdateRing = 'Ring1' }
+                    })
+            }
+
+            $plan = Resolve-AzLocalSideloadPlan -SchedulePath 'sched.yml' -AuthMapPath 'auth.csv' -CatalogPath 'cat.yml'
+
+            @($plan).Count | Should -Be 1
+            $plan[0].Status | Should -Be 'UnknownAuthAccountId'
+            $plan[0].ClusterName | Should -Be 'cluster1'
+        }
+    }
+
+    It 'Emits a Planned row when the cluster is due and the selected version is in the catalog' {
+        InModuleScope AzLocal.UpdateManagement {
+            $script:PlanNow = [datetime]'2026-06-11T00:00:00Z'
+
+            Mock Get-AzLocalApplyUpdatesScheduleConfig { [PSCustomObject]@{} }
+            Mock Get-AzLocalSideloadAuthMap {
+                @{ 'acct1' = [PSCustomObject]@{ RemotingTargetFqdn = 'host1.contoso.com'; ImportSharePath = '\\host1\import'; AuthMechanism = 'Negotiate' } }
+            }
+            Mock Get-AzLocalSideloadCatalog {
+                @([PSCustomObject]@{ Version = '12.2605.1003.210'; PackageType = 'Solution' })
+            }
+            Mock ConvertTo-AzLocalUpdateRingKqlFilter { '' }
+            Mock Resolve-AzLocalSideloadTargetPath { '\\host1\import' }
+            Mock Resolve-AzLocalCurrentUpdateRing { [PSCustomObject]@{ AllowedUpdateVersions = @('12.2605.1003.210') } }
+            Mock Get-AzLocalAvailableUpdates {
+                @([PSCustomObject]@{ UpdateState = 'Ready'; UpdateName = 'Solution12'; PackageType = 'Solution'; Version = '12.2605.1003.210' })
+            }
+            Mock Select-AzLocalNextUpdateForCluster {
+                [PSCustomObject]@{
+                    Reason         = 'Selected'
+                    SelectedUpdate = [PSCustomObject]@{ name = 'Solution12'; PackageType = 'Solution'; properties = [PSCustomObject]@{ version = '12.2605.1003.210'; state = 'Ready' } }
+                }
+            }
+            Mock Get-AzLocalApplyUpdatesScheduleNextFirings {
+                @([PSCustomObject]@{ Rings = @('Ring1'); DateUtc = $script:PlanNow.AddDays(2) })
+            }
+            Mock Invoke-AzResourceGraphQuery {
+                @([PSCustomObject]@{
+                        id             = '/subscriptions/s/clusters/c1'
+                        name           = 'cluster1'
+                        resourceGroup  = 'rg1'
+                        subscriptionId = 's'
+                        tags           = [PSCustomObject]@{ UpdateAuthAccountId = 'acct1'; UpdateRing = 'Ring1' }
+                    })
+            }
+
+            # NextWindow = Now+2, LeadDays=7 -> dueDate = Now-5 <= Now -> DueNow -> Planned
+            $plan = Resolve-AzLocalSideloadPlan -SchedulePath 'sched.yml' -AuthMapPath 'auth.csv' -CatalogPath 'cat.yml' -LeadDays 7 -Now $script:PlanNow
+
+            @($plan).Count | Should -Be 1
+            $plan[0].Status | Should -Be 'Planned'
+            $plan[0].DueNow | Should -BeTrue
+            $plan[0].SelectedVersion | Should -Be '12.2605.1003.210'
+            $plan[0].CatalogEntry | Should -Not -BeNullOrEmpty
+        }
+    }
+
+    It 'Flags NoCatalogEntry when the selected version is absent from the catalog' {
+        InModuleScope AzLocal.UpdateManagement {
+            $script:PlanNow2 = [datetime]'2026-06-11T00:00:00Z'
+
+            Mock Get-AzLocalApplyUpdatesScheduleConfig { [PSCustomObject]@{} }
+            Mock Get-AzLocalSideloadAuthMap {
+                @{ 'acct1' = [PSCustomObject]@{ RemotingTargetFqdn = 'host1.contoso.com'; ImportSharePath = '\\host1\import' } }
+            }
+            Mock Get-AzLocalSideloadCatalog { @() }   # empty catalog
+            Mock ConvertTo-AzLocalUpdateRingKqlFilter { '' }
+            Mock Resolve-AzLocalSideloadTargetPath { '\\host1\import' }
+            Mock Resolve-AzLocalCurrentUpdateRing { [PSCustomObject]@{ AllowedUpdateVersions = @('12.2605.1003.210') } }
+            Mock Get-AzLocalAvailableUpdates {
+                @([PSCustomObject]@{ UpdateState = 'Ready'; UpdateName = 'Solution12'; PackageType = 'Solution'; Version = '12.2605.1003.210' })
+            }
+            Mock Select-AzLocalNextUpdateForCluster {
+                [PSCustomObject]@{
+                    Reason         = 'Selected'
+                    SelectedUpdate = [PSCustomObject]@{ name = 'Solution12'; PackageType = 'Solution'; properties = [PSCustomObject]@{ version = '12.2605.1003.210'; state = 'Ready' } }
+                }
+            }
+            Mock Get-AzLocalApplyUpdatesScheduleNextFirings {
+                @([PSCustomObject]@{ Rings = @('Ring1'); DateUtc = $script:PlanNow2.AddDays(2) })
+            }
+            Mock Invoke-AzResourceGraphQuery {
+                @([PSCustomObject]@{
+                        id             = '/subscriptions/s/clusters/c1'
+                        name           = 'cluster1'
+                        resourceGroup  = 'rg1'
+                        subscriptionId = 's'
+                        tags           = [PSCustomObject]@{ UpdateAuthAccountId = 'acct1'; UpdateRing = 'Ring1' }
+                    })
+            }
+
+            $plan = Resolve-AzLocalSideloadPlan -SchedulePath 'sched.yml' -AuthMapPath 'auth.csv' -CatalogPath 'cat.yml' -LeadDays 7 -Now $script:PlanNow2
+
+            @($plan).Count | Should -Be 1
+            $plan[0].Status | Should -Be 'NoCatalogEntry'
+        }
+    }
+}
+
+Describe 'Sideload (v0.8.7): Invoke-AzLocalSideloadUpdate state machine' {
+
+    It 'Skips a cluster that has no state and is not due (Status != Planned)' {
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalSideloadState { $null }
+            Mock Invoke-SideloadCopyStart { [PSCustomObject]@{ Retries = 0 } }
+
+            $plan = @([PSCustomObject]@{ ClusterName = 'c1'; Status = 'NotDue'; SelectedVersion = '12.0'; Message = 'not yet' })
+            $res = Invoke-AzLocalSideloadUpdate -Plan $plan -StateRoot 'TestDrive:\state' -Confirm:$false
+
+            @($res).Count | Should -Be 1
+            $res[0].Action | Should -Be 'Skip'
+            Assert-MockCalled Invoke-SideloadCopyStart -Times 0 -Scope It
+        }
+    }
+
+    It 'Starts the copy for a due cluster with no existing state' {
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalSideloadState { $null }
+            Mock Invoke-SideloadCopyStart { [PSCustomObject]@{ Retries = 0; MediaFileName = 'media.zip' } }
+
+            $plan = @([PSCustomObject]@{ ClusterName = 'c1'; Status = 'Planned'; SelectedVersion = '12.2605.1003.210'; Message = 'due' })
+            $res = Invoke-AzLocalSideloadUpdate -Plan $plan -StateRoot 'TestDrive:\state' -Confirm:$false
+
+            $res[0].Action | Should -Be 'Start'
+            $res[0].State | Should -Be 'Copying'
+            Assert-MockCalled Invoke-SideloadCopyStart -Times 1 -Scope It
+        }
+    }
+
+    It 'Reports None when the cluster is already Imported' {
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalSideloadState {
+                [PSCustomObject]@{ ClusterName = 'c1'; State = 'Imported'; Version = '12.0'; Message = 'done' }
+            }
+
+            $plan = @([PSCustomObject]@{ ClusterName = 'c1'; Status = 'Planned'; SelectedVersion = '12.0' })
+            $res = Invoke-AzLocalSideloadUpdate -Plan $plan -StateRoot 'TestDrive:\state' -Confirm:$false
+
+            $res[0].Action | Should -Be 'None'
+            $res[0].State | Should -Be 'Imported'
+        }
+    }
+
+    It 'Reports InProgress for a Copying state with a fresh heartbeat' {
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalSideloadState {
+                [PSCustomObject]@{ ClusterName = 'c1'; State = 'Copying'; Version = '12.0'; TotalBytes = [long]100; CopiedBytes = [long]50; Mbps = 42; EtaUtc = '2026-06-11T01:00:00Z'; Retries = 0; Message = 'copying' }
+            }
+            Mock Test-AzLocalSideloadHeartbeatStale { $false }
+
+            $plan = @([PSCustomObject]@{ ClusterName = 'c1'; Status = 'Planned'; SelectedVersion = '12.0' })
+            $res = Invoke-AzLocalSideloadUpdate -Plan $plan -StateRoot 'TestDrive:\state' -Confirm:$false
+
+            $res[0].Action | Should -Be 'InProgress'
+            $res[0].State | Should -Be 'Copying'
+            $res[0].Message | Should -Match '50'
+        }
+    }
+
+    It 'Marks Failed when a Copying heartbeat is stale and retries are exhausted' {
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalSideloadState {
+                [PSCustomObject]@{ ClusterName = 'c1'; State = 'Copying'; Version = '12.0'; Retries = [int]3; Message = '' }
+            }
+            Mock Test-AzLocalSideloadHeartbeatStale { $true }
+            Mock Set-AzLocalSideloadState { }
+
+            $plan = @([PSCustomObject]@{ ClusterName = 'c1'; Status = 'Planned'; SelectedVersion = '12.0' })
+            $res = Invoke-AzLocalSideloadUpdate -Plan $plan -StateRoot 'TestDrive:\state' -MaxRetries 3 -Confirm:$false
+
+            $res[0].Action | Should -Be 'Failed'
+            $res[0].State | Should -Be 'Failed'
+            Assert-MockCalled Set-AzLocalSideloadState -Times 1 -Scope It
+        }
+    }
+
+    It 'Advances a Copied state through the import + gate-flip helper' {
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalSideloadState {
+                [PSCustomObject]@{ ClusterName = 'c1'; State = 'Copied'; Version = '12.0' }
+            }
+            Mock Complete-SideloadImport { [PSCustomObject]@{ State = 'Imported'; Message = 'Imported; UpdateSideloaded=True.' } }
+
+            $plan = @([PSCustomObject]@{ ClusterName = 'c1'; Status = 'Planned'; SelectedVersion = '12.0' })
+            $res = Invoke-AzLocalSideloadUpdate -Plan $plan -StateRoot 'TestDrive:\state' -Confirm:$false
+
+            $res[0].Action | Should -Be 'Import'
+            $res[0].State | Should -Be 'Imported'
+            Assert-MockCalled Complete-SideloadImport -Times 1 -Scope It
+        }
+    }
+
+    It 'Surfaces an Error row when a helper throws' {
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalSideloadState { $null }
+            Mock Invoke-SideloadCopyStart { throw 'media staging failed' }
+
+            $plan = @([PSCustomObject]@{ ClusterName = 'c1'; Status = 'Planned'; SelectedVersion = '12.0' })
+            $res = Invoke-AzLocalSideloadUpdate -Plan $plan -StateRoot 'TestDrive:\state' -Confirm:$false
+
+            $res[0].Action | Should -Be 'Error'
+            $res[0].State | Should -Be 'Failed'
+            $res[0].Message | Should -Match 'media staging failed'
+        }
+    }
+}
+
+Describe 'Sideload (v0.8.7): Export-AzLocalSideloadStatusReport' {
+
+    BeforeEach {
+        $script:SideloadStateRoot = Join-Path $env:TEMP ("azlocal-sideload-state-{0}" -f ([Guid]::NewGuid()))
+        $script:SideloadStateDir = Join-Path $script:SideloadStateRoot 'state'
+        New-Item -ItemType Directory -Path $script:SideloadStateDir -Force | Out-Null
+    }
+
+    AfterEach {
+        Remove-Item -LiteralPath $script:SideloadStateRoot -Recurse -Force -ErrorAction SilentlyContinue
+    }
+
+    It 'Builds a markdown table and JUnit XML from shared state records' {
+        $copying = [PSCustomObject]@{ ClusterName = 'clusterA'; Version = '12.0'; State = 'Copying'; OwningMachine = 'agent1'; TotalBytes = [long]100; CopiedBytes = [long]25; Mbps = 30; EtaUtc = '2026-06-11T02:00:00Z'; Retries = 0; Message = 'in progress' }
+        $imported = [PSCustomObject]@{ ClusterName = 'clusterB'; Version = '12.0'; State = 'Imported'; OwningMachine = 'agent2'; TotalBytes = [long]0; CopiedBytes = [long]0; Mbps = 0; EtaUtc = ''; Retries = 0; Message = 'done' }
+        ($copying | ConvertTo-Json) | Set-Content -LiteralPath (Join-Path $script:SideloadStateDir 'clusterA.json') -Encoding ASCII
+        ($imported | ConvertTo-Json) | Set-Content -LiteralPath (Join-Path $script:SideloadStateDir 'clusterB.json') -Encoding ASCII
+
+        $report = Export-AzLocalSideloadStatusReport -StateRoot $script:SideloadStateRoot
+
+        $report.Markdown | Should -Match '## Sideload status'
+        $report.Markdown | Should -Match 'clusterA'
+        $report.Markdown | Should -Match 'clusterB'
+        $report.JUnitXml | Should -Match '<testsuites'
+        $report.HasFailures | Should -BeFalse
+        @($report.Counts).Count | Should -BeGreaterThan 0
+    }
+
+    It 'Flags HasFailures and a JUnit failure for a Failed state' {
+        $failed = [PSCustomObject]@{ ClusterName = 'clusterC'; Version = '12.0'; State = 'Failed'; OwningMachine = 'agent1'; TotalBytes = [long]0; CopiedBytes = [long]0; Mbps = 0; EtaUtc = ''; Retries = 3; Message = 'copy failed' }
+        ($failed | ConvertTo-Json) | Set-Content -LiteralPath (Join-Path $script:SideloadStateDir 'clusterC.json') -Encoding ASCII
+
+        $report = Export-AzLocalSideloadStatusReport -StateRoot $script:SideloadStateRoot
+
+        $report.HasFailures | Should -BeTrue
+        $report.JUnitXml | Should -Match 'SideloadFailed'
+    }
+
+    It 'Surfaces plan error rows (UnknownAuthAccountId / NoCatalogEntry) in the report' {
+        $planErrors = @(
+            [PSCustomObject]@{ ClusterName = 'clusterD'; Status = 'UnknownAuthAccountId'; Message = 'unknown account' },
+            [PSCustomObject]@{ ClusterName = 'clusterE'; Status = 'NoCatalogEntry'; Message = 'no catalog entry' }
+        )
+
+        $report = Export-AzLocalSideloadStatusReport -StateRoot $script:SideloadStateRoot -Plan $planErrors
+
+        $report.HasFailures | Should -BeTrue
+        $report.Markdown | Should -Match 'Plan warnings / errors'
+        $report.Markdown | Should -Match 'UnknownAuthAccountId'
+        $report.Markdown | Should -Match 'NoCatalogEntry'
+    }
+
+    It 'Writes sideload-status.md and sideload-junit.xml when OutputPath is supplied' {
+        $imported = [PSCustomObject]@{ ClusterName = 'clusterB'; Version = '12.0'; State = 'Imported'; OwningMachine = 'agent2'; TotalBytes = [long]0; CopiedBytes = [long]0; Mbps = 0; EtaUtc = ''; Retries = 0; Message = 'done' }
+        ($imported | ConvertTo-Json) | Set-Content -LiteralPath (Join-Path $script:SideloadStateDir 'clusterB.json') -Encoding ASCII
+        $outDir = Join-Path $script:SideloadStateRoot 'report'
+
+        $null = Export-AzLocalSideloadStatusReport -StateRoot $script:SideloadStateRoot -OutputPath $outDir
+
+        Test-Path -LiteralPath (Join-Path $outDir 'sideload-status.md') | Should -BeTrue
+        Test-Path -LiteralPath (Join-Path $outDir 'sideload-junit.xml') | Should -BeTrue
+    }
+}
+
+Describe 'Sideload (v0.8.7): Add-AzLocalSideloadStepSummary' {
+
+    It 'Calls Export-AzLocalSideloadStatusReport and appends the markdown to the step summary' {
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Export-AzLocalSideloadStatusReport {
+                [PSCustomObject]@{ Markdown = '## Sideload status'; JUnitXml = '<testsuites/>'; Counts = @(); HasFailures = $false }
+            }
+            Mock Add-AzLocalPipelineStepSummary { }
+
+            $report = Add-AzLocalSideloadStepSummary -StateRoot 'TestDrive:\state'
+
+            $report.Markdown | Should -Be '## Sideload status'
+            Assert-MockCalled Export-AzLocalSideloadStatusReport -Times 1 -Scope It
+            Assert-MockCalled Add-AzLocalPipelineStepSummary -Times 1 -Scope It
+        }
+    }
+}
+
+#endregion On-Prem Sideloading Automation (v0.8.7)

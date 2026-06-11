@@ -2,7 +2,7 @@
 
 > ⚠️ **Disclaimer**: This module is **NOT** a Microsoft supported service offering or product. It is provided as example code only, with no warranty or official support. Refer to the [MIT license](https://github.com/NeilBird/Azure-Local/blob/main/LICENSE) for further information.
 
-**Latest Version:** v0.8.6 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.8.6)
+**Latest Version:** v0.8.7 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.8.7)
 
 > 📢 **Renamed in v0.7.3**: this module was previously published as `AzStackHci.ManageUpdates`. The new module name aligns with the Azure Local product name (_Microsoft retired the *Azure Stack HCI* brand in late 2024_). The module GUID is preserved across the rename. If you have the old name installed, run:
 >
@@ -23,7 +23,7 @@ Azure Local REST API specification (includes update management endpoints): https
 **This README (overview + most-recent release notes):**
 
 - [Where to Start](#where-to-start)
-- [What's New in v0.8.6](#whats-new-in-v086)
+- [What's New in v0.8.7](#whats-new-in-v087)
 - [What's New in v0.8.4](#whats-new-in-v084)
 - [Files](#files)
 - [Prerequisites](#prerequisites)
@@ -69,7 +69,7 @@ If you are new to this module, work through these in order from a regular PowerS
 | 5 | Apply the update | [`Start-AzLocalClusterUpdate`](docs/cmdlet-reference.md#start-azlocalclusterupdate) (single cluster or `-ScopeByUpdateRingTag` for a wave) |
 | 6 | Monitor and report | [`Get-AzLocalUpdateRuns`](docs/cmdlet-reference.md#get-azlocalupdateruns), [`Get-AzLocalFleetProgress`](docs/cmdlet-reference.md#get-azlocalfleetprogress), [`New-AzLocalFleetStatusHtmlReport`](docs/cmdlet-reference.md#new-azlocalfleetstatushtmlreport) |
 
-> **For CI/CD?** Skip this table and go straight to [Automation-Pipeline-Examples/README.md](./Automation-Pipeline-Examples/README.md) - it covers OIDC / Managed Identity / Service Principal setup, federated credentials, nine GitHub Actions workflows, and nine Azure DevOps pipelines (the v0.7.90 set includes `Step.7_monitor-updates`, `Step.8_fleet-update-status`, and `Step.9_fleet-health-status`).
+> **For CI/CD?** Skip this table and go straight to [Automation-Pipeline-Examples/README.md](./Automation-Pipeline-Examples/README.md) - it covers OIDC / Managed Identity / Service Principal setup, federated credentials, eleven GitHub Actions workflows, and eleven Azure DevOps pipelines (including the on-prem `sideload-updates` pipeline plus `apply-updates`, `monitor-updates`, `fleet-update-status`, and `fleet-health-status`). Pipeline files are no longer prefixed with `Step.N_` - the in-pipeline display names still carry the `Step.N` ordering, and `Update-AzLocalPipelineExample` migrates any older `Step.N_*.yml` files to the new names automatically while preserving your customizations.
 
 ### Common workflows (function-invocation order)
 
@@ -79,7 +79,7 @@ If you are new to this module, work through these in order from a regular PowerS
 | **Staged wave deployment** | `Get-AzLocalClusterInventory` -> `Set-AzLocalClusterUpdateRingTag` -> `Get-AzLocalClusterUpdateReadiness -ScopeByUpdateRingTag` -> `Start-AzLocalClusterUpdate -ScopeByUpdateRingTag` -> `Get-AzLocalFleetProgress` -> `New-AzLocalFleetStatusHtmlReport` |
 | **Daily fleet status report** | `Get-AzLocalFleetStatusData -AllClusters -IncludeUpdateRuns -IncludeHealthDetails -ExportPath ...` -> `New-AzLocalFleetStatusHtmlReport -StatusData $data -OutputPath ...` |
 | **Daily fleet health audit (v0.7.65)** | `Get-AzLocalFleetHealthFailures -View Summary -ExportPath fleet-health-summary.csv` -> review top failure reasons by cluster impact -> drill into [`Get-AzLocalFleetHealthFailures -View Detail`](docs/cmdlet-reference.md#get-azlocalfleethealthfailures) for per-cluster remediation |
-| **Schedule coverage drift audit (v0.7.65)** | `Test-AzLocalApplyUpdatesScheduleCoverage -View Audit -PipelineYamlPath .\.github\workflows` -> for any `Uncovered` rows, copy the `RequiredCronUTC` value and paste it into `Step.6_apply-updates.yml` -> re-run `-View Audit` to confirm `Covered` -> wire the bundled `Step.3_apply-updates-schedule-audit.yml` pipeline (weekly Mon 05:00 UTC) so future tag drift is caught automatically. Full runbook: [`Automation-Pipeline-Examples/README.md` section 8.3](./Automation-Pipeline-Examples/README.md#83-end-to-end-runbook-apply-updates-schedule-coverage-audit) |
+| **Schedule coverage drift audit (v0.7.65)** | `Test-AzLocalApplyUpdatesScheduleCoverage -View Audit -PipelineYamlPath .\.github\workflows` -> for any `Uncovered` rows, copy the `RequiredCronUTC` value and paste it into `apply-updates.yml` -> re-run `-View Audit` to confirm `Covered` -> wire the bundled `apply-updates-schedule-audit.yml` pipeline (weekly Mon 05:00 UTC) so future tag drift is caught automatically. Full runbook: [`Automation-Pipeline-Examples/README.md` section 8.3](./Automation-Pipeline-Examples/README.md#83-end-to-end-runbook-apply-updates-schedule-coverage-audit) |
 | **Pre-update health gate (CI/CD)** | `Test-AzLocalClusterHealth -BlockingOnly` -> `Test-AzLocalUpdateScheduleAllowed` -> `Test-AzLocalFleetHealthGate` -> proceed only on pass |
 | **Sideloaded payload (v0.7.1)** | Operator sets `UpdateSideloaded=False` -> stage payload out-of-band -> operator flips `UpdateSideloaded=True` -> `Start-AzLocalClusterUpdate` (auto-stamps `UpdateVersionInProgress`) -> `Get-AzLocalUpdateRuns` (auto-resets tags on success) -> `Reset-AzLocalSideloadedTag -Force` only if a tag gets stuck |
 | **Pause / resume long fleet run** | `Stop-AzLocalFleetUpdate -SaveState` -> ... -> `Resume-AzLocalFleetUpdate -StateFilePath ...` |
@@ -87,21 +87,21 @@ If you are new to this module, work through these in order from a regular PowerS
 
 > Most CI/CD pipelines in [Automation-Pipeline-Examples/](Automation-Pipeline-Examples/) are direct implementations of one of these workflows. Start there if you want a copy-pasteable end-to-end pipeline.
 
-## What's New in v0.8.6
+## What's New in v0.8.7
 
-**Step.3 cycle calendar enrichment: per-day Step.6 CRON firing times + per-(ring, date) `UpdateStartWindow` tag-coverage check (>=95% threshold).** Adds two new optional render-time columns to `Get-AzLocalApplyUpdatesScheduleCycleCalendar` and auto-wires them from `Export-AzLocalApplyUpdatesScheduleAudit` so operators can see, in one table: (a) which Step.6 cron firing times will fire on each calendar day, and (b) what fraction of clusters in the ring(s) eligible on that day have an `UpdateStartWindow` tag that actually covers at least one of those firings. **No public API removed; no existing parameter changed; no behavioural change on callers that do NOT supply the new dictionaries.** Same module export count as v0.8.5 (55).
+**On-prem solution-update sideloading automation: new self-hosted Step.6 pipeline + 5 new Public cmdlets + de-numbered pipeline filenames.** Adds an opt-in, off-by-default workflow for Azure Local clusters that cannot pull solution updates from Azure directly. The new Step.6 pipeline (`sideload-updates.yml`) robocopies update media to each cluster's import share, verifies the SHA256 over WinRM, runs `Add-SolutionUpdate`, and flips the `UpdateSideloaded=True` tag so the downstream apply (now Step.7) picks it up. The multi-hour copy runs in a detached Windows Scheduled Task and the pipeline is driven as a re-entrant state machine on a frequent CRON, so no individual run is long-lived. **Module export count grows 55 -> 60.**
 
-1. **New `Get-AzLocalApplyUpdatesScheduleCycleCalendar -CronFiringsByDate`** (`[hashtable]`, keys = `yyyy-MM-dd` UTC, values = `[string[]]` of `HH:mm` UTC firing times). When supplied, the per-day markdown table gains a centered `Ring CRON Start Time (UTC)<br>(Step 6 pipeline)` column between `Date (UTC)` and `Day`. Cell rendering: 0 firings -> `_(none)_`; 1-2 firings -> comma-joined (e.g. `02:00, 22:00`); 3+ firings -> first 2 + `" (+N)"` (e.g. `02:00, 10:00 (+2)`); dead day (`IsDeadDay`) -> `_(none - dead day)_`; missing date key -> blank cell.
-2. **New `Get-AzLocalApplyUpdatesScheduleCycleCalendar -WindowMatchByRingAndDate`** (`[hashtable[string,hashtable]]` keyed first by ring name then by `yyyy-MM-dd` UTC, leaf = `@{ Matching=<int>; Total=<int> }`). When supplied, the per-day table gains a `Tag Start Window Match (>=95%)` column AFTER `Eligible rings`. Each cell lists one line per eligible ring: `` `Ring`: True/False mat/tot (pct%) `` (True iff `Matching/Total >= 0.95`). `_(n/a)_` when a ring has no entry for the date; `_(0 clusters)_` when `Total=0`; `_(n/a - dead day)_` on dead days.
-3. **Pure render-time contract preserved.** `Get-AzLocalApplyUpdatesScheduleCycleCalendar` still does zero Azure / file I/O. Both columns are opt-in; omit either or both and the v0.8.5 column layout is bit-identical.
-4. **`Export-AzLocalApplyUpdatesScheduleAudit` auto-wires both columns.** Cron firings are derived by parsing `Step.6_apply-updates*.yml` from `-PipelineYamlPath` (uses existing `Read-AzLocalApplyUpdatesYamlCrons` + `ConvertFrom-AzLocalCronExpression`; invalid/complex crons degrade gracefully to no firings for that day). The window-match dict is derived when `-ClusterCsvPath` is supplied, by parsing each cluster's `UpdateStartWindow` tag (via `ConvertFrom-AzLocalUpdateWindow`) against each day's cron firings; overnight windows (e.g. `Mon-Sun_22:00-04:00`) match firings that fall in either the late-evening or early-morning portion correctly via a two-case `DayOfWeek` projection.
-5. **95% threshold.** A ring on a given day is True only when `Matching / Total >= 0.95` exact. Below threshold -> False (operators see the actual `mat/tot (pct%)` numbers and can act).
-6. **Failure mode is non-fatal.** Any error in the enrichment block degrades gracefully to a calendar without the new columns (matching v0.8.5 behaviour); a `Write-Warning` surfaces the cause but the Step.3 summary continues to render.
-7. **Pester suite updates**: drift-sync test bumped to `'0.8.6'`. 12 new It blocks under `Describe 'v0.8.6 Apply-Updates Schedule: Get-AzLocalApplyUpdatesScheduleCycleCalendar - CronFiringsByDate and WindowMatchByRingAndDate columns (markdown)'` cover: backwards compat, single-param paths, both-params path with 7-column header, `(+N)` suffix at 3+ firings, `_(none)_` cell, 95% threshold boundary (95/100 -> True, 94/100 -> False), `_(0 clusters)_` rendering, `_(n/a)_` rendering, case-insensitivity on ring + date keys, and three-optional-columns coexistence with `-ClusterRingCounts`. 2 new Export-* spy tests verify the auto-wire path.
+1. **5 new Public cmdlets**: `Update-AzLocalSideloadCatalog`, `Resolve-AzLocalSideloadPlan`, `Invoke-AzLocalSideloadUpdate`, `Export-AzLocalSideloadStatusReport`, `Add-AzLocalSideloadStepSummary`.
+2. **New Step.6 sideload pipeline** (`sideload-updates.yml`, GitHub Actions + Azure DevOps), opt-in via the `SIDELOAD_UPDATES` repository variable. Targets a self-hosted runner (`runs-on: [self-hosted, azlocal-sideload]`) on GitHub / a self-hosted agent pool (`pool: { name, demands: azlocal-sideload }`) on Azure DevOps. Manual dispatch plus a `*/30` CRON poll advances the state machine (Planned -> Copying -> Copied -> Verified -> Imported -> SideloadFlagged). See [Automation-Pipeline-Examples/docs/sideload.md](Automation-Pipeline-Examples/docs/sideload.md) + [sideload-robocopy.md](Automation-Pipeline-Examples/docs/sideload-robocopy.md).
+3. **BREAKING - pipeline filenames de-numbered.** The `Step.N_` filename prefix is removed (e.g. `Step.7_apply-updates.yml` -> `apply-updates.yml`); the in-pipeline `Step.N - ` display names are unchanged. `Update-AzLocalPipelineExample` is now rename-aware: it matches each destination pipeline by a stable logical id (embedded `# AZLOCAL-PIPELINE-ID:` marker, with legacy-filename aliases) and AUTO-RENAMES any older `Step.N_*.yml` to the new name while preserving your `BEGIN/END-AZLOCAL-CUSTOMIZE` CRON edits (emits a `RenamedFrom` result + a required-check warning).
+4. **BREAKING - display-step renumber** to make room for sideload at Step.6: apply-updates 6 -> 7, monitor-updates 7 -> 8, fleet-update-status 8 -> 9, fleet-health-status 9 -> 10.
+5. **Sideload-aware existing steps**: Step.1 inventory can emit the `UpdateAuthAccountId` column (`-IncludeSideloadColumns`, auto-enabled from `SIDELOAD_UPDATES`); Step.2 tag management can set `UpdateAuthAccountId` from CSV; Step.3 advisor can emit a recommended sideload CRON (apply window minus `SIDELOAD_LEAD_DAYS`). Byte-identical output when sideload is off.
+6. **Fixed**: the in-flight monitor "Current Step" column always showed the top-level wrapper step ("Start update"). `Format-AzLocalUpdateRun` and `Get-AzLocalFleetStatusData` now walk to the deepest active step (`Get-DeepestActiveStep`), matching the standard update-progress output.
+7. **BREAKING - all operator config relocated to a repo-root `config/` folder.** Every operator-authored config file - `ClusterUpdateRings.csv`, `apply-updates-schedule.yml`, `sideload-auth-map.csv`, `sideload-catalog.yml` - now lives in a single `config/` folder at the repo root, with the **identical path on GitHub Actions and Azure DevOps**. The starter `apply-updates-schedule.yml` moves here from its v0.7.92 location (`.github/` / repo root), and every pipeline default (`APPLY_UPDATES_SCHEDULE_PATH`, `SIDELOAD_AUTH_MAP_PATH`, `SIDELOAD_CATALOG_PATH`, ring-CSV paths) now points at `config/`. `Copy-AzLocalPipelineExample` seeds these starters into `config/` (never overwriting); `Update-AzLocalPipelineExample` refreshes only the pipeline YAMLs and leaves `config/` untouched.
 
-`GENERATED_AGAINST_MODULE_VERSION` bumped from `0.8.5` to `0.8.6` across all 20 bundled `Step.{0..9}.yml` templates.
+`GENERATED_AGAINST_MODULE_VERSION` bumped from `0.8.6` to `0.8.7` across all bundled pipeline templates.
 
-See [CHANGELOG.md](CHANGELOG.md#086---2026-06-10) for the full v0.8.6 entry. See [CHANGELOG.md](CHANGELOG.md#085---2026-06-09) for the v0.8.5 entry.
+See [CHANGELOG.md](CHANGELOG.md#087---2026-06-11) for the full v0.8.7 entry. See [CHANGELOG.md](CHANGELOG.md#086---2026-06-10) for the v0.8.6 entry.
 
 ## Files
 
@@ -221,7 +221,7 @@ Copy-AzLocalPipelineExample -Destination C:\repos\my-fleet -Platform GitHub
 
 The function prints a short "next steps" summary pointing at the copied README and the platform-specific YAML folder. See [`Automation-Pipeline-Examples/README.md`](Automation-Pipeline-Examples/README.md) for the full step-by-step setup guide.
 
-> 🔄 **Refreshing pipelines after a module upgrade?** Use `Update-AzLocalPipelineExample` instead of `Copy-AzLocalPipelineExample`. It is a marker-aware merge that refreshes everything **outside** the `# BEGIN-AZLOCAL-CUSTOMIZE:<region>` / `# END-AZLOCAL-CUSTOMIZE:<region>` blocks in each YAML and **preserves** everything inside them - so your custom cron schedules (`schedule-triggers`) and ITSM secret bindings (`itsm-secrets` in Step.6) survive the upgrade.
+> 🔄 **Refreshing pipelines after a module upgrade?** Use `Update-AzLocalPipelineExample` instead of `Copy-AzLocalPipelineExample`. It is a marker-aware merge that refreshes everything **outside** the `# BEGIN-AZLOCAL-CUSTOMIZE:<region>` / `# END-AZLOCAL-CUSTOMIZE:<region>` blocks in each YAML and **preserves** everything inside them - so your custom cron schedules (`schedule-triggers`) and ITSM secret bindings (`itsm-secrets` in Step.7) survive the upgrade.
 >
 > ```powershell
 > # Preview what would change
@@ -531,7 +531,7 @@ New-AzLocalFleetStatusHtmlReport `
     -IncludeHealthDetails -IncludeUpdateRuns
 ```
 
-> 💡 **CI/CD**: this same assess -> remediate -> apply flow is wired into the pipeline examples under `Automation-Pipeline-Examples/`: see the `Step.5_assess-update-readiness.yml` pipeline (report-only) and the `check-readiness` job inside `Step.6_apply-updates.yml`.
+> 💡 **CI/CD**: this same assess -> remediate -> apply flow is wired into the pipeline examples under `Automation-Pipeline-Examples/`: see the `assess-update-readiness.yml` pipeline (report-only) and the `check-readiness` job inside `apply-updates.yml`.
 
 ## Available Functions
 
@@ -546,7 +546,7 @@ The module exports **36 cmdlets**. Full detail (parameters, ARM API surface, RBA
 | **Fleet reads** | Daily fleet status reports, fleet health audits, version distribution | `Get-AzLocalFleetStatusData`, `New-AzLocalFleetStatusHtmlReport`, `Get-AzLocalFleetHealthOverview`, `Get-AzLocalFleetHealthFailures`, `Get-AzLocalFleetProgress` |
 | **Fleet gates** | Schedule coverage audit, fleet-wide health gate before a wave | `Test-AzLocalApplyUpdatesScheduleCoverage`, `Test-AzLocalFleetHealthGate`, `Test-AzLocalUpdateScheduleAllowed` |
 | **Fleet writes** | Wave-scoped update launcher with pause/resume state file | `Invoke-AzLocalFleetOperation`, `Stop-AzLocalFleetUpdate`, `Resume-AzLocalFleetUpdate`, `Export-AzLocalFleetState` |
-| **Pipeline support** | Refresh bundled `Step.*.yml` workflow templates while preserving operator edits | `Update-AzLocalPipelineExample` |
+| **Pipeline support** | Refresh bundled `*.yml` workflow templates while preserving operator edits | `Update-AzLocalPipelineExample` |
 | **Diagnostics** | Resolve effective ring for a cluster, latest solution version from the public catalog | `Resolve-AzLocalCurrentUpdateRing`, `Get-AzLocalLatestSolutionVersion`, `Get-AzLocalUpdateRunFailures` |
 
 Full signatures, ARM endpoints, and worked examples: **[docs/cmdlet-reference.md](docs/cmdlet-reference.md)**.
@@ -562,7 +562,7 @@ The module's gating cmdlets (`Get-AzLocalClusterUpdateReadiness`, `Test-AzLocalC
 
 Most common issues fall into one of these buckets:
 
-- **`az login` succeeds but `Get-AzLocalClusterInventory` returns nothing** - the identity has tenant-level `Reader` but not subscription `Reader` on the subscriptions where clusters live. Run the **`Step.0_authentication-test`** pipeline to enumerate the subscriptions the identity actually sees.
+- **`az login` succeeds but `Get-AzLocalClusterInventory` returns nothing** - the identity has tenant-level `Reader` but not subscription `Reader` on the subscriptions where clusters live. Run the **`authentication-test`** pipeline to enumerate the subscriptions the identity actually sees.
 - **`Start-AzLocalClusterUpdate` returns `Unauthorized`** - the identity has `Azure Stack HCI Reader` instead of `Azure Stack HCI Administrator`. See [docs/rbac.md](docs/rbac.md).
 - **`Get-AzLocalFleetHealthOverview` returns `ParserFailure: token=<EOF>`** - the underlying ARG query exceeded the `az graph query -q` Windows argument-truncation threshold (~2.8 KB). Fixed in v0.7.74; refresh your pipeline pins to v0.7.74+.
 - **`Test-AzLocalClusterHealth` reports duplicate findings** - ARM upstream sometimes emits byte-identical `healthCheckResult` rows; fixed in v0.7.76 via row-tuple dedup.
@@ -580,7 +580,13 @@ This code is provided as-is for educational and reference purposes.
 
 The full What's-New history (v0.7.81 and earlier) has moved to [docs/release-history.md](docs/release-history.md).
 
-The most recent release notes for **v0.8.6** stay above under [`What's New in v0.8.6`](#whats-new-in-v086).
+The most recent release notes for **v0.8.7** stay above under [`What's New in v0.8.7`](#whats-new-in-v087).
+
+### What's New in v0.8.6
+
+**Step.3 cycle calendar enrichment: per-day Step.6 CRON firing times + per-(ring, date) `UpdateStartWindow` tag-coverage check (>=95% threshold).** Adds two opt-in render-time columns to `Get-AzLocalApplyUpdatesScheduleCycleCalendar` (auto-wired from `Export-AzLocalApplyUpdatesScheduleAudit`) so operators see in one table which Step.6 cron firing times fire on each calendar day and what fraction of eligible clusters have an `UpdateStartWindow` tag that covers a firing. Also fixes six v0.8.5 thin-YAML port regressions (Step.0/3/4/6/9) and adds Pester static-audit guards. Same module export count as v0.8.5 (55).
+
+See [CHANGELOG.md](CHANGELOG.md#086---2026-06-10) for the full v0.8.6 entry.
 
 ### What's New in v0.8.4
 

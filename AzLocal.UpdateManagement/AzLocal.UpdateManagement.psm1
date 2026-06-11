@@ -151,7 +151,7 @@ Set-StrictMode -Version 1.0
 # bumps to one but not the other are caught before release. Two consumers:
 #   - Start-AzLocalClusterUpdate emits this in the run log header.
 #   - Get-AzLocalFleetStatusData stamps it into exported fleet-state JSON.
-$script:ModuleVersion = '0.8.6'
+$script:ModuleVersion = '0.8.7'
 $script:DefaultApiVersion = '2025-10-01'
 $script:DefaultLogFolder = Join-Path -Path $env:ProgramData -ChildPath 'AzLocal.UpdateManagement'
 
@@ -218,11 +218,17 @@ $script:UpdateSideloadedTagName = 'UpdateSideloaded'
 
 $script:UpdateVersionInProgressTagName = 'UpdateVersionInProgress'
 
+# v0.8.7: numeric account id (1-3 digits, e.g. 001) that maps a cluster to a
+# row in the sideload auth-map CSV (Key Vault + remoting settings) used by the
+# on-prem solution-update sideloading automation. Written/exported by Step.1
+# and Step.2 only when SIDELOAD_UPDATES is enabled; absent otherwise.
+$script:UpdateAuthAccountIdTagName = 'UpdateAuthAccountId'
+
 # Current apply-updates-schedule.yml schema version produced + consumed by
 # this module. Incremented when a non-additive change to the schedule file
-# format ships. Customer files on a LOWER version are auto-migrated by
-# Update-AzLocalPipelineExample via the per-hop recipes registered in
-# Private/Convert-AzLocalScheduleSchemaVersion.ps1. Customer files on a
+# format ships. Customer files on a LOWER version are migrated by
+# Update-AzLocalApplyUpdatesScheduleConfig via the per-hop recipes registered
+# in Private/Convert-AzLocalScheduleSchemaVersion.ps1. Customer files on a
 # HIGHER version cause the migrator to refuse with a remediation message
 # pointing at PSGallery.
 #
@@ -234,6 +240,17 @@ $script:UpdateVersionInProgressTagName = 'UpdateVersionInProgress'
 # Ready update' behaviour. v1 files remain readable; the additive field is
 # silently absent.
 $script:ScheduleSchemaCurrentVersion = 2
+
+# Current sideload-catalog.yml schema version produced + consumed by this
+# module (v0.8.7 on-prem sideloading automation). Mirrors the schedule schema
+# framework: customer catalog files on a LOWER version are migrated by
+# Update-AzLocalSideloadCatalog -SchemaMigrate via the per-hop recipes
+# registered in Private/Convert-AzLocalSideloadCatalogSchemaVersion.ps1.
+# Get-AzLocalSideloadCatalog refuses to read a catalog on a HIGHER version
+# (it points the operator at PSGallery). The recipe table ships EMPTY at v1
+# - the framework is in place so a future non-additive catalog format change
+# (e.g. v1 -> v2) is a small, comment-preserving, idempotent recipe addition.
+$script:SideloadCatalogSchemaCurrentVersion = 1
 
 $script:DayMap = [ordered]@{
     'Mon' = [DayOfWeek]::Monday
@@ -343,5 +360,11 @@ Export-ModuleMember -Function @(
     'Invoke-AzLocalReadinessGatedClusterUpdate',
     'Add-AzLocalApplyUpdatesStepSummary',
     'Add-AzLocalNoReadyClustersStepSummary',
-    'Invoke-AzLocalItsmTicketingFromArtifact'
+    'Invoke-AzLocalItsmTicketingFromArtifact',
+    # On-prem solution-update sideloading automation (v0.8.7)
+    'Update-AzLocalSideloadCatalog',
+    'Resolve-AzLocalSideloadPlan',
+    'Invoke-AzLocalSideloadUpdate',
+    'Export-AzLocalSideloadStatusReport',
+    'Add-AzLocalSideloadStepSummary'
 )

@@ -355,10 +355,10 @@ function Export-AzLocalClusterUpdateReadinessReport {
 
     # 2. Action banner
     if ($notReady -gt 0 -or $clustersWithCritical -gt 0) {
-        [void]$md.Add("> **Action required**: $notReady cluster(s) not ready and/or $clustersWithCritical cluster(s) with Critical health failures. Review the **Not-Ready** and **Critical-health** sections below first; the CSV artifacts in ``azlocal-step.5-readiness-assessment-report_*`` carry the full per-finding detail. Remediate (hardware vendor SBE / firmware / cluster health) before or alongside the next apply-updates run. **The healthy clusters are safe to proceed** - Step.6_apply-updates.yml is per-cluster scoped.")
+        [void]$md.Add("> **Action required**: $notReady cluster(s) not ready and/or $clustersWithCritical cluster(s) with Critical health failures. Review the **Not-Ready** and **Critical-health** sections below first; the CSV artifacts in ``azlocal-step.5-readiness-assessment-report_*`` carry the full per-finding detail. Remediate (hardware vendor SBE / firmware / cluster health) before or alongside the next apply-updates run. **The healthy clusters are safe to proceed** - Step.7_apply-updates.yml is per-cluster scoped.")
     }
     else {
-        [void]$md.Add('> **All clear**: every cluster in scope is ready for update. Safe to proceed with Step.6_apply-updates.yml for this ring.')
+        [void]$md.Add('> **All clear**: every cluster in scope is ready for update. Safe to proceed with Step.7_apply-updates.yml for this ring.')
     }
     [void]$md.Add('')
 
@@ -396,7 +396,7 @@ function Export-AzLocalClusterUpdateReadinessReport {
     if ($criticalRows.Count -gt 0) {
         [void]$md.Add('### Critical-health clusters')
         [void]$md.Add('')
-        [void]$md.Add('_Cross-link: see **Step.4_fleet-connectivity-status** for connectivity-class failures and **Step.9_fleet-health-status** for the broader Critical/Warning catalog._')
+        [void]$md.Add('_Cross-link: see **Step.4_fleet-connectivity-status** for connectivity-class failures and **Step.10_fleet-health-status** for the broader Critical/Warning catalog._')
         [void]$md.Add('')
         [void]$md.Add('| Cluster | UpdateRing | Health state | Critical | Warning |')
         [void]$md.Add('|---------|------------|--------------|----------|---------|')
@@ -448,9 +448,9 @@ function Export-AzLocalClusterUpdateReadinessReport {
     [void]$md.Add('### Cross-link to other pipelines')
     [void]$md.Add('')
     [void]$md.Add('- **Step.4_fleet-connectivity-status** - root-cause Disconnected / Offline / partial-connectivity findings on the Not-Ready and Critical-health rows above.')
-    [void]$md.Add('- **Step.6_apply-updates** - apply updates to the Ready clusters in this ring (manual workflow_dispatch, or wait for the scheduled cron firing).')
-    [void]$md.Add('- **Step.7_monitor-updates** - tail in-flight runs once Step.6 has started (auto-trigger on Step.6 completion, or manual).')
-    [void]$md.Add('- **Step.9_fleet-health-status** - broader Critical / Warning health catalog across the whole fleet (not just blocking-only).')
+    [void]$md.Add('- **Step.7_apply-updates** - apply updates to the Ready clusters in this ring (manual workflow_dispatch, or wait for the scheduled cron firing).')
+    [void]$md.Add('- **Step.8_monitor-updates** - tail in-flight runs once Step.7 has started (auto-trigger on Step.7 completion, or manual).')
+    [void]$md.Add('- **Step.10_fleet-health-status** - broader Critical / Warning health catalog across the whole fleet (not just blocking-only).')
     [void]$md.Add('')
     [void]$md.Add('_Note: the **Update Readiness Assessment** entry in the Checks tab is the merged combined view; the [JUnit Debug] entries are diagnostic mirrors for CI/test tooling._')
 

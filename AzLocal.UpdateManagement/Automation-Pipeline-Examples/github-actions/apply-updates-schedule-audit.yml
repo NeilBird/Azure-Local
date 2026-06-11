@@ -1,3 +1,4 @@
+# AZLOCAL-PIPELINE-ID: apply-updates-schedule-audit
 # Apply-Updates Schedule Coverage Audit
 # This workflow runs the read-only Test-AzLocalApplyUpdatesScheduleCoverage advisor
 # weekly to detect drift between the cron schedule(s) in your apply-updates pipeline
@@ -5,13 +6,13 @@
 #
 # WHY THIS PIPELINE EXISTS
 # ------------------------
-# Step.6_apply-updates.yml ships with NO default schedule (workflow_dispatch only) on purpose,
+# Step.7_apply-updates.yml ships with NO default schedule (workflow_dispatch only) on purpose,
 # so customers must consciously choose when updates fire. After you have configured
-# UpdateStartWindow tags on your clusters and added cron entries to Step.6_apply-updates.yml, this
+# UpdateStartWindow tags on your clusters and added cron entries to Step.7_apply-updates.yml, this
 # pipeline is the safety net that catches:
-#   - a new ring tagged with UpdateStartWindow that no cron in Step.6_apply-updates.yml will reach
+#   - a new ring tagged with UpdateStartWindow that no cron in Step.7_apply-updates.yml will reach
 #   - an UpdateStartWindow tag value that fails to parse (typo / wrong syntax)
-#   - Step.6_apply-updates.yml cron entries that the advisor cannot reason about
+#   - Step.7_apply-updates.yml cron entries that the advisor cannot reason about
 #     (DayOfMonth restrictions, step values) so you can audit them manually
 #
 # REPORTS GENERATED
@@ -46,13 +47,13 @@ on:
   workflow_dispatch:
     inputs:
       pipeline_path:
-        description: 'Path (file or folder) to Step.6_apply-updates.yml to audit, repo-relative. Required so the Recommend view can diff its proposed crons against what is already present in Step.6 and only emit a snippet for the truly missing entries. Default `.github/workflows` matches the standard GitHub Actions consumer layout where you paste the bundled `Step.6_apply-updates.yml` sample.'
+        description: 'Path (file or folder) to Step.7_apply-updates.yml to audit, repo-relative. Required so the Recommend view can diff its proposed crons against what is already present in Step.7 and only emit a snippet for the truly missing entries. Default `.github/workflows` matches the standard GitHub Actions consumer layout where you paste the bundled `Step.7_apply-updates.yml` sample.'
         required: true
         default: '.github/workflows'
       schedule_path:
         description: 'Path to apply-updates-schedule.yml. When set, the audit also reports RingMissingFromSchedule (fleet ring with no schedule row) and RingOrphanedInSchedule (schedule ring no cluster carries). Leave empty to skip the schedule-file two-way diff.'
         required: false
-        default: '.github/apply-updates-schedule.yml'
+        default: 'config/apply-updates-schedule.yml'
       lead_time_minutes:
         description: 'Minutes before UpdateStartWindow opens that the pipeline should fire (0-60). Default 5.'
         required: false
@@ -95,7 +96,7 @@ env:
   # this to the version actually installed and to the latest on PSGallery, and emits a
   # ::notice annotation if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.8.6'
+  GENERATED_AGAINST_MODULE_VERSION: '0.8.7'
   REQUIRED_MODULE_VERSION: ${{ github.event.inputs.module_version || vars.REQUIRED_MODULE_VERSION || '' }}
   # v0.8.4 - opt this workflow into Node.js 24 for all JavaScript actions
   # (actions/checkout, actions/download-artifact, actions/upload-artifact,
@@ -201,13 +202,17 @@ jobs:
       id: audit
       env:
         INPUT_PIPELINE_PATH:     ${{ github.event.inputs.pipeline_path || '.github/workflows' }}
-        INPUT_SCHEDULE_PATH:     ${{ github.event.inputs.schedule_path || '.github/apply-updates-schedule.yml' }}
+        INPUT_SCHEDULE_PATH:     ${{ github.event.inputs.schedule_path || 'config/apply-updates-schedule.yml' }}
         INPUT_LEAD_TIME_MINUTES: ${{ github.event.inputs.lead_time_minutes || '5' }}
         INPUT_FIRES_PER_WINDOW:  ${{ github.event.inputs.fires_per_window || '2' }}
         INPUT_INCLUDE_UNTAGGED:  ${{ github.event.inputs.include_untagged || 'false' }}
         INPUT_CLUSTER_CSV_PATH:  ${{ github.event.inputs.cluster_csv_path || 'config/ClusterUpdateRings.csv' }}
         INPUT_DEBUG:             ${{ github.event.inputs.debug || 'false' }}
         INSTALLED_MODULE_VERSION: ${{ steps.module-version.outputs.installed_module_version }}
+        # v0.8.7 sideload advisor (opt-in). When SIDELOAD_UPDATES=true the audit
+        # appends a "Recommended sideload schedule" section. Inert when unset/false.
+        SIDELOAD_UPDATES:        ${{ vars.SIDELOAD_UPDATES || 'false' }}
+        SIDELOAD_LEAD_DAYS:      ${{ vars.SIDELOAD_LEAD_DAYS || '7' }}
       run: |
         $ErrorActionPreference = 'Stop'
         Import-Module AzLocal.UpdateManagement -Force
