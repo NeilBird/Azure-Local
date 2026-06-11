@@ -2,7 +2,7 @@
 
 > ⚠️ **Disclaimer**: This module is **NOT** a Microsoft supported service offering or product. It is provided as example code only, with no warranty or official support. Refer to the [MIT license](https://github.com/NeilBird/Azure-Local/blob/main/LICENSE) for further information.
 
-**Latest Version:** v0.8.72 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.8.72)
+**Latest Version:** v0.8.73 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.8.73)
 
 > 📢 **Renamed in v0.7.3**: this module was previously published as `AzStackHci.ManageUpdates`. The new module name aligns with the Azure Local product name (_Microsoft retired the *Azure Stack HCI* brand in late 2024_). The module GUID is preserved across the rename. If you have the old name installed, run:
 >
@@ -23,9 +23,7 @@ Azure Local REST API specification (includes update management endpoints): https
 **This README (overview + most-recent release notes):**
 
 - [Where to Start](#where-to-start)
-- [What's New in v0.8.72](#whats-new-in-v0872)
-- [What's New in v0.8.7](#whats-new-in-v087)
-- [What's New in v0.8.4](#whats-new-in-v084)
+- [What's New in v0.8.73](#whats-new-in-v0873)
 - [Files](#files)
 - [Prerequisites](#prerequisites)
 - [RBAC Requirements](#rbac-requirements) (summary; full reference in [docs/rbac.md](docs/rbac.md))
@@ -88,16 +86,16 @@ If you are new to this module, work through these in order from a regular PowerS
 
 > Most CI/CD pipelines in [Automation-Pipeline-Examples/](Automation-Pipeline-Examples/) are direct implementations of one of these workflows. Start there if you want a copy-pasteable end-to-end pipeline.
 
-## What's New in v0.8.72
+## What's New in v0.8.73
 
-**Patch release: pipeline-template polish only.** Moves the `apply-updates.yml` schedule-file author guidance out of the customise marker so corrections reach already-deployed consumers, and zero-pads single-digit step numbers in pipeline display names so the GitHub Actions sidebar / Azure DevOps pipelines list sort in execution order. No public API or export-count change (still 60).
+**Cycle-calendar refinement.** The Step.3 apply-updates schedule audit now shows the per-ring cluster count INLINE in the "Eligible rings" column (instead of a separate column), and the Step.3 pipeline render path actually populates those counts. No public API or export-count change (still 60).
 
-1. **Fixed**: `apply-updates.yml` (GitHub Actions + Azure DevOps) - the schedule-file author guidance was trapped INSIDE the `# BEGIN/END-AZLOCAL-CUSTOMIZE:schedule-triggers` block. `Update-AzLocalPipelineExample` preserves the marker body verbatim from the consumer's file, so corrections to that guidance (e.g. the v0.8.71 `.github` -> `config` schedule-path fix) could never reach an already-deployed consumer. All guidance is now ABOVE the marker; the marker body holds only the trigger directive (a placeholder comment on GitHub, `trigger: none` on Azure DevOps).
-2. **Changed (display only)**: single-digit pipeline step numbers zero-padded to two digits in all display names / titles - GitHub Actions workflow `name:` fields, Azure DevOps `name:` / stage `displayName:` labels, and the `# Step.N - ` header comments (`Step.0` -> `Step.00` ... `Step.9` -> `Step.09`; `Step.10` unchanged). The GitHub Actions sidebar and Azure DevOps pipelines list sort alphabetically by display name, so `Step.10` previously sorted between `Step.1` and `Step.2`. Functional identifiers (artifact names `azlocal-step.N-*`) and cross-reference prose are unchanged.
+1. **Changed**: `Get-AzLocalApplyUpdatesScheduleCycleCalendar` no longer adds a separate "Clusters in ring(s)" column when `-ClusterRingCounts` is supplied. Instead the per-day calendar relabels the header "Eligible rings" -> "Eligible rings (cluster count)" and appends each ring's count inline to its token, e.g. `` `Prod` (9), `Canary` (3) ``. Dead days still render `_(none - dead day)_`. The per-ring projection table (with `-IncludePerRingSummary`) keeps its separate "Cluster count" column.
+2. **Fixed**: `Export-AzLocalApplyUpdatesScheduleAudit` (the cmdlet the Step.3 `apply-updates-schedule-audit` pipeline calls) never forwarded `-ClusterRingCounts` to the cycle-calendar cmdlet, so the cluster-count enrichment was silently absent from every rendered Step.3 summary. The Export wrapper now builds a ring -> tagged-cluster-count map from the supplied cluster CSV and forwards it, so the inline counts appear whenever a `-ClusterCsvPath` is provided.
 
-`GENERATED_AGAINST_MODULE_VERSION` bumped from `0.8.71` to `0.8.72` across all bundled pipeline templates.
+`GENERATED_AGAINST_MODULE_VERSION` bumped from `0.8.72` to `0.8.73` across all bundled pipeline templates.
 
-See [CHANGELOG.md](CHANGELOG.md#0872---2026-06-11) for the full v0.8.72 entry. See [`What's New in v0.8.71`](#whats-new-in-v0871) in the Release History section below for the previous release.
+See [CHANGELOG.md](CHANGELOG.md#0873---2026-06-11) for the full v0.8.73 entry. See [`What's New in v0.8.72`](#whats-new-in-v0872) in the Release History section below for the previous release.
 
 ## Files
 
@@ -576,7 +574,13 @@ This code is provided as-is for educational and reference purposes.
 
 The full What's-New history (v0.7.81 and earlier) has moved to [docs/release-history.md](docs/release-history.md).
 
-The most recent release notes for **v0.8.72** stay above under [`What's New in v0.8.72`](#whats-new-in-v0872).
+The most recent release notes for **v0.8.73** stay above under [`What's New in v0.8.73`](#whats-new-in-v0873).
+
+### What's New in v0.8.72
+
+**Patch release: pipeline-template polish only.** Moves the `apply-updates.yml` schedule-file author guidance out of the customise marker so corrections reach already-deployed consumers, and zero-pads single-digit step numbers in pipeline display names so the GitHub Actions sidebar / Azure DevOps pipelines list sort in execution order. No public API or export-count change (still 60). `apply-updates.yml` author guidance was trapped inside the `# BEGIN/END-AZLOCAL-CUSTOMIZE:schedule-triggers` block (which `Update-AzLocalPipelineExample` preserves verbatim from the consumer's file), so corrections such as the v0.8.71 `.github` -> `config` schedule-path fix could never reach an already-deployed consumer; all guidance is now ABOVE the marker. Single-digit pipeline step numbers were zero-padded to two digits across all display names / titles (`Step.0` -> `Step.00` ... `Step.9` -> `Step.09`; `Step.10` unchanged) so the GitHub Actions sidebar and Azure DevOps pipelines list sort in execution order.
+
+See [CHANGELOG.md](CHANGELOG.md#0872---2026-06-11) for the full v0.8.72 entry.
 
 ### What's New in v0.8.71
 

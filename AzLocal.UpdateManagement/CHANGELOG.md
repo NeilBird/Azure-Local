@@ -5,6 +5,19 @@ All notable changes to the AzLocal.UpdateManagement module (renamed from AzStack
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.73] - 2026-06-11
+
+Cycle-calendar refinement. The Step.3 apply-updates schedule audit now shows the per-ring cluster count INLINE in the "Eligible rings" column instead of as a separate column, and the Step.3 pipeline render path actually populates those counts (previously the counts never reached the rendered calendar). No public API or export-count change (still 60).
+
+### Changed
+
+- **Cluster counts folded inline into the "Eligible rings" column** - `Get-AzLocalApplyUpdatesScheduleCycleCalendar` no longer adds a separate "Clusters in ring(s)" column when `-ClusterRingCounts` is supplied. Instead the per-day calendar relabels the header "Eligible rings" -> "Eligible rings (cluster count)" and appends each ring's count inline to its token, e.g. `` `Prod` (9), `Canary` (3) ``. Dead days still render `_(none - dead day)_`. The per-ring projection table (when `-IncludePerRingSummary` is set) keeps its separate "Cluster count" column unchanged.
+- All bundled pipeline templates bump `GENERATED_AGAINST_MODULE_VERSION` from `'0.8.72'` to `'0.8.73'`.
+
+### Fixed
+
+- **Step.3 cycle calendar never showed cluster counts** - `Export-AzLocalApplyUpdatesScheduleAudit` (the cmdlet the Step.3 `apply-updates-schedule-audit` pipeline calls) never forwarded `-ClusterRingCounts` to the cycle-calendar cmdlet, so the cluster-count enrichment was silently absent from every rendered Step.3 summary even though the cmdlet supported it. The Export wrapper now builds a ring -> tagged-cluster-count map from the supplied cluster CSV and forwards it, so the inline counts appear whenever a `-ClusterCsvPath` is provided.
+
 ## [0.8.72] - 2026-06-11
 
 Patch release. Pipeline-template polish only - no module code, public API, or export-count change (still 60). Moves the `apply-updates.yml` schedule-file author guidance out of the customise marker so it can be refreshed on already-deployed consumers, and zero-pads single-digit step numbers in pipeline display names so the GitHub Actions sidebar and Azure DevOps pipelines list sort in execution order.
