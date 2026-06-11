@@ -411,7 +411,7 @@ function Copy-AzLocalPipelineExample {
     #    file - the existing file is always preserved and reported in
     #    the Next-steps summary. Safe to land alongside Step.6 because
     #    Step.6 ships with every `cron:` line commented out (verified
-    #    in github-actions/Step.6_apply-updates.yml).
+    #    in github-actions/Step.7_apply-updates.yml).
     # ------------------------------------------------------------------
     $scheduleSrc        = Join-Path -Path $sourceRoot -ChildPath 'apply-updates-schedule.example.yml'
     $scheduleDest       = $null
@@ -550,7 +550,7 @@ function Copy-AzLocalPipelineExample {
             Write-Host "  4. Each pipeline references service connection 'AzureLocal-ServiceConnection' - either name yours to match or edit 'azureSubscription:' in each YAML."
             Write-Host "  5. SCHEDULED Step.6 (apply-updates) requires apply-updates-schedule.yml:" -ForegroundColor Yellow
             foreach ($line in $scheduleHintLines) { Write-Host $line }
-            Write-Host "     Step.6 reads APPLY_UPDATES_SCHEDULE_PATH (default './apply-updates-schedule.yml' at repo root). Override the variable in the pipeline if you keep the schedule elsewhere. See section 5.2 step 6 + section 8 of the README."
+            Write-Host "     Step.7 reads APPLY_UPDATES_SCHEDULE_PATH (default './apply-updates-schedule.yml' at repo root). Override the variable in the pipeline if you keep the schedule elsewhere. See section 5.2 step 6 + section 8 of the README."
             Write-Host "  6. Optional: enable the ITSM connector by setting 'raise_itsm_ticket=true' (setup in ITSM/README.md)."
         }
         default {

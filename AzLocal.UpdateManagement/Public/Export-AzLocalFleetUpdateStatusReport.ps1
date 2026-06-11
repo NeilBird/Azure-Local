@@ -148,7 +148,7 @@ function Export-AzLocalFleetUpdateStatusReport {
         # snapshot object for downstream PowerShell use.
 
     .EXAMPLE
-        # Used by Step.8_fleet-update-status.yml (GitHub Actions + Azure DevOps):
+        # Used by Step.9_fleet-update-status.yml (GitHub Actions + Azure DevOps):
         Export-AzLocalFleetUpdateStatusReport `
             -Scope $env:INPUT_SCOPE `
             -UpdateRing $env:INPUT_UPDATE_RING `

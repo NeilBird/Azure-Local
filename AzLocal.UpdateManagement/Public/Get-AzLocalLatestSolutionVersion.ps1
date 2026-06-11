@@ -61,7 +61,7 @@ function Get-AzLocalLatestSolutionVersion {
         if ($manifest.SupportedYYMMs -contains $clusterYymm) { 'Supported' } else { 'Unsupported' }
 
     .EXAMPLE
-        # Used by Step.8_fleet-update-status pipeline (Step.7 prior to v0.7.90 renumber);
+        # Used by Step.9_fleet-update-status pipeline (Step.8 before the v0.8.7 sideload renumber; Step.7 before v0.7.90);
         # falls back to fleet-observed top-6 if the manifest is unreachable
         try {
             $m = Get-AzLocalLatestSolutionVersion -ErrorAction Stop

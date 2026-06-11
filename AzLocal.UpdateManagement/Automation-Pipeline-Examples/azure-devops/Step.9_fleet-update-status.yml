@@ -1,4 +1,4 @@
-# Step.8 - Fleet Update Status Monitoring Pipeline
+# Step.9 - Fleet Update Status Monitoring Pipeline
 # This pipeline monitors update status across all Azure Local clusters and generates reports
 #
 # USE CASES:
@@ -65,7 +65,7 @@ parameters:
   # Failed update run reported by the 'Update Run History and Error Details'
   # testsuite (and any failed AzureLocalFleetUpdateStatus row). Default is false
   # so existing schedules stay byte-identical until you opt in. The connector
-  # reads the JUnit file Step.6 already produces (readiness-status.xml) and
+  # reads the JUnit file Step.7 already produces (readiness-status.xml) and
   # the trigger matrix in ./.itsm/azurelocal-itsm.yml.
   - name: raiseItsmTicket
     displayName: 'Open ITSM tickets (ServiceNow) for fleet-update-status failures'
@@ -203,7 +203,7 @@ stages:
       condition: always()
       inputs:
         PathtoPublish: '$(reportsPath)'
-        ArtifactName: 'azlocal-step.8-fleet-update-status-report_$(stamp.artifactStamp)'
+        ArtifactName: 'azlocal-step.9-fleet-update-status-report_$(stamp.artifactStamp)'
         publishLocation: 'Container'
     
     # Publish JUnit test results LAST so the Test Results tab is populated
@@ -310,7 +310,7 @@ stages:
       condition: and(always(), eq('${{ parameters.raiseItsmTicket }}', 'true'))
       inputs:
         PathtoPublish: '$(reportsPath)'
-        ArtifactName: 'azlocal-step.8-fleet-update-status-itsm-results_$(stamp.artifactStamp)'
+        ArtifactName: 'azlocal-step.9-fleet-update-status-itsm-results_$(stamp.artifactStamp)'
         publishLocation: 'Container'
       continueOnError: true
 
@@ -320,5 +320,5 @@ stages:
       inputs:
         testResultsFormat: 'JUnit'
         testResultsFiles: '$(reportsPath)/itsm-results.xml'
-        testRunTitle: 'ITSM Tickets (Step.6) - $(Build.BuildNumber)'
+        testRunTitle: 'ITSM Tickets (Step.9) - $(Build.BuildNumber)'
         failTaskOnFailedTests: false

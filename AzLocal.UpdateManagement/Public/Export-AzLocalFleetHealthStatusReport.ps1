@@ -7,7 +7,7 @@ function Export-AzLocalFleetHealthStatusReport {
     .DESCRIPTION
         Public entry-point for the v0.8.5 thin-YAML refactor of the Step.9
         fleet-health-status pipeline. Before v0.8.5 the GitHub Actions and
-        Azure DevOps Step.9_fleet-health-status.yml files each carried
+        Azure DevOps Step.10_fleet-health-status.yml files each carried
         ~600 lines of inline PowerShell (failure collection + summary
         roll-up + overview collection + JUnit XML construction +
         collapsible markdown rendering + step-output emission). This
@@ -155,7 +155,7 @@ function Export-AzLocalFleetHealthStatusReport {
         # snapshot object for downstream PowerShell use.
 
     .EXAMPLE
-        # Used by Step.9_fleet-health-status.yml (GitHub Actions + Azure DevOps):
+        # Used by Step.10_fleet-health-status.yml (GitHub Actions + Azure DevOps):
         Export-AzLocalFleetHealthStatusReport `
             -Scope $env:INPUT_SCOPE `
             -UpdateRing $env:INPUT_UPDATE_RING `

@@ -5,7 +5,7 @@
 # This is the single source of truth for "which UpdateRing(s) is/are
 # eligible to apply updates on a given UTC date". It is consumed by:
 #
-#   * Step.6_apply-updates.yml    - reads it at every cron firing and
+#   * Step.7_apply-updates.yml    - reads it at every cron firing and
 #                                   resolves the UpdateRingValue (and,
 #                                   schema v2+, the AllowedUpdateVersions
 #                                   allow-list) to use for that run.
@@ -59,13 +59,13 @@ cycleAnchorYear:      2026
 
 # ---- AllowedUpdateVersions (schema v2, MANDATORY top-level) -------
 # >>> ALLOWED-UPDATE-VERSIONS-V2 <<<
-# Fleet-wide allow-list of Azure Local update identifiers that Step.6
+# Fleet-wide allow-list of Azure Local update identifiers that Step.7
 # (apply-updates) is permitted to install.
 #
 # Default 'Latest' (case-insensitive) is a reserved sentinel meaning
 # 'no constraint - install the latest Ready update on each cluster'
 # (the historic v0.7.88 default). Leave it as 'Latest' to keep that
-# behaviour. When set to an explicit list, Step.6 only installs
+# behaviour. When set to an explicit list, Step.7 only installs
 # updates whose `name` OR `properties.version` is an EXACT
 # (case-insensitive) match for one of the entries. If a cluster has
 # no Ready update that matches, that cluster is SKIPPED with status
@@ -98,7 +98,7 @@ cycleAnchorYear:      2026
 # customer ask in v0.7.89): install ONLY the YY04 + YY10 feature
 # updates plus the cumulative updates immediately preceding each
 # feature update (YY03 + YY09). With v2 schema you list those four
-# update names here once and Step.6 ignores every other 'Ready'
+# update names here once and Step.7 ignores every other 'Ready'
 # update. Example using real Azure Local update names:
 #   allowedUpdateVersions: 'Solution12.2603.1002.15;Solution12.2604.1003.1005;Solution12.2609.1002.XX;Solution12.2610.1003.XX'
 #

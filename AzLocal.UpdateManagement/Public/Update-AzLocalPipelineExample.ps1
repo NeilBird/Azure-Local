@@ -24,7 +24,7 @@ function Update-AzLocalPipelineExample {
         currently shipped:
 
             schedule-triggers   (every main pipeline)
-            itsm-secrets        (Step.6_apply-updates.yml only)
+            itsm-secrets        (Step.7_apply-updates.yml only)
 
         Per source YAML the cmdlet:
 

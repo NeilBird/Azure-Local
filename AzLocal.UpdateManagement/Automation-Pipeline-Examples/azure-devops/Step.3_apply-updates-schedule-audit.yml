@@ -5,13 +5,13 @@
 #
 # WHY THIS PIPELINE EXISTS
 # ------------------------
-# Step.6_apply-updates.yml ships with NO default schedule (trigger:none) on purpose, so
+# Step.7_apply-updates.yml ships with NO default schedule (trigger:none) on purpose, so
 # customers must consciously choose when updates fire. After you have configured
-# UpdateStartWindow tags on your clusters and added cron entries to Step.6_apply-updates.yml, this
+# UpdateStartWindow tags on your clusters and added cron entries to Step.7_apply-updates.yml, this
 # pipeline is the safety net that catches:
-#   - a new ring tagged with UpdateStartWindow that no cron in Step.6_apply-updates.yml will reach
+#   - a new ring tagged with UpdateStartWindow that no cron in Step.7_apply-updates.yml will reach
 #   - an UpdateStartWindow tag value that fails to parse (typo / wrong syntax)
-#   - Step.6_apply-updates.yml cron entries that the advisor cannot reason about
+#   - Step.7_apply-updates.yml cron entries that the advisor cannot reason about
 #     (DayOfMonth restrictions, step values) so you can audit them manually
 #
 # REPORTS GENERATED:
@@ -43,7 +43,7 @@ schedules:
 
 parameters:
   - name: pipelinePath
-    displayName: 'Path (file or folder) to Step.6_apply-updates.yml to audit, repo-relative. REQUIRED so the Recommend view can diff its proposed crons against what is already present in Step.6 and only emit a snippet for the truly missing entries. Default `.azure-pipelines` matches the standard Azure DevOps consumer layout; for repos that keep Step.6_apply-updates.yml at the repo root pass `.`'
+    displayName: 'Path (file or folder) to Step.7_apply-updates.yml to audit, repo-relative. REQUIRED so the Recommend view can diff its proposed crons against what is already present in Step.7 and only emit a snippet for the truly missing entries. Default `.azure-pipelines` matches the standard Azure DevOps consumer layout; for repos that keep Step.7_apply-updates.yml at the repo root pass `.`'
     type: string
     default: '.azure-pipelines'
 

@@ -3,7 +3,7 @@
 # Reports clusters whose latest update run is currently in flight, with the
 # CURRENT STEP each cluster is on and the ELAPSED DURATION of the run. Built
 # for operators who want a 30-minute-cadence "what is happening right now"
-# view, distinct from the daily Step.8 fleet-update-status snapshot which
+# view, distinct from the daily Step.9 fleet-update-status snapshot which
 # answers "is each cluster up-to-date?".
 #
 # This workflow is REPORT-ONLY and always succeeds. Long-running runs are
@@ -22,7 +22,7 @@
 # Workflow name carries the same Step.N - prefix as the filename so the GitHub
 # Actions sidebar (which sorts workflows alphabetically by this `name:` field)
 # lists the pipelines in execution order.
-name: Step.7 - Monitor In-Flight Updates
+name: Step.8 - Monitor In-Flight Updates
 
 on:
   # BEGIN-AZLOCAL-CUSTOMIZE:schedule-triggers
@@ -214,7 +214,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v6
         with:
-          name: azlocal-step.7-update-monitor_${{ steps.artifact-stamp.outputs.timestamp }}
+          name: azlocal-step.8-update-monitor_${{ steps.artifact-stamp.outputs.timestamp }}
           path: ./reports/*
           retention-days: 14
 

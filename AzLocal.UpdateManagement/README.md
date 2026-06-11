@@ -79,7 +79,7 @@ If you are new to this module, work through these in order from a regular PowerS
 | **Staged wave deployment** | `Get-AzLocalClusterInventory` -> `Set-AzLocalClusterUpdateRingTag` -> `Get-AzLocalClusterUpdateReadiness -ScopeByUpdateRingTag` -> `Start-AzLocalClusterUpdate -ScopeByUpdateRingTag` -> `Get-AzLocalFleetProgress` -> `New-AzLocalFleetStatusHtmlReport` |
 | **Daily fleet status report** | `Get-AzLocalFleetStatusData -AllClusters -IncludeUpdateRuns -IncludeHealthDetails -ExportPath ...` -> `New-AzLocalFleetStatusHtmlReport -StatusData $data -OutputPath ...` |
 | **Daily fleet health audit (v0.7.65)** | `Get-AzLocalFleetHealthFailures -View Summary -ExportPath fleet-health-summary.csv` -> review top failure reasons by cluster impact -> drill into [`Get-AzLocalFleetHealthFailures -View Detail`](docs/cmdlet-reference.md#get-azlocalfleethealthfailures) for per-cluster remediation |
-| **Schedule coverage drift audit (v0.7.65)** | `Test-AzLocalApplyUpdatesScheduleCoverage -View Audit -PipelineYamlPath .\.github\workflows` -> for any `Uncovered` rows, copy the `RequiredCronUTC` value and paste it into `Step.6_apply-updates.yml` -> re-run `-View Audit` to confirm `Covered` -> wire the bundled `Step.3_apply-updates-schedule-audit.yml` pipeline (weekly Mon 05:00 UTC) so future tag drift is caught automatically. Full runbook: [`Automation-Pipeline-Examples/README.md` section 8.3](./Automation-Pipeline-Examples/README.md#83-end-to-end-runbook-apply-updates-schedule-coverage-audit) |
+| **Schedule coverage drift audit (v0.7.65)** | `Test-AzLocalApplyUpdatesScheduleCoverage -View Audit -PipelineYamlPath .\.github\workflows` -> for any `Uncovered` rows, copy the `RequiredCronUTC` value and paste it into `Step.7_apply-updates.yml` -> re-run `-View Audit` to confirm `Covered` -> wire the bundled `Step.3_apply-updates-schedule-audit.yml` pipeline (weekly Mon 05:00 UTC) so future tag drift is caught automatically. Full runbook: [`Automation-Pipeline-Examples/README.md` section 8.3](./Automation-Pipeline-Examples/README.md#83-end-to-end-runbook-apply-updates-schedule-coverage-audit) |
 | **Pre-update health gate (CI/CD)** | `Test-AzLocalClusterHealth -BlockingOnly` -> `Test-AzLocalUpdateScheduleAllowed` -> `Test-AzLocalFleetHealthGate` -> proceed only on pass |
 | **Sideloaded payload (v0.7.1)** | Operator sets `UpdateSideloaded=False` -> stage payload out-of-band -> operator flips `UpdateSideloaded=True` -> `Start-AzLocalClusterUpdate` (auto-stamps `UpdateVersionInProgress`) -> `Get-AzLocalUpdateRuns` (auto-resets tags on success) -> `Reset-AzLocalSideloadedTag -Force` only if a tag gets stuck |
 | **Pause / resume long fleet run** | `Stop-AzLocalFleetUpdate -SaveState` -> ... -> `Resume-AzLocalFleetUpdate -StateFilePath ...` |
@@ -221,7 +221,7 @@ Copy-AzLocalPipelineExample -Destination C:\repos\my-fleet -Platform GitHub
 
 The function prints a short "next steps" summary pointing at the copied README and the platform-specific YAML folder. See [`Automation-Pipeline-Examples/README.md`](Automation-Pipeline-Examples/README.md) for the full step-by-step setup guide.
 
-> 🔄 **Refreshing pipelines after a module upgrade?** Use `Update-AzLocalPipelineExample` instead of `Copy-AzLocalPipelineExample`. It is a marker-aware merge that refreshes everything **outside** the `# BEGIN-AZLOCAL-CUSTOMIZE:<region>` / `# END-AZLOCAL-CUSTOMIZE:<region>` blocks in each YAML and **preserves** everything inside them - so your custom cron schedules (`schedule-triggers`) and ITSM secret bindings (`itsm-secrets` in Step.6) survive the upgrade.
+> 🔄 **Refreshing pipelines after a module upgrade?** Use `Update-AzLocalPipelineExample` instead of `Copy-AzLocalPipelineExample`. It is a marker-aware merge that refreshes everything **outside** the `# BEGIN-AZLOCAL-CUSTOMIZE:<region>` / `# END-AZLOCAL-CUSTOMIZE:<region>` blocks in each YAML and **preserves** everything inside them - so your custom cron schedules (`schedule-triggers`) and ITSM secret bindings (`itsm-secrets` in Step.7) survive the upgrade.
 >
 > ```powershell
 > # Preview what would change
@@ -531,7 +531,7 @@ New-AzLocalFleetStatusHtmlReport `
     -IncludeHealthDetails -IncludeUpdateRuns
 ```
 
-> 💡 **CI/CD**: this same assess -> remediate -> apply flow is wired into the pipeline examples under `Automation-Pipeline-Examples/`: see the `Step.5_assess-update-readiness.yml` pipeline (report-only) and the `check-readiness` job inside `Step.6_apply-updates.yml`.
+> 💡 **CI/CD**: this same assess -> remediate -> apply flow is wired into the pipeline examples under `Automation-Pipeline-Examples/`: see the `Step.5_assess-update-readiness.yml` pipeline (report-only) and the `check-readiness` job inside `Step.7_apply-updates.yml`.
 
 ## Available Functions
 

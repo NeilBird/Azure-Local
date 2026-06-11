@@ -196,7 +196,7 @@ resources
     [void]$sb.AppendLine('# This is the single source of truth for "which UpdateRing(s) is/are')
     [void]$sb.AppendLine('# eligible to apply updates on a given UTC date". It is consumed by:')
     [void]$sb.AppendLine('#')
-    [void]$sb.AppendLine('#   * Step.6_apply-updates.yml    - reads it at every cron firing and')
+    [void]$sb.AppendLine('#   * Step.7_apply-updates.yml    - reads it at every cron firing and')
     [void]$sb.AppendLine('#                                   resolves the UpdateRingValue to use')
     [void]$sb.AppendLine('#                                   for that run.')
     [void]$sb.AppendLine('#   * Step.3_apply-updates-schedule-audit.yml')

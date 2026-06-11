@@ -63,10 +63,10 @@ By the end of this guide you will have:
   - **Apply-Updates Schedule Coverage Audit** (Step.3, v0.7.65) - read-only weekly audit that compares the cron(s) in your `apply-updates` pipeline to the `UpdateStartWindow` tags actually present on your clusters and flags any (UpdateRing, UpdateStartWindow) pair that no cron will reach. *Scheduled weekly Mon 05:00 UTC + manual.*
   - **Fleet Connectivity Status** (Step.4, v0.7.79+, enhanced in v0.7.85) - read-only daily snapshot of Arc agent connectivity, physical NIC health, Azure Resource Bridge status, and the node-count reconciliation between cluster `reportedProperties.nodes` and Arc-tagged physical machines. *Scheduled daily 05:30 UTC + manual.*
   - **Assess Update Readiness** (Step.5) - pre-flight, report-only readiness + blocking-health snapshot, published as JUnit XML. *Manual only.*
-  - **Apply Updates** (Step.6) - apply updates to a single `UpdateRing` wave at a time, with WhatIf / dry-run support. *Manual only by default - **you must add a schedule** that lines up with your cluster `UpdateStartWindow` tags, see [Step 6 - Apply Updates](docs/appendix-pipelines.md#step-6---apply-updates) and [section 8](#8-scheduling-maintenance-windows-and-change-freeze-periods).*
-  - **Monitor In-Flight Updates** (Step.7, v0.7.90; v0.7.96 surfaces `Status` + deepest `ErrorMessage` columns, adds the `StepError` stuck-step JUnit type for runs that have hit an error inside a step without crossing the long-running threshold, and renders portal-linked Cluster Name / Update Name cells in the markdown summary; **v0.7.98 UX overhaul**: composite `SeverityScore` sort, per-cell `StateIcon` + `StatusIcon`, horizontal chip stack (`STEP-STUCK` / `RUN-STUCK` / `UNRESOLVED` / `RECENT-FAIL`), `CRITICAL / WARN / OK` fleet status badge at the top of the job summary, collapsible `<details>` Verbose Error block per row, and JUnit `<testsuite time="..">` + `<testcase time="..">` populated with real run elapsed seconds). Operational snapshot during an active wave: lists each cluster whose latest update run is `InProgress`, with current step, progress (`completed/total steps`), elapsed duration, the `Status` column (`Success`/`Error`/`InProgress`/...), and the deepest `errorMessage` walked out of the nested ARM `steps[]` tree; flags long-running runs (default >6h) AND step-errored stuck runs as JUnit failures in the Checks tab. *Scheduled 5x/day at 20:00, 22:00, 00:00, 02:00, 04:00 UTC (every 2h across the typical overnight maintenance window) + manual; default cadence is editable in `Step.7_monitor-updates.yml` (v0.7.92+).*
-  - **Fleet Update Status** (Step.8, formerly Step.7; v0.7.96 promotes `NeedsAttention` into the **Update Failed** bucket, adds a new **Action Required** bucket for `PreparationFailed`, and folds `PreparationInProgress` into **Update In Progress**; **v0.7.98** populates JUnit `time=` on each `<testcase>` in the `📜 Update Run History and Error Details` testsuite using `DurationMinutes * 60`). Scheduled daily snapshot of fleet update state, surfaced in the Tests tab. Markdown summary's `📜 Update Run History and Error Details` table now also carries portal-linked Cluster Name / Update Name cells plus the deepest-step `ErrorMessage`. *Scheduled daily 06:00 UTC + manual.*
-  - **Fleet Health Status** (Step.9, formerly Step.8) - scheduled daily snapshot of 24-hour system health-check failures, surfaced in the Tests tab. *Scheduled daily 07:00 UTC + manual.*
+  - **Apply Updates** (Step.7) - apply updates to a single `UpdateRing` wave at a time, with WhatIf / dry-run support. *Manual only by default - **you must add a schedule** that lines up with your cluster `UpdateStartWindow` tags, see [Step 7 - Apply Updates](docs/appendix-pipelines.md#step-7---apply-updates) and [section 8](#8-scheduling-maintenance-windows-and-change-freeze-periods).*
+  - **Monitor In-Flight Updates** (Step.8, v0.7.90; v0.7.96 surfaces `Status` + deepest `ErrorMessage` columns, adds the `StepError` stuck-step JUnit type for runs that have hit an error inside a step without crossing the long-running threshold, and renders portal-linked Cluster Name / Update Name cells in the markdown summary; **v0.7.98 UX overhaul**: composite `SeverityScore` sort, per-cell `StateIcon` + `StatusIcon`, horizontal chip stack (`STEP-STUCK` / `RUN-STUCK` / `UNRESOLVED` / `RECENT-FAIL`), `CRITICAL / WARN / OK` fleet status badge at the top of the job summary, collapsible `<details>` Verbose Error block per row, and JUnit `<testsuite time="..">` + `<testcase time="..">` populated with real run elapsed seconds). Operational snapshot during an active wave: lists each cluster whose latest update run is `InProgress`, with current step, progress (`completed/total steps`), elapsed duration, the `Status` column (`Success`/`Error`/`InProgress`/...), and the deepest `errorMessage` walked out of the nested ARM `steps[]` tree; flags long-running runs (default >6h) AND step-errored stuck runs as JUnit failures in the Checks tab. *Scheduled 5x/day at 20:00, 22:00, 00:00, 02:00, 04:00 UTC (every 2h across the typical overnight maintenance window) + manual; default cadence is editable in `Step.8_monitor-updates.yml` (v0.7.92+).*
+  - **Fleet Update Status** (Step.9, formerly Step.8; v0.7.96 promotes `NeedsAttention` into the **Update Failed** bucket, adds a new **Action Required** bucket for `PreparationFailed`, and folds `PreparationInProgress` into **Update In Progress**; **v0.7.98** populates JUnit `time=` on each `<testcase>` in the `📜 Update Run History and Error Details` testsuite using `DurationMinutes * 60`). Scheduled daily snapshot of fleet update state, surfaced in the Tests tab. Markdown summary's `📜 Update Run History and Error Details` table now also carries portal-linked Cluster Name / Update Name cells plus the deepest-step `ErrorMessage`. *Scheduled daily 06:00 UTC + manual.*
+  - **Fleet Health Status** (Step.10, formerly Step.9) - scheduled daily snapshot of 24-hour system health-check failures, surfaced in the Tests tab. *Scheduled daily 07:00 UTC + manual.*
 - An end-to-end "ring-based" rollout pattern: Pilot -> Wave2 -> Production, with each ring gated on the previous wave's success.
 - **Optional**: a ServiceNow integration that opens deduped incidents for clusters whose run status indicates the module's own retries cannot recover (failures, blocking health checks, sideloaded payload missing) - see [section 7](#7-optional-open-itsm-tickets-for-clusters-needing-operator-action).
 
@@ -86,12 +86,12 @@ Each row's name links to the matching `Step N -` section in [`docs/appendix-pipe
 | 3 | [Step.3 - Apply-Updates Schedule Coverage Audit](docs/appendix-pipelines.md#step-3---apply-updates-schedule-coverage-audit) | [`Step.3_apply-updates-schedule-audit.yml`](github-actions/Step.3_apply-updates-schedule-audit.yml) | [`Step.3_apply-updates-schedule-audit.yml`](azure-devops/Step.3_apply-updates-schedule-audit.yml) |
 | 4 | [Step.4 - Fleet Connectivity Status](docs/appendix-pipelines.md#step-4---fleet-connectivity-status) | [`Step.4_fleet-connectivity-status.yml`](github-actions/Step.4_fleet-connectivity-status.yml) | [`Step.4_fleet-connectivity-status.yml`](azure-devops/Step.4_fleet-connectivity-status.yml) |
 | 5 | [Step.5 - Assess Update Readiness](docs/appendix-pipelines.md#step-5---assess-update-readiness) | [`Step.5_assess-update-readiness.yml`](github-actions/Step.5_assess-update-readiness.yml) | [`Step.5_assess-update-readiness.yml`](azure-devops/Step.5_assess-update-readiness.yml) |
-| 6 | [Step.6 - Apply Updates](docs/appendix-pipelines.md#step-6---apply-updates) | [`Step.6_apply-updates.yml`](github-actions/Step.6_apply-updates.yml) | [`Step.6_apply-updates.yml`](azure-devops/Step.6_apply-updates.yml) |
-| 7 | [Step.7 - Monitor In-Flight Updates](docs/appendix-pipelines.md#step-7---monitor-in-flight-updates) | [`Step.7_monitor-updates.yml`](github-actions/Step.7_monitor-updates.yml) | [`Step.7_monitor-updates.yml`](azure-devops/Step.7_monitor-updates.yml) |
-| 8 | [Step.8 - Fleet Update Status](docs/appendix-pipelines.md#step-8---fleet-update-status) | [`Step.8_fleet-update-status.yml`](github-actions/Step.8_fleet-update-status.yml) | [`Step.8_fleet-update-status.yml`](azure-devops/Step.8_fleet-update-status.yml) |
-| 9 | [Step.9 - Fleet Health Status](docs/appendix-pipelines.md#step-9---fleet-health-status) | [`Step.9_fleet-health-status.yml`](github-actions/Step.9_fleet-health-status.yml) | [`Step.9_fleet-health-status.yml`](azure-devops/Step.9_fleet-health-status.yml) |
+| 7 | [Step.7 - Apply Updates](docs/appendix-pipelines.md#step-7---apply-updates) | [`Step.7_apply-updates.yml`](github-actions/Step.7_apply-updates.yml) | [`Step.7_apply-updates.yml`](azure-devops/Step.7_apply-updates.yml) |
+| 8 | [Step.8 - Monitor In-Flight Updates](docs/appendix-pipelines.md#step-8---monitor-in-flight-updates) | [`Step.8_monitor-updates.yml`](github-actions/Step.8_monitor-updates.yml) | [`Step.8_monitor-updates.yml`](azure-devops/Step.8_monitor-updates.yml) |
+| 9 | [Step.9 - Fleet Update Status](docs/appendix-pipelines.md#step-9---fleet-update-status) | [`Step.9_fleet-update-status.yml`](github-actions/Step.9_fleet-update-status.yml) | [`Step.9_fleet-update-status.yml`](azure-devops/Step.9_fleet-update-status.yml) |
+| 10 | [Step.10 - Fleet Health Status](docs/appendix-pipelines.md#step-10---fleet-health-status) | [`Step.10_fleet-health-status.yml`](github-actions/Step.10_fleet-health-status.yml) | [`Step.10_fleet-health-status.yml`](azure-devops/Step.10_fleet-health-status.yml) |
 
-- **GitHub Actions**: the Actions sidebar sorts workflows alphabetically by the `name:` field inside the YAML. Because every `name:` starts with `Step.N - `, the sidebar lists the ten workflows in execution order (Step.0 first, Step.9 last) instead of the cosmetically confusing alphabetical scatter (`Apply Updates`, `Apply-Updates Schedule Coverage Audit`, `Assess Update Readiness`, ...).
+- **GitHub Actions**: the Actions sidebar sorts workflows alphabetically by the `name:` field inside the YAML. Because every `name:` starts with `Step.N - `, the sidebar lists the ten workflows in execution order (Step.0 first, Step.10 last) instead of the cosmetically confusing alphabetical scatter (`Apply Updates`, `Apply-Updates Schedule Coverage Audit`, `Assess Update Readiness`, ...).
 - **Azure DevOps**: the Pipelines list sorts by the pipeline **definition name** chosen at *import time* (not by the YAML filename and not by any top-level `name:` field - the `name:` field in an ADO YAML controls the per-run *build number*, not the pipeline display name). When you import each YAML, the import wizard prefills the suggested pipeline name from the YAML's leading title comment; the YAMLs in this repo open with `# Step.N - <description>`, so the suggested name is already correct. **Accept the suggested name** (or paste `Step.N - <description>` yourself), and the Pipelines list will sort in execution order. You can rename a pipeline later via *Pipeline -> Edit -> Settings -> Name*.
 
 If you prefer a different naming scheme (e.g. `00 - Auth`, `01 - Inventory`, ...), just change the `name:` field in each GH Actions YAML and / or pick a different prefix at ADO import time. Nothing else in the module depends on these display names.
@@ -1024,14 +1024,14 @@ Both platforms expect the YAML files inside this folder to land in a platform-sp
         Step.3_apply-updates-schedule-audit.yml
         Step.4_fleet-connectivity-status.yml
         Step.5_assess-update-readiness.yml
-        Step.6_apply-updates.yml
-        Step.7_monitor-updates.yml
-        Step.8_fleet-update-status.yml
-        Step.9_fleet-health-status.yml
+        Step.7_apply-updates.yml
+        Step.8_monitor-updates.yml
+        Step.9_fleet-update-status.yml
+        Step.10_fleet-health-status.yml
     ```
 3. Commit and push. The workflows appear in the **Actions** tab.
-4. Each workflow exposes its inputs via the **Run workflow** button (workflow_dispatch). The scheduled triggers (e.g. `Step.4_fleet-connectivity-status.yml` runs daily at 05:30 UTC, `Step.7_monitor-updates.yml` runs 5x/day at 20:00, 22:00, 00:00, 02:00, 04:00 UTC (every 2h across the typical overnight maintenance window, v0.7.92+ default - edit the cron in the file if your maintenance window differs), `Step.8_fleet-update-status.yml` runs daily at 06:00 UTC, `Step.9_fleet-health-status.yml` runs daily at 07:00 UTC, `Step.3_apply-updates-schedule-audit.yml` runs weekly on Mondays at 05:00 UTC) activate automatically once the file is on the default branch.
-5. **Replace the starter `apply-updates-schedule.yml` with one generated from your live fleet** (required for **scheduled** Step.6 / Step.3 runs; manual `workflow_dispatch` runs of Step.6 work without it because they use the `-UpdateRingValue` input verbatim). v0.7.92+ `Copy-AzLocalPipelineExample -Platform GitHub` drops a **starter** `apply-updates-schedule.yml` alongside `.github\workflows\` (i.e. at `.github\apply-updates-schedule.yml`) by default. The starter is a verbatim copy of [`apply-updates-schedule.example.yml`](./apply-updates-schedule.example.yml) and ships with **DEMO** ring names (`Canary`, `DevTest`, `Ring1`, `Ring2`, `Prod`) that almost never match a real estate's `UpdateRing` tag values - regenerate from your live fleet, overwriting the demo file:
+4. Each workflow exposes its inputs via the **Run workflow** button (workflow_dispatch). The scheduled triggers (e.g. `Step.4_fleet-connectivity-status.yml` runs daily at 05:30 UTC, `Step.8_monitor-updates.yml` runs 5x/day at 20:00, 22:00, 00:00, 02:00, 04:00 UTC (every 2h across the typical overnight maintenance window, v0.7.92+ default - edit the cron in the file if your maintenance window differs), `Step.9_fleet-update-status.yml` runs daily at 06:00 UTC, `Step.10_fleet-health-status.yml` runs daily at 07:00 UTC, `Step.3_apply-updates-schedule-audit.yml` runs weekly on Mondays at 05:00 UTC) activate automatically once the file is on the default branch.
+5. **Replace the starter `apply-updates-schedule.yml` with one generated from your live fleet** (required for **scheduled** Step.7 / Step.3 runs; manual `workflow_dispatch` runs of Step.7 work without it because they use the `-UpdateRingValue` input verbatim). v0.7.92+ `Copy-AzLocalPipelineExample -Platform GitHub` drops a **starter** `apply-updates-schedule.yml` alongside `.github\workflows\` (i.e. at `.github\apply-updates-schedule.yml`) by default. The starter is a verbatim copy of [`apply-updates-schedule.example.yml`](./apply-updates-schedule.example.yml) and ships with **DEMO** ring names (`Canary`, `DevTest`, `Ring1`, `Ring2`, `Prod`) that almost never match a real estate's `UpdateRing` tag values - regenerate from your live fleet, overwriting the demo file:
 
    ```powershell
    # Regenerate from your fleet's live UpdateRing tag values, overwriting the starter.
@@ -1039,7 +1039,7 @@ Both platforms expect the YAML files inside this folder to land in a platform-sp
    New-AzLocalApplyUpdatesScheduleConfig -OutputPath .\.github\apply-updates-schedule.yml -Force
    ```
 
-   Review the regenerated file, uncomment / edit the rows you want active, then `git add .\.github\apply-updates-schedule.yml ; git commit ; git push`. The starter is safe to leave in place until then - the bundled Step.6 ships with every `cron:` line commented out inside the `BEGIN/END-AZLOCAL-CUSTOMIZE:schedule-triggers` markers, so it cannot fire on a `schedule:` trigger until you explicitly add a cron entry. Manual `workflow_dispatch` runs of Step.6 ignore the schedule file entirely (they take `-UpdateRingValue` verbatim from the run-form input).
+   Review the regenerated file, uncomment / edit the rows you want active, then `git add .\.github\apply-updates-schedule.yml ; git commit ; git push`. The starter is safe to leave in place until then - the bundled Step.7 ships with every `cron:` line commented out inside the `BEGIN/END-AZLOCAL-CUSTOMIZE:schedule-triggers` markers, so it cannot fire on a `schedule:` trigger until you explicitly add a cron entry. Manual `workflow_dispatch` runs of Step.7 ignore the schedule file entirely (they take `-UpdateRingValue` verbatim from the run-form input).
 
    **Safety rails**: `Copy-AzLocalPipelineExample` **never overwrites** an existing `apply-updates-schedule.yml` - any operator-tailored schedule you commit is preserved across re-runs. Pass `-SkipStarterSchedule` to suppress the starter copy entirely (e.g. if you pre-stage the schedule via separate tooling). For the full schema, multi-stage rollouts, weekly-cycle / ring-eligibility model, and the `allowedUpdateVersions` allow-list (schema v2), see [section 8](#8-scheduling-maintenance-windows-and-change-freeze-periods).
 
@@ -1088,7 +1088,7 @@ Both platforms expect the YAML files inside this folder to land in a platform-sp
 3. **Pipelines -> New pipeline -> Azure Repos Git -> your repo -> Existing Azure Pipelines YAML file**, then point at the path of each file. Repeat for all eight.
 4. After the pipeline is created, click **Save** (not **Run**) until you are ready to execute.
 5. Each pipeline references a service connection named `AzureLocal-ServiceConnection`. Either name your service connection to match, or change `azureSubscription:` in each YAML.
-6. **Replace the starter `apply-updates-schedule.yml` with one generated from your live fleet** (required for **scheduled** Step.6 / Step.3 runs; manual queue runs of Step.6 work without it because they use the `updateRing` parameter verbatim). v0.7.92+ `Copy-AzLocalPipelineExample -Platform AzureDevOps -Destination .\pipelines\` drops a **starter** `apply-updates-schedule.yml` **one level up** from the pipelines folder (i.e. at `.\apply-updates-schedule.yml` at repo root) by default - this separates the config file from the folder that holds the pipeline YAMLs. The starter is a verbatim copy of [`apply-updates-schedule.example.yml`](./apply-updates-schedule.example.yml) and ships with **DEMO** ring names (`Canary`, `DevTest`, `Ring1`, `Ring2`, `Prod`) that almost never match a real estate's `UpdateRing` tag values - regenerate from your live fleet, overwriting the demo file:
+6. **Replace the starter `apply-updates-schedule.yml` with one generated from your live fleet** (required for **scheduled** Step.7 / Step.3 runs; manual queue runs of Step.7 work without it because they use the `updateRing` parameter verbatim). v0.7.92+ `Copy-AzLocalPipelineExample -Platform AzureDevOps -Destination .\pipelines\` drops a **starter** `apply-updates-schedule.yml` **one level up** from the pipelines folder (i.e. at `.\apply-updates-schedule.yml` at repo root) by default - this separates the config file from the folder that holds the pipeline YAMLs. The starter is a verbatim copy of [`apply-updates-schedule.example.yml`](./apply-updates-schedule.example.yml) and ships with **DEMO** ring names (`Canary`, `DevTest`, `Ring1`, `Ring2`, `Prod`) that almost never match a real estate's `UpdateRing` tag values - regenerate from your live fleet, overwriting the demo file:
 
    ```powershell
    # Regenerate from your fleet's live UpdateRing tag values, overwriting the starter.
@@ -1096,7 +1096,7 @@ Both platforms expect the YAML files inside this folder to land in a platform-sp
    New-AzLocalApplyUpdatesScheduleConfig -OutputPath .\apply-updates-schedule.yml -Force
    ```
 
-   Review the regenerated file, uncomment / edit the rows you want active, then commit and push. Step.6 (ADO) reads the file at `APPLY_UPDATES_SCHEDULE_PATH` (default `./apply-updates-schedule.yml` at repo root, which matches the default starter location) - override the pipeline variable if you keep the schedule elsewhere. The starter is safe to leave in place until then - the bundled Step.6 ships with every `cron:` line commented out inside the `BEGIN/END-AZLOCAL-CUSTOMIZE:schedule-triggers` markers, so it cannot fire on a scheduled trigger until you explicitly add a cron entry. Manual queue runs of Step.6 ignore the schedule file entirely (they take `updateRing` verbatim from the run-form input).
+   Review the regenerated file, uncomment / edit the rows you want active, then commit and push. Step.7 (ADO) reads the file at `APPLY_UPDATES_SCHEDULE_PATH` (default `./apply-updates-schedule.yml` at repo root, which matches the default starter location) - override the pipeline variable if you keep the schedule elsewhere. The starter is safe to leave in place until then - the bundled Step.7 ships with every `cron:` line commented out inside the `BEGIN/END-AZLOCAL-CUSTOMIZE:schedule-triggers` markers, so it cannot fire on a scheduled trigger until you explicitly add a cron entry. Manual queue runs of Step.7 ignore the schedule file entirely (they take `updateRing` verbatim from the run-form input).
 
    **Safety rails**: `Copy-AzLocalPipelineExample` **never overwrites** an existing `apply-updates-schedule.yml` - any operator-tailored schedule you commit is preserved across re-runs. Pass `-SkipStarterSchedule` to suppress the starter copy entirely (e.g. if you pre-stage the schedule via separate tooling). For the full schema, multi-stage rollouts, weekly-cycle / ring-eligibility model, and the `allowedUpdateVersions` allow-list (schema v2), see [section 8](#8-scheduling-maintenance-windows-and-change-freeze-periods).
 
@@ -1121,7 +1121,7 @@ If your change-control process requires you to pin the module version (so a rele
 gh variable set REQUIRED_MODULE_VERSION --body '0.7.60' --repo <owner>/<repo>
 
 # Override for a single manual run, leaving the estate-wide pin untouched:
-gh workflow run Step.8_fleet-update-status.yml -f module_version=0.7.60
+gh workflow run Step.9_fleet-update-status.yml -f module_version=0.7.60
 
 # Clear the estate-wide pin to return to latest:
 gh variable delete REQUIRED_MODULE_VERSION --repo <owner>/<repo>
@@ -1198,7 +1198,7 @@ This is the canonical "nothing wired -> staged rollout working" sequence. Follow
 +-----------------------------------------------------------------------+
 |                          PHASE 3: ROLLOUT                              |
 |  6.4  Step.5_assess-update-readiness.yml  (report-only pre-flight)            |
-|  6.5  Step.6_apply-updates.yml  Wave1 -> validate -> Wave2 -> Production      |
+|  6.5  Step.7_apply-updates.yml  Wave1 -> validate -> Wave2 -> Production      |
 +-----------------------------------------------------------------------+
                               v
 +-----------------------------------------------------------------------+
@@ -1208,21 +1208,21 @@ This is the canonical "nothing wired -> staged rollout working" sequence. Follow
 |       - "Are Arc agents Connected, NICs healthy, Resource Bridges      |
 |          reachable, and does the cluster's node count reconcile        |
 |          with Arc-tagged physical machines?"                           |
-|  6.6  Step.7_monitor-updates.yml  (5x/day 20-04 UTC every 2h, manual too)     |
+|  6.6  Step.8_monitor-updates.yml  (5x/day 20-04 UTC every 2h, manual too)     |
 |       - v0.7.90                                                        |
 |       - "What is happening right now? Which clusters are mid-update,   |
 |          which step are they on, and is anything stuck?" In-flight     |
 |          monitor; flags runs over a configurable threshold (default    |
 |          6h) as JUnit failures.                                        |
-|  6.6  Step.8_fleet-update-status.yml  (scheduled, daily 06:00 UTC)            |
+|  6.6  Step.9_fleet-update-status.yml  (scheduled, daily 06:00 UTC)            |
 |       - "Is each cluster up-to-date?"                                  |
-|  6.6  Step.9_fleet-health-status.yml  (scheduled, daily 07:00 UTC) - v0.7.65  |
+|  6.6  Step.10_fleet-health-status.yml  (scheduled, daily 07:00 UTC) - v0.7.65 |
 |       - "Do clusters have actionable health issues even when           |
 |          up-to-date?" Surfaces 24-hour system health-check failures.   |
 |  6.7  Step.3_apply-updates-schedule-audit.yml  (scheduled, weekly Mon 05:00   |
 |       UTC) - v0.7.65                                                   |
 |       - "Will any tagged UpdateStartWindow never be reached by the cron     |
-|          schedule in Step.6_apply-updates.yml?" Read-only drift advisor.      |
+|          schedule in Step.7_apply-updates.yml?" Read-only drift advisor.      |
 +-----------------------------------------------------------------------+
 ```
 
@@ -1269,7 +1269,7 @@ Every pipeline emits one or more artifacts (CSV / Markdown / JUnit XML / HTML). 
                                                           |   BlockingReasons, HealthState, ...)
                                                           |
                                             +-------------------------------+
-                                            |  Step.6_apply-updates.yml            |
+                                            |  Step.7_apply-updates.yml            |
                                             |  in:  cluster-readiness.csv   |
                                             |  (consumes ClusterResourceId  |
                                             |   filtered to ReadyForUpdate) |
@@ -1283,10 +1283,10 @@ Every pipeline emits one or more artifacts (CSV / Markdown / JUnit XML / HTML). 
                   |                        |                              |                          |
                   v                        v                              v                          v
    +-------------------------+ +---------------------------+ +-------------------------------+ +---------------------------+
-   | Step.8_fleet-update-status.yml | | Step.9_fleet-health-status.yml   | | apply-updates-schedule-audit  | | (Optional) ITSM forwarder |
+   | Step.9_fleet-update-status.yml | | Step.10_fleet-health-status.yml  | | apply-updates-schedule-audit  | | (Optional) ITSM forwarder |
    | daily 06:00 UTC         | | daily 07:00 UTC           | | .yml                          | | (section 7)               |
    | out: fleet-update-      | | out: fleet-health-        | | weekly Mon 05:00 UTC          | | consumes:                 |
-   |      status.csv         | |      failures.csv         | | in:  Step.6_apply-updates.yml        | |  - apply-updates-         |
+   |      status.csv         | |      failures.csv         | | in:  Step.7_apply-updates.yml        | |  - apply-updates-         |
    |      fleet-update-      | |      fleet-health-        | |      cron entries             | |    results.csv            |
    |      status.html        | |      summary.html         | | out: schedule-coverage-       | |  - fleet-health-          |
    +-------------------------+ +---------------------------+ |      audit.csv                | |    failures.csv           |
@@ -1302,7 +1302,7 @@ Key handoffs to remember:
 - **`cluster-inventory.csv`** is the only artifact the operator edits by hand. Everything downstream is machine-generated.
 - **`cluster-readiness.csv`** carries `ClusterResourceId` from Assess into Apply. Apply does not re-query ARG to pick targets - it consumes the ID column directly, so a stale or malformed readiness CSV silently produces zero ready clusters. Always treat the most recent readiness run as the source of truth for the next Apply.
 - **`apply-updates-results.xml`** (JUnit) is what surfaces in the Tests tab on GH Actions and Azure DevOps. Failed-first ordering means actionable rows appear at the top of the reporter UI.
-- **`schedule-coverage-recommend.md`** is the only artifact intended to be pasted by hand - directly back into `Step.6_apply-updates.yml`'s `on.schedule` / ADO trigger block when the audit reports `Uncovered` or `PartiallyCovered` rows.
+- **`schedule-coverage-recommend.md`** is the only artifact intended to be pasted by hand - directly back into `Step.7_apply-updates.yml`'s `on.schedule` / ADO trigger block when the audit reports `Uncovered` or `PartiallyCovered` rows.
 - **Step.4 Fleet Connectivity Status runs parallel to (not downstream of) the apply-updates artifact chain.** It reads ARG directly and emits its own per-scope CSVs (`fleet-cluster-connectivity.csv`, `fleet-arc-status-summary.csv`, `fleet-arc-non-connected-machines.csv`, `fleet-physical-nics.csv`, `fleet-physical-nic-stats.csv`, `fleet-arb-status.csv`) plus a JUnit XML (`fleet-connectivity-status.xml`). No dependency on `cluster-readiness.csv` or `cluster-inventory.csv` - it is the upstream "can we see the fleet at all?" probe. Use it to triage why the apply-updates chain is empty or under-counting.
 
 ### 6.1 Inventory the estate
@@ -1397,17 +1397,17 @@ New-AzLocalApplyUpdatesScheduleConfig -OutputPath .\.github\apply-updates-schedu
 New-AzLocalApplyUpdatesScheduleConfig -OutputPath .\apply-updates-schedule.yml -Force
 ```
 
-The cmdlet inspects every `UpdateRing` and `UpdateStartWindow` tag on the clusters the pipeline identity can read, then emits a schema v2 schedule with one block per distinct ring plus a Recommend / cron snippet inside `Step.6_apply-updates.yml`'s `BEGIN/END-AZLOCAL-CUSTOMIZE:schedule-triggers` marker block. Review the generated file, uncomment the rows you want active, then commit and push.
+The cmdlet inspects every `UpdateRing` and `UpdateStartWindow` tag on the clusters the pipeline identity can read, then emits a schema v2 schedule with one block per distinct ring plus a Recommend / cron snippet inside `Step.7_apply-updates.yml`'s `BEGIN/END-AZLOCAL-CUSTOMIZE:schedule-triggers` marker block. Review the generated file, uncomment the rows you want active, then commit and push.
 
-**Why this step matters**: the schedule file is **required for scheduled Step.6 / Step.3 runs**. Manual `workflow_dispatch` (GitHub) / queue (Azure DevOps) runs of Step.6 work without it - they take `update_ring` / `updateRing` verbatim from the run-form input - but anything cron-triggered (the steady-state Step.6 wave kicks, the Step.3 weekly drift audit) reads ring eligibility from this file.
+**Why this step matters**: the schedule file is **required for scheduled Step.7 / Step.3 runs**. Manual `workflow_dispatch` (GitHub) / queue (Azure DevOps) runs of Step.7 work without it - they take `update_ring` / `updateRing` verbatim from the run-form input - but anything cron-triggered (the steady-state Step.7 wave kicks, the Step.3 weekly drift audit) reads ring eligibility from this file.
 
 **Safety rails**:
 
 - `Copy-AzLocalPipelineExample` **never overwrites** an existing `apply-updates-schedule.yml` - any operator-tailored schedule already committed is preserved across re-runs.
-- The bundled Step.6 ships with every `cron:` line commented out inside the `BEGIN/END-AZLOCAL-CUSTOMIZE:schedule-triggers` markers, so Step.6 cannot fire on a `schedule:` trigger until at least one cron is explicitly uncommented - the DEMO starter is safe to leave in place until you regenerate.
+- The bundled Step.7 ships with every `cron:` line commented out inside the `BEGIN/END-AZLOCAL-CUSTOMIZE:schedule-triggers` markers, so Step.7 cannot fire on a `schedule:` trigger until at least one cron is explicitly uncommented - the DEMO starter is safe to leave in place until you regenerate.
 - Pass `-SkipStarterSchedule` to `Copy-AzLocalPipelineExample` to suppress the starter drop entirely (e.g. for estates that pre-stage the schedule via separate tooling).
 
-For the full schema, multi-stage rollouts, weekly-cycle / ring-eligibility model, and the `allowedUpdateVersions` allow-list (schema v2), see [section 8](#8-scheduling-maintenance-windows-and-change-freeze-periods). The weekly drift detector (`Step.3_apply-updates-schedule-audit.yml`) that catches `(UpdateRing, UpdateStartWindow)` tag combinations no cron in Step.6 will ever reach is summarised in section 6.7 (full runbook in [section 8.3](#83-end-to-end-runbook-apply-updates-schedule-coverage-audit)).
+For the full schema, multi-stage rollouts, weekly-cycle / ring-eligibility model, and the `allowedUpdateVersions` allow-list (schema v2), see [section 8](#8-scheduling-maintenance-windows-and-change-freeze-periods). The weekly drift detector (`Step.3_apply-updates-schedule-audit.yml`) that catches `(UpdateRing, UpdateStartWindow)` tag combinations no cron in Step.7 will ever reach is summarised in section 6.7 (full runbook in [section 8.3](#83-end-to-end-runbook-apply-updates-schedule-coverage-audit)).
 
 ### 6.6 Apply updates - one wave at a time
 
@@ -1436,7 +1436,7 @@ Use the duration data in `update-runs.csv` from the wave you just finished to si
 
 For tighter control around production rollouts, add a manual approval gate between waves:
 
-- **Azure DevOps**: a separate stage with a `ManualValidation@0` step (the `Step.6_apply-updates.yml` shipped here includes a commented-out `WaitForApproval` block ready to enable).
+- **Azure DevOps**: a separate stage with a `ManualValidation@0` step (the `Step.7_apply-updates.yml` shipped here includes a commented-out `WaitForApproval` block ready to enable).
 - **GitHub Actions**: an `environment:` on the production job with required reviewers, configured in *Settings -> Environments*.
 
 ### 6.7 Continuous fleet monitoring
@@ -1446,11 +1446,11 @@ The "steady-state" phase ships **three complementary pipelines**, all read-only,
 | Pipeline | Daily | Answers | Output |
 |----------|-------|---------|--------|
 | `Step.4_fleet-connectivity-status.yml` *(v0.7.79+, enhanced in v0.7.85)* | 05:30 UTC | *"Are all clusters' Arc agents Connected? Are physical NICs healthy? Are Azure Resource Bridges reachable? Does the cluster's reported node count match the Arc-tagged physical machines we see?"* | JUnit + per-scope CSV/JSON + Markdown summary; one test case per cluster, with reconciliation rows that include "How to interpret + act" remediation guidance for any non-zero node-coverage delta |
-| `Step.7_monitor-updates.yml` *(v0.7.90; v0.7.92 default cadence)* | 5x/day at 20:00, 22:00, 00:00, 02:00, 04:00 UTC (every 2h across the overnight maintenance window) + manual | *"What is happening right now? Which clusters are mid-update, which step are they on, and is anything stuck?"* | JUnit + CSV + Markdown summary; one test case per in-flight cluster (failure when elapsed > threshold, default 6h) |
-| `Step.8_fleet-update-status.yml` *(formerly Step.7)* | 06:00 UTC | *"Is each cluster up-to-date? Which ones need an apply, which ones are SBE-blocked, which ones failed?"* | JUnit + CSV/JSON + Markdown summary; one test case per cluster |
-| `Step.9_fleet-health-status.yml` *(v0.7.65, formerly Step.8)* | 07:00 UTC | *"Do clusters have actionable health issues even when up-to-date? What failure reasons hit the most clusters?"* | JUnit + CSV/JSON + Markdown summary; one test case per (cluster, failing 24-hour health check) grouped under Critical / Warning testsuites |
+| `Step.8_monitor-updates.yml` *(v0.7.90; v0.7.92 default cadence)* | 5x/day at 20:00, 22:00, 00:00, 02:00, 04:00 UTC (every 2h across the overnight maintenance window) + manual | *"What is happening right now? Which clusters are mid-update, which step are they on, and is anything stuck?"* | JUnit + CSV + Markdown summary; one test case per in-flight cluster (failure when elapsed > threshold, default 6h) |
+| `Step.9_fleet-update-status.yml` *(formerly Step.8)* | 06:00 UTC | *"Is each cluster up-to-date? Which ones need an apply, which ones are SBE-blocked, which ones failed?"* | JUnit + CSV/JSON + Markdown summary; one test case per cluster |
+| `Step.10_fleet-health-status.yml` *(v0.7.65, formerly Step.9)* | 07:00 UTC | *"Do clusters have actionable health issues even when up-to-date? What failure reasons hit the most clusters?"* | JUnit + CSV/JSON + Markdown summary; one test case per (cluster, failing 24-hour health check) grouped under Critical / Warning testsuites |
 
-The four run in distinct (offset) cron slots so they don't contend for the same agent. `Step.7_monitor-updates.yml` ships **without** an active schedule - turn the `'*/30 * * * *'` cron on only during an active wave.
+The four run in distinct (offset) cron slots so they don't contend for the same agent. `Step.8_monitor-updates.yml` ships **without** an active schedule - turn the `'*/30 * * * *'` cron on only during an active wave.
 
 **Fleet Connectivity Status** *(introduced in v0.7.79, enhanced in v0.7.85)* runs daily at 05:30 UTC and answers the upstream question every other steady-state pipeline depends on: *"can the pipeline identity actually see every cluster, every physical node, and every Resource Bridge it is supposed to manage?"* The Step.4 reconciliation table compares each cluster's `reportedProperties.nodes` count against the Arc-tagged physical machines visible in Resource Graph and flags both directions of drift (positive = Arc has more machines than the cluster reports; negative = cluster reports more nodes than Arc can see). The v0.7.85 *"How to interpret + act on a non-zero reconciliation"* subsection in the pipeline summary gives operators per-direction remediation lists and an inline Resource Graph query template for triage. RBAC: `Reader` plus `Microsoft.ResourceGraph/resources/read`, `Microsoft.AzureStackHCI/edgeDevices/read`, `Microsoft.HybridCompute/machines/read`, and `Microsoft.ResourceConnector/appliances/read` - all already in the **`Azure Stack HCI Update Operator (custom)`** custom role definition shipped in [section 3.1](#31-custom-role-azure-stack-hci-update-operator-custom).
 
@@ -1481,7 +1481,7 @@ It calls the new [`Get-AzLocalFleetHealthFailures`](../README.md#get-azlocalflee
 
 Configure your CI/CD platform's alerting on the JUnit failures - GitHub Actions surfaces them in the run summary and Azure DevOps shows them in the Tests tab with trend analytics.
 
-**Plus weekly: `Step.3_apply-updates-schedule-audit.yml`** (read-only, runs Mondays at 05:00 UTC by default) catches drift between the cron schedule(s) committed to `Step.6_apply-updates.yml` and the `UpdateRing` / `UpdateStartWindow` tags that operators apply to new clusters. It emits a JUnit + CSV + Markdown "Recommend" snippet that pastes straight back into Step.6 to close any coverage gap. **For the full audit runbook (tag a cluster -> see drift -> paste recommended cron -> re-run and watch it turn green), see [section 8.3](#83-end-to-end-runbook-apply-updates-schedule-coverage-audit).**
+**Plus weekly: `Step.3_apply-updates-schedule-audit.yml`** (read-only, runs Mondays at 05:00 UTC by default) catches drift between the cron schedule(s) committed to `Step.7_apply-updates.yml` and the `UpdateRing` / `UpdateStartWindow` tags that operators apply to new clusters. It emits a JUnit + CSV + Markdown "Recommend" snippet that pastes straight back into Step.7 to close any coverage gap. **For the full audit runbook (tag a cluster -> see drift -> paste recommended cron -> re-run and watch it turn green), see [section 8.3](#83-end-to-end-runbook-apply-updates-schedule-coverage-audit).**
 
 ---
 
@@ -1497,7 +1497,7 @@ This README does not duplicate the setup - it is a single-source-of-truth in [`.
 > ```powershell
 > Copy-AzLocalItsmSample
 > ```
-> This copies `azurelocal-itsm.yml` + `templates/incident-body.md` from the installed module into `.\.itsm\` - the exact relative path that `Step.6_apply-updates.yml` looks for at job runtime (`itsm_config_path` / `itsmConfigPath` default `./.itsm/azurelocal-itsm.yml`). The sample is CI-platform-agnostic; both GitHub Actions and Azure DevOps consume the same YAML, only the secret source differs. To refresh the sample after a module upgrade, re-run with `-Update` (per-file `ShouldContinue` prompt) or `-Update -Confirm:$false` (unattended). See [`Copy-AzLocalItsmSample` reference](../Public/Copy-AzLocalItsmSample.ps1).
+> This copies `azurelocal-itsm.yml` + `templates/incident-body.md` from the installed module into `.\.itsm\` - the exact relative path that `Step.7_apply-updates.yml` looks for at job runtime (`itsm_config_path` / `itsmConfigPath` default `./.itsm/azurelocal-itsm.yml`). The sample is CI-platform-agnostic; both GitHub Actions and Azure DevOps consume the same YAML, only the secret source differs. To refresh the sample after a module upgrade, re-run with `-Update` (per-file `ShouldContinue` prompt) or `-Update -Confirm:$false` (unattended). See [`Copy-AzLocalItsmSample` reference](../Public/Copy-AzLocalItsmSample.ps1).
 
 | Step | Where it's documented |
 |---|---|
@@ -1507,14 +1507,14 @@ This README does not duplicate the setup - it is a single-source-of-truth in [`.
 | Author the trigger matrix at `./.itsm/azurelocal-itsm.yml` (a ready-to-copy version ships in [`./.itsm/`](./.itsm/) - use `Copy-AzLocalItsmSample` to drop it into your repo) | [ITSM/README.md section 5](../ITSM/README.md#5-author-the-trigger-matrix) |
 | Validate end-to-end with `Test-AzLocalItsmConnection` before flipping the pipeline switch | [ITSM/README.md section 6](../ITSM/README.md#6-validate-before-you-wire-it-into-a-pipeline) |
 
-Once the ServiceNow side is set up, the pipeline-side change is **already in `Step.6_apply-updates.yml`** in this folder. You enable it by:
+Once the ServiceNow side is set up, the pipeline-side change is **already in `Step.7_apply-updates.yml`** in this folder. You enable it by:
 
 1. Setting `raise_itsm_ticket=true` when you trigger Apply Updates (workflow input in GH Actions, parameter in Azure DevOps).
 2. Wiring the three secrets the step expects:
    - `ITSM_SN_INSTANCE_URL`
    - `ITSM_SN_CLIENT_ID`
    - `ITSM_SN_CLIENT_SECRET`
-3. (Azure DevOps only) Uncomment the `- group: AzureLocal-ITSM-Secrets` line at the top of `Step.6_apply-updates.yml` once the variable group exists.
+3. (Azure DevOps only) Uncomment the `- group: AzureLocal-ITSM-Secrets` line at the top of `Step.7_apply-updates.yml` once the variable group exists.
 
 The first production run should keep `itsm_dry_run=true` (the connector still resolves secrets and performs the read-only dedupe lookup so you can validate the matrix + templates against a real workload, without creating tickets). The dry-run output includes a CSV + JUnit projection of "what would have been ticketed" - inspect those before flipping the switch.
 
@@ -1534,9 +1534,9 @@ The `UpdateStartWindow` and `UpdateExclusionsWindow` tags on each cluster contro
 | `UpdateExclusionsWindow` (v0.7.90; was `UpdateExclusions`) | `YYYY-MM-DD/YYYY-MM-DD`, comma-separated, supports `*` wildcards | `20**-12-20/20**-01-03,2027-06-01/2027-06-10` | No updates start during these dates. **Exclusions override windows.** |
 | `UpdateExcluded` (v0.7.90) | `True` / `False` / `1` / `0` (case-insensitive) | `True` | Operator hard override. `True` skips the cluster with `Status = ExcludedByTag` regardless of ring scope, sideloaded state, or schedule. `Set-AzLocalClusterUpdateRingTag` default-stamps `False` on any cluster that doesn't already have the tag. |
 
-> **CRITICAL: the `UpdateStartWindow` tag is a *gate*, not a *trigger*.** The tag only controls **whether** the Apply Updates pipeline is allowed to start an update on a given cluster when the pipeline is already running. The tag does **not** schedule the pipeline itself. The shipped `Step.6_apply-updates.yml` samples have **`workflow_dispatch` only** (GitHub Actions) / **`trigger: none`** (Azure DevOps) with no `schedule:` / `schedules:` block - which means **if you never trigger the pipeline manually during a window, no updates are ever applied automatically**, no matter what `UpdateStartWindow` you have tagged on your clusters.
+> **CRITICAL: the `UpdateStartWindow` tag is a *gate*, not a *trigger*.** The tag only controls **whether** the Apply Updates pipeline is allowed to start an update on a given cluster when the pipeline is already running. The tag does **not** schedule the pipeline itself. The shipped `Step.7_apply-updates.yml` samples have **`workflow_dispatch` only** (GitHub Actions) / **`trigger: none`** (Azure DevOps) with no `schedule:` / `schedules:` block - which means **if you never trigger the pipeline manually during a window, no updates are ever applied automatically**, no matter what `UpdateStartWindow` you have tagged on your clusters.
 >
-> **You must add a `schedule:` (GH) / `schedules:` (ADO) block to `Step.6_apply-updates.yml` that fires *inside* (or a few minutes *before*) every `UpdateStartWindow` you have tagged.** If your fleet uses several distinct `UpdateStartWindow` values across rings, add one cron entry per window. Examples (UTC):
+> **You must add a `schedule:` (GH) / `schedules:` (ADO) block to `Step.7_apply-updates.yml` that fires *inside* (or a few minutes *before*) every `UpdateStartWindow` you have tagged.** If your fleet uses several distinct `UpdateStartWindow` values across rings, add one cron entry per window. Examples (UTC):
 >
 > | Cluster `UpdateStartWindow` tag | GitHub Actions `cron` | Azure DevOps `cron` | Notes |
 > |---|---|---|---|
@@ -1546,7 +1546,7 @@ The `UpdateStartWindow` and `UpdateExclusionsWindow` tags on each cluster contro
 >
 > Inside the pipeline, `Test-AzLocalUpdateScheduleAllowed` is the per-cluster gate - clusters whose `UpdateStartWindow` does not cover "now" (or whose `UpdateExclusionsWindow` does cover "now") are skipped with `Status = ScheduleBlocked`. Running the pipeline outside any window is therefore safe but wasted - **running it during a window is the only way an update ever starts.** Separately, clusters with `UpdateExcluded = True` are skipped with `Status = ExcludedByTag` regardless of schedule.
 >
-> **Tip - one pipeline per ring**: if `Pilot` / `Wave1` / `Production` have different windows, the cleanest pattern is to either (a) copy `Step.6_apply-updates.yml` per ring with the ring's own schedule + `update_ring` hard-coded, or (b) keep one YAML but pass `update_ring` via a matrix indexed by cron entry. Sticking with the default "single manual workflow" is fine for ad-hoc / change-controlled estates - in that case the operator manually clicks **Run workflow** at the start of the maintenance window.
+> **Tip - one pipeline per ring**: if `Pilot` / `Wave1` / `Production` have different windows, the cleanest pattern is to either (a) copy `Step.7_apply-updates.yml` per ring with the ring's own schedule + `update_ring` hard-coded, or (b) keep one YAML but pass `update_ring` via a matrix indexed by cron entry. Sticking with the default "single manual workflow" is fine for ad-hoc / change-controlled estates - in that case the operator manually clicks **Run workflow** at the start of the maintenance window.
 
 Grammar details:
 
@@ -1569,11 +1569,11 @@ Test-AzLocalUpdateScheduleAllowed -UpdateStartWindow "Sat_02:00-06:00" -TestTime
 
 ### 8.1.1 Recommended Step.5 pre-flight schedule (per ring)
 
-`Step.5_assess-update-readiness.yml` is the **report-only pre-flight** for an Apply Updates wave. The pipeline does not ship with a `schedule:` / `schedules:` block because the `update_ring` input is required and no single ring value is correct for every consumer. **Skipping Step.5 will not break Step.6** - the apply pipeline does its own internal `Get-AzLocalClusterUpdateReadiness` per-cluster pre-flight - but you lose the **human review window** between "we now know Ring2 has 12 clusters with blocking health checks" and "Ring2's maintenance window opens". For non-trivial estates that review window is worth preserving.
+`Step.5_assess-update-readiness.yml` is the **report-only pre-flight** for an Apply Updates wave. The pipeline does not ship with a `schedule:` / `schedules:` block because the `update_ring` input is required and no single ring value is correct for every consumer. **Skipping Step.5 will not break Step.7** - the apply pipeline does its own internal `Get-AzLocalClusterUpdateReadiness` per-cluster pre-flight - but you lose the **human review window** between "we now know Ring2 has 12 clusters with blocking health checks" and "Ring2's maintenance window opens". For non-trivial estates that review window is worth preserving.
 
-The recommendation is to **schedule one Step.5 cron entry per ring you intend to patch, anchored 12-72 hours before that ring's Step.6 cron, with the lead time scaled to ring size**:
+The recommendation is to **schedule one Step.5 cron entry per ring you intend to patch, anchored 12-72 hours before that ring's Step.7 cron, with the lead time scaled to ring size**:
 
-| Ring size | Lead time | Step.5 cron (UTC) anchored on a `Sat 02:00` Step.6 window | Rationale |
+| Ring size | Lead time | Step.5 cron (UTC) anchored on a `Sat 02:00` Step.7 window | Rationale |
 |---|---|---|---|
 | Small (<= 10 clusters) | 12-24 hours | `'0 2 * * 5'` (Fri 02:00) | Enough to triage a handful of `<failure>` entries; health signal still fresh at apply time. |
 | Medium (10-50 clusters) | 24-48 hours | `'0 2 * * 4'` (Thu 02:00) | Lets you raise tickets / engage cluster owners before the weekend. |
@@ -1589,17 +1589,17 @@ on:
     inputs:
       update_ring: { description: 'UpdateRing tag value', required: true, default: 'Wave1' }
   schedule:
-    - cron: '0 2 * * 4'   # Wave1 - Thu 02:00 UTC, 48h ahead of Sat 02:00 Wave1 Step.6 cron
+    - cron: '0 2 * * 4'   # Wave1 - Thu 02:00 UTC, 48h ahead of Sat 02:00 Wave1 Step.7 cron
 env:
   UPDATE_RING: ${{ github.event.inputs.update_ring || 'Wave1' }}
 # ... job steps below pass $UPDATE_RING into the Assess-AzLocalClusterUpdateReadiness call ...
 ```
 
-Copy this file once per ring (e.g. `Step.5_..._Pilot.yml`, `Step.5_..._Wave1.yml`, `Step.5_..._Production.yml`), changing the ring name in three places: workflow `name:`, `default:` value, and the `cron:` day-of-week so each fires the right lead time ahead of *that* ring's Step.6 cron.
+Copy this file once per ring (e.g. `Step.5_..._Pilot.yml`, `Step.5_..._Wave1.yml`, `Step.5_..._Production.yml`), changing the ring name in three places: workflow `name:`, `default:` value, and the `cron:` day-of-week so each fires the right lead time ahead of *that* ring's Step.7 cron.
 
 **Why one YAML per ring**: GitHub Actions `schedule:`-triggered runs cannot supply `inputs:` values - they always use the workflow's default `inputs:`. So a single `Step.5_*.yml` with three crons in one `schedule:` block (and `update_ring` required, no default) would never actually run on cron - every cron tick would fail input validation. Splitting one YAML per ring (each with its own default + single cron) is the cleanest fix. Azure DevOps has the same constraint - `schedules:`-triggered runs use the YAML's default `parameters:` values, so the same per-ring split pattern applies.
 
-**Known gap**: the Step.3 schedule-coverage audit (`Step.3_apply-updates-schedule-audit.yml`) currently validates Step.6 cron-to-`UpdateStartWindow` coverage only - it does **not** audit whether each Step.5 cron is correctly anchored ahead of a Step.6 cron. **Always pair Step.5 + Step.6 cron edits in the same PR** so the lead-time relationship is reviewable by a human at merge time. The per-pipeline appendix entry for [Step 5 - Assess Update Readiness](docs/appendix-pipelines.md#step-5---assess-update-readiness) repeats this guidance with the same lead-time table.
+**Known gap**: the Step.3 schedule-coverage audit (`Step.3_apply-updates-schedule-audit.yml`) currently validates Step.7 cron-to-`UpdateStartWindow` coverage only - it does **not** audit whether each Step.5 cron is correctly anchored ahead of a Step.7 cron. **Always pair Step.5 + Step.7 cron edits in the same PR** so the lead-time relationship is reviewable by a human at merge time. The per-pipeline appendix entry for [Step 5 - Assess Update Readiness](docs/appendix-pipelines.md#step-5---assess-update-readiness) repeats this guidance with the same lead-time table.
 
 **Always-green caveat**: `Step.5_assess-update-readiness.yml` never goes red at the pipeline level - per-cluster readiness gaps surface as JUnit `<failure>` entries in the Tests / Checks tab via `readiness.xml`. A silently-empty `readiness.xml` (e.g. an `update_ring` typo with zero clusters in scope) **will not generate a red-build email**. Either check the Tests tab after each scheduled run, or wire the JUnit reporter into the CI status surface you already monitor.
 
@@ -1682,7 +1682,7 @@ Repeat for the rest of the ring.
 - **GitHub Actions**: *Actions -> Apply-Updates Schedule Coverage Audit -> Run workflow*.
 - **Azure DevOps**: *Pipelines -> Apply-Updates Schedule Coverage Audit -> Run pipeline*.
 
-Both default `pipelinePath` to the standard consumer location for the platform: `.github/workflows` on GitHub Actions, `.azure-pipelines` on Azure DevOps. If you copied `Step.6_apply-updates.yml` into one of those folders (the recommended layout), the audit finds it on the first run. Override `pipelinePath` only if your copied `Step.6_apply-updates.yml` lives somewhere else (e.g. `.\pipelines`).
+Both default `pipelinePath` to the standard consumer location for the platform: `.github/workflows` on GitHub Actions, `.azure-pipelines` on Azure DevOps. If you copied `Step.7_apply-updates.yml` into one of those folders (the recommended layout), the audit finds it on the first run. Override `pipelinePath` only if your copied `Step.7_apply-updates.yml` lives somewhere else (e.g. `.\pipelines`).
 
 #### Step 4 - Read the run summary
 
@@ -1715,7 +1715,7 @@ Followed by the per-row detail (Uncovered first):
 And finally the **ready-to-paste cron block** (Recommend view). With the default `firesPerWindow: 2`, every window emits **two** cron entries - one tagged `(open)` that fires `leadTimeMinutes` BEFORE the window opens, and one tagged `(retry)` that fires inside the window at the lesser of the window midpoint or +60 min after it opens:
 
 ````yaml
-# --- GitHub Actions: paste under Step.6_apply-updates.yml `on:` ---
+# --- GitHub Actions: paste under Step.7_apply-updates.yml `on:` ---
 # schedule:
 #   - cron: '55 1 * * 6,0'    # Sat-Sun_02:00-06:00 (open)  (rings: Pilot, 3 cluster(s))
 #   - cron: '3 3 * * 6,0'     # Sat-Sun_02:00-06:00 (retry) (rings: Pilot, 3 cluster(s))
@@ -1727,7 +1727,7 @@ And finally the **ready-to-paste cron block** (Recommend view). With the default
 
 #### Step 5 - Apply the recommendation
 
-Open `Step.6_apply-updates.yml`, uncomment / paste the recommended `schedule:` (GH) or `schedules:` (ADO) block, and commit. The audit pipeline emits both blocks even when `-Platform Both` is the default - copy the section that matches your CI/CD platform.
+Open `Step.7_apply-updates.yml`, uncomment / paste the recommended `schedule:` (GH) or `schedules:` (ADO) block, and commit. The audit pipeline emits both blocks even when `-Platform Both` is the default - copy the section that matches your CI/CD platform.
 
 #### Why two cron entries per window? (belt-and-braces)
 
@@ -1745,13 +1745,13 @@ Pass `fires_per_window: '1'` (GitHub) or `firesPerWindow: 1` (ADO) on Step.3 to 
 
 If two clusters share an `UpdateRing` tag but carry **different** `UpdateStartWindow` values (e.g. follow-the-sun, or a typo), Step.3 emits a separate `Covered` / `Uncovered` row for each (Ring, Window) pair AND a single informational `RingMixedWindows` warning row in the Schedule sub-table. The runtime gate reads each cluster's own tag so updates still fire correctly, but the ring no longer represents a single maintenance window for operator mental-model purposes. The warning row's recommendation lists three resolution choices: (a) standardise the ring to one window, (b) split into separate rings, or (c) accept the divergence and document it in the schedule file's `notes` column. `RingMixedWindows` is **not** counted as an `Uncovered` failure - the pipeline does not gate on it.
 
-#### Step 6 - Re-run the audit to verify
+#### Step 7 - Re-run the audit to verify
 
 Trigger the audit pipeline again. The summary should now show **Uncovered = 0**, the Audit Detail table all `Covered`, and JUnit Test Results all green.
 
-#### Step 7 - Catch drift automatically
+#### Step 8 - Catch drift automatically
 
-Leave the weekly Monday 05:00 UTC schedule enabled. Any time someone tags a new cluster with a `UpdateStartWindow` value that the existing crons in `Step.6_apply-updates.yml` do not cover, the next Monday's audit run flips to **Uncovered** for that pair and surfaces it on the Tests tab. Configure your CI/CD alerting (GitHub Actions: branch-protection required check; Azure DevOps: notification on Test results) so the team is notified.
+Leave the weekly Monday 05:00 UTC schedule enabled. Any time someone tags a new cluster with a `UpdateStartWindow` value that the existing crons in `Step.7_apply-updates.yml` do not cover, the next Monday's audit run flips to **Uncovered** for that pair and surfaces it on the Tests tab. Configure your CI/CD alerting (GitHub Actions: branch-protection required check; Azure DevOps: notification on Test results) so the team is notified.
 
 #### Ad-hoc / desktop equivalent (no pipeline)
 
@@ -1895,7 +1895,7 @@ Only the **apply-side fan-out** still uses parallelism control, because applying
 
 | Function | `-ThrottleLimit` exposed | Used by pipeline |
 |---|---|---|
-| `Start-AzLocalClusterUpdate` (apply-side fleet ops) | Internal via `Invoke-FleetJobsInParallel`; no user-facing `-ThrottleLimit` parameter. | Step.6 Apply Updates. |
+| `Start-AzLocalClusterUpdate` (apply-side fleet ops) | Internal via `Invoke-FleetJobsInParallel`; no user-facing `-ThrottleLimit` parameter. | Step.7 Apply Updates. |
 
 The apply-side parallelism is bounded internally by the module's own job-pool helper; there is no operator-facing throttle knob to tune.
 
@@ -1988,10 +1988,10 @@ Automation-Pipeline-Examples/
     Step.3_apply-updates-schedule-audit.yml  # 3. Weekly read-only audit: UpdateStartWindow tags vs apply-updates cron (Mon 05:00 UTC, v0.7.65).
     Step.4_fleet-connectivity-status.yml     # 4. Daily fleet connectivity / Arc / NIC / Resource Bridge snapshot + node-coverage reconciliation (daily 05:30 UTC, v0.7.79+; reconciliation enhanced in v0.7.85).
     Step.5_assess-update-readiness.yml       # 5. Pre-flight readiness report (manual; v0.7.0).
-    Step.6_apply-updates.yml                 # 6. Apply updates to one UpdateRing (with optional ITSM step, v0.7.4).
-    Step.7_monitor-updates.yml               # 7. In-flight update monitor: per-cluster current step + elapsed duration; flags long-running runs (manual, optional */30 min cron; v0.7.90).
-    Step.8_fleet-update-status.yml           # 8. Scheduled fleet update-status snapshot (daily 06:00 UTC; formerly Step.7).
-    Step.9_fleet-health-status.yml           # 9. Scheduled fleet 24-hour health-check failure report (daily 07:00 UTC, v0.7.65; formerly Step.8).
+    Step.7_apply-updates.yml                 # 6. Apply updates to one UpdateRing (with optional ITSM step, v0.7.4).
+    Step.8_monitor-updates.yml               # 7. In-flight update monitor: per-cluster current step + elapsed duration; flags long-running runs (manual, optional */30 min cron; v0.7.90).
+    Step.9_fleet-update-status.yml           # 8. Scheduled fleet update-status snapshot (daily 06:00 UTC; formerly Step.8).
+    Step.10_fleet-health-status.yml           # 9. Scheduled fleet 24-hour health-check failure report (daily 07:00 UTC, v0.7.65; formerly Step.9).
   azure-devops/
     Step.0_authentication-test.yml
     Step.1_inventory-clusters.yml
@@ -1999,17 +1999,17 @@ Automation-Pipeline-Examples/
     Step.3_apply-updates-schedule-audit.yml
     Step.4_fleet-connectivity-status.yml
     Step.5_assess-update-readiness.yml
-    Step.6_apply-updates.yml
-    Step.7_monitor-updates.yml
-    Step.8_fleet-update-status.yml
-    Step.9_fleet-health-status.yml
+    Step.7_apply-updates.yml
+    Step.8_monitor-updates.yml
+    Step.9_fleet-update-status.yml
+    Step.10_fleet-health-status.yml
 ```
 
 ---
 
 ## 14. Pipeline reference
 
-Moved to [docs/appendix-pipelines.md](docs/appendix-pipelines.md) - one section per pipeline (`Step 0 - ...` ... `Step 9 - ...`) mapping 1:1 to the bundled `Step.N_*.yml` workflows, with purpose, inputs, trigger, cmdlets invoked, dependencies, artefacts, RBAC, and exit conditions for each. Kept out-of-line to keep this README focused on the runbook.
+Moved to [docs/appendix-pipelines.md](docs/appendix-pipelines.md) - one section per pipeline (`Step 0 - ...` ... `Step 10 - ...`) mapping 1:1 to the bundled `Step.N_*.yml` workflows, with purpose, inputs, trigger, cmdlets invoked, dependencies, artefacts, RBAC, and exit conditions for each. Kept out-of-line to keep this README focused on the runbook.
 
 ## Appendix B: Release history
 

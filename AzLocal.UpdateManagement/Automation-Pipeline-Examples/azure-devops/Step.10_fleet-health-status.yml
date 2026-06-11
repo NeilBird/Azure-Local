@@ -1,4 +1,4 @@
-# Step.9 - Fleet Health Status Monitoring Pipeline
+# Step.10 - Fleet Health Status Monitoring Pipeline
 # This pipeline surfaces 24-hour system health-check failures across every Azure Local
 # cluster the service connection can read - including clusters that are already
 # "up to date" with no available updates. The 24-hour health checks continue to run
@@ -217,7 +217,7 @@ stages:
       condition: always()
       inputs:
         PathtoPublish: '$(reportsPath)'
-        ArtifactName: 'azlocal-step.9-fleet-health-status-report_$(stamp.artifactStamp)'
+        ArtifactName: 'azlocal-step.10-fleet-health-status-report_$(stamp.artifactStamp)'
         publishLocation: 'Container'
 
     # Publish JUnit test results LAST so the Test Results tab is populated but the
@@ -321,7 +321,7 @@ stages:
       condition: and(always(), eq('${{ parameters.raiseItsmTicket }}', 'true'))
       inputs:
         PathtoPublish: '$(reportsPath)'
-        ArtifactName: 'azlocal-step.9-fleet-health-status-itsm-results_$(stamp.artifactStamp)'
+        ArtifactName: 'azlocal-step.10-fleet-health-status-itsm-results_$(stamp.artifactStamp)'
         publishLocation: 'Container'
       continueOnError: true
 
@@ -331,5 +331,5 @@ stages:
       inputs:
         testResultsFormat: 'JUnit'
         testResultsFiles: '$(reportsPath)/itsm-results.xml'
-        testRunTitle: 'ITSM Tickets (Step.9) - $(Build.BuildNumber)'
+        testRunTitle: 'ITSM Tickets (Step.10) - $(Build.BuildNumber)'
         failTaskOnFailedTests: false

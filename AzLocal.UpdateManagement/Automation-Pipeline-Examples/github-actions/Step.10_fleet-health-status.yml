@@ -31,7 +31,7 @@
 # Workflow name carries the same Step.N - prefix as the filename so the GitHub
 # Actions sidebar (which sorts workflows alphabetically by this `name:` field)
 # lists the eight pipelines in execution order.
-name: Step.9 - Fleet Health Status
+name: Step.10 - Fleet Health Status
 
 on:
   # BEGIN-AZLOCAL-CUSTOMIZE:schedule-triggers
@@ -225,7 +225,7 @@ jobs:
     - name: Upload Fleet Health Reports
       uses: actions/upload-artifact@v6
       with:
-        name: azlocal-step.9-fleet-health-status-report_${{ steps.artifact-stamp.outputs.timestamp }}
+        name: azlocal-step.10-fleet-health-status-report_${{ steps.artifact-stamp.outputs.timestamp }}
         path: ./reports/
         retention-days: 90
 
@@ -327,7 +327,7 @@ jobs:
       if: ${{ github.event.inputs.raise_itsm_ticket == 'true' }}
       uses: actions/upload-artifact@v6
       with:
-        name: azlocal-step.9-fleet-health-status-itsm-results_${{ steps.artifact-stamp.outputs.timestamp }}
+        name: azlocal-step.10-fleet-health-status-itsm-results_${{ steps.artifact-stamp.outputs.timestamp }}
         path: ./reports/itsm-*.*
         retention-days: 30
       continue-on-error: true
@@ -336,7 +336,7 @@ jobs:
       if: ${{ github.event.inputs.raise_itsm_ticket == 'true' }}
       uses: dorny/test-reporter@v3
       with:
-        name: ITSM Tickets (Step.9)
+        name: ITSM Tickets (Step.10)
         path: ./reports/itsm-results.xml
         reporter: java-junit
       continue-on-error: true

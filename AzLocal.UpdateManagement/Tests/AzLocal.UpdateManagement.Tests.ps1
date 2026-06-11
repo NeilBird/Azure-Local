@@ -448,7 +448,7 @@ Describe 'Module: AzLocal.UpdateManagement' {
         # shipped with a default pipeline_path of
         # 'AzLocal.UpdateManagement/Automation-Pipeline-Examples' - a path that
         # only exists in this module's source repo. In a consumer repo (where
-        # Step.6_apply-updates.yml lives under .github/workflows or .azure-pipelines),
+        # Step.7_apply-updates.yml lives under .github/workflows or .azure-pipelines),
         # the default-trigger run failed with
         #   PipelineYamlPath '...' does not exist on the runner
         # before the schedule advisor could emit JUnit XML. The defaults are
@@ -607,10 +607,10 @@ Describe 'Module: AzLocal.UpdateManagement' {
                 'Step.3_apply-updates-schedule-audit.yml' = 1
                 'Step.4_fleet-connectivity-status.yml'   = 1
                 'Step.5_assess-update-readiness.yml'     = 1
-                'Step.6_apply-updates.yml'               = 1
-                'Step.7_monitor-updates.yml'             = 1
-                'Step.8_fleet-update-status.yml'         = 1
-                'Step.9_fleet-health-status.yml'         = 1
+                'Step.7_apply-updates.yml'               = 1
+                'Step.8_monitor-updates.yml'             = 1
+                'Step.9_fleet-update-status.yml'         = 1
+                'Step.10_fleet-health-status.yml'         = 1
             }
             $offenders = New-Object System.Collections.Generic.List[string]
             foreach ($yml in $ymlFiles) {
@@ -652,7 +652,7 @@ Describe 'Module: AzLocal.UpdateManagement' {
         # the cmdlets that produce that output (the per-cluster table
         # content is asserted in the cmdlet-level Pester suite).
         It 'GitHub Actions Step.6 yml invokes Invoke-AzLocalReadinessGatedClusterUpdate (writes apply-results.json) and Add-AzLocalApplyUpdatesStepSummary (renders both per-cluster tables)' {
-            $yml = Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples\github-actions\Step.6_apply-updates.yml'
+            $yml = Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples\github-actions\Step.7_apply-updates.yml'
             $yml = (Resolve-Path -Path $yml).Path
             $content = Get-Content -LiteralPath $yml -Raw
             $content | Should -Match 'Invoke-AzLocalReadinessGatedClusterUpdate' -Because 'Step.6 GH apply-updates step must call the readiness-gated apply cmdlet (which writes apply-results.json)'
@@ -662,7 +662,7 @@ Describe 'Module: AzLocal.UpdateManagement' {
         }
 
         It 'Azure DevOps Step.6 yml invokes Invoke-AzLocalReadinessGatedClusterUpdate (writes apply-results.json) and Add-AzLocalApplyUpdatesStepSummary (renders both per-cluster tables)' {
-            $yml = Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples\azure-devops\Step.6_apply-updates.yml'
+            $yml = Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples\azure-devops\Step.7_apply-updates.yml'
             $yml = (Resolve-Path -Path $yml).Path
             $content = Get-Content -LiteralPath $yml -Raw
             $content | Should -Match 'Invoke-AzLocalReadinessGatedClusterUpdate' -Because 'ADO Step.6 apply-updates task must call the readiness-gated apply cmdlet'
@@ -672,7 +672,7 @@ Describe 'Module: AzLocal.UpdateManagement' {
         }
 
         It 'GitHub Actions Step.6 yml invokes the schedule-resolver, readiness-gate, no-ready, and ITSM cmdlets in their respective steps' {
-            $yml = Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples\github-actions\Step.6_apply-updates.yml'
+            $yml = Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples\github-actions\Step.7_apply-updates.yml'
             $yml = (Resolve-Path -Path $yml).Path
             $content = Get-Content -LiteralPath $yml -Raw
             $content | Should -Match 'Resolve-AzLocalPipelineUpdateRing'        -Because 'Step.6 GH resolve-ring step must call Resolve-AzLocalPipelineUpdateRing (replaces the ~80-line inline resolver script)'
@@ -682,7 +682,7 @@ Describe 'Module: AzLocal.UpdateManagement' {
         }
 
         It 'Azure DevOps Step.6 yml invokes the schedule-resolver, readiness-gate, no-ready, and ITSM cmdlets in their respective tasks' {
-            $yml = Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples\azure-devops\Step.6_apply-updates.yml'
+            $yml = Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples\azure-devops\Step.7_apply-updates.yml'
             $yml = (Resolve-Path -Path $yml).Path
             $content = Get-Content -LiteralPath $yml -Raw
             $content | Should -Match 'Resolve-AzLocalPipelineUpdateRing'
@@ -702,8 +702,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
         # path must still work verbatim when the new input is false (back-compat),
         # and the resolver must throw a helpful error when BOTH paths are empty.
         BeforeAll {
-            $script:S6Gh  = (Resolve-Path (Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples\github-actions\Step.6_apply-updates.yml')).Path
-            $script:S6Ado = (Resolve-Path (Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples\azure-devops\Step.6_apply-updates.yml')).Path
+            $script:S6Gh  = (Resolve-Path (Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples\github-actions\Step.7_apply-updates.yml')).Path
+            $script:S6Ado = (Resolve-Path (Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples\azure-devops\Step.7_apply-updates.yml')).Path
             $script:S6GhContent  = Get-Content -LiteralPath $script:S6Gh  -Raw
             $script:S6AdoContent = Get-Content -LiteralPath $script:S6Ado -Raw
         }
@@ -6970,7 +6970,7 @@ on:
   schedule:
     - cron: '55 1 * * 6,0'
     - cron: "0 22 * * 5"
-"@ | Set-Content -Path (Join-Path $script:tmpYamlDir 'github-actions\Step.6_apply-updates.yml') -Encoding ASCII
+"@ | Set-Content -Path (Join-Path $script:tmpYamlDir 'github-actions\Step.7_apply-updates.yml') -Encoding ASCII
             @"
 trigger: none
 schedules:
@@ -6978,7 +6978,7 @@ schedules:
     displayName: Weekday early-morning
     branches:
       include: [ main ]
-"@ | Set-Content -Path (Join-Path $script:tmpYamlDir 'azure-devops\Step.6_apply-updates.yml') -Encoding ASCII
+"@ | Set-Content -Path (Join-Path $script:tmpYamlDir 'azure-devops\Step.7_apply-updates.yml') -Encoding ASCII
         }
         AfterAll {
             Remove-Item -Path $script:tmpYamlDir -Recurse -Force -ErrorAction SilentlyContinue
@@ -7029,7 +7029,7 @@ on:
 on:
   schedule:
     - cron: '0 7 * * *'
-"@ | Set-Content -Path (Join-Path $regressionDir 'github-actions\Step.9_fleet-health-status.yml') -Encoding ASCII
+"@ | Set-Content -Path (Join-Path $regressionDir 'github-actions\Step.10_fleet-health-status.yml') -Encoding ASCII
                 # Apply-updates file: ships with only commented-out cron examples,
                 # so the reader should return ZERO crons for this folder overall.
                 @"
@@ -7037,7 +7037,7 @@ on:
   workflow_dispatch:
   # schedule:
   #   - cron: '0 22 * * 6'
-"@ | Set-Content -Path (Join-Path $regressionDir 'github-actions\Step.6_apply-updates.yml') -Encoding ASCII
+"@ | Set-Content -Path (Join-Path $regressionDir 'github-actions\Step.7_apply-updates.yml') -Encoding ASCII
 
                 InModuleScope AzLocal.UpdateManagement -Parameters @{ dir = $regressionDir } {
                     param($dir)
@@ -7063,7 +7063,7 @@ on:
   schedule:
     - cron: '   '
     - cron: '0 22 * * 6'
-"@ | Set-Content -Path (Join-Path $emptyDir 'github-actions\Step.6_apply-updates.yml') -Encoding ASCII
+"@ | Set-Content -Path (Join-Path $emptyDir 'github-actions\Step.7_apply-updates.yml') -Encoding ASCII
 
                 InModuleScope AzLocal.UpdateManagement -Parameters @{ dir = $emptyDir } {
                     param($dir)
@@ -7087,7 +7087,7 @@ on:
 on:
   schedule:
     - cron: '50 1 * * 6,0'
-"@ | Set-Content -Path (Join-Path $script:tmpYamlDir2 'github-actions\Step.6_apply-updates.yml') -Encoding ASCII
+"@ | Set-Content -Path (Join-Path $script:tmpYamlDir2 'github-actions\Step.7_apply-updates.yml') -Encoding ASCII
         }
         AfterAll {
             Remove-Item -Path $script:tmpYamlDir2 -Recurse -Force -ErrorAction SilentlyContinue
@@ -7239,7 +7239,7 @@ on:
 on:
   schedule:
     - cron: '55 1 * * 6,0'
-"@ | Set-Content -Path (Join-Path $script:beltYamlDir 'github-actions\Step.6_apply-updates.yml') -Encoding ASCII
+"@ | Set-Content -Path (Join-Path $script:beltYamlDir 'github-actions\Step.7_apply-updates.yml') -Encoding ASCII
         }
         AfterAll {
             Remove-Item -Path $script:beltYamlDir -Recurse -Force -ErrorAction SilentlyContinue
@@ -7331,7 +7331,7 @@ on:
   schedule:
     - cron: '50 1 * * 6,0'
     - cron: '55 21 * * 1-5'
-"@ | Set-Content -Path (Join-Path $script:multiYamlDir 'github-actions\Step.6_apply-updates.yml') -Encoding ASCII
+"@ | Set-Content -Path (Join-Path $script:multiYamlDir 'github-actions\Step.7_apply-updates.yml') -Encoding ASCII
         }
         AfterAll {
             Remove-Item -Path $script:multiYamlDir -Recurse -Force -ErrorAction SilentlyContinue
@@ -7434,7 +7434,7 @@ on:
 on:
   schedule:
     - cron: '55 1 * * 6,0'
-"@ | Set-Content -Path (Join-Path $script:pruneYamlDir 'github-actions\Step.6_apply-updates.yml') -Encoding ASCII
+"@ | Set-Content -Path (Join-Path $script:pruneYamlDir 'github-actions\Step.7_apply-updates.yml') -Encoding ASCII
         }
         AfterAll {
             Remove-Item -Path $script:pruneYamlDir -Recurse -Force -ErrorAction SilentlyContinue
@@ -7501,7 +7501,7 @@ on:
             @"
 on:
   workflow_dispatch:
-"@ | Set-Content -Path (Join-Path $script:nwtDir 'github-actions\Step.6_apply-updates.yml') -Encoding ASCII
+"@ | Set-Content -Path (Join-Path $script:nwtDir 'github-actions\Step.7_apply-updates.yml') -Encoding ASCII
 
             # CSV WITH ResourceId column: 4 clusters. One peer (cA) in Ring1
             # with a real UpdateStartWindow; one orphan target (cB) in Ring1
@@ -7631,7 +7631,7 @@ cB,rg1,s1,Ring1,
             @"
 on:
   workflow_dispatch:
-"@ | Set-Content -Path (Join-Path $script:calDir 'github-actions\Step.6_apply-updates.yml') -Encoding ASCII
+"@ | Set-Content -Path (Join-Path $script:calDir 'github-actions\Step.7_apply-updates.yml') -Encoding ASCII
 
             # Minimal schema-v2 schedule: 2-week cycle, Ring1 in week 1
             # (Mon-Fri), Ring2 in week 2 (Mon-Fri). No allowedUpdateVersions.
@@ -7706,7 +7706,7 @@ schedule:
             @"
 on:
   workflow_dispatch:
-"@ | Set-Content -Path (Join-Path $script:exclDir 'github-actions\Step.6_apply-updates.yml') -Encoding ASCII
+"@ | Set-Content -Path (Join-Path $script:exclDir 'github-actions\Step.7_apply-updates.yml') -Encoding ASCII
         }
         AfterAll {
             Remove-Item -Path $script:exclDir -Recurse -Force -ErrorAction SilentlyContinue
@@ -7752,7 +7752,7 @@ on:
         # End-to-end smoke against the actual YAMLs published to PSGallery as
         # part of the module. This is the gap that let v0.7.68 ship with the
         # -LiteralPath/-Include glob regression: unit tests only fed the reader
-        # synthetic Step.6_apply-updates.yml files in isolation, never a real
+        # synthetic Step.7_apply-updates.yml files in isolation, never a real
         # multi-pipeline folder. Running the audit against the bundle now
         # guarantees that no future change re-introduces a glob that also picks
         # up sibling Step.N_*.yml schedule triggers.
@@ -7777,7 +7777,7 @@ on:
             InModuleScope AzLocal.UpdateManagement -Parameters @{ bundleGhDir = $script:bundleGhDir } {
                 param($bundleGhDir)
                 $r = Read-AzLocalApplyUpdatesYamlCrons -Path $bundleGhDir
-                @($r).Count | Should -Be 0 -Because 'the shipped Step.6_apply-updates.yml ships with only commented cron examples, and the reader must NOT pick up crons from sibling Step.N pipelines'
+                @($r).Count | Should -Be 0 -Because 'the shipped Step.7_apply-updates.yml ships with only commented cron examples, and the reader must NOT pick up crons from sibling Step.N pipelines'
             }
         }
     }
@@ -7966,7 +7966,7 @@ Describe 'v0.7.66 Artifact download names carry a UTC timestamp suffix' {
                 }
                 # Accept either the in-stage step-output form (`$(stamp.artifactStamp)`)
                 # OR a cross-stage variable that ends in `ArtifactStamp)`, which is
-                # how `Step.6_apply-updates.yml` consumes the CheckReadiness stage's stamp
+                # how `Step.7_apply-updates.yml` consumes the CheckReadiness stage's stamp
                 # via the `readinessArtifactStamp` mapped variable.
                 if ($name -notmatch '\$\(.+?[Aa]rtifactStamp\)') {
                     $offenders.Add("$($yml.Name): ${key} '$name' missing a `$(...artifactStamp) suffix")
@@ -8360,14 +8360,14 @@ Describe 'Function: Update-AzLocalPipelineExample' {
     }
 
     Context 'Marker-aware merge preserves destination customisations' {
-        It 'Replaces the schedule-triggers body with the destination body in Step.6_apply-updates.yml' {
+        It 'Replaces the schedule-triggers body with the destination body in Step.7_apply-updates.yml' {
             $temp = Join-Path $env:TEMP "upe-merge-$([guid]::NewGuid())"
             New-Item -ItemType Directory -Path $temp -Force | Out-Null
             try {
-                # 1. Copy the bundled Step.6_apply-updates.yml to the destination.
-                $src = Join-Path $script:UpePlatformSrcGh 'Step.6_apply-updates.yml'
+                # 1. Copy the bundled Step.7_apply-updates.yml to the destination.
+                $src = Join-Path $script:UpePlatformSrcGh 'Step.7_apply-updates.yml'
                 Copy-Item -Path $src -Destination $temp
-                $destFile = Join-Path $temp 'Step.6_apply-updates.yml'
+                $destFile = Join-Path $temp 'Step.7_apply-updates.yml'
 
                 # 2. Inject a customer cron INSIDE the schedule-triggers marker block.
                 $customerBody = "`r`n  schedule:`r`n    - cron: '0 22 * * 6'  # Wave1 SatNight22UTC`r`n  "
@@ -8384,7 +8384,7 @@ Describe 'Function: Update-AzLocalPipelineExample' {
 
                 # 3. Run the cmdlet. Source body should be REPLACED with customer body.
                 $r = Update-AzLocalPipelineExample -Destination $temp -Platform GitHub -PassThru -Confirm:$false
-                $row = $r | Where-Object { $_.File -like '*Step.6_apply-updates.yml' }
+                $row = $r | Where-Object { $_.File -like '*Step.7_apply-updates.yml' }
                 $row.Action            | Should -Match 'Updated|Unchanged'
                 # Customer cron MUST survive
                 $newText = [System.IO.File]::ReadAllText($destFile, [System.Text.UTF8Encoding]::new($false))
@@ -8413,11 +8413,11 @@ Describe 'Function: Update-AzLocalPipelineExample' {
             New-Item -ItemType Directory -Path $temp -Force | Out-Null
             try {
                 # Place a stripped-down YAML at dest with NO markers, same filename as a bundled file.
-                $destFile = Join-Path $temp 'Step.6_apply-updates.yml'
+                $destFile = Join-Path $temp 'Step.7_apply-updates.yml'
                 'name: legacy file with no markers' | Set-Content -LiteralPath $destFile -Encoding utf8
 
                 $r = Update-AzLocalPipelineExample -Destination $temp -Platform GitHub -PassThru -Confirm:$false 3>$null
-                $row = $r | Where-Object { $_.File -like '*Step.6_apply-updates.yml' }
+                $row = $r | Where-Object { $_.File -like '*Step.7_apply-updates.yml' }
                 $row.Action | Should -Be 'Skipped-NeedsForce'
                 # Dest file unchanged
                 (Get-Content -Raw -LiteralPath $destFile) | Should -Match 'legacy file with no markers'
@@ -8428,11 +8428,11 @@ Describe 'Function: Update-AzLocalPipelineExample' {
             $temp = Join-Path $env:TEMP "upe-firstmig-force-$([guid]::NewGuid())"
             New-Item -ItemType Directory -Path $temp -Force | Out-Null
             try {
-                $destFile = Join-Path $temp 'Step.6_apply-updates.yml'
+                $destFile = Join-Path $temp 'Step.7_apply-updates.yml'
                 'name: legacy file with no markers' | Set-Content -LiteralPath $destFile -Encoding utf8
 
                 $r = Update-AzLocalPipelineExample -Destination $temp -Platform GitHub -PassThru -Force -Confirm:$false 3>$null
-                $row = $r | Where-Object { $_.File -like '*Step.6_apply-updates.yml' }
+                $row = $r | Where-Object { $_.File -like '*Step.7_apply-updates.yml' }
                 $row.Action | Should -Be 'Overwritten'
                 $row.NewMarkers | Should -Contain 'schedule-triggers'
                 (Get-Content -Raw -LiteralPath $destFile) | Should -Match 'BEGIN-AZLOCAL-CUSTOMIZE:schedule-triggers'
@@ -9283,7 +9283,7 @@ Describe 'Function: Test-AzLocalApplyUpdatesScheduleCoverage - v0.7.70 Section d
         @"
 on:
   workflow_dispatch:
-"@ | Set-Content -Path (Join-Path $script:v7_70_yamlDir 'github-actions\Step.6_apply-updates.yml') -Encoding ASCII
+"@ | Set-Content -Path (Join-Path $script:v7_70_yamlDir 'github-actions\Step.7_apply-updates.yml') -Encoding ASCII
 
         # Schedule file that knows about Pilot + Wave1 but is MISSING 'Production'
         # (which is tagged on c3) and ORPHANS 'Pilot' (which no cluster carries).
@@ -15777,7 +15777,7 @@ Describe 'Thin-YAML Step.3: Export-AzLocalApplyUpdatesScheduleAudit' {
         $env:_S3_OUTDIR          = $script:_s3_outDir
         $env:_S3_PIPELINEDIR     = $script:_s3_pipelineDir
 
-        $global:_s3_auditRows = @( (New-S3AuditRow -Status 'Uncovered' -Issue 'No cron entry matches Sat 01:00 +60' -Recommendation 'Add 55 0 * * 6 to Step.6_apply-updates.yml') )
+        $global:_s3_auditRows = @( (New-S3AuditRow -Status 'Uncovered' -Issue 'No cron entry matches Sat 01:00 +60' -Recommendation 'Add 55 0 * * 6 to Step.7_apply-updates.yml') )
 
         $result = InModuleScope AzLocal.UpdateManagement {
             Mock Test-AzLocalApplyUpdatesScheduleCoverage { $global:_s3_auditRows } -ParameterFilter { $View -eq 'Audit' }
@@ -16027,7 +16027,7 @@ Describe 'Thin-YAML Step.3: Export-AzLocalApplyUpdatesScheduleAudit' {
         $env:_S3_OUTDIR          = $script:_s3_outDir
         $env:_S3_SCHEDULE        = $script:_s3_scheduleFile
 
-        # Drop a real Step.6_apply-updates.yml with two cron triggers so
+        # Drop a real Step.7_apply-updates.yml with two cron triggers so
         # Read-AzLocalApplyUpdatesYamlCrons + ConvertFrom-AzLocalCronExpression
         # produce non-empty FireTimes for the calendar block.
         $ghDir = Join-Path $script:_s3_pipelineDir 'github-actions'
@@ -16038,7 +16038,7 @@ on:
     - cron: '0 2 * * *'
     - cron: '30 4 * * 1-5'
   workflow_dispatch:
-"@ | Set-Content -Path (Join-Path $ghDir 'Step.6_apply-updates.yml') -Encoding ASCII
+"@ | Set-Content -Path (Join-Path $ghDir 'Step.7_apply-updates.yml') -Encoding ASCII
         $env:_S3_PIPELINEDIR = $script:_s3_pipelineDir
 
         # Schedule has cycleWeeks=1 so the calendar default horizon is 7 days.
@@ -16107,7 +16107,7 @@ on:
 on:
   schedule:
     - cron: '0 2 * * *'
-"@ | Set-Content -Path (Join-Path $ghDir 'Step.6_apply-updates.yml') -Encoding ASCII
+"@ | Set-Content -Path (Join-Path $ghDir 'Step.7_apply-updates.yml') -Encoding ASCII
         $env:_S3_PIPELINEDIR = $script:_s3_pipelineDir
 
         # Synthesise a tiny cluster CSV: 2 clusters in 'Cdn' ring, one with

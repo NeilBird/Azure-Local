@@ -5,13 +5,13 @@
 #
 # WHY THIS PIPELINE EXISTS
 # ------------------------
-# Step.6_apply-updates.yml ships with NO default schedule (workflow_dispatch only) on purpose,
+# Step.7_apply-updates.yml ships with NO default schedule (workflow_dispatch only) on purpose,
 # so customers must consciously choose when updates fire. After you have configured
-# UpdateStartWindow tags on your clusters and added cron entries to Step.6_apply-updates.yml, this
+# UpdateStartWindow tags on your clusters and added cron entries to Step.7_apply-updates.yml, this
 # pipeline is the safety net that catches:
-#   - a new ring tagged with UpdateStartWindow that no cron in Step.6_apply-updates.yml will reach
+#   - a new ring tagged with UpdateStartWindow that no cron in Step.7_apply-updates.yml will reach
 #   - an UpdateStartWindow tag value that fails to parse (typo / wrong syntax)
-#   - Step.6_apply-updates.yml cron entries that the advisor cannot reason about
+#   - Step.7_apply-updates.yml cron entries that the advisor cannot reason about
 #     (DayOfMonth restrictions, step values) so you can audit them manually
 #
 # REPORTS GENERATED
@@ -46,7 +46,7 @@ on:
   workflow_dispatch:
     inputs:
       pipeline_path:
-        description: 'Path (file or folder) to Step.6_apply-updates.yml to audit, repo-relative. Required so the Recommend view can diff its proposed crons against what is already present in Step.6 and only emit a snippet for the truly missing entries. Default `.github/workflows` matches the standard GitHub Actions consumer layout where you paste the bundled `Step.6_apply-updates.yml` sample.'
+        description: 'Path (file or folder) to Step.7_apply-updates.yml to audit, repo-relative. Required so the Recommend view can diff its proposed crons against what is already present in Step.7 and only emit a snippet for the truly missing entries. Default `.github/workflows` matches the standard GitHub Actions consumer layout where you paste the bundled `Step.7_apply-updates.yml` sample.'
         required: true
         default: '.github/workflows'
       schedule_path:

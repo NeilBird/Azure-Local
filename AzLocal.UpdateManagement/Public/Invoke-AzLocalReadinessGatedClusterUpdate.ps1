@@ -8,7 +8,7 @@ function Invoke-AzLocalReadinessGatedClusterUpdate {
         per-cluster apply results to apply-results.json.
     .DESCRIPTION
         v0.8.5 Step.6 thin-YAML helper. Replaces the ~110-line inline `run:`
-        block that lived in both Step.6_apply-updates.yml pipelines.
+        block that lived in both Step.7_apply-updates.yml pipelines.
 
         Behaviour matches the prior inline block byte-for-byte:
           - Loads readiness-report.csv, validates the ClusterResourceId

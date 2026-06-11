@@ -1,4 +1,4 @@
-# Step.6 - Apply Updates to Azure Local Clusters
+# Step.7 - Apply Updates to Azure Local Clusters
 # This pipeline applies updates to clusters filtered by UpdateRing tag value
 
 # BEGIN-AZLOCAL-CUSTOMIZE:schedule-triggers
@@ -230,7 +230,7 @@ stages:
             displayName: 'Publish Readiness Report'
             inputs:
               PathtoPublish: '$(Build.ArtifactStagingDirectory)'
-              ArtifactName: 'azlocal-step.6-apply-updates-readiness-report_$(stamp.artifactStamp)'
+              ArtifactName: 'azlocal-step.7-apply-updates-readiness-report_$(stamp.artifactStamp)'
               publishLocation: 'Container'
 
   # Stage 2: Apply Updates (with approval gate for production)
@@ -324,7 +324,7 @@ stages:
               source: 'current'
               # artifact name now carries a UTC timestamp - rebuild via the
               # readinessArtifactStamp variable mapped from the CheckReadiness stage.
-              artifact: 'azlocal-step.6-apply-updates-readiness-report_$(readinessArtifactStamp)'
+              artifact: 'azlocal-step.7-apply-updates-readiness-report_$(readinessArtifactStamp)'
               path: '$(Build.ArtifactStagingDirectory)'
 
           # v0.8.5 thin-YAML - readiness-gated apply via shared helper. Validates
@@ -379,7 +379,7 @@ stages:
             displayName: 'Publish Update Logs'
             inputs:
               PathtoPublish: '$(Build.ArtifactStagingDirectory)'
-              ArtifactName: 'azlocal-step.6-apply-updates-logs_$(stamp.artifactStamp)'
+              ArtifactName: 'azlocal-step.7-apply-updates-logs_$(stamp.artifactStamp)'
               publishLocation: 'Container'
 
           - task: PublishTestResults@2
@@ -447,7 +447,7 @@ stages:
             condition: and(always(), eq('${{ parameters.raiseItsmTicket }}', 'true'))
             inputs:
               PathtoPublish: '$(Build.ArtifactStagingDirectory)'
-              ArtifactName: 'azlocal-step.6-apply-updates-itsm-results_$(stamp.artifactStamp)'
+              ArtifactName: 'azlocal-step.7-apply-updates-itsm-results_$(stamp.artifactStamp)'
               publishLocation: 'Container'
             continueOnError: true
 

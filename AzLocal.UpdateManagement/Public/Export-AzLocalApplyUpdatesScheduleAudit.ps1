@@ -73,7 +73,7 @@ function Export-AzLocalApplyUpdatesScheduleAudit {
         `$env:BUILD_ARTIFACTSTAGINGDIRECTORY` (Azure DevOps).
 
     .PARAMETER PipelineYamlPath
-        Path (file or folder) to Step.6_apply-updates.yml. REQUIRED so
+        Path (file or folder) to Step.7_apply-updates.yml. REQUIRED so
         the Recommend view can diff its proposed crons against what is
         already in Step.6 and only emit a snippet for the truly missing
         entries.
@@ -233,7 +233,7 @@ function Export-AzLocalApplyUpdatesScheduleAudit {
     }
 
     if (-not (Test-Path -LiteralPath $PipelineYamlPath)) {
-        throw "PipelineYamlPath '$PipelineYamlPath' does not exist. Set it to the folder containing Step.6_apply-updates.yml (e.g. '.github/workflows' or '.azure-pipelines') so the Recommend view can diff its proposed crons against the existing file."
+        throw "PipelineYamlPath '$PipelineYamlPath' does not exist. Set it to the folder containing Step.7_apply-updates.yml (e.g. '.github/workflows' or '.azure-pipelines') so the Recommend view can diff its proposed crons against the existing file."
     }
 
     $haveSchedule = $false
@@ -548,7 +548,7 @@ function Export-AzLocalApplyUpdatesScheduleAudit {
     & $addDetailTable '### Audit Detail - Cron coverage (Uncovered / Partial / Malformed first)' $cronRows 'No tagged clusters found - nothing to audit.'
 
     if (-not $hasIssues -and $recoContent) {
-        [void]$md.Add('### Reference - Recommended schedule (copy into Step.6_apply-updates.yml)')
+        [void]$md.Add('### Reference - Recommended schedule (copy into Step.7_apply-updates.yml)')
         [void]$md.Add('')
         [void]$md.Add($recoContent)
         [void]$md.Add('')
@@ -559,7 +559,7 @@ function Export-AzLocalApplyUpdatesScheduleAudit {
     # calendar silently disappeared from clean-fleet runs.
     # v0.8.6 enrichment: when PipelineYamlPath (always) and ClusterCsvPath
     # (optional) are available, build two extra columns:
-    #   * "Ring CRON Start Time (Step 6 pipeline)" - per-day UTC firing
+    #   * "Ring CRON Start Time (Step 7 pipeline)" - per-day UTC firing
     #     times projected from Step.6 cron triggers.
     #   * "Tag Start Window Match (>=95%)" - per (ring, date) pair: do
     #     >=95% of clusters in the ring have an UpdateStartWindow tag

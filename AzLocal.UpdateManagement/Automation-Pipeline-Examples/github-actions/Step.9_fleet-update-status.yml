@@ -23,7 +23,7 @@
 # Workflow name carries the same Step.N - prefix as the filename so the GitHub
 # Actions sidebar (which sorts workflows alphabetically by this `name:` field)
 # lists the eight pipelines in execution order.
-name: Step.8 - Fleet Update Status
+name: Step.9 - Fleet Update Status
 
 on:
   # BEGIN-AZLOCAL-CUSTOMIZE:schedule-triggers
@@ -68,7 +68,7 @@ on:
       # Failed update run reported by the '📜 Update Run History and Error Details'
       # testsuite (and any failed AzureLocalFleetUpdateStatus row). Default is false
       # so existing schedules stay byte-identical until you opt in. The connector reads
-      # the JUnit file Step.6 already produces (./reports/readiness-status.xml) and
+      # the JUnit file Step.7 already produces (./reports/readiness-status.xml) and
       # the trigger matrix in ./.itsm/azurelocal-itsm.yml.
       raise_itsm_ticket:
         description: 'Open ITSM tickets (ServiceNow) for fleet-update-status failures'
@@ -205,7 +205,7 @@ jobs:
       id: artifact-stamp
       shell: pwsh
       # every downloadable artifact gets a UTC timestamp suffix so multiple runs on
-      # the same day produce distinct zip names (e.g. azlocal-step.8-fleet-update-status-report_20260518_143217.zip).
+      # the same day produce distinct zip names (e.g. azlocal-step.9-fleet-update-status-report_20260518_143217.zip).
       run: |
         $stamp = (Get-Date).ToUniversalTime().ToString('yyyyMMdd_HHmmss')
         "timestamp=$stamp" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
@@ -214,7 +214,7 @@ jobs:
     - name: Upload Fleet Status Reports
       uses: actions/upload-artifact@v6
       with:
-        name: azlocal-step.8-fleet-update-status-report_${{ steps.artifact-stamp.outputs.timestamp }}
+        name: azlocal-step.9-fleet-update-status-report_${{ steps.artifact-stamp.outputs.timestamp }}
         path: ./reports/
         retention-days: 90
     
@@ -317,7 +317,7 @@ jobs:
       if: ${{ github.event.inputs.raise_itsm_ticket == 'true' }}
       uses: actions/upload-artifact@v6
       with:
-        name: azlocal-step.8-fleet-update-status-itsm-results_${{ steps.artifact-stamp.outputs.timestamp }}
+        name: azlocal-step.9-fleet-update-status-itsm-results_${{ steps.artifact-stamp.outputs.timestamp }}
         path: ./reports/itsm-*.*
         retention-days: 30
       continue-on-error: true
@@ -326,7 +326,7 @@ jobs:
       if: ${{ github.event.inputs.raise_itsm_ticket == 'true' }}
       uses: dorny/test-reporter@v3
       with:
-        name: ITSM Tickets (Step.6)
+        name: ITSM Tickets (Step.9)
         path: ./reports/itsm-results.xml
         reporter: java-junit
       continue-on-error: true

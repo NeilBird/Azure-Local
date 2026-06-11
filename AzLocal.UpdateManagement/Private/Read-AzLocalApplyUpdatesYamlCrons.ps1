@@ -10,10 +10,12 @@ function Read-AzLocalApplyUpdatesYamlCrons {
         Discovery rules:
           - If Path is a file, scan that file.
           - If Path is a directory, recursively find files matching any of
-            'Step.6_apply-updates*.yml', 'Step.6_apply-updates*.yaml',
+            'Step.7_apply-updates*.yml', 'Step.7_apply-updates*.yaml',
             'apply-updates*.yml', or 'apply-updates*.yaml'.
-            (The 'Step.5_' prefix is the v0.7.68+ shipped name; the un-prefixed
-             form is the legacy name still supported for backwards compatibility.)
+            (The 'Step.7_' prefix is the v0.8.7+ shipped name - the apply pipeline
+             moved from Step.6 to Step.7 when the opt-in sideload pipeline took
+             Step.6; the un-prefixed form is the legacy name still supported for
+             backwards compatibility.)
 
         Platform is inferred from the parent directory name when the YAML is
         under .../github-actions/ or .../azure-devops/. Falls back to the
@@ -60,15 +62,15 @@ function Read-AzLocalApplyUpdatesYamlCrons {
         # NOTE: Get-ChildItem -LiteralPath -Recurse -Include silently ignores the
         # -Include filter and returns every recursed file (confirmed in PS 5.1).
         # That caused v0.7.68 to pick up every Step.N_*.yml sibling (Step.1, Step.3,
-        # Step.4, Step.7, Step.8, Step.9 all carry their own schedule crons) and treat
+        # Step.4, Step.8, Step.9, Step.10 all carry their own schedule crons) and treat
         # their crons as apply-updates crons - garbage in the audit, and on PS 7 the
         # binder surfaced it as 'Cannot bind argument to parameter Expression because
         # it is an empty string' once any unparseable capture was reached.
         # Use -Filter (which is honoured under -Recurse) one pattern at a time,
         # then dedupe by FullName.
         $patterns = @(
-            'Step.6_apply-updates*.yml',
-            'Step.6_apply-updates*.yaml',
+            'Step.7_apply-updates*.yml',
+            'Step.7_apply-updates*.yaml',
             'apply-updates*.yml',
             'apply-updates*.yaml'
         )
