@@ -2866,6 +2866,45 @@ Describe 'Integration: Start-AzLocalClusterUpdate Schedule Status' {
                 if (Test-Path $outputPath) { Remove-Item $outputPath -Force }
             }
         }
+
+        It 'Export-ResultsToJUnitXml should not throw on an UpdateStarted row lacking CurrentState/Progress (v0.8.7)' {
+            # Regression: the UpdateStarted success shape emitted by
+            # Start-AzLocalClusterUpdate has no CurrentState or Progress
+            # property. Under Set-StrictMode -Version Latest the success
+            # (default) branch's bare 'if ($result.CurrentState)' /
+            # 'if ($result.Progress)' threw "The property 'CurrentState'
+            # cannot be found on this object", surfacing as
+            # "Failed to export results: ..." in the Apply Updates step.
+            $testResult = [PSCustomObject]@{
+                ClusterName = 'London'
+                Status      = 'UpdateStarted'
+                Message     = 'Update initiated successfully'
+                UpdateName  = 'Solution12.2605.1003.210'
+                StartTime   = Get-Date
+                EndTime     = Get-Date
+                Duration    = '00:00:14'
+            }
+            $outputPath = Join-Path $env:TEMP "pester-junit-updatestarted-$([Guid]::NewGuid()).xml"
+            try {
+                {
+                    & (Get-Module 'AzLocal.UpdateManagement') {
+                        param($results, $path)
+                        Export-ResultsToJUnitXml -Results $results -OutputPath $path -TestSuiteName 'Test' -OperationType 'StartUpdate'
+                    } @($testResult) $outputPath
+                } | Should -Not -Throw
+
+                $outputPath | Should -Exist
+                $xml = [xml](Get-Content $outputPath -Raw)
+                $testCase = $xml.SelectSingleNode('//testcase')
+                $testCase | Should -Not -BeNullOrEmpty
+                # Success row renders as <system-out>, not <failure>/<skipped>/<error>.
+                $testCase.SelectSingleNode('system-out') | Should -Not -BeNullOrEmpty
+                $testCase.SelectSingleNode('failure')     | Should -BeNullOrEmpty
+            }
+            finally {
+                if (Test-Path $outputPath) { Remove-Item $outputPath -Force }
+            }
+        }
     }
 
     Context 'JUnit XML export handles non-failure non-passing statuses (v0.7.62)' {
