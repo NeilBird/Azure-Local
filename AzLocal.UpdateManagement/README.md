@@ -69,7 +69,7 @@ If you are new to this module, work through these in order from a regular PowerS
 | 5 | Apply the update | [`Start-AzLocalClusterUpdate`](docs/cmdlet-reference.md#start-azlocalclusterupdate) (single cluster or `-ScopeByUpdateRingTag` for a wave) |
 | 6 | Monitor and report | [`Get-AzLocalUpdateRuns`](docs/cmdlet-reference.md#get-azlocalupdateruns), [`Get-AzLocalFleetProgress`](docs/cmdlet-reference.md#get-azlocalfleetprogress), [`New-AzLocalFleetStatusHtmlReport`](docs/cmdlet-reference.md#new-azlocalfleetstatushtmlreport) |
 
-> **For CI/CD?** Skip this table and go straight to [Automation-Pipeline-Examples/README.md](./Automation-Pipeline-Examples/README.md) - it covers OIDC / Managed Identity / Service Principal setup, federated credentials, nine GitHub Actions workflows, and nine Azure DevOps pipelines (the v0.7.90 set includes `Step.7_monitor-updates`, `Step.8_fleet-update-status`, and `Step.9_fleet-health-status`).
+> **For CI/CD?** Skip this table and go straight to [Automation-Pipeline-Examples/README.md](./Automation-Pipeline-Examples/README.md) - it covers OIDC / Managed Identity / Service Principal setup, federated credentials, eleven GitHub Actions workflows, and eleven Azure DevOps pipelines (including the on-prem `sideload-updates` pipeline plus `apply-updates`, `monitor-updates`, `fleet-update-status`, and `fleet-health-status`). Pipeline files are no longer prefixed with `Step.N_` - the in-pipeline display names still carry the `Step.N` ordering, and `Update-AzLocalPipelineExample` migrates any older `Step.N_*.yml` files to the new names automatically while preserving your customizations.
 
 ### Common workflows (function-invocation order)
 
@@ -79,7 +79,7 @@ If you are new to this module, work through these in order from a regular PowerS
 | **Staged wave deployment** | `Get-AzLocalClusterInventory` -> `Set-AzLocalClusterUpdateRingTag` -> `Get-AzLocalClusterUpdateReadiness -ScopeByUpdateRingTag` -> `Start-AzLocalClusterUpdate -ScopeByUpdateRingTag` -> `Get-AzLocalFleetProgress` -> `New-AzLocalFleetStatusHtmlReport` |
 | **Daily fleet status report** | `Get-AzLocalFleetStatusData -AllClusters -IncludeUpdateRuns -IncludeHealthDetails -ExportPath ...` -> `New-AzLocalFleetStatusHtmlReport -StatusData $data -OutputPath ...` |
 | **Daily fleet health audit (v0.7.65)** | `Get-AzLocalFleetHealthFailures -View Summary -ExportPath fleet-health-summary.csv` -> review top failure reasons by cluster impact -> drill into [`Get-AzLocalFleetHealthFailures -View Detail`](docs/cmdlet-reference.md#get-azlocalfleethealthfailures) for per-cluster remediation |
-| **Schedule coverage drift audit (v0.7.65)** | `Test-AzLocalApplyUpdatesScheduleCoverage -View Audit -PipelineYamlPath .\.github\workflows` -> for any `Uncovered` rows, copy the `RequiredCronUTC` value and paste it into `Step.7_apply-updates.yml` -> re-run `-View Audit` to confirm `Covered` -> wire the bundled `Step.3_apply-updates-schedule-audit.yml` pipeline (weekly Mon 05:00 UTC) so future tag drift is caught automatically. Full runbook: [`Automation-Pipeline-Examples/README.md` section 8.3](./Automation-Pipeline-Examples/README.md#83-end-to-end-runbook-apply-updates-schedule-coverage-audit) |
+| **Schedule coverage drift audit (v0.7.65)** | `Test-AzLocalApplyUpdatesScheduleCoverage -View Audit -PipelineYamlPath .\.github\workflows` -> for any `Uncovered` rows, copy the `RequiredCronUTC` value and paste it into `apply-updates.yml` -> re-run `-View Audit` to confirm `Covered` -> wire the bundled `apply-updates-schedule-audit.yml` pipeline (weekly Mon 05:00 UTC) so future tag drift is caught automatically. Full runbook: [`Automation-Pipeline-Examples/README.md` section 8.3](./Automation-Pipeline-Examples/README.md#83-end-to-end-runbook-apply-updates-schedule-coverage-audit) |
 | **Pre-update health gate (CI/CD)** | `Test-AzLocalClusterHealth -BlockingOnly` -> `Test-AzLocalUpdateScheduleAllowed` -> `Test-AzLocalFleetHealthGate` -> proceed only on pass |
 | **Sideloaded payload (v0.7.1)** | Operator sets `UpdateSideloaded=False` -> stage payload out-of-band -> operator flips `UpdateSideloaded=True` -> `Start-AzLocalClusterUpdate` (auto-stamps `UpdateVersionInProgress`) -> `Get-AzLocalUpdateRuns` (auto-resets tags on success) -> `Reset-AzLocalSideloadedTag -Force` only if a tag gets stuck |
 | **Pause / resume long fleet run** | `Stop-AzLocalFleetUpdate -SaveState` -> ... -> `Resume-AzLocalFleetUpdate -StateFilePath ...` |
@@ -531,7 +531,7 @@ New-AzLocalFleetStatusHtmlReport `
     -IncludeHealthDetails -IncludeUpdateRuns
 ```
 
-> 💡 **CI/CD**: this same assess -> remediate -> apply flow is wired into the pipeline examples under `Automation-Pipeline-Examples/`: see the `Step.5_assess-update-readiness.yml` pipeline (report-only) and the `check-readiness` job inside `Step.7_apply-updates.yml`.
+> 💡 **CI/CD**: this same assess -> remediate -> apply flow is wired into the pipeline examples under `Automation-Pipeline-Examples/`: see the `assess-update-readiness.yml` pipeline (report-only) and the `check-readiness` job inside `apply-updates.yml`.
 
 ## Available Functions
 
@@ -546,7 +546,7 @@ The module exports **36 cmdlets**. Full detail (parameters, ARM API surface, RBA
 | **Fleet reads** | Daily fleet status reports, fleet health audits, version distribution | `Get-AzLocalFleetStatusData`, `New-AzLocalFleetStatusHtmlReport`, `Get-AzLocalFleetHealthOverview`, `Get-AzLocalFleetHealthFailures`, `Get-AzLocalFleetProgress` |
 | **Fleet gates** | Schedule coverage audit, fleet-wide health gate before a wave | `Test-AzLocalApplyUpdatesScheduleCoverage`, `Test-AzLocalFleetHealthGate`, `Test-AzLocalUpdateScheduleAllowed` |
 | **Fleet writes** | Wave-scoped update launcher with pause/resume state file | `Invoke-AzLocalFleetOperation`, `Stop-AzLocalFleetUpdate`, `Resume-AzLocalFleetUpdate`, `Export-AzLocalFleetState` |
-| **Pipeline support** | Refresh bundled `Step.*.yml` workflow templates while preserving operator edits | `Update-AzLocalPipelineExample` |
+| **Pipeline support** | Refresh bundled `*.yml` workflow templates while preserving operator edits | `Update-AzLocalPipelineExample` |
 | **Diagnostics** | Resolve effective ring for a cluster, latest solution version from the public catalog | `Resolve-AzLocalCurrentUpdateRing`, `Get-AzLocalLatestSolutionVersion`, `Get-AzLocalUpdateRunFailures` |
 
 Full signatures, ARM endpoints, and worked examples: **[docs/cmdlet-reference.md](docs/cmdlet-reference.md)**.
@@ -562,7 +562,7 @@ The module's gating cmdlets (`Get-AzLocalClusterUpdateReadiness`, `Test-AzLocalC
 
 Most common issues fall into one of these buckets:
 
-- **`az login` succeeds but `Get-AzLocalClusterInventory` returns nothing** - the identity has tenant-level `Reader` but not subscription `Reader` on the subscriptions where clusters live. Run the **`Step.0_authentication-test`** pipeline to enumerate the subscriptions the identity actually sees.
+- **`az login` succeeds but `Get-AzLocalClusterInventory` returns nothing** - the identity has tenant-level `Reader` but not subscription `Reader` on the subscriptions where clusters live. Run the **`authentication-test`** pipeline to enumerate the subscriptions the identity actually sees.
 - **`Start-AzLocalClusterUpdate` returns `Unauthorized`** - the identity has `Azure Stack HCI Reader` instead of `Azure Stack HCI Administrator`. See [docs/rbac.md](docs/rbac.md).
 - **`Get-AzLocalFleetHealthOverview` returns `ParserFailure: token=<EOF>`** - the underlying ARG query exceeded the `az graph query -q` Windows argument-truncation threshold (~2.8 KB). Fixed in v0.7.74; refresh your pipeline pins to v0.7.74+.
 - **`Test-AzLocalClusterHealth` reports duplicate findings** - ARM upstream sometimes emits byte-identical `healthCheckResult` rows; fixed in v0.7.76 via row-tuple dedup.
