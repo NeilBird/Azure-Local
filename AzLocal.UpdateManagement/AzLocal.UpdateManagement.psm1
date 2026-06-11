@@ -351,5 +351,9 @@ Export-ModuleMember -Function @(
     'Add-AzLocalNoReadyClustersStepSummary',
     'Invoke-AzLocalItsmTicketingFromArtifact',
     # On-prem solution-update sideloading automation (v0.8.7)
-    'Update-AzLocalSideloadCatalog'
+    'Update-AzLocalSideloadCatalog',
+    'Resolve-AzLocalSideloadPlan',
+    'Invoke-AzLocalSideloadUpdate',
+    'Export-AzLocalSideloadStatusReport',
+    'Add-AzLocalSideloadStepSummary'
 )

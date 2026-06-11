@@ -153,6 +153,10 @@
         'Public/New-AzLocalFleetConnectivityStatusSummary.ps1',
         # On-prem solution-update sideloading automation (v0.8.7) - catalog maintenance
         'Public/Update-AzLocalSideloadCatalog.ps1',
+        # On-prem solution-update sideloading automation (v0.8.7) - planner, orchestrator, reporting
+        'Public/Resolve-AzLocalSideloadPlan.ps1',
+        'Public/Invoke-AzLocalSideloadUpdate.ps1',
+        'Public/Export-AzLocalSideloadStatusReport.ps1',
         # Thin-YAML pipeline foundation (v0.8.5)
         'Public/Add-AzLocalPipelineVersionBanner.ps1',
         # Thin-YAML Step.0 (v0.8.5) - Authentication validation + subscription scope + cluster reachability
@@ -267,7 +271,11 @@
         'Add-AzLocalNoReadyClustersStepSummary',
         'Invoke-AzLocalItsmTicketingFromArtifact',
         # On-prem solution-update sideloading automation (v0.8.7)
-        'Update-AzLocalSideloadCatalog'
+        'Update-AzLocalSideloadCatalog',
+        'Resolve-AzLocalSideloadPlan',
+        'Invoke-AzLocalSideloadUpdate',
+        'Export-AzLocalSideloadStatusReport',
+        'Add-AzLocalSideloadStepSummary'
     )
 
     # Cmdlets to export from this module, for best performance, do not use wildcards and do not delete the entry, use an empty array if there are no cmdlets to export.
