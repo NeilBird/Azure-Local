@@ -5,6 +5,43 @@ All notable changes to the AzLocal.UpdateManagement module (renamed from AzStack
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.7] - 2026-06-11
+
+On-prem solution-update sideloading automation release. Adds an opt-in, off-by-default workflow for Azure Local clusters that cannot pull solution updates from Azure directly: a new self-hosted Step.6 pipeline (`sideload-updates.yml`) robocopies update media to each cluster's import share, verifies the SHA256 over WinRM, runs `Add-SolutionUpdate`, and flips the `UpdateSideloaded=True` cluster tag so the downstream apply (now Step.7) picks it up. The long-running copy executes in a detached Windows Scheduled Task and is driven as a re-entrant state machine on a frequent CRON, so no individual pipeline run is long-lived. **This release de-numbers all bundled pipeline filenames and renumbers four display steps (BREAKING for any consumer that pins on the old `Step.N_*.yml` filenames).** Module export count grows 55 -> 60.
+
+### New Public cmdlets (5)
+
+- **`Update-AzLocalSideloadCatalog`** - validates / refreshes the sideload catalog (Solution and OEM SBE `packageType` entries) used to resolve which update media to stage.
+- **`Resolve-AzLocalSideloadPlan`** - resolves the per-cluster sideload plan (target media, import share, current state) from inventory + catalog.
+- **`Invoke-AzLocalSideloadUpdate`** - the re-entrant state-machine driver (Planned -> Copying -> Copied -> Verified -> Imported -> SideloadFlagged); spawns / re-attaches the detached robocopy Scheduled Task, verifies SHA256 over WinRM, runs `Add-SolutionUpdate`, and sets `UpdateSideloaded=True`.
+- **`Export-AzLocalSideloadStatusReport`** - emits the per-cluster sideload status CSV + JUnit XML + step outputs for the Step.6 pipeline.
+- **`Add-AzLocalSideloadStepSummary`** - renders the Step.6 markdown step summary (per-state table + shared-state contract + exit conditions).
+
+### New Step.6 sideload pipeline
+
+- **`sideload-updates.yml`** (GitHub Actions + Azure DevOps), opt-in via the `SIDELOAD_UPDATES` repository variable. Targets a self-hosted runner (`runs-on: [self-hosted, azlocal-sideload]`) on GitHub / a self-hosted agent pool (`pool: { name, demands: azlocal-sideload }`) on Azure DevOps. Manual `workflow_dispatch` plus a `*/30` CRON poll so the state machine can advance between runs.
+- Catalog (Solution + OEM SBE), shared-UNC state for multi-runner coordination, a Key Vault-sourced AD credential for cluster WinRM, and robocopy throttling (`SIDELOAD_ROBOCOPY_SWITCHES`) are documented in `Automation-Pipeline-Examples/docs/sideload.md` and `sideload-robocopy.md`.
+
+### BREAKING - pipeline filenames de-numbered
+
+- The `Step.N_` filename prefix has been removed from every bundled pipeline (e.g. `Step.7_apply-updates.yml` -> `apply-updates.yml`). The in-pipeline `Step.N - ` **display** names are unchanged, so the operator-facing step ordering is preserved. Stable filenames mean future reorders become pure display-name edits.
+- **`Update-AzLocalPipelineExample` is now rename-aware.** It matches each destination pipeline by a stable logical id (embedded `# AZLOCAL-PIPELINE-ID:` marker on line 1, with legacy-filename aliases) rather than by filename, and AUTO-RENAMES any older `Step.N_*.yml` on disk to the new de-numbered name while preserving the consumer's `BEGIN/END-AZLOCAL-CUSTOMIZE` CRON edits. It emits a `RenamedFrom` result field and a GitHub/Azure DevOps required-check warning when a rename occurs.
+
+### BREAKING - display-step renumber
+
+To make room for sideload at Step.6, four display steps shift up by one: apply-updates 6 -> 7, monitor-updates 7 -> 8, fleet-update-status 8 -> 9, fleet-health-status 9 -> 10.
+
+### Sideload-aware existing steps
+
+- **Step.1 inventory** can emit the `UpdateAuthAccountId` column (`-IncludeSideloadColumns`, auto-enabled when `SIDELOAD_UPDATES` is set). Byte-identical output when sideload is off.
+- **Step.2 tag management** can set the `UpdateAuthAccountId` tag from CSV.
+- **Step.3 schedule advisor** can emit a recommended sideload CRON (the apply window minus `SIDELOAD_LEAD_DAYS`) when sideloading is enabled.
+
+### Versioning / tests
+
+- `ModuleVersion` 0.8.6 -> 0.8.7 (`.psd1` + `.psm1`). Export count assertion 55 -> 60.
+- All bundled pipeline templates bump `GENERATED_AGAINST_MODULE_VERSION` from `'0.8.6'` to `'0.8.7'`.
+
 ## [0.8.6] - 2026-06-10
 
 Step.3 cycle-calendar enrichment release. Adds two opt-in columns to the per-day `## Cycle calendar` markdown table produced by `Get-AzLocalApplyUpdatesScheduleCycleCalendar` and auto-wires them from `Export-AzLocalApplyUpdatesScheduleAudit` so operators can see (a) which Step.6 cron firing times will fire on each calendar day and (b) what fraction of clusters in the ring(s) eligible on that day have an `UpdateStartWindow` tag that actually covers at least one of those firings. **Also fixes six production regressions introduced by the v0.8.5 thin-YAML port (Step.0, Step.3, Step.4 x2, Step.6, Step.9) and adds Pester guards so the same anti-patterns cannot ship again.** No public API removed; no existing parameter changed; no behavioural change on callers that do NOT supply the new dictionaries. Same module export count as v0.8.5 (55).

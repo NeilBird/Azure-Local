@@ -2,7 +2,7 @@
 
 > ⚠️ **Disclaimer**: This module is **NOT** a Microsoft supported service offering or product. It is provided as example code only, with no warranty or official support. Refer to the [MIT license](https://github.com/NeilBird/Azure-Local/blob/main/LICENSE) for further information.
 
-**Latest Version:** v0.8.6 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.8.6)
+**Latest Version:** v0.8.7 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.8.7)
 
 > 📢 **Renamed in v0.7.3**: this module was previously published as `AzStackHci.ManageUpdates`. The new module name aligns with the Azure Local product name (_Microsoft retired the *Azure Stack HCI* brand in late 2024_). The module GUID is preserved across the rename. If you have the old name installed, run:
 >
@@ -23,7 +23,7 @@ Azure Local REST API specification (includes update management endpoints): https
 **This README (overview + most-recent release notes):**
 
 - [Where to Start](#where-to-start)
-- [What's New in v0.8.6](#whats-new-in-v086)
+- [What's New in v0.8.7](#whats-new-in-v087)
 - [What's New in v0.8.4](#whats-new-in-v084)
 - [Files](#files)
 - [Prerequisites](#prerequisites)
@@ -87,21 +87,19 @@ If you are new to this module, work through these in order from a regular PowerS
 
 > Most CI/CD pipelines in [Automation-Pipeline-Examples/](Automation-Pipeline-Examples/) are direct implementations of one of these workflows. Start there if you want a copy-pasteable end-to-end pipeline.
 
-## What's New in v0.8.6
+## What's New in v0.8.7
 
-**Step.3 cycle calendar enrichment: per-day Step.6 CRON firing times + per-(ring, date) `UpdateStartWindow` tag-coverage check (>=95% threshold).** Adds two new optional render-time columns to `Get-AzLocalApplyUpdatesScheduleCycleCalendar` and auto-wires them from `Export-AzLocalApplyUpdatesScheduleAudit` so operators can see, in one table: (a) which Step.6 cron firing times will fire on each calendar day, and (b) what fraction of clusters in the ring(s) eligible on that day have an `UpdateStartWindow` tag that actually covers at least one of those firings. **No public API removed; no existing parameter changed; no behavioural change on callers that do NOT supply the new dictionaries.** Same module export count as v0.8.5 (55).
+**On-prem solution-update sideloading automation: new self-hosted Step.6 pipeline + 5 new Public cmdlets + de-numbered pipeline filenames.** Adds an opt-in, off-by-default workflow for Azure Local clusters that cannot pull solution updates from Azure directly. The new Step.6 pipeline (`sideload-updates.yml`) robocopies update media to each cluster's import share, verifies the SHA256 over WinRM, runs `Add-SolutionUpdate`, and flips the `UpdateSideloaded=True` tag so the downstream apply (now Step.7) picks it up. The multi-hour copy runs in a detached Windows Scheduled Task and the pipeline is driven as a re-entrant state machine on a frequent CRON, so no individual run is long-lived. **Module export count grows 55 -> 60.**
 
-1. **New `Get-AzLocalApplyUpdatesScheduleCycleCalendar -CronFiringsByDate`** (`[hashtable]`, keys = `yyyy-MM-dd` UTC, values = `[string[]]` of `HH:mm` UTC firing times). When supplied, the per-day markdown table gains a centered `Ring CRON Start Time (UTC)<br>(Step 6 pipeline)` column between `Date (UTC)` and `Day`. Cell rendering: 0 firings -> `_(none)_`; 1-2 firings -> comma-joined (e.g. `02:00, 22:00`); 3+ firings -> first 2 + `" (+N)"` (e.g. `02:00, 10:00 (+2)`); dead day (`IsDeadDay`) -> `_(none - dead day)_`; missing date key -> blank cell.
-2. **New `Get-AzLocalApplyUpdatesScheduleCycleCalendar -WindowMatchByRingAndDate`** (`[hashtable[string,hashtable]]` keyed first by ring name then by `yyyy-MM-dd` UTC, leaf = `@{ Matching=<int>; Total=<int> }`). When supplied, the per-day table gains a `Tag Start Window Match (>=95%)` column AFTER `Eligible rings`. Each cell lists one line per eligible ring: `` `Ring`: True/False mat/tot (pct%) `` (True iff `Matching/Total >= 0.95`). `_(n/a)_` when a ring has no entry for the date; `_(0 clusters)_` when `Total=0`; `_(n/a - dead day)_` on dead days.
-3. **Pure render-time contract preserved.** `Get-AzLocalApplyUpdatesScheduleCycleCalendar` still does zero Azure / file I/O. Both columns are opt-in; omit either or both and the v0.8.5 column layout is bit-identical.
-4. **`Export-AzLocalApplyUpdatesScheduleAudit` auto-wires both columns.** Cron firings are derived by parsing `Step.6_apply-updates*.yml` from `-PipelineYamlPath` (uses existing `Read-AzLocalApplyUpdatesYamlCrons` + `ConvertFrom-AzLocalCronExpression`; invalid/complex crons degrade gracefully to no firings for that day). The window-match dict is derived when `-ClusterCsvPath` is supplied, by parsing each cluster's `UpdateStartWindow` tag (via `ConvertFrom-AzLocalUpdateWindow`) against each day's cron firings; overnight windows (e.g. `Mon-Sun_22:00-04:00`) match firings that fall in either the late-evening or early-morning portion correctly via a two-case `DayOfWeek` projection.
-5. **95% threshold.** A ring on a given day is True only when `Matching / Total >= 0.95` exact. Below threshold -> False (operators see the actual `mat/tot (pct%)` numbers and can act).
-6. **Failure mode is non-fatal.** Any error in the enrichment block degrades gracefully to a calendar without the new columns (matching v0.8.5 behaviour); a `Write-Warning` surfaces the cause but the Step.3 summary continues to render.
-7. **Pester suite updates**: drift-sync test bumped to `'0.8.6'`. 12 new It blocks under `Describe 'v0.8.6 Apply-Updates Schedule: Get-AzLocalApplyUpdatesScheduleCycleCalendar - CronFiringsByDate and WindowMatchByRingAndDate columns (markdown)'` cover: backwards compat, single-param paths, both-params path with 7-column header, `(+N)` suffix at 3+ firings, `_(none)_` cell, 95% threshold boundary (95/100 -> True, 94/100 -> False), `_(0 clusters)_` rendering, `_(n/a)_` rendering, case-insensitivity on ring + date keys, and three-optional-columns coexistence with `-ClusterRingCounts`. 2 new Export-* spy tests verify the auto-wire path.
+1. **5 new Public cmdlets**: `Update-AzLocalSideloadCatalog`, `Resolve-AzLocalSideloadPlan`, `Invoke-AzLocalSideloadUpdate`, `Export-AzLocalSideloadStatusReport`, `Add-AzLocalSideloadStepSummary`.
+2. **New Step.6 sideload pipeline** (`sideload-updates.yml`, GitHub Actions + Azure DevOps), opt-in via the `SIDELOAD_UPDATES` repository variable. Targets a self-hosted runner (`runs-on: [self-hosted, azlocal-sideload]`) on GitHub / a self-hosted agent pool (`pool: { name, demands: azlocal-sideload }`) on Azure DevOps. Manual dispatch plus a `*/30` CRON poll advances the state machine (Planned -> Copying -> Copied -> Verified -> Imported -> SideloadFlagged). See [Automation-Pipeline-Examples/docs/sideload.md](Automation-Pipeline-Examples/docs/sideload.md) + [sideload-robocopy.md](Automation-Pipeline-Examples/docs/sideload-robocopy.md).
+3. **BREAKING - pipeline filenames de-numbered.** The `Step.N_` filename prefix is removed (e.g. `Step.7_apply-updates.yml` -> `apply-updates.yml`); the in-pipeline `Step.N - ` display names are unchanged. `Update-AzLocalPipelineExample` is now rename-aware: it matches each destination pipeline by a stable logical id (embedded `# AZLOCAL-PIPELINE-ID:` marker, with legacy-filename aliases) and AUTO-RENAMES any older `Step.N_*.yml` to the new name while preserving your `BEGIN/END-AZLOCAL-CUSTOMIZE` CRON edits (emits a `RenamedFrom` result + a required-check warning).
+4. **BREAKING - display-step renumber** to make room for sideload at Step.6: apply-updates 6 -> 7, monitor-updates 7 -> 8, fleet-update-status 8 -> 9, fleet-health-status 9 -> 10.
+5. **Sideload-aware existing steps**: Step.1 inventory can emit the `UpdateAuthAccountId` column (`-IncludeSideloadColumns`, auto-enabled from `SIDELOAD_UPDATES`); Step.2 tag management can set `UpdateAuthAccountId` from CSV; Step.3 advisor can emit a recommended sideload CRON (apply window minus `SIDELOAD_LEAD_DAYS`). Byte-identical output when sideload is off.
 
-`GENERATED_AGAINST_MODULE_VERSION` bumped from `0.8.5` to `0.8.6` across all 20 bundled `Step.{0..9}.yml` templates.
+`GENERATED_AGAINST_MODULE_VERSION` bumped from `0.8.6` to `0.8.7` across all bundled pipeline templates.
 
-See [CHANGELOG.md](CHANGELOG.md#086---2026-06-10) for the full v0.8.6 entry. See [CHANGELOG.md](CHANGELOG.md#085---2026-06-09) for the v0.8.5 entry.
+See [CHANGELOG.md](CHANGELOG.md#087---2026-06-11) for the full v0.8.7 entry. See [CHANGELOG.md](CHANGELOG.md#086---2026-06-10) for the v0.8.6 entry.
 
 ## Files
 
@@ -580,7 +578,13 @@ This code is provided as-is for educational and reference purposes.
 
 The full What's-New history (v0.7.81 and earlier) has moved to [docs/release-history.md](docs/release-history.md).
 
-The most recent release notes for **v0.8.6** stay above under [`What's New in v0.8.6`](#whats-new-in-v086).
+The most recent release notes for **v0.8.7** stay above under [`What's New in v0.8.7`](#whats-new-in-v087).
+
+### What's New in v0.8.6
+
+**Step.3 cycle calendar enrichment: per-day Step.6 CRON firing times + per-(ring, date) `UpdateStartWindow` tag-coverage check (>=95% threshold).** Adds two opt-in render-time columns to `Get-AzLocalApplyUpdatesScheduleCycleCalendar` (auto-wired from `Export-AzLocalApplyUpdatesScheduleAudit`) so operators see in one table which Step.6 cron firing times fire on each calendar day and what fraction of eligible clusters have an `UpdateStartWindow` tag that covers a firing. Also fixes six v0.8.5 thin-YAML port regressions (Step.0/3/4/6/9) and adds Pester static-audit guards. Same module export count as v0.8.5 (55).
+
+See [CHANGELOG.md](CHANGELOG.md#086---2026-06-10) for the full v0.8.6 entry.
 
 ### What's New in v0.8.4
 

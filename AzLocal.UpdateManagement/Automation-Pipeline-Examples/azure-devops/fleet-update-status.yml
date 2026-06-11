@@ -93,7 +93,7 @@ variables:
   # the version actually installed and to the latest on PSGallery, and emits a warning
   # log if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.8.6'
+  GENERATED_AGAINST_MODULE_VERSION: '0.8.7'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): queue-time parameter > pipeline variable
   # 'REQUIRED_MODULE_VERSION' overridden at queue time > empty (latest).

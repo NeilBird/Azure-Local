@@ -34,8 +34,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $script:ModuleInfo | Should -Not -BeNullOrEmpty
         }
 
-        It 'Should have version 0.8.6' {
-            $script:ModuleInfo.Version | Should -Be '0.8.6'
+        It 'Should have version 0.8.7' {
+            $script:ModuleInfo.Version | Should -Be '0.8.7'
         }
 
         It 'Module version constants are in sync between .psm1 and .psd1' {
@@ -212,8 +212,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $content | Should -Not -Match 'function\s+Convert-ScheduleRow' -Because "Step.3 $Platform must not contain inline schedule-row helpers (removed in v0.8.5)"
         }
 
-        It 'Should export exactly 55 functions' {
-            $script:ModuleInfo.ExportedFunctions.Count | Should -Be 55
+        It 'Should export exactly 60 functions' {
+            $script:ModuleInfo.ExportedFunctions.Count | Should -Be 60
         }
 
         It 'Should export the expected functions' {
