@@ -15,7 +15,6 @@
 name: Step.7 - Apply Updates
 
 on:
-  # BEGIN-AZLOCAL-CUSTOMIZE:schedule-triggers
   # PREFERRED PATTERN - drive automated update runs from a ring-aware
   # schedule file (config/apply-updates-schedule.yml by default),
   # not from per-window crons.
@@ -45,8 +44,13 @@ on:
   # but ring resolution then defaults to the workflow_dispatch input default,
   # which is rarely what schedule-triggered runs actually want.
   #
-  # Content between BEGIN/END markers is preserved by
-  # Update-AzLocalPipelineExample across module upgrades.
+  # Add your schedule: cron block between the BEGIN/END markers below. That
+  # region (and ONLY that region) is preserved verbatim by
+  # Update-AzLocalPipelineExample across module upgrades - keep author guidance
+  # like the paths above OUTSIDE the markers so module refreshes can correct it.
+  # BEGIN-AZLOCAL-CUSTOMIZE:schedule-triggers
+  # (No schedule by default - this pipeline is workflow_dispatch-only until you
+  #  add a schedule: block here. See the guidance comments above.)
   # END-AZLOCAL-CUSTOMIZE:schedule-triggers
 
   workflow_dispatch:

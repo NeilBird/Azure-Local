@@ -2,7 +2,10 @@
 # Step.7 - Apply Updates to Azure Local Clusters
 # This pipeline applies updates to clusters filtered by UpdateRing tag value
 
-# BEGIN-AZLOCAL-CUSTOMIZE:schedule-triggers
+# Author guidance lives OUTSIDE the customise markers so module refreshes
+# (Update-AzLocalPipelineExample) can correct it; only the trigger directive
+# between the markers is preserved verbatim across module upgrades.
+#
 # PREFERRED PATTERN - drive automated update runs from a ring-aware
 # schedule file (config/apply-updates-schedule.yml by default),
 # not from per-window crons.
@@ -39,8 +42,10 @@
 #         include: [main]
 #       always: true
 #
-# Content between BEGIN/END markers is preserved by
-# Update-AzLocalPipelineExample across module upgrades.
+# Replace `trigger: none` between the BEGIN/END markers below with your
+# schedules: block. That region (and ONLY that region) is preserved verbatim
+# by Update-AzLocalPipelineExample across module upgrades.
+# BEGIN-AZLOCAL-CUSTOMIZE:schedule-triggers
 trigger: none
 # END-AZLOCAL-CUSTOMIZE:schedule-triggers
 
