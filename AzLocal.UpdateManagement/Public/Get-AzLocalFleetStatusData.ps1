@@ -406,9 +406,14 @@ function Get-AzLocalFleetStatusData {
                         if ($latestProps.progress -and $latestProps.progress.steps) {
                             $steps = $latestProps.progress.steps
                             $runProgress = "$(@($steps | Where-Object { $_.status -eq 'Success' }).Count)/$(@($steps).Count) steps"
-                            $ipStep = $steps | Where-Object { $_.status -eq 'InProgress' } | Select-Object -First 1
-                            $fStep  = $steps | Where-Object { $_.status -in @('Error','Failed') } | Select-Object -First 1
-                            if ($ipStep) { $currentStep = $ipStep.name } elseif ($fStep) { $currentStep = "$($fStep.name) (FAILED)" }
+                            # Walk to the deepest InProgress/Error/Failed step rather than the
+                            # coarse top-level wrapper (e.g. "Start update"), so CurrentStep stays
+                            # consistent with CurrentStepDetail / the standard update-progress output.
+                            $deepestActive = Get-DeepestActiveStep -Steps $steps
+                            if ($deepestActive) {
+                                if ($deepestActive.status -in @('Error','Failed')) { $currentStep = "$($deepestActive.name) (FAILED)" }
+                                else { $currentStep = $deepestActive.name }
+                            }
                             $currentStepDetail = Get-CurrentStepPath -Steps $steps -IncludeErrorMessage
                             if ([string]::IsNullOrWhiteSpace($currentStepDetail)) { $currentStepDetail = $currentStep }
                         }

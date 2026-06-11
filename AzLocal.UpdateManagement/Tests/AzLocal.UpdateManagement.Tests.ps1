@@ -1633,6 +1633,80 @@ Describe 'Helper Function: Format-AzLocalUpdateRun (Internal)' {
             $f.ErrorMessage | Should -BeNullOrEmpty
         }
     }
+
+    It 'CurrentStep reflects the deepest InProgress step, not the top-level wrapper (Step.7 monitor fix)' {
+        InModuleScope AzLocal.UpdateManagement {
+            # Real Azure Local progress trees nest a coarse top-level wrapper step
+            # (e.g. "Start update") that stays InProgress for the whole run. CurrentStep
+            # must dig to the deepest active leaf so the in-flight monitor shows the real
+            # current activity instead of always showing the wrapper name.
+            $run = [PSCustomObject]@{
+                id         = '/subscriptions/x/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/c1/updates/Solution12.2604/updateRuns/rDeep'
+                name       = 'rDeep'
+                properties = [PSCustomObject]@{
+                    state           = 'InProgress'
+                    timeStarted     = (Get-Date).AddMinutes(-30).ToUniversalTime().ToString('o')
+                    lastUpdatedTime = $null
+                    duration        = $null
+                    progress        = [PSCustomObject]@{
+                        status = 'InProgress'
+                        steps  = @(
+                            [PSCustomObject]@{
+                                name   = 'Start update'
+                                status = 'InProgress'
+                                steps  = @(
+                                    [PSCustomObject]@{
+                                        name   = 'Update Cluster'
+                                        status = 'InProgress'
+                                        steps  = @(
+                                            [PSCustomObject]@{ name = 'Update Node 2'; status = 'InProgress' }
+                                        )
+                                    }
+                                )
+                            }
+                        )
+                    }
+                    location        = 'eastus'
+                }
+            }
+            $f = Format-AzLocalUpdateRun -run $run -clusterName 'c1'
+            $f.CurrentStep | Should -Be 'Update Node 2'
+        }
+    }
+
+    It 'CurrentStep reflects the deepest Failed step with (FAILED) suffix, not the top-level wrapper (Step.7 monitor fix)' {
+        InModuleScope AzLocal.UpdateManagement {
+            $run = [PSCustomObject]@{
+                id         = '/subscriptions/x/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/c1/updates/Solution12.2604/updateRuns/rDeepFail'
+                name       = 'rDeepFail'
+                properties = [PSCustomObject]@{
+                    state           = 'Failed'
+                    timeStarted     = '2026-04-24T16:10:24Z'
+                    lastUpdatedTime = '2026-04-24T17:10:24Z'
+                    duration        = 'PT1H'
+                    progress        = [PSCustomObject]@{
+                        status = 'Error'
+                        steps  = @(
+                            [PSCustomObject]@{
+                                name   = 'Start update'
+                                status = 'Error'
+                                steps  = @(
+                                    [PSCustomObject]@{
+                                        name         = 'Run Pre Update Validation'
+                                        status       = 'Error'
+                                        errorMessage = 'validation failed'
+                                    }
+                                )
+                            }
+                        )
+                    }
+                    location        = 'eastus'
+                }
+            }
+            $f = Format-AzLocalUpdateRun -run $run -clusterName 'c1'
+            $f.CurrentStep | Should -Be 'Run Pre Update Validation (FAILED)'
+        }
+    }
 }
 
 Describe 'Helper Function: Get-DeepestErrorMessage (Internal)' {
