@@ -1,5 +1,5 @@
 # AZLOCAL-PIPELINE-ID: inventory-clusters
-# Step.1 - Inventory Azure Local Clusters
+# Step.01 - Inventory Azure Local Clusters
 # This pipeline queries all Azure Local clusters and exports inventory with UpdateRing tag status
 #
 # OUTPUT COLUMNS:

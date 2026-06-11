@@ -1,5 +1,5 @@
 # AZLOCAL-PIPELINE-ID: monitor-updates
-# Step.8 - Monitor In-Flight Updates (Azure DevOps)
+# Step.08 - Monitor In-Flight Updates (Azure DevOps)
 # -----------------------------------------------------------
 # Reports clusters whose latest update run is currently in flight, with the
 # CURRENT STEP each cluster is on and the ELAPSED DURATION of the run. Built

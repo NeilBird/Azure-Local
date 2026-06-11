@@ -23,7 +23,7 @@
 # Workflow name carries the same Step.N - prefix as the filename so the GitHub
 # Actions sidebar (which sorts workflows alphabetically by this `name:` field)
 # lists the pipelines in execution order.
-name: Step.8 - Monitor In-Flight Updates
+name: Step.08 - Monitor In-Flight Updates
 
 on:
   # BEGIN-AZLOCAL-CUSTOMIZE:schedule-triggers

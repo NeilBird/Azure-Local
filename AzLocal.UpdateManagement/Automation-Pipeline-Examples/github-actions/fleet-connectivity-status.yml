@@ -50,7 +50,7 @@
 # Workflow name carries the same Step.N - prefix as the filename so the GitHub
 # Actions sidebar (which sorts workflows alphabetically by this `name:` field)
 # lists the pipelines in execution order.
-name: Step.4 - Fleet Connectivity Status
+name: Step.04 - Fleet Connectivity Status
 
 on:
   # BEGIN-AZLOCAL-CUSTOMIZE:schedule-triggers

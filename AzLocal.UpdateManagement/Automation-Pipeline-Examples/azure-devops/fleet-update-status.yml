@@ -1,5 +1,5 @@
 # AZLOCAL-PIPELINE-ID: fleet-update-status
-# Step.9 - Fleet Update Status Monitoring Pipeline
+# Step.09 - Fleet Update Status Monitoring Pipeline
 # This pipeline monitors update status across all Azure Local clusters and generates reports
 #
 # USE CASES:

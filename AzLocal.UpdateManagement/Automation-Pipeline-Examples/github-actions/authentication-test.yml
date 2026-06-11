@@ -1,5 +1,5 @@
 # AZLOCAL-PIPELINE-ID: authentication-test
-# Step.0 - Authentication Validation and Subscription Scope Report
+# Step.00 - Authentication Validation and Subscription Scope Report
 #
 # PURPOSE:
 #   Validates that the App Registration / federated credentials / GitHub secrets / RBAC
@@ -46,7 +46,7 @@
 # Workflow name carries the same Step.N - prefix as the filename so the GitHub
 # Actions sidebar (which sorts workflows alphabetically by this `name:` field)
 # lists the eight pipelines in execution order.
-name: Step.0 - Authentication Validation and Subscription Scope Report
+name: Step.00 - Authentication Validation and Subscription Scope Report
 
 on:
   # BEGIN-AZLOCAL-CUSTOMIZE:schedule-triggers

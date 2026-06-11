@@ -1,5 +1,5 @@
 # AZLOCAL-PIPELINE-ID: fleet-connectivity-status
-# Step.4 - Fleet Connectivity Status Monitoring Pipeline
+# Step.04 - Fleet Connectivity Status Monitoring Pipeline
 # This pipeline surfaces network-connectivity issues across every Azure Local
 # cluster the service connection can read - four scopes in one pipeline:
 #
@@ -49,7 +49,7 @@
 
 # Pipeline display name carries the same Step.N - prefix as the filename so the
 # ADO pipelines list (sorts by `name:` field) lists pipelines in execution order.
-name: Step.4 - Fleet Connectivity Status
+name: Step.04 - Fleet Connectivity Status
 
 # BEGIN-AZLOCAL-CUSTOMIZE:schedule-triggers
 # Edits inside this block are preserved across Update-AzLocalPipelineExample

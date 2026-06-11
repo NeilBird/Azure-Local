@@ -1,5 +1,5 @@
 # AZLOCAL-PIPELINE-ID: authentication-test
-# Step.0 - Authentication Validation and Subscription Scope Report
+# Step.00 - Authentication Validation and Subscription Scope Report
 #
 # PURPOSE:
 #   Validates that the service connection (Workload Identity Federation), App Registration,
@@ -35,11 +35,11 @@
 #   - Pipeline artifact (auth-report) containing JUnit XML + subscriptions.json + .csv.
 #
 # HOW TO RUN (after the file is committed and the pipeline is imported):
-#   Pipelines -> Step.0 - Authentication Validation and Subscription Scope Report -> Run pipeline.
+#   Pipelines -> Step.00 - Authentication Validation and Subscription Scope Report -> Run pipeline.
 #
 # See Automation-Pipeline-Examples/README.md, section 5.2, for the full setup story.
 
-name: Step.0 - Authentication Validation and Subscription Scope Report
+name: Step.00 - Authentication Validation and Subscription Scope Report
 
 # BEGIN-AZLOCAL-CUSTOMIZE:schedule-triggers
 # Add or modify `schedules:` blocks here to enable cron-driven runs. Content

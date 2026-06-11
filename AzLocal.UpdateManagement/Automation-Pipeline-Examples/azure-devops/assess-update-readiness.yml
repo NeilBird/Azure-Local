@@ -1,5 +1,5 @@
 # AZLOCAL-PIPELINE-ID: assess-update-readiness
-# Step.5 - Assess Update Readiness (Pre-flight go/no-go gate)
+# Step.05 - Assess Update Readiness (Pre-flight go/no-go gate)
 # --------------------------------------------------
 # Runs Get-AzLocalClusterUpdateReadiness and Test-AzLocalClusterHealth -BlockingOnly
 # against a target UpdateRing (or the whole fleet) BEFORE apply-updates.yml runs.

@@ -21,7 +21,7 @@
 # Workflow name carries the same Step.N - prefix as the filename so the GitHub
 # Actions sidebar (which sorts workflows alphabetically by this `name:` field)
 # lists the eight pipelines in execution order.
-name: Step.1 - Inventory Azure Local Clusters
+name: Step.01 - Inventory Azure Local Clusters
 
 on:
   workflow_dispatch:
