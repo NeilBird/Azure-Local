@@ -3,7 +3,7 @@
     RootModule = 'AzLocal.UpdateManagement.psm1'
 
     # Version number of this module.
-    ModuleVersion = '0.8.71'
+    ModuleVersion = '0.8.72'
 
     # Supported PSEditions
     CompatiblePSEditions = @('Desktop', 'Core')
@@ -307,6 +307,12 @@
 
             # ReleaseNotes of this module
             ReleaseNotes = @'
+## Version 0.8.72 - Patch: pipeline-template polish only. Schedule-file author guidance moved OUTSIDE the apply-updates.yml customise marker so it refreshes on existing consumers; single-digit Step.N display names zero-padded (Step.0 -> Step.00 ... Step.9 -> Step.09) so the GitHub Actions sidebar / Azure DevOps list sort in execution order. No public API or export-count change (still 60).
+
+- **FIX**: `apply-updates.yml` (GitHub Actions + Azure DevOps) - the schedule-file author guidance comments were trapped INSIDE the `# BEGIN/END-AZLOCAL-CUSTOMIZE:schedule-triggers` block. Because `Update-AzLocalPipelineExample` preserves the marker body verbatim from the consumer's file, any correction to that guidance (e.g. the v0.8.71 `.github` -> `config` schedule-path fix) could never reach an already-deployed consumer. All author guidance is now ABOVE the marker; the marker body holds only the trigger directive (placeholder comment on GH, `trigger: none` on ADO).
+- **CHANGE (display only)**: single-digit pipeline step numbers zero-padded to two digits in all display names / titles - GitHub Actions workflow `name:` fields, Azure DevOps `name:` / stage `displayName:` labels, and the `# Step.N - ` header comments (`Step.0` -> `Step.00` ... `Step.9` -> `Step.09`; `Step.10` unchanged). The GitHub Actions sidebar and Azure DevOps pipelines list sort alphabetically by display name, so `Step.10` previously sorted between `Step.1` and `Step.2`. Functional identifiers (artifact names `azlocal-step.N-*`) and cross-reference prose are unchanged.
+- **All bundled pipeline templates** bump `GENERATED_AGAINST_MODULE_VERSION` from `'0.8.71'` to `'0.8.72'`.
+
 ## Version 0.8.71 - Patch: JUnit export strict-mode crash fix + sideload schedule-path default corrected + pipeline doc-string filenames de-numbered. No public API or export-count change (still 60).
 
 - **FIX (production)**: `Export-ResultsToJUnitXml` no longer throws `The property 'CurrentState' cannot be found on this object` under `Set-StrictMode -Version Latest` when an apply run emits an `UpdateStarted` success row that lacks `CurrentState`/`Progress`. All bare property reads are now guarded with `PSObject.Properties[...]`.

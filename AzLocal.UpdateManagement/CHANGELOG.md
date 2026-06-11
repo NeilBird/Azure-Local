@@ -5,6 +5,19 @@ All notable changes to the AzLocal.UpdateManagement module (renamed from AzStack
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.72] - 2026-06-11
+
+Patch release. Pipeline-template polish only - no module code, public API, or export-count change (still 60). Moves the `apply-updates.yml` schedule-file author guidance out of the customise marker so it can be refreshed on already-deployed consumers, and zero-pads single-digit step numbers in pipeline display names so the GitHub Actions sidebar and Azure DevOps pipelines list sort in execution order.
+
+### Fixed
+
+- **`apply-updates.yml` author guidance trapped inside the customise marker (GitHub Actions + Azure DevOps)** - the schedule-file author guidance comments (including the `New-AzLocalApplyUpdatesScheduleConfig` example and the schedule-path default) lived INSIDE the `# BEGIN/END-AZLOCAL-CUSTOMIZE:schedule-triggers` block. `Update-AzLocalPipelineExample` is a marker-aware merge: it keeps the BEGIN/END lines from the new source but preserves the BODY between them verbatim from the consumer's file. So any correction to guidance inside the marker - such as the v0.8.71 `.github` -> `config` schedule-path fix - could never propagate to a consumer who had customised their crons. All author guidance has been moved ABOVE the `# BEGIN-AZLOCAL-CUSTOMIZE:schedule-triggers` line (outside the preserved region); the marker body now holds only the trigger directive (a placeholder comment on GitHub, `trigger: none` on Azure DevOps). The guidance was also reworded to avoid mentioning the literal `BEGIN-AZLOCAL-CUSTOMIZE:schedule-triggers` token, which the marker parser would otherwise mis-detect as a second marker.
+
+### Changed
+
+- **Pipeline display names zero-padded (display/title text only)** - single-digit step numbers are padded to two digits across all bundled pipeline display names and titles: GitHub Actions workflow `name:` fields, Azure DevOps top-level `name:` / stage `displayName:` labels, and the `# Step.N - ` header comments (`Step.0` -> `Step.00` ... `Step.9` -> `Step.09`; `Step.10` is unchanged). The GitHub Actions sidebar and Azure DevOps pipelines list sort workflows alphabetically by display name, so `Step.10` previously sorted between `Step.1` and `Step.2`. Functional identifiers (artifact names `azlocal-step.N-*`) and cross-reference prose comments are deliberately left unchanged.
+- All bundled pipeline templates bump `GENERATED_AGAINST_MODULE_VERSION` from `'0.8.71'` to `'0.8.72'`.
+
 ## [0.8.71] - 2026-06-11
 
 Patch release. Fixes a production strict-mode crash in JUnit export, corrects the GitHub Actions sideload schedule-path default, and de-numbers stale `Step.N_*.yml` filename references left behind in pipeline doc strings after the v0.8.7 rename. No public API or export-count change (still 60).

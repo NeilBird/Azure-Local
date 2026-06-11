@@ -12,10 +12,9 @@
 # Workflow name carries the same Step.N - prefix as the filename so the GitHub
 # Actions sidebar (which sorts workflows alphabetically by this `name:` field)
 # lists the eight pipelines in execution order.
-name: Step.7 - Apply Updates
+name: Step.07 - Apply Updates
 
 on:
-  # BEGIN-AZLOCAL-CUSTOMIZE:schedule-triggers
   # PREFERRED PATTERN - drive automated update runs from a ring-aware
   # schedule file (config/apply-updates-schedule.yml by default),
   # not from per-window crons.
@@ -45,8 +44,13 @@ on:
   # but ring resolution then defaults to the workflow_dispatch input default,
   # which is rarely what schedule-triggered runs actually want.
   #
-  # Content between BEGIN/END markers is preserved by
-  # Update-AzLocalPipelineExample across module upgrades.
+  # Add your schedule: cron block between the BEGIN/END markers below. That
+  # region (and ONLY that region) is preserved verbatim by
+  # Update-AzLocalPipelineExample across module upgrades - keep author guidance
+  # like the paths above OUTSIDE the markers so module refreshes can correct it.
+  # BEGIN-AZLOCAL-CUSTOMIZE:schedule-triggers
+  # (No schedule by default - this pipeline is workflow_dispatch-only until you
+  #  add a schedule: block here. See the guidance comments above.)
   # END-AZLOCAL-CUSTOMIZE:schedule-triggers
 
   workflow_dispatch:
@@ -131,7 +135,7 @@ env:
   # this to the version actually installed and to the latest on PSGallery, and emits a
   # ::notice annotation if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.8.71'
+  GENERATED_AGAINST_MODULE_VERSION: '0.8.72'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): manual workflow_dispatch input >
   # repository variable 'REQUIRED_MODULE_VERSION' > empty (latest).
