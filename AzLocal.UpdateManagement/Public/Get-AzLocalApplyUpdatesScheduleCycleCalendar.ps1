@@ -54,9 +54,11 @@ function Get-AzLocalApplyUpdatesScheduleCycleCalendar {
     .PARAMETER ClusterRingCounts
         Optional hashtable mapping ring name (case-insensitive) to the
         count of clusters currently tagged with that UpdateRing. When
-        supplied AND -AsMarkdown is set, the per-day calendar table and
-        the per-ring projection table both gain a "Clusters in ring(s)"
-        / "Cluster count" column so operators can see at a glance how
+        supplied AND -AsMarkdown is set, the per-day calendar table's
+        "Eligible rings" column is relabelled "Eligible rings (cluster
+        count)" and each ring token gains an inline count (e.g.
+        `Prod` (5)); the per-ring projection table gains a separate
+        "Cluster count" column. This lets operators see at a glance how
         many clusters each upcoming firing will touch. Pure cmdlet -
         callers (e.g. Test-AzLocalApplyUpdatesScheduleCoverage / Step.3
         yml) build this dictionary from their cluster CSV or live tag
@@ -335,7 +337,10 @@ function Get-AzLocalApplyUpdatesScheduleCycleCalendar {
     }
     # Header pieces: build incrementally so a future 3rd optional
     # column slots in cleanly. Order MUST be:
-    #   Date | [Cron firings] | Day | CycleWeek | Eligible rings | [Window match] | [Cluster counts] | AllowedUpdateVersions
+    #   Date | [Cron firings] | Day | CycleWeek | Eligible rings | [Window match] | AllowedUpdateVersions
+    # When -ClusterRingCounts is supplied the count is folded INLINE
+    # into the Eligible rings tokens (header relabelled to
+    # "Eligible rings (cluster count)"), not added as a separate column.
     $headerCells = New-Object System.Collections.Generic.List[string]
     $alignCells  = New-Object System.Collections.Generic.List[string]
     [void]$headerCells.Add('Date (UTC)'); [void]$alignCells.Add('---')
@@ -345,13 +350,13 @@ function Get-AzLocalApplyUpdatesScheduleCycleCalendar {
     }
     [void]$headerCells.Add('Day');             [void]$alignCells.Add('---')
     [void]$headerCells.Add('CycleWeek');       [void]$alignCells.Add('---')
-    [void]$headerCells.Add('Eligible rings');  [void]$alignCells.Add('---')
+    # When cluster counts are supplied the count is folded INLINE into
+    # each ring token (e.g. `Prod` (5)), so the header is relabelled
+    # rather than adding a separate column.
+    $ringsHeader = if ($hasCounts) { 'Eligible rings (cluster count)' } else { 'Eligible rings' }
+    [void]$headerCells.Add($ringsHeader);      [void]$alignCells.Add('---')
     if ($hasWindowMatch) {
         [void]$headerCells.Add('Tag Start Window Match (>=95%)')
-        [void]$alignCells.Add('---')
-    }
-    if ($hasCounts) {
-        [void]$headerCells.Add('Clusters in ring(s)')
         [void]$alignCells.Add('---')
     }
     [void]$headerCells.Add('AllowedUpdateVersions'); [void]$alignCells.Add('---')
@@ -361,7 +366,15 @@ function Get-AzLocalApplyUpdatesScheduleCycleCalendar {
         $dateKey = $r.DateUtc.ToString('yyyy-MM-dd')
         $isDead  = (-not $r.Rings -or @($r.Rings).Count -eq 0)
         $ringsCell = if (-not $isDead) {
-            (@($r.Rings) | ForEach-Object { '`' + $_ + '`' }) -join ', '
+            (@($r.Rings) | ForEach-Object {
+                if ($hasCounts) {
+                    $cnt = 0
+                    if ($ringCounts.ContainsKey($_)) { $cnt = $ringCounts[$_] }
+                    '`' + $_ + '` (' + $cnt + ')'
+                } else {
+                    '`' + $_ + '`'
+                }
+            }) -join ', '
         } else {
             '_(none - dead day)_'
         }
@@ -415,26 +428,6 @@ function Get-AzLocalApplyUpdatesScheduleCycleCalendar {
                 $matchCell = ($parts -join '; ')
             }
         }
-        $countCell = $null
-        if ($hasCounts) {
-            $countCell = if (-not $isDead) {
-                $cparts = @()
-                $total = 0
-                foreach ($rg in @($r.Rings)) {
-                    $cnt = 0
-                    if ($ringCounts.ContainsKey($rg)) { $cnt = $ringCounts[$rg] }
-                    $cparts += "``$rg``: $cnt"
-                    $total += $cnt
-                }
-                if (@($r.Rings).Count -gt 1) {
-                    (($cparts -join ', ') + " (total: $total)")
-                } else {
-                    ($cparts -join ', ')
-                }
-            } else {
-                '_(0 - dead day)_'
-            }
-        }
         # Assemble cells in the same order as the header.
         $rowCells = New-Object System.Collections.Generic.List[string]
         [void]$rowCells.Add($dateKey)
@@ -443,7 +436,6 @@ function Get-AzLocalApplyUpdatesScheduleCycleCalendar {
         [void]$rowCells.Add([string]$r.CycleWeekLabel)
         [void]$rowCells.Add($ringsCell)
         if ($hasWindowMatch) { [void]$rowCells.Add($matchCell) }
-        if ($hasCounts)      { [void]$rowCells.Add($countCell) }
         [void]$rowCells.Add($allowCell)
         [void]$sb.AppendLine('| ' + ($rowCells -join ' | ') + ' |')
     }

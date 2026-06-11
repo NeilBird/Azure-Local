@@ -3,7 +3,7 @@
     RootModule = 'AzLocal.UpdateManagement.psm1'
 
     # Version number of this module.
-    ModuleVersion = '0.8.72'
+    ModuleVersion = '0.8.73'
 
     # Supported PSEditions
     CompatiblePSEditions = @('Desktop', 'Core')
@@ -307,6 +307,12 @@
 
             # ReleaseNotes of this module
             ReleaseNotes = @'
+## Version 0.8.73 - Cycle calendar: cluster counts folded INLINE into the "Eligible rings" column (Step.3 apply-updates schedule audit). No public API or export-count change (still 60).
+
+- **CHANGE**: `Get-AzLocalApplyUpdatesScheduleCycleCalendar` no longer renders a separate "Clusters in ring(s)" column when `-ClusterRingCounts` is supplied. Instead the "Eligible rings" header is relabelled "Eligible rings (cluster count)" and each ring token carries its count inline, e.g. `` `Prod` (9), `Canary` (3) ``. Dead days still render `_(none - dead day)_`. The per-ring projection table keeps its separate "Cluster count" column.
+- **FIX**: `Export-AzLocalApplyUpdatesScheduleAudit` (the Step.3 pipeline render path) now builds a ring -> tagged-cluster-count map from the cluster CSV and forwards it as `-ClusterRingCounts`. Previously this caller never passed the parameter, so the cluster counts never appeared in the rendered Step.3 cycle calendar even though the cmdlet supported them.
+- **All bundled pipeline templates** bump `GENERATED_AGAINST_MODULE_VERSION` from `'0.8.72'` to `'0.8.73'`.
+
 ## Version 0.8.72 - Patch: pipeline-template polish only. Schedule-file author guidance moved OUTSIDE the apply-updates.yml customise marker so it refreshes on existing consumers; single-digit Step.N display names zero-padded (Step.0 -> Step.00 ... Step.9 -> Step.09) so the GitHub Actions sidebar / Azure DevOps list sort in execution order. No public API or export-count change (still 60).
 
 - **FIX**: `apply-updates.yml` (GitHub Actions + Azure DevOps) - the schedule-file author guidance comments were trapped INSIDE the `# BEGIN/END-AZLOCAL-CUSTOMIZE:schedule-triggers` block. Because `Update-AzLocalPipelineExample` preserves the marker body verbatim from the consumer's file, any correction to that guidance (e.g. the v0.8.71 `.github` -> `config` schedule-path fix) could never reach an already-deployed consumer. All author guidance is now ABOVE the marker; the marker body holds only the trigger directive (placeholder comment on GH, `trigger: none` on ADO).

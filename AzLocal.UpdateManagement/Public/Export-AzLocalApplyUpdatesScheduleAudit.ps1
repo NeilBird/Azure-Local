@@ -589,6 +589,7 @@ function Export-AzLocalApplyUpdatesScheduleAudit {
         $calendarMd = $null
         $cronFiringsByDate        = $null
         $windowMatchByRingAndDate = $null
+        $clusterRingCountMap      = $null
         try {
             $schedForCalendar = if ($sched) { $sched } else { Get-AzLocalApplyUpdatesScheduleConfig -Path $SchedulePath -ErrorAction Stop }
 
@@ -636,6 +637,24 @@ function Export-AzLocalApplyUpdatesScheduleAudit {
                 # Window-match column needs cluster CSV input.
                 if ($haveCsv) {
                     $clusters = @(Import-Csv -LiteralPath $ClusterCsvPath -ErrorAction Stop)
+
+                    # Build a ring -> tagged-cluster-count map so the
+                    # cycle calendar can fold the count inline into the
+                    # "Eligible rings (cluster count)" column.
+                    $clusterRingCountMap = @{}
+                    foreach ($c in $clusters) {
+                        $cr = ''
+                        if ($c.PSObject.Properties.Name -contains 'UpdateRing' -and $null -ne $c.UpdateRing) {
+                            $cr = ([string]$c.UpdateRing).Trim()
+                        }
+                        if ([string]::IsNullOrWhiteSpace($cr)) { continue }
+                        if ($clusterRingCountMap.ContainsKey($cr)) {
+                            $clusterRingCountMap[$cr] = [int]$clusterRingCountMap[$cr] + 1
+                        } else {
+                            $clusterRingCountMap[$cr] = 1
+                        }
+                    }
+                    if ($clusterRingCountMap.Count -eq 0) { $clusterRingCountMap = $null }
 
                     # Pre-parse each cluster's UpdateStartWindow once.
                     $ringsToClusters = New-Object 'System.Collections.Generic.Dictionary[string,System.Collections.Generic.List[psobject]]' ([System.StringComparer]::OrdinalIgnoreCase)
@@ -711,6 +730,7 @@ function Export-AzLocalApplyUpdatesScheduleAudit {
                 Write-Warning "Failed to build cycle-calendar enrichment columns: $($_.Exception.Message)"
                 $cronFiringsByDate        = $null
                 $windowMatchByRingAndDate = $null
+                $clusterRingCountMap      = $null
             }
 
             $calArgs = @{
@@ -721,6 +741,7 @@ function Export-AzLocalApplyUpdatesScheduleAudit {
             }
             if ($cronFiringsByDate)        { $calArgs.CronFiringsByDate        = $cronFiringsByDate }
             if ($windowMatchByRingAndDate) { $calArgs.WindowMatchByRingAndDate = $windowMatchByRingAndDate }
+            if ($clusterRingCountMap)      { $calArgs.ClusterRingCounts        = $clusterRingCountMap }
             $calendarMd = Get-AzLocalApplyUpdatesScheduleCycleCalendar @calArgs
         }
         catch {

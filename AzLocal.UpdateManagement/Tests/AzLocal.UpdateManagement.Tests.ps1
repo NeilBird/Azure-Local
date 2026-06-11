@@ -34,8 +34,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $script:ModuleInfo | Should -Not -BeNullOrEmpty
         }
 
-        It 'Should have version 0.8.72' {
-            $script:ModuleInfo.Version | Should -Be '0.8.72'
+        It 'Should have version 0.8.73' {
+            $script:ModuleInfo.Version | Should -Be '0.8.73'
         }
 
         It 'Module version constants are in sync between .psm1 and .psd1' {
@@ -88,6 +88,13 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $match.Success | Should -BeTrue -Because "README.md TOC must contain a main-body '- [What's New in vX.Y.Z](#whats-new-in-vXYZ)' entry"
             $match.Groups['displayed'].Value | Should -Be $manifestVersion -Because 'the TOC main-body What''s New entry must point at the current manifest ModuleVersion'
             $match.Groups['anchor'].Value | Should -Be $manifestVersionAnchor -Because "the TOC anchor must collapse to the manifest ModuleVersion (#whats-new-in-v$manifestVersionAnchor)"
+            # The TOC must list ONLY the current release's What's New entry.
+            # Prior versions live under the Release History sub-list (as
+            # indented `  - [...]` entries, which this top-level `^- ` pattern
+            # does not match). Stale top-level entries (e.g. a leftover
+            # "What's New in v0.8.7" from an earlier bump) must be removed.
+            $allTocMatches = [regex]::Matches($readmeContent, $pattern)
+            $allTocMatches.Count | Should -Be 1 -Because "the TOC must list only the current release What's New entry; prior versions belong under Release History (found: $(($allTocMatches | ForEach-Object { $_.Groups['displayed'].Value }) -join ', '))"
         }
 
         It 'README.md main body has exactly one "## What''s New" section, pointing at manifest ModuleVersion' {
@@ -7904,7 +7911,7 @@ schedule:
                 Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend -PipelineYamlPath (Join-Path $calDir 'github-actions') -SchedulePath $schedule -ExportPath $out 6>$null | Out-Null
                 $md = Get-Content -Path $out -Raw
                 $md | Should -Match 'Cycle calendar - next 14 day\(s\) \(cycle length: 2 week\(s\)\)'
-                $md | Should -Match '\| Date \(UTC\) \| Day \| CycleWeek \| Eligible rings \|( Clusters in ring\(s\) \|)? AllowedUpdateVersions \|'
+                $md | Should -Match '\| Date \(UTC\) \| Day \| CycleWeek \| Eligible rings(?: \(cluster count\))? \| AllowedUpdateVersions \|'
                 # Should have 14 data rows
                 $rowCount = ([regex]::Matches($md, '(?m)^\|\s*\d{4}-\d{2}-\d{2}\s*\|')).Count
                 $rowCount | Should -Be 14
@@ -12905,20 +12912,21 @@ schedule:
         $md | Should -Match "$fridayDate.*Canary.*Ring1|$fridayDate.*Ring1.*Canary"
     }
 
-    It '-ClusterRingCounts adds a Clusters in ring(s) column on the calendar table' {
+    It '-ClusterRingCounts folds the count inline into the Eligible rings column' {
         $counts = @{ Canary = 3; Ring1 = 2; Prod = 9 }
         $md = Get-AzLocalApplyUpdatesScheduleCycleCalendar -Schedule $script:ccmd_multi -StartDate $script:ccmd_wk1Mon -AsMarkdown -ClusterRingCounts $counts
-        $md | Should -Match '\| Date \(UTC\) \| Day \| CycleWeek \| Eligible rings \| Clusters in ring\(s\) \| AllowedUpdateVersions \|'
-        # Day-0 (W1 Monday) has Canary -> count of 3 should appear in the row cell
+        $md | Should -Match '\| Date \(UTC\) \| Day \| CycleWeek \| Eligible rings \(cluster count\) \| AllowedUpdateVersions \|'
+        # Day-0 (W1 Monday) has Canary -> inline count of (3) should appear in the row cell
         $w1MonStr = $script:ccmd_wk1Mon.ToString('yyyy-MM-dd')
-        $md | Should -Match "$w1MonStr.*``Canary``: 3"
+        $md | Should -Match "$w1MonStr.*``Canary`` \(3\)"
     }
 
-    It '-ClusterRingCounts on an overlap day shows per-ring counts plus a (total: N) aggregate' {
+    It '-ClusterRingCounts on an overlap day shows each ring with its own inline count' {
         $counts = @{ Canary = 3; Ring1 = 2; Prod = 9 }
         $md = Get-AzLocalApplyUpdatesScheduleCycleCalendar -Schedule $script:ccmd_multi -StartDate $script:ccmd_wk1Mon -Days 5 -AsMarkdown -ClusterRingCounts $counts
-        # Friday of W1: Canary + Ring1, total = 5
-        $md | Should -Match 'total: 5'
+        # Friday of W1: Canary + Ring1, each with its own inline count.
+        $md | Should -Match '`Canary` \(3\)'
+        $md | Should -Match '`Ring1` \(2\)'
     }
 
     It '-ClusterRingCounts with -IncludePerRingSummary adds Cluster count column on the per-ring projection table' {
@@ -12931,9 +12939,10 @@ schedule:
         $md | Should -Match '\| `Prod` \| 9 \|'
     }
 
-    It '-ClusterRingCounts omitted: the legacy 5-column calendar header is used' {
+    It '-ClusterRingCounts omitted: the legacy Eligible rings header (no inline count) is used' {
         $md = Get-AzLocalApplyUpdatesScheduleCycleCalendar -Schedule $script:ccmd_multi -StartDate $script:ccmd_wk1Mon -AsMarkdown
-        # Must NOT contain the 6-column header.
+        # Must NOT relabel the Eligible rings header or add the old separate column.
+        ($md -match '\| Eligible rings \(cluster count\) \|') | Should -Be $false
         ($md -match '\| Clusters in ring\(s\) \|') | Should -Be $false
     }
 
@@ -12941,7 +12950,7 @@ schedule:
         $counts = @{ canary = 7 }
         $md = Get-AzLocalApplyUpdatesScheduleCycleCalendar -Schedule $script:ccmd_clean -StartDate $script:ccmd_wk1Mon -AsMarkdown -ClusterRingCounts $counts
         $w1MonStr = $script:ccmd_wk1Mon.ToString('yyyy-MM-dd')
-        $md | Should -Match "$w1MonStr.*``Canary``: 7"
+        $md | Should -Match "$w1MonStr.*``Canary`` \(7\)"
     }
 
     It '-ClusterRingCounts on dead days shows the dead-day cell' {
@@ -12949,7 +12958,7 @@ schedule:
         # Day-1 (Tuesday) in the clean fixture is a dead day.
         $md = Get-AzLocalApplyUpdatesScheduleCycleCalendar -Schedule $script:ccmd_clean -StartDate $script:ccmd_wk1Mon -Days 2 -AsMarkdown -ClusterRingCounts $counts
         $tueStr = $script:ccmd_wk1Mon.AddDays(1).ToString('yyyy-MM-dd')
-        $md | Should -Match "$tueStr.*_\(0 - dead day\)_"
+        $md | Should -Match "$tueStr.*_\(none - dead day\)_"
     }
 
     It 'Cycle-wrap row renders the (cycle wraps) annotation in CycleWeek cell' {
@@ -13127,13 +13136,13 @@ schedule:
         $md | Should -Match '\| 02:00 \|'
     }
 
-    It 'Three optional columns (Cron + Cluster counts + Window match) coexist; Window match sits immediately after Eligible rings' {
+    It 'Optional columns coexist: Cron + inline cluster counts + Window match; Window match sits immediately after Eligible rings' {
         $cron = @{ ($script:cccol_wk1Mon.ToString('yyyy-MM-dd')) = @('02:00') }
         $rc   = @{ Cdn = 30; Prod = 40 }
         $wm   = @{ Cdn = @{ ($script:cccol_wk1Mon.ToString('yyyy-MM-dd')) = @{ Matching = 30; Total = 30 } } }
         $md   = Get-AzLocalApplyUpdatesScheduleCycleCalendar -Schedule $script:cccol_cfg -StartDate $script:cccol_wk1Mon -Days 1 -AsMarkdown `
             -CronFiringsByDate $cron -ClusterRingCounts $rc -WindowMatchByRingAndDate $wm
-        $md | Should -Match '\| Date \(UTC\) \| Ring CRON Start Time<br>\(apply-updates pipeline\) \| Day \| CycleWeek \| Eligible rings \| Tag Start Window Match \(>=95%\) \| Clusters in ring\(s\) \| AllowedUpdateVersions \|'
+        $md | Should -Match '\| Date \(UTC\) \| Ring CRON Start Time<br>\(apply-updates pipeline\) \| Day \| CycleWeek \| Eligible rings \(cluster count\) \| Tag Start Window Match \(>=95%\) \| AllowedUpdateVersions \|'
     }
 }
 
@@ -16326,6 +16335,8 @@ on:
         ($allTimes | Sort-Object -Unique) | Should -Contain '02:00'
         # WindowMatch should be ABSENT because we didn't supply a ClusterCsvPath.
         $global:_s3_calArgs.ContainsKey('WindowMatchByRingAndDate') | Should -BeFalse
+        # ClusterRingCounts is also CSV-derived, so it must be absent too.
+        $global:_s3_calArgs.ContainsKey('ClusterRingCounts') | Should -BeFalse
     }
 
     It 'v0.8.6: When PipelineYamlPath AND ClusterCsvPath are both supplied, the cycle calendar gets both new dicts' {
@@ -16404,6 +16415,11 @@ on:
             $sample['Total']                                     | Should -Be 2
             # Exactly 1 of the 2 clusters' windows covers 02:00 UTC.
             $sample['Matching']                                  | Should -Be 1
+            # ClusterRingCounts is also forwarded (CSV-derived): 2 Cdn clusters.
+            $global:_s3_calArgs.ContainsKey('ClusterRingCounts') | Should -BeTrue
+            $rc = $global:_s3_calArgs['ClusterRingCounts']
+            $rc | Should -BeOfType 'hashtable'
+            [int]$rc['Cdn']                                      | Should -Be 2
         }
         finally {
             if (Test-Path -LiteralPath $csvPath) { Remove-Item -LiteralPath $csvPath -Force -ErrorAction SilentlyContinue }
