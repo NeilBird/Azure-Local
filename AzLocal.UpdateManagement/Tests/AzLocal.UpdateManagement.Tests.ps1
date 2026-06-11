@@ -16782,3 +16782,396 @@ Describe 'v0.8.6 regression guard: Step.0 Export-AzLocalAuthValidationReport def
         )
     }
 }
+
+#region On-Prem Sideloading Automation (v0.8.7) - behaviour tests for the 5 new public cmdlets
+
+Describe 'Sideload (v0.8.7): Update-AzLocalSideloadCatalog' {
+
+    Context 'Offline HTML parsing + catalog merge' {
+
+        It 'Parses CombinedSolutionBundle rows from offline HTML and writes a reviewable catalog' {
+            $catalogPath = Join-Path $env:TEMP ("azlocal-sideload-catalog-{0}.yml" -f ([Guid]::NewGuid()))
+            try {
+                $html = @'
+<table>
+  <tr><td><a href="https://download.contoso.com/CombinedSolutionBundle.12.2605.1003.210.zip">12.2605.1003.210</a></td>
+      <td>26100.4061</td>
+      <td>SHA256: ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789. Availability date: 2026-05-15</td></tr>
+</table>
+'@
+                $result = Update-AzLocalSideloadCatalog -Path $catalogPath -Html $html -Confirm:$false
+
+                $result | Should -Not -BeNullOrEmpty
+                @($result).Count | Should -Be 1
+                $result[0].Version | Should -Be '12.2605.1003.210'
+                $result[0].PackageType | Should -Be 'Solution'
+                $result[0].OsBuild | Should -Be '26100.4061'
+                $result[0].DownloadUri | Should -Be 'https://download.contoso.com/CombinedSolutionBundle.12.2605.1003.210.zip'
+                $result[0].Sha256 | Should -Be 'ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789'
+                $result[0].AvailabilityDate | Should -Be '2026-05-15'
+
+                Test-Path -LiteralPath $catalogPath | Should -BeTrue
+                $written = Get-Content -LiteralPath $catalogPath -Raw
+                $written | Should -Match "version: '12\.2605\.1003\.210'"
+                $written | Should -Match 'packageType: Solution'
+            }
+            finally {
+                Remove-Item -LiteralPath $catalogPath -Force -ErrorAction SilentlyContinue
+            }
+        }
+
+        It 'Preserves existing SBE (OEM) entries while merging Solution rows' {
+            $catalogPath = Join-Path $env:TEMP ("azlocal-sideload-catalog-{0}.yml" -f ([Guid]::NewGuid()))
+            try {
+                # Seed an SBE entry the operator authored by hand.
+                $seed = @'
+schemaVersion: 1
+packages:
+  - version: '12.2605.1003.210'
+    packageType: SBE
+    sourceFolder: '\\fileserver\sbe\contoso'
+    sha256: '1111111111111111111111111111111111111111111111111111111111111111'
+'@
+                Set-Content -LiteralPath $catalogPath -Value $seed -Encoding ASCII
+
+                $html = @'
+<a href="https://download.contoso.com/CombinedSolutionBundle.12.2606.0.99.zip">12.2606.0.99</a>
+<span>SHA256 2222222222222222222222222222222222222222222222222222222222222222 Availability date: 2026-06-01</span>
+'@
+                $result = Update-AzLocalSideloadCatalog -Path $catalogPath -Html $html -Confirm:$false
+
+                # SBE entry preserved + new Solution entry appended.
+                $sbe = @($result | Where-Object { $_.PackageType -eq 'SBE' })
+                $sbe.Count | Should -Be 1
+                $sbe[0].Version | Should -Be '12.2605.1003.210'
+
+                $sol = @($result | Where-Object { $_.PackageType -eq 'Solution' -and $_.Version -eq '12.2606.0.99' })
+                $sol.Count | Should -Be 1
+                $sol[0].DownloadUri | Should -Match 'CombinedSolutionBundle\.12\.2606\.0\.99\.zip'
+            }
+            finally {
+                Remove-Item -LiteralPath $catalogPath -Force -ErrorAction SilentlyContinue
+            }
+        }
+
+        It 'Does not write the catalog under -WhatIf' {
+            $catalogPath = Join-Path $env:TEMP ("azlocal-sideload-catalog-{0}.yml" -f ([Guid]::NewGuid()))
+            try {
+                $html = '<a href="https://download.contoso.com/CombinedSolutionBundle.12.2605.1003.210.zip">12.2605.1003.210</a>'
+                $null = Update-AzLocalSideloadCatalog -Path $catalogPath -Html $html -WhatIf
+                Test-Path -LiteralPath $catalogPath | Should -BeFalse -Because '-WhatIf must not write the catalog file'
+            }
+            finally {
+                Remove-Item -LiteralPath $catalogPath -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+}
+
+Describe 'Sideload (v0.8.7): Resolve-AzLocalSideloadPlan' {
+
+    It 'Flags clusters whose UpdateAuthAccountId is not in the auth map' {
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalApplyUpdatesScheduleConfig { [PSCustomObject]@{} }
+            Mock Get-AzLocalSideloadAuthMap { @{} }   # empty -> any account id is unknown
+            Mock Get-AzLocalSideloadCatalog { @() }
+            Mock ConvertTo-AzLocalUpdateRingKqlFilter { '' }
+            Mock Get-AzLocalApplyUpdatesScheduleNextFirings { @() }
+            Mock Invoke-AzResourceGraphQuery {
+                @([PSCustomObject]@{
+                        id             = '/subscriptions/s/clusters/c1'
+                        name           = 'cluster1'
+                        resourceGroup  = 'rg1'
+                        subscriptionId = 's'
+                        tags           = [PSCustomObject]@{ UpdateAuthAccountId = 'missing-acct'; UpdateRing = 'Ring1' }
+                    })
+            }
+
+            $plan = Resolve-AzLocalSideloadPlan -SchedulePath 'sched.yml' -AuthMapPath 'auth.csv' -CatalogPath 'cat.yml'
+
+            @($plan).Count | Should -Be 1
+            $plan[0].Status | Should -Be 'UnknownAuthAccountId'
+            $plan[0].ClusterName | Should -Be 'cluster1'
+        }
+    }
+
+    It 'Emits a Planned row when the cluster is due and the selected version is in the catalog' {
+        InModuleScope AzLocal.UpdateManagement {
+            $script:PlanNow = [datetime]'2026-06-11T00:00:00Z'
+
+            Mock Get-AzLocalApplyUpdatesScheduleConfig { [PSCustomObject]@{} }
+            Mock Get-AzLocalSideloadAuthMap {
+                @{ 'acct1' = [PSCustomObject]@{ RemotingTargetFqdn = 'host1.contoso.com'; ImportSharePath = '\\host1\import'; AuthMechanism = 'Negotiate' } }
+            }
+            Mock Get-AzLocalSideloadCatalog {
+                @([PSCustomObject]@{ Version = '12.2605.1003.210'; PackageType = 'Solution' })
+            }
+            Mock ConvertTo-AzLocalUpdateRingKqlFilter { '' }
+            Mock Resolve-AzLocalSideloadTargetPath { '\\host1\import' }
+            Mock Resolve-AzLocalCurrentUpdateRing { [PSCustomObject]@{ AllowedUpdateVersions = @('12.2605.1003.210') } }
+            Mock Get-AzLocalAvailableUpdates {
+                @([PSCustomObject]@{ UpdateState = 'Ready'; UpdateName = 'Solution12'; PackageType = 'Solution'; Version = '12.2605.1003.210' })
+            }
+            Mock Select-AzLocalNextUpdateForCluster {
+                [PSCustomObject]@{
+                    Reason         = 'Selected'
+                    SelectedUpdate = [PSCustomObject]@{ name = 'Solution12'; PackageType = 'Solution'; properties = [PSCustomObject]@{ version = '12.2605.1003.210'; state = 'Ready' } }
+                }
+            }
+            Mock Get-AzLocalApplyUpdatesScheduleNextFirings {
+                @([PSCustomObject]@{ Rings = @('Ring1'); DateUtc = $script:PlanNow.AddDays(2) })
+            }
+            Mock Invoke-AzResourceGraphQuery {
+                @([PSCustomObject]@{
+                        id             = '/subscriptions/s/clusters/c1'
+                        name           = 'cluster1'
+                        resourceGroup  = 'rg1'
+                        subscriptionId = 's'
+                        tags           = [PSCustomObject]@{ UpdateAuthAccountId = 'acct1'; UpdateRing = 'Ring1' }
+                    })
+            }
+
+            # NextWindow = Now+2, LeadDays=7 -> dueDate = Now-5 <= Now -> DueNow -> Planned
+            $plan = Resolve-AzLocalSideloadPlan -SchedulePath 'sched.yml' -AuthMapPath 'auth.csv' -CatalogPath 'cat.yml' -LeadDays 7 -Now $script:PlanNow
+
+            @($plan).Count | Should -Be 1
+            $plan[0].Status | Should -Be 'Planned'
+            $plan[0].DueNow | Should -BeTrue
+            $plan[0].SelectedVersion | Should -Be '12.2605.1003.210'
+            $plan[0].CatalogEntry | Should -Not -BeNullOrEmpty
+        }
+    }
+
+    It 'Flags NoCatalogEntry when the selected version is absent from the catalog' {
+        InModuleScope AzLocal.UpdateManagement {
+            $script:PlanNow2 = [datetime]'2026-06-11T00:00:00Z'
+
+            Mock Get-AzLocalApplyUpdatesScheduleConfig { [PSCustomObject]@{} }
+            Mock Get-AzLocalSideloadAuthMap {
+                @{ 'acct1' = [PSCustomObject]@{ RemotingTargetFqdn = 'host1.contoso.com'; ImportSharePath = '\\host1\import' } }
+            }
+            Mock Get-AzLocalSideloadCatalog { @() }   # empty catalog
+            Mock ConvertTo-AzLocalUpdateRingKqlFilter { '' }
+            Mock Resolve-AzLocalSideloadTargetPath { '\\host1\import' }
+            Mock Resolve-AzLocalCurrentUpdateRing { [PSCustomObject]@{ AllowedUpdateVersions = @('12.2605.1003.210') } }
+            Mock Get-AzLocalAvailableUpdates {
+                @([PSCustomObject]@{ UpdateState = 'Ready'; UpdateName = 'Solution12'; PackageType = 'Solution'; Version = '12.2605.1003.210' })
+            }
+            Mock Select-AzLocalNextUpdateForCluster {
+                [PSCustomObject]@{
+                    Reason         = 'Selected'
+                    SelectedUpdate = [PSCustomObject]@{ name = 'Solution12'; PackageType = 'Solution'; properties = [PSCustomObject]@{ version = '12.2605.1003.210'; state = 'Ready' } }
+                }
+            }
+            Mock Get-AzLocalApplyUpdatesScheduleNextFirings {
+                @([PSCustomObject]@{ Rings = @('Ring1'); DateUtc = $script:PlanNow2.AddDays(2) })
+            }
+            Mock Invoke-AzResourceGraphQuery {
+                @([PSCustomObject]@{
+                        id             = '/subscriptions/s/clusters/c1'
+                        name           = 'cluster1'
+                        resourceGroup  = 'rg1'
+                        subscriptionId = 's'
+                        tags           = [PSCustomObject]@{ UpdateAuthAccountId = 'acct1'; UpdateRing = 'Ring1' }
+                    })
+            }
+
+            $plan = Resolve-AzLocalSideloadPlan -SchedulePath 'sched.yml' -AuthMapPath 'auth.csv' -CatalogPath 'cat.yml' -LeadDays 7 -Now $script:PlanNow2
+
+            @($plan).Count | Should -Be 1
+            $plan[0].Status | Should -Be 'NoCatalogEntry'
+        }
+    }
+}
+
+Describe 'Sideload (v0.8.7): Invoke-AzLocalSideloadUpdate state machine' {
+
+    It 'Skips a cluster that has no state and is not due (Status != Planned)' {
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalSideloadState { $null }
+            Mock Invoke-SideloadCopyStart { [PSCustomObject]@{ Retries = 0 } }
+
+            $plan = @([PSCustomObject]@{ ClusterName = 'c1'; Status = 'NotDue'; SelectedVersion = '12.0'; Message = 'not yet' })
+            $res = Invoke-AzLocalSideloadUpdate -Plan $plan -StateRoot 'TestDrive:\state' -Confirm:$false
+
+            @($res).Count | Should -Be 1
+            $res[0].Action | Should -Be 'Skip'
+            Assert-MockCalled Invoke-SideloadCopyStart -Times 0 -Scope It
+        }
+    }
+
+    It 'Starts the copy for a due cluster with no existing state' {
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalSideloadState { $null }
+            Mock Invoke-SideloadCopyStart { [PSCustomObject]@{ Retries = 0; MediaFileName = 'media.zip' } }
+
+            $plan = @([PSCustomObject]@{ ClusterName = 'c1'; Status = 'Planned'; SelectedVersion = '12.2605.1003.210'; Message = 'due' })
+            $res = Invoke-AzLocalSideloadUpdate -Plan $plan -StateRoot 'TestDrive:\state' -Confirm:$false
+
+            $res[0].Action | Should -Be 'Start'
+            $res[0].State | Should -Be 'Copying'
+            Assert-MockCalled Invoke-SideloadCopyStart -Times 1 -Scope It
+        }
+    }
+
+    It 'Reports None when the cluster is already Imported' {
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalSideloadState {
+                [PSCustomObject]@{ ClusterName = 'c1'; State = 'Imported'; Version = '12.0'; Message = 'done' }
+            }
+
+            $plan = @([PSCustomObject]@{ ClusterName = 'c1'; Status = 'Planned'; SelectedVersion = '12.0' })
+            $res = Invoke-AzLocalSideloadUpdate -Plan $plan -StateRoot 'TestDrive:\state' -Confirm:$false
+
+            $res[0].Action | Should -Be 'None'
+            $res[0].State | Should -Be 'Imported'
+        }
+    }
+
+    It 'Reports InProgress for a Copying state with a fresh heartbeat' {
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalSideloadState {
+                [PSCustomObject]@{ ClusterName = 'c1'; State = 'Copying'; Version = '12.0'; TotalBytes = [long]100; CopiedBytes = [long]50; Mbps = 42; EtaUtc = '2026-06-11T01:00:00Z'; Retries = 0; Message = 'copying' }
+            }
+            Mock Test-AzLocalSideloadHeartbeatStale { $false }
+
+            $plan = @([PSCustomObject]@{ ClusterName = 'c1'; Status = 'Planned'; SelectedVersion = '12.0' })
+            $res = Invoke-AzLocalSideloadUpdate -Plan $plan -StateRoot 'TestDrive:\state' -Confirm:$false
+
+            $res[0].Action | Should -Be 'InProgress'
+            $res[0].State | Should -Be 'Copying'
+            $res[0].Message | Should -Match '50'
+        }
+    }
+
+    It 'Marks Failed when a Copying heartbeat is stale and retries are exhausted' {
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalSideloadState {
+                [PSCustomObject]@{ ClusterName = 'c1'; State = 'Copying'; Version = '12.0'; Retries = [int]3; Message = '' }
+            }
+            Mock Test-AzLocalSideloadHeartbeatStale { $true }
+            Mock Set-AzLocalSideloadState { }
+
+            $plan = @([PSCustomObject]@{ ClusterName = 'c1'; Status = 'Planned'; SelectedVersion = '12.0' })
+            $res = Invoke-AzLocalSideloadUpdate -Plan $plan -StateRoot 'TestDrive:\state' -MaxRetries 3 -Confirm:$false
+
+            $res[0].Action | Should -Be 'Failed'
+            $res[0].State | Should -Be 'Failed'
+            Assert-MockCalled Set-AzLocalSideloadState -Times 1 -Scope It
+        }
+    }
+
+    It 'Advances a Copied state through the import + gate-flip helper' {
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalSideloadState {
+                [PSCustomObject]@{ ClusterName = 'c1'; State = 'Copied'; Version = '12.0' }
+            }
+            Mock Complete-SideloadImport { [PSCustomObject]@{ State = 'Imported'; Message = 'Imported; UpdateSideloaded=True.' } }
+
+            $plan = @([PSCustomObject]@{ ClusterName = 'c1'; Status = 'Planned'; SelectedVersion = '12.0' })
+            $res = Invoke-AzLocalSideloadUpdate -Plan $plan -StateRoot 'TestDrive:\state' -Confirm:$false
+
+            $res[0].Action | Should -Be 'Import'
+            $res[0].State | Should -Be 'Imported'
+            Assert-MockCalled Complete-SideloadImport -Times 1 -Scope It
+        }
+    }
+
+    It 'Surfaces an Error row when a helper throws' {
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalSideloadState { $null }
+            Mock Invoke-SideloadCopyStart { throw 'media staging failed' }
+
+            $plan = @([PSCustomObject]@{ ClusterName = 'c1'; Status = 'Planned'; SelectedVersion = '12.0' })
+            $res = Invoke-AzLocalSideloadUpdate -Plan $plan -StateRoot 'TestDrive:\state' -Confirm:$false
+
+            $res[0].Action | Should -Be 'Error'
+            $res[0].State | Should -Be 'Failed'
+            $res[0].Message | Should -Match 'media staging failed'
+        }
+    }
+}
+
+Describe 'Sideload (v0.8.7): Export-AzLocalSideloadStatusReport' {
+
+    BeforeEach {
+        $script:SideloadStateRoot = Join-Path $env:TEMP ("azlocal-sideload-state-{0}" -f ([Guid]::NewGuid()))
+        $script:SideloadStateDir = Join-Path $script:SideloadStateRoot 'state'
+        New-Item -ItemType Directory -Path $script:SideloadStateDir -Force | Out-Null
+    }
+
+    AfterEach {
+        Remove-Item -LiteralPath $script:SideloadStateRoot -Recurse -Force -ErrorAction SilentlyContinue
+    }
+
+    It 'Builds a markdown table and JUnit XML from shared state records' {
+        $copying = [PSCustomObject]@{ ClusterName = 'clusterA'; Version = '12.0'; State = 'Copying'; OwningMachine = 'agent1'; TotalBytes = [long]100; CopiedBytes = [long]25; Mbps = 30; EtaUtc = '2026-06-11T02:00:00Z'; Retries = 0; Message = 'in progress' }
+        $imported = [PSCustomObject]@{ ClusterName = 'clusterB'; Version = '12.0'; State = 'Imported'; OwningMachine = 'agent2'; TotalBytes = [long]0; CopiedBytes = [long]0; Mbps = 0; EtaUtc = ''; Retries = 0; Message = 'done' }
+        ($copying | ConvertTo-Json) | Set-Content -LiteralPath (Join-Path $script:SideloadStateDir 'clusterA.json') -Encoding ASCII
+        ($imported | ConvertTo-Json) | Set-Content -LiteralPath (Join-Path $script:SideloadStateDir 'clusterB.json') -Encoding ASCII
+
+        $report = Export-AzLocalSideloadStatusReport -StateRoot $script:SideloadStateRoot
+
+        $report.Markdown | Should -Match '## Sideload status'
+        $report.Markdown | Should -Match 'clusterA'
+        $report.Markdown | Should -Match 'clusterB'
+        $report.JUnitXml | Should -Match '<testsuites'
+        $report.HasFailures | Should -BeFalse
+        @($report.Counts).Count | Should -BeGreaterThan 0
+    }
+
+    It 'Flags HasFailures and a JUnit failure for a Failed state' {
+        $failed = [PSCustomObject]@{ ClusterName = 'clusterC'; Version = '12.0'; State = 'Failed'; OwningMachine = 'agent1'; TotalBytes = [long]0; CopiedBytes = [long]0; Mbps = 0; EtaUtc = ''; Retries = 3; Message = 'copy failed' }
+        ($failed | ConvertTo-Json) | Set-Content -LiteralPath (Join-Path $script:SideloadStateDir 'clusterC.json') -Encoding ASCII
+
+        $report = Export-AzLocalSideloadStatusReport -StateRoot $script:SideloadStateRoot
+
+        $report.HasFailures | Should -BeTrue
+        $report.JUnitXml | Should -Match 'SideloadFailed'
+    }
+
+    It 'Surfaces plan error rows (UnknownAuthAccountId / NoCatalogEntry) in the report' {
+        $planErrors = @(
+            [PSCustomObject]@{ ClusterName = 'clusterD'; Status = 'UnknownAuthAccountId'; Message = 'unknown account' },
+            [PSCustomObject]@{ ClusterName = 'clusterE'; Status = 'NoCatalogEntry'; Message = 'no catalog entry' }
+        )
+
+        $report = Export-AzLocalSideloadStatusReport -StateRoot $script:SideloadStateRoot -Plan $planErrors
+
+        $report.HasFailures | Should -BeTrue
+        $report.Markdown | Should -Match 'Plan warnings / errors'
+        $report.Markdown | Should -Match 'UnknownAuthAccountId'
+        $report.Markdown | Should -Match 'NoCatalogEntry'
+    }
+
+    It 'Writes sideload-status.md and sideload-junit.xml when OutputPath is supplied' {
+        $imported = [PSCustomObject]@{ ClusterName = 'clusterB'; Version = '12.0'; State = 'Imported'; OwningMachine = 'agent2'; TotalBytes = [long]0; CopiedBytes = [long]0; Mbps = 0; EtaUtc = ''; Retries = 0; Message = 'done' }
+        ($imported | ConvertTo-Json) | Set-Content -LiteralPath (Join-Path $script:SideloadStateDir 'clusterB.json') -Encoding ASCII
+        $outDir = Join-Path $script:SideloadStateRoot 'report'
+
+        $null = Export-AzLocalSideloadStatusReport -StateRoot $script:SideloadStateRoot -OutputPath $outDir
+
+        Test-Path -LiteralPath (Join-Path $outDir 'sideload-status.md') | Should -BeTrue
+        Test-Path -LiteralPath (Join-Path $outDir 'sideload-junit.xml') | Should -BeTrue
+    }
+}
+
+Describe 'Sideload (v0.8.7): Add-AzLocalSideloadStepSummary' {
+
+    It 'Calls Export-AzLocalSideloadStatusReport and appends the markdown to the step summary' {
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Export-AzLocalSideloadStatusReport {
+                [PSCustomObject]@{ Markdown = '## Sideload status'; JUnitXml = '<testsuites/>'; Counts = @(); HasFailures = $false }
+            }
+            Mock Add-AzLocalPipelineStepSummary { }
+
+            $report = Add-AzLocalSideloadStepSummary -StateRoot 'TestDrive:\state'
+
+            $report.Markdown | Should -Be '## Sideload status'
+            Assert-MockCalled Export-AzLocalSideloadStatusReport -Times 1 -Scope It
+            Assert-MockCalled Add-AzLocalPipelineStepSummary -Times 1 -Scope It
+        }
+    }
+}
+
+#endregion On-Prem Sideloading Automation (v0.8.7)
