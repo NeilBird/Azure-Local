@@ -82,7 +82,7 @@
         # On-prem solution-update sideloading automation (v0.8.7)
         'Private/Get-AzLocalSideloadAuthMap.ps1',
         'Private/Get-AzLocalSideloadCatalog.ps1',
-        'Private/Test-AzCliAvailable.ps1',
+        'Private/Select-AzLocalNextUpdateForCluster.ps1',        'Private/Test-AzCliAvailable.ps1',
         'Private/Test-AzLocalAllowedUpdateVersionsString.ps1',
         'Private/Test-AzLocalUpdateExclusion.ps1',
         'Private/Test-AzLocalUpdateExcludedAllowed.ps1',
