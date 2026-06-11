@@ -37,6 +37,10 @@ To make room for sideload at Step.6, four display steps shift up by one: apply-u
 - **Step.2 tag management** can set the `UpdateAuthAccountId` tag from CSV.
 - **Step.3 schedule advisor** can emit a recommended sideload CRON (the apply window minus `SIDELOAD_LEAD_DAYS`) when sideloading is enabled.
 
+### Fixed
+
+- **In-flight monitor "Current Step" column always showed the top-level wrapper step (e.g. "Start update").** `Format-AzLocalUpdateRun` (and the duplicate logic in `Get-AzLocalFleetStatusData`) selected `CurrentStep` from the **top-level** `properties.progress.steps` array only. Azure Local nests a coarse wrapper step that stays `InProgress` for the entire run, so the Step.8 monitor (`Export-AzLocalUpdateRunMonitorReport`) and fleet-status report always rendered the wrapper name instead of the real current activity. Both paths now reuse `Get-DeepestActiveStep` to walk to the deepest `InProgress`/`Error`/`Failed` leaf (preserving the `(FAILED)` suffix), making `CurrentStep` consistent with `CurrentStepDetail` / `Get-CurrentStepPath` and the standard update-progress output. Adds two `Format-AzLocalUpdateRun` regression tests.
+
 ### Versioning / tests
 
 - `ModuleVersion` 0.8.6 -> 0.8.7 (`.psd1` + `.psm1`). Export count assertion 55 -> 60.
