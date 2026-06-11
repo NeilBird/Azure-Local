@@ -136,6 +136,24 @@ The table below is the ground truth for what each shipped YAML does **out of the
 >
 > **Known gap**: the Step 3 schedule-coverage audit currently validates Step 7 cron-to-`UpdateStartWindow` coverage only - it does **not** audit whether each Step 5 cron is correctly anchored to a Step 7 cron. Pair Step 5 and Step 7 cron edits in the same PR so the lead-time relationship is reviewable. The end-to-end runbook in the parent README's [section 8.1.1](../README.md#811-recommended-step5-pre-flight-schedule-per-ring) has worked examples for the most common ring layouts.
 
+## Step 6 - Sideload Updates
+
+> **OPT-IN, OFF BY DEFAULT, self-hosted runner required.** Introduced in v0.8.7. This pipeline is inert unless the repository variable `SIDELOAD_UPDATES` is the literal string `'true'`. Full architecture, the scheduled-task survival model, the shared-state / multi-runner contract, the auth-map, and the catalog format are in [sideload.md](sideload.md); robocopy throttling guidance is in [sideload-robocopy.md](sideload-robocopy.md).
+
+| Aspect | Value |
+|---|---|
+| **Purpose** | Pre-stage Azure Local solution-update media onto clusters that **cannot pull updates from Azure directly** (dark / air-gapped / restricted-egress fabrics). It Robocopies the `CombinedSolutionBundle` (or OEM SBE package) to each cluster's infrastructure `import` SMB share, verifies the SHA256 over WinRM, runs `Add-SolutionUpdate`, and flips `UpdateSideloaded=True` so the downstream Step 7 apply can proceed. |
+| **Inputs** | `update_ring` (optional - a single ring, a `;`-delimited list, or `***` for every tagged cluster; default `***`), `dry_run` (optional, default `true` - previews the plan + transitions with no staging / task / tag changes), `module_version` (optional pin). |
+| **Trigger** | **Manual only by default** (`workflow_dispatch` / **Run pipeline** button). **No schedule ships** because the pipeline requires an on-prem self-hosted runner labelled `azlocal-sideload` (GH) / a self-hosted agent in a pool with the `azlocal-sideload` demand (ADO) that most repos do not have. Once the runner/agent is online, uncomment the bundled `*/30 * * * *` cron inside the `BEGIN/END-AZLOCAL-CUSTOMIZE:schedule-triggers` block to drive the state machine. |
+| **Cmdlets invoked** | `Resolve-AzLocalSideloadPlan` (selects clusters whose next apply window is within `SIDELOAD_LEAD_DAYS`), `Invoke-AzLocalSideloadUpdate` (the re-entrant state machine), `Export-AzLocalSideloadStatusReport` + `Add-AzLocalSideloadStepSummary` (JUnit + Markdown summary). |
+| **Re-entrant state machine** | Each run advances every in-scope cluster by **one** transition and exits: `Planned -> Copying -> Copied -> Verified -> Imported -> SideloadFlagged`. The multi-hour copy itself runs in a **detached Windows Scheduled Task** (driven by `Tools/Invoke-AzLocalSideloadCopyTask.ps1`) so no pipeline run is ever long-lived. Re-running is always safe; a stale `Copying` heartbeat (> `SIDELOAD_HEARTBEAT_STALE_MINUTES`) is re-driven. |
+| **Depends on** | Step 1 (`UpdateRing` + sideload tags present, including `UpdateAuthAccountId`), Step 2 (to apply those tags at scale), and a populated `sideload-auth-map.csv` + `sideload-catalog.yml`. The downstream Step 7 apply consumes the `UpdateSideloaded=True` flag this pipeline sets. |
+| **Artefacts** | `sideload-status.xml` (JUnit, one cluster per test), `sideload-status.csv`, plus per-run copy/verify logs under the shared `SIDELOAD_STATE_ROOT\logs`. |
+| **Shared state** | `SIDELOAD_STATE_ROOT` must be a UNC path that every runner/agent can read+write (`state\`, `logs\`, `cache\`). Verified media is cached under `SIDELOAD_CACHE_ROOT` (defaults to `<state-root>\cache`) so a bundle is downloaded + hashed once and reused across clusters. |
+| **RBAC** | ARG fleet read + Key Vault secret read + `UpdateSideloaded` tag write for the pipeline identity; a separate Active Directory `[pscredential]` (built from two Key Vault secrets named in the auth-map row) is used for the cluster WinRM remoting and `Add-SolutionUpdate`. |
+| **Exit conditions** | Pipeline run is green when every in-scope cluster either advances cleanly or is correctly classified as a skip. Per-cluster copy / verify / import failures surface as JUnit `<failure>` entries. |
+| **ITSM** | Not supported in v0.8.7 (staging is a pre-apply preparation step; failures surface as JUnit `<failure>` entries for operator review). |
+
 ## Step 7 - Apply Updates
 
 | Aspect | Value |
