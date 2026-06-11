@@ -6516,9 +6516,9 @@ Describe 'Function: Copy-AzLocalPipelineExample' {
 
     # v0.7.92: starter apply-updates-schedule.yml drop (default-on for
     # -Platform GitHub|AzureDevOps; suppressed by -SkipStarterSchedule).
-    # The starter lands ONE LEVEL UP from -Destination so the schedule
-    # file sits beside .github\workflows\ (GitHub) or the pipelines
-    # folder (ADO) rather than inside it.
+    # v0.8.7 relocates the starter into a repo-root `config\` folder so the
+    # schedule sits beside config\ClusterUpdateRings.csv - the IDENTICAL
+    # path on GitHub and Azure DevOps.
 
     It 'v0.7.92: -SkipStarterSchedule is exposed as a [switch] parameter' {
         $cmd = Get-Command -Name 'Copy-AzLocalPipelineExample' -ErrorAction Stop
@@ -6526,14 +6526,14 @@ Describe 'Function: Copy-AzLocalPipelineExample' {
         $cmd.Parameters['SkipStarterSchedule'].ParameterType | Should -Be ([switch])
     }
 
-    It 'v0.7.92: -Platform GitHub default drops starter apply-updates-schedule.yml ONE LEVEL UP from -Destination' {
+    It 'v0.8.7: -Platform GitHub default drops starter apply-updates-schedule.yml into repo-root config folder' {
         $repoRoot = Join-Path $script:cpDestRoot 'gh-starter-fresh'
         $dest = Join-Path $repoRoot '.github\workflows'
         New-Item -Path $dest -ItemType Directory -Force | Out-Null
 
         Copy-AzLocalPipelineExample -Destination $dest -Platform GitHub 6>$null | Out-Null
 
-        $scheduleDest = Join-Path $repoRoot '.github\apply-updates-schedule.yml'
+        $scheduleDest = Join-Path $repoRoot 'config\apply-updates-schedule.yml'
         Test-Path $scheduleDest | Should -BeTrue
         # File content must match the bundled example verbatim (starter copy
         # is byte-for-byte, no templating).
@@ -6542,14 +6542,14 @@ Describe 'Function: Copy-AzLocalPipelineExample' {
         (Get-FileHash -LiteralPath $scheduleDest).Hash | Should -Be (Get-FileHash -LiteralPath $source).Hash
     }
 
-    It 'v0.7.92: -Platform AzureDevOps default drops starter apply-updates-schedule.yml ONE LEVEL UP from -Destination' {
+    It 'v0.8.7: -Platform AzureDevOps default drops starter apply-updates-schedule.yml into repo-root config folder' {
         $repoRoot = Join-Path $script:cpDestRoot 'ado-starter-fresh'
         $dest = Join-Path $repoRoot 'pipelines'
         New-Item -Path $dest -ItemType Directory -Force | Out-Null
 
         Copy-AzLocalPipelineExample -Destination $dest -Platform AzureDevOps 6>$null | Out-Null
 
-        $scheduleDest = Join-Path $repoRoot 'apply-updates-schedule.yml'
+        $scheduleDest = Join-Path $repoRoot 'config\apply-updates-schedule.yml'
         Test-Path $scheduleDest | Should -BeTrue
     }
 
@@ -6559,7 +6559,8 @@ Describe 'Function: Copy-AzLocalPipelineExample' {
         New-Item -Path $dest -ItemType Directory -Force | Out-Null
 
         # Pre-seed an operator-tailored schedule file
-        $scheduleDest = Join-Path $repoRoot '.github\apply-updates-schedule.yml'
+        $scheduleDest = Join-Path $repoRoot 'config\apply-updates-schedule.yml'
+        New-Item -Path (Split-Path -Parent $scheduleDest) -ItemType Directory -Force | Out-Null
         $sentinel = '# OPERATOR SENTINEL - must never be overwritten by Copy-AzLocalPipelineExample'
         Set-Content -LiteralPath $scheduleDest -Value $sentinel -Encoding ASCII
 
@@ -6576,7 +6577,7 @@ Describe 'Function: Copy-AzLocalPipelineExample' {
 
         Copy-AzLocalPipelineExample -Destination $dest -Platform GitHub -SkipStarterSchedule 6>$null | Out-Null
 
-        $scheduleDest = Join-Path $repoRoot '.github\apply-updates-schedule.yml'
+        $scheduleDest = Join-Path $repoRoot 'config\apply-updates-schedule.yml'
         Test-Path $scheduleDest | Should -BeFalse
     }
 
@@ -6605,8 +6606,122 @@ Describe 'Function: Copy-AzLocalPipelineExample' {
 
         Copy-AzLocalPipelineExample -Destination $dest -Platform GitHub -WhatIf 6>$null | Out-Null
 
-        $scheduleDest = Join-Path $repoRoot '.github\apply-updates-schedule.yml'
+        $scheduleDest = Join-Path $repoRoot 'config\apply-updates-schedule.yml'
         Test-Path $scheduleDest | Should -BeFalse
+    }
+
+    # v0.8.7: starter on-prem sideloading config drop (sideload-auth-map.csv
+    # + sideload-catalog.yml). Default-on for -Platform GitHub|AzureDevOps;
+    # suppressed by -SkipStarterSideloadConfig. Lands in the SAME repo-root
+    # `config\` folder as the starter schedule and the ring CSV - the
+    # IDENTICAL path on GitHub and Azure DevOps. Both files are
+    # header/skeleton only (no demo data rows), so they parse to an empty
+    # auth-map / empty catalog.
+
+    It 'v0.8.7: -SkipStarterSideloadConfig is exposed as a [switch] parameter' {
+        $cmd = Get-Command -Name 'Copy-AzLocalPipelineExample' -ErrorAction Stop
+        $cmd.Parameters.ContainsKey('SkipStarterSideloadConfig') | Should -BeTrue
+        $cmd.Parameters['SkipStarterSideloadConfig'].ParameterType | Should -Be ([switch])
+    }
+
+    It 'v0.8.7: -Platform GitHub default drops starter sideload config into repo-root config folder' {
+        $repoRoot = Join-Path $script:cpDestRoot 'gh-sideload-fresh'
+        $dest = Join-Path $repoRoot '.github\workflows'
+        New-Item -Path $dest -ItemType Directory -Force | Out-Null
+
+        Copy-AzLocalPipelineExample -Destination $dest -Platform GitHub 6>$null | Out-Null
+
+        Test-Path (Join-Path $repoRoot 'config\sideload-auth-map.csv') | Should -BeTrue
+        Test-Path (Join-Path $repoRoot 'config\sideload-catalog.yml')  | Should -BeTrue
+    }
+
+    It 'v0.8.7: -Platform AzureDevOps default drops starter sideload config into repo-root config folder' {
+        $repoRoot = Join-Path $script:cpDestRoot 'ado-sideload-fresh'
+        $dest = Join-Path $repoRoot 'pipelines'
+        New-Item -Path $dest -ItemType Directory -Force | Out-Null
+
+        Copy-AzLocalPipelineExample -Destination $dest -Platform AzureDevOps 6>$null | Out-Null
+
+        Test-Path (Join-Path $repoRoot 'config\sideload-auth-map.csv') | Should -BeTrue
+        Test-Path (Join-Path $repoRoot 'config\sideload-catalog.yml')  | Should -BeTrue
+    }
+
+    It 'v0.8.7: starter auth-map is header-only and parses to an EMPTY auth-map (no demo rows)' {
+        $repoRoot = Join-Path $script:cpDestRoot 'gh-sideload-parse'
+        $dest = Join-Path $repoRoot '.github\workflows'
+        New-Item -Path $dest -ItemType Directory -Force | Out-Null
+
+        Copy-AzLocalPipelineExample -Destination $dest -Platform GitHub 6>$null | Out-Null
+
+        $authMapPath = Join-Path $repoRoot 'config\sideload-auth-map.csv'
+        $catalogPath = Join-Path $repoRoot 'config\sideload-catalog.yml'
+
+        # The starter must carry NO demo credential data (so it is inert even
+        # if SIDELOAD_UPDATES is flipped on before the operator fills it in).
+        $authRaw = Get-Content -Raw -LiteralPath $authMapPath
+        $authRaw | Should -Match 'UpdateAuthAccountId,KeyVaultName'
+        $authRaw | Should -Not -Match 'kv-azlocal'
+
+        $map = InModuleScope AzLocal.UpdateManagement -Parameters @{ P = $authMapPath } {
+            param($P)
+            Get-AzLocalSideloadAuthMap -Path $P
+        }
+        $map.Keys.Count | Should -Be 0
+
+        $catalog = InModuleScope AzLocal.UpdateManagement -Parameters @{ P = $catalogPath } {
+            param($P)
+            @(Get-AzLocalSideloadCatalog -Path $P)
+        }
+        $catalog.Count | Should -Be 0
+    }
+
+    It 'v0.8.7: existing sideload config at the target is NEVER overwritten by the starter drop' {
+        $repoRoot = Join-Path $script:cpDestRoot 'gh-sideload-preserve'
+        $dest = Join-Path $repoRoot '.github\workflows'
+        New-Item -Path $dest -ItemType Directory -Force | Out-Null
+        New-Item -Path (Join-Path $repoRoot 'config') -ItemType Directory -Force | Out-Null
+
+        $authMapPath = Join-Path $repoRoot 'config\sideload-auth-map.csv'
+        $sentinel = '# OPERATOR SENTINEL - must never be overwritten'
+        Set-Content -LiteralPath $authMapPath -Value $sentinel -Encoding ASCII
+
+        Copy-AzLocalPipelineExample -Destination $dest -Platform GitHub 6>$null | Out-Null
+
+        (Get-Content -LiteralPath $authMapPath -Raw) | Should -Match 'OPERATOR SENTINEL'
+    }
+
+    It 'v0.8.7: -SkipStarterSideloadConfig suppresses the sideload starter drop entirely' {
+        $repoRoot = Join-Path $script:cpDestRoot 'gh-sideload-skip'
+        $dest = Join-Path $repoRoot '.github\workflows'
+        New-Item -Path $dest -ItemType Directory -Force | Out-Null
+
+        Copy-AzLocalPipelineExample -Destination $dest -Platform GitHub -SkipStarterSideloadConfig 6>$null | Out-Null
+
+        Test-Path (Join-Path $repoRoot 'config\sideload-auth-map.csv') | Should -BeFalse
+        Test-Path (Join-Path $repoRoot 'config\sideload-catalog.yml')  | Should -BeFalse
+    }
+
+    It 'v0.8.7: -Platform All does NOT drop sideload starter config (only GitHub|AzureDevOps do)' {
+        $parent = Join-Path $script:cpDestRoot 'all-no-sideload-parent'
+        New-Item -Path $parent -ItemType Directory -Force | Out-Null
+        $dest = Join-Path $parent 'all-no-sideload'
+        New-Item -Path $dest -ItemType Directory -Force | Out-Null
+
+        Copy-AzLocalPipelineExample -Destination $dest 6>$null | Out-Null
+
+        Test-Path (Join-Path $parent 'sideload-auth-map.csv') | Should -BeFalse
+        Test-Path (Join-Path $dest   'sideload-auth-map.csv') | Should -BeFalse
+    }
+
+    It 'v0.8.7: -WhatIf does not write the sideload starter config' {
+        $repoRoot = Join-Path $script:cpDestRoot 'gh-sideload-whatif'
+        $dest = Join-Path $repoRoot '.github\workflows'
+        New-Item -Path $dest -ItemType Directory -Force | Out-Null
+
+        Copy-AzLocalPipelineExample -Destination $dest -Platform GitHub -WhatIf 6>$null | Out-Null
+
+        Test-Path (Join-Path $repoRoot 'config\sideload-auth-map.csv') | Should -BeFalse
+        Test-Path (Join-Path $repoRoot 'config\sideload-catalog.yml')  | Should -BeFalse
     }
 }
 
@@ -16939,6 +17054,119 @@ packages:
                 Remove-Item -LiteralPath $catalogPath -Force -ErrorAction SilentlyContinue
             }
         }
+    }
+
+    Context 'Schema migration (-SchemaMigrate)' {
+
+        It '-SchemaMigrate is exposed as a [switch] parameter' {
+            $cmd = Get-Command -Name 'Update-AzLocalSideloadCatalog' -ErrorAction Stop
+            $cmd.Parameters.ContainsKey('SchemaMigrate') | Should -BeTrue
+            $cmd.Parameters['SchemaMigrate'].ParameterType | Should -Be ([switch])
+        }
+
+        It 'Migrating a v1 catalog is a no-op (already on the current schema) and leaves the file untouched' {
+            $catalogPath = Join-Path $env:TEMP ("azlocal-sideload-catalog-{0}.yml" -f ([Guid]::NewGuid()))
+            try {
+                $seed = @'
+# Operator comment that must survive
+schemaVersion: 1
+packages:
+  - version: 'DellSBE-4.1.2412.1'
+    packageType: SBE
+    sourceFolder: '\\fileserver\sbe\Dell\4.1.2412.1'
+'@
+                Set-Content -LiteralPath $catalogPath -Value $seed -Encoding ASCII
+                $before = Get-Content -LiteralPath $catalogPath -Raw
+
+                $result = Update-AzLocalSideloadCatalog -Path $catalogPath -SchemaMigrate -Confirm:$false
+
+                $result.Action | Should -Be 'Unchanged-SchemaCurrent'
+                $result.FromVersion | Should -Be 1
+                $result.ToVersion | Should -Be 1
+                $result.BackupPath | Should -BeNullOrEmpty
+                # File content unchanged; no backup written.
+                (Get-Content -LiteralPath $catalogPath -Raw) | Should -Be $before
+                $base = [System.IO.Path]::GetFileNameWithoutExtension($catalogPath)
+                Test-Path -LiteralPath (Join-Path (Split-Path -Parent $catalogPath) ($base + '.v1.old.yml')) | Should -BeFalse
+            }
+            finally {
+                Remove-Item -LiteralPath $catalogPath -Force -ErrorAction SilentlyContinue
+            }
+        }
+
+        It '-SchemaMigrate on a missing file throws a clear error' {
+            $missing = Join-Path $env:TEMP ("azlocal-sideload-missing-{0}.yml" -f ([Guid]::NewGuid()))
+            { Update-AzLocalSideloadCatalog -Path $missing -SchemaMigrate -Confirm:$false } |
+                Should -Throw -ExpectedMessage '*catalog file not found*'
+        }
+    }
+}
+
+Describe 'Sideload (v0.8.7): catalog schema framework' {
+
+    It 'Get-AzLocalSideloadCatalog REFUSES a catalog written by a newer module (higher schemaVersion)' {
+        $catalogPath = Join-Path $env:TEMP ("azlocal-sideload-future-{0}.yml" -f ([Guid]::NewGuid()))
+        try {
+            $seed = @'
+schemaVersion: 99
+packages:
+  - version: '12.2605.1003.210'
+    packageType: Solution
+    downloadUri: 'https://contoso/CombinedSolutionBundle.zip'
+    sha256: 'ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789'
+'@
+            Set-Content -LiteralPath $catalogPath -Value $seed -Encoding ASCII
+            {
+                InModuleScope AzLocal.UpdateManagement -Parameters @{ P = $catalogPath } {
+                    param($P)
+                    Get-AzLocalSideloadCatalog -Path $P
+                }
+            } | Should -Throw -ExpectedMessage '*only supports up to*'
+        }
+        finally {
+            Remove-Item -LiteralPath $catalogPath -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'Get-AzLocalSideloadCatalog tolerates a MISSING schemaVersion (treated as v1) and parses packages' {
+        $catalogPath = Join-Path $env:TEMP ("azlocal-sideload-nosv-{0}.yml" -f ([Guid]::NewGuid()))
+        try {
+            $seed = @'
+packages:
+  - version: 'DellSBE-4.1.2412.1'
+    packageType: SBE
+    sourceFolder: '\\fileserver\sbe\Dell\4.1.2412.1'
+'@
+            Set-Content -LiteralPath $catalogPath -Value $seed -Encoding ASCII
+            $pkgs = @(InModuleScope AzLocal.UpdateManagement -Parameters @{ P = $catalogPath } {
+                param($P)
+                Get-AzLocalSideloadCatalog -Path $P
+            })
+            $pkgs.Count | Should -Be 1
+            $pkgs[0].Version | Should -Be 'DellSBE-4.1.2412.1'
+        }
+        finally {
+            Remove-Item -LiteralPath $catalogPath -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'Convert-AzLocalSideloadCatalogSchemaVersion is a no-op at the current schema version' {
+        $r = InModuleScope AzLocal.UpdateManagement {
+            $text = "schemaVersion: $($script:SideloadCatalogSchemaCurrentVersion)`r`npackages:`r`n"
+            Convert-AzLocalSideloadCatalogSchemaVersion -Text $text
+        }
+        $r.Migrated | Should -BeFalse
+        $r.Hops.Count | Should -Be 0
+    }
+
+    It 'Convert-AzLocalSideloadCatalogSchemaVersion throws a wired-up error when a hop is missing (empty recipe table at v1)' {
+        {
+            InModuleScope AzLocal.UpdateManagement {
+                # Force a target one above current; the v1 recipe table is empty
+                # so the engine must report the missing '1->2' hop.
+                Convert-AzLocalSideloadCatalogSchemaVersion -Text "schemaVersion: 1`r`npackages:`r`n" -TargetSchemaVersion 2
+            }
+        } | Should -Throw -ExpectedMessage "*no migration recipe registered for '1->2'*"
     }
 }
 

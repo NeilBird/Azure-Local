@@ -173,6 +173,45 @@ Test-Cmdlet -Name 'Test-AzLocalApplyUpdatesScheduleCoverage' `
     } `
     -RequiredColumns @()
 
+# 13. Resolve-AzLocalSideloadPlan (Step.6 sideload-updates; v0.8.7 NEW)
+# Read-only planner. Its ARG query selects clusters carrying an
+# UpdateAuthAccountId tag; the auth-map + catalog are operator-authored config
+# with no bundled live example, so we synthesise minimal valid temp files. On a
+# fleet with no UpdateAuthAccountId-tagged clusters the plan is legitimately
+# empty (PASS-EMPTY) - that still validates the ARG query parsed/executed and
+# the schedule/auth/catalog parsers did not throw. Dedicated, sequence-faithful
+# coverage lives in Tools/smoke-test-sideload-plan.ps1.
+Test-Cmdlet -Name 'Resolve-AzLocalSideloadPlan' `
+    -Invoke {
+        $scheduleFile = 'C:\Users\nebird\Repos\Azure-Local\AzLocal.UpdateManagement\Automation-Pipeline-Examples\apply-updates-schedule.example.yml'
+        if (-not (Test-Path $scheduleFile)) {
+            Write-Host "  (no example schedule file; skipping)" -ForegroundColor DarkYellow
+            return @()
+        }
+        $tmp = New-Item -ItemType Directory -Path (Join-Path $env:TEMP "argv-step6-$(Get-Random)") -Force
+        try {
+            $authMap = Join-Path $tmp.FullName 'sideload-auth-map.csv'
+            @(
+                'UpdateAuthAccountId,KeyVaultName,UsernameSecretName,PasswordSecretName,RemotingTargetFqdn,FqdnSuffix,AuthMechanism,ImportSharePath'
+                '001,kv-smoke,sideload-user,sideload-pass,,.smoke.contoso.com,Negotiate,'
+            ) | Set-Content -LiteralPath $authMap -Encoding ASCII
+            $catalog = Join-Path $tmp.FullName 'sideload-catalog.yml'
+            @(
+                'schemaVersion: 1'
+                'packages:'
+                "  - version: '12.2605.1003.210'"
+                '    packageType: Solution'
+                "    downloadUri: 'https://download.contoso.com/CombinedSolutionBundle.12.2605.1003.210.zip'"
+                "    sha256: 'ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789'"
+            ) | Set-Content -LiteralPath $catalog -Encoding ASCII
+            Resolve-AzLocalSideloadPlan -SchedulePath $scheduleFile -AuthMapPath $authMap -CatalogPath $catalog
+        }
+        finally {
+            Remove-Item -Path $tmp.FullName -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    } `
+    -RequiredColumns @('ClusterName','ClusterResourceId','UpdateAuthAccountId','Ring','DueNow','SelectedVersion','PackageType','RemotingHost','TargetPath','Status','Message')
+
 Write-Host "`n========================================" -ForegroundColor Cyan
 Write-Host " ARG / Pipeline-driver Validation Summary" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan

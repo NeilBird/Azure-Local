@@ -110,9 +110,13 @@ env:
   # Shared verified media cache. Defaults (in the cmdlet) to <state-root>\cache.
   SIDELOAD_CACHE_ROOT: ${{ vars.SIDELOAD_CACHE_ROOT || '' }}
   # Path to the sideload auth-map CSV (UpdateAuthAccountId -> Key Vault + secret names).
-  SIDELOAD_AUTH_MAP_PATH: ${{ vars.SIDELOAD_AUTH_MAP_PATH || './sideload-auth-map.csv' }}
+  # Defaults to `config/` so it sits alongside apply-updates-schedule.yml and
+  # ClusterUpdateRings.csv (this is where Copy-AzLocalPipelineExample drops the
+  # starter). Override the variable to relocate it.
+  SIDELOAD_AUTH_MAP_PATH: ${{ vars.SIDELOAD_AUTH_MAP_PATH || './config/sideload-auth-map.csv' }}
   # Path to the committed sideload catalog YAML (Version -> DownloadUri/Sha256).
-  SIDELOAD_CATALOG_PATH: ${{ vars.SIDELOAD_CATALOG_PATH || './sideload-catalog.yml' }}
+  # Defaults to `config/` alongside the auth-map + schedule. Override to relocate.
+  SIDELOAD_CATALOG_PATH: ${{ vars.SIDELOAD_CATALOG_PATH || './config/sideload-catalog.yml' }}
   # Days before a cluster's next apply window that media should be sideloaded.
   SIDELOAD_LEAD_DAYS: ${{ vars.SIDELOAD_LEAD_DAYS || '7' }}
   # Extra robocopy switches for the detached copy worker (throttling / retries).

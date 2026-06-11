@@ -92,13 +92,13 @@ variables:
   # Shared UNC root that ALL agents can read+write (state\, logs\, cache\):
   #   SIDELOAD_STATE_ROOT: '\\\\fileserver\\azlocal-sideload'
   #   SIDELOAD_CACHE_ROOT: ''   # defaults (in the cmdlet) to <state-root>\cache
-  #   SIDELOAD_AUTH_MAP_PATH: './sideload-auth-map.csv'
-  #   SIDELOAD_CATALOG_PATH: './sideload-catalog.yml'
+  #   SIDELOAD_AUTH_MAP_PATH: './config/sideload-auth-map.csv'
+  #   SIDELOAD_CATALOG_PATH: './config/sideload-catalog.yml'
   #   SIDELOAD_LEAD_DAYS: '7'
   #   SIDELOAD_ROBOCOPY_SWITCHES: '/R:5 /W:30'
   #   SIDELOAD_HEARTBEAT_STALE_MINUTES: '60'
   #   SIDELOAD_REMOTING_FQDN_SUFFIX: ''   # e.g. '.corp.contoso.com'
-  #   APPLY_UPDATES_SCHEDULE_PATH: './.azuredevops/apply-updates-schedule.yml'
+  #   APPLY_UPDATES_SCHEDULE_PATH: './config/apply-updates-schedule.yml'
   #   SIDELOAD_KV_AUTH: 'oidc'   # oidc | managedidentity | serviceprincipal
 
 stages:

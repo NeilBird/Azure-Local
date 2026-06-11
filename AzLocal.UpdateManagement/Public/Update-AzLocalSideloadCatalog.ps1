@@ -33,6 +33,17 @@ function Update-AzLocalSideloadCatalog {
         The catalog file is written WITHOUT a BOM. This function honours
         -WhatIf / -Confirm and does not overwrite the file under -WhatIf.
 
+        SCHEMA MIGRATION (-SchemaMigrate):
+        Passing -SchemaMigrate switches the cmdlet from content refresh to a
+        schema-version migration of an EXISTING catalog file (no web fetch).
+        It mirrors Update-AzLocalApplyUpdatesScheduleConfig -SchemaMigrate:
+        the per-hop recipes in Private/Convert-AzLocalSideloadCatalogSchemaVersion.ps1
+        are walked from the file's current schemaVersion up to the module's
+        current version, operator comments + SBE (OEM) entries + row order are
+        preserved verbatim, the original is backed up as <name>.v<old>.old.yml,
+        and a structured result object is returned. At schema v1 the recipe
+        table is empty, so this is a no-op until the first format change ships.
+
     .PARAMETER Path
         Path to the catalog YAML to create or update.
 
@@ -44,23 +55,116 @@ function Update-AzLocalSideloadCatalog {
         Optional raw HTML to parse instead of fetching SourceUri (used for
         offline / air-gapped refresh and for unit testing).
 
+    .PARAMETER SchemaMigrate
+        Migrate an existing catalog file to the module's current schema
+        version instead of refreshing its content. Non-destructive: backs the
+        original up as <name>.v<oldVersion>.old.yml and returns a result object
+        ({ Action, Path, FromVersion, ToVersion, BackupPath, Hops[] }).
+
     .OUTPUTS
-        [PSCustomObject[]] the merged package entries that were written.
+        Content refresh (default): [PSCustomObject[]] the merged package
+        entries that were written.
+        -SchemaMigrate: a single [PSCustomObject] describing the migration
+        (Action = 'Migrated' | 'Unchanged-SchemaCurrent' | 'WhatIf').
     #>
-    [CmdletBinding(SupportsShouldProcess = $true)]
+    [CmdletBinding(SupportsShouldProcess = $true, DefaultParameterSetName = 'ContentRefresh')]
     [OutputType([PSCustomObject[]])]
     param(
         [Parameter(Mandatory = $true)]
         [ValidateNotNullOrEmpty()]
         [string]$Path,
 
-        [Parameter(Mandatory = $false)]
+        [Parameter(Mandatory = $false, ParameterSetName = 'ContentRefresh')]
         [ValidateNotNullOrEmpty()]
         [string]$SourceUri = 'https://learn.microsoft.com/en-us/azure/azure-local/manage/import-discover-updates-offline-23h2',
 
-        [Parameter(Mandatory = $false)]
-        [string]$Html
+        [Parameter(Mandatory = $false, ParameterSetName = 'ContentRefresh')]
+        [string]$Html,
+
+        [Parameter(Mandatory = $true, ParameterSetName = 'SchemaMigrate')]
+        [switch]$SchemaMigrate
     )
+
+    # ---- SchemaMigrate mode: text-surgery schema migration -------------
+    # Bypasses the web fetch entirely. Mirrors the schedule-file migrator
+    # (Update-AzLocalApplyUpdatesScheduleConfig -SchemaMigrate).
+    if ($PSCmdlet.ParameterSetName -eq 'SchemaMigrate') {
+        if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+            throw "Update-AzLocalSideloadCatalog: catalog file not found: '$Path'. Create a starter with Copy-AzLocalPipelineExample, or refresh content with Update-AzLocalSideloadCatalog -Path <path>."
+        }
+        $full = (Resolve-Path -LiteralPath $Path).Path
+        $text = Get-Content -LiteralPath $full -Raw -ErrorAction Stop
+
+        Write-Log -Message "Update-AzLocalSideloadCatalog: computing schema migration for '$full' to version $($script:SideloadCatalogSchemaCurrentVersion)..." -Level Info
+        $result = Convert-AzLocalSideloadCatalogSchemaVersion -Text $text -TargetSchemaVersion $script:SideloadCatalogSchemaCurrentVersion -SourcePath $full
+
+        if (-not $result.Migrated) {
+            Write-Log -Message "Catalog file is already on schemaVersion=$($result.ToVersion). No changes required." -Level Info
+            return [pscustomobject]@{
+                Action      = 'Unchanged-SchemaCurrent'
+                Path        = $full
+                FromVersion = $result.FromVersion
+                ToVersion   = $result.ToVersion
+                BackupPath  = $null
+                Hops        = @()
+            }
+        }
+
+        # Backup naming mirrors the schedule migrator:
+        # <basename>.v<oldVersion>.old.yml in the same directory.
+        $dir        = [System.IO.Path]::GetDirectoryName($full)
+        $base       = [System.IO.Path]::GetFileNameWithoutExtension($full)
+        $backupName = "$base.v$($result.FromVersion).old.yml"
+        $backupPath = if ($dir) { Join-Path $dir $backupName } else { $backupName }
+
+        if ((Test-Path -LiteralPath $backupPath) -and -not $WhatIfPreference) {
+            throw "Update-AzLocalSideloadCatalog: backup target '$backupPath' already exists. A previous migration from version $($result.FromVersion) was not cleaned up. Review/commit/delete it, then re-run."
+        }
+
+        $changeSummary = ($result.Hops | ForEach-Object { "v$($_.FromVersion)->v$($_.ToVersion): $(($_.Changes -join '; '))" }) -join ' | '
+        $shouldMsg = "Migrate schemaVersion $($result.FromVersion) -> $($result.ToVersion). Backup '$([IO.Path]::GetFileName($full))' as '$backupName'. Changes: $changeSummary"
+        if (-not $PSCmdlet.ShouldProcess($full, $shouldMsg)) {
+            Write-Log -Message "WhatIf/Confirm declined: catalog file NOT modified. Computed migration was: $shouldMsg" -Level Info
+            return [pscustomobject]@{
+                Action      = 'WhatIf'
+                Path        = $full
+                FromVersion = $result.FromVersion
+                ToVersion   = $result.ToVersion
+                BackupPath  = $backupPath
+                Hops        = $result.Hops
+            }
+        }
+
+        # Rename original first so we never have two valid copies at the
+        # canonical path; roll back the rename if the write fails.
+        Rename-Item -LiteralPath $full -NewName $backupName -ErrorAction Stop
+        Write-Log -Message "Renamed original to: $backupPath" -Level Info
+        try {
+            Write-Utf8NoBomFile -Path $full -Content $result.NewText
+        }
+        catch {
+            Write-Log -Message "Write of migrated content FAILED: $($_.Exception.Message). Rolling back the rename so the original is restored." -Level Error
+            try { Rename-Item -LiteralPath $backupPath -NewName ([System.IO.Path]::GetFileName($full)) -ErrorAction Stop }
+            catch { Write-Log -Message "ROLLBACK ALSO FAILED. Manual recovery needed: rename '$backupPath' back to '$full' by hand." -Level Error }
+            throw
+        }
+
+        Write-Log -Message "Migrated $full to schemaVersion=$($result.ToVersion)." -Level Success
+        foreach ($hop in $result.Hops) {
+            Write-Log -Message "  v$($hop.FromVersion) -> v$($hop.ToVersion):" -Level Info
+            foreach ($c in $hop.Changes) { Write-Log -Message "    + $c" -Level Info }
+        }
+        Write-Log -Message "Review the migration with: git diff -- ""$([IO.Path]::GetFileName($full))""" -Level Info
+        Write-Log -Message "Once you have committed the new file, the backup '$backupName' can be removed." -Level Info
+        return [pscustomobject]@{
+            Action      = 'Migrated'
+            Path        = $full
+            FromVersion = $result.FromVersion
+            ToVersion   = $result.ToVersion
+            BackupPath  = $backupPath
+            Hops        = $result.Hops
+        }
+    }
 
     # ---- Acquire HTML --------------------------------------------------
     if ([string]::IsNullOrWhiteSpace($Html)) {
@@ -222,7 +326,7 @@ function ConvertTo-AzLocalSideloadCatalogYaml {
     if (-not [string]::IsNullOrWhiteSpace($SourceUri)) {
         [void]$sb.AppendLine(('# Source: {0}' -f $SourceUri))
     }
-    [void]$sb.AppendLine('schemaVersion: 1')
+    [void]$sb.AppendLine(('schemaVersion: {0}' -f $script:SideloadCatalogSchemaCurrentVersion))
     [void]$sb.AppendLine('packages:')
 
     foreach ($pkg in $Packages) {

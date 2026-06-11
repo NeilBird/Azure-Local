@@ -226,9 +226,9 @@ $script:UpdateAuthAccountIdTagName = 'UpdateAuthAccountId'
 
 # Current apply-updates-schedule.yml schema version produced + consumed by
 # this module. Incremented when a non-additive change to the schedule file
-# format ships. Customer files on a LOWER version are auto-migrated by
-# Update-AzLocalPipelineExample via the per-hop recipes registered in
-# Private/Convert-AzLocalScheduleSchemaVersion.ps1. Customer files on a
+# format ships. Customer files on a LOWER version are migrated by
+# Update-AzLocalApplyUpdatesScheduleConfig via the per-hop recipes registered
+# in Private/Convert-AzLocalScheduleSchemaVersion.ps1. Customer files on a
 # HIGHER version cause the migrator to refuse with a remediation message
 # pointing at PSGallery.
 #
@@ -240,6 +240,17 @@ $script:UpdateAuthAccountIdTagName = 'UpdateAuthAccountId'
 # Ready update' behaviour. v1 files remain readable; the additive field is
 # silently absent.
 $script:ScheduleSchemaCurrentVersion = 2
+
+# Current sideload-catalog.yml schema version produced + consumed by this
+# module (v0.8.7 on-prem sideloading automation). Mirrors the schedule schema
+# framework: customer catalog files on a LOWER version are migrated by
+# Update-AzLocalSideloadCatalog -SchemaMigrate via the per-hop recipes
+# registered in Private/Convert-AzLocalSideloadCatalogSchemaVersion.ps1.
+# Get-AzLocalSideloadCatalog refuses to read a catalog on a HIGHER version
+# (it points the operator at PSGallery). The recipe table ships EMPTY at v1
+# - the framework is in place so a future non-additive catalog format change
+# (e.g. v1 -> v2) is a small, comment-preserving, idempotent recipe addition.
+$script:SideloadCatalogSchemaCurrentVersion = 1
 
 $script:DayMap = [ordered]@{
     'Mon' = [DayOfWeek]::Monday

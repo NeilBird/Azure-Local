@@ -17,7 +17,7 @@ name: Step.7 - Apply Updates
 on:
   # BEGIN-AZLOCAL-CUSTOMIZE:schedule-triggers
   # PREFERRED PATTERN - drive automated update runs from a ring-aware
-  # schedule file (apply-updates-schedule.yml at the repo root by default),
+  # schedule file (config/apply-updates-schedule.yml by default),
   # not from per-window crons.
   #
   # How it works:
@@ -32,7 +32,7 @@ on:
   #      at New-AzLocalApplyUpdatesScheduleConfig.
   #
   # Generate a STRAWMAN schedule file from your fleet via:
-  #   New-AzLocalApplyUpdatesScheduleConfig -OutputPath .\.github\apply-updates-schedule.yml
+  #   New-AzLocalApplyUpdatesScheduleConfig -OutputPath .\config\apply-updates-schedule.yml
   # Every row is commented out by default - review and uncomment to activate.
   #
   # Recommended cron: once per day at a low-traffic time (the resolver is
@@ -140,7 +140,7 @@ env:
   # root). The resolver step in check-readiness reads this file when the trigger
   # is `schedule:`. Override via repository variable APPLY_UPDATES_SCHEDULE_PATH
   # if you keep the schedule outside `.github/`.
-  APPLY_UPDATES_SCHEDULE_PATH: ${{ vars.APPLY_UPDATES_SCHEDULE_PATH || './.github/apply-updates-schedule.yml' }}
+  APPLY_UPDATES_SCHEDULE_PATH: ${{ vars.APPLY_UPDATES_SCHEDULE_PATH || './config/apply-updates-schedule.yml' }}
   # v0.8.4 - opt this workflow into Node.js 24 for all JavaScript actions
   # (actions/checkout, actions/download-artifact, actions/upload-artifact,
   # azure/login, dorny/test-reporter, etc). Per GitHub's 2025-09-19 deprecation

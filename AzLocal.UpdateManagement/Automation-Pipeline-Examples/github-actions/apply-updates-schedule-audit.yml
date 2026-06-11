@@ -53,7 +53,7 @@ on:
       schedule_path:
         description: 'Path to apply-updates-schedule.yml. When set, the audit also reports RingMissingFromSchedule (fleet ring with no schedule row) and RingOrphanedInSchedule (schedule ring no cluster carries). Leave empty to skip the schedule-file two-way diff.'
         required: false
-        default: '.github/apply-updates-schedule.yml'
+        default: 'config/apply-updates-schedule.yml'
       lead_time_minutes:
         description: 'Minutes before UpdateStartWindow opens that the pipeline should fire (0-60). Default 5.'
         required: false
@@ -202,7 +202,7 @@ jobs:
       id: audit
       env:
         INPUT_PIPELINE_PATH:     ${{ github.event.inputs.pipeline_path || '.github/workflows' }}
-        INPUT_SCHEDULE_PATH:     ${{ github.event.inputs.schedule_path || '.github/apply-updates-schedule.yml' }}
+        INPUT_SCHEDULE_PATH:     ${{ github.event.inputs.schedule_path || 'config/apply-updates-schedule.yml' }}
         INPUT_LEAD_TIME_MINUTES: ${{ github.event.inputs.lead_time_minutes || '5' }}
         INPUT_FIRES_PER_WINDOW:  ${{ github.event.inputs.fires_per_window || '2' }}
         INPUT_INCLUDE_UNTAGGED:  ${{ github.event.inputs.include_untagged || 'false' }}

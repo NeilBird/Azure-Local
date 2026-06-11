@@ -1033,15 +1033,15 @@ Both platforms expect the YAML files inside this folder to land in a platform-sp
     ```
 3. Commit and push. The workflows appear in the **Actions** tab.
 4. Each workflow exposes its inputs via the **Run workflow** button (workflow_dispatch). The scheduled triggers (e.g. `fleet-connectivity-status.yml` runs daily at 05:30 UTC, `monitor-updates.yml` runs 5x/day at 20:00, 22:00, 00:00, 02:00, 04:00 UTC (every 2h across the typical overnight maintenance window, v0.7.92+ default - edit the cron in the file if your maintenance window differs), `fleet-update-status.yml` runs daily at 06:00 UTC, `fleet-health-status.yml` runs daily at 07:00 UTC, `apply-updates-schedule-audit.yml` runs weekly on Mondays at 05:00 UTC) activate automatically once the file is on the default branch.
-5. **Replace the starter `apply-updates-schedule.yml` with one generated from your live fleet** (required for **scheduled** Step.7 / Step.3 runs; manual `workflow_dispatch` runs of Step.7 work without it because they use the `-UpdateRingValue` input verbatim). v0.7.92+ `Copy-AzLocalPipelineExample -Platform GitHub` drops a **starter** `apply-updates-schedule.yml` alongside `.github\workflows\` (i.e. at `.github\apply-updates-schedule.yml`) by default. The starter is a verbatim copy of [`apply-updates-schedule.example.yml`](./apply-updates-schedule.example.yml) and ships with **DEMO** ring names (`Canary`, `DevTest`, `Ring1`, `Ring2`, `Prod`) that almost never match a real estate's `UpdateRing` tag values - regenerate from your live fleet, overwriting the demo file:
+5. **Replace the starter `apply-updates-schedule.yml` with one generated from your live fleet** (required for **scheduled** Step.7 / Step.3 runs; manual `workflow_dispatch` runs of Step.7 work without it because they use the `-UpdateRingValue` input verbatim). v0.8.7+ `Copy-AzLocalPipelineExample -Platform GitHub` drops a **starter** `apply-updates-schedule.yml` into a **`config\` folder at the repo root** (i.e. at `config\apply-updates-schedule.yml`, alongside `config\ClusterUpdateRings.csv`) by default. The starter is a verbatim copy of [`apply-updates-schedule.example.yml`](./apply-updates-schedule.example.yml) and ships with **DEMO** ring names (`Canary`, `DevTest`, `Ring1`, `Ring2`, `Prod`) that almost never match a real estate's `UpdateRing` tag values - regenerate from your live fleet, overwriting the demo file:
 
    ```powershell
    # Regenerate from your fleet's live UpdateRing tag values, overwriting the starter.
    # -Force is required because the starter file already exists at that path.
-   New-AzLocalApplyUpdatesScheduleConfig -OutputPath .\.github\apply-updates-schedule.yml -Force
+   New-AzLocalApplyUpdatesScheduleConfig -OutputPath .\config\apply-updates-schedule.yml -Force
    ```
 
-   Review the regenerated file, uncomment / edit the rows you want active, then `git add .\.github\apply-updates-schedule.yml ; git commit ; git push`. The starter is safe to leave in place until then - the bundled Step.7 ships with every `cron:` line commented out inside the `BEGIN/END-AZLOCAL-CUSTOMIZE:schedule-triggers` markers, so it cannot fire on a `schedule:` trigger until you explicitly add a cron entry. Manual `workflow_dispatch` runs of Step.7 ignore the schedule file entirely (they take `-UpdateRingValue` verbatim from the run-form input).
+   Review the regenerated file, uncomment / edit the rows you want active, then `git add .\config\apply-updates-schedule.yml ; git commit ; git push`. The starter is safe to leave in place until then - the bundled Step.7 ships with every `cron:` line commented out inside the `BEGIN/END-AZLOCAL-CUSTOMIZE:schedule-triggers` markers, so it cannot fire on a `schedule:` trigger until you explicitly add a cron entry. Manual `workflow_dispatch` runs of Step.7 ignore the schedule file entirely (they take `-UpdateRingValue` verbatim from the run-form input).
 
    **Safety rails**: `Copy-AzLocalPipelineExample` **never overwrites** an existing `apply-updates-schedule.yml` - any operator-tailored schedule you commit is preserved across re-runs. Pass `-SkipStarterSchedule` to suppress the starter copy entirely (e.g. if you pre-stage the schedule via separate tooling). For the full schema, multi-stage rollouts, weekly-cycle / ring-eligibility model, and the `allowedUpdateVersions` allow-list (schema v2), see [section 8](#8-scheduling-maintenance-windows-and-change-freeze-periods).
 
@@ -1090,15 +1090,15 @@ Both platforms expect the YAML files inside this folder to land in a platform-sp
 3. **Pipelines -> New pipeline -> Azure Repos Git -> your repo -> Existing Azure Pipelines YAML file**, then point at the path of each file. Repeat for all eight.
 4. After the pipeline is created, click **Save** (not **Run**) until you are ready to execute.
 5. Each pipeline references a service connection named `AzureLocal-ServiceConnection`. Either name your service connection to match, or change `azureSubscription:` in each YAML.
-6. **Replace the starter `apply-updates-schedule.yml` with one generated from your live fleet** (required for **scheduled** Step.7 / Step.3 runs; manual queue runs of Step.7 work without it because they use the `updateRing` parameter verbatim). v0.7.92+ `Copy-AzLocalPipelineExample -Platform AzureDevOps -Destination .\pipelines\` drops a **starter** `apply-updates-schedule.yml` **one level up** from the pipelines folder (i.e. at `.\apply-updates-schedule.yml` at repo root) by default - this separates the config file from the folder that holds the pipeline YAMLs. The starter is a verbatim copy of [`apply-updates-schedule.example.yml`](./apply-updates-schedule.example.yml) and ships with **DEMO** ring names (`Canary`, `DevTest`, `Ring1`, `Ring2`, `Prod`) that almost never match a real estate's `UpdateRing` tag values - regenerate from your live fleet, overwriting the demo file:
+6. **Replace the starter `apply-updates-schedule.yml` with one generated from your live fleet** (required for **scheduled** Step.7 / Step.3 runs; manual queue runs of Step.7 work without it because they use the `updateRing` parameter verbatim). v0.8.7+ `Copy-AzLocalPipelineExample -Platform AzureDevOps -Destination .\pipelines\` drops a **starter** `apply-updates-schedule.yml` into a **`config\` folder at the repo root** (i.e. at `config\apply-updates-schedule.yml`, alongside `config\ClusterUpdateRings.csv`) by default - the same `config\` folder used on GitHub, so the path is identical on both platforms. The starter is a verbatim copy of [`apply-updates-schedule.example.yml`](./apply-updates-schedule.example.yml) and ships with **DEMO** ring names (`Canary`, `DevTest`, `Ring1`, `Ring2`, `Prod`) that almost never match a real estate's `UpdateRing` tag values - regenerate from your live fleet, overwriting the demo file:
 
    ```powershell
    # Regenerate from your fleet's live UpdateRing tag values, overwriting the starter.
    # -Force is required because the starter file already exists at that path.
-   New-AzLocalApplyUpdatesScheduleConfig -OutputPath .\apply-updates-schedule.yml -Force
+   New-AzLocalApplyUpdatesScheduleConfig -OutputPath .\config\apply-updates-schedule.yml -Force
    ```
 
-   Review the regenerated file, uncomment / edit the rows you want active, then commit and push. Step.7 (ADO) reads the file at `APPLY_UPDATES_SCHEDULE_PATH` (default `./apply-updates-schedule.yml` at repo root, which matches the default starter location) - override the pipeline variable if you keep the schedule elsewhere. The starter is safe to leave in place until then - the bundled Step.7 ships with every `cron:` line commented out inside the `BEGIN/END-AZLOCAL-CUSTOMIZE:schedule-triggers` markers, so it cannot fire on a scheduled trigger until you explicitly add a cron entry. Manual queue runs of Step.7 ignore the schedule file entirely (they take `updateRing` verbatim from the run-form input).
+   Review the regenerated file, uncomment / edit the rows you want active, then commit and push. Step.7 (ADO) reads the file at `APPLY_UPDATES_SCHEDULE_PATH` (default `./config/apply-updates-schedule.yml`, which matches the default starter location) - override the pipeline variable if you keep the schedule elsewhere. The starter is safe to leave in place until then - the bundled Step.7 ships with every `cron:` line commented out inside the `BEGIN/END-AZLOCAL-CUSTOMIZE:schedule-triggers` markers, so it cannot fire on a scheduled trigger until you explicitly add a cron entry. Manual queue runs of Step.7 ignore the schedule file entirely (they take `updateRing` verbatim from the run-form input).
 
    **Safety rails**: `Copy-AzLocalPipelineExample` **never overwrites** an existing `apply-updates-schedule.yml` - any operator-tailored schedule you commit is preserved across re-runs. Pass `-SkipStarterSchedule` to suppress the starter copy entirely (e.g. if you pre-stage the schedule via separate tooling). For the full schema, multi-stage rollouts, weekly-cycle / ring-eligibility model, and the `allowedUpdateVersions` allow-list (schema v2), see [section 8](#8-scheduling-maintenance-windows-and-change-freeze-periods).
 
@@ -1389,14 +1389,11 @@ If you do want a hard go / no-go gate (typical for first production wave), have 
 
 ### 6.5 Generate `apply-updates-schedule.yml` from your live fleet
 
-`Copy-AzLocalPipelineExample` (run earlier when you wired the pipelines into your repo - see [section 5](#5-wire-the-pipeline-files-into-your-repo)) dropped a **starter** `apply-updates-schedule.yml` next to your pipelines on first copy - GitHub Actions: `.github\apply-updates-schedule.yml`, Azure DevOps: `.\apply-updates-schedule.yml` at repo root. That starter ships with **DEMO** ring names (`Canary`, `DevTest`, `Ring1`, `Ring2`, `Prod`) that almost never match a real estate's `UpdateRing` tag values. Now that section 6.3 has tagged your clusters, regenerate the file so the rings, windows, and `allowedUpdateVersions` reflect the live fleet:
+`Copy-AzLocalPipelineExample` (run earlier when you wired the pipelines into your repo - see [section 5](#5-wire-the-pipeline-files-into-your-repo)) dropped a **starter** `apply-updates-schedule.yml` into a **`config\` folder at the repo root** on first copy - the SAME `config\apply-updates-schedule.yml` path on both GitHub Actions and Azure DevOps, alongside `config\ClusterUpdateRings.csv`. That starter ships with **DEMO** ring names (`Canary`, `DevTest`, `Ring1`, `Ring2`, `Prod`) that almost never match a real estate's `UpdateRing` tag values. Now that section 6.3 has tagged your clusters, regenerate the file so the rings, windows, and `allowedUpdateVersions` reflect the live fleet:
 
 ```powershell
-# GitHub Actions
-New-AzLocalApplyUpdatesScheduleConfig -OutputPath .\.github\apply-updates-schedule.yml -Force
-
-# Azure DevOps (default starter location, repo root)
-New-AzLocalApplyUpdatesScheduleConfig -OutputPath .\apply-updates-schedule.yml -Force
+# GitHub Actions and Azure DevOps (same config\ folder on both)
+New-AzLocalApplyUpdatesScheduleConfig -OutputPath .\config\apply-updates-schedule.yml -Force
 ```
 
 The cmdlet inspects every `UpdateRing` and `UpdateStartWindow` tag on the clusters the pipeline identity can read, then emits a schema v2 schedule with one block per distinct ring plus a Recommend / cron snippet inside `apply-updates.yml`'s `BEGIN/END-AZLOCAL-CUSTOMIZE:schedule-triggers` marker block. Review the generated file, uncomment the rows you want active, then commit and push.
@@ -1868,7 +1865,7 @@ Use the schema migrator:
 
 ```powershell
 Update-AzLocalApplyUpdatesScheduleConfig `
-    -Path .\apply-updates-schedule.yml `
+    -Path .\config\apply-updates-schedule.yml `
     -SchemaMigrate
 ```
 

@@ -84,6 +84,7 @@
         # On-prem solution-update sideloading automation (v0.8.7)
         'Private/Get-AzLocalSideloadAuthMap.ps1',
         'Private/Get-AzLocalSideloadCatalog.ps1',
+        'Private/Convert-AzLocalSideloadCatalogSchemaVersion.ps1',
         'Private/Select-AzLocalNextUpdateForCluster.ps1',
         'Private/Resolve-AzLocalSideloadCredential.ps1',
         'Private/Get-AzLocalSolutionUpdateDownload.ps1',

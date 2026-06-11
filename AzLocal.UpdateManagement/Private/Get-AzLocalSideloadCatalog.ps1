@@ -161,8 +161,23 @@ function Get-AzLocalSideloadCatalog {
             if ($trimmed -match '^packages:\s*$') {
                 $inPackages = $true
             }
-            # Top-level scalars (schemaVersion etc.) are ignored - only the
-            # packages list is consumed.
+            elseif ($trimmed -match '^schemaVersion:\s*(.+)$') {
+                # Guard against a catalog written by a NEWER module. A higher
+                # schemaVersion may carry fields/semantics this reader does
+                # not understand, so refuse rather than silently mis-parse.
+                # Mirrors the schedule-file behaviour. Missing schemaVersion
+                # is tolerated (treated as v1) for back-compat.
+                $svRaw = (& $parseScalar $Matches[1])
+                $sv = 0
+                if (-not [int]::TryParse($svRaw, [ref]$sv)) {
+                    throw "Sideload catalog '$Path' has a non-integer schemaVersion '$svRaw'."
+                }
+                if ($sv -gt $script:SideloadCatalogSchemaCurrentVersion) {
+                    throw "Sideload catalog '$Path' is on schemaVersion=$sv but this module only supports up to $($script:SideloadCatalogSchemaCurrentVersion). Upgrade the AzLocal.UpdateManagement module (Update-Module AzLocal.UpdateManagement), then re-read the catalog."
+                }
+            }
+            # Other top-level scalars are ignored - only the packages list
+            # is consumed.
             continue
         }
 

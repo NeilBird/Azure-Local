@@ -173,14 +173,14 @@ packages:
 | `SIDELOAD_UPDATES` | `false` | **Master gate.** The job is skipped unless this is the literal `'true'`. |
 | `SIDELOAD_STATE_ROOT` | (none) | Shared UNC root holding `state\`, `logs\`, `cache\`. **Required** when enabled. |
 | `SIDELOAD_CACHE_ROOT` | `<state-root>\cache` | Shared verified media cache. |
-| `SIDELOAD_AUTH_MAP_PATH` | `./sideload-auth-map.csv` | Auth-map CSV (see 4.1). |
-| `SIDELOAD_CATALOG_PATH` | `./sideload-catalog.yml` | Catalog YAML (see 5). |
+| `SIDELOAD_AUTH_MAP_PATH` | `./config/sideload-auth-map.csv` | Auth-map CSV (see 4.1). `Copy-AzLocalPipelineExample` drops a header-only starter here (same `config/` folder on GitHub and Azure DevOps). |
+| `SIDELOAD_CATALOG_PATH` | `./config/sideload-catalog.yml` | Catalog YAML (see 5). `Copy-AzLocalPipelineExample` drops an empty skeleton starter here. |
 | `SIDELOAD_LEAD_DAYS` | `7` | Days before a cluster's next apply window that media should be sideloaded. |
 | `SIDELOAD_ROBOCOPY_SWITCHES` | `/R:5 /W:30` | Extra robocopy switches for the detached worker (see [sideload-robocopy.md](sideload-robocopy.md)). |
 | `SIDELOAD_HEARTBEAT_STALE_MINUTES` | `60` | Minutes after which a `Copying` heartbeat is considered stale and re-driven. |
 | `SIDELOAD_REMOTING_FQDN_SUFFIX` | (empty) | Global FQDN suffix appended to a cluster name to form the WinRM host when the auth-map row does not override it. |
 | `SIDELOAD_KV_AUTH` | `oidc` | Key Vault auth mode for the on-prem runner. |
-| `APPLY_UPDATES_SCHEDULE_PATH` | `./.github/apply-updates-schedule.yml` | Ring-aware apply-updates schedule; the planner reads it to find each cluster's next apply window. |
+| `APPLY_UPDATES_SCHEDULE_PATH` | `./config/apply-updates-schedule.yml` | Ring-aware apply-updates schedule; the planner reads it to find each cluster's next apply window. |
 
 ---
 
