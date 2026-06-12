@@ -4,7 +4,17 @@
 >
 > **For older releases**, this is the canonical reference; the main README intentionally stays slim so the most recent block is easy to find.
 >
-> **For v0.8.75 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0875) `What's New in v0.8.75` section.
+> **For v0.8.76 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0876) `What's New in v0.8.76` section.
+
+---
+
+### What's New in v0.8.75
+
+v0.8.75 removes the duplicate Cycle calendar table from the Step.3 apply-updates schedule audit step summary on runs with Recommend-view findings (uncovered/partial cron windows, `RingMissingFromSchedule`, `RingOrphanedInSchedule`, `UnparseableCron`, or `NoWindowTag` when a cluster CSV was supplied). The Recommend snippet's plain 5-column calendar was inlined into the wrapper's action-required block **above** the wrapper's own enriched 7-column calendar, so operators saw two calendars back-to-back. Clean-fleet runs were unaffected. New additive `[switch]$OmitCycleCalendar` parameter on `Test-AzLocalApplyUpdatesScheduleCoverage` (default off, so direct callers see no behaviour change); `Export-AzLocalApplyUpdatesScheduleAudit` opts in so only the enriched calendar surfaces in the Step.3 summary regardless of findings. The drift-notice banner from `Add-AzLocalPipelineVersionBanner` now recommends `Update-AzLocalPipelineExample` (marker-aware merge that preserves `AZLOCAL-CUSTOMIZE` blocks) with the right `-Platform` and a `-Destination` hint per detected pipeline host. Three Step.3 step-summary screenshots added to `Automation-Pipeline-Examples/README.md` section 8.3. No public API or export-count change (still 60).
+
+`GENERATED_AGAINST_MODULE_VERSION` bumped from `0.8.74` to `0.8.75` across all bundled pipeline templates.
+
+See [CHANGELOG.md](../CHANGELOG.md#0875---2026-06-12) for the full v0.8.75 entry.
 
 ---
 

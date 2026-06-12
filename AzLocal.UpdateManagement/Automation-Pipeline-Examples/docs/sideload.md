@@ -1,7 +1,15 @@
 # Sideload Updates (on-prem, opt-in) - Step 6
 
-> **Introduced in v0.8.7.** Opt-in, off by default. This pipeline is inert unless the
-> repository variable `SIDELOAD_UPDATES` is the literal string `'true'`.
+> **Introduced in v0.8.7. Preflight job added in v0.8.76.** Opt-in, off by default.
+> The job is inert unless the repository (GH) / pipeline (ADO) variable
+> `SIDELOAD_UPDATES` is one of `'true'`, `'True'`, `'TRUE'`, or `'1'`.
+>
+> Every run starts with a `preflight` job/stage (~10s on a Microsoft-hosted Windows
+> runner) that writes a clear panel to the run step summary explaining what is set,
+> what is missing, and how to enable Step.6. When the gate is OFF the preflight
+> succeeds with an enablement walkthrough; when the gate is ON but required
+> configuration is missing it fails fast and the `sideload` job/stage is skipped.
+> See section 9 below for the preflight behaviour matrix.
 
 The **Sideload Updates** pipeline (`sideload-updates.yml`, logical pipeline id
 `sideload-updates`, displayed as **Step.6**) pre-stages Azure Local solution-update
@@ -170,8 +178,8 @@ packages:
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `SIDELOAD_UPDATES` | `false` | **Master gate.** The job is skipped unless this is the literal `'true'`. |
-| `SIDELOAD_STATE_ROOT` | (none) | Shared UNC root holding `state\`, `logs\`, `cache\`. **Required** when enabled. |
+| `SIDELOAD_UPDATES` | (unset) | **Master gate.** The job is skipped unless this is one of `'true'`, `'True'`, `'TRUE'`, or `'1'`. Any other value (including blanks, `'false'`, `'yes'`) keeps the pipeline inert. |
+| `SIDELOAD_STATE_ROOT` | (none) | Shared UNC root holding `state\`, `logs\`, `cache\`. **Required** when enabled. Validated by the preflight (section 9). |
 | `SIDELOAD_CACHE_ROOT` | `<state-root>\cache` | Shared verified media cache. |
 | `SIDELOAD_AUTH_MAP_PATH` | `./config/sideload-auth-map.csv` | Auth-map CSV (see 4.1). `Copy-AzLocalPipelineExample` drops a header-only starter here (same `config/` folder on GitHub and Azure DevOps). |
 | `SIDELOAD_CATALOG_PATH` | `./config/sideload-catalog.yml` | Catalog YAML (see 5). `Copy-AzLocalPipelineExample` drops an empty skeleton starter here. |
@@ -218,3 +226,58 @@ packages:
 9. The state machine advances each cluster to `Imported` / `SideloadFlagged`; the
    downstream **Step.7 - Apply Updates** wave then applies the staged update during the
    cluster's `UpdateStartWindow`.
+
+---
+
+## 9. Preflight (v0.8.76+)
+
+Step.6 is **opt-in and off by default** and requires an on-prem self-hosted runner /
+agent that most repos and projects do not have. Before v0.8.76 a triggered run with
+no setup completed simply showed `Status: Skipped` (no logs, no annotation), which
+gave operators no actionable feedback. v0.8.76 prepends a `preflight` job
+(GitHub Actions) / `Preflight` stage (Azure DevOps) that always runs on
+`windows-latest` (Microsoft-hosted, no Azure/Key Vault access, ~10s).
+
+### Behaviour matrix
+
+| `SIDELOAD_UPDATES` | `SIDELOAD_STATE_ROOT` | Self-hosted runner (GH only) | Preflight outcome | `sideload` job |
+|---|---|---|---|---|
+| unset / `'false'` / other | n/a | n/a | **Succeeds** with enablement walkthrough in step summary + `::notice` annotation | Skipped by its own `if:` / `condition:` |
+| `'true'` / `'True'` / `'TRUE'` / `'1'` | unset | n/a | **Fails** (exit 1) with "missing variable" panel + `::error` | Skipped (`needs:` / `dependsOn:` unmet) |
+| accepted | set | no online `azlocal-sideload` runner AND runners API returned a list | **Fails** (exit 1) with "no online runner" panel + `::error` | Skipped |
+| accepted | set | runners API returned 403/404 (most repos) | **Succeeds** with warning ("could not enumerate runners - verify manually") | Runs |
+| accepted | set | online `azlocal-sideload` runner found | **Succeeds** with "Preflight passed" panel | Runs |
+
+### Why a Microsoft-hosted Windows runner is fine for preflight
+
+The preflight does NOT touch the cluster fabric, Key Vault, or any Azure resource.
+It only reads workflow / pipeline variables, optionally queries the GH runners API,
+and writes markdown to the step summary. There is no domain-membership or
+VLAN-reachability requirement, so `windows-latest` is the correct minimal-cost host.
+
+The actual `sideload` job still **must** run on the self-hosted runner with the
+`azlocal-sideload` label (GH) or pool capability (ADO), because the on-prem copy +
+WinRM steps cannot work from a Microsoft-hosted runner (no line-of-sight to the
+fabric VLAN, no AD trust).
+
+### Runner-enumeration permission (GH Actions only)
+
+The preflight tries to call `GET /repos/{owner}/{repo}/actions/runners` with
+`GITHUB_TOKEN` and the workflow's `actions: read` permission. GitHub's repo
+runners API actually requires **repo-admin** privilege, which `GITHUB_TOKEN` does
+not hold by default - so for most callers the API will return 403 and the
+preflight degrades to a warning ("verify manually under Settings -> Actions ->
+Runners"). When the API does return a list (e.g. a fine-grained PAT or a GitHub
+App is wired into the workflow with `administration: read`) the preflight reports
+the exact set of matching online runners.
+
+### Azure DevOps does not enumerate agents
+
+The ADO preflight stage validates the gate + `SIDELOAD_STATE_ROOT` only. The
+`Agent Pools (read)` scope required to call the ADO agent enumeration API is
+not normally granted to the pipeline identity, so the preflight relies on the
+operator having verified the `azlocal-sideload` capability is present in their
+self-hosted pool (Project Settings -> Agent pools -> &lt;pool&gt; -> Capabilities).
+If no matching agent is online the `Sideload` stage will sit `Queued` until
+manually cancelled.
+
