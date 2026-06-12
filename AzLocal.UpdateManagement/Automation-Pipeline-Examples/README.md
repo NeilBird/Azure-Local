@@ -94,6 +94,11 @@ Each row's name links to the matching `Step N -` section in [`docs/appendix-pipe
 | 10 | [Step.10 - Fleet Health Status](docs/appendix-pipelines.md#step-10---fleet-health-status) | [`fleet-health-status.yml`](github-actions/fleet-health-status.yml) | [`fleet-health-status.yml`](azure-devops/fleet-health-status.yml) |
 
 - **GitHub Actions**: the Actions sidebar sorts workflows alphabetically by the `name:` field inside the YAML. Because every `name:` starts with `Step.N - `, the sidebar lists the eleven workflows in execution order (Step.0 first, Step.10 last) instead of the cosmetically confusing alphabetical scatter (`Apply Updates`, `Apply-Updates Schedule Coverage Audit`, `Assess Update Readiness`, ...).
+
+  ![GitHub Actions sidebar of the Azure/AzLocal.UpdateManagement consumer repo showing all eleven workflows listed in execution order (Step.00 Authentication Validation, Step.01 Inventory Azure Local Clusters, Step.02 Manage UpdateRing Tags, Step.03 Apply-Updates Schedule Coverage Audit, Step.04 Fleet Connectivity Status, Step.05 Assess Update Readiness, Step.06 Sideload Updates Opt-in, Step.07 Apply Updates, Step.08 Monitor In-Flight Updates, Step.09 Fleet Update Status, Step.10 Fleet Health Status) with the All workflows pane showing a recent run history of green-checked successful runs across Step.05 / Step.08 / Step.09 / Step.10 from main](../docs/images/github-actions-10-pipelines-view.png)
+
+  *Step.NN display-name prefix means the GitHub Actions sidebar (and the Azure DevOps Pipelines list) sort the eleven workflows in execution order rather than the cosmetically confusing alphabetical scatter.*
+
 - **Azure DevOps**: the Pipelines list sorts by the pipeline **definition name** chosen at *import time* (not by the YAML filename and not by any top-level `name:` field - the `name:` field in an ADO YAML controls the per-run *build number*, not the pipeline display name). When you import each YAML, the import wizard prefills the suggested pipeline name from the YAML's leading title comment; the YAMLs in this repo open with `# Step.N - <description>`, so the suggested name is already correct. **Accept the suggested name** (or paste `Step.N - <description>` yourself), and the Pipelines list will sort in execution order. You can rename a pipeline later via *Pipeline -> Edit -> Settings -> Name*.
 
 If you prefer a different naming scheme (e.g. `00 - Auth`, `01 - Inventory`, ...), just change the `name:` field in each GH Actions YAML and / or pick a different prefix at ADO import time. Nothing else in the module depends on these display names.
@@ -1140,7 +1145,7 @@ To set an estate-wide pin in ADO, either change the `moduleVersion` parameter de
 
 | Situation | What you see | What it means |
 |---|---|---|
-| `installed > generated` | "Pipeline YAML was generated against AzLocal.UpdateManagement v<X> but the agent installed v<Y>." | Your committed YAML is older than the module on the agent. Pipeline steps may have been improved since - re-run `Copy-AzLocalPipelineExample -Update` to refresh. |
+| `installed > generated` | "Pipeline YAML was generated against AzLocal.UpdateManagement v<X> but the agent installed v<Y>." | Your committed YAML is older than the module on the agent. Pipeline steps may have been improved since - re-run `Update-AzLocalPipelineExample` (with the `-Platform GitHub` / `-Platform AzureDevOps` flag the v0.8.75 annotation now prints for you) to refresh while preserving your `AZLOCAL-CUSTOMIZE` markers. |
 | `latest > installed` | "AzLocal.UpdateManagement v<L> is available on PSGallery; this run installed v<I>." | A newer module is on PSGallery than the one the pipeline pinned to. Review the [module CHANGELOG](../CHANGELOG.md) before bumping `REQUIRED_MODULE_VERSION` (or clear the pin to install the latest automatically). |
 
 Both annotations are warnings, not failures - your pipeline still passes.
@@ -1451,9 +1456,17 @@ The "steady-state" phase ships **three complementary pipelines**, all read-only,
 
 The four run in distinct (offset) cron slots so they don't contend for the same agent. `monitor-updates.yml` ships **without** an active schedule - turn the `'*/30 * * * *'` cron on only during an active wave.
 
+![Step.08 - Monitor In-Flight Updates summary tab: red Fleet Status CRITICAL header (1 run > 6d, 1 step > 4h, 4 unresolved failures, 20 clusters scoped), the new Tip line explaining Ctrl/Cmd/middle-click for new-tab opens (GitHub markdown strips target="_blank"), the In-flight runs table with the new deep-tree Progress column showing `132/167 steps (79%)` for the Arizona Solution12.2604.1003.1005 CAU Attempt step, and the Failed runs table with plain-anchor Cluster + Update hyperlinks for Toronto / Virginia / NewYorkCity](../docs/images/monitor-inflight-updates.png)
+
+*Step.08 in-flight monitor on a real 20-cluster fleet - the `Progress` column reports leaf-step completion (`M/N steps (P%)`) since v0.8.74 instead of the coarse top-level wrapper count that previously always read `1/2 steps`, and the `Tip` line above the runs table makes the Ctrl/Cmd/middle-click new-tab behaviour explicit (GitHub markdown strips `target="_blank"` from anchors).*
+
 **Fleet Connectivity Status** *(introduced in v0.7.79, enhanced in v0.7.85)* runs daily at 05:30 UTC and answers the upstream question every other steady-state pipeline depends on: *"can the pipeline identity actually see every cluster, every physical node, and every Resource Bridge it is supposed to manage?"* The Step.4 reconciliation table compares each cluster's `reportedProperties.nodes` count against the Arc-tagged physical machines visible in Resource Graph and flags both directions of drift (positive = Arc has more machines than the cluster reports; negative = cluster reports more nodes than Arc can see). The v0.7.85 *"How to interpret + act on a non-zero reconciliation"* subsection in the pipeline summary gives operators per-direction remediation lists and an inline Resource Graph query template for triage. RBAC: `Reader` plus `Microsoft.ResourceGraph/resources/read`, `Microsoft.AzureStackHCI/edgeDevices/read`, `Microsoft.HybridCompute/machines/read`, and `Microsoft.ResourceConnector/appliances/read` - all already in the **`Azure Stack HCI Update Operator (custom)`** custom role definition shipped in [section 3.1](#31-custom-role-azure-stack-hci-update-operator-custom).
 
 **Fleet Update Status** is scheduled to run daily at 06:00 UTC once you push the YAML. It does no writes - it builds a fleet-wide JUnit + CSV + JSON snapshot for dashboards and alerting.
+
+![Step.09 - Fleet Update Status summary tab: Fleet Version Distribution table breaking 20 clusters into 5 YYMM rows (2605 / 2604 / 2603 / 2601 supported, 2511 unsupported) with per-row cluster counts, percentages, support badges and the first 15 cluster names per version row, plus a Critical Health Status table (13 Passed / 7 Failed) and a Primary Status table (Total Clusters 20, Up to Date 7, Ready for Update 5, Update In Progress 1)](../docs/images/fleet-update-status.png)
+
+*Step.09 Fleet Update Status summary tab on a real 20-cluster fleet - leads with the version-distribution table (anchored on the Microsoft manifest YYMM) and the Primary Status breakdown that uses the same priority cascade (Up to Date / Ready for Update / In Progress / SBE Prerequisite / Health Failure / Update Failed / Action Required / Needs Investigation) as Step.05 and Step.07 since v0.8.74.*
 
 | Artefact | Description |
 |---|---|
@@ -1477,6 +1490,14 @@ It calls the new [`Get-AzLocalFleetHealthFailures`](../README.md#get-azlocalflee
 | Markdown step summary | Pipeline run summary leads with the pivot-by-failure-reason table, followed by a per-cluster "Detailed Results" table mirroring the standard "24-Hour System Health Checks - Detailed Results" view. |
 
 **RBAC for Fleet Health Status** (read-only): the service connection needs `Reader` on each cluster (or the parent RG / subscription) plus `Microsoft.ResourceGraph/resources/read`. No write actions are taken.
+
+![Step.10 - Fleet Health Status summary tab part 1: Health Check Failures By Reason table sorted most-widespread-first, with Severity / Failure Reason / Cluster Count / Failure Count / Affected Clusters (Seattle, Toronto, Mobile, Nashville, Tacoma, Virginia linked) / Latest columns - leading critical reasons are Storage Services Physical Disks Health Check (2 clusters / 12 failures), Storage Virtual Disk Health Check (2/8), Storage Job Health Check (2/7), Test Network intent on existing cluster nodes (2/5) and several Environment Validator exceptions and HCIOrchestratorAccount / ECEAgentService Account / Cluster-Aware Updating Rule 6 health checks](../docs/images/fleet-health-status-part1.png)
+
+*Step.10 Fleet Health Status part 1: the pivot-by-failure-reason table that leads the summary. Sorted by `ClusterCount desc` so the most widespread fleet-wide issues bubble to the top - this is the ready-made "what should we fix first?" prioritisation view.*
+
+![Step.10 - Fleet Health Status summary tab part 2: Detailed Results (per-cluster, per-failure) section with collapsible cluster rows sorted worst-first - Toronto Critical x28, Seattle Critical x27 / Warning x7, Tacoma Critical x9, Nashville Critical x3 / Warning x1 (expanded) showing three [Critical] Environment Validator Exception - Test-AzStackHciHardware rows with Failure Remediation "Raise case with Microsoft support" plus one [Warning] Microsoft.Health.FaultType.Cluster.KeyVaultDoesNotExist row linking out to the Microsoft Learn key-vault remediation guide, then collapsed rows for Mobile, Virginia, NewYorkCity, Bellevue, Portland, ending with Reports Available pointing to fleet-health-detail.csv](../docs/images/fleet-health-status-part-2.png)
+
+*Step.10 Fleet Health Status part 2: the per-cluster Detailed Results drill-down. Clusters are listed worst-affected first, each expander shows the full per-(cluster, failing check) rows with Failure Reason, Failure Remediation, Target Resource Name / Type, and Last Occurrence - mirroring the standalone "24-Hour System Health Checks - Detailed Results" view.*
 
 Configure your CI/CD platform's alerting on the JUnit failures - GitHub Actions surfaces them in the run summary and Azure DevOps shows them in the Tests tab with trend analytics.
 
@@ -1723,6 +1744,22 @@ And finally the **ready-to-paste cron block** (Recommend view). With the default
 #   - cron: '55 21 * * 1-5'   # Mon-Fri_22:00-04:00 (open)  (rings: Wave2, 47 cluster(s))
 #   - cron: '0 23 * * 1-5'    # Mon-Fri_22:00-04:00 (retry) (rings: Wave2, 47 cluster(s))
 ````
+
+##### Visual: example Step.3 step summary
+
+The three captures below are from the same Step.3 run on a fleet with a drift case (two clusters tagged with a window the existing crons do not cover) and a NoWindowTag case (one cluster missing the `UpdateStartWindow` tag entirely).
+
+**Part 1 - Action required (1 of 2): cron coverage remediation** - the recommended `schedule:` / `schedules:` block to paste into `apply-updates.yml`:
+
+![Step.3 step summary - Action required (1 of 2): cron coverage remediation](../docs/images/apply-updates-schedule-audit-part1.png)
+
+**Part 2 - Action required (2 of 2): NoWindowTag remediation** - per-cluster advisor with a peer-derived `UpdateStartWindow` value to apply via `Set-AzLocalClusterUpdateRingTag`:
+
+![Step.3 step summary - Action required (2 of 2): NoWindowTag remediation](../docs/images/apply-updates-schedule-audit-part2.png)
+
+**Part 3 - Cycle calendar (enriched, 7 columns)** - per-day UTC projection over the schedule's cycle horizon, with the Step.6 apply-updates cron firing times and `Tag Start Window Match (>=95%)` per ring/date so you can verify at-a-glance that each ring's tagged clusters have an `UpdateStartWindow` that actually covers at least one cron firing on its eligible days:
+
+![Step.3 step summary - Cycle calendar (enriched, 7 columns)](../docs/images/apply-updates-schedule-audit-part3.png)
 
 #### Step 5 - Apply the recommendation
 

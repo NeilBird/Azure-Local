@@ -5,6 +5,32 @@ All notable changes to the AzLocal.UpdateManagement module (renamed from AzStack
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.75] - 2026-06-12
+
+Patch release. Removes the duplicate **Cycle calendar** table from the Step.3 apply-updates schedule audit step summary - before this fix, on any run where the Recommend view had at least one action-required finding (uncovered/partial cron windows, `RingMissingFromSchedule`, `RingOrphanedInSchedule`, `UnparseableCron`, or `NoWindowTag` when a cluster CSV was supplied), the Recommend snippet's plain 5-column calendar was inlined into the wrapper output **above** the wrapper's own enriched 7-column calendar, so operators saw two calendars back-to-back. Clean-fleet runs (no findings) were unaffected because the Recommend snippet is never written when its items list is empty. Also lands three Step.3 step-summary screenshots in `Automation-Pipeline-Examples/README.md` section 8.3. No public API or export-count change (still 60).
+
+### Fixed
+
+- **Step.3 step summary rendered the Cycle calendar twice when there were findings.** `Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend` writes a self-contained snippet to its `schedule-coverage-recommend.md` output - the snippet carries its action-required H2s, the proposed cron YAML block, AND a plain (5-column) cycle-calendar block (`Date | Day | CycleWeek | Eligible rings | AllowedUpdateVersions`). That snippet is only written when the Recommend view emits at least one row (so on a clean fleet, `$output.Count` is 0 and nothing is exported). `Export-AzLocalApplyUpdatesScheduleAudit` (the Step.3 wrapper) inlines that file as the action-required block when `$hasIssues` is true, and ALSO renders its OWN enriched (7-column) calendar later in the summary - with two extra columns (`Ring CRON Start Time (apply-updates pipeline)` and `Tag Start Window Match (>=95%)`) computed from the Step.6 cron triggers + cluster CSV. The wrapper used to be the only emitter; the inner emission was added in v0.8.5 (as a regression guard against a v0.8.4 silent-drop bug on clean fleets) and the two paths coexisted without anyone noticing the duplicate until v0.8.74's production Step.3 run.
+- The fix is a new additive `[switch]$OmitCycleCalendar` parameter on `Test-AzLocalApplyUpdatesScheduleCoverage` (default off, no behaviour change for direct callers) that suppresses the inner calendar; `Export-AzLocalApplyUpdatesScheduleAudit` now opts in (`-OmitCycleCalendar=$true`) so only the enriched calendar surfaces in the Step.3 summary regardless of whether the run has findings.
+
+### Changed (drift-notice banner)
+
+- **`Add-AzLocalPipelineVersionBanner` now recommends `Update-AzLocalPipelineExample` (not `Copy-AzLocalPipelineExample -Update`) in the YAML-older-than-module annotation, and inlines the correct `-Platform` value and a sensible `-Destination` hint based on the detected pipeline host.** Before v0.8.75 the annotation said *"re-run 'Copy-AzLocalPipelineExample -Update' (you will be prompted per file; add `-Confirm:$false` to bypass)"* - which (a) used the clean-overwrite tool when the marker-aware merge tool exists for exactly this scenario, and (b) left the operator to figure out the right `-Platform` and `-Destination` themselves. The new annotation prints the complete copy-pasteable command: `Update-AzLocalPipelineExample -Destination '<repo-root>\.github\workflows' -Platform GitHub` on GitHub Actions, `Update-AzLocalPipelineExample -Destination '<repo-root>\pipelines' -Platform AzureDevOps` on Azure DevOps. Update preserves customer customisations bracketed by `AZLOCAL-CUSTOMIZE` markers (CRON schedules, ITSM secrets) so it is the correct tool to recommend on a repo that has already been customised. The symmetric YAML-newer-than-module warning gets the same treatment. Verdict text on `-PassThru` returns `'YAML older than module - run Update-AzLocalPipelineExample to refresh'`.
+
+### Added
+
+- **`Test-AzLocalApplyUpdatesScheduleCoverage -OmitCycleCalendar` switch** - opts out of the Recommend view's informational cycle calendar section. Used by `Export-AzLocalApplyUpdatesScheduleAudit` to avoid the duplicate-rendering bug above; direct callers see the calendar unchanged.
+- New Pester regression test (`v0.8.75: passes -OmitCycleCalendar to the inner Recommend invocation so the step summary renders only one Cycle calendar`) spies on the Recommend mock to assert the switch is bound, and asserts the rendered step summary contains exactly one `## Cycle calendar - next` heading.
+
+### Docs
+
+- `Automation-Pipeline-Examples/README.md` section 8.3 gains three Step.3 step-summary screenshots: `apply-updates-schedule-audit-part1.png` (cron coverage remediation), `apply-updates-schedule-audit-part2.png` (NoWindowTag remediation), `apply-updates-schedule-audit-part3.png` (enriched cycle calendar). `docs/images/README.md` referenced-by table updated with the three new entries.
+
+### Changed
+
+- All bundled pipeline templates bump `GENERATED_AGAINST_MODULE_VERSION` from `'0.8.74'` to `'0.8.75'`.
+
 ## [0.8.74] - 2026-06-12
 
 Consistency release for the cluster readiness reports. A cluster that has already applied every required update is now classified and labelled identically across the Step.5 readiness report, the Step.7 readiness gate, and the Step.9 fleet update-status report. Also corrects the `Progress` column in the Step.7 in-flight monitor and the standalone HTML report's "Recent Update Run History" table, which had been reporting a near-constant `1/2 steps` for the whole multi-hour run, and drops the dead `target="_blank"` / `rel="noopener"` attributes from every Step.7 / Step.8 / Step.10 portal-link cell (GitHub Actions and Azure DevOps step-summary sanitisers strip them anyway) in favour of an explicit Ctrl/Cmd/middle-click tip rendered above the affected tables. No public API or export-count change (still 60).

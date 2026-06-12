@@ -313,6 +313,11 @@ function Export-AzLocalApplyUpdatesScheduleAudit {
     }
     if ($haveSchedule) { $recoArgs.SchedulePath   = $SchedulePath }
     if ($haveCsv)      { $recoArgs.ClusterCsvPath = $ClusterCsvPath }
+    # v0.8.75: suppress the inner plain (5-column) cycle calendar from
+    # the Recommend output; this wrapper renders its own enriched
+    # (7-column) calendar below, so without this switch the Step.3
+    # step summary would render two cycle-calendar tables back-to-back.
+    $recoArgs.OmitCycleCalendar = $true
     Test-AzLocalApplyUpdatesScheduleCoverage @recoArgs | Out-Null
 
     # ---- Bucketise --------------------------------------------------------

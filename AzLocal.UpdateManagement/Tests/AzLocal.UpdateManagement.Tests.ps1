@@ -34,8 +34,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $script:ModuleInfo | Should -Not -BeNullOrEmpty
         }
 
-        It 'Should have version 0.8.74' {
-            $script:ModuleInfo.Version | Should -Be '0.8.74'
+        It 'Should have version 0.8.75' {
+            $script:ModuleInfo.Version | Should -Be '0.8.75'
         }
 
         It 'Module version constants are in sync between .psm1 and .psd1' {
@@ -12833,6 +12833,46 @@ Describe 'Thin-YAML foundation: Add-AzLocalPipelineVersionBanner' {
         $info.Verdict | Should -Match 'YAML older than module'
     }
 
+    It "v0.8.75: YAML-older notice includes platform-aware Update-AzLocalPipelineExample command (GitHub host)" {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_ghSummaryFile
+        $env:TF_BUILD            = $null
+        $captured = & {
+            InModuleScope AzLocal.UpdateManagement {
+                Add-AzLocalPipelineVersionBanner -GeneratedAgainstVersion '0.0.1' -SkipPSGalleryQuery
+            }
+        } *>&1
+        $msg = ($captured -join "`n")
+        $expectedSubstring = "Update-AzLocalPipelineExample -Destination '<repo-root>\.github\workflows' -Platform GitHub"
+        $msg | Should -Match '::notice title=Workflow YAML may be stale::'
+        ($msg.Contains($expectedSubstring)) | Should -BeTrue -Because "the GH notice must include literal substring '$expectedSubstring'"
+        $msg | Should -Not -Match 'Copy-AzLocalPipelineExample -Update'
+    }
+
+    It "v0.8.75: YAML-older notice includes platform-aware Update-AzLocalPipelineExample command (AzureDevOps host)" {
+        $env:GITHUB_ACTIONS                 = $null
+        $env:TF_BUILD                       = 'True'
+        $env:BUILD_ARTIFACTSTAGINGDIRECTORY = $script:_adoStageDir
+        $captured = & {
+            InModuleScope AzLocal.UpdateManagement {
+                Add-AzLocalPipelineVersionBanner -GeneratedAgainstVersion '0.0.1' -SkipPSGalleryQuery
+            }
+        } *>&1
+        $msg = ($captured -join "`n")
+        $expectedSubstring = "Update-AzLocalPipelineExample -Destination '<repo-root>\pipelines' -Platform AzureDevOps"
+        ($msg.Contains($expectedSubstring)) | Should -BeTrue -Because "the ADO notice must include literal substring '$expectedSubstring'"
+        $msg | Should -Match 'Workflow YAML may be stale'
+        $msg | Should -Not -Match 'Copy-AzLocalPipelineExample -Update'
+    }
+
+    It "v0.8.75: YAML-older verdict (PassThru) reads 'run Update-AzLocalPipelineExample to refresh'" {
+        $info = InModuleScope AzLocal.UpdateManagement {
+            Add-AzLocalPipelineVersionBanner -GeneratedAgainstVersion '0.0.1' -SkipPSGalleryQuery -PassThru
+        }
+        $info.Verdict | Should -Be 'YAML older than module - run Update-AzLocalPipelineExample to refresh'
+    }
+
     It 'Find-Module failure is swallowed (returns $null latest, no throw)' {
         $env:GITHUB_ACTIONS      = 'true'
         $env:GITHUB_OUTPUT       = $script:_ghOutputFile
@@ -16826,6 +16866,49 @@ on:
         finally {
             if (Test-Path -LiteralPath $csvPath) { Remove-Item -LiteralPath $csvPath -Force -ErrorAction SilentlyContinue }
         }
+    }
+
+    It 'v0.8.75: passes -OmitCycleCalendar to the inner Recommend invocation so the step summary renders only one Cycle calendar' {
+        # Regression guard: Test-AzLocalApplyUpdatesScheduleCoverage -View
+        # Recommend emits its own plain (5-column) cycle calendar; the wrapper
+        # ALSO emits its own enriched (7-column) cycle calendar via
+        # Get-AzLocalApplyUpdatesScheduleCycleCalendar. Before v0.8.75 the
+        # Step.3 step summary rendered both back-to-back; the fix is to pass
+        # -OmitCycleCalendar=$true to the Recommend invocation so only the
+        # enriched calendar surfaces. Spy on the Recommend mock and assert
+        # the switch was bound.
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s3_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s3_ghSummaryFile
+        $env:_S3_OUTDIR          = $script:_s3_outDir
+        $env:_S3_PIPELINEDIR     = $script:_s3_pipelineDir
+        $env:_S3_SCHEDULE        = $script:_s3_scheduleFile
+
+        $global:_s3_auditRows         = @( (New-S3AuditRow -Status 'Covered') )
+        $global:_s3_schedule          = New-S3ScheduleV2
+        $global:_s3_recoOmitCalendar  = $null
+
+        $null = InModuleScope AzLocal.UpdateManagement {
+            Mock Test-AzLocalApplyUpdatesScheduleCoverage { $global:_s3_auditRows } -ParameterFilter { $View -eq 'Audit' }
+            Mock Test-AzLocalApplyUpdatesScheduleCoverage {
+                $global:_s3_recoOmitCalendar = [bool]$OmitCycleCalendar
+            } -ParameterFilter { $View -eq 'Recommend' }
+            Mock Test-AzLocalApplyUpdatesScheduleCoverage { } -ParameterFilter { $View -eq 'Matrix' }
+            Mock Get-AzLocalApplyUpdatesScheduleConfig        { $global:_s3_schedule }
+            Mock Get-AzLocalApplyUpdatesScheduleCycleCalendar { '## Cycle calendar - next 4 day(s) (cycle length: 1 week(s))' }
+            Export-AzLocalApplyUpdatesScheduleAudit `
+                -PipelineYamlPath $env:_S3_PIPELINEDIR `
+                -SchedulePath     $env:_S3_SCHEDULE `
+                -OutputDirectory  $env:_S3_OUTDIR `
+                -PassThru
+        }
+
+        $global:_s3_recoOmitCalendar | Should -BeTrue -Because 'Export wrapper must pass -OmitCycleCalendar=$true so the Recommend view does not emit a duplicate plain calendar'
+
+        # And the rendered step summary must contain exactly ONE "## Cycle calendar - next" heading.
+        $summary = Get-Content -LiteralPath $script:_s3_ghSummaryFile -Raw
+        $heads   = [regex]::Matches($summary, '##\s+Cycle calendar - next\s+\d+\s+day')
+        $heads.Count | Should -Be 1 -Because 'After the fix the Step.3 step summary renders exactly one cycle calendar (the enriched one from the wrapper)'
     }
 }
 #endregion v0.8.5: Export-AzLocalApplyUpdatesScheduleAudit
