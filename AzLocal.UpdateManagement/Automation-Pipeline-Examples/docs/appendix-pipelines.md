@@ -111,6 +111,8 @@ The table below is the ground truth for what each shipped YAML does **out of the
 
 ## Step 5 - Assess Update Readiness
 
+> **Behaviour change in v0.8.74**: clusters that have already applied every required update are now classified as **Up to Date** (counted separately) instead of being lumped into the Not-Ready bucket. The summary's "Up to date" count is now accurate, the "Not-Ready clusters (review first)" table excludes Up-to-Date and Ready clusters, and the "All clusters detail" table shows a readable `Status` column in place of the old `Ready` boolean. Classification is shared with Step 7 and Step 9 via the `Get-AzLocalClusterReadinessStatus` helper.
+
 | Aspect | Value |
 |---|---|
 | **Purpose** | Pre-flight, report-only readiness + blocking-health snapshot for a single `UpdateRing`. **Always succeeds** - per-cluster failures show up as JUnit test failures rather than failing the whole run. |
@@ -155,6 +157,8 @@ The table below is the ground truth for what each shipped YAML does **out of the
 | **ITSM** | Not supported in v0.8.7 (staging is a pre-apply preparation step; failures surface as JUnit `<failure>` entries for operator review). |
 
 ## Step 7 - Apply Updates
+
+> **Behaviour change in v0.8.74**: the pre-apply readiness gate report (`Export-AzLocalClusterReadinessGateReport`) replaces its binary `Ready?` column with a readable `Status` column so fully-patched clusters now show **Up to Date** instead of a no-entry icon that implied failure. The header line shows a distinct `Up to Date` count and the step emits a new additive `UP_TO_DATE_COUNT` / `UpToDateCount` output (the `READY_COUNT` gate that drives the apply is unchanged). Classification is shared with Step 5 and Step 9 via the `Get-AzLocalClusterReadinessStatus` helper. When the gate finds no clusters ready, the "No Clusters Ready" summary (`Add-AzLocalNoReadyClustersStepSummary`) now renders an Up-to-Date vs Not-Ready breakdown - so an idle run makes clear that already-patched clusters are a healthy steady state (a notice, not a warning, when every cluster is up to date) rather than a fault.
 
 | Aspect | Value |
 |---|---|

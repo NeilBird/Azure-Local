@@ -455,6 +455,12 @@ function Export-AzLocalFleetHealthStatusReport {
     # ---- Fleet Health Overview table -------------------------------------
     [void]$md.Add('### Fleet Health Overview (fleet rollup)')
     [void]$md.Add('')
+    # GitHub / ADO step-summary sanitisers strip `target="_blank"` (and force
+    # `rel="nofollow"`), so the Cluster portal links open in the current tab
+    # by default. Tip stays even when there are zero overview rows because the
+    # detail / by-reason tables further down can still emit cluster links.
+    [void]$md.Add('> **Tip:** Hold `Ctrl` (or `Cmd` on macOS) when clicking - or middle-click - Cluster links to open them in a new tab. (GitHub markdown strips `target="_blank"`.)')
+    [void]$md.Add('')
     if ($overview.Count -eq 0) {
         [void]$md.Add('*No clusters returned from Get-AzLocalFleetHealthOverview.*')
     }
@@ -462,10 +468,9 @@ function Export-AzLocalFleetHealthStatusReport {
         [void]$md.Add('| Cluster | Health | Update Status | Current Version | SBE Version | Azure Connection | Last Checked | Health Check Age (days) | Node Count |')
         [void]$md.Add('|---------|--------|---------------|------------------|--------------|------------------|---------------|--------------------------|------------|')
         foreach ($o in (@($overview) | Select-Object -First $MaxOverviewRows)) {
-            # target="_blank" so clicking a portal link opens in a new tab
-            # and the operator does not lose the pipeline run page.
+            # target="_blank" intentionally omitted: sanitiser strips it. See Tip above.
             $clusterCell = if ($o.ClusterPortalUrl) {
-                ('<a href="{0}" target="_blank" rel="noopener noreferrer">{1}</a>' -f $o.ClusterPortalUrl, $o.ClusterName)
+                ('<a href="{0}">{1}</a>' -f $o.ClusterPortalUrl, $o.ClusterName)
             }
             else { [string]$o.ClusterName }
             # Use literal Unicode glyphs (not GH ':name:' shortcodes) so GH +
@@ -505,7 +510,8 @@ function Export-AzLocalFleetHealthStatusReport {
             $linkedParts = for ($i = 0; $i -lt $names.Count; $i++) {
                 $n = $names[$i]
                 $u = if ($i -lt $urls.Count) { $urls[$i] } else { '' }
-                if ($u) { ('<a href="{0}" target="_blank" rel="noopener noreferrer">{1}</a>' -f $u, $n) } else { $n }
+                # target="_blank" intentionally omitted: sanitiser strips it.
+                if ($u) { ('<a href="{0}">{1}</a>' -f $u, $n) } else { $n }
             }
             $clList = if ($linkedParts.Count -le 10) {
                 $linkedParts -join ', '
@@ -564,7 +570,7 @@ function Export-AzLocalFleetHealthStatusReport {
             $sevTally = $sevParts -join ' &nbsp;&middot;&nbsp; '
 
             $clusterCell = if ($cl.ClusterPortalUrl) {
-                ('<a href="{0}" target="_blank" rel="noopener noreferrer">{1}</a>' -f $cl.ClusterPortalUrl, $cl.ClusterName)
+                ('<a href="{0}">{1}</a>' -f $cl.ClusterPortalUrl, $cl.ClusterName)
             }
             else { [string]$cl.ClusterName }
             $lastOccStr = if ($cl.LastOccurrence) { ('{0:yyyy-MM-ddTHH:mm:ssZ}' -f $cl.LastOccurrence) } else { '-' }
@@ -577,7 +583,7 @@ function Export-AzLocalFleetHealthStatusReport {
             foreach ($r in $cl.Rows) {
                 $sevTag = if ($r.Severity -eq 'Critical') { '[Critical]' } else { '[Warning]' }
                 $rem    = if ($r.PSObject.Properties.Match('Remediation').Count -gt 0) { [string]$r.Remediation } else { '' }
-                $remCell = if ($rem -and $rem.StartsWith('https://')) { ('<a href="{0}" target="_blank" rel="noopener noreferrer">link</a>' -f $rem) } else { $rem }
+                $remCell = if ($rem -and $rem.StartsWith('https://')) { ('<a href="{0}">link</a>' -f $rem) } else { $rem }
                 $tName = if ($r.PSObject.Properties.Match('TargetResourceName').Count -gt 0) { [string]$r.TargetResourceName } else { '' }
                 $tType = if ($r.PSObject.Properties.Match('TargetResourceType').Count -gt 0) { [string]$r.TargetResourceType } else { '' }
                 [void]$md.Add(('| {0} | {1} | {2} | {3} | {4} | {5} | {6} |' -f $sevTag, $r.FailureReason, $remCell, $tName, $tType, $r.LastOccurrence, $r.ResourceGroup))

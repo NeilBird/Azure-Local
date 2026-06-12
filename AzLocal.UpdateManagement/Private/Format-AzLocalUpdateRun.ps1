@@ -43,11 +43,30 @@ function Format-AzLocalUpdateRun {
     $errorMessage = ''
     if ($props.progress -and $props.progress.steps) {
         $steps = $props.progress.steps
-        # Wrap in @() so .Count returns 0 (not $null) when no step matches -- previously the
-        # "completed" numerator rendered blank for runs that failed before any step succeeded.
-        $completedSteps = @($steps | Where-Object { $_.status -eq "Success" }).Count
-        $totalSteps = @($steps).Count
-        $progress = "$completedSteps/$totalSteps steps"
+        # Progress must reflect the DEEP nested step tree, not the top-level wrapper steps.
+        # Real Azure Local update runs expose only ~2 coarse top-level steps ("Prepare update"
+        # Success + "Start update" InProgress/Error), so counting the top level alone reported a
+        # near-constant "1/2 steps" for the entire multi-hour run regardless of real progress
+        # (validated against live ARM data: a 7-level / 167-leaf run still showed top-level 1/2).
+        # Get-AzLocalUpdateRunStepStats walks to the leaf steps (the atomic work units) so the
+        # numerator climbs as the install proceeds, mirroring how CurrentStep already traverses
+        # the full tree via Get-DeepestActiveStep.
+        $stepStats = Get-AzLocalUpdateRunStepStats -Steps $steps
+        if ($stepStats.TotalLeaf -gt 0) {
+            $pct = [int][math]::Round((($stepStats.CompletedLeaf / $stepStats.TotalLeaf) * 100))
+            $progress = "$($stepStats.CompletedLeaf)/$($stepStats.TotalLeaf) steps ($pct%)"
+            if ($stepStats.FailedLeaf -gt 0) {
+                $progress = "$progress, $($stepStats.FailedLeaf) failed"
+            }
+        }
+        else {
+            # Defensive fallback: no leaf steps resolved (e.g. an empty nested array). Use the
+            # top-level Success count so the column is never blank. Guarded property read keeps
+            # this safe under Set-StrictMode -Version Latest.
+            $completedSteps = @($steps | Where-Object { $_.PSObject.Properties['status'] -and $_.status -eq 'Success' }).Count
+            $totalSteps = @($steps).Count
+            $progress = "$completedSteps/$totalSteps steps"
+        }
 
         # Resolve the deepest InProgress/Error/Failed step in the nested progress tree.
         # The top-level steps array only exposes a coarse wrapper step (e.g. "Start update")

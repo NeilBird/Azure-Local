@@ -4,7 +4,29 @@
 >
 > **For older releases**, this is the canonical reference; the main README intentionally stays slim so the most recent block is easy to find.
 >
-> **For v0.8.73 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0873) `What's New in v0.8.73` section.
+> **For v0.8.74 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0874) `What's New in v0.8.74` section.
+
+---
+
+### What's New in v0.8.74
+
+v0.8.74 makes the "Up to Date" cluster classification consistent across the Step.5 readiness report, the Step.7 readiness gate, and the Step.9 fleet update-status report. It also corrects the `Progress` column in the Step.7 in-flight monitor and the standalone HTML report's "Recent Update Run History" table, both of which had been reporting a near-constant `1/2 steps` for the whole multi-hour run, and drops the dead `target="_blank"` portal-link attributes that GitHub Actions / Azure DevOps step-summary sanitisers were stripping anyway (replaced with an explicit Ctrl/Cmd/middle-click tip above each affected table). No public API or export-count change (still 60).
+
+**Fully-patched clusters were mis-classified as "not ready".** A cluster that had successfully installed every required update showed `0` in the Step.5 (`Export-AzLocalClusterUpdateReadinessReport`) "Up to date" summary count and appeared in its "Not-Ready clusters (review first)" table; Step.7 (`Export-AzLocalClusterReadinessGateReport`) rendered it with a no-entry icon in the binary `Ready?` column - both implying failure. The root cause was that the "Up to Date" determination required the `AllAvailableUpdates` collection to be empty, but a cluster that has installed all updates still lists those (now-Installed) package names there. Step.9 already classified these clusters correctly via its priority cascade.
+
+**`Progress` column always reported the top-level wrapper.** The Step.7 in-flight monitor (`Export-AzLocalUpdateRunMonitorReport`) and the standalone HTML report's `Recent Update Run History` table (`New-AzLocalFleetStatusHtmlReport`, fed by `Get-AzLocalFleetStatusData`) both rendered `Progress` from the top level of `properties.progress.steps`. Azure Local only exposes two coarse wrapper steps there - `Prepare update` (Success) and `Start update` (InProgress for the whole run) - so the column always read `1/2 steps` for ~150-leaf solution updates regardless of real progress. Both paths now walk the full nested step tree via a new private helper (`Get-AzLocalUpdateRunStepStats`) and report leaf-step completion as `M/N steps (P%)` (optionally suffixed with `, K failed`), matching how `CurrentStep` already walks the tree via `Get-DeepestActiveStep`.
+
+**Portal hyperlinks `target="_blank"` was being silently stripped.** The Cluster / Update hyperlinks rendered in Step.7 (`Export-AzLocalUpdateRunMonitorReport`) in-flight + failed-runs tables, Step.8 (`Export-AzLocalFleetUpdateStatusReport`) Update Run History table, and Step.10 (`Export-AzLocalFleetHealthStatusReport`) Fleet Health Overview / By-Reason / Detailed Results tables always opened in the current tab even though the markdown source set `target="_blank"`. GitHub's GFM sanitiser (and the ADO equivalent) drops the `target` attribute entirely and forces `rel="nofollow"` - confirmed in the rendered HTML of a real GitHub Actions job summary, and documented in [Stack Overflow: open link in new tab with github markdown using target="_blank"](https://stackoverflow.com/questions/41915571/open-link-in-new-tab-with-github-markdown-using-target-blank). The dead attributes are now removed (so the emitted markdown matches the rendered DOM), and each affected table is preceded by an explicit tip: *"Hold `Ctrl` (or `Cmd` on macOS) when clicking - or middle-click - Cluster or Update links to open them in a new tab. (GitHub markdown strips `target="_blank"`.)"* The standalone HTML report (`New-AzLocalFleetStatusHtmlReport`) is unaffected; it is written as a raw `.html` artifact (not a step-summary), so its `target="_blank"` already works as intended in any browser.
+
+**New shared classifier.** A new private helper, `Get-AzLocalClusterReadinessStatus`, is the single source of truth for the readiness priority cascade (UpdateFailed > ActionRequired > HealthFailure > SbeBlocked > InProgress > ReadyForUpdate > UpToDate > NeedsInvestigation). Step.5, Step.7 and Step.9 (`Export-AzLocalFleetUpdateStatusReport`) now classify clusters identically through this helper; previously each report re-implemented the logic inline and the definitions had drifted.
+
+**Step.7 reporting changes.** The per-cluster table replaces its binary `Ready?` column with a readable `Status` column (`Ready`, `Up to Date`, `In Progress`, `SBE Prerequisite`, `Health Failure`, `Update Failed`, `Action Required`, `Needs Investigation`), the header line shows a distinct `Up to Date` count, and a new additive `UP_TO_DATE_COUNT` / `UpToDateCount` step output is emitted (`-PassThru` returns `UpToDateCount`). The existing `READY_COUNT` gate semantics are unchanged.
+
+**Step.5 reporting changes.** The "All clusters detail" table replaces its `Ready` boolean column with the same readable `Status` label, and the "Not-Ready clusters (review first)" table now excludes both Up-to-Date and Ready clusters.
+
+**Step.7 "No Clusters Ready" summary now explains why.** `Add-AzLocalNoReadyClustersStepSummary` takes new `-UpToDateCount` / `-NotReadyCount` parameters and renders an Up-to-Date vs Not-Ready breakdown table, so an idle apply-updates run makes clear that already-patched clusters are a healthy steady state (and logs an informational notice instead of a warning when every cluster is up to date) and points to the per-cluster `Status` / `Blocking Reasons` detail. Both the GitHub Actions and Azure DevOps `apply-updates` templates wire the two counts through from the readiness gate.
+
+`GENERATED_AGAINST_MODULE_VERSION` bumped from `0.8.73` to `0.8.74` across all bundled pipeline templates.
 
 ---
 

@@ -2,7 +2,7 @@
 
 > ⚠️ **Disclaimer**: This module is **NOT** a Microsoft supported service offering or product. It is provided as example code only, with no warranty or official support. Refer to the [MIT license](https://github.com/NeilBird/Azure-Local/blob/main/LICENSE) for further information.
 
-**Latest Version:** v0.8.73 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.8.73)
+**Latest Version:** v0.8.74 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.8.74)
 
 > 📢 **Renamed in v0.7.3**: this module was previously published as `AzStackHci.ManageUpdates`. The new module name aligns with the Azure Local product name (_Microsoft retired the *Azure Stack HCI* brand in late 2024_). The module GUID is preserved across the rename. If you have the old name installed, run:
 >
@@ -23,7 +23,7 @@ Azure Local REST API specification (includes update management endpoints): https
 **This README (overview + most-recent release notes):**
 
 - [Where to Start](#where-to-start)
-- [What's New in v0.8.73](#whats-new-in-v0873)
+- [What's New in v0.8.74](#whats-new-in-v0874)
 - [Files](#files)
 - [Prerequisites](#prerequisites)
 - [RBAC Requirements](#rbac-requirements) (summary; full reference in [docs/rbac.md](docs/rbac.md))
@@ -86,16 +86,22 @@ If you are new to this module, work through these in order from a regular PowerS
 
 > Most CI/CD pipelines in [Automation-Pipeline-Examples/](Automation-Pipeline-Examples/) are direct implementations of one of these workflows. Start there if you want a copy-pasteable end-to-end pipeline.
 
-## What's New in v0.8.73
+## What's New in v0.8.74
 
-**Cycle-calendar refinement.** The Step.3 apply-updates schedule audit now shows the per-ring cluster count INLINE in the "Eligible rings" column (instead of a separate column), and the Step.3 pipeline render path actually populates those counts. No public API or export-count change (still 60).
+**Consistent "Up to Date" classification across the readiness reports, a deep-tree fix for the `Progress` column in the Step.7 monitor and the standalone HTML "Recent Update Run History" report, and removal of the dead `target="_blank"` portal-link attributes that GitHub / ADO step-summary sanitisers were stripping anyway (replaced with an explicit Ctrl/Cmd/middle-click tip above each affected table).** A cluster that has already applied every required update is now classified and labelled identically across the Step.5 readiness report, the Step.7 readiness gate, and the Step.9 fleet update-status report. The Step.7 monitor and the standalone HTML report now report `Progress` as deep leaf-step completion (`M/N steps (P%)`) instead of the coarse top-level wrapper count (`1/2 steps`) that they had been emitting for the whole multi-hour run. No public API or export-count change (still 60).
 
-1. **Changed**: `Get-AzLocalApplyUpdatesScheduleCycleCalendar` no longer adds a separate "Clusters in ring(s)" column when `-ClusterRingCounts` is supplied. Instead the per-day calendar relabels the header "Eligible rings" -> "Eligible rings (cluster count)" and appends each ring's count inline to its token, e.g. `` `Prod` (9), `Canary` (3) ``. Dead days still render `_(none - dead day)_`. The per-ring projection table (with `-IncludePerRingSummary`) keeps its separate "Cluster count" column.
-2. **Fixed**: `Export-AzLocalApplyUpdatesScheduleAudit` (the cmdlet the Step.3 `apply-updates-schedule-audit` pipeline calls) never forwarded `-ClusterRingCounts` to the cycle-calendar cmdlet, so the cluster-count enrichment was silently absent from every rendered Step.3 summary. The Export wrapper now builds a ring -> tagged-cluster-count map from the supplied cluster CSV and forwards it, so the inline counts appear whenever a `-ClusterCsvPath` is provided.
+1. **Fixed**: fully-patched clusters were mis-classified as "not ready". Step.5 (`Export-AzLocalClusterUpdateReadinessReport`) showed `0` in its "Up to date" summary count and listed such clusters in the "Not-Ready clusters (review first)" table; Step.7 (`Export-AzLocalClusterReadinessGateReport`) rendered them with a no-entry icon in the binary `Ready?` column - both implying failure. Root cause: the "Up to Date" test required the `AllAvailableUpdates` collection to be empty, but a cluster that has installed all updates still lists those (now-Installed) package names there, so the test never matched. Step.9 already classified these correctly; Step.5/Step.7 now share that exact logic.
+2. **Fixed (Progress column)**: the `Progress` column rendered by the Step.7 in-flight monitor (`Export-AzLocalUpdateRunMonitorReport`) and the standalone HTML report's `Recent Update Run History` table (`New-AzLocalFleetStatusHtmlReport` / `Get-AzLocalFleetStatusData`) always reported the top-level wrapper count (typically `1/2 steps`) because Azure Local only exposes two top-level wrapper steps in `properties.progress.steps` (`Prepare update` + `Start update`) and `Start update` stays `InProgress` for the whole run. Both paths now traverse the full nested step tree via a new private helper (`Get-AzLocalUpdateRunStepStats`) and report leaf-step completion as `M/N steps (P%)`, optionally suffixed with `, K failed`. Matches how `CurrentStep` already walks the tree via `Get-DeepestActiveStep`.
+3. **Fixed (portal hyperlinks)**: the Cluster / Update hyperlinks in Step.7 (`Export-AzLocalUpdateRunMonitorReport`), Step.8 (`Export-AzLocalFleetUpdateStatusReport`) and Step.10 (`Export-AzLocalFleetHealthStatusReport`) step-summary tables always opened in the current tab even though the markdown source set `target="_blank"`. GitHub's GFM sanitiser (and the ADO equivalent) strips `target` entirely and forces `rel="nofollow"` - confirmed in the rendered HTML of a real job summary. The dead attributes are now removed and each affected table is preceded by an explicit tip: *"Hold `Ctrl` (or `Cmd` on macOS) when clicking - or middle-click - Cluster or Update links to open them in a new tab. (GitHub markdown strips `target="_blank"`.)"* The standalone HTML report (`New-AzLocalFleetStatusHtmlReport`) is unaffected - it ships as a raw `.html` artifact, not a step-summary, so its `target="_blank"` already works.
+4. **Added**: `Get-AzLocalClusterReadinessStatus` private helper is the single source of truth for the readiness priority cascade (UpdateFailed > ActionRequired > HealthFailure > SbeBlocked > InProgress > ReadyForUpdate > UpToDate > NeedsInvestigation). Step.5, Step.7 and Step.9 (`Export-AzLocalFleetUpdateStatusReport`) all classify clusters through this one helper.
+5. **Added**: `Get-AzLocalUpdateRunStepStats` private helper recursively walks the nested `properties.progress.steps` tree and returns leaf-step totals (`TotalLeaf` / `CompletedLeaf` / `InProgressLeaf` / `FailedLeaf`). `Skipped` leaves count as completed so a fully-finished run reaches 100%; wrapper steps are excluded so children aren't double-counted.
+6. **Added**: Step.7 emits a new `UP_TO_DATE_COUNT` / `UpToDateCount` step output (additive; existing `READY_COUNT` gate semantics unchanged) and `-PassThru` returns `UpToDateCount`.
+7. **Changed**: Step.7's per-cluster table replaces the binary `Ready?` column with a readable `Status` column (`Ready`, `Up to Date`, `In Progress`, `SBE Prerequisite`, `Health Failure`, `Update Failed`, `Action Required`, `Needs Investigation`) and the header line shows a distinct `Up to Date` count. Step.5's "All clusters detail" table replaces its `Ready` boolean column with the same readable `Status` label, and its "Not-Ready clusters (review first)" table excludes Up-to-Date and Ready clusters.
+8. **Changed**: the Step.7 "No Clusters Ready" summary now explains *why* there is nothing to apply. `Add-AzLocalNoReadyClustersStepSummary` takes new `-UpToDateCount` / `-NotReadyCount` parameters and renders an Up-to-Date vs Not-Ready breakdown table - so an idle run makes clear that already-patched clusters are a healthy steady state (and logs a notice, not a warning, when *every* cluster is up to date) and points to the per-cluster `Status` / `Blocking Reasons` detail. Both the GitHub Actions and Azure DevOps `apply-updates` templates wire the two counts through from the readiness gate.
 
-`GENERATED_AGAINST_MODULE_VERSION` bumped from `0.8.72` to `0.8.73` across all bundled pipeline templates.
+`GENERATED_AGAINST_MODULE_VERSION` bumped from `0.8.73` to `0.8.74` across all bundled pipeline templates.
 
-See [CHANGELOG.md](CHANGELOG.md#0873---2026-06-11) for the full v0.8.73 entry. See [`What's New in v0.8.72`](#whats-new-in-v0872) in the Release History section below for the previous release.
+See [CHANGELOG.md](CHANGELOG.md#0874---2026-06-11) for the full v0.8.74 entry. See [`What's New in v0.8.73`](#whats-new-in-v0873) in the Release History section below for the previous release.
 
 ## Files
 
@@ -574,7 +580,13 @@ This code is provided as-is for educational and reference purposes.
 
 The full What's-New history (v0.7.81 and earlier) has moved to [docs/release-history.md](docs/release-history.md).
 
-The most recent release notes for **v0.8.73** stay above under [`What's New in v0.8.73`](#whats-new-in-v0873).
+The most recent release notes for **v0.8.74** stay above under [`What's New in v0.8.74`](#whats-new-in-v0874).
+
+### What's New in v0.8.73
+
+**Cycle-calendar refinement.** The Step.3 apply-updates schedule audit now shows the per-ring cluster count INLINE in the "Eligible rings" column (instead of a separate column), and the Step.3 pipeline render path actually populates those counts. `Get-AzLocalApplyUpdatesScheduleCycleCalendar` no longer adds a separate "Clusters in ring(s)" column when `-ClusterRingCounts` is supplied; instead the per-day calendar relabels the header "Eligible rings" -> "Eligible rings (cluster count)" and appends each ring's count inline. `Export-AzLocalApplyUpdatesScheduleAudit` now forwards `-ClusterRingCounts` (previously it never did, so the counts were silently absent). No public API or export-count change (still 60).
+
+See [CHANGELOG.md](CHANGELOG.md#0873---2026-06-11) for the full v0.8.73 entry.
 
 ### What's New in v0.8.72
 

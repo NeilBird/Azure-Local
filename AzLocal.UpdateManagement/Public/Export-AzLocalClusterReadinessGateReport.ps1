@@ -36,10 +36,10 @@ function Export-AzLocalClusterReadinessGateReport {
         Filename for the per-task markdown summary (ADO/Local only). Default:
         'azlocal-step6-readiness-summary.md'.
     .PARAMETER PassThru
-        Returns PSCustomObject with: TotalCount, ReadyCount, NotReadyCount,
-        UpdateRing, ReadinessCsvPath, SummaryPath, Results (raw rows from
-        Get-AzLocalClusterUpdateReadiness when not in the short-circuit path,
-        else @()).
+        Returns PSCustomObject with: TotalCount, ReadyCount, UpToDateCount,
+        NotReadyCount, UpdateRing, ReadinessCsvPath, SummaryPath, Results (raw
+        rows from Get-AzLocalClusterUpdateReadiness when not in the
+        short-circuit path, else @()).
     .NOTES
         Author  : AzLocal.UpdateManagement
         Version : 0.8.5 (Step.6 thin-YAML port)
@@ -97,10 +97,10 @@ function Export-AzLocalClusterReadinessGateReport {
     # bindings byte-for-byte: GH uses UPPER_SNAKE, ADO uses PascalCase
     # (e.g. stageDependencies.CheckReadiness.ReadinessCheck.outputs['readiness.ReadyCount']).
     if ($pipelineHost -eq 'AzureDevOps') {
-        $nReadyCount = 'ReadyCount'; $nTotalCount = 'TotalCount'; $nNotReadyCount = 'NotReadyCount'
+        $nReadyCount = 'ReadyCount'; $nTotalCount = 'TotalCount'; $nNotReadyCount = 'NotReadyCount'; $nUpToDateCount = 'UpToDateCount'
     }
     else {
-        $nReadyCount = 'READY_COUNT'; $nTotalCount = 'TOTAL_COUNT'; $nNotReadyCount = 'NOT_READY_COUNT'
+        $nReadyCount = 'READY_COUNT'; $nTotalCount = 'TOTAL_COUNT'; $nNotReadyCount = 'NOT_READY_COUNT'; $nUpToDateCount = 'UP_TO_DATE_COUNT'
     }
 
     # Short-circuit when the schedule resolver returned no ring.
@@ -108,11 +108,13 @@ function Export-AzLocalClusterReadinessGateReport {
         Write-Host "No UpdateRing scheduled for this firing - skipping readiness check."
         Set-AzLocalPipelineOutput -Name $nReadyCount    -Value '0' -CrossJob
         Set-AzLocalPipelineOutput -Name $nTotalCount    -Value '0' -CrossJob
+        Set-AzLocalPipelineOutput -Name $nUpToDateCount -Value '0' -CrossJob
         Set-AzLocalPipelineOutput -Name $nNotReadyCount -Value '0' -CrossJob
         if ($PassThru) {
             return [pscustomobject]@{
                 TotalCount       = 0
                 ReadyCount       = 0
+                UpToDateCount    = 0
                 NotReadyCount    = 0
                 UpdateRing       = ''
                 ReadinessCsvPath = $csvPath
@@ -133,7 +135,12 @@ function Export-AzLocalClusterReadinessGateReport {
 
     $totalCount    = $results.Count
     $readyCount    = @($results | Where-Object { $_.ReadyForUpdate -eq $true }).Count
-    $notReadyCount = $totalCount - $readyCount
+    # v0.8.74: Up to Date is now its own displayed bucket (shared cascade with
+    # Step.5 / Step.9) so clusters that have already applied all updates are not
+    # lumped into "Not Ready" - that previously implied failure for healthy,
+    # fully-patched clusters. READY_COUNT (the apply-updates gate) is unchanged.
+    $upToDateCount = @($results | Where-Object { (Get-AzLocalClusterReadinessStatus -ReadinessRow $_) -eq 'UpToDate' }).Count
+    $notReadyCount = $totalCount - $readyCount - $upToDateCount
 
     Write-Host ""
     Write-Host "========================================" -ForegroundColor Cyan
@@ -141,10 +148,12 @@ function Export-AzLocalClusterReadinessGateReport {
     Write-Host "========================================" -ForegroundColor Cyan
     Write-Host "Total Clusters: $totalCount"
     Write-Host "Ready for Update: $readyCount"
+    Write-Host "Up to Date: $upToDateCount"
     Write-Host "Not Ready: $notReadyCount"
 
     Set-AzLocalPipelineOutput -Name $nReadyCount    -Value "$readyCount"    -CrossJob
     Set-AzLocalPipelineOutput -Name $nTotalCount    -Value "$totalCount"    -CrossJob
+    Set-AzLocalPipelineOutput -Name $nUpToDateCount -Value "$upToDateCount" -CrossJob
     Set-AzLocalPipelineOutput -Name $nNotReadyCount -Value "$notReadyCount" -CrossJob
 
     if ($readyCount -eq 0 -and $pipelineHost -eq 'AzureDevOps') {
@@ -159,15 +168,27 @@ function Export-AzLocalClusterReadinessGateReport {
     $sb = New-Object System.Text.StringBuilder
     [void]$sb.AppendLine("$headingLevel Cluster Readiness ($UpdateRing)")
     [void]$sb.AppendLine()
-    [void]$sb.AppendLine("**Total:** $totalCount &nbsp;|&nbsp; **Ready:** $readyCount &nbsp;|&nbsp; **Not Ready:** $notReadyCount")
+    [void]$sb.AppendLine("**Total:** $totalCount &nbsp;|&nbsp; **Ready:** $readyCount &nbsp;|&nbsp; **Up to Date:** $upToDateCount &nbsp;|&nbsp; **Not Ready:** $notReadyCount")
     [void]$sb.AppendLine()
-    [void]$sb.AppendLine('| Cluster | Current Version | Update State | Health | Ready? | Recommended Update | Blocking Reasons |')
+    [void]$sb.AppendLine('| Cluster | Current Version | Update State | Health | Status | Recommended Update | Blocking Reasons |')
     [void]$sb.AppendLine('|---|---|---|---|---|---|---|')
 
     $rendered = 0
     foreach ($r in ($results | Sort-Object @{Expression = { [bool]$_.ReadyForUpdate }; Descending = $true }, ClusterName)) {
         if ($rendered -ge $MaxRows) { break }
-        $readyIcon = if ($r.ReadyForUpdate -eq $true) { [char]0x2705 } else { [char]0x26D4 }
+        # v0.8.74: a readable Status cell driven by the shared readiness cascade.
+        # Up-to-Date clusters now show a green check + "Up to Date" instead of the
+        # no-entry icon that the old binary Ready? column rendered for them.
+        $statusCell = switch (Get-AzLocalClusterReadinessStatus -ReadinessRow $r) {
+            'ReadyForUpdate'     { "{0} Ready" -f [char]0x2705 }
+            'UpToDate'           { "{0} Up to Date" -f [char]0x2705 }
+            'InProgress'         { "{0} In Progress" -f ([string]([char]0x23F3)) }
+            'SbeBlocked'         { "{0} SBE Prerequisite" -f [char]0x26D4 }
+            'HealthFailure'      { "{0} Health Failure" -f [char]0x274C }
+            'UpdateFailed'       { "{0} Update Failed" -f [char]0x274C }
+            'ActionRequired'     { "{0} Action Required" -f [char]0x274C }
+            default              { "{0} Needs Investigation" -f ([string]([char]0x26A0) + [char]0xFE0F) }
+        }
         $hSt = "$($r.HealthState)"
         $hCell = switch -Regex ($hSt) {
             '^Success$' { ("{0} {1}" -f [char]0x2705, $hSt); break }
@@ -180,7 +201,7 @@ function Export-AzLocalClusterReadinessGateReport {
         $blocking = $blocking -replace '\|', '\|' -replace '\r?\n', ' '
         $reco = if ($r.RecommendedUpdate) { '`' + $r.RecommendedUpdate + '`' } else { '-' }
         $curr = if ($r.CurrentVersion) { '`' + $r.CurrentVersion + '`' } else { '-' }
-        [void]$sb.AppendLine("| ``$($r.ClusterName)`` | $curr | $($r.UpdateState) | $hCell | $readyIcon | $reco | $blocking |")
+        [void]$sb.AppendLine("| ``$($r.ClusterName)`` | $curr | $($r.UpdateState) | $hCell | $statusCell | $reco | $blocking |")
         $rendered++
     }
 
@@ -196,6 +217,7 @@ function Export-AzLocalClusterReadinessGateReport {
         return [pscustomobject]@{
             TotalCount       = $totalCount
             ReadyCount       = $readyCount
+            UpToDateCount    = $upToDateCount
             NotReadyCount    = $notReadyCount
             UpdateRing       = $UpdateRing
             ReadinessCsvPath = $csvPath

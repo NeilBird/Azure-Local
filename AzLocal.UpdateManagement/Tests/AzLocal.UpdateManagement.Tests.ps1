@@ -34,8 +34,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $script:ModuleInfo | Should -Not -BeNullOrEmpty
         }
 
-        It 'Should have version 0.8.73' {
-            $script:ModuleInfo.Version | Should -Be '0.8.73'
+        It 'Should have version 0.8.74' {
+            $script:ModuleInfo.Version | Should -Be '0.8.74'
         }
 
         It 'Module version constants are in sync between .psm1 and .psd1' {
@@ -1712,6 +1712,179 @@ Describe 'Helper Function: Format-AzLocalUpdateRun (Internal)' {
             }
             $f = Format-AzLocalUpdateRun -run $run -clusterName 'c1'
             $f.CurrentStep | Should -Be 'Run Pre Update Validation (FAILED)'
+        }
+    }
+
+    Context 'Progress reflects deep leaf steps, not the top-level wrapper (v0.8.74)' {
+
+        It 'Progress counts deep leaf steps and a percentage, not the coarse top-level 1/2' {
+            InModuleScope AzLocal.UpdateManagement {
+                # Real Azure Local runs expose only 2 top-level steps ("Prepare update" Success
+                # + "Start update" InProgress), so the OLD top-level count always rendered
+                # "1/2 steps" for the whole multi-hour run. The deep tree below has 4 leaf steps
+                # (3 Success + 1 InProgress) -> Progress must read 3/4 (75%).
+                $run = [PSCustomObject]@{
+                    id         = '/subscriptions/x/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/c1/updates/Sol/updateRuns/rProg'
+                    name       = 'rProg'
+                    properties = [PSCustomObject]@{
+                        state    = 'InProgress'
+                        progress = [PSCustomObject]@{
+                            status = 'InProgress'
+                            steps  = @(
+                                [PSCustomObject]@{ name = 'Prepare update'; status = 'Success' }
+                                [PSCustomObject]@{
+                                    name   = 'Start update'
+                                    status = 'InProgress'
+                                    steps  = @(
+                                        [PSCustomObject]@{
+                                            name   = 'Update Cluster'
+                                            status = 'InProgress'
+                                            steps  = @(
+                                                [PSCustomObject]@{ name = 'Update Node 1'; status = 'Success' }
+                                                [PSCustomObject]@{ name = 'Update Node 2'; status = 'Success' }
+                                                [PSCustomObject]@{ name = 'Update Node 3'; status = 'InProgress' }
+                                            )
+                                        }
+                                    )
+                                }
+                            )
+                        }
+                        location = 'eastus'
+                    }
+                }
+                $f = Format-AzLocalUpdateRun -run $run -clusterName 'c1'
+                $f.Progress | Should -Be '3/4 steps (75%)'
+            }
+        }
+
+        It 'Progress appends a failed-leaf count when the deep tree has Error/Failed leaves' {
+            InModuleScope AzLocal.UpdateManagement {
+                $run = [PSCustomObject]@{
+                    id         = '/subscriptions/x/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/c1/updates/Sol/updateRuns/rFail'
+                    name       = 'rFail'
+                    properties = [PSCustomObject]@{
+                        state    = 'Failed'
+                        progress = [PSCustomObject]@{
+                            status = 'Error'
+                            steps  = @(
+                                [PSCustomObject]@{ name = 'Prepare update'; status = 'Success' }
+                                [PSCustomObject]@{
+                                    name   = 'Start update'
+                                    status = 'Error'
+                                    steps  = @(
+                                        [PSCustomObject]@{ name = 'Step A'; status = 'Success' }
+                                        [PSCustomObject]@{ name = 'Step B'; status = 'Error' }
+                                    )
+                                }
+                            )
+                        }
+                        location = 'eastus'
+                    }
+                }
+                $f = Format-AzLocalUpdateRun -run $run -clusterName 'c1'
+                $f.Progress | Should -Be '2/3 steps (67%), 1 failed'
+            }
+        }
+    }
+}
+
+Describe 'Helper Function: Get-AzLocalUpdateRunStepStats (Internal)' {
+
+    It 'Should return all-zero stats for an empty steps array' {
+        InModuleScope AzLocal.UpdateManagement {
+            $s = Get-AzLocalUpdateRunStepStats -Steps @()
+            $s.TotalLeaf | Should -Be 0
+            $s.CompletedLeaf | Should -Be 0
+            $s.InProgressLeaf | Should -Be 0
+            $s.FailedLeaf | Should -Be 0
+        }
+    }
+
+    It 'Should count only leaf steps, excluding parent/wrapper steps' {
+        InModuleScope AzLocal.UpdateManagement {
+            # Wrapper "P" (Success) has 2 children; only the children are leaves.
+            $steps = @(
+                [PSCustomObject]@{
+                    name   = 'P'
+                    status = 'Success'
+                    steps  = @(
+                        [PSCustomObject]@{ name = 'a'; status = 'Success' }
+                        [PSCustomObject]@{ name = 'b'; status = 'InProgress' }
+                    )
+                }
+            )
+            $s = Get-AzLocalUpdateRunStepStats -Steps $steps
+            $s.TotalLeaf | Should -Be 2
+            $s.CompletedLeaf | Should -Be 1
+            $s.InProgressLeaf | Should -Be 1
+        }
+    }
+
+    It 'Should count Skipped leaves as completed so a finished run can reach 100 percent' {
+        InModuleScope AzLocal.UpdateManagement {
+            $steps = @(
+                [PSCustomObject]@{ name = 'a'; status = 'Success' }
+                [PSCustomObject]@{ name = 'b'; status = 'Skipped' }
+            )
+            $s = Get-AzLocalUpdateRunStepStats -Steps $steps
+            $s.TotalLeaf | Should -Be 2
+            $s.CompletedLeaf | Should -Be 2
+        }
+    }
+
+    It 'Should count Error and Failed leaves as failed' {
+        InModuleScope AzLocal.UpdateManagement {
+            $steps = @(
+                [PSCustomObject]@{ name = 'a'; status = 'Error' }
+                [PSCustomObject]@{ name = 'b'; status = 'Failed' }
+                [PSCustomObject]@{ name = 'c'; status = 'Success' }
+            )
+            $s = Get-AzLocalUpdateRunStepStats -Steps $steps
+            $s.FailedLeaf | Should -Be 2
+            $s.CompletedLeaf | Should -Be 1
+        }
+    }
+
+    It 'Should count blank/NotStarted leaves in Total only (remaining work)' {
+        InModuleScope AzLocal.UpdateManagement {
+            $steps = @(
+                [PSCustomObject]@{ name = 'a'; status = 'Success' }
+                [PSCustomObject]@{ name = 'b'; status = '' }
+                [PSCustomObject]@{ name = 'c' }
+            )
+            $s = Get-AzLocalUpdateRunStepStats -Steps $steps
+            $s.TotalLeaf | Should -Be 3
+            $s.CompletedLeaf | Should -Be 1
+            $s.InProgressLeaf | Should -Be 0
+            $s.FailedLeaf | Should -Be 0
+        }
+    }
+
+    It 'Should aggregate leaves recursively across a deeply nested tree' {
+        InModuleScope AzLocal.UpdateManagement {
+            $steps = @(
+                [PSCustomObject]@{ name = 'Prepare update'; status = 'Success' }
+                [PSCustomObject]@{
+                    name   = 'Start update'
+                    status = 'InProgress'
+                    steps  = @(
+                        [PSCustomObject]@{
+                            name   = 'Update Cluster'
+                            status = 'InProgress'
+                            steps  = @(
+                                [PSCustomObject]@{ name = 'Node 1'; status = 'Success' }
+                                [PSCustomObject]@{ name = 'Node 2'; status = 'Success' }
+                                [PSCustomObject]@{ name = 'Node 3'; status = 'InProgress' }
+                            )
+                        }
+                    )
+                }
+            )
+            $s = Get-AzLocalUpdateRunStepStats -Steps $steps
+            # Leaves: Prepare update, Node 1, Node 2, Node 3 = 4 (Start update + Update Cluster are wrappers)
+            $s.TotalLeaf | Should -Be 4
+            $s.CompletedLeaf | Should -Be 3
+            $s.InProgressLeaf | Should -Be 1
         }
     }
 }
@@ -4596,6 +4769,87 @@ Describe 'Get-AzLocalFleetStatusData (schema contract)' {
                 # bump.
                 $script:ModuleVersion | Should -Not -BeNullOrEmpty
                 $script:ModuleVersion | Should -Match '^\d+\.\d+\.\d+$'
+            }
+        }
+
+        # v0.8.74: the LatestRuns[].Progress field feeds the standalone HTML report's
+        # "Recent Update Run History" table AND the latest-runs.csv. The previous top-
+        # level-only count ("$(Success).Count/$(steps).Count steps") rendered a near-
+        # constant "1/2 steps" for the whole multi-hour run because Azure Local only
+        # exposes two coarse top-level wrapper steps ("Prepare update" + "Start
+        # update"). This guards against a regression back to the top-level count.
+        It 'LatestRuns Progress counts deep leaf steps with a percentage, not top-level wrappers' {
+            InModuleScope AzLocal.UpdateManagement {
+                function global:az { $global:LASTEXITCODE = 0; return '{}' }
+                Mock Test-AzCliAvailable { return $true }
+                Mock Install-AzGraphExtension { return $true }
+
+                $deepSteps = @(
+                    [PSCustomObject]@{ name = 'Prepare update'; status = 'Success' }
+                    [PSCustomObject]@{
+                        name   = 'Start update'
+                        status = 'InProgress'
+                        steps  = @(
+                            [PSCustomObject]@{
+                                name   = 'Update Cluster'
+                                status = 'InProgress'
+                                steps  = @(
+                                    [PSCustomObject]@{ name = 'Update Node 1'; status = 'Success' }
+                                    [PSCustomObject]@{ name = 'Update Node 2'; status = 'Success' }
+                                    [PSCustomObject]@{ name = 'Update Node 3'; status = 'InProgress' }
+                                )
+                            }
+                        )
+                    }
+                )
+
+                Mock Invoke-AzRestJson {
+                    param($Uri)
+                    if ($Uri -match '/updateSummaries/default') {
+                        return [PSCustomObject]@{ Data = [PSCustomObject]@{ properties = [PSCustomObject]@{
+                            state = 'AppliedSuccessfully'; healthState = 'Success'
+                            currentVersion = '12.2402.0'; currentSbeVersion = 'N/A'
+                            lastChecked = '2025-10-01T00:00:00Z'; lastUpdated = '2025-10-01T00:00:00Z'
+                            healthCheckResult = @()
+                        } } }
+                    }
+                    if ($Uri -match '/updates\?api-version') {
+                        return [PSCustomObject]@{ Data = [PSCustomObject]@{ value = @(
+                            [PSCustomObject]@{ name = '12.2402.1'; properties = [PSCustomObject]@{ state = 'Ready' } }
+                        ) } }
+                    }
+                    if ($Uri -match '/updates/[^/]+/updateRuns\?api-version') {
+                        return [PSCustomObject]@{ Data = [PSCustomObject]@{ value = @(
+                            [PSCustomObject]@{
+                                id = '/subscriptions/s/resourceGroups/r/providers/Microsoft.AzureStackHCI/clusters/c1/updates/12.2402.1/updateRuns/run1'
+                                name = 'run1'
+                                properties = [PSCustomObject]@{
+                                    state = 'InProgress'
+                                    timeStarted = '2026-06-10T08:00:00Z'
+                                    lastUpdatedTime = '2026-06-10T10:00:00Z'
+                                    location = 'eastus'
+                                    progress = [PSCustomObject]@{
+                                        status = 'InProgress'
+                                        steps = $deepSteps
+                                    }
+                                }
+                            }
+                        ) } }
+                    }
+                    return [PSCustomObject]@{ Data = [PSCustomObject]@{
+                        properties = [PSCustomObject]@{ status = 'Succeeded' }
+                    } }
+                }
+
+                $rid = '/subscriptions/s/resourceGroups/r/providers/Microsoft.AzureStackHCI/clusters/c1'
+                $result = Get-AzLocalFleetStatusData -ClusterResourceIds @($rid) -IncludeUpdateRuns
+
+                $result.LatestRuns | Should -Not -BeNullOrEmpty
+                $row = @($result.LatestRuns)[0]
+                # 4 leaves (Prepare update + 3 nodes), 3 completed, 1 in-progress -> 3/4 (75%)
+                $row.Progress | Should -Be '3/4 steps (75%)'
+                # Must NOT regress to the old top-level count of "1/2 steps".
+                $row.Progress | Should -Not -Match '^\d+/2 steps$'
             }
         }
     }
@@ -14500,14 +14754,13 @@ Describe 'Thin-YAML Step.7: Export-AzLocalUpdateRunMonitorReport' {
         }
     }
 
-    It 'In-flight runs table renders Cluster and Update cells as target=_blank links so they do NOT navigate away from the pipeline output' {
+    It 'In-flight runs table renders Cluster and Update cells as plain anchor links (sanitiser strips target/rel) and emits a Ctrl-click tip above the tables' {
         # Regression guard: the In-flight runs (and Failed runs) tables MUST
-        # render Cluster + Update cells as <a href="..." target="_blank"
-        # rel="noopener">...</a> so operators clicking through to the Azure
-        # portal from the pipeline run summary keep the pipeline tab open.
-        # The cmdlet honours both ClusterPortalUrl and UpdateRunPortalUrl - so
-        # both must be present on the source row AND surface in the rendered
-        # markdown summary.
+        # render Cluster + Update cells as <a href="...">...</a>. We intentionally
+        # do NOT emit target="_blank" / rel="noopener" because the GitHub Actions
+        # and Azure DevOps step-summary markdown sanitisers strip them (and
+        # force rel="nofollow"). A Ctrl-click tip directly above the tables
+        # tells operators how to open links in a new tab.
         $env:GITHUB_ACTIONS      = 'true'
         $env:GITHUB_OUTPUT       = $script:_s7_ghOutputFile
         $env:GITHUB_STEP_SUMMARY = $script:_s7_ghSummaryFile
@@ -14535,10 +14788,14 @@ Describe 'Thin-YAML Step.7: Export-AzLocalUpdateRunMonitorReport' {
         }
         $summary = Get-Content -Raw -LiteralPath $script:_s7_ghSummaryFile
         $summary | Should -Match '### In-flight runs'
-        # Cluster cell renders as target=_blank link with rel=noopener
-        $summary | Should -Match '<a href="https://portal\.azure\.com/#@/resource[^"]*alpha[^"]*" target="_blank" rel="noopener">alpha</a>'
-        # Update cell renders as target=_blank link with rel=noopener
-        $summary | Should -Match '<a href="https://portal\.azure\.com/#view/Microsoft_AzureStackHCI_PortalExtension/SingleInstanceHistoryDetails[^"]*" target="_blank" rel="noopener">12\.2509\.1\.21</a>'
+        # Ctrl-click tip rendered above the tables
+        $summary | Should -Match '\*\*Tip:\*\* Hold `Ctrl`.*Cluster or Update links'
+        # Cluster cell renders as plain href (no target/rel attrs - sanitiser strips them)
+        $summary | Should -Match '<a href="https://portal\.azure\.com/#@/resource[^"]*alpha[^"]*">alpha</a>'
+        # Update cell renders as plain href
+        $summary | Should -Match '<a href="https://portal\.azure\.com/#view/Microsoft_AzureStackHCI_PortalExtension/SingleInstanceHistoryDetails[^"]*">12\.2509\.1\.21</a>'
+        # Regression: target="_blank" must NOT appear as an anchor attribute (stripped by sanitiser anyway, so it is dead weight). The Tip text deliberately mentions the literal string in prose, so match it only inside an opening <a> tag.
+        $summary | Should -Not -Match '<a [^>]*target="_blank"'
     }
 }
 
@@ -15109,7 +15366,7 @@ Describe 'Thin-YAML Step.9: Export-AzLocalFleetHealthStatusReport' {
         $out | Should -Match 'warning_count=0'
     }
 
-    It 'Critical+Warning mixed fleet emits one testcase per failing check, correct bucket counts, and target=_blank portal links in the markdown summary' {
+    It 'Critical+Warning mixed fleet emits one testcase per failing check, correct bucket counts, and plain anchor cluster links plus a Ctrl-click tip in the markdown summary' {
         $env:GITHUB_ACTIONS      = 'true'
         $env:GITHUB_OUTPUT       = $script:_s9_ghOutputFile
         $env:GITHUB_STEP_SUMMARY = $script:_s9_ghSummaryFile
@@ -15151,10 +15408,14 @@ Describe 'Thin-YAML Step.9: Export-AzLocalFleetHealthStatusReport' {
         $xml | Should -Match '<property name="ClusterName" value="alpha" />'
         $xml | Should -Match '<property name="UpdateName" value="ClusterCertExpiry" />'
         $xml | Should -Match '<property name="Severity" value="Critical" />'
-        # Markdown summary: target=_blank on cluster portal link
+        # Markdown summary: plain <a href> on cluster portal link (sanitiser strips target/rel)
         $summary = Get-Content -Raw -LiteralPath $script:_s9_ghSummaryFile
         $summary | Should -Match '### Fleet Health Overview'
-        $summary | Should -Match '<a href="https://portal\.azure\.com[^"]*alpha[^"]*" target="_blank" rel="noopener noreferrer">alpha</a>'
+        # Ctrl-click tip rendered above the tables
+        $summary | Should -Match '\*\*Tip:\*\* Hold `Ctrl`.*Cluster links'
+        $summary | Should -Match '<a href="https://portal\.azure\.com[^"]*alpha[^"]*">alpha</a>'
+        # Regression: target="_blank" must NOT appear as an anchor attribute (stripped by sanitiser anyway). The Tip text mentions the literal string in prose, so match it only inside an opening <a> tag.
+        $summary | Should -Not -Match '<a [^>]*target="_blank"'
         $summary | Should -Match '### Health Check Failures By Reason'
         $summary | Should -Match '### Detailed Results'
         # KPI table values
@@ -15562,6 +15823,147 @@ Describe 'Thin-YAML Step.5: Export-AzLocalClusterUpdateReadinessReport' {
 }
 
 #endregion v0.8.5: Export-AzLocalClusterUpdateReadinessReport
+
+#region v0.8.74: Get-AzLocalClusterReadinessStatus (shared readiness cascade)
+Describe 'Private: Get-AzLocalClusterReadinessStatus' {
+
+    It 'Classifies <Expected> for UpdateState=<UpdateState> Health=<HealthState> Prereq=<HasPrerequisiteUpdates> Ready=<ReadyForUpdate>' -ForEach @(
+        @{ UpdateState='Failed';               HealthState='Success'; HasPrerequisiteUpdates=''; ReadyForUpdate=$false; Expected='UpdateFailed' }
+        @{ UpdateState='UpdateFailed';         HealthState='Success'; HasPrerequisiteUpdates=''; ReadyForUpdate=$false; Expected='UpdateFailed' }
+        @{ UpdateState='NeedsAttention';       HealthState='Success'; HasPrerequisiteUpdates=''; ReadyForUpdate=$false; Expected='UpdateFailed' }
+        @{ UpdateState='PreparationFailed';    HealthState='Success'; HasPrerequisiteUpdates=''; ReadyForUpdate=$false; Expected='ActionRequired' }
+        @{ UpdateState='UpToDate';             HealthState='Failure'; HasPrerequisiteUpdates=''; ReadyForUpdate=$false; Expected='HealthFailure' }
+        @{ UpdateState='UpdateAvailable';      HealthState='Success'; HasPrerequisiteUpdates='12.2510.0.1'; ReadyForUpdate=$false; Expected='SbeBlocked' }
+        @{ UpdateState='UpdateInProgress';     HealthState='Success'; HasPrerequisiteUpdates=''; ReadyForUpdate=$false; Expected='InProgress' }
+        @{ UpdateState='PreparationInProgress';HealthState='Success'; HasPrerequisiteUpdates=''; ReadyForUpdate=$false; Expected='InProgress' }
+        @{ UpdateState='UpdateAvailable';      HealthState='Success'; HasPrerequisiteUpdates=''; ReadyForUpdate=$true;  Expected='ReadyForUpdate' }
+        @{ UpdateState='UpToDate';             HealthState='Success'; HasPrerequisiteUpdates=''; ReadyForUpdate=$false; Expected='UpToDate' }
+        @{ UpdateState='AppliedSuccessfully';  HealthState='Success'; HasPrerequisiteUpdates=''; ReadyForUpdate=$false; Expected='UpToDate' }
+        @{ UpdateState='Downloading';          HealthState='Success'; HasPrerequisiteUpdates=''; ReadyForUpdate=$false; Expected='NeedsInvestigation' }
+    ) {
+        $global:_grs_row = [pscustomobject]@{
+            UpdateState            = $UpdateState
+            HealthState            = $HealthState
+            HasPrerequisiteUpdates = $HasPrerequisiteUpdates
+            ReadyForUpdate         = $ReadyForUpdate
+        }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Get-AzLocalClusterReadinessStatus -ReadinessRow $global:_grs_row
+        }
+        $result | Should -Be $Expected
+    }
+
+    It 'REGRESSION: AppliedSuccessfully with already-installed updates listed in AllAvailableUpdates is UpToDate (not NeedsInvestigation)' {
+        # The production bug: a cluster that has applied every update still carries
+        # the installed package names in AllAvailableUpdates. The cascade must NOT
+        # require AllAvailableUpdates to be empty.
+        $global:_grs_row = [pscustomobject]@{
+            UpdateState            = 'AppliedSuccessfully'
+            HealthState            = 'Success'
+            HasPrerequisiteUpdates = ''
+            ReadyForUpdate         = $false
+            AllAvailableUpdates    = '12.2605.1003.210; 12.2510.0.999'
+        }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Get-AzLocalClusterReadinessStatus -ReadinessRow $global:_grs_row
+        }
+        $result | Should -Be 'UpToDate'
+    }
+
+    It 'Priority cascade: UpdateFailed wins over a Failure health state' {
+        $global:_grs_row = [pscustomobject]@{
+            UpdateState            = 'UpdateFailed'
+            HealthState            = 'Failure'
+            HasPrerequisiteUpdates = '12.2510.0.1'
+            ReadyForUpdate         = $false
+        }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Get-AzLocalClusterReadinessStatus -ReadinessRow $global:_grs_row
+        }
+        $result | Should -Be 'UpdateFailed'
+    }
+
+    It 'Strict-mode-safe when optional properties are absent (returns NeedsInvestigation)' {
+        $global:_grs_row = [pscustomobject]@{ ClusterName = 'partial' }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Get-AzLocalClusterReadinessStatus -ReadinessRow $global:_grs_row
+        }
+        $result | Should -Be 'NeedsInvestigation'
+    }
+}
+#endregion v0.8.74: Get-AzLocalClusterReadinessStatus
+
+#region v0.8.74: Export-AzLocalClusterReadinessGateReport (Step.7 status column)
+Describe 'Thin-YAML Step.7: Export-AzLocalClusterReadinessGateReport' {
+
+    BeforeEach {
+        $script:_s7_savedGhActions = $env:GITHUB_ACTIONS
+        $script:_s7_savedTfBuild   = $env:TF_BUILD
+        $script:_s7_savedGhOutput  = $env:GITHUB_OUTPUT
+        $script:_s7_savedGhSummary = $env:GITHUB_STEP_SUMMARY
+        Remove-Item Env:\GITHUB_ACTIONS      -ErrorAction SilentlyContinue
+        Remove-Item Env:\TF_BUILD            -ErrorAction SilentlyContinue
+        Remove-Item Env:\GITHUB_OUTPUT       -ErrorAction SilentlyContinue
+        Remove-Item Env:\GITHUB_STEP_SUMMARY -ErrorAction SilentlyContinue
+
+        $script:_s7_outDir        = Join-Path -Path $env:TEMP -ChildPath ("s7-out-{0}"        -f ([Guid]::NewGuid()))
+        $script:_s7_ghOutputFile  = Join-Path -Path $env:TEMP -ChildPath ("s7-gh-output-{0}"  -f ([Guid]::NewGuid()))
+        $script:_s7_ghSummaryFile = Join-Path -Path $env:TEMP -ChildPath ("s7-gh-summary-{0}.md" -f ([Guid]::NewGuid()))
+        New-Item -ItemType Directory -Path $script:_s7_outDir       -Force | Out-Null
+        New-Item -ItemType File      -Path $script:_s7_ghOutputFile  -Force | Out-Null
+        New-Item -ItemType File      -Path $script:_s7_ghSummaryFile -Force | Out-Null
+    }
+
+    AfterEach {
+        if ($null -ne $script:_s7_savedGhActions) { $env:GITHUB_ACTIONS      = $script:_s7_savedGhActions } else { Remove-Item Env:\GITHUB_ACTIONS      -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_s7_savedTfBuild)   { $env:TF_BUILD            = $script:_s7_savedTfBuild   } else { Remove-Item Env:\TF_BUILD            -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_s7_savedGhOutput)  { $env:GITHUB_OUTPUT       = $script:_s7_savedGhOutput  } else { Remove-Item Env:\GITHUB_OUTPUT       -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_s7_savedGhSummary) { $env:GITHUB_STEP_SUMMARY = $script:_s7_savedGhSummary } else { Remove-Item Env:\GITHUB_STEP_SUMMARY -ErrorAction SilentlyContinue }
+        foreach ($p in @($script:_s7_ghOutputFile, $script:_s7_ghSummaryFile)) {
+            if ($p -and (Test-Path -LiteralPath $p)) { Remove-Item -LiteralPath $p -Force -ErrorAction SilentlyContinue }
+        }
+        if ($script:_s7_outDir -and (Test-Path -LiteralPath $script:_s7_outDir)) {
+            Remove-Item -LiteralPath $script:_s7_outDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'PassThru splits Ready / UpToDate / NotReady and emits UP_TO_DATE_COUNT output' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s7_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s7_ghSummaryFile
+        $global:_s7_outDir    = $script:_s7_outDir
+        $global:_s7_readiness = @(
+            [pscustomobject]@{ ClusterName='ready';  ClusterResourceId='/subscriptions/s1/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/ready'
+                               UpdateState='UpdateAvailable'; HealthState='Success'; ReadyForUpdate=$true;  HasPrerequisiteUpdates=''
+                               AllAvailableUpdates='12.2510.0.999'; CurrentVersion='12.2509.0.0'; RecommendedUpdate='12.2510.0.999'; BlockingReasons='' }
+            [pscustomobject]@{ ClusterName='dallas'; ClusterResourceId='/subscriptions/s1/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/dallas'
+                               UpdateState='AppliedSuccessfully'; HealthState='Success'; ReadyForUpdate=$false; HasPrerequisiteUpdates=''
+                               AllAvailableUpdates='12.2605.1003.210'; CurrentVersion='12.2605.1003.210'; RecommendedUpdate=''; BlockingReasons='' }
+            [pscustomobject]@{ ClusterName='broken'; ClusterResourceId='/subscriptions/s1/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/broken'
+                               UpdateState='Failed'; HealthState='Failure'; ReadyForUpdate=$false; HasPrerequisiteUpdates=''
+                               AllAvailableUpdates='12.2510.0.999'; CurrentVersion='12.2509.0.0'; RecommendedUpdate='12.2510.0.999'; BlockingReasons='Critical Health Status: Failed' }
+        )
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterUpdateReadiness { @($global:_s7_readiness) }
+            Export-AzLocalClusterReadinessGateReport -UpdateRing 'Wave1' -OutputDirectory $global:_s7_outDir -PassThru
+        }
+        $result.TotalCount    | Should -Be 3
+        $result.ReadyCount    | Should -Be 1
+        $result.UpToDateCount | Should -Be 1
+        $result.NotReadyCount | Should -Be 1
+
+        $out = Get-Content -LiteralPath $script:_s7_ghOutputFile -Raw
+        $out | Should -Match 'UP_TO_DATE_COUNT=1'
+        $out | Should -Match 'READY_COUNT=1'
+
+        $summary = Get-Content -LiteralPath $script:_s7_ghSummaryFile -Raw
+        $summary | Should -Match '\*\*Up to Date:\*\* 1'
+        $summary | Should -Match 'Up to Date'
+        # The Status column header replaced the old binary "Ready?" header.
+        $summary | Should -Match '\| Status \|'
+    }
+}
+#endregion v0.8.74: Export-AzLocalClusterReadinessGateReport
 
 #region v0.8.5: Export-AzLocalFleetConnectivityStatusReport
 Describe 'Thin-YAML Step.4: Export-AzLocalFleetConnectivityStatusReport' {
@@ -16749,7 +17151,101 @@ Describe 'Thin-YAML Step.6: Add-AzLocalNoReadyClustersStepSummary' {
             $script:S6CmdN.Parameters['PassThru'].ParameterType.Name | Should -Be 'SwitchParameter'
         }
     }
+
+    Context 'Rendering (v0.8.74 empty-ring clarity)' {
+
+        BeforeAll {
+            $script:S6N_PriorGh = $env:GITHUB_ACTIONS
+            $script:S6N_PriorTf = $env:TF_BUILD
+        }
+
+        AfterAll {
+            if ($null -ne $script:S6N_PriorGh) { $env:GITHUB_ACTIONS = $script:S6N_PriorGh } else { Remove-Item Env:GITHUB_ACTIONS -ErrorAction SilentlyContinue }
+            if ($null -ne $script:S6N_PriorTf) { $env:TF_BUILD = $script:S6N_PriorTf } else { Remove-Item Env:TF_BUILD -ErrorAction SilentlyContinue }
+        }
+
+        BeforeEach {
+            # Force the Local host so the summary is written to a temp file we can read back.
+            Remove-Item Env:GITHUB_ACTIONS -ErrorAction SilentlyContinue
+            Remove-Item Env:TF_BUILD       -ErrorAction SilentlyContinue
+            $script:S6N_SummaryName = "s6n-noready-{0}.md" -f ([Guid]::NewGuid())
+            $script:S6N_SummaryPath = Join-Path -Path $env:TEMP -ChildPath $script:S6N_SummaryName
+            Remove-Item -LiteralPath $script:S6N_SummaryPath -ErrorAction SilentlyContinue
+        }
+
+        AfterEach {
+            if ($script:S6N_SummaryPath -and (Test-Path -LiteralPath $script:S6N_SummaryPath)) {
+                Remove-Item -LiteralPath $script:S6N_SummaryPath -Force -ErrorAction SilentlyContinue
+            }
+        }
+
+        It 'Empty ring renders the "No UpdateRing Scheduled for This Firing" section (NOT the misleading no-clusters-found text)' {
+            $null = Add-AzLocalNoReadyClustersStepSummary -UpdateRing '' -TotalCount 0 `
+                -SummaryFileName $script:S6N_SummaryName -WarningVariable s6nWarn -WarningAction SilentlyContinue
+            $content = Get-Content -LiteralPath $script:S6N_SummaryPath -Raw
+            $content | Should -Match 'No UpdateRing Scheduled for This Firing'
+            $content | Should -Match 'This is expected'
+            $content | Should -Not -Match "No clusters found with UpdateRing tag value"
+        }
+
+        It 'Empty ring does NOT emit a warning (expected idle firing, not a fault)' {
+            $null = Add-AzLocalNoReadyClustersStepSummary -UpdateRing '   ' -TotalCount 0 `
+                -SummaryFileName $script:S6N_SummaryName -WarningVariable s6nWarn -WarningAction SilentlyContinue
+            @($s6nWarn).Count | Should -Be 0
+        }
+
+        It 'Non-empty ring with TotalCount=0 still renders "No clusters found with UpdateRing tag value" and warns' {
+            $null = Add-AzLocalNoReadyClustersStepSummary -UpdateRing 'Wave1' -TotalCount 0 `
+                -SummaryFileName $script:S6N_SummaryName -WarningVariable s6nWarn -WarningAction SilentlyContinue
+            $content = Get-Content -LiteralPath $script:S6N_SummaryPath -Raw
+            $content | Should -Match 'No Clusters Ready for Update'
+            $content | Should -Match "No clusters found with UpdateRing tag value 'Wave1'"
+            @($s6nWarn).Count | Should -BeGreaterThan 0
+        }
+
+        It 'Non-empty ring with TotalCount>0 renders the "Found N cluster(s) ... but none are ready" message' {
+            $null = Add-AzLocalNoReadyClustersStepSummary -UpdateRing 'Prod' -TotalCount 3 `
+                -SummaryFileName $script:S6N_SummaryName -WarningVariable s6nWarn -WarningAction SilentlyContinue
+            $content = Get-Content -LiteralPath $script:S6N_SummaryPath -Raw
+            $content | Should -Match "Found 3 cluster\(s\) with UpdateRing='Prod', but none are ready"
+            @($s6nWarn).Count | Should -BeGreaterThan 0
+        }
+
+        It 'With Up-to-Date / Not-Ready breakdown renders the outcome table with both counts' {
+            $null = Add-AzLocalNoReadyClustersStepSummary -UpdateRing 'Prod' -TotalCount 5 -UpToDateCount 3 -NotReadyCount 2 `
+                -SummaryFileName $script:S6N_SummaryName -WarningVariable s6nWarn -WarningAction SilentlyContinue
+            $content = Get-Content -LiteralPath $script:S6N_SummaryPath -Raw
+            $content | Should -Match '\| Outcome \| Clusters \|'
+            $content | Should -Match 'Up to Date \(already fully patched - no action needed\) \| 3 \|'
+            $content | Should -Match 'Not Ready \(needs attention before updating\) \| 2 \|'
+            $content | Should -Match 'Check Update Readiness'
+        }
+
+        It 'When all clusters are up to date (NotReadyCount=0) emphasises the healthy steady state' {
+            $null = Add-AzLocalNoReadyClustersStepSummary -UpdateRing 'Prod' -TotalCount 4 -UpToDateCount 4 -NotReadyCount 0 `
+                -SummaryFileName $script:S6N_SummaryName -WarningVariable s6nWarn -WarningAction SilentlyContinue
+            $content = Get-Content -LiteralPath $script:S6N_SummaryPath -Raw
+            $content | Should -Match 'All 4 cluster\(s\) tagged UpdateRing=''Prod'' are already up to date'
+            $content | Should -Match 'healthy steady state'
+            $content | Should -Match 'Up to Date \(already fully patched - no action needed\) \| 4 \|'
+        }
+
+        It 'When all clusters are up to date does NOT emit a warning (healthy steady state)' {
+            $null = Add-AzLocalNoReadyClustersStepSummary -UpdateRing 'Prod' -TotalCount 4 -UpToDateCount 4 -NotReadyCount 0 `
+                -SummaryFileName $script:S6N_SummaryName -WarningVariable s6nWarn -WarningAction SilentlyContinue
+            @($s6nWarn).Count | Should -Be 0
+        }
+
+        It 'Empty-string breakdown counts fall back to the generic "Possible reasons" list (no parse throw)' {
+            { Add-AzLocalNoReadyClustersStepSummary -UpdateRing 'Prod' -TotalCount 3 -UpToDateCount '' -NotReadyCount '' `
+                -SummaryFileName $script:S6N_SummaryName -WarningAction SilentlyContinue } | Should -Not -Throw
+            $content = Get-Content -LiteralPath $script:S6N_SummaryPath -Raw
+            $content | Should -Match 'Possible reasons:'
+            $content | Should -Match "Found 3 cluster\(s\) with UpdateRing='Prod', but none are ready"
+        }
+    }
 }
+
 
 Describe 'Thin-YAML Step.6: Invoke-AzLocalItsmTicketingFromArtifact' {
 

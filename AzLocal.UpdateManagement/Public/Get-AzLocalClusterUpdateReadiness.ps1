@@ -578,14 +578,13 @@ function Get-AzLocalClusterUpdateReadiness {
     $totalClusters = $results.Count
     $readyForUpdateClusters = @($results | Where-Object { $_.ReadyForUpdate -eq $true }).Count
     # v0.7.99: UpToDate is now its own bucket (was previously rolled into NotReady).
-    # A cluster is UpToDate when its UpdateState is UpToDate/AppliedSuccessfully AND it
-    # has no remaining available updates to install. Previous reporting buried these in
-    # the catch-all NotReady total even though no action was required.
-    $upToDateClusters = @($results | Where-Object {
-            $_.ReadyForUpdate -ne $true -and
-            $_.UpdateState -in @('UpToDate', 'AppliedSuccessfully') -and
-            [string]::IsNullOrEmpty([string]$_.AllAvailableUpdates)
-        }).Count
+    # v0.8.74: classification uses the shared Get-AzLocalClusterReadinessStatus
+    # priority cascade (identical to Step.5 / Step.7 / Step.9). The previous strict
+    # IsNullOrEmpty(AllAvailableUpdates) test silently returned zero because a
+    # cluster that has applied all updates still lists the already-installed
+    # packages in AllAvailableUpdates - so up-to-date clusters were mis-counted
+    # into the catch-all NotReady total even though no action was required.
+    $upToDateClusters = @($results | Where-Object { (Get-AzLocalClusterReadinessStatus -ReadinessRow $_) -eq 'UpToDate' }).Count
     $notReadyForUpdateClusters = $totalClusters - $readyForUpdateClusters - $upToDateClusters
     $inProgressClusters = @($results | Where-Object { $_.UpdateState -eq "UpdateInProgress" }).Count
     $prereqClusters = @($results | Where-Object { $_.HasPrerequisiteUpdates -ne "" }).Count

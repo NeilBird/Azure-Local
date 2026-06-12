@@ -405,7 +405,29 @@ function Get-AzLocalFleetStatusData {
                         $currentStep = ''; $currentStepDetail = ''; $runProgress = ''
                         if ($latestProps.progress -and $latestProps.progress.steps) {
                             $steps = $latestProps.progress.steps
-                            $runProgress = "$(@($steps | Where-Object { $_.status -eq 'Success' }).Count)/$(@($steps).Count) steps"
+                            # Progress must reflect the DEEP nested step tree, not the coarse top-level
+                            # wrapper. Real Azure Local update runs expose only ~2 top-level steps
+                            # ("Prepare update" + "Start update"), so counting at the top reports a
+                            # near-constant "1/2 steps" for the whole multi-hour run. Walk to leaf
+                            # steps via Get-AzLocalUpdateRunStepStats so the Progress column rendered
+                            # in the standalone HTML report (Recent Update Run History) and the
+                            # latest-runs.csv climbs as the install proceeds - matching the Step.7
+                            # monitor output formatted by Format-AzLocalUpdateRun.
+                            $stepStats = Get-AzLocalUpdateRunStepStats -Steps $steps
+                            if ($stepStats.TotalLeaf -gt 0) {
+                                $pct = [int][math]::Round((($stepStats.CompletedLeaf / $stepStats.TotalLeaf) * 100))
+                                $runProgress = "$($stepStats.CompletedLeaf)/$($stepStats.TotalLeaf) steps ($pct%)"
+                                if ($stepStats.FailedLeaf -gt 0) {
+                                    $runProgress = "$runProgress, $($stepStats.FailedLeaf) failed"
+                                }
+                            }
+                            else {
+                                # Defensive fallback: no leaves resolved. Use the top-level Success
+                                # count so the column is never blank. Guarded property read for strict mode.
+                                $completedSteps = @($steps | Where-Object { $_.PSObject.Properties['status'] -and $_.status -eq 'Success' }).Count
+                                $totalSteps = @($steps).Count
+                                $runProgress = "$completedSteps/$totalSteps steps"
+                            }
                             # Walk to the deepest InProgress/Error/Failed step rather than the
                             # coarse top-level wrapper (e.g. "Start update"), so CurrentStep stays
                             # consistent with CurrentStepDetail / the standard update-progress output.

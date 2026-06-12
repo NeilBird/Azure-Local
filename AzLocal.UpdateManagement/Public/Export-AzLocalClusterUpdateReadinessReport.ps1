@@ -264,12 +264,13 @@ function Export-AzLocalClusterUpdateReadinessReport {
 
     # v0.7.99: 3-bucket model matches Get-AzLocalClusterUpdateReadiness Summary.
     # UpToDate clusters are NOT rolled into NotReady - they are a distinct bucket.
-    $readyForUpdate = @($readiness | Where-Object { $_.ReadyForUpdate -eq $true }).Count
-    $upToDate = @($readiness | Where-Object {
-            $_.ReadyForUpdate -ne $true -and
-            $_.UpdateState -in @('UpToDate', 'AppliedSuccessfully') -and
-            [string]::IsNullOrEmpty([string]$_.AllAvailableUpdates)
-        }).Count
+    # v0.8.74: classification now uses the shared Get-AzLocalClusterReadinessStatus
+    # priority cascade (identical to Step.9) so a cluster that has applied all
+    # updates is counted as Up to Date even though its AllAvailableUpdates still
+    # lists the already-installed packages. The previous strict
+    # IsNullOrEmpty(AllAvailableUpdates) test silently returned zero.
+    $readyForUpdate = @($readiness | Where-Object { (Get-AzLocalClusterReadinessStatus -ReadinessRow $_) -eq 'ReadyForUpdate' }).Count
+    $upToDate = @($readiness | Where-Object { (Get-AzLocalClusterReadinessStatus -ReadinessRow $_) -eq 'UpToDate' }).Count
     $total = @($readiness).Count
     $notReady = $total - $readyForUpdate - $upToDate
 
@@ -376,7 +377,11 @@ function Export-AzLocalClusterUpdateReadinessReport {
     [void]$md.Add('')
 
     # 4. Not-Ready cluster table (blocking findings first)
-    $notReadyRows = @($readiness | Where-Object { $_.ReadyForUpdate -ne $true })
+    # v0.8.74: exclude Up-to-Date clusters (and Ready clusters) - they require no
+    # action and previously cluttered this "review first" table, implying failure.
+    $notReadyRows = @($readiness | Where-Object {
+            (Get-AzLocalClusterReadinessStatus -ReadinessRow $_) -notin @('ReadyForUpdate', 'UpToDate')
+        })
     if ($notReadyRows.Count -gt 0) {
         [void]$md.Add('### Not-Ready clusters (review first)')
         [void]$md.Add('')
@@ -416,12 +421,8 @@ function Export-AzLocalClusterUpdateReadinessReport {
         [void]$md.Add('| UpdateRing | Total | Ready for Update | Up to Date | Not Ready for Update |')
         [void]$md.Add('|------------|-------|------------------|------------|----------------------|')
         foreach ($g in $ringGroups) {
-            $gReady = @($g.Group | Where-Object { $_.ReadyForUpdate -eq $true }).Count
-            $gUpToDate = @($g.Group | Where-Object {
-                    $_.ReadyForUpdate -ne $true -and
-                    $_.UpdateState -in @('UpToDate', 'AppliedSuccessfully') -and
-                    [string]::IsNullOrEmpty([string]$_.AllAvailableUpdates)
-                }).Count
+            $gReady = @($g.Group | Where-Object { (Get-AzLocalClusterReadinessStatus -ReadinessRow $_) -eq 'ReadyForUpdate' }).Count
+            $gUpToDate = @($g.Group | Where-Object { (Get-AzLocalClusterReadinessStatus -ReadinessRow $_) -eq 'UpToDate' }).Count
             $gNotReady = $g.Count - $gReady - $gUpToDate
             [void]$md.Add("| $($g.Name) | $($g.Count) | $gReady | $gUpToDate | $gNotReady |")
         }
@@ -432,14 +433,24 @@ function Export-AzLocalClusterUpdateReadinessReport {
     if ($total -gt 0) {
         [void]$md.Add('### All clusters detail')
         [void]$md.Add('')
-        [void]$md.Add('| Cluster | UpdateRing | Current version | Current SBE version | Update state | Health | Ready | Recommended update |')
-        [void]$md.Add('|---------|------------|-----------------|---------------------|--------------|--------|-------|--------------------|')
+        [void]$md.Add('| Cluster | UpdateRing | Current version | Current SBE version | Update state | Health | Status | Recommended update |')
+        [void]$md.Add('|---------|------------|-----------------|---------------------|--------------|--------|--------|--------------------|')
         foreach ($r in ($readiness | Sort-Object @{Expression={ if ($ringByResourceId.ContainsKey($_.ClusterResourceId)) { $ringByResourceId[$_.ClusterResourceId] } else { 'zzz' } }}, ClusterName)) {
             $ring = if ($ringByResourceId.ContainsKey($r.ClusterResourceId)) { $ringByResourceId[$r.ClusterResourceId] } else { '-' }
             $cv  = if ($r.CurrentVersion) { $r.CurrentVersion } else { '-' }
             $csv = if ($r.PSObject.Properties['CurrentSbeVersion'] -and $r.CurrentSbeVersion) { $r.CurrentSbeVersion } else { '-' }
             $ru  = if ($r.RecommendedUpdate) { $r.RecommendedUpdate } else { '-' }
-            [void]$md.Add("| $($r.ClusterName) | $ring | $cv | $csv | $($r.UpdateState) | $($r.HealthState) | $($r.ReadyForUpdate) | $ru |")
+            $statusLabel = switch (Get-AzLocalClusterReadinessStatus -ReadinessRow $r) {
+                'ReadyForUpdate'     { 'Ready for Update' }
+                'UpToDate'           { 'Up to Date' }
+                'InProgress'         { 'In Progress' }
+                'SbeBlocked'         { 'SBE Prerequisite' }
+                'HealthFailure'      { 'Health Failure' }
+                'UpdateFailed'       { 'Update Failed' }
+                'ActionRequired'     { 'Action Required' }
+                default              { 'Needs Investigation' }
+            }
+            [void]$md.Add("| $($r.ClusterName) | $ring | $cv | $csv | $($r.UpdateState) | $($r.HealthState) | $statusLabel | $ru |")
         }
         [void]$md.Add('')
     }
