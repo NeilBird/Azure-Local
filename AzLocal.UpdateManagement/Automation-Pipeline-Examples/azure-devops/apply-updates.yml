@@ -120,7 +120,7 @@ variables:
   # log if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
   - name: GENERATED_AGAINST_MODULE_VERSION
-    value: '0.8.73'
+    value: '0.8.74'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): queue-time parameter > pipeline variable
   # 'REQUIRED_MODULE_VERSION' overridden at queue time > empty (latest).
@@ -511,6 +511,11 @@ stages:
 
         variables:
           totalCount: $[ stageDependencies.CheckReadiness.ReadinessCheck.outputs['readiness.TotalCount'] ]
+          # v0.8.74: Up-to-Date vs Not-Ready breakdown so the summary can
+          # explain WHY there is nothing to apply (already-patched clusters are
+          # a healthy steady state, not a failure).
+          upToDateCount: $[ stageDependencies.CheckReadiness.ReadinessCheck.outputs['readiness.UpToDateCount'] ]
+          notReadyCount: $[ stageDependencies.CheckReadiness.ReadinessCheck.outputs['readiness.NotReadyCount'] ]
           # report the resolved ring (not the raw parameter input) so
           # scheduled runs surface the actual ring the resolver picked.
           resolvedUpdateRing: $[ stageDependencies.CheckReadiness.ReadinessCheck.outputs['resolveRing.RESOLVED_UPDATE_RING'] ]
@@ -542,4 +547,4 @@ stages:
               pwsh: true
               script: |
                 Import-Module AzLocal.UpdateManagement -Force
-                Add-AzLocalNoReadyClustersStepSummary -UpdateRing $env:RESOLVED_UPDATE_RING -TotalCount "$(totalCount)"
+                Add-AzLocalNoReadyClustersStepSummary -UpdateRing $env:RESOLVED_UPDATE_RING -TotalCount "$(totalCount)" -UpToDateCount "$(upToDateCount)" -NotReadyCount "$(notReadyCount)"

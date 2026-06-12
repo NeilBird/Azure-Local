@@ -361,6 +361,9 @@ function Export-AzLocalFleetUpdateStatusReport {
     # Cluster is counted exactly once. Priority (first match wins):
     #   UpdateFailed > ActionRequired > HealthFailure > SbeBlocked >
     #   InProgress > ReadyForUpdate > UpToDate > NeedsInvestigation
+    # v0.8.74: the cascade lives in the shared Private helper
+    # Get-AzLocalClusterReadinessStatus so Step.5 / Step.7 / Step.9 classify
+    # "Up to Date" identically (was previously re-implemented inline here).
     $failureStates = @('Failed','UpdateFailed','NeedsAttention','PreparationFailed')
     $stUpdateFailed = 0
     $stActionRequired = 0
@@ -371,14 +374,16 @@ function Export-AzLocalFleetUpdateStatusReport {
     $stUpToDate = 0
     $stOther = 0
     foreach ($c in $readiness) {
-        if ($c.UpdateState -in @('Failed','UpdateFailed','NeedsAttention'))      { $stUpdateFailed++ }
-        elseif ($c.UpdateState -eq 'PreparationFailed')                          { $stActionRequired++ }
-        elseif ($c.HealthState -eq 'Failure')                                    { $stHealthFailure++ }
-        elseif ($c.HasPrerequisiteUpdates)                                       { $stSbeBlocked++ }
-        elseif ($c.UpdateState -in @('UpdateInProgress','PreparationInProgress')){ $stInProgress++ }
-        elseif ($c.ReadyForUpdate -eq $true)                                     { $stReadyForUpdate++ }
-        elseif ($c.UpdateState -in @('UpToDate','AppliedSuccessfully'))          { $stUpToDate++ }
-        else                                                                     { $stOther++ }
+        switch (Get-AzLocalClusterReadinessStatus -ReadinessRow $c) {
+            'UpdateFailed'   { $stUpdateFailed++ }
+            'ActionRequired' { $stActionRequired++ }
+            'HealthFailure'  { $stHealthFailure++ }
+            'SbeBlocked'     { $stSbeBlocked++ }
+            'InProgress'     { $stInProgress++ }
+            'ReadyForUpdate' { $stReadyForUpdate++ }
+            'UpToDate'       { $stUpToDate++ }
+            default          { $stOther++ }
+        }
     }
     $hasPrerequisite = @($readiness | Where-Object { $_.HasPrerequisiteUpdates -ne '' -and $null -ne $_.HasPrerequisiteUpdates }).Count
 
@@ -396,21 +401,13 @@ function Export-AzLocalFleetUpdateStatusReport {
         TotalClusters = $totalTests
         Summary       = [ordered]@{
             ReadyForUpdate    = @($readiness | Where-Object { $_.ReadyForUpdate -eq $true }).Count
-            UpToDate          = @($readiness | Where-Object {
-                $_.ReadyForUpdate -ne $true -and
-                $_.UpdateState -in @('UpToDate','AppliedSuccessfully') -and
-                [string]::IsNullOrEmpty([string]$_.AllAvailableUpdates)
-            }).Count
+            UpToDate          = $stUpToDate
             InProgress        = @($readiness | Where-Object { $_.UpdateState -in @('UpdateInProgress','PreparationInProgress') }).Count
             HealthFailures    = @($readiness | Where-Object { $_.HealthState -eq 'Failure' }).Count
             UpdateFailures    = @($readiness | Where-Object { $_.UpdateState -in @('Failed','UpdateFailed','NeedsAttention') }).Count
             ActionRequired    = @($readiness | Where-Object { $_.UpdateState -eq 'PreparationFailed' }).Count
             HasPrerequisite   = $hasPrerequisite
-            NotReadyForUpdate = @($readiness | Where-Object {
-                $_.ReadyForUpdate -ne $true -and
-                ($_.UpdateState -notin @('UpdateInProgress','PreparationInProgress')) -and
-                -not ($_.UpdateState -in @('UpToDate','AppliedSuccessfully') -and [string]::IsNullOrEmpty([string]$_.AllAvailableUpdates))
-            }).Count
+            NotReadyForUpdate = ($totalTests - $stReadyForUpdate - $stUpToDate - $stInProgress)
         }
         Clusters      = $readiness
     }

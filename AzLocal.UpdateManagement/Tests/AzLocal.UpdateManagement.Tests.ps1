@@ -34,8 +34,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $script:ModuleInfo | Should -Not -BeNullOrEmpty
         }
 
-        It 'Should have version 0.8.73' {
-            $script:ModuleInfo.Version | Should -Be '0.8.73'
+        It 'Should have version 0.8.74' {
+            $script:ModuleInfo.Version | Should -Be '0.8.74'
         }
 
         It 'Module version constants are in sync between .psm1 and .psd1' {
@@ -15563,6 +15563,147 @@ Describe 'Thin-YAML Step.5: Export-AzLocalClusterUpdateReadinessReport' {
 
 #endregion v0.8.5: Export-AzLocalClusterUpdateReadinessReport
 
+#region v0.8.74: Get-AzLocalClusterReadinessStatus (shared readiness cascade)
+Describe 'Private: Get-AzLocalClusterReadinessStatus' {
+
+    It 'Classifies <Expected> for UpdateState=<UpdateState> Health=<HealthState> Prereq=<HasPrerequisiteUpdates> Ready=<ReadyForUpdate>' -ForEach @(
+        @{ UpdateState='Failed';               HealthState='Success'; HasPrerequisiteUpdates=''; ReadyForUpdate=$false; Expected='UpdateFailed' }
+        @{ UpdateState='UpdateFailed';         HealthState='Success'; HasPrerequisiteUpdates=''; ReadyForUpdate=$false; Expected='UpdateFailed' }
+        @{ UpdateState='NeedsAttention';       HealthState='Success'; HasPrerequisiteUpdates=''; ReadyForUpdate=$false; Expected='UpdateFailed' }
+        @{ UpdateState='PreparationFailed';    HealthState='Success'; HasPrerequisiteUpdates=''; ReadyForUpdate=$false; Expected='ActionRequired' }
+        @{ UpdateState='UpToDate';             HealthState='Failure'; HasPrerequisiteUpdates=''; ReadyForUpdate=$false; Expected='HealthFailure' }
+        @{ UpdateState='UpdateAvailable';      HealthState='Success'; HasPrerequisiteUpdates='12.2510.0.1'; ReadyForUpdate=$false; Expected='SbeBlocked' }
+        @{ UpdateState='UpdateInProgress';     HealthState='Success'; HasPrerequisiteUpdates=''; ReadyForUpdate=$false; Expected='InProgress' }
+        @{ UpdateState='PreparationInProgress';HealthState='Success'; HasPrerequisiteUpdates=''; ReadyForUpdate=$false; Expected='InProgress' }
+        @{ UpdateState='UpdateAvailable';      HealthState='Success'; HasPrerequisiteUpdates=''; ReadyForUpdate=$true;  Expected='ReadyForUpdate' }
+        @{ UpdateState='UpToDate';             HealthState='Success'; HasPrerequisiteUpdates=''; ReadyForUpdate=$false; Expected='UpToDate' }
+        @{ UpdateState='AppliedSuccessfully';  HealthState='Success'; HasPrerequisiteUpdates=''; ReadyForUpdate=$false; Expected='UpToDate' }
+        @{ UpdateState='Downloading';          HealthState='Success'; HasPrerequisiteUpdates=''; ReadyForUpdate=$false; Expected='NeedsInvestigation' }
+    ) {
+        $global:_grs_row = [pscustomobject]@{
+            UpdateState            = $UpdateState
+            HealthState            = $HealthState
+            HasPrerequisiteUpdates = $HasPrerequisiteUpdates
+            ReadyForUpdate         = $ReadyForUpdate
+        }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Get-AzLocalClusterReadinessStatus -ReadinessRow $global:_grs_row
+        }
+        $result | Should -Be $Expected
+    }
+
+    It 'REGRESSION: AppliedSuccessfully with already-installed updates listed in AllAvailableUpdates is UpToDate (not NeedsInvestigation)' {
+        # The production bug: a cluster that has applied every update still carries
+        # the installed package names in AllAvailableUpdates. The cascade must NOT
+        # require AllAvailableUpdates to be empty.
+        $global:_grs_row = [pscustomobject]@{
+            UpdateState            = 'AppliedSuccessfully'
+            HealthState            = 'Success'
+            HasPrerequisiteUpdates = ''
+            ReadyForUpdate         = $false
+            AllAvailableUpdates    = '12.2605.1003.210; 12.2510.0.999'
+        }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Get-AzLocalClusterReadinessStatus -ReadinessRow $global:_grs_row
+        }
+        $result | Should -Be 'UpToDate'
+    }
+
+    It 'Priority cascade: UpdateFailed wins over a Failure health state' {
+        $global:_grs_row = [pscustomobject]@{
+            UpdateState            = 'UpdateFailed'
+            HealthState            = 'Failure'
+            HasPrerequisiteUpdates = '12.2510.0.1'
+            ReadyForUpdate         = $false
+        }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Get-AzLocalClusterReadinessStatus -ReadinessRow $global:_grs_row
+        }
+        $result | Should -Be 'UpdateFailed'
+    }
+
+    It 'Strict-mode-safe when optional properties are absent (returns NeedsInvestigation)' {
+        $global:_grs_row = [pscustomobject]@{ ClusterName = 'partial' }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Get-AzLocalClusterReadinessStatus -ReadinessRow $global:_grs_row
+        }
+        $result | Should -Be 'NeedsInvestigation'
+    }
+}
+#endregion v0.8.74: Get-AzLocalClusterReadinessStatus
+
+#region v0.8.74: Export-AzLocalClusterReadinessGateReport (Step.7 status column)
+Describe 'Thin-YAML Step.7: Export-AzLocalClusterReadinessGateReport' {
+
+    BeforeEach {
+        $script:_s7_savedGhActions = $env:GITHUB_ACTIONS
+        $script:_s7_savedTfBuild   = $env:TF_BUILD
+        $script:_s7_savedGhOutput  = $env:GITHUB_OUTPUT
+        $script:_s7_savedGhSummary = $env:GITHUB_STEP_SUMMARY
+        Remove-Item Env:\GITHUB_ACTIONS      -ErrorAction SilentlyContinue
+        Remove-Item Env:\TF_BUILD            -ErrorAction SilentlyContinue
+        Remove-Item Env:\GITHUB_OUTPUT       -ErrorAction SilentlyContinue
+        Remove-Item Env:\GITHUB_STEP_SUMMARY -ErrorAction SilentlyContinue
+
+        $script:_s7_outDir        = Join-Path -Path $env:TEMP -ChildPath ("s7-out-{0}"        -f ([Guid]::NewGuid()))
+        $script:_s7_ghOutputFile  = Join-Path -Path $env:TEMP -ChildPath ("s7-gh-output-{0}"  -f ([Guid]::NewGuid()))
+        $script:_s7_ghSummaryFile = Join-Path -Path $env:TEMP -ChildPath ("s7-gh-summary-{0}.md" -f ([Guid]::NewGuid()))
+        New-Item -ItemType Directory -Path $script:_s7_outDir       -Force | Out-Null
+        New-Item -ItemType File      -Path $script:_s7_ghOutputFile  -Force | Out-Null
+        New-Item -ItemType File      -Path $script:_s7_ghSummaryFile -Force | Out-Null
+    }
+
+    AfterEach {
+        if ($null -ne $script:_s7_savedGhActions) { $env:GITHUB_ACTIONS      = $script:_s7_savedGhActions } else { Remove-Item Env:\GITHUB_ACTIONS      -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_s7_savedTfBuild)   { $env:TF_BUILD            = $script:_s7_savedTfBuild   } else { Remove-Item Env:\TF_BUILD            -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_s7_savedGhOutput)  { $env:GITHUB_OUTPUT       = $script:_s7_savedGhOutput  } else { Remove-Item Env:\GITHUB_OUTPUT       -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_s7_savedGhSummary) { $env:GITHUB_STEP_SUMMARY = $script:_s7_savedGhSummary } else { Remove-Item Env:\GITHUB_STEP_SUMMARY -ErrorAction SilentlyContinue }
+        foreach ($p in @($script:_s7_ghOutputFile, $script:_s7_ghSummaryFile)) {
+            if ($p -and (Test-Path -LiteralPath $p)) { Remove-Item -LiteralPath $p -Force -ErrorAction SilentlyContinue }
+        }
+        if ($script:_s7_outDir -and (Test-Path -LiteralPath $script:_s7_outDir)) {
+            Remove-Item -LiteralPath $script:_s7_outDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'PassThru splits Ready / UpToDate / NotReady and emits UP_TO_DATE_COUNT output' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s7_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s7_ghSummaryFile
+        $global:_s7_outDir    = $script:_s7_outDir
+        $global:_s7_readiness = @(
+            [pscustomobject]@{ ClusterName='ready';  ClusterResourceId='/subscriptions/s1/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/ready'
+                               UpdateState='UpdateAvailable'; HealthState='Success'; ReadyForUpdate=$true;  HasPrerequisiteUpdates=''
+                               AllAvailableUpdates='12.2510.0.999'; CurrentVersion='12.2509.0.0'; RecommendedUpdate='12.2510.0.999'; BlockingReasons='' }
+            [pscustomobject]@{ ClusterName='dallas'; ClusterResourceId='/subscriptions/s1/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/dallas'
+                               UpdateState='AppliedSuccessfully'; HealthState='Success'; ReadyForUpdate=$false; HasPrerequisiteUpdates=''
+                               AllAvailableUpdates='12.2605.1003.210'; CurrentVersion='12.2605.1003.210'; RecommendedUpdate=''; BlockingReasons='' }
+            [pscustomobject]@{ ClusterName='broken'; ClusterResourceId='/subscriptions/s1/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/broken'
+                               UpdateState='Failed'; HealthState='Failure'; ReadyForUpdate=$false; HasPrerequisiteUpdates=''
+                               AllAvailableUpdates='12.2510.0.999'; CurrentVersion='12.2509.0.0'; RecommendedUpdate='12.2510.0.999'; BlockingReasons='Critical Health Status: Failed' }
+        )
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterUpdateReadiness { @($global:_s7_readiness) }
+            Export-AzLocalClusterReadinessGateReport -UpdateRing 'Wave1' -OutputDirectory $global:_s7_outDir -PassThru
+        }
+        $result.TotalCount    | Should -Be 3
+        $result.ReadyCount    | Should -Be 1
+        $result.UpToDateCount | Should -Be 1
+        $result.NotReadyCount | Should -Be 1
+
+        $out = Get-Content -LiteralPath $script:_s7_ghOutputFile -Raw
+        $out | Should -Match 'UP_TO_DATE_COUNT=1'
+        $out | Should -Match 'READY_COUNT=1'
+
+        $summary = Get-Content -LiteralPath $script:_s7_ghSummaryFile -Raw
+        $summary | Should -Match '\*\*Up to Date:\*\* 1'
+        $summary | Should -Match 'Up to Date'
+        # The Status column header replaced the old binary "Ready?" header.
+        $summary | Should -Match '\| Status \|'
+    }
+}
+#endregion v0.8.74: Export-AzLocalClusterReadinessGateReport
+
 #region v0.8.5: Export-AzLocalFleetConnectivityStatusReport
 Describe 'Thin-YAML Step.4: Export-AzLocalFleetConnectivityStatusReport' {
 
@@ -16749,7 +16890,101 @@ Describe 'Thin-YAML Step.6: Add-AzLocalNoReadyClustersStepSummary' {
             $script:S6CmdN.Parameters['PassThru'].ParameterType.Name | Should -Be 'SwitchParameter'
         }
     }
+
+    Context 'Rendering (v0.8.74 empty-ring clarity)' {
+
+        BeforeAll {
+            $script:S6N_PriorGh = $env:GITHUB_ACTIONS
+            $script:S6N_PriorTf = $env:TF_BUILD
+        }
+
+        AfterAll {
+            if ($null -ne $script:S6N_PriorGh) { $env:GITHUB_ACTIONS = $script:S6N_PriorGh } else { Remove-Item Env:GITHUB_ACTIONS -ErrorAction SilentlyContinue }
+            if ($null -ne $script:S6N_PriorTf) { $env:TF_BUILD = $script:S6N_PriorTf } else { Remove-Item Env:TF_BUILD -ErrorAction SilentlyContinue }
+        }
+
+        BeforeEach {
+            # Force the Local host so the summary is written to a temp file we can read back.
+            Remove-Item Env:GITHUB_ACTIONS -ErrorAction SilentlyContinue
+            Remove-Item Env:TF_BUILD       -ErrorAction SilentlyContinue
+            $script:S6N_SummaryName = "s6n-noready-{0}.md" -f ([Guid]::NewGuid())
+            $script:S6N_SummaryPath = Join-Path -Path $env:TEMP -ChildPath $script:S6N_SummaryName
+            Remove-Item -LiteralPath $script:S6N_SummaryPath -ErrorAction SilentlyContinue
+        }
+
+        AfterEach {
+            if ($script:S6N_SummaryPath -and (Test-Path -LiteralPath $script:S6N_SummaryPath)) {
+                Remove-Item -LiteralPath $script:S6N_SummaryPath -Force -ErrorAction SilentlyContinue
+            }
+        }
+
+        It 'Empty ring renders the "No UpdateRing Scheduled for This Firing" section (NOT the misleading no-clusters-found text)' {
+            $null = Add-AzLocalNoReadyClustersStepSummary -UpdateRing '' -TotalCount 0 `
+                -SummaryFileName $script:S6N_SummaryName -WarningVariable s6nWarn -WarningAction SilentlyContinue
+            $content = Get-Content -LiteralPath $script:S6N_SummaryPath -Raw
+            $content | Should -Match 'No UpdateRing Scheduled for This Firing'
+            $content | Should -Match 'This is expected'
+            $content | Should -Not -Match "No clusters found with UpdateRing tag value"
+        }
+
+        It 'Empty ring does NOT emit a warning (expected idle firing, not a fault)' {
+            $null = Add-AzLocalNoReadyClustersStepSummary -UpdateRing '   ' -TotalCount 0 `
+                -SummaryFileName $script:S6N_SummaryName -WarningVariable s6nWarn -WarningAction SilentlyContinue
+            @($s6nWarn).Count | Should -Be 0
+        }
+
+        It 'Non-empty ring with TotalCount=0 still renders "No clusters found with UpdateRing tag value" and warns' {
+            $null = Add-AzLocalNoReadyClustersStepSummary -UpdateRing 'Wave1' -TotalCount 0 `
+                -SummaryFileName $script:S6N_SummaryName -WarningVariable s6nWarn -WarningAction SilentlyContinue
+            $content = Get-Content -LiteralPath $script:S6N_SummaryPath -Raw
+            $content | Should -Match 'No Clusters Ready for Update'
+            $content | Should -Match "No clusters found with UpdateRing tag value 'Wave1'"
+            @($s6nWarn).Count | Should -BeGreaterThan 0
+        }
+
+        It 'Non-empty ring with TotalCount>0 renders the "Found N cluster(s) ... but none are ready" message' {
+            $null = Add-AzLocalNoReadyClustersStepSummary -UpdateRing 'Prod' -TotalCount 3 `
+                -SummaryFileName $script:S6N_SummaryName -WarningVariable s6nWarn -WarningAction SilentlyContinue
+            $content = Get-Content -LiteralPath $script:S6N_SummaryPath -Raw
+            $content | Should -Match "Found 3 cluster\(s\) with UpdateRing='Prod', but none are ready"
+            @($s6nWarn).Count | Should -BeGreaterThan 0
+        }
+
+        It 'With Up-to-Date / Not-Ready breakdown renders the outcome table with both counts' {
+            $null = Add-AzLocalNoReadyClustersStepSummary -UpdateRing 'Prod' -TotalCount 5 -UpToDateCount 3 -NotReadyCount 2 `
+                -SummaryFileName $script:S6N_SummaryName -WarningVariable s6nWarn -WarningAction SilentlyContinue
+            $content = Get-Content -LiteralPath $script:S6N_SummaryPath -Raw
+            $content | Should -Match '\| Outcome \| Clusters \|'
+            $content | Should -Match 'Up to Date \(already fully patched - no action needed\) \| 3 \|'
+            $content | Should -Match 'Not Ready \(needs attention before updating\) \| 2 \|'
+            $content | Should -Match 'Check Update Readiness'
+        }
+
+        It 'When all clusters are up to date (NotReadyCount=0) emphasises the healthy steady state' {
+            $null = Add-AzLocalNoReadyClustersStepSummary -UpdateRing 'Prod' -TotalCount 4 -UpToDateCount 4 -NotReadyCount 0 `
+                -SummaryFileName $script:S6N_SummaryName -WarningVariable s6nWarn -WarningAction SilentlyContinue
+            $content = Get-Content -LiteralPath $script:S6N_SummaryPath -Raw
+            $content | Should -Match 'All 4 cluster\(s\) tagged UpdateRing=''Prod'' are already up to date'
+            $content | Should -Match 'healthy steady state'
+            $content | Should -Match 'Up to Date \(already fully patched - no action needed\) \| 4 \|'
+        }
+
+        It 'When all clusters are up to date does NOT emit a warning (healthy steady state)' {
+            $null = Add-AzLocalNoReadyClustersStepSummary -UpdateRing 'Prod' -TotalCount 4 -UpToDateCount 4 -NotReadyCount 0 `
+                -SummaryFileName $script:S6N_SummaryName -WarningVariable s6nWarn -WarningAction SilentlyContinue
+            @($s6nWarn).Count | Should -Be 0
+        }
+
+        It 'Empty-string breakdown counts fall back to the generic "Possible reasons" list (no parse throw)' {
+            { Add-AzLocalNoReadyClustersStepSummary -UpdateRing 'Prod' -TotalCount 3 -UpToDateCount '' -NotReadyCount '' `
+                -SummaryFileName $script:S6N_SummaryName -WarningAction SilentlyContinue } | Should -Not -Throw
+            $content = Get-Content -LiteralPath $script:S6N_SummaryPath -Raw
+            $content | Should -Match 'Possible reasons:'
+            $content | Should -Match "Found 3 cluster\(s\) with UpdateRing='Prod', but none are ready"
+        }
+    }
 }
+
 
 Describe 'Thin-YAML Step.6: Invoke-AzLocalItsmTicketingFromArtifact' {
 

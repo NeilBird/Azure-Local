@@ -3,7 +3,7 @@
     RootModule = 'AzLocal.UpdateManagement.psm1'
 
     # Version number of this module.
-    ModuleVersion = '0.8.73'
+    ModuleVersion = '0.8.74'
 
     # Supported PSEditions
     CompatiblePSEditions = @('Desktop', 'Core')
@@ -46,6 +46,7 @@
         'Private/Format-AzLocalDurationHuman.ps1',
         'Private/Format-AzLocalIncidentBody.ps1',
         'Private/Format-AzLocalUpdateRun.ps1',
+        'Private/Get-AzLocalClusterReadinessStatus.ps1',
         'Private/Get-AzLocalClusterUpdateRuns.ps1',
         'Private/Get-AzLocalItsmDedupeKey.ps1',
         'Private/Get-AzLocalItsmTriggerDecision.ps1',
@@ -307,6 +308,15 @@
 
             # ReleaseNotes of this module
             ReleaseNotes = @'
+## Version 0.8.74 - Consistent "Up to Date" classification across Step.5 / Step.7 / Step.9 readiness reports. No public API or export-count change (still 60).
+
+- **FIX (reporting)**: a cluster that has already applied every required update was being mis-classified. Step.5 (`Export-AzLocalClusterUpdateReadinessReport`) showed `0` in its "Up to date" summary count and listed fully-patched clusters in the "Not-Ready clusters (review first)" table; Step.7 (`Export-AzLocalClusterReadinessGateReport`) rendered them with a no-entry icon in a binary `Ready?` column, implying failure. Root cause: the "Up to Date" test required `AllAvailableUpdates` to be empty, but a cluster that has installed all updates still lists those (now-Installed) package names there, so the strict test never matched.
+- **NEW (internal)**: `Get-AzLocalClusterReadinessStatus` private helper is now the single source of truth for the readiness priority cascade (UpdateFailed > ActionRequired > HealthFailure > SbeBlocked > InProgress > ReadyForUpdate > UpToDate > NeedsInvestigation). Step.5, Step.7 and Step.9 (`Export-AzLocalFleetUpdateStatusReport`) all classify clusters identically via this helper - previously each re-implemented the logic inline and the definitions had drifted.
+- **CHANGE (Step.7)**: the per-cluster readiness table's binary `Ready?` column is replaced with a readable `Status` column (`Ready`, `Up to Date`, `In Progress`, `SBE Prerequisite`, `Health Failure`, `Update Failed`, `Action Required`, `Needs Investigation`). The header now shows a distinct `Up to Date` count and a new `UP_TO_DATE_COUNT` / `UpToDateCount` step output is emitted (additive; existing `READY_COUNT` gate semantics are unchanged). PassThru gains `UpToDateCount`.
+- **CHANGE (Step.5)**: the "All clusters detail" table's `Ready` boolean column is replaced with the same readable `Status` label, and the "Not-Ready clusters (review first)" table now excludes Up-to-Date and Ready clusters.
+- **CHANGE (Step.7)**: the "No Clusters Ready" summary (`Add-AzLocalNoReadyClustersStepSummary`) gains `-UpToDateCount` / `-NotReadyCount` parameters and renders an Up-to-Date vs Not-Ready breakdown so idle runs show that already-patched clusters are a healthy steady state (a notice, not a warning, when all are up to date). Both apply-updates templates wire the counts through.
+- **All bundled pipeline templates** bump `GENERATED_AGAINST_MODULE_VERSION` from `'0.8.73'` to `'0.8.74'`.
+
 ## Version 0.8.73 - Cycle calendar: cluster counts folded INLINE into the "Eligible rings" column (Step.3 apply-updates schedule audit). No public API or export-count change (still 60).
 
 - **CHANGE**: `Get-AzLocalApplyUpdatesScheduleCycleCalendar` no longer renders a separate "Clusters in ring(s)" column when `-ClusterRingCounts` is supplied. Instead the "Eligible rings" header is relabelled "Eligible rings (cluster count)" and each ring token carries its count inline, e.g. `` `Prod` (9), `Canary` (3) ``. Dead days still render `_(none - dead day)_`. The per-ring projection table keeps its separate "Cluster count" column.
@@ -315,8 +325,8 @@
 
 ## Version 0.8.72 - Patch: pipeline-template polish only. Schedule-file author guidance moved OUTSIDE the apply-updates.yml customise marker so it refreshes on existing consumers; single-digit Step.N display names zero-padded (Step.0 -> Step.00 ... Step.9 -> Step.09) so the GitHub Actions sidebar / Azure DevOps list sort in execution order. No public API or export-count change (still 60).
 
-- **FIX**: `apply-updates.yml` (GitHub Actions + Azure DevOps) - the schedule-file author guidance comments were trapped INSIDE the `# BEGIN/END-AZLOCAL-CUSTOMIZE:schedule-triggers` block. Because `Update-AzLocalPipelineExample` preserves the marker body verbatim from the consumer's file, any correction to that guidance (e.g. the v0.8.71 `.github` -> `config` schedule-path fix) could never reach an already-deployed consumer. All author guidance is now ABOVE the marker; the marker body holds only the trigger directive (placeholder comment on GH, `trigger: none` on ADO).
-- **CHANGE (display only)**: single-digit pipeline step numbers zero-padded to two digits in all display names / titles - GitHub Actions workflow `name:` fields, Azure DevOps `name:` / stage `displayName:` labels, and the `# Step.N - ` header comments (`Step.0` -> `Step.00` ... `Step.9` -> `Step.09`; `Step.10` unchanged). The GitHub Actions sidebar and Azure DevOps pipelines list sort alphabetically by display name, so `Step.10` previously sorted between `Step.1` and `Step.2`. Functional identifiers (artifact names `azlocal-step.N-*`) and cross-reference prose are unchanged.
+- **FIX**: `apply-updates.yml` (GitHub Actions + Azure DevOps) - the schedule-file author guidance comments were trapped INSIDE the `# BEGIN/END-AZLOCAL-CUSTOMIZE:schedule-triggers` block, so corrections could never reach an already-deployed consumer. All author guidance is now ABOVE the marker; the marker body holds only the trigger directive.
+- **CHANGE (display only)**: single-digit pipeline step numbers zero-padded to two digits in all display names / titles (`Step.0` -> `Step.00` ... `Step.9` -> `Step.09`; `Step.10` unchanged) so the GitHub Actions sidebar and Azure DevOps list sort in execution order. Functional identifiers (artifact names) are unchanged.
 - **All bundled pipeline templates** bump `GENERATED_AGAINST_MODULE_VERSION` from `'0.8.71'` to `'0.8.72'`.
 
 ## Version 0.8.71 - Patch: JUnit export strict-mode crash fix + sideload schedule-path default corrected + pipeline doc-string filenames de-numbered. No public API or export-count change (still 60).
@@ -341,14 +351,6 @@ Adds opt-in, off-by-default on-prem sideloading for Azure Local clusters that ca
 ## Version 0.8.6 - Step.3 cycle-calendar enrichment (per-day CRON + UpdateStartWindow tag coverage) + six v0.8.5 pipeline regression fixes (Step.0/3/4/6/9) + new Pester static-audit guards. See CHANGELOG for the full v0.8.6 entry.
 
 ## Version 0.8.5 - New Public cmdlet `Get-AzLocalApplyUpdatesScheduleCycleCalendar` + Step.6 manual schedule-file inputs + Step.3 cycle-calendar regression fix + per-ring cluster-count column + full thin-YAML port of all 10 Step pipelines (14 new Public cmdlets). Module export count grows 35 -> 55. See CHANGELOG for the full v0.8.5 entry.
-
-## Version 0.8.3 - Test-AzLocalApplyUpdatesScheduleCoverage Step.3 advisor accuracy + readability fixes: Recommend now diff-prunes against `-PipelineYamlPath`, Step.3 yml `pipeline_path` REQUIRED, Allow-list heading reframed, closing-fence typo fixed
-
-## Version 0.8.2 - Test-AzLocalApplyUpdatesScheduleCoverage operator-UX release: -View Recommend snippet embeds `# All cron times below are UTC` comment + `Indent tip` blockquote; -View Audit `NoWindowTag` row now names affected clusters grouped by `UpdateRing` + sorts AFTER Covered; Step.3 GH/ADO Allow-list section trimmed; five new internal pipeline-host helpers (Get/Set/Add/Write-AzLocalPipeline*) laid down as foundations for the upcoming executable-YAML refactor
-
-## Version 0.8.1 - Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend GH snippet emits ONLY the `schedule:` block (no `on:` / `workflow_dispatch:` lines) so it can be pasted straight into Step.6_apply-updates.yml without producing a duplicate-key YAML error
-
-## Version 0.8.0 - Step.7 form-default regressions fixed (criticalElapsedDays 7->3, updateRing Wave1->empty) + Pii-Guard.Tests.ps1 (repo-hygiene guard) + Publish-Module.ps1 excludes maintainer-only RELEASE-PROCESS.md
 
 ## Version 0.7.99 - Property/Summary renames (AvailableUpdates -> AllAvailableUpdates, AvailableUpdatesCount -> ActionableUpdatesCount, Ready/NotReady Summary -> ReadyForUpdate/UpToDate/NotReadyForUpdate) + Step.7 CRITICAL elapsed-days 7->3 + artifact zip names prefixed with step.X-
 

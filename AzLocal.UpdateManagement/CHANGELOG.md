@@ -5,6 +5,26 @@ All notable changes to the AzLocal.UpdateManagement module (renamed from AzStack
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.74] - 2026-06-11
+
+Consistency release for the cluster readiness reports. A cluster that has already applied every required update is now classified and labelled identically across the Step.5 readiness report, the Step.7 readiness gate, and the Step.9 fleet update-status report. No public API or export-count change (still 60).
+
+### Fixed
+
+- **Fully-patched clusters mis-classified as "not ready" in Step.5 and Step.7** - a cluster that had successfully installed every required update showed `0` in the Step.5 (`Export-AzLocalClusterUpdateReadinessReport`) "Up to date" summary count and appeared in its "Not-Ready clusters (review first)" table, and rendered with a no-entry icon in the Step.7 (`Export-AzLocalClusterReadinessGateReport`) binary `Ready?` column - both implying failure. Root cause: the "Up to Date" determination required the `AllAvailableUpdates` collection to be empty, but a cluster that has installed all updates still lists those (now-Installed) package names there, so the test never matched a fully-patched cluster. Step.9 already classified these correctly via its priority cascade; Step.5/Step.7 now share that exact logic.
+
+### Added
+
+- **`Get-AzLocalClusterReadinessStatus` private helper** - the single source of truth for the readiness priority cascade (UpdateFailed > ActionRequired > HealthFailure > SbeBlocked > InProgress > ReadyForUpdate > UpToDate > NeedsInvestigation). Step.5, Step.7 and Step.9 (`Export-AzLocalFleetUpdateStatusReport`) now all classify clusters through this one helper; previously each report re-implemented the logic inline and the definitions had drifted.
+- **Step.7 `UP_TO_DATE_COUNT` / `UpToDateCount` step output** - additive; the existing `READY_COUNT` gate semantics are unchanged. `Export-AzLocalClusterReadinessGateReport -PassThru` now also returns `UpToDateCount`.
+- **Step.7 "No Clusters Ready" summary now explains why** - `Add-AzLocalNoReadyClustersStepSummary` accepts the new `-UpToDateCount` / `-NotReadyCount` parameters and renders an Up-to-Date vs Not-Ready breakdown table, so an idle apply-updates run makes clear that already-patched clusters are a healthy steady state (not a failure) and points to the per-cluster `Status` / `Blocking Reasons` detail. When every discovered cluster is already up to date the run now logs an informational notice instead of a warning. Both the GitHub Actions and Azure DevOps `apply-updates` templates wire the two new counts through from the readiness gate.
+
+### Changed
+
+- **Step.7 per-cluster table now has a `Status` column instead of a binary `Ready?` column** - it renders readable labels (`Ready`, `Up to Date`, `In Progress`, `SBE Prerequisite`, `Health Failure`, `Update Failed`, `Action Required`, `Needs Investigation`) and the header line now shows a distinct `Up to Date` count.
+- **Step.5 "All clusters detail" table `Ready` boolean column replaced with the same readable `Status` label**, and the "Not-Ready clusters (review first)" table now excludes both Up-to-Date and Ready clusters.
+- All bundled pipeline templates bump `GENERATED_AGAINST_MODULE_VERSION` from `'0.8.73'` to `'0.8.74'`.
+
 ## [0.8.73] - 2026-06-11
 
 Cycle-calendar refinement. The Step.3 apply-updates schedule audit now shows the per-ring cluster count INLINE in the "Eligible rings" column instead of as a separate column, and the Step.3 pipeline render path actually populates those counts (previously the counts never reached the rendered calendar). No public API or export-count change (still 60).
