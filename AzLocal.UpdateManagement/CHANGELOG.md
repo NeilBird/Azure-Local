@@ -5,6 +5,26 @@ All notable changes to the AzLocal.UpdateManagement module (renamed from AzStack
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.76] - 2026-06-12
+
+Patch release. Adds a Microsoft-hosted Windows preflight job (GitHub Actions) / preflight stage (Azure DevOps) in front of the opt-in Step.6 `sideload-updates.yml` pipeline so an operator who triggers Step.6 without first completing the opt-in setup sees a clear "what to do next" panel in the run step summary instead of a silent `Status: Skipped`. Also broadens the master gate to accept `'true'`, `'True'`, `'TRUE'`, or `'1'` (was strict-literal `'true'` only).
+
+### Added
+- **GitHub Actions `sideload-updates.yml`**: new `preflight` job on `runs-on: windows-latest` with `permissions: actions: read, contents: read`. The job ALWAYS runs (no `if:` gate). It writes a markdown panel to `$GITHUB_STEP_SUMMARY` describing the gate state, required-variable check (currently `SIDELOAD_STATE_ROOT` only - other paths have sensible defaults), and a best-effort self-hosted-runner enumeration via the `/repos/{owner}/{repo}/actions/runners` API. The `sideload` job gains `needs: preflight`, so it cannot queue indefinitely when prerequisites are missing.
+- **Azure DevOps `sideload-updates.yml`**: new `Preflight` stage on `pool: vmImage: windows-latest` that performs the gate + `SIDELOAD_STATE_ROOT` check and uploads the panel via `##vso[task.uploadsummary]`. The `Sideload` stage gains `dependsOn: Preflight`.
+- **`Automation-Pipeline-Examples/docs/sideload.md` section 9** "Preflight (v0.8.76+)" - documents the full preflight behaviour matrix and explains why a Microsoft-hosted Windows runner is the right host for preflight (no fabric or Key Vault access required).
+
+### Changed
+- **Master gate broadened**: both `sideload-updates.yml` files now accept `SIDELOAD_UPDATES` in `'true'` / `'True'` / `'TRUE'` / `'1'`. GH Actions uses `contains(fromJSON('["true","True","TRUE","1"]'), vars.SIDELOAD_UPDATES)`; ADO uses an `or(eq..., eq...)` condition. The README continues to recommend `'true'` as the canonical value.
+- **`docs/sideload.md` section 6** gate row updated to reflect the four accepted values; header note documents the preflight.
+- **All bundled pipeline templates** bump `GENERATED_AGAINST_MODULE_VERSION` from `'0.8.75'` to `'0.8.76'`.
+
+### Why preflight runs on a Microsoft-hosted Windows runner
+The preflight does NOT touch the cluster fabric, Key Vault, or any Azure resource. It only reads workflow / pipeline variables, optionally queries the GH runners API with `GITHUB_TOKEN`, and writes markdown to the step summary. There is no domain-membership or VLAN-reachability requirement, so `windows-latest` is the correct minimal-cost host (~10s) and aligns with every other pipeline in the suite. The `sideload` job itself still requires the on-prem self-hosted runner with the `azlocal-sideload` label - that part has not changed.
+
+### Notes on runner enumeration
+The repo runners API requires repo-admin permission, which `GITHUB_TOKEN` does not normally grant. If the API call returns 403/404 the preflight degrades to a warning panel ("could not enumerate runners - verify manually under Settings -> Actions -> Runners"); it does NOT fail the run. If the API does return a list (e.g. a fine-grained PAT or GitHub App is wired in with `administration: read`), the preflight reports the exact set of matching online runners and fails fast when none are online. Azure DevOps does not enumerate agents at all (the `Agent Pools (read)` scope is not normally granted to the pipeline identity).
+
 ## [0.8.75] - 2026-06-12
 
 Patch release. Removes the duplicate **Cycle calendar** table from the Step.3 apply-updates schedule audit step summary - before this fix, on any run where the Recommend view had at least one action-required finding (uncovered/partial cron windows, `RingMissingFromSchedule`, `RingOrphanedInSchedule`, `UnparseableCron`, or `NoWindowTag` when a cluster CSV was supplied), the Recommend snippet's plain 5-column calendar was inlined into the wrapper output **above** the wrapper's own enriched 7-column calendar, so operators saw two calendars back-to-back. Clean-fleet runs (no findings) were unaffected because the Recommend snippet is never written when its items list is empty. Also lands three Step.3 step-summary screenshots in `Automation-Pipeline-Examples/README.md` section 8.3. No public API or export-count change (still 60).

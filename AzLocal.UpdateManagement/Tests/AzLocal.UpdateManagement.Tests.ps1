@@ -34,8 +34,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $script:ModuleInfo | Should -Not -BeNullOrEmpty
         }
 
-        It 'Should have version 0.8.75' {
-            $script:ModuleInfo.Version | Should -Be '0.8.75'
+        It 'Should have version 0.8.76' {
+            $script:ModuleInfo.Version | Should -Be '0.8.76'
         }
 
         It 'Module version constants are in sync between .psm1 and .psd1' {
@@ -216,6 +216,35 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $content | Should -Match 'Export-AzLocalApplyUpdatesScheduleAudit' -Because "Step.3 $Platform must call the v0.8.5 thin-YAML cmdlet"
             $content | Should -Not -Match 'Test-AzLocalApplyUpdatesScheduleCoverage[^\.]+-View\s+Audit' -Because "Step.3 $Platform must not call the advisor inline - the cmdlet does all 3 views internally (v0.8.5)"
             $content | Should -Not -Match 'function\s+Convert-ScheduleRow' -Because "Step.3 $Platform must not contain inline schedule-row helpers (removed in v0.8.5)"
+        }
+
+        It 'v0.8.76: sideload-updates.yml (GitHub Actions) has a preflight job on windows-latest' {
+            $yamlPath = Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples\github-actions\sideload-updates.yml'
+            Test-Path $yamlPath | Should -BeTrue
+            $content = Get-Content -Path $yamlPath -Raw
+
+            # New preflight job runs on a Microsoft-hosted Windows runner so it
+            # ALWAYS executes regardless of self-hosted runner availability,
+            # and writes setup guidance to the step summary when the gate or
+            # required state-root variable is missing.
+            $content | Should -Match '(?m)^\s*preflight:\s*$' -Because "GH sideload pipeline must define a preflight job (v0.8.76)"
+            $content | Should -Match '(?ms)preflight:.*?runs-on:\s*windows-latest' -Because "GH preflight job must run on windows-latest (no fabric / Key Vault access required)"
+            $content | Should -Match '(?ms)preflight:.*?permissions:.*?actions:\s*read' -Because "GH preflight needs actions:read to call the runners API"
+            $content | Should -Match '(?m)^\s*needs:\s*preflight\s*$' -Because "the sideload job must gate on preflight"
+            $content | Should -Match 'contains\(fromJSON\(.*true.*True.*TRUE.*1.*\),\s*vars\.SIDELOAD_UPDATES\)' -Because "master gate must accept true/True/TRUE/1 (v0.8.76)"
+        }
+
+        It 'v0.8.76: sideload-updates.yml (Azure DevOps) has a Preflight stage on windows-latest' {
+            $yamlPath = Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples\azure-devops\sideload-updates.yml'
+            Test-Path $yamlPath | Should -BeTrue
+            $content = Get-Content -Path $yamlPath -Raw
+
+            $content | Should -Match '(?m)^-\s*stage:\s*Preflight\s*$' -Because "ADO sideload pipeline must define a Preflight stage (v0.8.76)"
+            $content | Should -Match '(?ms)stage:\s*Preflight.*?vmImage:\s*windows-latest' -Because "ADO Preflight stage must run on windows-latest"
+            $content | Should -Match '(?m)^\s*dependsOn:\s*Preflight\s*$' -Because "the Sideload stage must depend on Preflight"
+            $content | Should -Match '##vso\[task\.uploadsummary\]' -Because "ADO preflight must write the markdown panel via uploadsummary"
+            $content | Should -Match "eq\(variables\['SIDELOAD_UPDATES'\],\s*'true'\)" -Because "ADO gate must accept 'true'"
+            $content | Should -Match "eq\(variables\['SIDELOAD_UPDATES'\],\s*'1'\)" -Because "ADO gate must accept '1' (v0.8.76)"
         }
 
         It 'Should export exactly 60 functions' {

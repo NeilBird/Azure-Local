@@ -2,7 +2,7 @@
 
 > ⚠️ **Disclaimer**: This module is **NOT** a Microsoft supported service offering or product. It is provided as example code only, with no warranty or official support. Refer to the [MIT license](https://github.com/NeilBird/Azure-Local/blob/main/LICENSE) for further information.
 
-**Latest Version:** v0.8.75 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.8.75)
+**Latest Version:** v0.8.76 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.8.76)
 
 > 📢 **Renamed in v0.7.3**: this module was previously published as `AzStackHci.ManageUpdates`. The new module name aligns with the Azure Local product name (_Microsoft retired the *Azure Stack HCI* brand in late 2024_). The module GUID is preserved across the rename. If you have the old name installed, run:
 >
@@ -23,7 +23,7 @@ Azure Local REST API specification (includes update management endpoints): https
 **This README (overview + most-recent release notes):**
 
 - [Where to Start](#where-to-start)
-- [What's New in v0.8.75](#whats-new-in-v0875)
+- [What's New in v0.8.76](#whats-new-in-v0876)
 - [Files](#files)
 - [Prerequisites](#prerequisites)
 - [RBAC Requirements](#rbac-requirements) (summary; full reference in [docs/rbac.md](docs/rbac.md))
@@ -86,19 +86,18 @@ If you are new to this module, work through these in order from a regular PowerS
 
 > Most CI/CD pipelines in [Automation-Pipeline-Examples/](Automation-Pipeline-Examples/) are direct implementations of one of these workflows. Start there if you want a copy-pasteable end-to-end pipeline.
 
-## What's New in v0.8.75
+## What's New in v0.8.76
 
-**Patch release. Removes the duplicate Cycle calendar table from the Step.3 apply-updates schedule audit step summary** - before v0.8.75, on any run with at least one Recommend-view action-required finding (uncovered/partial cron windows, `RingMissingFromSchedule`, `RingOrphanedInSchedule`, `UnparseableCron`, or `NoWindowTag` when a cluster CSV was supplied), the Recommend snippet's plain 5-column calendar was inlined into the wrapper output (as part of the action-required block) **above** the wrapper's own enriched 7-column calendar, so operators saw two calendars back-to-back. Clean-fleet runs (no findings) were unaffected because the Recommend snippet is never written when its items list is empty. Also lands three Step.3 step-summary screenshots in `Automation-Pipeline-Examples/README.md` section 8.3. No public API or export-count change (still 60).
+**Patch release. Adds a Microsoft-hosted Windows preflight job (GitHub Actions) / preflight stage (Azure DevOps) in front of the opt-in Step.6 `sideload-updates.yml` pipeline.** Before v0.8.76, triggering Step.6 without first completing the opt-in setup (master gate `SIDELOAD_UPDATES` not set, or set without registering a self-hosted `azlocal-sideload` runner) produced `Status: Skipped` with no logs, no annotation, and no actionable feedback - operators had to read the YAML to figure out why. v0.8.76 prepends a `preflight` job (`runs-on: windows-latest`, ~10s, no Azure access) that ALWAYS runs and writes a clear panel to the run step summary explaining what is set, what is missing, and how to enable Step.6. Also broadens the master gate to accept `'true'`, `'True'`, `'TRUE'`, or `'1'` (was strict-literal `'true'` only). No public API change or new exports (still 60).
 
-1. **Fixed**: the Step.3 step summary rendered the Cycle calendar twice on runs with findings. `Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend` writes a self-contained snippet to its `schedule-coverage-recommend.md` output - the snippet carries its action-required H2s, the proposed cron YAML block, AND a plain (5-column) cycle-calendar block (`Date | Day | CycleWeek | Eligible rings | AllowedUpdateVersions`). That snippet is only written when the Recommend view emits at least one row (clean fleets skip it). `Export-AzLocalApplyUpdatesScheduleAudit` (the Step.3 wrapper) inlined that file as the action-required block when `$hasIssues` was true AND then rendered its OWN enriched (7-column) calendar lower in the summary - with two extra columns (`Ring CRON Start Time (apply-updates pipeline)` and `Tag Start Window Match (>=95%)`) computed from the Step.6 cron triggers + cluster CSV.
-2. **Added**: new additive `[switch]$OmitCycleCalendar` parameter on `Test-AzLocalApplyUpdatesScheduleCoverage` (default off, so direct callers see the calendar unchanged). `Export-AzLocalApplyUpdatesScheduleAudit` passes `-OmitCycleCalendar=$true` so only the enriched calendar surfaces in the Step.3 summary regardless of whether the run has findings.
-3. **Added**: Pester regression spies on the Recommend mock to assert the switch is bound, and asserts the rendered step summary contains exactly one `## Cycle calendar - next` heading.
-4. **Changed (drift-notice banner)**: `Add-AzLocalPipelineVersionBanner` now recommends `Update-AzLocalPipelineExample` (the marker-aware merge tool that preserves `AZLOCAL-CUSTOMIZE` blocks) instead of `Copy-AzLocalPipelineExample -Update` (the clean-overwrite tool) in the YAML-older-than-module annotation, and inlines the right `-Platform` value plus a sensible `-Destination` hint based on the detected pipeline host: `Update-AzLocalPipelineExample -Destination '<repo-root>\.github\workflows' -Platform GitHub` on GitHub Actions, `Update-AzLocalPipelineExample -Destination '<repo-root>\pipelines' -Platform AzureDevOps` on Azure DevOps. Symmetric warning when the YAML is newer than the installed module gets the same treatment. Three new Pester cases pin the GH / ADO / verdict text.
-5. **Docs**: section 8.3 of `Automation-Pipeline-Examples/README.md` (Apply-Updates Schedule Coverage Audit runbook) gains three Step.3 step-summary screenshots - cron coverage remediation, NoWindowTag remediation, and the enriched cycle calendar.
+1. **Added (GitHub Actions)**: new `preflight` job in `sideload-updates.yml` on `runs-on: windows-latest` with `permissions: actions: read, contents: read`. The job ALWAYS runs (no `if:` gate). Outcomes: gate OFF -> succeeds with a `::notice` annotation and a full enablement walkthrough in the step summary; gate ON + `SIDELOAD_STATE_ROOT` missing -> fails (`::error`, `exit 1`) with a missing-variable panel; gate ON + best-effort `/repos/{owner}/{repo}/actions/runners` enumeration finds no online `azlocal-sideload` runner -> fails with a no-online-runner panel; gate ON + the API returns 403/404 (the typical case - `GITHUB_TOKEN` lacks admin) -> succeeds with a manual-verification warning panel; all OK -> succeeds with a "Preflight passed" panel. The `sideload` job gains `needs: preflight` so it cannot queue indefinitely when prerequisites are missing.
+2. **Added (Azure DevOps)**: new `Preflight` stage in `sideload-updates.yml` on `pool: vmImage: windows-latest`. Validates the gate + `SIDELOAD_STATE_ROOT`; uploads the markdown panel via `##vso[task.uploadsummary]`. Does NOT enumerate ADO agents (the `Agent Pools (read)` scope is not normally granted to the pipeline identity, so the preflight degrades to documentation in that case). The `Sideload` stage gains `dependsOn: Preflight`.
+3. **Changed (master gate broadened)**: both `sideload-updates.yml` files now accept `SIDELOAD_UPDATES` in `'true'` / `'True'` / `'TRUE'` / `'1'`. GH uses `contains(fromJSON('["true","True","TRUE","1"]'), vars.SIDELOAD_UPDATES)`; ADO uses an `or(eq..., eq...)` condition. The README still recommends `'true'` as the canonical value; the additional accepted values are forgiving of case-insensitive habits.
+4. **Docs**: `Automation-Pipeline-Examples/docs/sideload.md` updated - section 6 gate row reflects the four accepted values, header note documents the preflight, new section 9 "Preflight (v0.8.76+)" with the full behaviour matrix and a short rationale for why a Microsoft-hosted Windows runner is the correct host for preflight (no fabric / Key Vault access required).
 
-`GENERATED_AGAINST_MODULE_VERSION` bumped from `0.8.74` to `0.8.75` across all bundled pipeline templates.
+`GENERATED_AGAINST_MODULE_VERSION` bumped from `0.8.75` to `0.8.76` across all bundled pipeline templates.
 
-See [CHANGELOG.md](CHANGELOG.md#0875---2026-06-12) for the full v0.8.75 entry. See [`What's New in v0.8.74`](docs/release-history.md#whats-new-in-v0874) in the Release History for the previous release.
+See [CHANGELOG.md](CHANGELOG.md#0876---2026-06-12) for the full v0.8.76 entry. See [`What's New in v0.8.75`](docs/release-history.md#whats-new-in-v0875) in the Release History for the previous release.
 
 ## Files
 
@@ -577,7 +576,7 @@ This code is provided as-is for educational and reference purposes.
 
 The full What's-New history (v0.7.81 and earlier) has moved to [docs/release-history.md](docs/release-history.md).
 
-The most recent release notes for **v0.8.75** stay above under [`What's New in v0.8.75`](#whats-new-in-v0875).
+The most recent release notes for **v0.8.76** stay above under [`What's New in v0.8.76`](#whats-new-in-v0876).
 
 ### What's New in v0.8.73
 

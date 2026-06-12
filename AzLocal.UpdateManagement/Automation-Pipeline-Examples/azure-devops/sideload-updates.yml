@@ -79,7 +79,7 @@ variables:
   # the version actually installed and to the latest on PSGallery, and emits a warning
   # log if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.8.75'
+  GENERATED_AGAINST_MODULE_VERSION: '0.8.76'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): queue-time parameter > pipeline variable
   # 'REQUIRED_MODULE_VERSION' overridden at queue time > empty (latest).
@@ -102,10 +102,161 @@ variables:
   #   SIDELOAD_KV_AUTH: 'oidc'   # oidc | managedidentity | serviceprincipal
 
 stages:
+# ---------------------------------------------------------------------------
+# PREFLIGHT (always runs on a Microsoft-hosted Windows agent)
+# ---------------------------------------------------------------------------
+# Purpose: explain - in the stage step summary - WHY the `Sideload` stage did
+# or did not run, so an operator who triggers Step.6 without first completing
+# the opt-in setup sees a clear "what to do next" panel instead of a silent
+# "Skipped" status (the symptom that prompted v0.8.76).
+#
+# Cost: ~10s on windows-latest. No Azure / Key Vault access. Always runs.
+#
+# Outcomes:
+#   - Gate OFF (SIDELOAD_UPDATES unset / not in 'true'|'True'|'TRUE'|'1'):
+#       Preflight succeeds with an informational panel showing how to enable
+#       Step.6. The `Sideload` stage is then SKIPPED by its own condition.
+#   - Gate ON + SIDELOAD_STATE_ROOT missing: Preflight FAILS with a panel
+#       listing the missing variable(s). The `Sideload` stage is skipped
+#       because its `dependsOn: Preflight` cannot be satisfied.
+#   - All checks pass: Preflight succeeds, `Sideload` proceeds onto your
+#       self-hosted pool.
+#
+# NOTE: Unlike the GitHub Actions equivalent, Azure DevOps does NOT enumerate
+# agent availability here. The ADO pool/agent API requires `Agent Pools (read)`
+# scope which most pipeline identities do not hold. Verify your `azlocal-sideload`
+# capability is present in your self-hosted pool MANUALLY (Project Settings ->
+# Agent pools -> <pool> -> Capabilities).
+- stage: Preflight
+  displayName: 'Step.06 Preflight - Validate Opt-in'
+  jobs:
+  - job: PreflightCheck
+    displayName: 'Validate Sideload Opt-in + Required Configuration'
+    pool:
+      vmImage: windows-latest
+    steps:
+    - task: PowerShell@2
+      displayName: 'Run Step.6 preflight'
+      env:
+        SIDELOAD_UPDATES: $(SIDELOAD_UPDATES)
+        SIDELOAD_STATE_ROOT: $(SIDELOAD_STATE_ROOT)
+        SIDELOAD_AUTH_MAP_PATH: $(SIDELOAD_AUTH_MAP_PATH)
+        SIDELOAD_CATALOG_PATH: $(SIDELOAD_CATALOG_PATH)
+        APPLY_UPDATES_SCHEDULE_PATH: $(APPLY_UPDATES_SCHEDULE_PATH)
+        AGENT_TEMPDIRECTORY: $(Agent.TempDirectory)
+      inputs:
+        targetType: 'inline'
+        pwsh: true
+        script: |
+          $ErrorActionPreference = 'Stop'
+          $summaryPath = Join-Path $env:AGENT_TEMPDIRECTORY 'sideload-preflight.md'
+          $lines = [System.Collections.Generic.List[string]]::new()
+          function Append-Summary([string]$line) { [void]$lines.Add($line) }
+
+          # Master gate: case-insensitive 'true'/'True'/'TRUE' OR literal '1'.
+          $gateRaw = "$($env:SIDELOAD_UPDATES)".Trim()
+          $gateOn  = ($gateRaw -in @('true','True','TRUE','1'))
+
+          Append-Summary '## Step.6 - Sideload Updates - Preflight'
+          Append-Summary ''
+
+          if (-not $gateOn) {
+              Append-Summary '> [!NOTE]'
+              Append-Summary '> **Step.6 (Sideload Updates) is OPT-IN and currently OFF.**'
+              Append-Summary '>'
+              if ([string]::IsNullOrWhiteSpace($gateRaw)) {
+                  Append-Summary '> The pipeline variable `SIDELOAD_UPDATES` is **not set**. The `Sideload` stage for this run was skipped.'
+              } else {
+                  Append-Summary "> The pipeline variable ``SIDELOAD_UPDATES`` is set to ``'$gateRaw'`` which is not one of the accepted opt-in values (``'true'`` / ``'True'`` / ``'TRUE'`` / ``'1'``). The ``Sideload`` stage for this run was skipped."
+              }
+              Append-Summary ''
+              Append-Summary '### How to enable Step.6'
+              Append-Summary ''
+              Append-Summary '1. **Provision an on-prem self-hosted agent** on the same network as your Azure Local clusters. Add it to a self-hosted POOL and give the agent a custom capability named `azlocal-sideload` (Project Settings -> Agent pools -> <pool> -> <agent> -> Capabilities -> User-defined). See [Self-hosted Windows agents](https://learn.microsoft.com/azure/devops/pipelines/agents/windows-agent).'
+              Append-Summary '2. **Replace `<your-self-hosted-pool>` in this YAML** with your pool name (under the `Sideload` stage `pool.name`).'
+              Append-Summary '3. **Stage the config files** in your repository under `./config/`:'
+              Append-Summary '   - `apply-updates-schedule.yml` (the ring-aware apply schedule - generated by Step.3 Schedule Audit)'
+              Append-Summary '   - `sideload-auth-map.csv` (per-cluster Key Vault + secret-name map for WinRM credentials)'
+              Append-Summary '   - `sideload-catalog.yml` (committed catalog of approved `CombinedSolutionBundle` versions, `Version` -> `DownloadUri` + `Sha256`)'
+              Append-Summary '4. **Set the pipeline Variables** (Pipeline -> Edit -> Variables, or a Variable Group):'
+              Append-Summary '   - `SIDELOAD_STATE_ROOT` = shared UNC path the agent can read/write (e.g. `\\fileserver\azlocal-sideload`)'
+              Append-Summary '   - Optional: `SIDELOAD_CACHE_ROOT`, `SIDELOAD_LEAD_DAYS`, `SIDELOAD_ROBOCOPY_SWITCHES`, `SIDELOAD_HEARTBEAT_STALE_MINUTES`, `SIDELOAD_REMOTING_FQDN_SUFFIX`, `SIDELOAD_KV_AUTH`'
+              Append-Summary '5. **Configure the service connection** named `AzureLocal-ServiceConnection` (Workload Identity Federation) with read access to your Resource Graph + Key Vault.'
+              Append-Summary '6. **Flip the master gate**: set pipeline variable `SIDELOAD_UPDATES` = `true` (also accepted: `True`, `TRUE`, `1`).'
+              Append-Summary ''
+              Append-Summary '> [!IMPORTANT]'
+              Append-Summary '> Step.6 cannot run on a Microsoft-hosted agent. The job copies multi-GB update media to the cluster `import` SMB share and PowerShell-remotes into a cluster node - both require line-of-sight to the on-prem fabric VLAN and (typically) AD domain membership.'
+              Append-Summary ''
+              Append-Summary 'See `Automation-Pipeline-Examples/README.md` section 8.6 (Sideload Updates) for the full setup walkthrough.'
+
+              [System.IO.File]::WriteAllLines($summaryPath, $lines)
+              Write-Host "##vso[task.uploadsummary]$summaryPath"
+              Write-Host "##[warning]Step.6 sideload is OPT-IN - SIDELOAD_UPDATES is not set to an opt-in value ('true'/'True'/'TRUE'/'1'). See the stage summary for enablement instructions."
+              exit 0
+          }
+
+          # Gate is ON - validate required configuration.
+          Append-Summary '### Master gate'
+          Append-Summary ''
+          Append-Summary "- ``SIDELOAD_UPDATES`` = ``'$gateRaw'`` (opt-in)"
+          Append-Summary ''
+          Append-Summary '### Required configuration'
+          Append-Summary ''
+          $missing = [System.Collections.Generic.List[string]]::new()
+          $stateRoot = "$($env:SIDELOAD_STATE_ROOT)".Trim()
+          if ([string]::IsNullOrWhiteSpace($stateRoot)) {
+              [void]$missing.Add('SIDELOAD_STATE_ROOT')
+              Append-Summary '- `SIDELOAD_STATE_ROOT` - **MISSING** (required: shared UNC root reachable from the self-hosted agent, e.g. `\\fileserver\azlocal-sideload`)'
+          } else {
+              Append-Summary "- ``SIDELOAD_STATE_ROOT`` = ``$stateRoot``"
+          }
+          Append-Summary "- ``SIDELOAD_AUTH_MAP_PATH`` = ``$($env:SIDELOAD_AUTH_MAP_PATH)``"
+          Append-Summary "- ``SIDELOAD_CATALOG_PATH`` = ``$($env:SIDELOAD_CATALOG_PATH)``"
+          Append-Summary "- ``APPLY_UPDATES_SCHEDULE_PATH`` = ``$($env:APPLY_UPDATES_SCHEDULE_PATH)``"
+          Append-Summary ''
+
+          if ($missing.Count -gt 0) {
+              Append-Summary '> [!CAUTION]'
+              Append-Summary "> **Setup incomplete.** Missing required variable(s): ``$($missing -join '`, `')``. The ``Sideload`` stage will not run."
+              Append-Summary ''
+              Append-Summary 'See `Automation-Pipeline-Examples/README.md` section 8.6 (Sideload Updates) for the full setup walkthrough.'
+
+              [System.IO.File]::WriteAllLines($summaryPath, $lines)
+              Write-Host "##vso[task.uploadsummary]$summaryPath"
+              Write-Host "##vso[task.logissue type=error]Step.6 preflight failed - required variable(s) not set: $($missing -join ', ')"
+              exit 1
+          }
+
+          Append-Summary '### Self-hosted agent'
+          Append-Summary ''
+          Append-Summary '- Verify your self-hosted pool advertises the `azlocal-sideload` capability and has at least one **Online** agent (Project Settings -> Agent pools -> <pool> -> Agents).'
+          Append-Summary '- The ADO agent pool API requires `Agent Pools (read)` scope which the pipeline identity does not normally hold, so this preflight cannot enumerate agents automatically.'
+          Append-Summary ''
+          Append-Summary '> [!TIP]'
+          Append-Summary '> **Preflight passed.** The `Sideload` stage will run on your self-hosted pool. If no `azlocal-sideload`-capable agent is online the job will queue for up to the pipeline default (no-time-limit by default; cancel the run if it stays Queued for more than a few minutes).'
+          Append-Summary ''
+
+          [System.IO.File]::WriteAllLines($summaryPath, $lines)
+          Write-Host "##vso[task.uploadsummary]$summaryPath"
+
 - stage: Sideload
   displayName: 'Step.06 - Sideload Updates (Opt-in)'
-  # Master opt-in gate: do nothing unless SIDELOAD_UPDATES is explicitly 'true'.
-  condition: eq(variables['SIDELOAD_UPDATES'], 'true')
+  # Wait for preflight to pass before queuing onto the self-hosted pool.
+  # If preflight FAILS (missing config), this stage is skipped (`dependsOn` unmet).
+  # If preflight succeeds with the gate OFF, this stage is skipped by its own `condition`.
+  dependsOn: Preflight
+  # Master opt-in gate: do nothing unless SIDELOAD_UPDATES is one of the
+  # accepted truthy values (case-insensitive 'true' or literal '1').
+  condition: |
+    and(
+      succeeded(),
+      or(
+        eq(variables['SIDELOAD_UPDATES'], 'true'),
+        eq(variables['SIDELOAD_UPDATES'], 'True'),
+        eq(variables['SIDELOAD_UPDATES'], 'TRUE'),
+        eq(variables['SIDELOAD_UPDATES'], '1')
+      )
+    )
   jobs:
   - job: AdvanceSideload
     displayName: 'Advance Sideload State Machine'
