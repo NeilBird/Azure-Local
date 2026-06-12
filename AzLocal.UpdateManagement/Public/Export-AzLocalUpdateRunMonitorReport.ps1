@@ -536,6 +536,12 @@ function Export-AzLocalUpdateRunMonitorReport {
         [void]$md.Add("| Recently-failed runs (last ${RecentFailureWindowHours}h) | $($recentlyFailed.Count) |")
     }
     [void]$md.Add('')
+    if ($inFlight.Count -gt 0 -or $unresolvedFailed.Count -gt 0) {
+        # GitHub / ADO step-summary sanitisers strip `target="_blank"`, so the
+        # Cluster + Update portal links open in the current tab by default.
+        [void]$md.Add('> **Tip:** Hold `Ctrl` (or `Cmd` on macOS) when clicking - or middle-click - Cluster or Update links to open them in a new tab. (GitHub markdown strips `target="_blank"`.)')
+        [void]$md.Add('')
+    }
     if ($inFlight.Count -gt 0) {
         [void]$md.Add('### In-flight runs (sorted by severity score, worst first)')
         [void]$md.Add('')
@@ -554,8 +560,11 @@ function Export-AzLocalUpdateRunMonitorReport {
             $stepEl = if ($r.StepElapsedDisplay) { $stepElPrefix + $r.StepElapsedDisplay } else { '-' }
             $runEl  = if ($r.ElapsedDisplay)     { $runElPrefix  + $r.ElapsedDisplay }     else { '-' }
             $flagCell = if ($r.Flags) { $r.Flags } else { '-' }
-            $clusterCell = if ($r.ClusterPortalUrl)   { '<a href="' + $r.ClusterPortalUrl   + '" target="_blank" rel="noopener">' + $r.ClusterName + '</a>' } else { $r.ClusterName }
-            $updateCell  = if ($r.UpdateRunPortalUrl) { '<a href="' + $r.UpdateRunPortalUrl + '" target="_blank" rel="noopener">' + $r.UpdateName  + '</a>' } else { $r.UpdateName }
+            # target="_blank" intentionally omitted: GitHub Actions + ADO step-summary
+            # markdown sanitisers strip it (and force `rel="nofollow"`). The Tip above
+            # the table tells operators to Ctrl-click to open in a new tab.
+            $clusterCell = if ($r.ClusterPortalUrl)   { '<a href="' + $r.ClusterPortalUrl   + '">' + $r.ClusterName + '</a>' } else { $r.ClusterName }
+            $updateCell  = if ($r.UpdateRunPortalUrl) { '<a href="' + $r.UpdateRunPortalUrl + '">' + $r.UpdateName  + '</a>' } else { $r.UpdateName }
             [void]$md.Add("| $clusterCell | $updateCell | $stateCell | $statusCell | $cs | $pg | $stepStart | $stepEl | $($r.StartTimeUtc) | $runEl | $flagCell |")
         }
         [void]$md.Add('')
@@ -580,8 +589,9 @@ function Export-AzLocalUpdateRunMonitorReport {
                 '<details><summary>Show error</summary><br><code>' + $e + '</code></details>'
             }
             $recentTag = if ($r.IsRecentFailure) { ":fire: last ${RecentFailureWindowHours}h" } else { '-' }
-            $clusterCell = if ($r.ClusterPortalUrl)   { '<a href="' + $r.ClusterPortalUrl   + '" target="_blank" rel="noopener">' + $r.ClusterName + '</a>' } else { $r.ClusterName }
-            $updateCell  = if ($r.UpdateRunPortalUrl) { '<a href="' + $r.UpdateRunPortalUrl + '" target="_blank" rel="noopener">' + $r.UpdateName  + '</a>' } else { $r.UpdateName }
+            # target="_blank" intentionally omitted (see in-flight table above).
+            $clusterCell = if ($r.ClusterPortalUrl)   { '<a href="' + $r.ClusterPortalUrl   + '">' + $r.ClusterName + '</a>' } else { $r.ClusterName }
+            $updateCell  = if ($r.UpdateRunPortalUrl) { '<a href="' + $r.UpdateRunPortalUrl + '">' + $r.UpdateName  + '</a>' } else { $r.UpdateName }
             [void]$md.Add("| $clusterCell | $updateCell | $($r.EndTimeUtc) | $cs | $detailCell | $recentTag |")
         }
         [void]$md.Add('')

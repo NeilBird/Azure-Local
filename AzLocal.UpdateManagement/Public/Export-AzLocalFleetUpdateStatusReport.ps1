@@ -925,6 +925,10 @@ function Export-AzLocalFleetUpdateStatusReport {
             [void]$md.Add('')
             [void]$md.Add("_ARG-first, fleet-scale failure-detail view. Shows up to $RunHistoryTopRows most recent unresolved Failed update runs (last $RunHistorySinceDays days). Source cmdlet: ``Get-AzLocalUpdateRunFailures -State Failed -OnlyUnresolved``.$dedupSuffix._")
             [void]$md.Add('')
+            # GitHub / ADO step-summary sanitisers strip `target="_blank"`, so the
+            # Cluster + Update portal links open in the current tab by default.
+            [void]$md.Add('> **Tip:** Hold `Ctrl` (or `Cmd` on macOS) when clicking - or middle-click - Cluster or Update links to open them in a new tab. (GitHub markdown strips `target="_blank"`.)')
+            [void]$md.Add('')
             [void]$md.Add('| Cluster Name | Update Name | Update State | Status | Current Step | Verbose Error Details | Duration | Time Started | Last Updated |')
             [void]$md.Add('|---|---|---|---|---|---|---|---|---|')
             foreach ($r in $renderRows) {
@@ -943,8 +947,11 @@ function Export-AzLocalFleetUpdateStatusReport {
                     '<details><summary>Show error</summary><br><code>' + $e + '</code>' + $extraBlock + '</details>'
                 }
                 else { '_(none)_' }
-                $clusterCell = if ($r.ClusterResourceId) { '<a href="https://portal.azure.com/#@/resource{0}" target="_blank">{1}</a>' -f $r.ClusterResourceId, $r.ClusterName } else { [string]$r.ClusterName }
-                $updCell     = if ($r.UpdateRunPortalUrl) { '<a href="{0}" target="_blank">{1}</a>' -f $r.UpdateRunPortalUrl, $r.UpdateName } else { [string]$r.UpdateName }
+                # target="_blank" intentionally omitted: GitHub Actions + ADO step-summary
+                # markdown sanitisers strip it (and force `rel="nofollow"`). The Tip above
+                # the table tells operators to Ctrl-click to open in a new tab.
+                $clusterCell = if ($r.ClusterResourceId) { '<a href="https://portal.azure.com/#@/resource{0}">{1}</a>' -f $r.ClusterResourceId, $r.ClusterName } else { [string]$r.ClusterName }
+                $updCell     = if ($r.UpdateRunPortalUrl) { '<a href="{0}">{1}</a>' -f $r.UpdateRunPortalUrl, $r.UpdateName } else { [string]$r.UpdateName }
                 [void]$md.Add("| $clusterCell | $updCell | $($r.State) | $($r.Status) | $($r.CurrentStep) | $errCell | $($r.Duration) | $($r.StartTime) | $($r.LastUpdated) |")
             }
             [void]$md.Add('')
