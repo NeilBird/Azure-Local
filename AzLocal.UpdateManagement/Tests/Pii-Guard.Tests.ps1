@@ -68,7 +68,11 @@ Describe 'PII Guard: Tests folder' {
         )
 
         $script:TargetFiles = Get-ChildItem -Path $script:TestsRoot -File -Recurse |
-            Where-Object { $_.Name -ne $script:GuardFileName -and $_.Extension -in @('.ps1','.psm1','.psd1','.json','.md','.xml','.yml','.yaml','.csv') }
+            Where-Object {
+                $_.Name -ne $script:GuardFileName -and
+                $_.Extension -in @('.ps1','.psm1','.psd1','.json','.md','.xml','.yml','.yaml','.csv') -and
+                $_.FullName -notmatch '[\\/]TestResults[\\/]'
+            }
     }
 
     It 'enumerates at least one target file' {

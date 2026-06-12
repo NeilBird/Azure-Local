@@ -144,6 +144,13 @@ function Test-AzLocalApplyUpdatesScheduleCoverage {
         export the table; Recommend exports the YAML snippet.
     .PARAMETER PassThru
         Emit objects to the pipeline even when -ExportPath was supplied.
+    .PARAMETER OmitCycleCalendar
+        Suppress the informational Cycle calendar section in -View Recommend
+        output. Used by Export-AzLocalApplyUpdatesScheduleAudit (v0.8.75+)
+        which inlines this Recommend output AND separately renders its own
+        enriched (7-column) cycle calendar - the inner plain calendar would
+        otherwise appear twice in the Step.3 step summary. Default off,
+        so direct callers see the calendar unchanged.
     .OUTPUTS
         PSCustomObject[] - shape depends on -View (see Status values above).
     .EXAMPLE
@@ -201,7 +208,10 @@ function Test-AzLocalApplyUpdatesScheduleCoverage {
         [string]$ExportPath,
 
         [Parameter(Mandatory = $false)]
-        [switch]$PassThru
+        [switch]$PassThru,
+
+        [Parameter(Mandatory = $false)]
+        [switch]$OmitCycleCalendar
     )
 
     # v0.7.75: auto-detect CI host when the caller accepted the default
@@ -940,7 +950,13 @@ resources
             # it to the cmdlet so the calendar surfaces 'Clusters in
             # ring(s)' per day and 'Cluster count' per ring. The cmdlet
             # itself does no CSV / Azure I/O.
-            if ($scheduleCfg) {
+            #
+            # v0.8.75: gate the whole block on -OmitCycleCalendar so the
+            # Export-AzLocalApplyUpdatesScheduleAudit wrapper (which
+            # inlines this Recommend output AND separately renders an
+            # enriched 7-column calendar) does not show two calendars
+            # in the Step.3 step summary.
+            if ($scheduleCfg -and -not $OmitCycleCalendar) {
                 $ringCountMap = @{}
                 foreach ($c in @($clusters)) {
                     if ($c.UpdateRing -and -not [string]::IsNullOrWhiteSpace($c.UpdateRing)) {

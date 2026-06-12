@@ -85,7 +85,7 @@ function Add-AzLocalPipelineVersionBanner {
           Verdict                  [string] - one of:
                                        'in sync'
                                        'YAML newer than module - check REQUIRED_MODULE_VERSION'
-                                       'YAML older than module - run Copy-AzLocalPipelineExample -Update'
+                                       'YAML older than module - run Update-AzLocalPipelineExample to refresh'
                                        'newer module available on PSGallery'
 
     .EXAMPLE
@@ -152,9 +152,19 @@ function Add-AzLocalPipelineVersionBanner {
     $pinStatus = if ([string]::IsNullOrWhiteSpace($PinnedVersion)) { 'latest (fix-forward)' } else { "pinned to v$PinnedVersion" }
     $latestStr = if ($SkipPSGalleryQuery) { '(PSGallery lookup skipped)' } elseif ($latest) { "v$latest" } else { '(PSGallery lookup failed)' }
     $verdict   = if ($installed -lt $generated) { 'YAML newer than module - check REQUIRED_MODULE_VERSION' }
-                 elseif ($installed -gt $generated) { 'YAML older than module - run Copy-AzLocalPipelineExample -Update' }
+                 elseif ($installed -gt $generated) { 'YAML older than module - run Update-AzLocalPipelineExample to refresh' }
                  elseif ($latest -and ($latest -gt $installed)) { 'newer module available on PSGallery' }
                  else { 'in sync' }
+
+    # v0.8.75: tailor the refresh-command hint to the detected pipeline host so the
+    # operator can copy-paste the exact -Platform and a sensible -Destination from the
+    # annotation. The customer runs the refresh from their LAPTOP (not the runner),
+    # so the destination uses a `<repo-root>` placeholder rather than the runner's
+    # workspace path. Falls back to GitHub conventions for local invocations.
+    $hostKind = Get-AzLocalPipelineHost
+    $refreshPlatform = if ($hostKind -eq 'AzureDevOps') { 'AzureDevOps' } else { 'GitHub' }
+    $refreshDestHint = if ($hostKind -eq 'AzureDevOps') { '<repo-root>\pipelines' } else { '<repo-root>\.github\workflows' }
+    $refreshCommand = "Update-AzLocalPipelineExample -Destination '$refreshDestHint' -Platform $refreshPlatform"
 
     Write-Host ''
     Write-Host 'Module version summary'
@@ -168,12 +178,12 @@ function Add-AzLocalPipelineVersionBanner {
     if ($installed -lt $generated) {
         Write-AzLocalPipelineWarning `
             -Title "$ModuleName is older than workflow YAML expects" `
-            -Message "$ModuleName v$installed is OLDER than the version this workflow YAML was generated against (v$generated). Cmdlets, parameters, or output schemas referenced by this YAML may not exist in v$installed. Set REQUIRED_MODULE_VERSION to v$generated, or refresh the YAML to match the installed module via 'Copy-AzLocalPipelineExample -Update'."
+            -Message "$ModuleName v$installed is OLDER than the version this workflow YAML was generated against (v$generated). Cmdlets, parameters, or output schemas referenced by this YAML may not exist in v$installed. Either pin REQUIRED_MODULE_VERSION to v$generated so the runner installs the matching version, or refresh the YAML to match the installed module by running (from your laptop): $refreshCommand. Update preserves your customisations bracketed by AZLOCAL-CUSTOMIZE markers (CRON schedules, ITSM secrets, etc.)."
     }
     if ($installed -gt $generated) {
         Write-AzLocalPipelineNotice `
             -Title 'Workflow YAML may be stale' `
-            -Message "Workflow YAML was generated against $ModuleName v$generated but the runner installed v$installed. Pipeline steps may have been improved in later releases - to refresh, re-run 'Copy-AzLocalPipelineExample -Update' (you will be prompted per file; add -Confirm:`$false to bypass). Pipeline YAMLs are under git so 'git diff' shows exactly what changed before commit."
+            -Message "Workflow YAML was generated against $ModuleName v$generated but the runner installed v$installed. Pipeline steps may have been improved in later releases. From your laptop, refresh with: $refreshCommand. Update preserves your customisations bracketed by AZLOCAL-CUSTOMIZE markers (CRON schedules, ITSM secrets, etc.). Pipeline YAMLs are under git so 'git diff' shows exactly what changed before commit."
     }
     if ($latest -and ($latest -gt $installed)) {
         Write-AzLocalPipelineNotice `
