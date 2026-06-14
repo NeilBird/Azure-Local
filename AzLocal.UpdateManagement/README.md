@@ -2,7 +2,7 @@
 
 > ⚠️ **Disclaimer**: This module is **NOT** a Microsoft supported service offering or product. It is provided as example code only, with no warranty or official support. Refer to the [MIT license](https://github.com/NeilBird/Azure-Local/blob/main/LICENSE) for further information.
 
-**Latest Version:** v0.8.77 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.8.77)
+**Latest Version:** v0.8.78 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.8.78)
 
 > 📢 **Renamed in v0.7.3**: this module was previously published as `AzStackHci.ManageUpdates`. The new module name aligns with the Azure Local product name (_Microsoft retired the *Azure Stack HCI* brand in late 2024_). The module GUID is preserved across the rename. If you have the old name installed, run:
 >
@@ -23,7 +23,7 @@ Azure Local REST API specification (includes update management endpoints): https
 **This README (overview + most-recent release notes):**
 
 - [Where to Start](#where-to-start)
-- [What's New in v0.8.77](#whats-new-in-v0877)
+- [What's New in v0.8.78](#whats-new-in-v0878)
 - [Files](#files)
 - [Prerequisites](#prerequisites)
 - [RBAC Requirements](#rbac-requirements) (summary; full reference in [docs/rbac.md](docs/rbac.md))
@@ -86,17 +86,19 @@ If you are new to this module, work through these in order from a regular PowerS
 
 > Most CI/CD pipelines in [Automation-Pipeline-Examples/](Automation-Pipeline-Examples/) are direct implementations of one of these workflows. Start there if you want a copy-pasteable end-to-end pipeline.
 
-## What's New in v0.8.77
+## What's New in v0.8.78
 
-**Patch release. Fixes two production strict-mode crashes** that surfaced in Step.05 / Step.06 / Step.07 of the bundled apply-updates pipelines. Both bugs share the same root cause: bare `$obj.Prop` property access under `Set-StrictMode -Version Latest` **throws** when `Prop` is absent on a `PSCustomObject` instead of returning `$null`. Fixes use the `$obj.PSObject.Properties['Prop'] -and $obj.Prop` guard idiom (and `IDictionary.Contains()` for tag bags returned by `Invoke-AzRestJson`). No public API change or new exports (still 60). All bundled pipeline templates bump `GENERATED_AGAINST_MODULE_VERSION` from `0.8.76` to `0.8.77`.
+**Patch release. Pipeline-summary UX polish** driven by operator feedback on the bundled apply-updates pipeline (Step.07). Three improvements land together:
 
-1. **Fixed (`Start-AzLocalClusterUpdate`, Step.07 main entry)**: production emitted `Error processing cluster '<Name>': The property 'UpdateStartWindow' cannot be found on this object.` for clusters whose tag bag did not include `UpdateStartWindow` / `UpdateExclusionsWindow`. The old `if ($clusterTags -and $clusterTags.$($script:UpdateStartWindowTagName))` threw **before** `-and` short-circuited because bare `.$()` member access on a missing `PSCustomObject` property is strict-mode-fatal. New code branches on `$clusterTags -is [System.Collections.IDictionary]` and uses `.Contains()` for hashtables / `PSObject.Properties[...]` for `PSCustomObject` tag bags. The semantic intent ("absent = any time eligible / no window restriction") is preserved: the outer `if ($windowTagValue -or $exclusionTagValue)` correctly skips the schedule gate when both are `$null`.
-2. **Fixed (`Test-AzLocalClusterHealth`, Step.05/06 readiness gate)**: production emitted `Checking: <Cluster>... Error: The property 'healthCheckResult' cannot be found on this object.` for clusters whose ARM update summary genuinely had no `healthCheckResult` field (typical for clusters not yet probed). The `catch` block then flagged the cluster `HealthState=Error / Passed=$false`, and the readiness gate falsely treated it as **blocked**, poisoning Step.5 / Step.7 / Step.9 readiness output for affected clusters. The same bare-access pattern was present in `Get-HealthCheckFailureSummary` (Private helper) and `Get-AzLocalFleetStatusData` (Public, `-IncludeHealthDetails`). All three sites now use the `PSObject.Properties[...]` guard; `Test-AzLocalClusterHealth` correctly classifies such clusters as `HealthState="No Data" / Passed=$true` and continues.
-3. **Tests**: two new Pester regression contexts feed the minimal real-world property-less shapes and assert `Should -Not -Throw` plus the correct downstream classification. Both bugs were invisible to parse-time analysis - only runtime against the property-less shape triggers the strict-mode throw.
+1. **JUnit re-classification of designed gate-respect outcomes.** `ScheduleBlocked` (cluster honouring its `UpdateStartWindow`), `SideloadedBlocked` (cluster honouring `UpdateSideloaded=False`), and `ExcludedByTag` (cluster honouring `AzureLocalManagement.UpdateExcluded=true`) are operator-configured opt-outs, not failures. They were previously rendered as `<failure>` rows by `Export-ResultsToJUnitXml`, which made `dorny/test-reporter` flip Step.07 runs **red** with `##[error]Failed test were found` on otherwise-successful schedule-aware / sideload-gated / tag-excluded runs. They now render as `<skipped>` and the summary `<testsuite failures=N>` / `<testsuite skipped=N>` attributes agree. `HealthCheckBlocked` deliberately remains in the failure bucket - a Critical health failure blocking an update IS a real operational issue the team should action.
+2. **Apply Updates summary now shows the FULL ring picture.** Previously the Readiness KPI table in the Apply Updates step summary showed only Total Clusters + Ready for Update, meaning the operator had no idea how many clusters were already fully patched (healthy steady state) or held back by the readiness gate (`state=NeedsAttention` / `UpdateInProgress` / `UpdateFailed` / pending SBE prerequisites / Critical health failure). The new optional `-UpToDateCount` / `-NotReadyCount` parameters on `Add-AzLocalApplyUpdatesStepSummary` add `Already Up to Date` and `Not Ready (needs attention before updating)` rows. Both apply-updates YAMLs (GitHub Actions + Azure DevOps) wire the upstream `readiness.UpToDateCount` / `readiness.NotReadyCount` outputs (already emitted by the check-readiness job/stage since v0.8.74) through to the summary task.
+3. **`actions/download-artifact@v6` -> `@v7` in `apply-updates.yml` (GitHub Actions).** v6 still ran on Node.js 20 and was emitting `Node.js 20 actions are deprecated. Please update the following actions to use Node.js 24` warnings on every Step.07 run. `@v7` (Dec 2025 release) runs natively on Node 24 and silences the warning. `@v7` is chosen deliberately over `@v8`: v8 introduced a breaking change defaulting the `digest-mismatch` setting to `error`, which is more disruptive than the v6 -> v7 upgrade benefit.
 
-`GENERATED_AGAINST_MODULE_VERSION` bumped from `0.8.76` to `0.8.77` across all bundled pipeline templates.
+Readiness gate verified robust against the operator question "do we show some clusters as Ready when they have a previously-failed in-progress run?" - the answer is **no**. `Get-AzLocalClusterUpdateReadiness` and `Start-AzLocalClusterUpdate` (Step 3) both predicate Ready on `updateSummary.properties.state -in @('UpdateAvailable','Ready','ReadyToInstall')`. Clusters in `NeedsAttention` / `UpdateInProgress` / `UpdateFailed` / `PreparationFailed` correctly land in Not-Ready and are surfaced by the Cluster Readiness table's `Status` column (added in v0.8.74).
 
-See [CHANGELOG.md](CHANGELOG.md#0877---2026-06-14) for the full v0.8.77 entry. See [`What's New in v0.8.76`](docs/release-history.md#whats-new-in-v0876) in the Release History for the previous release.
+`GENERATED_AGAINST_MODULE_VERSION` bumped from `0.8.77` to `0.8.78` across all bundled pipeline templates.
+
+See [CHANGELOG.md](CHANGELOG.md#0878---2026-06-15) for the full v0.8.78 entry. See [`What's New in v0.8.77`](docs/release-history.md#whats-new-in-v0877) in the Release History for the previous release.
 
 ## Files
 
@@ -575,7 +577,11 @@ This code is provided as-is for educational and reference purposes.
 
 The full What's-New history (v0.7.81 and earlier) has moved to [docs/release-history.md](docs/release-history.md).
 
-The most recent release notes for **v0.8.77** stay above under [`What's New in v0.8.77`](#whats-new-in-v0877).
+The most recent release notes for **v0.8.78** stay above under [`What's New in v0.8.78`](#whats-new-in-v0878).
+
+### What's New in v0.8.77
+
+**Patch release. Fixes two production strict-mode crashes** that surfaced in Step.05 / Step.06 / Step.07 of the bundled apply-updates pipelines. Both bugs share the same root cause: bare `$obj.Prop` property access under `Set-StrictMode -Version Latest` **throws** when `Prop` is absent on a `PSCustomObject` instead of returning `$null`. Fixes use the `$obj.PSObject.Properties['Prop'] -and $obj.Prop` guard idiom (and `IDictionary.Contains()` for tag bags returned by `Invoke-AzRestJson`). No public API change or new exports (still 60). `GENERATED_AGAINST_MODULE_VERSION` bumped from `0.8.76` to `0.8.77` across all bundled pipeline templates. See [CHANGELOG.md](CHANGELOG.md#0877---2026-06-14) for the full per-bullet detail and [docs/release-history.md](docs/release-history.md#whats-new-in-v0877) for the archived entry.
 
 ### What's New in v0.8.76
 

@@ -5,6 +5,39 @@ All notable changes to the AzLocal.UpdateManagement module (renamed from AzStack
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.78] - 2026-06-15
+
+Patch release. Pipeline-summary UX polish driven by operator feedback on the bundled apply-updates pipeline (Step.07). Three improvements land together, plus the routine `actions/download-artifact` deprecation bump:
+
+1. **JUnit re-classification of designed gate-respect outcomes.** `ScheduleBlocked` (cluster honouring its `UpdateStartWindow`), `SideloadedBlocked` (cluster honouring `UpdateSideloaded=False`), and `ExcludedByTag` (cluster honouring `AzureLocalManagement.UpdateExcluded=true`) are operator-configured opt-outs, not failures. They were previously rendered as `<failure>` rows by `Export-ResultsToJUnitXml`, which made `dorny/test-reporter` flip Step.07 runs RED with `##[error]Failed test were found` on otherwise-successful schedule-aware / sideload-gated / tag-excluded runs. They now render as `<skipped>` and the summary `<testsuite failures=N>` / `<testsuite skipped=N>` attributes agree. `HealthCheckBlocked` deliberately remains in the failure bucket - a Critical health failure blocking an update IS a real operational issue the team should action.
+2. **Apply Updates summary now shows the FULL ring picture.** Previously the Readiness KPI table in the Apply Updates step summary showed only Total Clusters + Ready for Update, meaning the operator had no idea how many clusters were already fully patched (healthy steady state) or held back by the readiness gate (`state=NeedsAttention` / `UpdateInProgress` / `UpdateFailed` / pending SBE prerequisites / Critical health failure). The new optional `-UpToDateCount` / `-NotReadyCount` parameters on `Add-AzLocalApplyUpdatesStepSummary` add `Already Up to Date` and `Not Ready (needs attention before updating)` rows. Both apply-updates YAMLs (GitHub Actions + Azure DevOps) wire the upstream `readiness.UpToDateCount` / `readiness.NotReadyCount` outputs (already emitted by the check-readiness job/stage since v0.8.74) through to the summary task.
+3. **`actions/download-artifact@v6` -> `@v7` in `apply-updates.yml` (GitHub Actions).** v6 still ran on Node.js 20 by default and was emitting `Node.js 20 actions are deprecated. Please update the following actions to use Node.js 24` warnings on every Step.07 run. `@v7` (Dec 2025 release) runs natively on Node 24 and silences the warning. **`@v7` is chosen deliberately over `@v8`**: v8 introduced a breaking change defaulting the `digest-mismatch` setting to `error`, which is more disruptive than the v6 -> v7 upgrade benefit.
+
+No public API change or new exports (still 60). All bundled pipeline templates bump `GENERATED_AGAINST_MODULE_VERSION` from `'0.8.77'` to `'0.8.78'`.
+
+### Fixed
+
+- **`Export-ResultsToJUnitXml` - JUnit re-classification of designed gate-respect outcomes.** Moved `ScheduleBlocked`, `SideloadedBlocked`, and `ExcludedByTag` from the `<failure>` bucket to the `<skipped>` bucket BOTH in the summary `<testsuite failures=...>` / `<testsuite skipped=...>` attributes AND in the per-testcase switch. `HealthCheckBlocked` deliberately retained in the failure bucket. `ExcludedByTag` was previously not explicitly classified at all - it fell through to the `<system-out>` default branch, which made it look like a successful test in `dorny/test-reporter` (now correctly classified as skipped).
+
+### Added
+
+- **`Add-AzLocalApplyUpdatesStepSummary` - optional `-UpToDateCount` and `-NotReadyCount` parameters.** Default `-1` (unknown) so the corresponding Readiness KPI rows are quietly omitted when callers do not supply them - existing consumers that have not regenerated their YAMLs see the same 2-row Readiness table they always did. When supplied (>= 0), the Readiness KPI table expands from 2 rows to 4 rows: `Total Clusters` / `Ready for Update` / `Already Up to Date` / `Not Ready (needs attention before updating)`. Up-to-Date is surfaced as a healthy steady state; Not-Ready surfaces clusters correctly held back by the readiness gate (state=NeedsAttention / UpdateInProgress / UpdateFailed, pending SBE prerequisites, critical health failures).
+
+### Changed
+
+- **`apply-updates.yml` (GitHub Actions)**: `actions/download-artifact@v6` -> `@v7` for the readiness-report download step (silences Node.js 20 deprecation warning). The `Summary` step now forwards `UpToDateCount` and `NotReadyCount` to `Add-AzLocalApplyUpdatesStepSummary` from `${{ needs.check-readiness.outputs.up_to_date_count }}` / `${{ needs.check-readiness.outputs.not_ready_count }}` (the check-readiness job has emitted these outputs since v0.8.74).
+- **`apply-updates.yml` (Azure DevOps)**: the `ApplyClusterUpdates` job adds two new `variables:` (`upToDateCount` / `notReadyCount`) pulling from `stageDependencies.CheckReadiness.ReadinessCheck.outputs['readiness.UpToDateCount']` / `'.NotReadyCount'`. The `Generate Summary` task forwards them to `Add-AzLocalApplyUpdatesStepSummary`.
+
+### Tests
+
+- `Context 'JUnit XML export handles ScheduleBlocked'` and `Context 'JUnit XML export handles SideloadedBlocked (v0.7.1, reclassified v0.8.78)'` updated to assert the per-testcase element is `<skipped>` (not `<failure>`) AND the summary `<testsuite>` attributes agree (`failures=0`, `skipped=1`).
+- New `It 'Export-ResultsToJUnitXml renders ExcludedByTag as <skipped> (v0.8.78)'` covers the third designed-skip status, asserting both per-testcase and summary-attr correctness.
+- New `It 'Has v0.8.78 optional readiness-breakdown parameters UpToDateCount/NotReadyCount'` parameter-shape regression on `Add-AzLocalApplyUpdatesStepSummary` (in the existing `Thin-YAML Step.6: Add-AzLocalApplyUpdatesStepSummary` describe).
+
+### Pipeline templates
+
+- All bundled pipeline templates bump `GENERATED_AGAINST_MODULE_VERSION` from `'0.8.77'` to `'0.8.78'`. Bodies are unchanged except for the GitHub Actions `apply-updates.yml` (download-artifact bump + UpToDateCount/NotReadyCount wiring) and the Azure DevOps `apply-updates.yml` (UpToDateCount/NotReadyCount wiring).
+
 ## [0.8.77] - 2026-06-14
 
 Patch release. Fixes two production strict-mode crashes that surfaced in Step.05 / Step.06 / Step.07 of the bundled apply-updates pipelines. Both bugs share the same root cause: bare `$obj.Prop` property access under `Set-StrictMode -Version Latest` **throws** when `Prop` is absent on a `PSCustomObject` instead of returning `$null`. Fixes use the `$obj.PSObject.Properties['Prop'] -and $obj.Prop` guard idiom (and `IDictionary.Contains()` for tag bags returned by `Invoke-AzRestJson`). No public API change or new exports (still 60). All bundled pipeline templates bump `GENERATED_AGAINST_MODULE_VERSION` from `'0.8.76'` to `'0.8.77'`.

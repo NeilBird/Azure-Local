@@ -135,7 +135,7 @@ env:
   # this to the version actually installed and to the latest on PSGallery, and emits a
   # ::notice annotation if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.8.77'
+  GENERATED_AGAINST_MODULE_VERSION: '0.8.78'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): manual workflow_dispatch input >
   # repository variable 'REQUIRED_MODULE_VERSION' > empty (latest).
@@ -354,7 +354,10 @@ jobs:
     # health, Step 3c schedule, Step 3b1 sideloaded) as defence in depth in
     # case state drifts between the two jobs.
     - name: Download Readiness Report
-      uses: actions/download-artifact@v6
+      # v0.8.78: bumped from @v6 to @v7. v6 still ran on Node.js 20 by default
+      # and triggered the runner's "Node.js 20 is deprecated" warning on every
+      # apply-updates run. @v7 runs natively on Node 24 and silences the warning.
+      uses: actions/download-artifact@v7
       with:
         # artifact name now carries a UTC timestamp - resolve via the
         # upstream job's outputs.readiness_artifact so re-runs on the same day
@@ -502,6 +505,13 @@ jobs:
             UpdateRing           = $env:INPUT_UPDATE_RING
             TotalCount           = "${{ needs.check-readiness.outputs.total_count }}"
             ReadyCount           = "${{ needs.check-readiness.outputs.ready_count }}"
+            # v0.8.78: surface the full ring picture (Up to Date + Not Ready) in
+            # the apply-updates Readiness KPI, not just the clusters that entered
+            # Apply Updates. Up-to-Date clusters are a healthy steady state;
+            # Not-Ready clusters were held back by the readiness gate (e.g.
+            # state=NeedsAttention / UpdateInProgress / UpdateFailed).
+            UpToDateCount        = "${{ needs.check-readiness.outputs.up_to_date_count }}"
+            NotReadyCount        = "${{ needs.check-readiness.outputs.not_ready_count }}"
             Succeeded            = "${{ steps.apply-updates.outputs.SUCCEEDED }}"
             Skipped              = "${{ steps.apply-updates.outputs.SKIPPED }}"
             Failed               = "${{ steps.apply-updates.outputs.FAILED }}"

@@ -34,8 +34,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $script:ModuleInfo | Should -Not -BeNullOrEmpty
         }
 
-        It 'Should have version 0.8.77' {
-            $script:ModuleInfo.Version | Should -Be '0.8.77'
+        It 'Should have version 0.8.78' {
+            $script:ModuleInfo.Version | Should -Be '0.8.78'
         }
 
         It 'Module version constants are in sync between .psm1 and .psd1' {
@@ -3014,7 +3014,12 @@ Describe 'Integration: Start-AzLocalClusterUpdate Schedule Status' {
     }
 
     Context 'JUnit XML export handles ScheduleBlocked' {
-        It 'Export-ResultsToJUnitXml should handle ScheduleBlocked result' {
+        It 'Export-ResultsToJUnitXml renders ScheduleBlocked as <skipped> (v0.8.78)' {
+            # v0.8.78: ScheduleBlocked is a DESIGNED operator-configured gate-respect
+            # outcome (UpdateStartWindow honoured), not a failure. Previously rendered
+            # as <failure type="ScheduleBlocked">, which made dorny/test-reporter
+            # flip Step.7 runs RED with '##[error]Failed test were found' on otherwise
+            # successful schedule-aware runs. Must now render as <skipped>.
             $testResult = [PSCustomObject]@{
                 ClusterName = 'test-cluster'
                 Status      = 'ScheduleBlocked'
@@ -3033,11 +3038,17 @@ Describe 'Integration: Start-AzLocalClusterUpdate Schedule Status' {
 
                 $outputPath | Should -Exist
                 $xml = [xml](Get-Content $outputPath -Raw)
+                # Per-testcase element must be <skipped>, not <failure>.
                 $testCase = $xml.SelectSingleNode('//testcase')
                 $testCase | Should -Not -BeNullOrEmpty
-                $failure = $testCase.SelectSingleNode('failure')
-                $failure | Should -Not -BeNullOrEmpty
-                $failure.type | Should -Be 'ScheduleBlocked'
+                $testCase.SelectSingleNode('failure') | Should -BeNullOrEmpty
+                $skipped = $testCase.SelectSingleNode('skipped')
+                $skipped | Should -Not -BeNullOrEmpty
+                $skipped.message | Should -Match 'Outside maintenance window'
+                # Summary <testsuite> attrs must agree: 0 failures, 1 skipped.
+                $suite = $xml.SelectSingleNode('//testsuite')
+                [int]$suite.failures | Should -Be 0
+                [int]$suite.skipped  | Should -Be 1
             }
             finally {
                 if (Test-Path $outputPath) { Remove-Item $outputPath -Force }
@@ -3045,8 +3056,11 @@ Describe 'Integration: Start-AzLocalClusterUpdate Schedule Status' {
         }
     }
 
-    Context 'JUnit XML export handles SideloadedBlocked (v0.7.1)' {
-        It 'Export-ResultsToJUnitXml should handle SideloadedBlocked result' {
+    Context 'JUnit XML export handles SideloadedBlocked (v0.7.1, reclassified v0.8.78)' {
+        It 'Export-ResultsToJUnitXml renders SideloadedBlocked as <skipped> (v0.8.78)' {
+            # v0.8.78: SideloadedBlocked is a DESIGNED operator-configured gate-respect
+            # outcome (UpdateSideloaded=False honoured), not a failure. Same fix as
+            # ScheduleBlocked above.
             $testResult = [PSCustomObject]@{
                 ClusterName = 'test-cluster'
                 Status      = 'SideloadedBlocked'
@@ -3067,9 +3081,49 @@ Describe 'Integration: Start-AzLocalClusterUpdate Schedule Status' {
                 $xml = [xml](Get-Content $outputPath -Raw)
                 $testCase = $xml.SelectSingleNode('//testcase')
                 $testCase | Should -Not -BeNullOrEmpty
-                $failure = $testCase.SelectSingleNode('failure')
-                $failure | Should -Not -BeNullOrEmpty
-                $failure.type | Should -Be 'SideloadedBlocked'
+                $testCase.SelectSingleNode('failure') | Should -BeNullOrEmpty
+                $skipped = $testCase.SelectSingleNode('skipped')
+                $skipped | Should -Not -BeNullOrEmpty
+                $skipped.message | Should -Match 'UpdateSideloaded'
+                $suite = $xml.SelectSingleNode('//testsuite')
+                [int]$suite.failures | Should -Be 0
+                [int]$suite.skipped  | Should -Be 1
+            }
+            finally {
+                if (Test-Path $outputPath) { Remove-Item $outputPath -Force }
+            }
+        }
+
+        It 'Export-ResultsToJUnitXml renders ExcludedByTag as <skipped> (v0.8.78)' {
+            # v0.8.78: ExcludedByTag (AzureLocalManagement.UpdateExcluded=true) is a
+            # DESIGNED opt-out, not a failure. Previously fell through to <system-out>;
+            # now explicitly classified as <skipped>.
+            $testResult = [PSCustomObject]@{
+                ClusterName = 'test-cluster'
+                Status      = 'ExcludedByTag'
+                Message     = 'Cluster excluded by AzureLocalManagement.UpdateExcluded=true'
+                UpdateName  = $null
+                StartTime   = Get-Date
+                EndTime     = Get-Date
+                Duration    = '00:00:01'
+            }
+            $outputPath = Join-Path $env:TEMP "pester-junit-excluded-test-$([Guid]::NewGuid()).xml"
+            try {
+                & (Get-Module 'AzLocal.UpdateManagement') {
+                    param($results, $path)
+                    Export-ResultsToJUnitXml -Results $results -OutputPath $path -TestSuiteName 'Test' -OperationType 'StartUpdate'
+                } @($testResult) $outputPath
+
+                $outputPath | Should -Exist
+                $xml = [xml](Get-Content $outputPath -Raw)
+                $testCase = $xml.SelectSingleNode('//testcase')
+                $testCase | Should -Not -BeNullOrEmpty
+                $testCase.SelectSingleNode('failure') | Should -BeNullOrEmpty
+                $skipped = $testCase.SelectSingleNode('skipped')
+                $skipped | Should -Not -BeNullOrEmpty
+                $suite = $xml.SelectSingleNode('//testsuite')
+                [int]$suite.failures | Should -Be 0
+                [int]$suite.skipped  | Should -Be 1
             }
             finally {
                 if (Test-Path $outputPath) { Remove-Item $outputPath -Force }
@@ -17363,6 +17417,15 @@ Describe 'Thin-YAML Step.6: Add-AzLocalApplyUpdatesStepSummary' {
         It 'Has counter parameters TotalCount/ReadyCount/Succeeded/Skipped/Failed/HealthBlocked/ScheduleBlocked/SideloadedBlocked/ExcludedByTag' {
             foreach ($n in 'TotalCount','ReadyCount','Succeeded','Skipped','Failed','HealthBlocked','ScheduleBlocked','SideloadedBlocked','ExcludedByTag') {
                 $script:S6CmdS.Parameters.Keys | Should -Contain $n -Because "Add-AzLocalApplyUpdatesStepSummary must expose $n"
+            }
+        }
+        It 'Has v0.8.78 optional readiness-breakdown parameters UpToDateCount/NotReadyCount' {
+            # v0.8.78: surface the readiness gate's Up-to-Date / Not-Ready counts so the
+            # apply-updates summary's Readiness KPI reflects the full ring picture, not
+            # only the clusters that entered Apply Updates. Both default to -1 (unknown)
+            # so callers that haven't been updated yet keep working unchanged.
+            foreach ($n in 'UpToDateCount','NotReadyCount') {
+                $script:S6CmdS.Parameters.Keys | Should -Contain $n -Because "Add-AzLocalApplyUpdatesStepSummary must expose $n (v0.8.78)"
             }
         }
         It 'Has parameter ApplyResultsJsonPath' { $script:S6CmdS.Parameters.Keys | Should -Contain 'ApplyResultsJsonPath' }

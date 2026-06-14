@@ -120,7 +120,7 @@ variables:
   # log if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
   - name: GENERATED_AGAINST_MODULE_VERSION
-    value: '0.8.77'
+    value: '0.8.78'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): queue-time parameter > pipeline variable
   # 'REQUIRED_MODULE_VERSION' overridden at queue time > empty (latest).
@@ -276,6 +276,14 @@ stages:
         variables:
           readyCount: $[ stageDependencies.CheckReadiness.ReadinessCheck.outputs['readiness.ReadyCount'] ]
           totalCount: $[ stageDependencies.CheckReadiness.ReadinessCheck.outputs['readiness.TotalCount'] ]
+          # v0.8.78: surface the readiness gate's Up-to-Date / Not-Ready breakdown
+          # in the apply-updates summary so the operator sees the FULL ring picture
+          # (not just the clusters that entered Apply Updates). Up-to-Date is a
+          # healthy steady state; Not-Ready includes clusters held back by a
+          # previously-failed run (state=NeedsAttention / UpdateFailed), an
+          # in-progress run, pending SBE prerequisites or a critical health failure.
+          upToDateCount: $[ stageDependencies.CheckReadiness.ReadinessCheck.outputs['readiness.UpToDateCount'] ]
+          notReadyCount: $[ stageDependencies.CheckReadiness.ReadinessCheck.outputs['readiness.NotReadyCount'] ]
           # pull the upstream artifact-stamp through so the download step
           # can reconstruct the timestamped artifact name produced by CheckReadiness.
           readinessArtifactStamp: $[ stageDependencies.CheckReadiness.ReadinessCheck.outputs['stamp.artifactStamp'] ]
@@ -486,6 +494,11 @@ stages:
                     UpdateRing           = $env:RESOLVED_UPDATE_RING
                     TotalCount           = "$(totalCount)"
                     ReadyCount           = "$(readyCount)"
+                    # v0.8.78: pass the readiness gate's Up-to-Date / Not-Ready breakdown
+                    # so the Readiness KPI surfaces the FULL ring picture, not just the
+                    # clusters that entered Apply Updates.
+                    UpToDateCount        = "$(upToDateCount)"
+                    NotReadyCount        = "$(notReadyCount)"
                     Succeeded            = "$(applyUpdates.Succeeded)"
                     Skipped              = "$(applyUpdates.Skipped)"
                     Failed               = "$(applyUpdates.Failed)"

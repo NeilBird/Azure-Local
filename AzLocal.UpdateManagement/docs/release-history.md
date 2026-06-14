@@ -4,7 +4,22 @@
 >
 > **For older releases**, this is the canonical reference; the main README intentionally stays slim so the most recent block is easy to find.
 >
-> **For v0.8.77 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0877) `What's New in v0.8.77` section.
+> **For v0.8.78 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0878) `What's New in v0.8.78` section.
+
+---
+
+### What's New in v0.8.77
+
+v0.8.77 fixed two production strict-mode crashes that surfaced in Step.05 / Step.06 / Step.07 of the bundled apply-updates pipelines. Both bugs shared the same root cause: bare `$obj.Prop` property access under `Set-StrictMode -Version Latest` **throws** when `Prop` is absent on a `PSCustomObject` instead of returning `$null`.
+
+1. **`Start-AzLocalClusterUpdate` (Step.07 main entry)** - production emitted `Error processing cluster '<Name>': The property 'UpdateStartWindow' cannot be found on this object.` for clusters whose tag bag did not include `UpdateStartWindow` / `UpdateExclusionsWindow`. The guard now branches on `$clusterTags -is [System.Collections.IDictionary]` and uses `.Contains()` for hashtables / `PSObject.Properties[...]` for `PSCustomObject` tag bags. The semantic intent ("absent = any time eligible / no window restriction") is preserved.
+2. **`Test-AzLocalClusterHealth` (Step.05/06 readiness gate)** - production emitted `Checking: <Cluster>... Error: The property 'healthCheckResult' cannot be found on this object.` for clusters whose ARM update summary genuinely had no `healthCheckResult` field. The `catch` block then flagged the cluster `HealthState=Error / Passed=$false`, poisoning Step.5 / Step.7 / Step.9 readiness output for affected clusters. Same guard idiom applied in `Get-HealthCheckFailureSummary` (Private) and `Get-AzLocalFleetStatusData` (Public, `-IncludeHealthDetails`). Such clusters now correctly classify as `HealthState="No Data" / Passed=$true`.
+
+Two new Pester regression contexts feed the minimal real-world property-less shapes and assert `Should -Not -Throw`. Both bugs were invisible to parse-time analysis - only runtime against the property-less shape triggers the strict-mode throw.
+
+`GENERATED_AGAINST_MODULE_VERSION` bumped from `0.8.76` to `0.8.77` across all bundled pipeline templates.
+
+See [CHANGELOG.md](../CHANGELOG.md#0877---2026-06-14) for the full v0.8.77 entry.
 
 ---
 
