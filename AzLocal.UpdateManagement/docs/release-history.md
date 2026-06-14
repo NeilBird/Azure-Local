@@ -4,7 +4,17 @@
 >
 > **For older releases**, this is the canonical reference; the main README intentionally stays slim so the most recent block is easy to find.
 >
-> **For v0.8.76 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0876) `What's New in v0.8.76` section.
+> **For v0.8.77 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0877) `What's New in v0.8.77` section.
+
+---
+
+### What's New in v0.8.76
+
+v0.8.76 adds a Microsoft-hosted Windows preflight job (GitHub Actions) / preflight stage (Azure DevOps) in front of the opt-in Step.6 `sideload-updates.yml` pipeline. Before v0.8.76, triggering Step.6 without first completing the opt-in setup (master gate `SIDELOAD_UPDATES` not set, or set without registering a self-hosted `azlocal-sideload` runner) produced `Status: Skipped` with no logs, no annotation, and no actionable feedback. The new `preflight` job (`runs-on: windows-latest`, ~10s, no Azure access) ALWAYS runs and writes a clear panel to the run step summary. Master gate broadened to accept `'true'` / `'True'` / `'TRUE'` / `'1'`. No public API change or new exports (still 60).
+
+`GENERATED_AGAINST_MODULE_VERSION` bumped from `0.8.75` to `0.8.76` across all bundled pipeline templates.
+
+See [CHANGELOG.md](../CHANGELOG.md#0876---2026-06-12) for the full v0.8.76 entry.
 
 ---
 

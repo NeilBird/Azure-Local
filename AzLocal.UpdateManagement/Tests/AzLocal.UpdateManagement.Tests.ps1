@@ -34,8 +34,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $script:ModuleInfo | Should -Not -BeNullOrEmpty
         }
 
-        It 'Should have version 0.8.76' {
-            $script:ModuleInfo.Version | Should -Be '0.8.76'
+        It 'Should have version 0.8.77' {
+            $script:ModuleInfo.Version | Should -Be '0.8.77'
         }
 
         It 'Module version constants are in sync between .psm1 and .psd1' {
@@ -3477,6 +3477,53 @@ Describe 'Function: Test-AzLocalClusterHealth' {
             $noun | Should -BeLike 'AzLocal*'
         }
     }
+
+    Context 'v0.8.77 strict-mode regression: missing properties.healthCheckResult' {
+        # Production Step.05/06 (Azure/AzLocal.UpdateManagement) emitted
+        # `Checking: <ClusterName>... Error: The property 'healthCheckResult'
+        # cannot be found on this object.` for clusters whose ARM update
+        # summary genuinely had no `healthCheckResult` field (typical for
+        # clusters that had not been probed yet). Bare
+        # $summary.properties.healthCheckResult under Set-StrictMode -Version
+        # Latest THROWS, the catch block flagged the cluster
+        # HealthState=Error / Passed=$false, and the readiness gate then
+        # falsely blocked Arizona / Sydney from updates. Fix uses
+        # PSObject.Properties[] indexing to guard the property read so the
+        # function returns 'No Data' / Passed=$true instead of throwing.
+        It 'Should classify a cluster with no healthCheckResult as "No Data" (Passed=$true) and NOT throw' {
+            InModuleScope AzLocal.UpdateManagement {
+                $resourceId = '/subscriptions/s/resourceGroups/r/providers/Microsoft.AzureStackHCI/clusters/no-hcr'
+
+                # Summary row mirrors the ARG `updatesummaries` projection
+                # shape Test-AzLocalClusterHealth consumes (id / name /
+                # properties / ClusterResourceId_). DELIBERATELY omits the
+                # `healthCheckResult` property from `properties`.
+                $summaryRow = [PSCustomObject]@{
+                    id                  = "$resourceId/updateSummaries/default"
+                    name                = 'default'
+                    properties          = [PSCustomObject]@{ state = 'AppliedSuccessfully' }
+                    ClusterResourceId_  = $resourceId.ToLower()
+                }
+
+                function global:az { $global:LASTEXITCODE = 0; return '{}' }
+                Mock Test-AzCliAvailable         { return $true }
+                Mock Install-AzGraphExtension    { return $true }
+                Mock Invoke-AzResourceGraphQuery { return @($summaryRow) }
+
+                $result = $null
+                # Note: assignment inside the Should -Not -Throw scriptblock
+                # runs in its own scope and does NOT propagate; call once for
+                # the throw assertion then capture again for property asserts.
+                { Test-AzLocalClusterHealth `
+                    -ClusterResourceIds @($resourceId) -PassThru 6>$null | Out-Null } | Should -Not -Throw
+                $result = Test-AzLocalClusterHealth -ClusterResourceIds @($resourceId) -PassThru 6>$null
+
+                $result             | Should -Not -BeNullOrEmpty
+                $result.HealthState | Should -Be 'No Data'
+                $result.Passed      | Should -Be $true
+            }
+        }
+    }
 }
 
 #endregion Pre-Update Health Validation Tests
@@ -5095,6 +5142,88 @@ Describe 'Start-AzLocalClusterUpdate (prefetched pass-through)' {
 
                 $results | Should -Not -BeNullOrEmpty
                 Assert-MockCalled Get-AzLocalAvailableUpdates -Times 0 -Exactly
+            }
+        }
+    }
+
+    Context 'v0.8.77 strict-mode regression: missing UpdateStartWindow tag' {
+        # Production Step.07 (Azure/AzLocal.UpdateManagement) emitted: "Error
+        # processing cluster 'Portland': The property 'UpdateStartWindow' cannot
+        # be found on this object." for clusters whose tag bag did not include
+        # UpdateStartWindow / UpdateExclusionsWindow. Bare $clusterTags.<Name>
+        # reads throw under Set-StrictMode -Version Latest when the property is
+        # absent on a PSCustomObject. The intent is "no tag = any time
+        # eligible" (no window restriction), matching the schedule audit's
+        # NoWindowTag advisory-not-blocking design.
+        It 'Should NOT throw when cluster tags object lacks UpdateStartWindow and UpdateExclusionsWindow' {
+            InModuleScope AzLocal.UpdateManagement {
+                $resourceId = '/subscriptions/s/resourceGroups/r/providers/Microsoft.AzureStackHCI/clusters/no-window-tag'
+
+                # tags is a real PSCustomObject (matches Invoke-AzRestJson shape)
+                # but deliberately omits UpdateStartWindow / UpdateExclusionsWindow.
+                $tagsWithoutWindow = [PSCustomObject]@{ Environment = 'Production'; UpdateRing = 'Stable' }
+
+                Mock Test-ExportPathWritable { return $true }
+                Mock Test-AzCliAvailable     { return $true }
+                Mock Get-AzLocalClusterInfo {
+                    return [PSCustomObject]@{
+                        id   = $resourceId
+                        name = 'no-window-tag'
+                        tags = $tagsWithoutWindow
+                        properties = [PSCustomObject]@{ status = 'ConnectedRecently' }
+                    }
+                }
+                # Stop early with a state that produces a Skipped record so the
+                # function exits cleanly after the schedule-tag read code path.
+                Mock Get-AzLocalUpdateSummary {
+                    return [PSCustomObject]@{
+                        properties = [PSCustomObject]@{
+                            state = 'NotApplicableForTest'
+                            healthState = 'Success'
+                        }
+                    }
+                }
+
+                { Start-AzLocalClusterUpdate `
+                        -ClusterResourceIds @($resourceId) `
+                        -Force `
+                        -PassThru 4>$null 6>$null | Out-Null } | Should -Not -Throw
+            }
+        }
+
+        It 'Should treat missing UpdateStartWindow as "any time" and proceed past the schedule gate' {
+            InModuleScope AzLocal.UpdateManagement {
+                $resourceId = '/subscriptions/s/resourceGroups/r/providers/Microsoft.AzureStackHCI/clusters/any-time'
+
+                # No tags at all on the cluster - schedule gate should be a no-op,
+                # and Test-AzLocalUpdateScheduleAllowed should NOT be invoked
+                # because $windowTagValue and $exclusionTagValue are both $null.
+                Mock Test-ExportPathWritable { return $true }
+                Mock Test-AzCliAvailable     { return $true }
+                Mock Get-AzLocalClusterInfo {
+                    return [PSCustomObject]@{
+                        id   = $resourceId
+                        name = 'any-time'
+                        tags = [PSCustomObject]@{}
+                        properties = [PSCustomObject]@{ status = 'ConnectedRecently' }
+                    }
+                }
+                Mock Get-AzLocalUpdateSummary {
+                    return [PSCustomObject]@{
+                        properties = [PSCustomObject]@{
+                            state = 'NotApplicableForTest'
+                            healthState = 'Success'
+                        }
+                    }
+                }
+                Mock Test-AzLocalUpdateScheduleAllowed { throw 'schedule gate must not be called when no window tags are set' }
+
+                $null = Start-AzLocalClusterUpdate `
+                    -ClusterResourceIds @($resourceId) `
+                    -Force `
+                    -PassThru 4>$null 6>$null
+
+                Assert-MockCalled Test-AzLocalUpdateScheduleAllowed -Times 0 -Exactly
             }
         }
     }

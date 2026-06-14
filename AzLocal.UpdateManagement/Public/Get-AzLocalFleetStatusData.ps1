@@ -465,7 +465,10 @@ function Get-AzLocalFleetStatusData {
             # Health details (from already-fetched update summary)
             if ($IncludeHealthDetails) {
                 $failures = @()
-                if ($hasSummary -and $updateSummary.properties.healthCheckResult) {
+                # v0.8.77: guard property reads under Set-StrictMode -Version Latest.
+                $hcrProps = if ($hasSummary -and $updateSummary) { $updateSummary.PSObject.Properties['properties'] } else { $null }
+                $hasHCR   = $hcrProps -and $updateSummary.properties.PSObject.Properties['healthCheckResult'] -and $updateSummary.properties.healthCheckResult
+                if ($hasHCR) {
                     foreach ($check in $updateSummary.properties.healthCheckResult) {
                         if ($check.status -eq "Failed") {
                             $sev = if ($check.severity) { $check.severity } else { "Unknown" }

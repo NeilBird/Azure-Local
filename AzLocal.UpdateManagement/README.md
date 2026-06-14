@@ -2,7 +2,7 @@
 
 > ⚠️ **Disclaimer**: This module is **NOT** a Microsoft supported service offering or product. It is provided as example code only, with no warranty or official support. Refer to the [MIT license](https://github.com/NeilBird/Azure-Local/blob/main/LICENSE) for further information.
 
-**Latest Version:** v0.8.76 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.8.76)
+**Latest Version:** v0.8.77 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.8.77)
 
 > 📢 **Renamed in v0.7.3**: this module was previously published as `AzStackHci.ManageUpdates`. The new module name aligns with the Azure Local product name (_Microsoft retired the *Azure Stack HCI* brand in late 2024_). The module GUID is preserved across the rename. If you have the old name installed, run:
 >
@@ -23,7 +23,7 @@ Azure Local REST API specification (includes update management endpoints): https
 **This README (overview + most-recent release notes):**
 
 - [Where to Start](#where-to-start)
-- [What's New in v0.8.76](#whats-new-in-v0876)
+- [What's New in v0.8.77](#whats-new-in-v0877)
 - [Files](#files)
 - [Prerequisites](#prerequisites)
 - [RBAC Requirements](#rbac-requirements) (summary; full reference in [docs/rbac.md](docs/rbac.md))
@@ -86,18 +86,17 @@ If you are new to this module, work through these in order from a regular PowerS
 
 > Most CI/CD pipelines in [Automation-Pipeline-Examples/](Automation-Pipeline-Examples/) are direct implementations of one of these workflows. Start there if you want a copy-pasteable end-to-end pipeline.
 
-## What's New in v0.8.76
+## What's New in v0.8.77
 
-**Patch release. Adds a Microsoft-hosted Windows preflight job (GitHub Actions) / preflight stage (Azure DevOps) in front of the opt-in Step.6 `sideload-updates.yml` pipeline.** Before v0.8.76, triggering Step.6 without first completing the opt-in setup (master gate `SIDELOAD_UPDATES` not set, or set without registering a self-hosted `azlocal-sideload` runner) produced `Status: Skipped` with no logs, no annotation, and no actionable feedback - operators had to read the YAML to figure out why. v0.8.76 prepends a `preflight` job (`runs-on: windows-latest`, ~10s, no Azure access) that ALWAYS runs and writes a clear panel to the run step summary explaining what is set, what is missing, and how to enable Step.6. Also broadens the master gate to accept `'true'`, `'True'`, `'TRUE'`, or `'1'` (was strict-literal `'true'` only). No public API change or new exports (still 60).
+**Patch release. Fixes two production strict-mode crashes** that surfaced in Step.05 / Step.06 / Step.07 of the bundled apply-updates pipelines. Both bugs share the same root cause: bare `$obj.Prop` property access under `Set-StrictMode -Version Latest` **throws** when `Prop` is absent on a `PSCustomObject` instead of returning `$null`. Fixes use the `$obj.PSObject.Properties['Prop'] -and $obj.Prop` guard idiom (and `IDictionary.Contains()` for tag bags returned by `Invoke-AzRestJson`). No public API change or new exports (still 60). All bundled pipeline templates bump `GENERATED_AGAINST_MODULE_VERSION` from `0.8.76` to `0.8.77`.
 
-1. **Added (GitHub Actions)**: new `preflight` job in `sideload-updates.yml` on `runs-on: windows-latest` with `permissions: actions: read, contents: read`. The job ALWAYS runs (no `if:` gate). Outcomes: gate OFF -> succeeds with a `::notice` annotation and a full enablement walkthrough in the step summary; gate ON + `SIDELOAD_STATE_ROOT` missing -> fails (`::error`, `exit 1`) with a missing-variable panel; gate ON + best-effort `/repos/{owner}/{repo}/actions/runners` enumeration finds no online `azlocal-sideload` runner -> fails with a no-online-runner panel; gate ON + the API returns 403/404 (the typical case - `GITHUB_TOKEN` lacks admin) -> succeeds with a manual-verification warning panel; all OK -> succeeds with a "Preflight passed" panel. The `sideload` job gains `needs: preflight` so it cannot queue indefinitely when prerequisites are missing.
-2. **Added (Azure DevOps)**: new `Preflight` stage in `sideload-updates.yml` on `pool: vmImage: windows-latest`. Validates the gate + `SIDELOAD_STATE_ROOT`; uploads the markdown panel via `##vso[task.uploadsummary]`. Does NOT enumerate ADO agents (the `Agent Pools (read)` scope is not normally granted to the pipeline identity, so the preflight degrades to documentation in that case). The `Sideload` stage gains `dependsOn: Preflight`.
-3. **Changed (master gate broadened)**: both `sideload-updates.yml` files now accept `SIDELOAD_UPDATES` in `'true'` / `'True'` / `'TRUE'` / `'1'`. GH uses `contains(fromJSON('["true","True","TRUE","1"]'), vars.SIDELOAD_UPDATES)`; ADO uses an `or(eq..., eq...)` condition. The README still recommends `'true'` as the canonical value; the additional accepted values are forgiving of case-insensitive habits.
-4. **Docs**: `Automation-Pipeline-Examples/docs/sideload.md` updated - section 6 gate row reflects the four accepted values, header note documents the preflight, new section 9 "Preflight (v0.8.76+)" with the full behaviour matrix and a short rationale for why a Microsoft-hosted Windows runner is the correct host for preflight (no fabric / Key Vault access required).
+1. **Fixed (`Start-AzLocalClusterUpdate`, Step.07 main entry)**: production emitted `Error processing cluster '<Name>': The property 'UpdateStartWindow' cannot be found on this object.` for clusters whose tag bag did not include `UpdateStartWindow` / `UpdateExclusionsWindow`. The old `if ($clusterTags -and $clusterTags.$($script:UpdateStartWindowTagName))` threw **before** `-and` short-circuited because bare `.$()` member access on a missing `PSCustomObject` property is strict-mode-fatal. New code branches on `$clusterTags -is [System.Collections.IDictionary]` and uses `.Contains()` for hashtables / `PSObject.Properties[...]` for `PSCustomObject` tag bags. The semantic intent ("absent = any time eligible / no window restriction") is preserved: the outer `if ($windowTagValue -or $exclusionTagValue)` correctly skips the schedule gate when both are `$null`.
+2. **Fixed (`Test-AzLocalClusterHealth`, Step.05/06 readiness gate)**: production emitted `Checking: <Cluster>... Error: The property 'healthCheckResult' cannot be found on this object.` for clusters whose ARM update summary genuinely had no `healthCheckResult` field (typical for clusters not yet probed). The `catch` block then flagged the cluster `HealthState=Error / Passed=$false`, and the readiness gate falsely treated it as **blocked**, poisoning Step.5 / Step.7 / Step.9 readiness output for affected clusters. The same bare-access pattern was present in `Get-HealthCheckFailureSummary` (Private helper) and `Get-AzLocalFleetStatusData` (Public, `-IncludeHealthDetails`). All three sites now use the `PSObject.Properties[...]` guard; `Test-AzLocalClusterHealth` correctly classifies such clusters as `HealthState="No Data" / Passed=$true` and continues.
+3. **Tests**: two new Pester regression contexts feed the minimal real-world property-less shapes and assert `Should -Not -Throw` plus the correct downstream classification. Both bugs were invisible to parse-time analysis - only runtime against the property-less shape triggers the strict-mode throw.
 
-`GENERATED_AGAINST_MODULE_VERSION` bumped from `0.8.75` to `0.8.76` across all bundled pipeline templates.
+`GENERATED_AGAINST_MODULE_VERSION` bumped from `0.8.76` to `0.8.77` across all bundled pipeline templates.
 
-See [CHANGELOG.md](CHANGELOG.md#0876---2026-06-12) for the full v0.8.76 entry. See [`What's New in v0.8.75`](docs/release-history.md#whats-new-in-v0875) in the Release History for the previous release.
+See [CHANGELOG.md](CHANGELOG.md#0877---2026-06-14) for the full v0.8.77 entry. See [`What's New in v0.8.76`](docs/release-history.md#whats-new-in-v0876) in the Release History for the previous release.
 
 ## Files
 
@@ -576,7 +575,13 @@ This code is provided as-is for educational and reference purposes.
 
 The full What's-New history (v0.7.81 and earlier) has moved to [docs/release-history.md](docs/release-history.md).
 
-The most recent release notes for **v0.8.76** stay above under [`What's New in v0.8.76`](#whats-new-in-v0876).
+The most recent release notes for **v0.8.77** stay above under [`What's New in v0.8.77`](#whats-new-in-v0877).
+
+### What's New in v0.8.76
+
+**Patch release. Adds a Microsoft-hosted Windows preflight job (GitHub Actions) / preflight stage (Azure DevOps) in front of the opt-in Step.6 `sideload-updates.yml` pipeline.** Before v0.8.76, triggering Step.6 without first completing the opt-in setup (master gate `SIDELOAD_UPDATES` not set, or set without registering a self-hosted `azlocal-sideload` runner) produced `Status: Skipped` with no logs, no annotation, and no actionable feedback - operators had to read the YAML to figure out why. v0.8.76 prepends a `preflight` job (`runs-on: windows-latest`, ~10s, no Azure access) that ALWAYS runs and writes a clear panel to the run step summary explaining what is set, what is missing, and how to enable Step.6. Also broadens the master gate to accept `'true'`, `'True'`, `'TRUE'`, or `'1'` (was strict-literal `'true'` only). No public API change or new exports (still 60).
+
+See [CHANGELOG.md](CHANGELOG.md#0876---2026-06-12) for the full v0.8.76 entry.
 
 ### What's New in v0.8.73
 

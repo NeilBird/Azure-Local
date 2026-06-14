@@ -795,10 +795,24 @@ function Start-AzLocalClusterUpdate {
                 }
 
                 # Step 3c: Schedule/maintenance window validation
-                # Check UpdateStartWindow and UpdateExclusionsWindow tags if present on the cluster resource
-                $clusterTags = $clusterInfo.tags
-                $windowTagValue = if ($clusterTags -and $clusterTags.$($script:UpdateStartWindowTagName)) { $clusterTags.$($script:UpdateStartWindowTagName) } else { $null }
-                $exclusionTagValue = if ($clusterTags -and $clusterTags.$($script:UpdateExclusionsWindowTagName)) { $clusterTags.$($script:UpdateExclusionsWindowTagName) } else { $null }
+                # Check UpdateStartWindow and UpdateExclusionsWindow tags if present on the cluster resource.
+                # v0.8.77: tag absence MUST be treated as "no window restriction" (any time eligible).
+                # Bare $clusterTags.<tagName> reads THROW under Set-StrictMode -Version Latest when the
+                # property is absent on a PSCustomObject (clusterInfo.tags from Invoke-AzRestJson).
+                # Guard with PSObject.Properties so missing tags resolve to $null rather than blowing up
+                # the entire Start-AzLocalClusterUpdate call for that cluster.
+                $clusterTags       = $clusterInfo.tags
+                $windowTagValue    = $null
+                $exclusionTagValue = $null
+                if ($clusterTags) {
+                    if ($clusterTags -is [System.Collections.IDictionary]) {
+                        if ($clusterTags.Contains($script:UpdateStartWindowTagName))      { $windowTagValue    = $clusterTags[$script:UpdateStartWindowTagName] }
+                        if ($clusterTags.Contains($script:UpdateExclusionsWindowTagName)) { $exclusionTagValue = $clusterTags[$script:UpdateExclusionsWindowTagName] }
+                    } else {
+                        if ($clusterTags.PSObject.Properties[$script:UpdateStartWindowTagName])      { $windowTagValue    = $clusterTags.$($script:UpdateStartWindowTagName) }
+                        if ($clusterTags.PSObject.Properties[$script:UpdateExclusionsWindowTagName]) { $exclusionTagValue = $clusterTags.$($script:UpdateExclusionsWindowTagName) }
+                    }
+                }
 
                 if ($windowTagValue -or $exclusionTagValue) {
                     Write-Log -Message "Step 3c: Checking maintenance schedule tags..." -Level Info
