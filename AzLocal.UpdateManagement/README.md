@@ -2,7 +2,7 @@
 
 > ⚠️ **Disclaimer**: This module is **NOT** a Microsoft supported service offering or product. It is provided as example code only, with no warranty or official support. Refer to the [MIT license](https://github.com/NeilBird/Azure-Local/blob/main/LICENSE) for further information.
 
-**Latest Version:** v0.8.78 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.8.78)
+**Latest Version:** v0.8.79 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.8.79)
 
 > 📢 **Renamed in v0.7.3**: this module was previously published as `AzStackHci.ManageUpdates`. The new module name aligns with the Azure Local product name (_Microsoft retired the *Azure Stack HCI* brand in late 2024_). The module GUID is preserved across the rename. If you have the old name installed, run:
 >
@@ -23,7 +23,7 @@ Azure Local REST API specification (includes update management endpoints): https
 **This README (overview + most-recent release notes):**
 
 - [Where to Start](#where-to-start)
-- [What's New in v0.8.78](#whats-new-in-v0878)
+- [What's New in v0.8.79](#whats-new-in-v0879)
 - [Files](#files)
 - [Prerequisites](#prerequisites)
 - [RBAC Requirements](#rbac-requirements) (summary; full reference in [docs/rbac.md](docs/rbac.md))
@@ -86,19 +86,32 @@ If you are new to this module, work through these in order from a regular PowerS
 
 > Most CI/CD pipelines in [Automation-Pipeline-Examples/](Automation-Pipeline-Examples/) are direct implementations of one of these workflows. Start there if you want a copy-pasteable end-to-end pipeline.
 
-## What's New in v0.8.78
+## What's New in v0.8.79
 
-**Patch release. Pipeline-summary UX polish** driven by operator feedback on the bundled apply-updates pipeline (Step.07). Three improvements land together:
+**Patch release. Adds an operator-only "Force Immediate Update" break-glass override** to the Step.07 apply-updates pipeline. Intended for emergency / out-of-window patching driven by an on-call operator; **defaults to OFF**; **cannot be reached from the scheduled `apply-updates-schedule.yml` configuration file**.
 
-1. **JUnit re-classification of designed gate-respect outcomes.** `ScheduleBlocked` (cluster honouring its `UpdateStartWindow`), `SideloadedBlocked` (cluster honouring `UpdateSideloaded=False`), and `ExcludedByTag` (cluster honouring `AzureLocalManagement.UpdateExcluded=true`) are operator-configured opt-outs, not failures. They were previously rendered as `<failure>` rows by `Export-ResultsToJUnitXml`, which made `dorny/test-reporter` flip Step.07 runs **red** with `##[error]Failed test were found` on otherwise-successful schedule-aware / sideload-gated / tag-excluded runs. They now render as `<skipped>` and the summary `<testsuite failures=N>` / `<testsuite skipped=N>` attributes agree. `HealthCheckBlocked` deliberately remains in the failure bucket - a Critical health failure blocking an update IS a real operational issue the team should action.
-2. **Apply Updates summary now shows the FULL ring picture.** Previously the Readiness KPI table in the Apply Updates step summary showed only Total Clusters + Ready for Update, meaning the operator had no idea how many clusters were already fully patched (healthy steady state) or held back by the readiness gate (`state=NeedsAttention` / `UpdateInProgress` / `UpdateFailed` / pending SBE prerequisites / Critical health failure). The new optional `-UpToDateCount` / `-NotReadyCount` parameters on `Add-AzLocalApplyUpdatesStepSummary` add `Already Up to Date` and `Not Ready (needs attention before updating)` rows. Both apply-updates YAMLs (GitHub Actions + Azure DevOps) wire the upstream `readiness.UpToDateCount` / `readiness.NotReadyCount` outputs (already emitted by the check-readiness job/stage since v0.8.74) through to the summary task.
-3. **`actions/download-artifact@v6` -> `@v7` in `apply-updates.yml` (GitHub Actions).** v6 still ran on Node.js 20 and was emitting `Node.js 20 actions are deprecated. Please update the following actions to use Node.js 24` warnings on every Step.07 run. `@v7` (Dec 2025 release) runs natively on Node 24 and silences the warning. `@v7` is chosen deliberately over `@v8`: v8 introduced a breaking change defaulting the `digest-mismatch` setting to `error`, which is more disruptive than the v6 -> v7 upgrade benefit.
+### What it does
 
-Readiness gate verified robust against the operator question "do we show some clusters as Ready when they have a previously-failed in-progress run?" - the answer is **no**. `Get-AzLocalClusterUpdateReadiness` and `Start-AzLocalClusterUpdate` (Step 3) both predicate Ready on `updateSummary.properties.state -in @('UpdateAvailable','Ready','ReadyToInstall')`. Clusters in `NeedsAttention` / `UpdateInProgress` / `UpdateFailed` / `PreparationFailed` correctly land in Not-Ready and are surfaced by the Cluster Readiness table's `Status` column (added in v0.8.74).
+When enabled, the per-cluster Step 3c maintenance-window gate (`UpdateStartWindow` / `UpdateExclusionsWindow` tags) is **bypassed** and updates start regardless of the current UTC time. All other readiness gates (connectivity, health, sideload status, `UpdateExcluded` operator hard-override) continue to apply. The override is opt-in per-run on both pipeline hosts:
 
-`GENERATED_AGAINST_MODULE_VERSION` bumped from `0.8.77` to `0.8.78` across all bundled pipeline templates.
+- **GitHub Actions:** new `force_immediate_update` `workflow_dispatch` choice input (default `'false'`). Description rendered in the Run Workflow GUI starts with `WARNING:` and explicitly notes `MANUAL RUNS ONLY`.
+- **Azure DevOps:** new `forceImmediateUpdate` boolean `parameters:` entry (default `false`). `displayName:` in the Queue Build GUI starts with `WARNING:` and explicitly notes `MANUAL QUEUE ONLY`.
+- **Direct cmdlet use:** new `Invoke-AzLocalReadinessGatedClusterUpdate -ForceImmediateUpdate` switch (which forwards `-IgnoreScheduleTags` to `Start-AzLocalClusterUpdate` for every cluster in the readiness CSV). A high-visibility warning banner (`::warning::` on GHA, `##vso[task.logissue type=warning]` on ADO, `Write-Warning` otherwise) is emitted at the top of the run when the override fires.
 
-See [CHANGELOG.md](CHANGELOG.md#0878---2026-06-15) for the full v0.8.78 entry. See [`What's New in v0.8.77`](docs/release-history.md#whats-new-in-v0877) in the Release History for the previous release.
+### Security / anti-injection design
+
+Two layers of defence prevent a scheduled cron firing from honouring the override:
+
+1. **GitHub Actions YAML expression collapse**: `${{ github.event_name == 'workflow_dispatch' && github.event.inputs.force_immediate_update || 'false' }}` - any `schedule` / `push` / `pull_request` / `repository_dispatch` event sees `'false'` even if a malicious upstream tried to inject the input.
+2. **Azure DevOps runtime guard**: the apply step rechecks `$(Build.Reason) -eq 'Manual'` before flipping the switch. Scheduled / CI / PR runs log a `##vso[task.logissue type=warning]` explaining the parameter was ignored.
+
+The override is **deliberately not surfaced** by `New-AzLocalApplyUpdatesScheduleConfig` / `Resolve-AzLocalPipelineUpdateRing` / `Get-AzLocalApplyUpdatesScheduleAudit` - there is no path to enable it from `apply-updates-schedule.yml`. A Pester sweep asserts this.
+
+The `UpdateExcluded` operator hard-override (`AzureLocalManagement.UpdateExcluded=true`) is INTENTIONALLY still respected by `Force Immediate Update` - the break-glass override is about time-window gates, not per-cluster opt-outs. If a cluster must be force-included despite an `UpdateExcluded` tag, remove the tag first.
+
+`GENERATED_AGAINST_MODULE_VERSION` bumped from `0.8.78` to `0.8.79` across all bundled pipeline templates.
+
+See [CHANGELOG.md](CHANGELOG.md#0879---2026-06-15) for the full v0.8.79 entry. See [`What's New in v0.8.78`](docs/release-history.md#whats-new-in-v0878) in the Release History for the previous release.
 
 ## Files
 
@@ -577,7 +590,11 @@ This code is provided as-is for educational and reference purposes.
 
 The full What's-New history (v0.7.81 and earlier) has moved to [docs/release-history.md](docs/release-history.md).
 
-The most recent release notes for **v0.8.78** stay above under [`What's New in v0.8.78`](#whats-new-in-v0878).
+The most recent release notes for **v0.8.79** stay above under [`What's New in v0.8.79`](#whats-new-in-v0879).
+
+### What's New in v0.8.78
+
+**Patch release. Pipeline-summary UX polish** on the bundled apply-updates pipeline (Step.07). Three improvements landed together: (1) `ScheduleBlocked` / `SideloadedBlocked` / `ExcludedByTag` outcomes now render as JUnit `<skipped>` instead of `<failure>` so `dorny/test-reporter` no longer flips Step.07 RED on by-design gate-respect outcomes (`HealthCheckBlocked` stays a `<failure>`); (2) the new optional `-UpToDateCount` / `-NotReadyCount` parameters on `Add-AzLocalApplyUpdatesStepSummary` add `Already Up to Date` and `Not Ready (needs attention before updating)` rows to the Readiness KPI table; (3) `actions/download-artifact@v6 -> @v7` in `apply-updates.yml` (GitHub Actions) silences the Node.js 20 deprecation warning. No public API change or new exports (still 60). `GENERATED_AGAINST_MODULE_VERSION` bumped from `0.8.77` to `0.8.78` across all bundled pipeline templates. See [CHANGELOG.md](CHANGELOG.md#0878---2026-06-15) for the full v0.8.78 entry and [docs/release-history.md](docs/release-history.md#whats-new-in-v0878) for the archived entry.
 
 ### What's New in v0.8.77
 

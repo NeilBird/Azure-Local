@@ -5,6 +5,35 @@ All notable changes to the AzLocal.UpdateManagement module (renamed from AzStack
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.79] - 2026-06-15
+
+Patch release. Adds an operator-only **Force Immediate Update** break-glass override to the Step.07 apply-updates pipeline that bypasses the per-cluster `UpdateStartWindow` / `UpdateExclusionsWindow` maintenance-window gate. Intended for emergency / out-of-window patching driven by an on-call operator; defaults to OFF; cannot be reached from the scheduled `apply-updates-schedule.yml` configuration file.
+
+### Added
+
+- **`Start-AzLocalClusterUpdate -IgnoreScheduleTags`** (new `[switch]` parameter). When set, the entire Step 3c maintenance-window block is skipped: the per-cluster `UpdateStartWindow` and `UpdateExclusionsWindow` tag lookups still execute (so the tag values can be logged), but `Test-AzLocalUpdateScheduleAllowed` is NOT called and the cluster is admitted regardless of the current UTC time. A `Warning`-level log entry is emitted per cluster recording the bypassed tag values so the override is visible in the transcript. Other gates (connectivity, health, sideload status, `UpdateExcluded` operator hard-override) continue to apply.
+- **`Invoke-AzLocalReadinessGatedClusterUpdate -ForceImmediateUpdate`** (new `[switch]` parameter). When set, forwards `-IgnoreScheduleTags` to `Start-AzLocalClusterUpdate` for every cluster in the readiness CSV, and emits a high-visibility warning banner at the top of the apply run using the host-aware idiom (`::warning::` for GitHub Actions, `##vso[task.logissue type=warning]` for Azure DevOps, plain `Write-Warning` otherwise) so operators see the override has fired before any cluster is touched.
+- **Pipeline parameter `force_immediate_update` (GitHub Actions `workflow_dispatch` input)** in `apply-updates.yml`. Choice input with values `false` (default) / `true`. The `description:` rendered in the GUI starts `WARNING:` and explicitly notes `MANUAL RUNS ONLY`. Wired into the apply step via an `INPUT_FORCE_IMMEDIATE_UPDATE` environment variable using an anti-injection collapse pattern: `${{ github.event_name == 'workflow_dispatch' && github.event.inputs.force_immediate_update || 'false' }}` - any `schedule` / `push` / `pull_request` / `repository_dispatch` event sees `'false'` even if a malicious upstream tried to inject the input.
+- **Pipeline parameter `forceImmediateUpdate` (Azure DevOps `parameters:` boolean)** in `apply-updates.yml`. Defaults to `false`. The `displayName:` rendered in the Queue Build GUI starts `WARNING:` and explicitly notes `MANUAL QUEUE ONLY`. Wired into the apply step via a `FORCE_IMMEDIATE_UPDATE_PARAM` environment variable, with a runtime guard: the override is only forwarded to `Invoke-AzLocalReadinessGatedClusterUpdate` when `$env:BUILD_REASON -eq 'Manual'`. Scheduled / CI-triggered / PR-triggered runs log a `##vso[task.logissue type=warning]` explaining the parameter was ignored.
+- **Bundled pipeline templates** all bump `GENERATED_AGAINST_MODULE_VERSION` from `'0.8.78'` to `'0.8.79'`.
+
+### Security / Anti-Injection Design
+
+- The override is **deliberately unreachable from the apply-updates-schedule.yml configuration file**. No `forceImmediateUpdate` field exists on `New-AzLocalApplyUpdatesScheduleConfig`, `Resolve-AzLocalPipelineUpdateRing`, or `Get-AzLocalApplyUpdatesScheduleAudit`. A new Pester sweep asserts this.
+- **Two layers of defence prevent a scheduled cron firing from honouring the flag**: (1) GitHub Actions YAML expression collapse to `'false'` for any non-`workflow_dispatch` event; (2) Azure DevOps runtime PowerShell guard requiring `$(Build.Reason) -eq 'Manual'`. Both layers fail closed.
+- The `WARNING:` GUI label is required to make the override visible to anyone clicking through the Queue Build / Run Workflow dialog.
+
+### Tests
+
+- New parameter-presence regressions for `Start-AzLocalClusterUpdate -IgnoreScheduleTags` and `Invoke-AzLocalReadinessGatedClusterUpdate -ForceImmediateUpdate`.
+- New `v0.8.79 Step.7 break-glass: force_immediate_update / forceImmediateUpdate` context (8 `It` blocks) that asserts: GHA input declaration + `WARNING:` GUI label + `MANUAL RUNS ONLY` text; ADO parameter declaration + `WARNING:` displayName + `MANUAL QUEUE ONLY` text; GHA `${{ github.event_name == 'workflow_dispatch' && ... || 'false' }}` anti-injection collapse; ADO `$(Build.Reason) -eq 'Manual'` runtime guard; pwsh forwarding of `-ForceImmediateUpdate` on both hosts; anti-leak sweep across `New-AzLocalApplyUpdatesScheduleConfig.ps1`, `Resolve-AzLocalPipelineUpdateRing.ps1`, and `Get-AzLocalApplyUpdatesScheduleAudit.ps1` confirming the override is NEVER referenced from any schedule-config code path.
+- `Should have version 0.8.79` updated.
+
+### Notes
+
+- This release is operator-UX-only: no Az cmdlet API change, no readiness gate change, no schedule-config change, no new exports (still 60).
+- The `UpdateExcluded` operator hard-override (`AzureLocalManagement.UpdateExcluded=true`) is INTENTIONALLY still respected by `Force Immediate Update`. The break-glass override is about time-window gates, not about per-cluster opt-outs. If a cluster must be force-included despite an `UpdateExcluded` tag, the operator removes the tag first.
+
 ## [0.8.78] - 2026-06-15
 
 Patch release. Pipeline-summary UX polish driven by operator feedback on the bundled apply-updates pipeline (Step.07). Three improvements land together, plus the routine `actions/download-artifact` deprecation bump:

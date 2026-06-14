@@ -48,6 +48,17 @@ function Start-AzLocalClusterUpdate {
         Azure REST API version to use. Default: "2025-10-01".
     .PARAMETER Force
         Skip confirmation prompts.
+    .PARAMETER IgnoreScheduleTags
+        v0.8.79 break-glass override. When set, the per-cluster Step 3c maintenance-schedule
+        gate is BYPASSED entirely - both the `UpdateStartWindow` (allowed window) and the
+        `UpdateExclusionsWindow` (deny window) tags are ignored and the cluster proceeds
+        directly to the apply call regardless of the current UTC time. A `Warning` is logged
+        per cluster so the override is visible in the run log + transcript. This switch does
+        NOT bypass any of the other readiness gates (cluster connectivity, health, sideload,
+        UpdateExcluded operator hard-override). Intended for emergency / out-of-window
+        patching driven by an on-call operator from a manual pipeline run; the bundled
+        pipeline YAMLs only expose this through `workflow_dispatch` (GHA) / `Manual` queue
+        (ADO) - schedule-triggered runs never honour it.
     .PARAMETER LogFolderPath
         Folder path for log files. Default: C:\ProgramData\AzLocal.UpdateManagement\
     .PARAMETER EnableTranscript
@@ -107,6 +118,9 @@ function Start-AzLocalClusterUpdate {
 
         [Parameter(Mandatory = $false)]
         [switch]$Force,
+
+        [Parameter(Mandatory = $false)]
+        [switch]$IgnoreScheduleTags,
 
         [Parameter(Mandatory = $false)]
         [string]$LogFolderPath,
@@ -814,7 +828,13 @@ function Start-AzLocalClusterUpdate {
                     }
                 }
 
-                if ($windowTagValue -or $exclusionTagValue) {
+                if ($IgnoreScheduleTags) {
+                    # v0.8.79 break-glass override (-IgnoreScheduleTags / pipeline force_immediate_update=true).
+                    # Skip Step 3c entirely - apply regardless of UpdateStartWindow / UpdateExclusionsWindow.
+                    # Log a Warning per cluster so the override is visible in the transcript + step summary.
+                    Write-Log -Message "Step 3c: BYPASSED for '$clusterName' (-IgnoreScheduleTags). UpdateStartWindow='$windowTagValue', UpdateExclusionsWindow='$exclusionTagValue' will NOT be evaluated." -Level Warning
+                }
+                elseif ($windowTagValue -or $exclusionTagValue) {
                     Write-Log -Message "Step 3c: Checking maintenance schedule tags..." -Level Info
                     if ($windowTagValue) { Write-Log -Message "  UpdateStartWindow tag: $windowTagValue" -Level Info }
                     if ($exclusionTagValue) { Write-Log -Message "  UpdateExclusionsWindow tag: $exclusionTagValue" -Level Info }

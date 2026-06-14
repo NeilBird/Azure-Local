@@ -91,6 +91,19 @@ on:
         options:
           - 'false'
           - 'true'
+      # v0.8.79 break-glass override. ONLY honoured for workflow_dispatch runs
+      # (manual operator action); schedule-triggered runs deliberately do NOT
+      # have this input bound, so it cannot leak into the YAML configuration
+      # file. When true, Step 3c maintenance-window gating is bypassed and
+      # updates start regardless of UpdateStartWindow / UpdateExclusionsWindow.
+      force_immediate_update:
+        description: 'WARNING: FORCE IMMEDIATE UPDATE - bypass the per-cluster UpdateStartWindow / UpdateExclusionsWindow tags and apply updates immediately for the selected ring. Break-glass override for emergency / out-of-window patching. MANUAL RUNS ONLY - schedule-triggered runs ignore this flag.'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
       # --- ITSM Connector (ServiceNow) ---
       # Set raise_itsm_ticket=true to open ServiceNow incidents for clusters whose
       # Status matches an entry in the trigger matrix (default config:
@@ -135,7 +148,7 @@ env:
   # this to the version actually installed and to the latest on PSGallery, and emits a
   # ::notice annotation if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.8.78'
+  GENERATED_AGAINST_MODULE_VERSION: '0.8.79'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): manual workflow_dispatch input >
   # repository variable 'REQUIRED_MODULE_VERSION' > empty (latest).
@@ -378,6 +391,11 @@ jobs:
         INPUT_UPDATE_RING: ${{ needs.check-readiness.outputs.resolved_update_ring }}
         INPUT_UPDATE_NAME: ${{ github.event.inputs.update_name }}
         INPUT_DRY_RUN: ${{ github.event.inputs.dry_run }}
+        # v0.8.79 break-glass override. Force-immediate is ONLY honoured on
+        # workflow_dispatch runs. The conditional below collapses to 'false'
+        # for any non-manual event (schedule, push, etc.) so the override
+        # cannot leak through the YAML configuration into automated firings.
+        INPUT_FORCE_IMMEDIATE_UPDATE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.force_immediate_update || 'false' }}
         # v0.7.90: ';'-joined allow-list resolved from apply-updates-schedule.yml
         # 'allowedUpdateVersions' (schema v2). Empty for workflow_dispatch or
         # when no allow-list is configured - in either case the cmdlet falls
@@ -393,6 +411,7 @@ jobs:
             OutputDirectory       = './artifacts'
         }
         if ($env:INPUT_DRY_RUN -eq 'true') { $params['DryRun'] = $true }
+        if ($env:INPUT_FORCE_IMMEDIATE_UPDATE -eq 'true') { $params['ForceImmediateUpdate'] = $true }
         Invoke-AzLocalReadinessGatedClusterUpdate @params
 
     - name: Compute Artifact Timestamp
