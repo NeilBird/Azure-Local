@@ -36,6 +36,17 @@ function Add-AzLocalApplyUpdatesStepSummary {
         display, to int for KPI checks).
     .PARAMETER ReadyCount
         Readiness ready count.
+    .PARAMETER UpToDateCount
+        Readiness up-to-date count (clusters already fully patched - no action
+        needed). Optional; defaults to -1 ("unknown") in which case the
+        Readiness table omits the row. (v0.8.78)
+    .PARAMETER NotReadyCount
+        Readiness not-ready count (clusters held back by a previously-failed
+        run, an in-progress run, pending SBE prerequisites or a critical
+        health-check failure - typically clusters in the 'NeedsAttention',
+        'UpdateInProgress', 'UpdateFailed' or 'HasPrerequisite' states).
+        Optional; defaults to -1 ("unknown") in which case the Readiness
+        table omits the row. (v0.8.78)
     .PARAMETER Succeeded
         Apply succeeded count.
     .PARAMETER Skipped
@@ -83,6 +94,11 @@ function Add-AzLocalApplyUpdatesStepSummary {
 
         [Parameter(Mandatory = $false)] [object]$TotalCount        = 0,
         [Parameter(Mandatory = $false)] [object]$ReadyCount        = 0,
+        # v0.8.78: optional readiness-gate breakdown so operators see the full
+        # ring picture (Up to Date / Not Ready) alongside Ready, not just the
+        # apply-buckets. -1 = unknown -> row omitted.
+        [Parameter(Mandatory = $false)] [object]$UpToDateCount     = -1,
+        [Parameter(Mandatory = $false)] [object]$NotReadyCount     = -1,
         [Parameter(Mandatory = $false)] [object]$Succeeded         = 0,
         [Parameter(Mandatory = $false)] [object]$Skipped           = 0,
         [Parameter(Mandatory = $false)] [object]$Failed            = 0,
@@ -132,6 +148,17 @@ function Add-AzLocalApplyUpdatesStepSummary {
     # Coerce numeric inputs.
     $totalInt           = [int]([string]$TotalCount)
     $readyInt           = [int]([string]$ReadyCount)
+    # v0.8.78: tolerate empty strings (unresolved pipeline macros) by parsing
+    # to -1 ("unknown") so the Readiness rows are quietly omitted instead of
+    # throwing or rendering '0' for callers that haven't been updated yet.
+    $parseOptional = {
+        param($value)
+        $parsed = 0
+        if ([int]::TryParse([string]$value, [ref]$parsed)) { return $parsed }
+        return -1
+    }
+    $upToDateInt        = & $parseOptional $UpToDateCount
+    $notReadyInt        = & $parseOptional $NotReadyCount
     $succeededInt       = [int]([string]$Succeeded)
     $skippedInt         = [int]([string]$Skipped)
     $failedInt          = [int]([string]$Failed)
@@ -160,6 +187,20 @@ function Add-AzLocalApplyUpdatesStepSummary {
     [void]$sb.AppendLine('|--------|-------|')
     [void]$sb.AppendLine("| Total Clusters | $totalInt |")
     [void]$sb.AppendLine("| Ready for Update | $readyInt |")
+    # v0.8.78: surface Up to Date and Not Ready so the operator sees the FULL
+    # ring picture in the apply-updates summary - not just the clusters that
+    # entered Apply Updates. Up-to-Date is a healthy steady state (already
+    # fully patched, nothing to apply). Not-Ready includes clusters held back
+    # by a previously-failed run (state=NeedsAttention / UpdateFailed), an
+    # in-progress run (UpdateInProgress), pending SBE prerequisites, or a
+    # critical health failure - those clusters were correctly skipped by the
+    # readiness gate and Start-AzLocalClusterUpdate's Step 3 state check.
+    if ($upToDateInt -ge 0) {
+        [void]$sb.AppendLine("| Already Up to Date | $upToDateInt |")
+    }
+    if ($notReadyInt -ge 0) {
+        [void]$sb.AppendLine("| Not Ready (needs attention before updating) | $notReadyInt |")
+    }
     [void]$sb.AppendLine()
 
     [void]$sb.AppendLine("$h3 Results")

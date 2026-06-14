@@ -45,8 +45,17 @@ function Export-ResultsToJUnitXml {
     # while UpdateNotFound rows had <error>. Tools like dorny/test-reporter use the
     # summary attributes for the headline numbers, so the discrepancy produced
     # misleading "all green" CI summaries.
-    $failures = @($Results | Where-Object { $_.Status -in @("Failed", "Error", "HealthCheckBlocked", "ScheduleBlocked", "SideloadedBlocked") }).Count
-    $skipped  = @($Results | Where-Object { $_.Status -in @("Skipped", "NotReady", "NotConnected", "NoUpdatesAvailable", "NoReadyUpdates") }).Count
+    # v0.8.78: ScheduleBlocked / SideloadedBlocked / ExcludedByTag are DESIGNED
+    # no-ops (operator-configured gates honoured by Start-AzLocalClusterUpdate),
+    # not failures. Previously they emitted <failure> rows, which made dorny/test-
+    # reporter flip Step.7 runs RED with '##[error]Failed test were found' even
+    # though the cluster simply respected its UpdateStartWindow / UpdateSideloaded /
+    # UpdateExcluded tag. They now render as <skipped> alongside NoUpdatesAvailable
+    # so legitimate gate-respect outcomes do not look like apply failures.
+    # HealthCheckBlocked remains in the failure bucket - a Critical health check
+    # blocking an update IS an operational issue the team should action.
+    $failures = @($Results | Where-Object { $_.Status -in @("Failed", "Error", "HealthCheckBlocked") }).Count
+    $skipped  = @($Results | Where-Object { $_.Status -in @("Skipped", "NotReady", "NotConnected", "NoUpdatesAvailable", "NoReadyUpdates", "ScheduleBlocked", "SideloadedBlocked", "ExcludedByTag") }).Count
     $errors   = @($Results | Where-Object { $_.Status -in @("NotFound", "UpdateNotFound") }).Count
     $timestamp = Get-Date -Format "yyyy-MM-ddTHH:mm:ss"
     
@@ -110,9 +119,13 @@ function Export-ResultsToJUnitXml {
         [void]$xmlBuilder.AppendLine("    <testcase name=`"$(ConvertTo-XmlSafeString $testName)`" classname=`"$TestSuiteName.$OperationType`" time=`"$testTime`">")
 
         switch ($result.Status) {
-            { $_ -in @("Failed", "Error", "HealthCheckBlocked", "ScheduleBlocked", "SideloadedBlocked") } {
+            # v0.8.78: ScheduleBlocked / SideloadedBlocked / ExcludedByTag moved to
+            # the <skipped> branch below (designed gate-respect, not failure).
+            # HealthCheckBlocked remains here because a Critical health failure
+            # blocking an update IS something operators need to action.
+            { $_ -in @("Failed", "Error", "HealthCheckBlocked") } {
                 $message = ConvertTo-XmlSafeString ($result.Message)
-                $errorType = if ($result.Status -eq "Error") { "Error" } elseif ($result.Status -eq "HealthCheckBlocked") { "HealthCheckBlocked" } elseif ($result.Status -eq "ScheduleBlocked") { "ScheduleBlocked" } elseif ($result.Status -eq "SideloadedBlocked") { "SideloadedBlocked" } else { "AssertionError" }
+                $errorType = if ($result.Status -eq "Error") { "Error" } elseif ($result.Status -eq "HealthCheckBlocked") { "HealthCheckBlocked" } else { "AssertionError" }
                 [void]$xmlBuilder.AppendLine("      <failure message=`"$message`" type=`"$errorType`">")
                 [void]$xmlBuilder.AppendLine("Cluster: $clusterName")
                 [void]$xmlBuilder.AppendLine("Status: $($result.Status)")
@@ -153,10 +166,12 @@ function Export-ResultsToJUnitXml {
                 [void]$xmlBuilder.AppendLine("Message: $message")
                 [void]$xmlBuilder.AppendLine("      </error>")
             }
-            { $_ -in @("Skipped", "NotReady", "NotConnected", "NoUpdatesAvailable", "NoReadyUpdates") } {
+            { $_ -in @("Skipped", "NotReady", "NotConnected", "NoUpdatesAvailable", "NoReadyUpdates", "ScheduleBlocked", "SideloadedBlocked", "ExcludedByTag") } {
                 # v0.7.62: previously only literal "Skipped" rendered as <skipped>; the
                 # other "did not apply, but not a failure" Status values fell through to
                 # <system-out>, producing misleading "all green" CI summaries.
+                # v0.8.78: ScheduleBlocked / SideloadedBlocked / ExcludedByTag added here -
+                # they are DESIGNED operator-configured gate-respect outcomes, not failures.
                 $message = ConvertTo-XmlSafeString ($result.Message)
                 [void]$xmlBuilder.AppendLine("      <skipped message=`"$message`" />")
             }
