@@ -5,6 +5,26 @@ All notable changes to the AzLocal.UpdateManagement module (renamed from AzStack
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.77] - 2026-06-14
+
+Patch release. Fixes two production strict-mode crashes that surfaced in Step.05 / Step.06 / Step.07 of the bundled apply-updates pipelines. Both bugs share the same root cause: bare `$obj.Prop` property access under `Set-StrictMode -Version Latest` **throws** when `Prop` is absent on a `PSCustomObject` instead of returning `$null`. Fixes use the `$obj.PSObject.Properties['Prop'] -and $obj.Prop` guard idiom (and `IDictionary.Contains()` for tag bags returned by `Invoke-AzRestJson`). No public API change or new exports (still 60). All bundled pipeline templates bump `GENERATED_AGAINST_MODULE_VERSION` from `'0.8.76'` to `'0.8.77'`.
+
+### Fixed
+
+- **`Start-AzLocalClusterUpdate` (Step.07 main entry) - clusters without an `UpdateStartWindow` tag.** Production emitted `Error processing cluster '<Name>': The property 'UpdateStartWindow' cannot be found on this object.` for clusters whose tag bag did not include `UpdateStartWindow` / `UpdateExclusionsWindow`. The old guard `if ($clusterTags -and $clusterTags.$($script:UpdateStartWindowTagName))` threw **before** `-and` short-circuited because bare `.$()` member access on a missing `PSCustomObject` property is strict-mode-fatal. New code branches on `$clusterTags -is [System.Collections.IDictionary]` and uses `.Contains()` for hashtables / `PSObject.Properties[...]` for `PSCustomObject` tag bags. The semantic intent ("absent = any time eligible / no window restriction") is preserved: the outer `if ($windowTagValue -or $exclusionTagValue)` correctly skips the schedule gate when both are `$null`.
+- **`Test-AzLocalClusterHealth` (Step.05/06 readiness gate) - clusters with no `properties.healthCheckResult` field.** Production emitted `Checking: <Cluster>... Error: The property 'healthCheckResult' cannot be found on this object.` for clusters whose ARM update summary genuinely had no `healthCheckResult` field (typical for clusters not yet probed by the update-health pipeline). The `catch` block then flagged the cluster `HealthState=Error / Passed=$false`, and the readiness gate falsely treated it as **blocked** - poisoning Step.5 / Step.7 / Step.9 readiness output for affected clusters (observed on Arizona and Sydney during the 2026-06-10..2026-06-14 window). The same bare-access pattern was present in `Get-HealthCheckFailureSummary` (Private helper) and `Get-AzLocalFleetStatusData` (Public, `-IncludeHealthDetails` path). All three sites now use the `PSObject.Properties[...]` guard idiom; `Test-AzLocalClusterHealth` correctly classifies such clusters as `HealthState="No Data" / Passed=$true` and continues.
+
+### Tests
+
+- Two new Pester regression contexts:
+  - `v0.8.77 strict-mode regression: missing UpdateStartWindow tag` on `Start-AzLocalClusterUpdate` - feeds a `PSCustomObject` tag bag that deliberately omits the window tags, asserts `Should -Not -Throw`, and verifies `Test-AzLocalUpdateScheduleAllowed` is **not** called (proving the "no window tag = any time" semantic).
+  - `v0.8.77 strict-mode regression: missing properties.healthCheckResult` on `Test-AzLocalClusterHealth` - feeds an ARG-shaped summary row whose `properties` PSCustomObject omits `healthCheckResult`, asserts `Should -Not -Throw`, and verifies the result row classifies as `HealthState='No Data'` / `Passed=$true`.
+- Both bugs were **invisible** to parse-time analysis (`Get-CmdletErrors` / get_errors / lint) - only runtime against the property-less shape triggers the strict-mode throw. The new tests use the minimal real-world fixtures that match the production shapes.
+
+### Pipeline templates
+
+- All bundled pipeline templates bump `GENERATED_AGAINST_MODULE_VERSION` from `'0.8.76'` to `'0.8.77'`. The pipeline YAML bodies themselves are unchanged.
+
 ## [0.8.76] - 2026-06-12
 
 Patch release. Adds a Microsoft-hosted Windows preflight job (GitHub Actions) / preflight stage (Azure DevOps) in front of the opt-in Step.6 `sideload-updates.yml` pipeline so an operator who triggers Step.6 without first completing the opt-in setup sees a clear "what to do next" panel in the run step summary instead of a silent `Status: Skipped`. Also broadens the master gate to accept `'true'`, `'True'`, `'TRUE'`, or `'1'` (was strict-literal `'true'` only).

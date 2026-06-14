@@ -248,7 +248,19 @@ function Test-AzLocalClusterHealth {
             $key = $cluster.ResourceId.ToLower()
             $summary = if ($summaryByCluster.ContainsKey($key)) { $summaryByCluster[$key] } else { $null }
 
-            if (-not $summary -or -not $summary.properties.healthCheckResult) {
+            # v0.8.77: guard property reads with PSObject.Properties because
+            # `$summary.properties.healthCheckResult` (bare access) THROWS under
+            # Set-StrictMode -Version Latest when `healthCheckResult` is absent
+            # on the `properties` PSCustomObject. Clusters whose ARM update
+            # summary genuinely has no health-check data (typical for clusters
+            # that have not had an update-readiness probe yet) were producing
+            # `Checking: <ClusterName>... Error: The property 'healthCheckResult'
+            # cannot be found on this object.` in Step.05/06/07 production runs,
+            # which then poisoned the readiness gate (Passed=$false flagged the
+            # cluster as blocked when it was simply un-probed).
+            $summaryProps = if ($summary) { $summary.PSObject.Properties['properties'] } else { $null }
+            $hasHCR = $summaryProps -and $summary.properties.PSObject.Properties['healthCheckResult'] -and $summary.properties.healthCheckResult
+            if (-not $hasHCR) {
                 Write-Host " No Health Data" -ForegroundColor Yellow
                 $results += [PSCustomObject]@{
                     ClusterName = $clusterName; HealthState = "No Data"; Passed = $true
@@ -257,7 +269,7 @@ function Test-AzLocalClusterHealth {
                 continue
             }
 
-            $healthState = if ($summary.properties.healthState) { [string]$summary.properties.healthState } else { "Unknown" }
+            $healthState = if ($summary.properties.PSObject.Properties['healthState'] -and $summary.properties.healthState) { [string]$summary.properties.healthState } else { "Unknown" }
             $healthChecks = $summary.properties.healthCheckResult
 
             # Extract failures (Critical and Warning only; use -BlockingOnly for Critical only)

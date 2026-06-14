@@ -13,7 +13,11 @@ function Get-HealthCheckFailureSummary {
         [object]$UpdateSummary
     )
 
-    if (-not $UpdateSummary -or -not $UpdateSummary.properties.healthCheckResult) {
+    # v0.8.77: guard property reads - bare `$UpdateSummary.properties.healthCheckResult`
+    # THROWS under Set-StrictMode -Version Latest when the property is absent.
+    $summaryProps = if ($UpdateSummary) { $UpdateSummary.PSObject.Properties['properties'] } else { $null }
+    $hasHCR = $summaryProps -and $UpdateSummary.properties.PSObject.Properties['healthCheckResult'] -and $UpdateSummary.properties.healthCheckResult
+    if (-not $hasHCR) {
         return ""
     }
 
