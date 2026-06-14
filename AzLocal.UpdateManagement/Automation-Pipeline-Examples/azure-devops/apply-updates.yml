@@ -85,6 +85,15 @@ parameters:
     type: boolean
     default: true
 
+  # v0.8.79 break-glass override. Only honoured when $(Build.Reason) -eq 'Manual'
+  # (operator-initiated queue from the Azure DevOps UI / CLI). Schedule-triggered
+  # runs deliberately ignore this flag even if a YAML edit ever sets the default
+  # to true - the apply step rechecks $(Build.Reason) at runtime.
+  - name: forceImmediateUpdate
+    displayName: 'WARNING: FORCE IMMEDIATE UPDATE - bypass UpdateStartWindow / UpdateExclusionsWindow tags and apply updates immediately. Break-glass override for emergency / out-of-window patching. MANUAL QUEUE ONLY - schedule-triggered runs ignore this flag.'
+    type: boolean
+    default: false
+
   # --- ITSM Connector (ServiceNow) ---
   # Opt-in ticket creation. Defaults preserve the previous pipeline behaviour
   # (no ITSM calls). Secrets are wired via the variable group referenced below
@@ -120,7 +129,7 @@ variables:
   # log if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
   - name: GENERATED_AGAINST_MODULE_VERSION
-    value: '0.8.78'
+    value: '0.8.79'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): queue-time parameter > pipeline variable
   # 'REQUIRED_MODULE_VERSION' overridden at queue time > empty (latest).
@@ -366,6 +375,11 @@ stages:
               # clusters with no matching Ready update are skipped with
               # status 'NotInAllowList'.
               RESOLVED_ALLOWED_UPDATE_VERSIONS: $(resolvedAllowedUpdateVersions)
+              # v0.8.79 break-glass override - parameter value + Build.Reason guard.
+              # The runtime check below collapses force=true on Schedule/CI runs to
+              # force=false so the override only ever takes effect on a Manual queue.
+              FORCE_IMMEDIATE_UPDATE_PARAM: ${{ parameters.forceImmediateUpdate }}
+              BUILD_REASON: $(Build.Reason)
             inputs:
               azureSubscription: 'AzureLocal-ServiceConnection'  # Update with your service connection name
               scriptType: 'pscore'
@@ -380,6 +394,14 @@ stages:
                     OutputDirectory       = "$(Build.ArtifactStagingDirectory)"
                 }
                 if ([System.Convert]::ToBoolean("${{ parameters.dryRun }}")) { $params['DryRun'] = $true }
+                if ($env:FORCE_IMMEDIATE_UPDATE_PARAM -eq 'True') {
+                    if ($env:BUILD_REASON -eq 'Manual') {
+                        $params['ForceImmediateUpdate'] = $true
+                    }
+                    else {
+                        Write-Host "##vso[task.logissue type=warning]forceImmediateUpdate=True ignored: Build.Reason='$env:BUILD_REASON' (override is honoured only for Manual queue runs)."
+                    }
+                }
                 Invoke-AzLocalReadinessGatedClusterUpdate @params
 
           # compute a UTC timestamp variable so both update-logs and itsm-results share a unique per-run suffix.

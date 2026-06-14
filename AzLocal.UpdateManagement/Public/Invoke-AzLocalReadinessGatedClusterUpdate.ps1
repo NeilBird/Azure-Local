@@ -54,6 +54,15 @@ function Invoke-AzLocalReadinessGatedClusterUpdate {
         Returns PSCustomObject with all seven counters + Results +
         JUnitPath + ApplyResultsJsonPath + ReadyResourceIds (the ARM IDs
         actually handed to Start-AzLocalClusterUpdate).
+    .PARAMETER ForceImmediateUpdate
+        v0.8.79 break-glass override. When set, forwards `-IgnoreScheduleTags` to
+        Start-AzLocalClusterUpdate so the per-cluster Step 3c maintenance-schedule
+        gate (UpdateStartWindow / UpdateExclusionsWindow tags) is BYPASSED for every
+        cluster in the readiness CSV. Intended for emergency / out-of-window patching
+        driven by an on-call operator. The bundled apply-updates.yml pipelines only
+        expose this through `workflow_dispatch` (GHA) and `Manual` queue (ADO); schedule-
+        triggered runs never honour it (guarded at the YAML layer). A prominent banner
+        is logged at the start of the apply.
     .NOTES
         Author  : AzLocal.UpdateManagement
         Version : 0.8.5 (Step.6 thin-YAML port)
@@ -93,7 +102,9 @@ function Invoke-AzLocalReadinessGatedClusterUpdate {
         [ValidateNotNullOrEmpty()]
         [string]$ApplyResultsJsonFileName = 'apply-results.json',
 
-        [switch]$PassThru
+        [switch]$PassThru,
+
+        [switch]$ForceImmediateUpdate
     )
 
     Set-StrictMode -Version Latest
@@ -222,6 +233,20 @@ function Invoke-AzLocalReadinessGatedClusterUpdate {
         switch ($pipelineHost) {
             'AzureDevOps' { Write-Host "##vso[task.logissue type=warning]DRY RUN MODE - No updates will be applied" }
             default       { Write-Host "DRY RUN MODE - No updates will be applied" }
+        }
+    }
+
+    if ($ForceImmediateUpdate) {
+        # v0.8.79 break-glass override. Surface a HIGH-VISIBILITY warning on every
+        # supported pipeline host so the override is unmistakable in run logs and
+        # PR annotations. The actual bypass is enforced inside Start-AzLocalClusterUpdate
+        # Step 3c via the forwarded -IgnoreScheduleTags switch.
+        $applyParams['IgnoreScheduleTags'] = $true
+        $forceMsg = "FORCE IMMEDIATE UPDATE enabled. UpdateStartWindow and UpdateExclusionsWindow tags will be IGNORED for every cluster in this run. This is a break-glass override intended for emergency / out-of-window patching."
+        switch ($pipelineHost) {
+            'GitHub'      { Write-Host "::warning::$forceMsg" }
+            'AzureDevOps' { Write-Host "##vso[task.logissue type=warning]$forceMsg" }
+            default       { Write-Warning $forceMsg }
         }
     }
 

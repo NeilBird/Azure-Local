@@ -34,8 +34,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $script:ModuleInfo | Should -Not -BeNullOrEmpty
         }
 
-        It 'Should have version 0.8.78' {
-            $script:ModuleInfo.Version | Should -Be '0.8.78'
+        It 'Should have version 0.8.79' {
+            $script:ModuleInfo.Version | Should -Be '0.8.79'
         }
 
         It 'Module version constants are in sync between .psm1 and .psd1' {
@@ -806,6 +806,77 @@ Describe 'Module: AzLocal.UpdateManagement' {
         }
     }
 
+    Context 'v0.8.79 Step.7 break-glass: force_immediate_update / forceImmediateUpdate' {
+        # v0.8.79 introduces an operator-only override that bypasses the per-cluster
+        # UpdateStartWindow / UpdateExclusionsWindow gate (Step 3c of Start-AzLocalClusterUpdate).
+        # The override MUST NOT be reachable from the apply-updates-schedule.yml configuration
+        # file - this is enforced by per-host wiring guards below.
+        BeforeAll {
+            $script:S6Gh78  = (Resolve-Path (Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples\github-actions\apply-updates.yml')).Path
+            $script:S6Ado78 = (Resolve-Path (Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples\azure-devops\apply-updates.yml')).Path
+            $script:S6Gh78Content  = Get-Content -LiteralPath $script:S6Gh78  -Raw
+            $script:S6Ado78Content = Get-Content -LiteralPath $script:S6Ado78 -Raw
+        }
+
+        It 'GH Step.7 declares the force_immediate_update workflow_dispatch input (choice false/true, defaults false)' {
+            $script:S6Gh78Content | Should -Match '(?m)^\s*force_immediate_update:\s*$' -Because 'v0.8.79 GH apply-updates must expose force_immediate_update as a workflow_dispatch input'
+            $script:S6Gh78Content | Should -Match "force_immediate_update:[\s\S]{0,600}?type:\s*choice[\s\S]{0,200}?-\s*'false'[\s\S]{0,100}?-\s*'true'" -Because 'force_immediate_update must be a choice between false and true'
+            $script:S6Gh78Content | Should -Match "force_immediate_update:[\s\S]{0,600}?default:\s*'false'" -Because 'force_immediate_update must default to false (opt-in only)'
+        }
+
+        It 'GH Step.7 input description starts with WARNING and flags MANUAL RUNS ONLY' {
+            $script:S6Gh78Content | Should -Match "force_immediate_update:[\s\S]{0,200}?description:\s*'WARNING:" -Because 'GUI label must visibly call out the override risk'
+            $script:S6Gh78Content | Should -Match 'force_immediate_update[\s\S]{0,600}?MANUAL RUNS ONLY' -Because 'description must state that schedule-triggered runs ignore the flag'
+        }
+
+        It 'GH Step.7 apply step env: clamps force_immediate_update to false on non-workflow_dispatch events (anti-injection)' {
+            # The conditional MUST collapse to 'false' for any event other than workflow_dispatch
+            # so a scheduled cron firing can never honour the override even if a YAML config
+            # change ever tried to flip the default.
+            $script:S6Gh78Content | Should -Match "INPUT_FORCE_IMMEDIATE_UPDATE:\s*\$\{\{\s*github\.event_name\s*==\s*'workflow_dispatch'\s*&&\s*github\.event\.inputs\.force_immediate_update\s*\|\|\s*'false'\s*\}\}" -Because 'env wiring must collapse to false for any non-workflow_dispatch trigger'
+        }
+
+        It 'GH Step.7 apply pwsh forwards INPUT_FORCE_IMMEDIATE_UPDATE to the cmdlet as -ForceImmediateUpdate' {
+            $script:S6Gh78Content | Should -Match "if\s*\(\s*\`$env:INPUT_FORCE_IMMEDIATE_UPDATE\s*-eq\s*'true'\s*\)\s*\{\s*\`$params\['ForceImmediateUpdate'\]\s*=\s*\`$true\s*\}"
+        }
+
+        It 'ADO Step.7 declares the forceImmediateUpdate boolean parameter (defaults false)' {
+            $script:S6Ado78Content | Should -Match '(?m)^\s*-\s*name:\s*forceImmediateUpdate' -Because 'v0.8.79 ADO apply-updates must expose forceImmediateUpdate as a top-level parameter'
+            $script:S6Ado78Content | Should -Match "forceImmediateUpdate[\s\S]{0,600}?type:\s*boolean[\s\S]{0,200}?default:\s*false" -Because 'forceImmediateUpdate must be a boolean defaulting to false'
+        }
+
+        It 'ADO Step.7 forceImmediateUpdate displayName starts with WARNING and flags MANUAL QUEUE ONLY' {
+            $script:S6Ado78Content | Should -Match "forceImmediateUpdate[\s\S]{0,300}?displayName:\s*'WARNING:" -Because 'GUI label must visibly call out the override risk'
+            $script:S6Ado78Content | Should -Match 'forceImmediateUpdate[\s\S]{0,600}?MANUAL QUEUE ONLY' -Because 'displayName must state that schedule-triggered runs ignore the flag'
+        }
+
+        It 'ADO Step.7 apply task env: exposes FORCE_IMMEDIATE_UPDATE_PARAM and BUILD_REASON' {
+            $script:S6Ado78Content | Should -Match 'FORCE_IMMEDIATE_UPDATE_PARAM:\s*\$\{\{\s*parameters\.forceImmediateUpdate\s*\}\}'
+            $script:S6Ado78Content | Should -Match 'BUILD_REASON:\s*\$\(Build\.Reason\)'
+        }
+
+        It 'ADO Step.7 apply task pwsh enforces Build.Reason -eq Manual before honouring the override (anti-injection)' {
+            # The runtime guard MUST verify Build.Reason='Manual' before flipping the switch;
+            # any other reason (Schedule, IndividualCI, PullRequest, etc.) must log a warning
+            # and skip the override regardless of the parameter value.
+            $script:S6Ado78Content | Should -Match "if\s*\(\s*\`$env:FORCE_IMMEDIATE_UPDATE_PARAM\s*-eq\s*'True'\s*\)\s*\{[\s\S]{0,400}?\`$env:BUILD_REASON\s*-eq\s*'Manual'[\s\S]{0,200}?\`$params\['ForceImmediateUpdate'\]\s*=\s*\`$true"
+        }
+
+        It 'apply-updates-schedule.yml does NOT expose a force_immediate / forceImmediate field (override must be unreachable from the schedule config)' {
+            # The schedule resolver generator must NOT learn about this override. Sweep every
+            # known schedule-config artefact to make sure no future refactor leaks the flag.
+            $candidates = @(
+                (Join-Path -Path $PSScriptRoot -ChildPath '..\Public\New-AzLocalApplyUpdatesScheduleConfig.ps1'),
+                (Join-Path -Path $PSScriptRoot -ChildPath '..\Public\Resolve-AzLocalPipelineUpdateRing.ps1'),
+                (Join-Path -Path $PSScriptRoot -ChildPath '..\Public\Get-AzLocalApplyUpdatesScheduleAudit.ps1')
+            ) | Where-Object { Test-Path -LiteralPath $_ }
+            foreach ($f in $candidates) {
+                $raw = Get-Content -LiteralPath $f -Raw
+                $raw | Should -Not -Match '(?i)force[_-]?immediate' -Because "$([IO.Path]::GetFileName($f)) must NOT reference the break-glass override (it is operator-only)"
+            }
+        }
+    }
+
     Context 'v0.8.4 RBAC custom role display name rename' {
         # v0.8.4: the bundled custom role definition is renamed from
         # 'Azure Stack HCI Update Operator' to
@@ -933,6 +1004,11 @@ Describe 'Function: Start-AzLocalClusterUpdate' {
 
         It 'Should have Force parameter' {
             $command.Parameters.Keys | Should -Contain 'Force'
+        }
+
+        It 'v0.8.79: Should have IgnoreScheduleTags switch (break-glass override - bypasses Step 3c UpdateStartWindow / UpdateExclusionsWindow gate)' {
+            $command.Parameters.Keys | Should -Contain 'IgnoreScheduleTags'
+            $command.Parameters['IgnoreScheduleTags'].ParameterType.Name | Should -Be 'SwitchParameter'
         }
 
         It 'Should have WhatIf parameter' {
@@ -17337,6 +17413,10 @@ Describe 'Thin-YAML Step.6: Invoke-AzLocalReadinessGatedClusterUpdate' {
         It 'Has parameter PassThru (switch)'     {
             $script:S6CmdI.Parameters.Keys | Should -Contain 'PassThru'
             $script:S6CmdI.Parameters['PassThru'].ParameterType.Name | Should -Be 'SwitchParameter'
+        }
+        It 'v0.8.79: Has parameter ForceImmediateUpdate (switch - break-glass override forwarded as -IgnoreScheduleTags)' {
+            $script:S6CmdI.Parameters.Keys | Should -Contain 'ForceImmediateUpdate'
+            $script:S6CmdI.Parameters['ForceImmediateUpdate'].ParameterType.Name | Should -Be 'SwitchParameter'
         }
     }
 

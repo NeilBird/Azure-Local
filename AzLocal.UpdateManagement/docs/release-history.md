@@ -4,7 +4,21 @@
 >
 > **For older releases**, this is the canonical reference; the main README intentionally stays slim so the most recent block is easy to find.
 >
-> **For v0.8.78 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0878) `What's New in v0.8.78` section.
+> **For v0.8.79 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0879) `What's New in v0.8.79` section.
+
+---
+
+### What's New in v0.8.78
+
+v0.8.78 was a pipeline-summary UX polish release driven by operator feedback on the bundled apply-updates pipeline (Step.07). Three improvements landed together:
+
+1. **JUnit re-classification of designed gate-respect outcomes.** `ScheduleBlocked` (cluster honouring its `UpdateStartWindow`), `SideloadedBlocked` (cluster honouring `UpdateSideloaded=False`), and `ExcludedByTag` (cluster honouring `AzureLocalManagement.UpdateExcluded=true`) are operator-configured opt-outs, not failures. They were previously rendered as `<failure>` rows by `Export-ResultsToJUnitXml`, which made `dorny/test-reporter` flip Step.07 runs **red** with `##[error]Failed test were found` on otherwise-successful schedule-aware / sideload-gated / tag-excluded runs. They now render as `<skipped>` and the summary `<testsuite failures=N>` / `<testsuite skipped=N>` attributes agree. `HealthCheckBlocked` deliberately remains in the failure bucket - a Critical health failure blocking an update IS a real operational issue the team should action.
+2. **Apply Updates summary now shows the FULL ring picture.** The new optional `-UpToDateCount` / `-NotReadyCount` parameters on `Add-AzLocalApplyUpdatesStepSummary` add `Already Up to Date` and `Not Ready (needs attention before updating)` rows to the Readiness KPI table. Both apply-updates YAMLs (GitHub Actions + Azure DevOps) wire the upstream `readiness.UpToDateCount` / `readiness.NotReadyCount` outputs through to the summary task.
+3. **`actions/download-artifact@v6` -> `@v7` in `apply-updates.yml` (GitHub Actions).** Silences the Node.js 20 deprecation warning. `@v7` chosen deliberately over `@v8` to avoid v8's `digest-mismatch=error` breaking-change default.
+
+`GENERATED_AGAINST_MODULE_VERSION` bumped from `0.8.77` to `0.8.78` across all bundled pipeline templates.
+
+See [CHANGELOG.md](../CHANGELOG.md#0878---2026-06-15) for the full v0.8.78 entry.
 
 ---
 
