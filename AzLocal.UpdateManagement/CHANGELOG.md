@@ -5,6 +5,54 @@ All notable changes to the AzLocal.UpdateManagement module (renamed from AzStack
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.83] - 2026-06-15
+
+Patch release. Fix-forward for v0.8.82 Item-5: the new Step.08 `UpdateLastAttempt`
+reconciliation pass reads `$inv.tags` from `Get-AzLocalClusterInventory`, but the
+v0.8.82 inventory projection did not carry the raw ARM `tags` bag. As a result the
+"Recent update attempts with no observable updateRun" section was always empty in
+production - the reconciliation found zero attempt gaps regardless of fleet
+state. v0.8.83 surfaces the raw `tags` bag on every inventory row (in-memory only;
+the on-disk CSV / JSON export keeps its explicit `$selectColumns` whitelist so
+artefacts continue to omit the raw bag). Also fixes the GH Actions
+`monitor-updates.yml` `jobs.outputs:` block to expose `attempts_without_run` to
+downstream jobs (the cmdlet was already emitting it in v0.8.82 - only the YAML
+wiring was missing), and a docstring drift in `Export-AzLocalUpdateRunMonitorReport`
+("6 step outputs" -> "7 step outputs"). No public API change. Export count
+unchanged (still 60).
+
+### Fixed
+
+- **`Get-AzLocalClusterInventory` PassThru output now carries the raw ARM `tags`
+  bag** on every cluster row (`$itemProps['tags'] = $cluster.tags`). v0.8.82's
+  Step.08 `UpdateLastAttempt` reconciliation pass in
+  `Export-AzLocalUpdateRunMonitorReport` reads `$inv.tags` via
+  `PSObject.Properties['tags']` to find the audit tag - without this fix, the
+  reconciliation silently always reported zero gaps. The on-disk CSV / JSON
+  export remains unchanged: the existing `$selectColumns` whitelist explicitly
+  names the columns to persist and does NOT include `tags`, so artefacts do
+  not leak the raw bag. New regression test
+  (`v0.8.83: Get-AzLocalClusterInventory preserves raw ARM tag bag on PassThru`)
+  asserts the in-memory property is present AND that `$selectColumns` does not
+  surface `tags`.
+- **GitHub Actions `monitor-updates.yml` `jobs.outputs:` block** now exposes the
+  `attempts_without_run` step output (`${{ steps.snapshot.outputs.attempts_without_run }}`)
+  so downstream jobs can gate on `attempts_without_run > 0` (e.g. open a triage
+  issue when URP package-internal pre-install health-check failures are
+  detected). The cmdlet was already emitting the step output in v0.8.82; only
+  the pipeline-level `jobs.outputs:` wiring was missing. Azure DevOps requires
+  no change here - `Set-AzLocalPipelineOutput` auto-publishes the step variable
+  via `##vso[task.setvariable variable=...;isOutput=true]`.
+- **`Export-AzLocalUpdateRunMonitorReport` cmdlet docstring drift**. The
+  comment-based help still said "Emits 6 step outputs" after v0.8.82 added the
+  seventh (`attempts_without_run`). Now reads "Emits 7 step outputs" with
+  `attempts_without_run` listed alongside the existing six.
+
+### Changed
+
+- `GENERATED_AGAINST_MODULE_VERSION` bumped from `'0.8.82'` to `'0.8.83'`
+  across all bundled GitHub Actions and Azure DevOps pipeline templates.
+
 ## [0.8.82] - 2026-06-15
 
 Patch release. Step.05 + Step.10 step-summary UX polish from the v0.8.81 manual

@@ -4,7 +4,15 @@
 >
 > **For older releases**, this is the canonical reference; the main README intentionally stays slim so the most recent block is easy to find.
 >
-> **For v0.8.82 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0882) `What's New in v0.8.82` section.
+> **For v0.8.83 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0883) `What's New in v0.8.83` section.
+
+---
+
+### What's New in v0.8.83
+
+Patch release. Fix-forward for v0.8.82 Item-5. The new Step.08 `UpdateLastAttempt` reconciliation pass in `Export-AzLocalUpdateRunMonitorReport` reads `$inv.tags` from `Get-AzLocalClusterInventory`, but the v0.8.82 inventory projection did not carry the raw ARM `tags` bag, so the "Recent update attempts with no observable updateRun" section silently always reported zero gaps in production. v0.8.83 surfaces the raw `tags` bag on every inventory row (in-memory only; the on-disk CSV / JSON export keeps its explicit `$selectColumns` whitelist so artefacts continue to omit the raw bag). Also fixes the GitHub Actions `monitor-updates.yml` `jobs.outputs:` block to expose `attempts_without_run` to downstream jobs (the cmdlet was already emitting it in v0.8.82 - only the YAML wiring was missing), and a docstring drift in `Export-AzLocalUpdateRunMonitorReport` ("6 step outputs" -> "7 step outputs"). No public API change. Export count unchanged (still 60).
+
+`GENERATED_AGAINST_MODULE_VERSION` bumped from `0.8.82` to `0.8.83` across all bundled pipeline templates.
 
 ---
 
