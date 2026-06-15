@@ -2,7 +2,7 @@
 
 > ⚠️ **Disclaimer**: This module is **NOT** a Microsoft supported service offering or product. It is provided as example code only, with no warranty or official support. Refer to the [MIT license](https://github.com/NeilBird/Azure-Local/blob/main/LICENSE) for further information.
 
-**Latest Version:** v0.8.83 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.8.83)
+**Latest Version:** v0.8.84 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.8.84)
 
 > 📢 **Renamed in v0.7.3**: this module was previously published as `AzStackHci.ManageUpdates`. The new module name aligns with the Azure Local product name (_Microsoft retired the *Azure Stack HCI* brand in late 2024_). The module GUID is preserved across the rename. If you have the old name installed, run:
 >
@@ -23,7 +23,7 @@ Azure Local REST API specification (includes update management endpoints): https
 **This README (overview + most-recent release notes):**
 
 - [Where to Start](#where-to-start)
-- [What's New in v0.8.83](#whats-new-in-v0883)
+- [What's New in v0.8.84](#whats-new-in-v0884)
 - [Files](#files)
 - [Prerequisites](#prerequisites)
 - [RBAC Requirements](#rbac-requirements) (summary; full reference in [docs/rbac.md](docs/rbac.md))
@@ -86,24 +86,26 @@ If you are new to this module, work through these in order from a regular PowerS
 
 > Most CI/CD pipelines in [Automation-Pipeline-Examples/](Automation-Pipeline-Examples/) are direct implementations of one of these workflows. Start there if you want a copy-pasteable end-to-end pipeline.
 
-## What's New in v0.8.83
+## What's New in v0.8.84
 
-**Patch release. Fix-forward for v0.8.82 Item-5.** The new Step.08 `UpdateLastAttempt` reconciliation pass in `Export-AzLocalUpdateRunMonitorReport` reads `$inv.tags` from `Get-AzLocalClusterInventory`, but the v0.8.82 inventory projection did not carry the raw ARM `tags` bag - so the "Recent update attempts with no observable updateRun" section was silently always empty in production regardless of fleet state. v0.8.83 surfaces the raw `tags` bag on every inventory row (in-memory only; the on-disk CSV / JSON export keeps its explicit `$selectColumns` whitelist so artefacts continue to omit the raw bag). Also fixes the GitHub Actions `monitor-updates.yml` `jobs.outputs:` block to expose `attempts_without_run` to downstream jobs (the cmdlet was already emitting it in v0.8.82 - only the YAML wiring was missing), and a docstring drift in `Export-AzLocalUpdateRunMonitorReport` ("6 step outputs" -> "7 step outputs"). No public API change. Export count unchanged (still 60).
+**Documentation-only patch release.** Extends the `Export-AzLocalUpdateRunMonitorReport` markdown callout under the "Recent update attempts with no observable updateRun" section (introduced in v0.8.82, made functional in v0.8.83) with an operator runbook. The previous one-line callout pointed users at the Azure portal Activity Log only. v0.8.84 expands it into a numbered diagnosis flow (Activity Log -> in-portal `updateRun` check -> URP service health) and a fenced PowerShell snippet showing the exact `Get-ClusterGroup` / `Move-ClusterGroup` / `Stop+Start-ClusterGroup` commands to bounce the two URP cluster groups (`Azure Stack HCI Update Service Cluster Group` + `Azure Stack HCI Orchestrator Service Cluster Group`) when an attempt-gap reproduces and all Azure-side investigation comes back clean. Includes an explicit warning that the Orchestrator (ECE) group must NOT be bounced during a healthy in-flight run. No public API change, no behavioural change to any cmdlet. Export count unchanged (still 60).
 
-### Fixes
+### Added
 
-- **`Get-AzLocalClusterInventory` PassThru output now carries the raw ARM `tags` bag** on every cluster row. v0.8.82's Step.08 reconciliation reads `$inv.tags` via `PSObject.Properties['tags']` to find the `UpdateLastAttempt` audit tag - without this fix, the reconciliation silently always reported zero gaps. The on-disk CSV / JSON export remains unchanged: the existing `$selectColumns` whitelist explicitly names the columns to persist and does NOT include `tags`, so artefacts do not leak the raw bag. New regression test asserts the in-memory property is present AND that the whitelist still excludes `tags`.
-- **GitHub Actions `monitor-updates.yml` `jobs.outputs:` block** now exposes the `attempts_without_run` step output (`${{ steps.snapshot.outputs.attempts_without_run }}`) so downstream jobs can gate on `attempts_without_run > 0` (e.g. open a triage issue when URP package-internal pre-install health-check failures are detected). Azure DevOps requires no change - `Set-AzLocalPipelineOutput` auto-publishes the step variable via `##vso[task.setvariable variable=...;isOutput=true]`; the ADO `monitor-updates.yml` comment-only update brings its docstring in line with the seven step outputs.
-- **`Export-AzLocalUpdateRunMonitorReport` cmdlet docstring drift** - now reads "Emits 7 step outputs" with `attempts_without_run` listed alongside the existing six (was still "6 step outputs" after v0.8.82 added the seventh).
+- **Operator runbook in the Step.08 "Recent update attempts with no observable updateRun" callout** in `Export-AzLocalUpdateRunMonitorReport`. The callout now renders three numbered diagnosis steps (Azure portal Activity Log -> in-portal `updateRun` check -> URP service health) and a fenced PowerShell block with the exact Failover Clustering cmdlets to inspect ownership and bounce the URP cluster groups. The snippet:
+  - Prefixes every action with `Get-ClusterGroup ... | Format-Table Name, OwnerNode, State` so operators see the exit state of each cmdlet (more diagnostic than `-Verbose`).
+  - Covers multi-node clusters (`Move-ClusterGroup` for zero-downtime failover) and single-node / fallback cases (`Stop-ClusterGroup` + `Start-ClusterGroup`).
+  - Explicitly warns that bouncing the Orchestrator (ECE) group during a healthy in-flight `updateRun` will interrupt it.
+- New regression test (`v0.8.84: Step.08 attempt-gap callout includes URP cluster-group recovery snippet`) asserts the rendered markdown contains the diagnosis list, both URP cluster group names, the `Format-Table` line, the move + stop + start cmdlets, the in-flight warning, and that `-Verbose` is NOT present on any of the cmdlets.
 
 ### Notes
 
 - **No new exports** (count unchanged at 60).
-- **`GENERATED_AGAINST_MODULE_VERSION`** bumped from `0.8.82` to `0.8.83` across all bundled pipeline templates.
+- **`GENERATED_AGAINST_MODULE_VERSION`** bumped from `0.8.83` to `0.8.84` across all bundled pipeline templates.
 
 > Previous release notes have moved into the [Release History](#release-history) appendix at the bottom of this document.
 
-See [CHANGELOG.md](CHANGELOG.md#0883---2026-06-15) for the full v0.8.83 entry. See [`What's New in v0.8.82`](#whats-new-in-v0882) in the Release History for the previous release.
+See [CHANGELOG.md](CHANGELOG.md#0884---2026-06-15) for the full v0.8.84 entry. See [`What's New in v0.8.83`](#whats-new-in-v0883) in the Release History for the previous release.
 
 ## Files
 
@@ -582,7 +584,11 @@ This code is provided as-is for educational and reference purposes.
 
 The full What's-New history (v0.7.81 and earlier) has moved to [docs/release-history.md](docs/release-history.md).
 
-The most recent release notes for **v0.8.83** stay above under [`What's New in v0.8.83`](#whats-new-in-v0883).
+The most recent release notes for **v0.8.84** stay above under [`What's New in v0.8.84`](#whats-new-in-v0884).
+
+### What's New in v0.8.83
+
+**Patch release. Fix-forward for v0.8.82 Item-5.** The new Step.08 `UpdateLastAttempt` reconciliation pass in `Export-AzLocalUpdateRunMonitorReport` reads `$inv.tags` from `Get-AzLocalClusterInventory`, but the v0.8.82 inventory projection did not carry the raw ARM `tags` bag - so the "Recent update attempts with no observable updateRun" section was silently always empty in production regardless of fleet state. v0.8.83 surfaces the raw `tags` bag on every inventory row (in-memory only; the on-disk CSV / JSON export keeps its explicit `$selectColumns` whitelist so artefacts continue to omit the raw bag). Also fixes the GitHub Actions `monitor-updates.yml` `jobs.outputs:` block to expose `attempts_without_run` to downstream jobs (the cmdlet was already emitting it in v0.8.82 - only the YAML wiring was missing), and a docstring drift in `Export-AzLocalUpdateRunMonitorReport` ("6 step outputs" -> "7 step outputs"). No public API change. Export count unchanged (still 60). `GENERATED_AGAINST_MODULE_VERSION` bumped from `0.8.82` to `0.8.83` across all bundled pipeline templates. See [CHANGELOG.md](CHANGELOG.md#0883---2026-06-15) for the full v0.8.83 entry and [docs/release-history.md](docs/release-history.md#whats-new-in-v0883) for the archived entry.
 
 ### What's New in v0.8.82
 

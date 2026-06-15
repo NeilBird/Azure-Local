@@ -34,8 +34,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $script:ModuleInfo | Should -Not -BeNullOrEmpty
         }
 
-        It 'Should have version 0.8.83' {
-            $script:ModuleInfo.Version | Should -Be '0.8.83'
+        It 'Should have version 0.8.84' {
+            $script:ModuleInfo.Version | Should -Be '0.8.84'
         }
 
         It 'Module version constants are in sync between .psm1 and .psd1' {
@@ -1281,6 +1281,60 @@ Describe 'v0.8.83: Get-AzLocalClusterInventory preserves raw ARM tag bag on Pass
         $whitelistMatch = [regex]::Match($src, '\$selectColumns\s*=\s*@\(([\s\S]*?)\)')
         $whitelistMatch.Success | Should -BeTrue -Because 'Get-AzLocalClusterInventory must declare an explicit $selectColumns whitelist for CSV/JSON export'
         $whitelistMatch.Groups[1].Value | Should -Not -Match "'tags'"
+    }
+}
+
+Describe 'v0.8.84: Step.08 attempt-gap callout includes URP cluster-group recovery snippet' {
+    # v0.8.84 extends the "What this means" callout under the
+    # "Recent update attempts with no observable updateRun" section of
+    # Export-AzLocalUpdateRunMonitorReport with a 3-step diagnosis flow
+    # plus a fenced powershell block showing Get-ClusterGroup / Move-ClusterGroup
+    # / Stop+Start-ClusterGroup recovery for the two URP cluster groups.
+    # Source-level assertions (no end-to-end run needed) so this regression
+    # catches accidental wording drift across releases.
+
+    BeforeAll {
+        $script:srcMonitor = Get-Content -Raw -LiteralPath "$PSScriptRoot/../Public/Export-AzLocalUpdateRunMonitorReport.ps1"
+    }
+
+    It 'Renders a numbered "Diagnosis (in order)" list' {
+        $script:srcMonitor | Should -Match '\*\*Diagnosis \(in order\):\*\*'
+        $script:srcMonitor | Should -Match '1\. \*\*Azure portal -> cluster blade -> Activity Log\*\*'
+        $script:srcMonitor | Should -Match '2\. \*\*Azure portal -> cluster blade -> Updates\*\*'
+        $script:srcMonitor | Should -Match '3\. \*\*URP service health'
+    }
+
+    It 'Names both URP cluster groups in the recovery snippet' {
+        $script:srcMonitor | Should -Match "Azure Stack HCI Update Service Cluster Group"
+        $script:srcMonitor | Should -Match "Azure Stack HCI Orchestrator Service Cluster Group"
+    }
+
+    It 'Recommends Get-ClusterGroup | Format-Table OwnerNode, State before any action' {
+        # Source contains PS-escaped single quotes ('') because the markdown lines
+        # are themselves built inside single-quoted strings. Allow one-or-two quote
+        # characters in the regex so the assertion tolerates either rendering.
+        $script:srcMonitor | Should -Match "Get-ClusterGroup\s+''?Azure Stack HCI Update Service Cluster Group''?,\s+''?Azure Stack HCI Orchestrator Service Cluster Group''?"
+        $script:srcMonitor | Should -Match 'Format-Table Name, OwnerNode, State'
+    }
+
+    It 'Recommends Move-ClusterGroup for multi-node clusters' {
+        $script:srcMonitor | Should -Match "Move-ClusterGroup ''?Azure Stack HCI Update Service Cluster Group''?"
+    }
+
+    It 'Recommends Stop-ClusterGroup + Start-ClusterGroup for single-node or as fallback' {
+        $script:srcMonitor | Should -Match 'Stop-ClusterGroup'
+        $script:srcMonitor | Should -Match 'Start-ClusterGroup'
+    }
+
+    It 'Warns that ECE Orchestrator group must NOT be bounced during a healthy in-flight run' {
+        $script:srcMonitor | Should -Match 'only if no updateRun is actively in progress'
+    }
+
+    It 'Does NOT pass -Verbose to the cluster-group cmdlets (Format-Table is more diagnostic)' {
+        # -Verbose adds noise but does not surface OwnerNode/State; the Format-Table line does.
+        # Catch regressions where someone adds -Verbose back to Move/Stop/Start-ClusterGroup.
+        $callsiteMatches = [regex]::Matches($script:srcMonitor, '(Move-ClusterGroup|Stop-ClusterGroup|Start-ClusterGroup)\s+-Verbose')
+        $callsiteMatches.Count | Should -Be 0 -Because '-Verbose was intentionally dropped from the URP recovery snippet in v0.8.84'
     }
 }
 

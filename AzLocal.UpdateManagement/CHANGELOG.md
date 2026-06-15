@@ -5,6 +5,45 @@ All notable changes to the AzLocal.UpdateManagement module (renamed from AzStack
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.84] - 2026-06-15
+
+Documentation-only patch release. Extends the `Export-AzLocalUpdateRunMonitorReport`
+markdown callout under the "Recent update attempts with no observable updateRun"
+section (introduced in v0.8.82, made functional in v0.8.83) with an operator
+runbook. The previous one-line callout pointed users at the Azure portal Activity
+Log only. v0.8.84 expands it into a numbered diagnosis flow (Activity Log -> in-portal
+`updateRun` check -> URP service health) and a fenced PowerShell snippet showing
+the exact `Get-ClusterGroup` / `Move-ClusterGroup` / `Stop+Start-ClusterGroup`
+commands to bounce the two URP cluster groups (`Azure Stack HCI Update Service
+Cluster Group` + `Azure Stack HCI Orchestrator Service Cluster Group`) when an
+attempt-gap reproduces and all Azure-side investigation comes back clean. Includes
+an explicit warning that the Orchestrator (ECE) group must NOT be bounced during
+a healthy in-flight run. No public API change, no behavioural change to any
+cmdlet. Export count unchanged (still 60).
+
+### Added
+
+- **Operator runbook in the Step.08 "Recent update attempts with no observable
+  updateRun" callout** in `Export-AzLocalUpdateRunMonitorReport`. The callout
+  now renders three numbered diagnosis steps and a fenced PowerShell block with
+  the exact Failover Clustering cmdlets to inspect ownership and bounce the URP
+  cluster groups. The snippet (a) prefixes every action with
+  `Get-ClusterGroup ... | Format-Table Name, OwnerNode, State` so operators see
+  the exit state of each cmdlet (more diagnostic than `-Verbose`), (b) covers
+  multi-node clusters (`Move-ClusterGroup` for zero-downtime failover) and
+  single-node / fallback cases (`Stop-ClusterGroup` + `Start-ClusterGroup`),
+  and (c) explicitly warns that bouncing the Orchestrator (ECE) group during a
+  healthy in-flight `updateRun` will interrupt it. New regression test
+  (`v0.8.84: Step.08 attempt-gap callout includes URP cluster-group recovery snippet`)
+  asserts the rendered markdown contains the diagnosis list, both URP cluster
+  group names, the `Format-Table` line, the move + stop + start cmdlets, the
+  in-flight warning, and that `-Verbose` is NOT present on any of the cmdlets.
+
+### Changed
+
+- `GENERATED_AGAINST_MODULE_VERSION` bumped from `'0.8.83'` to `'0.8.84'`
+  across all bundled GitHub Actions and Azure DevOps pipeline templates.
+
 ## [0.8.83] - 2026-06-15
 
 Patch release. Fix-forward for v0.8.82 Item-5: the new Step.08 `UpdateLastAttempt`
