@@ -165,10 +165,15 @@ function Export-AzLocalClusterReadinessGateReport {
     # on ADO (file is its own summary card) and `## Cluster Readiness` on
     # GitHub (appended into GITHUB_STEP_SUMMARY which already has H1).
     $headingLevel = if ($pipelineHost -eq 'AzureDevOps') { '#' } else { '##' }
+    # v0.8.81: shared status-icon map + portal deep-link + Ctrl+click tip so
+    # the Step.6 gate report mirrors the markdown polish in Step.05 / Step.10.
+    $iconMap = Get-AzLocalStatusIconMap -PipelineHost $pipelineHost
     $sb = New-Object System.Text.StringBuilder
     [void]$sb.AppendLine("$headingLevel Cluster Readiness ($UpdateRing)")
     [void]$sb.AppendLine()
     [void]$sb.AppendLine("**Total:** $totalCount &nbsp;|&nbsp; **Ready:** $readyCount &nbsp;|&nbsp; **Up to Date:** $upToDateCount &nbsp;|&nbsp; **Not Ready:** $notReadyCount")
+    [void]$sb.AppendLine()
+    [void]$sb.AppendLine((Get-AzLocalCtrlClickTip))
     [void]$sb.AppendLine()
     [void]$sb.AppendLine('| Cluster | Current Version | Update State | Health | Status | Recommended Update | Blocking Reasons |')
     [void]$sb.AppendLine('|---|---|---|---|---|---|---|')
@@ -179,21 +184,14 @@ function Export-AzLocalClusterReadinessGateReport {
         # v0.8.74: a readable Status cell driven by the shared readiness cascade.
         # Up-to-Date clusters now show a green check + "Up to Date" instead of the
         # no-entry icon that the old binary Ready? column rendered for them.
-        $statusCell = switch (Get-AzLocalClusterReadinessStatus -ReadinessRow $r) {
-            'ReadyForUpdate'     { "{0} Ready" -f [char]0x2705 }
-            'UpToDate'           { "{0} Up to Date" -f [char]0x2705 }
-            'InProgress'         { "{0} In Progress" -f ([string]([char]0x23F3)) }
-            'SbeBlocked'         { "{0} SBE Prerequisite" -f [char]0x26D4 }
-            'HealthFailure'      { "{0} Health Failure" -f [char]0x274C }
-            'UpdateFailed'       { "{0} Update Failed" -f [char]0x274C }
-            'ActionRequired'     { "{0} Action Required" -f [char]0x274C }
-            default              { "{0} Needs Investigation" -f ([string]([char]0x26A0) + [char]0xFE0F) }
-        }
+        # v0.8.81: icon glyph now comes from Get-AzLocalStatusIconMap (host-aware).
+        $statusKey = Get-AzLocalClusterReadinessStatus -ReadinessRow $r
+        $statusCell = if ($iconMap.ContainsKey($statusKey)) { $iconMap[$statusKey] } else { $iconMap['NeedsInvestigation'] }
         $hSt = "$($r.HealthState)"
         $hCell = switch -Regex ($hSt) {
-            '^Success$' { ("{0} {1}" -f [char]0x2705, $hSt); break }
-            '^Warning$' { ("{0} {1}" -f ([string]([char]0x26A0) + [char]0xFE0F), $hSt); break }
-            '^Failure$' { ("{0} {1}" -f [char]0x274C, $hSt); break }
+            '^Success$' { $iconMap['Healthy'] -replace ' Healthy$', " $hSt"; break }
+            '^Warning$' { $iconMap['Warning'] -replace ' Warning$', " $hSt"; break }
+            '^Failure$' { $iconMap['Critical'] -replace ' Critical$', " $hSt"; break }
             default     { $hSt }
         }
         $blocking = "$($r.BlockingReasons)"
@@ -201,7 +199,9 @@ function Export-AzLocalClusterReadinessGateReport {
         $blocking = $blocking -replace '\|', '\|' -replace '\r?\n', ' '
         $reco = if ($r.RecommendedUpdate) { '`' + $r.RecommendedUpdate + '`' } else { '-' }
         $curr = if ($r.CurrentVersion) { '`' + $r.CurrentVersion + '`' } else { '-' }
-        [void]$sb.AppendLine("| ``$($r.ClusterName)`` | $curr | $($r.UpdateState) | $hCell | $statusCell | $reco | $blocking |")
+        $clusterResId = if ($r.PSObject.Properties['ClusterResourceId'] -and $r.ClusterResourceId) { [string]$r.ClusterResourceId } else { '' }
+        $clusterCell = Get-AzLocalClusterPortalLink -ClusterName ([string]$r.ClusterName) -ClusterResourceId $clusterResId
+        [void]$sb.AppendLine("| $clusterCell | $curr | $($r.UpdateState) | $hCell | $statusCell | $reco | $blocking |")
         $rendered++
     }
 

@@ -34,8 +34,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $script:ModuleInfo | Should -Not -BeNullOrEmpty
         }
 
-        It 'Should have version 0.8.80' {
-            $script:ModuleInfo.Version | Should -Be '0.8.80'
+        It 'Should have version 0.8.81' {
+            $script:ModuleInfo.Version | Should -Be '0.8.81'
         }
 
         It 'Module version constants are in sync between .psm1 and .psd1' {
@@ -15757,11 +15757,12 @@ Describe 'Thin-YAML Step.9: Export-AzLocalFleetHealthStatusReport' {
         $summary | Should -Not -Match '<a [^>]*target="_blank"'
         $summary | Should -Match '### Health Check Failures By Reason'
         $summary | Should -Match '### Detailed Results'
-        # KPI table values
+        # KPI table values - row labels are prefixed with the host-aware iconMap status
+        # tag (e.g. '❌ Critical' / '✅ Healthy'), so anchor on the row label + count only.
         $summary | Should -Match '\| \*\*Total Failing Checks\*\* \| 3 \|'
-        $summary | Should -Match '\| \*\*Critical\*\* \| 2 \|'
-        $summary | Should -Match '\| \*\*Warning\*\* \| 1 \|'
-        $summary | Should -Match '\| \*\*Healthy Clusters\*\* \| 1 \|'
+        $summary | Should -Match '\*\*Critical\*\* \| 2 \|'
+        $summary | Should -Match '\*\*Warning\*\* \| 1 \|'
+        $summary | Should -Match '\*\*Healthy Clusters\*\* \| 1 \|'
         # step outputs
         $out = Get-Content -LiteralPath $script:_s9_ghOutputFile -Raw
         $out | Should -Match 'total_failures=3'
@@ -18669,3 +18670,249 @@ Describe 'v0.8.80 Q2: Export-AzLocalFleetHealthStatusReport renders Title + port
 }
 
 #endregion v0.8.80 Pipeline-failure rendering improvements (Q1 / Q2 / Q3)
+
+#region v0.8.81 Shared step-summary helpers + Step.10 KPI fix
+
+Describe 'v0.8.81: Get-AzLocalStatusIconMap private helper' {
+    It 'Is registered as a private module function' {
+        InModuleScope AzLocal.UpdateManagement {
+            (Get-Command Get-AzLocalStatusIconMap -ErrorAction SilentlyContinue) | Should -Not -BeNullOrEmpty
+        }
+        # NOT exported
+        (Get-Command Get-AzLocalStatusIconMap -ErrorAction SilentlyContinue -Module AzLocal.UpdateManagement | Where-Object { $_.CommandType -eq 'Function' -and $_.Visibility -eq 'Public' }) | Should -BeNullOrEmpty
+    }
+
+    It 'Returns a hashtable for the GitHubActions host (Unicode glyphs - shortcodes only on ADO)' {
+        InModuleScope AzLocal.UpdateManagement {
+            $m = Get-AzLocalStatusIconMap -PipelineHost 'GitHub'
+            $m | Should -BeOfType ([hashtable])
+            # GitHub Actions step-summary renders Unicode emoji natively, so the helper
+            # returns the glyph block - identical to the Local block. Shortcodes are an
+            # AzureDevOps-only branch (their wiki/markdown renderer prefers them).
+            $m['Success']            | Should -Not -Match ':white_check_mark:'
+            $m['Fail']               | Should -Not -Match ':x:'
+            $m['StateInProgress']    | Should -Not -Match ':large_blue_circle:'
+            $m['Info']               | Should -Not -Match ':information_source:'
+            # And confirm the actual Unicode code-points are there.
+            $m['Success']            | Should -Match ([string][char]0x2705)     # ✅
+            $m['Fail']               | Should -Match ([string][char]0x274C)     # ❌
+            $m['StateInProgress']    | Should -Match ([regex]::Escape([char]::ConvertFromUtf32(0x1F535)))   # 🔵
+            $m['GreenCircle']        | Should -Match ([regex]::Escape([char]::ConvertFromUtf32(0x1F7E2)))   # 🟢
+            $m['YellowCircle']       | Should -Match ([regex]::Escape([char]::ConvertFromUtf32(0x1F7E1)))   # 🟡
+        }
+    }
+
+    It 'Returns a hashtable for the AzureDevOps host (shortcodes too - ADO renders them)' {
+        InModuleScope AzLocal.UpdateManagement {
+            $m = Get-AzLocalStatusIconMap -PipelineHost 'AzureDevOps'
+            $m | Should -BeOfType ([hashtable])
+            # ADO branch returns Markdown shortcodes (block matches the GitHub block).
+            $m['Success']         | Should -Match ':white_check_mark:'
+            $m['StateInProgress'] | Should -Match ':large_blue_circle:'
+            $m['Info']            | Should -Match ':information_source:'
+        }
+    }
+
+    It 'Returns a hashtable for the Local host (Unicode glyphs, not shortcodes)' {
+        InModuleScope AzLocal.UpdateManagement {
+            $m = Get-AzLocalStatusIconMap -PipelineHost 'Local'
+            $m | Should -BeOfType ([hashtable])
+            # Local host emits raw Unicode - confirm the Markdown-shortcode form is NOT present.
+            $m['Success']            | Should -Not -Match ':white_check_mark:'
+            $m['Fail']               | Should -Not -Match ':x:'
+            $m['StateInProgress']    | Should -Not -Match ':large_blue_circle:'
+            $m['Info']               | Should -Not -Match ':information_source:'
+            # And confirm the actual Unicode code-points are there.
+            $m['Success']            | Should -Match ([string][char]0x2705)     # check (BMP)
+            $m['Fail']               | Should -Match ([string][char]0x274C)     # cross (BMP)
+            $m['StateInProgress']    | Should -Match ([regex]::Escape([char]::ConvertFromUtf32(0x1F535)))   # blue circle
+            $m['StateNotStarted']    | Should -Match ([string][char]0x26AA)     # white circle (BMP)
+            $m['GreenCircle']        | Should -Match ([regex]::Escape([char]::ConvertFromUtf32(0x1F7E2)))   # green circle
+            $m['YellowCircle']       | Should -Match ([regex]::Escape([char]::ConvertFromUtf32(0x1F7E1)))   # yellow circle
+            $m['CycleArrows']        | Should -Match ([regex]::Escape([char]::ConvertFromUtf32(0x1F504)))   # cycle arrows
+        }
+    }
+
+    It 'Both return blocks (shortcodes vs glyphs) expose the same required key set (no drift)' {
+        InModuleScope AzLocal.UpdateManagement {
+            $required = @(
+                'Ready','ReadyForUpdate','UpToDate','InProgress','SbeBlocked',
+                'HealthFailure','UpdateFailed','ActionRequired','NeedsInvestigation',
+                'Healthy','Critical','Warning','Unknown','HealthCheckFailed',
+                'SeverityCritical','SeverityWarning',
+                'Success','Fail','Block','Skip','Warn',
+                'StateInProgress','StateSucceeded','StateFailed','StateNotStarted','StateUnknown',
+                'StatusInProgress','StatusCancelled',
+                'Info','GreenCircle','YellowCircle','CycleArrows','GreyQuestion',
+                'SupportSupported','SupportUnsupported','SupportUnknown'
+            )
+            $ado   = Get-AzLocalStatusIconMap -PipelineHost 'AzureDevOps'
+            $local = Get-AzLocalStatusIconMap -PipelineHost 'Local'
+            foreach ($k in $required) {
+                $ado.ContainsKey($k)   | Should -BeTrue -Because "AzureDevOps (shortcode) map must define key '$k'"
+                $local.ContainsKey($k) | Should -BeTrue -Because "Local (glyph) map must define key '$k'"
+            }
+        }
+    }
+}
+
+Describe 'v0.8.81: Get-AzLocalClusterPortalLink private helper' {
+    It 'Is registered as a private module function (not exported)' {
+        InModuleScope AzLocal.UpdateManagement {
+            (Get-Command Get-AzLocalClusterPortalLink -ErrorAction SilentlyContinue) | Should -Not -BeNullOrEmpty
+        }
+        (Get-Command Get-AzLocalClusterPortalLink -ErrorAction SilentlyContinue -Module AzLocal.UpdateManagement | Where-Object { $_.CommandType -eq 'Function' -and $_.Visibility -eq 'Public' }) | Should -BeNullOrEmpty
+    }
+
+    It 'Wraps the cluster name in a portal anchor when ClusterResourceId is supplied' {
+        InModuleScope AzLocal.UpdateManagement {
+            $rid = '/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/Portland'
+            $out = Get-AzLocalClusterPortalLink -ClusterName 'Portland' -ClusterResourceId $rid
+            $out | Should -Match '<a href="https://portal\.azure\.com/#@/resource'
+            $out | Should -Match '>Portland</a>'
+        }
+    }
+
+    It 'Returns the plain cluster name when neither URL nor ResourceId is supplied' {
+        InModuleScope AzLocal.UpdateManagement {
+            $out = Get-AzLocalClusterPortalLink -ClusterName 'Portland'
+            $out | Should -Be 'Portland'
+        }
+    }
+
+    It 'Prefers ClusterPortalUrl over ClusterResourceId when both are supplied' {
+        InModuleScope AzLocal.UpdateManagement {
+            $rid = '/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/Portland'
+            $explicit = 'https://example.invalid/explicit-url'
+            $out = Get-AzLocalClusterPortalLink -ClusterName 'Portland' -ClusterResourceId $rid -ClusterPortalUrl $explicit
+            $out | Should -Match ([regex]::Escape($explicit))
+            $out | Should -Not -Match 'portal\.azure\.com'
+        }
+    }
+
+    It 'HTML-escapes the cluster name when -Escape is set' {
+        InModuleScope AzLocal.UpdateManagement {
+            $rid = '/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/cl'
+            $out = Get-AzLocalClusterPortalLink -ClusterName 'A<B>C&D' -ClusterResourceId $rid -Escape
+            $out | Should -Match 'A&lt;B&gt;C&amp;D'
+        }
+    }
+}
+
+Describe 'v0.8.81: Get-AzLocalCtrlClickTip private helper' {
+    It 'Is registered as a private module function (not exported)' {
+        InModuleScope AzLocal.UpdateManagement {
+            (Get-Command Get-AzLocalCtrlClickTip -ErrorAction SilentlyContinue) | Should -Not -BeNullOrEmpty
+        }
+        (Get-Command Get-AzLocalCtrlClickTip -ErrorAction SilentlyContinue -Module AzLocal.UpdateManagement | Where-Object { $_.CommandType -eq 'Function' -and $_.Visibility -eq 'Public' }) | Should -BeNullOrEmpty
+    }
+
+    It 'Returns a markdown blockquote tip mentioning Ctrl/Cmd-click and middle-click' {
+        InModuleScope AzLocal.UpdateManagement {
+            $tip = Get-AzLocalCtrlClickTip
+            $tip | Should -BeOfType ([string])
+            $tip | Should -Match '^>\s+\*\*Tip:\*\*'
+            $tip | Should -Match 'Ctrl'
+            $tip | Should -Match 'Cmd'
+            $tip | Should -Match 'middle-click'
+            $tip | Should -Match 'target="_blank"'
+        }
+    }
+}
+
+Describe 'v0.8.81: Step.05/06/07/08/09/10 renderers consume Get-AzLocalStatusIconMap' {
+    $cases = @(
+        @{ Step = 'Step.05 (Readiness report)'; Path = "$PSScriptRoot/../Public/Export-AzLocalClusterUpdateReadinessReport.ps1" }
+        @{ Step = 'Step.06 (Readiness gate)';   Path = "$PSScriptRoot/../Public/Export-AzLocalClusterReadinessGateReport.ps1" }
+        @{ Step = 'Step.07 (Apply updates)';    Path = "$PSScriptRoot/../Public/Add-AzLocalApplyUpdatesStepSummary.ps1" }
+        @{ Step = 'Step.08 (Monitor)';          Path = "$PSScriptRoot/../Public/Export-AzLocalUpdateRunMonitorReport.ps1" }
+        @{ Step = 'Step.09 (Fleet update)';     Path = "$PSScriptRoot/../Public/Export-AzLocalFleetUpdateStatusReport.ps1" }
+        @{ Step = 'Step.10 (Fleet health)';     Path = "$PSScriptRoot/../Public/Export-AzLocalFleetHealthStatusReport.ps1" }
+    )
+
+    It '<Step> calls Get-AzLocalStatusIconMap and reads from $iconMap' -ForEach $cases {
+        Test-Path -LiteralPath $Path | Should -BeTrue -Because "$Step source must exist at $Path"
+        $src = Get-Content -LiteralPath $Path -Raw
+        $src | Should -Match 'Get-AzLocalStatusIconMap'
+        $src | Should -Match '\$iconMap\b'
+    }
+}
+
+Describe 'v0.8.81: Step.08 monitor uses iconMap for State and Status columns' {
+    BeforeAll {
+        $script:src08 = Get-Content -LiteralPath "$PSScriptRoot/../Public/Export-AzLocalUpdateRunMonitorReport.ps1" -Raw
+    }
+    It 'Resolves $stateIcon via $iconMap State* keys' {
+        $src08 | Should -Match "\`$iconMap\['StateInProgress'\]"
+        $src08 | Should -Match "\`$iconMap\['StateSucceeded'\]"
+        $src08 | Should -Match "\`$iconMap\['StateFailed'\]"
+        $src08 | Should -Match "\`$iconMap\['StateNotStarted'\]"
+        $src08 | Should -Match "\`$iconMap\['StateUnknown'\]"
+    }
+    It 'Resolves $statusIcon via $iconMap Success/Fail/StatusInProgress/Block/StatusCancelled keys' {
+        $src08 | Should -Match "\`$iconMap\['Success'\]"
+        $src08 | Should -Match "\`$iconMap\['Fail'\]"
+        $src08 | Should -Match "\`$iconMap\['StatusInProgress'\]"
+        $src08 | Should -Match "\`$iconMap\['Block'\]"
+        $src08 | Should -Match "\`$iconMap\['StatusCancelled'\]"
+    }
+    It 'No longer hard-codes the GitHub-Markdown shortcodes inline in the State / Current Step Status switches' {
+        # The shortcodes are now centralised in Get-AzLocalStatusIconMap. The renderer
+        # should not contain the bare ':large_blue_circle:' / ':hourglass_flowing_sand:'
+        # literal strings in its switch arms any more (they only live inside the helper).
+        $src08 | Should -Not -Match "= ':large_blue_circle:'"
+        $src08 | Should -Not -Match "= ':hourglass_flowing_sand:'"
+    }
+}
+
+Describe 'v0.8.81: Step.09 fleet status uses iconMap for Critical Health / Primary Status / Version Distribution' {
+    BeforeAll {
+        $script:src09 = Get-Content -LiteralPath "$PSScriptRoot/../Public/Export-AzLocalFleetUpdateStatusReport.ps1" -Raw
+    }
+    It 'Resolves Critical Health Status / Primary Status icons via $iconMap (Info / GreenCircle / YellowCircle / CycleArrows / Warn / Fail)' {
+        $src09 | Should -Match "\`$iconMap\['Info'\]"
+        $src09 | Should -Match "\`$iconMap\['GreenCircle'\]"
+        $src09 | Should -Match "\`$iconMap\['YellowCircle'\]"
+        $src09 | Should -Match "\`$iconMap\['CycleArrows'\]"
+        $src09 | Should -Match "\`$iconMap\['Warn'\]"
+        $src09 | Should -Match "\`$iconMap\['Fail'\]"
+    }
+    It 'Resolves Version Distribution Support cell via $iconMap (SupportSupported / SupportUnsupported / SupportUnknown)' {
+        $src09 | Should -Match "\`$iconMap\['SupportSupported'\]"
+        $src09 | Should -Match "\`$iconMap\['SupportUnsupported'\]"
+        $src09 | Should -Match "\`$iconMap\['SupportUnknown'\]"
+    }
+}
+
+Describe 'v0.8.81: Step.10 Fleet Health Status - KPI counting fix + Description / FailureName columns' {
+    BeforeAll {
+        $script:src10 = Get-Content -LiteralPath "$PSScriptRoot/../Public/Export-AzLocalFleetHealthStatusReport.ps1" -Raw
+    }
+    It 'Splits the KPI into Cluster Counts and Failing Checks Breakdown tables' {
+        $src10 | Should -Match '###\s*Cluster Counts'
+        $src10 | Should -Match '###\s*Failing Checks Breakdown'
+    }
+    It 'Computes Other as Total - Healthy - Unhealthy clamped non-negative (Cluster Counts sums to Total)' {
+        $src10 | Should -Match '\$totalInSub\s*-\s*\$healthyClusters\s*-\s*\$totalClusters'
+        $src10 | Should -Match 'if \(\$otherClusters\s*-lt\s*0\)\s*\{\s*\$otherClusters\s*=\s*0\s*\}'
+    }
+    It 'Emits the new other_clusters pipeline step output' {
+        $src10 | Should -Match "Set-AzLocalPipelineOutput\s+-Name\s+'other_clusters'"
+    }
+    It 'Exposes OtherClusters on the -PassThru PSCustomObject' {
+        $src10 | Should -Match 'OtherClusters\s*=\s*\[int\]\$otherClustersOut'
+    }
+    It 'Detailed Results includes a Description column (collapsible drive/volume detail)' {
+        $src10 | Should -Match '\|\s*Description\s*\|'
+    }
+    It 'Detailed Results preserves the raw FailureName column (for grep / triage by FaultType)' {
+        $src10 | Should -Match 'FailureName'
+    }
+    It 'Reads icons via $iconMap rather than inline shortcodes' {
+        $src10 | Should -Match '\$iconMap\b'
+        $src10 | Should -Match "\`$iconMap\['Warning'\]"
+    }
+}
+
+#endregion v0.8.81 Shared step-summary helpers + Step.10 KPI fix
+

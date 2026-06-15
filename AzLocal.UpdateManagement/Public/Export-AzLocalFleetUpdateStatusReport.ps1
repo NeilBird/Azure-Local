@@ -249,6 +249,11 @@ function Export-AzLocalFleetUpdateStatusReport {
 
     $pipelineHost = Get-AzLocalPipelineHost
 
+    # v0.8.81: shared status-icon map (host-aware) - replaces the inline
+    # GitHub shortcodes that previously rendered as literal text on Azure
+    # DevOps step summaries.
+    $iconMap = Get-AzLocalStatusIconMap -PipelineHost $pipelineHost
+
     if (-not $OutputDirectory) {
         if ($pipelineHost -eq 'AzureDevOps' -and $env:BUILD_ARTIFACTSTAGINGDIRECTORY) {
             $OutputDirectory = Join-Path -Path $env:BUILD_ARTIFACTSTAGINGDIRECTORY -ChildPath 'reports'
@@ -847,9 +852,9 @@ function Export-AzLocalFleetUpdateStatusReport {
                 $yymmDisplay = if ($g.Name) { $g.Name } else { '_(unknown)_' }
                 $supportStatusForYymm = $groupRows[0].SupportStatus
                 $supportEmoji = switch ($supportStatusForYymm) {
-                    'Supported'   { ':white_check_mark: Supported' }
-                    'Unsupported' { ':warning: Unsupported' }
-                    default       { ':grey_question: Unknown' }
+                    'Supported'   { $iconMap['SupportSupported'] }
+                    'Unsupported' { $iconMap['SupportUnsupported'] }
+                    default       { $iconMap['SupportUnknown'] }
                 }
                 $updateVersionsCell = (($groupRows | ForEach-Object { '{0} x {1}' -f $_.Version, $_.Count }) -join '<br>')
                 $clusterNames = @()
@@ -884,8 +889,8 @@ function Export-AzLocalFleetUpdateStatusReport {
     [void]$md.Add('')
     [void]$md.Add('| Metric | Count | Status |')
     [void]$md.Add('|--------|-------|--------|')
-    [void]$md.Add("| **Passed** (healthy, no failures, not SBE-blocked) | $criticalHealthPassed | :white_check_mark: |")
-    $chFailedIcon = if ($criticalHealthFailed -gt 0) { ':x:' } else { ':white_check_mark:' }
+    [void]$md.Add("| **Passed** (healthy, no failures, not SBE-blocked) | $criticalHealthPassed | $($iconMap['Success']) |")
+    $chFailedIcon = if ($criticalHealthFailed -gt 0) { $iconMap['Fail'] } else { $iconMap['Success'] }
     [void]$md.Add("| **Failed** (HealthState=Failure OR UpdateState=Failed OR SBE prerequisite blocked) | $criticalHealthFailed | $chFailedIcon |")
     [void]$md.Add('')
 
@@ -894,19 +899,19 @@ function Export-AzLocalFleetUpdateStatusReport {
     [void]$md.Add('')
     [void]$md.Add('| Metric | Count | Status |')
     [void]$md.Add('|--------|-------|--------|')
-    [void]$md.Add("| **Total Clusters** | $totalTests | :information_source: |")
-    [void]$md.Add("| **Up to Date** | $stUpToDate | :white_check_mark: |")
-    [void]$md.Add("| **Ready for Update** | $stReadyForUpdate | :green_circle: |")
-    [void]$md.Add("| **Update In Progress** | $stInProgress | :arrows_counterclockwise: |")
-    $sbeIcon = if ($stSbeBlocked -gt 0) { ':yellow_circle:' } else { ':white_check_mark:' }
+    [void]$md.Add("| **Total Clusters** | $totalTests | $($iconMap['Info']) |")
+    [void]$md.Add("| **Up to Date** | $stUpToDate | $($iconMap['Success']) |")
+    [void]$md.Add("| **Ready for Update** | $stReadyForUpdate | $($iconMap['GreenCircle']) |")
+    [void]$md.Add("| **Update In Progress** | $stInProgress | $($iconMap['CycleArrows']) |")
+    $sbeIcon = if ($stSbeBlocked -gt 0) { $iconMap['YellowCircle'] } else { $iconMap['Success'] }
     [void]$md.Add("| **SBE Prerequisite Blocked** | $stSbeBlocked | $sbeIcon |")
-    $hfIcon = if ($stHealthFailure -gt 0) { ':x:' } else { ':white_check_mark:' }
+    $hfIcon = if ($stHealthFailure -gt 0) { $iconMap['Fail'] } else { $iconMap['Success'] }
     [void]$md.Add("| **Health Failure** (HealthState=Failure) | $stHealthFailure | $hfIcon |")
-    $ufIcon = if ($stUpdateFailed -gt 0) { ':x:' } else { ':white_check_mark:' }
+    $ufIcon = if ($stUpdateFailed -gt 0) { $iconMap['Fail'] } else { $iconMap['Success'] }
     [void]$md.Add("| **Update Failed** (Failed / UpdateFailed / NeedsAttention) | $stUpdateFailed | $ufIcon |")
-    $arIcon = if ($stActionRequired -gt 0) { ':x:' } else { ':white_check_mark:' }
+    $arIcon = if ($stActionRequired -gt 0) { $iconMap['Fail'] } else { $iconMap['Success'] }
     [void]$md.Add("| **Action Required** (PreparationFailed) | $stActionRequired | $arIcon |")
-    $niIcon = if ($stOther -gt 0) { ':warning:' } else { ':white_check_mark:' }
+    $niIcon = if ($stOther -gt 0) { $iconMap['Warn'] } else { $iconMap['Success'] }
     [void]$md.Add("| **Needs Investigation** | $stOther | $niIcon |")
     [void]$md.Add('')
     [void]$md.Add('Priority cascade used to bucket each cluster exactly once:')

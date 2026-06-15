@@ -136,12 +136,19 @@ function Add-AzLocalApplyUpdatesStepSummary {
     $pipelineHost = Get-AzLocalPipelineHost
     $useShortcodeIcons = ($pipelineHost -eq 'AzureDevOps')
 
-    # Unicode emoji glyphs (GH/Local) vs GitHub-Markdown shortcodes (ADO).
-    $iconSuccess = if ($useShortcodeIcons) { ':white_check_mark:' } else { [string][char]0x2705 }
-    $iconFail    = if ($useShortcodeIcons) { ':x:' }                else { [string][char]0x274C }
-    $iconBlock   = if ($useShortcodeIcons) { ':no_entry:' }         else { [string][char]0x26D4 }
-    $iconSkip    = if ($useShortcodeIcons) { ':next_track_button:' } else { ([string][char]0x23ED + [string][char]0xFE0F) }
-    $iconWarn    = if ($useShortcodeIcons) { ':warning:' }          else { ([string][char]0x26A0 + [string][char]0xFE0F) }
+    # v0.8.81: status-icon glyphs now come from the shared private helper
+    # Get-AzLocalStatusIconMap (host-aware: GH/local Unicode vs ADO short-
+    # codes). Local aliases keep the rest of this file readable without a
+    # blanket find-and-replace.
+    $iconMap = Get-AzLocalStatusIconMap -PipelineHost $pipelineHost
+    $iconSuccess = $iconMap['Success']
+    $iconFail    = $iconMap['Fail']
+    $iconBlock   = $iconMap['Block']
+    $iconSkip    = $iconMap['Skip']
+    $iconWarn    = $iconMap['Warn']
+    # Suppress unused-variable analyzer noise; the alias above keeps backwards
+    # compatibility with future code that may reference $useShortcodeIcons.
+    $null = $useShortcodeIcons
 
     $headingLevel = if ($pipelineHost -eq 'AzureDevOps') { '#' } else { '##' }
 
@@ -217,12 +224,34 @@ function Add-AzLocalApplyUpdatesStepSummary {
 
     $actionsRendered = 0
 
+    # v0.8.81: build a ClusterName -> ClusterResourceId lookup from the readiness
+    # CSV (when supplied) so the Cluster Actions + Skipped at Readiness Gate
+    # tables can render portal deep-links without requiring upstream Start-
+    # AzLocalClusterUpdate / Invoke-AzLocalReadinessGatedClusterUpdate shape
+    # changes. Falls back to plain cluster names when the CSV is absent or
+    # the row has no ClusterResourceId column.
+    $clusterIdByName = @{}
+    if ($ReadinessCsvPath -and (Test-Path -LiteralPath $ReadinessCsvPath)) {
+        try {
+            foreach ($row in (Import-Csv -Path $ReadinessCsvPath)) {
+                if ($row.PSObject.Properties['ClusterName'] -and $row.PSObject.Properties['ClusterResourceId'] -and $row.ClusterName -and $row.ClusterResourceId) {
+                    $clusterIdByName[[string]$row.ClusterName] = [string]$row.ClusterResourceId
+                }
+            }
+        }
+        catch {
+            Write-Verbose ("Add-AzLocalApplyUpdatesStepSummary: unable to read ClusterResourceId map from {0}: {1}" -f $ReadinessCsvPath, $_.Exception.Message)
+        }
+    }
+
     # Per-cluster apply results table (from apply-results.json).
     if ($ApplyResultsJsonPath -and (Test-Path -LiteralPath $ApplyResultsJsonPath)) {
         $applyRows = @(Get-Content -Raw -Path $ApplyResultsJsonPath | ConvertFrom-Json)
         if ($applyRows.Count -gt 0) {
             [void]$sb.AppendLine()
             [void]$sb.AppendLine("$h3 Cluster Actions ($($applyRows.Count) cluster(s))")
+            [void]$sb.AppendLine()
+            [void]$sb.AppendLine((Get-AzLocalCtrlClickTip))
             [void]$sb.AppendLine()
             [void]$sb.AppendLine('| Cluster | Status | Update | Duration | Message |')
             [void]$sb.AppendLine('|---|---|---|---|---|')
@@ -241,7 +270,9 @@ function Add-AzLocalApplyUpdatesStepSummary {
                 $msg = "$($r.Message)"
                 if ($msg.Length -gt 180) { $msg = $msg.Substring(0, 177) + '...' }
                 $msg = $msg -replace '\|', '\|' -replace '\r?\n', ' '
-                [void]$sb.AppendLine("| ``$($r.ClusterName)`` | $icon $st | $upd | $dur | $msg |")
+                $clusterResId = if ($clusterIdByName.ContainsKey([string]$r.ClusterName)) { $clusterIdByName[[string]$r.ClusterName] } else { '' }
+                $clusterCell = Get-AzLocalClusterPortalLink -ClusterName ([string]$r.ClusterName) -ClusterResourceId $clusterResId
+                [void]$sb.AppendLine("| $clusterCell | $icon $st | $upd | $dur | $msg |")
                 $actionsRendered++
             }
         }
@@ -256,6 +287,8 @@ function Add-AzLocalApplyUpdatesStepSummary {
             [void]$sb.AppendLine("$h3 Clusters Skipped at Readiness Gate ($($blockedRows.Count) cluster(s))")
             [void]$sb.AppendLine()
             [void]$sb.AppendLine('_These clusters were assessed by Check Update Readiness but not handed to Apply Updates. Resolve the listed blocking reasons (or wait for them to clear) then re-run the pipeline._')
+            [void]$sb.AppendLine()
+            [void]$sb.AppendLine((Get-AzLocalCtrlClickTip))
             [void]$sb.AppendLine()
             [void]$sb.AppendLine('| Cluster | Update State | Health | Current Version | Recommended | Blocking Reasons |')
             [void]$sb.AppendLine('|---|---|---|---|---|---|')
@@ -273,7 +306,9 @@ function Add-AzLocalApplyUpdatesStepSummary {
                     '^Failure$' { "$iconFail $hSt"; break }
                     default     { $hSt }
                 }
-                [void]$sb.AppendLine("| ``$($b.ClusterName)`` | $($b.UpdateState) | $hCell | $curr | $reco | $blocking |")
+                $clusterResId = if ($b.PSObject.Properties['ClusterResourceId'] -and $b.ClusterResourceId) { [string]$b.ClusterResourceId } else { '' }
+                $clusterCell = Get-AzLocalClusterPortalLink -ClusterName ([string]$b.ClusterName) -ClusterResourceId $clusterResId
+                [void]$sb.AppendLine("| $clusterCell | $($b.UpdateState) | $hCell | $curr | $reco | $blocking |")
                 $skippedRendered++
             }
             if ($blockedRows.Count -gt $MaxSkippedRows) {

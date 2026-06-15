@@ -434,42 +434,69 @@ function Export-AzLocalFleetHealthStatusReport {
     Set-AzLocalPipelineOutput -Name 'overview_rows'     -Value ([string]$overview.Count)
     Set-AzLocalPipelineOutput -Name 'healthy_clusters'  -Value ([string]$healthyClusters)
     Set-AzLocalPipelineOutput -Name 'total_in_sub'      -Value ([string]$totalInSub)
-
+    # v0.8.81: Other-bucket step output so consumers can validate
+    # healthy + unhealthy + other = total_in_sub without re-deriving.
+    $otherClustersOut = $totalInSub - $healthyClusters - $totalClusters
+    if ($otherClustersOut -lt 0) { $otherClustersOut = 0 }
+    Set-AzLocalPipelineOutput -Name 'other_clusters'    -Value ([string]$otherClustersOut)
     Write-Host ""
     Write-Host "Fleet Health Collection complete:"
     Write-Host "  Total clusters in scope : $totalInSub"
     Write-Host "  Healthy clusters        : $healthyClusters"
     Write-Host "  Unhealthy clusters      : $totalClusters"
+    $otherClustersDiag = $totalInSub - $healthyClusters - $totalClusters
+    if ($otherClustersDiag -lt 0) { $otherClustersDiag = 0 }
+    Write-Host "  Other clusters (non-Healthy, no failures): $otherClustersDiag"
     Write-Host "  Total failing checks    : $totalFailures (Critical=$criticalCount, Warning=$warningCount)"
     Write-Host "  Distinct failure reasons: $distinctReasons"
     Write-Host "  Overview rows           : $($overview.Count)"
 
     # ---- Step 7: markdown summary ----------------------------------------
+    # v0.8.81: split the legacy single KPI table into TWO tables so each one
+    # has a row set that actually sums to its denominator:
+    #   1. Cluster Counts (Total = Healthy + Unhealthy + Other)
+    #   2. Failing Checks Breakdown (Total = Critical + Warning, plus
+    #      Distinct Reasons as a secondary metric)
+    # The legacy table mixed both axes and produced the confusing
+    # "11 + 8 != 20" output when one or more clusters had HealthStatus other
+    # than 'Healthy' AND no failing detail rows (e.g. 'In progress',
+    # 'Unknown', 'Health check failed').
     $generatedUtc = $Now.ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss UTC')
+    $iconMap = Get-AzLocalStatusIconMap -PipelineHost $pipelineHost
+    $otherClusters = $totalInSub - $healthyClusters - $totalClusters
+    if ($otherClusters -lt 0) { $otherClusters = 0 }
     $md = New-Object 'System.Collections.Generic.List[string]'
     [void]$md.Add('## Fleet Health Status Summary')
+    [void]$md.Add('')
+    [void]$md.Add('### Cluster Counts')
     [void]$md.Add('')
     [void]$md.Add('| Metric | Count |')
     [void]$md.Add('|--------|-------|')
     [void]$md.Add("| **Total Clusters in Subscription** | $totalInSub |")
-    [void]$md.Add("| **Healthy Clusters** | $healthyClusters |")
-    [void]$md.Add("| **Unhealthy Clusters** | $totalClusters |")
+    [void]$md.Add(("| {0} **Healthy Clusters** | {1} |" -f $iconMap['Healthy'], $healthyClusters))
+    [void]$md.Add(("| {0} **Unhealthy Clusters (with failing checks)** | {1} |" -f $iconMap['SeverityCritical'], $totalClusters))
+    [void]$md.Add(("| {0} **Other (In progress / Unknown / Health check failed)** | {1} |" -f $iconMap['Warning'], $otherClusters))
+    [void]$md.Add('')
+    [void]$md.Add('> _Cluster counts sum to **Total Clusters in Subscription**. **Unhealthy** = clusters with at least one Critical or Warning health-check failure in the Detail view. **Other** captures clusters with no failing checks but a non-`Healthy` overview state (e.g. `In progress`, `Unknown`, `Health check failed`, `Warning`)._')
+    [void]$md.Add('')
+    [void]$md.Add('### Failing Checks Breakdown')
+    [void]$md.Add('')
+    [void]$md.Add('| Metric | Count |')
+    [void]$md.Add('|--------|-------|')
     [void]$md.Add("| **Total Failing Checks** | $totalFailures |")
-    [void]$md.Add("| **Critical** | $criticalCount |")
-    [void]$md.Add("| **Warning** | $warningCount |")
+    [void]$md.Add(("| {0} **Critical** | {1} |" -f $iconMap['SeverityCritical'], $criticalCount))
+    [void]$md.Add(("| {0} **Warning** | {1} |" -f $iconMap['SeverityWarning'], $warningCount))
     [void]$md.Add("| **Distinct Failure Reasons** | $distinctReasons |")
     [void]$md.Add('')
-    [void]$md.Add('> _**Healthy** / **Unhealthy** count clusters via `Get-AzLocalFleetHealthOverview`; **Unhealthy** = at least one Critical or Warning health-check failure. **Total Failing Checks** counts individual failing checks (one cluster can contribute multiple)._')
+    [void]$md.Add('> _**Total Failing Checks** = **Critical** + **Warning**. One cluster can contribute multiple failing checks. **Distinct Failure Reasons** is a secondary axis (Critical + Warning rolled up by reason)._')
     [void]$md.Add('')
 
     # ---- Fleet Health Overview table -------------------------------------
     [void]$md.Add('### Fleet Health Overview (fleet rollup)')
     [void]$md.Add('')
-    # GitHub / ADO step-summary sanitisers strip `target="_blank"` (and force
-    # `rel="nofollow"`), so the Cluster portal links open in the current tab
-    # by default. Tip stays even when there are zero overview rows because the
-    # detail / by-reason tables further down can still emit cluster links.
-    [void]$md.Add('> **Tip:** Hold `Ctrl` (or `Cmd` on macOS) when clicking - or middle-click - Cluster links to open them in a new tab. (GitHub markdown strips `target="_blank"`.)')
+    # v0.8.81: tip is shared across Step.04/08/09/10 - factored out so the
+    # phrasing stays in sync.
+    [void]$md.Add((Get-AzLocalCtrlClickTip))
     [void]$md.Add('')
     if ($overview.Count -eq 0) {
         [void]$md.Add('*No clusters returned from Get-AzLocalFleetHealthOverview.*')
@@ -479,18 +506,16 @@ function Export-AzLocalFleetHealthStatusReport {
         [void]$md.Add('|---------|--------|---------------|------------------|--------------|------------------|---------------|--------------------------|------------|')
         foreach ($o in (@($overview) | Select-Object -First $MaxOverviewRows)) {
             # target="_blank" intentionally omitted: sanitiser strips it. See Tip above.
-            $clusterCell = if ($o.ClusterPortalUrl) {
-                ('<a href="{0}">{1}</a>' -f $o.ClusterPortalUrl, $o.ClusterName)
-            }
-            else { [string]$o.ClusterName }
-            # Use literal Unicode glyphs (not GH ':name:' shortcodes) so GH +
-            # ADO render identically. Label is retained for greppability.
+            $clusterCell = Get-AzLocalClusterPortalLink -ClusterName ([string]$o.ClusterName) -ClusterPortalUrl ([string]$o.ClusterPortalUrl)
+            # v0.8.81: use shared icon map - keep readable status names rather
+            # than inlining glyph constants.
             $healthTag = switch ($o.HealthStatus) {
-                'Healthy'             { "$([char]0x2705) Healthy" }
-                'Critical'            { "$([char]0x274C) Critical" }
-                'Warning'             { "$([char]0x26A0)$([char]0xFE0F) Warning" }
-                'In progress'         { "$([char]0x23F3) In progress" }
-                'Health check failed' { "$([char]0x274C) Failed" }
+                'Healthy'             { $iconMap['Healthy'] }
+                'Critical'            { $iconMap['Critical'] }
+                'Warning'             { $iconMap['Warning'] }
+                'In progress'         { $iconMap['InProgress'] }
+                'Health check failed' { $iconMap['HealthCheckFailed'] }
+                'Unknown'             { $iconMap['Unknown'] }
                 default               { '[' + [string]$o.HealthStatus + ']' }
             }
             [void]$md.Add(('| {0} | {1} | {2} | {3} | {4} | {5} | {6} | {7} | {8} |' -f $clusterCell, $healthTag, $o.UpdateStatus, $o.CurrentVersion, $o.SbeVersion, $o.AzureConnection, $o.LastChecked, $o.HealthResultsAgeDays, $o.NodeCount))
@@ -512,7 +537,7 @@ function Export-AzLocalFleetHealthStatusReport {
         [void]$md.Add('| Severity | Failure Reason | Cluster Count | Failure Count | Affected Clusters | Latest |')
         [void]$md.Add('|----------|----------------|---------------|---------------|--------------------|--------|')
         foreach ($r in (@($summary) | Select-Object -First $MaxSummaryRows)) {
-            $sevTag = if ($r.Severity -eq 'Critical') { '[Critical]' } else { '[Warning]' }
+            $sevTag = if ($r.Severity -eq 'Critical') { $iconMap['SeverityCritical'] } else { $iconMap['SeverityWarning'] }
             # Keep @() OUTSIDE the 'if' so single-element splits do not unwrap
             # to a bare String (PowerShell scalar-unwrap guard).
             $names = @(if ($r.AffectedClusters)          { $r.AffectedClusters          -split '; ' } else { @() })
@@ -579,29 +604,60 @@ function Export-AzLocalFleetHealthStatusReport {
             if ($cl.WarningCount  -gt 0) { $sevParts += ('[Warning] x {0}'  -f $cl.WarningCount)  }
             $sevTally = $sevParts -join ' &nbsp;&middot;&nbsp; '
 
-            $clusterCell = if ($cl.ClusterPortalUrl) {
-                ('<a href="{0}">{1}</a>' -f $cl.ClusterPortalUrl, $cl.ClusterName)
-            }
-            else { [string]$cl.ClusterName }
+            $clusterCell = Get-AzLocalClusterPortalLink -ClusterName ([string]$cl.ClusterName) -ClusterPortalUrl ([string]$cl.ClusterPortalUrl)
             $lastOccStr = if ($cl.LastOccurrence) { ('{0:yyyy-MM-ddTHH:mm:ssZ}' -f $cl.LastOccurrence) } else { '-' }
 
             [void]$md.Add('<details>')
             [void]$md.Add(('<summary><strong>{0}</strong> &nbsp;&middot;&nbsp; {1} &nbsp;&middot;&nbsp; last {2}</summary>' -f $clusterCell, $sevTally, $lastOccStr))
             [void]$md.Add('')
-            [void]$md.Add('| Severity | Failure Reason | Title | Failure Remediation | Target Resource Name | Target Resource Type | Last Occurrence | Resource Group |')
-            [void]$md.Add('|----------|----------------|-------|---------------------|----------------------|----------------------|------------------|----------------|')
+            # v0.8.81: column order rework so the most-specific cell appears
+            # first. `Title` (per-check title) is usually the most operator-
+            # readable description of the failure ("Node-03 disk D: failed");
+            # `Failure Reason` (the displayName ARG payload) is the broader
+            # category ("Storage Physical Disks Health Check"). When Title
+            # is empty or identical to Failure Reason, the Title cell shows
+            # an em-dash so the column stays self-evidently empty rather than
+            # duplicating the reason. `Description` is wrapped in an inline
+            # <details> so long contextual text (file paths, volume names,
+            # node identifiers) does not bloat the row. `Health Check Name`
+            # is the raw ARG `name` field (e.g.
+            # `Microsoft.Health.FaultType.Volume.FileSystem.Corruption.Correctable`)
+            # in monospace for grep/triage.
+            [void]$md.Add('| Severity | Title | Failure Reason | Description | Health Check Name | Failure Remediation | Target Resource Name | Target Resource Type | Last Occurrence | Resource Group |')
+            [void]$md.Add('|----------|-------|----------------|-------------|--------------------|---------------------|----------------------|----------------------|------------------|----------------|')
             foreach ($r in $cl.Rows) {
-                $sevTag = if ($r.Severity -eq 'Critical') { '[Critical]' } else { '[Warning]' }
+                $sevTag = if ($r.Severity -eq 'Critical') { $iconMap['SeverityCritical'] } else { $iconMap['SeverityWarning'] }
                 $rem    = if ($r.PSObject.Properties.Match('Remediation').Count -gt 0) { [string]$r.Remediation } else { '' }
                 $remCell = if ($rem -and $rem.StartsWith('https://')) { ('<a href="{0}">link</a>' -f $rem) } else { $rem }
                 $tName = if ($r.PSObject.Properties.Match('TargetResourceName').Count -gt 0) { [string]$r.TargetResourceName } else { '' }
                 $tType = if ($r.PSObject.Properties.Match('TargetResourceType').Count -gt 0) { [string]$r.TargetResourceType } else { '' }
-                # v0.8.80: add per-check `title` (often the most specific
-                # single field - names the failing node/volume) and wrap
-                # TargetResourceName in a portal deep-link when the
-                # corresponding TargetResourceID is present.
                 $tTitle = if ($r.PSObject.Properties.Match('Title').Count -gt 0) { [string]$r.Title } else { '' }
                 $tResId = if ($r.PSObject.Properties.Match('TargetResourceID').Count -gt 0) { [string]$r.TargetResourceID } else { '' }
+                $tDesc  = if ($r.PSObject.Properties.Match('Description').Count -gt 0) { [string]$r.Description } else { '' }
+                $tName_raw = if ($r.PSObject.Properties.Match('FailureName').Count -gt 0) { [string]$r.FailureName } else { '' }
+
+                # v0.8.81: collapse Title when it duplicates the Failure Reason
+                # verbatim (cluster-rollup checks often have identical title +
+                # displayName). em-dash keeps the column visually distinct.
+                $titleCell = if ($tTitle -and ($tTitle -ne [string]$r.FailureReason)) { $tTitle } else { ([string][char]0x2014) }
+
+                # v0.8.81: collapsible Description cell (operators told us they
+                # could not see *which volume* was corrupt - the file path lives
+                # in Description, which the legacy renderer only surfaced via
+                # the JUnit XML body, not the markdown table).
+                $descCell = if ($tDesc) {
+                    $descEscaped = $tDesc -replace '\|', '\|' -replace '`', '\`'
+                    # Markdown tables forbid raw newlines in cells - render as <br>.
+                    $descEscaped = $descEscaped -replace "`r`n", '<br>' -replace "`n", '<br>'
+                    if ($descEscaped.Length -gt 120) {
+                        '<details><summary>view</summary>{0}</details>' -f $descEscaped
+                    } else {
+                        $descEscaped
+                    }
+                } else { '' }
+
+                $nameRawCell = if ($tName_raw) { ('`{0}`' -f $tName_raw) } else { '' }
+
                 $tNameCell = if ($tResId -and $tName) {
                     '<a href="https://portal.azure.com/#@/resource{0}">{1}</a>' -f $tResId, $tName
                 } elseif ($tResId) {
@@ -609,7 +665,7 @@ function Export-AzLocalFleetHealthStatusReport {
                 } else {
                     $tName
                 }
-                [void]$md.Add(('| {0} | {1} | {2} | {3} | {4} | {5} | {6} | {7} |' -f $sevTag, $r.FailureReason, $tTitle, $remCell, $tNameCell, $tType, $r.LastOccurrence, $r.ResourceGroup))
+                [void]$md.Add(('| {0} | {1} | {2} | {3} | {4} | {5} | {6} | {7} | {8} | {9} |' -f $sevTag, $titleCell, $r.FailureReason, $descCell, $nameRawCell, $remCell, $tNameCell, $tType, $r.LastOccurrence, $r.ResourceGroup))
             }
             [void]$md.Add('</details>')
             [void]$md.Add('')
@@ -651,6 +707,7 @@ function Export-AzLocalFleetHealthStatusReport {
             OverviewRows      = [int]$overview.Count
             HealthyClusters   = [int]$healthyClusters
             TotalInSub        = [int]$totalInSub
+            OtherClusters     = [int]$otherClustersOut
             DetailCsvPath     = $detailCsv
             DetailJsonPath    = $detailJson
             SummaryCsvPath    = $summaryCsv

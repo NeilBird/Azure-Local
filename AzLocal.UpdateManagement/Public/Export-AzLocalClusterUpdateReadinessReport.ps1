@@ -364,15 +364,17 @@ function Export-AzLocalClusterUpdateReadinessReport {
     [void]$md.Add('')
 
     # 3. Summary counts
+    # v0.8.81: use shared icon map so the summary mirrors the table rows below.
+    $iconMap = Get-AzLocalStatusIconMap -PipelineHost $pipelineHost
     [void]$md.Add('### Summary counts')
     [void]$md.Add('')
     [void]$md.Add('| Metric | Count |')
     [void]$md.Add('|--------|-------|')
     [void]$md.Add("| Total clusters in scope | $total |")
-    [void]$md.Add("| Ready for update | $readyForUpdate |")
-    [void]$md.Add("| Up to date | $upToDate |")
-    [void]$md.Add("| Not ready for update | $notReady |")
-    [void]$md.Add("| Clusters with Critical health failures | $clustersWithCritical |")
+    [void]$md.Add(("| {0} Ready for update | {1} |" -f $iconMap['ReadyForUpdate'], $readyForUpdate))
+    [void]$md.Add(("| {0} Up to date | {1} |" -f $iconMap['UpToDate'], $upToDate))
+    [void]$md.Add(("| {0} Not ready for update | {1} |" -f $iconMap['ActionRequired'], $notReady))
+    [void]$md.Add(("| {0} Clusters with Critical health failures | {1} |" -f $iconMap['HealthFailure'], $clustersWithCritical))
     [void]$md.Add("| Total Critical findings | $criticalFindings |")
     [void]$md.Add('')
 
@@ -385,13 +387,22 @@ function Export-AzLocalClusterUpdateReadinessReport {
     if ($notReadyRows.Count -gt 0) {
         [void]$md.Add('### Not-Ready clusters (review first)')
         [void]$md.Add('')
-        [void]$md.Add('| Cluster | UpdateRing | Current version | Update state | Health | Blocking reasons |')
-        [void]$md.Add('|---------|------------|-----------------|--------------|--------|------------------|')
+        # v0.8.81: portal deep-links on the Cluster column - operators can
+        # jump straight to the cluster blade. Tip explains the GitHub-strips-
+        # target=_blank behaviour for the first column.
+        [void]$md.Add((Get-AzLocalCtrlClickTip))
+        [void]$md.Add('')
+        [void]$md.Add('| Cluster | UpdateRing | Current version | Update state | Health | Status | Blocking reasons |')
+        [void]$md.Add('|---------|------------|-----------------|--------------|--------|--------|------------------|')
         foreach ($r in ($notReadyRows | Sort-Object @{Expression={ if ($ringByResourceId.ContainsKey($_.ClusterResourceId)) { $ringByResourceId[$_.ClusterResourceId] } else { 'zzz' } }}, ClusterName)) {
             $ring = if ($ringByResourceId.ContainsKey($r.ClusterResourceId)) { $ringByResourceId[$r.ClusterResourceId] } else { '-' }
             $cv = if ($r.CurrentVersion) { $r.CurrentVersion } else { '-' }
             $br = if ($r.PSObject.Properties['BlockingReasons'] -and $r.BlockingReasons) { $r.BlockingReasons } else { '-' }
-            [void]$md.Add("| $($r.ClusterName) | $ring | $cv | $($r.UpdateState) | $($r.HealthState) | $br |")
+            $clusterResId = if ($r.PSObject.Properties['ClusterResourceId'] -and $r.ClusterResourceId) { [string]$r.ClusterResourceId } else { '' }
+            $clusterCell = Get-AzLocalClusterPortalLink -ClusterName ([string]$r.ClusterName) -ClusterResourceId $clusterResId
+            $statusKey = Get-AzLocalClusterReadinessStatus -ReadinessRow $r
+            $statusCell = if ($iconMap.ContainsKey($statusKey)) { $iconMap[$statusKey] } else { $iconMap['NeedsInvestigation'] }
+            [void]$md.Add("| $clusterCell | $ring | $cv | $($r.UpdateState) | $($r.HealthState) | $statusCell | $br |")
         }
         [void]$md.Add('')
     }
@@ -433,6 +444,10 @@ function Export-AzLocalClusterUpdateReadinessReport {
     if ($total -gt 0) {
         [void]$md.Add('### All clusters detail')
         [void]$md.Add('')
+        # v0.8.81: portal deep-links on the Cluster column + status icons via
+        # shared iconMap (mirrors Step.06 readiness-gate output).
+        [void]$md.Add((Get-AzLocalCtrlClickTip))
+        [void]$md.Add('')
         [void]$md.Add('| Cluster | UpdateRing | Current version | Current SBE version | Update state | Health | Status | Recommended update |')
         [void]$md.Add('|---------|------------|-----------------|---------------------|--------------|--------|--------|--------------------|')
         foreach ($r in ($readiness | Sort-Object @{Expression={ if ($ringByResourceId.ContainsKey($_.ClusterResourceId)) { $ringByResourceId[$_.ClusterResourceId] } else { 'zzz' } }}, ClusterName)) {
@@ -440,17 +455,11 @@ function Export-AzLocalClusterUpdateReadinessReport {
             $cv  = if ($r.CurrentVersion) { $r.CurrentVersion } else { '-' }
             $csv = if ($r.PSObject.Properties['CurrentSbeVersion'] -and $r.CurrentSbeVersion) { $r.CurrentSbeVersion } else { '-' }
             $ru  = if ($r.RecommendedUpdate) { $r.RecommendedUpdate } else { '-' }
-            $statusLabel = switch (Get-AzLocalClusterReadinessStatus -ReadinessRow $r) {
-                'ReadyForUpdate'     { 'Ready for Update' }
-                'UpToDate'           { 'Up to Date' }
-                'InProgress'         { 'In Progress' }
-                'SbeBlocked'         { 'SBE Prerequisite' }
-                'HealthFailure'      { 'Health Failure' }
-                'UpdateFailed'       { 'Update Failed' }
-                'ActionRequired'     { 'Action Required' }
-                default              { 'Needs Investigation' }
-            }
-            [void]$md.Add("| $($r.ClusterName) | $ring | $cv | $csv | $($r.UpdateState) | $($r.HealthState) | $statusLabel | $ru |")
+            $statusKey = Get-AzLocalClusterReadinessStatus -ReadinessRow $r
+            $statusCell = if ($iconMap.ContainsKey($statusKey)) { $iconMap[$statusKey] } else { $iconMap['NeedsInvestigation'] }
+            $clusterResId = if ($r.PSObject.Properties['ClusterResourceId'] -and $r.ClusterResourceId) { [string]$r.ClusterResourceId } else { '' }
+            $clusterCell = Get-AzLocalClusterPortalLink -ClusterName ([string]$r.ClusterName) -ClusterResourceId $clusterResId
+            [void]$md.Add("| $clusterCell | $ring | $cv | $csv | $($r.UpdateState) | $($r.HealthState) | $statusCell | $ru |")
         }
         [void]$md.Add('')
     }

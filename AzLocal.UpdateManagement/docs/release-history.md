@@ -4,7 +4,21 @@
 >
 > **For older releases**, this is the canonical reference; the main README intentionally stays slim so the most recent block is easy to find.
 >
-> **For v0.8.80 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0880) `What's New in v0.8.80` section.
+> **For v0.8.81 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0881) `What's New in v0.8.81` section.
+
+---
+
+### What's New in v0.8.80
+
+v0.8.80 was a minor release that bundled three additive pipeline-failure-rendering improvements targeting the Step.05 / Step.08 / Step.09 / Step.10 step summaries. All changes were backward-compatible. One new private helper (`Get-AzLocalUpdateRunHealthEvidence`).
+
+**Q1 - HealthCheck failure enrichment (Step.09).** When `Get-AzLocalUpdateRunFailures` categorises a failed run as `ErrorCategory='HealthCheck'`, it now attaches a `HealthCheckEvidence` array column carrying same-cluster Critical `updateSummaries.healthCheckResult` entries that fired within a +/-2h window around the run. The Step.09 markdown step summary renders this evidence as bullets inside the per-row `<details>` panel and the JUnit XML systemOut block lists each evidence entry's timestamp / title / severity / target resource id. New parameter `[bool]$EnrichWithHealthEvidence = $true` lets CSV-only consumers opt out. Backed by a new private helper `Get-AzLocalUpdateRunHealthEvidence` (one ARG hop per HealthCheck-category row, scoped to a single cluster id; reuses the anti-mv-expand 128-cap projection pattern).
+
+**Q2 - Title and TargetResourceID columns (Step.05 + Step.10).** Both `Get-AzLocalFleetHealthFailures` (Step.10) and `Test-AzLocalClusterHealth` (Step.05) project per-check `Title` (often more specific than `displayName`, e.g. names the failing node or volume) and full `TargetResourceID` (lets renderers deep-link Server/Volume health failures back to the exact ARM resource). `Export-AzLocalFleetHealthStatusReport` adds Title as a markdown column and wraps TargetResourceName in a portal hyperlink when TargetResourceID is present. `Test-AzLocalClusterHealth` adds Title to the dedup composite key, the `Format-Table` console output, and the JUnit `Message` field.
+
+**Q3 - Surface BOTH deepest-step `description` AND `errorMessage` (Step.08 + Step.09).** Both deepest-error walkers (`Resolve-AzLocalUpdateRunDeepestError` and `Get-DeepestErrorMessage`) now capture step `description` at the same recursion site as `errorMessage` (previously description was silently dropped via coalesce). New `DeepestStepDescription` column on `Get-AzLocalUpdateRunFailures`; new `ErrorDescription` field on `Format-AzLocalUpdateRun` / `Get-AzLocalUpdateRuns -PassThru`; renderers combine `description + errorMessage` in markdown failure cells and JUnit bodies. Cross-reference `.NOTES` headers added to the four parallel functions so future maintainers keep them in sync.
+
+`GENERATED_AGAINST_MODULE_VERSION` bumped from `0.8.79` to `0.8.80` across all bundled pipeline templates. No new exports (still 60).
 
 ---
 
