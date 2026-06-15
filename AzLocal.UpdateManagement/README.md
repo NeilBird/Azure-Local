@@ -2,7 +2,7 @@
 
 > ⚠️ **Disclaimer**: This module is **NOT** a Microsoft supported service offering or product. It is provided as example code only, with no warranty or official support. Refer to the [MIT license](https://github.com/NeilBird/Azure-Local/blob/main/LICENSE) for further information.
 
-**Latest Version:** v0.8.81 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.8.81)
+**Latest Version:** v0.8.82 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.8.82)
 
 > 📢 **Renamed in v0.7.3**: this module was previously published as `AzStackHci.ManageUpdates`. The new module name aligns with the Azure Local product name (_Microsoft retired the *Azure Stack HCI* brand in late 2024_). The module GUID is preserved across the rename. If you have the old name installed, run:
 >
@@ -23,7 +23,7 @@ Azure Local REST API specification (includes update management endpoints): https
 **This README (overview + most-recent release notes):**
 
 - [Where to Start](#where-to-start)
-- [What's New in v0.8.81](#whats-new-in-v0881)
+- [What's New in v0.8.82](#whats-new-in-v0882)
 - [Files](#files)
 - [Prerequisites](#prerequisites)
 - [RBAC Requirements](#rbac-requirements) (summary; full reference in [docs/rbac.md](docs/rbac.md))
@@ -86,40 +86,33 @@ If you are new to this module, work through these in order from a regular PowerS
 
 > Most CI/CD pipelines in [Automation-Pipeline-Examples/](Automation-Pipeline-Examples/) are direct implementations of one of these workflows. Start there if you want a copy-pasteable end-to-end pipeline.
 
-## What's New in v0.8.81
+## What's New in v0.8.82
 
-**Patch release. Step summary polish across Steps 05-10.** Fixes a Step.10 KPI counting bug, surfaces drive/volume-level detail in the Step.10 health-failure renderer, and consolidates status-icon / cluster-deep-link / Ctrl-click-tip rendering onto three new shared private helpers so Steps 05-09 stay consistent and the Azure DevOps step summary no longer leaks literal GitHub-Markdown shortcodes (`:white_check_mark:`, etc.) into the rendered output. No public API or export-count change (still 60 exports). One new private helper trio.
+**Patch release. Step.05 + Step.10 step-summary UX polish from the v0.8.81 manual pipeline-run review.** Four small fixes; no public API or export-count change (still 60 exports).
 
-### Step.10 Fleet Health Status report - KPI fix + drive-level detail
+### Step.05 cluster update readiness report
 
-- **Fixes the "Healthy + Unhealthy != Total" KPI counting bug** (`Export-AzLocalFleetHealthStatusReport`). The KPI table previously summed only two buckets (Healthy + Unhealthy) and silently dropped clusters whose `HealthStatus` was `In progress` / `Unknown` / `Health check failed` AND had no failure rows. The KPI block is now split into two tables:
-  - **Cluster Counts** - Total / Healthy / Unhealthy / **Other** (new). Other is computed as `Total - Healthy - Unhealthy` (clamped non-negative) so the three buckets always sum to Total.
-  - **Failing Checks Breakdown** - Total / Critical / Warning / Distinct Reasons (the old sub-counts, separated for clarity).
-- New `other_clusters` pipeline step output; `-PassThru` PSCustomObject gains an `OtherClusters` field.
-- **Detailed Results columns reordered** to put the most-specific identifier first: `Severity | Title | Failure Reason | Description | Health Check Name | Failure Remediation | Target Resource Name | Target Resource Type | Last Occurrence | Resource Group`. Description is rendered as a collapsible `<details>` block so file-paths and volume detail (e.g. the `\Device\HarddiskVolume6\...vhdx` path emitted by a `Microsoft.Health.FaultType.Volume.FileSystem.Corruption.Correctable` warning) are surfaced without bloating the default row height. The raw fault-type Name is preserved so operators can grep / triage by FaultType across runs.
+- **Summary counts table no longer duplicates labels.** Each row was reusing the shared `Get-AzLocalStatusIconMap` cell (which already includes its own label, e.g. `Ready for Update`) AND appending a duplicate trailing label, producing `Ready for Update Ready for update` / `Up to Date Up to date` / `Action Required Not ready for update` / `Health Failure Clusters with Critical health failures`. The icon-map cell is now emitted unmodified. The HealthFailure row keeps `(Clusters with Critical health failures)` in parentheses since it counts something different from the readiness cascade.
+- **All clusters detail table** now sorts by **Status priority** first (`InProgress` -> `HealthFailure` -> `UpdateFailed` -> `ActionRequired` -> `SbeBlocked` -> `NeedsInvestigation` -> `ReadyForUpdate` -> `UpToDate`), then `UpdateRing` + `ClusterName` as before. In-flight + remediation rows surface at the top of the table; Up-to-Date clusters drop to the bottom so operators see actionable items first.
+- **Not-Ready clusters (review first) table - Blocking reasons column** no longer shows `-` for rows blocked by `UpdateFailed` / `NeedsAttention` / `InProgress` / Warning-only `HealthFailure` / `SbeBlocked`. The upstream `Get-AzLocalClusterUpdateReadiness` only populates `BlockingReasons` for `CriticalHealthCheck` findings and abnormal cluster connectivity states (e.g. `NotConnectedRecently`). For every other Not-Ready category the column was left empty and rendered as `-`, forcing operators to cross-read the `Update state` + `Health` columns to infer the reason. The renderer now derives an actionable token from the Status bucket when `BlockingReasons` is empty:
+  - `InProgress` -> `UpdateInProgress (run in-flight)`
+  - `UpdateFailed` -> `UpdateState=<UpdateState>` (e.g. `UpdateState=NeedsAttention`, `UpdateState=UpdateFailed`)
+  - `ActionRequired` -> `UpdateState=PreparationFailed`
+  - `HealthFailure` -> `HealthState=Failure (no Critical findings; review Warning findings)`
+  - `SbeBlocked` -> `PrerequisiteRequired (SBE update first)`
+  - `NeedsInvestigation` -> `NeedsInvestigation (no Update or Health signal)`
+  - For any of the above, `; HealthState=Warning` is appended when the cluster's `HealthState` is `Warning` and the Status bucket is not already `HealthFailure`.
 
-### Steps 05-09 - shared step-summary helpers
+### Step.10 fleet health status report
 
-Three new Private helpers:
-
-- **`Get-AzLocalStatusIconMap`** - host-aware (GitHub vs Azure DevOps) status-name -> icon-cell map. Returns GitHub-Markdown shortcodes (`:white_check_mark:` / `:x:` / `:warning:` / ...) on the `GitHubActions` host where they render natively, and Unicode glyphs (U+2705 / U+274C / U+26A0 / ...) on every other host. Covers the full readiness cascade, health-overview buckets, severity tags, apply-updates outcomes, run-state buckets, progress-status buckets, fleet-status icons, and version-support cells - single source of truth for every Step.* pipeline icon.
-- **`Get-AzLocalClusterPortalLink`** - wraps a cluster name in a Markdown anchor pointing at the Azure Portal resource blade (`https://portal.azure.com/#@/resource{resourceId}`) when a resource id is supplied; falls back to the plain cluster name otherwise.
-- **`Get-AzLocalCtrlClickTip`** - single-source the standing `> **Tip:** Hold Ctrl... when clicking - or middle-click - Cluster links to open them in a new tab.` line so it stays identical across pipelines.
-
-Per-pipeline polish:
-
-- **Step.05** (`Export-AzLocalClusterUpdateReadinessReport`): icons via `Get-AzLocalStatusIconMap`, Cluster cell via `Get-AzLocalClusterPortalLink`, Ctrl-click tip via `Get-AzLocalCtrlClickTip`; "Up to Date" gains the readiness-cascade check icon.
-- **Step.06** (`Export-AzLocalClusterReadinessGateReport`): drops the inline icon switch in favour of the shared helper; cluster cells now deep-link to the portal; Ctrl-click tip added.
-- **Step.07** (`Add-AzLocalApplyUpdatesStepSummary`): drops the inline `$iconSuccess` / `$iconFail` / `$iconBlock` / `$iconSkip` / `$iconWarn` definitions in favour of the shared helper (so the icons render correctly on Azure DevOps). The Cluster Actions and Clusters Skipped at Readiness Gate tables now resolve each cluster's resource id from the readiness CSV (built from `Get-AzLocalClusterUpdateReadiness`) and wrap the Cluster cell via `Get-AzLocalClusterPortalLink`; Ctrl-click tip added. (The upstream apply-results JSON intentionally keeps its minimal `ClusterName / Status / UpdateName / Duration / Message` shape - the cluster id lookup is done in the renderer.)
-- **Step.08** (`Export-AzLocalUpdateRunMonitorReport`): the `$stateIcon` and `$statusIcon` switches no longer hard-code GitHub-Markdown shortcodes (`:large_blue_circle:` / `:hourglass_flowing_sand:` / etc.) which rendered as literal text on Azure DevOps. Both switches read from the shared icon map using the new `State*` and `Status*` keys.
-- **Step.09** (`Export-AzLocalFleetUpdateStatusReport`): the inline shortcodes used by the Critical Health Status table, the Primary Status table, and the Version Distribution Support column are routed through the shared icon map (new keys `Info`, `GreenCircle`, `YellowCircle`, `CycleArrows`, `GreyQuestion`, `SupportSupported`, `SupportUnsupported`, `SupportUnknown`).
+- **Detailed Results - Description column** inline-vs-collapse threshold bumped from 120 to **280 characters**. Short single-sentence descriptions render inline and only long multi-line descriptions collapse behind `<details><summary>view</summary>...</details>`. The previous 120-char cutoff put roughly half the rows inline and half collapsed on the same table, which looked broken.
 
 ### Notes
 
-- **No new exports** (count unchanged at 60). Helpers are Private and live under `Private/`.
-- **`GENERATED_AGAINST_MODULE_VERSION`** bumped from `0.8.80` to `0.8.81` across all bundled pipeline templates.
+- **No new exports** (count unchanged at 60).
+- **`GENERATED_AGAINST_MODULE_VERSION`** bumped from `0.8.81` to `0.8.82` across all bundled pipeline templates.
 
-See [CHANGELOG.md](CHANGELOG.md#0881---2026-06-17) for the full v0.8.81 entry. See [`What's New in v0.8.80`](docs/release-history.md#whats-new-in-v0880) in the Release History for the previous release.
+See [CHANGELOG.md](CHANGELOG.md#0882---2026-06-15) for the full v0.8.82 entry. See [`What's New in v0.8.81`](docs/release-history.md#whats-new-in-v0881) in the Release History for the previous release.
 
 ## Files
 
@@ -598,7 +591,11 @@ This code is provided as-is for educational and reference purposes.
 
 The full What's-New history (v0.7.81 and earlier) has moved to [docs/release-history.md](docs/release-history.md).
 
-The most recent release notes for **v0.8.81** stay above under [`What's New in v0.8.81`](#whats-new-in-v0881).
+The most recent release notes for **v0.8.82** stay above under [`What's New in v0.8.82`](#whats-new-in-v0882).
+
+### What's New in v0.8.81
+
+**Patch release. Step summary polish across Steps 05-10.** Fixes a Step.10 KPI counting bug, surfaces drive/volume-level detail in the Step.10 health-failure renderer, and consolidates status-icon / cluster-deep-link / Ctrl-click-tip rendering onto three new shared private helpers so Steps 05-09 stay consistent and the Azure DevOps step summary no longer leaks literal GitHub-Markdown shortcodes (`:white_check_mark:`, etc.) into the rendered output. Step.10 KPI block is now split into `Cluster Counts` (Total / Healthy / Unhealthy / **Other**, where Other captures `In progress` / `Unknown` / `Health check failed` clusters previously dropped) and `Failing Checks Breakdown` (Total / Critical / Warning / Distinct Reasons); new `other_clusters` step output and `OtherClusters` `-PassThru` field. Detailed Results columns reordered to put Title first and add a collapsible `<details>` Description block surfacing drive/volume-level detail. Three new Private helpers: `Get-AzLocalStatusIconMap` (host-aware icon map), `Get-AzLocalClusterPortalLink` (portal deep-link wrapper) and `Get-AzLocalCtrlClickTip` (single-source Ctrl-click banner). No public API or export-count change (still 60). `GENERATED_AGAINST_MODULE_VERSION` bumped from `0.8.80` to `0.8.81` across all bundled pipeline templates. See [CHANGELOG.md](CHANGELOG.md#0881---2026-06-17) for the full v0.8.81 entry and [docs/release-history.md](docs/release-history.md#whats-new-in-v0881) for the archived entry.
 
 ### What's New in v0.8.80
 

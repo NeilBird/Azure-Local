@@ -645,11 +645,14 @@ function Export-AzLocalFleetHealthStatusReport {
                 # could not see *which volume* was corrupt - the file path lives
                 # in Description, which the legacy renderer only surfaced via
                 # the JUnit XML body, not the markdown table).
+                # v0.8.82: bumped inline-vs-collapse threshold 120 -> 280 chars
+                # so short single-sentence descriptions render inline and only
+                # long multi-line descriptions collapse behind 'view'.
                 $descCell = if ($tDesc) {
                     $descEscaped = $tDesc -replace '\|', '\|' -replace '`', '\`'
                     # Markdown tables forbid raw newlines in cells - render as <br>.
                     $descEscaped = $descEscaped -replace "`r`n", '<br>' -replace "`n", '<br>'
-                    if ($descEscaped.Length -gt 120) {
+                    if ($descEscaped.Length -gt 280) {
                         '<details><summary>view</summary>{0}</details>' -f $descEscaped
                     } else {
                         $descEscaped

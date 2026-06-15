@@ -401,10 +401,40 @@ function Export-AzLocalClusterUpdateReadinessReport {
         foreach ($r in ($notReadyRows | Sort-Object @{Expression={ if ($ringByResourceId.ContainsKey($_.ClusterResourceId)) { $ringByResourceId[$_.ClusterResourceId] } else { 'zzz' } }}, ClusterName)) {
             $ring = if ($ringByResourceId.ContainsKey($r.ClusterResourceId)) { $ringByResourceId[$r.ClusterResourceId] } else { '-' }
             $cv = if ($r.CurrentVersion) { $r.CurrentVersion } else { '-' }
-            $br = if ($r.PSObject.Properties['BlockingReasons'] -and $r.BlockingReasons) { $r.BlockingReasons } else { '-' }
+            # v0.8.82: when BlockingReasons is empty for a Not-Ready row,
+            # derive a meaningful token from the Status bucket so the column
+            # never shows '-' in the "review first" table. The previous
+            # behaviour left InProgress / UpdateFailed / NeedsAttention /
+            # Warning-only HealthFailure / SbeBlocked rows with '-', forcing
+            # operators to cross-read Update state + Health to infer the
+            # reason. The derived label complements (does not replace) the
+            # Status icon and is host-agnostic plain text.
+            $statusKey = Get-AzLocalClusterReadinessStatus -ReadinessRow $r
+            $existingBr = if ($r.PSObject.Properties['BlockingReasons'] -and $r.BlockingReasons) { [string]$r.BlockingReasons } else { '' }
+            if ($existingBr) {
+                $br = $existingBr
+            } else {
+                $derived = switch ($statusKey) {
+                    'InProgress'         { 'UpdateInProgress (run in-flight)' }
+                    'UpdateFailed'       {
+                        if ($r.PSObject.Properties['UpdateState'] -and $r.UpdateState) {
+                            'UpdateState={0}' -f $r.UpdateState
+                        } else { 'UpdateFailed' }
+                    }
+                    'ActionRequired'     { 'UpdateState=PreparationFailed' }
+                    'HealthFailure'      { 'HealthState=Failure (no Critical findings; review Warning findings)' }
+                    'SbeBlocked'         { 'PrerequisiteRequired (SBE update first)' }
+                    'NeedsInvestigation' { 'NeedsInvestigation (no Update or Health signal)' }
+                    default              { '-' }
+                }
+                # Append Warning health context where it adds information.
+                if ($r.PSObject.Properties['HealthState'] -and $r.HealthState -eq 'Warning' -and $statusKey -notin @('HealthFailure')) {
+                    $derived = '{0}; HealthState=Warning' -f $derived
+                }
+                $br = $derived
+            }
             $clusterResId = if ($r.PSObject.Properties['ClusterResourceId'] -and $r.ClusterResourceId) { [string]$r.ClusterResourceId } else { '' }
             $clusterCell = Get-AzLocalClusterPortalLink -ClusterName ([string]$r.ClusterName) -ClusterResourceId $clusterResId
-            $statusKey = Get-AzLocalClusterReadinessStatus -ReadinessRow $r
             $statusCell = if ($iconMap.ContainsKey($statusKey)) { $iconMap[$statusKey] } else { $iconMap['NeedsInvestigation'] }
             [void]$md.Add("| $clusterCell | $ring | $cv | $($r.UpdateState) | $($r.HealthState) | $statusCell | $br |")
         }
@@ -452,12 +482,12 @@ function Export-AzLocalClusterUpdateReadinessReport {
         # shared iconMap (mirrors Step.06 readiness-gate output).
         [void]$md.Add((Get-AzLocalCtrlClickTip))
         [void]$md.Add('')
-        [void]$md.Add('| Cluster | UpdateRing | Current version | Current SBE version | Update state | Health | Status | Recommended update |')
-        [void]$md.Add('|---------|------------|-----------------|---------------------|--------------|--------|--------|--------------------|')
-        # v0.8.82: sort by Status priority (operator-actionable items first):
-        # InProgress -> HealthFailure -> UpdateFailed -> ActionRequired ->
-        # SbeBlocked -> NeedsInvestigation -> ReadyForUpdate -> UpToDate.
-        # Within the same Status, sort by UpdateRing then ClusterName.
+        [void]$md.Add('| Cluster | UpdateRing | Current version | Current SBE version | Update state | Health | Status | Last Updated | Recommended update |')
+        [void]$md.Add('|---------|------------|-----------------|---------------------|--------------|--------|--------|--------------|--------------------|')
+        # v0.8.82: sort UpdateRing first, then Status priority (operator-actionable
+        # items first within each ring), then ClusterName. Previous v0.8.82
+        # ordering put Status first which grouped failures across rings; the
+        # ring-first ordering matches how operators reason about wave rollout.
         $statusOrder = @{
             'InProgress'         = 1
             'HealthFailure'      = 2
@@ -469,19 +499,20 @@ function Export-AzLocalClusterUpdateReadinessReport {
             'UpToDate'           = 8
         }
         $sorted = $readiness | Sort-Object `
-            @{Expression={ $k = Get-AzLocalClusterReadinessStatus -ReadinessRow $_; if ($statusOrder.ContainsKey($k)) { $statusOrder[$k] } else { 99 } }}, `
             @{Expression={ if ($ringByResourceId.ContainsKey($_.ClusterResourceId)) { $ringByResourceId[$_.ClusterResourceId] } else { 'zzz' } }}, `
+            @{Expression={ $k = Get-AzLocalClusterReadinessStatus -ReadinessRow $_; if ($statusOrder.ContainsKey($k)) { $statusOrder[$k] } else { 99 } }}, `
             ClusterName
         foreach ($r in $sorted) {
             $ring = if ($ringByResourceId.ContainsKey($r.ClusterResourceId)) { $ringByResourceId[$r.ClusterResourceId] } else { '-' }
             $cv  = if ($r.CurrentVersion) { $r.CurrentVersion } else { '-' }
             $csv = if ($r.PSObject.Properties['CurrentSbeVersion'] -and $r.CurrentSbeVersion) { $r.CurrentSbeVersion } else { '-' }
             $ru  = if ($r.RecommendedUpdate) { $r.RecommendedUpdate } else { '-' }
+            $lu  = if ($r.PSObject.Properties['LastUpdated'] -and $r.LastUpdated) { $r.LastUpdated } else { '-' }
             $statusKey = Get-AzLocalClusterReadinessStatus -ReadinessRow $r
             $statusCell = if ($iconMap.ContainsKey($statusKey)) { $iconMap[$statusKey] } else { $iconMap['NeedsInvestigation'] }
             $clusterResId = if ($r.PSObject.Properties['ClusterResourceId'] -and $r.ClusterResourceId) { [string]$r.ClusterResourceId } else { '' }
             $clusterCell = Get-AzLocalClusterPortalLink -ClusterName ([string]$r.ClusterName) -ClusterResourceId $clusterResId
-            [void]$md.Add("| $clusterCell | $ring | $cv | $csv | $($r.UpdateState) | $($r.HealthState) | $statusCell | $ru |")
+            [void]$md.Add("| $clusterCell | $ring | $cv | $csv | $($r.UpdateState) | $($r.HealthState) | $statusCell | $lu | $ru |")
         }
         [void]$md.Add('')
     }

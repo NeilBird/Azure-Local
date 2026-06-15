@@ -98,6 +98,40 @@ function Invoke-AzLocalSideloadedAutoResetForCluster {
     $result.PreviousSideloaded = $tagSideloaded
     $result.StagedVersion = $tagVersion
 
+    # v0.8.82: independent auto-clear for the UpdateLastAttempt audit tag.
+    # Runs regardless of UpdateSideloaded so it works on every fleet cluster.
+    # Clear when EITHER (a) latest Succeeded run's UpdateName matches the tag's
+    # recorded UpdateName, OR (b) the tag is a stale Blocked/Failed attempt
+    # (>1h old) and a Succeeded run has subsequently materialised.
+    $tagLastAttempt = Get-TagValue -Tags $cluster.tags -Name $script:UpdateLastAttemptTagName
+    if (-not [string]::IsNullOrWhiteSpace($tagLastAttempt) -and $LatestRunState -eq 'Succeeded') {
+        $parsedAttempt = ConvertFrom-AzLocalUpdateLastAttemptTagValue -Value $tagLastAttempt
+        if ($parsedAttempt) {
+            $shouldClear = $false
+            if (-not [string]::IsNullOrWhiteSpace($parsedAttempt.UpdateName) `
+                -and -not [string]::IsNullOrWhiteSpace($LatestRunUpdateName) `
+                -and $parsedAttempt.UpdateName.Trim() -ieq $LatestRunUpdateName.Trim()) {
+                $shouldClear = $true
+            }
+            elseif ($parsedAttempt.Outcome -in @('HealthCheckBlocked','Failed') `
+                    -and ((Get-Date).ToUniversalTime() - $parsedAttempt.AttemptUtc).TotalHours -ge 1) {
+                $shouldClear = $true
+            }
+            if ($shouldClear) {
+                try {
+                    [void](Set-AzLocalClusterTagsMerge `
+                        -ClusterResourceId $ClusterResourceId `
+                        -Tags @{ $script:UpdateLastAttemptTagName = $null } `
+                        -ApiVersion $ApiVersion)
+                    Write-Verbose "Cleared stale UpdateLastAttempt='$tagLastAttempt' for '$ClusterName' (latest run '$LatestRunUpdateName' Succeeded)."
+                }
+                catch {
+                    Write-Verbose "Failed to clear UpdateLastAttempt for '$ClusterName': $($_.Exception.Message)"
+                }
+            }
+        }
+    }
+
     # 1. UpdateSideloaded tag absent
     if ([string]::IsNullOrWhiteSpace($tagSideloaded)) {
         # Orphan-cleanup branch: if there's a leftover UpdateVersionInProgress tag

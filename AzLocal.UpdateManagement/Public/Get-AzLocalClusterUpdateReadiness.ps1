@@ -359,6 +359,7 @@ function Get-AzLocalClusterUpdateReadiness {
                     BlockingReasons        = ''
                     UpdateStartWindow           = ''
                     UpdateExclusionsWindow = ''
+                    LastUpdated            = ''
                 }) | Out-Null
             continue
         }
@@ -458,6 +459,9 @@ function Get-AzLocalClusterUpdateReadiness {
             # Installed versions (Solution + SBE) from updateSummary.
             $currentVersion = ''
             $currentSbeVersion = ''
+            # v0.8.82: most-recent packageVersions[].lastUpdated across ALL packageTypes
+            # (Solution AND SBE AND services) - operator-facing "Last Updated" column.
+            $lastUpdated = ''
             if ($sumProps) {
                 if ($sumProps.PSObject.Properties['currentVersion']) {
                     $currentVersion = [string]$sumProps.currentVersion
@@ -481,6 +485,18 @@ function Get-AzLocalClusterUpdateReadiness {
                         if ($latestSbe -and $latestSbe.version) {
                             $currentSbeVersion = [string]$latestSbe.version
                         }
+                    }
+                    # Pull the most-recent lastUpdated across every package row
+                    # (Solution, SBE, services). Use ISO-8601 round-trip format
+                    # so the markdown/CSV/JSON outputs are timezone-unambiguous.
+                    $stamps = @($sumProps.packageVersions |
+                        Where-Object { $_.PSObject.Properties['lastUpdated'] -and $_.lastUpdated } |
+                        ForEach-Object {
+                            try { [datetime]$_.lastUpdated } catch { $null }
+                        } | Where-Object { $_ })
+                    if ($stamps.Count -gt 0) {
+                        $maxStamp = ($stamps | Sort-Object -Descending | Select-Object -First 1)
+                        $lastUpdated = $maxStamp.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
                     }
                 }
             }
@@ -539,8 +555,9 @@ function Get-AzLocalClusterUpdateReadiness {
                     RecommendedUpdate      = $recommendedUpdate
                     HealthCheckFailures    = $healthCheckFailures
                     BlockingReasons        = ($blockingReasons -join '; ')
-                    UpdateStartWindow           = if ($uw) { $uw } else { '' }
+                    UpdateStartWindow      = if ($uw) { $uw } else { '' }
                     UpdateExclusionsWindow = if ($ue) { $ue } else { '' }
+                    LastUpdated            = $lastUpdated
                 }) | Out-Null
         }
         catch {
@@ -563,8 +580,9 @@ function Get-AzLocalClusterUpdateReadiness {
                     RecommendedUpdate      = ''
                     HealthCheckFailures    = $_.Exception.Message
                     BlockingReasons        = ''
-                    UpdateStartWindow           = ''
+                    UpdateStartWindow      = ''
                     UpdateExclusionsWindow = ''
+                    LastUpdated            = ''
                 }) | Out-Null
         }
     }

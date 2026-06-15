@@ -151,7 +151,7 @@ Set-StrictMode -Version 1.0
 # bumps to one but not the other are caught before release. Two consumers:
 #   - Start-AzLocalClusterUpdate emits this in the run log header.
 #   - Get-AzLocalFleetStatusData stamps it into exported fleet-state JSON.
-$script:ModuleVersion = '0.8.81'
+$script:ModuleVersion = '0.8.82'
 $script:DefaultApiVersion = '2025-10-01'
 $script:DefaultLogFolder = Join-Path -Path $env:ProgramData -ChildPath 'AzLocal.UpdateManagement'
 
@@ -217,6 +217,19 @@ $script:UpdateExcludedTagName = 'UpdateExcluded'
 $script:UpdateSideloadedTagName = 'UpdateSideloaded'
 
 $script:UpdateVersionInProgressTagName = 'UpdateVersionInProgress'
+
+# v0.8.82: per-cluster "we attempted an apply at this UTC time, here is the
+# outcome our module observed" audit tag. Written by Start-AzLocalClusterUpdate
+# at EVERY attempt outcome (including pre-update HealthCheckBlocked,
+# Failed-to-start from ARM, and successful Applied). Cleared by the same
+# auto-reset pathway as UpdateVersionInProgress once the corresponding
+# updateRun has reached a terminal Succeeded state. Used by Step.08 to
+# surface gaps where an attempt was made but no updateRun ever materialised
+# - the audit-log-only outcome that hides Portland-style URP package
+# pre-install health-check failures from the standard "Failed runs" table.
+# Format: '<ISO-8601 UTC>;<Outcome>;<UpdateName>;<Reason truncated>'
+# Truncated to 256 chars (Azure tag value limit).
+$script:UpdateLastAttemptTagName = 'UpdateLastAttempt'
 
 # v0.8.7: numeric account id (1-3 digits, e.g. 001) that maps a cluster to a
 # row in the sideload auth-map CSV (Key Vault + remoting settings) used by the

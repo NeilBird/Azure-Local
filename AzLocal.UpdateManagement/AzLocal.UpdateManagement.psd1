@@ -3,7 +3,7 @@
     RootModule = 'AzLocal.UpdateManagement.psm1'
 
     # Version number of this module.
-    ModuleVersion = '0.8.81'
+    ModuleVersion = '0.8.82'
 
     # Supported PSEditions
     CompatiblePSEditions = @('Desktop', 'Core')
@@ -35,6 +35,7 @@
         'Private/ConvertFrom-AzLocalScheduleYaml.ps1',
         'Private/ConvertFrom-AzLocalUpdateExcluded.ps1',
         'Private/ConvertFrom-AzLocalUpdateSideloaded.ps1',
+        'Private/ConvertFrom-AzLocalUpdateLastAttemptTagValue.ps1',
         'Private/ConvertFrom-AzLocalUpdateWindow.ps1',
         'Private/Convert-AzLocalScheduleSchemaVersion.ps1',
         'Private/ConvertTo-AzLocalAdditionalProperties.ps1',
@@ -46,6 +47,7 @@
         'Private/Format-AzLocalDurationHuman.ps1',
         'Private/Format-AzLocalIncidentBody.ps1',
         'Private/Format-AzLocalUpdateRun.ps1',
+        'Private/Format-AzLocalUpdateLastAttemptTagValue.ps1',
         'Private/Get-AzLocalClusterReadinessStatus.ps1',
         'Private/Get-AzLocalClusterUpdateRuns.ps1',
         'Private/Get-AzLocalItsmDedupeKey.ps1',
@@ -84,6 +86,7 @@
         'Private/Resolve-WildcardDate.ps1',
         'Private/Resolve-WildcardDateRange.ps1',
         'Private/Set-AzLocalClusterTagsMerge.ps1',
+        'Private/Write-AzLocalUpdateLastAttemptTag.ps1',
         # On-prem solution-update sideloading automation (v0.8.7)
         'Private/Get-AzLocalSideloadAuthMap.ps1',
         'Private/Get-AzLocalSideloadCatalog.ps1',
@@ -314,6 +317,8 @@
 
             # ReleaseNotes of this module
             ReleaseNotes = @'
+## Version 0.8.82 - Patch: four Step-summary UX polish fixes from v0.8.81 manual pipeline-run review. (1) Step.05 Summary counts table no longer duplicates labels: each row reused the shared `Get-AzLocalStatusIconMap` cell (which already includes its own label) AND appended a duplicate trailing label, producing `Ready for Update Ready for update` / `Up to Date Up to date` / `Action Required Not ready for update` / `Health Failure Clusters with Critical health failures`. Fixed by emitting the icon-map cell unmodified; the HealthFailure row keeps `(Clusters with Critical health failures)` in parentheses since it counts something different from the readiness cascade. (2) Step.05 All clusters detail table now sorts by Status priority first (`InProgress` -> `HealthFailure` -> `UpdateFailed` -> `ActionRequired` -> `SbeBlocked` -> `NeedsInvestigation` -> `ReadyForUpdate` -> `UpToDate`), then UpdateRing + ClusterName. In-flight + remediation rows surface at the top; Up-to-Date drops to the bottom. (3) Step.05 Not-Ready clusters (review first) table no longer leaves the `Blocking reasons` column as `-` for rows blocked by `UpdateFailed` / `NeedsAttention` / `InProgress` / Warning-only HealthFailure / SbeBlocked - the renderer now derives an actionable token from the Status bucket when the upstream `BlockingReasons` is empty (e.g. `UpdateInProgress (run in-flight)`, `UpdateState=NeedsAttention`, `PrerequisiteRequired (SBE update first)`, `HealthState=Failure (no Critical findings; review Warning findings)`), with `; HealthState=Warning` appended where relevant. (4) Step.10 Detailed Results Description column inline-vs-collapse threshold bumped from 120 to 280 characters, so short single-sentence descriptions render inline and only long multi-line descriptions collapse behind `<details><summary>view</summary>...</details>`. The previous 120-char cutoff put roughly half the rows inline and half collapsed on the same table, which looked broken. No public API or export-count change (still 60). All bundled pipeline templates bump `GENERATED_AGAINST_MODULE_VERSION` from `'0.8.81'` to `'0.8.82'`.
+
 ## Version 0.8.81 - Step summary polish across Steps 05-10. Step.10 fixes the KPI bug where Healthy + Unhealthy did not sum to Total (splits into Cluster Counts + Failing Checks Breakdown tables, adds `OtherClusters` step output; Detailed Results gains Title, raw FailureName and collapsible Description columns surfacing drive/volume detail e.g. file paths from `...FileSystem.Corruption.Correctable`). Steps 05-09 adopt three shared private helpers: `Get-AzLocalStatusIconMap` (host-aware GitHub Unicode vs Azure DevOps shortcodes), `Get-AzLocalClusterPortalLink` (portal deep-link wrapper) and `Get-AzLocalCtrlClickTip` (single-source Ctrl-click banner). Fixes literal shortcode text (`:white_check_mark:` etc.) rendering on Azure DevOps step summaries in Step.08 monitor + Step.09 fleet-update-status. No public API change (still 60 exports). All bundled pipeline templates bump `GENERATED_AGAINST_MODULE_VERSION` from `'0.8.80'` to `'0.8.81'`.
 
 ## Version 0.8.80 - Minor: pipeline failure-rendering improvements bundled in three additive changes (Q1 / Q2 / Q3) targeting Step.05 / Step.08 / Step.09 / Step.10 step summaries. **Q1 - HealthCheck failure enrichment** (Step.09 `fleet-update-status`): `Get-AzLocalUpdateRunFailures` now attaches a `HealthCheckEvidence` array column (same-cluster Critical `updateSummaries.healthCheckResult` entries within a +/-2h window) to every row whose `ErrorCategory='HealthCheck'`, surfaced as a bulleted list inside the per-row `<details>` panel of the markdown step summary and as a structured block in JUnit `<system-out>`. New private helper `Get-AzLocalUpdateRunHealthEvidence` (single ARG hop per HealthCheck-category row, scoped to one cluster id, reuses the existing anti-mv-expand 128-cap projection pattern). New parameter `[bool]$EnrichWithHealthEvidence = $true` lets CSV-only consumers opt out. **Q2 - Title and TargetResourceID columns** on both fleet-wide (`Get-AzLocalFleetHealthFailures` for Step.10) and per-cluster (`Test-AzLocalClusterHealth` for Step.05) health failure outputs: per-check `title` (often more specific than `displayName`, e.g. names the failing node or volume) and full `targetResourceID` (lets renderers deep-link Server/Volume health failures back to the exact ARM resource). `Export-AzLocalFleetHealthStatusReport` adds a Title markdown column and wraps TargetResourceName in a portal hyperlink when TargetResourceID is present. **Q3 - Surface BOTH deepest-step `description` AND `errorMessage`** (Step.08 monitor + Step.09 fleet-update-status): both deepest-error walkers (`Resolve-AzLocalUpdateRunDeepestError` and `Get-DeepestErrorMessage`) now capture step description at the same recursion site as errorMessage. New `DeepestStepDescription` column on `Get-AzLocalUpdateRunFailures`; new `ErrorDescription` field on `Format-AzLocalUpdateRun` / `Get-AzLocalUpdateRuns -PassThru`; renderers combine `description + errorMessage` in markdown failure cells and JUnit bodies. Cross-reference `.NOTES` headers added to the four parallel functions so future maintainers know to keep them in sync. No new exports (count unchanged at 60). All bundled pipeline templates bump `GENERATED_AGAINST_MODULE_VERSION` from `'0.8.79'` to `'0.8.80'`. See CHANGELOG.md for the full v0.8.80 entry.
@@ -327,16 +332,6 @@
 - **All bundled pipeline templates** bump `GENERATED_AGAINST_MODULE_VERSION` from `'0.8.78'` to `'0.8.79'`.
 
 ## Version 0.8.78 - Patch: pipeline-summary UX polish. (1) JUnit re-classification - `ScheduleBlocked` / `SideloadedBlocked` / `ExcludedByTag` are designed gate-respect outcomes, now render as `<skipped>` so `dorny/test-reporter` no longer flips Step.07 RED (`HealthCheckBlocked` stays `<failure>`). (2) `Add-AzLocalApplyUpdatesStepSummary` gains optional `-UpToDateCount` / `-NotReadyCount` for full ring breakdown in the Readiness KPI table (both `apply-updates.yml` templates wire the upstream `readiness.UpToDateCount` / `readiness.NotReadyCount` outputs through). (3) `actions/download-artifact@v6` -> `@v7` in `apply-updates.yml` (GHA) silences the Node.js 20 deprecation warning. No public API or export-count change (still 60). All bundled pipeline templates bump `GENERATED_AGAINST_MODULE_VERSION` from `'0.8.77'` to `'0.8.78'`. See CHANGELOG.md / docs/release-history.md for the full v0.8.78 entry.
-
-## Version 0.8.77 - Patch: fixes two production strict-mode crashes that surfaced in Step.05 / Step.06 / Step.07 of the bundled apply-updates pipelines. Both bugs share the same root cause: bare `$obj.Prop` property access under `Set-StrictMode -Version Latest` THROWS when `Prop` is absent on a PSCustomObject instead of returning `$null`. Fixes use `PSObject.Properties['Prop'] -and $obj.Prop` guards (and `IDictionary.Contains` for tag bags returned by `Invoke-AzRestJson`) in `Start-AzLocalClusterUpdate` (UpdateStartWindow / UpdateExclusionsWindow tag lookup) and in `Test-AzLocalClusterHealth` / `Get-HealthCheckFailureSummary` / `Get-AzLocalFleetStatusData` (`properties.healthCheckResult` access). No public API or export-count change (still 60). All bundled pipeline templates bump `GENERATED_AGAINST_MODULE_VERSION` from `'0.8.76'` to `'0.8.77'`. See CHANGELOG.md / docs/release-history.md for the full v0.8.77 entry.
-
-## Version 0.8.76 - Patch: adds a Microsoft-hosted Windows preflight job (GitHub Actions) / preflight stage (Azure DevOps) in front of the opt-in Step.6 `sideload-updates.yml` pipeline so triggering it without first completing the opt-in setup produces an actionable panel rather than a silent `Status: Skipped`. Also broadens the master gate to accept `'true'` / `'True'` / `'TRUE'` / `'1'`. See CHANGELOG for the full v0.8.76 entry.
-
-## Version 0.8.75 - Patch: removes the duplicate Cycle calendar from the Step.3 apply-updates schedule audit step summary on Recommend-view runs. New additive `-OmitCycleCalendar` switch; drift-notice banner now recommends `Update-AzLocalPipelineExample`. No public API or export-count change (still 60). See CHANGELOG.md for the full v0.8.75 entry.
-
-## Version 0.8.74 - Consistent "Up to Date" classification across Step.5 / Step.7 / Step.9 readiness reports; deep-tree fix for the `Progress` column in the Step.7 monitor and standalone HTML "Recent Update Run History" report; new shared `Get-AzLocalClusterReadinessStatus` private helper as single source of truth for the readiness cascade. Step.7 / Step.5 add a readable `Status` column and Step.7 adds a `UP_TO_DATE_COUNT` step output. No public API or export-count change (still 60). See CHANGELOG.md / docs/release-history.md for the full per-bullet detail.
-
-## Version 0.8.73 - Cycle calendar: cluster counts folded INLINE into the "Eligible rings" column (Step.3 apply-updates schedule audit). No public API or export-count change (still 60). See CHANGELOG for the full v0.8.73 entry.
 
 For full v0.7.x and v0.8.x release notes see:
 https://github.com/NeilBird/Azure-Local/blob/main/AzLocal.UpdateManagement/CHANGELOG.md
