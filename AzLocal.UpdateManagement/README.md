@@ -2,7 +2,7 @@
 
 > ⚠️ **Disclaimer**: This module is **NOT** a Microsoft supported service offering or product. It is provided as example code only, with no warranty or official support. Refer to the [MIT license](https://github.com/NeilBird/Azure-Local/blob/main/LICENSE) for further information.
 
-**Latest Version:** v0.8.82 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.8.82)
+**Latest Version:** v0.8.83 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.8.83)
 
 > 📢 **Renamed in v0.7.3**: this module was previously published as `AzStackHci.ManageUpdates`. The new module name aligns with the Azure Local product name (_Microsoft retired the *Azure Stack HCI* brand in late 2024_). The module GUID is preserved across the rename. If you have the old name installed, run:
 >
@@ -23,7 +23,7 @@ Azure Local REST API specification (includes update management endpoints): https
 **This README (overview + most-recent release notes):**
 
 - [Where to Start](#where-to-start)
-- [What's New in v0.8.82](#whats-new-in-v0882)
+- [What's New in v0.8.83](#whats-new-in-v0883)
 - [Files](#files)
 - [Prerequisites](#prerequisites)
 - [RBAC Requirements](#rbac-requirements) (summary; full reference in [docs/rbac.md](docs/rbac.md))
@@ -86,33 +86,24 @@ If you are new to this module, work through these in order from a regular PowerS
 
 > Most CI/CD pipelines in [Automation-Pipeline-Examples/](Automation-Pipeline-Examples/) are direct implementations of one of these workflows. Start there if you want a copy-pasteable end-to-end pipeline.
 
-## What's New in v0.8.82
+## What's New in v0.8.83
 
-**Patch release. Step.05 + Step.10 step-summary UX polish from the v0.8.81 manual pipeline-run review.** Four small fixes; no public API or export-count change (still 60 exports).
+**Patch release. Fix-forward for v0.8.82 Item-5.** The new Step.08 `UpdateLastAttempt` reconciliation pass in `Export-AzLocalUpdateRunMonitorReport` reads `$inv.tags` from `Get-AzLocalClusterInventory`, but the v0.8.82 inventory projection did not carry the raw ARM `tags` bag - so the "Recent update attempts with no observable updateRun" section was silently always empty in production regardless of fleet state. v0.8.83 surfaces the raw `tags` bag on every inventory row (in-memory only; the on-disk CSV / JSON export keeps its explicit `$selectColumns` whitelist so artefacts continue to omit the raw bag). Also fixes the GitHub Actions `monitor-updates.yml` `jobs.outputs:` block to expose `attempts_without_run` to downstream jobs (the cmdlet was already emitting it in v0.8.82 - only the YAML wiring was missing), and a docstring drift in `Export-AzLocalUpdateRunMonitorReport` ("6 step outputs" -> "7 step outputs"). No public API change. Export count unchanged (still 60).
 
-### Step.05 cluster update readiness report
+### Fixes
 
-- **Summary counts table no longer duplicates labels.** Each row was reusing the shared `Get-AzLocalStatusIconMap` cell (which already includes its own label, e.g. `Ready for Update`) AND appending a duplicate trailing label, producing `Ready for Update Ready for update` / `Up to Date Up to date` / `Action Required Not ready for update` / `Health Failure Clusters with Critical health failures`. The icon-map cell is now emitted unmodified. The HealthFailure row keeps `(Clusters with Critical health failures)` in parentheses since it counts something different from the readiness cascade.
-- **All clusters detail table** now sorts by **Status priority** first (`InProgress` -> `HealthFailure` -> `UpdateFailed` -> `ActionRequired` -> `SbeBlocked` -> `NeedsInvestigation` -> `ReadyForUpdate` -> `UpToDate`), then `UpdateRing` + `ClusterName` as before. In-flight + remediation rows surface at the top of the table; Up-to-Date clusters drop to the bottom so operators see actionable items first.
-- **Not-Ready clusters (review first) table - Blocking reasons column** no longer shows `-` for rows blocked by `UpdateFailed` / `NeedsAttention` / `InProgress` / Warning-only `HealthFailure` / `SbeBlocked`. The upstream `Get-AzLocalClusterUpdateReadiness` only populates `BlockingReasons` for `CriticalHealthCheck` findings and abnormal cluster connectivity states (e.g. `NotConnectedRecently`). For every other Not-Ready category the column was left empty and rendered as `-`, forcing operators to cross-read the `Update state` + `Health` columns to infer the reason. The renderer now derives an actionable token from the Status bucket when `BlockingReasons` is empty:
-  - `InProgress` -> `UpdateInProgress (run in-flight)`
-  - `UpdateFailed` -> `UpdateState=<UpdateState>` (e.g. `UpdateState=NeedsAttention`, `UpdateState=UpdateFailed`)
-  - `ActionRequired` -> `UpdateState=PreparationFailed`
-  - `HealthFailure` -> `HealthState=Failure (no Critical findings; review Warning findings)`
-  - `SbeBlocked` -> `PrerequisiteRequired (SBE update first)`
-  - `NeedsInvestigation` -> `NeedsInvestigation (no Update or Health signal)`
-  - For any of the above, `; HealthState=Warning` is appended when the cluster's `HealthState` is `Warning` and the Status bucket is not already `HealthFailure`.
-
-### Step.10 fleet health status report
-
-- **Detailed Results - Description column** inline-vs-collapse threshold bumped from 120 to **280 characters**. Short single-sentence descriptions render inline and only long multi-line descriptions collapse behind `<details><summary>view</summary>...</details>`. The previous 120-char cutoff put roughly half the rows inline and half collapsed on the same table, which looked broken.
+- **`Get-AzLocalClusterInventory` PassThru output now carries the raw ARM `tags` bag** on every cluster row. v0.8.82's Step.08 reconciliation reads `$inv.tags` via `PSObject.Properties['tags']` to find the `UpdateLastAttempt` audit tag - without this fix, the reconciliation silently always reported zero gaps. The on-disk CSV / JSON export remains unchanged: the existing `$selectColumns` whitelist explicitly names the columns to persist and does NOT include `tags`, so artefacts do not leak the raw bag. New regression test asserts the in-memory property is present AND that the whitelist still excludes `tags`.
+- **GitHub Actions `monitor-updates.yml` `jobs.outputs:` block** now exposes the `attempts_without_run` step output (`${{ steps.snapshot.outputs.attempts_without_run }}`) so downstream jobs can gate on `attempts_without_run > 0` (e.g. open a triage issue when URP package-internal pre-install health-check failures are detected). Azure DevOps requires no change - `Set-AzLocalPipelineOutput` auto-publishes the step variable via `##vso[task.setvariable variable=...;isOutput=true]`; the ADO `monitor-updates.yml` comment-only update brings its docstring in line with the seven step outputs.
+- **`Export-AzLocalUpdateRunMonitorReport` cmdlet docstring drift** - now reads "Emits 7 step outputs" with `attempts_without_run` listed alongside the existing six (was still "6 step outputs" after v0.8.82 added the seventh).
 
 ### Notes
 
 - **No new exports** (count unchanged at 60).
-- **`GENERATED_AGAINST_MODULE_VERSION`** bumped from `0.8.81` to `0.8.82` across all bundled pipeline templates.
+- **`GENERATED_AGAINST_MODULE_VERSION`** bumped from `0.8.82` to `0.8.83` across all bundled pipeline templates.
 
-See [CHANGELOG.md](CHANGELOG.md#0882---2026-06-15) for the full v0.8.82 entry. See [`What's New in v0.8.81`](docs/release-history.md#whats-new-in-v0881) in the Release History for the previous release.
+> Previous release notes have moved into the [Release History](#release-history) appendix at the bottom of this document.
+
+See [CHANGELOG.md](CHANGELOG.md#0883---2026-06-15) for the full v0.8.83 entry. See [`What's New in v0.8.82`](#whats-new-in-v0882) in the Release History for the previous release.
 
 ## Files
 
@@ -591,7 +582,11 @@ This code is provided as-is for educational and reference purposes.
 
 The full What's-New history (v0.7.81 and earlier) has moved to [docs/release-history.md](docs/release-history.md).
 
-The most recent release notes for **v0.8.82** stay above under [`What's New in v0.8.82`](#whats-new-in-v0882).
+The most recent release notes for **v0.8.83** stay above under [`What's New in v0.8.83`](#whats-new-in-v0883).
+
+### What's New in v0.8.82
+
+**Patch release. Step.05 + Step.10 step-summary UX polish from the v0.8.81 manual pipeline-run review.** Four small fixes; no public API or export-count change (still 60 exports). Step.05 Summary counts table no longer duplicates row labels (each row was reusing the shared `Get-AzLocalStatusIconMap` cell - which already includes its own label - AND appending a duplicate trailing label). Step.05 All clusters detail table sorts by **Status priority** first (`InProgress` -> `HealthFailure` -> `UpdateFailed` -> `ActionRequired` -> `SbeBlocked` -> `NeedsInvestigation` -> `ReadyForUpdate` -> `UpToDate`), then `UpdateRing` + `ClusterName`; Up-to-Date drops to the bottom so operators see actionable items first. Step.05 Not-Ready clusters Blocking reasons column derives an actionable token from the Status bucket when upstream `BlockingReasons` is empty (`UpdateInProgress (run in-flight)`, `UpdateState=<UpdateState>`, `PrerequisiteRequired (SBE update first)`, `NeedsInvestigation (no Update or Health signal)`, etc.; appends `; HealthState=Warning` when relevant). Step.10 Detailed Results Description column inline-vs-collapse threshold bumped from 120 to 280 characters in `Export-AzLocalFleetHealthStatusReport`. `GENERATED_AGAINST_MODULE_VERSION` bumped from `0.8.81` to `0.8.82` across all bundled pipeline templates. See [CHANGELOG.md](CHANGELOG.md#0882---2026-06-15) for the full v0.8.82 entry and [docs/release-history.md](docs/release-history.md#whats-new-in-v0882) for the archived entry.
 
 ### What's New in v0.8.81
 

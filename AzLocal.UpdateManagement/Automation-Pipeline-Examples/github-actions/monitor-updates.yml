@@ -86,7 +86,7 @@ env:
   # this to the version actually installed and to the latest on PSGallery, and emits a
   # ::notice annotation if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.8.82'
+  GENERATED_AGAINST_MODULE_VERSION: '0.8.83'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): manual workflow_dispatch input >
   # repository variable 'REQUIRED_MODULE_VERSION' > empty (latest).
@@ -121,6 +121,12 @@ jobs:
       step_errored: ${{ steps.snapshot.outputs.step_errored }}
       recent_failures: ${{ steps.snapshot.outputs.recent_failures }}
       unresolved_failures: ${{ steps.snapshot.outputs.unresolved_failures }}
+      # v0.8.83: expose the Step.08 UpdateLastAttempt-reconciliation count
+      # (clusters whose UpdateLastAttempt tag points at an attempt with no
+      # observable updateRun resource - typically a URP package-internal
+      # pre-install health-check failure). Wired so downstream pipeline
+      # jobs can gate on attempts_without_run > 0.
+      attempts_without_run: ${{ steps.snapshot.outputs.attempts_without_run }}
 
     steps:
       - name: Checkout repository

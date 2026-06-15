@@ -336,6 +336,8 @@ function Get-AzLocalClusterInventory {
                 $itemProps['UpdateAuthAccountId'] = if ($authIdTagValue) { $authIdTagValue } else { "" }
             }
             $itemProps['ResourceId'] = $cluster.id
+            # Preserve raw ARM tag bag so downstream consumers can read tags this projection does not explicitly surface (CSV/JSON export below uses an explicit $selectColumns list so this field is excluded from on-disk artefacts).
+            $itemProps['tags'] = $cluster.tags
             $inventoryItem = [PSCustomObject]$itemProps
             $inventory += $inventoryItem
         }

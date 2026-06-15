@@ -34,8 +34,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $script:ModuleInfo | Should -Not -BeNullOrEmpty
         }
 
-        It 'Should have version 0.8.82' {
-            $script:ModuleInfo.Version | Should -Be '0.8.82'
+        It 'Should have version 0.8.83' {
+            $script:ModuleInfo.Version | Should -Be '0.8.83'
         }
 
         It 'Module version constants are in sync between .psm1 and .psd1' {
@@ -1211,6 +1211,76 @@ Describe 'Regression: Get-AzLocalClusterInventory ValidatePattern shadowing' {
             ($result | Where-Object ClusterName -eq 'untagged').UpdateRing | Should -Be ''
             ($result | Where-Object ClusterName -eq 'untagged').HasUpdateRingTag | Should -Be 'No'
         }
+    }
+}
+
+Describe 'v0.8.83: Get-AzLocalClusterInventory preserves raw ARM tag bag on PassThru' {
+    # v0.8.82 shipped Export-AzLocalUpdateRunMonitorReport's UpdateLastAttempt
+    # reconciliation pass, which reads $inv.tags via PSObject.Properties['tags']
+    # to find the audit tag. The Get-AzLocalClusterInventory projection in
+    # v0.8.82 didn't carry .tags, so the reconciliation was silently always-empty
+    # in production. v0.8.83 surfaces the raw .tags bag on every inventory row.
+    # In-memory only - the on-disk CSV/JSON export uses an explicit $selectColumns
+    # whitelist that excludes .tags, so this regression test also confirms that
+    # exported CSV does NOT contain a 'tags' column.
+
+    It 'PassThru output exposes raw ARM tags property on every cluster row' {
+        InModuleScope AzLocal.UpdateManagement {
+            function global:az {
+                param()
+                $global:LASTEXITCODE = 0
+                if ($args -contains 'show') {
+                    return '{"id":"00000000-0000-0000-0000-000000000000","name":"sub"}'
+                }
+                return '{}'
+            }
+            Mock Test-AzCliAvailable { return $true }
+            Mock Install-AzGraphExtension { return $true }
+            Mock Invoke-AzResourceGraphQuery {
+                return @(
+                    [PSCustomObject]@{
+                        id             = '/subscriptions/s/resourceGroups/r/providers/Microsoft.AzureStackHCI/clusters/c1'
+                        name           = 'c1'
+                        resourceGroup  = 'r'
+                        subscriptionId = 's'
+                        tags           = @{
+                            UpdateRing        = 'Wave1'
+                            UpdateLastAttempt = '2026-06-14T21:28:23Z;UpdateStarted;Solution12.2605.1003.210;Update initiated successfully'
+                            UpdateWindow      = 'Mon|18-22'
+                        }
+                    },
+                    [PSCustomObject]@{
+                        id             = '/subscriptions/s/resourceGroups/r/providers/Microsoft.AzureStackHCI/clusters/c2'
+                        name           = 'c2'
+                        resourceGroup  = 'r'
+                        subscriptionId = 's'
+                        tags           = $null
+                    }
+                )
+            }
+
+            $result = Get-AzLocalClusterInventory -PassThru
+            $result | Should -HaveCount 2
+            $c1 = $result | Where-Object ClusterName -eq 'c1'
+            $c1.PSObject.Properties['tags'] | Should -Not -BeNullOrEmpty
+            $c1.tags                        | Should -Not -BeNullOrEmpty
+            $c1.tags['UpdateRing']          | Should -Be 'Wave1'
+            $c1.tags['UpdateLastAttempt']   | Should -Be '2026-06-14T21:28:23Z;UpdateStarted;Solution12.2605.1003.210;Update initiated successfully'
+            $c1.tags['UpdateWindow']        | Should -Be 'Mon|18-22'
+
+            # Untagged cluster still gets a .tags property; value is $null/empty bag.
+            $c2 = $result | Where-Object ClusterName -eq 'c2'
+            $c2.PSObject.Properties['tags'] | Should -Not -BeNullOrEmpty
+        }
+    }
+
+    It 'CSV/JSON export uses explicit $selectColumns whitelist that excludes the raw tags bag' {
+        $src = Get-Content -Raw -LiteralPath "$PSScriptRoot/../Public/Get-AzLocalClusterInventory.ps1"
+        # The whitelist must exist and must NOT name 'tags' (would leak the raw bag to artefacts).
+        $src | Should -Match '\$selectColumns\s*='
+        $whitelistMatch = [regex]::Match($src, '\$selectColumns\s*=\s*@\(([\s\S]*?)\)')
+        $whitelistMatch.Success | Should -BeTrue -Because 'Get-AzLocalClusterInventory must declare an explicit $selectColumns whitelist for CSV/JSON export'
+        $whitelistMatch.Groups[1].Value | Should -Not -Match "'tags'"
     }
 }
 

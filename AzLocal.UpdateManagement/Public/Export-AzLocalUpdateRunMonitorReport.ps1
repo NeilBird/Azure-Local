@@ -40,9 +40,9 @@ function Export-AzLocalUpdateRunMonitorReport {
              threshold line + metric table + 'In-flight runs' table +
              'Failed runs (unresolved)' table + action-required / healthy
              footer) via `Add-AzLocalPipelineStepSummary`.
-          6. Emits 6 step outputs via `Set-AzLocalPipelineOutput`:
+          6. Emits 7 step outputs via `Set-AzLocalPipelineOutput`:
              in_flight, long_running, long_running_step, step_errored,
-             recent_failures, unresolved_failures.
+             recent_failures, unresolved_failures, attempts_without_run.
 
         Internal reuse (per the v0.8.5 thin-YAML consistency contract):
           * `Get-AzLocalUpdateRuns` (with `-PassThru -SkipSideloadedReset`)

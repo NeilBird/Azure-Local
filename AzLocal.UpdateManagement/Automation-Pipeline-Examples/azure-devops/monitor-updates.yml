@@ -84,7 +84,7 @@ parameters:
     default: ''
 
 variables:
-  GENERATED_AGAINST_MODULE_VERSION: '0.8.82'
+  GENERATED_AGAINST_MODULE_VERSION: '0.8.83'
   REQUIRED_MODULE_VERSION: '${{ parameters.moduleVersion }}'
   reportsPath: '$(Build.ArtifactStagingDirectory)/reports'
 
@@ -137,9 +137,10 @@ stages:
       # failed tables) has been condensed into the Public cmdlet
       # Export-AzLocalUpdateRunMonitorReport. The cmdlet writes
       # $(reportsPath)/update-monitor.csv + .xml, uploads the markdown
-      # summary via ##vso[task.uploadsummary], and sets the six pipeline
+      # summary via ##vso[task.uploadsummary], and sets the seven pipeline
       # variables (in_flight, long_running, long_running_step,
-      # step_errored, recent_failures, unresolved_failures).
+      # step_errored, recent_failures, unresolved_failures,
+      # attempts_without_run).
       inputs:
         azureSubscription: 'AzureLocal-ServiceConnection'  # Update with your service connection name
         scriptType: 'pscore'
