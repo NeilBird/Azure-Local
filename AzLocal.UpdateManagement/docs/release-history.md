@@ -4,7 +4,17 @@
 >
 > **For older releases**, this is the canonical reference; the main README intentionally stays slim so the most recent block is easy to find.
 >
-> **For v0.8.83 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0883) `What's New in v0.8.83` section.
+> **For v0.8.84 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0884) `What's New in v0.8.84` section.
+
+---
+
+### What's New in v0.8.84
+
+Documentation-only patch release. Extends the `Export-AzLocalUpdateRunMonitorReport` markdown callout under the "Recent update attempts with no observable updateRun" section (introduced in v0.8.82, made functional in v0.8.83) with an operator runbook. The previous one-line callout pointed users at the Azure portal Activity Log only. v0.8.84 expands it into a numbered diagnosis flow (Activity Log -> in-portal `updateRun` check -> URP service health) and a fenced PowerShell snippet showing the exact `Get-ClusterGroup` / `Move-ClusterGroup` / `Stop+Start-ClusterGroup` commands to bounce the two URP cluster groups (`Azure Stack HCI Update Service Cluster Group` + `Azure Stack HCI Orchestrator Service Cluster Group`) when an attempt-gap reproduces and all Azure-side investigation comes back clean. Includes an explicit warning that the Orchestrator (ECE) group must NOT be bounced during a healthy in-flight run. No public API change, no behavioural change to any cmdlet. Export count unchanged (still 60).
+
+The snippet prefixes every action with `Get-ClusterGroup ... | Format-Table Name, OwnerNode, State` so operators see the exit state of each cmdlet (more diagnostic than `-Verbose`), covers multi-node clusters (`Move-ClusterGroup` for zero-downtime failover) and single-node / fallback cases (`Stop-ClusterGroup` + `Start-ClusterGroup`), and explicitly warns that bouncing the Orchestrator (ECE) group during a healthy in-flight `updateRun` will interrupt it.
+
+`GENERATED_AGAINST_MODULE_VERSION` bumped from `0.8.83` to `0.8.84` across all bundled pipeline templates.
 
 ---
 
