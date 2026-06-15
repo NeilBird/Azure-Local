@@ -84,7 +84,7 @@ parameters:
     default: ''
 
 variables:
-  GENERATED_AGAINST_MODULE_VERSION: '0.8.79'
+  GENERATED_AGAINST_MODULE_VERSION: '0.8.80'
   REQUIRED_MODULE_VERSION: '${{ parameters.moduleVersion }}'
   reportsPath: '$(Build.ArtifactStagingDirectory)/reports'
 

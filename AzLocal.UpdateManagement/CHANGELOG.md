@@ -5,6 +5,67 @@ All notable changes to the AzLocal.UpdateManagement module (renamed from AzStack
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.80] - 2026-06-16
+
+Minor release. Bundles three pipeline-failure-rendering improvements that target the
+Step.05 / Step.08 / Step.09 / Step.10 step summaries. All changes are additive and
+backward-compatible (no exports renamed, no parameter contracts broken). One new
+private helper (`Get-AzLocalUpdateRunHealthEvidence`).
+
+### Added
+
+- **Q1 - HealthCheck failure enrichment** (Step.09 `fleet-update-status`): when
+  `Get-AzLocalUpdateRunFailures` categorises a failed run as
+  `ErrorCategory='HealthCheck'` (the default), it now attaches a
+  `HealthCheckEvidence` array column carrying same-cluster Critical
+  `updateSummaries.healthCheckResult` entries that fired within a +/-2h window
+  around the run. New private helper `Get-AzLocalUpdateRunHealthEvidence` (one
+  ARG hop per HealthCheck-category row, scoped to a single cluster id; reuses
+  the existing anti-mv-expand 128-cap pattern). The fleet-update-status
+  markdown step summary now renders this evidence as bullets inside the per-row
+  `<details>` panel, and the JUnit XML systemOut block lists each evidence
+  entry's timestamp / title / severity / target resource id. New parameter
+  `[bool]$EnrichWithHealthEvidence = $true` on `Get-AzLocalUpdateRunFailures`
+  lets CSV-only consumers opt out of the extra ARG hops.
+- **Q2 - Title and TargetResourceID columns** on both fleet-wide and
+  per-cluster health failure outputs. `Get-AzLocalFleetHealthFailures` (Step.10)
+  and `Test-AzLocalClusterHealth` (Step.05) now project the per-check `title`
+  (often more specific than `displayName`, e.g. names the failing node) and the
+  full `targetResourceID` (the ARM id of the failing component - lets renderers
+  deep-link Server/Volume health failures back to the exact node or volume).
+  `Export-AzLocalFleetHealthStatusReport` adds Title as a markdown column and
+  wraps TargetResourceName in a portal hyperlink when TargetResourceID is
+  present. `Test-AzLocalClusterHealth` adds Title to the dedup key, the
+  Format-Table console output, and the JUnit Message field.
+- **Q3 - Surface BOTH deepest-step `description` AND `errorMessage`**
+  (Step.08 monitor + Step.09 fleet-update-status). Previously the two deepest-
+  error walkers returned only the errorMessage trace and silently dropped the
+  human-readable step description. Both walkers (`Resolve-AzLocalUpdateRunDeepestError`
+  and `Get-DeepestErrorMessage`) now capture description at the same recursion
+  site as errorMessage. `Get-AzLocalUpdateRunFailures` emits a new
+  `DeepestStepDescription` column; `Format-AzLocalUpdateRun` emits a new
+  `ErrorDescription` field on its PSCustomObject; the Step.08 and Step.09
+  renderers combine description + errorMessage in the markdown failure cell
+  and in the JUnit body (description heading, then trace).
+- Cross-reference `.NOTES` headers added to the four parallel functions
+  (the two deepest-error walkers and the two healthCheckResult readers) so
+  future maintainers know to keep them in sync.
+
+### Changed
+
+- All bundled pipeline templates bump `GENERATED_AGAINST_MODULE_VERSION` from
+  `'0.8.79'` to `'0.8.80'`.
+
+### Notes
+
+- No new exports (count unchanged at 60).
+- Step.07 (`Add-AzLocalApplyUpdatesStepSummary`) was deliberately left out of
+  the Q1/Q3 wiring because its data source is the live
+  `Invoke-AzLocalReadinessGatedClusterUpdate` result row (apply-results.json),
+  not `Get-AzLocalUpdateRunFailures`. Surfacing Q1/Q3 at Step.07 requires a
+  separate upstream change to the readiness-gated invoker and is tracked for a
+  follow-up release.
+
 ## [0.8.79] - 2026-06-15
 
 Patch release. Adds an operator-only **Force Immediate Update** break-glass override to the Step.07 apply-updates pipeline that bypasses the per-cluster `UpdateStartWindow` / `UpdateExclusionsWindow` maintenance-window gate. Intended for emergency / out-of-window patching driven by an on-call operator; defaults to OFF; cannot be reached from the scheduled `apply-updates-schedule.yml` configuration file.

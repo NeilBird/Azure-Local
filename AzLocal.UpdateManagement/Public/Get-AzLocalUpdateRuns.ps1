@@ -464,6 +464,7 @@ $updateNameClause
                     StepStartTime     = $formatted.StepStartTime
                     StepElapsed       = $formatted.StepElapsed
                     ErrorMessage      = $formatted.ErrorMessage
+                    ErrorDescription  = if ($formatted.PSObject.Properties['ErrorDescription']) { [string]$formatted.ErrorDescription } else { '' }
                     Location          = $formatted.Location
                 }
             }
@@ -499,6 +500,7 @@ $updateNameClause
                         StepStartTime     = ''
                         StepElapsed       = ''
                         ErrorMessage      = ''
+                        ErrorDescription  = ''
                         Location          = ''
                     })
             }

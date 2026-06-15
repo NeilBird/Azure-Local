@@ -3,7 +3,7 @@
     RootModule = 'AzLocal.UpdateManagement.psm1'
 
     # Version number of this module.
-    ModuleVersion = '0.8.79'
+    ModuleVersion = '0.8.80'
 
     # Supported PSEditions
     CompatiblePSEditions = @('Desktop', 'Core')
@@ -55,6 +55,7 @@
         'Private/Get-AzLocalPipelineId.ps1',
         'Private/Get-AzLocalPipelineManifest.ps1',
         'Private/Get-AzLocalRunEndTime.ps1',
+        'Private/Get-AzLocalUpdateRunHealthEvidence.ps1',
         'Private/Get-AzLocalUpdateRunStepStats.ps1',
         'Private/Get-CurrentStepPath.ps1',
         'Private/Get-DeepestActiveStep.ps1',
@@ -309,6 +310,8 @@
 
             # ReleaseNotes of this module
             ReleaseNotes = @'
+## Version 0.8.80 - Minor: pipeline failure-rendering improvements bundled in three additive changes (Q1 / Q2 / Q3) targeting Step.05 / Step.08 / Step.09 / Step.10 step summaries. **Q1 - HealthCheck failure enrichment** (Step.09 `fleet-update-status`): `Get-AzLocalUpdateRunFailures` now attaches a `HealthCheckEvidence` array column (same-cluster Critical `updateSummaries.healthCheckResult` entries within a +/-2h window) to every row whose `ErrorCategory='HealthCheck'`, surfaced as a bulleted list inside the per-row `<details>` panel of the markdown step summary and as a structured block in JUnit `<system-out>`. New private helper `Get-AzLocalUpdateRunHealthEvidence` (single ARG hop per HealthCheck-category row, scoped to one cluster id, reuses the existing anti-mv-expand 128-cap projection pattern). New parameter `[bool]$EnrichWithHealthEvidence = $true` lets CSV-only consumers opt out. **Q2 - Title and TargetResourceID columns** on both fleet-wide (`Get-AzLocalFleetHealthFailures` for Step.10) and per-cluster (`Test-AzLocalClusterHealth` for Step.05) health failure outputs: per-check `title` (often more specific than `displayName`, e.g. names the failing node or volume) and full `targetResourceID` (lets renderers deep-link Server/Volume health failures back to the exact ARM resource). `Export-AzLocalFleetHealthStatusReport` adds a Title markdown column and wraps TargetResourceName in a portal hyperlink when TargetResourceID is present. **Q3 - Surface BOTH deepest-step `description` AND `errorMessage`** (Step.08 monitor + Step.09 fleet-update-status): both deepest-error walkers (`Resolve-AzLocalUpdateRunDeepestError` and `Get-DeepestErrorMessage`) now capture step description at the same recursion site as errorMessage. New `DeepestStepDescription` column on `Get-AzLocalUpdateRunFailures`; new `ErrorDescription` field on `Format-AzLocalUpdateRun` / `Get-AzLocalUpdateRuns -PassThru`; renderers combine `description + errorMessage` in markdown failure cells and JUnit bodies. Cross-reference `.NOTES` headers added to the four parallel functions so future maintainers know to keep them in sync. No new exports (count unchanged at 60). All bundled pipeline templates bump `GENERATED_AGAINST_MODULE_VERSION` from `'0.8.79'` to `'0.8.80'`. See CHANGELOG.md for the full v0.8.80 entry.
+
 ## Version 0.8.79 - Patch: operator break-glass override for Step.07. Adds `Force Immediate Update` to `Invoke-AzLocalReadinessGatedClusterUpdate` (`-ForceImmediateUpdate`) and `Start-AzLocalClusterUpdate` (`-IgnoreScheduleTags`), plus matching pipeline parameters `force_immediate_update` (GitHub Actions `workflow_dispatch` input) / `forceImmediateUpdate` (Azure DevOps `parameters:` boolean) both defaulting to `false`. When enabled, the per-cluster Step 3c maintenance-window gate (`UpdateStartWindow` / `UpdateExclusionsWindow` tags) is bypassed and updates start regardless of the current UTC time. Intended for emergency / out-of-window patching driven by an on-call operator. The override is UNREACHABLE from the apply-updates-schedule.yml configuration file - GHA wiring collapses the flag to `'false'` for any non-`workflow_dispatch` trigger (`${{ github.event_name == 'workflow_dispatch' && github.event.inputs.force_immediate_update || 'false' }}`), and ADO rechecks `$(Build.Reason) -eq 'Manual'` at runtime before honouring the parameter. A `WARNING:` GUI label is prepended on both pipeline hosts and a high-visibility `::warning::` (GHA) / `##vso[task.logissue type=warning]` (ADO) banner is emitted into the run log when the override fires. No new exports (still 60). All bundled pipeline templates bump `GENERATED_AGAINST_MODULE_VERSION` from `'0.8.78'` to `'0.8.79'`.
 
 - **CHANGE (`Start-AzLocalClusterUpdate`)**: new `[switch]$IgnoreScheduleTags` parameter. When set, the entire Step 3c block is skipped (tag lookup + `Test-AzLocalUpdateScheduleAllowed` call) and a per-cluster `Warning` is logged with the bypassed tag values so the override is visible in the transcript. Does NOT bypass any other readiness gate (connectivity, health, sideload, `UpdateExcluded` operator hard-override).

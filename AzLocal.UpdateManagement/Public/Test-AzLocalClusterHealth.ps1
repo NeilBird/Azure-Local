@@ -300,8 +300,18 @@ function Test-AzLocalClusterHealth {
                     $description = if ($check.description) { $check.description } else { "" }
                     $remediation = if ($check.remediation) { $check.remediation } else { "" }
                     $targetResName = if ($check.targetResourceName) { $check.targetResourceName } else { "" }
+                    # v0.8.80: surface the ARM resource id of the failing
+                    # component (e.g. /.../arcSettings/.../servers/NODE01)
+                    # so renderers can deep-link Server/Volume health
+                    # failures back to the exact node or volume rather
+                    # than just the cluster. Also surface the cluster-
+                    # level `title` field, which is often more specific
+                    # than `displayName` (e.g. 'Disk firmware update required
+                    # on NODE01' vs displayName 'Disk firmware check').
+                    $title         = if ($check.title) { "$($check.title)" } else { "" }
+                    $targetResId   = if ($check.targetResourceID) { "$($check.targetResourceID)" } else { "" }
                     $timestamp = if ($check.timestamp) { $check.timestamp } else { "" }
-                    $key = $clusterName + $usSep + $displayName + $usSep + $sev + $usSep + $description + $usSep + $remediation + $usSep + $targetResName + $usSep + $timestamp
+                    $key = $clusterName + $usSep + $displayName + $usSep + $sev + $usSep + $description + $usSep + $remediation + $usSep + $targetResName + $usSep + $title + $usSep + $timestamp
                     if (-not $seenKeys.Add($key)) {
                         Write-Verbose "Suppressing duplicate healthCheckResult row for cluster '$clusterName' check '$displayName' target '$targetResName' timestamp '$timestamp' (ARM upstream duplicate)."
                         continue
@@ -310,9 +320,11 @@ function Test-AzLocalClusterHealth {
                         ClusterName        = $clusterName
                         CheckName          = $displayName
                         Severity           = $sev
+                        Title              = $title
                         Description        = $description
                         Remediation        = $remediation
                         TargetResourceName = $targetResName
+                        TargetResourceID   = $targetResId
                         Timestamp          = $timestamp
                     }
                 }
@@ -372,7 +384,7 @@ function Test-AzLocalClusterHealth {
     if ($allFailures.Count -gt 0) {
         Write-Log -Message "" -Level Info
         Write-Log -Message "Health Check Failures:" -Level Header
-        $allFailures | Format-Table ClusterName, Severity, CheckName, TargetResourceName, Description -AutoSize -Wrap | Out-String -Stream | ForEach-Object {
+        $allFailures | Format-Table ClusterName, Severity, CheckName, Title, TargetResourceName, Description -AutoSize -Wrap | Out-String -Stream | ForEach-Object {
             if ($_ -ne "") { Write-Log -Message $_ -Level Info }
         }
 
@@ -443,9 +455,13 @@ function Test-AzLocalClusterHealth {
                 'JUnitXml' {
                     $junitResults = $allFailures | ForEach-Object {
                         $junitNodeInfo = if ($_.TargetResourceName) { " (Node: $($_.TargetResourceName))" } else { "" }
+                        # v0.8.80: prefer the per-check `title` (often more
+                        # specific than displayName/CheckName, e.g. names the
+                        # failing node or volume) when present.
+                        $junitTitle = if ($_.PSObject.Properties['Title'] -and $_.Title) { [string]$_.Title } else { [string]$_.CheckName }
                         [PSCustomObject]@{
                             ClusterName = $_.ClusterName; Status = "Failed"
-                            Message = "$($_.Severity): $($_.CheckName)$junitNodeInfo - $($_.Description)"
+                            Message = "$($_.Severity): $junitTitle$junitNodeInfo - $($_.Description)"
                             UpdateName = $_.CheckName; CurrentState = $_.Severity
                         }
                     }
