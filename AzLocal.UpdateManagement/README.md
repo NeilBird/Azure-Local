@@ -2,7 +2,7 @@
 
 > ⚠️ **Disclaimer**: This module is **NOT** a Microsoft supported service offering or product. It is provided as example code only, with no warranty or official support. Refer to the [MIT license](https://github.com/NeilBird/Azure-Local/blob/main/LICENSE) for further information.
 
-**Latest Version:** v0.8.80 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.8.80)
+**Latest Version:** v0.8.81 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.8.81)
 
 > 📢 **Renamed in v0.7.3**: this module was previously published as `AzStackHci.ManageUpdates`. The new module name aligns with the Azure Local product name (_Microsoft retired the *Azure Stack HCI* brand in late 2024_). The module GUID is preserved across the rename. If you have the old name installed, run:
 >
@@ -23,7 +23,7 @@ Azure Local REST API specification (includes update management endpoints): https
 **This README (overview + most-recent release notes):**
 
 - [Where to Start](#where-to-start)
-- [What's New in v0.8.80](#whats-new-in-v0880)
+- [What's New in v0.8.81](#whats-new-in-v0881)
 - [Files](#files)
 - [Prerequisites](#prerequisites)
 - [RBAC Requirements](#rbac-requirements) (summary; full reference in [docs/rbac.md](docs/rbac.md))
@@ -86,36 +86,40 @@ If you are new to this module, work through these in order from a regular PowerS
 
 > Most CI/CD pipelines in [Automation-Pipeline-Examples/](Automation-Pipeline-Examples/) are direct implementations of one of these workflows. Start there if you want a copy-pasteable end-to-end pipeline.
 
-## What's New in v0.8.80
+## What's New in v0.8.81
 
-**Minor release. Pipeline failure-rendering improvements** bundled as three additive changes targeting the Step.05 / Step.08 / Step.09 / Step.10 step summaries. All changes are backward-compatible. One new private helper (`Get-AzLocalUpdateRunHealthEvidence`).
+**Patch release. Step summary polish across Steps 05-10.** Fixes a Step.10 KPI counting bug, surfaces drive/volume-level detail in the Step.10 health-failure renderer, and consolidates status-icon / cluster-deep-link / Ctrl-click-tip rendering onto three new shared private helpers so Steps 05-09 stay consistent and the Azure DevOps step summary no longer leaks literal GitHub-Markdown shortcodes (`:white_check_mark:`, etc.) into the rendered output. No public API or export-count change (still 60 exports). One new private helper trio.
 
-### Q1 - HealthCheck failure enrichment (Step.09 `fleet-update-status`)
+### Step.10 Fleet Health Status report - KPI fix + drive-level detail
 
-When `Get-AzLocalUpdateRunFailures` categorises a failed run as `ErrorCategory='HealthCheck'` (the default), it now attaches a `HealthCheckEvidence` array column carrying same-cluster **Critical** `updateSummaries.healthCheckResult` entries that fired within a `+/-2h` window around the run. The Step.09 markdown step summary renders this evidence as bullets inside the per-row `<details>` panel and the JUnit XML systemOut block lists each evidence entry's timestamp / title / severity / target resource id. New parameter `[bool]$EnrichWithHealthEvidence = $true` lets CSV-only consumers opt out of the extra ARG hops.
+- **Fixes the "Healthy + Unhealthy != Total" KPI counting bug** (`Export-AzLocalFleetHealthStatusReport`). The KPI table previously summed only two buckets (Healthy + Unhealthy) and silently dropped clusters whose `HealthStatus` was `In progress` / `Unknown` / `Health check failed` AND had no failure rows. The KPI block is now split into two tables:
+  - **Cluster Counts** - Total / Healthy / Unhealthy / **Other** (new). Other is computed as `Total - Healthy - Unhealthy` (clamped non-negative) so the three buckets always sum to Total.
+  - **Failing Checks Breakdown** - Total / Critical / Warning / Distinct Reasons (the old sub-counts, separated for clarity).
+- New `other_clusters` pipeline step output; `-PassThru` PSCustomObject gains an `OtherClusters` field.
+- **Detailed Results columns reordered** to put the most-specific identifier first: `Severity | Title | Failure Reason | Description | Health Check Name | Failure Remediation | Target Resource Name | Target Resource Type | Last Occurrence | Resource Group`. Description is rendered as a collapsible `<details>` block so file-paths and volume detail (e.g. the `\Device\HarddiskVolume6\...vhdx` path emitted by a `Microsoft.Health.FaultType.Volume.FileSystem.Corruption.Correctable` warning) are surfaced without bloating the default row height. The raw fault-type Name is preserved so operators can grep / triage by FaultType across runs.
 
-The new private helper `Get-AzLocalUpdateRunHealthEvidence` performs a single ARG hop per HealthCheck-category row, scoped to one cluster id, reusing the existing anti-mv-expand 128-cap projection pattern.
+### Steps 05-09 - shared step-summary helpers
 
-### Q2 - Title and TargetResourceID columns (Step.05 + Step.10)
+Three new Private helpers:
 
-Both fleet-wide (`Get-AzLocalFleetHealthFailures`, Step.10) and per-cluster (`Test-AzLocalClusterHealth`, Step.05) health failure outputs now project two extra fields off every `properties.healthCheckResult` entry:
+- **`Get-AzLocalStatusIconMap`** - host-aware (GitHub vs Azure DevOps) status-name -> icon-cell map. Returns GitHub-Markdown shortcodes (`:white_check_mark:` / `:x:` / `:warning:` / ...) on the `GitHubActions` host where they render natively, and Unicode glyphs (U+2705 / U+274C / U+26A0 / ...) on every other host. Covers the full readiness cascade, health-overview buckets, severity tags, apply-updates outcomes, run-state buckets, progress-status buckets, fleet-status icons, and version-support cells - single source of truth for every Step.* pipeline icon.
+- **`Get-AzLocalClusterPortalLink`** - wraps a cluster name in a Markdown anchor pointing at the Azure Portal resource blade (`https://portal.azure.com/#@/resource{resourceId}`) when a resource id is supplied; falls back to the plain cluster name otherwise.
+- **`Get-AzLocalCtrlClickTip`** - single-source the standing `> **Tip:** Hold Ctrl... when clicking - or middle-click - Cluster links to open them in a new tab.` line so it stays identical across pipelines.
 
-- **`Title`** - the per-check title (often more specific than `displayName`, e.g. names the failing node or volume).
-- **`TargetResourceID`** - full ARM id of the failing component; lets renderers deep-link Server / Volume health failures back to the exact node or volume.
+Per-pipeline polish:
 
-`Export-AzLocalFleetHealthStatusReport` adds Title as a markdown column and wraps TargetResourceName in a portal hyperlink when TargetResourceID is present. `Test-AzLocalClusterHealth` adds Title to the dedup composite key, the `Format-Table` console output, and the JUnit `Message` field.
-
-### Q3 - Surface BOTH deepest-step `description` AND `errorMessage` (Step.08 + Step.09)
-
-The two deepest-error walkers (`Resolve-AzLocalUpdateRunDeepestError` and `Get-DeepestErrorMessage`) now capture step `description` at the same recursion site as `errorMessage` (previously description was silently dropped via coalesce). New `DeepestStepDescription` column on `Get-AzLocalUpdateRunFailures`; new `ErrorDescription` field on `Format-AzLocalUpdateRun` / `Get-AzLocalUpdateRuns -PassThru`. The Step.08 (`Export-AzLocalUpdateRunMonitorReport`) and Step.09 (`Export-AzLocalFleetUpdateStatusReport`) renderers combine `description + errorMessage` in markdown failure cells and JUnit bodies. Cross-reference `.NOTES` headers added to the four parallel functions so future maintainers know to keep them in sync.
+- **Step.05** (`Export-AzLocalClusterUpdateReadinessReport`): icons via `Get-AzLocalStatusIconMap`, Cluster cell via `Get-AzLocalClusterPortalLink`, Ctrl-click tip via `Get-AzLocalCtrlClickTip`; "Up to Date" gains the readiness-cascade check icon.
+- **Step.06** (`Export-AzLocalClusterReadinessGateReport`): drops the inline icon switch in favour of the shared helper; cluster cells now deep-link to the portal; Ctrl-click tip added.
+- **Step.07** (`Add-AzLocalApplyUpdatesStepSummary`): drops the inline `$iconSuccess` / `$iconFail` / `$iconBlock` / `$iconSkip` / `$iconWarn` definitions in favour of the shared helper (so the icons render correctly on Azure DevOps). The Cluster Actions and Clusters Skipped at Readiness Gate tables now resolve each cluster's resource id from the readiness CSV (built from `Get-AzLocalClusterUpdateReadiness`) and wrap the Cluster cell via `Get-AzLocalClusterPortalLink`; Ctrl-click tip added. (The upstream apply-results JSON intentionally keeps its minimal `ClusterName / Status / UpdateName / Duration / Message` shape - the cluster id lookup is done in the renderer.)
+- **Step.08** (`Export-AzLocalUpdateRunMonitorReport`): the `$stateIcon` and `$statusIcon` switches no longer hard-code GitHub-Markdown shortcodes (`:large_blue_circle:` / `:hourglass_flowing_sand:` / etc.) which rendered as literal text on Azure DevOps. Both switches read from the shared icon map using the new `State*` and `Status*` keys.
+- **Step.09** (`Export-AzLocalFleetUpdateStatusReport`): the inline shortcodes used by the Critical Health Status table, the Primary Status table, and the Version Distribution Support column are routed through the shared icon map (new keys `Info`, `GreenCircle`, `YellowCircle`, `CycleArrows`, `GreyQuestion`, `SupportSupported`, `SupportUnsupported`, `SupportUnknown`).
 
 ### Notes
 
-- **No new exports** (count unchanged at 60).
-- **Step.07** (`Add-AzLocalApplyUpdatesStepSummary`) was deliberately left out of the Q1 / Q3 wiring because its data source is the live `Invoke-AzLocalReadinessGatedClusterUpdate` result row (apply-results.json), not `Get-AzLocalUpdateRunFailures`. Surfacing Q1 / Q3 at Step.07 requires a separate upstream change and is tracked for a follow-up release.
-- **`GENERATED_AGAINST_MODULE_VERSION`** bumped from `0.8.79` to `0.8.80` across all bundled pipeline templates.
+- **No new exports** (count unchanged at 60). Helpers are Private and live under `Private/`.
+- **`GENERATED_AGAINST_MODULE_VERSION`** bumped from `0.8.80` to `0.8.81` across all bundled pipeline templates.
 
-See [CHANGELOG.md](CHANGELOG.md#0880---2026-06-16) for the full v0.8.80 entry. See [`What's New in v0.8.79`](docs/release-history.md#whats-new-in-v0879) in the Release History for the previous release.
+See [CHANGELOG.md](CHANGELOG.md#0881---2026-06-17) for the full v0.8.81 entry. See [`What's New in v0.8.80`](docs/release-history.md#whats-new-in-v0880) in the Release History for the previous release.
 
 ## Files
 
@@ -594,7 +598,11 @@ This code is provided as-is for educational and reference purposes.
 
 The full What's-New history (v0.7.81 and earlier) has moved to [docs/release-history.md](docs/release-history.md).
 
-The most recent release notes for **v0.8.80** stay above under [`What's New in v0.8.80`](#whats-new-in-v0880).
+The most recent release notes for **v0.8.81** stay above under [`What's New in v0.8.81`](#whats-new-in-v0881).
+
+### What's New in v0.8.80
+
+**Minor release. Pipeline failure-rendering improvements** bundled as three additive changes targeting the Step.05 / Step.08 / Step.09 / Step.10 step summaries. (Q1) `Get-AzLocalUpdateRunFailures` attaches a `HealthCheckEvidence` array column with same-cluster Critical health-check entries within +/-2h of a HealthCheck-category run (new private helper `Get-AzLocalUpdateRunHealthEvidence`; opt-out via `-EnrichWithHealthEvidence:$false`). (Q2) `Get-AzLocalFleetHealthFailures` (Step.10) and `Test-AzLocalClusterHealth` (Step.05) project per-check `Title` and full `TargetResourceID`; `Export-AzLocalFleetHealthStatusReport` adds Title as a column and wraps TargetResourceName in a portal hyperlink. (Q3) Both deepest-error walkers (`Resolve-AzLocalUpdateRunDeepestError`, `Get-DeepestErrorMessage`) now capture step `description` alongside `errorMessage`; new `DeepestStepDescription` column on `Get-AzLocalUpdateRunFailures`; new `ErrorDescription` field on `Format-AzLocalUpdateRun` / `Get-AzLocalUpdateRuns -PassThru`; Step.08 + Step.09 renderers combine the two in markdown failure cells and JUnit bodies. No public API or export-count change (still 60). `GENERATED_AGAINST_MODULE_VERSION` bumped from `0.8.79` to `0.8.80` across all bundled pipeline templates. See [CHANGELOG.md](CHANGELOG.md#0880---2026-06-16) for the full v0.8.80 entry and [docs/release-history.md](docs/release-history.md#whats-new-in-v0880) for the archived entry.
 
 ### What's New in v0.8.78
 

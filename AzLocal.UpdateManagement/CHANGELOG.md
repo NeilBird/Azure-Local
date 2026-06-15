@@ -5,6 +5,105 @@ All notable changes to the AzLocal.UpdateManagement module (renamed from AzStack
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.81] - 2026-06-17
+
+Patch release. Step summary polish across Steps 05-10: fixes a Step.10 KPI counting
+bug, surfaces drive/volume-level detail in the Step.10 health-failure renderer, and
+moves status-icon / cluster-deep-link / Ctrl-click-tip rendering onto three shared
+private helpers so Steps 05-09 stay consistent and so the Azure DevOps step summary
+no longer leaks literal GitHub-Markdown shortcodes (`:white_check_mark:`, etc.) into
+the rendered output. No public API or export-count change (still 60 exports). One
+new private helper trio (`Get-AzLocalStatusIconMap`, `Get-AzLocalClusterPortalLink`,
+`Get-AzLocalCtrlClickTip`).
+
+### Added
+
+- **Shared private helpers** (Step summary DRY foundation):
+  - `Private/Get-AzLocalStatusIconMap.ps1` - host-aware (GitHub vs Azure DevOps)
+    status-name -> icon-cell map. Returns GitHub-Markdown shortcodes
+    (`:white_check_mark:` / `:x:` / `:warning:` / ...) on the `GitHubActions` host
+    where they render natively, and Unicode glyphs (U+2705 / U+274C / U+26A0 ...)
+    on every other host (Azure DevOps and local console). Covers the full readiness
+    cascade, health-overview buckets, severity tags, apply-updates outcomes, run-state
+    buckets, progress-status buckets, fleet status, and version-support cells - so
+    one helper is the single source of truth for every Step.* pipeline icon.
+  - `Private/Get-AzLocalClusterPortalLink.ps1` - wraps a cluster name in a Markdown
+    anchor pointing at the Azure Portal resource blade
+    (`https://portal.azure.com/#@/resource{resourceId}`) when a resource id is
+    supplied, falls back to the plain cluster name otherwise. Used by the
+    Cluster column in Step.05 / Step.06 / Step.07 / Step.10 tables.
+  - `Private/Get-AzLocalCtrlClickTip.ps1` - single-source the standing
+    `> **Tip:** Hold Ctrl... when clicking - or middle-click - Cluster links to
+    open them in a new tab.` line so it stays identical across pipelines.
+
+- **Step.10 Fleet Health Status report** (`Export-AzLocalFleetHealthStatusReport`):
+  - **Fixes "Healthy + Unhealthy != Total" KPI bug**. The KPI table previously
+    summed only two buckets (Healthy + Unhealthy) and silently dropped clusters
+    whose `HealthStatus` was `In progress` / `Unknown` / `Health check failed` AND
+    had no failure rows. The table is now split into two:
+    - **Cluster Counts** - Total / Healthy / Unhealthy / **Other** (new). Other
+      is computed as `Total - Healthy - Unhealthy` (clamped non-negative) so the
+      three buckets always sum to Total.
+    - **Failing Checks Breakdown** - Total / Critical / Warning / Distinct
+      Reasons (the old sub-counts, separated for clarity).
+  - New `other_clusters` pipeline step output (number of clusters in the Other
+    bucket); `-PassThru` PSCustomObject gains a matching `OtherClusters` field.
+  - **Detailed Results columns reordered** to put the most-specific identifier
+    first: `Severity | Title | Failure Reason | Description | Health Check Name |
+    Failure Remediation | Target Resource Name | Target Resource Type |
+    Last Occurrence | Resource Group`. Title is the per-check title (often
+    names the failing node or volume); Description is a collapsible `<details>`
+    block that surfaces drive/volume-level detail (e.g. the
+    `\Device\HarddiskVolume6\...vhdx` file path emitted by a
+    `Microsoft.Health.FaultType.Volume.FileSystem.Corruption.Correctable`
+    warning); Health Check Name is the raw fault-type name (kept verbatim so
+    operators can grep/triage by FaultType across runs).
+
+### Changed
+
+- **Step.05 Pre-flight Update Readiness Assessment**
+  (`Export-AzLocalClusterUpdateReadinessReport`): Summary counts table and
+  Not-Ready + All-clusters tables now render status icons via
+  `Get-AzLocalStatusIconMap`; Cluster cells wrapped via
+  `Get-AzLocalClusterPortalLink`; standing Ctrl-click tip via
+  `Get-AzLocalCtrlClickTip`; "Up to Date" bucket gains the readiness-cascade
+  check icon.
+- **Step.06 Apply-Updates Readiness Gate report**
+  (`Export-AzLocalClusterReadinessGateReport`): drops the inline icon `switch`
+  block in favour of `Get-AzLocalStatusIconMap`; Cluster cells now wrap via
+  `Get-AzLocalClusterPortalLink`; Ctrl-click tip via
+  `Get-AzLocalCtrlClickTip`.
+- **Step.07 Apply-Updates step summary** (`Add-AzLocalApplyUpdatesStepSummary`):
+  drops the inline `$iconSuccess` / `$iconFail` / `$iconBlock` / `$iconSkip` /
+  `$iconWarn` definitions in favour of `Get-AzLocalStatusIconMap` (so the
+  icons render correctly on Azure DevOps). The Cluster Actions and Clusters
+  Skipped at Readiness Gate tables now resolve each cluster's resource id from
+  the readiness CSV (built from `Get-AzLocalClusterUpdateReadiness`) and wrap
+  the Cluster cell via `Get-AzLocalClusterPortalLink`. Adds the standing
+  Ctrl-click tip via `Get-AzLocalCtrlClickTip`. (The upstream apply-results
+  JSON intentionally keeps its minimal `ClusterName / Status / UpdateName /
+  Duration / Message` shape - the cluster id lookup is done in the renderer.)
+- **Step.08 In-flight Update Run Monitor**
+  (`Export-AzLocalUpdateRunMonitorReport`): the `$stateIcon` and `$statusIcon`
+  switches no longer hard-code GitHub-Markdown shortcodes (e.g.
+  `:large_blue_circle:` / `:hourglass_flowing_sand:`) which rendered as literal
+  text on Azure DevOps. Both switches now read from `Get-AzLocalStatusIconMap`
+  using the new `State*` (`StateInProgress` / `StateSucceeded` / `StateFailed` /
+  `StateNotStarted` / `StateUnknown`) and `Status*`
+  (`StatusInProgress` / `StatusCancelled`) keys.
+- **Step.09 Fleet Update Status report**
+  (`Export-AzLocalFleetUpdateStatusReport`): the inline shortcodes used by the
+  Critical Health Status table, the Primary Status table, and the Version
+  Distribution Support column are routed through `Get-AzLocalStatusIconMap`
+  (new keys `Info`, `GreenCircle`, `YellowCircle`, `CycleArrows`,
+  `GreyQuestion`, `SupportSupported`, `SupportUnsupported`,
+  `SupportUnknown`) so they render correctly on both pipeline hosts.
+
+### Pipeline templates
+
+- All bundled pipeline templates bump `GENERATED_AGAINST_MODULE_VERSION` from
+  `'0.8.80'` to `'0.8.81'`.
+
 ## [0.8.80] - 2026-06-16
 
 Minor release. Bundles three pipeline-failure-rendering improvements that target the

@@ -185,6 +185,11 @@ function Export-AzLocalUpdateRunMonitorReport {
 
     $pipelineHost = Get-AzLocalPipelineHost
 
+    # v0.8.81: shared status-icon map (host-aware) - replaces the inline
+    # red/yellow/green-circle and check/cross shortcodes that previously
+    # rendered as literal text on Azure DevOps.
+    $iconMap = Get-AzLocalStatusIconMap -PipelineHost $pipelineHost
+
     if (-not $OutputDirectory) {
         if ($pipelineHost -eq 'AzureDevOps' -and $env:BUILD_ARTIFACTSTAGINGDIRECTORY) {
             $OutputDirectory = $env:BUILD_ARTIFACTSTAGINGDIRECTORY
@@ -322,18 +327,18 @@ function Export-AzLocalUpdateRunMonitorReport {
             elseif ($elapsed -gt $thresholdSpan) { $runSeverity = 'warn' }
         }
         $stateIcon = switch ($r.State) {
-            'InProgress' { ':large_blue_circle:' }
-            'Succeeded'  { ':large_green_circle:' }
-            'Failed'     { ':red_circle:' }
-            'NotStarted' { ':white_circle:' }
-            default      { ':grey_question:' }
+            'InProgress' { $iconMap['StateInProgress'] }
+            'Succeeded'  { $iconMap['StateSucceeded'] }
+            'Failed'     { $iconMap['StateFailed'] }
+            'NotStarted' { $iconMap['StateNotStarted'] }
+            default      { $iconMap['StateUnknown'] }
         }
         $statusIcon = switch ($progressStatus) {
-            'Success'    { ':white_check_mark:' }
-            'Error'      { ':x:' }
-            'InProgress' { ':hourglass_flowing_sand:' }
-            'Skipped'    { ':no_entry:' }
-            'Cancelled'  { ':fast_forward:' }
+            'Success'    { $iconMap['Success'] }
+            'Error'      { $iconMap['Fail'] }
+            'InProgress' { $iconMap['StatusInProgress'] }
+            'Skipped'    { $iconMap['Block'] }
+            'Cancelled'  { $iconMap['StatusCancelled'] }
             default      { '' }
         }
         $chipList = New-Object 'System.Collections.Generic.List[string]'
