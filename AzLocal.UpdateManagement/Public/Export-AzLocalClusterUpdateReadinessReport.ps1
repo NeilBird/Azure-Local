@@ -364,17 +364,21 @@ function Export-AzLocalClusterUpdateReadinessReport {
     [void]$md.Add('')
 
     # 3. Summary counts
-    # v0.8.81: use shared icon map so the summary mirrors the table rows below.
+    # v0.8.82: use shared icon map cells AS the metric label (each icon-map
+    # value already includes its own text, e.g. "<U+2705> Ready for Update").
+    # Previously each row also appended a duplicate trailing label, producing
+    # "<U+2705> Ready for Update Ready for update" - fixed by emitting the
+    # icon-map cell unmodified.
     $iconMap = Get-AzLocalStatusIconMap -PipelineHost $pipelineHost
     [void]$md.Add('### Summary counts')
     [void]$md.Add('')
     [void]$md.Add('| Metric | Count |')
     [void]$md.Add('|--------|-------|')
     [void]$md.Add("| Total clusters in scope | $total |")
-    [void]$md.Add(("| {0} Ready for update | {1} |" -f $iconMap['ReadyForUpdate'], $readyForUpdate))
-    [void]$md.Add(("| {0} Up to date | {1} |" -f $iconMap['UpToDate'], $upToDate))
-    [void]$md.Add(("| {0} Not ready for update | {1} |" -f $iconMap['ActionRequired'], $notReady))
-    [void]$md.Add(("| {0} Clusters with Critical health failures | {1} |" -f $iconMap['HealthFailure'], $clustersWithCritical))
+    [void]$md.Add(("| {0} | {1} |" -f $iconMap['ReadyForUpdate'], $readyForUpdate))
+    [void]$md.Add(("| {0} | {1} |" -f $iconMap['UpToDate'], $upToDate))
+    [void]$md.Add(("| {0} | {1} |" -f $iconMap['ActionRequired'], $notReady))
+    [void]$md.Add(("| {0} (Clusters with Critical health failures) | {1} |" -f $iconMap['HealthFailure'], $clustersWithCritical))
     [void]$md.Add("| Total Critical findings | $criticalFindings |")
     [void]$md.Add('')
 
@@ -450,7 +454,25 @@ function Export-AzLocalClusterUpdateReadinessReport {
         [void]$md.Add('')
         [void]$md.Add('| Cluster | UpdateRing | Current version | Current SBE version | Update state | Health | Status | Recommended update |')
         [void]$md.Add('|---------|------------|-----------------|---------------------|--------------|--------|--------|--------------------|')
-        foreach ($r in ($readiness | Sort-Object @{Expression={ if ($ringByResourceId.ContainsKey($_.ClusterResourceId)) { $ringByResourceId[$_.ClusterResourceId] } else { 'zzz' } }}, ClusterName)) {
+        # v0.8.82: sort by Status priority (operator-actionable items first):
+        # InProgress -> HealthFailure -> UpdateFailed -> ActionRequired ->
+        # SbeBlocked -> NeedsInvestigation -> ReadyForUpdate -> UpToDate.
+        # Within the same Status, sort by UpdateRing then ClusterName.
+        $statusOrder = @{
+            'InProgress'         = 1
+            'HealthFailure'      = 2
+            'UpdateFailed'       = 3
+            'ActionRequired'     = 4
+            'SbeBlocked'         = 5
+            'NeedsInvestigation' = 6
+            'ReadyForUpdate'     = 7
+            'UpToDate'           = 8
+        }
+        $sorted = $readiness | Sort-Object `
+            @{Expression={ $k = Get-AzLocalClusterReadinessStatus -ReadinessRow $_; if ($statusOrder.ContainsKey($k)) { $statusOrder[$k] } else { 99 } }}, `
+            @{Expression={ if ($ringByResourceId.ContainsKey($_.ClusterResourceId)) { $ringByResourceId[$_.ClusterResourceId] } else { 'zzz' } }}, `
+            ClusterName
+        foreach ($r in $sorted) {
             $ring = if ($ringByResourceId.ContainsKey($r.ClusterResourceId)) { $ringByResourceId[$r.ClusterResourceId] } else { '-' }
             $cv  = if ($r.CurrentVersion) { $r.CurrentVersion } else { '-' }
             $csv = if ($r.PSObject.Properties['CurrentSbeVersion'] -and $r.CurrentSbeVersion) { $r.CurrentSbeVersion } else { '-' }
