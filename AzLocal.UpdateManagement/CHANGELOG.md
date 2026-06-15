@@ -5,6 +5,119 @@ All notable changes to the AzLocal.UpdateManagement module (renamed from AzStack
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.82] - 2026-06-15
+
+Patch release. Step.05 + Step.10 step-summary UX polish from the v0.8.81 manual
+pipeline-run review **plus three Item-5 deliverables**: (1) Step.05 "Last Updated"
+column + UpdateRing-first sort, (2) per-cluster `UpdateLastAttempt` audit tag
+written at every `Start-AzLocalClusterUpdate` outcome (and auto-cleared by the
+existing sideloaded-reset path when a matching Succeeded run is observed), and
+(3) a Step.08 reconciliation section that surfaces clusters where the
+`UpdateLastAttempt` tag indicates an apply attempt with no observable updateRun
+(captures Portland-style URP package-internal pre-install health-check failures).
+No public API change. Export count unchanged (still 60).
+
+### Added
+
+- **`UpdateLastAttempt` cluster tag** (new). `Start-AzLocalClusterUpdate` now
+  stamps each cluster with an ISO-8601 timestamp + outcome + update name +
+  short reason at every attempt outcome: `HealthCheckBlocked`, `UpdateStarted`,
+  and `Failed`. Format: `<UTC>;<Outcome>;<UpdateName>;<Reason>` truncated to
+  the 256-char Azure tag-value limit (reason field truncated first with a
+  trailing `~` sentinel; embedded `;` in reason is replaced with `,`). Writes
+  swallow ARM errors and log a Warning - the audit tag MUST NOT block the
+  apply flow. New Private helpers: `Format-AzLocalUpdateLastAttemptTagValue`,
+  `ConvertFrom-AzLocalUpdateLastAttemptTagValue`,
+  `Write-AzLocalUpdateLastAttemptTag`. New script-scoped constant
+  `$script:UpdateLastAttemptTagName = 'UpdateLastAttempt'`.
+- **Auto-clear of `UpdateLastAttempt`** in
+  `Invoke-AzLocalSideloadedAutoResetForCluster`. The independent clear
+  block (separate from the existing sideloaded reset logic) clears the tag
+  when the latest update run is `Succeeded` AND either the UpdateName
+  matches (case-insensitive) the recorded attempt OR the attempt was a
+  `HealthCheckBlocked` / `Failed` outcome more than 1h old. Wrapped in
+  try/catch with Verbose-only logging - never modifies the function's
+  return shape.
+- **Step.05 "Last Updated" column** in `Export-AzLocalClusterUpdateReadinessReport`.
+  Sourced from `Get-AzLocalClusterUpdateReadiness`, which now computes the
+  most-recent `packageVersions[].lastUpdated` timestamp across ALL
+  packageTypes (Solution / Services / Platform / SBE / etc.) and exposes it
+  as a new `LastUpdated` property on every output row (success, NotFound, and
+  Error rows). The detail table grows a new "Last Updated" cell between
+  "Status" and "Recommended update".
+- **Step.05 sort change**: detail table now sorts by **UpdateRing -> Status
+  priority -> ClusterName** (was Status -> UpdateRing -> ClusterName). Ring
+  cohorts (Validation -> Canary -> Pilot -> Production / Default) stay
+  grouped, with In-Flight + remediation rows surfacing at the top of each
+  ring cohort. The Status-priority ordering inside each ring matches the
+  v0.8.82 fix above (InProgress -> HealthFailure -> UpdateFailed -> ...).
+- **Step.08 "Recent update attempts with no observable updateRun" section**
+  in `Export-AzLocalUpdateRunMonitorReport`. Joins the per-cluster
+  `UpdateLastAttempt` tag against the observed updateRun list and surfaces
+  any attempt within the last `-RecentAttemptWindowHours` (default 72)
+  that does not match an updateRun whose `StartTimeUtc` is at-or-after
+  the attempt timestamp (-5 min slack). Each gap emits a JUnit testcase
+  with `Type='AttemptWithoutRun'`. New pipeline output
+  `attempts_without_run` and new `PassThru` fields
+  `AttemptWithoutRunCount` + `AttemptGaps`. Common cause for a gap: URP
+  package-internal pre-install health-check failure (audit log shows
+  `Allows to apply updates: Succeeded` but no updateRun resource is ever
+  persisted). New parameter:
+  `[ValidateRange(0,8760)][int]$RecentAttemptWindowHours = 72`.
+
+### Fixed
+
+- **Step.05 Summary counts table** (`Export-AzLocalClusterUpdateReadinessReport`)
+  no longer duplicates row labels. Each row reused the shared
+  `Get-AzLocalStatusIconMap` cell (which already includes its own label) AND
+  appended a duplicate trailing label, producing `Ready for Update Ready for
+  update` / `Up to Date Up to date` / `Action Required Not ready for update` /
+  `Health Failure Clusters with Critical health failures`. The icon-map cell
+  is now emitted unmodified. The HealthFailure row keeps `(Clusters with
+  Critical health failures)` in parentheses since it counts something
+  different from the readiness cascade.
+- **Step.05 All clusters detail table** now sorts by **Status priority** first
+  (`InProgress` -> `HealthFailure` -> `UpdateFailed` -> `ActionRequired` ->
+  `SbeBlocked` -> `NeedsInvestigation` -> `ReadyForUpdate` -> `UpToDate`),
+  then `UpdateRing` + `ClusterName` as before. In-flight + remediation rows
+  surface at the top; Up-to-Date drops to the bottom so operators see
+  actionable items first.
+- **Step.05 Not-Ready clusters (review first) table - Blocking reasons column**
+  no longer shows `-` for rows blocked by `UpdateFailed` / `NeedsAttention` /
+  `InProgress` / Warning-only `HealthFailure` / `SbeBlocked`. The upstream
+  `Get-AzLocalClusterUpdateReadiness` only populates `BlockingReasons` for
+  `CriticalHealthCheck` findings and abnormal cluster connectivity states
+  (e.g. `NotConnectedRecently`). For every other Not-Ready category the
+  column was left empty and rendered as `-`, forcing operators to cross-read
+  the `Update state` + `Health` columns to infer the reason. The renderer
+  now derives an actionable token from the Status bucket when the upstream
+  `BlockingReasons` is empty:
+  - `InProgress` -> `UpdateInProgress (run in-flight)`
+  - `UpdateFailed` -> `UpdateState=<UpdateState>` (e.g. `UpdateState=NeedsAttention`, `UpdateState=UpdateFailed`)
+  - `ActionRequired` -> `UpdateState=PreparationFailed`
+  - `HealthFailure` -> `HealthState=Failure (no Critical findings; review Warning findings)`
+  - `SbeBlocked` -> `PrerequisiteRequired (SBE update first)`
+  - `NeedsInvestigation` -> `NeedsInvestigation (no Update or Health signal)`
+
+  For any of the above, `; HealthState=Warning` is appended when the
+  cluster's `HealthState` is `Warning` and the Status bucket is not already
+  `HealthFailure`. The upstream `Get-AzLocalClusterUpdateReadiness` output
+  shape is unchanged; the derivation is renderer-side only so JSON / CSV /
+  `-PassThru` consumers continue to receive the original empty
+  `BlockingReasons` value for these rows.
+- **Step.10 Detailed Results Description column** inline-vs-collapse threshold
+  bumped from 120 to **280 characters** in
+  `Export-AzLocalFleetHealthStatusReport`. Short single-sentence descriptions
+  render inline and only long multi-line descriptions collapse behind
+  `<details><summary>view</summary>...</details>`. The previous 120-char
+  cutoff put roughly half the rows inline and half collapsed on the same
+  table, which looked broken.
+
+### Changed
+
+- `GENERATED_AGAINST_MODULE_VERSION` bumped from `'0.8.81'` to `'0.8.82'`
+  across all bundled GitHub Actions and Azure DevOps pipeline templates.
+
 ## [0.8.81] - 2026-06-17
 
 Patch release. Step summary polish across Steps 05-10: fixes a Step.10 KPI counting

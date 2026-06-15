@@ -635,6 +635,17 @@ function Start-AzLocalClusterUpdate {
                         EndTime       = Get-Date
                         Duration      = $null
                     }) | Out-Null
+                    # v0.8.82: audit-tag the attempt so Step.08 can surface
+                    # pre-update health blocks even when no updateRun ever
+                    # materialises.
+                    Write-AzLocalUpdateLastAttemptTag `
+                        -ClusterResourceId $clusterInfo.id `
+                        -ClusterName $clusterName `
+                        -AttemptUtc $clusterStartTime.ToUniversalTime() `
+                        -Outcome 'HealthCheckBlocked' `
+                        -UpdateName '' `
+                        -Reason $critSummary `
+                        -ApiVersion $ApiVersion
                     continue
                 }
                 Write-Log -Message "No critical health issues found - cluster is eligible for update" -Level Success
@@ -1189,6 +1200,17 @@ function Start-AzLocalClusterUpdate {
                             EndTime       = $endTime
                             Duration      = $duration.ToString("hh\:mm\:ss")
                         }) | Out-Null
+                        # v0.8.82: audit-tag the successful attempt. Cleared by
+                        # the auto-reset path in Get-AzLocalUpdateRuns when a
+                        # matching Succeeded run later materialises.
+                        Write-AzLocalUpdateLastAttemptTag `
+                            -ClusterResourceId $clusterInfo.id `
+                            -ClusterName $clusterName `
+                            -AttemptUtc $clusterStartTime.ToUniversalTime() `
+                            -Outcome 'UpdateStarted' `
+                            -UpdateName $selectedUpdate.name `
+                            -Reason 'Update initiated successfully' `
+                            -ApiVersion $ApiVersion
                     }
                     else {
                         Write-Log -Message "Failed to start update on cluster '$clusterName'." -Level Error
@@ -1201,6 +1223,17 @@ function Start-AzLocalClusterUpdate {
                             EndTime       = $endTime
                             Duration      = $duration.ToString("hh\:mm\:ss")
                         }) | Out-Null
+                        # v0.8.82: audit-tag the failed attempt so Step.08 can
+                        # surface gaps where ARM rejected the apply and no
+                        # updateRun was created.
+                        Write-AzLocalUpdateLastAttemptTag `
+                            -ClusterResourceId $clusterInfo.id `
+                            -ClusterName $clusterName `
+                            -AttemptUtc $clusterStartTime.ToUniversalTime() `
+                            -Outcome 'Failed' `
+                            -UpdateName $selectedUpdate.name `
+                            -Reason 'apply/action returned failure' `
+                            -ApiVersion $ApiVersion
                     }
                 }
                 elseif ($WhatIfPreference) {

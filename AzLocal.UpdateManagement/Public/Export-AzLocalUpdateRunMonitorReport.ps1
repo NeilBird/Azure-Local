@@ -156,6 +156,10 @@ function Export-AzLocalUpdateRunMonitorReport {
         [int]$RecentFailureWindowHours = 24,
 
         [Parameter(Mandatory = $false)]
+        [ValidateRange(0, 8760)]
+        [int]$RecentAttemptWindowHours = 72,
+
+        [Parameter(Mandatory = $false)]
         [ValidateRange(1, 365)]
         [int]$CriticalElapsedDays = 3,
 
@@ -216,9 +220,14 @@ function Export-AzLocalUpdateRunMonitorReport {
     Write-Host ("Thresholds: per-step={0}h (warn) / {1}h (crit), overall={2}h (warn) / {3}d (crit) / {4}d (skull), recent-failure-window={5}h" -f $LongRunningStepHours, ($LongRunningStepHours * 2), $LongRunningThresholdHours, $CriticalElapsedDays, ($CriticalElapsedDays * 2), $RecentFailureWindowHours)
 
     # ---- Query runs --------------------------------------------------------
+    # v0.8.82: always fetch inventory (both scope paths) so we have per-cluster
+    # tags available for the UpdateLastAttempt reconciliation pass. Previously
+    # the by-update-ring path skipped the inventory call entirely.
+    $inventoryForTags = $null
     $runs = @()
     if ($Scope -eq 'by-update-ring' -and $UpdateRing) {
         Write-Host "Scope: UpdateRing = $UpdateRing"
+        $inventoryForTags = @(Get-AzLocalClusterInventory -ScopeByUpdateRingTag -UpdateRingValue $UpdateRing -PassThru)
         $runs = @(Get-AzLocalUpdateRuns -ScopeByUpdateRingTag -UpdateRingValue $UpdateRing -Latest -PassThru -SkipSideloadedReset)
     }
     else {
@@ -239,6 +248,7 @@ function Export-AzLocalUpdateRunMonitorReport {
             Set-AzLocalPipelineOutput -Name 'step_errored'        -Value '0'
             Set-AzLocalPipelineOutput -Name 'recent_failures'     -Value '0'
             Set-AzLocalPipelineOutput -Name 'unresolved_failures' -Value '0'
+            Set-AzLocalPipelineOutput -Name 'attempts_without_run' -Value '0'
             $emptySb = New-Object System.Text.StringBuilder
             [void]$emptySb.AppendLine('## In-Flight Update Monitor')
             [void]$emptySb.AppendLine('')
@@ -252,6 +262,8 @@ function Export-AzLocalUpdateRunMonitorReport {
                     StepErroredCount       = 0
                     RecentFailureCount     = 0
                     UnresolvedFailureCount = 0
+                    AttemptWithoutRunCount = 0
+                    AttemptGaps            = @()
                     CsvPath                = $monitorCsv
                     XmlPath                = $monitorXml
                     Rows                   = @()
@@ -261,6 +273,7 @@ function Export-AzLocalUpdateRunMonitorReport {
         }
         $resourceIds = @($inventory | Select-Object -ExpandProperty ResourceId)
         $runs = @(Get-AzLocalUpdateRuns -ClusterResourceIds $resourceIds -Latest -PassThru -SkipSideloadedReset)
+        $inventoryForTags = @($inventory)
     }
 
     # ---- Project + enrich rows --------------------------------------------
@@ -420,6 +433,54 @@ function Export-AzLocalUpdateRunMonitorReport {
     $recentlyFailed   = @($rows     | Where-Object { $_.IsRecentFailure })
     $unresolvedFailed = @($rows     | Where-Object { $_.IsUnresolvedFailure })
 
+    # ---- v0.8.82: UpdateLastAttempt gap reconciliation --------------------
+    # Surface clusters whose UpdateLastAttempt tag indicates an attempt was
+    # made in the last $RecentAttemptWindowHours that does NOT have a matching
+    # observable updateRun in $rows. Captures Portland-style URP-package
+    # pre-install health-check failures (audit-log shows 'Apply Succeeded'
+    # but no updateRun resource was ever persisted) AND our own pre-update
+    # HealthCheckBlocked outcomes AND our own apply/action Failed outcomes.
+    $attemptGaps = New-Object 'System.Collections.Generic.List[object]'
+    if ($RecentAttemptWindowHours -gt 0 -and $inventoryForTags -and $inventoryForTags.Count -gt 0) {
+        $attemptCutoff = $nowUtc.AddHours(-$RecentAttemptWindowHours)
+        $runByResId = @{}
+        foreach ($r in $rows) {
+            if ($r.ClusterResourceId) { $runByResId[[string]$r.ClusterResourceId] = $r }
+        }
+        foreach ($inv in $inventoryForTags) {
+            $tagBag = if ($inv -and $inv.PSObject.Properties['tags']) { $inv.tags } else { $null }
+            $tagValue = Get-TagValue -Tags $tagBag -Name $script:UpdateLastAttemptTagName
+            if ([string]::IsNullOrWhiteSpace($tagValue)) { continue }
+            $parsed = ConvertFrom-AzLocalUpdateLastAttemptTagValue -Value $tagValue
+            if (-not $parsed) { continue }
+            if ($parsed.AttemptUtc -lt $attemptCutoff) { continue }
+
+            $resId = if ($inv.PSObject.Properties['ResourceId']) { [string]$inv.ResourceId } else { '' }
+            $matchedRun = if ($resId -and $runByResId.ContainsKey($resId)) { $runByResId[$resId] } else { $null }
+            $hasCoveringRun = $false
+            if ($matchedRun -and $matchedRun.StartTimeUtc) {
+                [datetime]$rs = [datetime]::MinValue
+                if ([datetime]::TryParse([string]$matchedRun.StartTimeUtc, [ref]$rs)) {
+                    $runStartUtc = [datetime]::SpecifyKind($rs, [DateTimeKind]::Utc)
+                    if ($runStartUtc -ge $parsed.AttemptUtc.AddMinutes(-5)) {
+                        $hasCoveringRun = $true
+                    }
+                }
+            }
+            if ($hasCoveringRun) { continue }
+
+            $attemptGaps.Add([pscustomobject]@{
+                ClusterName       = if ($inv.PSObject.Properties['ClusterName']) { [string]$inv.ClusterName } else { '' }
+                ClusterResourceId = $resId
+                AttemptUtc        = $parsed.AttemptUtc
+                AttemptUtcText    = $parsed.AttemptUtc.ToString('yyyy-MM-dd HH:mm:ssZ')
+                Outcome           = $parsed.Outcome
+                UpdateName        = $parsed.UpdateName
+                Reason            = $parsed.Reason
+            }) | Out-Null
+        }
+    }
+
     # ---- CSV (always emit, even if empty) ---------------------------------
     if ($rows.Count -gt 0) {
         $rows | Sort-Object @{Expression='SeverityScore';Descending=$true}, ClusterName | Export-Csv -Path $monitorCsv -NoTypeInformation -Encoding utf8
@@ -502,6 +563,19 @@ function Export-AzLocalUpdateRunMonitorReport {
             Failure   = @{ Message = $msg; Type = 'RecentFailure'; Body = $msg }
         }) | Out-Null
     }
+    foreach ($gap in ($attemptGaps | Sort-Object @{Expression='AttemptUtc';Descending=$true}, ClusterName)) {
+        $safeName = ($gap.ClusterName -replace '[^A-Za-z0-9_.-]', '_')
+        $updateLabel = if ([string]::IsNullOrWhiteSpace($gap.UpdateName)) { '(no update name)' } else { $gap.UpdateName }
+        $caseName = '{0} - {1} - ATTEMPT-NO-RUN ({2})' -f $safeName, $updateLabel, $gap.Outcome
+        $reasonText = if ([string]::IsNullOrWhiteSpace($gap.Reason)) { '(no reason recorded)' } else { $gap.Reason }
+        $msg = ("Cluster '{0}' carries an UpdateLastAttempt tag (outcome='{1}', update='{2}', at {3}) but no observable updateRun has materialised. Investigate via the Azure portal activity log; common cause is a URP package pre-install health-check failure (audit event 'Allows to apply updates: Succeeded' with no resulting updateRun). Reason recorded by module: {4}" -f $gap.ClusterName, $gap.Outcome, $updateLabel, $gap.AttemptUtcText, $reasonText)
+        $testCases.Add(@{
+            Name      = $caseName
+            ClassName = 'UpdateMonitor'
+            Time      = 0.0
+            Failure   = @{ Message = $msg; Type = 'AttemptWithoutRun'; Body = $msg }
+        }) | Out-Null
+    }
     $null = New-AzLocalPipelineJUnitXml -TestSuitesName 'Update Run Monitor' -Suites @(
         @{
             Name      = 'Update Run Monitor'
@@ -517,6 +591,7 @@ function Export-AzLocalUpdateRunMonitorReport {
     Set-AzLocalPipelineOutput -Name 'step_errored'        -Value ([string]$stepErrored.Count)
     Set-AzLocalPipelineOutput -Name 'recent_failures'     -Value ([string]$recentlyFailed.Count)
     Set-AzLocalPipelineOutput -Name 'unresolved_failures' -Value ([string]$unresolvedFailed.Count)
+    Set-AzLocalPipelineOutput -Name 'attempts_without_run' -Value ([string]$attemptGaps.Count)
 
     # ---- Markdown step summary -------------------------------------------
     $md = New-Object 'System.Collections.Generic.List[string]'
@@ -561,6 +636,9 @@ function Export-AzLocalUpdateRunMonitorReport {
     [void]$md.Add("| Unresolved-failed runs (latest run is Failed) | $($unresolvedFailed.Count) |")
     if ($RecentFailureWindowHours -gt 0) {
         [void]$md.Add("| Recently-failed runs (last ${RecentFailureWindowHours}h) | $($recentlyFailed.Count) |")
+    }
+    if ($RecentAttemptWindowHours -gt 0) {
+        [void]$md.Add("| Update attempts without observable run (last ${RecentAttemptWindowHours}h) | $($attemptGaps.Count) |")
     }
     [void]$md.Add('')
     if ($inFlight.Count -gt 0 -or $unresolvedFailed.Count -gt 0) {
@@ -634,6 +712,26 @@ function Export-AzLocalUpdateRunMonitorReport {
         }
         [void]$md.Add('')
     }
+    if ($attemptGaps.Count -gt 0) {
+        [void]$md.Add("### Recent update attempts with no observable updateRun (last ${RecentAttemptWindowHours}h)")
+        [void]$md.Add('')
+        [void]$md.Add('Sourced from the per-cluster `UpdateLastAttempt` tag (set by `Start-AzLocalClusterUpdate`). The most common cause is a URP package pre-install health-check failure: the cluster activity log shows `Allows to apply updates: Succeeded` but no `updateRun` child resource is ever persisted, so the standard "Failed runs" table cannot see it.')
+        [void]$md.Add('')
+        [void]$md.Add('| Cluster | Outcome | Update | Attempted (UTC) | Reason |')
+        [void]$md.Add('|---------|---------|--------|-----------------|--------|')
+        foreach ($gap in ($attemptGaps | Sort-Object @{Expression='AttemptUtc';Descending=$true}, ClusterName)) {
+            $clusterCell = Get-AzLocalClusterPortalLink -ClusterName ([string]$gap.ClusterName) -ClusterResourceId ([string]$gap.ClusterResourceId)
+            $updateLabel = if ([string]::IsNullOrWhiteSpace($gap.UpdateName)) { '-' } else { $gap.UpdateName }
+            $reasonText = if ([string]::IsNullOrWhiteSpace($gap.Reason)) { '-' } else {
+                # escape pipe so it does not break the table row
+                ($gap.Reason -replace '\|', '\|')
+            }
+            [void]$md.Add("| $clusterCell | $($gap.Outcome) | $updateLabel | $($gap.AttemptUtcText) | $reasonText |")
+        }
+        [void]$md.Add('')
+        [void]$md.Add('> **What this means.** The module recorded an apply attempt against this cluster, but the corresponding `updateRun` resource cannot be queried via Azure Resource Graph. Either URP rejected the orchestration after the audit-log `apply/action` succeeded (typical for package-internal pre-install health failures), or the run was created and then deleted before this report ran. Investigate via the Azure portal: cluster blade -> Activity Log -> filter on `Allows to apply updates` for the timestamp above.')
+        [void]$md.Add('')
+    }
     if (($stepErrored.Count + $longRunningStep.Count + $longRunning.Count + $unresolvedFailed.Count) -gt 0) {
         [void]$md.Add('> **Action required.** One or more update runs have errored, hit a threshold, or have an unresolved Failed latest run. Common causes (consult the Azure Local Update Manager portal + the cluster activity log for the affected cluster(s)):')
         [void]$md.Add('>')
@@ -669,6 +767,8 @@ function Export-AzLocalUpdateRunMonitorReport {
             StepErroredCount       = [int]$stepErrored.Count
             RecentFailureCount     = [int]$recentlyFailed.Count
             UnresolvedFailureCount = [int]$unresolvedFailed.Count
+            AttemptWithoutRunCount = [int]$attemptGaps.Count
+            AttemptGaps            = $attemptGaps.ToArray()
             CsvPath                = $monitorCsv
             XmlPath                = $monitorXml
             Rows                   = $rows

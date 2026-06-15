@@ -34,8 +34,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $script:ModuleInfo | Should -Not -BeNullOrEmpty
         }
 
-        It 'Should have version 0.8.81' {
-            $script:ModuleInfo.Version | Should -Be '0.8.81'
+        It 'Should have version 0.8.82' {
+            $script:ModuleInfo.Version | Should -Be '0.8.82'
         }
 
         It 'Module version constants are in sync between .psm1 and .psd1' {
@@ -14916,7 +14916,7 @@ Describe 'Thin-YAML Step.7: Export-AzLocalUpdateRunMonitorReport' {
         $row.IsRecentFailure     | Should -BeFalse
     }
 
-    It 'Scope=by-update-ring skips Get-AzLocalClusterInventory and queries by tag' {
+    It 'Scope=by-update-ring queries inventory by tag (for UpdateLastAttempt reconciliation) and queries runs by tag' {
         $runs = @(
             [pscustomobject]@{
                 ClusterName       = 'alpha'
@@ -14935,10 +14935,13 @@ Describe 'Thin-YAML Step.7: Export-AzLocalUpdateRunMonitorReport' {
         )
         $global:_s7_payload = @{ Inventory = $script:_s7_inventory; Runs = $runs; Now = $script:_s7_now; OutDir = $script:_s7_outDir }
         $result = InModuleScope AzLocal.UpdateManagement {
-            Mock Get-AzLocalClusterInventory { throw 'Should NOT be called when Scope=by-update-ring' }
+            # v0.8.82: by-update-ring path now calls Get-AzLocalClusterInventory with
+            # -ScopeByUpdateRingTag so we have per-cluster tags for the UpdateLastAttempt
+            # reconciliation pass. It must NOT be called without those parameters.
+            Mock Get-AzLocalClusterInventory { @($global:_s7_payload.Inventory) } -ParameterFilter { $ScopeByUpdateRingTag -eq $true -and $UpdateRingValue -eq 'Canary' }
             Mock Get-AzLocalUpdateRuns       { @($global:_s7_payload.Runs) } -ParameterFilter { $ScopeByUpdateRingTag -eq $true -and $UpdateRingValue -eq 'Canary' }
             $r = Export-AzLocalUpdateRunMonitorReport -OutputDirectory $global:_s7_payload.OutDir -Now $global:_s7_payload.Now -Scope 'by-update-ring' -UpdateRing 'Canary' -PassThru
-            Should -Invoke Get-AzLocalClusterInventory -Times 0 -Exactly
+            Should -Invoke Get-AzLocalClusterInventory -Times 1 -Exactly -ParameterFilter { $ScopeByUpdateRingTag -eq $true -and $UpdateRingValue -eq 'Canary' }
             Should -Invoke Get-AzLocalUpdateRuns       -Times 1 -Exactly -ParameterFilter { $ScopeByUpdateRingTag -eq $true -and $UpdateRingValue -eq 'Canary' }
             $r
         }
@@ -16159,6 +16162,61 @@ Describe 'Thin-YAML Step.5: Export-AzLocalClusterUpdateReadinessReport' {
         $summary = Get-Content -LiteralPath $script:_s5_ghSummaryFile -Raw
         $summary | Should -Match '\[OK\]'
         $summary | Should -Match 'All clear'
+    }
+
+    It 'v0.8.82: Not-Ready Blocking reasons column derives an actionable token when upstream BlockingReasons is empty' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s5_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s5_ghSummaryFile
+        $global:_s5_payload = @{
+            Inventory = @(
+                [pscustomobject]@{ ClusterName='c-inprog';  ResourceId='/subscriptions/s1/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/c-inprog';  UpdateRing='Prod' }
+                [pscustomobject]@{ ClusterName='c-needatt'; ResourceId='/subscriptions/s1/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/c-needatt'; UpdateRing='Prod' }
+                [pscustomobject]@{ ClusterName='c-warn';    ResourceId='/subscriptions/s1/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/c-warn';    UpdateRing='Prod' }
+                [pscustomobject]@{ ClusterName='c-prefail'; ResourceId='/subscriptions/s1/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/c-prefail'; UpdateRing='Prod' }
+                [pscustomobject]@{ ClusterName='c-sbe';     ResourceId='/subscriptions/s1/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/c-sbe';     UpdateRing='Prod' }
+            )
+            Readiness = @(
+                [pscustomobject]@{ ClusterName='c-inprog';  ClusterResourceId='/subscriptions/s1/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/c-inprog'
+                                   UpdateState='UpdateInProgress'; HealthState='Success'; ReadyForUpdate=$false
+                                   AllAvailableUpdates=''; CurrentVersion='12.2510.0.0'; RecommendedUpdate=''; BlockingReasons=''; HasPrerequisiteUpdates='' }
+                [pscustomobject]@{ ClusterName='c-needatt'; ClusterResourceId='/subscriptions/s1/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/c-needatt'
+                                   UpdateState='NeedsAttention'; HealthState='Success'; ReadyForUpdate=$false
+                                   AllAvailableUpdates='12.2510.0.999'; CurrentVersion='12.2509.0.0'; RecommendedUpdate='12.2510.0.999'; BlockingReasons=''; HasPrerequisiteUpdates='' }
+                [pscustomobject]@{ ClusterName='c-warn';    ClusterResourceId='/subscriptions/s1/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/c-warn'
+                                   UpdateState='UpdateFailed'; HealthState='Warning'; ReadyForUpdate=$false
+                                   AllAvailableUpdates='12.2510.0.999'; CurrentVersion='12.2509.0.0'; RecommendedUpdate='12.2510.0.999'; BlockingReasons=''; HasPrerequisiteUpdates='' }
+                [pscustomobject]@{ ClusterName='c-prefail'; ClusterResourceId='/subscriptions/s1/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/c-prefail'
+                                   UpdateState='PreparationFailed'; HealthState='Success'; ReadyForUpdate=$false
+                                   AllAvailableUpdates='12.2510.0.999'; CurrentVersion='12.2509.0.0'; RecommendedUpdate='12.2510.0.999'; BlockingReasons=''; HasPrerequisiteUpdates='' }
+                [pscustomobject]@{ ClusterName='c-sbe';     ClusterResourceId='/subscriptions/s1/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/c-sbe'
+                                   UpdateState='UpdateAvailable'; HealthState='Success'; ReadyForUpdate=$false
+                                   AllAvailableUpdates='12.2510.0.999'; CurrentVersion='12.2509.0.0'; RecommendedUpdate='12.2510.0.999'; BlockingReasons=''; HasPrerequisiteUpdates='SBE 1.0.0' }
+            )
+            Health = @(
+                [pscustomobject]@{ ClusterName='c-inprog';  HealthState='Success'; Passed=$true;  CriticalCount=0; WarningCount=0; Failures='' }
+                [pscustomobject]@{ ClusterName='c-needatt'; HealthState='Success'; Passed=$true;  CriticalCount=0; WarningCount=0; Failures='' }
+                [pscustomobject]@{ ClusterName='c-warn';    HealthState='Warning'; Passed=$false; CriticalCount=0; WarningCount=1; Failures='' }
+                [pscustomobject]@{ ClusterName='c-prefail'; HealthState='Success'; Passed=$true;  CriticalCount=0; WarningCount=0; Failures='' }
+                [pscustomobject]@{ ClusterName='c-sbe';     HealthState='Success'; Passed=$true;  CriticalCount=0; WarningCount=0; Failures='' }
+            )
+            OutDir = $script:_s5_outDir
+        }
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory       { @($global:_s5_payload.Inventory) }
+            Mock Get-AzLocalClusterUpdateReadiness { @($global:_s5_payload.Readiness) }
+            Mock Test-AzLocalClusterHealth         { @($global:_s5_payload.Health) }
+            Export-AzLocalClusterUpdateReadinessReport -OutputDirectory $global:_s5_payload.OutDir | Out-Null
+        }
+        $summary = Get-Content -LiteralPath $script:_s5_ghSummaryFile -Raw
+        # Section header present (Not-Ready table is rendered).
+        $summary | Should -Match 'Not-Ready clusters \(review first\)'
+        # Each derived token surfaces in the table.
+        $summary | Should -Match 'UpdateInProgress \(run in-flight\)'
+        $summary | Should -Match 'UpdateState=NeedsAttention'
+        $summary | Should -Match 'UpdateState=UpdateFailed; HealthState=Warning'
+        $summary | Should -Match 'UpdateState=PreparationFailed'
+        $summary | Should -Match 'PrerequisiteRequired \(SBE update first\)'
     }
 }
 
@@ -18916,3 +18974,199 @@ Describe 'v0.8.81: Step.10 Fleet Health Status - KPI counting fix + Description 
 
 #endregion v0.8.81 Shared step-summary helpers + Step.10 KPI fix
 
+#region v0.8.82 Step.05 / Step.10 step-summary UX polish
+
+Describe 'v0.8.82: Step.10 Detailed Results Description inline-vs-collapse threshold' {
+    BeforeAll {
+        $script:src10v82 = Get-Content -LiteralPath "$PSScriptRoot/../Public/Export-AzLocalFleetHealthStatusReport.ps1" -Raw
+    }
+    It 'Inline-vs-collapse threshold is 280 characters (bumped from 120 in v0.8.82)' {
+        $script:src10v82 | Should -Match '\$descEscaped\.Length\s*-gt\s*280'
+    }
+    It 'Collapsed long-description rows are wrapped in details/summary HTML' {
+        $script:src10v82 | Should -Match '<details>[\s\S]*?<summary>view</summary>'
+    }
+    It 'Carries the v0.8.82 inline-vs-collapse threshold comment as a regression marker' {
+        $script:src10v82 | Should -Match 'v0\.8\.82.*120\s*->\s*280'
+    }
+}
+
+Describe 'v0.8.82: Step.05 Summary counts row uses iconMap cell unmodified (no trailing duplicate label)' {
+    BeforeAll {
+        $script:src5v82 = Get-Content -LiteralPath "$PSScriptRoot/../Public/Export-AzLocalClusterUpdateReadinessReport.ps1" -Raw
+    }
+    It 'ReadyForUpdate / UpToDate / ActionRequired Summary-counts rows emit the iconMap cell raw' {
+        # Each row is just "| {iconMap[Key]} | {count} |" with NO appended trailing word.
+        $script:src5v82 | Should -Match '\| \{0\} \| \{1\} \|"\s*-f\s*\$iconMap\[''ReadyForUpdate''\]'
+        $script:src5v82 | Should -Match '\| \{0\} \| \{1\} \|"\s*-f\s*\$iconMap\[''UpToDate''\]'
+        $script:src5v82 | Should -Match '\| \{0\} \| \{1\} \|"\s*-f\s*\$iconMap\[''ActionRequired''\]'
+    }
+    It 'HealthFailure row keeps its disambiguating parenthetical, no other label duplication' {
+        # The parenthetical lives inside the format template, then the iconMap cell is the {0} arg.
+        $script:src5v82 | Should -Match '\| \{0\} \(Clusters with Critical health failures\) \| \{1\} \|"\s*-f\s*\$iconMap\[''HealthFailure''\]'
+    }
+    It 'Carries the v0.8.82 duplicate-label fix comment as a regression marker' {
+        $script:src5v82 | Should -Match '(?s)v0\.8\.82.*duplicate trailing label'
+    }
+}
+
+#endregion v0.8.82 Step.05 / Step.10 step-summary UX polish
+
+
+#region v0.8.82 Item 5: LastUpdated column + UpdateLastAttempt audit tag (Step.05 / Step.08)
+
+Describe 'v0.8.82: Format-AzLocalUpdateLastAttemptTagValue (Private)' {
+    BeforeAll {
+        $moduleName = 'AzLocal.UpdateManagement'
+    }
+    It 'Round-trips a simple value' {
+        $val = & (Get-Module $moduleName) { Format-AzLocalUpdateLastAttemptTagValue -AttemptUtc ([datetime]::SpecifyKind('2026-06-14T21:28:23',[DateTimeKind]::Utc)) -Outcome 'UpdateStarted' -UpdateName 'Solution12.2605.1003.210' -Reason 'Update initiated successfully' }
+        $val | Should -Be '2026-06-14T21:28:23Z;UpdateStarted;Solution12.2605.1003.210;Update initiated successfully'
+    }
+    It 'Truncates output to 256 chars when Reason is long' {
+        $reason = 'A' * 1000
+        $val = & (Get-Module $moduleName) { param($r) Format-AzLocalUpdateLastAttemptTagValue -AttemptUtc ([datetime]::SpecifyKind('2026-06-14T21:28:23',[DateTimeKind]::Utc)) -Outcome 'HealthCheckBlocked' -UpdateName '' -Reason $r } $reason
+        $val.Length | Should -BeLessOrEqual 256
+        $val | Should -BeLike '*~'
+    }
+    It 'Replaces embedded semicolons in Reason with commas' {
+        $val = & (Get-Module $moduleName) { Format-AzLocalUpdateLastAttemptTagValue -AttemptUtc ([datetime]::SpecifyKind('2026-06-14T21:28:23',[DateTimeKind]::Utc)) -Outcome 'HealthCheckBlocked' -UpdateName '' -Reason 'a;b;c' }
+        $val | Should -Be '2026-06-14T21:28:23Z;HealthCheckBlocked;;a,b,c'
+    }
+    It 'Collapses whitespace in Reason to single spaces' {
+        $val = & (Get-Module $moduleName) { Format-AzLocalUpdateLastAttemptTagValue -AttemptUtc ([datetime]::SpecifyKind('2026-06-14T21:28:23',[DateTimeKind]::Utc)) -Outcome 'HealthCheckBlocked' -UpdateName '' -Reason "line1`r`n  line2" }
+        $val | Should -Be '2026-06-14T21:28:23Z;HealthCheckBlocked;;line1 line2'
+    }
+}
+
+Describe 'v0.8.82: ConvertFrom-AzLocalUpdateLastAttemptTagValue (Private)' {
+    BeforeAll {
+        $moduleName = 'AzLocal.UpdateManagement'
+    }
+    It 'Parses a round-tripped value' {
+        $p = & (Get-Module $moduleName) { ConvertFrom-AzLocalUpdateLastAttemptTagValue -Value '2026-06-14T21:28:23Z;UpdateStarted;Solution12.2605.1003.210;Update initiated successfully' }
+        $p | Should -Not -BeNullOrEmpty
+        $p.AttemptUtc | Should -Be ([datetime]::SpecifyKind('2026-06-14T21:28:23',[DateTimeKind]::Utc))
+        $p.Outcome    | Should -Be 'UpdateStarted'
+        $p.UpdateName | Should -Be 'Solution12.2605.1003.210'
+        $p.Reason     | Should -Be 'Update initiated successfully'
+    }
+    It 'Returns $null on empty input' {
+        (& (Get-Module $moduleName) { ConvertFrom-AzLocalUpdateLastAttemptTagValue -Value '' }) | Should -BeNullOrEmpty
+    }
+    It 'Returns $null on malformed input (non-ISO timestamp)' {
+        (& (Get-Module $moduleName) { ConvertFrom-AzLocalUpdateLastAttemptTagValue -Value 'NOT-A-DATE;Failed;X;y' }) | Should -BeNullOrEmpty
+    }
+    It 'Handles missing trailing fields' {
+        $p = & (Get-Module $moduleName) { ConvertFrom-AzLocalUpdateLastAttemptTagValue -Value '2026-06-14T21:28:23Z;HealthCheckBlocked' }
+        $p | Should -Not -BeNullOrEmpty
+        $p.UpdateName | Should -BeNullOrEmpty
+        $p.Reason     | Should -BeNullOrEmpty
+    }
+}
+
+Describe 'v0.8.82: Module exposes UpdateLastAttemptTagName script var' {
+    It 'Has $script:UpdateLastAttemptTagName == UpdateLastAttempt' {
+        $name = & (Get-Module 'AzLocal.UpdateManagement') { $script:UpdateLastAttemptTagName }
+        $name | Should -Be 'UpdateLastAttempt'
+    }
+}
+
+Describe 'v0.8.82: Get-AzLocalClusterUpdateReadiness emits LastUpdated column' {
+    BeforeAll {
+        $script:src5LU = Get-Content -LiteralPath "$PSScriptRoot/../Public/Get-AzLocalClusterUpdateReadiness.ps1" -Raw
+    }
+    It 'LastUpdated property appears in the success-row PSCustomObject' {
+        $script:src5LU | Should -Match 'LastUpdated\s*=\s*\$lastUpdated'
+    }
+    It 'LastUpdated is derived from packageVersions[*].lastUpdated (ALL packageTypes)' {
+        $script:src5LU | Should -Match 'most-recent packageVersions\[\]\.lastUpdated across ALL packageTypes'
+    }
+    It 'LastUpdated property appears as empty string in NotFound + Error rows' {
+        ($script:src5LU -split 'LastUpdated\s*=\s*''''').Count | Should -BeGreaterOrEqual 3
+    }
+}
+
+Describe 'v0.8.82: Export-AzLocalClusterUpdateReadinessReport adds Last Updated column + UpdateRing-first sort' {
+    BeforeAll {
+        $script:src5Rep = Get-Content -LiteralPath "$PSScriptRoot/../Public/Export-AzLocalClusterUpdateReadinessReport.ps1" -Raw
+    }
+    It 'Detail table header contains "Last Updated"' {
+        $script:src5Rep | Should -Match '\| Cluster \| UpdateRing \| Current version \| Current SBE version \| Update state \| Health \| Status \| Last Updated \| Recommended update \|'
+    }
+    It 'Detail rows include a Last Updated cell after Status' {
+        $script:src5Rep | Should -Match '\| \$statusCell \| \$lu \| \$ru \|'
+    }
+    It 'Sort order is UpdateRing -> Status -> ClusterName (ring first, not status first)' {
+        # The Sort-Object now leads with the UpdateRing expression before the status priority.
+        $script:src5Rep | Should -Match "sort UpdateRing first, then Status priority"
+    }
+}
+
+Describe 'v0.8.82: Start-AzLocalClusterUpdate writes UpdateLastAttempt tag at HealthCheckBlocked / UpdateStarted / Failed' {
+    BeforeAll {
+        $script:srcStart = Get-Content -LiteralPath "$PSScriptRoot/../Public/Start-AzLocalClusterUpdate.ps1" -Raw
+    }
+    It 'HealthCheckBlocked path calls Write-AzLocalUpdateLastAttemptTag with Outcome HealthCheckBlocked' {
+        $script:srcStart | Should -Match "(?s)Status\s*=\s*['""]HealthCheckBlocked['""].*?Write-AzLocalUpdateLastAttemptTag.*?-Outcome\s+'HealthCheckBlocked'"
+    }
+    It 'UpdateStarted path calls Write-AzLocalUpdateLastAttemptTag with Outcome UpdateStarted' {
+        $script:srcStart | Should -Match "(?s)Status\s*=\s*['""]UpdateStarted['""].*?Write-AzLocalUpdateLastAttemptTag.*?-Outcome\s+'UpdateStarted'"
+    }
+    It 'Failed path calls Write-AzLocalUpdateLastAttemptTag with Outcome Failed' {
+        $script:srcStart | Should -Match "(?s)Status\s*=\s*['""]Failed['""].*?Write-AzLocalUpdateLastAttemptTag.*?-Outcome\s+'Failed'"
+    }
+}
+
+Describe 'v0.8.82: Invoke-AzLocalSideloadedAutoResetForCluster clears UpdateLastAttempt independently' {
+    BeforeAll {
+        $script:srcReset = Get-Content -LiteralPath "$PSScriptRoot/../Private/Invoke-AzLocalSideloadedAutoResetForCluster.ps1" -Raw
+    }
+    It 'Reads the UpdateLastAttempt tag value' {
+        $script:srcReset | Should -Match 'Get-TagValue\s+-Tags\s+\$cluster\.tags\s+-Name\s+\$script:UpdateLastAttemptTagName'
+    }
+    It 'Clears the tag via Set-AzLocalClusterTagsMerge when latest Succeeded run matches OR attempt is stale' {
+        $script:srcReset | Should -Match 'Set-AzLocalClusterTagsMerge[\s\S]*?UpdateLastAttemptTagName[\s\S]*?=\s*\$null'
+    }
+    It 'Clears regardless of UpdateSideloaded state (independent of the sideloaded reset path)' {
+        $script:srcReset | Should -Match 'independent auto-clear for the UpdateLastAttempt audit tag'
+    }
+}
+
+Describe 'v0.8.82: Export-AzLocalUpdateRunMonitorReport reconciles UpdateLastAttempt vs observable runs' {
+    BeforeAll {
+        $script:src8 = Get-Content -LiteralPath "$PSScriptRoot/../Public/Export-AzLocalUpdateRunMonitorReport.ps1" -Raw
+    }
+    It 'Exposes -RecentAttemptWindowHours parameter (default 72)' {
+        $script:src8 | Should -Match '\[int\]\$RecentAttemptWindowHours\s*=\s*72'
+    }
+    It 'Builds an $attemptGaps list against UpdateLastAttempt tag' {
+        $script:src8 | Should -Match '\$attemptGaps\s*=\s*New-Object'
+        $script:src8 | Should -Match 'Get-TagValue\s+-Tags\s+\$tagBag\s+-Name\s+\$script:UpdateLastAttemptTagName'
+        $script:src8 | Should -Match 'ConvertFrom-AzLocalUpdateLastAttemptTagValue'
+    }
+    It 'Skips gaps where the matching run started at or after the attempt timestamp' {
+        $script:src8 | Should -Match '\$runStartUtc\s*-ge\s*\$parsed\.AttemptUtc\.AddMinutes\(-5\)'
+    }
+    It 'Always fetches inventory (even on by-update-ring scope) so tags are available' {
+        $script:src8 | Should -Match 'Get-AzLocalClusterInventory\s+-ScopeByUpdateRingTag\s+-UpdateRingValue\s+\$UpdateRing'
+    }
+    It 'Emits attempts_without_run pipeline output' {
+        $script:src8 | Should -Match "Set-AzLocalPipelineOutput\s+-Name\s+'attempts_without_run'\s+-Value"
+    }
+    It 'Renders a "Recent update attempts with no observable updateRun" section' {
+        $script:src8 | Should -Match 'Recent update attempts with no observable updateRun \(last \$\{RecentAttemptWindowHours\}h\)'
+    }
+    It 'Emits AttemptWithoutRun JUnit testcase Type per gap' {
+        $script:src8 | Should -Match "Type\s*=\s*'AttemptWithoutRun'"
+    }
+    It 'PassThru shape exposes AttemptWithoutRunCount + AttemptGaps' {
+        $script:src8 | Should -Match 'AttemptWithoutRunCount\s*=\s*\[int\]\$attemptGaps\.Count'
+        $script:src8 | Should -Match 'AttemptGaps\s*=\s*\$attemptGaps\.ToArray\(\)'
+    }
+    It 'Empty-inventory early-return PassThru also exposes AttemptWithoutRunCount' {
+        $script:src8 | Should -Match 'AttemptWithoutRunCount\s*=\s*0'
+    }
+}
+
+#endregion v0.8.82 Item 5: LastUpdated column + UpdateLastAttempt audit tag
