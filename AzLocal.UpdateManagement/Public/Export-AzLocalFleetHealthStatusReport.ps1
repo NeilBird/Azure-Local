@@ -362,6 +362,12 @@ function Export-AzLocalFleetHealthStatusReport {
             $clusterPortalUrl = if ($r.PSObject.Properties.Match('ClusterPortalUrl').Count -gt 0)  { [string]$r.ClusterPortalUrl }  else { '' }
             $targetResName    = if ($r.PSObject.Properties.Match('TargetResourceName').Count -gt 0){ [string]$r.TargetResourceName }else { '' }
             $targetResType    = if ($r.PSObject.Properties.Match('TargetResourceType').Count -gt 0){ [string]$r.TargetResourceType }else { '' }
+            # v0.8.80: surface the per-check `title` (often more specific than
+            # FailureReason/displayName) and `targetResourceID` (the full ARM
+            # id of the failing component - lets renderers deep-link to the
+            # exact server / volume / nic that failed).
+            $titleText        = if ($r.PSObject.Properties.Match('Title').Count -gt 0)              { [string]$r.Title }              else { '' }
+            $targetResId      = if ($r.PSObject.Properties.Match('TargetResourceID').Count -gt 0)   { [string]$r.TargetResourceID }   else { '' }
             $msg = "{0}: {1} (last occurred {2:yyyy-MM-ddTHH:mm:ssZ})" -f $r.Severity, $r.FailureReason, $r.LastOccurrence
             $bodyLines = @(
                 [string]$r.Description
@@ -369,8 +375,10 @@ function Export-AzLocalFleetHealthStatusReport {
                 "ResourceGroup: $($r.ResourceGroup)"
                 "SubscriptionId: $($r.SubscriptionId)"
             )
-            if ($targetResName) { $bodyLines += "TargetResourceName: $targetResName" }
-            if ($targetResType) { $bodyLines += "TargetResourceType: $targetResType" }
+            if ($titleText)        { $bodyLines += "Title: $titleText" }
+            if ($targetResName)    { $bodyLines += "TargetResourceName: $targetResName" }
+            if ($targetResType)    { $bodyLines += "TargetResourceType: $targetResType" }
+            if ($targetResId)      { $bodyLines += "TargetResourceID: $targetResId" }
             if ($clusterPortalUrl) { $bodyLines += "ClusterPortalUrl: $clusterPortalUrl" }
             $tc = @{
                 Name       = "{0} :: {1}" -f $r.ClusterName, $r.FailureReason
@@ -382,10 +390,12 @@ function Export-AzLocalFleetHealthStatusReport {
                     UpdateName         = [string]$r.FailureReason   # ITSM dedupe key slot
                     Status             = [string]$r.Severity
                     FailureReason      = [string]$r.FailureReason
+                    Title              = $titleText
                     Severity           = [string]$r.Severity
                     ClusterPortalUrl   = $clusterPortalUrl
                     TargetResourceName = $targetResName
                     TargetResourceType = $targetResType
+                    TargetResourceID   = $targetResId
                 })
                 Failure    = @{
                     Type    = [string]$r.Severity
@@ -578,15 +588,28 @@ function Export-AzLocalFleetHealthStatusReport {
             [void]$md.Add('<details>')
             [void]$md.Add(('<summary><strong>{0}</strong> &nbsp;&middot;&nbsp; {1} &nbsp;&middot;&nbsp; last {2}</summary>' -f $clusterCell, $sevTally, $lastOccStr))
             [void]$md.Add('')
-            [void]$md.Add('| Severity | Failure Reason | Failure Remediation | Target Resource Name | Target Resource Type | Last Occurrence | Resource Group |')
-            [void]$md.Add('|----------|----------------|---------------------|----------------------|----------------------|------------------|----------------|')
+            [void]$md.Add('| Severity | Failure Reason | Title | Failure Remediation | Target Resource Name | Target Resource Type | Last Occurrence | Resource Group |')
+            [void]$md.Add('|----------|----------------|-------|---------------------|----------------------|----------------------|------------------|----------------|')
             foreach ($r in $cl.Rows) {
                 $sevTag = if ($r.Severity -eq 'Critical') { '[Critical]' } else { '[Warning]' }
                 $rem    = if ($r.PSObject.Properties.Match('Remediation').Count -gt 0) { [string]$r.Remediation } else { '' }
                 $remCell = if ($rem -and $rem.StartsWith('https://')) { ('<a href="{0}">link</a>' -f $rem) } else { $rem }
                 $tName = if ($r.PSObject.Properties.Match('TargetResourceName').Count -gt 0) { [string]$r.TargetResourceName } else { '' }
                 $tType = if ($r.PSObject.Properties.Match('TargetResourceType').Count -gt 0) { [string]$r.TargetResourceType } else { '' }
-                [void]$md.Add(('| {0} | {1} | {2} | {3} | {4} | {5} | {6} |' -f $sevTag, $r.FailureReason, $remCell, $tName, $tType, $r.LastOccurrence, $r.ResourceGroup))
+                # v0.8.80: add per-check `title` (often the most specific
+                # single field - names the failing node/volume) and wrap
+                # TargetResourceName in a portal deep-link when the
+                # corresponding TargetResourceID is present.
+                $tTitle = if ($r.PSObject.Properties.Match('Title').Count -gt 0) { [string]$r.Title } else { '' }
+                $tResId = if ($r.PSObject.Properties.Match('TargetResourceID').Count -gt 0) { [string]$r.TargetResourceID } else { '' }
+                $tNameCell = if ($tResId -and $tName) {
+                    '<a href="https://portal.azure.com/#@/resource{0}">{1}</a>' -f $tResId, $tName
+                } elseif ($tResId) {
+                    '<a href="https://portal.azure.com/#@/resource{0}">link</a>' -f $tResId
+                } else {
+                    $tName
+                }
+                [void]$md.Add(('| {0} | {1} | {2} | {3} | {4} | {5} | {6} | {7} |' -f $sevTag, $r.FailureReason, $tTitle, $remCell, $tNameCell, $tType, $r.LastOccurrence, $r.ResourceGroup))
             }
             [void]$md.Add('</details>')
             [void]$md.Add('')

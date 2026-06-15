@@ -34,8 +34,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $script:ModuleInfo | Should -Not -BeNullOrEmpty
         }
 
-        It 'Should have version 0.8.79' {
-            $script:ModuleInfo.Version | Should -Be '0.8.79'
+        It 'Should have version 0.8.80' {
+            $script:ModuleInfo.Version | Should -Be '0.8.80'
         }
 
         It 'Module version constants are in sync between .psm1 and .psd1' {
@@ -8460,8 +8460,19 @@ schedule:
                 # At least one row should reference Ring1 and one Ring2
                 $md | Should -Match '`Ring1`'
                 $md | Should -Match '`Ring2`'
-                # At least one row should be marked as cycle-wrap (week 1 immediately after week 2 OR vice versa within 14 days)
-                $md | Should -Match '_\(cycle wraps\)_'
+                # Cycle-wrap marker only appears when the 14-day projection
+                # crosses the cycle boundary. With cycleWeeks=2 and a 14-day
+                # window starting on day-1 of the cycle the window ends exactly
+                # at the boundary - no wrap row is emitted. Compute today's
+                # day-in-cycle from the anchor and only assert when wrap is
+                # expected.
+                $anchor = [datetime]'2024-01-01'   # ISO week 1, 2024 (Monday)
+                $todayUtc = [datetime]::UtcNow.Date
+                $daysSinceAnchor = ($todayUtc - $anchor).Days
+                $dayInCycle = $daysSinceAnchor % 14
+                if ($dayInCycle -ne 0) {
+                    $md | Should -Match '_\(cycle wraps\)_'
+                }
             }
         }
 
@@ -18412,3 +18423,249 @@ Describe 'Sideload (v0.8.7): Add-AzLocalSideloadStepSummary' {
 }
 
 #endregion On-Prem Sideloading Automation (v0.8.7)
+
+#region v0.8.80 Pipeline-failure rendering improvements (Q1 / Q2 / Q3)
+
+Describe 'v0.8.80 Q3: Get-DeepestErrorMessage -IncludeDescription' {
+
+    It 'Returns a string by default (back-compat)' {
+        InModuleScope AzLocal.UpdateManagement {
+            $steps = @(
+                [PSCustomObject]@{
+                    name = 'L1'; status = 'Failed'; description = 'L1 desc'; errorMessage = 'L1 trace'
+                }
+            )
+            $r = Get-DeepestErrorMessage -Steps $steps
+            $r | Should -BeOfType ([string])
+            $r | Should -Be 'L1 trace'
+        }
+    }
+
+    It 'Returns a hashtable with Msg + Description when -IncludeDescription is set' {
+        InModuleScope AzLocal.UpdateManagement {
+            $steps = @(
+                [PSCustomObject]@{
+                    name = 'L1'; status = 'Failed'; description = 'outer desc'; errorMessage = 'outer trace'
+                    steps = @(
+                        [PSCustomObject]@{
+                            name = 'L2'; status = 'Error'; description = 'inner desc'; errorMessage = 'inner trace'
+                        }
+                    )
+                }
+            )
+            $r = Get-DeepestErrorMessage -Steps $steps -IncludeDescription
+            $r | Should -BeOfType ([hashtable])
+            $r.Msg | Should -Be 'inner trace'
+            $r.Description | Should -Be 'inner desc'
+        }
+    }
+
+    It 'Returns hashtable with empty string fields when no failed step is found (-IncludeDescription)' {
+        InModuleScope AzLocal.UpdateManagement {
+            $r = Get-DeepestErrorMessage -Steps @() -IncludeDescription
+            $r | Should -BeOfType ([hashtable])
+            $r.Msg | Should -Be ''
+            $r.Description | Should -Be ''
+        }
+    }
+
+    It 'Should NOT throw on a Failed step that lacks a description property (strict-mode guard)' {
+        InModuleScope AzLocal.UpdateManagement {
+            $steps = @(
+                [PSCustomObject]@{
+                    name = 'L1'; status = 'Failed'; errorMessage = 'no desc here'
+                }
+            )
+            { Get-DeepestErrorMessage -Steps $steps -IncludeDescription } | Should -Not -Throw
+            $r = Get-DeepestErrorMessage -Steps $steps -IncludeDescription
+            $r.Msg | Should -Be 'no desc here'
+            $r.Description | Should -Be ''
+        }
+    }
+}
+
+Describe 'v0.8.80 Q3: Resolve-AzLocalUpdateRunDeepestError captures Description' {
+
+    It 'Should emit a Description field on the result hashtable' {
+        InModuleScope AzLocal.UpdateManagement {
+            $steps = @(
+                [PSCustomObject]@{
+                    name = 'Outer'; status = 'Failed'; description = 'outer desc'; errorMessage = 'outer trace'
+                    steps = @(
+                        [PSCustomObject]@{
+                            name = 'Deepest'; status = 'Error'; description = 'deepest desc'; errorMessage = 'deepest trace'
+                        }
+                    )
+                }
+            )
+            $r = Resolve-AzLocalUpdateRunDeepestError -Steps $steps
+            $r | Should -BeOfType ([hashtable])
+            $r.ContainsKey('Description') | Should -BeTrue
+            $r.Description | Should -Be 'deepest desc'
+            $r.Msg | Should -Be 'deepest trace'
+        }
+    }
+}
+
+Describe 'v0.8.80 Q3: Format-AzLocalUpdateRun emits ErrorDescription' {
+
+    It 'Should always emit an ErrorDescription property (empty string when no error)' {
+        InModuleScope AzLocal.UpdateManagement {
+            $run = [PSCustomObject]@{
+                name = '2026-01-01T00:00:00Z'
+                properties = [PSCustomObject]@{
+                    state = 'Succeeded'
+                    timeStarted = (Get-Date).ToUniversalTime().ToString('o')
+                    lastUpdatedTime = (Get-Date).ToUniversalTime().ToString('o')
+                    steps = @()
+                }
+            }
+            $out = Format-AzLocalUpdateRun -Run $run
+            $out.PSObject.Properties.Name | Should -Contain 'ErrorDescription'
+            $out.PSObject.Properties.Name | Should -Contain 'ErrorMessage'
+        }
+    }
+
+    It 'Should populate ErrorDescription from the deepest Failed step description' {
+        InModuleScope AzLocal.UpdateManagement {
+            $run = [PSCustomObject]@{
+                name = '2026-01-01T00:00:00Z'
+                properties = [PSCustomObject]@{
+                    state = 'Failed'
+                    timeStarted = (Get-Date).ToUniversalTime().ToString('o')
+                    lastUpdatedTime = (Get-Date).ToUniversalTime().ToString('o')
+                    progress = [PSCustomObject]@{
+                        steps = @(
+                            [PSCustomObject]@{
+                                name = 'Stage'; status = 'Failed'; description = 'Outer stage desc'; errorMessage = 'outer trace'
+                                steps = @(
+                                    [PSCustomObject]@{
+                                        name = 'Inner'; status = 'Error'; description = 'Inner step desc'; errorMessage = 'inner trace'
+                                    }
+                                )
+                            }
+                        )
+                    }
+                }
+            }
+            $out = Format-AzLocalUpdateRun -Run $run
+            $out.ErrorDescription | Should -Be 'Inner step desc'
+            $out.ErrorMessage | Should -Be 'inner trace'
+        }
+    }
+}
+
+Describe 'v0.8.80 Q3: Get-AzLocalUpdateRuns -PassThru exposes ErrorDescription' {
+
+    It 'Should declare ErrorDescription on the live-row PSCustomObject shape (Add-Member contract)' {
+        # Read from the dev-tree source (NOT a possibly-stale PSGallery
+        # copy of the module).
+        $src = Get-Content "$PSScriptRoot/../Public/Get-AzLocalUpdateRuns.ps1" -Raw
+        $src | Should -Match 'ErrorDescription\s*='
+    }
+}
+
+Describe 'v0.8.80 Q3: Get-AzLocalUpdateRunFailures exposes DeepestStepDescription' {
+
+    It 'Should declare DeepestStepDescription column in the Detail Select projection' {
+        $src = Get-Content "$PSScriptRoot/../Public/Get-AzLocalUpdateRunFailures.ps1" -Raw
+        $src | Should -Match 'DeepestStepDescription'
+    }
+
+    It 'Should declare EnrichWithHealthEvidence parameter (defaults true) for Q1 opt-out' {
+        $command = Get-Command Get-AzLocalUpdateRunFailures
+        $command.Parameters.Keys | Should -Contain 'EnrichWithHealthEvidence'
+        $command.Parameters['EnrichWithHealthEvidence'].ParameterType.FullName | Should -Be 'System.Boolean'
+    }
+}
+
+Describe 'v0.8.80 Q1: Get-AzLocalUpdateRunHealthEvidence helper' {
+
+    It 'Should be a private (non-exported) helper function' {
+        InModuleScope AzLocal.UpdateManagement {
+            $command = Get-Command Get-AzLocalUpdateRunHealthEvidence -ErrorAction SilentlyContinue
+            $command | Should -Not -BeNullOrEmpty
+        }
+        # Should NOT be exported as a public cmdlet
+        (Get-Command Get-AzLocalUpdateRunHealthEvidence -ErrorAction SilentlyContinue -Module AzLocal.UpdateManagement | Where-Object { $_.CommandType -eq 'Function' -and $_.Visibility -eq 'Public' }) | Should -BeNullOrEmpty
+    }
+
+    It 'Should declare WindowBefore / WindowAfter / MinSeverity parameters' {
+        InModuleScope AzLocal.UpdateManagement {
+            $command = Get-Command Get-AzLocalUpdateRunHealthEvidence
+            $command.Parameters.Keys | Should -Contain 'ClusterResourceId'
+            $command.Parameters.Keys | Should -Contain 'RunStartTime'
+            $command.Parameters.Keys | Should -Contain 'RunEndTime'
+            $command.Parameters.Keys | Should -Contain 'WindowBefore'
+            $command.Parameters.Keys | Should -Contain 'WindowAfter'
+            $command.Parameters.Keys | Should -Contain 'MinSeverity'
+        }
+    }
+
+    It 'Should return @() (empty) when the underlying ARG query throws' {
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Invoke-AzResourceGraphQuery { throw 'simulated ARG failure' }
+            # Wrap with @() because the function returns an empty pipeline
+            # on the throw-path; assignment receives $null without @().
+            $r = @(Get-AzLocalUpdateRunHealthEvidence `
+                -ClusterResourceId '/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/c1' `
+                -RunStartTime (Get-Date).AddHours(-1) `
+                -RunEndTime (Get-Date) 6>$null)
+            $r.Count | Should -Be 0
+        }
+    }
+}
+
+Describe 'v0.8.80 Q2: Get-AzLocalFleetHealthFailures exposes Title + TargetResourceID' {
+
+    It 'Should declare Title in the Detail Select projection source' {
+        $src = Get-Content "$PSScriptRoot/../Public/Get-AzLocalFleetHealthFailures.ps1" -Raw
+        $src | Should -Match 'Title\s*='
+        $src | Should -Match 'TargetResourceID'
+    }
+}
+
+Describe 'v0.8.80 Q2: Test-AzLocalClusterHealth exposes Title + TargetResourceID' {
+
+    It 'Should declare Title + TargetResourceID in the failure PSCustomObject source' {
+        $src = Get-Content "$PSScriptRoot/../Public/Test-AzLocalClusterHealth.ps1" -Raw
+        $src | Should -Match 'Title\s*='
+        $src | Should -Match 'TargetResourceID'
+    }
+}
+
+Describe 'v0.8.80 Q3: Export-AzLocalUpdateRunMonitorReport renders description + trace' {
+
+    It 'Source includes ErrorDescription in row schema (Q3 wiring)' {
+        $src = Get-Content "$PSScriptRoot/../Public/Export-AzLocalUpdateRunMonitorReport.ps1" -Raw
+        $src | Should -Match 'ErrorDescription'
+    }
+}
+
+Describe 'v0.8.80 Q1+Q3: Export-AzLocalFleetUpdateStatusReport renders evidence + description' {
+
+    It 'Source includes DeepestStepDescription in the CSV projection (Q3 wiring)' {
+        $src = Get-Content "$PSScriptRoot/../Public/Export-AzLocalFleetUpdateStatusReport.ps1" -Raw
+        $src | Should -Match 'DeepestStepDescription'
+    }
+
+    It 'Source includes HealthCheckEvidence rendering (Q1 wiring)' {
+        $src = Get-Content "$PSScriptRoot/../Public/Export-AzLocalFleetUpdateStatusReport.ps1" -Raw
+        $src | Should -Match 'HealthCheckEvidence'
+    }
+}
+
+Describe 'v0.8.80 Q2: Export-AzLocalFleetHealthStatusReport renders Title + portal deep-link' {
+
+    It 'Source includes Title column in markdown header (Q2 wiring)' {
+        $src = Get-Content "$PSScriptRoot/../Public/Export-AzLocalFleetHealthStatusReport.ps1" -Raw
+        $src | Should -Match '\|\s*Title\s*\|'
+    }
+
+    It 'Source includes portal deep-link wrapper for TargetResourceID' {
+        $src = Get-Content "$PSScriptRoot/../Public/Export-AzLocalFleetHealthStatusReport.ps1" -Raw
+        $src | Should -Match 'portal\.azure\.com/#@/resource'
+    }
+}
+
+#endregion v0.8.80 Pipeline-failure rendering improvements (Q1 / Q2 / Q3)

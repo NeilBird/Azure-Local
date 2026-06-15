@@ -506,7 +506,7 @@ function Export-AzLocalFleetUpdateStatusReport {
 
     if ($runHistoryCount -gt 0) {
         $runFailures |
-            Select-Object ClusterName, UpdateName, State, Status, CurrentStep, Duration, StartTime, LastUpdated, DeepestStepName, ErrorCategory, DeepestErrMsg, UpdateRunPortalUrl, ClusterResourceId, RunId |
+            Select-Object ClusterName, UpdateName, State, Status, CurrentStep, Duration, StartTime, LastUpdated, DeepestStepName, DeepestStepDescription, ErrorCategory, DeepestErrMsg, UpdateRunPortalUrl, ClusterResourceId, RunId |
             Export-Csv -Path $runHistoryCsv -NoTypeInformation -Force
         $runFailures | ConvertTo-Json -Depth 4 | Out-File -FilePath $runHistoryJson -Encoding utf8
     }
@@ -659,8 +659,19 @@ function Export-AzLocalFleetUpdateStatusReport {
             try { $rowSec = [int][math]::Round([double]$f.DurationMinutes * 60, 0) } catch { $rowSec = 0 }
             if ($rowSec -lt 0) { $rowSec = 0 }
         }
-        $errBody = if ($f.DeepestErrMsg) {
+        # v0.8.80: combine deepest-step description (what was running)
+        # with errorMessage (why it failed) so the JUnit body shows both.
+        # Previously DeepestStepDescription was silently dropped because
+        # the coalesce preferred errorMessage. 4000-char total cap is
+        # preserved to keep the XML pageable.
+        $deepDesc = if ($f.PSObject.Properties['DeepestStepDescription']) { [string]$f.DeepestStepDescription } else { '' }
+        $errBody = if ($deepDesc -and $f.DeepestErrMsg) {
+            $combined = '{0}{1}{1}Trace: {2}' -f $deepDesc, [System.Environment]::NewLine, $f.DeepestErrMsg
+            if ($combined.Length -gt 4000) { $combined.Substring(0,4000) + ' ... (truncated)' } else { $combined }
+        } elseif ($f.DeepestErrMsg) {
             if ([string]$f.DeepestErrMsg.Length -gt 4000) { ([string]$f.DeepestErrMsg).Substring(0,4000) + ' ... (truncated)' } else { [string]$f.DeepestErrMsg }
+        } elseif ($deepDesc) {
+            if ($deepDesc.Length -gt 4000) { $deepDesc.Substring(0,4000) + ' ... (truncated)' } else { $deepDesc }
         } else { '(no error message captured)' }
 
         $sysOutLines = @(
@@ -676,6 +687,23 @@ function Export-AzLocalFleetUpdateStatusReport {
             "Portal Link: $($f.UpdateRunPortalUrl)"
         )
         if ($f.StackTracePreview) { $sysOutLines += "Stack Trace Preview: $($f.StackTracePreview)" }
+
+        # v0.8.80: surface same-cluster Critical healthCheckResult entries
+        # for HealthCheck-category failures as a delimited block in systemOut
+        # so operators can see WHICH check fired without leaving the JUnit
+        # report.
+        if ($f.PSObject.Properties['HealthCheckEvidence'] -and $f.HealthCheckEvidence -and @($f.HealthCheckEvidence).Count -gt 0) {
+            $sysOutLines += ''
+            $sysOutLines += '---- Same-cluster Critical health check evidence (+/-2h window) ----'
+            foreach ($ev in @($f.HealthCheckEvidence)) {
+                $tsText  = if ($ev.Timestamp) { ([datetime]$ev.Timestamp).ToString('s') + 'Z' } else { '' }
+                $titleTxt = if ($ev.Title) { $ev.Title } elseif ($ev.FailureReason) { $ev.FailureReason } else { '(unknown)' }
+                $targetTxt = if ($ev.TargetResourceName) { $ev.TargetResourceName } else { '-' }
+                $sysOutLines += ('[{0}] {1}  (severity {2}, target {3})' -f $tsText, $titleTxt, $ev.Severity, $targetTxt)
+                if ($ev.TargetResourceID) { $sysOutLines += ('  TargetResourceID: {0}' -f $ev.TargetResourceID) }
+                if ($ev.Remediation)      { $sysOutLines += ('  Remediation: {0}' -f $ev.Remediation) }
+            }
+        }
 
         $fClusterPortal = if ($f.ClusterResourceId) { "https://portal.azure.com/#@/resource$($f.ClusterResourceId)" } else { '' }
 
@@ -932,10 +960,42 @@ function Export-AzLocalFleetUpdateStatusReport {
             [void]$md.Add('| Cluster Name | Update Name | Update State | Status | Current Step | Verbose Error Details | Duration | Time Started | Last Updated |')
             [void]$md.Add('|---|---|---|---|---|---|---|---|---|')
             foreach ($r in $renderRows) {
-                $errCell = if ($r.DeepestErrMsg) {
-                    $e = [string]$r.DeepestErrMsg
-                    $e = $e -replace '&','&amp;' -replace '<','&lt;' -replace '>','&gt;'
-                    $e = $e -replace "`r`n",'<br>' -replace "`n",'<br>' -replace '\|','\|'
+                $errCell = if ($r.DeepestErrMsg -or ($r.PSObject.Properties['DeepestStepDescription'] -and $r.DeepestStepDescription)) {
+                    # v0.8.80: surface the deepest step's `description`
+                    # (human-readable line) as a heading inside the panel
+                    # before the trace, so operators read 'what step was
+                    # running' before 'what threw'. Previously the
+                    # description was silently dropped.
+                    $deepDescRaw = if ($r.PSObject.Properties['DeepestStepDescription']) { [string]$r.DeepestStepDescription } else { '' }
+                    $errRaw      = [string]$r.DeepestErrMsg
+                    $deepDescHtml = if ($deepDescRaw) {
+                        $d = $deepDescRaw -replace '&','&amp;' -replace '<','&lt;' -replace '>','&gt;'
+                        $d = $d -replace "`r`n",'<br>' -replace "`n",'<br>' -replace '\|','\|'
+                        '<b>Step:</b> ' + $d + '<br><br>'
+                    } else { '' }
+                    $eHtml = if ($errRaw) {
+                        $e = $errRaw -replace '&','&amp;' -replace '<','&lt;' -replace '>','&gt;'
+                        $e = $e -replace "`r`n",'<br>' -replace "`n",'<br>' -replace '\|','\|'
+                        '<code>' + $e + '</code>'
+                    } else { '<i>(no errorMessage trace)</i>' }
+
+                    # v0.8.80: render Q1 same-cluster Critical
+                    # healthCheckResult evidence as an inline list when
+                    # ErrorCategory='HealthCheck'.
+                    $evidenceBlock = ''
+                    if ($r.PSObject.Properties['HealthCheckEvidence'] -and $r.HealthCheckEvidence -and @($r.HealthCheckEvidence).Count -gt 0) {
+                        $evBullets = (@($r.HealthCheckEvidence) | Select-Object -First 10 | ForEach-Object {
+                            $tsTxt    = if ($_.Timestamp) { ([datetime]$_.Timestamp).ToString('s') + 'Z' } else { '' }
+                            $titleTxt = if ($_.Title) { $_.Title } elseif ($_.FailureReason) { $_.FailureReason } else { '(unknown)' }
+                            $titleTxt = $titleTxt -replace '&','&amp;' -replace '<','&lt;' -replace '>','&gt;' -replace '\|','\|'
+                            $tgtTxt   = if ($_.TargetResourceName) { $_.TargetResourceName } else { '-' }
+                            $tgtTxt   = $tgtTxt -replace '&','&amp;' -replace '<','&lt;' -replace '>','&gt;' -replace '\|','\|'
+                            ('&bull; [' + $tsTxt + '] ' + $titleTxt + ' <i>(' + $_.Severity + ', target ' + $tgtTxt + ')</i>')
+                        }) -join '<br>'
+                        $evCount   = @($r.HealthCheckEvidence).Count
+                        $evidenceBlock = '<br><br><b>Same-cluster Critical health check evidence (' + $evCount + ', most recent first, +/-2h window):</b><br>' + $evBullets
+                    }
+
                     $extraBlock = ''
                     if ($r.EarlierOccurrences -and @($r.EarlierOccurrences).Count -gt 0) {
                         $bullets = (@($r.EarlierOccurrences) | ForEach-Object {
@@ -944,7 +1004,7 @@ function Export-AzLocalFleetUpdateStatusReport {
                         }) -join '<br>'
                         $extraBlock = '<br><br><b>Earlier occurrences with the same error (' + (@($r.EarlierOccurrences).Count) + '):</b><br>' + $bullets
                     }
-                    '<details><summary>Show error</summary><br><code>' + $e + '</code>' + $extraBlock + '</details>'
+                    '<details><summary>Show error</summary><br>' + $deepDescHtml + $eHtml + $evidenceBlock + $extraBlock + '</details>'
                 }
                 else { '_(none)_' }
                 # target="_blank" intentionally omitted: GitHub Actions + ADO step-summary

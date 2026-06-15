@@ -217,10 +217,12 @@ extensibilityresources
                 Severity           = $sev
                 FailureName        = "$($hc.name)"
                 FailureReason      = "$($hc.displayName)"
+                Title              = "$($hc.title)"
                 Description        = "$($hc.description)"
                 Remediation        = "$($hc.remediation)"
                 TargetResourceName = "$($hc.targetResourceName)"
                 TargetResourceType = "$($hc.targetResourceType)"
+                TargetResourceID   = "$($hc.targetResourceID)"
                 LastOccurrence     = $ts
             })
         }
@@ -316,7 +318,10 @@ $ringFilter
         # Detail view: pass-through after surfacing severity ordering so that
         # JUnit and CSV consumers see Critical rows before Warning rows.
         # v0.7.70 added TargetResourceName, TargetResourceType, ClusterPortalUrl.
-        $output = @($rows | Select-Object ClusterName, ResourceGroup, SubscriptionId, Severity, FailureReason, FailureName, Description, Remediation, TargetResourceName, TargetResourceType, LastOccurrence, ClusterResourceId, ClusterPortalUrl)
+        # v0.8.80 added Title, TargetResourceID (the full ARM resource id
+        # of the failing component; lets renderers deep-link Server/Volume
+        # health failures back to the exact node or volume in the portal).
+        $output = @($rows | Select-Object ClusterName, ResourceGroup, SubscriptionId, Severity, FailureReason, FailureName, Title, Description, Remediation, TargetResourceName, TargetResourceType, TargetResourceID, LastOccurrence, ClusterResourceId, ClusterPortalUrl)
     }
 
     # Export if requested.

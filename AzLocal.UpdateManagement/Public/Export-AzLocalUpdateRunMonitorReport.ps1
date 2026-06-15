@@ -403,6 +403,7 @@ function Export-AzLocalUpdateRunMonitorReport {
             Duration             = $r.Duration
             CurrentStepDetail    = $r.CurrentStepDetail
             ErrorMessage         = if ($r.PSObject.Properties['ErrorMessage']) { [string]$r.ErrorMessage } else { '' }
+            ErrorDescription     = if ($r.PSObject.Properties['ErrorDescription']) { [string]$r.ErrorDescription } else { '' }
         }
     }
     $rows = @($rows)
@@ -428,7 +429,18 @@ function Export-AzLocalUpdateRunMonitorReport {
         $safeName = ($r.ClusterName -replace '[^A-Za-z0-9_.-]', '_')
         $caseName = "$safeName - $($r.UpdateName) - $($r.CurrentStep)"
         if ($r.HasStepError) {
-            $errSnippet = if ($r.ErrorMessage) { $r.ErrorMessage } else { '(no errorMessage on deepest failed step)' }
+            # v0.8.80: prefer the deepest step's `description` (human-readable
+            # line) PLUS the errorMessage trace when both are present, so the
+            # operator sees WHAT failed and WHY in the same cell.
+            $errSnippet = if ($r.ErrorDescription -and $r.ErrorMessage) {
+                '{0} - {1}' -f $r.ErrorDescription, $r.ErrorMessage
+            } elseif ($r.ErrorMessage) {
+                $r.ErrorMessage
+            } elseif ($r.ErrorDescription) {
+                $r.ErrorDescription
+            } else {
+                '(no errorMessage on deepest failed step)'
+            }
             $msg = ('Progress status is Error (state still InProgress) - step is stuck. CurrentStep: {0}. StepElapsed: {1}. ErrorMessage: {2}' -f $r.CurrentStep, $r.StepElapsedDisplay, $errSnippet)
             $testCases.Add(@{
                 Name      = $caseName
@@ -466,7 +478,17 @@ function Export-AzLocalUpdateRunMonitorReport {
     foreach ($r in ($unresolvedFailed | Sort-Object @{Expression='EndTimeUtc';Descending=$true})) {
         $safeName = ($r.ClusterName -replace '[^A-Za-z0-9_.-]', '_')
         $caseName = "$safeName - $($r.UpdateName) - FAILED"
-        $detail = if ($r.ErrorMessage) { $r.ErrorMessage } elseif ($r.CurrentStepDetail) { $r.CurrentStepDetail } else { $r.CurrentStep }
+        $detail = if ($r.ErrorDescription -and $r.ErrorMessage) {
+            '{0} - {1}' -f $r.ErrorDescription, $r.ErrorMessage
+        } elseif ($r.ErrorMessage) {
+            $r.ErrorMessage
+        } elseif ($r.ErrorDescription) {
+            $r.ErrorDescription
+        } elseif ($r.CurrentStepDetail) {
+            $r.CurrentStepDetail
+        } else {
+            $r.CurrentStep
+        }
         $msg = ('Run failed at {0} UTC. Step: {1}. Detail: {2}.' -f $r.EndTimeUtc, $r.CurrentStep, $detail)
         $testCases.Add(@{
             Name      = $caseName
@@ -582,7 +604,18 @@ function Export-AzLocalUpdateRunMonitorReport {
         [void]$md.Add('|---------|--------|-------------|-------------|-----------------------|--------|')
         foreach ($r in ($unresolvedFailed | Sort-Object @{Expression='EndTimeUtc';Descending=$true})) {
             $cs = if ($r.CurrentStep) { $r.CurrentStep } else { '-' }
-            $rawDetail = if ($r.ErrorMessage) { [string]$r.ErrorMessage } elseif ($r.CurrentStepDetail) { [string]$r.CurrentStepDetail } else { '' }
+            # v0.8.80: combine the deepest step's description (the human
+            # 'what step was running') with its errorMessage (the trace).
+            # Falls back through ErrorMessage -> ErrorDescription -> CurrentStepDetail.
+            $rawDetail = if ($r.ErrorDescription -and $r.ErrorMessage) {
+                ('{0}{1}{1}Trace: {2}' -f $r.ErrorDescription, [System.Environment]::NewLine, $r.ErrorMessage)
+            } elseif ($r.ErrorMessage) {
+                [string]$r.ErrorMessage
+            } elseif ($r.ErrorDescription) {
+                [string]$r.ErrorDescription
+            } elseif ($r.CurrentStepDetail) {
+                [string]$r.CurrentStepDetail
+            } else { '' }
             $detailCell = if ([string]::IsNullOrWhiteSpace($rawDetail)) { '_(no error detail)_' } else {
                 $e = $rawDetail -replace '&','&amp;' -replace '<','&lt;' -replace '>','&gt;'
                 $e = $e -replace "`r`n",'<br>' -replace "`n",'<br>' -replace '\|','\|'

@@ -2,7 +2,7 @@
 
 > ⚠️ **Disclaimer**: This module is **NOT** a Microsoft supported service offering or product. It is provided as example code only, with no warranty or official support. Refer to the [MIT license](https://github.com/NeilBird/Azure-Local/blob/main/LICENSE) for further information.
 
-**Latest Version:** v0.8.79 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.8.79)
+**Latest Version:** v0.8.80 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.8.80)
 
 > 📢 **Renamed in v0.7.3**: this module was previously published as `AzStackHci.ManageUpdates`. The new module name aligns with the Azure Local product name (_Microsoft retired the *Azure Stack HCI* brand in late 2024_). The module GUID is preserved across the rename. If you have the old name installed, run:
 >
@@ -23,7 +23,7 @@ Azure Local REST API specification (includes update management endpoints): https
 **This README (overview + most-recent release notes):**
 
 - [Where to Start](#where-to-start)
-- [What's New in v0.8.79](#whats-new-in-v0879)
+- [What's New in v0.8.80](#whats-new-in-v0880)
 - [Files](#files)
 - [Prerequisites](#prerequisites)
 - [RBAC Requirements](#rbac-requirements) (summary; full reference in [docs/rbac.md](docs/rbac.md))
@@ -86,32 +86,36 @@ If you are new to this module, work through these in order from a regular PowerS
 
 > Most CI/CD pipelines in [Automation-Pipeline-Examples/](Automation-Pipeline-Examples/) are direct implementations of one of these workflows. Start there if you want a copy-pasteable end-to-end pipeline.
 
-## What's New in v0.8.79
+## What's New in v0.8.80
 
-**Patch release. Adds an operator-only "Force Immediate Update" break-glass override** to the Step.07 apply-updates pipeline. Intended for emergency / out-of-window patching driven by an on-call operator; **defaults to OFF**; **cannot be reached from the scheduled `apply-updates-schedule.yml` configuration file**.
+**Minor release. Pipeline failure-rendering improvements** bundled as three additive changes targeting the Step.05 / Step.08 / Step.09 / Step.10 step summaries. All changes are backward-compatible. One new private helper (`Get-AzLocalUpdateRunHealthEvidence`).
 
-### What it does
+### Q1 - HealthCheck failure enrichment (Step.09 `fleet-update-status`)
 
-When enabled, the per-cluster Step 3c maintenance-window gate (`UpdateStartWindow` / `UpdateExclusionsWindow` tags) is **bypassed** and updates start regardless of the current UTC time. All other readiness gates (connectivity, health, sideload status, `UpdateExcluded` operator hard-override) continue to apply. The override is opt-in per-run on both pipeline hosts:
+When `Get-AzLocalUpdateRunFailures` categorises a failed run as `ErrorCategory='HealthCheck'` (the default), it now attaches a `HealthCheckEvidence` array column carrying same-cluster **Critical** `updateSummaries.healthCheckResult` entries that fired within a `+/-2h` window around the run. The Step.09 markdown step summary renders this evidence as bullets inside the per-row `<details>` panel and the JUnit XML systemOut block lists each evidence entry's timestamp / title / severity / target resource id. New parameter `[bool]$EnrichWithHealthEvidence = $true` lets CSV-only consumers opt out of the extra ARG hops.
 
-- **GitHub Actions:** new `force_immediate_update` `workflow_dispatch` choice input (default `'false'`). Description rendered in the Run Workflow GUI starts with `WARNING:` and explicitly notes `MANUAL RUNS ONLY`.
-- **Azure DevOps:** new `forceImmediateUpdate` boolean `parameters:` entry (default `false`). `displayName:` in the Queue Build GUI starts with `WARNING:` and explicitly notes `MANUAL QUEUE ONLY`.
-- **Direct cmdlet use:** new `Invoke-AzLocalReadinessGatedClusterUpdate -ForceImmediateUpdate` switch (which forwards `-IgnoreScheduleTags` to `Start-AzLocalClusterUpdate` for every cluster in the readiness CSV). A high-visibility warning banner (`::warning::` on GHA, `##vso[task.logissue type=warning]` on ADO, `Write-Warning` otherwise) is emitted at the top of the run when the override fires.
+The new private helper `Get-AzLocalUpdateRunHealthEvidence` performs a single ARG hop per HealthCheck-category row, scoped to one cluster id, reusing the existing anti-mv-expand 128-cap projection pattern.
 
-### Security / anti-injection design
+### Q2 - Title and TargetResourceID columns (Step.05 + Step.10)
 
-Two layers of defence prevent a scheduled cron firing from honouring the override:
+Both fleet-wide (`Get-AzLocalFleetHealthFailures`, Step.10) and per-cluster (`Test-AzLocalClusterHealth`, Step.05) health failure outputs now project two extra fields off every `properties.healthCheckResult` entry:
 
-1. **GitHub Actions YAML expression collapse**: `${{ github.event_name == 'workflow_dispatch' && github.event.inputs.force_immediate_update || 'false' }}` - any `schedule` / `push` / `pull_request` / `repository_dispatch` event sees `'false'` even if a malicious upstream tried to inject the input.
-2. **Azure DevOps runtime guard**: the apply step rechecks `$(Build.Reason) -eq 'Manual'` before flipping the switch. Scheduled / CI / PR runs log a `##vso[task.logissue type=warning]` explaining the parameter was ignored.
+- **`Title`** - the per-check title (often more specific than `displayName`, e.g. names the failing node or volume).
+- **`TargetResourceID`** - full ARM id of the failing component; lets renderers deep-link Server / Volume health failures back to the exact node or volume.
 
-The override is **deliberately not surfaced** by `New-AzLocalApplyUpdatesScheduleConfig` / `Resolve-AzLocalPipelineUpdateRing` / `Get-AzLocalApplyUpdatesScheduleAudit` - there is no path to enable it from `apply-updates-schedule.yml`. A Pester sweep asserts this.
+`Export-AzLocalFleetHealthStatusReport` adds Title as a markdown column and wraps TargetResourceName in a portal hyperlink when TargetResourceID is present. `Test-AzLocalClusterHealth` adds Title to the dedup composite key, the `Format-Table` console output, and the JUnit `Message` field.
 
-The `UpdateExcluded` operator hard-override (`AzureLocalManagement.UpdateExcluded=true`) is INTENTIONALLY still respected by `Force Immediate Update` - the break-glass override is about time-window gates, not per-cluster opt-outs. If a cluster must be force-included despite an `UpdateExcluded` tag, remove the tag first.
+### Q3 - Surface BOTH deepest-step `description` AND `errorMessage` (Step.08 + Step.09)
 
-`GENERATED_AGAINST_MODULE_VERSION` bumped from `0.8.78` to `0.8.79` across all bundled pipeline templates.
+The two deepest-error walkers (`Resolve-AzLocalUpdateRunDeepestError` and `Get-DeepestErrorMessage`) now capture step `description` at the same recursion site as `errorMessage` (previously description was silently dropped via coalesce). New `DeepestStepDescription` column on `Get-AzLocalUpdateRunFailures`; new `ErrorDescription` field on `Format-AzLocalUpdateRun` / `Get-AzLocalUpdateRuns -PassThru`. The Step.08 (`Export-AzLocalUpdateRunMonitorReport`) and Step.09 (`Export-AzLocalFleetUpdateStatusReport`) renderers combine `description + errorMessage` in markdown failure cells and JUnit bodies. Cross-reference `.NOTES` headers added to the four parallel functions so future maintainers know to keep them in sync.
 
-See [CHANGELOG.md](CHANGELOG.md#0879---2026-06-15) for the full v0.8.79 entry. See [`What's New in v0.8.78`](docs/release-history.md#whats-new-in-v0878) in the Release History for the previous release.
+### Notes
+
+- **No new exports** (count unchanged at 60).
+- **Step.07** (`Add-AzLocalApplyUpdatesStepSummary`) was deliberately left out of the Q1 / Q3 wiring because its data source is the live `Invoke-AzLocalReadinessGatedClusterUpdate` result row (apply-results.json), not `Get-AzLocalUpdateRunFailures`. Surfacing Q1 / Q3 at Step.07 requires a separate upstream change and is tracked for a follow-up release.
+- **`GENERATED_AGAINST_MODULE_VERSION`** bumped from `0.8.79` to `0.8.80` across all bundled pipeline templates.
+
+See [CHANGELOG.md](CHANGELOG.md#0880---2026-06-16) for the full v0.8.80 entry. See [`What's New in v0.8.79`](docs/release-history.md#whats-new-in-v0879) in the Release History for the previous release.
 
 ## Files
 
@@ -590,7 +594,7 @@ This code is provided as-is for educational and reference purposes.
 
 The full What's-New history (v0.7.81 and earlier) has moved to [docs/release-history.md](docs/release-history.md).
 
-The most recent release notes for **v0.8.79** stay above under [`What's New in v0.8.79`](#whats-new-in-v0879).
+The most recent release notes for **v0.8.80** stay above under [`What's New in v0.8.80`](#whats-new-in-v0880).
 
 ### What's New in v0.8.78
 

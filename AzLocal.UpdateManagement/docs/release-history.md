@@ -4,7 +4,19 @@
 >
 > **For older releases**, this is the canonical reference; the main README intentionally stays slim so the most recent block is easy to find.
 >
-> **For v0.8.79 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0879) `What's New in v0.8.79` section.
+> **For v0.8.80 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0880) `What's New in v0.8.80` section.
+
+---
+
+### What's New in v0.8.79
+
+v0.8.79 was a patch release that added an operator-only **Force Immediate Update** break-glass override to the Step.07 apply-updates pipeline. Intended for emergency / out-of-window patching driven by an on-call operator; defaults to OFF; unreachable from the scheduled `apply-updates-schedule.yml` configuration file.
+
+When enabled, the per-cluster Step 3c maintenance-window gate (`UpdateStartWindow` / `UpdateExclusionsWindow` tags) is bypassed and updates start regardless of the current UTC time. All other readiness gates (connectivity, health, sideload status, `UpdateExcluded` operator hard-override) continue to apply. The override is opt-in per-run on both pipeline hosts: a `force_immediate_update` `workflow_dispatch` choice input on GitHub Actions (default `'false'`, description starts with `WARNING:` and notes `MANUAL RUNS ONLY`), and a `forceImmediateUpdate` boolean `parameters:` entry on Azure DevOps (default `false`, `displayName:` starts with `WARNING:` and notes `MANUAL QUEUE ONLY`). The cmdlet-side surface is a new `Invoke-AzLocalReadinessGatedClusterUpdate -ForceImmediateUpdate` switch which forwards `-IgnoreScheduleTags` to `Start-AzLocalClusterUpdate` for every cluster in the readiness CSV. A high-visibility warning banner is emitted at the top of the run when the override fires.
+
+Two layers of defence prevent a scheduled cron firing from honouring the override: (1) GitHub Actions YAML expression collapse `${{ github.event_name == 'workflow_dispatch' && github.event.inputs.force_immediate_update || 'false' }}` ensures any `schedule` / `push` / `pull_request` / `repository_dispatch` event sees `'false'`; (2) Azure DevOps runtime guard rechecks `$(Build.Reason) -eq 'Manual'` before flipping the switch. The override is deliberately not surfaced by `New-AzLocalApplyUpdatesScheduleConfig` / `Resolve-AzLocalPipelineUpdateRing` / `Get-AzLocalApplyUpdatesScheduleAudit` - there is no path to enable it from `apply-updates-schedule.yml` (a Pester sweep asserts this). The `UpdateExcluded` operator hard-override (`AzureLocalManagement.UpdateExcluded=true`) is INTENTIONALLY still respected by `Force Immediate Update`.
+
+`GENERATED_AGAINST_MODULE_VERSION` bumped from `0.8.78` to `0.8.79` across all bundled pipeline templates. No new exports (still 60).
 
 ---
 

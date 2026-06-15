@@ -110,10 +110,14 @@ function Get-AzLocalUpdateRunFailures {
         PSCustomObject[] - Detail view columns:
           ClusterName, ResourceGroup, SubscriptionId, ClusterResourceId,
           UpdateName, RunId, State, StartTime, EndTime, DurationMinutes,
-          DeepestStepDepth (1-8 or 0), DeepestStepName, DeepestErrMsg,
-          StackTracePreview, ErrorCategory, ProgressJsonBytes,
+          DeepestStepDepth (1-8 or 0), DeepestStepName, DeepestStepDescription,
+          DeepestErrMsg, StackTracePreview, ErrorCategory, ProgressJsonBytes,
           IsUnresolved (only when -OnlyUnresolved is used),
-          ProgressJson (only when -IncludeRawProgress is used)
+          ProgressJson (only when -IncludeRawProgress is used),
+          HealthCheckEvidence (only when ErrorCategory='HealthCheck' and
+            -EnrichWithHealthEvidence is on (default $true) - an array of
+            same-cluster Critical healthCheckResult entries from
+            updateSummaries scoped to a +/-2h window around the run)
 
         Summary view columns:
           ErrorCategory, ClusterCount, FailureCount, AffectedClusters,
@@ -186,6 +190,16 @@ function Get-AzLocalUpdateRunFailures {
 
         [Parameter(Mandatory = $false)]
         [string]$ExportPath,
+
+        # v0.8.80: when ErrorCategory='HealthCheck' on a Detail row, fetch
+        # the cluster's `updateSummaries.healthCheckResult` entries that
+        # fired within a +/-2h window of the run and attach them to the
+        # output row as `HealthCheckEvidence` (an array of slim projections)
+        # so renderers can show WHICH check fired. Default $true; pass
+        # -EnrichWithHealthEvidence:$false to skip the extra ARG hops when
+        # the caller doesn't need the evidence (e.g. CSV exports).
+        [Parameter(Mandatory = $false)]
+        [bool]$EnrichWithHealthEvidence = $true,
 
         [Parameter(Mandatory = $false)]
         [switch]$PassThru
@@ -314,6 +328,7 @@ $clusterClause
         $walk = Resolve-AzLocalUpdateRunDeepestError -Steps $r.ProgressSteps
         $deepDepth = [int]$walk.Depth
         $deepName  = [string]$walk.Name
+        $deepDesc  = if ($walk.PSObject.Properties['Description'] -and $walk.Description) { [string]$walk.Description } else { '' }
         $deepMsg   = if ($deepDepth -gt 0 -and $walk.Msg) {
             [string]$walk.Msg
         } elseif ($walk.FirstDescription) {
@@ -338,10 +353,11 @@ $clusterClause
         # Attach the computed columns. Add-Member -Force overwrites if the
         # property already exists (defensive against mocks that pre-populate
         # them).
-        $r | Add-Member -NotePropertyName 'DeepestStepDepth' -NotePropertyValue $deepDepth   -Force
-        $r | Add-Member -NotePropertyName 'DeepestStepName'  -NotePropertyValue $deepName    -Force
-        $r | Add-Member -NotePropertyName 'DeepestErrMsg'    -NotePropertyValue $deepMsg     -Force
-        $r | Add-Member -NotePropertyName 'ErrorCategory'    -NotePropertyValue $deepCategory -Force
+        $r | Add-Member -NotePropertyName 'DeepestStepDepth'       -NotePropertyValue $deepDepth   -Force
+        $r | Add-Member -NotePropertyName 'DeepestStepName'        -NotePropertyValue $deepName    -Force
+        $r | Add-Member -NotePropertyName 'DeepestStepDescription' -NotePropertyValue $deepDesc    -Force
+        $r | Add-Member -NotePropertyName 'DeepestErrMsg'          -NotePropertyValue $deepMsg     -Force
+        $r | Add-Member -NotePropertyName 'ErrorCategory'          -NotePropertyValue $deepCategory -Force
     }
 
     # Drop the intermediate ProgressSteps column so callers see the
@@ -523,6 +539,7 @@ extensibilityresources
                 DurationMinutes    = $r.DurationMinutes
                 DeepestStepDepth   = $r.DeepestStepDepth
                 DeepestStepName    = $r.DeepestStepName
+                DeepestStepDescription = if ($r.PSObject.Properties['DeepestStepDescription']) { [string]$r.DeepestStepDescription } else { '' }
                 DeepestErrMsg      = $r.DeepestErrMsg
                 StackTracePreview  = $r.StackTracePreview
                 ErrorCategory      = $r.ErrorCategory
@@ -532,6 +549,29 @@ extensibilityresources
             }
             if ($IncludeRawProgress) {
                 $obj | Add-Member -NotePropertyName 'ProgressJson' -NotePropertyValue $r.ProgressJson
+            }
+            # v0.8.80: fetch same-cluster Critical healthCheckResult entries
+            # that fired within a +/-2h window of the run, so renderers can
+            # show WHICH check fired on a HealthCheck-category failure.
+            # Scoped to ErrorCategory='HealthCheck' to keep ARG query count
+            # bounded (one extra hop per failed-with-health-cat row, not
+            # per row). Skipped when -EnrichWithHealthEvidence:$false.
+            if ($EnrichWithHealthEvidence -and $r.ErrorCategory -eq 'HealthCheck' -and $r.ClusterResourceId -and $r.StartTime -and $r.EndTime) {
+                try {
+                    $evidenceRows = Get-AzLocalUpdateRunHealthEvidence `
+                        -ClusterResourceId $r.ClusterResourceId `
+                        -RunStartTime ([datetime]$r.StartTime) `
+                        -RunEndTime   ([datetime]$r.EndTime) `
+                        -SubscriptionId:$SubscriptionId
+                    $obj | Add-Member -NotePropertyName 'HealthCheckEvidence' -NotePropertyValue (@($evidenceRows))
+                }
+                catch {
+                    Write-Log -Message "HealthCheck evidence enrichment failed for $($r.ClusterName)/$($r.RunId): $($_.Exception.Message)" -Level Warning
+                    $obj | Add-Member -NotePropertyName 'HealthCheckEvidence' -NotePropertyValue (@())
+                }
+            }
+            else {
+                $obj | Add-Member -NotePropertyName 'HealthCheckEvidence' -NotePropertyValue (@())
             }
             $obj
         }

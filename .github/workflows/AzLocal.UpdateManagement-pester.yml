@@ -154,6 +154,6 @@ jobs:
         uses: EnricoMi/publish-unit-test-result-action/windows@v2
         with:
           check_name: AzLocal.UpdateManagement Pester
-          junit_files: AzLocal.UpdateManagement/Tests/TestResults/pester-junit.xml
+          files: AzLocal.UpdateManagement/Tests/TestResults/pester-junit.xml
           comment_mode: off
           ignore_runs: true

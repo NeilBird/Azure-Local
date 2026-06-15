@@ -47,6 +47,13 @@ function Resolve-AzLocalUpdateRunDeepestError {
                                        (1-based) of the deepest match
           Msg              [string] - the deepest errorMessage text
           Name             [string] - that step's `name`
+          Description      [string] - that step's `description` captured
+                                       at the SAME recursion site as Msg
+                                       (added v0.8.80 - the deepest step
+                                       often has BOTH a human-readable
+                                       description and an errorMessage
+                                       trace; renderers should display
+                                       both, not pick one)
           FirstDescription [string] - the very first non-empty
                                        top-level `description`, used as
                                        a fallback when no errorMessage
@@ -55,7 +62,17 @@ function Resolve-AzLocalUpdateRunDeepestError {
     .NOTES
         Author: Neil Bird, Microsoft.
         Added:  v0.7.76 (P0 ARG mv-expand 128-cap fix)
+        Updated:v0.8.80 (added Description field at deepest site)
         Module: AzLocal.UpdateManagement (private helper)
+
+        Consumed by Get-AzLocalUpdateRunFailures (Step.07 verification
+        + Step.09 fleet-update-status renderer).
+
+        Parallel walker: Get-DeepestErrorMessage (Private/) walks the
+        same tree shape but is used by Format-AzLocalUpdateRun for the
+        Get-AzLocalUpdateRuns -PassThru shape (Step.08 monitor). If
+        you change the deepest-step contract here, also update
+        Get-DeepestErrorMessage so the two pipelines stay in sync.
     #>
     [CmdletBinding()]
     [OutputType([hashtable])]
@@ -75,6 +92,7 @@ function Resolve-AzLocalUpdateRunDeepestError {
         Depth            = 0
         Msg              = ''
         Name             = ''
+        Description      = ''
         FirstDescription = ''
     }
 
@@ -119,6 +137,14 @@ function Resolve-AzLocalUpdateRunDeepestError {
                 $stepName = $null
                 try { $stepName = $step.name } catch { $stepName = $null }
                 $result.Name = if ($stepName) { [string]$stepName } else { '' }
+                # v0.8.80: capture description at the SAME site as Msg so
+                # renderers can show both. Previously only FirstDescription
+                # was captured (top-level only), which silently dropped the
+                # deepest step's human-readable line when an errorMessage
+                # was also present (always true for HealthCheck failures).
+                $stepDesc = $null
+                try { $stepDesc = $step.description } catch { $stepDesc = $null }
+                $result.Description = if ($stepDesc) { [string]$stepDesc } else { '' }
             }
         }
 
@@ -129,9 +155,10 @@ function Resolve-AzLocalUpdateRunDeepestError {
         if ($null -ne $childSteps) {
             $child = Resolve-AzLocalUpdateRunDeepestError -Steps $childSteps -Depth ($Depth + 1) -MaxDepth $MaxDepth
             if ($child.Depth -gt $result.Depth) {
-                $result.Depth = $child.Depth
-                $result.Msg   = $child.Msg
-                $result.Name  = $child.Name
+                $result.Depth       = $child.Depth
+                $result.Msg         = $child.Msg
+                $result.Name        = $child.Name
+                $result.Description = $child.Description
             }
             if ($Depth -eq 1 -and -not $result.FirstDescription -and $child.FirstDescription) {
                 $result.FirstDescription = $child.FirstDescription

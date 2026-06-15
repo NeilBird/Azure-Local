@@ -41,6 +41,7 @@ function Format-AzLocalUpdateRun {
     # already shows 'Error', telling the operator a step has errored and the run is stuck.
     $progressStatus = if ($props.progress -and $props.progress.PSObject.Properties['status']) { [string]$props.progress.status } else { '' }
     $errorMessage = ''
+    $errorDescription = ''
     if ($props.progress -and $props.progress.steps) {
         $steps = $props.progress.steps
         # Progress must reflect the DEEP nested step tree, not the top-level wrapper steps.
@@ -104,7 +105,12 @@ function Format-AzLocalUpdateRun {
         # Deepest non-empty errorMessage from any Error/Failed step in the tree (v0.7.96).
         # Uses a coalesce(e8Msg..e1Msg) recursion so operators see the actual leaf failure
         # (e.g. CAU exception) rather than the generic parent step name.
-        $errorMessage = Get-DeepestErrorMessage -Steps $steps
+        # v0.8.80: also capture the deepest step's `description` (human-readable line) so
+        # the Step.08 monitor renderer can show BOTH the description and the errorMessage
+        # trace in the same cell. Previously the description was silently dropped.
+        $deepest = Get-DeepestErrorMessage -Steps $steps -IncludeDescription
+        $errorMessage = if ($deepest -is [hashtable]) { [string]$deepest.Msg } else { [string]$deepest }
+        $errorDescription = if ($deepest -is [hashtable]) { [string]$deepest.Description } else { '' }
         if ($deepestActive -and $deepestActive.PSObject.Properties['startTimeUtc'] -and $deepestActive.startTimeUtc) {
             try {
                 $stepStartDt = [datetime]::SpecifyKind(([datetime]$deepestActive.startTimeUtc).ToUniversalTime(), [DateTimeKind]::Utc)
@@ -155,6 +161,7 @@ function Format-AzLocalUpdateRun {
         StepStartTime     = $stepStartTimeDisplay
         StepElapsed       = $stepElapsedDisplay
         ErrorMessage      = $errorMessage
+        ErrorDescription  = $errorDescription
         Location          = $props.location
     }
 
