@@ -8460,8 +8460,19 @@ schedule:
                 # At least one row should reference Ring1 and one Ring2
                 $md | Should -Match '`Ring1`'
                 $md | Should -Match '`Ring2`'
-                # At least one row should be marked as cycle-wrap (week 1 immediately after week 2 OR vice versa within 14 days)
-                $md | Should -Match '_\(cycle wraps\)_'
+                # Cycle-wrap marker only appears when the 14-day projection
+                # crosses the cycle boundary. With cycleWeeks=2 and a 14-day
+                # window starting on day-1 of the cycle the window ends exactly
+                # at the boundary - no wrap row is emitted. Compute today's
+                # day-in-cycle from the anchor and only assert when wrap is
+                # expected.
+                $anchor = [datetime]'2024-01-01'   # ISO week 1, 2024 (Monday)
+                $todayUtc = [datetime]::UtcNow.Date
+                $daysSinceAnchor = ($todayUtc - $anchor).Days
+                $dayInCycle = $daysSinceAnchor % 14
+                if ($dayInCycle -ne 0) {
+                    $md | Should -Match '_\(cycle wraps\)_'
+                }
             }
         }
 
