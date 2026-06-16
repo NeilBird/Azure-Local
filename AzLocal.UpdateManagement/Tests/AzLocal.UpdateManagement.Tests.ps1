@@ -14200,8 +14200,11 @@ Describe 'Thin-YAML Step.0: Export-AzLocalAuthValidationReport' {
         $summary = Get-Content -LiteralPath $script:_avr_ghSummaryFile -Raw
         $summary | Should -Match '## Step\.0 - Authentication Validation and Subscription Scope Report'
         $summary | Should -Match '### Count of subscriptions accessible = 2'
+        $summary | Should -Match '<details>'
+        $summary | Should -Match 'Expand for subscription details'
         $summary | Should -Match 'Alpha'
         $summary | Should -Match 'Beta'
+        $summary | Should -Match '</details>'
         # Step outputs: all three keys present.
         $outputs = Get-Content -LiteralPath $script:_avr_ghOutputFile -Raw
         $outputs | Should -Match 'subscription_count=2'
@@ -14259,9 +14262,12 @@ Describe 'Thin-YAML Step.0: Export-AzLocalAuthValidationReport' {
         $result = Invoke-Step0Cmdlet -Params $params -Account $script:_avr_account -Subs $multi -Clusters $script:_avr_clusters -RoleRows $script:_avr_roleRows
         $result.SubscriptionCount | Should -Be 3
         $summary = Get-Content -LiteralPath $script:_avr_ghSummaryFile -Raw
+        $summary | Should -Match '<details>'
+        $summary | Should -Match 'Expand for subscription details'
         $summary | Should -Match '\| 1 \| A \| `s1`'
         $summary | Should -Match '\| 2 \| B \| `s2`'
         $summary | Should -Match '\| 3 \| C \| `s3`'
+        $summary | Should -Match '</details>'
     }
 
     It 'Throws a helpful error when az account show fails' {

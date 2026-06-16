@@ -151,39 +151,6 @@ jobs:
               -GeneratedAgainstVersion $env:GENERATED_AGAINST_VERSION `
               -LatestOnPSGallery      $env:LATEST_ON_PSGALLERY
 
-      - name: 'Format Subscription Details as Collapsible Section'
-        if: always()
-        shell: pwsh
-        run: |
-          $reportDir = './reports'
-          $csvPath = Join-Path $reportDir 'subscriptions.csv'
-          
-          if (Test-Path -LiteralPath $csvPath) {
-              $subs = Import-Csv -LiteralPath $csvPath -ErrorAction SilentlyContinue
-              $subCount = @($subs).Count
-              
-              # Append collapsible subscription details to GITHUB_STEP_SUMMARY
-              $summary = @"
-          
-          ### Count of subscriptions accessible = $subCount
-          
-          <details>
-          <summary>Expand for subscription details</summary>
-          
-          | Subscription ID | Subscription Name |
-          |---|---|
-          "@
-              
-              if ($subs) {
-                  foreach ($sub in $subs) {
-                      $summary += "`n| $($sub.'Subscription ID') | $($sub.'Subscription Name') |"
-                  }
-              }
-              
-              $summary += "`n</details>`n"
-              $summary | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
-          }
-
       - name: 'Compute Artifact Timestamp'
         id: artifact-stamp
         shell: pwsh
