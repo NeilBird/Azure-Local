@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------------------
-# Sideload catalog (introduce in module version 0.8.7 to provide on-premises solution or SBE update sideloading automation)
+# Sideload catalog (introduced in module version 0.8.7 to provide on-premises solution or SBE update sideloading automation)
 # ---------------------------------------------------------------------------
 # Source-controlled list of the Azure Local solution-update media (and OEM SBE
 # packages) the sideloading automation is allowed to stage. The runtime copy
