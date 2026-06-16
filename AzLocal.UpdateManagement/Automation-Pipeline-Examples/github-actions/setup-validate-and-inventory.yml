@@ -1,5 +1,5 @@
 # AZLOCAL-PIPELINE-ID: setup-validate-and-inventory
-# Setup: 01 - Validate Auth and Inventory Azure Local Clusters
+# Config: 01 - Validate Auth and Inventory Azure Local Clusters
 #
 # PURPOSE:
 #   This is the first step in the setup workflow. It combines two operations:
@@ -42,7 +42,7 @@
 #
 # See Automation-Pipeline-Examples/README.md for full setup story.
 
-name: 'Setup: 01 - Validate Auth and Inventory Clusters'
+name: 'Config: 01 - Validate Auth and Inventory Clusters'
 
 on:
   workflow_dispatch:
@@ -73,7 +73,7 @@ env:
   # this to the version actually installed and to the latest on PSGallery, and emits a
   # ::notice annotation if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample. See Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.8.85'
+  GENERATED_AGAINST_MODULE_VERSION: '0.8.86'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): manual workflow_dispatch input >
   # repository variable 'REQUIRED_MODULE_VERSION' > empty (latest).
@@ -171,7 +171,7 @@ jobs:
         if: always()
         uses: dorny/test-reporter@v3
         with:
-          name: '[JUnit Debug] Setup: 01 - Authentication Validation'
+          name: '[JUnit Debug] Config: 01 - Authentication Validation'
           path: ./reports/auth-report.xml
           reporter: java-junit
           fail-on-error: false

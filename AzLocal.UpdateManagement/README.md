@@ -2,7 +2,7 @@
 
 > ⚠️ **Disclaimer**: This module is **NOT** a Microsoft supported service offering or product. It is provided as example code only, with no warranty or official support. Refer to the [MIT license](https://github.com/NeilBird/Azure-Local/blob/main/LICENSE) for further information.
 
-**Latest Version:** v0.8.85 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.8.85)
+**Latest Version:** v0.8.86 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.8.86)
 
 > 📢 **Renamed in v0.7.3**: this module was previously published as `AzStackHci.ManageUpdates`. The new module name aligns with the Azure Local product name (_Microsoft retired the *Azure Stack HCI* brand in late 2024_). The module GUID is preserved across the rename. If you have the old name installed, run:
 >
@@ -23,7 +23,7 @@ Azure Local REST API specification (includes update management endpoints): https
 **This README (overview + most-recent release notes):**
 
 - [Where to Start](#where-to-start)
-- [What's New in v0.8.85](#whats-new-in-v0885)
+- [What's New in v0.8.86](#whats-new-in-v0886)
 - [Files](#files)
 - [Prerequisites](#prerequisites)
 - [RBAC Requirements](#rbac-requirements) (summary; full reference in [docs/rbac.md](docs/rbac.md))
@@ -86,24 +86,23 @@ If you are new to this module, work through these in order from a regular PowerS
 
 > Most CI/CD pipelines in [Automation-Pipeline-Examples/](Automation-Pipeline-Examples/) are direct implementations of one of these workflows. Start there if you want a copy-pasteable end-to-end pipeline.
 
-## What's New in v0.8.85
+## What's New in v0.8.86
 
-**Pipeline UX consolidation release.** Introduces Setup/Fleet naming in bundled pipelines, adds the merged GitHub onboarding workflow `setup-validate-and-inventory.yml` (Setup: 01), and updates pipeline refresh tooling to safely handle deprecated workflow cleanup with pipeline-ID verification. Also bumps bundled pipeline `GENERATED_AGAINST_MODULE_VERSION` pins to `0.8.85`.
+**Pipeline sidebar-ordering fix.** Renames the three onboarding pipeline templates from `Setup: 0N` to `Config: 0N` so the GitHub Actions sidebar (and the Azure DevOps Pipelines list) lists the onboarding / configuration workflows *ahead of* the `Fleet: 0N` operational workflows. Both surfaces sort alphabetically by the workflow `name:` / definition name, and `C` (Config) sorts before `F` (Fleet) - the previous `Setup:` prefix sorted *after* `Fleet:`.
 
-### Added
+### Changed
 
-- Bundled GitHub workflows now surface Setup/Fleet ordering and include `Setup: 01 - Validate Auth and Inventory Clusters`.
-- Legacy GitHub onboarding workflows (`authentication-test.yml`, `inventory-clusters.yml`) are superseded by the merged Setup workflow in the bundled set.
-- `Copy-AzLocalPipelineExample` and `Update-AzLocalPipelineExample` gain optional `-PruneDeprecated` cleanup for superseded workflow files, with AZLOCAL-PIPELINE-ID verification before removal.
+- The three onboarding workflows are renamed `Config: 01 - Validate Auth and Inventory Clusters`, `Config: 02 - Manage UpdateRing Tags`, and `Config: 03 - Apply-Updates Schedule Coverage Audit` (was `Setup: 0N`). Display-name (`name:` / `displayName:`) change only - filenames, `AZLOCAL-PIPELINE-ID` values, aliases, and `-PruneDeprecated` logic are unchanged.
+- Bundled pipeline `README.md` + `docs/appendix-pipelines.md` updated to use `Config: NN` naming throughout.
 
 ### Notes
 
 - **No new exports** (count unchanged at 60).
-- **`GENERATED_AGAINST_MODULE_VERSION`** bumped from `0.8.84` to `0.8.85` across bundled pipeline templates.
+- **`GENERATED_AGAINST_MODULE_VERSION`** bumped from `0.8.85` to `0.8.86` across bundled pipeline templates.
 
 > Previous release notes have moved into the [Release History](#release-history) appendix at the bottom of this document.
 
-See [CHANGELOG.md](CHANGELOG.md) for full release details. See [`What's New in v0.8.84`](#whats-new-in-v0884) in the Release History for the previous release.
+See [CHANGELOG.md](CHANGELOG.md) for full release details. See [`What's New in v0.8.85`](#whats-new-in-v0885) in the Release History for the previous release.
 
 ## Files
 
@@ -582,7 +581,11 @@ This code is provided as-is for educational and reference purposes.
 
 The full What's-New history (v0.7.81 and earlier) has moved to [docs/release-history.md](docs/release-history.md).
 
-The most recent release notes for **v0.8.84** stay above under [`What's New in v0.8.84`](#whats-new-in-v0884).
+The most recent release notes for **v0.8.86** stay above under [`What's New in v0.8.86`](#whats-new-in-v0886).
+
+### What's New in v0.8.85
+
+**Pipeline UX consolidation release.** Introduces Setup/Fleet naming in bundled pipelines, adds the merged GitHub onboarding workflow `setup-validate-and-inventory.yml` (Setup: 01), and updates pipeline refresh tooling to safely handle deprecated workflow cleanup with pipeline-ID verification. Also bumps bundled pipeline `GENERATED_AGAINST_MODULE_VERSION` pins to `0.8.85`. (Superseded in v0.8.86, which renames the `Setup: 0N` workflows to `Config: 0N`.) See [CHANGELOG.md](CHANGELOG.md#0885---2026-06-16) for the full v0.8.85 entry.
 
 ### What's New in v0.8.83
 
