@@ -27,7 +27,7 @@
 # A cron firing that lands on a day with NO matching schedule rows is
 # logged and exits 0 - no errors, no failures.
 #
-# This file is REQUIRED for the "Fleet: 04 - Apply Updates"
+# This file is REQUIRED for the "Update: 3 - Apply Updates"
 # (apply-updates.yml) pipeline when triggered by a schedule (not
 # workflow_dispatch). If the file is missing, apply-updates.yml throws
 # with the exact remediation command.

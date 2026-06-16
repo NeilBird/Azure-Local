@@ -82,7 +82,7 @@ function Get-AzLocalPipelineManifest {
     #
     # v0.8.85: the two standalone onboarding workflows authentication-test.yml
     # (DisplayStep 0) and inventory-clusters.yml (DisplayStep 1) were merged
-    # into a single setup-validate-and-inventory.yml (Config: 01). Its Aliases
+    # into a single setup-validate-and-inventory.yml (Config: 1). Its Aliases
     # list BOTH superseded filenames (and their Step.N_ ancestors) so
     # Update-AzLocalPipelineExample can rename-match a customer who still has
     # either old file and carry their schedule CRONs into the merged workflow.

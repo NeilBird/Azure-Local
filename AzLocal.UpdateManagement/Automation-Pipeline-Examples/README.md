@@ -56,49 +56,50 @@ It is written in the same step-by-step style as [`ITSM/README.md`](../ITSM/READM
 By the end of this guide you will have:
 
 - A federated identity (no client secrets) wired into your CI/CD platform with the **minimum** Azure RBAC needed for cluster update management.
-- Config/Fleet workflows committed to your repo and visible in the Actions / Pipelines UI:
-  - **Config: 01 - Validate Auth and Inventory Clusters** (GitHub) - merged auth + inventory flow with a clear setup-first summary (including collapsible subscription details) and cluster inventory export.
-  - **Config: 02 - Manage UpdateRing Tags** - bulk-apply `UpdateRing`, `UpdateStartWindow`, `UpdateExclusionsWindow`, `UpdateExcluded` tags from CSV.
-  - **Config: 03 - Apply-Updates Schedule Coverage Audit** - read-only audit that validates your schedule against `UpdateStartWindow` tags.
-  - **Fleet: 01 - Assess Update Readiness** - pre-flight readiness + blocking-health gate report.
-  - **Fleet: 02 - Fleet Connectivity Status** - Arc connectivity, NIC health, and ARB status snapshot.
-  - **Fleet: 03 - Sideload Updates (opt-in)** - on-prem media pre-stage workflow for disconnected environments.
-  - **Fleet: 04 - Apply Updates** - ring-scoped update execution with WhatIf support and schedule-aware gating.
-  - **Fleet: 05 - Monitor In-Flight Updates** - active-run progress and stuck-run diagnostics.
-  - **Fleet: 06 - Fleet Update Status** - daily fleet-wide update-state summary.
-  - **Fleet: 07 - Fleet Health Status** - daily 24-hour health-failure summary.
+- Config/Monitor/Update workflows committed to your repo and visible in the Actions / Pipelines UI:
+  - **Config: 1 - Validate Auth and Inventory Clusters** (GitHub) - merged auth + inventory flow with a clear setup-first summary (including collapsible subscription details) and cluster inventory export.
+  - **Config: 2 - Manage UpdateRing Tags** - bulk-apply `UpdateRing`, `UpdateStartWindow`, `UpdateExclusionsWindow`, `UpdateExcluded` tags from CSV.
+  - **Config: 3 - Apply-Updates Schedule Coverage Audit** - read-only audit that validates your schedule against `UpdateStartWindow` tags.
+  - **Monitor: 1 - Fleet Connectivity Status** - Arc connectivity, NIC health, and ARB status snapshot.
+  - **Monitor: 2 - Fleet Health Status** - daily 24-hour health-failure summary.
+  - **Monitor: 3 - Fleet Update Status** - daily fleet-wide update-state summary.
+  - **Update: 1 - Assess Update Readiness** - pre-flight readiness + blocking-health gate report.
+  - **Update: 2 - Sideload Updates (opt-in)** - on-prem media pre-stage workflow for disconnected environments.
+  - **Update: 3 - Apply Updates** - ring-scoped update execution with WhatIf support and schedule-aware gating.
+  - **Update: 4 - Monitor In-Flight Updates** - active-run progress and stuck-run diagnostics.
 - An end-to-end "ring-based" rollout pattern: Pilot -> Wave2 -> Production, with each ring gated on the previous wave's success.
 - **Optional**: a ServiceNow integration that opens deduped incidents for clusters whose run status indicates the module's own retries cannot recover (failures, blocking health checks, sideloaded payload missing) - see [section 7](#7-optional-open-itsm-tickets-for-clusters-needing-operator-action).
 
 The pipelines are **fully opt-in additive layers** over the module. The PowerShell functions also work without any pipeline at all - see [section 10](#10-standalone-html-report-no-pipeline) for the ad-hoc / desktop story.
 
-### 1.1 Why the pipelines are named `Config: NN` and `Fleet: NN`
+### 1.1 Why the pipelines are named `Config: N`, `Monitor: N`, and `Update: N`
 
-The active workflow model uses two clear groups:
+The active workflow model uses three clear groups:
 
-- `Config: 01-03` for onboarding and configuration.
-- `Fleet: 01-07` for day-2 operational monitoring and update execution.
+- `Config: 1-3` for onboarding and configuration.
+- `Monitor: 1-3` for day-2 fleet monitoring (connectivity, update status, health).
+- `Update: 1-4` for the update lifecycle (readiness, sideload, apply, in-flight monitor).
 
 | Group | Workflow name | GH Actions | Azure DevOps |
 |---|---|---|---|
-| Config | Config: 01 - Validate Auth and Inventory Clusters | `setup-validate-and-inventory.yml` | `authentication-test.yml` + `inventory-clusters.yml` |
-| Config | Config: 02 - Manage UpdateRing Tags | `manage-updatering-tags.yml` | `manage-updatering-tags.yml` |
-| Config | Config: 03 - Apply-Updates Schedule Coverage Audit | `apply-updates-schedule-audit.yml` | `apply-updates-schedule-audit.yml` |
-| Fleet | Fleet: 01 - Assess Update Readiness | `assess-update-readiness.yml` | `assess-update-readiness.yml` |
-| Fleet | Fleet: 02 - Fleet Connectivity Status | `fleet-connectivity-status.yml` | `fleet-connectivity-status.yml` |
-| Fleet | Fleet: 03 - Sideload Updates (Opt-in) | `sideload-updates.yml` | `sideload-updates.yml` |
-| Fleet | Fleet: 04 - Apply Updates | `apply-updates.yml` | `apply-updates.yml` |
-| Fleet | Fleet: 05 - Monitor In-Flight Updates | `monitor-updates.yml` | `monitor-updates.yml` |
-| Fleet | Fleet: 06 - Fleet Update Status | `fleet-update-status.yml` | `fleet-update-status.yml` |
-| Fleet | Fleet: 07 - Fleet Health Status | `fleet-health-status.yml` | `fleet-health-status.yml` |
+| Config | Config: 1 - Validate Auth and Inventory Clusters | `setup-validate-and-inventory.yml` | `authentication-test.yml` + `inventory-clusters.yml` |
+| Config | Config: 2 - Manage UpdateRing Tags | `manage-updatering-tags.yml` | `manage-updatering-tags.yml` |
+| Config | Config: 3 - Apply-Updates Schedule Coverage Audit | `apply-updates-schedule-audit.yml` | `apply-updates-schedule-audit.yml` |
+| Monitor | Monitor: 1 - Fleet Connectivity Status | `fleet-connectivity-status.yml` | `fleet-connectivity-status.yml` |
+| Monitor | Monitor: 2 - Fleet Health Status | `fleet-health-status.yml` | `fleet-health-status.yml` |
+| Monitor | Monitor: 3 - Fleet Update Status | `fleet-update-status.yml` | `fleet-update-status.yml` |
+| Update | Update: 1 - Assess Update Readiness | `assess-update-readiness.yml` | `assess-update-readiness.yml` |
+| Update | Update: 2 - Sideload Updates (Opt-in) | `sideload-updates.yml` | `sideload-updates.yml` |
+| Update | Update: 3 - Apply Updates | `apply-updates.yml` | `apply-updates.yml` |
+| Update | Update: 4 - Monitor In-Flight Updates | `monitor-updates.yml` | `monitor-updates.yml` |
 
-- **GitHub Actions**: the Actions sidebar sorts workflows alphabetically by the `name:` field. Prefixing names with `Config: NN` and `Fleet: NN` keeps the sidebar in intended execution order (the `Config:` group sorts ahead of `Fleet:` so onboarding pipelines appear first).
+- **GitHub Actions**: the Actions sidebar sorts workflows alphabetically by the `name:` field. Prefixing names with `Config: N`, `Monitor: N`, and `Update: N` keeps the sidebar grouped (the `Config:` onboarding group sorts first, then `Monitor:` day-2 reporting, then the `Update:` lifecycle pipelines).
 
-  ![GitHub Actions sidebar showing Config and Fleet workflows in execution order](../docs/images/github-actions-10-pipelines-view.png)
+  ![GitHub Actions sidebar showing Config, Monitor, and Update workflows grouped](../docs/images/github-actions-10-pipelines-view.png)
 
-  *The Config/Fleet numeric prefixes keep the GitHub Actions sidebar in practical execution order rather than a purely alphabetical scatter.*
+  *The Config/Monitor/Update numeric prefixes keep the GitHub Actions sidebar grouped by purpose rather than a purely alphabetical scatter.*
 
-- **Azure DevOps**: the Pipelines list sorts by the pipeline **definition name** chosen at import time (not by filename). Use the same `Config: NN` / `Fleet: NN` naming when you import so the list stays in operational order.
+- **Azure DevOps**: the Pipelines list sorts by the pipeline **definition name** chosen at import time (not by filename). Use the same `Config: N` / `Monitor: N` / `Update: N` naming when you import so the list stays grouped by purpose.
 
 If you prefer a different naming scheme (e.g. `00 - Auth`, `01 - Inventory`, ...), just change the `name:` field in each GH Actions YAML and / or pick a different prefix at ADO import time. Nothing else in the module depends on these display names.
 
@@ -956,13 +957,13 @@ Both platforms expect the YAML files inside this folder to land in a platform-sp
 > Copy-AzLocalPipelineExample -Destination .\pipelines -Platform AzureDevOps
 > ```
 >
-> The function prints a short "next steps" summary pointing at the copied YAML location with the recommended workflow / pipeline to run first (GitHub: **Config: 01 - Validate Auth and Inventory Clusters**, Azure DevOps: auth validation + inventory onboarding). Supports `-Platform GitHub | AzureDevOps | All`, `-PassThru`, `-WhatIf`, `-Confirm`.
+> The function prints a short "next steps" summary pointing at the copied YAML location with the recommended workflow / pipeline to run first (GitHub: **Config: 1 - Validate Auth and Inventory Clusters**, Azure DevOps: auth validation + inventory onboarding). Supports `-Platform GitHub | AzureDevOps | All`, `-PassThru`, `-WhatIf`, `-Confirm`.
 >
 > **Refusing to overwrite**: the function will refuse to overwrite any file that already exists in `-Destination`, listing the conflicts in the error message. To refresh after a module upgrade, delete the existing copies first (`Remove-Item .\.github\workflows\*.yml`) and re-run.
 
 ### 5.1 GitHub Actions
 
-1. **Run Config: 01 first (strongly recommended).** Before exercising the Fleet workflows, validate that the App Registration, federated credentials, GitHub secrets, environments, and RBAC role assignment all line up - and capture the count + per-subscription detail of subscriptions visible to the pipeline identity - by running **`Config: 01 - Validate Auth and Inventory Clusters`**. This narrows any failure to one onboarding workflow instead of debugging multiple operational workflows simultaneously. **Re-run periodically** (recommended monthly, or after any RBAC change in the tenant) to confirm the pipeline identity's subscription scope has not silently widened or narrowed.
+1. **Run Config: 1 first (strongly recommended).** Before exercising the Update and Monitor workflows, validate that the App Registration, federated credentials, GitHub secrets, environments, and RBAC role assignment all line up - and capture the count + per-subscription detail of subscriptions visible to the pipeline identity - by running **`Config: 1 - Validate Auth and Inventory Clusters`**. This narrows any failure to one onboarding workflow instead of debugging multiple operational workflows simultaneously. **Re-run periodically** (recommended monthly, or after any RBAC change in the tenant) to confirm the pipeline identity's subscription scope has not silently widened or narrowed.
 
   The onboarding workflow ships with the module at [`github-actions/setup-validate-and-inventory.yml`](./github-actions/setup-validate-and-inventory.yml). It emits the auth validation JUnit report (Authentication / Subscription Scope / Resource Graph Reachability), writes a setup-focused markdown summary (including a collapsible subscription-details section), and exports both auth and inventory artifacts for downstream workflows.
 
@@ -987,8 +988,8 @@ Both platforms expect the YAML files inside this folder to land in a platform-sp
    At the `gh` CLI level, `gh run watch` shows the run summary as the steps complete (`gh` actually renders these as Unicode check marks; reproduced here in ASCII):
 
    ```text
-  ? Select a workflow run * Config: 01 - Validate Auth and Inventory Clusters, Config: 01 - Validate Auth and Inventory Clusters [main] 12s ago
-  [OK] main Config: 01 - Validate Auth and Inventory Clusters - <run-id>
+  ? Select a workflow run * Config: 1 - Validate Auth and Inventory Clusters, Config: 1 - Validate Auth and Inventory Clusters [main] 12s ago
+  [OK] main Config: 1 - Validate Auth and Inventory Clusters - <run-id>
    Triggered via workflow_dispatch less than a minute ago
 
    JOBS
@@ -1001,7 +1002,7 @@ Both platforms expect the YAML files inside this folder to land in a platform-sp
      [OK] Post Azure login (OIDC)
      [OK] Complete job
 
-  [OK] Run Config: 01 - Validate Auth and Inventory Clusters (<run-id>) completed with 'success'
+  [OK] Run Config: 1 - Validate Auth and Inventory Clusters (<run-id>) completed with 'success'
    ```
 
    Inside the `Collect Authentication and Subscription Scope Report` step, the run log shows:
@@ -1022,7 +1023,7 @@ Both platforms expect the YAML files inside this folder to land in a platform-sp
    <cluster-1>    <rg-1>                  <sub-guid>
    ```
 
-  ![Config: 01 - Validate Auth and Inventory Clusters run, showing authentication validation output and subscription scope details](../docs/images/auth-smoke-test-validate-oidc.png)
+  ![Config: 1 - Validate Auth and Inventory Clusters run, showing authentication validation output and subscription scope details](../docs/images/auth-smoke-test-validate-oidc.png)
 
    You may see one informational `windows-latest` -> `windows-2025-vs2026` migration notice in the run annotations. The sample workflows pin `runs-on: windows-latest` (the module is a Windows-side PowerShell module), and GitHub will retarget the alias to the new image automatically when it becomes the default - no action required on your part. As of v0.7.60 the previously-seen Node.js 20 deprecation banner (against `actions/checkout@v4`, `azure/login@v2`, `actions/upload-artifact@v4`, `dorny/test-reporter@v1`) is gone: the sample workflows have been refreshed to Node 24-compatible majors (`@v5`, `@v3`, `@v6`, `@v3` respectively).
 
@@ -1527,6 +1528,8 @@ Configure your CI/CD platform's alerting on the JUnit failures - GitHub Actions 
 
 The connector reads the JUnit results the Apply Updates pipeline already publishes and, for each cluster whose status matches your configured trigger matrix (default: `Failed`, `Error`, `HealthCheckBlocked`, `SideloadedBlocked`), opens a deduped ServiceNow incident via the Table API. Idempotency is enforced via a SHA256 dedupe key written to a custom `u_azlocal_dedupe_key` column, so re-running the same workflow does not create duplicates.
 
+> **v0.8.87: the Update: 4 in-flight monitor (`monitor-updates.yml`) now supports the same opt-in ITSM step.** Toggle `raise_itsm_ticket=true` (`raiseItsmTicket` on Azure DevOps) and it reads `./reports/update-monitor.xml` after publishing the JUnit. The monitor JUnit now emits per-testcase `ClusterResourceId` / `UpdateName` / `Status` properties (`Status` is `StepError` / `LongRunningStep` / `LongRunningOverall` / `InProgress` / `Failed` / `AttemptWithoutRun`); the sample matrix raises on `AttemptWithoutRun` + `StepError` and leaves `LongRunning*` opt-in. The monitor stays report-only and always green - ITSM failures never affect its result. To pick a poll cadence, the **Config: 3** schedule auditor now prints a "Recommended in-flight monitor schedule (Update: 4)" cron derived from your apply windows (`-MonitorFiresPerHour`, `-MonitorTrailingDays`).
+
 This README does not duplicate the setup - it is a single-source-of-truth in [`../ITSM/README.md`](../ITSM/README.md). Here is the high-level wiring you'll do over there:
 
 > **Shortcut for getting the sample into your repo**: from the repo root, run
@@ -1635,7 +1638,7 @@ Copy this file once per ring (e.g. `assess-update-readiness-Pilot.yml`, `assess-
 
 **Why one YAML per ring**: GitHub Actions `schedule:`-triggered runs cannot supply `inputs:` values - they always use the workflow's default `inputs:`. So a single `assess-update-readiness*.yml` with three crons in one `schedule:` block (and `update_ring` required, no default) would never actually run on cron - every cron tick would fail input validation. Splitting one YAML per ring (each with its own default + single cron) is the cleanest fix. Azure DevOps has the same constraint - `schedules:`-triggered runs use the YAML's default `parameters:` values, so the same per-ring split pattern applies.
 
-**Known gap**: the Step.3 schedule-coverage audit (`apply-updates-schedule-audit.yml`) currently validates Step.7 cron-to-`UpdateStartWindow` coverage only - it does **not** audit whether each Step.5 cron is correctly anchored ahead of a Step.7 cron. **Always pair Step.5 + Step.7 cron edits in the same PR** so the lead-time relationship is reviewable by a human at merge time. The per-pipeline appendix entry for [Fleet: 01 - Assess Update Readiness](docs/appendix-pipelines.md#fleet-01---assess-update-readiness) repeats this guidance with the same lead-time table.
+**Known gap**: the Step.3 schedule-coverage audit (`apply-updates-schedule-audit.yml`) currently validates Step.7 cron-to-`UpdateStartWindow` coverage only - it does **not** audit whether each Step.5 cron is correctly anchored ahead of a Step.7 cron. **Always pair Step.5 + Step.7 cron edits in the same PR** so the lead-time relationship is reviewable by a human at merge time. The per-pipeline appendix entry for [Update: 1 - Assess Update Readiness](docs/appendix-pipelines.md#update-1---assess-update-readiness) repeats this guidance with the same lead-time table.
 
 **Always-green caveat**: `assess-update-readiness.yml` never goes red at the pipeline level - per-cluster readiness gaps surface as JUnit `<failure>` entries in the Tests / Checks tab via `readiness.xml`. A silently-empty `readiness.xml` (e.g. an `update_ring` typo with zero clusters in scope) **will not generate a red-build email**. Either check the Tests tab after each scheduled run, or wire the JUnit reporter into the CI status surface you already monitor.
 
@@ -2034,34 +2037,35 @@ Automation-Pipeline-Examples/
     templates/
       incident-body.md                #   - Mustache-style ticket body template.
   github-actions/
-    setup-validate-and-inventory.yml  # Config: 01. Auth + subscription-scope validation and cluster inventory (merged auth+inventory in v0.8.85; manual + weekly Sun 08:00 UTC).
-    manage-updatering-tags.yml        # Config: 02. Apply UpdateRing / UpdateStartWindow / UpdateExclusionsWindow / UpdateExcluded tags (manual).
-    apply-updates-schedule-audit.yml  # Config: 03. Weekly read-only audit: UpdateStartWindow tags vs apply-updates cron (Mon 05:00 UTC, v0.7.65).
-    assess-update-readiness.yml       # Fleet: 01. Pre-flight readiness report (manual; v0.7.0).
-    fleet-connectivity-status.yml     # Fleet: 02. Daily fleet connectivity / Arc / NIC / Resource Bridge snapshot + node-coverage reconciliation (daily 05:30 UTC, v0.7.79+; reconciliation enhanced in v0.7.85).
-    sideload-updates.yml              # Fleet: 03. Opt-in self-hosted-runner workflow: Robocopy + WinRM sideload of solution-update media to clusters gated on UpdateSideloaded (manual; v0.8.7).
-    apply-updates.yml                 # Fleet: 04. Apply updates to one UpdateRing (with optional ITSM step, v0.7.4).
-    monitor-updates.yml               # Fleet: 05. In-flight update monitor: per-cluster current step + elapsed duration; flags long-running runs (manual, optional cron; v0.7.90).
-    fleet-update-status.yml           # Fleet: 06. Scheduled fleet update-status snapshot (daily 06:00 UTC).
-    fleet-health-status.yml           # Fleet: 07. Scheduled fleet 24-hour health-check failure report (daily 07:00 UTC, v0.7.65).
+    apply-updates-schedule-audit.yml  # Config: 3. Weekly read-only audit: UpdateStartWindow tags vs apply-updates cron (Mon 05:00 UTC, v0.7.65).
+    apply-updates.yml                 # Update: 3. Apply updates to one UpdateRing (with optional ITSM step, v0.7.4).
+    assess-update-readiness.yml       # Update: 1. Pre-flight readiness report (manual; v0.7.0).
+    fleet-connectivity-status.yml     # Monitor: 1. Daily fleet connectivity / Arc / NIC / Resource Bridge snapshot + node-coverage reconciliation (daily 05:30 UTC, v0.7.79+; reconciliation enhanced in v0.7.85).
+    fleet-health-status.yml           # Monitor: 2. Scheduled fleet 24-hour health-check failure report (daily 07:00 UTC, v0.7.65).
+    fleet-update-status.yml           # Monitor: 3. Scheduled fleet update-status snapshot (daily 06:00 UTC).
+    manage-updatering-tags.yml        # Config: 2. Apply UpdateRing / UpdateStartWindow / UpdateExclusionsWindow / UpdateExcluded tags (manual).
+    monitor-updates.yml               # Update: 4. In-flight update monitor: per-cluster current step + elapsed duration; flags long-running runs (manual, optional cron; v0.7.90).
+    setup-validate-and-inventory.yml  # Config: 1. Auth + subscription-scope validation and cluster inventory (merged auth+inventory in v0.8.85; manual + weekly Sun 08:00 UTC).
+    sideload-updates.yml              # Update: 2. Opt-in self-hosted-runner workflow: Robocopy + WinRM sideload of solution-update media to clusters gated on UpdateSideloaded (manual; v0.8.7).
+
   azure-devops/
-    setup-validate-and-inventory.yml
-    manage-updatering-tags.yml
     apply-updates-schedule-audit.yml
+    apply-updates.yml
     assess-update-readiness.yml
     fleet-connectivity-status.yml
-    sideload-updates.yml
-    apply-updates.yml
-    monitor-updates.yml
-    fleet-update-status.yml
     fleet-health-status.yml
+    fleet-update-status.yml
+    manage-updatering-tags.yml
+    monitor-updates.yml
+    setup-validate-and-inventory.yml
+    sideload-updates.yml
 ```
 
 ---
 
 ## 14. Pipeline reference
 
-Moved to [docs/appendix-pipelines.md](docs/appendix-pipelines.md) - one section per pipeline (`Config: 01 - ...` ... `Fleet: 07 - ...`) mapping 1:1 to the bundled `*.yml` workflows, with purpose, inputs, trigger, cmdlets invoked, dependencies, artefacts, RBAC, and exit conditions for each. Kept out-of-line to keep this README focused on the runbook.
+Moved to [docs/appendix-pipelines.md](docs/appendix-pipelines.md) - one section per pipeline (`Config: 1 - ...` ... `Update: 4 - ...`) mapping 1:1 to the bundled `*.yml` workflows, with purpose, inputs, trigger, cmdlets invoked, dependencies, artefacts, RBAC, and exit conditions for each. Kept out-of-line to keep this README focused on the runbook.
 
 ## Appendix B: Release history
 

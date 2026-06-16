@@ -1,5 +1,5 @@
 # AZLOCAL-PIPELINE-ID: setup-validate-and-inventory
-# Config: 01 - Validate Auth and Inventory Azure Local Clusters
+# Config: 1 - Validate Auth and Inventory Azure Local Clusters
 #
 # PURPOSE:
 #   This is the first step in the setup workflow. It combines two operations:
@@ -7,7 +7,7 @@
 #   2. INVENTORY: Queries all Azure Local clusters and exports inventory with UpdateRing tag status
 #
 #   Run this workflow:
-#       - BEFORE adding the operational workflows (Fleet: 01-07). It narrows any failure 
+#       - BEFORE adding the operational workflows (Update: 1-4 and Monitor: 1-3). It narrows any failure 
 #         to authentication/discovery rather than seven interacting pipelines.
 #       - PERIODICALLY (recommended monthly, or after every RBAC change in the tenant) 
 #         to confirm subscription scope and cluster inventory are accurate.
@@ -42,7 +42,7 @@
 #
 # See Automation-Pipeline-Examples/README.md for full setup story.
 
-name: 'Config: 01 - Validate Auth and Inventory Clusters'
+name: 'Config: 1 - Validate Auth and Inventory Clusters'
 
 on:
   workflow_dispatch:
@@ -73,7 +73,7 @@ env:
   # this to the version actually installed and to the latest on PSGallery, and emits a
   # ::notice annotation if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample. See Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.8.86'
+  GENERATED_AGAINST_MODULE_VERSION: '0.8.87'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): manual workflow_dispatch input >
   # repository variable 'REQUIRED_MODULE_VERSION' > empty (latest).
@@ -171,7 +171,7 @@ jobs:
         if: always()
         uses: dorny/test-reporter@v3
         with:
-          name: '[JUnit Debug] Config: 01 - Authentication Validation'
+          name: '[JUnit Debug] Config: 1 - Authentication Validation'
           path: ./reports/auth-report.xml
           reporter: java-junit
           fail-on-error: false

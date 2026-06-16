@@ -1,5 +1,5 @@
 # AZLOCAL-PIPELINE-ID: setup-validate-and-inventory
-# Config: 01 - Validate Auth and Inventory Azure Local Clusters
+# Config: 1 - Validate Auth and Inventory Azure Local Clusters
 #
 # PURPOSE:
 #   This is the first step in the setup workflow. It combines two operations:
@@ -10,7 +10,7 @@
 #      UpdateRing tag status.
 #
 #   Run this pipeline:
-#       - BEFORE importing the operational pipelines (Fleet: 01-07). It narrows
+#       - BEFORE importing the operational pipelines (Update: 1-4 and Monitor: 1-3). It narrows
 #         any failure to authentication/discovery rather than seven interacting
 #         pipelines.
 #       - PERIODICALLY (recommended monthly, or after every RBAC change in the
@@ -41,11 +41,11 @@
 #     cluster-inventory (ClusterUpdateRings.csv + .json + README_Instructions.txt).
 #
 # HOW TO RUN (after the file is committed and the pipeline is imported):
-#   Pipelines -> Config: 01 - Validate Auth and Inventory Clusters -> Run pipeline.
+#   Pipelines -> Config: 1 - Validate Auth and Inventory Clusters -> Run pipeline.
 #
 # See Automation-Pipeline-Examples/README.md, section 5, for the full setup story.
 
-name: 'Config: 01 - Validate Auth and Inventory Clusters'
+name: 'Config: 1 - Validate Auth and Inventory Clusters'
 
 # BEGIN-AZLOCAL-CUSTOMIZE:schedule-triggers
 # Add or modify `schedules:` blocks here to enable cron-driven runs. Content
@@ -79,7 +79,7 @@ variables:
   # log if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
   - name: GENERATED_AGAINST_MODULE_VERSION
-    value: '0.8.86'
+    value: '0.8.87'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): queue-time parameter > pipeline variable
   # 'REQUIRED_MODULE_VERSION' overridden at queue time > empty (latest).
@@ -155,7 +155,7 @@ stages:
             inputs:
               testResultsFormat: 'JUnit'
               testResultsFiles: '$(Build.ArtifactStagingDirectory)/auth-report/auth-report.xml'
-              testRunTitle: '[JUnit Debug] Config: 01 - Authentication Validation'
+              testRunTitle: '[JUnit Debug] Config: 1 - Authentication Validation'
               failTaskOnFailedTests: false
               mergeTestResults: false
 

@@ -1,5 +1,5 @@
 # AZLOCAL-PIPELINE-ID: manage-updatering-tags
-# Config: 02 - Manage UpdateRing Tags
+# Config: 2 - Manage UpdateRing Tags
 # This pipeline creates or updates UpdateRing tags on Azure Local clusters from a CSV file
 #
 # WORKFLOW:
@@ -46,7 +46,7 @@ variables:
   # log if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
   - name: GENERATED_AGAINST_MODULE_VERSION
-    value: '0.8.86'
+    value: '0.8.87'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): queue-time parameter > pipeline variable
   # 'REQUIRED_MODULE_VERSION' overridden at queue time > empty (latest).
@@ -58,7 +58,7 @@ pool:
 
 stages:
   - stage: ManageTags
-    displayName: 'Config: 02 - Manage UpdateRing Tags'
+    displayName: 'Config: 2 - Manage UpdateRing Tags'
     jobs:
       - job: ApplyTags
         displayName: 'Apply UpdateRing Tags'

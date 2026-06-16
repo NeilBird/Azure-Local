@@ -2,7 +2,7 @@
 
 > ⚠️ **Disclaimer**: This module is **NOT** a Microsoft supported service offering or product. It is provided as example code only, with no warranty or official support. Refer to the [MIT license](https://github.com/NeilBird/Azure-Local/blob/main/LICENSE) for further information.
 
-**Latest Version:** v0.8.86 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.8.86)
+**Latest Version:** v0.8.87 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.8.87)
 
 > 📢 **Renamed in v0.7.3**: this module was previously published as `AzStackHci.ManageUpdates`. The new module name aligns with the Azure Local product name (_Microsoft retired the *Azure Stack HCI* brand in late 2024_). The module GUID is preserved across the rename. If you have the old name installed, run:
 >
@@ -23,7 +23,7 @@ Azure Local REST API specification (includes update management endpoints): https
 **This README (overview + most-recent release notes):**
 
 - [Where to Start](#where-to-start)
-- [What's New in v0.8.86](#whats-new-in-v0886)
+- [What's New in v0.8.87](#whats-new-in-v0887)
 - [Files](#files)
 - [Prerequisites](#prerequisites)
 - [RBAC Requirements](#rbac-requirements) (summary; full reference in [docs/rbac.md](docs/rbac.md))
@@ -86,23 +86,35 @@ If you are new to this module, work through these in order from a regular PowerS
 
 > Most CI/CD pipelines in [Automation-Pipeline-Examples/](Automation-Pipeline-Examples/) are direct implementations of one of these workflows. Start there if you want a copy-pasteable end-to-end pipeline.
 
-## What's New in v0.8.86
+## What's New in v0.8.87
 
-**Pipeline sidebar-ordering fix.** Renames the three onboarding pipeline templates from `Setup: 0N` to `Config: 0N` so the GitHub Actions sidebar (and the Azure DevOps Pipelines list) lists the onboarding / configuration workflows *ahead of* the `Fleet: 0N` operational workflows. Both surfaces sort alphabetically by the workflow `name:` / definition name, and `C` (Config) sorts before `F` (Fleet) - the previous `Setup:` prefix sorted *after* `Fleet:`.
+**Pipeline display-name rename.** The bundled pipeline display names are renamed into a three-group `Config: N` / `Monitor: N` / `Update: N` scheme (single-digit, e.g. `Monitor: 1 - Fleet Connectivity Status`, `Update: 4 - Monitor In-Flight Updates`), replacing the former `Setup: 0N` / `Fleet: 0N` prefixes so the GitHub Actions and Azure DevOps lists group onboarding, day-2 monitoring, and update-lifecycle workflows logically. Filenames and `AZLOCAL-PIPELINE-ID` values are unchanged.
+
+**Fleet Connectivity Status output clarification.** Renames the "Orphan ARBs" section in the `New-AzLocalFleetConnectivityStatusSummary` (Monitor: 1 - Fleet Connectivity Status) markdown output to **"Non-Azure Local and/or Orphan ARB appliances"** and adds an explicit caveat that an Arc resource bridge with no matching in-scope Azure Local cluster is *not necessarily orphaned*. Azure Arc resource bridge is also used by **VMware vSphere** and **System Center Virtual Machine Manager (SCVMM)** Arc-enabled deployments, so a listed appliance may be a healthy, in-use resource bridge for a non-Azure Local platform.
+
+**In-flight monitor ITSM auto-ticketing + Config: 3 monitor-cadence recommendation.** The Update: 4 in-flight monitor and the ServiceNow ITSM connector now join up so stuck, failed, and attempt-without-run clusters auto-raise deduped incidents, and the Config: 3 schedule auditor recommends how often to poll the monitor.
+
+### Added
+
+- **`Export-AzLocalUpdateRunMonitorReport` (Update: 4)** now writes per-`<testcase>` `<properties>` into `update-monitor.xml` (`ClusterName`, `ClusterResourceId`, `UpdateName`, `Status`, `CurrentStep`, `ClusterPortalUrl`, `UpdateRunPortalUrl`). `Status` is one of `StepError`, `LongRunningStep`, `LongRunningOverall`, `InProgress`, `Failed`, or `AttemptWithoutRun`. This lets `New-AzLocalIncident` dedupe (one incident per affected cluster until it clears) and deep-link into the Azure portal - previously every monitor row was skipped for a missing ClusterResourceId / UpdateName.
+- **Opt-in ITSM ticketing in `monitor-updates.yml`** (GitHub Actions and Azure DevOps). A new `raise_itsm_ticket` / `raiseItsmTicket` input (default off) runs `New-AzLocalIncident` against the monitor JUnit after it is published. The monitor stays report-only and always green; ITSM failures never affect its result. The sample trigger matrix `azurelocal-itsm.yml` gains `AttemptWithoutRun` (raise, severity 3), `StepError` (raise, severity 2), and opt-in `LongRunningOverall` / `LongRunningStep` entries.
+- **`Export-AzLocalApplyUpdatesScheduleAudit` (Config: 3)** gains an always-on **"Recommended in-flight monitor schedule (Update: 4)"** section that derives a `monitor-updates.yml` poll cron from the apply-window weekday(s), covering the apply day plus a configurable trailing window for multi-day runs. Two new parameters: `-MonitorFiresPerHour` (1-12, default 2 = every 30 min) and `-MonitorTrailingDays` (0-14, default 3).
 
 ### Changed
 
-- The three onboarding workflows are renamed `Config: 01 - Validate Auth and Inventory Clusters`, `Config: 02 - Manage UpdateRing Tags`, and `Config: 03 - Apply-Updates Schedule Coverage Audit` (was `Setup: 0N`). Display-name (`name:` / `displayName:`) change only - filenames, `AZLOCAL-PIPELINE-ID` values, aliases, and `-PruneDeprecated` logic are unchanged.
-- Bundled pipeline `README.md` + `docs/appendix-pipelines.md` updated to use `Config: NN` naming throughout.
+- The section heading `### Orphan ARBs (no matching cluster in scope)` becomes `### Non-Azure Local and/or Orphan ARB appliances`, with an intro line and an expanded caveat calling out VMware vSphere / SCVMM resource bridges and adding investigate-before-acting guidance (check the resource type, associated custom location, and the platform served; do not delete an ARB until you have confirmed it is genuinely orphaned).
+- The KPI-table "Orphan ARBs" note, the "how to interpret" causes list (new leading bullet about non-Azure Local resource bridges), and the cluster-table cross-reference now point at the renamed section.
+- The `### Cluster Connectivity (with ARB Status)` table is split into a `### Cluster with Connectivity Issues` table (clusters not Connected with a Running ARB) shown first and expanded, and a `### Cluster without Connectivity Issues` table (Connectivity = Connected AND ARB Status = Running) collapsed behind an `Expand to view clusters` details block. Both tables share the same columns.
 
 ### Notes
 
+- The Monitor: 1 connectivity changes are **output text only**. The monitor / ITSM / Config: 3 changes add new JUnit properties, two optional parameters (`-MonitorFiresPerHour`, `-MonitorTrailingDays`), and an opt-in pipeline step - all **backward-compatible** with existing defaults.
 - **No new exports** (count unchanged at 60).
-- **`GENERATED_AGAINST_MODULE_VERSION`** bumped from `0.8.85` to `0.8.86` across bundled pipeline templates.
+- **`GENERATED_AGAINST_MODULE_VERSION`** bumped from `0.8.86` to `0.8.87` across bundled pipeline templates.
 
 > Previous release notes have moved into the [Release History](#release-history) appendix at the bottom of this document.
 
-See [CHANGELOG.md](CHANGELOG.md) for full release details. See [`What's New in v0.8.85`](#whats-new-in-v0885) in the Release History for the previous release.
+See [CHANGELOG.md](CHANGELOG.md) for full release details. See [`What's New in v0.8.86`](#whats-new-in-v0886) in the Release History for the previous release.
 
 ## Files
 
@@ -581,7 +593,11 @@ This code is provided as-is for educational and reference purposes.
 
 The full What's-New history (v0.7.81 and earlier) has moved to [docs/release-history.md](docs/release-history.md).
 
-The most recent release notes for **v0.8.86** stay above under [`What's New in v0.8.86`](#whats-new-in-v0886).
+The most recent release notes for **v0.8.87** stay above under [`What's New in v0.8.87`](#whats-new-in-v0887).
+
+### What's New in v0.8.86
+
+**Pipeline sidebar-ordering fix.** Renames the three onboarding pipeline templates from `Setup: 0N` to `Config: 0N` so the GitHub Actions sidebar (and the Azure DevOps Pipelines list) lists the onboarding / configuration workflows *ahead of* the `Fleet: 0N` operational workflows. Both surfaces sort alphabetically by the workflow `name:` / definition name, and `C` (Config) sorts before `F` (Fleet) - the previous `Setup:` prefix sorted *after* `Fleet:`. Display-name change only - filenames, `AZLOCAL-PIPELINE-ID` values, aliases, and `-PruneDeprecated` logic are unchanged. See [CHANGELOG.md](CHANGELOG.md#0886---2026-06-16) for the full v0.8.86 entry.
 
 ### What's New in v0.8.85
 

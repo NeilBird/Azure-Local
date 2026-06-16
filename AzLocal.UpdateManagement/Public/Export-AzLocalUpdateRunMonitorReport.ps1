@@ -491,6 +491,23 @@ function Export-AzLocalUpdateRunMonitorReport {
 
     # ---- JUnit XML via the shared emitter ---------------------------------
     $testCases = New-Object 'System.Collections.Generic.List[hashtable]'
+    # v0.8.87: emit per-testcase <properties> (ClusterName / ClusterResourceId /
+    # UpdateName / Status / CurrentStep / portal URLs) so the ITSM connector
+    # (New-AzLocalIncident) can compute the SHA256 dedupe key and the Mustache
+    # body template can deep-link into the Azure portal. The Status property is
+    # what Get-AzLocalItsmTriggerDecision matches against the trigger matrix.
+    $tcProps = {
+        param($row, [string]$statusValue)
+        [ordered]@{
+            ClusterName        = [string]$row.ClusterName
+            ClusterResourceId  = [string]$row.ClusterResourceId
+            UpdateName         = [string]$row.UpdateName
+            Status             = $statusValue
+            CurrentStep        = [string]$row.CurrentStep
+            ClusterPortalUrl   = [string]$row.ClusterPortalUrl
+            UpdateRunPortalUrl = [string]$row.UpdateRunPortalUrl
+        }
+    }
     foreach ($r in ($inFlight | Sort-Object @{Expression='SeverityScore';Descending=$true}, ClusterName)) {
         $safeName = ($r.ClusterName -replace '[^A-Za-z0-9_.-]', '_')
         $caseName = "$safeName - $($r.UpdateName) - $($r.CurrentStep)"
@@ -513,6 +530,7 @@ function Export-AzLocalUpdateRunMonitorReport {
                 ClassName = 'UpdateMonitor'
                 Time      = [double]$r.RunDurationSeconds
                 Failure   = @{ Message = $msg; Type = 'StepError'; Body = $msg }
+                Properties = (& $tcProps $r 'StepError')
             }) | Out-Null
         }
         elseif ($r.ExceedsStepThreshold) {
@@ -522,6 +540,7 @@ function Export-AzLocalUpdateRunMonitorReport {
                 ClassName = 'UpdateMonitor'
                 Time      = [double]$r.RunDurationSeconds
                 Failure   = @{ Message = $msg; Type = 'LongRunningStep'; Body = $msg }
+                Properties = (& $tcProps $r 'LongRunningStep')
             }) | Out-Null
         }
         elseif ($r.ExceedsThreshold) {
@@ -531,6 +550,7 @@ function Export-AzLocalUpdateRunMonitorReport {
                 ClassName = 'UpdateMonitor'
                 Time      = [double]$r.RunDurationSeconds
                 Failure   = @{ Message = $msg; Type = 'LongRunningOverall'; Body = $msg }
+                Properties = (& $tcProps $r 'LongRunningOverall')
             }) | Out-Null
         }
         else {
@@ -538,6 +558,7 @@ function Export-AzLocalUpdateRunMonitorReport {
                 Name      = $caseName
                 ClassName = 'UpdateMonitor'
                 Time      = [double]$r.RunDurationSeconds
+                Properties = (& $tcProps $r 'InProgress')
             }) | Out-Null
         }
     }
@@ -561,6 +582,7 @@ function Export-AzLocalUpdateRunMonitorReport {
             ClassName = 'UpdateMonitor'
             Time      = [double]$r.RunDurationSeconds
             Failure   = @{ Message = $msg; Type = 'RecentFailure'; Body = $msg }
+            Properties = (& $tcProps $r 'Failed')
         }) | Out-Null
     }
     foreach ($gap in ($attemptGaps | Sort-Object @{Expression='AttemptUtc';Descending=$true}, ClusterName)) {
@@ -574,6 +596,17 @@ function Export-AzLocalUpdateRunMonitorReport {
             ClassName = 'UpdateMonitor'
             Time      = 0.0
             Failure   = @{ Message = $msg; Type = 'AttemptWithoutRun'; Body = $msg }
+            Properties = [ordered]@{
+                ClusterName        = [string]$gap.ClusterName
+                ClusterResourceId  = [string]$gap.ClusterResourceId
+                UpdateName         = $updateLabel
+                Status             = 'AttemptWithoutRun'
+                CurrentStep        = ''
+                ClusterPortalUrl   = if ($gap.ClusterResourceId) { 'https://portal.azure.com/#@/resource' + [string]$gap.ClusterResourceId + '/updates' } else { '' }
+                UpdateRunPortalUrl = ''
+                Outcome            = [string]$gap.Outcome
+                AttemptUtc         = [string]$gap.AttemptUtcText
+            }
         }) | Out-Null
     }
     $null = New-AzLocalPipelineJUnitXml -TestSuitesName 'Update Run Monitor' -Suites @(

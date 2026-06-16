@@ -1,5 +1,5 @@
 # AZLOCAL-PIPELINE-ID: assess-update-readiness
-# Fleet: 01 - Assess Update Readiness (Pre-flight go/no-go gate)
+# Update: 1 - Assess Update Readiness (Pre-flight go/no-go gate)
 # --------------------------------------------------
 # Runs Get-AzLocalClusterUpdateReadiness and Test-AzLocalClusterHealth -BlockingOnly
 # against a target UpdateRing (or the whole fleet) BEFORE apply-updates.yml runs.
@@ -70,7 +70,7 @@ variables:
   # the version actually installed and to the latest on PSGallery, and emits a warning
   # log if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.8.86'
+  GENERATED_AGAINST_MODULE_VERSION: '0.8.87'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): queue-time parameter > pipeline variable
   # 'REQUIRED_MODULE_VERSION' overridden at queue time > empty (latest).
@@ -82,7 +82,7 @@ pool:
 
 stages:
   - stage: Assess
-    displayName: 'Fleet: 01 - Assess Update Readiness'
+    displayName: 'Update: 1 - Assess Update Readiness'
     jobs:
       - job: AssessReadiness
         displayName: 'Readiness + blocking health gate'

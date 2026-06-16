@@ -1,5 +1,5 @@
 # AZLOCAL-PIPELINE-ID: fleet-connectivity-status
-# Fleet: 02 - Fleet Connectivity Status Monitoring Pipeline
+# Monitor: 1 - Fleet Connectivity Status Monitoring Pipeline
 # This pipeline surfaces network-connectivity issues across every Azure Local
 # cluster the service connection can read - four scopes in one pipeline:
 #
@@ -49,7 +49,7 @@
 
 # Pipeline display name carries the same Step.N - prefix as the filename so the
 # ADO pipelines list (sorts by `name:` field) lists pipelines in execution order.
-name: 'Fleet: 02 - Fleet Connectivity Status'
+name: 'Monitor: 1 - Fleet Connectivity Status'
 
 # BEGIN-AZLOCAL-CUSTOMIZE:schedule-triggers
 # Edits inside this block are preserved across Update-AzLocalPipelineExample
@@ -110,7 +110,7 @@ variables:
   # the version actually installed and to the latest on PSGallery, and emits a warning
   # log if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.8.86'
+  GENERATED_AGAINST_MODULE_VERSION: '0.8.87'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): queue-time parameter > pipeline variable
   # 'REQUIRED_MODULE_VERSION' overridden at queue time > empty (latest).
