@@ -10,17 +10,22 @@ name: AzLocal.UpdateManagement - Pester
 # Cost mitigation: path-filtered to AzLocal.UpdateManagement/** only, and only
 # fires on the three useful PR activities (opened, synchronize, reopened).
 
+# DISABLED: automatic CI triggers are commented out because the Pester suite is
+# run locally before every push (see AzLocal.UpdateManagement/Tests/Invoke-Tests.ps1).
+# To re-enable hosted CI, uncomment the pull_request + push blocks below.
+# workflow_dispatch is kept so the workflow remains valid (GitHub requires at
+# least one trigger) and can still be run on demand from the Actions tab.
 on:
-  pull_request:
-    types: [opened, synchronize, reopened]
-    paths:
-      - 'AzLocal.UpdateManagement/**'
-      - '.github/workflows/AzLocal.UpdateManagement-pester.yml'
-  push:
-    branches: [main]
-    paths:
-      - 'AzLocal.UpdateManagement/**'
-      - '.github/workflows/AzLocal.UpdateManagement-pester.yml'
+  # pull_request:
+  #   types: [opened, synchronize, reopened]
+  #   paths:
+  #     - 'AzLocal.UpdateManagement/**'
+  #     - '.github/workflows/AzLocal.UpdateManagement-pester.yml'
+  # push:
+  #   branches: [main]
+  #   paths:
+  #     - 'AzLocal.UpdateManagement/**'
+  #     - '.github/workflows/AzLocal.UpdateManagement-pester.yml'
   workflow_dispatch:
 
 concurrency:

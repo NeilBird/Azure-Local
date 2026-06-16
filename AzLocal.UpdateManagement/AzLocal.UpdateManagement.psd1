@@ -3,7 +3,7 @@
     RootModule = 'AzLocal.UpdateManagement.psm1'
 
     # Version number of this module.
-    ModuleVersion = '0.8.85'
+    ModuleVersion = '0.8.86'
 
     # Supported PSEditions
     CompatiblePSEditions = @('Desktop', 'Core')
@@ -317,6 +317,8 @@
 
             # ReleaseNotes of this module
             ReleaseNotes = @'
+## Version 0.8.86 - Patch: renames the three onboarding pipeline templates from `Setup: 0N` to `Config: 0N` so the GitHub Actions sidebar (and the Azure DevOps Pipelines list) sorts the onboarding / configuration workflows ahead of the `Fleet: 0N` operational workflows. Both surfaces sort alphabetically by the workflow `name:` / definition name, and `C` (Config) sorts before `F` (Fleet); the previous `Setup:` prefix sorted AFTER `Fleet:`. Only the operator-facing `name:` (GitHub Actions) / `displayName:` (Azure DevOps) fields change - filenames, `AZLOCAL-PIPELINE-ID` values, aliases, prune logic, and all cmdlet behaviour are unchanged. Bundled pipeline README + appendix docs updated to match. No public API or behavioural change. Export count unchanged (still 60). `GENERATED_AGAINST_MODULE_VERSION` bumped from `'0.8.85'` to `'0.8.86'`.
+
 ## Version 0.8.85 - Patch: introduces Setup/Fleet naming in bundled pipeline templates, adds merged GitHub onboarding workflow `setup-validate-and-inventory.yml`, and updates pipeline refresh tooling with optional deprecated-file pruning guarded by AZLOCAL-PIPELINE-ID verification. No public API or behavioural change. Export count unchanged (still 60). `GENERATED_AGAINST_MODULE_VERSION` bumped from `'0.8.84'` to `'0.8.85'`.
 
 ## Version 0.8.83 - Patch: fix-forward for v0.8.82 Item-5. The Step.08 `UpdateLastAttempt` reconciliation in `Export-AzLocalUpdateRunMonitorReport` reads `$inv.tags` from `Get-AzLocalClusterInventory`, but the v0.8.82 inventory projection did not carry the raw ARM `tags` bag - so the "Recent update attempts with no observable updateRun" section was silently always empty in production. v0.8.83 surfaces the raw `tags` bag on every inventory row (in-memory only; the CSV / JSON export keeps its explicit `$selectColumns` whitelist - new regression test asserts both). Also wires `attempts_without_run` into the GitHub Actions `monitor-updates.yml` `jobs.outputs:` block (ADO `Set-AzLocalPipelineOutput` auto-publishes so only an ADO docstring refresh needed), and corrects the `Export-AzLocalUpdateRunMonitorReport` "6 step outputs" docstring to "7 step outputs". No public API change. Export count unchanged (still 60). All bundled pipeline templates bump `GENERATED_AGAINST_MODULE_VERSION` from `'0.8.82'` to `'0.8.83'`.

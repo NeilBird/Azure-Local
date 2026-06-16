@@ -5,6 +5,36 @@ All notable changes to the AzLocal.UpdateManagement module (renamed from AzStack
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.86] - 2026-06-16
+
+Patch release. Renames the three onboarding pipeline templates from `Setup: 0N`
+to `Config: 0N` so the GitHub Actions sidebar (and the Azure DevOps Pipelines
+list) sorts the onboarding / configuration workflows ahead of the `Fleet: 0N`
+operational workflows. Both surfaces sort alphabetically by the workflow `name:`
+/ definition name, and `C` (Config) sorts before `F` (Fleet); the previous
+`Setup:` prefix sorted *after* `Fleet:`. No public API change. Export count
+unchanged (still 60).
+
+### Changed
+
+- Renames the operator-facing display names of the three onboarding workflows
+  from `Setup: 01/02/03` to `Config: 01/02/03` across both GitHub Actions
+  (`name:`) and Azure DevOps (`displayName:` / `name:`) templates. Filenames,
+  `AZLOCAL-PIPELINE-ID` values, aliases, and `-PruneDeprecated` logic are
+  unchanged - this is a display-name-only change.
+- Updates the bundled pipeline `README.md` and `docs/appendix-pipelines.md`
+  (section headings, dependency cross-references, naming rationale) to use the
+  `Config: NN` naming.
+- Clarifies in the bundled pipeline `README.md` (step 3, "federate the
+  workflow") that **GitHub environments are optional**: the branch-scoped
+  federated credential is all OIDC requires, so leaving the `environment` input
+  blank is the supported minimal setup. Environments are a governance wrapper
+  (approval gates, deployment-branch restrictions, wait timers, per-environment
+  identities) and only need environment-scoped federated credentials when a run
+  actually names one.
+- `GENERATED_AGAINST_MODULE_VERSION` bumped from `'0.8.85'` to `'0.8.86'`
+  across all bundled GitHub Actions and Azure DevOps pipeline templates.
+
 ## [0.8.85] - 2026-06-16
 
 Patch release. Introduces Setup/Fleet naming in bundled pipeline templates,

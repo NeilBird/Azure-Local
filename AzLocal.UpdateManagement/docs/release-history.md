@@ -4,7 +4,19 @@
 >
 > **For older releases**, this is the canonical reference; the main README intentionally stays slim so the most recent block is easy to find.
 >
-> **For v0.8.84 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0884) `What's New in v0.8.84` section.
+> **For v0.8.86 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0886) `What's New in v0.8.86` section.
+
+---
+
+### What's New in v0.8.86
+
+Patch release. Renames the three onboarding pipeline templates from `Setup: 0N` to `Config: 0N` so the GitHub Actions sidebar (and the Azure DevOps Pipelines list) sorts the onboarding / configuration workflows ahead of the `Fleet: 0N` operational workflows. Both surfaces sort alphabetically by the workflow `name:` / definition name, and `C` (Config) sorts before `F` (Fleet); the previous `Setup:` prefix sorted *after* `Fleet:`. Display-name (`name:` / `displayName:`) change only - filenames, `AZLOCAL-PIPELINE-ID` values, aliases, and `-PruneDeprecated` logic are unchanged. Bundled pipeline README + appendix docs updated to match. No public API change. Export count unchanged (still 60). `GENERATED_AGAINST_MODULE_VERSION` bumped from `0.8.85` to `0.8.86` across all bundled pipeline templates.
+
+---
+
+### What's New in v0.8.85
+
+Patch release. Introduces Setup/Fleet naming in bundled pipeline templates, adds the merged GitHub onboarding workflow `setup-validate-and-inventory.yml`, and updates pipeline refresh tooling with optional deprecated-file pruning guarded by AZLOCAL-PIPELINE-ID verification. (Superseded in v0.8.86, which renames the `Setup: 0N` workflows to `Config: 0N`.) No public API change. Export count unchanged (still 60). `GENERATED_AGAINST_MODULE_VERSION` bumped from `0.8.84` to `0.8.85`.
 
 ---
 

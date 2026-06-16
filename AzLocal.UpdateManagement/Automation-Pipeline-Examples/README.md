@@ -56,10 +56,10 @@ It is written in the same step-by-step style as [`ITSM/README.md`](../ITSM/READM
 By the end of this guide you will have:
 
 - A federated identity (no client secrets) wired into your CI/CD platform with the **minimum** Azure RBAC needed for cluster update management.
-- Setup/Fleet workflows committed to your repo and visible in the Actions / Pipelines UI:
-  - **Setup: 01 - Validate Auth and Inventory Clusters** (GitHub) - merged auth + inventory flow with a clear setup-first summary (including collapsible subscription details) and cluster inventory export.
-  - **Setup: 02 - Manage UpdateRing Tags** - bulk-apply `UpdateRing`, `UpdateStartWindow`, `UpdateExclusionsWindow`, `UpdateExcluded` tags from CSV.
-  - **Setup: 03 - Apply-Updates Schedule Coverage Audit** - read-only audit that validates your schedule against `UpdateStartWindow` tags.
+- Config/Fleet workflows committed to your repo and visible in the Actions / Pipelines UI:
+  - **Config: 01 - Validate Auth and Inventory Clusters** (GitHub) - merged auth + inventory flow with a clear setup-first summary (including collapsible subscription details) and cluster inventory export.
+  - **Config: 02 - Manage UpdateRing Tags** - bulk-apply `UpdateRing`, `UpdateStartWindow`, `UpdateExclusionsWindow`, `UpdateExcluded` tags from CSV.
+  - **Config: 03 - Apply-Updates Schedule Coverage Audit** - read-only audit that validates your schedule against `UpdateStartWindow` tags.
   - **Fleet: 01 - Assess Update Readiness** - pre-flight readiness + blocking-health gate report.
   - **Fleet: 02 - Fleet Connectivity Status** - Arc connectivity, NIC health, and ARB status snapshot.
   - **Fleet: 03 - Sideload Updates (opt-in)** - on-prem media pre-stage workflow for disconnected environments.
@@ -72,18 +72,18 @@ By the end of this guide you will have:
 
 The pipelines are **fully opt-in additive layers** over the module. The PowerShell functions also work without any pipeline at all - see [section 10](#10-standalone-html-report-no-pipeline) for the ad-hoc / desktop story.
 
-### 1.1 Why the pipelines are named `Setup: NN` and `Fleet: NN`
+### 1.1 Why the pipelines are named `Config: NN` and `Fleet: NN`
 
 The active workflow model uses two clear groups:
 
-- `Setup: 01-03` for onboarding and configuration.
+- `Config: 01-03` for onboarding and configuration.
 - `Fleet: 01-07` for day-2 operational monitoring and update execution.
 
 | Group | Workflow name | GH Actions | Azure DevOps |
 |---|---|---|---|
-| Setup | Setup: 01 - Validate Auth and Inventory Clusters | `setup-validate-and-inventory.yml` | `authentication-test.yml` + `inventory-clusters.yml` |
-| Setup | Setup: 02 - Manage UpdateRing Tags | `manage-updatering-tags.yml` | `manage-updatering-tags.yml` |
-| Setup | Setup: 03 - Apply-Updates Schedule Coverage Audit | `apply-updates-schedule-audit.yml` | `apply-updates-schedule-audit.yml` |
+| Config | Config: 01 - Validate Auth and Inventory Clusters | `setup-validate-and-inventory.yml` | `authentication-test.yml` + `inventory-clusters.yml` |
+| Config | Config: 02 - Manage UpdateRing Tags | `manage-updatering-tags.yml` | `manage-updatering-tags.yml` |
+| Config | Config: 03 - Apply-Updates Schedule Coverage Audit | `apply-updates-schedule-audit.yml` | `apply-updates-schedule-audit.yml` |
 | Fleet | Fleet: 01 - Assess Update Readiness | `assess-update-readiness.yml` | `assess-update-readiness.yml` |
 | Fleet | Fleet: 02 - Fleet Connectivity Status | `fleet-connectivity-status.yml` | `fleet-connectivity-status.yml` |
 | Fleet | Fleet: 03 - Sideload Updates (Opt-in) | `sideload-updates.yml` | `sideload-updates.yml` |
@@ -92,13 +92,13 @@ The active workflow model uses two clear groups:
 | Fleet | Fleet: 06 - Fleet Update Status | `fleet-update-status.yml` | `fleet-update-status.yml` |
 | Fleet | Fleet: 07 - Fleet Health Status | `fleet-health-status.yml` | `fleet-health-status.yml` |
 
-- **GitHub Actions**: the Actions sidebar sorts workflows alphabetically by the `name:` field. Prefixing names with `Setup: NN` and `Fleet: NN` keeps the sidebar in intended execution order.
+- **GitHub Actions**: the Actions sidebar sorts workflows alphabetically by the `name:` field. Prefixing names with `Config: NN` and `Fleet: NN` keeps the sidebar in intended execution order (the `Config:` group sorts ahead of `Fleet:` so onboarding pipelines appear first).
 
-  ![GitHub Actions sidebar showing Setup and Fleet workflows in execution order](../docs/images/github-actions-10-pipelines-view.png)
+  ![GitHub Actions sidebar showing Config and Fleet workflows in execution order](../docs/images/github-actions-10-pipelines-view.png)
 
-  *The Setup/Fleet numeric prefixes keep the GitHub Actions sidebar in practical execution order rather than a purely alphabetical scatter.*
+  *The Config/Fleet numeric prefixes keep the GitHub Actions sidebar in practical execution order rather than a purely alphabetical scatter.*
 
-- **Azure DevOps**: the Pipelines list sorts by the pipeline **definition name** chosen at import time (not by filename). Use the same `Setup: NN` / `Fleet: NN` naming when you import so the list stays in operational order.
+- **Azure DevOps**: the Pipelines list sorts by the pipeline **definition name** chosen at import time (not by filename). Use the same `Config: NN` / `Fleet: NN` naming when you import so the list stays in operational order.
 
 If you prefer a different naming scheme (e.g. `00 - Auth`, `01 - Inventory`, ...), just change the `name:` field in each GH Actions YAML and / or pick a different prefix at ADO import time. Nothing else in the module depends on these display names.
 
@@ -499,7 +499,17 @@ az role assignment create `
 
 **Step 3 - federate the workflow**
 
-> **Plan your GitHub environments now**: environment-scoped subjects (`...:environment:<name>`) only succeed at workflow run time if a GitHub environment with the exact same name exists in the repo (names are **case-sensitive**). The `az` command will accept any string you put in `subject` - Entra ID does **not** validate it against GitHub - but a missing or mistyped environment fails the OIDC exchange at runtime with `AADSTS70021: No matching federated identity record found`. The create order does not technically matter, but it is easiest to decide on environment names now (and ideally create them up-front under **your repo -> Settings -> Environments -> New environment**) so the strings you put into the federated credentials definitely match what GitHub will later send in the token. For the ring-based rollout pattern this guide describes, three are recommended:
+> **Are GitHub environments required? No - they are optional.** The pipelines authenticate to Azure with a **branch-scoped** federated credential (`...:ref:refs/heads/main`, the first `az ad app federated-credential create` block below). That single credential is all OIDC needs - leave the `environment` input **blank** (as in the screenshot most operators see) and every workflow runs under the branch-scoped subject claim. The `environment:` line in each job evaluates to an empty string, GitHub attaches no environment, and `azure/login` exchanges the branch-scoped token. This is the correct, fully-supported minimal setup.
+>
+> **What environments add (and when to bother).** A GitHub environment is a *governance* wrapper, **not** an OIDC requirement. Create them only when you want one or more of:
+> - **Required reviewers / manual approval gates** - e.g. a human must approve before the `apply-updates` job runs against the `Production` ring.
+> - **Deployment-branch restrictions** - only allow the workflow to target an environment from `main`.
+> - **Wait timers** - enforce a soak period between rings.
+> - **Per-environment secrets / variables** - e.g. a *different* `AZURE_CLIENT_ID` (a separate App Registration) per ring, so the pilot ring and the production ring use distinct identities with distinct RBAC scopes.
+>
+> If you do **not** need any of those, you can skip the environment-scoped credentials, the environment table, and the `environment` input entirely - the branch-scoped credential covers all runs. You can also add environments later without re-doing anything: create the environment, add its environment-scoped federated credential, and start passing its name in the `environment` input. **Is OIDC the reason?** Yes - the only auth-level effect of naming an environment is that GitHub puts `environment:<name>` into the token's `subject` claim instead of `ref:refs/heads/main`, which is why a *named* run needs a matching **environment-scoped** federated credential (the loop block further below). A *blank* run never needs one.
+>
+> **Plan your GitHub environments now** (only if you decided you want them above): environment-scoped subjects (`...:environment:<name>`) only succeed at workflow run time if a GitHub environment with the exact same name exists in the repo (names are **case-sensitive**). The `az` command will accept any string you put in `subject` - Entra ID does **not** validate it against GitHub - but a missing or mistyped environment fails the OIDC exchange at runtime with `AADSTS70021: No matching federated identity record found`. The create order does not technically matter, but it is easiest to decide on environment names now (and ideally create them up-front under **your repo -> Settings -> Environments -> New environment**) so the strings you put into the federated credentials definitely match what GitHub will later send in the token. **This whole table is optional** - it only applies if you opted into environments above. For the ring-based rollout pattern this guide describes, three are *suggested* (none are required):
 >
 > | Environment | Purpose | Suggested protection rules |
 > |---|---|---|
@@ -514,7 +524,10 @@ az role assignment create `
 > **GitHub environments and `UpdateRing` tag values are independent.** The `UpdateRing` tag lives on the cluster ARM resource and is what the PowerShell functions filter on (`-UpdateRing Wave1`). A GitHub environment is just an approval gate and federated credential subject. They do **not** have to share names, and the mapping is many-to-many: one GitHub environment can run updates across multiple `UpdateRing` values (different workflow runs pass different `-UpdateRing` parameters under the same approval gate), and multiple environments can target the same `UpdateRing` (e.g. a `PreProductionDryRun` environment that runs with `-WhatIf` against the `Production` ring). The workflow YAML decides which ring tag a given environment-gated run applies to.
 
 ```bash
-# Branch-scoped credential (for default-branch / scheduled runs).
+# REQUIRED - branch-scoped credential (for default-branch / scheduled runs).
+# This single credential is enough to run every pipeline with the `environment`
+# input left blank. If you are not using GitHub environments, this is the ONLY
+# federated credential you need - skip the environment-scoped block below.
 az ad app federated-credential create `
     --id <appId-from-step-1> `
     --parameters '{
@@ -524,8 +537,10 @@ az ad app federated-credential create `
         "audiences": ["api://AzureADTokenExchange"]
     }'
 
-# Environment-scoped credential - one per GitHub environment (DevTest, PreProduction, Production).
-# Repeat this command three times, substituting both `name` and `subject` to match each environment.
+# OPTIONAL - environment-scoped credential, one per GitHub environment you chose
+# to create (e.g. DevTest, PreProduction, Production). Only needed if you pass an
+# environment name in the workflow `environment` input. Skip entirely otherwise.
+# Repeat this command once per environment, substituting both `name` and `subject`.
 az ad app federated-credential create `
     --id <appId-from-step-1> `
     --parameters '{
@@ -542,7 +557,7 @@ Subject-claim patterns for other trigger types:
 |---|---|
 | Push to a branch | `repo:<owner>/<repo>:ref:refs/heads/<branch>` |
 | Pull request | `repo:<owner>/<repo>:pull_request` |
-| Environment | `repo:<owner>/<repo>:environment:<env>` |
+| Environment *(optional)* | `repo:<owner>/<repo>:environment:<env>` |
 | Tag | `repo:<owner>/<repo>:ref:refs/tags/<tag>` |
 
 > **PowerShell on Windows**: passing the `--parameters` JSON as an inline string (as shown above) fails on Windows PowerShell - and on PowerShell 7+ on Windows - with `Failed to parse string as JSON: ... Expecting property name enclosed in double quotes`. The `az` CLI on Windows is a `.cmd` shim, and cmd.exe strips the inner double quotes from the JSON before `az` ever sees them. Microsoft's [quoting guidance](https://learn.microsoft.com/cli/azure/use-azure-cli-successfully-quoting#json-strings) recommends bypassing the shell entirely by writing the JSON to a file and passing it with the `@<filepath>` prefix - this is the universally safe pattern and works on Linux/macOS too:
@@ -563,8 +578,9 @@ Subject-claim patterns for other trigger types:
 >     --id <appId-from-step-1> `
 >     --parameters "@$paramsFile"
 >
-> # Environment-scoped credentials - one per GitHub environment (names are case-sensitive
-> # and must match the environments that will exist in your repo at workflow run time)
+> # OPTIONAL - environment-scoped credentials, one per GitHub environment (names are
+> # case-sensitive and must match the environments in your repo at workflow run time).
+> # Skip this foreach entirely if you are running with the `environment` input blank.
 > foreach ($envName in 'DevTest','PreProduction','Production') {
 >     @{
 >         name      = "GitHubActions-$envName"
@@ -628,7 +644,7 @@ You can add the secrets via the **GitHub UI** (**Settings -> Secrets and variabl
 >
 > `gh` reuses the credentials of the signed-in account, so it can write secrets to any repo that account can write to. No personal access token needed for interactive use.
 
-**Script the secrets and environments (recommended)** - end-to-end: creates the GitHub environments your federated credentials reference, writes the three repo-level secrets, and (optionally) pins `AZURE_CLIENT_ID` at each environment. Substitute `<owner>/<repo>` for your target repo:
+**Script the secrets and environments** - end-to-end: creates the GitHub environments your federated credentials reference (**optional** - only needed if you opted into environments in step 3; if you are running with the `environment` input blank, you can skip the environment-creation loop and keep just the secret/variable writes), writes the three repo-level secrets, and (optionally) pins `AZURE_CLIENT_ID` at each environment. Substitute `<owner>/<repo>` for your target repo:
 
 ```powershell
 # Inputs - reuse the variables from the federation step where you can
@@ -940,13 +956,13 @@ Both platforms expect the YAML files inside this folder to land in a platform-sp
 > Copy-AzLocalPipelineExample -Destination .\pipelines -Platform AzureDevOps
 > ```
 >
-> The function prints a short "next steps" summary pointing at the copied YAML location with the recommended workflow / pipeline to run first (GitHub: **Setup: 01 - Validate Auth and Inventory Clusters**, Azure DevOps: auth validation + inventory onboarding). Supports `-Platform GitHub | AzureDevOps | All`, `-PassThru`, `-WhatIf`, `-Confirm`.
+> The function prints a short "next steps" summary pointing at the copied YAML location with the recommended workflow / pipeline to run first (GitHub: **Config: 01 - Validate Auth and Inventory Clusters**, Azure DevOps: auth validation + inventory onboarding). Supports `-Platform GitHub | AzureDevOps | All`, `-PassThru`, `-WhatIf`, `-Confirm`.
 >
 > **Refusing to overwrite**: the function will refuse to overwrite any file that already exists in `-Destination`, listing the conflicts in the error message. To refresh after a module upgrade, delete the existing copies first (`Remove-Item .\.github\workflows\*.yml`) and re-run.
 
 ### 5.1 GitHub Actions
 
-1. **Run Setup: 01 first (strongly recommended).** Before exercising the Fleet workflows, validate that the App Registration, federated credentials, GitHub secrets, environments, and RBAC role assignment all line up - and capture the count + per-subscription detail of subscriptions visible to the pipeline identity - by running **`Setup: 01 - Validate Auth and Inventory Clusters`**. This narrows any failure to one onboarding workflow instead of debugging multiple operational workflows simultaneously. **Re-run periodically** (recommended monthly, or after any RBAC change in the tenant) to confirm the pipeline identity's subscription scope has not silently widened or narrowed.
+1. **Run Config: 01 first (strongly recommended).** Before exercising the Fleet workflows, validate that the App Registration, federated credentials, GitHub secrets, environments, and RBAC role assignment all line up - and capture the count + per-subscription detail of subscriptions visible to the pipeline identity - by running **`Config: 01 - Validate Auth and Inventory Clusters`**. This narrows any failure to one onboarding workflow instead of debugging multiple operational workflows simultaneously. **Re-run periodically** (recommended monthly, or after any RBAC change in the tenant) to confirm the pipeline identity's subscription scope has not silently widened or narrowed.
 
   The onboarding workflow ships with the module at [`github-actions/setup-validate-and-inventory.yml`](./github-actions/setup-validate-and-inventory.yml). It emits the auth validation JUnit report (Authentication / Subscription Scope / Resource Graph Reachability), writes a setup-focused markdown summary (including a collapsible subscription-details section), and exports both auth and inventory artifacts for downstream workflows.
 
@@ -971,8 +987,8 @@ Both platforms expect the YAML files inside this folder to land in a platform-sp
    At the `gh` CLI level, `gh run watch` shows the run summary as the steps complete (`gh` actually renders these as Unicode check marks; reproduced here in ASCII):
 
    ```text
-  ? Select a workflow run * Setup: 01 - Validate Auth and Inventory Clusters, Setup: 01 - Validate Auth and Inventory Clusters [main] 12s ago
-  [OK] main Setup: 01 - Validate Auth and Inventory Clusters - <run-id>
+  ? Select a workflow run * Config: 01 - Validate Auth and Inventory Clusters, Config: 01 - Validate Auth and Inventory Clusters [main] 12s ago
+  [OK] main Config: 01 - Validate Auth and Inventory Clusters - <run-id>
    Triggered via workflow_dispatch less than a minute ago
 
    JOBS
@@ -985,7 +1001,7 @@ Both platforms expect the YAML files inside this folder to land in a platform-sp
      [OK] Post Azure login (OIDC)
      [OK] Complete job
 
-  [OK] Run Setup: 01 - Validate Auth and Inventory Clusters (<run-id>) completed with 'success'
+  [OK] Run Config: 01 - Validate Auth and Inventory Clusters (<run-id>) completed with 'success'
    ```
 
    Inside the `Collect Authentication and Subscription Scope Report` step, the run log shows:
@@ -1006,7 +1022,7 @@ Both platforms expect the YAML files inside this folder to land in a platform-sp
    <cluster-1>    <rg-1>                  <sub-guid>
    ```
 
-  ![Setup: 01 - Validate Auth and Inventory Clusters run, showing authentication validation output and subscription scope details](../docs/images/auth-smoke-test-validate-oidc.png)
+  ![Config: 01 - Validate Auth and Inventory Clusters run, showing authentication validation output and subscription scope details](../docs/images/auth-smoke-test-validate-oidc.png)
 
    You may see one informational `windows-latest` -> `windows-2025-vs2026` migration notice in the run annotations. The sample workflows pin `runs-on: windows-latest` (the module is a Windows-side PowerShell module), and GitHub will retarget the alias to the new image automatically when it becomes the default - no action required on your part. As of v0.7.60 the previously-seen Node.js 20 deprecation banner (against `actions/checkout@v4`, `azure/login@v2`, `actions/upload-artifact@v4`, `dorny/test-reporter@v1`) is gone: the sample workflows have been refreshed to Node 24-compatible majors (`@v5`, `@v3`, `@v6`, `@v3` respectively).
 
@@ -2018,9 +2034,9 @@ Automation-Pipeline-Examples/
     templates/
       incident-body.md                #   - Mustache-style ticket body template.
   github-actions/
-    setup-validate-and-inventory.yml  # Setup: 01. Auth + subscription-scope validation and cluster inventory (merged auth+inventory in v0.8.85; manual + weekly Sun 08:00 UTC).
-    manage-updatering-tags.yml        # Setup: 02. Apply UpdateRing / UpdateStartWindow / UpdateExclusionsWindow / UpdateExcluded tags (manual).
-    apply-updates-schedule-audit.yml  # Setup: 03. Weekly read-only audit: UpdateStartWindow tags vs apply-updates cron (Mon 05:00 UTC, v0.7.65).
+    setup-validate-and-inventory.yml  # Config: 01. Auth + subscription-scope validation and cluster inventory (merged auth+inventory in v0.8.85; manual + weekly Sun 08:00 UTC).
+    manage-updatering-tags.yml        # Config: 02. Apply UpdateRing / UpdateStartWindow / UpdateExclusionsWindow / UpdateExcluded tags (manual).
+    apply-updates-schedule-audit.yml  # Config: 03. Weekly read-only audit: UpdateStartWindow tags vs apply-updates cron (Mon 05:00 UTC, v0.7.65).
     assess-update-readiness.yml       # Fleet: 01. Pre-flight readiness report (manual; v0.7.0).
     fleet-connectivity-status.yml     # Fleet: 02. Daily fleet connectivity / Arc / NIC / Resource Bridge snapshot + node-coverage reconciliation (daily 05:30 UTC, v0.7.79+; reconciliation enhanced in v0.7.85).
     sideload-updates.yml              # Fleet: 03. Opt-in self-hosted-runner workflow: Robocopy + WinRM sideload of solution-update media to clusters gated on UpdateSideloaded (manual; v0.8.7).
@@ -2045,7 +2061,7 @@ Automation-Pipeline-Examples/
 
 ## 14. Pipeline reference
 
-Moved to [docs/appendix-pipelines.md](docs/appendix-pipelines.md) - one section per pipeline (`Setup: 01 - ...` ... `Fleet: 07 - ...`) mapping 1:1 to the bundled `*.yml` workflows, with purpose, inputs, trigger, cmdlets invoked, dependencies, artefacts, RBAC, and exit conditions for each. Kept out-of-line to keep this README focused on the runbook.
+Moved to [docs/appendix-pipelines.md](docs/appendix-pipelines.md) - one section per pipeline (`Config: 01 - ...` ... `Fleet: 07 - ...`) mapping 1:1 to the bundled `*.yml` workflows, with purpose, inputs, trigger, cmdlets invoked, dependencies, artefacts, RBAC, and exit conditions for each. Kept out-of-line to keep this README focused on the runbook.
 
 ## Appendix B: Release history
 
