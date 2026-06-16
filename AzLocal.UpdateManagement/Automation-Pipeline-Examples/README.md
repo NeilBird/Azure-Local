@@ -1054,11 +1054,11 @@ Both platforms expect the YAML files inside this folder to land in a platform-sp
 
 1. **Run authentication validation first (strongly recommended).** Before importing the remaining pipelines, validate that the service connection (Workload Identity Federation), App Registration, and RBAC role assignment all line up - and capture the count + per-subscription detail of subscriptions visible to the pipeline identity - by running the authentication validation pipeline. This narrows any failure to one small YAML file instead of debugging multiple interacting pipelines simultaneously.
 
-   The validation pipeline ships with the module at [`azure-devops/authentication-test.yml`](./azure-devops/authentication-test.yml). v0.7.70 emits a **JUnit XML** report (Authentication / Subscription Scope / Resource Graph Reachability) published via `PublishTestResults@2` and rendered in the run's **Tests** tab, a **markdown summary** with the subscription count + subscription detail table uploaded to the run's **Summary** tab via `##vso[task.uploadsummary]`, and a `auth-report` pipeline artifact (XML + `subscriptions.json` + `subscriptions.csv`) for ITSM / dashboard ingest.
+   The validation pipeline ships with the module at [`azure-devops/setup-validate-and-inventory.yml`](./azure-devops/setup-validate-and-inventory.yml). v0.8.85 merged the former `authentication-test.yml` + `inventory-clusters.yml` into this single workflow. It emits a **JUnit XML** report (Authentication / Subscription Scope / Resource Graph Reachability / Cluster Inventory) published via `PublishTestResults@2` and rendered in the run's **Tests** tab, a **markdown summary** with the subscription count + subscription detail table uploaded to the run's **Summary** tab via `##vso[task.uploadsummary]`, and a `auth-report` pipeline artifact (XML + `subscriptions.json` + `subscriptions.csv` + `cluster-inventory.csv`) for ITSM / dashboard ingest.
 
    If you used the `Copy-AzLocalPipelineExample` shortcut above, the file is already in your chosen pipelines folder alongside the other eight pipeline YAMLs - those YAMLs sit dormant until you import each one as a pipeline, so they're harmless at rest. Otherwise, copy just that one file into your repo. Either way, import it as a new pipeline:
 
-   - **Pipelines -> New pipeline -> Azure Repos Git -> your repo -> Existing Azure Pipelines YAML file -> `/azure-devops/authentication-test.yml`**.
+   - **Pipelines -> New pipeline -> Azure Repos Git -> your repo -> Existing Azure Pipelines YAML file -> `/azure-devops/setup-validate-and-inventory.yml`**.
    - **Save and run**. If your service connection has a name other than `AzureLocal-ServiceConnection`, edit `azureSubscription:` in the YAML first (the only configurable line).
 
    Unlike GitHub Actions, ADO does **not** have environment-scoped federated credentials at the auth layer - the service connection itself is the federation, so a single pipeline run validates everything. ADO **Environments** (Pipelines -> Environments) are approval gates only, layered on top of the service connection, and are not exercised by this validation pipeline.
@@ -1192,7 +1192,7 @@ This is the canonical "nothing wired -> staged rollout working" sequence. Follow
 ```text
 +-----------------------------------------------------------------------+
 |                          PHASE 1: INVENTORY                            |
-|  6.1  inventory-clusters.yml  ->  cluster-inventory.csv                |
+|  6.1  setup-validate-and-inventory.yml  ->  cluster-inventory.csv      |
 +-----------------------------------------------------------------------+
                               v
 +-----------------------------------------------------------------------+
@@ -1239,7 +1239,7 @@ Every pipeline emits one or more artifacts (CSV / Markdown / JUnit XML / HTML). 
 
 ```text
                                             +-------------------------------+
-                                            |  inventory-clusters.yml       |
+                                            |  setup-validate-and-inventory |
                                             |  (read-only ARG)              |
                                             +-------------------------------+
                                                           |
@@ -1501,7 +1501,7 @@ It calls the new [`Get-AzLocalFleetHealthFailures`](../README.md#get-azlocalflee
 
 Configure your CI/CD platform's alerting on the JUnit failures - GitHub Actions surfaces them in the run summary and Azure DevOps shows them in the Tests tab with trend analytics.
 
-**Plus weekly: `apply-updates-schedule-audit.yml`** (read-only, runs Mondays at 05:00 UTC by default) catches drift between the cron schedule(s) committed to `apply-updates.yml` and the `UpdateRing` / `UpdateStartWindow` tags that operators apply to new clusters. It emits a JUnit + CSV + Markdown "Recommend" snippet that pastes straight back into Step.7 to close any coverage gap. **For the full audit runbook (tag a cluster -> see drift -> paste recommended cron -> re-run and watch it turn green), see [section 8.3](#83-end-to-end-runbook-apply-updates-schedule-coverage-audit).**
+**Plus weekly: `apply-updates-schedule-audit.yml`** (read-only, runs Mondays at 05:00 UTC by default) catches drift between the cron schedule(s) committed to `apply-updates.yml` and the `UpdateRing` / `UpdateStartWindow` tags that operators apply to new clusters. It emits a JUnit + CSV + Markdown "Recommend" snippet that pastes straight back into `apply-updates.yml` to close any coverage gap. **For the full audit runbook (tag a cluster -> see drift -> paste recommended cron -> re-run and watch it turn green), see [section 8.3](#83-end-to-end-runbook-apply-updates-schedule-coverage-audit).**
 
 ---
 
@@ -1619,7 +1619,7 @@ Copy this file once per ring (e.g. `assess-update-readiness-Pilot.yml`, `assess-
 
 **Why one YAML per ring**: GitHub Actions `schedule:`-triggered runs cannot supply `inputs:` values - they always use the workflow's default `inputs:`. So a single `assess-update-readiness*.yml` with three crons in one `schedule:` block (and `update_ring` required, no default) would never actually run on cron - every cron tick would fail input validation. Splitting one YAML per ring (each with its own default + single cron) is the cleanest fix. Azure DevOps has the same constraint - `schedules:`-triggered runs use the YAML's default `parameters:` values, so the same per-ring split pattern applies.
 
-**Known gap**: the Step.3 schedule-coverage audit (`apply-updates-schedule-audit.yml`) currently validates Step.7 cron-to-`UpdateStartWindow` coverage only - it does **not** audit whether each Step.5 cron is correctly anchored ahead of a Step.7 cron. **Always pair Step.5 + Step.7 cron edits in the same PR** so the lead-time relationship is reviewable by a human at merge time. The per-pipeline appendix entry for [Step 5 - Assess Update Readiness](docs/appendix-pipelines.md#step-5---assess-update-readiness) repeats this guidance with the same lead-time table.
+**Known gap**: the Step.3 schedule-coverage audit (`apply-updates-schedule-audit.yml`) currently validates Step.7 cron-to-`UpdateStartWindow` coverage only - it does **not** audit whether each Step.5 cron is correctly anchored ahead of a Step.7 cron. **Always pair Step.5 + Step.7 cron edits in the same PR** so the lead-time relationship is reviewable by a human at merge time. The per-pipeline appendix entry for [Fleet: 01 - Assess Update Readiness](docs/appendix-pipelines.md#fleet-01---assess-update-readiness) repeats this guidance with the same lead-time table.
 
 **Always-green caveat**: `assess-update-readiness.yml` never goes red at the pipeline level - per-cluster readiness gaps surface as JUnit `<failure>` entries in the Tests / Checks tab via `readiness.xml`. A silently-empty `readiness.xml` (e.g. an `update_ring` typo with zero clusters in scope) **will not generate a red-build email**. Either check the Tests tab after each scheduled run, or wire the JUnit reporter into the CI status surface you already monitor.
 
@@ -2018,23 +2018,23 @@ Automation-Pipeline-Examples/
     templates/
       incident-body.md                #   - Mustache-style ticket body template.
   github-actions/
-    authentication-test.yml           # 0. Authentication validation + subscription scope report (manual; v0.7.70).
-    inventory-clusters.yml            # 1. Inventory (weekly Mon 06:00 UTC + manual).
-    manage-updatering-tags.yml        # 2. Apply UpdateRing / UpdateStartWindow / UpdateExclusionsWindow / UpdateExcluded tags (manual).
-    apply-updates-schedule-audit.yml  # 3. Weekly read-only audit: UpdateStartWindow tags vs apply-updates cron (Mon 05:00 UTC, v0.7.65).
-    fleet-connectivity-status.yml     # 4. Daily fleet connectivity / Arc / NIC / Resource Bridge snapshot + node-coverage reconciliation (daily 05:30 UTC, v0.7.79+; reconciliation enhanced in v0.7.85).
-    assess-update-readiness.yml       # 5. Pre-flight readiness report (manual; v0.7.0).
-    apply-updates.yml                 # 6. Apply updates to one UpdateRing (with optional ITSM step, v0.7.4).
-    monitor-updates.yml               # 7. In-flight update monitor: per-cluster current step + elapsed duration; flags long-running runs (manual, optional */30 min cron; v0.7.90).
-    fleet-update-status.yml           # 8. Scheduled fleet update-status snapshot (daily 06:00 UTC; formerly Step.8).
-    fleet-health-status.yml           # 9. Scheduled fleet 24-hour health-check failure report (daily 07:00 UTC, v0.7.65; formerly Step.9).
+    setup-validate-and-inventory.yml  # Setup: 01. Auth + subscription-scope validation and cluster inventory (merged auth+inventory in v0.8.85; manual + weekly Sun 08:00 UTC).
+    manage-updatering-tags.yml        # Setup: 02. Apply UpdateRing / UpdateStartWindow / UpdateExclusionsWindow / UpdateExcluded tags (manual).
+    apply-updates-schedule-audit.yml  # Setup: 03. Weekly read-only audit: UpdateStartWindow tags vs apply-updates cron (Mon 05:00 UTC, v0.7.65).
+    assess-update-readiness.yml       # Fleet: 01. Pre-flight readiness report (manual; v0.7.0).
+    fleet-connectivity-status.yml     # Fleet: 02. Daily fleet connectivity / Arc / NIC / Resource Bridge snapshot + node-coverage reconciliation (daily 05:30 UTC, v0.7.79+; reconciliation enhanced in v0.7.85).
+    sideload-updates.yml              # Fleet: 03. Opt-in self-hosted-runner workflow: Robocopy + WinRM sideload of solution-update media to clusters gated on UpdateSideloaded (manual; v0.8.7).
+    apply-updates.yml                 # Fleet: 04. Apply updates to one UpdateRing (with optional ITSM step, v0.7.4).
+    monitor-updates.yml               # Fleet: 05. In-flight update monitor: per-cluster current step + elapsed duration; flags long-running runs (manual, optional cron; v0.7.90).
+    fleet-update-status.yml           # Fleet: 06. Scheduled fleet update-status snapshot (daily 06:00 UTC).
+    fleet-health-status.yml           # Fleet: 07. Scheduled fleet 24-hour health-check failure report (daily 07:00 UTC, v0.7.65).
   azure-devops/
-    authentication-test.yml
-    inventory-clusters.yml
+    setup-validate-and-inventory.yml
     manage-updatering-tags.yml
     apply-updates-schedule-audit.yml
-    fleet-connectivity-status.yml
     assess-update-readiness.yml
+    fleet-connectivity-status.yml
+    sideload-updates.yml
     apply-updates.yml
     monitor-updates.yml
     fleet-update-status.yml
@@ -2045,7 +2045,7 @@ Automation-Pipeline-Examples/
 
 ## 14. Pipeline reference
 
-Moved to [docs/appendix-pipelines.md](docs/appendix-pipelines.md) - one section per pipeline (`Step 0 - ...` ... `Step 10 - ...`) mapping 1:1 to the bundled `*.yml` workflows, with purpose, inputs, trigger, cmdlets invoked, dependencies, artefacts, RBAC, and exit conditions for each. Kept out-of-line to keep this README focused on the runbook.
+Moved to [docs/appendix-pipelines.md](docs/appendix-pipelines.md) - one section per pipeline (`Setup: 01 - ...` ... `Fleet: 07 - ...`) mapping 1:1 to the bundled `*.yml` workflows, with purpose, inputs, trigger, cmdlets invoked, dependencies, artefacts, RBAC, and exit conditions for each. Kept out-of-line to keep this README focused on the runbook.
 
 ## Appendix B: Release history
 

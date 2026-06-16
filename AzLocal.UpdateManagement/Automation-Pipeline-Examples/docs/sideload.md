@@ -20,7 +20,7 @@ imported, the pipeline flips the `UpdateSideloaded=True` gate so the downstream
 internet-connected clusters.
 
 For the per-pipeline reference card (inputs, artefacts, RBAC, exit conditions) see
-[appendix-pipelines.md - Step 6](appendix-pipelines.md#step-6---sideload-updates).
+[appendix-pipelines.md - Fleet: 03](appendix-pipelines.md#fleet-03---sideload-updates-opt-in).
 For robocopy throttling guidance see [sideload-robocopy.md](sideload-robocopy.md).
 
 ---

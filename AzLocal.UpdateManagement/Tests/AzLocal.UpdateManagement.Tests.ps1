@@ -7434,6 +7434,83 @@ Describe 'Function: Copy-AzLocalPipelineExample' {
         Test-Path (Join-Path $repoRoot 'config\sideload-auth-map.csv') | Should -BeFalse
         Test-Path (Join-Path $repoRoot 'config\sideload-catalog.yml')  | Should -BeFalse
     }
+
+    # v0.8.85: -PruneDeprecated removes the legacy authentication-test.yml /
+    # inventory-clusters.yml sample files that were merged into the single
+    # setup-validate-and-inventory.yml workflow. The cleanup is opt-in,
+    # GitHub-only, ID-verified (each candidate's AZLOCAL-PIPELINE-ID must match
+    # the expected value before deletion) and ShouldProcess-gated.
+    Context 'v0.8.85 -PruneDeprecated cleanup of merged setup workflow files' {
+
+        It '-PruneDeprecated is exposed as a [switch] parameter' {
+            $cmd = Get-Command -Name 'Copy-AzLocalPipelineExample' -ErrorAction Stop
+            $cmd.Parameters.ContainsKey('PruneDeprecated') | Should -BeTrue
+            $cmd.Parameters['PruneDeprecated'].ParameterType | Should -Be ([switch])
+        }
+
+        It 'removes BOTH deprecated files when their AZLOCAL-PIPELINE-IDs match' {
+            $dest = Join-Path $script:cpDestRoot 'prune-both'
+            New-Item -Path $dest -ItemType Directory -Force | Out-Null
+            # Seed the two legacy files with their canonical IDs so the
+            # ID-verification gate allows deletion.
+            Set-Content -LiteralPath (Join-Path $dest 'authentication-test.yml') -Value '# AZLOCAL-PIPELINE-ID: authentication-test' -Encoding ASCII
+            Set-Content -LiteralPath (Join-Path $dest 'inventory-clusters.yml')  -Value '# AZLOCAL-PIPELINE-ID: inventory-clusters'  -Encoding ASCII
+
+            Copy-AzLocalPipelineExample -Destination $dest -Platform GitHub -PruneDeprecated -Confirm:$false 6>$null | Out-Null
+
+            Test-Path (Join-Path $dest 'authentication-test.yml') | Should -BeFalse
+            Test-Path (Join-Path $dest 'inventory-clusters.yml')  | Should -BeFalse
+            # The merged replacement must be present.
+            Test-Path (Join-Path $dest 'setup-validate-and-inventory.yml') | Should -BeTrue
+        }
+
+        It 'removes only the single deprecated file that is present' {
+            $dest = Join-Path $script:cpDestRoot 'prune-single'
+            New-Item -Path $dest -ItemType Directory -Force | Out-Null
+            Set-Content -LiteralPath (Join-Path $dest 'inventory-clusters.yml') -Value '# AZLOCAL-PIPELINE-ID: inventory-clusters' -Encoding ASCII
+
+            Copy-AzLocalPipelineExample -Destination $dest -Platform GitHub -PruneDeprecated -Confirm:$false 6>$null | Out-Null
+
+            Test-Path (Join-Path $dest 'inventory-clusters.yml') | Should -BeFalse
+            Test-Path (Join-Path $dest 'setup-validate-and-inventory.yml') | Should -BeTrue
+        }
+
+        It 'preserves a deprecated-named file whose AZLOCAL-PIPELINE-ID does not match' {
+            $dest = Join-Path $script:cpDestRoot 'prune-mismatch'
+            New-Item -Path $dest -ItemType Directory -Force | Out-Null
+            # An operator-owned file that merely happens to share the legacy
+            # name but carries a different ID must NOT be deleted.
+            Set-Content -LiteralPath (Join-Path $dest 'authentication-test.yml') -Value '# AZLOCAL-PIPELINE-ID: my-custom-auth-workflow' -Encoding ASCII
+
+            Copy-AzLocalPipelineExample -Destination $dest -Platform GitHub -PruneDeprecated -Confirm:$false 6>$null 3>$null | Out-Null
+
+            Test-Path (Join-Path $dest 'authentication-test.yml') | Should -BeTrue
+        }
+
+        It 'leaves deprecated files untouched when -PruneDeprecated is NOT supplied' {
+            $dest = Join-Path $script:cpDestRoot 'prune-omitted'
+            New-Item -Path $dest -ItemType Directory -Force | Out-Null
+            Set-Content -LiteralPath (Join-Path $dest 'authentication-test.yml') -Value '# AZLOCAL-PIPELINE-ID: authentication-test' -Encoding ASCII
+            Set-Content -LiteralPath (Join-Path $dest 'inventory-clusters.yml')  -Value '# AZLOCAL-PIPELINE-ID: inventory-clusters'  -Encoding ASCII
+
+            Copy-AzLocalPipelineExample -Destination $dest -Platform GitHub 6>$null 3>$null | Out-Null
+
+            Test-Path (Join-Path $dest 'authentication-test.yml') | Should -BeTrue
+            Test-Path (Join-Path $dest 'inventory-clusters.yml')  | Should -BeTrue
+        }
+
+        It '-PruneDeprecated -WhatIf does not delete the deprecated files' {
+            $dest = Join-Path $script:cpDestRoot 'prune-whatif'
+            New-Item -Path $dest -ItemType Directory -Force | Out-Null
+            Set-Content -LiteralPath (Join-Path $dest 'authentication-test.yml') -Value '# AZLOCAL-PIPELINE-ID: authentication-test' -Encoding ASCII
+            Set-Content -LiteralPath (Join-Path $dest 'inventory-clusters.yml')  -Value '# AZLOCAL-PIPELINE-ID: inventory-clusters'  -Encoding ASCII
+
+            Copy-AzLocalPipelineExample -Destination $dest -Platform GitHub -PruneDeprecated -WhatIf 6>$null | Out-Null
+
+            Test-Path (Join-Path $dest 'authentication-test.yml') | Should -BeTrue
+            Test-Path (Join-Path $dest 'inventory-clusters.yml')  | Should -BeTrue
+        }
+    }
 }
 
 #endregion Copy-AzLocalPipelineExample (v0.7.4, updated in v0.7.50, v0.7.92)
@@ -9432,6 +9509,69 @@ jobs:
             $afterContent = [System.IO.File]::ReadAllText($destFile, [System.Text.UTF8Encoding]::new($false))
             $afterContent | Should -Match "GENERATED_AGAINST_MODULE_VERSION: '0\.7\.50'"
             $afterContent | Should -Match 'operator hand-edit'
+        }
+    }
+
+    # v0.8.85: -PruneDeprecated removes the legacy authentication-test.yml /
+    # inventory-clusters.yml sample files once the merged
+    # setup-validate-and-inventory.yml has been written by the refresh. The
+    # cleanup is opt-in, GitHub-only, ID-verified and ShouldProcess-gated.
+    Context 'v0.8.85 -PruneDeprecated cleanup of merged setup workflow files' {
+
+        It '-PruneDeprecated is exposed as a [switch] parameter' {
+            $cmd = Get-Command -Name 'Update-AzLocalPipelineExample' -ErrorAction Stop
+            $cmd.Parameters.ContainsKey('PruneDeprecated') | Should -BeTrue
+            $cmd.Parameters['PruneDeprecated'].ParameterType | Should -Be ([switch])
+        }
+
+        It 'removes both deprecated files when their AZLOCAL-PIPELINE-IDs match' {
+            $temp = Join-Path $env:TEMP "upe-prune-both-$([guid]::NewGuid())"
+            New-Item -ItemType Directory -Path $temp -Force | Out-Null
+            try {
+                # Seed the merged replacement so the prune precondition (the
+                # canonical setup-validate-and-inventory.yml exists) is met via a
+                # plain canonical match - no rename-merge of the legacy aliases.
+                Copy-Item -LiteralPath (Join-Path $script:UpePlatformSrcGh 'setup-validate-and-inventory.yml') -Destination $temp
+                Set-Content -LiteralPath (Join-Path $temp 'authentication-test.yml') -Value '# AZLOCAL-PIPELINE-ID: authentication-test' -Encoding ASCII
+                Set-Content -LiteralPath (Join-Path $temp 'inventory-clusters.yml')  -Value '# AZLOCAL-PIPELINE-ID: inventory-clusters'  -Encoding ASCII
+
+                Update-AzLocalPipelineExample -Destination $temp -Platform GitHub -PruneDeprecated -Confirm:$false 6>$null 4>$null | Out-Null
+
+                Test-Path -LiteralPath (Join-Path $temp 'authentication-test.yml') | Should -BeFalse
+                Test-Path -LiteralPath (Join-Path $temp 'inventory-clusters.yml')  | Should -BeFalse
+                Test-Path -LiteralPath (Join-Path $temp 'setup-validate-and-inventory.yml') | Should -BeTrue
+            }
+            finally { Remove-Item -Path $temp -Recurse -Force -ErrorAction SilentlyContinue }
+        }
+
+        It 'preserves a deprecated-named file whose AZLOCAL-PIPELINE-ID does not match' {
+            $temp = Join-Path $env:TEMP "upe-prune-mismatch-$([guid]::NewGuid())"
+            New-Item -ItemType Directory -Path $temp -Force | Out-Null
+            try {
+                Copy-Item -LiteralPath (Join-Path $script:UpePlatformSrcGh 'setup-validate-and-inventory.yml') -Destination $temp
+                Set-Content -LiteralPath (Join-Path $temp 'authentication-test.yml') -Value '# AZLOCAL-PIPELINE-ID: my-custom-auth' -Encoding ASCII
+
+                Update-AzLocalPipelineExample -Destination $temp -Platform GitHub -PruneDeprecated -Confirm:$false 6>$null 4>$null | Out-Null
+
+                Test-Path -LiteralPath (Join-Path $temp 'authentication-test.yml') | Should -BeTrue
+            }
+            finally { Remove-Item -Path $temp -Recurse -Force -ErrorAction SilentlyContinue }
+        }
+
+        It 'leaves deprecated files untouched when -PruneDeprecated is NOT supplied' {
+            $temp = Join-Path $env:TEMP "upe-prune-omitted-$([guid]::NewGuid())"
+            New-Item -ItemType Directory -Path $temp -Force | Out-Null
+            try {
+                Copy-Item -LiteralPath (Join-Path $script:UpePlatformSrcGh 'setup-validate-and-inventory.yml') -Destination $temp
+                Set-Content -LiteralPath (Join-Path $temp 'authentication-test.yml') -Value '# AZLOCAL-PIPELINE-ID: authentication-test' -Encoding ASCII
+                Set-Content -LiteralPath (Join-Path $temp 'inventory-clusters.yml')  -Value '# AZLOCAL-PIPELINE-ID: inventory-clusters'  -Encoding ASCII
+
+                Update-AzLocalPipelineExample -Destination $temp -Platform GitHub -Confirm:$false 6>$null 4>$null | Out-Null
+
+                Test-Path -LiteralPath (Join-Path $temp 'authentication-test.yml') | Should -BeTrue
+                Test-Path -LiteralPath (Join-Path $temp 'inventory-clusters.yml')  | Should -BeTrue
+            }
+            finally { Remove-Item -Path $temp -Recurse -Force -ErrorAction SilentlyContinue }
         }
     }
 }

@@ -79,9 +79,19 @@ function Get-AzLocalPipelineManifest {
     # the pre-renumber legacy filename so Update can recover a customer's CRONs
     # regardless of which copy they started from. sideload-updates is net-new
     # in v0.8.7 and therefore has no aliases.
+    #
+    # v0.8.85: the two standalone onboarding workflows authentication-test.yml
+    # (DisplayStep 0) and inventory-clusters.yml (DisplayStep 1) were merged
+    # into a single setup-validate-and-inventory.yml (Setup: 01). Its Aliases
+    # list BOTH superseded filenames (and their Step.N_ ancestors) so
+    # Update-AzLocalPipelineExample can rename-match a customer who still has
+    # either old file and carry their schedule CRONs into the merged workflow.
+    # inventory-clusters.yml is listed first because it is the alias that
+    # historically carried the schedule trigger; the rename path adopts the
+    # first existing alias. The companion authentication-test.yml is then
+    # cleaned up by -PruneDeprecated.
     @(
-        [PSCustomObject]@{ Id = 'authentication-test';          FileName = 'authentication-test.yml';          DisplayStep = 0;  IntroducedIn = '0.7.0'; Aliases = @('Step.0_authentication-test.yml') }
-        [PSCustomObject]@{ Id = 'inventory-clusters';           FileName = 'inventory-clusters.yml';           DisplayStep = 1;  IntroducedIn = '0.7.0'; Aliases = @('Step.1_inventory-clusters.yml') }
+        [PSCustomObject]@{ Id = 'setup-validate-and-inventory'; FileName = 'setup-validate-and-inventory.yml'; DisplayStep = 0;  IntroducedIn = '0.8.85'; Aliases = @('inventory-clusters.yml', 'authentication-test.yml', 'Step.1_inventory-clusters.yml', 'Step.0_authentication-test.yml') }
         [PSCustomObject]@{ Id = 'manage-updatering-tags';       FileName = 'manage-updatering-tags.yml';       DisplayStep = 2;  IntroducedIn = '0.7.0'; Aliases = @('Step.2_manage-updatering-tags.yml') }
         [PSCustomObject]@{ Id = 'apply-updates-schedule-audit'; FileName = 'apply-updates-schedule-audit.yml'; DisplayStep = 3;  IntroducedIn = '0.7.0'; Aliases = @('Step.3_apply-updates-schedule-audit.yml') }
         [PSCustomObject]@{ Id = 'fleet-connectivity-status';    FileName = 'fleet-connectivity-status.yml';    DisplayStep = 4;  IntroducedIn = '0.7.0'; Aliases = @('Step.4_fleet-connectivity-status.yml') }
