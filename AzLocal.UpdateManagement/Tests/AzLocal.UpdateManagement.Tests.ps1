@@ -34,8 +34,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $script:ModuleInfo | Should -Not -BeNullOrEmpty
         }
 
-        It 'Should have version 0.8.86' {
-            $script:ModuleInfo.Version | Should -Be '0.8.86'
+        It 'Should have version 0.8.87' {
+            $script:ModuleInfo.Version | Should -Be '0.8.87'
         }
 
         It 'Module version constants are in sync between .psm1 and .psd1' {
@@ -12664,7 +12664,7 @@ Describe 'Function: New-AzLocalFleetConnectivityStatusSummary' {
         }
 
         It 'Does NOT include the Orphan ARBs section when there are no orphans' {
-            $script:mdEmpty | Should -Not -Match '### Orphan ARBs'
+            $script:mdEmpty | Should -Not -Match '### Non-Azure Local and/or Orphan ARB appliances'
         }
 
         It 'Stays well under the 21K cap with empty inputs' {
@@ -12698,7 +12698,7 @@ Describe 'Function: New-AzLocalFleetConnectivityStatusSummary' {
         }
 
         It 'Includes the Orphan ARBs section heading' {
-            $script:mdOrphan | Should -Match '### Orphan ARBs \(no matching cluster in scope\)'
+            $script:mdOrphan | Should -Match '### Non-Azure Local and/or Orphan ARB appliances'
         }
 
         It 'Lists the orphan ARB by name' {

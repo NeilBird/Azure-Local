@@ -334,7 +334,7 @@ function New-AzLocalFleetConnectivityStatusSummary {
     [void]$sb.AppendLine("| ARBs in scope | $arbTotal | One row per ``resourceconnector/appliances`` (multi-cluster-per-RG collapsed via summarize/make_set) |")
     [void]$sb.AppendLine("| Clusters with an ARB | $clustersWithArb | Clusters matched to an ARB by ClusterId |")
     [void]$sb.AppendLine("| Clusters without an ARB | $clustersWithoutArb | Clusters that show ``_(no ARB)_`` in the per-cluster table below |")
-    [void]$sb.AppendLine("| Orphan ARBs | $($orphanArbs.Count) | ARBs whose RG contains no in-scope HCI cluster (listed in the Orphan ARBs section below when > 0) |")
+    [void]$sb.AppendLine("| Orphan ARBs | $($orphanArbs.Count) | ARBs whose RG contains no in-scope HCI cluster (listed in the 'Non-Azure Local and/or Orphan ARB appliances' section below when > 0; may include VMware/SCVMM resource bridges) |")
     [void]$sb.AppendLine('')
 
     # 5c. "How to interpret + act" static prose
@@ -379,8 +379,9 @@ function New-AzLocalFleetConnectivityStatusSummary {
     [void]$sb.AppendLine('')
     [void]$sb.AppendLine('**``Orphan ARBs`` > 0** _(ARBs whose RG contains no in-scope HCI cluster)_')
     [void]$sb.AppendLine('')
-    [void]$sb.AppendLine('Inspect the ''Orphan ARBs (no matching cluster in scope)'' section below for the full resource IDs. Causes:')
+    [void]$sb.AppendLine('Inspect the ''Non-Azure Local and/or Orphan ARB appliances'' section below for the full resource IDs. Causes:')
     [void]$sb.AppendLine('')
+    [void]$sb.AppendLine('- **ARB serves a different platform** - Azure Arc resource bridge is also used by VMware vSphere and SCVMM; the appliance may be a healthy bridge for a non-Azure Local deployment, not an orphan. Confirm the platform before acting.')
     [void]$sb.AppendLine('- **Cluster deleted but its ARB was not cleaned up** - delete the orphan ARB.')
     [void]$sb.AppendLine('- **ARB in a different sub/RG from the cluster it serves** - scope-list drift; correct the input parameter list to include the matching cluster.')
     [void]$sb.AppendLine('- **ARB created for a cluster excluded from this run** (e.g. environment filter) - verify the filter; no action if expected.')
@@ -389,7 +390,7 @@ function New-AzLocalFleetConnectivityStatusSummary {
     # 5d. Cluster Connectivity (with ARB Status) per-cluster table
     [void]$sb.AppendLine('### Cluster Connectivity (with ARB Status)')
     [void]$sb.AppendLine('')
-    [void]$sb.AppendLine('_One row per cluster, left-joined to the cluster''s Azure Resource Bridge (ARB) appliance status. Each cluster has at most one ARB. ARBs without a matching cluster in scope are listed separately as ''Orphan ARBs''._')
+    [void]$sb.AppendLine('_One row per cluster, left-joined to the cluster''s Azure Resource Bridge (ARB) appliance status. Each cluster has at most one ARB. ARBs without a matching cluster in scope are listed separately under ''Non-Azure Local and/or Orphan ARB appliances''._')
     [void]$sb.AppendLine('')
     if ($ClusterRows.Count -eq 0) {
         [void]$sb.AppendLine('*No clusters returned.*')
@@ -429,9 +430,11 @@ function New-AzLocalFleetConnectivityStatusSummary {
     # 5e. Orphan ARBs table (conditional)
     if ($orphanArbs.Count -gt 0) {
         [void]$sb.AppendLine('')
-        [void]$sb.AppendLine('### Orphan ARBs (no matching cluster in scope)')
+        [void]$sb.AppendLine('### Non-Azure Local and/or Orphan ARB appliances')
         [void]$sb.AppendLine('')
-        [void]$sb.AppendLine('_ARB appliances whose resource group does not contain any HCI cluster visible to this run. May indicate a stale appliance, or a cluster outside the configured scope._')
+        [void]$sb.AppendLine('These ARB appliances do not have a matching Azure Local instance (cluster) in scope.')
+        [void]$sb.AppendLine('')
+        [void]$sb.AppendLine('_ARB appliances whose resource group does not contain any HCI cluster visible to this run. This does **not** by itself mean the appliance is stale or orphaned: Azure Arc resource bridge is also used by **VMware vSphere** and **System Center Virtual Machine Manager (SCVMM)** Arc-enabled deployments, so an appliance listed here may be a healthy, in-use resource bridge for a non-Azure Local platform. Other causes include a stale appliance left behind after a cluster was deleted, or a cluster that is outside the configured scope of this run. **Fully investigate each appliance - check its resource type, associated custom location, and the platform it serves - before taking any action; do not delete an ARB until you have confirmed it is genuinely orphaned.**_')
         [void]$sb.AppendLine('')
         [void]$sb.AppendLine('| ARB | Status | Resource Group | Days Since LastModified |')
         [void]$sb.AppendLine('|-----|--------|----------------|--------------------------|')

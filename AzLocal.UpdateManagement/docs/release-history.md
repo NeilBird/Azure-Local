@@ -4,7 +4,13 @@
 >
 > **For older releases**, this is the canonical reference; the main README intentionally stays slim so the most recent block is easy to find.
 >
-> **For v0.8.86 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0886) `What's New in v0.8.86` section.
+> **For v0.8.87 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0887) `What's New in v0.8.87` section.
+
+---
+
+### What's New in v0.8.87
+
+Patch release. Renames the "Orphan ARBs" section in the `New-AzLocalFleetConnectivityStatusSummary` (Fleet: 02 - Fleet Connectivity Status) markdown output to "Non-Azure Local and/or Orphan ARB appliances" and adds an explicit caveat that an Arc resource bridge with no matching in-scope Azure Local cluster is NOT necessarily orphaned. Azure Arc resource bridge is also used by **VMware vSphere** and **System Center Virtual Machine Manager (SCVMM)** Arc-enabled deployments, so an appliance listed here may be a healthy, in-use resource bridge for a non-Azure Local platform. The section now carries investigate-before-acting guidance (check the resource type, associated custom location, and the platform served; do not delete an ARB until you have confirmed it is genuinely orphaned). The KPI-table note, the "how to interpret" causes list, and the cluster-table cross-reference are updated to match. Output text only - no public API, parameter, or behavioural change. Export count unchanged (still 60). `GENERATED_AGAINST_MODULE_VERSION` bumped from `0.8.86` to `0.8.87` across all bundled pipeline templates.
 
 ---
 

@@ -3,7 +3,7 @@
     RootModule = 'AzLocal.UpdateManagement.psm1'
 
     # Version number of this module.
-    ModuleVersion = '0.8.86'
+    ModuleVersion = '0.8.87'
 
     # Supported PSEditions
     CompatiblePSEditions = @('Desktop', 'Core')
@@ -317,6 +317,8 @@
 
             # ReleaseNotes of this module
             ReleaseNotes = @'
+## Version 0.8.87 - Patch: renames the "Orphan ARBs" section in the `New-AzLocalFleetConnectivityStatusSummary` (Fleet: 02 - Fleet Connectivity Status) output to "Non-Azure Local and/or Orphan ARB appliances" and adds a caveat that an Arc resource bridge with no matching in-scope Azure Local cluster is NOT necessarily orphaned - Arc resource bridge is also used by VMware vSphere and SCVMM, so a listed appliance may be a healthy bridge for a non-Azure Local platform. Adds investigate-before-acting guidance (check resource type, custom location, platform served; do not delete until confirmed orphaned). KPI note, causes list, and cluster-table cross-reference updated to match. Output text only - no public API or behavioural change. Export count unchanged (still 60). `GENERATED_AGAINST_MODULE_VERSION` bumped to `'0.8.87'`.
+
 ## Version 0.8.86 - Patch: renames the three onboarding pipeline templates from `Setup: 0N` to `Config: 0N` so the GitHub Actions sidebar (and the Azure DevOps Pipelines list) sorts the onboarding / configuration workflows ahead of the `Fleet: 0N` operational workflows. Both surfaces sort alphabetically by the workflow `name:` / definition name, and `C` (Config) sorts before `F` (Fleet); the previous `Setup:` prefix sorted AFTER `Fleet:`. Only the operator-facing `name:` (GitHub Actions) / `displayName:` (Azure DevOps) fields change - filenames, `AZLOCAL-PIPELINE-ID` values, aliases, prune logic, and all cmdlet behaviour are unchanged. Bundled pipeline README + appendix docs updated to match. No public API or behavioural change. Export count unchanged (still 60). `GENERATED_AGAINST_MODULE_VERSION` bumped from `'0.8.85'` to `'0.8.86'`.
 
 ## Version 0.8.85 - Patch: introduces Setup/Fleet naming in bundled pipeline templates, adds merged GitHub onboarding workflow `setup-validate-and-inventory.yml`, and updates pipeline refresh tooling with optional deprecated-file pruning guarded by AZLOCAL-PIPELINE-ID verification. No public API or behavioural change. Export count unchanged (still 60). `GENERATED_AGAINST_MODULE_VERSION` bumped from `'0.8.84'` to `'0.8.85'`.

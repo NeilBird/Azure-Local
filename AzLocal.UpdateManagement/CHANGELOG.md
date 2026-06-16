@@ -5,6 +5,33 @@ All notable changes to the AzLocal.UpdateManagement module (renamed from AzStack
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.87] - 2026-06-16
+
+Patch release. Renames the "Orphan ARBs" section in the
+`New-AzLocalFleetConnectivityStatusSummary` (Fleet: 02 - Fleet Connectivity
+Status) markdown output to "Non-Azure Local and/or Orphan ARB appliances" and
+adds an explicit caveat that an Arc resource bridge with no matching in-scope
+Azure Local cluster is NOT necessarily orphaned. Azure Arc resource bridge is
+also used by VMware vSphere and System Center Virtual Machine Manager (SCVMM)
+Arc-enabled deployments, so a listed appliance may be a healthy, in-use bridge
+for a non-Azure Local platform. Output text only - no public API change. Export
+count unchanged (still 60).
+
+### Changed
+
+- `New-AzLocalFleetConnectivityStatusSummary` renames the `### Orphan ARBs (no
+  matching cluster in scope)` section heading to `### Non-Azure Local and/or
+  Orphan ARB appliances`, adds an intro line ("These ARB appliances do not have
+  a matching Azure Local instance (cluster) in scope."), and expands the italic
+  caveat to call out VMware vSphere and SCVMM Arc resource bridges and to add
+  investigate-before-acting guidance (check resource type, custom location, and
+  the platform served; do not delete an ARB until confirmed genuinely orphaned).
+- The KPI-table "Orphan ARBs" note, the "how to interpret" causes list (new
+  leading bullet about non-Azure Local resource bridges), and the cluster-table
+  cross-reference now point at the renamed section.
+- `GENERATED_AGAINST_MODULE_VERSION` bumped from `0.8.86` to `0.8.87` across all
+  bundled pipeline templates.
+
 ## [0.8.86] - 2026-06-16
 
 Patch release. Renames the three onboarding pipeline templates from `Setup: 0N`
