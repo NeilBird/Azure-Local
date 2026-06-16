@@ -1,5 +1,5 @@
 # AZLOCAL-PIPELINE-ID: manage-updatering-tags
-# Config: 02 - Manage UpdateRing Tags
+# Config: 2 - Manage UpdateRing Tags
 # This pipeline creates or updates UpdateRing tags on Azure Local clusters from a CSV file
 #
 # WORKFLOW:
@@ -58,7 +58,7 @@ pool:
 
 stages:
   - stage: ManageTags
-    displayName: 'Config: 02 - Manage UpdateRing Tags'
+    displayName: 'Config: 2 - Manage UpdateRing Tags'
     jobs:
       - job: ApplyTags
         displayName: 'Apply UpdateRing Tags'

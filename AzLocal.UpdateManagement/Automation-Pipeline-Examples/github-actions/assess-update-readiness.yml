@@ -36,7 +36,7 @@
 # Workflow name carries the same Step.N - prefix as the filename so the GitHub
 # Actions sidebar (which sorts workflows alphabetically by this `name:` field)
 # lists the eight pipelines in execution order.
-name: 'Fleet: 01 - Assess Update Readiness'
+name: 'Update: 1 - Assess Update Readiness'
 
 on:
   # BEGIN-AZLOCAL-CUSTOMIZE:schedule-triggers

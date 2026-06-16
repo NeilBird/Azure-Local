@@ -48,3 +48,21 @@ triggers:
     raiseTicket: false
   NotReady:
     raiseTicket: false
+
+  # ----- Update: 4 - Monitor In-Flight Updates statuses (v0.8.87) -----
+  # Emitted by Export-AzLocalUpdateRunMonitorReport in update-monitor.xml.
+  # Wire monitor-updates.yml with raise_itsm_ticket=true to open tickets for
+  # these. Dedupe key = SHA256(ClusterResourceId|UpdateName|TriggerCategory),
+  # so a stuck/attempt-gap cluster opens at most ONE incident until it clears.
+  AttemptWithoutRun:
+    raiseTicket: true
+    severity: 3
+    category: "Update attempt with no observable updateRun"   # UpdateLastAttempt tag set, but no updateRun materialised (commonly a URP package pre-install health-check failure)
+  StepError:
+    raiseTicket: true
+    severity: 2
+    category: "Update step stuck in error"                    # progress.status == Error while state is still InProgress
+  LongRunningOverall:
+    raiseTicket: false   # informational backstop; opt-in if you want a ticket per run exceeding the overall-elapsed threshold
+  LongRunningStep:
+    raiseTicket: false   # informational; opt-in if you want a ticket per run whose current step exceeds the per-step threshold

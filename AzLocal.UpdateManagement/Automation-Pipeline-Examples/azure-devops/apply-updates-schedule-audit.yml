@@ -1,5 +1,5 @@
 # AZLOCAL-PIPELINE-ID: apply-updates-schedule-audit
-# Config: 03 - Apply-Updates Schedule Coverage Audit Pipeline
+# Config: 3 - Apply-Updates Schedule Coverage Audit Pipeline
 # This pipeline runs the read-only Test-AzLocalApplyUpdatesScheduleCoverage advisor
 # weekly to detect drift between the cron schedule(s) in your apply-updates pipeline
 # YAML and the UpdateStartWindow tags that operators have placed on Azure Local clusters.
@@ -98,7 +98,7 @@ variables:
 
 stages:
 - stage: ScheduleCoverage
-  displayName: 'Config: 03 - Audit Apply-Updates Schedule Coverage'
+  displayName: 'Config: 3 - Audit Apply-Updates Schedule Coverage'
   jobs:
   - job: Audit
     displayName: 'Run Schedule Coverage Advisor'

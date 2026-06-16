@@ -19461,3 +19461,84 @@ Describe 'v0.8.82: Export-AzLocalUpdateRunMonitorReport reconciles UpdateLastAtt
 }
 
 #endregion v0.8.82 Item 5: LastUpdated column + UpdateLastAttempt audit tag
+
+#region v0.8.87: monitor JUnit properties + ITSM wiring + Config:03 monitor cron
+
+Describe 'v0.8.87: Export-AzLocalUpdateRunMonitorReport emits per-testcase ITSM Properties' {
+    BeforeAll {
+        $script:src887mon = Get-Content -LiteralPath "$PSScriptRoot/../Public/Export-AzLocalUpdateRunMonitorReport.ps1" -Raw
+    }
+    It 'Defines a $tcProps scriptblock with the ITSM dedupe/deep-link keys' {
+        $script:src887mon | Should -Match '\$tcProps\s*=\s*\{'
+        $script:src887mon | Should -Match 'ClusterResourceId\s*=\s*\[string\]\$row\.ClusterResourceId'
+        $script:src887mon | Should -Match 'UpdateName\s*=\s*\[string\]\$row\.UpdateName'
+        $script:src887mon | Should -Match 'Status\s*=\s*\$statusValue'
+    }
+    It 'Attaches Properties to each in-flight testcase with the correct Status value' {
+        $script:src887mon | Should -Match "Properties = \(& \`$tcProps \`$r 'StepError'\)"
+        $script:src887mon | Should -Match "Properties = \(& \`$tcProps \`$r 'LongRunningStep'\)"
+        $script:src887mon | Should -Match "Properties = \(& \`$tcProps \`$r 'LongRunningOverall'\)"
+        $script:src887mon | Should -Match "Properties = \(& \`$tcProps \`$r 'InProgress'\)"
+        $script:src887mon | Should -Match "Properties = \(& \`$tcProps \`$r 'Failed'\)"
+    }
+    It 'AttemptWithoutRun gap rows emit a Status=AttemptWithoutRun property with a stable UpdateName fallback' {
+        $script:src887mon | Should -Match "Status\s+=\s+'AttemptWithoutRun'"
+        $script:src887mon | Should -Match '\(no update name\)'
+    }
+}
+
+Describe 'v0.8.87: Export-AzLocalApplyUpdatesScheduleAudit recommends an Update:4 monitor cron' {
+    BeforeAll {
+        $script:src887cfg = Get-Content -LiteralPath "$PSScriptRoot/../Public/Export-AzLocalApplyUpdatesScheduleAudit.ps1" -Raw
+    }
+    It 'Exposes -MonitorFiresPerHour (1-12, default 2) and -MonitorTrailingDays (0-14, default 3)' {
+        $script:src887cfg | Should -Match '\[ValidateRange\(1,\s*12\)\]'
+        $script:src887cfg | Should -Match '\[int\]\$MonitorFiresPerHour\s*=\s*2'
+        $script:src887cfg | Should -Match '\[ValidateRange\(0,\s*14\)\]'
+        $script:src887cfg | Should -Match '\[int\]\$MonitorTrailingDays\s*=\s*3'
+    }
+    It 'Renders an always-on "Recommended in-flight monitor schedule (Update: 4)" section' {
+        $script:src887cfg | Should -Match 'Recommended in-flight monitor schedule \(Update: 4\)'
+    }
+    It 'Derives the minute field from the cadence (0 for hourly, */N otherwise)' {
+        $script:src887cfg | Should -Match "if \(\`$monitorFires -le 1\) \{ '0' \} else \{ \('\*/\{0\}' -f \`$monitorIntervalMinutes\) \}"
+    }
+    It 'Expands apply weekday(s) across the trailing coverage window' {
+        $script:src887cfg | Should -Match 'for \(\$k = 0; \$k -le \$MonitorTrailingDays; \$k\+\+\)'
+        $script:src887cfg | Should -Match '\$monitorCoverageSet\.Add\(\(\(\$applyDow \+ \$k\) % 7\)\)'
+    }
+    It 'Falls back to a 24x7 cron when no apply firings are derivable' {
+        $script:src887cfg | Should -Match "\`$monitorFallbackCron = \('\{0\} \* \* \* \*' -f \`$monitorMinuteField\)"
+    }
+}
+
+Describe 'v0.8.87: ITSM trigger matrix covers the Update:4 monitor statuses' {
+    BeforeAll {
+        $script:itsmCfg887 = Get-Content -LiteralPath "$PSScriptRoot/../Automation-Pipeline-Examples/.itsm/azurelocal-itsm.yml" -Raw
+    }
+    It 'Raises on AttemptWithoutRun and StepError' {
+        $script:itsmCfg887 | Should -Match '(?m)^\s*AttemptWithoutRun:'
+        $script:itsmCfg887 | Should -Match '(?m)^\s*StepError:'
+    }
+    It 'Includes opt-in (raiseTicket:false) entries for the long-running monitor statuses' {
+        $script:itsmCfg887 | Should -Match '(?m)^\s*LongRunningOverall:'
+        $script:itsmCfg887 | Should -Match '(?m)^\s*LongRunningStep:'
+    }
+}
+
+Describe 'v0.8.87: monitor-updates.yml gains an opt-in ITSM ticketing step' {
+    It 'GitHub Actions monitor pipeline wires raise_itsm_ticket + New-AzLocalIncident' {
+        $gh = Get-Content -LiteralPath "$PSScriptRoot/../Automation-Pipeline-Examples/github-actions/monitor-updates.yml" -Raw
+        $gh | Should -Match '(?m)^\s*raise_itsm_ticket:'
+        $gh | Should -Match 'New-AzLocalIncident'
+        $gh | Should -Match 'update-monitor\.xml'
+    }
+    It 'Azure DevOps monitor pipeline wires raiseItsmTicket + New-AzLocalIncident' {
+        $ado = Get-Content -LiteralPath "$PSScriptRoot/../Automation-Pipeline-Examples/azure-devops/monitor-updates.yml" -Raw
+        $ado | Should -Match '(?m)^\s*-\s*name:\s*raiseItsmTicket'
+        $ado | Should -Match 'New-AzLocalIncident'
+        $ado | Should -Match 'update-monitor\.xml'
+    }
+}
+
+#endregion v0.8.87: monitor JUnit properties + ITSM wiring + Config:03 monitor cron

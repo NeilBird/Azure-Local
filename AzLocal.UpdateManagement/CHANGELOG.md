@@ -7,8 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.8.87] - 2026-06-16
 
-Patch release. Renames the "Orphan ARBs" section in the
-`New-AzLocalFleetConnectivityStatusSummary` (Fleet: 02 - Fleet Connectivity
+Renames the bundled pipeline display names into a three-group `Config: N` /
+`Monitor: N` / `Update: N` scheme (single-digit, e.g.
+`Monitor: 1 - Fleet Connectivity Status`, `Update: 4 - Monitor In-Flight
+Updates`), replacing the former `Setup: 0N` / `Fleet: 0N` prefixes so the
+GitHub Actions and Azure DevOps lists group onboarding, day-2 monitoring, and
+update-lifecycle workflows logically. Display name (`name:` / `displayName:`)
+only - filenames and `AZLOCAL-PIPELINE-ID` values are unchanged.
+
+Also renames the "Orphan ARBs" section in the
+`New-AzLocalFleetConnectivityStatusSummary` (Monitor: 1 - Fleet Connectivity
 Status) markdown output to "Non-Azure Local and/or Orphan ARB appliances" and
 adds an explicit caveat that an Arc resource bridge with no matching in-scope
 Azure Local cluster is NOT necessarily orphaned. Azure Arc resource bridge is
@@ -17,8 +25,56 @@ Arc-enabled deployments, so a listed appliance may be a healthy, in-use bridge
 for a non-Azure Local platform. Output text only - no public API change. Export
 count unchanged (still 60).
 
+Also extends the in-flight monitor (Update: 4) and ITSM connector so stuck /
+failed / attempt-without-run clusters surfaced by
+`Export-AzLocalUpdateRunMonitorReport` can auto-raise deduped ServiceNow
+incidents, and teaches the Config: 3 schedule auditor
+(`Export-AzLocalApplyUpdatesScheduleAudit`) to recommend an Update: 4 monitor
+poll cadence. New parameters are additive with backward-compatible defaults;
+export count unchanged (still 60).
+
+### Added
+
+- `Export-AzLocalUpdateRunMonitorReport` now writes per-`<testcase>`
+  `<properties>` into `update-monitor.xml` (`ClusterName`, `ClusterResourceId`,
+  `UpdateName`, `Status`, `CurrentStep`, `ClusterPortalUrl`,
+  `UpdateRunPortalUrl`). The `Status` values are `StepError`, `LongRunningStep`,
+  `LongRunningOverall`, `InProgress`, `Failed`, and `AttemptWithoutRun` (the
+  UpdateLastAttempt-reconciliation rows, which use a `(no update name)`
+  `UpdateName` fallback so the ITSM dedupe key stays stable per cluster). This
+  is what lets `New-AzLocalIncident` dedupe and deep-link from the monitor
+  pipeline (previously every monitor row was skipped for missing
+  ClusterResourceId / UpdateName).
+- `Export-AzLocalApplyUpdatesScheduleAudit` (Config: 3) gains a new always-on
+  "Recommended in-flight monitor schedule (Update: 4)" section that derives a
+  `monitor-updates.yml` poll cron from the apply-window weekday(s), covering the
+  apply day plus a configurable trailing window for multi-day runs. Two new
+  parameters: `-MonitorFiresPerHour` (1-12, default 2 = every 30 min) and
+  `-MonitorTrailingDays` (0-14, default 3, mirroring the Update: 4 CRITICAL
+  elapsed tier).
+- The bundled `monitor-updates.yml` (GitHub Actions and Azure DevOps) gains an
+  opt-in ITSM ticketing step (`raise_itsm_ticket` / `raiseItsmTicket`,
+  default off) that runs `New-AzLocalIncident` against the monitor JUnit after
+  it is published. Strictly additive - the monitor remains report-only and
+  always green.
+- The sample ITSM trigger matrix
+  (`Automation-Pipeline-Examples/.itsm/azurelocal-itsm.yml`) gains entries for
+  the Update: 4 monitor statuses: `AttemptWithoutRun` (raise, severity 3),
+  `StepError` (raise, severity 2), and opt-in `LongRunningOverall` /
+  `LongRunningStep`. Documented in `ITSM/ITSM-Config-Reference.md`.
+
 ### Changed
 
+- Renames the bundled pipeline display names (`name:` on GitHub Actions,
+  `displayName:` / `name:` on Azure DevOps) into the three-group
+  `Config: N` / `Monitor: N` / `Update: N` scheme with single-digit numbering:
+  `Config: 1-3` (onboarding/config), `Monitor: 1-3` (day-2 fleet monitoring),
+  and `Update: 1-4` (update lifecycle). `Monitor: 2` is Fleet Health Status and
+  `Monitor: 3` is Fleet Update Status (numbered to match alphabetical order).
+  Filenames, `AZLOCAL-PIPELINE-ID` values, aliases, and `-PruneDeprecated`
+  logic are unchanged - this is a display-name-only change. Bundled pipeline
+  `README.md`, `docs/appendix-pipelines.md`, and the ITSM / release docs are
+  updated to match.
 - `New-AzLocalFleetConnectivityStatusSummary` renames the `### Orphan ARBs (no
   matching cluster in scope)` section heading to `### Non-Azure Local and/or
   Orphan ARB appliances`, adds an intro line ("These ARB appliances do not have

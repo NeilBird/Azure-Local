@@ -1,5 +1,5 @@
 # AZLOCAL-PIPELINE-ID: sideload-updates
-# Fleet: 03 - Sideload Updates (Opt-in, on-prem self-hosted agent)
+# Update: 2 - Sideload Updates (Opt-in, on-prem self-hosted agent)
 #
 # OPT-IN, OFF BY DEFAULT. This pipeline automates the on-prem sideloading of
 # Azure Local solution-update media for clusters that cannot pull updates from

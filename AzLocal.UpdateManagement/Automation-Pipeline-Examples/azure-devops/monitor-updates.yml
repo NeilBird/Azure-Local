@@ -1,5 +1,5 @@
 # AZLOCAL-PIPELINE-ID: monitor-updates
-# Fleet: 05 - Monitor In-Flight Updates (Azure DevOps)
+# Update: 4 - Monitor In-Flight Updates (Azure DevOps)
 # -----------------------------------------------------------
 # Reports clusters whose latest update run is currently in flight, with the
 # CURRENT STEP each cluster is on and the ELAPSED DURATION of the run. Built
@@ -83,10 +83,54 @@ parameters:
     type: string
     default: ''
 
+  # --- ITSM Connector (ServiceNow auto-raise on in-flight monitor failures) ---
+  # Set raiseItsmTicket=true to open ServiceNow incidents (v0.8.87) from each
+  # stuck-step / failed / attempt-without-run cluster surfaced in
+  # update-monitor.xml. Default false so existing schedules stay byte-identical
+  # until you opt in. The connector reads the JUnit file this pipeline already
+  # produces (update-monitor.xml) and the trigger matrix in
+  # ./.itsm/azurelocal-itsm.yml (defaults raise AttemptWithoutRun / StepError /
+  # Failed; LongRunningStep / LongRunningOverall are opt-in).
+  - name: raiseItsmTicket
+    displayName: 'Open ITSM tickets (ServiceNow) for in-flight monitor failures'
+    type: boolean
+    default: false
+
+  - name: itsmConfigPath
+    displayName: 'Path to ITSM matrix config (YAML or JSON)'
+    type: string
+    default: './.itsm/azurelocal-itsm.yml'
+
+  - name: itsmDryRun
+    displayName: 'ITSM: build payloads + run read-only dedupe but do NOT create tickets'
+    type: boolean
+    default: false
+
+  - name: itsmForceCreate
+    displayName: 'ITSM: bypass dedupe and always create new tickets (use with caution)'
+    type: boolean
+    default: false
+
 variables:
   GENERATED_AGAINST_MODULE_VERSION: '0.8.87'
   REQUIRED_MODULE_VERSION: '${{ parameters.moduleVersion }}'
   reportsPath: '$(Build.ArtifactStagingDirectory)/reports'
+  # ITSM connector. When raiseItsmTicket=true the Raise ITSM task below
+  # references $(ITSM_SN_INSTANCE_URL), $(ITSM_SN_CLIENT_ID),
+  # $(ITSM_SN_CLIENT_SECRET). The simplest binding is an ADO variable group
+  # named 'AzureLocal-ITSM-Secrets'. ADO does not allow mixing mapping-form
+  # variables with '- group:' entries in the same block, so to enable the
+  # group reference convert this entire 'variables:' block to list form:
+  #   variables:
+  #     - name: GENERATED_AGAINST_MODULE_VERSION
+  #       value: '0.8.87'
+  #     - name: REQUIRED_MODULE_VERSION
+  #       value: '${{ parameters.moduleVersion }}'
+  #     - name: reportsPath
+  #       value: '$(Build.ArtifactStagingDirectory)/reports'
+  #     - group: AzureLocal-ITSM-Secrets
+  # When raiseItsmTicket=false the Raise ITSM task is skipped and the secrets
+  # are not consulted, so the conversion is only required for opt-in users.
 
 stages:
 - stage: MonitorInFlight
@@ -186,4 +230,104 @@ stages:
         testResultsFiles: '$(reportsPath)/update-monitor.xml'
         testRunTitle: 'In-Flight Update Monitor'
         mergeTestResults: false
+        failTaskOnFailedTests: false
+
+    # ----------------------------------------------------------------------
+    # ITSM Connector (ServiceNow auto-raise on in-flight monitor failures)
+    #
+    # Fully opt-in (gated on parameters.raiseItsmTicket == true). Runs AFTER
+    # the JUnit file is published, so the ITSM task is strictly additive -
+    # failures here never affect the monitor result (which is always green;
+    # this is a report-only pipeline). Reads the same update-monitor.xml that
+    # powers the summary. The JUnit emitter writes per-testcase <properties>
+    # (ClusterName / ClusterResourceId / UpdateName / Status / CurrentStep /
+    # ClusterPortalUrl / UpdateRunPortalUrl) so New-AzLocalIncident can compute
+    # the SHA256 dedupe key (one incident per stuck/failed/attempt-gap cluster
+    # until it clears) and the Mustache body template can deep-link into the
+    # Azure portal.
+    # ----------------------------------------------------------------------
+    - task: PowerShell@2
+      displayName: 'Install powershell-yaml (ITSM config parser)'
+      condition: and(succeeded(), eq('${{ parameters.raiseItsmTicket }}', 'true'))
+      inputs:
+        targetType: 'inline'
+        pwsh: true
+        script: |
+          if (-not (Get-Module -ListAvailable -Name powershell-yaml)) {
+              Install-Module powershell-yaml -Scope CurrentUser -Force -AllowClobber
+          }
+
+    - task: AzureCLI@2
+      displayName: 'Raise ITSM tickets'
+      name: itsm
+      condition: and(succeeded(), eq('${{ parameters.raiseItsmTicket }}', 'true'))
+      env:
+        # BEGIN-AZLOCAL-CUSTOMIZE:itsm-secrets
+        # Bind your ITSM connector secrets from the variable group above.
+        # Defaults assume the ServiceNow OAuth client_credentials naming used
+        # by azurelocal-itsm.yml (env://ITSM_SN_*). If your secret names differ,
+        # update them here - this block is preserved by
+        # Update-AzLocalPipelineExample across module upgrades.
+        ITSM_SN_INSTANCE_URL: $(ITSM_SN_INSTANCE_URL)
+        ITSM_SN_CLIENT_ID: $(ITSM_SN_CLIENT_ID)
+        ITSM_SN_CLIENT_SECRET: $(ITSM_SN_CLIENT_SECRET)
+        # END-AZLOCAL-CUSTOMIZE:itsm-secrets
+      inputs:
+        azureSubscription: 'AzureLocal-ServiceConnection'  # Update with your service connection name
+        scriptType: 'pscore'
+        scriptLocation: 'inlineScript'
+        inlineScript: |
+          Import-Module AzLocal.UpdateManagement -Force
+
+          $configPath = "${{ parameters.itsmConfigPath }}"
+          $dryRun     = [System.Convert]::ToBoolean("${{ parameters.itsmDryRun }}")
+          $force      = [System.Convert]::ToBoolean("${{ parameters.itsmForceCreate }}")
+
+          if (-not (Test-Path $configPath)) {
+              Write-Host "##vso[task.logissue type=warning]ITSM config not found at '$configPath' - skipping ticket creation."
+              exit 0
+          }
+
+          $cfg = Get-AzLocalItsmConfig -Path $configPath
+
+          $junitInput = "$(reportsPath)/update-monitor.xml"
+          if (-not (Test-Path $junitInput)) {
+              Write-Host "##vso[task.logissue type=warning]No update-monitor.xml found at '$junitInput' - skipping ticket creation."
+              exit 0
+          }
+
+          $params = @{
+              InputArtifactPath = $junitInput
+              Config            = $cfg
+              RunMetadata       = @{
+                  Platform = 'azure-devops'
+                  RunId    = $env:BUILD_BUILDID
+                  RunUrl   = "$($env:SYSTEM_COLLECTIONURI)$($env:SYSTEM_TEAMPROJECT)/_build/results?buildId=$($env:BUILD_BUILDID)"
+                  Branch   = $env:BUILD_SOURCEBRANCH
+              }
+              DryRun            = $dryRun
+              ForceCreate       = $force
+              ExportPath        = "$(reportsPath)/itsm-results.csv"
+              ExportJUnitPath   = "$(reportsPath)/itsm-results.xml"
+          }
+
+          $results = New-AzLocalIncident @params
+          $results | Format-Table ClusterName, Action, TicketId, Severity -AutoSize
+
+    - task: PublishBuildArtifacts@1
+      displayName: 'Publish ITSM Artefacts'
+      condition: and(always(), eq('${{ parameters.raiseItsmTicket }}', 'true'))
+      inputs:
+        PathtoPublish: '$(reportsPath)'
+        ArtifactName: 'azlocal-step.8-update-monitor-itsm-results_$(stamp.artifactStamp)'
+        publishLocation: 'Container'
+      continueOnError: true
+
+    - task: PublishTestResults@2
+      displayName: 'Publish ITSM Test Results'
+      condition: and(always(), eq('${{ parameters.raiseItsmTicket }}', 'true'))
+      inputs:
+        testResultsFormat: 'JUnit'
+        testResultsFiles: '$(reportsPath)/itsm-results.xml'
+        testRunTitle: 'ITSM Tickets (Update: 4 Monitor) - $(Build.BuildNumber)'
         failTaskOnFailedTests: false

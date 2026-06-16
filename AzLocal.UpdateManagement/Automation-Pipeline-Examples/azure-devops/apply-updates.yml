@@ -1,5 +1,5 @@
 # AZLOCAL-PIPELINE-ID: apply-updates
-# Fleet: 04 - Apply Updates to Azure Local Clusters
+# Update: 3 - Apply Updates to Azure Local Clusters
 # This pipeline applies updates to clusters filtered by UpdateRing tag value
 
 # Author guidance lives OUTSIDE the customise markers so module refreshes
@@ -252,7 +252,7 @@ stages:
 
   # Stage 2: Apply Updates (with approval gate for production)
   - stage: ApplyUpdates
-    displayName: 'Fleet: 04 - Apply Updates'
+    displayName: 'Update: 3 - Apply Updates'
     dependsOn: CheckReadiness
     condition: and(succeeded(), gt(dependencies.CheckReadiness.outputs['ReadinessCheck.readiness.ReadyCount'], 0))
 

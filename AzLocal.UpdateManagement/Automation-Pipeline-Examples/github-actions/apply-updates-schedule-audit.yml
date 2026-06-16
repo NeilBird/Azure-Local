@@ -31,7 +31,7 @@
 # Workflow name carries the same Step.N - prefix as the filename so the GitHub
 # Actions sidebar (which sorts workflows alphabetically by this `name:` field)
 # lists the eight pipelines in execution order.
-name: 'Config: 03 - Apply-Updates Schedule Coverage Audit'
+name: 'Config: 3 - Apply-Updates Schedule Coverage Audit'
 
 on:
   # BEGIN-AZLOCAL-CUSTOMIZE:schedule-triggers

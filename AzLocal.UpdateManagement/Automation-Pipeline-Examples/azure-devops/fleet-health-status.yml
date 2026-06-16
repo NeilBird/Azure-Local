@@ -1,5 +1,5 @@
 # AZLOCAL-PIPELINE-ID: fleet-health-status
-# Fleet: 07 - Fleet Health Status Monitoring Pipeline
+# Monitor: 2 - Fleet Health Status Monitoring Pipeline
 # This pipeline surfaces 24-hour system health-check failures across every Azure Local
 # cluster the service connection can read - including clusters that are already
 # "up to date" with no available updates. The 24-hour health checks continue to run

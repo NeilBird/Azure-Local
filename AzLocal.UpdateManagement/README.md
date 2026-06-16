@@ -88,7 +88,17 @@ If you are new to this module, work through these in order from a regular PowerS
 
 ## What's New in v0.8.87
 
-**Fleet Connectivity Status output clarification.** Renames the "Orphan ARBs" section in the `New-AzLocalFleetConnectivityStatusSummary` (Fleet: 02 - Fleet Connectivity Status) markdown output to **"Non-Azure Local and/or Orphan ARB appliances"** and adds an explicit caveat that an Arc resource bridge with no matching in-scope Azure Local cluster is *not necessarily orphaned*. Azure Arc resource bridge is also used by **VMware vSphere** and **System Center Virtual Machine Manager (SCVMM)** Arc-enabled deployments, so a listed appliance may be a healthy, in-use resource bridge for a non-Azure Local platform.
+**Pipeline display-name rename.** The bundled pipeline display names are renamed into a three-group `Config: N` / `Monitor: N` / `Update: N` scheme (single-digit, e.g. `Monitor: 1 - Fleet Connectivity Status`, `Update: 4 - Monitor In-Flight Updates`), replacing the former `Setup: 0N` / `Fleet: 0N` prefixes so the GitHub Actions and Azure DevOps lists group onboarding, day-2 monitoring, and update-lifecycle workflows logically. Filenames and `AZLOCAL-PIPELINE-ID` values are unchanged.
+
+**Fleet Connectivity Status output clarification.** Renames the "Orphan ARBs" section in the `New-AzLocalFleetConnectivityStatusSummary` (Monitor: 1 - Fleet Connectivity Status) markdown output to **"Non-Azure Local and/or Orphan ARB appliances"** and adds an explicit caveat that an Arc resource bridge with no matching in-scope Azure Local cluster is *not necessarily orphaned*. Azure Arc resource bridge is also used by **VMware vSphere** and **System Center Virtual Machine Manager (SCVMM)** Arc-enabled deployments, so a listed appliance may be a healthy, in-use resource bridge for a non-Azure Local platform.
+
+**In-flight monitor ITSM auto-ticketing + Config: 3 monitor-cadence recommendation.** The Update: 4 in-flight monitor and the ServiceNow ITSM connector now join up so stuck, failed, and attempt-without-run clusters auto-raise deduped incidents, and the Config: 3 schedule auditor recommends how often to poll the monitor.
+
+### Added
+
+- **`Export-AzLocalUpdateRunMonitorReport` (Update: 4)** now writes per-`<testcase>` `<properties>` into `update-monitor.xml` (`ClusterName`, `ClusterResourceId`, `UpdateName`, `Status`, `CurrentStep`, `ClusterPortalUrl`, `UpdateRunPortalUrl`). `Status` is one of `StepError`, `LongRunningStep`, `LongRunningOverall`, `InProgress`, `Failed`, or `AttemptWithoutRun`. This lets `New-AzLocalIncident` dedupe (one incident per affected cluster until it clears) and deep-link into the Azure portal - previously every monitor row was skipped for a missing ClusterResourceId / UpdateName.
+- **Opt-in ITSM ticketing in `monitor-updates.yml`** (GitHub Actions and Azure DevOps). A new `raise_itsm_ticket` / `raiseItsmTicket` input (default off) runs `New-AzLocalIncident` against the monitor JUnit after it is published. The monitor stays report-only and always green; ITSM failures never affect its result. The sample trigger matrix `azurelocal-itsm.yml` gains `AttemptWithoutRun` (raise, severity 3), `StepError` (raise, severity 2), and opt-in `LongRunningOverall` / `LongRunningStep` entries.
+- **`Export-AzLocalApplyUpdatesScheduleAudit` (Config: 3)** gains an always-on **"Recommended in-flight monitor schedule (Update: 4)"** section that derives a `monitor-updates.yml` poll cron from the apply-window weekday(s), covering the apply day plus a configurable trailing window for multi-day runs. Two new parameters: `-MonitorFiresPerHour` (1-12, default 2 = every 30 min) and `-MonitorTrailingDays` (0-14, default 3).
 
 ### Changed
 
@@ -98,7 +108,7 @@ If you are new to this module, work through these in order from a regular PowerS
 
 ### Notes
 
-- **Output text only** - no public API, parameter, or behavioural change.
+- The Monitor: 1 connectivity changes are **output text only**. The monitor / ITSM / Config: 3 changes add new JUnit properties, two optional parameters (`-MonitorFiresPerHour`, `-MonitorTrailingDays`), and an opt-in pipeline step - all **backward-compatible** with existing defaults.
 - **No new exports** (count unchanged at 60).
 - **`GENERATED_AGAINST_MODULE_VERSION`** bumped from `0.8.86` to `0.8.87` across bundled pipeline templates.
 

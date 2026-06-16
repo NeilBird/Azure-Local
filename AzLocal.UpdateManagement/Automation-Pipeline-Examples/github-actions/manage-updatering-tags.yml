@@ -22,7 +22,7 @@
 # Workflow name carries the same Setup prefix as the filename so the GitHub
 # Actions sidebar (which sorts workflows alphabetically by this `name:` field)
 # lists the setup and operational pipelines in execution order.
-name: 'Config: 02 - Manage UpdateRing Tags'
+name: 'Config: 2 - Manage UpdateRing Tags'
 
 on:
   # BEGIN-AZLOCAL-CUSTOMIZE:schedule-triggers

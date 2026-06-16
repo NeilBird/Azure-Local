@@ -12,7 +12,7 @@
 # Workflow name carries the same Step.N - prefix as the filename so the GitHub
 # Actions sidebar (which sorts workflows alphabetically by this `name:` field)
 # lists the eight pipelines in execution order.
-name: 'Fleet: 04 - Apply Updates'
+name: 'Update: 3 - Apply Updates'
 
 on:
   # PREFERRED PATTERN - drive automated update runs from a ring-aware

@@ -56,6 +56,15 @@ Top-level keys are JUnit `Status` values produced by `Get-AzLocalUpdateRuns` /
 `Invoke-AzLocalFleetOperation` (e.g. `Failed`, `Error`, `HealthCheckBlocked`,
 `SideloadedBlocked`, `ExcludedByTag`, `ScheduleBlocked`, `Skipped`, `NotReady`).
 
+From v0.8.87 the **Update: 4 - Monitor In-Flight Updates** pipeline
+(`Export-AzLocalUpdateRunMonitorReport` -> `update-monitor.xml`) also emits
+per-testcase `Status` values you can target: `AttemptWithoutRun` (an
+`UpdateLastAttempt` tag with no observable updateRun, commonly a URP package
+pre-install health-check failure), `StepError` (a step stuck in `Error` while
+the run is still `InProgress`), and the informational `LongRunningOverall` /
+`LongRunningStep` thresholds. Wire `monitor-updates.yml` with
+`raise_itsm_ticket=true` to action them.
+
 | Field | Type | Notes |
 |---|---|---|
 | `triggers.<Status>.raiseTicket` | bool | Required. `true` opens a ticket; `false` (default) skips. |
