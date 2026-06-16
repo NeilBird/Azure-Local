@@ -162,8 +162,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
             # that disagree with the module they just installed. Every
             # bundled *.yml sample (both platforms) must pin to the current
             # manifest ModuleVersion. v0.8.7 de-numbered the filenames and
-            # authentication-test.yml now also consumes the module, so every
-            # sample (no exemptions) carries the pin.
+            # setup-validate-and-inventory.yml (the merged setup workflow) also
+            # consumes the module, so every sample (no exemptions) carries the pin.
             $manifestPath = Join-Path -Path $PSScriptRoot -ChildPath '..\AzLocal.UpdateManagement.psd1'
             $manifestVersion = (Import-PowerShellDataFile -Path $manifestPath).ModuleVersion
             $samplesDir = Join-Path -Path $PSScriptRoot -ChildPath "..\Automation-Pipeline-Examples\$Platform"
@@ -642,9 +642,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
             # with one Add-AzLocalPipelineVersionBanner call - count either
             # form as a banner emit.
             $perFileExpect = @{
-                'authentication-test.yml'          = 1
-                'inventory-clusters.yml'           = 1
-                'manage-updatering-tags.yml'       = 1
+                'setup-validate-and-inventory.yml'  = 2
+                'manage-updatering-tags.yml'        = 1
                 'apply-updates-schedule-audit.yml' = 1
                 'fleet-connectivity-status.yml'    = 1
                 'assess-update-readiness.yml'      = 1
@@ -7082,7 +7081,7 @@ Describe 'Function: Copy-AzLocalPipelineExample' {
 
         $yamls = @(Get-ChildItem -LiteralPath $dest -Filter '*.yml' -File)
         $yamls.Count | Should -BeGreaterThan 0
-        $yamls.Name | Should -Contain 'authentication-test.yml'
+        $yamls.Name | Should -Contain 'setup-validate-and-inventory.yml'
 
         Test-Path (Join-Path $dest 'azure-devops')   | Should -BeFalse
         Test-Path (Join-Path $dest 'github-actions') | Should -BeFalse
