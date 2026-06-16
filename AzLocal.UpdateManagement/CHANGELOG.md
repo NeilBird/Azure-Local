@@ -29,9 +29,12 @@ count unchanged (still 60).
 - The KPI-table "Orphan ARBs" note, the "how to interpret" causes list (new
   leading bullet about non-Azure Local resource bridges), and the cluster-table
   cross-reference now point at the renamed section.
-- The `### Cluster Connectivity (with ARB Status)` per-cluster table is now
-  wrapped in a collapsed `<details>` block (`<summary>Expand to view
-  clusters</summary>`) so the step summary stays compact by default.
+- The `### Cluster Connectivity (with ARB Status)` table is split into two: a
+  `### Cluster with Connectivity Issues` table (clusters that are not Connected
+  with a Running ARB) shown first and expanded, and a `### Cluster without
+  Connectivity Issues` table (Connectivity = Connected AND ARB Status = Running)
+  collapsed behind a `<summary>Expand to view clusters</summary>` details block.
+  Both tables share the same columns.
 - `GENERATED_AGAINST_MODULE_VERSION` bumped from `0.8.86` to `0.8.87` across all
   bundled pipeline templates.
 

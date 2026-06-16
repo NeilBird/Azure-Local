@@ -387,46 +387,100 @@ function New-AzLocalFleetConnectivityStatusSummary {
     [void]$sb.AppendLine('- **ARB created for a cluster excluded from this run** (e.g. environment filter) - verify the filter; no action if expected.')
     [void]$sb.AppendLine('')
 
-    # 5d. Cluster Connectivity (with ARB Status) per-cluster table
-    [void]$sb.AppendLine('### Cluster Connectivity (with ARB Status)')
+    # 5d. Cluster Connectivity (with ARB Status) per-cluster tables.
+    # Clusters are split into two tables: those WITH connectivity issues (anything
+    # that is not Connected with a Running ARB) shown first and expanded, and those
+    # WITHOUT connectivity issues (Connectivity = Connected AND ARB Status = Running)
+    # collapsed behind an "Expand to view clusters" details block.
+    $clusterIntro = '_One row per cluster, left-joined to the cluster''s Azure Resource Bridge (ARB) appliance status. Each cluster has at most one ARB. ARBs without a matching cluster in scope are listed separately under ''Non-Azure Local and/or Orphan ARB appliances''._'
+    $tableHeader  = '| Cluster | Connectivity | Cluster Status | Nodes | ARB | ARB Status | ARB Days Since LastModified | Resource Group | Location |'
+    $tableDivider = '|---------|---------------|-----------------|-------|-----|-------------|------------------------------|----------------|----------|'
+
+    # Row renderer - plain scriptblock (NOT .GetNewClosure()) so it retains the
+    # module SessionState (access to Get-ClusterSev / Get-StatusIcon / Get-ArbSev)
+    # and lexical access to $arbByClusterId.
+    $renderClusterRow = {
+        param($r)
+        $sev          = Get-ClusterSev $r.ConnectivityStatus
+        $icon         = Get-StatusIcon $sev
+        $clusterCell  = if ($r.ClusterId) { '[{0}](https://portal.azure.com/#@/resource{1})' -f $r.ClusterName, $r.ClusterId } else { $r.ClusterName }
+
+        $arb = $null
+        if ($r.ClusterId) { $arb = $arbByClusterId[$r.ClusterId.ToLowerInvariant()] }
+
+        if ($arb) {
+            $arbSev        = Get-ArbSev $arb.ArbStatus
+            $arbIcon       = Get-StatusIcon $arbSev
+            $arbCell       = if ($arb.ArbId) { '[{0}](https://portal.azure.com/#@/resource{1})' -f $arb.ArbName, $arb.ArbId } else { $arb.ArbName }
+            $arbStatusCell = '{0} {1}' -f $arbIcon, $arb.ArbStatus
+            $arbDaysCell   = $arb.DaysSinceLastModified
+        }
+        else {
+            $arbCell       = '_(no ARB)_'
+            $arbStatusCell = '-'
+            $arbDaysCell   = '-'
+        }
+
+        ('| {0} | {1} {2} | {3} | {4} | {5} | {6} | {7} | {8} | {9} |' -f $clusterCell, $icon, $r.ConnectivityStatus, $r.ClusterStatus, $r.NodeCount, $arbCell, $arbStatusCell, $arbDaysCell, $r.ResourceGroup, $r.Location)
+    }
+
+    # Classify each cluster as healthy (Connected + matched ARB Running) or with issues.
+    $clustersWithIssues = New-Object 'System.Collections.Generic.List[object]'
+    $clustersHealthy    = New-Object 'System.Collections.Generic.List[object]'
+    foreach ($r in $ClusterRows) {
+        $arbForRow = $null
+        if ($r.ClusterId) { $arbForRow = $arbByClusterId[$r.ClusterId.ToLowerInvariant()] }
+        $isHealthy = ($r.ConnectivityStatus -eq 'Connected') -and ($null -ne $arbForRow) -and ($arbForRow.ArbStatus -eq 'Running')
+        if ($isHealthy) { [void]$clustersHealthy.Add($r) } else { [void]$clustersWithIssues.Add($r) }
+    }
+
+    # 5d-i. Clusters WITH connectivity issues (shown first, not collapsed).
+    [void]$sb.AppendLine('### Cluster with Connectivity Issues')
     [void]$sb.AppendLine('')
-    [void]$sb.AppendLine('_One row per cluster, left-joined to the cluster''s Azure Resource Bridge (ARB) appliance status. Each cluster has at most one ARB. ARBs without a matching cluster in scope are listed separately under ''Non-Azure Local and/or Orphan ARB appliances''._')
+    [void]$sb.AppendLine($clusterIntro)
     [void]$sb.AppendLine('')
     if ($ClusterRows.Count -eq 0) {
         [void]$sb.AppendLine('*No clusters returned.*')
+    }
+    elseif ($clustersWithIssues.Count -eq 0) {
+        [void]$sb.AppendLine('*No clusters with connectivity issues - every cluster is Connected with a Running ARB.*')
+    }
+    else {
+        [void]$sb.AppendLine($tableHeader)
+        [void]$sb.AppendLine($tableDivider)
+        foreach ($r in ($clustersWithIssues | Select-Object -First 100)) {
+            [void]$sb.AppendLine((& $renderClusterRow $r))
+        }
+        if ($clustersWithIssues.Count -gt 100) {
+            [void]$sb.AppendLine('')
+            [void]$sb.AppendLine("*Showing first 100 of $($clustersWithIssues.Count); see ``fleet-cluster-connectivity.csv`` and ``fleet-arb-status.csv`` for the full lists.*")
+        }
+    }
+    [void]$sb.AppendLine('')
+
+    # 5d-ii. Clusters WITHOUT connectivity issues (collapsed by default).
+    [void]$sb.AppendLine('### Cluster without Connectivity Issues')
+    [void]$sb.AppendLine('')
+    [void]$sb.AppendLine($clusterIntro)
+    [void]$sb.AppendLine('')
+    if ($ClusterRows.Count -eq 0) {
+        [void]$sb.AppendLine('*No clusters returned.*')
+    }
+    elseif ($clustersHealthy.Count -eq 0) {
+        [void]$sb.AppendLine('*No clusters are currently Connected with a Running ARB.*')
     }
     else {
         [void]$sb.AppendLine('<details>')
         [void]$sb.AppendLine('<summary>Expand to view clusters</summary>')
         [void]$sb.AppendLine('')
-        [void]$sb.AppendLine('| Cluster | Connectivity | Cluster Status | Nodes | ARB | ARB Status | ARB Days Since LastModified | Resource Group | Location |')
-        [void]$sb.AppendLine('|---------|---------------|-----------------|-------|-----|-------------|------------------------------|----------------|----------|')
-        foreach ($r in ($ClusterRows | Select-Object -First 100)) {
-            $sev          = Get-ClusterSev $r.ConnectivityStatus
-            $icon         = Get-StatusIcon $sev
-            $clusterCell  = if ($r.ClusterId) { '[{0}](https://portal.azure.com/#@/resource{1})' -f $r.ClusterName, $r.ClusterId } else { $r.ClusterName }
-
-            $arb = $null
-            if ($r.ClusterId) { $arb = $arbByClusterId[$r.ClusterId.ToLowerInvariant()] }
-
-            if ($arb) {
-                $arbSev        = Get-ArbSev $arb.ArbStatus
-                $arbIcon       = Get-StatusIcon $arbSev
-                $arbCell       = if ($arb.ArbId) { '[{0}](https://portal.azure.com/#@/resource{1})' -f $arb.ArbName, $arb.ArbId } else { $arb.ArbName }
-                $arbStatusCell = '{0} {1}' -f $arbIcon, $arb.ArbStatus
-                $arbDaysCell   = $arb.DaysSinceLastModified
-            }
-            else {
-                $arbCell       = '_(no ARB)_'
-                $arbStatusCell = '-'
-                $arbDaysCell   = '-'
-            }
-
-            [void]$sb.AppendLine(('| {0} | {1} {2} | {3} | {4} | {5} | {6} | {7} | {8} | {9} |' -f $clusterCell, $icon, $r.ConnectivityStatus, $r.ClusterStatus, $r.NodeCount, $arbCell, $arbStatusCell, $arbDaysCell, $r.ResourceGroup, $r.Location))
+        [void]$sb.AppendLine($tableHeader)
+        [void]$sb.AppendLine($tableDivider)
+        foreach ($r in ($clustersHealthy | Select-Object -First 100)) {
+            [void]$sb.AppendLine((& $renderClusterRow $r))
         }
-        if ($ClusterRows.Count -gt 100) {
+        if ($clustersHealthy.Count -gt 100) {
             [void]$sb.AppendLine('')
-            [void]$sb.AppendLine("*Showing first 100 of $($ClusterRows.Count); see ``fleet-cluster-connectivity.csv`` and ``fleet-arb-status.csv`` for the full lists.*")
+            [void]$sb.AppendLine("*Showing first 100 of $($clustersHealthy.Count); see ``fleet-cluster-connectivity.csv`` and ``fleet-arb-status.csv`` for the full lists.*")
         }
         [void]$sb.AppendLine('')
         [void]$sb.AppendLine('</details>')

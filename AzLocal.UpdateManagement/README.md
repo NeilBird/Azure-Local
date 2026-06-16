@@ -94,7 +94,7 @@ If you are new to this module, work through these in order from a regular PowerS
 
 - The section heading `### Orphan ARBs (no matching cluster in scope)` becomes `### Non-Azure Local and/or Orphan ARB appliances`, with an intro line and an expanded caveat calling out VMware vSphere / SCVMM resource bridges and adding investigate-before-acting guidance (check the resource type, associated custom location, and the platform served; do not delete an ARB until you have confirmed it is genuinely orphaned).
 - The KPI-table "Orphan ARBs" note, the "how to interpret" causes list (new leading bullet about non-Azure Local resource bridges), and the cluster-table cross-reference now point at the renamed section.
-- The `### Cluster Connectivity (with ARB Status)` per-cluster table is now wrapped in a collapsed `<details>` block (`Expand to view clusters`) so the step summary stays compact by default.
+- The `### Cluster Connectivity (with ARB Status)` table is split into a `### Cluster with Connectivity Issues` table (clusters not Connected with a Running ARB) shown first and expanded, and a `### Cluster without Connectivity Issues` table (Connectivity = Connected AND ARB Status = Running) collapsed behind an `Expand to view clusters` details block. Both tables share the same columns.
 
 ### Notes
 

@@ -12561,13 +12561,29 @@ Describe 'Function: New-AzLocalFleetConnectivityStatusSummary' {
             $script:md | Should -Match '### How to interpret \+ act on a non-zero reconciliation'
         }
 
-        It 'Includes the Cluster Connectivity (with ARB Status) table heading' {
-            $script:md | Should -Match '### Cluster Connectivity \(with ARB Status\)'
+        It 'Includes the Cluster with Connectivity Issues table heading' {
+            $script:md | Should -Match '### Cluster with Connectivity Issues'
         }
 
-        It 'Wraps the cluster connectivity table in a collapsed details block' {
-            $script:md | Should -Match '<details>\s*\r?\n<summary>Expand to view clusters</summary>'
+        It 'Includes the Cluster without Connectivity Issues table heading' {
+            $script:md | Should -Match '### Cluster without Connectivity Issues'
+        }
+
+        It 'Collapses only the without-issues table in a details block' {
+            $script:md | Should -Match '### Cluster without Connectivity Issues[\s\S]*?<details>\s*\r?\n<summary>Expand to view clusters</summary>'
             $script:md | Should -Match '</details>'
+        }
+
+        It 'Lists a Connected cluster with a Running ARB under the without-issues table' {
+            # Mobile is Connected and arb-mobile is Running, so it must appear after
+            # the "without Connectivity Issues" heading.
+            $script:md | Should -Match '### Cluster without Connectivity Issues[\s\S]*\[Mobile\]\(https://portal\.azure\.com/#@/resource/sub/abc/rg/x/p/m\.azurestackhci/clusters/Mobile\)'
+        }
+
+        It 'Lists a Disconnected cluster under the with-issues table' {
+            # NewYork is Disconnected, so it must appear under "with Connectivity Issues"
+            # and before the "without Connectivity Issues" heading.
+            $script:md | Should -Match '### Cluster with Connectivity Issues[\s\S]*\| \[NewYork\][\s\S]*### Cluster without Connectivity Issues'
         }
 
         It 'Renders cluster rows with portal links when ClusterId is present' {
@@ -12854,7 +12870,8 @@ Describe 'Function: New-AzLocalFleetConnectivityStatusSummary' {
         It 'Treats missing CSV files as empty (no error)' {
             # No fleet-arb-status.csv, no fleet-physical-nics.csv etc.
             # Should still produce a complete markdown document.
-            $script:mdCsv | Should -Match '### Cluster Connectivity \(with ARB Status\)'
+            $script:mdCsv | Should -Match '### Cluster with Connectivity Issues'
+            $script:mdCsv | Should -Match '### Cluster without Connectivity Issues'
             $script:mdCsv | Should -Match '\*No physical NIC issues\.'
         }
 
