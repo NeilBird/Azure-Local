@@ -1,5 +1,5 @@
 # AZLOCAL-PIPELINE-ID: apply-updates-schedule-audit
-# Step.03 - Apply-Updates Schedule Coverage Audit Pipeline
+# Setup: 03 - Apply-Updates Schedule Coverage Audit Pipeline
 # This pipeline runs the read-only Test-AzLocalApplyUpdatesScheduleCoverage advisor
 # weekly to detect drift between the cron schedule(s) in your apply-updates pipeline
 # YAML and the UpdateStartWindow tags that operators have placed on Azure Local clusters.
@@ -87,7 +87,7 @@ parameters:
     default: false
 
 variables:
-  GENERATED_AGAINST_MODULE_VERSION: '0.8.84'
+  GENERATED_AGAINST_MODULE_VERSION: '0.8.85'
   REQUIRED_MODULE_VERSION: '${{ parameters.moduleVersion }}'
   reportsPath: '$(Build.ArtifactStagingDirectory)/reports'
   # v0.8.7 sideload advisor defaults. Override at the pipeline / variable-group
@@ -98,7 +98,7 @@ variables:
 
 stages:
 - stage: ScheduleCoverage
-  displayName: 'Audit Apply-Updates Schedule Coverage'
+  displayName: 'Setup: 03 - Audit Apply-Updates Schedule Coverage'
   jobs:
   - job: Audit
     displayName: 'Run Schedule Coverage Advisor'

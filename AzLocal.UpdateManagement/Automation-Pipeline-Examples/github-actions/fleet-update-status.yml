@@ -24,7 +24,7 @@
 # Workflow name carries the same Step.N - prefix as the filename so the GitHub
 # Actions sidebar (which sorts workflows alphabetically by this `name:` field)
 # lists the eight pipelines in execution order.
-name: Step.09 - Fleet Update Status
+name: 'Fleet: 06 - Fleet Update Status'
 
 on:
   # BEGIN-AZLOCAL-CUSTOMIZE:schedule-triggers
@@ -66,7 +66,7 @@ on:
         default: ''
       # --- ITSM Connector (ServiceNow auto-raise on fleet-update-status) ---
       # Set raise_itsm_ticket=true to open ServiceNow incidents from each unresolved
-      # Failed update run reported by the 'ðŸ“œ Update Run History and Error Details'
+      # Failed update run reported by the 'Ã°Å¸â€œÅ“ Update Run History and Error Details'
       # testsuite (and any failed AzureLocalFleetUpdateStatus row). Default is false
       # so existing schedules stay byte-identical until you opt in. The connector reads
       # the JUnit file Step.7 already produces (./reports/readiness-status.xml) and
@@ -105,7 +105,7 @@ env:
   # this to the version actually installed and to the latest on PSGallery, and emits a
   # ::notice annotation if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.8.84'
+  GENERATED_AGAINST_MODULE_VERSION: '0.8.85'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): manual workflow_dispatch input >
   # repository variable 'REQUIRED_MODULE_VERSION' > empty (latest).

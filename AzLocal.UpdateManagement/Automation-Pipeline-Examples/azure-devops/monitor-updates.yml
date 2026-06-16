@@ -1,5 +1,5 @@
 # AZLOCAL-PIPELINE-ID: monitor-updates
-# Step.08 - Monitor In-Flight Updates (Azure DevOps)
+# Fleet: 05 - Monitor In-Flight Updates (Azure DevOps)
 # -----------------------------------------------------------
 # Reports clusters whose latest update run is currently in flight, with the
 # CURRENT STEP each cluster is on and the ELAPSED DURATION of the run. Built
@@ -84,7 +84,7 @@ parameters:
     default: ''
 
 variables:
-  GENERATED_AGAINST_MODULE_VERSION: '0.8.84'
+  GENERATED_AGAINST_MODULE_VERSION: '0.8.85'
   REQUIRED_MODULE_VERSION: '${{ parameters.moduleVersion }}'
   reportsPath: '$(Build.ArtifactStagingDirectory)/reports'
 

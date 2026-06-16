@@ -19,10 +19,10 @@
 # NOTE: GitHub Actions does not support file uploads as workflow inputs.
 #       The edited CSV must be committed to the repository first.
 
-# Workflow name carries the same Step.N - prefix as the filename so the GitHub
+# Workflow name carries the same Setup prefix as the filename so the GitHub
 # Actions sidebar (which sorts workflows alphabetically by this `name:` field)
-# lists the eight pipelines in execution order.
-name: Step.02 - Manage UpdateRing Tags
+# lists the setup and operational pipelines in execution order.
+name: 'Setup: 02 - Manage UpdateRing Tags'
 
 on:
   # BEGIN-AZLOCAL-CUSTOMIZE:schedule-triggers
@@ -65,7 +65,7 @@ env:
   # this to the version actually installed and to the latest on PSGallery, and emits a
   # ::notice annotation if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.8.84'
+  GENERATED_AGAINST_MODULE_VERSION: '0.8.85'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): manual workflow_dispatch input >
   # repository variable 'REQUIRED_MODULE_VERSION' > empty (latest).

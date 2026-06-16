@@ -34,8 +34,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $script:ModuleInfo | Should -Not -BeNullOrEmpty
         }
 
-        It 'Should have version 0.8.84' {
-            $script:ModuleInfo.Version | Should -Be '0.8.84'
+        It 'Should have version 0.8.85' {
+            $script:ModuleInfo.Version | Should -Be '0.8.85'
         }
 
         It 'Module version constants are in sync between .psm1 and .psd1' {
@@ -575,13 +575,13 @@ Describe 'Module: AzLocal.UpdateManagement' {
         # actions/upload-artifact, dorny/test-reporter, etc.) execute under
         # Node 24 ahead of GitHub's platform-wide cutover. This drift test
         # guards against a future Copy-AzLocalPipelineExample / refresh
-        # silently dropping the opt-in from any of the 10 yml templates.
+        # silently dropping the opt-in from any of the bundled yml templates.
         It 'Every GitHub Actions yml declares FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true at workflow scope' {
             $ghRoot = Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples\github-actions'
             $ghRoot = (Resolve-Path -Path $ghRoot).Path
 
             $ymlFiles = Get-ChildItem -Path $ghRoot -Filter '*.yml' -File
-            $ymlFiles.Count | Should -BeGreaterOrEqual 11 -Because 'all 11 de-numbered pipeline templates are expected under Automation-Pipeline-Examples/github-actions/'
+            $ymlFiles.Count | Should -BeGreaterOrEqual 10 -Because 'all 10 de-numbered pipeline templates are expected under Automation-Pipeline-Examples/github-actions/'
 
             $offenders = New-Object System.Collections.Generic.List[string]
             foreach ($yml in $ymlFiles) {
@@ -7060,7 +7060,7 @@ Describe 'Function: Copy-AzLocalPipelineExample' {
         # YAMLs landed directly in $dest
         $yamls = @(Get-ChildItem -LiteralPath $dest -Filter '*.yml' -File)
         $yamls.Count | Should -BeGreaterThan 0
-        $yamls.Name | Should -Contain 'authentication-test.yml'
+        $yamls.Name | Should -Contain 'setup-validate-and-inventory.yml'
 
         # No platform-named subfolder, no Automation-Pipeline-Examples wrapper
         Test-Path (Join-Path $dest 'github-actions') | Should -BeFalse
@@ -7130,7 +7130,7 @@ Describe 'Function: Copy-AzLocalPipelineExample' {
         Copy-AzLocalPipelineExample -Destination $dest -Platform GitHub 6>$null | Out-Null
 
         # Mutate one destination file so we can prove it gets overwritten
-        $target = Join-Path $dest 'authentication-test.yml'
+        $target = Join-Path $dest 'setup-validate-and-inventory.yml'
         $sentinel = '# SENTINEL - if this comment survives, -Update did not overwrite'
         Set-Content -LiteralPath $target -Value $sentinel -Encoding ASCII
         (Get-Content -LiteralPath $target -Raw) | Should -Match 'SENTINEL'
@@ -7172,7 +7172,7 @@ Describe 'Function: Copy-AzLocalPipelineExample' {
 
         # Seed and then mutate
         Copy-AzLocalPipelineExample -Destination $dest -Platform GitHub 6>$null | Out-Null
-        $target = Join-Path $dest 'authentication-test.yml'
+        $target = Join-Path $dest 'setup-validate-and-inventory.yml'
         $sentinel = '# WHATIF SENTINEL - -WhatIf must preserve this'
         Set-Content -LiteralPath $target -Value $sentinel -Encoding ASCII
 

@@ -260,7 +260,14 @@ function Copy-AzLocalPipelineExample {
         # drop (sideload-auth-map.csv + sideload-catalog.yml) for
         # Platform=GitHub|AzureDevOps. Default OFF. Existing files are
         # always preserved regardless of this switch.
-        [switch]$SkipStarterSideloadConfig
+        [switch]$SkipStarterSideloadConfig,
+
+        # v0.8.85: when set, remove deprecated workflow filenames that are
+        # superseded by newer merged pipelines (for example, GitHub
+        # authentication-test.yml + inventory-clusters.yml replaced by
+        # setup-validate-and-inventory.yml). Default OFF to avoid deleting
+        # operator-edited files without explicit opt-in.
+        [switch]$PruneDeprecated
     )
 
     # ------------------------------------------------------------------
@@ -449,6 +456,50 @@ function Copy-AzLocalPipelineExample {
     }
 
     Write-Verbose "Copied $copiedCount file(s) from '$sourceRoot' to '$targetRoot' (skipped: $skippedCount)."
+
+    # ------------------------------------------------------------------
+    # 5b (v0.8.85). Optional cleanup of deprecated sample filenames that
+    #     were superseded by merged pipelines.
+    # ------------------------------------------------------------------
+    if ($Platform -eq 'GitHub') {
+        $replacementPath = Join-Path -Path $targetRoot -ChildPath 'setup-validate-and-inventory.yml'
+        $deprecatedFiles = @(
+            [PSCustomObject]@{ Path = (Join-Path -Path $targetRoot -ChildPath 'authentication-test.yml'); ExpectedId = 'authentication-test' }
+            [PSCustomObject]@{ Path = (Join-Path -Path $targetRoot -ChildPath 'inventory-clusters.yml');  ExpectedId = 'inventory-clusters' }
+        )
+        $existingDeprecated = @($deprecatedFiles | Where-Object { Test-Path -LiteralPath $_.Path -PathType Leaf })
+        if ((Test-Path -LiteralPath $replacementPath -PathType Leaf) -and $existingDeprecated.Count -gt 0) {
+            if ($PruneDeprecated.IsPresent) {
+                foreach ($deprecatedEntry in $existingDeprecated) {
+                    $deprecatedPath = $deprecatedEntry.Path
+                    $expectedId = $deprecatedEntry.ExpectedId
+                    $canDelete = $false
+                    try {
+                        $deprecatedText = [System.IO.File]::ReadAllText($deprecatedPath, [System.Text.UTF8Encoding]::new($false))
+                        $deprecatedId = Get-AzLocalPipelineId -Text $deprecatedText
+                        $canDelete = ($deprecatedId -eq $expectedId)
+                    }
+                    catch {
+                        Write-Warning ("Copy-AzLocalPipelineExample: could not inspect '{0}' for AZLOCAL-PIPELINE-ID; leaving file untouched. {1}" -f $deprecatedPath, $_.Exception.Message)
+                    }
+
+                    if (-not $canDelete) {
+                        Write-Warning ("Copy-AzLocalPipelineExample: '{0}' does not match expected pipeline ID '{1}'. Leaving file untouched." -f $deprecatedPath, $expectedId)
+                        continue
+                    }
+
+                    if ($PSCmdlet.ShouldProcess($deprecatedPath, 'Remove deprecated workflow replaced by setup-validate-and-inventory.yml')) {
+                        Remove-Item -LiteralPath $deprecatedPath -Force -ErrorAction Stop
+                        Write-Verbose ("Copy-AzLocalPipelineExample: removed deprecated workflow '{0}'." -f $deprecatedPath)
+                    }
+                }
+            }
+            else {
+                $deprecatedList = ($existingDeprecated | ForEach-Object { "  - $($_.Path)" }) -join [Environment]::NewLine
+                Write-Warning ("Copy-AzLocalPipelineExample: found deprecated workflow file(s) replaced by 'setup-validate-and-inventory.yml'. They were left in place to preserve operator edits.{0}{1}{0}To remove them automatically on refresh, rerun with -PruneDeprecated." -f [Environment]::NewLine, $deprecatedList)
+            }
+        }
+    }
 
     # ------------------------------------------------------------------
     # 6 (v0.7.92, relocated to config\ in v0.8.7). Starter
@@ -691,7 +742,7 @@ function Copy-AzLocalPipelineExample {
             else {
                 Write-Host ("  1. Move the YAML files from '{0}' into '.github\workflows\' in your repo, then commit and push." -f $targetRoot)
             }
-            Write-Host "  2. RECOMMENDED: run 'Step.0_authentication-test.yml' FIRST (one-shot) to validate OIDC / RBAC before wiring the other workflows. See section 5.1 of the Automation-Pipeline-Examples README."
+            Write-Host "  2. RECOMMENDED: run 'setup-validate-and-inventory.yml' FIRST (one-shot) to validate OIDC / RBAC and generate your initial cluster inventory before wiring the other workflows. See section 5.1 of the Automation-Pipeline-Examples README."
             Write-Host "  3. Wire up authentication (OIDC / Workload Identity / Managed Identity / SP) - see section 3 of the README."
             Write-Host "  4. SCHEDULED Step.6 (apply-updates) requires apply-updates-schedule.yml:" -ForegroundColor Yellow
             foreach ($line in $scheduleHintLines) { Write-Host $line }
