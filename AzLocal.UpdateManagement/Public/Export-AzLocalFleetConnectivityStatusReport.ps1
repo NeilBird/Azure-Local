@@ -397,7 +397,7 @@ function Export-AzLocalFleetConnectivityStatusReport {
     }
     $md = New-AzLocalFleetConnectivityStatusSummary @summaryArgs
 
-    Add-AzLocalPipelineStepSummary -Markdown $md -SummaryFileName $SummaryFileName | Out-Null
+    $summaryWrittenPath = Add-AzLocalPipelineStepSummary -Markdown $md -SummaryFileName $SummaryFileName
 
     # ---- Step outputs (lowercase snake_case, v0.8.5 convention) -----------
     Set-AzLocalPipelineOutput -Name 'cluster_total'   -Value ([string]$clusterRows.Count)
@@ -442,7 +442,7 @@ function Export-AzLocalFleetConnectivityStatusReport {
             NicFailures          = $nicFail
             ArbFailures          = $arbFail
             JUnitXmlPath         = $xmlPath
-            SummaryPath          = (Join-Path -Path $OutputDirectory -ChildPath $SummaryFileName)
+            SummaryPath          = $summaryWrittenPath
         }
     }
 }

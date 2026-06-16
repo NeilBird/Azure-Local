@@ -54,7 +54,12 @@ function Invoke-AzCliJson {
         $env:PYTHONIOENCODING = 'utf-8'
 
         $azArgs = @($Arguments) + '--only-show-errors'
-        $raw = & az @azArgs 2>&1
+        # Use Continue so ErrorRecord objects from native az stderr do not become
+        # terminating exceptions when the caller sets -ErrorAction Stop. The exit
+        # code ($LASTEXITCODE) is the authoritative failure signal; we handle it
+        # explicitly below.
+        $local:ErrorActionPreference = 'Continue'
+        $raw = @(& az @azArgs 2>&1)
         $exit = $LASTEXITCODE
 
         # Split merged stdout+stderr by stream type. Stderr lines (Python
