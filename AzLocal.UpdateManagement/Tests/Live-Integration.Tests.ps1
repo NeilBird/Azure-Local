@@ -409,7 +409,7 @@ Describe 'Live-Integration: Export-*Report cmdlets emit non-empty artifacts (v0.
     It '[Step.3] Export-AzLocalApplyUpdatesScheduleAudit emits audit + matrix CSV, recommend MD, JUnit XML and PassThru exposes counts' {
         $modRoot = Split-Path -Path (Get-Module AzLocal.UpdateManagement | Select-Object -First 1).Path -Parent
         $schedule = Join-Path $modRoot 'Automation-Pipeline-Examples\apply-updates-schedule.example.yml'
-        $pipelineYml = Join-Path $modRoot 'Automation-Pipeline-Examples\github-actions\Step.3_apply-updates-schedule-audit.yml'
+        $pipelineYml = Join-Path $modRoot 'Automation-Pipeline-Examples\github-actions\apply-updates-schedule-audit.yml'
         Test-Path -LiteralPath $schedule    | Should -BeTrue -Because 'bundled schedule example must exist'
         Test-Path -LiteralPath $pipelineYml | Should -BeTrue -Because 'bundled Step.3 pipeline yml must exist'
 

@@ -34,8 +34,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $script:ModuleInfo | Should -Not -BeNullOrEmpty
         }
 
-        It 'Should have version 0.8.84' {
-            $script:ModuleInfo.Version | Should -Be '0.8.84'
+        It 'Should have version 0.8.85' {
+            $script:ModuleInfo.Version | Should -Be '0.8.85'
         }
 
         It 'Module version constants are in sync between .psm1 and .psd1' {
@@ -162,8 +162,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
             # that disagree with the module they just installed. Every
             # bundled *.yml sample (both platforms) must pin to the current
             # manifest ModuleVersion. v0.8.7 de-numbered the filenames and
-            # authentication-test.yml now also consumes the module, so every
-            # sample (no exemptions) carries the pin.
+            # setup-validate-and-inventory.yml (the merged setup workflow) also
+            # consumes the module, so every sample (no exemptions) carries the pin.
             $manifestPath = Join-Path -Path $PSScriptRoot -ChildPath '..\AzLocal.UpdateManagement.psd1'
             $manifestVersion = (Import-PowerShellDataFile -Path $manifestPath).ModuleVersion
             $samplesDir = Join-Path -Path $PSScriptRoot -ChildPath "..\Automation-Pipeline-Examples\$Platform"
@@ -575,13 +575,13 @@ Describe 'Module: AzLocal.UpdateManagement' {
         # actions/upload-artifact, dorny/test-reporter, etc.) execute under
         # Node 24 ahead of GitHub's platform-wide cutover. This drift test
         # guards against a future Copy-AzLocalPipelineExample / refresh
-        # silently dropping the opt-in from any of the 10 yml templates.
+        # silently dropping the opt-in from any of the bundled yml templates.
         It 'Every GitHub Actions yml declares FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true at workflow scope' {
             $ghRoot = Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples\github-actions'
             $ghRoot = (Resolve-Path -Path $ghRoot).Path
 
             $ymlFiles = Get-ChildItem -Path $ghRoot -Filter '*.yml' -File
-            $ymlFiles.Count | Should -BeGreaterOrEqual 11 -Because 'all 11 de-numbered pipeline templates are expected under Automation-Pipeline-Examples/github-actions/'
+            $ymlFiles.Count | Should -BeGreaterOrEqual 10 -Because 'all 10 de-numbered pipeline templates are expected under Automation-Pipeline-Examples/github-actions/'
 
             $offenders = New-Object System.Collections.Generic.List[string]
             foreach ($yml in $ymlFiles) {
@@ -642,9 +642,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
             # with one Add-AzLocalPipelineVersionBanner call - count either
             # form as a banner emit.
             $perFileExpect = @{
-                'authentication-test.yml'          = 1
-                'inventory-clusters.yml'           = 1
-                'manage-updatering-tags.yml'       = 1
+                'setup-validate-and-inventory.yml'  = 2
+                'manage-updatering-tags.yml'        = 1
                 'apply-updates-schedule-audit.yml' = 1
                 'fleet-connectivity-status.yml'    = 1
                 'assess-update-readiness.yml'      = 1
@@ -7060,7 +7059,7 @@ Describe 'Function: Copy-AzLocalPipelineExample' {
         # YAMLs landed directly in $dest
         $yamls = @(Get-ChildItem -LiteralPath $dest -Filter '*.yml' -File)
         $yamls.Count | Should -BeGreaterThan 0
-        $yamls.Name | Should -Contain 'authentication-test.yml'
+        $yamls.Name | Should -Contain 'setup-validate-and-inventory.yml'
 
         # No platform-named subfolder, no Automation-Pipeline-Examples wrapper
         Test-Path (Join-Path $dest 'github-actions') | Should -BeFalse
@@ -7082,7 +7081,7 @@ Describe 'Function: Copy-AzLocalPipelineExample' {
 
         $yamls = @(Get-ChildItem -LiteralPath $dest -Filter '*.yml' -File)
         $yamls.Count | Should -BeGreaterThan 0
-        $yamls.Name | Should -Contain 'authentication-test.yml'
+        $yamls.Name | Should -Contain 'setup-validate-and-inventory.yml'
 
         Test-Path (Join-Path $dest 'azure-devops')   | Should -BeFalse
         Test-Path (Join-Path $dest 'github-actions') | Should -BeFalse
@@ -7130,7 +7129,7 @@ Describe 'Function: Copy-AzLocalPipelineExample' {
         Copy-AzLocalPipelineExample -Destination $dest -Platform GitHub 6>$null | Out-Null
 
         # Mutate one destination file so we can prove it gets overwritten
-        $target = Join-Path $dest 'authentication-test.yml'
+        $target = Join-Path $dest 'setup-validate-and-inventory.yml'
         $sentinel = '# SENTINEL - if this comment survives, -Update did not overwrite'
         Set-Content -LiteralPath $target -Value $sentinel -Encoding ASCII
         (Get-Content -LiteralPath $target -Raw) | Should -Match 'SENTINEL'
@@ -7172,7 +7171,7 @@ Describe 'Function: Copy-AzLocalPipelineExample' {
 
         # Seed and then mutate
         Copy-AzLocalPipelineExample -Destination $dest -Platform GitHub 6>$null | Out-Null
-        $target = Join-Path $dest 'authentication-test.yml'
+        $target = Join-Path $dest 'setup-validate-and-inventory.yml'
         $sentinel = '# WHATIF SENTINEL - -WhatIf must preserve this'
         Set-Content -LiteralPath $target -Value $sentinel -Encoding ASCII
 
@@ -7434,6 +7433,83 @@ Describe 'Function: Copy-AzLocalPipelineExample' {
 
         Test-Path (Join-Path $repoRoot 'config\sideload-auth-map.csv') | Should -BeFalse
         Test-Path (Join-Path $repoRoot 'config\sideload-catalog.yml')  | Should -BeFalse
+    }
+
+    # v0.8.85: -PruneDeprecated removes the legacy authentication-test.yml /
+    # inventory-clusters.yml sample files that were merged into the single
+    # setup-validate-and-inventory.yml workflow. The cleanup is opt-in,
+    # GitHub-only, ID-verified (each candidate's AZLOCAL-PIPELINE-ID must match
+    # the expected value before deletion) and ShouldProcess-gated.
+    Context 'v0.8.85 -PruneDeprecated cleanup of merged setup workflow files' {
+
+        It '-PruneDeprecated is exposed as a [switch] parameter' {
+            $cmd = Get-Command -Name 'Copy-AzLocalPipelineExample' -ErrorAction Stop
+            $cmd.Parameters.ContainsKey('PruneDeprecated') | Should -BeTrue
+            $cmd.Parameters['PruneDeprecated'].ParameterType | Should -Be ([switch])
+        }
+
+        It 'removes BOTH deprecated files when their AZLOCAL-PIPELINE-IDs match' {
+            $dest = Join-Path $script:cpDestRoot 'prune-both'
+            New-Item -Path $dest -ItemType Directory -Force | Out-Null
+            # Seed the two legacy files with their canonical IDs so the
+            # ID-verification gate allows deletion.
+            Set-Content -LiteralPath (Join-Path $dest 'authentication-test.yml') -Value '# AZLOCAL-PIPELINE-ID: authentication-test' -Encoding ASCII
+            Set-Content -LiteralPath (Join-Path $dest 'inventory-clusters.yml')  -Value '# AZLOCAL-PIPELINE-ID: inventory-clusters'  -Encoding ASCII
+
+            Copy-AzLocalPipelineExample -Destination $dest -Platform GitHub -PruneDeprecated -Confirm:$false 6>$null | Out-Null
+
+            Test-Path (Join-Path $dest 'authentication-test.yml') | Should -BeFalse
+            Test-Path (Join-Path $dest 'inventory-clusters.yml')  | Should -BeFalse
+            # The merged replacement must be present.
+            Test-Path (Join-Path $dest 'setup-validate-and-inventory.yml') | Should -BeTrue
+        }
+
+        It 'removes only the single deprecated file that is present' {
+            $dest = Join-Path $script:cpDestRoot 'prune-single'
+            New-Item -Path $dest -ItemType Directory -Force | Out-Null
+            Set-Content -LiteralPath (Join-Path $dest 'inventory-clusters.yml') -Value '# AZLOCAL-PIPELINE-ID: inventory-clusters' -Encoding ASCII
+
+            Copy-AzLocalPipelineExample -Destination $dest -Platform GitHub -PruneDeprecated -Confirm:$false 6>$null | Out-Null
+
+            Test-Path (Join-Path $dest 'inventory-clusters.yml') | Should -BeFalse
+            Test-Path (Join-Path $dest 'setup-validate-and-inventory.yml') | Should -BeTrue
+        }
+
+        It 'preserves a deprecated-named file whose AZLOCAL-PIPELINE-ID does not match' {
+            $dest = Join-Path $script:cpDestRoot 'prune-mismatch'
+            New-Item -Path $dest -ItemType Directory -Force | Out-Null
+            # An operator-owned file that merely happens to share the legacy
+            # name but carries a different ID must NOT be deleted.
+            Set-Content -LiteralPath (Join-Path $dest 'authentication-test.yml') -Value '# AZLOCAL-PIPELINE-ID: my-custom-auth-workflow' -Encoding ASCII
+
+            Copy-AzLocalPipelineExample -Destination $dest -Platform GitHub -PruneDeprecated -Confirm:$false 6>$null 3>$null | Out-Null
+
+            Test-Path (Join-Path $dest 'authentication-test.yml') | Should -BeTrue
+        }
+
+        It 'leaves deprecated files untouched when -PruneDeprecated is NOT supplied' {
+            $dest = Join-Path $script:cpDestRoot 'prune-omitted'
+            New-Item -Path $dest -ItemType Directory -Force | Out-Null
+            Set-Content -LiteralPath (Join-Path $dest 'authentication-test.yml') -Value '# AZLOCAL-PIPELINE-ID: authentication-test' -Encoding ASCII
+            Set-Content -LiteralPath (Join-Path $dest 'inventory-clusters.yml')  -Value '# AZLOCAL-PIPELINE-ID: inventory-clusters'  -Encoding ASCII
+
+            Copy-AzLocalPipelineExample -Destination $dest -Platform GitHub 6>$null 3>$null | Out-Null
+
+            Test-Path (Join-Path $dest 'authentication-test.yml') | Should -BeTrue
+            Test-Path (Join-Path $dest 'inventory-clusters.yml')  | Should -BeTrue
+        }
+
+        It '-PruneDeprecated -WhatIf does not delete the deprecated files' {
+            $dest = Join-Path $script:cpDestRoot 'prune-whatif'
+            New-Item -Path $dest -ItemType Directory -Force | Out-Null
+            Set-Content -LiteralPath (Join-Path $dest 'authentication-test.yml') -Value '# AZLOCAL-PIPELINE-ID: authentication-test' -Encoding ASCII
+            Set-Content -LiteralPath (Join-Path $dest 'inventory-clusters.yml')  -Value '# AZLOCAL-PIPELINE-ID: inventory-clusters'  -Encoding ASCII
+
+            Copy-AzLocalPipelineExample -Destination $dest -Platform GitHub -PruneDeprecated -WhatIf 6>$null | Out-Null
+
+            Test-Path (Join-Path $dest 'authentication-test.yml') | Should -BeTrue
+            Test-Path (Join-Path $dest 'inventory-clusters.yml')  | Should -BeTrue
+        }
     }
 }
 
@@ -9433,6 +9509,69 @@ jobs:
             $afterContent = [System.IO.File]::ReadAllText($destFile, [System.Text.UTF8Encoding]::new($false))
             $afterContent | Should -Match "GENERATED_AGAINST_MODULE_VERSION: '0\.7\.50'"
             $afterContent | Should -Match 'operator hand-edit'
+        }
+    }
+
+    # v0.8.85: -PruneDeprecated removes the legacy authentication-test.yml /
+    # inventory-clusters.yml sample files once the merged
+    # setup-validate-and-inventory.yml has been written by the refresh. The
+    # cleanup is opt-in, GitHub-only, ID-verified and ShouldProcess-gated.
+    Context 'v0.8.85 -PruneDeprecated cleanup of merged setup workflow files' {
+
+        It '-PruneDeprecated is exposed as a [switch] parameter' {
+            $cmd = Get-Command -Name 'Update-AzLocalPipelineExample' -ErrorAction Stop
+            $cmd.Parameters.ContainsKey('PruneDeprecated') | Should -BeTrue
+            $cmd.Parameters['PruneDeprecated'].ParameterType | Should -Be ([switch])
+        }
+
+        It 'removes both deprecated files when their AZLOCAL-PIPELINE-IDs match' {
+            $temp = Join-Path $env:TEMP "upe-prune-both-$([guid]::NewGuid())"
+            New-Item -ItemType Directory -Path $temp -Force | Out-Null
+            try {
+                # Seed the merged replacement so the prune precondition (the
+                # canonical setup-validate-and-inventory.yml exists) is met via a
+                # plain canonical match - no rename-merge of the legacy aliases.
+                Copy-Item -LiteralPath (Join-Path $script:UpePlatformSrcGh 'setup-validate-and-inventory.yml') -Destination $temp
+                Set-Content -LiteralPath (Join-Path $temp 'authentication-test.yml') -Value '# AZLOCAL-PIPELINE-ID: authentication-test' -Encoding ASCII
+                Set-Content -LiteralPath (Join-Path $temp 'inventory-clusters.yml')  -Value '# AZLOCAL-PIPELINE-ID: inventory-clusters'  -Encoding ASCII
+
+                Update-AzLocalPipelineExample -Destination $temp -Platform GitHub -PruneDeprecated -Confirm:$false 6>$null 4>$null | Out-Null
+
+                Test-Path -LiteralPath (Join-Path $temp 'authentication-test.yml') | Should -BeFalse
+                Test-Path -LiteralPath (Join-Path $temp 'inventory-clusters.yml')  | Should -BeFalse
+                Test-Path -LiteralPath (Join-Path $temp 'setup-validate-and-inventory.yml') | Should -BeTrue
+            }
+            finally { Remove-Item -Path $temp -Recurse -Force -ErrorAction SilentlyContinue }
+        }
+
+        It 'preserves a deprecated-named file whose AZLOCAL-PIPELINE-ID does not match' {
+            $temp = Join-Path $env:TEMP "upe-prune-mismatch-$([guid]::NewGuid())"
+            New-Item -ItemType Directory -Path $temp -Force | Out-Null
+            try {
+                Copy-Item -LiteralPath (Join-Path $script:UpePlatformSrcGh 'setup-validate-and-inventory.yml') -Destination $temp
+                Set-Content -LiteralPath (Join-Path $temp 'authentication-test.yml') -Value '# AZLOCAL-PIPELINE-ID: my-custom-auth' -Encoding ASCII
+
+                Update-AzLocalPipelineExample -Destination $temp -Platform GitHub -PruneDeprecated -Confirm:$false 6>$null 4>$null | Out-Null
+
+                Test-Path -LiteralPath (Join-Path $temp 'authentication-test.yml') | Should -BeTrue
+            }
+            finally { Remove-Item -Path $temp -Recurse -Force -ErrorAction SilentlyContinue }
+        }
+
+        It 'leaves deprecated files untouched when -PruneDeprecated is NOT supplied' {
+            $temp = Join-Path $env:TEMP "upe-prune-omitted-$([guid]::NewGuid())"
+            New-Item -ItemType Directory -Path $temp -Force | Out-Null
+            try {
+                Copy-Item -LiteralPath (Join-Path $script:UpePlatformSrcGh 'setup-validate-and-inventory.yml') -Destination $temp
+                Set-Content -LiteralPath (Join-Path $temp 'authentication-test.yml') -Value '# AZLOCAL-PIPELINE-ID: authentication-test' -Encoding ASCII
+                Set-Content -LiteralPath (Join-Path $temp 'inventory-clusters.yml')  -Value '# AZLOCAL-PIPELINE-ID: inventory-clusters'  -Encoding ASCII
+
+                Update-AzLocalPipelineExample -Destination $temp -Platform GitHub -Confirm:$false 6>$null 4>$null | Out-Null
+
+                Test-Path -LiteralPath (Join-Path $temp 'authentication-test.yml') | Should -BeTrue
+                Test-Path -LiteralPath (Join-Path $temp 'inventory-clusters.yml')  | Should -BeTrue
+            }
+            finally { Remove-Item -Path $temp -Recurse -Force -ErrorAction SilentlyContinue }
         }
     }
 }
@@ -14201,8 +14340,11 @@ Describe 'Thin-YAML Step.0: Export-AzLocalAuthValidationReport' {
         $summary = Get-Content -LiteralPath $script:_avr_ghSummaryFile -Raw
         $summary | Should -Match '## Step\.0 - Authentication Validation and Subscription Scope Report'
         $summary | Should -Match '### Count of subscriptions accessible = 2'
+        $summary | Should -Match '<details>'
+        $summary | Should -Match 'Expand for subscription details'
         $summary | Should -Match 'Alpha'
         $summary | Should -Match 'Beta'
+        $summary | Should -Match '</details>'
         # Step outputs: all three keys present.
         $outputs = Get-Content -LiteralPath $script:_avr_ghOutputFile -Raw
         $outputs | Should -Match 'subscription_count=2'
@@ -14260,9 +14402,12 @@ Describe 'Thin-YAML Step.0: Export-AzLocalAuthValidationReport' {
         $result = Invoke-Step0Cmdlet -Params $params -Account $script:_avr_account -Subs $multi -Clusters $script:_avr_clusters -RoleRows $script:_avr_roleRows
         $result.SubscriptionCount | Should -Be 3
         $summary = Get-Content -LiteralPath $script:_avr_ghSummaryFile -Raw
+        $summary | Should -Match '<details>'
+        $summary | Should -Match 'Expand for subscription details'
         $summary | Should -Match '\| 1 \| A \| `s1`'
         $summary | Should -Match '\| 2 \| B \| `s2`'
         $summary | Should -Match '\| 3 \| C \| `s3`'
+        $summary | Should -Match '</details>'
     }
 
     It 'Throws a helpful error when az account show fails' {

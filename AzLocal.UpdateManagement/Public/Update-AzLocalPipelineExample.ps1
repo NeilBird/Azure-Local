@@ -175,6 +175,13 @@ function Update-AzLocalPipelineExample {
 
         [switch]$Force,
 
+        # v0.8.85: when set, remove deprecated workflow filenames that are
+        # superseded by newer merged pipelines (for example, GitHub
+        # authentication-test.yml + inventory-clusters.yml replaced by
+        # setup-validate-and-inventory.yml). Default OFF so upgrades remain
+        # non-destructive unless explicitly requested.
+        [switch]$PruneDeprecated,
+
         [switch]$PassThru
     )
 
@@ -523,6 +530,47 @@ function Update-AzLocalPipelineExample {
     $byAction = $results | Group-Object Action | Sort-Object Name
     $summary  = ($byAction | ForEach-Object { "$($_.Name)=$($_.Count)" }) -join ' '
     Write-Log -Message "Update-AzLocalPipelineExample: $($results.Count) source file(s) processed - $summary" -Level Info
+
+    # v0.8.85: optional cleanup for deprecated merged GitHub workflows.
+    if ($Platform -eq 'GitHub') {
+        $replacementPath = Join-Path -Path $destResolved -ChildPath 'setup-validate-and-inventory.yml'
+        $deprecatedFiles = @(
+            [PSCustomObject]@{ Path = (Join-Path -Path $destResolved -ChildPath 'authentication-test.yml'); ExpectedId = 'authentication-test' }
+            [PSCustomObject]@{ Path = (Join-Path -Path $destResolved -ChildPath 'inventory-clusters.yml');  ExpectedId = 'inventory-clusters' }
+        )
+        $existingDeprecated = @($deprecatedFiles | Where-Object { Test-Path -LiteralPath $_.Path -PathType Leaf })
+        if ((Test-Path -LiteralPath $replacementPath -PathType Leaf) -and $existingDeprecated.Count -gt 0) {
+            if ($PruneDeprecated.IsPresent) {
+                foreach ($deprecatedEntry in $existingDeprecated) {
+                    $deprecatedPath = $deprecatedEntry.Path
+                    $expectedId = $deprecatedEntry.ExpectedId
+                    $canDelete = $false
+                    try {
+                        $deprecatedText = [System.IO.File]::ReadAllText($deprecatedPath, [System.Text.UTF8Encoding]::new($false))
+                        $deprecatedId = Get-AzLocalPipelineId -Text $deprecatedText
+                        $canDelete = ($deprecatedId -eq $expectedId)
+                    }
+                    catch {
+                        Write-Log -Message "  Note    : could not inspect '$([System.IO.Path]::GetFileName($deprecatedPath))' for AZLOCAL-PIPELINE-ID; leaving file untouched. $($_.Exception.Message)" -Level Warning
+                    }
+
+                    if (-not $canDelete) {
+                        Write-Log -Message "  Note    : '$([System.IO.Path]::GetFileName($deprecatedPath))' does not match expected pipeline ID '$expectedId'; leaving file untouched." -Level Warning
+                        continue
+                    }
+
+                    if ($PSCmdlet.ShouldProcess($deprecatedPath, 'Remove deprecated workflow replaced by setup-validate-and-inventory.yml')) {
+                        Remove-Item -LiteralPath $deprecatedPath -Force -ErrorAction Stop
+                        Write-Log -Message "  Removed : deprecated workflow '$([System.IO.Path]::GetFileName($deprecatedPath))' (replaced by setup-validate-and-inventory.yml)" -Level Success
+                    }
+                }
+            }
+            else {
+                $deprecatedList = ($existingDeprecated | ForEach-Object { "  - $([System.IO.Path]::GetFileName($_.Path))" }) -join [Environment]::NewLine
+                Write-Log -Message ("  Note    : deprecated workflow file(s) detected (replaced by setup-validate-and-inventory.yml). Left in place by default to avoid destructive changes:{0}{1}{0}            Rerun with -PruneDeprecated to remove them automatically." -f [Environment]::NewLine, $deprecatedList) -Level Warning
+            }
+        }
+    }
 
     if ($PassThru) {
         return $results.ToArray()

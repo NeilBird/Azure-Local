@@ -1,0 +1,256 @@
+# AZLOCAL-PIPELINE-ID: setup-validate-and-inventory
+# Setup: 01 - Validate Auth and Inventory Azure Local Clusters
+#
+# PURPOSE:
+#   This is the first step in the setup workflow. It combines two operations:
+#   1. VALIDATION: Validates OIDC + RBAC + subscription scope access
+#   2. INVENTORY: Queries all Azure Local clusters and exports inventory with UpdateRing tag status
+#
+#   Run this workflow:
+#       - BEFORE adding the operational workflows (Fleet: 01-07). It narrows any failure 
+#         to authentication/discovery rather than seven interacting pipelines.
+#       - PERIODICALLY (recommended monthly, or after every RBAC change in the tenant) 
+#         to confirm subscription scope and cluster inventory are accurate.
+#
+# VALIDATION PROBES:
+#       1. azure/login OIDC token exchange (App Registration + federated credential).
+#       2. Repository / environment secrets (AZURE_CLIENT_ID, _TENANT_ID, _SUBSCRIPTION_ID).
+#       3. Azure RBAC on the App Registration's service principal.
+#       4. Resource Graph reachability (proves the SP can actually see clusters).
+#       5. Subscription scope: total count and full Subscription ID / Name table.
+#
+# INVENTORY OUTPUT COLUMNS:
+#   ClusterName, ResourceGroup, SubscriptionId, SubscriptionName,
+#   UpdateRing, HasUpdateRingTag, UpdateStartWindow, UpdateExclusions,
+#   UpdateSideloaded, UpdateVersionInProgress, ResourceId
+#
+#   - UpdateSideloaded (operator-set): True/False/1/0 - sideloaded-payload gate
+#   - UpdateVersionInProgress (module-managed; do not edit): staged update name
+#   See main module README, section "Sideloaded Payload Workflow".
+#
+# REPORTS GENERATED:
+#   - Authentication: JUnit XML + subscriptions.json + subscriptions.csv
+#   - Inventory: ClusterUpdateRings.csv + ClusterUpdateRings.json + README_Instructions.txt
+#   - GITHUB_STEP_SUMMARY markdown: Version banner, subscription count with collapsible
+#     details table, cluster inventory summary with UpdateRing distribution, next steps.
+#   - Artifacts: Both reports available for download.
+#
+# HOW TO TRIGGER (after committed to default branch):
+#   gh workflow run setup-validate-and-inventory.yml --repo <owner>/<repo>
+#   gh workflow run setup-validate-and-inventory.yml --repo <owner>/<repo> -f environment=DevTest
+#   gh run watch --repo <owner>/<repo>
+#
+# See Automation-Pipeline-Examples/README.md for full setup story.
+
+name: 'Setup: 01 - Validate Auth and Inventory Clusters'
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'GitHub Environment (leave blank for branch-scoped OIDC, or specify environment name for environment-scoped OIDC + secrets)'
+        required: false
+        default: ''
+      subscription_filter:
+        description: 'Subscription ID to filter inventory (leave empty for all subscriptions)'
+        required: false
+        default: ''
+      module_version:
+        description: 'Pin AzLocal.UpdateManagement version (empty = latest from PSGallery). See Automation-Pipeline-Examples/README.md section 5.'
+        required: false
+        default: ''
+  # BEGIN-AZLOCAL-CUSTOMIZE:schedule-triggers
+  # Content between BEGIN/END markers is preserved by
+  # Update-AzLocalPipelineExample across module upgrades. Edit the cron
+  # below or add more `- cron:` entries to suit your maintenance windows.
+  schedule:
+    # Run weekly on Sunday at 8:00 AM UTC
+    - cron: '0 8 * * 0'
+  # END-AZLOCAL-CUSTOMIZE:schedule-triggers
+
+env:
+  # Module version this workflow YAML was generated against. The install step compares
+  # this to the version actually installed and to the latest on PSGallery, and emits a
+  # ::notice annotation if the YAML appears stale - prompting you to refresh via
+  # Copy-AzLocalPipelineExample. See Automation-Pipeline-Examples/README.md section 5.
+  GENERATED_AGAINST_MODULE_VERSION: '0.8.85'
+  # Resolution order for the module version pin (leave all unset to install the latest,
+  # which is the default "fix-forward" behaviour): manual workflow_dispatch input >
+  # repository variable 'REQUIRED_MODULE_VERSION' > empty (latest).
+  REQUIRED_MODULE_VERSION: ${{ github.event.inputs.module_version || vars.REQUIRED_MODULE_VERSION || '' }}
+  # v0.8.4 - opt this workflow into Node.js 24 for all JavaScript actions
+  # (actions/checkout, actions/download-artifact, actions/upload-artifact,
+  # azure/login, dorny/test-reporter, etc). Per GitHub's 2025-09-19 deprecation
+  # notice Node 20 is forced off by default on 2026-06-16 and removed from the
+  # runner on 2026-09-16. Setting this env var silences the deprecation warnings
+  # and exercises Node 24 ahead of the cut-over. To temporarily opt back out,
+  # set ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true.
+  # https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+permissions:
+  id-token: write
+  contents: read
+  checks: write
+
+jobs:
+  validate:
+    name: 'Validate OIDC + RBAC + Subscription Scope'
+    runs-on: windows-latest
+    environment: ${{ inputs.environment }}
+
+    outputs:
+      subscription_count: ${{ steps.report.outputs.subscription_count }}
+      cluster_count: ${{ steps.report.outputs.cluster_count }}
+      auth_valid: ${{ steps.report.outputs.auth_valid }}
+
+    steps:
+      - name: 'Checkout repository'
+        uses: actions/checkout@v5
+
+      - name: 'Azure login (OIDC)'
+        uses: azure/login@v3
+        with:
+          client-id:       ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id:       ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: 'Install AzLocal.UpdateManagement from PSGallery'
+        shell: pwsh
+        id: module-version
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $installArgs = @{ Name = 'AzLocal.UpdateManagement'; Scope = 'CurrentUser'; Force = $true; AllowClobber = $true }
+          if ($env:REQUIRED_MODULE_VERSION) {
+              $installArgs.RequiredVersion = $env:REQUIRED_MODULE_VERSION
+              Write-Host "REQUIRED_MODULE_VERSION is set - pinning install to v$($env:REQUIRED_MODULE_VERSION)."
+          } else {
+              Write-Host "REQUIRED_MODULE_VERSION is empty - installing the latest version from PSGallery (default fix-forward behaviour)."
+          }
+          Install-Module @installArgs
+          Import-Module AzLocal.UpdateManagement -Force
+          Add-AzLocalPipelineVersionBanner `
+              -GeneratedAgainstVersion $env:GENERATED_AGAINST_MODULE_VERSION `
+              -PinnedVersion $env:REQUIRED_MODULE_VERSION
+
+      - name: 'Collect Authentication and Subscription Scope Report'
+        id: report
+        shell: pwsh
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          INSTALLED_MODULE_VERSION:    ${{ steps.module-version.outputs.installed_module_version }}
+          GENERATED_AGAINST_VERSION:   ${{ steps.module-version.outputs.generated_against_version }}
+          LATEST_ON_PSGALLERY:         ${{ steps.module-version.outputs.latest_on_psgallery }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Import-Module AzLocal.UpdateManagement -Force
+          Export-AzLocalAuthValidationReport `
+              -AzureClientId          $env:AZURE_CLIENT_ID `
+              -ReportDirectory        './reports' `
+              -InstalledModuleVersion $env:INSTALLED_MODULE_VERSION `
+              -GeneratedAgainstVersion $env:GENERATED_AGAINST_VERSION `
+              -LatestOnPSGallery      $env:LATEST_ON_PSGALLERY
+
+      - name: 'Compute Artifact Timestamp'
+        id: artifact-stamp
+        shell: pwsh
+        run: |
+          $stamp = (Get-Date).ToUniversalTime().ToString('yyyyMMdd_HHmmss')
+          "timestamp=$stamp" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          Write-Host "Artifact timestamp: $stamp"
+
+      - name: 'Upload auth report artifact'
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: azlocal-step.1-setup-auth-report_${{ steps.artifact-stamp.outputs.timestamp }}
+          path: ./reports/
+          retention-days: 30
+
+      - name: 'Publish JUnit Diagnostic Results'
+        if: always()
+        uses: dorny/test-reporter@v3
+        with:
+          name: '[JUnit Debug] Setup: 01 - Authentication Validation'
+          path: ./reports/auth-report.xml
+          reporter: java-junit
+          fail-on-error: false
+          list-suites: failed
+          list-tests: failed
+
+  inventory-clusters:
+    name: 'Inventory Azure Local Clusters'
+    runs-on: windows-latest
+    needs: validate
+    if: success()
+    
+    outputs:
+      cluster_count: ${{ steps.inventory.outputs.cluster_count }}
+      with_tag_count: ${{ steps.inventory.outputs.with_tag_count }}
+      without_tag_count: ${{ steps.inventory.outputs.without_tag_count }}
+
+    steps:
+    - name: 'Checkout repository'
+      uses: actions/checkout@v5
+    
+    - name: 'Azure CLI Login (OIDC)'
+      uses: azure/login@v3
+      with:
+        client-id: ${{ secrets.AZURE_CLIENT_ID }}
+        tenant-id: ${{ vars.AZURE_TENANT_ID }}
+        subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+    
+    - name: 'Install Azure CLI Resource Graph Extension'
+      shell: pwsh
+      run: |
+        az extension add --name resource-graph --yes
+    
+    - name: 'Install AzLocal.UpdateManagement from PSGallery'
+      shell: pwsh
+      id: module-version
+      run: |
+        $ErrorActionPreference = 'Stop'
+        $installArgs = @{ Name = 'AzLocal.UpdateManagement'; Scope = 'CurrentUser'; Force = $true; AllowClobber = $true }
+        if ($env:REQUIRED_MODULE_VERSION) {
+            $installArgs.RequiredVersion = $env:REQUIRED_MODULE_VERSION
+            Write-Host "REQUIRED_MODULE_VERSION is set - pinning install to v$($env:REQUIRED_MODULE_VERSION)."
+        } else {
+            Write-Host "REQUIRED_MODULE_VERSION is empty - installing the latest version from PSGallery (default fix-forward behaviour)."
+        }
+        Install-Module @installArgs
+        Import-Module AzLocal.UpdateManagement -Force
+        Add-AzLocalPipelineVersionBanner `
+            -GeneratedAgainstVersion $env:GENERATED_AGAINST_MODULE_VERSION `
+            -PinnedVersion $env:REQUIRED_MODULE_VERSION
+
+    - name: 'Run Cluster Inventory'
+      id: inventory
+      shell: pwsh
+      env:
+        INPUT_SUBSCRIPTION_FILTER: ${{ github.event.inputs.subscription_filter }}
+        INSTALLED_MODULE_VERSION:  ${{ steps.module-version.outputs.installed_module_version }}
+      run: |
+        $ErrorActionPreference = 'Stop'
+        Import-Module AzLocal.UpdateManagement -Force
+        Invoke-AzLocalClusterInventory `
+            -OutputDirectory       './artifacts' `
+            -SubscriptionFilter    $env:INPUT_SUBSCRIPTION_FILTER `
+            -InstalledModuleVersion $env:INSTALLED_MODULE_VERSION
+
+    - name: 'Compute Artifact Timestamp'
+      id: artifact-stamp
+      shell: pwsh
+      run: |
+        $stamp = (Get-Date).ToUniversalTime().ToString('yyyyMMdd_HHmmss')
+        "timestamp=$stamp" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+        Write-Host "Artifact timestamp: $stamp"
+
+    - name: 'Upload Inventory Artifact'
+      uses: actions/upload-artifact@v6
+      with:
+        name: azlocal-step.1-setup-cluster-inventory_${{ steps.artifact-stamp.outputs.timestamp }}
+        path: |
+          ./artifacts/*.csv
+          ./artifacts/*.json
+          ./artifacts/README_Instructions.txt
+        retention-days: 30

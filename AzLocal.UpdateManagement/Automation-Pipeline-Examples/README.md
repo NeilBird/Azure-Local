@@ -56,50 +56,49 @@ It is written in the same step-by-step style as [`ITSM/README.md`](../ITSM/READM
 By the end of this guide you will have:
 
 - A federated identity (no client secrets) wired into your CI/CD platform with the **minimum** Azure RBAC needed for cluster update management.
-- Eleven working pipelines committed to your repo and visible in the Actions / Pipelines UI:
-  - **Authentication Validation and Subscription Scope Report** (Step.0) - probe the federated identity end-to-end, emit a JUnit-rendered authentication / scope / Resource Graph report, and capture the subscription set the pipeline identity can read. *Manual only - re-run after every RBAC change.*
-  - **Inventory** (Step.1) - enumerate every Azure Local cluster the identity can see and export a CSV. *Scheduled weekly + manual.*
-  - **Manage UpdateRing tags** (Step.2) - bulk-apply `UpdateRing`, `UpdateStartWindow`, `UpdateExclusionsWindow`, `UpdateExcluded` tags from that CSV. *Manual only.*
-  - **Apply-Updates Schedule Coverage Audit** (Step.3, v0.7.65) - read-only weekly audit that compares the cron(s) in your `apply-updates` pipeline to the `UpdateStartWindow` tags actually present on your clusters and flags any (UpdateRing, UpdateStartWindow) pair that no cron will reach. *Scheduled weekly Mon 05:00 UTC + manual.*
-  - **Fleet Connectivity Status** (Step.4, v0.7.79+, enhanced in v0.7.85) - read-only daily snapshot of Arc agent connectivity, physical NIC health, Azure Resource Bridge status, and the node-count reconciliation between cluster `reportedProperties.nodes` and Arc-tagged physical machines. *Scheduled daily 05:30 UTC + manual.*
-  - **Assess Update Readiness** (Step.5) - pre-flight, report-only readiness + blocking-health snapshot, published as JUnit XML. *Manual only.*
-  - **Sideload Updates** (Step.6, v0.8.7) - **opt-in, off by default, on-prem self-hosted runner/agent required.** Pre-stages solution-update media onto clusters that cannot pull updates from Azure directly (dark / air-gapped fabrics): Robocopy to the cluster import share, remote SHA256 verify, `Add-SolutionUpdate` import, then flip `UpdateSideloaded=True` for the downstream Step.7 apply. Re-entrant state machine driven by a frequent CRON; the multi-hour copy runs in a detached Scheduled Task. *Inert unless `SIDELOAD_UPDATES=true`. See [sideload.md](docs/sideload.md) and [sideload-robocopy.md](docs/sideload-robocopy.md).*
-  - **Apply Updates** (Step.7; **v0.8.81 step-summary polish**: per-host apply-updates step summary now uses the new shared `Get-AzLocalStatusIconMap` host-aware icon helper (fixes literal `:white_check_mark:` text on Azure DevOps step summaries), the Cluster column wraps in a portal deep-link via `Get-AzLocalClusterPortalLink`, and the standing Ctrl-click tip is single-sourced via `Get-AzLocalCtrlClickTip`; **v0.8.79 break-glass override**: optional `force_immediate_update` / `forceImmediateUpdate` pipeline parameter (defaults `false`, **manual run / queue only**) bypasses the per-cluster `UpdateStartWindow` / `UpdateExclusionsWindow` maintenance-window gate for emergency / out-of-window patching - the override is unreachable from the scheduled `apply-updates-schedule.yml` configuration file and a high-visibility WARNING banner is emitted into the run log when it fires; **v0.8.78 step-summary UX polish**: ``ScheduleBlocked`` / ``SideloadedBlocked`` / ``ExcludedByTag`` outcomes render as JUnit ``<skipped>`` instead of ``<failure>`` so ``dorny/test-reporter`` no longer flips Step.07 RED on by-design gate-respect outcomes - ``HealthCheckBlocked`` deliberately stays a ``<failure>``; the Readiness KPI table now also surfaces **Already Up to Date** and **Not Ready (needs attention before updating)** rows so operators see the full ring breakdown - eligible, started, skipped, blocked, up-to-date, needs-attention - in one place; GHA-only: ``actions/download-artifact@v6 -> @v7`` silences the Node 20 deprecation warning) - apply updates to a single `UpdateRing` wave at a time, with WhatIf / dry-run support. *Manual only by default - **you must add a schedule** that lines up with your cluster `UpdateStartWindow` tags, see [Step 7 - Apply Updates](docs/appendix-pipelines.md#step-7---apply-updates) and [section 8](#8-scheduling-maintenance-windows-and-change-freeze-periods).*
-  - **Monitor In-Flight Updates** (Step.8, v0.7.90; **v0.8.81 host-aware icons**: the State and Current Step Status columns now use the shared `Get-AzLocalStatusIconMap` helper (fixes literal `:large_blue_circle:` / `:hourglass_flowing_sand:` text on Azure DevOps step summaries); v0.7.96 surfaces `Status` + deepest `ErrorMessage` columns, adds the `StepError` stuck-step JUnit type for runs that have hit an error inside a step without crossing the long-running threshold, and renders portal-linked Cluster Name / Update Name cells in the markdown summary; **v0.7.98 UX overhaul**: composite `SeverityScore` sort, per-cell `StateIcon` + `StatusIcon`, horizontal chip stack (`STEP-STUCK` / `RUN-STUCK` / `UNRESOLVED` / `RECENT-FAIL`), `CRITICAL / WARN / OK` fleet status badge at the top of the job summary, collapsible `<details>` Verbose Error block per row, and JUnit `<testsuite time="..">` + `<testcase time="..">` populated with real run elapsed seconds). Operational snapshot during an active wave: lists each cluster whose latest update run is `InProgress`, with current step, progress (`completed/total steps`), elapsed duration, the `Status` column (`Success`/`Error`/`InProgress`/...), and the deepest `errorMessage` walked out of the nested ARM `steps[]` tree; flags long-running runs (default >6h) AND step-errored stuck runs as JUnit failures in the Checks tab. *Scheduled 5x/day at 20:00, 22:00, 00:00, 02:00, 04:00 UTC (every 2h across the typical overnight maintenance window) + manual; default cadence is editable in `monitor-updates.yml` (v0.7.92+).*
-  - **Fleet Update Status** (Step.9, formerly Step.8; **v0.8.81 host-aware icons**: the Critical Health Status table, the Primary Status table, and the Version Distribution Support column now use the shared `Get-AzLocalStatusIconMap` helper (fixes literal `:green_circle:` / `:yellow_circle:` / `:information_source:` text on Azure DevOps step summaries); v0.7.96 promotes `NeedsAttention` into the **Update Failed** bucket, adds a new **Action Required** bucket for `PreparationFailed`, and folds `PreparationInProgress` into **Update In Progress**; **v0.7.98** populates JUnit `time=` on each `<testcase>` in the `📜 Update Run History and Error Details` testsuite using `DurationMinutes * 60`). Scheduled daily snapshot of fleet update state, surfaced in the Tests tab. Markdown summary's `📜 Update Run History and Error Details` table now also carries portal-linked Cluster Name / Update Name cells plus the deepest-step `ErrorMessage`. *Scheduled daily 06:00 UTC + manual.*
-  - **Fleet Health Status** (Step.10, formerly Step.9; **v0.8.81**: fixes the KPI counting bug where Healthy + Unhealthy did not sum to Total - the top KPI table is now split into **Cluster Counts** (Total / Healthy / Unhealthy / **Other**) and **Failing Checks Breakdown**, with a new `other_clusters` step output. Detailed Results columns reordered to put `Title` first and add a collapsible `Description` block that surfaces drive/volume-level detail (e.g. file paths from `Microsoft.Health.FaultType.Volume.FileSystem.Corruption.Correctable` warnings); raw fault-type `Name` preserved for grep/triage) - scheduled daily snapshot of 24-hour system health-check failures, surfaced in the Tests tab. *Scheduled daily 07:00 UTC + manual.*
+- Setup/Fleet workflows committed to your repo and visible in the Actions / Pipelines UI:
+  - **Setup: 01 - Validate Auth and Inventory Clusters** (GitHub) - merged auth + inventory flow with a clear setup-first summary (including collapsible subscription details) and cluster inventory export.
+  - **Setup: 02 - Manage UpdateRing Tags** - bulk-apply `UpdateRing`, `UpdateStartWindow`, `UpdateExclusionsWindow`, `UpdateExcluded` tags from CSV.
+  - **Setup: 03 - Apply-Updates Schedule Coverage Audit** - read-only audit that validates your schedule against `UpdateStartWindow` tags.
+  - **Fleet: 01 - Assess Update Readiness** - pre-flight readiness + blocking-health gate report.
+  - **Fleet: 02 - Fleet Connectivity Status** - Arc connectivity, NIC health, and ARB status snapshot.
+  - **Fleet: 03 - Sideload Updates (opt-in)** - on-prem media pre-stage workflow for disconnected environments.
+  - **Fleet: 04 - Apply Updates** - ring-scoped update execution with WhatIf support and schedule-aware gating.
+  - **Fleet: 05 - Monitor In-Flight Updates** - active-run progress and stuck-run diagnostics.
+  - **Fleet: 06 - Fleet Update Status** - daily fleet-wide update-state summary.
+  - **Fleet: 07 - Fleet Health Status** - daily 24-hour health-failure summary.
 - An end-to-end "ring-based" rollout pattern: Pilot -> Wave2 -> Production, with each ring gated on the previous wave's success.
 - **Optional**: a ServiceNow integration that opens deduped incidents for clusters whose run status indicates the module's own retries cannot recover (failures, blocking health checks, sideloaded payload missing) - see [section 7](#7-optional-open-itsm-tickets-for-clusters-needing-operator-action).
 
 The pipelines are **fully opt-in additive layers** over the module. The PowerShell functions also work without any pipeline at all - see [section 10](#10-standalone-html-report-no-pipeline) for the ad-hoc / desktop story.
 
-### 1.1 Why the pipelines are named `Step.N - <description>`
+### 1.1 Why the pipelines are named `Setup: NN` and `Fleet: NN`
 
-The eleven YAMLs ship with a de-numbered filename (e.g. `apply-updates.yml`) **and** a matching `Step.N - <description>` value in each workflow's `name:` field (GitHub Actions) / header title (Azure DevOps):
+The active workflow model uses two clear groups:
 
-Each row's name links to the matching `Step N -` section in [`docs/appendix-pipelines.md`](docs/appendix-pipelines.md), which documents what every pipeline does, the cmdlets it calls, its inputs / outputs / dependencies, the RBAC and exit conditions, and the emitted artefacts. The **GH Actions** and **Azure DevOps** columns link directly to the source YAML for each platform.
+- `Setup: 01-03` for onboarding and configuration.
+- `Fleet: 01-07` for day-2 operational monitoring and update execution.
 
-| Step | File / Workflow name | GH Actions | Azure DevOps |
-|---:|---|---|---|
-| 0 | [Step.0 - Authentication Validation and Subscription Scope Report](docs/appendix-pipelines.md#step-0---authentication-validation-and-subscription-scope-report) | [`authentication-test.yml`](github-actions/authentication-test.yml) | [`authentication-test.yml`](azure-devops/authentication-test.yml) |
-| 1 | [Step.1 - Inventory Azure Local Clusters](docs/appendix-pipelines.md#step-1---inventory-clusters) | [`inventory-clusters.yml`](github-actions/inventory-clusters.yml) | [`inventory-clusters.yml`](azure-devops/inventory-clusters.yml) |
-| 2 | [Step.2 - Manage UpdateRing Tags](docs/appendix-pipelines.md#step-2---manage-updatering-tags) | [`manage-updatering-tags.yml`](github-actions/manage-updatering-tags.yml) | [`manage-updatering-tags.yml`](azure-devops/manage-updatering-tags.yml) |
-| 3 | [Step.3 - Apply-Updates Schedule Coverage Audit](docs/appendix-pipelines.md#step-3---apply-updates-schedule-coverage-audit) | [`apply-updates-schedule-audit.yml`](github-actions/apply-updates-schedule-audit.yml) | [`apply-updates-schedule-audit.yml`](azure-devops/apply-updates-schedule-audit.yml) |
-| 4 | [Step.4 - Fleet Connectivity Status](docs/appendix-pipelines.md#step-4---fleet-connectivity-status) | [`fleet-connectivity-status.yml`](github-actions/fleet-connectivity-status.yml) | [`fleet-connectivity-status.yml`](azure-devops/fleet-connectivity-status.yml) |
-| 5 | [Step.5 - Assess Update Readiness](docs/appendix-pipelines.md#step-5---assess-update-readiness) | [`assess-update-readiness.yml`](github-actions/assess-update-readiness.yml) | [`assess-update-readiness.yml`](azure-devops/assess-update-readiness.yml) |
-| 6 | [Step.6 - Sideload Updates (opt-in, on-prem)](docs/appendix-pipelines.md#step-6---sideload-updates) | [`sideload-updates.yml`](github-actions/sideload-updates.yml) | [`sideload-updates.yml`](azure-devops/sideload-updates.yml) |
-| 7 | [Step.7 - Apply Updates](docs/appendix-pipelines.md#step-7---apply-updates) | [`apply-updates.yml`](github-actions/apply-updates.yml) | [`apply-updates.yml`](azure-devops/apply-updates.yml) |
-| 8 | [Step.8 - Monitor In-Flight Updates](docs/appendix-pipelines.md#step-8---monitor-in-flight-updates) | [`monitor-updates.yml`](github-actions/monitor-updates.yml) | [`monitor-updates.yml`](azure-devops/monitor-updates.yml) |
-| 9 | [Step.9 - Fleet Update Status](docs/appendix-pipelines.md#step-9---fleet-update-status) | [`fleet-update-status.yml`](github-actions/fleet-update-status.yml) | [`fleet-update-status.yml`](azure-devops/fleet-update-status.yml) |
-| 10 | [Step.10 - Fleet Health Status](docs/appendix-pipelines.md#step-10---fleet-health-status) | [`fleet-health-status.yml`](github-actions/fleet-health-status.yml) | [`fleet-health-status.yml`](azure-devops/fleet-health-status.yml) |
+| Group | Workflow name | GH Actions | Azure DevOps |
+|---|---|---|---|
+| Setup | Setup: 01 - Validate Auth and Inventory Clusters | `setup-validate-and-inventory.yml` | `authentication-test.yml` + `inventory-clusters.yml` |
+| Setup | Setup: 02 - Manage UpdateRing Tags | `manage-updatering-tags.yml` | `manage-updatering-tags.yml` |
+| Setup | Setup: 03 - Apply-Updates Schedule Coverage Audit | `apply-updates-schedule-audit.yml` | `apply-updates-schedule-audit.yml` |
+| Fleet | Fleet: 01 - Assess Update Readiness | `assess-update-readiness.yml` | `assess-update-readiness.yml` |
+| Fleet | Fleet: 02 - Fleet Connectivity Status | `fleet-connectivity-status.yml` | `fleet-connectivity-status.yml` |
+| Fleet | Fleet: 03 - Sideload Updates (Opt-in) | `sideload-updates.yml` | `sideload-updates.yml` |
+| Fleet | Fleet: 04 - Apply Updates | `apply-updates.yml` | `apply-updates.yml` |
+| Fleet | Fleet: 05 - Monitor In-Flight Updates | `monitor-updates.yml` | `monitor-updates.yml` |
+| Fleet | Fleet: 06 - Fleet Update Status | `fleet-update-status.yml` | `fleet-update-status.yml` |
+| Fleet | Fleet: 07 - Fleet Health Status | `fleet-health-status.yml` | `fleet-health-status.yml` |
 
-- **GitHub Actions**: the Actions sidebar sorts workflows alphabetically by the `name:` field inside the YAML. Because every `name:` starts with `Step.N - `, the sidebar lists the eleven workflows in execution order (Step.0 first, Step.10 last) instead of the cosmetically confusing alphabetical scatter (`Apply Updates`, `Apply-Updates Schedule Coverage Audit`, `Assess Update Readiness`, ...).
+- **GitHub Actions**: the Actions sidebar sorts workflows alphabetically by the `name:` field. Prefixing names with `Setup: NN` and `Fleet: NN` keeps the sidebar in intended execution order.
 
-  ![GitHub Actions sidebar of the Azure/AzLocal.UpdateManagement consumer repo showing all eleven workflows listed in execution order (Step.00 Authentication Validation, Step.01 Inventory Azure Local Clusters, Step.02 Manage UpdateRing Tags, Step.03 Apply-Updates Schedule Coverage Audit, Step.04 Fleet Connectivity Status, Step.05 Assess Update Readiness, Step.06 Sideload Updates Opt-in, Step.07 Apply Updates, Step.08 Monitor In-Flight Updates, Step.09 Fleet Update Status, Step.10 Fleet Health Status) with the All workflows pane showing a recent run history of green-checked successful runs across Step.05 / Step.08 / Step.09 / Step.10 from main](../docs/images/github-actions-10-pipelines-view.png)
+  ![GitHub Actions sidebar showing Setup and Fleet workflows in execution order](../docs/images/github-actions-10-pipelines-view.png)
 
-  *Step.NN display-name prefix means the GitHub Actions sidebar (and the Azure DevOps Pipelines list) sort the eleven workflows in execution order rather than the cosmetically confusing alphabetical scatter.*
+  *The Setup/Fleet numeric prefixes keep the GitHub Actions sidebar in practical execution order rather than a purely alphabetical scatter.*
 
-- **Azure DevOps**: the Pipelines list sorts by the pipeline **definition name** chosen at *import time* (not by the YAML filename and not by any top-level `name:` field - the `name:` field in an ADO YAML controls the per-run *build number*, not the pipeline display name). When you import each YAML, the import wizard prefills the suggested pipeline name from the YAML's leading title comment; the YAMLs in this repo open with `# Step.N - <description>`, so the suggested name is already correct. **Accept the suggested name** (or paste `Step.N - <description>` yourself), and the Pipelines list will sort in execution order. You can rename a pipeline later via *Pipeline -> Edit -> Settings -> Name*.
+- **Azure DevOps**: the Pipelines list sorts by the pipeline **definition name** chosen at import time (not by filename). Use the same `Setup: NN` / `Fleet: NN` naming when you import so the list stays in operational order.
 
 If you prefer a different naming scheme (e.g. `00 - Auth`, `01 - Inventory`, ...), just change the `name:` field in each GH Actions YAML and / or pick a different prefix at ADO import time. Nothing else in the module depends on these display names.
 
@@ -131,10 +130,10 @@ The identity created in section 4 needs the following permissions on every subsc
 | `Microsoft.AzureStackHCI/clusters/updates/apply/action` | Apply Updates. |
 | `Microsoft.AzureStackHCI/clusters/updateSummaries/read` | Apply Updates, Fleet Update Status. |
 | `Microsoft.AzureStackHCI/clusters/updates/updateRuns/read` | Apply Updates, Fleet Update Status. |
-| `Microsoft.AzureStackHCI/edgeDevices/read` | Fleet Connectivity Status (Step.4 - physical NIC inventory). |
-| `Microsoft.HybridCompute/machines/read` | Fleet Connectivity Status (Step.4 - Arc agent inventory). |
+| `Microsoft.AzureStackHCI/edgeDevices/read` | Fleet Connectivity Status (physical NIC inventory). |
+| `Microsoft.HybridCompute/machines/read` | Fleet Connectivity Status (Arc agent inventory). |
 | `Microsoft.HybridCompute/machines/extensions/read` | Reserved for future Arc-machine extension reporting (no current cmdlet queries this, but bundled to avoid a follow-up role update). |
-| `Microsoft.ResourceConnector/appliances/read` | Fleet Connectivity Status (Step.4 - Azure Resource Bridges). |
+| `Microsoft.ResourceConnector/appliances/read` | Fleet Connectivity Status (Azure Resource Bridges). |
 | `Microsoft.ResourceGraph/resources/read` | All pipelines (Resource Graph lookups). |
 | `Microsoft.Resources/subscriptions/resourceGroups/read` | All pipelines (resolve cluster scopes). |
 | `Microsoft.Resources/tags/read` | Manage UpdateRing Tags, sideloaded workflow. |
@@ -941,27 +940,27 @@ Both platforms expect the YAML files inside this folder to land in a platform-sp
 > Copy-AzLocalPipelineExample -Destination .\pipelines -Platform AzureDevOps
 > ```
 >
-> The function prints a short "next steps" summary pointing at the copied YAML location with the recommended workflow / pipeline to run first (the **Authentication Validation and Subscription Scope Report** - see sections 5.1 and 5.2 below). Supports `-Platform GitHub | AzureDevOps | All`, `-PassThru`, `-WhatIf`, `-Confirm`.
+> The function prints a short "next steps" summary pointing at the copied YAML location with the recommended workflow / pipeline to run first (GitHub: **Setup: 01 - Validate Auth and Inventory Clusters**, Azure DevOps: auth validation + inventory onboarding). Supports `-Platform GitHub | AzureDevOps | All`, `-PassThru`, `-WhatIf`, `-Confirm`.
 >
 > **Refusing to overwrite**: the function will refuse to overwrite any file that already exists in `-Destination`, listing the conflicts in the error message. To refresh after a module upgrade, delete the existing copies first (`Remove-Item .\.github\workflows\*.yml`) and re-run.
 
 ### 5.1 GitHub Actions
 
-1. **Run the Authentication Validation and Subscription Scope Report first (strongly recommended).** Before exercising all seven workflows, validate that the App Registration, federated credentials, GitHub secrets, environments, and RBAC role assignment all line up - and capture the count + per-subscription detail of subscriptions visible to the pipeline identity - by running **`Step.0 - Authentication Validation and Subscription Scope Report`**. This narrows any failure to *one* small YAML file instead of debugging seven interacting workflows simultaneously. **Re-run periodically** (recommended monthly, or after any RBAC change in the tenant) to confirm the pipeline identity's subscription scope has not silently widened or narrowed - drift here is the earliest signal that downstream fleet reports are about to under- or over-count clusters.
+1. **Run Setup: 01 first (strongly recommended).** Before exercising the Fleet workflows, validate that the App Registration, federated credentials, GitHub secrets, environments, and RBAC role assignment all line up - and capture the count + per-subscription detail of subscriptions visible to the pipeline identity - by running **`Setup: 01 - Validate Auth and Inventory Clusters`**. This narrows any failure to one onboarding workflow instead of debugging multiple operational workflows simultaneously. **Re-run periodically** (recommended monthly, or after any RBAC change in the tenant) to confirm the pipeline identity's subscription scope has not silently widened or narrowed.
 
-   The validation workflow ships with the module at [`github-actions/authentication-test.yml`](./github-actions/authentication-test.yml). v0.7.70 emits a **JUnit XML** report (Authentication / Subscription Scope / Resource Graph Reachability) rendered in the run's Checks UI via `dorny/test-reporter`, a **markdown summary** with the subscription count + subscription detail table written to `$GITHUB_STEP_SUMMARY`, and a `auth-report` artifact (XML + `subscriptions.json` + `subscriptions.csv`) for ITSM / dashboard ingest.
+  The onboarding workflow ships with the module at [`github-actions/setup-validate-and-inventory.yml`](./github-actions/setup-validate-and-inventory.yml). It emits the auth validation JUnit report (Authentication / Subscription Scope / Resource Graph Reachability), writes a setup-focused markdown summary (including a collapsible subscription-details section), and exports both auth and inventory artifacts for downstream workflows.
 
    - **If you used the `Copy-AzLocalPipelineExample` shortcut above**: the file is already in `.github/workflows/` alongside the other seven workflow YAMLs - those will ride along on the commit but stay dormant until you trigger them manually (`gh workflow run`) or their schedules fire. Commit and push to the default branch, then run the trigger commands below.
    - **If you didn't use the shortcut**: copy just that one file into your repo's `.github/workflows/`, commit, and push to the default branch.
 
-   Then trigger it twice - once branch-scoped, once environment-scoped - to prove **both** federated credential types work end-to-end:
+  Then trigger it twice - once branch-scoped, once environment-scoped - to prove both federated credential types work end-to-end:
 
    ```powershell
    # 1. Branch-scoped run - exercises the 'GitHubActions-main' federated credential.
-   gh workflow run authentication-test.yml --repo $repo
+  gh workflow run setup-validate-and-inventory.yml --repo $repo
 
    # 2. Environment-scoped run - exercises the 'GitHubActions-DevTest' federated credential.
-   gh workflow run authentication-test.yml --repo $repo -f environment=DevTest
+  gh workflow run setup-validate-and-inventory.yml --repo $repo -f environment=DevTest
 
    # Watch the most recent run live (Ctrl+C to stop watching, run continues).
    gh run watch --repo $repo
@@ -972,8 +971,8 @@ Both platforms expect the YAML files inside this folder to land in a platform-sp
    At the `gh` CLI level, `gh run watch` shows the run summary as the steps complete (`gh` actually renders these as Unicode check marks; reproduced here in ASCII):
 
    ```text
-   ? Select a workflow run * Step.0 - Authentication Validation and Subscription Scope Report, Step.0 - Authentication Validation and Subscription Scope Report [main] 12s ago
-   [OK] main Step.0 - Authentication Validation and Subscription Scope Report - <run-id>
+  ? Select a workflow run * Setup: 01 - Validate Auth and Inventory Clusters, Setup: 01 - Validate Auth and Inventory Clusters [main] 12s ago
+  [OK] main Setup: 01 - Validate Auth and Inventory Clusters - <run-id>
    Triggered via workflow_dispatch less than a minute ago
 
    JOBS
@@ -986,7 +985,7 @@ Both platforms expect the YAML files inside this folder to land in a platform-sp
      [OK] Post Azure login (OIDC)
      [OK] Complete job
 
-   [OK] Run Step.0 - Authentication Validation and Subscription Scope Report (<run-id>) completed with 'success'
+  [OK] Run Setup: 01 - Validate Auth and Inventory Clusters (<run-id>) completed with 'success'
    ```
 
    Inside the `Collect Authentication and Subscription Scope Report` step, the run log shows:
@@ -1007,7 +1006,7 @@ Both platforms expect the YAML files inside this folder to land in a platform-sp
    <cluster-1>    <rg-1>                  <sub-guid>
    ```
 
-   ![Step.0 - Authentication Validation and Subscription Scope Report - Validate OIDC + RBAC + Subscription Scope job, showing the `Collect Authentication and Subscription Scope Report` step expanded with `az account show`, role assignments, the per-subscription scope table, and Resource Graph cluster count](../docs/images/auth-smoke-test-validate-oidc.png)
+  ![Setup: 01 - Validate Auth and Inventory Clusters run, showing authentication validation output and subscription scope details](../docs/images/auth-smoke-test-validate-oidc.png)
 
    You may see one informational `windows-latest` -> `windows-2025-vs2026` migration notice in the run annotations. The sample workflows pin `runs-on: windows-latest` (the module is a Windows-side PowerShell module), and GitHub will retarget the alias to the new image automatically when it becomes the default - no action required on your part. As of v0.7.60 the previously-seen Node.js 20 deprecation banner (against `actions/checkout@v4`, `azure/login@v2`, `actions/upload-artifact@v4`, `dorny/test-reporter@v1`) is gone: the sample workflows have been refreshed to Node 24-compatible majors (`@v5`, `@v3`, `@v6`, `@v3` respectively).
 
@@ -1020,17 +1019,18 @@ Both platforms expect the YAML files inside this folder to land in a platform-sp
    | `Error: Could not fetch access token for Azure` (no AADSTS code) | The workflow lacks `permissions: id-token: write` or the secrets are missing/misspelt. | Confirm the `permissions:` block is present and run `gh secret list --repo $repo` shows all three `AZURE_*` secrets. |
    | Environment-scoped run hangs in **Waiting for review** | The environment has required-reviewers protection (good!) and is waiting for you to approve. | Approve in the **Actions** tab, or remove required reviewers from the validation run via the environment settings. |
 
-   Once the run is green, leave `authentication-test.yml` in place and schedule yourself to re-run it monthly (or whenever you change RBAC / federated credentials / subscription assignments). If you used the `Copy-AzLocalPipelineExample` shortcut, the other nine workflows are already on the default branch - skip to step 4 to run them. Otherwise, proceed to step 2 to copy the remaining workflow files.
+  Once the run is green, keep `setup-validate-and-inventory.yml` in place and schedule yourself to re-run it monthly (or whenever you change RBAC / federated credentials / subscription assignments). If you used the `Copy-AzLocalPipelineExample` shortcut, the other workflows are already on the default branch - skip to step 4 to run them. Otherwise, proceed to step 2 to copy the remaining workflow files.
 
 2. Copy every file from [`github-actions/`](./github-actions/) into `.github/workflows/` in your repo:
     ```text
     .github/
       workflows/
-        inventory-clusters.yml
+        setup-validate-and-inventory.yml
         manage-updatering-tags.yml
         apply-updates-schedule-audit.yml
         fleet-connectivity-status.yml
         assess-update-readiness.yml
+        sideload-updates.yml
         apply-updates.yml
         monitor-updates.yml
         fleet-update-status.yml
@@ -1038,7 +1038,7 @@ Both platforms expect the YAML files inside this folder to land in a platform-sp
     ```
 3. Commit and push. The workflows appear in the **Actions** tab.
 4. Each workflow exposes its inputs via the **Run workflow** button (workflow_dispatch). The scheduled triggers (e.g. `fleet-connectivity-status.yml` runs daily at 05:30 UTC, `monitor-updates.yml` runs 5x/day at 20:00, 22:00, 00:00, 02:00, 04:00 UTC (every 2h across the typical overnight maintenance window, v0.7.92+ default - edit the cron in the file if your maintenance window differs), `fleet-update-status.yml` runs daily at 06:00 UTC, `fleet-health-status.yml` runs daily at 07:00 UTC, `apply-updates-schedule-audit.yml` runs weekly on Mondays at 05:00 UTC) activate automatically once the file is on the default branch.
-5. **Replace the starter `apply-updates-schedule.yml` with one generated from your live fleet** (required for **scheduled** Step.7 / Step.3 runs; manual `workflow_dispatch` runs of Step.7 work without it because they use the `-UpdateRingValue` input verbatim). v0.8.7+ `Copy-AzLocalPipelineExample -Platform GitHub` drops a **starter** `apply-updates-schedule.yml` into a **`config\` folder at the repo root** (i.e. at `config\apply-updates-schedule.yml`, alongside `config\ClusterUpdateRings.csv`) by default. The starter is a verbatim copy of [`apply-updates-schedule.example.yml`](./apply-updates-schedule.example.yml) and ships with **DEMO** ring names (`Canary`, `DevTest`, `Ring1`, `Ring2`, `Prod`) that almost never match a real estate's `UpdateRing` tag values - regenerate from your live fleet, overwriting the demo file:
+5. **Replace the starter `apply-updates-schedule.yml` with one generated from your live fleet** (required for scheduled Apply + Schedule-Audit runs; manual `workflow_dispatch` runs of Apply work without it because they use the `-UpdateRingValue` input verbatim). v0.8.7+ `Copy-AzLocalPipelineExample -Platform GitHub` drops a starter `apply-updates-schedule.yml` into a `config\` folder at the repo root by default. The starter ships with demo ring names (`Canary`, `DevTest`, `Ring1`, `Ring2`, `Prod`) that almost never match real estates; regenerate from your live fleet:
 
    ```powershell
    # Regenerate from your fleet's live UpdateRing tag values, overwriting the starter.
@@ -1046,19 +1046,19 @@ Both platforms expect the YAML files inside this folder to land in a platform-sp
    New-AzLocalApplyUpdatesScheduleConfig -OutputPath .\config\apply-updates-schedule.yml -Force
    ```
 
-   Review the regenerated file, uncomment / edit the rows you want active, then `git add .\config\apply-updates-schedule.yml ; git commit ; git push`. The starter is safe to leave in place until then - the bundled Step.7 ships with every `cron:` line commented out inside the `BEGIN/END-AZLOCAL-CUSTOMIZE:schedule-triggers` markers, so it cannot fire on a `schedule:` trigger until you explicitly add a cron entry. Manual `workflow_dispatch` runs of Step.7 ignore the schedule file entirely (they take `-UpdateRingValue` verbatim from the run-form input).
+  Review the regenerated file, uncomment / edit the rows you want active, then `git add .\config\apply-updates-schedule.yml ; git commit ; git push`. The starter is safe to leave in place until then - the bundled apply workflow ships with every `cron:` line commented out inside the `BEGIN/END-AZLOCAL-CUSTOMIZE:schedule-triggers` markers, so it cannot fire on a `schedule:` trigger until you explicitly add a cron entry. Manual `workflow_dispatch` runs ignore the schedule file entirely (they take `-UpdateRingValue` verbatim from the run-form input).
 
    **Safety rails**: `Copy-AzLocalPipelineExample` **never overwrites** an existing `apply-updates-schedule.yml` - any operator-tailored schedule you commit is preserved across re-runs. Pass `-SkipStarterSchedule` to suppress the starter copy entirely (e.g. if you pre-stage the schedule via separate tooling). For the full schema, multi-stage rollouts, weekly-cycle / ring-eligibility model, and the `allowedUpdateVersions` allow-list (schema v2), see [section 8](#8-scheduling-maintenance-windows-and-change-freeze-periods).
 
 ### 5.2 Azure DevOps
 
-1. **Run the Authentication Validation and Subscription Scope Report first (strongly recommended).** Before importing all eight remaining pipelines, validate that the service connection (Workload Identity Federation), App Registration, and RBAC role assignment all line up - and capture the count + per-subscription detail of subscriptions visible to the pipeline identity - by running **`Step.0 - Authentication Validation and Subscription Scope Report`**. This narrows any failure to *one* small YAML file instead of debugging eight interacting pipelines simultaneously. **Re-run periodically** (recommended monthly, or after any RBAC change in the tenant) to confirm the pipeline identity's subscription scope has not silently widened or narrowed - drift here is the earliest signal that downstream fleet reports are about to under- or over-count clusters.
+1. **Run authentication validation first (strongly recommended).** Before importing the remaining pipelines, validate that the service connection (Workload Identity Federation), App Registration, and RBAC role assignment all line up - and capture the count + per-subscription detail of subscriptions visible to the pipeline identity - by running the authentication validation pipeline. This narrows any failure to one small YAML file instead of debugging multiple interacting pipelines simultaneously.
 
-   The validation pipeline ships with the module at [`azure-devops/authentication-test.yml`](./azure-devops/authentication-test.yml). v0.7.70 emits a **JUnit XML** report (Authentication / Subscription Scope / Resource Graph Reachability) published via `PublishTestResults@2` and rendered in the run's **Tests** tab, a **markdown summary** with the subscription count + subscription detail table uploaded to the run's **Summary** tab via `##vso[task.uploadsummary]`, and a `auth-report` pipeline artifact (XML + `subscriptions.json` + `subscriptions.csv`) for ITSM / dashboard ingest.
+   The validation pipeline ships with the module at [`azure-devops/setup-validate-and-inventory.yml`](./azure-devops/setup-validate-and-inventory.yml). v0.8.85 merged the former `authentication-test.yml` + `inventory-clusters.yml` into this single workflow. It emits a **JUnit XML** report (Authentication / Subscription Scope / Resource Graph Reachability / Cluster Inventory) published via `PublishTestResults@2` and rendered in the run's **Tests** tab, a **markdown summary** with the subscription count + subscription detail table uploaded to the run's **Summary** tab via `##vso[task.uploadsummary]`, and a `auth-report` pipeline artifact (XML + `subscriptions.json` + `subscriptions.csv` + `cluster-inventory.csv`) for ITSM / dashboard ingest.
 
    If you used the `Copy-AzLocalPipelineExample` shortcut above, the file is already in your chosen pipelines folder alongside the other eight pipeline YAMLs - those YAMLs sit dormant until you import each one as a pipeline, so they're harmless at rest. Otherwise, copy just that one file into your repo. Either way, import it as a new pipeline:
 
-   - **Pipelines -> New pipeline -> Azure Repos Git -> your repo -> Existing Azure Pipelines YAML file -> `/azure-devops/authentication-test.yml`**.
+   - **Pipelines -> New pipeline -> Azure Repos Git -> your repo -> Existing Azure Pipelines YAML file -> `/azure-devops/setup-validate-and-inventory.yml`**.
    - **Save and run**. If your service connection has a name other than `AzureLocal-ServiceConnection`, edit `azureSubscription:` in the YAML first (the only configurable line).
 
    Unlike GitHub Actions, ADO does **not** have environment-scoped federated credentials at the auth layer - the service connection itself is the federation, so a single pipeline run validates everything. ADO **Environments** (Pipelines -> Environments) are approval gates only, layered on top of the service connection, and are not exercised by this validation pipeline.
@@ -1095,7 +1095,7 @@ Both platforms expect the YAML files inside this folder to land in a platform-sp
 3. **Pipelines -> New pipeline -> Azure Repos Git -> your repo -> Existing Azure Pipelines YAML file**, then point at the path of each file. Repeat for all eight.
 4. After the pipeline is created, click **Save** (not **Run**) until you are ready to execute.
 5. Each pipeline references a service connection named `AzureLocal-ServiceConnection`. Either name your service connection to match, or change `azureSubscription:` in each YAML.
-6. **Replace the starter `apply-updates-schedule.yml` with one generated from your live fleet** (required for **scheduled** Step.7 / Step.3 runs; manual queue runs of Step.7 work without it because they use the `updateRing` parameter verbatim). v0.8.7+ `Copy-AzLocalPipelineExample -Platform AzureDevOps -Destination .\pipelines\` drops a **starter** `apply-updates-schedule.yml` into a **`config\` folder at the repo root** (i.e. at `config\apply-updates-schedule.yml`, alongside `config\ClusterUpdateRings.csv`) by default - the same `config\` folder used on GitHub, so the path is identical on both platforms. The starter is a verbatim copy of [`apply-updates-schedule.example.yml`](./apply-updates-schedule.example.yml) and ships with **DEMO** ring names (`Canary`, `DevTest`, `Ring1`, `Ring2`, `Prod`) that almost never match a real estate's `UpdateRing` tag values - regenerate from your live fleet, overwriting the demo file:
+6. **Replace the starter `apply-updates-schedule.yml` with one generated from your live fleet** (required for scheduled apply and schedule-audit runs; manual queue runs of apply work without it because they use the `updateRing` parameter verbatim). v0.8.7+ `Copy-AzLocalPipelineExample -Platform AzureDevOps -Destination .\pipelines\` drops a starter `apply-updates-schedule.yml` into `config\` at the repo root by default - the same `config\` folder used on GitHub, so the path is identical on both platforms. The starter is a verbatim copy of [`apply-updates-schedule.example.yml`](./apply-updates-schedule.example.yml) and ships with demo ring names (`Canary`, `DevTest`, `Ring1`, `Ring2`, `Prod`) that almost never match real estates - regenerate from your live fleet:
 
    ```powershell
    # Regenerate from your fleet's live UpdateRing tag values, overwriting the starter.
@@ -1103,7 +1103,7 @@ Both platforms expect the YAML files inside this folder to land in a platform-sp
    New-AzLocalApplyUpdatesScheduleConfig -OutputPath .\config\apply-updates-schedule.yml -Force
    ```
 
-   Review the regenerated file, uncomment / edit the rows you want active, then commit and push. Step.7 (ADO) reads the file at `APPLY_UPDATES_SCHEDULE_PATH` (default `./config/apply-updates-schedule.yml`, which matches the default starter location) - override the pipeline variable if you keep the schedule elsewhere. The starter is safe to leave in place until then - the bundled Step.7 ships with every `cron:` line commented out inside the `BEGIN/END-AZLOCAL-CUSTOMIZE:schedule-triggers` markers, so it cannot fire on a scheduled trigger until you explicitly add a cron entry. Manual queue runs of Step.7 ignore the schedule file entirely (they take `updateRing` verbatim from the run-form input).
+  Review the regenerated file, uncomment / edit the rows you want active, then commit and push. Apply Updates (ADO) reads the file at `APPLY_UPDATES_SCHEDULE_PATH` (default `./config/apply-updates-schedule.yml`) - override the pipeline variable if you keep the schedule elsewhere. The starter is safe to leave in place until then - the bundled apply workflow ships with every `cron:` line commented out inside the `BEGIN/END-AZLOCAL-CUSTOMIZE:schedule-triggers` markers, so it cannot fire on a scheduled trigger until you explicitly add a cron entry. Manual queue runs ignore the schedule file entirely (they take `updateRing` verbatim from the run-form input).
 
    **Safety rails**: `Copy-AzLocalPipelineExample` **never overwrites** an existing `apply-updates-schedule.yml` - any operator-tailored schedule you commit is preserved across re-runs. Pass `-SkipStarterSchedule` to suppress the starter copy entirely (e.g. if you pre-stage the schedule via separate tooling). For the full schema, multi-stage rollouts, weekly-cycle / ring-eligibility model, and the `allowedUpdateVersions` allow-list (schema v2), see [section 8](#8-scheduling-maintenance-windows-and-change-freeze-periods).
 
@@ -1165,7 +1165,7 @@ Copy-AzLocalPipelineExample -Destination .\.github\workflows -Platform GitHub -U
 
 The destination folders are under git, so `git diff` after the refresh shows exactly which lines changed - giving you a final review gate before commit. `Copy-AzLocalPipelineExample` deliberately does not expose a `-Force` switch; `-Update` (with optional `-Confirm:$false`) is the only path to overwrite, and git remains the rollback.
 
-**Preserving operator edits across upgrades (v0.7.68+).** For estates that have edited the bundled YAMLs to add custom cron schedules, ITSM secret bindings, or environment-specific tweaks, the marker-aware `Update-AzLocalPipelineExample` is the preferred refresh path. It replaces everything **outside** the documented customisation regions (paired `BEGIN-AZLOCAL-CUSTOMIZE:<region>` / `END-AZLOCAL-CUSTOMIZE:<region>` comments around `schedule-triggers` and, in Step.5, `itsm-secrets`) and **preserves** everything inside them, so a module bump no longer wipes your customer-specific cron lines or secret name mappings:
+**Preserving operator edits across upgrades (v0.7.68+).** For estates that have edited the bundled YAMLs to add custom cron schedules, ITSM secret bindings, or environment-specific tweaks, the marker-aware `Update-AzLocalPipelineExample` is the preferred refresh path. It replaces everything **outside** the documented customisation regions (paired `BEGIN-AZLOCAL-CUSTOMIZE:<region>` / `END-AZLOCAL-CUSTOMIZE:<region>` comments around `schedule-triggers` and ITSM secrets) and **preserves** everything inside them, so a module bump no longer wipes your customer-specific cron lines or secret name mappings:
 
 ```powershell
 # Preview the marker-aware merge (writes nothing, prints a per-file change manifest):
@@ -1192,7 +1192,7 @@ This is the canonical "nothing wired -> staged rollout working" sequence. Follow
 ```text
 +-----------------------------------------------------------------------+
 |                          PHASE 1: INVENTORY                            |
-|  6.1  inventory-clusters.yml  ->  cluster-inventory.csv                |
+|  6.1  setup-validate-and-inventory.yml  ->  cluster-inventory.csv      |
 +-----------------------------------------------------------------------+
                               v
 +-----------------------------------------------------------------------+
@@ -1239,7 +1239,7 @@ Every pipeline emits one or more artifacts (CSV / Markdown / JUnit XML / HTML). 
 
 ```text
                                             +-------------------------------+
-                                            |  inventory-clusters.yml       |
+                                            |  setup-validate-and-inventory |
                                             |  (read-only ARG)              |
                                             +-------------------------------+
                                                           |
@@ -1310,7 +1310,7 @@ Key handoffs to remember:
 - **`cluster-readiness.csv`** carries `ClusterResourceId` from Assess into Apply. Apply does not re-query ARG to pick targets - it consumes the ID column directly, so a stale or malformed readiness CSV silently produces zero ready clusters. Always treat the most recent readiness run as the source of truth for the next Apply.
 - **`apply-updates-results.xml`** (JUnit) is what surfaces in the Tests tab on GH Actions and Azure DevOps. Failed-first ordering means actionable rows appear at the top of the reporter UI.
 - **`schedule-coverage-recommend.md`** is the only artifact intended to be pasted by hand - directly back into `apply-updates.yml`'s `on.schedule` / ADO trigger block when the audit reports `Uncovered` or `PartiallyCovered` rows.
-- **Step.4 Fleet Connectivity Status runs parallel to (not downstream of) the apply-updates artifact chain.** It reads ARG directly and emits its own per-scope CSVs (`fleet-cluster-connectivity.csv`, `fleet-arc-status-summary.csv`, `fleet-arc-non-connected-machines.csv`, `fleet-physical-nics.csv`, `fleet-physical-nic-stats.csv`, `fleet-arb-status.csv`) plus a JUnit XML (`fleet-connectivity-status.xml`). No dependency on `cluster-readiness.csv` or `cluster-inventory.csv` - it is the upstream "can we see the fleet at all?" probe. Use it to triage why the apply-updates chain is empty or under-counting.
+- **Fleet Connectivity Status runs parallel to (not downstream of) the apply-updates artifact chain.** It reads ARG directly and emits its own per-scope CSVs (`fleet-cluster-connectivity.csv`, `fleet-arc-status-summary.csv`, `fleet-arc-non-connected-machines.csv`, `fleet-physical-nics.csv`, `fleet-physical-nic-stats.csv`, `fleet-arb-status.csv`) plus a JUnit XML (`fleet-connectivity-status.xml`). No dependency on `cluster-readiness.csv` or `cluster-inventory.csv` - it is the upstream "can we see the fleet at all?" probe. Use it to triage why the apply-updates chain is empty or under-counting.
 
 ### 6.1 Inventory the estate
 
@@ -1403,15 +1403,15 @@ New-AzLocalApplyUpdatesScheduleConfig -OutputPath .\config\apply-updates-schedul
 
 The cmdlet inspects every `UpdateRing` and `UpdateStartWindow` tag on the clusters the pipeline identity can read, then emits a schema v2 schedule with one block per distinct ring plus a Recommend / cron snippet inside `apply-updates.yml`'s `BEGIN/END-AZLOCAL-CUSTOMIZE:schedule-triggers` marker block. Review the generated file, uncomment the rows you want active, then commit and push.
 
-**Why this step matters**: the schedule file is **required for scheduled Step.7 / Step.3 runs**. Manual `workflow_dispatch` (GitHub) / queue (Azure DevOps) runs of Step.7 work without it - they take `update_ring` / `updateRing` verbatim from the run-form input - but anything cron-triggered (the steady-state Step.7 wave kicks, the Step.3 weekly drift audit) reads ring eligibility from this file.
+**Why this step matters**: the schedule file is required for scheduled apply and schedule-audit runs. Manual `workflow_dispatch` (GitHub) / queue (Azure DevOps) runs of apply work without it - they take `update_ring` / `updateRing` verbatim from the run-form input - but anything cron-triggered reads ring eligibility from this file.
 
 **Safety rails**:
 
 - `Copy-AzLocalPipelineExample` **never overwrites** an existing `apply-updates-schedule.yml` - any operator-tailored schedule already committed is preserved across re-runs.
-- The bundled Step.7 ships with every `cron:` line commented out inside the `BEGIN/END-AZLOCAL-CUSTOMIZE:schedule-triggers` markers, so Step.7 cannot fire on a `schedule:` trigger until at least one cron is explicitly uncommented - the DEMO starter is safe to leave in place until you regenerate.
+- The bundled apply workflow ships with every `cron:` line commented out inside the `BEGIN/END-AZLOCAL-CUSTOMIZE:schedule-triggers` markers, so it cannot fire on a `schedule:` trigger until at least one cron is explicitly uncommented - the demo starter is safe to leave in place until you regenerate.
 - Pass `-SkipStarterSchedule` to `Copy-AzLocalPipelineExample` to suppress the starter drop entirely (e.g. for estates that pre-stage the schedule via separate tooling).
 
-For the full schema, multi-stage rollouts, weekly-cycle / ring-eligibility model, and the `allowedUpdateVersions` allow-list (schema v2), see [section 8](#8-scheduling-maintenance-windows-and-change-freeze-periods). The weekly drift detector (`apply-updates-schedule-audit.yml`) that catches `(UpdateRing, UpdateStartWindow)` tag combinations no cron in Step.7 will ever reach is summarised in section 6.7 (full runbook in [section 8.3](#83-end-to-end-runbook-apply-updates-schedule-coverage-audit)).
+For the full schema, multi-stage rollouts, weekly-cycle / ring-eligibility model, and the `allowedUpdateVersions` allow-list (schema v2), see [section 8](#8-scheduling-maintenance-windows-and-change-freeze-periods). The weekly drift detector (`apply-updates-schedule-audit.yml`) that catches `(UpdateRing, UpdateStartWindow)` combinations with no matching apply cron is summarised in section 6.7 (full runbook in [section 8.3](#83-end-to-end-runbook-apply-updates-schedule-coverage-audit)).
 
 ### 6.6 Apply updates - one wave at a time
 
@@ -1451,7 +1451,7 @@ The "steady-state" phase ships **three complementary pipelines**, all read-only,
 |----------|-------|---------|--------|
 | `fleet-connectivity-status.yml` *(v0.7.79+, enhanced in v0.7.85)* | 05:30 UTC | *"Are all clusters' Arc agents Connected? Are physical NICs healthy? Are Azure Resource Bridges reachable? Does the cluster's reported node count match the Arc-tagged physical machines we see?"* | JUnit + per-scope CSV/JSON + Markdown summary; one test case per cluster, with reconciliation rows that include "How to interpret + act" remediation guidance for any non-zero node-coverage delta |
 | `monitor-updates.yml` *(v0.7.90; v0.7.92 default cadence)* | 5x/day at 20:00, 22:00, 00:00, 02:00, 04:00 UTC (every 2h across the overnight maintenance window) + manual | *"What is happening right now? Which clusters are mid-update, which step are they on, and is anything stuck?"* | JUnit + CSV + Markdown summary; one test case per in-flight cluster (failure when elapsed > threshold, default 6h) |
-| `fleet-update-status.yml` *(formerly Step.8)* | 06:00 UTC | *"Is each cluster up-to-date? Which ones need an apply, which ones are SBE-blocked, which ones failed?"* | JUnit + CSV/JSON + Markdown summary; one test case per cluster |
+| `fleet-update-status.yml` | 06:00 UTC | *"Is each cluster up-to-date? Which ones need an apply, which ones are SBE-blocked, which ones failed?"* | JUnit + CSV/JSON + Markdown summary; one test case per cluster |
 | `fleet-health-status.yml` *(v0.7.65, formerly Step.9)* | 07:00 UTC | *"Do clusters have actionable health issues even when up-to-date? What failure reasons hit the most clusters?"* | JUnit + CSV/JSON + Markdown summary; one test case per (cluster, failing 24-hour health check) grouped under Critical / Warning testsuites |
 
 The four run in distinct (offset) cron slots so they don't contend for the same agent. `monitor-updates.yml` ships **without** an active schedule - turn the `'*/30 * * * *'` cron on only during an active wave.
@@ -1501,7 +1501,7 @@ It calls the new [`Get-AzLocalFleetHealthFailures`](../README.md#get-azlocalflee
 
 Configure your CI/CD platform's alerting on the JUnit failures - GitHub Actions surfaces them in the run summary and Azure DevOps shows them in the Tests tab with trend analytics.
 
-**Plus weekly: `apply-updates-schedule-audit.yml`** (read-only, runs Mondays at 05:00 UTC by default) catches drift between the cron schedule(s) committed to `apply-updates.yml` and the `UpdateRing` / `UpdateStartWindow` tags that operators apply to new clusters. It emits a JUnit + CSV + Markdown "Recommend" snippet that pastes straight back into Step.7 to close any coverage gap. **For the full audit runbook (tag a cluster -> see drift -> paste recommended cron -> re-run and watch it turn green), see [section 8.3](#83-end-to-end-runbook-apply-updates-schedule-coverage-audit).**
+**Plus weekly: `apply-updates-schedule-audit.yml`** (read-only, runs Mondays at 05:00 UTC by default) catches drift between the cron schedule(s) committed to `apply-updates.yml` and the `UpdateRing` / `UpdateStartWindow` tags that operators apply to new clusters. It emits a JUnit + CSV + Markdown "Recommend" snippet that pastes straight back into `apply-updates.yml` to close any coverage gap. **For the full audit runbook (tag a cluster -> see drift -> paste recommended cron -> re-run and watch it turn green), see [section 8.3](#83-end-to-end-runbook-apply-updates-schedule-coverage-audit).**
 
 ---
 
@@ -1619,7 +1619,7 @@ Copy this file once per ring (e.g. `assess-update-readiness-Pilot.yml`, `assess-
 
 **Why one YAML per ring**: GitHub Actions `schedule:`-triggered runs cannot supply `inputs:` values - they always use the workflow's default `inputs:`. So a single `assess-update-readiness*.yml` with three crons in one `schedule:` block (and `update_ring` required, no default) would never actually run on cron - every cron tick would fail input validation. Splitting one YAML per ring (each with its own default + single cron) is the cleanest fix. Azure DevOps has the same constraint - `schedules:`-triggered runs use the YAML's default `parameters:` values, so the same per-ring split pattern applies.
 
-**Known gap**: the Step.3 schedule-coverage audit (`apply-updates-schedule-audit.yml`) currently validates Step.7 cron-to-`UpdateStartWindow` coverage only - it does **not** audit whether each Step.5 cron is correctly anchored ahead of a Step.7 cron. **Always pair Step.5 + Step.7 cron edits in the same PR** so the lead-time relationship is reviewable by a human at merge time. The per-pipeline appendix entry for [Step 5 - Assess Update Readiness](docs/appendix-pipelines.md#step-5---assess-update-readiness) repeats this guidance with the same lead-time table.
+**Known gap**: the Step.3 schedule-coverage audit (`apply-updates-schedule-audit.yml`) currently validates Step.7 cron-to-`UpdateStartWindow` coverage only - it does **not** audit whether each Step.5 cron is correctly anchored ahead of a Step.7 cron. **Always pair Step.5 + Step.7 cron edits in the same PR** so the lead-time relationship is reviewable by a human at merge time. The per-pipeline appendix entry for [Fleet: 01 - Assess Update Readiness](docs/appendix-pipelines.md#fleet-01---assess-update-readiness) repeats this guidance with the same lead-time table.
 
 **Always-green caveat**: `assess-update-readiness.yml` never goes red at the pipeline level - per-cluster readiness gaps surface as JUnit `<failure>` entries in the Tests / Checks tab via `readiness.xml`. A silently-empty `readiness.xml` (e.g. an `update_ring` typo with zero clusters in scope) **will not generate a red-build email**. Either check the Tests tab after each scheduled run, or wire the JUnit reporter into the CI status surface you already monitor.
 
@@ -2018,23 +2018,23 @@ Automation-Pipeline-Examples/
     templates/
       incident-body.md                #   - Mustache-style ticket body template.
   github-actions/
-    authentication-test.yml           # 0. Authentication validation + subscription scope report (manual; v0.7.70).
-    inventory-clusters.yml            # 1. Inventory (weekly Mon 06:00 UTC + manual).
-    manage-updatering-tags.yml        # 2. Apply UpdateRing / UpdateStartWindow / UpdateExclusionsWindow / UpdateExcluded tags (manual).
-    apply-updates-schedule-audit.yml  # 3. Weekly read-only audit: UpdateStartWindow tags vs apply-updates cron (Mon 05:00 UTC, v0.7.65).
-    fleet-connectivity-status.yml     # 4. Daily fleet connectivity / Arc / NIC / Resource Bridge snapshot + node-coverage reconciliation (daily 05:30 UTC, v0.7.79+; reconciliation enhanced in v0.7.85).
-    assess-update-readiness.yml       # 5. Pre-flight readiness report (manual; v0.7.0).
-    apply-updates.yml                 # 6. Apply updates to one UpdateRing (with optional ITSM step, v0.7.4).
-    monitor-updates.yml               # 7. In-flight update monitor: per-cluster current step + elapsed duration; flags long-running runs (manual, optional */30 min cron; v0.7.90).
-    fleet-update-status.yml           # 8. Scheduled fleet update-status snapshot (daily 06:00 UTC; formerly Step.8).
-    fleet-health-status.yml           # 9. Scheduled fleet 24-hour health-check failure report (daily 07:00 UTC, v0.7.65; formerly Step.9).
+    setup-validate-and-inventory.yml  # Setup: 01. Auth + subscription-scope validation and cluster inventory (merged auth+inventory in v0.8.85; manual + weekly Sun 08:00 UTC).
+    manage-updatering-tags.yml        # Setup: 02. Apply UpdateRing / UpdateStartWindow / UpdateExclusionsWindow / UpdateExcluded tags (manual).
+    apply-updates-schedule-audit.yml  # Setup: 03. Weekly read-only audit: UpdateStartWindow tags vs apply-updates cron (Mon 05:00 UTC, v0.7.65).
+    assess-update-readiness.yml       # Fleet: 01. Pre-flight readiness report (manual; v0.7.0).
+    fleet-connectivity-status.yml     # Fleet: 02. Daily fleet connectivity / Arc / NIC / Resource Bridge snapshot + node-coverage reconciliation (daily 05:30 UTC, v0.7.79+; reconciliation enhanced in v0.7.85).
+    sideload-updates.yml              # Fleet: 03. Opt-in self-hosted-runner workflow: Robocopy + WinRM sideload of solution-update media to clusters gated on UpdateSideloaded (manual; v0.8.7).
+    apply-updates.yml                 # Fleet: 04. Apply updates to one UpdateRing (with optional ITSM step, v0.7.4).
+    monitor-updates.yml               # Fleet: 05. In-flight update monitor: per-cluster current step + elapsed duration; flags long-running runs (manual, optional cron; v0.7.90).
+    fleet-update-status.yml           # Fleet: 06. Scheduled fleet update-status snapshot (daily 06:00 UTC).
+    fleet-health-status.yml           # Fleet: 07. Scheduled fleet 24-hour health-check failure report (daily 07:00 UTC, v0.7.65).
   azure-devops/
-    authentication-test.yml
-    inventory-clusters.yml
+    setup-validate-and-inventory.yml
     manage-updatering-tags.yml
     apply-updates-schedule-audit.yml
-    fleet-connectivity-status.yml
     assess-update-readiness.yml
+    fleet-connectivity-status.yml
+    sideload-updates.yml
     apply-updates.yml
     monitor-updates.yml
     fleet-update-status.yml
@@ -2045,7 +2045,7 @@ Automation-Pipeline-Examples/
 
 ## 14. Pipeline reference
 
-Moved to [docs/appendix-pipelines.md](docs/appendix-pipelines.md) - one section per pipeline (`Step 0 - ...` ... `Step 10 - ...`) mapping 1:1 to the bundled `*.yml` workflows, with purpose, inputs, trigger, cmdlets invoked, dependencies, artefacts, RBAC, and exit conditions for each. Kept out-of-line to keep this README focused on the runbook.
+Moved to [docs/appendix-pipelines.md](docs/appendix-pipelines.md) - one section per pipeline (`Setup: 01 - ...` ... `Fleet: 07 - ...`) mapping 1:1 to the bundled `*.yml` workflows, with purpose, inputs, trigger, cmdlets invoked, dependencies, artefacts, RBAC, and exit conditions for each. Kept out-of-line to keep this README focused on the runbook.
 
 ## Appendix B: Release history
 

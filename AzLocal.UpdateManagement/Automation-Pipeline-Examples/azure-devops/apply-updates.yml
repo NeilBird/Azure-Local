@@ -1,5 +1,5 @@
 # AZLOCAL-PIPELINE-ID: apply-updates
-# Step.07 - Apply Updates to Azure Local Clusters
+# Fleet: 04 - Apply Updates to Azure Local Clusters
 # This pipeline applies updates to clusters filtered by UpdateRing tag value
 
 # Author guidance lives OUTSIDE the customise markers so module refreshes
@@ -129,7 +129,7 @@ variables:
   # log if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
   - name: GENERATED_AGAINST_MODULE_VERSION
-    value: '0.8.84'
+    value: '0.8.85'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): queue-time parameter > pipeline variable
   # 'REQUIRED_MODULE_VERSION' overridden at queue time > empty (latest).
@@ -252,7 +252,7 @@ stages:
 
   # Stage 2: Apply Updates (with approval gate for production)
   - stage: ApplyUpdates
-    displayName: 'Apply Updates'
+    displayName: 'Fleet: 04 - Apply Updates'
     dependsOn: CheckReadiness
     condition: and(succeeded(), gt(dependencies.CheckReadiness.outputs['ReadinessCheck.readiness.ReadyCount'], 0))
 

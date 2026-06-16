@@ -3,7 +3,7 @@
     RootModule = 'AzLocal.UpdateManagement.psm1'
 
     # Version number of this module.
-    ModuleVersion = '0.8.84'
+    ModuleVersion = '0.8.85'
 
     # Supported PSEditions
     CompatiblePSEditions = @('Desktop', 'Core')
@@ -317,7 +317,7 @@
 
             # ReleaseNotes of this module
             ReleaseNotes = @'
-## Version 0.8.84 - Docs-only patch. Extends the Step.08 `Export-AzLocalUpdateRunMonitorReport` "Recent update attempts with no observable updateRun" callout (introduced v0.8.82, made functional v0.8.83) with an operator runbook: numbered diagnosis flow (Azure portal Activity Log -> in-portal `updateRun` check -> URP service health) plus a fenced PowerShell snippet showing `Get-ClusterGroup` / `Move-ClusterGroup` / `Stop+Start-ClusterGroup` commands to bounce the two URP cluster groups (`Azure Stack HCI Update Service Cluster Group` + `Azure Stack HCI Orchestrator Service Cluster Group`) when an attempt-gap reproduces and all Azure-side investigation comes back clean. Snippet prefixes every action with `Format-Table Name, OwnerNode, State` (exit-state diagnostic, more useful than `-Verbose`); covers multi-node and single-node; explicit warning that the Orchestrator (ECE) group must NOT be bounced during a healthy in-flight `updateRun`. New regression test asserts the rendered markdown. No public API or behavioural change. Export count unchanged (still 60). `GENERATED_AGAINST_MODULE_VERSION` bumped from `'0.8.83'` to `'0.8.84'`.
+## Version 0.8.85 - Patch: introduces Setup/Fleet naming in bundled pipeline templates, adds merged GitHub onboarding workflow `setup-validate-and-inventory.yml`, and updates pipeline refresh tooling with optional deprecated-file pruning guarded by AZLOCAL-PIPELINE-ID verification. No public API or behavioural change. Export count unchanged (still 60). `GENERATED_AGAINST_MODULE_VERSION` bumped from `'0.8.84'` to `'0.8.85'`.
 
 ## Version 0.8.83 - Patch: fix-forward for v0.8.82 Item-5. The Step.08 `UpdateLastAttempt` reconciliation in `Export-AzLocalUpdateRunMonitorReport` reads `$inv.tags` from `Get-AzLocalClusterInventory`, but the v0.8.82 inventory projection did not carry the raw ARM `tags` bag - so the "Recent update attempts with no observable updateRun" section was silently always empty in production. v0.8.83 surfaces the raw `tags` bag on every inventory row (in-memory only; the CSV / JSON export keeps its explicit `$selectColumns` whitelist - new regression test asserts both). Also wires `attempts_without_run` into the GitHub Actions `monitor-updates.yml` `jobs.outputs:` block (ADO `Set-AzLocalPipelineOutput` auto-publishes so only an ADO docstring refresh needed), and corrects the `Export-AzLocalUpdateRunMonitorReport` "6 step outputs" docstring to "7 step outputs". No public API change. Export count unchanged (still 60). All bundled pipeline templates bump `GENERATED_AGAINST_MODULE_VERSION` from `'0.8.82'` to `'0.8.83'`.
 

@@ -2,7 +2,7 @@
 
 > ⚠️ **Disclaimer**: This module is **NOT** a Microsoft supported service offering or product. It is provided as example code only, with no warranty or official support. Refer to the [MIT license](https://github.com/NeilBird/Azure-Local/blob/main/LICENSE) for further information.
 
-**Latest Version:** v0.8.84 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.8.84)
+**Latest Version:** v0.8.85 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.8.85)
 
 > 📢 **Renamed in v0.7.3**: this module was previously published as `AzStackHci.ManageUpdates`. The new module name aligns with the Azure Local product name (_Microsoft retired the *Azure Stack HCI* brand in late 2024_). The module GUID is preserved across the rename. If you have the old name installed, run:
 >
@@ -23,7 +23,7 @@ Azure Local REST API specification (includes update management endpoints): https
 **This README (overview + most-recent release notes):**
 
 - [Where to Start](#where-to-start)
-- [What's New in v0.8.84](#whats-new-in-v0884)
+- [What's New in v0.8.85](#whats-new-in-v0885)
 - [Files](#files)
 - [Prerequisites](#prerequisites)
 - [RBAC Requirements](#rbac-requirements) (summary; full reference in [docs/rbac.md](docs/rbac.md))
@@ -86,26 +86,24 @@ If you are new to this module, work through these in order from a regular PowerS
 
 > Most CI/CD pipelines in [Automation-Pipeline-Examples/](Automation-Pipeline-Examples/) are direct implementations of one of these workflows. Start there if you want a copy-pasteable end-to-end pipeline.
 
-## What's New in v0.8.84
+## What's New in v0.8.85
 
-**Documentation-only patch release.** Extends the `Export-AzLocalUpdateRunMonitorReport` markdown callout under the "Recent update attempts with no observable updateRun" section (introduced in v0.8.82, made functional in v0.8.83) with an operator runbook. The previous one-line callout pointed users at the Azure portal Activity Log only. v0.8.84 expands it into a numbered diagnosis flow (Activity Log -> in-portal `updateRun` check -> URP service health) and a fenced PowerShell snippet showing the exact `Get-ClusterGroup` / `Move-ClusterGroup` / `Stop+Start-ClusterGroup` commands to bounce the two URP cluster groups (`Azure Stack HCI Update Service Cluster Group` + `Azure Stack HCI Orchestrator Service Cluster Group`) when an attempt-gap reproduces and all Azure-side investigation comes back clean. Includes an explicit warning that the Orchestrator (ECE) group must NOT be bounced during a healthy in-flight run. No public API change, no behavioural change to any cmdlet. Export count unchanged (still 60).
+**Pipeline UX consolidation release.** Introduces Setup/Fleet naming in bundled pipelines, adds the merged GitHub onboarding workflow `setup-validate-and-inventory.yml` (Setup: 01), and updates pipeline refresh tooling to safely handle deprecated workflow cleanup with pipeline-ID verification. Also bumps bundled pipeline `GENERATED_AGAINST_MODULE_VERSION` pins to `0.8.85`.
 
 ### Added
 
-- **Operator runbook in the Step.08 "Recent update attempts with no observable updateRun" callout** in `Export-AzLocalUpdateRunMonitorReport`. The callout now renders three numbered diagnosis steps (Azure portal Activity Log -> in-portal `updateRun` check -> URP service health) and a fenced PowerShell block with the exact Failover Clustering cmdlets to inspect ownership and bounce the URP cluster groups. The snippet:
-  - Prefixes every action with `Get-ClusterGroup ... | Format-Table Name, OwnerNode, State` so operators see the exit state of each cmdlet (more diagnostic than `-Verbose`).
-  - Covers multi-node clusters (`Move-ClusterGroup` for zero-downtime failover) and single-node / fallback cases (`Stop-ClusterGroup` + `Start-ClusterGroup`).
-  - Explicitly warns that bouncing the Orchestrator (ECE) group during a healthy in-flight `updateRun` will interrupt it.
-- New regression test (`v0.8.84: Step.08 attempt-gap callout includes URP cluster-group recovery snippet`) asserts the rendered markdown contains the diagnosis list, both URP cluster group names, the `Format-Table` line, the move + stop + start cmdlets, the in-flight warning, and that `-Verbose` is NOT present on any of the cmdlets.
+- Bundled GitHub workflows now surface Setup/Fleet ordering and include `Setup: 01 - Validate Auth and Inventory Clusters`.
+- Legacy GitHub onboarding workflows (`authentication-test.yml`, `inventory-clusters.yml`) are superseded by the merged Setup workflow in the bundled set.
+- `Copy-AzLocalPipelineExample` and `Update-AzLocalPipelineExample` gain optional `-PruneDeprecated` cleanup for superseded workflow files, with AZLOCAL-PIPELINE-ID verification before removal.
 
 ### Notes
 
 - **No new exports** (count unchanged at 60).
-- **`GENERATED_AGAINST_MODULE_VERSION`** bumped from `0.8.83` to `0.8.84` across all bundled pipeline templates.
+- **`GENERATED_AGAINST_MODULE_VERSION`** bumped from `0.8.84` to `0.8.85` across bundled pipeline templates.
 
 > Previous release notes have moved into the [Release History](#release-history) appendix at the bottom of this document.
 
-See [CHANGELOG.md](CHANGELOG.md#0884---2026-06-15) for the full v0.8.84 entry. See [`What's New in v0.8.83`](#whats-new-in-v0883) in the Release History for the previous release.
+See [CHANGELOG.md](CHANGELOG.md) for full release details. See [`What's New in v0.8.84`](#whats-new-in-v0884) in the Release History for the previous release.
 
 ## Files
 

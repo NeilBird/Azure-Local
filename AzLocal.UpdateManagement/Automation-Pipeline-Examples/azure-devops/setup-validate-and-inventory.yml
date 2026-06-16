@@ -1,0 +1,256 @@
+# AZLOCAL-PIPELINE-ID: setup-validate-and-inventory
+# Setup: 01 - Validate Auth and Inventory Azure Local Clusters
+#
+# PURPOSE:
+#   This is the first step in the setup workflow. It combines two operations:
+#   1. VALIDATION: Validates the service connection (Workload Identity Federation),
+#      App Registration, and RBAC role assignments, and produces a Subscription
+#      Scope report listing every subscription the pipeline identity can see.
+#   2. INVENTORY: Queries all Azure Local clusters and exports inventory with
+#      UpdateRing tag status.
+#
+#   Run this pipeline:
+#       - BEFORE importing the operational pipelines (Fleet: 01-07). It narrows
+#         any failure to authentication/discovery rather than seven interacting
+#         pipelines.
+#       - PERIODICALLY (recommended monthly, or after every RBAC change in the
+#         tenant) to confirm the pipeline identity subscription scope and cluster
+#         inventory have not silently drifted.
+#
+# VALIDATION PROBES:
+#       1. AzureCLI@2 task auth against the service connection (Workload Identity
+#          Federation auto-managed by ADO).
+#       2. Service-connection -> App Registration -> subscription wiring.
+#       3. Azure RBAC on the App Registration's service principal.
+#       4. Resource Graph reachability (proves the SP can actually see clusters).
+#       5. Subscription scope: total count and full Subscription ID / Name table.
+#
+# INVENTORY OUTPUT COLUMNS:
+#   ClusterName, ResourceGroup, SubscriptionId, SubscriptionName,
+#   UpdateRing, HasUpdateRingTag, UpdateStartWindow, UpdateExclusions,
+#   UpdateSideloaded, UpdateVersionInProgress, ResourceId
+#
+#   - UpdateSideloaded (operator-set): True/False/1/0 - sideloaded-payload gate
+#   - UpdateVersionInProgress (module-managed; do not edit): staged update name
+#   See main module README, section "Sideloaded Payload Workflow".
+#
+# REPORTS GENERATED:
+#   - JUnit XML published via PublishTestResults@2 (renders in the ADO Tests tab).
+#   - Markdown summary uploaded via ##vso[task.uploadsummary] (renders in the Summary tab).
+#   - Artifacts: auth-report (JUnit XML + subscriptions.json + .csv) and
+#     cluster-inventory (ClusterUpdateRings.csv + .json + README_Instructions.txt).
+#
+# HOW TO RUN (after the file is committed and the pipeline is imported):
+#   Pipelines -> Setup: 01 - Validate Auth and Inventory Clusters -> Run pipeline.
+#
+# See Automation-Pipeline-Examples/README.md, section 5, for the full setup story.
+
+name: 'Setup: 01 - Validate Auth and Inventory Clusters'
+
+# BEGIN-AZLOCAL-CUSTOMIZE:schedule-triggers
+# Add or modify `schedules:` blocks here to enable cron-driven runs. Content
+# between BEGIN/END markers is preserved by Update-AzLocalPipelineExample
+# across module upgrades.
+trigger: none
+
+schedules:
+  # Run weekly on Sunday at 8:00 AM UTC
+  - cron: '0 8 * * 0'
+    displayName: 'Weekly Setup Validation and Inventory'
+    branches:
+      include:
+        - main
+    always: true
+# END-AZLOCAL-CUSTOMIZE:schedule-triggers
+
+parameters:
+  - name: subscriptionFilter
+    displayName: 'Subscription ID Filter (leave empty for all subscriptions)'
+    type: string
+    default: ''
+  - name: moduleVersion
+    displayName: 'Pin AzLocal.UpdateManagement version (empty = latest from PSGallery). See Automation-Pipeline-Examples/README.md section 5 "Optional configuration".'
+    type: string
+    default: ''
+
+variables:
+  # Module version this YAML was generated against. The install step compares this to
+  # the version actually installed and to the latest on PSGallery, and emits a warning
+  # log if the YAML appears stale - prompting you to refresh via
+  # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
+  - name: GENERATED_AGAINST_MODULE_VERSION
+    value: '0.8.85'
+  # Resolution order for the module version pin (leave all unset to install the latest,
+  # which is the default "fix-forward" behaviour): queue-time parameter > pipeline variable
+  # 'REQUIRED_MODULE_VERSION' overridden at queue time > empty (latest).
+  - name: REQUIRED_MODULE_VERSION
+    value: '${{ parameters.moduleVersion }}'
+
+pool:
+  vmImage: 'windows-latest'
+
+stages:
+  - stage: Validate
+    displayName: 'Validate Workload Identity Federation + RBAC + Subscription Scope'
+    jobs:
+      - job: ValidateAuthAndScope
+        displayName: 'Run auth, RBAC, and Subscription Scope probes'
+
+        steps:
+          - task: PowerShell@2
+            displayName: 'Install AzLocal.UpdateManagement from PSGallery'
+            # v0.8.5 thin-YAML: drift detection + banner + step outputs are all
+            # produced by Add-AzLocalPipelineVersionBanner (Public cmdlet).
+            env:
+              REQUIRED_MODULE_VERSION: $(REQUIRED_MODULE_VERSION)
+              GENERATED_AGAINST_MODULE_VERSION: $(GENERATED_AGAINST_MODULE_VERSION)
+            inputs:
+              targetType: 'inline'
+              pwsh: true
+              script: |
+                $ErrorActionPreference = 'Stop'
+                $installArgs = @{ Name = 'AzLocal.UpdateManagement'; Scope = 'CurrentUser'; Force = $true; AllowClobber = $true }
+                if ($env:REQUIRED_MODULE_VERSION) {
+                    $installArgs.RequiredVersion = $env:REQUIRED_MODULE_VERSION
+                    Write-Host "REQUIRED_MODULE_VERSION is set - pinning install to v$($env:REQUIRED_MODULE_VERSION)."
+                } else {
+                    Write-Host "REQUIRED_MODULE_VERSION is empty - installing the latest version from PSGallery (default fix-forward behaviour)."
+                }
+                Install-Module @installArgs
+                Import-Module AzLocal.UpdateManagement -Force
+                $banner = Add-AzLocalPipelineVersionBanner `
+                    -GeneratedAgainstVersion $env:GENERATED_AGAINST_MODULE_VERSION `
+                    -PinnedVersion $env:REQUIRED_MODULE_VERSION `
+                    -PassThru
+                $latestStr = if ($banner.LatestOnPSGallery) { $banner.LatestOnPSGallery } else { '' }
+                Write-Host "##vso[task.setvariable variable=installedModuleVersion;isOutput=false]$($banner.InstalledVersion)"
+                Write-Host "##vso[task.setvariable variable=generatedAgainstVersion;isOutput=false]$($banner.GeneratedAgainstVersion)"
+                Write-Host "##vso[task.setvariable variable=latestOnPsGallery;isOutput=false]$latestStr"
+
+          - task: AzureCLI@2
+            displayName: 'Collect Authentication and Subscription Scope Report'
+            inputs:
+              azureSubscription: 'AzureLocal-ServiceConnection'  # Update if your service connection has a different name.
+              scriptType: 'pscore'
+              scriptLocation: 'inlineScript'
+              # v0.8.5 thin-YAML: Export-AzLocalAuthValidationReport performs all
+              # four probes (az account show / role assignment list / az account
+              # list / Resource Graph query), writes the JUnit XML +
+              # subscriptions.json + subscriptions.csv, uploads the markdown
+              # summary via ##vso[task.uploadsummary], and emits the three
+              # pipeline variables (subscription_count, cluster_count, auth_valid).
+              inlineScript: |
+                $ErrorActionPreference = 'Stop'
+                Import-Module AzLocal.UpdateManagement -Force
+                $reportDir = Join-Path $env:BUILD_ARTIFACTSTAGINGDIRECTORY 'auth-report'
+                Export-AzLocalAuthValidationReport `
+                    -ReportDirectory         $reportDir `
+                    -InstalledModuleVersion  "$(installedModuleVersion)" `
+                    -GeneratedAgainstVersion "$(generatedAgainstVersion)" `
+                    -LatestOnPSGallery       "$(latestOnPsGallery)"
+
+          - task: PublishTestResults@2
+            displayName: 'Publish Authentication Validation JUnit Diagnostics'
+            condition: always()
+            inputs:
+              testResultsFormat: 'JUnit'
+              testResultsFiles: '$(Build.ArtifactStagingDirectory)/auth-report/auth-report.xml'
+              testRunTitle: '[JUnit Debug] Setup: 01 - Authentication Validation'
+              failTaskOnFailedTests: false
+              mergeTestResults: false
+
+          - pwsh: |
+              $stamp = (Get-Date).ToUniversalTime().ToString('yyyyMMdd_HHmmss')
+              Write-Host "##vso[task.setvariable variable=artifactStamp;isOutput=true]$stamp"
+              Write-Host "Artifact timestamp: $stamp"
+            displayName: 'Compute Artifact Timestamp'
+            condition: always()
+            name: stamp
+
+          - task: PublishPipelineArtifact@1
+            displayName: 'Publish auth-report artifact'
+            condition: always()
+            inputs:
+              targetPath: '$(Build.ArtifactStagingDirectory)/auth-report'
+              artifact: 'azlocal-step.1-setup-auth-report_$(stamp.artifactStamp)'
+              publishLocation: 'pipeline'
+
+  - stage: Inventory
+    displayName: 'Inventory Azure Local Clusters'
+    dependsOn: Validate
+    condition: succeeded()
+    jobs:
+      - job: InventoryClusters
+        displayName: 'Run Cluster Inventory'
+
+        steps:
+          - checkout: self
+            displayName: 'Checkout Repository'
+
+          - task: AzureCLI@2
+            displayName: 'Install Resource Graph Extension'
+            inputs:
+              azureSubscription: 'AzureLocal-ServiceConnection'  # Update with your service connection name.
+              scriptType: 'pscore'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                az extension add --name resource-graph --yes
+
+          - task: PowerShell@2
+            displayName: 'Install AzLocal.UpdateManagement from PSGallery'
+            # v0.8.5 thin-YAML: drift detection + banner + step outputs are all
+            # produced by Add-AzLocalPipelineVersionBanner (Public cmdlet).
+            env:
+              REQUIRED_MODULE_VERSION: $(REQUIRED_MODULE_VERSION)
+              GENERATED_AGAINST_MODULE_VERSION: $(GENERATED_AGAINST_MODULE_VERSION)
+            inputs:
+              targetType: 'inline'
+              pwsh: true
+              script: |
+                $ErrorActionPreference = 'Stop'
+                $installArgs = @{ Name = 'AzLocal.UpdateManagement'; Scope = 'CurrentUser'; Force = $true; AllowClobber = $true }
+                if ($env:REQUIRED_MODULE_VERSION) {
+                    $installArgs.RequiredVersion = $env:REQUIRED_MODULE_VERSION
+                    Write-Host "REQUIRED_MODULE_VERSION is set - pinning install to v$($env:REQUIRED_MODULE_VERSION)."
+                } else {
+                    Write-Host "REQUIRED_MODULE_VERSION is empty - installing the latest version from PSGallery (default fix-forward behaviour)."
+                }
+                Install-Module @installArgs
+                Import-Module AzLocal.UpdateManagement -Force
+                $banner = Add-AzLocalPipelineVersionBanner `
+                    -GeneratedAgainstVersion $env:GENERATED_AGAINST_MODULE_VERSION `
+                    -PinnedVersion $env:REQUIRED_MODULE_VERSION `
+                    -PassThru
+                Write-Host "##vso[task.setvariable variable=installedModuleVersion;isOutput=false]$($banner.InstalledVersion)"
+
+          - task: AzureCLI@2
+            displayName: 'Run Cluster Inventory'
+            inputs:
+              azureSubscription: 'AzureLocal-ServiceConnection'  # Update with your service connection name.
+              scriptType: 'pscore'
+              scriptLocation: 'inlineScript'
+              # v0.8.5 thin-YAML: Invoke-AzLocalClusterInventory writes the four
+              # artifacts to -OutputDirectory, emits the markdown summary via
+              # ##vso[task.uploadsummary], and sets the four step outputs.
+              inlineScript: |
+                $ErrorActionPreference = 'Stop'
+                Import-Module AzLocal.UpdateManagement -Force
+                Invoke-AzLocalClusterInventory `
+                    -OutputDirectory        "$(Build.ArtifactStagingDirectory)" `
+                    -SubscriptionFilter     "${{ parameters.subscriptionFilter }}" `
+                    -InstalledModuleVersion "$(installedModuleVersion)"
+
+          - pwsh: |
+              $stamp = (Get-Date).ToUniversalTime().ToString('yyyyMMdd_HHmmss')
+              Write-Host "##vso[task.setvariable variable=artifactStamp;isOutput=true]$stamp"
+              Write-Host "Artifact timestamp: $stamp"
+            displayName: 'Compute Artifact Timestamp'
+            condition: always()
+            name: stamp
+
+          - task: PublishBuildArtifacts@1
+            displayName: 'Publish Inventory Artifact'
+            inputs:
+              PathtoPublish: '$(Build.ArtifactStagingDirectory)'
+              ArtifactName: 'azlocal-step.1-setup-cluster-inventory_$(stamp.artifactStamp)'
+              publishLocation: 'Container'

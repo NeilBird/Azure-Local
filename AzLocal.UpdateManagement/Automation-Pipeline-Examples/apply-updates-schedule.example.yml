@@ -19,17 +19,18 @@
 #
 #   1. This file (day-grain): the calendar week / day of week says
 #      WHICH UpdateRing tag values are eligible TODAY in UTC.
-#   2. The Step.5 cron schedule (intra-day-grain): says HOW OFTEN the
-#      apply-updates job wakes up (e.g. hourly).
+#   2. The apply-updates.yml cron schedule (intra-day-grain): says HOW
+#      OFTEN the apply-updates job wakes up (e.g. hourly).
 #   3. Per-cluster `UpdateStartWindow` tag (minute-grain): says WHEN, during
 #      an eligible day, the actual update is allowed to start.
 #
 # A cron firing that lands on a day with NO matching schedule rows is
 # logged and exits 0 - no errors, no failures.
 #
-# This file is REQUIRED for the "Step.5 Apply Updates" pipeline when
-# triggered by a schedule (not workflow_dispatch). If the file is
-# missing, Step.5 throws with the exact remediation command.
+# This file is REQUIRED for the "Fleet: 04 - Apply Updates"
+# (apply-updates.yml) pipeline when triggered by a schedule (not
+# workflow_dispatch). If the file is missing, apply-updates.yml throws
+# with the exact remediation command.
 #
 # Generate a starter file from your current fleet via:
 #   New-AzLocalApplyUpdatesScheduleConfig -OutputPath .\config\apply-updates-schedule.yml
@@ -59,14 +60,14 @@ cycleAnchorYear:      2026
 
 # ---- AllowedUpdateVersions (schema v2, MANDATORY top-level) -------
 # >>> ALLOWED-UPDATE-VERSIONS-V2 <<<
-# Fleet-wide allow-list of Azure Local update identifiers that Step.7
-# (apply-updates) is permitted to install.
+# Fleet-wide allow-list of Azure Local update identifiers that
+# apply-updates.yml is permitted to install.
 #
 # Default 'Latest' (case-insensitive) is a reserved sentinel meaning
 # 'no constraint - install the latest Ready update on each cluster'
 # (the historic v0.7.88 default). Leave it as 'Latest' to keep that
-# behaviour. When set to an explicit list, Step.7 only installs
-# updates whose `name` OR `properties.version` is an EXACT
+# behaviour. When set to an explicit list, apply-updates.yml only
+# installs updates whose `name` OR `properties.version` is an EXACT
 # (case-insensitive) match for one of the entries. If a cluster has
 # no Ready update that matches, that cluster is SKIPPED with status
 # 'NotInAllowList' (strict no-op; never falls back to 'latest').
@@ -98,8 +99,8 @@ cycleAnchorYear:      2026
 # customer ask in v0.7.89): install ONLY the YY04 + YY10 feature
 # updates plus the cumulative updates immediately preceding each
 # feature update (YY03 + YY09). With v2 schema you list those four
-# update names here once and Step.7 ignores every other 'Ready'
-# update. Example using real Azure Local update names:
+# update names here once and apply-updates.yml ignores every other
+# 'Ready' update. Example using real Azure Local update names:
 #   allowedUpdateVersions: 'Solution12.2603.1002.15;Solution12.2604.1003.1005;Solution12.2609.1002.XX;Solution12.2610.1003.XX'
 #
 # Mixed Solution + OEM SBE example - allow the YY04 cumulative AND a

@@ -353,6 +353,9 @@ function Export-AzLocalAuthValidationReport {
     [void]$md.AppendLine('')
     [void]$md.AppendLine("### Count of subscriptions accessible = $subCount")
     [void]$md.AppendLine('')
+    [void]$md.AppendLine('<details>')
+    [void]$md.AppendLine('<summary>Expand for subscription details</summary>')
+    [void]$md.AppendLine('')
     [void]$md.AppendLine('| # | Subscription Name | Subscription ID | Tenant ID | State |')
     [void]$md.AppendLine('|---|---|---|---|---|')
     $i = 0
@@ -360,6 +363,8 @@ function Export-AzLocalAuthValidationReport {
         $i++
         [void]$md.AppendLine("| $i | $($s.name) | ``$($s.subscriptionId)`` | ``$($s.tenantId)`` | $($s.state) |")
     }
+    [void]$md.AppendLine('')
+    [void]$md.AppendLine('</details>')
     [void]$md.AppendLine('')
     [void]$md.AppendLine("*Generated at $((Get-Date).ToString('yyyy-MM-dd HH:mm:ss UTC'))*")
 
