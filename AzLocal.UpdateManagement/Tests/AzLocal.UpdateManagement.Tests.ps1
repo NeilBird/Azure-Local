@@ -12565,6 +12565,11 @@ Describe 'Function: New-AzLocalFleetConnectivityStatusSummary' {
             $script:md | Should -Match '### Cluster Connectivity \(with ARB Status\)'
         }
 
+        It 'Wraps the cluster connectivity table in a collapsed details block' {
+            $script:md | Should -Match '<details>\s*\r?\n<summary>Expand to view clusters</summary>'
+            $script:md | Should -Match '</details>'
+        }
+
         It 'Renders cluster rows with portal links when ClusterId is present' {
             $script:md | Should -Match '\[Mobile\]\(https://portal\.azure\.com/#@/resource/sub/abc/rg/x/p/m\.azurestackhci/clusters/Mobile\)'
         }

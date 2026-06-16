@@ -396,6 +396,9 @@ function New-AzLocalFleetConnectivityStatusSummary {
         [void]$sb.AppendLine('*No clusters returned.*')
     }
     else {
+        [void]$sb.AppendLine('<details>')
+        [void]$sb.AppendLine('<summary>Expand to view clusters</summary>')
+        [void]$sb.AppendLine('')
         [void]$sb.AppendLine('| Cluster | Connectivity | Cluster Status | Nodes | ARB | ARB Status | ARB Days Since LastModified | Resource Group | Location |')
         [void]$sb.AppendLine('|---------|---------------|-----------------|-------|-----|-------------|------------------------------|----------------|----------|')
         foreach ($r in ($ClusterRows | Select-Object -First 100)) {
@@ -425,6 +428,8 @@ function New-AzLocalFleetConnectivityStatusSummary {
             [void]$sb.AppendLine('')
             [void]$sb.AppendLine("*Showing first 100 of $($ClusterRows.Count); see ``fleet-cluster-connectivity.csv`` and ``fleet-arb-status.csv`` for the full lists.*")
         }
+        [void]$sb.AppendLine('')
+        [void]$sb.AppendLine('</details>')
     }
 
     # 5e. Orphan ARBs table (conditional)
