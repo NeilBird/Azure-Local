@@ -3,11 +3,11 @@
 .SYNOPSIS
     Publishes AzLocal.DeploymentAutomation to the PowerShell Gallery.
 .DESCRIPTION
-    Copies the module to a clean staging folder (C:\Temp\AzLocal.DeploymentAutomation),
-    removes files that should not be included in the published package (tests,
-    test results, .vscode settings, cluster-specific parameter files,
-    deployment-parameter-files), validates the manifest, then publishes via
-    Publish-Module.
+    Copies the module to a clean per-user staging folder (under the current
+    user's TEMP), removes files that should not be included in the published
+    package (tests, test results, .vscode settings, cluster-specific parameter
+    files, deployment-parameter-files), scans the staged package for secrets,
+    validates the manifest, then publishes via Publish-Module.
 
     The NuGet API key is prompted interactively and is never stored on disk.
 .NOTES
@@ -25,7 +25,10 @@ $ErrorActionPreference = 'Stop'
 # ── Paths ──────────────────────────────────────────────────────────────────────
 $ModuleName  = 'AzLocal.DeploymentAutomation'
 $SourceDir   = $PSScriptRoot                          # repo module folder
-$StagingDir  = Join-Path 'C:\Temp' $ModuleName
+# Stage under the current user's TEMP (ACL-scoped to this user) rather than the
+# predictable, often world-writable C:\Temp, so the transient staged copy cannot
+# be read or tampered with by other local users during publish.
+$StagingDir  = Join-Path ([System.IO.Path]::GetTempPath()) $ModuleName
 
 # ── 1. Clean staging area ──────────────────────────────────────────────────────
 # NOTE: Staging refresh deliberately bypasses -WhatIf via -WhatIf:$false so that
@@ -73,14 +76,86 @@ Get-ChildItem $StagingDir -Recurse -File | ForEach-Object {
 }
 Write-Host ""
 
-# ── 5. Validate manifest ──────────────────────────────────────────────────────
+# ── 5. Pre-publish secret-leak guard ───────────────────────────────────────────
+# Defense-in-depth: the package is built by REMOVING a denylist of folders, so any
+# new file added to the module would publish by default. Before publishing, scan
+# every staged file for content that must never reach a public gallery (real
+# subscription/tenant/object GUIDs, private keys, storage keys). Known-legitimate
+# values - synthetic placeholders, this module's manifest GUID, and Azure built-in
+# role-definition GUIDs - are skipped below so the shipped examples do not trip it.
+Write-Host "[$ModuleName] Scanning staged files for secrets..." -ForegroundColor Cyan
+
+$secretPatterns = [ordered]@{
+    'Real subscription/tenant/object GUID' = '(?<![0-9a-fA-F])[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}(?![0-9a-fA-F])'
+    'Private key block'                    = '-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----'
+    'Storage account key'                  = 'AccountKey=[A-Za-z0-9+/=]{20,}'
+}
+
+# GUIDs that are legitimate, public, fixed identifiers - never secrets:
+#   * obviously-synthetic placeholders where every dash-group is a single repeated
+#     character (e.g. 00000000-0000-0000-0000-000000000000, or the sample
+#     aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee subscription ID), and
+#   * this module's own manifest GUID (read dynamically below).
+# Azure built-in role-definition GUIDs in the ARM templates are skipped separately
+# via the 'roleDefinition' context check, so new role assignments never trip this.
+$placeholderGuidPattern = '^(.)\1{7}-(.)\2{3}-(.)\3{3}-(.)\4{3}-(.)\5{11}$'
+$manifestGuid = ''
+try { $manifestGuid = [string](Import-PowerShellDataFile -Path (Join-Path $StagingDir "$ModuleName.psd1")).Guid } catch { }
+$secretAllowList = @()
+if (-not [string]::IsNullOrWhiteSpace($manifestGuid)) { $secretAllowList += $manifestGuid }
+
+$secretHits = New-Object System.Collections.Generic.List[string]
+Get-ChildItem $StagingDir -Recurse -File | ForEach-Object {
+    $stagedFile = $_
+    $content = Get-Content -LiteralPath $stagedFile.FullName -Raw -ErrorAction SilentlyContinue
+    if ([string]::IsNullOrEmpty($content)) { return }
+    foreach ($label in $secretPatterns.Keys) {
+        foreach ($match in [regex]::Matches($content, $secretPatterns[$label])) {
+            if ($secretAllowList -contains $match.Value) { continue }
+            # Skip obviously-synthetic placeholder GUIDs (repeated char per segment).
+            if ($match.Value -match $placeholderGuidPattern) { continue }
+            # Skip Azure built-in role-definition GUIDs (public, tenant-invariant).
+            $windowStart = [Math]::Max(0, $match.Index - 60)
+            $preceding = $content.Substring($windowStart, $match.Index - $windowStart)
+            if ($preceding -match 'roleDefinition') { continue }
+            $relPath = $stagedFile.FullName.Replace($StagingDir + '\', '')
+            $secretHits.Add(('  {0}: {1} -> ''{2}''' -f $relPath, $label, $match.Value))
+        }
+    }
+}
+
+if ($secretHits.Count -gt 0) {
+    Write-Host ''
+    Write-Host "[$ModuleName] SECRET SCAN FAILED - the following look like real secrets:" -ForegroundColor Red
+    $secretHits | ForEach-Object { Write-Host $_ -ForegroundColor Red }
+    throw 'Refusing to publish: staged package contains values that look like real secrets. Replace them with placeholders, or add the file to $RemovePaths, then retry.'
+}
+
+# Belt-and-braces: the shipped naming config MUST remain placeholder-only so a
+# locally customised .config never ships real tenant/object IDs.
+$stagedConfig = Join-Path $StagingDir '.config\naming-standards-config.json'
+if (Test-Path $stagedConfig) {
+    $cfg = Get-Content -LiteralPath $stagedConfig -Raw | ConvertFrom-Json
+    $envTenant = if ($cfg.environment.PSObject.Properties['tenantId']) { [string]$cfg.environment.tenantId } else { '' }
+    $envObjId  = if ($cfg.environment.PSObject.Properties['hciResourceProviderObjectID']) { [string]$cfg.environment.hciResourceProviderObjectID } else { '' }
+    if (-not [string]::IsNullOrWhiteSpace($envTenant) -and $envTenant -notmatch '^[xX-]+$') {
+        throw "Refusing to publish: .config/naming-standards-config.json environment.tenantId is not a placeholder ('$envTenant'). Reset it before publishing."
+    }
+    if (-not [string]::IsNullOrWhiteSpace($envObjId)) {
+        throw "Refusing to publish: .config/naming-standards-config.json environment.hciResourceProviderObjectID is populated ('$envObjId'). Reset it before publishing."
+    }
+}
+
+Write-Host '  No secrets detected in staged package.' -ForegroundColor Green
+
+# ── 6. Validate manifest ──────────────────────────────────────────────────────
 Write-Host "[$ModuleName] Validating module manifest..." -ForegroundColor Cyan
 $manifestPath = Join-Path $StagingDir "$ModuleName.psd1"
 $manifest = Test-ModuleManifest -Path $manifestPath -ErrorAction Stop
 Write-Host "  Module:  $($manifest.Name)" -ForegroundColor Green
 Write-Host "  Version: $($manifest.Version)" -ForegroundColor Green
 
-# ── 6. Prompt for API key (masked) and publish ─────────────────────────────────
+# ── 7. Prompt for API key (masked) and publish ─────────────────────────────────
 Write-Host ""
 Write-Host "Paste your PowerShell Gallery NuGet API key (input is masked, nothing will echo):" -ForegroundColor Yellow
 $secureApiKey = Read-Host -Prompt "API key" -AsSecureString
