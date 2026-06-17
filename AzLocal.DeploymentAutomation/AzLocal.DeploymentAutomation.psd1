@@ -4,7 +4,7 @@
     RootModule = 'AzLocal.DeploymentAutomation.psm1'
 
     # Version number of this module.
-    ModuleVersion = '1.0.1'
+    ModuleVersion = '1.0.2'
 
     # ID used to uniquely identify this module
     GUID = 'a3e4b8c1-6f2d-4e5a-9b1c-7d8e3f0a2b4c'
@@ -39,6 +39,7 @@
     NestedModules = @(
         # Private (internal) functions
         'Private\Format-Json.ps1'
+        'Private\Get-AzLocalArmResource.ps1'
         'Private\Get-AzLocalDeploymentNetworkSettings.ps1'
         'Private\Get-AzLocalNamingConfig.ps1'
         'Private\Get-AzLocalNetworkSettingsFromJson.ps1'
@@ -97,6 +98,15 @@
 
             # Release notes for this version
             ReleaseNotes = @'
+## v1.0.2 - June 2026
+
+### Hardened Azure resource existence checks (fixes misleading "Arc node not found")
+Existence checks used `Get-AzResource -ErrorAction SilentlyContinue`, which swallowed ALL errors (HTTP 400 unsupported api-version, auth, RBAC, transport) and returned `$null`, so callers misreported the resource as missing.
+
+- New private helper `Get-AzLocalArmResource` returns `$null` only for a genuine 404 and throws on real failures. It self-heals an unsupported auto-negotiated api-version by parsing ARM's supported-versions list and retrying with the newest stable version.
+- All four existence-check call sites now use the helper (`Start-AzLocalTemplateDeployment`, `Test-AzLocalClusterPreFlight`, `Get-AzLocalDeploymentStatus`). Arc node lookups default to the GA `Microsoft.HybridCompute/machines` api-version `2025-01-13`.
+- `Start-AzLocalTemplateDeployment` now pins context via `Set-AzContext -SubscriptionId -TenantId` on the direct path (multi-subscription tenants could otherwise default to the wrong subscription).
+
 ## v1.0.1 - May 2026
 
 ### Optional `dnsServers` override in `-NetworkSettingsJson`

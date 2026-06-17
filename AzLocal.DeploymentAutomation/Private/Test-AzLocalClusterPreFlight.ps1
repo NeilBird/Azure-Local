@@ -142,9 +142,21 @@
 
     # 4. Check all Arc nodes are registered
     $allNodesPresent = $true
+    # Default to the GA api-version for Microsoft.HybridCompute/machines; the helper
+    # self-heals (parses ARM's supported-versions list and retries) if it is rejected.
+    $arcMachineApiVersion = '2025-01-13'
     foreach ($nodeName in $nodeNames) {
         $arcResourceId = "/subscriptions/$($ClusterRow.SubscriptionId)/resourceGroups/$resourceGroupName/providers/Microsoft.HybridCompute/machines/$nodeName"
-        $arcNode = Get-AzResource -ResourceId $arcResourceId -ErrorAction SilentlyContinue
+        try {
+            # Existence-aware lookup: $null means genuinely absent; a real failure
+            # (unsupported api-version, auth, RBAC, transport) throws with the real reason
+            # instead of being masked as "NOT FOUND".
+            $arcNode = Get-AzLocalArmResource -ResourceId $arcResourceId -ResourceKind 'Arc node' -ApiVersion $arcMachineApiVersion
+        } catch {
+            $allNodesPresent = $false
+            $messages += "Arc node '$nodeName': ERROR checking registration - $($_.Exception.Message)"
+            continue
+        }
         if ($arcNode) {
             $messages += "Arc node '$nodeName': REGISTERED"
         } else {
@@ -169,7 +181,25 @@
 
     # 5. Check for existing cluster resource (already deployed)
     $clusterResourceId = "/subscriptions/$($ClusterRow.SubscriptionId)/resourceGroups/$resourceGroupName/providers/Microsoft.AzureStackHCI/clusters/$clusterName"
-    $existingCluster = Get-AzResource -ResourceId $clusterResourceId -ErrorAction SilentlyContinue
+    $existingCluster = $null
+    try {
+        # Existence-aware lookup: $null means genuinely absent; a real failure throws
+        # with the real reason instead of being masked as "does not exist".
+        $existingCluster = Get-AzLocalArmResource -ResourceId $clusterResourceId -ResourceKind 'cluster'
+    } catch {
+        $status = 'Failed'
+        $messages += "Cluster '$clusterName': ERROR checking existence - $($_.Exception.Message)"
+        $duration = ((Get-Date) - $startTime).TotalSeconds
+        return [PSCustomObject]@{
+            UniqueID          = $uniqueID
+            ClusterName       = $clusterName
+            ResourceGroupName = $resourceGroupName
+            DeploymentName    = $deploymentName
+            Status            = $status
+            Messages          = $messages
+            Duration          = [math]::Round($duration, 2)
+        }
+    }
     if ($existingCluster) {
         $status = 'Skipped'
         $messages += "Cluster '$clusterName' already exists in resource group. Skipping."

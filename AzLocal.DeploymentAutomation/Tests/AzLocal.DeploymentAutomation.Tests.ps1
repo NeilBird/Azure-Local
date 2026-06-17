@@ -52,9 +52,9 @@ Describe 'Module: AzLocal.DeploymentAutomation' {
             $script:ModuleInfo | Should -Not -BeNullOrEmpty
         }
 
-        It 'Should have version 1.0.1 in manifest' {
+        It 'Should have version 1.0.2 in manifest' {
             $manifest = Import-PowerShellDataFile -Path $script:ManifestPath
-            $manifest.ModuleVersion | Should -Be '1.0.1'
+            $manifest.ModuleVersion | Should -Be '1.0.2'
         }
 
         It 'Should contain Start-AzLocalTemplateDeployment function' {
@@ -144,8 +144,8 @@ Describe 'Module: AzLocal.DeploymentAutomation' {
             $script:ManifestRaw.FunctionsToExport | Should -Contain 'Get-AzLocalDeploymentStatus'
         }
 
-        It 'Should have version 1.0.1' {
-            $script:ManifestRaw.ModuleVersion | Should -Be '1.0.1'
+        It 'Should have version 1.0.2' {
+            $script:ManifestRaw.ModuleVersion | Should -Be '1.0.2'
         }
 
         It 'Should have ReleaseNotes within the PSGallery character limit' {
@@ -4044,6 +4044,31 @@ Describe 'Code Quality: CI/CD Automation Functions' {
         $script:ModuleSource | Should -Match 'Key Vault Secrets Officer'
         $script:ModuleSource | Should -Match 'Storage Account Contributor'
     }
+
+    It 'Resource existence checks should NOT mask errors with Get-AzResource -ErrorAction SilentlyContinue' {
+        # The misleading "Arc node not found" customer bug was caused by
+        # Get-AzResource -ErrorAction SilentlyContinue swallowing real errors.
+        # Existence checks must go through Get-AzLocalArmResource instead.
+        $script:ModuleSource | Should -Not -Match 'Get-AzResource\s+-ResourceId[^\r\n]*-ErrorAction\s+SilentlyContinue'
+    }
+
+    It 'Existence checks should use the Get-AzLocalArmResource helper' {
+        $script:ModuleSource | Should -Match 'Get-AzLocalArmResource\s+-ResourceId'
+    }
+
+    It 'Get-AzLocalArmResource should self-heal unsupported api-versions' {
+        $script:ModuleSource | Should -Match 'supported api-versions'
+        $script:ModuleSource | Should -Match 'Get-AzResource\s+-ResourceId\s+\$ResourceId\s+-ApiVersion'
+    }
+
+    It 'Arc node existence checks should default to the GA HybridCompute api-version 2025-01-13' {
+        $script:ModuleSource | Should -Match '\$arcMachineApiVersion\s*=\s*''2025-01-13'''
+        $script:ModuleSource | Should -Match '-ResourceKind ''Arc node'' -ApiVersion \$arcMachineApiVersion'
+    }
+
+    It 'Start-AzLocalTemplateDeployment should pin Azure context via Set-AzContext' {
+        $script:ModuleSource | Should -Match 'Function Start-AzLocalTemplateDeployment[\s\S]*?Set-AzContext\s+-SubscriptionId\s+\$SubscriptionId\s+-TenantId\s+\$TenantId'
+    }
 }
 
 # ============================================================================
@@ -4877,6 +4902,103 @@ Describe 'Disaggregated (SAN) Deployment Support' {
             $headers | Should -Contain 'SanNetworkAdapterName'
             $headers | Should -Contain 'SanNetworkVlanId'
             $headers | Should -Contain 'SanNetworkAddressPrefix'
+        }
+    }
+}
+
+# ============================================================================
+# Function: Get-AzLocalArmResource (existence-aware, error-surfacing getter)
+# ============================================================================
+Describe 'Function: Get-AzLocalArmResource' {
+
+    BeforeAll {
+        $script:armResourceId = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/rg-test/providers/Microsoft.HybridCompute/machines/node01'
+    }
+
+    Context 'Resource exists' {
+        It 'Should return the resource object returned by Get-AzResource' {
+            InModuleScope AzLocal.DeploymentAutomation -Parameters @{ Id = $script:armResourceId } {
+                param($Id)
+                Mock Get-AzResource { return [PSCustomObject]@{ Name = 'node01'; Type = 'Microsoft.HybridCompute/machines' } }
+                $result = Get-AzLocalArmResource -ResourceId $Id -ResourceKind 'Arc node'
+                $result | Should -Not -BeNullOrEmpty
+                $result.Name | Should -Be 'node01'
+            }
+        }
+
+        It 'Should use a caller-supplied api-version on the first lookup' {
+            InModuleScope AzLocal.DeploymentAutomation -Parameters @{ Id = $script:armResourceId } {
+                param($Id)
+                Mock Get-AzResource {
+                    param($ResourceId, $ApiVersion)
+                    return [PSCustomObject]@{ Name = 'node01'; ApiVersionUsed = $ApiVersion }
+                }
+                $result = Get-AzLocalArmResource -ResourceId $Id -ResourceKind 'Arc node' -ApiVersion '2025-01-13'
+                $result.ApiVersionUsed | Should -Be '2025-01-13'
+            }
+        }
+    }
+
+    Context 'Resource genuinely absent (HTTP 404)' {
+        It 'Should return $null when Get-AzResource reports the resource was not found' {
+            InModuleScope AzLocal.DeploymentAutomation -Parameters @{ Id = $script:armResourceId } {
+                param($Id)
+                Mock Get-AzResource { throw "The Resource 'Microsoft.HybridCompute/machines/node01' under resource group 'rg-test' was not found." }
+                $result = Get-AzLocalArmResource -ResourceId $Id -ResourceKind 'Arc node'
+                $result | Should -BeNullOrEmpty
+            }
+        }
+
+        It 'Should return $null on an explicit ResourceNotFound error' {
+            InModuleScope AzLocal.DeploymentAutomation -Parameters @{ Id = $script:armResourceId } {
+                param($Id)
+                Mock Get-AzResource { throw 'ResourceNotFound: The resource could not be found.' }
+                Get-AzLocalArmResource -ResourceId $Id | Should -BeNullOrEmpty
+            }
+        }
+    }
+
+    Context 'Unsupported api-version (HTTP 400) self-heal' {
+        It 'Should retry with the newest stable supported api-version and return the resource' {
+            InModuleScope AzLocal.DeploymentAutomation -Parameters @{ Id = $script:armResourceId } {
+                param($Id)
+                Mock Get-AzResource {
+                    param($ResourceId, $ApiVersion)
+                    if (-not $ApiVersion) {
+                        throw "No registered resource provider found for location 'westeurope' and API version '2026-06-04-preview' for type 'machines'. The supported api-versions are '2019-03-18-preview, 2024-07-10, 2025-01-13, 2025-02-19-preview'."
+                    }
+                    return [PSCustomObject]@{ Name = 'node01'; ApiVersionUsed = $ApiVersion }
+                }
+                $result = Get-AzLocalArmResource -ResourceId $Id -ResourceKind 'Arc node'
+                $result.Name | Should -Be 'node01'
+                # Newest STABLE version wins (preview versions are excluded).
+                $result.ApiVersionUsed | Should -Be '2025-01-13'
+            }
+        }
+
+        It 'Should return $null if the resource is genuinely absent at the retried api-version' {
+            InModuleScope AzLocal.DeploymentAutomation -Parameters @{ Id = $script:armResourceId } {
+                param($Id)
+                Mock Get-AzResource {
+                    param($ResourceId, $ApiVersion)
+                    if (-not $ApiVersion) {
+                        throw "No registered resource provider found for location 'westeurope' and API version '2026-06-04-preview'. The supported api-versions are '2024-07-10, 2025-01-13'."
+                    }
+                    throw "The Resource under resource group 'rg-test' was not found."
+                }
+                Get-AzLocalArmResource -ResourceId $Id | Should -BeNullOrEmpty
+            }
+        }
+    }
+
+    Context 'Real failure (auth / RBAC / transport)' {
+        It 'Should rethrow and surface the real error instead of masking it as not found' {
+            InModuleScope AzLocal.DeploymentAutomation -Parameters @{ Id = $script:armResourceId } {
+                param($Id)
+                Mock Get-AzResource { throw 'Authentication failed. Please run Connect-AzAccount.' }
+                { Get-AzLocalArmResource -ResourceId $Id -ResourceKind 'Arc node' } |
+                    Should -Throw -ExpectedMessage '*Authentication failed*'
+            }
         }
     }
 }
