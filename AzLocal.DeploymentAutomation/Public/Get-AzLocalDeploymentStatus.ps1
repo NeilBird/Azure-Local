@@ -144,7 +144,27 @@
 
         # Check if cluster already exists
         $clusterResourceId = "/subscriptions/$($cluster.SubscriptionId)/resourceGroups/$resourceGroupName/providers/Microsoft.AzureStackHCI/clusters/$clusterName"
-        $existingCluster = Get-AzResource -ResourceId $clusterResourceId -ErrorAction SilentlyContinue
+        $existingCluster = $null
+        try {
+            # Existence-aware lookup: $null means genuinely absent; a real failure
+            # (unsupported api-version, auth, RBAC, transport) throws with the real
+            # reason instead of being masked as "does not exist".
+            $existingCluster = Get-AzLocalArmResource -ResourceId $clusterResourceId -ResourceKind 'cluster'
+        } catch {
+            $duration = ((Get-Date) - $startTime).TotalSeconds
+            Write-AzLocalLog "  ${uniqueID}: Error checking cluster existence - $($_.Exception.Message)" -Level Error
+            $allResults += [PSCustomObject]@{
+                UniqueID          = $uniqueID
+                ClusterName       = $clusterName
+                ResourceGroupName = $resourceGroupName
+                DeploymentName    = $deploymentName
+                DeploymentStatus  = 'CheckError'
+                ProvisioningState = 'N/A'
+                Message           = "Failed to check cluster existence: $($_.Exception.Message)"
+                Duration          = [math]::Round($duration, 2)
+            }
+            continue
+        }
         if ($existingCluster) {
             $duration = ((Get-Date) - $startTime).TotalSeconds
             Write-AzLocalLog "  ${uniqueID}: Cluster already exists." -Level Success

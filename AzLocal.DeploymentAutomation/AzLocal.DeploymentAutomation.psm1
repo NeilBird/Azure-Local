@@ -2,9 +2,9 @@
 <#
 .SYNOPSIS
     Author:     Neil Bird, MSFT
-    Version:    1.0.1
+    Version:    1.0.2
     Created:    May 15th 2025
-    Updated:    May 12th 2026
+    Updated:    June 17th 2026
 
 .DESCRIPTION
 

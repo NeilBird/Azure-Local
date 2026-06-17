@@ -161,6 +161,21 @@
     Write-AzLocalLog "Type of Deployment: $TypeOfDeployment" -Level Info
     Write-Verbose "DeploymentMode: $DeploymentMode | NodeCount: $NodeCount | Location: $Location"
 
+    # Pin the Azure context to the requested subscription and tenant. In multi-subscription
+    # tenants the signed-in identity can default to the WRONG subscription, which makes the
+    # resource group / Arc node / prerequisite checks (and the deployment itself) run against
+    # the wrong subscription and fail with misleading "not found" errors.
+    # (Skipped when called from Start-AzLocalCsvDeployment, which already set the context.)
+    if (-not $SkipPreFlightChecks) {
+        try {
+            Set-AzContext -SubscriptionId $SubscriptionId -TenantId $TenantId -ErrorAction Stop | Out-Null
+            Write-AzLocalLog "Azure context set to subscription '$SubscriptionId'." -Level Success
+        } catch {
+            Write-AzLocalLog "Failed to set Azure context to subscription '$SubscriptionId' (tenant '$TenantId'): $($_.Exception.Message)" -Level Error
+            throw "Failed to set Azure context to subscription '$SubscriptionId'. Verify you are signed in (Connect-AzAccount) and have access to this subscription. $($_.Exception.Message)"
+        }
+    }
+
     # Validate NodeCount for each deployment type
     if ($TypeOfDeployment -eq "SingleNode" -and $NodeCount -gt 1) {
         Write-AzLocalLog "SingleNode deployment does not support -NodeCount greater than 1. SingleNode is always a single node." -Level Error
@@ -632,7 +647,13 @@
                 Write-AzLocalLog "Checking Arc Node is registered in resource group: '$ResourceGroupName'" -Level Warning
                 Write-Verbose "Arc Node Resource ID: '$arcNodeResourceId'"
                 $ClusterNodeCheck = $null
-                $ClusterNodeCheck = Get-AzResource -ResourceId $arcNodeResourceId -ErrorAction SilentlyContinue
+                # Existence-aware lookup: returns $null only for a genuine 404; a real
+                # failure (e.g. unsupported api-version, auth, RBAC) throws with the real
+                # ARM error instead of being masked as "Arc node not found".
+                # Default to the GA api-version for Microsoft.HybridCompute/machines; the
+                # helper self-heals (parses ARM's supported list) if a region rejects it.
+                $arcMachineApiVersion = '2025-01-13'
+                $ClusterNodeCheck = Get-AzLocalArmResource -ResourceId $arcNodeResourceId -ResourceKind 'Arc node' -ApiVersion $arcMachineApiVersion
                 if($ClusterNodeCheck) {
                     Write-AzLocalLog "Arc Node exists in target resource group: '$ResourceGroupName'" -Level Success
                 } else {
