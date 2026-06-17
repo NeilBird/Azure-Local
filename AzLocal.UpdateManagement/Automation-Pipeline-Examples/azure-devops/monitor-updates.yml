@@ -112,7 +112,7 @@ parameters:
     default: false
 
 variables:
-  GENERATED_AGAINST_MODULE_VERSION: '0.8.87'
+  GENERATED_AGAINST_MODULE_VERSION: '0.8.88'
   REQUIRED_MODULE_VERSION: '${{ parameters.moduleVersion }}'
   reportsPath: '$(Build.ArtifactStagingDirectory)/reports'
   # ITSM connector. When raiseItsmTicket=true the Raise ITSM task below
@@ -123,7 +123,7 @@ variables:
   # group reference convert this entire 'variables:' block to list form:
   #   variables:
   #     - name: GENERATED_AGAINST_MODULE_VERSION
-  #       value: '0.8.87'
+  #       value: '0.8.88'
   #     - name: REQUIRED_MODULE_VERSION
   #       value: '${{ parameters.moduleVersion }}'
   #     - name: reportsPath
@@ -219,7 +219,7 @@ stages:
       condition: always()
       inputs:
         PathtoPublish: '$(reportsPath)'
-        ArtifactName: 'azlocal-step.8-update-monitor_$(stamp.artifactStamp)'
+        ArtifactName: 'azlocal-update-monitor_$(stamp.artifactStamp)'
         publishLocation: 'Container'
 
     - task: PublishTestResults@2
@@ -319,7 +319,7 @@ stages:
       condition: and(always(), eq('${{ parameters.raiseItsmTicket }}', 'true'))
       inputs:
         PathtoPublish: '$(reportsPath)'
-        ArtifactName: 'azlocal-step.8-update-monitor-itsm-results_$(stamp.artifactStamp)'
+        ArtifactName: 'azlocal-update-monitor-itsm-results_$(stamp.artifactStamp)'
         publishLocation: 'Container'
       continueOnError: true
 

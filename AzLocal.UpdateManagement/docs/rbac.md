@@ -26,6 +26,7 @@ The following permissions are required for update + fleet-connectivity operation
 | Read cluster info | `Microsoft.AzureStackHCI/clusters/read` |
 | Read update summary | `Microsoft.AzureStackHCI/clusters/updateSummaries/read` |
 | List available updates | `Microsoft.AzureStackHCI/clusters/updates/read` |
+| **Refresh assessment ("Check for updates", preview)** | `Microsoft.AzureStackHCI/clusters/updateSummaries/default/checkUpdates` (POST action - see preview note below) |
 | **Start/Apply update** | `Microsoft.AzureStackHCI/clusters/updates/apply/action` |
 | Monitor update runs | `Microsoft.AzureStackHCI/clusters/updates/updateRuns/read` |
 | Query clusters (Resource Graph) | `Microsoft.ResourceGraph/resources/read` |
@@ -36,6 +37,8 @@ The following permissions are required for update + fleet-connectivity operation
 | Read Azure Resource Bridge appliance status (Step.4) | `Microsoft.ResourceConnector/appliances/read` |
 
 > **v0.7.80 note:** The last three rows above were added in v0.7.80. They are required by `Get-AzLocalFleetConnectivityStatus` (introduced in v0.7.79) and therefore by the `fleet-connectivity-status.yml` pipeline. Without them, the cmdlet still returns the cluster connectivity section but every other section (Arc agents, physical NICs, Azure Resource Bridges) silently returns zero rows because ARG yields an empty `.data` array for resource types the caller cannot read. Pipelines that were created against the v0.7.79-or-earlier custom-role JSON will see 0 Arc agents / 0 NICs / 0 ARBs until the role is updated.
+
+> **v0.8.88 note - "Check for updates" (`checkUpdates`) is preview and NOT yet in any custom role:** `Sync-AzLocalClusterUpdateSummary` and the opt-out stale-assessment auto-scan in `Export-AzLocalClusterUpdateReadinessReport` POST `Microsoft.AzureStackHCI/clusters/updateSummaries/default/checkUpdates` on the `2026-03-01-preview` API. The action is **not yet published in the `Microsoft.AzureStackHCI` provider operations catalog**, so it **cannot be added to the `Actions[]` of a custom role definition today** - `az role definition update` validates each entry against the catalog and rejects unregistered actions. The custom roles below therefore deliberately omit it. Until it GAs, only built-in roles that grant the broad `Microsoft.AzureStackHCI/*` action set (e.g. **Azure Stack HCI Administrator**) or **Contributor** authorize the refresh; under the least-privilege custom role the call returns a non-fatal `403 AuthorizationFailed` (logged, then execution continues - the readiness report still completes). Pass `-SkipStaleAssessmentScan` to suppress the auto-scan. **When `checkUpdates` GAs, add the GA'd action (expected `Microsoft.AzureStackHCI/clusters/updateSummaries/checkUpdates/action` - confirm the exact string from a 403 `AuthorizationFailed` body or `az provider operation show --namespace Microsoft.AzureStackHCI`) to every `Actions[]` block in this file and to the bundled `azlocal-update-management-custom-role.json`.**
 
 ### Roles That Do NOT Have Update Permissions
 

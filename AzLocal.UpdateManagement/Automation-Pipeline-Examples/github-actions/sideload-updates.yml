@@ -83,7 +83,7 @@ env:
   # this to the version actually installed and to the latest on PSGallery, and emits a
   # ::notice annotation if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.8.87'
+  GENERATED_AGAINST_MODULE_VERSION: '0.8.88'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): manual workflow_dispatch input >
   # repository variable 'REQUIRED_MODULE_VERSION' > empty (latest).
@@ -437,7 +437,7 @@ jobs:
       if: always()
       uses: actions/upload-artifact@v6
       with:
-        name: azlocal-step.6-sideload-updates-report_${{ steps.artifact-stamp.outputs.timestamp }}
+        name: azlocal-sideload-updates-report_${{ steps.artifact-stamp.outputs.timestamp }}
         path: ./reports/
         retention-days: 90
 

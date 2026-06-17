@@ -5,6 +5,80 @@ All notable changes to the AzLocal.UpdateManagement module (renamed from AzStack
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.88] - 2026-06-17
+
+Adds programmatic "Check for updates" (checkUpdates) automation and stale-update-assessment
+detection so a cluster that reports "Up to date" while a newer solution build is actually
+available (a stale cached assessment) is detected and refreshed without leaving the pipeline.
+
+### Added
+
+- `Sync-AzLocalClusterUpdateSummary` - new Public cmdlet (export count 60 -> 61). POSTs the
+  `Microsoft.AzureStackHCI/clusters/updateSummaries/default/checkUpdates` ARM action (the
+  programmatic equivalent of the Azure portal "Check for updates" button) on the
+  `2026-03-01-preview` API to force one or more clusters to re-evaluate update availability.
+  Clusters are selected by name (`-ClusterNames` + `-ResourceGroupName` + `-SubscriptionId`),
+  by Resource ID (`-ClusterResourceIds`), or by `UpdateRing` tag
+  (`-ScopeByUpdateRingTag` + `-UpdateRingValue`), mirroring `Start-AzLocalClusterUpdate`.
+  Fire-and-forget by default (an offline / busy cluster cannot stall a fleet run); `-Wait`
+  polls the cluster's `updateSummaries/default` until `properties.lastChecked` advances past
+  the pre-trigger baseline (or `-TimeoutSeconds` elapses, 30-3600 default 300; poll cadence
+  `-PollIntervalSeconds` 5-300 default 15) and stores the refreshed `UpdateState` /
+  `CurrentVersion` / `LastChecked` / `AvailableUpdateCount` / raw `UpdateSummary` on the
+  returned object. Supports `SupportsShouldProcess` (`-WhatIf` / `-Confirm`), `-Force`, and
+  `-PassThru`.
+- Opt-out stale-assessment auto-scan in `Export-AzLocalClusterUpdateReadinessReport`. After
+  the readiness cascade, any cluster reporting `UpToDate` whose installed version is behind
+  the latest released `YYMM` (detected by the new private `Test-AzLocalUpdateAssessmentStale`
+  helper plus `Get-AzLocalLatestSolutionVersion`) triggers a fire-and-forget Check for updates
+  to refresh it. New `-SkipStaleAssessmentScan` switch (opt out; default scan ON) and
+  `-StaleAssessmentApiVersion` parameter (default `2026-03-01-preview`); new
+  "### Stale update assessments" markdown section; new `StaleAssessmentCount` /
+  `StaleAssessmentClusters` / `StaleAssessmentScanTriggered` `-PassThru` fields (added to both
+  the main and idle-path PassThru shapes).
+- `Test-AzLocalUpdateAssessmentStale` - new private pure helper (`-CurrentVersion`,
+  `-LatestYYMM` -> `{ IsStale; ClusterYYMM; LatestYYMM; Reason }`). `IsStale` is `$true` only
+  when the cluster's installed `YYMM` is strictly less than the latest released `YYMM`.
+
+### Changed
+
+- Authorization / 403 failures on the refresh call are now surfaced in the console log.
+  `Sync-AzLocalClusterUpdateSummary` always echoes the full `az rest` error text (which, for
+  an RBAC denial, contains the exact `Action` name and scope) via `Write-Log -Level Error`,
+  and when it detects `AuthorizationFailed` / `Forbidden` / `403` it emits an explicit
+  `Write-Log -Level Warning` instructing the operator to capture the action name and assign
+  `Azure Stack HCI Administrator` / `Contributor` (or pass `-SkipStaleAssessmentScan`). The
+  message is visible even on the fire-and-forget readiness auto-scan path (the `| Out-Null`
+  there suppresses only pipeline objects, not host output), and the failure is non-fatal -
+  the readiness report still completes.
+- Operator-facing pipeline cross-references de-numbered. Stale `Step.N_*.yml` references in
+  rendered report text (`Export-AzLocalClusterUpdateReadinessReport`,
+  `Export-AzLocalApplyUpdatesScheduleAudit`, `Export-AzLocalUpdateRunMonitorReport`) and in
+  pipeline-example doc strings (`Copy-AzLocalPipelineExample`,
+  `New-AzLocalApplyUpdatesScheduleConfig`) now use the descriptive filenames
+  (`apply-updates.yml`, `monitor-updates.yml`, `sideload-updates.yml`,
+  `setup-validate-and-inventory.yml`, etc.) that have shipped since v0.8.7. A non-existent
+  `Step.0_authentication-test.yml` pointer in the Azure DevOps `Copy-AzLocalPipelineExample`
+  guidance is corrected to `setup-validate-and-inventory.yml`.
+
+### Docs
+
+- Documented the future custom-RBAC requirement for `checkUpdates` in the module
+  `README.md` (RBAC Requirements), `docs/rbac.md`, and
+  `Automation-Pipeline-Examples/README.md`: the preview `checkUpdates` action is not yet in
+  the `Microsoft.AzureStackHCI` provider operations catalog and so cannot be added to a
+  custom role today (`az role definition update` rejects unregistered actions). Until it GAs,
+  use `Azure Stack HCI Administrator` / `Contributor` or accept the non-fatal 403-and-warn
+  behaviour; when it GAs, add the GA'd action (expected
+  `Microsoft.AzureStackHCI/clusters/updateSummaries/checkUpdates/action` - confirm from a 403
+  body or the provider operations catalog) to the bundled
+  `azlocal-update-management-custom-role.json` and the permission tables.
+
+### Notes
+
+- `GENERATED_AGAINST_MODULE_VERSION` bumped from `0.8.87` to `0.8.88` across all bundled
+  pipeline templates (GitHub Actions + Azure DevOps).
+
 ## [0.8.87] - 2026-06-16
 
 Renames the bundled pipeline display names into a three-group `Config: N` /

@@ -2,7 +2,7 @@
 
 > ⚠️ **Disclaimer**: This module is **NOT** a Microsoft supported service offering or product. It is provided as example code only, with no warranty or official support. Refer to the [MIT license](https://github.com/NeilBird/Azure-Local/blob/main/LICENSE) for further information.
 
-**Latest Version:** v0.8.87 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.8.87)
+**Latest Version:** v0.8.88 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.8.88)
 
 > 📢 **Renamed in v0.7.3**: this module was previously published as `AzStackHci.ManageUpdates`. The new module name aligns with the Azure Local product name (_Microsoft retired the *Azure Stack HCI* brand in late 2024_). The module GUID is preserved across the rename. If you have the old name installed, run:
 >
@@ -23,7 +23,7 @@ Azure Local REST API specification (includes update management endpoints): https
 **This README (overview + most-recent release notes):**
 
 - [Where to Start](#where-to-start)
-- [What's New in v0.8.87](#whats-new-in-v0887)
+- [What's New in v0.8.88](#whats-new-in-v0888)
 - [Files](#files)
 - [Prerequisites](#prerequisites)
 - [RBAC Requirements](#rbac-requirements) (summary; full reference in [docs/rbac.md](docs/rbac.md))
@@ -86,35 +86,29 @@ If you are new to this module, work through these in order from a regular PowerS
 
 > Most CI/CD pipelines in [Automation-Pipeline-Examples/](Automation-Pipeline-Examples/) are direct implementations of one of these workflows. Start there if you want a copy-pasteable end-to-end pipeline.
 
-## What's New in v0.8.87
+## What's New in v0.8.88
 
-**Pipeline display-name rename.** The bundled pipeline display names are renamed into a three-group `Config: N` / `Monitor: N` / `Update: N` scheme (single-digit, e.g. `Monitor: 1 - Fleet Connectivity Status`, `Update: 4 - Monitor In-Flight Updates`), replacing the former `Setup: 0N` / `Fleet: 0N` prefixes so the GitHub Actions and Azure DevOps lists group onboarding, day-2 monitoring, and update-lifecycle workflows logically. Filenames and `AZLOCAL-PIPELINE-ID` values are unchanged.
-
-**Fleet Connectivity Status output clarification.** Renames the "Orphan ARBs" section in the `New-AzLocalFleetConnectivityStatusSummary` (Monitor: 1 - Fleet Connectivity Status) markdown output to **"Non-Azure Local and/or Orphan ARB appliances"** and adds an explicit caveat that an Arc resource bridge with no matching in-scope Azure Local cluster is *not necessarily orphaned*. Azure Arc resource bridge is also used by **VMware vSphere** and **System Center Virtual Machine Manager (SCVMM)** Arc-enabled deployments, so a listed appliance may be a healthy, in-use resource bridge for a non-Azure Local platform.
-
-**In-flight monitor ITSM auto-ticketing + Config: 3 monitor-cadence recommendation.** The Update: 4 in-flight monitor and the ServiceNow ITSM connector now join up so stuck, failed, and attempt-without-run clusters auto-raise deduped incidents, and the Config: 3 schedule auditor recommends how often to poll the monitor.
+**"Check for updates" automation + stale-assessment detection.** Adds a new public cmdlet and an opt-out auto-scan so an Azure Local cluster that reports "Up to date" while a newer solution build is actually available (a stale cached assessment) is detected and refreshed without leaving the pipeline.
 
 ### Added
 
-- **`Export-AzLocalUpdateRunMonitorReport` (Update: 4)** now writes per-`<testcase>` `<properties>` into `update-monitor.xml` (`ClusterName`, `ClusterResourceId`, `UpdateName`, `Status`, `CurrentStep`, `ClusterPortalUrl`, `UpdateRunPortalUrl`). `Status` is one of `StepError`, `LongRunningStep`, `LongRunningOverall`, `InProgress`, `Failed`, or `AttemptWithoutRun`. This lets `New-AzLocalIncident` dedupe (one incident per affected cluster until it clears) and deep-link into the Azure portal - previously every monitor row was skipped for a missing ClusterResourceId / UpdateName.
-- **Opt-in ITSM ticketing in `monitor-updates.yml`** (GitHub Actions and Azure DevOps). A new `raise_itsm_ticket` / `raiseItsmTicket` input (default off) runs `New-AzLocalIncident` against the monitor JUnit after it is published. The monitor stays report-only and always green; ITSM failures never affect its result. The sample trigger matrix `azurelocal-itsm.yml` gains `AttemptWithoutRun` (raise, severity 3), `StepError` (raise, severity 2), and opt-in `LongRunningOverall` / `LongRunningStep` entries.
-- **`Export-AzLocalApplyUpdatesScheduleAudit` (Config: 3)** gains an always-on **"Recommended in-flight monitor schedule (Update: 4)"** section that derives a `monitor-updates.yml` poll cron from the apply-window weekday(s), covering the apply day plus a configurable trailing window for multi-day runs. Two new parameters: `-MonitorFiresPerHour` (1-12, default 2 = every 30 min) and `-MonitorTrailingDays` (0-14, default 3).
+- **`Sync-AzLocalClusterUpdateSummary`** (new Public cmdlet; export count 60 -> 61). POSTs the `updateSummaries/default/checkUpdates` ARM action - the programmatic equivalent of the Azure portal **Check for updates** button - to force one or more clusters to re-evaluate update availability. Clusters are selected by name, by Resource ID, or by `UpdateRing` tag (mirroring `Start-AzLocalClusterUpdate`). Fire-and-forget by default (safe for fleet use); `-Wait` polls `updateSummaries` until `lastChecked` advances and returns the refreshed `UpdateState` / `CurrentVersion` / `AvailableUpdateCount`. Supports `-WhatIf` / `-Confirm`, `-Force`, and `-PassThru`.
+- **Opt-out stale-assessment auto-scan in `Export-AzLocalClusterUpdateReadinessReport`.** After the readiness cascade, any cluster reporting `UpToDate` whose installed version is behind the latest released `YYMM` (detected by the new private `Test-AzLocalUpdateAssessmentStale` helper plus `Get-AzLocalLatestSolutionVersion`) triggers a fire-and-forget Check for updates to refresh it. New `-SkipStaleAssessmentScan` switch (opt out) and `-StaleAssessmentApiVersion` parameter; new **"Stale update assessments"** report section; new `StaleAssessmentCount` / `StaleAssessmentClusters` / `StaleAssessmentScanTriggered` `-PassThru` fields.
 
 ### Changed
 
-- The section heading `### Orphan ARBs (no matching cluster in scope)` becomes `### Non-Azure Local and/or Orphan ARB appliances`, with an intro line and an expanded caveat calling out VMware vSphere / SCVMM resource bridges and adding investigate-before-acting guidance (check the resource type, associated custom location, and the platform served; do not delete an ARB until you have confirmed it is genuinely orphaned).
-- The KPI-table "Orphan ARBs" note, the "how to interpret" causes list (new leading bullet about non-Azure Local resource bridges), and the cluster-table cross-reference now point at the renamed section.
-- The `### Cluster Connectivity (with ARB Status)` table is split into a `### Cluster with Connectivity Issues` table (clusters not Connected with a Running ARB) shown first and expanded, and a `### Cluster without Connectivity Issues` table (Connectivity = Connected AND ARB Status = Running) collapsed behind an `Expand to view clusters` details block. Both tables share the same columns.
+- **Authorization / 403 failures on the refresh call are now surfaced in the console log.** `Sync-AzLocalClusterUpdateSummary` echoes the full `az rest` error (which, for an RBAC denial, contains the exact `Action` name and scope) and, when it detects `AuthorizationFailed` / `403`, emits an explicit warning telling the operator to capture the action name and assign `Azure Stack HCI Administrator` / `Contributor` (or pass `-SkipStaleAssessmentScan`). The failure is non-fatal - the readiness report still completes.
+- **Operator-facing pipeline cross-references de-numbered.** Stale `Step.N_*.yml` references in rendered report text and pipeline-example doc strings now use the descriptive filenames (e.g. `apply-updates.yml`, `monitor-updates.yml`, `sideload-updates.yml`) that have shipped since v0.8.7.
 
 ### Notes
 
-- The Monitor: 1 connectivity changes are **output text only**. The monitor / ITSM / Config: 3 changes add new JUnit properties, two optional parameters (`-MonitorFiresPerHour`, `-MonitorTrailingDays`), and an opt-in pipeline step - all **backward-compatible** with existing defaults.
-- **No new exports** (count unchanged at 60).
-- **`GENERATED_AGAINST_MODULE_VERSION`** bumped from `0.8.86` to `0.8.87` across bundled pipeline templates.
+- **`checkUpdates` is a preview action** (`2026-03-01-preview`) and is **not yet in the `Microsoft.AzureStackHCI` provider operations catalog**, so it **cannot be added to the least-privilege `Azure Stack HCI Update Operator (custom)` role yet**. Under that role the refresh returns a non-fatal `403`; use `Azure Stack HCI Administrator` / `Contributor`, or `-SkipStaleAssessmentScan`, until it GAs. See [docs/rbac.md](docs/rbac.md) and the [RBAC Requirements](#rbac-requirements) note. When it GAs, add the GA'd action (expected `Microsoft.AzureStackHCI/clusters/updateSummaries/checkUpdates/action`) to the custom role.
+- **Export count 60 -> 61** (`Sync-AzLocalClusterUpdateSummary`).
+- **`GENERATED_AGAINST_MODULE_VERSION`** bumped from `0.8.87` to `0.8.88` across bundled pipeline templates.
 
 > Previous release notes have moved into the [Release History](#release-history) appendix at the bottom of this document.
 
-See [CHANGELOG.md](CHANGELOG.md) for full release details. See [`What's New in v0.8.86`](#whats-new-in-v0886) in the Release History for the previous release.
+See [CHANGELOG.md](CHANGELOG.md) for full release details. See [`What's New in v0.8.87`](#whats-new-in-v0887) in the Release History for the previous release.
 
 ## Files
 
@@ -140,10 +134,13 @@ The module needs a small number of Azure RBAC roles depending on what you call i
 |-----------------|--------------------------|-------|
 | Read-only inventory and fleet reports (`Get-AzLocal*`, `Test-AzLocal*`) | `Azure Stack HCI Reader` + `Reader` | Subscription or Resource Group |
 | Starting updates (`Start-AzLocalClusterUpdate`, fleet wrappers) | `Azure Stack HCI Administrator` | Subscription, Resource Group, or per-cluster |
+| Refreshing a stale update assessment (`Sync-AzLocalClusterUpdateSummary`, readiness report auto-scan) | `Azure Stack HCI Administrator` or `Contributor` (see preview note below) | Subscription, Resource Group, or per-cluster |
 | Setting / clearing ring tags (`Set-AzLocalClusterUpdateRingTag`) | `Tag Contributor` + `Reader` (or any role with `Microsoft.Resources/tags/write`) | Subscription or Resource Group |
 | Resource Graph fleet queries | `Reader` on every subscription you want included | Subscription |
 
 A least-privilege custom role definition (`Azure Stack HCI Update Operator (custom)`) and the exact `actions:` list are documented in [docs/rbac.md](docs/rbac.md), along with `az role assignment create` recipes for OIDC federated credentials, Managed Identity, and Service Principal authentication.
+
+> 📝 **Preview - "Check for updates" (`checkUpdates`) and the least-privilege custom role:** Since v0.8.88, `Sync-AzLocalClusterUpdateSummary` and the opt-out stale-assessment auto-scan in `Export-AzLocalClusterUpdateReadinessReport` POST the preview `Microsoft.AzureStackHCI/clusters/updateSummaries/default/checkUpdates` action (`2026-03-01-preview`). This action is **not yet published in the `Microsoft.AzureStackHCI` provider operations catalog**, so it **cannot be added to a custom role today** (`az role definition update` rejects unregistered actions). The least-privilege `Azure Stack HCI Update Operator (custom)` role therefore does **not** authorize it - the refresh call returns a non-fatal `403 AuthorizationFailed` (the cmdlets log it and continue; the readiness report still completes). Use `Azure Stack HCI Administrator` / `Contributor` to exercise the refresh today, or pass `-SkipStaleAssessmentScan`. **Once `checkUpdates` GAs, add the GA'd action (expected `Microsoft.AzureStackHCI/clusters/updateSummaries/checkUpdates/action` - confirm from a 403 body or the catalog) to the custom role.** See [docs/rbac.md](docs/rbac.md) and [Automation-Pipeline-Examples/README.md](Automation-Pipeline-Examples/README.md#3-permissions).
 ## Quick Start
 
 ### 1. Authenticate to Azure
@@ -593,7 +590,11 @@ This code is provided as-is for educational and reference purposes.
 
 The full What's-New history (v0.7.81 and earlier) has moved to [docs/release-history.md](docs/release-history.md).
 
-The most recent release notes for **v0.8.87** stay above under [`What's New in v0.8.87`](#whats-new-in-v0887).
+The most recent release notes for **v0.8.88** stay above under [`What's New in v0.8.88`](#whats-new-in-v0888).
+
+### What's New in v0.8.87
+
+**Pipeline display-name rename + in-flight monitor ITSM auto-ticketing.** Renames the bundled pipeline display names into a three-group `Config: N` / `Monitor: N` / `Update: N` scheme (single-digit, replacing the former `Setup: 0N` / `Fleet: 0N` prefixes; filenames and `AZLOCAL-PIPELINE-ID` values unchanged). Renames the Fleet Connectivity Status "Orphan ARBs" output section to "Non-Azure Local and/or Orphan ARB appliances" with a caveat that an Arc resource bridge with no in-scope Azure Local cluster is not necessarily orphaned (also used by VMware vSphere / SCVMM). Joins the Update: 4 in-flight monitor to the ServiceNow ITSM connector so stuck / failed / attempt-without-run clusters auto-raise deduped incidents (`Export-AzLocalUpdateRunMonitorReport` emits per-`<testcase>` properties; opt-in `raise_itsm_ticket` / `raiseItsmTicket` step in `monitor-updates.yml`), and teaches the Config: 3 schedule auditor to recommend a monitor poll cadence (`-MonitorFiresPerHour`, `-MonitorTrailingDays`). Backward-compatible defaults; export count unchanged (still 60). `GENERATED_AGAINST_MODULE_VERSION` bumped from `0.8.86` to `0.8.87`. See [CHANGELOG.md](CHANGELOG.md#0887---2026-06-16) for the full v0.8.87 entry.
 
 ### What's New in v0.8.86
 

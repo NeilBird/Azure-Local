@@ -787,7 +787,7 @@ function Export-AzLocalUpdateRunMonitorReport {
         [void]$md.Add('>     Format-Table Name, OwnerNode, State')
         [void]$md.Add('> ```')
         [void]$md.Add('>')
-        [void]$md.Add('> The companion `Azure Stack HCI Orchestrator Service Cluster Group` (ECE control plane) can be bounced the same way **only if no updateRun is actively in progress** - bouncing ECE during a healthy in-flight run will interrupt it. Re-run the Monitor pipeline (Step.08) after the cluster groups report `State = Online` to confirm the attempt-gap clears or reproduces.')
+        [void]$md.Add('> The companion `Azure Stack HCI Orchestrator Service Cluster Group` (ECE control plane) can be bounced the same way **only if no updateRun is actively in progress** - bouncing ECE during a healthy in-flight run will interrupt it. Re-run the Monitor Updates pipeline after the cluster groups report `State = Online` to confirm the attempt-gap clears or reproduces.')
         [void]$md.Add('')
     }
     if (($stepErrored.Count + $longRunningStep.Count + $longRunning.Count + $unresolvedFailed.Count) -gt 0) {

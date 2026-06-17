@@ -151,7 +151,7 @@ Set-StrictMode -Version 1.0
 # bumps to one but not the other are caught before release. Two consumers:
 #   - Start-AzLocalClusterUpdate emits this in the run log header.
 #   - Get-AzLocalFleetStatusData stamps it into exported fleet-state JSON.
-$script:ModuleVersion = '0.8.87'
+$script:ModuleVersion = '0.8.88'
 $script:DefaultApiVersion = '2025-10-01'
 $script:DefaultLogFolder = Join-Path -Path $env:ProgramData -ChildPath 'AzLocal.UpdateManagement'
 
@@ -343,6 +343,8 @@ Export-ModuleMember -Function @(
     'Get-AzLocalFleetHealthOverview',
     # Latest Released Solution Version (v0.7.70 Phase E) - public manifest probe (aka.ms/AzureEdgeUpdates) that anchors the rolling YYMM support window in Step.6
     'Get-AzLocalLatestSolutionVersion',
+    # Check for Updates (v0.8.88) - triggers the updateSummaries/default/checkUpdates ARM action to refresh a cluster's (potentially stale) update assessment; opt-in -Wait polls the refreshed summary
+    'Sync-AzLocalClusterUpdateSummary',
     # Fleet Connectivity Status (v0.7.79) - 4-scope connectivity audit: cluster, Arc agent, physical NIC, ARB
     'Get-AzLocalFleetConnectivityStatus',
     # Fleet Connectivity Status Summary Renderer (v0.7.87) - markdown step-summary builder used by Step.4 GH+ADO pipelines

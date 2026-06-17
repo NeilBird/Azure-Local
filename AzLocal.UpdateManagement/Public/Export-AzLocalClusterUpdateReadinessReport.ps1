@@ -170,6 +170,20 @@ function Export-AzLocalClusterUpdateReadinessReport {
         [AllowNull()]
         [string]$InstalledModuleVersion,
 
+        # v0.8.88: opt-OUT of the automatic "Check for updates" scan. By default,
+        # any cluster bucketed Up-to-Date whose installed YYMM is behind the latest
+        # released YYMM in the public manifest is treated as having a STALE update
+        # assessment, and a fire-and-forget checkUpdates scan is triggered to refresh
+        # it (Sync-AzLocalClusterUpdateSummary). Supplying this switch detects and
+        # reports the stale clusters but does NOT trigger the refresh.
+        [Parameter(Mandatory = $false)]
+        [switch]$SkipStaleAssessmentScan,
+
+        # API version for the checkUpdates action when auto-triggering a refresh.
+        # The action is only exposed on the preview API surface.
+        [Parameter(Mandatory = $false)]
+        [string]$StaleAssessmentApiVersion = '2026-03-01-preview',
+
         [Parameter(Mandatory = $false)]
         [switch]$PassThru
     )
@@ -233,6 +247,9 @@ function Export-AzLocalClusterUpdateReadinessReport {
                     ClustersWithCritical = 0
                     ReadinessRows        = @()
                     HealthRows           = @()
+                    StaleAssessmentCount         = 0
+                    StaleAssessmentClusters      = @()
+                    StaleAssessmentScanTriggered = $false
                     ReadinessCsvPath     = $readinessCsv
                     ReadinessXmlPath     = $readinessXml
                     HealthCsvPath        = $healthCsv
@@ -279,6 +296,58 @@ function Export-AzLocalClusterUpdateReadinessReport {
     Write-Host "Ready for update      : $readyForUpdate"
     Write-Host "Up to date            : $upToDate"
     Write-Host "Not ready for update  : $notReady"
+
+    # ---- Stale update-assessment detection (v0.8.88) ----------------------
+    # A cluster can report Up-to-Date while a newer solution build is actually
+    # available, because its cached update assessment has not been refreshed.
+    # Detect that by comparing each Up-to-Date cluster's installed YYMM against
+    # the latest released YYMM in the public manifest. Detection is read-only and
+    # never throws; the auto-refresh (checkUpdates) is fire-and-forget and is
+    # suppressed by -SkipStaleAssessmentScan.
+    $staleClusters = New-Object 'System.Collections.Generic.List[object]'
+    $staleScanTriggered = $false
+    $latestManifest = $null
+    try {
+        $latestManifest = Get-AzLocalLatestSolutionVersion
+    }
+    catch {
+        Write-Warning "Could not fetch the latest released solution version for stale-assessment detection: $($_.Exception.Message)"
+    }
+    if ($latestManifest -and $latestManifest.LatestYYMM) {
+        foreach ($r in $readiness) {
+            if ((Get-AzLocalClusterReadinessStatus -ReadinessRow $r) -ne 'UpToDate') { continue }
+            $cv = if ($r.PSObject.Properties['CurrentVersion'] -and $r.CurrentVersion) { [string]$r.CurrentVersion } else { '' }
+            $staleCheck = Test-AzLocalUpdateAssessmentStale -CurrentVersion $cv -LatestYYMM ([string]$latestManifest.LatestYYMM)
+            if ($staleCheck.IsStale) {
+                $clusterResId = if ($r.PSObject.Properties['ClusterResourceId'] -and $r.ClusterResourceId) { [string]$r.ClusterResourceId } else { '' }
+                $staleClusters.Add([pscustomobject]@{
+                        ClusterName       = [string]$r.ClusterName
+                        ClusterResourceId = $clusterResId
+                        CurrentVersion    = $cv
+                        ClusterYYMM       = $staleCheck.ClusterYYMM
+                        LatestYYMM        = $staleCheck.LatestYYMM
+                    }) | Out-Null
+            }
+        }
+    }
+    if ($staleClusters.Count -gt 0) {
+        Write-Host ''
+        Write-Host "Stale update assessments: $($staleClusters.Count) Up-to-Date cluster(s) behind the latest released YYMM ($($latestManifest.LatestYYMM))"
+        $staleResourceIds = @($staleClusters | Where-Object { $_.ClusterResourceId } | Select-Object -ExpandProperty ClusterResourceId)
+        if ($SkipStaleAssessmentScan) {
+            Write-Host '  -SkipStaleAssessmentScan set: NOT triggering an automatic Check for Updates.'
+        }
+        elseif ($staleResourceIds.Count -gt 0) {
+            try {
+                Write-Host "  Triggering fire-and-forget 'Check for updates' on $($staleResourceIds.Count) cluster(s)..."
+                Sync-AzLocalClusterUpdateSummary -ClusterResourceIds $staleResourceIds -ApiVersion $StaleAssessmentApiVersion -Force | Out-Null
+                $staleScanTriggered = $true
+            }
+            catch {
+                Write-Warning "Automatic Check for Updates failed: $($_.Exception.Message)"
+            }
+        }
+    }
 
     Write-Host ''
     Write-Host '========================================'
@@ -356,10 +425,10 @@ function Export-AzLocalClusterUpdateReadinessReport {
 
     # 2. Action banner
     if ($notReady -gt 0 -or $clustersWithCritical -gt 0) {
-        [void]$md.Add("> **Action required**: $notReady cluster(s) not ready and/or $clustersWithCritical cluster(s) with Critical health failures. Review the **Not-Ready** and **Critical-health** sections below first; the CSV artifacts in ``azlocal-step.5-readiness-assessment-report_*`` carry the full per-finding detail. Remediate (hardware vendor SBE / firmware / cluster health) before or alongside the next apply-updates run. **The healthy clusters are safe to proceed** - Step.7_apply-updates.yml is per-cluster scoped.")
+        [void]$md.Add("> **Action required**: $notReady cluster(s) not ready and/or $clustersWithCritical cluster(s) with Critical health failures. Review the **Not-Ready** and **Critical-health** sections below first; the CSV artifacts in ``azlocal-readiness-assessment-report_*`` carry the full per-finding detail. Remediate (hardware vendor SBE / firmware / cluster health) before or alongside the next apply-updates run. **The healthy clusters are safe to proceed** - the **apply-updates** pipeline is per-cluster scoped.")
     }
     else {
-        [void]$md.Add('> **All clear**: every cluster in scope is ready for update. Safe to proceed with Step.7_apply-updates.yml for this ring.')
+        [void]$md.Add('> **All clear**: every cluster in scope is ready for update. Safe to proceed with the **apply-updates** pipeline for this ring.')
     }
     [void]$md.Add('')
 
@@ -446,7 +515,7 @@ function Export-AzLocalClusterUpdateReadinessReport {
     if ($criticalRows.Count -gt 0) {
         [void]$md.Add('### Critical-health clusters')
         [void]$md.Add('')
-        [void]$md.Add('_Cross-link: see **Step.4_fleet-connectivity-status** for connectivity-class failures and **Step.10_fleet-health-status** for the broader Critical/Warning catalog._')
+        [void]$md.Add('_Cross-link: see the **fleet-connectivity-status** pipeline for connectivity-class failures and the **fleet-health-status** pipeline for the broader Critical/Warning catalog._')
         [void]$md.Add('')
         [void]$md.Add('| Cluster | UpdateRing | Health state | Critical | Warning |')
         [void]$md.Add('|---------|------------|--------------|----------|---------|')
@@ -517,13 +586,37 @@ function Export-AzLocalClusterUpdateReadinessReport {
         [void]$md.Add('')
     }
 
-    # 8. Cross-links to other pipelines
+    # 8. Stale update assessments (v0.8.88)
+    if ($staleClusters.Count -gt 0) {
+        [void]$md.Add('### Stale update assessments')
+        [void]$md.Add('')
+        $scanNote = if ($SkipStaleAssessmentScan) {
+            'A refresh was **not** triggered (`-SkipStaleAssessmentScan`). Run **Sync-AzLocalClusterUpdateSummary** (or the portal "Check for updates" button) on these clusters, then re-run this assessment.'
+        }
+        elseif ($staleScanTriggered) {
+            'A fire-and-forget **Check for updates** (checkUpdates) was triggered automatically on these clusters to refresh the assessment. Re-run this assessment shortly to pick up the refreshed state.'
+        }
+        else {
+            'No refresh was triggered (no resolvable Resource IDs, or the trigger failed - see the run log).'
+        }
+        [void]$md.Add("> These clusters report **Up to Date** but their installed build is behind the latest released version ($($latestManifest.LatestYYMM)) in the public manifest - their update assessment is likely stale. $scanNote")
+        [void]$md.Add('')
+        [void]$md.Add('| Cluster | Installed version | Installed YYMM | Latest released YYMM |')
+        [void]$md.Add('|---------|-------------------|----------------|----------------------|')
+        foreach ($s in ($staleClusters | Sort-Object ClusterName)) {
+            $cvCell = if ($s.CurrentVersion) { $s.CurrentVersion } else { '-' }
+            [void]$md.Add("| $($s.ClusterName) | $cvCell | $($s.ClusterYYMM) | $($s.LatestYYMM) |")
+        }
+        [void]$md.Add('')
+    }
+
+    # 9. Cross-links to other pipelines
     [void]$md.Add('### Cross-link to other pipelines')
     [void]$md.Add('')
-    [void]$md.Add('- **Step.4_fleet-connectivity-status** - root-cause Disconnected / Offline / partial-connectivity findings on the Not-Ready and Critical-health rows above.')
-    [void]$md.Add('- **Step.7_apply-updates** - apply updates to the Ready clusters in this ring (manual workflow_dispatch, or wait for the scheduled cron firing).')
-    [void]$md.Add('- **Step.8_monitor-updates** - tail in-flight runs once Step.7 has started (auto-trigger on Step.7 completion, or manual).')
-    [void]$md.Add('- **Step.10_fleet-health-status** - broader Critical / Warning health catalog across the whole fleet (not just blocking-only).')
+    [void]$md.Add('- **fleet-connectivity-status** - root-cause Disconnected / Offline / partial-connectivity findings on the Not-Ready and Critical-health rows above.')
+    [void]$md.Add('- **apply-updates** - apply updates to the Ready clusters in this ring (manual workflow_dispatch, or wait for the scheduled cron firing).')
+    [void]$md.Add('- **monitor-updates** - tail in-flight runs once apply-updates has started (auto-trigger on apply-updates completion, or manual).')
+    [void]$md.Add('- **fleet-health-status** - broader Critical / Warning health catalog across the whole fleet (not just blocking-only).')
     [void]$md.Add('')
     [void]$md.Add('_Note: the **Update Readiness Assessment** entry in the Checks tab is the merged combined view; the [JUnit Debug] entries are diagnostic mirrors for CI/test tooling._')
 
@@ -544,6 +637,9 @@ function Export-AzLocalClusterUpdateReadinessReport {
             ClustersWithCritical = [int]$clustersWithCritical
             ReadinessRows        = @($readiness)
             HealthRows           = @($health)
+            StaleAssessmentCount         = [int]$staleClusters.Count
+            StaleAssessmentClusters      = $staleClusters.ToArray()
+            StaleAssessmentScanTriggered = [bool]$staleScanTriggered
             ReadinessCsvPath     = $readinessCsv
             ReadinessXmlPath     = $readinessXml
             HealthCsvPath        = $healthCsv

@@ -96,7 +96,7 @@ env:
   # this to the version actually installed and to the latest on PSGallery, and emits a
   # ::notice annotation if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.8.87'
+  GENERATED_AGAINST_MODULE_VERSION: '0.8.88'
   REQUIRED_MODULE_VERSION: ${{ github.event.inputs.module_version || vars.REQUIRED_MODULE_VERSION || '' }}
   # v0.8.4 - opt this workflow into Node.js 24 for all JavaScript actions
   # (actions/checkout, actions/download-artifact, actions/upload-artifact,
@@ -255,7 +255,7 @@ jobs:
       if: always()
       uses: actions/upload-artifact@v6
       with:
-        name: azlocal-step.3-apply-updates-schedule-audit-report_${{ steps.artifact-stamp.outputs.timestamp }}
+        name: azlocal-apply-updates-schedule-audit-report_${{ steps.artifact-stamp.outputs.timestamp }}
         path: ./reports/
         retention-days: 90
 
