@@ -142,6 +142,8 @@ The identity created in section 4 needs the following permissions on every subsc
 
 If you opt in to the ITSM connector with Key Vault-sourced secrets, the identity additionally needs **Key Vault Secrets User** on the configured vault. No other new RBAC.
 
+> **Future RBAC - "Check for updates" (checkUpdates) auto-refresh (preview):** Since v0.8.88, `Sync-AzLocalClusterUpdateSummary` and the opt-out stale-assessment auto-scan in `Export-AzLocalClusterUpdateReadinessReport` POST the `Microsoft.AzureStackHCI/clusters/updateSummaries/default/checkUpdates` ARM action (the programmatic "Check for updates" button) on the `2026-03-01-preview` API. **This action is still preview and is NOT yet published in the `Microsoft.AzureStackHCI` provider operations catalog, so it cannot be added to a custom role definition today** (`az role definition update` validates `Actions[]` against the catalog and rejects unregistered actions). Until it GAs, an identity holding only the least-privilege custom role above will get a `403 AuthorizationFailed` on the refresh call - this is **non-fatal**: the cmdlets log the error and continue, and the readiness report still completes (it just cannot auto-refresh a stale assessment). To exercise the refresh today, assign the built-in **Azure Stack HCI Administrator** or **Contributor** role on the cluster scope, or skip the scan with `-SkipStaleAssessmentScan`. **When checkUpdates GAs, add the GA'd action (expected `Microsoft.AzureStackHCI/clusters/updateSummaries/checkUpdates/action` - confirm the exact string from a 403 `AuthorizationFailed` body or the provider operations catalog) to the `Actions[]` array in the role JSON below and to the permissions table above.**
+
 > **Tag-management identity (Manage UpdateRing Tags pipeline)** can use the built-in **Tag Contributor** role on its own - it grants exactly `Microsoft.Resources/tags/*` and nothing else. Since v0.7.65, `Set-AzLocalClusterUpdateRingTag` writes tags via the dedicated `Microsoft.Resources/tags/default` PATCH endpoint, so the broader `microsoft.azurestackhci/clusters/write` action (full cluster Contributor) is **not** required for tag changes.
 
 ### 3.1 Custom role: `Azure Stack HCI Update Operator (custom)`
@@ -193,6 +195,8 @@ The recommended MG default is shown in the JSON below. Whichever path you pick, 
 ```
 
 `AssignableScopes` defaults to **one management-group scope** so the recommended MG + Azure Policy DINE path in [section 3.2](#32-recommended-assign-at-scale-via-azure-policy-dine-on-a-management-group) works out of the box (Azure custom roles can be assigned at or below any scope listed here). If you're following the legacy per-subscription path in [section 3.3](#33-manual--per-subscription-alternative-legacy), replace the entry with one or more `/subscriptions/<sub-id>` scopes instead - the hard cap is 2000 entries per role definition.
+
+> **Deliberately absent - `checkUpdates`:** the `Actions[]` array above does **not** include a `checkUpdates` action. The preview "Check for updates" auto-refresh (`Sync-AzLocalClusterUpdateSummary`) needs it, but the action is not yet in the `Microsoft.AzureStackHCI` provider operations catalog and `az role definition update` would reject it. See the **Future RBAC** note under the permissions table above. Add the GA'd action here once `checkUpdates` is generally available.
 
 **Who can run these commands?**
 

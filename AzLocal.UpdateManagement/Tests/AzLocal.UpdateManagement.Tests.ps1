@@ -34,8 +34,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $script:ModuleInfo | Should -Not -BeNullOrEmpty
         }
 
-        It 'Should have version 0.8.87' {
-            $script:ModuleInfo.Version | Should -Be '0.8.87'
+        It 'Should have version 0.8.88' {
+            $script:ModuleInfo.Version | Should -Be '0.8.88'
         }
 
         It 'Module version constants are in sync between .psm1 and .psd1' {
@@ -247,8 +247,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $content | Should -Match "eq\(variables\['SIDELOAD_UPDATES'\],\s*'1'\)" -Because "ADO gate must accept '1' (v0.8.76)"
         }
 
-        It 'Should export exactly 60 functions' {
-            $script:ModuleInfo.ExportedFunctions.Count | Should -Be 60
+        It 'Should export exactly 61 functions' {
+            $script:ModuleInfo.ExportedFunctions.Count | Should -Be 61
         }
 
         It 'Should export the expected functions' {
@@ -305,6 +305,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
                 'Get-AzLocalFleetHealthOverview',
                 # Latest Released Solution Version (v0.7.70 Phase E) - public manifest probe (aka.ms/AzureEdgeUpdates) anchoring the rolling YYMM support window in Step.6
                 'Get-AzLocalLatestSolutionVersion',
+                # Check for Updates (v0.8.88) - refresh a cluster's stale update assessment via the checkUpdates ARM action
+                'Sync-AzLocalClusterUpdateSummary',
                 # Fleet Connectivity Status (v0.7.79) - 4-scope connectivity audit: cluster, Arc agent, physical NIC, ARB
                 'Get-AzLocalFleetConnectivityStatus',
                 # Fleet Connectivity Status Summary Renderer (v0.7.87) - markdown step-summary builder used by Step.4 GH+ADO pipelines
@@ -8922,7 +8924,7 @@ Describe 'v0.7.66 Artifact download names carry a UTC timestamp suffix' {
         $script:examplesRoot = (Resolve-Path -Path (Join-Path $PSScriptRoot '..\Automation-Pipeline-Examples')).Path
     }
 
-    It 'GitHub Actions: every upload-artifact step uses a timestamped name and azlocal-step.X- prefix' {
+    It 'GitHub Actions: every upload-artifact step uses a timestamped azlocal- name with no legacy step.X- prefix' {
         $ghDir   = Join-Path $script:examplesRoot 'github-actions'
         $ghFiles = Get-ChildItem -Path $ghDir -Filter '*.yml' -File
         $offenders = New-Object System.Collections.Generic.List[string]
@@ -8932,8 +8934,11 @@ Describe 'v0.7.66 Artifact download names carry a UTC timestamp suffix' {
             $rxArtifact = [regex]::new("(?ms)uses:\s*actions/upload-artifact@[^\r\n]+\r?\n\s*with:\s*\r?\n\s*name:\s*([^\r\n]+)")
             foreach ($m in $rxArtifact.Matches($content)) {
                 $name = $m.Groups[1].Value.Trim().Trim("'""")
-                if ($name -notmatch '^azlocal-step\.\d+-') {
-                    $offenders.Add("$($yml.Name): upload-artifact name '$name' missing azlocal-step.<digit>- prefix (v0.7.99+)")
+                if ($name -notmatch '^azlocal-') {
+                    $offenders.Add("$($yml.Name): upload-artifact name '$name' missing azlocal- prefix")
+                }
+                if ($name -match '(?i)step\.\d+-') {
+                    $offenders.Add("$($yml.Name): upload-artifact name '$name' still carries a legacy step.<digit>- prefix (must be removed to future-proof, v0.8.x+)")
                 }
                 if ($name -notmatch '\$\{\{\s*steps\.[^}]+\.outputs\.timestamp\s*\}\}') {
                     $offenders.Add("$($yml.Name): upload-artifact name '$name' missing steps.<id>.outputs.timestamp suffix")
@@ -8941,10 +8946,10 @@ Describe 'v0.7.66 Artifact download names carry a UTC timestamp suffix' {
             }
         }
         $detail = if ($offenders.Count -gt 0) { $offenders -join [Environment]::NewLine } else { '(no offenders)' }
-        $offenders.Count | Should -Be 0 -Because "every actions/upload-artifact step must carry an azlocal-step.X-* name with steps.<id>.outputs.timestamp. Findings:$([Environment]::NewLine)$detail"
+        $offenders.Count | Should -Be 0 -Because "every actions/upload-artifact step must carry an azlocal-* name (no legacy step.X- prefix) with steps.<id>.outputs.timestamp. Findings:$([Environment]::NewLine)$detail"
     }
 
-    It 'Azure DevOps: every PublishBuildArtifacts / PublishPipelineArtifact uses a timestamped name and azlocal-step.X- prefix' {
+    It 'Azure DevOps: every PublishBuildArtifacts / PublishPipelineArtifact uses a timestamped azlocal- name with no legacy step.X- prefix' {
         $adoDir   = Join-Path $script:examplesRoot 'azure-devops'
         $adoFiles = Get-ChildItem -Path $adoDir -Filter '*.yml' -File
         $offenders = New-Object System.Collections.Generic.List[string]
@@ -8955,8 +8960,11 @@ Describe 'v0.7.66 Artifact download names carry a UTC timestamp suffix' {
             foreach ($m in $rxAdo.Matches($content)) {
                 $key  = $m.Groups[1].Value
                 $name = $m.Groups[2].Value
-                if ($name -notmatch '^azlocal-step\.\d+-') {
-                    $offenders.Add("$($yml.Name): ${key} '$name' missing azlocal-step.<digit>- prefix (v0.7.99+)")
+                if ($name -notmatch '^azlocal-') {
+                    $offenders.Add("$($yml.Name): ${key} '$name' missing azlocal- prefix")
+                }
+                if ($name -match '(?i)step\.\d+-') {
+                    $offenders.Add("$($yml.Name): ${key} '$name' still carries a legacy step.<digit>- prefix (must be removed to future-proof, v0.8.x+)")
                 }
                 # Accept either the in-stage step-output form (`$(stamp.artifactStamp)`)
                 # OR a cross-stage variable that ends in `ArtifactStamp)`, which is
@@ -8968,7 +8976,7 @@ Describe 'v0.7.66 Artifact download names carry a UTC timestamp suffix' {
             }
         }
         $detail = if ($offenders.Count -gt 0) { $offenders -join [Environment]::NewLine } else { '(no offenders)' }
-        $offenders.Count | Should -Be 0 -Because "every PublishBuildArtifacts/PublishPipelineArtifact ArtifactName must be azlocal-step.X-*_`$(stamp.artifactStamp). Findings:$([Environment]::NewLine)$detail"
+        $offenders.Count | Should -Be 0 -Because "every PublishBuildArtifacts/PublishPipelineArtifact ArtifactName must be azlocal-*_`$(stamp.artifactStamp) (no legacy step.X- prefix). Findings:$([Environment]::NewLine)$detail"
     }
 
     It 'GitHub Actions: legacy non-stamped artifact names are gone' {
@@ -11309,8 +11317,8 @@ Describe 'Function: Get-AzLocalFleetHealthOverview - v0.7.70 (ARG-first fleet he
             $cmd.CommandType | Should -Be 'Function'
         }
 
-        It 'BS7: Module exports exactly 60 functions (was 55 after Step.6 thin-YAML port; v0.8.7 sideload automation adds 5 cmdlets)' {
-            (Get-Module AzLocal.UpdateManagement).ExportedFunctions.Count | Should -Be 60
+        It 'BS7: Module exports exactly 61 functions (was 55 after Step.6 thin-YAML port; v0.8.7 sideload automation adds 5 cmdlets; v0.8.88 adds Sync-AzLocalClusterUpdateSummary)' {
+            (Get-Module AzLocal.UpdateManagement).ExportedFunctions.Count | Should -Be 61
         }
     }
 
@@ -19542,3 +19550,162 @@ Describe 'v0.8.87: monitor-updates.yml gains an opt-in ITSM ticketing step' {
 }
 
 #endregion v0.8.87: monitor JUnit properties + ITSM wiring + Config:03 monitor cron
+
+#region v0.8.88: Check for updates (checkUpdates) - Sync cmdlet + stale-assessment detector
+
+Describe 'Function: Sync-AzLocalClusterUpdateSummary' {
+
+    Context 'Parameter Validation' {
+        BeforeAll {
+            $command = Get-Command Sync-AzLocalClusterUpdateSummary
+        }
+
+        It 'Should have ClusterNames parameter' {
+            $command.Parameters.Keys | Should -Contain 'ClusterNames'
+        }
+
+        It 'Should have ClusterResourceIds parameter' {
+            $command.Parameters.Keys | Should -Contain 'ClusterResourceIds'
+        }
+
+        It 'Should have ScopeByUpdateRingTag parameter' {
+            $command.Parameters.Keys | Should -Contain 'ScopeByUpdateRingTag'
+        }
+
+        It 'Should have UpdateRingValue parameter' {
+            $command.Parameters.Keys | Should -Contain 'UpdateRingValue'
+        }
+
+        It 'Should have ApiVersion parameter' {
+            $command.Parameters.Keys | Should -Contain 'ApiVersion'
+        }
+
+        It 'ApiVersion should default to the preview surface (2026-03-01-preview)' {
+            # checkUpdates is only exposed on the preview API.
+            $src = Get-Content -Raw -LiteralPath "$PSScriptRoot/../Public/Sync-AzLocalClusterUpdateSummary.ps1"
+            $src | Should -Match "\[string\]\`$ApiVersion\s*=\s*'2026-03-01-preview'"
+        }
+
+        It 'Should have Wait, Force and PassThru switches' {
+            $command.Parameters.Keys | Should -Contain 'Wait'
+            $command.Parameters.Keys | Should -Contain 'Force'
+            $command.Parameters.Keys | Should -Contain 'PassThru'
+        }
+
+        It 'TimeoutSeconds should be ValidateRange(30,3600) with default 300' {
+            $src = Get-Content -Raw -LiteralPath "$PSScriptRoot/../Public/Sync-AzLocalClusterUpdateSummary.ps1"
+            $src | Should -Match '\[ValidateRange\(30,\s*3600\)\]'
+            $src | Should -Match '\[int\]\$TimeoutSeconds\s*=\s*300'
+        }
+
+        It 'PollIntervalSeconds should be ValidateRange(5,300) with default 15' {
+            $src = Get-Content -Raw -LiteralPath "$PSScriptRoot/../Public/Sync-AzLocalClusterUpdateSummary.ps1"
+            $src | Should -Match '\[ValidateRange\(5,\s*300\)\]'
+            $src | Should -Match '\[int\]\$PollIntervalSeconds\s*=\s*15'
+        }
+
+        It 'Should support ShouldProcess (-WhatIf / -Confirm)' {
+            $command.Parameters.Keys | Should -Contain 'WhatIf'
+            $command.Parameters.Keys | Should -Contain 'Confirm'
+        }
+
+        It 'Should have three cluster-selection parameter sets' {
+            $command.ParameterSets.Name | Should -Contain 'ByName'
+            $command.ParameterSets.Name | Should -Contain 'ByResourceId'
+            $command.ParameterSets.Name | Should -Contain 'ByTag'
+        }
+    }
+
+    Context 'v0.8.88: Authorization (403) error surfacing (source guard)' {
+        # The auto-scan can run under a least-privilege custom role that does NOT yet
+        # include the preview checkUpdates action. When that happens, ARM returns
+        # AuthorizationFailed; the cmdlet must echo the FULL error (which carries the
+        # denied Action name + scope) and flag the row so operators can capture it.
+        BeforeAll {
+            $script:srcSync = Get-Content -Raw -LiteralPath "$PSScriptRoot/../Public/Sync-AzLocalClusterUpdateSummary.ps1"
+        }
+
+        It 'Echoes the full POST error text via Write-Log Error (contains denied Action + scope)' {
+            $script:srcSync | Should -Match '\$errorText\s*=\s*\[string\]\$postResp\.Error'
+            $script:srcSync | Should -Match 'checkUpdates POST failed:\s*\$errorText'
+            $script:srcSync | Should -Match "Write-Log -Message `"  \`$clusterName : FAILED - \`$errorText`" -Level Error"
+        }
+
+        It 'Detects AuthorizationFailed / Forbidden / 403 and sets Status = AuthorizationFailed' {
+            $script:srcSync | Should -Match "if \(\`$errorText -match 'AuthorizationFailed\|does not have authorization\|Forbidden\|\\b403\\b'\)"
+            $script:srcSync | Should -Match "\`$row\.Status\s*=\s*'AuthorizationFailed'"
+        }
+
+        It 'Emits an explicit RBAC warning telling the operator to copy the Action name' {
+            $script:srcSync | Should -Match 'AUTHORIZATION ERROR'
+            $script:srcSync | Should -Match "Copy the exact 'Action' name and scope"
+            $script:srcSync | Should -Match 'preview checkUpdates action'
+            $script:srcSync | Should -Match "-Level Warning"
+        }
+    }
+}
+
+Describe 'Helper Function: Test-AzLocalUpdateAssessmentStale (Internal)' {
+
+    It 'Flags IsStale = $true when installed YYMM is strictly behind latest' {
+        InModuleScope AzLocal.UpdateManagement {
+            $r = Test-AzLocalUpdateAssessmentStale -CurrentVersion '12.2605.1003.210' -LatestYYMM '2606'
+            $r.IsStale | Should -BeTrue
+            $r.ClusterYYMM | Should -Be '2605'
+            $r.LatestYYMM | Should -Be '2606'
+            $r.Reason | Should -Match 'behind'
+        }
+    }
+
+    It 'Returns IsStale = $false when installed YYMM equals latest (current)' {
+        InModuleScope AzLocal.UpdateManagement {
+            $r = Test-AzLocalUpdateAssessmentStale -CurrentVersion '12.2606.1003.210' -LatestYYMM '2606'
+            $r.IsStale | Should -BeFalse
+            $r.ClusterYYMM | Should -Be '2606'
+        }
+    }
+
+    It 'Returns IsStale = $false when installed YYMM is ahead of latest' {
+        InModuleScope AzLocal.UpdateManagement {
+            $r = Test-AzLocalUpdateAssessmentStale -CurrentVersion '12.2607.1003.210' -LatestYYMM '2606'
+            $r.IsStale | Should -BeFalse
+            $r.ClusterYYMM | Should -Be '2607'
+        }
+    }
+
+    It 'Does not flag stale when CurrentVersion is empty (cannot assess)' {
+        InModuleScope AzLocal.UpdateManagement {
+            $r = Test-AzLocalUpdateAssessmentStale -CurrentVersion '' -LatestYYMM '2606'
+            $r.IsStale | Should -BeFalse
+            $r.ClusterYYMM | Should -BeNullOrEmpty
+            $r.Reason | Should -Match 'No installed version'
+        }
+    }
+
+    It 'Does not flag stale when CurrentVersion has no parseable YYMM token' {
+        InModuleScope AzLocal.UpdateManagement {
+            $r = Test-AzLocalUpdateAssessmentStale -CurrentVersion '12.9.7' -LatestYYMM '2606'
+            $r.IsStale | Should -BeFalse
+            $r.ClusterYYMM | Should -BeNullOrEmpty
+            $r.Reason | Should -Match 'no parseable YYMM'
+        }
+    }
+
+    It 'Does not flag stale when LatestYYMM is missing or invalid' {
+        InModuleScope AzLocal.UpdateManagement {
+            $r = Test-AzLocalUpdateAssessmentStale -CurrentVersion '12.2605.1003.210' -LatestYYMM ''
+            $r.IsStale | Should -BeFalse
+            $r.Reason | Should -Match 'No valid manifest LatestYYMM'
+        }
+    }
+
+    It 'Parses the first valid YYMM token (YY in 20-99, MM in 01-12)' {
+        InModuleScope AzLocal.UpdateManagement {
+            # 1003 is not a valid YYMM (MM=03 ok but YY=10 < 20), so 2605 is selected.
+            $r = Test-AzLocalUpdateAssessmentStale -CurrentVersion '12.2605.1003.210' -LatestYYMM '2606'
+            $r.ClusterYYMM | Should -Be '2605'
+        }
+    }
+}
+
+#endregion v0.8.88: Check for updates (checkUpdates) - Sync cmdlet + stale-assessment detector

@@ -105,7 +105,7 @@ variables:
   # the version actually installed and to the latest on PSGallery, and emits a warning
   # log if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.8.87'
+  GENERATED_AGAINST_MODULE_VERSION: '0.8.88'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): queue-time parameter > pipeline variable
   # 'REQUIRED_MODULE_VERSION' overridden at queue time > empty (latest).
@@ -218,7 +218,7 @@ stages:
       condition: always()
       inputs:
         PathtoPublish: '$(reportsPath)'
-        ArtifactName: 'azlocal-step.10-fleet-health-status-report_$(stamp.artifactStamp)'
+        ArtifactName: 'azlocal-fleet-health-status-report_$(stamp.artifactStamp)'
         publishLocation: 'Container'
 
     # Publish JUnit test results LAST so the Test Results tab is populated but the
@@ -322,7 +322,7 @@ stages:
       condition: and(always(), eq('${{ parameters.raiseItsmTicket }}', 'true'))
       inputs:
         PathtoPublish: '$(reportsPath)'
-        ArtifactName: 'azlocal-step.10-fleet-health-status-itsm-results_$(stamp.artifactStamp)'
+        ArtifactName: 'azlocal-fleet-health-status-itsm-results_$(stamp.artifactStamp)'
         publishLocation: 'Container'
       continueOnError: true
 

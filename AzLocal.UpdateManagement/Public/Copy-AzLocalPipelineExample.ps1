@@ -744,7 +744,7 @@ function Copy-AzLocalPipelineExample {
             }
             Write-Host "  2. RECOMMENDED: run 'setup-validate-and-inventory.yml' FIRST (one-shot) to validate OIDC / RBAC and generate your initial cluster inventory before wiring the other workflows. See section 5.1 of the Automation-Pipeline-Examples README."
             Write-Host "  3. Wire up authentication (OIDC / Workload Identity / Managed Identity / SP) - see section 3 of the README."
-            Write-Host "  4. SCHEDULED Step.6 (apply-updates) requires apply-updates-schedule.yml:" -ForegroundColor Yellow
+            Write-Host "  4. SCHEDULED apply-updates requires apply-updates-schedule.yml:" -ForegroundColor Yellow
             foreach ($line in $scheduleHintLines) { Write-Host $line }
             Write-Host "     See section 5.1 step 5 + section 8 of the README for the full schema, multi-stage rollouts, and the allowedUpdateVersions allow-list."
             Write-Host "  5. Optional: enable the ITSM connector by setting 'raise_itsm_ticket=true' (setup in ITSM/README.md)."
@@ -752,12 +752,12 @@ function Copy-AzLocalPipelineExample {
         }
         'AzureDevOps' {
             Write-Host ("  1. Commit the YAML files from '{0}' to your Azure Repo." -f $targetRoot)
-            Write-Host "  2. RECOMMENDED: import 'Step.0_authentication-test.yml' FIRST (one-shot) to validate the service connection / RBAC before wiring the other pipelines. See section 5.2 of the Automation-Pipeline-Examples README."
+            Write-Host "  2. RECOMMENDED: import 'setup-validate-and-inventory.yml' FIRST (one-shot) to validate the service connection / RBAC before wiring the other pipelines. See section 5.2 of the Automation-Pipeline-Examples README."
             Write-Host "  3. For each remaining YAML: Pipelines -> New pipeline -> Existing Azure Pipelines YAML file -> point at the file -> Save."
             Write-Host "  4. Each pipeline references service connection 'AzureLocal-ServiceConnection' - either name yours to match or edit 'azureSubscription:' in each YAML."
-            Write-Host "  5. SCHEDULED Step.6 (apply-updates) requires apply-updates-schedule.yml:" -ForegroundColor Yellow
+            Write-Host "  5. SCHEDULED apply-updates requires apply-updates-schedule.yml:" -ForegroundColor Yellow
             foreach ($line in $scheduleHintLines) { Write-Host $line }
-            Write-Host "     Step.7 reads APPLY_UPDATES_SCHEDULE_PATH (default './config/apply-updates-schedule.yml'). Override the variable in the pipeline if you keep the schedule elsewhere. See section 5.2 step 6 + section 8 of the README."
+            Write-Host "     apply-updates reads APPLY_UPDATES_SCHEDULE_PATH (default './config/apply-updates-schedule.yml'). Override the variable in the pipeline if you keep the schedule elsewhere. See section 5.2 step 6 + section 8 of the README."
             Write-Host "  6. Optional: enable the ITSM connector by setting 'raise_itsm_ticket=true' (setup in ITSM/README.md)."
             foreach ($line in $sideloadHintLines) { Write-Host $line }
         }

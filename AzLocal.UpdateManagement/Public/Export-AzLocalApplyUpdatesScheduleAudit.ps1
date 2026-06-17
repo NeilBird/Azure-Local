@@ -272,7 +272,7 @@ function Export-AzLocalApplyUpdatesScheduleAudit {
     }
 
     if (-not (Test-Path -LiteralPath $PipelineYamlPath)) {
-        throw "PipelineYamlPath '$PipelineYamlPath' does not exist. Set it to the folder containing Step.7_apply-updates.yml (e.g. '.github/workflows' or '.azure-pipelines') so the Recommend view can diff its proposed crons against the existing file."
+        throw "PipelineYamlPath '$PipelineYamlPath' does not exist. Set it to the folder containing apply-updates.yml (e.g. '.github/workflows' or '.azure-pipelines') so the Recommend view can diff its proposed crons against the existing file."
     }
 
     $haveSchedule = $false
@@ -594,7 +594,7 @@ function Export-AzLocalApplyUpdatesScheduleAudit {
     & $addDetailTable '### Audit Detail - Cron coverage (Uncovered / Partial / Malformed first)' $cronRows 'No tagged clusters found - nothing to audit.'
 
     if (-not $hasIssues -and $recoContent) {
-        [void]$md.Add('### Reference - Recommended schedule (copy into Step.7_apply-updates.yml)')
+        [void]$md.Add('### Reference - Recommended schedule (copy into apply-updates.yml)')
         [void]$md.Add('')
         [void]$md.Add($recoContent)
         [void]$md.Add('')
@@ -839,11 +839,11 @@ function Export-AzLocalApplyUpdatesScheduleAudit {
             Write-Warning "Failed to read apply-updates crons for the sideload schedule recommendation: $($_.Exception.Message)"
         }
 
-        [void]$md.Add('### Recommended sideload schedule (Step.6 - opt-in)')
+        [void]$md.Add('### Recommended sideload schedule (sideload-updates - opt-in)')
         [void]$md.Add('')
-        [void]$md.Add("`SIDELOAD_UPDATES` is enabled, so media must be pre-staged on each cluster **$leadDays day(s)** before its apply window opens. The on-prem **Step.6 - Sideload Update** pipeline is re-entrant: drive it on a frequent poll cron and its planner uses `SIDELOAD_LEAD_DAYS=$leadDays` to decide when each cluster is due.")
+        [void]$md.Add("`SIDELOAD_UPDATES` is enabled, so media must be pre-staged on each cluster **$leadDays day(s)** before its apply window opens. The on-prem **Sideload Updates** pipeline is re-entrant: drive it on a frequent poll cron and its planner uses `SIDELOAD_LEAD_DAYS=$leadDays` to decide when each cluster is due.")
         [void]$md.Add('')
-        [void]$md.Add('Recommended Step.6 poll cron (every 30 minutes) - paste into the `schedule:`/`schedules:` block of `sideload-updates.yml`:')
+        [void]$md.Add('Recommended sideload-updates poll cron (every 30 minutes) - paste into the `schedule:`/`schedules:` block of `sideload-updates.yml`:')
         [void]$md.Add('')
         [void]$md.Add('```')
         [void]$md.Add('*/30 * * * *')
@@ -871,11 +871,11 @@ function Export-AzLocalApplyUpdatesScheduleAudit {
                 [void]$md.Add(('| {0} {1} | {2} | {3} {1} | `{4}` |' -f $dayNames[$applyDow], $hhmm, $leadDays, $dayNames[$shiftedDow], $kickoffCron))
             }
             [void]$md.Add('')
-            [void]$md.Add('> The kickoff cron is the EARLIEST point staging could start for that window. The re-entrant Step.6 pipeline (frequent poll) advances the multi-hour copy from that point; you do NOT need a separate cron per ring.')
+            [void]$md.Add('> The kickoff cron is the EARLIEST point staging could start for that window. The re-entrant sideload-updates pipeline (frequent poll) advances the multi-hour copy from that point; you do NOT need a separate cron per ring.')
             [void]$md.Add('')
         }
         else {
-            [void]$md.Add('> No simple weekly apply-window firings were found in the pipeline YAML, so a per-window kickoff cron could not be derived. Drive Step.6 on the recommended poll cron above; its planner will stage each cluster `SIDELOAD_LEAD_DAYS` days before its apply window.')
+            [void]$md.Add('> No simple weekly apply-window firings were found in the pipeline YAML, so a per-window kickoff cron could not be derived. Drive sideload-updates on the recommended poll cron above; its planner will stage each cluster `SIDELOAD_LEAD_DAYS` days before its apply window.')
             [void]$md.Add('')
         }
         $sideloadScheduleIncluded = $true
