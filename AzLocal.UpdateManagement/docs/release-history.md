@@ -4,7 +4,13 @@
 >
 > **For older releases**, this is the canonical reference; the main README intentionally stays slim so the most recent block is easy to find.
 >
-> **For v0.8.89 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0889) `What's New in v0.8.89` section.
+> **For v0.8.90 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0890) `What's New in v0.8.90` section.
+
+---
+
+### What's New in v0.8.89
+
+Sharpens the Config: 3 (`Export-AzLocalApplyUpdatesScheduleAudit`) "Recommended in-flight monitor schedule (Update: 4)" so the recommended `monitor-updates.yml` cron only polls when an update can actually be in flight, instead of 24x7. Replaces `-MonitorFiresPerHour` with `-MonitorPollIntervalMinutes` (`ValidateSet` 15/20/30/60/120/180/240, default 30) and adds `-MonitorInFlightHours` (`ValidateRange` 0-48, default 6). Monitor **days** now derive from `apply-updates-schedule.yml` ring eligibility (the cycle calendar) when `-SchedulePath` is supplied, otherwise from the `apply-updates.yml` cron weekday(s); monitor **hours** are bounded to the `UpdateStartWindow` span plus the in-flight buffer, falling back to all-hours when a run can cross midnight. Adds an Automation-Pipeline-Examples README section "How to control which updates are installed, and when". Catalog-checks, documents, and guards the `checkUpdates` RBAC action (deliberately omitted from the least-privilege role until it GAs). No public-API change (export count 61). `GENERATED_AGAINST_MODULE_VERSION` bumped from `0.8.88` to `0.8.89`. See [CHANGELOG.md](../CHANGELOG.md#0889---2026-06-18) for the full v0.8.89 entry.
 
 ---
 

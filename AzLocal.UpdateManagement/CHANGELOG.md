@@ -5,6 +5,39 @@ All notable changes to the AzLocal.UpdateManagement module (renamed from AzStack
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.90] - 2026-06-20
+
+Adds opt-in event-driven in-flight update monitoring so Update: 4 (Monitor In-Flight Updates)
+runs right after Update: 3 (Apply Updates) starts an update, yet stays cheap the rest of the
+time. Introduces a fleet-wide idle short-circuit on the monitor cmdlet, an event-driven trigger
+from apply to monitor on both platforms, a 6-hourly default monitor cron, and Config: 3
+recommendation tuning inputs.
+
+### Added
+
+- **`Export-AzLocalUpdateRunMonitorReport -SkipWhenIdle` switch.** Performs one low-cost
+  fleet-wide Azure Resource Graph probe (new private helper `Test-AzLocalUpdateRunsInFlight`:
+  "any `updateRuns` `InProgress`?") and short-circuits to an IDLE result - writing the empty
+  CSV/JUnit artefacts and all-zero step outputs - skipping the per-cluster sweep when nothing
+  is in flight. Fail-safe: a probe error runs the full sweep rather than skipping.
+- **Event-driven trigger from Update: 3 to Update: 4.** `apply-updates.yml` fires the monitor
+  after starting >=1 update - `gh workflow run monitor-updates.yml` on GitHub Actions
+  (job gains `actions: write`) / the Pipelines REST queue API on Azure DevOps - tagged
+  `triggered_by=apply-updates`. The monitor honours an optional `MONITOR_TRIGGER_DELAY_MINUTES`
+  startup delay (unset/0 = off, otherwise clamped 15-240) so it lands AFTER updates move into
+  `InProgress`. Cron/manual runs never delay. The monitor allows concurrent runs so a sleeping
+  event-driven run never blocks the next.
+- **Config: 3 monitor-recommendation tuning inputs.** Both `apply-updates-schedule-audit.yml`
+  templates expose `MonitorPollIntervalMinutes` / `MonitorTrailingDays` / `MonitorInFlightHours`
+  as workflow inputs/parameters and plumb them into `Export-AzLocalApplyUpdatesScheduleAudit`.
+
+### Changed
+
+- **`monitor-updates.yml` default cron drops from 5x/day to every 6h (`0 */6 * * *`)** and
+  passes `-SkipWhenIdle` by default on both platforms.
+- All bundled pipeline templates bump `GENERATED_AGAINST_MODULE_VERSION` from `'0.8.89'` to
+  `'0.8.90'`. Export count unchanged (still 61 - the new helper is private).
+
 ## [0.8.89] - 2026-06-18
 
 Sharpens the Config: 3 (`Export-AzLocalApplyUpdatesScheduleAudit`) "Recommended in-flight

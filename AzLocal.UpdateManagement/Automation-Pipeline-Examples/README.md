@@ -74,8 +74,8 @@ This is the whole journey - from an empty repo to a self-running, ring-based upd
 - [ ] **10. Plan rings and apply tags:** decide Pilot/Wave2/Production rings and `UpdateStartWindow`s, then bulk-apply them with **Config: 2 - Manage UpdateRing Tags**. See [section 6.2](#62-plan-update-rings-windows-and-exclusions) and [6.3](#63-apply-tags).
 - [ ] **11. Pre-flight readiness:** run **Update: 1 - Assess Update Readiness** to surface blockers before scheduling. See [section 6.4](#64-pre-flight-readiness-assessment).
 - [ ] **12. Generate `apply-updates-schedule.yml`** from the live fleet with `New-AzLocalApplyUpdatesScheduleConfig`. See [section 6.5](#65-generate-apply-updates-scheduleyml-from-your-live-fleet).
-- [ ] **13. Run Config: 3 - Apply-Updates Schedule Coverage Audit**, then paste its **apply cron** into `apply-updates.yml` and its **monitor cron** into `monitor-updates.yml`. See [section 1.2](#12-how-to-control-which-updates-are-installed-and-when) and [section 8.3](#83-end-to-end-runbook-apply-updates-schedule-coverage-audit).
-- [ ] **14. Go live:** apply updates one wave at a time with **Update: 3 - Apply Updates**, and enable continuous monitoring (**Monitor: 1-3** + **Update: 4**). See [section 6.6](#66-apply-updates---one-wave-at-a-time) and [6.7](#67-continuous-fleet-monitoring).
+- [ ] **13. Run Config: 3 - Apply-Updates Schedule Coverage Audit**, then paste its **apply cron** into `apply-updates.yml`. *(v0.8.90: the **monitor cron** it also recommends is now optional - `monitor-updates.yml` self-drives via an every-6h `-SkipWhenIdle` heartbeat plus an event-driven trigger from Apply; paste the recommended monitor cron only to tighten in-wave polling.)* See [section 1.2](#12-how-to-control-which-updates-are-installed-and-when) and [section 8.3](#83-end-to-end-runbook-apply-updates-schedule-coverage-audit).
+- [ ] **14. Go live:** apply updates one wave at a time with **Update: 3 - Apply Updates**. Continuous monitoring (**Monitor: 1-3** + **Update: 4**) is already active by default - *(v0.8.90)* **Update: 4** auto-runs every 6h with a cheap `-SkipWhenIdle` heartbeat and is fired event-driven by Apply the moment an update starts, so there is nothing to turn on. See [section 6.6](#66-apply-updates---one-wave-at-a-time) and [6.7](#67-continuous-fleet-monitoring).
 
 > **The detailed walkthrough below mirrors this checklist exactly.** Sections 2-5 cover the one-time setup (steps 1-8); [section 6](#6-end-to-end-runbook-bring-an-estate-online) is the canonical end-to-end runbook for the operating loop (steps 9-14). If you only read one section in depth, read [section 6](#6-end-to-end-runbook-bring-an-estate-online).
 
@@ -159,10 +159,10 @@ In one sentence: **`apply-updates-schedule.yml` picks the days, the cron picks t
    - a **recommended apply cron** for **Update: 3 - Apply Updates** (`apply-updates.yml`), and
    - a **recommended in-flight monitor cron** for **Update: 4 - Monitor In-Flight Updates** (`monitor-updates.yml`).
 4. **Paste the apply cron into `apply-updates.yml`.** Copy the recommended apply cron from the Config: 3 summary into the `schedule:` block (GitHub Actions) / `schedules:` block (Azure DevOps) of `apply-updates.yml`, inside the `BEGIN/END-AZLOCAL-CUSTOMIZE:schedule-triggers` marker. Commit. Update: 3 now wakes on exactly the eligible days.
-5. **Paste the monitor cron into `monitor-updates.yml`.** Copy the recommended monitor cron into the `schedule:` block of `monitor-updates.yml`. Update: 4 then polls only while updates can be in flight (see [section 6.7](#67-continuous-fleet-monitoring)), instead of 24x7.
+5. **(Optional, v0.8.90+) Tighten the monitor poll cadence.** `monitor-updates.yml` already self-drives - it ships an active every-6h `0 */6 * * *` cron that runs a cheap `-SkipWhenIdle` heartbeat, and Apply fires it event-driven the moment an update starts (see [section 6.7](#67-continuous-fleet-monitoring)), so you **no longer need to paste a monitor cron** for the monitor to run. If you want tighter in-wave polling than every 6h, copy the recommended monitor cron from the Config: 3 summary into the `schedule:` block of `monitor-updates.yml` to override the default.
 6. **Re-run Config: 3 whenever tags or the schedule change** to catch drift and regenerate the crons. The weekly `apply-updates-schedule-audit.yml` does this automatically (see [section 8.3](#83-end-to-end-runbook-apply-updates-schedule-coverage-audit)).
 
-> **Config: 3 is the glue.** Once layers 1 and 3 are in place, it derives the layer-2 crons for both the apply and the monitor pipelines - so you never hand-craft cron expressions, and Update: 3 and Update: 4 stay aligned to your rings and maintenance windows.
+> **Config: 3 is the glue.** Once layers 1 and 3 are in place, it derives the layer-2 apply cron (and an optional tighter monitor cron) - so you never hand-craft cron expressions, and Update: 3 and Update: 4 stay aligned to your rings and maintenance windows.
 
 ---
 
@@ -598,6 +598,8 @@ Subject-claim patterns for other trigger types:
 
 No `AZURE_CLIENT_SECRET` is needed.
 
+> **Optional extra Variable (v0.8.90):** `MONITOR_TRIGGER_DELAY_MINUTES` lets you delay the in-flight monitor when it is fired automatically by Apply Updates, so its first snapshot lands after the new `updateRun` registers as `InProgress`. It is opt-in (unset/0 = no delay), non-sensitive (a plain integer, so a Variable not a Secret), and honoured in the `15`-`240` range. See [6.7 Continuous fleet monitoring -> Event-driven monitor trigger](#67-continuous-fleet-monitoring) for the full end-to-end behaviour.
+
 For public repositories, prefer [environment secrets with required reviewers](https://docs.github.com/en/actions/deployment/targeting-different-environments/using-environments-for-deployment#environment-secrets) over repository-level secrets - they restrict who can run the workflow against production identities.
 
 You can add the secrets via the **GitHub UI** (**Settings -> Secrets and variables -> Actions -> New repository secret**, then **Settings -> Environments -> `<env>` -> Add secret** for environment-scoped values), or scripted via the **GitHub CLI** (`gh`) - expand the section below.
@@ -1003,7 +1005,7 @@ Both platforms expect the YAML files inside this folder to land in a platform-sp
         fleet-health-status.yml
     ```
 3. Commit and push. The workflows appear in the **Actions** tab.
-4. Each workflow exposes its inputs via the **Run workflow** button (workflow_dispatch). The scheduled triggers (e.g. `fleet-connectivity-status.yml` runs daily at 05:30 UTC, `monitor-updates.yml` runs 5x/day at 20:00, 22:00, 00:00, 02:00, 04:00 UTC (every 2h across the typical overnight maintenance window, v0.7.92+ default - edit the cron in the file if your maintenance window differs), `fleet-update-status.yml` runs daily at 06:00 UTC, `fleet-health-status.yml` runs daily at 07:00 UTC, `apply-updates-schedule-audit.yml` runs weekly on Mondays at 05:00 UTC) activate automatically once the file is on the default branch.
+4. Each workflow exposes its inputs via the **Run workflow** button (workflow_dispatch). The scheduled triggers (e.g. `fleet-connectivity-status.yml` runs daily at 05:30 UTC, `monitor-updates.yml` runs every 6h at 00:00, 06:00, 12:00, 18:00 UTC (v0.8.90+ default - a low-cost `-SkipWhenIdle` heartbeat that short-circuits when nothing is in flight; edit the cron in the file if you prefer a different cadence), `fleet-update-status.yml` runs daily at 06:00 UTC, `fleet-health-status.yml` runs daily at 07:00 UTC, `apply-updates-schedule-audit.yml` runs weekly on Mondays at 05:00 UTC) activate automatically once the file is on the default branch. **v0.8.90:** `apply-updates.yml` also fires `monitor-updates.yml` automatically as soon as it starts >=1 update (event-driven trigger), so the monitor catches in-flight runs without waiting for the next 6-hourly slot.
 5. **Replace the starter `apply-updates-schedule.yml` with one generated from your live fleet** (required for scheduled Apply + Schedule-Audit runs; manual `workflow_dispatch` runs of Apply work without it because they use the `-UpdateRingValue` input verbatim). v0.8.7+ `Copy-AzLocalPipelineExample -Platform GitHub` drops a starter `apply-updates-schedule.yml` into a `config\` folder at the repo root by default. The starter ships with demo ring names (`Canary`, `DevTest`, `Ring1`, `Ring2`, `Prod`) that almost never match real estates; regenerate from your live fleet:
 
    ```powershell
@@ -1111,7 +1113,7 @@ This is the canonical "nothing wired -> staged rollout working" sequence. Follow
 |       - "Are Arc agents Connected, NICs healthy, Resource Bridges      |
 |          reachable, and does the cluster's node count reconcile        |
 |          with Arc-tagged physical machines?"                           |
-|  6.6  monitor-updates.yml  (5x/day 20-04 UTC every 2h, manual too)     |
+|  6.6  monitor-updates.yml  (every 6h + event-driven, -SkipWhenIdle)    |
 |       - v0.7.90                                                        |
 |       - "What is happening right now? Which clusters are mid-update,   |
 |          which step are they on, and is anything stuck?" In-flight     |
@@ -1346,15 +1348,57 @@ The "steady-state" phase ships **three complementary pipelines**, all read-only,
 | Pipeline | Daily | Answers | Output |
 |----------|-------|---------|--------|
 | `fleet-connectivity-status.yml` *(v0.7.79+, enhanced in v0.7.85)* | 05:30 UTC | *"Are all clusters' Arc agents Connected? Are physical NICs healthy? Are Azure Resource Bridges reachable? Does the cluster's reported node count match the Arc-tagged physical machines we see?"* | JUnit + per-scope CSV/JSON + Markdown summary; one test case per cluster, with reconciliation rows that include "How to interpret + act" remediation guidance for any non-zero node-coverage delta |
-| `monitor-updates.yml` *(v0.7.90; v0.7.92 default cadence)* | 5x/day at 20:00, 22:00, 00:00, 02:00, 04:00 UTC (every 2h across the overnight maintenance window) + manual | *"What is happening right now? Which clusters are mid-update, which step are they on, and is anything stuck?"* | JUnit + CSV + Markdown summary; one test case per in-flight cluster (failure when elapsed > threshold, default 6h) |
+| `monitor-updates.yml` *(v0.7.90; v0.8.90 default cadence)* | every 6h at 00:00, 06:00, 12:00, 18:00 UTC + event-driven (fired by `apply-updates.yml`) + manual | *"What is happening right now? Which clusters are mid-update, which step are they on, and is anything stuck?"* | JUnit + CSV + Markdown summary; one test case per in-flight cluster (failure when elapsed > threshold, default 6h). Runs a cheap `-SkipWhenIdle` heartbeat that short-circuits when nothing is in flight |
 | `fleet-update-status.yml` | 06:00 UTC | *"Is each cluster up-to-date? Which ones need an apply, which ones are SBE-blocked, which ones failed?"* | JUnit + CSV/JSON + Markdown summary; one test case per cluster |
 | `fleet-health-status.yml` *(v0.7.65, formerly Step.9)* | 07:00 UTC | *"Do clusters have actionable health issues even when up-to-date? What failure reasons hit the most clusters?"* | JUnit + CSV/JSON + Markdown summary; one test case per (cluster, failing 24-hour health check) grouped under Critical / Warning testsuites |
 
-The four run in distinct (offset) cron slots so they don't contend for the same agent. `monitor-updates.yml` ships **without** an active schedule - turn the `'*/30 * * * *'` cron on only during an active wave.
+The four run in distinct (offset) cron slots so they don't contend for the same agent. **v0.8.90:** `monitor-updates.yml` now ships with an active 6-hourly `0 */6 * * *` cron that runs a low-cost `-SkipWhenIdle` heartbeat (one fleet-wide "anything in flight?" probe that short-circuits when idle), and is additionally fired event-driven by `apply-updates.yml` the moment it starts an update - so you no longer have to manually turn a cron on during a wave.
 
 ![Step.08 - Monitor In-Flight Updates summary tab: red Fleet Status CRITICAL header (1 run > 6d, 1 step > 4h, 4 unresolved failures, 20 clusters scoped), the new Tip line explaining Ctrl/Cmd/middle-click for new-tab opens (GitHub markdown strips target="_blank"), the In-flight runs table with the new deep-tree Progress column showing `132/167 steps (79%)` for the Arizona Solution12.2604.1003.1005 CAU Attempt step, and the Failed runs table with plain-anchor Cluster + Update hyperlinks for Toronto / Virginia / NewYorkCity](../docs/images/monitor-inflight-updates.png)
 
 *Step.08 in-flight monitor on a real 20-cluster fleet - the `Progress` column reports leaf-step completion (`M/N steps (P%)`) since v0.8.74 instead of the coarse top-level wrapper count that previously always read `1/2 steps`, and the `Tip` line above the runs table makes the Ctrl/Cmd/middle-click new-tab behaviour explicit (GitHub markdown strips `target="_blank"` from anchors).*
+
+#### Event-driven monitor trigger and the optional `MONITOR_TRIGGER_DELAY_MINUTES` variable (v0.8.90)
+
+Before v0.8.90 the in-flight monitor only ran on a manual/uncommented cron, so an operator had to remember to turn it on for a wave and off again afterwards. v0.8.90 makes the monitor **self-driving** by combining three changes that work together:
+
+1. **An always-on 6-hourly heartbeat** - `monitor-updates.yml` now ships an active `0 */6 * * *` cron. By itself that would generate four idle runs/day, so...
+2. **`-SkipWhenIdle`** - every scheduled run first does one cheap fleet-wide Resource Graph probe ("is *any* `updateRun` `InProgress`?"). If nothing is in flight it emits an `IDLE` result and **skips the per-cluster sweep entirely**, so off-wave runs cost a single ARG query. (Fail-safe: if the probe itself errors, the monitor does NOT skip - it runs the full sweep.)
+3. **An event-driven trigger from Apply** - the moment `apply-updates.yml` starts >=1 update, it fires `monitor-updates.yml` directly, tagged `triggered_by=apply-updates`, so the monitor catches the run within minutes instead of waiting up to 6 hours for the next cron slot.
+
+**How Apply fires the monitor (fire-and-forget):**
+
+| Platform | Mechanism | Permission / prerequisite |
+|---|---|---|
+| GitHub Actions | `gh workflow run monitor-updates.yml -f triggered_by=apply-updates -f apply_run_id=<id>` from the Apply job | The Apply workflow's job needs `permissions: actions: write` (already set in the shipped `apply-updates.yml`). Both workflows must be on the default branch. |
+| Azure DevOps | Queues the monitor pipeline via the Pipelines REST API with `triggeredBy=apply-updates` | The build service identity needs **Queue builds** on the monitor pipeline. |
+
+Apply never waits on the monitor - it dispatches and moves on. This keeps the wave moving and means a single Apply run that starts updates on several rings still results in exactly one monitor trigger.
+
+**Why a delay can help - and how to set it.** When Apply starts an update, the cluster's `updateRun` takes a short while to transition into `InProgress` in Azure Resource Graph (it first runs pre-update health checks). If the monitor fires *instantly* and `-SkipWhenIdle` runs its probe before that transition lands, the probe can legitimately see "nothing in flight" and short-circuit. The optional **`MONITOR_TRIGGER_DELAY_MINUTES`** variable inserts a one-off sleep at the *start of the monitor run* so the snapshot lands after the run has registered:
+
+| Property | Behaviour |
+|---|---|
+| **Where it lives** | A repository (or environment) **Variable** on GitHub Actions (`vars.MONITOR_TRIGGER_DELAY_MINUTES`); a **pipeline variable** (or variable-group / queue-time variable) on Azure DevOps. It is read as an `env:` value by the monitor's "Startup delay" step. |
+| **Default** | **Unset or `0` = no delay** - the monitor runs immediately. The variable is entirely opt-in; existing repos behave exactly as before until you set it. |
+| **Honoured range** | `15`-`240` minutes. A non-zero value **below 15 is clamped up to 15**; a value **above 240 is clamped down to 240** (a guard so a typo cannot pin the runner for hours or blow the 6h GitHub-hosted job cap). |
+| **Scope** | The delay applies to the **event-driven run only** (`triggered_by` / `triggeredBy == 'apply-updates'`). Scheduled (cron) runs and manual `workflow_dispatch` / Run-pipeline runs **never** delay - the startup-delay step is skipped for them. |
+| **Where the sleep runs** | Always **inside the monitor**, never inside Apply. Only one Apply run executes at a time, so sleeping in Apply would block the next Apply attempt; the monitor allows concurrent runs, so a delayed run never blocks the next scheduled or manual snapshot. |
+
+Set it once per repo/project:
+
+```powershell
+# GitHub Actions - repository Variable (not a Secret; it is a non-sensitive integer)
+gh variable set MONITOR_TRIGGER_DELAY_MINUTES --body 30 --repo <owner>/<repo>
+
+# Azure DevOps - pipeline variable (Pipelines -> Edit -> Variables), or a variable group,
+# or a queue-time override. Name it exactly:
+#   MONITOR_TRIGGER_DELAY_MINUTES = 30
+```
+
+A practical starting point is `30` minutes - long enough for the `updateRun` to clear pre-update health checks and register as `InProgress`, short enough that the first in-flight snapshot still lands early in the wave. Leave it unset if your environment registers runs quickly and you prefer the monitor to fire immediately (the 6-hourly cron will pick up anything the first event-driven run missed).
+
+> **Net effect:** between waves the monitor is effectively free (one ARG probe every 6h via `-SkipWhenIdle`); during a wave it triggers itself off Apply and - with `MONITOR_TRIGGER_DELAY_MINUTES` set - lands its first snapshot right after updates go `InProgress`, with zero manual cron juggling.
 
 **Fleet Connectivity Status** *(introduced in v0.7.79, enhanced in v0.7.85)* runs daily at 05:30 UTC and answers the upstream question every other steady-state pipeline depends on: *"can the pipeline identity actually see every cluster, every physical node, and every Resource Bridge it is supposed to manage?"* The Monitor: 1 reconciliation table compares each cluster's `reportedProperties.nodes` count against the Arc-tagged physical machines visible in Resource Graph and flags both directions of drift (positive = Arc has more machines than the cluster reports; negative = cluster reports more nodes than Arc can see). The v0.7.85 *"How to interpret + act on a non-zero reconciliation"* subsection in the pipeline summary gives operators per-direction remediation lists and an inline Resource Graph query template for triage. RBAC: `Reader` plus `Microsoft.ResourceGraph/resources/read`, `Microsoft.AzureStackHCI/edgeDevices/read`, `Microsoft.HybridCompute/machines/read`, and `Microsoft.ResourceConnector/appliances/read` - all already in the **`Azure Stack HCI Update Operator (custom)`** custom role definition shipped in [section 3.1](#31-custom-role-azure-stack-hci-update-operator-custom).
 
@@ -1665,6 +1709,8 @@ The three captures below are from the same Step.3 run on a fleet with a drift ca
 
 Open `apply-updates.yml`, uncomment / paste the recommended `schedule:` (GH) or `schedules:` (ADO) block, and commit. The audit pipeline emits both blocks even when `-Platform Both` is the default - copy the section that matches your CI/CD platform.
 
+> **(v0.8.90) The recommended *monitor* cron is optional.** The audit also prints a recommended in-flight monitor cron for `monitor-updates.yml`, but pasting it is no longer required: the monitor self-drives via an active every-6h `-SkipWhenIdle` heartbeat and the event-driven trigger from Apply (see [section 6.7](#67-continuous-fleet-monitoring)). Paste the recommended monitor cron only if you want tighter in-wave polling than every 6h.
+
 #### Why two cron entries per window? (belt-and-braces)
 
 The default `firesPerWindow: 2` on Step.3 is **recommended** because a single cron per window has three known silent-skip modes:
@@ -1925,7 +1971,7 @@ Automation-Pipeline-Examples/
     fleet-health-status.yml           # Monitor: 2. Scheduled fleet 24-hour health-check failure report (daily 07:00 UTC, v0.7.65).
     fleet-update-status.yml           # Monitor: 3. Scheduled fleet update-status snapshot (daily 06:00 UTC).
     manage-updatering-tags.yml        # Config: 2. Apply UpdateRing / UpdateStartWindow / UpdateExclusionsWindow / UpdateExcluded tags (manual).
-    monitor-updates.yml               # Update: 4. In-flight update monitor: per-cluster current step + elapsed duration; flags long-running runs (manual, optional cron; v0.7.90).
+    monitor-updates.yml               # Update: 4. In-flight update monitor: per-cluster current step + elapsed duration; flags long-running runs (every 6h cron + event-driven from apply-updates.yml + manual; -SkipWhenIdle heartbeat; v0.7.90, v0.8.90 cadence).
     setup-validate-and-inventory.yml  # Config: 1. Auth + subscription-scope validation and cluster inventory (merged auth+inventory in v0.8.85; manual + weekly Sun 08:00 UTC).
     sideload-updates.yml              # Update: 2. Opt-in self-hosted-runner workflow: Robocopy + WinRM sideload of solution-update media to clusters gated on UpdateSideloaded (manual; v0.8.7).
 

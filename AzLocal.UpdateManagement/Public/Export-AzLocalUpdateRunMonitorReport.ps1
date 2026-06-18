@@ -117,6 +117,16 @@ function Export-AzLocalUpdateRunMonitorReport {
         nothing to the pipeline; the artifacts and step outputs are still
         produced.
 
+    .PARAMETER SkipWhenIdle
+        Performance fast path for high-frequency / event-driven schedules.
+        When set, the cmdlet first runs ONE cheap fleet-wide Resource Graph
+        probe ('is any update run InProgress?'). If nothing is in flight it
+        emits the IDLE result immediately (empty CSV + JUnit, all-zero step
+        outputs, 'Fleet Status: IDLE' badge) and skips the expensive
+        per-cluster Get-AzLocalClusterInventory + Get-AzLocalUpdateRuns
+        sweep. If anything is InProgress - or if the probe itself errors
+        (fail-safe) - the full sweep runs exactly as without the switch.
+
     .OUTPUTS
         Nothing by default. When -PassThru is set, a single PSCustomObject.
 
@@ -184,7 +194,10 @@ function Export-AzLocalUpdateRunMonitorReport {
         [datetime]$Now = (Get-Date),
 
         [Parameter(Mandatory = $false)]
-        [switch]$PassThru
+        [switch]$PassThru,
+
+        [Parameter(Mandatory = $false)]
+        [switch]$SkipWhenIdle
     )
 
     $pipelineHost = Get-AzLocalPipelineHost
@@ -219,6 +232,69 @@ function Export-AzLocalUpdateRunMonitorReport {
 
     Write-Host ("Thresholds: per-step={0}h (warn) / {1}h (crit), overall={2}h (warn) / {3}d (crit) / {4}d (skull), recent-failure-window={5}h" -f $LongRunningStepHours, ($LongRunningStepHours * 2), $LongRunningThresholdHours, $CriticalElapsedDays, ($CriticalElapsedDays * 2), $RecentFailureWindowHours)
 
+    # v0.8.90: shared idle-completion emitter. Writes the empty CSV + JUnit, the
+    # 7 all-zero step outputs, and the IDLE status badge, then returns the
+    # all-zero PassThru shape. Used by BOTH the -SkipWhenIdle fast path (below)
+    # and the empty-inventory path so the two idle outcomes stay identical.
+    function Complete-MonitorIdle {
+        param([Parameter(Mandatory = $true)][string]$StatusLine)
+        # Write empty CSV so the artifact upload step has something to attach.
+        '' | Set-Content -LiteralPath $monitorCsv -Encoding utf8
+        # Write empty JUnit XML so the publish-test-results step has something to read.
+        $emptyXml = New-AzLocalPipelineJUnitXml -TestSuitesName 'Update Run Monitor' -Suites @(
+            @{ Name = 'Update Run Monitor'; ClassName = 'UpdateMonitor'; TestCases = @() }
+        ) -OutputPath $monitorXml
+        $null = $emptyXml
+        Set-AzLocalPipelineOutput -Name 'in_flight'           -Value '0'
+        Set-AzLocalPipelineOutput -Name 'long_running'        -Value '0'
+        Set-AzLocalPipelineOutput -Name 'long_running_step'   -Value '0'
+        Set-AzLocalPipelineOutput -Name 'step_errored'        -Value '0'
+        Set-AzLocalPipelineOutput -Name 'recent_failures'     -Value '0'
+        Set-AzLocalPipelineOutput -Name 'unresolved_failures' -Value '0'
+        Set-AzLocalPipelineOutput -Name 'attempts_without_run' -Value '0'
+        $idleSb = New-Object System.Text.StringBuilder
+        [void]$idleSb.AppendLine('## In-Flight Update Monitor')
+        [void]$idleSb.AppendLine('')
+        [void]$idleSb.AppendLine($StatusLine)
+        Add-AzLocalPipelineStepSummary -Markdown $idleSb.ToString() -SummaryFileName $SummaryFileName | Out-Null
+        return [pscustomobject]@{
+            InFlightCount          = 0
+            LongRunningCount       = 0
+            LongRunningStepCount   = 0
+            StepErroredCount       = 0
+            RecentFailureCount     = 0
+            UnresolvedFailureCount = 0
+            AttemptWithoutRunCount = 0
+            AttemptGaps            = @()
+            CsvPath                = $monitorCsv
+            XmlPath                = $monitorXml
+            Rows                   = @()
+        }
+    }
+
+    # v0.8.90: -SkipWhenIdle fast path. Run ONE cheap fleet-wide ARG probe
+    # ("is any update run InProgress?"). If nothing is in flight, emit the IDLE
+    # result immediately and skip the per-cluster inventory + update-run sweep.
+    # Fail-safe: if the probe itself errors, do NOT skip (treat as in-flight)
+    # so a transient ARG hiccup never hides a genuinely active fleet.
+    if ($SkipWhenIdle) {
+        $anyInFlight = $true
+        try {
+            $anyInFlight = [bool](Test-AzLocalUpdateRunsInFlight)
+        }
+        catch {
+            Write-Warning ("SkipWhenIdle probe failed; running full sweep. {0}" -f $_.Exception.Message)
+            $anyInFlight = $true
+        }
+        if (-not $anyInFlight) {
+            Write-Host 'SkipWhenIdle: no update runs in flight across the fleet - skipping full sweep.'
+            $idleResult = Complete-MonitorIdle -StatusLine ':white_circle: **Fleet Status: IDLE** - no update runs in flight (full sweep skipped via -SkipWhenIdle)'
+            if ($PassThru) { return $idleResult }
+            return
+        }
+        Write-Host 'SkipWhenIdle: update run(s) in flight - running full sweep.'
+    }
+
     # ---- Query runs --------------------------------------------------------
     # v0.8.82: always fetch inventory (both scope paths) so we have per-cluster
     # tags available for the UpdateLastAttempt reconciliation pass. Previously
@@ -235,40 +311,8 @@ function Export-AzLocalUpdateRunMonitorReport {
         $inventory = Get-AzLocalClusterInventory -PassThru
         if (-not $inventory -or @($inventory).Count -eq 0) {
             Write-Warning 'No clusters found in inventory.'
-            # Write empty CSV so the artifact upload step has something to attach.
-            '' | Set-Content -LiteralPath $monitorCsv -Encoding utf8
-            # Write empty JUnit XML so the publish-test-results step has something to read.
-            $emptyXml = New-AzLocalPipelineJUnitXml -TestSuitesName 'Update Run Monitor' -Suites @(
-                @{ Name = 'Update Run Monitor'; ClassName = 'UpdateMonitor'; TestCases = @() }
-            ) -OutputPath $monitorXml
-            $null = $emptyXml
-            Set-AzLocalPipelineOutput -Name 'in_flight'           -Value '0'
-            Set-AzLocalPipelineOutput -Name 'long_running'        -Value '0'
-            Set-AzLocalPipelineOutput -Name 'long_running_step'   -Value '0'
-            Set-AzLocalPipelineOutput -Name 'step_errored'        -Value '0'
-            Set-AzLocalPipelineOutput -Name 'recent_failures'     -Value '0'
-            Set-AzLocalPipelineOutput -Name 'unresolved_failures' -Value '0'
-            Set-AzLocalPipelineOutput -Name 'attempts_without_run' -Value '0'
-            $emptySb = New-Object System.Text.StringBuilder
-            [void]$emptySb.AppendLine('## In-Flight Update Monitor')
-            [void]$emptySb.AppendLine('')
-            [void]$emptySb.AppendLine(':white_circle: **Fleet Status: IDLE** - no clusters found in inventory')
-            Add-AzLocalPipelineStepSummary -Markdown $emptySb.ToString() -SummaryFileName $SummaryFileName | Out-Null
-            if ($PassThru) {
-                return [pscustomobject]@{
-                    InFlightCount          = 0
-                    LongRunningCount       = 0
-                    LongRunningStepCount   = 0
-                    StepErroredCount       = 0
-                    RecentFailureCount     = 0
-                    UnresolvedFailureCount = 0
-                    AttemptWithoutRunCount = 0
-                    AttemptGaps            = @()
-                    CsvPath                = $monitorCsv
-                    XmlPath                = $monitorXml
-                    Rows                   = @()
-                }
-            }
+            $idleResult = Complete-MonitorIdle -StatusLine ':white_circle: **Fleet Status: IDLE** - no clusters found in inventory'
+            if ($PassThru) { return $idleResult }
             return
         }
         $resourceIds = @($inventory | Select-Object -ExpandProperty ResourceId)
