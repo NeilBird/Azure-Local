@@ -148,7 +148,7 @@ env:
   # this to the version actually installed and to the latest on PSGallery, and emits a
   # ::notice annotation if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.8.93'
+  GENERATED_AGAINST_MODULE_VERSION: '0.8.94'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): manual workflow_dispatch input >
   # repository variable 'REQUIRED_MODULE_VERSION' > empty (latest).
@@ -180,7 +180,9 @@ jobs:
   # Optional: Add a readiness check job first
   check-readiness:
     name: Check Update Readiness
+    # BEGIN-AZLOCAL-CUSTOMIZE:runner-target-check-readiness
     runs-on: windows-latest
+    # END-AZLOCAL-CUSTOMIZE:runner-target-check-readiness
     # Required for OIDC authentication and dorny/test-reporter (Check Run publishing)
     permissions:
       id-token: write
@@ -303,7 +305,9 @@ jobs:
   # Main job to apply updates
   apply-updates:
     name: Apply Updates
+    # BEGIN-AZLOCAL-CUSTOMIZE:runner-target-apply-updates
     runs-on: windows-latest
+    # END-AZLOCAL-CUSTOMIZE:runner-target-apply-updates
     # Required for OIDC authentication and dorny/test-reporter (Check Run publishing)
     permissions:
       id-token: write
@@ -576,7 +580,9 @@ jobs:
   # Handle case when no clusters are ready
   no-clusters-ready:
     name: No Clusters Ready
+    # BEGIN-AZLOCAL-CUSTOMIZE:runner-target-no-clusters-ready
     runs-on: windows-latest
+    # END-AZLOCAL-CUSTOMIZE:runner-target-no-clusters-ready
     needs: check-readiness
     if: ${{ needs.check-readiness.outputs.ready_count == 0 }}
 

@@ -34,8 +34,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $script:ModuleInfo | Should -Not -BeNullOrEmpty
         }
 
-        It 'Should have version 0.8.93' {
-            $script:ModuleInfo.Version | Should -Be '0.8.93'
+        It 'Should have version 0.8.94' {
+            $script:ModuleInfo.Version | Should -Be '0.8.94'
         }
 
         It 'Module version constants are in sync between .psm1 and .psd1' {
@@ -9704,6 +9704,117 @@ jobs:
                 Test-Path -LiteralPath (Join-Path $temp 'inventory-clusters.yml')  | Should -BeTrue
             }
             finally { Remove-Item -Path $temp -Recurse -Force -ErrorAction SilentlyContinue }
+        }
+    }
+
+    # v0.8.94: Expanded BEGIN/END-AZLOCAL-CUSTOMIZE coverage. Operator-owned
+    # infrastructure values (Azure DevOps WIF service connection, ADO agent
+    # pools, GitHub runner labels, sideload self-hosted pools) are now wrapped
+    # in uniquely-named marker regions so that an operator edit inside the
+    # region survives Update-AzLocalPipelineExample (even with -Force, which
+    # otherwise reverts out-of-marker edits).
+    Context 'v0.8.94 expanded infra markers survive a round-trip merge' {
+
+        BeforeAll {
+            # Replaces the body between a named marker pair with $NewBody,
+            # returning the full new file text. Slice-based (not regex) to avoid
+            # backreference and escaping pitfalls. BEGIN/END lines are preserved.
+            function Set-MarkerRegionBody {
+                param(
+                    [Parameter(Mandatory)][string]$Text,
+                    [Parameter(Mandatory)][string]$Region,
+                    [Parameter(Mandatory)][string]$NewBody
+                )
+                $beginTok = "BEGIN-AZLOCAL-CUSTOMIZE:$Region"
+                $endTok   = "END-AZLOCAL-CUSTOMIZE:$Region"
+                $iBegin = $Text.IndexOf($beginTok)
+                if ($iBegin -lt 0) { throw "BEGIN marker for region '$Region' not found." }
+                $iAfterBeginLine = $Text.IndexOf("`n", $iBegin)
+                if ($iAfterBeginLine -lt 0) { throw "Malformed BEGIN line for region '$Region'." }
+                $iAfterBeginLine += 1
+                $iEnd = $Text.IndexOf($endTok, $iAfterBeginLine)
+                if ($iEnd -lt 0) { throw "END marker for region '$Region' not found." }
+                $iEndLineStart = $Text.LastIndexOf("`n", $iEnd) + 1
+                return $Text.Substring(0, $iAfterBeginLine) + $NewBody + $Text.Substring($iEndLineStart)
+            }
+        }
+
+        $roundTripCases = @(
+            @{ Platform = 'AzureDevOps'; File = 'apply-updates.yml';   Region = 'service-connection-ReadinessCheck'; NewBody = "        azureSubscription: 'MyContoso-WIF-SENTINEL'`r`n"; Sentinel = 'MyContoso-WIF-SENTINEL' }
+            @{ Platform = 'AzureDevOps'; File = 'apply-updates.yml';   Region = 'runner-target-pipeline';            NewBody = "  vmImage: 'windows-2022-SENTINEL'`r`n";              Sentinel = 'windows-2022-SENTINEL' }
+            @{ Platform = 'AzureDevOps'; File = 'sideload-updates.yml'; Region = 'sideload-runner-AdvanceSideload';   NewBody = "    pool:`r`n      name: 'Contoso-OnPrem-SENTINEL'`r`n      demands:`r`n        - azlocal-sideload`r`n"; Sentinel = 'Contoso-OnPrem-SENTINEL' }
+            @{ Platform = 'GitHub';      File = 'apply-updates.yml';   Region = 'runner-target-check-readiness';     NewBody = "    runs-on: [self-hosted, contoso-SENTINEL]`r`n"; Sentinel = 'contoso-SENTINEL' }
+        )
+
+        It 'Preserves an operator edit inside <Region> (<Platform>/<File>)' -ForEach $roundTripCases {
+            $srcDir  = if ($Platform -eq 'GitHub') { $script:UpePlatformSrcGh } else { $script:UpePlatformSrcAdo }
+            $temp = Join-Path $env:TEMP "upe-infra-$([guid]::NewGuid())"
+            New-Item -ItemType Directory -Path $temp -Force | Out-Null
+            try {
+                $src = Join-Path $srcDir $File
+                Copy-Item -Path $src -Destination $temp
+                $destFile = Join-Path $temp $File
+
+                $orig   = [System.IO.File]::ReadAllText($destFile, [System.Text.UTF8Encoding]::new($false))
+                $edited = Set-MarkerRegionBody -Text $orig -Region $Region -NewBody $NewBody
+                [System.IO.File]::WriteAllText($destFile, $edited, [System.Text.UTF8Encoding]::new($false))
+
+                $r = Update-AzLocalPipelineExample -Destination $temp -Platform $Platform -PassThru -Confirm:$false 3>$null
+                $row = $r | Where-Object { $_.File -like "*$File" }
+                $row.Action           | Should -Match 'Updated|Unchanged'
+                $row.PreservedMarkers | Should -Contain $Region
+
+                $after = [System.IO.File]::ReadAllText($destFile, [System.Text.UTF8Encoding]::new($false))
+                $after | Should -Match ([regex]::Escape($Sentinel))
+            }
+            finally { Remove-Item -Path $temp -Recurse -Force -ErrorAction SilentlyContinue }
+        }
+
+        It 'Operator edit survives even with -Force in <Region> (<Platform>/<File>)' -ForEach $roundTripCases {
+            $srcDir  = if ($Platform -eq 'GitHub') { $script:UpePlatformSrcGh } else { $script:UpePlatformSrcAdo }
+            $temp = Join-Path $env:TEMP "upe-infra-force-$([guid]::NewGuid())"
+            New-Item -ItemType Directory -Path $temp -Force | Out-Null
+            try {
+                $src = Join-Path $srcDir $File
+                Copy-Item -Path $src -Destination $temp
+                $destFile = Join-Path $temp $File
+
+                $orig   = [System.IO.File]::ReadAllText($destFile, [System.Text.UTF8Encoding]::new($false))
+                $edited = Set-MarkerRegionBody -Text $orig -Region $Region -NewBody $NewBody
+                [System.IO.File]::WriteAllText($destFile, $edited, [System.Text.UTF8Encoding]::new($false))
+
+                Update-AzLocalPipelineExample -Destination $temp -Platform $Platform -Force -Confirm:$false 3>$null | Out-Null
+
+                $after = [System.IO.File]::ReadAllText($destFile, [System.Text.UTF8Encoding]::new($false))
+                $after | Should -Match ([regex]::Escape($Sentinel))
+            }
+            finally { Remove-Item -Path $temp -Recurse -Force -ErrorAction SilentlyContinue }
+        }
+    }
+
+    # v0.8.94: Structural guard - every bundled pipeline YAML must have balanced
+    # BEGIN/END markers and NO duplicate region name within a file (the marker
+    # parser keeps only the FIRST occurrence of a duplicated name and warns).
+    Context 'v0.8.94 bundled YAML marker integrity' {
+        $allBundled = @()
+        foreach ($p in @('github-actions','azure-devops')) {
+            $dir = Join-Path $PSScriptRoot "..\Automation-Pipeline-Examples\$p"
+            if (Test-Path -LiteralPath $dir) {
+                $allBundled += Get-ChildItem -LiteralPath $dir -Filter '*.yml' -File |
+                    ForEach-Object { @{ Path = $_.FullName; Name = "$p/$($_.Name)" } }
+            }
+        }
+
+        It 'Has balanced, uniquely-named markers in <Name>' -ForEach $allBundled {
+            $text  = [System.IO.File]::ReadAllText($Path, [System.Text.UTF8Encoding]::new($false))
+            $begin = [regex]::Matches($text, 'BEGIN-AZLOCAL-CUSTOMIZE:([A-Za-z0-9_-]+)') | ForEach-Object { $_.Groups[1].Value }
+            $end   = [regex]::Matches($text, 'END-AZLOCAL-CUSTOMIZE:([A-Za-z0-9_-]+)')   | ForEach-Object { $_.Groups[1].Value }
+            @($begin).Count | Should -Be @($end).Count
+            if (@($begin).Count -gt 0) {
+                (Compare-Object @($begin | Sort-Object) @($end | Sort-Object)) | Should -BeNullOrEmpty
+                $dupes = $begin | Group-Object | Where-Object Count -gt 1
+                $dupes | Should -BeNullOrEmpty
+            }
         }
     }
 }

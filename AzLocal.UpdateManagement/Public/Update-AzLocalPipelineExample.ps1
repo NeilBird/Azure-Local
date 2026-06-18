@@ -20,11 +20,28 @@ function Update-AzLocalPipelineExample {
         Both markers are plain YAML comments (the leading '#' character) and
         therefore have zero runtime effect on either GitHub Actions or Azure
         DevOps. The <section> name is an identifier consisting of letters,
-        digits, hyphens and underscores. It is unique per file. Examples
+        digits, hyphens and underscores. It is unique per file. Regions
         currently shipped:
 
-            schedule-triggers   (every main pipeline)
-            itsm-secrets        (Step.7_apply-updates.yml only)
+            schedule-triggers          (cron/schedule trigger block - main pipelines)
+            itsm-secrets               (ITSM secret bindings - apply-updates.yml)
+            service-connection-<job>   (Azure DevOps WIF service connection name on
+                                        each AzureCLI@2/AzurePowerShell@5 task; one
+                                        region per task, suffixed by the job name)
+            runner-target-<job>        (the hosted agent pool / GitHub runs-on label
+                                        that selects where the job runs)
+            sideload-runner-<job>      (the self-hosted pool/runner that the sideload
+                                        Advance job must run on - on-prem agents that
+                                        advertise the 'azlocal-sideload' capability)
+
+        Added in v0.8.94 (service-connection / runner-target / sideload-runner):
+        these wrap operator-owned INFRASTRUCTURE values (service connection
+        name, agent pool, runner label) so an edit inside the region survives
+        Update - including with -Force, which otherwise reverts out-of-marker
+        edits. Per-run INPUT defaults (e.g. updateRing, config paths, throttle)
+        are deliberately NOT marker-wrapped: they are already overridable per
+        run and via variable groups, and wrapping them would FREEZE the module
+        author's ability to improve those defaults on each release.
 
         Per source YAML the cmdlet:
 

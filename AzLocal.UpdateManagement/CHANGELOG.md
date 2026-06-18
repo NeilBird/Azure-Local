@@ -5,6 +5,49 @@ All notable changes to the AzLocal.UpdateManagement module (renamed from AzStack
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.94] - 2026-06-19
+
+Expands `BEGIN/END-AZLOCAL-CUSTOMIZE` marker coverage across every bundled CI/CD
+pipeline YAML (GitHub Actions **and** Azure DevOps) so operator-owned infrastructure
+values survive `Update-AzLocalPipelineExample`. Template + docs + tests only - no
+public API, parameter, or export-count change (still 61).
+
+### Changed
+
+- **Three new marker region families wrap operator-owned infrastructure values.**
+  Each Azure DevOps WIF service connection (`azureSubscription:` on every
+  `AzureCLI@2`/`AzurePowerShell@5` task) is now wrapped in
+  `# BEGIN/END-AZLOCAL-CUSTOMIZE:service-connection-<job>`; the hosted agent pool /
+  GitHub `runs-on:` label in `# ...:runner-target-<job>`; and the sideload self-hosted
+  pool/runner in `# ...:sideload-runner-<job>`. 45 marker pairs were added across 20
+  bundled YAML files. Region names are derived from the nearest stage/job and are
+  unique within each file (the marker parser keeps only the first occurrence of a
+  duplicated name).
+- **Operator edits inside these regions now survive `Update-AzLocalPipelineExample`,
+  including with `-Force`** (which otherwise reverts edits made outside marker regions).
+  The marker-aware merge engine and parser were already generic, so no cmdlet code
+  changed - this release is purely the templates, documentation, and test coverage.
+- **Per-run input defaults are deliberately NOT marker-wrapped** (e.g. `updateRing`,
+  config paths, throttle). They are already overridable per run and via variable
+  groups, and wrapping them would freeze the module author's ability to improve those
+  defaults on each release.
+
+### Added
+
+- Pester round-trip coverage asserting a simulated operator edit inside each new
+  `service-connection` / `runner-target` / `sideload-runner` region survives both a
+  default and a `-Force` merge, plus a structural guard that every bundled YAML has
+  balanced, uniquely-named markers.
+
+### Documentation
+
+- Documented the new regions in `Update-AzLocalPipelineExample` help, the module
+  README upgrade callout, and the Azure DevOps onboarding checklist (section 5.4 of
+  the pipeline-examples README).
+
+- `GENERATED_AGAINST_MODULE_VERSION` bumped to `'0.8.94'` across all 20 bundled
+  pipeline templates.
+
 ## [0.8.93] - 2026-06-18
 
 Fixes a Bad Request in the **Update: 1 - Assess Update Readiness** pipeline: the

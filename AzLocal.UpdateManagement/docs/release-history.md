@@ -4,9 +4,13 @@
 >
 > **For older releases**, this is the canonical reference; the main README intentionally stays slim so the most recent block is easy to find.
 >
-> **For v0.8.93 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0893) `What's New in v0.8.93` section.
+> **For v0.8.94 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0894) `What's New in v0.8.94` section.
 
 ---
+
+### What's New in v0.8.93
+
+Fixes a Bad Request in the **Update: 1 - Assess Update Readiness** pipeline. `Sync-AzLocalClusterUpdateSummary` (and the `Export-AzLocalClusterUpdateReadinessReport` stale-assessment auto-scan that calls it) POSTed the `Microsoft.AzureStackHCI/clusters/updateSummaries/default/checkUpdates` ARM action with no request body; the `2026-03-01-preview` API spec now requires a body to be present. The cmdlet now sends an empty JSON object `{}` (no properties are mandatory for a plain re-scan), validated end-to-end against a live cluster, and refreshes the now-stale RBAC comment to reflect that the v0.8.92 `updateSummaries/*` wildcard already authorizes `checkUpdates` (a `403` now means the custom role simply is not assigned). Bug-fix only - no API, parameter, or export-count change (still 61). `GENERATED_AGAINST_MODULE_VERSION` bumped from `0.8.92` to `0.8.93`. See [CHANGELOG.md](../CHANGELOG.md#0893---2026-06-18) for the full v0.8.93 entry.
 
 ### What's New in v0.8.92
 

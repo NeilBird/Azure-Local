@@ -1103,6 +1103,7 @@ The example pipelines have **near-100% functional parity** across GitHub Actions
   }
   ```
 
+  > Since **v0.8.94** each `azureSubscription:` line is wrapped in a `# BEGIN/END-AZLOCAL-CUSTOMIZE:service-connection-<job>` marker, so your renamed connection name **survives `Update-AzLocalPipelineExample`** (including with `-Force`). The agent pool (`# ...:runner-target-<job>`) and the sideload self-hosted pool (`# ...:sideload-runner-<job>`) are wrapped the same way. See [4.2](#42-azure-devops-with-workload-identity-federation-recommended) and the [version-pinning appendix](docs/appendix-module-version-pinning.md) for the upgrade workflow.
 - [ ] **(Optional) Create variable groups** in **Pipelines -> Library**: `AzureLocal-Config` for defaults (e.g. the most-common `UpdateRing`), and - only if you plan to raise ITSM tickets - `AzureLocal-ITSM-Secrets` (see [section 7](#7-optional-open-itsm-tickets-for-clusters-needing-operator-action)).
 
 #### Per-pipeline (after import)
