@@ -34,8 +34,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $script:ModuleInfo | Should -Not -BeNullOrEmpty
         }
 
-        It 'Should have version 0.8.90' {
-            $script:ModuleInfo.Version | Should -Be '0.8.90'
+        It 'Should have version 0.8.91' {
+            $script:ModuleInfo.Version | Should -Be '0.8.91'
         }
 
         It 'Module version constants are in sync between .psm1 and .psd1' {
@@ -8670,7 +8670,7 @@ cB,rg1,s1,Ring1,
                 Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend -PipelineYamlPath (Join-Path $nwtDir 'github-actions') -ClusterCsvPath $csv -ExportPath $out 6>$null | Out-Null
                 $md = Get-Content -Path $out -Raw
                 $md | Should -Match 'matched by \*\*ClusterName\+ResourceGroup\*\*'
-                $md | Should -Match 'consider re-running Step\.1'
+                $md | Should -Match 'onsider re-running the cluster inventory pipeline'
             }
         }
 
@@ -8688,7 +8688,7 @@ cB,rg1,s1,Ring1,
                 Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend -PipelineYamlPath (Join-Path $nwtDir 'github-actions') -ClusterCsvPath $csv -ExportPath $out 6>$null | Out-Null
                 $md = Get-Content -Path $out -Raw
                 $md | Should -Match '\*\*Not in CSV\.\*\*'
-                $md | Should -Match 're-run Step\.1'
+                $md | Should -Match 'Re-run the cluster inventory pipeline'
                 $md | Should -Match 'replace `[^`]+` in source control with the artifact'
             }
         }
@@ -14489,7 +14489,7 @@ Describe 'Thin-YAML Step.0: Export-AzLocalAuthValidationReport' {
         [void](Invoke-Step0Cmdlet -Params $params -Account $script:_avr_account -Subs $script:_avr_subs -Clusters $script:_avr_clusters -RoleRows $script:_avr_roleRows)
         # Summary file should now contain the rendered markdown.
         $summary = Get-Content -LiteralPath $script:_avr_ghSummaryFile -Raw
-        $summary | Should -Match '## Step\.0 - Authentication Validation and Subscription Scope Report'
+        $summary | Should -Match '## Authentication Validation and Subscription Scope Report'
         $summary | Should -Match '### Count of subscriptions accessible = 2'
         $summary | Should -Match '<details>'
         $summary | Should -Match 'Expand for subscription details'
@@ -14746,7 +14746,7 @@ Describe 'Thin-YAML Step.1: Invoke-AzLocalClusterInventory' {
             Invoke-AzLocalClusterInventory @p
         })
         $summary = Get-Content -LiteralPath $script:_inv_ghSummaryFile -Raw
-        $summary | Should -Match '## Step\.1 - Cluster Inventory'
+        $summary | Should -Match '## Cluster Inventory'
         $summary | Should -Match '\| Total Clusters \| 4 \|'
         $summary | Should -Match '\| With UpdateRing Tag \| 3 \|'
         $summary | Should -Match '\| Without UpdateRing Tag \| 1 \|'
@@ -15001,7 +15001,7 @@ beta,/subscriptions/s1/resourceGroups/rg2/providers/Microsoft.AzureStackHCI/clus
         $outputs | Should -Match 'already_in_sync_count=1'
         $outputs | Should -Match 'results_json_path='
         $summary = Get-Content -LiteralPath $script:_s2_ghSummaryFile -Raw
-        $summary | Should -Match '## Step\.2 - UpdateRing Tag Management Summary'
+        $summary | Should -Match '## UpdateRing Tag Management Summary'
         $summary | Should -Match '\| Total clusters processed \| 2 \|'
         $summary | Should -Match 'alpha'
         # v0.8.6: per-cluster table split into "Tag Updates Applied" + "No Tag Updates (no-op)"

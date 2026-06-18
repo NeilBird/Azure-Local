@@ -327,14 +327,14 @@ function Export-AzLocalAuthValidationReport {
     }
 
     $xmlPath = Join-Path -Path $ReportDirectory -ChildPath $ReportFileName
-    [void](New-AzLocalPipelineJUnitXml -TestSuitesName 'Step.0 - Authentication Validation and Subscription Scope Report' -Suites $suites -OutputPath $xmlPath)
+    [void](New-AzLocalPipelineJUnitXml -TestSuitesName 'Authentication Validation and Subscription Scope Report' -Suites $suites -OutputPath $xmlPath)
     Write-Host "JUnit XML written to: $xmlPath"
 
     # ------------------------------------------------------------------
     # Build markdown step summary via the shared helper
     # ------------------------------------------------------------------
     $md = [System.Text.StringBuilder]::new()
-    [void]$md.AppendLine('## Step.0 - Authentication Validation and Subscription Scope Report')
+    [void]$md.AppendLine('## Authentication Validation and Subscription Scope Report')
     [void]$md.AppendLine('')
     [void]$md.AppendLine('| Check | Result |')
     [void]$md.AppendLine('|---|---|')

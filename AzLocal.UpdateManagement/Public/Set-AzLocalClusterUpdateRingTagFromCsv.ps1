@@ -155,7 +155,7 @@ function Set-AzLocalClusterUpdateRingTagFromCsv {
         Write-Host ' pipeline first, edit the CSV, commit it, then re-run THIS pipeline.'
         Write-Host '==========================================================================='
         Write-Host ''
-        Write-Host 'STEP 1 - Generate the cluster inventory (Step.1 pipeline).'
+        Write-Host 'STEP 1 - Generate the cluster inventory (cluster inventory pipeline).'
         Write-Host 'STEP 2 - Edit ClusterUpdateRings.csv in Excel and fill in the UpdateRing column.'
         Write-Host 'STEP 3 - Commit the edited CSV into your ops repo (recommended path config/ClusterUpdateRings.csv).'
         Write-Host 'STEP 4 - Re-run THIS pipeline pointing at the committed CSV.'
@@ -175,7 +175,7 @@ function Set-AzLocalClusterUpdateRingTagFromCsv {
         }
     }
     else {
-        throw "CSV file is empty (no rows): $InputCsvPath. Re-run the Step.1 inventory pipeline to regenerate the file."
+        throw "CSV file is empty (no rows): $InputCsvPath. Re-run the cluster inventory pipeline to regenerate the file."
     }
 
     $rowsWithValues = @($rows | Where-Object { $_.UpdateRing -and $_.UpdateRing.Trim() -ne '' }).Count
@@ -273,7 +273,7 @@ function Set-AzLocalClusterUpdateRingTagFromCsv {
 
     # ----- 8. Markdown step summary ------------------------------------
     $sb = New-Object System.Text.StringBuilder
-    [void]$sb.AppendLine('## Step.2 - UpdateRing Tag Management Summary')
+    [void]$sb.AppendLine('## UpdateRing Tag Management Summary')
     [void]$sb.AppendLine('')
     [void]$sb.AppendLine('| Setting | Value |')
     [void]$sb.AppendLine('|---------|-------|')

@@ -126,7 +126,7 @@ function Get-AzLocalFleetConnectivityStatus {
     # ------------------------------------------------------------------
     # 1. Cluster connectivity
     # ------------------------------------------------------------------
-    Write-Log -Message 'Step.4 [1/5] Querying cluster connectivity...' -Level Info
+    Write-Log -Message '[1/5] Querying cluster connectivity...' -Level Info
 
     $clusterKql = "resources | where type =~ 'microsoft.azurestackhci/clusters'"
     $clusterRaw = Invoke-AzResourceGraphQuery -Query $clusterKql @invokeArgs
@@ -174,7 +174,7 @@ function Get-AzLocalFleetConnectivityStatus {
     # ------------------------------------------------------------------
     # 2. Update summaries (current version per cluster)
     # ------------------------------------------------------------------
-    Write-Log -Message 'Step.4 [2/5] Querying update summaries for cluster versions...' -Level Info
+    Write-Log -Message '[2/5] Querying update summaries for cluster versions...' -Level Info
 
     $versionKql = "extensibilityresources | where type =~ 'microsoft.azurestackhci/clusters/updatesummaries'"
     $versionRaw = Invoke-AzResourceGraphQuery -Query $versionKql @invokeArgs
@@ -197,7 +197,7 @@ function Get-AzLocalFleetConnectivityStatus {
     #    ArcSummary is built via Group-Object so there is no dependency on
     #    ARG honouring '| summarize'.
     # ------------------------------------------------------------------
-    Write-Log -Message 'Step.4 [3/5] Querying Arc machine status...' -Level Info
+    Write-Log -Message '[3/5] Querying Arc machine status...' -Level Info
 
     $machinesKql = "resources | where type =~ 'microsoft.hybridcompute/machines' | where properties.cloudMetadata.provider =~ 'AzSHCI' | where kind !~ 'HCI'"
     $machinesRaw = Invoke-AzResourceGraphQuery -Query $machinesKql @invokeArgs
@@ -260,7 +260,7 @@ function Get-AzLocalFleetConnectivityStatus {
     #    rows even when ARG drops the final '| project'.
     #    Machine join done client-side using $machineByShortName.
     # ------------------------------------------------------------------
-    Write-Log -Message 'Step.4 [4/5] Querying NIC inventory...' -Level Info
+    Write-Log -Message '[4/5] Querying NIC inventory...' -Level Info
 
     $nicKql = @'
 extensibilityresources
@@ -327,7 +327,7 @@ extensibilityresources
     #    Replaces the KQL summarize/make_set join that ARG silently drops.
     #    Multi-cluster-per-RG is safe: clustersByRg holds a list per key.
     # ------------------------------------------------------------------
-    Write-Log -Message 'Step.4 [5/5] Querying Azure Resource Bridge status...' -Level Info
+    Write-Log -Message '[5/5] Querying Azure Resource Bridge status...' -Level Info
 
     # v0.7.84 fix: explicitly `extend lastModifiedAt = tostring(systemData.lastModifiedAt)`.
     # The default `resources` ARG response sometimes omits/strips `systemData`,

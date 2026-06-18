@@ -73,9 +73,9 @@ function Export-AzLocalApplyUpdatesScheduleAudit {
         `$env:BUILD_ARTIFACTSTAGINGDIRECTORY` (Azure DevOps).
 
     .PARAMETER PipelineYamlPath
-        Path (file or folder) to Step.7_apply-updates.yml. REQUIRED so
+        Path (file or folder) to apply-updates.yml. REQUIRED so
         the Recommend view can diff its proposed crons against what is
-        already in Step.6 and only emit a snippet for the truly missing
+        already in apply-updates and only emit a snippet for the truly missing
         entries.
 
     .PARAMETER SchedulePath

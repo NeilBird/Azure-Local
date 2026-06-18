@@ -4,7 +4,13 @@
 >
 > **For older releases**, this is the canonical reference; the main README intentionally stays slim so the most recent block is easy to find.
 >
-> **For v0.8.90 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0890) `What's New in v0.8.90` section.
+> **For v0.8.91 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0891) `What's New in v0.8.91` section.
+
+---
+
+### What's New in v0.8.90
+
+Adds opt-in event-driven, idle-aware in-flight update monitoring so Update: 4 (Monitor In-Flight Updates) runs right after Update: 3 (Apply Updates) starts an update, yet stays cheap the rest of the time. Adds a fleet-wide idle short-circuit on `Export-AzLocalUpdateRunMonitorReport` (`-SkipWhenIdle`, new private helper `Test-AzLocalUpdateRunsInFlight`), an apply-to-monitor event-driven trigger on both platforms (`apply-updates.yml` fires `monitor-updates.yml` after starting >=1 update, optional `MONITOR_TRIGGER_DELAY_MINUTES` 15-240), a 6-hourly default monitor cron (`0 */6 * * *`), and Config: 3 monitor-recommendation tuning inputs (`MonitorPollIntervalMinutes` / `MonitorTrailingDays` / `MonitorInFlightHours`). No public-API change (export count unchanged at 61 - the new helper is private). `GENERATED_AGAINST_MODULE_VERSION` bumped from `0.8.89` to `0.8.90`. See [CHANGELOG.md](../CHANGELOG.md#0890---2026-06-20) for the full v0.8.90 entry.
 
 ---
 

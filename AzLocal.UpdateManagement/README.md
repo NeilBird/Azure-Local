@@ -2,7 +2,7 @@
 
 > ⚠️ **Disclaimer**: This module is **NOT** a Microsoft supported service offering or product. It is provided as example code only, with no warranty or official support. Refer to the [MIT license](https://github.com/NeilBird/Azure-Local/blob/main/LICENSE) for further information.
 
-**Latest Version:** v0.8.90 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.8.90)
+**Latest Version:** v0.8.91 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.8.91)
 
 This folder contains the 'AzLocal.UpdateManagement' PowerShell module for managing updates on Azure Local (formerly Azure Stack HCI) clusters using the Azure Local REST API. The module supports both interactive use and CI/CD automation via Service Principal or Managed Identity authentication.
 
@@ -14,7 +14,7 @@ Azure Local REST API specification (includes update management endpoints): https
 **This README (overview + most-recent release notes):**
 
 - [Where to Start](#where-to-start)
-- [What's New in v0.8.90](#whats-new-in-v0890)
+- [What's New in v0.8.91](#whats-new-in-v0891)
 - [Files](#files)
 - [Prerequisites](#prerequisites)
 - [RBAC Requirements](#rbac-requirements) (summary; full reference in [docs/rbac.md](docs/rbac.md))
@@ -77,28 +77,23 @@ If you are new to this module, work through these in order from a regular PowerS
 
 > Most CI/CD pipelines in [Automation-Pipeline-Examples/](Automation-Pipeline-Examples/) are direct implementations of one of these workflows. Start there if you want a copy-pasteable end-to-end pipeline.
 
-## What's New in v0.8.90
+## What's New in v0.8.91
 
-**Event-driven, idle-aware in-flight update monitoring.** Update: 4 (Monitor In-Flight Updates) now runs right after Update: 3 (Apply Updates) starts an update, yet stays cheap the rest of the time. A new fleet-wide idle short-circuit, an apply-to-monitor trigger on both platforms, a 6-hourly default monitor cron, and Config: 3 recommendation tuning inputs.
-
-### Added
-
-- **`Export-AzLocalUpdateRunMonitorReport -SkipWhenIdle` switch.** Performs one low-cost fleet-wide Azure Resource Graph probe (new private helper `Test-AzLocalUpdateRunsInFlight`: "any `updateRuns` `InProgress`?") and short-circuits to an **IDLE** result - writing the empty CSV/JUnit artefacts and all-zero step outputs - skipping the per-cluster sweep when nothing is in flight. **Fail-safe**: a probe error runs the full sweep rather than skipping.
-- **Event-driven trigger from Update: 3 to Update: 4.** `apply-updates.yml` fires the monitor after starting >=1 update - `gh workflow run monitor-updates.yml` on GitHub Actions (job gains `actions: write`) / the Pipelines REST queue API on Azure DevOps - tagged `triggered_by=apply-updates`. The monitor honours an optional `MONITOR_TRIGGER_DELAY_MINUTES` startup delay (unset/0 = off, otherwise clamped 15-240) so it lands **after** updates move into `InProgress`. Cron / manual runs never delay, and the monitor allows concurrent runs so a sleeping event-driven run never blocks the next.
-- **Config: 3 monitor-recommendation tuning inputs.** Both `apply-updates-schedule-audit.yml` templates expose `MonitorPollIntervalMinutes` / `MonitorTrailingDays` / `MonitorInFlightHours` as workflow inputs / parameters and plumb them into `Export-AzLocalApplyUpdatesScheduleAudit`.
+**Operator-facing cleanup of stale `Step.N` pipeline references.** Removes the last "edit `Step.7_apply-updates.yml`" style instructions left over from the v0.8.7 filename de-numbering, so the report and audit output names the files operators actually have. Output / help text only - no behavioural, API, or export-count change (still 61). The intentional backward-compatibility `Step.N_*.yml` migration aliases in `Get-AzLocalPipelineManifest` are unchanged.
 
 ### Changed
 
-- **`monitor-updates.yml` default cron drops from 5x/day to every 6h (`0 */6 * * *`)** and passes `-SkipWhenIdle` by default on both platforms.
+- **Config: 3 schedule-coverage audit no longer points at a non-existent file.** `Export-AzLocalApplyUpdatesScheduleAudit` / `Test-AzLocalApplyUpdatesScheduleCoverage` previously told operators to edit `Step.7_apply-updates.yml` (removed in v0.8.7). The "How to fix" headings, throw message, comment-based help, and cron-coverage prose now name the shipped `apply-updates.yml` (with `.github/workflows/` and `azure-devops/` paths) and reference sibling pipelines by purpose (e.g. "the Manage UpdateRing Tags pipeline") instead of dead step numbers. The internal `$step6FileLabel` variable is renamed `$applyFileLabel`.
+- **Step-summary headers drop their dead step-number prefix.** `## Step.0 - Authentication Validation...` -> `## Authentication Validation...`, `## Step.1 - Cluster Inventory` -> `## Cluster Inventory`, and `## Step.2 - UpdateRing Tag Management Summary` -> `## UpdateRing Tag Management Summary`. The `Get-AzLocalFleetConnectivityStatus` progress log drops its `Step.4` prefix (now `[N/5]`).
 
 ### Notes
 
-- **No public-API change** (export count unchanged at 61 - the new helper is private).
-- **`GENERATED_AGAINST_MODULE_VERSION`** bumped from `0.8.89` to `0.8.90` across bundled pipeline templates.
+- **No public-API change** (export count unchanged at 61).
+- **`GENERATED_AGAINST_MODULE_VERSION`** bumped from `0.8.90` to `0.8.91` across bundled pipeline templates.
 
 > Previous release notes have moved into the [Release History](#release-history) appendix at the bottom of this document.
 
-See [CHANGELOG.md](CHANGELOG.md) for full release details. See [`What's New in v0.8.88`](#whats-new-in-v0888) in the Release History for the previous release.
+See [CHANGELOG.md](CHANGELOG.md) for full release details. See [`What's New in v0.8.90`](#whats-new-in-v0890) in the Release History for the previous release.
 
 ## Files
 
@@ -580,7 +575,11 @@ This code is provided as-is for educational and reference purposes.
 
 The full What's-New history (v0.7.81 and earlier) has moved to [docs/release-history.md](docs/release-history.md).
 
-The most recent release notes for **v0.8.90** stay above under [`What's New in v0.8.90`](#whats-new-in-v0890).
+The most recent release notes for **v0.8.91** stay above under [`What's New in v0.8.91`](#whats-new-in-v0891).
+
+### What's New in v0.8.90
+
+**Event-driven, idle-aware in-flight update monitoring.** Update: 4 (Monitor In-Flight Updates) now runs right after Update: 3 (Apply Updates) starts an update, yet stays cheap the rest of the time. Adds a fleet-wide idle short-circuit on `Export-AzLocalUpdateRunMonitorReport` (`-SkipWhenIdle`, new private helper `Test-AzLocalUpdateRunsInFlight`), an apply-to-monitor event-driven trigger on both platforms (`apply-updates.yml` fires `monitor-updates.yml` after starting >=1 update, optional `MONITOR_TRIGGER_DELAY_MINUTES` 15-240), a 6-hourly default monitor cron (`0 */6 * * *`), and Config: 3 monitor-recommendation tuning inputs (`MonitorPollIntervalMinutes` / `MonitorTrailingDays` / `MonitorInFlightHours`). No public-API change (export count unchanged at 61 - the new helper is private). `GENERATED_AGAINST_MODULE_VERSION` bumped from `0.8.89` to `0.8.90`. See [CHANGELOG.md](CHANGELOG.md#0890---2026-06-20) for the full v0.8.90 entry.
 
 ### What's New in v0.8.89
 
