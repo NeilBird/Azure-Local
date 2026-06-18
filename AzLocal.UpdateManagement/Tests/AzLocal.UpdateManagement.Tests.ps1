@@ -34,8 +34,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $script:ModuleInfo | Should -Not -BeNullOrEmpty
         }
 
-        It 'Should have version 0.8.88' {
-            $script:ModuleInfo.Version | Should -Be '0.8.88'
+        It 'Should have version 0.8.89' {
+            $script:ModuleInfo.Version | Should -Be '0.8.89'
         }
 
         It 'Module version constants are in sync between .psm1 and .psd1' {
@@ -19499,24 +19499,41 @@ Describe 'v0.8.87: Export-AzLocalApplyUpdatesScheduleAudit recommends an Update:
     BeforeAll {
         $script:src887cfg = Get-Content -LiteralPath "$PSScriptRoot/../Public/Export-AzLocalApplyUpdatesScheduleAudit.ps1" -Raw
     }
-    It 'Exposes -MonitorFiresPerHour (1-12, default 2) and -MonitorTrailingDays (0-14, default 3)' {
-        $script:src887cfg | Should -Match '\[ValidateRange\(1,\s*12\)\]'
-        $script:src887cfg | Should -Match '\[int\]\$MonitorFiresPerHour\s*=\s*2'
+    It 'Exposes -MonitorPollIntervalMinutes (ValidateSet, default 30), -MonitorTrailingDays (0-14, default 3), and -MonitorInFlightHours (0-48, default 6)' {
+        $script:src887cfg | Should -Match '\[ValidateSet\(15,\s*20,\s*30,\s*60,\s*120,\s*180,\s*240\)\]'
+        $script:src887cfg | Should -Match '\[int\]\$MonitorPollIntervalMinutes\s*=\s*30'
         $script:src887cfg | Should -Match '\[ValidateRange\(0,\s*14\)\]'
         $script:src887cfg | Should -Match '\[int\]\$MonitorTrailingDays\s*=\s*3'
+        $script:src887cfg | Should -Match '\[ValidateRange\(0,\s*48\)\]'
+        $script:src887cfg | Should -Match '\[int\]\$MonitorInFlightHours\s*=\s*6'
     }
     It 'Renders an always-on "Recommended in-flight monitor schedule (Update: 4)" section' {
         $script:src887cfg | Should -Match 'Recommended in-flight monitor schedule \(Update: 4\)'
     }
-    It 'Derives the minute field from the cadence (0 for hourly, */N otherwise)' {
-        $script:src887cfg | Should -Match "if \(\`$monitorFires -le 1\) \{ '0' \} else \{ \('\*/\{0\}' -f \`$monitorIntervalMinutes\) \}"
+    It 'Derives the minute field from the cadence (0 for >= 60 min, */N otherwise)' {
+        $script:src887cfg | Should -Match 'if \(\$monitorIntervalMinutes -lt 60\)'
+        $script:src887cfg | Should -Match "\`$monitorMinuteField = \('\*/\{0\}' -f \`$monitorIntervalMinutes\)"
     }
-    It 'Expands apply weekday(s) across the trailing coverage window' {
+    It 'Expands the eligible weekday(s) across the trailing coverage window' {
         $script:src887cfg | Should -Match 'for \(\$k = 0; \$k -le \$MonitorTrailingDays; \$k\+\+\)'
-        $script:src887cfg | Should -Match '\$monitorCoverageSet\.Add\(\(\(\$applyDow \+ \$k\) % 7\)\)'
+        $script:src887cfg | Should -Match '\$monitorCoverageSet\.Add\(\(\(\$baseDow \+ \$k\) % 7\)\)'
     }
-    It 'Falls back to a 24x7 cron when no apply firings are derivable' {
-        $script:src887cfg | Should -Match "\`$monitorFallbackCron = \('\{0\} \* \* \* \*' -f \`$monitorMinuteField\)"
+    It 'Bounds the hour field from the UpdateStartWindow span plus the in-flight buffer' {
+        $script:src887cfg | Should -Match 'ConvertFrom-AzLocalUpdateWindow -WindowString \$ws'
+        $script:src887cfg | Should -Match '\$candidateHigh = \$monitorWinMaxEndHour \+ \$MonitorInFlightHours'
+        $script:src887cfg | Should -Match '\$monitorHoursBounded = \$true'
+    }
+    It 'Falls back to all-hours when a run can cross midnight (overnight window or trailing days)' {
+        $script:src887cfg | Should -Match 'if \(\$monitorWinOvernight\)'
+        $script:src887cfg | Should -Match '\$MonitorTrailingDays -gt 0'
+    }
+    It 'Derives monitor weekdays from schedule ring eligibility (reusing the cron-firings map, not a second calendar call)' {
+        $script:src887cfg | Should -Match '\$haveSchedule -and \$cronFiringsByDate -and \$cronFiringsByDate\.Count -gt 0'
+        $script:src887cfg | Should -Match '\[datetime\]::TryParseExact'
+        $script:src887cfg | Should -Match 'apply-updates-schedule\.yml ring eligibility'
+    }
+    It 'Falls back to an all-days cron when no apply firings are derivable' {
+        $script:src887cfg | Should -Match "\`$monitorFallbackCron = \('\{0\} \{1\} \* \* \*' -f \`$monitorMinuteField, \`$monitorHourField\)"
     }
 }
 

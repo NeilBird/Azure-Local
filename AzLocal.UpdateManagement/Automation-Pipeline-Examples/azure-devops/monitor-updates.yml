@@ -112,7 +112,7 @@ parameters:
     default: false
 
 variables:
-  GENERATED_AGAINST_MODULE_VERSION: '0.8.88'
+  GENERATED_AGAINST_MODULE_VERSION: '0.8.89'
   REQUIRED_MODULE_VERSION: '${{ parameters.moduleVersion }}'
   reportsPath: '$(Build.ArtifactStagingDirectory)/reports'
   # ITSM connector. When raiseItsmTicket=true the Raise ITSM task below
@@ -123,7 +123,7 @@ variables:
   # group reference convert this entire 'variables:' block to list form:
   #   variables:
   #     - name: GENERATED_AGAINST_MODULE_VERSION
-  #       value: '0.8.88'
+  #       value: '0.8.89'
   #     - name: REQUIRED_MODULE_VERSION
   #       value: '${{ parameters.moduleVersion }}'
   #     - name: reportsPath

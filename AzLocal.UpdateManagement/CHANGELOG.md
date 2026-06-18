@@ -5,6 +5,45 @@ All notable changes to the AzLocal.UpdateManagement module (renamed from AzStack
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.89] - 2026-06-18
+
+Sharpens the Config: 3 (`Export-AzLocalApplyUpdatesScheduleAudit`) "Recommended in-flight
+monitor schedule (Update: 4)" so the recommended `monitor-updates.yml` cron only polls when
+an update can actually be in flight, instead of 24x7. Adds an Automation-Pipeline-Examples
+README section documenting how the three scheduling layers control which updates install, and
+when.
+
+### Changed
+
+- **`Export-AzLocalApplyUpdatesScheduleAudit` monitor-cron recommendation is now schedule- and window-aware.**
+  - Replaced `-MonitorFiresPerHour` (1-12) with `-MonitorPollIntervalMinutes`
+    (`ValidateSet` 15/20/30/60/120/180/240, default 30). The new knob expresses a true
+    poll interval, including multi-hour cadence for slow multi-node runs (which can take
+    up to ~48h); values < 60 min set the cron minute field to `*/N`, values >= 60 min set
+    the minute field to `0` and step the hour field every N/60 hours.
+  - Added `-MonitorInFlightHours` (`ValidateRange` 0-48, default 6): a buffer past the
+    latest `UpdateStartWindow` end so the monitor keeps polling for runs still finishing
+    after the maintenance window closes.
+  - Monitor **days** now derive from `apply-updates-schedule.yml` ring eligibility (the
+    cycle calendar) when `-SchedulePath` is supplied, otherwise from the `apply-updates.yml`
+    cron weekday(s). The base set is still expanded by `-MonitorTrailingDays`.
+  - Monitor **hours** are now bounded to the `UpdateStartWindow` span (earliest start ->
+    latest end) plus `-MonitorInFlightHours`, falling back to all-hours (`*`) when a run can
+    cross midnight (an overnight window, `-MonitorTrailingDays > 0`, or the buffer pushing
+    coverage past 24h) so no in-flight time is left unpolled.
+
+### Added
+
+- **Automation-Pipeline-Examples README section 1.2 "How to control which updates are installed, and when".**
+  Documents the three-layer model (`apply-updates-schedule.yml` picks the days, the
+  `apply-updates.yml` cron picks the wake cadence, `UpdateStartWindow` picks the time-of-day)
+  and the end-to-end workflow: tag clusters (Config: 2) -> generate the schedule (6.5) -> run
+  Config: 3, which outputs ready-to-paste apply and monitor crons -> paste into Update: 3 and
+  Update: 4.
+
+All bundled pipeline templates bump `GENERATED_AGAINST_MODULE_VERSION` from `'0.8.88'` to
+`'0.8.89'`. Export count unchanged (still 61).
+
 ## [0.8.88] - 2026-06-17
 
 Adds programmatic "Check for updates" (checkUpdates) automation and stale-update-assessment

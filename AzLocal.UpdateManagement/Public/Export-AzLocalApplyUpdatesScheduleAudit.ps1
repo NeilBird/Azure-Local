@@ -136,17 +136,30 @@ function Export-AzLocalApplyUpdatesScheduleAudit {
         shifted back this many days). When not explicitly bound it is resolved
         from the SIDELOAD_LEAD_DAYS environment variable, defaulting to 7.
 
-    .PARAMETER MonitorFiresPerHour
-        How often the v0.8.87 "Recommended in-flight monitor schedule" section
+    .PARAMETER MonitorPollIntervalMinutes
+        Desired frequency the "Recommended in-flight monitor schedule" section
         suggests the Update: 4 monitor-updates pipeline should poll while an
-        update run is in flight (1-12, default 2 = every 30 minutes). Drives
-        the minute field of the recommended monitor cron.
+        update run is in flight. One of 15, 20, 30, 60, 120, 180, 240 minutes
+        (default 30). Values < 60 set the cron minute field to '*/N'; values
+        >= 60 set the minute field to '0' and step the hour field every N/60
+        hours. Lets operators dial cadence to run duration (single-node runs
+        ~4-5h vs multi-node up to ~48h).
 
     .PARAMETER MonitorTrailingDays
         How many days after an apply window opens an update run may still be
         in flight (0-14, default 3, mirroring the Update: 4 monitor's CRITICAL
-        elapsed tier). The recommended monitor cron covers the apply weekday(s)
-        plus this many trailing days so multi-day runs stay observed.
+        elapsed tier). The recommended monitor cron covers the eligible
+        weekday(s) plus this many trailing days so multi-day runs stay
+        observed. Any value > 0 forces the hour field to '*' (a run can carry
+        into the next day's hours).
+
+    .PARAMETER MonitorInFlightHours
+        How many hours past the latest UpdateStartWindow end the recommended
+        monitor cron keeps polling, to catch runs still finishing after the
+        maintenance window closes (0-48, default 6). The monitor hour field is
+        bounded to [earliest window start .. latest window end + this buffer]
+        when that span stays within a single UTC day; otherwise it falls back
+        to '*' (all hours) so no in-flight time is left unpolled.
 
     .PARAMETER InstalledModuleVersion
         Optional [string] used in the markdown footer
@@ -238,12 +251,16 @@ function Export-AzLocalApplyUpdatesScheduleAudit {
         [int]$SideloadLeadDays = 7,
 
         [Parameter(Mandatory = $false)]
-        [ValidateRange(1, 12)]
-        [int]$MonitorFiresPerHour = 2,
+        [ValidateSet(15, 20, 30, 60, 120, 180, 240)]
+        [int]$MonitorPollIntervalMinutes = 30,
 
         [Parameter(Mandatory = $false)]
         [ValidateRange(0, 14)]
         [int]$MonitorTrailingDays = 3,
+
+        [Parameter(Mandatory = $false)]
+        [ValidateRange(0, 48)]
+        [int]$MonitorInFlightHours = 6,
 
         [Parameter(Mandatory = $false)]
         [AllowEmptyString()]
@@ -299,8 +316,9 @@ function Export-AzLocalApplyUpdatesScheduleAudit {
     Write-Host "IncludeUntagged  : $IncludeUntagged"
     Write-Host "ClusterCsvPath   : $(if ($haveCsv) { $ClusterCsvPath } else { '(skipped - empty or missing)' })"
     Write-Host "Platform         : $Platform"
-    Write-Host "MonitorFires/hr  : $MonitorFiresPerHour"
+    Write-Host "MonitorPollMins  : $MonitorPollIntervalMinutes"
     Write-Host "MonitorTrailDays : $MonitorTrailingDays"
+    Write-Host "MonitorInFlightH : $MonitorInFlightHours"
     Write-Host ''
 
     # ---- Audit view (rows + CSV) ------------------------------------------
@@ -882,22 +900,133 @@ function Export-AzLocalApplyUpdatesScheduleAudit {
     }
 
     # ---- Recommended in-flight monitor schedule (Update: 4) ----------------
-    # v0.8.87: recommend a poll cron for the 'Update: 4 - Monitor In-Flight
+    # v0.8.89: recommend a poll cron for the 'Update: 4 - Monitor In-Flight
     # Updates' (monitor-updates.yml) pipeline, scaled to how often updates are
-    # applied. Once an apply window fires, an update run can stay in-flight for
-    # hours to days (the monitor's own CRITICAL elapsed tier defaults to 3
-    # days), so the monitor must poll frequently across the apply weekday(s)
-    # AND the trailing days an update may still be running. Cadence (fires/hour)
-    # is driven by -MonitorFiresPerHour; trailing coverage by -MonitorTrailingDays.
+    # applied AND bounded to when updates can actually be running. Once an apply
+    # window fires, an update run can stay in-flight for hours to days, so the
+    # recommended cron polls across:
+    #   * DAYS   - the weekdays an update can be eligible. When -SchedulePath is
+    #              supplied these come from apply-updates-schedule.yml ring
+    #              eligibility (layer 1, via the cycle calendar); otherwise from
+    #              the apply-updates.yml cron weekday(s) (layer 2). The base set
+    #              is expanded by -MonitorTrailingDays for multi-day runs.
+    #   * HOURS  - bounded by the UpdateStartWindow tag span (layer 3) earliest
+    #              start -> latest end + an -MonitorInFlightHours buffer for runs
+    #              still finishing. Falls back to all-hours ('*') when a run can
+    #              cross midnight (an overnight window, -MonitorTrailingDays > 0,
+    #              or the buffer pushes coverage past 24h) so no in-flight time
+    #              is left unpolled.
+    #   * CADENCE - -MonitorPollIntervalMinutes (15/20/30/60/120/180/240 min)
+    #              sets the minute step (< 60 min) or the hour step (>= 60 min).
     # Always emitted (independent of the sideload opt-in).
-    $monitorFires = $MonitorFiresPerHour
-    $monitorIntervalMinutes = [int][math]::Floor(60 / $monitorFires)
-    if ($monitorIntervalMinutes -lt 1) { $monitorIntervalMinutes = 1 }
-    $monitorMinuteField = if ($monitorFires -le 1) { '0' } else { ('*/{0}' -f $monitorIntervalMinutes) }
+
+    # Cadence -> minute field + (for >= 60 min) hour step.
+    $monitorIntervalMinutes = $MonitorPollIntervalMinutes
+    $monitorHourStep = 1
+    if ($monitorIntervalMinutes -lt 60) {
+        $monitorMinuteField = ('*/{0}' -f $monitorIntervalMinutes)
+    }
+    else {
+        $monitorMinuteField = '0'
+        $monitorHourStep = [int]($monitorIntervalMinutes / 60)
+    }
+
+    # HOURS: derive the [earliest start, latest end] span across every distinct
+    # UpdateStartWindow tag value in the audit rows. An overnight window
+    # (end <= start) means a run can cross midnight, so hours cannot be bounded.
+    $monitorWindowStrings = @(
+        $audit |
+            Where-Object { $_.PSObject.Properties['UpdateStartWindow'] -and -not [string]::IsNullOrWhiteSpace([string]$_.UpdateStartWindow) } |
+            ForEach-Object { ([string]$_.UpdateStartWindow).Trim() } |
+            Sort-Object -Unique
+    )
+    $monitorWinMinStartHour = $null
+    $monitorWinMaxEndHour   = $null
+    $monitorWinOvernight    = $false
+    foreach ($ws in $monitorWindowStrings) {
+        $segs = @()
+        try { $segs = @(ConvertFrom-AzLocalUpdateWindow -WindowString $ws -ErrorAction Stop) }
+        catch { continue }
+        foreach ($seg in $segs) {
+            if ($seg.Overnight) { $monitorWinOvernight = $true; continue }
+            $sh = [int][math]::Floor($seg.StartTime.TotalHours)
+            $eh = [int][math]::Ceiling($seg.EndTime.TotalHours)
+            if ($null -eq $monitorWinMinStartHour -or $sh -lt $monitorWinMinStartHour) { $monitorWinMinStartHour = $sh }
+            if ($null -eq $monitorWinMaxEndHour   -or $eh -gt $monitorWinMaxEndHour)   { $monitorWinMaxEndHour   = $eh }
+        }
+    }
+
+    # Decide whether the hour field can be bounded to a single UTC day.
+    $monitorHoursBounded = $false
+    $monitorHourLow      = 0
+    $monitorHourHigh     = 23
+    $monitorHoursReason  = ''
+    if ($monitorWinOvernight) {
+        $monitorHoursReason = 'an UpdateStartWindow crosses midnight'
+    }
+    elseif ($MonitorTrailingDays -gt 0) {
+        $monitorHoursReason = ('runs may continue for {0} trailing day(s)' -f $MonitorTrailingDays)
+    }
+    elseif ($null -eq $monitorWinMinStartHour -or $null -eq $monitorWinMaxEndHour) {
+        $monitorHoursReason = 'no UpdateStartWindow tags were found to bound the hours'
+    }
+    else {
+        $candidateHigh = $monitorWinMaxEndHour + $MonitorInFlightHours
+        if ($candidateHigh -gt 23) {
+            $monitorHoursReason = ('the in-flight buffer ({0}h past window end) pushes coverage past midnight' -f $MonitorInFlightHours)
+        }
+        else {
+            $monitorHoursBounded = $true
+            $monitorHourLow      = $monitorWinMinStartHour
+            $monitorHourHigh     = $candidateHigh
+        }
+    }
+
+    # Build the hour field from the bound + cadence step.
+    if ($monitorHoursBounded) {
+        if ($monitorHourStep -gt 1) {
+            $monitorHourField = ('{0}-{1}/{2}' -f $monitorHourLow, $monitorHourHigh, $monitorHourStep)
+        }
+        elseif ($monitorHourLow -eq $monitorHourHigh) {
+            $monitorHourField = ('{0}' -f $monitorHourLow)
+        }
+        else {
+            $monitorHourField = ('{0}-{1}' -f $monitorHourLow, $monitorHourHigh)
+        }
+    }
+    else {
+        $monitorHourField = if ($monitorHourStep -gt 1) { ('*/{0}' -f $monitorHourStep) } else { '*' }
+    }
+
+    # DAYS: prefer apply-updates-schedule.yml ring eligibility (layer 1) - the
+    # distinct UTC weekdays that carry at least one apply-cron firing across the
+    # cycle horizon. This reuses the $cronFiringsByDate map already built for the
+    # cycle-calendar render above, so the schedule calendar cmdlet is NOT invoked
+    # a second time (a second call would clobber the calendar render's args and
+    # break the cycle-calendar enrichment). Falls back to the apply-updates.yml
+    # cron weekday(s) when no schedule firings are available.
+    $monitorScheduleDows = @()
+    $monitorDaySource    = 'apply-updates.yml cron weekday(s)'
+    if ($haveSchedule -and $cronFiringsByDate -and $cronFiringsByDate.Count -gt 0) {
+        $monitorEligibleDows = New-Object 'System.Collections.Generic.HashSet[int]'
+        foreach ($dateKey in $cronFiringsByDate.Keys) {
+            $fires = @($cronFiringsByDate[$dateKey])
+            if ($fires.Count -eq 0) { continue }
+            $parsedDate = [datetime]::MinValue
+            if ([datetime]::TryParseExact([string]$dateKey, 'yyyy-MM-dd', [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::None, [ref]$parsedDate)) {
+                [void]$monitorEligibleDows.Add([int]$parsedDate.DayOfWeek)
+            }
+        }
+        if ($monitorEligibleDows.Count -gt 0) {
+            $monitorScheduleDows = @($monitorEligibleDows) | Sort-Object
+            $monitorDaySource    = 'apply-updates-schedule.yml ring eligibility'
+        }
+    }
 
     # Distinct apply-window weekly firings (DayOfWeek) from the apply pipeline
-    # crons. Read-AzLocalApplyUpdatesYamlCrons uses a unary-comma return -
-    # direct assignment only (NEVER @() wrap).
+    # crons - the day source when schedule eligibility is unavailable.
+    # Read-AzLocalApplyUpdatesYamlCrons uses a unary-comma return - direct
+    # assignment only (NEVER @() wrap).
     $monitorApplyFirings = New-Object 'System.Collections.Generic.List[psobject]'
     try {
         $monitorCronTriggers = Read-AzLocalApplyUpdatesYamlCrons -Path $PipelineYamlPath -ErrorAction Stop
@@ -921,29 +1050,46 @@ function Export-AzLocalApplyUpdatesScheduleAudit {
         Write-Warning "Failed to read apply-updates crons for the monitor schedule recommendation: $($_.Exception.Message)"
     }
 
-    [void]$md.Add('### Recommended in-flight monitor schedule (Update: 4)')
-    [void]$md.Add('')
-    [void]$md.Add(('The **Update: 4 - Monitor In-Flight Updates** (`monitor-updates.yml`) pipeline should poll frequently while any update run is in flight. An update can stay in-flight for hours to days after its apply window opens, so poll **{0}x/hour** (every {1} min) across the apply weekday(s) plus the next **{2} day(s)** to catch multi-day runs.' -f $monitorFires, $monitorIntervalMinutes, $MonitorTrailingDays))
-    [void]$md.Add('')
-
     $monitorDayNames = @('Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat')
     $monitorApplyDows = @($monitorApplyFirings | ForEach-Object { [int]$_.DayOfWeek } | Sort-Object -Unique)
-    if ($monitorApplyDows.Count -gt 0) {
-        # Expand each apply weekday across the trailing coverage days.
+
+    # Base weekdays: schedule eligibility wins, else apply-cron weekdays.
+    if ($monitorScheduleDows.Count -gt 0) {
+        $monitorBaseDows = $monitorScheduleDows
+    }
+    else {
+        $monitorBaseDows = $monitorApplyDows
+    }
+
+    $monitorCadenceLabel =
+        if ($monitorIntervalMinutes -lt 60) { ('every {0} min' -f $monitorIntervalMinutes) }
+        elseif ($monitorIntervalMinutes -eq 60) { 'hourly' }
+        else { ('every {0}h' -f $monitorHourStep) }
+
+    [void]$md.Add('### Recommended in-flight monitor schedule (Update: 4)')
+    [void]$md.Add('')
+
+    if ($monitorBaseDows.Count -gt 0) {
+        # Expand each base weekday across the trailing coverage days.
         $monitorCoverageSet = New-Object 'System.Collections.Generic.HashSet[int]'
-        foreach ($applyDow in $monitorApplyDows) {
+        foreach ($baseDow in $monitorBaseDows) {
             for ($k = 0; $k -le $MonitorTrailingDays; $k++) {
-                [void]$monitorCoverageSet.Add((($applyDow + $k) % 7))
+                [void]$monitorCoverageSet.Add((($baseDow + $k) % 7))
             }
         }
-        $monitorCoverageDows = @($monitorCoverageSet) | Sort-Object
-        $monitorDayField = if ($monitorCoverageDows.Count -ge 7) { '*' } else { ($monitorCoverageDows -join ',') }
-        $monitorCron = ('{0} * * * {1}' -f $monitorMinuteField, $monitorDayField)
+        $monitorCoverageDows  = @($monitorCoverageSet) | Sort-Object
+        $monitorDayField      = if ($monitorCoverageDows.Count -ge 7) { '*' } else { ($monitorCoverageDows -join ',') }
+        $monitorCron          = ('{0} {1} * * {2}' -f $monitorMinuteField, $monitorHourField, $monitorDayField)
         $monitorCoverageLabel = if ($monitorCoverageDows.Count -ge 7) { 'every day' } else { (($monitorCoverageDows | ForEach-Object { $monitorDayNames[$_] }) -join ', ') }
-        $monitorApplyLabel = ($monitorApplyDows | ForEach-Object { $monitorDayNames[$_] }) -join ', '
+        $monitorBaseLabel     = ($monitorBaseDows | ForEach-Object { $monitorDayNames[$_] }) -join ', '
+        $monitorHoursLabel    = if ($monitorHoursBounded) { ('{0:00}:00-{1:00}:00 UTC' -f $monitorHourLow, $monitorHourHigh) } else { 'all hours (24h)' }
 
-        [void]$md.Add(('Apply firing weekday(s): **{0}**. With {1} trailing day(s) of coverage, the monitor should run on: **{2}**.' -f $monitorApplyLabel, $MonitorTrailingDays, $monitorCoverageLabel))
+        [void]$md.Add(('The **Update: 4 - Monitor In-Flight Updates** (`monitor-updates.yml`) pipeline should poll while an update run is in flight. Cadence: **{0}**. Eligible weekday(s) (from {1}): **{2}**; with {3} trailing day(s) the monitor runs on **{4}**. Hour coverage: **{5}**.' -f $monitorCadenceLabel, $monitorDaySource, $monitorBaseLabel, $MonitorTrailingDays, $monitorCoverageLabel, $monitorHoursLabel))
         [void]$md.Add('')
+        if (-not $monitorHoursBounded -and $monitorHoursReason) {
+            [void]$md.Add(('> Hours are left at `*` (24h) because {0}. Set `-MonitorTrailingDays 0`, tighten the `UpdateStartWindow` tags, or lower `-MonitorInFlightHours` to bound the hour field to a single UTC day.' -f $monitorHoursReason))
+            [void]$md.Add('')
+        }
         [void]$md.Add('Recommended Update: 4 monitor cron - paste into the `schedule:` block of `monitor-updates.yml`:')
         [void]$md.Add('')
         [void]$md.Add('```')
@@ -954,8 +1100,8 @@ function Export-AzLocalApplyUpdatesScheduleAudit {
         [void]$md.Add('')
     }
     else {
-        $monitorFallbackCron = ('{0} * * * *' -f $monitorMinuteField)
-        [void]$md.Add('> No simple weekly apply-window firings were found in the pipeline YAML, so a focused monitor window could not be derived. Run the monitor 24x7 at the configured cadence:')
+        $monitorFallbackCron = ('{0} {1} * * *' -f $monitorMinuteField, $monitorHourField)
+        [void]$md.Add(('No simple weekly apply-window firings were found in the pipeline YAML, so a focused monitor window could not be derived. Run the monitor at the configured cadence (**{0}**) across all days:' -f $monitorCadenceLabel))
         [void]$md.Add('')
         [void]$md.Add('```')
         [void]$md.Add($monitorFallbackCron)

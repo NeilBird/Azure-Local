@@ -12,6 +12,7 @@ It is written in the same step-by-step style as [`ITSM/README.md`](../ITSM/READM
 
 1. [What you'll have when you're done](#1-what-youll-have-when-youre-done)
    - [1.1 Why the pipelines are named `Step.N - <description>`](#11-why-the-pipelines-are-named-stepn---description)
+   - [1.2 How to control which updates are installed, and when](#12-how-to-control-which-updates-are-installed-and-when)
 2. [Prerequisites](#2-prerequisites)
 3. [Required Azure permissions](#3-required-azure-permissions)
    - [3.1 Custom role: `Azure Stack HCI Update Operator (custom)`](#31-custom-role-azure-stack-hci-update-operator-custom)
@@ -102,6 +103,37 @@ The active workflow model uses three clear groups:
 - **Azure DevOps**: the Pipelines list sorts by the pipeline **definition name** chosen at import time (not by filename). Use the same `Config: N` / `Monitor: N` / `Update: N` naming when you import so the list stays grouped by purpose.
 
 If you prefer a different naming scheme (e.g. `00 - Auth`, `01 - Inventory`, ...), just change the `name:` field in each GH Actions YAML and / or pick a different prefix at ADO import time. Nothing else in the module depends on these display names.
+
+### 1.2 How to control which updates are installed, and when
+
+Three independent layers decide **what** installs and **when**. Each answers a different question, and they compose cleanly once set up in order:
+
+| Layer | File / source | Configured via | Grain | Answers |
+|---|---|---|---|---|
+| 1 | `apply-updates-schedule.yml` | `New-AzLocalApplyUpdatesScheduleConfig` (section 6.5) | day | **WHICH `UpdateRing`(s) are eligible on a given UTC date** - the cycle calendar (`cycleWeeks` + ISO-week anchor + day-of-week -> ring eligibility) |
+| 2 | `apply-updates.yml` `schedule:` cron | **Config: 3** output, pasted in (see below) | intra-day | **HOW OFTEN the "Update: 3 - Apply Updates" job wakes up** to check whether today is an eligible day |
+| 3 | per-cluster `UpdateStartWindow` tag | **Config: 2 - Manage UpdateRing Tags** | minute | **WHEN, during an eligible day, an update is allowed to start** (`<days>_<HH:MM>-<HH:MM>`, UTC) |
+
+How the layers work together:
+
+- **Layer 1 (`apply-updates-schedule.yml`)** is the single source of truth for *which days* each ring may update. A cron firing that lands on a day with no matching schedule row is logged and exits 0 - no update runs.
+- **Layer 2 (the cron in `apply-updates.yml`)** only controls *wake frequency*. It must fire on the eligible days that layer 1 defines; on every other day it is a harmless no-op.
+- **Layer 3 (`UpdateStartWindow`)** gates the *time of day* an update is actually allowed to begin on an eligible day. Outside the window the cluster returns `ScheduleBlocked`.
+
+In one sentence: **`apply-updates-schedule.yml` picks the days, the cron picks the wake cadence, and `UpdateStartWindow` picks the time-of-day.** You never hand-write the layer-2 cron - **Config: 3** computes it for you from layers 1 and 3.
+
+#### Step-by-step: from tags to a live schedule
+
+1. **Tag the clusters (ring + layer 3).** Run **Config: 2 - Manage UpdateRing Tags** to bulk-apply `UpdateRing` and `UpdateStartWindow` (and optional `UpdateExclusionsWindow` / `UpdateExcluded`) from CSV. See [section 6.3](#63-apply-tags).
+2. **Generate / update `apply-updates-schedule.yml` (layer 1).** Produce the ring-eligibility calendar from your live fleet - see [section 6.5](#65-generate-apply-updates-scheduleyml-from-your-live-fleet) (`New-AzLocalApplyUpdatesScheduleConfig`). Commit it.
+3. **Run Config: 3 - Apply-Updates Schedule Coverage Audit.** This read-only pipeline diffs the live `UpdateRing` / `UpdateStartWindow` tags against `apply-updates-schedule.yml`, reports any coverage gaps, and **outputs two ready-to-paste cron snippets** in its step summary:
+   - a **recommended apply cron** for **Update: 3 - Apply Updates** (`apply-updates.yml`), and
+   - a **recommended in-flight monitor cron** for **Update: 4 - Monitor In-Flight Updates** (`monitor-updates.yml`).
+4. **Paste the apply cron into `apply-updates.yml`.** Copy the recommended apply cron from the Config: 3 summary into the `schedule:` block (GitHub Actions) / `schedules:` block (Azure DevOps) of `apply-updates.yml`, inside the `BEGIN/END-AZLOCAL-CUSTOMIZE:schedule-triggers` marker. Commit. Update: 3 now wakes on exactly the eligible days.
+5. **Paste the monitor cron into `monitor-updates.yml`.** Copy the recommended monitor cron into the `schedule:` block of `monitor-updates.yml`. Update: 4 then polls only while updates can be in flight (see [section 6.7](#67-continuous-fleet-monitoring)), instead of 24x7.
+6. **Re-run Config: 3 whenever tags or the schedule change** to catch drift and regenerate the crons. The weekly `apply-updates-schedule-audit.yml` does this automatically (see [section 8.3](#83-end-to-end-runbook-apply-updates-schedule-coverage-audit)).
+
+> **Config: 3 is the glue.** Once layers 1 and 3 are in place, it derives the layer-2 crons for both the apply and the monitor pipelines - so you never hand-craft cron expressions, and Update: 3 and Update: 4 stay aligned to your rings and maintenance windows.
 
 ---
 
@@ -1532,7 +1564,7 @@ Configure your CI/CD platform's alerting on the JUnit failures - GitHub Actions 
 
 The connector reads the JUnit results the Apply Updates pipeline already publishes and, for each cluster whose status matches your configured trigger matrix (default: `Failed`, `Error`, `HealthCheckBlocked`, `SideloadedBlocked`), opens a deduped ServiceNow incident via the Table API. Idempotency is enforced via a SHA256 dedupe key written to a custom `u_azlocal_dedupe_key` column, so re-running the same workflow does not create duplicates.
 
-> **v0.8.87: the Update: 4 in-flight monitor (`monitor-updates.yml`) now supports the same opt-in ITSM step.** Toggle `raise_itsm_ticket=true` (`raiseItsmTicket` on Azure DevOps) and it reads `./reports/update-monitor.xml` after publishing the JUnit. The monitor JUnit now emits per-testcase `ClusterResourceId` / `UpdateName` / `Status` properties (`Status` is `StepError` / `LongRunningStep` / `LongRunningOverall` / `InProgress` / `Failed` / `AttemptWithoutRun`); the sample matrix raises on `AttemptWithoutRun` + `StepError` and leaves `LongRunning*` opt-in. The monitor stays report-only and always green - ITSM failures never affect its result. To pick a poll cadence, the **Config: 3** schedule auditor now prints a "Recommended in-flight monitor schedule (Update: 4)" cron derived from your apply windows (`-MonitorFiresPerHour`, `-MonitorTrailingDays`).
+> **v0.8.87: the Update: 4 in-flight monitor (`monitor-updates.yml`) now supports the same opt-in ITSM step.** Toggle `raise_itsm_ticket=true` (`raiseItsmTicket` on Azure DevOps) and it reads `./reports/update-monitor.xml` after publishing the JUnit. The monitor JUnit now emits per-testcase `ClusterResourceId` / `UpdateName` / `Status` properties (`Status` is `StepError` / `LongRunningStep` / `LongRunningOverall` / `InProgress` / `Failed` / `AttemptWithoutRun`); the sample matrix raises on `AttemptWithoutRun` + `StepError` and leaves `LongRunning*` opt-in. The monitor stays report-only and always green - ITSM failures never affect its result. To pick a poll cadence, the **Config: 3** schedule auditor now prints a "Recommended in-flight monitor schedule (Update: 4)" cron derived from your apply windows and `UpdateStartWindow` tags (`-MonitorPollIntervalMinutes`, `-MonitorTrailingDays`, `-MonitorInFlightHours`).
 
 This README does not duplicate the setup - it is a single-source-of-truth in [`../ITSM/README.md`](../ITSM/README.md). Here is the high-level wiring you'll do over there:
 
