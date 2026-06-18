@@ -2,16 +2,7 @@
 
 > ⚠️ **Disclaimer**: This module is **NOT** a Microsoft supported service offering or product. It is provided as example code only, with no warranty or official support. Refer to the [MIT license](https://github.com/NeilBird/Azure-Local/blob/main/LICENSE) for further information.
 
-**Latest Version:** v0.8.88 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.8.88)
-
-> 📢 **Renamed in v0.7.3**: this module was previously published as `AzStackHci.ManageUpdates`. The new module name aligns with the Azure Local product name (_Microsoft retired the *Azure Stack HCI* brand in late 2024_). The module GUID is preserved across the rename. If you have the old name installed, run:
->
-> ```powershell
-> Get-Module AzStackHci.ManageUpdates -ListAvailable | Uninstall-Module -Force -Verbose
-> Install-Module AzLocal.UpdateManagement
-> ```
->
-> All previously-published `AzStackHci.ManageUpdates` versions have been unlisted from PSGallery. See [CHANGELOG.md](CHANGELOG.md) for the full migration note. This message will be removed in two releases time.
+**Latest Version:** v0.8.89 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.8.89)
 
 This folder contains the 'AzLocal.UpdateManagement' PowerShell module for managing updates on Azure Local (formerly Azure Stack HCI) clusters using the Azure Local REST API. The module supports both interactive use and CI/CD automation via Service Principal or Managed Identity authentication.
 
@@ -23,7 +14,7 @@ Azure Local REST API specification (includes update management endpoints): https
 **This README (overview + most-recent release notes):**
 
 - [Where to Start](#where-to-start)
-- [What's New in v0.8.88](#whats-new-in-v0888)
+- [What's New in v0.8.89](#whats-new-in-v0889)
 - [Files](#files)
 - [Prerequisites](#prerequisites)
 - [RBAC Requirements](#rbac-requirements) (summary; full reference in [docs/rbac.md](docs/rbac.md))
@@ -86,29 +77,31 @@ If you are new to this module, work through these in order from a regular PowerS
 
 > Most CI/CD pipelines in [Automation-Pipeline-Examples/](Automation-Pipeline-Examples/) are direct implementations of one of these workflows. Start there if you want a copy-pasteable end-to-end pipeline.
 
-## What's New in v0.8.88
+## What's New in v0.8.89
 
-**"Check for updates" automation + stale-assessment detection.** Adds a new public cmdlet and an opt-out auto-scan so an Azure Local cluster that reports "Up to date" while a newer solution build is actually available (a stale cached assessment) is detected and refreshed without leaving the pipeline.
-
-### Added
-
-- **`Sync-AzLocalClusterUpdateSummary`** (new Public cmdlet; export count 60 -> 61). POSTs the `updateSummaries/default/checkUpdates` ARM action - the programmatic equivalent of the Azure portal **Check for updates** button - to force one or more clusters to re-evaluate update availability. Clusters are selected by name, by Resource ID, or by `UpdateRing` tag (mirroring `Start-AzLocalClusterUpdate`). Fire-and-forget by default (safe for fleet use); `-Wait` polls `updateSummaries` until `lastChecked` advances and returns the refreshed `UpdateState` / `CurrentVersion` / `AvailableUpdateCount`. Supports `-WhatIf` / `-Confirm`, `-Force`, and `-PassThru`.
-- **Opt-out stale-assessment auto-scan in `Export-AzLocalClusterUpdateReadinessReport`.** After the readiness cascade, any cluster reporting `UpToDate` whose installed version is behind the latest released `YYMM` (detected by the new private `Test-AzLocalUpdateAssessmentStale` helper plus `Get-AzLocalLatestSolutionVersion`) triggers a fire-and-forget Check for updates to refresh it. New `-SkipStaleAssessmentScan` switch (opt out) and `-StaleAssessmentApiVersion` parameter; new **"Stale update assessments"** report section; new `StaleAssessmentCount` / `StaleAssessmentClusters` / `StaleAssessmentScanTriggered` `-PassThru` fields.
+**A sharper Config: 3 monitor-cron recommendation + a "which updates install, and when" runbook.** Tunes the schedule audit (`Export-AzLocalApplyUpdatesScheduleAudit`) so the **Recommended in-flight monitor schedule (Update: 4)** it prints only polls while an update can actually be in flight - instead of a blunt 24x7 cron - and adds a README section that explains, end to end, the three layers that decide which updates install on which clusters and when.
 
 ### Changed
 
-- **Authorization / 403 failures on the refresh call are now surfaced in the console log.** `Sync-AzLocalClusterUpdateSummary` echoes the full `az rest` error (which, for an RBAC denial, contains the exact `Action` name and scope) and, when it detects `AuthorizationFailed` / `403`, emits an explicit warning telling the operator to capture the action name and assign `Azure Stack HCI Administrator` / `Contributor` (or pass `-SkipStaleAssessmentScan`). The failure is non-fatal - the readiness report still completes.
-- **Operator-facing pipeline cross-references de-numbered.** Stale `Step.N_*.yml` references in rendered report text and pipeline-example doc strings now use the descriptive filenames (e.g. `apply-updates.yml`, `monitor-updates.yml`, `sideload-updates.yml`) that have shipped since v0.8.7.
+- **`Export-AzLocalApplyUpdatesScheduleAudit` monitor-cron recommendation is now schedule- and window-aware.** The "Recommended in-flight monitor schedule (Update: 4)" cron now reflects when runs are genuinely active:
+  - **`-MonitorFiresPerHour` is replaced by `-MonitorPollIntervalMinutes`** (`ValidateSet` 15/20/30/60/120/180/240, default 30). It expresses a real poll interval, including multi-hour cadence for slow multi-node runs (which can take up to ~48h). Under 60 min sets the cron minute field to `*/N`; 60 min or more sets the minute field to `0` and steps the hour field every N/60 hours.
+  - **New `-MonitorInFlightHours`** (`ValidateRange` 0-48, default 6): a buffer past the latest `UpdateStartWindow` end so the monitor keeps polling for runs still finishing after the maintenance window closes.
+  - **Monitor days** now derive from `apply-updates-schedule.yml` ring eligibility (the cycle calendar) when `-SchedulePath` is supplied, otherwise from the `apply-updates.yml` cron weekday(s); still expanded by `-MonitorTrailingDays`.
+  - **Monitor hours** are now bounded to the `UpdateStartWindow` span plus `-MonitorInFlightHours`, falling back to all-hours (`*`) when a run can cross midnight (an overnight window, `-MonitorTrailingDays > 0`, or the buffer pushing coverage past 24h) so no in-flight time is left unpolled.
+
+### Added
+
+- **Automation-Pipeline-Examples README section "How to control which updates are installed, and when".** Documents the three-layer model - `apply-updates-schedule.yml` picks the **days**, the `apply-updates.yml` cron picks the wake **cadence**, and the per-cluster `UpdateStartWindow` tag picks the **time of day** - plus the end-to-end workflow: tag clusters (Config: 2) -> generate the schedule -> run Config: 3, which now outputs ready-to-paste apply and monitor crons -> paste those into Update: 3 and Update: 4.
+- **`checkUpdates` RBAC action: catalog-checked, documented, and guarded.** A provider-operations-catalog check (`az provider operation show`, 2026-06-18) confirms the "Check for updates" refresh action `Microsoft.AzureStackHCI/clusters/updateSummaries/checkUpdates/action` (confirmed verbatim from a live `403 AuthorizationFailed` body) is **enforced by Azure but not yet in the operations catalog**, so `az role definition create` / `update` would reject it - the least-privilege custom role continues to **deliberately omit** it (the four registered update actions it already grants are the complete catalog set). The `docs/rbac.md` and Automation README permission tables now document that the action is exercised by `Sync-AzLocalClusterUpdateSummary` and the stale-assessment auto-scan in `Export-AzLocalClusterUpdateReadinessReport` (the **Update: 1 - Assess Update Readiness** pipeline), that built-in **Azure Stack HCI Administrator** / **Contributor** authorize it via wildcard (or use `-SkipStaleAssessmentScan`), and that the action **will be added to the role once it GAs into the catalog**. A new Pester tripwire asserts the four registered actions are present and `checkUpdates` is absent, failing the moment it is added so the role JSON and docs update together.
 
 ### Notes
 
-- **`checkUpdates` is a preview action** (`2026-03-01-preview`) and is **not yet in the `Microsoft.AzureStackHCI` provider operations catalog**, so it **cannot be added to the least-privilege `Azure Stack HCI Update Operator (custom)` role yet**. Under that role the refresh returns a non-fatal `403`; use `Azure Stack HCI Administrator` / `Contributor`, or `-SkipStaleAssessmentScan`, until it GAs. See [docs/rbac.md](docs/rbac.md) and the [RBAC Requirements](#rbac-requirements) note. When it GAs, add the GA'd action (expected `Microsoft.AzureStackHCI/clusters/updateSummaries/checkUpdates/action`) to the custom role.
-- **Export count 60 -> 61** (`Sync-AzLocalClusterUpdateSummary`).
-- **`GENERATED_AGAINST_MODULE_VERSION`** bumped from `0.8.87` to `0.8.88` across bundled pipeline templates.
+- **No public-API change** (export count unchanged at 61).
+- **`GENERATED_AGAINST_MODULE_VERSION`** bumped from `0.8.88` to `0.8.89` across bundled pipeline templates.
 
 > Previous release notes have moved into the [Release History](#release-history) appendix at the bottom of this document.
 
-See [CHANGELOG.md](CHANGELOG.md) for full release details. See [`What's New in v0.8.87`](#whats-new-in-v0887) in the Release History for the previous release.
+See [CHANGELOG.md](CHANGELOG.md) for full release details. See [`What's New in v0.8.88`](#whats-new-in-v0888) in the Release History for the previous release.
 
 ## Files
 
@@ -134,13 +127,13 @@ The module needs a small number of Azure RBAC roles depending on what you call i
 |-----------------|--------------------------|-------|
 | Read-only inventory and fleet reports (`Get-AzLocal*`, `Test-AzLocal*`) | `Azure Stack HCI Reader` + `Reader` | Subscription or Resource Group |
 | Starting updates (`Start-AzLocalClusterUpdate`, fleet wrappers) | `Azure Stack HCI Administrator` | Subscription, Resource Group, or per-cluster |
-| Refreshing a stale update assessment (`Sync-AzLocalClusterUpdateSummary`, readiness report auto-scan) | `Azure Stack HCI Administrator` or `Contributor` (see preview note below) | Subscription, Resource Group, or per-cluster |
+| Refreshing a stale update assessment (`Sync-AzLocalClusterUpdateSummary`, readiness report auto-scan) | `Azure Stack HCI Administrator` or `Contributor` (preview action not yet in the custom role - see note below) | Subscription, Resource Group, or per-cluster |
 | Setting / clearing ring tags (`Set-AzLocalClusterUpdateRingTag`) | `Tag Contributor` + `Reader` (or any role with `Microsoft.Resources/tags/write`) | Subscription or Resource Group |
 | Resource Graph fleet queries | `Reader` on every subscription you want included | Subscription |
 
 A least-privilege custom role definition (`Azure Stack HCI Update Operator (custom)`) and the exact `actions:` list are documented in [docs/rbac.md](docs/rbac.md), along with `az role assignment create` recipes for OIDC federated credentials, Managed Identity, and Service Principal authentication.
 
-> 📝 **Preview - "Check for updates" (`checkUpdates`) and the least-privilege custom role:** Since v0.8.88, `Sync-AzLocalClusterUpdateSummary` and the opt-out stale-assessment auto-scan in `Export-AzLocalClusterUpdateReadinessReport` POST the preview `Microsoft.AzureStackHCI/clusters/updateSummaries/default/checkUpdates` action (`2026-03-01-preview`). This action is **not yet published in the `Microsoft.AzureStackHCI` provider operations catalog**, so it **cannot be added to a custom role today** (`az role definition update` rejects unregistered actions). The least-privilege `Azure Stack HCI Update Operator (custom)` role therefore does **not** authorize it - the refresh call returns a non-fatal `403 AuthorizationFailed` (the cmdlets log it and continue; the readiness report still completes). Use `Azure Stack HCI Administrator` / `Contributor` to exercise the refresh today, or pass `-SkipStaleAssessmentScan`. **Once `checkUpdates` GAs, add the GA'd action (expected `Microsoft.AzureStackHCI/clusters/updateSummaries/checkUpdates/action` - confirm from a 403 body or the catalog) to the custom role.** See [docs/rbac.md](docs/rbac.md) and [Automation-Pipeline-Examples/README.md](Automation-Pipeline-Examples/README.md#3-permissions).
+> 📝 **"Check for updates" (`checkUpdates`) is preview and not yet in the least-privilege custom role:** Since v0.8.88, `Sync-AzLocalClusterUpdateSummary` and the opt-out stale-assessment auto-scan in `Export-AzLocalClusterUpdateReadinessReport` POST the preview `Microsoft.AzureStackHCI/clusters/updateSummaries/default/checkUpdates` action (`2026-03-01-preview`). The RBAC action Azure enforces for it is `Microsoft.AzureStackHCI/clusters/updateSummaries/checkUpdates/action` (confirmed verbatim from a live `403 AuthorizationFailed` body), but a provider-operations-catalog check on 2026-06-18 (`az provider operation show --namespace Microsoft.AzureStackHCI`) confirms it is **not yet published in the catalog** - so it **cannot be added to a custom role today** (`az role definition create` / `update` rejects unregistered actions). The `Azure Stack HCI Update Operator (custom)` role therefore deliberately omits it; under that role the refresh returns a non-fatal `403 AuthorizationFailed` (logged, execution continues; the readiness report still completes). Use `Azure Stack HCI Administrator` / `Contributor` (their `Microsoft.AzureStackHCI/clusters/*` wildcard matches the unregistered action) or pass `-SkipStaleAssessmentScan`. The only automation consumer is the **Update: 1 - Assess Update Readiness** pipeline (`assess-update-readiness.yml`) via the readiness-report auto-scan; `Sync-AzLocalClusterUpdateSummary` does the same on demand. **The action will be added to the custom role once it GAs into the operations catalog** (a guard test in the suite flips at that point). See [docs/rbac.md](docs/rbac.md) and [Automation-Pipeline-Examples/README.md](Automation-Pipeline-Examples/README.md#3-permissions).
 ## Quick Start
 
 ### 1. Authenticate to Azure
@@ -591,6 +584,10 @@ This code is provided as-is for educational and reference purposes.
 The full What's-New history (v0.7.81 and earlier) has moved to [docs/release-history.md](docs/release-history.md).
 
 The most recent release notes for **v0.8.88** stay above under [`What's New in v0.8.88`](#whats-new-in-v0888).
+
+### What's New in v0.8.88
+
+**"Check for updates" automation + stale-assessment detection.** Adds a new public cmdlet (`Sync-AzLocalClusterUpdateSummary`, export count 60 -> 61) and an opt-out auto-scan in `Export-AzLocalClusterUpdateReadinessReport` so an Azure Local cluster that reports "Up to date" while a newer solution build is actually available (a stale cached assessment) is detected and refreshed without leaving the pipeline. `Sync-AzLocalClusterUpdateSummary` POSTs the `updateSummaries/default/checkUpdates` ARM action (the programmatic equivalent of the portal **Check for updates** button); fire-and-forget by default, `-Wait` polls until `lastChecked` advances. Authorization / `403` failures on the refresh call are now surfaced (with the exact action name) and are non-fatal. `checkUpdates` is still a preview action not yet in the provider operations catalog, so it cannot be added to the least-privilege custom role yet - use `Azure Stack HCI Administrator` / `Contributor` or `-SkipStaleAssessmentScan` until it GAs. `GENERATED_AGAINST_MODULE_VERSION` bumped from `0.8.87` to `0.8.88`. See [CHANGELOG.md](CHANGELOG.md#0888---2026-06-17) for the full v0.8.88 entry.
 
 ### What's New in v0.8.87
 

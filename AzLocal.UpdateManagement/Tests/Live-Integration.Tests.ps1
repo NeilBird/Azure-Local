@@ -91,6 +91,25 @@ BeforeDiscovery {
     }
 
     $SkipLive = [bool]$LiveGateReason
+
+    # The provider-operations catalog (az provider operation show) is GLOBAL -
+    # it is not scoped to any subscription - so the checkUpdates catalog tripwire
+    # only needs az to be logged in; it does NOT require the AdaptiveCloudLab
+    # subscription that the rest of the Live suite targets. Compute a lighter
+    # gate that skips only when az is unavailable or not logged in.
+    $CatalogGateReason = $null
+    try {
+        $null = Get-Command az -ErrorAction Stop
+    } catch {
+        $CatalogGateReason = 'az CLI is not available on PATH'
+    }
+    if (-not $CatalogGateReason) {
+        $null = & az account show -o json 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            $CatalogGateReason = "az is not logged in (az account show exit $LASTEXITCODE)"
+        }
+    }
+    $SkipCatalog = [bool]$CatalogGateReason
 }
 
 BeforeAll {
@@ -510,6 +529,72 @@ Describe 'Live-Integration: Export-*Report cmdlets emit non-empty artifacts (v0.
         Test-Path -LiteralPath $r.OverviewJsonPath | Should -BeTrue
         Test-Path -LiteralPath $r.XmlPath          | Should -BeTrue
         (Get-Item -LiteralPath $r.OverviewCsvPath).Length | Should -BeGreaterThan 0
+    }
+}
+
+Describe 'Live-Integration: checkUpdates provider-operations catalog tripwire' -Tag 'Live' -Skip:$SkipCatalog {
+    # v0.8.89: LIVE companion to the OFFLINE tripwire in
+    # AzLocal.UpdateManagement.Tests.ps1 ('v0.8.89 RBAC checkUpdates action ...').
+    #
+    # The offline tripwire fires when a HUMAN adds checkUpdates to the role JSON.
+    # THIS live test queries the REAL Microsoft.AzureStackHCI provider operations
+    # catalog via Az CLI (az provider operation show) and FAILS the moment Azure
+    # PUBLISHES 'Microsoft.AzureStackHCI/clusters/updateSummaries/checkUpdates/action'
+    # - i.e. the moment it becomes a registered action that az role definition
+    # create/update will accept, and therefore the moment it is safe to add to the
+    # least-privilege custom role.
+    #
+    # Gated by $SkipCatalog (only requires az to be logged in - the catalog is
+    # global, not subscription-scoped) and Tag 'Live' (excluded from the default
+    # unit run). Run it with:
+    #     .\Tests\Invoke-Tests.ps1 -IncludeLive
+    #     # or just this file:
+    #     Invoke-Pester -Path .\Tests\Live-Integration.Tests.ps1 -Tag Live
+    #
+    # WHEN the 'still absent' test below goes RED:
+    #   1. Add "Microsoft.AzureStackHCI/clusters/updateSummaries/checkUpdates/action"
+    #      to every Actions[] block: bundled azlocal-update-management-custom-role.json,
+    #      docs/rbac.md (x3 blocks), Automation-Pipeline-Examples/README.md.
+    #   2. Flip the OFFLINE tripwire assertions (Not -Contain -> Contain) in
+    #      AzLocal.UpdateManagement.Tests.ps1.
+    #   3. Update the prose in docs/rbac.md, Automation README, top-level README,
+    #      and docs/cmdlet-reference.md to say the action is now in the role.
+    #   4. Flip the assertion in this live test (Should -BeNullOrEmpty ->
+    #      Should -Not -BeNullOrEmpty) so it then guards continued availability.
+
+    BeforeAll {
+        $script:checkUpdatesAction = 'Microsoft.AzureStackHCI/clusters/updateSummaries/checkUpdates/action'
+        # One operation name per line (-o tsv). Case-insensitive comparisons below.
+        $script:catalogOps  = & az provider operation show --namespace Microsoft.AzureStackHCI --query "resourceTypes[].operations[].name" -o tsv 2>$null
+        $script:catalogExit = $LASTEXITCODE
+    }
+
+    It 'az provider operation show returns the Microsoft.AzureStackHCI catalog' {
+        $script:catalogExit | Should -Be 0 -Because 'the catalog query must succeed for this tripwire to be meaningful'
+        ($script:catalogOps | Measure-Object).Count | Should -BeGreaterThan 0 -Because 'the provider must expose at least one operation'
+    }
+
+    It 'The four update actions the custom role relies on are still present in the catalog' {
+        $required = @(
+            'Microsoft.AzureStackHCI/clusters/updateSummaries/read',
+            'Microsoft.AzureStackHCI/clusters/updates/read',
+            'Microsoft.AzureStackHCI/clusters/updates/apply/action',
+            'Microsoft.AzureStackHCI/clusters/updates/updateRuns/read'
+        )
+        $catalogLower = @($script:catalogOps | ForEach-Object { $_.ToLowerInvariant() })
+        foreach ($action in $required) {
+            $catalogLower | Should -Contain $action.ToLowerInvariant() -Because "the custom role grants $action; it must still exist in the provider operations catalog"
+        }
+    }
+
+    It 'checkUpdates is STILL absent from the catalog (when this fails, add it to the custom role - see comments)' {
+        # TRIPWIRE: this is the auto-detector. While checkUpdates is unregistered
+        # the match is empty and the test is green. The day Azure publishes the
+        # action, the match is non-empty and this test goes red - that is the
+        # signal to add it to the role and flip both tripwires (see the 4-step
+        # comment block at the top of this Describe).
+        $present = @($script:catalogOps | Where-Object { $_ -match 'checkUpdates' })
+        $present | Should -BeNullOrEmpty -Because "checkUpdates has appeared in the Microsoft.AzureStackHCI provider operations catalog - it is now safe to add '$($script:checkUpdatesAction)' to the least-privilege custom role and flip the offline tripwire in AzLocal.UpdateManagement.Tests.ps1. Catalog entries matching 'checkUpdates': $($present -join ', ')"
     }
 }
 

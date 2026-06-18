@@ -26,19 +26,25 @@ The following permissions are required for update + fleet-connectivity operation
 | Read cluster info | `Microsoft.AzureStackHCI/clusters/read` |
 | Read update summary | `Microsoft.AzureStackHCI/clusters/updateSummaries/read` |
 | List available updates | `Microsoft.AzureStackHCI/clusters/updates/read` |
-| **Refresh assessment ("Check for updates", preview)** | `Microsoft.AzureStackHCI/clusters/updateSummaries/default/checkUpdates` (POST action - see preview note below) |
+| **Refresh assessment ("Check for updates", preview)** | `Microsoft.AzureStackHCI/clusters/updateSummaries/checkUpdates/action` (POST action - not yet in the operations catalog; see note below) |
 | **Start/Apply update** | `Microsoft.AzureStackHCI/clusters/updates/apply/action` |
 | Monitor update runs | `Microsoft.AzureStackHCI/clusters/updates/updateRuns/read` |
 | Query clusters (Resource Graph) | `Microsoft.ResourceGraph/resources/read` |
 | **Read/Write tags** | `Microsoft.Resources/tags/read`, `Microsoft.Resources/tags/write` |
-| Read Arc machine agent status (Step.4) | `Microsoft.HybridCompute/machines/read` |
+| Read Arc machine agent status (Monitor: 1) | `Microsoft.HybridCompute/machines/read` |
 | Read Arc machine extensions (reserved for future extension reporting) | `Microsoft.HybridCompute/machines/extensions/read` |
-| Read physical NIC inventory via edge devices (Step.4) | `Microsoft.AzureStackHCI/edgeDevices/read` |
-| Read Azure Resource Bridge appliance status (Step.4) | `Microsoft.ResourceConnector/appliances/read` |
+| Read physical NIC inventory via edge devices (Monitor: 1) | `Microsoft.AzureStackHCI/edgeDevices/read` |
+| Read Azure Resource Bridge appliance status (Monitor: 1) | `Microsoft.ResourceConnector/appliances/read` |
 
 > **v0.7.80 note:** The last three rows above were added in v0.7.80. They are required by `Get-AzLocalFleetConnectivityStatus` (introduced in v0.7.79) and therefore by the `fleet-connectivity-status.yml` pipeline. Without them, the cmdlet still returns the cluster connectivity section but every other section (Arc agents, physical NICs, Azure Resource Bridges) silently returns zero rows because ARG yields an empty `.data` array for resource types the caller cannot read. Pipelines that were created against the v0.7.79-or-earlier custom-role JSON will see 0 Arc agents / 0 NICs / 0 ARBs until the role is updated.
 
-> **v0.8.88 note - "Check for updates" (`checkUpdates`) is preview and NOT yet in any custom role:** `Sync-AzLocalClusterUpdateSummary` and the opt-out stale-assessment auto-scan in `Export-AzLocalClusterUpdateReadinessReport` POST `Microsoft.AzureStackHCI/clusters/updateSummaries/default/checkUpdates` on the `2026-03-01-preview` API. The action is **not yet published in the `Microsoft.AzureStackHCI` provider operations catalog**, so it **cannot be added to the `Actions[]` of a custom role definition today** - `az role definition update` validates each entry against the catalog and rejects unregistered actions. The custom roles below therefore deliberately omit it. Until it GAs, only built-in roles that grant the broad `Microsoft.AzureStackHCI/*` action set (e.g. **Azure Stack HCI Administrator**) or **Contributor** authorize the refresh; under the least-privilege custom role the call returns a non-fatal `403 AuthorizationFailed` (logged, then execution continues - the readiness report still completes). Pass `-SkipStaleAssessmentScan` to suppress the auto-scan. **When `checkUpdates` GAs, add the GA'd action (expected `Microsoft.AzureStackHCI/clusters/updateSummaries/checkUpdates/action` - confirm the exact string from a 403 `AuthorizationFailed` body or `az provider operation show --namespace Microsoft.AzureStackHCI`) to every `Actions[]` block in this file and to the bundled `azlocal-update-management-custom-role.json`.**
+> **v0.8.89 note - "Check for updates" (`checkUpdates`) is preview, enforced-but-not-yet-catalog-registered, so it is intentionally NOT in the custom role:** `Sync-AzLocalClusterUpdateSummary` and the opt-out stale-assessment auto-scan in `Export-AzLocalClusterUpdateReadinessReport` POST `Microsoft.AzureStackHCI/clusters/updateSummaries/default/checkUpdates` on the `2026-03-01-preview` API. The RBAC action Azure enforces for it is `Microsoft.AzureStackHCI/clusters/updateSummaries/checkUpdates/action` (confirmed verbatim from a live `403 AuthorizationFailed` body). **However**, a provider-operations-catalog check on 2026-06-18 (`az provider operation show --namespace Microsoft.AzureStackHCI`) confirms this action is **not yet published in the catalog** - only `updateSummaries/read` exists. Because `az role definition create` / `update` validates every entry in `Actions[]` against the catalog and **rejects** unregistered actions, adding `checkUpdates/action` to the custom role would make the role fail to create. The roles below therefore **deliberately omit** it.
+>
+> **Why the built-in roles still work:** **Azure Stack HCI Administrator** grants `Microsoft.AzureStackHCI/clusters/*` (and `Microsoft.AzureStackHCI/*`); those wildcards match the enforced-but-unregistered action, which an explicit least-privilege role cannot. Under the custom role the refresh returns a **non-fatal** `403 AuthorizationFailed` (logged, then execution continues - the readiness report still completes). To exercise the refresh today, assign **Azure Stack HCI Administrator** / **Contributor** on the cluster scope, or pass `-SkipStaleAssessmentScan` to skip the auto-scan.
+>
+> **Who needs it:** the `Update: 1 - Assess Update Readiness` pipeline (`assess-update-readiness.yml`, GitHub Actions + Azure DevOps) calls `Export-AzLocalClusterUpdateReadinessReport`, whose auto-scan POSTs `checkUpdates` for any cluster with a stale assessment; the ad-hoc `Sync-AzLocalClusterUpdateSummary` cmdlet (no bundled pipeline) does the same on demand. No other pipeline or cmdlet uses this action.
+>
+> **When `checkUpdates` GAs into the catalog**, add the single line `"Microsoft.AzureStackHCI/clusters/updateSummaries/checkUpdates/action"` to every `Actions[]` block in this file and to the bundled [`azlocal-update-management-custom-role.json`](../Automation-Pipeline-Examples/azlocal-update-management-custom-role.json). Re-check with `az provider operation show --namespace Microsoft.AzureStackHCI --query "resourceTypes[].operations[].name" -o tsv | Select-String checkUpdates` before adding.
 
 ### Roles That Do NOT Have Update Permissions
 
@@ -145,12 +151,13 @@ The per-subscription `AssignableScopes` pattern above works well for a handful o
 - The role definition itself has a **hard cap of 2000 entries** in `AssignableScopes`.
 - Drift is hard to detect - a subscription that was provisioned without the assignment silently disappears from the pipeline's reach.
 
-For estates of more than ~5-10 subscriptions, or any estate where new subscriptions are provisioned regularly, scale this out with two standard Azure primitives:
+For estates of more than ~5-10 subscriptions, or any estate where new subscriptions are provisioned regularly, scale this out with three standard Azure primitives:
 
 1. **A single management-group entry in `AssignableScopes`** on the custom role definition (custom roles can be assigned at or below any scope listed in `AssignableScopes`, and management-group scopes have been supported since 2020).
-2. **An Azure Policy `deployIfNotExists` (DINE) assignment at that management group** that creates the per-subscription role assignment automatically. Existing subscriptions are picked up by a one-time remediation task; new subscriptions are auto-remediated as they are created. This is the standard Azure Landing Zones pattern.
+2. **An Entra security group** that the role is granted to (rather than granting it directly to the pipeline service principal). Onboarding or rotating a pipeline identity then becomes a single group-membership change with zero RBAC privilege.
+3. **An Azure Policy `deployIfNotExists` (DINE) assignment at that management group** that creates the per-subscription role assignment (to the group) automatically. Existing subscriptions are picked up by a one-time remediation task; new subscriptions are auto-remediated as they are created. This is the standard Azure Landing Zones pattern.
 
-The result: when a new subscription joins the management group, the pipeline identity gets the `Azure Stack HCI Update Operator (custom)` role at that subscription with zero manual steps.
+The result: when a new subscription joins the management group, the operators security group gets the `Azure Stack HCI Update Operator (custom)` role at that subscription with zero manual steps, and every member of that group (the OIDC pipeline identity plus any break-glass operators) inherits it.
 
 **Step 1 - role definition with a management-group `AssignableScopes`**
 
@@ -198,14 +205,23 @@ $roleId = az role definition list `
 # "/providers/Microsoft.Authorization/roleDefinitions/$roleId"
 ```
 
-**Step 3 - capture the pipeline identity's object ID** (the principal that the role assignment grants the role TO):
+**Step 3 - create an Entra security group and capture its object ID** (the principal that the role assignment grants the role TO):
+
+> **Recommended: assign the role to a security GROUP, not directly to the pipeline service principal.** When the DINE policy grants the role to a group, onboarding (or rotating) a pipeline identity becomes a single `az ad group member add` - no RBAC privilege and no policy change required. Add the OIDC service principal (and any human break-glass operators) to this group; everything they need across the whole estate flows from group membership. This is the flow documented as the happy path in the CI/CD README.
 
 ```powershell
-# For a service principal / App Registration:
-$pipelinePrincipalId = az ad sp show --id <appId> --query id -o tsv
-# For a user-assigned managed identity:
-# $pipelinePrincipalId = az identity show -g <rg> -n <mi-name> --query principalId -o tsv
+# Create a standard Entra security group (one-time). A plain security group is
+# sufficient - it does NOT need to be mail-enabled or role-assignable.
+$groupId = az ad group create `
+    --display-name "AzureLocal-UpdateAutomation-Operators" `
+    --mail-nickname "AzureLocal-UpdateAutomation-Operators" `
+    --query id -o tsv
+
+# If the group already exists, capture its object ID instead:
+# $groupId = az ad group show --group "AzureLocal-UpdateAutomation-Operators" --query id -o tsv
 ```
+
+> **Alternative - assign directly to the pipeline identity** (smaller estates, or where you do not want a group): capture the principal object ID instead of a group and set `principalType` to `ServicePrincipal` in Step 4. `$groupId = az ad sp show --id <appId> --query id -o tsv` for a service principal / App Registration, or `az identity show -g <rg> -n <mi-name> --query principalId -o tsv` for a user-assigned managed identity. The Step 5 step that adds the SP to the group is then not needed.
 
 **Step 4 - create the policy definition at the management group**
 
@@ -225,7 +241,13 @@ The `deployIfNotExists` policy below targets `Microsoft.Resources/subscriptions`
       },
       "principalId": {
         "type": "String",
-        "metadata": { "displayName": "Pipeline identity object ID" }
+        "metadata": { "displayName": "Security group (or pipeline identity) object ID" }
+      },
+      "principalType": {
+        "type": "String",
+        "defaultValue": "Group",
+        "allowedValues": [ "Group", "ServicePrincipal" ],
+        "metadata": { "displayName": "Principal type - Group (recommended) or ServicePrincipal" }
       }
     },
     "policyRule": {
@@ -253,14 +275,16 @@ The `deployIfNotExists` policy below targets `Microsoft.Resources/subscriptions`
               "mode": "Incremental",
               "parameters": {
                 "roleDefinitionId": { "value": "[parameters('roleDefinitionId')]" },
-                "principalId":      { "value": "[parameters('principalId')]" }
+                "principalId":      { "value": "[parameters('principalId')]" },
+                "principalType":    { "value": "[parameters('principalType')]" }
               },
               "template": {
                 "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
                 "contentVersion": "1.0.0.0",
                 "parameters": {
                   "roleDefinitionId": { "type": "string" },
-                  "principalId":      { "type": "string" }
+                  "principalId":      { "type": "string" },
+                  "principalType":    { "type": "string" }
                 },
                 "variables": {
                   "assignmentName": "[guid(subscription().id, parameters('roleDefinitionId'), parameters('principalId'))]"
@@ -273,7 +297,7 @@ The `deployIfNotExists` policy below targets `Microsoft.Resources/subscriptions`
                     "properties": {
                       "roleDefinitionId": "[parameters('roleDefinitionId')]",
                       "principalId":      "[parameters('principalId')]",
-                      "principalType":    "ServicePrincipal"
+                      "principalType":    "[parameters('principalType')]"
                     }
                   }
                 ]
@@ -313,7 +337,8 @@ $assignment = az policy assignment create `
     --params @"
 {
   \"roleDefinitionId\": { \"value\": \"/providers/Microsoft.Authorization/roleDefinitions/$roleId\" },
-  \"principalId\":      { \"value\": \"$pipelinePrincipalId\" }
+  \"principalId\":      { \"value\": \"$groupId\" },
+  \"principalType\":    { \"value\": \"Group\" }
 }
 "@ -o json | ConvertFrom-Json
 
@@ -338,6 +363,24 @@ az policy remediation create `
 ```
 
 This walks every subscription already under the MG, evaluates compliance, and creates the missing role assignment where required. New subscriptions added to the MG after this point are auto-remediated as they are created (the DINE effect runs on resource create).
+
+**Step 7 - add the pipeline identity (and any human operators) to the security group**
+
+This is the only step you repeat when onboarding or rotating a pipeline identity. Because the role is granted to the group across the whole management group, adding a principal to the group grants it the full `Azure Stack HCI Update Operator (custom)` reach on every in-scope subscription - with no RBAC privilege and no policy change:
+
+```powershell
+# Add the CI/CD OIDC service principal (App Registration) to the operators group.
+# $appId is the Application (client) ID of the federated-credential app registration.
+$spObjectId = az ad sp show --id <appId> --query id -o tsv
+az ad group member add `
+    --group "AzureLocal-UpdateAutomation-Operators" `
+    --member-id $spObjectId
+
+# (Optional) add human break-glass operators by their user object ID:
+# az ad group member add --group "AzureLocal-UpdateAutomation-Operators" --member-id <user-object-id>
+```
+
+> **Group object ID propagation**: a newly created Entra group and new memberships are usually usable within a minute or two, but can take longer to propagate to all regions. If the first pipeline run after onboarding reports missing permissions, wait a few minutes and re-run before investigating further.
 
 **Trade-offs vs the per-subscription `AssignableScopes` list**
 

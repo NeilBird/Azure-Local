@@ -6,6 +6,22 @@
 
 ## Appendix B: Release history
 
+> **Legacy `Step.N` naming used below.** The release notes in this appendix predate the current **Config / Monitor / Update** workflow naming (see [section 1.1 of the CI/CD README](../README.md#11-why-the-pipelines-are-named-config-n-monitor-n-and-update-n)). The historical `Step.N` filenames / display names map to the current names as follows (note the legacy `Step.N` numbering itself shifted across releases - the table reflects the final pre-rename scheme):
+>
+> | Legacy name | Current name | GH Actions file |
+> |---|---|---|
+> | Step.0 - Authentication Validation | Config: 1 - Validate Auth and Inventory Clusters | `setup-validate-and-inventory.yml` |
+> | Step.1 - Inventory Clusters | Config: 1 - Validate Auth and Inventory Clusters | `setup-validate-and-inventory.yml` |
+> | Step.2 - Manage UpdateRing Tags | Config: 2 - Manage UpdateRing Tags | `manage-updatering-tags.yml` |
+> | Step.3 - Apply-Updates Schedule Audit | Config: 3 - Apply-Updates Schedule Coverage Audit | `apply-updates-schedule-audit.yml` |
+> | Step.4 - Fleet Connectivity Status | Monitor: 1 - Fleet Connectivity Status | `fleet-connectivity-status.yml` |
+> | Step.5 - Assess Update Readiness | Update: 1 - Assess Update Readiness | `assess-update-readiness.yml` |
+> | Step.6 / Step.7 - Apply Updates | Update: 3 - Apply Updates | `apply-updates.yml` |
+> | (in-flight monitor) | Update: 4 - Monitor In-Flight Updates | `monitor-updates.yml` |
+> | Step.9 - Fleet Update Status | Monitor: 3 - Fleet Update Status | `fleet-update-status.yml` |
+> | Step.9 / Step.10 - Fleet Health Status | Monitor: 2 - Fleet Health Status | `fleet-health-status.yml` |
+> | (sideload, opt-in) | Update: 2 - Sideload Updates | `sideload-updates.yml` |
+
 > **Latest version:** the `GENERATED_AGAINST_MODULE_VERSION` env / pipeline variable in every bundled `Step.*.yml` template is bumped on each release; check that value (or the [`CHANGELOG.md`](../../CHANGELOG.md)) for the current pin. Releases after **v0.7.70** are mechanical pipeline-pin bumps only (no template-shape changes) and are documented in the module CHANGELOG; the per-release entries below capture the last set of releases that materially changed the bundled YAMLs.
 
 The body of this document tracks **v0.7.70** behaviour. Older versions are preserved below for reference.

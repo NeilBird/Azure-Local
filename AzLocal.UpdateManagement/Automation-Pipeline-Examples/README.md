@@ -10,8 +10,10 @@ It is written in the same step-by-step style as [`ITSM/README.md`](../ITSM/READM
 
 ## Table of contents
 
+0. [Quick start checklist (zero to automated)](#0-quick-start-checklist-zero-to-automated)
 1. [What you'll have when you're done](#1-what-youll-have-when-youre-done)
-   - [1.1 Why the pipelines are named `Step.N - <description>`](#11-why-the-pipelines-are-named-stepn---description)
+   - [1.1 Why the pipelines are named `Config: N`, `Monitor: N`, `Update: N`](#11-why-the-pipelines-are-named-config-n-monitor-n-and-update-n)
+   - [1.2 How to control which updates are installed, and when](#12-how-to-control-which-updates-are-installed-and-when)
 2. [Prerequisites](#2-prerequisites)
 3. [Required Azure permissions](#3-required-azure-permissions)
    - [3.1 Custom role: `Azure Stack HCI Update Operator (custom)`](#31-custom-role-azure-stack-hci-update-operator-custom)
@@ -48,6 +50,34 @@ It is written in the same step-by-step style as [`ITSM/README.md`](../ITSM/READM
 14. [Pipeline reference](#14-pipeline-reference) (moved to [docs/appendix-pipelines.md](docs/appendix-pipelines.md))
 15. [Appendix B: Release history](#appendix-b-release-history) (moved to [docs/appendix-release-history.md](docs/appendix-release-history.md))
 16. [Related documentation](#16-related-documentation)
+
+---
+
+## 0. Quick start checklist (zero to automated)
+
+This is the whole journey - from an empty repo to a self-running, ring-based update programme - as a single linear checklist. Each step links to the detailed section; **follow them top to bottom without jumping around**. The one-time setup (steps 1-8) is done once per CI/CD platform; the operating loop (steps 9-14) is what you repeat each update cycle.
+
+**One-time setup (do once):**
+
+- [ ] **1. Create a Git repo** to host the pipeline files (a GitHub repo for GitHub Actions, or an Azure DevOps repo/project for Azure Pipelines). This repo holds *only* the workflow YAML and config - it does **not** contain the module source. See [section 2](#2-prerequisites).
+- [ ] **2. Install the module on your admin workstation:** `Install-Module AzLocal.UpdateManagement -Scope CurrentUser`. See [section 2](#2-prerequisites).
+- [ ] **3. Copy the example pipelines into your repo** with `Copy-AzLocalPipelineExample` (you do **not** git-clone this repository). For GitHub: `Copy-AzLocalPipelineExample -Platform GitHub -Destination .\.github\workflows`. See [section 5](#5-wire-the-pipeline-files-into-your-repo).
+- [ ] **4. Create the custom role** `Azure Stack HCI Update Operator (custom)` with a management-group `AssignableScopes`. See [section 3.1](#31-custom-role-azure-stack-hci-update-operator-custom).
+- [ ] **5. Create an Entra security group and let Azure Policy assign the role to it** across the management group (DINE). New subscriptions are then covered automatically. See [section 3.2](#32-recommended-assign-at-scale-via-azure-policy-dine-on-a-management-group).
+- [ ] **6. Wire CI/CD authentication** (GitHub OIDC federated credential or Azure DevOps Workload Identity Federation - no client secrets) and note the app's object ID. See [section 4](#4-choose-your-cicd-platform-and-authentication).
+- [ ] **7. Add the CI/CD service principal to the security group** from step 5 - this single membership grants it update rights across the whole estate. See [section 3.2](#32-recommended-assign-at-scale-via-azure-policy-dine-on-a-management-group).
+- [ ] **8. Commit the pipeline files and set the required secrets/variables** (tenant, subscription, client IDs). See [section 5](#5-wire-the-pipeline-files-into-your-repo).
+
+**Operating loop (repeat each update cycle):**
+
+- [ ] **9. Inventory the estate:** run **Config: 1 - Validate Auth and Inventory Clusters**. See [section 6.1](#61-inventory-the-estate).
+- [ ] **10. Plan rings and apply tags:** decide Pilot/Wave2/Production rings and `UpdateStartWindow`s, then bulk-apply them with **Config: 2 - Manage UpdateRing Tags**. See [section 6.2](#62-plan-update-rings-windows-and-exclusions) and [6.3](#63-apply-tags).
+- [ ] **11. Pre-flight readiness:** run **Update: 1 - Assess Update Readiness** to surface blockers before scheduling. See [section 6.4](#64-pre-flight-readiness-assessment).
+- [ ] **12. Generate `apply-updates-schedule.yml`** from the live fleet with `New-AzLocalApplyUpdatesScheduleConfig`. See [section 6.5](#65-generate-apply-updates-scheduleyml-from-your-live-fleet).
+- [ ] **13. Run Config: 3 - Apply-Updates Schedule Coverage Audit**, then paste its **apply cron** into `apply-updates.yml` and its **monitor cron** into `monitor-updates.yml`. See [section 1.2](#12-how-to-control-which-updates-are-installed-and-when) and [section 8.3](#83-end-to-end-runbook-apply-updates-schedule-coverage-audit).
+- [ ] **14. Go live:** apply updates one wave at a time with **Update: 3 - Apply Updates**, and enable continuous monitoring (**Monitor: 1-3** + **Update: 4**). See [section 6.6](#66-apply-updates---one-wave-at-a-time) and [6.7](#67-continuous-fleet-monitoring).
+
+> **The detailed walkthrough below mirrors this checklist exactly.** Sections 2-5 cover the one-time setup (steps 1-8); [section 6](#6-end-to-end-runbook-bring-an-estate-online) is the canonical end-to-end runbook for the operating loop (steps 9-14). If you only read one section in depth, read [section 6](#6-end-to-end-runbook-bring-an-estate-online).
 
 ---
 
@@ -103,6 +133,37 @@ The active workflow model uses three clear groups:
 
 If you prefer a different naming scheme (e.g. `00 - Auth`, `01 - Inventory`, ...), just change the `name:` field in each GH Actions YAML and / or pick a different prefix at ADO import time. Nothing else in the module depends on these display names.
 
+### 1.2 How to control which updates are installed, and when
+
+Three independent layers decide **what** installs and **when**. Each answers a different question, and they compose cleanly once set up in order:
+
+| Layer | File / source | Configured via | Grain | Answers |
+|---|---|---|---|---|
+| 1 | `apply-updates-schedule.yml` | `New-AzLocalApplyUpdatesScheduleConfig` (section 6.5) | day | **WHICH `UpdateRing`(s) are eligible on a given UTC date** - the cycle calendar (`cycleWeeks` + ISO-week anchor + day-of-week -> ring eligibility) |
+| 2 | `apply-updates.yml` `schedule:` cron | **Config: 3** output, pasted in (see below) | intra-day | **HOW OFTEN the "Update: 3 - Apply Updates" job wakes up** to check whether today is an eligible day |
+| 3 | per-cluster `UpdateStartWindow` tag | **Config: 2 - Manage UpdateRing Tags** | minute | **WHEN, during an eligible day, an update is allowed to start** (`<days>_<HH:MM>-<HH:MM>`, UTC) |
+
+How the layers work together:
+
+- **Layer 1 (`apply-updates-schedule.yml`)** is the single source of truth for *which days* each ring may update. A cron firing that lands on a day with no matching schedule row is logged and exits 0 - no update runs.
+- **Layer 2 (the cron in `apply-updates.yml`)** only controls *wake frequency*. It must fire on the eligible days that layer 1 defines; on every other day it is a harmless no-op.
+- **Layer 3 (`UpdateStartWindow`)** gates the *time of day* an update is actually allowed to begin on an eligible day. Outside the window the cluster returns `ScheduleBlocked`.
+
+In one sentence: **`apply-updates-schedule.yml` picks the days, the cron picks the wake cadence, and `UpdateStartWindow` picks the time-of-day.** You never hand-write the layer-2 cron - **Config: 3** computes it for you from layers 1 and 3.
+
+#### Step-by-step: from tags to a live schedule
+
+1. **Tag the clusters (ring + layer 3).** Run **Config: 2 - Manage UpdateRing Tags** to bulk-apply `UpdateRing` and `UpdateStartWindow` (and optional `UpdateExclusionsWindow` / `UpdateExcluded`) from CSV. See [section 6.3](#63-apply-tags).
+2. **Generate / update `apply-updates-schedule.yml` (layer 1).** Produce the ring-eligibility calendar from your live fleet - see [section 6.5](#65-generate-apply-updates-scheduleyml-from-your-live-fleet) (`New-AzLocalApplyUpdatesScheduleConfig`). Commit it.
+3. **Run Config: 3 - Apply-Updates Schedule Coverage Audit.** This read-only pipeline diffs the live `UpdateRing` / `UpdateStartWindow` tags against `apply-updates-schedule.yml`, reports any coverage gaps, and **outputs two ready-to-paste cron snippets** in its step summary:
+   - a **recommended apply cron** for **Update: 3 - Apply Updates** (`apply-updates.yml`), and
+   - a **recommended in-flight monitor cron** for **Update: 4 - Monitor In-Flight Updates** (`monitor-updates.yml`).
+4. **Paste the apply cron into `apply-updates.yml`.** Copy the recommended apply cron from the Config: 3 summary into the `schedule:` block (GitHub Actions) / `schedules:` block (Azure DevOps) of `apply-updates.yml`, inside the `BEGIN/END-AZLOCAL-CUSTOMIZE:schedule-triggers` marker. Commit. Update: 3 now wakes on exactly the eligible days.
+5. **Paste the monitor cron into `monitor-updates.yml`.** Copy the recommended monitor cron into the `schedule:` block of `monitor-updates.yml`. Update: 4 then polls only while updates can be in flight (see [section 6.7](#67-continuous-fleet-monitoring)), instead of 24x7.
+6. **Re-run Config: 3 whenever tags or the schedule change** to catch drift and regenerate the crons. The weekly `apply-updates-schedule-audit.yml` does this automatically (see [section 8.3](#83-end-to-end-runbook-apply-updates-schedule-coverage-audit)).
+
+> **Config: 3 is the glue.** Once layers 1 and 3 are in place, it derives the layer-2 crons for both the apply and the monitor pipelines - so you never hand-craft cron expressions, and Update: 3 and Update: 4 stay aligned to your rings and maintenance windows.
+
 ---
 
 ## 2. Prerequisites
@@ -130,6 +191,7 @@ The identity created in section 4 needs the following permissions on every subsc
 | `Microsoft.AzureStackHCI/clusters/updates/read` | Apply Updates, Fleet Update Status. |
 | `Microsoft.AzureStackHCI/clusters/updates/apply/action` | Apply Updates. |
 | `Microsoft.AzureStackHCI/clusters/updateSummaries/read` | Apply Updates, Fleet Update Status. |
+| `Microsoft.AzureStackHCI/clusters/updateSummaries/checkUpdates/action` (preview - NOT in the custom role; see note below) | Assess Update Readiness ("Check for updates" auto-refresh of stale assessments); `Sync-AzLocalClusterUpdateSummary`. |
 | `Microsoft.AzureStackHCI/clusters/updates/updateRuns/read` | Apply Updates, Fleet Update Status. |
 | `Microsoft.AzureStackHCI/edgeDevices/read` | Fleet Connectivity Status (physical NIC inventory). |
 | `Microsoft.HybridCompute/machines/read` | Fleet Connectivity Status (Arc agent inventory). |
@@ -142,7 +204,7 @@ The identity created in section 4 needs the following permissions on every subsc
 
 If you opt in to the ITSM connector with Key Vault-sourced secrets, the identity additionally needs **Key Vault Secrets User** on the configured vault. No other new RBAC.
 
-> **Future RBAC - "Check for updates" (checkUpdates) auto-refresh (preview):** Since v0.8.88, `Sync-AzLocalClusterUpdateSummary` and the opt-out stale-assessment auto-scan in `Export-AzLocalClusterUpdateReadinessReport` POST the `Microsoft.AzureStackHCI/clusters/updateSummaries/default/checkUpdates` ARM action (the programmatic "Check for updates" button) on the `2026-03-01-preview` API. **This action is still preview and is NOT yet published in the `Microsoft.AzureStackHCI` provider operations catalog, so it cannot be added to a custom role definition today** (`az role definition update` validates `Actions[]` against the catalog and rejects unregistered actions). Until it GAs, an identity holding only the least-privilege custom role above will get a `403 AuthorizationFailed` on the refresh call - this is **non-fatal**: the cmdlets log the error and continue, and the readiness report still completes (it just cannot auto-refresh a stale assessment). To exercise the refresh today, assign the built-in **Azure Stack HCI Administrator** or **Contributor** role on the cluster scope, or skip the scan with `-SkipStaleAssessmentScan`. **When checkUpdates GAs, add the GA'd action (expected `Microsoft.AzureStackHCI/clusters/updateSummaries/checkUpdates/action` - confirm the exact string from a 403 `AuthorizationFailed` body or the provider operations catalog) to the `Actions[]` array in the role JSON below and to the permissions table above.**
+> **RBAC - "Check for updates" (checkUpdates) auto-refresh (preview):** Since v0.8.88, `Sync-AzLocalClusterUpdateSummary` and the opt-out stale-assessment auto-scan in `Export-AzLocalClusterUpdateReadinessReport` POST the `Microsoft.AzureStackHCI/clusters/updateSummaries/default/checkUpdates` ARM action (the programmatic "Check for updates" button) on the `2026-03-01-preview` API. The RBAC action Azure enforces for it is `Microsoft.AzureStackHCI/clusters/updateSummaries/checkUpdates/action` (confirmed verbatim from a live `403 AuthorizationFailed` body). **A provider-operations-catalog check on 2026-06-18 (`az provider operation show --namespace Microsoft.AzureStackHCI`) confirms this action is NOT yet published in the catalog** - so it **cannot be added to the explicit least-privilege custom role**: `az role definition create` / `update` validates `Actions[]` against the catalog and rejects unregistered actions. The role JSON below therefore deliberately omits it. **Who exercises it:** only the **Update: 1 - Assess Update Readiness** pipeline (`assess-update-readiness.yml`, GitHub Actions + Azure DevOps) - via the auto-scan inside `Export-AzLocalClusterUpdateReadinessReport` - and the ad-hoc `Sync-AzLocalClusterUpdateSummary` cmdlet (no bundled pipeline). Under the custom role the refresh returns a **non-fatal** `403 AuthorizationFailed` (logged, execution continues; the readiness report still completes). To exercise it today, assign the built-in **Azure Stack HCI Administrator** / **Contributor** role (their `Microsoft.AzureStackHCI/clusters/*` wildcard matches the unregistered action) or pass `-SkipStaleAssessmentScan`. **When checkUpdates GAs into the catalog**, add `Microsoft.AzureStackHCI/clusters/updateSummaries/checkUpdates/action` to the role JSON below and update this table.
 
 > **Tag-management identity (Manage UpdateRing Tags pipeline)** can use the built-in **Tag Contributor** role on its own - it grants exactly `Microsoft.Resources/tags/*` and nothing else. Since v0.7.65, `Set-AzLocalClusterUpdateRingTag` writes tags via the dedicated `Microsoft.Resources/tags/default` PATCH endpoint, so the broader `microsoft.azurestackhci/clusters/write` action (full cluster Contributor) is **not** required for tag changes.
 
@@ -196,7 +258,7 @@ The recommended MG default is shown in the JSON below. Whichever path you pick, 
 
 `AssignableScopes` defaults to **one management-group scope** so the recommended MG + Azure Policy DINE path in [section 3.2](#32-recommended-assign-at-scale-via-azure-policy-dine-on-a-management-group) works out of the box (Azure custom roles can be assigned at or below any scope listed here). If you're following the legacy per-subscription path in [section 3.3](#33-manual--per-subscription-alternative-legacy), replace the entry with one or more `/subscriptions/<sub-id>` scopes instead - the hard cap is 2000 entries per role definition.
 
-> **Deliberately absent - `checkUpdates`:** the `Actions[]` array above does **not** include a `checkUpdates` action. The preview "Check for updates" auto-refresh (`Sync-AzLocalClusterUpdateSummary`) needs it, but the action is not yet in the `Microsoft.AzureStackHCI` provider operations catalog and `az role definition update` would reject it. See the **Future RBAC** note under the permissions table above. Add the GA'd action here once `checkUpdates` is generally available.
+> **Deliberately absent (preview action) - `checkUpdates`:** the `Actions[]` array above does **not** include `Microsoft.AzureStackHCI/clusters/updateSummaries/checkUpdates/action`. The preview "Check for updates" auto-refresh (`Sync-AzLocalClusterUpdateSummary` and the stale-assessment auto-scan used by the **Update: 1 - Assess Update Readiness** pipeline) needs it, but a catalog check on 2026-06-18 confirms the action is not yet in the `Microsoft.AzureStackHCI` provider operations catalog, so `az role definition create` / `update` would reject it. See the **RBAC - "Check for updates"** note under the permissions table above. Add the line once `checkUpdates` GAs into the catalog.
 
 **Who can run these commands?**
 
@@ -233,41 +295,9 @@ $mgId = "<your-mg-id>"      # e.g. "azurelocal-prod"
     Set-Content ./azlocal-update-management-custom-role.json -Encoding UTF8
 
 az role definition create --role-definition ./azlocal-update-management-custom-role.json
-
-# Option 2 - inline create with an expanding PowerShell here-string ($mgId is interpolated)
-@"
-{
-  "Name": "Azure Stack HCI Update Operator (custom)",
-  "IsCustom": true,
-  "Description": "Customer-managed custom role - reference by roleDefinitionId (GUID) in automation rather than by name to remain stable if Microsoft later ships a built-in role with a similar display name. Can read and apply Azure Local cluster updates, manage UpdateRing tags, and read the fleet-connectivity inventory (Arc-enabled machines, edge-device NICs, Azure Resource Bridges) needed to assess pre-update connectivity.",
-  "Actions": [
-    "Microsoft.AzureStackHCI/clusters/read",
-    "Microsoft.AzureStackHCI/clusters/updateSummaries/read",
-    "Microsoft.AzureStackHCI/clusters/updates/read",
-    "Microsoft.AzureStackHCI/clusters/updates/apply/action",
-    "Microsoft.AzureStackHCI/clusters/updates/updateRuns/read",
-    "Microsoft.AzureStackHCI/edgeDevices/read",
-    "Microsoft.HybridCompute/machines/read",
-    "Microsoft.HybridCompute/machines/extensions/read",
-    "Microsoft.ResourceConnector/appliances/read",
-    "Microsoft.Resources/subscriptions/resourceGroups/read",
-    "Microsoft.ResourceGraph/resources/read",
-    "Microsoft.Resources/tags/read",
-    "Microsoft.Resources/tags/write"
-  ],
-  "NotActions": [],
-  "DataActions": [],
-  "NotDataActions": [],
-  "AssignableScopes": [
-    "/providers/Microsoft.Management/managementGroups/$mgId"
-  ]
-}
-"@ | Out-File -FilePath ./azlocal-update-management-custom-role.json -Encoding UTF8
-
-az role definition create --role-definition ./azlocal-update-management-custom-role.json
 ```
 
-> **Note**: The here-string in Option 2 uses double quotes (`@"..."@`) so PowerShell expands `$mgId` into the JSON before it's written to disk. If you switch to a literal here-string (`@'...'@`), the variable is not expanded and you must substitute the placeholder yourself like in Option 1. For the legacy per-subscription path, replace `$mgId` with `$subId` and the `AssignableScopes` entry with `"/subscriptions/$subId"`.
+> **Single source of truth for the role JSON.** The runnable definition lives in **one** file - the bundled [`./azlocal-update-management-custom-role.json`](./azlocal-update-management-custom-role.json). The block shown above is for reading; Option 1 substitutes the placeholder in the bundled file and creates the role from it. If you prefer to create the file and role in a single step from an expanding PowerShell here-string (Option 2), that variant is in [`docs/rbac.md`](../docs/rbac.md#custom-azure-stack-hci-update-operator-custom-role-definition-least-privilege). For the legacy per-subscription path, replace `$mgId` with a subscription ID and the `AssignableScopes` entry with `"/subscriptions/$subId"`.
 
 **Common errors and how to fix them**
 
@@ -299,30 +329,34 @@ The fix is **not** to escalate to Global Administrator (an Entra ID role, see no
 
 ### 3.2 Recommended: assign at scale via Azure Policy DINE on a management group
 
-**This is the default assignment path** for any estate larger than ~5-10 subscriptions, or any estate where subscriptions are added regularly. You assign the role definition **once** at a management group via an Azure Policy `deployIfNotExists` (DINE) assignment, and every subscription under the MG - present and future - gets the per-subscription role assignment created automatically.
+**This is the default assignment path** for any estate larger than ~5-10 subscriptions, or any estate where subscriptions are added regularly. You grant the role definition **once** at a management group, via an Azure Policy `deployIfNotExists` (DINE) assignment, to an **Entra security group** - and every subscription under the MG (present and future) gets the per-subscription role assignment created automatically. Onboarding or rotating a pipeline identity is then just a group-membership change.
 
 **Why this is the default**
 
+- **Grant target is a security group, not the SP directly.** The DINE policy assigns the role to a security group. Adding the CI/CD service principal (or a break-glass operator) to that group grants it the full estate-wide reach with **zero RBAC privilege** and no policy change - a single `az ad group member add`.
 - **Onboarding a new subscription** = move it under the MG. No `az role definition update`. No `az role assignment create`. The policy DINE creates the assignment within minutes of the subscription appearing.
 - **Drift detection** = automatic via Azure Policy compliance. Non-compliant subs (e.g. one where the assignment was deleted out-of-band) are visible in the Policy compliance blade and re-remediable on demand.
 - **Standing privilege required** = `Owner` / `User Access Administrator` at the MG **once** for setup, then nothing. The policy's managed identity creates role assignments thereafter.
 - **Scale cap** = effectively unbounded (the per-sub `AssignableScopes` path caps at 2000 entries per role definition).
 - **Audit surface** = Azure Policy compliance dashboard + Activity Log per subscription.
 
-**Sequence at a glance** (full recipe in [`docs/rbac.md` -> Scaling AssignableScopes with management groups + Azure Policy](../docs/rbac.md#scaling-assignablescopes-with-management-groups--azure-policy-recommended-for-large-or-growing-estates)):
+**Sequence at a glance** (full copy-paste recipe in [`docs/rbac.md` -> Scaling AssignableScopes with management groups + Azure Policy](../docs/rbac.md#scaling-assignablescopes-with-management-groups--azure-policy-recommended-for-large-or-growing-estates)):
 
 1. **Create the role** with the management-group `AssignableScopes` shown in [section 3.1](#31-custom-role-azure-stack-hci-update-operator-custom) above (the JSON's default). This is the **prerequisite** for step 4 - the policy definition references the role by ID.
 2. Capture `$roleId` (`az role definition list --custom-role-only true --name "Azure Stack HCI Update Operator (custom)" --query "[0].name" -o tsv`).
-3. Capture the pipeline identity's `principalId` (`az ad sp show --id <appId> --query id -o tsv` for an SP / app registration, or `az identity show -g <rg> -n <mi-name> --query principalId -o tsv` for a user-assigned managed identity).
-4. Create the DINE policy definition at the MG (`az policy definition create --management-group <mg-id> --rules ./assign-azlocal-update-operator-policy.json --mode All`) - full `deployIfNotExists` JSON in the rbac.md recipe.
-5. Assign the policy at the MG with a system-assigned managed identity, and grant the MI `User Access Administrator` at the MG (`az policy assignment create --mi-system-assigned ...` + `az role assignment create --role "User Access Administrator" --scope "/providers/Microsoft.Management/managementGroups/<mg-id>"`).
+3. **Create an Entra security group** (a standard security group - not Microsoft 365, not role-assignable) and capture its object ID: `$groupId = az ad group create --display-name "AzureLocal-UpdateAutomation-Operators" --mail-nickname "az-local-upd-ops" --query id -o tsv`.
+4. Create the DINE policy definition at the MG (`az policy definition create --management-group <mg-id> --rules ./assign-azlocal-update-operator-policy.json --mode All`) - full `deployIfNotExists` JSON in the rbac.md recipe. The policy grants the role to the **group** (`principalType: Group`).
+5. Assign the policy at the MG with a system-assigned managed identity (passing `$groupId` as the principal), and grant the MI `User Access Administrator` at the MG (`az policy assignment create --mi-system-assigned ...` + `az role assignment create --role "User Access Administrator" --scope "/providers/Microsoft.Management/managementGroups/<mg-id>"`).
 6. One-time remediation of existing subscriptions (`az policy remediation create --policy-assignment <...> --resource-discovery-mode ReEvaluateCompliance`).
+7. **Add the CI/CD service principal (and any break-glass operators) to the group** - the only step you repeat per identity: `az ad group member add --group $groupId --member-id (az ad sp show --id <appId> --query id -o tsv)`. For an Enterprise Application, `--member-id` is the SP **object** ID, not the appId.
 
-After step 6, the pipeline identity holds the custom role on every subscription under the MG. New subscriptions are auto-remediated as they are created (the DINE effect runs on subscription create). **No further role-assignment or role-definition operations are needed for new subscriptions.**
+After step 6, the security group holds the custom role on every subscription under the MG; after step 7, every member of that group (the pipeline identity plus any operators) inherits it. New subscriptions are auto-remediated as they are created (the DINE effect runs on subscription create). **No further role-assignment or role-definition operations are needed for new subscriptions or new identities.**
 
-> **Required permissions for the one-time setup**: `Owner` or `User Access Administrator` (or `Role Based Access Control Administrator`) at the management-group scope. Day-to-day onboarding of new subscriptions then requires no RBAC privilege at all.
+> **Required permissions for the one-time setup**: `Owner` or `User Access Administrator` (or `Role Based Access Control Administrator`) at the management-group scope. Day-to-day onboarding of new subscriptions and new pipeline identities then requires no Azure RBAC privilege at all - only group-membership management.
 
-> **When NOT to use MG + DINE**: you don't have access to a management group covering the in-scope subscriptions; the estate is small (1-5 subscriptions) and isn't expected to grow; you explicitly want each role grant to be a deliberate manual operation (e.g. for regulatory reasons). In any of those cases, follow the [legacy per-subscription path in section 3.3](#33-manual--per-subscription-alternative-legacy) instead.
+> **Smaller estates / no group**: you can point the DINE policy directly at the pipeline SP instead of a group (set `principalType: ServicePrincipal` and pass the SP object ID in steps 4-5, and skip step 7). The rbac.md recipe documents both. The group is recommended because it decouples identity onboarding from RBAC entirely.
+
+> **When NOT to use MG + DINE**: you don't have access to a management group covering the in-scope subscriptions; the estate is small (1-5 subscriptions) and isn't expected to grow; you explicitly want each role grant to be a deliberate manual operation (e.g. for regulatory reasons). In any of those cases, follow the [per-subscription path in section 3.3](#33-manual--per-subscription-alternative-legacy) instead.
 
 ### 3.3 Manual / per-subscription alternative (legacy)
 
@@ -478,7 +512,7 @@ First create the Service Principal:
 az ad sp create --id <appId-from-step-1>
 ```
 
-Assign the least-privilege **`Azure Stack HCI Update Operator (custom)`** custom role. This grants the Service Principal only the actions the nine pipelines need (read clusters, read/apply updates, read update runs, read/write tags, Resource Graph queries, plus the Arc / edgeDevice / Resource Bridge reads that Step.4 Fleet Connectivity Status calls). The full JSON role definition and `az role definition create` command live in [section 3 above](#3-required-azure-permissions) - run that block once per tenant first, then assign:
+Assign the least-privilege **`Azure Stack HCI Update Operator (custom)`** custom role. This grants the Service Principal only the actions the nine pipelines need (read clusters, read/apply updates, read update runs, read/write tags, Resource Graph queries, plus the Arc / edgeDevice / Resource Bridge reads that Monitor: 1 Fleet Connectivity Status calls). The full JSON role definition and `az role definition create` command live in [section 3 above](#3-required-azure-permissions) - run that block once per tenant first, then assign:
 
 ```bash
 az role assignment create `
@@ -504,54 +538,18 @@ az role assignment create `
 
 **Step 3 - federate the workflow**
 
-> **Are GitHub environments required? No - they are optional.** The pipelines authenticate to Azure with a **branch-scoped** federated credential (`...:ref:refs/heads/main`, the first `az ad app federated-credential create` block below). That single credential is all OIDC needs - leave the `environment` input **blank** (as in the screenshot most operators see) and every workflow runs under the branch-scoped subject claim. The `environment:` line in each job evaluates to an empty string, GitHub attaches no environment, and `azure/login` exchanges the branch-scoped token. This is the correct, fully-supported minimal setup.
->
-> **What environments add (and when to bother).** A GitHub environment is a *governance* wrapper, **not** an OIDC requirement. Create them only when you want one or more of:
-> - **Required reviewers / manual approval gates** - e.g. a human must approve before the `apply-updates` job runs against the `Production` ring.
-> - **Deployment-branch restrictions** - only allow the workflow to target an environment from `main`.
-> - **Wait timers** - enforce a soak period between rings.
-> - **Per-environment secrets / variables** - e.g. a *different* `AZURE_CLIENT_ID` (a separate App Registration) per ring, so the pilot ring and the production ring use distinct identities with distinct RBAC scopes.
->
-> If you do **not** need any of those, you can skip the environment-scoped credentials, the environment table, and the `environment` input entirely - the branch-scoped credential covers all runs. You can also add environments later without re-doing anything: create the environment, add its environment-scoped federated credential, and start passing its name in the `environment` input. **Is OIDC the reason?** Yes - the only auth-level effect of naming an environment is that GitHub puts `environment:<name>` into the token's `subject` claim instead of `ref:refs/heads/main`, which is why a *named* run needs a matching **environment-scoped** federated credential (the loop block further below). A *blank* run never needs one.
->
-> **Plan your GitHub environments now** (only if you decided you want them above): environment-scoped subjects (`...:environment:<name>`) only succeed at workflow run time if a GitHub environment with the exact same name exists in the repo (names are **case-sensitive**). The `az` command will accept any string you put in `subject` - Entra ID does **not** validate it against GitHub - but a missing or mistyped environment fails the OIDC exchange at runtime with `AADSTS70021: No matching federated identity record found`. The create order does not technically matter, but it is easiest to decide on environment names now (and ideally create them up-front under **your repo -> Settings -> Environments -> New environment**) so the strings you put into the federated credentials definitely match what GitHub will later send in the token. **This whole table is optional** - it only applies if you opted into environments above. For the ring-based rollout pattern this guide describes, three are *suggested* (none are required):
->
-> | Environment | Purpose | Suggested protection rules |
-> |---|---|---|
-> | `DevTest` | Pilot ring - first cluster(s) to receive a new build. | Required reviewers: 0-1 (auto-promote acceptable). |
-> | `PreProduction` | Wave2 ring - broader validation before fleet-wide rollout. | Required reviewers: 1. |
-> | `Production` | Final ring - the bulk of the fleet. | Required reviewers: 2. Deployment branches: `main` only. Optional wait timer. |
->
-> Each environment becomes **one** federated credential, one `environment:` line in the workflow job, and one independent approval gate. A single app registration supports up to 20 federated credentials, so this comfortably scales if you later add more rings.
->
-> The names `DevTest`, `PreProduction`, and `Production` are just suggestions to match the ring pattern in this guide - **pick whatever names suit your organisation** (e.g. `Pilot`, `Wave2`, `Prod`, `Ring0`, `Ring1`, `Ring2`). Whatever you choose, use the **same name** in (a) the GitHub environment, (b) the federated credential `subject`, and (c) the `environment:` line of the workflow job that targets that ring.
->
-> **GitHub environments and `UpdateRing` tag values are independent.** The `UpdateRing` tag lives on the cluster ARM resource and is what the PowerShell functions filter on (`-UpdateRing Wave1`). A GitHub environment is just an approval gate and federated credential subject. They do **not** have to share names, and the mapping is many-to-many: one GitHub environment can run updates across multiple `UpdateRing` values (different workflow runs pass different `-UpdateRing` parameters under the same approval gate), and multiple environments can target the same `UpdateRing` (e.g. a `PreProductionDryRun` environment that runs with `-WhatIf` against the `Production` ring). The workflow YAML decides which ring tag a given environment-gated run applies to.
+> **GitHub environments are optional - skip them for now.** The pipelines authenticate with the **branch-scoped** federated credential below (`...:ref:refs/heads/main`). That single credential is all OIDC needs: leave the `environment` input **blank** and every workflow runs under the branch-scoped subject claim. GitHub environments are a *governance* wrapper (approval gates, per-ring identities, branch/wait-timer protections), **not** an OIDC requirement, and you can add them later without redoing anything. If you want them, see **[Appendix: GitHub environments](docs/appendix-github-environments.md)** - it covers the suggested environment layout, the environment-scoped federated credentials, and the `gh` CLI to create them. The happy path below uses only the one required branch-scoped credential.
 
 ```bash
 # REQUIRED - branch-scoped credential (for default-branch / scheduled runs).
 # This single credential is enough to run every pipeline with the `environment`
-# input left blank. If you are not using GitHub environments, this is the ONLY
-# federated credential you need - skip the environment-scoped block below.
+# input left blank. For environment-scoped credentials, see the appendix linked above.
 az ad app federated-credential create `
     --id <appId-from-step-1> `
     --parameters '{
         "name": "GitHubActions-main",
         "issuer": "https://token.actions.githubusercontent.com",
         "subject": "repo:<owner>/<repo>:ref:refs/heads/main",
-        "audiences": ["api://AzureADTokenExchange"]
-    }'
-
-# OPTIONAL - environment-scoped credential, one per GitHub environment you chose
-# to create (e.g. DevTest, PreProduction, Production). Only needed if you pass an
-# environment name in the workflow `environment` input. Skip entirely otherwise.
-# Repeat this command once per environment, substituting both `name` and `subject`.
-az ad app federated-credential create `
-    --id <appId-from-step-1> `
-    --parameters '{
-        "name": "GitHubActions-Production",
-        "issuer": "https://token.actions.githubusercontent.com",
-        "subject": "repo:<owner>/<repo>:environment:Production",
         "audiences": ["api://AzureADTokenExchange"]
     }'
 ```
@@ -583,27 +581,10 @@ Subject-claim patterns for other trigger types:
 >     --id <appId-from-step-1> `
 >     --parameters "@$paramsFile"
 >
-> # OPTIONAL - environment-scoped credentials, one per GitHub environment (names are
-> # case-sensitive and must match the environments in your repo at workflow run time).
-> # Skip this foreach entirely if you are running with the `environment` input blank.
-> foreach ($envName in 'DevTest','PreProduction','Production') {
->     @{
->         name      = "GitHubActions-$envName"
->         issuer    = 'https://token.actions.githubusercontent.com'
->         subject   = "repo:<owner>/<repo>:environment:$envName"
->         audiences = @('api://AzureADTokenExchange')
->     } | ConvertTo-Json | Out-File -FilePath $paramsFile -Encoding utf8 -Force
->
->     Write-Host "Creating federated credential for $envName environment..."
->     az ad app federated-credential create `
->         --id <appId-from-step-1> `
->         --parameters "@$paramsFile"
-> }
->
 > Remove-Item $paramsFile
 > ```
 >
-> The `@` in `"@$paramsFile"` is the **az CLI's** "read from file" prefix (not PowerShell splatting). The surrounding double quotes ensure PowerShell expands `$paramsFile` and passes `az` a single literal string like `@C:\Users\...\Temp\fed-cred.json`. Add or remove names from the `foreach` to match the environments you actually created. Repeat the same build-file-then-pass pattern for any other subject claims you need (`pull_request`, tag, additional branches).
+> The `@` in `"@$paramsFile"` is the **az CLI's** "read from file" prefix (not PowerShell splatting). The surrounding double quotes ensure PowerShell expands `$paramsFile` and passes `az` a single literal string like `@C:\Users\...\Temp\fed-cred.json`. Repeat the same build-file-then-pass pattern for any other subject claims you need (`pull_request`, tag, additional branches). For **environment-scoped** credentials, see **[Appendix: GitHub environments](docs/appendix-github-environments.md)**.
 
 **Step 4 - add the one GitHub Secret and two GitHub Variables**
 
@@ -649,7 +630,7 @@ You can add the secrets via the **GitHub UI** (**Settings -> Secrets and variabl
 >
 > `gh` reuses the credentials of the signed-in account, so it can write secrets to any repo that account can write to. No personal access token needed for interactive use.
 
-**Script the secrets and environments** - end-to-end: creates the GitHub environments your federated credentials reference (**optional** - only needed if you opted into environments in step 3; if you are running with the `environment` input blank, you can skip the environment-creation loop and keep just the secret/variable writes), writes the three repo-level secrets, and (optionally) pins `AZURE_CLIENT_ID` at each environment. Substitute `<owner>/<repo>` for your target repo:
+**Script the secret and variables** - writes the one repo-level Secret (`AZURE_CLIENT_ID`) and two repo-level Variables (`AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`) that every workflow run needs. (Creating GitHub environments and pinning per-environment secrets is **optional** and covered in [Appendix: GitHub environments](docs/appendix-github-environments.md).) Substitute `<owner>/<repo>` for your target repo:
 
 ```powershell
 # Inputs - reuse the variables from the federation step where you can
@@ -657,13 +638,12 @@ $repo     = '<owner>/<repo>'                                 # e.g. contoso/azlo
 $clientId = '<appId-from-step-1>'                            # GUID printed by az ad app create (from step 1)
 $subId    = (az account show --query id       -o tsv)        # current az subscription
 $tenantId = (az account show --query tenantId -o tsv)        # current az tenant
-$envs     = 'DevTest','PreProduction','Production'           # match the names in your federated credentials
 
 # 0. Preflight - confirm gh is signed in as the right account and can write to $repo.
-#    Skipping this is the most common cause of opaque HTTP 404s in step 1.
+#    Skipping this is the most common cause of opaque HTTP 404s.
 gh auth status                                              # check signed-in account + token scopes
 gh repo view $repo                                          # must print repo details, confirm as you expect
-gh api "/repos/$repo" --jq '.permissions'                   # must show "admin": true - env creation is admin-only
+gh api "/repos/$repo" --jq '.permissions'                   # must show "admin": true - 'gh secret set' requires admin
 #    If gh repo view returns 404 or shows a "Repository setup required" prompt:
 #      - the repo path is wrong (typo in $repo), OR
 #      - your gh account doesn't have access at all (org owner / repo admin only), OR
@@ -675,22 +655,11 @@ gh api "/repos/$repo" --jq '.permissions'                   # must show "admin":
 #
 #    If gh repo view succeeds but '.permissions' shows '"admin": false':
 #      - you have read/push but NOT admin on the repo.
-#      - 'gh api PUT /environments/...' (and 'gh secret set') require admin.
+#      - 'gh secret set' requires admin.
 #      - Ask a repo admin to either run this block, or grant your account the
 #        Admin role under repo Settings -> Collaborators and teams.
 
-# 1. Create the GitHub environments (idempotent - PUT creates if missing, no-op if it exists).
-#    The federated credentials in step 3 only succeed at workflow run time if these exist.
-#    No 'gh env create' command exists - use the REST API via gh api.
-foreach ($envName in $envs) {
-    Write-Host "Ensuring environment '$envName' exists in $repo..."
-    gh api `
-        --method PUT `
-        -H "Accept: application/vnd.github+json" `
-        "/repos/$repo/environments/$envName" | Out-Null
-}
-
-# 2. Repository-level secret and variables (REQUIRED - visible to every workflow run in the repo).
+# 1. Repository-level secret and variables (REQUIRED - visible to every workflow run in the repo).
 #    AZURE_CLIENT_ID identifies the app registration for OIDC and is the only Secret.
 #    AZURE_TENANT_ID and AZURE_SUBSCRIPTION_ID are *Variables* (not Secrets) because they are
 #    public ARM/AAD identifiers, not credentials. Each is consumed only by the corresponding
@@ -701,25 +670,13 @@ gh secret   set AZURE_CLIENT_ID       --body $clientId  --repo $repo
 gh variable set AZURE_TENANT_ID       --body $tenantId  --repo $repo
 gh variable set AZURE_SUBSCRIPTION_ID --body $subId     --repo $repo
 
-# 3. Optional, additive on top of step 2 (NOT a replacement) - pin AZURE_CLIENT_ID
-#    at each environment scope. GitHub resolves secrets env-first then repo-first,
-#    so an env-scoped value shadows the repo-level one for jobs targeting that env.
-#    Use this if you want a future repo-level CLIENT_ID rotation to require an
-#    explicit per-env update before it applies to Production. Skip if you're happy
-#    with the single repo-level value (the common case for first-time setup).
-foreach ($envName in $envs) {
-    gh secret set AZURE_CLIENT_ID --body $clientId --env $envName --repo $repo
-}
-
-# Verify (lists names only, never the values - secret values are write-only in GitHub).
+# 2. Verify (lists names only, never the values - secret values are write-only in GitHub).
 # Variable values ARE returned by 'gh variable list' (variables are not masked, by design).
 gh secret   list --repo $repo
 gh variable list --repo $repo
-gh secret   list --env  Production --repo $repo
-gh api "/repos/$repo/environments" --jq '.environments[].name'
 ```
 
-**What success looks like.** With step 3 skipped (the common first-time-setup path), expect output along these lines (timestamps and order may vary):
+**What success looks like.** Expect output along these lines (timestamps and order may vary):
 
 ```text
 # gh secret set AZURE_CLIENT_ID ...
@@ -737,23 +694,11 @@ AZURE_CLIENT_ID        about 1 minute ago
 NAME                   VALUE                                  UPDATED
 AZURE_TENANT_ID        00000000-0000-0000-0000-000000000000   about 1 minute ago
 AZURE_SUBSCRIPTION_ID  00000000-0000-0000-0000-000000000000   about 1 minute ago
-
-# gh secret list --env Production --repo $repo
-no secrets found
-
-# gh api "/repos/$repo/environments" --jq '.environments[].name'
-DevTest
-PreProduction
-Production
 ```
 
-The key signals are: one repo-level secret (`AZURE_CLIENT_ID`), two repo-level variables (`AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`) with their values visible, and all three environments listed. The blank env-scoped secret list is **expected** and confirms OIDC is working as designed - see the next note.
-
-> **`no secrets found` at env scope is expected with OIDC + federated credentials.** When you authenticate with OIDC, the `azure/login` action does not need a stored client secret; the single repo-level secret in step 2 carries only the OIDC App Registration's public `AZURE_CLIENT_ID`, the tenant id and subscription id are repo-level Variables (consumed only by `azure/login`'s `tenant-id:` and `subscription-id:` inputs), and the federated-credential `subject` claim (which includes the environment name) is what restricts who can mint a token. Env-scoped secrets in step 3 are only needed if you want to pin a different `AZURE_CLIENT_ID` per environment (e.g. one App Registration per ring). The empty `gh secret list --env Production` output is the correct steady state, not a misconfiguration.
+The key signals are: one repo-level secret (`AZURE_CLIENT_ID`) and two repo-level variables (`AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`) with their values visible. With OIDC + federated credentials there is **no** `AZURE_CLIENT_SECRET` - the federated-credential `subject` claim is what restricts who can mint a token.
 
 > **Note**: `gh secret list` shows only the secret **names** and last-updated timestamps - GitHub never returns the secret values back, even to admins. If you need to confirm what's there, the names + dates are the only signal; to verify a value you must overwrite with the same `gh secret set` command.
-
-> **Protection rules are not set by this block.** `gh api PUT /environments/<name>` with no body creates a plain environment with no required reviewers, no deployment-branch policy, and no wait timer. For Production you almost certainly want at least required reviewers - the simplest path is to set those in the UI (**Settings -> Environments -> Production -> Configure**), or extend the `gh api` call with a JSON body per the [REST API reference](https://docs.github.com/en/rest/deployments/environments#create-or-update-an-environment). Required-reviewer values must be user/team **IDs**, not names, which is why the UI is often easier here.
 
 </details>
 
@@ -1132,77 +1077,7 @@ Optional: create a variable group named **`AzureLocal-Config`** in **Pipelines -
 
 ### 5.3 Optional configuration (_not recommended_): pin the module version
 
-Every example pipeline installs `AzLocal.UpdateManagement` from PSGallery at runtime instead of importing a vendored copy from the repo. By default the install step pulls the **latest** version on each run - this is the recommended "fix-forward" posture: bug fixes and new safety gates land on your fleet without you having to touch the YAML again.
-
-If your change-control process requires you to pin the module version (so a release on PSGallery cannot change what runs in production without an explicit promotion), set `REQUIRED_MODULE_VERSION`. The install step pins to that exact version when set, and falls back to "latest" when empty.
-
-**Note**: Pinning shifts ongoing maintenance onto you. With a pin in place you are responsible for: (1) periodically checking PowerShell Gallery for new `AzLocal.UpdateManagement` releases; (2) refreshing the pipeline YAMLs in your repository when a new version ships (run `Copy-AzLocalPipelineExample -Update` - see further below); and (3) bumping `REQUIRED_MODULE_VERSION` to match the version those refreshed YAMLs were generated against. If the three drift apart, the drift-notice warnings (see below) lose most of their value.
-
-**GitHub Actions** - resolution order (first non-empty wins):
-
-1. Manual `workflow_dispatch` input `module_version` (per-run override).
-2. Repository variable `REQUIRED_MODULE_VERSION` (estate-wide default).
-3. Empty (install latest).
-
-```bash
-# Set an estate-wide pin (applies to every scheduled / event-triggered run):
-gh variable set REQUIRED_MODULE_VERSION --body '0.7.60' --repo <owner>/<repo>
-
-# Override for a single manual run, leaving the estate-wide pin untouched:
-gh workflow run fleet-update-status.yml -f module_version=0.7.60
-
-# Clear the estate-wide pin to return to latest:
-gh variable delete REQUIRED_MODULE_VERSION --repo <owner>/<repo>
-```
-
-**Azure DevOps** - resolution order (first non-empty wins):
-
-1. Queue-time override of the `moduleVersion` pipeline parameter.
-2. The pipeline parameter's default (defaults to empty / latest in the shipped YAMLs).
-
-To set an estate-wide pin in ADO, either change the `moduleVersion` parameter default in each YAML, or wrap it in a variable group / template parameter and reference it from each pipeline.
-
-**Drift notices.** Each install step compares three versions and emits a warning annotation (`::notice` in GitHub Actions, `##vso[task.logissue type=warning]` in Azure DevOps) when:
-
-| Situation | What you see | What it means |
-|---|---|---|
-| `installed > generated` | "Pipeline YAML was generated against AzLocal.UpdateManagement v<X> but the agent installed v<Y>." | Your committed YAML is older than the module on the agent. Pipeline steps may have been improved since - re-run `Update-AzLocalPipelineExample` (with the `-Platform GitHub` / `-Platform AzureDevOps` flag the v0.8.75 annotation now prints for you) to refresh while preserving your `AZLOCAL-CUSTOMIZE` markers. |
-| `latest > installed` | "AzLocal.UpdateManagement v<L> is available on PSGallery; this run installed v<I>." | A newer module is on PSGallery than the one the pipeline pinned to. Review the [module CHANGELOG](../CHANGELOG.md) before bumping `REQUIRED_MODULE_VERSION` (or clear the pin to install the latest automatically). |
-
-Both annotations are warnings, not failures - your pipeline still passes.
-
-**Refreshing pipeline YAMLs after a module upgrade.** When the drift notice fires (or you want to pick up new pipeline features that ship in a module release), re-run the copy command with `-Update`:
-
-```powershell
-# Interactive (prompts per file with Y / A / N / L / S / ? options):
-Copy-AzLocalPipelineExample -Destination .\.github\workflows -Platform GitHub -Update
-
-# Unattended (for automation - overwrites every file without prompting):
-Copy-AzLocalPipelineExample -Destination .\pipelines -Platform AzureDevOps -Update -Confirm:$false
-
-# Preview which files would change without writing anything:
-Copy-AzLocalPipelineExample -Destination .\.github\workflows -Platform GitHub -Update -WhatIf
-```
-
-The destination folders are under git, so `git diff` after the refresh shows exactly which lines changed - giving you a final review gate before commit. `Copy-AzLocalPipelineExample` deliberately does not expose a `-Force` switch; `-Update` (with optional `-Confirm:$false`) is the only path to overwrite, and git remains the rollback.
-
-**Preserving operator edits across upgrades (v0.7.68+).** For estates that have edited the bundled YAMLs to add custom cron schedules, ITSM secret bindings, or environment-specific tweaks, the marker-aware `Update-AzLocalPipelineExample` is the preferred refresh path. It replaces everything **outside** the documented customisation regions (paired `BEGIN-AZLOCAL-CUSTOMIZE:<region>` / `END-AZLOCAL-CUSTOMIZE:<region>` comments around `schedule-triggers` and ITSM secrets) and **preserves** everything inside them, so a module bump no longer wipes your customer-specific cron lines or secret name mappings:
-
-```powershell
-# Preview the marker-aware merge (writes nothing, prints a per-file change manifest):
-Update-AzLocalPipelineExample -Destination .\.github\workflows -Platform GitHub -WhatIf
-
-# Interactive merge (prompts per file):
-Update-AzLocalPipelineExample -Destination .\.github\workflows -Platform GitHub
-
-# Unattended merge:
-Update-AzLocalPipelineExample -Destination .\.azure-pipelines  -Platform AzureDevOps -Force
-
-# Capture the per-file change manifest:
-$report = Update-AzLocalPipelineExample -Destination .\.github\workflows -Platform GitHub -Force -PassThru
-```
-
-Use `Copy-AzLocalPipelineExample -Update` when you want a clean overwrite (no operator edits to preserve, or you have intentionally chosen to discard them); use `Update-AzLocalPipelineExample` when you have customised the bundled YAMLs and want to keep those edits.
+By default every example pipeline installs the **latest** `AzLocal.UpdateManagement` from PSGallery on each run (the recommended "fix-forward" posture). If your change-control process requires pinning a specific version - and for the drift-notice reference and the YAML-refresh commands (`Copy-AzLocalPipelineExample -Update`, `Update-AzLocalPipelineExample`) - see **[Appendix: Pinning the module version](docs/appendix-module-version-pinning.md)**.
 
 ---
 
@@ -1481,7 +1356,7 @@ The four run in distinct (offset) cron slots so they don't contend for the same 
 
 *Step.08 in-flight monitor on a real 20-cluster fleet - the `Progress` column reports leaf-step completion (`M/N steps (P%)`) since v0.8.74 instead of the coarse top-level wrapper count that previously always read `1/2 steps`, and the `Tip` line above the runs table makes the Ctrl/Cmd/middle-click new-tab behaviour explicit (GitHub markdown strips `target="_blank"` from anchors).*
 
-**Fleet Connectivity Status** *(introduced in v0.7.79, enhanced in v0.7.85)* runs daily at 05:30 UTC and answers the upstream question every other steady-state pipeline depends on: *"can the pipeline identity actually see every cluster, every physical node, and every Resource Bridge it is supposed to manage?"* The Step.4 reconciliation table compares each cluster's `reportedProperties.nodes` count against the Arc-tagged physical machines visible in Resource Graph and flags both directions of drift (positive = Arc has more machines than the cluster reports; negative = cluster reports more nodes than Arc can see). The v0.7.85 *"How to interpret + act on a non-zero reconciliation"* subsection in the pipeline summary gives operators per-direction remediation lists and an inline Resource Graph query template for triage. RBAC: `Reader` plus `Microsoft.ResourceGraph/resources/read`, `Microsoft.AzureStackHCI/edgeDevices/read`, `Microsoft.HybridCompute/machines/read`, and `Microsoft.ResourceConnector/appliances/read` - all already in the **`Azure Stack HCI Update Operator (custom)`** custom role definition shipped in [section 3.1](#31-custom-role-azure-stack-hci-update-operator-custom).
+**Fleet Connectivity Status** *(introduced in v0.7.79, enhanced in v0.7.85)* runs daily at 05:30 UTC and answers the upstream question every other steady-state pipeline depends on: *"can the pipeline identity actually see every cluster, every physical node, and every Resource Bridge it is supposed to manage?"* The Monitor: 1 reconciliation table compares each cluster's `reportedProperties.nodes` count against the Arc-tagged physical machines visible in Resource Graph and flags both directions of drift (positive = Arc has more machines than the cluster reports; negative = cluster reports more nodes than Arc can see). The v0.7.85 *"How to interpret + act on a non-zero reconciliation"* subsection in the pipeline summary gives operators per-direction remediation lists and an inline Resource Graph query template for triage. RBAC: `Reader` plus `Microsoft.ResourceGraph/resources/read`, `Microsoft.AzureStackHCI/edgeDevices/read`, `Microsoft.HybridCompute/machines/read`, and `Microsoft.ResourceConnector/appliances/read` - all already in the **`Azure Stack HCI Update Operator (custom)`** custom role definition shipped in [section 3.1](#31-custom-role-azure-stack-hci-update-operator-custom).
 
 **Fleet Update Status** is scheduled to run daily at 06:00 UTC once you push the YAML. It does no writes - it builds a fleet-wide JUnit + CSV + JSON snapshot for dashboards and alerting.
 
@@ -1532,7 +1407,7 @@ Configure your CI/CD platform's alerting on the JUnit failures - GitHub Actions 
 
 The connector reads the JUnit results the Apply Updates pipeline already publishes and, for each cluster whose status matches your configured trigger matrix (default: `Failed`, `Error`, `HealthCheckBlocked`, `SideloadedBlocked`), opens a deduped ServiceNow incident via the Table API. Idempotency is enforced via a SHA256 dedupe key written to a custom `u_azlocal_dedupe_key` column, so re-running the same workflow does not create duplicates.
 
-> **v0.8.87: the Update: 4 in-flight monitor (`monitor-updates.yml`) now supports the same opt-in ITSM step.** Toggle `raise_itsm_ticket=true` (`raiseItsmTicket` on Azure DevOps) and it reads `./reports/update-monitor.xml` after publishing the JUnit. The monitor JUnit now emits per-testcase `ClusterResourceId` / `UpdateName` / `Status` properties (`Status` is `StepError` / `LongRunningStep` / `LongRunningOverall` / `InProgress` / `Failed` / `AttemptWithoutRun`); the sample matrix raises on `AttemptWithoutRun` + `StepError` and leaves `LongRunning*` opt-in. The monitor stays report-only and always green - ITSM failures never affect its result. To pick a poll cadence, the **Config: 3** schedule auditor now prints a "Recommended in-flight monitor schedule (Update: 4)" cron derived from your apply windows (`-MonitorFiresPerHour`, `-MonitorTrailingDays`).
+> **v0.8.87: the Update: 4 in-flight monitor (`monitor-updates.yml`) now supports the same opt-in ITSM step.** Toggle `raise_itsm_ticket=true` (`raiseItsmTicket` on Azure DevOps) and it reads `./reports/update-monitor.xml` after publishing the JUnit. The monitor JUnit now emits per-testcase `ClusterResourceId` / `UpdateName` / `Status` properties (`Status` is `StepError` / `LongRunningStep` / `LongRunningOverall` / `InProgress` / `Failed` / `AttemptWithoutRun`); the sample matrix raises on `AttemptWithoutRun` + `StepError` and leaves `LongRunning*` opt-in. The monitor stays report-only and always green - ITSM failures never affect its result. To pick a poll cadence, the **Config: 3** schedule auditor now prints a "Recommended in-flight monitor schedule (Update: 4)" cron derived from your apply windows and `UpdateStartWindow` tags (`-MonitorPollIntervalMinutes`, `-MonitorTrailingDays`, `-MonitorInFlightHours`).
 
 This README does not duplicate the setup - it is a single-source-of-truth in [`../ITSM/README.md`](../ITSM/README.md). Here is the high-level wiring you'll do over there:
 
@@ -1610,13 +1485,13 @@ Test-AzLocalUpdateScheduleAllowed -UpdateStartWindow "Sat-Sun_02:00-06:00" -Upda
 Test-AzLocalUpdateScheduleAllowed -UpdateStartWindow "Sat_02:00-06:00" -TestTime ([datetime]"2026-04-19 03:00:00")
 ```
 
-### 8.1.1 Recommended Step.5 pre-flight schedule (per ring)
+### 8.1.1 Recommended Update: 1 (Assess Update Readiness) pre-flight schedule (per ring)
 
-`assess-update-readiness.yml` is the **report-only pre-flight** for an Apply Updates wave. The pipeline does not ship with a `schedule:` / `schedules:` block because the `update_ring` input is required and no single ring value is correct for every consumer. **Skipping Step.5 will not break Step.7** - the apply pipeline does its own internal `Get-AzLocalClusterUpdateReadiness` per-cluster pre-flight - but you lose the **human review window** between "we now know Ring2 has 12 clusters with blocking health checks" and "Ring2's maintenance window opens". For non-trivial estates that review window is worth preserving.
+`assess-update-readiness.yml` is the **report-only pre-flight** for an Apply Updates wave. The pipeline does not ship with a `schedule:` / `schedules:` block because the `update_ring` input is required and no single ring value is correct for every consumer. **Skipping Update: 1 will not break Update: 3** - the apply pipeline does its own internal `Get-AzLocalClusterUpdateReadiness` per-cluster pre-flight - but you lose the **human review window** between "we now know Ring2 has 12 clusters with blocking health checks" and "Ring2's maintenance window opens". For non-trivial estates that review window is worth preserving.
 
-The recommendation is to **schedule one Step.5 cron entry per ring you intend to patch, anchored 12-72 hours before that ring's Step.7 cron, with the lead time scaled to ring size**:
+The recommendation is to **schedule one Update: 1 cron entry per ring you intend to patch, anchored 12-72 hours before that ring's Update: 3 (Apply Updates) cron, with the lead time scaled to ring size**:
 
-| Ring size | Lead time | Step.5 cron (UTC) anchored on a `Sat 02:00` Step.7 window | Rationale |
+| Ring size | Lead time | Update: 1 cron (UTC) anchored on a `Sat 02:00` Update: 3 window | Rationale |
 |---|---|---|---|
 | Small (<= 10 clusters) | 12-24 hours | `'0 2 * * 5'` (Fri 02:00) | Enough to triage a handful of `<failure>` entries; health signal still fresh at apply time. |
 | Medium (10-50 clusters) | 24-48 hours | `'0 2 * * 4'` (Thu 02:00) | Lets you raise tickets / engage cluster owners before the weekend. |
@@ -1626,13 +1501,13 @@ Worked snippet (GitHub Actions, **one `assess-update-readiness*.yml` per ring** 
 
 ```yaml
 # .github/workflows/assess-update-readiness-Wave1.yml
-name: Step.5 - Assess Update Readiness (Wave1)
+name: Update: 1 - Assess Update Readiness (Wave1)
 on:
   workflow_dispatch:
     inputs:
       update_ring: { description: 'UpdateRing tag value', required: true, default: 'Wave1' }
   schedule:
-    - cron: '0 2 * * 4'   # Wave1 - Thu 02:00 UTC, 48h ahead of Sat 02:00 Wave1 Step.7 cron
+    - cron: '0 2 * * 4'   # Wave1 - Thu 02:00 UTC, 48h ahead of Sat 02:00 Wave1 Update: 3 cron
 env:
   UPDATE_RING: ${{ github.event.inputs.update_ring || 'Wave1' }}
 # ... job steps below pass $UPDATE_RING into the Assess-AzLocalClusterUpdateReadiness call ...
@@ -1642,7 +1517,7 @@ Copy this file once per ring (e.g. `assess-update-readiness-Pilot.yml`, `assess-
 
 **Why one YAML per ring**: GitHub Actions `schedule:`-triggered runs cannot supply `inputs:` values - they always use the workflow's default `inputs:`. So a single `assess-update-readiness*.yml` with three crons in one `schedule:` block (and `update_ring` required, no default) would never actually run on cron - every cron tick would fail input validation. Splitting one YAML per ring (each with its own default + single cron) is the cleanest fix. Azure DevOps has the same constraint - `schedules:`-triggered runs use the YAML's default `parameters:` values, so the same per-ring split pattern applies.
 
-**Known gap**: the Step.3 schedule-coverage audit (`apply-updates-schedule-audit.yml`) currently validates Step.7 cron-to-`UpdateStartWindow` coverage only - it does **not** audit whether each Step.5 cron is correctly anchored ahead of a Step.7 cron. **Always pair Step.5 + Step.7 cron edits in the same PR** so the lead-time relationship is reviewable by a human at merge time. The per-pipeline appendix entry for [Update: 1 - Assess Update Readiness](docs/appendix-pipelines.md#update-1---assess-update-readiness) repeats this guidance with the same lead-time table.
+**Known gap**: the Config: 3 schedule-coverage audit (`apply-updates-schedule-audit.yml`) currently validates Update: 3 cron-to-`UpdateStartWindow` coverage only - it does **not** audit whether each Update: 1 cron is correctly anchored ahead of an Update: 3 cron. **Always pair Update: 1 + Update: 3 cron edits in the same PR** so the lead-time relationship is reviewable by a human at merge time. The per-pipeline appendix entry for [Update: 1 - Assess Update Readiness](docs/appendix-pipelines.md#update-1---assess-update-readiness) repeats this guidance with the same lead-time table.
 
 **Always-green caveat**: `assess-update-readiness.yml` never goes red at the pipeline level - per-cluster readiness gaps surface as JUnit `<failure>` entries in the Tests / Checks tab via `readiness.xml`. A silently-empty `readiness.xml` (e.g. an `update_ring` typo with zero clusters in scope) **will not generate a red-build email**. Either check the Tests tab after each scheduled run, or wire the JUnit reporter into the CI status surface you already monitor.
 
@@ -1694,6 +1569,8 @@ jobs:
 ### 8.3 End-to-end runbook: Apply-Updates Schedule Coverage Audit
 
 *(New in v0.7.65. Pre-wired pipeline samples: [`github-actions/apply-updates-schedule-audit.yml`](./github-actions/apply-updates-schedule-audit.yml), [`azure-devops/apply-updates-schedule-audit.yml`](./azure-devops/apply-updates-schedule-audit.yml).)*
+
+> **Scope.** This is a **focused sub-runbook** for one task: keeping your cron schedule and `UpdateStartWindow` tags in sync. It is **not** the whole-estate onboarding sequence - for "nothing wired -> staged rollout working" follow the canonical [section 6 end-to-end runbook](#6-end-to-end-runbook-bring-an-estate-online) first, then use this loop on an ongoing basis.
 
 This runbook walks through the full loop of **discover -> fix -> verify** for `UpdateStartWindow` / cron drift. Use it the first time you tag a new ring, and rely on the weekly scheduled audit to catch drift afterwards.
 
@@ -2077,6 +1954,8 @@ Moved to [docs/appendix-release-history.md](docs/appendix-release-history.md) to
 ## 16. Related documentation
 
 - [Azure Local Update Management module README](../README.md)
+- [Appendix: GitHub environments (`docs/appendix-github-environments.md`)](docs/appendix-github-environments.md) - optional governance wrapper for section 4.1: approval gates, per-ring identities, and the environment-scoped federated credentials + `gh` CLI to set them up.
+- [Appendix: Pinning the module version (`docs/appendix-module-version-pinning.md`)](docs/appendix-module-version-pinning.md) - optional deep-dive for section 5.3: `REQUIRED_MODULE_VERSION`, drift notices, and the `Copy-`/`Update-AzLocalPipelineExample` YAML-refresh commands.
 - [Concepts and terminology (`docs/concepts.md`)](../docs/concepts.md) - one-page glossary covering update states, deep-link columns, and the JUnit testsuites the pipelines emit.
 - [RBAC reference (`docs/rbac.md`)](../docs/rbac.md) - full action / NotAction list for the custom role, plus the read-only delegations the fleet health / connectivity / update-status pipelines need.
 - [Troubleshooting reference (`docs/troubleshooting.md`)](../docs/troubleshooting.md) - module-level error patterns (auth, Resource Graph paging, JUnit emission, ITSM probe failures) keyed by the messages the pipelines surface.

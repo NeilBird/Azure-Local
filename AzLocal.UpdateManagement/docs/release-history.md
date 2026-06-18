@@ -4,9 +4,13 @@
 >
 > **For older releases**, this is the canonical reference; the main README intentionally stays slim so the most recent block is easy to find.
 >
-> **For v0.8.87 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0887) `What's New in v0.8.87` section.
+> **For v0.8.89 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0889) `What's New in v0.8.89` section.
 
 ---
+
+### What's New in v0.8.88
+
+Adds programmatic "Check for updates" automation and stale-assessment detection. A new public cmdlet `Sync-AzLocalClusterUpdateSummary` (export count 60 -> 61) POSTs the `updateSummaries/default/checkUpdates` ARM action - the programmatic equivalent of the Azure portal **Check for updates** button - to force one or more clusters (selected by name, Resource ID, or `UpdateRing` tag) to re-evaluate update availability. Fire-and-forget by default; `-Wait` polls `updateSummaries` until `lastChecked` advances and returns the refreshed `UpdateState` / `CurrentVersion` / `AvailableUpdateCount`. Supports `-WhatIf` / `-Confirm`, `-Force`, `-PassThru`. `Export-AzLocalClusterUpdateReadinessReport` gains an opt-out stale-assessment auto-scan: any cluster reporting `UpToDate` whose installed version is behind the latest released `YYMM` (via the new private `Test-AzLocalUpdateAssessmentStale` helper plus `Get-AzLocalLatestSolutionVersion`) triggers a fire-and-forget Check for updates to refresh it; new `-SkipStaleAssessmentScan` switch and `-StaleAssessmentApiVersion` parameter, a new "Stale update assessments" report section, and new `StaleAssessmentCount` / `StaleAssessmentClusters` / `StaleAssessmentScanTriggered` `-PassThru` fields. Authorization / `403` failures on the refresh call are surfaced in the console log (the `az rest` error contains the exact action name and scope) and are non-fatal - the readiness report still completes. `checkUpdates` is a preview action (`2026-03-01-preview`) not yet in the `Microsoft.AzureStackHCI` provider operations catalog, so it cannot be added to the least-privilege `Azure Stack HCI Update Operator (custom)` role yet; under that role the refresh returns a non-fatal `403` - use `Azure Stack HCI Administrator` / `Contributor`, or `-SkipStaleAssessmentScan`, until it GAs. `GENERATED_AGAINST_MODULE_VERSION` bumped from `0.8.87` to `0.8.88` across all bundled pipeline templates. See [CHANGELOG.md](../CHANGELOG.md#0888---2026-06-17) for the full v0.8.88 entry.
 
 ### What's New in v0.8.87
 
