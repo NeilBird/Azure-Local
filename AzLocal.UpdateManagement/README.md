@@ -2,7 +2,7 @@
 
 > ⚠️ **Disclaimer**: This module is **NOT** a Microsoft supported service offering or product. It is provided as example code only, with no warranty or official support. Refer to the [MIT license](https://github.com/NeilBird/Azure-Local/blob/main/LICENSE) for further information.
 
-**Latest Version:** v0.8.92 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.8.92)
+**Latest Version:** v0.8.93 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.8.93)
 
 This folder contains the 'AzLocal.UpdateManagement' PowerShell module for managing updates on Azure Local (formerly Azure Stack HCI) clusters using the Azure Local REST API. The module supports both interactive use and CI/CD automation via Service Principal or Managed Identity authentication.
 
@@ -14,7 +14,7 @@ Azure Local REST API specification (includes update management endpoints): https
 **This README (overview + most-recent release notes):**
 
 - [Where to Start](#where-to-start)
-- [What's New in v0.8.92](#whats-new-in-v0892)
+- [What's New in v0.8.93](#whats-new-in-v0893)
 - [Files](#files)
 - [Prerequisites](#prerequisites)
 - [RBAC Requirements](#rbac-requirements) (summary; full reference in [docs/rbac.md](docs/rbac.md))
@@ -77,23 +77,26 @@ If you are new to this module, work through these in order from a regular PowerS
 
 > Most CI/CD pipelines in [Automation-Pipeline-Examples/](Automation-Pipeline-Examples/) are direct implementations of one of these workflows. Start there if you want a copy-pasteable end-to-end pipeline.
 
-## What's New in v0.8.92
+## What's New in v0.8.93
 
-**The least-privilege custom role now grants the preview "Check for updates" (`checkUpdates`) action via a wildcard.** The bundled `Azure Stack HCI Update Operator (custom)` role swaps the explicit `Microsoft.AzureStackHCI/clusters/updateSummaries/read` action for the `Microsoft.AzureStackHCI/clusters/updateSummaries/*` wildcard. `az role definition create` / `update` rejects the explicit `.../updateSummaries/checkUpdates/action` leaf (still absent from the `Microsoft.AzureStackHCI` provider operations catalog as of 2026-06-18), but it accepts a wildcard whose prefix resolves to the registered `updateSummaries/read`, and Azure matches the enforced `checkUpdates/action` against that wildcard at authorization time. Doc / RBAC-only change - no behavioural, API, or export-count change (still 61).
+**Fixes a Bad Request in the "Update: 1 - Assess Update Readiness" pipeline.** `Sync-AzLocalClusterUpdateSummary` (and the `Export-AzLocalClusterUpdateReadinessReport` stale-assessment auto-scan that calls it) POSTed the `Microsoft.AzureStackHCI/clusters/updateSummaries/default/checkUpdates` ARM action with no request body. The `2026-03-01-preview` API spec now requires a body to be present, so the bodyless POST was rejected with `HttpRequestPayloadAPISpecValidationFailed` / `MissingRequiredParameter "Value is required but was not provided. Paths in payload: '.body'"`. Bug-fix only - no API, parameter, or export-count change (still 61).
+
+### Fixed
+
+- **`checkUpdates` POST now sends an empty JSON body `{}`.** No properties are mandatory for a plain re-scan, so an empty object satisfies the spec's body requirement. Validated end-to-end against a live cluster (a bodyless POST returns `400`; the `{}` body returns `202 Accepted` / triggered).
 
 ### Changed
 
-- **Custom role grants `updateSummaries/*` instead of `updateSummaries/read`.** The wildcard subsumes `read` and additionally authorizes the preview `checkUpdates/action`, so `Sync-AzLocalClusterUpdateSummary` and the `Export-AzLocalClusterUpdateReadinessReport` stale-assessment auto-scan now succeed under the custom role - no fallback to `Azure Stack HCI Administrator` / `Contributor` and no `-SkipStaleAssessmentScan` needed. Updated in the bundled `azlocal-update-management-custom-role.json`, `docs/rbac.md` (x3 role blocks), both READMEs, `docs/cmdlet-reference.md`, and the `Connect-AzLocalServicePrincipal` comment-based help. The offline + live RBAC tripwire tests now assert the wildcard is present and the explicit leaf is not enumerated.
+- **Refreshed the now-stale RBAC comment / authorization warning** in `Sync-AzLocalClusterUpdateSummary` to reflect that the v0.8.92 `updateSummaries/*` wildcard already authorizes `checkUpdates`. A `403` from the action therefore means the `Azure Stack HCI Update Operator (custom)` role (or an equivalent built-in) is simply not assigned at the scope - not that the action is ungranted.
 
 ### Notes
 
 - **No public-API change** (export count unchanged at 61).
-- **Trade-off:** the wildcard also covers any future control-plane sub-operation Microsoft adds under `clusters/updateSummaries/`. If you prefer to enumerate leaves, replace it with `updateSummaries/read` (and accept the `checkUpdates` refresh then returns a non-fatal `403`).
-- **`GENERATED_AGAINST_MODULE_VERSION`** bumped from `0.8.91` to `0.8.92` across bundled pipeline templates.
+- **`GENERATED_AGAINST_MODULE_VERSION`** bumped from `0.8.92` to `0.8.93` across bundled pipeline templates.
 
 > Previous release notes have moved into the [Release History](#release-history) appendix at the bottom of this document.
 
-See [CHANGELOG.md](CHANGELOG.md) for full release details. See [`What's New in v0.8.91`](#whats-new-in-v0891) in the Release History for the previous release.
+See [CHANGELOG.md](CHANGELOG.md) for full release details. See [`What's New in v0.8.92`](#whats-new-in-v0892) in the Release History for the previous release.
 
 ## Files
 
@@ -575,7 +578,11 @@ This code is provided as-is for educational and reference purposes.
 
 The full What's-New history (v0.7.81 and earlier) has moved to [docs/release-history.md](docs/release-history.md).
 
-The most recent release notes for **v0.8.92** stay above under [`What's New in v0.8.92`](#whats-new-in-v0892).
+The most recent release notes for **v0.8.93** stay above under [`What's New in v0.8.93`](#whats-new-in-v0893).
+
+### What's New in v0.8.92
+
+**The least-privilege custom role now grants the preview "Check for updates" (`checkUpdates`) action via a wildcard.** The bundled `Azure Stack HCI Update Operator (custom)` role swaps the explicit `Microsoft.AzureStackHCI/clusters/updateSummaries/read` action for the `Microsoft.AzureStackHCI/clusters/updateSummaries/*` wildcard. `az role definition create` / `update` rejects the explicit `.../updateSummaries/checkUpdates/action` leaf (still absent from the `Microsoft.AzureStackHCI` provider operations catalog as of 2026-06-18), but it accepts a wildcard whose prefix resolves to the registered `updateSummaries/read`, and Azure matches the enforced `checkUpdates/action` against that wildcard at authorization time. Doc / RBAC-only change - no behavioural, API, or export-count change (still 61). `GENERATED_AGAINST_MODULE_VERSION` bumped from `0.8.91` to `0.8.92`. See [CHANGELOG.md](CHANGELOG.md#0892---2026-06-20) for the full v0.8.92 entry.
 
 ### What's New in v0.8.91
 
