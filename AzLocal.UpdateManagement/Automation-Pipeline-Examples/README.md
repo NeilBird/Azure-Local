@@ -28,6 +28,7 @@ It is written in the same step-by-step style as [`ITSM/README.md`](../ITSM/READM
    - [5.1 GitHub Actions](#51-github-actions)
    - [5.2 Azure DevOps](#52-azure-devops)
    - [5.3 Optional configuration (not recommended): pin the module version](#53-optional-configuration-not-recommended-pin-the-module-version)
+   - [5.4 Azure DevOps onboarding checklist](#54-azure-devops-onboarding-checklist)
 6. [End-to-end runbook: bring an estate online](#6-end-to-end-runbook-bring-an-estate-online)
    - [6.1 Inventory the estate](#61-inventory-the-estate)
    - [6.2 Plan update rings, windows, and exclusions](#62-plan-update-rings-windows-and-exclusions)
@@ -1080,6 +1081,46 @@ Optional: create a variable group named **`AzureLocal-Config`** in **Pipelines -
 ### 5.3 Optional configuration (_not recommended_): pin the module version
 
 By default every example pipeline installs the **latest** `AzLocal.UpdateManagement` from PSGallery on each run (the recommended "fix-forward" posture). If your change-control process requires pinning a specific version - and for the drift-notice reference and the YAML-refresh commands (`Copy-AzLocalPipelineExample -Update`, `Update-AzLocalPipelineExample`) - see **[Appendix: Pinning the module version](docs/appendix-module-version-pinning.md)**.
+
+---
+
+### 5.4 Azure DevOps onboarding checklist
+
+The example pipelines have **near-100% functional parity** across GitHub Actions and Azure DevOps - the same cmdlets, parameters, gating logic, outputs, artifacts, scheduled cron, and the event-driven apply -> monitor trigger all run identically on both platforms. The only differences are **platform-idiomatic setup steps** that Azure DevOps requires and GitHub Actions does not. None are bugs, but a first-time ADO operator will hit them in this order. Work through the checklist before handing the project to a new user.
+
+#### Pre-import (do once for the project)
+
+- [ ] **Create the Workload Identity Federation service connection** with the custom RBAC role assigned (see [section 4.2](#42-azure-devops-with-workload-identity-federation-recommended) and [section 3](#3-required-azure-permissions)). This is the ADO equivalent of the GitHub OIDC federated credential.
+- [ ] **Match the service-connection name `AzureLocal-ServiceConnection`**, or rename it everywhere. Every ADO pipeline references `azureSubscription: 'AzureLocal-ServiceConnection'` (each line is tagged `# Update with your service connection name`). It appears multiple times in `apply-updates.yml` (4x: readiness + apply + monitor-trigger + post-apply stages) and once in each of the other ADO YAMLs. Easiest: **name your service connection `AzureLocal-ServiceConnection`** so zero edits are needed. Otherwise bulk-replace the literal string across [`azure-devops/`](./azure-devops/) before importing:
+
+  ```powershell
+  # Run from the repo root after copying the azure-devops/ folder in.
+  Get-ChildItem .\azure-devops\*.yml | ForEach-Object {
+      $enc = [System.Text.UTF8Encoding]::new($false)
+      $t = [System.IO.File]::ReadAllText($_.FullName, $enc)
+      $t = $t.Replace("'AzureLocal-ServiceConnection'", "'<your-service-connection-name>'")
+      [System.IO.File]::WriteAllText($_.FullName, $t, $enc)
+  }
+  ```
+
+- [ ] **(Optional) Create variable groups** in **Pipelines -> Library**: `AzureLocal-Config` for defaults (e.g. the most-common `UpdateRing`), and - only if you plan to raise ITSM tickets - `AzureLocal-ITSM-Secrets` (see [section 7](#7-optional-open-itsm-tickets-for-clusters-needing-operator-action)).
+
+#### Per-pipeline (after import)
+
+- [ ] **Set concurrency on `apply-updates`.** GitHub Actions has a YAML `concurrency:` block that serialises apply runs automatically; Azure DevOps has **no first-class YAML concurrency** equivalent. Configure it in the UI so two apply runs can never race the same fleet: **Pipelines -> apply-updates -> Edit -> ... -> Triggers -> "Limit concurrent runs"** (or attach an **Environment** with an **Exclusive lock** check). Do this before the first scheduled apply.
+- [ ] **Enable OAuth token access for the event-driven monitor trigger.** When Update: 3 (Apply) starts >=1 update it auto-queues Update: 4 (Monitor) via the ADO REST API using `$(System.AccessToken)`. That token is only populated when **"Allow scripts to access the OAuth token"** is enabled (Pipeline **Edit -> ... -> Options**, or the job-level `System.AccessToken` mapping the YAML already wires). If it is off, the apply run still succeeds but the monitor is not auto-fired (you can still run it on its 6-hourly cron / manually).
+- [ ] **Do not rename the `CheckReadiness` stage or the `ReadinessCheck` job in `apply-updates.yml`.** The apply stage consumes the readiness gate via `stageDependencies.CheckReadiness.ReadinessCheck.outputs[...]` (ReadyCount / TotalCount / NotReadyCount / resolved ring + allow-list). ADO binds these by **exact stage + job + output name**; renaming any of them breaks the binding **silently** (the variable resolves to an empty string, not an error). The GitHub Actions equivalent uses `needs.check-readiness.outputs.*`, which fails loudly instead. After import, run **one manual `apply-updates` with `dryRun` / WhatIf** and confirm `ReadyCount` is populated in the apply stage log before trusting a scheduled run.
+- [ ] **(ITSM only) Convert the `variables:` block to list form.** Azure DevOps cannot mix mapping-form variables (`name: value`) with a `- group:` reference in the same block. To pull in `AzureLocal-ITSM-Secrets`, convert the pipeline's `variables:` mapping to `- name: / value:` list form, add `- group: AzureLocal-ITSM-Secrets`, then uncomment the ITSM task. Each ITSM-capable ADO YAML carries an inline comment showing the before/after. Skip entirely if you are not using ITSM.
+
+#### FAQ
+
+- **Is anything missing on the Azure DevOps side?** No. Every cmdlet, parameter, gate, artifact (CSV / JSON / JUnit XML / HTML / step summary), scheduled cron, and the event-driven apply -> monitor trigger exist on both platforms. The deltas above are setup ergonomics, not feature gaps.
+- **Why do ADO run-form parameters look like `updateRing` while GitHub uses `update_ring`?** Cosmetic only. ADO parameters use PascalCase and GitHub inputs use snake_case by platform convention; both map to the same PascalCase PowerShell cmdlet parameters (`-UpdateRing`) at runtime.
+- **Artifacts and test results - same?** Yes, via platform-native tasks: GitHub uploads with `actions/upload-artifact` + renders JUnit with a test-reporter action and writes `$GITHUB_STEP_SUMMARY`; ADO uses `PublishBuildArtifacts` + `PublishTestResults@2` (Tests tab) + `##vso[task.uploadsummary]` (Summary tab). The files produced are identical.
+- **Do the schedules differ?** No - the default cron expressions match line-for-line across both platforms. As shipped, `apply-updates` has every `cron:` commented out inside the `BEGIN/END-AZLOCAL-CUSTOMIZE:schedule-triggers` markers on both platforms, so it never fires on a schedule until you add one.
+- **Module version pinning?** Identical strategy on both - latest-from-PSGallery by default, with the same `GENERATED_AGAINST_MODULE_VERSION` drift-detection pin and `Add-AzLocalPipelineVersionBanner` notice.
+
+> **Top 3 to verify before go-live:** (1) the service-connection name matches `AzureLocal-ServiceConnection` (or you bulk-replaced it); (2) `apply-updates` has "Limit concurrent runs" set to 1; (3) a manual `apply-updates` dry-run shows a populated `ReadyCount` in the apply stage (proves the `stageDependencies` binding resolves).
 
 ---
 
