@@ -511,7 +511,7 @@ First create the Service Principal:
 az ad sp create --id <appId-from-step-1>
 ```
 
-Assign the least-privilege **`Azure Stack HCI Update Operator (custom)`** custom role. This grants the Service Principal only the actions the nine pipelines need (read clusters, read/apply updates, read update runs, read/write tags, Resource Graph queries, plus the Arc / edgeDevice / Resource Bridge reads that Step.4 Fleet Connectivity Status calls). The full JSON role definition and `az role definition create` command live in [section 3 above](#3-required-azure-permissions) - run that block once per tenant first, then assign:
+Assign the least-privilege **`Azure Stack HCI Update Operator (custom)`** custom role. This grants the Service Principal only the actions the nine pipelines need (read clusters, read/apply updates, read update runs, read/write tags, Resource Graph queries, plus the Arc / edgeDevice / Resource Bridge reads that Monitor: 1 Fleet Connectivity Status calls). The full JSON role definition and `az role definition create` command live in [section 3 above](#3-required-azure-permissions) - run that block once per tenant first, then assign:
 
 ```bash
 az role assignment create `
@@ -1355,7 +1355,7 @@ The four run in distinct (offset) cron slots so they don't contend for the same 
 
 *Step.08 in-flight monitor on a real 20-cluster fleet - the `Progress` column reports leaf-step completion (`M/N steps (P%)`) since v0.8.74 instead of the coarse top-level wrapper count that previously always read `1/2 steps`, and the `Tip` line above the runs table makes the Ctrl/Cmd/middle-click new-tab behaviour explicit (GitHub markdown strips `target="_blank"` from anchors).*
 
-**Fleet Connectivity Status** *(introduced in v0.7.79, enhanced in v0.7.85)* runs daily at 05:30 UTC and answers the upstream question every other steady-state pipeline depends on: *"can the pipeline identity actually see every cluster, every physical node, and every Resource Bridge it is supposed to manage?"* The Step.4 reconciliation table compares each cluster's `reportedProperties.nodes` count against the Arc-tagged physical machines visible in Resource Graph and flags both directions of drift (positive = Arc has more machines than the cluster reports; negative = cluster reports more nodes than Arc can see). The v0.7.85 *"How to interpret + act on a non-zero reconciliation"* subsection in the pipeline summary gives operators per-direction remediation lists and an inline Resource Graph query template for triage. RBAC: `Reader` plus `Microsoft.ResourceGraph/resources/read`, `Microsoft.AzureStackHCI/edgeDevices/read`, `Microsoft.HybridCompute/machines/read`, and `Microsoft.ResourceConnector/appliances/read` - all already in the **`Azure Stack HCI Update Operator (custom)`** custom role definition shipped in [section 3.1](#31-custom-role-azure-stack-hci-update-operator-custom).
+**Fleet Connectivity Status** *(introduced in v0.7.79, enhanced in v0.7.85)* runs daily at 05:30 UTC and answers the upstream question every other steady-state pipeline depends on: *"can the pipeline identity actually see every cluster, every physical node, and every Resource Bridge it is supposed to manage?"* The Monitor: 1 reconciliation table compares each cluster's `reportedProperties.nodes` count against the Arc-tagged physical machines visible in Resource Graph and flags both directions of drift (positive = Arc has more machines than the cluster reports; negative = cluster reports more nodes than Arc can see). The v0.7.85 *"How to interpret + act on a non-zero reconciliation"* subsection in the pipeline summary gives operators per-direction remediation lists and an inline Resource Graph query template for triage. RBAC: `Reader` plus `Microsoft.ResourceGraph/resources/read`, `Microsoft.AzureStackHCI/edgeDevices/read`, `Microsoft.HybridCompute/machines/read`, and `Microsoft.ResourceConnector/appliances/read` - all already in the **`Azure Stack HCI Update Operator (custom)`** custom role definition shipped in [section 3.1](#31-custom-role-azure-stack-hci-update-operator-custom).
 
 **Fleet Update Status** is scheduled to run daily at 06:00 UTC once you push the YAML. It does no writes - it builds a fleet-wide JUnit + CSV + JSON snapshot for dashboards and alerting.
 
@@ -1484,13 +1484,13 @@ Test-AzLocalUpdateScheduleAllowed -UpdateStartWindow "Sat-Sun_02:00-06:00" -Upda
 Test-AzLocalUpdateScheduleAllowed -UpdateStartWindow "Sat_02:00-06:00" -TestTime ([datetime]"2026-04-19 03:00:00")
 ```
 
-### 8.1.1 Recommended Step.5 pre-flight schedule (per ring)
+### 8.1.1 Recommended Update: 1 (Assess Update Readiness) pre-flight schedule (per ring)
 
-`assess-update-readiness.yml` is the **report-only pre-flight** for an Apply Updates wave. The pipeline does not ship with a `schedule:` / `schedules:` block because the `update_ring` input is required and no single ring value is correct for every consumer. **Skipping Step.5 will not break Step.7** - the apply pipeline does its own internal `Get-AzLocalClusterUpdateReadiness` per-cluster pre-flight - but you lose the **human review window** between "we now know Ring2 has 12 clusters with blocking health checks" and "Ring2's maintenance window opens". For non-trivial estates that review window is worth preserving.
+`assess-update-readiness.yml` is the **report-only pre-flight** for an Apply Updates wave. The pipeline does not ship with a `schedule:` / `schedules:` block because the `update_ring` input is required and no single ring value is correct for every consumer. **Skipping Update: 1 will not break Update: 3** - the apply pipeline does its own internal `Get-AzLocalClusterUpdateReadiness` per-cluster pre-flight - but you lose the **human review window** between "we now know Ring2 has 12 clusters with blocking health checks" and "Ring2's maintenance window opens". For non-trivial estates that review window is worth preserving.
 
-The recommendation is to **schedule one Step.5 cron entry per ring you intend to patch, anchored 12-72 hours before that ring's Step.7 cron, with the lead time scaled to ring size**:
+The recommendation is to **schedule one Update: 1 cron entry per ring you intend to patch, anchored 12-72 hours before that ring's Update: 3 (Apply Updates) cron, with the lead time scaled to ring size**:
 
-| Ring size | Lead time | Step.5 cron (UTC) anchored on a `Sat 02:00` Step.7 window | Rationale |
+| Ring size | Lead time | Update: 1 cron (UTC) anchored on a `Sat 02:00` Update: 3 window | Rationale |
 |---|---|---|---|
 | Small (<= 10 clusters) | 12-24 hours | `'0 2 * * 5'` (Fri 02:00) | Enough to triage a handful of `<failure>` entries; health signal still fresh at apply time. |
 | Medium (10-50 clusters) | 24-48 hours | `'0 2 * * 4'` (Thu 02:00) | Lets you raise tickets / engage cluster owners before the weekend. |
@@ -1500,13 +1500,13 @@ Worked snippet (GitHub Actions, **one `assess-update-readiness*.yml` per ring** 
 
 ```yaml
 # .github/workflows/assess-update-readiness-Wave1.yml
-name: Step.5 - Assess Update Readiness (Wave1)
+name: Update: 1 - Assess Update Readiness (Wave1)
 on:
   workflow_dispatch:
     inputs:
       update_ring: { description: 'UpdateRing tag value', required: true, default: 'Wave1' }
   schedule:
-    - cron: '0 2 * * 4'   # Wave1 - Thu 02:00 UTC, 48h ahead of Sat 02:00 Wave1 Step.7 cron
+    - cron: '0 2 * * 4'   # Wave1 - Thu 02:00 UTC, 48h ahead of Sat 02:00 Wave1 Update: 3 cron
 env:
   UPDATE_RING: ${{ github.event.inputs.update_ring || 'Wave1' }}
 # ... job steps below pass $UPDATE_RING into the Assess-AzLocalClusterUpdateReadiness call ...
@@ -1516,7 +1516,7 @@ Copy this file once per ring (e.g. `assess-update-readiness-Pilot.yml`, `assess-
 
 **Why one YAML per ring**: GitHub Actions `schedule:`-triggered runs cannot supply `inputs:` values - they always use the workflow's default `inputs:`. So a single `assess-update-readiness*.yml` with three crons in one `schedule:` block (and `update_ring` required, no default) would never actually run on cron - every cron tick would fail input validation. Splitting one YAML per ring (each with its own default + single cron) is the cleanest fix. Azure DevOps has the same constraint - `schedules:`-triggered runs use the YAML's default `parameters:` values, so the same per-ring split pattern applies.
 
-**Known gap**: the Step.3 schedule-coverage audit (`apply-updates-schedule-audit.yml`) currently validates Step.7 cron-to-`UpdateStartWindow` coverage only - it does **not** audit whether each Step.5 cron is correctly anchored ahead of a Step.7 cron. **Always pair Step.5 + Step.7 cron edits in the same PR** so the lead-time relationship is reviewable by a human at merge time. The per-pipeline appendix entry for [Update: 1 - Assess Update Readiness](docs/appendix-pipelines.md#update-1---assess-update-readiness) repeats this guidance with the same lead-time table.
+**Known gap**: the Config: 3 schedule-coverage audit (`apply-updates-schedule-audit.yml`) currently validates Update: 3 cron-to-`UpdateStartWindow` coverage only - it does **not** audit whether each Update: 1 cron is correctly anchored ahead of an Update: 3 cron. **Always pair Update: 1 + Update: 3 cron edits in the same PR** so the lead-time relationship is reviewable by a human at merge time. The per-pipeline appendix entry for [Update: 1 - Assess Update Readiness](docs/appendix-pipelines.md#update-1---assess-update-readiness) repeats this guidance with the same lead-time table.
 
 **Always-green caveat**: `assess-update-readiness.yml` never goes red at the pipeline level - per-cluster readiness gaps surface as JUnit `<failure>` entries in the Tests / Checks tab via `readiness.xml`. A silently-empty `readiness.xml` (e.g. an `update_ring` typo with zero clusters in scope) **will not generate a red-build email**. Either check the Tests tab after each scheduled run, or wire the JUnit reporter into the CI status surface you already monitor.
 

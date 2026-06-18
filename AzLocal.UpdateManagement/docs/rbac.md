@@ -31,10 +31,10 @@ The following permissions are required for update + fleet-connectivity operation
 | Monitor update runs | `Microsoft.AzureStackHCI/clusters/updates/updateRuns/read` |
 | Query clusters (Resource Graph) | `Microsoft.ResourceGraph/resources/read` |
 | **Read/Write tags** | `Microsoft.Resources/tags/read`, `Microsoft.Resources/tags/write` |
-| Read Arc machine agent status (Step.4) | `Microsoft.HybridCompute/machines/read` |
+| Read Arc machine agent status (Monitor: 1) | `Microsoft.HybridCompute/machines/read` |
 | Read Arc machine extensions (reserved for future extension reporting) | `Microsoft.HybridCompute/machines/extensions/read` |
-| Read physical NIC inventory via edge devices (Step.4) | `Microsoft.AzureStackHCI/edgeDevices/read` |
-| Read Azure Resource Bridge appliance status (Step.4) | `Microsoft.ResourceConnector/appliances/read` |
+| Read physical NIC inventory via edge devices (Monitor: 1) | `Microsoft.AzureStackHCI/edgeDevices/read` |
+| Read Azure Resource Bridge appliance status (Monitor: 1) | `Microsoft.ResourceConnector/appliances/read` |
 
 > **v0.7.80 note:** The last three rows above were added in v0.7.80. They are required by `Get-AzLocalFleetConnectivityStatus` (introduced in v0.7.79) and therefore by the `fleet-connectivity-status.yml` pipeline. Without them, the cmdlet still returns the cluster connectivity section but every other section (Arc agents, physical NICs, Azure Resource Bridges) silently returns zero rows because ARG yields an empty `.data` array for resource types the caller cannot read. Pipelines that were created against the v0.7.79-or-earlier custom-role JSON will see 0 Arc agents / 0 NICs / 0 ARBs until the role is updated.
 
