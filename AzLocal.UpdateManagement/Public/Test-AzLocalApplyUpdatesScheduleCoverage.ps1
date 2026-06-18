@@ -81,8 +81,8 @@ function Test-AzLocalApplyUpdatesScheduleCoverage {
     .PARAMETER View
         'Audit' (default), 'Matrix', or 'Recommend'.
     .PARAMETER ClusterCsvPath
-        Path to the source-controlled cluster inventory CSV (the file Step.2
-        consumes to apply UpdateRing/UpdateStartWindow tags - default location
+        Path to the source-controlled cluster inventory CSV (the file the
+        Manage UpdateRing Tags pipeline consumes to apply UpdateRing/UpdateStartWindow tags - default location
         `config/ClusterUpdateRings.csv`). When supplied, the Recommend view
         emits a `NoWindowTag remediation` section: for each cluster that has
         an UpdateRing tag but no UpdateStartWindow tag, the advisor proposes
@@ -93,7 +93,7 @@ function Test-AzLocalApplyUpdatesScheduleCoverage {
         older CSVs that pre-date the ResourceId column.
 
     .PARAMETER PipelineYamlPath
-        Optional for -View Audit. Path to a single Step.7_apply-updates.yml file, or to
+        Optional for -View Audit. Path to a single apply-updates.yml file, or to
         a folder that contains apply-updates*.yml files (typically the
         Automation-Pipeline-Examples folder of your forked module). Drives the
         cron-vs-UpdateStartWindow coverage check. May be supplied together with
@@ -114,7 +114,7 @@ function Test-AzLocalApplyUpdatesScheduleCoverage {
         explicitly, the cmdlet auto-detects the CI host from environment
         variables ($env:GITHUB_ACTIONS='true' -> 'GitHubActions';
         $env:TF_BUILD='True' or $env:SYSTEM_TEAMFOUNDATIONCOLLECTIONURI set
-        -> 'AzureDevOps') so a Step.3 pipeline run only ever emits the
+        -> 'AzureDevOps') so an apply-updates-schedule-audit pipeline run only ever emits the
         snippet matching its own CI platform. An explicit -Platform value
         is honoured unchanged (including explicit -Platform Both, which
         suppresses auto-detect).
@@ -149,7 +149,7 @@ function Test-AzLocalApplyUpdatesScheduleCoverage {
         output. Used by Export-AzLocalApplyUpdatesScheduleAudit (v0.8.75+)
         which inlines this Recommend output AND separately renders its own
         enriched (7-column) cycle calendar - the inner plain calendar would
-        otherwise appear twice in the Step.3 step summary. Default off,
+        otherwise appear twice in the apply-updates-schedule-audit step summary. Default off,
         so direct callers see the calendar unchanged.
     .OUTPUTS
         PSCustomObject[] - shape depends on -View (see Status values above).
@@ -246,7 +246,7 @@ function Test-AzLocalApplyUpdatesScheduleCoverage {
     if ($View -eq 'Audit' -and
         [string]::IsNullOrWhiteSpace($PipelineYamlPath) -and
         [string]::IsNullOrWhiteSpace($SchedulePath)) {
-        throw "-View 'Audit' requires at least one of -PipelineYamlPath or -SchedulePath. Point -PipelineYamlPath at Step.7_apply-updates.yml (or the Automation-Pipeline-Examples folder) and/or -SchedulePath at your apply-updates-schedule.yml."
+        throw "-View 'Audit' requires at least one of -PipelineYamlPath or -SchedulePath. Point -PipelineYamlPath at apply-updates.yml (or the Automation-Pipeline-Examples folder) and/or -SchedulePath at your apply-updates-schedule.yml."
     }
     if ($PipelineYamlPath -and -not (Test-Path -LiteralPath $PipelineYamlPath)) {
         throw "PipelineYamlPath not found: $PipelineYamlPath"
@@ -619,7 +619,7 @@ resources
 
             if ($emitGh) {
                 if ($emitAdo) {
-                    [void]$cronSb.AppendLine('### GitHub Actions - paste under the existing `on:` key in Step.7_apply-updates.yml')
+                    [void]$cronSb.AppendLine('### GitHub Actions - paste under the existing `on:` key in apply-updates.yml')
                     [void]$cronSb.AppendLine()
                 }
                 # v0.8.1: emit ONLY the `schedule:` block (no surrounding `on:`/`workflow_dispatch:`
@@ -649,7 +649,7 @@ resources
             }
             if ($emitAdo) {
                 if ($emitGh) {
-                    [void]$cronSb.AppendLine('### Azure DevOps - paste at the top level of Step.7_apply-updates.yml')
+                    [void]$cronSb.AppendLine('### Azure DevOps - paste at the top level of apply-updates.yml')
                     [void]$cronSb.AppendLine()
                 }
                 [void]$cronSb.AppendLine('```yaml')
@@ -705,10 +705,10 @@ resources
                     default         { 'apply-updates-schedule.yml' }
                 }
             }
-            $step6FileLabel = switch ($Platform) {
-                'GitHubActions' { '.github/workflows/Step.7_apply-updates.yml' }
-                'AzureDevOps'   { '.azuredevops/Step.7_apply-updates.yml' }
-                default         { 'Step.7_apply-updates.yml' }
+            $applyFileLabel = switch ($Platform) {
+                'GitHubActions' { '.github/workflows/apply-updates.yml' }
+                'AzureDevOps'   { 'azure-devops/apply-updates.yml' }
+                default         { 'apply-updates.yml' }
             }
 
             $fullSb = New-Object System.Text.StringBuilder
@@ -724,7 +724,7 @@ resources
                 $checkIdx = 0
                 if ($hasMissing) {
                     $checkIdx++
-                    [void]$fullSb.AppendLine("$checkIdx. **Add missing rings** to ``$scheduleFileLabel`` (Step $checkIdx below). Until each ring tagged on the fleet appears in at least one schedule row, ``Resolve-AzLocalCurrentUpdateRing`` returns nothing for those clusters and Step.6 silently skips them.")
+                    [void]$fullSb.AppendLine("$checkIdx. **Add missing rings** to ``$scheduleFileLabel`` (Step $checkIdx below). Until each ring tagged on the fleet appears in at least one schedule row, ``Resolve-AzLocalCurrentUpdateRing`` returns nothing for those clusters and apply-updates silently skips them.")
                 }
                 if ($hasOrphaned) {
                     $checkIdx++
@@ -732,18 +732,18 @@ resources
                 }
                 if ($hasUnparseable) {
                     $checkIdx++
-                    [void]$fullSb.AppendLine("$checkIdx. **Simplify unparseable cron line(s)** in ``$step6FileLabel`` (Step $checkIdx below). The advisor cannot reason about these, so the cron-coverage recommendation in the next step may over-suggest entries that duplicate what an already-correct-but-unparseable line is doing.")
+                    [void]$fullSb.AppendLine("$checkIdx. **Simplify unparseable cron line(s)** in ``$applyFileLabel`` (Step $checkIdx below). The advisor cannot reason about these, so the cron-coverage recommendation in the next step may over-suggest entries that duplicate what an already-correct-but-unparseable line is doing.")
                 }
                 if ($byCron.Count -gt 0) {
                     $checkIdx++
-                    [void]$fullSb.AppendLine("$checkIdx. **Add missing cron entries** to ``$step6FileLabel`` (Step $checkIdx below). Until each UpdateStartWindow has at least one cron firing inside its lead-time envelope, Step.6 never wakes up for those clusters even when their ring is eligible today.")
+                    [void]$fullSb.AppendLine("$checkIdx. **Add missing cron entries** to ``$applyFileLabel`` (Step $checkIdx below). Until each UpdateStartWindow has at least one cron firing inside its lead-time envelope, apply-updates never wakes up for those clusters even when their ring is eligible today.")
                 }
                 if ($hasNoWindowTag) {
                     $checkIdx++
-                    [void]$fullSb.AppendLine("$checkIdx. **Edit ``$ClusterCsvPath`` to fill in the missing ``UpdateStartWindow`` value(s)** (Step $checkIdx below) and re-run Step.2 to apply the tags to Azure. Until each cluster has an ``UpdateStartWindow`` tag, ``Test-AzLocalUpdateScheduleAllowed`` denies it and Step.6 silently skips that cluster every day.")
+                    [void]$fullSb.AppendLine("$checkIdx. **Edit ``$ClusterCsvPath`` to fill in the missing ``UpdateStartWindow`` value(s)** (Step $checkIdx below) and re-run the Manage UpdateRing Tags pipeline to apply the tags to Azure. Until each cluster has an ``UpdateStartWindow`` tag, ``Test-AzLocalUpdateScheduleAllowed`` denies it and apply-updates silently skips that cluster every day.")
                 }
                 $checkIdx++
-                [void]$fullSb.AppendLine("$checkIdx. **Commit the edits and re-run this Step.3 pipeline** to confirm all (Ring, Window) pairs are green.")
+                [void]$fullSb.AppendLine("$checkIdx. **Commit the edits and re-run this apply-updates-schedule-audit pipeline** to confirm all (Ring, Window) pairs are green.")
                 [void]$fullSb.AppendLine()
                 [void]$fullSb.AppendLine('---')
                 [void]$fullSb.AppendLine()
@@ -784,7 +784,7 @@ resources
                 }
                 [void]$fullSb.AppendLine('```')
                 [void]$fullSb.AppendLine()
-                [void]$fullSb.AppendLine("After editing, commit ``$scheduleFileLabel`` to your default branch and re-run Step.3 to confirm the rings are now resolved.")
+                [void]$fullSb.AppendLine("After editing, commit ``$scheduleFileLabel`` to your default branch and re-run the apply-updates-schedule-audit pipeline to confirm the rings are now resolved.")
                 [void]$fullSb.AppendLine()
             }
 
@@ -808,7 +808,7 @@ resources
                 $prefix = if ($actionCount -gt 1) { " ($actionIdx of $actionCount)" } else { '' }
                 [void]$fullSb.AppendLine("## Action required$prefix - simplify unparseable cron expression(s)")
                 [void]$fullSb.AppendLine()
-                [void]$fullSb.AppendLine("**Why this matters.** The advisor could not statically reason about the following cron line(s) in ``$step6FileLabel``. UpdateStartWindow coverage for these crons was NOT evaluated, so the cron-coverage recommendation below may over-suggest entries that duplicate what an already-correct-but-unparseable line is doing. Resolve these first.")
+                [void]$fullSb.AppendLine("**Why this matters.** The advisor could not statically reason about the following cron line(s) in ``$applyFileLabel``. UpdateStartWindow coverage for these crons was NOT evaluated, so the cron-coverage recommendation below may over-suggest entries that duplicate what an already-correct-but-unparseable line is doing. Resolve these first.")
                 [void]$fullSb.AppendLine()
                 [void]$fullSb.AppendLine('**Supported syntax:** ``minute`` and ``hour`` may be a literal value, a comma-list, or a range (``a-b``); ``day-of-month`` and ``month`` must be ``*``; ``day-of-week`` may be ``*``, a literal value, a comma-list, or a range. Step values (``*/n``), lists/ranges in ``day-of-month`` or ``month``, and names (``MON``, ``JAN``) are not yet supported - split a complex cron into multiple simpler crons if needed.')
                 [void]$fullSb.AppendLine()
@@ -828,23 +828,23 @@ resources
                 $prefix = if ($actionCount -gt 1) { " ($actionIdx of $actionCount)" } else { '' }
                 [void]$fullSb.AppendLine("## Action required$prefix - cron coverage")
                 [void]$fullSb.AppendLine()
-                [void]$fullSb.AppendLine("**Why this matters.** Step.6 apply-updates is a scheduled pipeline - it only runs when one of its ``cron`` entries fires. ``Test-AzLocalUpdateScheduleAllowed`` then gates each cluster on its per-cluster ``UpdateStartWindow`` tag. If NO cron fires inside an UpdateStartWindow's lead-time envelope, the gate is never even reached and the cluster is silently skipped that day.")
+                [void]$fullSb.AppendLine("**Why this matters.** apply-updates is a scheduled pipeline - it only runs when one of its ``cron`` entries fires. ``Test-AzLocalUpdateScheduleAllowed`` then gates each cluster on its per-cluster ``UpdateStartWindow`` tag. If NO cron fires inside an UpdateStartWindow's lead-time envelope, the gate is never even reached and the cluster is silently skipped that day.")
                 [void]$fullSb.AppendLine()
-                [void]$fullSb.AppendLine("Each cron below is set to ``LeadTimeMinutes`` minutes BEFORE the start of its UpdateStartWindow segment so ``Test-AzLocalUpdateScheduleAllowed`` opens the gate exactly when expected. Adjust the value of ``LeadTimeMinutes`` on Step.3 if your fleet needs a different lead time.")
+                [void]$fullSb.AppendLine("Each cron below is set to ``LeadTimeMinutes`` minutes BEFORE the start of its UpdateStartWindow segment so ``Test-AzLocalUpdateScheduleAllowed`` opens the gate exactly when expected. Adjust the value of ``LeadTimeMinutes`` on the apply-updates-schedule-audit pipeline if your fleet needs a different lead time.")
                 [void]$fullSb.AppendLine()
                 if ($RecommendFiresPerWindow -ge 2) {
-                    [void]$fullSb.AppendLine("**Belt-and-braces (default).** Each window emits TWO cron entries - one ``open`` cron LeadTimeMinutes BEFORE the window opens, and one ``retry`` cron INSIDE the window at the lesser of the midpoint or +60 minutes after the window opens. The retry catches the three known failure modes that would otherwise silently skip a cluster for the day: GitHub Actions scheduled-workflow jitter (up to ~15 min, can push the opening cron past a tight window), transient first-fire failures (auth, runner-pool exhaustion, module install hiccup), and a long window that would otherwise have to wait half its duration for a retry (a 24h window retries at +60min, not at +12h). The runtime gate (``Test-AzLocalUpdateScheduleAllowed``) plus the existing in-flight guard ensure clusters whose first run has already started are not re-triggered. Pass ``-RecommendFiresPerWindow 1`` on Step.3 to suppress the retry tier and emit only the opening crons.")
+                    [void]$fullSb.AppendLine("**Belt-and-braces (default).** Each window emits TWO cron entries - one ``open`` cron LeadTimeMinutes BEFORE the window opens, and one ``retry`` cron INSIDE the window at the lesser of the midpoint or +60 minutes after the window opens. The retry catches the three known failure modes that would otherwise silently skip a cluster for the day: GitHub Actions scheduled-workflow jitter (up to ~15 min, can push the opening cron past a tight window), transient first-fire failures (auth, runner-pool exhaustion, module install hiccup), and a long window that would otherwise have to wait half its duration for a retry (a 24h window retries at +60min, not at +12h). The runtime gate (``Test-AzLocalUpdateScheduleAllowed``) plus the existing in-flight guard ensure clusters whose first run has already started are not re-triggered. Pass ``-RecommendFiresPerWindow 1`` on the apply-updates-schedule-audit pipeline to suppress the retry tier and emit only the opening crons.")
                     [void]$fullSb.AppendLine()
                 }
                 [void]$fullSb.AppendLine()
-                [void]$fullSb.AppendLine("### How to fix - edit ``$step6FileLabel``")
+                [void]$fullSb.AppendLine("### How to fix - edit ``$applyFileLabel``")
                 [void]$fullSb.AppendLine()
                 if ($emitGh -and -not $emitAdo) {
-                    [void]$fullSb.AppendLine('Add (or merge with) the following `schedule:` block under the existing `on:` key. Place it inside the `# BEGIN-AZLOCAL-CUSTOMIZE:schedule-triggers` / `# END-AZLOCAL-CUSTOMIZE:schedule-triggers` markers so it survives `Update-AzLocalPipelineExample` refreshes. **Do NOT add a second `workflow_dispatch:` line** - Step.7 already declares one with the `update_ring` / `dry_run` / ITSM / `module_version` inputs that the manual `Run workflow` button needs:')
+                    [void]$fullSb.AppendLine('Add (or merge with) the following `schedule:` block under the existing `on:` key. Place it inside the `# BEGIN-AZLOCAL-CUSTOMIZE:schedule-triggers` / `# END-AZLOCAL-CUSTOMIZE:schedule-triggers` markers so it survives `Update-AzLocalPipelineExample` refreshes. **Do NOT add a second `workflow_dispatch:` line** - apply-updates.yml already declares one with the `update_ring` / `dry_run` / ITSM / `module_version` inputs that the manual `Run workflow` button needs:')
                 } elseif ($emitAdo -and -not $emitGh) {
                     [void]$fullSb.AppendLine('Add (or merge with) a top-level `schedules:` block:')
                 } else {
-                    [void]$fullSb.AppendLine('Choose the snippet matching your CI platform and paste/merge into your Step.6 pipeline file. For GitHub Actions, paste the `schedule:` block under the existing `on:` key (do NOT add a second `workflow_dispatch:` - Step.7 already declares one). For Azure DevOps, paste the `schedules:` block at the top level.')
+                    [void]$fullSb.AppendLine('Choose the snippet matching your CI platform and paste/merge into your apply-updates.yml pipeline file. For GitHub Actions, paste the `schedule:` block under the existing `on:` key (do NOT add a second `workflow_dispatch:` - apply-updates.yml already declares one). For Azure DevOps, paste the `schedules:` block at the top level.')
                 }
                 [void]$fullSb.AppendLine()
                 # v0.8.2: paste-tip - the snippet below is at 2-space indent (sibling of
@@ -870,9 +870,9 @@ resources
                 $prefix = if ($actionCount -gt 1) { " ($actionIdx of $actionCount)" } else { '' }
                 [void]$fullSb.AppendLine("## Action required$prefix - NoWindowTag remediation")
                 [void]$fullSb.AppendLine()
-                [void]$fullSb.AppendLine("**Why this matters.** The cluster(s) listed below have an ``UpdateRing`` tag but NO ``UpdateStartWindow`` tag. ``Test-AzLocalUpdateScheduleAllowed`` denies any cluster with a missing or malformed ``UpdateStartWindow`` tag (fail-closed), so Step.6 silently skips them every day - they will never receive an update until the tag is set.")
+                [void]$fullSb.AppendLine("**Why this matters.** The cluster(s) listed below have an ``UpdateRing`` tag but NO ``UpdateStartWindow`` tag. ``Test-AzLocalUpdateScheduleAllowed`` denies any cluster with a missing or malformed ``UpdateStartWindow`` tag (fail-closed), so apply-updates silently skips them every day - they will never receive an update until the tag is set.")
                 [void]$fullSb.AppendLine()
-                [void]$fullSb.AppendLine("The advisor proposes a peer-derived value for each cluster (the most common ``UpdateStartWindow`` already used by other clusters in the same ``UpdateRing``). Review the suggestion, edit ``$ClusterCsvPath``, commit, and re-run Step.2 to apply the tags to Azure.")
+                [void]$fullSb.AppendLine("The advisor proposes a peer-derived value for each cluster (the most common ``UpdateStartWindow`` already used by other clusters in the same ``UpdateRing``). Review the suggestion, edit ``$ClusterCsvPath``, commit, and re-run the Manage UpdateRing Tags pipeline to apply the tags to Azure.")
                 [void]$fullSb.AppendLine()
                 [void]$fullSb.AppendLine("### How to fix - edit ``$ClusterCsvPath``")
                 [void]$fullSb.AppendLine()
@@ -885,7 +885,7 @@ resources
                     $sourceLabel = ''
                     if ([string]::IsNullOrWhiteSpace($ring)) {
                         $suggested   = '(none)'
-                        $sourceLabel = 'Cluster has no `UpdateRing` tag - tag it via Step.2 first, then re-run this audit.'
+                        $sourceLabel = 'Cluster has no `UpdateRing` tag - tag it via the Manage UpdateRing Tags pipeline first, then re-run this audit.'
                     } else {
                         $peers = @($taggedClusters | Where-Object { $_.UpdateRing -and ($_.UpdateRing.Trim() -ieq $ring) })
                         if ($peers.Count -eq 0) {
@@ -919,11 +919,11 @@ resources
                         $key = "$($nwt.ClusterName)|$($nwt.ResourceGroup)"
                         if ($csvByNameAndRg -and $csvByNameAndRg.ContainsKey($key)) {
                             $found      = $true
-                            $csvOutcome = 'Found (matched by **ClusterName+ResourceGroup**) - edit the `UpdateStartWindow` cell on this row. Consider re-running Step.1 to regenerate the CSV with a `ResourceId` column for unambiguous matching.'
+                            $csvOutcome = 'Found (matched by **ClusterName+ResourceGroup**) - edit the `UpdateStartWindow` cell on this row. Consider re-running the cluster inventory pipeline to regenerate the CSV with a `ResourceId` column for unambiguous matching.'
                         }
                     }
                     if (-not $found) {
-                        $csvOutcome = "**Not in CSV.** Re-run Step.1 to regenerate the cluster inventory artifact, unzip it, and replace ``$ClusterCsvPath`` in source control with the artifact's CSV. The new row will appear with a blank ``UpdateStartWindow`` cell - fill it in with the suggested value above, then commit and re-run Step.2."
+                        $csvOutcome = "**Not in CSV.** Re-run the cluster inventory pipeline to regenerate the cluster inventory artifact, unzip it, and replace ``$ClusterCsvPath`` in source control with the artifact's CSV. The new row will appear with a blank ``UpdateStartWindow`` cell - fill it in with the suggested value above, then commit and re-run the Manage UpdateRing Tags pipeline."
                     }
                     $clusterEsc = ($nwt.ClusterName  -replace '\|','\|')
                     $rgEsc      = ($nwt.ResourceGroup -replace '\|','\|')

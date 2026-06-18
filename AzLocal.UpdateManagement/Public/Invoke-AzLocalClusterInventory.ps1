@@ -288,7 +288,7 @@ STEP 2 - Commit ClusterUpdateRings.csv into your ops repository
 STEP 3 - Run the 'Manage UpdateRing Tags' pipeline
 ------------------------------------------------------------------------
 
-  - Trigger 'Manage UpdateRing Tags' (Step.2) and point its
+  - Trigger 'Manage UpdateRing Tags' and point its
     csv_file_path / csvFilePath input at the path you committed in
     STEP 2 (default is 'config/ClusterUpdateRings.csv').
   - RECOMMENDED FIRST RUN: leave 'dry_run' / 'dryRun' = true. The
@@ -349,7 +349,7 @@ Run timestamp (UTC): __TIMESTAMP__
 
     # Markdown step summary.
     $sb = New-Object System.Text.StringBuilder
-    [void]$sb.AppendLine('## Step.1 - Cluster Inventory')
+    [void]$sb.AppendLine('## Cluster Inventory')
     [void]$sb.AppendLine('')
     [void]$sb.AppendLine('| Metric | Value |')
     [void]$sb.AppendLine('|--------|-------|')
@@ -375,7 +375,7 @@ Run timestamp (UTC): __TIMESTAMP__
     [void]$sb.AppendLine('1. Download the artifact attached to this run.')
     [void]$sb.AppendLine('2. Open `ClusterUpdateRings.csv` in Excel and fill in the `UpdateRing` column.')
     [void]$sb.AppendLine('3. Commit the edited CSV (recommended path `config/ClusterUpdateRings.csv`).')
-    [void]$sb.AppendLine('4. Run the "Manage UpdateRing Tags" pipeline (Step.2).')
+    [void]$sb.AppendLine('4. Run the "Manage UpdateRing Tags" pipeline.')
 
     Add-AzLocalPipelineStepSummary -Markdown $sb.ToString() -SummaryFileName $SummaryFileName | Out-Null
 

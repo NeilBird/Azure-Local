@@ -5,6 +5,33 @@ All notable changes to the AzLocal.UpdateManagement module (renamed from AzStack
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.91] - 2026-06-20
+
+Operator-facing cleanup of stale `Step.N` pipeline references left over from the v0.8.7
+filename de-numbering. No behavioural, API, or export-count change (still 61); the
+intentional backward-compatibility `Step.N_*.yml` migration aliases in
+`Get-AzLocalPipelineManifest` are unchanged.
+
+### Changed
+
+- **Config: 3 schedule-coverage audit no longer points operators at a non-existent file.**
+  `Export-AzLocalApplyUpdatesScheduleAudit` / `Test-AzLocalApplyUpdatesScheduleCoverage`
+  previously told operators to edit `Step.7_apply-updates.yml` (a filename removed in v0.8.7).
+  The "How to fix" headings, throw message, comment-based help, and cron-coverage prose now
+  name the shipped `apply-updates.yml` (with `.github/workflows/` and `azure-devops/` paths)
+  and reference sibling pipelines by purpose (e.g. "the Manage UpdateRing Tags pipeline")
+  instead of dead step numbers. The internal `$step6FileLabel` variable is renamed
+  `$applyFileLabel`.
+- **Step-summary headers drop their dead step-number prefix.**
+  `## Step.0 - Authentication Validation...` -> `## Authentication Validation...`
+  (`Export-AzLocalAuthValidationReport`), `## Step.1 - Cluster Inventory` ->
+  `## Cluster Inventory` (`Invoke-AzLocalClusterInventory`), and
+  `## Step.2 - UpdateRing Tag Management Summary` -> `## UpdateRing Tag Management Summary`
+  (`Set-AzLocalClusterUpdateRingTagFromCsv`).
+- **`Get-AzLocalFleetConnectivityStatus` progress log drops its `Step.4` prefix** (now `[N/5]`).
+- **`GENERATED_AGAINST_MODULE_VERSION`** pin bumped to `'0.8.91'` across the bundled pipeline
+  templates.
+
 ## [0.8.90] - 2026-06-20
 
 Adds opt-in event-driven in-flight update monitoring so Update: 4 (Monitor In-Flight Updates)
