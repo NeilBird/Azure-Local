@@ -26,7 +26,7 @@ The following permissions are required for update + fleet-connectivity operation
 | Read cluster info | `Microsoft.AzureStackHCI/clusters/read` |
 | Read update summary | `Microsoft.AzureStackHCI/clusters/updateSummaries/read` |
 | List available updates | `Microsoft.AzureStackHCI/clusters/updates/read` |
-| **Refresh assessment ("Check for updates", preview)** | `Microsoft.AzureStackHCI/clusters/updateSummaries/checkUpdates/action` (POST action - not yet in the operations catalog; see note below) |
+| **Refresh assessment ("Check for updates", preview)** | `Microsoft.AzureStackHCI/clusters/updateSummaries/checkUpdates/action` (POST action - granted via the `updateSummaries/*` wildcard in the custom role; see note below) |
 | **Start/Apply update** | `Microsoft.AzureStackHCI/clusters/updates/apply/action` |
 | Monitor update runs | `Microsoft.AzureStackHCI/clusters/updates/updateRuns/read` |
 | Query clusters (Resource Graph) | `Microsoft.ResourceGraph/resources/read` |
@@ -38,13 +38,13 @@ The following permissions are required for update + fleet-connectivity operation
 
 > **v0.7.80 note:** The last three rows above were added in v0.7.80. They are required by `Get-AzLocalFleetConnectivityStatus` (introduced in v0.7.79) and therefore by the `fleet-connectivity-status.yml` pipeline. Without them, the cmdlet still returns the cluster connectivity section but every other section (Arc agents, physical NICs, Azure Resource Bridges) silently returns zero rows because ARG yields an empty `.data` array for resource types the caller cannot read. Pipelines that were created against the v0.7.79-or-earlier custom-role JSON will see 0 Arc agents / 0 NICs / 0 ARBs until the role is updated.
 
-> **v0.8.89 note - "Check for updates" (`checkUpdates`) is preview, enforced-but-not-yet-catalog-registered, so it is intentionally NOT in the custom role:** `Sync-AzLocalClusterUpdateSummary` and the opt-out stale-assessment auto-scan in `Export-AzLocalClusterUpdateReadinessReport` POST `Microsoft.AzureStackHCI/clusters/updateSummaries/default/checkUpdates` on the `2026-03-01-preview` API. The RBAC action Azure enforces for it is `Microsoft.AzureStackHCI/clusters/updateSummaries/checkUpdates/action` (confirmed verbatim from a live `403 AuthorizationFailed` body). **However**, a provider-operations-catalog check on 2026-06-18 (`az provider operation show --namespace Microsoft.AzureStackHCI`) confirms this action is **not yet published in the catalog** - only `updateSummaries/read` exists. Because `az role definition create` / `update` validates every entry in `Actions[]` against the catalog and **rejects** unregistered actions, adding `checkUpdates/action` to the custom role would make the role fail to create. The roles below therefore **deliberately omit** it.
+> **v0.8.92 note - "Check for updates" (`checkUpdates`) is preview, enforced-but-not-yet-catalog-registered, and is granted by the custom role via a wildcard:** `Sync-AzLocalClusterUpdateSummary` and the opt-out stale-assessment auto-scan in `Export-AzLocalClusterUpdateReadinessReport` POST `Microsoft.AzureStackHCI/clusters/updateSummaries/default/checkUpdates` on the `2026-03-01-preview` API. The RBAC action Azure enforces for it is `Microsoft.AzureStackHCI/clusters/updateSummaries/checkUpdates/action` (confirmed verbatim from a live `403 AuthorizationFailed` body). A provider-operations-catalog check on 2026-06-18 (`az provider operation show --namespace Microsoft.AzureStackHCI`) confirms the explicit `checkUpdates/action` leaf is **not yet published in the catalog** - only `updateSummaries/read` exists. Because `az role definition create` / `update` validates every entry in `Actions[]` against the catalog and **rejects** an *explicit* unregistered action, the role JSON below cannot list `checkUpdates/action` directly. Instead it grants `Microsoft.AzureStackHCI/clusters/updateSummaries/*`: `az` validates a wildcard only at its resolvable prefix (`updateSummaries/`, which exists), so the wildcard is **accepted**, and Azure's authorization engine matches the enforced `checkUpdates/action` against it at request time. The wildcard also subsumes `updateSummaries/read` (so that explicit line is replaced) and any future control-plane sub-operation under `clusters/updateSummaries/`.
 >
-> **Why the built-in roles still work:** **Azure Stack HCI Administrator** grants `Microsoft.AzureStackHCI/clusters/*` (and `Microsoft.AzureStackHCI/*`); those wildcards match the enforced-but-unregistered action, which an explicit least-privilege role cannot. Under the custom role the refresh returns a **non-fatal** `403 AuthorizationFailed` (logged, then execution continues - the readiness report still completes). To exercise the refresh today, assign **Azure Stack HCI Administrator** / **Contributor** on the cluster scope, or pass `-SkipStaleAssessmentScan` to skip the auto-scan.
+> **Built-in roles also work:** **Azure Stack HCI Administrator** grants `Microsoft.AzureStackHCI/clusters/*` (and `Microsoft.AzureStackHCI/*`), which likewise matches the enforced action. Under the custom role, thanks to the `updateSummaries/*` wildcard, the refresh now succeeds (no `403`); if you prefer to enumerate explicit leaves and drop the wildcard, list `updateSummaries/read` instead and the refresh will return a **non-fatal** `403 AuthorizationFailed` (logged, then execution continues - the readiness report still completes), or pass `-SkipStaleAssessmentScan` to skip the auto-scan.
 >
 > **Who needs it:** the `Update: 1 - Assess Update Readiness` pipeline (`assess-update-readiness.yml`, GitHub Actions + Azure DevOps) calls `Export-AzLocalClusterUpdateReadinessReport`, whose auto-scan POSTs `checkUpdates` for any cluster with a stale assessment; the ad-hoc `Sync-AzLocalClusterUpdateSummary` cmdlet (no bundled pipeline) does the same on demand. No other pipeline or cmdlet uses this action.
 >
-> **When `checkUpdates` GAs into the catalog**, add the single line `"Microsoft.AzureStackHCI/clusters/updateSummaries/checkUpdates/action"` to every `Actions[]` block in this file and to the bundled [`azlocal-update-management-custom-role.json`](../Automation-Pipeline-Examples/azlocal-update-management-custom-role.json). Re-check with `az provider operation show --namespace Microsoft.AzureStackHCI --query "resourceTypes[].operations[].name" -o tsv | Select-String checkUpdates` before adding.
+> **When `checkUpdates` GAs into the catalog**, you may optionally replace the `updateSummaries/*` wildcard with the two explicit leaves (`"Microsoft.AzureStackHCI/clusters/updateSummaries/read"` + `"Microsoft.AzureStackHCI/clusters/updateSummaries/checkUpdates/action"`) in every `Actions[]` block in this file and the bundled [`azlocal-update-management-custom-role.json`](../Automation-Pipeline-Examples/azlocal-update-management-custom-role.json) for a marginally tighter grant. Re-check the catalog with `az provider operation show --namespace Microsoft.AzureStackHCI --query "resourceTypes[].operations[].name" -o tsv | Select-String checkUpdates` first.
 
 ### Roles That Do NOT Have Update Permissions
 
@@ -69,7 +69,7 @@ If you need a least-privilege custom role specifically for update operations:
   "Description": "Customer-managed custom role - reference by roleDefinitionId (GUID) in automation rather than by name to remain stable if Microsoft later ships a built-in role with a similar display name. Can read and apply Azure Local cluster updates, manage UpdateRing tags, and read the fleet-connectivity inventory (Arc-enabled machines, edge-device NICs, Azure Resource Bridges) needed to assess pre-update connectivity.",
   "Actions": [
     "Microsoft.AzureStackHCI/clusters/read",
-    "Microsoft.AzureStackHCI/clusters/updateSummaries/read",
+    "Microsoft.AzureStackHCI/clusters/updateSummaries/*",
     "Microsoft.AzureStackHCI/clusters/updates/read",
     "Microsoft.AzureStackHCI/clusters/updates/apply/action",
     "Microsoft.AzureStackHCI/clusters/updates/updateRuns/read",
@@ -116,7 +116,7 @@ az role definition create --role-definition ./azlocal-update-management-custom-r
   "Description": "Customer-managed custom role - reference by roleDefinitionId (GUID) in automation rather than by name to remain stable if Microsoft later ships a built-in role with a similar display name. Can read and apply Azure Local cluster updates, manage UpdateRing tags, and read the fleet-connectivity inventory (Arc-enabled machines, edge-device NICs, Azure Resource Bridges) needed to assess pre-update connectivity.",
   "Actions": [
     "Microsoft.AzureStackHCI/clusters/read",
-    "Microsoft.AzureStackHCI/clusters/updateSummaries/read",
+    "Microsoft.AzureStackHCI/clusters/updateSummaries/*",
     "Microsoft.AzureStackHCI/clusters/updates/read",
     "Microsoft.AzureStackHCI/clusters/updates/apply/action",
     "Microsoft.AzureStackHCI/clusters/updates/updateRuns/read",
@@ -170,7 +170,7 @@ Replace the per-subscription entry shown above with one (or more) management-gro
   "Description": "Customer-managed custom role - reference by roleDefinitionId (GUID) in automation rather than by name to remain stable if Microsoft later ships a built-in role with a similar display name. Can read and apply Azure Local cluster updates, manage UpdateRing tags, and read the fleet-connectivity inventory (Arc-enabled machines, edge-device NICs, Azure Resource Bridges) needed to assess pre-update connectivity.",
   "Actions": [
     "Microsoft.AzureStackHCI/clusters/read",
-    "Microsoft.AzureStackHCI/clusters/updateSummaries/read",
+    "Microsoft.AzureStackHCI/clusters/updateSummaries/*",
     "Microsoft.AzureStackHCI/clusters/updates/read",
     "Microsoft.AzureStackHCI/clusters/updates/apply/action",
     "Microsoft.AzureStackHCI/clusters/updates/updateRuns/read",

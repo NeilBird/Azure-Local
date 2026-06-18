@@ -2,7 +2,7 @@
 
 > ⚠️ **Disclaimer**: This module is **NOT** a Microsoft supported service offering or product. It is provided as example code only, with no warranty or official support. Refer to the [MIT license](https://github.com/NeilBird/Azure-Local/blob/main/LICENSE) for further information.
 
-**Latest Version:** v0.8.91 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.8.91)
+**Latest Version:** v0.8.92 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.8.92)
 
 This folder contains the 'AzLocal.UpdateManagement' PowerShell module for managing updates on Azure Local (formerly Azure Stack HCI) clusters using the Azure Local REST API. The module supports both interactive use and CI/CD automation via Service Principal or Managed Identity authentication.
 
@@ -14,7 +14,7 @@ Azure Local REST API specification (includes update management endpoints): https
 **This README (overview + most-recent release notes):**
 
 - [Where to Start](#where-to-start)
-- [What's New in v0.8.91](#whats-new-in-v0891)
+- [What's New in v0.8.92](#whats-new-in-v0892)
 - [Files](#files)
 - [Prerequisites](#prerequisites)
 - [RBAC Requirements](#rbac-requirements) (summary; full reference in [docs/rbac.md](docs/rbac.md))
@@ -77,23 +77,23 @@ If you are new to this module, work through these in order from a regular PowerS
 
 > Most CI/CD pipelines in [Automation-Pipeline-Examples/](Automation-Pipeline-Examples/) are direct implementations of one of these workflows. Start there if you want a copy-pasteable end-to-end pipeline.
 
-## What's New in v0.8.91
+## What's New in v0.8.92
 
-**Operator-facing cleanup of stale `Step.N` pipeline references.** Removes the last "edit `Step.7_apply-updates.yml`" style instructions left over from the v0.8.7 filename de-numbering, so the report and audit output names the files operators actually have. Output / help text only - no behavioural, API, or export-count change (still 61). The intentional backward-compatibility `Step.N_*.yml` migration aliases in `Get-AzLocalPipelineManifest` are unchanged.
+**The least-privilege custom role now grants the preview "Check for updates" (`checkUpdates`) action via a wildcard.** The bundled `Azure Stack HCI Update Operator (custom)` role swaps the explicit `Microsoft.AzureStackHCI/clusters/updateSummaries/read` action for the `Microsoft.AzureStackHCI/clusters/updateSummaries/*` wildcard. `az role definition create` / `update` rejects the explicit `.../updateSummaries/checkUpdates/action` leaf (still absent from the `Microsoft.AzureStackHCI` provider operations catalog as of 2026-06-18), but it accepts a wildcard whose prefix resolves to the registered `updateSummaries/read`, and Azure matches the enforced `checkUpdates/action` against that wildcard at authorization time. Doc / RBAC-only change - no behavioural, API, or export-count change (still 61).
 
 ### Changed
 
-- **Config: 3 schedule-coverage audit no longer points at a non-existent file.** `Export-AzLocalApplyUpdatesScheduleAudit` / `Test-AzLocalApplyUpdatesScheduleCoverage` previously told operators to edit `Step.7_apply-updates.yml` (removed in v0.8.7). The "How to fix" headings, throw message, comment-based help, and cron-coverage prose now name the shipped `apply-updates.yml` (with `.github/workflows/` and `azure-devops/` paths) and reference sibling pipelines by purpose (e.g. "the Manage UpdateRing Tags pipeline") instead of dead step numbers. The internal `$step6FileLabel` variable is renamed `$applyFileLabel`.
-- **Step-summary headers drop their dead step-number prefix.** `## Step.0 - Authentication Validation...` -> `## Authentication Validation...`, `## Step.1 - Cluster Inventory` -> `## Cluster Inventory`, and `## Step.2 - UpdateRing Tag Management Summary` -> `## UpdateRing Tag Management Summary`. The `Get-AzLocalFleetConnectivityStatus` progress log drops its `Step.4` prefix (now `[N/5]`).
+- **Custom role grants `updateSummaries/*` instead of `updateSummaries/read`.** The wildcard subsumes `read` and additionally authorizes the preview `checkUpdates/action`, so `Sync-AzLocalClusterUpdateSummary` and the `Export-AzLocalClusterUpdateReadinessReport` stale-assessment auto-scan now succeed under the custom role - no fallback to `Azure Stack HCI Administrator` / `Contributor` and no `-SkipStaleAssessmentScan` needed. Updated in the bundled `azlocal-update-management-custom-role.json`, `docs/rbac.md` (x3 role blocks), both READMEs, `docs/cmdlet-reference.md`, and the `Connect-AzLocalServicePrincipal` comment-based help. The offline + live RBAC tripwire tests now assert the wildcard is present and the explicit leaf is not enumerated.
 
 ### Notes
 
 - **No public-API change** (export count unchanged at 61).
-- **`GENERATED_AGAINST_MODULE_VERSION`** bumped from `0.8.90` to `0.8.91` across bundled pipeline templates.
+- **Trade-off:** the wildcard also covers any future control-plane sub-operation Microsoft adds under `clusters/updateSummaries/`. If you prefer to enumerate leaves, replace it with `updateSummaries/read` (and accept the `checkUpdates` refresh then returns a non-fatal `403`).
+- **`GENERATED_AGAINST_MODULE_VERSION`** bumped from `0.8.91` to `0.8.92` across bundled pipeline templates.
 
 > Previous release notes have moved into the [Release History](#release-history) appendix at the bottom of this document.
 
-See [CHANGELOG.md](CHANGELOG.md) for full release details. See [`What's New in v0.8.90`](#whats-new-in-v0890) in the Release History for the previous release.
+See [CHANGELOG.md](CHANGELOG.md) for full release details. See [`What's New in v0.8.91`](#whats-new-in-v0891) in the Release History for the previous release.
 
 ## Files
 
@@ -119,13 +119,13 @@ The module needs a small number of Azure RBAC roles depending on what you call i
 |-----------------|--------------------------|-------|
 | Read-only inventory and fleet reports (`Get-AzLocal*`, `Test-AzLocal*`) | `Azure Stack HCI Reader` + `Reader` | Subscription or Resource Group |
 | Starting updates (`Start-AzLocalClusterUpdate`, fleet wrappers) | `Azure Stack HCI Administrator` | Subscription, Resource Group, or per-cluster |
-| Refreshing a stale update assessment (`Sync-AzLocalClusterUpdateSummary`, readiness report auto-scan) | `Azure Stack HCI Administrator` or `Contributor` (preview action not yet in the custom role - see note below) | Subscription, Resource Group, or per-cluster |
+| Refreshing a stale update assessment (`Sync-AzLocalClusterUpdateSummary`, readiness report auto-scan) | `Azure Stack HCI Administrator` / `Contributor`, or the custom role (granted via its `updateSummaries/*` wildcard - see note below) | Subscription, Resource Group, or per-cluster |
 | Setting / clearing ring tags (`Set-AzLocalClusterUpdateRingTag`) | `Tag Contributor` + `Reader` (or any role with `Microsoft.Resources/tags/write`) | Subscription or Resource Group |
 | Resource Graph fleet queries | `Reader` on every subscription you want included | Subscription |
 
 A least-privilege custom role definition (`Azure Stack HCI Update Operator (custom)`) and the exact `actions:` list are documented in [docs/rbac.md](docs/rbac.md), along with `az role assignment create` recipes for OIDC federated credentials, Managed Identity, and Service Principal authentication.
 
-> 📝 **"Check for updates" (`checkUpdates`) is preview and not yet in the least-privilege custom role:** Since v0.8.88, `Sync-AzLocalClusterUpdateSummary` and the opt-out stale-assessment auto-scan in `Export-AzLocalClusterUpdateReadinessReport` POST the preview `Microsoft.AzureStackHCI/clusters/updateSummaries/default/checkUpdates` action (`2026-03-01-preview`). The RBAC action Azure enforces for it is `Microsoft.AzureStackHCI/clusters/updateSummaries/checkUpdates/action` (confirmed verbatim from a live `403 AuthorizationFailed` body), but a provider-operations-catalog check on 2026-06-18 (`az provider operation show --namespace Microsoft.AzureStackHCI`) confirms it is **not yet published in the catalog** - so it **cannot be added to a custom role today** (`az role definition create` / `update` rejects unregistered actions). The `Azure Stack HCI Update Operator (custom)` role therefore deliberately omits it; under that role the refresh returns a non-fatal `403 AuthorizationFailed` (logged, execution continues; the readiness report still completes). Use `Azure Stack HCI Administrator` / `Contributor` (their `Microsoft.AzureStackHCI/clusters/*` wildcard matches the unregistered action) or pass `-SkipStaleAssessmentScan`. The only automation consumer is the **Update: 1 - Assess Update Readiness** pipeline (`assess-update-readiness.yml`) via the readiness-report auto-scan; `Sync-AzLocalClusterUpdateSummary` does the same on demand. **The action will be added to the custom role once it GAs into the operations catalog** (a guard test in the suite flips at that point). See [docs/rbac.md](docs/rbac.md) and [Automation-Pipeline-Examples/README.md](Automation-Pipeline-Examples/README.md#3-permissions).
+> 📝 **"Check for updates" (`checkUpdates`) is preview and is granted by the least-privilege custom role via a wildcard:** Since v0.8.88, `Sync-AzLocalClusterUpdateSummary` and the opt-out stale-assessment auto-scan in `Export-AzLocalClusterUpdateReadinessReport` POST the preview `Microsoft.AzureStackHCI/clusters/updateSummaries/default/checkUpdates` action (`2026-03-01-preview`). The RBAC action Azure enforces for it is `Microsoft.AzureStackHCI/clusters/updateSummaries/checkUpdates/action` (confirmed verbatim from a live `403 AuthorizationFailed` body). A provider-operations-catalog check on 2026-06-18 (`az provider operation show --namespace Microsoft.AzureStackHCI`) confirms the explicit `checkUpdates/action` leaf is **not yet published in the catalog**, and `az role definition create` / `update` rejects an *explicit* unregistered action - but it **accepts a wildcard**. As of v0.8.92 the `Azure Stack HCI Update Operator (custom)` role therefore grants `Microsoft.AzureStackHCI/clusters/updateSummaries/*` (which also covers `updateSummaries/read`); Azure matches the enforced `checkUpdates/action` against that wildcard at authorization time, so the refresh is authorized under the custom role today - no fallback to `Azure Stack HCI Administrator` / `Contributor` required, and no `-SkipStaleAssessmentScan` needed. The only automation consumer is the **Update: 1 - Assess Update Readiness** pipeline (`assess-update-readiness.yml`) via the readiness-report auto-scan; `Sync-AzLocalClusterUpdateSummary` does the same on demand. The wildcard also sweeps in any future control-plane sub-operation under `clusters/updateSummaries/`. See [docs/rbac.md](docs/rbac.md) and [Automation-Pipeline-Examples/README.md](Automation-Pipeline-Examples/README.md#3-permissions).
 ## Quick Start
 
 ### 1. Authenticate to Azure
@@ -575,7 +575,11 @@ This code is provided as-is for educational and reference purposes.
 
 The full What's-New history (v0.7.81 and earlier) has moved to [docs/release-history.md](docs/release-history.md).
 
-The most recent release notes for **v0.8.91** stay above under [`What's New in v0.8.91`](#whats-new-in-v0891).
+The most recent release notes for **v0.8.92** stay above under [`What's New in v0.8.92`](#whats-new-in-v0892).
+
+### What's New in v0.8.91
+
+**Operator-facing cleanup of stale `Step.N` pipeline references.** Removes the last "edit `Step.7_apply-updates.yml`" style instructions left over from the v0.8.7 filename de-numbering, so the report and audit output names the files operators actually have. Output / help text only - no behavioural, API, or export-count change (still 61). The intentional backward-compatibility `Step.N_*.yml` migration aliases in `Get-AzLocalPipelineManifest` are unchanged. `GENERATED_AGAINST_MODULE_VERSION` bumped from `0.8.90` to `0.8.91`. See [CHANGELOG.md](CHANGELOG.md#0891---2026-06-20) for the full v0.8.91 entry.
 
 ### What's New in v0.8.90
 
