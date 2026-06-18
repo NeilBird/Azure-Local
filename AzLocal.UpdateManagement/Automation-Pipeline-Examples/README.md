@@ -10,8 +10,9 @@ It is written in the same step-by-step style as [`ITSM/README.md`](../ITSM/READM
 
 ## Table of contents
 
+0. [Quick start checklist (zero to automated)](#0-quick-start-checklist-zero-to-automated)
 1. [What you'll have when you're done](#1-what-youll-have-when-youre-done)
-   - [1.1 Why the pipelines are named `Step.N - <description>`](#11-why-the-pipelines-are-named-stepn---description)
+   - [1.1 Why the pipelines are named `Config: N`, `Monitor: N`, `Update: N`](#11-why-the-pipelines-are-named-config-n-monitor-n-and-update-n)
    - [1.2 How to control which updates are installed, and when](#12-how-to-control-which-updates-are-installed-and-when)
 2. [Prerequisites](#2-prerequisites)
 3. [Required Azure permissions](#3-required-azure-permissions)
@@ -49,6 +50,34 @@ It is written in the same step-by-step style as [`ITSM/README.md`](../ITSM/READM
 14. [Pipeline reference](#14-pipeline-reference) (moved to [docs/appendix-pipelines.md](docs/appendix-pipelines.md))
 15. [Appendix B: Release history](#appendix-b-release-history) (moved to [docs/appendix-release-history.md](docs/appendix-release-history.md))
 16. [Related documentation](#16-related-documentation)
+
+---
+
+## 0. Quick start checklist (zero to automated)
+
+This is the whole journey - from an empty repo to a self-running, ring-based update programme - as a single linear checklist. Each step links to the detailed section; **follow them top to bottom without jumping around**. The one-time setup (steps 1-8) is done once per CI/CD platform; the operating loop (steps 9-14) is what you repeat each update cycle.
+
+**One-time setup (do once):**
+
+- [ ] **1. Create a Git repo** to host the pipeline files (a GitHub repo for GitHub Actions, or an Azure DevOps repo/project for Azure Pipelines). This repo holds *only* the workflow YAML and config - it does **not** contain the module source. See [section 2](#2-prerequisites).
+- [ ] **2. Install the module on your admin workstation:** `Install-Module AzLocal.UpdateManagement -Scope CurrentUser`. See [section 2](#2-prerequisites).
+- [ ] **3. Copy the example pipelines into your repo** with `Copy-AzLocalPipelineExample` (you do **not** git-clone this repository). For GitHub: `Copy-AzLocalPipelineExample -Platform GitHub -Destination .\.github\workflows`. See [section 5](#5-wire-the-pipeline-files-into-your-repo).
+- [ ] **4. Create the custom role** `Azure Stack HCI Update Operator (custom)` with a management-group `AssignableScopes`. See [section 3.1](#31-custom-role-azure-stack-hci-update-operator-custom).
+- [ ] **5. Create an Entra security group and let Azure Policy assign the role to it** across the management group (DINE). New subscriptions are then covered automatically. See [section 3.2](#32-recommended-assign-at-scale-via-azure-policy-dine-on-a-management-group).
+- [ ] **6. Wire CI/CD authentication** (GitHub OIDC federated credential or Azure DevOps Workload Identity Federation - no client secrets) and note the app's object ID. See [section 4](#4-choose-your-cicd-platform-and-authentication).
+- [ ] **7. Add the CI/CD service principal to the security group** from step 5 - this single membership grants it update rights across the whole estate. See [section 3.2](#32-recommended-assign-at-scale-via-azure-policy-dine-on-a-management-group).
+- [ ] **8. Commit the pipeline files and set the required secrets/variables** (tenant, subscription, client IDs). See [section 5](#5-wire-the-pipeline-files-into-your-repo).
+
+**Operating loop (repeat each update cycle):**
+
+- [ ] **9. Inventory the estate:** run **Config: 1 - Validate Auth and Inventory Clusters**. See [section 6.1](#61-inventory-the-estate).
+- [ ] **10. Plan rings and apply tags:** decide Pilot/Wave2/Production rings and `UpdateStartWindow`s, then bulk-apply them with **Config: 2 - Manage UpdateRing Tags**. See [section 6.2](#62-plan-update-rings-windows-and-exclusions) and [6.3](#63-apply-tags).
+- [ ] **11. Pre-flight readiness:** run **Update: 1 - Assess Update Readiness** to surface blockers before scheduling. See [section 6.4](#64-pre-flight-readiness-assessment).
+- [ ] **12. Generate `apply-updates-schedule.yml`** from the live fleet with `New-AzLocalApplyUpdatesScheduleConfig`. See [section 6.5](#65-generate-apply-updates-scheduleyml-from-your-live-fleet).
+- [ ] **13. Run Config: 3 - Apply-Updates Schedule Coverage Audit**, then paste its **apply cron** into `apply-updates.yml` and its **monitor cron** into `monitor-updates.yml`. See [section 1.2](#12-how-to-control-which-updates-are-installed-and-when) and [section 8.3](#83-end-to-end-runbook-apply-updates-schedule-coverage-audit).
+- [ ] **14. Go live:** apply updates one wave at a time with **Update: 3 - Apply Updates**, and enable continuous monitoring (**Monitor: 1-3** + **Update: 4**). See [section 6.6](#66-apply-updates---one-wave-at-a-time) and [6.7](#67-continuous-fleet-monitoring).
+
+> **The detailed walkthrough below mirrors this checklist exactly.** Sections 2-5 cover the one-time setup (steps 1-8); [section 6](#6-end-to-end-runbook-bring-an-estate-online) is the canonical end-to-end runbook for the operating loop (steps 9-14). If you only read one section in depth, read [section 6](#6-end-to-end-runbook-bring-an-estate-online).
 
 ---
 
@@ -265,41 +294,9 @@ $mgId = "<your-mg-id>"      # e.g. "azurelocal-prod"
     Set-Content ./azlocal-update-management-custom-role.json -Encoding UTF8
 
 az role definition create --role-definition ./azlocal-update-management-custom-role.json
-
-# Option 2 - inline create with an expanding PowerShell here-string ($mgId is interpolated)
-@"
-{
-  "Name": "Azure Stack HCI Update Operator (custom)",
-  "IsCustom": true,
-  "Description": "Customer-managed custom role - reference by roleDefinitionId (GUID) in automation rather than by name to remain stable if Microsoft later ships a built-in role with a similar display name. Can read and apply Azure Local cluster updates, manage UpdateRing tags, and read the fleet-connectivity inventory (Arc-enabled machines, edge-device NICs, Azure Resource Bridges) needed to assess pre-update connectivity.",
-  "Actions": [
-    "Microsoft.AzureStackHCI/clusters/read",
-    "Microsoft.AzureStackHCI/clusters/updateSummaries/read",
-    "Microsoft.AzureStackHCI/clusters/updates/read",
-    "Microsoft.AzureStackHCI/clusters/updates/apply/action",
-    "Microsoft.AzureStackHCI/clusters/updates/updateRuns/read",
-    "Microsoft.AzureStackHCI/edgeDevices/read",
-    "Microsoft.HybridCompute/machines/read",
-    "Microsoft.HybridCompute/machines/extensions/read",
-    "Microsoft.ResourceConnector/appliances/read",
-    "Microsoft.Resources/subscriptions/resourceGroups/read",
-    "Microsoft.ResourceGraph/resources/read",
-    "Microsoft.Resources/tags/read",
-    "Microsoft.Resources/tags/write"
-  ],
-  "NotActions": [],
-  "DataActions": [],
-  "NotDataActions": [],
-  "AssignableScopes": [
-    "/providers/Microsoft.Management/managementGroups/$mgId"
-  ]
-}
-"@ | Out-File -FilePath ./azlocal-update-management-custom-role.json -Encoding UTF8
-
-az role definition create --role-definition ./azlocal-update-management-custom-role.json
 ```
 
-> **Note**: The here-string in Option 2 uses double quotes (`@"..."@`) so PowerShell expands `$mgId` into the JSON before it's written to disk. If you switch to a literal here-string (`@'...'@`), the variable is not expanded and you must substitute the placeholder yourself like in Option 1. For the legacy per-subscription path, replace `$mgId` with `$subId` and the `AssignableScopes` entry with `"/subscriptions/$subId"`.
+> **Single source of truth for the role JSON.** The runnable definition lives in **one** file - the bundled [`./azlocal-update-management-custom-role.json`](./azlocal-update-management-custom-role.json). The block shown above is for reading; Option 1 substitutes the placeholder in the bundled file and creates the role from it. If you prefer to create the file and role in a single step from an expanding PowerShell here-string (Option 2), that variant is in [`docs/rbac.md`](../docs/rbac.md#custom-azure-stack-hci-update-operator-custom-role-definition-least-privilege). For the legacy per-subscription path, replace `$mgId` with a subscription ID and the `AssignableScopes` entry with `"/subscriptions/$subId"`.
 
 **Common errors and how to fix them**
 
@@ -331,30 +328,34 @@ The fix is **not** to escalate to Global Administrator (an Entra ID role, see no
 
 ### 3.2 Recommended: assign at scale via Azure Policy DINE on a management group
 
-**This is the default assignment path** for any estate larger than ~5-10 subscriptions, or any estate where subscriptions are added regularly. You assign the role definition **once** at a management group via an Azure Policy `deployIfNotExists` (DINE) assignment, and every subscription under the MG - present and future - gets the per-subscription role assignment created automatically.
+**This is the default assignment path** for any estate larger than ~5-10 subscriptions, or any estate where subscriptions are added regularly. You grant the role definition **once** at a management group, via an Azure Policy `deployIfNotExists` (DINE) assignment, to an **Entra security group** - and every subscription under the MG (present and future) gets the per-subscription role assignment created automatically. Onboarding or rotating a pipeline identity is then just a group-membership change.
 
 **Why this is the default**
 
+- **Grant target is a security group, not the SP directly.** The DINE policy assigns the role to a security group. Adding the CI/CD service principal (or a break-glass operator) to that group grants it the full estate-wide reach with **zero RBAC privilege** and no policy change - a single `az ad group member add`.
 - **Onboarding a new subscription** = move it under the MG. No `az role definition update`. No `az role assignment create`. The policy DINE creates the assignment within minutes of the subscription appearing.
 - **Drift detection** = automatic via Azure Policy compliance. Non-compliant subs (e.g. one where the assignment was deleted out-of-band) are visible in the Policy compliance blade and re-remediable on demand.
 - **Standing privilege required** = `Owner` / `User Access Administrator` at the MG **once** for setup, then nothing. The policy's managed identity creates role assignments thereafter.
 - **Scale cap** = effectively unbounded (the per-sub `AssignableScopes` path caps at 2000 entries per role definition).
 - **Audit surface** = Azure Policy compliance dashboard + Activity Log per subscription.
 
-**Sequence at a glance** (full recipe in [`docs/rbac.md` -> Scaling AssignableScopes with management groups + Azure Policy](../docs/rbac.md#scaling-assignablescopes-with-management-groups--azure-policy-recommended-for-large-or-growing-estates)):
+**Sequence at a glance** (full copy-paste recipe in [`docs/rbac.md` -> Scaling AssignableScopes with management groups + Azure Policy](../docs/rbac.md#scaling-assignablescopes-with-management-groups--azure-policy-recommended-for-large-or-growing-estates)):
 
 1. **Create the role** with the management-group `AssignableScopes` shown in [section 3.1](#31-custom-role-azure-stack-hci-update-operator-custom) above (the JSON's default). This is the **prerequisite** for step 4 - the policy definition references the role by ID.
 2. Capture `$roleId` (`az role definition list --custom-role-only true --name "Azure Stack HCI Update Operator (custom)" --query "[0].name" -o tsv`).
-3. Capture the pipeline identity's `principalId` (`az ad sp show --id <appId> --query id -o tsv` for an SP / app registration, or `az identity show -g <rg> -n <mi-name> --query principalId -o tsv` for a user-assigned managed identity).
-4. Create the DINE policy definition at the MG (`az policy definition create --management-group <mg-id> --rules ./assign-azlocal-update-operator-policy.json --mode All`) - full `deployIfNotExists` JSON in the rbac.md recipe.
-5. Assign the policy at the MG with a system-assigned managed identity, and grant the MI `User Access Administrator` at the MG (`az policy assignment create --mi-system-assigned ...` + `az role assignment create --role "User Access Administrator" --scope "/providers/Microsoft.Management/managementGroups/<mg-id>"`).
+3. **Create an Entra security group** (a standard security group - not Microsoft 365, not role-assignable) and capture its object ID: `$groupId = az ad group create --display-name "AzureLocal-UpdateAutomation-Operators" --mail-nickname "az-local-upd-ops" --query id -o tsv`.
+4. Create the DINE policy definition at the MG (`az policy definition create --management-group <mg-id> --rules ./assign-azlocal-update-operator-policy.json --mode All`) - full `deployIfNotExists` JSON in the rbac.md recipe. The policy grants the role to the **group** (`principalType: Group`).
+5. Assign the policy at the MG with a system-assigned managed identity (passing `$groupId` as the principal), and grant the MI `User Access Administrator` at the MG (`az policy assignment create --mi-system-assigned ...` + `az role assignment create --role "User Access Administrator" --scope "/providers/Microsoft.Management/managementGroups/<mg-id>"`).
 6. One-time remediation of existing subscriptions (`az policy remediation create --policy-assignment <...> --resource-discovery-mode ReEvaluateCompliance`).
+7. **Add the CI/CD service principal (and any break-glass operators) to the group** - the only step you repeat per identity: `az ad group member add --group $groupId --member-id (az ad sp show --id <appId> --query id -o tsv)`. For an Enterprise Application, `--member-id` is the SP **object** ID, not the appId.
 
-After step 6, the pipeline identity holds the custom role on every subscription under the MG. New subscriptions are auto-remediated as they are created (the DINE effect runs on subscription create). **No further role-assignment or role-definition operations are needed for new subscriptions.**
+After step 6, the security group holds the custom role on every subscription under the MG; after step 7, every member of that group (the pipeline identity plus any operators) inherits it. New subscriptions are auto-remediated as they are created (the DINE effect runs on subscription create). **No further role-assignment or role-definition operations are needed for new subscriptions or new identities.**
 
-> **Required permissions for the one-time setup**: `Owner` or `User Access Administrator` (or `Role Based Access Control Administrator`) at the management-group scope. Day-to-day onboarding of new subscriptions then requires no RBAC privilege at all.
+> **Required permissions for the one-time setup**: `Owner` or `User Access Administrator` (or `Role Based Access Control Administrator`) at the management-group scope. Day-to-day onboarding of new subscriptions and new pipeline identities then requires no Azure RBAC privilege at all - only group-membership management.
 
-> **When NOT to use MG + DINE**: you don't have access to a management group covering the in-scope subscriptions; the estate is small (1-5 subscriptions) and isn't expected to grow; you explicitly want each role grant to be a deliberate manual operation (e.g. for regulatory reasons). In any of those cases, follow the [legacy per-subscription path in section 3.3](#33-manual--per-subscription-alternative-legacy) instead.
+> **Smaller estates / no group**: you can point the DINE policy directly at the pipeline SP instead of a group (set `principalType: ServicePrincipal` and pass the SP object ID in steps 4-5, and skip step 7). The rbac.md recipe documents both. The group is recommended because it decouples identity onboarding from RBAC entirely.
+
+> **When NOT to use MG + DINE**: you don't have access to a management group covering the in-scope subscriptions; the estate is small (1-5 subscriptions) and isn't expected to grow; you explicitly want each role grant to be a deliberate manual operation (e.g. for regulatory reasons). In any of those cases, follow the [per-subscription path in section 3.3](#33-manual--per-subscription-alternative-legacy) instead.
 
 ### 3.3 Manual / per-subscription alternative (legacy)
 

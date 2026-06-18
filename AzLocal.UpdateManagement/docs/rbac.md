@@ -145,12 +145,13 @@ The per-subscription `AssignableScopes` pattern above works well for a handful o
 - The role definition itself has a **hard cap of 2000 entries** in `AssignableScopes`.
 - Drift is hard to detect - a subscription that was provisioned without the assignment silently disappears from the pipeline's reach.
 
-For estates of more than ~5-10 subscriptions, or any estate where new subscriptions are provisioned regularly, scale this out with two standard Azure primitives:
+For estates of more than ~5-10 subscriptions, or any estate where new subscriptions are provisioned regularly, scale this out with three standard Azure primitives:
 
 1. **A single management-group entry in `AssignableScopes`** on the custom role definition (custom roles can be assigned at or below any scope listed in `AssignableScopes`, and management-group scopes have been supported since 2020).
-2. **An Azure Policy `deployIfNotExists` (DINE) assignment at that management group** that creates the per-subscription role assignment automatically. Existing subscriptions are picked up by a one-time remediation task; new subscriptions are auto-remediated as they are created. This is the standard Azure Landing Zones pattern.
+2. **An Entra security group** that the role is granted to (rather than granting it directly to the pipeline service principal). Onboarding or rotating a pipeline identity then becomes a single group-membership change with zero RBAC privilege.
+3. **An Azure Policy `deployIfNotExists` (DINE) assignment at that management group** that creates the per-subscription role assignment (to the group) automatically. Existing subscriptions are picked up by a one-time remediation task; new subscriptions are auto-remediated as they are created. This is the standard Azure Landing Zones pattern.
 
-The result: when a new subscription joins the management group, the pipeline identity gets the `Azure Stack HCI Update Operator (custom)` role at that subscription with zero manual steps.
+The result: when a new subscription joins the management group, the operators security group gets the `Azure Stack HCI Update Operator (custom)` role at that subscription with zero manual steps, and every member of that group (the OIDC pipeline identity plus any break-glass operators) inherits it.
 
 **Step 1 - role definition with a management-group `AssignableScopes`**
 
@@ -198,14 +199,23 @@ $roleId = az role definition list `
 # "/providers/Microsoft.Authorization/roleDefinitions/$roleId"
 ```
 
-**Step 3 - capture the pipeline identity's object ID** (the principal that the role assignment grants the role TO):
+**Step 3 - create an Entra security group and capture its object ID** (the principal that the role assignment grants the role TO):
+
+> **Recommended: assign the role to a security GROUP, not directly to the pipeline service principal.** When the DINE policy grants the role to a group, onboarding (or rotating) a pipeline identity becomes a single `az ad group member add` - no RBAC privilege and no policy change required. Add the OIDC service principal (and any human break-glass operators) to this group; everything they need across the whole estate flows from group membership. This is the flow documented as the happy path in the CI/CD README.
 
 ```powershell
-# For a service principal / App Registration:
-$pipelinePrincipalId = az ad sp show --id <appId> --query id -o tsv
-# For a user-assigned managed identity:
-# $pipelinePrincipalId = az identity show -g <rg> -n <mi-name> --query principalId -o tsv
+# Create a standard Entra security group (one-time). A plain security group is
+# sufficient - it does NOT need to be mail-enabled or role-assignable.
+$groupId = az ad group create `
+    --display-name "AzureLocal-UpdateAutomation-Operators" `
+    --mail-nickname "AzureLocal-UpdateAutomation-Operators" `
+    --query id -o tsv
+
+# If the group already exists, capture its object ID instead:
+# $groupId = az ad group show --group "AzureLocal-UpdateAutomation-Operators" --query id -o tsv
 ```
+
+> **Alternative - assign directly to the pipeline identity** (smaller estates, or where you do not want a group): capture the principal object ID instead of a group and set `principalType` to `ServicePrincipal` in Step 4. `$groupId = az ad sp show --id <appId> --query id -o tsv` for a service principal / App Registration, or `az identity show -g <rg> -n <mi-name> --query principalId -o tsv` for a user-assigned managed identity. The Step 5 step that adds the SP to the group is then not needed.
 
 **Step 4 - create the policy definition at the management group**
 
@@ -225,7 +235,13 @@ The `deployIfNotExists` policy below targets `Microsoft.Resources/subscriptions`
       },
       "principalId": {
         "type": "String",
-        "metadata": { "displayName": "Pipeline identity object ID" }
+        "metadata": { "displayName": "Security group (or pipeline identity) object ID" }
+      },
+      "principalType": {
+        "type": "String",
+        "defaultValue": "Group",
+        "allowedValues": [ "Group", "ServicePrincipal" ],
+        "metadata": { "displayName": "Principal type - Group (recommended) or ServicePrincipal" }
       }
     },
     "policyRule": {
@@ -253,14 +269,16 @@ The `deployIfNotExists` policy below targets `Microsoft.Resources/subscriptions`
               "mode": "Incremental",
               "parameters": {
                 "roleDefinitionId": { "value": "[parameters('roleDefinitionId')]" },
-                "principalId":      { "value": "[parameters('principalId')]" }
+                "principalId":      { "value": "[parameters('principalId')]" },
+                "principalType":    { "value": "[parameters('principalType')]" }
               },
               "template": {
                 "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
                 "contentVersion": "1.0.0.0",
                 "parameters": {
                   "roleDefinitionId": { "type": "string" },
-                  "principalId":      { "type": "string" }
+                  "principalId":      { "type": "string" },
+                  "principalType":    { "type": "string" }
                 },
                 "variables": {
                   "assignmentName": "[guid(subscription().id, parameters('roleDefinitionId'), parameters('principalId'))]"
@@ -273,7 +291,7 @@ The `deployIfNotExists` policy below targets `Microsoft.Resources/subscriptions`
                     "properties": {
                       "roleDefinitionId": "[parameters('roleDefinitionId')]",
                       "principalId":      "[parameters('principalId')]",
-                      "principalType":    "ServicePrincipal"
+                      "principalType":    "[parameters('principalType')]"
                     }
                   }
                 ]
@@ -313,7 +331,8 @@ $assignment = az policy assignment create `
     --params @"
 {
   \"roleDefinitionId\": { \"value\": \"/providers/Microsoft.Authorization/roleDefinitions/$roleId\" },
-  \"principalId\":      { \"value\": \"$pipelinePrincipalId\" }
+  \"principalId\":      { \"value\": \"$groupId\" },
+  \"principalType\":    { \"value\": \"Group\" }
 }
 "@ -o json | ConvertFrom-Json
 
@@ -338,6 +357,24 @@ az policy remediation create `
 ```
 
 This walks every subscription already under the MG, evaluates compliance, and creates the missing role assignment where required. New subscriptions added to the MG after this point are auto-remediated as they are created (the DINE effect runs on resource create).
+
+**Step 7 - add the pipeline identity (and any human operators) to the security group**
+
+This is the only step you repeat when onboarding or rotating a pipeline identity. Because the role is granted to the group across the whole management group, adding a principal to the group grants it the full `Azure Stack HCI Update Operator (custom)` reach on every in-scope subscription - with no RBAC privilege and no policy change:
+
+```powershell
+# Add the CI/CD OIDC service principal (App Registration) to the operators group.
+# $appId is the Application (client) ID of the federated-credential app registration.
+$spObjectId = az ad sp show --id <appId> --query id -o tsv
+az ad group member add `
+    --group "AzureLocal-UpdateAutomation-Operators" `
+    --member-id $spObjectId
+
+# (Optional) add human break-glass operators by their user object ID:
+# az ad group member add --group "AzureLocal-UpdateAutomation-Operators" --member-id <user-object-id>
+```
+
+> **Group object ID propagation**: a newly created Entra group and new memberships are usually usable within a minute or two, but can take longer to propagate to all regions. If the first pipeline run after onboarding reports missing permissions, wait a few minutes and re-run before investigating further.
 
 **Trade-offs vs the per-subscription `AssignableScopes` list**
 
