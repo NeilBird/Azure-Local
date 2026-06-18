@@ -4,7 +4,13 @@
 >
 > **For older releases**, this is the canonical reference; the main README intentionally stays slim so the most recent block is easy to find.
 >
-> **For v0.8.91 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0891) `What's New in v0.8.91` section.
+> **For v0.8.92 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0892) `What's New in v0.8.92` section.
+
+---
+
+### What's New in v0.8.91
+
+Operator-facing cleanup of stale `Step.N` pipeline references left over from the v0.8.7 filename de-numbering, so the report and audit output names the files operators actually have. Output / help text only - no behavioural, API, or export-count change (still 61); the intentional backward-compatibility `Step.N_*.yml` migration aliases in `Get-AzLocalPipelineManifest` are unchanged. `GENERATED_AGAINST_MODULE_VERSION` bumped from `0.8.90` to `0.8.91`. See [CHANGELOG.md](../CHANGELOG.md#0891---2026-06-20) for the full v0.8.91 entry.
 
 ---
 

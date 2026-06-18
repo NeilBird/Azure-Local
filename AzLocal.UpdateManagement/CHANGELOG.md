@@ -5,6 +5,38 @@ All notable changes to the AzLocal.UpdateManagement module (renamed from AzStack
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.92] - 2026-06-20
+
+Grants the preview "Check for updates" (`checkUpdates`) action to the least-privilege
+`Azure Stack HCI Update Operator (custom)` role via the
+`Microsoft.AzureStackHCI/clusters/updateSummaries/*` wildcard. Doc / RBAC-only change -
+no behavioural, API, or export-count change (still 61).
+
+### Changed
+
+- **Custom role grants `updateSummaries/*` instead of `updateSummaries/read`.**
+  `az role definition create` / `update` rejects the explicit
+  `Microsoft.AzureStackHCI/clusters/updateSummaries/checkUpdates/action` leaf because it is
+  not yet published in the `Microsoft.AzureStackHCI` provider operations catalog (checked
+  2026-06-18), but it accepts a wildcard whose prefix (`updateSummaries/`) resolves to the
+  registered `updateSummaries/read`. Azure's authorization engine then matches the enforced
+  `checkUpdates/action` against the `updateSummaries/*` wildcard at request time. The wildcard
+  subsumes `updateSummaries/read` and also covers any future control-plane sub-operation under
+  `clusters/updateSummaries/`.
+- As a result, `Sync-AzLocalClusterUpdateSummary` and the
+  `Export-AzLocalClusterUpdateReadinessReport` stale-assessment auto-scan now succeed under the
+  custom role - no fallback to `Azure Stack HCI Administrator` / `Contributor` and no
+  `-SkipStaleAssessmentScan` needed.
+- Updated the bundled `azlocal-update-management-custom-role.json`, `docs/rbac.md` (x3 role
+  blocks), both READMEs, `docs/cmdlet-reference.md`, and the `Connect-AzLocalServicePrincipal`
+  comment-based help. The offline and live RBAC tripwire tests now assert the `updateSummaries/*`
+  wildcard is present and the explicit `checkUpdates` leaf is not enumerated.
+
+### Notes
+
+- **No public-API change** (export count unchanged at 61).
+- **`GENERATED_AGAINST_MODULE_VERSION`** bumped from `0.8.91` to `0.8.92` across bundled pipeline templates.
+
 ## [0.8.91] - 2026-06-20
 
 Operator-facing cleanup of stale `Step.N` pipeline references left over from the v0.8.7

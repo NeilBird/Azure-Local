@@ -89,7 +89,7 @@ function Connect-AzLocalServicePrincipal {
         - Microsoft.AzureStackHCI/clusters/read
         - Microsoft.AzureStackHCI/clusters/updates/read
         - Microsoft.AzureStackHCI/clusters/updates/apply/action
-        - Microsoft.AzureStackHCI/clusters/updateSummaries/read
+        - Microsoft.AzureStackHCI/clusters/updateSummaries/* (wildcard covers updateSummaries/read plus the preview checkUpdates/action)
         - Microsoft.AzureStackHCI/clusters/updates/updateRuns/read
         - Microsoft.Resources/subscriptions/resources/read (for Azure Resource Graph queries)
         - Tag Contributor role (for Set-AzLocalClusterUpdateRingTag)

@@ -533,16 +533,18 @@ Describe 'Live-Integration: Export-*Report cmdlets emit non-empty artifacts (v0.
 }
 
 Describe 'Live-Integration: checkUpdates provider-operations catalog tripwire' -Tag 'Live' -Skip:$SkipCatalog {
-    # v0.8.89: LIVE companion to the OFFLINE tripwire in
-    # AzLocal.UpdateManagement.Tests.ps1 ('v0.8.89 RBAC checkUpdates action ...').
+    # v0.8.92: LIVE companion to the OFFLINE tripwire in
+    # AzLocal.UpdateManagement.Tests.ps1 ('v0.8.92 RBAC checkUpdates action ...').
     #
-    # The offline tripwire fires when a HUMAN adds checkUpdates to the role JSON.
+    # The offline tripwire asserts the role JSON grants the
+    # 'Microsoft.AzureStackHCI/clusters/updateSummaries/*' wildcard (which Azure
+    # matches against the enforced checkUpdates/action) and does NOT enumerate the
+    # explicit checkUpdates leaf (az would reject it while it is unregistered).
     # THIS live test queries the REAL Microsoft.AzureStackHCI provider operations
     # catalog via Az CLI (az provider operation show) and FAILS the moment Azure
     # PUBLISHES 'Microsoft.AzureStackHCI/clusters/updateSummaries/checkUpdates/action'
     # - i.e. the moment it becomes a registered action that az role definition
-    # create/update will accept, and therefore the moment it is safe to add to the
-    # least-privilege custom role.
+    # create/update will accept as an explicit leaf.
     #
     # Gated by $SkipCatalog (only requires az to be logged in - the catalog is
     # global, not subscription-scoped) and Tag 'Live' (excluded from the default
@@ -551,14 +553,16 @@ Describe 'Live-Integration: checkUpdates provider-operations catalog tripwire' -
     #     # or just this file:
     #     Invoke-Pester -Path .\Tests\Live-Integration.Tests.ps1 -Tag Live
     #
-    # WHEN the 'still absent' test below goes RED:
-    #   1. Add "Microsoft.AzureStackHCI/clusters/updateSummaries/checkUpdates/action"
-    #      to every Actions[] block: bundled azlocal-update-management-custom-role.json,
+    # WHEN the 'still absent' test below goes RED (checkUpdates has GA'd into the
+    # catalog), the wildcard already covers it - no change is REQUIRED. Optionally,
+    # for a marginally tighter grant you may:
+    #   1. Replace "Microsoft.AzureStackHCI/clusters/updateSummaries/*" with the two
+    #      explicit leaves ("...updateSummaries/read" + "...updateSummaries/checkUpdates/action")
+    #      in every Actions[] block: bundled azlocal-update-management-custom-role.json,
     #      docs/rbac.md (x3 blocks), Automation-Pipeline-Examples/README.md.
-    #   2. Flip the OFFLINE tripwire assertions (Not -Contain -> Contain) in
-    #      AzLocal.UpdateManagement.Tests.ps1.
+    #   2. Update the OFFLINE tripwire assertions in AzLocal.UpdateManagement.Tests.ps1.
     #   3. Update the prose in docs/rbac.md, Automation README, top-level README,
-    #      and docs/cmdlet-reference.md to say the action is now in the role.
+    #      and docs/cmdlet-reference.md.
     #   4. Flip the assertion in this live test (Should -BeNullOrEmpty ->
     #      Should -Not -BeNullOrEmpty) so it then guards continued availability.
 

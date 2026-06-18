@@ -4,7 +4,7 @@
   "Description": "Customer-managed custom role - reference by roleDefinitionId (GUID) in automation rather than by name to remain stable if Microsoft later ships a built-in role with a similar display name. Can read and apply Azure Local cluster updates, manage UpdateRing tags, and read the fleet-connectivity inventory (Arc-enabled machines, edge-device NICs, Azure Resource Bridges) needed to assess pre-update connectivity.",
   "Actions": [
     "Microsoft.AzureStackHCI/clusters/read",
-    "Microsoft.AzureStackHCI/clusters/updateSummaries/read",
+    "Microsoft.AzureStackHCI/clusters/updateSummaries/*",
     "Microsoft.AzureStackHCI/clusters/updates/read",
     "Microsoft.AzureStackHCI/clusters/updates/apply/action",
     "Microsoft.AzureStackHCI/clusters/updates/updateRuns/read",
