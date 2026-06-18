@@ -5,6 +5,31 @@ All notable changes to the AzLocal.UpdateManagement module (renamed from AzStack
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.93] - 2026-06-18
+
+Fixes a Bad Request in the **Update: 1 - Assess Update Readiness** pipeline: the
+`checkUpdates` ARM action POST was missing its required request body. Bug-fix only -
+no API, parameter, or export-count change (still 61).
+
+### Fixed
+
+- **`Sync-AzLocalClusterUpdateSummary` now sends an empty JSON body on the `checkUpdates` POST.**
+  The cmdlet (and the `Export-AzLocalClusterUpdateReadinessReport` stale-assessment auto-scan
+  that calls it) POSTed `Microsoft.AzureStackHCI/clusters/updateSummaries/default/checkUpdates`
+  with no request body. The `2026-03-01-preview` API spec now requires a body to be present, so
+  the bodyless POST was rejected with
+  `HttpRequestPayloadAPISpecValidationFailed` / `MissingRequiredParameter "Value is required but
+  was not provided. Paths in payload: '.body'"`. The POST now sends an empty JSON object `{}`
+  (no properties are mandatory for a plain re-scan), validated end-to-end against a live cluster.
+
+### Changed
+
+- **Refreshed the now-stale RBAC comment / authorization warning** in
+  `Sync-AzLocalClusterUpdateSummary` to reflect that the v0.8.92 `updateSummaries/*` wildcard
+  already authorizes `checkUpdates`; a 403 therefore means the
+  `Azure Stack HCI Update Operator (custom)` role (or an equivalent built-in) is simply not
+  assigned at the scope, not that the action is ungranted.
+
 ## [0.8.92] - 2026-06-20
 
 Grants the preview "Check for updates" (`checkUpdates`) action to the least-privilege

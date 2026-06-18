@@ -34,8 +34,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $script:ModuleInfo | Should -Not -BeNullOrEmpty
         }
 
-        It 'Should have version 0.8.92' {
-            $script:ModuleInfo.Version | Should -Be '0.8.92'
+        It 'Should have version 0.8.93' {
+            $script:ModuleInfo.Version | Should -Be '0.8.93'
         }
 
         It 'Module version constants are in sync between .psm1 and .psd1' {
@@ -19860,10 +19860,11 @@ Describe 'Function: Sync-AzLocalClusterUpdateSummary' {
     }
 
     Context 'v0.8.88: Authorization (403) error surfacing (source guard)' {
-        # The auto-scan can run under a least-privilege custom role that does NOT yet
-        # include the preview checkUpdates action. When that happens, ARM returns
-        # AuthorizationFailed; the cmdlet must echo the FULL error (which carries the
-        # denied Action name + scope) and flag the row so operators can capture it.
+        # The auto-scan can run under a least-privilege custom role. As of v0.8.92 the
+        # bundled 'Azure Stack HCI Update Operator (custom)' role grants checkUpdates via
+        # the updateSummaries/* wildcard, so a 403 means the role is simply not assigned.
+        # When ARM returns AuthorizationFailed the cmdlet must echo the FULL error (which
+        # carries the denied Action name + scope) and flag the row so operators can act.
         BeforeAll {
             $script:srcSync = Get-Content -Raw -LiteralPath "$PSScriptRoot/../Public/Sync-AzLocalClusterUpdateSummary.ps1"
         }
@@ -19879,11 +19880,29 @@ Describe 'Function: Sync-AzLocalClusterUpdateSummary' {
             $script:srcSync | Should -Match "\`$row\.Status\s*=\s*'AuthorizationFailed'"
         }
 
-        It 'Emits an explicit RBAC warning telling the operator to copy the Action name' {
+        It 'Emits an explicit RBAC warning naming the custom role and its wildcard grant' {
             $script:srcSync | Should -Match 'AUTHORIZATION ERROR'
-            $script:srcSync | Should -Match "Copy the exact 'Action' name and scope"
-            $script:srcSync | Should -Match 'preview checkUpdates action'
+            $script:srcSync | Should -Match "Azure Stack HCI Update Operator \(custom\)"
+            $script:srcSync | Should -Match 'updateSummaries/\* wildcard'
             $script:srcSync | Should -Match "-Level Warning"
+        }
+    }
+
+    Context 'v0.8.93: checkUpdates POST sends an empty JSON body (source guard)' {
+        # The 2026-03-01-preview updateSummaries/default/checkUpdates action REQUIRES a
+        # request body. A bodyless POST is rejected with
+        # HttpRequestPayloadAPISpecValidationFailed / MissingRequiredParameter '.body'.
+        # The cmdlet must POST an empty JSON object '{}' to satisfy the spec.
+        BeforeAll {
+            $script:srcSyncBody = Get-Content -Raw -LiteralPath "$PSScriptRoot/../Public/Sync-AzLocalClusterUpdateSummary.ps1"
+        }
+
+        It 'Passes -Body ''{}'' on the checkUpdates Invoke-AzRestJson POST' {
+            $script:srcSyncBody | Should -Match "Invoke-AzRestJson -Uri \`$checkUri -Method POST -Body '\{\}'"
+        }
+
+        It 'Does NOT issue a bodyless checkUpdates POST (regression guard)' {
+            $script:srcSyncBody | Should -Not -Match "Invoke-AzRestJson -Uri \`$checkUri -Method POST\s*\r?\n"
         }
     }
 }

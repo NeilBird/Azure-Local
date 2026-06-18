@@ -4,7 +4,13 @@
 >
 > **For older releases**, this is the canonical reference; the main README intentionally stays slim so the most recent block is easy to find.
 >
-> **For v0.8.92 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0892) `What's New in v0.8.92` section.
+> **For v0.8.93 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0893) `What's New in v0.8.93` section.
+
+---
+
+### What's New in v0.8.92
+
+Grants the preview "Check for updates" (`checkUpdates`) action to the least-privilege `Azure Stack HCI Update Operator (custom)` role via the `Microsoft.AzureStackHCI/clusters/updateSummaries/*` wildcard. `az role definition create` / `update` rejects the explicit `.../updateSummaries/checkUpdates/action` leaf (still absent from the `Microsoft.AzureStackHCI` provider operations catalog as of 2026-06-18), but it accepts a wildcard whose prefix resolves to the registered `updateSummaries/read`, and Azure matches the enforced `checkUpdates/action` against that wildcard at authorization time, so `Sync-AzLocalClusterUpdateSummary` and the `Export-AzLocalClusterUpdateReadinessReport` stale-assessment auto-scan now succeed under the custom role. Doc / RBAC-only change - no behavioural, API, or export-count change (still 61). `GENERATED_AGAINST_MODULE_VERSION` bumped from `0.8.91` to `0.8.92`. See [CHANGELOG.md](../CHANGELOG.md#0892---2026-06-20) for the full v0.8.92 entry.
 
 ---
 

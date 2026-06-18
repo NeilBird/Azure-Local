@@ -307,10 +307,15 @@ function Sync-AzLocalClusterUpdateSummary {
             }
         }
 
-        # Fire the checkUpdates action (empty body POST -> 202 Accepted / async LRO).
+        # Fire the checkUpdates action (POST -> 202 Accepted / async LRO).
+        # The 2026-03-01-preview API spec requires a request body to be present:
+        # a bodyless POST is rejected with HttpRequestPayloadAPISpecValidationFailed /
+        # MissingRequiredParameter "Value is required but was not provided. Paths in
+        # payload: '.body'". An empty JSON object satisfies the body requirement
+        # (no properties are mandatory for a plain re-scan).
         $checkUri = "https://management.azure.com$resourceId/updateSummaries/default/checkUpdates?api-version=$ApiVersion"
         Write-Log -Message "  $clusterName : POST checkUpdates" -Level Info
-        $postResp = Invoke-AzRestJson -Uri $checkUri -Method POST
+        $postResp = Invoke-AzRestJson -Uri $checkUri -Method POST -Body '{}'
 
         if (-not $postResp.Ok) {
             $errorText = [string]$postResp.Error
@@ -322,15 +327,16 @@ function Sync-AzLocalClusterUpdateSummary {
             Write-Log -Message "  $clusterName : FAILED - $errorText" -Level Error
 
             # Make an authorization / 403 denial unmistakable. The least-privilege
-            # custom role 'Azure Stack HCI Update Operator (custom)' does NOT yet
-            # authorize checkUpdates (the preview action is absent from the
-            # Microsoft.AzureStackHCI provider operations catalog, so it cannot be
-            # added to a custom role today). Use 'Azure Stack HCI Administrator' or
-            # 'Contributor' until checkUpdates GAs, then add the action surfaced in
-            # the error below to the custom role.
+            # custom role 'Azure Stack HCI Update Operator (custom)' authorizes
+            # checkUpdates via the 'Microsoft.AzureStackHCI/clusters/updateSummaries/*'
+            # wildcard (the preview '.../checkUpdates/action' leaf is not yet listed in
+            # the Microsoft.AzureStackHCI provider operations catalog, so the wildcard
+            # is used to grant it). A 403 here therefore means the identity has NOT been
+            # assigned that custom role (or an equivalent built-in such as 'Azure Stack
+            # HCI Administrator' / 'Contributor') at this scope.
             if ($errorText -match 'AuthorizationFailed|does not have authorization|Forbidden|\b403\b') {
                 $row.Status = 'AuthorizationFailed'
-                Write-Log -Message "  $clusterName : AUTHORIZATION ERROR - the signed-in identity is not permitted to run 'Check for updates' (checkUpdates). Copy the exact 'Action' name and scope from the error line above; grant that action (or assign 'Azure Stack HCI Administrator' / 'Contributor'). The least-privilege custom role does not yet include the preview checkUpdates action." -Level Warning
+                Write-Log -Message "  $clusterName : AUTHORIZATION ERROR - the signed-in identity is not permitted to run 'Check for updates' (checkUpdates). Assign the 'Azure Stack HCI Update Operator (custom)' role (which grants checkUpdates via the updateSummaries/* wildcard), or a built-in role such as 'Azure Stack HCI Administrator' / 'Contributor', at this scope." -Level Warning
             }
 
             $results.Add([pscustomobject]$row) | Out-Null
