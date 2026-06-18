@@ -21,7 +21,7 @@
     Copyright = '(c) Microsoft. All rights reserved.'
 
     # Description of the functionality provided by this module
-    Description = 'PowerShell module to manage Azure Local (formerly Azure Stack HCI) cluster updates using Azure Update Manager APIs. Provides functions to start updates, check update status, list available updates, and monitor update runs. Renamed from AzStackHci.ManageUpdates in v0.7.3 to align with the Azure Local product name.'
+    Description = 'PowerShell module to manage Azure Local (formerly Azure Stack HCI) cluster updates using Azure Update Manager APIs. Provides functions to start updates, check update status, list available updates, and monitor update runs.'
 
     # Minimum version of the PowerShell engine required by this module
     PowerShellVersion = '5.1'

@@ -15,10 +15,6 @@
     Supports Service Principal authentication for CI/CD automation scenarios
     (GitHub Actions, Azure DevOps Pipelines).
 
-    NOTE: Renamed from AzStackHci.ManageUpdates in v0.7.3. Module GUID is preserved
-    across the rename. See CHANGELOG.md and the v0.7.3 release notes in the manifest
-    for migration guidance.
-
 .PARAMETER ClusterNames
     An array of Azure Local cluster names to update. Use this OR ClusterResourceIds.
 

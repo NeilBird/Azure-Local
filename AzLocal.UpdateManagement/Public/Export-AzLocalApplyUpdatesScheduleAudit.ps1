@@ -1018,7 +1018,11 @@ function Export-AzLocalApplyUpdatesScheduleAudit {
             }
         }
         if ($monitorEligibleDows.Count -gt 0) {
-            $monitorScheduleDows = @($monitorEligibleDows) | Sort-Object
+            # NB: wrap the WHOLE pipeline in @(); '@($x) | Sort-Object' undoes the
+            # inner @() for a single element, leaving a scalar with no .Count
+            # (PropertyNotFoundException under Set-StrictMode -Version Latest at the
+            # $monitorScheduleDows.Count check below).
+            $monitorScheduleDows = @(@($monitorEligibleDows) | Sort-Object)
             $monitorDaySource    = 'apply-updates-schedule.yml ring eligibility'
         }
     }
