@@ -34,8 +34,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $script:ModuleInfo | Should -Not -BeNullOrEmpty
         }
 
-        It 'Should have version 0.8.89' {
-            $script:ModuleInfo.Version | Should -Be '0.8.89'
+        It 'Should have version 0.8.90' {
+            $script:ModuleInfo.Version | Should -Be '0.8.90'
         }
 
         It 'Module version constants are in sync between .psm1 and .psd1' {
@@ -247,7 +247,54 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $content | Should -Match "eq\(variables\['SIDELOAD_UPDATES'\],\s*'1'\)" -Because "ADO gate must accept '1' (v0.8.76)"
         }
 
+        It 'v0.8.90: monitor-updates.yml (GitHub Actions) defaults to a 6-hour cron and wires the event-driven trigger + -SkipWhenIdle' {
+            $yamlPath = Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples\github-actions\monitor-updates.yml'
+            Test-Path $yamlPath | Should -BeTrue
+            $content = Get-Content -Path $yamlPath -Raw
+            $content | Should -Match "cron:\s*'0 \*/6 \* \* \*'" -Because "monitor default cron is every 6h (v0.8.90)"
+            $content | Should -Match '(?m)^\s+skip_when_idle:' -Because "monitor exposes the skip_when_idle dispatch input"
+            $content | Should -Match '(?m)^\s+triggered_by:' -Because "monitor accepts the triggered_by event marker"
+            $content | Should -Match 'MONITOR_TRIGGER_DELAY_MINUTES' -Because "monitor reads the trigger-delay var for the event-driven sleep"
+            $content | Should -Match "github\.event\.inputs\.triggered_by == 'apply-updates'" -Because "the startup delay only runs for apply-driven triggers"
+            $content | Should -Match "\`$params\['SkipWhenIdle'\]\s*=\s*\`$true" -Because "monitor passes -SkipWhenIdle to the cmdlet unless explicitly disabled"
+        }
+
+        It 'v0.8.90: monitor-updates.yml (Azure DevOps) defaults to a 6-hour cron and wires triggeredBy + skipWhenIdle' {
+            $yamlPath = Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples\azure-devops\monitor-updates.yml'
+            Test-Path $yamlPath | Should -BeTrue
+            $content = Get-Content -Path $yamlPath -Raw
+            $content | Should -Match '0 \*/6 \* \* \*' -Because "ADO monitor default cron is every 6h (v0.8.90)"
+            $content | Should -Match '(?m)^\s*-\s*name:\s*skipWhenIdle' -Because "ADO monitor exposes the skipWhenIdle parameter"
+            $content | Should -Match '(?m)^\s*-\s*name:\s*triggeredBy' -Because "ADO monitor accepts the triggeredBy marker"
+            $content | Should -Match "eq\('\`$\{\{ parameters\.triggeredBy \}\}',\s*'apply-updates'\)" -Because "the ADO startup delay only runs for apply-driven triggers"
+        }
+
+        It 'v0.8.90: apply-updates.yml (GitHub Actions) fires the monitor after starting >=1 update' {
+            $yamlPath = Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples\github-actions\apply-updates.yml'
+            Test-Path $yamlPath | Should -BeTrue
+            $content = Get-Content -Path $yamlPath -Raw
+            $content | Should -Match '(?m)^\s+actions:\s*write' -Because "apply needs actions:write to dispatch the monitor workflow"
+            $content | Should -Match 'gh workflow run monitor-updates\.yml' -Because "apply fires the monitor via the gh CLI"
+            $content | Should -Match 'triggered_by=apply-updates' -Because "apply tags the dispatch as the event-driven trigger"
+        }
+
+        It 'v0.8.90: apply-updates-schedule-audit.yml exposes the 3 monitor tuning inputs on both platforms' -ForEach @(
+            @{ Platform = 'github-actions'; Poll = 'monitor_poll_interval_minutes'; Trail = 'monitor_trailing_days'; Hours = 'monitor_in_flight_hours' }
+            @{ Platform = 'azure-devops';   Poll = 'monitorPollIntervalMinutes';    Trail = 'monitorTrailingDays';   Hours = 'monitorInFlightHours' }
+        ) {
+            $yamlPath = Join-Path -Path $PSScriptRoot -ChildPath "..\Automation-Pipeline-Examples\$Platform\apply-updates-schedule-audit.yml"
+            Test-Path $yamlPath | Should -BeTrue
+            $content = Get-Content -Path $yamlPath -Raw
+            $content | Should -Match ([regex]::Escape($Poll))  -Because "$Platform audit exposes the poll-interval tuning input"
+            $content | Should -Match ([regex]::Escape($Trail)) -Because "$Platform audit exposes the trailing-days tuning input"
+            $content | Should -Match ([regex]::Escape($Hours)) -Because "$Platform audit exposes the in-flight-hours tuning input"
+            $content | Should -Match 'MonitorPollIntervalMinutes' -Because "$Platform audit plumbs the poll interval into the cmdlet"
+            $content | Should -Match 'MonitorTrailingDays'        -Because "$Platform audit plumbs trailing days into the cmdlet"
+            $content | Should -Match 'MonitorInFlightHours'       -Because "$Platform audit plumbs in-flight hours into the cmdlet"
+        }
+
         It 'Should export exactly 61 functions' {
+
             $script:ModuleInfo.ExportedFunctions.Count | Should -Be 61
         }
 
@@ -15107,7 +15154,109 @@ Describe 'Thin-YAML Step.7: Export-AzLocalUpdateRunMonitorReport' {
         $summary | Should -Match 'Fleet Status: IDLE'
     }
 
+    It '-SkipWhenIdle with no in-flight runs: emits IDLE and SKIPS the per-cluster sweep' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s7_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s7_ghSummaryFile
+        $global:_s7_payload = @{ Inventory = $script:_s7_inventory; Runs = @(); Now = $script:_s7_now; OutDir = $script:_s7_outDir }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Test-AzLocalUpdateRunsInFlight { $false }
+            # The sweep MUST NOT run when the probe says nothing is in flight.
+            Mock Get-AzLocalClusterInventory { throw 'sweep should have been skipped (Get-AzLocalClusterInventory called)' }
+            Mock Get-AzLocalUpdateRuns       { throw 'sweep should have been skipped (Get-AzLocalUpdateRuns called)' }
+            Export-AzLocalUpdateRunMonitorReport -OutputDirectory $global:_s7_payload.OutDir -Now $global:_s7_payload.Now -SkipWhenIdle -PassThru
+        }
+        $result.InFlightCount | Should -Be 0
+        @($result.Rows).Count | Should -Be 0
+        Test-Path -LiteralPath $result.CsvPath | Should -BeTrue
+        Test-Path -LiteralPath $result.XmlPath | Should -BeTrue
+        $outputs = Get-Content -Raw -LiteralPath $script:_s7_ghOutputFile
+        $outputs | Should -Match 'in_flight=0'
+        $summary = Get-Content -Raw -LiteralPath $script:_s7_ghSummaryFile
+        $summary | Should -Match 'Fleet Status: IDLE'
+        $summary | Should -Match 'full sweep skipped via -SkipWhenIdle'
+    }
+
+    It '-SkipWhenIdle with an in-flight run: runs the FULL sweep (InFlightCount=1)' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s7_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s7_ghSummaryFile
+        $runs = @(
+            [pscustomobject]@{
+                ClusterName       = 'alpha'
+                ClusterResourceId = $script:_s7_inventory[0].ResourceId
+                UpdateName        = '12.2509.1.21'
+                State             = 'InProgress'
+                Status            = 'InProgress'
+                CurrentStep       = 'Run Update Health Checks'
+                Progress          = '40%'
+                StartTime         = $script:_s7_now.AddMinutes(-30).ToString('yyyy-MM-ddTHH:mm:ss')
+                StepStartTime     = $script:_s7_now.AddMinutes(-30).ToString('yyyy-MM-ddTHH:mm:ss')
+                EndTime           = $null
+                RunId             = 'r1'
+                RunResourceId     = ($script:_s7_inventory[0].ResourceId + '/updates/12.2509.1.21/updateRuns/r1')
+            }
+        )
+        $global:_s7_payload = @{ Inventory = $script:_s7_inventory; Runs = $runs; Now = $script:_s7_now; OutDir = $script:_s7_outDir }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Test-AzLocalUpdateRunsInFlight { $true }
+            Mock Get-AzLocalClusterInventory { @($global:_s7_payload.Inventory) }
+            Mock Get-AzLocalUpdateRuns       { @($global:_s7_payload.Runs) }
+            Export-AzLocalUpdateRunMonitorReport -OutputDirectory $global:_s7_payload.OutDir -Now $global:_s7_payload.Now -SkipWhenIdle -PassThru
+        }
+        $result.InFlightCount | Should -Be 1
+        @($result.Rows).Count | Should -Be 1
+        $summary = Get-Content -Raw -LiteralPath $script:_s7_ghSummaryFile
+        $summary | Should -Not -Match 'full sweep skipped via -SkipWhenIdle'
+    }
+
+    It '-SkipWhenIdle probe failure is FAIL-SAFE: runs the full sweep instead of skipping' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s7_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s7_ghSummaryFile
+        $runs = @(
+            [pscustomobject]@{
+                ClusterName       = 'alpha'
+                ClusterResourceId = $script:_s7_inventory[0].ResourceId
+                UpdateName        = '12.2509.1.21'
+                State             = 'InProgress'
+                Status            = 'InProgress'
+                CurrentStep       = 'Run Update Health Checks'
+                Progress          = '40%'
+                StartTime         = $script:_s7_now.AddMinutes(-30).ToString('yyyy-MM-ddTHH:mm:ss')
+                StepStartTime     = $script:_s7_now.AddMinutes(-30).ToString('yyyy-MM-ddTHH:mm:ss')
+                EndTime           = $null
+                RunId             = 'r1'
+                RunResourceId     = ($script:_s7_inventory[0].ResourceId + '/updates/12.2509.1.21/updateRuns/r1')
+            }
+        )
+        $global:_s7_payload = @{ Inventory = $script:_s7_inventory; Runs = $runs; Now = $script:_s7_now; OutDir = $script:_s7_outDir }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Test-AzLocalUpdateRunsInFlight { throw 'transient ARG throttle' }
+            Mock Get-AzLocalClusterInventory { @($global:_s7_payload.Inventory) }
+            Mock Get-AzLocalUpdateRuns       { @($global:_s7_payload.Runs) }
+            Export-AzLocalUpdateRunMonitorReport -OutputDirectory $global:_s7_payload.OutDir -Now $global:_s7_payload.Now -SkipWhenIdle -PassThru
+        }
+        $result.InFlightCount | Should -Be 1
+        $summary = Get-Content -Raw -LiteralPath $script:_s7_ghSummaryFile
+        $summary | Should -Not -Match 'full sweep skipped via -SkipWhenIdle'
+    }
+
+    It 'Test-AzLocalUpdateRunsInFlight returns $true when the probe finds a row, $false when empty' {
+        $inFlight = InModuleScope AzLocal.UpdateManagement {
+            Mock Invoke-AzResourceGraphQuery { @([pscustomobject]@{ id = '/subscriptions/s1/.../updateRuns/r1' }) }
+            Test-AzLocalUpdateRunsInFlight
+        }
+        $inFlight | Should -BeTrue
+        $idle = InModuleScope AzLocal.UpdateManagement {
+            Mock Invoke-AzResourceGraphQuery { @() }
+            Test-AzLocalUpdateRunsInFlight
+        }
+        $idle | Should -BeFalse
+    }
+
     It 'Single in-flight run within thresholds: InFlightCount=1, no warn/crit chips, status HEALTHY' {
+
         $env:GITHUB_ACTIONS      = 'true'
         $env:GITHUB_OUTPUT       = $script:_s7_ghOutputFile
         $env:GITHUB_STEP_SUMMARY = $script:_s7_ghSummaryFile

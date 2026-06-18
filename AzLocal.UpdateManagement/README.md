@@ -2,7 +2,7 @@
 
 > ⚠️ **Disclaimer**: This module is **NOT** a Microsoft supported service offering or product. It is provided as example code only, with no warranty or official support. Refer to the [MIT license](https://github.com/NeilBird/Azure-Local/blob/main/LICENSE) for further information.
 
-**Latest Version:** v0.8.89 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.8.89)
+**Latest Version:** v0.8.90 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.8.90)
 
 This folder contains the 'AzLocal.UpdateManagement' PowerShell module for managing updates on Azure Local (formerly Azure Stack HCI) clusters using the Azure Local REST API. The module supports both interactive use and CI/CD automation via Service Principal or Managed Identity authentication.
 
@@ -14,7 +14,7 @@ Azure Local REST API specification (includes update management endpoints): https
 **This README (overview + most-recent release notes):**
 
 - [Where to Start](#where-to-start)
-- [What's New in v0.8.89](#whats-new-in-v0889)
+- [What's New in v0.8.90](#whats-new-in-v0890)
 - [Files](#files)
 - [Prerequisites](#prerequisites)
 - [RBAC Requirements](#rbac-requirements) (summary; full reference in [docs/rbac.md](docs/rbac.md))
@@ -77,27 +77,24 @@ If you are new to this module, work through these in order from a regular PowerS
 
 > Most CI/CD pipelines in [Automation-Pipeline-Examples/](Automation-Pipeline-Examples/) are direct implementations of one of these workflows. Start there if you want a copy-pasteable end-to-end pipeline.
 
-## What's New in v0.8.89
+## What's New in v0.8.90
 
-**A sharper Config: 3 monitor-cron recommendation + a "which updates install, and when" runbook.** Tunes the schedule audit (`Export-AzLocalApplyUpdatesScheduleAudit`) so the **Recommended in-flight monitor schedule (Update: 4)** it prints only polls while an update can actually be in flight - instead of a blunt 24x7 cron - and adds a README section that explains, end to end, the three layers that decide which updates install on which clusters and when.
-
-### Changed
-
-- **`Export-AzLocalApplyUpdatesScheduleAudit` monitor-cron recommendation is now schedule- and window-aware.** The "Recommended in-flight monitor schedule (Update: 4)" cron now reflects when runs are genuinely active:
-  - **`-MonitorFiresPerHour` is replaced by `-MonitorPollIntervalMinutes`** (`ValidateSet` 15/20/30/60/120/180/240, default 30). It expresses a real poll interval, including multi-hour cadence for slow multi-node runs (which can take up to ~48h). Under 60 min sets the cron minute field to `*/N`; 60 min or more sets the minute field to `0` and steps the hour field every N/60 hours.
-  - **New `-MonitorInFlightHours`** (`ValidateRange` 0-48, default 6): a buffer past the latest `UpdateStartWindow` end so the monitor keeps polling for runs still finishing after the maintenance window closes.
-  - **Monitor days** now derive from `apply-updates-schedule.yml` ring eligibility (the cycle calendar) when `-SchedulePath` is supplied, otherwise from the `apply-updates.yml` cron weekday(s); still expanded by `-MonitorTrailingDays`.
-  - **Monitor hours** are now bounded to the `UpdateStartWindow` span plus `-MonitorInFlightHours`, falling back to all-hours (`*`) when a run can cross midnight (an overnight window, `-MonitorTrailingDays > 0`, or the buffer pushing coverage past 24h) so no in-flight time is left unpolled.
+**Event-driven, idle-aware in-flight update monitoring.** Update: 4 (Monitor In-Flight Updates) now runs right after Update: 3 (Apply Updates) starts an update, yet stays cheap the rest of the time. A new fleet-wide idle short-circuit, an apply-to-monitor trigger on both platforms, a 6-hourly default monitor cron, and Config: 3 recommendation tuning inputs.
 
 ### Added
 
-- **Automation-Pipeline-Examples README section "How to control which updates are installed, and when".** Documents the three-layer model - `apply-updates-schedule.yml` picks the **days**, the `apply-updates.yml` cron picks the wake **cadence**, and the per-cluster `UpdateStartWindow` tag picks the **time of day** - plus the end-to-end workflow: tag clusters (Config: 2) -> generate the schedule -> run Config: 3, which now outputs ready-to-paste apply and monitor crons -> paste those into Update: 3 and Update: 4.
-- **`checkUpdates` RBAC action: catalog-checked, documented, and guarded.** A provider-operations-catalog check (`az provider operation show`, 2026-06-18) confirms the "Check for updates" refresh action `Microsoft.AzureStackHCI/clusters/updateSummaries/checkUpdates/action` (confirmed verbatim from a live `403 AuthorizationFailed` body) is **enforced by Azure but not yet in the operations catalog**, so `az role definition create` / `update` would reject it - the least-privilege custom role continues to **deliberately omit** it (the four registered update actions it already grants are the complete catalog set). The `docs/rbac.md` and Automation README permission tables now document that the action is exercised by `Sync-AzLocalClusterUpdateSummary` and the stale-assessment auto-scan in `Export-AzLocalClusterUpdateReadinessReport` (the **Update: 1 - Assess Update Readiness** pipeline), that built-in **Azure Stack HCI Administrator** / **Contributor** authorize it via wildcard (or use `-SkipStaleAssessmentScan`), and that the action **will be added to the role once it GAs into the catalog**. A new Pester tripwire asserts the four registered actions are present and `checkUpdates` is absent, failing the moment it is added so the role JSON and docs update together.
+- **`Export-AzLocalUpdateRunMonitorReport -SkipWhenIdle` switch.** Performs one low-cost fleet-wide Azure Resource Graph probe (new private helper `Test-AzLocalUpdateRunsInFlight`: "any `updateRuns` `InProgress`?") and short-circuits to an **IDLE** result - writing the empty CSV/JUnit artefacts and all-zero step outputs - skipping the per-cluster sweep when nothing is in flight. **Fail-safe**: a probe error runs the full sweep rather than skipping.
+- **Event-driven trigger from Update: 3 to Update: 4.** `apply-updates.yml` fires the monitor after starting >=1 update - `gh workflow run monitor-updates.yml` on GitHub Actions (job gains `actions: write`) / the Pipelines REST queue API on Azure DevOps - tagged `triggered_by=apply-updates`. The monitor honours an optional `MONITOR_TRIGGER_DELAY_MINUTES` startup delay (unset/0 = off, otherwise clamped 15-240) so it lands **after** updates move into `InProgress`. Cron / manual runs never delay, and the monitor allows concurrent runs so a sleeping event-driven run never blocks the next.
+- **Config: 3 monitor-recommendation tuning inputs.** Both `apply-updates-schedule-audit.yml` templates expose `MonitorPollIntervalMinutes` / `MonitorTrailingDays` / `MonitorInFlightHours` as workflow inputs / parameters and plumb them into `Export-AzLocalApplyUpdatesScheduleAudit`.
+
+### Changed
+
+- **`monitor-updates.yml` default cron drops from 5x/day to every 6h (`0 */6 * * *`)** and passes `-SkipWhenIdle` by default on both platforms.
 
 ### Notes
 
-- **No public-API change** (export count unchanged at 61).
-- **`GENERATED_AGAINST_MODULE_VERSION`** bumped from `0.8.88` to `0.8.89` across bundled pipeline templates.
+- **No public-API change** (export count unchanged at 61 - the new helper is private).
+- **`GENERATED_AGAINST_MODULE_VERSION`** bumped from `0.8.89` to `0.8.90` across bundled pipeline templates.
 
 > Previous release notes have moved into the [Release History](#release-history) appendix at the bottom of this document.
 
@@ -583,7 +580,11 @@ This code is provided as-is for educational and reference purposes.
 
 The full What's-New history (v0.7.81 and earlier) has moved to [docs/release-history.md](docs/release-history.md).
 
-The most recent release notes for **v0.8.88** stay above under [`What's New in v0.8.88`](#whats-new-in-v0888).
+The most recent release notes for **v0.8.90** stay above under [`What's New in v0.8.90`](#whats-new-in-v0890).
+
+### What's New in v0.8.89
+
+**A sharper Config: 3 monitor-cron recommendation + a "which updates install, and when" runbook.** Tunes the schedule audit (`Export-AzLocalApplyUpdatesScheduleAudit`) so the **Recommended in-flight monitor schedule (Update: 4)** it prints only polls while an update can actually be in flight - instead of a blunt 24x7 cron - and adds a README section explaining the three layers that decide which updates install on which clusters and when. Replaces `-MonitorFiresPerHour` with `-MonitorPollIntervalMinutes` (`ValidateSet` 15/20/30/60/120/180/240, default 30) and adds `-MonitorInFlightHours` (`ValidateRange` 0-48, default 6). Monitor days now derive from `apply-updates-schedule.yml` ring eligibility (or the apply cron weekday) and monitor hours from the `UpdateStartWindow` span plus the in-flight buffer. Also catalog-checks, documents, and guards the `checkUpdates` RBAC action (deliberately omitted from the least-privilege role until it GAs). No public-API change (export count 61). `GENERATED_AGAINST_MODULE_VERSION` bumped from `0.8.88` to `0.8.89`. See [CHANGELOG.md](CHANGELOG.md#0889---2026-06-18) for the full v0.8.89 entry.
 
 ### What's New in v0.8.88
 

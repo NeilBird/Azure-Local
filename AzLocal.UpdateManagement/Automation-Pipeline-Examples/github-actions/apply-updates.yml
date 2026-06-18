@@ -148,7 +148,7 @@ env:
   # this to the version actually installed and to the latest on PSGallery, and emits a
   # ::notice annotation if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.8.89'
+  GENERATED_AGAINST_MODULE_VERSION: '0.8.90'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): manual workflow_dispatch input >
   # repository variable 'REQUIRED_MODULE_VERSION' > empty (latest).
@@ -309,6 +309,10 @@ jobs:
       id-token: write
       contents: read
       checks: write
+      # v0.8.90: 'actions: write' lets the post-apply step dispatch Update: 4
+      # (Monitor In-Flight Updates) via `gh workflow run` using the default
+      # GITHUB_TOKEN. Without it the trigger step gets HTTP 403.
+      actions: write
     needs: check-readiness
     # Only run if there are clusters ready for update
     if: ${{ needs.check-readiness.outputs.ready_count > 0 }}
@@ -413,6 +417,31 @@ jobs:
         if ($env:INPUT_DRY_RUN -eq 'true') { $params['DryRun'] = $true }
         if ($env:INPUT_FORCE_IMMEDIATE_UPDATE -eq 'true') { $params['ForceImmediateUpdate'] = $true }
         Invoke-AzLocalReadinessGatedClusterUpdate @params
+
+    # v0.8.90: event-driven trigger. As soon as Apply has STARTED >=1 update
+    # (the cmdlet's SUCCEEDED step output > 0), fire Update: 4 (Monitor In-Flight
+    # Updates) so the in-flight view appears without waiting for the monitor's 6h
+    # cron safety-net. This is a fire-and-forget dispatch that returns
+    # immediately - the OPTIONAL startup delay (repository Variable
+    # MONITOR_TRIGGER_DELAY_MINUTES) is applied INSIDE the monitor, never here,
+    # so this never blocks the (single-instance) Apply pipeline. The monitor runs
+    # with -SkipWhenIdle, so if the started runs complete before it lands it
+    # simply reports IDLE after one cheap probe. Requires the job-level
+    # 'actions: write' permission added above. `gh` resolves the target workflow
+    # by filename, so keep Update: 4 named 'monitor-updates.yml' in
+    # .github/workflows/ (rename here too if you rename the file).
+    - name: Trigger in-flight monitor
+      if: ${{ fromJSON(steps.apply-updates.outputs.SUCCEEDED || '0') > 0 }}
+      shell: pwsh
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        STARTED: ${{ steps.apply-updates.outputs.SUCCEEDED }}
+      run: |
+        Write-Host "Apply started $($env:STARTED) update(s) - dispatching Update: 4 (Monitor In-Flight Updates)."
+        gh workflow run monitor-updates.yml `
+          -f triggered_by=apply-updates `
+          -f apply_run_id=$($env:GITHUB_RUN_ID) `
+          -f skip_when_idle=true
 
     - name: Compute Artifact Timestamp
       if: always()

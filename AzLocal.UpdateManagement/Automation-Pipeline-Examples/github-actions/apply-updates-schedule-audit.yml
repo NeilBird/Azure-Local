@@ -78,6 +78,30 @@ on:
         description: 'Path to the source-controlled cluster inventory CSV (the same file Step.2 consumes - default `config/ClusterUpdateRings.csv`). When set, the Recommend view emits a NoWindowTag remediation section: for each cluster missing an UpdateStartWindow tag, the advisor proposes a peer-derived value and tells the operator which row of the CSV to edit (or to re-run Step.1 if the cluster is absent from the CSV). Leave empty to skip the CSV-driven remediation.'
         required: false
         default: 'config/ClusterUpdateRings.csv'
+      # v0.8.90: tuning inputs for the "Recommended in-flight monitor schedule
+      # (Update: 4)" section. These shape ONLY that recommendation block - they
+      # do not change the coverage audit itself. Defaults match the cmdlet.
+      monitor_poll_interval_minutes:
+        description: 'Recommended Update: 4 (Monitor) cron cadence in minutes. Default 30.'
+        required: false
+        default: '30'
+        type: choice
+        options:
+          - '15'
+          - '20'
+          - '30'
+          - '60'
+          - '120'
+          - '180'
+          - '240'
+      monitor_trailing_days:
+        description: 'Recommended monitor: days AFTER each update window to keep polling for late/long-running runs (0-14). Default 3.'
+        required: false
+        default: '3'
+      monitor_in_flight_hours:
+        description: 'Recommended monitor: hours of continuous polling from each window opening to catch in-flight runs (0-48). Default 6.'
+        required: false
+        default: '6'
       module_version:
         description: 'Pin AzLocal.UpdateManagement version (empty = latest from PSGallery). See Automation-Pipeline-Examples/README.md section 5 "Optional configuration".'
         required: false
@@ -96,7 +120,7 @@ env:
   # this to the version actually installed and to the latest on PSGallery, and emits a
   # ::notice annotation if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.8.89'
+  GENERATED_AGAINST_MODULE_VERSION: '0.8.90'
   REQUIRED_MODULE_VERSION: ${{ github.event.inputs.module_version || vars.REQUIRED_MODULE_VERSION || '' }}
   # v0.8.4 - opt this workflow into Node.js 24 for all JavaScript actions
   # (actions/checkout, actions/download-artifact, actions/upload-artifact,
@@ -207,6 +231,9 @@ jobs:
         INPUT_FIRES_PER_WINDOW:  ${{ github.event.inputs.fires_per_window || '2' }}
         INPUT_INCLUDE_UNTAGGED:  ${{ github.event.inputs.include_untagged || 'false' }}
         INPUT_CLUSTER_CSV_PATH:  ${{ github.event.inputs.cluster_csv_path || 'config/ClusterUpdateRings.csv' }}
+        INPUT_MONITOR_POLL_INTERVAL_MINUTES: ${{ github.event.inputs.monitor_poll_interval_minutes || '30' }}
+        INPUT_MONITOR_TRAILING_DAYS:         ${{ github.event.inputs.monitor_trailing_days || '3' }}
+        INPUT_MONITOR_IN_FLIGHT_HOURS:       ${{ github.event.inputs.monitor_in_flight_hours || '6' }}
         INPUT_DEBUG:             ${{ github.event.inputs.debug || 'false' }}
         INSTALLED_MODULE_VERSION: ${{ steps.module-version.outputs.installed_module_version }}
         # v0.8.7 sideload advisor (opt-in). When SIDELOAD_UPDATES=true the audit
@@ -239,6 +266,11 @@ jobs:
         if ($env:INPUT_SCHEDULE_PATH)    { $params['SchedulePath'] = $env:INPUT_SCHEDULE_PATH }
         if ($env:INPUT_CLUSTER_CSV_PATH) { $params['ClusterCsvPath'] = $env:INPUT_CLUSTER_CSV_PATH }
         if ($env:INPUT_INCLUDE_UNTAGGED -eq 'true') { $params['IncludeUntagged'] = $true }
+        # v0.8.90: monitor-schedule recommendation tuning (defaults match cmdlet).
+        [int]$mInt = 0
+        if ([int]::TryParse([string]$env:INPUT_MONITOR_POLL_INTERVAL_MINUTES, [ref]$mInt) -and $mInt -gt 0) { $params['MonitorPollIntervalMinutes'] = $mInt }
+        if ([int]::TryParse([string]$env:INPUT_MONITOR_TRAILING_DAYS, [ref]$mInt) -and $mInt -ge 0)         { $params['MonitorTrailingDays']        = $mInt }
+        if ([int]::TryParse([string]$env:INPUT_MONITOR_IN_FLIGHT_HOURS, [ref]$mInt) -and $mInt -ge 0)       { $params['MonitorInFlightHours']       = $mInt }
 
         Export-AzLocalApplyUpdatesScheduleAudit @params
 

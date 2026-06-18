@@ -76,6 +76,32 @@ parameters:
     type: string
     default: 'config/ClusterUpdateRings.csv'
 
+  # v0.8.90: tuning params for the "Recommended in-flight monitor schedule
+  # (Update: 4)" section. These shape ONLY that recommendation block - they do
+  # not change the coverage audit itself. Defaults match the cmdlet.
+  - name: monitorPollIntervalMinutes
+    displayName: 'Recommended Update: 4 (Monitor) cron cadence in minutes. Default 30.'
+    type: number
+    default: 30
+    values:
+      - 15
+      - 20
+      - 30
+      - 60
+      - 120
+      - 180
+      - 240
+
+  - name: monitorTrailingDays
+    displayName: 'Recommended monitor: days AFTER each update window to keep polling for late/long-running runs (0-14). Default 3.'
+    type: number
+    default: 3
+
+  - name: monitorInFlightHours
+    displayName: 'Recommended monitor: hours of continuous polling from each window opening to catch in-flight runs (0-48). Default 6.'
+    type: number
+    default: 6
+
   - name: moduleVersion
     displayName: 'Pin AzLocal.UpdateManagement version (empty = latest from PSGallery). See Automation-Pipeline-Examples/README.md section 5 "Optional configuration".'
     type: string
@@ -87,7 +113,7 @@ parameters:
     default: false
 
 variables:
-  GENERATED_AGAINST_MODULE_VERSION: '0.8.89'
+  GENERATED_AGAINST_MODULE_VERSION: '0.8.90'
   REQUIRED_MODULE_VERSION: '${{ parameters.moduleVersion }}'
   reportsPath: '$(Build.ArtifactStagingDirectory)/reports'
   # v0.8.7 sideload advisor defaults. Override at the pipeline / variable-group
@@ -159,6 +185,9 @@ stages:
         INPUT_FIRES_PER_WINDOW:  ${{ parameters.firesPerWindow }}
         INPUT_INCLUDE_UNTAGGED:  ${{ lower(parameters.includeUntagged) }}
         INPUT_CLUSTER_CSV_PATH:  ${{ parameters.clusterCsvPath }}
+        INPUT_MONITOR_POLL_INTERVAL_MINUTES: ${{ parameters.monitorPollIntervalMinutes }}
+        INPUT_MONITOR_TRAILING_DAYS:         ${{ parameters.monitorTrailingDays }}
+        INPUT_MONITOR_IN_FLIGHT_HOURS:       ${{ parameters.monitorInFlightHours }}
         INPUT_DEBUG:             ${{ lower(parameters.debug) }}
         INSTALLED_MODULE_VERSION: $(moduleVersion.installed_module_version)
         REPORTS_PATH: $(reportsPath)
@@ -198,6 +227,11 @@ stages:
           if ($env:INPUT_SCHEDULE_PATH)    { $params['SchedulePath'] = $env:INPUT_SCHEDULE_PATH }
           if ($env:INPUT_CLUSTER_CSV_PATH) { $params['ClusterCsvPath'] = $env:INPUT_CLUSTER_CSV_PATH }
           if ($env:INPUT_INCLUDE_UNTAGGED -eq 'true') { $params['IncludeUntagged'] = $true }
+          # v0.8.90: monitor-schedule recommendation tuning (defaults match cmdlet).
+          [int]$mInt = 0
+          if ([int]::TryParse([string]$env:INPUT_MONITOR_POLL_INTERVAL_MINUTES, [ref]$mInt) -and $mInt -gt 0) { $params['MonitorPollIntervalMinutes'] = $mInt }
+          if ([int]::TryParse([string]$env:INPUT_MONITOR_TRAILING_DAYS, [ref]$mInt) -and $mInt -ge 0)         { $params['MonitorTrailingDays']        = $mInt }
+          if ([int]::TryParse([string]$env:INPUT_MONITOR_IN_FLIGHT_HOURS, [ref]$mInt) -and $mInt -ge 0)       { $params['MonitorInFlightHours']       = $mInt }
 
           Export-AzLocalApplyUpdatesScheduleAudit @params
 

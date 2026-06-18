@@ -129,7 +129,7 @@ variables:
   # log if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
   - name: GENERATED_AGAINST_MODULE_VERSION
-    value: '0.8.89'
+    value: '0.8.90'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): queue-time parameter > pipeline variable
   # 'REQUIRED_MODULE_VERSION' overridden at queue time > empty (latest).
@@ -143,6 +143,15 @@ variables:
   # schedule elsewhere.
   - name: APPLY_UPDATES_SCHEDULE_PATH
     value: './config/apply-updates-schedule.yml'
+  # v0.8.90: event-driven monitor trigger. Set MONITOR_PIPELINE_ID to the
+  # numeric pipeline definition ID of Update: 4 (Monitor In-Flight Updates) to
+  # have this pipeline queue the monitor as soon as it STARTS >=1 update. Find
+  # the ID in the monitor pipeline's URL (.../_build?definitionId=NN) or via
+  # `az pipelines show`. Leave empty to disable the trigger (the monitor's 6h
+  # cron still covers you). Requires "Allow scripts to access the OAuth token"
+  # so the trigger step's $(System.AccessToken) can queue the run.
+  - name: MONITOR_PIPELINE_ID
+    value: ''
   # ITSM connector. Uncomment the group reference once you
   # have created a variable group named 'AzureLocal-ITSM-Secrets' containing:
   #   ITSM_SN_INSTANCE_URL, ITSM_SN_CLIENT_ID, ITSM_SN_CLIENT_SECRET
@@ -403,6 +412,48 @@ stages:
                     }
                 }
                 Invoke-AzLocalReadinessGatedClusterUpdate @params
+
+          # v0.8.90: event-driven trigger. As soon as Apply has STARTED >=1
+          # update (applyUpdates.Succeeded > 0), queue Update: 4 (Monitor
+          # In-Flight Updates) via the ADO REST API so the in-flight view appears
+          # without waiting for the monitor's 6h cron safety-net. Fire-and-forget
+          # (returns immediately) - the OPTIONAL startup delay
+          # (MONITOR_TRIGGER_DELAY_MINUTES, set in the monitor pipeline) is applied
+          # INSIDE the monitor, never here, so this never blocks the
+          # single-instance Apply pipeline. Skipped when MONITOR_PIPELINE_ID is
+          # unset. The monitor runs with -SkipWhenIdle, so if the started runs
+          # finish before it lands it just reports IDLE after one cheap probe.
+          - task: PowerShell@2
+            displayName: 'Trigger in-flight monitor'
+            condition: gt(variables['applyUpdates.Succeeded'], 0)
+            env:
+              SYSTEM_ACCESSTOKEN: $(System.AccessToken)
+              MONITOR_PIPELINE_ID: $(MONITOR_PIPELINE_ID)
+              STARTED: $(applyUpdates.Succeeded)
+            inputs:
+              targetType: 'inline'
+              pwsh: true
+              script: |
+                if (-not $env:MONITOR_PIPELINE_ID) {
+                    Write-Host 'MONITOR_PIPELINE_ID not set - skipping event-driven monitor trigger (the monitor 6h cron still covers monitoring).'
+                    return
+                }
+                Write-Host "Apply started $($env:STARTED) update(s) - queueing Update: 4 (Monitor In-Flight Updates) pipeline id $($env:MONITOR_PIPELINE_ID)."
+                $uri = "$($env:SYSTEM_COLLECTIONURI)$($env:SYSTEM_TEAMPROJECT)/_apis/pipelines/$($env:MONITOR_PIPELINE_ID)/runs?api-version=7.1-preview.1"
+                $body = @{
+                    templateParameters = @{
+                        triggeredBy = 'apply-updates'
+                        applyRunId  = "$($env:BUILD_BUILDID)"
+                    }
+                } | ConvertTo-Json -Depth 5
+                $headers = @{ Authorization = "Bearer $($env:SYSTEM_ACCESSTOKEN)"; 'Content-Type' = 'application/json' }
+                try {
+                    $resp = Invoke-RestMethod -Method Post -Uri $uri -Headers $headers -Body $body
+                    Write-Host "Queued monitor run id $($resp.id): $($resp._links.web.href)"
+                }
+                catch {
+                    Write-Host "##vso[task.logissue type=warning]Failed to queue monitor pipeline: $($_.Exception.Message). The monitor 6h cron still covers monitoring."
+                }
 
           # compute a UTC timestamp variable so both update-logs and itsm-results share a unique per-run suffix.
           - pwsh: |

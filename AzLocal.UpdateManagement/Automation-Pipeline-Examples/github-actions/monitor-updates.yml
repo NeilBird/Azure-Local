@@ -30,18 +30,24 @@ on:
   # Content between BEGIN/END markers is preserved by
   # Update-AzLocalPipelineExample across module upgrades.
   #
-  # Default (v0.7.92+): runs 5x/day, every 2 hours across the typical overnight
-  # maintenance window (20:00, 22:00, 00:00, 02:00, 04:00 UTC). GitHub Actions
-  # cron is ALWAYS UTC - adjust the hour list below for your local maintenance
-  # window. Comment the `schedule:` block out entirely to disable.
+  # Default (v0.8.90+): runs every 6 hours, 24x7 (00:00, 06:00, 12:00, 18:00
+  # UTC) as a low-cost safety-net heartbeat. The snapshot step runs with
+  # -SkipWhenIdle, so a heartbeat that finds nothing in flight short-circuits
+  # after a single cheap Resource Graph probe (no per-cluster sweep) - which is
+  # what makes a frequent cron affordable. The PRIMARY, low-latency trigger is
+  # event-driven: Update: 3 (Apply Updates) fires this workflow as soon as it
+  # starts >=1 update (see the apply-updates pipeline). GitHub Actions cron is
+  # ALWAYS UTC - adjust below for your local maintenance window. Comment the
+  # `schedule:` block out entirely to disable.
   #
   # Other typical patterns:
   #   '*/30 * * * *'         every 30 min, 24x7 (busiest)
   #   '0 */2 * * *'          every 2 hours, 24x7
+  #   '0 0,2,4,20,22 * * *'  5x/day across an overnight maintenance window
   #   '*/30 * * * 0,6'       every 30 min, weekends only
   #   '*/15 22-6 * * 0,6'    every 15 min during the weekend maintenance window
   schedule:
-    - cron: '0 0,2,4,20,22 * * *'
+    - cron: '0 */6 * * *'
   # END-AZLOCAL-CUSTOMIZE:schedule-triggers
 
   workflow_dispatch:
@@ -76,6 +82,20 @@ on:
         description: 'CRITICAL tier for overall-elapsed (default 3 days). In-flight runs older than this get a :rotating_light: chip; older than 2x this get a :skull: chip. Strongest visual signal that human intervention is needed - a 19-day-stuck run will no longer be hidden behind a single "step errored" chip.'
         required: false
         default: '3'
+      # v0.8.90: performance fast path. When 'true' (default) the snapshot runs
+      # with -SkipWhenIdle - one cheap fleet-wide "anything in flight?" probe
+      # that short-circuits to an IDLE report when nothing is updating, skipping
+      # the per-cluster sweep. Set 'false' to force a full sweep even when idle.
+      # NOTE: scheduled (cron) runs always behave as 'true' regardless of this
+      # input, since workflow_dispatch inputs do not apply to schedule events.
+      skip_when_idle:
+        description: 'Skip the per-cluster sweep when no update runs are in flight (cheap probe only). Default true.'
+        required: false
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
       # ITSM (ServiceNow) auto-ticketing - opt-in (v0.8.87). When enabled the
       # connector reads the update-monitor.xml this pipeline already produces and,
       # for each cluster whose Status matches the trigger matrix (default raises
@@ -113,13 +133,28 @@ on:
         description: 'Pin AzLocal.UpdateManagement version (empty = latest from PSGallery). See Automation-Pipeline-Examples/README.md section 5 "Optional configuration".'
         required: false
         default: ''
+      # v0.8.90: machine-set markers for the event-driven trigger fired by
+      # Update: 3 (Apply Updates). Operators normally leave these BLANK.
+      # triggered_by=apply-updates is what enables the optional startup delay
+      # (repository Variable MONITOR_TRIGGER_DELAY_MINUTES) so the monitor lands
+      # AFTER updates have moved past their initial health-check phase. Cron and
+      # manual runs leave it blank and therefore never delay. apply_run_id
+      # back-links to the Apply run that fired this monitor (shown in the log).
+      triggered_by:
+        description: 'Marker set by the Apply pipeline for the event-driven trigger (leave blank for manual runs).'
+        required: false
+        default: ''
+      apply_run_id:
+        description: 'Run id of the Apply pipeline that triggered this monitor (back-link; leave blank for manual runs).'
+        required: false
+        default: ''
 
 env:
   # Module version this workflow YAML was generated against. The install step compares
   # this to the version actually installed and to the latest on PSGallery, and emits a
   # ::notice annotation if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.8.89'
+  GENERATED_AGAINST_MODULE_VERSION: '0.8.90'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): manual workflow_dispatch input >
   # repository variable 'REQUIRED_MODULE_VERSION' > empty (latest).
@@ -204,6 +239,35 @@ jobs:
               -GeneratedAgainstVersion $env:GENERATED_AGAINST_MODULE_VERSION `
               -PinnedVersion $env:REQUIRED_MODULE_VERSION
 
+      - name: Startup delay (event-driven trigger only)
+        # Only the Update: 3 (Apply Updates) -> Update: 4 (Monitor) event-driven
+        # trigger honours a startup delay, so the monitor lands AFTER updates
+        # have had a chance to move past the initial health-check phase. Cron and
+        # manual runs NEVER delay (this step is skipped unless
+        # triggered_by=apply-updates). The delay value is read from the optional
+        # repository Variable MONITOR_TRIGGER_DELAY_MINUTES (set via:
+        # gh variable set MONITOR_TRIGGER_DELAY_MINUTES --body 30). Unset/0 = no
+        # delay; otherwise clamped to 15..240 minutes (guards a typo from holding
+        # the runner for hours / blowing the 6h GitHub-hosted job cap). The sleep
+        # lives HERE (in the monitor), never in Apply, because only one Apply run
+        # executes at a time - delaying there would block the next Apply attempt.
+        if: ${{ github.event.inputs.triggered_by == 'apply-updates' }}
+        shell: pwsh
+        env:
+          MONITOR_TRIGGER_DELAY_MINUTES: ${{ vars.MONITOR_TRIGGER_DELAY_MINUTES || '0' }}
+          APPLY_RUN_ID: ${{ github.event.inputs.apply_run_id }}
+        run: |
+          [int]$delay = 0
+          if (-not [int]::TryParse([string]$env:MONITOR_TRIGGER_DELAY_MINUTES, [ref]$delay)) { $delay = 0 }
+          if ($delay -le 0) {
+              Write-Host 'MONITOR_TRIGGER_DELAY_MINUTES not set (or 0) - no startup delay.'
+              return
+          }
+          if ($delay -lt 15)  { Write-Host "Delay $delay below minimum - clamping to 15.";  $delay = 15 }
+          if ($delay -gt 240) { Write-Host "Delay $delay above maximum - clamping to 240."; $delay = 240 }
+          Write-Host "Event-driven trigger (apply_run_id=$($env:APPLY_RUN_ID)): sleeping $delay minute(s) before snapshot."
+          Start-Sleep -Seconds ($delay * 60)
+
       - name: Snapshot in-flight update runs
         # v0.8.5 thin-YAML: the inline run block (cluster scope query
         # via Get-AzLocalUpdateRuns -Latest -PassThru, severity
@@ -224,6 +288,7 @@ jobs:
           INPUT_STEP_THRESHOLD_HOURS: ${{ github.event.inputs.long_running_step_hours }}
           INPUT_RECENT_FAILURE_WINDOW_HOURS: ${{ github.event.inputs.recent_failure_window_hours }}
           INPUT_CRITICAL_ELAPSED_DAYS: ${{ github.event.inputs.critical_elapsed_days }}
+          INPUT_SKIP_WHEN_IDLE: ${{ github.event.inputs.skip_when_idle }}
           INSTALLED_MODULE_VERSION: ${{ steps.module-version.outputs.installed_module_version }}
         run: |
           $ErrorActionPreference = 'Stop'
@@ -239,6 +304,10 @@ jobs:
           if ([int]::TryParse([string]$env:INPUT_THRESHOLD_HOURS, [ref]$parsed) -and $parsed -gt 0)             { $params['LongRunningThresholdHours'] = $parsed }
           if ([int]::TryParse([string]$env:INPUT_RECENT_FAILURE_WINDOW_HOURS, [ref]$parsed) -and $parsed -ge 0) { $params['RecentFailureWindowHours']  = $parsed }
           if ([int]::TryParse([string]$env:INPUT_CRITICAL_ELAPSED_DAYS, [ref]$parsed) -and $parsed -gt 0)       { $params['CriticalElapsedDays']       = $parsed }
+          # v0.8.90: -SkipWhenIdle defaults ON (cheap idle probe). Scheduled runs
+          # have no workflow_dispatch inputs, so an empty value also means ON.
+          # Only an explicit 'false' disables it (manual full-sweep override).
+          if ($env:INPUT_SKIP_WHEN_IDLE -ne 'false') { $params['SkipWhenIdle'] = $true }
           Export-AzLocalUpdateRunMonitorReport @params
 
       - name: Compute Artifact Timestamp

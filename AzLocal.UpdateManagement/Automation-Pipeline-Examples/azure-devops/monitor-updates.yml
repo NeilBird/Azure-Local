@@ -26,17 +26,21 @@
 # module upgrades. Add or modify `schedules:` blocks below.
 trigger: none  # Manual or scheduled only
 
-# Default (v0.7.92+): runs 5x/day, every 2 hours across the typical overnight
-# maintenance window (20:00, 22:00, 00:00, 02:00, 04:00 UTC). Azure DevOps
-# cron is ALWAYS UTC - adjust the hour list below for your local maintenance
-# window. Comment the `schedules:` block out entirely to disable.
+# Default (v0.8.90+): runs every 6 hours, 24x7 (00:00, 06:00, 12:00, 18:00 UTC)
+# as a low-cost safety-net heartbeat. The snapshot step runs with -SkipWhenIdle,
+# so a heartbeat that finds nothing in flight short-circuits after a single cheap
+# Resource Graph probe (no per-cluster sweep) - which is what makes a frequent
+# cron affordable. The PRIMARY, low-latency trigger is event-driven: Update: 3
+# (Apply Updates) queues this pipeline as soon as it starts >=1 update. Azure
+# DevOps cron is ALWAYS UTC - adjust below for your local maintenance window.
+# Comment the `schedules:` block out entirely to disable.
 #
 # ADO does not support sub-hour cron in YAML `schedules:` - the lowest
 # cadence is hourly. For sub-hour cadence, use a pipeline trigger from an
 # external scheduler (e.g. an Azure Function) that queues this pipeline via REST.
 schedules:
-  - cron: '0 0,2,4,20,22 * * *'
-    displayName: 'In-flight update monitor (5x/day, 20-04 UTC every 2h)'
+  - cron: '0 */6 * * *'
+    displayName: 'In-flight update monitor (every 6h, 24x7)'
     branches:
       include:
         - main
@@ -78,8 +82,33 @@ parameters:
     type: string
     default: '3'
 
+  # v0.8.90: performance fast path. When true (default) the snapshot runs with
+  # -SkipWhenIdle - one cheap fleet-wide "anything in flight?" probe that short-
+  # circuits to an IDLE report when nothing is updating, skipping the per-cluster
+  # sweep. Set false to force a full sweep even when idle.
+  - name: skipWhenIdle
+    displayName: 'Skip the per-cluster sweep when no update runs are in flight (cheap probe only).'
+    type: boolean
+    default: true
+
   - name: moduleVersion
     displayName: 'Pin AzLocal.UpdateManagement version (empty = latest from PSGallery). See Automation-Pipeline-Examples/README.md section 5 "Optional configuration".'
+    type: string
+    default: ''
+
+  # v0.8.90: machine-set markers for the event-driven trigger queued by
+  # Update: 3 (Apply Updates). Operators normally leave these BLANK.
+  # triggeredBy=apply-updates enables the optional startup delay
+  # ($(MONITOR_TRIGGER_DELAY_MINUTES)) so the monitor lands AFTER updates move
+  # past their initial health-check phase. Cron and manual runs leave it blank
+  # and never delay. applyRunId back-links to the Apply run (shown in the log).
+  - name: triggeredBy
+    displayName: 'Marker set by the Apply pipeline for the event-driven trigger (leave blank for manual runs).'
+    type: string
+    default: ''
+
+  - name: applyRunId
+    displayName: 'Run id of the Apply pipeline that triggered this monitor (back-link; leave blank for manual runs).'
     type: string
     default: ''
 
@@ -112,9 +141,15 @@ parameters:
     default: false
 
 variables:
-  GENERATED_AGAINST_MODULE_VERSION: '0.8.89'
+  GENERATED_AGAINST_MODULE_VERSION: '0.8.90'
   REQUIRED_MODULE_VERSION: '${{ parameters.moduleVersion }}'
   reportsPath: '$(Build.ArtifactStagingDirectory)/reports'
+  # v0.8.90: optional startup delay (minutes) honoured ONLY when this pipeline is
+  # queued by Update: 3 (Apply Updates) with triggeredBy=apply-updates. Unset/0 =
+  # no delay; otherwise clamped to 15..240. Override per-org via a pipeline
+  # variable or a variable group (ADO has no repository-Variable equivalent to
+  # GitHub's vars.*). Cron + manual runs never delay regardless of this value.
+  MONITOR_TRIGGER_DELAY_MINUTES: '0'
   # ITSM connector. When raiseItsmTicket=true the Raise ITSM task below
   # references $(ITSM_SN_INSTANCE_URL), $(ITSM_SN_CLIENT_ID),
   # $(ITSM_SN_CLIENT_SECRET). The simplest binding is an ADO variable group
@@ -123,7 +158,7 @@ variables:
   # group reference convert this entire 'variables:' block to list form:
   #   variables:
   #     - name: GENERATED_AGAINST_MODULE_VERSION
-  #       value: '0.8.89'
+  #       value: '0.8.90'
   #     - name: REQUIRED_MODULE_VERSION
   #       value: '${{ parameters.moduleVersion }}'
   #     - name: reportsPath
@@ -171,6 +206,37 @@ stages:
               -GeneratedAgainstVersion $env:GENERATED_AGAINST_MODULE_VERSION `
               -PinnedVersion $env:REQUIRED_MODULE_VERSION
 
+    - task: PowerShell@2
+      displayName: 'Startup delay (event-driven trigger only)'
+      # Only the Update: 3 (Apply Updates) -> Update: 4 (Monitor) event-driven
+      # trigger honours a startup delay, so the monitor lands AFTER updates have
+      # had a chance to move past the initial health-check phase. Cron and manual
+      # runs NEVER delay (this step is skipped unless triggeredBy=apply-updates).
+      # The delay value is read from the pipeline variable
+      # MONITOR_TRIGGER_DELAY_MINUTES (override via a variable group or queue-time
+      # variable). Unset/0 = no delay; otherwise clamped to 15..240 minutes
+      # (guards a typo from holding the agent for hours). The sleep lives HERE (in
+      # the monitor), never in Apply, because only one Apply run executes at a
+      # time - delaying there would block the next Apply attempt.
+      condition: eq('${{ parameters.triggeredBy }}', 'apply-updates')
+      env:
+        MONITOR_TRIGGER_DELAY_MINUTES: $(MONITOR_TRIGGER_DELAY_MINUTES)
+        APPLY_RUN_ID: '${{ parameters.applyRunId }}'
+      inputs:
+        targetType: 'inline'
+        pwsh: true
+        script: |
+          [int]$delay = 0
+          if (-not [int]::TryParse([string]$env:MONITOR_TRIGGER_DELAY_MINUTES, [ref]$delay)) { $delay = 0 }
+          if ($delay -le 0) {
+              Write-Host 'MONITOR_TRIGGER_DELAY_MINUTES not set (or 0) - no startup delay.'
+              return
+          }
+          if ($delay -lt 15)  { Write-Host "Delay $delay below minimum - clamping to 15.";  $delay = 15 }
+          if ($delay -gt 240) { Write-Host "Delay $delay above maximum - clamping to 240."; $delay = 240 }
+          Write-Host "Event-driven trigger (apply_run_id=$($env:APPLY_RUN_ID)): sleeping $delay minute(s) before snapshot."
+          Start-Sleep -Seconds ($delay * 60)
+
     - task: AzureCLI@2
       name: snapshot
       displayName: 'Snapshot in-flight update runs'
@@ -203,6 +269,9 @@ stages:
           if ([int]::TryParse("${{ parameters.longRunningThresholdHours }}", [ref]$parsed) -and $parsed -gt 0) { $params['LongRunningThresholdHours'] = $parsed }
           if ([int]::TryParse("${{ parameters.recentFailureWindowHours }}",  [ref]$parsed) -and $parsed -ge 0) { $params['RecentFailureWindowHours']  = $parsed }
           if ([int]::TryParse("${{ parameters.criticalElapsedDays }}",       [ref]$parsed) -and $parsed -gt 0) { $params['CriticalElapsedDays']       = $parsed }
+          # v0.8.90: -SkipWhenIdle (cheap idle probe) - the boolean parameter
+          # expands to $True / $False at compile time.
+          if ($${{ parameters.skipWhenIdle }}) { $params['SkipWhenIdle'] = $true }
           Export-AzLocalUpdateRunMonitorReport @params
 
     # compute a UTC timestamp variable so every downloadable artifact name is unique per run.
