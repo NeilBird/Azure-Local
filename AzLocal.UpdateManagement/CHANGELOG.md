@@ -31,6 +31,24 @@ when.
     latest end) plus `-MonitorInFlightHours`, falling back to all-hours (`*`) when a run can
     cross midnight (an overnight window, `-MonitorTrailingDays > 0`, or the buffer pushing
     coverage past 24h) so no in-flight time is left unpolled.
+- **`checkUpdates` RBAC action: catalog-checked, documented, and guarded (still omitted from the role).**
+  A provider-operations-catalog check (`az provider operation show --namespace Microsoft.AzureStackHCI`,
+  2026-06-18) confirms the "Check for updates" refresh action
+  `Microsoft.AzureStackHCI/clusters/updateSummaries/checkUpdates/action` (confirmed verbatim from a live
+  `403 AuthorizationFailed` body) is **enforced by Azure but not yet published in the operations catalog** -
+  so `az role definition create` / `update` would reject it. The least-privilege custom role therefore
+  continues to **deliberately omit** it (the four registered update actions - `updateSummaries/read`,
+  `updates/read`, `updates/apply/action`, `updates/updateRuns/read` - are the complete set the catalog
+  exposes under those paths and are all already granted). Documented the cmdlet -> pipeline -> action
+  mapping in the `docs/rbac.md` and Automation README permission tables: the action is exercised by
+  `Sync-AzLocalClusterUpdateSummary` and by the stale-assessment auto-scan in
+  `Export-AzLocalClusterUpdateReadinessReport` (the **Update: 1 - Assess Update Readiness** pipeline,
+  `assess-update-readiness.yml`); the built-in **Azure Stack HCI Administrator** / **Contributor** roles
+  authorize it via their `Microsoft.AzureStackHCI/clusters/*` wildcard, or use `-SkipStaleAssessmentScan`.
+  The docs now state the action **will be added to the custom role once it GAs into the catalog**, and a new
+  Pester tripwire (`v0.8.89 RBAC checkUpdates action`) asserts the four registered actions are present and
+  that `checkUpdates` is absent - it fails the moment the action is added, forcing the role JSON and docs to
+  be updated together.
 
 ### Added
 

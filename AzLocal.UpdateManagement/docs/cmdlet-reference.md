@@ -351,7 +351,7 @@ Write-Host "Update State: $($summary.properties.state)"
 
 The action is asynchronous on the ARM side (202 Accepted). By default the cmdlet is fire-and-forget (returns a `Triggered` result per cluster immediately, so an offline or busy cluster cannot stall a fleet run). Pass `-Wait` to poll each cluster's `updateSummaries/default` until `lastChecked` advances (or `-TimeoutSeconds` elapses) and attach the refreshed summary to the result object.
 
-> **Preview API / RBAC note:** `checkUpdates` is exposed only on the `2026-03-01-preview` API surface and is **not yet in any custom role** (see [rbac.md](rbac.md)). Under the least-privilege `Azure Stack HCI Update Operator (custom)` role the call returns a non-fatal `403 AuthorizationFailed`; only built-in roles granting the broad `Microsoft.AzureStackHCI/*` set (e.g. **Azure Stack HCI Administrator**) or **Contributor** authorize it today.
+> **Preview API / RBAC note:** `checkUpdates` is exposed only on the `2026-03-01-preview` API surface. The RBAC action Azure enforces for it - `Microsoft.AzureStackHCI/clusters/updateSummaries/checkUpdates/action` - is **not yet published in the `Microsoft.AzureStackHCI` provider operations catalog** (checked 2026-06-18 with `az provider operation show`), so it **cannot be added to a custom role today** and the least-privilege `Azure Stack HCI Update Operator (custom)` role deliberately omits it (see [rbac.md](rbac.md)). Under that role the call returns a non-fatal `403 AuthorizationFailed`; built-in roles granting the broad `Microsoft.AzureStackHCI/clusters/*` wildcard (e.g. **Azure Stack HCI Administrator**) or **Contributor** authorize it. **The action will be added to the custom role once it GAs into the operations catalog.**
 
 Key parameters:
 

@@ -946,6 +946,80 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $offenders.Count | Should -Be 0 -Because "currently-shipping docs (Automation-Pipeline-Examples/**/*.md + docs/*.md except release-history.md) must reference the renamed role as 'Azure Stack HCI Update Operator (custom)' - except in migration-tip lines that contain 'pre-v0.8.4'. Findings:$([Environment]::NewLine)$detail"
         }
     }
+
+    Context 'v0.8.89 RBAC checkUpdates action - deliberate omission pending catalog registration' {
+        # The "Check for updates" refresh - Sync-AzLocalClusterUpdateSummary and the
+        # Export-AzLocalClusterUpdateReadinessReport stale-assessment auto-scan, which
+        # the Update: 1 - Assess Update Readiness pipeline (assess-update-readiness.yml)
+        # exercises - POSTs the ARM action
+        # Microsoft.AzureStackHCI/clusters/updateSummaries/default/checkUpdates. Azure
+        # ENFORCES the RBAC action
+        # 'Microsoft.AzureStackHCI/clusters/updateSummaries/checkUpdates/action'
+        # (confirmed verbatim from a live 403 AuthorizationFailed body) but, as of
+        # 2026-06-18, that action is NOT YET published in the Microsoft.AzureStackHCI
+        # provider operations catalog (verified with az provider operation show).
+        # Because az role definition create/update validates Actions[] against the
+        # catalog and rejects unregistered actions, the bundled least-privilege role
+        # deliberately OMITS checkUpdates - adding it today would make the role fail to
+        # create. The built-in Azure Stack HCI Administrator / Contributor roles still
+        # authorize the refresh because their Microsoft.AzureStackHCI/clusters/* wildcard
+        # matches the enforced-but-unregistered action.
+        #
+        # WHEN checkUpdates GAs into the catalog, re-check with:
+        #   az provider operation show --namespace Microsoft.AzureStackHCI
+        #     --query "resourceTypes[].operations[].name" -o tsv | Select-String checkUpdates
+        # then add the single line
+        #   "Microsoft.AzureStackHCI/clusters/updateSummaries/checkUpdates/action"
+        # to every Actions[] block (bundled JSON + docs/rbac.md x3 + Automation README)
+        # and FLIP the two tripwire assertions below (Not -Contain -> Contain). This
+        # Context is the tripwire that forces the role JSON and the RBAC docs to be
+        # updated together.
+        BeforeAll {
+            $script:checkUpdatesAction = 'Microsoft.AzureStackHCI/clusters/updateSummaries/checkUpdates/action'
+            $script:roleJsonPath = (Resolve-Path -Path (Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples\azlocal-update-management-custom-role.json')).Path
+            $script:roleActions = (Get-Content -LiteralPath $script:roleJsonPath -Raw | ConvertFrom-Json).Actions
+        }
+
+        It 'Bundled role grants all four catalog-registered update actions (the documented minimum)' {
+            $required = @(
+                'Microsoft.AzureStackHCI/clusters/updateSummaries/read',
+                'Microsoft.AzureStackHCI/clusters/updates/read',
+                'Microsoft.AzureStackHCI/clusters/updates/apply/action',
+                'Microsoft.AzureStackHCI/clusters/updates/updateRuns/read'
+            )
+            foreach ($action in $required) {
+                $script:roleActions | Should -Contain $action -Because "the least-privilege role must grant the registered update action $action"
+            }
+        }
+
+        It 'Bundled role deliberately OMITS the preview checkUpdates action (not yet in the operations catalog)' {
+            # TRIPWIRE: when checkUpdates GAs and is added to the role JSON, this fails.
+            # Flip to `Should -Contain` and update docs/rbac.md, Automation README,
+            # top-level README, and docs/cmdlet-reference.md to say it is now included.
+            $script:roleActions | Should -Not -Contain $script:checkUpdatesAction -Because 'checkUpdates is enforced by Azure but not yet published in the Microsoft.AzureStackHCI operations catalog (checked 2026-06-18), so az role definition create/update would reject it; add it - and flip this test - only once az provider operation show lists it'
+        }
+
+        It 'No bundled-role-adjacent JSON block (docs/rbac.md, Automation README) lists checkUpdates as an Actions[] element' {
+            # The action string legitimately appears in PROSE notes (backtick-wrapped);
+            # this check targets only the JSON array-element form ("...action") so a
+            # stray addition to any embedded role JSON is caught without false matches
+            # on the explanatory notes.
+            $repoRoot = (Resolve-Path -Path (Join-Path -Path $PSScriptRoot -ChildPath '..')).Path
+            $docFiles = @(
+                'docs\rbac.md',
+                'Automation-Pipeline-Examples\README.md'
+            )
+            $jsonElementPattern = '(?m)^\s*"Microsoft\.AzureStackHCI/clusters/updateSummaries/checkUpdates/action"'
+            $offenders = New-Object System.Collections.Generic.List[string]
+            foreach ($rel in $docFiles) {
+                $content = Get-Content -LiteralPath (Join-Path -Path $repoRoot -ChildPath $rel) -Raw
+                if ($content -match $jsonElementPattern) {
+                    $offenders.Add($rel)
+                }
+            }
+            $offenders.ToArray() | Should -BeNullOrEmpty -Because 'checkUpdates must not appear as a role JSON Actions[] element while it is absent from the bundled role and the operations catalog - keep the embedded role blocks consistent with azlocal-update-management-custom-role.json'
+        }
+    }
 }
 
 Describe 'Function: Connect-AzLocalServicePrincipal' {
