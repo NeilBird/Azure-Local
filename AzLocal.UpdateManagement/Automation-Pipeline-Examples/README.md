@@ -1569,6 +1569,8 @@ jobs:
 
 *(New in v0.7.65. Pre-wired pipeline samples: [`github-actions/apply-updates-schedule-audit.yml`](./github-actions/apply-updates-schedule-audit.yml), [`azure-devops/apply-updates-schedule-audit.yml`](./azure-devops/apply-updates-schedule-audit.yml).)*
 
+> **Scope.** This is a **focused sub-runbook** for one task: keeping your cron schedule and `UpdateStartWindow` tags in sync. It is **not** the whole-estate onboarding sequence - for "nothing wired -> staged rollout working" follow the canonical [section 6 end-to-end runbook](#6-end-to-end-runbook-bring-an-estate-online) first, then use this loop on an ongoing basis.
+
 This runbook walks through the full loop of **discover -> fix -> verify** for `UpdateStartWindow` / cron drift. Use it the first time you tag a new ring, and rely on the weekly scheduled audit to catch drift afterwards.
 
 #### Step 1 - One-time: deploy the audit pipeline
