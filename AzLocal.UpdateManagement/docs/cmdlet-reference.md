@@ -49,6 +49,7 @@ This table is the canonical index of every public cmdlet the module ships. It is
 | Cmdlet | Type | Target |
 |---|---|---|
 | [`Start-AzLocalClusterUpdate`](#start-azlocalclusterupdate) | **WRITE** | Azure REST (ARM `PUT .../updateRuns/{id}`) |
+| [`Sync-AzLocalClusterUpdateSummary`](#sync-azlocalclusterupdatesummary) | **WRITE** | Azure REST (ARM `POST .../updateSummaries/default/checkUpdates`) |
 | [`Stop-AzLocalFleetUpdate`](#stop-azlocalfleetupdate) | **WRITE** | Azure REST (ARM `POST .../updateRuns/{id}/cancel`) |
 | [`Resume-AzLocalFleetUpdate`](#resume-azlocalfleetupdate) | **WRITE** | Azure REST (ARM `POST .../updateRuns/{id}/retry`) |
 | [`Invoke-AzLocalFleetOperation`](#invoke-azlocalfleetoperation) | **WRITE** | Azure REST (generic per-cluster mutation) |
@@ -342,6 +343,34 @@ Gets the update summary for a cluster.
 ```powershell
 $summary = Get-AzLocalUpdateSummary -ClusterResourceId $cluster.id
 Write-Host "Update State: $($summary.properties.state)"
+```
+
+### `Sync-AzLocalClusterUpdateSummary`
+
+**WRITE.** Triggers a fresh "Check for updates" scan on one or more clusters by POSTing to the cluster's `updateSummaries/default/checkUpdates` ARM action - the programmatic equivalent of the Azure portal **Check for updates** button. Use it to remediate a **stale assessment**: a cluster that reports "Up to date" while a newer solution version is actually available, because its cached assessment has not refreshed. Clusters are selected by name, by Resource ID, or by `UpdateRing` tag (mirroring `Start-AzLocalClusterUpdate`).
+
+The action is asynchronous on the ARM side (202 Accepted). By default the cmdlet is fire-and-forget (returns a `Triggered` result per cluster immediately, so an offline or busy cluster cannot stall a fleet run). Pass `-Wait` to poll each cluster's `updateSummaries/default` until `lastChecked` advances (or `-TimeoutSeconds` elapses) and attach the refreshed summary to the result object.
+
+> **Preview API / RBAC note:** `checkUpdates` is exposed only on the `2026-03-01-preview` API surface and is **not yet in any custom role** (see [rbac.md](rbac.md)). Under the least-privilege `Azure Stack HCI Update Operator (custom)` role the call returns a non-fatal `403 AuthorizationFailed`; only built-in roles granting the broad `Microsoft.AzureStackHCI/*` set (e.g. **Azure Stack HCI Administrator**) or **Contributor** authorize it today.
+
+Key parameters:
+
+- `-ClusterNames` / `-ClusterResourceIds` / `-ScopeByUpdateRingTag` + `-UpdateRingValue` - cluster selection (one set, mutually exclusive).
+- `-ResourceGroupName`, `-SubscriptionId` - scope (defaults to the current `az` CLI subscription).
+- `-ApiVersion` - REST API version for both the POST and the poll (default `2026-03-01-preview`).
+- `-Wait`, `-TimeoutSeconds` (default 300), `-PollIntervalSeconds` (default 15) - synchronous completion polling.
+- `-Force` - skip the confirmation prompt (state-changing action).
+- `-PassThru` - emit a result object per cluster.
+
+```powershell
+# Fire-and-forget: trigger a fresh scan on one cluster
+Sync-AzLocalClusterUpdateSummary -ClusterNames "Sydney" -ResourceGroupName "Prod-RG" -Force
+
+# Trigger and wait for the refreshed summary
+Sync-AzLocalClusterUpdateSummary -ClusterNames "Sydney" -Wait -PassThru
+
+# Refresh every cluster tagged UpdateRing=Production
+Sync-AzLocalClusterUpdateSummary -ScopeByUpdateRingTag -UpdateRingValue "Production" -Force
 ```
 
 ### `Get-AzLocalAvailableUpdates`
