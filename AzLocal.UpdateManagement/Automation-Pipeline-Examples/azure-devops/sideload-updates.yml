@@ -79,7 +79,7 @@ variables:
   # the version actually installed and to the latest on PSGallery, and emits a warning
   # log if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.8.93'
+  GENERATED_AGAINST_MODULE_VERSION: '0.8.94'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): queue-time parameter > pipeline variable
   # 'REQUIRED_MODULE_VERSION' overridden at queue time > empty (latest).
@@ -132,8 +132,10 @@ stages:
   jobs:
   - job: PreflightCheck
     displayName: 'Validate Sideload Opt-in + Required Configuration'
+    # BEGIN-AZLOCAL-CUSTOMIZE:runner-target-PreflightCheck
     pool:
       vmImage: windows-latest
+    # END-AZLOCAL-CUSTOMIZE:runner-target-PreflightCheck
     steps:
     - task: PowerShell@2
       displayName: 'Run Step.6 preflight'
@@ -263,10 +265,12 @@ stages:
     # Requires an on-prem self-hosted AGENT (Azure DevOps terminology) on the same
     # network as the clusters, in a POOL whose agents advertise the `azlocal-sideload`
     # capability. Replace '<your-self-hosted-pool>' with your pool name.
+    # BEGIN-AZLOCAL-CUSTOMIZE:sideload-runner-AdvanceSideload
     pool:
       name: '<your-self-hosted-pool>'
       demands:
         - azlocal-sideload
+    # END-AZLOCAL-CUSTOMIZE:sideload-runner-AdvanceSideload
 
     steps:
     - checkout: self
@@ -312,7 +316,9 @@ stages:
         SIDELOAD_REMOTING_FQDN_SUFFIX: $(SIDELOAD_REMOTING_FQDN_SUFFIX)
         reportsPath: $(reportsPath)
       inputs:
+        # BEGIN-AZLOCAL-CUSTOMIZE:service-connection-AdvanceSideload
         azureSubscription: 'AzureLocal-ServiceConnection'  # Update with your service connection name
+        # END-AZLOCAL-CUSTOMIZE:service-connection-AdvanceSideload
         scriptType: 'pscore'
         scriptLocation: 'inlineScript'
         # addSpnToEnvironment exposes $env:servicePrincipalId / $env:idToken /

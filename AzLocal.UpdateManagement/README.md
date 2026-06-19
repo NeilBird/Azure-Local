@@ -2,7 +2,7 @@
 
 > ⚠️ **Disclaimer**: This module is **NOT** a Microsoft supported service offering or product. It is provided as example code only, with no warranty or official support. Refer to the [MIT license](https://github.com/NeilBird/Azure-Local/blob/main/LICENSE) for further information.
 
-**Latest Version:** v0.8.93 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.8.93)
+**Latest Version:** v0.8.94 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.8.94)
 
 This folder contains the 'AzLocal.UpdateManagement' PowerShell module for managing updates on Azure Local (formerly Azure Stack HCI) clusters using the Azure Local REST API. The module supports both interactive use and CI/CD automation via Service Principal or Managed Identity authentication.
 
@@ -14,7 +14,7 @@ Azure Local REST API specification (includes update management endpoints): https
 **This README (overview + most-recent release notes):**
 
 - [Where to Start](#where-to-start)
-- [What's New in v0.8.93](#whats-new-in-v0893)
+- [What's New in v0.8.94](#whats-new-in-v0894)
 - [Files](#files)
 - [Prerequisites](#prerequisites)
 - [RBAC Requirements](#rbac-requirements) (summary; full reference in [docs/rbac.md](docs/rbac.md))
@@ -77,26 +77,28 @@ If you are new to this module, work through these in order from a regular PowerS
 
 > Most CI/CD pipelines in [Automation-Pipeline-Examples/](Automation-Pipeline-Examples/) are direct implementations of one of these workflows. Start there if you want a copy-pasteable end-to-end pipeline.
 
-## What's New in v0.8.93
+## What's New in v0.8.94
 
-**Fixes a Bad Request in the "Update: 1 - Assess Update Readiness" pipeline.** `Sync-AzLocalClusterUpdateSummary` (and the `Export-AzLocalClusterUpdateReadinessReport` stale-assessment auto-scan that calls it) POSTed the `Microsoft.AzureStackHCI/clusters/updateSummaries/default/checkUpdates` ARM action with no request body. The `2026-03-01-preview` API spec now requires a body to be present, so the bodyless POST was rejected with `HttpRequestPayloadAPISpecValidationFailed` / `MissingRequiredParameter "Value is required but was not provided. Paths in payload: '.body'"`. Bug-fix only - no API, parameter, or export-count change (still 61).
-
-### Fixed
-
-- **`checkUpdates` POST now sends an empty JSON body `{}`.** No properties are mandatory for a plain re-scan, so an empty object satisfies the spec's body requirement. Validated end-to-end against a live cluster (a bodyless POST returns `400`; the `{}` body returns `202 Accepted` / triggered).
+**Expands `BEGIN/END-AZLOCAL-CUSTOMIZE` marker coverage across every bundled CI/CD pipeline YAML (GitHub Actions and Azure DevOps)** so operator-owned infrastructure values survive `Update-AzLocalPipelineExample` - including with `-Force`, which otherwise reverts edits made outside marker regions. Template + docs + tests only - no public API, parameter, or export-count change (still 61).
 
 ### Changed
 
-- **Refreshed the now-stale RBAC comment / authorization warning** in `Sync-AzLocalClusterUpdateSummary` to reflect that the v0.8.92 `updateSummaries/*` wildcard already authorizes `checkUpdates`. A `403` from the action therefore means the `Azure Stack HCI Update Operator (custom)` role (or an equivalent built-in) is simply not assigned at the scope - not that the action is ungranted.
+- **Three new marker region families wrap operator-owned infrastructure values.** The Azure DevOps WIF service connection name on each `AzureCLI@2`/`AzurePowerShell@5` task is now wrapped in `# BEGIN/END-AZLOCAL-CUSTOMIZE:service-connection-<job>`; the hosted agent pool / GitHub `runs-on:` label in `# ...:runner-target-<job>`; and the sideload self-hosted pool/runner in `# ...:sideload-runner-<job>`. 45 marker pairs were added across 20 bundled YAML files, with region names derived from the nearest stage/job and unique within each file.
+- **Operator edits inside these regions now survive `Update-AzLocalPipelineExample`.** The marker-aware merge engine and parser were already generic, so no cmdlet code changed - this release is purely the templates, documentation, and test coverage.
+- **Per-run input defaults are deliberately NOT marker-wrapped** (e.g. `updateRing`, config paths, throttle). They are already overridable per run and via variable groups, and wrapping them would freeze the module author's ability to improve those defaults on each release.
+
+### Added
+
+- Pester round-trip coverage asserting a simulated operator edit inside each new region survives both a default and a `-Force` merge, plus a structural guard that every bundled YAML has balanced, uniquely-named markers.
 
 ### Notes
 
 - **No public-API change** (export count unchanged at 61).
-- **`GENERATED_AGAINST_MODULE_VERSION`** bumped from `0.8.92` to `0.8.93` across bundled pipeline templates.
+- **`GENERATED_AGAINST_MODULE_VERSION`** bumped from `0.8.93` to `0.8.94` across bundled pipeline templates.
 
 > Previous release notes have moved into the [Release History](#release-history) appendix at the bottom of this document.
 
-See [CHANGELOG.md](CHANGELOG.md) for full release details. See [`What's New in v0.8.92`](#whats-new-in-v0892) in the Release History for the previous release.
+See [CHANGELOG.md](CHANGELOG.md) for full release details. See [`What's New in v0.8.93`](#whats-new-in-v0893) in the Release History for the previous release.
 
 ## Files
 
@@ -219,7 +221,7 @@ Copy-AzLocalPipelineExample -Destination C:\repos\my-fleet -Platform GitHub
 
 The function prints a short "next steps" summary pointing at the copied README and the platform-specific YAML folder. See [`Automation-Pipeline-Examples/README.md`](Automation-Pipeline-Examples/README.md) for the full step-by-step setup guide.
 
-> 🔄 **Refreshing pipelines after a module upgrade?** Use `Update-AzLocalPipelineExample` instead of `Copy-AzLocalPipelineExample`. It is a marker-aware merge that refreshes everything **outside** the `# BEGIN-AZLOCAL-CUSTOMIZE:<region>` / `# END-AZLOCAL-CUSTOMIZE:<region>` blocks in each YAML and **preserves** everything inside them - so your custom cron schedules (`schedule-triggers`) and ITSM secret bindings (`itsm-secrets` in Step.7) survive the upgrade.
+> 🔄 **Refreshing pipelines after a module upgrade?** Use `Update-AzLocalPipelineExample` instead of `Copy-AzLocalPipelineExample`. It is a marker-aware merge that refreshes everything **outside** the `# BEGIN-AZLOCAL-CUSTOMIZE:<region>` / `# END-AZLOCAL-CUSTOMIZE:<region>` blocks in each YAML and **preserves** everything inside them - so your custom cron schedules (`schedule-triggers`), ITSM secret bindings (`itsm-secrets`), Azure DevOps service connection name (`service-connection-*`), agent pools / runner labels (`runner-target-*`) and sideload self-hosted pools (`sideload-runner-*`) all survive the upgrade.
 >
 > ```powershell
 > # Preview what would change
@@ -578,7 +580,11 @@ This code is provided as-is for educational and reference purposes.
 
 The full What's-New history (v0.7.81 and earlier) has moved to [docs/release-history.md](docs/release-history.md).
 
-The most recent release notes for **v0.8.93** stay above under [`What's New in v0.8.93`](#whats-new-in-v0893).
+The most recent release notes for **v0.8.94** stay above under [`What's New in v0.8.94`](#whats-new-in-v0894).
+
+### What's New in v0.8.93
+
+**Fixes a Bad Request in the "Update: 1 - Assess Update Readiness" pipeline.** `Sync-AzLocalClusterUpdateSummary` (and the `Export-AzLocalClusterUpdateReadinessReport` stale-assessment auto-scan that calls it) POSTed the `checkUpdates` ARM action with no request body; the `2026-03-01-preview` API spec now requires one. The cmdlet now sends an empty JSON object `{}` (no properties are mandatory for a plain re-scan), validated end-to-end against a live cluster, and refreshes the now-stale RBAC comment to reflect that the v0.8.92 `updateSummaries/*` wildcard already authorizes `checkUpdates`. Bug-fix only - no API, parameter, or export-count change (still 61). `GENERATED_AGAINST_MODULE_VERSION` bumped from `0.8.92` to `0.8.93`. See [CHANGELOG.md](CHANGELOG.md#0893---2026-06-18) for the full v0.8.93 entry.
 
 ### What's New in v0.8.92
 

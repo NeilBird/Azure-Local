@@ -73,7 +73,7 @@ env:
   # this to the version actually installed and to the latest on PSGallery, and emits a
   # ::notice annotation if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample. See Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.8.93'
+  GENERATED_AGAINST_MODULE_VERSION: '0.8.94'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): manual workflow_dispatch input >
   # repository variable 'REQUIRED_MODULE_VERSION' > empty (latest).
@@ -96,7 +96,9 @@ permissions:
 jobs:
   validate:
     name: 'Validate OIDC + RBAC + Subscription Scope'
+    # BEGIN-AZLOCAL-CUSTOMIZE:runner-target-validate
     runs-on: windows-latest
+    # END-AZLOCAL-CUSTOMIZE:runner-target-validate
     environment: ${{ inputs.environment }}
 
     outputs:
@@ -180,7 +182,9 @@ jobs:
 
   inventory-clusters:
     name: 'Inventory Azure Local Clusters'
+    # BEGIN-AZLOCAL-CUSTOMIZE:runner-target-inventory-clusters
     runs-on: windows-latest
+    # END-AZLOCAL-CUSTOMIZE:runner-target-inventory-clusters
     needs: validate
     if: success()
     

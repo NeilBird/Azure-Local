@@ -141,7 +141,7 @@ parameters:
     default: false
 
 variables:
-  GENERATED_AGAINST_MODULE_VERSION: '0.8.93'
+  GENERATED_AGAINST_MODULE_VERSION: '0.8.94'
   REQUIRED_MODULE_VERSION: '${{ parameters.moduleVersion }}'
   reportsPath: '$(Build.ArtifactStagingDirectory)/reports'
   # v0.8.90: optional startup delay (minutes) honoured ONLY when this pipeline is
@@ -158,7 +158,7 @@ variables:
   # group reference convert this entire 'variables:' block to list form:
   #   variables:
   #     - name: GENERATED_AGAINST_MODULE_VERSION
-  #       value: '0.8.93'
+  #       value: '0.8.94'
   #     - name: REQUIRED_MODULE_VERSION
   #       value: '${{ parameters.moduleVersion }}'
   #     - name: reportsPath
@@ -173,8 +173,10 @@ stages:
   jobs:
   - job: Monitor
     displayName: 'Snapshot in-flight update runs'
+    # BEGIN-AZLOCAL-CUSTOMIZE:runner-target-Monitor
     pool:
       vmImage: 'windows-latest'
+    # END-AZLOCAL-CUSTOMIZE:runner-target-Monitor
 
     steps:
     - checkout: self
@@ -252,7 +254,9 @@ stages:
       # step_errored, recent_failures, unresolved_failures,
       # attempts_without_run).
       inputs:
+        # BEGIN-AZLOCAL-CUSTOMIZE:service-connection-Monitor
         azureSubscription: 'AzureLocal-ServiceConnection'  # Update with your service connection name
+        # END-AZLOCAL-CUSTOMIZE:service-connection-Monitor
         scriptType: 'pscore'
         scriptLocation: 'inlineScript'
         inlineScript: |
@@ -342,7 +346,9 @@ stages:
         ITSM_SN_CLIENT_SECRET: $(ITSM_SN_CLIENT_SECRET)
         # END-AZLOCAL-CUSTOMIZE:itsm-secrets
       inputs:
+        # BEGIN-AZLOCAL-CUSTOMIZE:service-connection-Monitor-2
         azureSubscription: 'AzureLocal-ServiceConnection'  # Update with your service connection name
+        # END-AZLOCAL-CUSTOMIZE:service-connection-Monitor-2
         scriptType: 'pscore'
         scriptLocation: 'inlineScript'
         inlineScript: |

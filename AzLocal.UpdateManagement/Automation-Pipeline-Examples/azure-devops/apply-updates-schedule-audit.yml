@@ -113,7 +113,7 @@ parameters:
     default: false
 
 variables:
-  GENERATED_AGAINST_MODULE_VERSION: '0.8.93'
+  GENERATED_AGAINST_MODULE_VERSION: '0.8.94'
   REQUIRED_MODULE_VERSION: '${{ parameters.moduleVersion }}'
   reportsPath: '$(Build.ArtifactStagingDirectory)/reports'
   # v0.8.7 sideload advisor defaults. Override at the pipeline / variable-group
@@ -128,8 +128,10 @@ stages:
   jobs:
   - job: Audit
     displayName: 'Run Schedule Coverage Advisor'
+    # BEGIN-AZLOCAL-CUSTOMIZE:runner-target-Audit
     pool:
       vmImage: 'windows-latest'
+    # END-AZLOCAL-CUSTOMIZE:runner-target-Audit
 
     steps:
     - checkout: self
@@ -197,7 +199,9 @@ stages:
         SIDELOAD_LEAD_DAYS: $(SIDELOAD_LEAD_DAYS)
       inputs:
         # Replace with your service connection name
+        # BEGIN-AZLOCAL-CUSTOMIZE:service-connection-Audit
         azureSubscription: 'AzureLocal-ServiceConnection'  # Update with your service connection name
+        # END-AZLOCAL-CUSTOMIZE:service-connection-Audit
         scriptType: 'pscore'
         scriptLocation: 'inlineScript'
         inlineScript: |

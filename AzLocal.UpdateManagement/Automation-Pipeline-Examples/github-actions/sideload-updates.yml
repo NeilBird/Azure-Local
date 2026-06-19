@@ -83,7 +83,7 @@ env:
   # this to the version actually installed and to the latest on PSGallery, and emits a
   # ::notice annotation if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.8.93'
+  GENERATED_AGAINST_MODULE_VERSION: '0.8.94'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): manual workflow_dispatch input >
   # repository variable 'REQUIRED_MODULE_VERSION' > empty (latest).
@@ -162,7 +162,9 @@ jobs:
   #   - All checks pass: preflight succeeds, `sideload` job proceeds.
   preflight:
     name: Step.6 Preflight - Validate Opt-in + Self-Hosted Runner
+    # BEGIN-AZLOCAL-CUSTOMIZE:runner-target-preflight
     runs-on: windows-latest
+    # END-AZLOCAL-CUSTOMIZE:runner-target-preflight
     permissions:
       actions: read      # Best-effort runner enumeration (may 403 - graceful fallback)
       contents: read
@@ -320,7 +322,9 @@ jobs:
     # Requires an on-prem self-hosted RUNNER (GitHub Actions terminology) on the
     # same network as the clusters, registered with the `azlocal-sideload` label
     # (use a dedicated runner group to restrict which repos can target it).
+    # BEGIN-AZLOCAL-CUSTOMIZE:sideload-runner-sideload
     runs-on: [self-hosted, azlocal-sideload]
+    # END-AZLOCAL-CUSTOMIZE:sideload-runner-sideload
     # Master opt-in gate: do nothing unless SIDELOAD_UPDATES is one of the
     # accepted truthy values (case-insensitive 'true' or literal '1').
     if: ${{ contains(fromJSON('["true","True","TRUE","1"]'), vars.SIDELOAD_UPDATES) }}

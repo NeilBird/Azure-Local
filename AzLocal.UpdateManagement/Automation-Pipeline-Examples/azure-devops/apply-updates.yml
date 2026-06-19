@@ -129,7 +129,7 @@ variables:
   # log if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
   - name: GENERATED_AGAINST_MODULE_VERSION
-    value: '0.8.93'
+    value: '0.8.94'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): queue-time parameter > pipeline variable
   # 'REQUIRED_MODULE_VERSION' overridden at queue time > empty (latest).
@@ -159,8 +159,10 @@ variables:
   # variables are not required.
   # - group: AzureLocal-ITSM-Secrets
 
+# BEGIN-AZLOCAL-CUSTOMIZE:runner-target-pipeline
 pool:
   vmImage: 'windows-latest'
+# END-AZLOCAL-CUSTOMIZE:runner-target-pipeline
 
 stages:
   # Stage 1: Check Readiness
@@ -177,7 +179,9 @@ stages:
           - task: AzureCLI@2
             displayName: 'Install Resource Graph Extension'
             inputs:
+              # BEGIN-AZLOCAL-CUSTOMIZE:service-connection-ReadinessCheck
               azureSubscription: 'AzureLocal-ServiceConnection'  # Update with your service connection name
+              # END-AZLOCAL-CUSTOMIZE:service-connection-ReadinessCheck
               scriptType: 'pscore'
               scriptLocation: 'inlineScript'
               inlineScript: |
@@ -236,7 +240,9 @@ stages:
               # apply-updates-schedule.yml.
               RESOLVED_UPDATE_RING: $(resolveRing.RESOLVED_UPDATE_RING)
             inputs:
+              # BEGIN-AZLOCAL-CUSTOMIZE:service-connection-ReadinessCheck-2
               azureSubscription: 'AzureLocal-ServiceConnection'  # Update with your service connection name
+              # END-AZLOCAL-CUSTOMIZE:service-connection-ReadinessCheck-2
               scriptType: 'pscore'
               scriptLocation: 'inlineScript'
               inlineScript: |
@@ -322,7 +328,9 @@ stages:
           - task: AzureCLI@2
             displayName: 'Install Resource Graph Extension'
             inputs:
+              # BEGIN-AZLOCAL-CUSTOMIZE:service-connection-ApplyClusterUpdates
               azureSubscription: 'AzureLocal-ServiceConnection'  # Update with your service connection name
+              # END-AZLOCAL-CUSTOMIZE:service-connection-ApplyClusterUpdates
               scriptType: 'pscore'
               scriptLocation: 'inlineScript'
               inlineScript: |
@@ -390,7 +398,9 @@ stages:
               FORCE_IMMEDIATE_UPDATE_PARAM: ${{ parameters.forceImmediateUpdate }}
               BUILD_REASON: $(Build.Reason)
             inputs:
+              # BEGIN-AZLOCAL-CUSTOMIZE:service-connection-ApplyClusterUpdates-2
               azureSubscription: 'AzureLocal-ServiceConnection'  # Update with your service connection name
+              # END-AZLOCAL-CUSTOMIZE:service-connection-ApplyClusterUpdates-2
               scriptType: 'pscore'
               scriptLocation: 'inlineScript'
               inlineScript: |
@@ -517,7 +527,9 @@ stages:
               ITSM_SN_CLIENT_SECRET: $(ITSM_SN_CLIENT_SECRET)
               # END-AZLOCAL-CUSTOMIZE:itsm-secrets
             inputs:
+              # BEGIN-AZLOCAL-CUSTOMIZE:service-connection-ApplyClusterUpdates-3
               azureSubscription: 'AzureLocal-ServiceConnection'  # Update with your service connection name
+              # END-AZLOCAL-CUSTOMIZE:service-connection-ApplyClusterUpdates-3
               scriptType: 'pscore'
               scriptLocation: 'inlineScript'
               inlineScript: |
