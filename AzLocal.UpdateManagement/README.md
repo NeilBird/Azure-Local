@@ -2,7 +2,7 @@
 
 > ⚠️ **Disclaimer**: This module is **NOT** a Microsoft supported service offering or product. It is provided as example code only, with no warranty or official support. Refer to the [MIT license](https://github.com/NeilBird/Azure-Local/blob/main/LICENSE) for further information.
 
-**Latest Version:** v0.8.95 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.8.95)
+**Latest Version:** v0.8.96 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.8.96)
 
 This folder contains the 'AzLocal.UpdateManagement' PowerShell module for managing updates on Azure Local (formerly Azure Stack HCI) clusters using the Azure Local REST API. The module supports both interactive use and CI/CD automation via Service Principal or Managed Identity authentication.
 
@@ -14,7 +14,7 @@ Azure Local REST API specification (includes update management endpoints): https
 **This README (overview + most-recent release notes):**
 
 - [Where to Start](#where-to-start)
-- [What's New in v0.8.95](#whats-new-in-v0895)
+- [What's New in v0.8.96](#whats-new-in-v0896)
 - [Files](#files)
 - [Prerequisites](#prerequisites)
 - [RBAC Requirements](#rbac-requirements) (summary; full reference in [docs/rbac.md](docs/rbac.md))
@@ -77,41 +77,28 @@ If you are new to this module, work through these in order from a regular PowerS
 
 > Most CI/CD pipelines in [Automation-Pipeline-Examples/](Automation-Pipeline-Examples/) are direct implementations of one of these workflows. Start there if you want a copy-pasteable end-to-end pipeline.
 
-## What's New in v0.8.95
+## What's New in v0.8.96
 
-Three changes ship together this release:
+Follow-up to v0.8.95 that surfaces the **stalled / orphaned in-flight run** signal in the prominent pipeline **summary output** (the JUnit test-reporter check), not just the artifact CSV.
 
-1. **Guarded, opt-in ONE-TIME automatic retry of FAILED Azure Local cluster updates** (off by default), so a cluster whose update run terminated in a failed state can be re-applied automatically - the same action as the portal's "Try again" button - without ever looping.
-2. **Stalled / orphaned in-flight-run detection** in the Monitor report, so an `InProgress` run whose ARM `lastUpdatedTime` has frozen (the orchestrator died mid-step yet ARM still reports `InProgress`) is flagged CRITICAL instead of being mistaken for healthy progress.
-3. **Transient-network retry** in the Resource Graph helper, so a `ConnectionResetError(10054)` / "Connection broken" mid-query no longer fails the whole pipeline step.
-
-Export count 61 -> 64.
-
-### Added
-
-- **`Invoke-AzLocalFailedUpdateRetry`** (per-cluster primitive). Re-issues the `updates/{updateName}/apply` ARM action, but only when the cluster's updateSummary state is `NeedsAttention`, `UpdateFailed`, or `PreparationFailed`. A cluster still `UpdateInProgress` (including a stalled/orphaned run) is deliberately **skipped** - an in-flight run cannot be retried. Auto-detects the failed update version from the latest failed run when `-UpdateName` is omitted. `SupportsShouldProcess` with High `ConfirmImpact`.
-- **Durable one-time guard.** The retry is recorded in a dedicated `UpdateRetryAttempted` cluster tag (alongside the generic `UpdateLastAttempt` audit pointer). A recorded attempt for the same update version returns `RetryAlreadyAttempted` so a scheduled pipeline never re-applies in a loop; `-Force` overrides. Both tags **auto-clear** once the retried run reaches `Succeeded` (or a stale `RetryFailed` attempt ages out after 1h).
-- **`Invoke-AzLocalReadinessGatedFailedUpdateRetry`** (Apply-Updates pipeline fan-out). Reuses the readiness report, retries each failed-state cluster once with `-Confirm:$false` but NOT `-Force` (the guard stays active), and emits per-status step outputs, `apply-retry-results.json`, and a "Failed Update Single-Retry" summary section.
-- **`Add-AzLocalFailedUpdateRetryHintSummary`** (discoverability notice). When the feature is OFF, the Apply-Updates and Monitor In-Flight Updates pipelines print a short, host-tailored awareness notice with the exact enable command and a pointer to the new "Opt-in: single-retry of failed updates" CI/CD README section.
-- **Stalled / orphaned in-flight-run detection** (`Export-AzLocalUpdateRunMonitorReport -StalledNoProgressHours <n>`, default 24, `0` disables). An `InProgress` run whose ARM `lastUpdatedTime` has not advanced beyond the threshold is treated as making zero progress and flagged CRITICAL with a `:zzz: stalled` chip, counted separately (`StalledCount` in `-PassThru`, an eighth `stalled` step output), and surfaced in a new "Last Activity (UTC)" column. `Format-AzLocalUpdateRun` now captures the ARM `lastUpdatedTime` (surfaced as `LastUpdatedTime` on `Get-AzLocalUpdateRuns -PassThru`). Motivated by a real orphaned run that sat `InProgress` for 30+ days after freezing at `PT9M33S`.
+v0.8.95 detected a frozen `InProgress` run and showed it in the CSV and the markdown step summary, but the per-cluster JUnit `<testcase>` classification cascade in `Export-AzLocalUpdateRunMonitorReport` never referenced `IsStalled`. As a result a run whose ARM `lastUpdatedTime` had frozen for weeks (e.g. a real orphaned run stuck for 33+ days) was reported in the test-reporter check only as a long-running step, and an operator had to open the CSV to learn it was actually stalled.
 
 ### Changed
 
-- `FAILED_UPDATES_SINGLE_RETRY` opt-in (GitHub repository Variable / Azure DevOps pipeline variable) wired into the bundled `apply-updates.yml` for both platforms, with the awareness notice surfaced in both the apply and monitor pipelines when the variable is not `true`.
-- `Write-AzLocalUpdateLastAttemptTag` generalised with an optional `-TagName` parameter so the same writer persists the dedicated `UpdateRetryAttempted` guard tag.
+- **A stalled run is now a dedicated, top-priority JUnit failure.** A new first branch in the in-flight `<testcase>` cascade emits `Status` / failure `Type` = `Stalled` with a `STALLED: no orchestration activity for <duration> ...` message (ARM `lastUpdatedTime`, current step, step/overall elapsed, progress) whenever `IsStalled` is set, instead of falling through to the `LongRunningStep` / `LongRunningOverall` reasons. The CSV, markdown step summary, and `-PassThru` shape are unchanged.
 
-### Fixed
+### Added
 
-- **`Invoke-AzResourceGraphQuery` now retries transient network failures, not just throttling.** The per-page retry classifier previously matched only rate-limit / `429` signals, so a `ConnectionResetError(10054)` / "Connection broken" / 5xx gateway / timeout fell straight through to a hard `throw` and failed the whole pipeline step. These transient errors now share the same `-MaxRetries` budget and exponential backoff, but - unlike throttling - deliberately do NOT arm the cross-call cooldown (a reset is not a rate-limit signal). Two new module-scope diagnostics (`$script:LastResourceGraphTransientNetwork`, `$script:LastResourceGraphTransientRetryCount`) let callers/tests distinguish a reset from a 429.
+- **`Stalled` ITSM trigger-matrix status.** The bundled sample `azurelocal-itsm.yml` gains a `Stalled:` key (`raiseTicket: true`, severity 2, category "Update run stalled / orphaned") so operators can open a ticket on an orphaned run. A `Status` not present in a user's matrix is simply ignored, so the new key is additive and safe.
 
 ### Notes
 
-- **Off by default** - no behaviour change unless you set `FAILED_UPDATES_SINGLE_RETRY=true`.
-- **`GENERATED_AGAINST_MODULE_VERSION`** bumped from `0.8.94` to `0.8.95` across bundled pipeline templates.
+- **Report-only and additive** - no public API, parameter, or export-count change (still 64).
+- **`GENERATED_AGAINST_MODULE_VERSION`** bumped from `0.8.95` to `0.8.96` across bundled pipeline templates.
 
 > Previous release notes have moved into the [Release History](#release-history) appendix at the bottom of this document.
 
-See [CHANGELOG.md](CHANGELOG.md) for full release details. See [`What's New in v0.8.94`](#whats-new-in-v0894) in the Release History for the previous release.
+See [CHANGELOG.md](CHANGELOG.md) for full release details. See [`What's New in v0.8.95`](#whats-new-in-v0895) in the Release History for the previous release.
 
 ## Files
 
@@ -593,7 +580,11 @@ This code is provided as-is for educational and reference purposes.
 
 The full What's-New history (v0.7.81 and earlier) has moved to [docs/release-history.md](docs/release-history.md).
 
-The most recent release notes for **v0.8.95** stay above under [`What's New in v0.8.95`](#whats-new-in-v0895).
+The most recent release notes for **v0.8.96** stay above under [`What's New in v0.8.96`](#whats-new-in-v0896).
+
+### What's New in v0.8.95
+
+**Adds a guarded, opt-in ONE-TIME automatic retry of FAILED Azure Local cluster updates, plus the transient-error and stalled-run hardening that motivated it.** New cmdlets `Invoke-AzLocalFailedUpdateRetry` (per-cluster primitive - re-issues the portal "Try again" `updates/{name}/apply` action only when the updateSummary state is `NeedsAttention`/`UpdateFailed`/`PreparationFailed`; an in-progress or stalled run is skipped), `Invoke-AzLocalReadinessGatedFailedUpdateRetry` (Apply-Updates fan-out), and `Add-AzLocalFailedUpdateRetryHintSummary` (discoverability notice). The one-time guard is a durable `UpdateRetryAttempted` tag that auto-clears once the retried run succeeds; the capability is OFF by default and gated by `FAILED_UPDATES_SINGLE_RETRY`. Also ships `Export-AzLocalUpdateRunMonitorReport -StalledNoProgressHours` stalled/orphaned-run detection and `Invoke-AzResourceGraphQuery` transient-network retry. Export count 61 -> 64. `GENERATED_AGAINST_MODULE_VERSION` bumped from `0.8.94` to `0.8.95`. See [CHANGELOG.md](CHANGELOG.md#0895---2026-06-23) for the full v0.8.95 entry.
 
 ### What's New in v0.8.94
 

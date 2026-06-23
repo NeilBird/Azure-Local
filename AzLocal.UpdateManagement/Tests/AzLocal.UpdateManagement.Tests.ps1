@@ -34,8 +34,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $script:ModuleInfo | Should -Not -BeNullOrEmpty
         }
 
-        It 'Should have version 0.8.95' {
-            $script:ModuleInfo.Version | Should -Be '0.8.95'
+        It 'Should have version 0.8.96' {
+            $script:ModuleInfo.Version | Should -Be '0.8.96'
         }
 
         It 'Module version constants are in sync between .psm1 and .psd1' {
@@ -15683,6 +15683,44 @@ Describe 'Thin-YAML Step.7: Export-AzLocalUpdateRunMonitorReport' {
         (Get-Content -Raw -LiteralPath $script:_s7_ghSummaryFile) | Should -Match 'Fleet Status: CRITICAL'
     }
 
+    It 'Stalled run surfaces in the JUnit testcase as a Stalled-typed failure (not just a long-running-step reason)' {
+        # v0.8.96 regression: before this, a stalled run fell into the
+        # ExceedsStepThreshold branch and the JUnit failure message (what the
+        # test-reporter check renders) only said 'step exceeds Nh' - never that
+        # the run was stalled/orphaned. The stall was visible only in the CSV.
+        $runs = @(
+            [pscustomobject]@{
+                ClusterName       = 'alpha'
+                ClusterResourceId = $script:_s7_inventory[0].ResourceId
+                UpdateName        = 'Solution12.2604.1003.1005'
+                State             = 'InProgress'
+                Status            = 'InProgress'
+                CurrentStep       = 'CAU Attempt'
+                Progress          = '132/167 steps (79%)'
+                StartTime         = $script:_s7_now.AddDays(-30).ToString('yyyy-MM-ddTHH:mm:ss')
+                StepStartTime     = $script:_s7_now.AddDays(-30).ToString('yyyy-MM-ddTHH:mm:ss')
+                LastUpdatedTime   = $script:_s7_now.AddDays(-30).AddMinutes(9).ToString('yyyy-MM-ddTHH:mm:ss')
+                EndTime           = $null
+                RunId             = '19444cab'
+                RunResourceId     = ($script:_s7_inventory[0].ResourceId + '/updates/Solution12.2604.1003.1005/updateRuns/19444cab')
+            }
+        )
+        $global:_s7_payload = @{ Inventory = $script:_s7_inventory; Runs = $runs; Now = $script:_s7_now; OutDir = $script:_s7_outDir }
+        $null = InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory { @($global:_s7_payload.Inventory) }
+            Mock Get-AzLocalUpdateRuns       { @($global:_s7_payload.Runs) }
+            Export-AzLocalUpdateRunMonitorReport -OutputDirectory $global:_s7_payload.OutDir -Now $global:_s7_payload.Now -StalledNoProgressHours 24
+        }
+        [xml]$xml = Get-Content -Raw -LiteralPath (Join-Path $script:_s7_outDir 'update-monitor.xml')
+        $stalledCases = @($xml.SelectNodes('//testcase') | Where-Object { $_.name -match 'alpha' })
+        $stalledCases.Count        | Should -BeGreaterOrEqual 1
+        $stalledCases[0].failure.type    | Should -Be 'Stalled'
+        $stalledCases[0].failure.message | Should -Match 'STALLED: no orchestration activity'
+        # the Status property the ITSM connector matches on must be 'Stalled'
+        $statusProp = @($stalledCases[0].properties.property | Where-Object { $_.name -eq 'Status' })
+        $statusProp[0].value | Should -Be 'Stalled'
+    }
+
     It 'Actively-progressing InProgress run (recent lastUpdatedTime) is NOT stalled' {
         $runs = @(
             [pscustomobject]@{
@@ -20140,6 +20178,9 @@ Describe 'v0.8.87: ITSM trigger matrix covers the Update:4 monitor statuses' {
     It 'Raises on AttemptWithoutRun and StepError' {
         $script:itsmCfg887 | Should -Match '(?m)^\s*AttemptWithoutRun:'
         $script:itsmCfg887 | Should -Match '(?m)^\s*StepError:'
+    }
+    It 'Raises on the v0.8.96 Stalled status' {
+        $script:itsmCfg887 | Should -Match '(?m)^\s*Stalled:'
     }
     It 'Includes opt-in (raiseTicket:false) entries for the long-running monitor statuses' {
         $script:itsmCfg887 | Should -Match '(?m)^\s*LongRunningOverall:'

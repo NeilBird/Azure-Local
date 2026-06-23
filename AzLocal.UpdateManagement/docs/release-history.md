@@ -4,9 +4,13 @@
 >
 > **For older releases**, this is the canonical reference; the main README intentionally stays slim so the most recent block is easy to find.
 >
-> **For v0.8.95 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0895) `What's New in v0.8.95` section.
+> **For v0.8.96 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0896) `What's New in v0.8.96` section.
 
 ---
+
+### What's New in v0.8.95
+
+Adds a guarded, opt-in **one-time automatic retry of FAILED Azure Local cluster updates** (off by default, gated by `FAILED_UPDATES_SINGLE_RETRY`), plus the transient-error and stalled-run hardening that motivated it. New cmdlets `Invoke-AzLocalFailedUpdateRetry`, `Invoke-AzLocalReadinessGatedFailedUpdateRetry`, and `Add-AzLocalFailedUpdateRetryHintSummary`; a durable `UpdateRetryAttempted` one-time guard tag that auto-clears on success; `Export-AzLocalUpdateRunMonitorReport -StalledNoProgressHours` stalled/orphaned-run detection; and `Invoke-AzResourceGraphQuery` transient-network retry. Export count 61 -> 64. `GENERATED_AGAINST_MODULE_VERSION` bumped from `0.8.94` to `0.8.95`. See [CHANGELOG.md](../CHANGELOG.md#0895---2026-06-23) for the full v0.8.95 entry.
 
 ### What's New in v0.8.94
 

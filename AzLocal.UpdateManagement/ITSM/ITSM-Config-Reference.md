@@ -61,9 +61,11 @@ From v0.8.87 the **Update: 4 - Monitor In-Flight Updates** pipeline
 per-testcase `Status` values you can target: `AttemptWithoutRun` (an
 `UpdateLastAttempt` tag with no observable updateRun, commonly a URP package
 pre-install health-check failure), `StepError` (a step stuck in `Error` while
-the run is still `InProgress`), and the informational `LongRunningOverall` /
-`LongRunningStep` thresholds. Wire `monitor-updates.yml` with
-`raise_itsm_ticket=true` to action them.
+the run is still `InProgress`), `Stalled` (v0.8.96 - an `InProgress` run whose
+ARM `lastUpdatedTime` has frozen past the stalled-no-progress threshold, i.e. an
+orphaned run that is no longer advancing), and the informational
+`LongRunningOverall` / `LongRunningStep` thresholds. Wire `monitor-updates.yml`
+with `raise_itsm_ticket=true` to action them.
 
 | Field | Type | Notes |
 |---|---|---|

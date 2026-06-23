@@ -610,7 +610,24 @@ function Export-AzLocalUpdateRunMonitorReport {
     foreach ($r in ($inFlight | Sort-Object @{Expression='SeverityScore';Descending=$true}, ClusterName)) {
         $safeName = ($r.ClusterName -replace '[^A-Za-z0-9_.-]', '_')
         $caseName = "$safeName - $($r.UpdateName) - $($r.CurrentStep)"
-        if ($r.HasStepError) {
+        # v0.8.96: STALLED takes top classification priority. An InProgress run
+        # whose ARM lastUpdatedTime has frozen past -StalledNoProgressHours is
+        # orphaned/stuck, so surface that as the JUnit failure reason. Before
+        # this, the cascade only reported step/overall elapsed, so the prominent
+        # test-reporter check never mentioned the stall - only the CSV did
+        # (the exact gap the Arizona 19444cab run exposed). 'Stalled' is a new
+        # ITSM trigger-matrix status key (the sample matrix raises on it).
+        if ($r.IsStalled) {
+            $msg = ('STALLED: no orchestration activity for {0} (ARM lastUpdatedTime {1} UTC). The run still reports InProgress but appears orphaned/stuck - the orchestrator likely died mid-step. CurrentStep: {2}. Step elapsed: {3}. Overall elapsed: {4}. Progress: {5}.' -f $r.SinceLastUpdateDisplay, $r.LastUpdatedUtc, $r.CurrentStep, $r.StepElapsedDisplay, $r.ElapsedDisplay, $r.Progress)
+            $testCases.Add(@{
+                Name      = $caseName
+                ClassName = 'UpdateMonitor'
+                Time      = [double]$r.RunDurationSeconds
+                Failure   = @{ Message = $msg; Type = 'Stalled'; Body = $msg }
+                Properties = (& $tcProps $r 'Stalled')
+            }) | Out-Null
+        }
+        elseif ($r.HasStepError) {
             # v0.8.80: prefer the deepest step's `description` (human-readable
             # line) PLUS the errorMessage trace when both are present, so the
             # operator sees WHAT failed and WHY in the same cell.
