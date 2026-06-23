@@ -5,6 +5,41 @@ All notable changes to the AzLocal.UpdateManagement module (renamed from AzStack
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.96] - 2026-06-24
+
+Follow-up to v0.8.95: surface the **stalled / orphaned in-flight run** signal in the
+prominent pipeline **summary output** (the JUnit test-reporter check), not just the
+artifact CSV. v0.8.95 detected the stall and showed it in the CSV and the markdown
+step summary, but the per-cluster JUnit `<testcase>` classification cascade never
+referenced `IsStalled` - so a frozen `InProgress` run (e.g. the Arizona `19444cab`
+run, stuck for 33d 19h) was reported only as a long-running step, and the operator
+had to open the CSV to learn it was stalled. Template + report + docs + tests only -
+no public API, parameter, or export-count change (still 64).
+
+### Changed
+
+- **`Export-AzLocalUpdateRunMonitorReport` now classifies a stalled run as a dedicated
+  top-priority JUnit failure.** A new first branch in the in-flight `<testcase>` cascade
+  emits `Status` / failure `Type` = `Stalled` with a `STALLED: no orchestration activity
+  for <duration> ...` message (ARM `lastUpdatedTime`, current step, step/overall elapsed,
+  progress) whenever `IsStalled` is set, instead of falling through to the
+  `LongRunningStep` / `LongRunningOverall` reasons. The CSV and `-PassThru` shape are
+  unchanged. `GENERATED_AGAINST_MODULE_VERSION` bumped to `'0.8.96'`.
+- **The stalled output now spells out the manual remediation.** Because a stalled run
+  still reports `InProgress`, the failed-update single-retry job deliberately skips it -
+  so the JUnit failure body and a new callout under the in-flight markdown table now tell
+  the operator it is NOT auto-retried and give the `Get-SolutionUpdate` /
+  `Get-SolutionUpdateRun` / `Start-MonitoringActionplanInstanceToComplete` /
+  `Start-SolutionUpdate` flow plus the public [Troubleshoot solution updates](https://learn.microsoft.com/azure/azure-local/update/update-troubleshooting-23h2)
+  doc link.
+
+### Added
+
+- **`Stalled` ITSM trigger-matrix status.** The bundled sample `azurelocal-itsm.yml`
+  gains a `Stalled:` key (`raiseTicket: true`, severity 2, category "Update run stalled /
+  orphaned") so operators can open a ticket on an orphaned run. A `Status` not present in
+  a user's matrix is simply ignored, so the new key is additive and safe.
+
 ## [0.8.95] - 2026-06-23
 
 Three changes ship together this release: (1) a guarded, opt-in **one-time
