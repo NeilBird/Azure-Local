@@ -3,7 +3,7 @@
     RootModule = 'AzLocal.UpdateManagement.psm1'
 
     # Version number of this module.
-    ModuleVersion = '0.8.94'
+    ModuleVersion = '0.8.95'
 
     # Supported PSEditions
     CompatiblePSEditions = @('Desktop', 'Core')
@@ -156,6 +156,9 @@
         'Public/Resume-AzLocalFleetUpdate.ps1',
         'Public/Set-AzLocalClusterUpdateRingTag.ps1',
         'Public/Start-AzLocalClusterUpdate.ps1',
+        # Guarded one-time retry of a FAILED update (v0.8.95) - re-applies the same
+        # updates/{name}/apply action the portal 'Try again' button uses
+        'Public/Invoke-AzLocalFailedUpdateRetry.ps1',
         'Public/Stop-AzLocalFleetUpdate.ps1',
         'Public/Sync-AzLocalClusterUpdateSummary.ps1',
         'Public/Test-AzLocalApplyUpdatesScheduleCoverage.ps1',
@@ -197,6 +200,8 @@
         'Public/Resolve-AzLocalPipelineUpdateRing.ps1',
         'Public/Export-AzLocalClusterReadinessGateReport.ps1',
         'Public/Invoke-AzLocalReadinessGatedClusterUpdate.ps1',
+        'Public/Invoke-AzLocalReadinessGatedFailedUpdateRetry.ps1',
+        'Public/Add-AzLocalFailedUpdateRetryHintSummary.ps1',
         'Public/Add-AzLocalApplyUpdatesStepSummary.ps1',
         'Public/Add-AzLocalNoReadyClustersStepSummary.ps1',
         'Public/Invoke-AzLocalItsmTicketingFromArtifact.ps1'
@@ -205,6 +210,8 @@
     FunctionsToExport = @(
         'Connect-AzLocalServicePrincipal',
         'Start-AzLocalClusterUpdate',
+        # Guarded one-time retry of a FAILED update (v0.8.95)
+        'Invoke-AzLocalFailedUpdateRetry',
         'Get-AzLocalClusterUpdateReadiness',
         'Get-AzLocalClusterInventory',
         'Get-AzLocalClusterInfo',
@@ -285,6 +292,8 @@
         'Resolve-AzLocalPipelineUpdateRing',
         'Export-AzLocalClusterReadinessGateReport',
         'Invoke-AzLocalReadinessGatedClusterUpdate',
+        'Invoke-AzLocalReadinessGatedFailedUpdateRetry',
+        'Add-AzLocalFailedUpdateRetryHintSummary',
         'Add-AzLocalApplyUpdatesStepSummary',
         'Add-AzLocalNoReadyClustersStepSummary',
         'Invoke-AzLocalItsmTicketingFromArtifact',
@@ -322,6 +331,8 @@
 
             # ReleaseNotes of this module
             ReleaseNotes = @'
+## Version 0.8.95 - Adds a guarded, opt-in ONE-TIME automatic retry of FAILED Azure Local cluster updates, plus the transient-error and stalled-run hardening that motivated it. New public cmdlets: `Invoke-AzLocalFailedUpdateRetry` (per-cluster primitive - re-issues the same `updates/{name}/apply` action the portal Try again button uses, only when the cluster updateSummary state is NeedsAttention/UpdateFailed/PreparationFailed; an in-progress or stalled/orphaned run is deliberately SKIPPED), `Invoke-AzLocalReadinessGatedFailedUpdateRetry` (Step.6 thin-YAML fan-out that reuses readiness-report.csv, retries each failed-state cluster once with -Confirm:$false but NOT -Force so the guard stays active, emits per-status step outputs + apply-retry-results.json + a Failed Update Single-Retry summary section), and `Add-AzLocalFailedUpdateRetryHintSummary` (discoverability notice). The one-time guard is a durable `UpdateRetryAttempted` cluster tag (a second tag alongside the generic `UpdateLastAttempt` audit pointer); a recorded attempt for the same update version returns `RetryAlreadyAttempted` so a scheduled pipeline never re-applies in a loop, and the guard auto-clears once the retried run reaches Succeeded (or a stale RetryFailed attempt ages out after 1h) via the existing post-success reconciliation. The capability is OFF by default and gated by the `FAILED_UPDATES_SINGLE_RETRY` pipeline variable in `apply-updates.yml` (GitHub + Azure DevOps); when it is off, both the Apply-Updates and Monitor In-Flight Updates pipelines print a short awareness notice (with the exact enable command + a pointer to the new "Opt-in: single-retry of failed updates" CI/CD README section). Also ships two supporting hardening changes: (1) `Export-AzLocalUpdateRunMonitorReport` gains a `-StalledNoProgressHours` parameter (default 24, 0 disables) that flags an `InProgress` run whose ARM `lastUpdatedTime` has frozen as CRITICAL with a stalled chip, an eighth `stalled` step output, a `StalledCount` PassThru field and a new "Last Activity (UTC)" column (`Format-AzLocalUpdateRun`/`Get-AzLocalUpdateRuns` now surface `LastUpdatedTime`) - motivated by an orphaned run stuck InProgress for 30+ days; and (2) `Invoke-AzResourceGraphQuery` now retries transient network failures (`ConnectionResetError(10054)`/"Connection broken"/5xx gateway/timeout), not just throttling, sharing the same `-MaxRetries` budget but NOT arming the cross-call cooldown, with new `$script:LastResourceGraphTransientNetwork`/`LastResourceGraphTransientRetryCount` diagnostics. Export count 61 -> 64. `GENERATED_AGAINST_MODULE_VERSION` bumped to `'0.8.95'`.
+
 ## Version 0.8.94 - Expands `BEGIN/END-AZLOCAL-CUSTOMIZE` marker coverage across every bundled CI/CD pipeline YAML (both GitHub Actions and Azure DevOps) so operator-owned INFRASTRUCTURE values survive `Update-AzLocalPipelineExample` - including with `-Force`, which otherwise reverts edits made outside marker regions. Three new uniquely-named region families wrap: the Azure DevOps WIF service connection name on each `AzureCLI@2`/`AzurePowerShell@5` task (`service-connection-<job>`); the hosted agent pool / GitHub `runs-on:` label that selects where a job runs (`runner-target-<job>`); and the sideload self-hosted pool/runner that the on-prem Advance job must use (`sideload-runner-<job>`). 45 marker pairs added across 20 files; region names are derived from the nearest stage/job and are unique per file. The merge engine (`Update-AzLocalPipelineExample`) and marker parser were already generic, so no function code changed - this is purely a template + docs + test release. Per-run INPUT defaults (updateRing, config paths, throttle) are deliberately NOT wrapped: they are already overridable per run and via variable groups, and wrapping them would freeze the module author's ability to improve defaults each release. No public API or export-count change (still 61). `GENERATED_AGAINST_MODULE_VERSION` bumped to `'0.8.94'`.
 
 ## Version 0.8.93 - Fixes a Bad Request in the `Update: 1 - Assess Update Readiness` pipeline. `Sync-AzLocalClusterUpdateSummary` (and the `Export-AzLocalClusterUpdateReadinessReport` stale-assessment auto-scan that calls it) POSTed the `Microsoft.AzureStackHCI/clusters/updateSummaries/default/checkUpdates` ARM action with NO request body; the `2026-03-01-preview` API spec now requires a body to be present, so the bodyless POST was rejected with `HttpRequestPayloadAPISpecValidationFailed` / `MissingRequiredParameter "Value is required but was not provided. Paths in payload: '.body'"`. The cmdlet now sends an empty JSON object `{}` (no properties are mandatory for a plain re-scan), validated end-to-end against a live cluster. Also refreshes the now-stale RBAC comment/warning in the cmdlet so it reflects that the v0.8.92 `updateSummaries/*` wildcard already authorizes checkUpdates (a 403 now means the custom role simply is not assigned, not that the action is ungranted). Bug-fix only - no API, parameter or export-count change (still 61). `GENERATED_AGAINST_MODULE_VERSION` bumped to `'0.8.93'`.
@@ -331,8 +342,6 @@
 ## Version 0.8.91 - Operator-facing cleanup of stale `Step.N` references left from the v0.8.7 pipeline de-numbering. The Config: 3 schedule-coverage audit (`Export-AzLocalApplyUpdatesScheduleAudit` / `Test-AzLocalApplyUpdatesScheduleCoverage`) no longer tells operators to edit a non-existent `Step.7_apply-updates.yml`: the "How to fix" headings, throw message, comment-based help and cron-coverage prose now name the shipped `apply-updates.yml` (with `.github/workflows/` and `azure-devops/` paths) and reference sibling pipelines by purpose (e.g. "the Manage UpdateRing Tags pipeline") instead of dead step numbers; the internal `$step6FileLabel` is renamed `$applyFileLabel`. Emitted markdown step-summary headers drop their dead step-number prefix (`## Step.0 - Authentication Validation...` -> `## Authentication Validation...`, `## Step.1 - Cluster Inventory` -> `## Cluster Inventory`, `## Step.2 - UpdateRing Tag Management Summary` -> `## UpdateRing Tag Management Summary`) and the `Get-AzLocalFleetConnectivityStatus` progress log drops its `Step.4` prefix. Output/help text only - no behavioural, API or export-count change (still 61); intentional backward-compat `Step.N_*.yml` migration aliases in `Get-AzLocalPipelineManifest` are unchanged. `GENERATED_AGAINST_MODULE_VERSION` bumped to `'0.8.91'`.
 
 ## Version 0.8.90 - Adds opt-in event-driven in-flight update monitoring so Update: 4 (Monitor In-Flight Updates) runs right after Update: 3 (Apply Updates) starts an update, yet stays cheap the rest of the time. New `-SkipWhenIdle` switch on `Export-AzLocalUpdateRunMonitorReport` performs one low-cost fleet-wide Azure Resource Graph probe ("any updateRuns InProgress?", new private helper `Test-AzLocalUpdateRunsInFlight`) and short-circuits to an IDLE result - writing the empty CSV/JUnit artefacts and all-zero step outputs - skipping the per-cluster sweep when nothing is in flight; fail-safe, so a probe error runs the full sweep rather than skipping. The bundled `monitor-updates.yml` default cron drops from 5x/day to every 6h (`0 */6 * * *`) and passes `-SkipWhenIdle` by default. `apply-updates.yml` now fires the monitor after starting >=1 update - `gh workflow run monitor-updates.yml` on GitHub Actions (needs `actions: write`) / the Pipelines REST queue API on Azure DevOps - tagged `triggered_by=apply-updates`; the monitor honours an optional `MONITOR_TRIGGER_DELAY_MINUTES` startup delay (unset/0 = off, otherwise clamped 15-240) so it lands AFTER updates move into InProgress. The monitor allows concurrent runs so a sleeping event-driven run never blocks the next. Both `apply-updates-schedule-audit.yml` (Config: 3) templates expose the monitor-recommendation tuning knobs (`MonitorPollIntervalMinutes`, `MonitorTrailingDays`, `MonitorInFlightHours`) as workflow inputs/parameters and plumb them into the cmdlet. Export count unchanged (still 61 - the new helper is private). `GENERATED_AGAINST_MODULE_VERSION` bumped to `'0.8.90'`.
-
-## Version 0.8.89 - Sharpens the Config: 3 (Export-AzLocalApplyUpdatesScheduleAudit) "Recommended in-flight monitor schedule (Update: 4)" so the recommended monitor-updates.yml cron only polls when an update can actually be in flight, instead of 24x7. Replaces -MonitorFiresPerHour with -MonitorPollIntervalMinutes (15/20/30/60/120/180/240 min - now supports multi-hour cadence for slow multi-node runs that can take up to ~48h) and adds -MonitorInFlightHours (0-48, default 6), a buffer past the maintenance window for runs still finishing. Monitor DAYS now derive from apply-updates-schedule.yml ring eligibility (the cycle calendar) when -SchedulePath is supplied, otherwise from the apply-updates.yml cron weekday(s); monitor HOURS are bounded to the UpdateStartWindow span plus the in-flight buffer, falling back to all-hours when a run can cross midnight (an overnight window, -MonitorTrailingDays > 0, or the buffer pushing past 24h). Adds an Automation-Pipeline-Examples README section "How to control which updates are installed, and when" documenting the three-layer day/cadence/time model (apply-updates-schedule.yml -> apply cron -> UpdateStartWindow) and the tag -> schedule -> Config: 3 cron -> Update: 3/4 paste workflow. No public-API export-count change (still 61). GENERATED_AGAINST_MODULE_VERSION bumped to '0.8.89'.
 
 For full release notes see:
 https://github.com/NeilBird/Azure-Local/blob/main/AzLocal.UpdateManagement/CHANGELOG.md

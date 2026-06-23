@@ -132,6 +132,41 @@ function Invoke-AzLocalSideloadedAutoResetForCluster {
         }
     }
 
+    # v0.8.95: parallel auto-clear for the dedicated UpdateRetryAttempted one-time
+    # guard tag, under the SAME Succeeded condition as UpdateLastAttempt above so
+    # both tags are reconciled together (a successful run re-arms a future retry).
+    # Clear when EITHER (a) the latest Succeeded run's UpdateName matches the tag's
+    # recorded UpdateName, OR (b) the tag is a stale 'RetryFailed' attempt (>1h old)
+    # and a Succeeded run has subsequently materialised.
+    $tagRetryAttempted = Get-TagValue -Tags $cluster.tags -Name $script:UpdateRetryAttemptedTagName
+    if (-not [string]::IsNullOrWhiteSpace($tagRetryAttempted) -and $LatestRunState -eq 'Succeeded') {
+        $parsedRetry = ConvertFrom-AzLocalUpdateLastAttemptTagValue -Value $tagRetryAttempted
+        if ($parsedRetry) {
+            $shouldClearRetry = $false
+            if (-not [string]::IsNullOrWhiteSpace($parsedRetry.UpdateName) `
+                -and -not [string]::IsNullOrWhiteSpace($LatestRunUpdateName) `
+                -and $parsedRetry.UpdateName.Trim() -ieq $LatestRunUpdateName.Trim()) {
+                $shouldClearRetry = $true
+            }
+            elseif ($parsedRetry.Outcome -eq 'RetryFailed' `
+                    -and ((Get-Date).ToUniversalTime() - $parsedRetry.AttemptUtc).TotalHours -ge 1) {
+                $shouldClearRetry = $true
+            }
+            if ($shouldClearRetry) {
+                try {
+                    [void](Set-AzLocalClusterTagsMerge `
+                        -ClusterResourceId $ClusterResourceId `
+                        -Tags @{ $script:UpdateRetryAttemptedTagName = $null } `
+                        -ApiVersion $ApiVersion)
+                    Write-Verbose "Cleared stale UpdateRetryAttempted='$tagRetryAttempted' for '$ClusterName' (latest run '$LatestRunUpdateName' Succeeded)."
+                }
+                catch {
+                    Write-Verbose "Failed to clear UpdateRetryAttempted for '$ClusterName': $($_.Exception.Message)"
+                }
+            }
+        }
+    }
+
     # 1. UpdateSideloaded tag absent
     if ([string]::IsNullOrWhiteSpace($tagSideloaded)) {
         # Orphan-cleanup branch: if there's a leftover UpdateVersionInProgress tag
