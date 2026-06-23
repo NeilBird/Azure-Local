@@ -5,6 +5,71 @@ All notable changes to the AzLocal.UpdateManagement module (renamed from AzStack
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.95] - 2026-06-23
+
+Three changes ship together this release: (1) a guarded, opt-in **one-time
+automatic retry of FAILED Azure Local cluster updates** (off by default), gated by
+the `FAILED_UPDATES_SINGLE_RETRY` pipeline variable, plus a discoverability notice
+surfaced by the Apply-Updates and Monitor pipelines when the feature is disabled;
+(2) **stalled / orphaned in-flight-run detection** in the Monitor report, so an
+`InProgress` run whose ARM `lastUpdatedTime` has frozen is flagged CRITICAL instead
+of being mistaken for healthy progress; and (3) **transient-network retry** in the
+Resource Graph helper, so a `ConnectionResetError(10054)` / "Connection broken"
+mid-query no longer fails the whole pipeline step. Export count 61 -> 64.
+
+### Added
+
+- **`Invoke-AzLocalFailedUpdateRetry`** (per-cluster primitive). Re-issues the same
+  `updates/{updateName}/apply` ARM action the portal "Try again" button uses, but only
+  when the cluster's updateSummary state is `NeedsAttention`, `UpdateFailed`, or
+  `PreparationFailed`. A cluster still `UpdateInProgress` (including a stalled/orphaned
+  run) is deliberately skipped. Auto-detects the failed update version from the latest
+  failed run when `-UpdateName` is omitted. `SupportsShouldProcess` / High `ConfirmImpact`.
+- **One-time guard via a durable `UpdateRetryAttempted` cluster tag** (a second tag
+  alongside the generic `UpdateLastAttempt` audit pointer). A recorded attempt for the
+  same update version returns `RetryAlreadyAttempted` so a scheduled pipeline never
+  re-applies in a loop; `-Force` overrides. Both tags auto-clear once the retried run
+  reaches `Succeeded` (or a stale `RetryFailed` attempt ages out after 1h) via the
+  existing post-success reconciliation (`Invoke-AzLocalSideloadedAutoResetForCluster`).
+- **`Invoke-AzLocalReadinessGatedFailedUpdateRetry`** (Step.6 thin-YAML fan-out). Reuses
+  `readiness-report.csv`, retries each failed-state cluster once with `-Confirm:$false`
+  but NOT `-Force` (the one-time guard stays active), emits per-status step outputs +
+  `apply-retry-results.json` + a "Failed Update Single-Retry" consolidated-summary section.
+- **`Add-AzLocalFailedUpdateRetryHintSummary`** (discoverability notice). When the feature
+  is OFF, the Apply-Updates and Monitor In-Flight Updates pipelines print a short,
+  host-tailored awareness notice (with the exact enable command and a pointer to the new
+  "Opt-in: single-retry of failed updates" CI/CD README section).
+- **Stalled / orphaned in-flight-run detection** in `Export-AzLocalUpdateRunMonitorReport`
+  via a new `-StalledNoProgressHours` parameter (default 24; `0` disables). An `InProgress`
+  run whose ARM `lastUpdatedTime` has not advanced beyond the threshold is making zero
+  progress (the orchestrator died mid-step yet ARM still reports `InProgress` - e.g. an
+  orphaned run stuck for weeks) and is now flagged CRITICAL with a `:zzz: stalled` chip,
+  counted separately (`StalledCount` in `-PassThru`, an eighth `stalled` step output), and
+  shown in a new "Last Activity (UTC)" column. `Format-AzLocalUpdateRun` now captures the
+  ARM `lastUpdatedTime` (surfaced as `LastUpdatedTime` on `Get-AzLocalUpdateRuns -PassThru`).
+
+### Changed
+
+- `FAILED_UPDATES_SINGLE_RETRY` opt-in wired into the bundled `apply-updates.yml`
+  (GitHub Actions + Azure DevOps) - a gated "Retry Failed Updates" step plus the
+  awareness notice in both apply and monitor pipelines when the variable is not `true`.
+- `Write-AzLocalUpdateLastAttemptTag` generalised with an optional `-TagName` parameter
+  (defaults to `UpdateLastAttempt`) so the same writer persists the dedicated
+  `UpdateRetryAttempted` guard tag. `GENERATED_AGAINST_MODULE_VERSION` bumped to `'0.8.95'`.
+
+### Fixed
+
+- **`Invoke-AzResourceGraphQuery` now retries transient network failures, not just
+  throttling.** The per-page retry classifier previously matched only rate-limit /
+  `429` signals, so a `ConnectionResetError(10054)` / "Connection broken" / 5xx gateway /
+  timeout (common on long fleet queries over the public ARG endpoint) fell straight
+  through to a hard `throw` and failed the whole pipeline step. These transient errors
+  now share the same `-MaxRetries` budget and exponential backoff, but - unlike
+  throttling - deliberately do NOT arm the cross-call cooldown (a reset is not a
+  rate-limit signal). Two new module-scope diagnostics (`$script:LastResourceGraphTransientNetwork`,
+  `$script:LastResourceGraphTransientRetryCount`) let callers/tests distinguish a reset
+  from a 429. Non-transient failures (auth, bad KQL, permissions) still fail fast.
+
 ## [0.8.94] - 2026-06-19
 
 Expands `BEGIN/END-AZLOCAL-CUSTOMIZE` marker coverage across every bundled CI/CD

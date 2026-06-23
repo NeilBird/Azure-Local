@@ -9,6 +9,21 @@ function Format-AzLocalUpdateRun {
     $endTimeDt = Get-AzLocalRunEndTime -props $props
     $endTimeDisplay = if ($endTimeDt) { $endTimeDt.ToString("yyyy-MM-dd HH:mm") } else { "" }
 
+    # v0.8.95: capture properties.lastUpdatedTime - the wall-clock instant the
+    # ARM update-run resource was last mutated by the orchestrator. This is the
+    # authoritative "is this run still alive?" signal. A healthy InProgress run
+    # has its lastUpdatedTime bumped continuously; an ORPHANED run (orchestrator
+    # died mid-step) keeps State=InProgress forever but lastUpdatedTime freezes.
+    # Surfaced so callers can detect a stalled run that is making zero progress
+    # (e.g. Arizona run 19444cab: timeStarted 2026-05-21, duration frozen at
+    # PT9M33S, lastUpdatedTime never advanced past 2026-05-21 - yet ARM still
+    # reports InProgress 30+ days later). Format-only: no behaviour change here.
+    $lastUpdatedDt = $null
+    if ($props.PSObject.Properties['lastUpdatedTime'] -and $props.lastUpdatedTime) {
+        try { $lastUpdatedDt = [datetime]$props.lastUpdatedTime } catch { $null = $_ <# malformed lastUpdatedTime; leave blank #> }
+    }
+    $lastUpdatedDisplay = if ($lastUpdatedDt) { $lastUpdatedDt.ToString("yyyy-MM-dd HH:mm") } else { "" }
+
     # Duration: prefer ARM-reported properties.duration (ISO-8601, e.g. "PT8H37M58S")
     # because it's authoritative and immune to clock skew. Fall back to
     # EndTime - StartTime, then to "running" for in-flight runs.
@@ -154,6 +169,7 @@ function Format-AzLocalUpdateRun {
         Status            = $progressStatus
         StartTime         = if ($props.timeStarted) { ([datetime]$props.timeStarted).ToString("yyyy-MM-dd HH:mm") } else { "" }
         EndTime           = $endTimeDisplay
+        LastUpdatedTime   = $lastUpdatedDisplay
         Duration          = $duration
         Progress          = $progress
         CurrentStep       = $currentStep

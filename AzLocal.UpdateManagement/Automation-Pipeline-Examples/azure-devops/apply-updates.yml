@@ -129,7 +129,7 @@ variables:
   # log if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
   - name: GENERATED_AGAINST_MODULE_VERSION
-    value: '0.8.94'
+    value: '0.8.95'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): queue-time parameter > pipeline variable
   # 'REQUIRED_MODULE_VERSION' overridden at queue time > empty (latest).
@@ -423,6 +423,54 @@ stages:
                 }
                 Invoke-AzLocalReadinessGatedClusterUpdate @params
 
+          # v0.8.95: OPT-IN guarded single-retry of FAILED updates. Disabled by
+          # default; enable by setting the pipeline variable (or variable-group
+          # entry) FAILED_UPDATES_SINGLE_RETRY = true. When enabled, re-applies
+          # updates for the clusters the readiness gate marked NotReady because
+          # their LATEST run terminated in a FAILED state. Reuses the SAME
+          # readiness CSV, retries each failed cluster EXACTLY ONCE per update
+          # version (durable UpdateRetryAttempted tag guard; auto-clears on
+          # Succeeded), appends a 'Failed Update Single-Retry' section to the
+          # consolidated summary, and emits 4 PascalCase task output variables
+          # (RetryStarted, RetryAlready, RetrySkipped, RetryFailed). In-progress /
+          # stalled runs are never retried. Honours dryRun.
+          - task: AzureCLI@2
+            displayName: 'Retry Failed Updates'
+            name: retryFailedUpdates
+            condition: eq(variables['FAILED_UPDATES_SINGLE_RETRY'], 'true')
+            env:
+              RESOLVED_UPDATE_RING: $(resolvedUpdateRing)
+            inputs:
+              # BEGIN-AZLOCAL-CUSTOMIZE:service-connection-RetryFailedUpdates
+              azureSubscription: 'AzureLocal-ServiceConnection'  # Update with your service connection name
+              # END-AZLOCAL-CUSTOMIZE:service-connection-RetryFailedUpdates
+              scriptType: 'pscore'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                Import-Module AzLocal.UpdateManagement -Force
+                $params = @{
+                    ReadinessCsvPath = "$(Build.ArtifactStagingDirectory)/readiness-report.csv"
+                    UpdateRing       = $env:RESOLVED_UPDATE_RING
+                    OutputDirectory  = "$(Build.ArtifactStagingDirectory)"
+                }
+                if ([System.Convert]::ToBoolean("${{ parameters.dryRun }}")) { $params['DryRun'] = $true }
+                Invoke-AzLocalReadinessGatedFailedUpdateRetry @params
+
+          # v0.8.95: discoverability notice. When FAILED_UPDATES_SINGLE_RETRY is
+          # NOT enabled, append a short opt-in awareness section to the
+          # consolidated summary so operators learn the capability exists (with
+          # the enable instruction + CI/CD README pointer). No Azure access
+          # required - purely informational. Renders nothing when the feature is on.
+          - task: PowerShell@2
+            displayName: 'Failed-update retry availability notice'
+            condition: and(always(), ne(variables['FAILED_UPDATES_SINGLE_RETRY'], 'true'))
+            inputs:
+              targetType: 'inline'
+              pwsh: true
+              script: |
+                Import-Module AzLocal.UpdateManagement -Force
+                Add-AzLocalFailedUpdateRetryHintSummary
+
           # v0.8.90: event-driven trigger. As soon as Apply has STARTED >=1
           # update (applyUpdates.Succeeded > 0), queue Update: 4 (Monitor
           # In-Flight Updates) via the ADO REST API so the in-flight view appears
@@ -435,7 +483,7 @@ stages:
           # finish before it lands it just reports IDLE after one cheap probe.
           - task: PowerShell@2
             displayName: 'Trigger in-flight monitor'
-            condition: gt(variables['applyUpdates.Succeeded'], 0)
+            condition: or(gt(variables['applyUpdates.Succeeded'], 0), gt(coalesce(variables['retryFailedUpdates.RetryStarted'], 0), 0))
             env:
               SYSTEM_ACCESSTOKEN: $(System.AccessToken)
               MONITOR_PIPELINE_ID: $(MONITOR_PIPELINE_ID)

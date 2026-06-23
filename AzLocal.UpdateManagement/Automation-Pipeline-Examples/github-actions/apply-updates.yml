@@ -148,7 +148,7 @@ env:
   # this to the version actually installed and to the latest on PSGallery, and emits a
   # ::notice annotation if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.8.94'
+  GENERATED_AGAINST_MODULE_VERSION: '0.8.95'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): manual workflow_dispatch input >
   # repository variable 'REQUIRED_MODULE_VERSION' > empty (latest).
@@ -422,6 +422,48 @@ jobs:
         if ($env:INPUT_FORCE_IMMEDIATE_UPDATE -eq 'true') { $params['ForceImmediateUpdate'] = $true }
         Invoke-AzLocalReadinessGatedClusterUpdate @params
 
+    # v0.8.95: OPT-IN guarded single-retry of FAILED updates. Disabled by
+    # default; enable by setting the repository Variable
+    # FAILED_UPDATES_SINGLE_RETRY=true
+    #   gh variable set FAILED_UPDATES_SINGLE_RETRY --body true
+    # When enabled, this step re-applies updates for the clusters the readiness
+    # gate marked NotReady because their LATEST run terminated in a FAILED state
+    # (NeedsAttention / UpdateFailed / PreparationFailed). It reuses the SAME
+    # readiness-report.csv (no re-discovery), retries each failed cluster EXACTLY
+    # ONCE per update version (enforced by the durable UpdateRetryAttempted
+    # cluster tag - re-runs are no-ops until the retried run Succeeds and the tag
+    # auto-clears), and appends a 'Failed Update Single-Retry' section to the same
+    # consolidated job summary. Honours dry_run (-> WhatIf). In-progress / stalled
+    # runs are deliberately NOT retried.
+    - name: Retry Failed Updates
+      if: ${{ vars.FAILED_UPDATES_SINGLE_RETRY == 'true' }}
+      shell: pwsh
+      id: retry-failed-updates
+      env:
+        INPUT_UPDATE_RING: ${{ needs.check-readiness.outputs.resolved_update_ring }}
+        INPUT_DRY_RUN: ${{ github.event.inputs.dry_run }}
+      run: |
+        Import-Module AzLocal.UpdateManagement -Force
+        $params = @{
+            ReadinessCsvPath = './artifacts/readiness-report.csv'
+            UpdateRing       = $env:INPUT_UPDATE_RING
+            OutputDirectory  = './artifacts'
+        }
+        if ($env:INPUT_DRY_RUN -eq 'true') { $params['DryRun'] = $true }
+        Invoke-AzLocalReadinessGatedFailedUpdateRetry @params
+
+    # v0.8.95: discoverability notice. When FAILED_UPDATES_SINGLE_RETRY is NOT
+    # enabled (unset / false / 0), append a short opt-in awareness section to the
+    # consolidated job summary so operators learn the capability exists, with the
+    # exact enable command and a pointer to the CI/CD README. Renders nothing when
+    # the feature is already on (the retry step owns the summary in that case).
+    - name: Failed-update retry availability notice
+      if: ${{ always() && vars.FAILED_UPDATES_SINGLE_RETRY != 'true' }}
+      shell: pwsh
+      run: |
+        Import-Module AzLocal.UpdateManagement -Force
+        Add-AzLocalFailedUpdateRetryHintSummary
+
     # v0.8.90: event-driven trigger. As soon as Apply has STARTED >=1 update
     # (the cmdlet's SUCCEEDED step output > 0), fire Update: 4 (Monitor In-Flight
     # Updates) so the in-flight view appears without waiting for the monitor's 6h
@@ -434,14 +476,17 @@ jobs:
     # 'actions: write' permission added above. `gh` resolves the target workflow
     # by filename, so keep Update: 4 named 'monitor-updates.yml' in
     # .github/workflows/ (rename here too if you rename the file).
+    # v0.8.95: also fires when the opt-in retry step STARTED >=1 retry.
     - name: Trigger in-flight monitor
-      if: ${{ fromJSON(steps.apply-updates.outputs.SUCCEEDED || '0') > 0 }}
+      if: ${{ fromJSON(steps.apply-updates.outputs.SUCCEEDED || '0') > 0 || fromJSON(steps.retry-failed-updates.outputs.RETRY_STARTED || '0') > 0 }}
       shell: pwsh
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         STARTED: ${{ steps.apply-updates.outputs.SUCCEEDED }}
+        RETRIED: ${{ steps.retry-failed-updates.outputs.RETRY_STARTED }}
       run: |
-        Write-Host "Apply started $($env:STARTED) update(s) - dispatching Update: 4 (Monitor In-Flight Updates)."
+        $started = [int]($env:STARTED ?? '0'); $retried = [int]($env:RETRIED ?? '0')
+        Write-Host "Apply started $started update(s) and retried $retried failed update(s) - dispatching Update: 4 (Monitor In-Flight Updates)."
         gh workflow run monitor-updates.yml `
           -f triggered_by=apply-updates `
           -f apply_run_id=$($env:GITHUB_RUN_ID) `

@@ -43,6 +43,7 @@ It is written in the same step-by-step style as [`ITSM/README.md`](../ITSM/READM
    - [8.2 Multi-stage rollouts with approval gates](#82-multi-stage-rollouts-with-approval-gates)
    - [8.3 End-to-end runbook: Apply-Updates Schedule Coverage Audit](#83-end-to-end-runbook-apply-updates-schedule-coverage-audit)
    - [8.4 Restrict which updates each ring installs (`allowedUpdateVersions`, schema v2)](#84-restrict-which-updates-each-ring-installs-allowedupdateversions-schema-v2)
+   - [8.5 Opt-in: single-retry of failed updates (`FAILED_UPDATES_SINGLE_RETRY`)](#85-opt-in-single-retry-of-failed-updates-failed_updates_single_retry)
 9. [Tuning throughput (`-ThrottleLimit`)](#9-tuning-throughput--throttlelimit)
 10. [Standalone HTML report (no pipeline)](#10-standalone-html-report-no-pipeline)
 11. [Security model](#11-security-model)
@@ -1906,6 +1907,53 @@ After migration the file is a strict superset of v1 - every cluster still resolv
 #### 8.4.5 Audit pipeline support
 
 `apply-updates-schedule-audit.yml` (GitHub Actions and Azure DevOps) automatically emits an **Allow-list coverage (schema v2)** section in its run summary when a `-SchedulePath` is supplied. The section surfaces the **top-level fleet default**, then a per-row table showing the effective `allowedUpdateVersions` for each schedule row (or `inherits top-level` when no row-level override is set), and recommends edit sites for rows that you might want to override. Schema v1 files get a one-line nudge to run the migrator.
+
+---
+
+### 8.5 Opt-in: single-retry of failed updates (`FAILED_UPDATES_SINGLE_RETRY`)
+
+By default, a cluster whose latest update run ends in a **failed** state (`NeedsAttention`, `UpdateFailed`, or `PreparationFailed`) is **left as-is** - the readiness gate marks it NotReady and the Apply-Updates pipeline does not touch it again. A human decides whether to re-apply.
+
+You can opt in to a **guarded, one-time** automatic retry. When enabled, the Apply-Updates pipeline (`Update: 3 - Apply Updates`) adds a **Retry Failed Updates** step that re-applies the same update version for each failed cluster - the same action as the Azure portal's **Try again** button (Azure Local update runs are resumable). The retry is **safe-by-design**:
+
+- **One-time per update version.** Each failed cluster is retried at most once. A durable `UpdateRetryAttempted` cluster tag records the attempt; while present, the cluster is skipped with status `RetryAlreadyAttempted`, so a scheduled pipeline can never re-apply in a loop.
+- **Auto-clears on success.** The guard tag is cleared automatically once the retried run reaches `Succeeded` (by the same reconciliation that clears `UpdateLastAttempt`), re-arming a future retry naturally.
+- **Never touches in-progress / stalled runs.** A cluster that is still `UpdateInProgress` (including a frozen/orphaned run) is skipped - an in-flight run cannot be retried and must be cleared first.
+- **Reuses the readiness report.** No extra discovery; only clusters already in scope for the run's `UpdateRing` are considered. Honours `dry_run` / `dryRun` (renders as WhatIf).
+
+The retried clusters appear in a dedicated **Failed Update Single-Retry** section of the consolidated job summary, and (when any retry starts) the in-flight monitor is triggered just as a normal apply would.
+
+This capability is **off by default**. When it is off, both `Update: 3 - Apply Updates` and `Update: 4 - Monitor In-Flight Updates` print a short awareness notice in their run summary pointing back here.
+
+**Enable it:**
+
+- **GitHub Actions** - set a repository Variable (not a secret):
+
+  ```bash
+  gh variable set FAILED_UPDATES_SINGLE_RETRY --body true
+  ```
+
+  Set it back to `false` (or delete the Variable) to disable.
+
+- **Azure DevOps** - add a pipeline variable (or a variable-group entry linked to the apply/monitor pipelines):
+
+  ```text
+  FAILED_UPDATES_SINGLE_RETRY = true
+  ```
+
+  Set it to `false` (or remove it) to disable.
+
+**Manual / ad-hoc retry (no pipeline variable required):** the per-cluster primitive `Invoke-AzLocalFailedUpdateRetry` can be run directly, e.g.:
+
+```powershell
+# Auto-detect the failed update on a single cluster and retry it once (prompts for confirmation)
+Invoke-AzLocalFailedUpdateRetry -ClusterName 'Arizona'
+
+# Targeted, unattended retry of a specific failed version, overriding the one-time guard
+Invoke-AzLocalFailedUpdateRetry -ClusterName 'Arizona' -UpdateName 'Solution12.2604.1003.1005' -Force
+```
+
+`-Force` overrides the one-time guard (and suppresses the confirmation prompt); omit it to respect the guard.
 
 ---
 

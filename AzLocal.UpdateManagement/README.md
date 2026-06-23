@@ -2,7 +2,7 @@
 
 > ⚠️ **Disclaimer**: This module is **NOT** a Microsoft supported service offering or product. It is provided as example code only, with no warranty or official support. Refer to the [MIT license](https://github.com/NeilBird/Azure-Local/blob/main/LICENSE) for further information.
 
-**Latest Version:** v0.8.94 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.8.94)
+**Latest Version:** v0.8.95 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.8.95)
 
 This folder contains the 'AzLocal.UpdateManagement' PowerShell module for managing updates on Azure Local (formerly Azure Stack HCI) clusters using the Azure Local REST API. The module supports both interactive use and CI/CD automation via Service Principal or Managed Identity authentication.
 
@@ -14,7 +14,7 @@ Azure Local REST API specification (includes update management endpoints): https
 **This README (overview + most-recent release notes):**
 
 - [Where to Start](#where-to-start)
-- [What's New in v0.8.94](#whats-new-in-v0894)
+- [What's New in v0.8.95](#whats-new-in-v0895)
 - [Files](#files)
 - [Prerequisites](#prerequisites)
 - [RBAC Requirements](#rbac-requirements) (summary; full reference in [docs/rbac.md](docs/rbac.md))
@@ -77,28 +77,41 @@ If you are new to this module, work through these in order from a regular PowerS
 
 > Most CI/CD pipelines in [Automation-Pipeline-Examples/](Automation-Pipeline-Examples/) are direct implementations of one of these workflows. Start there if you want a copy-pasteable end-to-end pipeline.
 
-## What's New in v0.8.94
+## What's New in v0.8.95
 
-**Expands `BEGIN/END-AZLOCAL-CUSTOMIZE` marker coverage across every bundled CI/CD pipeline YAML (GitHub Actions and Azure DevOps)** so operator-owned infrastructure values survive `Update-AzLocalPipelineExample` - including with `-Force`, which otherwise reverts edits made outside marker regions. Template + docs + tests only - no public API, parameter, or export-count change (still 61).
+Three changes ship together this release:
 
-### Changed
+1. **Guarded, opt-in ONE-TIME automatic retry of FAILED Azure Local cluster updates** (off by default), so a cluster whose update run terminated in a failed state can be re-applied automatically - the same action as the portal's "Try again" button - without ever looping.
+2. **Stalled / orphaned in-flight-run detection** in the Monitor report, so an `InProgress` run whose ARM `lastUpdatedTime` has frozen (the orchestrator died mid-step yet ARM still reports `InProgress`) is flagged CRITICAL instead of being mistaken for healthy progress.
+3. **Transient-network retry** in the Resource Graph helper, so a `ConnectionResetError(10054)` / "Connection broken" mid-query no longer fails the whole pipeline step.
 
-- **Three new marker region families wrap operator-owned infrastructure values.** The Azure DevOps WIF service connection name on each `AzureCLI@2`/`AzurePowerShell@5` task is now wrapped in `# BEGIN/END-AZLOCAL-CUSTOMIZE:service-connection-<job>`; the hosted agent pool / GitHub `runs-on:` label in `# ...:runner-target-<job>`; and the sideload self-hosted pool/runner in `# ...:sideload-runner-<job>`. 45 marker pairs were added across 20 bundled YAML files, with region names derived from the nearest stage/job and unique within each file.
-- **Operator edits inside these regions now survive `Update-AzLocalPipelineExample`.** The marker-aware merge engine and parser were already generic, so no cmdlet code changed - this release is purely the templates, documentation, and test coverage.
-- **Per-run input defaults are deliberately NOT marker-wrapped** (e.g. `updateRing`, config paths, throttle). They are already overridable per run and via variable groups, and wrapping them would freeze the module author's ability to improve those defaults on each release.
+Export count 61 -> 64.
 
 ### Added
 
-- Pester round-trip coverage asserting a simulated operator edit inside each new region survives both a default and a `-Force` merge, plus a structural guard that every bundled YAML has balanced, uniquely-named markers.
+- **`Invoke-AzLocalFailedUpdateRetry`** (per-cluster primitive). Re-issues the `updates/{updateName}/apply` ARM action, but only when the cluster's updateSummary state is `NeedsAttention`, `UpdateFailed`, or `PreparationFailed`. A cluster still `UpdateInProgress` (including a stalled/orphaned run) is deliberately **skipped** - an in-flight run cannot be retried. Auto-detects the failed update version from the latest failed run when `-UpdateName` is omitted. `SupportsShouldProcess` with High `ConfirmImpact`.
+- **Durable one-time guard.** The retry is recorded in a dedicated `UpdateRetryAttempted` cluster tag (alongside the generic `UpdateLastAttempt` audit pointer). A recorded attempt for the same update version returns `RetryAlreadyAttempted` so a scheduled pipeline never re-applies in a loop; `-Force` overrides. Both tags **auto-clear** once the retried run reaches `Succeeded` (or a stale `RetryFailed` attempt ages out after 1h).
+- **`Invoke-AzLocalReadinessGatedFailedUpdateRetry`** (Apply-Updates pipeline fan-out). Reuses the readiness report, retries each failed-state cluster once with `-Confirm:$false` but NOT `-Force` (the guard stays active), and emits per-status step outputs, `apply-retry-results.json`, and a "Failed Update Single-Retry" summary section.
+- **`Add-AzLocalFailedUpdateRetryHintSummary`** (discoverability notice). When the feature is OFF, the Apply-Updates and Monitor In-Flight Updates pipelines print a short, host-tailored awareness notice with the exact enable command and a pointer to the new "Opt-in: single-retry of failed updates" CI/CD README section.
+- **Stalled / orphaned in-flight-run detection** (`Export-AzLocalUpdateRunMonitorReport -StalledNoProgressHours <n>`, default 24, `0` disables). An `InProgress` run whose ARM `lastUpdatedTime` has not advanced beyond the threshold is treated as making zero progress and flagged CRITICAL with a `:zzz: stalled` chip, counted separately (`StalledCount` in `-PassThru`, an eighth `stalled` step output), and surfaced in a new "Last Activity (UTC)" column. `Format-AzLocalUpdateRun` now captures the ARM `lastUpdatedTime` (surfaced as `LastUpdatedTime` on `Get-AzLocalUpdateRuns -PassThru`). Motivated by a real orphaned run that sat `InProgress` for 30+ days after freezing at `PT9M33S`.
+
+### Changed
+
+- `FAILED_UPDATES_SINGLE_RETRY` opt-in (GitHub repository Variable / Azure DevOps pipeline variable) wired into the bundled `apply-updates.yml` for both platforms, with the awareness notice surfaced in both the apply and monitor pipelines when the variable is not `true`.
+- `Write-AzLocalUpdateLastAttemptTag` generalised with an optional `-TagName` parameter so the same writer persists the dedicated `UpdateRetryAttempted` guard tag.
+
+### Fixed
+
+- **`Invoke-AzResourceGraphQuery` now retries transient network failures, not just throttling.** The per-page retry classifier previously matched only rate-limit / `429` signals, so a `ConnectionResetError(10054)` / "Connection broken" / 5xx gateway / timeout fell straight through to a hard `throw` and failed the whole pipeline step. These transient errors now share the same `-MaxRetries` budget and exponential backoff, but - unlike throttling - deliberately do NOT arm the cross-call cooldown (a reset is not a rate-limit signal). Two new module-scope diagnostics (`$script:LastResourceGraphTransientNetwork`, `$script:LastResourceGraphTransientRetryCount`) let callers/tests distinguish a reset from a 429.
 
 ### Notes
 
-- **No public-API change** (export count unchanged at 61).
-- **`GENERATED_AGAINST_MODULE_VERSION`** bumped from `0.8.93` to `0.8.94` across bundled pipeline templates.
+- **Off by default** - no behaviour change unless you set `FAILED_UPDATES_SINGLE_RETRY=true`.
+- **`GENERATED_AGAINST_MODULE_VERSION`** bumped from `0.8.94` to `0.8.95` across bundled pipeline templates.
 
 > Previous release notes have moved into the [Release History](#release-history) appendix at the bottom of this document.
 
-See [CHANGELOG.md](CHANGELOG.md) for full release details. See [`What's New in v0.8.93`](#whats-new-in-v0893) in the Release History for the previous release.
+See [CHANGELOG.md](CHANGELOG.md) for full release details. See [`What's New in v0.8.94`](#whats-new-in-v0894) in the Release History for the previous release.
 
 ## Files
 
@@ -580,7 +593,11 @@ This code is provided as-is for educational and reference purposes.
 
 The full What's-New history (v0.7.81 and earlier) has moved to [docs/release-history.md](docs/release-history.md).
 
-The most recent release notes for **v0.8.94** stay above under [`What's New in v0.8.94`](#whats-new-in-v0894).
+The most recent release notes for **v0.8.95** stay above under [`What's New in v0.8.95`](#whats-new-in-v0895).
+
+### What's New in v0.8.94
+
+**Expands `BEGIN/END-AZLOCAL-CUSTOMIZE` marker coverage across every bundled CI/CD pipeline YAML (GitHub Actions and Azure DevOps)** so operator-owned infrastructure values survive `Update-AzLocalPipelineExample` - including with `-Force`. Three new uniquely-named marker region families wrap the Azure DevOps WIF service connection (`service-connection-<job>`), the hosted agent pool / GitHub `runs-on:` label (`runner-target-<job>`), and the sideload self-hosted pool/runner (`sideload-runner-<job>`); 45 marker pairs across 20 files. The merge engine and parser were already generic, so no cmdlet code changed - template + docs + tests only. No public-API or export-count change (still 61). `GENERATED_AGAINST_MODULE_VERSION` bumped from `0.8.93` to `0.8.94`. See [CHANGELOG.md](CHANGELOG.md#0894---2026-06-19) for the full v0.8.94 entry.
 
 ### What's New in v0.8.93
 

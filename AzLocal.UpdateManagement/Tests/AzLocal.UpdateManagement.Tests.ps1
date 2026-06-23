@@ -34,8 +34,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $script:ModuleInfo | Should -Not -BeNullOrEmpty
         }
 
-        It 'Should have version 0.8.94' {
-            $script:ModuleInfo.Version | Should -Be '0.8.94'
+        It 'Should have version 0.8.95' {
+            $script:ModuleInfo.Version | Should -Be '0.8.95'
         }
 
         It 'Module version constants are in sync between .psm1 and .psd1' {
@@ -293,9 +293,9 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $content | Should -Match 'MonitorInFlightHours'       -Because "$Platform audit plumbs in-flight hours into the cmdlet"
         }
 
-        It 'Should export exactly 61 functions' {
+        It 'Should export exactly 64 functions' {
 
-            $script:ModuleInfo.ExportedFunctions.Count | Should -Be 61
+            $script:ModuleInfo.ExportedFunctions.Count | Should -Be 64
         }
 
         It 'Should export the expected functions' {
@@ -390,7 +390,11 @@ Describe 'Module: AzLocal.UpdateManagement' {
                 'Resolve-AzLocalSideloadPlan',
                 'Invoke-AzLocalSideloadUpdate',
                 'Export-AzLocalSideloadStatusReport',
-                'Add-AzLocalSideloadStepSummary'
+                'Add-AzLocalSideloadStepSummary',
+                # Guarded One-Time Failed-Update Retry (v0.8.95) - per-cluster primitive + readiness-gated Step.6 wrapper + pipeline discoverability notice
+                'Invoke-AzLocalFailedUpdateRetry',
+                'Invoke-AzLocalReadinessGatedFailedUpdateRetry',
+                'Add-AzLocalFailedUpdateRetryHintSummary'
             )
             
             foreach ($func in $expectedFunctions) {
@@ -4148,6 +4152,160 @@ Describe 'Internal Helper: Invoke-AzResourceGraphQuery' {
                 [void](Invoke-AzResourceGraphQuery -Query 'resources')
                 $script:LastResourceGraphThrottled | Should -BeFalse
                 $script:LastResourceGraphRetryCount | Should -Be 0
+            }
+        }
+    }
+
+    Context 'Transient network / connection-reset handling (v0.8.95)' {
+        # v0.8.95 extended the per-page retry loop to cover transient network
+        # failures (TCP connection reset mid-request). Two production GitHub
+        # Actions runs (Fleet Update Status run 28008708678 and Apply Updates
+        # run 27964791090) both failed when 'az graph query' hit a
+        # ConnectionResetError(10054) / "Connection broken", which the
+        # resource-graph extension then mis-handled into a Python traceback
+        # ("'NoneType' object has no attribute 'error'") and exit 1. These are
+        # transient and now retried. They are tracked SEPARATELY from throttle
+        # via $script:LastResourceGraphTransientNetwork /
+        # $script:LastResourceGraphTransientRetryCount, and they do NOT arm the
+        # cross-call throttle cooldown.
+        #
+        # The exact error text the production runs emitted is reproduced inline
+        # in each test (as a local here-string) so the classifier is exercised
+        # against the real-world string. NOTE: it must be defined INSIDE the
+        # InModuleScope block - a $script:-scoped variable declared at Context
+        # level is not visible inside InModuleScope, where $script: resolves to
+        # the MODULE's scope, not the test file's.
+
+        It 'Should retry on a connection reset (10054) and eventually succeed' {
+            InModuleScope AzLocal.UpdateManagement {
+                $script:ResetCalls = 0
+                $errText = @'
+ERROR: The command failed with an unexpected error. Here is the traceback:
+ERROR: 'NoneType' object has no attribute 'error'
+azure.core.exceptions.HttpResponseError: ("Connection broken: ConnectionResetError(10054, 'An existing connection was forcibly closed by the remote host', None, 10054, None)", ConnectionResetError(10054, 'An existing connection was forcibly closed by the remote host', None, 10054, None))
+AttributeError: 'NoneType' object has no attribute 'error'
+'@
+                function az {
+                    $script:ResetCalls++
+                    if ($script:ResetCalls -le 2) {
+                        # -ErrorAction Continue bypasses Pester v5's It-block 'Stop'
+                        # default so $LASTEXITCODE is still set; mirrors how real
+                        # az.exe writes the traceback to stderr without raising a
+                        # terminating PowerShell error.
+                        Write-Error -ErrorAction Continue $errText
+                        $global:LASTEXITCODE = 1
+                        return
+                    }
+                    $global:LASTEXITCODE = 0
+                    return '{"count":1,"data":[{"id":"recovered"}],"total_records":1}'
+                }
+
+                $rows = Invoke-AzResourceGraphQuery -Query 'resources' -RetryBaseSeconds 0.1 -WarningAction SilentlyContinue
+                $rows | Should -HaveCount 1
+                $rows[0].id | Should -Be 'recovered'
+                $script:ResetCalls | Should -Be 3
+                $script:LastResourceGraphTransientNetwork | Should -BeTrue
+                $script:LastResourceGraphTransientRetryCount | Should -Be 2
+                # A connection reset is NOT a throttle - throttle flags stay clean.
+                $script:LastResourceGraphThrottled | Should -BeFalse
+                $script:LastResourceGraphRetryCount | Should -Be 0
+            }
+        }
+
+        It 'Should give up and throw once -MaxRetries is exhausted on persistent resets' {
+            InModuleScope AzLocal.UpdateManagement {
+                $errText = @'
+ERROR: The command failed with an unexpected error. Here is the traceback:
+azure.core.exceptions.HttpResponseError: ("Connection broken: ConnectionResetError(10054, 'An existing connection was forcibly closed by the remote host', None, 10054, None)", ConnectionResetError(10054, 'An existing connection was forcibly closed by the remote host', None, 10054, None))
+'@
+                function az {
+                    Write-Error -ErrorAction Continue $errText
+                    $global:LASTEXITCODE = 1
+                    return
+                }
+
+                {
+                    Invoke-AzResourceGraphQuery -Query 'resources' -MaxRetries 2 -RetryBaseSeconds 0.1 -WarningAction SilentlyContinue
+                } | Should -Throw -ExpectedMessage '*Azure Resource Graph query failed*'
+                $script:LastResourceGraphTransientNetwork | Should -BeTrue
+                $script:LastResourceGraphTransientRetryCount | Should -Be 2
+            }
+        }
+
+        It 'Should NOT arm the cross-call throttle cooldown on a connection reset' {
+            InModuleScope AzLocal.UpdateManagement {
+                # Reset cooldown state so the assertion is unambiguous.
+                $script:ArgCrossCallCooldownUntil = [DateTime]::MinValue
+                $script:ArgConsecutiveThrottledCalls = 0
+                $errText = @'
+azure.core.exceptions.HttpResponseError: ("Connection broken: ConnectionResetError(10054, 'An existing connection was forcibly closed by the remote host', None, 10054, None)", ConnectionResetError(10054, 'An existing connection was forcibly closed by the remote host', None, 10054, None))
+'@
+                $script:ResetThenOk = 0
+                function az {
+                    $script:ResetThenOk++
+                    if ($script:ResetThenOk -eq 1) {
+                        Write-Error -ErrorAction Continue $errText
+                        $global:LASTEXITCODE = 1
+                        return
+                    }
+                    $global:LASTEXITCODE = 0
+                    return '{"count":0,"data":[],"total_records":0}'
+                }
+
+                [void](Invoke-AzResourceGraphQuery -Query 'resources' -RetryBaseSeconds 0.1 -WarningAction SilentlyContinue)
+                # Connection resets must leave the cross-call throttle cooldown untouched.
+                $script:ArgConsecutiveThrottledCalls | Should -Be 0
+                $script:ArgCrossCallCooldownUntil | Should -Be ([DateTime]::MinValue)
+            }
+        }
+
+        It 'Should still NOT retry genuine non-transient errors (auth / bad KQL)' {
+            InModuleScope AzLocal.UpdateManagement {
+                $script:AuthCalls = 0
+                function az {
+                    $script:AuthCalls++
+                    Write-Error -ErrorAction Continue 'ERROR: AuthenticationFailed - the access token is invalid'
+                    $global:LASTEXITCODE = 1
+                    return
+                }
+
+                {
+                    Invoke-AzResourceGraphQuery -Query 'resources' -MaxRetries 5 -RetryBaseSeconds 0.1
+                } | Should -Throw -ExpectedMessage '*Azure Resource Graph query failed*'
+                $script:AuthCalls | Should -Be 1
+                $script:LastResourceGraphTransientNetwork | Should -BeFalse
+                $script:LastResourceGraphTransientRetryCount | Should -Be 0
+            }
+        }
+
+        It 'Should reset transient-network diagnostic flags at the start of every call' {
+            InModuleScope AzLocal.UpdateManagement {
+                $errText = @'
+azure.core.exceptions.HttpResponseError: ("Connection broken: ConnectionResetError(10054, 'An existing connection was forcibly closed by the remote host', None, 10054, None)", ConnectionResetError(10054, 'An existing connection was forcibly closed by the remote host', None, 10054, None))
+'@
+                $script:T1Calls = 0
+                function az {
+                    $script:T1Calls++
+                    if ($script:T1Calls -eq 1) {
+                        Write-Error -ErrorAction Continue $errText
+                        $global:LASTEXITCODE = 1
+                        return
+                    }
+                    $global:LASTEXITCODE = 0
+                    return '{"count":0,"data":[],"total_records":0}'
+                }
+                [void](Invoke-AzResourceGraphQuery -Query 'resources' -RetryBaseSeconds 0.1 -WarningAction SilentlyContinue)
+                $script:LastResourceGraphTransientNetwork | Should -BeTrue
+                $script:LastResourceGraphTransientRetryCount | Should -Be 1
+
+                # Second, clean call: flags must reset back to FALSE / 0.
+                function az {
+                    $global:LASTEXITCODE = 0
+                    return '{"count":0,"data":[],"total_records":0}'
+                }
+                [void](Invoke-AzResourceGraphQuery -Query 'resources')
+                $script:LastResourceGraphTransientNetwork | Should -BeFalse
+                $script:LastResourceGraphTransientRetryCount | Should -Be 0
             }
         }
     }
@@ -11552,8 +11710,8 @@ Describe 'Function: Get-AzLocalFleetHealthOverview - v0.7.70 (ARG-first fleet he
             $cmd.CommandType | Should -Be 'Function'
         }
 
-        It 'BS7: Module exports exactly 61 functions (was 55 after Step.6 thin-YAML port; v0.8.7 sideload automation adds 5 cmdlets; v0.8.88 adds Sync-AzLocalClusterUpdateSummary)' {
-            (Get-Module AzLocal.UpdateManagement).ExportedFunctions.Count | Should -Be 61
+        It 'BS7: Module exports exactly 64 functions (was 55 after Step.6 thin-YAML port; v0.8.7 sideload automation adds 5 cmdlets; v0.8.88 adds Sync-AzLocalClusterUpdateSummary; v0.8.95 adds Invoke-AzLocalFailedUpdateRetry + Invoke-AzLocalReadinessGatedFailedUpdateRetry + Add-AzLocalFailedUpdateRetryHintSummary)' {
+            (Get-Module AzLocal.UpdateManagement).ExportedFunctions.Count | Should -Be 64
         }
     }
 
@@ -15481,6 +15639,107 @@ Describe 'Thin-YAML Step.7: Export-AzLocalUpdateRunMonitorReport' {
         $failedCases = @($xml.SelectNodes('//testcase[failure]'))
         $failedCases.Count | Should -BeGreaterOrEqual 1
         $failedCases[0].failure.type | Should -Be 'StepError'
+    }
+
+    It 'Stalled InProgress run (lastUpdatedTime frozen beyond StalledNoProgressHours): StalledCount=1, CRITICAL, stalled chip' {
+        # Arizona run 19444cab repro: State=InProgress for weeks, but ARM
+        # lastUpdatedTime froze after only ~9 minutes of runtime. The run is
+        # making zero progress yet still reports InProgress.
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s7_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s7_ghSummaryFile
+        $runs = @(
+            [pscustomobject]@{
+                ClusterName       = 'alpha'
+                ClusterResourceId = $script:_s7_inventory[0].ResourceId
+                UpdateName        = 'Solution12.2604.1003.1005'
+                State             = 'InProgress'
+                Status            = 'InProgress'
+                CurrentStep       = 'Run Update Health Checks'
+                Progress          = ''
+                StartTime         = $script:_s7_now.AddDays(-30).ToString('yyyy-MM-ddTHH:mm:ss')
+                StepStartTime     = $script:_s7_now.AddDays(-30).ToString('yyyy-MM-ddTHH:mm:ss')
+                LastUpdatedTime   = $script:_s7_now.AddDays(-30).AddMinutes(9).ToString('yyyy-MM-ddTHH:mm:ss')   # frozen ~30d ago
+                EndTime           = $null
+                RunId             = '19444cab'
+                RunResourceId     = ($script:_s7_inventory[0].ResourceId + '/updates/Solution12.2604.1003.1005/updateRuns/19444cab')
+            }
+        )
+        $global:_s7_payload = @{ Inventory = $script:_s7_inventory; Runs = $runs; Now = $script:_s7_now; OutDir = $script:_s7_outDir }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory { @($global:_s7_payload.Inventory) }
+            Mock Get-AzLocalUpdateRuns       { @($global:_s7_payload.Runs) }
+            Export-AzLocalUpdateRunMonitorReport -OutputDirectory $global:_s7_payload.OutDir -Now $global:_s7_payload.Now -StalledNoProgressHours 24 -PassThru
+        }
+        $result.InFlightCount | Should -Be 1
+        $result.StalledCount  | Should -Be 1
+        $row = @($result.Rows)[0]
+        $row.IsStalled            | Should -BeTrue
+        $row.LastUpdatedUtc       | Should -Not -BeNullOrEmpty
+        $row.SinceLastUpdateHours | Should -BeGreaterThan 24
+        $row.Flags                | Should -Match 'stalled'
+        $row.SeverityScore        | Should -BeGreaterThan 599
+        (Get-Content -Raw -LiteralPath $script:_s7_ghOutputFile)  | Should -Match 'stalled=1'
+        (Get-Content -Raw -LiteralPath $script:_s7_ghSummaryFile) | Should -Match 'Fleet Status: CRITICAL'
+    }
+
+    It 'Actively-progressing InProgress run (recent lastUpdatedTime) is NOT stalled' {
+        $runs = @(
+            [pscustomobject]@{
+                ClusterName       = 'beta'
+                ClusterResourceId = $script:_s7_inventory[1].ResourceId
+                UpdateName        = '12.2509.1.21'
+                State             = 'InProgress'
+                Status            = 'InProgress'
+                CurrentStep       = 'Apply Update'
+                Progress          = '60%'
+                StartTime         = $script:_s7_now.AddHours(-3).ToString('yyyy-MM-ddTHH:mm:ss')
+                StepStartTime     = $script:_s7_now.AddMinutes(-20).ToString('yyyy-MM-ddTHH:mm:ss')
+                LastUpdatedTime   = $script:_s7_now.AddMinutes(-5).ToString('yyyy-MM-ddTHH:mm:ss')   # actively updating
+                EndTime           = $null
+                RunId             = 'r-live'
+                RunResourceId     = ($script:_s7_inventory[1].ResourceId + '/updates/12.2509.1.21/updateRuns/r-live')
+            }
+        )
+        $global:_s7_payload = @{ Inventory = $script:_s7_inventory; Runs = $runs; Now = $script:_s7_now; OutDir = $script:_s7_outDir }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory { @($global:_s7_payload.Inventory) }
+            Mock Get-AzLocalUpdateRuns       { @($global:_s7_payload.Runs) }
+            Export-AzLocalUpdateRunMonitorReport -OutputDirectory $global:_s7_payload.OutDir -Now $global:_s7_payload.Now -StalledNoProgressHours 24 -PassThru
+        }
+        $result.InFlightCount | Should -Be 1
+        $result.StalledCount  | Should -Be 0
+        $row = @($result.Rows)[0]
+        $row.IsStalled | Should -BeFalse
+    }
+
+    It 'StalledNoProgressHours=0 disables stalled detection even for a frozen run' {
+        $runs = @(
+            [pscustomobject]@{
+                ClusterName       = 'gamma'
+                ClusterResourceId = $script:_s7_inventory[2].ResourceId
+                UpdateName        = 'Solution12.2604.1003.1005'
+                State             = 'InProgress'
+                Status            = 'InProgress'
+                CurrentStep       = 'Run Update Health Checks'
+                Progress          = ''
+                StartTime         = $script:_s7_now.AddDays(-30).ToString('yyyy-MM-ddTHH:mm:ss')
+                StepStartTime     = $script:_s7_now.AddDays(-30).ToString('yyyy-MM-ddTHH:mm:ss')
+                LastUpdatedTime   = $script:_s7_now.AddDays(-30).AddMinutes(9).ToString('yyyy-MM-ddTHH:mm:ss')
+                EndTime           = $null
+                RunId             = '19444cab'
+                RunResourceId     = ($script:_s7_inventory[2].ResourceId + '/updates/Solution12.2604.1003.1005/updateRuns/19444cab')
+            }
+        )
+        $global:_s7_payload = @{ Inventory = $script:_s7_inventory; Runs = $runs; Now = $script:_s7_now; OutDir = $script:_s7_outDir }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory { @($global:_s7_payload.Inventory) }
+            Mock Get-AzLocalUpdateRuns       { @($global:_s7_payload.Runs) }
+            Export-AzLocalUpdateRunMonitorReport -OutputDirectory $global:_s7_payload.OutDir -Now $global:_s7_payload.Now -StalledNoProgressHours 0 -PassThru
+        }
+        $result.StalledCount | Should -Be 0
+        $row = @($result.Rows)[0]
+        $row.IsStalled | Should -BeFalse
     }
 
     It 'Unresolved failure (latest run is Failed) surfaces in UnresolvedFailureCount and JUnit' {
@@ -20082,3 +20341,282 @@ Describe 'Helper Function: Test-AzLocalUpdateAssessmentStale (Internal)' {
 }
 
 #endregion v0.8.88: Check for updates (checkUpdates) - Sync cmdlet + stale-assessment detector
+
+#region v0.8.95: Guarded one-time failed-update retry
+
+Describe 'v0.8.95: Module exposes UpdateRetryAttemptedTagName script var' {
+    It 'Has $script:UpdateRetryAttemptedTagName == UpdateRetryAttempted' {
+        $name = & (Get-Module 'AzLocal.UpdateManagement') { $script:UpdateRetryAttemptedTagName }
+        $name | Should -Be 'UpdateRetryAttempted'
+    }
+}
+
+Describe 'v0.8.95: Write-AzLocalUpdateLastAttemptTag accepts -TagName (defaults to UpdateLastAttempt)' {
+    BeforeAll {
+        $script:srcWriter = Get-Content -LiteralPath "$PSScriptRoot/../Private/Write-AzLocalUpdateLastAttemptTag.ps1" -Raw
+    }
+    It 'Declares a -TagName parameter defaulting to $script:UpdateLastAttemptTagName' {
+        $script:srcWriter | Should -Match '\[string\]\$TagName\s*=\s*\$script:UpdateLastAttemptTagName'
+    }
+    It 'Uses $TagName when merging the tag (not a hard-coded tag name)' {
+        $script:srcWriter | Should -Match '-Tags @\{\s*\$TagName\s*=\s*\$value\s*\}'
+    }
+}
+
+Describe 'v0.8.95: Invoke-AzLocalFailedUpdateRetry (functional)' {
+    BeforeAll {
+        # Shadow native `az` so the cmdlet's "az account show" subscription
+        # resolution (used when -SubscriptionId is omitted) returns a value
+        # instead of hitting a real Azure CLI / failing parameter binding.
+        function global:az { $global:LASTEXITCODE = 0; return 'sub-1234' }
+    }
+    AfterAll {
+        Remove-Item function:\az -ErrorAction SilentlyContinue
+    }
+    It 'Failed state + explicit UpdateName -> RetryStarted and writes BOTH tags' {
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Write-Log {}
+            Mock Test-AzCliAvailable { $true }
+            Mock Get-AzLocalClusterInfo { [pscustomobject]@{ id = '/subscriptions/s/resourceGroups/r/providers/microsoft.azurestackhci/clusters/Arizona'; name = 'Arizona'; tags = @{} } }
+            Mock Get-AzLocalUpdateSummary { [pscustomobject]@{ properties = [pscustomobject]@{ state = 'UpdateFailed' } } }
+            Mock Get-TagValue { '' }
+            Mock Invoke-AzLocalUpdateApply { $true }
+            Mock Write-AzLocalUpdateLastAttemptTag {}
+
+            $r = Invoke-AzLocalFailedUpdateRetry -ClusterName 'Arizona' -UpdateName 'Solution12.2604.1003.1005' -Confirm:$false
+
+            $r.Status | Should -Be 'RetryStarted'
+            $r.UpdateName | Should -Be 'Solution12.2604.1003.1005'
+            Assert-MockCalled Invoke-AzLocalUpdateApply -Times 1 -Exactly
+            # Generic audit tag (default TagName) + dedicated guard tag.
+            Assert-MockCalled Write-AzLocalUpdateLastAttemptTag -Times 2 -Exactly
+            Assert-MockCalled Write-AzLocalUpdateLastAttemptTag -Times 1 -Exactly -ParameterFilter { $TagName -eq $script:UpdateRetryAttemptedTagName -and $Outcome -eq 'RetryStarted' }
+            Assert-MockCalled Write-AzLocalUpdateLastAttemptTag -Times 1 -Exactly -ParameterFilter { -not $PSBoundParameters.ContainsKey('TagName') -and $Outcome -eq 'UpdateRetried' }
+        }
+    }
+
+    It 'Guard tag recording the same update -> RetryAlreadyAttempted, no apply' {
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Write-Log {}
+            Mock Test-AzCliAvailable { $true }
+            Mock Get-AzLocalClusterInfo { [pscustomobject]@{ id = '/subscriptions/s/resourceGroups/r/providers/microsoft.azurestackhci/clusters/Arizona'; name = 'Arizona'; tags = @{} } }
+            Mock Get-AzLocalUpdateSummary { [pscustomobject]@{ properties = [pscustomobject]@{ state = 'UpdateFailed' } } }
+            # Guard tag already records a RetryStarted attempt for the same version.
+            Mock Get-TagValue { '2026-01-01T00:00:00Z;RetryStarted;Solution12.2604.1003.1005;One-time retry of failed update initiated' }
+            Mock Invoke-AzLocalUpdateApply { $true }
+            Mock Write-AzLocalUpdateLastAttemptTag {}
+
+            $r = Invoke-AzLocalFailedUpdateRetry -ClusterName 'Arizona' -UpdateName 'Solution12.2604.1003.1005' -Confirm:$false
+
+            $r.Status | Should -Be 'RetryAlreadyAttempted'
+            Assert-MockCalled Invoke-AzLocalUpdateApply -Times 0 -Exactly
+            Assert-MockCalled Write-AzLocalUpdateLastAttemptTag -Times 0 -Exactly
+        }
+    }
+
+    It '-Force overrides the one-time guard and retries again' {
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Write-Log {}
+            Mock Test-AzCliAvailable { $true }
+            Mock Get-AzLocalClusterInfo { [pscustomobject]@{ id = '/subscriptions/s/resourceGroups/r/providers/microsoft.azurestackhci/clusters/Arizona'; name = 'Arizona'; tags = @{} } }
+            Mock Get-AzLocalUpdateSummary { [pscustomobject]@{ properties = [pscustomobject]@{ state = 'UpdateFailed' } } }
+            Mock Get-TagValue { '2026-01-01T00:00:00Z;RetryStarted;Solution12.2604.1003.1005;already retried' }
+            Mock Invoke-AzLocalUpdateApply { $true }
+            Mock Write-AzLocalUpdateLastAttemptTag {}
+
+            $r = Invoke-AzLocalFailedUpdateRetry -ClusterName 'Arizona' -UpdateName 'Solution12.2604.1003.1005' -Force
+
+            $r.Status | Should -Be 'RetryStarted'
+            Assert-MockCalled Invoke-AzLocalUpdateApply -Times 1 -Exactly
+        }
+    }
+
+    It 'In-progress (or stalled/orphaned) state -> Skipped, never retried' {
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Write-Log {}
+            Mock Test-AzCliAvailable { $true }
+            Mock Get-AzLocalClusterInfo { [pscustomobject]@{ id = '/subscriptions/s/resourceGroups/r/providers/microsoft.azurestackhci/clusters/Arizona'; name = 'Arizona'; tags = @{} } }
+            Mock Get-AzLocalUpdateSummary { [pscustomobject]@{ properties = [pscustomobject]@{ state = 'UpdateInProgress' } } }
+            Mock Get-TagValue { '' }
+            Mock Invoke-AzLocalUpdateApply { $true }
+            Mock Write-AzLocalUpdateLastAttemptTag {}
+
+            $r = Invoke-AzLocalFailedUpdateRetry -ClusterName 'Arizona' -UpdateName 'Solution12.2604.1003.1005' -Confirm:$false
+
+            $r.Status | Should -Be 'Skipped'
+            $r.Message | Should -BeLike '*in-flight*'
+            Assert-MockCalled Invoke-AzLocalUpdateApply -Times 0 -Exactly
+        }
+    }
+
+    It 'Auto-detects the failed update from the latest failed run when -UpdateName omitted' {
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Write-Log {}
+            Mock Test-AzCliAvailable { $true }
+            Mock Get-AzLocalClusterInfo { [pscustomobject]@{ id = '/subscriptions/s/resourceGroups/r/providers/microsoft.azurestackhci/clusters/Arizona'; name = 'Arizona'; tags = @{} } }
+            Mock Get-AzLocalUpdateSummary { [pscustomobject]@{ properties = [pscustomobject]@{ state = 'NeedsAttention' } } }
+            Mock Get-AzLocalClusterUpdateRuns { ,@([pscustomobject]@{ properties = [pscustomobject]@{ timeStarted = '2026-01-01T00:00:00Z' } }) }
+            Mock Format-AzLocalUpdateRun { [pscustomobject]@{ State = 'Failed'; UpdateName = 'Solution12.2604.1003.1005' } }
+            Mock Get-TagValue { '' }
+            Mock Invoke-AzLocalUpdateApply { $true }
+            Mock Write-AzLocalUpdateLastAttemptTag {}
+
+            $r = Invoke-AzLocalFailedUpdateRetry -ClusterName 'Arizona' -Confirm:$false
+
+            $r.Status | Should -Be 'RetryStarted'
+            $r.UpdateName | Should -Be 'Solution12.2604.1003.1005'
+        }
+    }
+
+    It 'Apply rejected -> Failed and records both tags (consumes the one-time retry)' {
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Write-Log {}
+            Mock Test-AzCliAvailable { $true }
+            Mock Get-AzLocalClusterInfo { [pscustomobject]@{ id = '/subscriptions/s/resourceGroups/r/providers/microsoft.azurestackhci/clusters/Arizona'; name = 'Arizona'; tags = @{} } }
+            Mock Get-AzLocalUpdateSummary { [pscustomobject]@{ properties = [pscustomobject]@{ state = 'UpdateFailed' } } }
+            Mock Get-TagValue { '' }
+            Mock Invoke-AzLocalUpdateApply { $null }
+            Mock Write-AzLocalUpdateLastAttemptTag {}
+
+            $r = Invoke-AzLocalFailedUpdateRetry -ClusterName 'Arizona' -UpdateName 'Solution12.2604.1003.1005' -Confirm:$false
+
+            $r.Status | Should -Be 'Failed'
+            Assert-MockCalled Write-AzLocalUpdateLastAttemptTag -Times 2 -Exactly
+            Assert-MockCalled Write-AzLocalUpdateLastAttemptTag -Times 1 -Exactly -ParameterFilter { $TagName -eq $script:UpdateRetryAttemptedTagName -and $Outcome -eq 'RetryFailed' }
+        }
+    }
+}
+
+Describe 'v0.8.95: Invoke-AzLocalFailedUpdateRetry (source contract)' {
+    BeforeAll {
+        $script:srcRetry = Get-Content -LiteralPath "$PSScriptRoot/../Public/Invoke-AzLocalFailedUpdateRetry.ps1" -Raw
+    }
+    It 'Declares SupportsShouldProcess + High ConfirmImpact' {
+        $script:srcRetry | Should -Match "SupportsShouldProcess\s*=\s*\`$true"
+        $script:srcRetry | Should -Match "ConfirmImpact\s*=\s*'High'"
+    }
+    It 'Failed-state gate excludes UpdateInProgress' {
+        $script:srcRetry | Should -Match "\`$failedStates\s*=\s*@\('NeedsAttention',\s*'UpdateFailed',\s*'PreparationFailed'\)"
+    }
+    It 'One-time guard reads the dedicated UpdateRetryAttempted tag (not UpdateLastAttempt)' {
+        $script:srcRetry | Should -Match 'Get-TagValue\s+-Tags\s+\$clusterInfo\.tags\s+-Name\s+\$script:UpdateRetryAttemptedTagName'
+    }
+    It 'Success path writes the dedicated guard tag with -TagName UpdateRetryAttempted and Outcome RetryStarted' {
+        $script:srcRetry | Should -Match "(?s)-Outcome\s+\`$retryGuardStartedOutcome.*?-TagName\s+\`$script:UpdateRetryAttemptedTagName"
+        $script:srcRetry | Should -Match "\`$retryGuardStartedOutcome\s*=\s*'RetryStarted'"
+    }
+    It 'Failure path writes the guard tag with Outcome RetryFailed' {
+        $script:srcRetry | Should -Match "\`$retryGuardFailedOutcome\s*=\s*'RetryFailed'"
+    }
+}
+
+Describe 'v0.8.95: Invoke-AzLocalSideloadedAutoResetForCluster auto-clears UpdateRetryAttempted' {
+    BeforeAll {
+        $script:srcReset95 = Get-Content -LiteralPath "$PSScriptRoot/../Private/Invoke-AzLocalSideloadedAutoResetForCluster.ps1" -Raw
+    }
+    It 'Reads the UpdateRetryAttempted tag value' {
+        $script:srcReset95 | Should -Match 'Get-TagValue\s+-Tags\s+\$cluster\.tags\s+-Name\s+\$script:UpdateRetryAttemptedTagName'
+    }
+    It 'Clears the guard tag via Set-AzLocalClusterTagsMerge when the latest Succeeded run matches' {
+        $script:srcReset95 | Should -Match 'UpdateRetryAttemptedTagName\s*=\s*\$null'
+    }
+    It 'Also clears a stale RetryFailed attempt older than 1h' {
+        $script:srcReset95 | Should -Match "\`$parsedRetry\.Outcome\s+-eq\s+'RetryFailed'"
+        $script:srcReset95 | Should -Match 'TotalHours\s+-ge\s+1'
+    }
+}
+
+Describe 'v0.8.95: Invoke-AzLocalReadinessGatedFailedUpdateRetry (source contract)' {
+    BeforeAll {
+        $script:srcWrap = Get-Content -LiteralPath "$PSScriptRoot/../Public/Invoke-AzLocalReadinessGatedFailedUpdateRetry.ps1" -Raw
+    }
+    It 'Filters readiness rows to failed updateSummary states with a usable resource id' {
+        $script:srcWrap | Should -Match "\`$failedStates\s*=\s*@\('NeedsAttention',\s*'UpdateFailed',\s*'PreparationFailed'\)"
+        $script:srcWrap | Should -Match '\$_\.ClusterResourceId\s+-and\s+\(\$_\.UpdateState\s+-in\s+\$failedStates\)'
+    }
+    It 'Invokes the primitive with -Confirm:$false (NOT -Force) so the one-time guard stays active' {
+        $script:srcWrap | Should -Match "Confirm\s*=\s*\`$false"
+        $script:srcWrap | Should -Not -Match 'Force\s*=\s*\$true'
+    }
+    It 'Forwards -WhatIf to the primitive on DryRun' {
+        $script:srcWrap | Should -Match "if \(\`$DryRun\) \{ \`$retryParams\['WhatIf'\] = \`$true \}"
+    }
+    It 'Renders a "Failed Update Single-Retry" summary section' {
+        $script:srcWrap | Should -Match '## Failed Update Single-Retry'
+    }
+    It 'Emits per-host step outputs (GH UPPER_SNAKE, ADO PascalCase)' {
+        $script:srcWrap | Should -Match "'RETRY_STARTED'"
+        $script:srcWrap | Should -Match "'RetryStarted'"
+    }
+    It 'Persists per-cluster results to apply-retry-results.json' {
+        $script:srcWrap | Should -Match "RetryResultsJsonFileName\s*=\s*'apply-retry-results.json'"
+    }
+    It 'PassThru shape exposes the four counters + Results + paths' {
+        $script:srcWrap | Should -Match 'RetryStarted\s*=\s*\$retryStarted'
+        $script:srcWrap | Should -Match 'RetryAlreadyAttempted\s*=\s*\$retryAlready'
+        $script:srcWrap | Should -Match 'RetrySkipped\s*=\s*\$retrySkipped'
+        $script:srcWrap | Should -Match 'RetryFailed\s*=\s*\$retryFailed'
+    }
+}
+
+Describe 'v0.8.95: Add-AzLocalFailedUpdateRetryHintSummary (functional)' {
+    It 'Renders the opt-in notice when the feature is NOT enabled' {
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalPipelineHost { 'GitHub' }
+            Mock Add-AzLocalPipelineStepSummary { 'C:\temp\hint.md' }
+
+            $r = Add-AzLocalFailedUpdateRetryHintSummary -PassThru
+
+            $r.Rendered | Should -Be $true
+            Assert-MockCalled Add-AzLocalPipelineStepSummary -Times 1 -Exactly -ParameterFilter { $Markdown -match 'gh variable set FAILED_UPDATES_SINGLE_RETRY' }
+        }
+    }
+    It 'Renders NOTHING when -IsEnabled is supplied' {
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalPipelineHost { 'GitHub' }
+            Mock Add-AzLocalPipelineStepSummary { 'C:\temp\hint.md' }
+
+            $r = Add-AzLocalFailedUpdateRetryHintSummary -IsEnabled -PassThru
+
+            $r.Rendered | Should -Be $false
+            Assert-MockCalled Add-AzLocalPipelineStepSummary -Times 0 -Exactly
+        }
+    }
+    It 'References the CI/CD README opt-in section' {
+        $src = Get-Content -LiteralPath "$PSScriptRoot/../Public/Add-AzLocalFailedUpdateRetryHintSummary.ps1" -Raw
+        $src | Should -Match 'Opt-in: single-retry of failed updates'
+        $src | Should -Match 'Automation-Pipeline-Examples/README.md'
+    }
+}
+
+Describe 'v0.8.95: pipeline wiring for FAILED_UPDATES_SINGLE_RETRY' {
+    It 'GitHub apply-updates gates the retry step on the repository Variable' {
+        $yml = Get-Content -LiteralPath "$PSScriptRoot/../Automation-Pipeline-Examples/github-actions/apply-updates.yml" -Raw
+        $yml | Should -Match "vars.FAILED_UPDATES_SINGLE_RETRY == 'true'"
+        $yml | Should -Match 'Invoke-AzLocalReadinessGatedFailedUpdateRetry'
+        $yml | Should -Match 'Add-AzLocalFailedUpdateRetryHintSummary'
+    }
+    It 'GitHub monitor-updates shows the availability notice when the feature is OFF' {
+        $yml = Get-Content -LiteralPath "$PSScriptRoot/../Automation-Pipeline-Examples/github-actions/monitor-updates.yml" -Raw
+        $yml | Should -Match "vars.FAILED_UPDATES_SINGLE_RETRY != 'true'"
+        $yml | Should -Match 'Add-AzLocalFailedUpdateRetryHintSummary'
+    }
+    It 'Azure DevOps apply-updates gates the retry task on the pipeline variable' {
+        $yml = Get-Content -LiteralPath "$PSScriptRoot/../Automation-Pipeline-Examples/azure-devops/apply-updates.yml" -Raw
+        $yml | Should -Match "eq\(variables\['FAILED_UPDATES_SINGLE_RETRY'\],\s*'true'\)"
+        $yml | Should -Match 'Invoke-AzLocalReadinessGatedFailedUpdateRetry'
+        $yml | Should -Match 'Add-AzLocalFailedUpdateRetryHintSummary'
+    }
+    It 'Azure DevOps monitor-updates shows the availability notice when the feature is OFF' {
+        $yml = Get-Content -LiteralPath "$PSScriptRoot/../Automation-Pipeline-Examples/azure-devops/monitor-updates.yml" -Raw
+        $yml | Should -Match "ne\(variables\['FAILED_UPDATES_SINGLE_RETRY'\],\s*'true'\)"
+        $yml | Should -Match 'Add-AzLocalFailedUpdateRetryHintSummary'
+    }
+    It 'Pipeline README documents the opt-in variable' {
+        $readme = Get-Content -LiteralPath "$PSScriptRoot/../Automation-Pipeline-Examples/README.md" -Raw
+        $readme | Should -Match 'Opt-in: single-retry of failed updates'
+        $readme | Should -Match 'FAILED_UPDATES_SINGLE_RETRY'
+    }
+}
+
+#endregion v0.8.95: Guarded one-time failed-update retry

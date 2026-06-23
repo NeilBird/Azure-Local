@@ -40,9 +40,10 @@ function Export-AzLocalUpdateRunMonitorReport {
              threshold line + metric table + 'In-flight runs' table +
              'Failed runs (unresolved)' table + action-required / healthy
              footer) via `Add-AzLocalPipelineStepSummary`.
-          6. Emits 7 step outputs via `Set-AzLocalPipelineOutput`:
+          6. Emits 8 step outputs via `Set-AzLocalPipelineOutput`:
              in_flight, long_running, long_running_step, step_errored,
-             recent_failures, unresolved_failures, attempts_without_run.
+             stalled, recent_failures, unresolved_failures,
+             attempts_without_run.
 
         Internal reuse (per the v0.8.5 thin-YAML consistency contract):
           * `Get-AzLocalUpdateRuns` (with `-PassThru -SkipSideloadedReset`)
@@ -89,6 +90,15 @@ function Export-AzLocalUpdateRunMonitorReport {
         many days get a rotating_light chip; older than 2x get a skull
         chip. Default 3.
 
+    .PARAMETER StalledNoProgressHours
+        STALLED-run detection. An InProgress run whose ARM `lastUpdatedTime`
+        has not advanced for more than this many hours is treated as
+        stalled / making zero progress (the orchestrator died mid-step but
+        ARM still reports InProgress - e.g. an orphaned run stuck for weeks).
+        Stalled runs get a CRITICAL status, a ':zzz: stalled' chip, and are
+        counted separately (StalledCount / 'stalled' step output). Default
+        24. Set to 0 to disable stalled detection.
+
     .PARAMETER CsvFileName
         Filename for the per-cluster CSV. Default 'update-monitor.csv'.
 
@@ -112,8 +122,9 @@ function Export-AzLocalUpdateRunMonitorReport {
     .PARAMETER PassThru
         When set, returns a single PSCustomObject summarising the run
         (InFlightCount, LongRunningCount, LongRunningStepCount,
-        StepErroredCount, RecentFailureCount, UnresolvedFailureCount,
-        CsvPath, XmlPath, Rows). Without -PassThru the cmdlet emits
+        StepErroredCount, StalledCount, RecentFailureCount,
+        UnresolvedFailureCount, CsvPath, XmlPath, Rows). Without -PassThru
+        the cmdlet emits
         nothing to the pipeline; the artifacts and step outputs are still
         produced.
 
@@ -174,6 +185,10 @@ function Export-AzLocalUpdateRunMonitorReport {
         [int]$CriticalElapsedDays = 3,
 
         [Parameter(Mandatory = $false)]
+        [ValidateRange(0, 8760)]
+        [int]$StalledNoProgressHours = 24,
+
+        [Parameter(Mandatory = $false)]
         [ValidateNotNullOrEmpty()]
         [string]$CsvFileName = 'update-monitor.csv',
 
@@ -228,9 +243,13 @@ function Export-AzLocalUpdateRunMonitorReport {
     $stepCritSpan      = [TimeSpan]::FromHours($LongRunningStepHours * 2)
     $critElapsedSpan   = [TimeSpan]::FromDays($CriticalElapsedDays)
     $skullElapsedSpan  = [TimeSpan]::FromDays($CriticalElapsedDays * 2)
+    # v0.8.95: an InProgress run whose ARM lastUpdatedTime has not advanced for
+    # this long is treated as STALLED (orchestrator died mid-step; the run is
+    # making zero progress yet ARM still reports InProgress). 0 disables the check.
+    $stalledSpan       = if ($StalledNoProgressHours -gt 0) { [TimeSpan]::FromHours($StalledNoProgressHours) } else { [TimeSpan]::Zero }
     $failureWindowStart = if ($RecentFailureWindowHours -gt 0) { $nowUtc.AddHours(-$RecentFailureWindowHours) } else { [datetime]::MaxValue }
 
-    Write-Host ("Thresholds: per-step={0}h (warn) / {1}h (crit), overall={2}h (warn) / {3}d (crit) / {4}d (skull), recent-failure-window={5}h" -f $LongRunningStepHours, ($LongRunningStepHours * 2), $LongRunningThresholdHours, $CriticalElapsedDays, ($CriticalElapsedDays * 2), $RecentFailureWindowHours)
+    Write-Host ("Thresholds: per-step={0}h (warn) / {1}h (crit), overall={2}h (warn) / {3}d (crit) / {4}d (skull), recent-failure-window={5}h, stalled-no-progress={6}h" -f $LongRunningStepHours, ($LongRunningStepHours * 2), $LongRunningThresholdHours, $CriticalElapsedDays, ($CriticalElapsedDays * 2), $RecentFailureWindowHours, $StalledNoProgressHours)
 
     # v0.8.90: shared idle-completion emitter. Writes the empty CSV + JUnit, the
     # 7 all-zero step outputs, and the IDLE status badge, then returns the
@@ -249,6 +268,7 @@ function Export-AzLocalUpdateRunMonitorReport {
         Set-AzLocalPipelineOutput -Name 'long_running'        -Value '0'
         Set-AzLocalPipelineOutput -Name 'long_running_step'   -Value '0'
         Set-AzLocalPipelineOutput -Name 'step_errored'        -Value '0'
+        Set-AzLocalPipelineOutput -Name 'stalled'             -Value '0'
         Set-AzLocalPipelineOutput -Name 'recent_failures'     -Value '0'
         Set-AzLocalPipelineOutput -Name 'unresolved_failures' -Value '0'
         Set-AzLocalPipelineOutput -Name 'attempts_without_run' -Value '0'
@@ -262,6 +282,7 @@ function Export-AzLocalUpdateRunMonitorReport {
             LongRunningCount       = 0
             LongRunningStepCount   = 0
             StepErroredCount       = 0
+            StalledCount           = 0
             RecentFailureCount     = 0
             UnresolvedFailureCount = 0
             AttemptWithoutRunCount = 0
@@ -357,6 +378,33 @@ function Export-AzLocalUpdateRunMonitorReport {
         }
         $exceeds     = if ($elapsed     -and ($r.State -eq 'InProgress')) { $elapsed -gt $thresholdSpan } else { $false }
         $exceedsStep = if ($stepElapsed -and ($r.State -eq 'InProgress')) { $stepElapsed -gt $stepThresholdSpan } else { $false }
+
+        # v0.8.95: stalled-run detection. Parse the ARM lastUpdatedTime and, for
+        # an InProgress run, measure how long the run resource has gone WITHOUT
+        # any orchestrator activity. A genuinely-running update bumps
+        # lastUpdatedTime continuously; an orphaned run (orchestrator died
+        # mid-step) keeps State=InProgress forever while lastUpdatedTime freezes.
+        # When the no-activity gap exceeds $stalledSpan the run is making zero
+        # progress and is flagged STALLED so operators aren't misled into
+        # thinking it is still actively applying (Arizona run 19444cab: 30+ days
+        # InProgress, last touched after only 9m33s of runtime).
+        $lastUpdatedDt = $null
+        if ($r.PSObject.Properties['LastUpdatedTime'] -and $r.LastUpdatedTime) {
+            [datetime]$tmpL = [datetime]::MinValue
+            if ([datetime]::TryParse([string]$r.LastUpdatedTime, [ref]$tmpL)) {
+                $lastUpdatedDt = [datetime]::SpecifyKind($tmpL, [DateTimeKind]::Utc)
+            }
+        }
+        $sinceLastUpdate = if ($lastUpdatedDt) { $nowUtc - $lastUpdatedDt } else { $null }
+        $isStalled = if ($r.State -eq 'InProgress' -and $stalledSpan -gt [TimeSpan]::Zero -and $sinceLastUpdate) {
+            $sinceLastUpdate -gt $stalledSpan
+        } else { $false }
+        $sinceLastUpdateDisplay = if ($sinceLastUpdate) {
+            if ($sinceLastUpdate.TotalDays -ge 1) { ('{0}d {1}h' -f [int]$sinceLastUpdate.TotalDays, $sinceLastUpdate.Hours) }
+            elseif ($sinceLastUpdate.TotalHours -ge 1) { ('{0}h {1}m' -f [int]$sinceLastUpdate.TotalHours, $sinceLastUpdate.Minutes) }
+            else { ('{0}m' -f [int]$sinceLastUpdate.TotalMinutes) }
+        } else { '' }
+
         $isRecentFailure     = if ($RecentFailureWindowHours -gt 0 -and $r.State -eq 'Failed' -and $endDt) { $endDt -gt $failureWindowStart } else { $false }
         $isUnresolvedFailure = ($r.State -eq 'Failed')
         $progressStatus = if ($r.PSObject.Properties['Status']) { [string]$r.Status } else { '' }
@@ -400,6 +448,7 @@ function Export-AzLocalUpdateRunMonitorReport {
         }
         $chipList = New-Object 'System.Collections.Generic.List[string]'
         if ($hasStepError) { $chipList.Add(':rotating_light: step errored') | Out-Null }
+        if ($isStalled) { $chipList.Add((':zzz: stalled - no activity {0}' -f $sinceLastUpdateDisplay)) | Out-Null }
         if ($stepSeverity -eq 'crit') { $chipList.Add((':rotating_light: step >{0}h' -f ($LongRunningStepHours * 2))) | Out-Null }
         elseif ($stepSeverity -eq 'warn') { $chipList.Add((':warning: step >{0}h' -f $LongRunningStepHours)) | Out-Null }
         if ($runSeverity -eq 'skull') { $chipList.Add((':skull: run >{0}d' -f ($CriticalElapsedDays * 2))) | Out-Null }
@@ -411,6 +460,7 @@ function Export-AzLocalUpdateRunMonitorReport {
         $severityScore = 0.0
         if ($hasStepError) { $severityScore += 1000 }
         if ($r.State -eq 'Failed') { $severityScore += 800 }
+        if ($isStalled) { $severityScore += 600 }
         if ($runSeverity -eq 'skull') { $severityScore += 500 }
         elseif ($runSeverity -eq 'crit') { $severityScore += 300 }
         elseif ($runSeverity -eq 'warn') { $severityScore += 50 }
@@ -439,8 +489,12 @@ function Export-AzLocalUpdateRunMonitorReport {
             Progress             = $r.Progress
             StartTimeUtc         = if ($startDt)     { $startDt.ToString('yyyy-MM-dd HH:mm') }     else { '' }
             EndTimeUtc           = if ($endDt)       { $endDt.ToString('yyyy-MM-dd HH:mm') }       else { '' }
+            LastUpdatedUtc       = if ($lastUpdatedDt) { $lastUpdatedDt.ToString('yyyy-MM-dd HH:mm') } else { '' }
             ElapsedDisplay       = $elapsedDisplay
             ElapsedHours         = if ($elapsed)     { [math]::Round($elapsed.TotalHours, 2) }     else { '' }
+            SinceLastUpdateDisplay = $sinceLastUpdateDisplay
+            SinceLastUpdateHours = if ($sinceLastUpdate) { [math]::Round($sinceLastUpdate.TotalHours, 2) } else { '' }
+            IsStalled            = $isStalled
             StepStartTimeUtc     = if ($stepStartDt) { $stepStartDt.ToString('yyyy-MM-dd HH:mm') } else { '' }
             StepElapsedDisplay   = $stepElapsedDisplay
             StepElapsedHours     = $stepElapsedHoursVal
@@ -474,6 +528,7 @@ function Export-AzLocalUpdateRunMonitorReport {
     $longRunning      = @($inFlight | Where-Object { $_.ExceedsThreshold })
     $longRunningStep  = @($inFlight | Where-Object { $_.ExceedsStepThreshold })
     $stepErrored      = @($inFlight | Where-Object { $_.HasStepError })
+    $stalled          = @($inFlight | Where-Object { $_.IsStalled })
     $recentlyFailed   = @($rows     | Where-Object { $_.IsRecentFailure })
     $unresolvedFailed = @($rows     | Where-Object { $_.IsUnresolvedFailure })
 
@@ -666,6 +721,7 @@ function Export-AzLocalUpdateRunMonitorReport {
     Set-AzLocalPipelineOutput -Name 'long_running'        -Value ([string]$longRunning.Count)
     Set-AzLocalPipelineOutput -Name 'long_running_step'   -Value ([string]$longRunningStep.Count)
     Set-AzLocalPipelineOutput -Name 'step_errored'        -Value ([string]$stepErrored.Count)
+    Set-AzLocalPipelineOutput -Name 'stalled'             -Value ([string]$stalled.Count)
     Set-AzLocalPipelineOutput -Name 'recent_failures'     -Value ([string]$recentlyFailed.Count)
     Set-AzLocalPipelineOutput -Name 'unresolved_failures' -Value ([string]$unresolvedFailed.Count)
     Set-AzLocalPipelineOutput -Name 'attempts_without_run' -Value ([string]$attemptGaps.Count)
@@ -677,12 +733,13 @@ function Export-AzLocalUpdateRunMonitorReport {
     $skullCount    = @($inFlight | Where-Object { $_.RunSeverity -eq 'skull' }).Count
     $critRunCount  = @($inFlight | Where-Object { $_.RunSeverity -eq 'crit' }).Count
     $critStepCount = @($inFlight | Where-Object { $_.StepSeverity -eq 'crit' }).Count
-    $hasCritical   = ($stepErrored.Count -gt 0) -or ($unresolvedFailed.Count -gt 0) -or ($skullCount -gt 0) -or ($critRunCount -gt 0) -or ($critStepCount -gt 0)
+    $hasCritical   = ($stepErrored.Count -gt 0) -or ($unresolvedFailed.Count -gt 0) -or ($stalled.Count -gt 0) -or ($skullCount -gt 0) -or ($critRunCount -gt 0) -or ($critStepCount -gt 0)
     $warnCount     = @($inFlight | Where-Object { $_.StepSeverity -eq 'warn' -or $_.RunSeverity -eq 'warn' }).Count
     $hasWarn       = ($warnCount -gt 0)
     $statusBadge = if ($hasCritical) {
         $crits = @()
         if ($stepErrored.Count -gt 0)       { $crits += "$($stepErrored.Count) stuck step error(s)" }
+        if ($stalled.Count -gt 0)           { $crits += "$($stalled.Count) stalled run(s) (no activity > ${StalledNoProgressHours}h)" }
         if ($skullCount    -gt 0)           { $crits += "$skullCount run(s) > $($CriticalElapsedDays * 2)d" }
         if ($critRunCount  -gt 0)           { $crits += "$critRunCount run(s) > ${CriticalElapsedDays}d" }
         if ($critStepCount -gt 0)           { $crits += "$critStepCount step(s) > $($LongRunningStepHours * 2)h" }
@@ -708,6 +765,9 @@ function Export-AzLocalUpdateRunMonitorReport {
     [void]$md.Add("| Clusters scoped | $($rows.Count) |")
     [void]$md.Add("| Update runs in flight | $($inFlight.Count) |")
     [void]$md.Add("| Step errored (progress.status == 'Error', state still InProgress) | $($stepErrored.Count) |")
+    if ($StalledNoProgressHours -gt 0) {
+        [void]$md.Add("| Stalled runs (InProgress, no activity > ${StalledNoProgressHours}h) | $($stalled.Count) |")
+    }
     [void]$md.Add("| Step elapsed > ${LongRunningStepHours}h (primary) | $($longRunningStep.Count) |")
     [void]$md.Add("| Overall elapsed > ${LongRunningThresholdHours}h (backstop) | $($longRunning.Count) |")
     [void]$md.Add("| Unresolved-failed runs (latest run is Failed) | $($unresolvedFailed.Count) |")
@@ -727,8 +787,8 @@ function Export-AzLocalUpdateRunMonitorReport {
     if ($inFlight.Count -gt 0) {
         [void]$md.Add('### In-flight runs (sorted by severity score, worst first)')
         [void]$md.Add('')
-        [void]$md.Add('| Cluster | Update | State | Progress Status | Current Step | Progress | Step Started (UTC) | Step Elapsed | Run Started (UTC) | Run Elapsed | Flags |')
-        [void]$md.Add('|---------|--------|-------|-----------------|--------------|----------|--------------------|--------------|-------------------|-------------|-------|')
+        [void]$md.Add('| Cluster | Update | State | Progress Status | Current Step | Progress | Step Started (UTC) | Step Elapsed | Run Started (UTC) | Run Elapsed | Last Activity (UTC) | Flags |')
+        [void]$md.Add('|---------|--------|-------|-----------------|--------------|----------|--------------------|--------------|-------------------|-------------|---------------------|-------|')
         foreach ($r in ($inFlight | Sort-Object @{Expression='SeverityScore';Descending=$true}, ClusterName)) {
             $cs = if ($r.CurrentStep) { $r.CurrentStep } else { '-' }
             $pg = if ($r.Progress) { $r.Progress } else { '-' }
@@ -741,13 +801,21 @@ function Export-AzLocalUpdateRunMonitorReport {
             $runElPrefix  = switch ($r.RunSeverity)  { 'skull' { ':skull: ' } 'crit' { ':rotating_light: ' } 'warn' { ':warning: ' } default { '' } }
             $stepEl = if ($r.StepElapsedDisplay) { $stepElPrefix + $r.StepElapsedDisplay } else { '-' }
             $runEl  = if ($r.ElapsedDisplay)     { $runElPrefix  + $r.ElapsedDisplay }     else { '-' }
+            # Last Activity column surfaces ARM lastUpdatedTime + how long since the
+            # run resource last advanced. A continuously-bumping value = healthy
+            # progress; a frozen value (with the stalled chip) = orphaned run.
+            $lastAct = if ($r.LastUpdatedUtc) {
+                $sinceTxt = if ($r.SinceLastUpdateDisplay) { ' (' + $r.SinceLastUpdateDisplay + ' ago)' } else { '' }
+                $stallPrefix = if ($r.IsStalled) { ':zzz: ' } else { '' }
+                $stallPrefix + $r.LastUpdatedUtc + $sinceTxt
+            } else { '-' }
             $flagCell = if ($r.Flags) { $r.Flags } else { '-' }
             # target="_blank" intentionally omitted: GitHub Actions + ADO step-summary
             # markdown sanitisers strip it (and force `rel="nofollow"`). The Tip above
             # the table tells operators to Ctrl-click to open in a new tab.
             $clusterCell = if ($r.ClusterPortalUrl)   { '<a href="' + $r.ClusterPortalUrl   + '">' + $r.ClusterName + '</a>' } else { $r.ClusterName }
             $updateCell  = if ($r.UpdateRunPortalUrl) { '<a href="' + $r.UpdateRunPortalUrl + '">' + $r.UpdateName  + '</a>' } else { $r.UpdateName }
-            [void]$md.Add("| $clusterCell | $updateCell | $stateCell | $statusCell | $cs | $pg | $stepStart | $stepEl | $($r.StartTimeUtc) | $runEl | $flagCell |")
+            [void]$md.Add("| $clusterCell | $updateCell | $stateCell | $statusCell | $cs | $pg | $stepStart | $stepEl | $($r.StartTimeUtc) | $runEl | $lastAct | $flagCell |")
         }
         [void]$md.Add('')
     }
@@ -867,6 +935,7 @@ function Export-AzLocalUpdateRunMonitorReport {
             LongRunningCount       = [int]$longRunning.Count
             LongRunningStepCount   = [int]$longRunningStep.Count
             StepErroredCount       = [int]$stepErrored.Count
+            StalledCount           = [int]$stalled.Count
             RecentFailureCount     = [int]$recentlyFailed.Count
             UnresolvedFailureCount = [int]$unresolvedFailed.Count
             AttemptWithoutRunCount = [int]$attemptGaps.Count

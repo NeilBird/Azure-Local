@@ -49,5 +49,15 @@ function Format-AzLocalUpdateLastAttemptTagValue {
             $r = ''
         }
     }
-    return ($head + $r)
+
+    # Final hard clamp (v0.8.95 guard rail): the Reason truncation above keeps the
+    # value <= 256 in the normal case, but a pathologically long Outcome or
+    # UpdateName could make $head alone exceed 256 (driving $maxReasonLen to 0 yet
+    # still over-length). Azure rejects tag values > 256 chars, so clamp the whole
+    # string defensively as a last line of defence regardless of which field is long.
+    $final = $head + $r
+    if ($final.Length -gt 256) {
+        $final = $final.Substring(0, 256)
+    }
+    return $final
 }

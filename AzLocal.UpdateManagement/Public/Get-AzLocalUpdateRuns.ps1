@@ -457,8 +457,9 @@ $updateNameClause
                     Status            = $formatted.Status
                     StartTime         = $formatted.StartTime
                     EndTime           = $formatted.EndTime
+                    LastUpdatedTime   = $formatted.LastUpdatedTime
                     Duration          = $formatted.Duration
-                    Progress           = $formatted.Progress
+                    Progress          = $formatted.Progress
                     CurrentStep       = $formatted.CurrentStep
                     CurrentStepDetail = $formatted.CurrentStepDetail
                     StepStartTime     = $formatted.StepStartTime

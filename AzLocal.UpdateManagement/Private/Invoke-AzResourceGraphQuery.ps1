@@ -48,6 +48,11 @@ function Invoke-AzResourceGraphQuery {
         times with exponential backoff + jitter before the call gives up and
         throws. Defaults to 5 (initial attempt + 5 retries = 6 total tries
         per page).
+
+        v0.8.95: the SAME budget now also covers transient network failures
+        (connection reset / "Connection broken" / ConnectionResetError 10054 /
+        5xx gateway / timeout). These are retried with the same backoff but,
+        unlike throttling, do NOT arm the cross-call cooldown.
     .PARAMETER RetryBaseSeconds
         v0.7.68: base delay for the exponential backoff on throttle retries.
         Defaults to 1 second; attempt N sleeps `RetryBaseSeconds * 2^(N-1)`
@@ -73,6 +78,21 @@ function Invoke-AzResourceGraphQuery {
         Once a throttle event is observed during a call, an inter-page pause
         of 1 second is inserted between subsequent pages to avoid immediately
         re-triggering the limiter.
+
+        v0.8.95 transient-network handling exposes two more module-scope flags
+        reset at the start of every call:
+          $script:LastResourceGraphTransientNetwork   - $true if a connection
+                                                        reset / "Connection
+                                                        broken" / 5xx / timeout
+                                                        was retried
+          $script:LastResourceGraphTransientRetryCount - count of such retries
+        Recognised transient-network markers (case-insensitive) include:
+          'connection reset/aborted/broken/refused', 'forcibly closed',
+          '10054', 'ConnectionResetError', 'RemoteDisconnected', 'remote end
+          closed', 'max retries exceeded', 'ECONNRESET', 'service unavailable',
+          '502/503/504', 'gateway time(out)', 'timed out', 'temporarily
+          unavailable'. These share the -MaxRetries budget and the exponential
+          backoff with throttling but do NOT arm the cross-call cooldown.
         v0.7.84 cross-call coordination adds two more module-scope items:
           $script:ArgCrossCallCooldownUntil               - [DateTime]; until this
                                                             instant the NEXT call
@@ -147,6 +167,13 @@ function Invoke-AzResourceGraphQuery {
     # callers can read these flags to detect/report transient ARG throttling.
     $script:LastResourceGraphThrottled = $false
     $script:LastResourceGraphRetryCount = 0
+
+    # v0.8.95: transient network / connection-reset diagnostics, reset per
+    # call. Kept separate from the throttle flags so callers can distinguish
+    # a connection reset (ConnectionResetError 10054 / "Connection broken")
+    # from a rate-limit 429. Set by the per-page retry loop below.
+    $script:LastResourceGraphTransientNetwork = $false
+    $script:LastResourceGraphTransientRetryCount = 0
 
     # v0.7.84: cross-call ARG cooldown coordination. The per-page retry loop
     # handles bursts WITHIN one call; this block adds coordination ACROSS
@@ -239,32 +266,60 @@ function Invoke-AzResourceGraphQuery {
                 $errText = ((($stderrLines + $stdoutLines) | Out-String).Trim())
                 $isThrottle = $errText -match '(?i)(rate.?limit|throttl|\b429\b|too many requests)'
 
-                if ($isThrottle -and $retryAttempt -lt $MaxRetries) {
-                    $retryAttempt++
-                    $script:LastResourceGraphThrottled = $true
-                    $script:LastResourceGraphRetryCount++
+                # v0.8.95: transient network / connection-reset classifier.
+                # ARG calls over the public endpoint occasionally have the TCP
+                # connection torn down mid-request by the remote host. The CLI
+                # surfaces this as a Python 'ConnectionResetError(10054, ...)'
+                # wrapped in azure.core HttpResponseError 'Connection broken'.
+                # Worse, the resource-graph extension's own error handler then
+                # crashes with "'NoneType' object has no attribute 'error'"
+                # (it assumes ex.model is non-null) - so the observable exit-1
+                # text is a Python traceback, NOT a clean HTTP status. These
+                # are transient and safe to retry. We deliberately keep this
+                # SEPARATE from $isThrottle: a connection reset is not a
+                # rate-limit signal, so it must NOT arm the cross-call throttle
+                # cooldown (that would needlessly slow every subsequent call).
+                # Non-transient failures (auth, bad KQL, permissions) do not
+                # match either pattern and still fall through to the throw.
+                $isTransientNetwork = $errText -match '(?i)(connection (?:reset|aborted|broken|refused)|forcibly closed|\b10054\b|connectionreseterror|remotedisconnected|remote end closed|max retries exceeded|\bECONNRESET\b|\bservice unavailable\b|\b50[234]\b|gateway time|\btimed? ?out\b|temporar(?:ily|y) unavailable|operation timed out)'
 
-                    # v0.7.84: update cross-call cooldown so the NEXT call to
-                    # this helper (whatever the caller) waits this out before
-                    # its first page. Adaptive: more consecutive throttled
-                    # calls -> longer cooldown, capped at 10s and counter
-                    # capped at 5 so cooldown never exceeds the cap.
-                    $script:ArgConsecutiveThrottledCalls = [Math]::Min(5, $script:ArgConsecutiveThrottledCalls + 1)
-                    $cooldownSecs = [Math]::Min(10.0, $RetryBaseSeconds * [Math]::Pow(2, $script:ArgConsecutiveThrottledCalls - 1))
-                    $script:ArgCrossCallCooldownUntil = (Get-Date).AddSeconds($cooldownSecs)
+                if (($isThrottle -or $isTransientNetwork) -and $retryAttempt -lt $MaxRetries) {
+                    $retryAttempt++
+
+                    if ($isThrottle) {
+                        $script:LastResourceGraphThrottled = $true
+                        $script:LastResourceGraphRetryCount++
+
+                        # v0.7.84: update cross-call cooldown so the NEXT call to
+                        # this helper (whatever the caller) waits this out before
+                        # its first page. Adaptive: more consecutive throttled
+                        # calls -> longer cooldown, capped at 10s and counter
+                        # capped at 5 so cooldown never exceeds the cap.
+                        $script:ArgConsecutiveThrottledCalls = [Math]::Min(5, $script:ArgConsecutiveThrottledCalls + 1)
+                        $cooldownSecs = [Math]::Min(10.0, $RetryBaseSeconds * [Math]::Pow(2, $script:ArgConsecutiveThrottledCalls - 1))
+                        $script:ArgCrossCallCooldownUntil = (Get-Date).AddSeconds($cooldownSecs)
+                    }
+                    else {
+                        # v0.8.95: transient network retry - tracked via its own
+                        # diagnostics so callers/tests can distinguish a reset
+                        # from a throttle. Does NOT arm the cross-call cooldown.
+                        $script:LastResourceGraphTransientNetwork = $true
+                        $script:LastResourceGraphTransientRetryCount++
+                    }
 
                     $baseDelay = $RetryBaseSeconds * [Math]::Pow(2, $retryAttempt - 1)
                     # +/-20% jitter, floor 0.5s
                     $jitterFactor = 1 + (Get-Random -Minimum -0.2 -Maximum 0.2)
                     $delay = [Math]::Max(0.5, $baseDelay * $jitterFactor)
-                    Write-Warning ("Invoke-AzResourceGraphQuery: ARG throttled on page {0} (attempt {1}/{2}); sleeping {3:N2}s before retry." -f $pages, $retryAttempt, $MaxRetries, $delay)
+                    $reason = if ($isThrottle) { 'throttled' } else { 'transient network error' }
+                    Write-Warning ("Invoke-AzResourceGraphQuery: ARG {0} on page {1} (attempt {2}/{3}); sleeping {4:N2}s before retry." -f $reason, $pages, $retryAttempt, $MaxRetries, $delay)
                     Start-Sleep -Seconds $delay
                     # Ratchet the inter-page pause so the NEXT page also waits
                     if ($interPagePauseMs -lt 1000) { $interPagePauseMs = 1000 }
                     continue
                 }
 
-                # Either not a throttle, or out of retries: fail hard.
+                # Either not retryable, or out of retries: fail hard.
                 throw "Azure Resource Graph query failed (exit $exit): $(ConvertTo-ScrubbedCliOutput -Text $errText)"
             }
 

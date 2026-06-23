@@ -147,7 +147,7 @@ Set-StrictMode -Version 1.0
 # bumps to one but not the other are caught before release. Two consumers:
 #   - Start-AzLocalClusterUpdate emits this in the run log header.
 #   - Get-AzLocalFleetStatusData stamps it into exported fleet-state JSON.
-$script:ModuleVersion = '0.8.94'
+$script:ModuleVersion = '0.8.95'
 $script:DefaultApiVersion = '2025-10-01'
 $script:DefaultLogFolder = Join-Path -Path $env:ProgramData -ChildPath 'AzLocal.UpdateManagement'
 
@@ -227,6 +227,21 @@ $script:UpdateVersionInProgressTagName = 'UpdateVersionInProgress'
 # Truncated to 256 chars (Azure tag value limit).
 $script:UpdateLastAttemptTagName = 'UpdateLastAttempt'
 
+# v0.8.95: dedicated one-time-retry guard + record tag written ONLY by
+# Invoke-AzLocalFailedUpdateRetry when it re-applies a FAILED update (the same
+# updates/{name}/apply action the portal 'Try again' button issues). Records
+# the retry date + outcome (RetryStarted / RetryFailed) for the specific update
+# version. Its presence for a given update version is the idempotency guard that
+# stops a scheduled pipeline re-applying in a loop (override with -Force). Shares
+# the exact same value format as UpdateLastAttempt and is cleared by the SAME
+# auto-reset reconciliation in Invoke-AzLocalSideloadedAutoResetForCluster once
+# the retried update reaches a terminal Succeeded state (re-arming a future
+# retry naturally). Kept separate from UpdateLastAttempt so the generic
+# last-attempt audit pointer and the retry-specific guard never overwrite one
+# another.
+# Format: '<ISO-8601 UTC>;<Outcome>;<UpdateName>;<Reason truncated>'
+$script:UpdateRetryAttemptedTagName = 'UpdateRetryAttempted'
+
 # v0.8.7: numeric account id (1-3 digits, e.g. 001) that maps a cluster to a
 # row in the sideload auth-map CSV (Key Vault + remoting settings) used by the
 # on-prem solution-update sideloading automation. Written/exported by Step.1
@@ -289,6 +304,8 @@ $script:FleetOperationState = $null
 Export-ModuleMember -Function @(
     'Connect-AzLocalServicePrincipal',
     'Start-AzLocalClusterUpdate',
+    # Guarded one-time retry of a FAILED update (v0.8.95)
+    'Invoke-AzLocalFailedUpdateRetry',
     'Get-AzLocalClusterUpdateReadiness',
     'Get-AzLocalClusterInventory',
     'Get-AzLocalClusterInfo',
@@ -369,6 +386,8 @@ Export-ModuleMember -Function @(
     'Resolve-AzLocalPipelineUpdateRing',
     'Export-AzLocalClusterReadinessGateReport',
     'Invoke-AzLocalReadinessGatedClusterUpdate',
+    'Invoke-AzLocalReadinessGatedFailedUpdateRetry',
+    'Add-AzLocalFailedUpdateRetryHintSummary',
     'Add-AzLocalApplyUpdatesStepSummary',
     'Add-AzLocalNoReadyClustersStepSummary',
     'Invoke-AzLocalItsmTicketingFromArtifact',

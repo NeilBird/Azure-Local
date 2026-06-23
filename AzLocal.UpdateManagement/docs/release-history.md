@@ -4,7 +4,13 @@
 >
 > **For older releases**, this is the canonical reference; the main README intentionally stays slim so the most recent block is easy to find.
 >
-> **For v0.8.94 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0894) `What's New in v0.8.94` section.
+> **For v0.8.95 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0895) `What's New in v0.8.95` section.
+
+---
+
+### What's New in v0.8.94
+
+Expands `BEGIN/END-AZLOCAL-CUSTOMIZE` marker coverage across every bundled CI/CD pipeline YAML (GitHub Actions and Azure DevOps) so operator-owned infrastructure values survive `Update-AzLocalPipelineExample` - including with `-Force`. Three new uniquely-named marker region families wrap the Azure DevOps WIF service connection (`service-connection-<job>`), the hosted agent pool / GitHub `runs-on:` label (`runner-target-<job>`), and the sideload self-hosted pool/runner (`sideload-runner-<job>`); 45 marker pairs across 20 files, region names derived from the nearest stage/job and unique per file. The merge engine and parser were already generic, so no cmdlet code changed - template + docs + tests only. No public-API or export-count change (still 61). `GENERATED_AGAINST_MODULE_VERSION` bumped from `0.8.93` to `0.8.94`. See [CHANGELOG.md](../CHANGELOG.md#0894---2026-06-19) for the full v0.8.94 entry.
 
 ---
 

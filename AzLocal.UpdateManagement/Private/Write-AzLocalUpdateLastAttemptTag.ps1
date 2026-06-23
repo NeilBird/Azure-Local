@@ -9,6 +9,13 @@ function Write-AzLocalUpdateLastAttemptTag {
         (this is an informational/audit tag - never block the calling flow).
 
         Tag format documented on $script:UpdateLastAttemptTagName.
+    .PARAMETER TagName
+        Name of the cluster tag to write. Defaults to
+        $script:UpdateLastAttemptTagName (the generic last-attempt audit
+        pointer). Invoke-AzLocalFailedUpdateRetry passes
+        $script:UpdateRetryAttemptedTagName here so the durable one-time
+        retry-guard tag is written through the same formatter/merge path.
+        Both tags share the identical value format.
     #>
     [CmdletBinding()]
     [OutputType([void])]
@@ -39,6 +46,10 @@ function Write-AzLocalUpdateLastAttemptTag {
         [string]$Reason,
 
         [Parameter(Mandatory = $false)]
+        [ValidateNotNullOrEmpty()]
+        [string]$TagName = $script:UpdateLastAttemptTagName,
+
+        [Parameter(Mandatory = $false)]
         [string]$ApiVersion = $script:DefaultApiVersion
     )
 
@@ -51,12 +62,12 @@ function Write-AzLocalUpdateLastAttemptTag {
 
         [void](Set-AzLocalClusterTagsMerge `
             -ClusterResourceId $ClusterResourceId `
-            -Tags @{ $script:UpdateLastAttemptTagName = $value } `
+            -Tags @{ $TagName = $value } `
             -ApiVersion $ApiVersion)
 
-        Write-Log -Message "Set $($script:UpdateLastAttemptTagName) tag on '$ClusterName' to '$value'" -Level Verbose
+        Write-Log -Message "Set $TagName tag on '$ClusterName' to '$value'" -Level Verbose
     }
     catch {
-        Write-Log -Message "Warning: failed to write $($script:UpdateLastAttemptTagName) tag on '$ClusterName': $($_.Exception.Message)" -Level Warning
+        Write-Log -Message "Warning: failed to write $TagName tag on '$ClusterName': $($_.Exception.Message)" -Level Warning
     }
 }
