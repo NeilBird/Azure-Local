@@ -85,7 +85,8 @@ v0.8.95 detected a frozen `InProgress` run and showed it in the CSV and the mark
 
 ### Changed
 
-- **A stalled run is now a dedicated, top-priority JUnit failure.** A new first branch in the in-flight `<testcase>` cascade emits `Status` / failure `Type` = `Stalled` with a `STALLED: no orchestration activity for <duration> ...` message (ARM `lastUpdatedTime`, current step, step/overall elapsed, progress) whenever `IsStalled` is set, instead of falling through to the `LongRunningStep` / `LongRunningOverall` reasons. The CSV, markdown step summary, and `-PassThru` shape are unchanged.
+- **A stalled run is now a dedicated, top-priority JUnit failure.** A new first branch in the in-flight `<testcase>` cascade emits `Status` / failure `Type` = `Stalled` with a `STALLED: no orchestration activity for <duration> ...` message (ARM `lastUpdatedTime`, current step, step/overall elapsed, progress) whenever `IsStalled` is set, instead of falling through to the `LongRunningStep` / `LongRunningOverall` reasons. The CSV and `-PassThru` shape are unchanged.
+- **The stalled output spells out the manual remediation.** Because a stalled run still reports `InProgress`, the failed-update single-retry job deliberately skips it - so the JUnit failure body and a new callout under the in-flight markdown table tell the operator it is **not** auto-retried and give the on-node `Get-SolutionUpdate` / `Get-SolutionUpdateRun` / `Start-MonitoringActionplanInstanceToComplete` / `Start-SolutionUpdate` flow plus the public [Troubleshoot solution updates for Azure Local](https://learn.microsoft.com/azure/azure-local/update/update-troubleshooting-23h2) doc link.
 
 ### Added
 

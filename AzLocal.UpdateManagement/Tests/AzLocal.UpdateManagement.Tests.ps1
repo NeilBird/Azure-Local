@@ -15705,6 +15705,9 @@ Describe 'Thin-YAML Step.7: Export-AzLocalUpdateRunMonitorReport' {
                 RunResourceId     = ($script:_s7_inventory[0].ResourceId + '/updates/Solution12.2604.1003.1005/updateRuns/19444cab')
             }
         )
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s7_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s7_ghSummaryFile
         $global:_s7_payload = @{ Inventory = $script:_s7_inventory; Runs = $runs; Now = $script:_s7_now; OutDir = $script:_s7_outDir }
         $null = InModuleScope AzLocal.UpdateManagement {
             Mock Get-AzLocalClusterInventory { @($global:_s7_payload.Inventory) }
@@ -15716,9 +15719,19 @@ Describe 'Thin-YAML Step.7: Export-AzLocalUpdateRunMonitorReport' {
         $stalledCases.Count        | Should -BeGreaterOrEqual 1
         $stalledCases[0].failure.type    | Should -Be 'Stalled'
         $stalledCases[0].failure.message | Should -Match 'STALLED: no orchestration activity'
+        # v0.8.96: the failure body must also spell out the manual remediation
+        # (the run is not auto-retried) with the Get-/Start-SolutionUpdate flow
+        # and the public troubleshooting doc link.
+        $stalledCases[0].failure.message | Should -Match 'MANUAL ACTION REQUIRED'
+        $stalledCases[0].failure.message | Should -Match 'Start-SolutionUpdate'
+        $stalledCases[0].failure.message | Should -Match 'update-troubleshooting-23h2'
         # the Status property the ITSM connector matches on must be 'Stalled'
         $statusProp = @($stalledCases[0].properties.property | Where-Object { $_.name -eq 'Status' })
         $statusProp[0].value | Should -Be 'Stalled'
+        # the markdown step summary must carry the operator-action callout too
+        $summaryMd = Get-Content -Raw -LiteralPath $script:_s7_ghSummaryFile
+        $summaryMd | Should -Match 'Stalled / orphaned run\(s\) detected'
+        $summaryMd | Should -Match 'Manual action required'
     }
 
     It 'Actively-progressing InProgress run (recent lastUpdatedTime) is NOT stalled' {

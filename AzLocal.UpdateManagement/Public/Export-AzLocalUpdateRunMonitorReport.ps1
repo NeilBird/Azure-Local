@@ -618,7 +618,12 @@ function Export-AzLocalUpdateRunMonitorReport {
         # (the exact gap the Arizona 19444cab run exposed). 'Stalled' is a new
         # ITSM trigger-matrix status key (the sample matrix raises on it).
         if ($r.IsStalled) {
-            $msg = ('STALLED: no orchestration activity for {0} (ARM lastUpdatedTime {1} UTC). The run still reports InProgress but appears orphaned/stuck - the orchestrator likely died mid-step. CurrentStep: {2}. Step elapsed: {3}. Overall elapsed: {4}. Progress: {5}.' -f $r.SinceLastUpdateDisplay, $r.LastUpdatedUtc, $r.CurrentStep, $r.StepElapsedDisplay, $r.ElapsedDisplay, $r.Progress)
+            # v0.8.96: spell out the manual remediation in the failure body. A
+            # stalled run still reports InProgress, so the failed-update single-
+            # retry job (Invoke-AzLocalFailedUpdateRetry) deliberately SKIPS it -
+            # operator action is the only path. Surface the Get-SolutionUpdate /
+            # Start-SolutionUpdate flow + the public troubleshooting doc inline.
+            $msg = ('STALLED: no orchestration activity for {0} (ARM lastUpdatedTime {1} UTC). The run still reports InProgress but appears orphaned/stuck - the orchestrator likely died mid-step. CurrentStep: {2}. Step elapsed: {3}. Overall elapsed: {4}. Progress: {5}. MANUAL ACTION REQUIRED: this run is NOT auto-retried (it still reports InProgress, so the failed-update single-retry job skips it - that job only acts on terminal NeedsAttention / UpdateFailed / PreparationFailed states). On a cluster node run: Get-SolutionUpdate | Format-Table ResourceId,State,Version; then $u = Get-SolutionUpdate | Where-Object Version -eq <version>; $u | Get-SolutionUpdateRun to inspect the action plan; Start-MonitoringActionplanInstanceToComplete -actionPlanInstanceID <id> to watch it to completion; then $u | Start-SolutionUpdate to resume - or collect logs and open a support ticket if the run is truly orphaned. Docs: https://learn.microsoft.com/azure/azure-local/update/update-troubleshooting-23h2' -f $r.SinceLastUpdateDisplay, $r.LastUpdatedUtc, $r.CurrentStep, $r.StepElapsedDisplay, $r.ElapsedDisplay, $r.Progress)
             $testCases.Add(@{
                 Name      = $caseName
                 ClassName = 'UpdateMonitor'
@@ -833,6 +838,13 @@ function Export-AzLocalUpdateRunMonitorReport {
             $clusterCell = if ($r.ClusterPortalUrl)   { '<a href="' + $r.ClusterPortalUrl   + '">' + $r.ClusterName + '</a>' } else { $r.ClusterName }
             $updateCell  = if ($r.UpdateRunPortalUrl) { '<a href="' + $r.UpdateRunPortalUrl + '">' + $r.UpdateName  + '</a>' } else { $r.UpdateName }
             [void]$md.Add("| $clusterCell | $updateCell | $stateCell | $statusCell | $cs | $pg | $stepStart | $stepEl | $($r.StartTimeUtc) | $runEl | $lastAct | $flagCell |")
+        }
+        # v0.8.96: when any in-flight row is stalled/orphaned, spell out the
+        # manual remediation under the table. These runs still report InProgress
+        # so the failed-update single-retry job skips them - operator action only.
+        if (@($inFlight | Where-Object { $_.IsStalled }).Count -gt 0) {
+            [void]$md.Add('')
+            [void]$md.Add('> :zzz: **Stalled / orphaned run(s) detected.** A run flagged `stalled` still reports `InProgress` but its ARM `lastUpdatedTime` has frozen past the threshold, so it is **not** auto-retried by the failed-update single-retry job (that job only acts on terminal `NeedsAttention` / `UpdateFailed` / `PreparationFailed` states). **Manual action required:** on a cluster node run `Get-SolutionUpdate | Format-Table ResourceId,State,Version`, then `$u = Get-SolutionUpdate | Where-Object Version -eq <version>; $u | Get-SolutionUpdateRun` to inspect the action plan, `Start-MonitoringActionplanInstanceToComplete -actionPlanInstanceID <id>` to watch it to completion, then `$u | Start-SolutionUpdate` to resume - or collect logs and open a support ticket if the run is truly orphaned. Docs: [Troubleshoot solution updates for Azure Local](https://learn.microsoft.com/azure/azure-local/update/update-troubleshooting-23h2).')
         }
         [void]$md.Add('')
     }
