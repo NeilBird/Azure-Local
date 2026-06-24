@@ -498,6 +498,12 @@ function Export-AzLocalFleetHealthStatusReport {
     # phrasing stays in sync.
     [void]$md.Add((Get-AzLocalCtrlClickTip))
     [void]$md.Add('')
+    # v0.8.97: collapse the full per-cluster rollup behind a details block
+    # (matches the "Expand to view clusters" pattern in Monitor: 1 - Fleet
+    # Connectivity Status) so the summary above stays in view.
+    [void]$md.Add('<details>')
+    [void]$md.Add('<summary>Expand to view clusters</summary>')
+    [void]$md.Add('')
     if ($overview.Count -eq 0) {
         [void]$md.Add('*No clusters returned from Get-AzLocalFleetHealthOverview.*')
     }
@@ -525,6 +531,8 @@ function Export-AzLocalFleetHealthStatusReport {
             [void]$md.Add(('*Showing first {0} clusters of {1}; see `{2}` artifact for the full list.*' -f $MaxOverviewRows, $overview.Count, $OverviewCsvFileName))
         }
     }
+    [void]$md.Add('')
+    [void]$md.Add('</details>')
     [void]$md.Add('')
 
     # ---- Health Check Failures By Reason ----------------------------------

@@ -362,6 +362,16 @@ function Export-AzLocalFleetUpdateStatusReport {
     $readiness = @(Get-AzLocalClusterUpdateReadiness @readinessParams)
     $totalTests = $readiness.Count
 
+    # v0.8.97: map ClusterResourceId -> UpdateRing tag from inventory so the
+    # shared "Clusters - Ready for Update" table can show each cluster's ring.
+    $ringByResourceId = @{}
+    foreach ($inv in @($inventory)) {
+        if ($null -eq $inv) { continue }
+        if (-not ($inv.PSObject.Properties['ResourceId'] -and $inv.ResourceId)) { continue }
+        $ringValue = if ($inv.PSObject.Properties['UpdateRing'] -and $inv.UpdateRing) { [string]$inv.UpdateRing } else { '(no ring tag)' }
+        $ringByResourceId[[string]$inv.ResourceId] = $ringValue
+    }
+
     # ---- Status bucket classification (priority cascade) ------------------
     # Cluster is counted exactly once. Priority (first match wins):
     #   UpdateFailed > ActionRequired > HealthFailure > SbeBlocked >
@@ -718,6 +728,7 @@ function Export-AzLocalFleetUpdateStatusReport {
             Time       = [double]$rowSec
             Properties = ([ordered]@{
                 ClusterName        = [string]$f.ClusterName
+                UpdateRing         = if ($f.PSObject.Properties['UpdateRing']) { [string]$f.UpdateRing } else { '' }
                 ClusterResourceId  = [string]$f.ClusterResourceId
                 UpdateName         = [string]$f.UpdateName
                 Status             = 'Failed'
@@ -962,8 +973,8 @@ function Export-AzLocalFleetUpdateStatusReport {
             # Cluster + Update portal links open in the current tab by default.
             [void]$md.Add('> **Tip:** Hold `Ctrl` (or `Cmd` on macOS) when clicking - or middle-click - Cluster or Update links to open them in a new tab. (GitHub markdown strips `target="_blank"`.)')
             [void]$md.Add('')
-            [void]$md.Add('| Cluster Name | Update Name | Update State | Status | Current Step | Verbose Error Details | Duration | Time Started | Last Updated |')
-            [void]$md.Add('|---|---|---|---|---|---|---|---|---|')
+            [void]$md.Add('| Cluster Name | Update Ring | Update Name | Update State | Status | Current Step | Verbose Error Details | Duration | Time Started | Last Updated |')
+            [void]$md.Add('|---|---|---|---|---|---|---|---|---|---|')
             foreach ($r in $renderRows) {
                 $errCell = if ($r.DeepestErrMsg -or ($r.PSObject.Properties['DeepestStepDescription'] -and $r.DeepestStepDescription)) {
                     # v0.8.80: surface the deepest step's `description`
@@ -1017,13 +1028,26 @@ function Export-AzLocalFleetUpdateStatusReport {
                 # the table tells operators to Ctrl-click to open in a new tab.
                 $clusterCell = if ($r.ClusterResourceId) { '<a href="https://portal.azure.com/#@/resource{0}">{1}</a>' -f $r.ClusterResourceId, $r.ClusterName } else { [string]$r.ClusterName }
                 $updCell     = if ($r.UpdateRunPortalUrl) { '<a href="{0}">{1}</a>' -f $r.UpdateRunPortalUrl, $r.UpdateName } else { [string]$r.UpdateName }
-                [void]$md.Add("| $clusterCell | $updCell | $($r.State) | $($r.Status) | $($r.CurrentStep) | $errCell | $($r.Duration) | $($r.StartTime) | $($r.LastUpdated) |")
+                $ringCell    = if ($r.PSObject.Properties['UpdateRing'] -and $r.UpdateRing) { ([string]$r.UpdateRing) -replace '\|','\|' } else { '-' }
+                [void]$md.Add("| $clusterCell | $ringCell | $updCell | $($r.State) | $($r.Status) | $($r.CurrentStep) | $errCell | $($r.Duration) | $($r.StartTime) | $($r.LastUpdated) |")
             }
             [void]$md.Add('')
         }
         catch {
             Write-Warning "Failed to render Update Run History markdown table: $($_.Exception.Message)"
         }
+    }
+
+    # Clusters - Ready for Update table (v0.8.97). Shared projection + renderer
+    # with the Assess Update Readiness pipeline so both surfaces stay in sync.
+    try {
+        $readyForUpdateRows = @(Get-AzLocalReadyForUpdateRows -ReadinessRows $readiness -RingByResourceId $ringByResourceId)
+        foreach ($line in (Get-AzLocalReadyForUpdateTableMarkdown -ReadyRows $readyForUpdateRows)) {
+            [void]$md.Add($line)
+        }
+    }
+    catch {
+        Write-Warning "Failed to render Clusters - Ready for Update markdown table: $($_.Exception.Message)"
     }
 
     # Reports list

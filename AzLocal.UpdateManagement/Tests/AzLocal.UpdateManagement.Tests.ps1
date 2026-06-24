@@ -34,8 +34,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $script:ModuleInfo | Should -Not -BeNullOrEmpty
         }
 
-        It 'Should have version 0.8.96' {
-            $script:ModuleInfo.Version | Should -Be '0.8.96'
+        It 'Should have version 0.8.97' {
+            $script:ModuleInfo.Version | Should -Be '0.8.97'
         }
 
         It 'Module version constants are in sync between .psm1 and .psd1' {
@@ -11804,6 +11804,68 @@ Describe 'Function: Get-AzLocalUpdateRunFailures - v0.7.70 fleet-scale failure-d
             }
         }
 
+        It 'v0.8.97: Detail output exposes an UpdateRing column populated from the cluster ARM tag' {
+            InModuleScope AzLocal.UpdateManagement {
+                Mock Invoke-AzResourceGraphQuery {
+                    if ($Query -match "project id = tolower\(id\), UpdateRing") {
+                        # Secondary ring-tag lookup query.
+                        return @(
+                            [PSCustomObject]@{
+                                id         = '/subscriptions/sub-1111/resourcegroups/rg1/providers/microsoft.azurestackhci/clusters/cluster01'
+                                UpdateRing = 'Wave1'
+                            }
+                        )
+                    }
+                    # Primary failures query.
+                    return @(
+                        [PSCustomObject]@{
+                            ClusterName='Cluster01'; ResourceGroup='RG1'; SubscriptionId='sub-1111'
+                            ClusterResourceId='/subscriptions/sub-1111/resourceGroups/RG1/providers/Microsoft.AzureStackHCI/clusters/Cluster01'
+                            UpdateName='Sol.1'; RunId='r1'; State='Failed'
+                            StartTime='2026-05-15T20:28:25Z'; EndTime='2026-05-15T21:11:15Z'
+                            DurationMinutes=42; DeepestStepDepth=1; DeepestStepName='x'
+                            DeepestErrMsg='e'; StackTracePreview=''; ErrorCategory='Other'
+                            Status='Extracted'; ProgressDescription=''
+                            ProgressJsonBytes=10; ProgressJson=''
+                        }
+                    )
+                }
+                $rows = Get-AzLocalUpdateRunFailures -State Failed 6>$null
+                $rows[0].PSObject.Properties.Name | Should -Contain 'UpdateRing'
+                $rows[0].UpdateRing | Should -Be 'Wave1'
+            }
+        }
+
+        It 'v0.8.97: UpdateRing is blank when the cluster has no UpdateRing tag' {
+            InModuleScope AzLocal.UpdateManagement {
+                Mock Invoke-AzResourceGraphQuery {
+                    if ($Query -match "project id = tolower\(id\), UpdateRing") {
+                        return @(
+                            [PSCustomObject]@{
+                                id         = '/subscriptions/sub-1111/resourcegroups/rg1/providers/microsoft.azurestackhci/clusters/cluster01'
+                                UpdateRing = ''
+                            }
+                        )
+                    }
+                    return @(
+                        [PSCustomObject]@{
+                            ClusterName='Cluster01'; ResourceGroup='RG1'; SubscriptionId='sub-1111'
+                            ClusterResourceId='/subscriptions/sub-1111/resourceGroups/RG1/providers/Microsoft.AzureStackHCI/clusters/Cluster01'
+                            UpdateName='Sol.1'; RunId='r1'; State='Failed'
+                            StartTime='2026-05-15T20:28:25Z'; EndTime='2026-05-15T21:11:15Z'
+                            DurationMinutes=42; DeepestStepDepth=1; DeepestStepName='x'
+                            DeepestErrMsg='e'; StackTracePreview=''; ErrorCategory='Other'
+                            Status='Extracted'; ProgressDescription=''
+                            ProgressJsonBytes=10; ProgressJson=''
+                        }
+                    )
+                }
+                $rows = Get-AzLocalUpdateRunFailures -State Failed 6>$null
+                $rows[0].PSObject.Properties.Name | Should -Contain 'UpdateRing'
+                $rows[0].UpdateRing | Should -Be ''
+            }
+        }
+
         It 'BS10: UpdateRunPortalUrl matches the SingleInstanceHistoryDetails portal deep-link pattern (URL-encoded cluster resource id)' {
             InModuleScope AzLocal.UpdateManagement {
                 Mock Invoke-AzResourceGraphQuery {
@@ -16388,6 +16450,7 @@ Describe 'Thin-YAML Step.8: Export-AzLocalFleetUpdateStatusReport' {
                     DeepestStepName='ApplyNodeUpdate'; ErrorCategory='NodeReboot'
                     DeepestErrMsg='Node reboot timed out after 30 minutes'
                     UpdateRunPortalUrl='https://portal.azure.com/run/1'; RunId='run-1'; StackTracePreview=''
+                    UpdateRing='Wave1'
                 }
             )
             OutDir = $script:_s8_outDir; Now = $script:_s8_now
@@ -16411,6 +16474,52 @@ Describe 'Thin-YAML Step.8: Export-AzLocalFleetUpdateStatusReport' {
         $xml | Should -Match 'Node reboot timed out after 30 minutes'
         $out = Get-Content -LiteralPath $script:_s8_ghOutputFile -Raw
         $out | Should -Match 'run_history_count=1'
+    }
+
+    It 'v0.8.97: Update Run History table includes an Update Ring column populated from the failure rows' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s8_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s8_ghSummaryFile
+        $start = $script:_s8_now.AddHours(-3)
+        $end   = $script:_s8_now.AddHours(-1)
+        $global:_s8_payload = @{
+            Inventory = @([pscustomobject]@{ ClusterName='eta'; ResourceId='/subscriptions/s1/resourceGroups/rg7/providers/Microsoft.AzureStackHCI/clusters/eta' })
+            Readiness = @(
+                [pscustomobject]@{
+                    ClusterName='eta'; ResourceGroup='rg7'; SubscriptionId='s1'
+                    ResourceId='/subscriptions/s1/resourceGroups/rg7/providers/Microsoft.AzureStackHCI/clusters/eta'
+                    UpdateState='Failed'; HealthState='Success'; ReadyForUpdate=$false
+                    HasPrerequisiteUpdates=''; AllAvailableUpdates=''; ReadyUpdates=''; SBEDependency=''
+                    RecommendedUpdate=''; CurrentVersion='12.2510.0.0'; HealthCheckFailures=''
+                }
+            )
+            Manifest = [pscustomobject]@{ SupportedYYMMs=@('2510'); LatestYYMM='2510'; LatestVersion='12.2510.0.999'; ManifestFetchedAt=(Get-Date).ToUniversalTime() }
+            Failures = @(
+                [pscustomobject]@{
+                    ClusterName='eta'; ClusterResourceId='/subscriptions/s1/resourceGroups/rg7/providers/Microsoft.AzureStackHCI/clusters/eta'
+                    UpdateName='12.2510.0.999'; State='Failed'; Status='Failed'; CurrentStep='ApplyNodeUpdate'
+                    Duration='02:00:00'; DurationMinutes=120.0; StartTime=$start; LastUpdated=$end
+                    DeepestStepName='ApplyNodeUpdate'; ErrorCategory='NodeReboot'
+                    DeepestErrMsg='Node reboot timed out after 30 minutes'
+                    UpdateRunPortalUrl='https://portal.azure.com/run/1'; RunId='run-1'; StackTracePreview=''
+                    UpdateRing='Wave3'
+                }
+            )
+            OutDir = $script:_s8_outDir; Now = $script:_s8_now
+        }
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory       { @($global:_s8_payload.Inventory) }
+            Mock Get-AzLocalClusterUpdateReadiness { @($global:_s8_payload.Readiness) }
+            Mock Get-AzLocalLatestSolutionVersion  { $global:_s8_payload.Manifest }
+            Mock Get-AzLocalUpdateSummary          { @() }
+            Mock Get-AzLocalAvailableUpdates       { @() }
+            Mock Get-AzLocalUpdateRuns             { @() }
+            Mock Get-AzLocalUpdateRunFailures      { @($global:_s8_payload.Failures) }
+            Export-AzLocalFleetUpdateStatusReport -OutputDirectory $global:_s8_payload.OutDir -Now $global:_s8_payload.Now | Out-Null
+        }
+        $summary = Get-Content -LiteralPath $script:_s8_ghSummaryFile -Raw
+        $summary | Should -Match '\| Cluster Name \| Update Ring \| Update Name \|'
+        $summary | Should -Match 'Wave3'
     }
 
     It '-IncludeUpdateRuns:$false skips the Get-AzLocalUpdateRuns step' {
@@ -20674,3 +20783,171 @@ Describe 'v0.8.95: pipeline wiring for FAILED_UPDATES_SINGLE_RETRY' {
 }
 
 #endregion v0.8.95: Guarded one-time failed-update retry
+
+#region v0.8.97: Shared "Clusters - Ready for Update" view + UpdateRing column
+
+Describe 'v0.8.97: Get-AzLocalReadyForUpdateRows private helper' {
+    It 'Is registered as a private module function (not exported)' {
+        InModuleScope AzLocal.UpdateManagement {
+            (Get-Command Get-AzLocalReadyForUpdateRows -ErrorAction SilentlyContinue) | Should -Not -BeNullOrEmpty
+        }
+        (Get-Command Get-AzLocalReadyForUpdateRows -ErrorAction SilentlyContinue -Module AzLocal.UpdateManagement | Where-Object { $_.CommandType -eq 'Function' -and $_.Visibility -eq 'Public' }) | Should -BeNullOrEmpty
+    }
+
+    It 'Filters to only ReadyForUpdate clusters and resolves UpdateRing from the map' {
+        $result = InModuleScope AzLocal.UpdateManagement {
+            $rows = @(
+                [pscustomobject]@{ ClusterName = 'alpha'; ClusterResourceId = '/sub/s/rg/alpha'; CurrentVersion = '12.2511.1002.5'; RecommendedUpdate = '12.2606.1.1'; UpdateState = 'UpdateAvailable'; HealthState = 'Success'; HasPrerequisiteUpdates = ''; ReadyForUpdate = $true }
+                [pscustomobject]@{ ClusterName = 'bravo'; ClusterResourceId = '/sub/s/rg/bravo'; CurrentVersion = '12.2606.1.1'; RecommendedUpdate = ''; UpdateState = 'UpToDate'; HealthState = 'Success'; HasPrerequisiteUpdates = ''; ReadyForUpdate = $false }
+            )
+            $ringMap = @{ '/sub/s/rg/alpha' = 'Wave1'; '/sub/s/rg/bravo' = 'Wave2' }
+            Get-AzLocalReadyForUpdateRows -ReadinessRows $rows -RingByResourceId $ringMap
+        }
+        @($result).Count | Should -Be 1
+        $result[0].ClusterName       | Should -Be 'alpha'
+        $result[0].UpdateRing        | Should -Be 'Wave1'
+        $result[0].CurrentVersion    | Should -Be '12.2511.1002.5'
+        $result[0].RecommendedUpdate | Should -Be '12.2606.1.1'
+    }
+
+    It 'Falls back to "-" when a ready cluster has no ring map entry' {
+        $result = InModuleScope AzLocal.UpdateManagement {
+            $rows = @(
+                [pscustomobject]@{ ClusterName = 'gamma'; ClusterResourceId = '/sub/s/rg/gamma'; CurrentVersion = '12.2511.1'; RecommendedUpdate = '12.2606.1'; UpdateState = 'UpdateAvailable'; HealthState = 'Success'; HasPrerequisiteUpdates = ''; ReadyForUpdate = $true }
+            )
+            Get-AzLocalReadyForUpdateRows -ReadinessRows $rows -RingByResourceId @{}
+        }
+        @($result).Count | Should -Be 1
+        $result[0].UpdateRing | Should -Be '-'
+    }
+
+    It 'Returns an empty collection (no throw) when no clusters are ready' {
+        { InModuleScope AzLocal.UpdateManagement {
+            $rows = @([pscustomobject]@{ ClusterName = 'd'; ClusterResourceId = ''; CurrentVersion = '12.2606.1'; RecommendedUpdate = ''; UpdateState = 'UpToDate'; HealthState = 'Success'; HasPrerequisiteUpdates = ''; ReadyForUpdate = $false })
+            $r = Get-AzLocalReadyForUpdateRows -ReadinessRows $rows -RingByResourceId @{}
+            @($r).Count | Should -Be 0
+        } } | Should -Not -Throw
+    }
+
+    It 'Sorts by UpdateRing then ClusterName' {
+        $result = InModuleScope AzLocal.UpdateManagement {
+            $rows = @(
+                [pscustomobject]@{ ClusterName = 'zeta';  ClusterResourceId = '/z'; CurrentVersion = '12.2511.1'; RecommendedUpdate = '12.2606.1'; UpdateState = 'UpdateAvailable'; HealthState = 'Success'; HasPrerequisiteUpdates = ''; ReadyForUpdate = $true }
+                [pscustomobject]@{ ClusterName = 'alpha'; ClusterResourceId = '/a'; CurrentVersion = '12.2511.1'; RecommendedUpdate = '12.2606.1'; UpdateState = 'UpdateAvailable'; HealthState = 'Success'; HasPrerequisiteUpdates = ''; ReadyForUpdate = $true }
+            )
+            $ringMap = @{ '/z' = 'Wave1'; '/a' = 'Wave1' }
+            Get-AzLocalReadyForUpdateRows -ReadinessRows $rows -RingByResourceId $ringMap
+        }
+        $result[0].ClusterName | Should -Be 'alpha'
+        $result[1].ClusterName | Should -Be 'zeta'
+    }
+}
+
+Describe 'v0.8.97: Get-AzLocalReadyForUpdateTableMarkdown private helper' {
+    It 'Is registered as a private module function (not exported)' {
+        InModuleScope AzLocal.UpdateManagement {
+            (Get-Command Get-AzLocalReadyForUpdateTableMarkdown -ErrorAction SilentlyContinue) | Should -Not -BeNullOrEmpty
+        }
+        (Get-Command Get-AzLocalReadyForUpdateTableMarkdown -ErrorAction SilentlyContinue -Module AzLocal.UpdateManagement | Where-Object { $_.CommandType -eq 'Function' -and $_.Visibility -eq 'Public' }) | Should -BeNullOrEmpty
+    }
+
+    It 'Renders heading + empty-state message when there are no ready clusters' {
+        $lines = InModuleScope AzLocal.UpdateManagement {
+            Get-AzLocalReadyForUpdateTableMarkdown -ReadyRows @()
+        }
+        ($lines -join "`n") | Should -Match '### Clusters - Ready for Update'
+        ($lines -join "`n") | Should -Match '_No clusters are currently Ready for Update\._'
+    }
+
+    It 'Renders the shared table header, Ctrl-click tip and a portal deep-link per cluster' {
+        $lines = InModuleScope AzLocal.UpdateManagement {
+            $rows = @(
+                [pscustomobject]@{ ClusterName = 'alpha'; UpdateRing = 'Wave1'; CurrentVersion = '12.2511.1002.5'; RecommendedUpdate = '12.2606.1.1'; ClusterResourceId = '/sub/s/rg/alpha' }
+            )
+            Get-AzLocalReadyForUpdateTableMarkdown -ReadyRows $rows
+        }
+        $joined = $lines -join "`n"
+        $joined | Should -Match '### Clusters - Ready for Update'
+        $joined | Should -Match '\| Cluster \| Update Ring \| Current Update \| Recommended Update \|'
+        $joined | Should -Match '\*\*Tip:\*\*'
+        $joined | Should -Match 'Wave1'
+        $joined | Should -Match '12\.2511\.1002\.5'
+        $joined | Should -Match 'href="https://portal\.azure\.com/#@/resource/sub/s/rg/alpha"'
+    }
+}
+
+Describe 'v0.8.97: Monitor:3 run-history UpdateRing column + Ready-for-Update table' {
+    BeforeAll {
+        $script:src09v97 = Get-Content -LiteralPath "$PSScriptRoot/../Public/Export-AzLocalFleetUpdateStatusReport.ps1" -Raw
+        $script:srcFailures = Get-Content -LiteralPath "$PSScriptRoot/../Public/Get-AzLocalUpdateRunFailures.ps1" -Raw
+    }
+    It 'Get-AzLocalUpdateRunFailures projects UpdateRing from a cluster tags query' {
+        $srcFailures | Should -Match "tags\['UpdateRing'\]"
+        $srcFailures | Should -Match 'UpdateRing'
+    }
+    It 'Run-history markdown table header carries the Update Ring column' {
+        $src09v97 | Should -Match '\| Cluster Name \| Update Ring \| Update Name \|'
+    }
+    It 'Monitor:3 builds a ClusterResourceId -> UpdateRing map and calls the shared ready-for-update helpers' {
+        $src09v97 | Should -Match '\$ringByResourceId'
+        $src09v97 | Should -Match 'Get-AzLocalReadyForUpdateRows'
+        $src09v97 | Should -Match 'Get-AzLocalReadyForUpdateTableMarkdown'
+    }
+}
+
+Describe 'v0.8.97: Assess Readiness ready-for-update table + collapsed detail' {
+    BeforeAll {
+        $script:src05v97 = Get-Content -LiteralPath "$PSScriptRoot/../Public/Export-AzLocalClusterUpdateReadinessReport.ps1" -Raw
+    }
+    It 'Adds the ReadyForUpdateCsvFileName parameter (default ready-for-update.csv)' {
+        $src05v97 | Should -Match "\`$ReadyForUpdateCsvFileName\s*=\s*'ready-for-update\.csv'"
+    }
+    It 'Calls the shared ready-for-update renderer before the All clusters detail table' {
+        $src05v97 | Should -Match 'Get-AzLocalReadyForUpdateTableMarkdown'
+        $src05v97 | Should -Match '### All clusters detail'
+    }
+    It 'Wraps the All clusters detail table in a collapsed details block' {
+        $src05v97 | Should -Match '<details>'
+        $src05v97 | Should -Match '<summary>Expand to view clusters</summary>'
+        $src05v97 | Should -Match '</details>'
+    }
+    It 'Returns ReadyForUpdateCsvPath in the PassThru object' {
+        $src05v97 | Should -Match 'ReadyForUpdateCsvPath'
+    }
+}
+
+Describe 'v0.8.97: Monitor:2 Fleet Health Overview collapsed by default' {
+    BeforeAll {
+        $script:src10v97 = Get-Content -LiteralPath "$PSScriptRoot/../Public/Export-AzLocalFleetHealthStatusReport.ps1" -Raw
+    }
+    It 'Wraps the Fleet Health Overview table in a collapsed details block with the consistent summary' {
+        $src10v97 | Should -Match '### Fleet Health Overview \(fleet rollup\)'
+        $src10v97 | Should -Match '<summary>Expand to view clusters</summary>'
+    }
+}
+
+Describe 'v0.8.97: Apply Updates readiness gate stale-assessment + Support column' {
+    BeforeAll {
+        $script:src06v97 = Get-Content -LiteralPath "$PSScriptRoot/../Public/Export-AzLocalClusterReadinessGateReport.ps1" -Raw
+    }
+    It 'Fetches the public manifest and runs stale-assessment detection' {
+        $src06v97 | Should -Match 'Get-AzLocalLatestSolutionVersion'
+        $src06v97 | Should -Match 'Test-AzLocalUpdateAssessmentStale'
+        $src06v97 | Should -Match '_IsStaleAssessment'
+    }
+    It 'Overrides a stale "Up to Date" status with an actionable warning' {
+        $src06v97 | Should -Match 'Update Available \(stale assessment\)'
+    }
+    It 'Adds a Support column to the readiness table header' {
+        $src06v97 | Should -Match '\| Cluster \| Current Version \| Update State \| Health \| Status \| Support \| Recommended Update \| Blocking Reasons \|'
+        $src06v97 | Should -Match "iconMap\['SupportSupported'\]"
+        $src06v97 | Should -Match "iconMap\['SupportUnsupported'\]"
+        $src06v97 | Should -Match "iconMap\['SupportUnknown'\]"
+    }
+    It 'Surfaces StaleAssessmentCount in the PassThru object' {
+        $src06v97 | Should -Match 'StaleAssessmentCount'
+    }
+}
+
+#endregion v0.8.97: Shared "Clusters - Ready for Update" view + UpdateRing column
+

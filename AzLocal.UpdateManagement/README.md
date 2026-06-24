@@ -2,7 +2,7 @@
 
 > ⚠️ **Disclaimer**: This module is **NOT** a Microsoft supported service offering or product. It is provided as example code only, with no warranty or official support. Refer to the [MIT license](https://github.com/NeilBird/Azure-Local/blob/main/LICENSE) for further information.
 
-**Latest Version:** v0.8.96 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.8.96)
+**Latest Version:** v0.8.97 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.8.97)
 
 This folder contains the 'AzLocal.UpdateManagement' PowerShell module for managing updates on Azure Local (formerly Azure Stack HCI) clusters using the Azure Local REST API. The module supports both interactive use and CI/CD automation via Service Principal or Managed Identity authentication.
 
@@ -14,7 +14,7 @@ Azure Local REST API specification (includes update management endpoints): https
 **This README (overview + most-recent release notes):**
 
 - [Where to Start](#where-to-start)
-- [What's New in v0.8.96](#whats-new-in-v0896)
+- [What's New in v0.8.97](#whats-new-in-v0897)
 - [Files](#files)
 - [Prerequisites](#prerequisites)
 - [RBAC Requirements](#rbac-requirements) (summary; full reference in [docs/rbac.md](docs/rbac.md))
@@ -77,25 +77,27 @@ If you are new to this module, work through these in order from a regular PowerS
 
 > Most CI/CD pipelines in [Automation-Pipeline-Examples/](Automation-Pipeline-Examples/) are direct implementations of one of these workflows. Start there if you want a copy-pasteable end-to-end pipeline.
 
-## What's New in v0.8.96
+## What's New in v0.8.97
 
-Follow-up to v0.8.95 that surfaces the **stalled / orphaned in-flight run** signal in the prominent pipeline **summary output** (the JUnit test-reporter check), not just the artifact CSV.
-
-v0.8.95 detected a frozen `InProgress` run and showed it in the CSV and the markdown step summary, but the per-cluster JUnit `<testcase>` classification cascade in `Export-AzLocalUpdateRunMonitorReport` never referenced `IsStalled`. As a result a run whose ARM `lastUpdatedTime` had frozen for weeks (e.g. a real orphaned run stuck for 33+ days) was reported in the test-reporter check only as a long-running step, and an operator had to open the CSV to learn it was actually stalled.
-
-### Changed
-
-- **A stalled run is now a dedicated, top-priority JUnit failure.** A new first branch in the in-flight `<testcase>` cascade emits `Status` / failure `Type` = `Stalled` with a `STALLED: no orchestration activity for <duration> ...` message (ARM `lastUpdatedTime`, current step, step/overall elapsed, progress) whenever `IsStalled` is set, instead of falling through to the `LongRunningStep` / `LongRunningOverall` reasons. The CSV and `-PassThru` shape are unchanged.
-- **The stalled output spells out the manual remediation.** Because a stalled run still reports `InProgress`, the failed-update single-retry job deliberately skips it - so the JUnit failure body and a new callout under the in-flight markdown table tell the operator it is **not** auto-retried and give the on-node `Get-SolutionUpdate` / `Get-SolutionUpdateRun` / `Start-MonitoringActionplanInstanceToComplete` / `Start-SolutionUpdate` flow plus the public [Troubleshoot solution updates for Azure Local](https://learn.microsoft.com/azure/azure-local/update/update-troubleshooting-23h2) doc link.
+Update-readiness reporting clarity across the fleet reports, plus intelligent detection of **stale "Up to Date" clusters** in the Apply Updates readiness table.
 
 ### Added
 
-- **`Stalled` ITSM trigger-matrix status.** The bundled sample `azurelocal-itsm.yml` gains a `Stalled:` key (`raiseTicket: true`, severity 2, category "Update run stalled / orphaned") so operators can open a ticket on an orphaned run. A `Status` not present in a user's matrix is simply ignored, so the new key is additive and safe.
+- **`UpdateRing` column on `Get-AzLocalUpdateRunFailures` (Detail view)** sourced from the cluster's ARM `UpdateRing` tag (resolved via a secondary Resource Graph query against `microsoft.azurestackhci/clusters`; blank when the cluster carries no ring tag).
+- **Monitor: 3 (`Export-AzLocalFleetUpdateStatusReport`)**: the Update Run History table gains an **Update Ring** column (2nd, after Cluster Name) and a new **"Clusters - Ready for Update"** summary table below the run history.
+- **Assess Readiness (`Export-AzLocalClusterUpdateReadinessReport`)**: a new **"Clusters - Ready for Update"** table plus a separate `ready-for-update.csv` artefact (`-ReadyForUpdateCsvFileName`, default `ready-for-update.csv`).
+- **Stale-assessment detection + a "Support" column in the Apply Updates "Cluster Readiness" table.** A cluster that reports **Up to Date** while the public update manifest (`https://aka.ms/AzureEdgeUpdates`) advertises a newer solution build - typically a disconnected cluster serving a stale cached assessment - is now flagged with an **Update Available (stale assessment)** status and a **Support** column that calls out when the running build is no longer in support.
+- Two new private helpers - `Get-AzLocalReadyForUpdateRows` and `Get-AzLocalReadyForUpdateTableMarkdown` - back the shared "Ready for Update" view used by both the Monitor: 3 and Assess Readiness reports.
+
+### Changed
+
+- **Assess Readiness "All clusters detail" table is now collapsed** behind an `Expand to view clusters` `<details>` block so the actionable summary tables sit above the fold.
+- **Monitor: 2 "Fleet Health Overview" table is now collapsed** behind the same `Expand to view clusters` expander.
 
 ### Notes
 
 - **Report-only and additive** - no public API, parameter, or export-count change (still 64).
-- **`GENERATED_AGAINST_MODULE_VERSION`** bumped from `0.8.95` to `0.8.96` across bundled pipeline templates.
+- **`GENERATED_AGAINST_MODULE_VERSION`** bumped from `0.8.96` to `0.8.97` across bundled pipeline templates.
 
 > Previous release notes have moved into the [Release History](#release-history) appendix at the bottom of this document.
 
@@ -581,7 +583,11 @@ This code is provided as-is for educational and reference purposes.
 
 The full What's-New history (v0.7.81 and earlier) has moved to [docs/release-history.md](docs/release-history.md).
 
-The most recent release notes for **v0.8.96** stay above under [`What's New in v0.8.96`](#whats-new-in-v0896).
+The most recent release notes for **v0.8.97** stay above under [`What's New in v0.8.97`](#whats-new-in-v0897).
+
+### What's New in v0.8.96
+
+**Follow-up to v0.8.95 that surfaces the stalled / orphaned in-flight run signal in the prominent pipeline summary output (the JUnit test-reporter check), not just the artifact CSV.** A new top-priority branch in the in-flight `<testcase>` cascade in `Export-AzLocalUpdateRunMonitorReport` emits `Status` / failure `Type` = `Stalled` whenever `IsStalled` is set (previously a frozen `InProgress` run was reported only as a long-running step). The stalled output spells out the manual remediation (the run is NOT auto-retried by the single-retry job) and the bundled `azurelocal-itsm.yml` gains an additive `Stalled:` trigger key. Report-only and additive - no public API, parameter, or export-count change (still 64). `GENERATED_AGAINST_MODULE_VERSION` bumped from `0.8.95` to `0.8.96`. See [CHANGELOG.md](CHANGELOG.md#0896---2026-06-24) for the full v0.8.96 entry.
 
 ### What's New in v0.8.95
 

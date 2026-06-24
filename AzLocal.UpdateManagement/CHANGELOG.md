@@ -5,6 +5,41 @@ All notable changes to the AzLocal.UpdateManagement module (renamed from AzStack
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.97] - 2026-06-24
+
+Update-readiness reporting clarity across the fleet reports, plus intelligent
+detection of **stale "Up to Date" clusters** in the Apply Updates readiness table.
+Report-only and additive - no public API, parameter, or export-count change (still 64).
+
+### Added
+
+- `UpdateRing` column on `Get-AzLocalUpdateRunFailures` (Detail view), sourced from the
+  cluster's ARM `UpdateRing` tag via a secondary Resource Graph query against
+  `microsoft.azurestackhci/clusters` (blank when the cluster has no ring tag).
+- Monitor: 3 (`Export-AzLocalFleetUpdateStatusReport`): an **Update Ring** column on the
+  Update Run History table (2nd, after Cluster Name) and a new **"Clusters - Ready for
+  Update"** table below the run history.
+- Assess Readiness (`Export-AzLocalClusterUpdateReadinessReport`): a new **"Clusters -
+  Ready for Update"** table and a separate `ready-for-update.csv` artefact
+  (`-ReadyForUpdateCsvFileName`, default `ready-for-update.csv`).
+- Stale-assessment detection plus a **Support** column in the Apply Updates "Cluster
+  Readiness" table: a cluster reporting **Up to Date** while the public update manifest
+  (`https://aka.ms/AzureEdgeUpdates`) advertises a newer build (a stale cached assessment,
+  e.g. a disconnected cluster) is flagged **Update Available (stale assessment)**.
+- Two new private helpers `Get-AzLocalReadyForUpdateRows` and
+  `Get-AzLocalReadyForUpdateTableMarkdown` back the shared "Ready for Update" view.
+
+### Changed
+
+- Assess Readiness "All clusters detail" table is collapsed behind an
+  `Expand to view clusters` `<details>` block.
+- Monitor: 2 "Fleet Health Overview" table is collapsed behind the same expander.
+
+### Notes
+
+- `GENERATED_AGAINST_MODULE_VERSION` bumped from `0.8.96` to `0.8.97` across bundled
+  pipeline templates.
+
 ## [0.8.96] - 2026-06-24
 
 Follow-up to v0.8.95: surface the **stalled / orphaned in-flight run** signal in the

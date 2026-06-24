@@ -1313,12 +1313,15 @@ Either way verifies the tags in Azure with a follow-up read. Both paths use the 
 
 ### 6.4 Pre-flight readiness assessment
 
-Run **Assess Update Readiness** for the ring you are about to roll. It produces two JUnit XML files (visible in the Tests / Checks tab) and two CSV artefacts:
+Run **Assess Update Readiness** for the ring you are about to roll. It produces two JUnit XML files (visible in the Tests / Checks tab) and three CSV artefacts:
 
 | Artefact | What it shows |
 |---|---|
 | `readiness.xml` / `readiness.csv` | One test per cluster from `Get-AzLocalClusterUpdateReadiness`. Fails if `ReadyForUpdate = $false` (e.g. missing SBE prerequisite, no updates available, cluster in `Updating`). |
 | `health-blocking.xml` / `health-blocking.csv` | One test per cluster from `Test-AzLocalClusterHealth -BlockingOnly`. Fails if any **Critical** health failure exists. Non-critical findings are surfaced but do not fail the test. |
+| `ready-for-update.csv` (v0.8.97) | The subset of clusters that passed every readiness check and are ready to roll, grouped by `UpdateRing` - mirrors the new **"Clusters - Ready for Update"** summary table in the step summary. |
+
+The step summary now leads with the **"Clusters - Ready for Update"** table; the verbose **"All clusters detail"** table is collapsed behind an `Expand to view clusters` block (v0.8.97).
 
 The pipeline itself is **report-only and always succeeds**. Per-cluster red tests are signal, not a stop condition for the wave - in a large fleet, one or two clusters out at any given moment is the norm, and blocking the entire wave on those is rarely what you want. `Start-AzLocalClusterUpdate` is per-cluster-scoped and will no-op on the un-ready clusters anyway.
 

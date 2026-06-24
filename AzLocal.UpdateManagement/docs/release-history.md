@@ -4,9 +4,13 @@
 >
 > **For older releases**, this is the canonical reference; the main README intentionally stays slim so the most recent block is easy to find.
 >
-> **For v0.8.96 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0896) `What's New in v0.8.96` section.
+> **For v0.8.97 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0897) `What's New in v0.8.97` section.
 
 ---
+
+### What's New in v0.8.96
+
+Follow-up to v0.8.95 that surfaces the **stalled / orphaned in-flight run** signal in the prominent pipeline summary output (the JUnit test-reporter check), not just the artifact CSV. A new top-priority branch in the in-flight `<testcase>` cascade in `Export-AzLocalUpdateRunMonitorReport` emits `Status` / failure `Type` = `Stalled` whenever `IsStalled` is set (previously a frozen `InProgress` run was reported only as a long-running step), spells out the manual remediation (the run is NOT auto-retried by the single-retry job), and the bundled `azurelocal-itsm.yml` gains an additive `Stalled:` trigger key. Report-only and additive - no public API, parameter, or export-count change (still 64). `GENERATED_AGAINST_MODULE_VERSION` bumped from `0.8.95` to `0.8.96`. See [CHANGELOG.md](../CHANGELOG.md#0896---2026-06-24) for the full v0.8.96 entry.
 
 ### What's New in v0.8.95
 

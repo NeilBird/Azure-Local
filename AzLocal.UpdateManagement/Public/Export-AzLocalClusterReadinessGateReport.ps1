@@ -37,9 +37,9 @@ function Export-AzLocalClusterReadinessGateReport {
         'azlocal-step6-readiness-summary.md'.
     .PARAMETER PassThru
         Returns PSCustomObject with: TotalCount, ReadyCount, UpToDateCount,
-        NotReadyCount, UpdateRing, ReadinessCsvPath, SummaryPath, Results (raw
-        rows from Get-AzLocalClusterUpdateReadiness when not in the
-        short-circuit path, else @()).
+        NotReadyCount, StaleAssessmentCount, UpdateRing, ReadinessCsvPath,
+        SummaryPath, Results (raw rows from Get-AzLocalClusterUpdateReadiness
+        when not in the short-circuit path, else @()).
     .NOTES
         Author  : AzLocal.UpdateManagement
         Version : 0.8.5 (Step.6 thin-YAML port)
@@ -116,6 +116,7 @@ function Export-AzLocalClusterReadinessGateReport {
                 ReadyCount       = 0
                 UpToDateCount    = 0
                 NotReadyCount    = 0
+                StaleAssessmentCount = 0
                 UpdateRing       = ''
                 ReadinessCsvPath = $csvPath
                 SummaryPath      = $null
@@ -161,6 +162,47 @@ function Export-AzLocalClusterReadinessGateReport {
         Write-Host "##vso[task.logissue type=warning]No clusters are ready for updates in ring '$UpdateRing'"
     }
 
+    # v0.8.97: anchor a support window + stale-assessment detection on the
+    # public Azure Local update manifest (mirrors Monitor: 3 - Fleet Update
+    # Status). A disconnected cluster can report ARM UpdateState 'UpToDate'
+    # while a newer solution build is already released, because its cached
+    # assessment ("Updates Available") has not refreshed. We compare each
+    # cluster's installed YYMM to the manifest's latest YYMM and flag the
+    # difference so the readiness table does not show a misleading
+    # "Up to Date" for clusters that are actually behind.
+    $latestReleasedYymm    = ''
+    $latestReleasedVersion = ''
+    $supportedYymms        = @()
+    try {
+        Write-Host "Querying https://aka.ms/AzureEdgeUpdates for the latest released Azure Local solution version..."
+        $manifestProbe         = Get-AzLocalLatestSolutionVersion -ErrorAction Stop
+        $latestReleasedYymm    = [string]$manifestProbe.LatestYYMM
+        $latestReleasedVersion = [string]$manifestProbe.LatestVersion
+        $supportedYymms        = @($manifestProbe.SupportedYYMMs)
+        Write-Host ("Latest released solution version: {0} (YYMM={1})." -f $latestReleasedVersion, $latestReleasedYymm) -ForegroundColor Green
+    }
+    catch {
+        Write-Warning "Failed to query the public update manifest - Support column falls back to a fleet-observed top-6 YYMM window and stale-assessment detection is skipped. Error: $($_.Exception.Message)"
+        $observedYymms = @($results | ForEach-Object {
+                $vp = ([string]$_.CurrentVersion) -split '\.'
+                if ($vp.Count -ge 2) { $vp[1] } else { '' }
+            } | Where-Object { $_ -match '^[0-9]{4}$' } | Sort-Object -Unique)
+        $supportedYymms = @($observedYymms | Sort-Object -Descending | Select-Object -First 6)
+    }
+
+    # Stale pre-pass: annotate each row so the render loop (and the summary
+    # header count) agree. Only clusters the shared cascade classifies as
+    # 'UpToDate' are candidates; staleness needs a manifest LatestYYMM.
+    $staleCount = 0
+    foreach ($r in $results) {
+        $isStale = $false
+        if ($latestReleasedYymm -and (Get-AzLocalClusterReadinessStatus -ReadinessRow $r) -eq 'UpToDate') {
+            $staleCheck = Test-AzLocalUpdateAssessmentStale -CurrentVersion ([string]$r.CurrentVersion) -LatestYYMM $latestReleasedYymm
+            if ($staleCheck.IsStale) { $isStale = $true; $staleCount++ }
+        }
+        $r | Add-Member -MemberType NoteProperty -Name _IsStaleAssessment -Value $isStale -Force
+    }
+
     # Per-cluster readiness markdown table. Heading is `# Cluster Readiness`
     # on ADO (file is its own summary card) and `## Cluster Readiness` on
     # GitHub (appended into GITHUB_STEP_SUMMARY which already has H1).
@@ -171,12 +213,13 @@ function Export-AzLocalClusterReadinessGateReport {
     $sb = New-Object System.Text.StringBuilder
     [void]$sb.AppendLine("$headingLevel Cluster Readiness ($UpdateRing)")
     [void]$sb.AppendLine()
-    [void]$sb.AppendLine("**Total:** $totalCount &nbsp;|&nbsp; **Ready:** $readyCount &nbsp;|&nbsp; **Up to Date:** $upToDateCount &nbsp;|&nbsp; **Not Ready:** $notReadyCount")
+    $staleSegment = if ($staleCount -gt 0) { " &nbsp;|&nbsp; **Stale assessment:** $staleCount" } else { '' }
+    [void]$sb.AppendLine("**Total:** $totalCount &nbsp;|&nbsp; **Ready:** $readyCount &nbsp;|&nbsp; **Up to Date:** $upToDateCount &nbsp;|&nbsp; **Not Ready:** $notReadyCount$staleSegment")
     [void]$sb.AppendLine()
     [void]$sb.AppendLine((Get-AzLocalCtrlClickTip))
     [void]$sb.AppendLine()
-    [void]$sb.AppendLine('| Cluster | Current Version | Update State | Health | Status | Recommended Update | Blocking Reasons |')
-    [void]$sb.AppendLine('|---|---|---|---|---|---|---|')
+    [void]$sb.AppendLine('| Cluster | Current Version | Update State | Health | Status | Support | Recommended Update | Blocking Reasons |')
+    [void]$sb.AppendLine('|---|---|---|---|---|---|---|---|')
 
     $rendered = 0
     foreach ($r in ($results | Sort-Object @{Expression = { [bool]$_.ReadyForUpdate }; Descending = $true }, ClusterName)) {
@@ -186,7 +229,26 @@ function Export-AzLocalClusterReadinessGateReport {
         # no-entry icon that the old binary Ready? column rendered for them.
         # v0.8.81: icon glyph now comes from Get-AzLocalStatusIconMap (host-aware).
         $statusKey = Get-AzLocalClusterReadinessStatus -ReadinessRow $r
-        $statusCell = if ($iconMap.ContainsKey($statusKey)) { $iconMap[$statusKey] } else { $iconMap['NeedsInvestigation'] }
+        # v0.8.97: a disconnected/stale cluster can report ARM UpdateState
+        # 'UpToDate' while a newer solution build is already released. The
+        # stale pre-pass flagged these; surface them as an actionable warning
+        # instead of a misleading "Up to Date" so the operator runs Check for
+        # Updates (e.g. Sync-AzLocalClusterUpdateSummary).
+        $isStaleAssessment = ($r.PSObject.Properties['_IsStaleAssessment'] -and $r._IsStaleAssessment)
+        $statusCell = if ($isStaleAssessment) {
+            ('{0} Update Available (stale assessment)' -f $iconMap['Warn'])
+        }
+        elseif ($iconMap.ContainsKey($statusKey)) { $iconMap[$statusKey] }
+        else { $iconMap['NeedsInvestigation'] }
+        # v0.8.97: Support column mirrors the Monitor: 3 - Fleet Update Status
+        # rolling 6-month YYMM support window (public manifest, fleet-observed
+        # top-6 fallback when the manifest is unreachable).
+        $verParts = ([string]$r.CurrentVersion) -split '\.'
+        $verYymm  = if ($verParts.Count -ge 2) { $verParts[1] } else { '' }
+        $supportCell = if ($verYymm -match '^[0-9]{4}$') {
+            if ($supportedYymms -contains $verYymm) { $iconMap['SupportSupported'] } else { $iconMap['SupportUnsupported'] }
+        }
+        else { $iconMap['SupportUnknown'] }
         $hSt = "$($r.HealthState)"
         $hCell = switch -Regex ($hSt) {
             '^Success$' { $iconMap['Healthy'] -replace ' Healthy$', " $hSt"; break }
@@ -201,8 +263,13 @@ function Export-AzLocalClusterReadinessGateReport {
         $curr = if ($r.CurrentVersion) { '`' + $r.CurrentVersion + '`' } else { '-' }
         $clusterResId = if ($r.PSObject.Properties['ClusterResourceId'] -and $r.ClusterResourceId) { [string]$r.ClusterResourceId } else { '' }
         $clusterCell = Get-AzLocalClusterPortalLink -ClusterName ([string]$r.ClusterName) -ClusterResourceId $clusterResId
-        [void]$sb.AppendLine("| $clusterCell | $curr | $($r.UpdateState) | $hCell | $statusCell | $reco | $blocking |")
+        [void]$sb.AppendLine("| $clusterCell | $curr | $($r.UpdateState) | $hCell | $statusCell | $supportCell | $reco | $blocking |")
         $rendered++
+    }
+
+    if ($staleCount -gt 0) {
+        [void]$sb.AppendLine()
+        [void]$sb.AppendLine("> **Note:** $staleCount cluster(s) report ARM state 'Up to Date' but are running a solution version behind the latest released build (YYMM ``$latestReleasedYymm``). Their cached update assessment is stale - run 'Check for Updates' (e.g. ``Sync-AzLocalClusterUpdateSummary``) to refresh. These clusters are NOT truly up to date.")
     }
 
     if ($totalCount -gt $MaxRows) {
@@ -219,6 +286,7 @@ function Export-AzLocalClusterReadinessGateReport {
             ReadyCount       = $readyCount
             UpToDateCount    = $upToDateCount
             NotReadyCount    = $notReadyCount
+            StaleAssessmentCount = $staleCount
             UpdateRing       = $UpdateRing
             ReadinessCsvPath = $csvPath
             SummaryPath      = $summaryPath
