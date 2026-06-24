@@ -108,7 +108,9 @@ function Get-AzLocalUpdateRunFailures {
 
     .OUTPUTS
         PSCustomObject[] - Detail view columns:
-          ClusterName, ResourceGroup, SubscriptionId, ClusterResourceId,
+          ClusterName, UpdateRing (the cluster's 'UpdateRing' ARM tag value,
+          '' when the tag is absent), ResourceGroup, SubscriptionId,
+          ClusterResourceId,
           UpdateName, RunId, State, StartTime, EndTime, DurationMinutes,
           DeepestStepDepth (1-8 or 0), DeepestStepName, DeepestStepDescription,
           DeepestErrMsg, StackTracePreview, ErrorCategory, ProgressJsonBytes,
@@ -445,6 +447,36 @@ extensibilityresources
         Write-Log -Message "Latest-succeeded lookup loaded $($latestSucceededMap.Count) (cluster, update) entries." -Level Verbose
     }
 
+    # v0.8.97: enrich each Detail row with the cluster's 'UpdateRing' ARM tag.
+    # The updateruns resource does NOT carry the parent cluster's tags, so a
+    # single secondary ARG query maps ClusterResourceId (lower-cased) ->
+    # UpdateRing tag value. One cheap fleet-wide read (one row per cluster).
+    $ringMap = @{}
+    if ($View -eq 'Detail') {
+        $ringKql = @"
+resources
+| where type =~ 'microsoft.azurestackhci/clusters'
+| project id = tolower(id), UpdateRing = tostring(tags['UpdateRing'])
+"@
+        try {
+            $ringRows = if ($SubscriptionId) {
+                Invoke-AzResourceGraphQuery -Query $ringKql -SubscriptionId $SubscriptionId
+            } else {
+                Invoke-AzResourceGraphQuery -Query $ringKql
+            }
+            foreach ($rr in @($ringRows)) {
+                if (-not $rr) { continue }
+                if (-not ($rr.PSObject.Properties.Match('id').Count -gt 0)) { continue }
+                if (-not $rr.id) { continue }
+                $ringMap[[string]$rr.id] = if ($rr.PSObject.Properties.Match('UpdateRing').Count -gt 0) { [string]$rr.UpdateRing } else { '' }
+            }
+            Write-Log -Message "UpdateRing tag lookup loaded $($ringMap.Count) cluster entries." -Level Verbose
+        }
+        catch {
+            Write-Log -Message "UpdateRing tag enrichment query failed: $($_.Exception.Message). UpdateRing column will be blank." -Level Warning
+        }
+    }
+
     # Build the output the caller asked for.
     if ($View -eq 'Summary') {
         # Aggregate by ErrorCategory. ClusterCount desc puts the most-
@@ -523,6 +555,7 @@ extensibilityresources
 
             $obj = [PSCustomObject]@{
                 ClusterName        = $r.ClusterName
+                UpdateRing         = if ($r.ClusterResourceId -and $ringMap.ContainsKey(([string]$r.ClusterResourceId).ToLower())) { $ringMap[([string]$r.ClusterResourceId).ToLower()] } else { '' }
                 ResourceGroup      = $r.ResourceGroup
                 SubscriptionId     = $r.SubscriptionId
                 ClusterResourceId  = $r.ClusterResourceId

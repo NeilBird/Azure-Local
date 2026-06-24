@@ -79,6 +79,11 @@ function Export-AzLocalClusterUpdateReadinessReport {
         Filename for the per-cluster readiness CSV.
         Default 'readiness.csv'.
 
+    .PARAMETER ReadyForUpdateCsvFileName
+        Filename for the CSV that lists only the clusters classified as
+        'Ready for Update' (ClusterName, UpdateRing, CurrentVersion,
+        RecommendedUpdate, ClusterResourceId). Default 'ready-for-update.csv'.
+
     .PARAMETER ReadinessXmlFileName
         Filename for the readiness JUnit XML report.
         Default 'readiness.xml'.
@@ -108,9 +113,9 @@ function Export-AzLocalClusterUpdateReadinessReport {
         When set, returns a single PSCustomObject summarising the run
         (TotalCount, ReadyForUpdateCount, UpToDateCount, NotReadyCount,
         CriticalFindings, ClustersWithCritical, ReadinessRows,
-        HealthRows, and the 5 file paths). Without -PassThru the cmdlet
-        emits nothing to the pipeline; the artifacts and step outputs
-        are still produced.
+        HealthRows, and the file paths incl. ReadyForUpdateCsvPath).
+        Without -PassThru the cmdlet emits nothing to the pipeline; the
+        artifacts and step outputs are still produced.
 
     .OUTPUTS
         Nothing by default. When -PassThru is set, a single PSCustomObject.
@@ -144,6 +149,10 @@ function Export-AzLocalClusterUpdateReadinessReport {
         [Parameter(Mandatory = $false)]
         [ValidateNotNullOrEmpty()]
         [string]$ReadinessCsvFileName = 'readiness.csv',
+
+        [Parameter(Mandatory = $false)]
+        [ValidateNotNullOrEmpty()]
+        [string]$ReadyForUpdateCsvFileName = 'ready-for-update.csv',
 
         [Parameter(Mandatory = $false)]
         [ValidateNotNullOrEmpty()]
@@ -203,6 +212,7 @@ function Export-AzLocalClusterUpdateReadinessReport {
     }
 
     $readinessCsv = Join-Path -Path $OutputDirectory -ChildPath $ReadinessCsvFileName
+    $readyForUpdateCsv = Join-Path -Path $OutputDirectory -ChildPath $ReadyForUpdateCsvFileName
     $readinessXml = Join-Path -Path $OutputDirectory -ChildPath $ReadinessXmlFileName
     $healthCsv    = Join-Path -Path $OutputDirectory -ChildPath $HealthCsvFileName
     $healthXml    = Join-Path -Path $OutputDirectory -ChildPath $HealthXmlFileName
@@ -251,6 +261,7 @@ function Export-AzLocalClusterUpdateReadinessReport {
                     StaleAssessmentClusters      = @()
                     StaleAssessmentScanTriggered = $false
                     ReadinessCsvPath     = $readinessCsv
+                    ReadyForUpdateCsvPath = $readyForUpdateCsv
                     ReadinessXmlPath     = $readinessXml
                     HealthCsvPath        = $healthCsv
                     HealthXmlPath        = $healthXml
@@ -296,6 +307,27 @@ function Export-AzLocalClusterUpdateReadinessReport {
     Write-Host "Ready for update      : $readyForUpdate"
     Write-Host "Up to date            : $upToDate"
     Write-Host "Not ready for update  : $notReady"
+
+    # ---- Ready-for-Update subset (v0.8.97) --------------------------------
+    # Shared projection (Get-AzLocalReadyForUpdateRows) reused by the markdown
+    # "Clusters - Ready for Update" table below AND by the dedicated CSV
+    # artefact. The same projection/table is rendered by Monitor: 3 - Fleet
+    # Update Status.
+    $readyForUpdateRows = @(Get-AzLocalReadyForUpdateRows -ReadinessRows $readiness -RingByResourceId $ringByResourceId)
+    try {
+        if ($readyForUpdateRows.Count -gt 0) {
+            $readyForUpdateRows | ConvertTo-SafeCsvCollection | Export-Csv -Path $readyForUpdateCsv -NoTypeInformation -Force
+        }
+        else {
+            # Always emit a header-only CSV so the artefact is present even when
+            # no clusters are ready. ASCII keeps it BOM-free.
+            Set-Content -Path $readyForUpdateCsv -Value '"ClusterName","UpdateRing","CurrentVersion","RecommendedUpdate","ClusterResourceId"' -Encoding ASCII
+        }
+        Write-Host "Ready-for-Update CSV  : $readyForUpdateCsv ($($readyForUpdateRows.Count) cluster(s))"
+    }
+    catch {
+        Write-Warning "Failed to write ready-for-update CSV: $($_.Exception.Message)"
+    }
 
     # ---- Stale update-assessment detection (v0.8.88) ----------------------
     # A cluster can report Up-to-Date while a newer solution build is actually
@@ -545,11 +577,23 @@ function Export-AzLocalClusterUpdateReadinessReport {
 
     # 7. All-clusters detail table
     if ($total -gt 0) {
+        # 7a. Clusters - Ready for Update (shared table, rendered before the
+        # full detail list so operators see the actionable "go now" set first).
+        foreach ($line in (Get-AzLocalReadyForUpdateTableMarkdown -ReadyRows $readyForUpdateRows)) {
+            [void]$md.Add($line)
+        }
+
         [void]$md.Add('### All clusters detail')
         [void]$md.Add('')
         # v0.8.81: portal deep-links on the Cluster column + status icons via
         # shared iconMap (mirrors Step.06 readiness-gate output).
         [void]$md.Add((Get-AzLocalCtrlClickTip))
+        [void]$md.Add('')
+        # v0.8.97: collapse the full per-cluster list behind a details block
+        # (matches the "Expand to view clusters" pattern in Monitor: 1 - Fleet
+        # Connectivity Status) so the actionable tables above stay in view.
+        [void]$md.Add('<details>')
+        [void]$md.Add('<summary>Expand to view clusters</summary>')
         [void]$md.Add('')
         [void]$md.Add('| Cluster | UpdateRing | Current version | Current SBE version | Update state | Health | Status | Last Updated | Recommended update |')
         [void]$md.Add('|---------|------------|-----------------|---------------------|--------------|--------|--------|--------------|--------------------|')
@@ -583,6 +627,8 @@ function Export-AzLocalClusterUpdateReadinessReport {
             $clusterCell = Get-AzLocalClusterPortalLink -ClusterName ([string]$r.ClusterName) -ClusterResourceId $clusterResId
             [void]$md.Add("| $clusterCell | $ring | $cv | $csv | $($r.UpdateState) | $($r.HealthState) | $statusCell | $lu | $ru |")
         }
+        [void]$md.Add('')
+        [void]$md.Add('</details>')
         [void]$md.Add('')
     }
 
@@ -641,6 +687,7 @@ function Export-AzLocalClusterUpdateReadinessReport {
             StaleAssessmentClusters      = $staleClusters.ToArray()
             StaleAssessmentScanTriggered = [bool]$staleScanTriggered
             ReadinessCsvPath     = $readinessCsv
+            ReadyForUpdateCsvPath = $readyForUpdateCsv
             ReadinessXmlPath     = $readinessXml
             HealthCsvPath        = $healthCsv
             HealthXmlPath        = $healthXml
