@@ -98,6 +98,23 @@ function Get-AzLocalClusterUpdateReadiness {
         [ValidateSet('Auto', 'Csv', 'Json', 'JUnitXml')]
         [string]$ExportFormat = 'Auto',
 
+        # v0.9.1: when supplied, an apply-updates schedule (schema v2) constrains
+        # which update versions each cluster's ring is allowed to install. The
+        # readiness calc is recomputed using ONLY the allow-listed Ready updates
+        # (per-ring 'allowedUpdateVersions' override beats the top-level fleet
+        # default; 'Latest' alone means no constraint). A cluster whose Ready
+        # updates are all outside its allow-list is reported as UpToDate.
+        [Parameter(Mandatory = $false)]
+        [string]$SchedulePath,
+
+        # v0.9.1: direct fleet-wide allow-list (bypasses -SchedulePath / per-ring
+        # resolution). Same matching semantics - 'Latest' alone disables the
+        # filter. Useful for ad-hoc assessments without a schedule file.
+        [Parameter(Mandatory = $false)]
+        [AllowNull()]
+        [AllowEmptyCollection()]
+        [string[]]$AllowedUpdateVersions,
+
         [Parameter(Mandatory = $false)]
         [switch]$PassThru
     )
@@ -125,6 +142,30 @@ function Get-AzLocalClusterUpdateReadiness {
         Write-Error "Failed to install Azure CLI 'resource-graph' extension. Please install manually: az extension add --name resource-graph"
         return
     }
+
+    # v0.9.1: load the apply-updates schedule once (schema v2 allow-list). The
+    # per-cluster effective allow-list is resolved later from each cluster's
+    # UpdateRing tag via Resolve-AzLocalClusterAllowList.
+    $scheduleCfg = $null
+    if ($SchedulePath) {
+        try {
+            $scheduleCfg = Get-AzLocalApplyUpdatesScheduleConfig -Path $SchedulePath
+            Write-Log -Message "Loaded apply-updates schedule allow-list from '$SchedulePath' (schema v$($scheduleCfg.SchemaVersion))." -Level Info
+        }
+        catch {
+            Write-Log -Message "Failed to load schedule '$SchedulePath': $($_.Exception.Message)" -Level Error
+            return
+        }
+    }
+
+    # Direct fleet-wide allow-list (used when -SchedulePath is not supplied).
+    $flatAllowList = @()
+    if ($AllowedUpdateVersions) {
+        $flatAllowList = @($AllowedUpdateVersions | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })
+    }
+    $flatIsLatest = ($flatAllowList.Count -gt 0) -and -not (@($flatAllowList | Where-Object {
+        -not [string]::Equals([string]$_, 'Latest', [System.StringComparison]::OrdinalIgnoreCase)
+    }).Count -gt 0)
 
     # Build list of clusters to process
     $clustersToProcess = @()
@@ -360,6 +401,9 @@ function Get-AzLocalClusterUpdateReadiness {
                     UpdateStartWindow           = ''
                     UpdateExclusionsWindow = ''
                     LastUpdated            = ''
+                    AllowedUpdateVersions  = ''
+                    AllowListSource        = 'None'
+                    AzureUpdateState       = 'N/A'
                 }) | Out-Null
             continue
         }
@@ -413,6 +457,54 @@ function Get-AzLocalClusterUpdateReadiness {
                     })
             }
 
+            # v0.9.1: allow-list override. Resolve the effective allow-list for
+            # this cluster (per-ring schedule override -> top-level fleet default,
+            # or the direct -AllowedUpdateVersions list), then recompute readiness
+            # using ONLY the allow-listed Ready updates. The full Ready list is
+            # preserved in the ReadyUpdates column; RecommendedUpdate / ReadyForUpdate
+            # reflect the constrained view. A cluster whose Ready updates are all
+            # outside its allow-list is reported UpToDate (no action under schedule).
+            $rawUpdateState          = $updateState
+            $allowListDisplay        = ''
+            $allowListSource         = 'None'
+            $scheduleSuppressedReady = $false
+            $effectiveAllowList      = @()
+            if ($scheduleCfg) {
+                $clusterRing = if ($clusterTags) { Get-TagValue -Tags $clusterTags -Name 'UpdateRing' } else { $null }
+                $resolvedAllow = Resolve-AzLocalClusterAllowList -UpdateRing $clusterRing -Schedule $scheduleCfg
+                $effectiveAllowList = @($resolvedAllow.EffectiveAllowList)
+                if ($effectiveAllowList.Count -eq 0) {
+                    $allowListSource = 'None'
+                }
+                elseif ($resolvedAllow.IsLatest) {
+                    $allowListSource = 'Latest'
+                }
+                else {
+                    $allowListSource = $resolvedAllow.Source
+                }
+            }
+            elseif ($flatAllowList.Count -gt 0) {
+                $effectiveAllowList = $flatAllowList
+                $allowListSource = if ($flatIsLatest) { 'Latest' } else { 'Explicit' }
+            }
+            if ($effectiveAllowList.Count -gt 0) {
+                $allowListDisplay = ($effectiveAllowList -join '; ')
+            }
+
+            $constraintActive = ($allowListSource -in @('RowOverride', 'TopLevel', 'Explicit'))
+            if ($constraintActive -and $readyUpdates.Count -gt 0) {
+                $allowSelection = Select-AzLocalNextUpdateForCluster `
+                    -ReadyUpdates (& $wrapForLatest $readyUpdates) `
+                    -AllowedUpdateVersions $effectiveAllowList
+                $allowedNameSet = New-Object System.Collections.Generic.HashSet[string] ([System.StringComparer]::OrdinalIgnoreCase)
+                foreach ($f in @($allowSelection.FilteredUpdates)) {
+                    if ($f -and $f.name) { [void]$allowedNameSet.Add([string]$f.name) }
+                }
+                $filteredReady = @($readyUpdates | Where-Object { $allowedNameSet.Contains([string]$_.UpdateName_) })
+                if ($filteredReady.Count -eq 0) { $scheduleSuppressedReady = $true }
+                $readyUpdates = $filteredReady
+            }
+
             $recommendedUpdate = ''
             $counted = $null
             $isUpToDateState = $updateState -in @('UpToDate', 'AppliedSuccessfully')
@@ -423,7 +515,7 @@ function Get-AzLocalClusterUpdateReadiness {
                 $recommendedUpdate = $latestReady.name
                 $counted = $recommendedUpdate
             }
-            elseif (-not $isUpToDateState -and -not $allInstalled -and $availableUpdates.Count -gt 0) {
+            elseif (-not $isUpToDateState -and -not $allInstalled -and -not $scheduleSuppressedReady -and $availableUpdates.Count -gt 0) {
                 $nonInstalled = @($availableUpdates | Where-Object { $_.properties.state -ne 'Installed' })
                 if ($nonInstalled.Count -gt 0) {
                     $latestAvailable = Get-LatestUpdateByYYMM -Updates (& $wrapForLatest $nonInstalled)
@@ -455,6 +547,16 @@ function Get-AzLocalClusterUpdateReadiness {
                 $isReady = $false
                 $counted = $null
             }
+
+            # v0.9.1: a cluster whose Ready updates were ALL filtered out by the
+            # allow-list (and is otherwise unblocked / not prereq-gated) is
+            # reported UpToDate - there is no action to take under the schedule.
+            # The raw Azure update-summary state is preserved in AzureUpdateState.
+            $scheduleConstrainedUpToDate = $scheduleSuppressedReady -and
+                ($blockingReasons.Count -eq 0) -and
+                ($prereqUpdates.Count -eq 0) -and
+                ($rawUpdateState -notin @('UpdateInProgress', 'PreparationInProgress', 'Failed', 'UpdateFailed', 'NeedsAttention', 'PreparationFailed'))
+            $rowUpdateState = if ($scheduleConstrainedUpToDate) { 'UpToDate' } else { $updateState }
 
             # Installed versions (Solution + SBE) from updateSummary.
             $currentVersion = ''
@@ -511,6 +613,9 @@ function Get-AzLocalClusterUpdateReadiness {
             elseif ($allInstalled) {
                 Write-Host ' UpToDate' -ForegroundColor Gray
             }
+            elseif ($scheduleConstrainedUpToDate) {
+                Write-Host ' UpToDate (schedule allow-list - no allowed update ready)' -ForegroundColor Gray
+            }
             elseif ($prereqUpdates.Count -gt 0 -and $readyUpdates.Count -eq 0) {
                 Write-Host ' Has Prerequisite (SBE update required)' -ForegroundColor Yellow
             }
@@ -543,7 +648,7 @@ function Get-AzLocalClusterUpdateReadiness {
                     ResourceGroup          = $cluster.ResourceGroup
                     SubscriptionId         = $cluster.SubscriptionId
                     ClusterState           = $clusterStatus
-                    UpdateState            = $updateState
+                    UpdateState            = $rowUpdateState
                     HealthState            = $healthState
                     CurrentVersion         = $currentVersion
                     CurrentSbeVersion      = $currentSbeVersion
@@ -558,6 +663,9 @@ function Get-AzLocalClusterUpdateReadiness {
                     UpdateStartWindow      = if ($uw) { $uw } else { '' }
                     UpdateExclusionsWindow = if ($ue) { $ue } else { '' }
                     LastUpdated            = $lastUpdated
+                    AllowedUpdateVersions  = $allowListDisplay
+                    AllowListSource        = $allowListSource
+                    AzureUpdateState       = $rawUpdateState
                 }) | Out-Null
         }
         catch {
@@ -583,6 +691,9 @@ function Get-AzLocalClusterUpdateReadiness {
                     UpdateStartWindow      = ''
                     UpdateExclusionsWindow = ''
                     LastUpdated            = ''
+                    AllowedUpdateVersions  = ''
+                    AllowListSource        = 'None'
+                    AzureUpdateState       = 'Error'
                 }) | Out-Null
         }
     }

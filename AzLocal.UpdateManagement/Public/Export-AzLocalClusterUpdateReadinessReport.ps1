@@ -193,6 +193,15 @@ function Export-AzLocalClusterUpdateReadinessReport {
         [Parameter(Mandatory = $false)]
         [string]$StaleAssessmentApiVersion = '2026-03-01-preview',
 
+        # v0.9.1: optional apply-updates schedule (schema v2) whose
+        # allowedUpdateVersions allow-list constrains which updates each ring may
+        # install. When supplied, readiness is recomputed using ONLY the
+        # allow-listed Ready updates (per-ring override beats the top-level
+        # default; 'Latest' alone = no constraint) - clusters whose Ready updates
+        # are all outside their allow-list are reported UpToDate.
+        [Parameter(Mandatory = $false)]
+        [string]$SchedulePath,
+
         [Parameter(Mandatory = $false)]
         [switch]$PassThru
     )
@@ -231,8 +240,7 @@ function Export-AzLocalClusterUpdateReadinessReport {
 
     # ---- Scope params -----------------------------------------------------
     $scopeParams = @{}
-    if ($Scope -eq 'by-update-ring' -and $UpdateRing) {
-        $scopeParams['ScopeByUpdateRingTag'] = $true
+    if ($Scope -eq 'by-update-ring' -and $UpdateRing) {        $scopeParams['ScopeByUpdateRingTag'] = $true
         $scopeParams['UpdateRingValue']      = $UpdateRing
         Write-Host "Scope: UpdateRing = $UpdateRing"
     }
@@ -277,6 +285,13 @@ function Export-AzLocalClusterUpdateReadinessReport {
     Write-Host '========================================'
     Write-Host 'Step 1: Readiness (Get-AzLocalClusterUpdateReadiness)'
     Write-Host '========================================'
+
+    # v0.9.1: forward the schedule allow-list to BOTH readiness calls so the
+    # CSV and the JUnit XML reflect the same constrained Ready/UpToDate buckets.
+    if ($SchedulePath) {
+        $scopeParams['SchedulePath'] = $SchedulePath
+        Write-Host "Allow-list: apply-updates schedule '$SchedulePath'"
+    }
 
     # CSV for humans
     $readiness = Get-AzLocalClusterUpdateReadiness @scopeParams `

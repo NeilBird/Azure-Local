@@ -131,6 +131,10 @@ stages:
 
           - task: AzureCLI@2
             displayName: 'Collect Authentication and Subscription Scope Report'
+            # v0.9.1: single retry for the transient OIDC/az-login failure (the
+            # service-connection token exchange can intermittently return
+            # "JSON is invalid"). This task is read-only/idempotent so a re-run is safe.
+            retryCountOnTaskFailure: 2
             inputs:
               # BEGIN-AZLOCAL-CUSTOMIZE:service-connection-ValidateAuthAndScope
               azureSubscription: 'AzureLocal-ServiceConnection'  # Update if your service connection has a different name.
@@ -193,6 +197,10 @@ stages:
 
           - task: AzureCLI@2
             displayName: 'Install Resource Graph Extension'
+            # v0.9.1: single retry for the transient OIDC/az-login failure (the
+            # service-connection token exchange can intermittently return
+            # "JSON is invalid"). This task is read-only/idempotent so a re-run is safe.
+            retryCountOnTaskFailure: 2
             inputs:
               # BEGIN-AZLOCAL-CUSTOMIZE:service-connection-InventoryClusters
               azureSubscription: 'AzureLocal-ServiceConnection'  # Update with your service connection name.
@@ -231,6 +239,10 @@ stages:
 
           - task: AzureCLI@2
             displayName: 'Run Cluster Inventory'
+            # v0.9.1: single retry for the transient OIDC/az-login failure (the
+            # service-connection token exchange can intermittently return
+            # "JSON is invalid"). This task is read-only/idempotent so a re-run is safe.
+            retryCountOnTaskFailure: 2
             inputs:
               # BEGIN-AZLOCAL-CUSTOMIZE:service-connection-InventoryClusters-2
               azureSubscription: 'AzureLocal-ServiceConnection'  # Update with your service connection name.

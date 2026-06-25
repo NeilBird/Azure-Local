@@ -7,11 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.9.1] - 2026-06-26
 
-**Bug fix:** dry-run (`-WhatIf`) pipeline runs now render their step summary and
-outputs. `$WhatIfPreference` cascaded from the workload cmdlet into the pipeline
-reporting helpers and silently suppressed their `Out-File` writes (`Out-File` itself
-supports `ShouldProcess`), so a dry run produced zero step summary and zero step
-outputs - operators had to read the raw runner log to see what would change.
+This release adds an opt-in update **allow-list override** to the readiness
+assessment, adds a **transient login retry** to every read-only task across the
+pipeline examples, and fixes a dry-run reporting bug.
+
+### Added
+
+- **Readiness allow-list override.** `Get-AzLocalClusterUpdateReadiness` and
+  `Export-AzLocalClusterUpdateReadinessReport` gain an opt-in `-SchedulePath`
+  (apply-updates schedule, schema v2) plus a direct `-AllowedUpdateVersions`
+  `[string[]]` parameter. When a constraint is supplied and a cluster is not
+  pinned to the `Latest` sentinel, readiness is recomputed using **only** the
+  allow-listed updates: a cluster whose Ready updates all fall outside its
+  allow-list is reported `UpdateState = UpToDate` / `ReadyForUpdate = $false`
+  (no action under the schedule). Three new columns surface the decision -
+  `AllowedUpdateVersions`, `AllowListSource`
+  (`None`/`Latest`/`Explicit`/`TopLevel`/`RowOverride`), and `AzureUpdateState`
+  (the preserved raw Azure update-summary state). A new private resolver,
+  `Resolve-AzLocalClusterAllowList`, applies the precedence: a per-ring schedule
+  override beats the top-level fleet default (a `***` rings cell is the all-rings
+  wildcard; an untagged cluster falls back to the top-level default). The
+  default code path (neither parameter supplied) is unchanged.
+- **Transient `azure/login` retry across the pipeline examples.** Every
+  read-only/idempotent task now retries the intermittent OIDC token-exchange
+  failure (`Error: JSON is invalid: Expecting value...`) once. GitHub Actions
+  workflows pair a `continue-on-error` primary login (`id: azure_login`) with an
+  `if: steps.azure_login.outcome == 'failure'` retry step (12 guards across 10
+  workflows); Azure DevOps pipelines use the native `retryCountOnTaskFailure: 2`
+  (14 across 10 pipelines). Mutating tasks (**Apply Updates**, **Retry Failed
+  Updates**, **Raise ITSM tickets**) are deliberately excluded to avoid
+  duplicate-apply / duplicate-ticket risk.
 
 ### Fixed
 
@@ -25,6 +50,9 @@ outputs - operators had to read the raw runner log to see what would change.
 
 ### Changed
 
+- The assess-update-readiness GitHub Actions and Azure DevOps examples opt into
+  the allow-list automatically when a `./config/apply-updates-schedule.yml` file
+  is present in the repo.
 - `GENERATED_AGAINST_MODULE_VERSION` pins bumped to `'0.9.1'`.
 
 ## [0.9.0] - 2026-06-25

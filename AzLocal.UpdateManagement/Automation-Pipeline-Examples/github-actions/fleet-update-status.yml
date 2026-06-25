@@ -137,6 +137,12 @@ jobs:
     
     # OIDC Authentication - recommended
     - name: Azure CLI Login (OIDC)
+      id: azure_login
+      # v0.9.1: OIDC token exchange / `az login` can transiently fail
+      # ("JSON is invalid: Expecting value" / az exit code 1). Let this first
+      # attempt fail soft so the retry step below can try once more before the
+      # job fails.
+      continue-on-error: true
       uses: azure/login@v3
       with:
         client-id: ${{ secrets.AZURE_CLIENT_ID }}
@@ -149,6 +155,17 @@ jobs:
         # read) and is NOT interpolated into Azure portal deep-link URLs (those use
         # the per-row `subscriptionId` returned by ARG).
         # Set it via: gh variable set AZURE_SUBSCRIPTION_ID --body <subId>
+        subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+    # v0.9.1: single automatic retry for the transient login failure above. Runs
+    # only when the first attempt failed; no continue-on-error here, so a second
+    # failure stops the job.
+    - name: Azure CLI Login (OIDC) - retry
+      if: steps.azure_login.outcome == 'failure'
+      uses: azure/login@v3
+      with:
+        client-id: ${{ secrets.AZURE_CLIENT_ID }}
+        tenant-id: ${{ vars.AZURE_TENANT_ID }}
         subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
     
     - name: Install Azure CLI Resource Graph Extension

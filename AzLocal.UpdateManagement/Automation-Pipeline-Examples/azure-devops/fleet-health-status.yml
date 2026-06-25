@@ -172,6 +172,10 @@ stages:
 
     - task: AzureCLI@2
       displayName: 'Collect Fleet Health Status'
+      # v0.9.1: single retry for the transient OIDC/az-login failure (the
+      # service-connection token exchange can intermittently return
+      # "JSON is invalid"). This task is read-only/idempotent so a re-run is safe.
+      retryCountOnTaskFailure: 2
       # v0.8.5 thin-YAML: the inline run block (Get-AzLocalFleetHealthFailures
       # Detail view + in-process Group-Object summary roll-up +
       # Get-AzLocalFleetHealthOverview + 2-suite JUnit XML emission +

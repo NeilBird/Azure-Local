@@ -124,6 +124,11 @@ stages:
 
           - task: AzureCLI@2
             displayName: 'Apply UpdateRing Tags'
+            # v0.9.1: single retry for the transient OIDC/az-login failure (the
+            # service-connection token exchange can intermittently return "JSON is
+            # invalid"). Tag writes are idempotent (re-applying the same UpdateRing
+            # value is a no-op), so a re-run is safe.
+            retryCountOnTaskFailure: 2
             # v0.8.5 thin-YAML: the inline Set-AzLocalClusterUpdateRingTag
             # invocation, JSON sidecar write, and Generate Summary task have
             # been condensed into the Public cmdlet

@@ -79,7 +79,12 @@ If you are new to this module, work through these in order from a regular PowerS
 
 ## What's New in v0.9.1
 
-**Bug fix:** dry-run (`-WhatIf`) pipeline runs now render their step summary and outputs in the run **Summary**, instead of producing nothing.
+This release adds an opt-in update **allow-list override** to the readiness assessment, adds a **transient login retry** to every read-only task across the pipeline examples, and fixes a dry-run reporting bug.
+
+### Added
+
+- **Readiness allow-list override.** `Get-AzLocalClusterUpdateReadiness` and `Export-AzLocalClusterUpdateReadinessReport` gain an opt-in `-SchedulePath` (apply-updates schedule, schema v2) plus a direct `-AllowedUpdateVersions` `[string[]]` parameter. When a constraint is supplied and a cluster is not pinned to the `Latest` sentinel, readiness is recomputed using **only** the allow-listed updates: a cluster whose `Ready` updates all fall outside its allow-list is reported `UpdateState = UpToDate` / `ReadyForUpdate = $false` (no action under the schedule). Three new columns surface the decision - `AllowedUpdateVersions`, `AllowListSource` (`None`/`Latest`/`Explicit`/`TopLevel`/`RowOverride`), and `AzureUpdateState` (the preserved raw Azure update-summary state). A per-ring schedule override beats the top-level fleet default (a `***` rings cell is the all-rings wildcard; an untagged cluster falls back to the top-level default). The default code path (neither parameter supplied) is unchanged, and the assess-update-readiness pipeline examples opt in automatically when a `./config/apply-updates-schedule.yml` file exists in the repo. See [Section 8 - Assess Readiness](#8-assess-readiness-and-health-before-applying-updates-recommended).
+- **Transient `azure/login` retry across the pipeline examples.** Every read-only/idempotent task now retries the intermittent OIDC token-exchange failure (`Error: JSON is invalid: Expecting value...`) once. GitHub Actions workflows pair a `continue-on-error` primary login (`id: azure_login`) with an `if: steps.azure_login.outcome == 'failure'` retry step (12 guards across 10 workflows); Azure DevOps pipelines use the native `retryCountOnTaskFailure: 2` (14 across 10 pipelines). Mutating tasks (**Apply Updates**, **Retry Failed Updates**, **Raise ITSM tickets**) are deliberately excluded to avoid duplicate-apply / duplicate-ticket risk.
 
 ### Fixed
 
@@ -87,7 +92,7 @@ If you are new to this module, work through these in order from a regular PowerS
 
 ### Notes
 
-- **Bug-fix only** - no public API, parameter, or export-count change (still 64). Adds a GitHub-host WhatIf+summary regression test.
+- **Additive + bug-fix only** - no public function or export-count change (still 64; the allow-list resolver `Resolve-AzLocalClusterAllowList` is a private helper). Adds Pester coverage for the allow-list resolver, the readiness override, the login-retry wiring, and the dry-run regression.
 - **`GENERATED_AGAINST_MODULE_VERSION`** bumped from `0.9.0` to `0.9.1` across bundled pipeline templates.
 
 > Previous release notes have moved into the [Release History](#release-history) appendix at the bottom of this document.
@@ -474,6 +479,20 @@ $readiness | Group-Object ReadyForUpdate | Select-Object Name, Count
 $readiness | Where-Object { -not $_.ReadyForUpdate } |
     Select-Object ClusterName, HealthState, UpdateState, HasPrerequisiteUpdates, SBEDependency
 ```
+
+> 🎯 **Constrain readiness to an allow-list (v0.9.1).** By default the readiness
+> check treats the latest `Ready` update as the recommendation. To instead gate
+> readiness against the same `allowedUpdateVersions` allow-list used by the apply
+> schedule, pass `-SchedulePath ./config/apply-updates-schedule.yml` (schema v2;
+> per-ring override beats the top-level fleet default) or pass an explicit
+> `-AllowedUpdateVersions '10.2604.0.123','10.2610.0.456'`. The reserved sentinel
+> `Latest` means "no constraint". When a constraint is active, a cluster whose
+> `Ready` updates all fall **outside** its allow-list is reported `UpToDate` /
+> `ReadyForUpdate = $false` (there is no permitted action under the schedule); the
+> raw Azure update-summary state is preserved in the new `AzureUpdateState` column
+> alongside `AllowedUpdateVersions` and `AllowListSource`. The assess-update-readiness
+> pipeline examples opt in automatically when a `./config/apply-updates-schedule.yml`
+> file exists in the repo.
 
 **Step 2: Drill into the Critical health failures that will block updates**
 

@@ -1,0 +1,340 @@
+#Requires -Module Pester
+<#
+.SYNOPSIS
+    v0.9.1 feature tests: (1) the apply-updates schedule allowedUpdateVersions
+    allow-list override in the readiness assessment, and (2) the transient
+    azure/login (GHA) + AzureCLI@2 (ADO) OIDC login retry wiring across the
+    automation pipeline examples.
+
+.NOTES
+    These tests are intentionally isolated in their own file so the synthetic
+    Azure Resource Graph mocks for Get-AzLocalClusterUpdateReadiness do not
+    bleed into the large parameter-validation suite. The default code path
+    (no -SchedulePath / -AllowedUpdateVersions) is unaffected.
+#>
+
+BeforeAll {
+    $modulePath = Join-Path -Path $PSScriptRoot -ChildPath '..\AzLocal.UpdateManagement.psd1'
+    Import-Module $modulePath -Force -ErrorAction Stop
+
+    $script:PipelineRoot = Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples'
+}
+
+AfterAll {
+    Remove-Module AzLocal.UpdateManagement -Force -ErrorAction SilentlyContinue
+}
+
+Describe 'v0.9.1 Private helper: Resolve-AzLocalClusterAllowList' {
+
+    BeforeAll {
+        # A typed schedule-config-shaped object mirroring the surface
+        # Get-AzLocalApplyUpdatesScheduleConfig exposes: a top-level
+        # AllowedUpdateVersions [string[]] and Schedule rows each with .rings
+        # (';'-separated) and .AllowedUpdateVersionsParsed [string[]] (or $null).
+        $script:NewSchedule = {
+            param($TopLevel, $Rows)
+            [PSCustomObject]@{
+                SchemaVersion         = 2
+                AllowedUpdateVersions = $TopLevel
+                Schedule              = $Rows
+            }
+        }
+        $script:NewRow = {
+            param($Rings, $Override)
+            [PSCustomObject]@{
+                rings                       = $Rings
+                AllowedUpdateVersionsParsed = $Override
+            }
+        }
+    }
+
+    It 'Returns Source=TopLevel and IsLatest when only the top-level list is Latest' {
+        InModuleScope AzLocal.UpdateManagement {
+            $sched = [PSCustomObject]@{
+                AllowedUpdateVersions = @('Latest')
+                Schedule              = @(
+                    [PSCustomObject]@{ rings = 'Canary'; AllowedUpdateVersionsParsed = $null }
+                )
+            }
+            $r = Resolve-AzLocalClusterAllowList -UpdateRing 'Canary' -Schedule $sched
+            $r.Source                 | Should -Be 'TopLevel'
+            $r.IsLatest               | Should -BeTrue
+            @($r.EffectiveAllowList)  | Should -HaveCount 1
+            $r.EffectiveAllowList[0]  | Should -Be 'Latest'
+        }
+    }
+
+    It 'Per-ring override beats the top-level default' {
+        InModuleScope AzLocal.UpdateManagement {
+            $sched = [PSCustomObject]@{
+                AllowedUpdateVersions = @('10.2604.0.123')
+                Schedule              = @(
+                    [PSCustomObject]@{ rings = 'Canary'; AllowedUpdateVersionsParsed = $null },
+                    [PSCustomObject]@{ rings = 'Prod';   AllowedUpdateVersionsParsed = @('10.2610.0.456') }
+                )
+            }
+            $r = Resolve-AzLocalClusterAllowList -UpdateRing 'Prod' -Schedule $sched
+            $r.Source                | Should -Be 'RowOverride'
+            $r.MatchedRing           | Should -Be 'Prod'
+            $r.IsLatest              | Should -BeFalse
+            $r.EffectiveAllowList[0] | Should -Be '10.2610.0.456'
+        }
+    }
+
+    It "A row whose rings cell is the '***' wildcard supplies the override for any ring" {
+        InModuleScope AzLocal.UpdateManagement {
+            $sched = [PSCustomObject]@{
+                AllowedUpdateVersions = @('10.2604.0.123')
+                Schedule              = @(
+                    [PSCustomObject]@{ rings = '***'; AllowedUpdateVersionsParsed = @('10.2699.0.999') }
+                )
+            }
+            $r = Resolve-AzLocalClusterAllowList -UpdateRing 'AnyRing' -Schedule $sched
+            $r.Source                | Should -Be 'RowOverride'
+            $r.EffectiveAllowList[0] | Should -Be '10.2699.0.999'
+        }
+    }
+
+    It 'An untagged cluster (no UpdateRing) falls back to the top-level default' {
+        InModuleScope AzLocal.UpdateManagement {
+            $sched = [PSCustomObject]@{
+                AllowedUpdateVersions = @('10.2604.0.123')
+                Schedule              = @(
+                    [PSCustomObject]@{ rings = 'Prod'; AllowedUpdateVersionsParsed = @('10.2610.0.456') }
+                )
+            }
+            $r = Resolve-AzLocalClusterAllowList -UpdateRing '' -Schedule $sched
+            $r.Source                | Should -Be 'TopLevel'
+            $r.MatchedRing           | Should -Be ''
+            $r.EffectiveAllowList[0] | Should -Be '10.2604.0.123'
+        }
+    }
+
+    It 'Returns Source=None when neither a row override nor a top-level list is present' {
+        InModuleScope AzLocal.UpdateManagement {
+            $sched = [PSCustomObject]@{
+                AllowedUpdateVersions = @()
+                Schedule              = @(
+                    [PSCustomObject]@{ rings = 'Canary'; AllowedUpdateVersionsParsed = $null }
+                )
+            }
+            $r = Resolve-AzLocalClusterAllowList -UpdateRing 'Canary' -Schedule $sched
+            $r.Source                | Should -Be 'None'
+            $r.IsLatest              | Should -BeFalse
+            @($r.EffectiveAllowList) | Should -HaveCount 0
+        }
+    }
+
+    It 'Ring match is case-insensitive' {
+        InModuleScope AzLocal.UpdateManagement {
+            $sched = [PSCustomObject]@{
+                AllowedUpdateVersions = @('top.1.2.3')
+                Schedule              = @(
+                    [PSCustomObject]@{ rings = 'Production'; AllowedUpdateVersionsParsed = @('row.4.5.6') }
+                )
+            }
+            $r = Resolve-AzLocalClusterAllowList -UpdateRing 'production' -Schedule $sched
+            $r.Source                | Should -Be 'RowOverride'
+            $r.EffectiveAllowList[0] | Should -Be 'row.4.5.6'
+        }
+    }
+}
+
+Describe 'v0.9.1 Get-AzLocalClusterUpdateReadiness: allow-list override' {
+
+    BeforeAll {
+        $script:Rid = '/subscriptions/s/resourceGroups/r/providers/Microsoft.AzureStackHCI/clusters/c1'
+
+        # Shared ARG mock: one Ready update (Solution10.2509.0.100 / version
+        # 10.2509.0.100) on a single connected, healthy cluster. The summary
+        # state is UpdateAvailable so the cluster is Ready in the default path.
+        $script:InvokeArgMock = {
+            param($Query, $SubscriptionId)
+            if ($Query -match 'updatesummaries') {
+                return @([PSCustomObject]@{
+                        id                 = "$script:Rid/updateSummaries/default"
+                        name               = 'default'
+                        properties         = [PSCustomObject]@{ state = 'UpdateAvailable'; healthState = 'Success' }
+                        ClusterResourceId_ = $script:Rid.ToLower()
+                    })
+            }
+            elseif ($Query -match "clusters/updates'") {
+                return @([PSCustomObject]@{
+                        name               = 'Solution10.2509.0.100'
+                        properties         = [PSCustomObject]@{ state = 'Ready'; version = '10.2509.0.100' }
+                        ClusterResourceId_ = $script:Rid.ToLower()
+                        UpdateName_        = 'Solution10.2509.0.100'
+                    })
+            }
+            else {
+                # Cluster discovery row.
+                return @([PSCustomObject]@{
+                        id             = $script:Rid
+                        name           = 'c1'
+                        resourceGroup  = 'r'
+                        subscriptionId = 's'
+                        tags           = @{ UpdateRing = 'Prod' }
+                        properties     = [PSCustomObject]@{ status = 'ConnectedRecently' }
+                    })
+            }
+        }
+    }
+
+    It 'Default path (no allow-list) reports the cluster Ready and AllowListSource=None' {
+        InModuleScope AzLocal.UpdateManagement -Parameters @{ Rid = $script:Rid; ArgMock = $script:InvokeArgMock } {
+            param($Rid, $ArgMock)
+            function global:az { $global:LASTEXITCODE = 0; return '{}' }
+            Mock Test-AzCliAvailable      { return $true }
+            Mock Install-AzGraphExtension { return $true }
+            Mock Invoke-AzResourceGraphQuery $ArgMock
+
+            $row = Get-AzLocalClusterUpdateReadiness -ClusterResourceIds @($Rid) -PassThru 6>$null |
+                Where-Object ClusterName -eq 'c1'
+
+            $row.ReadyForUpdate    | Should -BeTrue
+            $row.RecommendedUpdate | Should -Be 'Solution10.2509.0.100'
+            $row.AllowListSource   | Should -Be 'None'
+            $row.UpdateState       | Should -Be 'UpdateAvailable'
+            $row.AzureUpdateState  | Should -Be 'UpdateAvailable'
+        }
+    }
+
+    It 'An allow-list that matches the Ready update keeps the cluster Ready (AllowListSource=Explicit)' {
+        InModuleScope AzLocal.UpdateManagement -Parameters @{ Rid = $script:Rid; ArgMock = $script:InvokeArgMock } {
+            param($Rid, $ArgMock)
+            function global:az { $global:LASTEXITCODE = 0; return '{}' }
+            Mock Test-AzCliAvailable      { return $true }
+            Mock Install-AzGraphExtension { return $true }
+            Mock Invoke-AzResourceGraphQuery $ArgMock
+
+            $row = Get-AzLocalClusterUpdateReadiness -ClusterResourceIds @($Rid) `
+                -AllowedUpdateVersions @('10.2509.0.100') -PassThru 6>$null |
+                Where-Object ClusterName -eq 'c1'
+
+            $row.ReadyForUpdate    | Should -BeTrue
+            $row.RecommendedUpdate | Should -Be 'Solution10.2509.0.100'
+            $row.AllowListSource   | Should -Be 'Explicit'
+            $row.AllowedUpdateVersions | Should -Be '10.2509.0.100'
+        }
+    }
+
+    It 'An allow-list with no matching Ready update suppresses the update and reports UpToDate (raw state preserved)' {
+        InModuleScope AzLocal.UpdateManagement -Parameters @{ Rid = $script:Rid; ArgMock = $script:InvokeArgMock } {
+            param($Rid, $ArgMock)
+            function global:az { $global:LASTEXITCODE = 0; return '{}' }
+            Mock Test-AzCliAvailable      { return $true }
+            Mock Install-AzGraphExtension { return $true }
+            Mock Invoke-AzResourceGraphQuery $ArgMock
+
+            $row = Get-AzLocalClusterUpdateReadiness -ClusterResourceIds @($Rid) `
+                -AllowedUpdateVersions @('99.9999.0.999') -PassThru 6>$null |
+                Where-Object ClusterName -eq 'c1'
+
+            $row.ReadyForUpdate   | Should -BeFalse
+            $row.UpdateState      | Should -Be 'UpToDate'
+            $row.AzureUpdateState | Should -Be 'UpdateAvailable' -Because 'the raw Azure update-summary state must be preserved for diagnostics'
+            $row.AllowListSource  | Should -Be 'Explicit'
+        }
+    }
+
+    It "The 'Latest' sentinel applies no constraint (cluster stays Ready, AllowListSource=Latest)" {
+        InModuleScope AzLocal.UpdateManagement -Parameters @{ Rid = $script:Rid; ArgMock = $script:InvokeArgMock } {
+            param($Rid, $ArgMock)
+            function global:az { $global:LASTEXITCODE = 0; return '{}' }
+            Mock Test-AzCliAvailable      { return $true }
+            Mock Install-AzGraphExtension { return $true }
+            Mock Invoke-AzResourceGraphQuery $ArgMock
+
+            $row = Get-AzLocalClusterUpdateReadiness -ClusterResourceIds @($Rid) `
+                -AllowedUpdateVersions @('Latest') -PassThru 6>$null |
+                Where-Object ClusterName -eq 'c1'
+
+            $row.ReadyForUpdate    | Should -BeTrue
+            $row.RecommendedUpdate | Should -Be 'Solution10.2509.0.100'
+            $row.AllowListSource   | Should -Be 'Latest'
+        }
+    }
+}
+
+Describe 'v0.9.1 readiness cmdlet exposes allow-list surface parameters' {
+    BeforeAll { $script:cmd = Get-Command Get-AzLocalClusterUpdateReadiness }
+
+    It 'Has a SchedulePath parameter' {
+        $script:cmd.Parameters.Keys | Should -Contain 'SchedulePath'
+    }
+
+    It 'Has an AllowedUpdateVersions parameter typed [string[]]' {
+        $script:cmd.Parameters.Keys | Should -Contain 'AllowedUpdateVersions'
+        $script:cmd.Parameters['AllowedUpdateVersions'].ParameterType.FullName | Should -Be 'System.String[]'
+    }
+
+    It 'Export-AzLocalClusterUpdateReadinessReport forwards a SchedulePath parameter' {
+        (Get-Command Export-AzLocalClusterUpdateReadinessReport).Parameters.Keys |
+            Should -Contain 'SchedulePath'
+    }
+}
+
+Describe 'v0.9.1 pipeline login-retry wiring' {
+
+    It 'All Azure DevOps read-only tasks declare retryCountOnTaskFailure: 2 (14 total)' {
+        $adoFiles = Get-ChildItem -Path (Join-Path $script:PipelineRoot 'azure-devops') -Filter '*.yml' -File
+        $total = 0
+        foreach ($f in $adoFiles) {
+            $content = Get-Content -Raw -LiteralPath $f.FullName
+            $total += ([regex]::Matches($content, 'retryCountOnTaskFailure:\s*2')).Count
+        }
+        $total | Should -Be 14
+    }
+
+    It 'Mutating Azure DevOps tasks are NOT given a retry (no retry near Apply/Retry Failed/Raise ITSM displayNames)' {
+        # The state-changing tasks must never auto-retry (duplicate apply /
+        # duplicate ITSM ticket risk). Assert the retry directive does not
+        # immediately follow any of these mutating displayName lines.
+        $adoFiles = Get-ChildItem -Path (Join-Path $script:PipelineRoot 'azure-devops') -Filter '*.yml' -File
+        $mutatingPattern = "displayName:\s*'(Apply Updates|Retry Failed Updates|Raise ITSM tickets)'[^\n]*\n(\s*#[^\n]*\n)*\s*retryCountOnTaskFailure"
+        foreach ($f in $adoFiles) {
+            $content = Get-Content -Raw -LiteralPath $f.FullName
+            [regex]::IsMatch($content, $mutatingPattern) |
+                Should -BeFalse -Because "$($f.Name) must not auto-retry a mutating task"
+        }
+    }
+
+    It 'All GitHub Actions workflows declare the azure/login failure-retry guard (12 total)' {
+        $ghaFiles = Get-ChildItem -Path (Join-Path $script:PipelineRoot 'github-actions') -Filter '*.yml' -File
+        $total = 0
+        foreach ($f in $ghaFiles) {
+            $content = Get-Content -Raw -LiteralPath $f.FullName
+            $total += ([regex]::Matches($content, "outcome == 'failure'")).Count
+        }
+        $total | Should -Be 12
+    }
+
+    It 'Each GitHub Actions login-retry guard pairs with a continue-on-error primary login (azure_login id)' {
+        $ghaFiles = Get-ChildItem -Path (Join-Path $script:PipelineRoot 'github-actions') -Filter '*.yml' -File
+        foreach ($f in $ghaFiles) {
+            $content = Get-Content -Raw -LiteralPath $f.FullName
+            $retryCount = ([regex]::Matches($content, "steps\.azure_login\.outcome == 'failure'")).Count
+            if ($retryCount -gt 0) {
+                $content | Should -Match 'id:\s*azure_login' -Because "$($f.Name) references steps.azure_login but never defines that id"
+                $content | Should -Match 'continue-on-error:\s*true' -Because "$($f.Name) primary login must continue-on-error so the retry can run"
+            }
+        }
+    }
+}
+
+Describe 'v0.9.1 pipeline schedule allow-list wiring (assess pipelines)' {
+
+    It 'GitHub Actions assess-update-readiness wires APPLY_UPDATES_SCHEDULE_PATH into SchedulePath' {
+        $content = Get-Content -Raw -LiteralPath (Join-Path $script:PipelineRoot 'github-actions/assess-update-readiness.yml')
+        $content | Should -Match 'APPLY_UPDATES_SCHEDULE_PATH'
+        $content | Should -Match "\`$params\['SchedulePath'\]"
+        $content | Should -Match 'Test-Path -LiteralPath'
+    }
+
+    It 'Azure DevOps assess-update-readiness wires APPLY_UPDATES_SCHEDULE_PATH into SchedulePath' {
+        $content = Get-Content -Raw -LiteralPath (Join-Path $script:PipelineRoot 'azure-devops/assess-update-readiness.yml')
+        $content | Should -Match 'APPLY_UPDATES_SCHEDULE_PATH'
+        $content | Should -Match "\`$params\['SchedulePath'\]"
+        $content | Should -Match 'Test-Path -LiteralPath'
+    }
+}

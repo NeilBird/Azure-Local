@@ -242,6 +242,10 @@ stages:
     - task: AzureCLI@2
       name: snapshot
       displayName: 'Snapshot in-flight update runs'
+      # v0.9.1: single retry for the transient OIDC/az-login failure (the
+      # service-connection token exchange can intermittently return
+      # "JSON is invalid"). This task is read-only/idempotent so a re-run is safe.
+      retryCountOnTaskFailure: 2
       # v0.8.5 thin-YAML: the inline run block (cluster scope query via
       # Get-AzLocalUpdateRuns -Latest -PassThru, severity classification,
       # per-cluster CSV, JUnit XML, the six pipeline variables, and the

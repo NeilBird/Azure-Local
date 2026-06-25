@@ -178,6 +178,10 @@ stages:
 
           - task: AzureCLI@2
             displayName: 'Install Resource Graph Extension'
+            # v0.9.1: single retry for the transient OIDC/az-login failure (the
+            # service-connection token exchange can intermittently return
+            # "JSON is invalid"). This task is read-only/idempotent so a re-run is safe.
+            retryCountOnTaskFailure: 2
             inputs:
               # BEGIN-AZLOCAL-CUSTOMIZE:service-connection-ReadinessCheck
               azureSubscription: 'AzureLocal-ServiceConnection'  # Update with your service connection name
@@ -231,6 +235,10 @@ stages:
           # summary uploaded as stage Build Summary.
           - task: AzureCLI@2
             displayName: 'Check Cluster Readiness'
+            # v0.9.1: single retry for the transient OIDC/az-login failure (the
+            # service-connection token exchange can intermittently return
+            # "JSON is invalid"). This task is read-only/idempotent so a re-run is safe.
+            retryCountOnTaskFailure: 2
             name: readiness
             env:
               # resolved by the upstream 'Resolve UpdateRing from
@@ -327,6 +335,10 @@ stages:
 
           - task: AzureCLI@2
             displayName: 'Install Resource Graph Extension'
+            # v0.9.1: single retry for the transient OIDC/az-login failure (the
+            # service-connection token exchange can intermittently return
+            # "JSON is invalid"). This task is read-only/idempotent so a re-run is safe.
+            retryCountOnTaskFailure: 2
             inputs:
               # BEGIN-AZLOCAL-CUSTOMIZE:service-connection-ApplyClusterUpdates
               azureSubscription: 'AzureLocal-ServiceConnection'  # Update with your service connection name

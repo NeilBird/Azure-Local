@@ -251,6 +251,8 @@ Assesses update readiness across Azure Local clusters and provides a summary rep
 **Parameters:**
 - `-ClusterNames`, `-ClusterResourceIds`, or `-ScopeByUpdateRingTag`/`-UpdateRingValue` (same as `Start-AzLocalClusterUpdate`)
 - `-ExportPath` (Optional): Export results to a CSV file
+- `-SchedulePath` (Optional, v0.9.1): Path to an apply-updates schedule (schema v2). Its `allowedUpdateVersions` allow-list constrains readiness to the updates each ring is permitted to install (per-ring override beats the top-level fleet default; `Latest` = no constraint).
+- `-AllowedUpdateVersions` (Optional, v0.9.1): `[string[]]` explicit allow-list, applied to every cluster when `-SchedulePath` is not used. `Latest` = no constraint.
 
 **Output Columns (and CSV Export):**
 | Column | Description |
@@ -259,13 +261,16 @@ Assesses update readiness across Azure Local clusters and provides a summary rep
 | `ResourceGroup` | Resource group containing the cluster |
 | `SubscriptionId` | Azure subscription ID |
 | `ClusterState` | Cluster connection state (e.g., "ConnectedRecently") |
-| `UpdateState` | Current update state (e.g., "UpdateAvailable", "NeedsAttention") |
+| `UpdateState` | Current update state (e.g., "UpdateAvailable", "NeedsAttention"). When an allow-list constraint is active and no allowed update is Ready, this is reported as `UpToDate`. |
 | `HealthState` | Health check state: "Success", "Warning", "Failure", or "InProgress" |
-| `ReadyForUpdate` | Boolean indicating if the cluster is ready for updates |
+| `ReadyForUpdate` | Boolean indicating if the cluster is ready for updates (within the allow-list, when one is active) |
 | `AllAvailableUpdates` | All available update names (every state - Ready, NotReady, Installed, etc.). _Renamed from `AvailableUpdates` in v0.7.99._ |
 | `ReadyUpdates` | List of updates in "Ready" state |
 | `RecommendedUpdate` | The recommended (latest) ready update |
 | `HealthCheckFailures` | Summary of failed health checks with severity |
+| `AllowedUpdateVersions` | _(v0.9.1)_ The effective allow-list applied to this cluster (`;`-joined), or empty when none |
+| `AllowListSource` | _(v0.9.1)_ How the allow-list was resolved: `None`, `Latest`, `Explicit`, `TopLevel`, or `RowOverride` |
+| `AzureUpdateState` | _(v0.9.1)_ The raw Azure update-summary state, preserved even when `UpdateState` is overridden to `UpToDate` |
 
 **Examples:**
 
@@ -278,6 +283,14 @@ Get-AzLocalClusterUpdateReadiness -ClusterNames @("Cluster01", "Cluster02") -Exp
 
 # Assess clusters by UpdateRing tag across all subscriptions
 Get-AzLocalClusterUpdateReadiness -ScopeByUpdateRingTag -UpdateRingValue "Production"
+
+# v0.9.1: gate readiness against the apply-updates schedule allow-list
+Get-AzLocalClusterUpdateReadiness -ScopeByUpdateRingTag -UpdateRingValue "Wave1" `
+    -SchedulePath "./config/apply-updates-schedule.yml" -PassThru
+
+# v0.9.1: gate readiness against an explicit allow-list
+Get-AzLocalClusterUpdateReadiness -ClusterNames @("Cluster01") `
+    -AllowedUpdateVersions "10.2604.0.123","10.2610.0.456" -PassThru
 ```
 
 **Sample Output:**

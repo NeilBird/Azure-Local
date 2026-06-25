@@ -165,6 +165,10 @@ stages:
 
     - task: AzureCLI@2
       displayName: 'Run Schedule Coverage Audit'
+      # v0.9.1: single retry for the transient OIDC/az-login failure (the
+      # service-connection token exchange can intermittently return
+      # "JSON is invalid"). This task is read-only/idempotent so a re-run is safe.
+      retryCountOnTaskFailure: 2
       # v0.8.5 thin-YAML: the inline inlineScript body (~210-line audit
       # block + ~185-line summary block: 3 calls to
       # Test-AzLocalApplyUpdatesScheduleCoverage, inline JUnit

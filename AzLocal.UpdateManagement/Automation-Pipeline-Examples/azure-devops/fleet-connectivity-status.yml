@@ -168,6 +168,10 @@ stages:
 
     - task: AzureCLI@2
       displayName: 'Collect Fleet Connectivity Data'
+      # v0.9.1: single retry for the transient OIDC/az-login failure (the
+      # service-connection token exchange can intermittently return
+      # "JSON is invalid"). This task is read-only/idempotent so a re-run is safe.
+      retryCountOnTaskFailure: 2
       # v0.8.5 thin-YAML: the inline inlineScript body (5 ARG queries via
       # Get-AzLocalFleetConnectivityStatus + per-scope severity classification +
       # ~200-line inline JUnit StringBuilder + markdown summary render + 12

@@ -302,6 +302,11 @@ stages:
 
     - task: AzureCLI@2
       displayName: 'Advance Sideload State Machine'
+      # v0.9.1: single retry for the transient OIDC/az-login failure (the
+      # service-connection token exchange can intermittently return "JSON is
+      # invalid"). The sideload state machine is re-entrant (durable state +
+      # heartbeat staleness detection), so a re-run safely resumes.
+      retryCountOnTaskFailure: 2
       env:
         INPUT_UPDATE_RING: ${{ parameters.updateRing }}
         INPUT_DRY_RUN: ${{ parameters.dryRun }}
