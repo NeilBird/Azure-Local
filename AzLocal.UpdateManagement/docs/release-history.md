@@ -4,9 +4,13 @@
 >
 > **For older releases**, this is the canonical reference; the main README intentionally stays slim so the most recent block is easy to find.
 >
-> **For v0.8.99 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0899) `What's New in v0.8.99` section.
+> **For v0.9.0 (the current release)**, see the main [README.md](../README.md#whats-new-in-v090) `What's New in v0.9.0` section.
 
 ---
+
+### What's New in v0.8.99
+
+A small follow-up to the v0.8.98 turnkey updater: the dropped `Update-Module-And-Pipelines.ps1` now **stages itself** so its own version-gated self-refresh is committed and pushed automatically. When a future module release ships an improved updater template, `Update-AzLocalPipelineExample` (called inside the script) version-refreshes the dropped script **in place**; in v0.8.98 the script's scoped `git add` staged only the workflow folder + `config`, so that self-refresh was left as an uncommitted working-tree change. The template now resolves its own repo-relative path from `$PSCommandPath` (only when the script actually lives inside the repo) and appends it to the staged paths, so the self-update is committed and pushed alongside the regenerated YAMLs. The updater template marker is bumped `1.0.0` -> `1.1.0`. Additive - no public function, parameter-removal, or export-count change (still 64). `GENERATED_AGAINST_MODULE_VERSION` bumped from `0.8.98` to `0.8.99`. See [CHANGELOG.md](../CHANGELOG.md#0899---2026-06-25) for the full v0.8.99 entry.
 
 ### What's New in v0.8.98
 

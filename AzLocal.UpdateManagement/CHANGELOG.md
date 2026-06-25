@@ -5,6 +5,44 @@ All notable changes to the AzLocal.UpdateManagement module (renamed from AzStack
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] - 2026-06-25
+
+Managed repo **README auto-drop**. `Copy-AzLocalPipelineExample` and
+`Update-AzLocalPipelineExample` now also drop a lightweight, link-first `README.md` into
+the customer repo root so a freshly set-up pipelines repo explains itself. Additive - no
+public function, parameter-removal or export-count change (still 64).
+
+### Added
+
+- **Managed `README.md` drop at the repo root.** Alongside the workflow folder, `config`,
+  and the turnkey `Update-Module-And-Pipelines.ps1`, both cmdlets now drop a short,
+  link-first README describing what the repo is for, how to refresh after a module release
+  (`.\Update-Module-And-Pipelines.ps1`), and where the docs live (links to
+  <https://aka.ms/AzLocal.UpdateManagement> and its CI/CD runbook). The bundled template
+  carries a hidden `<!-- AZLOCAL-README-VERSION: x.y.z -->` marker (invisible in rendered
+  Markdown) with its own semver starting at `1.0.0`.
+- **`-SkipReadme` switch** on both `Copy-AzLocalPipelineExample` and
+  `Update-AzLocalPipelineExample` to suppress the README drop / refresh entirely.
+- Two private helpers `Get-AzLocalReadmeTemplateVersion` and
+  `Test-AzLocalReadmeReplaceable`, with full Pester coverage.
+
+### Changed
+
+- **Operator content is never destroyed.** The managed README is written only when the
+  repo has no usable README - missing, whitespace-only, or a GitHub "Add a README" default
+  stub (an H1 matching the repo name plus at most a one-line description). A README already
+  carrying the marker is version-gate refreshed **in place** only when the bundled template
+  is newer; any other non-empty README is treated as operator-owned and left untouched
+  (remove the marker line to freeze a managed README as your own).
+- The drop is default-on for `-Platform GitHub|AzureDevOps`, and skipped for
+  `-Platform All` (its content references the turnkey script + `config` that only exist in
+  the single-platform layouts).
+- The turnkey `Update-Module-And-Pipelines.ps1` template marker is bumped
+  `1.1.0` -> `1.2.0` to also stage the managed README in its scoped `git add` - but **only**
+  when the README carries the marker, so an operator-owned README is never swept into the
+  automated commit.
+- `GENERATED_AGAINST_MODULE_VERSION` pins bumped to `'0.9.0'`.
+
 ## [0.8.99] - 2026-06-25
 
 Follow-up to v0.8.98's turnkey updater: the dropped `Update-Module-And-Pipelines.ps1`

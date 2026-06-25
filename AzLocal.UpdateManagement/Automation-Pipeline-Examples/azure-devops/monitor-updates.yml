@@ -141,7 +141,7 @@ parameters:
     default: false
 
 variables:
-  GENERATED_AGAINST_MODULE_VERSION: '0.8.99'
+  GENERATED_AGAINST_MODULE_VERSION: '0.9.0'
   REQUIRED_MODULE_VERSION: '${{ parameters.moduleVersion }}'
   reportsPath: '$(Build.ArtifactStagingDirectory)/reports'
   # v0.8.90: optional startup delay (minutes) honoured ONLY when this pipeline is
@@ -158,7 +158,7 @@ variables:
   # group reference convert this entire 'variables:' block to list form:
   #   variables:
   #     - name: GENERATED_AGAINST_MODULE_VERSION
-  #       value: '0.8.99'
+  #       value: '0.9.0'
   #     - name: REQUIRED_MODULE_VERSION
   #       value: '${{ parameters.moduleVersion }}'
   #     - name: reportsPath
