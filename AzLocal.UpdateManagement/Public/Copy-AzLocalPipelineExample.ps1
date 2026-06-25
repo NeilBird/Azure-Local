@@ -161,6 +161,27 @@ function Copy-AzLocalPipelineExample {
         `-SkipStarterUpdater` to suppress the drop / refresh entirely. Has no
         effect when `-Platform All` is in use.
 
+    .PARAMETER SkipReadme
+        By default (v0.9.0+) the function ALSO drops a lightweight, link-first
+        `README.md` into the REPO ROOT describing what the repo is for, how to
+        refresh after a module release, and where the documentation lives
+        (links to https://aka.ms/AzLocal.UpdateManagement and its CI/CD
+        runbook). The managed README carries a hidden
+        `<!-- AZLOCAL-README-VERSION: x.y.z -->` marker (invisible in rendered
+        Markdown) so the module can refresh it in place when a newer template
+        ships.
+
+        The drop is safe and never destroys operator content. It writes the
+        managed README only when the repo has no usable README - i.e. the file
+        is missing, whitespace-only, or a GitHub "Add a README" default stub
+        (an H1 matching the repo name with at most a one-line description). A
+        README that already carries the marker is version-gate refreshed (only
+        when the bundled template is newer); any other non-empty README is
+        treated as operator-owned and left untouched. Remove the marker line to
+        freeze a managed README as your own. Pass `-SkipReadme` to suppress the
+        drop / refresh entirely. Unlike the updater script, this works for every
+        `-Platform` value (the content is platform-agnostic).
+
     .PARAMETER Update
         Allow overwriting destination files that already exist. Without this
         switch the function aborts with a list of conflicting files. With
@@ -314,7 +335,14 @@ function Copy-AzLocalPipelineExample {
         # Update-Module-And-Pipelines.ps1 refresh script into the repo root
         # (Platform=GitHub|AzureDevOps). Default OFF. An existing file at the
         # repo root is always preserved regardless of this switch.
-        [switch]$SkipStarterUpdater
+        [switch]$SkipStarterUpdater,
+
+        # v0.9.0: when set, suppress the default drop / version-gated refresh
+        # of the managed repo README.md at the repo root (all platforms).
+        # Default OFF. An operator-owned README (no AZLOCAL-README-VERSION
+        # marker, and not a blank / GitHub-default stub) is always preserved
+        # regardless of this switch.
+        [switch]$SkipReadme
     )
 
     # ------------------------------------------------------------------
@@ -786,6 +814,105 @@ function Copy-AzLocalPipelineExample {
     }
 
     # ------------------------------------------------------------------
+    # 6d (v0.9.0). Managed repo README drop / version-gated refresh.
+    #    Default-on for -Platform GitHub|AzureDevOps; suppressed by
+    #    -SkipReadme. Lands a lightweight, link-first README.md in the REPO
+    #    ROOT so a fresh repo explains itself (what it is, how to refresh
+    #    after a module release, where the docs live). Scoped to the
+    #    single-platform layouts (like the updater / schedule / sideload
+    #    drops) because the README content references the turnkey
+    #    Update-Module-And-Pipelines.ps1 and config\ folder, which only
+    #    exist in those layouts. The bundled template carries a hidden
+    #    HTML-comment marker
+    #       <!-- AZLOCAL-README-VERSION: x.y.z -->
+    #    (invisible in rendered Markdown) plus the same two placeholder
+    #    tokens as the updater script:
+    #       __PLATFORM__         -> 'GitHub' | 'AzureDevOps'
+    #       __WORKFLOW_SUBPATH__ -> the workflow folder relative to the repo
+    #                               root, forward-slashed.
+    #    Operator content is never destroyed: the managed README is written
+    #    only when the repo has NO usable README (missing / whitespace-only /
+    #    GitHub default stub), an EXISTING managed README (carrying the
+    #    marker) is re-rendered only when the bundled template is NEWER, and
+    #    any other non-empty README is preserved as operator-owned.
+    # ------------------------------------------------------------------
+    $readmeSrc    = Join-Path -Path $sourceRoot -ChildPath 'repo-readme-template.md'
+    $readmeDest   = $null
+    $readmeAction = $null   # 'Created' | 'Updated' | 'Preserved' | 'Skipped' | 'SkippedBySwitch' | 'Missing'
+    if ($Platform -in @('GitHub', 'AzureDevOps') -and $repoRoot) {
+        $readmeDest = Join-Path -Path $repoRoot -ChildPath 'README.md'
+
+        if ($SkipReadme.IsPresent) {
+            $readmeAction = 'SkippedBySwitch'
+        }
+        elseif (-not (Test-Path -LiteralPath $readmeSrc -PathType Leaf)) {
+            $readmeAction = 'Missing'
+            Write-Warning ("Copy-AzLocalPipelineExample: README template source '{0}' not found; skipping README drop." -f $readmeSrc)
+        }
+        else {
+            $bundledReadme         = Get-Content -LiteralPath $readmeSrc -Raw
+            $bundledReadmeVersion  = Get-AzLocalReadmeTemplateVersion -Text $bundledReadme
+            $readmeExists          = Test-Path -LiteralPath $readmeDest -PathType Leaf
+            $existingReadmeText    = if ($readmeExists) { Get-Content -LiteralPath $readmeDest -Raw } else { '' }
+            $existingReadmeVersion = Get-AzLocalReadmeTemplateVersion -Text $existingReadmeText
+
+            # Decide: write when missing / replaceable / a strictly-older
+            # managed README; otherwise preserve operator content.
+            $writeReadme     = $false
+            $isReadmeRefresh = $false
+            if (-not $readmeExists) {
+                $writeReadme = $true
+            }
+            elseif ($existingReadmeVersion) {
+                # Module-managed README: refresh only when bundled is newer.
+                if ($bundledReadmeVersion -and $bundledReadmeVersion -gt $existingReadmeVersion) {
+                    $writeReadme     = $true
+                    $isReadmeRefresh = $true
+                }
+            }
+            elseif (Test-AzLocalReadmeReplaceable -Text $existingReadmeText -RepoName (Split-Path -Leaf $repoRoot.TrimEnd('\', '/'))) {
+                # Blank / whitespace-only / GitHub default stub: safe to write.
+                $writeReadme = $true
+            }
+
+            if (-not $writeReadme) {
+                $readmeAction = 'Preserved'
+                Write-Verbose ("Copy-AzLocalPipelineExample: README preserved (operator-owned or already up to date at '{0}'); not written." -f $readmeDest)
+            }
+            else {
+                $shouldMsg = if ($isReadmeRefresh) {
+                    "Refresh managed README.md to v$bundledReadmeVersion"
+                }
+                else {
+                    "Write managed README.md"
+                }
+                if ($PSCmdlet.ShouldProcess($readmeDest, $shouldMsg)) {
+                    $repoRootTrim = $repoRoot.TrimEnd('\', '/')
+                    $targetTrim   = $targetRoot.TrimEnd('\', '/')
+                    $workflowSubPath = $targetTrim.Substring($repoRootTrim.Length).TrimStart('\', '/') -replace '\\', '/'
+                    if ([string]::IsNullOrWhiteSpace($workflowSubPath)) {
+                        $workflowSubPath = (Split-Path -Leaf $targetTrim)
+                    }
+
+                    $readmeText = $bundledReadme.Replace('__PLATFORM__', $Platform).Replace('__WORKFLOW_SUBPATH__', $workflowSubPath)
+
+                    $readmeParent = Split-Path -Parent $readmeDest
+                    if (-not (Test-Path -LiteralPath $readmeParent)) {
+                        $null = New-Item -ItemType Directory -Path $readmeParent -Force -ErrorAction Stop
+                    }
+                    # UTF-8 without BOM (PS 5.1 Set-Content -Encoding UTF8 would add one).
+                    [System.IO.File]::WriteAllText($readmeDest, $readmeText, [System.Text.UTF8Encoding]::new($false))
+                    $readmeAction = if ($isReadmeRefresh) { 'Updated' } else { 'Created' }
+                }
+                else {
+                    # -WhatIf path or operator declined the prompt.
+                    $readmeAction = 'Skipped'
+                }
+            }
+        }
+    }
+
+    # ------------------------------------------------------------------
     # 7. Friendly "what now" summary so the user does not have to open
 
     #    the README first to know what they just copied. Uses Write-Host
@@ -823,6 +950,15 @@ function Copy-AzLocalPipelineExample {
     }
     elseif ($updaterAction -eq 'Preserved') {
         Write-Host ("  Turnkey refresh script preserved (existing file, up to date): {0}" -f $updaterDest) -ForegroundColor Yellow
+    }
+    if ($readmeAction -eq 'Created') {
+        Write-Host ("  Managed README dropped at: {0}" -f $readmeDest) -ForegroundColor Green
+    }
+    elseif ($readmeAction -eq 'Updated') {
+        Write-Host ("  Managed README refreshed to a newer template version at: {0}" -f $readmeDest) -ForegroundColor Green
+    }
+    elseif ($readmeAction -eq 'Preserved') {
+        Write-Host ("  Existing README preserved (operator-owned or up to date): {0}" -f $readmeDest) -ForegroundColor Yellow
     }
     Write-Host ""
     Write-Host "Next steps:" -ForegroundColor Cyan

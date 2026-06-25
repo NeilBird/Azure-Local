@@ -140,6 +140,17 @@ function Update-AzLocalPipelineExample {
         body - body edits are replaced on a version-gated refresh. Pass
         -SkipStarterUpdater to freeze the file entirely.
 
+    .PARAMETER SkipReadme
+        Suppress the v0.9.0 managed repo README drop / version-gated refresh.
+        By default Update also drops a lightweight, link-first `README.md` at
+        the repo root when the repo has no usable README (missing,
+        whitespace-only, or a GitHub "Add a README" default stub), and
+        refreshes an existing module-managed README (one carrying the hidden
+        `<!-- AZLOCAL-README-VERSION: x.y.z -->` marker) in place when the
+        bundled template is newer. Any other non-empty README is treated as
+        operator-owned and is never modified; remove the marker line to freeze
+        a managed README as your own. Pass -SkipReadme to suppress entirely.
+
     .OUTPUTS
         PSCustomObject[] (with -PassThru) - one row per source file with:
             File              - destination path (always the CANONICAL,
@@ -224,6 +235,14 @@ function Update-AzLocalPipelineExample {
         # repos that upgrade via Update (not Copy) still receive it. Never
         # overwrites an existing copy. Pass -SkipStarterUpdater to suppress.
         [switch]$SkipStarterUpdater,
+
+        # v0.9.0: also drop / version-gate refresh the managed repo README.md
+        # at the repo root. Written only when the repo has no usable README
+        # (missing / whitespace-only / GitHub default stub); an existing
+        # managed README (carrying the AZLOCAL-README-VERSION marker) is
+        # refreshed only when the bundled template is newer; any other
+        # non-empty README is preserved. Pass -SkipReadme to suppress.
+        [switch]$SkipReadme,
 
         [switch]$PassThru
     )
@@ -698,6 +717,95 @@ function Update-AzLocalPipelineExample {
                     }
                     else {
                         Write-Log -Message "  Created : turnkey refresh script 'Update-Module-And-Pipelines.ps1' at repo root '$repoRoot'" -Level Success
+                    }
+                }
+            }
+        }
+    }
+
+    # ------------------------------------------------------------------
+    # 6 (v0.9.0). Managed repo README drop / version-gated refresh parity
+    #    with Copy-AzLocalPipelineExample (section 6d). Existing users
+    #    upgrade via Update, so Update must also drop the managed README at
+    #    the repo root when the repo has no usable README (missing /
+    #    whitespace-only / GitHub default stub), and refresh an older
+    #    module-managed README (carrying the AZLOCAL-README-VERSION marker)
+    #    in place. Operator-owned READMEs are never modified. Suppressed by
+    #    -SkipReadme.
+    # ------------------------------------------------------------------
+    if (-not $SkipReadme.IsPresent) {
+        $readmeSrc = Join-Path -Path $sourceRoot -ChildPath 'repo-readme-template.md'
+
+        # Repo-root resolution mirrors section 5 / Copy-AzLocalPipelineExample.
+        $trimmedTarget = $destResolved.TrimEnd('\', '/')
+        $oneLevelUp    = Split-Path -Parent $trimmedTarget
+        if ($Platform -eq 'GitHub' -and ($trimmedTarget -match '[\\/]\.github[\\/]workflows$')) {
+            $repoRoot = Split-Path -Parent $oneLevelUp
+        }
+        else {
+            $repoRoot = $oneLevelUp
+        }
+        if ([string]::IsNullOrWhiteSpace($repoRoot)) {
+            $repoRoot = $trimmedTarget
+        }
+
+        $readmeDest = Join-Path -Path $repoRoot -ChildPath 'README.md'
+
+        if (-not (Test-Path -LiteralPath $readmeSrc -PathType Leaf)) {
+            Write-Log -Message ("  Note    : README template source '{0}' not found; skipping README drop." -f $readmeSrc) -Level Warning
+        }
+        else {
+            # Fresh-drop vs version-gated refresh vs preserve. A repo with no
+            # usable README (missing / whitespace-only / GitHub default stub)
+            # gets the managed README; a README already carrying the
+            # AZLOCAL-README-VERSION marker is re-rendered only when the
+            # bundled template is NEWER; any other non-empty README is
+            # operator-owned and preserved.
+            $bundledReadme         = Get-Content -LiteralPath $readmeSrc -Raw
+            $bundledReadmeVersion  = Get-AzLocalReadmeTemplateVersion -Text $bundledReadme
+            $readmeExists          = Test-Path -LiteralPath $readmeDest -PathType Leaf
+            $existingReadmeText    = if ($readmeExists) { Get-Content -LiteralPath $readmeDest -Raw } else { '' }
+            $existingReadmeVersion = Get-AzLocalReadmeTemplateVersion -Text $existingReadmeText
+
+            $writeReadme     = $false
+            $isReadmeRefresh = $false
+            if (-not $readmeExists) {
+                $writeReadme = $true
+            }
+            elseif ($existingReadmeVersion) {
+                if ($bundledReadmeVersion -and $bundledReadmeVersion -gt $existingReadmeVersion) {
+                    $writeReadme     = $true
+                    $isReadmeRefresh = $true
+                }
+            }
+            elseif (Test-AzLocalReadmeReplaceable -Text $existingReadmeText -RepoName (Split-Path -Leaf $repoRoot.TrimEnd('\', '/'))) {
+                $writeReadme = $true
+            }
+
+            if (-not $writeReadme) {
+                Write-Verbose ("Update-AzLocalPipelineExample: README preserved (operator-owned or already up to date at '{0}'); not written." -f $readmeDest)
+            }
+            else {
+                $shouldMsg = if ($isReadmeRefresh) {
+                    "Refresh managed README.md to v$bundledReadmeVersion"
+                }
+                else {
+                    "Write managed README.md"
+                }
+                if ($PSCmdlet.ShouldProcess($readmeDest, $shouldMsg)) {
+                    $repoRootTrim    = $repoRoot.TrimEnd('\', '/')
+                    $workflowSubPath = $trimmedTarget.Substring($repoRootTrim.Length).TrimStart('\', '/') -replace '\\', '/'
+                    if ([string]::IsNullOrWhiteSpace($workflowSubPath)) {
+                        $workflowSubPath = (Split-Path -Leaf $trimmedTarget)
+                    }
+                    $readmeText = $bundledReadme.Replace('__PLATFORM__', $Platform).Replace('__WORKFLOW_SUBPATH__', $workflowSubPath)
+                    # UTF-8 without BOM (PS 5.1 Set-Content -Encoding UTF8 would add one).
+                    [System.IO.File]::WriteAllText($readmeDest, $readmeText, [System.Text.UTF8Encoding]::new($false))
+                    if ($isReadmeRefresh) {
+                        Write-Log -Message ("  Updated : managed README.md refreshed to template v{0} at repo root '{1}'" -f $bundledReadmeVersion, $repoRoot) -Level Success
+                    }
+                    else {
+                        Write-Log -Message "  Created : managed README.md at repo root '$repoRoot'" -Level Success
                     }
                 }
             }

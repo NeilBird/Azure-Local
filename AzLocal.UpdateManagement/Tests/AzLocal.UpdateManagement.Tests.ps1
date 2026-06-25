@@ -34,8 +34,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $script:ModuleInfo | Should -Not -BeNullOrEmpty
         }
 
-        It 'Should have version 0.8.99' {
-            $script:ModuleInfo.Version | Should -Be '0.8.99'
+        It 'Should have version 0.9.0' {
+            $script:ModuleInfo.Version | Should -Be '0.9.0'
         }
 
         It 'Module version constants are in sync between .psm1 and .psd1' {
@@ -7955,6 +7955,190 @@ Describe 'Function: Copy-AzLocalPipelineExample' {
         (Get-Content -LiteralPath $updaterDest -Raw) | Should -Match 'operator-owned'
     }
 
+    # v0.9.0: managed repo README drop (default-on for -Platform
+    # GitHub|AzureDevOps; suppressed by -SkipReadme). Lands a lightweight,
+    # link-first README.md at the REPO ROOT only when the repo has no usable
+    # README (missing / whitespace-only / GitHub default stub); refreshes an
+    # existing managed README (carrying the hidden AZLOCAL-README-VERSION
+    # marker) only when the bundled template is newer; preserves any other
+    # non-empty README as operator-owned.
+    Context 'v0.9.0 managed repo README drop' {
+
+        It '-SkipReadme is exposed as a [switch] parameter' {
+            $cmd = Get-Command -Name 'Copy-AzLocalPipelineExample' -ErrorAction Stop
+            $cmd.Parameters.ContainsKey('SkipReadme') | Should -BeTrue
+            $cmd.Parameters['SkipReadme'].ParameterType | Should -Be ([switch])
+        }
+
+        It '-Platform GitHub default drops a managed README.md into the repo root' {
+            $repoRoot = Join-Path $script:cpDestRoot 'gh-readme-fresh'
+            $dest = Join-Path $repoRoot '.github\workflows'
+            New-Item -Path $dest -ItemType Directory -Force | Out-Null
+
+            Copy-AzLocalPipelineExample -Destination $dest -Platform GitHub 6>$null | Out-Null
+
+            $readmeDest = Join-Path $repoRoot 'README.md'
+            Test-Path $readmeDest | Should -BeTrue
+            $text = Get-Content -LiteralPath $readmeDest -Raw
+            $text | Should -Match '(?im)AZLOCAL-README-VERSION\s*:\s*\d+\.\d+\.\d+'
+        }
+
+        It '-Platform AzureDevOps default drops a managed README.md into the repo root' {
+            $repoRoot = Join-Path $script:cpDestRoot 'ado-readme-fresh'
+            $dest = Join-Path $repoRoot 'pipelines'
+            New-Item -Path $dest -ItemType Directory -Force | Out-Null
+
+            Copy-AzLocalPipelineExample -Destination $dest -Platform AzureDevOps 6>$null | Out-Null
+
+            Test-Path (Join-Path $repoRoot 'README.md') | Should -BeTrue
+        }
+
+        It 'dropped README has the placeholder tokens substituted and both aka.ms links' {
+            $repoRoot = Join-Path $script:cpDestRoot 'gh-readme-tokens'
+            $dest = Join-Path $repoRoot '.github\workflows'
+            New-Item -Path $dest -ItemType Directory -Force | Out-Null
+
+            Copy-AzLocalPipelineExample -Destination $dest -Platform GitHub 6>$null | Out-Null
+
+            $text = Get-Content -LiteralPath (Join-Path $repoRoot 'README.md') -Raw
+            $text | Should -Not -Match '__PLATFORM__'
+            $text | Should -Not -Match '__WORKFLOW_SUBPATH__'
+            $text | Should -Match 'GitHub'
+            $text | Should -Match '\.github/workflows'
+            $text | Should -Match 'https://aka\.ms/AzLocal\.UpdateManagement'
+            $text | Should -Match 'https://aka\.ms/AzLocal\.UpdateManagement/CICD'
+        }
+
+        It 'dropped README is written WITHOUT a UTF-8 BOM' {
+            $repoRoot = Join-Path $script:cpDestRoot 'gh-readme-bom'
+            $dest = Join-Path $repoRoot '.github\workflows'
+            New-Item -Path $dest -ItemType Directory -Force | Out-Null
+
+            Copy-AzLocalPipelineExample -Destination $dest -Platform GitHub 6>$null | Out-Null
+
+            $bytes = [System.IO.File]::ReadAllBytes((Join-Path $repoRoot 'README.md'))
+            ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) | Should -BeFalse
+        }
+
+        It 'replaces a GitHub default-stub README (H1 = repo name) with the managed README' {
+            $repoRoot = Join-Path $script:cpDestRoot 'gh-readme-stub'
+            $dest = Join-Path $repoRoot '.github\workflows'
+            New-Item -Path $dest -ItemType Directory -Force | Out-Null
+
+            $readmeDest = Join-Path $repoRoot 'README.md'
+            # GitHub "Add a README" default: a single H1 of the repo folder name.
+            Set-Content -LiteralPath $readmeDest -Value '# gh-readme-stub' -Encoding ASCII
+
+            Copy-AzLocalPipelineExample -Destination $dest -Platform GitHub 6>$null | Out-Null
+
+            (Get-Content -LiteralPath $readmeDest -Raw) | Should -Match '(?im)AZLOCAL-README-VERSION'
+        }
+
+        It 'preserves an operator-owned README (real content, no marker)' {
+            $repoRoot = Join-Path $script:cpDestRoot 'gh-readme-owned'
+            $dest = Join-Path $repoRoot '.github\workflows'
+            New-Item -Path $dest -ItemType Directory -Force | Out-Null
+
+            $readmeDest = Join-Path $repoRoot 'README.md'
+            $owned = @(
+                '# gh-readme-owned'
+                ''
+                '## Our internal runbook'
+                '- do not touch this file'
+                '- it is operator-owned'
+            ) -join "`r`n"
+            Set-Content -LiteralPath $readmeDest -Value $owned -Encoding ASCII
+
+            Copy-AzLocalPipelineExample -Destination $dest -Platform GitHub 6>$null | Out-Null
+
+            $text = Get-Content -LiteralPath $readmeDest -Raw
+            $text | Should -Match 'operator-owned'
+            $text | Should -Not -Match 'AZLOCAL-README-VERSION'
+        }
+
+        It 'refreshes an existing managed README with an OLDER version marker' {
+            $repoRoot = Join-Path $script:cpDestRoot 'gh-readme-older'
+            $dest = Join-Path $repoRoot '.github\workflows'
+            New-Item -Path $dest -ItemType Directory -Force | Out-Null
+
+            $readmeDest = Join-Path $repoRoot 'README.md'
+            $stale = @(
+                '<!-- AZLOCAL-README-VERSION: 0.0.1 -->'
+                '# Stale managed README'
+                'OLD MANAGED BODY - should be replaced on refresh'
+            ) -join "`r`n"
+            Set-Content -LiteralPath $readmeDest -Value $stale -Encoding ASCII
+
+            Copy-AzLocalPipelineExample -Destination $dest -Platform GitHub 6>$null | Out-Null
+
+            $text = Get-Content -LiteralPath $readmeDest -Raw
+            $text | Should -Not -Match 'OLD MANAGED BODY'
+            $text | Should -Match 'https://aka\.ms/AzLocal\.UpdateManagement'
+        }
+
+        It 'preserves an existing managed README with an EQUAL version marker' {
+            $repoRoot = Join-Path $script:cpDestRoot 'gh-readme-equal'
+            $dest = Join-Path $repoRoot '.github\workflows'
+            New-Item -Path $dest -ItemType Directory -Force | Out-Null
+
+            # First drop establishes the current bundled README version.
+            Copy-AzLocalPipelineExample -Destination $dest -Platform GitHub 6>$null | Out-Null
+            $readmeDest = Join-Path $repoRoot 'README.md'
+
+            # Append a sentinel; a second invocation at the SAME version must
+            # leave the README (and the sentinel) untouched.
+            Add-Content -LiteralPath $readmeDest -Value "`r`n<!-- OPERATOR SENTINEL EQUAL-VERSION -->"
+            Copy-AzLocalPipelineExample -Destination $dest -Platform GitHub -Update -Confirm:$false 6>$null | Out-Null
+
+            (Get-Content -LiteralPath $readmeDest -Raw) | Should -Match 'OPERATOR SENTINEL EQUAL-VERSION'
+        }
+
+        It '-SkipReadme suppresses the README drop entirely' {
+            $repoRoot = Join-Path $script:cpDestRoot 'gh-readme-skip'
+            $dest = Join-Path $repoRoot '.github\workflows'
+            New-Item -Path $dest -ItemType Directory -Force | Out-Null
+
+            Copy-AzLocalPipelineExample -Destination $dest -Platform GitHub -SkipReadme 6>$null | Out-Null
+
+            Test-Path (Join-Path $repoRoot 'README.md') | Should -BeFalse
+        }
+
+        It '-Platform All does NOT drop a managed README at a repo root' {
+            $parent = Join-Path $script:cpDestRoot 'all-no-readme-parent'
+            New-Item -Path $parent -ItemType Directory -Force | Out-Null
+            $dest = Join-Path $parent 'all-no-readme'
+            New-Item -Path $dest -ItemType Directory -Force | Out-Null
+
+            Copy-AzLocalPipelineExample -Destination $dest 6>$null | Out-Null
+
+            Test-Path (Join-Path $parent 'README.md') | Should -BeFalse
+            Test-Path (Join-Path $dest   'README.md') | Should -BeFalse
+        }
+
+        It '-WhatIf does not write the README' {
+            $repoRoot = Join-Path $script:cpDestRoot 'gh-readme-whatif'
+            $dest = Join-Path $repoRoot '.github\workflows'
+            New-Item -Path $dest -ItemType Directory -Force | Out-Null
+
+            Copy-AzLocalPipelineExample -Destination $dest -Platform GitHub -WhatIf 6>$null | Out-Null
+
+            Test-Path (Join-Path $repoRoot 'README.md') | Should -BeFalse
+        }
+
+        It 'v1.2.0 template: dropped updater script conditionally stages the managed README' {
+            $repoRoot = Join-Path $script:cpDestRoot 'gh-readme-stage'
+            $dest = Join-Path $repoRoot '.github\workflows'
+            New-Item -Path $dest -ItemType Directory -Force | Out-Null
+
+            Copy-AzLocalPipelineExample -Destination $dest -Platform GitHub 6>$null | Out-Null
+
+            $text = Get-Content -LiteralPath (Join-Path $repoRoot 'Update-Module-And-Pipelines.ps1') -Raw
+            # Stages README.md only when it carries the managed marker.
+            $text | Should -Match 'AZLOCAL-README-VERSION'
+            $text | Should -Match "\`$candidatePaths \+= 'README\.md'"
+        }
+    }
+
     # v0.8.85: -PruneDeprecated removes the legacy authentication-test.yml /
     # inventory-clusters.yml sample files that were merged into the single
     # setup-validate-and-inventory.yml workflow. The cleanup is opt-in,
@@ -9878,6 +10062,110 @@ Describe 'Helper Function: Get-AzLocalUpdaterScriptVersion (Internal)' {
     }
 }
 
+Describe 'Helper Function: Get-AzLocalReadmeTemplateVersion (Internal)' {
+
+    It 'Returns $null on empty input' {
+        InModuleScope AzLocal.UpdateManagement {
+            Get-AzLocalReadmeTemplateVersion -Text '' | Should -BeNullOrEmpty
+        }
+    }
+
+    It 'Returns $null when no marker is present' {
+        InModuleScope AzLocal.UpdateManagement {
+            Get-AzLocalReadmeTemplateVersion -Text "# Some README`n`nNo marker here." | Should -BeNullOrEmpty
+        }
+    }
+
+    It 'Parses the hidden HTML-comment marker into a [version]' {
+        InModuleScope AzLocal.UpdateManagement {
+            $v = Get-AzLocalReadmeTemplateVersion -Text "<!-- AZLOCAL-README-VERSION: 1.2.3 -->`n# Title"
+            $v | Should -BeOfType [version]
+            $v | Should -Be ([version]'1.2.3')
+        }
+    }
+
+    It 'Is case-insensitive on the token and tolerant of surrounding whitespace' {
+        InModuleScope AzLocal.UpdateManagement {
+            $v = Get-AzLocalReadmeTemplateVersion -Text "<!--   azlocal-readme-version :  2.0.0   -->"
+            $v | Should -Be ([version]'2.0.0')
+        }
+    }
+
+    It 'Returns the FIRST marker when several are present' {
+        InModuleScope AzLocal.UpdateManagement {
+            $v = Get-AzLocalReadmeTemplateVersion -Text "<!-- AZLOCAL-README-VERSION: 1.0.0 -->`n<!-- AZLOCAL-README-VERSION: 9.9.9 -->"
+            $v | Should -Be ([version]'1.0.0')
+        }
+    }
+
+    It 'Returns $null for a non-version-shaped value' {
+        InModuleScope AzLocal.UpdateManagement {
+            Get-AzLocalReadmeTemplateVersion -Text '<!-- AZLOCAL-README-VERSION: not-a-version -->' | Should -BeNullOrEmpty
+        }
+    }
+
+    It 'Reads the marker from the bundled repo-readme-template.md' {
+        $templatePath = Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples\repo-readme-template.md'
+        Test-Path -LiteralPath $templatePath | Should -BeTrue
+        $text = Get-Content -LiteralPath $templatePath -Raw
+        InModuleScope AzLocal.UpdateManagement -Parameters @{ Text = $text } {
+            param($Text)
+            Get-AzLocalReadmeTemplateVersion -Text $Text | Should -Not -BeNullOrEmpty
+        }
+    }
+}
+
+Describe 'Helper Function: Test-AzLocalReadmeReplaceable (Internal)' {
+
+    It 'Treats a missing / empty README as replaceable' {
+        InModuleScope AzLocal.UpdateManagement {
+            Test-AzLocalReadmeReplaceable -Text '' -RepoName 'my-repo' | Should -BeTrue
+        }
+    }
+
+    It 'Treats a whitespace-only README as replaceable' {
+        InModuleScope AzLocal.UpdateManagement {
+            Test-AzLocalReadmeReplaceable -Text "   `r`n   `r`n" -RepoName 'my-repo' | Should -BeTrue
+        }
+    }
+
+    It 'Treats a GitHub default stub (H1 = repo name) as replaceable' {
+        InModuleScope AzLocal.UpdateManagement {
+            Test-AzLocalReadmeReplaceable -Text '# my-repo' -RepoName 'my-repo' | Should -BeTrue
+        }
+    }
+
+    It 'Treats a GitHub default stub with a one-line description as replaceable' {
+        InModuleScope AzLocal.UpdateManagement {
+            Test-AzLocalReadmeReplaceable -Text "# My Repo`r`n`r`nA short description of the project." -RepoName 'my-repo' | Should -BeTrue
+        }
+    }
+
+    It 'Normalises punctuation / case when matching the repo name' {
+        InModuleScope AzLocal.UpdateManagement {
+            Test-AzLocalReadmeReplaceable -Text '# My Repo' -RepoName 'My-Repo' | Should -BeTrue
+        }
+    }
+
+    It 'Preserves a stub whose H1 does not match the repo name' {
+        InModuleScope AzLocal.UpdateManagement {
+            Test-AzLocalReadmeReplaceable -Text '# Something Completely Different' -RepoName 'my-repo' | Should -BeFalse
+        }
+    }
+
+    It 'Preserves a README with real operator content (heading + list)' {
+        InModuleScope AzLocal.UpdateManagement {
+            Test-AzLocalReadmeReplaceable -Text "# my-repo`r`n`r`n## Setup`r`n- step one" -RepoName 'my-repo' | Should -BeFalse
+        }
+    }
+
+    It 'Preserves a stub-shaped README when no repo name is supplied (conservative)' {
+        InModuleScope AzLocal.UpdateManagement {
+            Test-AzLocalReadmeReplaceable -Text '# my-repo' -RepoName '' | Should -BeFalse
+        }
+    }
+}
+
 Describe 'Function: Update-AzLocalPipelineExample' {
 
     BeforeAll {
@@ -9991,6 +10279,104 @@ Describe 'Function: Update-AzLocalPipelineExample' {
             try {
                 Update-AzLocalPipelineExample -Destination $dest -Platform GitHub -SkipStarterUpdater -Confirm:$false 6>$null 4>$null | Out-Null
                 Test-Path (Join-Path $repoRoot 'Update-Module-And-Pipelines.ps1') | Should -BeFalse
+            }
+            finally { Remove-Item -Path $repoRoot -Recurse -Force -ErrorAction SilentlyContinue }
+        }
+    }
+
+    Context 'v0.9.0 managed repo README drop + version-gated refresh' {
+        It 'Exposes -SkipReadme as a [switch] parameter' {
+            $cmd = Get-Command Update-AzLocalPipelineExample
+            $cmd.Parameters.ContainsKey('SkipReadme') | Should -BeTrue
+            $cmd.Parameters['SkipReadme'].ParameterType | Should -Be ([switch])
+        }
+
+        It 'Drops a managed README.md at the repo root when absent' {
+            $repoRoot = Join-Path $env:TEMP "upe-readme-fresh-$([guid]::NewGuid())"
+            $dest = Join-Path $repoRoot '.github\workflows'
+            New-Item -ItemType Directory -Path $dest -Force | Out-Null
+            try {
+                Update-AzLocalPipelineExample -Destination $dest -Platform GitHub -Confirm:$false 6>$null 4>$null | Out-Null
+                $readmeDest = Join-Path $repoRoot 'README.md'
+                Test-Path $readmeDest | Should -BeTrue
+                $text = Get-Content -LiteralPath $readmeDest -Raw
+                $text | Should -Match '(?im)AZLOCAL-README-VERSION'
+                $text | Should -Not -Match '__PLATFORM__'
+                $text | Should -Match 'https://aka\.ms/AzLocal\.UpdateManagement'
+            }
+            finally { Remove-Item -Path $repoRoot -Recurse -Force -ErrorAction SilentlyContinue }
+        }
+
+        It 'Replaces a GitHub default-stub README with the managed README' {
+            $repoRoot = Join-Path $env:TEMP "upe-readme-stub-$([guid]::NewGuid())"
+            $dest = Join-Path $repoRoot '.github\workflows'
+            New-Item -ItemType Directory -Path $dest -Force | Out-Null
+            try {
+                $readmeDest = Join-Path $repoRoot 'README.md'
+                # GitHub default README stub: a single H1 of the repo folder name.
+                $repoLeaf = Split-Path -Leaf $repoRoot
+                Set-Content -LiteralPath $readmeDest -Value "# $repoLeaf" -Encoding ASCII
+
+                Update-AzLocalPipelineExample -Destination $dest -Platform GitHub -Confirm:$false 6>$null 4>$null | Out-Null
+
+                (Get-Content -LiteralPath $readmeDest -Raw) | Should -Match '(?im)AZLOCAL-README-VERSION'
+            }
+            finally { Remove-Item -Path $repoRoot -Recurse -Force -ErrorAction SilentlyContinue }
+        }
+
+        It 'Refreshes an existing managed README with an OLDER version marker' {
+            $repoRoot = Join-Path $env:TEMP "upe-readme-older-$([guid]::NewGuid())"
+            $dest = Join-Path $repoRoot '.github\workflows'
+            New-Item -ItemType Directory -Path $dest -Force | Out-Null
+            try {
+                $readmeDest = Join-Path $repoRoot 'README.md'
+                $stale = @(
+                    '<!-- AZLOCAL-README-VERSION: 0.0.1 -->'
+                    '# Stale managed README'
+                    'OLD MANAGED BODY - should be replaced on refresh'
+                ) -join "`r`n"
+                Set-Content -LiteralPath $readmeDest -Value $stale -Encoding ASCII
+
+                Update-AzLocalPipelineExample -Destination $dest -Platform GitHub -Confirm:$false 6>$null 4>$null | Out-Null
+
+                $text = Get-Content -LiteralPath $readmeDest -Raw
+                $text | Should -Not -Match 'OLD MANAGED BODY'
+                $text | Should -Match 'https://aka\.ms/AzLocal\.UpdateManagement'
+            }
+            finally { Remove-Item -Path $repoRoot -Recurse -Force -ErrorAction SilentlyContinue }
+        }
+
+        It 'Preserves an operator-owned README (real content, no marker)' {
+            $repoRoot = Join-Path $env:TEMP "upe-readme-owned-$([guid]::NewGuid())"
+            $dest = Join-Path $repoRoot '.github\workflows'
+            New-Item -ItemType Directory -Path $dest -Force | Out-Null
+            try {
+                $readmeDest = Join-Path $repoRoot 'README.md'
+                $repoLeaf = Split-Path -Leaf $repoRoot
+                $owned = @(
+                    "# $repoLeaf"
+                    ''
+                    '## Internal runbook'
+                    '- operator-owned content'
+                ) -join "`r`n"
+                Set-Content -LiteralPath $readmeDest -Value $owned -Encoding ASCII
+
+                Update-AzLocalPipelineExample -Destination $dest -Platform GitHub -Confirm:$false 6>$null 4>$null | Out-Null
+
+                $text = Get-Content -LiteralPath $readmeDest -Raw
+                $text | Should -Match 'operator-owned content'
+                $text | Should -Not -Match 'AZLOCAL-README-VERSION'
+            }
+            finally { Remove-Item -Path $repoRoot -Recurse -Force -ErrorAction SilentlyContinue }
+        }
+
+        It '-SkipReadme suppresses the README drop entirely' {
+            $repoRoot = Join-Path $env:TEMP "upe-readme-skip-$([guid]::NewGuid())"
+            $dest = Join-Path $repoRoot '.github\workflows'
+            New-Item -ItemType Directory -Path $dest -Force | Out-Null
+            try {
+                Update-AzLocalPipelineExample -Destination $dest -Platform GitHub -SkipReadme -Confirm:$false 6>$null 4>$null | Out-Null
+                Test-Path (Join-Path $repoRoot 'README.md') | Should -BeFalse
             }
             finally { Remove-Item -Path $repoRoot -Recurse -Force -ErrorAction SilentlyContinue }
         }

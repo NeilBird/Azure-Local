@@ -2,7 +2,7 @@
 
 > ⚠️ **Disclaimer**: This module is **NOT** a Microsoft supported service offering or product. It is provided as example code only, with no warranty or official support. Refer to the [MIT license](https://github.com/NeilBird/Azure-Local/blob/main/LICENSE) for further information.
 
-**Latest Version:** v0.8.99 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.8.99)
+**Latest Version:** v0.9.0 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.9.0)
 
 This folder contains the 'AzLocal.UpdateManagement' PowerShell module for managing updates on Azure Local (formerly Azure Stack HCI) clusters using the Azure Local REST API. The module supports both interactive use and CI/CD automation via Service Principal or Managed Identity authentication.
 
@@ -14,7 +14,7 @@ Azure Local REST API specification (includes update management endpoints): https
 **This README (overview + most-recent release notes):**
 
 - [Where to Start](#where-to-start)
-- [What's New in v0.8.99](#whats-new-in-v0899)
+- [What's New in v0.9.0](#whats-new-in-v090)
 - [Files](#files)
 - [Prerequisites](#prerequisites)
 - [RBAC Requirements](#rbac-requirements) (summary; full reference in [docs/rbac.md](docs/rbac.md))
@@ -77,26 +77,29 @@ If you are new to this module, work through these in order from a regular PowerS
 
 > Most CI/CD pipelines in [Automation-Pipeline-Examples/](Automation-Pipeline-Examples/) are direct implementations of one of these workflows. Start there if you want a copy-pasteable end-to-end pipeline.
 
-## What's New in v0.8.99
+## What's New in v0.9.0
 
-A small follow-up to the v0.8.98 turnkey updater: the dropped `Update-Module-And-Pipelines.ps1` now **stages itself** so its own version-gated self-refresh is committed and pushed automatically.
+`Copy-AzLocalPipelineExample` and `Update-AzLocalPipelineExample` now also drop a lightweight, link-first **`README.md`** into the customer repo root, so a freshly set-up pipelines repo explains itself: what it is, how to refresh after a module release, and where the docs live.
 
-### Fixed
+### Added
 
-- **The turnkey `Update-Module-And-Pipelines.ps1` now also stages ITSELF.** When a future module release ships an improved updater template, `Update-AzLocalPipelineExample` (called inside the script) version-refreshes the dropped script **in place**. In v0.8.98 the script's scoped `git add` staged only the workflow folder + `config`, so that self-refresh was left as an **uncommitted working-tree change** you had to spot and commit by hand. The template now resolves its own repo-relative path from `$PSCommandPath` (only when the script actually lives inside the repo) and appends it to the staged paths, so the self-update is committed and pushed alongside the regenerated YAMLs. The scoped add still never uses a blanket `git add .`.
+- **Managed `README.md` drop at the repo root.** Alongside the workflow folder, `config`, and the turnkey `Update-Module-And-Pipelines.ps1`, both cmdlets now drop a short, link-first README describing what the repo is for, how to refresh after a module release (`.\Update-Module-And-Pipelines.ps1`), and where the docs live (links to <https://aka.ms/AzLocal.UpdateManagement> and its CI/CD runbook). The bundled template carries a hidden `<!-- AZLOCAL-README-VERSION: x.y.z -->` marker (invisible in rendered Markdown) with its own semver, starting at `1.0.0`.
+- **`-SkipReadme` switch** on both cmdlets to suppress the README drop / refresh entirely.
 
 ### Changed
 
-- The bundled updater template's `# AZLOCAL-UPDATER-VERSION` marker is bumped `1.0.0` -> `1.1.0`, so if you already have the v1.0.0 script dropped you get this fix auto-applied on your next run (version-gated refresh). **Bootstrap note:** the single transition run that upgrades a v1.0.0 drop to v1.1.0 executes the *old* body, so that one refresh is not self-staged - commit the refreshed script once, and every run thereafter self-stages.
+- **Operator content is never destroyed.** The managed README is written only when the repo has **no usable README** - missing, whitespace-only, or a GitHub "Add a README" default stub (an H1 matching the repo name plus at most a one-line description). A README already carrying the marker is version-gate refreshed **in place** only when the bundled template is newer; any other non-empty README is treated as operator-owned and left untouched. (Remove the marker line to freeze a managed README as your own.)
+- The drop is **default-on for `-Platform GitHub|AzureDevOps`**, and **skipped for `-Platform All`** - its content references the turnkey script + `config` that only exist in the single-platform layouts.
+- The turnkey `Update-Module-And-Pipelines.ps1` template marker is bumped `1.1.0` -> `1.2.0` to also stage the managed README in its scoped `git add` - but **only** when the README carries the marker, so an operator-owned README is never swept into the automated commit.
 
 ### Notes
 
-- **Additive** - no public function, parameter-removal, or export-count change (still 64).
-- **`GENERATED_AGAINST_MODULE_VERSION`** bumped from `0.8.98` to `0.8.99` across bundled pipeline templates.
+- **Additive** - no public function, parameter-removal, or export-count change (still 64). Backed by two new private helpers (`Get-AzLocalReadmeTemplateVersion`, `Test-AzLocalReadmeReplaceable`) with full Pester coverage.
+- **`GENERATED_AGAINST_MODULE_VERSION`** bumped from `0.8.99` to `0.9.0` across bundled pipeline templates.
 
 > Previous release notes have moved into the [Release History](#release-history) appendix at the bottom of this document.
 
-See [CHANGELOG.md](CHANGELOG.md) for full release details. See [`What's New in v0.8.97`](#whats-new-in-v0897) in the Release History for the previous release.
+See [CHANGELOG.md](CHANGELOG.md) for full release details. See [`What's New in v0.8.99`](#whats-new-in-v0899) in the Release History for the previous release.
 
 ## Files
 
@@ -578,7 +581,11 @@ This code is provided as-is for educational and reference purposes.
 
 The full What's-New history (v0.7.81 and earlier) has moved to [docs/release-history.md](docs/release-history.md).
 
-The most recent release notes for **v0.8.99** stay above under [`What's New in v0.8.99`](#whats-new-in-v0899).
+The most recent release notes for **v0.9.0** stay above under [`What's New in v0.9.0`](#whats-new-in-v090).
+
+### What's New in v0.8.99
+
+A small follow-up to the v0.8.98 turnkey updater: the dropped `Update-Module-And-Pipelines.ps1` now **stages itself** so its own version-gated self-refresh is committed and pushed automatically. When a future module release ships an improved updater template, `Update-AzLocalPipelineExample` (called inside the script) version-refreshes the dropped script **in place**; in v0.8.98 the script's scoped `git add` staged only the workflow folder + `config`, so that self-refresh was left as an uncommitted working-tree change. The template now resolves its own repo-relative path from `$PSCommandPath` (only when the script actually lives inside the repo) and appends it to the staged paths, so the self-update is committed and pushed alongside the regenerated YAMLs. The updater template marker is bumped `1.0.0` -> `1.1.0`. Additive - no public function, parameter-removal, or export-count change (still 64). `GENERATED_AGAINST_MODULE_VERSION` bumped from `0.8.98` to `0.8.99`. See [CHANGELOG.md](CHANGELOG.md#0899---2026-06-25) for the full v0.8.99 entry.
 
 ### What's New in v0.8.98
 
