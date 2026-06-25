@@ -4,9 +4,13 @@
 >
 > **For older releases**, this is the canonical reference; the main README intentionally stays slim so the most recent block is easy to find.
 >
-> **For v0.8.98 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0898) `What's New in v0.8.98` section.
+> **For v0.8.99 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0899) `What's New in v0.8.99` section.
 
 ---
+
+### What's New in v0.8.98
+
+**Turnkey "refresh after every release" updater for the customer repo.** `Copy-AzLocalPipelineExample` now also drops a self-contained `Update-Module-And-Pipelines.ps1` into the repo root (with the chosen platform + workflow subpath baked in): it installs the latest module only when newer, regenerates the pipeline YAMLs via `Update-AzLocalPipelineExample` (preserving `BEGIN/END-AZLOCAL-CUSTOMIZE` edits), then commits + pushes under ShouldProcess (`-WhatIf`/`-NoPush`). Default-on for single-platform modes, suppressed by `-SkipStarterUpdater`, skipped for `-Platform All`. Existing repos get it via `Update` too. The dropped script is version-stamped (`# AZLOCAL-UPDATER-VERSION`, a dedicated template semver from `1.0.0`) and self-refreshes in place only when its marker is strictly older - markerless/operator-owned files are preserved. The maintainer `Test-Pipelines.ps1` was renamed to `Tools/Update-Module-And-Pipelines.ps1` (Tools/ is stripped from the package, fixing a prior nupkg leak). Additive - no public API or export-count change (still 64). `GENERATED_AGAINST_MODULE_VERSION` bumped from `0.8.97` to `0.8.98`. See [CHANGELOG.md](../CHANGELOG.md#0898---2026-06-25) for the full v0.8.98 entry.
 
 ### What's New in v0.8.97
 

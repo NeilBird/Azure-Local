@@ -5,6 +5,36 @@ All notable changes to the AzLocal.UpdateManagement module (renamed from AzStack
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.99] - 2026-06-25
+
+Follow-up to v0.8.98's turnkey updater: the dropped `Update-Module-And-Pipelines.ps1`
+now **stages itself** so its version-gated self-refresh is committed and pushed.
+Template + tests only - no public function, parameter-removal or export-count change
+(still 64).
+
+### Fixed
+
+- **The turnkey `Update-Module-And-Pipelines.ps1` now also stages ITSELF.** When the
+  module ships an improved updater template, `Update-AzLocalPipelineExample` (called in
+  the script's step 2) version-refreshes the dropped script **in place**. In v0.8.98 the
+  script's scoped `git add` staged only the workflow folder + `config`, so that
+  self-refresh was left as an **uncommitted working-tree change** the operator had to
+  notice and commit by hand. The template now resolves its own repo-relative path from
+  `$PSCommandPath` (only when the script actually lives inside the repo) and appends it
+  to the staged paths, so the self-update is committed and pushed alongside the
+  regenerated YAMLs. The scoped add still never uses a blanket `git add .`.
+
+### Changed
+
+- The bundled updater template's `# AZLOCAL-UPDATER-VERSION` marker is bumped
+  `1.0.0` -> `1.1.0`, so a customer who already has the v1.0.0 script dropped gets this
+  fix auto-applied on their next run (version-gated refresh). **Bootstrap caveat:** the
+  single transition run that upgrades a v1.0.0 drop to v1.1.0 executes the OLD body, so
+  that one refresh is not self-staged - the operator commits the refreshed script once,
+  and every run thereafter self-stages.
+- `GENERATED_AGAINST_MODULE_VERSION` bumped from `0.8.98` to `0.8.99` across bundled
+  pipeline templates.
+
 ## [0.8.98] - 2026-06-25
 
 Turnkey **"refresh after every release" updater** for the customer repo. Additive -
