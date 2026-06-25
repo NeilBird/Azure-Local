@@ -5,6 +5,28 @@ All notable changes to the AzLocal.UpdateManagement module (renamed from AzStack
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.1] - 2026-06-26
+
+**Bug fix:** dry-run (`-WhatIf`) pipeline runs now render their step summary and
+outputs. `$WhatIfPreference` cascaded from the workload cmdlet into the pipeline
+reporting helpers and silently suppressed their `Out-File` writes (`Out-File` itself
+supports `ShouldProcess`), so a dry run produced zero step summary and zero step
+outputs - operators had to read the raw runner log to see what would change.
+
+### Fixed
+
+- **Dry-run pipeline step produced no summary / outputs.** `Add-AzLocalPipelineStepSummary`,
+  `Set-AzLocalPipelineOutput`, and `Set-AzLocalClusterUpdateRingTagFromCsv`'s
+  artifact-directory + JSON sidecar writes now pass `-WhatIf:$false`, so dry-run reporting
+  always reaches the run Summary (the `Dry Run | True` row, the per-cluster "would change"
+  detail, and the "This was a dry run. No changes were applied." footer). The actual Azure
+  tag PATCH stays suppressed by `ShouldProcess`. Adds a GitHub-host WhatIf+summary
+  regression test.
+
+### Changed
+
+- `GENERATED_AGAINST_MODULE_VERSION` pins bumped to `'0.9.1'`.
+
 ## [0.9.0] - 2026-06-25
 
 Managed repo **README auto-drop**. `Copy-AzLocalPipelineExample` and

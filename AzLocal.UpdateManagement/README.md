@@ -2,7 +2,7 @@
 
 > ⚠️ **Disclaimer**: This module is **NOT** a Microsoft supported service offering or product. It is provided as example code only, with no warranty or official support. Refer to the [MIT license](https://github.com/NeilBird/Azure-Local/blob/main/LICENSE) for further information.
 
-**Latest Version:** v0.9.0 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.9.0)
+**Latest Version:** v0.9.1 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.9.1)
 
 This folder contains the 'AzLocal.UpdateManagement' PowerShell module for managing updates on Azure Local (formerly Azure Stack HCI) clusters using the Azure Local REST API. The module supports both interactive use and CI/CD automation via Service Principal or Managed Identity authentication.
 
@@ -14,7 +14,7 @@ Azure Local REST API specification (includes update management endpoints): https
 **This README (overview + most-recent release notes):**
 
 - [Where to Start](#where-to-start)
-- [What's New in v0.9.0](#whats-new-in-v090)
+- [What's New in v0.9.1](#whats-new-in-v091)
 - [Files](#files)
 - [Prerequisites](#prerequisites)
 - [RBAC Requirements](#rbac-requirements) (summary; full reference in [docs/rbac.md](docs/rbac.md))
@@ -77,29 +77,22 @@ If you are new to this module, work through these in order from a regular PowerS
 
 > Most CI/CD pipelines in [Automation-Pipeline-Examples/](Automation-Pipeline-Examples/) are direct implementations of one of these workflows. Start there if you want a copy-pasteable end-to-end pipeline.
 
-## What's New in v0.9.0
+## What's New in v0.9.1
 
-`Copy-AzLocalPipelineExample` and `Update-AzLocalPipelineExample` now also drop a lightweight, link-first **`README.md`** into the customer repo root, so a freshly set-up pipelines repo explains itself: what it is, how to refresh after a module release, and where the docs live.
+**Bug fix:** dry-run (`-WhatIf`) pipeline runs now render their step summary and outputs in the run **Summary**, instead of producing nothing.
 
-### Added
+### Fixed
 
-- **Managed `README.md` drop at the repo root.** Alongside the workflow folder, `config`, and the turnkey `Update-Module-And-Pipelines.ps1`, both cmdlets now drop a short, link-first README describing what the repo is for, how to refresh after a module release (`.\Update-Module-And-Pipelines.ps1`), and where the docs live (links to <https://aka.ms/AzLocal.UpdateManagement> and its CI/CD runbook). The bundled template carries a hidden `<!-- AZLOCAL-README-VERSION: x.y.z -->` marker (invisible in rendered Markdown) with its own semver, starting at `1.0.0`.
-- **`-SkipReadme` switch** on both cmdlets to suppress the README drop / refresh entirely.
-
-### Changed
-
-- **Operator content is never destroyed.** The managed README is written only when the repo has **no usable README** - missing, whitespace-only, or a GitHub "Add a README" default stub (an H1 matching the repo name plus at most a one-line description). A README already carrying the marker is version-gate refreshed **in place** only when the bundled template is newer; any other non-empty README is treated as operator-owned and left untouched. (Remove the marker line to freeze a managed README as your own.)
-- The drop is **default-on for `-Platform GitHub|AzureDevOps`**, and **skipped for `-Platform All`** - its content references the turnkey script + `config` that only exist in the single-platform layouts.
-- The turnkey `Update-Module-And-Pipelines.ps1` template marker is bumped `1.1.0` -> `1.2.0` to also stage the managed README in its scoped `git add` - but **only** when the README carries the marker, so an operator-owned README is never swept into the automated commit.
+- **Dry-run pipeline runs produced zero step summary + zero step outputs.** When a pipeline step ran in WhatIf / dry-run mode - for example **"Config: 2 - Manage UpdateRing Tags"** with `dry_run = true` - `$WhatIfPreference` cascaded from the workload cmdlet into the pipeline reporting helpers and silently suppressed their `Out-File` writes (`Out-File` itself supports `ShouldProcess`). The result was an empty run Summary, forcing operators to dig through the raw runner log to see what *would* change. The reporting/artifact writes (`Add-AzLocalPipelineStepSummary`, `Set-AzLocalPipelineOutput`, and `Set-AzLocalClusterUpdateRingTagFromCsv`'s artifact-directory + JSON sidecar) now pass `-WhatIf:$false`, so a dry run always emits its full preview - the **Dry Run | True** settings row, the per-cluster "would change" detail, and the **"This was a dry run. No changes were applied."** footer - straight to the run Summary. The actual Azure tag PATCH stays correctly suppressed by `ShouldProcess`.
 
 ### Notes
 
-- **Additive** - no public function, parameter-removal, or export-count change (still 64). Backed by two new private helpers (`Get-AzLocalReadmeTemplateVersion`, `Test-AzLocalReadmeReplaceable`) with full Pester coverage.
-- **`GENERATED_AGAINST_MODULE_VERSION`** bumped from `0.8.99` to `0.9.0` across bundled pipeline templates.
+- **Bug-fix only** - no public API, parameter, or export-count change (still 64). Adds a GitHub-host WhatIf+summary regression test.
+- **`GENERATED_AGAINST_MODULE_VERSION`** bumped from `0.9.0` to `0.9.1` across bundled pipeline templates.
 
 > Previous release notes have moved into the [Release History](#release-history) appendix at the bottom of this document.
 
-See [CHANGELOG.md](CHANGELOG.md) for full release details. See [`What's New in v0.8.99`](#whats-new-in-v0899) in the Release History for the previous release.
+See [CHANGELOG.md](CHANGELOG.md) for full release details. See [`What's New in v0.9.0`](#whats-new-in-v090) in the Release History for the previous release.
 
 ## Files
 
@@ -581,7 +574,11 @@ This code is provided as-is for educational and reference purposes.
 
 The full What's-New history (v0.7.81 and earlier) has moved to [docs/release-history.md](docs/release-history.md).
 
-The most recent release notes for **v0.9.0** stay above under [`What's New in v0.9.0`](#whats-new-in-v090).
+The most recent release notes for **v0.9.1** stay above under [`What's New in v0.9.1`](#whats-new-in-v091).
+
+### What's New in v0.9.0
+
+**Managed repo README auto-drop.** `Copy-AzLocalPipelineExample` and `Update-AzLocalPipelineExample` now also drop a lightweight, link-first `README.md` into the customer repo root so a freshly set-up pipelines repo explains itself: what it is, how to refresh after a module release (`.\Update-Module-And-Pipelines.ps1`), and where the docs live. Operator content is never destroyed - the README is written only when the repo has no usable README (missing, whitespace-only, or a GitHub default stub), and a README carrying the hidden `<!-- AZLOCAL-README-VERSION -->` marker is version-gate refreshed in place; any other non-empty README is left untouched. Default-on for `-Platform GitHub|AzureDevOps`, suppressed by `-SkipReadme`, skipped for `-Platform All`. The turnkey `Update-Module-And-Pipelines.ps1` template marker is bumped `1.1.0` -> `1.2.0` to also stage the managed README. Additive - no public function, parameter-removal, or export-count change (still 64). `GENERATED_AGAINST_MODULE_VERSION` bumped from `0.8.99` to `0.9.0`. See [CHANGELOG.md](CHANGELOG.md#090---2026-06-25) for the full v0.9.0 entry.
 
 ### What's New in v0.8.99
 

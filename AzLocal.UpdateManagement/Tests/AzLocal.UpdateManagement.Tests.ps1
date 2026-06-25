@@ -34,8 +34,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $script:ModuleInfo | Should -Not -BeNullOrEmpty
         }
 
-        It 'Should have version 0.9.0' {
-            $script:ModuleInfo.Version | Should -Be '0.9.0'
+        It 'Should have version 0.9.1' {
+            $script:ModuleInfo.Version | Should -Be '0.9.1'
         }
 
         It 'Module version constants are in sync between .psm1 and .psd1' {
@@ -16139,6 +16139,41 @@ beta,/subscriptions/s1/resourceGroups/rg2/providers/Microsoft.AzureStackHCI/clus
         $result.WhatIfCount | Should -Be 2
         $result.CreatedCount | Should -Be 0
         $result.UpdatedCount | Should -Be 0
+    }
+
+    It 'Still emits the GitHub step summary + outputs under -WhatIf (dry-run preview is visible in the run Summary)' {
+        # Regression for the WhatIf cascade bug: a cmdlet invoked with -WhatIf
+        # sets $WhatIfPreference=$true, which cascades into the reporting helpers
+        # and silently suppressed their Out-File writes (Out-File supports
+        # ShouldProcess). The result was ZERO summary + ZERO step outputs in the
+        # pipeline for a dry-run. The reporting/artifact writes now pass
+        # -WhatIf:$false so the dry-run preview always reaches the run Summary.
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s2_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s2_ghSummaryFile
+        $whatIfResults = @(
+            [pscustomobject]@{ ClusterName = 'alpha'; Action = 'Created'; PreviousTagValue = ''; NewTagValue = 'Canary';     Status = 'WhatIf'; Message = 'Would create' }
+            [pscustomobject]@{ ClusterName = 'beta';  Action = 'Updated'; PreviousTagValue = 'Pilot'; NewTagValue = 'Production'; Status = 'WhatIf'; Message = 'Would update' }
+        )
+        $global:_s2_payload = @{ Results = $whatIfResults; Params = @{ InputCsvPath = $script:_s2_csvPath; OutputDirectory = $script:_s2_outDir; WhatIf = $true; PassThru = $true } }
+        [void](InModuleScope AzLocal.UpdateManagement {
+            Mock Set-AzLocalClusterUpdateRingTag { @($global:_s2_payload.Results) }
+            $p = $global:_s2_payload.Params
+            Set-AzLocalClusterUpdateRingTagFromCsv @p
+        })
+        # Step outputs must be present (not suppressed by the WhatIf cascade).
+        $outputs = Get-Content -LiteralPath $script:_s2_ghOutputFile -Raw
+        $outputs | Should -Not -BeNullOrEmpty
+        $outputs | Should -Match 'whatif_count=2'
+        $outputs | Should -Match 'total_count=2'
+        # Step summary must be present and flag the dry run.
+        $summary = Get-Content -LiteralPath $script:_s2_ghSummaryFile -Raw
+        $summary | Should -Not -BeNullOrEmpty
+        $summary | Should -Match '## UpdateRing Tag Management Summary'
+        $summary | Should -Match '\| Dry Run \| True \|'
+        $summary | Should -Match 'This was a dry run\. No changes were applied\.'
+        $summary | Should -Match 'alpha'
+        $summary | Should -Match 'beta'
     }
 
     It 'Tallies failed + skipped + updated counts independently' {

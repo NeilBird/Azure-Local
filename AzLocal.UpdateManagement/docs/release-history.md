@@ -4,9 +4,13 @@
 >
 > **For older releases**, this is the canonical reference; the main README intentionally stays slim so the most recent block is easy to find.
 >
-> **For v0.9.0 (the current release)**, see the main [README.md](../README.md#whats-new-in-v090) `What's New in v0.9.0` section.
+> **For v0.9.1 (the current release)**, see the main [README.md](../README.md#whats-new-in-v091) `What's New in v0.9.1` section.
 
 ---
+
+### What's New in v0.9.1
+
+**Bug fix: dry-run (`-WhatIf`) pipeline runs now render their step summary + outputs.** When a pipeline step ran in WhatIf / dry-run mode (e.g. "Config: 2 - Manage UpdateRing Tags" with `dry_run = true`), `$WhatIfPreference` cascaded from the workload cmdlet into the pipeline reporting helpers and silently suppressed their `Out-File` writes (`Out-File` itself supports `ShouldProcess`), producing zero step summary and zero step outputs - operators had to read the raw runner log to see what *would* change. The reporting/artifact writes (`Add-AzLocalPipelineStepSummary`, `Set-AzLocalPipelineOutput`, and `Set-AzLocalClusterUpdateRingTagFromCsv`'s artifact-directory + JSON sidecar) now pass `-WhatIf:$false`, so a dry run always emits its full preview to the run Summary while the actual Azure tag PATCH stays suppressed by `ShouldProcess`. Bug-fix only - no public API, parameter, or export-count change (still 64). `GENERATED_AGAINST_MODULE_VERSION` bumped from `0.9.0` to `0.9.1`. See [CHANGELOG.md](../CHANGELOG.md#091---2026-06-26) for the full v0.9.1 entry.
 
 ### What's New in v0.8.99
 

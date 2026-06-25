@@ -196,7 +196,10 @@ function Set-AzLocalClusterUpdateRingTagFromCsv {
         }
     }
     if (-not (Test-Path -LiteralPath $OutputDirectory)) {
-        New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
+        # -WhatIf:$false: the artifact directory holds dry-run reports (JSON
+        # sidecar + summary), not a change to the managed Azure system, so it
+        # must be created even when the cmdlet runs under -WhatIf.
+        New-Item -ItemType Directory -Path $OutputDirectory -Force -WhatIf:$false | Out-Null
     }
 
     # ----- 4. Apply tags via Set-AzLocalClusterUpdateRingTag -----------
@@ -231,12 +234,15 @@ function Set-AzLocalClusterUpdateRingTagFromCsv {
 
     # ----- 5. JSON sidecar ---------------------------------------------
     $resultsJsonPath = Join-Path -Path $OutputDirectory -ChildPath $ResultsJsonFileName
+    # -WhatIf:$false: the JSON sidecar is a dry-run report artifact (the
+    # function returns ResultsJsonPath pointing at it), not a change to the
+    # managed Azure system, so it must be written even under -WhatIf.
     if ($results.Count -gt 0) {
-        $results | ConvertTo-Json -Depth 5 | Out-File -FilePath $resultsJsonPath -Encoding utf8
+        $results | ConvertTo-Json -Depth 5 | Out-File -FilePath $resultsJsonPath -Encoding utf8 -WhatIf:$false
         Write-Host ("Wrote {0} per-cluster result row(s) to: {1}" -f $results.Count, $resultsJsonPath)
     }
     else {
-        '[]' | Out-File -FilePath $resultsJsonPath -Encoding utf8
+        '[]' | Out-File -FilePath $resultsJsonPath -Encoding utf8 -WhatIf:$false
         Write-Host ("No per-cluster results returned (empty CSV?). Wrote empty array to: {0}" -f $resultsJsonPath)
     }
 
