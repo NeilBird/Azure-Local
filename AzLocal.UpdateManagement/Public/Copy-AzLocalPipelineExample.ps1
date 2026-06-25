@@ -129,6 +129,38 @@ function Copy-AzLocalPipelineExample {
         Pass `-SkipStarterSideloadConfig` to suppress the drop entirely. Has
         no effect when `-Platform All` is in use.
 
+    .PARAMETER SkipStarterUpdater
+        Only meaningful with `-Platform GitHub` or `-Platform AzureDevOps`.
+
+        By default (v0.8.98+) the function ALSO drops a turnkey
+        `Update-Module-And-Pipelines.ps1` refresh script into the REPO ROOT
+        (alongside `.github\` / the pipelines folder - NOT into `config\`,
+        because it is an operator-run maintenance script rather than pipeline
+        configuration). The bundled source carries two placeholder tokens that
+        are substituted at drop time so the dropped script is turnkey for this
+        repo and platform:
+          - `__PLATFORM__`         -> 'GitHub' | 'AzureDevOps'
+          - `__WORKFLOW_SUBPATH__` -> the workflow folder relative to the repo
+                                      root (e.g. '.github/workflows' or
+                                      'pipelines').
+
+        After a future module release the operator runs the dropped script to
+        (1) install/import the latest published module version, (2) refresh the
+        bundled pipeline YAMLs via `Update-AzLocalPipelineExample` (preserving
+        their AZLOCAL-CUSTOMIZE marker edits), and (3) stage ONLY the workflow
+        folder + `config\`, then commit and push when something changed.
+
+        As with the other starters, an existing file at the repo root is never
+        clobbered blindly: the dropped script carries an
+        `AZLOCAL-UPDATER-VERSION` stamp, and it is re-rendered in place only
+        when the existing file's marker is STRICTLY OLDER than the bundled
+        template (logged as `Updated`). An up-to-date copy, or a file with no
+        version marker (i.e. operator-owned), is preserved. Tune the script
+        via its PARAMETERS (-Scope, -NoPush, etc.), not by editing the body -
+        body edits are replaced on a version-gated refresh. Pass
+        `-SkipStarterUpdater` to suppress the drop / refresh entirely. Has no
+        effect when `-Platform All` is in use.
+
     .PARAMETER Update
         Allow overwriting destination files that already exist. Without this
         switch the function aborts with a list of conflicting files. With
@@ -231,6 +263,15 @@ function Copy-AzLocalPipelineExample {
                       starters are inert until populated AND
                       `SIDELOAD_UPDATES=true`, so they are safe for operators
                       who never sideload.
+        Changed in  : v0.8.98 - for `-Platform GitHub|AzureDevOps` the function
+                      now ALSO drops a turnkey `Update-Module-And-Pipelines.ps1`
+                      refresh script into the REPO ROOT (token-substituted with
+                      the resolved platform + workflow subpath). The operator
+                      runs it after a future module release to upgrade the
+                      module, refresh the bundled pipelines (preserving
+                      AZLOCAL-CUSTOMIZE edits) and commit/push in one step.
+                      Existing files are NEVER overwritten. Pass
+                      `-SkipStarterUpdater` to suppress.
     #>
     [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'Low')]
     [OutputType([System.IO.DirectoryInfo])]
@@ -267,7 +308,13 @@ function Copy-AzLocalPipelineExample {
         # authentication-test.yml + inventory-clusters.yml replaced by
         # setup-validate-and-inventory.yml). Default OFF to avoid deleting
         # operator-edited files without explicit opt-in.
-        [switch]$PruneDeprecated
+        [switch]$PruneDeprecated,
+
+        # v0.8.98: when set, suppress the default drop of the turnkey
+        # Update-Module-And-Pipelines.ps1 refresh script into the repo root
+        # (Platform=GitHub|AzureDevOps). Default OFF. An existing file at the
+        # repo root is always preserved regardless of this switch.
+        [switch]$SkipStarterUpdater
     )
 
     # ------------------------------------------------------------------
@@ -649,6 +696,96 @@ function Copy-AzLocalPipelineExample {
     }
 
     # ------------------------------------------------------------------
+    # 6c (v0.8.98). Starter turnkey refresh script drop
+    #    (Update-Module-And-Pipelines.ps1). Default-on for
+    #    -Platform GitHub|AzureDevOps; suppressed by -SkipStarterUpdater.
+    #    Lands in the REPO ROOT (alongside .github\ / the pipelines folder),
+    #    NOT in config\, because it is an operator-run maintenance script
+    #    rather than pipeline configuration. The bundled source carries two
+    #    placeholder tokens that are substituted at drop time so the dropped
+    #    script is turnkey for THIS repo and platform:
+    #       __PLATFORM__         -> 'GitHub' | 'AzureDevOps'
+    #       __WORKFLOW_SUBPATH__ -> the workflow folder relative to the repo
+    #                               root (e.g. '.github/workflows' or
+    #                               'pipelines'), forward-slashed.
+    #    NEVER overwrites an existing file - the operator's copy always wins.
+    # ------------------------------------------------------------------
+    $updaterSrc    = Join-Path -Path $sourceRoot -ChildPath 'update-module-and-pipelines.ps1'
+    $updaterDest   = $null
+    $updaterAction = $null   # 'Copied' | 'Updated' | 'Preserved' | 'Skipped' | 'SkippedBySwitch' | 'Missing'
+    if ($Platform -in @('GitHub', 'AzureDevOps') -and $repoRoot) {
+        $updaterDest = Join-Path -Path $repoRoot -ChildPath 'Update-Module-And-Pipelines.ps1'
+
+        if ($SkipStarterUpdater.IsPresent) {
+            $updaterAction = 'SkippedBySwitch'
+        }
+        elseif (-not (Test-Path -LiteralPath $updaterSrc -PathType Leaf)) {
+            $updaterAction = 'Missing'
+            Write-Warning ("Copy-AzLocalPipelineExample: updater script source '{0}' not found; skipping updater drop." -f $updaterSrc)
+        }
+        else {
+            # Decide fresh-drop vs version-gated refresh vs no-op. The bundled
+            # template carries an AZLOCAL-UPDATER-VERSION stamp; an EXISTING
+            # file is only re-rendered when the bundled version is NEWER (so
+            # module-shipped improvements reach the repo), and is otherwise
+            # preserved (operator edits / up-to-date copies are never clobbered).
+            $bundledText    = Get-Content -LiteralPath $updaterSrc -Raw
+            $bundledVersion = Get-AzLocalUpdaterScriptVersion -Text $bundledText
+            $updaterExists  = Test-Path -LiteralPath $updaterDest -PathType Leaf
+            $isRefresh      = $false
+            if ($updaterExists) {
+                $existingVersion = Get-AzLocalUpdaterScriptVersion -Text (Get-Content -LiteralPath $updaterDest -Raw)
+                # Only re-render when the existing file carries a parseable
+                # AZLOCAL-UPDATER-VERSION marker that is STRICTLY OLDER than the
+                # bundled template. A file with NO marker is treated as
+                # operator-owned and preserved (never clobbered).
+                if ($existingVersion -and $bundledVersion -and $bundledVersion -gt $existingVersion) {
+                    $isRefresh = $true
+                }
+            }
+
+            if ($updaterExists -and -not $isRefresh) {
+                $updaterAction = 'Preserved'
+                Write-Verbose ("Copy-AzLocalPipelineExample: updater script preserved (already present and up to date at '{0}'); not copied." -f $updaterDest)
+            }
+            else {
+                $shouldMsg = if ($isRefresh) {
+                    "Refresh turnkey Update-Module-And-Pipelines.ps1 to v$bundledVersion (Platform=$Platform)"
+                }
+                else {
+                    "Write turnkey Update-Module-And-Pipelines.ps1 (Platform=$Platform)"
+                }
+                if ($PSCmdlet.ShouldProcess($updaterDest, $shouldMsg)) {
+                    # Resolve the workflow folder relative to the repo root so the
+                    # dropped script targets the right path. targetRoot is always
+                    # a descendant of repoRoot (repoRoot was derived from it above).
+                    $repoRootTrim = $repoRoot.TrimEnd('\', '/')
+                    $targetTrim   = $targetRoot.TrimEnd('\', '/')
+                    $workflowSubPath = $targetTrim.Substring($repoRootTrim.Length).TrimStart('\', '/') -replace '\\', '/'
+                    if ([string]::IsNullOrWhiteSpace($workflowSubPath)) {
+                        # Pathological drive-root fallback: use the leaf folder name.
+                        $workflowSubPath = (Split-Path -Leaf $targetTrim)
+                    }
+
+                    $updaterText = $bundledText.Replace('__PLATFORM__', $Platform).Replace('__WORKFLOW_SUBPATH__', $workflowSubPath)
+
+                    $updaterParent = Split-Path -Parent $updaterDest
+                    if (-not (Test-Path -LiteralPath $updaterParent)) {
+                        $null = New-Item -ItemType Directory -Path $updaterParent -Force -ErrorAction Stop
+                    }
+                    # UTF-8 without BOM (PS 5.1 Set-Content -Encoding UTF8 would add one).
+                    [System.IO.File]::WriteAllText($updaterDest, $updaterText, [System.Text.UTF8Encoding]::new($false))
+                    $updaterAction = if ($isRefresh) { 'Updated' } else { 'Copied' }
+                }
+                else {
+                    # -WhatIf path or operator declined the prompt.
+                    $updaterAction = 'Skipped'
+                }
+            }
+        }
+    }
+
+    # ------------------------------------------------------------------
     # 7. Friendly "what now" summary so the user does not have to open
 
     #    the README first to know what they just copied. Uses Write-Host
@@ -677,6 +814,15 @@ function Copy-AzLocalPipelineExample {
     }
     elseif ($sideloadConfigAction -eq 'Preserved') {
         Write-Host "  Starter sideload config preserved (existing sideload-auth-map.csv / sideload-catalog.yml left untouched)" -ForegroundColor Yellow
+    }
+    if ($updaterAction -eq 'Copied') {
+        Write-Host ("  Turnkey refresh script dropped at: {0}" -f $updaterDest) -ForegroundColor Green
+    }
+    elseif ($updaterAction -eq 'Updated') {
+        Write-Host ("  Turnkey refresh script refreshed to a newer template version at: {0}" -f $updaterDest) -ForegroundColor Green
+    }
+    elseif ($updaterAction -eq 'Preserved') {
+        Write-Host ("  Turnkey refresh script preserved (existing file, up to date): {0}" -f $updaterDest) -ForegroundColor Yellow
     }
     Write-Host ""
     Write-Host "Next steps:" -ForegroundColor Cyan
@@ -729,6 +875,21 @@ function Copy-AzLocalPipelineExample {
         if ($sideloadCatalogDest) { $sideloadHintLines += ("       {0}" -f $sideloadCatalogDest) }
         $sideloadHintLines += "     Populate both, set repository variable SIDELOAD_UPDATES=true, then dry-run the sideload-updates pipeline. Until then they are inert. See Automation-Pipeline-Examples/docs/sideload.md."
     }
+    # Optional updater sub-message - only emitted when the turnkey refresh
+    # script was dropped or already exists. It lets the operator refresh the
+    # bundled pipelines after a future module release in one command.
+    $updaterHintLines = @()
+    if ($updaterAction -in @('Copied', 'Updated', 'Preserved')) {
+        $verb = switch ($updaterAction) {
+            'Copied'  { 'dropped' }
+            'Updated' { 'refreshed to a newer template version' }
+            default   { 'already present' }
+        }
+        $updaterHintLines += ("  *. Turnkey refresh script {0} at the repo root:" -f $verb)
+        if ($updaterDest) { $updaterHintLines += ("       {0}" -f $updaterDest) }
+        $updaterHintLines += "     After a future module release, run it to upgrade the module, refresh these pipelines (preserving your AZLOCAL-CUSTOMIZE edits) and commit/push - in one step:"
+        $updaterHintLines += "       .\Update-Module-And-Pipelines.ps1"
+    }
     switch ($Platform) {
         'GitHub' {
             # Detect the canonical .github\workflows\ destination so we can
@@ -749,6 +910,7 @@ function Copy-AzLocalPipelineExample {
             Write-Host "     See section 5.1 step 5 + section 8 of the README for the full schema, multi-stage rollouts, and the allowedUpdateVersions allow-list."
             Write-Host "  5. Optional: enable the ITSM connector by setting 'raise_itsm_ticket=true' (setup in ITSM/README.md)."
             foreach ($line in $sideloadHintLines) { Write-Host $line }
+            foreach ($line in $updaterHintLines) { Write-Host $line }
         }
         'AzureDevOps' {
             Write-Host ("  1. Commit the YAML files from '{0}' to your Azure Repo." -f $targetRoot)
@@ -760,6 +922,7 @@ function Copy-AzLocalPipelineExample {
             Write-Host "     apply-updates reads APPLY_UPDATES_SCHEDULE_PATH (default './config/apply-updates-schedule.yml'). Override the variable in the pipeline if you keep the schedule elsewhere. See section 5.2 step 6 + section 8 of the README."
             Write-Host "  6. Optional: enable the ITSM connector by setting 'raise_itsm_ticket=true' (setup in ITSM/README.md)."
             foreach ($line in $sideloadHintLines) { Write-Host $line }
+            foreach ($line in $updaterHintLines) { Write-Host $line }
         }
         default {
             $readmePath = Join-Path -Path $targetRoot -ChildPath 'README.md'

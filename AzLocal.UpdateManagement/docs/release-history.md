@@ -4,9 +4,13 @@
 >
 > **For older releases**, this is the canonical reference; the main README intentionally stays slim so the most recent block is easy to find.
 >
-> **For v0.8.97 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0897) `What's New in v0.8.97` section.
+> **For v0.8.98 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0898) `What's New in v0.8.98` section.
 
 ---
+
+### What's New in v0.8.97
+
+Update-readiness reporting clarity across the fleet reports, plus intelligent detection of **stale "Up to Date" clusters** in the Apply Updates readiness table. `Get-AzLocalUpdateRunFailures` (Detail view) gains an `UpdateRing` column from the cluster ARM `UpdateRing` tag; Monitor: 3 and Assess Readiness gain a shared "Clusters - Ready for Update" table (Assess Readiness also writes a separate `ready-for-update.csv`); and the Apply Updates "Cluster Readiness" table now flags clusters reporting "Up to Date" against a newer public manifest build as **Update Available (stale assessment)** and adds a **Support** column. The "All clusters detail" / "Fleet Health Overview" tables are collapsed behind an expander. Report-only and additive - no public API, parameter, or export-count change (still 64). `GENERATED_AGAINST_MODULE_VERSION` bumped from `0.8.96` to `0.8.97`. See [CHANGELOG.md](../CHANGELOG.md#0897---2026-06-24) for the full v0.8.97 entry.
 
 ### What's New in v0.8.96
 

@@ -5,6 +5,45 @@ All notable changes to the AzLocal.UpdateManagement module (renamed from AzStack
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.98] - 2026-06-25
+
+Turnkey **"refresh after every release" updater** for the customer repo. Additive -
+no public function, parameter-removal or export-count change (still 64).
+
+### Added
+
+- `Copy-AzLocalPipelineExample` now also drops a self-contained
+  `Update-Module-And-Pipelines.ps1` into the customer's **repo root** (alongside the
+  existing workflow + config starter files), with the chosen devops platform
+  (`GitHub`/`AzureDevOps`) and the resolved workflow subpath baked in at drop time.
+  After each module release the operator just runs that one script: it `Find-Module`s
+  the latest `AzLocal.UpdateManagement`, installs it **only when newer** (no uninstall
+  churn), re-imports it, calls `Update-AzLocalPipelineExample` to regenerate the
+  pipeline YAMLs, stages **only** the workflow folder + `config`
+  (`git -C $RepoRoot add -A -- $gitPaths`, never a blanket `git add .`), then commits
+  and pushes under ShouldProcess (`-WhatIf`/`-NoPush` supported).
+- The drop is default-on for the two single-platform modes, is suppressed by the new
+  `-SkipStarterUpdater` switch, and is skipped entirely for `-Platform All`. The
+  bundled template is written BOM-less and is verified to parse as valid PowerShell.
+- **Existing repos get it too via `Update-AzLocalPipelineExample`.** Customers who set
+  up before v0.8.98 upgrade by running `Update` (not `Copy`), so `Update` now drops the
+  same turnkey `Update-Module-And-Pipelines.ps1` at the repo root when absent (also
+  gated by `-SkipStarterUpdater`).
+- **The dropped script is version-stamped and self-refreshing.** The bundled template
+  carries an `# AZLOCAL-UPDATER-VERSION: X.Y.Z` marker (a dedicated template semver,
+  independent of the module version, starting at `1.0.0`). When the module ships an
+  improved template, both `Copy` and `Update` re-render the dropped script **in place**
+  only when the existing file's marker is **strictly older** (logged as `Updated`). An
+  up-to-date copy, or a markerless (operator-owned) file, is **preserved** - operator
+  edits are never clobbered blindly. Behaviour is tuned via the script's parameters
+  (`-Scope`, `-NoPush`, ...), not by editing its body.
+
+### Changed
+
+- The maintainer's `Test-Pipelines.ps1` helper was renamed to
+  `Tools/Update-Module-And-Pipelines.ps1`. `Tools/` is stripped from the published
+  package, fixing a prior leak of the maintainer script into the PSGallery `.nupkg`.
+
 ## [0.8.97] - 2026-06-24
 
 Update-readiness reporting clarity across the fleet reports, plus intelligent

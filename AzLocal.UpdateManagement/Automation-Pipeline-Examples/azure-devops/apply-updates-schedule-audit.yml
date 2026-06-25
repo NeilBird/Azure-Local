@@ -113,7 +113,7 @@ parameters:
     default: false
 
 variables:
-  GENERATED_AGAINST_MODULE_VERSION: '0.8.97'
+  GENERATED_AGAINST_MODULE_VERSION: '0.8.98'
   REQUIRED_MODULE_VERSION: '${{ parameters.moduleVersion }}'
   reportsPath: '$(Build.ArtifactStagingDirectory)/reports'
   # v0.8.7 sideload advisor defaults. Override at the pipeline / variable-group

@@ -2,7 +2,7 @@
 
 > ⚠️ **Disclaimer**: This module is **NOT** a Microsoft supported service offering or product. It is provided as example code only, with no warranty or official support. Refer to the [MIT license](https://github.com/NeilBird/Azure-Local/blob/main/LICENSE) for further information.
 
-**Latest Version:** v0.8.97 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.8.97)
+**Latest Version:** v0.8.98 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.8.98)
 
 This folder contains the 'AzLocal.UpdateManagement' PowerShell module for managing updates on Azure Local (formerly Azure Stack HCI) clusters using the Azure Local REST API. The module supports both interactive use and CI/CD automation via Service Principal or Managed Identity authentication.
 
@@ -14,7 +14,7 @@ Azure Local REST API specification (includes update management endpoints): https
 **This README (overview + most-recent release notes):**
 
 - [Where to Start](#where-to-start)
-- [What's New in v0.8.97](#whats-new-in-v0897)
+- [What's New in v0.8.98](#whats-new-in-v0898)
 - [Files](#files)
 - [Prerequisites](#prerequisites)
 - [RBAC Requirements](#rbac-requirements) (summary; full reference in [docs/rbac.md](docs/rbac.md))
@@ -77,31 +77,32 @@ If you are new to this module, work through these in order from a regular PowerS
 
 > Most CI/CD pipelines in [Automation-Pipeline-Examples/](Automation-Pipeline-Examples/) are direct implementations of one of these workflows. Start there if you want a copy-pasteable end-to-end pipeline.
 
-## What's New in v0.8.97
+## What's New in v0.8.98
 
-Update-readiness reporting clarity across the fleet reports, plus intelligent detection of **stale "Up to Date" clusters** in the Apply Updates readiness table.
+A turnkey **"refresh after every release" updater** for the customer repo, so operators no longer have to remember the install / regenerate / commit sequence by hand.
 
 ### Added
 
-- **`UpdateRing` column on `Get-AzLocalUpdateRunFailures` (Detail view)** sourced from the cluster's ARM `UpdateRing` tag (resolved via a secondary Resource Graph query against `microsoft.azurestackhci/clusters`; blank when the cluster carries no ring tag).
-- **Monitor: 3 (`Export-AzLocalFleetUpdateStatusReport`)**: the Update Run History table gains an **Update Ring** column (2nd, after Cluster Name) and a new **"Clusters - Ready for Update"** summary table below the run history.
-- **Assess Readiness (`Export-AzLocalClusterUpdateReadinessReport`)**: a new **"Clusters - Ready for Update"** table plus a separate `ready-for-update.csv` artefact (`-ReadyForUpdateCsvFileName`, default `ready-for-update.csv`).
-- **Stale-assessment detection + a "Support" column in the Apply Updates "Cluster Readiness" table.** A cluster that reports **Up to Date** while the public update manifest (`https://aka.ms/AzureEdgeUpdates`) advertises a newer solution build - typically a disconnected cluster serving a stale cached assessment - is now flagged with an **Update Available (stale assessment)** status and a **Support** column that calls out when the running build is no longer in support.
-- Two new private helpers - `Get-AzLocalReadyForUpdateRows` and `Get-AzLocalReadyForUpdateTableMarkdown` - back the shared "Ready for Update" view used by both the Monitor: 3 and Assess Readiness reports.
+- **`Copy-AzLocalPipelineExample` now also drops a self-contained `Update-Module-And-Pipelines.ps1` into your repo root** (alongside the existing workflow + `config` starter files), with your chosen devops platform (`GitHub` / `AzureDevOps`) and the resolved workflow subpath baked in at drop time. After each module release you just run that one script:
+  1. `Find-Module` the latest `AzLocal.UpdateManagement` and **install it only when newer** (no uninstall churn), then re-import it.
+  2. Call `Update-AzLocalPipelineExample` to regenerate the pipeline YAMLs (your `BEGIN/END-AZLOCAL-CUSTOMIZE` edits are preserved).
+  3. Stage **only** the workflow folder + `config` (`git -C $RepoRoot add -A -- $gitPaths` - never a blanket `git add .`), then commit and push under ShouldProcess (`-WhatIf` / `-NoPush` supported).
+- The drop is **default-on** for the two single-platform modes, is suppressed by the new **`-SkipStarterUpdater`** switch, and is skipped entirely for `-Platform All`. The bundled template is written BOM-less and is verified to parse as valid PowerShell.
+- **Existing repos get it too.** Customers who set up before v0.8.98 upgrade by running `Update-AzLocalPipelineExample` (not `Copy`), so **`Update` now drops the same `Update-Module-And-Pipelines.ps1`** at the repo root when absent (also gated by `-SkipStarterUpdater`).
+- **The dropped script is version-stamped and self-refreshing.** It carries an `# AZLOCAL-UPDATER-VERSION: X.Y.Z` marker - a dedicated *template* semver starting at `1.0.0`, independent of the module version. When a future module release ships an improved template, both `Copy` and `Update` re-render the script **in place** *only* when the existing file's marker is **strictly older** (logged as `Updated`). An up-to-date copy, or a **markerless (operator-owned)** file, is **preserved** and never clobbered. Tune behaviour via the script's parameters (`-Scope`, `-NoPush`, ...) rather than editing its body - body edits are replaced on a version-gated refresh.
 
 ### Changed
 
-- **Assess Readiness "All clusters detail" table is now collapsed** behind an `Expand to view clusters` `<details>` block so the actionable summary tables sit above the fold.
-- **Monitor: 2 "Fleet Health Overview" table is now collapsed** behind the same `Expand to view clusters` expander.
+- The maintainer's `Test-Pipelines.ps1` helper was renamed to `Tools/Update-Module-And-Pipelines.ps1`. `Tools/` is stripped from the published package, **fixing a prior leak of the maintainer script into the PSGallery `.nupkg`**.
 
 ### Notes
 
-- **Report-only and additive** - no public API, parameter, or export-count change (still 64).
-- **`GENERATED_AGAINST_MODULE_VERSION`** bumped from `0.8.96` to `0.8.97` across bundled pipeline templates.
+- **Additive** - no public function, parameter-removal, or export-count change (still 64).
+- **`GENERATED_AGAINST_MODULE_VERSION`** bumped from `0.8.97` to `0.8.98` across bundled pipeline templates.
 
 > Previous release notes have moved into the [Release History](#release-history) appendix at the bottom of this document.
 
-See [CHANGELOG.md](CHANGELOG.md) for full release details. See [`What's New in v0.8.95`](#whats-new-in-v0895) in the Release History for the previous release.
+See [CHANGELOG.md](CHANGELOG.md) for full release details. See [`What's New in v0.8.97`](#whats-new-in-v0897) in the Release History for the previous release.
 
 ## Files
 
@@ -583,7 +584,11 @@ This code is provided as-is for educational and reference purposes.
 
 The full What's-New history (v0.7.81 and earlier) has moved to [docs/release-history.md](docs/release-history.md).
 
-The most recent release notes for **v0.8.97** stay above under [`What's New in v0.8.97`](#whats-new-in-v0897).
+The most recent release notes for **v0.8.98** stay above under [`What's New in v0.8.98`](#whats-new-in-v0898).
+
+### What's New in v0.8.97
+
+**Update-readiness reporting clarity across the fleet reports, plus intelligent detection of stale "Up to Date" clusters in the Apply Updates readiness table.** `Get-AzLocalUpdateRunFailures` (Detail view) gains an `UpdateRing` column from the cluster ARM `UpdateRing` tag; Monitor: 3 and Assess Readiness gain a shared "Clusters - Ready for Update" table (Assess Readiness also writes a separate `ready-for-update.csv`); and the Apply Updates "Cluster Readiness" table now flags clusters reporting "Up to Date" against a newer public manifest build as **Update Available (stale assessment)** and adds a **Support** column. The "All clusters detail" / "Fleet Health Overview" tables are collapsed behind an expander. Report-only and additive - no public API, parameter, or export-count change (still 64). `GENERATED_AGAINST_MODULE_VERSION` bumped from `0.8.96` to `0.8.97`. See [CHANGELOG.md](CHANGELOG.md#0897---2026-06-24) for the full v0.8.97 entry.
 
 ### What's New in v0.8.96
 
