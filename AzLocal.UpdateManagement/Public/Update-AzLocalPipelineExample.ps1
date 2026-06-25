@@ -124,6 +124,22 @@ function Update-AzLocalPipelineExample {
         Emit the per-file result objects to the pipeline. By default the
         cmdlet only writes summary log messages.
 
+    .PARAMETER SkipStarterUpdater
+        Suppress the v0.8.98 turnkey refresh-script drop. By default Update
+        also (re)creates a self-contained `Update-Module-And-Pipelines.ps1`
+        in the repo root when it is absent (with the chosen platform and
+        workflow subpath baked in), so a repo that was first set up before
+        v0.8.98 - and is therefore upgraded via Update rather than Copy -
+        still receives the one-shot "install latest module + refresh YAMLs +
+        commit/push" script. The dropped script carries an
+        `AZLOCAL-UPDATER-VERSION` stamp: when the module ships a newer
+        template version, Update re-renders the script in place (logged as
+        `Updated`). An up-to-date copy, or a file with no version marker (i.e.
+        operator-owned), is left untouched. Operator behaviour is tuned via
+        the script's PARAMETERS (-Scope, -NoPush, etc.), not by editing its
+        body - body edits are replaced on a version-gated refresh. Pass
+        -SkipStarterUpdater to freeze the file entirely.
+
     .OUTPUTS
         PSCustomObject[] (with -PassThru) - one row per source file with:
             File              - destination path (always the CANONICAL,
@@ -177,6 +193,10 @@ function Update-AzLocalPipelineExample {
         Author      : Neil Bird, Microsoft
         Module      : AzLocal.UpdateManagement
         Added in    : v0.7.68
+        Changed in  : v0.8.98 - also (re)drops the turnkey
+                      Update-Module-And-Pipelines.ps1 into the repo root when
+                      absent (never overwrites). Pass -SkipStarterUpdater to
+                      suppress.
         See also    : Copy-AzLocalPipelineExample (clean-overwrite tool)
     #>
     [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'Low')]
@@ -198,6 +218,12 @@ function Update-AzLocalPipelineExample {
         # setup-validate-and-inventory.yml). Default OFF so upgrades remain
         # non-destructive unless explicitly requested.
         [switch]$PruneDeprecated,
+
+        # v0.8.98: also (re)drop the turnkey Update-Module-And-Pipelines.ps1
+        # refresh script into the repo root when it is absent, so existing
+        # repos that upgrade via Update (not Copy) still receive it. Never
+        # overwrites an existing copy. Pass -SkipStarterUpdater to suppress.
+        [switch]$SkipStarterUpdater,
 
         [switch]$PassThru
     )
@@ -585,6 +611,95 @@ function Update-AzLocalPipelineExample {
             else {
                 $deprecatedList = ($existingDeprecated | ForEach-Object { "  - $([System.IO.Path]::GetFileName($_.Path))" }) -join [Environment]::NewLine
                 Write-Log -Message ("  Note    : deprecated workflow file(s) detected (replaced by setup-validate-and-inventory.yml). Left in place by default to avoid destructive changes:{0}{1}{0}            Rerun with -PruneDeprecated to remove them automatically." -f [Environment]::NewLine, $deprecatedList) -Level Warning
+            }
+        }
+    }
+
+    # ------------------------------------------------------------------
+    # 5 (v0.8.98). Turnkey refresh-script drop parity with
+    #    Copy-AzLocalPipelineExample. Existing users upgrade by running
+    #    Update (not Copy), so Update must ALSO (re)create the turnkey
+    #    Update-Module-And-Pipelines.ps1 at the repo root when it is
+    #    absent - otherwise pre-v0.8.98 repos would never receive it.
+    #    Default-on; NEVER overwrites an existing copy (operator edits
+    #    win); suppressed by -SkipStarterUpdater. The bundled source
+    #    carries two tokens substituted at drop time:
+    #       __PLATFORM__         -> 'GitHub' | 'AzureDevOps'
+    #       __WORKFLOW_SUBPATH__ -> the workflow folder relative to the
+    #                               repo root (forward-slashed).
+    # ------------------------------------------------------------------
+    if (-not $SkipStarterUpdater.IsPresent) {
+        $updaterSrc = Join-Path -Path $sourceRoot -ChildPath 'update-module-and-pipelines.ps1'
+
+        # Repo-root resolution mirrors Copy-AzLocalPipelineExample: for the
+        # canonical GitHub layout (.github\workflows) the repo root is two
+        # levels up; for Azure DevOps / other layouts it is one level up.
+        $trimmedTarget = $destResolved.TrimEnd('\', '/')
+        $oneLevelUp    = Split-Path -Parent $trimmedTarget
+        if ($Platform -eq 'GitHub' -and ($trimmedTarget -match '[\\/]\.github[\\/]workflows$')) {
+            $repoRoot = Split-Path -Parent $oneLevelUp
+        }
+        else {
+            $repoRoot = $oneLevelUp
+        }
+        if ([string]::IsNullOrWhiteSpace($repoRoot)) {
+            $repoRoot = $trimmedTarget
+        }
+
+        $updaterDest = Join-Path -Path $repoRoot -ChildPath 'Update-Module-And-Pipelines.ps1'
+
+        if (-not (Test-Path -LiteralPath $updaterSrc -PathType Leaf)) {
+            Write-Log -Message ("  Note    : updater script source '{0}' not found; skipping turnkey script drop." -f $updaterSrc) -Level Warning
+        }
+        else {
+            # Fresh-drop vs version-gated refresh vs no-op. The bundled
+            # template carries an AZLOCAL-UPDATER-VERSION stamp; an EXISTING
+            # file is only re-rendered when the bundled version is NEWER (so
+            # module-shipped improvements reach repos that upgrade via Update),
+            # and is otherwise preserved (operator edits / up-to-date copies
+            # are never clobbered).
+            $bundledText    = Get-Content -LiteralPath $updaterSrc -Raw
+            $bundledVersion = Get-AzLocalUpdaterScriptVersion -Text $bundledText
+            $updaterExists  = Test-Path -LiteralPath $updaterDest -PathType Leaf
+            $isRefresh      = $false
+            if ($updaterExists) {
+                $existingVersion = Get-AzLocalUpdaterScriptVersion -Text (Get-Content -LiteralPath $updaterDest -Raw)
+                # Only re-render when the existing file carries a parseable
+                # AZLOCAL-UPDATER-VERSION marker that is STRICTLY OLDER than the
+                # bundled template. A file with NO marker is treated as
+                # operator-owned and preserved (never clobbered).
+                if ($existingVersion -and $bundledVersion -and $bundledVersion -gt $existingVersion) {
+                    $isRefresh = $true
+                }
+            }
+
+            if ($updaterExists -and -not $isRefresh) {
+                Write-Verbose ("Update-AzLocalPipelineExample: updater script preserved (already present and up to date at '{0}'); not copied." -f $updaterDest)
+            }
+            else {
+                $shouldMsg = if ($isRefresh) {
+                    "Refresh turnkey Update-Module-And-Pipelines.ps1 to v$bundledVersion (Platform=$Platform)"
+                }
+                else {
+                    "Write turnkey Update-Module-And-Pipelines.ps1 (Platform=$Platform)"
+                }
+                if ($PSCmdlet.ShouldProcess($updaterDest, $shouldMsg)) {
+                    $repoRootTrim    = $repoRoot.TrimEnd('\', '/')
+                    $workflowSubPath = $trimmedTarget.Substring($repoRootTrim.Length).TrimStart('\', '/') -replace '\\', '/'
+                    if ([string]::IsNullOrWhiteSpace($workflowSubPath)) {
+                        $workflowSubPath = (Split-Path -Leaf $trimmedTarget)
+                    }
+
+                    $updaterText = $bundledText.Replace('__PLATFORM__', $Platform).Replace('__WORKFLOW_SUBPATH__', $workflowSubPath)
+                    # UTF-8 without BOM (PS 5.1 Set-Content -Encoding UTF8 would add one).
+                    [System.IO.File]::WriteAllText($updaterDest, $updaterText, [System.Text.UTF8Encoding]::new($false))
+                    if ($isRefresh) {
+                        Write-Log -Message ("  Updated : turnkey refresh script 'Update-Module-And-Pipelines.ps1' refreshed to template v{0} at repo root '{1}'" -f $bundledVersion, $repoRoot) -Level Success
+                    }
+                    else {
+                        Write-Log -Message "  Created : turnkey refresh script 'Update-Module-And-Pipelines.ps1' at repo root '$repoRoot'" -Level Success
+                    }
+                }
             }
         }
     }

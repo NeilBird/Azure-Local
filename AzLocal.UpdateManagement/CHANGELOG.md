@@ -22,10 +22,21 @@ no public function, parameter-removal or export-count change (still 64).
   pipeline YAMLs, stages **only** the workflow folder + `config`
   (`git -C $RepoRoot add -A -- $gitPaths`, never a blanket `git add .`), then commits
   and pushes under ShouldProcess (`-WhatIf`/`-NoPush` supported).
-- The drop is default-on for the two single-platform modes, **never overwrites** an
-  existing root script (operator edits are preserved), is suppressed by the new
+- The drop is default-on for the two single-platform modes, is suppressed by the new
   `-SkipStarterUpdater` switch, and is skipped entirely for `-Platform All`. The
   bundled template is written BOM-less and is verified to parse as valid PowerShell.
+- **Existing repos get it too via `Update-AzLocalPipelineExample`.** Customers who set
+  up before v0.8.98 upgrade by running `Update` (not `Copy`), so `Update` now drops the
+  same turnkey `Update-Module-And-Pipelines.ps1` at the repo root when absent (also
+  gated by `-SkipStarterUpdater`).
+- **The dropped script is version-stamped and self-refreshing.** The bundled template
+  carries an `# AZLOCAL-UPDATER-VERSION: X.Y.Z` marker (a dedicated template semver,
+  independent of the module version, starting at `1.0.0`). When the module ships an
+  improved template, both `Copy` and `Update` re-render the dropped script **in place**
+  only when the existing file's marker is **strictly older** (logged as `Updated`). An
+  up-to-date copy, or a markerless (operator-owned) file, is **preserved** - operator
+  edits are never clobbered blindly. Behaviour is tuned via the script's parameters
+  (`-Scope`, `-NoPush`, ...), not by editing its body.
 
 ### Changed
 

@@ -7867,6 +7867,78 @@ Describe 'Function: Copy-AzLocalPipelineExample' {
         $text | Should -Not -Match 'git add \.'
     }
 
+    # v0.8.98: version-gated self-refresh. The dropped script carries an
+    # '# AZLOCAL-UPDATER-VERSION: X.Y.Z' marker. Copy re-renders an existing
+    # file IN PLACE only when its marker is STRICTLY OLDER than the bundled
+    # template; an equal marker, or a markerless (operator-owned) file, is
+    # preserved.
+
+    It 'v0.8.98: bundled updater template carries an AZLOCAL-UPDATER-VERSION marker' {
+        $repoRoot = Join-Path $script:cpDestRoot 'gh-updater-marker'
+        $dest = Join-Path $repoRoot '.github\workflows'
+        New-Item -Path $dest -ItemType Directory -Force | Out-Null
+
+        Copy-AzLocalPipelineExample -Destination $dest -Platform GitHub 6>$null | Out-Null
+
+        $text = Get-Content -LiteralPath (Join-Path $repoRoot 'Update-Module-And-Pipelines.ps1') -Raw
+        $text | Should -Match '(?im)^\s*#+\s*AZLOCAL-UPDATER-VERSION\s*:\s*\d+\.\d+\.\d+\s*$'
+    }
+
+    It 'v0.8.98: existing updater script with an OLDER version marker is refreshed in place' {
+        $repoRoot = Join-Path $script:cpDestRoot 'gh-updater-older'
+        $dest = Join-Path $repoRoot '.github\workflows'
+        New-Item -Path $dest -ItemType Directory -Force | Out-Null
+
+        $updaterDest = Join-Path $repoRoot 'Update-Module-And-Pipelines.ps1'
+        # Simulate a stale prior drop: an OLD version marker + an operator
+        # body that the refresh is expected to replace.
+        $stale = @(
+            '#Requires -Version 5.1'
+            '# AZLOCAL-UPDATER-VERSION: 0.0.1'
+            '# STALE BODY - should be replaced on refresh'
+        ) -join "`r`n"
+        Set-Content -LiteralPath $updaterDest -Value $stale -Encoding ASCII
+
+        Copy-AzLocalPipelineExample -Destination $dest -Platform GitHub 6>$null | Out-Null
+
+        $text = Get-Content -LiteralPath $updaterDest -Raw
+        $text | Should -Not -Match 'STALE BODY'
+        $text | Should -Not -Match '0\.0\.1'
+        $text | Should -Match "Platform\s*=\s*'GitHub'"
+    }
+
+    It 'v0.8.98: existing updater script with an EQUAL version marker is preserved (not re-rendered)' {
+        $repoRoot = Join-Path $script:cpDestRoot 'gh-updater-equal'
+        $dest = Join-Path $repoRoot '.github\workflows'
+        New-Item -Path $dest -ItemType Directory -Force | Out-Null
+
+        # First drop establishes the current bundled marker version.
+        Copy-AzLocalPipelineExample -Destination $dest -Platform GitHub 6>$null | Out-Null
+        $updaterDest = Join-Path $repoRoot 'Update-Module-And-Pipelines.ps1'
+
+        # Append an operator sentinel; a second invocation at the SAME version
+        # must leave the updater file (and the sentinel) untouched. -Update is
+        # required so the pre-existing workflow YAMLs do not trip the
+        # no-overwrite guard before the updater logic runs.
+        Add-Content -LiteralPath $updaterDest -Value "`r`n# OPERATOR SENTINEL EQUAL-VERSION"
+        Copy-AzLocalPipelineExample -Destination $dest -Platform GitHub -Update -Confirm:$false 6>$null | Out-Null
+
+        (Get-Content -LiteralPath $updaterDest -Raw) | Should -Match 'OPERATOR SENTINEL EQUAL-VERSION'
+    }
+
+    It 'v0.8.98: existing markerless (operator-owned) updater script is preserved' {
+        $repoRoot = Join-Path $script:cpDestRoot 'gh-updater-markerless'
+        $dest = Join-Path $repoRoot '.github\workflows'
+        New-Item -Path $dest -ItemType Directory -Force | Out-Null
+
+        $updaterDest = Join-Path $repoRoot 'Update-Module-And-Pipelines.ps1'
+        Set-Content -LiteralPath $updaterDest -Value '# NO VERSION MARKER - operator-owned' -Encoding ASCII
+
+        Copy-AzLocalPipelineExample -Destination $dest -Platform GitHub 6>$null | Out-Null
+
+        (Get-Content -LiteralPath $updaterDest -Raw) | Should -Match 'operator-owned'
+    }
+
     # v0.8.85: -PruneDeprecated removes the legacy authentication-test.yml /
     # inventory-clusters.yml sample files that were merged into the single
     # setup-validate-and-inventory.yml workflow. The cleanup is opt-in,
@@ -9737,6 +9809,59 @@ second
     }
 }
 
+Describe 'Helper Function: Get-AzLocalUpdaterScriptVersion (Internal)' {
+
+    It 'Returns $null on empty input' {
+        InModuleScope AzLocal.UpdateManagement {
+            Get-AzLocalUpdaterScriptVersion -Text '' | Should -BeNullOrEmpty
+        }
+    }
+
+    It 'Returns $null when no marker is present' {
+        InModuleScope AzLocal.UpdateManagement {
+            Get-AzLocalUpdaterScriptVersion -Text "#Requires -Version 5.1`n# just a comment" | Should -BeNullOrEmpty
+        }
+    }
+
+    It 'Parses a standard marker into a [version]' {
+        InModuleScope AzLocal.UpdateManagement {
+            $v = Get-AzLocalUpdaterScriptVersion -Text "#Requires -Version 5.1`n# AZLOCAL-UPDATER-VERSION: 1.2.3`n<#"
+            $v | Should -BeOfType [version]
+            $v | Should -Be ([version]'1.2.3')
+        }
+    }
+
+    It 'Is case-insensitive on the token and tolerates extra hashes / whitespace' {
+        InModuleScope AzLocal.UpdateManagement {
+            $v = Get-AzLocalUpdaterScriptVersion -Text "  ## azlocal-updater-version :  2.0.0  "
+            $v | Should -Be ([version]'2.0.0')
+        }
+    }
+
+    It 'Returns the FIRST marker when several are present' {
+        InModuleScope AzLocal.UpdateManagement {
+            $v = Get-AzLocalUpdaterScriptVersion -Text "# AZLOCAL-UPDATER-VERSION: 1.0.0`n# AZLOCAL-UPDATER-VERSION: 9.9.9"
+            $v | Should -Be ([version]'1.0.0')
+        }
+    }
+
+    It 'Returns $null for a non-version-shaped value' {
+        InModuleScope AzLocal.UpdateManagement {
+            Get-AzLocalUpdaterScriptVersion -Text '# AZLOCAL-UPDATER-VERSION: not-a-version' | Should -BeNullOrEmpty
+        }
+    }
+
+    It 'Reads the marker from the bundled update-module-and-pipelines.ps1 template' {
+        $templatePath = Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples\update-module-and-pipelines.ps1'
+        Test-Path -LiteralPath $templatePath | Should -BeTrue
+        $text = Get-Content -LiteralPath $templatePath -Raw
+        InModuleScope AzLocal.UpdateManagement -Parameters @{ Text = $text } {
+            param($Text)
+            Get-AzLocalUpdaterScriptVersion -Text $Text | Should -Not -BeNullOrEmpty
+        }
+    }
+}
+
 Describe 'Function: Update-AzLocalPipelineExample' {
 
     BeforeAll {
@@ -9769,6 +9894,89 @@ Describe 'Function: Update-AzLocalPipelineExample' {
         It 'Throws when -Destination does not exist' {
             { Update-AzLocalPipelineExample -Destination "$env:TEMP\does-not-exist-$([guid]::NewGuid())" -Platform GitHub -PassThru } |
                 Should -Throw -ExpectedMessage '*Destination*does not exist*'
+        }
+    }
+
+    Context 'v0.8.98 turnkey updater drop + version-gated refresh' {
+        It 'Exposes -SkipStarterUpdater as a [switch] parameter' {
+            $cmd = Get-Command Update-AzLocalPipelineExample
+            $cmd.Parameters.ContainsKey('SkipStarterUpdater') | Should -BeTrue
+            $cmd.Parameters['SkipStarterUpdater'].ParameterType | Should -Be ([switch])
+        }
+
+        It 'Drops Update-Module-And-Pipelines.ps1 at the repo root when absent' {
+            $repoRoot = Join-Path $env:TEMP "upe-updater-fresh-$([guid]::NewGuid())"
+            $dest = Join-Path $repoRoot '.github\workflows'
+            New-Item -ItemType Directory -Path $dest -Force | Out-Null
+            try {
+                Update-AzLocalPipelineExample -Destination $dest -Platform GitHub -Confirm:$false 6>$null 4>$null | Out-Null
+                Test-Path (Join-Path $repoRoot 'Update-Module-And-Pipelines.ps1') | Should -BeTrue
+            }
+            finally { Remove-Item -Path $repoRoot -Recurse -Force -ErrorAction SilentlyContinue }
+        }
+
+        It 'Refreshes an existing updater script with an OLDER version marker' {
+            $repoRoot = Join-Path $env:TEMP "upe-updater-older-$([guid]::NewGuid())"
+            $dest = Join-Path $repoRoot '.github\workflows'
+            New-Item -ItemType Directory -Path $dest -Force | Out-Null
+            try {
+                $updaterDest = Join-Path $repoRoot 'Update-Module-And-Pipelines.ps1'
+                $stale = @(
+                    '#Requires -Version 5.1'
+                    '# AZLOCAL-UPDATER-VERSION: 0.0.1'
+                    '# STALE BODY - should be replaced on refresh'
+                ) -join "`r`n"
+                Set-Content -LiteralPath $updaterDest -Value $stale -Encoding ASCII
+
+                Update-AzLocalPipelineExample -Destination $dest -Platform GitHub -Confirm:$false 6>$null 4>$null | Out-Null
+
+                $text = Get-Content -LiteralPath $updaterDest -Raw
+                $text | Should -Not -Match 'STALE BODY'
+                $text | Should -Not -Match '0\.0\.1'
+            }
+            finally { Remove-Item -Path $repoRoot -Recurse -Force -ErrorAction SilentlyContinue }
+        }
+
+        It 'Preserves an existing updater script with an EQUAL version marker' {
+            $repoRoot = Join-Path $env:TEMP "upe-updater-equal-$([guid]::NewGuid())"
+            $dest = Join-Path $repoRoot '.github\workflows'
+            New-Item -ItemType Directory -Path $dest -Force | Out-Null
+            try {
+                Update-AzLocalPipelineExample -Destination $dest -Platform GitHub -Confirm:$false 6>$null 4>$null | Out-Null
+                $updaterDest = Join-Path $repoRoot 'Update-Module-And-Pipelines.ps1'
+                Add-Content -LiteralPath $updaterDest -Value "`r`n# OPERATOR SENTINEL EQUAL"
+
+                Update-AzLocalPipelineExample -Destination $dest -Platform GitHub -Confirm:$false 6>$null 4>$null | Out-Null
+
+                (Get-Content -LiteralPath $updaterDest -Raw) | Should -Match 'OPERATOR SENTINEL EQUAL'
+            }
+            finally { Remove-Item -Path $repoRoot -Recurse -Force -ErrorAction SilentlyContinue }
+        }
+
+        It 'Preserves a markerless (operator-owned) updater script' {
+            $repoRoot = Join-Path $env:TEMP "upe-updater-markerless-$([guid]::NewGuid())"
+            $dest = Join-Path $repoRoot '.github\workflows'
+            New-Item -ItemType Directory -Path $dest -Force | Out-Null
+            try {
+                $updaterDest = Join-Path $repoRoot 'Update-Module-And-Pipelines.ps1'
+                Set-Content -LiteralPath $updaterDest -Value '# NO VERSION MARKER - operator-owned' -Encoding ASCII
+
+                Update-AzLocalPipelineExample -Destination $dest -Platform GitHub -Confirm:$false 6>$null 4>$null | Out-Null
+
+                (Get-Content -LiteralPath $updaterDest -Raw) | Should -Match 'operator-owned'
+            }
+            finally { Remove-Item -Path $repoRoot -Recurse -Force -ErrorAction SilentlyContinue }
+        }
+
+        It '-SkipStarterUpdater suppresses the drop entirely' {
+            $repoRoot = Join-Path $env:TEMP "upe-updater-skip-$([guid]::NewGuid())"
+            $dest = Join-Path $repoRoot '.github\workflows'
+            New-Item -ItemType Directory -Path $dest -Force | Out-Null
+            try {
+                Update-AzLocalPipelineExample -Destination $dest -Platform GitHub -SkipStarterUpdater -Confirm:$false 6>$null 4>$null | Out-Null
+                Test-Path (Join-Path $repoRoot 'Update-Module-And-Pipelines.ps1') | Should -BeFalse
+            }
+            finally { Remove-Item -Path $repoRoot -Recurse -Force -ErrorAction SilentlyContinue }
         }
     }
 

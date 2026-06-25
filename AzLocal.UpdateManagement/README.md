@@ -87,7 +87,9 @@ A turnkey **"refresh after every release" updater** for the customer repo, so op
   1. `Find-Module` the latest `AzLocal.UpdateManagement` and **install it only when newer** (no uninstall churn), then re-import it.
   2. Call `Update-AzLocalPipelineExample` to regenerate the pipeline YAMLs (your `BEGIN/END-AZLOCAL-CUSTOMIZE` edits are preserved).
   3. Stage **only** the workflow folder + `config` (`git -C $RepoRoot add -A -- $gitPaths` - never a blanket `git add .`), then commit and push under ShouldProcess (`-WhatIf` / `-NoPush` supported).
-- The drop is **default-on** for the two single-platform modes, **never overwrites** an existing root script (so your edits survive), is suppressed by the new **`-SkipStarterUpdater`** switch, and is skipped entirely for `-Platform All`. The bundled template is written BOM-less and is verified to parse as valid PowerShell.
+- The drop is **default-on** for the two single-platform modes, is suppressed by the new **`-SkipStarterUpdater`** switch, and is skipped entirely for `-Platform All`. The bundled template is written BOM-less and is verified to parse as valid PowerShell.
+- **Existing repos get it too.** Customers who set up before v0.8.98 upgrade by running `Update-AzLocalPipelineExample` (not `Copy`), so **`Update` now drops the same `Update-Module-And-Pipelines.ps1`** at the repo root when absent (also gated by `-SkipStarterUpdater`).
+- **The dropped script is version-stamped and self-refreshing.** It carries an `# AZLOCAL-UPDATER-VERSION: X.Y.Z` marker - a dedicated *template* semver starting at `1.0.0`, independent of the module version. When a future module release ships an improved template, both `Copy` and `Update` re-render the script **in place** *only* when the existing file's marker is **strictly older** (logged as `Updated`). An up-to-date copy, or a **markerless (operator-owned)** file, is **preserved** and never clobbered. Tune behaviour via the script's parameters (`-Scope`, `-NoPush`, ...) rather than editing its body - body edits are replaced on a version-gated refresh.
 
 ### Changed
 
