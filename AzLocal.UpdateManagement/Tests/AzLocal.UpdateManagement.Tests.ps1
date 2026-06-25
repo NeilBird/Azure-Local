@@ -34,8 +34,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $script:ModuleInfo | Should -Not -BeNullOrEmpty
         }
 
-        It 'Should have version 0.8.98' {
-            $script:ModuleInfo.Version | Should -Be '0.8.98'
+        It 'Should have version 0.8.99' {
+            $script:ModuleInfo.Version | Should -Be '0.8.99'
         }
 
         It 'Module version constants are in sync between .psm1 and .psd1' {
@@ -7865,6 +7865,22 @@ Describe 'Function: Copy-AzLocalPipelineExample' {
         $text | Should -Match "git -C \`$RepoRoot add -A -- \`$gitPaths"
         $text | Should -Match "@\(\`$WorkflowSubPath, 'config'\)"
         $text | Should -Not -Match 'git add \.'
+    }
+
+    It 'v1.1.0 template: dropped script also stages ITSELF (so version-gated self-refresh is committed)' {
+        $repoRoot = Join-Path $script:cpDestRoot 'gh-updater-selfstage'
+        $dest = Join-Path $repoRoot '.github\workflows'
+        New-Item -Path $dest -ItemType Directory -Force | Out-Null
+
+        Copy-AzLocalPipelineExample -Destination $dest -Platform GitHub 6>$null | Out-Null
+
+        $updaterDest = Join-Path $repoRoot 'Update-Module-And-Pipelines.ps1'
+        $text = Get-Content -LiteralPath $updaterDest -Raw
+        # Resolves its own repo-relative path from $PSCommandPath and appends it
+        # to the staged paths, so an in-place self-refresh is committed/pushed.
+        $text | Should -Match '\$PSCommandPath'
+        $text | Should -Match '\$selfRel'
+        $text | Should -Match 'if \(\$selfRel\) \{ \$candidatePaths \+= \$selfRel \}'
     }
 
     # v0.8.98: version-gated self-refresh. The dropped script carries an

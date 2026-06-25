@@ -2,7 +2,7 @@
 
 > ⚠️ **Disclaimer**: This module is **NOT** a Microsoft supported service offering or product. It is provided as example code only, with no warranty or official support. Refer to the [MIT license](https://github.com/NeilBird/Azure-Local/blob/main/LICENSE) for further information.
 
-**Latest Version:** v0.8.98 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.8.98)
+**Latest Version:** v0.8.99 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.8.99)
 
 This folder contains the 'AzLocal.UpdateManagement' PowerShell module for managing updates on Azure Local (formerly Azure Stack HCI) clusters using the Azure Local REST API. The module supports both interactive use and CI/CD automation via Service Principal or Managed Identity authentication.
 
@@ -14,7 +14,7 @@ Azure Local REST API specification (includes update management endpoints): https
 **This README (overview + most-recent release notes):**
 
 - [Where to Start](#where-to-start)
-- [What's New in v0.8.98](#whats-new-in-v0898)
+- [What's New in v0.8.99](#whats-new-in-v0899)
 - [Files](#files)
 - [Prerequisites](#prerequisites)
 - [RBAC Requirements](#rbac-requirements) (summary; full reference in [docs/rbac.md](docs/rbac.md))
@@ -77,28 +77,22 @@ If you are new to this module, work through these in order from a regular PowerS
 
 > Most CI/CD pipelines in [Automation-Pipeline-Examples/](Automation-Pipeline-Examples/) are direct implementations of one of these workflows. Start there if you want a copy-pasteable end-to-end pipeline.
 
-## What's New in v0.8.98
+## What's New in v0.8.99
 
-A turnkey **"refresh after every release" updater** for the customer repo, so operators no longer have to remember the install / regenerate / commit sequence by hand.
+A small follow-up to the v0.8.98 turnkey updater: the dropped `Update-Module-And-Pipelines.ps1` now **stages itself** so its own version-gated self-refresh is committed and pushed automatically.
 
-### Added
+### Fixed
 
-- **`Copy-AzLocalPipelineExample` now also drops a self-contained `Update-Module-And-Pipelines.ps1` into your repo root** (alongside the existing workflow + `config` starter files), with your chosen devops platform (`GitHub` / `AzureDevOps`) and the resolved workflow subpath baked in at drop time. After each module release you just run that one script:
-  1. `Find-Module` the latest `AzLocal.UpdateManagement` and **install it only when newer** (no uninstall churn), then re-import it.
-  2. Call `Update-AzLocalPipelineExample` to regenerate the pipeline YAMLs (your `BEGIN/END-AZLOCAL-CUSTOMIZE` edits are preserved).
-  3. Stage **only** the workflow folder + `config` (`git -C $RepoRoot add -A -- $gitPaths` - never a blanket `git add .`), then commit and push under ShouldProcess (`-WhatIf` / `-NoPush` supported).
-- The drop is **default-on** for the two single-platform modes, is suppressed by the new **`-SkipStarterUpdater`** switch, and is skipped entirely for `-Platform All`. The bundled template is written BOM-less and is verified to parse as valid PowerShell.
-- **Existing repos get it too.** Customers who set up before v0.8.98 upgrade by running `Update-AzLocalPipelineExample` (not `Copy`), so **`Update` now drops the same `Update-Module-And-Pipelines.ps1`** at the repo root when absent (also gated by `-SkipStarterUpdater`).
-- **The dropped script is version-stamped and self-refreshing.** It carries an `# AZLOCAL-UPDATER-VERSION: X.Y.Z` marker - a dedicated *template* semver starting at `1.0.0`, independent of the module version. When a future module release ships an improved template, both `Copy` and `Update` re-render the script **in place** *only* when the existing file's marker is **strictly older** (logged as `Updated`). An up-to-date copy, or a **markerless (operator-owned)** file, is **preserved** and never clobbered. Tune behaviour via the script's parameters (`-Scope`, `-NoPush`, ...) rather than editing its body - body edits are replaced on a version-gated refresh.
+- **The turnkey `Update-Module-And-Pipelines.ps1` now also stages ITSELF.** When a future module release ships an improved updater template, `Update-AzLocalPipelineExample` (called inside the script) version-refreshes the dropped script **in place**. In v0.8.98 the script's scoped `git add` staged only the workflow folder + `config`, so that self-refresh was left as an **uncommitted working-tree change** you had to spot and commit by hand. The template now resolves its own repo-relative path from `$PSCommandPath` (only when the script actually lives inside the repo) and appends it to the staged paths, so the self-update is committed and pushed alongside the regenerated YAMLs. The scoped add still never uses a blanket `git add .`.
 
 ### Changed
 
-- The maintainer's `Test-Pipelines.ps1` helper was renamed to `Tools/Update-Module-And-Pipelines.ps1`. `Tools/` is stripped from the published package, **fixing a prior leak of the maintainer script into the PSGallery `.nupkg`**.
+- The bundled updater template's `# AZLOCAL-UPDATER-VERSION` marker is bumped `1.0.0` -> `1.1.0`, so if you already have the v1.0.0 script dropped you get this fix auto-applied on your next run (version-gated refresh). **Bootstrap note:** the single transition run that upgrades a v1.0.0 drop to v1.1.0 executes the *old* body, so that one refresh is not self-staged - commit the refreshed script once, and every run thereafter self-stages.
 
 ### Notes
 
 - **Additive** - no public function, parameter-removal, or export-count change (still 64).
-- **`GENERATED_AGAINST_MODULE_VERSION`** bumped from `0.8.97` to `0.8.98` across bundled pipeline templates.
+- **`GENERATED_AGAINST_MODULE_VERSION`** bumped from `0.8.98` to `0.8.99` across bundled pipeline templates.
 
 > Previous release notes have moved into the [Release History](#release-history) appendix at the bottom of this document.
 
@@ -584,7 +578,11 @@ This code is provided as-is for educational and reference purposes.
 
 The full What's-New history (v0.7.81 and earlier) has moved to [docs/release-history.md](docs/release-history.md).
 
-The most recent release notes for **v0.8.98** stay above under [`What's New in v0.8.98`](#whats-new-in-v0898).
+The most recent release notes for **v0.8.99** stay above under [`What's New in v0.8.99`](#whats-new-in-v0899).
+
+### What's New in v0.8.98
+
+**Turnkey "refresh after every release" updater for the customer repo.** `Copy-AzLocalPipelineExample` now also drops a self-contained `Update-Module-And-Pipelines.ps1` into the repo root (with the chosen platform + workflow subpath baked in): it installs the latest module only when newer, regenerates the pipeline YAMLs via `Update-AzLocalPipelineExample` (preserving `BEGIN/END-AZLOCAL-CUSTOMIZE` edits), then commits + pushes under ShouldProcess (`-WhatIf`/`-NoPush`). Default-on for single-platform modes, suppressed by `-SkipStarterUpdater`, skipped for `-Platform All`. Existing repos get it via `Update` too. The dropped script is version-stamped (`# AZLOCAL-UPDATER-VERSION`, a dedicated template semver from `1.0.0`) and self-refreshes in place only when its marker is strictly older - markerless/operator-owned files are preserved. The maintainer `Test-Pipelines.ps1` was renamed to `Tools/Update-Module-And-Pipelines.ps1` (Tools/ is stripped from the package, fixing a prior nupkg leak). Additive - no public API or export-count change (still 64). `GENERATED_AGAINST_MODULE_VERSION` bumped from `0.8.97` to `0.8.98`. See [CHANGELOG.md](CHANGELOG.md#0898---2026-06-25) for the full v0.8.98 entry.
 
 ### What's New in v0.8.97
 
