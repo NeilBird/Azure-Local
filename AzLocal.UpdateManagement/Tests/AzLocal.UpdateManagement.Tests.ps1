@@ -34,8 +34,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $script:ModuleInfo | Should -Not -BeNullOrEmpty
         }
 
-        It 'Should have version 0.8.97' {
-            $script:ModuleInfo.Version | Should -Be '0.8.97'
+        It 'Should have version 0.8.98' {
+            $script:ModuleInfo.Version | Should -Be '0.8.98'
         }
 
         It 'Module version constants are in sync between .psm1 and .psd1' {
@@ -7717,6 +7717,154 @@ Describe 'Function: Copy-AzLocalPipelineExample' {
 
         Test-Path (Join-Path $repoRoot 'config\sideload-auth-map.csv') | Should -BeFalse
         Test-Path (Join-Path $repoRoot 'config\sideload-catalog.yml')  | Should -BeFalse
+    }
+
+    # v0.8.98: turnkey Update-Module-And-Pipelines.ps1 drop (default-on for
+    # -Platform GitHub|AzureDevOps; suppressed by -SkipStarterUpdater). Lands
+    # in the REPO ROOT (not config\) with the platform + workflow subpath
+    # tokens substituted at drop time. NEVER overwrites an existing file.
+
+    It 'v0.8.98: -SkipStarterUpdater is exposed as a [switch] parameter' {
+        $cmd = Get-Command -Name 'Copy-AzLocalPipelineExample' -ErrorAction Stop
+        $cmd.Parameters.ContainsKey('SkipStarterUpdater') | Should -BeTrue
+        $cmd.Parameters['SkipStarterUpdater'].ParameterType | Should -Be ([switch])
+    }
+
+    It 'v0.8.98: -Platform GitHub default drops Update-Module-And-Pipelines.ps1 into the repo root' {
+        $repoRoot = Join-Path $script:cpDestRoot 'gh-updater-fresh'
+        $dest = Join-Path $repoRoot '.github\workflows'
+        New-Item -Path $dest -ItemType Directory -Force | Out-Null
+
+        Copy-AzLocalPipelineExample -Destination $dest -Platform GitHub 6>$null | Out-Null
+
+        $updaterDest = Join-Path $repoRoot 'Update-Module-And-Pipelines.ps1'
+        Test-Path $updaterDest | Should -BeTrue
+    }
+
+    It 'v0.8.98: -Platform AzureDevOps default drops Update-Module-And-Pipelines.ps1 into the repo root' {
+        $repoRoot = Join-Path $script:cpDestRoot 'ado-updater-fresh'
+        $dest = Join-Path $repoRoot 'pipelines'
+        New-Item -Path $dest -ItemType Directory -Force | Out-Null
+
+        Copy-AzLocalPipelineExample -Destination $dest -Platform AzureDevOps 6>$null | Out-Null
+
+        $updaterDest = Join-Path $repoRoot 'Update-Module-And-Pipelines.ps1'
+        Test-Path $updaterDest | Should -BeTrue
+    }
+
+    It 'v0.8.98: dropped GitHub script has the platform + workflow-subpath tokens substituted (no placeholders remain)' {
+        $repoRoot = Join-Path $script:cpDestRoot 'gh-updater-tokens'
+        $dest = Join-Path $repoRoot '.github\workflows'
+        New-Item -Path $dest -ItemType Directory -Force | Out-Null
+
+        Copy-AzLocalPipelineExample -Destination $dest -Platform GitHub 6>$null | Out-Null
+
+        $updaterDest = Join-Path $repoRoot 'Update-Module-And-Pipelines.ps1'
+        $text = Get-Content -LiteralPath $updaterDest -Raw
+        $text | Should -Not -Match '__PLATFORM__'
+        $text | Should -Not -Match '__WORKFLOW_SUBPATH__'
+        $text | Should -Match "Platform\s*=\s*'GitHub'"
+        $text | Should -Match "WorkflowSubPath\s*=\s*'\.github/workflows'"
+    }
+
+    It 'v0.8.98: dropped AzureDevOps script bakes in the AzureDevOps platform + pipelines subpath' {
+        $repoRoot = Join-Path $script:cpDestRoot 'ado-updater-tokens'
+        $dest = Join-Path $repoRoot 'pipelines'
+        New-Item -Path $dest -ItemType Directory -Force | Out-Null
+
+        Copy-AzLocalPipelineExample -Destination $dest -Platform AzureDevOps 6>$null | Out-Null
+
+        $updaterDest = Join-Path $repoRoot 'Update-Module-And-Pipelines.ps1'
+        $text = Get-Content -LiteralPath $updaterDest -Raw
+        $text | Should -Match "Platform\s*=\s*'AzureDevOps'"
+        $text | Should -Match "WorkflowSubPath\s*=\s*'pipelines'"
+    }
+
+    It 'v0.8.98: dropped script is valid, parseable PowerShell' {
+        $repoRoot = Join-Path $script:cpDestRoot 'gh-updater-parse'
+        $dest = Join-Path $repoRoot '.github\workflows'
+        New-Item -Path $dest -ItemType Directory -Force | Out-Null
+
+        Copy-AzLocalPipelineExample -Destination $dest -Platform GitHub 6>$null | Out-Null
+
+        $updaterDest = Join-Path $repoRoot 'Update-Module-And-Pipelines.ps1'
+        $tokens = $null; $parseErrors = $null
+        [System.Management.Automation.Language.Parser]::ParseFile($updaterDest, [ref]$tokens, [ref]$parseErrors) | Out-Null
+        @($parseErrors).Count | Should -Be 0
+    }
+
+    It 'v0.8.98: dropped script is written WITHOUT a UTF-8 BOM' {
+        $repoRoot = Join-Path $script:cpDestRoot 'gh-updater-bom'
+        $dest = Join-Path $repoRoot '.github\workflows'
+        New-Item -Path $dest -ItemType Directory -Force | Out-Null
+
+        Copy-AzLocalPipelineExample -Destination $dest -Platform GitHub 6>$null | Out-Null
+
+        $updaterDest = Join-Path $repoRoot 'Update-Module-And-Pipelines.ps1'
+        $bytes = [System.IO.File]::ReadAllBytes($updaterDest)
+        # No EF BB BF prefix.
+        ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) | Should -BeFalse
+    }
+
+    It 'v0.8.98: existing Update-Module-And-Pipelines.ps1 at the repo root is NEVER overwritten' {
+        $repoRoot = Join-Path $script:cpDestRoot 'gh-updater-preserve'
+        $dest = Join-Path $repoRoot '.github\workflows'
+        New-Item -Path $dest -ItemType Directory -Force | Out-Null
+
+        $updaterDest = Join-Path $repoRoot 'Update-Module-And-Pipelines.ps1'
+        $sentinel = '# OPERATOR SENTINEL - must never be overwritten by Copy-AzLocalPipelineExample'
+        Set-Content -LiteralPath $updaterDest -Value $sentinel -Encoding ASCII
+
+        Copy-AzLocalPipelineExample -Destination $dest -Platform GitHub 6>$null | Out-Null
+
+        (Get-Content -LiteralPath $updaterDest -Raw) | Should -Match 'OPERATOR SENTINEL'
+    }
+
+    It 'v0.8.98: -SkipStarterUpdater suppresses the updater drop entirely' {
+        $repoRoot = Join-Path $script:cpDestRoot 'gh-updater-skip'
+        $dest = Join-Path $repoRoot '.github\workflows'
+        New-Item -Path $dest -ItemType Directory -Force | Out-Null
+
+        Copy-AzLocalPipelineExample -Destination $dest -Platform GitHub -SkipStarterUpdater 6>$null | Out-Null
+
+        Test-Path (Join-Path $repoRoot 'Update-Module-And-Pipelines.ps1') | Should -BeFalse
+    }
+
+    It 'v0.8.98: -Platform All does NOT drop the updater script at a repo root' {
+        $parent = Join-Path $script:cpDestRoot 'all-no-updater-parent'
+        New-Item -Path $parent -ItemType Directory -Force | Out-Null
+        $dest = Join-Path $parent 'all-no-updater'
+        New-Item -Path $dest -ItemType Directory -Force | Out-Null
+
+        Copy-AzLocalPipelineExample -Destination $dest 6>$null | Out-Null
+
+        Test-Path (Join-Path $parent 'Update-Module-And-Pipelines.ps1') | Should -BeFalse
+        Test-Path (Join-Path $dest   'Update-Module-And-Pipelines.ps1') | Should -BeFalse
+    }
+
+    It 'v0.8.98: -WhatIf does not write the updater script' {
+        $repoRoot = Join-Path $script:cpDestRoot 'gh-updater-whatif'
+        $dest = Join-Path $repoRoot '.github\workflows'
+        New-Item -Path $dest -ItemType Directory -Force | Out-Null
+
+        Copy-AzLocalPipelineExample -Destination $dest -Platform GitHub -WhatIf 6>$null | Out-Null
+
+        Test-Path (Join-Path $repoRoot 'Update-Module-And-Pipelines.ps1') | Should -BeFalse
+    }
+
+    It 'v0.8.98: dropped script stages ONLY the workflow folder + config (scoped git add)' {
+        $repoRoot = Join-Path $script:cpDestRoot 'gh-updater-gitscope'
+        $dest = Join-Path $repoRoot '.github\workflows'
+        New-Item -Path $dest -ItemType Directory -Force | Out-Null
+
+        Copy-AzLocalPipelineExample -Destination $dest -Platform GitHub 6>$null | Out-Null
+
+        $updaterDest = Join-Path $repoRoot 'Update-Module-And-Pipelines.ps1'
+        $text = Get-Content -LiteralPath $updaterDest -Raw
+        # Scoped, path-independent add; not a bare 'git add .'.
+        $text | Should -Match "git -C \`$RepoRoot add -A -- \`$gitPaths"
+        $text | Should -Match "@\(\`$WorkflowSubPath, 'config'\)"
+        $text | Should -Not -Match 'git add \.'
     }
 
     # v0.8.85: -PruneDeprecated removes the legacy authentication-test.yml /

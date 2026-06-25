@@ -5,6 +5,34 @@ All notable changes to the AzLocal.UpdateManagement module (renamed from AzStack
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.98] - 2026-06-25
+
+Turnkey **"refresh after every release" updater** for the customer repo. Additive -
+no public function, parameter-removal or export-count change (still 64).
+
+### Added
+
+- `Copy-AzLocalPipelineExample` now also drops a self-contained
+  `Update-Module-And-Pipelines.ps1` into the customer's **repo root** (alongside the
+  existing workflow + config starter files), with the chosen devops platform
+  (`GitHub`/`AzureDevOps`) and the resolved workflow subpath baked in at drop time.
+  After each module release the operator just runs that one script: it `Find-Module`s
+  the latest `AzLocal.UpdateManagement`, installs it **only when newer** (no uninstall
+  churn), re-imports it, calls `Update-AzLocalPipelineExample` to regenerate the
+  pipeline YAMLs, stages **only** the workflow folder + `config`
+  (`git -C $RepoRoot add -A -- $gitPaths`, never a blanket `git add .`), then commits
+  and pushes under ShouldProcess (`-WhatIf`/`-NoPush` supported).
+- The drop is default-on for the two single-platform modes, **never overwrites** an
+  existing root script (operator edits are preserved), is suppressed by the new
+  `-SkipStarterUpdater` switch, and is skipped entirely for `-Platform All`. The
+  bundled template is written BOM-less and is verified to parse as valid PowerShell.
+
+### Changed
+
+- The maintainer's `Test-Pipelines.ps1` helper was renamed to
+  `Tools/Update-Module-And-Pipelines.ps1`. `Tools/` is stripped from the published
+  package, fixing a prior leak of the maintainer script into the PSGallery `.nupkg`.
+
 ## [0.8.97] - 2026-06-24
 
 Update-readiness reporting clarity across the fleet reports, plus intelligent
