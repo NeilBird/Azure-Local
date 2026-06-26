@@ -32,6 +32,7 @@ It is written in the same step-by-step style as [`ITSM/README.md`](../ITSM/READM
    - [5.4 Azure DevOps onboarding checklist](#54-azure-devops-onboarding-checklist)
 6. [End-to-end runbook: bring an estate online](#6-end-to-end-runbook-bring-an-estate-online)
    - [6.1 Inventory the estate](#61-inventory-the-estate)
+     - [6.1.1 (Optional) Exclude whole subscriptions from every fleet scan](#611-optional-exclude-whole-subscriptions-from-every-fleet-scan)
    - [6.2 Plan update rings, windows, and exclusions](#62-plan-update-rings-windows-and-exclusions)
    - [6.3 Apply tags](#63-apply-tags)
    - [6.4 Pre-flight readiness assessment](#64-pre-flight-readiness-assessment)
@@ -73,7 +74,7 @@ This is the whole journey - from an empty repo to a self-running, ring-based upd
 
 **Operating loop (repeat each update cycle):**
 
-- [ ] **9. Inventory the estate:** run **Config: 1 - Validate Auth and Inventory Clusters**. See [section 6.1](#61-inventory-the-estate).
+- [ ] **9. Inventory the estate:** run **Config: 1 - Validate Auth and Inventory Clusters**. See [section 6.1](#61-inventory-the-estate). *(Optional: carve out decommissioned / lab / out-of-scope subscriptions from every fleet scan with a subscription-exclusion list - see [section 6.1.1](#611-optional-exclude-whole-subscriptions-from-every-fleet-scan).)*
 - [ ] **10. Plan rings and apply tags:** decide Pilot/Wave2/Production rings and `UpdateStartWindow`s, then bulk-apply them with **Config: 2 - Manage UpdateRing Tags**. See [section 6.2](#62-plan-update-rings-windows-and-exclusions) and [6.3](#63-apply-tags).
 - [ ] **11. Pre-flight readiness:** run **Update: 1 - Assess Update Readiness** to surface blockers before scheduling. See [section 6.4](#64-pre-flight-readiness-assessment).
 - [ ] **12. Generate `apply-updates-schedule.yml`** from the live fleet with `New-AzLocalApplyUpdatesScheduleConfig`. See [section 6.5](#65-generate-apply-updates-scheduleyml-from-your-live-fleet).
@@ -102,6 +103,7 @@ By the end of this guide you will have:
   - **Update: 4 - Monitor In-Flight Updates** - active-run progress and stuck-run diagnostics.
 - An end-to-end "ring-based" rollout pattern: Pilot -> Wave2 -> Production, with each ring gated on the previous wave's success.
 - **Optional**: a ServiceNow integration that opens deduped incidents for clusters whose run status indicates the module's own retries cannot recover (failures, blocking health checks, sideloaded payload missing) - see [section 7](#7-optional-open-itsm-tickets-for-clusters-needing-operator-action).
+- **Optional** (v0.9.1): a fleet-wide **subscription-exclusion list** that filters decommissioned, lab, or out-of-scope subscriptions out of *every* Azure Resource Graph query (inventory, readiness, fleet status, update runs, connectivity) without touching any pipeline logic - see [section 6.1.1](#611-optional-exclude-whole-subscriptions-from-every-fleet-scan).
 
 The pipelines are **fully opt-in additive layers** over the module. The PowerShell functions also work without any pipeline at all - see [section 10](#10-standalone-html-report-no-pipeline) for the ad-hoc / desktop story.
 
@@ -1083,7 +1085,7 @@ Why a group instead of inline variables? Azure DevOps variable **precedence** ru
 
 | Variable | Default | Purpose | Consumed by |
 |---|---|---|---|
-| `AZLOCAL_EXCLUDED_SUBSCRIPTIONS_PATH` | `''` (none) | Path to the CSV of subscription IDs to exclude from every fleet scan. | All pipelines |
+| `AZLOCAL_EXCLUDED_SUBSCRIPTIONS_PATH` | `''` (none) | Path to the CSV of subscription IDs to exclude from every fleet scan. See [6.1.1](#611-optional-exclude-whole-subscriptions-from-every-fleet-scan). | All pipelines |
 | `APPLY_UPDATES_SCHEDULE_PATH` | `./config/apply-updates-schedule.yml` | Path to the apply schedule / allow-list. | `apply-updates`, `assess-update-readiness` |
 | `MONITOR_TRIGGER_DELAY_MINUTES` | `0` (no delay) | One-off startup sleep on the **event-driven** monitor run so the snapshot lands after the run registers `InProgress`. Honoured range 15-240. | `monitor-updates` |
 | `FAILED_UPDATES_SINGLE_RETRY` | unset (`off`) | Opt-in guarded one-time retry of failed update runs. Set `true` to enable. See [8.5](#85-opt-in-single-retry-of-failed-updates-failed_updates_single_retry). | `apply-updates` |
@@ -1314,6 +1316,59 @@ Download `cluster-inventory.csv` from the run artifacts. It contains `Subscripti
 ![inventory-clusters.yml run: Run Cluster Inventory step expanded, showing Inventory Summary with Total Clusters 20 / Clusters with UpdateRing tag 19 / 1 cluster without UpdateRing tag (warning), UpdateRing Distribution Canary=3 / Prod=9 / Ring1=3 / Ring2=4, CSV export path under the artifacts folder, and the Next Steps block guiding the operator to populate the UpdateRing column and then run Set-AzLocalClusterUpdateRingTag](../docs/images/inventory-clusters-run-output.png)
 
 > If you would rather skip the inventory pipeline entirely, the same operation runs from a local PowerShell session: `Import-Module ./AzLocal.UpdateManagement.psd1; Get-AzLocalClusterInventory -ExportPath ./cluster-inventory.csv`. This is the same code path the pipeline uses.
+
+#### 6.1.1 (Optional) Exclude whole subscriptions from every fleet scan
+
+*(v0.9.1)* By default every read-only pipeline scans **all** subscriptions the pipeline identity can see. If your tenant contains subscriptions you never want the module to touch - decommissioned estates, lab/sandbox subscriptions, or business units owned by another team - you can register a **subscription-exclusion list**. When set, the listed subscription IDs are filtered out **centrally**, so *every* Azure Resource Graph query inherits the exclusion automatically: inventory, readiness, fleet update/health/connectivity status, and in-flight update runs. No pipeline YAML or cluster tag changes are required.
+
+This is an estate-**scoping** control (which subscriptions are in play at all), distinct from the per-cluster `UpdateExcluded` tag in [6.2](#62-plan-update-rings-windows-and-exclusions) (which clusters are skipped *within* an in-scope subscription).
+
+**The exclusion CSV.** The list is a CSV in your repo. Only the `Subscription IDs` column is read - one subscription-id GUID per row; the other columns are for humans and are ignored. `#` comment lines are skipped, and a **header-only file is valid** (it excludes nothing and emits a warning rather than failing - handy as a committed placeholder you populate later). A worked example ships at [excluded-subscription-ids.example.csv](excluded-subscription-ids.example.csv):
+
+```csv
+Subscription IDs,Subscription Name,Comment / Notes
+00000000-0000-0000-0000-000000000000,Contoso-Lab,Lab subscription - never update
+11111111-1111-1111-1111-111111111111,Contoso-Decommissioned,Excluded pending tenant cleanup
+```
+
+> `Copy-AzLocalPipelineExample -Platform GitHub` (or `AzureDevOps`) automatically drops a **header-only** `config/Excluded-Subscription-Ids.csv` skeleton into your repo so the path exists; it never overwrites an existing file. Pass `-SkipStarterExclusions` to suppress it. `Update-AzLocalPipelineExample` drops the same skeleton for existing repos that don't have one yet.
+
+**Wire it into CI/CD.** Commit the CSV (e.g. `./config/Excluded-Subscription-Ids.csv`), then point the pipelines at it with the `AZLOCAL_EXCLUDED_SUBSCRIPTIONS_PATH` variable holding the **repo-relative path**. Leave the variable unset to exclude nothing.
+
+- **GitHub Actions:** create a repository (or organization) Actions **variable** named `AZLOCAL_EXCLUDED_SUBSCRIPTIONS_PATH` with the value `./config/Excluded-Subscription-Ids.csv`. Every workflow already reads it via `AZLOCAL_EXCLUDED_SUBSCRIPTIONS_PATH: ${{ vars.AZLOCAL_EXCLUDED_SUBSCRIPTIONS_PATH }}` in its `env:` block - nothing else to edit.
+
+  ```bash
+  gh variable set AZLOCAL_EXCLUDED_SUBSCRIPTIONS_PATH --body './config/Excluded-Subscription-Ids.csv'
+  ```
+
+- **Azure DevOps:** it is a member of the `AzureLocal-Pipeline-Settings` variable group - set it once there (see [section 5.2.1](#521-the-azurelocal-pipeline-settings-variable-group-shared-settings-set-once)). All ADO example pipelines source it from the group.
+
+  ```bash
+  az pipelines variable-group variable update \
+    --group-id <id> \
+    --name  AZLOCAL_EXCLUDED_SUBSCRIPTIONS_PATH \
+    --value './config/Excluded-Subscription-Ids.csv'
+  ```
+
+**Verify and drive it interactively.** Two public cmdlets let you confirm or override the list from a local session (or an ad-hoc pipeline step) without the environment variable:
+
+| Cmdlet | Purpose |
+|---|---|
+| `Get-AzLocalExcludedSubscription` | Shows the effective exclusion set this session (`SubscriptionIds`, `Count`, `Source`, `IsExplicit`). Resolves on first use from an explicit `Set-` call or the `AZLOCAL_EXCLUDED_SUBSCRIPTIONS_PATH` CSV. |
+| `Set-AzLocalExcludedSubscription` | Explicit override for the session: `-Path <csv>` to load a file, `-SubscriptionId <guids>` to set directly, or `-Clear` to remove all exclusions. An explicit call takes precedence over the environment variable for the rest of the process. |
+
+```powershell
+Import-Module ./AzLocal.UpdateManagement.psd1
+
+# Confirm what a pipeline-equivalent run would exclude (reads the env-var CSV):
+Get-AzLocalExcludedSubscription | Format-List
+
+# Or load / override the list for a local run:
+Set-AzLocalExcludedSubscription -Path ./config/Excluded-Subscription-Ids.csv -PassThru
+Get-AzLocalClusterInventory -ExportPath ./cluster-inventory.csv   # now skips the excluded subs
+```
+
+> **Secrets note:** this list is **non-secret** scoping metadata (subscription GUIDs are not credentials), so it belongs in source control / the `AzureLocal-Pipeline-Settings` group - never in a secret store. Azure authentication still flows through OIDC / the WIF service connection as before.
 
 ### 6.2 Plan update rings, windows, and exclusions
 
