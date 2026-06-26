@@ -5,6 +5,80 @@ All notable changes to the AzLocal.UpdateManagement module (renamed from AzStack
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.1] - 2026-06-26
+
+This release adds an opt-in update **allow-list override** to the readiness
+assessment, adds an optional **subscription-exclusion list** that filters every
+Azure Resource Graph query in the module, adds a **transient login retry** to
+every read-only task across the pipeline examples, and fixes a dry-run reporting
+bug. Two new public cmdlets bring the export count from 64 to **66**.
+
+### Added
+
+- **Readiness allow-list override.** `Get-AzLocalClusterUpdateReadiness` and
+  `Export-AzLocalClusterUpdateReadinessReport` gain an opt-in `-SchedulePath`
+  (apply-updates schedule, schema v2) plus a direct `-AllowedUpdateVersions`
+  `[string[]]` parameter. When a constraint is supplied and a cluster is not
+  pinned to the `Latest` sentinel, readiness is recomputed using **only** the
+  allow-listed updates: a cluster whose Ready updates all fall outside its
+  allow-list is reported `UpdateState = UpToDate` / `ReadyForUpdate = $false`
+  (no action under the schedule). Three new columns surface the decision -
+  `AllowedUpdateVersions`, `AllowListSource`
+  (`None`/`Latest`/`Explicit`/`TopLevel`/`RowOverride`), and `AzureUpdateState`
+  (the preserved raw Azure update-summary state). A new private resolver,
+  `Resolve-AzLocalClusterAllowList`, applies the precedence: a per-ring schedule
+  override beats the top-level fleet default (a `***` rings cell is the all-rings
+  wildcard; an untagged cluster falls back to the top-level default). The
+  default code path (neither parameter supplied) is unchanged.
+- **Optional subscription-exclusion list (single source of truth).** A new
+  opt-in CSV lets operators exclude entire subscriptions from every
+  AzLocal.UpdateManagement Azure Resource Graph query without touching the
+  individual KQL queries. Set the `AZLOCAL_EXCLUDED_SUBSCRIPTIONS_PATH`
+  pipeline/environment variable to a repo-relative CSV (columns:
+  `Subscription IDs,Subscription Name,Comment / Notes`; only the first column is
+  read, each value validated as a GUID, invalid rows skipped with a warning) and
+  every query centrally appends `| where id !startswith '/subscriptions/<id>/'`
+  via the new private helpers `Resolve-AzLocalExcludedSubscriptionId`,
+  `Get-AzLocalExcludedSubscriptionId`, and
+  `New-AzLocalSubscriptionExclusionKqlClause` (injected once in
+  `Invoke-AzResourceGraphQuery`). Two new public cmdlets,
+  `Get-AzLocalExcludedSubscription` and `Set-AzLocalExcludedSubscription`
+  (`-Path` / `-SubscriptionId` / `-Clear`), inspect and override the list for
+  interactive use. A header-only CSV (variable wired, zero rows) is **not** an
+  error - it warns and excludes nothing. Default (variable unset, no explicit
+  call) is a no-op. All 20 pipeline examples (10 GitHub Actions + 10 Azure
+  DevOps) declare the variable, and `Copy-/Update-AzLocalPipelineExample` drop an
+  inert header-only `config/Excluded-Subscription-Ids.csv` skeleton (never
+  overwriting an existing one).
+- **Transient `azure/login` retry across the pipeline examples.** Every
+  read-only/idempotent task now retries the intermittent OIDC token-exchange
+  failure (`Error: JSON is invalid: Expecting value...`) once. GitHub Actions
+  workflows pair a `continue-on-error` primary login (`id: azure_login`) with an
+  `if: steps.azure_login.outcome == 'failure'` retry step (12 guards across 10
+  workflows); Azure DevOps pipelines use the native `retryCountOnTaskFailure: 2`
+  (14 across 10 pipelines). Mutating tasks (**Apply Updates**, **Retry Failed
+  Updates**, **Raise ITSM tickets**) are deliberately excluded to avoid
+  duplicate-apply / duplicate-ticket risk.
+
+### Fixed
+
+- **Dry-run pipeline step produced no summary / outputs.** `Add-AzLocalPipelineStepSummary`,
+  `Set-AzLocalPipelineOutput`, and `Set-AzLocalClusterUpdateRingTagFromCsv`'s
+  artifact-directory + JSON sidecar writes now pass `-WhatIf:$false`, so dry-run reporting
+  always reaches the run Summary (the `Dry Run | True` row, the per-cluster "would change"
+  detail, and the "This was a dry run. No changes were applied." footer). The actual Azure
+  tag PATCH stays suppressed by `ShouldProcess`. Adds a GitHub-host WhatIf+summary
+  regression test.
+
+### Changed
+
+- The assess-update-readiness GitHub Actions and Azure DevOps examples opt into
+  the allow-list automatically when a `./config/apply-updates-schedule.yml` file
+  is present in the repo.
+- Module export count increased from 64 to **66** (`Get-AzLocalExcludedSubscription`,
+  `Set-AzLocalExcludedSubscription`).
+- `GENERATED_AGAINST_MODULE_VERSION` pins bumped to `'0.9.1'`.
+
 ## [0.9.0] - 2026-06-25
 
 Managed repo **README auto-drop**. `Copy-AzLocalPipelineExample` and

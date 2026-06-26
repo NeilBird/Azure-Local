@@ -54,7 +54,11 @@ function Set-AzLocalPipelineOutput {
             if (-not $githubOutput) {
                 throw "Set-AzLocalPipelineOutput: GITHUB_ACTIONS is true but GITHUB_OUTPUT env var is not set. This indicates a corrupt runner environment."
             }
-            "$Name=$Value" | Out-File -FilePath $githubOutput -Encoding utf8 -Append
+            # -WhatIf:$false: a step output is diagnostic reporting, not a state
+            # change to the managed system. It must always be emitted even when
+            # an upstream cmdlet runs under -WhatIf (which sets $WhatIfPreference
+            # and would otherwise suppress this Out-File via the WhatIf cascade).
+            "$Name=$Value" | Out-File -FilePath $githubOutput -Encoding utf8 -Append -WhatIf:$false
         }
         'AzureDevOps' {
             $isOutput = if ($CrossJob) { 'true' } else { 'false' }

@@ -65,7 +65,7 @@ env:
   # this to the version actually installed and to the latest on PSGallery, and emits a
   # ::notice annotation if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.9.0'
+  GENERATED_AGAINST_MODULE_VERSION: '0.9.1'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): manual workflow_dispatch input >
   # repository variable 'REQUIRED_MODULE_VERSION' > empty (latest).
@@ -79,6 +79,12 @@ env:
   # set ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true.
   # https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  # v0.9.1 - OPTIONAL subscription exclusion list. Create a repository (or org)
+  # Actions variable named AZLOCAL_EXCLUDED_SUBSCRIPTIONS_PATH whose value is the
+  # repo-relative path to your exclusion CSV (e.g. ./config/Excluded-Subscription-Ids.csv).
+  # When set, every AzLocal.UpdateManagement Azure Resource Graph query in this
+  # workflow excludes the listed subscriptions. Leave it unset to exclude nothing.
+  AZLOCAL_EXCLUDED_SUBSCRIPTIONS_PATH: ${{ vars.AZLOCAL_EXCLUDED_SUBSCRIPTIONS_PATH }}
 
 jobs:
   manage-tags:
@@ -98,6 +104,12 @@ jobs:
     # OPTION 1: OpenID Connect (OIDC) - RECOMMENDED
     # No client secret required - uses federated credentials
     - name: Azure CLI Login (OIDC)
+      id: azure_login
+      # v0.9.1: OIDC token exchange / `az login` can transiently fail
+      # ("JSON is invalid: Expecting value" / az exit code 1). Let this first
+      # attempt fail soft so the retry step below can try once more before the
+      # job fails.
+      continue-on-error: true
       uses: azure/login@v3
       with:
         client-id: ${{ secrets.AZURE_CLIENT_ID }}
@@ -110,6 +122,17 @@ jobs:
         # read) and is NOT interpolated into Azure portal deep-link URLs (those use
         # the per-row `subscriptionId` returned by ARG).
         # Set it via: gh variable set AZURE_SUBSCRIPTION_ID --body <subId>
+        subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+    # v0.9.1: single automatic retry for the transient login failure above. Runs
+    # only when the first attempt failed; no continue-on-error here, so a second
+    # failure stops the job.
+    - name: Azure CLI Login (OIDC) - retry
+      if: steps.azure_login.outcome == 'failure'
+      uses: azure/login@v3
+      with:
+        client-id: ${{ secrets.AZURE_CLIENT_ID }}
+        tenant-id: ${{ vars.AZURE_TENANT_ID }}
         subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
     
     # OPTION 2: Client Secret - LEGACY (uncomment if OIDC not available)

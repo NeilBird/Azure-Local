@@ -66,16 +66,29 @@ parameters:
     default: ''
 
 variables:
-  # Module version this YAML was generated against. The install step compares this to
-  # the version actually installed and to the latest on PSGallery, and emits a warning
-  # log if the YAML appears stale - prompting you to refresh via
-  # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.9.0'
-  # Resolution order for the module version pin (leave all unset to install the latest,
-  # which is the default "fix-forward" behaviour): queue-time parameter > pipeline variable
-  # 'REQUIRED_MODULE_VERSION' overridden at queue time > empty (latest).
-  REQUIRED_MODULE_VERSION: '${{ parameters.moduleVersion }}'
-  artifactsPath: '$(Build.ArtifactStagingDirectory)/readiness-assessment'
+  # Module version this YAML was generated against (per-file stamp; do NOT move to
+  # the shared group). The install step compares this to the installed version and
+  # to the latest on PSGallery and warns if the YAML looks stale - prompting a
+  # refresh via Copy-AzLocalPipelineExample -Update.
+  - name: GENERATED_AGAINST_MODULE_VERSION
+    value: '0.9.1'
+  # Resolution order for the module version pin: queue-time parameter 'moduleVersion'
+  # > empty (latest). Leave empty for the default fix-forward behaviour.
+  - name: REQUIRED_MODULE_VERSION
+    value: '${{ parameters.moduleVersion }}'
+  - name: artifactsPath
+    value: '$(Build.ArtifactStagingDirectory)/readiness-assessment'
+  # Shared, set-once pipeline settings come from the variable group below - the
+  # Azure DevOps equivalent of GitHub repo Variables. Set them ONCE in the group
+  # and every pipeline picks up the same values:
+  #   AZLOCAL_EXCLUDED_SUBSCRIPTIONS_PATH  (default '')   - optional subscription
+  #       exclusion CSV path (repo-relative); when non-empty every Azure Resource
+  #       Graph query in this pipeline excludes the listed subscriptions.
+  # Create the group once (Library > Variable groups, or
+  # `az pipelines variable-group create`). See Automation-Pipeline-Examples/README.md
+  # section 5. A variable redefined inline would OVERRIDE the group, so it is
+  # intentionally not redefined here - the group is the single source of truth.
+  - group: AzureLocal-Pipeline-Settings
 
 # BEGIN-AZLOCAL-CUSTOMIZE:runner-target-pipeline
 pool:
@@ -120,6 +133,10 @@ stages:
 
           - task: AzureCLI@2
             displayName: 'Run readiness + blocking health checks'
+            # v0.9.1: single retry for the transient OIDC/az-login failure (the
+            # service-connection token exchange can intermittently return
+            # "JSON is invalid"). This task is read-only/idempotent so a re-run is safe.
+            retryCountOnTaskFailure: 2
             # v0.8.5 thin-YAML: the inline run block (inventory + scope param
             # construction + Get-AzLocalClusterUpdateReadiness CSV/XML +
             # Test-AzLocalClusterHealth -BlockingOnly CSV/XML + combined JUnit
@@ -136,6 +153,13 @@ stages:
               INPUT_UPDATE_RING: ${{ parameters.updateRing }}
               INSTALLED_MODULE_VERSION: $(moduleVersion.installed_module_version)
               ARTIFACTS_PATH: $(artifactsPath)
+              # v0.9.1: optional apply-updates schedule (schema v2). When this
+              # file exists in the repo, its allowedUpdateVersions allow-list
+              # constrains the readiness calc to the updates each ring is
+              # permitted to install (per-ring override beats the top-level
+              # default; 'Latest' = no constraint). Leave the file absent to keep
+              # the default "latest Ready update" behaviour.
+              APPLY_UPDATES_SCHEDULE_PATH: ./config/apply-updates-schedule.yml
             inputs:
               # Replace with your service connection name
               # BEGIN-AZLOCAL-CUSTOMIZE:service-connection-AssessReadiness
@@ -153,6 +177,10 @@ stages:
                     InstalledModuleVersion = $env:INSTALLED_MODULE_VERSION
                 }
                 if ($env:INPUT_UPDATE_RING) { $params['UpdateRing'] = $env:INPUT_UPDATE_RING }
+                if ($env:APPLY_UPDATES_SCHEDULE_PATH -and (Test-Path -LiteralPath $env:APPLY_UPDATES_SCHEDULE_PATH)) {
+                    $params['SchedulePath'] = $env:APPLY_UPDATES_SCHEDULE_PATH
+                    Write-Host "Applying update allow-list from schedule: $($env:APPLY_UPDATES_SCHEDULE_PATH)"
+                }
                 Export-AzLocalClusterUpdateReadinessReport @params
 
           - task: PublishTestResults@2

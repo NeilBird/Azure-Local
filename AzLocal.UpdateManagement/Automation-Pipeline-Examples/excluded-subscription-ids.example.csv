@@ -1,0 +1,32 @@
+# Excluded-Subscription-Ids.csv - optional subscription exclusion list (v0.9.1).
+#
+# WORKED EXAMPLE. Copy-AzLocalPipelineExample drops a HEADER-ONLY skeleton of
+# this file into your repo at config/Excluded-Subscription-Ids.csv; this file
+# shows what a populated copy looks like.
+#
+# Purpose: list Azure subscription IDs (one per row) to EXCLUDE every resource
+# in those subscriptions from ALL AzLocal.UpdateManagement Azure Resource Graph
+# queries - inventory, readiness, fleet status, update runs, connectivity, etc.
+# Useful for carving out decommissioned, lab, or out-of-scope subscriptions
+# without changing any pipeline logic.
+#
+# HOW TO ACTIVATE (manual, one-time):
+#   1. Commit this CSV to source control (e.g. config/Excluded-Subscription-Ids.csv).
+#   2. Create a pipeline variable named AZLOCAL_EXCLUDED_SUBSCRIPTIONS_PATH whose
+#      value is the repo-relative path to the file, e.g.
+#        ./config/Excluded-Subscription-Ids.csv
+#      - GitHub Actions: a repository or organization Actions *variable*.
+#      - Azure DevOps:  a pipeline variable (or variable group entry).
+#   Without that variable the file does nothing.
+#
+# RULES:
+#   - Only the "Subscription IDs" column is read. The other columns are for
+#     humans and are ignored.
+#   - Each value must be a GUID. Non-GUID values are skipped with a warning.
+#   - A header-only file (no data rows) is valid and excludes nothing; the run
+#     emits a warning rather than failing.
+#   - Lines starting with '#' (like these) are ignored.
+#
+Subscription IDs,Subscription Name,Comment / Notes
+00000000-0000-0000-0000-000000000000,Contoso-Lab,Example only - replace or delete this row
+11111111-1111-1111-1111-111111111111,Contoso-Decommissioned,Excluded pending tenant cleanup

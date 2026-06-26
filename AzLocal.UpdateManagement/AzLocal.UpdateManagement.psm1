@@ -147,7 +147,7 @@ Set-StrictMode -Version 1.0
 # bumps to one but not the other are caught before release. Two consumers:
 #   - Start-AzLocalClusterUpdate emits this in the run log header.
 #   - Get-AzLocalFleetStatusData stamps it into exported fleet-state JSON.
-$script:ModuleVersion = '0.9.0'
+$script:ModuleVersion = '0.9.1'
 $script:DefaultApiVersion = '2025-10-01'
 $script:DefaultLogFolder = Join-Path -Path $env:ProgramData -ChildPath 'AzLocal.UpdateManagement'
 
@@ -187,6 +187,16 @@ $script:UpdateStartedLogPath = $null
 
 # Service Principal authentication state
 $script:ServicePrincipalAuthenticated = $false
+
+# v0.9.1: optional subscription-exclusion list state. Resolved at most once per
+# process by Get-AzLocalExcludedSubscriptionId (from an explicit
+# Set-AzLocalExcludedSubscription call OR the AZLOCAL_EXCLUDED_SUBSCRIPTIONS_PATH
+# environment variable) and injected centrally into every ARG query by
+# Invoke-AzResourceGraphQuery. Empty by default = nothing excluded.
+$script:ExcludedSubscriptionIds = @()
+$script:ExcludedSubscriptionSource = $null
+$script:ExcludedSubscriptionsResolved = $false
+$script:ExcludedSubscriptionsExplicit = $false
 
 
 # ---------------------------------------------------------------------------
@@ -396,5 +406,9 @@ Export-ModuleMember -Function @(
     'Resolve-AzLocalSideloadPlan',
     'Invoke-AzLocalSideloadUpdate',
     'Export-AzLocalSideloadStatusReport',
-    'Add-AzLocalSideloadStepSummary'
+    'Add-AzLocalSideloadStepSummary',
+    # Optional subscription-exclusion list (v0.9.1) - central ARG-query filter
+    # driven by AZLOCAL_EXCLUDED_SUBSCRIPTIONS_PATH / Set-AzLocalExcludedSubscription
+    'Get-AzLocalExcludedSubscription',
+    'Set-AzLocalExcludedSubscription'
 )

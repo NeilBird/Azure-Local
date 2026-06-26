@@ -2,7 +2,7 @@
 
 > ⚠️ **Disclaimer**: This module is **NOT** a Microsoft supported service offering or product. It is provided as example code only, with no warranty or official support. Refer to the [MIT license](https://github.com/NeilBird/Azure-Local/blob/main/LICENSE) for further information.
 
-**Latest Version:** v0.9.0 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.9.0)
+**Latest Version:** v0.9.1 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.9.1)
 
 This folder contains the 'AzLocal.UpdateManagement' PowerShell module for managing updates on Azure Local (formerly Azure Stack HCI) clusters using the Azure Local REST API. The module supports both interactive use and CI/CD automation via Service Principal or Managed Identity authentication.
 
@@ -14,7 +14,7 @@ Azure Local REST API specification (includes update management endpoints): https
 **This README (overview + most-recent release notes):**
 
 - [Where to Start](#where-to-start)
-- [What's New in v0.9.0](#whats-new-in-v090)
+- [What's New in v0.9.1](#whats-new-in-v091)
 - [Files](#files)
 - [Prerequisites](#prerequisites)
 - [RBAC Requirements](#rbac-requirements) (summary; full reference in [docs/rbac.md](docs/rbac.md))
@@ -77,29 +77,29 @@ If you are new to this module, work through these in order from a regular PowerS
 
 > Most CI/CD pipelines in [Automation-Pipeline-Examples/](Automation-Pipeline-Examples/) are direct implementations of one of these workflows. Start there if you want a copy-pasteable end-to-end pipeline.
 
-## What's New in v0.9.0
+## What's New in v0.9.1
 
-`Copy-AzLocalPipelineExample` and `Update-AzLocalPipelineExample` now also drop a lightweight, link-first **`README.md`** into the customer repo root, so a freshly set-up pipelines repo explains itself: what it is, how to refresh after a module release, and where the docs live.
+This release adds an opt-in update **allow-list override** to the readiness assessment, adds an optional **subscription-exclusion list** that filters every Azure Resource Graph query in the module, adds a **transient login retry** to every read-only task across the pipeline examples, and fixes a dry-run reporting bug. Two new public cmdlets bring the export count from 64 to **66**.
 
 ### Added
 
-- **Managed `README.md` drop at the repo root.** Alongside the workflow folder, `config`, and the turnkey `Update-Module-And-Pipelines.ps1`, both cmdlets now drop a short, link-first README describing what the repo is for, how to refresh after a module release (`.\Update-Module-And-Pipelines.ps1`), and where the docs live (links to <https://aka.ms/AzLocal.UpdateManagement> and its CI/CD runbook). The bundled template carries a hidden `<!-- AZLOCAL-README-VERSION: x.y.z -->` marker (invisible in rendered Markdown) with its own semver, starting at `1.0.0`.
-- **`-SkipReadme` switch** on both cmdlets to suppress the README drop / refresh entirely.
+- **Azure DevOps shared-settings variable group (`AzureLocal-Pipeline-Settings`).** All ten ADO example pipelines now source their shared, non-secret settings (`AZLOCAL_EXCLUDED_SUBSCRIPTIONS_PATH`, `APPLY_UPDATES_SCHEDULE_PATH`, `MONITOR_TRIGGER_DELAY_MINUTES`, `FAILED_UPDATES_SINGLE_RETRY`, and the full `SIDELOAD_*` family) from a single variable group via a `- group: AzureLocal-Pipeline-Settings` reference - the ADO equivalent of GitHub repo Variables, set once for the whole project instead of edited inline per YAML. The seven map-form `variables:` blocks were converted to list form so the group reference is valid, and no group member is redefined inline (an inline pipeline-root variable would override the group under ADO precedence). Azure auth stays on the Workload Identity Federation service connection - never in the group. The group is a documented one-time prerequisite (`az pipelines variable-group create`); see [Automation-Pipeline-Examples/README.md - 5.2.1](./Automation-Pipeline-Examples/README.md#521-the-azurelocal-pipeline-settings-variable-group-shared-settings-set-once).
+- **Readiness allow-list override.** `Get-AzLocalClusterUpdateReadiness` and `Export-AzLocalClusterUpdateReadinessReport` gain an opt-in `-SchedulePath` (apply-updates schedule, schema v2) plus a direct `-AllowedUpdateVersions` `[string[]]` parameter. When a constraint is supplied and a cluster is not pinned to the `Latest` sentinel, readiness is recomputed using **only** the allow-listed updates: a cluster whose `Ready` updates all fall outside its allow-list is reported `UpdateState = UpToDate` / `ReadyForUpdate = $false` (no action under the schedule). Three new columns surface the decision - `AllowedUpdateVersions`, `AllowListSource` (`None`/`Latest`/`Explicit`/`TopLevel`/`RowOverride`), and `AzureUpdateState` (the preserved raw Azure update-summary state). A per-ring schedule override beats the top-level fleet default (a `***` rings cell is the all-rings wildcard; an untagged cluster falls back to the top-level default). The default code path (neither parameter supplied) is unchanged, and the assess-update-readiness pipeline examples opt in automatically when a `./config/apply-updates-schedule.yml` file exists in the repo. See [Section 8 - Assess Readiness](#8-assess-readiness-and-health-before-applying-updates-recommended).
+- **Optional subscription-exclusion list (single source of truth).** A new opt-in CSV lets operators exclude entire subscriptions from **every** AzLocal.UpdateManagement Azure Resource Graph query without editing the individual KQL queries. Point the `AZLOCAL_EXCLUDED_SUBSCRIPTIONS_PATH` pipeline/environment variable at a repo-relative CSV (columns: `Subscription IDs,Subscription Name,Comment / Notes` - only the first column is read; each value is validated as a GUID and invalid rows are skipped with a warning) and every query centrally appends `| where id !startswith '/subscriptions/<id>/'`. Two new public cmdlets, `Get-AzLocalExcludedSubscription` and `Set-AzLocalExcludedSubscription` (`-Path` / `-SubscriptionId` / `-Clear`), inspect and override the list for interactive/local runs. A header-only CSV (variable wired, zero rows) is **not** an error - it warns and excludes nothing; the default (variable unset, no explicit call) is a no-op. All 20 pipeline examples wire the variable (GitHub Actions via repo Variables, Azure DevOps via the `AzureLocal-Pipeline-Settings` variable group), and `Copy-/Update-AzLocalPipelineExample` drop an inert header-only `config/Excluded-Subscription-Ids.csv` skeleton (never overwriting an existing one).
+- **Transient `azure/login` retry across the pipeline examples.** Every read-only/idempotent task now retries the intermittent OIDC token-exchange failure (`Error: JSON is invalid: Expecting value...`) once. GitHub Actions workflows pair a `continue-on-error` primary login (`id: azure_login`) with an `if: steps.azure_login.outcome == 'failure'` retry step (12 guards across 10 workflows); Azure DevOps pipelines use the native `retryCountOnTaskFailure: 2` (14 across 10 pipelines). Mutating tasks (**Apply Updates**, **Retry Failed Updates**, **Raise ITSM tickets**) are deliberately excluded to avoid duplicate-apply / duplicate-ticket risk.
 
-### Changed
+### Fixed
 
-- **Operator content is never destroyed.** The managed README is written only when the repo has **no usable README** - missing, whitespace-only, or a GitHub "Add a README" default stub (an H1 matching the repo name plus at most a one-line description). A README already carrying the marker is version-gate refreshed **in place** only when the bundled template is newer; any other non-empty README is treated as operator-owned and left untouched. (Remove the marker line to freeze a managed README as your own.)
-- The drop is **default-on for `-Platform GitHub|AzureDevOps`**, and **skipped for `-Platform All`** - its content references the turnkey script + `config` that only exist in the single-platform layouts.
-- The turnkey `Update-Module-And-Pipelines.ps1` template marker is bumped `1.1.0` -> `1.2.0` to also stage the managed README in its scoped `git add` - but **only** when the README carries the marker, so an operator-owned README is never swept into the automated commit.
+- **Dry-run pipeline runs produced zero step summary + zero step outputs.** When a pipeline step ran in WhatIf / dry-run mode - for example **"Config: 2 - Manage UpdateRing Tags"** with `dry_run = true` - `$WhatIfPreference` cascaded from the workload cmdlet into the pipeline reporting helpers and silently suppressed their `Out-File` writes (`Out-File` itself supports `ShouldProcess`). The result was an empty run Summary, forcing operators to dig through the raw runner log to see what *would* change. The reporting/artifact writes (`Add-AzLocalPipelineStepSummary`, `Set-AzLocalPipelineOutput`, and `Set-AzLocalClusterUpdateRingTagFromCsv`'s artifact-directory + JSON sidecar) now pass `-WhatIf:$false`, so a dry run always emits its full preview - the **Dry Run | True** settings row, the per-cluster "would change" detail, and the **"This was a dry run. No changes were applied."** footer - straight to the run Summary. The actual Azure tag PATCH stays correctly suppressed by `ShouldProcess`.
 
 ### Notes
 
-- **Additive** - no public function, parameter-removal, or export-count change (still 64). Backed by two new private helpers (`Get-AzLocalReadmeTemplateVersion`, `Test-AzLocalReadmeReplaceable`) with full Pester coverage.
-- **`GENERATED_AGAINST_MODULE_VERSION`** bumped from `0.8.99` to `0.9.0` across bundled pipeline templates.
+- **Additive + bug-fix.** Adds two public cmdlets (`Get-AzLocalExcludedSubscription`, `Set-AzLocalExcludedSubscription`), taking the export count from 64 to **66**; the allow-list resolver `Resolve-AzLocalClusterAllowList` and the exclusion helpers remain private. No parameter removals or breaking changes. Adds Pester coverage for the allow-list resolver, the readiness override, the subscription-exclusion parser/injection/env-load, the login-retry wiring, and the dry-run regression.
+- **`GENERATED_AGAINST_MODULE_VERSION`** bumped from `0.9.0` to `0.9.1` across bundled pipeline templates.
 
 > Previous release notes have moved into the [Release History](#release-history) appendix at the bottom of this document.
 
-See [CHANGELOG.md](CHANGELOG.md) for full release details. See [`What's New in v0.8.99`](#whats-new-in-v0899) in the Release History for the previous release.
+See [CHANGELOG.md](CHANGELOG.md) for full release details. See [`What's New in v0.9.0`](#whats-new-in-v090) in the Release History for the previous release.
 
 ## Files
 
@@ -482,6 +482,20 @@ $readiness | Where-Object { -not $_.ReadyForUpdate } |
     Select-Object ClusterName, HealthState, UpdateState, HasPrerequisiteUpdates, SBEDependency
 ```
 
+> 🎯 **Constrain readiness to an allow-list (v0.9.1).** By default the readiness
+> check treats the latest `Ready` update as the recommendation. To instead gate
+> readiness against the same `allowedUpdateVersions` allow-list used by the apply
+> schedule, pass `-SchedulePath ./config/apply-updates-schedule.yml` (schema v2;
+> per-ring override beats the top-level fleet default) or pass an explicit
+> `-AllowedUpdateVersions '10.2604.0.123','10.2610.0.456'`. The reserved sentinel
+> `Latest` means "no constraint". When a constraint is active, a cluster whose
+> `Ready` updates all fall **outside** its allow-list is reported `UpToDate` /
+> `ReadyForUpdate = $false` (there is no permitted action under the schedule); the
+> raw Azure update-summary state is preserved in the new `AzureUpdateState` column
+> alongside `AllowedUpdateVersions` and `AllowListSource`. The assess-update-readiness
+> pipeline examples opt in automatically when a `./config/apply-updates-schedule.yml`
+> file exists in the repo.
+
 **Step 2: Drill into the Critical health failures that will block updates**
 
 ```powershell
@@ -581,7 +595,11 @@ This code is provided as-is for educational and reference purposes.
 
 The full What's-New history (v0.7.81 and earlier) has moved to [docs/release-history.md](docs/release-history.md).
 
-The most recent release notes for **v0.9.0** stay above under [`What's New in v0.9.0`](#whats-new-in-v090).
+The most recent release notes for **v0.9.1** stay above under [`What's New in v0.9.1`](#whats-new-in-v091).
+
+### What's New in v0.9.0
+
+**Managed repo README auto-drop.** `Copy-AzLocalPipelineExample` and `Update-AzLocalPipelineExample` now also drop a lightweight, link-first `README.md` into the customer repo root so a freshly set-up pipelines repo explains itself: what it is, how to refresh after a module release (`.\Update-Module-And-Pipelines.ps1`), and where the docs live. Operator content is never destroyed - the README is written only when the repo has no usable README (missing, whitespace-only, or a GitHub default stub), and a README carrying the hidden `<!-- AZLOCAL-README-VERSION -->` marker is version-gate refreshed in place; any other non-empty README is left untouched. Default-on for `-Platform GitHub|AzureDevOps`, suppressed by `-SkipReadme`, skipped for `-Platform All`. The turnkey `Update-Module-And-Pipelines.ps1` template marker is bumped `1.1.0` -> `1.2.0` to also stage the managed README. Additive - no public function, parameter-removal, or export-count change (still 64). `GENERATED_AGAINST_MODULE_VERSION` bumped from `0.8.99` to `0.9.0`. See [CHANGELOG.md](CHANGELOG.md#090---2026-06-25) for the full v0.9.0 entry.
 
 ### What's New in v0.8.99
 

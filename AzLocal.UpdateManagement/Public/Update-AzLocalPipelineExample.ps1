@@ -244,6 +244,14 @@ function Update-AzLocalPipelineExample {
         # non-empty README is preserved. Pass -SkipReadme to suppress.
         [switch]$SkipReadme,
 
+        # v0.9.1: also drop the header-only Excluded-Subscription-Ids.csv
+        # skeleton into config\ when it is absent, so existing repos that
+        # upgrade via Update (not Copy) still receive it. Never overwrites an
+        # existing file. The skeleton is inert until the operator creates the
+        # AZLOCAL_EXCLUDED_SUBSCRIPTIONS_PATH variable. Pass -SkipStarterExclusions
+        # to suppress.
+        [switch]$SkipStarterExclusions,
+
         [switch]$PassThru
     )
 
@@ -809,6 +817,60 @@ function Update-AzLocalPipelineExample {
                     }
                 }
             }
+        }
+    }
+
+    # ------------------------------------------------------------------
+    # 7 (v0.9.1). Header-only subscription-exclusion CSV drop parity with
+    #    Copy-AzLocalPipelineExample (section 6b-2). Existing users upgrade
+    #    via Update, so Update must also drop the header-only
+    #    Excluded-Subscription-Ids.csv into config\ when it is absent.
+    #    NEVER overwrites an existing file. The skeleton is inert until the
+    #    operator creates the AZLOCAL_EXCLUDED_SUBSCRIPTIONS_PATH variable.
+    #    Suppressed by -SkipStarterExclusions.
+    # ------------------------------------------------------------------
+    if (-not $SkipStarterExclusions.IsPresent) {
+        # config\ resolution mirrors section 5/6: repo root is the config parent.
+        $trimmedTarget = $destResolved.TrimEnd('\', '/')
+        $oneLevelUp    = Split-Path -Parent $trimmedTarget
+        if ($Platform -eq 'GitHub' -and ($trimmedTarget -match '[\\/]\.github[\\/]workflows$')) {
+            $repoRoot = Split-Path -Parent $oneLevelUp
+        }
+        else {
+            $repoRoot = $oneLevelUp
+        }
+        if ([string]::IsNullOrWhiteSpace($repoRoot)) {
+            $repoRoot = $trimmedTarget
+        }
+
+        $exclusionsConfigDir = Join-Path -Path $repoRoot -ChildPath 'config'
+        $exclusionsDest      = Join-Path -Path $exclusionsConfigDir -ChildPath 'Excluded-Subscription-Ids.csv'
+
+        if (Test-Path -LiteralPath $exclusionsDest -PathType Leaf) {
+            Write-Verbose ("Update-AzLocalPipelineExample: Excluded-Subscription-Ids.csv preserved (already exists at '{0}'); not written." -f $exclusionsDest)
+        }
+        elseif ($PSCmdlet.ShouldProcess($exclusionsDest, 'Write starter Excluded-Subscription-Ids.csv')) {
+            $exclusionsStarter = @(
+                '# Excluded-Subscription-Ids.csv - optional subscription exclusion list (v0.9.1).'
+                '# Add one Azure subscription ID (GUID) per row under "Subscription IDs" to'
+                '# EXCLUDE every resource in that subscription from ALL AzLocal.UpdateManagement'
+                '# Azure Resource Graph queries (inventory, readiness, fleet status, etc.).'
+                '#'
+                '# This file does NOTHING until you create a pipeline variable named'
+                '# AZLOCAL_EXCLUDED_SUBSCRIPTIONS_PATH whose value is the repo-relative path to'
+                '# this file, e.g. ./config/Excluded-Subscription-Ids.csv'
+                '#'
+                '# Only the "Subscription IDs" column is read. Non-GUID values are skipped with a'
+                '# warning. A header-only file (no rows) is valid and excludes nothing (warning).'
+                '# Worked example with sample rows: excluded-subscription-ids.example.csv'
+                'Subscription IDs,Subscription Name,Comment / Notes'
+            )
+            $exclusionsParent = Split-Path -Parent $exclusionsDest
+            if (-not (Test-Path -LiteralPath $exclusionsParent)) {
+                $null = New-Item -ItemType Directory -Path $exclusionsParent -Force -ErrorAction Stop
+            }
+            Set-Content -LiteralPath $exclusionsDest -Value $exclusionsStarter -Encoding ASCII -ErrorAction Stop
+            Write-Log -Message "  Created : starter Excluded-Subscription-Ids.csv at '$exclusionsDest'" -Level Success
         }
     }
 

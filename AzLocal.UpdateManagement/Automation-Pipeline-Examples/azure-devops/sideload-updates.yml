@@ -75,31 +75,43 @@ parameters:
     default: ''
 
 variables:
-  # Module version this YAML was generated against. The install step compares this to
-  # the version actually installed and to the latest on PSGallery, and emits a warning
-  # log if the YAML appears stale - prompting you to refresh via
-  # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.9.0'
-  # Resolution order for the module version pin (leave all unset to install the latest,
-  # which is the default "fix-forward" behaviour): queue-time parameter > pipeline variable
-  # 'REQUIRED_MODULE_VERSION' overridden at queue time > empty (latest).
-  REQUIRED_MODULE_VERSION: '${{ parameters.moduleVersion }}'
-  reportsPath: '$(Build.ArtifactStagingDirectory)/reports'
-
-  # ---- Sideload configuration (set these as PIPELINE VARIABLES or via a variable group) ----
-  # Master gate. The stage is skipped unless this is the literal string 'true'.
-  #   SIDELOAD_UPDATES: 'true'
-  # Shared UNC root that ALL agents can read+write (state\, logs\, cache\):
-  #   SIDELOAD_STATE_ROOT: '\\\\fileserver\\azlocal-sideload'
-  #   SIDELOAD_CACHE_ROOT: ''   # defaults (in the cmdlet) to <state-root>\cache
-  #   SIDELOAD_AUTH_MAP_PATH: './config/sideload-auth-map.csv'
-  #   SIDELOAD_CATALOG_PATH: './config/sideload-catalog.yml'
-  #   SIDELOAD_LEAD_DAYS: '7'
-  #   SIDELOAD_ROBOCOPY_SWITCHES: '/R:5 /W:30'
-  #   SIDELOAD_HEARTBEAT_STALE_MINUTES: '60'
-  #   SIDELOAD_REMOTING_FQDN_SUFFIX: ''   # e.g. '.corp.contoso.com'
-  #   APPLY_UPDATES_SCHEDULE_PATH: './config/apply-updates-schedule.yml'
-  #   SIDELOAD_KV_AUTH: 'oidc'   # oidc | managedidentity | serviceprincipal
+  # Module version this YAML was generated against (per-file stamp; do NOT move to
+  # the shared group). The install step compares this to the installed version and
+  # to the latest on PSGallery and warns if the YAML looks stale - prompting a
+  # refresh via Copy-AzLocalPipelineExample -Update.
+  - name: GENERATED_AGAINST_MODULE_VERSION
+    value: '0.9.1'
+  # Resolution order for the module version pin: queue-time parameter 'moduleVersion'
+  # > empty (latest). Leave empty for the default fix-forward behaviour.
+  - name: REQUIRED_MODULE_VERSION
+    value: '${{ parameters.moduleVersion }}'
+  - name: reportsPath
+    value: '$(Build.ArtifactStagingDirectory)/reports'
+  # Shared, set-once pipeline settings come from the variable group below - the
+  # Azure DevOps equivalent of GitHub repo Variables. Set them ONCE in the group
+  # and every pipeline picks up the same values. This pipeline reads:
+  #   AZLOCAL_EXCLUDED_SUBSCRIPTIONS_PATH  (default '') - optional subscription
+  #       exclusion CSV path; when non-empty every Azure Resource Graph query
+  #       in this pipeline excludes the listed subscriptions.
+  #   ---- Sideload configuration (Step.6 opt-in) ----
+  #   SIDELOAD_UPDATES                 master gate; the Sideload stage is skipped
+  #                                    unless this is the literal string 'true'.
+  #   SIDELOAD_STATE_ROOT              shared UNC root all agents read+write
+  #                                    (e.g. '\\\\fileserver\\azlocal-sideload').
+  #   SIDELOAD_CACHE_ROOT              ''  - defaults (in the cmdlet) to <state-root>\cache
+  #   SIDELOAD_AUTH_MAP_PATH           './config/sideload-auth-map.csv'
+  #   SIDELOAD_CATALOG_PATH            './config/sideload-catalog.yml'
+  #   SIDELOAD_LEAD_DAYS               '7'
+  #   SIDELOAD_ROBOCOPY_SWITCHES       '/R:5 /W:30'
+  #   SIDELOAD_HEARTBEAT_STALE_MINUTES '60'
+  #   SIDELOAD_REMOTING_FQDN_SUFFIX    ''  (e.g. '.corp.contoso.com')
+  #   SIDELOAD_KV_AUTH                 'oidc' | 'managedidentity' | 'serviceprincipal'
+  #   APPLY_UPDATES_SCHEDULE_PATH      './config/apply-updates-schedule.yml'
+  # Create the group once (Library > Variable groups, or
+  # `az pipelines variable-group create`). See Automation-Pipeline-Examples/README.md
+  # section 5. A variable redefined inline would OVERRIDE the group, so these are
+  # intentionally not redefined here - the group is the single source of truth.
+  - group: AzureLocal-Pipeline-Settings
 
 stages:
 # ---------------------------------------------------------------------------
@@ -302,6 +314,11 @@ stages:
 
     - task: AzureCLI@2
       displayName: 'Advance Sideload State Machine'
+      # v0.9.1: single retry for the transient OIDC/az-login failure (the
+      # service-connection token exchange can intermittently return "JSON is
+      # invalid"). The sideload state machine is re-entrant (durable state +
+      # heartbeat staleness detection), so a re-run safely resumes.
+      retryCountOnTaskFailure: 2
       env:
         INPUT_UPDATE_RING: ${{ parameters.updateRing }}
         INPUT_DRY_RUN: ${{ parameters.dryRun }}
