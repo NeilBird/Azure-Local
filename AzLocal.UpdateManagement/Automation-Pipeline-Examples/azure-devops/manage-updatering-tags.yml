@@ -52,6 +52,13 @@ variables:
   # 'REQUIRED_MODULE_VERSION' overridden at queue time > empty (latest).
   - name: REQUIRED_MODULE_VERSION
     value: '${{ parameters.moduleVersion }}'
+  # v0.9.1 - OPTIONAL subscription exclusion list. Set this pipeline variable
+  # (or override it in a variable group / at queue time) to the repo-relative
+  # path of your exclusion CSV, e.g. ./config/Excluded-Subscription-Ids.csv. When
+  # non-empty, every AzLocal.UpdateManagement Azure Resource Graph query in this
+  # pipeline excludes the listed subscriptions. Leave empty to exclude nothing.
+  - name: AZLOCAL_EXCLUDED_SUBSCRIPTIONS_PATH
+    value: ''
 
 # BEGIN-AZLOCAL-CUSTOMIZE:runner-target-pipeline
 pool:

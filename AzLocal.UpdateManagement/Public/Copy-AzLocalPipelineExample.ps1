@@ -324,6 +324,14 @@ function Copy-AzLocalPipelineExample {
         # always preserved regardless of this switch.
         [switch]$SkipStarterSideloadConfig,
 
+        # v0.9.1: when set, suppress the default drop of the header-only
+        # Excluded-Subscription-Ids.csv skeleton into config\ for
+        # Platform=GitHub|AzureDevOps. Default OFF. An existing file is
+        # always preserved regardless of this switch. The dropped skeleton
+        # does nothing until the operator creates the
+        # AZLOCAL_EXCLUDED_SUBSCRIPTIONS_PATH variable (a manual one-time task).
+        [switch]$SkipStarterExclusions,
+
         # v0.8.85: when set, remove deprecated workflow filenames that are
         # superseded by newer merged pipelines (for example, GitHub
         # authentication-test.yml + inventory-clusters.yml replaced by
@@ -724,6 +732,62 @@ function Copy-AzLocalPipelineExample {
     }
 
     # ------------------------------------------------------------------
+    # 6b-2 (v0.9.1). Starter subscription-exclusion list drop
+    #    (Excluded-Subscription-Ids.csv). Default-on for
+    #    -Platform GitHub|AzureDevOps; suppressed by -SkipStarterExclusions.
+    #    Lands in the SAME `config\` folder as the schedule + sideload config.
+    #    The dropped file is HEADER-ONLY (guidance comments + the column
+    #    header, NO data rows), so it is inert until the operator BOTH adds
+    #    subscription-id rows AND creates the AZLOCAL_EXCLUDED_SUBSCRIPTIONS_PATH
+    #    pipeline variable pointing at it (a manual one-time task). A
+    #    header-only file excludes nothing and only emits a warning at runtime
+    #    if the variable is wired - it never fails the run. NEVER overwrites an
+    #    existing file.
+    # ------------------------------------------------------------------
+    $exclusionsDest   = $null
+    $exclusionsAction = $null   # 'Copied' | 'Preserved' | 'Skipped' | 'SkippedBySwitch'
+    if ($Platform -in @('GitHub', 'AzureDevOps')) {
+        $exclusionsDest = Join-Path -Path $configDir -ChildPath 'Excluded-Subscription-Ids.csv'
+
+        if ($SkipStarterExclusions.IsPresent) {
+            $exclusionsAction = 'SkippedBySwitch'
+        }
+        elseif (Test-Path -LiteralPath $exclusionsDest -PathType Leaf) {
+            $exclusionsAction = 'Preserved'
+            Write-Verbose ("Copy-AzLocalPipelineExample: starter Excluded-Subscription-Ids.csv preserved (already exists at '{0}')." -f $exclusionsDest)
+        }
+        elseif ($PSCmdlet.ShouldProcess($exclusionsDest, 'Write starter Excluded-Subscription-Ids.csv')) {
+            # Header / skeleton content (NO data rows). ASCII-only so
+            # Set-Content -Encoding ASCII writes no BOM. The worked example with
+            # sample rows ships as Automation-Pipeline-Examples/excluded-subscription-ids.example.csv.
+            $exclusionsStarter = @(
+                '# Excluded-Subscription-Ids.csv - optional subscription exclusion list (v0.9.1).'
+                '# Add one Azure subscription ID (GUID) per row under "Subscription IDs" to'
+                '# EXCLUDE every resource in that subscription from ALL AzLocal.UpdateManagement'
+                '# Azure Resource Graph queries (inventory, readiness, fleet status, etc.).'
+                '#'
+                '# This file does NOTHING until you create a pipeline variable named'
+                '# AZLOCAL_EXCLUDED_SUBSCRIPTIONS_PATH whose value is the repo-relative path to'
+                '# this file, e.g. ./config/Excluded-Subscription-Ids.csv'
+                '#'
+                '# Only the "Subscription IDs" column is read. Non-GUID values are skipped with a'
+                '# warning. A header-only file (no rows) is valid and excludes nothing (warning).'
+                '# Worked example with sample rows: excluded-subscription-ids.example.csv'
+                'Subscription IDs,Subscription Name,Comment / Notes'
+            )
+            $exclusionsParent = Split-Path -Parent $exclusionsDest
+            if (-not (Test-Path -LiteralPath $exclusionsParent)) {
+                $null = New-Item -ItemType Directory -Path $exclusionsParent -Force -ErrorAction Stop
+            }
+            Set-Content -LiteralPath $exclusionsDest -Value $exclusionsStarter -Encoding ASCII -ErrorAction Stop
+            $exclusionsAction = 'Copied'
+        }
+        else {
+            $exclusionsAction = 'Skipped'
+        }
+    }
+
+    # ------------------------------------------------------------------
     # 6c (v0.8.98). Starter turnkey refresh script drop
     #    (Update-Module-And-Pipelines.ps1). Default-on for
     #    -Platform GitHub|AzureDevOps; suppressed by -SkipStarterUpdater.
@@ -942,6 +1006,12 @@ function Copy-AzLocalPipelineExample {
     elseif ($sideloadConfigAction -eq 'Preserved') {
         Write-Host "  Starter sideload config preserved (existing sideload-auth-map.csv / sideload-catalog.yml left untouched)" -ForegroundColor Yellow
     }
+    if ($exclusionsAction -eq 'Copied') {
+        Write-Host ("  Starter subscription-exclusion CSV dropped at: {0}" -f $exclusionsDest) -ForegroundColor Green
+    }
+    elseif ($exclusionsAction -eq 'Preserved') {
+        Write-Host ("  Starter subscription-exclusion CSV preserved (existing file): {0}" -f $exclusionsDest) -ForegroundColor Yellow
+    }
     if ($updaterAction -eq 'Copied') {
         Write-Host ("  Turnkey refresh script dropped at: {0}" -f $updaterDest) -ForegroundColor Green
     }
@@ -1011,6 +1081,16 @@ function Copy-AzLocalPipelineExample {
         if ($sideloadCatalogDest) { $sideloadHintLines += ("       {0}" -f $sideloadCatalogDest) }
         $sideloadHintLines += "     Populate both, set repository variable SIDELOAD_UPDATES=true, then dry-run the sideload-updates pipeline. Until then they are inert. See Automation-Pipeline-Examples/docs/sideload.md."
     }
+    # Optional subscription-exclusion sub-message - only emitted when a starter
+    # Excluded-Subscription-Ids.csv was dropped or already exists. The CSV is
+    # inert until the operator creates the AZLOCAL_EXCLUDED_SUBSCRIPTIONS_PATH
+    # variable (a manual one-time task), so this is purely informational.
+    $exclusionsHintLines = @()
+    if ($exclusionsAction -in @('Copied', 'Preserved')) {
+        $exclusionsHintLines += "  *. OPTIONAL subscription exclusions (OFF by default): a starter CSV is in place:"
+        if ($exclusionsDest) { $exclusionsHintLines += ("       {0}" -f $exclusionsDest) }
+        $exclusionsHintLines += "     Add subscription-id rows, then create a pipeline variable AZLOCAL_EXCLUDED_SUBSCRIPTIONS_PATH set to './config/Excluded-Subscription-Ids.csv' to exclude those subscriptions from every Azure Resource Graph query. A header-only file excludes nothing (warning, never fails)."
+    }
     # Optional updater sub-message - only emitted when the turnkey refresh
     # script was dropped or already exists. It lets the operator refresh the
     # bundled pipelines after a future module release in one command.
@@ -1046,6 +1126,7 @@ function Copy-AzLocalPipelineExample {
             Write-Host "     See section 5.1 step 5 + section 8 of the README for the full schema, multi-stage rollouts, and the allowedUpdateVersions allow-list."
             Write-Host "  5. Optional: enable the ITSM connector by setting 'raise_itsm_ticket=true' (setup in ITSM/README.md)."
             foreach ($line in $sideloadHintLines) { Write-Host $line }
+            foreach ($line in $exclusionsHintLines) { Write-Host $line }
             foreach ($line in $updaterHintLines) { Write-Host $line }
         }
         'AzureDevOps' {
@@ -1058,6 +1139,7 @@ function Copy-AzLocalPipelineExample {
             Write-Host "     apply-updates reads APPLY_UPDATES_SCHEDULE_PATH (default './config/apply-updates-schedule.yml'). Override the variable in the pipeline if you keep the schedule elsewhere. See section 5.2 step 6 + section 8 of the README."
             Write-Host "  6. Optional: enable the ITSM connector by setting 'raise_itsm_ticket=true' (setup in ITSM/README.md)."
             foreach ($line in $sideloadHintLines) { Write-Host $line }
+            foreach ($line in $exclusionsHintLines) { Write-Host $line }
             foreach ($line in $updaterHintLines) { Write-Host $line }
         }
         default {

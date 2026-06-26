@@ -114,6 +114,12 @@ parameters:
 
 variables:
   GENERATED_AGAINST_MODULE_VERSION: '0.9.1'
+  # v0.9.1 - OPTIONAL subscription exclusion list. Set this pipeline variable
+  # (or override it in a variable group / at queue time) to the repo-relative
+  # path of your exclusion CSV, e.g. ./config/Excluded-Subscription-Ids.csv. When
+  # non-empty, every AzLocal.UpdateManagement Azure Resource Graph query in this
+  # pipeline excludes the listed subscriptions. Leave empty to exclude nothing.
+  AZLOCAL_EXCLUDED_SUBSCRIPTIONS_PATH: ''
   REQUIRED_MODULE_VERSION: '${{ parameters.moduleVersion }}'
   reportsPath: '$(Build.ArtifactStagingDirectory)/reports'
   # v0.8.7 sideload advisor defaults. Override at the pipeline / variable-group

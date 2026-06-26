@@ -106,6 +106,12 @@ variables:
   # log if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
   GENERATED_AGAINST_MODULE_VERSION: '0.9.1'
+  # v0.9.1 - OPTIONAL subscription exclusion list. Set this pipeline variable
+  # (or override it in a variable group / at queue time) to the repo-relative
+  # path of your exclusion CSV, e.g. ./config/Excluded-Subscription-Ids.csv. When
+  # non-empty, every AzLocal.UpdateManagement Azure Resource Graph query in this
+  # pipeline excludes the listed subscriptions. Leave empty to exclude nothing.
+  AZLOCAL_EXCLUDED_SUBSCRIPTIONS_PATH: ''
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): queue-time parameter > pipeline variable
   # 'REQUIRED_MODULE_VERSION' overridden at queue time > empty (latest).

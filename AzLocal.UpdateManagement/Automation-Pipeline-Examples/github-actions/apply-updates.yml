@@ -166,8 +166,12 @@ env:
   # warnings and exercises Node 24 ahead of the cut-over. To temporarily opt
   # back out after the cut-over, set ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true.
   # See https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true  # v0.9.1 - OPTIONAL subscription exclusion list. Create a repository (or org)
+  # Actions variable named AZLOCAL_EXCLUDED_SUBSCRIPTIONS_PATH whose value is the
+  # repo-relative path to your exclusion CSV (e.g. ./config/Excluded-Subscription-Ids.csv).
+  # When set, every AzLocal.UpdateManagement Azure Resource Graph query in this
+  # workflow excludes the listed subscriptions. Leave it unset to exclude nothing.
+  AZLOCAL_EXCLUDED_SUBSCRIPTIONS_PATH: ${{ vars.AZLOCAL_EXCLUDED_SUBSCRIPTIONS_PATH }}
 # prevent overlapping apply-updates runs from racing on the same
 # fleet. cancel-in-progress=false means a newly-triggered run queues behind an
 # in-flight one instead of cancelling it (cancellation mid-apply could leave

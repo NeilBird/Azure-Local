@@ -293,9 +293,9 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $content | Should -Match 'MonitorInFlightHours'       -Because "$Platform audit plumbs in-flight hours into the cmdlet"
         }
 
-        It 'Should export exactly 64 functions' {
+        It 'Should export exactly 66 functions' {
 
-            $script:ModuleInfo.ExportedFunctions.Count | Should -Be 64
+            $script:ModuleInfo.ExportedFunctions.Count | Should -Be 66
         }
 
         It 'Should export the expected functions' {
@@ -12468,8 +12468,8 @@ Describe 'Function: Get-AzLocalFleetHealthOverview - v0.7.70 (ARG-first fleet he
             $cmd.CommandType | Should -Be 'Function'
         }
 
-        It 'BS7: Module exports exactly 64 functions (was 55 after Step.6 thin-YAML port; v0.8.7 sideload automation adds 5 cmdlets; v0.8.88 adds Sync-AzLocalClusterUpdateSummary; v0.8.95 adds Invoke-AzLocalFailedUpdateRetry + Invoke-AzLocalReadinessGatedFailedUpdateRetry + Add-AzLocalFailedUpdateRetryHintSummary)' {
-            (Get-Module AzLocal.UpdateManagement).ExportedFunctions.Count | Should -Be 64
+        It 'BS7: Module exports exactly 66 functions (was 55 after Step.6 thin-YAML port; v0.8.7 sideload automation adds 5 cmdlets; v0.8.88 adds Sync-AzLocalClusterUpdateSummary; v0.8.95 adds Invoke-AzLocalFailedUpdateRetry + Invoke-AzLocalReadinessGatedFailedUpdateRetry + Add-AzLocalFailedUpdateRetryHintSummary; v0.9.1 adds Get-AzLocalExcludedSubscription + Set-AzLocalExcludedSubscription)' {
+            (Get-Module AzLocal.UpdateManagement).ExportedFunctions.Count | Should -Be 66
         }
     }
 

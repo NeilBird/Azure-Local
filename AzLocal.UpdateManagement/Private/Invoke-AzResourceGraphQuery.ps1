@@ -159,6 +159,29 @@ function Invoke-AzResourceGraphQuery {
     # KQL, do it in PowerShell `#` comments OUTSIDE the here-string.
     $Query = ($Query -replace '\s+', ' ').Trim()
 
+    # v0.9.1: central subscription-exclusion injection. Every ARG query in this
+    # module begins with a bare table token ('resources' / 'extensibilityresources')
+    # followed by ' | ...'. After the whitespace-collapse above, the query is a
+    # single line, so we can inject the exclusion filter immediately AFTER the
+    # first table token - before any '| project' that might drop the 'id' column
+    # the filter relies on. The exclusion set is resolved at most once per
+    # process (see Get-AzLocalExcludedSubscriptionId) and is empty by default, so
+    # this is a no-op unless the operator has opted in via
+    # AZLOCAL_EXCLUDED_SUBSCRIPTIONS_PATH or Set-AzLocalExcludedSubscription.
+    $excludedSubs = Get-AzLocalExcludedSubscriptionId
+    if ($excludedSubs -and @($excludedSubs).Count -gt 0) {
+        $exclusionClause = New-AzLocalSubscriptionExclusionKqlClause -SubscriptionId $excludedSubs
+        if ($exclusionClause) {
+            $firstSpace = $Query.IndexOf(' ')
+            if ($firstSpace -lt 0) {
+                $Query = '{0} {1}' -f $Query, $exclusionClause
+            }
+            else {
+                $Query = $Query.Substring(0, $firstSpace) + ' ' + $exclusionClause + ' ' + $Query.Substring($firstSpace + 1)
+            }
+        }
+    }
+
     # Reset the truncation flag at the start of every call so a caller checking
     # $script:LastResourceGraphQueryTruncated sees only THIS call's outcome.
     $script:LastResourceGraphQueryTruncated = $false

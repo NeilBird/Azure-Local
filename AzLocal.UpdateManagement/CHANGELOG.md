@@ -8,8 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.9.1] - 2026-06-26
 
 This release adds an opt-in update **allow-list override** to the readiness
-assessment, adds a **transient login retry** to every read-only task across the
-pipeline examples, and fixes a dry-run reporting bug.
+assessment, adds an optional **subscription-exclusion list** that filters every
+Azure Resource Graph query in the module, adds a **transient login retry** to
+every read-only task across the pipeline examples, and fixes a dry-run reporting
+bug. Two new public cmdlets bring the export count from 64 to **66**.
 
 ### Added
 
@@ -28,6 +30,26 @@ pipeline examples, and fixes a dry-run reporting bug.
   override beats the top-level fleet default (a `***` rings cell is the all-rings
   wildcard; an untagged cluster falls back to the top-level default). The
   default code path (neither parameter supplied) is unchanged.
+- **Optional subscription-exclusion list (single source of truth).** A new
+  opt-in CSV lets operators exclude entire subscriptions from every
+  AzLocal.UpdateManagement Azure Resource Graph query without touching the
+  individual KQL queries. Set the `AZLOCAL_EXCLUDED_SUBSCRIPTIONS_PATH`
+  pipeline/environment variable to a repo-relative CSV (columns:
+  `Subscription IDs,Subscription Name,Comment / Notes`; only the first column is
+  read, each value validated as a GUID, invalid rows skipped with a warning) and
+  every query centrally appends `| where id !startswith '/subscriptions/<id>/'`
+  via the new private helpers `Resolve-AzLocalExcludedSubscriptionId`,
+  `Get-AzLocalExcludedSubscriptionId`, and
+  `New-AzLocalSubscriptionExclusionKqlClause` (injected once in
+  `Invoke-AzResourceGraphQuery`). Two new public cmdlets,
+  `Get-AzLocalExcludedSubscription` and `Set-AzLocalExcludedSubscription`
+  (`-Path` / `-SubscriptionId` / `-Clear`), inspect and override the list for
+  interactive use. A header-only CSV (variable wired, zero rows) is **not** an
+  error - it warns and excludes nothing. Default (variable unset, no explicit
+  call) is a no-op. All 20 pipeline examples (10 GitHub Actions + 10 Azure
+  DevOps) declare the variable, and `Copy-/Update-AzLocalPipelineExample` drop an
+  inert header-only `config/Excluded-Subscription-Ids.csv` skeleton (never
+  overwriting an existing one).
 - **Transient `azure/login` retry across the pipeline examples.** Every
   read-only/idempotent task now retries the intermittent OIDC token-exchange
   failure (`Error: JSON is invalid: Expecting value...`) once. GitHub Actions
@@ -53,6 +75,8 @@ pipeline examples, and fixes a dry-run reporting bug.
 - The assess-update-readiness GitHub Actions and Azure DevOps examples opt into
   the allow-list automatically when a `./config/apply-updates-schedule.yml` file
   is present in the repo.
+- Module export count increased from 64 to **66** (`Get-AzLocalExcludedSubscription`,
+  `Set-AzLocalExcludedSubscription`).
 - `GENERATED_AGAINST_MODULE_VERSION` pins bumped to `'0.9.1'`.
 
 ## [0.9.0] - 2026-06-25

@@ -65,6 +65,8 @@ This table is the canonical index of every public cmdlet the module ships. It is
 | [`Connect-AzLocalServicePrincipal`](#connect-azlocalserviceprincipal) | AUTH | Az PowerShell context (no data-plane calls) |
 | [`Copy-AzLocalPipelineExample`](#copy-azlocalpipelineexample) | WRITE (local) | Local file scaffold |
 | `Copy-AzLocalItsmSample` | WRITE (local) | Local file scaffold |
+| [`Get-AzLocalExcludedSubscription`](#get-azlocalexcludedsubscription) | READ (validation) | In-memory exclusion list (resolved from CSV / env var) |
+| [`Set-AzLocalExcludedSubscription`](#set-azlocalexcludedsubscription) | WRITE (local) | In-memory exclusion-list state |
 
 #### ITSM integration
 
@@ -120,6 +122,67 @@ Set-Location $dest
 > # Scripted / CI refresh - no prompts, review afterwards with 'git diff'
 > Copy-AzLocalPipelineExample -Destination .\.github\workflows -Platform GitHub -Update -Confirm:$false
 > ```
+
+---
+
+### `Get-AzLocalExcludedSubscription`
+
+Returns the subscription-exclusion list currently in effect for this module session. Every Azure Resource Graph READ in the module funnels through a single query helper that appends a `| where id !startswith '/subscriptions/<id>/'` clause for each excluded subscription, so excluding a subscription here removes its clusters from **all** read cmdlets and reports at once.
+
+The list is resolved (once per process, lazily) from one of two sources, in priority order:
+
+1. An **explicit** override set via `Set-AzLocalExcludedSubscription` (wins for the rest of the session).
+2. The `AZLOCAL_EXCLUDED_SUBSCRIPTIONS_PATH` environment / pipeline variable pointing at a CSV. The CSV's first column must be named `Subscription IDs` (or `Subscription ID` / `SubscriptionId` - whitespace and case insensitive); only that column is read, each value is GUID-validated (invalid rows are skipped with a warning), and values are lower-cased and de-duplicated. The remaining columns (`Subscription Name`, `Comment / Notes`) are documentation only. A **header-only** CSV (zero data rows) is not an error - it warns and excludes nothing. If the variable is unset, the list is empty and the module behaves exactly as before.
+
+**Parameters:** None.
+
+**Returns:** a `[PSCustomObject]` with:
+
+- `SubscriptionIds` `[string[]]` - the resolved, lower-cased, de-duplicated GUIDs.
+- `Count` `[int]` - number of excluded subscriptions.
+- `Source` `[string]` - where the list came from (the CSV path, `Explicit:Parameter`, `Explicit:Cleared`, or `$null` when unset).
+- `IsExplicit` `[bool]` - `$true` when an explicit override is in effect.
+
+**Examples:**
+
+```powershell
+# Show what is being excluded (resolves the env-var CSV on first call)
+Get-AzLocalExcludedSubscription
+
+# Use the count in a guard
+if ((Get-AzLocalExcludedSubscription).Count -gt 0) { 'Exclusions active' }
+```
+
+---
+
+### `Set-AzLocalExcludedSubscription`
+
+Overrides the subscription-exclusion list for the current module session (useful for interactive / local runs where you do not want to set the `AZLOCAL_EXCLUDED_SUBSCRIPTIONS_PATH` variable). An explicit override set here wins over the environment variable for the rest of the session until you `-Clear` it.
+
+**Parameters (parameter sets are mutually exclusive):**
+
+- `-Path` (Path set, Position 0): Load the exclusion list from a CSV at this path (same schema as the env-var CSV described above). `Source` becomes the path.
+- `-SubscriptionId` `[string[]]` (List set): Set the exclusion list directly from one or more GUIDs. Non-GUID values are skipped with a warning. `Source` becomes `Explicit:Parameter`.
+- `-Clear` (Switch, Clear set): Empty the list and mark it explicitly cleared (suppresses the env-var auto-load for the session). `Source` becomes `Explicit:Cleared`.
+- `-PassThru` (Optional Switch): Return the resulting list (same shape as `Get-AzLocalExcludedSubscription`).
+- Supports `-WhatIf` and `-Confirm` (`ConfirmImpact = Low`).
+
+**Returns:** Nothing by default; the resolved `[PSCustomObject]` when `-PassThru` is specified.
+
+**Examples:**
+
+```powershell
+# Exclude two subscriptions directly for this session
+Set-AzLocalExcludedSubscription -SubscriptionId '11111111-1111-1111-1111-111111111111','22222222-2222-2222-2222-222222222222'
+
+# Load from a CSV you control
+Set-AzLocalExcludedSubscription -Path .\config\Excluded-Subscription-Ids.csv -PassThru
+
+# Reset to no exclusions for the rest of the session
+Set-AzLocalExcludedSubscription -Clear
+```
+
+> **Pipeline usage.** All 20 bundled pipeline examples (10 GitHub Actions + 10 Azure DevOps) declare the `AZLOCAL_EXCLUDED_SUBSCRIPTIONS_PATH` variable so you only have to point it at a repo-relative CSV (e.g. `./config/Excluded-Subscription-Ids.csv`) - no cmdlet call is needed in CI; the module auto-loads the CSV on its first Resource Graph query. `Copy-AzLocalPipelineExample` and `Update-AzLocalPipelineExample` drop an inert header-only `config/Excluded-Subscription-Ids.csv` skeleton (they never overwrite an existing one); pass `-SkipStarterExclusions` to suppress that drop.
 
 ---
 

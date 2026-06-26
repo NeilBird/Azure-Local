@@ -87,6 +87,12 @@ env:
   # set ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true.
   # https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  # v0.9.1 - OPTIONAL subscription exclusion list. Create a repository (or org)
+  # Actions variable named AZLOCAL_EXCLUDED_SUBSCRIPTIONS_PATH whose value is the
+  # repo-relative path to your exclusion CSV (e.g. ./config/Excluded-Subscription-Ids.csv).
+  # When set, every AzLocal.UpdateManagement Azure Resource Graph query in this
+  # workflow excludes the listed subscriptions. Leave it unset to exclude nothing.
+  AZLOCAL_EXCLUDED_SUBSCRIPTIONS_PATH: ${{ vars.AZLOCAL_EXCLUDED_SUBSCRIPTIONS_PATH }}
 
 permissions:
   id-token: write
