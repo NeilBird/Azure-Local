@@ -381,13 +381,23 @@ Describe 'v0.9.1 pipeline wiring: AZLOCAL_EXCLUDED_SUBSCRIPTIONS_PATH' {
         }
     }
 
-    It 'Every Azure DevOps pipeline declares the AZLOCAL_EXCLUDED_SUBSCRIPTIONS_PATH variable' {
+    It 'Every Azure DevOps pipeline sources shared settings from the AzureLocal-Pipeline-Settings variable group' {
         $adoDir = Join-Path $script:PipelineRoot 'azure-devops'
         $files = Get-ChildItem -Path $adoDir -Filter '*.yml' -File
         $files.Count | Should -Be 10
         foreach ($f in $files) {
-            (Get-Content -LiteralPath $f.FullName -Raw) |
-                Should -Match 'AZLOCAL_EXCLUDED_SUBSCRIPTIONS_PATH' -Because "ADO pipeline '$($f.Name)' should declare the exclusion variable"
+            $content = Get-Content -LiteralPath $f.FullName -Raw
+            # The exclusion path (and the other shared settings) are centralized in
+            # the variable group - the ADO equivalent of GitHub repo Variables.
+            $content |
+                Should -Match '(?m)^\s*-\s*group:\s*AzureLocal-Pipeline-Settings\s*$' -Because "ADO pipeline '$($f.Name)' must reference the shared variable group"
+            # And must NOT redefine AZLOCAL_EXCLUDED_SUBSCRIPTIONS_PATH inline - an
+            # inline pipeline-root variable OVERRIDES the group (ADO precedence), which
+            # would defeat the set-once design. Comment lines (#) are allowed.
+            $content |
+                Should -Not -Match '(?m)^\s*AZLOCAL_EXCLUDED_SUBSCRIPTIONS_PATH\s*:' -Because "ADO pipeline '$($f.Name)' must not define the exclusion var in map form inline"
+            $content |
+                Should -Not -Match '(?m)^\s*-\s*name:\s*AZLOCAL_EXCLUDED_SUBSCRIPTIONS_PATH\s*$' -Because "ADO pipeline '$($f.Name)' must not define the exclusion var in list form inline"
         }
     }
 

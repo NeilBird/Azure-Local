@@ -113,20 +113,33 @@ parameters:
     default: false
 
 variables:
-  GENERATED_AGAINST_MODULE_VERSION: '0.9.1'
-  # v0.9.1 - OPTIONAL subscription exclusion list. Set this pipeline variable
-  # (or override it in a variable group / at queue time) to the repo-relative
-  # path of your exclusion CSV, e.g. ./config/Excluded-Subscription-Ids.csv. When
-  # non-empty, every AzLocal.UpdateManagement Azure Resource Graph query in this
-  # pipeline excludes the listed subscriptions. Leave empty to exclude nothing.
-  AZLOCAL_EXCLUDED_SUBSCRIPTIONS_PATH: ''
-  REQUIRED_MODULE_VERSION: '${{ parameters.moduleVersion }}'
-  reportsPath: '$(Build.ArtifactStagingDirectory)/reports'
-  # v0.8.7 sideload advisor defaults. Override at the pipeline / variable-group
-  # level (set SIDELOAD_UPDATES=true to enable the recommended-sideload-schedule
-  # section). Defaults keep the audit byte-identical to v0.8.6 when unset.
-  SIDELOAD_UPDATES: 'false'
-  SIDELOAD_LEAD_DAYS: '7'
+  # Module version this YAML was generated against (per-file stamp; do NOT move to
+  # the shared group). The install step compares this to the installed version and
+  # to the latest on PSGallery and warns if the YAML looks stale - prompting a
+  # refresh via Copy-AzLocalPipelineExample -Update.
+  - name: GENERATED_AGAINST_MODULE_VERSION
+    value: '0.9.1'
+  # Resolution order for the module version pin: queue-time parameter 'moduleVersion'
+  # > empty (latest). Leave empty for the default fix-forward behaviour.
+  - name: REQUIRED_MODULE_VERSION
+    value: '${{ parameters.moduleVersion }}'
+  # Local artifact staging path (computed per run; not a shared setting).
+  - name: reportsPath
+    value: '$(Build.ArtifactStagingDirectory)/reports'
+  # Shared, set-once pipeline settings come from the variable group below - the
+  # Azure DevOps equivalent of GitHub repo Variables. Set them ONCE in the group
+  # and every pipeline picks up the same values:
+  #   AZLOCAL_EXCLUDED_SUBSCRIPTIONS_PATH  (default '')      - optional subscription
+  #       exclusion CSV path (repo-relative). When non-empty, every Azure Resource
+  #       Graph query in this pipeline excludes the listed subscriptions.
+  #   SIDELOAD_UPDATES                     (default 'false') - set 'true' to enable
+  #       the recommended-sideload-schedule section of the audit.
+  #   SIDELOAD_LEAD_DAYS                   (default '7')
+  # Create the group once (Library > Variable groups, or
+  # `az pipelines variable-group create`). See Automation-Pipeline-Examples/README.md
+  # section 5. A variable redefined inline would OVERRIDE the group, so these are
+  # intentionally not redefined here - the group is the single source of truth.
+  - group: AzureLocal-Pipeline-Settings
 
 stages:
 - stage: ScheduleCoverage

@@ -89,38 +89,37 @@ parameters:
     default: false
 
 variables:
-  # Module version this YAML was generated against. The install step compares this to
-  # the version actually installed and to the latest on PSGallery, and emits a warning
-  # log if the YAML appears stale - prompting you to refresh via
-  # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.9.1'
-  # v0.9.1 - OPTIONAL subscription exclusion list. Set this pipeline variable
-  # (or override it in a variable group / at queue time) to the repo-relative
-  # path of your exclusion CSV, e.g. ./config/Excluded-Subscription-Ids.csv. When
-  # non-empty, every AzLocal.UpdateManagement Azure Resource Graph query in this
-  # pipeline excludes the listed subscriptions. Leave empty to exclude nothing.
-  AZLOCAL_EXCLUDED_SUBSCRIPTIONS_PATH: ''
-  # Resolution order for the module version pin (leave all unset to install the latest,
-  # which is the default "fix-forward" behaviour): queue-time parameter > pipeline variable
-  # 'REQUIRED_MODULE_VERSION' overridden at queue time > empty (latest).
-  REQUIRED_MODULE_VERSION: '${{ parameters.moduleVersion }}'
-  reportsPath: '$(Build.ArtifactStagingDirectory)/reports'
-  # ITSM connector. When raiseItsmTicket=true the Raise ITSM
+  # Module version this YAML was generated against (per-file stamp; do NOT move to
+  # the shared group). The install step compares this to the installed version and
+  # to the latest on PSGallery and warns if the YAML looks stale - prompting a
+  # refresh via Copy-AzLocalPipelineExample -Update.
+  - name: GENERATED_AGAINST_MODULE_VERSION
+    value: '0.9.1'
+  # Resolution order for the module version pin: queue-time parameter 'moduleVersion'
+  # > empty (latest). Leave empty for the default fix-forward behaviour.
+  - name: REQUIRED_MODULE_VERSION
+    value: '${{ parameters.moduleVersion }}'
+  - name: reportsPath
+    value: '$(Build.ArtifactStagingDirectory)/reports'
+  # Shared, set-once pipeline settings come from the variable group below - the
+  # Azure DevOps equivalent of GitHub repo Variables. Set them ONCE in the group
+  # and every pipeline picks up the same values:
+  #   AZLOCAL_EXCLUDED_SUBSCRIPTIONS_PATH  (default '')   - optional subscription
+  #       exclusion CSV path (repo-relative); when non-empty every Azure Resource
+  #       Graph query in this pipeline excludes the listed subscriptions.
+  # Create the group once (Library > Variable groups, or
+  # `az pipelines variable-group create`). See Automation-Pipeline-Examples/README.md
+  # section 5. A variable redefined inline would OVERRIDE the group, so it is
+  # intentionally not redefined here - the group is the single source of truth.
+  - group: AzureLocal-Pipeline-Settings
+  # ITSM connector (opt-in, secrets). When raiseItsmTicket=true the Raise ITSM
   # task below references $(ITSM_SN_INSTANCE_URL), $(ITSM_SN_CLIENT_ID),
-  # $(ITSM_SN_CLIENT_SECRET). The simplest binding is an ADO variable group
-  # named 'AzureLocal-ITSM-Secrets'. ADO does not allow mixing mapping-form
-  # variables with '- group:' entries in the same block, so to enable the
-  # group reference convert this entire 'variables:' block to list form:
-  #   variables:
-  #     - name: GENERATED_AGAINST_MODULE_VERSION
-  #       value: '0.7.77'
-  #     - name: REQUIRED_MODULE_VERSION
-  #       value: '${{ parameters.moduleVersion }}'
-  #     - name: reportsPath
-  #       value: '$(Build.ArtifactStagingDirectory)/reports'
-  #     - group: AzureLocal-ITSM-Secrets
-  # When raiseItsmTicket=false the Raise ITSM task is skipped and the secrets
-  # are not consulted, so the conversion is only required for opt-in users.
+  # $(ITSM_SN_CLIENT_SECRET). Bind them via a SEPARATE variable group named
+  # 'AzureLocal-ITSM-Secrets' (kept apart because it holds secrets). This block
+  # is already list form, so just create that group and uncomment the line below.
+  # When raiseItsmTicket=false the Raise ITSM task is skipped and the secrets are
+  # not consulted, so this is only required for opt-in users.
+  # - group: AzureLocal-ITSM-Secrets
 
 stages:
 - stage: FleetStatus

@@ -27,6 +27,7 @@ It is written in the same step-by-step style as [`ITSM/README.md`](../ITSM/READM
 5. [Wire the pipeline files into your repo](#5-wire-the-pipeline-files-into-your-repo)
    - [5.1 GitHub Actions](#51-github-actions)
    - [5.2 Azure DevOps](#52-azure-devops)
+     - [5.2.1 The `AzureLocal-Pipeline-Settings` variable group (shared settings, set once)](#521-the-azurelocal-pipeline-settings-variable-group-shared-settings-set-once)
    - [5.3 Optional configuration (not recommended): pin the module version](#53-optional-configuration-not-recommended-pin-the-module-version)
    - [5.4 Azure DevOps onboarding checklist](#54-azure-devops-onboarding-checklist)
 6. [End-to-end runbook: bring an estate online](#6-end-to-end-runbook-bring-an-estate-online)
@@ -784,16 +785,7 @@ $spObjectId = az ad sp show --id $adoSpAppId --query id -o tsv
 az ad group member add --group <operators-group-objectId> --member-id $spObjectId
 ```
 
-> **ADO variable groups (if you use them)**: the only `AZURE_*` value you might still want to pin as a pipeline variable is the **subscription id** for read-only display in run logs - there's no `AZURE_CLIENT_SECRET` to protect. If you do want one, the equivalent of `gh secret set` is:
->
-> ```powershell
-> az pipelines variable-group create `
->     --name        'AzureLocal-PipelineVars' `
->     --variables   AZURE_SUBSCRIPTION_ID=$subId `
->     --authorize   true
-> ```
->
-> The service connection still does the heavy lifting; variable groups are optional metadata.
+> **ADO variable groups**: there are **no `AZURE_*` secrets to manage** - the service connection holds `clientId` / `tenantId` / `subscriptionId` and the federated identity, so there's no `AZURE_CLIENT_SECRET` to protect. The example pipelines do, however, source their **shared non-secret settings** (exclusion path, schedule path, sideload + monitor toggles) from a required variable group named **`AzureLocal-Pipeline-Settings`** - the ADO equivalent of GitHub repo Variables. Create it once as described in [section 5.2.1](#521-the-azurelocal-pipeline-settings-variable-group-shared-settings-set-once). Do **not** put `AZURE_*` auth values in it - they belong on the service connection.
 
 </details>
 
@@ -1077,7 +1069,61 @@ Both platforms expect the YAML files inside this folder to land in a platform-sp
 
    **Safety rails**: `Copy-AzLocalPipelineExample` **never overwrites** an existing `apply-updates-schedule.yml` - any operator-tailored schedule you commit is preserved across re-runs. Pass `-SkipStarterSchedule` to suppress the starter copy entirely (e.g. if you pre-stage the schedule via separate tooling). For the full schema, multi-stage rollouts, weekly-cycle / ring-eligibility model, and the `allowedUpdateVersions` allow-list (schema v2), see [section 8](#8-scheduling-maintenance-windows-and-change-freeze-periods).
 
-Optional: create a variable group named **`AzureLocal-Config`** in **Pipelines -> Library** for default values (e.g. the default `UpdateRing` for your most-common rollout). The example YAMLs do not require it.
+7. **Create the `AzureLocal-Pipeline-Settings` variable group (required - one-time).** Every ADO example pipeline pulls its **shared, non-secret settings** from a single variable group named **`AzureLocal-Pipeline-Settings`** via a `- group: AzureLocal-Pipeline-Settings` reference at the top of each pipeline. This is the Azure DevOps equivalent of GitHub repo **Variables** (`vars.*`) - set the values **once** and all ten pipelines inherit them, instead of editing each YAML. See [5.2.1](#521-the-azurelocal-pipeline-settings-variable-group-shared-settings-set-once) below for the create commands and the full member list.
+
+   > **The group must exist before you run any pipeline.** Referencing a variable group that does not exist is a **compile error** in Azure DevOps - the run fails before any job starts. Create it (even empty-but-present, with the shipped defaults) as part of onboarding.
+
+#### 5.2.1 The `AzureLocal-Pipeline-Settings` variable group (shared settings, set once)
+
+`AzureLocal-Pipeline-Settings` holds the **non-secret, fleet-wide settings** that previously had to be edited inline in each YAML. None of these are credentials - **authentication (subscription / tenant / client) stays on the Workload Identity Federation service connection**, never in this group (see [4.2](#42-azure-devops-with-workload-identity-federation-recommended)).
+
+Why a group instead of inline variables? Azure DevOps variable **precedence** runs (highest to lowest): job-level > stage-level > pipeline-root inline YAML > queue-time > variable group / Pipeline-UI. A variable group sits **below** pipeline-root inline YAML, so an inline variable of the same name would silently **override** the group. The example pipelines therefore **do not** redefine any group member inline - the group is the single source of truth. To change a setting fleet-wide, edit the group; to override it for one run, pass it as a **queue-time** variable (which outranks the group).
+
+**Members** (all optional - each ships with a safe default so an unset value never breaks a run):
+
+| Variable | Default | Purpose | Consumed by |
+|---|---|---|---|
+| `AZLOCAL_EXCLUDED_SUBSCRIPTIONS_PATH` | `''` (none) | Path to the CSV of subscription IDs to exclude from every fleet scan. | All pipelines |
+| `APPLY_UPDATES_SCHEDULE_PATH` | `./config/apply-updates-schedule.yml` | Path to the apply schedule / allow-list. | `apply-updates`, `assess-update-readiness` |
+| `MONITOR_TRIGGER_DELAY_MINUTES` | `0` (no delay) | One-off startup sleep on the **event-driven** monitor run so the snapshot lands after the run registers `InProgress`. Honoured range 15-240. | `monitor-updates` |
+| `FAILED_UPDATES_SINGLE_RETRY` | unset (`off`) | Opt-in guarded one-time retry of failed update runs. Set `true` to enable. See [8.5](#85-opt-in-single-retry-of-failed-updates-failed_updates_single_retry). | `apply-updates` |
+| `SIDELOAD_UPDATES` | `false` | Master gate for the sideload pipeline (accepts `true`/`1`). | `sideload-updates` |
+| `SIDELOAD_LEAD_DAYS` | `7` | Days ahead of a maintenance window to stage sideloaded content. | `sideload-updates`, `apply-updates-schedule-audit` |
+| `SIDELOAD_STATE_ROOT` | `''` | Durable state root for sideload progress/heartbeat. | `sideload-updates` |
+| `SIDELOAD_CACHE_ROOT` | `''` | Local cache root for staged update content. | `sideload-updates` |
+| `SIDELOAD_AUTH_MAP_PATH` | `''` | Path to the per-cluster remoting auth map. | `sideload-updates` |
+| `SIDELOAD_CATALOG_PATH` | `''` | Path to the update catalogue. | `sideload-updates` |
+| `SIDELOAD_ROBOCOPY_SWITCHES` | `''` | Override robocopy switches for content staging. | `sideload-updates` |
+| `SIDELOAD_HEARTBEAT_STALE_MINUTES` | `''` | Minutes before a sideload heartbeat is considered stale. | `sideload-updates` |
+| `SIDELOAD_REMOTING_FQDN_SUFFIX` | `''` | FQDN suffix appended when building remoting targets. | `sideload-updates` |
+| `SIDELOAD_KV_AUTH` | `''` | Key Vault reference for sideload remoting credentials. | `sideload-updates` |
+
+**Create the group (one-time).** Use the `azure-devops` `az` extension (installed in [4.2](#42-azure-devops-with-workload-identity-federation-recommended)). The example below seeds every member with its shipped default; delete the lines you do not need (they fall back to the same defaults) and set real paths for the sideload values only if you run the sideload pipeline:
+
+```powershell
+# Run after 'az devops configure --defaults organization=... project=...' (see 4.2).
+az pipelines variable-group create `
+    --name        'AzureLocal-Pipeline-Settings' `
+    --authorize   true `
+    --variables `
+        AZLOCAL_EXCLUDED_SUBSCRIPTIONS_PATH='' `
+        APPLY_UPDATES_SCHEDULE_PATH='./config/apply-updates-schedule.yml' `
+        MONITOR_TRIGGER_DELAY_MINUTES='0' `
+        FAILED_UPDATES_SINGLE_RETRY='false' `
+        SIDELOAD_UPDATES='false' `
+        SIDELOAD_LEAD_DAYS='7'
+
+# Verify the group exists and is authorized for all pipelines.
+az pipelines variable-group list `
+    --query "[?name=='AzureLocal-Pipeline-Settings'].{name:name, id:id, vars:keys(variables)}" `
+    -o jsonc
+```
+
+> `--authorize true` grants every pipeline in the project access to the group, matching the repo-wide visibility of GitHub repo Variables. To add or change a value later: `az pipelines variable-group variable update --group-id <id> --name MONITOR_TRIGGER_DELAY_MINUTES --value 30` (the `<id>` is printed by the `list` command above). You can also manage the group in the UI under **Pipelines -> Library -> Variable groups**.
+
+You can equally create the group **in the UI**: **Pipelines -> Library -> + Variable group**, name it exactly `AzureLocal-Pipeline-Settings`, add the rows above, and under **Pipeline permissions** grant access to your pipelines (or toggle "Allow access to all pipelines").
+
+> **Secrets stay separate.** This group is for **non-secret** settings only. ITSM credentials live in a separate `AzureLocal-ITSM-Secrets` group (see [section 7](#7-optional-open-itsm-tickets-for-clusters-needing-operator-action)); Azure auth lives on the service connection. Do not put secrets in `AzureLocal-Pipeline-Settings`.
 
 ### 5.3 Optional configuration (_not recommended_): pin the module version
 
@@ -1105,14 +1151,15 @@ The example pipelines have **near-100% functional parity** across GitHub Actions
   ```
 
   > Since **v0.8.94** each `azureSubscription:` line is wrapped in a `# BEGIN/END-AZLOCAL-CUSTOMIZE:service-connection-<job>` marker, so your renamed connection name **survives `Update-AzLocalPipelineExample`** (including with `-Force`). The agent pool (`# ...:runner-target-<job>`) and the sideload self-hosted pool (`# ...:sideload-runner-<job>`) are wrapped the same way. See [4.2](#42-azure-devops-with-workload-identity-federation-recommended) and the [version-pinning appendix](docs/appendix-module-version-pinning.md) for the upgrade workflow.
-- [ ] **(Optional) Create variable groups** in **Pipelines -> Library**: `AzureLocal-Config` for defaults (e.g. the most-common `UpdateRing`), and - only if you plan to raise ITSM tickets - `AzureLocal-ITSM-Secrets` (see [section 7](#7-optional-open-itsm-tickets-for-clusters-needing-operator-action)).
+- [ ] **Create the `AzureLocal-Pipeline-Settings` variable group** (see [5.2.1](#521-the-azurelocal-pipeline-settings-variable-group-shared-settings-set-once)). This is **required** - every ADO pipeline references it via `- group: AzureLocal-Pipeline-Settings`, and a missing group is a **compile error** (the run fails before any job starts). It is the ADO equivalent of GitHub repo Variables: set the shared, non-secret settings (exclusion path, schedule path, sideload + monitor toggles) **once** and all ten pipelines inherit them. Seed it with the shipped defaults via `az pipelines variable-group create` (or **Pipelines -> Library**), and grant it access to all pipelines (`--authorize true`).
+- [ ] **(Optional) Create the other variable groups** in **Pipelines -> Library**: `AzureLocal-Config` for run defaults (e.g. the most-common `UpdateRing`), and - only if you plan to raise ITSM tickets - `AzureLocal-ITSM-Secrets` (see [section 7](#7-optional-open-itsm-tickets-for-clusters-needing-operator-action)).
 
 #### Per-pipeline (after import)
 
 - [ ] **Set concurrency on `apply-updates`.** GitHub Actions has a YAML `concurrency:` block that serialises apply runs automatically; Azure DevOps has **no first-class YAML concurrency** equivalent. Configure it in the UI so two apply runs can never race the same fleet: **Pipelines -> apply-updates -> Edit -> ... -> Triggers -> "Limit concurrent runs"** (or attach an **Environment** with an **Exclusive lock** check). Do this before the first scheduled apply.
 - [ ] **Enable OAuth token access for the event-driven monitor trigger.** When Update: 3 (Apply) starts >=1 update it auto-queues Update: 4 (Monitor) via the ADO REST API using `$(System.AccessToken)`. That token is only populated when **"Allow scripts to access the OAuth token"** is enabled (Pipeline **Edit -> ... -> Options**, or the job-level `System.AccessToken` mapping the YAML already wires). If it is off, the apply run still succeeds but the monitor is not auto-fired (you can still run it on its 6-hourly cron / manually).
 - [ ] **Do not rename the `CheckReadiness` stage or the `ReadinessCheck` job in `apply-updates.yml`.** The apply stage consumes the readiness gate via `stageDependencies.CheckReadiness.ReadinessCheck.outputs[...]` (ReadyCount / TotalCount / NotReadyCount / resolved ring + allow-list). ADO binds these by **exact stage + job + output name**; renaming any of them breaks the binding **silently** (the variable resolves to an empty string, not an error). The GitHub Actions equivalent uses `needs.check-readiness.outputs.*`, which fails loudly instead. After import, run **one manual `apply-updates` with `dryRun` / WhatIf** and confirm `ReadyCount` is populated in the apply stage log before trusting a scheduled run.
-- [ ] **(ITSM only) Convert the `variables:` block to list form.** Azure DevOps cannot mix mapping-form variables (`name: value`) with a `- group:` reference in the same block. To pull in `AzureLocal-ITSM-Secrets`, convert the pipeline's `variables:` mapping to `- name: / value:` list form, add `- group: AzureLocal-ITSM-Secrets`, then uncomment the ITSM task. Each ITSM-capable ADO YAML carries an inline comment showing the before/after. Skip entirely if you are not using ITSM.
+- [ ] **(ITSM only) Uncomment the `AzureLocal-ITSM-Secrets` group reference.** Since v0.9.1 every ADO pipeline already uses **list-form** `variables:` with a `- group: AzureLocal-Pipeline-Settings` reference, so no map-to-list conversion is needed. To pull in ITSM credentials, just **uncomment** the `# - group: AzureLocal-ITSM-Secrets` line in the `variables:` block of each ITSM-capable pipeline and uncomment the ITSM task. Skip entirely if you are not using ITSM.
 
 #### FAQ
 
@@ -1122,7 +1169,7 @@ The example pipelines have **near-100% functional parity** across GitHub Actions
 - **Do the schedules differ?** No - the default cron expressions match line-for-line across both platforms. As shipped, `apply-updates` has every `cron:` commented out inside the `BEGIN/END-AZLOCAL-CUSTOMIZE:schedule-triggers` markers on both platforms, so it never fires on a schedule until you add one.
 - **Module version pinning?** Identical strategy on both - latest-from-PSGallery by default, with the same `GENERATED_AGAINST_MODULE_VERSION` drift-detection pin and `Add-AzLocalPipelineVersionBanner` notice.
 
-> **Top 3 to verify before go-live:** (1) the service-connection name matches `AzureLocal-ServiceConnection` (or you bulk-replaced it); (2) `apply-updates` has "Limit concurrent runs" set to 1; (3) a manual `apply-updates` dry-run shows a populated `ReadyCount` in the apply stage (proves the `stageDependencies` binding resolves).
+> **Top 3 to verify before go-live:** (1) the `AzureLocal-Pipeline-Settings` variable group exists and is authorized for all pipelines (a missing group fails compilation); (2) the service-connection name matches `AzureLocal-ServiceConnection` (or you bulk-replaced it); (3) `apply-updates` has "Limit concurrent runs" set to 1 **and** a manual `apply-updates` dry-run shows a populated `ReadyCount` in the apply stage (proves the `stageDependencies` binding resolves).
 
 ---
 
@@ -1425,7 +1472,7 @@ Apply never waits on the monitor - it dispatches and moves on. This keeps the wa
 
 | Property | Behaviour |
 |---|---|
-| **Where it lives** | A repository (or environment) **Variable** on GitHub Actions (`vars.MONITOR_TRIGGER_DELAY_MINUTES`); a **pipeline variable** (or variable-group / queue-time variable) on Azure DevOps. It is read as an `env:` value by the monitor's "Startup delay" step. |
+| **Where it lives** | A repository (or environment) **Variable** on GitHub Actions (`vars.MONITOR_TRIGGER_DELAY_MINUTES`); a member of the **`AzureLocal-Pipeline-Settings` variable group** (or a queue-time override) on Azure DevOps. It is read as an `env:` value by the monitor's "Startup delay" step. |
 | **Default** | **Unset or `0` = no delay** - the monitor runs immediately. The variable is entirely opt-in; existing repos behave exactly as before until you set it. |
 | **Honoured range** | `15`-`240` minutes. A non-zero value **below 15 is clamped up to 15**; a value **above 240 is clamped down to 240** (a guard so a typo cannot pin the runner for hours or blow the 6h GitHub-hosted job cap). |
 | **Scope** | The delay applies to the **event-driven run only** (`triggered_by` / `triggeredBy == 'apply-updates'`). Scheduled (cron) runs and manual `workflow_dispatch` / Run-pipeline runs **never** delay - the startup-delay step is skipped for them. |
@@ -1437,9 +1484,10 @@ Set it once per repo/project:
 # GitHub Actions - repository Variable (not a Secret; it is a non-sensitive integer)
 gh variable set MONITOR_TRIGGER_DELAY_MINUTES --body 30 --repo <owner>/<repo>
 
-# Azure DevOps - pipeline variable (Pipelines -> Edit -> Variables), or a variable group,
-# or a queue-time override. Name it exactly:
-#   MONITOR_TRIGGER_DELAY_MINUTES = 30
+# Azure DevOps - update the AzureLocal-Pipeline-Settings variable group (see 5.2.1),
+# or pass it as a queue-time override. <id> is from 'az pipelines variable-group list'.
+az pipelines variable-group variable update `
+    --group-id <id> --name MONITOR_TRIGGER_DELAY_MINUTES --value 30
 ```
 
 A practical starting point is `30` minutes - long enough for the `updateRun` to clear pre-update health checks and register as `InProgress`, short enough that the first in-flight snapshot still lands early in the wave. Leave it unset if your environment registers runs quickly and you prefer the monitor to fire immediately (the 6-hourly cron will pick up anything the first event-driven run missed).
@@ -1938,10 +1986,12 @@ This capability is **off by default**. When it is off, both `Update: 3 - Apply U
 
   Set it back to `false` (or delete the Variable) to disable.
 
-- **Azure DevOps** - add a pipeline variable (or a variable-group entry linked to the apply/monitor pipelines):
+- **Azure DevOps** - set it in the **`AzureLocal-Pipeline-Settings` variable group** (see [5.2.1](#521-the-azurelocal-pipeline-settings-variable-group-shared-settings-set-once)); the apply/monitor pipelines already reference the group:
 
-  ```text
-  FAILED_UPDATES_SINGLE_RETRY = true
+  ```powershell
+  # <id> is from 'az pipelines variable-group list' (see 5.2.1)
+  az pipelines variable-group variable update `
+      --group-id <id> --name FAILED_UPDATES_SINGLE_RETRY --value true
   ```
 
   Set it to `false` (or remove it) to disable.

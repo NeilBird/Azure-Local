@@ -135,21 +135,23 @@ variables:
   # 'REQUIRED_MODULE_VERSION' overridden at queue time > empty (latest).
   - name: REQUIRED_MODULE_VERSION
     value: '${{ parameters.moduleVersion }}'
-  # v0.9.1 - OPTIONAL subscription exclusion list. Set this pipeline variable
-  # (or override it in a variable group / at queue time) to the repo-relative
-  # path of your exclusion CSV, e.g. ./config/Excluded-Subscription-Ids.csv. When
-  # non-empty, every AzLocal.UpdateManagement Azure Resource Graph query in this
-  # pipeline excludes the listed subscriptions. Leave empty to exclude nothing.
-  - name: AZLOCAL_EXCLUDED_SUBSCRIPTIONS_PATH
-    value: ''
-  # Path to the ring-aware apply-updates-schedule.yml (relative to repo
-  # root). The 'Resolve UpdateRing from schedule' task reads this file when
-  # $(Build.Reason)='Schedule'. Default 'config/apply-updates-schedule.yml'
-  # matches where Copy-AzLocalPipelineExample drops the starter, alongside
-  # config/ClusterUpdateRings.csv. Override at queue time if you keep the
-  # schedule elsewhere.
-  - name: APPLY_UPDATES_SCHEDULE_PATH
-    value: './config/apply-updates-schedule.yml'
+  # Shared, set-once pipeline settings come from the variable group below - the
+  # Azure DevOps equivalent of GitHub repo Variables. Set them ONCE in the group
+  # and every pipeline picks up the same values:
+  #   AZLOCAL_EXCLUDED_SUBSCRIPTIONS_PATH  (default '')   - optional subscription
+  #       exclusion CSV path (repo-relative); when non-empty every Azure Resource
+  #       Graph query in this pipeline excludes the listed subscriptions.
+  #   APPLY_UPDATES_SCHEDULE_PATH  (default './config/apply-updates-schedule.yml')
+  #       - ring-aware schedule read by the 'Resolve UpdateRing from schedule' task
+  #       when $(Build.Reason)='Schedule', alongside config/ClusterUpdateRings.csv.
+  #   FAILED_UPDATES_SINGLE_RETRY  (default unset = off) - set 'true' to enable the
+  #       opt-in 'Retry Failed Updates' task below. The task's `condition:` reads
+  #       this variable, so the group value flips it on for every run (off by default).
+  # Create the group once (Library > Variable groups, or
+  # `az pipelines variable-group create`). See Automation-Pipeline-Examples/README.md
+  # section 5. A variable redefined inline would OVERRIDE the group, so these are
+  # intentionally not redefined here - the group is the single source of truth.
+  - group: AzureLocal-Pipeline-Settings
   # v0.8.90: event-driven monitor trigger. Set MONITOR_PIPELINE_ID to the
   # numeric pipeline definition ID of Update: 4 (Monitor In-Flight Updates) to
   # have this pipeline queue the monitor as soon as it STARTS >=1 update. Find
