@@ -30,6 +30,7 @@ It is written in the same step-by-step style as [`ITSM/README.md`](../ITSM/READM
      - [5.2.1 The `AzureLocal-Pipeline-Settings` variable group (shared settings, set once)](#521-the-azurelocal-pipeline-settings-variable-group-shared-settings-set-once)
    - [5.3 Optional configuration (not recommended): pin the module version](#53-optional-configuration-not-recommended-pin-the-module-version)
    - [5.4 Azure DevOps onboarding checklist](#54-azure-devops-onboarding-checklist)
+   - [5.5 Stay current: one-command refresh with `Update-Module-And-Pipelines.ps1`](#55-stay-current-one-command-refresh-with-update-module-and-pipelinesps1)
 6. [End-to-end runbook: bring an estate online](#6-end-to-end-runbook-bring-an-estate-online)
    - [6.1 Inventory the estate](#61-inventory-the-estate)
      - [6.1.1 (Optional) Exclude whole subscriptions from every fleet scan](#611-optional-exclude-whole-subscriptions-from-every-fleet-scan)
@@ -82,6 +83,8 @@ This is the whole journey - from an empty repo to a self-running, ring-based upd
 - [ ] **14. Go live:** apply updates one wave at a time with **Update: 3 - Apply Updates**. Continuous monitoring (**Monitor: 1-3** + **Update: 4**) is already active by default - *(v0.8.90)* **Update: 4** auto-runs every 6h with a cheap `-SkipWhenIdle` heartbeat and is fired event-driven by Apply the moment an update starts, so there is nothing to turn on. See [section 6.6](#66-apply-updates---one-wave-at-a-time) and [6.7](#67-continuous-fleet-monitoring).
 
 > **The detailed walkthrough below mirrors this checklist exactly.** Sections 2-5 cover the one-time setup (steps 1-8); [section 6](#6-end-to-end-runbook-bring-an-estate-online) is the canonical end-to-end runbook for the operating loop (steps 9-14). If you only read one section in depth, read [section 6](#6-end-to-end-runbook-bring-an-estate-online).
+
+> **Staying current (after each module release):** from your locally-cloned repo, run the turnkey **`.\Update-Module-And-Pipelines.ps1`** that `Copy-AzLocalPipelineExample` dropped into the repo root. One command upgrades the module on your workstation, refreshes the pipeline YAMLs (keeping your customisations), and commits + pushes the changes. Requires the repo cloned locally and `git` installed. See [section 5.5](#55-stay-current-one-command-refresh-with-update-module-and-pipelinesps1).
 
 ---
 
@@ -876,6 +879,8 @@ If you must use client secrets:
 
 Both platforms expect the YAML files inside this folder to land in a platform-specific location in your **consumer** repo.
 
+> **Already wired and just want to upgrade after a new module release?** Don't repeat the steps below. `Copy-AzLocalPipelineExample` drops a **turnkey `Update-Module-And-Pipelines.ps1`** into your repo root - run that one command from your locally-cloned repo and it upgrades the module on your workstation **and** refreshes the pipeline YAMLs (preserving your customisations) **and** commits + pushes the result. See [section 5.5](#55-stay-current-one-command-refresh-with-update-module-and-pipelinesps1).
+
 > **Shortcut**: install the module first and use `Copy-AzLocalPipelineExample` to copy this entire folder out of the module install location into a working folder, instead of cloning the repo or hunting through `$module.ModuleBase`:
 >
 > ```powershell
@@ -1172,6 +1177,40 @@ The example pipelines have **near-100% functional parity** across GitHub Actions
 - **Module version pinning?** Identical strategy on both - latest-from-PSGallery by default, with the same `GENERATED_AGAINST_MODULE_VERSION` drift-detection pin and `Add-AzLocalPipelineVersionBanner` notice.
 
 > **Top 3 to verify before go-live:** (1) the `AzureLocal-Pipeline-Settings` variable group exists and is authorized for all pipelines (a missing group fails compilation); (2) the service-connection name matches `AzureLocal-ServiceConnection` (or you bulk-replaced it); (3) `apply-updates` has "Limit concurrent runs" set to 1 **and** a manual `apply-updates` dry-run shows a populated `ReadyCount` in the apply stage (proves the `stageDependencies` binding resolves).
+
+---
+
+### 5.5 Stay current: one-command refresh with `Update-Module-And-Pipelines.ps1`
+
+Once your repo is wired (sections 5.1-5.4), keeping it current after a new `AzLocal.UpdateManagement` release is **a single command** - no re-copying YAMLs, no manual version bumps, no hand-written commit. When you first ran `Copy-AzLocalPipelineExample` it dropped a **turnkey `Update-Module-And-Pipelines.ps1`** into your repo root with your platform and workflow folder already baked in *(default-on since v0.8.98 for `-Platform GitHub` / `AzureDevOps`; pass `-SkipStarterUpdater` to suppress it)*.
+
+**Prerequisites:** the consumer repo **cloned locally**, **`git` installed** and on `PATH`, and PowerShell Gallery reachable from your workstation. (This is an admin-workstation script - it is *not* run by the pipelines.)
+
+**Run it from the repo root:**
+
+```powershell
+# From inside your locally-cloned pipelines repo:
+.\Update-Module-And-Pipelines.ps1
+```
+
+That one command does three things, in order, and **only acts when something actually changed**:
+
+1. **Upgrades the module on your workstation** - queries PSGallery and runs `Install-Module` **only if** the published version is newer than what you have installed (then imports it). If you are already current, it skips the install.
+2. **Refreshes the pipeline YAMLs** via the marker-aware `Update-AzLocalPipelineExample` - it replaces everything **outside** the `AZLOCAL-CUSTOMIZE` marker regions while **preserving your customisations inside them** (schedule crons, service-connection names, runner labels, ITSM secret bindings, the exclusion/schedule paths, etc.). It also refreshes the managed `config\` starters and the dropped `README.md` when the module ships newer templates.
+3. **Commits and pushes** - stages the workflow folder, the repo-root `config\` folder, the managed `README.md`, and the updater script itself (which may self-refresh), then commits and pushes **only if** the refresh produced a diff.
+
+**Useful options:**
+
+| Option | Effect |
+|---|---|
+| *(none)* | Upgrade module if needed, refresh YAMLs, then commit + push any changes. |
+| `-NoPush` | Refresh the YAMLs only - **skip** the `git add` / commit / push so you can review with `git status` / `git diff` and push yourself. |
+| `-Scope AllUsers` | Install the module machine-wide on upgrade (needs an elevated session). Default is `CurrentUser` (no elevation). |
+| `-RepoRoot` / `-Platform` / `-WorkflowSubPath` | Overrides for the values baked in at drop time - rarely needed. |
+
+> **Self-managing:** the script is a **managed file** - `Copy-`/`Update-AzLocalPipelineExample` auto-refresh it in place when the module ships a newer template, and the run above stages that self-update too. Tune its behaviour with the **parameters** above rather than editing the body (body edits are replaced on refresh).
+
+> **Prefer to review before pushing?** Run `.\Update-Module-And-Pipelines.ps1 -NoPush`, inspect `git diff`, then commit and push manually. The marker-aware merge means a refresh is safe to run even on a heavily-customised repo - your `AZLOCAL-CUSTOMIZE` regions survive.
 
 ---
 
