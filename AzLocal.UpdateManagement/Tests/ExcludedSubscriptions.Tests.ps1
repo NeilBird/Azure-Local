@@ -439,4 +439,144 @@ Describe 'v0.9.1 starter drop: Copy-AzLocalPipelineExample writes header-only Ex
 
         (Get-Content -LiteralPath $csv -Raw) | Should -Match '99999999-9999-9999-9999-999999999999'
     }
+
+    It 'Drops a comment-free CSV (no embedded # lines) that round-trips and parses cleanly (v0.9.10)' {
+        $dest = Join-Path $TestDrive 'repo-gh-clean\.github\workflows'
+        $null = New-Item -ItemType Directory -Path $dest -Force
+        Copy-AzLocalPipelineExample -Destination $dest -Platform GitHub -Confirm:$false | Out-Null
+
+        $csv = Join-Path $TestDrive 'repo-gh-clean\config\Excluded-Subscription-Ids.csv'
+        Test-Path -LiteralPath $csv | Should -BeTrue
+        $content = @(Get-Content -LiteralPath $csv)
+        # The CSV must carry NO '#' guidance lines - that guidance moved to the
+        # sidecar README so the CSV round-trips safely through Excel.
+        ($content | Where-Object { $_ -match '^\s*#' }).Count | Should -Be 0
+        # And the clean header-only CSV parses without throwing (header-only =
+        # zero data rows = excludes nothing).
+        InModuleScope AzLocal.UpdateManagement -Parameters @{ Path = $csv } {
+            param($Path)
+            { Resolve-AzLocalExcludedSubscriptionId -Path $Path } | Should -Not -Throw
+            $r = Resolve-AzLocalExcludedSubscriptionId -Path $Path
+            $r.RowCount | Should -Be 0
+            $r.Column   | Should -Match 'Subscription'
+        }
+    }
+
+    It 'Drops a sidecar Excluded-Subscription-Ids_README.txt with activation guidance (v0.9.10)' {
+        $dest = Join-Path $TestDrive 'repo-gh-readme\.github\workflows'
+        $null = New-Item -ItemType Directory -Path $dest -Force
+        Copy-AzLocalPipelineExample -Destination $dest -Platform GitHub -Confirm:$false | Out-Null
+
+        $readme = Join-Path $TestDrive 'repo-gh-readme\config\Excluded-Subscription-Ids_README.txt'
+        Test-Path -LiteralPath $readme | Should -BeTrue
+        $raw = Get-Content -LiteralPath $readme -Raw
+        $raw | Should -Match 'AZLOCAL_EXCLUDED_SUBSCRIPTIONS_PATH'
+        $raw | Should -Match 'Subscription IDs,Subscription Name,Comment / Notes'
+    }
+
+    It 'Does NOT overwrite an existing Excluded-Subscription-Ids_README.txt (v0.9.10)' {
+        $dest = Join-Path $TestDrive 'repo-gh-readme2\.github\workflows'
+        $null = New-Item -ItemType Directory -Path $dest -Force
+        $configDir = Join-Path $TestDrive 'repo-gh-readme2\config'
+        $null = New-Item -ItemType Directory -Path $configDir -Force
+        $readme = Join-Path $configDir 'Excluded-Subscription-Ids_README.txt'
+        'MY OWN NOTES - KEEP' | Set-Content -LiteralPath $readme -Encoding ASCII
+
+        Copy-AzLocalPipelineExample -Destination $dest -Platform GitHub -Confirm:$false | Out-Null
+
+        (Get-Content -LiteralPath $readme -Raw) | Should -Match 'MY OWN NOTES - KEEP'
+    }
 }
+
+Describe 'v0.9.10 migration: legacy commented Excluded-Subscription-Ids.csv is normalized in place' {
+
+    BeforeAll {
+        # The legacy v0.9.1 starter: '#' guidance comment lines above the header.
+        $script:LegacyCommented = @(
+            '# Excluded-Subscription-Ids.csv - optional subscription exclusion list (v0.9.1).'
+            '# Add one Azure subscription ID (GUID) per row under "Subscription IDs".'
+            '#'
+            '# This file does NOTHING until AZLOCAL_EXCLUDED_SUBSCRIPTIONS_PATH is set.'
+            'Subscription IDs,Subscription Name,Comment / Notes'
+        )
+    }
+
+    It 'Repair-AzLocalExcludedSubscriptionCsv returns $false (no-op) for an already-clean CSV' {
+        $csv = Join-Path $TestDrive 'clean\Excluded-Subscription-Ids.csv'
+        $null = New-Item -ItemType Directory -Path (Split-Path $csv) -Force
+        @('Subscription IDs,Subscription Name,Comment / Notes') | Set-Content -LiteralPath $csv -Encoding ASCII
+        $before = Get-Content -LiteralPath $csv -Raw
+
+        InModuleScope AzLocal.UpdateManagement -Parameters @{ Path = $csv } {
+            param($Path)
+            Repair-AzLocalExcludedSubscriptionCsv -Path $Path | Should -BeFalse
+        }
+        # Unchanged.
+        (Get-Content -LiteralPath $csv -Raw) | Should -Be $before
+    }
+
+    It 'Repair-AzLocalExcludedSubscriptionCsv strips comments and preserves GUID rows' {
+        $csv = Join-Path $TestDrive 'legacy-guids\Excluded-Subscription-Ids.csv'
+        $null = New-Item -ItemType Directory -Path (Split-Path $csv) -Force
+        @(
+            $script:LegacyCommented
+            '00000000-0000-0000-0000-000000000000,Contoso-Lab,never update'
+            '11111111-1111-1111-1111-111111111111,Contoso-Decom,pending cleanup'
+        ) | Set-Content -LiteralPath $csv -Encoding ASCII
+
+        InModuleScope AzLocal.UpdateManagement -Parameters @{ Path = $csv } {
+            param($Path)
+            Repair-AzLocalExcludedSubscriptionCsv -Path $Path | Should -BeTrue
+            # No '#' comment lines survive.
+            $content = @(Get-Content -LiteralPath $Path)
+            ($content | Where-Object { $_ -match '^\s*#' }).Count | Should -Be 0
+            # Both GUID rows preserved and the file parses cleanly.
+            $r = Resolve-AzLocalExcludedSubscriptionId -Path $Path
+            $r.RowCount | Should -Be 2
+            { Resolve-AzLocalExcludedSubscriptionId -Path $Path } | Should -Not -Throw
+        }
+        (Get-Content -LiteralPath $csv -Raw) | Should -Match '00000000-0000-0000-0000-000000000000'
+        (Get-Content -LiteralPath $csv -Raw) | Should -Match '11111111-1111-1111-1111-111111111111'
+    }
+
+    It 'Recovers GUID rows even from an Excel-mangled legacy file (quoted comments + trailing commas)' {
+        # Simulate what Excel writes after open+save: comment lines wrapped in
+        # quotes and padded with trailing commas, and a quoted GUID field.
+        $csv = Join-Path $TestDrive 'mangled\Excluded-Subscription-Ids.csv'
+        $null = New-Item -ItemType Directory -Path (Split-Path $csv) -Force
+        @(
+            '"# Excluded-Subscription-Ids.csv - optional subscription exclusion list (v0.9.1).",,'
+            '"# Add one Azure subscription ID (GUID) per row.",,'
+            'Subscription IDs,Subscription Name,Comment / Notes'
+            '"22222222-2222-2222-2222-222222222222",Contoso-Edge,keep excluded'
+        ) | Set-Content -LiteralPath $csv -Encoding ASCII
+
+        InModuleScope AzLocal.UpdateManagement -Parameters @{ Path = $csv } {
+            param($Path)
+            Repair-AzLocalExcludedSubscriptionCsv -Path $Path | Should -BeTrue
+            { Resolve-AzLocalExcludedSubscriptionId -Path $Path } | Should -Not -Throw
+            $r = Resolve-AzLocalExcludedSubscriptionId -Path $Path
+            $r.RowCount | Should -Be 1
+        }
+        (Get-Content -LiteralPath $csv -Raw) | Should -Match '22222222-2222-2222-2222-222222222222'
+    }
+
+    It 'Copy-AzLocalPipelineExample normalizes an existing legacy commented CSV (GitHub)' {
+        $dest = Join-Path $TestDrive 'repo-migrate\.github\workflows'
+        $null = New-Item -ItemType Directory -Path $dest -Force
+        $configDir = Join-Path $TestDrive 'repo-migrate\config'
+        $null = New-Item -ItemType Directory -Path $configDir -Force
+        $csv = Join-Path $configDir 'Excluded-Subscription-Ids.csv'
+        @(
+            $script:LegacyCommented
+            '33333333-3333-3333-3333-333333333333,Contoso-Old,exclude'
+        ) | Set-Content -LiteralPath $csv -Encoding ASCII
+
+        Copy-AzLocalPipelineExample -Destination $dest -Platform GitHub -Confirm:$false | Out-Null
+
+        $content = @(Get-Content -LiteralPath $csv)
+        ($content | Where-Object { $_ -match '^\s*#' }).Count | Should -Be 0
+        (Get-Content -LiteralPath $csv -Raw) | Should -Match '33333333-3333-3333-3333-333333333333'
+    }
+}
+

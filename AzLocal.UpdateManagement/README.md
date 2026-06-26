@@ -2,7 +2,7 @@
 
 > ⚠️ **Disclaimer**: This module is **NOT** a Microsoft supported service offering or product. It is provided as example code only, with no warranty or official support. Refer to the [MIT license](https://github.com/NeilBird/Azure-Local/blob/main/LICENSE) for further information.
 
-**Latest Version:** v0.9.1 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.9.1)
+**Latest Version:** v0.9.10 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.9.10)
 
 This folder contains the 'AzLocal.UpdateManagement' PowerShell module for managing updates on Azure Local (formerly Azure Stack HCI) clusters using the Azure Local REST API. The module supports both interactive use and CI/CD automation via Service Principal or Managed Identity authentication.
 
@@ -14,7 +14,7 @@ Azure Local REST API specification (includes update management endpoints): https
 **This README (overview + most-recent release notes):**
 
 - [Where to Start](#where-to-start)
-- [What's New in v0.9.1](#whats-new-in-v091)
+- [What's New in v0.9.10](#whats-new-in-v0910)
 - [Files](#files)
 - [Prerequisites](#prerequisites)
 - [RBAC Requirements](#rbac-requirements) (summary; full reference in [docs/rbac.md](docs/rbac.md))
@@ -77,25 +77,23 @@ If you are new to this module, work through these in order from a regular PowerS
 
 > Most CI/CD pipelines in [Automation-Pipeline-Examples/](Automation-Pipeline-Examples/) are direct implementations of one of these workflows. Start there if you want a copy-pasteable end-to-end pipeline.
 
-## What's New in v0.9.1
+## What's New in v0.9.10
 
-This release adds an opt-in update **allow-list override** to the readiness assessment, adds an optional **subscription-exclusion list** that filters every Azure Resource Graph query in the module, adds a **transient login retry** to every read-only task across the pipeline examples, and fixes a dry-run reporting bug. Two new public cmdlets bring the export count from 64 to **66**.
+This release hardens the optional subscription-exclusion **starter files** so they survive being opened and re-saved in Excel, and auto-heals files from the brief v0.9.1 format. One new private helper - no public function, parameter, or export-count change (still **66**).
+
+### Changed
+
+- **Starter `Excluded-Subscription-Ids.csv` is now a clean, comment-free CSV.** `Copy-AzLocalPipelineExample` previously dropped the column header preceded by a block of `#` guidance comments. When an operator opened that file in Excel and saved it, Excel re-quoted every comment line that contained a quote character, so those lines no longer began with `#`, survived the parser's comment filter, and the first one was mistaken for the header row - `Resolve-AzLocalExcludedSubscriptionId` then threw `does not contain a 'Subscription IDs' column` and the real GUID rows were never read. The dropped CSV now contains only the `Subscription IDs,Subscription Name,Comment / Notes` header (still header-only, still excludes nothing until populated), so it round-trips through spreadsheet editors unchanged.
 
 ### Added
 
-- **Azure DevOps shared-settings variable group (`AzureLocal-Pipeline-Settings`).** All ten ADO example pipelines now source their shared, non-secret settings (`AZLOCAL_EXCLUDED_SUBSCRIPTIONS_PATH`, `APPLY_UPDATES_SCHEDULE_PATH`, `MONITOR_TRIGGER_DELAY_MINUTES`, `FAILED_UPDATES_SINGLE_RETRY`, and the full `SIDELOAD_*` family) from a single variable group via a `- group: AzureLocal-Pipeline-Settings` reference - the ADO equivalent of GitHub repo Variables, set once for the whole project instead of edited inline per YAML. The seven map-form `variables:` blocks were converted to list form so the group reference is valid, and no group member is redefined inline (an inline pipeline-root variable would override the group under ADO precedence). Azure auth stays on the Workload Identity Federation service connection - never in the group. The group is a documented one-time prerequisite (`az pipelines variable-group create`); see [Automation-Pipeline-Examples/README.md - 5.2.1](./Automation-Pipeline-Examples/README.md#521-the-azurelocal-pipeline-settings-variable-group-shared-settings-set-once).
-- **Readiness allow-list override.** `Get-AzLocalClusterUpdateReadiness` and `Export-AzLocalClusterUpdateReadinessReport` gain an opt-in `-SchedulePath` (apply-updates schedule, schema v2) plus a direct `-AllowedUpdateVersions` `[string[]]` parameter. When a constraint is supplied and a cluster is not pinned to the `Latest` sentinel, readiness is recomputed using **only** the allow-listed updates: a cluster whose `Ready` updates all fall outside its allow-list is reported `UpdateState = UpToDate` / `ReadyForUpdate = $false` (no action under the schedule). Three new columns surface the decision - `AllowedUpdateVersions`, `AllowListSource` (`None`/`Latest`/`Explicit`/`TopLevel`/`RowOverride`), and `AzureUpdateState` (the preserved raw Azure update-summary state). A per-ring schedule override beats the top-level fleet default (a `***` rings cell is the all-rings wildcard; an untagged cluster falls back to the top-level default). The default code path (neither parameter supplied) is unchanged, and the assess-update-readiness pipeline examples opt in automatically when a `./config/apply-updates-schedule.yml` file exists in the repo. See [Section 8 - Assess Readiness](#8-assess-readiness-and-health-before-applying-updates-recommended).
-- **Optional subscription-exclusion list (single source of truth).** A new opt-in CSV lets operators exclude entire subscriptions from **every** AzLocal.UpdateManagement Azure Resource Graph query without editing the individual KQL queries. Point the `AZLOCAL_EXCLUDED_SUBSCRIPTIONS_PATH` pipeline/environment variable at a repo-relative CSV (columns: `Subscription IDs,Subscription Name,Comment / Notes` - only the first column is read; each value is validated as a GUID and invalid rows are skipped with a warning) and every query centrally appends `| where id !startswith '/subscriptions/<id>/'`. Two new public cmdlets, `Get-AzLocalExcludedSubscription` and `Set-AzLocalExcludedSubscription` (`-Path` / `-SubscriptionId` / `-Clear`), inspect and override the list for interactive/local runs. A header-only CSV (variable wired, zero rows) is **not** an error - it warns and excludes nothing; the default (variable unset, no explicit call) is a no-op. All 20 pipeline examples wire the variable (GitHub Actions via repo Variables, Azure DevOps via the `AzureLocal-Pipeline-Settings` variable group), and `Copy-/Update-AzLocalPipelineExample` drop an inert header-only `config/Excluded-Subscription-Ids.csv` skeleton (never overwriting an existing one).
-- **Transient `azure/login` retry across the pipeline examples.** Every read-only/idempotent task now retries the intermittent OIDC token-exchange failure (`Error: JSON is invalid: Expecting value...`) once. GitHub Actions workflows pair a `continue-on-error` primary login (`id: azure_login`) with an `if: steps.azure_login.outcome == 'failure'` retry step (12 guards across 10 workflows); Azure DevOps pipelines use the native `retryCountOnTaskFailure: 2` (14 across 10 pipelines). Mutating tasks (**Apply Updates**, **Retry Failed Updates**, **Raise ITSM tickets**) are deliberately excluded to avoid duplicate-apply / duplicate-ticket risk.
-
-### Fixed
-
-- **Dry-run pipeline runs produced zero step summary + zero step outputs.** When a pipeline step ran in WhatIf / dry-run mode - for example **"Config: 2 - Manage UpdateRing Tags"** with `dry_run = true` - `$WhatIfPreference` cascaded from the workload cmdlet into the pipeline reporting helpers and silently suppressed their `Out-File` writes (`Out-File` itself supports `ShouldProcess`). The result was an empty run Summary, forcing operators to dig through the raw runner log to see what *would* change. The reporting/artifact writes (`Add-AzLocalPipelineStepSummary`, `Set-AzLocalPipelineOutput`, and `Set-AzLocalClusterUpdateRingTagFromCsv`'s artifact-directory + JSON sidecar) now pass `-WhatIf:$false`, so a dry run always emits its full preview - the **Dry Run | True** settings row, the per-cluster "would change" detail, and the **"This was a dry run. No changes were applied."** footer - straight to the run Summary. The actual Azure tag PATCH stays correctly suppressed by `ShouldProcess`.
+- **Sidecar `Excluded-Subscription-Ids_README.txt`.** All operator guidance that used to live as `#` comments inside the CSV (purpose, one-time activation via `AZLOCAL_EXCLUDED_SUBSCRIPTIONS_PATH`, rules, and a worked example) now ships as a plain-text README dropped next to the CSV - the parser never reads it. Both files are default-on for `-Platform GitHub|AzureDevOps`, suppressed by the existing `-SkipStarterExclusions` switch, and neither overwrites an operator copy.
+- **One-time auto-migration for v0.9.1 adopters.** Because the drop never overwrites an existing file, an early adopter who already has the v0.9.1 commented CSV would otherwise keep the fragile format. A new private helper `Repair-AzLocalExcludedSubscriptionCsv` detects a legacy commented CSV on the next `Copy`/`Update-AzLocalPipelineExample` run and rewrites it **in place** to the clean format, recovering real subscription-id rows with a GUID regex over the raw lines (so it works even on a file Excel has already mangled). It is a no-op on a clean v0.9.10 CSV (idempotent) and can be retired in a future release once no v0.9.1-format files remain in the wild.
 
 ### Notes
 
-- **Additive + bug-fix.** Adds two public cmdlets (`Get-AzLocalExcludedSubscription`, `Set-AzLocalExcludedSubscription`), taking the export count from 64 to **66**; the allow-list resolver `Resolve-AzLocalClusterAllowList` and the exclusion helpers remain private. No parameter removals or breaking changes. Adds Pester coverage for the allow-list resolver, the readiness override, the subscription-exclusion parser/injection/env-load, the login-retry wiring, and the dry-run regression.
-- **`GENERATED_AGAINST_MODULE_VERSION`** bumped from `0.9.0` to `0.9.1` across bundled pipeline templates.
+- **One new private helper, no surface change.** No public cmdlet, parameter, or export-count change (still **66**). Adds Pester coverage asserting the dropped CSV is comment-free and parses cleanly, the sidecar README is dropped (and never overwrites an operator copy), and the legacy-CSV migration strips comments while preserving GUID rows - including on an Excel-mangled file.
+- **`GENERATED_AGAINST_MODULE_VERSION`** bumped from `0.9.1` to `0.9.10` across bundled pipeline templates.
 
 > Previous release notes have moved into the [Release History](#release-history) appendix at the bottom of this document.
 
@@ -595,7 +593,11 @@ This code is provided as-is for educational and reference purposes.
 
 The full What's-New history (v0.7.81 and earlier) has moved to [docs/release-history.md](docs/release-history.md).
 
-The most recent release notes for **v0.9.1** stay above under [`What's New in v0.9.1`](#whats-new-in-v091).
+The most recent release notes for **v0.9.10** stay above under [`What's New in v0.9.10`](#whats-new-in-v0910).
+
+### What's New in v0.9.1
+
+**Readiness allow-list override, optional subscription-exclusion list, transient login retry, and a dry-run reporting fix.** `Get-AzLocalClusterUpdateReadiness` / `Export-AzLocalClusterUpdateReadinessReport` gained an opt-in `-SchedulePath` + `-AllowedUpdateVersions` allow-list override (new `AllowedUpdateVersions` / `AllowListSource` / `AzureUpdateState` columns; private resolver `Resolve-AzLocalClusterAllowList`). A new opt-in subscription-exclusion CSV (`AZLOCAL_EXCLUDED_SUBSCRIPTIONS_PATH`) filters every Azure Resource Graph query, with two new public cmdlets `Get-AzLocalExcludedSubscription` / `Set-AzLocalExcludedSubscription` (export count 64 -> **66**). Every read-only pipeline task retries the transient `azure/login` OIDC failure once, and dry-run pipeline steps once again emit their full step summary + outputs (the `$WhatIfPreference` cascade that suppressed the reporting `Out-File` writes is fixed with `-WhatIf:$false`). `GENERATED_AGAINST_MODULE_VERSION` bumped from `0.9.0` to `0.9.1`. See [CHANGELOG.md](CHANGELOG.md#091---2026-06-26) for the full v0.9.1 entry.
 
 ### What's New in v0.9.0
 

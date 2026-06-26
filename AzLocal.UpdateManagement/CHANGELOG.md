@@ -5,6 +5,47 @@ All notable changes to the AzLocal.UpdateManagement module (renamed from AzStack
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.10] - 2026-06-26
+
+Hardens the optional subscription-exclusion starter so it survives being opened
+and re-saved in Excel, and auto-heals files from the brief v0.9.1 format. One new
+private helper; no public function, parameter, or export-count change.
+
+### Changed
+
+- **Starter `Excluded-Subscription-Ids.csv` is now a clean, comment-free CSV.**
+  `Copy-AzLocalPipelineExample` previously dropped the column header preceded by
+  a block of `#` guidance comments. When an operator opened that file in Excel
+  and saved, Excel re-quoted every comment line containing a quote character, so
+  those lines no longer began with `#`, survived the parser's comment filter,
+  and the first one was mistaken for the header row -
+  `Resolve-AzLocalExcludedSubscriptionId` then threw
+  `does not contain a 'Subscription IDs' column` and the real GUID rows were
+  never read. The dropped CSV now contains only the
+  `Subscription IDs,Subscription Name,Comment / Notes` header (still header-only,
+  still excludes nothing until populated), so it round-trips through spreadsheet
+  editors unchanged.
+
+### Added
+
+- **Sidecar `Excluded-Subscription-Ids_README.txt`.** All operator guidance that
+  used to live as `#` comments inside the CSV (purpose, one-time activation via
+  `AZLOCAL_EXCLUDED_SUBSCRIPTIONS_PATH`, rules, and a worked example) now ships
+  as a plain-text README dropped next to the CSV. The parser never reads it.
+  Both files are default-on for `-Platform GitHub|AzureDevOps`, suppressed by the
+  existing `-SkipStarterExclusions` switch, and neither overwrites an operator
+  copy.
+
+- **One-time auto-migration for v0.9.1 adopters.** Because the drop never
+  overwrites an existing file, an early adopter who already has the v0.9.1
+  commented CSV would keep the fragile format. A new private helper
+  `Repair-AzLocalExcludedSubscriptionCsv` detects a legacy commented CSV on the
+  next `Copy`/`Update-AzLocalPipelineExample` run and rewrites it **in place** to
+  the clean format, recovering real subscription-id rows with a GUID regex over
+  the raw lines so it works even on a file Excel has already mangled. It is a
+  no-op on a clean v0.9.10 CSV (idempotent) and can be retired in a future
+  release once no v0.9.1-format files remain in the wild.
+
 ## [0.9.1] - 2026-06-26
 
 This release adds an opt-in update **allow-list override** to the readiness

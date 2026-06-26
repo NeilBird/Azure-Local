@@ -1,8 +1,11 @@
-# Excluded-Subscription-Ids.csv - optional subscription exclusion list (v0.9.1).
+# Excluded-Subscription-Ids.csv - optional subscription exclusion list (v0.9.10).
 #
-# WORKED EXAMPLE. Copy-AzLocalPipelineExample drops a HEADER-ONLY skeleton of
-# this file into your repo at config/Excluded-Subscription-Ids.csv; this file
-# shows what a populated copy looks like.
+# WORKED EXAMPLE. Copy-AzLocalPipelineExample drops a CLEAN, comment-free CSV
+# (header row only) into your repo at config/Excluded-Subscription-Ids.csv, plus
+# a sidecar config/Excluded-Subscription-Ids_README.txt that carries the
+# operator guidance. This file shows what a populated copy looks like. (The
+# parser still ignores '#' comment lines, so this annotated example parses too;
+# but keep YOUR working CSV comment-free so it round-trips through Excel.)
 #
 # Purpose: list Azure subscription IDs (one per row) to EXCLUDE every resource
 # in those subscriptions from ALL AzLocal.UpdateManagement Azure Resource Graph
