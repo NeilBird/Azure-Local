@@ -732,47 +732,62 @@ function Copy-AzLocalPipelineExample {
     }
 
     # ------------------------------------------------------------------
-    # 6b-2 (v0.9.1). Starter subscription-exclusion list drop
-    #    (Excluded-Subscription-Ids.csv). Default-on for
-    #    -Platform GitHub|AzureDevOps; suppressed by -SkipStarterExclusions.
-    #    Lands in the SAME `config\` folder as the schedule + sideload config.
-    #    The dropped file is HEADER-ONLY (guidance comments + the column
-    #    header, NO data rows), so it is inert until the operator BOTH adds
-    #    subscription-id rows AND creates the AZLOCAL_EXCLUDED_SUBSCRIPTIONS_PATH
-    #    pipeline variable pointing at it (a manual one-time task). A
-    #    header-only file excludes nothing and only emits a warning at runtime
-    #    if the variable is wired - it never fails the run. NEVER overwrites an
-    #    existing file.
+    # 6b-2 (v0.9.1; split in v0.9.10). Starter subscription-exclusion list drop.
+    #    Default-on for -Platform GitHub|AzureDevOps; suppressed by
+    #    -SkipStarterExclusions. Two files land side-by-side in the SAME
+    #    `config\` folder as the schedule + sideload config:
+    #      1. Excluded-Subscription-Ids.csv      - a CLEAN CSV: just the column
+    #         header row, NO embedded comments and NO data rows. Keeping the CSV
+    #         comment-free means it round-trips safely through Excel and other
+    #         spreadsheet editors (embedding '#' guidance lines used to break
+    #         parsing once Excel re-quoted them - fixed in v0.9.10).
+    #      2. Excluded-Subscription-Ids_README.txt - all operator guidance
+    #         (purpose, activation steps, rules, a worked example) as plain
+    #         text the parser never reads.
+    #    The CSV is inert until the operator BOTH adds subscription-id rows AND
+    #    creates the AZLOCAL_EXCLUDED_SUBSCRIPTIONS_PATH pipeline variable
+    #    pointing at it (a manual one-time task). A header-only file excludes
+    #    nothing and only emits a warning at runtime if the variable is wired -
+    #    it never fails the run. NEVER overwrites an existing file (each file is
+    #    evaluated independently).
     # ------------------------------------------------------------------
-    $exclusionsDest   = $null
-    $exclusionsAction = $null   # 'Copied' | 'Preserved' | 'Skipped' | 'SkippedBySwitch'
+    $exclusionsDest         = $null
+    $exclusionsAction       = $null   # 'Copied' | 'Preserved' | 'Migrated' | 'Skipped' | 'SkippedBySwitch'
+    $exclusionsReadmeDest   = $null
+    $exclusionsReadmeAction = $null   # 'Copied' | 'Preserved' | 'Skipped' | 'SkippedBySwitch'
     if ($Platform -in @('GitHub', 'AzureDevOps')) {
-        $exclusionsDest = Join-Path -Path $configDir -ChildPath 'Excluded-Subscription-Ids.csv'
+        $exclusionsDest       = Join-Path -Path $configDir -ChildPath 'Excluded-Subscription-Ids.csv'
+        $exclusionsReadmeDest = Join-Path -Path $configDir -ChildPath 'Excluded-Subscription-Ids_README.txt'
 
+        # --- 6b-2a. The clean CSV (header row only, no comments). ---
         if ($SkipStarterExclusions.IsPresent) {
             $exclusionsAction = 'SkippedBySwitch'
         }
         elseif (Test-Path -LiteralPath $exclusionsDest -PathType Leaf) {
-            $exclusionsAction = 'Preserved'
-            Write-Verbose ("Copy-AzLocalPipelineExample: starter Excluded-Subscription-Ids.csv preserved (already exists at '{0}')." -f $exclusionsDest)
+            # File already present. If it is the legacy v0.9.1 commented format,
+            # proactively normalize it to the clean comment-free CSV (preserving
+            # any real subscription-id rows) so an Excel save can never mangle the
+            # embedded '#' comment lines. Otherwise leave the operator file alone.
+            # NOTE: Repair-AzLocalExcludedSubscriptionCsv is a one-time v0.9.1 ->
+            # v0.9.10 migration; it is a no-op on clean CSVs and can be retired
+            # in a future release.
+            if (Repair-AzLocalExcludedSubscriptionCsv -Path $exclusionsDest) {
+                $exclusionsAction = 'Migrated'
+                Write-Verbose ("Copy-AzLocalPipelineExample: normalized legacy commented Excluded-Subscription-Ids.csv at '{0}' (clean comment-free CSV; GUID rows preserved)." -f $exclusionsDest)
+            }
+            else {
+                $exclusionsAction = 'Preserved'
+                Write-Verbose ("Copy-AzLocalPipelineExample: starter Excluded-Subscription-Ids.csv preserved (already exists at '{0}')." -f $exclusionsDest)
+            }
         }
         elseif ($PSCmdlet.ShouldProcess($exclusionsDest, 'Write starter Excluded-Subscription-Ids.csv')) {
-            # Header / skeleton content (NO data rows). ASCII-only so
-            # Set-Content -Encoding ASCII writes no BOM. The worked example with
-            # sample rows ships as Automation-Pipeline-Examples/excluded-subscription-ids.example.csv.
+            # CLEAN CSV: column header only, NO data rows and NO '#' comments, so
+            # it round-trips through Excel unchanged. ASCII-only so
+            # Set-Content -Encoding ASCII writes no BOM. Operator guidance lives
+            # in the sibling Excluded-Subscription-Ids_README.txt; the worked
+            # example with sample rows also ships as
+            # Automation-Pipeline-Examples/excluded-subscription-ids.example.csv.
             $exclusionsStarter = @(
-                '# Excluded-Subscription-Ids.csv - optional subscription exclusion list (v0.9.1).'
-                '# Add one Azure subscription ID (GUID) per row under "Subscription IDs" to'
-                '# EXCLUDE every resource in that subscription from ALL AzLocal.UpdateManagement'
-                '# Azure Resource Graph queries (inventory, readiness, fleet status, etc.).'
-                '#'
-                '# This file does NOTHING until you create a pipeline variable named'
-                '# AZLOCAL_EXCLUDED_SUBSCRIPTIONS_PATH whose value is the repo-relative path to'
-                '# this file, e.g. ./config/Excluded-Subscription-Ids.csv'
-                '#'
-                '# Only the "Subscription IDs" column is read. Non-GUID values are skipped with a'
-                '# warning. A header-only file (no rows) is valid and excludes nothing (warning).'
-                '# Worked example with sample rows: excluded-subscription-ids.example.csv'
                 'Subscription IDs,Subscription Name,Comment / Notes'
             )
             $exclusionsParent = Split-Path -Parent $exclusionsDest
@@ -784,6 +799,69 @@ function Copy-AzLocalPipelineExample {
         }
         else {
             $exclusionsAction = 'Skipped'
+        }
+
+        # --- 6b-2b. The sidecar README (.txt) carrying the guidance the CSV
+        #     used to embed as '#' comment lines. Evaluated independently so an
+        #     operator-edited CSV does not suppress the README refresh. ---
+        if ($SkipStarterExclusions.IsPresent) {
+            $exclusionsReadmeAction = 'SkippedBySwitch'
+        }
+        elseif (Test-Path -LiteralPath $exclusionsReadmeDest -PathType Leaf) {
+            $exclusionsReadmeAction = 'Preserved'
+            Write-Verbose ("Copy-AzLocalPipelineExample: starter Excluded-Subscription-Ids_README.txt preserved (already exists at '{0}')." -f $exclusionsReadmeDest)
+        }
+        elseif ($PSCmdlet.ShouldProcess($exclusionsReadmeDest, 'Write starter Excluded-Subscription-Ids_README.txt')) {
+            # Plain-text operator guidance. ASCII-only so Set-Content -Encoding
+            # ASCII writes no BOM. The parser never reads this file.
+            $exclusionsReadme = @(
+                'Excluded-Subscription-Ids.csv - optional subscription exclusion list (v0.9.10)'
+                '============================================================================='
+                ''
+                'PURPOSE'
+                '  List Azure subscription IDs (one GUID per row, under the "Subscription IDs"'
+                '  column) to EXCLUDE every resource in those subscriptions from ALL'
+                '  AzLocal.UpdateManagement Azure Resource Graph queries - inventory, readiness,'
+                '  fleet status, update runs, connectivity, etc. Useful for carving out'
+                '  decommissioned, lab, or out-of-scope subscriptions without changing any'
+                '  pipeline logic.'
+                ''
+                'HOW TO ACTIVATE (manual, one-time)'
+                '  1. Add one subscription-id GUID per row to Excluded-Subscription-Ids.csv'
+                '     under the "Subscription IDs" column, then commit the file.'
+                '  2. Create a pipeline variable named AZLOCAL_EXCLUDED_SUBSCRIPTIONS_PATH whose'
+                '     value is the repo-relative path to the CSV, e.g.'
+                '        ./config/Excluded-Subscription-Ids.csv'
+                '       - GitHub Actions: a repository or organization Actions *variable*.'
+                '       - Azure DevOps:  a pipeline variable (or variable group entry).'
+                '  Until that variable is set, the CSV does nothing.'
+                ''
+                'RULES'
+                '  - Only the "Subscription IDs" column is read. The "Subscription Name" and'
+                '    "Comment / Notes" columns are for humans and are ignored.'
+                '  - Each value must be a GUID. Non-GUID values are skipped with a warning.'
+                '  - A header-only file (no data rows) is valid and excludes nothing; the run'
+                '    emits a warning rather than failing.'
+                ''
+                'EDITING'
+                '  - Keep this guidance in THIS .txt file, NOT in the .csv. The CSV must stay a'
+                '    clean comma-separated file (header row + GUID rows only) so it round-trips'
+                '    safely through Excel and other spreadsheet editors.'
+                ''
+                'WORKED EXAMPLE (what a populated CSV looks like)'
+                '  Subscription IDs,Subscription Name,Comment / Notes'
+                '  00000000-0000-0000-0000-000000000000,Contoso-Lab,Example only - replace or delete this row'
+                '  11111111-1111-1111-1111-111111111111,Contoso-Decommissioned,Excluded pending tenant cleanup'
+            )
+            $exclusionsReadmeParent = Split-Path -Parent $exclusionsReadmeDest
+            if (-not (Test-Path -LiteralPath $exclusionsReadmeParent)) {
+                $null = New-Item -ItemType Directory -Path $exclusionsReadmeParent -Force -ErrorAction Stop
+            }
+            Set-Content -LiteralPath $exclusionsReadmeDest -Value $exclusionsReadme -Encoding ASCII -ErrorAction Stop
+            $exclusionsReadmeAction = 'Copied'
+        }
+        else {
+            $exclusionsReadmeAction = 'Skipped'
         }
     }
 
@@ -1009,8 +1087,17 @@ function Copy-AzLocalPipelineExample {
     if ($exclusionsAction -eq 'Copied') {
         Write-Host ("  Starter subscription-exclusion CSV dropped at: {0}" -f $exclusionsDest) -ForegroundColor Green
     }
+    elseif ($exclusionsAction -eq 'Migrated') {
+        Write-Host ("  Starter subscription-exclusion CSV normalized to the clean comment-free format (legacy '#' comment lines removed; subscription-id rows preserved): {0}" -f $exclusionsDest) -ForegroundColor Green
+    }
     elseif ($exclusionsAction -eq 'Preserved') {
         Write-Host ("  Starter subscription-exclusion CSV preserved (existing file): {0}" -f $exclusionsDest) -ForegroundColor Yellow
+    }
+    if ($exclusionsReadmeAction -eq 'Copied') {
+        Write-Host ("  Subscription-exclusion README dropped at: {0}" -f $exclusionsReadmeDest) -ForegroundColor Green
+    }
+    elseif ($exclusionsReadmeAction -eq 'Preserved') {
+        Write-Host ("  Subscription-exclusion README preserved (existing file): {0}" -f $exclusionsReadmeDest) -ForegroundColor Yellow
     }
     if ($updaterAction -eq 'Copied') {
         Write-Host ("  Turnkey refresh script dropped at: {0}" -f $updaterDest) -ForegroundColor Green
@@ -1086,10 +1173,11 @@ function Copy-AzLocalPipelineExample {
     # inert until the operator creates the AZLOCAL_EXCLUDED_SUBSCRIPTIONS_PATH
     # variable (a manual one-time task), so this is purely informational.
     $exclusionsHintLines = @()
-    if ($exclusionsAction -in @('Copied', 'Preserved')) {
+    if ($exclusionsAction -in @('Copied', 'Preserved', 'Migrated')) {
         $exclusionsHintLines += "  *. OPTIONAL subscription exclusions (OFF by default): a starter CSV is in place:"
         if ($exclusionsDest) { $exclusionsHintLines += ("       {0}" -f $exclusionsDest) }
         $exclusionsHintLines += "     Add subscription-id rows, then create a pipeline variable AZLOCAL_EXCLUDED_SUBSCRIPTIONS_PATH set to './config/Excluded-Subscription-Ids.csv' to exclude those subscriptions from every Azure Resource Graph query. A header-only file excludes nothing (warning, never fails)."
+        if ($exclusionsReadmeDest) { $exclusionsHintLines += ("     See Excluded-Subscription-Ids_README.txt (next to the CSV) for full guidance and a worked example. Keep the CSV itself comment-free so it round-trips through Excel.") }
     }
     # Optional updater sub-message - only emitted when the turnkey refresh
     # script was dropped or already exists. It lets the operator refresh the

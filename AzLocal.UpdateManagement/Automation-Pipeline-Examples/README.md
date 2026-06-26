@@ -1370,7 +1370,7 @@ Subscription IDs,Subscription Name,Comment / Notes
 11111111-1111-1111-1111-111111111111,Contoso-Decommissioned,Excluded pending tenant cleanup
 ```
 
-> `Copy-AzLocalPipelineExample -Platform GitHub` (or `AzureDevOps`) automatically drops a **header-only** `config/Excluded-Subscription-Ids.csv` skeleton into your repo so the path exists; it never overwrites an existing file. Pass `-SkipStarterExclusions` to suppress it. `Update-AzLocalPipelineExample` drops the same skeleton for existing repos that don't have one yet.
+> `Copy-AzLocalPipelineExample -Platform GitHub` (or `AzureDevOps`) automatically drops a **clean, comment-free header-only** `config/Excluded-Subscription-Ids.csv` (just the column header) plus a sidecar `config/Excluded-Subscription-Ids_README.txt` with the activation guidance, so the path exists and stays Excel-safe; it never overwrites an existing file. Pass `-SkipStarterExclusions` to suppress them. `Update-AzLocalPipelineExample` drops the same files for existing repos that don't have them yet. (Keep the CSV itself comment-free: a `#`-commented CSV breaks once a spreadsheet editor re-quotes the comment lines - the guidance lives in the README instead.)
 
 **Wire it into CI/CD.** Commit the CSV (e.g. `./config/Excluded-Subscription-Ids.csv`), then point the pipelines at it with the `AZLOCAL_EXCLUDED_SUBSCRIPTIONS_PATH` variable holding the **repo-relative path**. Leave the variable unset to exclude nothing.
 

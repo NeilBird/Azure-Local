@@ -4,9 +4,13 @@
 >
 > **For older releases**, this is the canonical reference; the main README intentionally stays slim so the most recent block is easy to find.
 >
-> **For v0.9.1 (the current release)**, see the main [README.md](../README.md#whats-new-in-v091) `What's New in v0.9.1` section.
+> **For v0.9.10 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0910) `What's New in v0.9.10` section.
 
 ---
+
+### What's New in v0.9.10
+
+**Subscription-exclusion starter hardening.** The starter `Excluded-Subscription-Ids.csv` dropped by `Copy-AzLocalPipelineExample` is now a clean, comment-free CSV (column header only), and all operator guidance moves to a new sidecar `Excluded-Subscription-Ids_README.txt`. Embedding `#` guidance lines inside the CSV broke parsing once the file was opened and re-saved in Excel: Excel re-quotes any line containing a quote character, so the `#` comment lines no longer began with `#`, survived the parser's comment filter, and the first one was mistaken for the header row - `Resolve-AzLocalExcludedSubscriptionId` then threw `does not contain a 'Subscription IDs' column` and the real GUID rows were never read. Keeping the CSV comment-free lets it round-trip through spreadsheet editors unchanged; the README (never read by the parser) carries the purpose, activation steps, rules, and a worked example. Both files are default-on for `-Platform GitHub|AzureDevOps`, suppressed by the existing `-SkipStarterExclusions` switch, and neither overwrites an operator copy. A one-time auto-migration (private helper `Repair-AzLocalExcludedSubscriptionCsv`) heals early adopters who already have the v0.9.1 commented CSV: on the next `Copy`/`Update-AzLocalPipelineExample` run it rewrites the file in place to the clean format, recovering real subscription-id rows even from an Excel-mangled file, and is a no-op on a clean CSV. One new private helper - no public function, parameter, or export-count change (still 66). `GENERATED_AGAINST_MODULE_VERSION` bumped from `0.9.1` to `0.9.10`. See [CHANGELOG.md](../CHANGELOG.md#0910---2026-06-26) for the full v0.9.10 entry.
 
 ### What's New in v0.9.1
 
