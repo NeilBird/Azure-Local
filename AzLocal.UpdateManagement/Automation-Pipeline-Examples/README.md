@@ -1465,6 +1465,10 @@ Run **Assess Update Readiness** for the ring you are about to roll. It produces 
 
 The step summary now leads with the **"Clusters - Ready for Update"** table; the verbose **"All clusters detail"** table is collapsed behind an `Expand to view clusters` block (v0.8.97).
 
+![Update: 1 - Assess Update Readiness summary tab: Cluster Readiness table on a 20-cluster fleet (Total 11 / Ready 2 / Up to Date 9 / Not Ready 0 / Stale assessment 1) with per-cluster Current Version, Update State, Health, Status, Support, Recommended Update and Blocking Reasons columns - one cluster flagged "Update Available (stale assessment)" / Unsupported / Disconnected - and the footer note explaining stale "Up to Date" clusters running a build behind the latest manifest should re-run Sync-AzLocalClusterUpdateSummary](../docs/images/apply-updates-update-readiness.png)
+
+*Update: 1 Assess Update Readiness summary tab - the Cluster Readiness table flags stale "Up to Date" clusters running a solution build behind the latest manifest and surfaces blocking reasons (e.g. Disconnected) plus a Support column per cluster.*
+
 The pipeline itself is **report-only and always succeeds**. Per-cluster red tests are signal, not a stop condition for the wave - in a large fleet, one or two clusters out at any given moment is the norm, and blocking the entire wave on those is rarely what you want. `Start-AzLocalClusterUpdate` is per-cluster-scoped and will no-op on the un-ready clusters anyway.
 
 Common failure classes and where to fix them (the module *detects* blockers, it does not *remediate* them):

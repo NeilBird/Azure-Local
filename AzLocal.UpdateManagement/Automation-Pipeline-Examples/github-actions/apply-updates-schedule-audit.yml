@@ -257,8 +257,8 @@ jobs:
         INPUT_INCLUDE_UNTAGGED:  ${{ github.event.inputs.include_untagged || 'false' }}
         INPUT_CLUSTER_CSV_PATH:  ${{ github.event.inputs.cluster_csv_path || 'config/ClusterUpdateRings.csv' }}
         INPUT_MONITOR_POLL_INTERVAL_MINUTES: ${{ github.event.inputs.monitor_poll_interval_minutes || '30' }}
-        INPUT_MONITOR_TRAILING_DAYS:         ${{ github.event.inputs.monitor_trailing_days || '3' }}
-        INPUT_MONITOR_IN_FLIGHT_HOURS:       ${{ github.event.inputs.monitor_in_flight_hours || '6' }}
+        INPUT_MONITOR_TRAILING_DAYS:         ${{ github.event.inputs.monitor_trailing_days || '1' }}
+        INPUT_MONITOR_IN_FLIGHT_HOURS:       ${{ github.event.inputs.monitor_in_flight_hours || '2' }}
         INPUT_DEBUG:             ${{ github.event.inputs.debug || 'false' }}
         INSTALLED_MODULE_VERSION: ${{ steps.module-version.outputs.installed_module_version }}
         # v0.8.7 sideload advisor (opt-in). When SIDELOAD_UPDATES=true the audit
