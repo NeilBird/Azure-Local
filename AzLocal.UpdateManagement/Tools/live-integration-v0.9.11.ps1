@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------------------
-# Per-release LIVE integration smoke test  -  template pinned to v0.8.97.
+# Per-release LIVE integration smoke test  -  template pinned to v0.9.11.
 #
 # Purpose
 #   A read-only, end-to-end smoke test that runs the REAL report cmdlets against
@@ -18,7 +18,9 @@
 #   4. Run it after the source edits but BEFORE the version bump, to confirm the
 #      live output matches the requested format.
 #
-# What v0.8.97 asserts (the changes shipped in this release):
+# What v0.9.11 asserts (and the standing v0.8.97 shapes that must still render):
+#   - Export-AzLocalClusterUpdateReadinessReport -SchedulePath : must NOT throw
+#     (v0.9.11 fix: -SchedulePath no longer leaks into Test-AzLocalClusterHealth)
 #   - Get-AzLocalUpdateRunFailures -View Detail       : UpdateRing property
 #   - Monitor:3 Fleet Update Status run-history table  : "Update Ring" column
 #   - Monitor:3                                        : "Clusters - Ready for Update" table
@@ -34,10 +36,11 @@
 #requires -Version 5.1
 [CmdletBinding()]
 param(
-    [string]$ReleaseVersion = '0.8.97',
+    [string]$ReleaseVersion = '0.9.11',
     [string]$SubscriptionId,
     [string]$ModulePath,
-    [string[]]$Rings = @('Prod', 'Ring1', 'Ring2', 'Canary', 'DevTest')
+    [string[]]$Rings = @('Prod', 'Ring1', 'Ring2', 'Canary', 'DevTest'),
+    [string]$SchedulePath
 )
 
 $ErrorActionPreference = 'Continue'
@@ -127,6 +130,20 @@ try {
         if ($csvPath -and (Test-Path $csvPath)) { Save '3b-ready-for-update-csv' (Get-Content $csvPath -Raw) }
     }
     catch { $report['Export-AzLocalClusterUpdateReadinessReport'] = "ERROR: $($_.Exception.Message)" }
+
+    # 3c) v0.9.11 regression: -SchedulePath allow-list path must NOT throw.
+    #     The fixed scopeParams leak previously crashed the health step.
+    if ($SchedulePath -and (Test-Path $SchedulePath)) {
+        try {
+            Set-Content -Path $summaryFile -Value '' -Encoding UTF8
+            $null = Export-AzLocalClusterUpdateReadinessReport -Scope all -OutputDirectory $artDir -SchedulePath $SchedulePath -PassThru -ErrorAction Stop
+            $report['AssessReadiness -SchedulePath (no scopeParams leak)'] = 'PASS'
+        }
+        catch { $report['AssessReadiness -SchedulePath'] = "FAIL - $($_.Exception.Message)" }
+    }
+    else {
+        $report['AssessReadiness -SchedulePath'] = 'skipped (pass -SchedulePath to exercise the v0.9.11 fix)'
+    }
 
     # 4) Monitor:2 Fleet Health Status - collapsed overview
     try {
