@@ -1,4 +1,4 @@
-# Sideload Updates (on-prem, opt-in) - Step 6
+# Sideload Updates (on-prem, opt-in) - Update: 2
 
 > **Introduced in v0.8.7. Preflight job added in v0.8.76.** Opt-in, off by default.
 > The job is inert unless the repository (GH) / pipeline (ADO) variable
@@ -6,17 +6,17 @@
 >
 > Every run starts with a `preflight` job/stage (~10s on a Microsoft-hosted Windows
 > runner) that writes a clear panel to the run step summary explaining what is set,
-> what is missing, and how to enable Step.6. When the gate is OFF the preflight
+> what is missing, and how to enable Update: 2. When the gate is OFF the preflight
 > succeeds with an enablement walkthrough; when the gate is ON but required
 > configuration is missing it fails fast and the `sideload` job/stage is skipped.
 > See section 9 below for the preflight behaviour matrix.
 
 The **Sideload Updates** pipeline (`sideload-updates.yml`, logical pipeline id
-`sideload-updates`, displayed as **Step.6**) pre-stages Azure Local solution-update
+`sideload-updates`, displayed as **Update: 2**) pre-stages Azure Local solution-update
 media onto clusters that **cannot pull updates from Azure directly** - dark,
 air-gapped, or restricted-egress fabrics. Once the media is staged, verified, and
 imported, the pipeline flips the `UpdateSideloaded=True` gate so the downstream
-**Step.7 - Apply Updates** pipeline can proceed exactly as it does for
+**Update: 3 - Apply Updates** pipeline can proceed exactly as it does for
 internet-connected clusters.
 
 For the per-pipeline reference card (inputs, artefacts, RBAC, exit conditions) see
@@ -123,7 +123,7 @@ Two **distinct** identities are used - do not conflate them:
 
 ### 4.1 Sideload auth-map CSV (`SIDELOAD_AUTH_MAP_PATH`)
 
-Maps the numeric `UpdateAuthAccountId` tag (written onto clusters by Step.2) to the Key
+Maps the numeric `UpdateAuthAccountId` tag (written onto clusters by Config: 2) to the Key
 Vault + secret names that hold the AD credential:
 
 ```csv
@@ -214,24 +214,24 @@ packages:
    `sideload-auth-map.csv`.
 4. **Author `sideload-catalog.yml`** - run `Update-AzLocalSideloadCatalog` to fill the
    Microsoft Solution rows, then add any OEM SBE rows manually.
-5. **Tag the fleet** (Step.1 / Step.2): set `UpdateRing`, `UpdateStartWindow`, and
+5. **Tag the fleet** (Config: 1 / Config: 2): set `UpdateRing`, `UpdateStartWindow`, and
    `UpdateAuthAccountId` on each sideloaded cluster.
 6. **Set the repository variables** (section 6), starting with `SIDELOAD_UPDATES=true`.
 7. **Dry run**: trigger the pipeline manually with `dry_run=true` and review the planned
    transitions + the `sideload-status` artefacts.
 8. **Enable the CRON**: uncomment the bundled `*/30 * * * *` schedule inside the
    `BEGIN/END-AZLOCAL-CUSTOMIZE:schedule-triggers` block (preserved across
-   `Update-AzLocalPipelineExample` upgrades). The Step.3 schedule-coverage audit can
+   `Update-AzLocalPipelineExample` upgrades). The Config: 3 schedule-coverage audit can
    recommend a lead-time-aware cron (apply window minus `SIDELOAD_LEAD_DAYS`).
 9. The state machine advances each cluster to `Imported` / `SideloadFlagged`; the
-   downstream **Step.7 - Apply Updates** wave then applies the staged update during the
+   downstream **Update: 3 - Apply Updates** wave then applies the staged update during the
    cluster's `UpdateStartWindow`.
 
 ---
 
 ## 9. Preflight (v0.8.76+)
 
-Step.6 is **opt-in and off by default** and requires an on-prem self-hosted runner /
+Update: 2 is **opt-in and off by default** and requires an on-prem self-hosted runner /
 agent that most repos and projects do not have. Before v0.8.76 a triggered run with
 no setup completed simply showed `Status: Skipped` (no logs, no annotation), which
 gave operators no actionable feedback. v0.8.76 prepends a `preflight` job

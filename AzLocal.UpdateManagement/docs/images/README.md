@@ -5,8 +5,8 @@ This folder holds the screenshots referenced from the module documentation.
 ## Convention
 
 - Filenames are **kebab-case**, descriptive of the surface they capture (workflow + view), e.g.:
-  - `apply-updates-summary.png` - the **Summary** tab of an `apply-updates.yml` (Step.07) GitHub Actions run
-  - `auth-smoke-test-validate-oidc.png` - the **Validate OIDC + RBAC** job page of an `authentication-test.yml` (Step.00) run
+  - `apply-updates-summary.png` - the **Summary** tab of an `apply-updates.yml` (Update: 3) GitHub Actions run
+  - `auth-smoke-test-validate-oidc.png` - the **Validate OIDC + RBAC** job page of an `authentication-test.yml` (Config: 1) run
 - **Prefer PNG**. Keep each file under ~250 KB; run through `pngquant` / `oxipng` before committing.
 - **No secrets**. Subscription IDs, tenant IDs, principal IDs, cluster GUIDs and cluster names must be masked or redacted in the captured frame before the screenshot lands here. The screenshots in this folder are taken from the public-safe `Azure/AzLocal.UpdateManagement` sandbox repo where those values are already replaced with `***`.
 - **Capture from the default GitHub dark theme** so the visual style stays consistent across the docs.

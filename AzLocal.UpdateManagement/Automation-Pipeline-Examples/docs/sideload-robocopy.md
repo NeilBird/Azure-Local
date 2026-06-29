@@ -3,7 +3,7 @@
 > Companion to [sideload.md](sideload.md). Covers the `SIDELOAD_ROBOCOPY_SWITCHES`
 > repository variable that tunes the detached copy worker.
 
-The Step.6 sideload pipeline copies the `CombinedSolutionBundle` (or staged OEM SBE
+The Update: 2 sideload pipeline copies the `CombinedSolutionBundle` (or staged OEM SBE
 package) to each cluster's infrastructure `import` SMB share using **robocopy**, run
 inside a detached Windows Scheduled Task (`Tools/Invoke-AzLocalSideloadCopyTask.ps1`).
 On a constrained on-prem link a full bundle can be tens of GB, so the copy is the longest
