@@ -288,13 +288,17 @@ function Export-AzLocalClusterUpdateReadinessReport {
 
     # v0.9.1: forward the schedule allow-list to BOTH readiness calls so the
     # CSV and the JUnit XML reflect the same constrained Ready/UpToDate buckets.
+    # SchedulePath is added to a readiness-only clone so it does NOT leak into
+    # $scopeParams (which is also reused by Test-AzLocalClusterHealth, which has
+    # no -SchedulePath parameter).
+    $readinessParams = $scopeParams.Clone()
     if ($SchedulePath) {
-        $scopeParams['SchedulePath'] = $SchedulePath
+        $readinessParams['SchedulePath'] = $SchedulePath
         Write-Host "Allow-list: apply-updates schedule '$SchedulePath'"
     }
 
     # CSV for humans
-    $readiness = Get-AzLocalClusterUpdateReadiness @scopeParams `
+    $readiness = Get-AzLocalClusterUpdateReadiness @readinessParams `
         -ExportPath $readinessCsv `
         -PassThru
 
@@ -302,7 +306,7 @@ function Export-AzLocalClusterUpdateReadinessReport {
     # Two calls intentionally - this preserves the v0.8.4 dorny/test-reporter
     # contract byte-for-byte (the cmdlet's native JUnit shape is what operators
     # have screenshots / automations for). ARG round-trip is cheap.
-    $null = Get-AzLocalClusterUpdateReadiness @scopeParams `
+    $null = Get-AzLocalClusterUpdateReadiness @readinessParams `
         -ExportPath $readinessXml
 
     # v0.7.99: 3-bucket model matches Get-AzLocalClusterUpdateReadiness Summary.

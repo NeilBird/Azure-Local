@@ -93,14 +93,14 @@ parameters:
       - 240
 
   - name: monitorTrailingDays
-    displayName: 'Recommended monitor: days AFTER each update window to keep polling for late/long-running runs (0-14). Default 3.'
+    displayName: 'Recommended monitor: days AFTER each update window to keep polling for late/long-running runs (0-14). Default 1.'
     type: number
-    default: 3
+    default: 1
 
   - name: monitorInFlightHours
-    displayName: 'Recommended monitor: hours of continuous polling from each window opening to catch in-flight runs (0-48). Default 6.'
+    displayName: 'Recommended monitor: hours of continuous polling from each window opening to catch in-flight runs (0-48). Default 2.'
     type: number
-    default: 6
+    default: 2
 
   - name: moduleVersion
     displayName: 'Pin AzLocal.UpdateManagement version (empty = latest from PSGallery). See Automation-Pipeline-Examples/README.md section 5 "Optional configuration".'
@@ -118,7 +118,7 @@ variables:
   # to the latest on PSGallery and warns if the YAML looks stale - prompting a
   # refresh via Copy-AzLocalPipelineExample -Update.
   - name: GENERATED_AGAINST_MODULE_VERSION
-    value: '0.9.10'
+    value: '0.9.11'
   # Resolution order for the module version pin: queue-time parameter 'moduleVersion'
   # > empty (latest). Leave empty for the default fix-forward behaviour.
   - name: REQUIRED_MODULE_VERSION

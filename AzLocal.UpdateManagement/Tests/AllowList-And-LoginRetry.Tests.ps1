@@ -272,6 +272,20 @@ Describe 'v0.9.1 readiness cmdlet exposes allow-list surface parameters' {
         (Get-Command Export-AzLocalClusterUpdateReadinessReport).Parameters.Keys |
             Should -Contain 'SchedulePath'
     }
+
+    It 'Test-AzLocalClusterHealth has no -SchedulePath (so it must not be reused with the readiness params clone)' {
+        # Regression guard for the v0.9.10 leak: SchedulePath was added to the
+        # shared $scopeParams and then splatted into Test-AzLocalClusterHealth,
+        # which has no -SchedulePath, failing the whole assess pipeline. The
+        # health call must use $scopeParams while SchedulePath is added only to
+        # a readiness-only clone ($readinessParams).
+        (Get-Command Test-AzLocalClusterHealth).Parameters.Keys | Should -Not -Contain 'SchedulePath'
+
+        $src = (Get-Command Export-AzLocalClusterUpdateReadinessReport).ScriptBlock.ToString()
+        $src | Should -Match '\$readinessParams\[''SchedulePath''\]\s*=\s*\$SchedulePath'
+        $src | Should -Not -Match '\$scopeParams\[''SchedulePath''\]'
+        $src | Should -Match 'Test-AzLocalClusterHealth @scopeParams'
+    }
 }
 
 Describe 'v0.9.1 pipeline login-retry wiring' {

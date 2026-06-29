@@ -95,13 +95,13 @@ on:
           - '180'
           - '240'
       monitor_trailing_days:
-        description: 'Recommended monitor: days AFTER each update window to keep polling for late/long-running runs (0-14). Default 3.'
+        description: 'Recommended monitor: days AFTER each update window to keep polling for late/long-running runs (0-14). Default 1.'
         required: false
-        default: '3'
+        default: '1'
       monitor_in_flight_hours:
-        description: 'Recommended monitor: hours of continuous polling from each window opening to catch in-flight runs (0-48). Default 6.'
+        description: 'Recommended monitor: hours of continuous polling from each window opening to catch in-flight runs (0-48). Default 2.'
         required: false
-        default: '6'
+        default: '2'
       module_version:
         description: 'Pin AzLocal.UpdateManagement version (empty = latest from PSGallery). See Automation-Pipeline-Examples/README.md section 5 "Optional configuration".'
         required: false
@@ -120,7 +120,7 @@ env:
   # this to the version actually installed and to the latest on PSGallery, and emits a
   # ::notice annotation if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.9.10'
+  GENERATED_AGAINST_MODULE_VERSION: '0.9.11'
   REQUIRED_MODULE_VERSION: ${{ github.event.inputs.module_version || vars.REQUIRED_MODULE_VERSION || '' }}
   # v0.8.4 - opt this workflow into Node.js 24 for all JavaScript actions
   # (actions/checkout, actions/download-artifact, actions/upload-artifact,

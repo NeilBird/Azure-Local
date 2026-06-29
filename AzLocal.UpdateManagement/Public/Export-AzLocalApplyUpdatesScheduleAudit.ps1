@@ -147,7 +147,7 @@ function Export-AzLocalApplyUpdatesScheduleAudit {
 
     .PARAMETER MonitorTrailingDays
         How many days after an apply window opens an update run may still be
-        in flight (0-14, default 3, mirroring the Update: 4 monitor's CRITICAL
+        in flight (0-14, default 1, mirroring the Update: 4 monitor's CRITICAL
         elapsed tier). The recommended monitor cron covers the eligible
         weekday(s) plus this many trailing days so multi-day runs stay
         observed. Any value > 0 forces the hour field to '*' (a run can carry
@@ -156,7 +156,7 @@ function Export-AzLocalApplyUpdatesScheduleAudit {
     .PARAMETER MonitorInFlightHours
         How many hours past the latest UpdateStartWindow end the recommended
         monitor cron keeps polling, to catch runs still finishing after the
-        maintenance window closes (0-48, default 6). The monitor hour field is
+        maintenance window closes (0-48, default 2). The monitor hour field is
         bounded to [earliest window start .. latest window end + this buffer]
         when that span stays within a single UTC day; otherwise it falls back
         to '*' (all hours) so no in-flight time is left unpolled.
@@ -256,11 +256,11 @@ function Export-AzLocalApplyUpdatesScheduleAudit {
 
         [Parameter(Mandatory = $false)]
         [ValidateRange(0, 14)]
-        [int]$MonitorTrailingDays = 3,
+        [int]$MonitorTrailingDays = 1,
 
         [Parameter(Mandatory = $false)]
         [ValidateRange(0, 48)]
-        [int]$MonitorInFlightHours = 6,
+        [int]$MonitorInFlightHours = 2,
 
         [Parameter(Mandatory = $false)]
         [AllowEmptyString()]

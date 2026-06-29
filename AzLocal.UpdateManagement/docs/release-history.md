@@ -4,9 +4,13 @@
 >
 > **For older releases**, this is the canonical reference; the main README intentionally stays slim so the most recent block is easy to find.
 >
-> **For v0.9.10 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0910) `What's New in v0.9.10` section.
+> **For v0.9.11 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0911) `What's New in v0.9.11` section.
 
 ---
+
+### What's New in v0.9.11
+
+**Readiness allow-list scope-leak fix + monitor default tuning.** `Export-AzLocalClusterUpdateReadinessReport` no longer leaks the opt-in `-SchedulePath` value into the shared `$scopeParams` hashtable that is also splatted into `Test-AzLocalClusterHealth` (a cmdlet with no `SchedulePath` parameter) - which had made the v0.9.1 assess-update-readiness pipeline exit code 1 at the health step. Readiness now clones `$scopeParams` into a dedicated `$readinessParams` for the allow-list resolution and keeps the health calls on the clean `$scopeParams`. Separately, `Export-AzLocalApplyUpdatesScheduleAudit` monitor-recommendation defaults are tightened to reduce over-polling: `-MonitorTrailingDays` 3 -> 1 and `-MonitorInFlightHours` 6 -> 2 (cmdlet plus the GitHub/ADO `apply-updates-schedule-audit.yml` inputs; defaults apply on scheduled and manual runs). No public function or export-count change (still 66). `GENERATED_AGAINST_MODULE_VERSION` bumped to `0.9.11`. See [CHANGELOG.md](../CHANGELOG.md#0911---2026-06-26) for the full v0.9.11 entry.
 
 ### What's New in v0.9.10
 
