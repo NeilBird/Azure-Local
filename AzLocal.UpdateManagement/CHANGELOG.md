@@ -5,6 +5,20 @@ All notable changes to the AzLocal.UpdateManagement module (renamed from AzStack
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.11] - 2026-06-26
+
+### Fixed
+
+- **`Export-AzLocalClusterUpdateReadinessReport` no longer leaks `-SchedulePath` into the cluster health check.** The v0.9.1 readiness allow-list override added `SchedulePath` to the shared `$scopeParams` hashtable, which is also splatted into `Test-AzLocalClusterHealth` - a cmdlet that has no `SchedulePath` parameter - so the assess-update-readiness pipeline failed at the health step. Readiness now clones `$scopeParams` into a dedicated `$readinessParams` for the allow-list resolution and leaves the health calls on the clean `$scopeParams`. Added a regression test asserting `Test-AzLocalClusterHealth` exposes no `SchedulePath` and the source threads `SchedulePath` only through `$readinessParams`.
+
+### Changed
+
+- **`Export-AzLocalApplyUpdatesScheduleAudit` monitor-recommendation defaults tightened.** `-MonitorTrailingDays` lowered 3 -> 1 and `-MonitorInFlightHours` lowered 6 -> 2 to reduce over-polling in the recommended Update: 4 monitor cron. The bundled `apply-updates-schedule-audit.yml` GitHub Actions input and Azure DevOps parameter defaults match; these defaults apply on scheduled runs as well as manual dispatch.
+
+### Notes
+
+- No public function, parameter, or export-count change (still 66). `GENERATED_AGAINST_MODULE_VERSION` bumped to `0.9.11`.
+
 ## [0.9.10] - 2026-06-26
 
 Hardens the optional subscription-exclusion starter so it survives being opened

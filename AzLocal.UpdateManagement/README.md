@@ -2,7 +2,7 @@
 
 > ⚠️ **Disclaimer**: This module is **NOT** a Microsoft supported service offering or product. It is provided as example code only, with no warranty or official support. Refer to the [MIT license](https://github.com/NeilBird/Azure-Local/blob/main/LICENSE) for further information.
 
-**Latest Version:** v0.9.10 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.9.10)
+**Latest Version:** v0.9.11 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.9.11)
 
 This folder contains the 'AzLocal.UpdateManagement' PowerShell module for managing updates on Azure Local (formerly Azure Stack HCI) clusters using the Azure Local REST API. The module supports both interactive use and CI/CD automation via Service Principal or Managed Identity authentication.
 
@@ -14,7 +14,7 @@ Azure Local REST API specification (includes update management endpoints): https
 **This README (overview + most-recent release notes):**
 
 - [Where to Start](#where-to-start)
-- [What's New in v0.9.10](#whats-new-in-v0910)
+- [What's New in v0.9.11](#whats-new-in-v0911)
 - [Files](#files)
 - [Prerequisites](#prerequisites)
 - [RBAC Requirements](#rbac-requirements) (summary; full reference in [docs/rbac.md](docs/rbac.md))
@@ -77,27 +77,25 @@ If you are new to this module, work through these in order from a regular PowerS
 
 > Most CI/CD pipelines in [Automation-Pipeline-Examples/](Automation-Pipeline-Examples/) are direct implementations of one of these workflows. Start there if you want a copy-pasteable end-to-end pipeline.
 
-## What's New in v0.9.10
+## What's New in v0.9.11
 
-This release hardens the optional subscription-exclusion **starter files** so they survive being opened and re-saved in Excel, and auto-heals files from the brief v0.9.1 format. One new private helper - no public function, parameter, or export-count change (still **66**).
+A small fix + tuning release. Fixes the v0.9.1 assess-update-readiness pipeline failure (exit code 1 at the health step) and tightens the recommended in-flight monitor defaults. No public function, parameter, or export-count change (still **66**).
+
+### Fixed
+
+- **`Export-AzLocalClusterUpdateReadinessReport` no longer leaks `-SchedulePath` into the health check.** The v0.9.1 allow-list override added `SchedulePath` to the shared `$scopeParams` hashtable, which is also splatted into `Test-AzLocalClusterHealth` - a cmdlet with no `SchedulePath` parameter - so the assess-update-readiness pipeline died at the health step. Readiness now clones `$scopeParams` into a dedicated `$readinessParams` for the allow-list resolution and leaves the health calls on the clean `$scopeParams`. Added a regression test asserting `Test-AzLocalClusterHealth` exposes no `SchedulePath` and the source threads it only through `$readinessParams`.
 
 ### Changed
 
-- **Starter `Excluded-Subscription-Ids.csv` is now a clean, comment-free CSV.** `Copy-AzLocalPipelineExample` previously dropped the column header preceded by a block of `#` guidance comments. When an operator opened that file in Excel and saved it, Excel re-quoted every comment line that contained a quote character, so those lines no longer began with `#`, survived the parser's comment filter, and the first one was mistaken for the header row - `Resolve-AzLocalExcludedSubscriptionId` then threw `does not contain a 'Subscription IDs' column` and the real GUID rows were never read. The dropped CSV now contains only the `Subscription IDs,Subscription Name,Comment / Notes` header (still header-only, still excludes nothing until populated), so it round-trips through spreadsheet editors unchanged.
-
-### Added
-
-- **Sidecar `Excluded-Subscription-Ids_README.txt`.** All operator guidance that used to live as `#` comments inside the CSV (purpose, one-time activation via `AZLOCAL_EXCLUDED_SUBSCRIPTIONS_PATH`, rules, and a worked example) now ships as a plain-text README dropped next to the CSV - the parser never reads it. Both files are default-on for `-Platform GitHub|AzureDevOps`, suppressed by the existing `-SkipStarterExclusions` switch, and neither overwrites an operator copy.
-- **One-time auto-migration for v0.9.1 adopters.** Because the drop never overwrites an existing file, an early adopter who already has the v0.9.1 commented CSV would otherwise keep the fragile format. A new private helper `Repair-AzLocalExcludedSubscriptionCsv` detects a legacy commented CSV on the next `Copy`/`Update-AzLocalPipelineExample` run and rewrites it **in place** to the clean format, recovering real subscription-id rows with a GUID regex over the raw lines (so it works even on a file Excel has already mangled). It is a no-op on a clean v0.9.10 CSV (idempotent) and can be retired in a future release once no v0.9.1-format files remain in the wild.
+- **`Export-AzLocalApplyUpdatesScheduleAudit` monitor-recommendation defaults tightened to reduce over-polling.** `-MonitorTrailingDays` lowered 3 -> 1 and `-MonitorInFlightHours` lowered 6 -> 2. The bundled `apply-updates-schedule-audit.yml` GitHub Actions inputs and Azure DevOps parameter defaults match - and these defaults apply on scheduled runs as well as manual dispatch.
 
 ### Notes
 
-- **One new private helper, no surface change.** No public cmdlet, parameter, or export-count change (still **66**). Adds Pester coverage asserting the dropped CSV is comment-free and parses cleanly, the sidecar README is dropped (and never overwrites an operator copy), and the legacy-CSV migration strips comments while preserving GUID rows - including on an Excel-mangled file.
-- **`GENERATED_AGAINST_MODULE_VERSION`** bumped from `0.9.1` to `0.9.10` across bundled pipeline templates.
+- **`GENERATED_AGAINST_MODULE_VERSION`** bumped to `0.9.11`.
 
 > Previous release notes have moved into the [Release History](#release-history) appendix at the bottom of this document.
 
-See [CHANGELOG.md](CHANGELOG.md) for full release details. See [`What's New in v0.9.0`](#whats-new-in-v090) in the Release History for the previous release.
+See [CHANGELOG.md](CHANGELOG.md) for full release details. See [`What's New in v0.9.10`](#whats-new-in-v0910) in the Release History for the previous release.
 
 ## Files
 
@@ -593,7 +591,11 @@ This code is provided as-is for educational and reference purposes.
 
 The full What's-New history (v0.7.81 and earlier) has moved to [docs/release-history.md](docs/release-history.md).
 
-The most recent release notes for **v0.9.10** stay above under [`What's New in v0.9.10`](#whats-new-in-v0910).
+The most recent release notes for **v0.9.11** stay above under [`What's New in v0.9.11`](#whats-new-in-v0911).
+
+### What's New in v0.9.10
+
+Hardens the optional subscription-exclusion **starter files** so they survive being opened and re-saved in Excel, and auto-heals files from the brief v0.9.1 format. The dropped `Excluded-Subscription-Ids.csv` is now a clean, comment-free header-only CSV; all operator guidance moves to a sidecar `Excluded-Subscription-Ids_README.txt`; and a new private helper `Repair-AzLocalExcludedSubscriptionCsv` rewrites a legacy commented CSV in place on the next `Copy`/`Update-AzLocalPipelineExample` run (idempotent on clean files). No public function, parameter, or export-count change (still 66). `GENERATED_AGAINST_MODULE_VERSION` bumped from `0.9.1` to `0.9.10`. See [CHANGELOG.md](CHANGELOG.md#0910---2026-06-26) for the full v0.9.10 entry.
 
 ### What's New in v0.9.1
 

@@ -34,8 +34,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $script:ModuleInfo | Should -Not -BeNullOrEmpty
         }
 
-        It 'Should have version 0.9.10' {
-            $script:ModuleInfo.Version | Should -Be '0.9.10'
+        It 'Should have version 0.9.11' {
+            $script:ModuleInfo.Version | Should -Be '0.9.11'
         }
 
         It 'Module version constants are in sync between .psm1 and .psd1' {
@@ -21048,13 +21048,13 @@ Describe 'v0.8.87: Export-AzLocalApplyUpdatesScheduleAudit recommends an Update:
     BeforeAll {
         $script:src887cfg = Get-Content -LiteralPath "$PSScriptRoot/../Public/Export-AzLocalApplyUpdatesScheduleAudit.ps1" -Raw
     }
-    It 'Exposes -MonitorPollIntervalMinutes (ValidateSet, default 30), -MonitorTrailingDays (0-14, default 3), and -MonitorInFlightHours (0-48, default 6)' {
+    It 'Exposes -MonitorPollIntervalMinutes (ValidateSet, default 30), -MonitorTrailingDays (0-14, default 1), and -MonitorInFlightHours (0-48, default 2)' {
         $script:src887cfg | Should -Match '\[ValidateSet\(15,\s*20,\s*30,\s*60,\s*120,\s*180,\s*240\)\]'
         $script:src887cfg | Should -Match '\[int\]\$MonitorPollIntervalMinutes\s*=\s*30'
         $script:src887cfg | Should -Match '\[ValidateRange\(0,\s*14\)\]'
-        $script:src887cfg | Should -Match '\[int\]\$MonitorTrailingDays\s*=\s*3'
+        $script:src887cfg | Should -Match '\[int\]\$MonitorTrailingDays\s*=\s*1'
         $script:src887cfg | Should -Match '\[ValidateRange\(0,\s*48\)\]'
-        $script:src887cfg | Should -Match '\[int\]\$MonitorInFlightHours\s*=\s*6'
+        $script:src887cfg | Should -Match '\[int\]\$MonitorInFlightHours\s*=\s*2'
     }
     It 'Renders an always-on "Recommended in-flight monitor schedule (Update: 4)" section' {
         $script:src887cfg | Should -Match 'Recommended in-flight monitor schedule \(Update: 4\)'

@@ -1,6 +1,6 @@
 # ITSM Connector for AzLocal.UpdateManagement
 
-> Optional feature. Disabled by default. Module: `AzLocal.UpdateManagement` v0.7.4+ (Phase 1 shipped in v0.7.4; current module is v0.7.86).
+> Optional feature. Disabled by default. Module: `AzLocal.UpdateManagement` v0.7.4+ (Phase 1 shipped in v0.7.4; current module is v0.9.10).
 > Phase 1 (this release): ServiceNow incident creation + dedupe + connection probe. Phase 2 (Sync close-out via `Sync-AzLocalIncident`) and Phase 3 (Teams / Slack mirror adapters) are **deferred** to a future release - the design lives in [`ITSM-Connector-Plan.md`](./ITSM-Connector-Plan.md) but the functions are not yet shipped.
 
 This folder is the setup-and-configure landing page for the ITSM Connector. It walks an operator through every step from "nothing wired" to "the apply-updates pipeline opens a deduped ServiceNow incident when a cluster needs human intervention".
@@ -19,7 +19,7 @@ A working sample config plus the Mustache ticket-body template live at [`../Auto
 
 ## 1. What this connector does
 
-When any of the four "operator-attention" pipelines finishes - **`Step.4_fleet-connectivity-status`** (Critical / Warning Arc-machine / ARB / NIC / cluster connectivity failures), **`Step.6_apply-updates`**, **`Step.8_fleet-update-status`** *(formerly Step.7)* (unresolved Failed update runs), and **`Step.9_fleet-health-status`** *(formerly Step.8)* (Critical / Warning fleet-health failures) - the connector reads the JUnit results file the module already emits and, for each cluster row whose `Status` is in your trigger matrix:
+When any of the four "operator-attention" pipelines finishes - **`fleet-connectivity-status.yml`** (Monitor: 1; Critical / Warning Arc-machine / ARB / NIC / cluster connectivity failures), **`apply-updates.yml`** (Update: 3), **`fleet-update-status.yml`** (Monitor: 3; unresolved Failed update runs), and **`fleet-health-status.yml`** (Monitor: 2; Critical / Warning fleet-health failures) - the connector reads the JUnit results file the module already emits and, for each cluster row whose `Status` is in your trigger matrix:
 
 1. Computes a deterministic dedupe key (SHA256 of `ClusterResourceId | UpdateName | TriggerCategory`).
 2. Asks ServiceNow whether an incident with that key already exists in state New / In Progress / On Hold.
@@ -173,7 +173,7 @@ triggers:
   ScheduleBlocked:    { raiseTicket: false }   # self-resolves; opt-in if desired
   Skipped:            { raiseTicket: false }
   NotReady:           { raiseTicket: false }
-  # --- v0.7.70 Phase D: Step.7 fleet-health-failure statuses ---
+  # --- v0.7.70 Phase D: fleet-health-failure statuses ---
   # Get-AzLocalFleetHealthFailures emits Severity = Critical / Warning / Information.
   # Critical-first sort means the highest-impact rows are processed first.
   Critical:           { raiseTicket: true,  severity: 1, category: 'Cluster health: critical failure' }
@@ -256,12 +256,12 @@ The example pipelines under [`../Automation-Pipeline-Examples/`](../Automation-P
 
 | Pipeline | Trigger source | JUnit input | Default behaviour |
 |---|---|---|---|
-| `Step.4_fleet-connectivity-status` | `Get-AzLocalFleetConnectivityStatus` (Critical / Warning Arc-machine / ARB / NIC / cluster connectivity failures) | `./reports/fleet-connectivity-status.xml` | **v0.7.76+**, default OFF |
-| `Step.6_apply-updates` | `Get-AzLocalUpdateRunFailures` (live, from the run that just executed) | `./reports/update-results.xml` | Wired since v0.7.4 |
-| `Step.8_fleet-update-status` *(formerly Step.7)* | `Get-AzLocalUpdateRunFailures -State Failed -OnlyUnresolved` (fleet, last 30 days) | `./reports/fleet-update-status.xml` | **v0.7.70 Phase D**, default OFF |
-| `Step.9_fleet-health-status` *(formerly Step.8)* | `Get-AzLocalFleetHealthFailures -View Detail` (Critical-first) | `./reports/fleet-health-status.xml` | **v0.7.70 Phase D**, default OFF |
+| `fleet-connectivity-status.yml` (Monitor: 1) | `Get-AzLocalFleetConnectivityStatus` (Critical / Warning Arc-machine / ARB / NIC / cluster connectivity failures) | `./reports/fleet-connectivity-status.xml` | **v0.7.76+**, default OFF |
+| `apply-updates.yml` (Update: 3) | `Get-AzLocalUpdateRunFailures` (live, from the run that just executed) | `./reports/update-results.xml` | Wired since v0.7.4 |
+| `fleet-update-status.yml` (Monitor: 3) | `Get-AzLocalUpdateRunFailures -State Failed -OnlyUnresolved` (fleet, last 30 days) | `./reports/fleet-update-status.xml` | **v0.7.70 Phase D**, default OFF |
+| `fleet-health-status.yml` (Monitor: 2) | `Get-AzLocalFleetHealthFailures -View Detail` (Critical-first) | `./reports/fleet-health-status.xml` | **v0.7.70 Phase D**, default OFF |
 
-All four are gated on `raise_itsm_ticket` (a `workflow_dispatch` choice / pipeline parameter, default `false`) and fully opt-in - existing runs that do not toggle it on are byte-identical to before. The Step.4 / Step.6 / Step.8 wirings also expose an `itsm_dry_run` input (and Step.8 an `itsm_force_create`) so operators can preview tickets before flipping the switch.
+All four are gated on `raise_itsm_ticket` (a `workflow_dispatch` choice / pipeline parameter, default `false`) and fully opt-in - existing runs that do not toggle it on are byte-identical to before. The Monitor: 1 / Update: 3 / Monitor: 3 wirings also expose an `itsm_dry_run` input (and Monitor: 3 an `itsm_force_create`) so operators can preview tickets before flipping the switch.
 
 Key points from the wired step (full YAML in the example files):
 
