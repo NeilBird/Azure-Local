@@ -65,7 +65,8 @@ function Repair-AzLocalExcludedSubscriptionCsv {
 
     # Legacy-format signature: any '#' comment line. A clean v0.9.10 CSV carries
     # none, so already-clean files return $false (idempotent, safe to re-run).
-    $hasComments = @($rawLines | Where-Object { $_.TrimStart().StartsWith('#') }).Count -gt 0
+    # Tolerate Excel-mangled comments wrapped in double quotes ("# ...",,).
+    $hasComments = @($rawLines | Where-Object { $_.TrimStart().TrimStart('"').StartsWith('#') }).Count -gt 0
     if (-not $hasComments) {
         return $false
     }
