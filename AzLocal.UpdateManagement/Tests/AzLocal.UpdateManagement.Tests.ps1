@@ -34,8 +34,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $script:ModuleInfo | Should -Not -BeNullOrEmpty
         }
 
-        It 'Should have version 0.9.11' {
-            $script:ModuleInfo.Version | Should -Be '0.9.11'
+        It 'Should have version 0.9.12' {
+            $script:ModuleInfo.Version | Should -Be '0.9.12'
         }
 
         It 'Module version constants are in sync between .psm1 and .psd1' {
@@ -293,9 +293,9 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $content | Should -Match 'MonitorInFlightHours'       -Because "$Platform audit plumbs in-flight hours into the cmdlet"
         }
 
-        It 'Should export exactly 66 functions' {
+        It 'Should export exactly 68 functions' {
 
-            $script:ModuleInfo.ExportedFunctions.Count | Should -Be 66
+            $script:ModuleInfo.ExportedFunctions.Count | Should -Be 68
         }
 
         It 'Should export the expected functions' {
@@ -394,7 +394,10 @@ Describe 'Module: AzLocal.UpdateManagement' {
                 # Guarded One-Time Failed-Update Retry (v0.8.95) - per-cluster primitive + readiness-gated Step.6 wrapper + pipeline discoverability notice
                 'Invoke-AzLocalFailedUpdateRetry',
                 'Invoke-AzLocalReadinessGatedFailedUpdateRetry',
-                'Add-AzLocalFailedUpdateRetryHintSummary'
+                'Add-AzLocalFailedUpdateRetryHintSummary',
+                # Pipeline preflight guards (v0.9.12) - fail meaningfully + run-summary-visible on zero subscriptions / missing reports
+                'Assert-AzLocalAzureSubscriptionAccess',
+                'Assert-AzLocalPipelineReport'
             )
             
             foreach ($func in $expectedFunctions) {
@@ -12468,8 +12471,8 @@ Describe 'Function: Get-AzLocalFleetHealthOverview - v0.7.70 (ARG-first fleet he
             $cmd.CommandType | Should -Be 'Function'
         }
 
-        It 'BS7: Module exports exactly 66 functions (was 55 after Step.6 thin-YAML port; v0.8.7 sideload automation adds 5 cmdlets; v0.8.88 adds Sync-AzLocalClusterUpdateSummary; v0.8.95 adds Invoke-AzLocalFailedUpdateRetry + Invoke-AzLocalReadinessGatedFailedUpdateRetry + Add-AzLocalFailedUpdateRetryHintSummary; v0.9.1 adds Get-AzLocalExcludedSubscription + Set-AzLocalExcludedSubscription)' {
-            (Get-Module AzLocal.UpdateManagement).ExportedFunctions.Count | Should -Be 66
+        It 'BS7: Module exports exactly 68 functions (was 55 after Step.6 thin-YAML port; v0.8.7 sideload automation adds 5 cmdlets; v0.8.88 adds Sync-AzLocalClusterUpdateSummary; v0.8.95 adds Invoke-AzLocalFailedUpdateRetry + Invoke-AzLocalReadinessGatedFailedUpdateRetry + Add-AzLocalFailedUpdateRetryHintSummary; v0.9.1 adds Get-AzLocalExcludedSubscription + Set-AzLocalExcludedSubscription; v0.9.12 adds Assert-AzLocalAzureSubscriptionAccess + Assert-AzLocalPipelineReport)' {
+            (Get-Module AzLocal.UpdateManagement).ExportedFunctions.Count | Should -Be 68
         }
     }
 
@@ -17554,6 +17557,9 @@ Describe 'Thin-YAML Step.9: Export-AzLocalFleetHealthStatusReport' {
         $out | Should -Match 'total_failures=0'
         $out | Should -Match 'critical_count=0'
         $out | Should -Match 'warning_count=0'
+        # v0.9.12: with no reported health checks the Knowledge note is suppressed.
+        $summary = Get-Content -Raw -LiteralPath $script:_s9_ghSummaryFile
+        $summary | Should -Not -Match '\*\*Knowledge:\*\*'
     }
 
     It 'Critical+Warning mixed fleet emits one testcase per failing check, correct bucket counts, and plain anchor cluster links plus a Ctrl-click tip in the markdown summary' {
@@ -17608,6 +17614,12 @@ Describe 'Thin-YAML Step.9: Export-AzLocalFleetHealthStatusReport' {
         $summary | Should -Not -Match '<a [^>]*target="_blank"'
         $summary | Should -Match '### Health Check Failures By Reason'
         $summary | Should -Match '### Detailed Results'
+        # v0.9.12: operator Knowledge note - present when >=1 health check is reported,
+        # sits at the bottom of Detailed Results (above Reports Available), and points
+        # operators at the ARM health-results refresh command from Step 7 of the docs.
+        $summary | Should -Match '\*\*Knowledge:\*\*'
+        $summary | Should -Match '`Invoke-SolutionUpdatePrecheck -SystemHealth`'
+        $summary | Should -Match 'update-troubleshooting-23h2'
         # KPI table values - row labels are prefixed with the host-aware iconMap status
         # tag (e.g. '❌ Critical' / '✅ Healthy'), so anchor on the row label + count only.
         $summary | Should -Match '\| \*\*Total Failing Checks\*\* \| 3 \|'

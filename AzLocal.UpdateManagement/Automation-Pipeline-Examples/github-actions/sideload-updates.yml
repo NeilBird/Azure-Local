@@ -83,7 +83,7 @@ env:
   # this to the version actually installed and to the latest on PSGallery, and emits a
   # ::notice annotation if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.9.11'
+  GENERATED_AGAINST_MODULE_VERSION: '0.9.12'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): manual workflow_dispatch input >
   # repository variable 'REQUIRED_MODULE_VERSION' > empty (latest).
@@ -366,10 +366,14 @@ jobs:
         enable-AzPSSession: true
 
     # v0.9.1: single automatic retry for the transient login failure above. Runs
-    # only when the first attempt failed; no continue-on-error here, so a second
-    # failure stops the job.
+    # only when the first attempt failed.
+    # v0.9.12: this retry is now ALSO soft (continue-on-error); the dedicated
+    # "Verify Azure subscription access" gate below is this job's single hard
+    # authentication/authorization gate and fails with a clear summary message.
     - name: Azure Login (OIDC + Az PowerShell session) - retry
+      id: azure_login_retry
       if: steps.azure_login.outcome == 'failure'
+      continue-on-error: true
       uses: azure/login@v3
       with:
         client-id: ${{ secrets.AZURE_CLIENT_ID }}
@@ -399,6 +403,17 @@ jobs:
         Add-AzLocalPipelineVersionBanner `
             -GeneratedAgainstVersion $env:GENERATED_AGAINST_MODULE_VERSION `
             -PinnedVersion $env:REQUIRED_MODULE_VERSION
+
+    # v0.9.12: fail EARLY with a run-summary-visible message when the pipeline
+    # identity can see no Azure subscriptions. Because both azure/login attempts
+    # above are now soft, this is the job's hard authentication/authorization
+    # gate (sideload plan resolution reads the fleet via Resource Graph).
+    - name: Verify Azure subscription access
+      shell: pwsh
+      run: |
+        $ErrorActionPreference = 'Stop'
+        Import-Module AzLocal.UpdateManagement -Force
+        Assert-AzLocalAzureSubscriptionAccess
 
     - name: Advance Sideload State Machine
       id: sideload
@@ -450,6 +465,17 @@ jobs:
             Write-Host '::warning::One or more clusters are in a Failed state or have plan errors - see the Sideload status report.'
         }
 
+    # v0.9.12: fail with a clear, run-summary-visible message (instead of the
+    # downstream publish step's misleading "No test report files were found")
+    # when the sideload step reported success but wrote no JUnit report.
+    - name: Verify diagnostic reports were produced
+      if: steps.sideload.outcome == 'success'
+      shell: pwsh
+      run: |
+        $ErrorActionPreference = 'Stop'
+        Import-Module AzLocal.UpdateManagement -Force
+        Assert-AzLocalPipelineReport -Path './reports/sideload-junit.xml' -ProducingStepName 'Advance Sideload State Machine'
+
     - name: Compute Artifact Timestamp
       if: always()
       id: artifact-stamp
@@ -471,7 +497,10 @@ jobs:
 
     - name: Publish Test Results
       uses: dorny/test-reporter@v3
-      if: always()
+      # v0.9.12: was `if: always()`; now success()-gated so it skips when an
+      # upstream step failed - eliminating the misleading "No test report files
+      # were found" cascade.
+      if: success()
       with:
         name: Sideload Update Report
         path: ./reports/sideload-junit.xml

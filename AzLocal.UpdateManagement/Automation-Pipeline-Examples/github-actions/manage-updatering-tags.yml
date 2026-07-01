@@ -65,7 +65,7 @@ env:
   # this to the version actually installed and to the latest on PSGallery, and emits a
   # ::notice annotation if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.9.11'
+  GENERATED_AGAINST_MODULE_VERSION: '0.9.12'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): manual workflow_dispatch input >
   # repository variable 'REQUIRED_MODULE_VERSION' > empty (latest).
@@ -125,10 +125,16 @@ jobs:
         subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
     # v0.9.1: single automatic retry for the transient login failure above. Runs
-    # only when the first attempt failed; no continue-on-error here, so a second
-    # failure stops the job.
+    # only when the first attempt failed.
+    # v0.9.12: this retry is now ALSO soft (continue-on-error). Both login
+    # attempts failing - OR succeeding but yielding zero visible subscriptions
+    # (the cryptic "No subscriptions found for ***") - is caught by the dedicated
+    # "Verify Azure subscription access" gate below, which fails the job with a
+    # clear, run-summary-visible remediation message instead of a raw az error.
     - name: Azure CLI Login (OIDC) - retry
+      id: azure_login_retry
       if: steps.azure_login.outcome == 'failure'
+      continue-on-error: true
       uses: azure/login@v3
       with:
         client-id: ${{ secrets.AZURE_CLIENT_ID }}
@@ -188,6 +194,17 @@ jobs:
         Add-AzLocalPipelineVersionBanner `
             -GeneratedAgainstVersion $env:GENERATED_AGAINST_MODULE_VERSION `
             -PinnedVersion $env:REQUIRED_MODULE_VERSION
+
+    # v0.9.12: fail EARLY with a run-summary-visible message when the pipeline
+    # identity can see no Azure subscriptions. Because both azure/login attempts
+    # above are now soft, this is the job's hard authentication/authorization gate
+    # (tag resolution across the fleet needs at least one accessible subscription).
+    - name: Verify Azure subscription access
+      shell: pwsh
+      run: |
+        $ErrorActionPreference = 'Stop'
+        Import-Module AzLocal.UpdateManagement -Force
+        Assert-AzLocalAzureSubscriptionAccess
 
     - name: Apply UpdateRing Tags
       id: apply-tags

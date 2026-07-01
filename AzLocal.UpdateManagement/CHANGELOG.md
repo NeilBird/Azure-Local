@@ -5,6 +5,27 @@ All notable changes to the AzLocal.UpdateManagement module (renamed from AzStack
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.12] - 2026-06-27
+
+Adds two pipeline preflight guard cmdlets that turn two confusing failure
+cascades into one clear, actionable **run-summary** message, and wires them into
+all 20 bundled pipeline templates (10 GitHub Actions + 10 Azure DevOps).
+
+### Added
+
+- **`Assert-AzLocalAzureSubscriptionAccess` - fail meaningfully when the identity sees zero subscriptions.** Enumerates the subscriptions visible to the authenticated identity (`az account list --output json`), counts the `Enabled` ones, and when none are visible: emits a red `::error` / `##vso[task.logissue type=error]` annotation, writes a remediation block to the run summary (assign Reader/RBAC on the target subscription(s) or management group, confirm `AZURE_TENANT_ID` / `AZURE_CLIENT_ID`), sets the `subscription_count` step output to `0`, and throws. Replaces the cryptic "No subscriptions found for \*\*\*" failure (and the empty-report cascade it triggers downstream) with a fixable message. `-SubscriptionListJson` injects the account list for tests; `-MinimumCount` (default 1) and `-PassThru` (returns the enabled count) round out the surface.
+- **`Assert-AzLocalPipelineReport` - fail meaningfully when the collect step produced no report.** Placed BETWEEN the collect step and the publish step, it expands one or more `-Path` globs and, when no (non-empty) report file exists, writes a run-summary block pointing at the real upstream cause and throws BEFORE the publish step can emit its misleading "No test report files were found" warning. `-AllowEmpty` accepts zero-byte files; `-ProducingStepName` names the collect step in the message; `-PassThru` returns the matched file paths.
+- **Private helper `Write-AzLocalPipelineError`** - error-severity sibling of `Write-AzLocalPipelineWarning` (GitHub `::error`, ADO `##vso[task.logissue type=error]`, Local `Write-Error`); does not throw.
+
+### Changed
+
+- **All 10 GitHub Actions + all 10 Azure DevOps pipeline templates now wire in the two guards.** A subscription-access gate runs after Azure login / module install; a report-presence guard runs after the collect step (read/diagnostic workflows only); and the JUnit publish steps (`dorny/test-reporter` / `PublishTestResults@2`) now skip on upstream failure (`if: success()` / `condition: succeeded()`) instead of firing the phantom "no files" cascade. Write workflows (tag management, apply-updates) get the subscription gate only.
+- **`Export-AzLocalFleetHealthStatusReport` (Monitor: 2 - Fleet Health Status) now emits an operator "Knowledge" note** at the bottom of the Detailed Results section (above Reports Available), shown only when one or more health checks are reported. It reminds operators that after mitigating or remediating a failure they must re-run the system health checks to refresh the health results stored in ARM (`Invoke-SolutionUpdatePrecheck -SystemHealth`), otherwise the report keeps surfacing already-resolved failures from the stale ARM data store. Links to Step 7 of the Azure Local update-troubleshooting guidance.
+
+### Notes
+
+- Export count 66 -> 68. `GENERATED_AGAINST_MODULE_VERSION` bumped to `0.9.12`.
+
 ## [0.9.11] - 2026-06-26
 
 ### Fixed

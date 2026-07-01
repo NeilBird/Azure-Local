@@ -46,7 +46,7 @@ variables:
   # to the latest on PSGallery and warns if the YAML looks stale - prompting a
   # refresh via Copy-AzLocalPipelineExample -Update.
   - name: GENERATED_AGAINST_MODULE_VERSION
-    value: '0.9.11'
+    value: '0.9.12'
   # Resolution order for the module version pin: queue-time parameter 'moduleVersion'
   # > empty (latest). Leave empty for the default fix-forward behaviour.
   - name: REQUIRED_MODULE_VERSION
@@ -131,6 +131,27 @@ stages:
                 Add-AzLocalPipelineVersionBanner `
                     -GeneratedAgainstVersion $env:GENERATED_AGAINST_MODULE_VERSION `
                     -PinnedVersion $env:REQUIRED_MODULE_VERSION
+
+          # v0.9.12: fail with a run-summary-visible message when the service
+          # connection authenticates but the identity can see zero subscriptions
+          # (the cryptic "No subscriptions found for ***"). Runs under AzureCLI@2
+          # so `az account list` is authenticated; placed before the tag-apply
+          # task so the job fails fast with clear remediation instead of a
+          # downstream cascade. This is a write workflow with no JUnit report, so
+          # there is no report-presence guard.
+          - task: AzureCLI@2
+            displayName: 'Verify Azure subscription access'
+            retryCountOnTaskFailure: 2
+            inputs:
+              # BEGIN-AZLOCAL-CUSTOMIZE:service-connection-ApplyTags-subcheck
+              azureSubscription: 'AzureLocal-ServiceConnection'  # Update with your service connection name
+              # END-AZLOCAL-CUSTOMIZE:service-connection-ApplyTags-subcheck
+              scriptType: 'pscore'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                $ErrorActionPreference = 'Stop'
+                Import-Module AzLocal.UpdateManagement -Force
+                Assert-AzLocalAzureSubscriptionAccess
 
           - task: AzureCLI@2
             displayName: 'Apply UpdateRing Tags'

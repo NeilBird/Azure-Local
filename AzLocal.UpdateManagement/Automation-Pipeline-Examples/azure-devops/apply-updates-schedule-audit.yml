@@ -118,7 +118,7 @@ variables:
   # to the latest on PSGallery and warns if the YAML looks stale - prompting a
   # refresh via Copy-AzLocalPipelineExample -Update.
   - name: GENERATED_AGAINST_MODULE_VERSION
-    value: '0.9.11'
+    value: '0.9.12'
   # Resolution order for the module version pin: queue-time parameter 'moduleVersion'
   # > empty (latest). Leave empty for the default fix-forward behaviour.
   - name: REQUIRED_MODULE_VERSION
@@ -181,6 +181,25 @@ stages:
           Add-AzLocalPipelineVersionBanner `
               -GeneratedAgainstVersion $env:GENERATED_AGAINST_MODULE_VERSION `
               -PinnedVersion $env:REQUIRED_MODULE_VERSION
+
+    # v0.9.12: fail with a run-summary-visible message when the service
+    # connection authenticates but the identity can see zero subscriptions
+    # (the cryptic "No subscriptions found for ***"). Runs under AzureCLI@2 so
+    # `az account list` is authenticated; placed before the audit task so the
+    # job fails fast with clear remediation instead of a downstream cascade.
+    - task: AzureCLI@2
+      displayName: 'Verify Azure subscription access'
+      retryCountOnTaskFailure: 2
+      inputs:
+        # BEGIN-AZLOCAL-CUSTOMIZE:service-connection-Audit-subcheck
+        azureSubscription: 'AzureLocal-ServiceConnection'  # Update with your service connection name
+        # END-AZLOCAL-CUSTOMIZE:service-connection-Audit-subcheck
+        scriptType: 'pscore'
+        scriptLocation: 'inlineScript'
+        inlineScript: |
+          $ErrorActionPreference = 'Stop'
+          Import-Module AzLocal.UpdateManagement -Force
+          Assert-AzLocalAzureSubscriptionAccess
 
     - task: AzureCLI@2
       displayName: 'Run Schedule Coverage Audit'
@@ -262,6 +281,20 @@ stages:
 
           Export-AzLocalApplyUpdatesScheduleAudit @params
 
+    # v0.9.12: fail with a run-summary-visible message (instead of the
+    # PublishTestResults "No test result files were found" warning) when the
+    # audit task reported success but wrote no report files.
+    - task: PowerShell@2
+      displayName: 'Verify diagnostic reports were produced'
+      condition: succeeded()
+      inputs:
+        targetType: 'inline'
+        pwsh: true
+        script: |
+          $ErrorActionPreference = 'Stop'
+          Import-Module AzLocal.UpdateManagement -Force
+          Assert-AzLocalPipelineReport -Path '$(reportsPath)/*.xml' -ProducingStepName 'Run Schedule Coverage Audit'
+
     # compute a UTC timestamp variable so every downloadable artifact name is unique per run.
     - pwsh: |
         $stamp = (Get-Date).ToUniversalTime().ToString('yyyyMMdd_HHmmss')
@@ -281,7 +314,10 @@ stages:
 
     - task: PublishTestResults@2
       displayName: 'Publish Schedule Coverage as Test Results'
-      condition: always()
+      # v0.9.12: was `condition: always()`; now succeeded()-gated so it skips
+      # when an upstream step failed - eliminating the misleading "No test result
+      # files were found" warning cascade.
+      condition: succeeded()
       inputs:
         testResultsFormat: 'JUnit'
         testResultsFiles: '$(reportsPath)/schedule-coverage-audit.xml'

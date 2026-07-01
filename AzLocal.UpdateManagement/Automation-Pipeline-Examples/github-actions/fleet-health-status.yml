@@ -116,7 +116,7 @@ env:
   # this to the version actually installed and to the latest on PSGallery, and emits a
   # ::notice annotation if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.9.11'
+  GENERATED_AGAINST_MODULE_VERSION: '0.9.12'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): manual workflow_dispatch input >
   # repository variable 'REQUIRED_MODULE_VERSION' > empty (latest).
@@ -175,10 +175,16 @@ jobs:
         subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
     # v0.9.1: single automatic retry for the transient login failure above. Runs
-    # only when the first attempt failed; no continue-on-error here, so a second
-    # failure stops the job.
+    # only when the first attempt failed.
+    # v0.9.12: this retry is now ALSO soft (continue-on-error). Both login
+    # attempts failing - OR succeeding but yielding zero visible subscriptions
+    # (the cryptic "No subscriptions found for ***") - is caught by the dedicated
+    # "Verify Azure subscription access" gate below, which fails the job with a
+    # clear, run-summary-visible remediation message instead of a raw az error.
     - name: Azure CLI Login (OIDC) - retry
+      id: azure_login_retry
       if: steps.azure_login.outcome == 'failure'
+      continue-on-error: true
       uses: azure/login@v3
       with:
         client-id: ${{ secrets.AZURE_CLIENT_ID }}
@@ -210,6 +216,18 @@ jobs:
             -GeneratedAgainstVersion $env:GENERATED_AGAINST_MODULE_VERSION `
             -PinnedVersion $env:REQUIRED_MODULE_VERSION
 
+    # v0.9.12: fail EARLY with a run-summary-visible message when the pipeline
+    # identity can see no Azure subscriptions. This is the #1 cause of empty
+    # fleet reports and the misleading "No test report files were found" error
+    # downstream. Because both azure/login attempts above are now soft, this is
+    # the job's hard authentication/authorization gate.
+    - name: Verify Azure subscription access
+      shell: pwsh
+      run: |
+        $ErrorActionPreference = 'Stop'
+        Import-Module AzLocal.UpdateManagement -Force
+        Assert-AzLocalAzureSubscriptionAccess
+
     - name: Collect Fleet Health Status
       # v0.8.5 thin-YAML: the inline run block (Get-AzLocalFleetHealthFailures
       # Detail view + in-process Group-Object summary roll-up +
@@ -237,6 +255,19 @@ jobs:
         if ($env:INPUT_UPDATE_RING) { $params['UpdateRing'] = $env:INPUT_UPDATE_RING }
         Export-AzLocalFleetHealthStatusReport @params
 
+    # v0.9.12: fail with a clear, run-summary-visible message (instead of the
+    # downstream publish step's misleading "No test report files were found")
+    # when the collect step reported success but wrote no report files. Gated on
+    # the collect step's own success so it does not double-report when collect
+    # itself already failed.
+    - name: Verify diagnostic reports were produced
+      if: steps.fleet-health.outcome == 'success'
+      shell: pwsh
+      run: |
+        $ErrorActionPreference = 'Stop'
+        Import-Module AzLocal.UpdateManagement -Force
+        Assert-AzLocalPipelineReport -Path './reports/*.xml' -ProducingStepName 'Collect Fleet Health Status'
+
     - name: Compute Artifact Timestamp
       if: always()
       id: artifact-stamp
@@ -261,7 +292,12 @@ jobs:
     # stays compact for large fleets (only failing rows are rendered).
     - name: Publish JUnit Diagnostic Results
       uses: dorny/test-reporter@v3
-      if: always()
+      # v0.9.12: was `if: always()`. Now gated on success() so it is SKIPPED when
+      # an upstream step (login/subscription gate/collect/report gate) failed -
+      # eliminating the misleading "No test report files were found" cascade. On
+      # a normal run (including health failures, which do not fail the collect
+      # step) all upstream steps succeed and this publishes as before.
+      if: success()
       with:
         name: Fleet Health Status JUnit Debug
         path: ./reports/fleet-health-status.xml

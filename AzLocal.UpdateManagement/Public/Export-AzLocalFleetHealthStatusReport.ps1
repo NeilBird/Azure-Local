@@ -687,6 +687,17 @@ function Export-AzLocalFleetHealthStatusReport {
         }
     }
 
+    # v0.9.12: operator Knowledge note - rendered only when one or more health
+    # checks are reported. After an operator mitigates or remediates a failing
+    # check, the cluster's health results stored in ARM must be refreshed by
+    # re-running the system health checks; otherwise this report keeps
+    # surfacing the already-resolved failure from the stale ARM data store.
+    # See Step 7 of the Azure Local update-troubleshooting guidance.
+    if ($detail.Count -gt 0) {
+        [void]$md.Add('> **Knowledge:** After you mitigate or remediate any of the health-check failures listed above, re-run the system health checks on the affected cluster to refresh the health results stored in ARM by running `Invoke-SolutionUpdatePrecheck -SystemHealth` (or wait up to 24 hours for the next automatic health-check refresh). Until the checks are re-run, this report continues to surface the already-resolved failures from the stale ARM data store. As per Step 7 of the Azure Local update-troubleshooting guidance: _"After you resolve the failure, invoke the system health checks again by running the following command."_ See [Troubleshoot solution updates (Using PowerShell)](https://learn.microsoft.com/en-us/azure/azure-local/update/update-troubleshooting-23h2?view=azloc-2606#using-powershell).')
+        [void]$md.Add('')
+    }
+
     [void]$md.Add('### Reports Available')
     [void]$md.Add(('- `{0}` - one row per (cluster, failing health check)' -f $DetailCsvFileName))
     [void]$md.Add(('- `{0}` - one row per (FailureReason, Severity); ordered Critical-first, then by ClusterCount desc' -f $SummaryCsvFileName))

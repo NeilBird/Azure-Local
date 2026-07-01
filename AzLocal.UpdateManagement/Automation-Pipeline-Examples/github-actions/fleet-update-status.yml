@@ -105,7 +105,7 @@ env:
   # this to the version actually installed and to the latest on PSGallery, and emits a
   # ::notice annotation if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.9.11'
+  GENERATED_AGAINST_MODULE_VERSION: '0.9.12'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): manual workflow_dispatch input >
   # repository variable 'REQUIRED_MODULE_VERSION' > empty (latest).
@@ -164,10 +164,16 @@ jobs:
         subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
     # v0.9.1: single automatic retry for the transient login failure above. Runs
-    # only when the first attempt failed; no continue-on-error here, so a second
-    # failure stops the job.
+    # only when the first attempt failed.
+    # v0.9.12: this retry is now ALSO soft (continue-on-error). Both login
+    # attempts failing - OR succeeding but yielding zero visible subscriptions
+    # (the cryptic "No subscriptions found for ***") - is caught by the dedicated
+    # "Verify Azure subscription access" gate below, which fails the job with a
+    # clear, run-summary-visible remediation message instead of a raw az error.
     - name: Azure CLI Login (OIDC) - retry
+      id: azure_login_retry
       if: steps.azure_login.outcome == 'failure'
+      continue-on-error: true
       uses: azure/login@v3
       with:
         client-id: ${{ secrets.AZURE_CLIENT_ID }}
@@ -198,7 +204,17 @@ jobs:
         Add-AzLocalPipelineVersionBanner `
             -GeneratedAgainstVersion $env:GENERATED_AGAINST_MODULE_VERSION `
             -PinnedVersion $env:REQUIRED_MODULE_VERSION
-    
+
+    # v0.9.12: fail EARLY with a run-summary-visible message when the pipeline
+    # identity can see no Azure subscriptions. Because both azure/login attempts
+    # above are now soft, this is the job's hard authentication/authorization gate.
+    - name: Verify Azure subscription access
+      shell: pwsh
+      run: |
+        $ErrorActionPreference = 'Stop'
+        Import-Module AzLocal.UpdateManagement -Force
+        Assert-AzLocalAzureSubscriptionAccess
+
     - name: Collect Fleet Update Status
       # v0.8.5 thin-YAML: the inline run block (cluster inventory, readiness
       # cascade, version distribution with Microsoft-manifest support window,
@@ -225,6 +241,17 @@ jobs:
         }
         if ($env:INPUT_UPDATE_RING) { $params['UpdateRing'] = $env:INPUT_UPDATE_RING }
         Export-AzLocalFleetUpdateStatusReport @params
+
+    # v0.9.12: fail with a clear, run-summary-visible message (instead of the
+    # downstream publish step's misleading "No test report files were found")
+    # when the collect step reported success but wrote no report files.
+    - name: Verify diagnostic reports were produced
+      if: steps.fleet-status.outcome == 'success'
+      shell: pwsh
+      run: |
+        $ErrorActionPreference = 'Stop'
+        Import-Module AzLocal.UpdateManagement -Force
+        Assert-AzLocalPipelineReport -Path './reports/*.xml' -ProducingStepName 'Collect Fleet Update Status'
     
     - name: Compute Artifact Timestamp
       if: always()
@@ -251,7 +278,10 @@ jobs:
     # for fleets with 200+ clusters (only failing rows are shown).
     - name: Publish Test Results
       uses: dorny/test-reporter@v3
-      if: always()
+      # v0.9.12: was `if: always()`; now success()-gated so it skips when an
+      # upstream step failed - eliminating the misleading "No test report files
+      # were found" cascade.
+      if: success()
       with:
         name: Fleet Update Status Report
         path: ./reports/readiness-status.xml
