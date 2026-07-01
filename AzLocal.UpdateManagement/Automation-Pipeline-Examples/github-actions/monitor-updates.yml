@@ -230,10 +230,16 @@ jobs:
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
       # v0.9.1: single automatic retry for the transient login failure above. Runs
-      # only when the first attempt failed; no continue-on-error here, so a second
-      # failure stops the job.
+      # only when the first attempt failed.
+      # v0.9.12: this retry is now ALSO soft (continue-on-error). Both login
+      # attempts failing - OR succeeding but yielding zero visible subscriptions
+      # (the cryptic "No subscriptions found for ***") - is caught by the dedicated
+      # "Verify Azure subscription access" gate below, which fails the job with a
+      # clear, run-summary-visible remediation message instead of a raw az error.
       - name: Azure CLI Login (OIDC) - retry
+        id: azure_login_retry
         if: steps.azure_login.outcome == 'failure'
+        continue-on-error: true
         uses: azure/login@v3
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
@@ -263,6 +269,18 @@ jobs:
           Add-AzLocalPipelineVersionBanner `
               -GeneratedAgainstVersion $env:GENERATED_AGAINST_MODULE_VERSION `
               -PinnedVersion $env:REQUIRED_MODULE_VERSION
+
+      # v0.9.12: fail EARLY with a run-summary-visible message when the pipeline
+      # identity can see no Azure subscriptions. Because both azure/login attempts
+      # above are now soft, this is the job's hard authentication/authorization
+      # gate (placed before the optional startup delay so we never sleep on a
+      # doomed run).
+      - name: Verify Azure subscription access
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Import-Module AzLocal.UpdateManagement -Force
+          Assert-AzLocalAzureSubscriptionAccess
 
       - name: Startup delay (event-driven trigger only)
         # Only the Update: 3 (Apply Updates) -> Update: 4 (Monitor) event-driven
@@ -335,6 +353,19 @@ jobs:
           if ($env:INPUT_SKIP_WHEN_IDLE -ne 'false') { $params['SkipWhenIdle'] = $true }
           Export-AzLocalUpdateRunMonitorReport @params
 
+      # v0.9.12: fail with a clear, run-summary-visible message (instead of the
+      # downstream publish step's misleading "No test report files were found")
+      # when the collect step reported success but wrote no report files. The
+      # idle short-circuit still writes an (empty) JUnit, so this stays green on
+      # normal idle runs.
+      - name: Verify diagnostic reports were produced
+        if: steps.snapshot.outcome == 'success'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Import-Module AzLocal.UpdateManagement -Force
+          Assert-AzLocalPipelineReport -Path './reports/*.xml' -ProducingStepName 'Snapshot in-flight update runs'
+
       # v0.8.95: discoverability notice for the opt-in one-time auto-retry of
       # FAILED updates. Shown only when FAILED_UPDATES_SINGLE_RETRY is NOT
       # enabled, so operators who see failed/stalled runs here learn the
@@ -365,7 +396,10 @@ jobs:
           retention-days: 14
 
       - name: Publish Update Monitor JUnit
-        if: always()
+        # v0.9.12: was `if: always()`; now success()-gated so it skips when an
+        # upstream step failed - eliminating the misleading "No test report files
+        # were found" cascade.
+        if: success()
         uses: dorny/test-reporter@v3
         with:
           name: 'In-Flight Update Monitor'

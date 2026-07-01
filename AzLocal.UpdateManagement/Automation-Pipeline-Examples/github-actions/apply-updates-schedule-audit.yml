@@ -193,10 +193,14 @@ jobs:
         subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
     # v0.9.1: single automatic retry for the transient login failure above. Runs
-    # only when the first attempt failed; no continue-on-error here, so a second
-    # failure stops the job.
+    # only when the first attempt failed.
+    # v0.9.12: this retry is now ALSO soft (continue-on-error); the dedicated
+    # "Verify Azure subscription access" gate below is this job's single hard
+    # authentication/authorization gate and fails with a clear summary message.
     - name: Azure CLI Login (OIDC) - retry
+      id: azure_login_retry
       if: steps.azure_login.outcome == 'failure'
+      continue-on-error: true
       uses: azure/login@v3
       with:
         client-id: ${{ secrets.AZURE_CLIENT_ID }}
@@ -229,6 +233,17 @@ jobs:
         Add-AzLocalPipelineVersionBanner `
             -GeneratedAgainstVersion $env:GENERATED_AGAINST_MODULE_VERSION `
             -PinnedVersion $env:REQUIRED_MODULE_VERSION
+
+    # v0.9.12: fail EARLY with a run-summary-visible message when the pipeline
+    # identity can see no Azure subscriptions. Because both azure/login attempts
+    # above are now soft, this is the job's hard authentication/authorization
+    # gate (the audit resolves cluster monitor recommendations via Resource Graph).
+    - name: Verify Azure subscription access
+      shell: pwsh
+      run: |
+        $ErrorActionPreference = 'Stop'
+        Import-Module AzLocal.UpdateManagement -Force
+        Assert-AzLocalAzureSubscriptionAccess
 
     - name: Run Schedule Coverage Audit
       # v0.8.5 thin-YAML: the inline body (~220-line 'Run Schedule
@@ -299,6 +314,17 @@ jobs:
 
         Export-AzLocalApplyUpdatesScheduleAudit @params
 
+    # v0.9.12: fail with a clear, run-summary-visible message (instead of the
+    # downstream publish step's misleading "No test report files were found")
+    # when the audit step reported success but wrote no JUnit report.
+    - name: Verify diagnostic reports were produced
+      if: steps.audit.outcome == 'success'
+      shell: pwsh
+      run: |
+        $ErrorActionPreference = 'Stop'
+        Import-Module AzLocal.UpdateManagement -Force
+        Assert-AzLocalPipelineReport -Path './reports/schedule-coverage-audit.xml' -ProducingStepName 'Run Schedule Coverage Audit'
+
     - name: Compute Artifact Timestamp
       if: always()
       id: artifact-stamp
@@ -318,7 +344,10 @@ jobs:
 
     - name: Publish Test Results
       uses: dorny/test-reporter@v3
-      if: always()
+      # v0.9.12: was `if: always()`; now success()-gated so it skips when an
+      # upstream step failed - eliminating the misleading "No test report files
+      # were found" cascade.
+      if: success()
       with:
         name: Apply-Updates Schedule Coverage
         path: ./reports/schedule-coverage-audit.xml
