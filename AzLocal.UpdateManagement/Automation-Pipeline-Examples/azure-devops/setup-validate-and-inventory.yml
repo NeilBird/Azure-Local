@@ -167,9 +167,26 @@ stages:
                     -GeneratedAgainstVersion "$(generatedAgainstVersion)" `
                     -LatestOnPSGallery       "$(latestOnPsGallery)"
 
+          # v0.9.12: fail with a run-summary-visible message (instead of the
+          # PublishTestResults "No test result files were found" warning) when the
+          # collect task reported success but wrote no auth-report file.
+          - task: PowerShell@2
+            displayName: 'Verify diagnostic reports were produced'
+            condition: succeeded()
+            inputs:
+              targetType: 'inline'
+              pwsh: true
+              script: |
+                $ErrorActionPreference = 'Stop'
+                Import-Module AzLocal.UpdateManagement -Force
+                Assert-AzLocalPipelineReport -Path '$(Build.ArtifactStagingDirectory)/auth-report/*.xml' -ProducingStepName 'Collect Authentication and Subscription Scope Report'
+
           - task: PublishTestResults@2
             displayName: 'Publish Authentication Validation JUnit Diagnostics'
-            condition: always()
+            # v0.9.12: was `condition: always()`; now succeeded()-gated so it skips
+            # when an upstream step failed - eliminating the misleading "No test
+            # result files were found" warning cascade.
+            condition: succeeded()
             inputs:
               testResultsFormat: 'JUnit'
               testResultsFiles: '$(Build.ArtifactStagingDirectory)/auth-report/auth-report.xml'
@@ -192,6 +209,26 @@ stages:
               targetPath: '$(Build.ArtifactStagingDirectory)/auth-report'
               artifact: 'azlocal-setup-auth-report_$(stamp.artifactStamp)'
               publishLocation: 'pipeline'
+
+          # v0.9.12: hard-fail the validate stage with a run-summary-visible
+          # message when the identity can see zero subscriptions (the cryptic
+          # "No subscriptions found for ***"). Placed LAST - AFTER the auth
+          # report is collected and published - so the very diagnostic that
+          # explains the misconfiguration is preserved before the job fails.
+          - task: AzureCLI@2
+            displayName: 'Verify Azure subscription access'
+            condition: succeeded()
+            retryCountOnTaskFailure: 2
+            inputs:
+              # BEGIN-AZLOCAL-CUSTOMIZE:service-connection-ValidateAuthAndScope-subcheck
+              azureSubscription: 'AzureLocal-ServiceConnection'  # Update if your service connection has a different name.
+              # END-AZLOCAL-CUSTOMIZE:service-connection-ValidateAuthAndScope-subcheck
+              scriptType: 'pscore'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                $ErrorActionPreference = 'Stop'
+                Import-Module AzLocal.UpdateManagement -Force
+                Assert-AzLocalAzureSubscriptionAccess
 
   - stage: Inventory
     displayName: 'Inventory Azure Local Clusters'
@@ -246,6 +283,24 @@ stages:
                     -PinnedVersion $env:REQUIRED_MODULE_VERSION `
                     -PassThru
                 Write-Host "##vso[task.setvariable variable=installedModuleVersion;isOutput=false]$($banner.InstalledVersion)"
+
+          # v0.9.12: fail fast with a run-summary-visible message when the
+          # identity can see zero subscriptions (the cryptic "No subscriptions
+          # found for ***"). The inventory stage produces no JUnit report, so
+          # there is no auth diagnostic to preserve here - gate early.
+          - task: AzureCLI@2
+            displayName: 'Verify Azure subscription access'
+            retryCountOnTaskFailure: 2
+            inputs:
+              # BEGIN-AZLOCAL-CUSTOMIZE:service-connection-InventoryClusters-subcheck
+              azureSubscription: 'AzureLocal-ServiceConnection'  # Update with your service connection name.
+              # END-AZLOCAL-CUSTOMIZE:service-connection-InventoryClusters-subcheck
+              scriptType: 'pscore'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                $ErrorActionPreference = 'Stop'
+                Import-Module AzLocal.UpdateManagement -Force
+                Assert-AzLocalAzureSubscriptionAccess
 
           - task: AzureCLI@2
             displayName: 'Run Cluster Inventory'

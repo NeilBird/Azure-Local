@@ -179,6 +179,25 @@ stages:
               -GeneratedAgainstVersion $env:GENERATED_AGAINST_MODULE_VERSION `
               -PinnedVersion $env:REQUIRED_MODULE_VERSION
 
+    # v0.9.12: fail with a run-summary-visible message when the service
+    # connection authenticates but the identity can see zero subscriptions
+    # (the cryptic "No subscriptions found for ***"). Runs under AzureCLI@2 so
+    # `az account list` is authenticated; placed before the collect task so the
+    # job fails fast with clear remediation instead of a downstream cascade.
+    - task: AzureCLI@2
+      displayName: 'Verify Azure subscription access'
+      retryCountOnTaskFailure: 2
+      inputs:
+        # BEGIN-AZLOCAL-CUSTOMIZE:service-connection-CollectConnectivity-subcheck
+        azureSubscription: 'AzureLocal-ServiceConnection'  # Update with your service connection name
+        # END-AZLOCAL-CUSTOMIZE:service-connection-CollectConnectivity-subcheck
+        scriptType: 'pscore'
+        scriptLocation: 'inlineScript'
+        inlineScript: |
+          $ErrorActionPreference = 'Stop'
+          Import-Module AzLocal.UpdateManagement -Force
+          Assert-AzLocalAzureSubscriptionAccess
+
     - task: AzureCLI@2
       displayName: 'Collect Fleet Connectivity Data'
       # v0.9.1: single retry for the transient OIDC/az-login failure (the
@@ -218,6 +237,20 @@ stages:
           if ($env:INPUT_SUBSCRIPTION_FILTER) { $params['SubscriptionFilter'] = $env:INPUT_SUBSCRIPTION_FILTER }
           Export-AzLocalFleetConnectivityStatusReport @params
 
+    # v0.9.12: fail with a run-summary-visible message (instead of the
+    # PublishTestResults "No test result files were found" warning) when the
+    # collect task reported success but wrote no report files.
+    - task: PowerShell@2
+      displayName: 'Verify diagnostic reports were produced'
+      condition: succeeded()
+      inputs:
+        targetType: 'inline'
+        pwsh: true
+        script: |
+          $ErrorActionPreference = 'Stop'
+          Import-Module AzLocal.UpdateManagement -Force
+          Assert-AzLocalPipelineReport -Path '$(reportsPath)/*.xml' -ProducingStepName 'Collect Fleet Connectivity Data'
+
     - pwsh: |
         $stamp = (Get-Date).ToUniversalTime().ToString('yyyyMMdd_HHmmss')
         Write-Host "##vso[task.setvariable variable=artifactStamp;isOutput=true]$stamp"
@@ -239,7 +272,10 @@ stages:
     # (dorny/test-reporter@v3 there; PublishTestResults@2 here).
     - task: PublishTestResults@2
       displayName: 'Publish Fleet Connectivity JUnit Diagnostics'
-      condition: always()
+      # v0.9.12: was `condition: always()`; now succeeded()-gated so it skips
+      # when an upstream step failed - eliminating the misleading "No test result
+      # files were found" warning cascade.
+      condition: succeeded()
       inputs:
         testResultsFormat: 'JUnit'
         testResultsFiles: '$(reportsPath)/fleet-connectivity-status.xml'

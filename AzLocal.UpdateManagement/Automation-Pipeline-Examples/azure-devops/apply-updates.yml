@@ -217,6 +217,27 @@ stages:
                 Import-Module AzLocal.UpdateManagement -Force
                 Add-AzLocalPipelineVersionBanner -GeneratedAgainstVersion $env:GENERATED_AGAINST_MODULE_VERSION
 
+          # v0.9.12: fail with a run-summary-visible message when the service
+          # connection authenticates but the identity can see zero subscriptions
+          # (the cryptic "No subscriptions found for ***"). Runs under AzureCLI@2
+          # so `az account list` is authenticated; placed before the readiness
+          # gate so the stage fails fast with clear remediation. This is a write
+          # workflow whose report presence is gated by the stage's ReadyCount
+          # condition, so there is no report-presence guard here.
+          - task: AzureCLI@2
+            displayName: 'Verify Azure subscription access'
+            retryCountOnTaskFailure: 2
+            inputs:
+              # BEGIN-AZLOCAL-CUSTOMIZE:service-connection-ReadinessCheck-subcheck
+              azureSubscription: 'AzureLocal-ServiceConnection'  # Update with your service connection name
+              # END-AZLOCAL-CUSTOMIZE:service-connection-ReadinessCheck-subcheck
+              scriptType: 'pscore'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                $ErrorActionPreference = 'Stop'
+                Import-Module AzLocal.UpdateManagement -Force
+                Assert-AzLocalAzureSubscriptionAccess
+
           # v0.8.5 thin-YAML - Resolve UpdateRing (+ AllowedUpdateVersions) from
           # schedule file (or pass manual input through verbatim). Emits two task
           # output variables (resolveRing.RESOLVED_UPDATE_RING /
@@ -376,6 +397,25 @@ stages:
                 Import-Module AzLocal.UpdateManagement -Force
                 $installed = (Get-Module AzLocal.UpdateManagement | Sort-Object Version -Descending | Select-Object -First 1).Version
                 Write-Host "Installed AzLocal.UpdateManagement v$installed on ApplyUpdates stage agent."
+
+          # v0.9.12: fail with a run-summary-visible message when the service
+          # connection authenticates but the identity can see zero subscriptions
+          # (the cryptic "No subscriptions found for ***"). Runs under AzureCLI@2
+          # so `az account list` is authenticated; placed before the apply step
+          # so the stage fails fast with clear remediation instead of a cascade.
+          - task: AzureCLI@2
+            displayName: 'Verify Azure subscription access'
+            retryCountOnTaskFailure: 2
+            inputs:
+              # BEGIN-AZLOCAL-CUSTOMIZE:service-connection-ApplyClusterUpdates-subcheck
+              azureSubscription: 'AzureLocal-ServiceConnection'  # Update with your service connection name
+              # END-AZLOCAL-CUSTOMIZE:service-connection-ApplyClusterUpdates-subcheck
+              scriptType: 'pscore'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                $ErrorActionPreference = 'Stop'
+                Import-Module AzLocal.UpdateManagement -Force
+                Assert-AzLocalAzureSubscriptionAccess
 
           # Download the readiness CSV produced by the CheckReadiness stage
           # so the apply step operates on the readiness gate's decision rather than

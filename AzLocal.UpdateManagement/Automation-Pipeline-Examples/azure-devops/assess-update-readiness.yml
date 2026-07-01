@@ -131,6 +131,25 @@ stages:
                     -GeneratedAgainstVersion $env:GENERATED_AGAINST_MODULE_VERSION `
                     -PinnedVersion $env:REQUIRED_MODULE_VERSION
 
+          # v0.9.12: fail with a run-summary-visible message when the service
+          # connection authenticates but the identity can see zero subscriptions
+          # (the cryptic "No subscriptions found for ***"). Runs under AzureCLI@2
+          # so `az account list` is authenticated; placed before the collect task
+          # so the job fails fast with clear remediation instead of a cascade.
+          - task: AzureCLI@2
+            displayName: 'Verify Azure subscription access'
+            retryCountOnTaskFailure: 2
+            inputs:
+              # BEGIN-AZLOCAL-CUSTOMIZE:service-connection-AssessReadiness-subcheck
+              azureSubscription: 'AzureLocal-ServiceConnection'  # Update with your service connection name
+              # END-AZLOCAL-CUSTOMIZE:service-connection-AssessReadiness-subcheck
+              scriptType: 'pscore'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                $ErrorActionPreference = 'Stop'
+                Import-Module AzLocal.UpdateManagement -Force
+                Assert-AzLocalAzureSubscriptionAccess
+
           - task: AzureCLI@2
             displayName: 'Run readiness + blocking health checks'
             # v0.9.1: single retry for the transient OIDC/az-login failure (the
@@ -183,9 +202,26 @@ stages:
                 }
                 Export-AzLocalClusterUpdateReadinessReport @params
 
+          # v0.9.12: fail with a run-summary-visible message (instead of the
+          # PublishTestResults "No test result files were found" warning) when the
+          # collect task reported success but wrote no report files.
+          - task: PowerShell@2
+            displayName: 'Verify diagnostic reports were produced'
+            condition: succeeded()
+            inputs:
+              targetType: 'inline'
+              pwsh: true
+              script: |
+                $ErrorActionPreference = 'Stop'
+                Import-Module AzLocal.UpdateManagement -Force
+                Assert-AzLocalPipelineReport -Path '$(artifactsPath)/*.xml' -ProducingStepName 'Run readiness + blocking health checks'
+
           - task: PublishTestResults@2
             displayName: 'Publish Update Readiness Assessment (combined)'
-            condition: always()
+            # v0.9.12: was `condition: always()`; now succeeded()-gated so it skips
+            # when an upstream step failed - eliminating the misleading "No test
+            # result files were found" warning cascade.
+            condition: succeeded()
             inputs:
               testResultsFormat: 'JUnit'
               testResultsFiles: '$(artifactsPath)/assess-readiness.xml'
@@ -195,7 +231,8 @@ stages:
 
           - task: PublishTestResults@2
             displayName: 'Publish Readiness JUnit Diagnostics'
-            condition: always()
+            # v0.9.12: was `condition: always()`; now succeeded()-gated (see above).
+            condition: succeeded()
             inputs:
               testResultsFormat: 'JUnit'
               testResultsFiles: '$(artifactsPath)/readiness.xml'
@@ -205,7 +242,8 @@ stages:
 
           - task: PublishTestResults@2
             displayName: 'Publish Blocking-Health JUnit Diagnostics'
-            condition: always()
+            # v0.9.12: was `condition: always()`; now succeeded()-gated (see above).
+            condition: succeeded()
             inputs:
               testResultsFormat: 'JUnit'
               testResultsFiles: '$(artifactsPath)/health-blocking.xml'
