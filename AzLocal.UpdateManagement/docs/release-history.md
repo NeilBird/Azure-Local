@@ -4,9 +4,13 @@
 >
 > **For older releases**, this is the canonical reference; the main README intentionally stays slim so the most recent block is easy to find.
 >
-> **For v0.9.11 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0911) `What's New in v0.9.11` section.
+> **For v0.9.12 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0912) `What's New in v0.9.12` section.
 
 ---
+
+### What's New in v0.9.12
+
+**Pipeline preflight guards - two confusing failure cascades become one clear run-summary message.** Two new guard cmdlets, wired into all 20 bundled pipeline templates (10 GitHub Actions + 10 Azure DevOps), make failures visible in the run summary without drilling into agent step logs. `Assert-AzLocalAzureSubscriptionAccess` counts the `Enabled` subscriptions visible to the authenticated identity and, when none are visible, emits a red `::error` / `##vso[task.logissue type=error]` annotation, writes a remediation block to the run summary (assign Reader/RBAC on the target subscription(s) or management group; confirm `AZURE_TENANT_ID` / `AZURE_CLIENT_ID`), sets the `subscription_count` step output to `0`, and throws - replacing the cryptic "No subscriptions found for \*\*\*" failure and its downstream empty-report cascade. `Assert-AzLocalPipelineReport`, placed between collect and publish, expands one or more `-Path` globs and, when no non-empty report exists, writes a run-summary block pointing at the real upstream cause and throws BEFORE the publish step can fire its misleading "No test report files were found" warning. A new private helper `Write-AzLocalPipelineError` (error-severity sibling of `Write-AzLocalPipelineWarning`) backs both. The bundled templates also skip their JUnit publish steps on upstream failure (`if: success()` / `condition: succeeded()`). Additionally, Monitor: 2 - Fleet Health Status (`Export-AzLocalFleetHealthStatusReport`) now emits an operator "Knowledge" note at the bottom of the Detailed Results section (shown only when one or more health checks are reported) reminding operators to re-run the system health checks (`Invoke-SolutionUpdatePrecheck -SystemHealth`) after mitigating or remediating a failure so the health results stored in ARM are refreshed - otherwise the report keeps surfacing already-resolved failures from the stale ARM data store (links to Step 7 of the Azure Local update-troubleshooting guidance). Export count 66 -> 68. `GENERATED_AGAINST_MODULE_VERSION` bumped to `0.9.12`. See [CHANGELOG.md](../CHANGELOG.md#0912---2026-06-27) for the full v0.9.12 entry.
 
 ### What's New in v0.9.11
 

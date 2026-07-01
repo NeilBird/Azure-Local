@@ -290,14 +290,14 @@ Describe 'v0.9.1 readiness cmdlet exposes allow-list surface parameters' {
 
 Describe 'v0.9.1 pipeline login-retry wiring' {
 
-    It 'All Azure DevOps read-only tasks declare retryCountOnTaskFailure: 2 (14 total)' {
+    It 'All Azure DevOps read-only tasks declare retryCountOnTaskFailure: 2 (26 total)' {
         $adoFiles = Get-ChildItem -Path (Join-Path $script:PipelineRoot 'azure-devops') -Filter '*.yml' -File
         $total = 0
         foreach ($f in $adoFiles) {
             $content = Get-Content -Raw -LiteralPath $f.FullName
             $total += ([regex]::Matches($content, 'retryCountOnTaskFailure:\s*2')).Count
         }
-        $total | Should -Be 14
+        $total | Should -Be 26
     }
 
     It 'Mutating Azure DevOps tasks are NOT given a retry (no retry near Apply/Retry Failed/Raise ITSM displayNames)' {

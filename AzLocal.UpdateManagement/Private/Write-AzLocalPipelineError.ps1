@@ -52,7 +52,12 @@ function Write-AzLocalPipelineError {
             Write-Host "##vso[task.logissue type=error]$Title`: $Message"
         }
         default {
-            Write-Error ("{0}: {1}" -f $Title, $Message)
+            # Non-terminating by contract: this helper only EMITS the annotation.
+            # A bare Write-Error becomes TERMINATING under $ErrorActionPreference='Stop'
+            # (which the pipeline inline scripts set), which would abort the caller
+            # BEFORE it can write the run-summary block / step output and throw its
+            # own concise message. Force -ErrorAction Continue so it never throws.
+            Write-Error ("{0}: {1}" -f $Title, $Message) -ErrorAction Continue
         }
     }
 }

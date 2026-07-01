@@ -2,7 +2,7 @@
 
 > ⚠️ **Disclaimer**: This module is **NOT** a Microsoft supported service offering or product. It is provided as example code only, with no warranty or official support. Refer to the [MIT license](https://github.com/NeilBird/Azure-Local/blob/main/LICENSE) for further information.
 
-**Latest Version:** v0.9.11 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.9.11)
+**Latest Version:** v0.9.12 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.9.12)
 
 This folder contains the 'AzLocal.UpdateManagement' PowerShell module for managing updates on Azure Local (formerly Azure Stack HCI) clusters using the Azure Local REST API. The module supports both interactive use and CI/CD automation via Service Principal or Managed Identity authentication.
 
@@ -14,7 +14,7 @@ Azure Local REST API specification (includes update management endpoints): https
 **This README (overview + most-recent release notes):**
 
 - [Where to Start](#where-to-start)
-- [What's New in v0.9.11](#whats-new-in-v0911)
+- [What's New in v0.9.12](#whats-new-in-v0912)
 - [Files](#files)
 - [Prerequisites](#prerequisites)
 - [RBAC Requirements](#rbac-requirements) (summary; full reference in [docs/rbac.md](docs/rbac.md))
@@ -77,25 +77,28 @@ If you are new to this module, work through these in order from a regular PowerS
 
 > Most CI/CD pipelines in [Automation-Pipeline-Examples/](Automation-Pipeline-Examples/) are direct implementations of one of these workflows. Start there if you want a copy-pasteable end-to-end pipeline.
 
-## What's New in v0.9.11
+## What's New in v0.9.12
 
-A small fix + tuning release. Fixes the v0.9.1 assess-update-readiness pipeline failure (exit code 1 at the health step) and tightens the recommended in-flight monitor defaults. No public function, parameter, or export-count change (still **66**).
+**Pipeline preflight guards - two confusing failure cascades become one clear run-summary message.** Adds two guard cmdlets and wires them into all 20 bundled pipeline templates (10 GitHub Actions + 10 Azure DevOps) so failures are visible in the **run summary** without drilling into agent step logs.
 
-### Fixed
+### Added
 
-- **`Export-AzLocalClusterUpdateReadinessReport` no longer leaks `-SchedulePath` into the health check.** The v0.9.1 allow-list override added `SchedulePath` to the shared `$scopeParams` hashtable, which is also splatted into `Test-AzLocalClusterHealth` - a cmdlet with no `SchedulePath` parameter - so the assess-update-readiness pipeline died at the health step. Readiness now clones `$scopeParams` into a dedicated `$readinessParams` for the allow-list resolution and leaves the health calls on the clean `$scopeParams`. Added a regression test asserting `Test-AzLocalClusterHealth` exposes no `SchedulePath` and the source threads it only through `$readinessParams`.
+- **`Assert-AzLocalAzureSubscriptionAccess` - fail meaningfully when the identity sees zero subscriptions.** Counts the `Enabled` subscriptions visible to the authenticated identity and, when none are visible, emits a red `::error` / `##vso[task.logissue type=error]` annotation, writes a remediation block to the run summary (assign Reader/RBAC on the target subscription(s) or management group; confirm `AZURE_TENANT_ID` / `AZURE_CLIENT_ID`), sets the `subscription_count` step output to `0`, and throws - replacing the cryptic "No subscriptions found for \*\*\*" failure and the empty-report cascade it triggers downstream. `-SubscriptionListJson` (test seam), `-MinimumCount` (default 1), and `-PassThru` complete the surface.
+- **`Assert-AzLocalPipelineReport` - fail meaningfully when the collect step produced no report.** Placed between collect and publish, it expands one or more `-Path` globs and, when no non-empty report exists, writes a run-summary block pointing at the real upstream cause and throws BEFORE the publish step can fire its misleading "No test report files were found" warning. `-AllowEmpty`, `-ProducingStepName`, and `-PassThru` round out the surface.
+- **Private helper `Write-AzLocalPipelineError`** - error-severity sibling of `Write-AzLocalPipelineWarning` (GitHub `::error`, ADO `##vso[task.logissue type=error]`, Local `Write-Error`); does not throw.
 
 ### Changed
 
-- **`Export-AzLocalApplyUpdatesScheduleAudit` monitor-recommendation defaults tightened to reduce over-polling.** `-MonitorTrailingDays` lowered 3 -> 1 and `-MonitorInFlightHours` lowered 6 -> 2. The bundled `apply-updates-schedule-audit.yml` GitHub Actions inputs and Azure DevOps parameter defaults match - and these defaults apply on scheduled runs as well as manual dispatch.
+- **All 20 bundled pipeline templates wire in the guards.** A subscription-access gate runs after Azure login / module install; a report-presence guard runs after the collect step (read/diagnostic workflows only); and the JUnit publish steps now skip on upstream failure (`if: success()` / `condition: succeeded()`) instead of firing the phantom "no files" cascade. Write workflows (tag management, apply-updates) get the subscription gate only.
+- **Monitor: 2 - Fleet Health Status now surfaces an operator "Knowledge" note.** When one or more health checks are reported, `Export-AzLocalFleetHealthStatusReport` adds a note at the bottom of the Detailed Results section reminding operators that, after mitigating or remediating a failure, they must re-run the system health checks to refresh the health results stored in ARM (`Invoke-SolutionUpdatePrecheck -SystemHealth`) - otherwise the report keeps surfacing already-resolved failures from the stale ARM data store. Links to Step 7 of the Azure Local update-troubleshooting guidance.
 
 ### Notes
 
-- **`GENERATED_AGAINST_MODULE_VERSION`** bumped to `0.9.11`.
+- Export count 66 -> **68**. `GENERATED_AGAINST_MODULE_VERSION` bumped to `0.9.12`.
 
 > Previous release notes have moved into the [Release History](#release-history) appendix at the bottom of this document.
 
-See [CHANGELOG.md](CHANGELOG.md) for full release details. See [`What's New in v0.9.10`](#whats-new-in-v0910) in the Release History for the previous release.
+See [CHANGELOG.md](CHANGELOG.md) for full release details. See [`What's New in v0.9.11`](#whats-new-in-v0911) in the Release History for the previous release.
 
 ## Files
 
@@ -591,7 +594,11 @@ This code is provided as-is for educational and reference purposes.
 
 The full What's-New history (v0.7.81 and earlier) has moved to [docs/release-history.md](docs/release-history.md).
 
-The most recent release notes for **v0.9.11** stay above under [`What's New in v0.9.11`](#whats-new-in-v0911).
+The most recent release notes for **v0.9.12** stay above under [`What's New in v0.9.12`](#whats-new-in-v0912).
+
+### What's New in v0.9.11
+
+A small fix + tuning release. Fixes the v0.9.1 assess-update-readiness pipeline failure (exit code 1 at the health step) and tightens the recommended in-flight monitor defaults. `Export-AzLocalClusterUpdateReadinessReport` no longer leaks `-SchedulePath` into `Test-AzLocalClusterHealth` (readiness clones `$scopeParams` into a dedicated `$readinessParams`), and `Export-AzLocalApplyUpdatesScheduleAudit` tightens the recommended in-flight monitor defaults (`-MonitorTrailingDays` 3 -> 1, `-MonitorInFlightHours` 6 -> 2). No public function, parameter, or export-count change (still 66). `GENERATED_AGAINST_MODULE_VERSION` bumped to `0.9.11`. See [CHANGELOG.md](CHANGELOG.md#0911---2026-06-26) for the full v0.9.11 entry.
 
 ### What's New in v0.9.10
 
