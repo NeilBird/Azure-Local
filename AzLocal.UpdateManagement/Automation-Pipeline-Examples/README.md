@@ -2039,6 +2039,8 @@ Get-AzLocalAvailableUpdates -PassThru |
 
 Or in the **Azure portal**: **Azure Local** -> **\<cluster\>** -> **Updates** -> the **Name** column on each Ready update row is what you put in `allowedUpdateVersions:`. We recommend pinning by Name (`Solution12.2604.1003.1006` / `SBE5.0.2603.1522`) - the prefix makes it visually obvious whether an entry pins a Microsoft Solution or an OEM SBE.
 
+> **Spotting a cluster the allow-list silently suppressed.** When a cluster's only Ready update is filtered out by `allowedUpdateVersions` (a common trap with a prerequisite OEM SBE - see the `IMPORTANT` note in [`apply-updates-schedule.example.yml`](apply-updates-schedule.example.yml)), the **Update: 1 - Assess Update Readiness** report shows its **Status** as `Up to Date *`. The `*` marker (explained by a footnote above the *All clusters detail* table) means "up to date **only** because the allow-list excluded every Ready update", and the **Available Ready updates** column lists exactly what Azure has Ready. Copy the name/version from that column into `allowedUpdateVersions:` to let the cluster proceed. The readiness run log also prints an **"Allow-list mismatches"** warning enumerating each suppressed cluster and its excluded updates.
+
 #### 8.4.4 Migrating an existing v1 schedule
 
 Use the schema migrator:

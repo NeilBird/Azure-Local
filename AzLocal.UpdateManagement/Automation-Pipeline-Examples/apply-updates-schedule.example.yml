@@ -100,9 +100,12 @@ cycleAnchorYear:      2026
 # the next Microsoft Solution update will NOT be offered until that SBE
 # is installed. If your allow-list omits the SBE, the cluster reports
 # 'Up to Date' and never advances - the SBE was silently filtered out.
-# The Assess Update Readiness report's 'Available Ready updates' column
-# shows exactly what Azure has Ready for each cluster so you can spot the
-# missing entry. Always include the pending SBE in the allow-list.
+# The Assess Update Readiness report makes this visible: the cluster's
+# Status shows 'Up to Date *' (the ' *' marker + a footnote above the
+# table flag that it is up to date ONLY because the allow-list excluded
+# every Ready update), and the 'Available Ready updates' column shows
+# exactly what Azure has Ready so you can copy the missing name/version
+# straight into this file. Always include the pending SBE in the allow-list.
 #
 # Discover valid names per-cluster via:
 #   Get-AzLocalAvailableUpdates -ClusterName <name> -PassThru |

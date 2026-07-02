@@ -614,14 +614,6 @@ function Export-AzLocalClusterUpdateReadinessReport {
         [void]$md.Add('<details>')
         [void]$md.Add('<summary>Expand to view clusters</summary>')
         [void]$md.Add('')
-        # v0.9.14: 'Available Ready updates' column exposes every update Azure
-        # reports in a Ready state for the cluster (the pre-allow-list-filter
-        # list). Collapsed per-cell via <details> so the table stays tidy. A row
-        # showing 'Up to Date' but a NON-empty available list is the tell-tale
-        # sign an allowedUpdateVersions entry is missing/mistyped - the operator
-        # can copy the exact name/version straight into the YML.
-        [void]$md.Add('| Cluster | UpdateRing | Current version | Current SBE version | Update state | Health | Status | Last Updated | Recommended update | Available Ready updates |')
-        [void]$md.Add('|---------|------------|-----------------|---------------------|--------------|--------|--------|--------------|--------------------|-------------------------|')
         # v0.8.82: sort UpdateRing first, then Status priority (operator-actionable
         # items first within each ring), then ClusterName. Previous v0.8.82
         # ordering put Status first which grouped failures across rings; the
@@ -640,6 +632,13 @@ function Export-AzLocalClusterUpdateReadinessReport {
             @{Expression={ if ($ringByResourceId.ContainsKey($_.ClusterResourceId)) { $ringByResourceId[$_.ClusterResourceId] } else { 'zzz' } }}, `
             @{Expression={ $k = Get-AzLocalClusterReadinessStatus -ReadinessRow $_; if ($statusOrder.ContainsKey($k)) { $statusOrder[$k] } else { 99 } }}, `
             ClusterName
+        # v0.9.14: build the detail rows first so we know whether ANY cluster is
+        # 'Up to Date' ONLY because the allow-list filtered out every Ready
+        # update. Those rows get a ' *' marker on the Status cell and a footnote
+        # is emitted above the table so a green icon is never read as "genuinely
+        # current" when Azure actually has updates waiting.
+        $detailRows = New-Object System.Collections.Generic.List[string]
+        $anyAllowListSuppressed = $false
         foreach ($r in $sorted) {
             $ring = if ($ringByResourceId.ContainsKey($r.ClusterResourceId)) { $ringByResourceId[$r.ClusterResourceId] } else { '-' }
             $cv  = if ($r.CurrentVersion) { $r.CurrentVersion } else { '-' }
@@ -650,18 +649,52 @@ function Export-AzLocalClusterUpdateReadinessReport {
             $statusCell = if ($iconMap.ContainsKey($statusKey)) { $iconMap[$statusKey] } else { $iconMap['NeedsInvestigation'] }
             $clusterResId = if ($r.PSObject.Properties['ClusterResourceId'] -and $r.ClusterResourceId) { [string]$r.ClusterResourceId } else { '' }
             $clusterCell = Get-AzLocalClusterPortalLink -ClusterName ([string]$r.ClusterName) -ClusterResourceId $clusterResId
-            # Collapsible per-cell list of the Ready updates available for this
-            # cluster (name/version exactly as Azure reports them). '-' when the
-            # cluster genuinely has nothing Ready.
+            # Per-cell list of the Ready updates available for this cluster
+            # (name/version exactly as Azure reports them). A single update is
+            # rendered inline; 2+ collapse behind a <details> expander. '-' when
+            # the cluster genuinely has nothing Ready.
             $readyRaw = if ($r.PSObject.Properties['ReadyUpdates'] -and $r.ReadyUpdates) { [string]$r.ReadyUpdates } else { '' }
             $readyItems = @($readyRaw -split ';' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
             if ($readyItems.Count -eq 0) {
                 $availCell = '-'
             }
+            elseif ($readyItems.Count -eq 1) {
+                # v0.9.14: a lone Ready update is shown inline (no expander) so
+                # the tell-tale "UpToDate yet one update available" allow-list
+                # mismatch is visible at a glance - the single most common case
+                # for a silently-suppressed OEM SBE - without needing a click.
+                $availCell = $readyItems[0]
+            }
             else {
                 $availCell = ('<details><summary>{0} update(s)</summary>{1}</details>' -f $readyItems.Count, ($readyItems -join '<br>'))
             }
-            [void]$md.Add("| $clusterCell | $ring | $cv | $csv | $($r.UpdateState) | $($r.HealthState) | $statusCell | $lu | $ru | $availCell |")
+            # v0.9.14: a cluster reporting 'Up to Date' while it STILL has Ready
+            # updates can only be in that state because the allow-list excluded
+            # every one. Mark the Status cell with ' *' (explained by the
+            # footnote above the table) so the operator isn't misled.
+            $isAllowListSuppressed = ($statusKey -eq 'UpToDate') -and ($readyItems.Count -gt 0)
+            if ($isAllowListSuppressed) {
+                $statusCell = "$statusCell *"
+                $anyAllowListSuppressed = $true
+            }
+            [void]$detailRows.Add("| $clusterCell | $ring | $cv | $csv | $($r.UpdateState) | $($r.HealthState) | $statusCell | $lu | $ru | $availCell |")
+        }
+        # v0.9.14: footnote (only when at least one cluster is suppressed) that
+        # explains the ' *' Status marker and points at the exact remediation.
+        if ($anyAllowListSuppressed) {
+            [void]$md.Add('> \* **Status is `Up to Date` only because the cluster''s Available Ready update(s) are not listed in the `allowedUpdateVersions` allow-list** - they were filtered out, so there is no action to take this run. Copy the update name/version from the **Available Ready updates** column into your `apply-updates-schedule.yml` allow-list to let the cluster proceed.')
+            [void]$md.Add('')
+        }
+        # v0.9.14: 'Available Ready updates' column exposes every update Azure
+        # reports in a Ready state for the cluster (the pre-allow-list-filter
+        # list). Collapsed per-cell via <details> so the table stays tidy. A row
+        # showing 'Up to Date *' but a NON-empty available list is the tell-tale
+        # sign an allowedUpdateVersions entry is missing/mistyped - the operator
+        # can copy the exact name/version straight into the YML.
+        [void]$md.Add('| Cluster | UpdateRing | Current version | Current SBE version | Update state | Health | Status | Last Updated | Recommended update | Available Ready updates |')
+        [void]$md.Add('|---------|------------|-----------------|---------------------|--------------|--------|--------|--------------|--------------------|-------------------------|')
+        foreach ($row in $detailRows) {
+            [void]$md.Add($row)
         }
         [void]$md.Add('')
         [void]$md.Add('</details>')
