@@ -4,9 +4,13 @@
 >
 > **For older releases**, this is the canonical reference; the main README intentionally stays slim so the most recent block is easy to find.
 >
-> **For v0.9.12 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0912) `What's New in v0.9.12` section.
+> **For v0.9.13 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0913) `What's New in v0.9.13` section.
 
 ---
+
+### What's New in v0.9.13
+
+**Bug fix - Monitor: 3 (Fleet Update Status) no longer crashes on a failed run with a short deepest-error message.** `Export-AzLocalFleetUpdateStatusReport`'s deepest-error truncation guard read `[string]$f.DeepestErrMsg.Length`, which PowerShell parses as `[string]($f.DeepestErrMsg.Length)` (member access binds tighter than the cast). It stringified the *length* (e.g. `"50"`) and then compared that string to `4000` **lexically** - `"50" -gt 4000` is `$true` - so a short message was pushed into `.Substring(0,4000)` and threw `Index and length must refer to a location within the string`. The message is now cast to a string once (`$deepMsg = [string]$f.DeepestErrMsg`) before the integer length check. The defect has existed since v0.8.5 and surfaced on a real fleet-update-status run (#40); existing tests used a message whose length string sorted below `"4000"`, so it was never tripped. A regression test now feeds a short message and asserts no throw. No public function, parameter, or export-count change (still 68). `GENERATED_AGAINST_MODULE_VERSION` bumped to `0.9.13`. See [CHANGELOG.md](../CHANGELOG.md#0913---2026-07-02) for the full v0.9.13 entry.
 
 ### What's New in v0.9.12
 
