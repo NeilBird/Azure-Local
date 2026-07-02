@@ -129,7 +129,7 @@ variables:
   # log if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
   - name: GENERATED_AGAINST_MODULE_VERSION
-    value: '0.9.14'
+    value: '0.9.15'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): queue-time parameter > pipeline variable
   # 'REQUIRED_MODULE_VERSION' overridden at queue time > empty (latest).
@@ -271,6 +271,11 @@ stages:
               RESOLVE_FOR_DATE_UTC: ${{ parameters.resolveForDateUtc }}
               APPLY_UPDATES_SCHEDULE_PATH: $(APPLY_UPDATES_SCHEDULE_PATH)
               BUILD_REASON: $(Build.Reason)
+              # v0.9.15: forward the FORCE flag (only when the operator manually
+              # triggered the run) so the resolver still honours the
+              # allowedUpdateVersions allow-list on a break-glass run - only the
+              # schedule WINDOW is bypassed, never the version allow-list.
+              FORCE_IMMEDIATE_UPDATE_PARAM: ${{ parameters.forceImmediateUpdate }}
             inputs:
               targetType: 'inline'
               pwsh: true
@@ -278,6 +283,7 @@ stages:
                 Import-Module AzLocal.UpdateManagement -Force
                 $params = @{ ManualUpdateRing = $env:MANUAL_UPDATE_RING; ResolveForDateUtc = $env:RESOLVE_FOR_DATE_UTC }
                 if ($env:USE_SCHEDULE_FILE -eq 'True' -or $env:USE_SCHEDULE_FILE -eq 'true') { $params['UseScheduleFile'] = $true }
+                if (($env:FORCE_IMMEDIATE_UPDATE_PARAM -eq 'True' -or $env:FORCE_IMMEDIATE_UPDATE_PARAM -eq 'true') -and $env:BUILD_REASON -eq 'Manual') { $params['ForceImmediateUpdate'] = $true }
                 Resolve-AzLocalPipelineUpdateRing @params
 
           # v0.8.5 thin-YAML - readiness gate query + step outputs (PascalCase

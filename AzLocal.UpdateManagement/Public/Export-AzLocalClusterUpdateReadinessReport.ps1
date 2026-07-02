@@ -111,9 +111,12 @@ function Export-AzLocalClusterUpdateReadinessReport {
 
     .PARAMETER PassThru
         When set, returns a single PSCustomObject summarising the run
-        (TotalCount, ReadyForUpdateCount, UpToDateCount, NotReadyCount,
-        CriticalFindings, ClustersWithCritical, ReadinessRows,
+        (TotalCount, ReadyForUpdateCount, UpToDateCount, AllowListHeldCount,
+        NotReadyCount, CriticalFindings, ClustersWithCritical, ReadinessRows,
         HealthRows, and the file paths incl. ReadyForUpdateCsvPath).
+        AllowListHeldCount is a labelled SUBSET of UpToDateCount (clusters that
+        are Up to Date only because the allowedUpdateVersions allow-list held
+        their Ready update).
         Without -PassThru the cmdlet emits nothing to the pipeline; the
         artifacts and step outputs are still produced.
 
@@ -260,6 +263,7 @@ function Export-AzLocalClusterUpdateReadinessReport {
                     TotalCount           = 0
                     ReadyForUpdateCount  = 0
                     UpToDateCount        = 0
+                    AllowListHeldCount   = 0
                     NotReadyCount        = 0
                     CriticalFindings     = 0
                     ClustersWithCritical = 0
@@ -321,10 +325,27 @@ function Export-AzLocalClusterUpdateReadinessReport {
     $total = @($readiness).Count
     $notReady = $total - $readyForUpdate - $upToDate
 
+    # v0.9.15: clusters that classify 'Up to Date' ONLY because the
+    # allowedUpdateVersions allow-list filtered out every Ready update. These
+    # are surfaced in a dedicated VISIBLE table (section 6b) + a summary
+    # sub-count so operators no longer have to expand 'All clusters detail' to
+    # find them. Membership uses the SAME predicate as the detail ' *' marker
+    # (classified UpToDate AND a non-empty ReadyUpdates list). It is a labelled
+    # SUBSET of Up to Date - kept INSIDE the $upToDate total so the summary and
+    # per-UpdateRing pivot arithmetic (Ready + UpToDate + NotReady = Total)
+    # stays consistent.
+    $allowListHeldRows = @($readiness | Where-Object {
+            (Get-AzLocalClusterReadinessStatus -ReadinessRow $_) -eq 'UpToDate' -and
+            $_.PSObject.Properties['ReadyUpdates'] -and $_.ReadyUpdates -and
+            (@(([string]$_.ReadyUpdates) -split ';' | ForEach-Object { $_.Trim() } | Where-Object { $_ }).Count -gt 0)
+        })
+    $allowListHeld = $allowListHeldRows.Count
+
     Write-Host ''
     Write-Host "Total clusters in scope: $total"
     Write-Host "Ready for update      : $readyForUpdate"
     Write-Host "Up to date            : $upToDate"
+    Write-Host "  (held by allow-list): $allowListHeld"
     Write-Host "Not ready for update  : $notReady"
 
     # ---- Ready-for-Update subset (v0.8.97) --------------------------------
@@ -497,6 +518,11 @@ function Export-AzLocalClusterUpdateReadinessReport {
     [void]$md.Add("| Total clusters in scope | $total |")
     [void]$md.Add(("| {0} | {1} |" -f $iconMap['ReadyForUpdate'], $readyForUpdate))
     [void]$md.Add(("| {0} | {1} |" -f $iconMap['UpToDate'], $upToDate))
+    # v0.9.15: labelled sub-count (only when non-zero) of the Up-to-Date rows
+    # that are Up to Date ONLY because their Ready update was allow-list-held.
+    if ($allowListHeld -gt 0) {
+        [void]$md.Add(("| &nbsp;&nbsp;of which held by allow-list | {0} |" -f $allowListHeld))
+    }
     [void]$md.Add(("| {0} | {1} |" -f $iconMap['ActionRequired'], $notReady))
     [void]$md.Add(("| {0} (Clusters with Critical health failures) | {1} |" -f $iconMap['HealthFailure'], $clustersWithCritical))
     [void]$md.Add("| Total Critical findings | $criticalFindings |")
@@ -518,6 +544,9 @@ function Export-AzLocalClusterUpdateReadinessReport {
         [void]$md.Add('')
         [void]$md.Add('| Cluster | UpdateRing | Current version | Update state | Health | Status | Blocking reasons |')
         [void]$md.Add('|---------|------------|-----------------|--------------|--------|--------|------------------|')
+        # v0.9.15: track whether any Not-Ready cluster is SBE-prerequisite
+        # blocked so a manual-action knowledge note can be emitted once below.
+        $anySbeBlocked = $false
         foreach ($r in ($notReadyRows | Sort-Object @{Expression={ if ($ringByResourceId.ContainsKey($_.ClusterResourceId)) { $ringByResourceId[$_.ClusterResourceId] } else { 'zzz' } }}, ClusterName)) {
             $ring = if ($ringByResourceId.ContainsKey($r.ClusterResourceId)) { $ringByResourceId[$r.ClusterResourceId] } else { '-' }
             $cv = if ($r.CurrentVersion) { $r.CurrentVersion } else { '-' }
@@ -556,7 +585,15 @@ function Export-AzLocalClusterUpdateReadinessReport {
             $clusterResId = if ($r.PSObject.Properties['ClusterResourceId'] -and $r.ClusterResourceId) { [string]$r.ClusterResourceId } else { '' }
             $clusterCell = Get-AzLocalClusterPortalLink -ClusterName ([string]$r.ClusterName) -ClusterResourceId $clusterResId
             $statusCell = if ($iconMap.ContainsKey($statusKey)) { $iconMap[$statusKey] } else { $iconMap['NeedsInvestigation'] }
+            if ($statusKey -eq 'SbeBlocked') { $anySbeBlocked = $true }
             [void]$md.Add("| $clusterCell | $ring | $cv | $($r.UpdateState) | $($r.HealthState) | $statusCell | $br |")
+        }
+        # v0.9.15: SBE-prerequisite clusters need a manual, hardware-vendor
+        # (OEM) step the pipeline cannot perform - explain it once, only when
+        # at least one Not-Ready cluster is SBE-blocked.
+        if ($anySbeBlocked) {
+            [void]$md.Add('')
+            [void]$md.Add('> **`SBE Prerequisite` - manual action required.** These clusters have a Solution Builder Extension (SBE) update that must be applied **before** the Azure Local platform/OS update can proceed. The pipeline cannot action this automatically. Review your **Hardware OEM provider''s** Azure Local / SBE documentation for the correct SBE package and version, then **sideload the SBE update onto the cluster**. Once it is applied and the cluster re-assesses, it moves out of this table.')
         }
         [void]$md.Add('')
     }
@@ -590,6 +627,43 @@ function Export-AzLocalClusterUpdateReadinessReport {
             $gUpToDate = @($g.Group | Where-Object { (Get-AzLocalClusterReadinessStatus -ReadinessRow $_) -eq 'UpToDate' }).Count
             $gNotReady = $g.Count - $gReady - $gUpToDate
             [void]$md.Add("| $($g.Name) | $($g.Count) | $gReady | $gUpToDate | $gNotReady |")
+        }
+        [void]$md.Add('')
+    }
+
+    # 6b. Up-to-date-but-held-by-allow-list table (v0.9.15)
+    # A dedicated VISIBLE table (not behind the 'All clusters detail' expander)
+    # for clusters that are 'Up to Date' ONLY because their Ready update was
+    # filtered out by the allowedUpdateVersions allow-list. Rendering it as its
+    # own top-level section means operators see the exact update name/version
+    # to copy into apply-updates-schedule.yml without expanding anything.
+    if ($allowListHeldRows.Count -gt 0) {
+        [void]$md.Add('### Up to date - Ready update held by allow-list')
+        [void]$md.Add('')
+        [void]$md.Add('> These clusters are reported **Up to Date** for this run **only because their Available Ready update(s) are not in the `allowedUpdateVersions` allow-list** - they were filtered out, so there is no action to take right now. To let a cluster proceed, copy the exact update name/version from the **Available Ready updates** column into your `apply-updates-schedule.yml` allow-list.')
+        [void]$md.Add('')
+        [void]$md.Add((Get-AzLocalCtrlClickTip))
+        [void]$md.Add('')
+        [void]$md.Add('| Cluster | UpdateRing | Current version | Available Ready updates | Allow-list rule |')
+        [void]$md.Add('|---------|------------|-----------------|-------------------------|-----------------|')
+        foreach ($r in ($allowListHeldRows | Sort-Object @{Expression={ if ($ringByResourceId.ContainsKey($_.ClusterResourceId)) { $ringByResourceId[$_.ClusterResourceId] } else { 'zzz' } }}, ClusterName)) {
+            $ring = if ($ringByResourceId.ContainsKey($r.ClusterResourceId)) { $ringByResourceId[$r.ClusterResourceId] } else { '-' }
+            $cv  = if ($r.CurrentVersion) { $r.CurrentVersion } else { '-' }
+            $readyRaw = if ($r.PSObject.Properties['ReadyUpdates'] -and $r.ReadyUpdates) { [string]$r.ReadyUpdates } else { '' }
+            $readyItems = @($readyRaw -split ';' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+            if ($readyItems.Count -eq 1) {
+                $availCell = $readyItems[0]
+            }
+            elseif ($readyItems.Count -gt 1) {
+                $availCell = ('<details><summary>{0} update(s)</summary>{1}</details>' -f $readyItems.Count, ($readyItems -join '<br>'))
+            }
+            else {
+                $availCell = '-'
+            }
+            $allowRule = if ($r.PSObject.Properties['AllowedUpdateVersions'] -and $r.AllowedUpdateVersions) { [string]$r.AllowedUpdateVersions } else { '-' }
+            $clusterResId = if ($r.PSObject.Properties['ClusterResourceId'] -and $r.ClusterResourceId) { [string]$r.ClusterResourceId } else { '' }
+            $clusterCell = Get-AzLocalClusterPortalLink -ClusterName ([string]$r.ClusterName) -ClusterResourceId $clusterResId
+            [void]$md.Add("| $clusterCell | $ring | $cv | $availCell | $allowRule |")
         }
         [void]$md.Add('')
     }
@@ -747,6 +821,7 @@ function Export-AzLocalClusterUpdateReadinessReport {
             TotalCount           = [int]$total
             ReadyForUpdateCount  = [int]$readyForUpdate
             UpToDateCount        = [int]$upToDate
+            AllowListHeldCount   = [int]$allowListHeld
             NotReadyCount        = [int]$notReady
             CriticalFindings     = [int]$criticalFindings
             ClustersWithCritical = [int]$clustersWithCritical

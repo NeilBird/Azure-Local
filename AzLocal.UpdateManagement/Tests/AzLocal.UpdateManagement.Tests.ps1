@@ -34,8 +34,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $script:ModuleInfo | Should -Not -BeNullOrEmpty
         }
 
-        It 'Should have version 0.9.14' {
-            $script:ModuleInfo.Version | Should -Be '0.9.14'
+        It 'Should have version 0.9.15' {
+            $script:ModuleInfo.Version | Should -Be '0.9.15'
         }
 
         It 'Module version constants are in sync between .psm1 and .psd1' {
@@ -917,18 +917,51 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $script:S6Ado78Content | Should -Match "if\s*\(\s*\`$env:FORCE_IMMEDIATE_UPDATE_PARAM\s*-eq\s*'True'\s*\)\s*\{[\s\S]{0,400}?\`$env:BUILD_REASON\s*-eq\s*'Manual'[\s\S]{0,200}?\`$params\['ForceImmediateUpdate'\]\s*=\s*\`$true"
         }
 
+        It 'v0.9.15 GH resolve-ring step forwards force_immediate_update to the resolver (clamped to workflow_dispatch) so the allow-list is honoured' {
+            # The resolve-ring step must clamp force to workflow_dispatch, exactly
+            # like the apply step, so a scheduled firing can never activate it.
+            $script:S6Gh78Content | Should -Match "INPUT_FORCE_IMMEDIATE_UPDATE:\s*\$\{\{\s*github\.event_name\s*==\s*'workflow_dispatch'\s*&&\s*github\.event\.inputs\.force_immediate_update\s*\|\|\s*'false'\s*\}\}" -Because 'the resolve-ring step must also clamp force to workflow_dispatch'
+            $script:S6Gh78Content | Should -Match "if\s*\(\s*\`$env:INPUT_FORCE_IMMEDIATE_UPDATE\s*-eq\s*'true'\s*\)\s*\{\s*\`$params\['ForceImmediateUpdate'\]\s*=\s*\`$true\s*\}" -Because 'the resolve-ring step must forward the flag to Resolve-AzLocalPipelineUpdateRing'
+        }
+
+        It 'v0.9.15 ADO resolveRing task forwards forceImmediateUpdate (gated Build.Reason=Manual) to the resolver so the allow-list is honoured' {
+            $script:S6Ado78Content | Should -Match 'FORCE_IMMEDIATE_UPDATE_PARAM:\s*\$\{\{\s*parameters\.forceImmediateUpdate\s*\}\}'
+            $script:S6Ado78Content | Should -Match "\`$env:FORCE_IMMEDIATE_UPDATE_PARAM[\s\S]{0,300}?\`$env:BUILD_REASON\s*-eq\s*'Manual'[\s\S]{0,200}?\`$params\['ForceImmediateUpdate'\]\s*=\s*\`$true" -Because 'the resolveRing task must gate on Build.Reason=Manual before forwarding force'
+        }
+
         It 'apply-updates-schedule.yml does NOT expose a force_immediate / forceImmediate field (override must be unreachable from the schedule config)' {
-            # The schedule resolver generator must NOT learn about this override. Sweep every
-            # known schedule-config artefact to make sure no future refactor leaks the flag.
+            # The schedule config GENERATOR and AUDIT must never learn about this
+            # override - it must be unreachable from the apply-updates-schedule.yml
+            # configuration file. Sweep those artefacts to make sure no future
+            # refactor leaks the flag into the config surface.
+            #
+            # NOTE (v0.9.15): Resolve-AzLocalPipelineUpdateRing is DELIBERATELY
+            # excluded from this sweep. The resolver now consumes an operator-
+            # supplied -ForceImmediateUpdate PIPELINE parameter (gated to
+            # workflow_dispatch / Build.Reason=Manual in the YAML) so that a
+            # FORCE run still HONOURS the allowedUpdateVersions allow-list
+            # instead of silently overriding it. The flag is never sourced from
+            # the schedule config file itself - see the dedicated resolver
+            # assertions below.
             $candidates = @(
                 (Join-Path -Path $PSScriptRoot -ChildPath '..\Public\New-AzLocalApplyUpdatesScheduleConfig.ps1'),
-                (Join-Path -Path $PSScriptRoot -ChildPath '..\Public\Resolve-AzLocalPipelineUpdateRing.ps1'),
                 (Join-Path -Path $PSScriptRoot -ChildPath '..\Public\Get-AzLocalApplyUpdatesScheduleAudit.ps1')
             ) | Where-Object { Test-Path -LiteralPath $_ }
             foreach ($f in $candidates) {
                 $raw = Get-Content -LiteralPath $f -Raw
                 $raw | Should -Not -Match '(?i)force[_-]?immediate' -Because "$([IO.Path]::GetFileName($f)) must NOT reference the break-glass override (it is operator-only)"
             }
+        }
+
+        It 'v0.9.15 resolver honours the allow-list under force but never sources the force flag from the schedule config file' {
+            $resolverPath = (Join-Path -Path $PSScriptRoot -ChildPath '..\Public\Resolve-AzLocalPipelineUpdateRing.ps1')
+            $raw = Get-Content -LiteralPath $resolverPath -Raw
+            # Consumes an operator-supplied pipeline switch...
+            $raw | Should -Match '\[switch\]\$ForceImmediateUpdate' -Because 'the resolver must accept the operator-supplied force switch'
+            # ...and uses it to resolve the ring-scoped allow-list (never to alter the ring).
+            $raw | Should -Match 'Resolve-AzLocalForceAllowList' -Because 'force resolution must delegate to the ring-scoped allow-list helper'
+            # The force flag must NOT be read out of the parsed schedule config object.
+            $raw | Should -Not -Match '(?i)\$(cfg|forceCfg|Schedule)\.[A-Za-z]*force' -Because 'the force flag must never be sourced from the schedule config'
         }
     }
 
@@ -19246,6 +19279,10 @@ Describe 'Thin-YAML Step.6: Resolve-AzLocalPipelineUpdateRing' {
         It 'Has parameter SchedulePath'        { $script:S6CmdR.Parameters.Keys | Should -Contain 'SchedulePath' }
         It 'Has parameter ResolveForDateUtc'   { $script:S6CmdR.Parameters.Keys | Should -Contain 'ResolveForDateUtc' }
         It 'Has parameter Trigger'             { $script:S6CmdR.Parameters.Keys | Should -Contain 'Trigger' }
+        It 'Has parameter ForceImmediateUpdate (switch)' {
+            $script:S6CmdR.Parameters.Keys | Should -Contain 'ForceImmediateUpdate'
+            $script:S6CmdR.Parameters['ForceImmediateUpdate'].ParameterType.Name | Should -Be 'SwitchParameter'
+        }
         It 'Has parameter PassThru (switch)'   {
             $script:S6CmdR.Parameters.Keys | Should -Contain 'PassThru'
             $script:S6CmdR.Parameters['PassThru'].ParameterType.Name | Should -Be 'SwitchParameter'
@@ -19271,6 +19308,106 @@ Describe 'Thin-YAML Step.6: Resolve-AzLocalPipelineUpdateRing' {
         It 'Throws on malformed YYYY-MM-DD' {
             { Resolve-AzLocalPipelineUpdateRing -Trigger Manual -ManualUpdateRing 'Wave1' -UseScheduleFile -ResolveForDateUtc '07-15-2026' } |
                 Should -Throw -ExpectedMessage "*not a valid date*"
+        }
+    }
+
+    Context 'v0.9.15 ForceImmediateUpdate honours the allowedUpdateVersions allow-list (manual verbatim path)' {
+        BeforeAll {
+            # A real placeholder file so the resolver's Test-Path gate is true;
+            # the parsed content is supplied by the mocked config parser.
+            $script:S6ForceSched = Join-Path -Path $script:S6TmpRoot -ChildPath 'force-schedule.yml'
+            Set-Content -LiteralPath $script:S6ForceSched -Value '# placeholder schedule' -Encoding utf8
+        }
+
+        It 'Without -ForceImmediateUpdate the manual verbatim path still leaves the allow-list empty (regression)' {
+            $info = Resolve-AzLocalPipelineUpdateRing -Trigger Manual -ManualUpdateRing 'Prod' -SchedulePath $script:S6ForceSched -PassThru
+            $info.ResolvedUpdateRing            | Should -Be 'Prod'
+            $info.ResolvedAllowedUpdateVersions | Should -Be ''
+            $info.AllowListSource               | Should -Be 'None'
+            $info.ForceImmediateUpdate          | Should -BeFalse
+        }
+
+        It 'Force resolves the per-ring override allow-list for the target ring; the ring is NOT overridden' {
+            InModuleScope AzLocal.UpdateManagement -Parameters @{ SchedPath = $script:S6ForceSched } {
+                param($SchedPath)
+                Mock Get-AzLocalApplyUpdatesScheduleConfig {
+                    [PSCustomObject]@{
+                        AllowedUpdateVersions = @('10.2604.0.1')
+                        Schedule              = @(
+                            [PSCustomObject]@{ rings = 'Canary'; AllowedUpdateVersionsParsed = $null },
+                            [PSCustomObject]@{ rings = 'Prod';   AllowedUpdateVersionsParsed = @('10.2610.0.9') }
+                        )
+                    }
+                }
+                $info = Resolve-AzLocalPipelineUpdateRing -Trigger Manual -ManualUpdateRing 'Prod' -SchedulePath $SchedPath -ForceImmediateUpdate -PassThru
+                $info.ResolvedUpdateRing            | Should -Be 'Prod'   -Because 'force never rewrites the operator-selected ring'
+                $info.AllowListSource               | Should -Be 'RowOverride'
+                $info.ResolvedAllowedUpdateVersions | Should -Be '10.2610.0.9'
+                $info.ForceImmediateUpdate          | Should -BeTrue
+            }
+        }
+
+        It 'Force falls back to the fleet-wide global default when the target ring has no per-ring override' {
+            InModuleScope AzLocal.UpdateManagement -Parameters @{ SchedPath = $script:S6ForceSched } {
+                param($SchedPath)
+                Mock Get-AzLocalApplyUpdatesScheduleConfig {
+                    [PSCustomObject]@{
+                        AllowedUpdateVersions = @('10.2604.0.1')
+                        Schedule              = @(
+                            [PSCustomObject]@{ rings = 'Prod'; AllowedUpdateVersionsParsed = @('10.2610.0.9') }
+                        )
+                    }
+                }
+                $info = Resolve-AzLocalPipelineUpdateRing -Trigger Manual -ManualUpdateRing 'Canary' -SchedulePath $SchedPath -ForceImmediateUpdate -PassThru
+                $info.AllowListSource               | Should -Be 'TopLevel'
+                $info.ResolvedAllowedUpdateVersions | Should -Be '10.2604.0.1'
+            }
+        }
+
+        It "Force with a 'Latest' allow-list applies NO constraint (empty) so the latest Ready update installs" {
+            InModuleScope AzLocal.UpdateManagement -Parameters @{ SchedPath = $script:S6ForceSched } {
+                param($SchedPath)
+                Mock Get-AzLocalApplyUpdatesScheduleConfig {
+                    [PSCustomObject]@{
+                        AllowedUpdateVersions = @('Latest')
+                        Schedule              = @(
+                            [PSCustomObject]@{ rings = 'Prod'; AllowedUpdateVersionsParsed = $null }
+                        )
+                    }
+                }
+                $info = Resolve-AzLocalPipelineUpdateRing -Trigger Manual -ManualUpdateRing 'Prod' -SchedulePath $SchedPath -ForceImmediateUpdate -PassThru
+                $info.AllowListSource               | Should -Be 'TopLevel'
+                $info.ResolvedAllowedUpdateVersions | Should -Be ''
+            }
+        }
+
+        It 'Force unions per-ring overrides across a multi-ring input (Prod;Ring2) without overriding the ring' {
+            InModuleScope AzLocal.UpdateManagement -Parameters @{ SchedPath = $script:S6ForceSched } {
+                param($SchedPath)
+                Mock Get-AzLocalApplyUpdatesScheduleConfig {
+                    [PSCustomObject]@{
+                        AllowedUpdateVersions = @('10.2604.0.1')
+                        Schedule              = @(
+                            [PSCustomObject]@{ rings = 'Prod';  AllowedUpdateVersionsParsed = @('10.2610.0.9') },
+                            [PSCustomObject]@{ rings = 'Ring2'; AllowedUpdateVersionsParsed = @('10.2611.0.3') }
+                        )
+                    }
+                }
+                $info = Resolve-AzLocalPipelineUpdateRing -Trigger Manual -ManualUpdateRing 'Prod;Ring2' -SchedulePath $SchedPath -ForceImmediateUpdate -PassThru
+                $info.ResolvedUpdateRing            | Should -Be 'Prod;Ring2'
+                $info.AllowListSource               | Should -Be 'RowOverride'
+                $info.ResolvedAllowedUpdateVersions | Should -Be '10.2610.0.9;10.2611.0.3'
+            }
+        }
+
+        It 'Force with NO schedule file present degrades to the latest Ready update (empty, no throw)' {
+            $missing = Join-Path -Path $script:S6TmpRoot -ChildPath 'no-such-schedule.yml'
+            # A throw here would fail the test, so a clean direct assignment
+            # also proves the "no throw" contract for the missing-file path.
+            $info = Resolve-AzLocalPipelineUpdateRing -Trigger Manual -ManualUpdateRing 'Prod' -SchedulePath $missing -ForceImmediateUpdate -PassThru
+            $info.ResolvedUpdateRing            | Should -Be 'Prod'
+            $info.ResolvedAllowedUpdateVersions | Should -Be ''
+            $info.AllowListSource               | Should -Be 'None'
         }
     }
 }
@@ -21824,6 +21961,51 @@ Describe 'v0.9.14: Assess Readiness allow-list mismatch surfacing' {
     It 'Schedule example uses the verified 2604 build number (1006 not 1005)' {
         $srcScheduleYml | Should -Not -Match '2604\.1003\.1005'
         $srcScheduleYml | Should -Match '2604\.1003\.1006'
+    }
+}
+
+Describe 'v0.9.15: SBE-prerequisite note + allow-list-held dedicated table' {
+    BeforeAll {
+        $script:src05v915 = Get-Content -LiteralPath "$PSScriptRoot/../Public/Export-AzLocalClusterUpdateReadinessReport.ps1" -Raw
+    }
+
+    Context 'SBE-prerequisite manual-action note' {
+        It 'Tracks whether any Not-Ready cluster is SBE-blocked' {
+            $src05v915 | Should -Match '\$anySbeBlocked = \$false'
+            $src05v915 | Should -Match "if \(\`$statusKey -eq 'SbeBlocked'\) \{ \`$anySbeBlocked = \`$true \}"
+        }
+        It 'Emits the SBE knowledge note only when a cluster is SBE-blocked' {
+            $src05v915 | Should -Match 'if \(\$anySbeBlocked\)'
+        }
+        It 'SBE note explains the manual Hardware OEM sideload action' {
+            $src05v915 | Should -Match '`SBE Prerequisite` - manual action required'
+            $src05v915 | Should -Match 'Hardware OEM provider'
+            $src05v915 | Should -Match 'sideload the SBE update onto the cluster'
+        }
+    }
+
+    Context 'Allow-list-held dedicated visible table + summary sub-count' {
+        It 'Computes the allow-list-held subset with the same predicate as the detail marker' {
+            $src05v915 | Should -Match '\$allowListHeldRows = @\(\$readiness \| Where-Object'
+            $src05v915 | Should -Match "-eq 'UpToDate' -and"
+            $src05v915 | Should -Match "ReadyUpdates'\] -and"
+            $src05v915 | Should -Match '\$allowListHeld = \$allowListHeldRows\.Count'
+        }
+        It 'Adds the labelled of-which sub-count row only when non-zero' {
+            $src05v915 | Should -Match 'if \(\$allowListHeld -gt 0\)'
+            $src05v915 | Should -Match 'of which held by allow-list'
+        }
+        It 'Renders a dedicated visible section (not behind the details expander)' {
+            $src05v915 | Should -Match '### Up to date - Ready update held by allow-list'
+            $src05v915 | Should -Match 'if \(\$allowListHeldRows\.Count -gt 0\)'
+        }
+        It 'Held table carries the Available Ready updates + Allow-list rule columns' {
+            $src05v915 | Should -Match '\| Cluster \| UpdateRing \| Current version \| Available Ready updates \| Allow-list rule \|'
+            $src05v915 | Should -Match '\$allowRule = if \(\$r\.PSObject\.Properties\[''AllowedUpdateVersions''\]'
+        }
+        It 'Returns AllowListHeldCount in the PassThru object' {
+            $src05v915 | Should -Match 'AllowListHeldCount   = \[int\]\$allowListHeld'
+        }
     }
 }
 

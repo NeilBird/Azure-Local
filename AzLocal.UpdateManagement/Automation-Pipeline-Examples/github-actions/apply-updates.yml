@@ -148,7 +148,7 @@ env:
   # this to the version actually installed and to the latest on PSGallery, and emits a
   # ::notice annotation if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.9.14'
+  GENERATED_AGAINST_MODULE_VERSION: '0.9.15'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): manual workflow_dispatch input >
   # repository variable 'REQUIRED_MODULE_VERSION' > empty (latest).
@@ -323,10 +323,16 @@ jobs:
         INPUT_UPDATE_RING: ${{ github.event.inputs.update_ring }}
         USE_SCHEDULE_FILE: ${{ github.event.inputs.use_schedule_file }}
         RESOLVE_FOR_DATE_UTC: ${{ github.event.inputs.resolve_for_date_utc }}
+        # v0.9.15: forward the FORCE flag so the resolver still honours the
+        # allowedUpdateVersions allow-list on a break-glass run (only the
+        # schedule WINDOW is bypassed, never the version allow-list). Empty for
+        # scheduled firings.
+        INPUT_FORCE_IMMEDIATE_UPDATE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.force_immediate_update || 'false' }}
       run: |
         Import-Module AzLocal.UpdateManagement -Force
         $params = @{ ManualUpdateRing = $env:INPUT_UPDATE_RING; ResolveForDateUtc = $env:RESOLVE_FOR_DATE_UTC }
         if ($env:USE_SCHEDULE_FILE -eq 'true') { $params['UseScheduleFile'] = $true }
+        if ($env:INPUT_FORCE_IMMEDIATE_UPDATE -eq 'true') { $params['ForceImmediateUpdate'] = $true }
         Resolve-AzLocalPipelineUpdateRing @params
 
     # v0.8.5 thin-YAML - readiness gate query + step outputs + per-cluster
