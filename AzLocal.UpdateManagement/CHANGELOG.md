@@ -7,14 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.9.14] - 2026-07-02
 
-Report-only release - version bump so the allow-list-suppressed Ready-update
-surfacing from PR #117 can be published to the PowerShell Gallery (0.9.13 was
-already published). No code change beyond the version stamp; the feature itself
-shipped in 0.9.13's development branch and is re-released here under a fresh
-version number.
+Version bump so the allow-list-suppressed Ready-update surfacing from PR #117 can
+be published to the PowerShell Gallery (0.9.13 was already published), plus a
+small pipeline-bootstrap hardening: the shared PSGallery install step now retries
+a transient module-lookup failure instead of failing the whole run.
 
 ### Changed
 
+- **Pipeline install step now retries a transient PSGallery lookup failure (all 20 templates).** The shared "Install AzLocal.UpdateManagement from PSGallery" step in every GitHub Actions and Azure DevOps template wraps the `Install-Module` call in a 3-attempt retry with exponential backoff (10s, then 20s). This targets the transient `Install-Package: No match was found for the specified search criteria and module name 'AzLocal.UpdateManagement'` failure (a PSGallery search-index / publish-propagation blip) seen in a real run, which previously failed the entire job on the first hit. The retry is an inline `pwsh` loop (it runs *before* the module is installed, so it cannot be a module cmdlet) and re-throws on the final attempt so a persistent failure still fails the job; it deliberately does **not** use the native Azure DevOps `retryCountOnTaskFailure` (no configurable backoff).
 - **`Export-AzLocalClusterUpdateReadinessReport` - surface allow-list-suppressed Ready updates.** When an `allowedUpdateVersions` allow-list filters out every Ready update on a cluster, the report now makes that explicit: the "All clusters detail" table gains an `Available Ready updates` column (a lone Ready update renders inline; two or more collapse behind a `<details>` expander), and the affected row's Status is marked `Up to Date *` with a conditional footnote explaining the cluster is up to date **only** because the allow-list excluded every Ready update.
 - **`Get-AzLocalClusterUpdateReadiness` - allow-list-mismatch console warning.** Emits a per-cluster warning listing the exact excluded update name/version so an operator can copy it straight into the apply-updates schedule YML. The `Select-AzLocalNextUpdateForCluster` matcher accepts both the full update `name` and the bare `properties.version`.
 - **Docs.** Added a vendor/platform-named OEM SBE example and standardised the `Solution`/`SBE` name form in the readiness docs.

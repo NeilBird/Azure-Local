@@ -79,10 +79,11 @@ If you are new to this module, work through these in order from a regular PowerS
 
 ## What's New in v0.9.14
 
-**Report-only re-release of the allow-list-suppressed Ready-update surfacing (version bump for the PowerShell Gallery publish).** v0.9.13 was already published to the Gallery, so this release bumps the version to ship the readiness-report UX first merged in PR #117.
+**Version bump to publish the allow-list-suppressed Ready-update surfacing (PR #117) to the PowerShell Gallery, plus a pipeline-bootstrap retry.** v0.9.13 was already published to the Gallery, so this release bumps the version to ship the readiness-report UX - and adds a small hardening to the shared PSGallery install step so a transient module-lookup blip no longer fails a run.
 
 ### Changed
 
+- **Pipeline install step retries a transient PSGallery lookup failure (all 20 templates).** The shared "Install AzLocal.UpdateManagement from PSGallery" step in every GitHub Actions and Azure DevOps template now wraps `Install-Module` in a 3-attempt retry with exponential backoff (10s, then 20s), targeting the transient `Install-Package: No match was found for the specified search criteria and module name 'AzLocal.UpdateManagement'` failure (a PSGallery search-index / publish-propagation blip). The retry is an inline `pwsh` loop (it runs *before* the module is installed) and re-throws on the final attempt so a persistent failure still fails the job.
 - **`Export-AzLocalClusterUpdateReadinessReport` surfaces allow-list-suppressed Ready updates.** When an `allowedUpdateVersions` allow-list filters out every Ready update on a cluster, the "All clusters detail" table gains an `Available Ready updates` column (a lone Ready update renders inline; two or more collapse behind a `<details>` expander), and the affected row's Status is marked `Up to Date *` with a conditional footnote explaining the cluster is up to date **only** because the allow-list excluded every Ready update.
 - **`Get-AzLocalClusterUpdateReadiness` emits an allow-list-mismatch console warning** listing the exact excluded update name/version to copy straight into the apply-updates schedule YML. The `Select-AzLocalNextUpdateForCluster` matcher accepts both the full update `name` and the bare `properties.version`.
 - **Docs:** added a vendor/platform-named OEM SBE example and standardised the `Solution`/`SBE` name form.

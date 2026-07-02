@@ -352,3 +352,65 @@ Describe 'v0.9.1 pipeline schedule allow-list wiring (assess pipelines)' {
         $content | Should -Match 'Test-Path -LiteralPath'
     }
 }
+
+Describe 'v0.9.14 PSGallery install-step transient retry wiring' {
+
+    # v0.9.14: the shared "Install AzLocal.UpdateManagement from PSGallery" step
+    # in every pipeline (GitHub Actions and Azure DevOps) wraps the actual
+    # Install-Module call in a 3-attempt, exponential-backoff (10s, 20s) retry
+    # loop so a transient PSGallery search/propagation blip ("No match was found
+    # for the specified search criteria and module name 'AzLocal.UpdateManagement'")
+    # no longer fails the whole run. The retry MUST be an inline pwsh loop (not a
+    # module cmdlet) because it runs BEFORE the module is installed, and NOT the
+    # native ADO retryCountOnTaskFailure (which has no configurable backoff and
+    # would disturb the counted login-retry assertions above).
+
+    It 'Every pipeline YAML that installs the module wraps Install-Module in the 3-attempt retry loop' {
+        $ymlFiles = Get-ChildItem -Path $script:PipelineRoot -Recurse -Filter '*.yml' -File
+        $ymlFiles.Count | Should -BeGreaterThan 0
+
+        $issues = New-Object System.Collections.Generic.List[string]
+        foreach ($yml in $ymlFiles) {
+            $content = Get-Content -Raw -LiteralPath $yml.FullName
+            $installCount = ([regex]::Matches($content, [regex]::Escape('Install-Module @installArgs'))).Count
+            if ($installCount -eq 0) { continue }
+
+            $retryCount = ([regex]::Matches($content, [regex]::Escape('$installMaxAttempts = 3'))).Count
+            $sleepCount = ([regex]::Matches($content, [regex]::Escape('Start-Sleep -Seconds $installRetryDelay'))).Count
+
+            $relPath = $yml.FullName.Substring($script:PipelineRoot.Length).TrimStart('\', '/')
+            if ($retryCount -ne $installCount) {
+                $issues.Add("${relPath}: has $installCount install call(s) but $retryCount retry loop opener(s) (`$installMaxAttempts = 3)")
+            }
+            if ($sleepCount -ne $installCount) {
+                $issues.Add("${relPath}: has $installCount install call(s) but $sleepCount backoff Start-Sleep call(s)")
+            }
+        }
+
+        $detail = if ($issues.Count -gt 0) { ($issues -join [Environment]::NewLine) } else { '(no findings)' }
+        $issues.Count | Should -Be 0 -Because "every install step must wrap Install-Module in the retry loop. Findings:$([Environment]::NewLine)$detail"
+    }
+
+    It 'Retry loop count matches the total install-call count across all pipelines (26 each)' {
+        $ymlFiles = Get-ChildItem -Path $script:PipelineRoot -Recurse -Filter '*.yml' -File
+        $installTotal = 0
+        $retryTotal   = 0
+        foreach ($yml in $ymlFiles) {
+            $content = Get-Content -Raw -LiteralPath $yml.FullName
+            $installTotal += ([regex]::Matches($content, [regex]::Escape('Install-Module @installArgs'))).Count
+            $retryTotal   += ([regex]::Matches($content, [regex]::Escape('$installMaxAttempts = 3'))).Count
+        }
+        $installTotal | Should -Be 26
+        $retryTotal   | Should -Be $installTotal
+    }
+
+    It 'The retry loop re-throws on the final attempt so a persistent failure still fails the job' {
+        $ymlFiles = Get-ChildItem -Path $script:PipelineRoot -Recurse -Filter '*.yml' -File
+        foreach ($yml in $ymlFiles) {
+            $content = Get-Content -Raw -LiteralPath $yml.FullName
+            if (($content -notmatch [regex]::Escape('Install-Module @installArgs'))) { continue }
+            $content | Should -Match '\$installAttempt -ge \$installMaxAttempts' -Because "$($yml.Name) retry loop must stop and re-throw once max attempts are reached"
+            $content | Should -Match '(?m)^\s*throw\s*$' -Because "$($yml.Name) retry loop must re-throw the last error so the job fails"
+        }
+    }
+}

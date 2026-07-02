@@ -172,7 +172,27 @@ jobs:
           } else {
               Write-Host "REQUIRED_MODULE_VERSION is empty - installing the latest version from PSGallery (default fix-forward behaviour)."
           }
-          Install-Module @installArgs
+          # Transient PSGallery lookups can intermittently fail with "No match was found
+          # for the specified search criteria and module name 'AzLocal.UpdateManagement'"
+          # (a PSGallery search index / publish-propagation blip). Retry the install up
+          # to 3 attempts with exponential backoff (10s, then 20s) before giving up.
+          $installMaxAttempts = 3
+          $installAttempt = 0
+          while ($true) {
+              $installAttempt++
+              try {
+                  Install-Module @installArgs
+                  break
+              } catch {
+                  if ($installAttempt -ge $installMaxAttempts) {
+                      Write-Host "Install-Module failed after $installAttempt attempt(s): $($_.Exception.Message)"
+                      throw
+                  }
+                  $installRetryDelay = 10 * [math]::Pow(2, $installAttempt - 1)
+                  Write-Host "Install-Module attempt $installAttempt of $installMaxAttempts failed: $($_.Exception.Message). Retrying in $installRetryDelay second(s)..."
+                  Start-Sleep -Seconds $installRetryDelay
+              }
+          }
           Import-Module AzLocal.UpdateManagement -Force
           Add-AzLocalPipelineVersionBanner `
               -GeneratedAgainstVersion $env:GENERATED_AGAINST_MODULE_VERSION `
