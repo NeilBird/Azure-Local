@@ -614,8 +614,14 @@ function Export-AzLocalClusterUpdateReadinessReport {
         [void]$md.Add('<details>')
         [void]$md.Add('<summary>Expand to view clusters</summary>')
         [void]$md.Add('')
-        [void]$md.Add('| Cluster | UpdateRing | Current version | Current SBE version | Update state | Health | Status | Last Updated | Recommended update |')
-        [void]$md.Add('|---------|------------|-----------------|---------------------|--------------|--------|--------|--------------|--------------------|')
+        # v0.9.14: 'Available Ready updates' column exposes every update Azure
+        # reports in a Ready state for the cluster (the pre-allow-list-filter
+        # list). Collapsed per-cell via <details> so the table stays tidy. A row
+        # showing 'Up to Date' but a NON-empty available list is the tell-tale
+        # sign an allowedUpdateVersions entry is missing/mistyped - the operator
+        # can copy the exact name/version straight into the YML.
+        [void]$md.Add('| Cluster | UpdateRing | Current version | Current SBE version | Update state | Health | Status | Last Updated | Recommended update | Available Ready updates |')
+        [void]$md.Add('|---------|------------|-----------------|---------------------|--------------|--------|--------|--------------|--------------------|-------------------------|')
         # v0.8.82: sort UpdateRing first, then Status priority (operator-actionable
         # items first within each ring), then ClusterName. Previous v0.8.82
         # ordering put Status first which grouped failures across rings; the
@@ -644,7 +650,18 @@ function Export-AzLocalClusterUpdateReadinessReport {
             $statusCell = if ($iconMap.ContainsKey($statusKey)) { $iconMap[$statusKey] } else { $iconMap['NeedsInvestigation'] }
             $clusterResId = if ($r.PSObject.Properties['ClusterResourceId'] -and $r.ClusterResourceId) { [string]$r.ClusterResourceId } else { '' }
             $clusterCell = Get-AzLocalClusterPortalLink -ClusterName ([string]$r.ClusterName) -ClusterResourceId $clusterResId
-            [void]$md.Add("| $clusterCell | $ring | $cv | $csv | $($r.UpdateState) | $($r.HealthState) | $statusCell | $lu | $ru |")
+            # Collapsible per-cell list of the Ready updates available for this
+            # cluster (name/version exactly as Azure reports them). '-' when the
+            # cluster genuinely has nothing Ready.
+            $readyRaw = if ($r.PSObject.Properties['ReadyUpdates'] -and $r.ReadyUpdates) { [string]$r.ReadyUpdates } else { '' }
+            $readyItems = @($readyRaw -split ';' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+            if ($readyItems.Count -eq 0) {
+                $availCell = '-'
+            }
+            else {
+                $availCell = ('<details><summary>{0} update(s)</summary>{1}</details>' -f $readyItems.Count, ($readyItems -join '<br>'))
+            }
+            [void]$md.Add("| $clusterCell | $ring | $cv | $csv | $($r.UpdateState) | $($r.HealthState) | $statusCell | $lu | $ru | $availCell |")
         }
         [void]$md.Add('')
         [void]$md.Add('</details>')

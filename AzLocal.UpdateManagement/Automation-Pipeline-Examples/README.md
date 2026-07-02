@@ -1957,7 +1957,7 @@ The `apply-updates-schedule.yml` schema v2 adds an `allowedUpdateVersions:` fiel
 
 - **Top-level field is mandatory on schema v2.** Its value is either:
   - The reserved sentinel `'Latest'` (case-insensitive) - meaning "no constraint, install the latest Ready update on each cluster" (the historic v0.7.88 / v1 default). This is what the generator and the schema migrator emit by default.
-  - A semicolon-separated list of explicit update identifiers, e.g. `'Solution12.2604.1003.1005;Solution12.2610.1003.XX'` - clusters only install updates whose `name` OR `properties.version` matches one of those tokens (exact, case-insensitive). See [8.4.3](#843-finding-valid-update-names--version-strings) for what to put in this field for Microsoft Solution updates vs OEM SBE (Solution Builder Extension) updates.
+  - A semicolon-separated list of explicit update identifiers, e.g. `'Solution12.2604.1003.1006;Solution12.2610.1003.XX'` - clusters only install updates whose `name` OR `properties.version` matches one of those tokens (exact, case-insensitive). See [8.4.3](#843-finding-valid-update-names--version-strings) for what to put in this field for Microsoft Solution updates vs OEM SBE (Solution Builder Extension) updates.
 - **Per-row override is optional.** Any row in `schedule:` can carry its own `allowedUpdateVersions:` with either `'Latest'` (explicit opt-out from a fleet-wide allow-list) or its own semicolon-separated list. Per-row values **take precedence over the top-level** for any ring matched by that row.
 - **Mixing `Latest` with explicit values inside a single field is rejected** (e.g. `'Latest;10.2604.0.123'` fails validation). Either you constrain or you don't.
 - **Cross-row UNION semantics.** If two rows match the same `(week, day, ring)` and one row contributes `Latest` while another contributes explicit versions, **`Latest` wins** (the resolved allow-list becomes "no constraint"). This is intentional: an explicit `Latest` on any matching row is the operator saying "I am OK with whatever is Ready on this cluster".
@@ -1993,7 +1993,7 @@ schedule:
     # Per-row override: Production is restricted to the YY04 / YY10
     # feature drops. Cumulative updates are installed on Canary / Ring1
     # earlier in the cycle, but Production waits for the feature build.
-    allowedUpdateVersions: 'Solution12.2604.1003.1005;Solution12.2610.1003.XX'
+    allowedUpdateVersions: 'Solution12.2604.1003.1006;Solution12.2610.1003.XX'
     notes:        'Production - feature updates only'
 ```
 
@@ -2001,7 +2001,7 @@ What this does:
 
 - `Start-AzLocalClusterUpdate` resolves the current ring via `Resolve-AzLocalCurrentUpdateRing`, which now also returns the effective `AllowedUpdateVersions` for that ring.
 - For Canary / Ring1 clusters: effective allow-list = `Latest`, so the picker installs whatever is Ready.
-- For Production clusters: effective allow-list = `Solution12.2604.1003.1005;Solution12.2610.1003.XX`, so the picker only installs updates whose `name` or `properties.version` matches one of those two tokens. If neither is Ready, the run is a no-op (logged and skipped with status `NotInAllowList`, not failed).
+- For Production clusters: effective allow-list = `Solution12.2604.1003.1006;Solution12.2610.1003.XX`, so the picker only installs updates whose `name` or `properties.version` matches one of those two tokens. If neither is Ready, the run is a no-op (logged and skipped with status `NotInAllowList`, not failed).
 
 You can also pass `-AllowedUpdateVersions Latest` (or any explicit list) directly to `Start-AzLocalClusterUpdate` for ad-hoc invocations; that takes precedence over the schedule file.
 
@@ -2011,13 +2011,13 @@ The allow-list matcher accepts EITHER the full update `name` (recommended - this
 
 | Update type | Example `name` (recommended) | Equivalent `version` |
 |---|---|---|
-| Microsoft Solution update (cumulative / feature) | `Solution12.2604.1003.1005` | `12.2604.1003.1005` |
+| Microsoft Solution update (cumulative / feature) | `Solution12.2604.1003.1006` | `12.2604.1003.1006` |
 | OEM SBE (Solution Builder Extension) update | `SBE5.0.2603.1522` | `5.0.2603.1522` |
 
 To pin both the Microsoft Solution AND a specific vendor SBE for a release, list both names in the same `allowedUpdateVersions:` field:
 
 ```yaml
-allowedUpdateVersions: 'Solution12.2604.1003.1005;SBE5.0.2603.1522'
+allowedUpdateVersions: 'Solution12.2604.1003.1006;SBE5.0.2603.1522'
 ```
 
 Discover the valid names for your fleet two ways:
@@ -2034,7 +2034,7 @@ Get-AzLocalAvailableUpdates -PassThru |
     Format-Table ClusterName, UpdateName, UpdateState
 ```
 
-Or in the **Azure portal**: **Azure Local** -> **\<cluster\>** -> **Updates** -> the **Name** column on each Ready update row is what you put in `allowedUpdateVersions:`. We recommend pinning by Name (`Solution12.2604.1003.1005` / `SBE5.0.2603.1522`) - the prefix makes it visually obvious whether an entry pins a Microsoft Solution or an OEM SBE.
+Or in the **Azure portal**: **Azure Local** -> **\<cluster\>** -> **Updates** -> the **Name** column on each Ready update row is what you put in `allowedUpdateVersions:`. We recommend pinning by Name (`Solution12.2604.1003.1006` / `SBE5.0.2603.1522`) - the prefix makes it visually obvious whether an entry pins a Microsoft Solution or an OEM SBE.
 
 #### 8.4.4 Migrating an existing v1 schedule
 
@@ -2103,7 +2103,7 @@ This capability is **off by default**. When it is off, both `Update: 3 - Apply U
 Invoke-AzLocalFailedUpdateRetry -ClusterName 'Arizona'
 
 # Targeted, unattended retry of a specific failed version, overriding the one-time guard
-Invoke-AzLocalFailedUpdateRetry -ClusterName 'Arizona' -UpdateName 'Solution12.2604.1003.1005' -Force
+Invoke-AzLocalFailedUpdateRetry -ClusterName 'Arizona' -UpdateName 'Solution12.2604.1003.1006' -Force
 ```
 
 `-Force` overrides the one-time guard (and suppresses the confirmation prompt); omit it to respect the guard.
