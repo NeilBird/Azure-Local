@@ -50,8 +50,8 @@ This table is the canonical index of every public cmdlet the module ships. It is
 |---|---|---|
 | [`Start-AzLocalClusterUpdate`](#start-azlocalclusterupdate) | **WRITE** | Azure REST (ARM `PUT .../updateRuns/{id}`) |
 | [`Sync-AzLocalClusterUpdateSummary`](#sync-azlocalclusterupdatesummary) | **WRITE** | Azure REST (ARM `POST .../updateSummaries/default/checkUpdates`) |
-| [`Stop-AzLocalFleetUpdate`](#stop-azlocalfleetupdate) | **WRITE** | Azure REST (ARM `POST .../updateRuns/{id}/cancel`) |
-| [`Resume-AzLocalFleetUpdate`](#resume-azlocalfleetupdate) | **WRITE** | Azure REST (ARM `POST .../updateRuns/{id}/retry`) |
+| [`Stop-AzLocalFleetUpdate`](#stop-azlocalfleetupdate) | **WRITE (local)** | Local JSON state file + in-memory stop flag. Does NOT call Azure and does NOT cancel update runs already in progress (including a run in the Downloading state) - those continue to completion. |
+| [`Resume-AzLocalFleetUpdate`](#resume-azlocalfleetupdate) | **WRITE (composite)** | Reads a local JSON state file, then re-drives pending / failed clusters via `Invoke-AzLocalFleetOperation` (ARM `PUT .../updateRuns/{id}`). No dedicated `retry` endpoint is called. |
 | [`Invoke-AzLocalFleetOperation`](#invoke-azlocalfleetoperation) | **WRITE** | Azure REST (generic per-cluster mutation) |
 | [`Set-AzLocalClusterUpdateRingTag`](#set-azlocalclusterupdateringtag) | **WRITE** | Azure tags (`UpdateRing`, `UpdateStartWindow`) |
 | [`Reset-AzLocalSideloadedTag`](#reset-azlocalsideloadedtag) | **WRITE** | Azure tags (`UpdateSideloaded`, `UpdateVersionInProgress`) |

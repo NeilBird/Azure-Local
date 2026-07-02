@@ -14,6 +14,11 @@ function Resolve-AzLocalPipelineUpdateRing {
              - Returns ManualUpdateRing verbatim. No schedule file read.
              - AllowedUpdateVersions is empty (the cmdlet's default 'latest
                Ready update', or operator-supplied -UpdateName, applies).
+             - EXCEPTION (v0.9.15): when -ForceImmediateUpdate is set, the
+               allowedUpdateVersions allow-list configured for the target
+               ring(s) or globally IS still honoured (see -ForceImmediateUpdate).
+               A FORCE run bypasses only the schedule WINDOW, never the version
+               allow-list.
           2. Manual trigger + UseScheduleFile=$true:
              - Reads apply-updates-schedule.yml and runs the ring/AllowedUpdateVersions
                resolver against UtcNow OR a user-supplied ResolveForDateUtc.
@@ -48,15 +53,28 @@ function Resolve-AzLocalPipelineUpdateRing {
         Only honoured when -Trigger='Manual' AND -UseScheduleFile is set.
         UTC date string in 'yyyy-MM-dd' to resolve the schedule for (preview
         a future cycleWeek/dayOfWeek). Empty/whitespace = UtcNow.
+    .PARAMETER ForceImmediateUpdate
+        Switch. Signals a FORCE (break-glass) run that bypasses the schedule
+        WINDOW so an operator can patch outside the maintenance window. When
+        set on the back-compat manual path (Trigger='Manual' + UseScheduleFile
+        =$false), the allowedUpdateVersions allow-list configured for the
+        target ring(s) - or the fleet-wide global default - is STILL resolved
+        and applied (per-ring override beats global; the 'Latest' sentinel /
+        no allow-list falls back to 'install the latest Ready update'). This
+        prevents a forced run from silently overriding an operator's version
+        allow-list policy. When no schedule file is present the run degrades
+        gracefully to 'latest Ready update' (no throw). The resolved ring is
+        never overridden by this switch - only the allow-list is added.
     .PARAMETER Trigger
         'Manual' or 'Schedule'. Auto-detected from the pipeline host when
         omitted (GitHub: GITHUB_EVENT_NAME != 'workflow_dispatch' is Schedule;
         ADO: BUILD_REASON == 'Schedule').
     .PARAMETER PassThru
         Switch. Returns a PSCustomObject with: ResolvedUpdateRing,
-        ResolvedAllowedUpdateVersions, IsManual, UseScheduleFile, ResolveAt,
-        SchedulePath, Decision (Resolve-AzLocalCurrentUpdateRing output or
-        $null for back-compat manual path).
+        ResolvedAllowedUpdateVersions, IsManual, UseScheduleFile,
+        ForceImmediateUpdate, AllowListSource ('RowOverride'|'TopLevel'|'None'),
+        ResolveAt, SchedulePath, Decision (Resolve-AzLocalCurrentUpdateRing
+        output or $null for back-compat manual path).
     .EXAMPLE
         # Schedule trigger (cron firing) - resolves from default path.
         Resolve-AzLocalPipelineUpdateRing
@@ -72,7 +90,7 @@ function Resolve-AzLocalPipelineUpdateRing {
             -PassThru
     .NOTES
         Author  : AzLocal.UpdateManagement
-        Version : 0.8.5 (Step.6 thin-YAML port)
+        Version : 0.9.15 (ForceImmediateUpdate honours allowedUpdateVersions)
     #>
     [CmdletBinding()]
     [OutputType([void])]
@@ -95,6 +113,8 @@ function Resolve-AzLocalPipelineUpdateRing {
         [Parameter(Mandatory = $false)]
         [ValidateSet('Manual', 'Schedule', '')]
         [string]$Trigger = '',
+
+        [switch]$ForceImmediateUpdate,
 
         [switch]$PassThru
     )
@@ -139,6 +159,7 @@ function Resolve-AzLocalPipelineUpdateRing {
     $resolvedAllow = ''
     $resolveAt = [datetime]::UtcNow
     $decision = $null
+    $allowListSource = 'None'
 
     if ($isManual -and -not $UseScheduleFile) {
         # Back-compat path: manual ring verbatim, schedule file ignored.
@@ -146,7 +167,43 @@ function Resolve-AzLocalPipelineUpdateRing {
             throw "Resolve-AzLocalPipelineUpdateRing: Trigger='Manual' with UseScheduleFile=`$false requires -ManualUpdateRing to be non-empty. Supply -ManualUpdateRing (e.g. 'Wave1', 'Prod;Ring2', or '***'), OR set -UseScheduleFile to resolve from apply-updates-schedule.yml."
         }
         $resolved = $ManualUpdateRing
-        Write-Host "Trigger='Manual', UseScheduleFile=`$false - using manual input UpdateRing='$resolved' (schedule file ignored). AllowedUpdateVersions is not applied for manual runs - the cmdlet's default 'latest Ready update' (or -UpdateName) is used."
+
+        if ($ForceImmediateUpdate) {
+            # FORCE (break-glass) run: bypass the schedule WINDOW but STILL honour
+            # the allowedUpdateVersions allow-list (per-ring override beats the
+            # fleet-wide global default). Ring stays exactly as the operator
+            # supplied it; only the version allow-list is added.
+            if (Test-Path -LiteralPath $SchedulePath) {
+                try {
+                    $forceCfg = Get-AzLocalApplyUpdatesScheduleConfig -Path $SchedulePath
+                    $forceAllow = Resolve-AzLocalForceAllowList -UpdateRing $resolved -Schedule $forceCfg
+                    $allowListSource = $forceAllow.Source
+                    if ($forceAllow.IsLatest -or $forceAllow.Source -eq 'None') {
+                        $resolvedAllow = ''
+                        Write-Host "Trigger='Manual', UseScheduleFile=`$false, ForceImmediateUpdate - using manual input UpdateRing='$resolved'. No allowedUpdateVersions allow-list constrains ring(s) '$resolved' (source=$($forceAllow.Source), Latest=$($forceAllow.IsLatest)) - the latest Ready update will be installed."
+                    }
+                    else {
+                        $resolvedAllow = $forceAllow.AllowedUpdateVersionsValue
+                        Write-Host "Trigger='Manual', UseScheduleFile=`$false, ForceImmediateUpdate - using manual input UpdateRing='$resolved'. Honouring allowedUpdateVersions allow-list for ring(s) '$resolved' (source=$($forceAllow.Source)): $resolvedAllow. FORCE bypasses only the schedule WINDOW; the version allow-list is NOT overridden."
+                    }
+                }
+                catch {
+                    # Do NOT block a break-glass run because the schedule file
+                    # could not be parsed - degrade to 'latest Ready update'.
+                    $resolvedAllow = ''
+                    $allowListSource = 'None'
+                    Write-Host "Trigger='Manual', UseScheduleFile=`$false, ForceImmediateUpdate - using manual input UpdateRing='$resolved'. Could not read schedule file '$SchedulePath' to honour the allow-list ($($_.Exception.Message)); proceeding with the latest Ready update."
+                }
+            }
+            else {
+                $resolvedAllow = ''
+                $allowListSource = 'None'
+                Write-Host "Trigger='Manual', UseScheduleFile=`$false, ForceImmediateUpdate - using manual input UpdateRing='$resolved'. No schedule file at '$SchedulePath' - no allowedUpdateVersions allow-list to honour; the latest Ready update will be installed."
+            }
+        }
+        else {
+            Write-Host "Trigger='Manual', UseScheduleFile=`$false - using manual input UpdateRing='$resolved' (schedule file ignored). AllowedUpdateVersions is not applied for manual runs - the cmdlet's default 'latest Ready update' (or -UpdateName) is used."
+        }
     }
     else {
         # Schedule trigger OR manual-with-schedule-file: same resolver pipeline.
@@ -230,6 +287,8 @@ function Resolve-AzLocalPipelineUpdateRing {
             ResolvedAllowedUpdateVersions = $resolvedAllow
             IsManual                      = $isManual
             UseScheduleFile               = [bool]$UseScheduleFile
+            ForceImmediateUpdate          = [bool]$ForceImmediateUpdate
+            AllowListSource               = $allowListSource
             ResolveAt                     = $resolveAt
             SchedulePath                  = $SchedulePath
             Decision                      = $decision

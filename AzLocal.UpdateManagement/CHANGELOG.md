@@ -5,6 +5,32 @@ All notable changes to the AzLocal.UpdateManagement module (renamed from AzStack
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.15] - 2026-07-02
+
+Update: 1 - Assess Update Readiness gains two operator-guidance improvements based
+on real fleet-run feedback: allow-list-held clusters now have their own visible
+table (no need to expand "All clusters detail"), and SBE-prerequisite clusters
+carry a manual-action knowledge note. Update: 2 - Apply Updates gains a safety
+correction so a **FORCE (break-glass) run now HONOURS the `allowedUpdateVersions`
+allow-list** instead of silently installing the latest Ready update.
+
+### Added
+
+- **Dedicated visible "Up to date - Ready update held by allow-list" table.** Clusters that classify `Up to Date` **only** because the `allowedUpdateVersions` allow-list held back every Ready update are now surfaced in their own top-level section (Cluster / UpdateRing / Current version / Available Ready updates / Allow-list rule), so operators no longer have to expand the collapsed "All clusters detail" block to find them and copy the exact update name/version into `apply-updates-schedule.yml`.
+- **Summary "of which held by allow-list" sub-count.** The Summary counts table adds a labelled sub-row (shown only when non-zero) that reports how many of the `Up to Date` clusters are actually held by the allow-list. It is a labelled **subset** of the Up-to-Date total, so the summary and per-UpdateRing pivot arithmetic (Ready + Up to Date + Not Ready = Total) stays consistent.
+- **New PassThru property `AllowListHeldCount`** on `Export-AzLocalClusterUpdateReadinessReport` (a labelled subset of `UpToDateCount`).
+- **SBE-prerequisite manual-action note.** When one or more Not-Ready clusters are SBE-blocked, the "Not-Ready clusters (review first)" section now emits a knowledge note explaining that a Solution Builder Extension (SBE) update is a prerequisite the pipeline **cannot** apply automatically - operators must review their **Hardware OEM provider's** Azure Local / SBE documentation for the correct package/version and **sideload** the SBE update onto the cluster. The note renders only when at least one cluster is SBE-blocked.
+- **Private helper `Resolve-AzLocalForceAllowList`** - resolves the effective `allowedUpdateVersions` allow-list to honour on a FORCE run from the operator's manual `UpdateRing` input (single ring, `;`-joined list, or the `***` wildcard), applying the same per-ring-override-beats-global-default precedence as the scheduled path but matching rows by **ring** instead of by date/window. Pure decision function, no Azure calls.
+
+### Fixed
+
+- **FORCE (break-glass) runs now HONOUR the `allowedUpdateVersions` allow-list.** Previously, a forced apply on the back-compat manual path (`update_ring` supplied, `use_schedule_file=false`) resolved an **empty** allow-list, so `Start-AzLocalClusterUpdate` installed the *latest* Ready update - silently overriding an operator's per-ring or fleet-wide global version allow-list policy. `Resolve-AzLocalPipelineUpdateRing` gains a `-ForceImmediateUpdate` switch: when set on that path it reads the schedule file and resolves the ring-scoped allow-list (per-ring override beats the fleet-wide global default; the `Latest` sentinel / no allow-list still falls back to "install the latest Ready update"). A FORCE run now bypasses **only** the schedule WINDOW, never the version allow-list. The resolved ring is never changed by the switch. If no schedule file is present the run degrades gracefully to "latest Ready update" (no throw). Both the GitHub Actions and Azure DevOps `apply-updates` templates forward the existing `force_immediate_update` / `forceImmediateUpdate` operator input into the resolve-ring step under the same `workflow_dispatch` / `Build.Reason=Manual` gating already used by the apply step, so a scheduled firing can never activate it.
+- **`docs/cmdlet-reference.md` - corrected two fabricated REST targets in the WRITE-cmdlets table.** The summary table claimed `Stop-AzLocalFleetUpdate` calls `POST .../updateRuns/{id}/cancel` and `Resume-AzLocalFleetUpdate` calls `POST .../updateRuns/{id}/retry`. Neither endpoint is invoked. `Stop-AzLocalFleetUpdate` makes **no Azure call** - it writes a local JSON state file and sets an in-memory stop flag, and it does **not** cancel update runs already in progress (there is no supported way to cancel an in-flight Azure Local update run, including one in the Downloading state; those continue to completion). `Resume-AzLocalFleetUpdate` re-drives pending/failed clusters via `Invoke-AzLocalFleetOperation` (`PUT .../updateRuns/{id}`), not a dedicated retry endpoint. The per-cmdlet detail sections were already accurate; only the summary table rows were wrong.
+
+### Notes
+
+- No public function, parameter, or export-count change (still 68). One new **Private** helper (`Resolve-AzLocalForceAllowList`). `GENERATED_AGAINST_MODULE_VERSION` bumped to `0.9.15`.
+
 ## [0.9.14] - 2026-07-02
 
 Version bump so the allow-list-suppressed Ready-update surfacing from PR #117 can

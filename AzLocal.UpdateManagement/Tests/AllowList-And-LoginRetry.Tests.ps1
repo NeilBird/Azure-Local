@@ -140,6 +140,152 @@ Describe 'v0.9.1 Private helper: Resolve-AzLocalClusterAllowList' {
     }
 }
 
+Describe 'v0.9.15 Private helper: Resolve-AzLocalForceAllowList' {
+    # The FORCE (break-glass) allow-list resolver. Unlike the single-cluster
+    # Resolve-AzLocalClusterAllowList, this generalises to the operator's manual
+    # UpdateRing input (single ring, ';'-joined list, or the '***' wildcard) and
+    # returns the UNION of per-ring overrides across every covered row (per-ring
+    # override beats the fleet-wide global default; 'Latest' => no constraint).
+
+    It 'Per-ring override beats the global default for a single target ring' {
+        InModuleScope AzLocal.UpdateManagement {
+            $sched = [PSCustomObject]@{
+                AllowedUpdateVersions = @('10.2604.0.1')
+                Schedule              = @(
+                    [PSCustomObject]@{ rings = 'Canary'; AllowedUpdateVersionsParsed = $null },
+                    [PSCustomObject]@{ rings = 'Prod';   AllowedUpdateVersionsParsed = @('10.2610.0.9') }
+                )
+            }
+            $r = Resolve-AzLocalForceAllowList -UpdateRing 'Prod' -Schedule $sched
+            $r.Source                     | Should -Be 'RowOverride'
+            $r.IsLatest                   | Should -BeFalse
+            $r.AllowedUpdateVersionsValue | Should -Be '10.2610.0.9'
+            @($r.EffectiveAllowList)      | Should -HaveCount 1
+        }
+    }
+
+    It 'Falls back to the global default when the target ring has no per-ring override' {
+        InModuleScope AzLocal.UpdateManagement {
+            $sched = [PSCustomObject]@{
+                AllowedUpdateVersions = @('10.2604.0.1')
+                Schedule              = @(
+                    [PSCustomObject]@{ rings = 'Prod'; AllowedUpdateVersionsParsed = @('10.2610.0.9') }
+                )
+            }
+            $r = Resolve-AzLocalForceAllowList -UpdateRing 'Canary' -Schedule $sched
+            $r.Source                     | Should -Be 'TopLevel'
+            $r.AllowedUpdateVersionsValue | Should -Be '10.2604.0.1'
+        }
+    }
+
+    It 'Unions per-ring overrides across a multi-ring (Prod;Ring2) input' {
+        InModuleScope AzLocal.UpdateManagement {
+            $sched = [PSCustomObject]@{
+                AllowedUpdateVersions = @('10.2604.0.1')
+                Schedule              = @(
+                    [PSCustomObject]@{ rings = 'Prod';  AllowedUpdateVersionsParsed = @('10.2610.0.9') },
+                    [PSCustomObject]@{ rings = 'Ring2'; AllowedUpdateVersionsParsed = @('10.2611.0.3') }
+                )
+            }
+            $r = Resolve-AzLocalForceAllowList -UpdateRing 'Prod;Ring2' -Schedule $sched
+            $r.Source                     | Should -Be 'RowOverride'
+            $r.AllowedUpdateVersionsValue | Should -Be '10.2610.0.9;10.2611.0.3'
+            @($r.EffectiveAllowList)      | Should -HaveCount 2
+        }
+    }
+
+    It "A '***' target ring unions every row override across the whole fleet" {
+        InModuleScope AzLocal.UpdateManagement {
+            $sched = [PSCustomObject]@{
+                AllowedUpdateVersions = @('10.2604.0.1')
+                Schedule              = @(
+                    [PSCustomObject]@{ rings = 'Prod';  AllowedUpdateVersionsParsed = @('10.2610.0.9') },
+                    [PSCustomObject]@{ rings = 'Ring2'; AllowedUpdateVersionsParsed = @('10.2611.0.3') }
+                )
+            }
+            $r = Resolve-AzLocalForceAllowList -UpdateRing '***' -Schedule $sched
+            $r.Source                     | Should -Be 'RowOverride'
+            $r.AllowedUpdateVersionsValue | Should -Be '10.2610.0.9;10.2611.0.3'
+        }
+    }
+
+    It "A row whose rings cell is '***' supplies the override for any target ring" {
+        InModuleScope AzLocal.UpdateManagement {
+            $sched = [PSCustomObject]@{
+                AllowedUpdateVersions = @('10.2604.0.1')
+                Schedule              = @(
+                    [PSCustomObject]@{ rings = '***'; AllowedUpdateVersionsParsed = @('10.2699.0.999') }
+                )
+            }
+            $r = Resolve-AzLocalForceAllowList -UpdateRing 'AnyRing' -Schedule $sched
+            $r.Source                     | Should -Be 'RowOverride'
+            $r.AllowedUpdateVersionsValue | Should -Be '10.2699.0.999'
+        }
+    }
+
+    It "The 'Latest' sentinel collapses to no constraint (empty list, IsLatest=true)" {
+        InModuleScope AzLocal.UpdateManagement {
+            $sched = [PSCustomObject]@{
+                AllowedUpdateVersions = @('Latest')
+                Schedule              = @(
+                    [PSCustomObject]@{ rings = 'Prod'; AllowedUpdateVersionsParsed = $null }
+                )
+            }
+            $r = Resolve-AzLocalForceAllowList -UpdateRing 'Prod' -Schedule $sched
+            $r.Source                     | Should -Be 'TopLevel'
+            $r.IsLatest                   | Should -BeTrue
+            $r.AllowedUpdateVersionsValue | Should -Be ''
+            @($r.EffectiveAllowList)      | Should -HaveCount 0
+        }
+    }
+
+    It 'Returns Source=None with an empty list when neither a row override nor a global default is set' {
+        InModuleScope AzLocal.UpdateManagement {
+            $sched = [PSCustomObject]@{
+                AllowedUpdateVersions = @()
+                Schedule              = @(
+                    [PSCustomObject]@{ rings = 'Prod'; AllowedUpdateVersionsParsed = $null }
+                )
+            }
+            $r = Resolve-AzLocalForceAllowList -UpdateRing 'Prod' -Schedule $sched
+            $r.Source                     | Should -Be 'None'
+            $r.IsLatest                   | Should -BeFalse
+            $r.AllowedUpdateVersionsValue | Should -Be ''
+            @($r.EffectiveAllowList)      | Should -HaveCount 0
+        }
+    }
+
+    It 'Ring match is case-insensitive' {
+        InModuleScope AzLocal.UpdateManagement {
+            $sched = [PSCustomObject]@{
+                AllowedUpdateVersions = @('top.1.2.3')
+                Schedule              = @(
+                    [PSCustomObject]@{ rings = 'Production'; AllowedUpdateVersionsParsed = @('row.4.5.6') }
+                )
+            }
+            $r = Resolve-AzLocalForceAllowList -UpdateRing 'production' -Schedule $sched
+            $r.Source                     | Should -Be 'RowOverride'
+            $r.AllowedUpdateVersionsValue | Should -Be 'row.4.5.6'
+        }
+    }
+
+    It 'Deduplicates identical versions unioned from multiple covered rows' {
+        InModuleScope AzLocal.UpdateManagement {
+            $sched = [PSCustomObject]@{
+                AllowedUpdateVersions = @()
+                Schedule              = @(
+                    [PSCustomObject]@{ rings = 'Prod';  AllowedUpdateVersionsParsed = @('10.2610.0.9') },
+                    [PSCustomObject]@{ rings = 'Ring2'; AllowedUpdateVersionsParsed = @('10.2610.0.9') }
+                )
+            }
+            $r = Resolve-AzLocalForceAllowList -UpdateRing 'Prod;Ring2' -Schedule $sched
+            $r.Source                     | Should -Be 'RowOverride'
+            $r.AllowedUpdateVersionsValue | Should -Be '10.2610.0.9'
+            @($r.EffectiveAllowList)      | Should -HaveCount 1
+        }
+    }
+}
+
 Describe 'v0.9.1 Get-AzLocalClusterUpdateReadiness: allow-list override' {
 
     BeforeAll {
