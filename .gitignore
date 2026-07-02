@@ -1,6 +1,5 @@
-# Test Results
-**/TestResults/*.html
-**/TestResults/*.xml
+# Test Results (entire generated artefact folder - regenerated on each Pester run)
+**/TestResults/
 
 # PowerShell logs
 *.log
