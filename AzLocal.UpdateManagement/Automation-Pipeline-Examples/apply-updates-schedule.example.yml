@@ -120,6 +120,12 @@ cycleAnchorYear:      2026
 # specific vendor SBE that ships alongside it:
 #   allowedUpdateVersions: 'Solution12.2604.1003.1006;SBE5.0.2603.1522'
 #
+# NOTE - some OEM SBE names embed the vendor and platform (e.g. HPE
+# ProLiant) rather than the generic 'SBE<version>' form, so the `name`
+# does NOT reduce to 'SBE' + the version. Pin by the EXACT name from the
+# portal Updates blade / Get-AzLocalAvailableUpdates, not a guessed one:
+#   allowedUpdateVersions: 'Solution12.2604.1003.1006;SBE_HPE_ProLiant-Minimal_4.2.2601.1'
+#
 # Per-row override: any schedule row below may set its own
 # `allowedUpdateVersions:` field. Per-row beats top-level; multiple
 # matching rows UNION their lists; rows WITHOUT the field on a UNION

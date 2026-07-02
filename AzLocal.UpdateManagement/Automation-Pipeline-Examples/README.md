@@ -2013,6 +2013,9 @@ The allow-list matcher accepts EITHER the full update `name` (recommended - this
 |---|---|---|
 | Microsoft Solution update (cumulative / feature) | `Solution12.2604.1003.1006` | `12.2604.1003.1006` |
 | OEM SBE (Solution Builder Extension) update | `SBE5.0.2603.1522` | `5.0.2603.1522` |
+| OEM SBE with vendor/platform in the name (e.g. HPE ProLiant) | `SBE_HPE_ProLiant-Minimal_4.2.2601.1` | `4.2.2601.1` |
+
+> **Note - SBE `name` and `version` do not always share a prefix.** Some OEM SBE updates carry the vendor and platform in the `name` (e.g. `SBE_HPE_ProLiant-Minimal_4.2.2601.1`) rather than the generic `SBE<version>` form, so the `name` does not reduce to `SBE` + the `version`. Pin by the exact `name` from the portal Updates blade (or `Get-AzLocalAvailableUpdates`), not a guessed `SBE<version>` string.
 
 To pin both the Microsoft Solution AND a specific vendor SBE for a release, list both names in the same `allowedUpdateVersions:` field:
 
