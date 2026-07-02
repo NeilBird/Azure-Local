@@ -5,6 +5,18 @@ All notable changes to the AzLocal.UpdateManagement module (renamed from AzStack
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.13] - 2026-07-02
+
+Patch release - a single bug fix in the Fleet Update Status report.
+
+### Fixed
+
+- **`Export-AzLocalFleetUpdateStatusReport` (Monitor: 3) crashed on a failed run with a short deepest-error message.** The deepest-error truncation guard read `[string]$f.DeepestErrMsg.Length`, which PowerShell parses as `[string]($f.DeepestErrMsg.Length)` (member access binds tighter than the cast). It stringified the *length* (e.g. `"50"`) and then compared that string to `4000` **lexically** - `"50" -gt 4000` is `$true` - so a short message was pushed into `.Substring(0,4000)` and threw `Index and length must refer to a location within the string. (Parameter 'length')`. The message is now cast to a string once (`$deepMsg = [string]$f.DeepestErrMsg`) before the integer length check. The defect has existed since v0.8.5 (commit 629c501) and surfaced on a real fleet-update-status run (#40) whose failed cluster carried a short deepest-error message; existing tests used a message whose length string sorted below `"4000"`, so it was never tripped. A regression test now feeds a short message and asserts no throw.
+
+### Notes
+
+- No public function, parameter, or export-count change (still 68). `GENERATED_AGAINST_MODULE_VERSION` bumped to `0.9.13`.
+
 ## [0.9.12] - 2026-06-27
 
 Adds two pipeline preflight guard cmdlets that turn two confusing failure

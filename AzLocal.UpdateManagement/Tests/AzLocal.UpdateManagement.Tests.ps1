@@ -34,8 +34,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $script:ModuleInfo | Should -Not -BeNullOrEmpty
         }
 
-        It 'Should have version 0.9.12' {
-            $script:ModuleInfo.Version | Should -Be '0.9.12'
+        It 'Should have version 0.9.13' {
+            $script:ModuleInfo.Version | Should -Be '0.9.13'
         }
 
         It 'Module version constants are in sync between .psm1 and .psd1' {
@@ -17270,6 +17270,64 @@ Describe 'Thin-YAML Step.8: Export-AzLocalFleetUpdateStatusReport' {
         $xml | Should -Match 'Node reboot timed out after 30 minutes'
         $out = Get-Content -LiteralPath $script:_s8_ghOutputFile -Raw
         $out | Should -Match 'run_history_count=1'
+    }
+
+    It 'Regression: short DeepestErrMsg whose length-string sorts above 4000 does not crash Substring' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s8_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s8_ghSummaryFile
+        $start = $script:_s8_now.AddHours(-3)
+        $end   = $script:_s8_now.AddHours(-1)
+        # 50-char message reproduces the v0.8.5 operator-precedence bug: the old
+        # code did [string]$f.DeepestErrMsg.Length -> "50", and "50" -gt 4000 is
+        # TRUE (lexical string compare, "5" > "4"), so a 50-char string entered
+        # the .Substring(0,4000) branch and threw. Real Monitor: 3 run #40 crashed
+        # here. Messages of length 38 (used by the tests above) sort below "4000"
+        # and never tripped it, which is why the bug shipped undetected.
+        $shortErr = ('E' * 50)
+        $global:_s8_payload = @{
+            Inventory = @([pscustomobject]@{ ClusterName='eta'; ResourceId='/subscriptions/s1/resourceGroups/rg7/providers/Microsoft.AzureStackHCI/clusters/eta' })
+            Readiness = @(
+                [pscustomobject]@{
+                    ClusterName='eta'; ResourceGroup='rg7'; SubscriptionId='s1'
+                    ResourceId='/subscriptions/s1/resourceGroups/rg7/providers/Microsoft.AzureStackHCI/clusters/eta'
+                    UpdateState='Failed'; HealthState='Success'; ReadyForUpdate=$false
+                    HasPrerequisiteUpdates=''; AllAvailableUpdates=''; ReadyUpdates=''; SBEDependency=''
+                    RecommendedUpdate=''; CurrentVersion='12.2510.0.0'; HealthCheckFailures=''
+                }
+            )
+            Manifest = [pscustomobject]@{ SupportedYYMMs=@('2510'); LatestYYMM='2510'; LatestVersion='12.2510.0.999'; ManifestFetchedAt=(Get-Date).ToUniversalTime() }
+            Failures = @(
+                [pscustomobject]@{
+                    ClusterName='eta'; ClusterResourceId='/subscriptions/s1/resourceGroups/rg7/providers/Microsoft.AzureStackHCI/clusters/eta'
+                    UpdateName='12.2510.0.999'; State='Failed'; Status='Failed'; CurrentStep='ApplyNodeUpdate'
+                    Duration='02:00:00'; DurationMinutes=120.0; StartTime=$start; LastUpdated=$end
+                    DeepestStepName='ApplyNodeUpdate'; ErrorCategory='NodeReboot'
+                    DeepestErrMsg=$shortErr; DeepestStepDescription=''
+                    UpdateRunPortalUrl='https://portal.azure.com/run/1'; RunId='run-1'; StackTracePreview=''
+                    UpdateRing='Wave1'
+                }
+            )
+            OutDir = $script:_s8_outDir; Now = $script:_s8_now
+        }
+        $script:_s8_regResult = $null
+        {
+            $script:_s8_regResult = InModuleScope AzLocal.UpdateManagement {
+                Mock Get-AzLocalClusterInventory       { @($global:_s8_payload.Inventory) }
+                Mock Get-AzLocalClusterUpdateReadiness { @($global:_s8_payload.Readiness) }
+                Mock Get-AzLocalLatestSolutionVersion  { $global:_s8_payload.Manifest }
+                Mock Get-AzLocalUpdateSummary          { @() }
+                Mock Get-AzLocalAvailableUpdates       { @() }
+                Mock Get-AzLocalUpdateRuns             { @() }
+                Mock Get-AzLocalUpdateRunFailures      { @($global:_s8_payload.Failures) }
+                Export-AzLocalFleetUpdateStatusReport -OutputDirectory $global:_s8_payload.OutDir -Now $global:_s8_payload.Now -PassThru
+            }
+        } | Should -Not -Throw
+        $script:_s8_regResult.RunHistoryCount | Should -Be 1
+        $xml = [System.IO.File]::ReadAllText($script:_s8_regResult.XmlPath)
+        # full 50-char message must be emitted whole (not truncated, not dropped)
+        $xml | Should -Match $shortErr
+        $xml | Should -Not -Match 'truncated'
     }
 
     It 'v0.8.97: Update Run History table includes an Update Ring column populated from the failure rows' {

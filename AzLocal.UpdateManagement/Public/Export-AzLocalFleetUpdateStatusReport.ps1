@@ -684,7 +684,8 @@ function Export-AzLocalFleetUpdateStatusReport {
             $combined = '{0}{1}{1}Trace: {2}' -f $deepDesc, [System.Environment]::NewLine, $f.DeepestErrMsg
             if ($combined.Length -gt 4000) { $combined.Substring(0,4000) + ' ... (truncated)' } else { $combined }
         } elseif ($f.DeepestErrMsg) {
-            if ([string]$f.DeepestErrMsg.Length -gt 4000) { ([string]$f.DeepestErrMsg).Substring(0,4000) + ' ... (truncated)' } else { [string]$f.DeepestErrMsg }
+            $deepMsg = [string]$f.DeepestErrMsg
+            if ($deepMsg.Length -gt 4000) { $deepMsg.Substring(0,4000) + ' ... (truncated)' } else { $deepMsg }
         } elseif ($deepDesc) {
             if ($deepDesc.Length -gt 4000) { $deepDesc.Substring(0,4000) + ' ... (truncated)' } else { $deepDesc }
         } else { '(no error message captured)' }
