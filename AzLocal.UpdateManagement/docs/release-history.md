@@ -4,9 +4,13 @@
 >
 > **For older releases**, this is the canonical reference; the main README intentionally stays slim so the most recent block is easy to find.
 >
-> **For v0.9.13 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0913) `What's New in v0.9.13` section.
+> **For v0.9.14 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0914) `What's New in v0.9.14` section.
 
 ---
+
+### What's New in v0.9.14
+
+**Report-only re-release of the allow-list-suppressed Ready-update surfacing (version bump for the PowerShell Gallery publish).** v0.9.13 was already published to the Gallery, so this release bumps the version number to ship the readiness-report UX first merged in PR #117. `Export-AzLocalClusterUpdateReadinessReport` surfaces allow-list-suppressed Ready updates: when an `allowedUpdateVersions` allow-list filters out every Ready update on a cluster, the "All clusters detail" table gains an `Available Ready updates` column (a lone Ready update renders inline; two or more collapse behind a `<details>` expander), and the affected row's Status is marked `Up to Date *` with a conditional footnote explaining the cluster is up to date **only** because the allow-list excluded every Ready update. `Get-AzLocalClusterUpdateReadiness` emits an allow-list-mismatch console warning per suppressed cluster listing the exact excluded update name/version to copy into the apply-updates schedule YML, and the `Select-AzLocalNextUpdateForCluster` matcher accepts both the full update `name` and the bare `properties.version`. Docs add a vendor/platform-named OEM SBE example and standardise the `Solution`/`SBE` name form. No public function, parameter, or export-count change (still 68). `GENERATED_AGAINST_MODULE_VERSION` bumped to `0.9.14`. See [CHANGELOG.md](../CHANGELOG.md#0914---2026-07-02) for the full v0.9.14 entry.
 
 ### What's New in v0.9.13
 

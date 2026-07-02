@@ -5,6 +5,24 @@ All notable changes to the AzLocal.UpdateManagement module (renamed from AzStack
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.14] - 2026-07-02
+
+Report-only release - version bump so the allow-list-suppressed Ready-update
+surfacing from PR #117 can be published to the PowerShell Gallery (0.9.13 was
+already published). No code change beyond the version stamp; the feature itself
+shipped in 0.9.13's development branch and is re-released here under a fresh
+version number.
+
+### Changed
+
+- **`Export-AzLocalClusterUpdateReadinessReport` - surface allow-list-suppressed Ready updates.** When an `allowedUpdateVersions` allow-list filters out every Ready update on a cluster, the report now makes that explicit: the "All clusters detail" table gains an `Available Ready updates` column (a lone Ready update renders inline; two or more collapse behind a `<details>` expander), and the affected row's Status is marked `Up to Date *` with a conditional footnote explaining the cluster is up to date **only** because the allow-list excluded every Ready update.
+- **`Get-AzLocalClusterUpdateReadiness` - allow-list-mismatch console warning.** Emits a per-cluster warning listing the exact excluded update name/version so an operator can copy it straight into the apply-updates schedule YML. The `Select-AzLocalNextUpdateForCluster` matcher accepts both the full update `name` and the bare `properties.version`.
+- **Docs.** Added a vendor/platform-named OEM SBE example and standardised the `Solution`/`SBE` name form in the readiness docs.
+
+### Notes
+
+- No public function, parameter, or export-count change (still 68). `GENERATED_AGAINST_MODULE_VERSION` bumped to `0.9.14`.
+
 ## [0.9.13] - 2026-07-02
 
 Patch release - a single bug fix in the Fleet Update Status report.

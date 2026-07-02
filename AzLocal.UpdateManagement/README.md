@@ -2,7 +2,7 @@
 
 > ⚠️ **Disclaimer**: This module is **NOT** a Microsoft supported service offering or product. It is provided as example code only, with no warranty or official support. Refer to the [MIT license](https://github.com/NeilBird/Azure-Local/blob/main/LICENSE) for further information.
 
-**Latest Version:** v0.9.13 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.9.13)
+**Latest Version:** v0.9.14 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.9.14)
 
 This folder contains the 'AzLocal.UpdateManagement' PowerShell module for managing updates on Azure Local (formerly Azure Stack HCI) clusters using the Azure Local REST API. The module supports both interactive use and CI/CD automation via Service Principal or Managed Identity authentication.
 
@@ -14,7 +14,7 @@ Azure Local REST API specification (includes update management endpoints): https
 **This README (overview + most-recent release notes):**
 
 - [Where to Start](#where-to-start)
-- [What's New in v0.9.13](#whats-new-in-v0913)
+- [What's New in v0.9.14](#whats-new-in-v0914)
 - [Files](#files)
 - [Prerequisites](#prerequisites)
 - [RBAC Requirements](#rbac-requirements) (summary; full reference in [docs/rbac.md](docs/rbac.md))
@@ -77,21 +77,23 @@ If you are new to this module, work through these in order from a regular PowerS
 
 > Most CI/CD pipelines in [Automation-Pipeline-Examples/](Automation-Pipeline-Examples/) are direct implementations of one of these workflows. Start there if you want a copy-pasteable end-to-end pipeline.
 
-## What's New in v0.9.13
+## What's New in v0.9.14
 
-**Bug fix - Monitor: 3 (Fleet Update Status) no longer crashes on a failed run with a short deepest-error message.** A single mis-parenthesised cast in the report truncation logic turned a short error string into a `.Substring` overflow.
+**Report-only re-release of the allow-list-suppressed Ready-update surfacing (version bump for the PowerShell Gallery publish).** v0.9.13 was already published to the Gallery, so this release bumps the version to ship the readiness-report UX first merged in PR #117.
 
-### Fixed
+### Changed
 
-- **`Export-AzLocalFleetUpdateStatusReport` - truncation guard cast the LENGTH, not the string.** The deepest-error truncation guard read `[string]$f.DeepestErrMsg.Length`, which PowerShell parses as `[string]($f.DeepestErrMsg.Length)` (member access binds tighter than the cast). It stringified the *length* (e.g. `"50"`) and then compared that string to `4000` **lexically** - `"50" -gt 4000` is `$true` - so a short message was pushed into `.Substring(0,4000)` and threw `Index and length must refer to a location within the string`. The message is now cast to a string once (`$deepMsg = [string]$f.DeepestErrMsg`) before the integer length check. The bug has existed since v0.8.5 and surfaced on a real fleet-update-status run (#40) whose failed cluster carried a short deepest-error message; existing tests happened to use a message whose length string sorted below `"4000"`, so it was never tripped. A regression test now feeds a short message and asserts no throw.
+- **`Export-AzLocalClusterUpdateReadinessReport` surfaces allow-list-suppressed Ready updates.** When an `allowedUpdateVersions` allow-list filters out every Ready update on a cluster, the "All clusters detail" table gains an `Available Ready updates` column (a lone Ready update renders inline; two or more collapse behind a `<details>` expander), and the affected row's Status is marked `Up to Date *` with a conditional footnote explaining the cluster is up to date **only** because the allow-list excluded every Ready update.
+- **`Get-AzLocalClusterUpdateReadiness` emits an allow-list-mismatch console warning** listing the exact excluded update name/version to copy straight into the apply-updates schedule YML. The `Select-AzLocalNextUpdateForCluster` matcher accepts both the full update `name` and the bare `properties.version`.
+- **Docs:** added a vendor/platform-named OEM SBE example and standardised the `Solution`/`SBE` name form.
 
 ### Notes
 
-- No public function, parameter, or export-count change (still **68**). `GENERATED_AGAINST_MODULE_VERSION` bumped to `0.9.13`.
+- No public function, parameter, or export-count change (still **68**). `GENERATED_AGAINST_MODULE_VERSION` bumped to `0.9.14`.
 
 > Previous release notes have moved into the [Release History](#release-history) appendix at the bottom of this document.
 
-See [CHANGELOG.md](CHANGELOG.md) for full release details. See [`What's New in v0.9.12`](#whats-new-in-v0912) in the Release History for the previous release.
+See [CHANGELOG.md](CHANGELOG.md) for full release details. See [`What's New in v0.9.13`](#whats-new-in-v0913) in the Release History for the previous release.
 
 ## Files
 
@@ -587,7 +589,11 @@ This code is provided as-is for educational and reference purposes.
 
 The full What's-New history (v0.7.81 and earlier) has moved to [docs/release-history.md](docs/release-history.md).
 
-The most recent release notes for **v0.9.13** stay above under [`What's New in v0.9.13`](#whats-new-in-v0913).
+The most recent release notes for **v0.9.14** stay above under [`What's New in v0.9.14`](#whats-new-in-v0914).
+
+### What's New in v0.9.13
+
+**Bug fix - Monitor: 3 (Fleet Update Status) no longer crashes on a failed run with a short deepest-error message.** `Export-AzLocalFleetUpdateStatusReport`'s deepest-error truncation guard read `[string]$f.DeepestErrMsg.Length`, which PowerShell parses as `[string]($f.DeepestErrMsg.Length)` (member access binds tighter than the cast); it stringified the *length* and compared that string to `4000` **lexically**, pushing a short message into `.Substring(0,4000)` and throwing `Index and length must refer to a location within the string`. The message is now cast once (`$deepMsg = [string]$f.DeepestErrMsg`) before the integer length check; a regression test feeds a short message and asserts no throw. No public function, parameter, or export-count change (still 68). `GENERATED_AGAINST_MODULE_VERSION` bumped to `0.9.13`. See [CHANGELOG.md](CHANGELOG.md#0913---2026-07-02) for the full v0.9.13 entry.
 
 ### What's New in v0.9.12
 
