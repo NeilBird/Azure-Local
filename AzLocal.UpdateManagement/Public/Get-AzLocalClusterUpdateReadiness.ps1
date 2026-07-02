@@ -781,7 +781,28 @@ function Get-AzLocalClusterUpdateReadiness {
     Write-Log -Message "" -Level Info
     Write-Log -Message "Detailed Results:" -Level Header
     $results | Format-Table ClusterName, ResourceGroup, CurrentVersion, UpdateState, HealthState, ReadyForUpdate, RecommendedUpdate -AutoSize | Out-Host
-    
+
+    # v0.9.14: allow-list mismatch callout. A cluster that reports 'Up to Date'
+    # while Azure DOES have Ready updates (ReadyUpdates non-empty) can ONLY be in
+    # that state because an active allowedUpdateVersions allow-list filtered every
+    # Ready update out. That is indistinguishable from a genuinely up-to-date
+    # cluster in the table above, so surface the excluded updates explicitly -
+    # the operator can copy the exact name/version straight into the YML.
+    $allowListSuppressed = @($results | Where-Object {
+            $_.PSObject.Properties['AllowListSource'] -and $_.AllowListSource -and $_.AllowListSource -ne 'None' -and
+            $_.PSObject.Properties['ReadyUpdates'] -and $_.ReadyUpdates -and ([string]$_.ReadyUpdates).Trim() -ne '' -and
+            (Get-AzLocalClusterReadinessStatus -ReadinessRow $_) -eq 'UpToDate'
+        })
+    if ($allowListSuppressed.Count -gt 0) {
+        Write-Log -Message "" -Level Info
+        Write-Log -Message "Allow-list mismatches (updates available but not allow-listed):" -Level Warning
+        Write-Log -Message "  These clusters report 'Up to Date' ONLY because their allowedUpdateVersions filtered out every Ready update. Add one of the listed name/version values to the YML to let them proceed." -Level Warning
+        foreach ($suppressed in $allowListSuppressed) {
+            $effectiveAllow = if ($suppressed.PSObject.Properties['AllowedUpdateVersions'] -and $suppressed.AllowedUpdateVersions) { [string]$suppressed.AllowedUpdateVersions } else { '(none)' }
+            Write-Log -Message "  $($suppressed.ClusterName): allow-list [$effectiveAllow] excluded available Ready update(s): $($suppressed.ReadyUpdates)" -Level Warning
+        }
+    }
+
     # Show clusters with health check failures
     $clustersWithHealthIssues = @($results | Where-Object { $_.HealthCheckFailures -ne "" })
     if ($clustersWithHealthIssues.Count -gt 0) {

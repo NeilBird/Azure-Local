@@ -6,7 +6,7 @@ function Get-AzLocalLatestSolutionVersion {
 
     .DESCRIPTION
         Azure Local solution-bundle versions follow the format <prefix>.YYMM.X.X (e.g.
-        Solution12.2604.1003.1005). Microsoft publishes the catalog of currently-applicable
+        Solution12.2604.1003.1006). Microsoft publishes the catalog of currently-applicable
         solution bundles at the unauthenticated endpoint https://aka.ms/AzureEdgeUpdates (an
         XML manifest under the root element ASZSolutionBundleUpdates).
 

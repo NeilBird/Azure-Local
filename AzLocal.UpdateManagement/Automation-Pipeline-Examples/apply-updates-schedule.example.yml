@@ -74,15 +74,19 @@ cycleAnchorYear:      2026
 #
 # Format: semicolon-separated string (same convention as 'rings:').
 #
-# WHICH STRING DO I PUT IN HERE? - You can use EITHER the full update
-# `name` (recommended - this is the value the Azure portal Updates
-# blade shows in the 'Name' column) OR the bare `properties.version`
-# string. The matcher checks both columns and accepts either.
+# WHICH STRING DO I PUT IN HERE? - Use the full update `name` exactly as
+# the Azure portal Updates blade shows it in the 'Name' column. This is
+# the recommended, unambiguous form, and it is the ONE convention every
+# example below uses:
 #
-#   Microsoft Solution updates  - name:    'Solution12.2604.1003.1005'
-#                                 version: '12.2604.1003.1005'
-#   OEM SBE (Solution Builder    - name:    'SBE5.0.2603.1522'
-#     Extension) updates           version: '5.0.2603.1522'
+#   Microsoft Solution updates  - 'Solution12.2604.1003.1006'
+#   OEM SBE (Solution Builder    - 'SBE5.0.2603.1522'
+#     Extension) updates
+#
+# (The matcher will ALSO accept the bare `properties.version` string -
+# e.g. '12.2604.1003.1006' - because it checks both the name and version
+# columns. To keep this file readable, pick ONE convention and stick to
+# it; every example here uses the 'Solution' / 'SBE' name form.)
 #
 # OEM SBE updates appear in the same Ready-update list as Microsoft
 # Solution updates and are matched by exactly the same rule - the
@@ -90,6 +94,18 @@ cycleAnchorYear:      2026
 # To pin BOTH the Microsoft solution AND a specific vendor SBE for a
 # given release, list both names in the same allowedUpdateVersions
 # field (example below).
+#
+# IMPORTANT - SBE updates are often a PREREQUISITE. When a cluster's
+# ONLY Ready update is an OEM SBE (e.g. 'SBE_HPE_ProLiant-Minimal_4.2.2601.1'),
+# the next Microsoft Solution update will NOT be offered until that SBE
+# is installed. If your allow-list omits the SBE, the cluster reports
+# 'Up to Date' and never advances - the SBE was silently filtered out.
+# The Assess Update Readiness report makes this visible: the cluster's
+# Status shows 'Up to Date *' (the ' *' marker + a footnote above the
+# table flag that it is up to date ONLY because the allow-list excluded
+# every Ready update), and the 'Available Ready updates' column shows
+# exactly what Azure has Ready so you can copy the missing name/version
+# straight into this file. Always include the pending SBE in the allow-list.
 #
 # Discover valid names per-cluster via:
 #   Get-AzLocalAvailableUpdates -ClusterName <name> -PassThru |
@@ -101,15 +117,17 @@ cycleAnchorYear:      2026
 # feature update (YY03 + YY09). With v2 schema you list those four
 # update names here once and apply-updates.yml ignores every other
 # 'Ready' update. Example using real Azure Local update names:
-#   allowedUpdateVersions: 'Solution12.2603.1002.15;Solution12.2604.1003.1005;Solution12.2609.1002.XX;Solution12.2610.1003.XX'
+#   allowedUpdateVersions: 'Solution12.2603.1002.15;Solution12.2604.1003.1006;Solution12.2609.1002.XX;Solution12.2610.1003.XX'
 #
 # Mixed Solution + OEM SBE example - allow the YY04 cumulative AND a
 # specific vendor SBE that ships alongside it:
-#   allowedUpdateVersions: 'Solution12.2604.1003.1005;SBE5.0.2603.1522'
+#   allowedUpdateVersions: 'Solution12.2604.1003.1006;SBE5.0.2603.1522'
 #
-# Bare-version equivalent (no 'Solution' / 'SBE' prefix) - matches
-# via properties.version instead of name:
-#   allowedUpdateVersions: '12.2604.1003.1005;5.0.2603.1522'
+# NOTE - some OEM SBE names embed the vendor and platform (e.g. HPE
+# ProLiant) rather than the generic 'SBE<version>' form, so the `name`
+# does NOT reduce to 'SBE' + the version. Pin by the EXACT name from the
+# portal Updates blade / Get-AzLocalAvailableUpdates, not a guessed one:
+#   allowedUpdateVersions: 'Solution12.2604.1003.1006;SBE_HPE_ProLiant-Minimal_4.2.2601.1'
 #
 # Per-row override: any schedule row below may set its own
 # `allowedUpdateVersions:` field. Per-row beats top-level; multiple
@@ -174,11 +192,11 @@ schedule:
     # explicitly opt this row out of any fleet-wide allow-list (the
     # row will install the latest Ready update regardless of the
     # top-level setting).
-    # allowedUpdateVersions: 'Solution12.2604.1003.1005;Solution12.2610.1003.XX'
+    # allowedUpdateVersions: 'Solution12.2604.1003.1006;Solution12.2610.1003.XX'
     #
     # Mixed Solution + OEM SBE override (matches both the YY04
     # cumulative AND a specific vendor SBE that ships alongside it):
-    # allowedUpdateVersions: 'Solution12.2604.1003.1005;SBE5.0.2603.1522'
+    # allowedUpdateVersions: 'Solution12.2604.1003.1006;SBE5.0.2603.1522'
 
   # Example: ALWAYS-ON canary that runs every Monday throughout the
   # whole 8-week cycle in addition to the phase-specific rows above.

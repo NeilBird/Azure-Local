@@ -597,7 +597,7 @@ function Export-AzLocalApplyUpdatesScheduleAudit {
                     [void]$md.Add("- weeksInCycle: '*'")
                     [void]$md.Add("  daysOfWeek:   'Tue,Wed,Thu'")
                     [void]$md.Add("  rings:        'Prod'")
-                    [void]$md.Add("  allowedUpdateVersions: 'Solution12.2604.1003.1005;Solution12.2610.1003.XX'")
+                    [void]$md.Add("  allowedUpdateVersions: 'Solution12.2604.1003.1006;Solution12.2610.1003.XX'")
                     [void]$md.Add('```')
                     [void]$md.Add('')
                 }

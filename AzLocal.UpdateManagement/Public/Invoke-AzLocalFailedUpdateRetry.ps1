@@ -53,7 +53,7 @@ function Invoke-AzLocalFailedUpdateRetry {
         Azure subscription ID. Defaults to the current az CLI subscription.
 
     .PARAMETER UpdateName
-        The failed update version to retry (e.g. 'Solution12.2604.1003.1005').
+        The failed update version to retry (e.g. 'Solution12.2604.1003.1006').
         When omitted, the cmdlet auto-detects it from the cluster's most recent
         update run (which must itself be Failed/Error). Supply this explicitly for
         a targeted retry, or when the latest run cannot be auto-classified.
@@ -77,7 +77,7 @@ function Invoke-AzLocalFailedUpdateRetry {
         for confirmation). Skips if the cluster is still UpdateInProgress.
 
     .EXAMPLE
-        Invoke-AzLocalFailedUpdateRetry -ClusterName 'Arizona' -UpdateName 'Solution12.2604.1003.1005' -Force
+        Invoke-AzLocalFailedUpdateRetry -ClusterName 'Arizona' -UpdateName 'Solution12.2604.1003.1006' -Force
         Targeted, unattended retry of a specific failed update version, overriding
         the one-time guard.
 

@@ -21779,6 +21779,54 @@ Describe 'v0.8.97: Assess Readiness ready-for-update table + collapsed detail' {
     }
 }
 
+Describe 'v0.9.14: Assess Readiness allow-list mismatch surfacing' {
+    BeforeAll {
+        $script:src05Allow        = Get-Content -LiteralPath "$PSScriptRoot/../Public/Export-AzLocalClusterUpdateReadinessReport.ps1" -Raw
+        $script:srcReadinessAllow = Get-Content -LiteralPath "$PSScriptRoot/../Public/Get-AzLocalClusterUpdateReadiness.ps1" -Raw
+        $script:srcScheduleYml    = Get-Content -LiteralPath "$PSScriptRoot/../Automation-Pipeline-Examples/apply-updates-schedule.example.yml" -Raw
+    }
+    It 'Report adds the Available Ready updates column to the All clusters detail header' {
+        $src05Allow | Should -Match '\| Recommended update \| Available Ready updates \|'
+    }
+    It 'Report renders a lone Ready update inline and 2+ as a collapsed details block' {
+        $src05Allow | Should -Match '\$readyItems\.Count -eq 1'
+        $src05Allow | Should -Match '\$availCell = \$readyItems\[0\]'
+        $src05Allow | Should -Match '<details><summary>\{0\} update\(s\)</summary>\{1\}</details>'
+        $src05Allow | Should -Match '\$readyItems'
+    }
+    It 'Report row appends the collapsible available-updates cell' {
+        $src05Allow | Should -Match '\$ru \| \$availCell \|'
+    }
+    It 'Report flags allow-list-suppressed UpToDate rows with a Status marker' {
+        $src05Allow | Should -Match "\`$isAllowListSuppressed = \(\`$statusKey -eq 'UpToDate'\) -and \(\`$readyItems\.Count -gt 0\)"
+        $src05Allow | Should -Match '\$statusCell = "\$statusCell \*"'
+        $src05Allow | Should -Match '\$anyAllowListSuppressed = \$true'
+    }
+    It 'Report emits the allow-list Status-marker footnote only when a cluster is suppressed' {
+        $src05Allow | Should -Match 'if \(\$anyAllowListSuppressed\)'
+        $src05Allow | Should -Match 'Status is `Up to Date` only because'
+        $src05Allow | Should -Match 'allowedUpdateVersions` allow-list'
+    }
+    It 'Readiness cmdlet emits an allow-list mismatch callout for suppressed clusters' {
+        $srcReadinessAllow | Should -Match 'Allow-list mismatches \(updates available but not allow-listed\)'
+        $srcReadinessAllow | Should -Match '\$allowListSuppressed'
+    }
+    It 'Readiness mismatch detection gates on active allow-list + UpToDate + non-empty ReadyUpdates' {
+        $srcReadinessAllow | Should -Match "AllowListSource'\] -and"
+        $srcReadinessAllow | Should -Match "-eq 'UpToDate'"
+        $srcReadinessAllow | Should -Match "ReadyUpdates'\] -and"
+    }
+    It 'Schedule example documents the SBE-prerequisite trap' {
+        $srcScheduleYml | Should -Match 'SBE updates are often a PREREQUISITE'
+        $srcScheduleYml | Should -Match 'Available Ready updates'
+        $srcScheduleYml | Should -Match "Status shows 'Up to Date \*'"
+    }
+    It 'Schedule example uses the verified 2604 build number (1006 not 1005)' {
+        $srcScheduleYml | Should -Not -Match '2604\.1003\.1005'
+        $srcScheduleYml | Should -Match '2604\.1003\.1006'
+    }
+}
+
 Describe 'v0.8.97: Monitor:2 Fleet Health Overview collapsed by default' {
     BeforeAll {
         $script:src10v97 = Get-Content -LiteralPath "$PSScriptRoot/../Public/Export-AzLocalFleetHealthStatusReport.ps1" -Raw
