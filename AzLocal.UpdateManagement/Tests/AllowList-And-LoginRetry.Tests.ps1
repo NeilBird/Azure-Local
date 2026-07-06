@@ -503,15 +503,17 @@ Describe 'v0.9.14 PSGallery install-step transient retry wiring' {
 
     # v0.9.14: the shared "Install AzLocal.UpdateManagement from PSGallery" step
     # in every pipeline (GitHub Actions and Azure DevOps) wraps the actual
-    # Install-Module call in a 3-attempt, exponential-backoff (10s, 20s) retry
-    # loop so a transient PSGallery search/propagation blip ("No match was found
+    # Install-Module call in a 5-attempt, capped exponential-backoff + jitter
+    # retry loop (v0.9.16 hardened it from 3 attempts / 10s,20s after a customer
+    # and internal fleet both hit a >30s PSGallery search-index blip) so a
+    # transient PSGallery search/propagation blip ("No match was found
     # for the specified search criteria and module name 'AzLocal.UpdateManagement'")
     # no longer fails the whole run. The retry MUST be an inline pwsh loop (not a
     # module cmdlet) because it runs BEFORE the module is installed, and NOT the
     # native ADO retryCountOnTaskFailure (which has no configurable backoff and
     # would disturb the counted login-retry assertions above).
 
-    It 'Every pipeline YAML that installs the module wraps Install-Module in the 3-attempt retry loop' {
+    It 'Every pipeline YAML that installs the module wraps Install-Module in the 5-attempt retry loop' {
         $ymlFiles = Get-ChildItem -Path $script:PipelineRoot -Recurse -Filter '*.yml' -File
         $ymlFiles.Count | Should -BeGreaterThan 0
 
@@ -521,12 +523,12 @@ Describe 'v0.9.14 PSGallery install-step transient retry wiring' {
             $installCount = ([regex]::Matches($content, [regex]::Escape('Install-Module @installArgs'))).Count
             if ($installCount -eq 0) { continue }
 
-            $retryCount = ([regex]::Matches($content, [regex]::Escape('$installMaxAttempts = 3'))).Count
+            $retryCount = ([regex]::Matches($content, [regex]::Escape('$installMaxAttempts = 5'))).Count
             $sleepCount = ([regex]::Matches($content, [regex]::Escape('Start-Sleep -Seconds $installRetryDelay'))).Count
 
             $relPath = $yml.FullName.Substring($script:PipelineRoot.Length).TrimStart('\', '/')
             if ($retryCount -ne $installCount) {
-                $issues.Add("${relPath}: has $installCount install call(s) but $retryCount retry loop opener(s) (`$installMaxAttempts = 3)")
+                $issues.Add("${relPath}: has $installCount install call(s) but $retryCount retry loop opener(s) (`$installMaxAttempts = 5)")
             }
             if ($sleepCount -ne $installCount) {
                 $issues.Add("${relPath}: has $installCount install call(s) but $sleepCount backoff Start-Sleep call(s)")
@@ -544,10 +546,23 @@ Describe 'v0.9.14 PSGallery install-step transient retry wiring' {
         foreach ($yml in $ymlFiles) {
             $content = Get-Content -Raw -LiteralPath $yml.FullName
             $installTotal += ([regex]::Matches($content, [regex]::Escape('Install-Module @installArgs'))).Count
-            $retryTotal   += ([regex]::Matches($content, [regex]::Escape('$installMaxAttempts = 3'))).Count
+            $retryTotal   += ([regex]::Matches($content, [regex]::Escape('$installMaxAttempts = 5'))).Count
         }
         $installTotal | Should -Be 26
         $retryTotal   | Should -Be $installTotal
+    }
+
+    It 'Every retry loop uses a capped exponential backoff with jitter (v0.9.16)' {
+        $ymlFiles = Get-ChildItem -Path $script:PipelineRoot -Recurse -Filter '*.yml' -File
+        foreach ($yml in $ymlFiles) {
+            $content = Get-Content -Raw -LiteralPath $yml.FullName
+            $installCount = ([regex]::Matches($content, [regex]::Escape('Install-Module @installArgs'))).Count
+            if ($installCount -eq 0) { continue }
+            $capCount    = ([regex]::Matches($content, [regex]::Escape('[math]::Min(60, 10 * [math]::Pow(2, $installAttempt - 1))'))).Count
+            $jitterCount = ([regex]::Matches($content, [regex]::Escape('Get-Random -Minimum 0 -Maximum 5'))).Count
+            $capCount    | Should -Be $installCount -Because "$($yml.Name) every backoff must be capped at 60s via [math]::Min"
+            $jitterCount | Should -Be $installCount -Because "$($yml.Name) every backoff must add Get-Random jitter to avoid lockstep fleet retries"
+        }
     }
 
     It 'The retry loop re-throws on the final attempt so a persistent failure still fails the job' {
@@ -558,5 +573,25 @@ Describe 'v0.9.14 PSGallery install-step transient retry wiring' {
             $content | Should -Match '\$installAttempt -ge \$installMaxAttempts' -Because "$($yml.Name) retry loop must stop and re-throw once max attempts are reached"
             $content | Should -Match '(?m)^\s*throw\s*$' -Because "$($yml.Name) retry loop must re-throw the last error so the job fails"
         }
+    }
+
+    # v0.9.16: the benign "No Clusters Ready" reporting job in apply-updates
+    # (GH job no-clusters-ready / ADO stage NoClustersReady) only annotates a
+    # nothing-to-apply outcome. A persistent PSGallery install blip there must
+    # NOT turn a healthy no-op run red, so its install + report steps are soft
+    # (continue-on-error / continueOnError). The hardened retry loop still
+    # absorbs the common transient case; this just prevents a misleading red.
+    It 'GitHub Actions no-clusters-ready reporting job is soft (continue-on-error)' {
+        $content = Get-Content -Raw -LiteralPath (Join-Path $script:PipelineRoot 'github-actions/apply-updates.yml')
+        $content | Should -Match 'no-clusters-ready:'
+        ([regex]::Matches($content, [regex]::Escape('continue-on-error: true'))).Count |
+            Should -BeGreaterOrEqual 2 -Because 'the no-clusters-ready install + report steps must both be continue-on-error'
+    }
+
+    It 'Azure DevOps NoClustersReady reporting stage is soft (continueOnError)' {
+        $content = Get-Content -Raw -LiteralPath (Join-Path $script:PipelineRoot 'azure-devops/apply-updates.yml')
+        $content | Should -Match 'NoClustersReady'
+        ([regex]::Matches($content, [regex]::Escape('continueOnError: true'))).Count |
+            Should -BeGreaterOrEqual 2 -Because 'the ReportNoReadyClusters install + report tasks must both be continueOnError'
     }
 }
