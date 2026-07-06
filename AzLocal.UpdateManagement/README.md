@@ -2,7 +2,7 @@
 
 > ⚠️ **Disclaimer**: This module is **NOT** a Microsoft supported service offering or product. It is provided as example code only, with no warranty or official support. Refer to the [MIT license](https://github.com/NeilBird/Azure-Local/blob/main/LICENSE) for further information.
 
-**Latest Version:** v0.9.15 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.9.15)
+**Latest Version:** v0.9.16 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.9.16)
 
 This folder contains the 'AzLocal.UpdateManagement' PowerShell module for managing updates on Azure Local (formerly Azure Stack HCI) clusters using the Azure Local REST API. The module supports both interactive use and CI/CD automation via Service Principal or Managed Identity authentication.
 
@@ -14,7 +14,7 @@ Azure Local REST API specification (includes update management endpoints): https
 **This README (overview + most-recent release notes):**
 
 - [Where to Start](#where-to-start)
-- [What's New in v0.9.15](#whats-new-in-v0915)
+- [What's New in v0.9.16](#whats-new-in-v0916)
 - [Files](#files)
 - [Prerequisites](#prerequisites)
 - [RBAC Requirements](#rbac-requirements) (summary; full reference in [docs/rbac.md](docs/rbac.md))
@@ -77,24 +77,21 @@ If you are new to this module, work through these in order from a regular PowerS
 
 > Most CI/CD pipelines in [Automation-Pipeline-Examples/](Automation-Pipeline-Examples/) are direct implementations of one of these workflows. Start there if you want a copy-pasteable end-to-end pipeline.
 
-## What's New in v0.9.15
+## What's New in v0.9.16
 
-**Update: 1 - Assess Update Readiness - two operator-guidance improvements from real fleet-run feedback.** Allow-list-held clusters now get their own visible table (no need to expand "All clusters detail"), and SBE-prerequisite clusters carry a manual-action knowledge note.
+**Pipeline bootstrap hardening - Update: 3 - Apply Updates (and every other template).** After a customer and the internal fleet both hit a transient PSGallery search-index blip that failed an otherwise-healthy scheduled run, the shared "Install AzLocal.UpdateManagement from PSGallery" step is hardened and the benign "No Clusters Ready" reporting job is made non-fatal.
 
-### Added
+### Changed
 
-- **Dedicated visible "Up to date - Ready update held by allow-list" table.** Clusters that classify `Up to Date` **only** because the `allowedUpdateVersions` allow-list held back every Ready update are now surfaced in their own top-level section (Cluster / UpdateRing / Current version / Available Ready updates / Allow-list rule). Previously they were only visible if you expanded the collapsed "All clusters detail" block - now the exact update name/version to copy into `apply-updates-schedule.yml` is in plain view.
-- **Summary "of which held by allow-list" sub-count.** The Summary counts table adds a labelled sub-row (shown only when non-zero) reporting how many `Up to Date` clusters are actually held by the allow-list. It is a labelled **subset** of the Up-to-Date total, so the summary and per-UpdateRing pivot arithmetic (Ready + Up to Date + Not Ready = Total) stays consistent. New PassThru property `AllowListHeldCount`.
-- **SBE-prerequisite manual-action note.** When one or more Not-Ready clusters are SBE-blocked, the "Not-Ready clusters (review first)" section emits a knowledge note explaining that a Solution Builder Extension (SBE) update is a prerequisite the pipeline **cannot** apply automatically - operators must review their **Hardware OEM provider's** Azure Local / SBE documentation for the correct package/version and **sideload** the SBE update onto the cluster. The note renders only when at least one cluster is SBE-blocked.
+- **Install-step retry hardened from 3 to 5 attempts with capped exponential backoff + jitter.** The shared install step in all 20 GitHub Actions + Azure DevOps templates (26 install blocks) now retries a transient `No match was found ... 'AzLocal.UpdateManagement'` PSGallery lookup up to **5** times with delays of ~10s, 20s, 40s, 60s (capped at 60s via `[math]::Min`) plus 0-4s of random **jitter**. The old 3-attempt / 10s,20s window (~30s total) was too short to ride out a real index blip - in run 28721322188 the module installed cleanly in the readiness job but a sibling job one minute later failed all three attempts. The jitter stops fanned-out fleet jobs retrying in lockstep against the same flaky index.
 
 ### Fixed
 
-- **Update: 2 - FORCE (break-glass) runs now HONOUR the `allowedUpdateVersions` allow-list.** A forced apply on the manual path (`update_ring` supplied, `use_schedule_file=false`) previously resolved an **empty** allow-list, so the latest Ready update was installed - silently overriding an operator's per-ring or fleet-wide global version allow-list. `Resolve-AzLocalPipelineUpdateRing` gains a `-ForceImmediateUpdate` switch that resolves the ring-scoped allow-list (per-ring override beats the global default; the `Latest` sentinel / no allow-list still means "install the latest Ready update"). A FORCE run now bypasses **only** the schedule WINDOW - never the version allow-list - and never changes the operator-selected ring. If no schedule file is present it degrades gracefully to "latest Ready update" (no throw). Both `apply-updates` templates forward the existing `force_immediate_update` / `forceImmediateUpdate` input into the resolve-ring step under the same `workflow_dispatch` / `Build.Reason=Manual` gating already used by the apply step.
-- **Corrected two fabricated REST targets in [`docs/cmdlet-reference.md`](docs/cmdlet-reference.md).** The WRITE-cmdlets summary table wrongly claimed `Stop-AzLocalFleetUpdate` calls `POST .../updateRuns/{id}/cancel` and `Resume-AzLocalFleetUpdate` calls `POST .../updateRuns/{id}/retry`. Neither endpoint exists in the code path. `Stop-AzLocalFleetUpdate` makes **no Azure call** (it writes a local JSON state file + sets an in-memory stop flag) and does **not** cancel update runs already in progress - there is no supported way to cancel an in-flight Azure Local update run, including one in the Downloading state, so those runs continue to completion. `Resume-AzLocalFleetUpdate` re-drives pending/failed clusters via `Invoke-AzLocalFleetOperation` (`PUT .../updateRuns/{id}`).
+- **Benign "No Clusters Ready" reporting job no longer reds a healthy no-op run.** The `no-clusters-ready` job (GitHub Actions) / `NoClustersReady` stage (Azure DevOps) in `apply-updates` exists only to annotate a nothing-to-apply outcome. Its install + report steps are now `continue-on-error` / `continueOnError`, so a *persistent* PSGallery blip on a run where there was nothing to do produces a warning instead of a failed run. Jobs that genuinely need the module (apply, readiness, fleet-health, etc.) still fail hard after the hardened retry.
 
 ### Notes
 
-- No public function, parameter, or export-count change (still **68**). One new **Private** helper (`Resolve-AzLocalForceAllowList`). `GENERATED_AGAINST_MODULE_VERSION` bumped to `0.9.15`.
+- No public function, parameter, or export-count change (still **68**). Pipeline-template + test-only release. `GENERATED_AGAINST_MODULE_VERSION` bumped to `0.9.16`.
 
 > Previous release notes have moved into the [Release History](#release-history) appendix at the bottom of this document.
 
@@ -594,7 +591,11 @@ This code is provided as-is for educational and reference purposes.
 
 The full What's-New history (v0.7.81 and earlier) has moved to [docs/release-history.md](docs/release-history.md).
 
-The most recent release notes for **v0.9.15** stay above under [`What's New in v0.9.15`](#whats-new-in-v0915).
+The most recent release notes for **v0.9.16** stay above under [`What's New in v0.9.16`](#whats-new-in-v0916).
+
+### What's New in v0.9.15
+
+**Update: 1 - Assess Update Readiness operator-guidance + Update: 2 FORCE allow-list fix.** Allow-list-held clusters get their own visible "Up to date - Ready update held by allow-list" table plus an "of which held by allow-list" summary sub-count (new PassThru `AllowListHeldCount`), and SBE-prerequisite Not-Ready clusters carry a manual-action knowledge note (review the Hardware OEM provider's docs + sideload the SBE update). Fixed: a FORCE (break-glass) apply on the manual path now HONOURS the `allowedUpdateVersions` allow-list instead of silently installing the latest Ready update - `Resolve-AzLocalPipelineUpdateRing` gains a `-ForceImmediateUpdate` switch (new private helper `Resolve-AzLocalForceAllowList`) that bypasses only the schedule window, never the version allow-list; both `apply-updates` templates forward the force input under the existing manual-only gating. Also corrected two fabricated REST targets in `docs/cmdlet-reference.md`. No public function/export change (still 68). `GENERATED_AGAINST_MODULE_VERSION` bumped to `0.9.15`. See [CHANGELOG.md](CHANGELOG.md#0915---2026-07-02) for the full v0.9.15 entry.
 
 ### What's New in v0.9.14
 

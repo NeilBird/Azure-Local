@@ -4,9 +4,13 @@
 >
 > **For older releases**, this is the canonical reference; the main README intentionally stays slim so the most recent block is easy to find.
 >
-> **For v0.9.15 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0915) `What's New in v0.9.15` section.
+> **For v0.9.16 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0916) `What's New in v0.9.16` section.
 
 ---
+
+### What's New in v0.9.16
+
+**Pipeline bootstrap hardening - Update: 3 - Apply Updates and every other template.** After a customer (`sainsburys-tech/Limbus-AzureLocal-Cluster-Update`, Collect Fleet Health Status) and the internal fleet both hit a transient PSGallery search-index blip that failed an otherwise-healthy scheduled run, two changes make the pipeline bootstrap resilient. (1) The shared "Install AzLocal.UpdateManagement from PSGallery" step in all 20 GitHub Actions + Azure DevOps templates (26 install blocks) now retries a transient `No match was found ... 'AzLocal.UpdateManagement'` lookup up to **5** attempts (was 3) with a capped exponential backoff (~10s, 20s, 40s, 60s - capped at 60s via `[math]::Min`) plus 0-4s of random **jitter**. The old 3-attempt / 10s,20s window (~30s total) was too short to ride out a real index blip: in run 28721322188 the module installed cleanly in the readiness job but a sibling job one minute later failed all three attempts. The jitter prevents fanned-out fleet jobs from retrying in lockstep against the same flaky index. (2) The benign "No Clusters Ready" reporting job in `apply-updates` (GitHub Actions job `no-clusters-ready` / Azure DevOps stage `NoClustersReady`) - whose only purpose is to annotate a nothing-to-apply outcome - is now non-fatal: its install + report steps use `continue-on-error` / `continueOnError`, so a *persistent* PSGallery blip on a run where there was nothing to do produces a warning instead of a red run. Jobs that genuinely need the module still fail hard after the hardened retry. No public function, parameter, or export-count change (still 68). Pipeline-template + test-only release. `GENERATED_AGAINST_MODULE_VERSION` bumped to `0.9.16`. See [CHANGELOG.md](../CHANGELOG.md#0916---2026-07-06) for the full v0.9.16 entry.
 
 ### What's New in v0.9.15
 

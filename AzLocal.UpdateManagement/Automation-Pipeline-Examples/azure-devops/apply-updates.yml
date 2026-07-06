@@ -129,7 +129,7 @@ variables:
   # log if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
   - name: GENERATED_AGAINST_MODULE_VERSION
-    value: '0.9.15'
+    value: '0.9.16'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): queue-time parameter > pipeline variable
   # 'REQUIRED_MODULE_VERSION' overridden at queue time > empty (latest).
@@ -216,8 +216,8 @@ stages:
                 # Transient PSGallery lookups can intermittently fail with "No match was found
                 # for the specified search criteria and module name 'AzLocal.UpdateManagement'"
                 # (a PSGallery search index / publish-propagation blip). Retry the install up
-                # to 3 attempts with exponential backoff (10s, then 20s) before giving up.
-                $installMaxAttempts = 3
+                # to 5 attempts with capped exponential backoff + jitter (10s, 20s, 40s, 60s).
+                $installMaxAttempts = 5
                 $installAttempt = 0
                 while ($true) {
                     $installAttempt++
@@ -229,7 +229,7 @@ stages:
                             Write-Host "Install-Module failed after $installAttempt attempt(s): $($_.Exception.Message)"
                             throw
                         }
-                        $installRetryDelay = 10 * [math]::Pow(2, $installAttempt - 1)
+                        $installRetryDelay = [math]::Min(60, 10 * [math]::Pow(2, $installAttempt - 1)) + (Get-Random -Minimum 0 -Maximum 5)
                         Write-Host "Install-Module attempt $installAttempt of $installMaxAttempts failed: $($_.Exception.Message). Retrying in $installRetryDelay second(s)..."
                         Start-Sleep -Seconds $installRetryDelay
                     }
@@ -422,8 +422,8 @@ stages:
                 # Transient PSGallery lookups can intermittently fail with "No match was found
                 # for the specified search criteria and module name 'AzLocal.UpdateManagement'"
                 # (a PSGallery search index / publish-propagation blip). Retry the install up
-                # to 3 attempts with exponential backoff (10s, then 20s) before giving up.
-                $installMaxAttempts = 3
+                # to 5 attempts with capped exponential backoff + jitter (10s, 20s, 40s, 60s).
+                $installMaxAttempts = 5
                 $installAttempt = 0
                 while ($true) {
                     $installAttempt++
@@ -435,7 +435,7 @@ stages:
                             Write-Host "Install-Module failed after $installAttempt attempt(s): $($_.Exception.Message)"
                             throw
                         }
-                        $installRetryDelay = 10 * [math]::Pow(2, $installAttempt - 1)
+                        $installRetryDelay = [math]::Min(60, 10 * [math]::Pow(2, $installAttempt - 1)) + (Get-Random -Minimum 0 -Maximum 5)
                         Write-Host "Install-Module attempt $installAttempt of $installMaxAttempts failed: $($_.Exception.Message). Retrying in $installRetryDelay second(s)..."
                         Start-Sleep -Seconds $installRetryDelay
                     }
@@ -775,9 +775,13 @@ stages:
 
         steps:
           # Module install is required so the no-clusters-ready summary helper is
-          # available on this stage's agent.
+          # available on this stage's agent. This stage only REPORTS a benign
+          # "nothing to apply" outcome, so continueOnError keeps a persistent
+          # transient PSGallery install blip from failing a healthy no-op run
+          # (the hardened retry loop already absorbs the common transient case).
           - task: PowerShell@2
             displayName: 'Install AzLocal.UpdateManagement from PSGallery'
+            continueOnError: true
             env:
               REQUIRED_MODULE_VERSION: $(REQUIRED_MODULE_VERSION)
             inputs:
@@ -790,8 +794,8 @@ stages:
                 # Transient PSGallery lookups can intermittently fail with "No match was found
                 # for the specified search criteria and module name 'AzLocal.UpdateManagement'"
                 # (a PSGallery search index / publish-propagation blip). Retry the install up
-                # to 3 attempts with exponential backoff (10s, then 20s) before giving up.
-                $installMaxAttempts = 3
+                # to 5 attempts with capped exponential backoff + jitter (10s, 20s, 40s, 60s).
+                $installMaxAttempts = 5
                 $installAttempt = 0
                 while ($true) {
                     $installAttempt++
@@ -803,7 +807,7 @@ stages:
                             Write-Host "Install-Module failed after $installAttempt attempt(s): $($_.Exception.Message)"
                             throw
                         }
-                        $installRetryDelay = 10 * [math]::Pow(2, $installAttempt - 1)
+                        $installRetryDelay = [math]::Min(60, 10 * [math]::Pow(2, $installAttempt - 1)) + (Get-Random -Minimum 0 -Maximum 5)
                         Write-Host "Install-Module attempt $installAttempt of $installMaxAttempts failed: $($_.Exception.Message). Retrying in $installRetryDelay second(s)..."
                         Start-Sleep -Seconds $installRetryDelay
                     }
@@ -811,8 +815,11 @@ stages:
                 Import-Module AzLocal.UpdateManagement -Force
 
           # v0.8.5 thin-YAML - No-clusters-ready summary via shared helper.
+          # continueOnError: if the module could not be installed above, skip the
+          # summary gracefully rather than failing an otherwise-healthy no-op run.
           - task: PowerShell@2
             displayName: 'Generate Report'
+            continueOnError: true
             env:
               RESOLVED_UPDATE_RING: $(resolvedUpdateRing)
             inputs:

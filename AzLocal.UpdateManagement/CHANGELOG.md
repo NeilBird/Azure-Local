@@ -5,6 +5,25 @@ All notable changes to the AzLocal.UpdateManagement module (renamed from AzStack
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.16] - 2026-07-06
+
+Pipeline bootstrap hardening for **Update: 3 - Apply Updates** (and every other
+GitHub Actions / Azure DevOps template) after a customer and the internal fleet
+both hit a transient PSGallery search-index blip that failed an otherwise-healthy
+scheduled run.
+
+### Changed
+
+- **Install-step retry hardened from 3 to 5 attempts with capped exponential backoff + jitter.** The shared "Install AzLocal.UpdateManagement from PSGallery" step in all 20 templates (26 install blocks) now retries a transient `No match was found ... 'AzLocal.UpdateManagement'` PSGallery lookup up to 5 times with delays of ~10s, 20s, 40s, 60s (capped at 60s via `[math]::Min`) plus 0-4s of random jitter. The previous 3-attempt / 10s,20s window (~30s total) was too short to ride out a real index blip: in run 28721322188 the module installed cleanly in the readiness job but a sibling job one minute later failed all three attempts. The jitter prevents fanned-out fleet jobs from retrying in lockstep against the same flaky index.
+
+### Fixed
+
+- **Benign "No Clusters Ready" reporting job no longer reds a healthy no-op run.** The `no-clusters-ready` job (GitHub Actions) / `NoClustersReady` stage (Azure DevOps) in `apply-updates` exists only to annotate a nothing-to-apply outcome. Its install + report steps are now `continue-on-error` / `continueOnError`, so a *persistent* PSGallery blip on a run where there was nothing to do produces a warning instead of a failed run. Jobs that genuinely need the module (apply, readiness, fleet-health, etc.) still fail hard after the hardened retry, as before.
+
+### Notes
+
+- No public function, parameter, or export-count change (still 68). Pipeline-template + test-only release. `GENERATED_AGAINST_MODULE_VERSION` bumped to `0.9.16`.
+
 ## [0.9.15] - 2026-07-02
 
 Update: 1 - Assess Update Readiness gains two operator-guidance improvements based
