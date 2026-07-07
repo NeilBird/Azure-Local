@@ -403,7 +403,11 @@ function Get-AzLocalFleetStatusData {
                             $runDuration = if ($hasInProgress) { "$fmt (running)" } else { $fmt }
                         }
                         $currentStep = ''; $currentStepDetail = ''; $runProgress = ''
-                        if ($latestProps.progress -and $latestProps.progress.steps) {
+                        # v0.9.17: guard `progress`/`steps` under Set-StrictMode -Version Latest.
+                        # A run's `properties` can omit `progress`, and a `progress` object can
+                        # omit `steps` - bare reads THROW "The property 'steps'/'progress' cannot
+                        # be found on this object".
+                        if ($latestProps.PSObject.Properties['progress'] -and $latestProps.progress -and $latestProps.progress.PSObject.Properties['steps'] -and $latestProps.progress.steps) {
                             $steps = $latestProps.progress.steps
                             # Progress must reflect the DEEP nested step tree, not the coarse top-level
                             # wrapper. Real Azure Local update runs expose only ~2 top-level steps
@@ -455,7 +459,7 @@ function Get-AzLocalFleetStatusData {
                             EndTime = $latestEndDisplay
                             Duration = $runDuration; Progress = $runProgress
                             CurrentStep = $currentStep; CurrentStepDetail = $currentStepDetail
-                            Location = $latestProps.location
+                            Location = if ($latestProps.PSObject.Properties['location']) { $latestProps.location } else { '' }
                             Attempts = $attempts.Count
                         }) | Out-Null
                     }

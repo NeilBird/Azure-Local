@@ -385,6 +385,7 @@ function Get-AzLocalClusterUpdateReadiness {
                     ClusterResourceId      = $cluster.ResourceId
                     ResourceGroup          = $cluster.ResourceGroup
                     SubscriptionId         = $cluster.SubscriptionId
+                    UpdateRing             = ''
                     ClusterState           = 'Not Found'
                     UpdateState            = 'N/A'
                     HealthState            = 'N/A'
@@ -641,12 +642,17 @@ function Get-AzLocalClusterUpdateReadiness {
 
             $uw = if ($clusterTags) { Get-TagValue -Tags $clusterTags -Name $script:UpdateStartWindowTagName } else { $null }
             $ue = if ($clusterTags) { Get-TagValue -Tags $clusterTags -Name $script:UpdateExclusionsWindowTagName } else { $null }
+            # v0.9.17: surface each cluster's own UpdateRing tag so the readiness
+            # table / CSV can show WHICH ring a cluster belongs to (the gate can be
+            # scoped to a ';'-joined multi-ring value, e.g. 'Prod;Ring2').
+            $clusterUpdateRing = if ($clusterTags) { Get-TagValue -Tags $clusterTags -Name 'UpdateRing' } else { $null }
 
             $results.Add([PSCustomObject]@{
                     ClusterName            = $clusterName
                     ClusterResourceId      = $cluster.ResourceId
                     ResourceGroup          = $cluster.ResourceGroup
                     SubscriptionId         = $cluster.SubscriptionId
+                    UpdateRing             = if ($clusterUpdateRing) { $clusterUpdateRing } else { '' }
                     ClusterState           = $clusterStatus
                     UpdateState            = $rowUpdateState
                     HealthState            = $healthState
@@ -675,6 +681,7 @@ function Get-AzLocalClusterUpdateReadiness {
                     ClusterResourceId      = $cluster.ResourceId
                     ResourceGroup          = $cluster.ResourceGroup
                     SubscriptionId         = $cluster.SubscriptionId
+                    UpdateRing             = ''
                     ClusterState           = 'Error'
                     UpdateState            = 'Error'
                     HealthState            = 'Error'

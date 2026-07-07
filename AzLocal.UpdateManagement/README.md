@@ -85,9 +85,18 @@ If you are new to this module, work through these in order from a regular PowerS
 
 - **Install-step retry raised from 5 to 25 attempts (~25 min), uniformly on both platforms.** The shared "Install AzLocal.UpdateManagement from PSGallery" step in all 20 templates (26 install blocks) now retries up to **25** times with the same capped exponential backoff + jitter (10s, 20s, 40s, then a 60s cap), giving **~25 minutes** of single-run coverage to ride out a prolonged PSGallery search-index outage. This is deliberately **one mechanism** - a single long-retry run - rather than a per-platform self-re-queue, so GitHub Actions and Azure DevOps behave identically and neither needs extra permissions (`actions: write` / "Queue builds"). ~25 min stays under the Azure DevOps 60-min hosted-agent job cap (GitHub-hosted runners have a 6-hour cap; self-hosted agents are uncapped). The normal path is unchanged - a healthy install returns on the first attempt - and the latest module version is still installed on every run.
 
+### Added
+
+- **Schedule-source banner on the Update: 3 - Apply Updates step summaries (scheduled/cron runs).** On a cron-triggered run, the **Check Cluster Readiness** and **Apply Updates** step summaries now open with a short paragraph that makes it explicit the pipeline is acting on **your** configuration only: it names the `apply-updates-schedule.yml` file the ring(s) were derived from (with its path), states which **cycle day** the run falls on (e.g. *"cycle week 2 of 4"*, plus the UTC day), and lists the ring(s) that match. The Apply Updates banner additionally recommends running **Config: 3 - Apply-Updates Schedule Coverage Audit** to review the full per-day cycle. The banner renders nothing on manual (`workflow_dispatch`) runs or when no schedule file is present.
+- **`UpdateRing` column in the Apply-Updates "Cluster Readiness" table**, placed immediately after the `Cluster` column, so the ring each cluster belongs to is obvious when the readiness gate is scoped to a `;`-joined multi-ring value. Every readiness row and the `readiness-report.csv` artifact also carry a matching `UpdateRing` field (sourced from each cluster's `UpdateRing` tag).
+
+### Fixed
+
+- **Strict-mode crash when retrying a failed update whose ARM run omits `location` or `progress.steps`.** Under `Set-StrictMode -Version Latest` an absent property throws instead of returning `$null`, so `Invoke-AzLocalFailedUpdateRetry` failed with `The property 'location' cannot be found on this object.` / `The property 'steps' cannot be found on this object.` for clusters whose latest failed run had those shapes. All such optional-property reads are now guarded (`Format-AzLocalUpdateRun`, `Get-AzLocalFleetStatusData`, `Get-LastUpdateRunErrorSummary`).
+
 ### Notes
 
-- No public function, parameter, or export-count change (still **68**). Pipeline-template + test-only release. `GENERATED_AGAINST_MODULE_VERSION` bumped to `0.9.17`.
+- No public function or export-count change (still **68**); one new internal helper (`Get-AzLocalApplyScheduleSourceBanner`). Pipeline-template + module + test release. `GENERATED_AGAINST_MODULE_VERSION` bumped to `0.9.17`.
 
 > Previous release notes have moved into the [Release History](#release-history) appendix at the bottom of this document.
 

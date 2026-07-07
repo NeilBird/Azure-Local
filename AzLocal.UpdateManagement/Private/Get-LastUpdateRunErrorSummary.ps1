@@ -63,9 +63,12 @@ function Get-LastUpdateRunErrorSummary {
                 [datetime]::MinValue 
             }
         } -Descending | Select-Object -First 1
-        $progress = $latestFailed.properties.progress
+        $progress = if ($latestFailed.properties.PSObject.Properties['progress']) { $latestFailed.properties.progress } else { $null }
 
-        if (-not $progress -or -not $progress.steps) {
+        # v0.9.17: guard `steps` under Set-StrictMode -Version Latest. A failed run's
+        # `progress` object can exist but omit `steps`, and a bare `$progress.steps`
+        # read THROWS "The property 'steps' cannot be found on this object".
+        if (-not $progress -or -not ($progress.PSObject.Properties['steps'] -and $progress.steps)) {
             return @{ ErrorStep = ""; ErrorMessage = "" }
         }
 
