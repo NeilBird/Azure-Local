@@ -76,13 +76,19 @@ function Get-LastUpdateRunErrorSummary {
         function Find-DeepestError {
             param($steps)
             foreach ($step in $steps) {
-                if ($step.status -eq "Error" -or $step.status -eq "Failed") {
-                    if ($step.errorMessage) {
-                        return @{ Name = $step.name; Message = $step.errorMessage }
+                # v0.9.18: guard status/steps/errorMessage/name under Set-StrictMode -Version
+                # Latest - a leaf step in a failed run can omit these and a bare read THROWS.
+                $stepStatus = if ($step.PSObject.Properties['status']) { $step.status } else { $null }
+                if ($stepStatus -eq "Error" -or $stepStatus -eq "Failed") {
+                    $stepErr = if ($step.PSObject.Properties['errorMessage']) { $step.errorMessage } else { $null }
+                    if ($stepErr) {
+                        $stepName = if ($step.PSObject.Properties['name']) { $step.name } else { '' }
+                        return @{ Name = $stepName; Message = $stepErr }
                     }
                 }
-                if ($step.steps) {
-                    $nestedResult = Find-DeepestError -steps $step.steps
+                $childSteps = if ($step.PSObject.Properties['steps']) { $step.steps } else { $null }
+                if ($childSteps) {
+                    $nestedResult = Find-DeepestError -steps $childSteps
                     if ($nestedResult.Message) {
                         return $nestedResult
                     }

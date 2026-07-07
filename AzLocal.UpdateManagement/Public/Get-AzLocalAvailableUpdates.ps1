@@ -153,11 +153,12 @@ function Get-AzLocalAvailableUpdates {
         $enriched = @()
         foreach ($update in $result.value) {
             $props = $update.properties
-            $state = if ($props.state) { $props.state } else { "Unknown" }
-            $packageType = if ($props.packageType) { $props.packageType } else { "" }
+            $state = if ($props.PSObject.Properties['state'] -and $props.state) { $props.state } else { "Unknown" }
+            $packageType = if ($props.PSObject.Properties['packageType'] -and $props.packageType) { $props.packageType } else { "" }
             $sbeDependency = ""
             if ($state -in @("HasPrerequisite", "AdditionalContentRequired") -and $packageType -eq "SBE") {
-                $additionalProps = ConvertTo-AzLocalAdditionalProperties -InputObject $props.additionalProperties
+                $addlRaw = if ($props.PSObject.Properties['additionalProperties']) { $props.additionalProperties } else { $null }
+                $additionalProps = ConvertTo-AzLocalAdditionalProperties -InputObject $addlRaw
                 $sbeParts = @()
                 if ($additionalProps -and $additionalProps.SBEPublisher) { $sbeParts += "Publisher: $($additionalProps.SBEPublisher)" }
                 if ($additionalProps -and $additionalProps.SBEFamily) { $sbeParts += "Family: $($additionalProps.SBEFamily)" }

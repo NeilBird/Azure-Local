@@ -43,7 +43,7 @@
 #requires -Version 5.1
 [CmdletBinding()]
 param(
-    [string]$ReleaseVersion = '0.9.17',
+    [string]$ReleaseVersion = '0.9.18',
     [string]$SubscriptionId,
     [string]$ModulePath,
     [string[]]$Rings = @('Prod', 'Ring1', 'Ring2', 'Canary', 'DevTest'),

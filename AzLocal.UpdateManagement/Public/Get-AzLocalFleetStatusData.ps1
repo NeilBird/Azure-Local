@@ -280,8 +280,10 @@ function Get-AzLocalFleetStatusData {
             $sbeDependencyInfo = ""
             foreach ($pu in $prereqUpdates) {
                 $puProps = $pu.properties
-                if ($puProps.packageType -eq "SBE" -and $puProps.additionalProperties) {
-                    $addProps = ConvertTo-AzLocalAdditionalProperties -InputObject $puProps.additionalProperties
+                $puPkgType = if ($puProps.PSObject.Properties['packageType'] -and $puProps.packageType) { $puProps.packageType } else { '' }
+                $puAddl = if ($puProps.PSObject.Properties['additionalProperties']) { $puProps.additionalProperties } else { $null }
+                if ($puPkgType -eq "SBE" -and $puAddl) {
+                    $addProps = ConvertTo-AzLocalAdditionalProperties -InputObject $puAddl
                     if ($addProps) {
                         $sbeParts = @()
                         if ($addProps.SBEPublisher) { $sbeParts += "Publisher: $($addProps.SBEPublisher)" }

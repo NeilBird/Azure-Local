@@ -34,8 +34,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $script:ModuleInfo | Should -Not -BeNullOrEmpty
         }
 
-        It 'Should have version 0.9.17' {
-            $script:ModuleInfo.Version | Should -Be '0.9.17'
+        It 'Should have version 0.9.18' {
+            $script:ModuleInfo.Version | Should -Be '0.9.18'
         }
 
         It 'Module version constants are in sync between .psm1 and .psd1' {
@@ -2171,6 +2171,55 @@ Describe 'Helper Function: Format-AzLocalUpdateRun (Internal)' {
                 $f = Format-AzLocalUpdateRun -run $run -clusterName 'c1'
                 $f.Status   | Should -BeNullOrEmpty
                 $f.Location | Should -Be 'eastus'
+            }
+        }
+
+        It 'Does not throw when progress.steps holds LEAF steps that omit the steps child (regression: Tacoma bae9704e / v0.9.18)' {
+            InModuleScope AzLocal.UpdateManagement {
+                # Set strict mode inside module scope to mirror the production caller
+                # Invoke-AzLocalReadinessGatedFailedUpdateRetry (line 98), which is what
+                # made the recursive step-walkers throw on Tacoma's real failed run whose
+                # top-level steps are LEAF nodes with NO `steps` property.
+                Set-StrictMode -Version Latest
+                $run = [PSCustomObject]@{
+                    id         = '/subscriptions/x/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/Tacoma/updates/Solution12.2606/updateRuns/rLeaf'
+                    name       = 'rLeaf'
+                    properties = [PSCustomObject]@{
+                        state       = 'Failed'
+                        timeStarted = '2026-07-02T23:42:12Z'
+                        duration    = 'PT10M'
+                        location    = 'eastus'
+                        progress    = [PSCustomObject]@{
+                            status = 'Error'
+                            steps  = @(
+                                [PSCustomObject]@{ name = 'Downloading update'; status = 'Success' }        # no 'steps' child
+                                [PSCustomObject]@{ name = 'Update is blocked due to health check failure'; status = 'Failed'; errorMessage = 'health check failed' }  # no 'steps' child
+                                [PSCustomObject]@{ name = 'Initiating update installation.'; status = 'NotStarted' }  # no 'steps' child
+                            )
+                        }
+                    }
+                }
+                { Format-AzLocalUpdateRun -run $run -clusterName 'Tacoma' } | Should -Not -Throw
+                $f = Format-AzLocalUpdateRun -run $run -clusterName 'Tacoma'
+                $f.CurrentStep  | Should -Be 'Update is blocked due to health check failure (FAILED)'
+                $f.ErrorMessage | Should -Be 'health check failed'
+            }
+        }
+
+        It 'The recursive step-walkers do not throw on leaf steps missing the steps child (v0.9.18)' {
+            InModuleScope AzLocal.UpdateManagement {
+                Set-StrictMode -Version Latest
+                $steps = @(
+                    [PSCustomObject]@{ name = 'a'; status = 'Success' }
+                    [PSCustomObject]@{ name = 'b'; status = 'Failed'; errorMessage = 'boom' }
+                )
+                $active = $null
+                { $active = Get-DeepestActiveStep -Steps $steps } | Should -Not -Throw
+                (Get-DeepestActiveStep -Steps $steps).name | Should -Be 'b'
+                { Get-CurrentStepPath -Steps $steps -IncludeErrorMessage } | Should -Not -Throw
+                (Get-CurrentStepPath -Steps $steps -IncludeErrorMessage) | Should -Match 'b : boom'
+                { Get-DeepestErrorMessage -Steps $steps } | Should -Not -Throw
+                (Get-DeepestErrorMessage -Steps $steps) | Should -Be 'boom'
             }
         }
     }

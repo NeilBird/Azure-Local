@@ -5,6 +5,22 @@ All notable changes to the AzLocal.UpdateManagement module (renamed from AzStack
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.18] - 2026-07-07
+
+Follow-up strict-mode hardening after v0.9.17. A live re-run of **Update: 3 -
+Apply Updates** showed the failed-update single-retry still crashed on one
+cluster (Tacoma) with `The property 'steps' cannot be found on this object` even
+on v0.9.17.
+
+### Fixed
+
+- **Failed-update retry no longer crashes when a run's `progress.steps` contains LEAF steps that omit the `steps` child.** v0.9.17 guarded the *top-level* `progress.steps` read in `Format-AzLocalUpdateRun`, but the recursive step-tree walkers it calls - `Get-DeepestActiveStep`, `Get-CurrentStepPath`, `Get-DeepestErrorMessage`, and the inner `Find-DeepestError` in `Get-LastUpdateRunErrorSummary` - still read `$step.steps` / `$step.status` / `$step.name` / `$step.errorMessage` **bare**. Under `Set-StrictMode -Version Latest` (applied by the production entry point `Invoke-AzLocalReadinessGatedFailedUpdateRetry`), a leaf step that legitimately omits `steps` made the walker throw, so `Invoke-AzLocalFailedUpdateRetry` failed the whole cluster. Reproduced live against the affected cluster (a failed run whose four top-level steps are leaves with no `steps` child). All walker reads are now guarded with `PSObject.Properties[...]`.
+- **Broader strict-mode audit** of ARM/JSON-response consumers guarded several more optional-field bare reads that would throw on a shape that omits the field: `Get-AzLocalUpdateSummary` (the `lastUpdated`/`lastUpdatedTime` and `lastChecked`/`lastCheckedTime` ARG-vs-ARM compatibility pair - exactly one is present, so the bare read of the absent sibling threw - plus `state`/`healthState`/`updateStateProperties`); the SBE `packageType`/`additionalProperties` reads in `Get-AzLocalAvailableUpdates`, `Get-AzLocalClusterUpdateReadiness` and `Get-AzLocalFleetStatusData`; the `HealthCheckResult` container read in `Get-AzLocalUpdateRunHealthEvidence` and `Get-AzLocalFleetHealthFailures`; and the deepest-step `name` read in `Format-AzLocalUpdateRun`.
+
+### Notes
+
+- No public function or export-count change (still 68). Bug-fix + test release. `GENERATED_AGAINST_MODULE_VERSION` bumped to `0.9.18`.
+
 ## [0.9.17] - 2026-07-07
 
 PSGallery install-step retry hardened again after a customer hit a transient
