@@ -86,9 +86,13 @@ If you are new to this module, work through these in order from a regular PowerS
 - **Failed-update retry no longer crashes on a run whose `progress.steps` contains leaf steps that omit the `steps` child.** v0.9.17 guarded the *top-level* `progress.steps` read in `Format-AzLocalUpdateRun`, but the recursive step-tree walkers it calls - `Get-DeepestActiveStep`, `Get-CurrentStepPath`, `Get-DeepestErrorMessage`, and `Find-DeepestError` in `Get-LastUpdateRunErrorSummary` - still read `$step.steps` / `$step.status` / `$step.name` / `$step.errorMessage` **bare**. Under `Set-StrictMode -Version Latest` (applied by the production entry point `Invoke-AzLocalReadinessGatedFailedUpdateRetry`), a leaf step that legitimately omits `steps` made the walker throw and failed the whole cluster. Reproduced live against the affected cluster; all walker reads are now guarded with `PSObject.Properties[...]`.
 - **Broader strict-mode audit** of ARM/JSON-response consumers guarded more optional-field bare reads: `Get-AzLocalUpdateSummary` (the `lastUpdated`/`lastUpdatedTime` and `lastChecked`/`lastCheckedTime` ARG-vs-ARM compatibility pair - exactly one is present, so the bare read of the absent sibling threw - plus `state`/`healthState`/`updateStateProperties`); the SBE `packageType`/`additionalProperties` reads in `Get-AzLocalAvailableUpdates`, `Get-AzLocalClusterUpdateReadiness` and `Get-AzLocalFleetStatusData`; the `HealthCheckResult` container read in `Get-AzLocalUpdateRunHealthEvidence` and `Get-AzLocalFleetHealthFailures`; and the deepest-step `name` read in `Format-AzLocalUpdateRun`.
 
+### Added
+
+- **Support disclaimer in every pipeline run summary.** A new final `Support disclaimer` step (`if: always()` / `condition: always()`, non-fatal) is wired into all 20 templates and renders a bottom-of-summary footer via the new exported helper `Add-AzLocalPipelineSupportFooter`: a bold **Support disclaimer:** label + italic note that these pipelines are **not a supported Microsoft service offering**, how to open a support request (SR), and a link to open a **GitHub issue** for pipeline logic/outcome problems. The install-step version banner also gained a matching caveat line.
+
 ### Notes
 
-- No public function or export-count change (still **68**). Bug-fix + test release. `GENERATED_AGAINST_MODULE_VERSION` bumped to `0.9.18`.
+- Export count **68 -> 69** (adds `Add-AzLocalPipelineSupportFooter`). Bug-fix + pipeline + test release. `GENERATED_AGAINST_MODULE_VERSION` bumped to `0.9.18`.
 
 > Previous release notes have moved into the [Release History](#release-history) appendix at the bottom of this document.
 

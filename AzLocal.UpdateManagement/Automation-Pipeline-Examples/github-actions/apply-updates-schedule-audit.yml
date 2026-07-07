@@ -376,3 +376,12 @@ jobs:
         list-suites: failed
         list-tests: failed
 
+    # v0.9.18: render the support disclaimer at the very bottom of the run summary.
+    - name: Support disclaimer
+      if: always()
+      continue-on-error: true
+      shell: pwsh
+      run: |
+        Import-Module AzLocal.UpdateManagement -Force
+        Add-AzLocalPipelineSupportFooter
+

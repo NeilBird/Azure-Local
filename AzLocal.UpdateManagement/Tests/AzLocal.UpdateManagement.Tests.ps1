@@ -293,9 +293,9 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $content | Should -Match 'MonitorInFlightHours'       -Because "$Platform audit plumbs in-flight hours into the cmdlet"
         }
 
-        It 'Should export exactly 68 functions' {
+        It 'Should export exactly 69 functions' {
 
-            $script:ModuleInfo.ExportedFunctions.Count | Should -Be 68
+            $script:ModuleInfo.ExportedFunctions.Count | Should -Be 69
         }
 
         It 'Should export the expected functions' {
@@ -360,6 +360,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
                 'New-AzLocalFleetConnectivityStatusSummary',
                 # Thin-YAML pipeline foundation (v0.8.5) - install-step version banner + drift annotations + step outputs
                 'Add-AzLocalPipelineVersionBanner',
+                # Support-disclaimer footer (v0.9.18) - final if:always() step rendered at the bottom of every pipeline summary
+                'Add-AzLocalPipelineSupportFooter',
                 # Thin-YAML Step.0 (v0.8.5) - Authentication validation + subscription scope + cluster reachability
                 'Export-AzLocalAuthValidationReport',
                 # Thin-YAML Step.1 (v0.8.5) - Cluster inventory workload (timestamped + canonical CSV, JSON, README, step summary)
@@ -12619,8 +12621,8 @@ Describe 'Function: Get-AzLocalFleetHealthOverview - v0.7.70 (ARG-first fleet he
             $cmd.CommandType | Should -Be 'Function'
         }
 
-        It 'BS7: Module exports exactly 68 functions (was 55 after Step.6 thin-YAML port; v0.8.7 sideload automation adds 5 cmdlets; v0.8.88 adds Sync-AzLocalClusterUpdateSummary; v0.8.95 adds Invoke-AzLocalFailedUpdateRetry + Invoke-AzLocalReadinessGatedFailedUpdateRetry + Add-AzLocalFailedUpdateRetryHintSummary; v0.9.1 adds Get-AzLocalExcludedSubscription + Set-AzLocalExcludedSubscription; v0.9.12 adds Assert-AzLocalAzureSubscriptionAccess + Assert-AzLocalPipelineReport)' {
-            (Get-Module AzLocal.UpdateManagement).ExportedFunctions.Count | Should -Be 68
+        It 'BS7: Module exports exactly 69 functions (was 55 after Step.6 thin-YAML port; v0.8.7 sideload automation adds 5 cmdlets; v0.8.88 adds Sync-AzLocalClusterUpdateSummary; v0.8.95 adds Invoke-AzLocalFailedUpdateRetry + Invoke-AzLocalReadinessGatedFailedUpdateRetry + Add-AzLocalFailedUpdateRetryHintSummary; v0.9.1 adds Get-AzLocalExcludedSubscription + Set-AzLocalExcludedSubscription; v0.9.12 adds Assert-AzLocalAzureSubscriptionAccess + Assert-AzLocalPipelineReport; v0.9.18 adds Add-AzLocalPipelineSupportFooter)' {
+            (Get-Module AzLocal.UpdateManagement).ExportedFunctions.Count | Should -Be 69
         }
     }
 
@@ -14892,6 +14894,50 @@ Describe 'Thin-YAML foundation: Add-AzLocalPipelineVersionBanner' {
 }
 
 #endregion v0.8.5: Add-AzLocalPipelineVersionBanner (thin-YAML foundation)
+
+#region v0.9.18: Add-AzLocalPipelineSupportFooter
+Describe 'Support footer: Add-AzLocalPipelineSupportFooter' {
+
+    BeforeEach {
+        $script:_sf_savedGhActions = $env:GITHUB_ACTIONS
+        $script:_sf_savedGhSummary = $env:GITHUB_STEP_SUMMARY
+        Remove-Item Env:\GITHUB_ACTIONS      -ErrorAction SilentlyContinue
+        Remove-Item Env:\GITHUB_STEP_SUMMARY -ErrorAction SilentlyContinue
+        $script:_sf_ghSummaryFile = Join-Path -Path $env:TEMP -ChildPath ("sf-gh-summary-{0}.md" -f ([Guid]::NewGuid()))
+        New-Item -ItemType File -Path $script:_sf_ghSummaryFile -Force | Out-Null
+    }
+
+    AfterEach {
+        if ($null -ne $script:_sf_savedGhActions) { $env:GITHUB_ACTIONS      = $script:_sf_savedGhActions } else { Remove-Item Env:\GITHUB_ACTIONS      -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_sf_savedGhSummary) { $env:GITHUB_STEP_SUMMARY = $script:_sf_savedGhSummary } else { Remove-Item Env:\GITHUB_STEP_SUMMARY -ErrorAction SilentlyContinue }
+        if ($script:_sf_ghSummaryFile -and (Test-Path -LiteralPath $script:_sf_ghSummaryFile)) {
+            Remove-Item -LiteralPath $script:_sf_ghSummaryFile -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'Appends a bold-label / italic support disclaimer with a horizontal rule to the GitHub step summary' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_STEP_SUMMARY = $script:_sf_ghSummaryFile
+        InModuleScope AzLocal.UpdateManagement {
+            Add-AzLocalPipelineSupportFooter
+        }
+        $md = Get-Content -LiteralPath $script:_sf_ghSummaryFile -Raw
+        $md | Should -Match '(?m)^---\s*$'
+        $md | Should -Match '\*\*Support disclaimer:\*\*'
+        $md | Should -Match 'NOT a supported Microsoft service offering'
+        $md | Should -Match 'support request \(SR\) case with Microsoft'
+        # v0.9.18: final sentence links "GitHub issue" to the aka.ms redirect.
+        $md | Should -Match '\[GitHub issue\]\(https://aka\.ms/AzLocal\.UpdateManagement/issues\)'
+    }
+
+    It 'PassThru returns the summary path' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_STEP_SUMMARY = $script:_sf_ghSummaryFile
+        $p = InModuleScope AzLocal.UpdateManagement { Add-AzLocalPipelineSupportFooter -PassThru }
+        $p | Should -Not -BeNullOrEmpty
+    }
+}
+#endregion v0.9.18: Add-AzLocalPipelineSupportFooter
 
 #region v0.8.5: Get-AzLocalApplyUpdatesScheduleCycleCalendar
 

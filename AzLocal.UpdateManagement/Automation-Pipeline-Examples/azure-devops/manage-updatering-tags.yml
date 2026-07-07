@@ -224,3 +224,15 @@ stages:
               ArtifactName: 'azlocal-updatering-tag-logs_$(stamp.artifactStamp)'
               publishLocation: 'Container'
 
+          # v0.9.18: render the support disclaimer at the very bottom of the run summary.
+          - task: PowerShell@2
+            displayName: 'Support disclaimer'
+            condition: always()
+            continueOnError: true
+            inputs:
+              targetType: 'inline'
+              pwsh: true
+              script: |
+                Import-Module AzLocal.UpdateManagement -Force
+                Add-AzLocalPipelineSupportFooter
+

@@ -17,9 +17,13 @@ on v0.9.17.
 - **Failed-update retry no longer crashes when a run's `progress.steps` contains LEAF steps that omit the `steps` child.** v0.9.17 guarded the *top-level* `progress.steps` read in `Format-AzLocalUpdateRun`, but the recursive step-tree walkers it calls - `Get-DeepestActiveStep`, `Get-CurrentStepPath`, `Get-DeepestErrorMessage`, and the inner `Find-DeepestError` in `Get-LastUpdateRunErrorSummary` - still read `$step.steps` / `$step.status` / `$step.name` / `$step.errorMessage` **bare**. Under `Set-StrictMode -Version Latest` (applied by the production entry point `Invoke-AzLocalReadinessGatedFailedUpdateRetry`), a leaf step that legitimately omits `steps` made the walker throw, so `Invoke-AzLocalFailedUpdateRetry` failed the whole cluster. Reproduced live against the affected cluster (a failed run whose four top-level steps are leaves with no `steps` child). All walker reads are now guarded with `PSObject.Properties[...]`.
 - **Broader strict-mode audit** of ARM/JSON-response consumers guarded several more optional-field bare reads that would throw on a shape that omits the field: `Get-AzLocalUpdateSummary` (the `lastUpdated`/`lastUpdatedTime` and `lastChecked`/`lastCheckedTime` ARG-vs-ARM compatibility pair - exactly one is present, so the bare read of the absent sibling threw - plus `state`/`healthState`/`updateStateProperties`); the SBE `packageType`/`additionalProperties` reads in `Get-AzLocalAvailableUpdates`, `Get-AzLocalClusterUpdateReadiness` and `Get-AzLocalFleetStatusData`; the `HealthCheckResult` container read in `Get-AzLocalUpdateRunHealthEvidence` and `Get-AzLocalFleetHealthFailures`; and the deepest-step `name` read in `Format-AzLocalUpdateRun`.
 
+### Added
+
+- **Support disclaimer in every pipeline run summary.** A new final `Support disclaimer` step (`if: always()` / `condition: always()`, non-fatal) is wired into all 20 GitHub Actions + Azure DevOps templates and renders a bottom-of-summary footer via the new exported helper `Add-AzLocalPipelineSupportFooter`: a bold **Support disclaimer:** label + italic note that these pipelines are **not a supported Microsoft service offering**, how to open a support request (SR), and a link to open a **GitHub issue** for pipeline logic/outcome problems. The install-step version banner also gained a matching "not a supported Microsoft service offering" caveat line.
+
 ### Notes
 
-- No public function or export-count change (still 68). Bug-fix + test release. `GENERATED_AGAINST_MODULE_VERSION` bumped to `0.9.18`.
+- Export count **68 -> 69** (adds `Add-AzLocalPipelineSupportFooter`). Bug-fix + pipeline + test release. `GENERATED_AGAINST_MODULE_VERSION` bumped to `0.9.18`.
 
 ## [0.9.17] - 2026-07-07
 

@@ -477,3 +477,15 @@ stages:
         testResultsFiles: '$(reportsPath)/sideload-junit.xml'
         testRunTitle: 'Sideload Update - $(Build.BuildNumber)'
         failTaskOnFailedTests: false
+
+    # v0.9.18: render the support disclaimer at the very bottom of the run summary.
+    - task: PowerShell@2
+      displayName: 'Support disclaimer'
+      condition: always()
+      continueOnError: true
+      inputs:
+        targetType: 'inline'
+        pwsh: true
+        script: |
+          Import-Module AzLocal.UpdateManagement -Force
+          Add-AzLocalPipelineSupportFooter

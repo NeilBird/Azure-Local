@@ -399,3 +399,15 @@ stages:
         testRunTitle: 'ITSM Tickets (Step.4) - $(Build.BuildNumber)'
         mergeTestResults: false
         failTaskOnFailedTests: false
+
+    # v0.9.18: render the support disclaimer at the very bottom of the run summary.
+    - task: PowerShell@2
+      displayName: 'Support disclaimer'
+      condition: always()
+      continueOnError: true
+      inputs:
+        targetType: 'inline'
+        pwsh: true
+        script: |
+          Import-Module AzLocal.UpdateManagement -Force
+          Add-AzLocalPipelineSupportFooter

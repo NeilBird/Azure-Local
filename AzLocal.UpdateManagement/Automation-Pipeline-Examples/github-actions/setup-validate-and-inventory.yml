@@ -387,3 +387,12 @@ jobs:
           ./artifacts/*.json
           ./artifacts/README_Instructions.txt
         retention-days: 30
+
+    # v0.9.18: render the support disclaimer at the very bottom of the run summary.
+    - name: Support disclaimer
+      if: always()
+      continue-on-error: true
+      shell: pwsh
+      run: |
+        Import-Module AzLocal.UpdateManagement -Force
+        Add-AzLocalPipelineSupportFooter

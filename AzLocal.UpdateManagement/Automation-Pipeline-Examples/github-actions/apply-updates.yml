@@ -735,6 +735,15 @@ jobs:
         if ($env:INPUT_DRY_RUN -eq 'true') { $params['DryRun'] = $true }
         Add-AzLocalApplyUpdatesStepSummary @params
 
+    # v0.9.18: render the support disclaimer at the very bottom of the run summary.
+    - name: Support disclaimer
+      if: always()
+      continue-on-error: true
+      shell: pwsh
+      run: |
+        Import-Module AzLocal.UpdateManagement -Force
+        Add-AzLocalPipelineSupportFooter
+
   # Handle case when no clusters are ready
   no-clusters-ready:
     name: No Clusters Ready
@@ -791,3 +800,12 @@ jobs:
       run: |
         Import-Module AzLocal.UpdateManagement -Force
         Add-AzLocalNoReadyClustersStepSummary -UpdateRing $env:INPUT_UPDATE_RING -TotalCount "${{ needs.check-readiness.outputs.total_count }}" -UpToDateCount "${{ needs.check-readiness.outputs.up_to_date_count }}" -NotReadyCount "${{ needs.check-readiness.outputs.not_ready_count }}"
+
+    # v0.9.18: render the support disclaimer at the very bottom of the run summary.
+    - name: Support disclaimer
+      if: always()
+      continue-on-error: true
+      shell: pwsh
+      run: |
+        Import-Module AzLocal.UpdateManagement -Force
+        Add-AzLocalPipelineSupportFooter

@@ -752,6 +752,18 @@ stages:
                 if ([System.Convert]::ToBoolean("${{ parameters.dryRun }}")) { $params['DryRun'] = $true }
                 Add-AzLocalApplyUpdatesStepSummary @params
 
+          # v0.9.18: render the support disclaimer at the very bottom of the run summary.
+          - task: PowerShell@2
+            displayName: 'Support disclaimer'
+            condition: always()
+            continueOnError: true
+            inputs:
+              targetType: 'inline'
+              pwsh: true
+              script: |
+                Import-Module AzLocal.UpdateManagement -Force
+                Add-AzLocalPipelineSupportFooter
+
   # Stage 3: Handle no ready clusters
   - stage: NoClustersReady
     displayName: 'No Clusters Ready'
@@ -828,3 +840,15 @@ stages:
               script: |
                 Import-Module AzLocal.UpdateManagement -Force
                 Add-AzLocalNoReadyClustersStepSummary -UpdateRing $env:RESOLVED_UPDATE_RING -TotalCount "$(totalCount)" -UpToDateCount "$(upToDateCount)" -NotReadyCount "$(notReadyCount)"
+
+          # v0.9.18: render the support disclaimer at the very bottom of the run summary.
+          - task: PowerShell@2
+            displayName: 'Support disclaimer'
+            condition: always()
+            continueOnError: true
+            inputs:
+              targetType: 'inline'
+              pwsh: true
+              script: |
+                Import-Module AzLocal.UpdateManagement -Force
+                Add-AzLocalPipelineSupportFooter

@@ -374,6 +374,8 @@ Export-ModuleMember -Function @(
     'New-AzLocalFleetConnectivityStatusSummary',
     # Thin-YAML pipeline foundation (v0.8.5) - install-step version banner + drift annotations + step outputs (condenses ~50-line inline block in every Step.*.yml)
     'Add-AzLocalPipelineVersionBanner',
+    # Support-disclaimer footer (v0.9.18) - rendered at the very bottom of every pipeline run summary via a final if:always() step
+    'Add-AzLocalPipelineSupportFooter',
     # Pipeline preflight guards (v0.9.12) - fail early with a run-summary-visible message on the two most common silent-failure modes: zero accessible subscriptions and no diagnostic reports produced
     'Assert-AzLocalAzureSubscriptionAccess',
     'Assert-AzLocalPipelineReport',
