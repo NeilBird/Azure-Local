@@ -2,7 +2,7 @@
 
 > ⚠️ **Disclaimer**: This module is **NOT** a Microsoft supported service offering or product. It is provided as example code only, with no warranty or official support. Refer to the [MIT license](https://github.com/NeilBird/Azure-Local/blob/main/LICENSE) for further information.
 
-**Latest Version:** v0.9.17 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.9.17)
+**Latest Version:** v0.9.18 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.9.18)
 
 This folder contains the 'AzLocal.UpdateManagement' PowerShell module for managing updates on Azure Local (formerly Azure Stack HCI) clusters using the Azure Local REST API. The module supports both interactive use and CI/CD automation via Service Principal or Managed Identity authentication.
 
@@ -14,7 +14,7 @@ Azure Local REST API specification (includes update management endpoints): https
 **This README (overview + most-recent release notes):**
 
 - [Where to Start](#where-to-start)
-- [What's New in v0.9.17](#whats-new-in-v0917)
+- [What's New in v0.9.18](#whats-new-in-v0918)
 - [Files](#files)
 - [Prerequisites](#prerequisites)
 - [RBAC Requirements](#rbac-requirements) (summary; full reference in [docs/rbac.md](docs/rbac.md))
@@ -77,26 +77,26 @@ If you are new to this module, work through these in order from a regular PowerS
 
 > Most CI/CD pipelines in [Automation-Pipeline-Examples/](Automation-Pipeline-Examples/) are direct implementations of one of these workflows. Start there if you want a copy-pasteable end-to-end pipeline.
 
-## What's New in v0.9.17
+## What's New in v0.9.18
 
-**PSGallery install-step retry hardened to survive a prolonged outage - and unified across both platforms.** After a customer hit a PSGallery search-index blip that outlasted the v0.9.16 5-attempt (~2.5 min) window - all five attempts failed with `No match was found ... 'AzLocal.UpdateManagement'` - the shared install step now retries far longer, using one identical mechanism on GitHub Actions and Azure DevOps.
-
-### Changed
-
-- **Install-step retry raised from 5 to 25 attempts (~25 min), uniformly on both platforms.** The shared "Install AzLocal.UpdateManagement from PSGallery" step in all 20 templates (26 install blocks) now retries up to **25** times with the same capped exponential backoff + jitter (10s, 20s, 40s, then a 60s cap), giving **~25 minutes** of single-run coverage to ride out a prolonged PSGallery search-index outage. This is deliberately **one mechanism** - a single long-retry run - rather than a per-platform self-re-queue, so GitHub Actions and Azure DevOps behave identically and neither needs extra permissions (`actions: write` / "Queue builds"). ~25 min stays under the Azure DevOps 60-min hosted-agent job cap (GitHub-hosted runners have a 6-hour cap; self-hosted agents are uncapped). The normal path is unchanged - a healthy install returns on the first attempt - and the latest module version is still installed on every run.
-
-### Added
-
-- **Schedule-source banner on the Update: 3 - Apply Updates step summaries (scheduled/cron runs).** On a cron-triggered run, the **Check Cluster Readiness** and **Apply Updates** step summaries now open with a short paragraph that makes it explicit the pipeline is acting on **your** configuration only: it names the `apply-updates-schedule.yml` file the ring(s) were derived from (with its path), states which **cycle day** the run falls on (e.g. *"cycle week 2 of 4"*, plus the UTC day), and lists the ring(s) that match. The Apply Updates banner additionally recommends running **Config: 3 - Apply-Updates Schedule Coverage Audit** to review the full per-day cycle. The banner renders nothing on manual (`workflow_dispatch`) runs or when no schedule file is present.
-- **`UpdateRing` column in the Apply-Updates "Cluster Readiness" table**, placed immediately after the `Cluster` column, so the ring each cluster belongs to is obvious when the readiness gate is scoped to a `;`-joined multi-ring value. Every readiness row and the `readiness-report.csv` artifact also carry a matching `UpdateRing` field (sourced from each cluster's `UpdateRing` tag).
+**Follow-up strict-mode fix after v0.9.17.** A live re-run of **Update: 3 - Apply Updates** showed the failed-update single-retry still crashed on one cluster with `The property 'steps' cannot be found on this object`, even on v0.9.17.
 
 ### Fixed
 
-- **Strict-mode crash when retrying a failed update whose ARM run omits `location` or `progress.steps`.** Under `Set-StrictMode -Version Latest` an absent property throws instead of returning `$null`, so `Invoke-AzLocalFailedUpdateRetry` failed with `The property 'location' cannot be found on this object.` / `The property 'steps' cannot be found on this object.` for clusters whose latest failed run had those shapes. All such optional-property reads are now guarded (`Format-AzLocalUpdateRun`, `Get-AzLocalFleetStatusData`, `Get-LastUpdateRunErrorSummary`).
+- **Failed-update retry no longer crashes on a run whose `progress.steps` contains leaf steps that omit the `steps` child.** v0.9.17 guarded the *top-level* `progress.steps` read in `Format-AzLocalUpdateRun`, but the recursive step-tree walkers it calls - `Get-DeepestActiveStep`, `Get-CurrentStepPath`, `Get-DeepestErrorMessage`, and `Find-DeepestError` in `Get-LastUpdateRunErrorSummary` - still read `$step.steps` / `$step.status` / `$step.name` / `$step.errorMessage` **bare**. Under `Set-StrictMode -Version Latest` (applied by the production entry point `Invoke-AzLocalReadinessGatedFailedUpdateRetry`), a leaf step that legitimately omits `steps` made the walker throw and failed the whole cluster. Reproduced live against the affected cluster; all walker reads are now guarded with `PSObject.Properties[...]`.
+- **Broader strict-mode audit** of ARM/JSON-response consumers guarded more optional-field bare reads: `Get-AzLocalUpdateSummary` (the `lastUpdated`/`lastUpdatedTime` and `lastChecked`/`lastCheckedTime` ARG-vs-ARM compatibility pair - exactly one is present, so the bare read of the absent sibling threw - plus `state`/`healthState`/`updateStateProperties`); the SBE `packageType`/`additionalProperties` reads in `Get-AzLocalAvailableUpdates`, `Get-AzLocalClusterUpdateReadiness` and `Get-AzLocalFleetStatusData`; the `HealthCheckResult` container read in `Get-AzLocalUpdateRunHealthEvidence` and `Get-AzLocalFleetHealthFailures`; and the deepest-step `name` read in `Format-AzLocalUpdateRun`.
+
+### Added
+
+- **Support disclaimer in every pipeline run summary.** A new final `Support disclaimer` step (`if: always()` / `condition: always()`, non-fatal) is wired into all 20 templates and renders a bottom-of-summary footer via the new exported helper `Add-AzLocalPipelineSupportFooter`: a bold **Support disclaimer:** label + italic note that these pipelines are **not a supported Microsoft service offering**, how to open a support request (SR), and a link to open a **GitHub issue** for pipeline logic/outcome problems. The install-step version banner also gained a matching caveat line.
 
 ### Notes
 
-- No public function or export-count change (still **68**); one new internal helper (`Get-AzLocalApplyScheduleSourceBanner`). Pipeline-template + module + test release. `GENERATED_AGAINST_MODULE_VERSION` bumped to `0.9.17`.
+- Export count **68 -> 69** (adds `Add-AzLocalPipelineSupportFooter`). Bug-fix + pipeline + test release. `GENERATED_AGAINST_MODULE_VERSION` bumped to `0.9.18`.
+
+> Previous release notes have moved into the [Release History](#release-history) appendix at the bottom of this document.
+
+See [CHANGELOG.md](CHANGELOG.md) for full release details. See [`What's New in v0.9.17`](#whats-new-in-v0917) in the Release History for the previous release.
 
 > Previous release notes have moved into the [Release History](#release-history) appendix at the bottom of this document.
 

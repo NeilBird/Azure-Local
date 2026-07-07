@@ -193,7 +193,7 @@ extensibilityresources
     $totalChecksScanned   = 0
     $clustersWithChecks   = 0
     foreach ($cluster in @($clusterRows)) {
-        $hcr = $cluster.HealthCheckResult
+        $hcr = if ($cluster.PSObject.Properties['HealthCheckResult']) { $cluster.HealthCheckResult } else { $null }
         if (-not $hcr) { continue }
         $clustersWithChecks++
         foreach ($hc in @($hcr)) {

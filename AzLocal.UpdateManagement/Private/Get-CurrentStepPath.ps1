@@ -26,18 +26,25 @@ function Get-CurrentStepPath {
     if (-not $Steps -or $Steps.Count -eq 0 -or $MaxDepth -le 0) { return "" }
 
     foreach ($step in $Steps) {
-        if (-not $step.name) { continue }
-        $currentPath = if ($ParentPath) { "$ParentPath > $($step.name)" } else { $step.name }
+        # v0.9.18: guard name/status/steps/errorMessage under Set-StrictMode -Version Latest.
+        # A leaf step in a failed run can omit these; a bare read THROWS "The property
+        # 'steps' cannot be found on this object" (observed live: Tacoma failed run bae9704e).
+        $stepName = if ($step.PSObject.Properties['name']) { $step.name } else { $null }
+        if (-not $stepName) { continue }
+        $currentPath = if ($ParentPath) { "$ParentPath > $stepName" } else { $stepName }
 
-        if ($step.status -in @("InProgress", "Error", "Failed")) {
+        $stepStatus = if ($step.PSObject.Properties['status']) { $step.status } else { $null }
+        if ($stepStatus -in @("InProgress", "Error", "Failed")) {
             # Check if there are deeper nested steps with the same status
-            if ($step.steps -and $step.steps.Count -gt 0) {
-                $deeper = Get-CurrentStepPath -Steps $step.steps -ParentPath $currentPath -IncludeErrorMessage:$IncludeErrorMessage -MaxDepth ($MaxDepth - 1)
+            $childSteps = if ($step.PSObject.Properties['steps']) { $step.steps } else { $null }
+            if ($childSteps -and @($childSteps).Count -gt 0) {
+                $deeper = Get-CurrentStepPath -Steps $childSteps -ParentPath $currentPath -IncludeErrorMessage:$IncludeErrorMessage -MaxDepth ($MaxDepth - 1)
                 if ($deeper) { return $deeper }
             }
             # At the deepest level - append error message if requested and available
-            if ($IncludeErrorMessage -and $step.errorMessage) {
-                return "$currentPath : $($step.errorMessage)"
+            $stepErr = if ($step.PSObject.Properties['errorMessage']) { $step.errorMessage } else { $null }
+            if ($IncludeErrorMessage -and $stepErr) {
+                return "$currentPath : $stepErr"
             }
             return $currentPath
         }

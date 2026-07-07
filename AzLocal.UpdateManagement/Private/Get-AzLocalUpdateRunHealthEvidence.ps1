@@ -140,7 +140,7 @@ extensibilityresources
 
     $evidence = New-Object System.Collections.ArrayList
     foreach ($cluster in @($rows)) {
-        $hcr = $cluster.HealthCheckResult
+        $hcr = if ($cluster.PSObject.Properties['HealthCheckResult']) { $cluster.HealthCheckResult } else { $null }
         if (-not $hcr) { continue }
         foreach ($hc in @($hcr)) {
             $status = "$($hc.status)"

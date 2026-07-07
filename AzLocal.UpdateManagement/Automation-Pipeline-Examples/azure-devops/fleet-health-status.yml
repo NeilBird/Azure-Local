@@ -106,7 +106,7 @@ variables:
   # to the latest on PSGallery and warns if the YAML looks stale - prompting a
   # refresh via Copy-AzLocalPipelineExample -Update.
   - name: GENERATED_AGAINST_MODULE_VERSION
-    value: '0.9.17'
+    value: '0.9.18'
   # Resolution order for the module version pin: queue-time parameter 'moduleVersion'
   # > empty (latest). Leave empty for the default fix-forward behaviour.
   - name: REQUIRED_MODULE_VERSION
@@ -407,3 +407,15 @@ stages:
         testResultsFiles: '$(reportsPath)/itsm-results.xml'
         testRunTitle: 'ITSM Tickets (Step.10) - $(Build.BuildNumber)'
         failTaskOnFailedTests: false
+
+    # v0.9.18: render the support disclaimer at the very bottom of the run summary.
+    - task: PowerShell@2
+      displayName: 'Support disclaimer'
+      condition: always()
+      continueOnError: true
+      inputs:
+        targetType: 'inline'
+        pwsh: true
+        script: |
+          Import-Module AzLocal.UpdateManagement -Force
+          Add-AzLocalPipelineSupportFooter

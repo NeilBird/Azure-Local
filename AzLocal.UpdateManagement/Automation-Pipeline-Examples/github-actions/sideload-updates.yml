@@ -83,7 +83,7 @@ env:
   # this to the version actually installed and to the latest on PSGallery, and emits a
   # ::notice annotation if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.9.17'
+  GENERATED_AGAINST_MODULE_VERSION: '0.9.18'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): manual workflow_dispatch input >
   # repository variable 'REQUIRED_MODULE_VERSION' > empty (latest).
@@ -528,3 +528,12 @@ jobs:
         fail-on-error: false
         list-suites: failed
         list-tests: failed
+
+    # v0.9.18: render the support disclaimer at the very bottom of the run summary.
+    - name: Support disclaimer
+      if: always()
+      continue-on-error: true
+      shell: pwsh
+      run: |
+        Import-Module AzLocal.UpdateManagement -Force
+        Add-AzLocalPipelineSupportFooter

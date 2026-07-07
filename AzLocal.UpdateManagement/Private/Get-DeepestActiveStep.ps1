@@ -22,9 +22,15 @@ function Get-DeepestActiveStep {
     if (-not $Steps -or $Steps.Count -eq 0 -or $MaxDepth -le 0) { return $null }
 
     foreach ($step in $Steps) {
-        if ($step.status -in @("InProgress", "Error", "Failed")) {
-            if ($step.steps -and $step.steps.Count -gt 0) {
-                $deeper = Get-DeepestActiveStep -Steps $step.steps -MaxDepth ($MaxDepth - 1)
+        # v0.9.18: guard status/steps under Set-StrictMode -Version Latest. A leaf step in
+        # a failed run can omit the `steps` (and even `status`) property; a bare read THROWS
+        # "The property 'steps' cannot be found on this object" (observed live: Tacoma failed
+        # run bae9704e - four top-level LEAF steps with no `steps` child).
+        $stepStatus = if ($step.PSObject.Properties['status']) { $step.status } else { $null }
+        if ($stepStatus -in @("InProgress", "Error", "Failed")) {
+            $childSteps = if ($step.PSObject.Properties['steps']) { $step.steps } else { $null }
+            if ($childSteps -and @($childSteps).Count -gt 0) {
+                $deeper = Get-DeepestActiveStep -Steps $childSteps -MaxDepth ($MaxDepth - 1)
                 if ($deeper) { return $deeper }
             }
             return $step

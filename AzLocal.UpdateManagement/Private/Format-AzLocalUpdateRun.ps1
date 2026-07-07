@@ -99,11 +99,14 @@ function Format-AzLocalUpdateRun {
         # traverse the full tree.
         $deepestActive = Get-DeepestActiveStep -Steps $steps
         if ($deepestActive) {
-            if ($deepestActive.status -in @("Error", "Failed")) {
-                $currentStep = "$($deepestActive.name) (FAILED)"
+            # v0.9.18: guard status/name (a returned step can lack `name` under strict mode).
+            $daStatus = if ($deepestActive.PSObject.Properties['status']) { $deepestActive.status } else { '' }
+            $daName   = if ($deepestActive.PSObject.Properties['name']) { $deepestActive.name } else { '' }
+            if ($daStatus -in @("Error", "Failed")) {
+                $currentStep = "$daName (FAILED)"
             }
             else {
-                $currentStep = $deepestActive.name
+                $currentStep = $daName
             }
         }
 

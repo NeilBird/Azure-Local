@@ -191,7 +191,7 @@ function Add-AzLocalPipelineVersionBanner {
             -Message "$ModuleName v$latest is available on PSGallery; this run installed v$installed. Review the module CHANGELOG before bumping REQUIRED_MODULE_VERSION (or clear the pin to install the latest automatically)."
     }
 
-    $banner = "_Pipeline YAML v$generated | Module v$installed installed ($pinStatus) | PSGallery latest $latestStr | ${verdict}_`n"
+    $banner = "_Pipeline YAML v$generated | Module v$installed installed ($pinStatus) | PSGallery latest $latestStr | ${verdict}_`n`n_Support caveat: The automation pipelines provided in the $ModuleName module are NOT a supported Microsoft service offering._`n"
     [void](Add-AzLocalPipelineStepSummary -Markdown $banner -SummaryFileName $SummaryFileName)
 
     Set-AzLocalPipelineOutput -Name 'installed_module_version'  -Value $installed.ToString()

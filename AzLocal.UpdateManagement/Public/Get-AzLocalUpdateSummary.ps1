@@ -293,16 +293,18 @@ function Get-AzLocalUpdateSummary {
         }
 
         $props = $summary.properties
-        $state = if ($props.state) { [string]$props.state } else { 'Unknown' }
-        $healthState = if ($props.healthState) { [string]$props.healthState } else { 'Unknown' }
+        $state = if ($props.PSObject.Properties['state'] -and $props.state) { [string]$props.state } else { 'Unknown' }
+        $healthState = if ($props.PSObject.Properties['healthState'] -and $props.healthState) { [string]$props.healthState } else { 'Unknown' }
 
         # Field-name compatibility: ARG returns `lastUpdated`/`lastChecked`,
         # while older ARM REST shapes used `lastUpdatedTime`/`lastCheckedTime`.
-        $lastUpdatedRaw = if ($props.lastUpdated) { $props.lastUpdated } elseif ($props.lastUpdatedTime) { $props.lastUpdatedTime } else { $null }
-        $lastCheckedRaw = if ($props.lastChecked) { $props.lastChecked } elseif ($props.lastCheckedTime) { $props.lastCheckedTime } else { $null }
+        # v0.9.18: exactly ONE of each pair is present, so the bare read of the
+        # absent sibling THROWS under Set-StrictMode -Version Latest - guard both.
+        $lastUpdatedRaw = if ($props.PSObject.Properties['lastUpdated'] -and $props.lastUpdated) { $props.lastUpdated } elseif ($props.PSObject.Properties['lastUpdatedTime'] -and $props.lastUpdatedTime) { $props.lastUpdatedTime } else { $null }
+        $lastCheckedRaw = if ($props.PSObject.Properties['lastChecked'] -and $props.lastChecked) { $props.lastChecked } elseif ($props.PSObject.Properties['lastCheckedTime'] -and $props.lastCheckedTime) { $props.lastCheckedTime } else { $null }
         $lastUpdatedFmt = if ($lastUpdatedRaw) { ([datetime]$lastUpdatedRaw).ToString('yyyy-MM-dd HH:mm') } else { '' }
         $lastCheckedFmt = if ($lastCheckedRaw) { ([datetime]$lastCheckedRaw).ToString('yyyy-MM-dd HH:mm') } else { '' }
-        $availableUpdates = if ($props.updateStateProperties -and $props.updateStateProperties.availableUpdates) { $props.updateStateProperties.availableUpdates } else { 0 }
+        $availableUpdates = if ($props.PSObject.Properties['updateStateProperties'] -and $props.updateStateProperties -and $props.updateStateProperties.PSObject.Properties['availableUpdates'] -and $props.updateStateProperties.availableUpdates) { $props.updateStateProperties.availableUpdates } else { 0 }
 
         $row = [PSCustomObject]@{
             ClusterName           = $cluster.Name
