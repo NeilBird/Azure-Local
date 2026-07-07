@@ -155,7 +155,7 @@ function Get-AzLocalApplyScheduleSourceBanner {
         $lines.Add("> Today - **$dayName, $dateDisplay UTC** - is **cycle week $cycleWeek of $cycleTotal**, which your schedule maps to **no rings**, so this run will make no changes.")
     }
     $lines.Add("> ")
-    $lines.Add("> This pipeline acts only on the rings your schedule marks eligible for the current cycle day; no other clusters are touched, and each cluster is gated by its " + $bt + "UpdateStartWindow" + $bt + " tag value, which is UTC.")
+    $lines.Add("> This pipeline acts only on the rings your schedule marks eligible for the current cycle day; no other clusters are touched, and each cluster is gated by its " + $bt + "UpdateStartWindow" + $bt + " tag value, which uses UTC timezone.")
     if ($IncludeAuditRecommendation) {
         $lines.Add("> ")
         $lines.Add("> To review your entire cycle at a glance (every date mapped to its eligible rings), run the **'Config: 3 - Apply-Updates Schedule Coverage Audit'** pipeline and review its output.")
