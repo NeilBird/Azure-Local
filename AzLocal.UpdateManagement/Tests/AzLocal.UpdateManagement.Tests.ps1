@@ -14749,6 +14749,8 @@ Describe 'Thin-YAML foundation: Add-AzLocalPipelineVersionBanner' {
         }
         $md = Get-Content -LiteralPath $script:_ghSummaryFile -Raw
         $md | Should -Match '_Pipeline YAML v\d+\.\d+\.\d+ \| Module v\d+\.\d+\.\d+ installed \(.+?\) \| PSGallery latest .+? \| .+?_'
+        # v0.9.18: a support-caveat line is appended below the version banner.
+        $md | Should -Match 'Support caveat: The automation pipelines provided in the AzLocal\.UpdateManagement module are NOT a supported Microsoft service offering'
     }
 
     It 'YAML newer than module -> WARNING annotation on GH' {
