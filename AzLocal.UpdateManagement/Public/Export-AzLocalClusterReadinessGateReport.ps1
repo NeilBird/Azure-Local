@@ -211,6 +211,13 @@ function Export-AzLocalClusterReadinessGateReport {
     # the Step.6 gate report mirrors the markdown polish in Step.05 / Step.10.
     $iconMap = Get-AzLocalStatusIconMap -PipelineHost $pipelineHost
     $sb = New-Object System.Text.StringBuilder
+    # v0.9.17: on a SCHEDULE (cron) firing, prepend a banner making it explicit that
+    # the targeted UpdateRing(s) are derived from the operator's own
+    # apply-updates-schedule.yml (path + current cycle day + matched rings). Renders
+    # nothing on manual runs or when no schedule file is present.
+    foreach ($bannerLine in (Get-AzLocalApplyScheduleSourceBanner)) {
+        [void]$sb.AppendLine($bannerLine)
+    }
     [void]$sb.AppendLine("$headingLevel Cluster Readiness ($UpdateRing)")
     [void]$sb.AppendLine()
     $staleSegment = if ($staleCount -gt 0) { " &nbsp;|&nbsp; **Stale assessment:** $staleCount" } else { '' }
@@ -218,8 +225,8 @@ function Export-AzLocalClusterReadinessGateReport {
     [void]$sb.AppendLine()
     [void]$sb.AppendLine((Get-AzLocalCtrlClickTip))
     [void]$sb.AppendLine()
-    [void]$sb.AppendLine('| Cluster | Current Version | Update State | Health | Status | Support | Recommended Update | Blocking Reasons |')
-    [void]$sb.AppendLine('|---|---|---|---|---|---|---|---|')
+    [void]$sb.AppendLine('| Cluster | UpdateRing | Current Version | Update State | Health | Status | Support | Recommended Update | Blocking Reasons |')
+    [void]$sb.AppendLine('|---|---|---|---|---|---|---|---|---|')
 
     $rendered = 0
     foreach ($r in ($results | Sort-Object @{Expression = { [bool]$_.ReadyForUpdate }; Descending = $true }, ClusterName)) {
@@ -263,7 +270,10 @@ function Export-AzLocalClusterReadinessGateReport {
         $curr = if ($r.CurrentVersion) { '`' + $r.CurrentVersion + '`' } else { '-' }
         $clusterResId = if ($r.PSObject.Properties['ClusterResourceId'] -and $r.ClusterResourceId) { [string]$r.ClusterResourceId } else { '' }
         $clusterCell = Get-AzLocalClusterPortalLink -ClusterName ([string]$r.ClusterName) -ClusterResourceId $clusterResId
-        [void]$sb.AppendLine("| $clusterCell | $curr | $($r.UpdateState) | $hCell | $statusCell | $supportCell | $reco | $blocking |")
+        # v0.9.17: per-cluster UpdateRing tag - the readiness gate can be scoped to a
+        # ';'-joined multi-ring value, so show which ring each cluster belongs to.
+        $ringCell = if ($r.PSObject.Properties['UpdateRing'] -and $r.UpdateRing) { '`' + ([string]$r.UpdateRing) + '`' } else { '-' }
+        [void]$sb.AppendLine("| $clusterCell | $ringCell | $curr | $($r.UpdateState) | $hCell | $statusCell | $supportCell | $reco | $blocking |")
         $rendered++
     }
 

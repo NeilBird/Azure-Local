@@ -54,10 +54,16 @@ function Format-AzLocalUpdateRun {
     # Surfaced separately from State (v0.7.96) - exposes the portal 'Status' filter value.
     # Operationally critical: a run can sit at State=InProgress for days while progress.status
     # already shows 'Error', telling the operator a step has errored and the run is stuck.
-    $progressStatus = if ($props.progress -and $props.progress.PSObject.Properties['status']) { [string]$props.progress.status } else { '' }
+    # v0.9.17: guard `progress` itself (not just its children) - a failed run's ARM
+    # `properties` can omit `progress` entirely, and a `progress` object can omit `steps`.
+    # Bare `$props.progress` / `$props.progress.steps` reads THROW under
+    # Set-StrictMode -Version Latest (observed live: Tacoma retry -> "The property
+    # 'steps' cannot be found on this object").
+    $hasProgress = ($props.PSObject.Properties['progress'] -and $props.progress)
+    $progressStatus = if ($hasProgress -and $props.progress.PSObject.Properties['status']) { [string]$props.progress.status } else { '' }
     $errorMessage = ''
     $errorDescription = ''
-    if ($props.progress -and $props.progress.steps) {
+    if ($hasProgress -and $props.progress.PSObject.Properties['steps'] -and $props.progress.steps) {
         $steps = $props.progress.steps
         # Progress must reflect the DEEP nested step tree, not the top-level wrapper steps.
         # Real Azure Local update runs expose only ~2 coarse top-level steps ("Prepare update"
@@ -178,7 +184,10 @@ function Format-AzLocalUpdateRun {
         StepElapsed       = $stepElapsedDisplay
         ErrorMessage      = $errorMessage
         ErrorDescription  = $errorDescription
-        Location          = $props.location
+        # v0.9.17: guard `location` - a failed run's ARM `properties` can omit it,
+        # and a bare read THROWS under Set-StrictMode -Version Latest (observed live:
+        # Arizona retry -> "The property 'location' cannot be found on this object").
+        Location          = if ($props.PSObject.Properties['location']) { $props.location } else { '' }
     }
 
     if ($clusterName) {

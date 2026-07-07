@@ -503,17 +503,20 @@ Describe 'v0.9.14 PSGallery install-step transient retry wiring' {
 
     # v0.9.14: the shared "Install AzLocal.UpdateManagement from PSGallery" step
     # in every pipeline (GitHub Actions and Azure DevOps) wraps the actual
-    # Install-Module call in a 5-attempt, capped exponential-backoff + jitter
-    # retry loop (v0.9.16 hardened it from 3 attempts / 10s,20s after a customer
-    # and internal fleet both hit a >30s PSGallery search-index blip) so a
-    # transient PSGallery search/propagation blip ("No match was found
-    # for the specified search criteria and module name 'AzLocal.UpdateManagement'")
-    # no longer fails the whole run. The retry MUST be an inline pwsh loop (not a
-    # module cmdlet) because it runs BEFORE the module is installed, and NOT the
-    # native ADO retryCountOnTaskFailure (which has no configurable backoff and
-    # would disturb the counted login-retry assertions above).
+    # Install-Module call in a capped exponential-backoff + jitter retry loop so a
+    # transient PSGallery search/propagation blip ("No match was found for the
+    # specified search criteria and module name 'AzLocal.UpdateManagement'") no
+    # longer fails the whole run. Attempt history: 3 (v0.9.14) -> 5 (v0.9.16) ->
+    # 25 (v0.9.17) after a customer + internal fleet hit a >2.5-min PSGallery
+    # outage. v0.9.17 uses ONE uniform mechanism on BOTH platforms - 25 in-run
+    # attempts (~25 min single run) - deliberately NOT a self-re-queue, to keep
+    # GitHub Actions and Azure DevOps behaviour identical and avoid needing
+    # 'actions: write' / ADO's Queue-builds permission. The retry MUST be an inline
+    # pwsh loop (not a module cmdlet) because it runs BEFORE the module is
+    # installed, and NOT the native ADO retryCountOnTaskFailure (no configurable
+    # backoff; would disturb the counted login-retry assertions above).
 
-    It 'Every pipeline YAML that installs the module wraps Install-Module in the 5-attempt retry loop' {
+    It 'Every pipeline YAML that installs the module wraps Install-Module in the 25-attempt retry loop' {
         $ymlFiles = Get-ChildItem -Path $script:PipelineRoot -Recurse -Filter '*.yml' -File
         $ymlFiles.Count | Should -BeGreaterThan 0
 
@@ -523,12 +526,12 @@ Describe 'v0.9.14 PSGallery install-step transient retry wiring' {
             $installCount = ([regex]::Matches($content, [regex]::Escape('Install-Module @installArgs'))).Count
             if ($installCount -eq 0) { continue }
 
-            $retryCount = ([regex]::Matches($content, [regex]::Escape('$installMaxAttempts = 5'))).Count
+            $retryCount = ([regex]::Matches($content, [regex]::Escape('$installMaxAttempts = 25'))).Count
             $sleepCount = ([regex]::Matches($content, [regex]::Escape('Start-Sleep -Seconds $installRetryDelay'))).Count
 
             $relPath = $yml.FullName.Substring($script:PipelineRoot.Length).TrimStart('\', '/')
             if ($retryCount -ne $installCount) {
-                $issues.Add("${relPath}: has $installCount install call(s) but $retryCount retry loop opener(s) (`$installMaxAttempts = 5)")
+                $issues.Add("${relPath}: has $installCount install call(s) but $retryCount retry loop opener(s) (`$installMaxAttempts = 25)")
             }
             if ($sleepCount -ne $installCount) {
                 $issues.Add("${relPath}: has $installCount install call(s) but $sleepCount backoff Start-Sleep call(s)")
@@ -546,10 +549,20 @@ Describe 'v0.9.14 PSGallery install-step transient retry wiring' {
         foreach ($yml in $ymlFiles) {
             $content = Get-Content -Raw -LiteralPath $yml.FullName
             $installTotal += ([regex]::Matches($content, [regex]::Escape('Install-Module @installArgs'))).Count
-            $retryTotal   += ([regex]::Matches($content, [regex]::Escape('$installMaxAttempts = 5'))).Count
+            $retryTotal   += ([regex]::Matches($content, [regex]::Escape('$installMaxAttempts = 25'))).Count
         }
         $installTotal | Should -Be 26
         $retryTotal   | Should -Be $installTotal
+    }
+
+    It 'v0.9.17: both platforms use the same 25-attempt single-run mechanism (no self-re-queue)' {
+        $ymlFiles = Get-ChildItem -Path $script:PipelineRoot -Recurse -Filter '*.yml' -File
+        foreach ($yml in $ymlFiles) {
+            $content = Get-Content -Raw -LiteralPath $yml.FullName
+            if (([regex]::Matches($content, [regex]::Escape('Install-Module @installArgs'))).Count -eq 0) { continue }
+            $content | Should -Not -Match 'Re-queue on transient PSGallery install failure' -Because "$($yml.Name) must use the uniform 25-attempt single-run coverage, not a self-re-queue"
+            $content | Should -Not -Match 'install_retry_attempt' -Because "$($yml.Name) must not carry the abandoned re-queue counter input"
+        }
     }
 
     It 'Every retry loop uses a capped exponential backoff with jitter (v0.9.16)' {

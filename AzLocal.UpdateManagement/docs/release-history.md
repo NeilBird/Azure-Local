@@ -4,9 +4,17 @@
 >
 > **For older releases**, this is the canonical reference; the main README intentionally stays slim so the most recent block is easy to find.
 >
-> **For v0.9.16 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0916) `What's New in v0.9.16` section.
+> **For v0.9.17 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0917) `What's New in v0.9.17` section.
 
 ---
+
+### What's New in v0.9.17
+
+**PSGallery install-step retry hardened to survive a PROLONGED search-index outage - and unified across both platforms.** After an external customer hit a PSGallery blip that outlasted the v0.9.16 5-attempt (~2.5 min) window (all five attempts failed with `No match was found ... 'AzLocal.UpdateManagement'`), the shared "Install AzLocal.UpdateManagement from PSGallery" step in all 20 GitHub Actions + Azure DevOps templates (26 install blocks) now retries up to **25** attempts (~25 min) with the same capped exponential backoff + jitter (10s, 20s, 40s, then a 60s cap). This is deliberately **one uniform mechanism** on both platforms - a single long-retry run - rather than a per-platform self-re-queue, so GitHub Actions and Azure DevOps behave identically and neither needs extra permissions (GitHub `actions: write` / Azure DevOps "Queue builds"). ~25 min stays under the Azure DevOps 60-min hosted-agent job cap (GitHub-hosted runners have a 6-hour cap; self-hosted agents are uncapped). The normal path is unchanged - a healthy install returns on the first attempt - and the latest module version is still installed on every run.
+
+This release also adds two **Update: 3 - Apply Updates** operator-experience improvements and a strict-mode fix. (1) On scheduled/cron runs the **Check Cluster Readiness** and **Apply Updates** step summaries now open with a **schedule-source banner** making it explicit the pipeline acts on the operator's own configuration only - it names the `apply-updates-schedule.yml` file (with path), the current cycle day (e.g. *"cycle week 2 of 4"* + UTC day) and the matched ring(s); the Apply banner also recommends running **Config: 3 - Apply-Updates Schedule Coverage Audit** for the full per-day cycle view (new internal helper `Get-AzLocalApplyScheduleSourceBanner`; renders nothing on manual runs). (2) The Apply-Updates "Cluster Readiness" table gains an **`UpdateRing` column** immediately after `Cluster` (and a matching `UpdateRing` field on every readiness row / `readiness-report.csv`). (3) Fixed a `Set-StrictMode -Version Latest` crash retrying a failed update whose ARM run omits `location` or `progress.steps` (`Invoke-AzLocalFailedUpdateRetry` failed with `The property 'location'/'steps' cannot be found on this object.`); optional-property reads are now guarded in `Format-AzLocalUpdateRun`, `Get-AzLocalFleetStatusData` and `Get-LastUpdateRunErrorSummary`.
+
+No public function or export-count change (still 68); one new internal helper. Pipeline-template + module + test release. `GENERATED_AGAINST_MODULE_VERSION` bumped to `0.9.17`. See [CHANGELOG.md](../CHANGELOG.md#0917---2026-07-07) for the full v0.9.17 entry.
 
 ### What's New in v0.9.16
 

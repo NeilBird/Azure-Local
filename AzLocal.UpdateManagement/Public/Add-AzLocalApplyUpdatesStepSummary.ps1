@@ -181,6 +181,15 @@ function Add-AzLocalApplyUpdatesStepSummary {
     [void]$sb.AppendLine("**Target UpdateRing:** $UpdateRing")
     [void]$sb.AppendLine()
 
+    # v0.9.17: on a SCHEDULE (cron) firing, surface that the targeted UpdateRing(s)
+    # come from the operator's own apply-updates-schedule.yml (path + current cycle
+    # day + matched rings), and recommend the Schedule Coverage Audit for the full
+    # per-day cycle view. Renders nothing on manual runs or when no schedule file
+    # is present.
+    foreach ($bannerLine in (Get-AzLocalApplyScheduleSourceBanner -IncludeAuditRecommendation)) {
+        [void]$sb.AppendLine($bannerLine)
+    }
+
     if ($DryRun) {
         [void]$sb.AppendLine("**This was a dry run. No updates were applied.**")
         [void]$sb.AppendLine()

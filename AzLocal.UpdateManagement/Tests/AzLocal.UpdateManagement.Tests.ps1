@@ -34,8 +34,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $script:ModuleInfo | Should -Not -BeNullOrEmpty
         }
 
-        It 'Should have version 0.9.16' {
-            $script:ModuleInfo.Version | Should -Be '0.9.16'
+        It 'Should have version 0.9.17' {
+            $script:ModuleInfo.Version | Should -Be '0.9.17'
         }
 
         It 'Module version constants are in sync between .psm1 and .psd1' {
@@ -2106,6 +2106,72 @@ Describe 'Helper Function: Format-AzLocalUpdateRun (Internal)' {
             }
             $f = Format-AzLocalUpdateRun -run $run -clusterName 'c1'
             $f.CurrentStep | Should -Be 'Run Pre Update Validation (FAILED)'
+        }
+    }
+
+    Context 'Strict-mode: tolerates failed-run properties missing location / steps / progress (v0.9.17)' {
+
+        It 'Does not throw when properties omits location (regression: Arizona retry)' {
+            InModuleScope AzLocal.UpdateManagement {
+                $run = [PSCustomObject]@{
+                    id         = '/subscriptions/x/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/c1/updates/Solution12.2604/updateRuns/rNoLoc'
+                    name       = 'rNoLoc'
+                    properties = [PSCustomObject]@{
+                        state       = 'Failed'
+                        timeStarted = '2026-04-24T16:10:24Z'
+                        duration    = 'PT1H'
+                        progress    = [PSCustomObject]@{
+                            status = 'Error'
+                            steps  = @([PSCustomObject]@{ name = 'Step1'; status = 'Error'; errorMessage = 'boom' })
+                        }
+                        # NOTE: no 'location' property (real failed runs can omit it).
+                    }
+                }
+                $f = Format-AzLocalUpdateRun -run $run -clusterName 'c1'
+                $f.Location     | Should -Be ''
+                $f.ErrorMessage | Should -Be 'boom'
+            }
+        }
+
+        It 'Does not throw when progress omits steps (regression: Tacoma retry)' {
+            InModuleScope AzLocal.UpdateManagement {
+                $run = [PSCustomObject]@{
+                    id         = '/subscriptions/x/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/c1/updates/Solution12.2604/updateRuns/rNoSteps'
+                    name       = 'rNoSteps'
+                    properties = [PSCustomObject]@{
+                        state       = 'Failed'
+                        timeStarted = '2026-04-24T16:10:24Z'
+                        duration    = 'PT1H'
+                        location    = 'eastus'
+                        progress    = [PSCustomObject]@{
+                            status = 'Error'
+                            # NOTE: no 'steps' property (progress present but empty).
+                        }
+                    }
+                }
+                $f = Format-AzLocalUpdateRun -run $run -clusterName 'c1'
+                $f.Status   | Should -Be 'Error'
+                $f.Progress | Should -Be ''
+            }
+        }
+
+        It 'Does not throw when properties omits progress entirely' {
+            InModuleScope AzLocal.UpdateManagement {
+                $run = [PSCustomObject]@{
+                    id         = '/subscriptions/x/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/c1/updates/Solution12.2604/updateRuns/rNoProg'
+                    name       = 'rNoProg'
+                    properties = [PSCustomObject]@{
+                        state       = 'Failed'
+                        timeStarted = '2026-04-24T16:10:24Z'
+                        duration    = 'PT1H'
+                        location    = 'eastus'
+                        # NOTE: no 'progress' property at all.
+                    }
+                }
+                $f = Format-AzLocalUpdateRun -run $run -clusterName 'c1'
+                $f.Status   | Should -BeNullOrEmpty
+                $f.Location | Should -Be 'eastus'
+            }
         }
     }
 
@@ -18283,13 +18349,13 @@ Describe 'Thin-YAML Step.7: Export-AzLocalClusterReadinessGateReport' {
         $global:_s7_outDir    = $script:_s7_outDir
         $global:_s7_readiness = @(
             [pscustomobject]@{ ClusterName='ready';  ClusterResourceId='/subscriptions/s1/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/ready'
-                               UpdateState='UpdateAvailable'; HealthState='Success'; ReadyForUpdate=$true;  HasPrerequisiteUpdates=''
+                               UpdateRing='Wave1'; UpdateState='UpdateAvailable'; HealthState='Success'; ReadyForUpdate=$true;  HasPrerequisiteUpdates=''
                                AllAvailableUpdates='12.2510.0.999'; CurrentVersion='12.2509.0.0'; RecommendedUpdate='12.2510.0.999'; BlockingReasons='' }
             [pscustomobject]@{ ClusterName='dallas'; ClusterResourceId='/subscriptions/s1/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/dallas'
-                               UpdateState='AppliedSuccessfully'; HealthState='Success'; ReadyForUpdate=$false; HasPrerequisiteUpdates=''
+                               UpdateRing='Wave1'; UpdateState='AppliedSuccessfully'; HealthState='Success'; ReadyForUpdate=$false; HasPrerequisiteUpdates=''
                                AllAvailableUpdates='12.2605.1003.210'; CurrentVersion='12.2605.1003.210'; RecommendedUpdate=''; BlockingReasons='' }
             [pscustomobject]@{ ClusterName='broken'; ClusterResourceId='/subscriptions/s1/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/broken'
-                               UpdateState='Failed'; HealthState='Failure'; ReadyForUpdate=$false; HasPrerequisiteUpdates=''
+                               UpdateRing='Wave1'; UpdateState='Failed'; HealthState='Failure'; ReadyForUpdate=$false; HasPrerequisiteUpdates=''
                                AllAvailableUpdates='12.2510.0.999'; CurrentVersion='12.2509.0.0'; RecommendedUpdate='12.2510.0.999'; BlockingReasons='Critical Health Status: Failed' }
         )
         $result = InModuleScope AzLocal.UpdateManagement {
@@ -18310,9 +18376,113 @@ Describe 'Thin-YAML Step.7: Export-AzLocalClusterReadinessGateReport' {
         $summary | Should -Match 'Up to Date'
         # The Status column header replaced the old binary "Ready?" header.
         $summary | Should -Match '\| Status \|'
+        # v0.9.17: UpdateRing column is rendered after Cluster.
+        $summary | Should -Match '\| Cluster \| UpdateRing \|'
+        $summary | Should -Match '\| `Wave1` \|'
     }
 }
 #endregion v0.8.74: Export-AzLocalClusterReadinessGateReport
+
+#region v0.9.17: Get-AzLocalApplyScheduleSourceBanner (schedule-source banner)
+Describe 'Helper Function: Get-AzLocalApplyScheduleSourceBanner (Internal)' {
+
+    BeforeEach {
+        $script:_bnr_savedGh    = $env:GITHUB_ACTIONS
+        $script:_bnr_savedEvent = $env:GITHUB_EVENT_NAME
+        $script:_bnr_savedTf    = $env:TF_BUILD
+        $script:_bnr_savedReason = $env:BUILD_REASON
+        $env:GITHUB_ACTIONS = 'true'
+        Remove-Item Env:\TF_BUILD -ErrorAction SilentlyContinue
+        $script:_bnr_schedule = Join-Path -Path $env:TEMP -ChildPath ("bnr-sched-{0}.yml" -f ([Guid]::NewGuid()))
+        Set-Content -LiteralPath $script:_bnr_schedule -Value 'schemaVersion: 2' -Encoding utf8
+    }
+
+    AfterEach {
+        if ($null -ne $script:_bnr_savedGh)     { $env:GITHUB_ACTIONS = $script:_bnr_savedGh }     else { Remove-Item Env:\GITHUB_ACTIONS -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_bnr_savedEvent)  { $env:GITHUB_EVENT_NAME = $script:_bnr_savedEvent } else { Remove-Item Env:\GITHUB_EVENT_NAME -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_bnr_savedTf)     { $env:TF_BUILD = $script:_bnr_savedTf }           else { Remove-Item Env:\TF_BUILD -ErrorAction SilentlyContinue }
+        if ($null -ne $script:_bnr_savedReason) { $env:BUILD_REASON = $script:_bnr_savedReason }    else { Remove-Item Env:\BUILD_REASON -ErrorAction SilentlyContinue }
+        if ($script:_bnr_schedule -and (Test-Path -LiteralPath $script:_bnr_schedule)) {
+            Remove-Item -LiteralPath $script:_bnr_schedule -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'Renders the schedule source, current cycle day and matched rings on a schedule (cron) firing' {
+        $env:GITHUB_EVENT_NAME = 'schedule'
+        $sched = $script:_bnr_schedule
+        $text = InModuleScope AzLocal.UpdateManagement -Parameters @{ SchedulePath = $sched } {
+            param($SchedulePath)
+            Mock Get-AzLocalApplyUpdatesScheduleConfig { [pscustomobject]@{ CycleWeeks = 4 } }
+            Mock Resolve-AzLocalCurrentUpdateRing {
+                [pscustomobject]@{
+                    Rings           = @('Prod', 'Ring2')
+                    UpdateRingValue = 'Prod;Ring2'
+                    CycleWeek       = 2
+                    DayOfWeekName   = 'Tue'
+                    NowUtc          = [datetime]::SpecifyKind([datetime]'2026-07-07T00:00:00', [DateTimeKind]::Utc)
+                }
+            }
+            (Get-AzLocalApplyScheduleSourceBanner -SchedulePath $SchedulePath) -join "`n"
+        }
+        $text | Should -Match 'Schedule-driven run'
+        $text | Should -Match ([regex]::Escape($sched))
+        $text | Should -Match 'cycle week 2 of 4'
+        $text | Should -Match 'Tue, 2026-07-07 UTC'
+        $text | Should -Match 'Prod, Ring2'
+        # No audit recommendation unless explicitly requested.
+        $text | Should -Not -Match 'Schedule Coverage Audit'
+    }
+
+    It 'Appends the Config: 3 Schedule Coverage Audit recommendation when -IncludeAuditRecommendation is set' {
+        $env:GITHUB_EVENT_NAME = 'schedule'
+        $sched = $script:_bnr_schedule
+        $text = InModuleScope AzLocal.UpdateManagement -Parameters @{ SchedulePath = $sched } {
+            param($SchedulePath)
+            Mock Get-AzLocalApplyUpdatesScheduleConfig { [pscustomobject]@{ CycleWeeks = 4 } }
+            Mock Resolve-AzLocalCurrentUpdateRing {
+                [pscustomobject]@{ Rings = @('Prod'); UpdateRingValue = 'Prod'; CycleWeek = 1; DayOfWeekName = 'Mon'
+                                   NowUtc = [datetime]::SpecifyKind([datetime]'2026-07-06T00:00:00', [DateTimeKind]::Utc) }
+            }
+            (Get-AzLocalApplyScheduleSourceBanner -SchedulePath $SchedulePath -IncludeAuditRecommendation) -join "`n"
+        }
+        $text | Should -Match "'Config: 3 - Apply-Updates Schedule Coverage Audit'"
+    }
+
+    It 'Renders nothing on a manual (workflow_dispatch) run' {
+        $env:GITHUB_EVENT_NAME = 'workflow_dispatch'
+        $sched = $script:_bnr_schedule
+        $lines = InModuleScope AzLocal.UpdateManagement -Parameters @{ SchedulePath = $sched } {
+            param($SchedulePath)
+            Get-AzLocalApplyScheduleSourceBanner -SchedulePath $SchedulePath
+        }
+        @($lines).Count | Should -Be 0
+    }
+
+    It 'Renders nothing when the schedule file is absent' {
+        $env:GITHUB_EVENT_NAME = 'schedule'
+        $lines = InModuleScope AzLocal.UpdateManagement {
+            Get-AzLocalApplyScheduleSourceBanner -SchedulePath (Join-Path $env:TEMP ([Guid]::NewGuid().ToString() + '.yml'))
+        }
+        @($lines).Count | Should -Be 0
+    }
+
+    It 'Explains that no changes will be made when no rings match today' {
+        $env:GITHUB_EVENT_NAME = 'schedule'
+        $sched = $script:_bnr_schedule
+        $text = InModuleScope AzLocal.UpdateManagement -Parameters @{ SchedulePath = $sched } {
+            param($SchedulePath)
+            Mock Get-AzLocalApplyUpdatesScheduleConfig { [pscustomobject]@{ CycleWeeks = 2 } }
+            Mock Resolve-AzLocalCurrentUpdateRing {
+                [pscustomobject]@{ Rings = @(); UpdateRingValue = ''; CycleWeek = 1; DayOfWeekName = 'Sun'
+                                   NowUtc = [datetime]::SpecifyKind([datetime]'2026-07-05T00:00:00', [DateTimeKind]::Utc) }
+            }
+            (Get-AzLocalApplyScheduleSourceBanner -SchedulePath $SchedulePath) -join "`n"
+        }
+        $text | Should -Match 'no rings'
+        $text | Should -Match 'make no changes'
+    }
+}
+#endregion v0.9.17: Get-AzLocalApplyScheduleSourceBanner
 
 #region v0.8.5: Export-AzLocalFleetConnectivityStatusReport
 Describe 'Thin-YAML Step.4: Export-AzLocalFleetConnectivityStatusReport' {
@@ -22032,7 +22202,7 @@ Describe 'v0.8.97: Apply Updates readiness gate stale-assessment + Support colum
         $src06v97 | Should -Match 'Update Available \(stale assessment\)'
     }
     It 'Adds a Support column to the readiness table header' {
-        $src06v97 | Should -Match '\| Cluster \| Current Version \| Update State \| Health \| Status \| Support \| Recommended Update \| Blocking Reasons \|'
+        $src06v97 | Should -Match '\| Cluster \| UpdateRing \| Current Version \| Update State \| Health \| Status \| Support \| Recommended Update \| Blocking Reasons \|'
         $src06v97 | Should -Match "iconMap\['SupportSupported'\]"
         $src06v97 | Should -Match "iconMap\['SupportUnsupported'\]"
         $src06v97 | Should -Match "iconMap\['SupportUnknown'\]"
