@@ -2,7 +2,7 @@
 
 > ⚠️ **Disclaimer**: This module is **NOT** a Microsoft supported service offering or product. It is provided as example code only, with no warranty or official support. Refer to the [MIT license](https://github.com/NeilBird/Azure-Local/blob/main/LICENSE) for further information.
 
-**Latest Version:** v0.9.16 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.9.16)
+**Latest Version:** v0.9.17 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.9.17)
 
 This folder contains the 'AzLocal.UpdateManagement' PowerShell module for managing updates on Azure Local (formerly Azure Stack HCI) clusters using the Azure Local REST API. The module supports both interactive use and CI/CD automation via Service Principal or Managed Identity authentication.
 
@@ -14,7 +14,7 @@ Azure Local REST API specification (includes update management endpoints): https
 **This README (overview + most-recent release notes):**
 
 - [Where to Start](#where-to-start)
-- [What's New in v0.9.16](#whats-new-in-v0916)
+- [What's New in v0.9.17](#whats-new-in-v0917)
 - [Files](#files)
 - [Prerequisites](#prerequisites)
 - [RBAC Requirements](#rbac-requirements) (summary; full reference in [docs/rbac.md](docs/rbac.md))
@@ -77,25 +77,21 @@ If you are new to this module, work through these in order from a regular PowerS
 
 > Most CI/CD pipelines in [Automation-Pipeline-Examples/](Automation-Pipeline-Examples/) are direct implementations of one of these workflows. Start there if you want a copy-pasteable end-to-end pipeline.
 
-## What's New in v0.9.16
+## What's New in v0.9.17
 
-**Pipeline bootstrap hardening - Update: 3 - Apply Updates (and every other template).** After a customer and the internal fleet both hit a transient PSGallery search-index blip that failed an otherwise-healthy scheduled run, the shared "Install AzLocal.UpdateManagement from PSGallery" step is hardened and the benign "No Clusters Ready" reporting job is made non-fatal.
+**PSGallery install-step retry hardened to survive a prolonged outage - and unified across both platforms.** After a customer hit a PSGallery search-index blip that outlasted the v0.9.16 5-attempt (~2.5 min) window - all five attempts failed with `No match was found ... 'AzLocal.UpdateManagement'` - the shared install step now retries far longer, using one identical mechanism on GitHub Actions and Azure DevOps.
 
 ### Changed
 
-- **Install-step retry hardened from 3 to 5 attempts with capped exponential backoff + jitter.** The shared install step in all 20 GitHub Actions + Azure DevOps templates (26 install blocks) now retries a transient `No match was found ... 'AzLocal.UpdateManagement'` PSGallery lookup up to **5** times with delays of ~10s, 20s, 40s, 60s (capped at 60s via `[math]::Min`) plus 0-4s of random **jitter**. The old 3-attempt / 10s,20s window (~30s total) was too short to ride out a real index blip - in run 28721322188 the module installed cleanly in the readiness job but a sibling job one minute later failed all three attempts. The jitter stops fanned-out fleet jobs retrying in lockstep against the same flaky index.
-
-### Fixed
-
-- **Benign "No Clusters Ready" reporting job no longer reds a healthy no-op run.** The `no-clusters-ready` job (GitHub Actions) / `NoClustersReady` stage (Azure DevOps) in `apply-updates` exists only to annotate a nothing-to-apply outcome. Its install + report steps are now `continue-on-error` / `continueOnError`, so a *persistent* PSGallery blip on a run where there was nothing to do produces a warning instead of a failed run. Jobs that genuinely need the module (apply, readiness, fleet-health, etc.) still fail hard after the hardened retry.
+- **Install-step retry raised from 5 to 25 attempts (~25 min), uniformly on both platforms.** The shared "Install AzLocal.UpdateManagement from PSGallery" step in all 20 templates (26 install blocks) now retries up to **25** times with the same capped exponential backoff + jitter (10s, 20s, 40s, then a 60s cap), giving **~25 minutes** of single-run coverage to ride out a prolonged PSGallery search-index outage. This is deliberately **one mechanism** - a single long-retry run - rather than a per-platform self-re-queue, so GitHub Actions and Azure DevOps behave identically and neither needs extra permissions (`actions: write` / "Queue builds"). ~25 min stays under the Azure DevOps 60-min hosted-agent job cap (GitHub-hosted runners have a 6-hour cap; self-hosted agents are uncapped). The normal path is unchanged - a healthy install returns on the first attempt - and the latest module version is still installed on every run.
 
 ### Notes
 
-- No public function, parameter, or export-count change (still **68**). Pipeline-template + test-only release. `GENERATED_AGAINST_MODULE_VERSION` bumped to `0.9.16`.
+- No public function, parameter, or export-count change (still **68**). Pipeline-template + test-only release. `GENERATED_AGAINST_MODULE_VERSION` bumped to `0.9.17`.
 
 > Previous release notes have moved into the [Release History](#release-history) appendix at the bottom of this document.
 
-See [CHANGELOG.md](CHANGELOG.md) for full release details. See [`What's New in v0.9.14`](#whats-new-in-v0914) in the Release History for the previous release.
+See [CHANGELOG.md](CHANGELOG.md) for full release details. See [`What's New in v0.9.16`](#whats-new-in-v0916) in the Release History for the previous release.
 
 ## Files
 
@@ -591,7 +587,11 @@ This code is provided as-is for educational and reference purposes.
 
 The full What's-New history (v0.7.81 and earlier) has moved to [docs/release-history.md](docs/release-history.md).
 
-The most recent release notes for **v0.9.16** stay above under [`What's New in v0.9.16`](#whats-new-in-v0916).
+The most recent release notes for **v0.9.17** stay above under [`What's New in v0.9.17`](#whats-new-in-v0917).
+
+### What's New in v0.9.16
+
+**Pipeline bootstrap hardening + benign No Clusters Ready job made non-fatal.** The shared install step in all 20 templates hardened its transient-PSGallery-blip retry from 3 to 5 attempts with capped exponential backoff + jitter (10s, 20s, 40s, 60s cap), and the benign `no-clusters-ready` job (GH) / `NoClustersReady` stage (ADO) in `apply-updates` became `continue-on-error` / `continueOnError` so a persistent blip on a nothing-to-apply run no longer reds a healthy no-op. No public function/export change (still 68). `GENERATED_AGAINST_MODULE_VERSION` bumped to `0.9.16`. See [CHANGELOG.md](CHANGELOG.md#0916---2026-07-06) for the full v0.9.16 entry.
 
 ### What's New in v0.9.15
 

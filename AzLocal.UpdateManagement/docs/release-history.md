@@ -4,9 +4,13 @@
 >
 > **For older releases**, this is the canonical reference; the main README intentionally stays slim so the most recent block is easy to find.
 >
-> **For v0.9.16 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0916) `What's New in v0.9.16` section.
+> **For v0.9.17 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0917) `What's New in v0.9.17` section.
 
 ---
+
+### What's New in v0.9.17
+
+**PSGallery install-step retry hardened to survive a PROLONGED search-index outage - and unified across both platforms.** After an external customer hit a PSGallery blip that outlasted the v0.9.16 5-attempt (~2.5 min) window (all five attempts failed with `No match was found ... 'AzLocal.UpdateManagement'`), the shared "Install AzLocal.UpdateManagement from PSGallery" step in all 20 GitHub Actions + Azure DevOps templates (26 install blocks) now retries up to **25** attempts (~25 min) with the same capped exponential backoff + jitter (10s, 20s, 40s, then a 60s cap). This is deliberately **one uniform mechanism** on both platforms - a single long-retry run - rather than a per-platform self-re-queue, so GitHub Actions and Azure DevOps behave identically and neither needs extra permissions (GitHub `actions: write` / Azure DevOps "Queue builds"). ~25 min stays under the Azure DevOps 60-min hosted-agent job cap (GitHub-hosted runners have a 6-hour cap; self-hosted agents are uncapped). The normal path is unchanged - a healthy install returns on the first attempt - and the latest module version is still installed on every run. No public function, parameter, or export-count change (still 68). Pipeline-template + test-only release. `GENERATED_AGAINST_MODULE_VERSION` bumped to `0.9.17`. See [CHANGELOG.md](../CHANGELOG.md#0917---2026-07-07) for the full v0.9.17 entry.
 
 ### What's New in v0.9.16
 

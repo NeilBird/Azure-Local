@@ -5,6 +5,20 @@ All notable changes to the AzLocal.UpdateManagement module (renamed from AzStack
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.17] - 2026-07-07
+
+PSGallery install-step retry hardened again after a customer hit a transient
+search-index outage that lasted longer than the v0.9.16 5-attempt / ~2.5-min
+window (all five attempts failed with `No match was found ... 'AzLocal.UpdateManagement'`).
+
+### Changed
+
+- **Install-step retry raised from 5 to 25 attempts (~25 min) on BOTH platforms.** The shared "Install AzLocal.UpdateManagement from PSGallery" step in all 20 templates (26 install blocks) now retries up to 25 times with the same capped exponential backoff + jitter (10s, 20s, 40s, then a 60s cap), giving ~25 minutes of single-run coverage to ride out a prolonged PSGallery search-index outage. This is one **uniform** mechanism on GitHub Actions and Azure DevOps - a single long-retry run - deliberately chosen over a per-platform self-re-queue so both behave identically and neither needs extra permissions (GitHub `actions: write` / Azure DevOps "Queue builds"). ~25 min stays under the Azure DevOps 60-min hosted-agent job cap (GitHub-hosted runners have a 6-hour cap; self-hosted agents are uncapped). The normal path is unchanged - a healthy install returns on the first attempt - and the latest module version is still installed on every run.
+
+### Notes
+
+- No public function, parameter, or export-count change (still 68). Pipeline-template + test-only release. `GENERATED_AGAINST_MODULE_VERSION` bumped to `0.9.17`.
+
 ## [0.9.16] - 2026-07-06
 
 Pipeline bootstrap hardening for **Update: 3 - Apply Updates** (and every other

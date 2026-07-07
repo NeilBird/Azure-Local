@@ -154,7 +154,7 @@ env:
   # this to the version actually installed and to the latest on PSGallery, and emits a
   # ::notice annotation if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.9.16'
+  GENERATED_AGAINST_MODULE_VERSION: '0.9.17'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): manual workflow_dispatch input >
   # repository variable 'REQUIRED_MODULE_VERSION' > empty (latest).
@@ -267,8 +267,8 @@ jobs:
           # Transient PSGallery lookups can intermittently fail with "No match was found
           # for the specified search criteria and module name 'AzLocal.UpdateManagement'"
           # (a PSGallery search index / publish-propagation blip). Retry the install up
-          # to 5 attempts with capped exponential backoff + jitter (10s, 20s, 40s, 60s).
-          $installMaxAttempts = 5
+          # to 25 attempts (~25 min) with capped exponential backoff + jitter (10s, 20s, 40s, 60s cap) to ride out a prolonged PSGallery search-index outage in a single run.
+          $installMaxAttempts = 25
           $installAttempt = 0
           while ($true) {
               $installAttempt++
