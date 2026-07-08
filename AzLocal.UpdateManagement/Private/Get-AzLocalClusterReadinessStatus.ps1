@@ -26,6 +26,10 @@ function Get-AzLocalClusterReadinessStatus {
         Priority cascade (first match wins, cluster counted exactly once):
             UpdateFailed > ActionRequired > HealthFailure > SbeBlocked >
             InProgress > ReadyForUpdate > UpToDate > NeedsInvestigation
+
+        v0.9.19: SbeBlocked is gated on "no Ready update" - a cluster that has a
+        HasPrerequisite update AND a genuinely-Ready update is ReadyForUpdate
+        (the Ready update is installable now; the prereq item is non-blocking).
     .PARAMETER ReadinessRow
         A single PSCustomObject row as emitted by Get-AzLocalClusterUpdateReadiness.
         Optional properties are read defensively for Set-StrictMode -Version Latest.
@@ -58,7 +62,17 @@ function Get-AzLocalClusterReadinessStatus {
     if ($updateState -in @('Failed', 'UpdateFailed', 'NeedsAttention'))       { return 'UpdateFailed' }
     elseif ($updateState -eq 'PreparationFailed')                            { return 'ActionRequired' }
     elseif ($healthState -eq 'Failure')                                      { return 'HealthFailure' }
-    elseif ($hasPrereq)                                                      { return 'SbeBlocked' }
+    # v0.9.19: SbeBlocked must NOT win when the cluster also has a genuinely
+    # Ready update. A cluster can carry a HasPrerequisite/AdditionalContentRequired
+    # update (e.g. an OEM SBE whose OWN downstream prerequisite is unmet) at the
+    # same time as a Solution/feature update that Azure reports as Ready and
+    # installable. The portal (and Get-SolutionUpdate) show that Ready update as
+    # eligible with an active "Install now", so the actionable status is
+    # ReadyForUpdate - the prereq update is a separate, non-blocking item.
+    # Treating any HasPrerequisiteUpdates value as SbeBlocked previously masked
+    # these clusters as "SBE Prerequisite / Not-Ready" even though a feature
+    # update was ready to apply. Only classify SbeBlocked when nothing is Ready.
+    elseif ($hasPrereq -and -not $readyForUpdate)                           { return 'SbeBlocked' }
     elseif ($updateState -in @('UpdateInProgress', 'PreparationInProgress')) { return 'InProgress' }
     elseif ($readyForUpdate -eq $true)                                       { return 'ReadyForUpdate' }
     elseif ($updateState -in @('UpToDate', 'AppliedSuccessfully'))           { return 'UpToDate' }

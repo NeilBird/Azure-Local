@@ -402,8 +402,10 @@ function Get-AzLocalClusterUpdateReadiness {
                     UpdateStartWindow           = ''
                     UpdateExclusionsWindow = ''
                     LastUpdated            = ''
+                    StatusLastChecked      = ''
                     AllowedUpdateVersions  = ''
                     AllowListSource        = 'None'
+                    AllowListSuppressedUpdates = ''
                     AzureUpdateState       = 'N/A'
                 }) | Out-Null
             continue
@@ -471,6 +473,11 @@ function Get-AzLocalClusterUpdateReadiness {
             $allowListDisplay        = ''
             $allowListSource         = 'None'
             $scheduleSuppressedReady = $false
+            # v0.9.19: names of the Ready updates the allow-list filtered OUT for
+            # this cluster (';'-joined). Fleet-aggregated by the readiness report
+            # into the "Updates filtered out by the allow-list" table so operators
+            # can see which updates to add to apply-updates-schedule.yml.
+            $suppressedReadyNames    = ''
             $effectiveAllowList      = @()
             if ($scheduleCfg) {
                 $clusterRing = if ($clusterTags) { Get-TagValue -Tags $clusterTags -Name 'UpdateRing' } else { $null }
@@ -504,6 +511,12 @@ function Get-AzLocalClusterUpdateReadiness {
                     if ($f -and $f.name) { [void]$allowedNameSet.Add([string]$f.name) }
                 }
                 $filteredReady = @($readyUpdates | Where-Object { $allowedNameSet.Contains([string]$_.UpdateName_) })
+                # v0.9.19: capture the Ready updates the allow-list removed BEFORE
+                # $readyUpdates is narrowed to the allowed subset.
+                $suppressedReady = @($readyUpdates |
+                    Where-Object { -not $allowedNameSet.Contains([string]$_.UpdateName_) } |
+                    ForEach-Object { [string]$_.UpdateName_ })
+                if ($suppressedReady.Count -gt 0) { $suppressedReadyNames = ($suppressedReady -join '; ') }
                 if ($filteredReady.Count -eq 0) { $scheduleSuppressedReady = $true }
                 $readyUpdates = $filteredReady
             }
@@ -567,7 +580,26 @@ function Get-AzLocalClusterUpdateReadiness {
             # v0.8.82: most-recent packageVersions[].lastUpdated across ALL packageTypes
             # (Solution AND SBE AND services) - operator-facing "Last Updated" column.
             $lastUpdated = ''
+            # v0.9.19: the updateSummary's own lastChecked timestamp - i.e. WHEN Azure
+            # last scanned this cluster for update availability. This is the freshness
+            # signal operators need: the readiness assessment reads Azure's cached
+            # per-cluster state, so if lastChecked is stale a newly-released update
+            # will NOT yet show as Ready even though the portal catalog lists it (and a
+            # since-resolved SBE prerequisite may still read as blocked). ARG exposes it
+            # as 'lastChecked'; the single-cluster ARM shape uses 'lastCheckedTime'.
+            $statusLastChecked = ''
             if ($sumProps) {
+                $rawLastChecked = if ($sumProps.PSObject.Properties['lastChecked'] -and $sumProps.lastChecked) {
+                    [string]$sumProps.lastChecked
+                }
+                elseif ($sumProps.PSObject.Properties['lastCheckedTime'] -and $sumProps.lastCheckedTime) {
+                    [string]$sumProps.lastCheckedTime
+                }
+                else { '' }
+                if ($rawLastChecked) {
+                    try { $statusLastChecked = ([datetime]$rawLastChecked).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ') }
+                    catch { $statusLastChecked = $rawLastChecked }
+                }
                 if ($sumProps.PSObject.Properties['currentVersion']) {
                     $currentVersion = [string]$sumProps.currentVersion
                 }
@@ -671,8 +703,10 @@ function Get-AzLocalClusterUpdateReadiness {
                     UpdateStartWindow      = if ($uw) { $uw } else { '' }
                     UpdateExclusionsWindow = if ($ue) { $ue } else { '' }
                     LastUpdated            = $lastUpdated
+                    StatusLastChecked      = $statusLastChecked
                     AllowedUpdateVersions  = $allowListDisplay
                     AllowListSource        = $allowListSource
+                    AllowListSuppressedUpdates = $suppressedReadyNames
                     AzureUpdateState       = $rawUpdateState
                 }) | Out-Null
         }
@@ -700,8 +734,10 @@ function Get-AzLocalClusterUpdateReadiness {
                     UpdateStartWindow      = ''
                     UpdateExclusionsWindow = ''
                     LastUpdated            = ''
+                    StatusLastChecked      = ''
                     AllowedUpdateVersions  = ''
                     AllowListSource        = 'None'
+                    AllowListSuppressedUpdates = ''
                     AzureUpdateState       = 'Error'
                 }) | Out-Null
         }

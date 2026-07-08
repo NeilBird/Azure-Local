@@ -5,6 +5,35 @@ All notable changes to the AzLocal.UpdateManagement module (renamed from AzStack
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.19] - 2026-07-08
+
+**Update: 1 - Assess Update Readiness** fixes a mis-classification that hid
+Ready clusters behind an unrelated SBE prerequisite, surfaces which updates the
+allow-list is filtering out, and adds a per-cluster status-freshness timestamp;
+**Monitor: 3 - Fleet Update Status** gains two new tables and a clearer
+version-distribution layout.
+
+### Fixed
+
+- **A cluster with a genuinely-`Ready` update is no longer mislabelled "SBE Prerequisite / Not-Ready" just because it also carries a `HasPrerequisite` SBE update.** The shared readiness cascade (`Get-AzLocalClusterReadinessStatus`, used by Update: 1 / the Apply-Updates readiness gate / Monitor: 3) tested `SbeBlocked` **before** `ReadyForUpdate`, so any non-empty `HasPrerequisiteUpdates` value won even when a Solution/feature update was Ready and installable. A cluster can legitimately have both at once - e.g. a Solution feature update in state `Ready` (which the Azure portal shows as eligible with an active **Install now**) alongside an OEM SBE update in state `HasPrerequisite` (its own downstream prerequisite unmet). Such clusters were shown as **SBE Prerequisite** in the Not-Ready table and were **excluded from "Clusters - Ready for Update"**, so operators could not see they had an update ready to apply. `SbeBlocked` is now gated on there being **no** Ready update (`$hasPrereq -and -not $readyForUpdate`); a cluster with a Ready update classifies as **ReadyForUpdate**. Clusters whose only available update is the `HasPrerequisite` item still correctly show `SbeBlocked`.
+
+### Added
+
+- **Update: 1 - Assess Update Readiness** now shows a **Status checked (UTC)** column (the update summary's `lastChecked` timestamp - when Azure last scanned each cluster for available updates) in the Not-Ready and All-clusters-detail tables, plus a readiness-row field `StatusLastChecked`. A stale value is the usual reason a portal-visible update is not yet flagged **Ready** (or a since-resolved SBE prerequisite still reads as blocked); a note points operators at `Sync-AzLocalClusterUpdateSummary` / the portal "Check for updates" action to refresh before re-running.
+- **Update: 1 - Assess Update Readiness** now renders an **Updates filtered out by the allow-list** table. When the `allowedUpdateVersions` allow-list removes updates that Azure reports as **Ready**, this fleet-wide aggregate (not per cluster) lists each filtered-out update, whether the rule is **Global** (top-level list) or **Per-Ring** (per-row override), the affected update ring(s), and a distinct cluster count - so operators can see exactly which update names to add to `apply-updates-schedule.yml` to let them proceed. New readiness-row field `AllowListSuppressedUpdates`, step output `allowlist_filtered_updates`, and PassThru field `AllowListFilteredUpdateCount`.
+- **Fleet - SBE Version(s) Distribution table.** Directly below the solution-version distribution, a new table pivots each cluster's installed Solution Builder Extension (SBE) version (vendor `YYMM.x.x`). The base placeholders `2.0.0.0` / `2.1.0.0` and clusters with no SBE content are surfaced as **No SBE Installed**. The `YYMM` column is retained (2nd octet when it is a 4-digit year-month); there is no Support column because SBE has no Microsoft support window.
+- **Updates - Recent Successful Updates table.** Directly below the failed-attempts table, a new table lists update runs that reached `State=Succeeded` in the last 48 hours (Cluster Name, Update Ring, Update Name, Duration, Time Started, Time Completed) with Cluster + Update Azure Portal deep links - a positive-outcome view the failure-only table never showed.
+- New step outputs `sbe_version_dist_count` and `recently_completed_48h`.
+
+### Changed
+
+- Renamed report headers for clarity: `Fleet Version Distribution` -> **Fleet - Solution Update(s) Version Distribution**; `Update Run History and Error Details` -> **Updates - Recent Failed Update Attempts**.
+- `Get-AzLocalUpdateRuns` rows now carry a raw `EndTimeUtc` `[datetime]`, and `Export-AzLocalFleetUpdateStatusReport` Step 4c now collects the full run set (dropped `-Latest`) so multiple completions per cluster inside the 48h window are captured; the console state counts remain latest-per-cluster.
+
+### Notes
+
+- Export count unchanged at **69** (the new SBE and Recent Successful tables are inline in the existing `Export-AzLocalFleetUpdateStatusReport` cmdlet). `GENERATED_AGAINST_MODULE_VERSION` bumped to `0.9.19`.
+
 ## [0.9.18] - 2026-07-07
 
 Follow-up strict-mode hardening after v0.9.17. A live re-run of **Update: 3 -

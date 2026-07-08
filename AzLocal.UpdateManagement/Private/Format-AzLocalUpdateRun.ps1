@@ -178,6 +178,10 @@ function Format-AzLocalUpdateRun {
         Status            = $progressStatus
         StartTime         = if ($props.timeStarted) { ([datetime]$props.timeStarted).ToString("yyyy-MM-dd HH:mm") } else { "" }
         EndTime           = $endTimeDisplay
+        # v0.9.19: raw resolved end instant (UTC [datetime] or $null) so callers can
+        # filter on an exact time window (e.g. "succeeded in the last 48h") without
+        # re-parsing the truncated EndTime display string.
+        EndTimeUtc        = $endTimeDt
         LastUpdatedTime   = $lastUpdatedDisplay
         Duration          = $duration
         Progress          = $progress

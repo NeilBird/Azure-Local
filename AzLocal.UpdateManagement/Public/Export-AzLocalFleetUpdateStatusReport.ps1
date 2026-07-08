@@ -445,6 +445,38 @@ function Export-AzLocalFleetUpdateStatusReport {
     $mostCommonVersion    = if ($distinctVersions -gt 0) { $versionDistribution[0].Version } else { '(none)' }
     $mostCommonVersionPct = if ($distinctVersions -gt 0) { $versionDistribution[0].Percentage } else { 0 }
 
+    # ---- Fleet SBE Version(s) Distribution (v0.9.19) ----------------------
+    # Pivots each cluster's installed SBE version (CurrentSbeVersion from the
+    # updateSummary SBE packageVersions). SBE versions are vendor-specific
+    # (vendor.YYMM.x.x); the base placeholders '2.0.0.0' / '2.1.0.0' and any
+    # cluster with no SBE package are surfaced as 'No SBE Installed'. The YYMM
+    # column is retained (2nd octet when it is a 4-digit year-month) but there
+    # is no Microsoft support window for SBE, so no Support column is rendered.
+    $sbePlaceholderVersions = @('2.0.0.0', '2.1.0.0')
+    $sbeGroups = @($readiness | Group-Object {
+        $rawSbe = if ($_.PSObject.Properties['CurrentSbeVersion'] -and $_.CurrentSbeVersion) { [string]$_.CurrentSbeVersion } else { '' }
+        if ([string]::IsNullOrWhiteSpace($rawSbe)) { 'No SBE Installed' }
+        elseif ($sbePlaceholderVersions -contains $rawSbe) { "$rawSbe (No SBE Installed)" }
+        else { $rawSbe }
+    } | Sort-Object Count -Descending)
+    $sbeVersionDistribution = @($sbeGroups | ForEach-Object {
+        $clusterNames = @($_.Group | Sort-Object ClusterName | ForEach-Object { [string]$_.ClusterName })
+        $rawVer = ([string]$_.Name) -replace '\s*\(No SBE Installed\)\s*$', ''
+        $sbeYymm = if ($rawVer -eq 'No SBE Installed') { '' }
+                   else {
+                       $sbeParts = $rawVer -split '\.'
+                       if ($sbeParts.Count -ge 2 -and $sbeParts[1] -match '^[0-9]{4}$') { $sbeParts[1] } else { '' }
+                   }
+        [pscustomobject]@{
+            Version    = $_.Name
+            Count      = $_.Count
+            Percentage = if ($totalTests -gt 0) { [math]::Round(($_.Count / $totalTests) * 100, 1) } else { 0 }
+            Clusters   = ($clusterNames -join ', ')
+            Yymm       = $sbeYymm
+        }
+    })
+    $sbeDistinctVersions = $sbeVersionDistribution.Count
+
     # Anchor support window on Microsoft manifest (preferred) or
     # fleet-observed top-6 YYMM fallback when the manifest is unreachable.
     $supportSource         = 'fleet-observed'
@@ -782,16 +814,37 @@ function Export-AzLocalFleetUpdateStatusReport {
     $available = Get-AzLocalAvailableUpdates -ClusterResourceIds $fleetResourceIds -ExportPath $availableCsv -PassThru
     Write-Host "Found $(@($available).Count) available update(s) across fleet" -ForegroundColor Green
 
+    # v0.9.19: always defined so the markdown section is safe under Set-StrictMode
+    # even when -IncludeUpdateRuns:$false (no run collection performed).
+    $recentSuccessRuns = @()
     if ($IncludeUpdateRuns) {
         Write-Host ""
         Write-Host "Step 4c: Collecting recent update run history..." -ForegroundColor Yellow
-        $allRuns = Get-AzLocalUpdateRuns -ClusterResourceIds $fleetResourceIds -Latest -ExportPath $runsCsv -PassThru
-        $allRunsCount = @($allRuns).Count
-        $succeeded     = @($allRuns | Where-Object { $_.State -eq 'Succeeded' }).Count
-        $inProgressRuns = @($allRuns | Where-Object { $_.State -eq 'InProgress' }).Count
-        $failedRuns    = @($allRuns | Where-Object { $_.State -eq 'Failed' }).Count
+        # v0.9.19: collect the FULL run set (no -Latest) so the 'Recent Successful
+        # Updates' table can surface every run that reached Succeeded inside the
+        # 48h window (a cluster may complete more than one update in that period).
+        # The state counts below are still computed latest-per-cluster to preserve
+        # the prior console-summary semantics.
+        $allRuns = Get-AzLocalUpdateRuns -ClusterResourceIds $fleetResourceIds -ExportPath $runsCsv -PassThru
+        $allRunsList = @($allRuns)
+        $latestPerCluster = @($allRunsList | Group-Object ClusterName | ForEach-Object {
+            @($_.Group | Sort-Object @{ Expression = 'EndTimeUtc'; Descending = $true }, @{ Expression = 'StartTime'; Descending = $true })[0]
+        })
+        $allRunsCount = @($latestPerCluster).Count
+        $succeeded     = @($latestPerCluster | Where-Object { $_.State -eq 'Succeeded' }).Count
+        $inProgressRuns = @($latestPerCluster | Where-Object { $_.State -eq 'InProgress' }).Count
+        $failedRuns    = @($latestPerCluster | Where-Object { $_.State -eq 'Failed' }).Count
         Write-Host "Update runs collected for $allRunsCount cluster(s)" -ForegroundColor Green
         Write-Host "  Succeeded: $succeeded, In Progress: $inProgressRuns, Failed: $failedRuns"
+
+        # v0.9.19: runs that reached Succeeded and completed within the last 48h.
+        $recentSuccessCutoff = $Now.ToUniversalTime().AddHours(-48)
+        $recentSuccessRuns = @($allRunsList | Where-Object {
+            $_.State -eq 'Succeeded' -and
+            $_.PSObject.Properties['EndTimeUtc'] -and $_.EndTimeUtc -and
+            ([datetime]$_.EndTimeUtc).ToUniversalTime() -ge $recentSuccessCutoff
+        } | Sort-Object @{ Expression = 'EndTimeUtc'; Descending = $true }, @{ Expression = 'ClusterName'; Descending = $false })
+        Write-Host "  Recently completed (Succeeded, last 48h): $($recentSuccessRuns.Count)"
     }
 
     # ---- Step 5: console summary + step outputs ---------------------------
@@ -830,6 +883,8 @@ function Export-AzLocalFleetUpdateStatusReport {
     Set-AzLocalPipelineOutput -Name 'has_prerequisite'        -Value ([string]$hasPrerequisite)
     Set-AzLocalPipelineOutput -Name 'run_history_count'       -Value ([string]$runHistoryCount)
     Set-AzLocalPipelineOutput -Name 'version_dist_count'      -Value ([string]$distinctVersions)
+    Set-AzLocalPipelineOutput -Name 'sbe_version_dist_count'  -Value ([string]$sbeDistinctVersions)
+    Set-AzLocalPipelineOutput -Name 'recently_completed_48h'  -Value ([string](@($recentSuccessRuns).Count))
     Set-AzLocalPipelineOutput -Name 'supported_yymm_window'   -Value $supportedYymmWindow
     Set-AzLocalPipelineOutput -Name 'supported_clusters'      -Value ([string]$supportedCount)
     Set-AzLocalPipelineOutput -Name 'unsupported_clusters'    -Value ([string]$unsupportedCount)
@@ -848,7 +903,7 @@ function Export-AzLocalFleetUpdateStatusReport {
     if ($distinctVersions -gt 0) {
         try {
             $versionSection = @()
-            $versionSection += '### Fleet Version Distribution'
+            $versionSection += '### Fleet - Solution Update(s) Version Distribution'
             $versionSection += ''
             $versionSection += "_$distinctVersions distinct version(s) across $totalTests cluster(s). Anchor source: ``$supportSource``"
             if ($latestReleasedYymm) { $versionSection[-1] += ". Latest released YYMM (Microsoft manifest): ``$latestReleasedYymm`` (``$latestReleasedVersion``)" }
@@ -893,6 +948,51 @@ function Export-AzLocalFleetUpdateStatusReport {
         }
         catch {
             Write-Warning "Failed to render Fleet Version Distribution markdown table: $($_.Exception.Message)"
+        }
+    }
+
+    # Fleet - SBE Version(s) Distribution table (v0.9.19). Same layout as the
+    # solution distribution table but without the Support column (SBE versions
+    # are vendor-specific and have no Microsoft support window).
+    if ($sbeDistinctVersions -gt 0) {
+        try {
+            $sbeSection = @()
+            $sbeSection += '### Fleet - SBE Version(s) Distribution'
+            $sbeSection += ''
+            $sbeSection += "_$sbeDistinctVersions distinct SBE version value(s) across $totalTests cluster(s). SBE versions are vendor-specific; the base placeholders ``2.0.0.0`` / ``2.1.0.0`` and clusters with no SBE package are shown as **No SBE Installed**._"
+            $sbeSection += ''
+            $sbeSection += '| YYMM | SBE Update Versions | Clusters | % | Cluster Names (first 15 shown only) |'
+            $sbeSection += '|------|---------------------|----------|---|--------------------------------------|'
+            $bySbeYymm = $sbeVersionDistribution | Group-Object Yymm | Sort-Object @{Expression={ if ($_.Name) { $_.Name } else { '' } }; Descending=$true}
+            foreach ($g in $bySbeYymm) {
+                $groupRows = @($g.Group | Sort-Object Count -Descending)
+                $totalCount = ($groupRows | Measure-Object Count -Sum).Sum
+                $totalPct   = if ($totalTests -gt 0) { [math]::Round(($totalCount / $totalTests) * 100, 1) } else { 0 }
+                $yymmDisplay = if ($g.Name) { $g.Name } else { '_(unknown)_' }
+                $sbeVersionsCell = (($groupRows | ForEach-Object { '{0} x {1}' -f $_.Version, $_.Count }) -join '<br>')
+                $clusterNames = @()
+                foreach ($r in $groupRows) {
+                    if ($r.Clusters) {
+                        $clusterNames += @($r.Clusters -split ',\s*' | Where-Object { $_ })
+                    }
+                }
+                $clusterNames = @($clusterNames | Sort-Object -Unique)
+                $clCell = if ($clusterNames.Count -le 15) {
+                    $clusterNames -join '; '
+                }
+                else {
+                    (($clusterNames | Select-Object -First 15) -join '; ') + (' ... (+{0} more)' -f ($clusterNames.Count - 15))
+                }
+                $clCell = $clCell -replace '\|','\|'
+                $sbeSection += ('| {0} | {1} | {2} | {3}% | {4} |' -f $yymmDisplay, $sbeVersionsCell, $totalCount, $totalPct, $clCell)
+            }
+            $sbeSection += ''
+            $sbeSection += "_Note: the **Cluster Names (first 15 shown only)** column is truncated for readability. Download ``$ReadinessCsvFileName`` from artifacts for the full per-cluster SBE version list._"
+            $sbeSection += ''
+            foreach ($line in $sbeSection) { [void]$md.Add($line) }
+        }
+        catch {
+            Write-Warning "Failed to render Fleet - SBE Version(s) Distribution markdown table: $($_.Exception.Message)"
         }
     }
 
@@ -966,7 +1066,7 @@ function Export-AzLocalFleetUpdateStatusReport {
                 " (collapsed $totalRowsCnt run(s) into $groupCount unique failure group(s); older same-error reruns are listed inside each row's 'Show error' panel)"
             }
             else { '' }
-            [void]$md.Add("### :scroll: Update Run History and Error Details")
+            [void]$md.Add("### :scroll: Updates - Recent Failed Update Attempts")
             [void]$md.Add('')
             [void]$md.Add("_ARG-first, fleet-scale failure-detail view. Shows up to $RunHistoryTopRows most recent unresolved Failed update runs (last $RunHistorySinceDays days). Source cmdlet: ``Get-AzLocalUpdateRunFailures -State Failed -OnlyUnresolved``.$dedupSuffix._")
             [void]$md.Add('')
@@ -1036,6 +1136,43 @@ function Export-AzLocalFleetUpdateStatusReport {
         }
         catch {
             Write-Warning "Failed to render Update Run History markdown table: $($_.Exception.Message)"
+        }
+    }
+
+    # Updates - Recent Successful Updates table (v0.9.19). Sits directly below
+    # the 'Recent Failed Update Attempts' table and surfaces update runs that
+    # reached State=Succeeded within the last 48 hours (a positive-outcome view
+    # the failure-only table above never shows). Cluster + Update are portal
+    # deep links; column order mirrors the failed table.
+    if ($IncludeUpdateRuns) {
+        try {
+            [void]$md.Add('### :scroll: Updates - Recent Successful Updates')
+            [void]$md.Add('')
+            [void]$md.Add('_Update runs that completed successfully (State=Succeeded) in the last 48 hours. Source cmdlet: ``Get-AzLocalUpdateRuns``._')
+            [void]$md.Add('')
+            $recentSuccessList = @($recentSuccessRuns)
+            if ($recentSuccessList.Count -eq 0) {
+                [void]$md.Add('_No updates have completed successfully in the last 48 hours._')
+                [void]$md.Add('')
+            }
+            else {
+                [void]$md.Add('> **Tip:** Hold `Ctrl` (or `Cmd` on macOS) when clicking - or middle-click - Cluster or Update links to open them in a new tab. (GitHub markdown strips `target="_blank"`.)')
+                [void]$md.Add('')
+                [void]$md.Add('| Cluster Name | Update Ring | Update Name | Duration | Time Started | Time Completed |')
+                [void]$md.Add('|---|---|---|---|---|---|')
+                foreach ($r in $recentSuccessList) {
+                    $rid = if ($r.PSObject.Properties['ClusterResourceId']) { [string]$r.ClusterResourceId } else { '' }
+                    $clusterCell = if ($rid) { '<a href="https://portal.azure.com/#@/resource{0}">{1}</a>' -f $rid, $r.ClusterName } else { [string]$r.ClusterName }
+                    $runRid  = if ($r.PSObject.Properties['RunResourceId']) { [string]$r.RunResourceId } else { '' }
+                    $updCell = if ($runRid) { '<a href="https://portal.azure.com/#@/resource{0}">{1}</a>' -f $runRid, $r.UpdateName } else { [string]$r.UpdateName }
+                    $ringCell = if ($rid -and $ringByResourceId.ContainsKey($rid)) { ([string]$ringByResourceId[$rid]) -replace '\|','\|' } else { '-' }
+                    [void]$md.Add("| $clusterCell | $ringCell | $updCell | $($r.Duration) | $($r.StartTime) | $($r.EndTime) |")
+                }
+                [void]$md.Add('')
+            }
+        }
+        catch {
+            Write-Warning "Failed to render Updates - Recent Successful Updates markdown table: $($_.Exception.Message)"
         }
     }
 

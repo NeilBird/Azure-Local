@@ -43,7 +43,7 @@
 #requires -Version 5.1
 [CmdletBinding()]
 param(
-    [string]$ReleaseVersion = '0.9.18',
+    [string]$ReleaseVersion = '0.9.19',
     [string]$SubscriptionId,
     [string]$ModulePath,
     [string[]]$Rings = @('Prod', 'Ring1', 'Ring2', 'Canary', 'DevTest'),
@@ -134,6 +134,8 @@ try {
         $report['AssessReadiness ready CSV exists'] = if ($csvPath -and (Test-Path $csvPath)) { 'PASS' } else { 'FAIL - csv not written' }
         $report['AssessReadiness "Ready for Update" section'] = if ($md -match '### Clusters - Ready for Update') { 'PASS' } else { 'FAIL' }
         $report['AssessReadiness collapsed detail'] = if ($md -match '<summary>Expand to view clusters</summary>') { 'PASS' } else { 'FAIL' }
+        # v0.9.19: per-cluster update-status freshness column in the detail/Not-Ready tables.
+        $report['AssessReadiness "Status checked (UTC)" column (v0.9.19)'] = if ($md -match 'Status checked \(UTC\)') { 'PASS' } else { 'FAIL' }
         if ($csvPath -and (Test-Path $csvPath)) { Save '3b-ready-for-update-csv' (Get-Content $csvPath -Raw) }
     }
     catch { $report['Export-AzLocalClusterUpdateReadinessReport'] = "ERROR: $($_.Exception.Message)" }
@@ -170,7 +172,7 @@ try {
             $md = Get-Content -Path $summaryFile -Raw
             Save "5-applyupdates-ring-$ring-summary" $md
             if (-not $report.Contains('ApplyUpdates Support column header')) {
-                $report['ApplyUpdates Support column header'] = if ($md -match '\| Cluster \| Current Version \| Update State \| Health \| Status \| Support \| Recommended Update \| Blocking Reasons \|') { 'PASS' } else { 'FAIL' }
+                $report['ApplyUpdates Support column header'] = if ($md -match '\| Cluster \| UpdateRing \| Current Version \| Update State \| Health \| Status \| Support \| Recommended Update \| Blocking Reasons \|') { 'PASS' } else { 'FAIL' }
             }
             if ($md -match 'Update Available \(stale assessment\)' -and -not $report.Contains('ApplyUpdates stale override rendered')) {
                 $report['ApplyUpdates stale override rendered'] = "PASS (ring '$ring')"

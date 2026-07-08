@@ -34,8 +34,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $script:ModuleInfo | Should -Not -BeNullOrEmpty
         }
 
-        It 'Should have version 0.9.18' {
-            $script:ModuleInfo.Version | Should -Be '0.9.18'
+        It 'Should have version 0.9.19' {
+            $script:ModuleInfo.Version | Should -Be '0.9.19'
         }
 
         It 'Module version constants are in sync between .psm1 and .psd1' {
@@ -17572,6 +17572,220 @@ Describe 'Thin-YAML Step.8: Export-AzLocalFleetUpdateStatusReport' {
         $summary | Should -Match 'Wave3'
     }
 
+    It 'v0.9.19: renames the solution version distribution and failed-attempts headers' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s8_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s8_ghSummaryFile
+        $start = $script:_s8_now.AddHours(-3)
+        $end   = $script:_s8_now.AddHours(-1)
+        $global:_s8_payload = @{
+            Inventory = @([pscustomobject]@{ ClusterName='hdr'; ResourceId='/subscriptions/s1/resourceGroups/rgh/providers/Microsoft.AzureStackHCI/clusters/hdr' })
+            Readiness = @(
+                [pscustomobject]@{
+                    ClusterName='hdr'; ResourceGroup='rgh'; SubscriptionId='s1'
+                    ResourceId='/subscriptions/s1/resourceGroups/rgh/providers/Microsoft.AzureStackHCI/clusters/hdr'
+                    UpdateState='Failed'; HealthState='Success'; ReadyForUpdate=$false
+                    HasPrerequisiteUpdates=''; AllAvailableUpdates=''; ReadyUpdates=''; SBEDependency=''
+                    RecommendedUpdate=''; CurrentVersion='12.2510.0.0'; CurrentSbeVersion='10.2408.0.628'; HealthCheckFailures=''
+                }
+            )
+            Manifest = [pscustomobject]@{ SupportedYYMMs=@('2510'); LatestYYMM='2510'; LatestVersion='12.2510.0.999'; ManifestFetchedAt=(Get-Date).ToUniversalTime() }
+            Failures = @(
+                [pscustomobject]@{
+                    ClusterName='hdr'; ClusterResourceId='/subscriptions/s1/resourceGroups/rgh/providers/Microsoft.AzureStackHCI/clusters/hdr'
+                    UpdateName='12.2510.0.999'; State='Failed'; Status='Failed'; CurrentStep='ApplyNodeUpdate'
+                    Duration='02:00:00'; DurationMinutes=120.0; StartTime=$start; LastUpdated=$end
+                    DeepestStepName='ApplyNodeUpdate'; ErrorCategory='NodeReboot'
+                    DeepestErrMsg='Node reboot timed out'
+                    UpdateRunPortalUrl='https://portal.azure.com/run/1'; RunId='run-1'; StackTracePreview=''
+                    UpdateRing='Wave3'
+                }
+            )
+            OutDir = $script:_s8_outDir; Now = $script:_s8_now
+        }
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory       { @($global:_s8_payload.Inventory) }
+            Mock Get-AzLocalClusterUpdateReadiness { @($global:_s8_payload.Readiness) }
+            Mock Get-AzLocalLatestSolutionVersion  { $global:_s8_payload.Manifest }
+            Mock Get-AzLocalUpdateSummary          { @() }
+            Mock Get-AzLocalAvailableUpdates       { @() }
+            Mock Get-AzLocalUpdateRuns             { @() }
+            Mock Get-AzLocalUpdateRunFailures      { @($global:_s8_payload.Failures) }
+            Export-AzLocalFleetUpdateStatusReport -OutputDirectory $global:_s8_payload.OutDir -Now $global:_s8_payload.Now | Out-Null
+        }
+        $summary = Get-Content -LiteralPath $script:_s8_ghSummaryFile -Raw
+        $summary | Should -Match '### Fleet - Solution Update\(s\) Version Distribution'
+        $summary | Should -Match '### :scroll: Updates - Recent Failed Update Attempts'
+        # The pre-v0.9.19 header text must be gone.
+        $summary | Should -Not -Match '### Fleet Version Distribution'
+        $summary | Should -Not -Match '### :scroll: Update Run History and Error Details'
+    }
+
+    It 'v0.9.19: renders the Fleet - SBE Version(s) Distribution table and sbe_version_dist_count step output' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s8_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s8_ghSummaryFile
+        $global:_s8_payload = @{
+            Inventory = @(
+                [pscustomobject]@{ ClusterName='sbe1'; ResourceId='/subscriptions/s1/resourceGroups/rgs/providers/Microsoft.AzureStackHCI/clusters/sbe1' }
+                [pscustomobject]@{ ClusterName='sbe2'; ResourceId='/subscriptions/s1/resourceGroups/rgs/providers/Microsoft.AzureStackHCI/clusters/sbe2' }
+                [pscustomobject]@{ ClusterName='sbe3'; ResourceId='/subscriptions/s1/resourceGroups/rgs/providers/Microsoft.AzureStackHCI/clusters/sbe3' }
+            )
+            Readiness = @(
+                [pscustomobject]@{
+                    ClusterName='sbe1'; ResourceGroup='rgs'; SubscriptionId='s1'
+                    ResourceId='/subscriptions/s1/resourceGroups/rgs/providers/Microsoft.AzureStackHCI/clusters/sbe1'
+                    UpdateState='UpToDate'; HealthState='Success'; ReadyForUpdate=$false
+                    HasPrerequisiteUpdates=''; AllAvailableUpdates=''; ReadyUpdates=''; SBEDependency=''
+                    RecommendedUpdate=''; CurrentVersion='12.2510.0.0'; CurrentSbeVersion='10.2408.0.628'
+                }
+                [pscustomobject]@{
+                    ClusterName='sbe2'; ResourceGroup='rgs'; SubscriptionId='s1'
+                    ResourceId='/subscriptions/s1/resourceGroups/rgs/providers/Microsoft.AzureStackHCI/clusters/sbe2'
+                    UpdateState='UpToDate'; HealthState='Success'; ReadyForUpdate=$false
+                    HasPrerequisiteUpdates=''; AllAvailableUpdates=''; ReadyUpdates=''; SBEDependency=''
+                    RecommendedUpdate=''; CurrentVersion='12.2510.0.0'; CurrentSbeVersion='2.0.0.0'
+                }
+                [pscustomobject]@{
+                    ClusterName='sbe3'; ResourceGroup='rgs'; SubscriptionId='s1'
+                    ResourceId='/subscriptions/s1/resourceGroups/rgs/providers/Microsoft.AzureStackHCI/clusters/sbe3'
+                    UpdateState='UpToDate'; HealthState='Success'; ReadyForUpdate=$false
+                    HasPrerequisiteUpdates=''; AllAvailableUpdates=''; ReadyUpdates=''; SBEDependency=''
+                    RecommendedUpdate=''; CurrentVersion='12.2510.0.0'; CurrentSbeVersion=''
+                }
+            )
+            Manifest = [pscustomobject]@{ SupportedYYMMs=@('2510'); LatestYYMM='2510'; LatestVersion='12.2510.0.999'; ManifestFetchedAt=(Get-Date).ToUniversalTime() }
+            OutDir = $script:_s8_outDir; Now = $script:_s8_now
+        }
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory       { @($global:_s8_payload.Inventory) }
+            Mock Get-AzLocalClusterUpdateReadiness { @($global:_s8_payload.Readiness) }
+            Mock Get-AzLocalLatestSolutionVersion  { $global:_s8_payload.Manifest }
+            Mock Get-AzLocalUpdateSummary          { @() }
+            Mock Get-AzLocalAvailableUpdates       { @() }
+            Mock Get-AzLocalUpdateRuns             { @() }
+            Mock Get-AzLocalUpdateRunFailures      { @() }
+            Export-AzLocalFleetUpdateStatusReport -OutputDirectory $global:_s8_payload.OutDir -Now $global:_s8_payload.Now | Out-Null
+        }
+        $summary = Get-Content -LiteralPath $script:_s8_ghSummaryFile -Raw
+        $summary | Should -Match '### Fleet - SBE Version\(s\) Distribution'
+        # SBE table header retains the YYMM column and drops the Support column.
+        $summary | Should -Match '\| YYMM \| SBE Update Versions \| Clusters \| % \| Cluster Names \(first 15 shown only\) \|'
+        # Real vendor SBE surfaces its YYMM (2nd octet) and version.
+        $summary | Should -Match '2408'
+        $summary | Should -Match '10\.2408\.0\.628'
+        # Placeholder SBE version annotated; empty SBE bucketed as 'No SBE Installed'.
+        $summary | Should -Match '2\.0\.0\.0 \(No SBE Installed\)'
+        $summary | Should -Match 'No SBE Installed'
+        $out = Get-Content -LiteralPath $script:_s8_ghOutputFile -Raw
+        $out | Should -Match 'sbe_version_dist_count=3'
+    }
+
+    It 'v0.9.19: renders Recent Successful Updates for runs completed in the last 48h and skips older/failed runs' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s8_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s8_ghSummaryFile
+        $inWindowEnd  = $script:_s8_now.AddHours(-1)   # 2026-06-10T11:00:00Z (within 48h)
+        $outWindowEnd = $script:_s8_now.AddHours(-72)  # 2026-06-07T12:00:00Z (older than 48h)
+        $global:_s8_payload = @{
+            Inventory = @([pscustomobject]@{ ClusterName='succ'; UpdateRing='Wave1'; ResourceId='/subscriptions/s1/resourceGroups/rgu/providers/Microsoft.AzureStackHCI/clusters/succ' })
+            Readiness = @(
+                [pscustomobject]@{
+                    ClusterName='succ'; ResourceGroup='rgu'; SubscriptionId='s1'
+                    ResourceId='/subscriptions/s1/resourceGroups/rgu/providers/Microsoft.AzureStackHCI/clusters/succ'
+                    UpdateState='UpToDate'; HealthState='Success'; ReadyForUpdate=$false
+                    HasPrerequisiteUpdates=''; AllAvailableUpdates=''; ReadyUpdates=''; SBEDependency=''
+                    RecommendedUpdate=''; CurrentVersion='12.2510.0.0'
+                }
+            )
+            Manifest = [pscustomobject]@{ SupportedYYMMs=@('2510'); LatestYYMM='2510'; LatestVersion='12.2510.0.999'; ManifestFetchedAt=(Get-Date).ToUniversalTime() }
+            Runs = @(
+                [pscustomobject]@{
+                    ClusterName='succ'; ClusterResourceId='/subscriptions/s1/resourceGroups/rgu/providers/Microsoft.AzureStackHCI/clusters/succ'
+                    UpdateName='12.2510.0.999'; RunResourceId='/subscriptions/s1/resourceGroups/rgu/providers/Microsoft.AzureStackHCI/clusters/succ/updates/12.2510.0.999/updateRuns/run-in'
+                    State='Succeeded'; Status='Completed'; StartTime='2026-06-10 09:00'; EndTime='2026-06-10 11:00'; EndTimeUtc=$inWindowEnd; Duration='02:00:00'
+                }
+                [pscustomobject]@{
+                    ClusterName='succ'; ClusterResourceId='/subscriptions/s1/resourceGroups/rgu/providers/Microsoft.AzureStackHCI/clusters/succ'
+                    UpdateName='12.2509.0.500'; RunResourceId='/subscriptions/s1/resourceGroups/rgu/providers/Microsoft.AzureStackHCI/clusters/succ/updates/12.2509.0.500/updateRuns/run-old'
+                    State='Succeeded'; Status='Completed'; StartTime='2026-06-07 10:00'; EndTime='2026-06-07 12:00'; EndTimeUtc=$outWindowEnd; Duration='02:00:00'
+                }
+                [pscustomobject]@{
+                    ClusterName='succ'; ClusterResourceId='/subscriptions/s1/resourceGroups/rgu/providers/Microsoft.AzureStackHCI/clusters/succ'
+                    UpdateName='12.2510.0.111'; RunResourceId='/subscriptions/s1/resourceGroups/rgu/providers/Microsoft.AzureStackHCI/clusters/succ/updates/12.2510.0.111/updateRuns/run-fail'
+                    State='Failed'; Status='Failed'; StartTime='2026-06-10 08:00'; EndTime='2026-06-10 10:00'; EndTimeUtc=$inWindowEnd; Duration='02:00:00'
+                }
+            )
+            OutDir = $script:_s8_outDir; Now = $script:_s8_now
+        }
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory       { @($global:_s8_payload.Inventory) }
+            Mock Get-AzLocalClusterUpdateReadiness { @($global:_s8_payload.Readiness) }
+            Mock Get-AzLocalLatestSolutionVersion  { $global:_s8_payload.Manifest }
+            Mock Get-AzLocalUpdateSummary          { @() }
+            Mock Get-AzLocalAvailableUpdates       { @() }
+            Mock Get-AzLocalUpdateRuns             { @($global:_s8_payload.Runs) }
+            Mock Get-AzLocalUpdateRunFailures      { @() }
+            Export-AzLocalFleetUpdateStatusReport -OutputDirectory $global:_s8_payload.OutDir -Now $global:_s8_payload.Now | Out-Null
+        }
+        $summary = Get-Content -LiteralPath $script:_s8_ghSummaryFile -Raw
+        $summary | Should -Match '### :scroll: Updates - Recent Successful Updates'
+        $summary | Should -Match '\| Cluster Name \| Update Ring \| Update Name \| Duration \| Time Started \| Time Completed \|'
+        # In-window succeeded run present with portal deep links + ring.
+        $summary | Should -Match '12\.2510\.0\.999'
+        $summary | Should -Match 'updateRuns/run-in'
+        $summary | Should -Match 'Wave1'
+        # Older succeeded run (>48h) and the failed run are excluded.
+        $summary | Should -Not -Match 'updateRuns/run-old'
+        $summary | Should -Not -Match 'updateRuns/run-fail'
+        $out = Get-Content -LiteralPath $script:_s8_ghOutputFile -Raw
+        $out | Should -Match 'recently_completed_48h=1'
+    }
+
+    It 'v0.9.19: Recent Successful Updates shows an empty-state line and recently_completed_48h=0 when no run completed in 48h' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s8_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s8_ghSummaryFile
+        $outWindowEnd = $script:_s8_now.AddHours(-72)
+        $global:_s8_payload = @{
+            Inventory = @([pscustomobject]@{ ClusterName='succ0'; UpdateRing='Wave1'; ResourceId='/subscriptions/s1/resourceGroups/rgv/providers/Microsoft.AzureStackHCI/clusters/succ0' })
+            Readiness = @(
+                [pscustomobject]@{
+                    ClusterName='succ0'; ResourceGroup='rgv'; SubscriptionId='s1'
+                    ResourceId='/subscriptions/s1/resourceGroups/rgv/providers/Microsoft.AzureStackHCI/clusters/succ0'
+                    UpdateState='UpToDate'; HealthState='Success'; ReadyForUpdate=$false
+                    HasPrerequisiteUpdates=''; AllAvailableUpdates=''; ReadyUpdates=''; SBEDependency=''
+                    RecommendedUpdate=''; CurrentVersion='12.2510.0.0'
+                }
+            )
+            Manifest = [pscustomobject]@{ SupportedYYMMs=@('2510'); LatestYYMM='2510'; LatestVersion='12.2510.0.999'; ManifestFetchedAt=(Get-Date).ToUniversalTime() }
+            Runs = @(
+                [pscustomobject]@{
+                    ClusterName='succ0'; ClusterResourceId='/subscriptions/s1/resourceGroups/rgv/providers/Microsoft.AzureStackHCI/clusters/succ0'
+                    UpdateName='12.2509.0.500'; RunResourceId='/subscriptions/s1/resourceGroups/rgv/providers/Microsoft.AzureStackHCI/clusters/succ0/updates/12.2509.0.500/updateRuns/run-old'
+                    State='Succeeded'; Status='Completed'; StartTime='2026-06-07 10:00'; EndTime='2026-06-07 12:00'; EndTimeUtc=$outWindowEnd; Duration='02:00:00'
+                }
+            )
+            OutDir = $script:_s8_outDir; Now = $script:_s8_now
+        }
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory       { @($global:_s8_payload.Inventory) }
+            Mock Get-AzLocalClusterUpdateReadiness { @($global:_s8_payload.Readiness) }
+            Mock Get-AzLocalLatestSolutionVersion  { $global:_s8_payload.Manifest }
+            Mock Get-AzLocalUpdateSummary          { @() }
+            Mock Get-AzLocalAvailableUpdates       { @() }
+            Mock Get-AzLocalUpdateRuns             { @($global:_s8_payload.Runs) }
+            Mock Get-AzLocalUpdateRunFailures      { @() }
+            Export-AzLocalFleetUpdateStatusReport -OutputDirectory $global:_s8_payload.OutDir -Now $global:_s8_payload.Now | Out-Null
+        }
+        $summary = Get-Content -LiteralPath $script:_s8_ghSummaryFile -Raw
+        $summary | Should -Match '### :scroll: Updates - Recent Successful Updates'
+        $summary | Should -Match '_No updates have completed successfully in the last 48 hours\._'
+        $summary | Should -Not -Match 'updateRuns/run-old'
+        $out = Get-Content -LiteralPath $script:_s8_ghOutputFile -Raw
+        $out | Should -Match 'recently_completed_48h=0'
+    }
+
     It '-IncludeUpdateRuns:$false skips the Get-AzLocalUpdateRuns step' {
         $env:GITHUB_ACTIONS      = 'true'
         $env:GITHUB_OUTPUT       = $script:_s8_ghOutputFile
@@ -18131,6 +18345,153 @@ Describe 'Thin-YAML Step.5: Export-AzLocalClusterUpdateReadinessReport' {
         $out | Should -Match 'critical_failures=1'
     }
 
+    It 'v0.9.19: aggregates allow-list-filtered updates by scope + ring with a distinct cluster count' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s5_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s5_ghSummaryFile
+        $ridA = '/subscriptions/s1/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/pa'
+        $ridB = '/subscriptions/s1/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/pb'
+        $ridC = '/subscriptions/s1/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/gc'
+        $global:_s5_payload = @{
+            Inventory = @(
+                [pscustomobject]@{ ClusterName='pa'; ResourceId=$ridA; UpdateRing='Prod' }
+                [pscustomobject]@{ ClusterName='pb'; ResourceId=$ridB; UpdateRing='Prod' }
+                [pscustomobject]@{ ClusterName='gc'; ResourceId=$ridC; UpdateRing='Canary' }
+            )
+            Readiness = @(
+                [pscustomobject]@{ ClusterName='pa'; ClusterResourceId=$ridA; UpdateRing='Prod'
+                                   UpdateState='UpToDate'; HealthState='Success'; ReadyForUpdate=$false
+                                   AllAvailableUpdates='Solution12.2610.0.9'; CurrentVersion='12.2609.0.0'; RecommendedUpdate=''; BlockingReasons=''
+                                   AllowListSource='RowOverride'; AllowListSuppressedUpdates='Solution12.2610.0.9' }
+                [pscustomobject]@{ ClusterName='pb'; ClusterResourceId=$ridB; UpdateRing='Prod'
+                                   UpdateState='UpToDate'; HealthState='Success'; ReadyForUpdate=$false
+                                   AllAvailableUpdates='Solution12.2610.0.9'; CurrentVersion='12.2609.0.0'; RecommendedUpdate=''; BlockingReasons=''
+                                   AllowListSource='RowOverride'; AllowListSuppressedUpdates='Solution12.2610.0.9' }
+                [pscustomobject]@{ ClusterName='gc'; ClusterResourceId=$ridC; UpdateRing='Canary'
+                                   UpdateState='UpToDate'; HealthState='Success'; ReadyForUpdate=$false
+                                   AllAvailableUpdates='Solution12.2604.0.1'; CurrentVersion='12.2603.0.0'; RecommendedUpdate=''; BlockingReasons=''
+                                   AllowListSource='TopLevel'; AllowListSuppressedUpdates='Solution12.2604.0.1' }
+            )
+            Health = @(
+                [pscustomobject]@{ ClusterName='pa'; HealthState='Success'; Passed=$true; CriticalCount=0; WarningCount=0; Failures='' }
+                [pscustomobject]@{ ClusterName='pb'; HealthState='Success'; Passed=$true; CriticalCount=0; WarningCount=0; Failures='' }
+                [pscustomobject]@{ ClusterName='gc'; HealthState='Success'; Passed=$true; CriticalCount=0; WarningCount=0; Failures='' }
+            )
+            OutDir = $script:_s5_outDir
+        }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory       { @($global:_s5_payload.Inventory) }
+            Mock Get-AzLocalClusterUpdateReadiness { @($global:_s5_payload.Readiness) }
+            Mock Test-AzLocalClusterHealth         { @($global:_s5_payload.Health) }
+            Export-AzLocalClusterUpdateReadinessReport -OutputDirectory $global:_s5_payload.OutDir -PassThru
+        }
+        $summary = Get-Content -LiteralPath $script:_s5_ghSummaryFile -Raw
+        $summary | Should -Match '### Updates filtered out by the allow-list'
+        $summary | Should -Match '\| Filtered-out Update \| Allow-list Scope \| Update Ring\(s\) \| Clusters Affected \|'
+        # Per-Ring row: same update on 2 Prod clusters collapses to one row, count 2.
+        $summary | Should -Match '\| Solution12\.2610\.0\.9 \| Per-Ring \| Prod \| 2 \|'
+        # Global row: top-level allow-list, ring shown as '-', count 1.
+        $summary | Should -Match '\| Solution12\.2604\.0\.1 \| Global \| - \| 1 \|'
+        # 2 distinct filtered updates -> step output + PassThru.
+        $out = Get-Content -LiteralPath $script:_s5_ghOutputFile -Raw
+        $out | Should -Match 'allowlist_filtered_updates=2'
+        $result.AllowListFilteredUpdateCount | Should -Be 2
+    }
+
+    It 'v0.9.19: no filtered-updates table and allowlist_filtered_updates=0 when the allow-list suppresses nothing' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s5_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s5_ghSummaryFile
+        $global:_s5_payload = @{
+            Inventory = @([pscustomobject]@{ ClusterName='clean'; ResourceId='/subscriptions/s1/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/clean'; UpdateRing='Wave1' })
+            Readiness = @(
+                [pscustomobject]@{ ClusterName='clean'; ClusterResourceId='/subscriptions/s1/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/clean'; UpdateRing='Wave1'
+                                   UpdateState='UpdateAvailable'; HealthState='Success'; ReadyForUpdate=$true
+                                   AllAvailableUpdates='12.2510.0.999'; CurrentVersion='12.2509.0.0'; RecommendedUpdate='12.2510.0.999'; BlockingReasons=''
+                                   AllowListSource='Latest'; AllowListSuppressedUpdates='' }
+            )
+            Health = @([pscustomobject]@{ ClusterName='clean'; HealthState='Success'; Passed=$true; CriticalCount=0; WarningCount=0; Failures='' })
+            OutDir = $script:_s5_outDir
+        }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory       { @($global:_s5_payload.Inventory) }
+            Mock Get-AzLocalClusterUpdateReadiness { @($global:_s5_payload.Readiness) }
+            Mock Test-AzLocalClusterHealth         { @($global:_s5_payload.Health) }
+            Export-AzLocalClusterUpdateReadinessReport -OutputDirectory $global:_s5_payload.OutDir -PassThru
+        }
+        $summary = Get-Content -LiteralPath $script:_s5_ghSummaryFile -Raw
+        $summary | Should -Not -Match '### Updates filtered out by the allow-list'
+        $out = Get-Content -LiteralPath $script:_s5_ghOutputFile -Raw
+        $out | Should -Match 'allowlist_filtered_updates=0'
+        $result.AllowListFilteredUpdateCount | Should -Be 0
+    }
+
+    It 'v0.9.19: Not-Ready table shows a Status checked (UTC) column populated from the updateSummary lastChecked' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s5_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s5_ghSummaryFile
+        $rid = '/subscriptions/s1/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/stale1'
+        $global:_s5_payload = @{
+            Inventory = @([pscustomobject]@{ ClusterName='stale1'; ResourceId=$rid; UpdateRing='Ring0' })
+            Readiness = @(
+                [pscustomobject]@{ ClusterName='stale1'; ClusterResourceId=$rid; UpdateRing='Ring0'
+                                   UpdateState='UpdateAvailable'; HealthState='Success'; ReadyForUpdate=$false
+                                   AllAvailableUpdates='12.2604.1003.1006'; ReadyUpdates=''; HasPrerequisiteUpdates='SBE4.2.2601.1'
+                                   CurrentVersion='12.2603.1002.500'; RecommendedUpdate=''; BlockingReasons='PrerequisiteRequired (SBE update first)'
+                                   StatusLastChecked='2026-06-13T16:31:34Z' }
+            )
+            Health = @([pscustomobject]@{ ClusterName='stale1'; HealthState='Success'; Passed=$true; CriticalCount=0; WarningCount=0; Failures='' })
+            OutDir = $script:_s5_outDir
+        }
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory       { @($global:_s5_payload.Inventory) }
+            Mock Get-AzLocalClusterUpdateReadiness { @($global:_s5_payload.Readiness) }
+            Mock Test-AzLocalClusterHealth         { @($global:_s5_payload.Health) }
+            Export-AzLocalClusterUpdateReadinessReport -OutputDirectory $global:_s5_payload.OutDir | Out-Null
+        }
+        $summary = Get-Content -LiteralPath $script:_s5_ghSummaryFile -Raw
+        # Not-Ready table header carries the new Status checked column.
+        $summary | Should -Match '\| Cluster \| UpdateRing \| Current version \| Status checked \(UTC\) \| Update state \| Health \| Status \| Blocking reasons \|'
+        # The lastChecked timestamp is rendered in the row.
+        $summary | Should -Match '2026-06-13T16:31:34Z'
+        # Staleness guidance note is present.
+        $summary | Should -Match 'Status checked \(UTC\).*lastChecked'
+    }
+
+    It 'v0.9.19: a cluster with a Ready update AND a co-present HasPrerequisite SBE counts as Ready (not SBE-blocked Not-Ready)' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s5_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s5_ghSummaryFile
+        $rid = '/subscriptions/s1/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/rdy1'
+        $global:_s5_payload = @{
+            Inventory = @([pscustomobject]@{ ClusterName='rdy1'; ResourceId=$rid; UpdateRing='Ring0' })
+            Readiness = @(
+                [pscustomobject]@{ ClusterName='rdy1'; ClusterResourceId=$rid; UpdateRing='Ring0'
+                                   UpdateState='UpdateAvailable'; HealthState='Success'; ReadyForUpdate=$true
+                                   AllAvailableUpdates='Solution12.2604.1003.1006; SBE4.2.2606.1'
+                                   ReadyUpdates='Solution12.2604.1003.1006'
+                                   HasPrerequisiteUpdates='SBE4.2.2606.1'
+                                   CurrentVersion='12.2603.1002.500'; RecommendedUpdate='Solution12.2604.1003.1006'; BlockingReasons=''
+                                   StatusLastChecked='2026-07-08T00:52:23Z' }
+            )
+            Health = @([pscustomobject]@{ ClusterName='rdy1'; HealthState='Success'; Passed=$true; CriticalCount=0; WarningCount=0; Failures='' })
+            OutDir = $script:_s5_outDir
+        }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory       { @($global:_s5_payload.Inventory) }
+            Mock Get-AzLocalClusterUpdateReadiness { @($global:_s5_payload.Readiness) }
+            Mock Test-AzLocalClusterHealth         { @($global:_s5_payload.Health) }
+            Export-AzLocalClusterUpdateReadinessReport -OutputDirectory $global:_s5_payload.OutDir -PassThru
+        }
+        # Classified Ready, not SBE-blocked Not-Ready.
+        $result.ReadyForUpdateCount | Should -Be 1
+        $result.NotReadyCount       | Should -Be 0
+        $summary = Get-Content -LiteralPath $script:_s5_ghSummaryFile -Raw
+        # The cluster appears in the Ready-for-Update table and NOT in a Not-Ready review table.
+        $summary | Should -Match 'Clusters - Ready for Update'
+        $summary | Should -Not -Match '### Not-Ready clusters \(review first\)'
+    }
+
     It 'Combined assess-readiness.xml merges both testsuites under the Update Readiness Assessment root' {
         $env:GITHUB_ACTIONS      = 'true'
         $env:GITHUB_OUTPUT       = $script:_s5_ghOutputFile
@@ -18346,6 +18707,7 @@ Describe 'Private: Get-AzLocalClusterReadinessStatus' {
         @{ UpdateState='PreparationFailed';    HealthState='Success'; HasPrerequisiteUpdates=''; ReadyForUpdate=$false; Expected='ActionRequired' }
         @{ UpdateState='UpToDate';             HealthState='Failure'; HasPrerequisiteUpdates=''; ReadyForUpdate=$false; Expected='HealthFailure' }
         @{ UpdateState='UpdateAvailable';      HealthState='Success'; HasPrerequisiteUpdates='12.2510.0.1'; ReadyForUpdate=$false; Expected='SbeBlocked' }
+        @{ UpdateState='UpdateAvailable';      HealthState='Success'; HasPrerequisiteUpdates='SBE4.2.2606.1'; ReadyForUpdate=$true;  Expected='ReadyForUpdate' }
         @{ UpdateState='UpdateInProgress';     HealthState='Success'; HasPrerequisiteUpdates=''; ReadyForUpdate=$false; Expected='InProgress' }
         @{ UpdateState='PreparationInProgress';HealthState='Success'; HasPrerequisiteUpdates=''; ReadyForUpdate=$false; Expected='InProgress' }
         @{ UpdateState='UpdateAvailable';      HealthState='Success'; HasPrerequisiteUpdates=''; ReadyForUpdate=$true;  Expected='ReadyForUpdate' }
@@ -18380,6 +18742,39 @@ Describe 'Private: Get-AzLocalClusterReadinessStatus' {
             Get-AzLocalClusterReadinessStatus -ReadinessRow $global:_grs_row
         }
         $result | Should -Be 'UpToDate'
+    }
+
+    It 'REGRESSION (v0.9.19): a Ready feature update outranks a co-present HasPrerequisite SBE (ReadyForUpdate, not SbeBlocked)' {
+        # Real-world shape: the cluster has a Solution feature update in state
+        # Ready (installable now, ReadyForUpdate=$true) AND an OEM SBE update in
+        # state HasPrerequisite (its own downstream prereq unmet, so it is listed
+        # in HasPrerequisiteUpdates). The Azure portal shows the feature update as
+        # eligible with an active Install now, so the cluster is ReadyForUpdate -
+        # it must NOT be masked as SbeBlocked / Not-Ready.
+        $global:_grs_row = [pscustomobject]@{
+            UpdateState            = 'UpdateAvailable'
+            HealthState            = 'Success'
+            HasPrerequisiteUpdates = 'SBE4.2.2606.1'
+            ReadyForUpdate         = $true
+            ReadyUpdates           = 'Solution12.2604.1003.1006'
+        }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Get-AzLocalClusterReadinessStatus -ReadinessRow $global:_grs_row
+        }
+        $result | Should -Be 'ReadyForUpdate'
+    }
+
+    It 'A HasPrerequisite update with NO Ready update remains SbeBlocked' {
+        $global:_grs_row = [pscustomobject]@{
+            UpdateState            = 'UpdateAvailable'
+            HealthState            = 'Success'
+            HasPrerequisiteUpdates = 'SBE4.2.2606.1'
+            ReadyForUpdate         = $false
+        }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Get-AzLocalClusterReadinessStatus -ReadinessRow $global:_grs_row
+        }
+        $result | Should -Be 'SbeBlocked'
     }
 
     It 'Priority cascade: UpdateFailed wins over a Failure health state' {
@@ -21414,10 +21809,10 @@ Describe 'v0.8.82: Export-AzLocalClusterUpdateReadinessReport adds Last Updated 
         $script:src5Rep = Get-Content -LiteralPath "$PSScriptRoot/../Public/Export-AzLocalClusterUpdateReadinessReport.ps1" -Raw
     }
     It 'Detail table header contains "Last Updated"' {
-        $script:src5Rep | Should -Match '\| Cluster \| UpdateRing \| Current version \| Current SBE version \| Update state \| Health \| Status \| Last Updated \| Recommended update \|'
+        $script:src5Rep | Should -Match '\| Cluster \| UpdateRing \| Current version \| Current SBE version \| Update state \| Health \| Status \| Status checked \(UTC\) \| Last Updated \| Recommended update \|'
     }
     It 'Detail rows include a Last Updated cell after Status' {
-        $script:src5Rep | Should -Match '\| \$statusCell \| \$lu \| \$ru \|'
+        $script:src5Rep | Should -Match '\| \$statusCell \| \$sc \| \$lu \| \$ru \|'
     }
     It 'Sort order is UpdateRing -> Status -> ClusterName (ring first, not status first)' {
         # The Sort-Object now leads with the UpdateRing expression before the status priority.

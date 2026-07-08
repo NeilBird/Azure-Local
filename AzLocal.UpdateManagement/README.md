@@ -2,7 +2,7 @@
 
 > ⚠️ **Disclaimer**: This module is **NOT** a Microsoft supported service offering or product. It is provided as example code only, with no warranty or official support. Refer to the [MIT license](https://github.com/NeilBird/Azure-Local/blob/main/LICENSE) for further information.
 
-**Latest Version:** v0.9.18 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.9.18)
+**Latest Version:** v0.9.19 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.9.19)
 
 This folder contains the 'AzLocal.UpdateManagement' PowerShell module for managing updates on Azure Local (formerly Azure Stack HCI) clusters using the Azure Local REST API. The module supports both interactive use and CI/CD automation via Service Principal or Managed Identity authentication.
 
@@ -14,7 +14,7 @@ Azure Local REST API specification (includes update management endpoints): https
 **This README (overview + most-recent release notes):**
 
 - [Where to Start](#where-to-start)
-- [What's New in v0.9.18](#whats-new-in-v0918)
+- [What's New in v0.9.19](#whats-new-in-v0919)
 - [Files](#files)
 - [Prerequisites](#prerequisites)
 - [RBAC Requirements](#rbac-requirements) (summary; full reference in [docs/rbac.md](docs/rbac.md))
@@ -77,30 +77,34 @@ If you are new to this module, work through these in order from a regular PowerS
 
 > Most CI/CD pipelines in [Automation-Pipeline-Examples/](Automation-Pipeline-Examples/) are direct implementations of one of these workflows. Start there if you want a copy-pasteable end-to-end pipeline.
 
-## What's New in v0.9.18
+## What's New in v0.9.19
 
-**Follow-up strict-mode fix after v0.9.17.** A live re-run of **Update: 3 - Apply Updates** showed the failed-update single-retry still crashed on one cluster with `The property 'steps' cannot be found on this object`, even on v0.9.17.
+**Update: 1 - Assess Update Readiness** fixes a mis-classification that hid Ready clusters behind an unrelated SBE prerequisite, surfaces a per-cluster **Status checked (UTC)** freshness timestamp, and shows which updates the `allowedUpdateVersions` allow-list is filtering out; **Monitor: 3 - Fleet Update Status** gains two new tables and a clearer version-distribution layout.
 
 ### Fixed
 
-- **Failed-update retry no longer crashes on a run whose `progress.steps` contains leaf steps that omit the `steps` child.** v0.9.17 guarded the *top-level* `progress.steps` read in `Format-AzLocalUpdateRun`, but the recursive step-tree walkers it calls - `Get-DeepestActiveStep`, `Get-CurrentStepPath`, `Get-DeepestErrorMessage`, and `Find-DeepestError` in `Get-LastUpdateRunErrorSummary` - still read `$step.steps` / `$step.status` / `$step.name` / `$step.errorMessage` **bare**. Under `Set-StrictMode -Version Latest` (applied by the production entry point `Invoke-AzLocalReadinessGatedFailedUpdateRetry`), a leaf step that legitimately omits `steps` made the walker throw and failed the whole cluster. Reproduced live against the affected cluster; all walker reads are now guarded with `PSObject.Properties[...]`.
-- **Broader strict-mode audit** of ARM/JSON-response consumers guarded more optional-field bare reads: `Get-AzLocalUpdateSummary` (the `lastUpdated`/`lastUpdatedTime` and `lastChecked`/`lastCheckedTime` ARG-vs-ARM compatibility pair - exactly one is present, so the bare read of the absent sibling threw - plus `state`/`healthState`/`updateStateProperties`); the SBE `packageType`/`additionalProperties` reads in `Get-AzLocalAvailableUpdates`, `Get-AzLocalClusterUpdateReadiness` and `Get-AzLocalFleetStatusData`; the `HealthCheckResult` container read in `Get-AzLocalUpdateRunHealthEvidence` and `Get-AzLocalFleetHealthFailures`; and the deepest-step `name` read in `Format-AzLocalUpdateRun`.
+- **A cluster with a genuinely-`Ready` update is no longer mislabelled "SBE Prerequisite / Not-Ready" just because it also has a `HasPrerequisite` SBE update.** A cluster can have both at once - e.g. a Solution/feature update in state **Ready** (the Azure portal shows it as eligible with an active **Install now**) alongside an OEM SBE update in state `HasPrerequisite` (its own downstream prerequisite unmet). The shared readiness classifier tested "SBE-blocked" **before** "ready", so those clusters were shown as **SBE Prerequisite** in the Not-Ready table and **excluded from "Clusters - Ready for Update"** - hiding the fact that a feature update was ready to apply. A cluster with a Ready update now classifies as **Ready for Update**; only a cluster whose *sole* available update is the `HasPrerequisite` item still shows SBE-blocked. This fix is shared across Update: 1, the Apply-Updates readiness gate, and Monitor: 3.
 
 ### Added
 
-- **Support disclaimer in every pipeline run summary.** A new final `Support disclaimer` step (`if: always()` / `condition: always()`, non-fatal) is wired into all 20 templates and renders a bottom-of-summary footer via the new exported helper `Add-AzLocalPipelineSupportFooter`: a bold **Support disclaimer:** label + italic note that these pipelines are **not a supported Microsoft service offering**, how to open a support request (SR), and a link to open a **GitHub issue** for pipeline logic/outcome problems. The install-step version banner also gained a matching caveat line.
+- **Update: 1 - Assess Update Readiness - "Status checked (UTC)" column.** The Not-Ready and All-clusters-detail tables now show each cluster's `lastChecked` timestamp - **when Azure last scanned that cluster for available updates**. Because the assessment reads Azure's *cached* per-cluster state, a **stale** timestamp is the usual reason an update that the Azure portal already lists is not yet flagged **Ready** here (or a since-resolved SBE prerequisite still reads as blocked). A note points operators at `Sync-AzLocalClusterUpdateSummary` / the portal **Check for updates** action to refresh, then re-run. New readiness-row field `StatusLastChecked`.
+- **Update: 1 - Assess Update Readiness - "Updates filtered out by the allow-list" table.** When your `allowedUpdateVersions` allow-list (in `config/apply-updates-schedule.yml`) filters out updates that Azure reports as **Ready** on your clusters, the report now shows a fleet-wide aggregate (not per cluster) of exactly which updates were removed. Each row lists the filtered-out update, whether the rule is **Global** (top-level list) or **Per-Ring** (per-row override), the affected update ring(s), and a distinct **Clusters Affected** count. If you want any of those updates to install, add its exact name to the allow-list (the top-level list for a Global entry, or the matching ring's row override for a Per-Ring entry). New readiness-row field `AllowListSuppressedUpdates`, step output `allowlist_filtered_updates`, and PassThru field `AllowListFilteredUpdateCount`.
+- **Fleet - SBE Version(s) Distribution table.** Directly below the solution-version distribution, a new table pivots each cluster's installed Solution Builder Extension (SBE) version (vendor `YYMM.x.x`). The base placeholders `2.0.0.0` / `2.1.0.0` and clusters with no SBE content are surfaced as **No SBE Installed**. The `YYMM` column is retained (2nd octet when it is a 4-digit year-month); there is no Support column because SBE has no Microsoft support window.
+- **Updates - Recent Successful Updates table.** Directly below the failed-attempts table, a new table lists update runs that reached `State=Succeeded` in the last 48 hours (Cluster Name, Update Ring, Update Name, Duration, Time Started, Time Completed) with Cluster + Update Azure Portal deep links - a positive-outcome view the failure-only table never showed.
+- New step outputs `sbe_version_dist_count` and `recently_completed_48h`.
+
+### Changed
+
+- Renamed report headers for clarity: `Fleet Version Distribution` -> **Fleet - Solution Update(s) Version Distribution**; `Update Run History and Error Details` -> **Updates - Recent Failed Update Attempts**.
+- `Get-AzLocalUpdateRuns` rows now carry a raw `EndTimeUtc` `[datetime]`, and `Export-AzLocalFleetUpdateStatusReport` Step 4c now collects the full run set (dropped `-Latest`) so multiple completions per cluster inside the 48h window are captured; the console state counts remain latest-per-cluster.
 
 ### Notes
 
-- Export count **68 -> 69** (adds `Add-AzLocalPipelineSupportFooter`). Bug-fix + pipeline + test release. `GENERATED_AGAINST_MODULE_VERSION` bumped to `0.9.18`.
+- Export count unchanged at **69** (the new SBE and Recent Successful tables are inline in the existing `Export-AzLocalFleetUpdateStatusReport` cmdlet). `GENERATED_AGAINST_MODULE_VERSION` bumped to `0.9.19`.
 
 > Previous release notes have moved into the [Release History](#release-history) appendix at the bottom of this document.
 
-See [CHANGELOG.md](CHANGELOG.md) for full release details. See [`What's New in v0.9.17`](#whats-new-in-v0917) in the Release History for the previous release.
-
-> Previous release notes have moved into the [Release History](#release-history) appendix at the bottom of this document.
-
-See [CHANGELOG.md](CHANGELOG.md) for full release details. See [`What's New in v0.9.16`](#whats-new-in-v0916) in the Release History for the previous release.
+See [CHANGELOG.md](CHANGELOG.md) for full release details. See [`What's New in v0.9.18`](#whats-new-in-v0918) in the Release History for the previous release.
 
 ## Files
 
@@ -596,7 +600,11 @@ This code is provided as-is for educational and reference purposes.
 
 The full What's-New history (v0.7.81 and earlier) has moved to [docs/release-history.md](docs/release-history.md).
 
-The most recent release notes for **v0.9.17** stay above under [`What's New in v0.9.17`](#whats-new-in-v0917).
+The most recent release notes for **v0.9.19** stay above under [`What's New in v0.9.19`](#whats-new-in-v0919).
+
+### What's New in v0.9.18
+
+**Follow-up strict-mode hardening after v0.9.17.** A live re-run of Update: 3 - Apply Updates showed the failed-update single-retry still crashed on one cluster with `The property 'steps' cannot be found on this object`. v0.9.17 guarded only the top-level `progress.steps` read in `Format-AzLocalUpdateRun`; the recursive step-tree walkers it calls (`Get-DeepestActiveStep`, `Get-CurrentStepPath`, `Get-DeepestErrorMessage`, `Find-DeepestError`) still read `$step.steps` / `status` / `name` / `errorMessage` **bare** and threw under `Set-StrictMode -Version Latest` on a leaf step omitting `steps`; all walker reads are now guarded with `PSObject.Properties[...]`. A broader strict-mode audit guarded more optional-field bare reads across `Get-AzLocalUpdateSummary`, `Get-AzLocalAvailableUpdates`, `Get-AzLocalClusterUpdateReadiness`, `Get-AzLocalFleetStatusData`, `Get-AzLocalUpdateRunHealthEvidence` and `Get-AzLocalFleetHealthFailures`. Also new: a **Support disclaimer** footer (new exported helper `Add-AzLocalPipelineSupportFooter`, wired as a final `if: always()` step in all 20 templates) renders at the bottom of every pipeline run summary, plus a caveat line on the install-step version banner. Export count **68 -> 69**. `GENERATED_AGAINST_MODULE_VERSION` bumped to `0.9.18`. See [CHANGELOG.md](CHANGELOG.md#0918---2026-07-07) for the full v0.9.18 entry.
 
 ### What's New in v0.9.16
 
