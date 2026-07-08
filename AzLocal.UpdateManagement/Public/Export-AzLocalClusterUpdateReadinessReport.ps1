@@ -583,14 +583,18 @@ function Export-AzLocalClusterUpdateReadinessReport {
         # target=_blank behaviour for the first column.
         [void]$md.Add((Get-AzLocalCtrlClickTip))
         [void]$md.Add('')
-        [void]$md.Add('| Cluster | UpdateRing | Current version | Update state | Health | Status | Blocking reasons |')
-        [void]$md.Add('|---------|------------|-----------------|--------------|--------|--------|------------------|')
+        [void]$md.Add('| Cluster | UpdateRing | Current version | Status checked (UTC) | Update state | Health | Status | Blocking reasons |')
+        [void]$md.Add('|---------|------------|-----------------|----------------------|--------------|--------|--------|------------------|')
         # v0.9.15: track whether any Not-Ready cluster is SBE-prerequisite
         # blocked so a manual-action knowledge note can be emitted once below.
         $anySbeBlocked = $false
         foreach ($r in ($notReadyRows | Sort-Object @{Expression={ if ($ringByResourceId.ContainsKey($_.ClusterResourceId)) { $ringByResourceId[$_.ClusterResourceId] } else { 'zzz' } }}, ClusterName)) {
             $ring = if ($ringByResourceId.ContainsKey($r.ClusterResourceId)) { $ringByResourceId[$r.ClusterResourceId] } else { '-' }
             $cv = if ($r.CurrentVersion) { $r.CurrentVersion } else { '-' }
+            # v0.9.19: the updateSummary lastChecked timestamp - how fresh Azure's
+            # cached update-availability scan is for this cluster. A stale value here
+            # is the usual reason a portal-visible update is not yet flagged Ready.
+            $statusChecked = if ($r.PSObject.Properties['StatusLastChecked'] -and $r.StatusLastChecked) { [string]$r.StatusLastChecked } else { '-' }
             # v0.8.82: when BlockingReasons is empty for a Not-Ready row,
             # derive a meaningful token from the Status bucket so the column
             # never shows '-' in the "review first" table. The previous
@@ -627,7 +631,7 @@ function Export-AzLocalClusterUpdateReadinessReport {
             $clusterCell = Get-AzLocalClusterPortalLink -ClusterName ([string]$r.ClusterName) -ClusterResourceId $clusterResId
             $statusCell = if ($iconMap.ContainsKey($statusKey)) { $iconMap[$statusKey] } else { $iconMap['NeedsInvestigation'] }
             if ($statusKey -eq 'SbeBlocked') { $anySbeBlocked = $true }
-            [void]$md.Add("| $clusterCell | $ring | $cv | $($r.UpdateState) | $($r.HealthState) | $statusCell | $br |")
+            [void]$md.Add("| $clusterCell | $ring | $cv | $statusChecked | $($r.UpdateState) | $($r.HealthState) | $statusCell | $br |")
         }
         # v0.9.15: SBE-prerequisite clusters need a manual, hardware-vendor
         # (OEM) step the pipeline cannot perform - explain it once, only when
@@ -636,6 +640,8 @@ function Export-AzLocalClusterUpdateReadinessReport {
             [void]$md.Add('')
             [void]$md.Add('> **`SBE Prerequisite` - manual action required.** These clusters have a Solution Builder Extension (SBE) update that must be applied **before** the Azure Local platform/OS update can proceed. The pipeline cannot action this automatically. Review your **Hardware OEM provider''s** Azure Local / SBE documentation for the correct SBE package and version, then **sideload the SBE update onto the cluster**. Once it is applied and the cluster re-assesses, it moves out of this table.')
         }
+        [void]$md.Add('')
+        [void]$md.Add('> **`Status checked (UTC)`** is the `lastChecked` timestamp from each cluster''s Azure update summary - i.e. **when Azure last scanned that cluster for available updates**. This assessment reads Azure''s *cached* per-cluster state, so if this timestamp is **stale**, a newly-released update (or a since-resolved SBE prerequisite) may still show here even though the Azure portal catalog already lists it as available. If a row looks out of date, trigger a fresh scan - run [`Sync-AzLocalClusterUpdateSummary`](../README.md) (the "Check for updates" ARM action), or click **Check for updates** on the cluster''s Updates blade in the portal - then re-run this assessment so the readiness state reflects the latest catalog.')
         [void]$md.Add('')
     }
 
@@ -785,6 +791,8 @@ function Export-AzLocalClusterUpdateReadinessReport {
             $csv = if ($r.PSObject.Properties['CurrentSbeVersion'] -and $r.CurrentSbeVersion) { $r.CurrentSbeVersion } else { '-' }
             $ru  = if ($r.RecommendedUpdate) { $r.RecommendedUpdate } else { '-' }
             $lu  = if ($r.PSObject.Properties['LastUpdated'] -and $r.LastUpdated) { $r.LastUpdated } else { '-' }
+            # v0.9.19: updateSummary lastChecked (when Azure last scanned for updates).
+            $sc  = if ($r.PSObject.Properties['StatusLastChecked'] -and $r.StatusLastChecked) { $r.StatusLastChecked } else { '-' }
             $statusKey = Get-AzLocalClusterReadinessStatus -ReadinessRow $r
             $statusCell = if ($iconMap.ContainsKey($statusKey)) { $iconMap[$statusKey] } else { $iconMap['NeedsInvestigation'] }
             $clusterResId = if ($r.PSObject.Properties['ClusterResourceId'] -and $r.ClusterResourceId) { [string]$r.ClusterResourceId } else { '' }
@@ -817,7 +825,7 @@ function Export-AzLocalClusterUpdateReadinessReport {
                 $statusCell = "$statusCell *"
                 $anyAllowListSuppressed = $true
             }
-            [void]$detailRows.Add("| $clusterCell | $ring | $cv | $csv | $($r.UpdateState) | $($r.HealthState) | $statusCell | $lu | $ru | $availCell |")
+            [void]$detailRows.Add("| $clusterCell | $ring | $cv | $csv | $($r.UpdateState) | $($r.HealthState) | $statusCell | $sc | $lu | $ru | $availCell |")
         }
         # v0.9.14: footnote (only when at least one cluster is suppressed) that
         # explains the ' *' Status marker and points at the exact remediation.
@@ -831,8 +839,8 @@ function Export-AzLocalClusterUpdateReadinessReport {
         # showing 'Up to Date *' but a NON-empty available list is the tell-tale
         # sign an allowedUpdateVersions entry is missing/mistyped - the operator
         # can copy the exact name/version straight into the YML.
-        [void]$md.Add('| Cluster | UpdateRing | Current version | Current SBE version | Update state | Health | Status | Last Updated | Recommended update | Available Ready updates |')
-        [void]$md.Add('|---------|------------|-----------------|---------------------|--------------|--------|--------|--------------|--------------------|-------------------------|')
+        [void]$md.Add('| Cluster | UpdateRing | Current version | Current SBE version | Update state | Health | Status | Status checked (UTC) | Last Updated | Recommended update | Available Ready updates |')
+        [void]$md.Add('|---------|------------|-----------------|---------------------|--------------|--------|--------|----------------------|--------------|--------------------|-------------------------|')
         foreach ($row in $detailRows) {
             [void]$md.Add($row)
         }

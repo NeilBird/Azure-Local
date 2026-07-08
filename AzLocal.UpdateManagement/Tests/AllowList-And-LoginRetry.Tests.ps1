@@ -300,7 +300,7 @@ Describe 'v0.9.1 Get-AzLocalClusterUpdateReadiness: allow-list override' {
                 return @([PSCustomObject]@{
                         id                 = "$script:Rid/updateSummaries/default"
                         name               = 'default'
-                        properties         = [PSCustomObject]@{ state = 'UpdateAvailable'; healthState = 'Success' }
+                        properties         = [PSCustomObject]@{ state = 'UpdateAvailable'; healthState = 'Success'; lastChecked = '2026-07-07T11:53:06Z' }
                         ClusterResourceId_ = $script:Rid.ToLower()
                     })
             }
@@ -342,6 +342,8 @@ Describe 'v0.9.1 Get-AzLocalClusterUpdateReadiness: allow-list override' {
             $row.AllowListSource   | Should -Be 'None'
             $row.UpdateState       | Should -Be 'UpdateAvailable'
             $row.AzureUpdateState  | Should -Be 'UpdateAvailable'
+            # v0.9.19: the updateSummary lastChecked timestamp is surfaced (normalised to ISO-8601 UTC).
+            $row.StatusLastChecked | Should -Be '2026-07-07T11:53:06Z'
         }
     }
 

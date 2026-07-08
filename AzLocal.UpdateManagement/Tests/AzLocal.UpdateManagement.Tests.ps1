@@ -18426,6 +18426,38 @@ Describe 'Thin-YAML Step.5: Export-AzLocalClusterUpdateReadinessReport' {
         $result.AllowListFilteredUpdateCount | Should -Be 0
     }
 
+    It 'v0.9.19: Not-Ready table shows a Status checked (UTC) column populated from the updateSummary lastChecked' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s5_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s5_ghSummaryFile
+        $rid = '/subscriptions/s1/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/stale1'
+        $global:_s5_payload = @{
+            Inventory = @([pscustomobject]@{ ClusterName='stale1'; ResourceId=$rid; UpdateRing='Ring0' })
+            Readiness = @(
+                [pscustomobject]@{ ClusterName='stale1'; ClusterResourceId=$rid; UpdateRing='Ring0'
+                                   UpdateState='UpdateAvailable'; HealthState='Success'; ReadyForUpdate=$false
+                                   AllAvailableUpdates='12.2604.1003.1006'; ReadyUpdates=''; HasPrerequisiteUpdates='SBE4.2.2601.1'
+                                   CurrentVersion='12.2603.1002.500'; RecommendedUpdate=''; BlockingReasons='PrerequisiteRequired (SBE update first)'
+                                   StatusLastChecked='2026-06-13T16:31:34Z' }
+            )
+            Health = @([pscustomobject]@{ ClusterName='stale1'; HealthState='Success'; Passed=$true; CriticalCount=0; WarningCount=0; Failures='' })
+            OutDir = $script:_s5_outDir
+        }
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory       { @($global:_s5_payload.Inventory) }
+            Mock Get-AzLocalClusterUpdateReadiness { @($global:_s5_payload.Readiness) }
+            Mock Test-AzLocalClusterHealth         { @($global:_s5_payload.Health) }
+            Export-AzLocalClusterUpdateReadinessReport -OutputDirectory $global:_s5_payload.OutDir | Out-Null
+        }
+        $summary = Get-Content -LiteralPath $script:_s5_ghSummaryFile -Raw
+        # Not-Ready table header carries the new Status checked column.
+        $summary | Should -Match '\| Cluster \| UpdateRing \| Current version \| Status checked \(UTC\) \| Update state \| Health \| Status \| Blocking reasons \|'
+        # The lastChecked timestamp is rendered in the row.
+        $summary | Should -Match '2026-06-13T16:31:34Z'
+        # Staleness guidance note is present.
+        $summary | Should -Match 'Status checked \(UTC\).*lastChecked'
+    }
+
     It 'Combined assess-readiness.xml merges both testsuites under the Update Readiness Assessment root' {
         $env:GITHUB_ACTIONS      = 'true'
         $env:GITHUB_OUTPUT       = $script:_s5_ghOutputFile
@@ -21709,10 +21741,10 @@ Describe 'v0.8.82: Export-AzLocalClusterUpdateReadinessReport adds Last Updated 
         $script:src5Rep = Get-Content -LiteralPath "$PSScriptRoot/../Public/Export-AzLocalClusterUpdateReadinessReport.ps1" -Raw
     }
     It 'Detail table header contains "Last Updated"' {
-        $script:src5Rep | Should -Match '\| Cluster \| UpdateRing \| Current version \| Current SBE version \| Update state \| Health \| Status \| Last Updated \| Recommended update \|'
+        $script:src5Rep | Should -Match '\| Cluster \| UpdateRing \| Current version \| Current SBE version \| Update state \| Health \| Status \| Status checked \(UTC\) \| Last Updated \| Recommended update \|'
     }
     It 'Detail rows include a Last Updated cell after Status' {
-        $script:src5Rep | Should -Match '\| \$statusCell \| \$lu \| \$ru \|'
+        $script:src5Rep | Should -Match '\| \$statusCell \| \$sc \| \$lu \| \$ru \|'
     }
     It 'Sort order is UpdateRing -> Status -> ClusterName (ring first, not status first)' {
         # The Sort-Object now leads with the UpdateRing expression before the status priority.
