@@ -79,7 +79,11 @@ If you are new to this module, work through these in order from a regular PowerS
 
 ## What's New in v0.9.19
 
-**Update: 1 - Assess Update Readiness** now surfaces a per-cluster **Status checked (UTC)** freshness timestamp and shows which updates the `allowedUpdateVersions` allow-list is filtering out; **Monitor: 3 - Fleet Update Status** gains two new tables and a clearer version-distribution layout.
+**Update: 1 - Assess Update Readiness** fixes a mis-classification that hid Ready clusters behind an unrelated SBE prerequisite, surfaces a per-cluster **Status checked (UTC)** freshness timestamp, and shows which updates the `allowedUpdateVersions` allow-list is filtering out; **Monitor: 3 - Fleet Update Status** gains two new tables and a clearer version-distribution layout.
+
+### Fixed
+
+- **A cluster with a genuinely-`Ready` update is no longer mislabelled "SBE Prerequisite / Not-Ready" just because it also has a `HasPrerequisite` SBE update.** A cluster can have both at once - e.g. a Solution/feature update in state **Ready** (the Azure portal shows it as eligible with an active **Install now**) alongside an OEM SBE update in state `HasPrerequisite` (its own downstream prerequisite unmet). The shared readiness classifier tested "SBE-blocked" **before** "ready", so those clusters were shown as **SBE Prerequisite** in the Not-Ready table and **excluded from "Clusters - Ready for Update"** - hiding the fact that a feature update was ready to apply. A cluster with a Ready update now classifies as **Ready for Update**; only a cluster whose *sole* available update is the `HasPrerequisite` item still shows SBE-blocked. This fix is shared across Update: 1, the Apply-Updates readiness gate, and Monitor: 3.
 
 ### Added
 

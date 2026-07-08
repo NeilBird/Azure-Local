@@ -18458,6 +18458,40 @@ Describe 'Thin-YAML Step.5: Export-AzLocalClusterUpdateReadinessReport' {
         $summary | Should -Match 'Status checked \(UTC\).*lastChecked'
     }
 
+    It 'v0.9.19: a cluster with a Ready update AND a co-present HasPrerequisite SBE counts as Ready (not SBE-blocked Not-Ready)' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s5_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s5_ghSummaryFile
+        $rid = '/subscriptions/s1/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/rdy1'
+        $global:_s5_payload = @{
+            Inventory = @([pscustomobject]@{ ClusterName='rdy1'; ResourceId=$rid; UpdateRing='Ring0' })
+            Readiness = @(
+                [pscustomobject]@{ ClusterName='rdy1'; ClusterResourceId=$rid; UpdateRing='Ring0'
+                                   UpdateState='UpdateAvailable'; HealthState='Success'; ReadyForUpdate=$true
+                                   AllAvailableUpdates='Solution12.2604.1003.1006; SBE4.2.2606.1'
+                                   ReadyUpdates='Solution12.2604.1003.1006'
+                                   HasPrerequisiteUpdates='SBE4.2.2606.1'
+                                   CurrentVersion='12.2603.1002.500'; RecommendedUpdate='Solution12.2604.1003.1006'; BlockingReasons=''
+                                   StatusLastChecked='2026-07-08T00:52:23Z' }
+            )
+            Health = @([pscustomobject]@{ ClusterName='rdy1'; HealthState='Success'; Passed=$true; CriticalCount=0; WarningCount=0; Failures='' })
+            OutDir = $script:_s5_outDir
+        }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory       { @($global:_s5_payload.Inventory) }
+            Mock Get-AzLocalClusterUpdateReadiness { @($global:_s5_payload.Readiness) }
+            Mock Test-AzLocalClusterHealth         { @($global:_s5_payload.Health) }
+            Export-AzLocalClusterUpdateReadinessReport -OutputDirectory $global:_s5_payload.OutDir -PassThru
+        }
+        # Classified Ready, not SBE-blocked Not-Ready.
+        $result.ReadyForUpdateCount | Should -Be 1
+        $result.NotReadyCount       | Should -Be 0
+        $summary = Get-Content -LiteralPath $script:_s5_ghSummaryFile -Raw
+        # The cluster appears in the Ready-for-Update table and NOT in a Not-Ready review table.
+        $summary | Should -Match 'Clusters - Ready for Update'
+        $summary | Should -Not -Match '### Not-Ready clusters \(review first\)'
+    }
+
     It 'Combined assess-readiness.xml merges both testsuites under the Update Readiness Assessment root' {
         $env:GITHUB_ACTIONS      = 'true'
         $env:GITHUB_OUTPUT       = $script:_s5_ghOutputFile
@@ -18673,6 +18707,7 @@ Describe 'Private: Get-AzLocalClusterReadinessStatus' {
         @{ UpdateState='PreparationFailed';    HealthState='Success'; HasPrerequisiteUpdates=''; ReadyForUpdate=$false; Expected='ActionRequired' }
         @{ UpdateState='UpToDate';             HealthState='Failure'; HasPrerequisiteUpdates=''; ReadyForUpdate=$false; Expected='HealthFailure' }
         @{ UpdateState='UpdateAvailable';      HealthState='Success'; HasPrerequisiteUpdates='12.2510.0.1'; ReadyForUpdate=$false; Expected='SbeBlocked' }
+        @{ UpdateState='UpdateAvailable';      HealthState='Success'; HasPrerequisiteUpdates='SBE4.2.2606.1'; ReadyForUpdate=$true;  Expected='ReadyForUpdate' }
         @{ UpdateState='UpdateInProgress';     HealthState='Success'; HasPrerequisiteUpdates=''; ReadyForUpdate=$false; Expected='InProgress' }
         @{ UpdateState='PreparationInProgress';HealthState='Success'; HasPrerequisiteUpdates=''; ReadyForUpdate=$false; Expected='InProgress' }
         @{ UpdateState='UpdateAvailable';      HealthState='Success'; HasPrerequisiteUpdates=''; ReadyForUpdate=$true;  Expected='ReadyForUpdate' }
@@ -18707,6 +18742,39 @@ Describe 'Private: Get-AzLocalClusterReadinessStatus' {
             Get-AzLocalClusterReadinessStatus -ReadinessRow $global:_grs_row
         }
         $result | Should -Be 'UpToDate'
+    }
+
+    It 'REGRESSION (v0.9.19): a Ready feature update outranks a co-present HasPrerequisite SBE (ReadyForUpdate, not SbeBlocked)' {
+        # Real-world shape: the cluster has a Solution feature update in state
+        # Ready (installable now, ReadyForUpdate=$true) AND an OEM SBE update in
+        # state HasPrerequisite (its own downstream prereq unmet, so it is listed
+        # in HasPrerequisiteUpdates). The Azure portal shows the feature update as
+        # eligible with an active Install now, so the cluster is ReadyForUpdate -
+        # it must NOT be masked as SbeBlocked / Not-Ready.
+        $global:_grs_row = [pscustomobject]@{
+            UpdateState            = 'UpdateAvailable'
+            HealthState            = 'Success'
+            HasPrerequisiteUpdates = 'SBE4.2.2606.1'
+            ReadyForUpdate         = $true
+            ReadyUpdates           = 'Solution12.2604.1003.1006'
+        }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Get-AzLocalClusterReadinessStatus -ReadinessRow $global:_grs_row
+        }
+        $result | Should -Be 'ReadyForUpdate'
+    }
+
+    It 'A HasPrerequisite update with NO Ready update remains SbeBlocked' {
+        $global:_grs_row = [pscustomobject]@{
+            UpdateState            = 'UpdateAvailable'
+            HealthState            = 'Success'
+            HasPrerequisiteUpdates = 'SBE4.2.2606.1'
+            ReadyForUpdate         = $false
+        }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Get-AzLocalClusterReadinessStatus -ReadinessRow $global:_grs_row
+        }
+        $result | Should -Be 'SbeBlocked'
     }
 
     It 'Priority cascade: UpdateFailed wins over a Failure health state' {

@@ -7,9 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.9.19] - 2026-07-08
 
-**Update: 1 - Assess Update Readiness** surfaces which updates the allow-list is
-filtering out, and **Monitor: 3 - Fleet Update Status** gains two new tables and
-a clearer version-distribution layout.
+**Update: 1 - Assess Update Readiness** fixes a mis-classification that hid
+Ready clusters behind an unrelated SBE prerequisite, surfaces which updates the
+allow-list is filtering out, and adds a per-cluster status-freshness timestamp;
+**Monitor: 3 - Fleet Update Status** gains two new tables and a clearer
+version-distribution layout.
+
+### Fixed
+
+- **A cluster with a genuinely-`Ready` update is no longer mislabelled "SBE Prerequisite / Not-Ready" just because it also carries a `HasPrerequisite` SBE update.** The shared readiness cascade (`Get-AzLocalClusterReadinessStatus`, used by Update: 1 / the Apply-Updates readiness gate / Monitor: 3) tested `SbeBlocked` **before** `ReadyForUpdate`, so any non-empty `HasPrerequisiteUpdates` value won even when a Solution/feature update was Ready and installable. A cluster can legitimately have both at once - e.g. a Solution feature update in state `Ready` (which the Azure portal shows as eligible with an active **Install now**) alongside an OEM SBE update in state `HasPrerequisite` (its own downstream prerequisite unmet). Such clusters were shown as **SBE Prerequisite** in the Not-Ready table and were **excluded from "Clusters - Ready for Update"**, so operators could not see they had an update ready to apply. `SbeBlocked` is now gated on there being **no** Ready update (`$hasPrereq -and -not $readyForUpdate`); a cluster with a Ready update classifies as **ReadyForUpdate**. Clusters whose only available update is the `HasPrerequisite` item still correctly show `SbeBlocked`.
 
 ### Added
 
