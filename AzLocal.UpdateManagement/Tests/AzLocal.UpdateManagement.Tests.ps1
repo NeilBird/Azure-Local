@@ -34,8 +34,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $script:ModuleInfo | Should -Not -BeNullOrEmpty
         }
 
-        It 'Should have version 0.9.19' {
-            $script:ModuleInfo.Version | Should -Be '0.9.19'
+        It 'Should have version 0.9.20' {
+            $script:ModuleInfo.Version | Should -Be '0.9.20'
         }
 
         It 'Module version constants are in sync between .psm1 and .psd1' {
@@ -17621,7 +17621,7 @@ Describe 'Thin-YAML Step.8: Export-AzLocalFleetUpdateStatusReport' {
         $summary | Should -Not -Match '### :scroll: Update Run History and Error Details'
     }
 
-    It 'v0.9.19: renders the Fleet - SBE Version(s) Distribution table and sbe_version_dist_count step output' {
+    It 'v0.9.20: SBE distribution groups by OEM provider then YYMM (3rd octet), N/A for no-SBE' {
         $env:GITHUB_ACTIONS      = 'true'
         $env:GITHUB_OUTPUT       = $script:_s8_ghOutputFile
         $env:GITHUB_STEP_SUMMARY = $script:_s8_ghSummaryFile
@@ -17630,28 +17630,40 @@ Describe 'Thin-YAML Step.8: Export-AzLocalFleetUpdateStatusReport' {
                 [pscustomobject]@{ ClusterName='sbe1'; ResourceId='/subscriptions/s1/resourceGroups/rgs/providers/Microsoft.AzureStackHCI/clusters/sbe1' }
                 [pscustomobject]@{ ClusterName='sbe2'; ResourceId='/subscriptions/s1/resourceGroups/rgs/providers/Microsoft.AzureStackHCI/clusters/sbe2' }
                 [pscustomobject]@{ ClusterName='sbe3'; ResourceId='/subscriptions/s1/resourceGroups/rgs/providers/Microsoft.AzureStackHCI/clusters/sbe3' }
+                [pscustomobject]@{ ClusterName='sbe4'; ResourceId='/subscriptions/s1/resourceGroups/rgs/providers/Microsoft.AzureStackHCI/clusters/sbe4' }
             )
             Readiness = @(
+                # Dell cluster with a real vendor SBE (YYMM = 3rd octet = 2603).
                 [pscustomobject]@{
                     ClusterName='sbe1'; ResourceGroup='rgs'; SubscriptionId='s1'
                     ResourceId='/subscriptions/s1/resourceGroups/rgs/providers/Microsoft.AzureStackHCI/clusters/sbe1'
                     UpdateState='UpToDate'; HealthState='Success'; ReadyForUpdate=$false
                     HasPrerequisiteUpdates=''; AllAvailableUpdates=''; ReadyUpdates=''; SBEDependency=''
-                    RecommendedUpdate=''; CurrentVersion='12.2510.0.0'; CurrentSbeVersion='10.2408.0.628'
+                    RecommendedUpdate=''; CurrentVersion='12.2510.0.0'; CurrentSbeVersion='5.0.2603.1522'; SbeOemProvider='Dell'
                 }
+                # Lenovo cluster with a real vendor SBE (YYMM = 3rd octet = 2605).
                 [pscustomobject]@{
                     ClusterName='sbe2'; ResourceGroup='rgs'; SubscriptionId='s1'
                     ResourceId='/subscriptions/s1/resourceGroups/rgs/providers/Microsoft.AzureStackHCI/clusters/sbe2'
                     UpdateState='UpToDate'; HealthState='Success'; ReadyForUpdate=$false
                     HasPrerequisiteUpdates=''; AllAvailableUpdates=''; ReadyUpdates=''; SBEDependency=''
-                    RecommendedUpdate=''; CurrentVersion='12.2510.0.0'; CurrentSbeVersion='2.0.0.0'
+                    RecommendedUpdate=''; CurrentVersion='12.2510.0.0'; CurrentSbeVersion='5.0.2605.1000'; SbeOemProvider='Lenovo'
                 }
+                # Lenovo cluster on the base placeholder SBE (no vendor SBE) -> N/A, still grouped under Lenovo.
                 [pscustomobject]@{
                     ClusterName='sbe3'; ResourceGroup='rgs'; SubscriptionId='s1'
                     ResourceId='/subscriptions/s1/resourceGroups/rgs/providers/Microsoft.AzureStackHCI/clusters/sbe3'
                     UpdateState='UpToDate'; HealthState='Success'; ReadyForUpdate=$false
                     HasPrerequisiteUpdates=''; AllAvailableUpdates=''; ReadyUpdates=''; SBEDependency=''
-                    RecommendedUpdate=''; CurrentVersion='12.2510.0.0'; CurrentSbeVersion=''
+                    RecommendedUpdate=''; CurrentVersion='12.2510.0.0'; CurrentSbeVersion='2.1.0.0'; SbeOemProvider='Lenovo'
+                }
+                # Microsoft cluster with no SBE package at all -> N/A under Microsoft.
+                [pscustomobject]@{
+                    ClusterName='sbe4'; ResourceGroup='rgs'; SubscriptionId='s1'
+                    ResourceId='/subscriptions/s1/resourceGroups/rgs/providers/Microsoft.AzureStackHCI/clusters/sbe4'
+                    UpdateState='UpToDate'; HealthState='Success'; ReadyForUpdate=$false
+                    HasPrerequisiteUpdates=''; AllAvailableUpdates=''; ReadyUpdates=''; SBEDependency=''
+                    RecommendedUpdate=''; CurrentVersion='12.2510.0.0'; CurrentSbeVersion=''; SbeOemProvider='Microsoft'
                 }
             )
             Manifest = [pscustomobject]@{ SupportedYYMMs=@('2510'); LatestYYMM='2510'; LatestVersion='12.2510.0.999'; ManifestFetchedAt=(Get-Date).ToUniversalTime() }
@@ -17669,16 +17681,18 @@ Describe 'Thin-YAML Step.8: Export-AzLocalFleetUpdateStatusReport' {
         }
         $summary = Get-Content -LiteralPath $script:_s8_ghSummaryFile -Raw
         $summary | Should -Match '### Fleet - SBE Version\(s\) Distribution'
-        # SBE table header retains the YYMM column and drops the Support column.
-        $summary | Should -Match '\| YYMM \| SBE Update Versions \| Clusters \| % \| Cluster Names \(first 15 shown only\) \|'
-        # Real vendor SBE surfaces its YYMM (2nd octet) and version.
-        $summary | Should -Match '2408'
-        $summary | Should -Match '10\.2408\.0\.628'
-        # Placeholder SBE version annotated; empty SBE bucketed as 'No SBE Installed'.
-        $summary | Should -Match '2\.0\.0\.0 \(No SBE Installed\)'
-        $summary | Should -Match 'No SBE Installed'
+        # v0.9.20 header: OEM Provider is the first column.
+        $summary | Should -Match '\| OEM Provider \| YYMM \| SBE Update Versions \| Clusters \| % \| Cluster Names \(first 15 shown only\) \|'
+        # Real vendor SBE: YYMM from the 3rd octet, grouped under its OEM.
+        $summary | Should -Match '\| Dell \| 2603 \| 5\.0\.2603\.1522 x 1 \|'
+        $summary | Should -Match '\| Lenovo \| 2605 \| 5\.0\.2605\.1000 x 1 \|'
+        # Placeholder SBE -> N/A - No SBE Installed, still grouped by hardware OEM.
+        $summary | Should -Match '\| Lenovo \| N/A - No SBE Installed \|'
+        $summary | Should -Match '\| Microsoft \| N/A - No SBE Installed \|'
+        $summary | Should -Match 'N/A - No SBE Installed'
+        # 4 distinct (OEM, version) groups across the fleet.
         $out = Get-Content -LiteralPath $script:_s8_ghOutputFile -Raw
-        $out | Should -Match 'sbe_version_dist_count=3'
+        $out | Should -Match 'sbe_version_dist_count=4'
     }
 
     It 'v0.9.19: renders Recent Successful Updates for runs completed in the last 48h and skips older/failed runs' {
@@ -18799,6 +18813,48 @@ Describe 'Private: Get-AzLocalClusterReadinessStatus' {
     }
 }
 #endregion v0.8.74: Get-AzLocalClusterReadinessStatus
+
+#region v0.9.20: Resolve-AzLocalHardwareOem (SBE distribution OEM grouping)
+Describe 'Private: Resolve-AzLocalHardwareOem' {
+    It 'Normalises <Manufacturer> to <Expected>' -ForEach @(
+        @{ Manufacturer='Dell Inc.';                    Expected='Dell' }
+        @{ Manufacturer='Dell';                         Expected='Dell' }
+        @{ Manufacturer='Lenovo';                       Expected='Lenovo' }
+        @{ Manufacturer='HPE';                          Expected='HPE' }
+        @{ Manufacturer='Hewlett Packard Enterprise';   Expected='HPE' }
+        @{ Manufacturer='Hewlett-Packard';              Expected='HPE' }
+        @{ Manufacturer='Supermicro';                   Expected='Supermicro' }
+        @{ Manufacturer='Super Micro Computer, Inc.';   Expected='Supermicro' }
+        @{ Manufacturer='Microsoft Corporation';        Expected='Microsoft' }
+        @{ Manufacturer='Microsoft';                    Expected='Microsoft' }
+        @{ Manufacturer='Intel Corporation';            Expected='Intel' }
+        @{ Manufacturer='Fujitsu';                      Expected='Fujitsu' }
+    ) {
+        $result = InModuleScope AzLocal.UpdateManagement -Parameters @{ M = $Manufacturer } {
+            param($M)
+            Resolve-AzLocalHardwareOem -Manufacturer $M
+        }
+        $result | Should -Be $Expected
+    }
+
+    It 'Returns Unknown for a null / empty / whitespace manufacturer' -ForEach @(
+        @{ M = $null }, @{ M = '' }, @{ M = '   ' }
+    ) {
+        $result = InModuleScope AzLocal.UpdateManagement -Parameters @{ M = $M } {
+            param($M)
+            Resolve-AzLocalHardwareOem -Manufacturer $M
+        }
+        $result | Should -Be 'Unknown'
+    }
+
+    It 'Returns an unrecognised manufacturer trimmed as-is (so it still groups)' {
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Resolve-AzLocalHardwareOem -Manufacturer '  Acme Servers  '
+        }
+        $result | Should -Be 'Acme Servers'
+    }
+}
+#endregion v0.9.20: Resolve-AzLocalHardwareOem
 
 #region v0.8.74: Export-AzLocalClusterReadinessGateReport (Step.7 status column)
 Describe 'Thin-YAML Step.7: Export-AzLocalClusterReadinessGateReport' {

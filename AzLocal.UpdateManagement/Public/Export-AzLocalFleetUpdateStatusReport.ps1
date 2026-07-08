@@ -445,30 +445,40 @@ function Export-AzLocalFleetUpdateStatusReport {
     $mostCommonVersion    = if ($distinctVersions -gt 0) { $versionDistribution[0].Version } else { '(none)' }
     $mostCommonVersionPct = if ($distinctVersions -gt 0) { $versionDistribution[0].Percentage } else { 0 }
 
-    # ---- Fleet SBE Version(s) Distribution (v0.9.19) ----------------------
+    # ---- Fleet SBE Version(s) Distribution (v0.9.20) ----------------------
     # Pivots each cluster's installed SBE version (CurrentSbeVersion from the
-    # updateSummary SBE packageVersions). SBE versions are vendor-specific
-    # (vendor.YYMM.x.x); the base placeholders '2.0.0.0' / '2.1.0.0' and any
-    # cluster with no SBE package are surfaced as 'No SBE Installed'. The YYMM
-    # column is retained (2nd octet when it is a 4-digit year-month) but there
-    # is no Microsoft support window for SBE, so no Support column is rendered.
+    # updateSummary SBE packageVersions) PRIMARILY by hardware OEM provider
+    # (SbeOemProvider - Dell / HPE / Lenovo / Microsoft / ...) and SECONDARILY by
+    # the SBE YYMM. SBE versions are vendor-specific with the form
+    # <major>.<minor>.<YYMM>.<build>, so the YYMM is the THIRD dotted value
+    # (e.g. 5.0.2605.1000 -> 2605). The base placeholders 2.0.0.0 / 2.1.0.0 and
+    # any cluster with no SBE package mean no vendor SBE is installed, so their
+    # YYMM is reported as 'N/A - No SBE Installed' (they still group by OEM).
     $sbePlaceholderVersions = @('2.0.0.0', '2.1.0.0')
+    $sbeNotInstalledYymm = 'N/A - No SBE Installed'
     $sbeGroups = @($readiness | Group-Object {
         $rawSbe = if ($_.PSObject.Properties['CurrentSbeVersion'] -and $_.CurrentSbeVersion) { [string]$_.CurrentSbeVersion } else { '' }
-        if ([string]::IsNullOrWhiteSpace($rawSbe)) { 'No SBE Installed' }
-        elseif ($sbePlaceholderVersions -contains $rawSbe) { "$rawSbe (No SBE Installed)" }
-        else { $rawSbe }
+        $oem = if ($_.PSObject.Properties['SbeOemProvider'] -and $_.SbeOemProvider) { [string]$_.SbeOemProvider } else { 'Unknown' }
+        $verDisplay = if ([string]::IsNullOrWhiteSpace($rawSbe)) { 'No SBE Installed' }
+                      elseif ($sbePlaceholderVersions -contains $rawSbe) { "$rawSbe (No SBE Installed)" }
+                      else { $rawSbe }
+        "$oem||$verDisplay"
     } | Sort-Object Count -Descending)
     $sbeVersionDistribution = @($sbeGroups | ForEach-Object {
+        $keyParts = ([string]$_.Name) -split '\|\|', 2
+        $oem     = $keyParts[0]
+        $verName = if ($keyParts.Count -gt 1) { $keyParts[1] } else { $keyParts[0] }
         $clusterNames = @($_.Group | Sort-Object ClusterName | ForEach-Object { [string]$_.ClusterName })
-        $rawVer = ([string]$_.Name) -replace '\s*\(No SBE Installed\)\s*$', ''
-        $sbeYymm = if ($rawVer -eq 'No SBE Installed') { '' }
+        $rawVer = $verName -replace '\s*\(No SBE Installed\)\s*$', ''
+        $isNoSbe = ($verName -eq 'No SBE Installed') -or ($sbePlaceholderVersions -contains $rawVer)
+        $sbeYymm = if ($isNoSbe) { $sbeNotInstalledYymm }
                    else {
                        $sbeParts = $rawVer -split '\.'
-                       if ($sbeParts.Count -ge 2 -and $sbeParts[1] -match '^[0-9]{4}$') { $sbeParts[1] } else { '' }
+                       if ($sbeParts.Count -ge 3 -and $sbeParts[2] -match '^[0-9]{4}$') { $sbeParts[2] } else { $sbeNotInstalledYymm }
                    }
         [pscustomobject]@{
-            Version    = $_.Name
+            Oem        = $oem
+            Version    = $verName
             Count      = $_.Count
             Percentage = if ($totalTests -gt 0) { [math]::Round(($_.Count / $totalTests) * 100, 1) } else { 0 }
             Clusters   = ($clusterNames -join ', ')
@@ -951,43 +961,50 @@ function Export-AzLocalFleetUpdateStatusReport {
         }
     }
 
-    # Fleet - SBE Version(s) Distribution table (v0.9.19). Same layout as the
-    # solution distribution table but without the Support column (SBE versions
-    # are vendor-specific and have no Microsoft support window).
+    # Fleet - SBE Version(s) Distribution table (v0.9.20). Grouped by hardware
+    # OEM provider (first column) then SBE YYMM. SBE versions are vendor-specific
+    # and have no Microsoft support window, so no Support column is rendered.
     if ($sbeDistinctVersions -gt 0) {
         try {
             $sbeSection = @()
             $sbeSection += '### Fleet - SBE Version(s) Distribution'
             $sbeSection += ''
-            $sbeSection += "_$sbeDistinctVersions distinct SBE version value(s) across $totalTests cluster(s). SBE versions are vendor-specific; the base placeholders ``2.0.0.0`` / ``2.1.0.0`` and clusters with no SBE package are shown as **No SBE Installed**._"
+            $sbeSection += "_$sbeDistinctVersions distinct SBE version value(s) across $totalTests cluster(s), grouped by hardware OEM provider. SBE versions are vendor-specific (``<major>.<minor>.<YYMM>.<build>``), so the YYMM is the third value (e.g. ``5.0.2605.1000`` -> ``2605``). The base placeholders ``2.0.0.0`` / ``2.1.0.0`` and clusters with no SBE package are shown as **N/A - No SBE Installed**._"
             $sbeSection += ''
-            $sbeSection += '| YYMM | SBE Update Versions | Clusters | % | Cluster Names (first 15 shown only) |'
-            $sbeSection += '|------|---------------------|----------|---|--------------------------------------|'
-            $bySbeYymm = $sbeVersionDistribution | Group-Object Yymm | Sort-Object @{Expression={ if ($_.Name) { $_.Name } else { '' } }; Descending=$true}
-            foreach ($g in $bySbeYymm) {
-                $groupRows = @($g.Group | Sort-Object Count -Descending)
-                $totalCount = ($groupRows | Measure-Object Count -Sum).Sum
-                $totalPct   = if ($totalTests -gt 0) { [math]::Round(($totalCount / $totalTests) * 100, 1) } else { 0 }
-                $yymmDisplay = if ($g.Name) { $g.Name } else { '_(unknown)_' }
-                $sbeVersionsCell = (($groupRows | ForEach-Object { '{0} x {1}' -f $_.Version, $_.Count }) -join '<br>')
-                $clusterNames = @()
-                foreach ($r in $groupRows) {
-                    if ($r.Clusters) {
-                        $clusterNames += @($r.Clusters -split ',\s*' | Where-Object { $_ })
+            $sbeSection += '| OEM Provider | YYMM | SBE Update Versions | Clusters | % | Cluster Names (first 15 shown only) |'
+            $sbeSection += '|--------------|------|---------------------|----------|---|--------------------------------------|'
+            # Primary group: OEM (alphabetical). Secondary: YYMM (newest first;
+            # the 'N/A - No SBE Installed' bucket sorts last within each OEM).
+            $byOem = $sbeVersionDistribution | Group-Object Oem | Sort-Object Name
+            foreach ($oemGroup in $byOem) {
+                $oemName = ([string]$oemGroup.Name) -replace '\|', '\|'
+                $bySbeYymm = @($oemGroup.Group) | Group-Object Yymm |
+                    Sort-Object @{Expression={ if ($_.Name -eq $sbeNotInstalledYymm) { 0 } else { 1 } }; Descending=$true}, @{Expression={ $_.Name }; Descending=$true}
+                foreach ($g in $bySbeYymm) {
+                    $groupRows = @($g.Group | Sort-Object Count -Descending)
+                    $totalCount = ($groupRows | Measure-Object Count -Sum).Sum
+                    $totalPct   = if ($totalTests -gt 0) { [math]::Round(($totalCount / $totalTests) * 100, 1) } else { 0 }
+                    $yymmDisplay = $g.Name
+                    $sbeVersionsCell = (($groupRows | ForEach-Object { '{0} x {1}' -f $_.Version, $_.Count }) -join '<br>')
+                    $clusterNames = @()
+                    foreach ($r in $groupRows) {
+                        if ($r.Clusters) {
+                            $clusterNames += @($r.Clusters -split ',\s*' | Where-Object { $_ })
+                        }
                     }
+                    $clusterNames = @($clusterNames | Sort-Object -Unique)
+                    $clCell = if ($clusterNames.Count -le 15) {
+                        $clusterNames -join '; '
+                    }
+                    else {
+                        (($clusterNames | Select-Object -First 15) -join '; ') + (' ... (+{0} more)' -f ($clusterNames.Count - 15))
+                    }
+                    $clCell = $clCell -replace '\|','\|'
+                    $sbeSection += ('| {0} | {1} | {2} | {3} | {4}% | {5} |' -f $oemName, $yymmDisplay, $sbeVersionsCell, $totalCount, $totalPct, $clCell)
                 }
-                $clusterNames = @($clusterNames | Sort-Object -Unique)
-                $clCell = if ($clusterNames.Count -le 15) {
-                    $clusterNames -join '; '
-                }
-                else {
-                    (($clusterNames | Select-Object -First 15) -join '; ') + (' ... (+{0} more)' -f ($clusterNames.Count - 15))
-                }
-                $clCell = $clCell -replace '\|','\|'
-                $sbeSection += ('| {0} | {1} | {2} | {3}% | {4} |' -f $yymmDisplay, $sbeVersionsCell, $totalCount, $totalPct, $clCell)
             }
             $sbeSection += ''
-            $sbeSection += "_Note: the **Cluster Names (first 15 shown only)** column is truncated for readability. Download ``$ReadinessCsvFileName`` from artifacts for the full per-cluster SBE version list._"
+            $sbeSection += "_Note: the **Cluster Names (first 15 shown only)** column is truncated for readability. Download ``$ReadinessCsvFileName`` from artifacts for the full per-cluster SBE version + OEM list._"
             $sbeSection += ''
             foreach ($line in $sbeSection) { [void]$md.Add($line) }
         }
