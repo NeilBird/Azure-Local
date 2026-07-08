@@ -43,7 +43,7 @@
 #requires -Version 5.1
 [CmdletBinding()]
 param(
-    [string]$ReleaseVersion = '0.9.19',
+    [string]$ReleaseVersion = '0.9.20',
     [string]$SubscriptionId,
     [string]$ModulePath,
     [string[]]$Rings = @('Prod', 'Ring1', 'Ring2', 'Canary', 'DevTest'),
@@ -120,6 +120,8 @@ try {
         Save '2-monitor3-summary' $md
         $report['Monitor3 run-history "Update Ring" header'] = if ($md -match '\| Cluster Name \| Update Ring \| Update Name \|') { 'PASS' } else { 'n/a (no run history rows)' }
         $report['Monitor3 "Clusters - Ready for Update" table'] = if ($md -match '### Clusters - Ready for Update') { 'PASS' } else { 'FAIL - section missing' }
+        # v0.9.20: SBE distribution grouped by hardware OEM provider (first column).
+        $report['Monitor3 SBE distribution OEM Provider column (v0.9.20)'] = if ($md -match '\| OEM Provider \| YYMM \| SBE Update Versions \|') { 'PASS' } else { 'FAIL - OEM column missing' }
     }
     catch { $report['Export-AzLocalFleetUpdateStatusReport'] = "ERROR: $($_.Exception.Message)" }
 

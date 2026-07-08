@@ -5,6 +5,21 @@ All notable changes to the AzLocal.UpdateManagement module (renamed from AzStack
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.20] - 2026-07-08
+
+**Monitor: 3 - Fleet Update Status** - the **Fleet - SBE Version(s) Distribution**
+table is reworked to group by hardware OEM provider and read the correct YYMM.
+
+### Changed
+
+- **The SBE distribution table now leads with an OEM Provider column and groups clusters by hardware vendor.** Solution Builder Extension (SBE) packages are vendor-specific, so the table is now grouped **primarily by hardware OEM** (Dell / HPE / Lenovo / Microsoft / ...) and **secondarily by SBE YYMM**, with **OEM Provider** as the first column. The OEM is resolved from each cluster's reported node manufacturer (`properties.reportedProperties.nodes[].manufacturer`) via the new private helper `Resolve-AzLocalHardwareOem`; a new readiness-row field `SbeOemProvider` carries it (also in `readiness-status.csv`). A customer running mixed hardware (e.g. Dell + HPE + Lenovo) now sees each vendor's SBE spread split out and sorted by OEM name.
+- **SBE YYMM is now read from the correct (third) version octet.** SBE versions have the form `<major>.<minor>.<YYMM>.<build>` (e.g. `5.0.2605.1000` -> `2605`, `5.0.2603.1522` -> `2603`), so the YYMM is the **third** dotted value. The v0.9.19 table incorrectly used the second octet.
+- **Clusters with no vendor SBE now show `N/A - No SBE Installed` for YYMM.** The base placeholders `2.0.0.0` / `2.1.0.0` and clusters with no SBE package are genuinely *not* running a vendor SBE (not "unknown"), so their YYMM reads **N/A - No SBE Installed** while still grouping under their hardware OEM.
+
+### Notes
+
+- Export count unchanged at **69** (`Resolve-AzLocalHardwareOem` is a private helper). The reworked table renders identically on GitHub Actions and Azure DevOps (both call `Export-AzLocalFleetUpdateStatusReport`). `GENERATED_AGAINST_MODULE_VERSION` bumped to `0.9.20`.
+
 ## [0.9.19] - 2026-07-08
 
 **Update: 1 - Assess Update Readiness** fixes a mis-classification that hid

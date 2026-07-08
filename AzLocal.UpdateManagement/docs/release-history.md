@@ -4,9 +4,13 @@
 >
 > **For older releases**, this is the canonical reference; the main README intentionally stays slim so the most recent block is easy to find.
 >
-> **For v0.9.19 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0919) `What's New in v0.9.19` section.
+> **For v0.9.20 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0920) `What's New in v0.9.20` section.
 
 ---
+
+### What's New in v0.9.20
+
+**Monitor: 3 - Fleet Update Status: the "Fleet - SBE Version(s) Distribution" table is reworked to group by hardware OEM provider and read the correct YYMM.** Solution Builder Extension (SBE) packages are vendor-specific, so the table now leads with an **OEM Provider** first column and groups clusters **primarily by hardware OEM** (Dell / HPE / Lenovo / Microsoft / ...) then by SBE YYMM, sorted by OEM name. The OEM is resolved from each cluster's reported node manufacturer (`properties.reportedProperties.nodes[].manufacturer`) via the new private helper `Resolve-AzLocalHardwareOem`; a new readiness-row field `SbeOemProvider` carries it (also in `readiness-status.csv`). SBE YYMM is now read from the **third** version octet (`<major>.<minor>.<YYMM>.<build>`, e.g. `5.0.2605.1000` -> `2605`, `5.0.2603.1522` -> `2603`); v0.9.19 incorrectly used the second octet. Clusters with no vendor SBE (the base placeholders `2.0.0.0` / `2.1.0.0` and any cluster with no SBE package) now show **N/A - No SBE Installed** for YYMM (genuinely not present, not "unknown") while still grouping under their hardware OEM. A fleet running mixed hardware (e.g. Dell + HPE + Lenovo) now sees each vendor's SBE spread split out. Export count unchanged at **69** (`Resolve-AzLocalHardwareOem` is private); the table renders identically on GitHub Actions and Azure DevOps. `GENERATED_AGAINST_MODULE_VERSION` bumped to `0.9.20`. See [CHANGELOG.md](../CHANGELOG.md#0920---2026-07-08) for the full v0.9.20 entry.
 
 ### What's New in v0.9.19
 

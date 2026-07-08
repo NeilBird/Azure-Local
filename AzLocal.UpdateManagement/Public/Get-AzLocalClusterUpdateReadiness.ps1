@@ -391,6 +391,7 @@ function Get-AzLocalClusterUpdateReadiness {
                     HealthState            = 'N/A'
                     CurrentVersion         = ''
                     CurrentSbeVersion      = ''
+                    SbeOemProvider         = 'Unknown'
                     ReadyForUpdate         = $false
                     AllAvailableUpdates    = ''
                     ReadyUpdates           = ''
@@ -574,6 +575,23 @@ function Get-AzLocalClusterUpdateReadiness {
                 ($rawUpdateState -notin @('UpdateInProgress', 'PreparationInProgress', 'Failed', 'UpdateFailed', 'NeedsAttention', 'PreparationFailed'))
             $rowUpdateState = if ($scheduleConstrainedUpToDate) { 'UpToDate' } else { $updateState }
 
+            # v0.9.20: hardware OEM provider (Dell / HPE / Lenovo / Microsoft / ...)
+            # resolved from the cluster's reported node manufacturer. Monitor: 3 groups
+            # the SBE version distribution by this vendor - including clusters running
+            # the base placeholder SBE (2.0.0.0 / 2.1.0.0) that have no vendor SBE.
+            $sbeOemProvider = 'Unknown'
+            if ($clusterProps -and $clusterProps.PSObject.Properties['reportedProperties'] -and $clusterProps.reportedProperties) {
+                $reportedProps = $clusterProps.reportedProperties
+                if ($reportedProps.PSObject.Properties['nodes'] -and $reportedProps.nodes) {
+                    $nodeManufacturers = @($reportedProps.nodes | ForEach-Object {
+                        if ($_ -and $_.PSObject.Properties['manufacturer'] -and $_.manufacturer) { [string]$_.manufacturer } else { $null }
+                    } | Where-Object { $_ })
+                    if ($nodeManufacturers.Count -gt 0) {
+                        $sbeOemProvider = Resolve-AzLocalHardwareOem -Manufacturer $nodeManufacturers[0]
+                    }
+                }
+            }
+
             # Installed versions (Solution + SBE) from updateSummary.
             $currentVersion = ''
             $currentSbeVersion = ''
@@ -692,6 +710,7 @@ function Get-AzLocalClusterUpdateReadiness {
                     HealthState            = $healthState
                     CurrentVersion         = $currentVersion
                     CurrentSbeVersion      = $currentSbeVersion
+                    SbeOemProvider         = $sbeOemProvider
                     ReadyForUpdate         = $isReady
                     AllAvailableUpdates    = $availableUpdateNames
                     ReadyUpdates           = $readyUpdateNames
@@ -723,6 +742,7 @@ function Get-AzLocalClusterUpdateReadiness {
                     HealthState            = 'Error'
                     CurrentVersion         = ''
                     CurrentSbeVersion      = ''
+                    SbeOemProvider         = 'Unknown'
                     ReadyForUpdate         = $false
                     AllAvailableUpdates    = ''
                     ReadyUpdates           = ''
