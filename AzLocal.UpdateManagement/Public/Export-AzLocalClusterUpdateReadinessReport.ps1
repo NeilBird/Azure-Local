@@ -45,8 +45,8 @@ function Export-AzLocalClusterUpdateReadinessReport {
              action banner, summary counts, Not-Ready table, Critical-
              health table, per-ring pivot, all-clusters detail,
              cross-link list) via `Add-AzLocalPipelineStepSummary`.
-         10. Emits 2 step outputs via `Set-AzLocalPipelineOutput`:
-             not_ready, critical_failures.
+         10. Emits 3 step outputs via `Set-AzLocalPipelineOutput`:
+             not_ready, critical_failures, allowlist_filtered_updates.
 
         Internal reuse (per the v0.8.5 thin-YAML consistency contract):
           * `Get-AzLocalClusterInventory` for the all-clusters scope and
@@ -112,11 +112,14 @@ function Export-AzLocalClusterUpdateReadinessReport {
     .PARAMETER PassThru
         When set, returns a single PSCustomObject summarising the run
         (TotalCount, ReadyForUpdateCount, UpToDateCount, AllowListHeldCount,
-        NotReadyCount, CriticalFindings, ClustersWithCritical, ReadinessRows,
-        HealthRows, and the file paths incl. ReadyForUpdateCsvPath).
+        AllowListFilteredUpdateCount, NotReadyCount, CriticalFindings,
+        ClustersWithCritical, ReadinessRows, HealthRows, and the file paths
+        incl. ReadyForUpdateCsvPath).
         AllowListHeldCount is a labelled SUBSET of UpToDateCount (clusters that
         are Up to Date only because the allowedUpdateVersions allow-list held
-        their Ready update).
+        their Ready update). AllowListFilteredUpdateCount is the number of
+        distinct Ready updates the allow-list filtered out across the fleet
+        (surfaced in the 'Updates filtered out by the allow-list' table).
         Without -PassThru the cmdlet emits nothing to the pipeline; the
         artifacts and step outputs are still produced.
 
@@ -264,6 +267,7 @@ function Export-AzLocalClusterUpdateReadinessReport {
                     ReadyForUpdateCount  = 0
                     UpToDateCount        = 0
                     AllowListHeldCount   = 0
+                    AllowListFilteredUpdateCount = 0
                     NotReadyCount        = 0
                     CriticalFindings     = 0
                     ClustersWithCritical = 0
@@ -341,12 +345,48 @@ function Export-AzLocalClusterUpdateReadinessReport {
         })
     $allowListHeld = $allowListHeldRows.Count
 
+    # v0.9.19: fleet-wide aggregation of Ready updates the allowedUpdateVersions
+    # allow-list filtered OUT, grouped by (update, scope, ring) with a distinct
+    # cluster count. Sourced from the per-row AllowListSuppressedUpdates field
+    # (populated whenever a Global top-level/explicit or Per-Ring override list
+    # removed one or more otherwise-Ready updates). Rendered as a dedicated table
+    # (section 6c) so operators see - in aggregate, not per cluster - exactly
+    # which updates to add to apply-updates-schedule.yml, and at which scope.
+    $filteredUpdateAgg = @{}
+    foreach ($r in @($readiness)) {
+        if (-not ($r.PSObject.Properties['AllowListSuppressedUpdates'] -and $r.AllowListSuppressedUpdates)) { continue }
+        $src = if ($r.PSObject.Properties['AllowListSource']) { [string]$r.AllowListSource } else { 'None' }
+        $allowScope = if ($src -eq 'RowOverride') { 'Per-Ring' } else { 'Global' }
+        $ring = if ($allowScope -eq 'Per-Ring') {
+            if ($r.PSObject.Properties['UpdateRing'] -and $r.UpdateRing) { [string]$r.UpdateRing } else { '(untagged)' }
+        } else { '-' }
+        $cid = if ($r.PSObject.Properties['ClusterResourceId'] -and $r.ClusterResourceId) { [string]$r.ClusterResourceId } else { [string]$r.ClusterName }
+        foreach ($u in (([string]$r.AllowListSuppressedUpdates) -split ';' | ForEach-Object { $_.Trim() } | Where-Object { $_ })) {
+            $aggKey = '{0}|{1}|{2}' -f $u, $allowScope, $ring
+            if (-not $filteredUpdateAgg.ContainsKey($aggKey)) {
+                $filteredUpdateAgg[$aggKey] = [pscustomobject]@{
+                    Update   = $u
+                    Scope    = $allowScope
+                    Ring     = $ring
+                    Clusters = (New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase))
+                }
+            }
+            [void]$filteredUpdateAgg[$aggKey].Clusters.Add($cid)
+        }
+    }
+    $filteredUpdateRows = @($filteredUpdateAgg.Values |
+        Sort-Object @{ Expression = { $_.Clusters.Count }; Descending = $true }, Update, Scope, Ring)
+    $filteredUpdateDistinct = @($filteredUpdateRows | ForEach-Object { $_.Update } | Sort-Object -Unique).Count
+
     Write-Host ''
     Write-Host "Total clusters in scope: $total"
     Write-Host "Ready for update      : $readyForUpdate"
     Write-Host "Up to date            : $upToDate"
     Write-Host "  (held by allow-list): $allowListHeld"
     Write-Host "Not ready for update  : $notReady"
+    if ($filteredUpdateDistinct -gt 0) {
+        Write-Host "Updates filtered out by allow-list: $filteredUpdateDistinct distinct update(s)" -ForegroundColor Yellow
+    }
 
     # ---- Ready-for-Update subset (v0.8.97) --------------------------------
     # Shared projection (Get-AzLocalReadyForUpdateRows) reused by the markdown
@@ -482,6 +522,7 @@ function Export-AzLocalClusterUpdateReadinessReport {
     # ---- Step outputs -----------------------------------------------------
     Set-AzLocalPipelineOutput -Name 'not_ready'         -Value ([string]$notReady)
     Set-AzLocalPipelineOutput -Name 'critical_failures' -Value ([string]$clustersWithCritical)
+    Set-AzLocalPipelineOutput -Name 'allowlist_filtered_updates' -Value ([string]$filteredUpdateDistinct)
 
     # ---- Markdown step summary (8 sections) -------------------------------
     $md = New-Object 'System.Collections.Generic.List[string]'
@@ -668,6 +709,31 @@ function Export-AzLocalClusterUpdateReadinessReport {
         [void]$md.Add('')
     }
 
+    # 6c. Fleet aggregate: updates the allow-list filtered out (v0.9.19)
+    # A single fleet-wide roll-up (NOT per cluster) of every Ready update that
+    # the allowedUpdateVersions allow-list removed, grouped by scope (Global
+    # top-level/explicit vs Per-Ring override) with a distinct cluster count.
+    # This tells operators, in aggregate, exactly which update names to add to
+    # apply-updates-schedule.yml - and at which scope - to let them proceed.
+    if ($filteredUpdateRows.Count -gt 0) {
+        $affectedClusterIds = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+        foreach ($fr in $filteredUpdateRows) { foreach ($c in $fr.Clusters) { [void]$affectedClusterIds.Add($c) } }
+        $scheduleFileLabel = if ($SchedulePath) { "``$SchedulePath``" } else { 'your `apply-updates-schedule.yml`' }
+        [void]$md.Add('### Updates filtered out by the allow-list')
+        [void]$md.Add('')
+        [void]$md.Add(("> The ``allowedUpdateVersions`` allow-list is currently filtering out **{0} distinct update(s)** that Azure reports as **Ready** across **{1} cluster(s)**. These updates will **not** be installed until you add them to your schedule. To let any of them proceed, add the exact update name to {2}: for a **Global** entry add it to the top-level ``allowedUpdateVersions:`` list; for a **Per-Ring** entry add it to that ring's row ``allowedUpdateVersions:`` override. (This is a fleet aggregate - see **All clusters detail** for the per-cluster view.)" -f $filteredUpdateDistinct, $affectedClusterIds.Count, $scheduleFileLabel))
+        [void]$md.Add('')
+        [void]$md.Add('| Filtered-out Update | Allow-list Scope | Update Ring(s) | Clusters Affected |')
+        [void]$md.Add('|---------------------|------------------|----------------|-------------------|')
+        foreach ($fr in $filteredUpdateRows) {
+            $updCell   = ([string]$fr.Update) -replace '\|', '\|'
+            $scopeCell = [string]$fr.Scope
+            $ringCell  = ([string]$fr.Ring) -replace '\|', '\|'
+            [void]$md.Add("| $updCell | $scopeCell | $ringCell | $($fr.Clusters.Count) |")
+        }
+        [void]$md.Add('')
+    }
+
     # 7. All-clusters detail table
     if ($total -gt 0) {
         # 7a. Clusters - Ready for Update (shared table, rendered before the
@@ -822,6 +888,7 @@ function Export-AzLocalClusterUpdateReadinessReport {
             ReadyForUpdateCount  = [int]$readyForUpdate
             UpToDateCount        = [int]$upToDate
             AllowListHeldCount   = [int]$allowListHeld
+            AllowListFilteredUpdateCount = [int]$filteredUpdateDistinct
             NotReadyCount        = [int]$notReady
             CriticalFindings     = [int]$criticalFindings
             ClustersWithCritical = [int]$clustersWithCritical

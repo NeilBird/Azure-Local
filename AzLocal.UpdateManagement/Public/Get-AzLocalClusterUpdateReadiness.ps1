@@ -404,6 +404,7 @@ function Get-AzLocalClusterUpdateReadiness {
                     LastUpdated            = ''
                     AllowedUpdateVersions  = ''
                     AllowListSource        = 'None'
+                    AllowListSuppressedUpdates = ''
                     AzureUpdateState       = 'N/A'
                 }) | Out-Null
             continue
@@ -471,6 +472,11 @@ function Get-AzLocalClusterUpdateReadiness {
             $allowListDisplay        = ''
             $allowListSource         = 'None'
             $scheduleSuppressedReady = $false
+            # v0.9.19: names of the Ready updates the allow-list filtered OUT for
+            # this cluster (';'-joined). Fleet-aggregated by the readiness report
+            # into the "Updates filtered out by the allow-list" table so operators
+            # can see which updates to add to apply-updates-schedule.yml.
+            $suppressedReadyNames    = ''
             $effectiveAllowList      = @()
             if ($scheduleCfg) {
                 $clusterRing = if ($clusterTags) { Get-TagValue -Tags $clusterTags -Name 'UpdateRing' } else { $null }
@@ -504,6 +510,12 @@ function Get-AzLocalClusterUpdateReadiness {
                     if ($f -and $f.name) { [void]$allowedNameSet.Add([string]$f.name) }
                 }
                 $filteredReady = @($readyUpdates | Where-Object { $allowedNameSet.Contains([string]$_.UpdateName_) })
+                # v0.9.19: capture the Ready updates the allow-list removed BEFORE
+                # $readyUpdates is narrowed to the allowed subset.
+                $suppressedReady = @($readyUpdates |
+                    Where-Object { -not $allowedNameSet.Contains([string]$_.UpdateName_) } |
+                    ForEach-Object { [string]$_.UpdateName_ })
+                if ($suppressedReady.Count -gt 0) { $suppressedReadyNames = ($suppressedReady -join '; ') }
                 if ($filteredReady.Count -eq 0) { $scheduleSuppressedReady = $true }
                 $readyUpdates = $filteredReady
             }
@@ -673,6 +685,7 @@ function Get-AzLocalClusterUpdateReadiness {
                     LastUpdated            = $lastUpdated
                     AllowedUpdateVersions  = $allowListDisplay
                     AllowListSource        = $allowListSource
+                    AllowListSuppressedUpdates = $suppressedReadyNames
                     AzureUpdateState       = $rawUpdateState
                 }) | Out-Null
         }
@@ -702,6 +715,7 @@ function Get-AzLocalClusterUpdateReadiness {
                     LastUpdated            = ''
                     AllowedUpdateVersions  = ''
                     AllowListSource        = 'None'
+                    AllowListSuppressedUpdates = ''
                     AzureUpdateState       = 'Error'
                 }) | Out-Null
         }

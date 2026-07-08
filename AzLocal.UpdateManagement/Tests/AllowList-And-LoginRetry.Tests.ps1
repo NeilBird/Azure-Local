@@ -380,6 +380,9 @@ Describe 'v0.9.1 Get-AzLocalClusterUpdateReadiness: allow-list override' {
             $row.UpdateState      | Should -Be 'UpToDate'
             $row.AzureUpdateState | Should -Be 'UpdateAvailable' -Because 'the raw Azure update-summary state must be preserved for diagnostics'
             $row.AllowListSource  | Should -Be 'Explicit'
+            # v0.9.19: the filtered-out Ready update is surfaced for the fleet
+            # aggregate "Updates filtered out by the allow-list" table.
+            $row.AllowListSuppressedUpdates | Should -Be 'Solution10.2509.0.100'
         }
     }
 

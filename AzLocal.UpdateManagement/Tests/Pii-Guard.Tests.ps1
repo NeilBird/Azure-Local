@@ -64,7 +64,12 @@ Describe 'PII Guard: Tests folder' {
             '8.8.8.8', '8.8.4.4',
             '1.1.1.1', '1.0.0.1',
             '9.9.9.9', '149.112.112.112',
-            '208.67.222.222', '208.67.220.220'
+            '208.67.222.222', '208.67.220.220',
+            # NOT IP addresses: Azure Local SBE base placeholder version strings
+            # (vendor.YYMM.x.x sentinels meaning "no real SBE installed"). They
+            # appear verbatim in Fleet Update Status SBE-distribution fixtures and
+            # are valid dotted-quads, so they are exempted from the IPv4 guard.
+            '2.0.0.0', '2.1.0.0'
         )
 
         $script:TargetFiles = Get-ChildItem -Path $script:TestsRoot -File -Recurse |

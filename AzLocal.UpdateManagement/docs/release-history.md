@@ -4,9 +4,13 @@
 >
 > **For older releases**, this is the canonical reference; the main README intentionally stays slim so the most recent block is easy to find.
 >
-> **For v0.9.18 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0918) `What's New in v0.9.18` section.
+> **For v0.9.19 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0919) `What's New in v0.9.19` section.
 
 ---
+
+### What's New in v0.9.19
+
+**Update: 1 - Assess Update Readiness surfaces allow-list-filtered updates, and Monitor: 3 - Fleet Update Status gains two new tables.** Assess Update Readiness now renders an **Updates filtered out by the allow-list** table: when the `allowedUpdateVersions` allow-list (in `config/apply-updates-schedule.yml`) removes updates that Azure reports as **Ready**, this fleet-wide aggregate (not per cluster) lists each filtered-out update, whether the rule is **Global** (top-level list) or **Per-Ring** (per-row override), the affected update ring(s), and a distinct **Clusters Affected** count - so operators can see exactly which update names to add to the allow-list to let them proceed (new readiness-row field `AllowListSuppressedUpdates`, step output `allowlist_filtered_updates`, PassThru field `AllowListFilteredUpdateCount`). Monitor: 3 - Fleet Update Status adds a new **Fleet - SBE Version(s) Distribution** table pivoting each cluster's installed Solution Builder Extension (SBE) version (vendor `YYMM.x.x`); the base placeholders `2.0.0.0` / `2.1.0.0` and clusters with no SBE content are surfaced as **No SBE Installed** (the `YYMM` column is retained but there is no Support column - SBE has no Microsoft support window). A new **Updates - Recent Successful Updates** table lists update runs that reached `State=Succeeded` in the last 48 hours (Cluster Name, Update Ring, Update Name, Duration, Time Started, Time Completed) with Cluster + Update Azure Portal deep links. Report headers were renamed for clarity: `Fleet Version Distribution` -> **Fleet - Solution Update(s) Version Distribution**; `Update Run History and Error Details` -> **Updates - Recent Failed Update Attempts**. Supporting change: `Get-AzLocalUpdateRuns` rows now carry a raw `EndTimeUtc` `[datetime]`, and `Export-AzLocalFleetUpdateStatusReport` Step 4c now collects the full run set (dropped `-Latest`) so multiple completions per cluster inside the 48h window are captured. New step outputs `sbe_version_dist_count` and `recently_completed_48h`. Export count unchanged at **69**. `GENERATED_AGAINST_MODULE_VERSION` bumped to `0.9.19`. See [CHANGELOG.md](../CHANGELOG.md#0919---2026-07-08) for the full v0.9.19 entry.
 
 ### What's New in v0.9.18
 
