@@ -52,6 +52,20 @@ Get-VM -CimSession (Get-Cluster).Name | .\Get-HyperVVMCheckpointHealth.ps1 -Outp
 .\Get-HyperVVMCheckpointHealth.ps1 -VMName 'TestVM01' -SkipWorkerEvents -SkipAnalyticCheck
 ```
 
+### Download the script and run it
+
+Download the script from GitHub with `Invoke-WebRequest`, save it locally, then run it for a VM named `TestVM`:
+
+```powershell
+# Download the script from GitHub and save it to the current folder
+Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/NeilBird/Azure-Local/main/Get-HyperVVMCheckpointHealth/Get-HyperVVMCheckpointHealth.ps1' -OutFile '.\Get-HyperVVMCheckpointHealth.ps1'
+
+# Run the downloaded script for a VM named 'TestVM'
+.\Get-HyperVVMCheckpointHealth.ps1 -VMName 'TestVM'
+```
+
+> **Note:** Depending on your execution policy, you may need to unblock the downloaded file first: `Unblock-File -Path '.\Get-HyperVVMCheckpointHealth.ps1'`.
+
 > **Names or objects:** `-VMName` accepts VM **names** *or* VM **objects** (from `Get-VM`), as an array or via the pipeline. VM objects are normalized to their `.Name` inside the script, so `-VMName $VMs`, `-VMName $VMs.Name`, and `Get-VM | ...` all work. Each VM is audited **independently** - one VM not being found (or erroring) does not stop the rest. An input that resolves to no name, or to a string >100 chars (e.g. a mistakenly joined list), is skipped with a warning.
 
 ## Parameters
