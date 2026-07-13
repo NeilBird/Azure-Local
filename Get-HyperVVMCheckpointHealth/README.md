@@ -52,16 +52,16 @@ Get-VM -CimSession (Get-Cluster).Name | .\Get-HyperVVMCheckpointHealth.ps1 -Outp
 .\Get-HyperVVMCheckpointHealth.ps1 -VMName 'TestVM01' -SkipWorkerEvents -SkipAnalyticCheck
 ```
 
-### Download the script and run it
+### Download / save the script and run it
 
-Download the script from GitHub with `Invoke-WebRequest`, save it locally, then run it for a VM named `TestVM`:
+Review the source first: [`Get-HyperVVMCheckpointHealth.ps1`](./Get-HyperVVMCheckpointHealth.ps1). Then either download it with the `Invoke-WebRequest` example below to save it locally, or [copy and paste the entire script using the Raw link](https://raw.githubusercontent.com/NeilBird/Azure-Local/main/Get-HyperVVMCheckpointHealth/Get-HyperVVMCheckpointHealth.ps1) and save it locally. The example below shows executing the script for a VM named `TestVM`, saving output in the `C:\Temp\` folder:
 
 ```powershell
 # Download the script from GitHub and save it to the current folder
 Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/NeilBird/Azure-Local/main/Get-HyperVVMCheckpointHealth/Get-HyperVVMCheckpointHealth.ps1' -OutFile '.\Get-HyperVVMCheckpointHealth.ps1'
 
 # Run the downloaded script for a VM named 'TestVM'
-.\Get-HyperVVMCheckpointHealth.ps1 -VMName 'TestVM'
+.\Get-HyperVVMCheckpointHealth.ps1 -VMName 'TestVM' -OutputPath C:\Temp\
 ```
 
 > **Note:** Depending on your execution policy, you may need to unblock the downloaded file first: `Unblock-File -Path '.\Get-HyperVVMCheckpointHealth.ps1'`.
