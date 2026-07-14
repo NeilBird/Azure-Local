@@ -34,25 +34,44 @@
     Audits a single VM by name (console only).
 
 .EXAMPLE
-    .\Get-HyperVVMCheckpointHealth.ps1 -VMName (Get-VM -CimSession (Get-Cluster).Name) -OutputPath 'C:\Temp\Reports'
+    .\Get-HyperVVMCheckpointHealth.ps1 -VMName (Get-ClusterGroup | Where-Object GroupType -eq 'VirtualMachine').Name -OutputPath 'C:\Temp\Reports'
 
-    Audits every VM on the cluster by passing the VM OBJECTS; writes a per-VM .txt transcript and events .csv.
-
-.EXAMPLE
-    .\Get-HyperVVMCheckpointHealth.ps1 -VMName (Get-VM -CimSession (Get-Cluster).Name).Name -OutputPath 'C:\Temp\Reports'
-
-    Audits every VM on the cluster by passing the VM NAMES.
+    Audits EVERY clustered VM. The VM names come from the cluster API (Get-ClusterGroup - RPC, no WinRM
+    and no double hop), so this works when run locally on a node or over a single remoting hop. Writes a
+    per-VM .txt transcript and events .csv.
 
 .EXAMPLE
-    Get-VM -CimSession (Get-Cluster).Name | .\Get-HyperVVMCheckpointHealth.ps1 -OutputPath 'C:\Temp\Reports'
+    'lqwas911','lqwas912','lqwas921' | .\Get-HyperVVMCheckpointHealth.ps1 -OutputPath 'C:\Temp\Reports'
 
-    Pipes the VM objects straight in.
+    Audits a specific list of VMs (piped names). The script resolves each VM's owning node itself and
+    collects the data in that node's context, so no double-hop authentication is required.
+
+.EXAMPLE
+    .\Get-HyperVVMCheckpointHealth.ps1 -VMName 'TestVM01' -SkipWorkerEvents -SkipAnalyticCheck
+
+    Fastest run: disk / checkpoint / chain state only, skipping the event-log scan and Analytic check.
+
+.EXAMPLE
+    .\Get-HyperVVMCheckpointHealth.ps1 -Cluster 'CLUS01' -VMName (Get-ClusterGroup -Cluster 'CLUS01' | Where-Object GroupType -eq 'VirtualMachine').Name -OutputPath 'C:\Temp\Reports'
+
+    Runs REMOTELY from a management workstation (with the RSAT 'Failover Clustering' tools). -Cluster
+    targets the named cluster via the cluster RPC API and each owning node is reached in a SINGLE hop -
+    no double hop. Without -Cluster the script must be run ON a cluster node.
 
 .NOTES
-    Author : Neil Bird, Microsoft
-    Date   : July 2026
-    Requires: PowerShell 5.1+, the Hyper-V and FailoverClusters modules, rights to query the cluster /
-              Hyper-V / the nodes' event logs, and WinRM (Invoke-Command) to the owning and cluster nodes.
+    Author  : Neil Bird, Microsoft
+    Created : 2026-07-10
+    Updated : 2026-07-14
+    Version : 0.2.0
+    
+    Requires: Windows PowerShell 5.1 (this script is written for, and validated against, Windows
+              PowerShell 5.1 ONLY - it is NOT intended or tested for PowerShell 7.x). Also requires the Hyper-V
+              and FailoverClusters modules, rights to query the cluster / Hyper-V / the nodes' event
+              logs, and (when the VM's owning node is not the local node) WinRM to that owning node.
+              To run REMOTELY from a management workstation, use -Cluster <name> and install the RSAT
+              'Failover Clustering' tools on the workstation. Do NOT run it from inside an interactive
+              remoting session (Enter-PSSession) to a node - reaching another node from there is a
+              'double hop' and is blocked; run it ON a node, or from a workstation with -Cluster.
 
     THIS CODE-SAMPLE IS PROVIDED "AS IS" WITHOUT WARRANTY OF ANY KIND, EITHER EXPRESSED
     OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE IMPLIED WARRANTIES OF MERCHANTABILITY AND/OR
@@ -70,6 +89,13 @@
     of the possibility of such damages.
 #>
 
+#Requires -Version 5.1
+#Requires -PSEdition Desktop
+# NOTE: FailoverClusters is required LOCALLY in both run modes (on a node, or on a workstation via the
+# RSAT 'Failover Clustering' tools). Hyper-V is intentionally NOT required here: with -Cluster the
+# Hyper-V cmdlets run inside the owning-node session, so a management workstation need not have it.
+#Requires -Modules FailoverClusters
+
 [CmdletBinding()]
 param(
     [Parameter(Mandatory=$true, Position=0, ValueFromPipeline=$true, ValueFromPipelineByPropertyName=$true)]
@@ -78,6 +104,14 @@ param(
     # Accepts VM name(s) OR VM objects (from Get-VM). Objects are normalized to their .Name in the
     # process block, so -VMName $VMs (objects), -VMName $VMs.Name (strings), and 'Get-VM | ...' all work.
     [object[]]$VMName,
+
+    # Optional: target a cluster BY NAME so the script can be run from a management workstation (with
+    # the RSAT 'Failover Clustering' tools installed) instead of on a node. The cluster queries use the
+    # cluster RPC API and each owning node is then reached in a SINGLE remoting hop from the
+    # workstation - no double hop. When OMITTED, the script targets the LOCAL cluster and REQUIRES that
+    # you are running ON a cluster node (a Get-Cluster guard rail enforces this and fails clearly if not).
+    [ValidateNotNullOrEmpty()]
+    [string]$Cluster,
 
     # Optional: base folder for reports. Each run creates a timestamped sub-folder
     # (CheckpointAudit_<UTC>) inside it; every VM then gets its own .txt transcript and .csv event
@@ -92,23 +126,28 @@ param(
     # relevant to checkpoint/VHD problems. Use -SkipWorkerEvents to opt out and keep the run light.
     [switch]$SkipWorkerEvents,
 
-    # How far back to look when the event scan runs (default 96 hours = 4 days).
+    # How far back to look when the event scan runs (default 168 hours = 7 days).
     [ValidateRange(1, 720)]
-    [int]$EventLookbackHours = 96,
+    [int]$EventLookbackHours = 168,
 
-    # Event IDs to explicitly flag as a concern. Defaults cover the checkpoint fork-commit /
-    # merge failure mode on Hyper-V-Worker/Admin and Hyper-V-VMMS/Admin:
+    # Event IDs that indicate a genuine PROBLEM (drive the 'Concern = YES' flag). Defaults cover the
+    # checkpoint fork-commit / merge failure mode on Hyper-V-Worker/Admin and Hyper-V-VMMS/Admin:
     #   3216  Worker: failed to switch to new differencing disks during checkpoint (0x800703EE)
     #   3280  Worker: related checkpoint/disk error
-    #   18500 VMMS:   checkpoint started      18510 VMMS: checkpoint completed
     #   18590 VMMS:   checkpoint FAILED (fork-commit, 0x80048102) - key customer-visible signature
     #   18590 Worker: guest OS bugcheck / fatal error (SAME id, different channel - the VM crashed;
     #                 e.g. after a migration reopened a rolled-back chain). Check the Log column.
     #   18012 VMMS:   checkpoint operation failed
     #   12240 VMMS:   attachment (.avhdx) not found        15268 VMMS: failed to get disk information
     #   16300 VMMS:   cannot load a virtual machine configuration
-    #   19070/19090/19080 VMMS: background disk merge started / interrupted / finished
-    [int[]]$WorkerEventIds = @(3216, 3280, 18500, 18510, 18590, 18012, 12240, 15268, 16300, 19070, 19080, 19090),
+    #   19090 VMMS:   background disk merge INTERRUPTED
+    [int[]]$WorkerEventIds = @(3216, 3280, 18590, 18012, 12240, 15268, 16300, 19090),
+
+    # Informational lifecycle event IDs. These are still SURFACED (for the timeline / context) but are
+    # NOT flagged as a concern, because on their own they are normal, healthy operations:
+    #   18500 VMMS:   VM started successfully          18510 VMMS: checkpoint completed
+    #   19070 VMMS:   background disk merge started     19080 VMMS: background disk merge FINISHED successfully
+    [int[]]$ContextEventIds = @(18500, 18510, 19070, 19080),
 
     # HRESULT strings to flag as a concern when they appear in an event message:
     #   0x80048102 = VM_E_COMMIT_FORKS_ERROR        (checkpoint fork-commit failed - ROOT-CAUSE trigger)
@@ -131,6 +170,12 @@ param(
 )
 
 begin {
+
+# Microsoft Learn troubleshooting reference for Hyper-V VM backup / checkpoint / storage failures.
+# Surfaced in the summary and problem statement so operators have an authoritative next-read. Any
+# text quoted VERBATIM from this article in the report is attributed to it (title + URL below).
+$script:TroubleshootTitle = 'Microsoft Learn: Troubleshoot Hyper-V Virtual Machine Backup, Checkpoint, and Storage Failures'
+$script:TroubleshootUrl   = 'https://learn.microsoft.com/en-us/troubleshoot/windows-server/virtualization/hyper-v-virtual-machine-backup-checkpoint-storage'
 
 # Colour helpers - only emit colour (via Write-Host) when enabled; otherwise fall back to
 # Write-Output so redirection, transcript capture, and $var assignment behave exactly as before.
@@ -176,11 +221,13 @@ function Invoke-VMCheckpointAudit {
     [CmdletBinding()]
     param(
         [string]$VMName,
+        [string]$Cluster,
         [string]$OutputPath,
         [int]$StaleHours,
         [switch]$SkipWorkerEvents,
         [int]$EventLookbackHours,
         [int[]]$WorkerEventIds,
+        [int[]]$ContextEventIds,
         [string[]]$ErrorCodePatterns,
         [switch]$SkipAnalyticCheck
     )
@@ -194,7 +241,8 @@ function Invoke-VMCheckpointAudit {
             New-Item -ItemType Directory -Path $OutputPath -Force | Out-Null
         }
         $safeName   = ($VMName -replace '[^\w.\-]', '_')
-        $reportFile = Join-Path $OutputPath ("VMAudit_{0}_{1}.txt" -f $safeName, [DateTime]::UtcNow.ToString('yyyyMMdd-HHmmss'))
+        # VM name FIRST in the file name so per-VM reports sort together alphabetically for humans.
+        $reportFile = Join-Path $OutputPath ("{0}_VMAudit_{1}.txt" -f $safeName, [DateTime]::UtcNow.ToString('yyyyMMdd-HHmmss'))
         Start-Transcript -Path $reportFile -Force | Out-Null
         $transcriptStarted = $true
     }
@@ -210,46 +258,164 @@ function Invoke-VMCheckpointAudit {
         Write-Progress -Id 2 -ParentId 1 -Activity ("Auditing VM: {0}" -f $VMName) -Status $Status -PercentComplete $pct
     }
 
+    # Owner execution context (set once the owning node is resolved, below). All data collection runs
+    # through Invoke-OnOwner so we NEVER make a double hop: it runs the scriptblock locally when this
+    # node owns the VM, or through a SINGLE remoting session to the owning node otherwise. Scriptblocks
+    # MUST take their inputs via param()/-ArgumentList (NOT $using:) so the same block works both ways.
+    $script:OwnerIsLocal = $true
+    $script:OwnerSession = $null
+    function Invoke-OnOwner {
+        param(
+            [Parameter(Mandatory = $true)][scriptblock]$ScriptBlock,
+            [object[]]$ArgumentList = @()
+        )
+        if ($script:OwnerIsLocal) {
+            & $ScriptBlock @ArgumentList
+        } else {
+            Invoke-Command -Session $script:OwnerSession -ScriptBlock $ScriptBlock -ArgumentList $ArgumentList
+        }
+    }
+
     try {
 
     Show-AuditProgress 'Resolving cluster and VM'
-    # Resolve the cluster once (friendly failure if this isn't a cluster node / the service is down):
+    # Resolve the cluster once. With -Cluster we target that NAMED cluster (remote management from a
+    # workstation with the RSAT Failover Clustering tools); without it, this host must itself BE a
+    # cluster node - the Get-Cluster guard rail below fails clearly if it is not.
     try {
-        $ClusterName = (Get-Cluster -ErrorAction Stop).Name
+        if ($Cluster) {
+            $ClusterName = (Get-Cluster -Name $Cluster -ErrorAction Stop).Name
+        } else {
+            $ClusterName = (Get-Cluster -ErrorAction Stop).Name
+        }
     } catch {
-        Write-Alert "  ERROR: could not query the failover cluster (is this a cluster node with the Cluster service running?): $($_.Exception.Message)" -Level Critical
+        if ($Cluster) {
+            Write-Alert "  ERROR: could not reach cluster '$Cluster': $($_.Exception.Message)" -Level Critical
+            Write-Alert "  Check the name, that the RSAT 'Failover Clustering' tools are installed, and that you have rights to it." -Level Critical
+        } else {
+            Write-Alert "  ERROR: this host is not a cluster node, or the Cluster service is not running: $($_.Exception.Message)" -Level Critical
+            Write-Alert "  Run this script ON a cluster node, or from a management host using -Cluster <ClusterName>." -Level Critical
+        }
         return
     }
 
-    # Find the VM object, across any node in the cluster:
-    $VMObject = Get-VM -CimSession $ClusterName -Name $VMName -ErrorAction SilentlyContinue
-    if (-not $VMObject) {
-        Write-Output "VM '$VMName' not found on the cluster: $ClusterName"
+    # --- Resolve the VM's OWNING NODE without relying on double-hop authentication ------------------
+    # This script is designed to run either locally on a cluster node (interactive / SConfig logon) or
+    # via a SINGLE PowerShell Remoting hop into one node. To avoid a second ("double") hop we (1) find
+    # the cluster nodes and the VM's owning node using the cluster API (RPC - no WinRM), then (2) run
+    # every data-collection command in the OWNER CONTEXT: directly (locally) when this node owns the
+    # VM, otherwise through ONE remoting session to the owning node (see Invoke-OnOwner above).
+    $LocalNode    = $env:COMPUTERNAME
+    $clusterNodes = @(Get-ClusterNode -Cluster $ClusterName -ErrorAction SilentlyContinue | ForEach-Object { [string]$_.Name })
+
+    # (1a) Preferred: the VM's clustered role names the owner directly (cluster API - no hop).
+    $OwningNode = $null
+    $group = Get-ClusterGroup -Cluster $ClusterName -ErrorAction SilentlyContinue | Where-Object { $_.Name -eq $VMName }
+    if ($group) { $OwningNode = [string]$group.OwnerNode.Name }
+
+    # (1b) Fallback (non-clustered VM, or a role whose name differs from the VM name): loop each node
+    # and ask it LOCALLY which node runs the VM. Each probe is a single hop (or local) - never double.
+    if (-not $OwningNode) {
+        $probeNodes = if ($clusterNodes.Count -gt 0) { $clusterNodes } else { @($LocalNode) }
+        foreach ($node in $probeNodes) {
+            try {
+                if ($node.Split('.')[0] -eq $LocalNode) {
+                    if (Get-VM -Name $VMName -ErrorAction SilentlyContinue) { $OwningNode = $node; break }
+                } else {
+                    $found = Invoke-Command -ComputerName $node -ScriptBlock {
+                        param($n) [bool](Get-VM -Name $n -ErrorAction SilentlyContinue)
+                    } -ArgumentList $VMName -ErrorAction Stop
+                    if ($found) { $OwningNode = $node; break }
+                }
+            } catch {
+                # Could not reach this node in a single hop - keep looking on the others.
+            }
+        }
+    }
+
+    if (-not $OwningNode) {
+        Write-Output "VM '$VMName' not found on any node of cluster '$ClusterName'."
         return
     }
-    # Owning Node:
-    $OwningNode = $VMObject.ComputerName
-    # Report header: VM name, owning node, and when this audit was run:
+
+    # (2) Establish the owner execution context: local when this node owns the VM (zero hops), else ONE
+    # remoting session to the owning node. Every subsequent collection call goes through Invoke-OnOwner.
+    $script:OwnerIsLocal = ($OwningNode.Split('.')[0] -eq $LocalNode)
+    $script:OwnerSession = $null
+    if (-not $script:OwnerIsLocal) {
+        try {
+            $script:OwnerSession = New-PSSession -ComputerName $OwningNode -ErrorAction Stop
+        } catch {
+            Write-Alert "  ERROR: could not open a remoting session to owning node '$OwningNode': $($_.Exception.Message)" -Level Critical
+            Write-Alert "  TIP: run this script directly ON the owning node (interactive / SConfig logon), or from a" -Level Critical
+            Write-Alert "       host that can reach it in a SINGLE hop. Reaching another node from inside a remoting" -Level Critical
+            Write-Alert "       session is a 'double hop' and is blocked unless CredSSP/delegation is configured." -Level Critical
+            return
+        }
+    }
+
+    # Core VM properties, collected in the owner context as plain values (safe to render / serialize).
+    # Also gathers the Hyper-V host's supported VM configuration versions (Get-VMHostSupportedVersion,
+    # read-only) so we can compare the VM's version to the latest the owning node supports.
+    $vm = Invoke-OnOwner -ScriptBlock {
+        param($n)
+        $v = Get-VM -Name $n -ErrorAction SilentlyContinue
+        if (-not $v) { return $null }
+        $sv = Get-VMHostSupportedVersion -ErrorAction SilentlyContinue
+        [pscustomobject]@{
+            VMId                        = [string]$v.VMId
+            Status                      = [string]$v.Status
+            State                       = [string]$v.State
+            Uptime                      = [string]$v.Uptime
+            AutomaticCheckpointsEnabled = [bool]$v.AutomaticCheckpointsEnabled
+            CheckpointType              = [string]$v.CheckpointType
+            ConfigurationLocation       = [string]$v.ConfigurationLocation
+            ReplicationState            = [string]$v.ReplicationState
+            Version                     = [string]$v.Version
+            HostSupportedVersions       = @($sv | ForEach-Object { [string]$_.Version })
+        }
+    } -ArgumentList $VMName
+    if (-not $vm) {
+        Write-Output "VM '$VMName' could not be read on owning node '$OwningNode'."
+        return
+    }
+
+    # Compare the VM's configuration version to the latest the owning node supports
+    # (Get-VMHostSupportedVersion). A VM older than the latest can be upgraded (Update-VMVersion) and,
+    # in a mixed-version cluster, a version mismatch can block live migration. NOTE: an older config
+    # version is NOT a stated cause of the checkpoint/merge failure - see the dedicated section below.
+    $hostVerParsed = @($vm.HostSupportedVersions | Where-Object { $_ } | ForEach-Object { $p = $null; if ([version]::TryParse($_, [ref]$p)) { $p } })
+    $hostMaxVer    = if ($hostVerParsed.Count -gt 0) { (@($hostVerParsed | Sort-Object -Descending)[0]).ToString() } else { $null }
+    $vmVerOlder    = $false
+    $vmVerParsed   = $null
+    if ($hostMaxVer -and [version]::TryParse("$($vm.Version)", [ref]$vmVerParsed) -and ($vmVerParsed -lt [version]$hostMaxVer)) {
+        $vmVerOlder = $true
+    }
+
+    # Report header: VM name, owning node, and when this audit was run. Labels are padded to a common
+    # width so every field's colon lines up (the widest label is 'Latest supported by cluster').
     Write-Output "==================================================================="
     Write-Section "  VM CheckPoint (Differencing Disk) Audit"
-    Write-Output "  Cluster         : $ClusterName"
-    Write-Output "  VM Name         : $VMName"
-    Write-Output "  VM Id           : $($VMObject.VMId)"
-    Write-Output "  Owning Node     : $OwningNode"
+    Write-Output ("  {0,-27} : {1}" -f 'Cluster', $ClusterName)
+    Write-Output ("  {0,-27} : {1}" -f 'VM Name', $VMName)
+    Write-Output ("  {0,-27} : {1}" -f 'VM Id', $vm.VMId)
+    Write-Output ("  {0,-27} : {1}" -f 'Owning Node', $OwningNode)
     # Colour the VM Status: 'Operating normally' = green, Critical/Error/Failed = red, else amber.
-    $statusLevel = switch -Wildcard ("$($VMObject.Status)") { 'Operating normally' { 'Good'; break } '*Critical*' { 'Critical'; break } '*Error*' { 'Critical'; break } '*Fail*' { 'Critical'; break } default { 'Warning' } }
-    Write-Alert "  VM Status       : $($VMObject.Status)" -Level $statusLevel
+    $statusLevel = switch -Wildcard ("$($vm.Status)") { 'Operating normally' { 'Good'; break } '*Critical*' { 'Critical'; break } '*Error*' { 'Critical'; break } '*Fail*' { 'Critical'; break } default { 'Warning' } }
+    Write-Alert ("  {0,-27} : {1}" -f 'VM Status', $vm.Status) -Level $statusLevel
     # Colour the VM State: Running = green, anything containing 'Critical' = red, else amber.
-    $stateLevel = switch -Wildcard ("$($VMObject.State)") { 'Running' { 'Good' } '*Critical*' { 'Critical' } default { 'Warning' } }
-    Write-Alert "  VM State        : $($VMObject.State)" -Level $stateLevel
-    Write-Output "  Uptime          : $($VMObject.Uptime)"
+    $stateLevel = switch -Wildcard ("$($vm.State)") { 'Running' { 'Good' } '*Critical*' { 'Critical' } default { 'Warning' } }
+    Write-Alert ("  {0,-27} : {1}" -f 'VM State', $vm.State) -Level $stateLevel
+    Write-Output ("  {0,-27} : {1}" -f 'VM Config Version', $vm.Version)
+    Write-Output ("  {0,-27} : {1}" -f 'Latest supported by cluster', $(if ($hostMaxVer) { $hostMaxVer } else { 'unknown' }))
+    Write-Output ("  {0,-27} : {1}" -f 'Uptime', $vm.Uptime)
     # Auto Checkpoints: when True, Hyper-V takes a checkpoint automatically every time the VM STARTS
     # (a Client Hyper-V default; normally False on servers/clusters) - a source of 'unexpected' .avhdx
     # layers. Checkpoint Type is the style of checkpoint the VM is configured to take, which governs
     # how each checkpoint's fork is committed (the failure mode under investigation). Values annotated.
-    $autoCkptNote = if ($VMObject.AutomaticCheckpointsEnabled) { 'auto checkpoint taken at every VM start' } else { 'no automatic checkpoint at VM start' }
-    Write-Output "  Auto Checkpoints: $($VMObject.AutomaticCheckpointsEnabled) ($autoCkptNote)"
-    $ckptTypeNote = switch ("$($VMObject.CheckpointType)") {
+    $autoCkptNote = if ($vm.AutomaticCheckpointsEnabled) { 'auto checkpoint taken at every VM start' } else { 'no automatic checkpoint at VM start' }
+    Write-Output ("  {0,-27} : {1} ({2})" -f 'Auto Checkpoints', $vm.AutomaticCheckpointsEnabled, $autoCkptNote)
+    $ckptTypeNote = switch ("$($vm.CheckpointType)") {
         'Production'     { 'app-consistent via in-guest VSS; falls back to Standard if VSS is unavailable' }
         'ProductionOnly' { 'app-consistent via in-guest VSS; FAILS if VSS is unavailable (no fallback)' }
         'Standard'       { 'captures saved memory / running state (dev/test style)' }
@@ -257,12 +423,12 @@ function Invoke-VMCheckpointAudit {
         default          { '' }
     }
     if ($ckptTypeNote) {
-        Write-Output "  Checkpoint Type : $($VMObject.CheckpointType) ($ckptTypeNote)"
+        Write-Output ("  {0,-27} : {1} ({2})" -f 'Checkpoint Type', $vm.CheckpointType, $ckptTypeNote)
     } else {
-        Write-Output "  Checkpoint Type : $($VMObject.CheckpointType)"
+        Write-Output ("  {0,-27} : {1}" -f 'Checkpoint Type', $vm.CheckpointType)
     }
-    Write-Output "  Stale >=        : $StaleHours hours (flagged as 'YES')"
-    Write-Output "  Run At          : $([DateTime]::UtcNow.ToString('yyyy-MM-dd HH:mm:ss')) UTC"
+    Write-Output ("  {0,-27} : {1} hours (flagged as 'YES')" -f 'Stale >=', $StaleHours)
+    Write-Output ("  {0,-27} : {1} UTC" -f 'Report Generated', [DateTime]::UtcNow.ToString('yyyy-MM-dd HH:mm:ss'))
     Write-Output "==================================================================="
 
     # Clustered role state / current owner (should match the Owning Node above):
@@ -280,14 +446,18 @@ function Invoke-VMCheckpointAudit {
     # VM configuration file (.vmcx) - the failure mode hinges on stale on-disk chain metadata that
     # lives in this file, so its path and last-write time are worth surfacing (a recently rewritten
     # config - e.g. right after a fork-commit revert or a migration - is a useful signal).
-    $vmcxPath = Join-Path $VMObject.ConfigurationLocation ("Virtual Machines\{0}.vmcx" -f $VMObject.VMId)
+    $vmcxPath = Join-Path $vm.ConfigurationLocation ("Virtual Machines\{0}.vmcx" -f $vm.VMId)
     Show-AuditProgress 'Reading VM configuration (.vmcx)'
     Write-Section "VM Configuration (.vmcx):"
     try {
-        $vmcxInfo = Invoke-Command -ComputerName $OwningNode -ScriptBlock { Get-Item -LiteralPath $using:vmcxPath -ErrorAction SilentlyContinue } -ErrorAction Stop
+        $vmcxInfo = Invoke-OnOwner -ScriptBlock {
+            param($path)
+            $f = Get-Item -LiteralPath $path -ErrorAction SilentlyContinue
+            if ($f) { [pscustomobject]@{ FullName = [string]$f.FullName; LastWriteTimeUtc = $f.LastWriteTimeUtc } }
+        } -ArgumentList $vmcxPath
     } catch {
         $vmcxInfo = $null
-        Write-Alert "  Could not reach $OwningNode to read the .vmcx (WinRM?): $($_.Exception.Message)" -Level Warning
+        Write-Alert "  Could not read the .vmcx on '$OwningNode': $($_.Exception.Message)" -Level Warning
     }
     if ($vmcxInfo) {
         Write-Output ("  Path           : {0}" -f $vmcxInfo.FullName)
@@ -302,55 +472,67 @@ function Invoke-VMCheckpointAudit {
     $allChainPaths = [System.Collections.Generic.List[string]]::new()
 
     # Enumerate each attached disk and resolve its full differencing chain (top .avhdx -> ... -> base).
-    # Per-disk reads are guarded so one unreadable VHD (or a WinRM hiccup) doesn't abort the whole audit.
+    # This runs in ONE owner-context call (single hop for a remote owner) and flattens the VhdType enum
+    # to a string on the owner, so the downstream 'Differencing' comparisons are robust after transport.
     Show-AuditProgress 'Enumerating attached disks and differencing chains'
     $diskReports = [System.Collections.Generic.List[object]]::new()
-    foreach ($disk in (Get-VMHardDiskDrive -VM $VMObject -ErrorAction SilentlyContinue)) {
-        $chain = [System.Collections.Generic.List[object]]::new()
-        $p = $disk.Path
-        while ($p) {
-            try {
-                $v = Get-VHD -CimSession $OwningNode -Path $p -ErrorAction Stop
-            } catch {
-                Write-Alert "  WARNING: could not read VHD '$p' on ${OwningNode}: $($_.Exception.Message)" -Level Warning
-                break
+    $rawDisks = @(Invoke-OnOwner -ScriptBlock {
+        param($n)
+        $vmObj  = Get-VM -Name $n -ErrorAction SilentlyContinue
+        $result = @()
+        foreach ($disk in (Get-VMHardDiskDrive -VM $vmObj -ErrorAction SilentlyContinue)) {
+            $chain = @()
+            $p = $disk.Path
+            while ($p) {
+                $v = $null
+                try { $v = Get-VHD -Path $p -ErrorAction Stop } catch { break }
+                # Size + timestamps are filesystem metadata (not on the Get-VHD object), so read the file
+                # itself. If that read fails, fall back to Get-VHD's FileSize and leave timestamps null.
+                $file = $null
+                try { $file = Get-Item -LiteralPath $p -ErrorAction Stop } catch { }
+                $chain += [pscustomobject]@{
+                    Path      = [string]$v.Path
+                    Type      = [string]$v.VhdType
+                    SizeGB    = if ($file) { [math]::Round($file.Length / 1GB, 2) } else { [math]::Round(($v.FileSize) / 1GB, 2) }
+                    Created   = if ($file) { $file.CreationTimeUtc }  else { $null }
+                    LastWrite = if ($file) { $file.LastWriteTimeUtc } else { $null }
+                }
+                $p = $v.ParentPath
             }
-            # Size + timestamps are filesystem metadata, not on the Get-VHD object, so read the file
-            # itself on the owning node. If that read fails, fall back to Get-VHD's FileSize and leave
-            # timestamps null (handled downstream) rather than aborting.
-            $file = $null
-            try {
-                $file = Invoke-Command -ComputerName $OwningNode -ScriptBlock { Get-Item -LiteralPath $using:p } -ErrorAction Stop
-            } catch {
-                Write-Alert "  WARNING: could not read file metadata for '$p' on $OwningNode (WinRM?): $($_.Exception.Message)" -Level Warning
+            $result += [pscustomobject]@{
+                Attached = Split-Path $disk.Path -Leaf
+                Path     = [string]$disk.Path
+                Chain    = @($chain)
             }
-            $allChainPaths.Add($v.Path)
-            $chain.Add([pscustomobject]@{
-                Path      = $v.Path
-                Type      = $v.VhdType
-                SizeGB    = if ($file) { [math]::Round($file.Length / 1GB, 2) } else { [math]::Round(($v.FileSize) / 1GB, 2) }
-                Created   = if ($file) { $file.CreationTimeUtc }  else { $null }
-                LastWrite = if ($file) { $file.LastWriteTimeUtc } else { $null }
-            })
-            $p = $v.ParentPath
         }
+        $result
+    } -ArgumentList $VMName)
+
+    foreach ($rd in $rawDisks) {
+        $chain = @($rd.Chain)
+        foreach ($layer in $chain) { $allChainPaths.Add([string]$layer.Path) }
         if ($chain.Count -eq 0) {
             # Could not read even the attached disk - record a minimal entry so it still appears.
             $diskReports.Add([pscustomobject]@{
-                Attached = Split-Path $disk.Path -Leaf; Path = $disk.Path; TopType = 'Unknown'
+                Attached = $rd.Attached; Path = $rd.Path; TopType = 'Unknown'
                 SizeGB = $null; ChainDepth = 0; CheckpointCount = 0; AnyStale = $false; Chain = $chain
             })
             continue
         }
         $diskReports.Add([pscustomobject]@{
-            Attached        = Split-Path $disk.Path -Leaf
-            Path            = $disk.Path
+            Attached        = $rd.Attached
+            Path            = $rd.Path
             TopType         = $chain[0].Type
             SizeGB          = [math]::Round((($chain | Where-Object { $null -ne $_.SizeGB } | Measure-Object -Property SizeGB -Sum).Sum), 2)
             ChainDepth      = $chain.Count
-            # A Differencing (.avhdx) layer == an active checkpoint; the final Dynamic/Fixed disk is the base:
-            CheckpointCount = ($chain | Where-Object { $_.Type -eq 'Differencing' }).Count
-            AnyStale        = (@($chain | Where-Object { $_.LastWrite -and ([DateTime]::UtcNow - $_.LastWrite).TotalHours -ge $StaleHours }).Count -gt 0)
+            # A Differencing (.avhdx) layer == an active checkpoint; the final Dynamic/Fixed disk is the base.
+            # NOTE: the @() wrapper is REQUIRED - in Windows PowerShell 5.1 a bare (pipeline).Count returns
+            # $null when EXACTLY ONE item matches (the common single-checkpoint case), which silently
+            # zeroed this count and made the summary wrongly report 'No CheckPoint AVHDX disks'.
+            CheckpointCount = @($chain | Where-Object { $_.Type -eq 'Differencing' }).Count
+            # Stale applies to DIFFERENCING (.avhdx) layers only - a base (Fixed/Dynamic) disk legitimately
+            # has an old timestamp and must NOT be flagged stale (that was a false alarm).
+            AnyStale        = (@($chain | Where-Object { $_.Type -eq 'Differencing' -and $_.LastWrite -and ([DateTime]::UtcNow - $_.LastWrite).TotalHours -ge $StaleHours }).Count -gt 0)
             Chain           = $chain
         })
     }
@@ -420,7 +602,9 @@ function Invoke-VMCheckpointAudit {
                     SizeGB            = $c.SizeGB
                     'LastWrite (UTC)' = if ($c.LastWrite) { $c.LastWrite.ToString('yyyy-MM-dd HH:mm:ss') } else { '(unavailable)' }
                     'Age (hrs)'       = if ($c.LastWrite) { [math]::Round(([DateTime]::UtcNow - $c.LastWrite).TotalHours, 1) } else { $null }
-                    Stale             = if ($c.LastWrite -and ([DateTime]::UtcNow - $c.LastWrite).TotalHours -ge $StaleHours) { 'YES' } else { '' }
+                    # Only DIFFERENCING (.avhdx) layers can be 'stale'. A Base disk's old timestamp is
+                    # expected and healthy, so it is left blank rather than flagged.
+                    Stale             = if ($c.Type -eq 'Differencing' -and $c.LastWrite -and ([DateTime]::UtcNow - $c.LastWrite).TotalHours -ge $StaleHours) { 'YES' } else { '' }
                 }
             }
             $chainRows | Format-Table Level, Role, 'VHD File Name', Type, SizeGB, 'LastWrite (UTC)', 'Age (hrs)', Stale -AutoSize | Out-Indented
@@ -461,18 +645,41 @@ function Invoke-VMCheckpointAudit {
         Write-Output ""
     }
 
-    # Named checkpoints on the VM - maps .avhdx files to checkpoints such as 'Initial Replica':
+    # Named checkpoints on the VM - maps .avhdx files to checkpoints such as 'Initial Replica'.
+    # Collected in the owner context (single hop for a remote owner), including each checkpoint's disk
+    # folders so the orphan / .hrl scans below know where to look.
     Show-AuditProgress 'Enumerating checkpoints'
     Write-Section "Checkpoints (Get-VMSnapshot):"
-    $checkpoints = Get-VMSnapshot -CimSession $OwningNode -VMName $VMName -ErrorAction SilentlyContinue
-    if ($checkpoints) {
-        $checkpoints | Sort-Object CreationTime | Format-Table -AutoSize `
+    $ckptData = Invoke-OnOwner -ScriptBlock {
+        param($n)
+        $snaps   = Get-VMSnapshot -VMName $n -ErrorAction SilentlyContinue
+        $rows    = @()
+        $folders = @()
+        foreach ($s in $snaps) {
+            $snapType = if ($s.PSObject.Properties['SnapshotType']) { [string]$s.SnapshotType } elseif ($s.PSObject.Properties['CheckpointType']) { [string]$s.CheckpointType } else { '' }
+            $typeVal  = if ($s.PSObject.Properties['CheckpointType']) { [string]$s.CheckpointType } else { [string]$s.SnapshotType }
+            $parent   = if ($s.PSObject.Properties['ParentCheckpointName']) { [string]$s.ParentCheckpointName } else { [string]$s.ParentSnapshotName }
+            $rows += [pscustomobject]@{
+                Name            = [string]$s.Name
+                Type            = $typeVal
+                SnapType        = $snapType
+                CreationTimeUtc = $s.CreationTime.ToUniversalTime()
+                Parent          = $parent
+            }
+            foreach ($hd in (Get-VMHardDiskDrive -VMSnapshot $s -ErrorAction SilentlyContinue)) {
+                if ($hd.Path) { $folders += (Split-Path $hd.Path -Parent) }
+            }
+        }
+        [pscustomobject]@{ Rows = @($rows); Folders = @($folders) }
+    } -ArgumentList $VMName
+
+    $checkpoints = @($ckptData.Rows)
+    if ($checkpoints.Count -gt 0) {
+        $checkpoints | Sort-Object CreationTimeUtc | Format-Table -AutoSize `
             Name,
-            @{N='Type';E={ if ($_.PSObject.Properties['CheckpointType']) { $_.CheckpointType } else { $_.SnapshotType } }},
+            @{N='Type';E={ $_.Type }},
             @{N='Purpose';E={
-                $t = if ($_.PSObject.Properties['SnapshotType']) { "$($_.SnapshotType)" }
-                     elseif ($_.PSObject.Properties['CheckpointType']) { "$($_.CheckpointType)" } else { '' }
-                switch -Wildcard ($t) {
+                switch -Wildcard ("$($_.SnapType)") {
                     'AppConsistent*' { 'Replica recovery point (app-consistent)'; break }
                     'Synced*'        { 'Replica synced checkpoint';                break }
                     '*Replica*'      { 'Hyper-V Replica checkpoint';               break }
@@ -480,31 +687,25 @@ function Invoke-VMCheckpointAudit {
                     'Planned'        { 'Planned failover checkpoint';              break }
                     'Production*'    { 'Production checkpoint (backup)';           break }
                     'Standard'       { 'Standard checkpoint (manual/backup)';      break }
-                    default          { if ($t) { $t } else { 'Unknown' } }
+                    default          { if ($_.SnapType) { $_.SnapType } else { 'Unknown' } }
                 }
             }},
-            @{N='Created (UTC)';E={ $_.CreationTime.ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss') }},
-            @{N='Age (hrs)';E={ [math]::Round(([DateTime]::UtcNow - $_.CreationTime.ToUniversalTime()).TotalHours, 1) }},
-            @{N='Stale';E={ if (([DateTime]::UtcNow - $_.CreationTime.ToUniversalTime()).TotalHours -ge $StaleHours) { 'YES' } else { '' } }},
-            @{N='Parent';E={ if ($_.PSObject.Properties['ParentCheckpointName']) { $_.ParentCheckpointName } else { $_.ParentSnapshotName } }} | Out-Indented
+            @{N='Created (UTC)';E={ $_.CreationTimeUtc.ToString('yyyy-MM-dd HH:mm:ss') }},
+            @{N='Age (hrs)';E={ [math]::Round(([DateTime]::UtcNow - $_.CreationTimeUtc).TotalHours, 1) }},
+            @{N='Stale';E={ if (([DateTime]::UtcNow - $_.CreationTimeUtc).TotalHours -ge $StaleHours) { 'YES' } else { '' } }},
+            @{N='Parent';E={ $_.Parent }} | Out-Indented
     } else {
         Write-Output "  No checkpoints present on '$VMName'."
         Write-Output ""
     }
 
-    # Collect every folder holding one of this VM's VHDs - the attached chain AND any checkpoint
-    # disks - so we scan all relevant locations. There is no separate HRL path setting in Hyper-V
-    # Replica: the .hrl log always sits next to the VHD it protects.
+    # Collect every folder holding one of this VM's VHDs - the attached chain AND any checkpoint disks -
+    # so we scan all relevant locations. There is no separate HRL path setting in Hyper-V Replica: the
+    # .hrl log always sits next to the VHD it protects.
     $folderSet = [System.Collections.Generic.List[string]]::new()
     $allChainPaths | ForEach-Object { $folderSet.Add((Split-Path $_ -Parent)) }
-    if ($checkpoints) {
-        foreach ($cp in $checkpoints) {
-            # $cp carries its own CimSession, so do not also pass -CimSession here:
-            Get-VMHardDiskDrive -VMSnapshot $cp -ErrorAction SilentlyContinue |
-                ForEach-Object { if ($_.Path) { $folderSet.Add((Split-Path $_.Path -Parent)) } }
-        }
-    }
-    $vhdFolders = $folderSet | Sort-Object -Unique
+    foreach ($f in @($ckptData.Folders)) { if ($f) { $folderSet.Add([string]$f) } }
+    $vhdFolders = @($folderSet | Sort-Object -Unique)
 
     # Orphaned differencing disks: .avhdx files on disk that are NOT part of any attached chain
     # (a stuck/failed merge or a leftover replica recovery point can leave these behind):
@@ -512,19 +713,22 @@ function Invoke-VMCheckpointAudit {
     Write-Section "Orphaned .avhdx Files (present on disk but not attached to the VM):"
     if ($vhdFolders) {
         try {
-            $onDiskAvhdx = Invoke-Command -ComputerName $OwningNode -ScriptBlock {
-                $using:vhdFolders | ForEach-Object {
+            $onDiskAvhdx = @(Invoke-OnOwner -ScriptBlock {
+                param($folders)
+                $folders | ForEach-Object {
                     Get-ChildItem -LiteralPath $_ -Filter '*.avhdx' -File -ErrorAction SilentlyContinue
+                } | ForEach-Object {
+                    [pscustomobject]@{ Name = [string]$_.Name; FullName = [string]$_.FullName; Length = [long]$_.Length; LastWriteTimeUtc = $_.LastWriteTimeUtc }
                 }
-            } -ErrorAction Stop
+            } -ArgumentList (,$vhdFolders))
         } catch {
             $onDiskAvhdx = $null
-            Write-Alert "  Could not reach $OwningNode to scan for .avhdx files (WinRM?): $($_.Exception.Message)" -Level Warning
+            Write-Alert "  Could not scan for .avhdx files on '$OwningNode': $($_.Exception.Message)" -Level Warning
         }
         $attachedSet = [System.Collections.Generic.HashSet[string]]::new(
             [string[]]$allChainPaths, [System.StringComparer]::OrdinalIgnoreCase)
-        $orphans = $onDiskAvhdx | Where-Object { -not $attachedSet.Contains($_.FullName) }
-        if ($orphans) {
+        $orphans = @($onDiskAvhdx | Where-Object { $_ -and -not $attachedSet.Contains([string]$_.FullName) })
+        if ($orphans.Count -gt 0) {
             $orphans | Select-Object `
                 Name,
                 @{N='SizeGB';E={ [math]::Round($_.Length / 1GB, 2) }},
@@ -544,17 +748,44 @@ function Invoke-VMCheckpointAudit {
     # or a backlogged log can keep these artifacts around and inflate disk usage.
     Show-AuditProgress 'Checking Hyper-V Replica status'
     Write-Section "Hyper-V Replica (HVR) Status:"
-    if ($VMObject.ReplicationState -ne 'Disabled') {
-        $replication = Get-VMReplication -CimSession $OwningNode -VMName $VMName -ErrorAction SilentlyContinue
-        if ($replication) {
-            $replication | Format-List Name, State, Health, Mode, ReplicationRelationshipType,
+    if ($vm.ReplicationState -ne 'Disabled') {
+        $replInfo = Invoke-OnOwner -ScriptBlock {
+            param($n)
+            $r = Get-VMReplication -VMName $n -ErrorAction SilentlyContinue
+            $m = Measure-VMReplication -VMName $n -ErrorAction SilentlyContinue
+            [pscustomobject]@{
+                Repl = if ($r) { [pscustomobject]@{
+                    Name                        = [string]$r.Name
+                    State                       = [string]$r.State
+                    Health                      = [string]$r.Health
+                    Mode                        = [string]$r.Mode
+                    ReplicationRelationshipType = [string]$r.ReplicationRelationshipType
+                    PrimaryServerName           = [string]$r.PrimaryServerName
+                    ReplicaServerName           = [string]$r.ReplicaServerName
+                    LastReplicationTime         = [string]$r.LastReplicationTime
+                    FrequencySec                = [string]$r.FrequencySec
+                    ReplicationHealthDetails    = [string]($r.ReplicationHealthDetails -join '; ')
+                } } else { $null }
+                Measure = if ($m) { [pscustomobject]@{
+                    ReplicationHealth         = [string]$m.ReplicationHealth
+                    LastReplicationTime       = [string]$m.LastReplicationTime
+                    AverageReplicationSize    = [string]$m.AverageReplicationSize
+                    MaximumReplicationSize    = [string]$m.MaximumReplicationSize
+                    PendingReplicationSize    = [string]$m.PendingReplicationSize
+                    AverageReplicationLatency = [string]$m.AverageReplicationLatency
+                    ReplicationSuccessCount   = [string]$m.ReplicationSuccessCount
+                    MissedReplicationCount    = [string]$m.MissedReplicationCount
+                } } else { $null }
+            }
+        } -ArgumentList $VMName
+        if ($replInfo -and $replInfo.Repl) {
+            $replInfo.Repl | Format-List Name, State, Health, Mode, ReplicationRelationshipType,
                 PrimaryServerName, ReplicaServerName, LastReplicationTime, FrequencySec, ReplicationHealthDetails | Out-Indented
 
             # Replication throughput / backlog - shows if replication is falling behind:
             Write-Section "Hyper-V Replica Statistics (Measure-VMReplication):"
-            $replMeasure = Measure-VMReplication -CimSession $OwningNode -VMName $VMName -ErrorAction SilentlyContinue
-            if ($replMeasure) {
-                $replMeasure | Format-List ReplicationHealth, LastReplicationTime,
+            if ($replInfo.Measure) {
+                $replInfo.Measure | Format-List ReplicationHealth, LastReplicationTime,
                     AverageReplicationSize, MaximumReplicationSize, PendingReplicationSize,
                     AverageReplicationLatency, ReplicationSuccessCount, MissedReplicationCount | Out-Indented
             } else {
@@ -562,7 +793,7 @@ function Invoke-VMCheckpointAudit {
                 Write-Output ""
             }
         } else {
-            Write-Output "HVR Replication reported as '$($VMObject.ReplicationState)' but no replication object was returned."
+            Write-Output "HVR Replication reported as '$($vm.ReplicationState)' but no replication object was returned."
             Write-Output ""
         }
     } else {
@@ -576,16 +807,19 @@ function Invoke-VMCheckpointAudit {
     Write-Section "Hyper-V Replica Change Logs (.hrl):"
     if ($vhdFolders) {
         try {
-            $hrlFiles = Invoke-Command -ComputerName $OwningNode -ScriptBlock {
-                $using:vhdFolders | ForEach-Object {
+            $hrlFiles = @(Invoke-OnOwner -ScriptBlock {
+                param($folders)
+                $folders | ForEach-Object {
                     Get-ChildItem -LiteralPath $_ -Filter '*.hrl' -File -ErrorAction SilentlyContinue
+                } | ForEach-Object {
+                    [pscustomobject]@{ Name = [string]$_.Name; FullName = [string]$_.FullName; Length = [long]$_.Length; LastWriteTimeUtc = $_.LastWriteTimeUtc }
                 }
-            } -ErrorAction Stop
+            } -ArgumentList (,$vhdFolders))
         } catch {
             $hrlFiles = $null
-            Write-Alert "  Could not reach $OwningNode to scan for .hrl logs (WinRM?): $($_.Exception.Message)" -Level Warning
+            Write-Alert "  Could not scan for .hrl logs on '$OwningNode': $($_.Exception.Message)" -Level Warning
         }
-        if ($hrlFiles) {
+        if ($hrlFiles -and $hrlFiles.Count -gt 0) {
             $hrlFiles | Sort-Object Name | Select-Object `
                 Name,
                 @{N='SizeMB';E={ [math]::Round($_.Length / 1MB, 2) }},
@@ -610,60 +844,88 @@ function Invoke-VMCheckpointAudit {
     # Matching by event ID is node-wide on purpose: some of these events carry a blank or different VM GUID.
     # Runs by default; use -SkipWorkerEvents to opt out.
     $eventConcernCount = 0
+    $concernEvents     = @()
+    $eventsCsvName     = $null
     if (-not $SkipWorkerEvents) {
         Show-AuditProgress 'Scanning Hyper-V Worker/VMMS event logs'
         Write-Section "Hyper-V Worker/VMMS Admin Events (last $EventLookbackHours h on $OwningNode):"
         # Match on the VM GUID as well as the name - Worker/VMMS messages reference the
         # 'Virtual machine ID <GUID>', which is far more reliable than the long friendly name.
-        $vmId = [string]$VMObject.VMId
+        $vmId = [string]$vm.VMId
         try {
-        $workerEvents = Invoke-Command -ComputerName $OwningNode -ScriptBlock {
-            $start  = (Get-Date).AddHours(-$using:EventLookbackHours)
-            $vm     = $using:VMName
-            $vmId   = $using:vmId
-            $ids    = $using:WorkerEventIds
-            # Single alternation regex built from the (escaped) HRESULT strings:
-            $codeRx = ($using:ErrorCodePatterns | ForEach-Object { [regex]::Escape($_) }) -join '|'
-            Get-WinEvent -FilterHashtable @{
-                LogName   = 'Microsoft-Windows-Hyper-V-Worker-Admin', 'Microsoft-Windows-Hyper-V-VMMS-Admin'
-                StartTime = $start
-            } -ErrorAction SilentlyContinue |
-            Where-Object {
-                $_.Message -match [regex]::Escape($vm)   -or
-                $_.Message -match [regex]::Escape($vmId) -or
-                ($codeRx -and $_.Message -match $codeRx) -or
-                ($ids -contains $_.Id)
-            } |
-            Select-Object `
-                @{N='Time (UTC)';E={ $_.TimeCreated.ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss') }},
-                Id,
-                @{N='Level';E={ $_.LevelDisplayName }},
-                @{N='Log';E={ if ($_.LogName -like '*Worker*') { 'Worker' } elseif ($_.LogName -like '*VMMS*') { 'VMMS' } else { $_.LogName } }},
-                @{N='Concern';E={ if (($codeRx -and $_.Message -match $codeRx) -or ($ids -contains $_.Id)) { 'YES' } else { '' } }},
-                @{N='Message';E={ ($_.Message -split "`r?`n")[0] }},
-                @{N='FullMessage';E={ ($_.Message -replace "`r?`n", ' | ') }}
-        } -ErrorAction Stop
+            $workerEvents = @(Invoke-OnOwner -ScriptBlock {
+                param($lookbackHours, $vmName, $vmId, $concernIds, $contextIds, $codePatterns)
+                $start  = (Get-Date).AddHours(-$lookbackHours)
+                # Single alternation regex built from the (escaped) HRESULT strings:
+                $codeRx = ($codePatterns | ForEach-Object { [regex]::Escape($_) }) -join '|'
+                Get-WinEvent -FilterHashtable @{
+                    LogName   = 'Microsoft-Windows-Hyper-V-Worker-Admin', 'Microsoft-Windows-Hyper-V-VMMS-Admin'
+                    StartTime = $start
+                } -ErrorAction SilentlyContinue |
+                Where-Object {
+                    $_.Message -match [regex]::Escape($vmName) -or
+                    $_.Message -match [regex]::Escape($vmId)   -or
+                    ($codeRx -and $_.Message -match $codeRx)   -or
+                    ($concernIds -contains $_.Id)              -or
+                    ($contextIds -contains $_.Id)
+                } |
+                ForEach-Object {
+                    # Concern = a genuine PROBLEM only: an HRESULT match, or an ID in the concern list.
+                    # Informational lifecycle IDs (context list) are surfaced but NEVER flagged Concern.
+                    $isConcern = (($codeRx -and $_.Message -match $codeRx) -or ($concernIds -contains $_.Id))
+                    [pscustomobject]@{
+                        'Time (UTC)' = $_.TimeCreated.ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')
+                        Id           = [int]$_.Id
+                        Level        = [string]$_.LevelDisplayName
+                        Log          = if ($_.LogName -like '*Worker*') { 'Worker' } elseif ($_.LogName -like '*VMMS*') { 'VMMS' } else { [string]$_.LogName }
+                        Concern      = if ($isConcern) { 'YES' } else { '' }
+                        Message      = ($_.Message -split "`r?`n")[0]
+                        FullMessage  = ($_.Message -replace "`r?`n", ' | ')
+                    }
+                }
+            } -ArgumentList $EventLookbackHours, $VMName, $vmId, $WorkerEventIds, $ContextEventIds, $ErrorCodePatterns)
         } catch {
             $workerEvents = $null
-            Write-Alert "  Could not reach $OwningNode to read event logs (WinRM?): $($_.Exception.Message)" -Level Warning
+            Write-Alert "  Could not read event logs on '$OwningNode': $($_.Exception.Message)" -Level Warning
         }
 
-        if ($workerEvents) {
-            $workerEvents = $workerEvents | Sort-Object 'Time (UTC)'
-            # Console table shows the first message line only (readability). The full, untruncated
-            # text is preserved in the CSV export below.
-            $workerEvents | Format-Table 'Time (UTC)', Id, Level, Log, Concern, Message -AutoSize -Wrap | Out-Indented
-            $eventConcernCount = @($workerEvents | Where-Object { $_.Concern -eq 'YES' }).Count
+        if ($workerEvents -and $workerEvents.Count -gt 0) {
+            $workerEvents      = @($workerEvents | Sort-Object 'Time (UTC)')
+            $concernEvents     = @($workerEvents | Where-Object { $_.Concern -eq 'YES' })
+            $eventConcernCount = $concernEvents.Count
+
+            # The console / .txt table can be swamped by thousands of identical rows (e.g. repeated
+            # 15268). Cap each event ID to the first few rows here; the CSV keeps EVERY event, and a
+            # note states how many duplicates were collapsed and points to the CSV for full detail.
+            $perIdCap     = 5
+            $displayRows  = [System.Collections.Generic.List[object]]::new()
+            $removedNotes = [System.Collections.Generic.List[string]]::new()
+            $workerEvents | Group-Object Id | Sort-Object { [int]$_.Name } | ForEach-Object {
+                $grp = @($_.Group | Sort-Object 'Time (UTC)')
+                foreach ($e in ($grp | Select-Object -First $perIdCap)) { $displayRows.Add($e) }
+                if ($grp.Count -gt $perIdCap) {
+                    $removedNotes.Add(("  Removed {0} duplicate Event ID {1} entries (showing first {2}) - Review CSV file for full details." -f ($grp.Count - $perIdCap), $_.Name, $perIdCap))
+                }
+            }
+            # Console table shows the first message line only (readability); full text is in the CSV.
+            @($displayRows | Sort-Object 'Time (UTC)') | Format-Table 'Time (UTC)', Id, Level, Log, Concern, Message -AutoSize -Wrap | Out-Indented
+            foreach ($note in $removedNotes) { Write-Output $note }
+            if ($removedNotes.Count -gt 0) { Write-Output "" }
+            Write-Output ("  {0} event(s) matched ({1} shown after collapsing duplicates); {2} flagged as a Concern." -f $workerEvents.Count, $displayRows.Count, $eventConcernCount)
+            Write-Output  "  Informational lifecycle events (VM started, checkpoint completed, merge started / finished OK)"
+            Write-Output  "  are listed for context but NOT flagged as a Concern."
 
             # Export the FULL event detail to CSV (no truncation) when an -OutputPath was supplied.
-            # The file name includes the VM name and the UTC date (yyyy-MM-dd).
+            # The file name leads with the VM name and the UTC date (yyyy-MM-dd) so it sorts with the report.
             if ($OutputPath) {
-                $csvFolder = Split-Path -Parent $reportFile
-                $csvName   = "Events_{0}_{1}.csv" -f ($VMName -replace '[^\w.\-]', '_'), [DateTime]::UtcNow.ToString('yyyy-MM-dd')
-                $csvPath   = Join-Path $csvFolder $csvName
+                $csvFolder     = Split-Path -Parent $reportFile
+                $eventsCsvName = "{0}_Events_{1}.csv" -f ($VMName -replace '[^\w.\-]', '_'), [DateTime]::UtcNow.ToString('yyyy-MM-dd')
+                $csvPath       = Join-Path $csvFolder $eventsCsvName
                 $workerEvents | Select-Object 'Time (UTC)', Id, Level, Log, Concern, FullMessage |
                     Export-Csv -LiteralPath $csvPath -NoTypeInformation -Encoding UTF8
-                Write-Output "  Full event detail exported to CSV: $csvPath"
+                Write-Output ""
+                Write-Output "  Full, untruncated event messages exported to CSV: $csvPath"
+                Write-Output "  (Use that CSV rather than the truncated console table above - it has the complete text.)"
             }
         } else {
             Write-Output "  No matching events in the last $EventLookbackHours hours."
@@ -679,7 +941,7 @@ function Invoke-VMCheckpointAudit {
         Show-AuditProgress 'Checking Analytic channel state'
         Write-Section "Hyper-V-VMMS/Analytic Channel (per node):"
         $analyticLog = 'Microsoft-Windows-Hyper-V-VMMS/Analytic'
-        $nodes = @((Get-ClusterNode -ErrorAction SilentlyContinue).Name)
+        $nodes = @((Get-ClusterNode -Cluster $ClusterName -ErrorAction SilentlyContinue).Name)
         if (-not $nodes) { $nodes = @($OwningNode) }
         $analyticStatus = Invoke-Command -ComputerName $nodes -ScriptBlock {
             $log = $using:analyticLog
@@ -702,12 +964,90 @@ function Invoke-VMCheckpointAudit {
         }
     }
 
+    # VSS writer health (READ-ONLY). Per the Microsoft troubleshooting guide, failed / timed-out VSS
+    # writers are a leading cause of Hyper-V backup + checkpoint failures (a failed writer blocks the
+    # app-consistent checkpoint, which is the operation under investigation here). 'vssadmin list
+    # writers' only ENUMERATES writer state - it changes nothing. It needs an elevated context on the
+    # owning node; if that is unavailable the section degrades gracefully.
+    Show-AuditProgress 'Checking VSS writer health'
+    Write-Section "VSS Writer Health (vssadmin list writers - read-only):"
+    $vssWriters = $null
+    try {
+        $vssWriters = @(Invoke-OnOwner -ScriptBlock {
+            $raw = & vssadmin list writers 2>$null
+            if (-not $raw) { return @() }
+            $text = ($raw -join "`n")
+            $out = @()
+            foreach ($b in ($text -split "(?m)^Writer name:")) {
+                if ($b -notmatch "'") { continue }
+                $name    = if ($b -match "'([^']+)'")      { $Matches[1] }        else { '' }
+                $state   = if ($b -match "State:\s*(.+)")   { $Matches[1].Trim() } else { '' }
+                $lastErr = if ($b -match "Last error:\s*(.+)") { $Matches[1].Trim() } else { '' }
+                if ($name) { $out += [pscustomobject]@{ Writer = $name; State = $state; 'Last error' = $lastErr } }
+            }
+            $out
+        })
+    } catch {
+        $vssWriters = $null
+        Write-Alert "  Could not query VSS writers on '$OwningNode' (needs an elevated context): $($_.Exception.Message)" -Level Warning
+    }
+    $vssUnhealthy = @()
+    if ($vssWriters -and $vssWriters.Count -gt 0) {
+        $vssUnhealthy = @($vssWriters | Where-Object {
+            (($_.'Last error') -and ($_.'Last error' -ne 'No error')) -or ($_.State -notmatch 'Stable')
+        })
+        if ($vssUnhealthy.Count -gt 0) {
+            Write-Alert ("  {0} of {1} VSS writer(s) are NOT healthy (State not Stable, or a Last error):" -f $vssUnhealthy.Count, $vssWriters.Count) -Level Warning
+            $vssUnhealthy | Format-Table Writer, State, 'Last error' -AutoSize -Wrap | Out-Indented
+            Write-Output "  Unhealthy VSS writers commonly block Hyper-V checkpoint / backup operations. Restarting the"
+            Write-Output "  related service(s) or the affected writer often clears them (see the reference below)."
+        } else {
+            Write-Alert "  All $($vssWriters.Count) VSS writer(s) report State: Stable with no last error." -Level Good
+            Write-Output ""
+        }
+    } else {
+        Write-Output "  VSS writer state unavailable (vssadmin needs an elevated context on the owning node)."
+        Write-Output ""
+    }
+
+    # Dedicated VM configuration-version note. IMPORTANT: the Microsoft troubleshooting guide does NOT
+    # link an older VM config version to the checkpoint / merge failure under investigation; it lists a
+    # configuration-version MISMATCH as a cause of MIGRATION / START failures (a separate category). It
+    # is surfaced here as accurate, clearly-scoped context only, and only when the VM is behind latest.
+    if ($vmVerOlder) {
+        Write-Section "VM Configuration Version (migration / start context - NOT a checkpoint cause):"
+        Write-Output ("  This VM is at configuration version {0}; its owning node supports up to {1}." -f $vm.Version, $hostMaxVer)
+        Write-Output  "  This is NOT a stated cause of the checkpoint / merge failure being investigated. The text below"
+        Write-Output ("  is quoted VERBATIM from {0}" -f $script:TroubleshootTitle)
+        Write-Output  "  (which lists a configuration-version mismatch under migration / start failures):"
+        Write-Output  '      "Configuration version mismatch: VM configuration versions below the required minimum'
+        Write-Output  '       after migrations or upgrades."'
+        Write-Output  "  If an upgrade is required, shut the VM down first, then run 'Update-VMVersion' (or use Hyper-V"
+        Write-Output  "  Manager > Upgrade Configuration Version). This is an operator decision - the script changes nothing."
+        Write-Output ("  Reference: {0}" -f $script:TroubleshootTitle)
+        Write-Output ("             {0}" -f $script:TroubleshootUrl)
+        Write-Output ""
+    }
+
     # Summary: total active checkpoints (differencing / .avhdx layers) across all attached disks:
     Show-AuditProgress 'Building summary'
-    $totalCheckpoints = ($diskReports | Measure-Object -Property CheckpointCount -Sum).Sum
+    $totalCheckpoints = @($diskReports | Measure-Object -Property CheckpointCount -Sum).Sum
+    if (-not $totalCheckpoints) { $totalCheckpoints = 0 }
     $hasCheckpoints   = $totalCheckpoints -gt 0
     # Count named checkpoints older than the stale threshold:
-    $staleCheckpoints = @($checkpoints | Where-Object { ([DateTime]::UtcNow - $_.CreationTime.ToUniversalTime()).TotalHours -ge $StaleHours })
+    $staleCheckpoints = @($checkpoints | Where-Object { ([DateTime]::UtcNow - $_.CreationTimeUtc).TotalHours -ge $StaleHours })
+
+    # Severity: distinguish a CONFIRMED checkpoint fork-commit / merge-failure signature (a genuine
+    # data-loss risk if the VM is migrated / restarted) from symptom-only noise (e.g. repeated 15268
+    # or an aged backup checkpoint), which usually points to a stalled / failed backup or an unhealthy
+    # VSS writer rather than on-disk chain corruption.
+    $forkCommitIds    = @(3216, 18590)
+    $forkCommitRx     = (@('0x80048102', '0x800480BD', '0x800480BC', '0x800703EE') | ForEach-Object { [regex]::Escape($_) }) -join '|'
+    $hasForkSignature = (@($concernEvents | Where-Object { ($forkCommitIds -contains [int]$_.Id) -or ($_.FullMessage -match $forkCommitRx) }).Count -gt 0)
+    $holdState        = ($hasForkSignature -and ($hasCheckpoints -or $staleCheckpoints.Count -gt 0))
+    $investigate      = ((-not $holdState) -and (($staleCheckpoints.Count -gt 0) -or ($eventConcernCount -gt 0) -or ($vssUnhealthy.Count -gt 0)))
+    $concernIdSummary = (@($concernEvents | Group-Object Id | Sort-Object { [int]$_.Name } | ForEach-Object { "{0} x{1}" -f $_.Name, $_.Count }) -join ', ')
+
     Write-Output "==================================================================="
     if ($hasCheckpoints) {
         Write-Alert "  RESULT: $totalCheckpoints CheckPoint (differencing/AVHDX) disk(s) present on '$VMName'." -Level Warning
@@ -716,21 +1056,125 @@ function Invoke-VMCheckpointAudit {
     }
     if ($staleCheckpoints.Count -gt 0) {
         Write-Alert "  WARNING: $($staleCheckpoints.Count) checkpoint(s) are >= $StaleHours hours old (possibly stuck)." -Level Warning
+        Write-Alert "  ACTION: A Third-Party Backup product that creates Hyper-V checkpoints normally REQUESTS the" -Level Warning
+        Write-Alert "  checkpoint MERGE (removal) only AFTER it has successfully copied the VM's data. A checkpoint that" -Level Warning
+        Write-Alert "  lingers well beyond the backup window therefore suggests the backup did not complete, or did not" -Level Warning
+        Write-Alert "  issue the merge. If you are using such a product, check it for the progress / completion of its" -Level Warning
+        Write-Alert "  backup job(s), and confirm whether these aged checkpoint(s) are expected (by design) or need" -Level Warning
+        Write-Alert "  manual investigation." -Level Warning
     }
     if ($eventConcernCount -gt 0) {
-        Write-Alert "  WARNING: $eventConcernCount concerning Hyper-V event(s) found ($($ErrorCodePatterns -join '/') or IDs $($WorkerEventIds -join ', '))." -Level Warning
+        Write-Alert "  WARNING: $eventConcernCount concerning Hyper-V event(s) found (see the Concern=YES rows above)." -Level Warning
     }
-    if ($eventConcernCount -gt 0 -and ($hasCheckpoints -or $staleCheckpoints.Count -gt 0)) {
+    if ($holdState) {
         Write-Output ""
-        Write-Alert "  HOLD STATE: checkpoint/merge failure signatures AND unmerged differencing disk(s) are present." -Level Critical
-        Write-Alert "  Do NOT live-migrate, quick-migrate, storage-migrate, or restart this VM - reopening an" -Level Critical
-        Write-Alert "  inconsistent disk chain can roll disks back to their base and lose intervening data." -Level Critical
-        Write-Alert "  Open a Microsoft support case to validate/merge the chain before any such operation." -Level Critical
+        Write-Alert "  HOLD STATE (data-loss risk): a checkpoint fork-commit / merge-failure signature AND" -Level Critical
+        Write-Alert "  unmerged differencing disk(s) are present together." -Level Critical
+        Write-Alert ("  Why flagged: {0} active differencing (.avhdx) layer(s); fork-commit signature in event(s) [{1}]; {2} checkpoint(s) >= {3}h old." -f $totalCheckpoints, $concernIdSummary, $staleCheckpoints.Count, $StaleHours) -Level Critical
+        Write-Alert "  As a PRECAUTION, avoid live/quick/storage-migrating or restarting this VM until the chain has" -Level Critical
+        Write-Alert "  been validated (and merged if required) - reopening an inconsistent chain can roll disks back" -Level Critical
+        Write-Alert "  to base and lose intervening data. Engage Microsoft Support to confirm the safe path first." -Level Critical
+        Write-Alert ("  Reference: {0}" -f $script:TroubleshootTitle) -Level Critical
+        Write-Alert ("             {0}" -f $script:TroubleshootUrl) -Level Critical
+    } elseif ($investigate) {
+        Write-Output ""
+        Write-Alert "  INVESTIGATE: concern signals are present, but the specific checkpoint fork-commit signature" -Level Warning
+        Write-Alert "  was NOT observed. The likely cause is a stalled / failed backup checkpoint or an unhealthy VSS" -Level Warning
+        Write-Alert "  writer rather than on-disk chain corruption." -Level Warning
+        Write-Alert ("  Why flagged: {0} concerning event(s) [{1}]; {2} checkpoint(s) >= {3}h old; {4} unhealthy VSS writer(s)." -f $eventConcernCount, $concernIdSummary, $staleCheckpoints.Count, $StaleHours, $vssUnhealthy.Count) -Level Warning
+        Write-Alert "  FIRST CONTACT: engage your Third-Party Backup vendor - their product creates the checkpoint and" -Level Warning
+        Write-Alert "  is responsible for requesting the merge after a successful backup. Review the backup tool and the" -Level Warning
+        Write-Alert "  VSS Writer Health section above, and confirm whether the aged checkpoint(s) are expected. Only" -Level Warning
+        Write-Alert "  open a Microsoft Support (CSS) case if the vendor rules out their product, or if a fork-commit" -Level Warning
+        Write-Alert "  signature later appears. As a precaution, avoid an unnecessary VM migration / restart until confirmed." -Level Warning
+        Write-Alert ("  Reference: {0}" -f $script:TroubleshootTitle) -Level Warning
+        Write-Alert ("             {0}" -f $script:TroubleshootUrl) -Level Warning
     }
-    # Always remind the reader this is diagnostic only - any interpretation / remediation goes via CSS.
+    Write-Output "==================================================================="
+
+    # ---- Problem statement for a Microsoft Support (CSS) Support Request (SR) ----------------------
+    # A copy/paste-ready summary of the key findings, so this report can be pasted into (or attached to)
+    # a support case without re-typing. It references the events CSV for the full, untruncated detail.
     Write-Output ""
-    Write-Alert "  NOTE: This report is DIAGNOSTIC ONLY and makes no changes. For interpretation of these" -Level Info
-    Write-Alert "  findings or any remediation, open a Microsoft Support (CSS) case and act on their advice." -Level Info
+    Write-Section "PROBLEM STATEMENT (for your backup vendor and/or a Microsoft Support (CSS) case):"
+    Write-Output "  ------------------------------------------------------------------------------"
+    Write-Output ("  Cluster / Owner : {0} / {1}" -f $ClusterName, $OwningNode)
+    Write-Output ("  VM              : {0}  (Id {1})" -f $VMName, $vm.VMId)
+    Write-Output ("  VM State/Status : {0} / {1}" -f $vm.State, $vm.Status)
+    Write-Output ("  Report run at   : {0} UTC" -f [DateTime]::UtcNow.ToString('yyyy-MM-dd HH:mm:ss'))
+    Write-Output ""
+    if ($hasCheckpoints) {
+        Write-Output ("  This VM is running on {0} active differencing (.avhdx checkpoint) disk layer(s) over its base" -f $totalCheckpoints)
+        Write-Output  "  VHD(s). We are investigating a suspected checkpoint fork-commit / merge failure that can leave"
+        Write-Output  "  the on-disk chain inconsistent and, if the VM is later migrated or restarted, roll the disks"
+        Write-Output  "  back to base and orphan the data held in the .avhdx layer(s)."
+    } else {
+        Write-Output  "  This VM currently has no active differencing (.avhdx) disk layers attached."
+    }
+    if ($eventConcernCount -gt 0) {
+        Write-Output ""
+        Write-Output ("  {0} concerning Hyper-V event(s) were found on {1} in the last {2} hours, by event ID:" -f $eventConcernCount, $OwningNode, $EventLookbackHours)
+        $concernEvents | Group-Object Id | Sort-Object { [int]$_.Name } | ForEach-Object {
+            $times = @($_.Group.'Time (UTC)' | Sort-Object)
+            Write-Output ("    - ID {0}  x{1}   (first {2} UTC, last {3} UTC)" -f $_.Name, $_.Count, $times[0], $times[-1])
+        }
+    }
+    if ($vssUnhealthy.Count -gt 0) {
+        Write-Output ""
+        Write-Output ("  {0} VSS writer(s) are not healthy: {1}" -f $vssUnhealthy.Count, ((@($vssUnhealthy | ForEach-Object { $_.Writer })) -join ', '))
+        Write-Output  "  Unhealthy VSS writers commonly block Hyper-V checkpoint / backup operations."
+    }
+    if ($holdState) {
+        Write-Output ""
+        Write-Output  "  ASSESSMENT: HOLD STATE (data-loss risk) - a checkpoint fork-commit / merge-failure signature AND"
+        Write-Output  "  unmerged differencing disk(s) are present together. As a precaution this VM should NOT be"
+        Write-Output  "  live/quick/storage-migrated or restarted until the differencing chain has been validated (and"
+        Write-Output  "  merged if required); reopening an inconsistent chain can roll disks back to base and lose data."
+    } elseif ($investigate) {
+        Write-Output ""
+        Write-Output  "  ASSESSMENT: INVESTIGATE - concern signals are present, but the specific checkpoint fork-commit"
+        Write-Output  "  signature was NOT observed; the likely cause is a stalled / failed backup checkpoint or an"
+        Write-Output  "  unhealthy VSS writer. Engage your THIRD-PARTY BACKUP VENDOR first (their product creates the"
+        Write-Output  "  checkpoint and is responsible for requesting its merge after a successful backup); open a"
+        Write-Output  "  Microsoft Support (CSS) case only if the vendor rules out their product, or if a fork-commit"
+        Write-Output  "  signature later appears. Confirm the VSS writer state (see the VSS Writer Health section above,"
+        Write-Output  "  or run 'vssadmin list writers' on the owning node) and your backup product's recent job history,"
+        Write-Output  "  before performing any VM migration or restart."
+    }
+    if ($staleCheckpoints.Count -gt 0) {
+        Write-Output ""
+        Write-Output ("  {0} checkpoint(s) on this VM are older than {1} hours. A Third-Party Backup product that creates" -f $staleCheckpoints.Count, $StaleHours)
+        Write-Output  "  Hyper-V checkpoints normally requests the checkpoint MERGE (removal) only AFTER it has successfully"
+        Write-Output  "  copied the VM's data, so a checkpoint lingering well beyond the backup window suggests the backup"
+        Write-Output  "  did not complete or did not issue the merge. Check that product for the progress / completion of"
+        Write-Output  "  its backup job(s), and confirm whether these checkpoint(s) are expected (by design) or need manual"
+        Write-Output  "  investigation."
+    }
+    Write-Output ""
+    Write-Output  "  Requested action: please advise on the safe next step to validate and merge / consolidate the"
+    Write-Output  "  differencing chain for this VM."
+    Write-Output ""
+    Write-Output  "  Artifacts from this audit to attach to the case:"
+    if ($OutputPath -and $reportFile) {
+        Write-Output ("    - Text report : {0}" -f $reportFile)
+        if ($eventsCsvName) {
+            Write-Output ("    - Events CSV  : {0}" -f (Join-Path (Split-Path -Parent $reportFile) $eventsCsvName))
+            Write-Output  "                    (full, untruncated Hyper-V event messages that back the findings above)"
+        }
+    } else {
+        Write-Output  "    - (Re-run with -OutputPath <folder> to capture the .txt report and events .csv to attach.)"
+    }
+    Write-Output ""
+    Write-Output ("  Reference: {0}" -f $script:TroubleshootTitle)
+    Write-Output ("             {0}" -f $script:TroubleshootUrl)
+    Write-Output "  ------------------------------------------------------------------------------"
+
+    # Always remind the reader this is diagnostic only - any interpretation / remediation goes via the
+    # backup vendor (backup/VSS findings) or Microsoft Support (confirmed fork-commit).
+    Write-Output ""
+    Write-Alert "  NOTE: This report is DIAGNOSTIC ONLY and makes no changes. For backup / checkpoint-merge or VSS" -Level Info
+    Write-Alert "  findings, engage your third-party backup vendor first; open a Microsoft Support (CSS) case for a" -Level Info
+    Write-Alert "  confirmed fork-commit signature, or when the vendor rules out their product. Act on their advice." -Level Info
     Write-Output "==================================================================="
 
     # Boolean return for downstream/automation use (True = checkpoints present):
@@ -743,6 +1187,11 @@ function Invoke-VMCheckpointAudit {
         Write-Alert "  ERROR auditing '$VMName': $($_.Exception.Message)" -Level Critical
     }
     finally {
+        # Close the single remoting session to the owning node (if one was opened for this VM).
+        if ($script:OwnerSession) {
+            Remove-PSSession -Session $script:OwnerSession -ErrorAction SilentlyContinue
+            $script:OwnerSession = $null
+        }
         if ($transcriptStarted) {
             Stop-Transcript | Out-Null
             Write-Output "Report saved to: $reportFile"
@@ -753,7 +1202,7 @@ function Invoke-VMCheckpointAudit {
 # Collect all requested VMs (works for both the -VMName array and pipeline input) so the parent
 # progress bar can show an accurate "VM X of Y"; $VMSectionTotal drives the per-VM sub-progress %.
 $script:PendingVMNames = [System.Collections.Generic.List[string]]::new()
-$script:VMSectionTotal = 12
+$script:VMSectionTotal = 13
 
 # Resolve a single per-run output sub-folder (once per invocation) so every VM in this run is
 # grouped together and repeated runs never collide. Only created when -OutputPath is supplied.
@@ -765,6 +1214,12 @@ if ($OutputPath) {
         New-Item -ItemType Directory -Path $script:RunFolder -Force | Out-Null
     }
     Write-Output "Writing per-VM reports to: $script:RunFolder"
+} else {
+    # Option C: no -OutputPath means console output only (nothing saved). Warn UP FRONT so the operator
+    # can cancel and re-run with -OutputPath rather than discover it after a long multi-VM run.
+    Write-Alert "WARNING: -OutputPath was not supplied - console output ONLY; NO .txt report or events .csv will be saved." -Level Warning
+    Write-Alert "         Re-run with -OutputPath <folder> to capture files to attach to a backup-vendor / Microsoft (CSS) case." -Level Warning
+    Write-Output ""
 }
 
 }
@@ -809,13 +1264,20 @@ end {
             -Status ("VM {0} of {1}: {2}" -f $vmIndex, $vmTotal, $name) `
             -PercentComplete ([int](($vmIndex - 1) * 100 / $vmTotal))
 
-        Invoke-VMCheckpointAudit -VMName $name -OutputPath $script:RunFolder -StaleHours $StaleHours `
+        Invoke-VMCheckpointAudit -VMName $name -Cluster $Cluster -OutputPath $script:RunFolder -StaleHours $StaleHours `
             -SkipWorkerEvents:$SkipWorkerEvents -EventLookbackHours $EventLookbackHours `
-            -WorkerEventIds $WorkerEventIds -ErrorCodePatterns $ErrorCodePatterns `
+            -WorkerEventIds $WorkerEventIds -ContextEventIds $ContextEventIds -ErrorCodePatterns $ErrorCodePatterns `
             -SkipAnalyticCheck:$SkipAnalyticCheck
 
         # Clear this VM's sub-progress bar before moving to the next VM.
         Write-Progress -Id 2 -ParentId 1 -Activity ("Auditing VM: {0}" -f $name) -Completed
     }
     Write-Progress -Id 1 -Activity 'Hyper-V VM checkpoint / differencing-disk audit' -Completed
+
+    # Option C: repeat the 'nothing saved' warning at the END, so it is the last thing the operator
+    # sees after a long run (the up-front warning may have scrolled off the console).
+    if (-not $OutputPath) {
+        Write-Alert "WARNING: no report was saved (no -OutputPath) - console output only. Re-run with -OutputPath <folder>" -Level Warning
+        Write-Alert "         to capture the .txt report and events .csv to attach to a backup-vendor / Microsoft (CSS) case." -Level Warning
+    }
 }
