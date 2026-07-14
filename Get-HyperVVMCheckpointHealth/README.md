@@ -70,9 +70,14 @@ Two supported ways to run it, both single-hop:
 'lqwas911','lqwas912','lqwas921' | .\Get-HyperVVMCheckpointHealth.ps1 -OutputPath 'C:\Temp\Reports'
 
 # REMOTE: from a management workstation (RSAT Failover Clustering) - target a cluster by name.
-# NOTE: -Cluster must appear TWICE - the (Get-ClusterGroup -Cluster 'CLUS01' ...) that builds the
-# -VMName list is a SEPARATE local command that does NOT inherit the script's -Cluster, so it needs
-# its own; the script's -Cluster then governs the audit.
+# STEP 1 - verify the RSAT Failover Clustering tools are present on THIS workstation (see Requirements
+# to install if this returns nothing / $false). Get-ClusterGroup and Get-Cluster come from this module.
+if (Get-Module -ListAvailable FailoverClusters) { 'FailoverClusters: OK' } else { 'FailoverClusters: MISSING - install RSAT (see Requirements)' }
+Get-Command Get-ClusterGroup -ErrorAction SilentlyContinue   # should resolve; blank = tools not installed
+
+# STEP 2 - run it. NOTE: -Cluster must appear TWICE - the (Get-ClusterGroup -Cluster 'CLUS01' ...) that
+# builds the -VMName list is a SEPARATE local command that does NOT inherit the script's -Cluster, so it
+# needs its own; the script's -Cluster then governs the audit.
 .\Get-HyperVVMCheckpointHealth.ps1 -Cluster 'CLUS01' -VMName (Get-ClusterGroup -Cluster 'CLUS01' | Where-Object GroupType -eq 'VirtualMachine').Name -OutputPath 'C:\Temp\Reports'
 
 # Equivalent remote pipeline form (names gathered from the remote cluster, then piped in)
