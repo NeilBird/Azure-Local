@@ -296,3 +296,31 @@ $r = .\Get-HyperVVMCheckpointHealth.ps1 -Cluster 'CLUS01' `
 $r | Where-Object HoldState | Format-Table VMName, OwningNode, Recommendation
 $r | Export-Csv 'C:\Temp\Reports\fleet-summary.csv' -NoTypeInformation
 ```
+
+### Drilling into `ReportData`
+
+The flat top-level properties are ideal for quick `Where-Object` / `Export-Csv` roll-ups. For deeper integration, the nested `ReportData` object exposes the same rich per-VM detail the HTML report renders — checkpoints, disks, replication, VSS writers, the Analytic-channel state, the concerning-event breakdown, config-version comparison, and (for HOLD STATE) the copy/paste Support Case summary:
+
+```powershell
+$r = .\Get-HyperVVMCheckpointHealth.ps1 -Cluster 'CLUS01' `
+        -VMName (Get-ClusterGroup -Cluster 'CLUS01' | Where-Object GroupType -eq 'VirtualMachine').Name `
+        -OutputPath 'C:\Temp\Reports' -PassThru
+
+# Drill into the rich detail for any VM carrying the fork-commit signature
+$r | Where-Object { $_.ReportData.HasForkSignature } |
+    ForEach-Object { $_.ReportData.Checkpoints } |
+    Format-Table Name, AgeHrs, Stale
+
+# Every stale checkpoint across the whole fleet
+$r | ForEach-Object {
+    $_.ReportData.Checkpoints | Where-Object Stale |
+        Select-Object @{n='VM';e={ $_.Name }}, AgeHrs
+}
+
+# Hyper-V Replica health (ReportData.Replication is a nested object, not a flat string)
+$r | Where-Object { $_.ReportData.Replication.Enabled } |
+    Select-Object VMName, @{n='ReplState';e={ $_.ReportData.Replication.State }},
+                          @{n='ReplHealth';e={ $_.ReportData.Replication.Health }}
+```
+
+> **Note:** array members of `ReportData` (`Checkpoints`, `VssUnhealthy`, `CsvVolumes`, `EventBreakdown`, `AnalyticNodesNeedEnable`) display as `System.Object[]` in a default list view — that is just the formatter; enumerate them (as above) to see the elements. `ReportData` is `$null` for `NOT FOUND` / `ERROR` rows, so guard with `Where-Object { $_.ReportData }` first if needed.

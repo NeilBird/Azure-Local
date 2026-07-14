@@ -23,8 +23,8 @@
 
     The human-readable report is written to the HOST (and, with -OutputPath, the .txt transcript);
     by default NOTHING is written to the pipeline. Pass -PassThru to also emit one [pscustomobject]
-    per VM to the pipeline (VMName, OwningNode, Recommendation, HoldState, Has* flags, counts) for
-    Where-Object / Export-Csv / fleet roll-ups.
+    per VM to the pipeline (VMName, OwningNode, Recommendation, HoldState, Has* flags, counts, plus a
+    nested ReportData object with the full per-VM detail) for Where-Object / Export-Csv / fleet roll-ups.
 
     DISCLAIMER / CAVEATS:
       - EXAMPLE code. NOT a Microsoft-supported product or service offering; provided with NO warranty
@@ -95,13 +95,22 @@
     ('HOLD STATE' / 'INVESTIGATE' / 'OK' / 'NOT FOUND' / 'ERROR'), HoldState, HasAttachedCheckpoints,
     HasStaleCheckpoints, HasOrphanedCheckpoints, AttachedCheckpointCount, StaleCheckpointCount,
     ConcernEventCount, ReportFile, Detail - ideal for Where-Object / Export-Csv / fleet roll-ups.
+    It ALSO carries a nested ReportData object with the rich per-VM detail the HTML report renders
+    (Checkpoints[], AttachedDiskCount, CheckpointLayers, StaleCheckpointCount, Replication, VssState,
+    VssUnhealthy[], AnalyticNodesNeedEnable[], CsvVolumes[], OrphanCount, HasForkSignature,
+    EventBreakdown[], Version/HostMaxVersion, and - for HOLD STATE - SupportCaseSummary). ReportData
+    is $null for NOT FOUND / ERROR rows. Drill in, e.g.:
+        $results | Where-Object { $_.ReportData.HasForkSignature } |
+            ForEach-Object { $_.ReportData.Checkpoints } | Format-Table Name, AgeHrs, Stale
 
 .OUTPUTS
     None to the pipeline by default - the human-readable report goes to the host and, with -OutputPath,
     to a per-VM .txt transcript + events .csv. A single self-contained HTML fleet report is also written
     by default (suppress with -NoHtml; relocate with -HtmlReportPath). With -PassThru, one
-    [pscustomobject] per VM is emitted to the pipeline (see the -PassThru example above for its
-    properties).
+    [pscustomobject] per VM is emitted to the pipeline - flat properties (VMName, Recommendation,
+    HoldState, Has* flags, counts, ReportFile, Detail) for quick Where-Object / Export-Csv roll-ups,
+    PLUS a nested ReportData object with the full per-VM detail the HTML renders (see the -PassThru
+    example above for the ReportData fields and a drill-in snippet).
 
 .NOTES
     Author  : Neil Bird, Microsoft
@@ -167,6 +176,14 @@ param(
     # export in that sub-folder. Console-only if omitted. Base folder is created if it does not exist.
     [string]$OutputPath,
 
+    # Also audit VMs that were NOT requested but were DISCOVERED in the owning node's event data with a
+    # high-risk checkpoint/merge signature (background disk merge interrupted / failed, or 'cannot load
+    # VM configuration'). OFF by default: such VMs are always SURFACED (console + HTML) with a ready-to-
+    # run command, but only audited automatically when this switch is set. Bounded and non-recursive:
+    # only names that resolve to real clustered VMs are added, their own discoveries are not expanded,
+    # and the number added is capped (see $script:MaxDiscoveredToAudit).
+    [switch]$IncludeDiscoveredVMs,
+
     # Age (in hours) at or beyond which a checkpoint / differencing disk is flagged as stale.
     [ValidateRange(0, 8760)]
     [int]$StaleHours = 24,
@@ -220,9 +237,10 @@ param(
 
     # Emit one [pscustomobject] per VM to the PIPELINE (VMName, Cluster, OwningNode, Recommendation,
     # HoldState, HasAttachedCheckpoints, HasStaleCheckpoints, HasOrphanedCheckpoints, counts,
-    # ReportFile, Detail). The human-readable report always goes to the HOST (and, with -OutputPath,
-    # the .txt transcript); WITHOUT -PassThru nothing is written to the pipeline, so '$x = .\script'
-    # stays clean. Use -PassThru to feed Where-Object / Export-Csv / fleet roll-ups.
+    # ReportFile, Detail, plus a nested ReportData object with the rich per-VM detail the HTML
+    # renders). The human-readable report always goes to the HOST (and, with -OutputPath, the .txt
+    # transcript); WITHOUT -PassThru nothing is written to the pipeline, so '$x = .\script' stays
+    # clean. Use -PassThru to feed Where-Object / Export-Csv / fleet roll-ups.
     [switch]$PassThru,
 
     # Where to write the single self-contained HTML fleet report (one row per audited VM). ON by
@@ -245,14 +263,6 @@ param(
     # gathers the per-run .txt / .csv / .html so the whole audit can be copied to a browser device and
     # attached to a support case in one file.
     [switch]$NoZip,
-
-    # Also audit VMs that were NOT requested but were DISCOVERED in the owning node's event data with a
-    # high-risk checkpoint/merge signature (background disk merge interrupted / failed, or 'cannot load
-    # VM configuration'). OFF by default: such VMs are always SURFACED (console + HTML) with a ready-to-
-    # run command, but only audited automatically when this switch is set. Bounded and non-recursive:
-    # only names that resolve to real clustered VMs are added, their own discoveries are not expanded,
-    # and the number added is capped (see $script:MaxDiscoveredToAudit).
-    [switch]$IncludeDiscoveredVMs,
 
     # Skip the read-only cluster storage-health snapshot (Storage Spaces Direct / CSV / virtual+physical
     # disk health + active storage jobs). On by default; the snapshot is cluster-wide and gathered once.
@@ -377,7 +387,8 @@ function ConvertTo-VMCheckpointAuditHtml {
         [string]$ClusterName,
         [string]$GeneratedUtc,
         [object[]]$DiscoveredVMs,
-        [object]$StorageHealth
+        [object]$StorageHealth,
+        [bool]$IncludeDiscoveredVMs
     )
 
     function ConvertTo-HtmlText { param([object]$Value) if ($null -eq $Value) { '' } else { [System.Net.WebUtility]::HtmlEncode([string]$Value) } }
@@ -480,7 +491,8 @@ function ConvertTo-VMCheckpointAuditHtml {
   <div class="meta">
     Cluster <b>$(ConvertTo-HtmlText $ClusterName)</b> &nbsp;&bull;&nbsp; $countAll audited $vmWord
     &nbsp;&bull;&nbsp; Report generated <b>$(ConvertTo-HtmlText $GeneratedUtc) UTC</b><br>
-    Read-only diagnostic - <b>no changes were made to any VM</b>. Stale threshold: $StaleHours h; event lookback: $EventLookbackHours h.
+    Parameters: Stale CheckPoint threshold: $StaleHours h; Diagnostic events lookback: $EventLookbackHours h; Include discovered VMs: $(if ($IncludeDiscoveredVMs) { 'Yes' } else { 'No' }).<br>
+    Read-only diagnostic - <b>no changes were made to any VM</b>.
   </div>
 </header>
 
@@ -2262,7 +2274,7 @@ end {
             $html = ConvertTo-VMCheckpointAuditHtml -Results $script:AllAuditResults.ToArray() `
                 -StaleHours $StaleHours -EventLookbackHours $EventLookbackHours `
                 -ClusterName $clusterForName -GeneratedUtc ([DateTime]::UtcNow.ToString('yyyy-MM-dd HH:mm:ss')) `
-                -DiscoveredVMs $discoveredVMs -StorageHealth $script:ClusterStorageHealth
+                -DiscoveredVMs $discoveredVMs -StorageHealth $script:ClusterStorageHealth -IncludeDiscoveredVMs:$IncludeDiscoveredVMs
             [System.IO.File]::WriteAllText($htmlPath, $html, (New-Object System.Text.UTF8Encoding($false)))
             $htmlWritten = $htmlPath
             Write-Host ""
