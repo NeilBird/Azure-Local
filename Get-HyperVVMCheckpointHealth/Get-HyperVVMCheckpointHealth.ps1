@@ -1202,14 +1202,18 @@ function Invoke-VMCheckpointAudit {
         Write-Host  "  merged if required); reopening an inconsistent chain can roll disks back to base and lose data."
     } elseif ($investigate) {
         Write-Host ""
-        Write-Host  "  ASSESSMENT: INVESTIGATE - concern signals are present, but the specific checkpoint fork-commit"
-        Write-Host  "  signature was NOT observed; the likely cause is a stalled / failed backup checkpoint or an"
-        Write-Host  "  unhealthy VSS writer. Engage your THIRD-PARTY BACKUP VENDOR first (their product creates the"
-        Write-Host  "  checkpoint and is responsible for requesting its merge after a successful backup); open a"
-        Write-Host  "  Microsoft Support (CSS) case only if the vendor rules out their product, or if a fork-commit"
-        Write-Host  "  signature later appears. Confirm the VSS writer state (see the VSS Writer Health section above,"
-        Write-Host  "  or run 'vssadmin list writers' on the owning node) and your backup product's recent job history,"
-        Write-Host  "  before performing any VM migration or restart."
+        Write-Host  "  ASSESSMENT: INVESTIGATE - the specific checkpoint fork-commit signature was NOT observed; the"
+        Write-Host  "  likely cause is a stalled / failed backup checkpoint or an unhealthy VSS writer rather than"
+        Write-Host  "  on-disk chain corruption. Concern signal(s) for this VM:"
+        if ($staleCheckpoints.Count -gt 0) {
+            Write-Host ("    - {0} checkpoint(s) at or beyond the {1}-hour stale threshold (set via -StaleHours; default 24)." -f $staleCheckpoints.Count, $StaleHours)
+        }
+        if ($eventConcernCount -gt 0) {
+            Write-Host ("    - {0} concerning Hyper-V event(s) [{1}] on {2} in the last {3}h (see the events section above)." -f $eventConcernCount, $concernIdSummary, $OwningNode, $EventLookbackHours)
+        }
+        if ($vssUnhealthy.Count -gt 0) {
+            Write-Host ("    - {0} unhealthy VSS writer(s) (see the VSS Writer Health section above)." -f $vssUnhealthy.Count)
+        }
     }
     if ($staleCheckpoints.Count -gt 0) {
         Write-Host ""
@@ -1218,7 +1222,8 @@ function Invoke-VMCheckpointAudit {
         Write-Host  "  copied the VM's data, so a checkpoint lingering well beyond the backup window suggests the backup"
         Write-Host  "  did not complete or did not issue the merge. Check that product for the progress / completion of"
         Write-Host  "  its backup job(s), and confirm whether these checkpoint(s) are expected (by design) or need manual"
-        Write-Host  "  investigation."
+        Write-Host ("  investigation. If checkpoint(s) on this VM are EXPECTED to persist beyond {0}h (e.g. a longer" -f $StaleHours)
+        Write-Host  "  backup retention window), re-run with -StaleHours <n> (e.g. 48) to raise the threshold."
     }
     Write-Host ""
     if ($holdState) {
