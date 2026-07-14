@@ -116,7 +116,7 @@
     Author  : Neil Bird, Microsoft
     Created : 2026-07-10
     Updated : 2026-07-14
-    Version : 0.2.1
+    Version : 0.2.11
     
     Requires: Windows PowerShell 5.1 (this script is written for, and validated against, Windows
               PowerShell 5.1 ONLY - it is NOT intended or tested for PowerShell 7.x). Also requires the Hyper-V
@@ -542,7 +542,7 @@ function ConvertTo-VMCheckpointAuditHtml {
 <ol>
   <li><strong>Backup team first:</strong> for each VM with a stale checkpoint, check the backup product's recent job history - did the last backup complete? A leftover checkpoint usually means a backup that did not finish or did not issue the post-backup merge.</li>
   <li><strong>Confirm expected vs abandoned:</strong> decide whether each stale checkpoint is expected (by design) or left behind by a failed backup, then merge / remove the abandoned ones (prefer the backup product over manual deletion).</li>
-  <li><strong>Enable the Analytic channel</strong> (elevated, per node) to capture the internal per-disk revert trace for the next occurrence: <code>wevtutil sl Microsoft-Windows-Hyper-V-VMMS/Analytic /e:true</code></li>
+  <li><strong>Enable the Analytic channel</strong> (elevated, per node) to capture the internal per-disk revert trace for the next occurrence: <code>wevtutil sl Microsoft-Windows-Hyper-V-VMMS-Analytic /e:true /q:true</code></li>
   <li><strong>Rule out storage-layer disruption:</strong> if the storage-health section shows active S2D repair / resync jobs, CSV redirection, or unhealthy disks, treat it as a probable contributing factor and run the CSS Storage Diagnostic (<code>Install-Module -Name Microsoft.AzLocal.CSSTools</code>; then <code>Start-AzsSupportStorageDiagnostic</code>).</li>
   <li><strong>HOLD STATE VMs (if any):</strong> engage Microsoft Support (CSS) and/or your backup vendor before any migration / restart.</li>
   <li>Open a Microsoft Support case only if a fork-commit signature (<code>18590</code> / <code>0x80048102</code>) appears, or the backup vendor rules out their product.</li>
@@ -1671,7 +1671,7 @@ function Invoke-VMCheckpointAudit {
     if (-not $SkipAnalyticCheck) {
         Show-AuditProgress 'Checking Analytic channel state'
         Write-Section "Hyper-V-VMMS/Analytic Channel (per node):"
-        $analyticLog = 'Microsoft-Windows-Hyper-V-VMMS/Analytic'
+        $analyticLog = 'Microsoft-Windows-Hyper-V-VMMS-Analytic'
         $nodes = @((Get-ClusterNode -Cluster $ClusterName -ErrorAction SilentlyContinue).Name)
         if (-not $nodes) { $nodes = @($OwningNode) }
         $analyticStatus = Invoke-Command -ComputerName $nodes -ScriptBlock {
@@ -1688,7 +1688,7 @@ function Invoke-VMCheckpointAudit {
             if ($analyticNodesNeedEnable.Count -gt 0) {
                 Write-Host "  NOT enabled on: $($analyticNodesNeedEnable -join ', ')"
                 Write-Host "  To enable it (run elevated on each node listed above, if you choose to):"
-                Write-Host "      wevtutil sl $analyticLog /e:true"
+                Write-Host "      wevtutil sl $analyticLog /e:true /q:true"
                 Write-Host ""
             }
         } else {
@@ -1929,7 +1929,7 @@ function Invoke-VMCheckpointAudit {
         Write-Alert ("  TIP: the Hyper-V-VMMS/Analytic channel is not enabled on: {0}." -f ($analyticNodesNeedEnable -join ', ')) -Level Info
         Write-Alert "  It is the only place the internal per-disk .vmcx revert ('Cannot revert configuration info for AVHD') is" -Level Info
         Write-Alert "  traced. Enabling it now (elevated, per node) captures that extra detail for the NEXT occurrence:" -Level Info
-        Write-Alert "      wevtutil sl Microsoft-Windows-Hyper-V-VMMS/Analytic /e:true" -Level Info
+        Write-Alert "      wevtutil sl Microsoft-Windows-Hyper-V-VMMS-Analytic /e:true /q:true" -Level Info
     }
     Write-Host "==================================================================="
 
