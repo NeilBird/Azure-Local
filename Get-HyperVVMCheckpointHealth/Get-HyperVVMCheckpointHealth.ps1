@@ -643,7 +643,7 @@ function ConvertTo-VMCheckpointAuditHtml {
     <div class="k">Uptime</div><div>$(ConvertTo-HtmlText $rd.Uptime)</div>
     <div class="k">Attached disks</div><div>$($rd.AttachedDiskCount)</div>
     <div class="k">Checkpoints (Get-VMSnapshot)</div><div>$ckptCount</div>
-    <div class="k">Differencing (.avhdx) files</div><div>$($rd.CheckpointLayers) (= checkpoints &times; disks)</div>
+    <div class="k">Differencing (.avhdx) files</div><div>$(if ([int]$rd.CheckpointLayers -gt 0) { "$($rd.CheckpointLayers) (= checkpoints &times; disks)" } else { '0 (no checkpoints)' })</div>
     <div class="k">Stale checkpoints (&ge;$($rd.StaleHours)h)</div><div>$($rd.StaleCheckpointCount)</div>
     <div class="k">Checkpoint type</div><div>$(ConvertTo-HtmlText $rd.CheckpointType)</div>
     <div class="k">Orphaned .avhdx</div><div>$($rd.OrphanCount)</div>
