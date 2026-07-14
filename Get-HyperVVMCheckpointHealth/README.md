@@ -26,6 +26,14 @@ The script is **read-only** with respect to the VMs, disks, checkpoints, cluster
 
 - **Windows PowerShell 5.1** with the **Hyper-V** and **FailoverClusters** modules available. This script is written for, and validated against, **Windows PowerShell 5.1 only** — it is **not** intended for PowerShell 7.x.
 - Run it **on a cluster node** (interactive / SConfig logon), **or** from a **management workstation** using **`-Cluster <name>`** (with the RSAT **Failover Clustering** tools installed).
+- On a **management workstation**, install the RSAT **Failover Clustering** tools so `Get-ClusterGroup` / `Get-Cluster` resolve locally (without them you get `Get-ClusterGroup : The term ... is not recognized`):
+  ```powershell
+  # Windows 10 / 11 client (run elevated)
+  Add-WindowsCapability -Online -Name 'Rsat.FailoverCluster.Management.Tools~~~~0.0.1.0'
+
+  # Windows Server (run elevated)
+  Install-WindowsFeature -Name RSAT-Clustering-PowerShell
+  ```
 - Rights to query the cluster, Hyper-V, and the nodes' event logs. When the VM's owning node is not the local node, WinRM to that owning node is used for a **single** hop.
 
 ## How it connects (no double-hop)

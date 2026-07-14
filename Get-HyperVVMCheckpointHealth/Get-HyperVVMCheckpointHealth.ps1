@@ -193,7 +193,13 @@ if ($PSVersionTable.PSEdition -ne 'Desktop') {
 # 2) FailoverClusters must be available locally (on a cluster node, or via the RSAT 'Failover
 #    Clustering' tools on a management workstation).
 if (-not (Get-Module -ListAvailable -Name FailoverClusters)) {
-    throw "The 'FailoverClusters' module is not available. Run this on a cluster node, or install the RSAT 'Failover Clustering' tools on this workstation."
+    throw @"
+The 'FailoverClusters' module is not available. Run this on a cluster node, or install the RSAT
+'Failover Clustering' tools on this workstation:
+  - Windows 10/11 client : Add-WindowsCapability -Online -Name Rsat.FailoverCluster.Management.Tools~~~~0.0.1.0
+  - Windows Server       : Install-WindowsFeature RSAT-Clustering-PowerShell
+Then run this in Windows PowerShell 5.1, on a cluster node or a workstation that can reach the cluster.
+"@
 }
 
 # Microsoft Learn troubleshooting reference for Hyper-V VM backup / checkpoint / storage failures.
