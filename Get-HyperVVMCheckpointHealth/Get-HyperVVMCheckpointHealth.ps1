@@ -564,6 +564,11 @@ function Invoke-VMCheckpointAudit {
     $allChainPaths = [System.Collections.Generic.List[string]]::new()
     # Set true if the orphan scan below finds any .avhdx not part of an attached chain (feeds -PassThru).
     $hasOrphans = $false
+    # Nodes whose Hyper-V-VMMS/Analytic channel is NOT actively enabled (disabled, or 'not found').
+    # Populated by the Analytic section below and surfaced as a TIP in the RESULT block so the operator
+    # can choose to enable it for extra diagnostic detail on the NEXT occurrence (it is easily missed
+    # mid-report). Stays empty when -SkipAnalyticCheck is used, so no TIP is shown in that case.
+    $analyticNodesNeedEnable = @()
 
     # Enumerate each attached disk and resolve its full differencing chain (top .avhdx -> ... -> base).
     # This runs in ONE owner-context call (single hop for a remote owner) and flattens the VhdType enum
@@ -1050,9 +1055,11 @@ function Invoke-VMCheckpointAudit {
         } -ErrorAction SilentlyContinue
         if ($analyticStatus) {
             $analyticStatus | Sort-Object Node | Format-Table Node, Channel, Enabled -AutoSize | Out-Indented
-            $disabledNodes = @($analyticStatus | Where-Object { $_.Enabled -eq $false })
-            if ($disabledNodes.Count -gt 0) {
-                Write-Host "  DISABLED on: $($disabledNodes.Node -join ', ')"
+            # Only a real boolean $true means the channel is capturing; $false OR 'Unknown (log not
+            # found)' both mean it is NOT, so flag those nodes here and remember them for the RESULT tip.
+            $analyticNodesNeedEnable = @($analyticStatus | Where-Object { -not (($_.Enabled -is [bool]) -and $_.Enabled) } | ForEach-Object { [string]$_.Node })
+            if ($analyticNodesNeedEnable.Count -gt 0) {
+                Write-Host "  NOT enabled on: $($analyticNodesNeedEnable -join ', ')"
                 Write-Host "  To enable it (run elevated on each node listed above, if you choose to):"
                 Write-Host "      wevtutil sl $analyticLog /e:true"
                 Write-Host ""
@@ -1287,6 +1294,15 @@ function Invoke-VMCheckpointAudit {
         Write-Alert "  was NOT observed (likely a stalled / failed backup checkpoint or an unhealthy VSS writer)." -Level Warning
         Write-Alert ("  Why flagged: {0} concerning event(s) [{1}]; {2} checkpoint(s) >= {3}h old; {4} unhealthy VSS writer(s)." -f $eventConcernCount, $concernIdSummary, $staleCheckpoints.Count, $StaleHours, $vssUnhealthy.Count) -Level Warning
         Write-Alert "  See the FINDINGS TO INVESTIGATE section above for the suggested next steps (backup-team triage first; no Microsoft case needed yet)." -Level Warning
+    }
+    # Diagnostic-coverage TIP (independent of the verdict): if the Hyper-V-VMMS/Analytic channel is not
+    # enabled on one or more nodes, say so HERE in the RESULT block - mid-report it is easily missed.
+    if ($analyticNodesNeedEnable.Count -gt 0) {
+        Write-Host ""
+        Write-Alert ("  TIP: the Hyper-V-VMMS/Analytic channel is not enabled on: {0}." -f ($analyticNodesNeedEnable -join ', ')) -Level Info
+        Write-Alert "  It is the only place the internal per-disk .vmcx revert ('Cannot revert configuration info for AVHD') is" -Level Info
+        Write-Alert "  traced. Enabling it now (elevated, per node) captures that extra detail for the NEXT occurrence:" -Level Info
+        Write-Alert "      wevtutil sl Microsoft-Windows-Hyper-V-VMMS/Analytic /e:true" -Level Info
     }
     Write-Host "==================================================================="
 
