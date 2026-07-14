@@ -2,6 +2,11 @@
 
 > **Disclaimer:** This script is NOT a Microsoft supported service offering or product. It is provided as example code only, with no warranty or official support. Refer to the [MIT License](https://github.com/NeilBird/Azure-Local/blob/main/LICENSE) for further information.
 
+## Latest version:
+[`Get-HyperVVMCheckpointHealth.ps1`](./Get-HyperVVMCheckpointHealth.ps1)
+Updated: 2026-07-14
+Version: 0.2.0
+
 ## TL;DR
 
 An example PowerShell script that performs a **read-only** audit of a VM's **checkpoint / differencing-disk chain / replication** configuration, intended for use on an Azure Local or Windows Server Failover cluster.
@@ -10,19 +15,40 @@ Read-only health audit of a Hyper-V VM's **checkpoint / differencing-disk chain*
 
 ## Safety — this script makes no changes
 
-The script is **read-only** with respect to the VMs, disks, checkpoints, cluster, and event logs. Every data call is a `Get-*` / `Measure-*`, and the remote `Invoke-Command` blocks only run `Get-Item` / `Get-ChildItem` / `Get-WinEvent`.
+The script is **read-only** with respect to the VMs, disks, checkpoints, cluster, and event logs. Every data call is a `Get-*` / `Measure-*`, and the owner-context blocks only run read-only commands (`Get-VM`, `Get-VMHostSupportedVersion`, `Get-VHD`, `Get-VMSnapshot`, `Get-VMReplication`, `Get-Item`, `Get-ChildItem`, `Get-WinEvent`, and `vssadmin list writers`, which only *enumerates* VSS writer state).
 
 - It **never** creates/deletes/merges checkpoints, migrates, or changes VM/cluster state.
 - The Analytic-channel enable command is **printed only** — never executed.
 - The **only** filesystem writes happen when you opt in with `-OutputPath`: the `.txt` transcript, the events `.csv`, and (if needed) the output directory. With no `-OutputPath`, nothing is written.
-- It is **diagnostic only** — it does not determine root cause definitively or remediate anything. For interpretation of the findings, or any remediation, **open a Microsoft Support (CSS) case** and act on their advice before taking action.
+- It is **diagnostic only** — it does not determine root cause definitively or remediate anything. For **backup / checkpoint-merge or VSS** findings, engage your **third-party backup vendor first** (their product owns the checkpoint lifecycle); **open a Microsoft Support (CSS) case** for a confirmed fork-commit signature, or when the vendor rules out their product. Act on their advice before taking action.
 
 ## Requirements
 
-- PowerShell 5.1+ with the **Hyper-V** and **FailoverClusters** modules available.
-- Run from a management host (or cluster node) that can reach the cluster and its nodes.
-- **WinRM / `Invoke-Command`** to the owning node and cluster nodes (used to read file timestamps, scan `.avhdx` / `.hrl` files, query event logs, and check the Analytic channel state).
-- Rights to query the cluster, Hyper-V, and the nodes' event logs.
+- **Windows PowerShell 5.1** with the **Hyper-V** and **FailoverClusters** modules available. This script is written for, and validated against, **Windows PowerShell 5.1 only** — it is **not** intended for PowerShell 7.x.
+- Run it **on a cluster node** (interactive / SConfig logon), **or** from a **management workstation** using **`-Cluster <name>`** (with the RSAT **Failover Clustering** tools installed).
+- On a **management workstation**, install the RSAT **Failover Clustering** tools so `Get-ClusterGroup` / `Get-Cluster` resolve locally (without them you get `Get-ClusterGroup : The term ... is not recognized`):
+  ```powershell
+  # Windows 10 / 11 client (run elevated)
+  Add-WindowsCapability -Online -Name 'Rsat.FailoverCluster.Management.Tools~~~~0.0.1.0'
+
+  # Windows Server (run elevated)
+  Install-WindowsFeature -Name RSAT-Clustering-PowerShell
+  ```
+- Rights to query the cluster, Hyper-V, and the nodes' event logs. When the VM's owning node is not the local node, WinRM to that owning node is used for a **single** hop.
+
+## How it connects (no double-hop)
+
+The script is designed to avoid "double-hop" authentication failures (the `0x8009030e` Kerberos error you get when a remoting session tries to reach a second machine). It:
+
+1. finds the cluster nodes and the VM's **owning node** using the **cluster API** (`Get-ClusterGroup` / `Get-ClusterNode` — RPC, no WinRM), then
+2. runs every data-collection command in the **owner context** — **directly (locally)** when the current node owns the VM (zero hops), otherwise through **one** remoting session to the owning node.
+
+Two supported ways to run it, both single-hop:
+
+- **On a cluster node** (interactive / SConfig logon). VMs owned by that node are read locally (zero hops); VMs on other nodes are reached in one hop.
+- **From a management workstation** with **`-Cluster <name>`** (RSAT Failover Clustering installed). The cluster queries use RPC and each owning node is reached in one hop from the workstation. If you build the `-VMName` list from a `Get-ClusterGroup` sub-expression, add `-Cluster <name>` to **that** query too — it runs locally and does not inherit the script's `-Cluster` (see the remote example in Usage).
+
+> **Do not** `Enter-PSSession` into a node and then run the script: if the VM is owned by a *different* node, reaching it is a **second (double) hop** and is blocked (`Access is denied` / `0x8009030e`) unless CredSSP/delegation is configured. The script detects this and tells you to run it on a node or use `-Cluster`.
 
 ## Usage
 
@@ -36,20 +62,38 @@ The script is **read-only** with respect to the VMs, disks, checkpoints, cluster
 # Multiple VMs by name (array) - each gets its own .txt and .csv in the folder
 .\Get-HyperVVMCheckpointHealth.ps1 -VMName 'TestVM01','TestVM02' -OutputPath 'C:\Temp\Reports'
 
-# Every VM on the cluster - pass the VM OBJECTS directly (normalized to .Name internally)
-.\Get-HyperVVMCheckpointHealth.ps1 -VMName (Get-VM -CimSession (Get-Cluster).Name) -OutputPath 'C:\Temp\Reports'
+# Every clustered VM - ON A NODE. The bare Get-ClusterGroup targets the LOCAL cluster, so this form
+# only works when run on a cluster node (for a workstation, use the -Cluster form below).
+.\Get-HyperVVMCheckpointHealth.ps1 -VMName (Get-ClusterGroup | Where-Object GroupType -eq 'VirtualMachine').Name -OutputPath 'C:\Temp\Reports'
 
-# Every VM on the cluster - pass the names
-.\Get-HyperVVMCheckpointHealth.ps1 -VMName (Get-VM -CimSession (Get-Cluster).Name).Name -OutputPath 'C:\Temp\Reports'
+# A specific list of VM names (piped) - the script resolves each VM's owning node itself
+'VM01','VM02','VM03' | .\Get-HyperVVMCheckpointHealth.ps1 -OutputPath 'C:\Temp\Reports'
 
-# Every VM on the cluster (pipeline - VM objects piped straight in)
-Get-VM -CimSession (Get-Cluster).Name | .\Get-HyperVVMCheckpointHealth.ps1 -OutputPath 'C:\Temp\Reports'
+# REMOTE: from a management workstation (RSAT Failover Clustering) - target a cluster by name.
+# STEP 1 - verify the RSAT Failover Clustering tools are present on THIS workstation (see Requirements
+# to install if this returns nothing / $false). Get-ClusterGroup and Get-Cluster come from this module.
+if (Get-Module -ListAvailable FailoverClusters) { 'FailoverClusters: OK' } else { 'FailoverClusters: MISSING - install RSAT (see Requirements)' }
+Get-Command Get-ClusterGroup -ErrorAction SilentlyContinue   # should resolve; blank = tools not installed
 
-# Wider event look-back (7 days) and a lower stale threshold (12h)
-.\Get-HyperVVMCheckpointHealth.ps1 -VMName 'TestVM01' -EventLookbackHours 168 -StaleHours 12
+# STEP 2 - run it. NOTE: -Cluster must appear TWICE - the (Get-ClusterGroup -Cluster 'CLUS01' ...) that
+# builds the -VMName list is a SEPARATE local command that does NOT inherit the script's -Cluster, so it
+# needs its own; the script's -Cluster then governs the audit.
+.\Get-HyperVVMCheckpointHealth.ps1 -Cluster 'CLUS01' -VMName (Get-ClusterGroup -Cluster 'CLUS01' | Where-Object GroupType -eq 'VirtualMachine').Name -OutputPath 'C:\Temp\Reports'
+
+# Equivalent remote pipeline form (names gathered from the remote cluster, then piped in)
+Get-ClusterGroup -Cluster 'CLUS01' | Where-Object GroupType -eq 'VirtualMachine' |
+    Select-Object -ExpandProperty Name |
+    .\Get-HyperVVMCheckpointHealth.ps1 -Cluster 'CLUS01' -OutputPath 'C:\Temp\Reports'
+
+# Wider event look-back (14 days, vs the 7-day default) and a lower stale threshold (12h)
+.\Get-HyperVVMCheckpointHealth.ps1 -VMName 'TestVM01' -EventLookbackHours 336 -StaleHours 12
 
 # Skip the event-log scan and the Analytic-channel check (fastest, disk/checkpoint state only)
 .\Get-HyperVVMCheckpointHealth.ps1 -VMName 'TestVM01' -SkipWorkerEvents -SkipAnalyticCheck
+
+# -PassThru: also emit one object per VM to the pipeline (for Where-Object / Export-Csv / roll-ups)
+$r = .\Get-HyperVVMCheckpointHealth.ps1 -VMName 'TestVM01','TestVM02' -OutputPath 'C:\Temp\Reports' -PassThru
+$r | Where-Object HoldState | Format-Table VMName, OwningNode, Recommendation
 ```
 
 ### Download / save the script and run it
@@ -73,18 +117,21 @@ Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/NeilBird/Azure-Local/m
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `-VMName` | object[] (mandatory) | — | One or more VM **names** or VM **objects** (from `Get-VM`). Accepts an array and pipeline input (aliases `Name`, `VM`). Objects are normalized to `.Name`; names >100 chars are skipped with a warning. |
-| `-OutputPath` | string | — | Optional **base folder** for reports. Each run creates a timestamped sub-folder; each VM gets its own `.txt` transcript **and** events `.csv` inside it. Console-only if omitted. |
-| `-StaleHours` | int | `24` | Age (hours) at/beyond which a checkpoint or differencing disk is flagged `Stale = YES`. |
+| `-Cluster` | string | — | Optional. Target a cluster **by name** so the script can run from a **management workstation** (RSAT Failover Clustering) instead of on a node — cluster queries use RPC and each owning node is reached in a **single** hop. When omitted, the script targets the **local** cluster and a `Get-Cluster` guard rail requires you to be **on a cluster node** (it fails clearly if not). |
+| `-OutputPath` | string | — | Optional **base folder** for reports. Each run creates a timestamped sub-folder; each VM gets its own `.txt` transcript **and** events `.csv` inside it. If omitted, output is **console-only** (nothing saved) and the script warns at the start and end of the run to re-run with `-OutputPath` to capture files for a support case. |
+| `-StaleHours` | int | `24` | Age (hours) at/beyond which a checkpoint or differencing disk is flagged `Stale = YES`. If your backup product legitimately keeps checkpoints for longer (e.g. a 48-hour retention window), raise this (e.g. `-StaleHours 48`) so expected long-lived checkpoints are not flagged. |
 | `-SkipWorkerEvents` | switch | off | Skip the Hyper-V Worker/VMMS event-log scan. |
-| `-EventLookbackHours` | int | `96` (4 days) | How far back the event scan looks (1–720). |
-| `-WorkerEventIds` | int[] | see below | Event IDs flagged as a concern (node-wide match). |
+| `-EventLookbackHours` | int | `168` (7 days) | How far back the event scan looks (1–720). |
+| `-WorkerEventIds` | int[] | see below | Event IDs that indicate a genuine **problem** and drive the `Concern = YES` flag (node-wide match). |
+| `-ContextEventIds` | int[] | see below | **Informational** lifecycle event IDs. These are still **surfaced** for the timeline but are **never** flagged as a concern (e.g. VM started, checkpoint completed, merge started / finished OK). |
 | `-ErrorCodePatterns` | string[] | see below | HRESULT strings flagged as a concern when present in an event message. |
 | `-SkipAnalyticCheck` | switch | off | Skip the per-node `Hyper-V-VMMS/Analytic` channel state check. |
-| `-NoColour` (`-NoColor`) | switch | off | Colour is **on by default** for interactive consoles (headings + RESULT/WARNING/HOLD STATE). It auto-disables when output is redirected (`> file`, `Out-File`, `$x = .\script`) so captured text stays complete; the `-OutputPath` transcript captures the lines as plain text either way. Pass `-NoColour` to force plain output. |
+| `-PassThru` | switch | off | Emit **one `[pscustomobject]` per VM** to the pipeline (for `Where-Object` / `Export-Csv` / fleet roll-ups). Without it, **nothing** is written to the pipeline — the report goes to the host and, with `-OutputPath`, to the `.txt`/`.csv` files. See [Return value](#return-value). |
+| `-NoColour` (`-NoColor`) | switch | off | Colour is **on by default** for interactive consoles (headings + RESULT/WARNING/HOLD STATE). It auto-disables when output is redirected (`> file`, `Out-File`, `$x = .\script`) so captured text stays readable; the `-OutputPath` transcript captures the lines as plain text either way. Pass `-NoColour` to force plain output. |
 
 ## What it reports
 
-1. **Header** — cluster, VM name, VM Id (GUID), owning node, status/state, uptime, then two checkpoint-config fields, the stale threshold and run time (UTC):
+1. **Header** — cluster, VM name, VM Id (GUID), owning node, status/state, **VM config version** and the **latest version supported by the cluster** (via `Get-VMHostSupportedVersion`), uptime, then two checkpoint-config fields, the stale threshold and run time (UTC). When the VM's config version is older than the latest, a separate low **VM Configuration Version** section notes this as *migration / start* context — with the exact wording from the Microsoft guide and the `Update-VMVersion` remediation — and states explicitly that it is **not** a cause of the checkpoint/merge failure being investigated.
    - **Auto Checkpoints** (`AutomaticCheckpointsEnabled`) — when `True`, Hyper-V takes a checkpoint **automatically every time the VM starts** (a Client Hyper-V default; normally `False` on servers/clusters). A `True` here explains "unexpected" `.avhdx` layers appearing on boot.
    - **Checkpoint Type** (`CheckpointType`) — the style of checkpoint the VM is configured to take, which governs how each checkpoint's fork is committed: `Production` = app-consistent via in-guest VSS (falls back to Standard if VSS is unavailable); `ProductionOnly` = same but fails with no fallback; `Standard` = captures saved memory/running state (dev/test); `Disabled` = checkpoints not allowed. The value is annotated inline in the output.
 2. **VM configuration (`.vmcx`)** — the config file path plus its last-write time and age (the failure mode hinges on stale on-disk chain metadata living here).
@@ -95,9 +142,11 @@ Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/NeilBird/Azure-Local/m
 7. **Cluster Shared Volume free space** — scoped to the volume(s) hosting this VM's disks (falls back to all cluster volumes if it can't match); a stuck merge is often blocked by low free space.
 8. **Cluster role** (`Get-ClusterGroup`) — clustered role state and current owner.
 9. **Hyper-V Replica** — `Get-VMReplication` health + `Measure-VMReplication` throughput/backlog.
-10. **Worker/VMMS event scan** — recent events matching the VM (name **or** GUID), any listed error code, or any listed event ID. The console shows the first message line; the **full untruncated text is written to CSV** (see below).
+10. **Worker/VMMS event scan** — recent events matching the VM (name **or** GUID), any listed HRESULT, or any listed event ID. Each row is marked `Concern = YES` **only** for a genuine problem (an HRESULT match or a concern event ID); informational lifecycle events (VM started, checkpoint completed, merge started / finished OK) are listed for context but left blank. To keep the report readable, repeated rows for the same event ID are **collapsed** in the console / `.txt` (the first few are shown, followed by a `Removed N duplicate Event ID X entries - Review CSV file for full details.` note); the **full untruncated text of every event is written to the CSV**.
 11. **Analytic channel (per node)** — whether `Hyper-V-VMMS/Analytic` is enabled; prints the enable command where it is not.
-12. **Summary** — checkpoint count, stale warnings, event-concern warning, and a **HOLD STATE** warning (see below). It always closes with a reminder that the report is diagnostic only and that interpretation / remediation should go through a Microsoft Support (CSS) case.
+12. **VSS writer health** (`vssadmin list writers` — read-only) — flags any VSS writer whose state is not `Stable` or that reports a last error. Failed / timed-out VSS writers are a leading cause of Hyper-V checkpoint / backup failures (per the Microsoft troubleshooting guide).
+13. **Summary** — checkpoint count, stale-checkpoint + backup-check guidance, event-concern warning, and a **severity assessment**: **HOLD STATE (data-loss risk)** when a confirmed fork-commit / merge signature accompanies unmerged differencing disk(s), or **INVESTIGATE** when only symptom-level signals (e.g. repeated `15268`, an aged backup checkpoint, or an unhealthy VSS writer) are present. Each includes a plain-language "why flagged" line and links the Microsoft Learn troubleshooting article.
+14. **Problem Statement (for a Microsoft Support / CSS case)** — a copy/paste-ready block: cluster/owner/VM, plain-language findings, concerning events grouped by ID with first/last timestamps, the severity assessment, any unhealthy VSS writers, the requested action, the artifacts to attach (the `.txt` report and events `.csv`, by path), and the Microsoft Learn reference. It always closes with a reminder that the report is diagnostic only and that interpretation / remediation should go through a Microsoft Support (CSS) case.
 
 > **Progress:** while running, the script shows a parent progress bar (`VM X of Y`) with a per-VM sub-bar that updates through each section (resolving the VM, cluster role, disks, checkpoints, the event-log scan, etc.) — useful on a busy or large cluster where operations like the event-log scan can take time. Progress uses the PowerShell progress stream, so it never appears in the transcript, redirected output, or the returned value.
 
@@ -108,33 +157,45 @@ Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/NeilBird/Azure-Local/m
 ```
 <OutputPath>\
   CheckpointAudit_<yyyy-MM-dd_HHmmssZ>\        <- one sub-folder per run
-    VMAudit_<VMName>_<yyyyMMdd-HHmmss>.txt      <- full console transcript for that VM
-    Events_<VMName>_<yyyy-MM-dd>.csv            <- that VM's events, full untruncated text
+    <VMName>_VMAudit_<yyyyMMdd-HHmmss>.txt     <- full console transcript for that VM
+    <VMName>_Events_<yyyy-MM-dd>.csv           <- that VM's events, full untruncated text
 ```
 
-- **`VMAudit_<VMName>_<yyyyMMdd-HHmmss>.txt`** — full console transcript of that VM's run.
-- **`Events_<VMName>_<yyyy-MM-dd>.csv`** — that VM's event scan with the **complete, untruncated** message text (newlines flattened to ` | `). Use this rather than the console table, which truncates long messages.
+- **`<VMName>_VMAudit_<yyyyMMdd-HHmmss>.txt`** — full console transcript of that VM's run.
+- **`<VMName>_Events_<yyyy-MM-dd>.csv`** — that VM's event scan with the **complete, untruncated** message text (newlines flattened to ` | `). The `.txt` collapses repeated rows for the same event ID (first few shown + a `Removed N duplicate...` note), so use this CSV for the full record of every event.
 
-Running against many VMs therefore produces one `.txt` + one `.csv` per VM, all grouped in a single per-run sub-folder so repeated runs never intermix. The run-folder path is printed at the start of the run.
+File names lead with the **VM name** so per-VM reports sort together for easy reading. Running against many VMs produces one `.txt` + one `.csv` per VM, all grouped in a single per-run sub-folder so repeated runs never intermix. The run-folder path is printed at the start of the run.
 
 ## Failure-signature reference
 
 The defaults target the checkpoint fork-commit / merge failure mode.
 
-### Event IDs (`-WorkerEventIds`)
+### Concerning event IDs (`-WorkerEventIds`)
+
+These indicate a genuine problem and are flagged **`Concern = YES`**:
 
 | Log | ID | Meaning |
 |---|---|---|
 | Worker | `3216` | Failed to switch to new differencing disks during checkpoint (`0x800703EE`) |
 | Worker | `3280` | Related checkpoint/disk error |
-| VMMS | `18500` / `18510` | Checkpoint started / completed |
 | VMMS | `18590` | Checkpoint failed (fork-commit, `0x80048102`) — key signature |
 | Worker | `18590` | Guest OS bugcheck / fatal error — **same ID, different channel** (the VM crashed, e.g. after a migration reopened a rolled-back chain). Check the `Log` column to tell them apart. |
 | VMMS | `18012` | Checkpoint operation failed |
 | VMMS | `12240` | Attachment (`.avhdx`) not found |
 | VMMS | `15268` | Failed to get disk information |
 | VMMS | `16300` | Cannot load a virtual machine configuration |
-| VMMS | `19070` / `19090` / `19080` | Background disk merge started / interrupted / finished |
+| VMMS | `19090` | Background disk merge **interrupted** |
+
+### Informational context event IDs (`-ContextEventIds`)
+
+These are **surfaced for the timeline** but are **never** flagged as a concern (on their own they are normal, healthy operations). Previously these were incorrectly stamped `Concern = YES`:
+
+| Log | ID | Meaning |
+|---|---|---|
+| VMMS | `18500` | VM started successfully |
+| VMMS | `18510` | Checkpoint completed |
+| VMMS | `19070` | Background disk merge started |
+| VMMS | `19080` | Background disk merge finished **successfully** |
 
 > Event-ID matching is intentionally **node-wide** — some of these events carry a blank or a different VM GUID, so scoping strictly to one VM would miss them.
 
@@ -149,14 +210,16 @@ The defaults target the checkpoint fork-commit / merge failure mode.
 | `0x800703EE` | `ERROR_FILE_INVALID` | A volume changed underneath an open file |
 | `0x80070002` | `ERROR_FILE_NOT_FOUND` | The `.avhdx` / VM config file is missing |
 
-## HOLD STATE guidance
+## Severity: HOLD STATE vs INVESTIGATE
 
-When the report finds **checkpoint/merge failure signatures AND unmerged differencing disk(s)**, it prints a
-**HOLD STATE** warning. In that condition:
+The summary classifies findings into two levels so an operator knows how urgent it is:
 
-- **Do NOT** live-migrate, quick-migrate, storage-migrate, or restart the VM. Reopening an inconsistent disk chain can roll disks back to their base and lose intervening data.
-- Continuing to run the VM in place is generally safe (Hyper-V keeps using the in-memory chain state).
-- **Open a Microsoft support case** to validate/merge the chain before any migration or restart.
+- **HOLD STATE (data-loss risk)** — a confirmed checkpoint **fork-commit / merge-failure signature** (event `18590`, `3216`, or an HRESULT such as `0x80048102`) is present **together with** unmerged differencing disk(s). As a **precaution**, avoid live/quick/storage-migrating or restarting the VM until the chain has been validated (and merged if required) — reopening an inconsistent chain can roll disks back to base and lose intervening data. **Engage Microsoft Support** to confirm the safe path first.
+- **INVESTIGATE** — concern signals are present but the specific fork-commit signature was **not** observed. The likely cause is a **stalled / failed backup checkpoint** or an **unhealthy VSS writer** rather than on-disk chain corruption. **Engage your third-party backup vendor first** — their product creates the checkpoint and is responsible for requesting its **merge after a successful backup**, so a long-lived checkpoint usually means the backup did not complete or did not issue the merge. Review the backup tool and the **VSS Writer Health** section, and confirm whether any aged checkpoints are expected (by design). Open a Microsoft Support (CSS) case only if the vendor rules out their product, or if a fork-commit signature later appears. As a precaution, avoid an unnecessary migrate / restart until confirmed.
+
+Continuing to run the VM in place is generally safe (Hyper-V keeps using the in-memory chain state). Both levels, and the report's Problem Statement, link the Microsoft Learn troubleshooting guide:
+
+> [Troubleshoot Hyper-V Virtual Machine Backup, Checkpoint, and Storage Failures](https://learn.microsoft.com/en-us/troubleshoot/windows-server/virtualization/hyper-v-virtual-machine-backup-checkpoint-storage)
 
 ## Enabling the Analytic channel (optional, operator's choice)
 
@@ -168,4 +231,33 @@ wevtutil sl Microsoft-Windows-Hyper-V-VMMS/Analytic /e:true
 
 ## Return value
 
-The script returns a `[bool]` **per VM** — `$true` when that VM has one or more active checkpoint (differencing) disks — for use in automation. When multiple VMs are supplied, one boolean is emitted per VM.
+By **default the script writes nothing to the pipeline** — the human-readable report goes to the host (and, with `-OutputPath`, to the per-VM `.txt` transcript + events `.csv`). This keeps `$x = .\Get-HyperVVMCheckpointHealth.ps1 ...` clean.
+
+Add **`-PassThru`** to emit **one `[pscustomobject]` per VM** to the pipeline, in addition to the console report / files:
+
+| Property | Type | Meaning |
+|---|---|---|
+| `VMName` | string | VM name audited. |
+| `Cluster` | string | Cluster name. |
+| `OwningNode` | string | Node that owns/runs the VM. |
+| `Recommendation` | string | `HOLD STATE` / `INVESTIGATE` / `OK` / `NOT FOUND` / `ERROR`. |
+| `HoldState` | bool | Fork-commit / merge-failure signature **and** unmerged differencing disk(s) present together (data-loss risk). |
+| `HasAttachedCheckpoints` | bool | One or more active differencing (`.avhdx`) layers attached. |
+| `HasStaleCheckpoints` | bool | One or more checkpoints ≥ `-StaleHours` old. |
+| `HasOrphanedCheckpoints` | bool | Orphaned `.avhdx` present on disk (not part of any attached chain). |
+| `AttachedCheckpointCount` | int | Count of active differencing layers across attached disks. |
+| `StaleCheckpointCount` | int | Count of checkpoints ≥ `-StaleHours` old. |
+| `ConcernEventCount` | int | Count of `Concern = YES` Hyper-V events. |
+| `ReportFile` | string | Path to this VM's `.txt` report (`$null` when `-OutputPath` omitted). |
+| `Detail` | string | Extra context for `NOT FOUND` / `ERROR` rows. |
+
+A row is emitted for **every** VM — including `NOT FOUND` / `ERROR` cases — so a fleet sweep always yields one object per VM:
+
+```powershell
+$r = .\Get-HyperVVMCheckpointHealth.ps1 -Cluster 'CLUS01' `
+        -VMName (Get-ClusterGroup -Cluster 'CLUS01' | Where-Object GroupType -eq 'VirtualMachine').Name `
+        -OutputPath 'C:\Temp\Reports' -PassThru
+
+$r | Where-Object HoldState | Format-Table VMName, OwningNode, Recommendation
+$r | Export-Csv 'C:\Temp\Reports\fleet-summary.csv' -NoTypeInformation
+```
