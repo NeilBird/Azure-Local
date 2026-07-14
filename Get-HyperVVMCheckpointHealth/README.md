@@ -3,9 +3,10 @@
 > **Disclaimer:** This script is NOT a Microsoft supported service offering or product. It is provided as example code only, with no warranty or official support. Refer to the [MIT License](https://github.com/NeilBird/Azure-Local/blob/main/LICENSE) for further information.
 
 ## Latest version:
-[`Get-HyperVVMCheckpointHealth.ps1`](./Get-HyperVVMCheckpointHealth.ps1)
-Updated: 2026-07-14
-Version: 0.2.0
+
+- Script: [`Get-HyperVVMCheckpointHealth.ps1`](./Get-HyperVVMCheckpointHealth.ps1)
+- Updated: 2026-07-14
+- Version: 0.2.0
 
 ## TL;DR
 
