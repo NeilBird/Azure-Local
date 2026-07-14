@@ -1147,22 +1147,37 @@ function Invoke-VMCheckpointAudit {
     $investigate      = ((-not $holdState) -and (($staleCheckpoints.Count -gt 0) -or ($eventConcernCount -gt 0) -or ($vssUnhealthy.Count -gt 0)))
     $concernIdSummary = (@($concernEvents | Group-Object Id | Sort-Object { [int]$_.Name } | ForEach-Object { "{0} x{1}" -f $_.Name, $_.Count }) -join ', ')
 
-    # ---- Problem statement for a Microsoft Support (CSS) Support Request (SR) ----------------------
-    # A copy/paste-ready summary of the key findings, so this report can be pasted into (or attached to)
-    # a support case without re-typing. It references the events CSV for the full, untruncated detail.
+    # ---- Findings block for the operator / backup team (and, only when warranted, a CSS case) -------
+    # A copy/paste-ready summary of the key findings. The framing ADAPTS to severity so we do NOT push
+    # operators toward a Microsoft Support (CSS) case when there is no fork-commit signature: only
+    # HOLD STATE (a confirmed fork-commit signature alongside unmerged differencing disks) warrants a
+    # CSS case up front; INVESTIGATE and clean results are for the operator / backup team to triage
+    # FIRST. It references the events CSV for the full, untruncated detail.
+    if ($holdState) {
+        $statementTitle = "PROBLEM STATEMENT (for a Microsoft Support (CSS) case and/or your backup vendor):"
+    } elseif ($investigate) {
+        $statementTitle = "FINDINGS TO INVESTIGATE (for your operations / backup team - no Microsoft case needed yet):"
+    } else {
+        $statementTitle = "SUMMARY (for your records):"
+    }
     Write-Host ""
-    Write-Section "PROBLEM STATEMENT (for your backup vendor and/or a Microsoft Support (CSS) case):"
+    Write-Section $statementTitle
     Write-Host "  ------------------------------------------------------------------------------"
     Write-Host ("  Cluster / Owner : {0} / {1}" -f $ClusterName, $OwningNode)
     Write-Host ("  VM              : {0}  (Id {1})" -f $VMName, $vm.VMId)
     Write-Host ("  VM State/Status : {0} / {1}" -f $vm.State, $vm.Status)
     Write-Host ("  Report run at   : {0} UTC" -f [DateTime]::UtcNow.ToString('yyyy-MM-dd HH:mm:ss'))
     Write-Host ""
-    if ($hasCheckpoints) {
+    if ($hasCheckpoints -and $holdState) {
         Write-Host ("  This VM is running on {0} active differencing (.avhdx checkpoint) disk layer(s) over its base" -f $totalCheckpoints)
-        Write-Host  "  VHD(s). We are investigating a suspected checkpoint fork-commit / merge failure that can leave"
-        Write-Host  "  the on-disk chain inconsistent and, if the VM is later migrated or restarted, roll the disks"
-        Write-Host  "  back to base and orphan the data held in the .avhdx layer(s)."
+        Write-Host  "  VHD(s), together with a checkpoint fork-commit / merge-failure signature. That combination can"
+        Write-Host  "  leave the on-disk chain inconsistent and, if the VM is later migrated or restarted, roll the"
+        Write-Host  "  disks back to base and orphan the data held in the .avhdx layer(s)."
+    } elseif ($hasCheckpoints) {
+        Write-Host ("  This VM is running on {0} active differencing (.avhdx checkpoint) disk layer(s) over its base" -f $totalCheckpoints)
+        Write-Host  "  VHD(s). No checkpoint fork-commit / merge-failure signature was found, so these layer(s) are"
+        Write-Host  "  most likely a backup checkpoint that has not yet been merged - review them with your backup"
+        Write-Host  "  team before taking any action (this is NOT, on its own, a reason to open a Microsoft case)."
     } else {
         Write-Host  "  This VM currently has no active differencing (.avhdx) disk layers attached."
     }
@@ -1206,10 +1221,27 @@ function Invoke-VMCheckpointAudit {
         Write-Host  "  investigation."
     }
     Write-Host ""
-    Write-Host  "  Requested action: please advise on the safe next step to validate and merge / consolidate the"
-    Write-Host  "  differencing chain for this VM."
+    if ($holdState) {
+        Write-Host  "  Requested action: engage Microsoft Support (CSS) and/or your backup vendor to advise on the safe"
+        Write-Host  "  next step to validate and merge / consolidate the differencing chain BEFORE any migration / restart."
+    } elseif ($investigate) {
+        Write-Host  "  Suggested next steps (operator / backup team FIRST - a Microsoft Support (CSS) case is NOT needed"
+        Write-Host  "  for this result):"
+        Write-Host  "    1. Check your backup product's recent job history for this VM - did the last backup complete?"
+        Write-Host  "    2. Confirm whether the aged checkpoint is expected (by design) or was left behind by a failed backup."
+        Write-Host  "    3. If it is a leftover backup checkpoint, merge / remove it via the backup product (preferred), or"
+        Write-Host  "       via Hyper-V Manager once your backup team confirms it is safe to do so."
+        Write-Host  "    4. Only open a Microsoft Support (CSS) case if a fork-commit signature later appears, or your"
+        Write-Host  "       backup vendor rules out their product."
+    } else {
+        Write-Host  "  No action required from this result - no active checkpoint layer(s) and no concern signals were found."
+    }
     Write-Host ""
-    Write-Host  "  Artifacts from this audit to attach to the case:"
+    if ($holdState) {
+        Write-Host  "  Artifacts from this audit to attach to the case:"
+    } else {
+        Write-Host  "  Artifacts from this audit (for your records / to share with your backup team):"
+    }
     if ($OutputPath -and $reportFile) {
         Write-Host ("    - Text report : {0}" -f $reportFile)
         if ($eventsCsvName) {
@@ -1249,7 +1281,7 @@ function Invoke-VMCheckpointAudit {
         Write-Alert "  INVESTIGATE: concern signals are present, but the specific checkpoint fork-commit signature" -Level Warning
         Write-Alert "  was NOT observed (likely a stalled / failed backup checkpoint or an unhealthy VSS writer)." -Level Warning
         Write-Alert ("  Why flagged: {0} concerning event(s) [{1}]; {2} checkpoint(s) >= {3}h old; {4} unhealthy VSS writer(s)." -f $eventConcernCount, $concernIdSummary, $staleCheckpoints.Count, $StaleHours, $vssUnhealthy.Count) -Level Warning
-        Write-Alert "  See the PROBLEM STATEMENT section above for the recommended next steps and a copy/paste case summary." -Level Warning
+        Write-Alert "  See the FINDINGS TO INVESTIGATE section above for the suggested next steps (backup-team triage first; no Microsoft case needed yet)." -Level Warning
     }
     Write-Host "==================================================================="
 
