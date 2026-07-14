@@ -1155,12 +1155,6 @@ function Invoke-VMCheckpointAudit {
     }
     if ($staleCheckpoints.Count -gt 0) {
         Write-Alert "  WARNING: $($staleCheckpoints.Count) checkpoint(s) are >= $StaleHours hours old (possibly stuck)." -Level Warning
-        Write-Alert "  ACTION: If you are using a Third-Party Backup product that creates Hyper-V checkpoints, note it" -Level Warning
-        Write-Alert "  normally REQUESTS the checkpoint MERGE (removal) only AFTER it has successfully copied the VM's" -Level Warning
-        Write-Alert "  data. A checkpoint that lingers well beyond the backup window therefore suggests the backup did" -Level Warning
-        Write-Alert "  not complete, or did not issue the merge. Check that product for the progress / completion of its" -Level Warning
-        Write-Alert "  backup job(s), and confirm whether these aged checkpoint(s) are expected (by design) or need" -Level Warning
-        Write-Alert "  manual investigation." -Level Warning
     }
     if ($eventConcernCount -gt 0) {
         Write-Alert "  WARNING: $eventConcernCount concerning Hyper-V event(s) found (see the Concern=YES rows above)." -Level Warning
@@ -1170,24 +1164,13 @@ function Invoke-VMCheckpointAudit {
         Write-Alert "  HOLD STATE (data-loss risk): a checkpoint fork-commit / merge-failure signature AND" -Level Critical
         Write-Alert "  unmerged differencing disk(s) are present together." -Level Critical
         Write-Alert ("  Why flagged: {0} active differencing (.avhdx) layer(s); fork-commit signature in event(s) [{1}]; {2} checkpoint(s) >= {3}h old." -f $totalCheckpoints, $concernIdSummary, $staleCheckpoints.Count, $StaleHours) -Level Critical
-        Write-Alert "  As a PRECAUTION, avoid live/quick/storage-migrating or restarting this VM until the chain has" -Level Critical
-        Write-Alert "  been validated (and merged if required) - reopening an inconsistent chain can roll disks back" -Level Critical
-        Write-Alert "  to base and lose intervening data. Engage Microsoft Support to confirm the safe path first." -Level Critical
-        Write-Alert ("  Reference: {0}" -f $script:TroubleshootTitle) -Level Critical
-        Write-Alert ("             {0}" -f $script:TroubleshootUrl) -Level Critical
+        Write-Alert "  See the PROBLEM STATEMENT below for the recommended next steps and a copy/paste case summary." -Level Critical
     } elseif ($investigate) {
         Write-Host ""
         Write-Alert "  INVESTIGATE: concern signals are present, but the specific checkpoint fork-commit signature" -Level Warning
-        Write-Alert "  was NOT observed. The likely cause is a stalled / failed backup checkpoint or an unhealthy VSS" -Level Warning
-        Write-Alert "  writer rather than on-disk chain corruption." -Level Warning
+        Write-Alert "  was NOT observed (likely a stalled / failed backup checkpoint or an unhealthy VSS writer)." -Level Warning
         Write-Alert ("  Why flagged: {0} concerning event(s) [{1}]; {2} checkpoint(s) >= {3}h old; {4} unhealthy VSS writer(s)." -f $eventConcernCount, $concernIdSummary, $staleCheckpoints.Count, $StaleHours, $vssUnhealthy.Count) -Level Warning
-        Write-Alert "  FIRST CONTACT: engage your Third-Party Backup vendor - their product creates the checkpoint and" -Level Warning
-        Write-Alert "  is responsible for requesting the merge after a successful backup. Review the backup tool and the" -Level Warning
-        Write-Alert "  VSS Writer Health section above, and confirm whether the aged checkpoint(s) are expected. Only" -Level Warning
-        Write-Alert "  open a Microsoft Support (CSS) case if the vendor rules out their product, or if a fork-commit" -Level Warning
-        Write-Alert "  signature later appears. As a precaution, avoid an unnecessary VM migration / restart until confirmed." -Level Warning
-        Write-Alert ("  Reference: {0}" -f $script:TroubleshootTitle) -Level Warning
-        Write-Alert ("             {0}" -f $script:TroubleshootUrl) -Level Warning
+        Write-Alert "  See the PROBLEM STATEMENT below for the recommended next steps and a copy/paste case summary." -Level Warning
     }
     Write-Host "==================================================================="
 
