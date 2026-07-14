@@ -120,6 +120,12 @@ Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/NeilBird/Azure-Local/m
 
 # Run the downloaded script for a VM named 'TestVM'
 .\Get-HyperVVMCheckpointHealth.ps1 -VMName 'TestVM' -OutputPath C:\Temp\
+
+# Or, ON A CLUSTER NODE, audit EVERY clustered VM. The bare Get-ClusterGroup targets the LOCAL
+# cluster (cluster API - RPC, no WinRM), so this form is for running on a node. It returns every
+# clustered VM across all nodes, so -IncludeDiscoveredVMs is not needed here (they are already in
+# the list); use that switch only when auditing a SUBSET of VMs.
+.\Get-HyperVVMCheckpointHealth.ps1 -VMName (Get-ClusterGroup | Where-Object GroupType -eq 'VirtualMachine').Name -OutputPath C:\Temp\
 ```
 
 > **Note:** Depending on your execution policy, you may need to unblock the downloaded file first: `Unblock-File -Path '.\Get-HyperVVMCheckpointHealth.ps1'`.
