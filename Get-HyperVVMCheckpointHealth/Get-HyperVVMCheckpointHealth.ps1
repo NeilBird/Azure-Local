@@ -411,6 +411,11 @@ function ConvertTo-VMCheckpointAuditHtml {
     $countOk    = @($rows | Where-Object { $_.Recommendation -eq 'OK' }).Count
     $staleTotal = (@($rows | ForEach-Object { [int]$_.StaleCheckpointCount }) | Measure-Object -Sum).Sum
     if (-not $staleTotal) { $staleTotal = 0 }
+    # True when at least one audited node still has the Hyper-V-VMMS Analytic channel NOT enabled
+    # (per-VM ReportData.AnalyticNodesNeedEnable). Used to show the 'Enable the Analytic channel'
+    # recommended step ONLY when it is actually actionable - if it is already enabled everywhere
+    # (or the check was skipped), the bullet is omitted.
+    $analyticNeedsEnable = (@($rows | ForEach-Object { if ($_.ReportData) { @($_.ReportData.AnalyticNodesNeedEnable) } } | Where-Object { $_ }).Count -gt 0)
 
     $sb = [System.Text.StringBuilder]::new()
     $head = @'
@@ -536,13 +541,20 @@ function ConvertTo-VMCheckpointAuditHtml {
 </div>
 '@)
 
-    # Recommended next steps (placed up-front, right after the summary callouts).
+    # Recommended next steps (placed up-front, right after the summary callouts). The Analytic-channel
+    # bullet is shown ONLY when at least one audited node still needs it enabled (see $analyticNeedsEnable).
     [void]$sb.Append(@'
 <h2>Recommended next steps</h2>
 <ol>
   <li><strong>Backup team first:</strong> for each VM with a stale checkpoint, check the backup product's recent job history - did the last backup complete? A leftover checkpoint usually means a backup that did not finish or did not issue the post-backup merge.</li>
   <li><strong>Confirm expected vs abandoned:</strong> decide whether each stale checkpoint is expected (by design) or left behind by a failed backup, then merge / remove the abandoned ones (prefer the backup product over manual deletion).</li>
+'@)
+    if ($analyticNeedsEnable) {
+        [void]$sb.Append(@'
   <li><strong>Enable the Analytic channel</strong> (elevated, per node) to capture the internal per-disk revert trace for the next occurrence: <code>wevtutil sl Microsoft-Windows-Hyper-V-VMMS-Analytic /e:true /q:true</code></li>
+'@)
+    }
+    [void]$sb.Append(@'
   <li><strong>Rule out storage-layer disruption:</strong> if the storage-health section shows active S2D repair / resync jobs, CSV redirection, or unhealthy disks, treat it as a probable contributing factor and run the CSS Storage Diagnostic (<code>Install-Module -Name Microsoft.AzLocal.CSSTools</code>; then <code>Start-AzsSupportStorageDiagnostic</code>).</li>
   <li><strong>HOLD STATE VMs (if any):</strong> engage Microsoft Support (CSS) and/or your backup vendor before any migration / restart.</li>
   <li>Open a Microsoft Support case only if a fork-commit signature (<code>18590</code> / <code>0x80048102</code>) appears, or the backup vendor rules out their product.</li>
