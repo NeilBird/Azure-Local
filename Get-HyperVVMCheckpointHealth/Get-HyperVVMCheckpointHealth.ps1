@@ -90,11 +90,15 @@
 #>
 
 #Requires -Version 5.1
-#Requires -PSEdition Desktop
-# NOTE: FailoverClusters is required LOCALLY in both run modes (on a node, or on a workstation via the
-# RSAT 'Failover Clustering' tools). Hyper-V is intentionally NOT required here: with -Cluster the
+# NOTE: the Windows PowerShell 5.1 (Desktop) edition and the FailoverClusters module are enforced by
+# RUNTIME guards at the top of the begin block below - NOT by '#Requires -PSEdition Desktop' /
+# '#Requires -Modules FailoverClusters'. Those directives make PowerShell refuse to introspect the
+# script when the current session does not satisfy them, which breaks tab-completion of -Parameters
+# when authoring on a PowerShell 7 workstation (or one without the RSAT clustering tools). The runtime
+# guards give the same clear failure at execution time while keeping tooling / completion working.
+# FailoverClusters is required LOCALLY in both run modes (on a node, or on a workstation via the RSAT
+# 'Failover Clustering' tools). Hyper-V is intentionally NOT required locally: with -Cluster the
 # Hyper-V cmdlets run inside the owning-node session, so a management workstation need not have it.
-#Requires -Modules FailoverClusters
 
 [CmdletBinding()]
 param(
@@ -170,6 +174,18 @@ param(
 )
 
 begin {
+
+# Runtime requirement guards (see the NOTE above the param block for why these are NOT '#Requires').
+# 1) Windows PowerShell 5.1 (Desktop edition) only - this script is written for, and validated
+#    against, WinPS 5.1 and is NOT intended for PowerShell 7.x (Core).
+if ($PSVersionTable.PSEdition -ne 'Desktop') {
+    throw "This script requires Windows PowerShell 5.1 (Desktop edition). It is running under PowerShell $($PSVersionTable.PSVersion) ($($PSVersionTable.PSEdition)) - re-run it in Windows PowerShell 5.1."
+}
+# 2) FailoverClusters must be available locally (on a cluster node, or via the RSAT 'Failover
+#    Clustering' tools on a management workstation).
+if (-not (Get-Module -ListAvailable -Name FailoverClusters)) {
+    throw "The 'FailoverClusters' module is not available. Run this on a cluster node, or install the RSAT 'Failover Clustering' tools on this workstation."
+}
 
 # Microsoft Learn troubleshooting reference for Hyper-V VM backup / checkpoint / storage failures.
 # Surfaced in the summary and problem statement so operators have an authoritative next-read. Any
