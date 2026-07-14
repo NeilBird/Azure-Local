@@ -90,6 +90,10 @@ Get-ClusterGroup -Cluster 'CLUS01' | Where-Object GroupType -eq 'VirtualMachine'
 
 # Skip the event-log scan and the Analytic-channel check (fastest, disk/checkpoint state only)
 .\Get-HyperVVMCheckpointHealth.ps1 -VMName 'TestVM01' -SkipWorkerEvents -SkipAnalyticCheck
+
+# -PassThru: also emit one object per VM to the pipeline (for Where-Object / Export-Csv / roll-ups)
+$r = .\Get-HyperVVMCheckpointHealth.ps1 -VMName 'TestVM01','TestVM02' -OutputPath 'C:\Temp\Reports' -PassThru
+$r | Where-Object HoldState | Format-Table VMName, OwningNode, Recommendation
 ```
 
 ### Download / save the script and run it
@@ -122,7 +126,8 @@ Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/NeilBird/Azure-Local/m
 | `-ContextEventIds` | int[] | see below | **Informational** lifecycle event IDs. These are still **surfaced** for the timeline but are **never** flagged as a concern (e.g. VM started, checkpoint completed, merge started / finished OK). |
 | `-ErrorCodePatterns` | string[] | see below | HRESULT strings flagged as a concern when present in an event message. |
 | `-SkipAnalyticCheck` | switch | off | Skip the per-node `Hyper-V-VMMS/Analytic` channel state check. |
-| `-NoColour` (`-NoColor`) | switch | off | Colour is **on by default** for interactive consoles (headings + RESULT/WARNING/HOLD STATE). It auto-disables when output is redirected (`> file`, `Out-File`, `$x = .\script`) so captured text stays complete; the `-OutputPath` transcript captures the lines as plain text either way. Pass `-NoColour` to force plain output. |
+| `-PassThru` | switch | off | Emit **one `[pscustomobject]` per VM** to the pipeline (for `Where-Object` / `Export-Csv` / fleet roll-ups). Without it, **nothing** is written to the pipeline — the report goes to the host and, with `-OutputPath`, to the `.txt`/`.csv` files. See [Return value](#return-value). |
+| `-NoColour` (`-NoColor`) | switch | off | Colour is **on by default** for interactive consoles (headings + RESULT/WARNING/HOLD STATE). It auto-disables when output is redirected (`> file`, `Out-File`, `$x = .\script`) so captured text stays readable; the `-OutputPath` transcript captures the lines as plain text either way. Pass `-NoColour` to force plain output. |
 
 ## What it reports
 
@@ -226,4 +231,33 @@ wevtutil sl Microsoft-Windows-Hyper-V-VMMS/Analytic /e:true
 
 ## Return value
 
-The script returns a `[bool]` **per VM** — `$true` when that VM has one or more active checkpoint (differencing) disks — for use in automation. When multiple VMs are supplied, one boolean is emitted per VM.
+By **default the script writes nothing to the pipeline** — the human-readable report goes to the host (and, with `-OutputPath`, to the per-VM `.txt` transcript + events `.csv`). This keeps `$x = .\Get-HyperVVMCheckpointHealth.ps1 ...` clean.
+
+Add **`-PassThru`** to emit **one `[pscustomobject]` per VM** to the pipeline, in addition to the console report / files:
+
+| Property | Type | Meaning |
+|---|---|---|
+| `VMName` | string | VM name audited. |
+| `Cluster` | string | Cluster name. |
+| `OwningNode` | string | Node that owns/runs the VM. |
+| `Recommendation` | string | `HOLD STATE` / `INVESTIGATE` / `OK` / `NOT FOUND` / `ERROR`. |
+| `HoldState` | bool | Fork-commit / merge-failure signature **and** unmerged differencing disk(s) present together (data-loss risk). |
+| `HasAttachedCheckpoints` | bool | One or more active differencing (`.avhdx`) layers attached. |
+| `HasStaleCheckpoints` | bool | One or more checkpoints ≥ `-StaleHours` old. |
+| `HasOrphanedCheckpoints` | bool | Orphaned `.avhdx` present on disk (not part of any attached chain). |
+| `AttachedCheckpointCount` | int | Count of active differencing layers across attached disks. |
+| `StaleCheckpointCount` | int | Count of checkpoints ≥ `-StaleHours` old. |
+| `ConcernEventCount` | int | Count of `Concern = YES` Hyper-V events. |
+| `ReportFile` | string | Path to this VM's `.txt` report (`$null` when `-OutputPath` omitted). |
+| `Detail` | string | Extra context for `NOT FOUND` / `ERROR` rows. |
+
+A row is emitted for **every** VM — including `NOT FOUND` / `ERROR` cases — so a fleet sweep always yields one object per VM:
+
+```powershell
+$r = .\Get-HyperVVMCheckpointHealth.ps1 -Cluster 'CLUS01' `
+        -VMName (Get-ClusterGroup -Cluster 'CLUS01' | Where-Object GroupType -eq 'VirtualMachine').Name `
+        -OutputPath 'C:\Temp\Reports' -PassThru
+
+$r | Where-Object HoldState | Format-Table VMName, OwningNode, Recommendation
+$r | Export-Csv 'C:\Temp\Reports\fleet-summary.csv' -NoTypeInformation
+```
