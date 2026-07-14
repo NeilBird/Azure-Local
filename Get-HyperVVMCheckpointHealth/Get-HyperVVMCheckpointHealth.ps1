@@ -48,7 +48,7 @@
     (you must add -Cluster to the inner Get-ClusterGroup as well). Writes a per-VM .txt and events .csv.
 
 .EXAMPLE
-    'lqwas911','lqwas912','lqwas921' | .\Get-HyperVVMCheckpointHealth.ps1 -OutputPath 'C:\Temp\Reports'
+    'VM01','VM02','VM03' | .\Get-HyperVVMCheckpointHealth.ps1 -OutputPath 'C:\Temp\Reports'
 
     Audits a specific list of VMs (piped names). The script resolves each VM's owning node itself and
     collects the data in that node's context, so no double-hop authentication is required.

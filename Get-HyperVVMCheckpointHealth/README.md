@@ -67,7 +67,7 @@ Two supported ways to run it, both single-hop:
 .\Get-HyperVVMCheckpointHealth.ps1 -VMName (Get-ClusterGroup | Where-Object GroupType -eq 'VirtualMachine').Name -OutputPath 'C:\Temp\Reports'
 
 # A specific list of VM names (piped) - the script resolves each VM's owning node itself
-'lqwas911','lqwas912','lqwas921' | .\Get-HyperVVMCheckpointHealth.ps1 -OutputPath 'C:\Temp\Reports'
+'VM01','VM02','VM03' | .\Get-HyperVVMCheckpointHealth.ps1 -OutputPath 'C:\Temp\Reports'
 
 # REMOTE: from a management workstation (RSAT Failover Clustering) - target a cluster by name.
 # STEP 1 - verify the RSAT Failover Clustering tools are present on THIS workstation (see Requirements
