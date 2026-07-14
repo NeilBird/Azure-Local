@@ -671,15 +671,15 @@ function ConvertTo-VMCheckpointAuditHtml {
         $sh = $StorageHealth
         $badge = switch ("$($sh.Summary)") { 'Healthy' { 'ok' } 'Unavailable' { 'info' } default { 'warn' } }
         [void]$sb.Append("<h2>Cluster storage health (Storage Spaces Direct / CSV)</h2>`r`n")
-        [void]$sb.Append("<div class='callout $badge'><strong>Storage status: $(ConvertTo-HtmlText $sh.Summary).</strong> Read-only snapshot (source node <code>$(ConvertTo-HtmlText $sh.Source)</code>). Storage-layer disruption - S2D repair / resync jobs, CSV redirected or paused state, or unhealthy disks - can cause the very symptoms behind checkpoint / merge failures (files transiently locked or unavailable: <code>0x80070020</code>, <code>0x80070002</code>, 'cannot load VM configuration').</div>`r`n")
+        [void]$sb.Append("<div class='callout $badge'><strong>Storage status: $(ConvertTo-HtmlText $sh.Summary).</strong> Read-only snapshot (source node <code>$(ConvertTo-HtmlText $sh.Source)</code>). Storage-layer disruption - S2D repair / resync jobs, CSV block-redirected or paused state, or unhealthy disks - can cause the very symptoms behind checkpoint / merge failures (files transiently locked or unavailable: <code>0x80070020</code>, <code>0x80070002</code>, 'cannot load VM configuration'). Note: on Azure Local, <strong>ReFS CSVs run in File System Redirected mode by design</strong> - that is normal and is NOT flagged here.</div>`r`n")
         if (@($sh.StorageJobs).Count -gt 0) {
             [void]$sb.Append("<h3>Active storage jobs</h3><table><thead><tr><th>Job</th><th>State</th><th>% complete</th></tr></thead><tbody>")
             foreach ($j in @($sh.StorageJobs)) { [void]$sb.Append("<tr><td>$(ConvertTo-HtmlText $j.Name)</td><td>$(ConvertTo-HtmlText $j.State)</td><td class='num'>$(ConvertTo-HtmlText $j.Pct)</td></tr>") }
             [void]$sb.Append("</tbody></table>")
         }
         if (@($sh.CsvRedirected).Count -gt 0) {
-            [void]$sb.Append("<h3>CSVs in redirected / non-direct state</h3><table><thead><tr><th>Volume</th><th>Node</th><th>State</th><th>Block reason</th><th>FS reason</th></tr></thead><tbody>")
-            foreach ($v in @($sh.CsvRedirected)) { [void]$sb.Append("<tr><td>$(ConvertTo-HtmlText $v.Volume)</td><td>$(ConvertTo-HtmlText $v.Node)</td><td>$(ConvertTo-HtmlText $v.State)</td><td>$(ConvertTo-HtmlText $v.BlockReason)</td><td>$(ConvertTo-HtmlText $v.FsReason)</td></tr>") }
+            [void]$sb.Append("<h3>CSVs in an abnormal state (block-redirected, non-ReFS file-system redirected, or paused)</h3><table><thead><tr><th>Volume</th><th>Affected node(s)</th><th>State</th><th>Block reason</th><th>FS reason</th></tr></thead><tbody>")
+            foreach ($v in @($sh.CsvRedirected)) { [void]$sb.Append("<tr><td>$(ConvertTo-HtmlText $v.Volume)</td><td>$(ConvertTo-HtmlText $v.Nodes)</td><td>$(ConvertTo-HtmlText $v.State)</td><td>$(ConvertTo-HtmlText $v.BlockReason)</td><td>$(ConvertTo-HtmlText $v.FsReason)</td></tr>") }
             [void]$sb.Append("</tbody></table>")
         }
         if (@($sh.VDiskUnhealthy).Count -gt 0) {
@@ -691,6 +691,10 @@ function ConvertTo-VMCheckpointAuditHtml {
             [void]$sb.Append("<h3>Unhealthy physical disks</h3><table><thead><tr><th>Name</th><th>Health</th><th>Operational</th><th>Usage</th></tr></thead><tbody>")
             foreach ($d in @($sh.PDiskUnhealthy)) { [void]$sb.Append("<tr><td>$(ConvertTo-HtmlText $d.Name)</td><td>$(ConvertTo-HtmlText $d.Health)</td><td>$(ConvertTo-HtmlText $d.Operational)</td><td>$(ConvertTo-HtmlText $d.Usage)</td></tr>") }
             [void]$sb.Append("</tbody></table>")
+        }
+        if (@($sh.Subsystem).Count -gt 0) {
+            $subTxt = (@($sh.Subsystem | ForEach-Object { "{0}: {1}" -f $_.Name, $_.Health }) -join '; ')
+            [void]$sb.Append("<p class='muted'>Storage subsystem health: $(ConvertTo-HtmlText $subTxt). (A <em>Warning</em> here is often a minor, non-storage fault such as 'update available' - use the CSS diagnostic below for the exact fault.)</p>")
         }
         if ("$($sh.Summary)" -eq 'Healthy') {
             [void]$sb.Append("<p class='muted'>No active storage jobs, no redirected CSVs, and no unhealthy virtual / physical disks were detected at snapshot time.</p>")
@@ -782,9 +786,34 @@ function Get-ClusterStorageHealthSnapshot {
         try { $o.PDiskUnhealthy = @(Get-PhysicalDisk -ErrorAction Stop | Where-Object { "$($_.HealthStatus)" -ne 'Healthy' } | ForEach-Object { [pscustomobject]@{ Name = [string]$_.FriendlyName; Health = [string]$_.HealthStatus; Operational = [string]($_.OperationalStatus -join ','); Usage = [string]$_.Usage } }) } catch { $o.Notes += "PhysicalDisk: $($_.Exception.Message)" }
         try { $o.Subsystem = @(Get-StorageSubSystem -ErrorAction Stop | ForEach-Object { [pscustomobject]@{ Name = [string]$_.FriendlyName; Health = [string]$_.HealthStatus } }) } catch { $o.Notes += "Subsystem: $($_.Exception.Message)" }
         try {
-            $o.CsvRedirected = @(Get-ClusterSharedVolumeState -ErrorAction Stop |
-                Where-Object { ("$($_.StateInfo)" -and "$($_.StateInfo)" -ne 'Direct') -or $_.BlockRedirectedIOReason -or $_.FileSystemRedirectedIOReason } |
-                ForEach-Object { [pscustomobject]@{ Volume = [string]$_.VolumeFriendlyName; Node = [string]$_.Node; State = [string]$_.StateInfo; BlockReason = [string]$_.BlockRedirectedIOReason; FsReason = [string]$_.FileSystemRedirectedIOReason } })
+            # IMPORTANT: on Azure Local / S2D with ReFS, CSVs run in FileSystemRedirected mode BY DESIGN
+            # (FileSystemRedirectedIOReason = FileSystemReFs) - that is NORMAL and must NOT be flagged as
+            # degraded. Only surface genuinely abnormal states: block redirection for a real reason,
+            # file-system redirection for a NON-ReFS reason, or a paused / offline volume.
+            $benignFsReasons = @('NotFileSystemRedirected', 'FileSystemReFs', '')
+            $csvAbnormal = @(Get-ClusterSharedVolumeState -ErrorAction Stop |
+                Where-Object {
+                    $br = "$($_.BlockRedirectedIOReason)"
+                    $fr = "$($_.FileSystemRedirectedIOReason)"
+                    $si = "$($_.StateInfo)"
+                    ($br -and $br -ne 'NotBlockRedirected') -or
+                    ($fr -and ($benignFsReasons -notcontains $fr)) -or
+                    ($si -match 'Paused|Offline')
+                })
+            # Collapse to ONE row per volume. Get-ClusterSharedVolumeState returns a row per volume PER
+            # NODE, so a large cluster (e.g. 8 nodes x 40 volumes = 320 rows) would flood the table and a
+            # single affected volume would repeat across every node. Group by volume and aggregate the
+            # affected node(s) + distinct non-benign reasons so the table stays compact at any scale.
+            $o.CsvRedirected = @($csvAbnormal | Group-Object VolumeFriendlyName | ForEach-Object {
+                $g = $_.Group
+                [pscustomobject]@{
+                    Volume      = [string]$_.Name
+                    Nodes       = (@($g | ForEach-Object { [string]$_.Node } | Where-Object { $_ } | Sort-Object -Unique) -join ', ')
+                    State       = (@($g | ForEach-Object { [string]$_.StateInfo } | Where-Object { $_ } | Sort-Object -Unique) -join ', ')
+                    BlockReason = (@($g | ForEach-Object { [string]$_.BlockRedirectedIOReason } | Where-Object { $_ -and $_ -ne 'NotBlockRedirected' } | Sort-Object -Unique) -join ', ')
+                    FsReason    = (@($g | ForEach-Object { [string]$_.FileSystemRedirectedIOReason } | Where-Object { $_ -and ($benignFsReasons -notcontains $_) } | Sort-Object -Unique) -join ', ')
+                }
+            })
         } catch { $o.Notes += "CsvState: $($_.Exception.Message)" }
         [pscustomobject]$o
     }
@@ -801,7 +830,7 @@ function Get-ClusterStorageHealthSnapshot {
     }
 
     $degraded = (@($raw.VDiskUnhealthy).Count -gt 0) -or (@($raw.PDiskUnhealthy).Count -gt 0) -or
-        (@($raw.CsvRedirected).Count -gt 0) -or (@($raw.Subsystem | Where-Object { $_.Health -and $_.Health -ne 'Healthy' }).Count -gt 0)
+        (@($raw.CsvRedirected).Count -gt 0) -or (@($raw.Subsystem | Where-Object { "$($_.Health)" -eq 'Unhealthy' }).Count -gt 0)
     $summary = if (-not $raw.StorageModule) { 'Unavailable' } elseif ($degraded) { 'Degraded' } elseif (@($raw.StorageJobs).Count -gt 0) { 'Active storage jobs' } else { 'Healthy' }
     [pscustomobject]@{
         Available      = [bool]$raw.StorageModule
