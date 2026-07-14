@@ -641,7 +641,7 @@ function Invoke-VMCheckpointAudit {
         @{N='ChainSizeGB';E={ $_.SizeGB }},
         ChainDepth,
         CheckpointCount,
-        @{N='Stale';E={ if ($_.AnyStale) { 'YES' } else { '' } }} | Format-Table -AutoSize | Out-Indented
+        @{N='Stale';E={ if ($_.CheckpointCount -gt 0) { if ($_.AnyStale) { 'YES' } else { 'NO' } } else { 'n/a' } }} | Format-Table -AutoSize | Out-Indented
 
     # (b) Per-disk detail - one labelled block per disk so the full path is never truncated or
     # column-wrapped, including the attached (top-of-chain) disk's size, timestamps, age and stale flag:
@@ -666,8 +666,10 @@ function Invoke-VMCheckpointAudit {
         if ($top -and $top.LastWrite) {
             $topAge = [math]::Round(([DateTime]::UtcNow - $top.LastWrite).TotalHours, 1)
             Write-Host ("  LastWrite (UTC): {0}" -f $top.LastWrite.ToString('yyyy-MM-dd HH:mm:ss'))
-            Write-Host ("  Age (hrs)      : {0}" -f $topAge)
-            if ($topAge -ge $StaleHours) { Write-Host "  Stale          : YES" }
+            Write-Host ("  Age (hrs)      : {0}  (hours since last write; ~0 = active / in-use)" -f $topAge)
+            # Stale only applies to a DIFFERENCING (.avhdx) layer; a base disk's old timestamp is normal.
+            $topStale = if ($top.Type -eq 'Differencing') { if ($topAge -ge $StaleHours) { 'YES' } else { 'NO' } } else { 'n/a (base disk)' }
+            Write-Host ("  Stale          : {0}" -f $topStale)
         } else {
             Write-Host "  LastWrite (UTC): (unavailable)"
         }
@@ -683,6 +685,8 @@ function Invoke-VMCheckpointAudit {
             Write-Host "  $($d.Attached):"
             Write-Host "  Level 0 = the ACTIVE disk the VM writes to (child); each level's parent is the"
             Write-Host "  level below it; the highest level is the BASE. Chains can be many layers deep."
+            Write-Host "  Age (hrs) = hours since that layer was last written (0 = written within the hour;"
+            Write-Host "  the active top layer is normally ~0 because the VM is writing to it right now)."
             # Project the chain with an explicit Level (0 = active top) and Role so the parent -> child
             # hierarchy and total depth are unambiguous. SizeGB here is each LAYER's own size.
             $chainRows = for ($li = 0; $li -lt $d.Chain.Count; $li++) {
@@ -697,8 +701,8 @@ function Invoke-VMCheckpointAudit {
                     'LastWrite (UTC)' = if ($c.LastWrite) { $c.LastWrite.ToString('yyyy-MM-dd HH:mm:ss') } else { '(unavailable)' }
                     'Age (hrs)'       = if ($c.LastWrite) { [math]::Round(([DateTime]::UtcNow - $c.LastWrite).TotalHours, 1) } else { $null }
                     # Only DIFFERENCING (.avhdx) layers can be 'stale'. A Base disk's old timestamp is
-                    # expected and healthy, so it is left blank rather than flagged.
-                    Stale             = if ($c.Type -eq 'Differencing' -and $c.LastWrite -and ([DateTime]::UtcNow - $c.LastWrite).TotalHours -ge $StaleHours) { 'YES' } else { '' }
+                    # expected and healthy, so it shows 'n/a' rather than YES/NO.
+                    Stale             = if ($c.Type -ne 'Differencing') { 'n/a' } elseif ($c.LastWrite -and ([DateTime]::UtcNow - $c.LastWrite).TotalHours -ge $StaleHours) { 'YES' } else { 'NO' }
                 }
             }
             $chainRows | Format-Table Level, Role, 'VHD File Name', Type, SizeGB, 'LastWrite (UTC)', 'Age (hrs)', Stale -AutoSize | Out-Indented
@@ -786,7 +790,7 @@ function Invoke-VMCheckpointAudit {
             }},
             @{N='Created (UTC)';E={ $_.CreationTimeUtc.ToString('yyyy-MM-dd HH:mm:ss') }},
             @{N='Age (hrs)';E={ [math]::Round(([DateTime]::UtcNow - $_.CreationTimeUtc).TotalHours, 1) }},
-            @{N='Stale';E={ if (([DateTime]::UtcNow - $_.CreationTimeUtc).TotalHours -ge $StaleHours) { 'YES' } else { '' } }},
+            @{N='Stale';E={ if (([DateTime]::UtcNow - $_.CreationTimeUtc).TotalHours -ge $StaleHours) { 'YES' } else { 'NO' } }},
             @{N='Parent';E={ $_.Parent }} | Out-Indented
     } else {
         Write-Host "  No checkpoints present on '$VMName'."
@@ -920,7 +924,7 @@ function Invoke-VMCheckpointAudit {
                 @{N='SizeMB';E={ [math]::Round($_.Length / 1MB, 2) }},
                 @{N='LastWrite (UTC)';E={ $_.LastWriteTimeUtc.ToString('yyyy-MM-dd HH:mm:ss') }},
                 @{N='Age (hrs)';E={ [math]::Round(([DateTime]::UtcNow - $_.LastWriteTimeUtc).TotalHours, 1) }},
-                @{N='Stale';E={ if (([DateTime]::UtcNow - $_.LastWriteTimeUtc).TotalHours -ge $StaleHours) { 'YES' } else { '' } }},
+                @{N='Stale';E={ if (([DateTime]::UtcNow - $_.LastWriteTimeUtc).TotalHours -ge $StaleHours) { 'YES' } else { 'NO' } }},
                 FullName | Format-Table -AutoSize -Wrap | Out-Indented
         } else {
             Write-Host "  No .hrl replication logs found (expected on a PRIMARY with replication enabled)."
@@ -1151,10 +1155,10 @@ function Invoke-VMCheckpointAudit {
     }
     if ($staleCheckpoints.Count -gt 0) {
         Write-Alert "  WARNING: $($staleCheckpoints.Count) checkpoint(s) are >= $StaleHours hours old (possibly stuck)." -Level Warning
-        Write-Alert "  ACTION: A Third-Party Backup product that creates Hyper-V checkpoints normally REQUESTS the" -Level Warning
-        Write-Alert "  checkpoint MERGE (removal) only AFTER it has successfully copied the VM's data. A checkpoint that" -Level Warning
-        Write-Alert "  lingers well beyond the backup window therefore suggests the backup did not complete, or did not" -Level Warning
-        Write-Alert "  issue the merge. If you are using such a product, check it for the progress / completion of its" -Level Warning
+        Write-Alert "  ACTION: If you are using a Third-Party Backup product that creates Hyper-V checkpoints, note it" -Level Warning
+        Write-Alert "  normally REQUESTS the checkpoint MERGE (removal) only AFTER it has successfully copied the VM's" -Level Warning
+        Write-Alert "  data. A checkpoint that lingers well beyond the backup window therefore suggests the backup did" -Level Warning
+        Write-Alert "  not complete, or did not issue the merge. Check that product for the progress / completion of its" -Level Warning
         Write-Alert "  backup job(s), and confirm whether these aged checkpoint(s) are expected (by design) or need" -Level Warning
         Write-Alert "  manual investigation." -Level Warning
     }
