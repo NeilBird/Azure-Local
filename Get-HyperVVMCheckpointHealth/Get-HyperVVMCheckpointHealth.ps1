@@ -15,13 +15,16 @@
     data held in the .avhdx layer(s).
 
     The script makes NO changes to the VM, disks, checkpoints, or cluster (see README.md). The only
-    optional writes are the per-VM .txt transcript and events .csv, and only when -OutputPath is
-    supplied. While running it shows a "VM X of Y" progress bar with a per-VM, per-section sub-bar.
+    optional writes are the per-VM .txt report and events .csv (when -OutputPath is supplied), a single
+    self-contained HTML fleet report (on by default; suppress with -NoHtml), and a results .zip bundling
+    those files (on by default when -OutputPath is used; suppress with -NoZip). The console is QUIET by
+    default (concise one-line verdict per VM); pass -Quiet:$false for the full per-VM report on screen.
+    While running it shows a "VM X of Y" progress bar with a per-VM, per-section sub-bar.
 
     The human-readable report is written to the HOST (and, with -OutputPath, the .txt transcript);
     by default NOTHING is written to the pipeline. Pass -PassThru to also emit one [pscustomobject]
-    per VM to the pipeline (VMName, OwningNode, Recommendation, HoldState, Has* flags, counts) for
-    Where-Object / Export-Csv / fleet roll-ups.
+    per VM to the pipeline (VMName, OwningNode, Recommendation, HoldState, Has* flags, counts, plus a
+    nested ReportData object with the full per-VM detail) for Where-Object / Export-Csv / fleet roll-ups.
 
     DISCLAIMER / CAVEATS:
       - EXAMPLE code. NOT a Microsoft-supported product or service offering; provided with NO warranty
@@ -61,6 +64,16 @@
 .EXAMPLE
     .\Get-HyperVVMCheckpointHealth.ps1 -Cluster 'CLUS01' -VMName (Get-ClusterGroup -Cluster 'CLUS01' | Where-Object GroupType -eq 'VirtualMachine').Name -OutputPath 'C:\Temp\Reports'
 
+    A single self-contained HTML fleet report is written by DEFAULT. With -OutputPath it lands in the
+    per-run sub-folder as 'VMCheckpointAudit-<ClusterName>-yyyy-MM-dd.html' alongside the .txt/.csv;
+    without -OutputPath it is written to the current directory. Override the location with
+    -HtmlReportPath <folder-or-file>, or suppress it entirely with -NoHtml. The report has one row per
+    audited VM (colour-coded verdict), summary cards, a fleet table, and per-VM detail - ideal to email
+    or attach to a backup-vendor / Microsoft (CSS) case.
+
+.EXAMPLE
+    .\Get-HyperVVMCheckpointHealth.ps1 -Cluster 'CLUS01' -VMName (Get-ClusterGroup -Cluster 'CLUS01' | Where-Object GroupType -eq 'VirtualMachine').Name -OutputPath 'C:\Temp\Reports'
+
     Runs REMOTELY from a management workstation (with the RSAT 'Failover Clustering' tools). -Cluster
     targets the named cluster via the cluster RPC API and each owning node is reached in a SINGLE hop -
     no double hop. Without -Cluster the script must be run ON a cluster node.
@@ -82,17 +95,28 @@
     ('HOLD STATE' / 'INVESTIGATE' / 'OK' / 'NOT FOUND' / 'ERROR'), HoldState, HasAttachedCheckpoints,
     HasStaleCheckpoints, HasOrphanedCheckpoints, AttachedCheckpointCount, StaleCheckpointCount,
     ConcernEventCount, ReportFile, Detail - ideal for Where-Object / Export-Csv / fleet roll-ups.
+    It ALSO carries a nested ReportData object with the rich per-VM detail the HTML report renders
+    (Checkpoints[], AttachedDiskCount, CheckpointLayers, StaleCheckpointCount, Replication, VssState,
+    VssUnhealthy[], AnalyticNodesNeedEnable[], CsvVolumes[], OrphanCount, HasForkSignature,
+    EventBreakdown[], Version/HostMaxVersion, and - for HOLD STATE - SupportCaseSummary). ReportData
+    is $null for NOT FOUND / ERROR rows. Drill in, e.g.:
+        $results | Where-Object { $_.ReportData.HasForkSignature } |
+            ForEach-Object { $_.ReportData.Checkpoints } | Format-Table Name, AgeHrs, Stale
 
 .OUTPUTS
-    None by default - the human-readable report goes to the host and, with -OutputPath, to a per-VM
-    .txt transcript + events .csv. With -PassThru, one [pscustomobject] per VM is emitted to the
-    pipeline (see the -PassThru example above for its properties).
+    None to the pipeline by default - the human-readable report goes to the host and, with -OutputPath,
+    to a per-VM .txt transcript + events .csv. A single self-contained HTML fleet report is also written
+    by default (suppress with -NoHtml; relocate with -HtmlReportPath). With -PassThru, one
+    [pscustomobject] per VM is emitted to the pipeline - flat properties (VMName, Recommendation,
+    HoldState, Has* flags, counts, ReportFile, Detail) for quick Where-Object / Export-Csv roll-ups,
+    PLUS a nested ReportData object with the full per-VM detail the HTML renders (see the -PassThru
+    example above for the ReportData fields and a drill-in snippet).
 
 .NOTES
     Author  : Neil Bird, Microsoft
     Created : 2026-07-10
     Updated : 2026-07-14
-    Version : 0.2.0
+    Version : 0.2.1
     
     Requires: Windows PowerShell 5.1 (this script is written for, and validated against, Windows
               PowerShell 5.1 ONLY - it is NOT intended or tested for PowerShell 7.x). Also requires the Hyper-V
@@ -152,6 +176,14 @@ param(
     # export in that sub-folder. Console-only if omitted. Base folder is created if it does not exist.
     [string]$OutputPath,
 
+    # Also audit VMs that were NOT requested but were DISCOVERED in the owning node's event data with a
+    # high-risk checkpoint/merge signature (background disk merge interrupted / failed, or 'cannot load
+    # VM configuration'). OFF by default: such VMs are always SURFACED (console + HTML) with a ready-to-
+    # run command, but only audited automatically when this switch is set. Bounded and non-recursive:
+    # only names that resolve to real clustered VMs are added, their own discoveries are not expanded,
+    # and the number added is capped (see $script:MaxDiscoveredToAudit).
+    [switch]$IncludeDiscoveredVMs,
+
     # Age (in hours) at or beyond which a checkpoint / differencing disk is flagged as stale.
     [ValidateRange(0, 8760)]
     [int]$StaleHours = 24,
@@ -175,7 +207,8 @@ param(
     #   12240 VMMS:   attachment (.avhdx) not found        15268 VMMS: failed to get disk information
     #   16300 VMMS:   cannot load a virtual machine configuration
     #   19090 VMMS:   background disk merge INTERRUPTED
-    [int[]]$WorkerEventIds = @(3216, 3280, 18590, 18012, 12240, 15268, 16300, 19090),
+    #   19100 VMMS:   background disk merge FAILED to complete (e.g. 0x80070020 sharing violation)
+    [int[]]$WorkerEventIds = @(3216, 3280, 18590, 18012, 12240, 15268, 16300, 19090, 19100),
 
     # Informational lifecycle event IDs. These are still SURFACED (for the timeline / context) but are
     # NOT flagged as a concern, because on their own they are normal, healthy operations:
@@ -204,10 +237,36 @@ param(
 
     # Emit one [pscustomobject] per VM to the PIPELINE (VMName, Cluster, OwningNode, Recommendation,
     # HoldState, HasAttachedCheckpoints, HasStaleCheckpoints, HasOrphanedCheckpoints, counts,
-    # ReportFile, Detail). The human-readable report always goes to the HOST (and, with -OutputPath,
-    # the .txt transcript); WITHOUT -PassThru nothing is written to the pipeline, so '$x = .\script'
-    # stays clean. Use -PassThru to feed Where-Object / Export-Csv / fleet roll-ups.
-    [switch]$PassThru
+    # ReportFile, Detail, plus a nested ReportData object with the rich per-VM detail the HTML
+    # renders). The human-readable report always goes to the HOST (and, with -OutputPath, the .txt
+    # transcript); WITHOUT -PassThru nothing is written to the pipeline, so '$x = .\script' stays
+    # clean. Use -PassThru to feed Where-Object / Export-Csv / fleet roll-ups.
+    [switch]$PassThru,
+
+    # Where to write the single self-contained HTML fleet report (one row per audited VM). ON by
+    # default. Accepts EITHER a folder (the file is auto-named 'VMCheckpointAudit-<ClusterName>-
+    # yyyy-MM-dd.html') OR a full path ending in '.html'. When omitted, the report defaults to the
+    # per-run sub-folder created under -OutputPath; if -OutputPath was also omitted it is written to
+    # the current directory. Use -NoHtml to suppress it entirely.
+    [string]$HtmlReportPath,
+
+    # Suppress the HTML fleet report (it is generated by default). The console report, the -OutputPath
+    # .txt/.csv files and the -PassThru pipeline objects are unaffected.
+    [switch]$NoHtml,
+
+    # Console verbosity. ON (quiet) by DEFAULT: the full per-VM report is written to the .txt file and
+    # the HTML, while the console shows only a concise one-line verdict per VM plus the final pointers
+    # to the HTML / zip. Pass -Quiet:$false to stream the complete per-VM report to the console as well.
+    [bool]$Quiet = $true,
+
+    # Suppress the results .zip bundle (it is created by DEFAULT when -OutputPath is supplied). The zip
+    # gathers the per-run .txt / .csv / .html so the whole audit can be copied to a browser device and
+    # attached to a support case in one file.
+    [switch]$NoZip,
+
+    # Skip the read-only cluster storage-health snapshot (Storage Spaces Direct / CSV / virtual+physical
+    # disk health + active storage jobs). On by default; the snapshot is cluster-wide and gathered once.
+    [switch]$SkipStorageHealth
 )
 
 begin {
@@ -238,10 +297,46 @@ $script:TroubleshootUrl   = 'https://learn.microsoft.com/en-us/troubleshoot/wind
 
 # Colour helpers. The human-readable report is ALWAYS written to the HOST (Write-Host) - never to the
 # pipeline / success stream - so the pipeline stays reserved for the -PassThru per-VM summary object.
-# Start-Transcript (used when -OutputPath is supplied) still captures these host lines into the .txt.
+# A Write-Host proxy (defined below) captures every host line into a per-VM buffer, which is written to
+# the .txt (when -OutputPath is supplied) and mined for the HOLD STATE support summary in the HTML.
 # Colour is ON by default; it auto-disables when output is redirected (so a captured/paged view stays
 # readable) or when -NoColour is passed. -PassThru objects are emitted separately by the end block.
 $script:UseColour = (-not $NoColour) -and (-not [Console]::IsOutputRedirected)
+
+# Console verbosity + report capture. The full per-VM report is ALWAYS captured (line by line) into
+# $script:VMReportBuffer so it can be written to the per-VM .txt and mined for the HOLD STATE support
+# summary shown in the HTML. In Quiet mode (the default) the detailed lines are captured but NOT echoed
+# to the console - only the concise verdict + final pointers are shown. The Write-Host proxy below is
+# what implements this: it shadows the Write-Host cmdlet for the whole script, so every existing
+# Write-Host / Write-Section / Write-Alert / Out-Indented call is captured without further changes.
+$script:QuietConsole   = [bool]$Quiet
+$script:VMReportBuffer = $null
+function Write-Host {
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidOverwritingBuiltInCmdlets', '', Justification = 'Deliberate in-script proxy: captures report lines to a buffer and conditionally echoes to the host for Quiet mode. Fully qualified Microsoft.PowerShell.Utility\Write-Host is used inside to avoid recursion.')]
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingWriteHost', '', Justification = 'Proxy that captures report lines to a buffer and conditionally echoes to the host.')]
+    [CmdletBinding()]
+    param(
+        [Parameter(Position = 0, ValueFromPipeline = $true, ValueFromRemainingArguments = $true)]
+        [object[]]$Object,
+        [object]$Separator = ' ',
+        [System.ConsoleColor]$ForegroundColor,
+        [System.ConsoleColor]$BackgroundColor,
+        [switch]$NoNewline
+    )
+    $text = if ($null -ne $Object) { ($Object -join "$Separator") } else { '' }
+    # When a VM audit is in progress its buffer is active: capture the line. In Quiet mode, that is all
+    # we do for detail lines (no console echo). Outside an audit (buffer $null) - e.g. begin/end block
+    # messages - nothing is captured and the line is always shown.
+    if ($null -ne $script:VMReportBuffer) {
+        [void]$script:VMReportBuffer.Add([string]$text)
+        if ($script:QuietConsole) { return }
+    }
+    $params = @{ Object = $Object; Separator = $Separator }
+    if ($PSBoundParameters.ContainsKey('ForegroundColor')) { $params['ForegroundColor'] = $ForegroundColor }
+    if ($PSBoundParameters.ContainsKey('BackgroundColor')) { $params['BackgroundColor'] = $BackgroundColor }
+    if ($NoNewline) { $params['NoNewline'] = $true }
+    Microsoft.PowerShell.Utility\Write-Host @params
+}
 function Write-Section {
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingWriteHost', '', Justification = 'Opt-in colour via -Colour; falls back to Write-Host.')]
     param([string]$Text)
@@ -276,6 +371,492 @@ function Out-Indented {
     }
 }
 
+# Build a single self-contained HTML fleet report (inline CSS, no external assets) from the per-VM
+# result objects collected during the run. Consumes each result's .ReportData payload (built by
+# New-AuditSummary on the success path); results without ReportData (ERROR / NOT FOUND) still render
+# a row and a note. Returns the HTML as one [string]. Dynamic values are HTML-encoded; the renderer
+# changes nothing. The 'Checkpoints' vs 'AVHDX files' distinction is deliberate: Checkpoints = the
+# number of checkpoint objects (Get-VMSnapshot); AVHDX files = active differencing .avhdx layers on
+# disk = Checkpoints x Disks (one checkpoint freezes a layer on every attached disk).
+function ConvertTo-VMCheckpointAuditHtml {
+    [OutputType([string])]
+    param(
+        [object[]]$Results,
+        [int]$StaleHours,
+        [int]$EventLookbackHours,
+        [string]$ClusterName,
+        [string]$GeneratedUtc,
+        [object[]]$DiscoveredVMs,
+        [object]$StorageHealth,
+        [bool]$IncludeDiscoveredVMs
+    )
+
+    function ConvertTo-HtmlText { param([object]$Value) if ($null -eq $Value) { '' } else { [System.Net.WebUtility]::HtmlEncode([string]$Value) } }
+    function Get-VerdictRank { param([string]$Rec) switch ($Rec) { 'HOLD STATE' { 0 } 'INVESTIGATE' { 1 } 'OK' { 2 } 'NOT FOUND' { 3 } default { 4 } } }
+    function Get-VerdictPill {
+        param([string]$Rec)
+        switch ($Rec) {
+            'HOLD STATE'  { '<span class="pill hold">HOLD STATE</span>' }
+            'INVESTIGATE' { '<span class="pill investigate">INVESTIGATE</span>' }
+            'OK'          { '<span class="pill ok">OK</span>' }
+            'NOT FOUND'   { '<span class="pill err">NOT FOUND</span>' }
+            default       { '<span class="pill err">ERROR</span>' }
+        }
+    }
+
+    $rows       = @($Results)
+    $countAll   = $rows.Count
+    $countHold  = @($rows | Where-Object { $_.Recommendation -eq 'HOLD STATE' }).Count
+    $countInv   = @($rows | Where-Object { $_.Recommendation -eq 'INVESTIGATE' }).Count
+    $countOk    = @($rows | Where-Object { $_.Recommendation -eq 'OK' }).Count
+    $staleTotal = (@($rows | ForEach-Object { [int]$_.StaleCheckpointCount }) | Measure-Object -Sum).Sum
+    if (-not $staleTotal) { $staleTotal = 0 }
+
+    $sb = [System.Text.StringBuilder]::new()
+    $head = @'
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hyper-V VM Checkpoint Health Audit</title>
+<style>
+  :root{
+    --bg:#0f172a; --panel:#1e293b; --panel2:#243349; --ink:#e2e8f0; --muted:#94a3b8;
+    --line:#334155; --accent:#38bdf8;
+    --amber:#f59e0b; --amber-bg:#3a2c07; --red:#ef4444; --red-bg:#3a0d0d;
+    --green:#22c55e; --green-bg:#0f2e1a; --high:#fb7185; --high-bg:#3a1420;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:Segoe UI,-apple-system,Roboto,Helvetica,Arial,sans-serif;
+    background:var(--bg);color:var(--ink);line-height:1.55;font-size:15px}
+  .wrap{max-width:1120px;margin:0 auto;padding:32px 24px 80px}
+  header.top{border-bottom:2px solid var(--line);padding-bottom:18px;margin-bottom:28px}
+  header.top h1{margin:0 0 6px;font-size:26px;color:#fff}
+  .meta{color:var(--muted);font-size:13px}
+  .meta b{color:var(--ink)}
+  h2{margin:38px 0 14px;font-size:20px;color:#fff;border-left:4px solid var(--accent);padding-left:10px}
+  h3{margin:22px 0 8px;font-size:16px;color:#fff}
+  p{margin:8px 0}
+  a{color:var(--accent)}
+  code{background:#0b1220;color:#7dd3fc;padding:1px 6px;border-radius:4px;font-size:13px;
+    font-family:Consolas,Monaco,monospace}
+  pre{white-space:pre-wrap;word-break:break-word;background:#0b1220;color:#cbd5e1;padding:12px;
+    border-radius:8px;font-size:12.5px;line-height:1.4;font-family:Consolas,Monaco,monospace;overflow:auto;max-height:560px}
+  .cards{display:flex;flex-wrap:wrap;gap:14px;margin:8px 0 6px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;
+    padding:14px 18px;min-width:140px;flex:1}
+  .card .n{font-size:30px;font-weight:700;color:#fff;line-height:1.1}
+  .card .l{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.04em;margin-top:4px}
+  .card.amber .n{color:var(--amber)} .card.high .n{color:var(--high)} .card.green .n{color:var(--green)}
+  .callout{border-radius:10px;padding:14px 18px;margin:16px 0;border:1px solid var(--line)}
+  .callout.info{background:#0b2436;border-color:#1d4e6b}
+  .callout.warn{background:var(--amber-bg);border-color:#7a5b12}
+  .callout.high{background:var(--high-bg);border-color:#7a2438}
+  .callout.ok{background:var(--green-bg);border-color:#1c6b3a}
+  table{width:100%;border-collapse:collapse;margin:12px 0;font-size:13.5px;
+    background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+  th,td{padding:9px 11px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top}
+  th{background:var(--panel2);color:#cbd5e1;font-weight:600;white-space:nowrap}
+  tbody tr:hover{background:#22304a}
+  td.num{text-align:right;font-variant-numeric:tabular-nums}
+  .pill{display:inline-block;padding:2px 9px;border-radius:999px;font-size:11.5px;font-weight:700;white-space:nowrap}
+  .pill.investigate{background:var(--amber-bg);color:#fcd34d;border:1px solid #7a5b12}
+  .pill.high{background:var(--high-bg);color:#fda4af;border:1px solid #7a2438}
+  .pill.ok{background:var(--green-bg);color:#86efac;border:1px solid #1c6b3a}
+  .pill.hold{background:var(--red-bg);color:#fca5a5;border:1px solid #7a1f1f}
+  .pill.err{background:#2a2f3a;color:#cbd5e1;border:1px solid #475569}
+  .vm{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:6px 20px 18px;margin:16px 0}
+  .vm.hold{border-color:#7a1f1f;box-shadow:0 0 0 1px #7a1f1f inset}
+  .vm h3{display:flex;align-items:center;gap:10px}
+  .kv{display:grid;grid-template-columns:230px 1fr;gap:2px 14px;margin:10px 0}
+  .kv div.k{color:var(--muted)}
+  ul{margin:8px 0;padding-left:22px} li{margin:3px 0}
+  details{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:6px 14px;margin:10px 0}
+  summary{cursor:pointer;font-weight:600;color:#cbd5e1}
+  .muted{color:var(--muted)}
+  footer{margin-top:44px;border-top:1px solid var(--line);padding-top:16px;color:var(--muted);font-size:12.5px}
+</style>
+</head>
+<body>
+<div class="wrap">
+'@
+    [void]$sb.Append($head)
+
+    # Header + summary cards.
+    $vmWord = if ($countAll -eq 1) { 'VM' } else { 'VMs' }
+    [void]$sb.Append(@"
+<header class="top">
+  <h1>Hyper-V VM Checkpoint Health Audit</h1>
+  <div class="meta">
+    Cluster <b>$(ConvertTo-HtmlText $ClusterName)</b> &nbsp;&bull;&nbsp; $countAll audited $vmWord
+    &nbsp;&bull;&nbsp; Report generated <b>$(ConvertTo-HtmlText $GeneratedUtc) UTC</b><br>
+    Parameters: Stale CheckPoint threshold: $StaleHours h; Diagnostic events lookback: $EventLookbackHours h; Include discovered VMs: $(if ($IncludeDiscoveredVMs) { 'Yes' } else { 'No' }).<br>
+    Read-only diagnostic - <b>no changes were made to any VM</b>.
+  </div>
+</header>
+
+<div class="cards">
+  <div class="card"><div class="n">$countAll</div><div class="l">$vmWord audited</div></div>
+  <div class="card high"><div class="n">$countHold</div><div class="l">Hold state</div></div>
+  <div class="card amber"><div class="n">$countInv</div><div class="l">Investigate</div></div>
+  <div class="card green"><div class="n">$countOk</div><div class="l">OK</div></div>
+  <div class="card amber"><div class="n">$staleTotal</div><div class="l">Stale checkpoints</div></div>
+</div>
+"@)
+
+    # Adaptive headline.
+    if ($countHold -gt 0) {
+        [void]$sb.Append(@"
+<div class="callout high">
+  <strong>Headline:</strong> $countHold VM(s) are in <strong>HOLD STATE</strong> - a checkpoint fork-commit /
+  merge-failure signature AND unmerged differencing disk(s) are present together. As a precaution do NOT
+  live/quick/storage-migrate or restart those VMs until the differencing chain has been validated (and
+  merged if required). Engage Microsoft Support (CSS) and/or your backup vendor for those VMs.
+</div>
+"@)
+    } else {
+        [void]$sb.Append(@"
+<div class="callout ok">
+  <strong>Headline:</strong> No VM shows the checkpoint <em>fork-commit / merge-failure</em> signature
+  (event <code>18590</code> / <code>0x80048102</code>) and none is in a HOLD STATE, so
+  <strong>no Microsoft Support (CSS) case is warranted yet</strong>. $staleTotal stale backup checkpoint(s)
+  were found for the operations / backup team to triage first.
+</div>
+"@)
+    }
+
+    # Node-wide events caveat.
+    [void]$sb.Append(@'
+<div class="callout info">
+  <strong>Reading the event counts:</strong> the "concerning events" count is matched <strong>node-wide</strong>
+  on each VM's owning node, so it reflects checkpoint / merge activity across <strong>all</strong> VMs on that
+  node - the messages often reference <em>other</em> VMs. Treat it as node health context, not proof that the
+  audited VM itself is failing. Per-VM event detail is in each VM's section below.
+</div>
+'@)
+
+    # Recommended next steps (placed up-front, right after the summary callouts).
+    [void]$sb.Append(@'
+<h2>Recommended next steps</h2>
+<ol>
+  <li><strong>Backup team first:</strong> for each VM with a stale checkpoint, check the backup product's recent job history - did the last backup complete? A leftover checkpoint usually means a backup that did not finish or did not issue the post-backup merge.</li>
+  <li><strong>Confirm expected vs abandoned:</strong> decide whether each stale checkpoint is expected (by design) or left behind by a failed backup, then merge / remove the abandoned ones (prefer the backup product over manual deletion).</li>
+  <li><strong>Enable the Analytic channel</strong> (elevated, per node) to capture the internal per-disk revert trace for the next occurrence: <code>wevtutil sl Microsoft-Windows-Hyper-V-VMMS/Analytic /e:true</code></li>
+  <li><strong>Rule out storage-layer disruption:</strong> if the storage-health section shows active S2D repair / resync jobs, CSV redirection, or unhealthy disks, treat it as a probable contributing factor and run the CSS Storage Diagnostic (<code>Install-Module -Name Microsoft.AzLocal.CSSTools</code>; then <code>Start-AzsSupportStorageDiagnostic</code>).</li>
+  <li><strong>HOLD STATE VMs (if any):</strong> engage Microsoft Support (CSS) and/or your backup vendor before any migration / restart.</li>
+  <li>Open a Microsoft Support case only if a fork-commit signature (<code>18590</code> / <code>0x80048102</code>) appears, or the backup vendor rules out their product.</li>
+</ol>
+'@)
+
+    # VM summary table.
+    [void]$sb.Append(@'
+<h2>VM summary table</h2>
+<p class="muted"><strong>Checkpoints</strong> = checkpoint objects (<code>Get-VMSnapshot</code>). <strong>AVHDX files</strong> = active differencing <code>.avhdx</code> files on disk = <strong>Checkpoints &times; Disks</strong> (one checkpoint freezes a layer on every attached disk).</p>
+<table>
+<thead><tr>
+  <th>VM</th><th>Node</th><th>Cfg</th><th>Disks</th><th>Checkpoints</th><th>AVHDX files</th>
+  <th>Stale</th><th>Oldest ckpt age</th><th>Created</th><th>Hyper-V Replica</th><th>Verdict</th>
+</tr></thead>
+<tbody>
+'@)
+    foreach ($r in ($rows | Sort-Object @{ Expression = { Get-VerdictRank $_.Recommendation } }, VMName)) {
+        $node = (("$($r.OwningNode)" -split '\.')[0])
+        $rd   = $r.ReportData
+        $pill = Get-VerdictPill $r.Recommendation
+        if ($rd) {
+            $ckptCount = @($rd.Checkpoints).Count
+            $ages = @($rd.Checkpoints | ForEach-Object { [double]$_.AgeHrs })
+            if ($ages.Count -gt 0) {
+                $mx = ($ages | Measure-Object -Maximum).Maximum
+                $oldest = if ($mx -ge 168) { '~{0}h (~{1}d)' -f [math]::Round($mx, 1), [math]::Round($mx / 24, 0) } else { '~{0}h' -f [math]::Round($mx, 1) }
+                $oldestCkpt = @($rd.Checkpoints | Sort-Object AgeHrs -Descending)[0]
+                $created = ConvertTo-HtmlText $oldestCkpt.Created
+            } else { $oldest = '-'; $created = '-' }
+            $repl = if ($rd.Replication.Enabled) { ConvertTo-HtmlText ("{0} ({1})" -f $rd.Replication.State, $rd.Replication.Health) } else { 'Not enabled' }
+            [void]$sb.Append(@"
+<tr>
+  <td><code>$(ConvertTo-HtmlText $r.VMName)</code></td><td>$(ConvertTo-HtmlText $node)</td><td>$(ConvertTo-HtmlText $rd.Version)</td>
+  <td class="num">$($rd.AttachedDiskCount)</td><td class="num">$ckptCount</td><td class="num">$($rd.CheckpointLayers)</td>
+  <td class="num">$($rd.StaleCheckpointCount)</td><td>$oldest</td><td>$created</td>
+  <td>$repl</td><td>$pill</td>
+</tr>
+"@)
+        } else {
+            [void]$sb.Append(@"
+<tr>
+  <td><code>$(ConvertTo-HtmlText $r.VMName)</code></td><td>$(ConvertTo-HtmlText $node)</td><td>-</td>
+  <td class="num">-</td><td class="num">-</td><td class="num">-</td>
+  <td class="num">-</td><td>-</td><td>-</td>
+  <td>-</td><td>$pill</td>
+</tr>
+"@)
+        }
+    }
+    [void]$sb.Append("</tbody></table>`r`n")
+
+    # Discovered high-risk VMs (referenced in event data but not in the audit list).
+    if (@($DiscoveredVMs).Count -gt 0) {
+        [void]$sb.Append("<h2>Discovered high-risk VMs (recommended to audit)</h2>`r`n")
+        [void]$sb.Append("<div class='callout warn'>These VMs were <strong>not in the audit list</strong> but were referenced in this cluster's <strong>high-risk</strong> checkpoint / merge event signals (background disk merge interrupted / failed, sharing violation <code>0x80070020</code>, or 'cannot load VM configuration'). Given the data-loss risk of the fork-commit failure mode, auditing them is recommended.</div>`r`n")
+        [void]$sb.Append("<table><thead><tr><th>VM</th><th>Why flagged</th></tr></thead><tbody>")
+        foreach ($dv in $DiscoveredVMs) {
+            [void]$sb.Append("<tr><td><code>$(ConvertTo-HtmlText $dv.Name)</code></td><td>$(ConvertTo-HtmlText $dv.Reason)</td></tr>")
+        }
+        [void]$sb.Append("</tbody></table>`r`n")
+        $dvNames = (@($DiscoveredVMs | ForEach-Object { "'{0}'" -f $_.Name }) -join ',')
+        [void]$sb.Append("<p>Audit them with:</p><pre>.\Get-HyperVVMCheckpointHealth.ps1 -VMName $(ConvertTo-HtmlText $dvNames) -OutputPath &lt;folder&gt;</pre>`r`n")
+        [void]$sb.Append("<p class='muted'>Or re-run the original command adding <code>-IncludeDiscoveredVMs</code> to audit them automatically (bounded and non-recursive).</p>`r`n")
+    }
+
+    # Per-VM detail.
+    [void]$sb.Append("<h2>Per-VM detailed information</h2>`r`n")
+    foreach ($r in ($rows | Sort-Object @{ Expression = { Get-VerdictRank $_.Recommendation } }, VMName)) {
+        $rd   = $r.ReportData
+        $pill = Get-VerdictPill $r.Recommendation
+        $cls  = if ($r.Recommendation -eq 'HOLD STATE') { ' hold' } else { '' }
+        [void]$sb.Append("<div class=`"vm$cls`">`r`n  <h3><code>$(ConvertTo-HtmlText $r.VMName)</code> $pill</h3>`r`n")
+        if (-not $rd) {
+            [void]$sb.Append("  <div class='callout warn'>$(ConvertTo-HtmlText $r.Detail)</div>`r`n</div>")
+            continue
+        }
+        $ckptCount = @($rd.Checkpoints).Count
+        $verOld = if ($rd.VmVerOlder) { "Yes - v$(ConvertTo-HtmlText $rd.Version) vs cluster max v$(ConvertTo-HtmlText $rd.HostMaxVersion) (migration/start context only; not a checkpoint cause)." } else { 'No - at the latest supported version.' }
+        $analytic = if (@($rd.AnalyticNodesNeedEnable) -contains $r.OwningNode) { 'Not enabled on this node' } else { 'Enabled (or not checked)' }
+        $vss = switch ($rd.VssState) { 'Healthy' { "All $($rd.VssTotal) writer(s) Stable (no last error)" } 'Unhealthy' { "$($rd.VssUnhealthyCount) of $($rd.VssTotal) writer(s) NOT healthy" } default { 'Unavailable (needs elevated context on owner)' } }
+        [void]$sb.Append(@"
+  <div class="kv">
+    <div class="k">Owning node</div><div><code>$(ConvertTo-HtmlText $r.OwningNode)</code></div>
+    <div class="k">Config version</div><div>$(ConvertTo-HtmlText $rd.Version) (cluster max $(ConvertTo-HtmlText $rd.HostMaxVersion))</div>
+    <div class="k">Uptime</div><div>$(ConvertTo-HtmlText $rd.Uptime)</div>
+    <div class="k">Attached disks</div><div>$($rd.AttachedDiskCount)</div>
+    <div class="k">Checkpoints (Get-VMSnapshot)</div><div>$ckptCount</div>
+    <div class="k">Differencing (.avhdx) files</div><div>$($rd.CheckpointLayers) (= checkpoints &times; disks)</div>
+    <div class="k">Stale checkpoints (&ge;$($rd.StaleHours)h)</div><div>$($rd.StaleCheckpointCount)</div>
+    <div class="k">Checkpoint type</div><div>$(ConvertTo-HtmlText $rd.CheckpointType)</div>
+    <div class="k">Orphaned .avhdx</div><div>$($rd.OrphanCount)</div>
+    <div class="k">Hyper-V Replica</div><div>$(if ($rd.Replication.Enabled) { ConvertTo-HtmlText ("{0} ({1})" -f $rd.Replication.State, $rd.Replication.Health) } else { 'Not enabled' })</div>
+    <div class="k">VSS writers</div><div>$(ConvertTo-HtmlText $vss)</div>
+    <div class="k">Analytic channel</div><div>$(ConvertTo-HtmlText $analytic)</div>
+    <div class="k">Config behind latest</div><div>$verOld</div>
+    <div class="k">Node concerning events ($($rd.EventLookbackHours)h)</div><div>$($rd.EventConcernCount) (node-wide - see caveat above)</div>
+  </div>
+"@)
+        # Assessment callout.
+        if ($r.Recommendation -eq 'HOLD STATE') {
+            [void]$sb.Append("  <div class='callout high'><strong>HOLD STATE (data-loss risk).</strong> A checkpoint fork-commit / merge-failure signature AND unmerged differencing disk(s) are present together. Do NOT migrate or restart this VM until the chain is validated (and merged if required); reopening an inconsistent chain can roll disks back to base. Engage Microsoft Support (CSS) and/or your backup vendor.</div>`r`n")
+        } elseif ($r.Recommendation -eq 'INVESTIGATE') {
+            [void]$sb.Append("  <div class='callout warn'><strong>INVESTIGATE.</strong> Concern signals are present, but the specific checkpoint fork-commit signature was NOT observed - the likely cause is a stalled / failed backup checkpoint or an unhealthy VSS writer rather than on-disk chain corruption. Backup-team triage first; no Microsoft case needed yet.</div>`r`n")
+        } elseif ($r.Recommendation -eq 'OK') {
+            [void]$sb.Append("  <div class='callout ok'><strong>OK.</strong> No active checkpoint layers and no concern signals were found. No action required from this result.</div>`r`n")
+        }
+        # HOLD STATE: the copy/paste support-case summary lifted verbatim from the per-VM report (collapsed).
+        if ($r.Recommendation -eq 'HOLD STATE' -and $rd.PSObject.Properties['SupportCaseSummary'] -and $rd.SupportCaseSummary) {
+            [void]$sb.Append("  <details open><summary>Support Case summary (copy/paste for Microsoft Support / your backup vendor)</summary><pre>$(ConvertTo-HtmlText $rd.SupportCaseSummary)</pre></details>`r`n")
+        }
+        # Checkpoints table.
+        if ($ckptCount -gt 0) {
+            [void]$sb.Append("  <details open><summary>Checkpoints ($ckptCount)</summary><table><thead><tr><th>Name</th><th>Type</th><th>Purpose</th><th>Created (UTC)</th><th>Age (hrs)</th><th>Stale</th><th>Parent</th></tr></thead><tbody>")
+            foreach ($c in @($rd.Checkpoints | Sort-Object AgeHrs -Descending)) {
+                $staleTxt = if ($c.Stale) { 'YES' } else { 'NO' }
+                [void]$sb.Append("<tr><td>$(ConvertTo-HtmlText $c.Name)</td><td>$(ConvertTo-HtmlText $c.Type)</td><td>$(ConvertTo-HtmlText $c.Purpose)</td><td>$(ConvertTo-HtmlText $c.Created)</td><td class='num'>$($c.AgeHrs)</td><td>$staleTxt</td><td>$(ConvertTo-HtmlText $c.Parent)</td></tr>")
+            }
+            [void]$sb.Append("</tbody></table></details>`r`n")
+        }
+        # Concerning events breakdown.
+        if ($rd.EventConcernCount -gt 0 -and @($rd.EventBreakdown).Count -gt 0) {
+            [void]$sb.Append("  <details><summary>Concerning events on this node ($($rd.EventConcernCount) in $($rd.EventLookbackHours)h - node-wide)</summary><ul>")
+            foreach ($e in @($rd.EventBreakdown)) {
+                [void]$sb.Append("<li><code>$($e.Id)</code> &times;$($e.Count) (first $(ConvertTo-HtmlText $e.First), last $(ConvertTo-HtmlText $e.Last)) - $(ConvertTo-HtmlText $e.Sample)</li>")
+            }
+            [void]$sb.Append("</ul>")
+            if ($rd.EventsCsvName) { [void]$sb.Append("<p class='muted'>Full, untruncated messages: <code>$(ConvertTo-HtmlText $rd.EventsCsvName)</code>.</p>") }
+            [void]$sb.Append("</details>`r`n")
+        }
+        [void]$sb.Append("</div>")
+    }
+
+    # Cluster storage-health snapshot (S2D / CSV) - a strong candidate contributing factor for the
+    # checkpoint/merge symptoms (files transiently locked / unavailable during repair-resync or CSV
+    # redirection). Read-only lightweight snapshot; points to the CSS deep-diagnostic for more.
+    if ($StorageHealth) {
+        $sh = $StorageHealth
+        $badge = switch ("$($sh.Summary)") { 'Healthy' { 'ok' } 'Unavailable' { 'info' } default { 'warn' } }
+        [void]$sb.Append("<h2>Cluster storage health (Storage Spaces Direct / CSV)</h2>`r`n")
+        [void]$sb.Append("<div class='callout $badge'><strong>Storage status: $(ConvertTo-HtmlText $sh.Summary).</strong> Read-only snapshot (source node <code>$(ConvertTo-HtmlText $sh.Source)</code>). Storage-layer disruption - S2D repair / resync jobs, CSV block-redirected or paused state, or unhealthy disks - can cause the very symptoms behind checkpoint / merge failures (files transiently locked or unavailable: <code>0x80070020</code>, <code>0x80070002</code>, 'cannot load VM configuration'). Note: on Azure Local, <strong>ReFS CSVs run in File System Redirected mode by design</strong> - that is normal and is NOT flagged here.</div>`r`n")
+        if (@($sh.StorageJobs).Count -gt 0) {
+            [void]$sb.Append("<h3>Active storage jobs</h3><table><thead><tr><th>Job</th><th>State</th><th>% complete</th></tr></thead><tbody>")
+            foreach ($j in @($sh.StorageJobs)) { [void]$sb.Append("<tr><td>$(ConvertTo-HtmlText $j.Name)</td><td>$(ConvertTo-HtmlText $j.State)</td><td class='num'>$(ConvertTo-HtmlText $j.Pct)</td></tr>") }
+            [void]$sb.Append("</tbody></table>")
+        }
+        if (@($sh.CsvRedirected).Count -gt 0) {
+            [void]$sb.Append("<h3>CSVs in an abnormal state (block-redirected, non-ReFS file-system redirected, or paused)</h3><table><thead><tr><th>Volume</th><th>Affected node(s)</th><th>State</th><th>Block reason</th><th>FS reason</th></tr></thead><tbody>")
+            foreach ($v in @($sh.CsvRedirected)) { [void]$sb.Append("<tr><td>$(ConvertTo-HtmlText $v.Volume)</td><td>$(ConvertTo-HtmlText $v.Nodes)</td><td>$(ConvertTo-HtmlText $v.State)</td><td>$(ConvertTo-HtmlText $v.BlockReason)</td><td>$(ConvertTo-HtmlText $v.FsReason)</td></tr>") }
+            [void]$sb.Append("</tbody></table>")
+        }
+        if (@($sh.VDiskUnhealthy).Count -gt 0) {
+            [void]$sb.Append("<h3>Unhealthy virtual disks</h3><table><thead><tr><th>Name</th><th>Health</th><th>Operational</th></tr></thead><tbody>")
+            foreach ($d in @($sh.VDiskUnhealthy)) { [void]$sb.Append("<tr><td>$(ConvertTo-HtmlText $d.Name)</td><td>$(ConvertTo-HtmlText $d.Health)</td><td>$(ConvertTo-HtmlText $d.Operational)</td></tr>") }
+            [void]$sb.Append("</tbody></table>")
+        }
+        if (@($sh.PDiskUnhealthy).Count -gt 0) {
+            [void]$sb.Append("<h3>Unhealthy physical disks</h3><table><thead><tr><th>Name</th><th>Health</th><th>Operational</th><th>Usage</th></tr></thead><tbody>")
+            foreach ($d in @($sh.PDiskUnhealthy)) { [void]$sb.Append("<tr><td>$(ConvertTo-HtmlText $d.Name)</td><td>$(ConvertTo-HtmlText $d.Health)</td><td>$(ConvertTo-HtmlText $d.Operational)</td><td>$(ConvertTo-HtmlText $d.Usage)</td></tr>") }
+            [void]$sb.Append("</tbody></table>")
+        }
+        if (@($sh.Subsystem).Count -gt 0) {
+            $subTxt = (@($sh.Subsystem | ForEach-Object { "{0}: {1}" -f $_.Name, $_.Health }) -join '; ')
+            [void]$sb.Append("<p class='muted'>Storage subsystem health: $(ConvertTo-HtmlText $subTxt). (A <em>Warning</em> here is often a minor, non-storage fault such as 'update available' - use the CSS diagnostic below for the exact fault.)</p>")
+        }
+        if ("$($sh.Summary)" -eq 'Healthy') {
+            [void]$sb.Append("<p class='muted'>No active storage jobs, no redirected CSVs, and no unhealthy virtual / physical disks were detected at snapshot time.</p>")
+        }
+        if ("$($sh.Summary)" -eq 'Unavailable' -and $sh.Note) {
+            [void]$sb.Append("<p class='muted'>Storage cmdlets were not available from the snapshot node: $(ConvertTo-HtmlText $sh.Note)</p>")
+        }
+        [void]$sb.Append("<div class='callout info'><strong>Deeper analysis (recommended):</strong> this is a lightweight snapshot. For a full Storage Spaces Direct / SBL diagnostic - including storage event-channel analysis around the incident window - run Microsoft's CSS Storage Diagnostic, which performs far more checks:<br><code>Install-Module -Name Microsoft.AzLocal.CSSTools</code><br><code>Start-AzsSupportStorageDiagnostic</code><br><a href='https://github.com/Azure/AzureLocal-Supportability/blob/main/tools/CSSTools/1.2605.5.1611/functions/Start-AzsSupportStorageDiagnostic.md'>Start-AzsSupportStorageDiagnostic documentation</a></div>`r`n")
+    }
+
+    # Information (anonymised RCA background) + footer.
+    [void]$sb.Append(@'
+<h2>Information: the checkpoint fork-commit / merge-failure signature</h2>
+<div class="callout info">
+  <strong>Generic technical background</strong> - this section contains no customer, host or VM-specific data. It
+  explains the failure mode this audit looks for and the exact Event IDs / error codes that indicate it is present.
+</div>
+<p><strong>What it is.</strong> When Hyper-V takes a checkpoint (including the checkpoint a backup product creates
+automatically), the running disk is frozen and writes are redirected into a new differencing <code>.avhdx</code>.
+When the checkpoint is later removed, Hyper-V must <em>commit</em> (merge) that fork back into its parent and rewrite
+each disk''s on-disk configuration (<code>.vmcx</code>). If that <strong>fork-commit</strong> step fails, the per-disk
+<code>.vmcx</code> can be reverted <em>inconsistently</em>: the VM keeps running normally on its in-memory chain, but
+the on-disk chain metadata no longer matches. The inconsistency stays <strong>dormant</strong> until the VM is
+live-migrated or restarted - at which point Hyper-V reopens the on-disk chain and can <strong>roll the disks back to
+their base</strong>, orphaning everything written into the <code>.avhdx</code> layer(s) since the checkpoint.</p>
+<p><strong>How it typically unfolds:</strong></p>
+<ol>
+  <li><strong>Leading indicators</strong> - Hyper-V Replica change-tracking / resync failures (<code>0x800480BD</code>, <code>0x800480BC</code>).</li>
+  <li><strong>Trigger</strong> - the checkpoint fork-commit fails: VMMS event <code>18590</code> with <code>0x80048102</code> (<code>VM_E_COMMIT_FORKS_ERROR</code>), or Worker event <code>3216</code> (<code>0x800703EE</code>, failed to switch to the new differencing disks).</li>
+  <li><strong>Per-disk revert</strong> leaves the <code>.vmcx</code> chain inconsistent (traced only on the Hyper-V-VMMS/Analytic channel, which is off by default).</li>
+  <li><strong>Symptoms</strong> - backup retries then fail to open the disk (<code>0x80070020</code>, sharing violation); follow-on merges are interrupted / fail (<code>19090</code> / <code>19100</code>).</li>
+  <li><strong>Dormant, then materialised</strong> - the VM runs fine until a live migration or restart reopens the chain and rolls the disks back.</li>
+</ol>
+<p><strong>Event IDs and error codes treated as the signature:</strong></p>
+<table>
+<thead><tr><th>Signal</th><th>Channel</th><th>Meaning</th><th>Role</th></tr></thead>
+<tbody>
+  <tr><td>Event <code>18590</code> + <code>0x80048102</code></td><td>Hyper-V-VMMS</td><td><code>VM_E_COMMIT_FORKS_ERROR</code> - the checkpoint fork-commit failed</td><td><strong>Confirming</strong> (drives HOLD STATE)</td></tr>
+  <tr><td>Event <code>3216</code> + <code>0x800703EE</code></td><td>Hyper-V-Worker</td><td>Failed to switch to the new differencing disks during checkpoint</td><td><strong>Confirming</strong></td></tr>
+  <tr><td><code>0x800480BD</code></td><td>Replica</td><td><code>VM_E_FR_CHANGE_TRACKING_FAILED</code></td><td>Leading indicator</td></tr>
+  <tr><td><code>0x800480BC</code></td><td>Replica</td><td><code>VM_E_FR_RESYNC_REQUIRED</code></td><td>Leading indicator</td></tr>
+  <tr><td>Event <code>18012</code></td><td>Hyper-V-VMMS</td><td>Checkpoint operation failed</td><td>Corroborating</td></tr>
+  <tr><td>Event <code>19090</code> / <code>19100</code></td><td>Hyper-V-VMMS</td><td>Background disk merge interrupted / failed (<code>0x80070020</code>)</td><td>Corroborating</td></tr>
+  <tr><td>Event <code>12240</code> / <code>15268</code></td><td>Hyper-V-VMMS</td><td>Attachment <code>.avhdx</code> not found / failed to get disk information (<code>0x80070002</code>)</td><td>Corroborating</td></tr>
+  <tr><td>Event <code>16300</code></td><td>Hyper-V-VMMS</td><td>Cannot load a virtual machine configuration</td><td>Corroborating</td></tr>
+</tbody>
+</table>
+<p><strong>How the verdict is decided.</strong> A VM is flagged <span class="pill hold">HOLD STATE</span> only when a
+<strong>confirming</strong> signal above is found <em>together with</em> one or more unmerged differencing
+(<code>.avhdx</code>) layers - that combination is the data-loss risk. Concern signals <em>without</em> a confirming
+fork-commit signature are flagged <span class="pill investigate">INVESTIGATE</span> (usually a stalled / failed backup
+checkpoint or an unhealthy VSS writer), which the operations / backup team should triage first.</p>
+<p class="muted">Reference: Microsoft Learn - Troubleshoot Hyper-V Virtual Machine Backup, Checkpoint, and Storage Failures: <a href="https://learn.microsoft.com/en-us/troubleshoot/windows-server/virtualization/hyper-v-virtual-machine-backup-checkpoint-storage">learn.microsoft.com/en-us/troubleshoot/windows-server/virtualization/hyper-v-virtual-machine-backup-checkpoint-storage</a></p>
+
+<footer>
+  Generated by <code>Get-HyperVVMCheckpointHealth.ps1</code>. Read-only diagnostic report; no VM state was
+  modified. Verdict legend: <span class="pill hold">HOLD STATE</span> fork-commit signature + unmerged
+  disks (case-worthy) &nbsp; <span class="pill investigate">INVESTIGATE</span> concern signals, ops/backup
+  team first &nbsp; <span class="pill ok">OK</span> no concerns &nbsp; <span class="pill err">ERROR / NOT FOUND</span>.
+</footer>
+</div>
+</body>
+</html>
+'@)
+    return $sb.ToString()
+}
+
+# Read-only, lightweight cluster storage-health snapshot (Storage Spaces Direct / CSV). Gathered ONCE
+# per run (S2D + storage jobs are cluster-wide). Runs the storage cmdlets in a cluster-node context:
+# locally when this host is the target node, else via ONE remoting hop. Everything is wrapped so a
+# missing Storage module / non-S2D host degrades gracefully to 'Unavailable' rather than throwing.
+function Get-ClusterStorageHealthSnapshot {
+    [OutputType([object])]
+    param([string]$TargetNode)
+
+    $scan = {
+        $o = [ordered]@{
+            ComputerName   = $env:COMPUTERNAME
+            StorageModule  = [bool](Get-Command Get-StorageJob -ErrorAction SilentlyContinue)
+            StorageJobs    = @()
+            VDiskUnhealthy = @()
+            PDiskUnhealthy = @()
+            Subsystem      = @()
+            CsvRedirected  = @()
+            Notes          = @()
+        }
+        try { $o.StorageJobs = @(Get-StorageJob -ErrorAction Stop | ForEach-Object { [pscustomobject]@{ Name = [string]$_.Name; State = [string]$_.JobState; Pct = [string]$_.PercentComplete } }) } catch { $o.Notes += "StorageJob: $($_.Exception.Message)" }
+        try { $o.VDiskUnhealthy = @(Get-VirtualDisk -ErrorAction Stop | Where-Object { "$($_.HealthStatus)" -ne 'Healthy' -or "$($_.OperationalStatus)" -notmatch '^(OK|Completed)$' } | ForEach-Object { [pscustomobject]@{ Name = [string]$_.FriendlyName; Health = [string]$_.HealthStatus; Operational = [string]($_.OperationalStatus -join ',') } }) } catch { $o.Notes += "VirtualDisk: $($_.Exception.Message)" }
+        try { $o.PDiskUnhealthy = @(Get-PhysicalDisk -ErrorAction Stop | Where-Object { "$($_.HealthStatus)" -ne 'Healthy' } | ForEach-Object { [pscustomobject]@{ Name = [string]$_.FriendlyName; Health = [string]$_.HealthStatus; Operational = [string]($_.OperationalStatus -join ','); Usage = [string]$_.Usage } }) } catch { $o.Notes += "PhysicalDisk: $($_.Exception.Message)" }
+        try { $o.Subsystem = @(Get-StorageSubSystem -ErrorAction Stop | ForEach-Object { [pscustomobject]@{ Name = [string]$_.FriendlyName; Health = [string]$_.HealthStatus } }) } catch { $o.Notes += "Subsystem: $($_.Exception.Message)" }
+        try {
+            # IMPORTANT: on Azure Local / S2D with ReFS, CSVs run in FileSystemRedirected mode BY DESIGN
+            # (FileSystemRedirectedIOReason = FileSystemReFs) - that is NORMAL and must NOT be flagged as
+            # degraded. Only surface genuinely abnormal states: block redirection for a real reason,
+            # file-system redirection for a NON-ReFS reason, or a paused / offline volume.
+            $benignFsReasons = @('NotFileSystemRedirected', 'FileSystemReFs', '')
+            $csvAbnormal = @(Get-ClusterSharedVolumeState -ErrorAction Stop |
+                Where-Object {
+                    $br = "$($_.BlockRedirectedIOReason)"
+                    $fr = "$($_.FileSystemRedirectedIOReason)"
+                    $si = "$($_.StateInfo)"
+                    ($br -and $br -ne 'NotBlockRedirected') -or
+                    ($fr -and ($benignFsReasons -notcontains $fr)) -or
+                    ($si -match 'Paused|Offline')
+                })
+            # Collapse to ONE row per volume. Get-ClusterSharedVolumeState returns a row per volume PER
+            # NODE, so a large cluster (e.g. 8 nodes x 40 volumes = 320 rows) would flood the table and a
+            # single affected volume would repeat across every node. Group by volume and aggregate the
+            # affected node(s) + distinct non-benign reasons so the table stays compact at any scale.
+            $o.CsvRedirected = @($csvAbnormal | Group-Object VolumeFriendlyName | ForEach-Object {
+                $g = $_.Group
+                [pscustomobject]@{
+                    Volume      = [string]$_.Name
+                    Nodes       = (@($g | ForEach-Object { [string]$_.Node } | Where-Object { $_ } | Sort-Object -Unique) -join ', ')
+                    State       = (@($g | ForEach-Object { [string]$_.StateInfo } | Where-Object { $_ } | Sort-Object -Unique) -join ', ')
+                    BlockReason = (@($g | ForEach-Object { [string]$_.BlockRedirectedIOReason } | Where-Object { $_ -and $_ -ne 'NotBlockRedirected' } | Sort-Object -Unique) -join ', ')
+                    FsReason    = (@($g | ForEach-Object { [string]$_.FileSystemRedirectedIOReason } | Where-Object { $_ -and ($benignFsReasons -notcontains $_) } | Sort-Object -Unique) -join ', ')
+                }
+            })
+        } catch { $o.Notes += "CsvState: $($_.Exception.Message)" }
+        [pscustomobject]$o
+    }
+
+    try {
+        $local = $env:COMPUTERNAME
+        if ($TargetNode -and ($TargetNode.Split('.')[0] -ne $local)) {
+            $raw = Invoke-Command -ComputerName $TargetNode -ScriptBlock $scan -ErrorAction Stop
+        } else {
+            $raw = & $scan
+        }
+    } catch {
+        return [pscustomobject]@{ Available = $false; Source = $TargetNode; Summary = 'Unavailable'; Note = $_.Exception.Message; StorageJobs = @(); VDiskUnhealthy = @(); PDiskUnhealthy = @(); Subsystem = @(); CsvRedirected = @() }
+    }
+
+    $degraded = (@($raw.VDiskUnhealthy).Count -gt 0) -or (@($raw.PDiskUnhealthy).Count -gt 0) -or
+        (@($raw.CsvRedirected).Count -gt 0) -or (@($raw.Subsystem | Where-Object { "$($_.Health)" -eq 'Unhealthy' }).Count -gt 0)
+    $summary = if (-not $raw.StorageModule) { 'Unavailable' } elseif ($degraded) { 'Degraded' } elseif (@($raw.StorageJobs).Count -gt 0) { 'Active storage jobs' } else { 'Healthy' }
+    [pscustomobject]@{
+        Available      = [bool]$raw.StorageModule
+        Source         = [string]$raw.ComputerName
+        Summary        = $summary
+        StorageJobs    = @($raw.StorageJobs)
+        VDiskUnhealthy = @($raw.VDiskUnhealthy)
+        PDiskUnhealthy = @($raw.PDiskUnhealthy)
+        Subsystem      = @($raw.Subsystem)
+        CsvRedirected  = @($raw.CsvRedirected)
+        Note           = ((@($raw.Notes)) -join '; ')
+    }
+}
+
 function Invoke-VMCheckpointAudit {
     [CmdletBinding()]
     param(
@@ -291,9 +872,11 @@ function Invoke-VMCheckpointAudit {
         [switch]$SkipAnalyticCheck
     )
 
-    # Optionally tee ALL console output for THIS VM to its own .txt report (via a transcript).
-    # -OutputPath is treated as a FOLDER; a per-VM file is auto-named inside it.
-    $transcriptStarted = $false
+    # Capture ALL console output for THIS VM into a buffer. The buffer is always active (so the HOLD
+    # STATE support summary can be mined for the HTML even without -OutputPath); when -OutputPath is
+    # supplied it is also written to a per-VM .txt at the end. The Write-Host proxy (see begin block)
+    # both captures into this buffer and, in Quiet mode, withholds the detail lines from the console.
+    $script:VMReportBuffer = [System.Collections.Generic.List[string]]::new()
     $reportFile = $null
     if ($OutputPath) {
         if (-not (Test-Path -LiteralPath $OutputPath)) {
@@ -302,8 +885,6 @@ function Invoke-VMCheckpointAudit {
         $safeName   = ($VMName -replace '[^\w.\-]', '_')
         # VM name FIRST in the file name so per-VM reports sort together alphabetically for humans.
         $reportFile = Join-Path $OutputPath ("{0}_VMAudit_{1}.txt" -f $safeName, [DateTime]::UtcNow.ToString('yyyyMMdd-HHmmss'))
-        Start-Transcript -Path $reportFile -Force | Out-Null
-        $transcriptStarted = $true
     }
 
     # Per-VM sub-progress (child of the "VM X of Y" bar). Auto-increments a step counter so sections
@@ -349,7 +930,8 @@ function Invoke-VMCheckpointAudit {
             [int]   $StaleCheckpointCount    = 0,
             [int]   $ConcernEventCount       = 0,
             [string]$Owner                   = '',
-            [string]$Detail                  = ''
+            [string]$Detail                  = '',
+            [object]$ReportData              = $null
         )
         [pscustomobject]@{
             VMName                  = $VMName
@@ -365,6 +947,7 @@ function Invoke-VMCheckpointAudit {
             ConcernEventCount       = $ConcernEventCount
             ReportFile              = $reportFile
             Detail                  = $Detail
+            ReportData              = $ReportData
         }
     }
 
@@ -564,6 +1147,13 @@ function Invoke-VMCheckpointAudit {
     $allChainPaths = [System.Collections.Generic.List[string]]::new()
     # Set true if the orphan scan below finds any .avhdx not part of an attached chain (feeds -PassThru).
     $hasOrphans = $false
+    # Orphaned .avhdx rows found by the scan below (initialised here so the HTML data build can read it
+    # even when no VHD folders were resolved to scan).
+    $orphans = @()
+    # Cluster Shared Volume rows hosting this VM's disks (captured for the HTML report; see below).
+    $csvReport = @()
+    # Hyper-V Replica object for this VM (null unless replication is enabled; read by the HTML build).
+    $replInfo = $null
     # Nodes whose Hyper-V-VMMS/Analytic channel is NOT actively enabled (disabled, or 'not found').
     # Populated by the Analytic section below and surfaced as a TIP in the RESULT block so the operator
     # can choose to enable it for extra diagnostic detail on the NEXT occurrence (it is easily missed
@@ -743,6 +1333,18 @@ function Invoke-VMCheckpointAudit {
                 'Free %'   = [math]::Round(($part.FreeSpace / $part.Size) * 100, 1)
             }
         } | Format-Table -AutoSize | Out-Indented
+        # Capture the same projection for the HTML fleet report (a separate pass so the console table
+        # above is unchanged). Errors here are non-fatal - the HTML simply omits the CSV rows.
+        $csvReport = @($relevantCsv | ForEach-Object {
+            $p = $_.SharedVolumeInfo.Partition
+            [pscustomobject]@{
+                Volume     = [string]$_.Name
+                MountPoint = [string]$_.SharedVolumeInfo.FriendlyVolumeName
+                SizeGB     = [math]::Round($p.Size / 1GB, 2)
+                FreeGB     = [math]::Round($p.FreeSpace / 1GB, 2)
+                FreePct    = [math]::Round(($p.FreeSpace / $p.Size) * 100, 1)
+            }
+        })
     } catch {
         Write-Host "  Could not query Cluster Shared Volumes: $($_.Exception.Message)"
         Write-Host ""
@@ -997,6 +1599,31 @@ function Invoke-VMCheckpointAudit {
             $workerEvents      = @($workerEvents | Sort-Object 'Time (UTC)')
             $concernEvents     = @($workerEvents | Where-Object { $_.Concern -eq 'YES' })
             $eventConcernCount = $concernEvents.Count
+
+            # Discover OTHER VMs referenced in this node's HIGH-RISK signals (background disk merge
+            # interrupted / failed, or 'cannot load VM configuration'). Hyper-V messages quote the VM
+            # friendly name, so pull quoted tokens; the end block cross-checks them against real
+            # clustered VMs (which discards paths / noise) and de-duplicates. Collected for ALL VMs, and
+            # optionally auto-audited via -IncludeDiscoveredVMs.
+            $highRiskIds = @(19090, 19100, 16300)
+            foreach ($ev in $concernEvents) {
+                $isHighRisk = ($highRiskIds -contains [int]$ev.Id) -or ($ev.FullMessage -match '0x80070020')
+                if (-not $isHighRisk) { continue }
+                $reason = switch ([int]$ev.Id) {
+                    19100   { 'Background disk merge FAILED (event 19100)' }
+                    19090   { 'Background disk merge interrupted (event 19090)' }
+                    16300   { 'Cannot load VM configuration (event 16300)' }
+                    default { if ($ev.FullMessage -match '0x80070020') { 'Sharing violation on disk (0x80070020)' } else { 'High-risk checkpoint/merge signal' } }
+                }
+                foreach ($qm in [regex]::Matches([string]$ev.FullMessage, "'([^']+)'")) {
+                    $cand = $qm.Groups[1].Value.Trim()
+                    if ($cand) {
+                        [void]$script:DiscoveredCandidates.Add([pscustomobject]@{
+                            Name = $cand; Reason = $reason; SourceVM = $VMName; SourceNode = $OwningNode
+                        })
+                    }
+                }
+            }
 
             # The console / .txt table can be swamped by thousands of identical rows (e.g. repeated
             # 15268). Cap each event ID to the first few rows here; the CSV keeps EVERY event, and a
@@ -1317,6 +1944,112 @@ function Invoke-VMCheckpointAudit {
     # Per-VM result object for the pipeline (emitted only when the caller passed -PassThru; the end
     # block gates that). The human report above went to the host / transcript, never the pipeline.
     $recommendation = if ($holdState) { 'HOLD STATE' } elseif ($investigate) { 'INVESTIGATE' } else { 'OK' }
+
+    # In Quiet mode the detailed report above was captured but not echoed; show a single concise verdict
+    # line per VM (always to the real host, bypassing the buffer/quiet gate).
+    if ($script:QuietConsole) {
+        $verdictColour = switch ($recommendation) { 'HOLD STATE' { 'Red' } 'INVESTIGATE' { 'Yellow' } 'OK' { 'Green' } default { 'Gray' } }
+        Microsoft.PowerShell.Utility\Write-Host ("  [{0}] {1}  (owner {2})" -f $VMName, $recommendation, $OwningNode) -ForegroundColor $verdictColour
+    }
+
+    # For HOLD STATE VMs, mine the captured buffer for the 'PROBLEM STATEMENT' support block so the HTML
+    # can show it verbatim in a collapsed section (copy/paste-ready for a support case). Delimited by the
+    # two dashed rules the console block prints around it.
+    $supportCaseSummary = ''
+    if ($holdState -and $script:VMReportBuffer) {
+        $bufLines = $script:VMReportBuffer.ToArray()
+        $startI = -1
+        for ($bi = 0; $bi -lt $bufLines.Count; $bi++) { if ($bufLines[$bi] -like '*PROBLEM STATEMENT*') { $startI = $bi; break } }
+        if ($startI -ge 0) {
+            $dashSeen = 0; $endI = $bufLines.Count - 1
+            for ($bj = $startI; $bj -lt $bufLines.Count; $bj++) {
+                if ($bufLines[$bj] -match '^\s*-{20,}\s*$') { $dashSeen++; if ($dashSeen -ge 2) { $endI = $bj; break } }
+            }
+            $supportCaseSummary = ($bufLines[$startI..$endI] -join "`r`n")
+        }
+    }
+
+    # Build the structured detail the HTML fleet report renders (only the fields it needs). This is
+    # carried on the result object's .ReportData property and consumed once, in the end block. Purpose
+    # text mirrors the console 'Checkpoints' table so the HTML and console agree.
+    $ckptRowsForHtml = @($checkpoints | Sort-Object CreationTimeUtc | ForEach-Object {
+        $purpose = switch -Wildcard ("$($_.SnapType)") {
+            'AppConsistent*' { 'Replica recovery point (app-consistent)'; break }
+            'Synced*'        { 'Replica synced checkpoint';                break }
+            '*Replica*'      { 'Hyper-V Replica checkpoint';               break }
+            'Recovery'       { 'Replica recovery point';                   break }
+            'Planned'        { 'Planned failover checkpoint';              break }
+            'Production*'    { 'Production checkpoint (backup)';           break }
+            'Standard'       { 'Standard checkpoint (manual/backup)';      break }
+            default          { if ($_.SnapType) { $_.SnapType } else { 'Unknown' } }
+        }
+        $ageH = [math]::Round(([DateTime]::UtcNow - $_.CreationTimeUtc).TotalHours, 1)
+        [pscustomobject]@{
+            Name    = [string]$_.Name
+            Type    = [string]$_.Type
+            Purpose = $purpose
+            Created = $_.CreationTimeUtc.ToString('yyyy-MM-dd HH:mm:ss')
+            AgeHrs  = $ageH
+            Stale   = ($ageH -ge $StaleHours)
+            Parent  = [string]$_.Parent
+        }
+    })
+    $eventBreakdownForHtml = @($concernEvents | Group-Object Id | Sort-Object { [int]$_.Name } | ForEach-Object {
+        $times = @($_.Group.'Time (UTC)' | Sort-Object)
+        [pscustomobject]@{
+            Id     = [int]$_.Name
+            Count  = $_.Count
+            First  = [string]$times[0]
+            Last   = [string]$times[-1]
+            Sample = [string](@($_.Group)[0].Message)
+        }
+    })
+    $replForHtml = if ($replInfo -and $replInfo.Repl) {
+        [pscustomobject]@{
+            Enabled             = $true
+            State               = [string]$replInfo.Repl.State
+            Health              = [string]$replInfo.Repl.Health
+            Mode                = [string]$replInfo.Repl.Mode
+            Primary             = [string]$replInfo.Repl.PrimaryServerName
+            Replica             = [string]$replInfo.Repl.ReplicaServerName
+            LastReplicationTime = [string]$replInfo.Repl.LastReplicationTime
+        }
+    } else {
+        [pscustomobject]@{ Enabled = $false; State = ''; Health = ''; Mode = ''; Primary = ''; Replica = ''; LastReplicationTime = '' }
+    }
+    $vssStateForHtml = if (-not $vssWriters -or @($vssWriters).Count -eq 0) { 'Unavailable' } elseif ($vssUnhealthy.Count -gt 0) { 'Unhealthy' } else { 'Healthy' }
+    $reportData = [pscustomobject]@{
+        VMId                 = [string]$vm.VMId
+        Status               = [string]$vm.Status
+        State                = [string]$vm.State
+        Version              = [string]$vm.Version
+        HostMaxVersion       = [string]$hostMaxVer
+        VmVerOlder           = [bool]$vmVerOlder
+        Uptime               = [string]$vm.Uptime
+        CheckpointType       = [string]$vm.CheckpointType
+        AutomaticCheckpoints = [bool]$vm.AutomaticCheckpointsEnabled
+        AttachedDiskCount    = @($diskReports).Count
+        CheckpointLayers     = [int]$totalCheckpoints
+        Checkpoints          = $ckptRowsForHtml
+        StaleCheckpointCount = $staleCheckpoints.Count
+        StaleHours           = $StaleHours
+        Replication          = $replForHtml
+        VssState             = $vssStateForHtml
+        VssTotal             = @($vssWriters).Count
+        VssUnhealthyCount    = $vssUnhealthy.Count
+        VssUnhealthy         = @($vssUnhealthy | ForEach-Object { [pscustomobject]@{ Writer = [string]$_.Writer; State = [string]$_.State; LastError = [string]$_.'Last error' } })
+        AnalyticNodesNeedEnable = @($analyticNodesNeedEnable)
+        CsvVolumes           = @($csvReport)
+        OrphanCount          = @($orphans).Count
+        HasOrphans           = [bool]$hasOrphans
+        HasForkSignature     = [bool]$hasForkSignature
+        EventConcernCount    = $eventConcernCount
+        EventBreakdown       = $eventBreakdownForHtml
+        EventLookbackHours   = $EventLookbackHours
+        EventsCsvName        = [string]$eventsCsvName
+        SupportCaseSummary   = [string]$supportCaseSummary
+    }
+
     $summaryArgs = @{
         Recommendation          = $recommendation
         HoldState               = $holdState
@@ -1327,6 +2060,7 @@ function Invoke-VMCheckpointAudit {
         StaleCheckpointCount    = $staleCheckpoints.Count
         ConcernEventCount       = $eventConcernCount
         Owner                   = $OwningNode
+        ReportData              = $reportData
     }
     return (New-AuditSummary @summaryArgs)
 
@@ -1344,10 +2078,17 @@ function Invoke-VMCheckpointAudit {
             Remove-PSSession -Session $script:OwnerSession -ErrorAction SilentlyContinue
             $script:OwnerSession = $null
         }
-        if ($transcriptStarted) {
-            Stop-Transcript | Out-Null
-            Write-Host "Report saved to: $reportFile"
+        # Flush the captured report buffer to the per-VM .txt (when -OutputPath was supplied), then
+        # deactivate the buffer so begin/end-block messages are shown normally again.
+        if ($reportFile -and $script:VMReportBuffer) {
+            try {
+                [System.IO.File]::WriteAllLines($reportFile, $script:VMReportBuffer.ToArray(), (New-Object System.Text.UTF8Encoding($false)))
+                if (-not $script:QuietConsole) { Microsoft.PowerShell.Utility\Write-Host "Report saved to: $reportFile" }
+            } catch {
+                Write-Warning "Could not write the per-VM report file '$reportFile': $($_.Exception.Message)"
+            }
         }
+        $script:VMReportBuffer = $null
     }
 }
 
@@ -1355,6 +2096,17 @@ function Invoke-VMCheckpointAudit {
 # progress bar can show an accurate "VM X of Y"; $VMSectionTotal drives the per-VM sub-progress %.
 $script:PendingVMNames = [System.Collections.Generic.List[string]]::new()
 $script:VMSectionTotal = 13
+# Accumulate every per-VM result object for the single HTML fleet report built at the end of the run.
+$script:AllAuditResults = [System.Collections.Generic.List[object]]::new()
+# High-risk VM names discovered in event data (referenced by a merge-failed / merge-interrupted /
+# cannot-load-config signal) but not necessarily in the audit list. Cross-checked and de-duplicated in
+# the end block. Each entry: [pscustomobject]@{ Name; Reason; SourceVM; SourceNode }.
+$script:DiscoveredCandidates = [System.Collections.Generic.List[object]]::new()
+# Hard cap on how many discovered VMs -IncludeDiscoveredVMs will auto-audit (guards against a runaway
+# expansion on a very busy node).
+$script:MaxDiscoveredToAudit = 25
+# Cluster storage-health snapshot (populated once, in the end block, unless -SkipStorageHealth).
+$script:ClusterStorageHealth = $null
 
 # Resolve a single per-run output sub-folder (once per invocation) so every VM in this run is
 # grouped together and repeated runs never collide. Only created when -OutputPath is supplied.
@@ -1421,6 +2173,12 @@ end {
             -WorkerEventIds $WorkerEventIds -ContextEventIds $ContextEventIds -ErrorCodePatterns $ErrorCodePatterns `
             -SkipAnalyticCheck:$SkipAnalyticCheck
 
+        # Keep every per-VM result for the single HTML fleet report built after the loop (filter to real
+        # summary objects so any stray pipeline output cannot become a phantom row).
+        foreach ($s in @($vmSummary)) {
+            if ($s -and $s.PSObject.Properties['Recommendation']) { [void]$script:AllAuditResults.Add($s) }
+        }
+
         # Emit the per-VM result object to the pipeline ONLY when -PassThru was requested; otherwise the
         # run is 'report to host / files' only and the pipeline stays empty.
         if ($PassThru) { $vmSummary }
@@ -1429,6 +2187,144 @@ end {
         Write-Progress -Id 2 -ParentId 1 -Activity ("Auditing VM: {0}" -f $name) -Completed
     }
     Write-Progress -Id 1 -Activity 'Hyper-V VM checkpoint / differencing-disk audit' -Completed
+
+    # Resolve the report / zip base name from the cluster once (used by both the HTML and the zip).
+    $clusterForName = @($script:AllAuditResults | ForEach-Object { $_.Cluster } | Where-Object { $_ })
+    $clusterForName = if ($clusterForName.Count -gt 0) { [string]$clusterForName[0] } elseif ($Cluster) { $Cluster } else { 'cluster' }
+    $safeCluster    = ($clusterForName -replace '[^\w.\-]', '_')
+    $dateStamp      = [DateTime]::UtcNow.ToString('yyyy-MM-dd')
+    $htmlFileName   = "VMCheckpointAudit-{0}-{1}.html" -f $safeCluster, $dateStamp
+
+    # Cross-check the high-risk VM names discovered in event data against REAL clustered VMs (this
+    # discards paths / noise), drop any already audited, and de-duplicate. Always surfaced; only
+    # auto-audited when -IncludeDiscoveredVMs is set.
+    $discoveredVMs = @()
+    if (@($script:DiscoveredCandidates).Count -gt 0) {
+        $auditedNames = @($script:AllAuditResults | ForEach-Object { [string]$_.VMName })
+        $clusterVmNames = @()
+        try { $clusterVmNames = @(Get-ClusterGroup -Cluster $clusterForName -ErrorAction Stop | Where-Object { $_.GroupType -eq 'VirtualMachine' } | ForEach-Object { [string]$_.Name }) } catch { }
+        $seenDisc = @{}
+        foreach ($cand in $script:DiscoveredCandidates) {
+            if (-not $cand.Name) { continue }
+            $match = $clusterVmNames | Where-Object { $_ -eq $cand.Name } | Select-Object -First 1
+            if (-not $match) { continue }
+            if ($auditedNames -contains $match) { continue }
+            if ($seenDisc.ContainsKey($match.ToLower())) { continue }
+            $seenDisc[$match.ToLower()] = $true
+            $discoveredVMs += [pscustomobject]@{ Name = $match; Reason = [string]$cand.Reason }
+        }
+    }
+
+    # Optionally auto-audit the discovered VMs (bounded, NON-recursive: their own discoveries are not
+    # expanded). They join the same fleet report; anything past the cap is still surfaced below.
+    if ($IncludeDiscoveredVMs -and $discoveredVMs.Count -gt 0) {
+        $toAudit = @($discoveredVMs | Select-Object -First $script:MaxDiscoveredToAudit)
+        Microsoft.PowerShell.Utility\Write-Host ""
+        Microsoft.PowerShell.Utility\Write-Host ("  -IncludeDiscoveredVMs: auditing {0} discovered VM(s)..." -f $toAudit.Count) -ForegroundColor Cyan
+        foreach ($dv in $toAudit) {
+            $ds = Invoke-VMCheckpointAudit -VMName $dv.Name -Cluster $Cluster -OutputPath $script:RunFolder -StaleHours $StaleHours `
+                -SkipWorkerEvents:$SkipWorkerEvents -EventLookbackHours $EventLookbackHours `
+                -WorkerEventIds $WorkerEventIds -ContextEventIds $ContextEventIds -ErrorCodePatterns $ErrorCodePatterns `
+                -SkipAnalyticCheck:$SkipAnalyticCheck
+            foreach ($s in @($ds)) {
+                if ($s -and $s.PSObject.Properties['Recommendation']) { [void]$script:AllAuditResults.Add($s); if ($PassThru) { $s } }
+            }
+        }
+        # Remove the now-audited VMs from the discovered list (no re-expansion of new candidates).
+        $auditedNames = @($script:AllAuditResults | ForEach-Object { [string]$_.VMName })
+        $discoveredVMs = @($discoveredVMs | Where-Object { $auditedNames -notcontains $_.Name })
+    }
+
+    # Read-only cluster storage-health snapshot (once per run), unless suppressed. Query it from one of
+    # the owning nodes we already reached (local if this host is that node).
+    if (-not $SkipStorageHealth) {
+        Write-Progress -Id 1 -Activity 'Hyper-V VM checkpoint / differencing-disk audit' -Status 'Gathering cluster storage health' -PercentComplete 99
+        $ownerNodes  = @($script:AllAuditResults | ForEach-Object { $_.OwningNode } | Where-Object { $_ } | Sort-Object -Unique)
+        $storageNode = if ($ownerNodes.Count -gt 0) { [string]$ownerNodes[0] } else { $env:COMPUTERNAME }
+        $script:ClusterStorageHealth = Get-ClusterStorageHealthSnapshot -TargetNode $storageNode
+        Write-Progress -Id 1 -Activity 'Hyper-V VM checkpoint / differencing-disk audit' -Completed
+    }
+
+    # Single self-contained HTML fleet report (ON by default; suppress with -NoHtml). Destination:
+    # explicit -HtmlReportPath (a folder, or a full path ending in .html) > the -OutputPath per-run
+    # sub-folder > the current directory. Any failure here is non-fatal to the run.
+    $htmlWritten = $null
+    if (-not $NoHtml -and $script:AllAuditResults.Count -gt 0) {
+        try {
+            if ($HtmlReportPath) {
+                if ($HtmlReportPath -match '\.html?$') {
+                    $htmlPath = $HtmlReportPath
+                    $htmlDir  = Split-Path -Parent $htmlPath
+                    if (-not $htmlDir) { $htmlDir = (Get-Location).Path; $htmlPath = Join-Path $htmlDir $htmlPath }
+                } else {
+                    $htmlDir  = $HtmlReportPath
+                    $htmlPath = Join-Path $htmlDir $htmlFileName
+                }
+            } elseif ($script:RunFolder) {
+                $htmlDir  = $script:RunFolder
+                $htmlPath = Join-Path $htmlDir $htmlFileName
+            } else {
+                $htmlDir  = (Get-Location).Path
+                $htmlPath = Join-Path $htmlDir $htmlFileName
+            }
+            if ($htmlDir -and -not (Test-Path -LiteralPath $htmlDir)) {
+                New-Item -ItemType Directory -Path $htmlDir -Force | Out-Null
+            }
+
+            $html = ConvertTo-VMCheckpointAuditHtml -Results $script:AllAuditResults.ToArray() `
+                -StaleHours $StaleHours -EventLookbackHours $EventLookbackHours `
+                -ClusterName $clusterForName -GeneratedUtc ([DateTime]::UtcNow.ToString('yyyy-MM-dd HH:mm:ss')) `
+                -DiscoveredVMs $discoveredVMs -StorageHealth $script:ClusterStorageHealth -IncludeDiscoveredVMs:$IncludeDiscoveredVMs
+            [System.IO.File]::WriteAllText($htmlPath, $html, (New-Object System.Text.UTF8Encoding($false)))
+            $htmlWritten = $htmlPath
+            Write-Host ""
+            Write-Host "HTML fleet report written to: $htmlPath"
+        } catch {
+            Write-Alert "  WARNING: could not write the HTML fleet report: $($_.Exception.Message)" -Level Warning
+        }
+    }
+
+    # Results .zip bundle (ON by default; suppress with -NoZip). Requires -OutputPath (a per-run folder
+    # to bundle). Zips the run folder's .txt / .csv / .html into the -OutputPath root - a single file to
+    # copy to a browser device and attach to a support case. Non-fatal on failure.
+    $zipWritten = $null
+    if (-not $NoZip) {
+        if ($script:RunFolder -and (Test-Path -LiteralPath $script:RunFolder)) {
+            try {
+                $zipPath = Join-Path $OutputPath ("VMCheckpointAudit-{0}-{1}.zip" -f $safeCluster, $dateStamp)
+                if (Test-Path -LiteralPath $zipPath) { Remove-Item -LiteralPath $zipPath -Force }
+                Compress-Archive -Path (Join-Path $script:RunFolder '*') -DestinationPath $zipPath -Force
+                $zipWritten = $zipPath
+                Write-Host "Results bundled to zip:       $zipPath"
+            } catch {
+                Write-Alert "  WARNING: could not create the results zip: $($_.Exception.Message)" -Level Warning
+            }
+        } else {
+            Write-Alert "  NOTE: no results .zip was created - it requires -OutputPath (there was nothing on disk to bundle)." -Level Info
+        }
+    }
+
+    # Guidance: how to consume the portable report.
+    if ($zipWritten) {
+        Write-Host ""
+        Write-Host "  To review: copy the zip file to a device with a web browser, unzip it, and open the"
+        Write-Host "  '$htmlFileName' file (titled 'Hyper-V VM Checkpoint Health Audit')."
+    } elseif ($htmlWritten) {
+        Write-Host ""
+        Write-Host "  To review: open '$htmlFileName' (titled 'Hyper-V VM Checkpoint Health Audit') in a web browser."
+    }
+
+    # Surface any high-risk VMs discovered in event data but not audited (always shown, even in quiet).
+    if (@($discoveredVMs).Count -gt 0) {
+        Microsoft.PowerShell.Utility\Write-Host ""
+        Microsoft.PowerShell.Utility\Write-Host ("  {0} high-risk VM(s) were referenced in event data but were NOT audited:" -f @($discoveredVMs).Count) -ForegroundColor Yellow
+        foreach ($dv in $discoveredVMs) { Microsoft.PowerShell.Utility\Write-Host ("    - {0}  ({1})" -f $dv.Name, $dv.Reason) -ForegroundColor Yellow }
+        $dvList = (@($discoveredVMs | ForEach-Object { "'{0}'" -f $_.Name }) -join ',')
+        $clusterArg = if ($Cluster) { " -Cluster '$Cluster'" } else { '' }
+        Microsoft.PowerShell.Utility\Write-Host "  Recommend auditing them, e.g.:" -ForegroundColor Yellow
+        Microsoft.PowerShell.Utility\Write-Host ("    .\Get-HyperVVMCheckpointHealth.ps1 -VMName $dvList$clusterArg -OutputPath <folder>")
+        Microsoft.PowerShell.Utility\Write-Host "  (or re-run with -IncludeDiscoveredVMs to audit them automatically)."
+    }
 
     # Option C: repeat the 'nothing saved' warning at the END, so it is the last thing the operator
     # sees after a long run (the up-front warning may have scrolled off the console).
