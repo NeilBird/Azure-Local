@@ -36,9 +36,11 @@
 .EXAMPLE
     .\Get-HyperVVMCheckpointHealth.ps1 -VMName (Get-ClusterGroup | Where-Object GroupType -eq 'VirtualMachine').Name -OutputPath 'C:\Temp\Reports'
 
-    Audits EVERY clustered VM. The VM names come from the cluster API (Get-ClusterGroup - RPC, no WinRM
-    and no double hop), so this works when run locally on a node or over a single remoting hop. Writes a
-    per-VM .txt transcript and events .csv.
+    Audits EVERY clustered VM when run ON a cluster node. The VM names come from the cluster API
+    (Get-ClusterGroup - RPC, no WinRM and no double hop). NOTE: the bare Get-ClusterGroup sub-expression
+    is a SEPARATE command that runs in YOUR session and targets the LOCAL cluster, so this form only
+    works on a node. To do the same from a management workstation, see the -Cluster example below
+    (you must add -Cluster to the inner Get-ClusterGroup as well). Writes a per-VM .txt and events .csv.
 
 .EXAMPLE
     'lqwas911','lqwas912','lqwas921' | .\Get-HyperVVMCheckpointHealth.ps1 -OutputPath 'C:\Temp\Reports'
@@ -57,6 +59,13 @@
     Runs REMOTELY from a management workstation (with the RSAT 'Failover Clustering' tools). -Cluster
     targets the named cluster via the cluster RPC API and each owning node is reached in a SINGLE hop -
     no double hop. Without -Cluster the script must be run ON a cluster node.
+
+    IMPORTANT: -Cluster must appear TWICE. The (Get-ClusterGroup -Cluster 'CLUS01' ...) sub-expression
+    that builds the -VMName list is a SEPARATE command that runs in your local session BEFORE the
+    script starts; it does NOT inherit the script's -Cluster, so it needs its own -Cluster to point at
+    the remote cluster. The script's own -Cluster then governs the audit itself. (Equivalent pipeline
+    form: Get-ClusterGroup -Cluster 'CLUS01' | Where-Object GroupType -eq 'VirtualMachine' |
+    Select-Object -ExpandProperty Name | .\Get-HyperVVMCheckpointHealth.ps1 -Cluster 'CLUS01' ...)
 
 .NOTES
     Author  : Neil Bird, Microsoft

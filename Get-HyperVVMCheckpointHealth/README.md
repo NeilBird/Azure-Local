@@ -38,7 +38,7 @@ The script is designed to avoid "double-hop" authentication failures (the `0x800
 Two supported ways to run it, both single-hop:
 
 - **On a cluster node** (interactive / SConfig logon). VMs owned by that node are read locally (zero hops); VMs on other nodes are reached in one hop.
-- **From a management workstation** with **`-Cluster <name>`** (RSAT Failover Clustering installed). The cluster queries use RPC and each owning node is reached in one hop from the workstation.
+- **From a management workstation** with **`-Cluster <name>`** (RSAT Failover Clustering installed). The cluster queries use RPC and each owning node is reached in one hop from the workstation. If you build the `-VMName` list from a `Get-ClusterGroup` sub-expression, add `-Cluster <name>` to **that** query too — it runs locally and does not inherit the script's `-Cluster` (see the remote example in Usage).
 
 > **Do not** `Enter-PSSession` into a node and then run the script: if the VM is owned by a *different* node, reaching it is a **second (double) hop** and is blocked (`Access is denied` / `0x8009030e`) unless CredSSP/delegation is configured. The script detects this and tells you to run it on a node or use `-Cluster`.
 
@@ -54,14 +54,23 @@ Two supported ways to run it, both single-hop:
 # Multiple VMs by name (array) - each gets its own .txt and .csv in the folder
 .\Get-HyperVVMCheckpointHealth.ps1 -VMName 'TestVM01','TestVM02' -OutputPath 'C:\Temp\Reports'
 
-# Every clustered VM - enumerate names via the cluster API (RPC, no double hop)
+# Every clustered VM - ON A NODE. The bare Get-ClusterGroup targets the LOCAL cluster, so this form
+# only works when run on a cluster node (for a workstation, use the -Cluster form below).
 .\Get-HyperVVMCheckpointHealth.ps1 -VMName (Get-ClusterGroup | Where-Object GroupType -eq 'VirtualMachine').Name -OutputPath 'C:\Temp\Reports'
 
 # A specific list of VM names (piped) - the script resolves each VM's owning node itself
 'lqwas911','lqwas912','lqwas921' | .\Get-HyperVVMCheckpointHealth.ps1 -OutputPath 'C:\Temp\Reports'
 
-# REMOTE: from a management workstation (RSAT Failover Clustering) - target a cluster by name
+# REMOTE: from a management workstation (RSAT Failover Clustering) - target a cluster by name.
+# NOTE: -Cluster must appear TWICE - the (Get-ClusterGroup -Cluster 'CLUS01' ...) that builds the
+# -VMName list is a SEPARATE local command that does NOT inherit the script's -Cluster, so it needs
+# its own; the script's -Cluster then governs the audit.
 .\Get-HyperVVMCheckpointHealth.ps1 -Cluster 'CLUS01' -VMName (Get-ClusterGroup -Cluster 'CLUS01' | Where-Object GroupType -eq 'VirtualMachine').Name -OutputPath 'C:\Temp\Reports'
+
+# Equivalent remote pipeline form (names gathered from the remote cluster, then piped in)
+Get-ClusterGroup -Cluster 'CLUS01' | Where-Object GroupType -eq 'VirtualMachine' |
+    Select-Object -ExpandProperty Name |
+    .\Get-HyperVVMCheckpointHealth.ps1 -Cluster 'CLUS01' -OutputPath 'C:\Temp\Reports'
 
 # Wider event look-back (14 days, vs the 7-day default) and a lower stale threshold (12h)
 .\Get-HyperVVMCheckpointHealth.ps1 -VMName 'TestVM01' -EventLookbackHours 336 -StaleHours 12
