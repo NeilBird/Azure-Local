@@ -1147,33 +1147,6 @@ function Invoke-VMCheckpointAudit {
     $investigate      = ((-not $holdState) -and (($staleCheckpoints.Count -gt 0) -or ($eventConcernCount -gt 0) -or ($vssUnhealthy.Count -gt 0)))
     $concernIdSummary = (@($concernEvents | Group-Object Id | Sort-Object { [int]$_.Name } | ForEach-Object { "{0} x{1}" -f $_.Name, $_.Count }) -join ', ')
 
-    Write-Host "==================================================================="
-    if ($hasCheckpoints) {
-        Write-Alert "  RESULT: $totalCheckpoints CheckPoint (differencing/AVHDX) disk(s) present on '$VMName'." -Level Warning
-    } else {
-        Write-Alert "  RESULT: No CheckPoint AVHDX disks are attached to '$VMName'." -Level Good
-    }
-    if ($staleCheckpoints.Count -gt 0) {
-        Write-Alert "  WARNING: $($staleCheckpoints.Count) checkpoint(s) are >= $StaleHours hours old (possibly stuck)." -Level Warning
-    }
-    if ($eventConcernCount -gt 0) {
-        Write-Alert "  WARNING: $eventConcernCount concerning Hyper-V event(s) found (see the Concern=YES rows above)." -Level Warning
-    }
-    if ($holdState) {
-        Write-Host ""
-        Write-Alert "  HOLD STATE (data-loss risk): a checkpoint fork-commit / merge-failure signature AND" -Level Critical
-        Write-Alert "  unmerged differencing disk(s) are present together." -Level Critical
-        Write-Alert ("  Why flagged: {0} active differencing (.avhdx) layer(s); fork-commit signature in event(s) [{1}]; {2} checkpoint(s) >= {3}h old." -f $totalCheckpoints, $concernIdSummary, $staleCheckpoints.Count, $StaleHours) -Level Critical
-        Write-Alert "  See the PROBLEM STATEMENT below for the recommended next steps and a copy/paste case summary." -Level Critical
-    } elseif ($investigate) {
-        Write-Host ""
-        Write-Alert "  INVESTIGATE: concern signals are present, but the specific checkpoint fork-commit signature" -Level Warning
-        Write-Alert "  was NOT observed (likely a stalled / failed backup checkpoint or an unhealthy VSS writer)." -Level Warning
-        Write-Alert ("  Why flagged: {0} concerning event(s) [{1}]; {2} checkpoint(s) >= {3}h old; {4} unhealthy VSS writer(s)." -f $eventConcernCount, $concernIdSummary, $staleCheckpoints.Count, $StaleHours, $vssUnhealthy.Count) -Level Warning
-        Write-Alert "  See the PROBLEM STATEMENT below for the recommended next steps and a copy/paste case summary." -Level Warning
-    }
-    Write-Host "==================================================================="
-
     # ---- Problem statement for a Microsoft Support (CSS) Support Request (SR) ----------------------
     # A copy/paste-ready summary of the key findings, so this report can be pasted into (or attached to)
     # a support case without re-typing. It references the events CSV for the full, untruncated detail.
@@ -1250,6 +1223,35 @@ function Invoke-VMCheckpointAudit {
     Write-Host ("  Reference: {0}" -f $script:TroubleshootTitle)
     Write-Host ("             {0}" -f $script:TroubleshootUrl)
     Write-Host "  ------------------------------------------------------------------------------"
+
+    # ---- Overall RESULT / verdict (shown last, after the copy/paste PROBLEM STATEMENT above) --------
+    Write-Host ""
+    Write-Host "==================================================================="
+    if ($hasCheckpoints) {
+        Write-Alert "  RESULT: $totalCheckpoints CheckPoint (differencing/AVHDX) disk(s) present on '$VMName'." -Level Warning
+    } else {
+        Write-Alert "  RESULT: No CheckPoint AVHDX disks are attached to '$VMName'." -Level Good
+    }
+    if ($staleCheckpoints.Count -gt 0) {
+        Write-Alert "  WARNING: $($staleCheckpoints.Count) checkpoint(s) are >= $StaleHours hours old (possibly stuck)." -Level Warning
+    }
+    if ($eventConcernCount -gt 0) {
+        Write-Alert "  WARNING: $eventConcernCount concerning Hyper-V event(s) found (see the Concern=YES rows above)." -Level Warning
+    }
+    if ($holdState) {
+        Write-Host ""
+        Write-Alert "  HOLD STATE (data-loss risk): a checkpoint fork-commit / merge-failure signature AND" -Level Critical
+        Write-Alert "  unmerged differencing disk(s) are present together." -Level Critical
+        Write-Alert ("  Why flagged: {0} active differencing (.avhdx) layer(s); fork-commit signature in event(s) [{1}]; {2} checkpoint(s) >= {3}h old." -f $totalCheckpoints, $concernIdSummary, $staleCheckpoints.Count, $StaleHours) -Level Critical
+        Write-Alert "  See the PROBLEM STATEMENT section above for the recommended next steps and a copy/paste case summary." -Level Critical
+    } elseif ($investigate) {
+        Write-Host ""
+        Write-Alert "  INVESTIGATE: concern signals are present, but the specific checkpoint fork-commit signature" -Level Warning
+        Write-Alert "  was NOT observed (likely a stalled / failed backup checkpoint or an unhealthy VSS writer)." -Level Warning
+        Write-Alert ("  Why flagged: {0} concerning event(s) [{1}]; {2} checkpoint(s) >= {3}h old; {4} unhealthy VSS writer(s)." -f $eventConcernCount, $concernIdSummary, $staleCheckpoints.Count, $StaleHours, $vssUnhealthy.Count) -Level Warning
+        Write-Alert "  See the PROBLEM STATEMENT section above for the recommended next steps and a copy/paste case summary." -Level Warning
+    }
+    Write-Host "==================================================================="
 
     # Always remind the reader this is diagnostic only - any interpretation / remediation goes via the
     # backup vendor (backup/VSS findings) or Microsoft Support (confirmed fork-commit).
