@@ -541,22 +541,47 @@ function ConvertTo-VMCheckpointAuditHtml {
 </div>
 '@)
 
-    # Recommended next steps (placed up-front, right after the summary callouts). The Analytic-channel
-    # bullet is shown ONLY when at least one audited node still needs it enabled (see $analyticNeedsEnable).
+    # Recommended next steps (placed up-front, right after the summary callouts). Every bullet is
+    # CONTEXT-GATED so the list shows only advice that is actually actionable for this run:
+    #   - the two stale-checkpoint bullets appear only when >=1 stale checkpoint was found;
+    #   - the Analytic-channel bullet only when a node still needs it enabled ($analyticNeedsEnable);
+    #   - the storage bullet only when the storage snapshot is Degraded / has active jobs;
+    #   - the HOLD STATE bullet only when >=1 VM is in HOLD STATE.
+    # When none of those apply a single 'no action required' line is shown instead; the final
+    # 'open a case only if a fork-commit signature appears' guard-rail line is ALWAYS shown.
+    $storageDegraded   = ($StorageHealth -and (@('Degraded', 'Active storage jobs') -contains "$($StorageHealth.Summary)"))
+    $anyContextualStep = ($staleTotal -gt 0) -or $analyticNeedsEnable -or $storageDegraded -or ($countHold -gt 0)
     [void]$sb.Append(@'
 <h2>Recommended next steps</h2>
 <ol>
+'@)
+    if (-not $anyContextualStep) {
+        [void]$sb.Append(@'
+  <li><strong>No action required from this audit:</strong> no stale checkpoints, no HOLD STATE VMs, no storage-layer disruption, and the Analytic channel is enabled (or was not checked). Keep this report for your records.</li>
+'@)
+    }
+    if ($staleTotal -gt 0) {
+        [void]$sb.Append(@'
   <li><strong>Backup team first:</strong> for each VM with a stale checkpoint, check the backup product's recent job history - did the last backup complete? A leftover checkpoint usually means a backup that did not finish or did not issue the post-backup merge.</li>
   <li><strong>Confirm expected vs abandoned:</strong> decide whether each stale checkpoint is expected (by design) or left behind by a failed backup, then merge / remove the abandoned ones (prefer the backup product over manual deletion).</li>
 '@)
+    }
     if ($analyticNeedsEnable) {
         [void]$sb.Append(@'
   <li><strong>Enable the Analytic channel</strong> (elevated, per node) to capture the internal per-disk revert trace for the next occurrence: <code>wevtutil sl Microsoft-Windows-Hyper-V-VMMS-Analytic /e:true /q:true</code></li>
 '@)
     }
+    if ($storageDegraded) {
+        [void]$sb.Append(@'
+  <li><strong>Rule out storage-layer disruption:</strong> the storage-health section shows active S2D repair / resync jobs, CSV redirection, or unhealthy disks - treat it as a probable contributing factor and run the CSS Storage Diagnostic (<code>Install-Module -Name Microsoft.AzLocal.CSSTools</code>; then <code>Start-AzsSupportStorageDiagnostic</code>).</li>
+'@)
+    }
+    if ($countHold -gt 0) {
+        [void]$sb.Append(@'
+  <li><strong>HOLD STATE VMs:</strong> engage Microsoft Support (CSS) and/or your backup vendor before any migration / restart.</li>
+'@)
+    }
     [void]$sb.Append(@'
-  <li><strong>Rule out storage-layer disruption:</strong> if the storage-health section shows active S2D repair / resync jobs, CSV redirection, or unhealthy disks, treat it as a probable contributing factor and run the CSS Storage Diagnostic (<code>Install-Module -Name Microsoft.AzLocal.CSSTools</code>; then <code>Start-AzsSupportStorageDiagnostic</code>).</li>
-  <li><strong>HOLD STATE VMs (if any):</strong> engage Microsoft Support (CSS) and/or your backup vendor before any migration / restart.</li>
   <li>Open a Microsoft Support case only if a fork-commit signature (<code>18590</code> / <code>0x80048102</code>) appears, or the backup vendor rules out their product.</li>
 </ol>
 '@)
