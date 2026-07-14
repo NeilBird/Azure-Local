@@ -6,7 +6,7 @@
 
 - Script: [`Get-HyperVVMCheckpointHealth.ps1`](./Get-HyperVVMCheckpointHealth.ps1)
 - Updated: 2026-07-14
-- Version: 0.2.0
+- Version: 0.2.1
 
 ## TL;DR
 
@@ -16,11 +16,11 @@ Read-only health audit of a Hyper-V VM's **checkpoint / differencing-disk chain*
 
 ## Safety — this script makes no changes
 
-The script is **read-only** with respect to the VMs, disks, checkpoints, cluster, and event logs. Every data call is a `Get-*` / `Measure-*`, and the owner-context blocks only run read-only commands (`Get-VM`, `Get-VMHostSupportedVersion`, `Get-VHD`, `Get-VMSnapshot`, `Get-VMReplication`, `Get-Item`, `Get-ChildItem`, `Get-WinEvent`, and `vssadmin list writers`, which only *enumerates* VSS writer state).
+The script is **read-only** with respect to the VMs, disks, checkpoints, cluster, and event logs. Every data call is a `Get-*` / `Measure-*`, and the owner-context blocks only run read-only commands (`Get-VM`, `Get-VMHostSupportedVersion`, `Get-VHD`, `Get-VMSnapshot`, `Get-VMReplication`, `Get-Item`, `Get-ChildItem`, `Get-WinEvent`, `vssadmin list writers` (which only *enumerates* VSS writer state), and the storage-health snapshot `Get-StorageJob` / `Get-VirtualDisk` / `Get-PhysicalDisk` / `Get-StorageSubSystem` / `Get-ClusterSharedVolumeState`).
 
 - It **never** creates/deletes/merges checkpoints, migrates, or changes VM/cluster state.
 - The Analytic-channel enable command is **printed only** — never executed.
-- The **only** filesystem writes happen when you opt in with `-OutputPath`: the `.txt` transcript, the events `.csv`, and (if needed) the output directory. With no `-OutputPath`, nothing is written.
+- The **only** filesystem writes are diagnostic **artifacts**: a per-VM `.txt` report and events `.csv` (with `-OutputPath`), a single self-contained **HTML** fleet report (on by default — into the `-OutputPath` run folder, or the current directory if `-OutputPath` is omitted), and a results **`.zip`** bundling them (on by default when `-OutputPath` is used). Suppress with `-NoHtml` / `-NoZip`. None of these change the VM, disks, checkpoints, or cluster.
 - It is **diagnostic only** — it does not determine root cause definitively or remediate anything. For **backup / checkpoint-merge or VSS** findings, engage your **third-party backup vendor first** (their product owns the checkpoint lifecycle); **open a Microsoft Support (CSS) case** for a confirmed fork-commit signature, or when the vendor rules out their product. Act on their advice before taking action.
 
 ## Requirements
@@ -95,6 +95,19 @@ Get-ClusterGroup -Cluster 'CLUS01' | Where-Object GroupType -eq 'VirtualMachine'
 # -PassThru: also emit one object per VM to the pipeline (for Where-Object / Export-Csv / roll-ups)
 $r = .\Get-HyperVVMCheckpointHealth.ps1 -VMName 'TestVM01','TestVM02' -OutputPath 'C:\Temp\Reports' -PassThru
 $r | Where-Object HoldState | Format-Table VMName, OwningNode, Recommendation
+
+# HTML fleet report + results .zip are produced BY DEFAULT (into the -OutputPath run folder). The
+# console is quiet by default (one-line verdict per VM); the .txt and HTML still hold the full detail.
+.\Get-HyperVVMCheckpointHealth.ps1 -VMName 'VM01','VM02' -OutputPath 'C:\Temp\Reports'
+
+# Full per-VM report on the console as well as the files
+.\Get-HyperVVMCheckpointHealth.ps1 -VMName 'VM01' -OutputPath 'C:\Temp\Reports' -Quiet:$false
+
+# Also audit high-risk VMs DISCOVERED in the event data (bounded, non-recursive)
+.\Get-HyperVVMCheckpointHealth.ps1 -VMName 'VM01' -OutputPath 'C:\Temp\Reports' -IncludeDiscoveredVMs
+
+# Choose the HTML location explicitly (folder or full .html path); suppress the zip and/or HTML
+.\Get-HyperVVMCheckpointHealth.ps1 -VMName 'VM01' -OutputPath 'C:\Temp\Reports' -HtmlReportPath 'C:\Reports\audit.html' -NoZip
 ```
 
 ### Download / save the script and run it
@@ -128,6 +141,12 @@ Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/NeilBird/Azure-Local/m
 | `-ErrorCodePatterns` | string[] | see below | HRESULT strings flagged as a concern when present in an event message. |
 | `-SkipAnalyticCheck` | switch | off | Skip the per-node `Hyper-V-VMMS/Analytic` channel state check. |
 | `-PassThru` | switch | off | Emit **one `[pscustomobject]` per VM** to the pipeline (for `Where-Object` / `Export-Csv` / fleet roll-ups). Without it, **nothing** is written to the pipeline — the report goes to the host and, with `-OutputPath`, to the `.txt`/`.csv` files. See [Return value](#return-value). |
+| `-Quiet` | bool | `$true` | Console verbosity. **Quiet by default**: the full per-VM report still goes to the `.txt` and HTML, while the console shows only a concise one-line verdict per VM plus the final HTML/zip pointers. Pass `-Quiet:$false` to stream the complete per-VM report to the console too. |
+| `-HtmlReportPath` | string | — | Where to write the portable HTML fleet report. Accepts a **folder** (auto-named `VMCheckpointAudit-<Cluster>-yyyy-MM-dd.html`) or a full path ending in `.html`. Defaults to the `-OutputPath` run folder; if `-OutputPath` is omitted too, the current directory. |
+| `-NoHtml` | switch | off | Suppress the HTML fleet report (generated by default). |
+| `-NoZip` | switch | off | Suppress the results `.zip` bundle (created by default when `-OutputPath` is supplied). |
+| `-IncludeDiscoveredVMs` | switch | off | Also audit VMs **discovered** in the owning node's event data with a **high-risk** signal (merge interrupted/failed, sharing violation `0x80070020`, or cannot-load-config) but not in the audit list. Such VMs are **always surfaced** (console + HTML); this switch additionally audits them — **bounded** (cap 25) and **non-recursive**. |
+| `-SkipStorageHealth` | switch | off | Skip the read-only cluster storage-health snapshot (S2D storage jobs, CSV state, virtual/physical disk health). On by default; gathered once per run. |
 | `-NoColour` (`-NoColor`) | switch | off | Colour is **on by default** for interactive consoles (headings + RESULT/WARNING/HOLD STATE). It auto-disables when output is redirected (`> file`, `Out-File`, `$x = .\script`) so captured text stays readable; the `-OutputPath` transcript captures the lines as plain text either way. Pass `-NoColour` to force plain output. |
 
 ## What it reports
@@ -151,19 +170,32 @@ Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/NeilBird/Azure-Local/m
 
 > **Progress:** while running, the script shows a parent progress bar (`VM X of Y`) with a per-VM sub-bar that updates through each section (resolving the VM, cluster role, disks, checkpoints, the event-log scan, etc.) — useful on a busy or large cluster where operations like the event-log scan can take time. Progress uses the PowerShell progress stream, so it never appears in the transcript, redirected output, or the returned value.
 
+15. **Cluster storage health (Storage Spaces Direct / CSV)** — a read-only, cluster-wide snapshot (gathered **once** per run): active `Get-StorageJob` repair/resync jobs, CSVs in redirected/paused state, and any unhealthy virtual/physical disks. Storage-layer disruption is a plausible contributing factor for the merge / `0x80070020` / `16300` symptoms (files transiently locked or unavailable). The HTML also recommends Microsoft's CSS **Storage Diagnostic** (`Install-Module -Name Microsoft.AzLocal.CSSTools`; then `Start-AzsSupportStorageDiagnostic`) for a deep S2D / SBL analysis. Skip with `-SkipStorageHealth`.
+16. **Discovered high-risk VMs** — VMs referenced in the node's **high-risk** event signals (merge interrupted / failed, `0x80070020`, cannot-load-config) but **not** in the audit list, cross-checked against real clustered VMs. Always **surfaced** (console + HTML) with a ready-to-run command; audited automatically only with `-IncludeDiscoveredVMs` (bounded, non-recursive).
+
+## Portable HTML report & results bundle
+
+By default the run produces a single **self-contained HTML fleet report** (`VMCheckpointAudit-<Cluster>-<yyyy-MM-dd>.html`) — dark-themed, no external assets, safe to email or open on any device with a browser. It contains: summary cards; a **VM summary table** with distinct **Checkpoints** (`Get-VMSnapshot` count) and **AVHDX files** (differencing layers = Checkpoints × Disks) columns; a **Discovered high-risk VMs** section; **per-VM detailed information** (including, for HOLD STATE VMs, a copy/paste **Support Case summary**); a **Cluster storage health** section; and an anonymised **Information** section explaining the fork-commit signature and the exact Event IDs / HRESULTs that indicate it.
+
+When `-OutputPath` is used, a results **`.zip`** bundling the `.txt` + `.csv` + `.html` is also created (suppress with `-NoZip`), and the console prints guidance to **copy the zip to a device with a browser, unzip, and open the HTML**. The console itself is **quiet by default** (one-line verdict per VM); use `-Quiet:$false` for the full report on screen.
+
 ## Output files (only with `-OutputPath`)
 
 `-OutputPath` is an **optional base folder** (console-only if omitted). Each run creates a timestamped **sub-folder** inside it, and one set of files is written **per VM** in that sub-folder:
 
 ```
 <OutputPath>\
-  CheckpointAudit_<yyyy-MM-dd_HHmmssZ>\        <- one sub-folder per run
-    <VMName>_VMAudit_<yyyyMMdd-HHmmss>.txt     <- full console transcript for that VM
-    <VMName>_Events_<yyyy-MM-dd>.csv           <- that VM's events, full untruncated text
+  VMCheckpointAudit-<ClusterName>-<yyyy-MM-dd>.zip        <- results bundle (default; suppress with -NoZip)
+  CheckpointAudit_<yyyy-MM-dd_HHmmssZ>\                   <- one sub-folder per run
+    <VMName>_VMAudit_<yyyyMMdd-HHmmss>.txt               <- full report for that VM
+    <VMName>_Events_<yyyy-MM-dd>.csv                     <- that VM's events, full untruncated text
+    VMCheckpointAudit-<ClusterName>-<yyyy-MM-dd>.html    <- portable fleet report (default; suppress with -NoHtml)
 ```
 
-- **`<VMName>_VMAudit_<yyyyMMdd-HHmmss>.txt`** — full console transcript of that VM's run.
+- **`<VMName>_VMAudit_<yyyyMMdd-HHmmss>.txt`** — the full per-VM report (written from the captured output buffer; complete regardless of `-Quiet`).
 - **`<VMName>_Events_<yyyy-MM-dd>.csv`** — that VM's event scan with the **complete, untruncated** message text (newlines flattened to ` | `). The `.txt` collapses repeated rows for the same event ID (first few shown + a `Removed N duplicate...` note), so use this CSV for the full record of every event.
+- **`VMCheckpointAudit-<ClusterName>-<yyyy-MM-dd>.html`** — the single portable fleet report covering all audited VMs (see [Portable HTML report](#portable-html-report--results-bundle)).
+- **`VMCheckpointAudit-<ClusterName>-<yyyy-MM-dd>.zip`** — a bundle of the run folder (`.txt` + `.csv` + `.html`), for copying to a browser device / attaching to a support case in one file.
 
 File names lead with the **VM name** so per-VM reports sort together for easy reading. Running against many VMs produces one `.txt` + one `.csv` per VM, all grouped in a single per-run sub-folder so repeated runs never intermix. The run-folder path is printed at the start of the run.
 
@@ -186,6 +218,7 @@ These indicate a genuine problem and are flagged **`Concern = YES`**:
 | VMMS | `15268` | Failed to get disk information |
 | VMMS | `16300` | Cannot load a virtual machine configuration |
 | VMMS | `19090` | Background disk merge **interrupted** |
+| VMMS | `19100` | Background disk merge **failed** to complete (e.g. `0x80070020` sharing violation) |
 
 ### Informational context event IDs (`-ContextEventIds`)
 
@@ -251,6 +284,7 @@ Add **`-PassThru`** to emit **one `[pscustomobject]` per VM** to the pipeline, i
 | `ConcernEventCount` | int | Count of `Concern = YES` Hyper-V events. |
 | `ReportFile` | string | Path to this VM's `.txt` report (`$null` when `-OutputPath` omitted). |
 | `Detail` | string | Extra context for `NOT FOUND` / `ERROR` rows. |
+| `ReportData` | object | Rich per-VM detail (checkpoints, disks, replication, VSS, analytic, events, config version, and — for HOLD STATE — the Support Case summary) that the HTML fleet report renders. `$null` for `NOT FOUND` / `ERROR` rows. |
 
 A row is emitted for **every** VM — including `NOT FOUND` / `ERROR` cases — so a fleet sweep always yields one object per VM:
 
