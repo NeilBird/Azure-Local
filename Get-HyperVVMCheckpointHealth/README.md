@@ -10,9 +10,32 @@
 
 ## TL;DR
 
-An example PowerShell script that performs a **read-only** audit of a VM's **checkpoint / differencing-disk chain / replication** configuration, intended for use on an Azure Local or Windows Server Failover cluster.
+An example PowerShell script that performs a **read-only** audit of a VM's **checkpoint / differencing-disk chain, Hyper-V replication, and node event logs**. It automates the creation of a portable HTML Summary Report that highlights VMs with aged checkpoints, failing replication, and/or signals of concern that could occur during VM migration.
 
-Read-only health audit of a Hyper-V VM's **checkpoint / differencing-disk chain** on a Windows Server Failover Cluster or Azure Local cluster. It surfaces the specific failure mode where a checkpoint **fork-commit failure** leaves a VM's on-disk (`.vmcx`) chain metadata inconsistent — an inconsistency that can stay **dormant while the VM runs** and then be **materialised by a live migration or restart**, which can potentially cause the VM to roll the disks back to their base VHDX file(s), which can result in the data that is / was stored in the AVHDX file(s) being orphaned.
+This script provides insights that should be used as part of an operator investigation. It is NOT intended to troubleshoot active issues, nor does it provide a root-cause analysis (RCA). It is ONLY suitable as a tool to surface existing event data or configuration drift for VM checkpoints and/or replication issues.
+
+- **This script is NOT a supported service or offering from Microsoft. It is provided as example code only.**
+
+## Overview and details of intended use
+
+This example script performs a read-only audit of a Hyper-V VM's **checkpoint / differencing-disk chain, Hyper-V replication, and specific diagnostic event data** on an Azure Local or Windows Server Failover Cluster. It can be used to surface the specific failure mode where a checkpoint **fork-commit failure** leaves a VM's on-disk (`.vmcx`) chain metadata inconsistent — an inconsistency that can stay **dormant while the VM runs** and then be **materialised by a live migration or restart**, which can potentially cause the VM to roll the disks back to their base VHDX file(s), which can result in the data that is / was stored in the AVHDX file(s) being orphaned.
+
+The script is intended for Azure Local / Windows Server administrators / operators who need to audit the VMs running on a specific cluster — specifically for any anomalies in checkpoint, replication, or storage-related events. It generates automated output in the form of detailed `.txt` reports, `.csv` event-log data, and a portable **HTML summary** file that serves as the at-a-glance audit report.
+
+## Contents
+
+- [Safety — this script makes no changes](#safety--this-script-makes-no-changes)
+- [Requirements](#requirements)
+- [How it connects (no double-hop)](#how-it-connects-no-double-hop)
+- [Usage](#usage)
+- [Parameters](#parameters)
+- [What it reports](#what-it-reports)
+- [Portable HTML report & results bundle](#portable-html-report--results-bundle)
+- [Output files](#output-files-only-with--outputpath)
+- [Failure-signature reference](#failure-signature-reference)
+- [VM states (verdicts)](#vm-states-verdicts)
+- [Enabling the Analytic channel](#enabling-the-analytic-channel-optional-operators-choice)
+- [Return value](#return-value)
 
 ## Safety — this script makes no changes
 
@@ -286,7 +309,7 @@ Continuing to run a HOLD STATE / INVESTIGATE VM **in place** is generally safe (
 The internal per-disk `.vmcx` revert failure is traced only to `Hyper-V-VMMS/Analytic`, which is disabled by default. To capture it for future incidents, run **elevated on each node**:
 
 ```cmd
-wevtutil sl Microsoft-Windows-Hyper-V-VMMS/Analytic /e:true
+wevtutil sl Microsoft-Windows-Hyper-V-VMMS-Analytic /e:true /q:true
 ```
 
 ## Return value
