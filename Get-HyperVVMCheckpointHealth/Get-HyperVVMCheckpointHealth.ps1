@@ -467,7 +467,7 @@ function ConvertTo-VMCheckpointAuditHtml {
   p{margin:8px 0}
   a{color:var(--accent)}
   code{background:#0b1220;color:#7dd3fc;padding:1px 6px;border-radius:4px;font-size:13px;
-    font-family:Consolas,Monaco,monospace}
+    font-family:Consolas,Monaco,monospace;overflow-wrap:anywhere;word-break:break-word}
   pre{white-space:pre-wrap;word-break:break-word;background:#0b1220;color:#cbd5e1;padding:12px;
     border-radius:8px;font-size:12.5px;line-height:1.4;font-family:Consolas,Monaco,monospace;overflow:auto;max-height:560px}
   .cards{display:flex;flex-wrap:wrap;gap:14px;margin:8px 0 6px}
@@ -605,7 +605,7 @@ function ConvertTo-VMCheckpointAuditHtml {
     }
     if ($orphanTotal -gt 0) {
         [void]$sb.Append((@'
-  <li><strong>INVESTIGATE - orphaned .avhdx file(s):</strong> {0} .avhdx file(s) were found in VM disk folder(s) that are NOT attached to any VM chain - a stuck / failed merge or a leftover replica recovery point can leave these behind. Confirm with your backup team whether each is safe to remove before deleting any (do not delete blindly); see each VM's "Orphaned .avhdx files" detail below for names, sizes and timestamps.</li>
+  <li><strong>INVESTIGATE - orphaned .avhdx file(s):</strong> {0} .avhdx file(s) were found in VM disk folder(s) that are NOT attached to any VM chain - a stuck / failed merge or a leftover initial Hyper-V Replica checkpoint can leave these behind under specific scenarios. Confirm with your backup team before removing any (do not delete blindly); open a Microsoft CSS case for guidance if required. See each VM's "Orphaned .avhdx files" detail below for names, sizes and timestamps.</li>
 '@ -f $orphanTotal))
     }
     if ($analyticNeedsEnable) {
@@ -758,7 +758,7 @@ function ConvertTo-VMCheckpointAuditHtml {
             foreach ($o in @($rd.Orphans)) {
                 [void]$sb.Append("<tr><td>$(ConvertTo-HtmlText $o.Name)</td><td class='num'>$($o.SizeGB)</td><td>$(ConvertTo-HtmlText $o.Created)</td><td>$(ConvertTo-HtmlText $o.LastWrite)</td><td><code>$(ConvertTo-HtmlText $o.FullName)</code></td></tr>")
             }
-            [void]$sb.Append("</tbody></table><p class='muted'>A stuck / failed merge or a leftover replica recovery point can leave these behind. Confirm with your backup team before removing any (do not delete blindly).</p></details>`r`n")
+            [void]$sb.Append("</tbody></table><p class='muted'>A stuck / failed merge or a leftover initial Hyper-V Replica checkpoint can leave these behind under specific scenarios. Confirm with your backup team before removing any (do not delete blindly). Open a Microsoft CSS case for guidance if required.</p></details>`r`n")
         }
         # Concerning events breakdown.
         if ($rd.EventConcernCount -gt 0 -and @($rd.EventBreakdown).Count -gt 0) {
@@ -1540,8 +1540,9 @@ function Invoke-VMCheckpointAudit {
                 @{N='Created (UTC)';E={ if ($_.CreationTimeUtc)  { $_.CreationTimeUtc.ToString('yyyy-MM-dd HH:mm:ss') }  else { '(unavailable)' } }},
                 @{N='LastWrite (UTC)';E={ if ($_.LastWriteTimeUtc) { $_.LastWriteTimeUtc.ToString('yyyy-MM-dd HH:mm:ss') } else { '(unavailable)' } }},
                 FullName | Format-Table -AutoSize -Wrap | Out-Indented
-            Write-Host  "  These are NOT attached to the VM - a stuck / failed merge or a leftover replica recovery point can"
-            Write-Host  "  leave them behind. Confirm with your backup team whether each is safe to remove before deleting any."
+            Write-Host  "  These are NOT attached to the VM - a stuck / failed merge or a leftover initial Hyper-V Replica"
+            Write-Host  "  checkpoint can leave these behind under specific scenarios. Confirm with your backup team before"
+            Write-Host  "  removing any (do not delete blindly). Open a Microsoft CSS case for guidance if required."
         } else {
             Write-Host "  None found - every .avhdx in the VM's folders is part of an attached chain."
             Write-Host ""
