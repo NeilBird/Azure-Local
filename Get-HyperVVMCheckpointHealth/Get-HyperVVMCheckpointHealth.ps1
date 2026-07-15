@@ -97,11 +97,21 @@
     ConcernEventCount, ReportFile, Detail - ideal for Where-Object / Export-Csv / fleet roll-ups.
     It ALSO carries a nested ReportData object with the rich per-VM detail the HTML report renders
     (Checkpoints[], AttachedDiskCount, CheckpointLayers, StaleCheckpointCount, Replication, VssState,
-    VssUnhealthy[], AnalyticNodesNeedEnable[], CsvVolumes[], OrphanCount, HasForkSignature,
+    VssUnhealthy[], AnalyticNodesNeedEnable[], CsvVolumes[], OrphanCount, Orphans[], HasForkSignature,
     EventBreakdown[], Version/HostMaxVersion, and - for HOLD STATE - SupportCaseSummary). ReportData
     is $null for NOT FOUND / ERROR rows. Drill in, e.g.:
         $results | Where-Object { $_.ReportData.HasForkSignature } |
             ForEach-Object { $_.ReportData.Checkpoints } | Format-Table Name, AgeHrs, Stale
+
+.EXAMPLE
+    .\Get-HyperVVMCheckpointHealth.ps1 -Cluster 'CLUS01' -VMName (Get-ClusterGroup -Cluster 'CLUS01' | Where-Object GroupType -eq 'VirtualMachine').Name -ExcludedVMListCsv '.\CheckPointAudit_Excluded_VMs.csv' -OutputPath 'C:\Temp\Reports'
+
+    Audits every clustered VM EXCEPT those listed in the exclusion CSV. The file has a single column
+    with a 'VMName' header (a headerless single-column file also works); each VM whose name matches
+    (case-INSENSITIVE) is skipped BEFORE it is audited. Handy to permanently omit known-noisy or
+    intentionally long-checkpointed VMs from a fleet run. A relative path (e.g. '.\CheckPointAudit_
+    Excluded_VMs.csv', in the same folder as the script) is resolved against the current directory; a
+    missing / unreadable file is a non-fatal warning and the run proceeds with no exclusions.
 
 .OUTPUTS
     None to the pipeline by default - the human-readable report goes to the host and, with -OutputPath,
@@ -116,7 +126,7 @@
     Author  : Neil Bird, Microsoft
     Created : 2026-07-10
     Updated : 2026-07-15
-    Version : 0.2.12
+    Version : 0.2.13
     
     Requires: Windows PowerShell 5.1 (this script is written for, and validated against, Windows
               PowerShell 5.1 ONLY - it is NOT intended or tested for PowerShell 7.x). Also requires the Hyper-V
@@ -183,6 +193,13 @@ param(
     # only names that resolve to real clustered VMs are added, their own discoveries are not expanded,
     # and the number added is capped (see $script:MaxDiscoveredToAudit).
     [switch]$IncludeDiscoveredVMs,
+
+    # Optional: path to a CSV file listing VM names to EXCLUDE from the audit. The file has a single
+    # column with a 'VMName' header (a headerless single-column file is also accepted). It is read ONCE
+    # at start; any requested / piped VM whose name matches (case-INSENSITIVE) is skipped BEFORE it is
+    # audited, and excluded VMs are NOT auto-audited via -IncludeDiscoveredVMs either. A missing or
+    # unreadable file is a non-fatal warning (the run proceeds with no exclusions).
+    [string]$ExcludedVMListCsv,
 
     # Age (in hours) at or beyond which a checkpoint / differencing disk is flagged as stale.
     [ValidateRange(0, 8760)]
@@ -411,6 +428,11 @@ function ConvertTo-VMCheckpointAuditHtml {
     $countOk    = @($rows | Where-Object { $_.Recommendation -eq 'OK' }).Count
     $staleTotal = (@($rows | ForEach-Object { [int]$_.StaleCheckpointCount }) | Measure-Object -Sum).Sum
     if (-not $staleTotal) { $staleTotal = 0 }
+    # Fleet-wide count of orphaned .avhdx files (present in a VM's disk folder(s) but not attached to
+    # any chain). Summed from each VM's ReportData.OrphanCount for the summary card and the gated
+    # 'orphaned files' recommended-next-step below.
+    $orphanTotal = (@($rows | ForEach-Object { if ($_.ReportData) { [int]$_.ReportData.OrphanCount } else { 0 } }) | Measure-Object -Sum).Sum
+    if (-not $orphanTotal) { $orphanTotal = 0 }
     # True when at least one audited node still has the Hyper-V-VMMS Analytic channel NOT enabled
     # (per-VM ReportData.AnalyticNodesNeedEnable). Used to show the 'Enable the Analytic channel'
     # recommended step ONLY when it is actually actionable - if it is already enabled everywhere
@@ -445,7 +467,7 @@ function ConvertTo-VMCheckpointAuditHtml {
   p{margin:8px 0}
   a{color:var(--accent)}
   code{background:#0b1220;color:#7dd3fc;padding:1px 6px;border-radius:4px;font-size:13px;
-    font-family:Consolas,Monaco,monospace}
+    font-family:Consolas,Monaco,monospace;overflow-wrap:anywhere;word-break:break-word}
   pre{white-space:pre-wrap;word-break:break-word;background:#0b1220;color:#cbd5e1;padding:12px;
     border-radius:8px;font-size:12.5px;line-height:1.4;font-family:Consolas,Monaco,monospace;overflow:auto;max-height:560px}
   .cards{display:flex;flex-wrap:wrap;gap:14px;margin:8px 0 6px}
@@ -507,6 +529,7 @@ function ConvertTo-VMCheckpointAuditHtml {
   <div class="card amber"><div class="n">$countInv</div><div class="l">Investigate</div></div>
   <div class="card green"><div class="n">$countOk</div><div class="l">OK</div></div>
   <div class="card amber"><div class="n">$staleTotal</div><div class="l">Stale checkpoints</div></div>
+  <div class="card amber"><div class="n">$orphanTotal</div><div class="l">Orphaned .avhdx</div></div>
 </div>
 "@)
 
@@ -559,7 +582,7 @@ function ConvertTo-VMCheckpointAuditHtml {
     # NOTE: $countInv is included in $anyContextualStep so an INVESTIGATE-only run (e.g. VSS-writer /
     # concern-event driven with zero stale checkpoints) never falls through to 'No action required'.
     $storageDegraded   = ($StorageHealth -and (@('Degraded', 'Active storage jobs') -contains "$($StorageHealth.Summary)"))
-    $anyContextualStep = ($staleTotal -gt 0) -or ($countInv -gt 0) -or $analyticNeedsEnable -or $storageDegraded -or ($countHold -gt 0)
+    $anyContextualStep = ($staleTotal -gt 0) -or ($countInv -gt 0) -or $analyticNeedsEnable -or $storageDegraded -or ($countHold -gt 0) -or ($orphanTotal -gt 0)
     [void]$sb.Append(@'
 <h2>Recommended next steps</h2>
 <ol>
@@ -579,6 +602,11 @@ function ConvertTo-VMCheckpointAuditHtml {
         [void]$sb.Append((@'
   <li><strong>INVESTIGATE (backup team first):</strong> {0} VM(s) show concern signals (unhealthy VSS writer or VM-attributed checkpoint/merge events) but no fork-commit signature - triage with your backup team/vendor before any action; no immediate Microsoft support case is needed for these (see per-VM detail).</li>
 '@ -f $countInv))
+    }
+    if ($orphanTotal -gt 0) {
+        [void]$sb.Append((@'
+  <li><strong>INVESTIGATE - orphaned .avhdx file(s):</strong> {0} .avhdx file(s) were found in VM disk folder(s) that are NOT attached to any VM chain - a stuck / failed merge or a leftover initial Hyper-V Replica checkpoint can leave these behind under specific scenarios. Confirm with your backup team before removing any (do not delete blindly); open a Microsoft CSS case for guidance if required. See each VM's "Orphaned .avhdx files" detail below for names, sizes and timestamps.</li>
+'@ -f $orphanTotal))
     }
     if ($analyticNeedsEnable) {
         [void]$sb.Append(@'
@@ -723,6 +751,14 @@ function ConvertTo-VMCheckpointAuditHtml {
                 [void]$sb.Append("<tr><td>$(ConvertTo-HtmlText $c.Name)</td><td>$(ConvertTo-HtmlText $c.Type)</td><td>$(ConvertTo-HtmlText $c.Purpose)</td><td>$(ConvertTo-HtmlText $c.Created)</td><td class='num'>$($c.AgeHrs)</td><td>$staleTxt</td><td>$(ConvertTo-HtmlText $c.Parent)</td></tr>")
             }
             [void]$sb.Append("</tbody></table></details>`r`n")
+        }
+        # Orphaned .avhdx files table (present on disk in this VM's folder(s) but NOT attached to any chain).
+        if (@($rd.Orphans).Count -gt 0) {
+            [void]$sb.Append("  <details open><summary>Orphaned .avhdx files ($($rd.OrphanCount)) - on disk but NOT attached to the VM</summary><table><thead><tr><th>File Name</th><th>Size (GB)</th><th>Created (UTC)</th><th>LastWrite (UTC)</th><th>Full path</th></tr></thead><tbody>")
+            foreach ($o in @($rd.Orphans)) {
+                [void]$sb.Append("<tr><td>$(ConvertTo-HtmlText $o.Name)</td><td class='num'>$($o.SizeGB)</td><td>$(ConvertTo-HtmlText $o.Created)</td><td>$(ConvertTo-HtmlText $o.LastWrite)</td><td><code>$(ConvertTo-HtmlText $o.FullName)</code></td></tr>")
+            }
+            [void]$sb.Append("</tbody></table><p class='muted'>A stuck / failed merge or a leftover initial Hyper-V Replica checkpoint can leave these behind under specific scenarios. Confirm with your backup team before removing any (do not delete blindly). Open a Microsoft CSS case for guidance if required.</p></details>`r`n")
         }
         # Concerning events breakdown.
         if ($rd.EventConcernCount -gt 0 -and @($rd.EventBreakdown).Count -gt 0) {
@@ -1485,7 +1521,7 @@ function Invoke-VMCheckpointAudit {
                 $folders | ForEach-Object {
                     Get-ChildItem -LiteralPath $_ -Filter '*.avhdx' -File -ErrorAction SilentlyContinue
                 } | ForEach-Object {
-                    [pscustomobject]@{ Name = [string]$_.Name; FullName = [string]$_.FullName; Length = [long]$_.Length; LastWriteTimeUtc = $_.LastWriteTimeUtc }
+                    [pscustomobject]@{ Name = [string]$_.Name; FullName = [string]$_.FullName; Length = [long]$_.Length; CreationTimeUtc = $_.CreationTimeUtc; LastWriteTimeUtc = $_.LastWriteTimeUtc }
                 }
             } -ArgumentList (,$vhdFolders))
         } catch {
@@ -1497,11 +1533,16 @@ function Invoke-VMCheckpointAudit {
         $orphans = @($onDiskAvhdx | Where-Object { $_ -and -not $attachedSet.Contains([string]$_.FullName) })
         $hasOrphans = ($orphans.Count -gt 0)
         if ($orphans.Count -gt 0) {
-            $orphans | Select-Object `
-                Name,
+            Write-Alert ("  {0} orphaned .avhdx file(s) found (present on disk but NOT part of any attached chain):" -f $orphans.Count) -Level Warning
+            $orphans | Sort-Object LastWriteTimeUtc -Descending | Select-Object `
+                @{N='File Name';E={ $_.Name }},
                 @{N='SizeGB';E={ [math]::Round($_.Length / 1GB, 2) }},
-                @{N='LastWrite (UTC)';E={ $_.LastWriteTimeUtc.ToString('yyyy-MM-dd HH:mm:ss') }},
+                @{N='Created (UTC)';E={ if ($_.CreationTimeUtc)  { $_.CreationTimeUtc.ToString('yyyy-MM-dd HH:mm:ss') }  else { '(unavailable)' } }},
+                @{N='LastWrite (UTC)';E={ if ($_.LastWriteTimeUtc) { $_.LastWriteTimeUtc.ToString('yyyy-MM-dd HH:mm:ss') } else { '(unavailable)' } }},
                 FullName | Format-Table -AutoSize -Wrap | Out-Indented
+            Write-Host  "  These are NOT attached to the VM - a stuck / failed merge or a leftover initial Hyper-V Replica"
+            Write-Host  "  checkpoint can leave these behind under specific scenarios. Confirm with your backup team before"
+            Write-Host  "  removing any (do not delete blindly). Open a Microsoft CSS case for guidance if required."
         } else {
             Write-Host "  None found - every .avhdx in the VM's folders is part of an attached chain."
             Write-Host ""
@@ -1878,7 +1919,7 @@ function Invoke-VMCheckpointAudit {
     $holdState        = ($hasForkSignature -and ($hasCheckpoints -or $staleCheckpoints.Count -gt 0))
     # v0.2.12: the verdict is scoped to THIS VM. Node-wide concern events that name OTHER VMs (or no VM)
     # are reported as context only and do NOT, on their own, escalate a healthy, checkpoint-free VM.
-    $investigate      = ((-not $holdState) -and (($staleCheckpoints.Count -gt 0) -or ($vmEventConcernCount -gt 0) -or ($vssUnhealthy.Count -gt 0)))
+    $investigate      = ((-not $holdState) -and (($staleCheckpoints.Count -gt 0) -or ($vmEventConcernCount -gt 0) -or ($vssUnhealthy.Count -gt 0) -or $hasOrphans))
     $concernIdSummary     = (@($concernEvents   | Group-Object Id | Sort-Object { [int]$_.Name } | ForEach-Object { "{0} x{1}" -f $_.Name, $_.Count }) -join ', ')
     $vmConcernIdSummary   = (@($vmConcernEvents | Group-Object Id | Sort-Object { [int]$_.Name } | ForEach-Object { "{0} x{1}" -f $_.Name, $_.Count }) -join ', ')
     $nodeOnlyConcernCount = $eventConcernCount - $vmEventConcernCount
@@ -1937,6 +1978,12 @@ function Invoke-VMCheckpointAudit {
         Write-Host ("  {0} VSS writer(s) are not healthy: {1}" -f $vssUnhealthy.Count, ((@($vssUnhealthy | ForEach-Object { $_.Writer })) -join ', '))
         Write-Host  "  Unhealthy VSS writers commonly block Hyper-V checkpoint / backup operations."
     }
+    if ($hasOrphans) {
+        Write-Host ""
+        Write-Host ("  {0} orphaned .avhdx file(s) are present in this VM's disk folder(s) but are NOT attached to the VM." -f @($orphans).Count)
+        Write-Host  "  A stuck / failed merge or a leftover replica recovery point can leave these behind - confirm with"
+        Write-Host  "  your backup team before removing any (see the Orphaned .avhdx Files section above for details)."
+    }
     if ($holdState) {
         Write-Host ""
         Write-Host  "  ASSESSMENT: HOLD STATE (data-loss risk) - a checkpoint fork-commit / merge-failure signature AND"
@@ -1956,6 +2003,9 @@ function Invoke-VMCheckpointAudit {
         }
         if ($vssUnhealthy.Count -gt 0) {
             Write-Host ("    - {0} unhealthy VSS writer(s) (see the VSS Writer Health section above)." -f $vssUnhealthy.Count)
+        }
+        if ($hasOrphans) {
+            Write-Host ("    - {0} orphaned .avhdx file(s) in this VM's disk folder(s) (see the Orphaned .avhdx Files section above)." -f @($orphans).Count)
         }
     }
     if ($staleCheckpoints.Count -gt 0) {
@@ -2020,6 +2070,9 @@ function Invoke-VMCheckpointAudit {
     } elseif ($nodeOnlyConcernCount -gt 0) {
         Write-Alert "  NOTE: $nodeOnlyConcernCount concerning Hyper-V event(s) on $OwningNode reference OTHER VMs (node context - not this VM)." -Level Info
     }
+    if ($hasOrphans) {
+        Write-Alert "  WARNING: $(@($orphans).Count) orphaned .avhdx file(s) present in this VM's disk folder(s) (not attached to the VM)." -Level Warning
+    }
     if ($holdState) {
         Write-Host ""
         Write-Alert "  HOLD STATE (data-loss risk): a checkpoint fork-commit / merge-failure signature AND" -Level Critical
@@ -2030,7 +2083,7 @@ function Invoke-VMCheckpointAudit {
         Write-Host ""
         Write-Alert "  INVESTIGATE: concern signals are present, but the specific checkpoint fork-commit signature" -Level Warning
         Write-Alert "  was NOT observed (likely a stalled / failed backup checkpoint or an unhealthy VSS writer)." -Level Warning
-        Write-Alert ("  Why flagged: {0} concerning event(s) for this VM [{1}]; {2} checkpoint(s) >= {3}h old; {4} unhealthy VSS writer(s)." -f $vmEventConcernCount, $vmConcernIdSummary, $staleCheckpoints.Count, $StaleHours, $vssUnhealthy.Count) -Level Warning
+        Write-Alert ("  Why flagged: {0} concerning event(s) for this VM [{1}]; {2} checkpoint(s) >= {3}h old; {4} unhealthy VSS writer(s); {5} orphaned .avhdx file(s)." -f $vmEventConcernCount, $vmConcernIdSummary, $staleCheckpoints.Count, $StaleHours, $vssUnhealthy.Count, @($orphans).Count) -Level Warning
         Write-Alert "  See the FINDINGS TO INVESTIGATE section above for the suggested next steps (backup-team triage first; no Microsoft case needed yet)." -Level Warning
     }
     # Diagnostic-coverage TIP (independent of the verdict): if the Hyper-V-VMMS/Analytic channel is not
@@ -2129,6 +2182,17 @@ function Invoke-VMCheckpointAudit {
         [pscustomobject]@{ Enabled = $false; State = ''; Health = ''; Mode = ''; Primary = ''; Replica = ''; LastReplicationTime = '' }
     }
     $vssStateForHtml = if (-not $vssWriters -or @($vssWriters).Count -eq 0) { 'Unavailable' } elseif ($vssUnhealthy.Count -gt 0) { 'Unhealthy' } else { 'Healthy' }
+    # Orphaned .avhdx rows the HTML per-VM detail renders (name, size, created + last-write timestamps,
+    # full path). Newest-written first. Timestamps come straight from the file metadata gathered above.
+    $orphanRowsForHtml = @($orphans | Sort-Object LastWriteTimeUtc -Descending | ForEach-Object {
+        [pscustomobject]@{
+            Name      = [string]$_.Name
+            SizeGB    = [math]::Round($_.Length / 1GB, 2)
+            Created   = if ($_.CreationTimeUtc)  { $_.CreationTimeUtc.ToString('yyyy-MM-dd HH:mm:ss') }  else { '' }
+            LastWrite = if ($_.LastWriteTimeUtc) { $_.LastWriteTimeUtc.ToString('yyyy-MM-dd HH:mm:ss') } else { '' }
+            FullName  = [string]$_.FullName
+        }
+    })
     $reportData = [pscustomobject]@{
         VMId                 = [string]$vm.VMId
         Status               = [string]$vm.Status
@@ -2152,6 +2216,7 @@ function Invoke-VMCheckpointAudit {
         AnalyticNodesNeedEnable = @($analyticNodesNeedEnable)
         CsvVolumes           = @($csvReport)
         OrphanCount          = @($orphans).Count
+        Orphans              = $orphanRowsForHtml
         HasOrphans           = [bool]$hasOrphans
         HasForkSignature     = [bool]$hasForkSignature
         EventConcernCount    = $eventConcernCount
@@ -2220,6 +2285,36 @@ $script:MaxDiscoveredToAudit = 25
 # Cluster storage-health snapshot (populated once, in the end block, unless -SkipStorageHealth).
 $script:ClusterStorageHealth = $null
 
+# Exclusion list: VM names to SKIP, read ONCE from -ExcludedVMListCsv into a case-INSENSITIVE HashSet
+# so the process-block membership test is O(1). A CSV with a 'VMName' header column is preferred; a
+# headerless single-column file also works. A missing / unreadable file is a non-fatal WARNING - the
+# run proceeds with no exclusions. $script:ExcludedMatched records the names actually skipped so the
+# end block can report them.
+$script:ExcludedVMNames = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+$script:ExcludedMatched = [System.Collections.Generic.List[string]]::new()
+if ($ExcludedVMListCsv) {
+    if (Test-Path -LiteralPath $ExcludedVMListCsv) {
+        try {
+            $exRows  = @(Import-Csv -LiteralPath $ExcludedVMListCsv -ErrorAction Stop)
+            $exNames = @()
+            if ($exRows.Count -gt 0 -and $exRows[0].PSObject.Properties['VMName']) {
+                $exNames = @($exRows | ForEach-Object { [string]$_.VMName })
+            } else {
+                # No 'VMName' header - treat it as a plain one-name-per-line list (skip a stray header).
+                $exNames = @(Get-Content -LiteralPath $ExcludedVMListCsv -ErrorAction Stop |
+                    ForEach-Object { $_.Trim().Trim('"') } |
+                    Where-Object { $_ -and $_ -ne 'VMName' })
+            }
+            foreach ($exName in $exNames) { if ($exName -and $exName.Trim()) { [void]$script:ExcludedVMNames.Add($exName.Trim()) } }
+            Write-Host ("Exclusion list: loaded {0} VM name(s) to skip from '{1}'." -f $script:ExcludedVMNames.Count, $ExcludedVMListCsv)
+        } catch {
+            Write-Alert ("WARNING: could not read -ExcludedVMListCsv '{0}': {1}. Proceeding with NO exclusions." -f $ExcludedVMListCsv, $_.Exception.Message) -Level Warning
+        }
+    } else {
+        Write-Alert ("WARNING: -ExcludedVMListCsv '{0}' was not found. Proceeding with NO exclusions." -f $ExcludedVMListCsv) -Level Warning
+    }
+}
+
 # Resolve a single per-run output sub-folder (once per invocation) so every VM in this run is
 # grouped together and repeated runs never collide. Only created when -OutputPath is supplied.
 $script:RunFolder = $null
@@ -2264,6 +2359,14 @@ process {
             continue
         }
 
+        # Skip VMs on the exclusion list (-ExcludedVMListCsv), matched case-INSENSITIVELY. Recorded so
+        # the end block can report which VMs were skipped.
+        if ($script:ExcludedVMNames.Count -gt 0 -and $script:ExcludedVMNames.Contains($singleVMName.Trim())) {
+            Write-Host ("Skipping '{0}': present in the -ExcludedVMListCsv exclusion list." -f $singleVMName)
+            [void]$script:ExcludedMatched.Add($singleVMName)
+            continue
+        }
+
         # Defer the actual audit to the end block, where the true total is known (accurate X of Y).
         $script:PendingVMNames.Add($singleVMName)
     }
@@ -2272,7 +2375,14 @@ process {
 # Audit each collected VM. Runs in the end block so the parent progress bar knows the total count.
 end {
     $vmTotal = $script:PendingVMNames.Count
-    if ($vmTotal -eq 0) { return }
+    # Report any VMs skipped by the exclusion list (always shown, even in quiet mode).
+    if (@($script:ExcludedMatched).Count -gt 0) {
+        Write-Alert ("Excluded {0} VM(s) from this run via -ExcludedVMListCsv: {1}" -f @($script:ExcludedMatched).Count, (@($script:ExcludedMatched | Sort-Object -Unique) -join ', ')) -Level Info
+    }
+    if ($vmTotal -eq 0) {
+        Write-Alert 'No VMs to audit (all requested VM(s) were excluded, or none were supplied).' -Level Warning
+        return
+    }
     $vmIndex = 0
     foreach ($name in $script:PendingVMNames) {
         $vmIndex++
@@ -2321,6 +2431,7 @@ end {
             $match = $clusterVmNames | Where-Object { $_ -eq $cand.Name } | Select-Object -First 1
             if (-not $match) { continue }
             if ($auditedNames -contains $match) { continue }
+            if ($script:ExcludedVMNames.Count -gt 0 -and $script:ExcludedVMNames.Contains($match)) { continue }
             if ($seenDisc.ContainsKey($match.ToLower())) { continue }
             $seenDisc[$match.ToLower()] = $true
             $discoveredVMs += [pscustomobject]@{ Name = $match; Reason = [string]$cand.Reason }
