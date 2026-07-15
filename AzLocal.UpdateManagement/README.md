@@ -2,7 +2,7 @@
 
 > ⚠️ **Disclaimer**: This module is **NOT** a Microsoft supported service offering or product. It is provided as example code only, with no warranty or official support. Refer to the [MIT license](https://github.com/NeilBird/Azure-Local/blob/main/LICENSE) for further information.
 
-**Latest Version:** v0.9.20 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.9.20)
+**Latest Version:** v0.9.21 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.9.21)
 
 This folder contains the 'AzLocal.UpdateManagement' PowerShell module for managing updates on Azure Local (formerly Azure Stack HCI) clusters using the Azure Local REST API. The module supports both interactive use and CI/CD automation via Service Principal or Managed Identity authentication.
 
@@ -14,7 +14,7 @@ Azure Local REST API specification (includes update management endpoints): https
 **This README (overview + most-recent release notes):**
 
 - [Where to Start](#where-to-start)
-- [What's New in v0.9.20](#whats-new-in-v0920)
+- [What's New in v0.9.21](#whats-new-in-v0921)
 - [Files](#files)
 - [Prerequisites](#prerequisites)
 - [RBAC Requirements](#rbac-requirements) (summary; full reference in [docs/rbac.md](docs/rbac.md))
@@ -77,19 +77,28 @@ If you are new to this module, work through these in order from a regular PowerS
 
 > Most CI/CD pipelines in [Automation-Pipeline-Examples/](Automation-Pipeline-Examples/) are direct implementations of one of these workflows. Start there if you want a copy-pasteable end-to-end pipeline.
 
-## What's New in v0.9.20
+## What's New in v0.9.21
 
-**Monitor: 3 - Fleet Update Status - the "Fleet - SBE Version(s) Distribution" table now groups by hardware OEM and reads the correct YYMM.** Solution Builder Extension (SBE) packages are vendor-specific, so the table is reworked to make the OEM the primary lens.
+**Monitor: 2 - Fleet Health Status - the "Cluster Counts" summary table now counts each cluster once, by its highest failing-check severity, and the icons no longer duplicate the severity word.**
 
 ### Changed
 
-- **OEM Provider is now the first column, and clusters are grouped by hardware vendor then SBE YYMM.** The table groups **primarily by hardware OEM** (Dell / HPE / Lenovo / Microsoft / ...) and **secondarily by SBE YYMM**, sorted by OEM name. The OEM is resolved from each cluster's reported node manufacturer (`properties.reportedProperties.nodes[].manufacturer`) via the new private helper `Resolve-AzLocalHardwareOem`; a new readiness-row field `SbeOemProvider` carries it (also in `readiness-status.csv`). A fleet running mixed hardware (e.g. Dell + HPE + Lenovo) now sees each vendor's SBE spread split out.
-- **SBE YYMM is now read from the third version octet.** SBE versions have the form `<major>.<minor>.<YYMM>.<build>` (e.g. `5.0.2605.1000` -> `2605`, `5.0.2603.1522` -> `2603`), so the YYMM is the **third** value. The v0.9.19 table incorrectly used the second octet.
-- **Clusters with no vendor SBE now show `N/A - No SBE Installed` for YYMM.** The base placeholders `2.0.0.0` / `2.1.0.0` and clusters with no SBE package are genuinely *not* running a vendor SBE (not "unknown"), so they read **N/A - No SBE Installed** while still grouping under their hardware OEM.
+- **The unhealthy bucket is split by highest severity.** The single **Unhealthy Clusters (with failing checks)** row - previously stamped with the Critical (`❌`) icon even when it also contained warning-only clusters - is now two rows: **Critical - Unhealthy Clusters (with failing checks)** (at least one Critical failing check) and **Warning - Unhealthy Clusters (with failing checks)** (failing checks all Warning). A cluster with **both** Critical and Warning failing checks is counted in the **Critical** row only, so each cluster is counted exactly once and `Healthy + Critical + Warning-only + Other = Total`.
+- **The "Other" bucket is renamed** to **Other - (health check In progress / Unknown)** so it no longer reads as a severity.
+- **Count-table rows now use bare-glyph icons** (`✅` / `❌` / `⚠️` / `ℹ️`) so the severity word is no longer duplicated (previously `❌ Critical **Critical**` / `❌ Critical **Unhealthy Clusters...**`).
+- **Monitor: 1 - Fleet Connectivity Status:** each row of the **Fleet Connectivity Status Summary** KPI table is now prefixed with a bare-glyph status indicator (green tick / red cross), for visual consistency with the other pipeline step-summary tables.
+
+### Added
+
+- **New `Export-AzLocalFleetHealthStatusReport` step outputs** `critical_clusters` and `warning_only_clusters`, and new `-PassThru` properties `CriticalClusters` and `WarningOnlyClusters`.
+
+### Documentation
+
+- **Sideload updates (Update: 2) now has its own section + table-of-contents entry** in the CI/CD README ([`Automation-Pipeline-Examples/README.md`](Automation-Pipeline-Examples/README.md)), linking to the detailed [`docs/sideload.md`](Automation-Pipeline-Examples/docs/sideload.md) guide. That guide gains a new **External endpoints requirements** section (CI/CD, Azure, cluster-fabric, and the optional Microsoft update-media download endpoints) and an accuracy pass on the state machine, the detached scheduled task + **S4U logon caveat**, retry / housekeeping, the automatic `UpdateSideloaded` gate reset, and the status-report columns.
 
 > Previous release notes have moved into the [Release History](#release-history) appendix at the bottom of this document.
 
-See [CHANGELOG.md](CHANGELOG.md) for full release details. See [`What's New in v0.9.19`](#whats-new-in-v0919) in the Release History for the previous release.
+See [CHANGELOG.md](CHANGELOG.md) for full release details. See [`What's New in v0.9.20`](#whats-new-in-v0920) in the Release History for the previous release.
 
 ## Files
 
@@ -585,7 +594,11 @@ This code is provided as-is for educational and reference purposes.
 
 The full What's-New history (v0.7.81 and earlier) has moved to [docs/release-history.md](docs/release-history.md).
 
-The most recent release notes for **v0.9.20** stay above under [`What's New in v0.9.20`](#whats-new-in-v0920).
+The most recent release notes for **v0.9.21** stay above under [`What's New in v0.9.21`](#whats-new-in-v0921).
+
+### What's New in v0.9.20
+
+**Monitor: 3 - Fleet Update Status - the "Fleet - SBE Version(s) Distribution" table now groups by hardware OEM and reads the correct YYMM.** The table groups **primarily by hardware OEM** (Dell / HPE / Lenovo / Microsoft / ...) and **secondarily by SBE YYMM**, sorted by OEM name, with **OEM Provider** as the first column. The OEM is resolved from each cluster's reported node manufacturer (`properties.reportedProperties.nodes[].manufacturer`) via the new private helper `Resolve-AzLocalHardwareOem`; a new readiness-row field `SbeOemProvider` carries it (also in `readiness-status.csv`). SBE YYMM is now read from the **third** version octet (`<major>.<minor>.<YYMM>.<build>`, e.g. `5.0.2605.1000` -> `2605`); v0.9.19 incorrectly used the second octet. Clusters with no vendor SBE (base placeholders `2.0.0.0` / `2.1.0.0` and any cluster with no SBE package) now show **N/A - No SBE Installed** for YYMM while still grouping under their hardware OEM. Export count unchanged at **69** (`Resolve-AzLocalHardwareOem` is private). See [CHANGELOG.md](CHANGELOG.md#0920---2026-07-08) for the full v0.9.20 entry.
 
 ### What's New in v0.9.19
 

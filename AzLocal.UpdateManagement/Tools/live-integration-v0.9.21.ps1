@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------------------
-# Per-release LIVE integration smoke test  -  template pinned to v0.9.17.
+# Per-release LIVE integration smoke test  -  template pinned to v0.9.21.
 #
 # Purpose
 #   A read-only, end-to-end smoke test that runs the REAL report cmdlets against
@@ -21,19 +21,20 @@
 #   4. Run it after the source edits but BEFORE the version bump, to confirm the
 #      live output matches the requested format.
 #
-# What v0.9.17 asserts (and the standing v0.8.97 / v0.9.11 shapes that must still render):
+# What v0.9.21 asserts (and the standing v0.8.97 / v0.9.11 shapes that must still render):
 #   - Get-AzLocalUpdateRunFailures -View Detail        : UpdateRing property
 #   - Monitor:3 Fleet Update Status run-history table   : "Update Ring" column
 #   - Monitor:3                                         : "Clusters - Ready for Update" table
 #   - Assess Readiness                                  : ready-for-update.csv + collapsed detail
 #   - Export-AzLocalClusterUpdateReadinessReport -SchedulePath : must NOT throw
 #     (standing v0.9.11 fix: -SchedulePath no longer leaks into Test-AzLocalClusterHealth)
-#   - Monitor:2 Fleet Health Status                     : collapsed "Fleet Health Overview"
+#   - Monitor:2 Fleet Health Status (v0.9.21)           : Cluster Counts split into
+#     Critical / Warning-only rows (each cluster once), Other renamed, no duplicated
+#     severity word, PassThru CriticalClusters/WarningOnlyClusters, H+C+W+O=Total
+#   - Monitor:1 Fleet Connectivity Status (v0.9.21)     : KPI table rows carry a
+#     bare-glyph status indicator
 #   - Apply Updates readiness gate                      : stale-assessment Status override + Support column
-#   - v0.9.17 pipeline templates (shipped in the module package):
-#       * every install block uses the uniform 25-attempt capped-backoff + jitter loop
-#       * no self-re-queue machinery on either platform (single long-retry run)
-#       * benign No Clusters Ready job (GH + ADO) is soft (continue-on-error)
+#   - shipped pipeline templates: uniform 25-attempt install-step retry + soft No Clusters Ready job
 #
 # Requires: `az login`; signed-in identity has Reader on the target subscription.
 # Output  : $env:TEMP\azlocal-live-v<ReleaseVersion>\*.txt  (rendered markdown,
@@ -43,7 +44,7 @@
 #requires -Version 5.1
 [CmdletBinding()]
 param(
-    [string]$ReleaseVersion = '0.9.20',
+    [string]$ReleaseVersion = '0.9.21',
     [string]$SubscriptionId,
     [string]$ModulePath,
     [string[]]$Rings = @('Prod', 'Ring1', 'Ring2', 'Canary', 'DevTest'),
@@ -156,15 +157,35 @@ try {
         $report['AssessReadiness -SchedulePath'] = 'skipped (pass -SchedulePath to exercise the standing v0.9.11 fix)'
     }
 
-    # 4) Monitor:2 Fleet Health Status - collapsed overview
+    # 4) Monitor:2 Fleet Health Status - collapsed overview + v0.9.21 split Cluster Counts
     try {
         Set-Content -Path $summaryFile -Value '' -Encoding UTF8
-        $null = Export-AzLocalFleetHealthStatusReport -Scope all -OutputDirectory $artDir -PassThru -ErrorAction Stop
+        $r4 = Export-AzLocalFleetHealthStatusReport -Scope all -OutputDirectory $artDir -PassThru -ErrorAction Stop
         $md = Get-Content -Path $summaryFile -Raw
         Save '4-monitor2-summary' $md
         $report['Monitor2 Fleet Health Overview collapsed'] = if ($md -match '### Fleet Health Overview \(fleet rollup\)' -and $md -match '<summary>Expand to view clusters</summary>') { 'PASS' } else { 'FAIL' }
+        # v0.9.21: Cluster Counts split into Critical / Warning-only rows (each cluster counted once by highest severity).
+        $report['Monitor2 Critical-Unhealthy row (v0.9.21)']  = if ($md -match 'Critical - Unhealthy Clusters \(with failing checks\)') { 'PASS' } else { 'FAIL - row missing' }
+        $report['Monitor2 Warning-Unhealthy row (v0.9.21)']   = if ($md -match 'Warning - Unhealthy Clusters \(with failing checks\)') { 'PASS' } else { 'FAIL - row missing' }
+        $report['Monitor2 Other renamed row (v0.9.21)']       = if ($md -match 'Other - \(health check In progress / Unknown\)') { 'PASS' } else { 'FAIL - row missing' }
+        $report['Monitor2 no duplicated severity word (v0.9.21)'] = if ($md -notmatch 'Critical \*\*Critical\*\*' -and $md -notmatch 'Critical \*\*Unhealthy') { 'PASS' } else { 'FAIL - double-wording present' }
+        $report['Monitor2 PassThru Critical/Warning-only counts (v0.9.21)'] = if ($r4.PSObject.Properties['CriticalClusters'] -and $r4.PSObject.Properties['WarningOnlyClusters']) { "PASS (C=$($r4.CriticalClusters) W=$($r4.WarningOnlyClusters))" } else { 'FAIL - properties missing' }
+        $report['Monitor2 bucket sanity H+C+W+O=Total (v0.9.21)'] = if (($r4.HealthyClusters + $r4.CriticalClusters + $r4.WarningOnlyClusters + $r4.OtherClusters) -eq $r4.TotalInSub) { 'PASS' } else { "FAIL ($($r4.HealthyClusters)+$($r4.CriticalClusters)+$($r4.WarningOnlyClusters)+$($r4.OtherClusters) != $($r4.TotalInSub))" }
     }
     catch { $report['Export-AzLocalFleetHealthStatusReport'] = "ERROR: $($_.Exception.Message)" }
+
+    # 4b) Monitor:1 Fleet Connectivity Status - v0.9.21 KPI table gains per-row status glyphs
+    try {
+        Set-Content -Path $summaryFile -Value '' -Encoding UTF8
+        $null = Export-AzLocalFleetConnectivityStatusReport -OutputDirectory $artDir -PassThru -ErrorAction Stop
+        $md = Get-Content -Path $summaryFile -Raw
+        Save '4b-monitor1-summary' $md
+        $tick  = [string][char]0x2705
+        $cross = [string][char]0x274C
+        $hasGlyph = ($md -match ([regex]::Escape($tick) + ' \*\*Clusters\*\*')) -or ($md -match ([regex]::Escape($cross) + ' \*\*Clusters\*\*'))
+        $report['Monitor1 KPI row status glyph (v0.9.21)'] = if (($md -match '## Fleet Connectivity Status Summary') -and $hasGlyph) { 'PASS' } else { 'FAIL - no KPI glyph' }
+    }
+    catch { $report['Export-AzLocalFleetConnectivityStatusReport'] = "ERROR: $($_.Exception.Message)" }
 
     # 5) Apply Updates readiness gate - stale-assessment + Support column, per ring
     foreach ($ring in $Rings) {

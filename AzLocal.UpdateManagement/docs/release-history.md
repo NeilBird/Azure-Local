@@ -4,9 +4,15 @@
 >
 > **For older releases**, this is the canonical reference; the main README intentionally stays slim so the most recent block is easy to find.
 >
-> **For v0.9.20 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0920) `What's New in v0.9.20` section.
+> **For v0.9.21 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0921) `What's New in v0.9.21` section.
 
 ---
+
+### What's New in v0.9.21
+
+**Monitor: 2 - Fleet Health Status: the "Cluster Counts" summary table now counts each cluster once, by its highest failing-check severity, and the icons no longer duplicate the severity word.** The single **Unhealthy Clusters (with failing checks)** row - previously stamped with the Critical (`❌`) icon even when it also contained warning-only clusters - is split into **Critical - Unhealthy Clusters (with failing checks)** (clusters with at least one Critical failing check) and **Warning - Unhealthy Clusters (with failing checks)** (clusters whose failing checks are all Warning). A cluster with **both** Critical and Warning failing checks is counted in the **Critical** row only, so each cluster is counted exactly once and `Healthy + Critical + Warning-only + Other = Total`. The **Other** bucket is renamed to **Other - (health check In progress / Unknown)** so it no longer reads as a severity. The count-table rows now use bare-glyph icons (`✅` / `❌` / `⚠️` / `ℹ️`) so the severity word is no longer duplicated (previously `❌ Critical **Critical**` / `❌ Critical **Unhealthy Clusters...**`). New step outputs `critical_clusters` + `warning_only_clusters` and new `-PassThru` properties `CriticalClusters` + `WarningOnlyClusters`. **Monitor: 1 - Fleet Connectivity Status:** each row of the **Fleet Connectivity Status Summary** KPI table is now prefixed with a bare-glyph status indicator (green tick / red cross) for visual consistency with the other pipeline step-summary tables. No public function or export-count change (still **69**). `GENERATED_AGAINST_MODULE_VERSION` bumped to `0.9.21`. See [CHANGELOG.md](../CHANGELOG.md#0921---2026-07-15) for the full v0.9.21 entry.
+
+**Documentation (v0.9.21):** the on-prem **Sideload updates (Update: 2)** guide is now discoverable from the CI/CD README table of contents via its own dedicated section, and `Automation-Pipeline-Examples/docs/sideload.md` gains an **External endpoints requirements** section plus an accuracy pass (state machine, detached scheduled task + the S4U logon caveat, retry / housekeeping, the automatic `UpdateSideloaded` gate reset, and the status-report columns).
 
 ### What's New in v0.9.20
 

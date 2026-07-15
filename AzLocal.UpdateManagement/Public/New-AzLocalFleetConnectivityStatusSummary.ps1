@@ -311,11 +311,20 @@ function New-AzLocalFleetConnectivityStatusSummary {
     [void]$sb.AppendLine('')
     [void]$sb.AppendLine('| Scope | Total | Failing | Healthy |')
     [void]$sb.AppendLine('|-------|-------|---------|---------|')
-    [void]$sb.AppendLine("| **Clusters** | $clusterTotal | $clusterFail | $([math]::Max(0, $clusterTotal - $clusterFail)) |")
-    [void]$sb.AppendLine("| **Arc Agents (per machine)** | $arcTotal | $arcFail | $([math]::Max(0, $arcTotal - $arcFail)) |")
-    [void]$sb.AppendLine("| **Physical NICs (issues only)** | - | $nicFail | - |")
-    [void]$sb.AppendLine("| **Azure Resource Bridges** | $arbTotal | $arbFail | $([math]::Max(0, $arbTotal - $arbFail)) |")
-    [void]$sb.AppendLine("| **TOTAL FAILURES** | - | **$totalFail** | (Critical=$crit, Warning=$warn) |")
+    # v0.9.21: prefix each scope row with a bare-glyph status indicator
+    # (green tick when the scope has zero failures, red cross otherwise) for
+    # visual consistency with the other pipeline step-summary tables. The
+    # glyph is placed INSIDE the Scope cell so the 4-column layout is kept.
+    $clusterKpiIcon = if ($clusterFail -gt 0) { $critIcon } else { $okIcon }
+    $arcKpiIcon     = if ($arcFail    -gt 0) { $critIcon } else { $okIcon }
+    $nicKpiIcon     = if ($nicFail    -gt 0) { $critIcon } else { $okIcon }
+    $arbKpiIcon     = if ($arbFail    -gt 0) { $critIcon } else { $okIcon }
+    $totalKpiIcon   = if ($crit -gt 0) { $critIcon } elseif ($warn -gt 0) { $warnIcon } else { $okIcon }
+    [void]$sb.AppendLine("| $clusterKpiIcon **Clusters** | $clusterTotal | $clusterFail | $([math]::Max(0, $clusterTotal - $clusterFail)) |")
+    [void]$sb.AppendLine("| $arcKpiIcon **Arc Agents (per machine)** | $arcTotal | $arcFail | $([math]::Max(0, $arcTotal - $arcFail)) |")
+    [void]$sb.AppendLine("| $nicKpiIcon **Physical NICs (issues only)** | - | $nicFail | - |")
+    [void]$sb.AppendLine("| $arbKpiIcon **Azure Resource Bridges** | $arbTotal | $arbFail | $([math]::Max(0, $arbTotal - $arbFail)) |")
+    [void]$sb.AppendLine("| $totalKpiIcon **TOTAL FAILURES** | - | **$totalFail** | (Critical=$crit, Warning=$warn) |")
     [void]$sb.AppendLine('')
     [void]$sb.AppendLine('> _**Physical NICs** is filtered at the query layer to actionable issues only: NicStatus=Disconnected with a non-APIPA IPv4 address. ''Up'' adapters and adapters without a real IP are intentionally NOT reported (noise reduction)._')
     [void]$sb.AppendLine('')

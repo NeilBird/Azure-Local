@@ -5,6 +5,35 @@ All notable changes to the AzLocal.UpdateManagement module (renamed from AzStack
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.21] - 2026-07-15
+
+**Monitor: 2 - Fleet Health Status** - the **Cluster Counts** summary table now
+counts each cluster **once**, by its **highest** failing-check severity, and the
+count-table icons no longer duplicate the severity word. **Monitor: 1 - Fleet
+Connectivity Status** - the KPI summary table gains a bare-glyph status
+indicator per row.
+
+### Changed
+
+- **Fleet Health Status "Cluster Counts" table splits the unhealthy bucket by highest severity.** The single **Unhealthy Clusters (with failing checks)** row - which was stamped with the Critical (`❌`) icon even when it also contained warning-only clusters - is replaced by two rows: **Critical - Unhealthy Clusters (with failing checks)** (clusters with at least one Critical failing check) and **Warning - Unhealthy Clusters (with failing checks)** (clusters whose failing checks are all Warning). A cluster with **both** Critical and Warning failing checks is counted in the **Critical** row only, so each cluster is counted exactly once and `Healthy + Critical + Warning-only + Other = Total`.
+- **The "Other" bucket is renamed** to **Other - (health check In progress / Unknown)** to make clear it holds clusters with a non-`Healthy` overview state and no failing detail rows (rather than reading as a severity).
+- **Count-table rows now use bare-glyph icons (`✅` / `❌` / `⚠️` / `ℹ️`).** Previously the word-carrying icon tokens produced duplicated wording such as `❌ Critical **Critical**` and `❌ Critical **Unhealthy Clusters...**`; the severity word now appears once, in the row label.
+- **Fleet Connectivity Status KPI table rows are prefixed with a bare-glyph status indicator** (green tick when the scope has zero failures, red cross otherwise), for visual consistency with the other pipeline step-summary tables.
+
+### Added
+
+- **New `Export-AzLocalFleetHealthStatusReport` step outputs** `critical_clusters` and `warning_only_clusters`, and new `-PassThru` properties `CriticalClusters` and `WarningOnlyClusters`.
+
+### Documentation
+
+- **Sideload updates (Update: 2) now has its own entry in the CI/CD README table of contents.** `Automation-Pipeline-Examples/README.md` gains a dedicated **"Optional: Sideload updates to disconnected / air-gapped clusters (Update: 2)"** section that links to the detailed `docs/sideload.md` guide (previously that guide was only reachable from the pipeline appendix, so operators could not find it from the main TOC).
+- **`docs/sideload.md` gains an "External endpoints requirements" section** covering the CI/CD control-plane (GitHub / Azure DevOps self-hosted runner) endpoints, the Azure control-plane endpoints, the cluster fabric ports (SMB 445 / WinRM-HTTPS 5986), and the **optional** Microsoft update-media download endpoints (the `https://aka.ms/AzureEdgeUpdates` XML manifest and the Learn offline-updates `downloadUri` hosts). It also documents that the runtime **download-and-cache path already exists and needs no Git commit** - only the source-controlled catalog `sha256` metadata refresh (via `Update-AzLocalSideloadCatalog`) is committed, by design, to preserve the supply-chain hash check.
+- **`docs/sideload.md` accuracy pass**: corrected the state-machine diagram (removed the non-existent `Planned` / `SideloadFlagged` states; documented the real `Copying | Copied | Verified | Imported | Failed` enum and that the per-cluster state JSON *is* the heartbeat), documented the detached scheduled-task naming + the **S4U logon caveat** (the out-of-box task account cannot reach UNC paths - a gMSA or stored-password principal is required), the failed-task housekeeping behaviour, the fixed `MaxRetries = 3`, the advisory-only `SIDELOAD_KV_AUTH`, the automatic `UpdateSideloaded` gate reset via `Get-AzLocalUpdateRuns`, and the exact `Export-AzLocalSideloadStatusReport` table columns.
+
+### Notes
+
+- No public function or export-count change (still **69**). `GENERATED_AGAINST_MODULE_VERSION` bumped to `0.9.21`.
+
 ## [0.9.20] - 2026-07-08
 
 **Monitor: 3 - Fleet Update Status** - the **Fleet - SBE Version(s) Distribution**

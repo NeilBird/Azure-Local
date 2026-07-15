@@ -138,7 +138,8 @@ function Export-AzLocalFleetHealthStatusReport {
 
     .OUTPUTS
         [PSCustomObject] when -PassThru is supplied. Properties:
-          - TotalClusters, TotalFailures, CriticalCount, WarningCount,
+          - TotalClusters, CriticalClusters, WarningOnlyClusters,
+            TotalFailures, CriticalCount, WarningCount,
             DistinctReasons, OverviewRows, HealthyClusters, TotalInSub
           - DetailCsvPath, DetailJsonPath, SummaryCsvPath,
             SummaryJsonPath, OverviewCsvPath, OverviewJsonPath,
@@ -343,6 +344,14 @@ function Export-AzLocalFleetHealthStatusReport {
     $criticalDetail = @($detail | Where-Object { $_.Severity -eq 'Critical' })
     $warningDetail  = @($detail | Where-Object { $_.Severity -eq 'Warning'  })
     $totalClusters  = @($detail | Select-Object -ExpandProperty ClusterName -Unique).Count
+    # v0.9.21: split the unhealthy bucket by HIGHEST severity so each cluster
+    # is counted exactly once. A cluster with ANY Critical failing check is
+    # 'Critical'; a cluster whose failing checks are all Warning is
+    # 'Warning-only'. criticalClusters + warningOnlyClusters == totalClusters.
+    $criticalClusterNames = @($criticalDetail | Select-Object -ExpandProperty ClusterName -Unique)
+    $warningClusterNames  = @($warningDetail  | Select-Object -ExpandProperty ClusterName -Unique)
+    $criticalClusters     = [int]$criticalClusterNames.Count
+    $warningOnlyClusters  = [int](@($warningClusterNames | Where-Object { $criticalClusterNames -notcontains $_ }).Count)
     $totalFailures  = [int]$detail.Count
     $criticalCount  = [int]$criticalDetail.Count
     $warningCount   = [int]$warningDetail.Count
@@ -427,6 +436,9 @@ function Export-AzLocalFleetHealthStatusReport {
 
     # ---- Step 6: step outputs --------------------------------------------
     Set-AzLocalPipelineOutput -Name 'total_clusters'    -Value ([string]$totalClusters)
+    # v0.9.21: split unhealthy-cluster counts (by highest severity, each once).
+    Set-AzLocalPipelineOutput -Name 'critical_clusters'     -Value ([string]$criticalClusters)
+    Set-AzLocalPipelineOutput -Name 'warning_only_clusters' -Value ([string]$warningOnlyClusters)
     Set-AzLocalPipelineOutput -Name 'total_failures'    -Value ([string]$totalFailures)
     Set-AzLocalPipelineOutput -Name 'critical_count'    -Value ([string]$criticalCount)
     Set-AzLocalPipelineOutput -Name 'warning_count'     -Value ([string]$warningCount)
@@ -443,7 +455,7 @@ function Export-AzLocalFleetHealthStatusReport {
     Write-Host "Fleet Health Collection complete:"
     Write-Host "  Total clusters in scope : $totalInSub"
     Write-Host "  Healthy clusters        : $healthyClusters"
-    Write-Host "  Unhealthy clusters      : $totalClusters"
+    Write-Host "  Unhealthy clusters      : $totalClusters (Critical=$criticalClusters, Warning-only=$warningOnlyClusters)"
     $otherClustersDiag = $totalInSub - $healthyClusters - $totalClusters
     if ($otherClustersDiag -lt 0) { $otherClustersDiag = 0 }
     Write-Host "  Other clusters (non-Healthy, no failures): $otherClustersDiag"
@@ -473,19 +485,20 @@ function Export-AzLocalFleetHealthStatusReport {
     [void]$md.Add('| Metric | Count |')
     [void]$md.Add('|--------|-------|')
     [void]$md.Add("| **Total Clusters in Subscription** | $totalInSub |")
-    [void]$md.Add(("| {0} **Healthy Clusters** | {1} |" -f $iconMap['Healthy'], $healthyClusters))
-    [void]$md.Add(("| {0} **Unhealthy Clusters (with failing checks)** | {1} |" -f $iconMap['SeverityCritical'], $totalClusters))
-    [void]$md.Add(("| {0} **Other (In progress / Unknown / Health check failed)** | {1} |" -f $iconMap['Warning'], $otherClusters))
+    [void]$md.Add(("| {0} **Healthy Clusters** | {1} |" -f $iconMap['Success'], $healthyClusters))
+    [void]$md.Add(("| {0} **Critical - Unhealthy Clusters (with failing checks)** | {1} |" -f $iconMap['Fail'], $criticalClusters))
+    [void]$md.Add(("| {0} **Warning - Unhealthy Clusters (with failing checks)** | {1} |" -f $iconMap['Warn'], $warningOnlyClusters))
+    [void]$md.Add(("| {0} **Other - (health check In progress / Unknown)** | {1} |" -f $iconMap['Info'], $otherClusters))
     [void]$md.Add('')
-    [void]$md.Add('> _Cluster counts sum to **Total Clusters in Subscription**. **Unhealthy** = clusters with at least one Critical or Warning health-check failure in the Detail view. **Other** captures clusters with no failing checks but a non-`Healthy` overview state (e.g. `In progress`, `Unknown`, `Health check failed`, `Warning`)._')
+    [void]$md.Add('> _Cluster counts sum to **Total Clusters in Subscription** - each cluster is counted **once**, by the **highest** severity of its failing checks. A cluster with **both** Critical and Warning failing checks is counted in the **Critical** row only. **Warning** = clusters whose failing checks are all Warning. **Other** captures clusters with no failing checks but a non-`Healthy` overview state (e.g. `In progress`, `Unknown`, `Health check failed`)._')
     [void]$md.Add('')
     [void]$md.Add('### Failing Checks Breakdown')
     [void]$md.Add('')
     [void]$md.Add('| Metric | Count |')
     [void]$md.Add('|--------|-------|')
     [void]$md.Add("| **Total Failing Checks** | $totalFailures |")
-    [void]$md.Add(("| {0} **Critical** | {1} |" -f $iconMap['SeverityCritical'], $criticalCount))
-    [void]$md.Add(("| {0} **Warning** | {1} |" -f $iconMap['SeverityWarning'], $warningCount))
+    [void]$md.Add(("| {0} **Critical** | {1} |" -f $iconMap['Fail'], $criticalCount))
+    [void]$md.Add(("| {0} **Warning** | {1} |" -f $iconMap['Warn'], $warningCount))
     [void]$md.Add("| **Distinct Failure Reasons** | $distinctReasons |")
     [void]$md.Add('')
     [void]$md.Add('> _**Total Failing Checks** = **Critical** + **Warning**. One cluster can contribute multiple failing checks. **Distinct Failure Reasons** is a secondary axis (Critical + Warning rolled up by reason)._')
@@ -721,7 +734,9 @@ function Export-AzLocalFleetHealthStatusReport {
 
     if ($PassThru) {
         return [pscustomobject]@{
-            TotalClusters     = [int]$totalClusters
+            TotalClusters       = [int]$totalClusters
+            CriticalClusters    = [int]$criticalClusters
+            WarningOnlyClusters = [int]$warningOnlyClusters
             TotalFailures     = [int]$totalFailures
             CriticalCount     = [int]$criticalCount
             WarningCount      = [int]$warningCount

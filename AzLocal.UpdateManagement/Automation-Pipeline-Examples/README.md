@@ -53,9 +53,10 @@ It is written in the same step-by-step style as [`ITSM/README.md`](../ITSM/READM
 11. [Security model](#11-security-model)
 12. [Troubleshooting](#12-troubleshooting)
 13. [File layout](#13-file-layout)
-14. [Pipeline reference](#14-pipeline-reference) (moved to [docs/appendix-pipelines.md](docs/appendix-pipelines.md))
-15. [Appendix B: Release history](#appendix-b-release-history) (moved to [docs/appendix-release-history.md](docs/appendix-release-history.md))
-16. [Related documentation](#16-related-documentation)
+14. [Optional: Sideload updates to disconnected / air-gapped clusters (Update: 2)](#14-optional-sideload-updates-to-disconnected--air-gapped-clusters-update-2)
+15. [Pipeline reference](#15-pipeline-reference) (moved to [docs/appendix-pipelines.md](docs/appendix-pipelines.md))
+16. [Appendix B: Release history](#appendix-b-release-history) (moved to [docs/appendix-release-history.md](docs/appendix-release-history.md))
+17. [Related documentation](#17-related-documentation)
 
 ---
 
@@ -2238,14 +2239,37 @@ Automation-Pipeline-Examples/
 
 ---
 
-## 14. Pipeline reference
+## 14. Optional: Sideload updates to disconnected / air-gapped clusters (Update: 2)
+
+> **Opt-in, off by default. Requires a self-hosted runner/agent on the cluster fabric network.**
+
+Clusters that **cannot pull updates from Azure directly** (dark, air-gapped, or restricted-egress fabrics) can still be updated by **pre-staging** the solution-update media onto each cluster's infrastructure `import` SMB share, importing it over WinRM, and then letting the normal **Update: 3 - Apply Updates** wave install it. This is the **Sideload Updates** pipeline (`sideload-updates.yml`, shown as **Update: 2**); it is inert unless you set the repository (GitHub) / pipeline (Azure DevOps) variable `SIDELOAD_UPDATES=true`.
+
+Because a multi-GB bundle copy can take hours over a constrained on-prem link, the pipeline is a **re-entrant state machine**: each short run advances every in-scope cluster by one step, while the actual robocopy runs in a **detached Windows Scheduled Task** that survives the pipeline run ending and the agent recycling. Progress is tracked in shared-UNC state JSON so any runner in the pool can pick it up and report. Once the media is staged, SHA256-verified, and imported, the pipeline flips the `UpdateSideloaded=True` tag - the gate that **Update: 1 - Assess Update Readiness** and **Update: 3 - Apply Updates** check before they allow a disconnected cluster to update.
+
+At a glance, sideloading involves:
+
+- a **self-hosted runner/agent** labelled `azlocal-sideload` on the fabric network (Microsoft-hosted runners cannot reach on-prem clusters);
+- a source-controlled **catalog** (`sideload-catalog.yml`) listing the Microsoft Solution bundles (auto-populated from the Microsoft Learn offline-updates table) and any OEM SBE packages;
+- an **auth-map** (`sideload-auth-map.csv`) mapping each cluster's `UpdateAuthAccountId` tag to the Key Vault secrets that hold the Active Directory credential used for the WinRM import;
+- a **shared UNC state root** (`SIDELOAD_STATE_ROOT`) holding per-cluster state JSON, robocopy logs, and the verified media cache.
+
+**Full setup, configuration, the state machine, the scheduled-task / robocopy model, authentication, the catalog and auth-map formats, external-endpoint requirements, reporting, and the preflight are documented in the dedicated guide:**
+
+- **[docs/sideload.md](docs/sideload.md)** - complete sideload setup and operations guide (Update: 2), including the **External endpoints requirements** section.
+- **[docs/sideload-robocopy.md](docs/sideload-robocopy.md)** - robocopy throttling / `SIDELOAD_ROBOCOPY_SWITCHES` guidance.
+- Per-pipeline reference card: [docs/appendix-pipelines.md - Update: 2](docs/appendix-pipelines.md#update-2---sideload-updates-opt-in).
+
+---
+
+## 15. Pipeline reference
 
 Moved to [docs/appendix-pipelines.md](docs/appendix-pipelines.md) - one section per pipeline (`Config: 1 - ...` ... `Update: 4 - ...`) mapping 1:1 to the bundled `*.yml` workflows, with purpose, inputs, trigger, cmdlets invoked, dependencies, artefacts, RBAC, and exit conditions for each. Kept out-of-line to keep this README focused on the runbook.
 
 ## Appendix B: Release history
 
 Moved to [docs/appendix-release-history.md](docs/appendix-release-history.md) to keep this README focused on the runbook.
-## 16. Related documentation
+## 17. Related documentation
 
 - [Azure Local Update Management module README](../README.md)
 - [Appendix: GitHub environments (`docs/appendix-github-environments.md`)](docs/appendix-github-environments.md) - optional governance wrapper for section 4.1: approval gates, per-ring identities, and the environment-scoped federated credentials + `gh` CLI to set them up.

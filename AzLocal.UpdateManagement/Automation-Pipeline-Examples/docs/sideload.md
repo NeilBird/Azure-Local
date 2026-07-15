@@ -46,6 +46,10 @@ pipeline targets:
 > Terminology: GitHub uses **runners** (in runner groups); Azure DevOps uses **agents**
 > (in agent pools). This is never an AKS "node pool".
 
+For the exact firewall endpoints the runner/agent needs - CI/CD control plane, Azure
+control plane, the cluster fabric, and the optional Microsoft update-media download hosts -
+see [section 10 - External endpoints requirements](#10-external-endpoints-requirements).
+
 ---
 
 ## 2. Re-entrant state machine + scheduled-task survival model
@@ -64,11 +68,25 @@ machine**:
   state and advance/report without cross-agent remoting.
 
 Drive the pipeline on a **frequent CRON (every 30 minutes)** so successive short runs
-walk each cluster through the states:
+walk each cluster through the persisted `State` values (the `State` field in each
+cluster's state JSON under `state\`):
 
 ```
-Planned -> Copying -> Copied -> Verified -> Imported -> SideloadFlagged
+(plan status: Planned) --> Copying --> Copied --> Imported
+                              |           |
+                              v           v
+                           Failed      Verified   (NeedsSbe: the Microsoft solution
+                        (retries        imported, but an OEM SBE package is
+                         exhausted)      still required)
 ```
+
+The full on-disk `State` enum is `Copying | Copied | Verified | Imported | Failed`.
+`Planned` is a **plan** status emitted by `Resolve-AzLocalSideloadPlan` (a cluster due
+within `SIDELOAD_LEAD_DAYS`), **not** a persisted state. `Copied` means the media landed;
+the SHA256 verify + `Add-SolutionUpdate` import step then promotes it straight to
+`Imported`. `Verified` is written **only** for the `NeedsSbe` case. There is no
+`SideloadFlagged` state - the `UpdateSideloaded=True` **tag** (not a state) is what the
+downstream apply pipelines gate on.
 
 Per cluster, the current shared state determines the action taken by
 `Invoke-AzLocalSideloadUpdate`:
@@ -84,6 +102,39 @@ Per cluster, the current shared state determines the action taken by
 
 Re-running is **always safe** - the state machine is idempotent.
 
+### 2.1 The per-cluster state JSON *is* the heartbeat
+
+There is **no separate heartbeat or marker file**. Each cluster's `state\<cluster>.json`
+holds both the current `State` and the progress fields the detached worker rewrites
+roughly every **30 seconds** while the copy runs: `LastHeartbeatUtc`, `OwningMachine`,
+`TotalBytes`, `CopiedBytes`, `Mbps`, `EtaUtc`, `ExitCode`, `Retries`, `TaskName`,
+`LogPath`, `Message`. The state machine branches on `State` plus the freshness of
+`LastHeartbeatUtc` - it does **not** parse the robocopy log. A `Copying` record whose
+`LastHeartbeatUtc` is older than `SIDELOAD_HEARTBEAT_STALE_MINUTES` (default 60) is treated
+as a dead host and re-driven on the current runner, up to `MaxRetries` (fixed at **3**;
+not currently exposed as a `SIDELOAD_*` variable).
+
+### 2.2 The detached copy Scheduled Task (and an important account caveat)
+
+The copy worker is registered with `Register-ScheduledTask` (not `schtasks`) as
+`AzLocalSideload_<sanitized-cluster>`, running `powershell.exe -File
+Tools/Invoke-AzLocalSideloadCopyTask.ps1` with `ExecutionTimeLimit = 0` (no time limit, so
+a multi-hour copy is never killed). The task is **removed** (`Unregister-ScheduledTask`)
+only when the cluster reaches `Imported`. A terminally `Failed`, `Verified` (NeedsSbe), or
+still-importing task is **left registered**; the next retry re-registers the same-named
+task, which replaces the old one.
+
+> **IMPORTANT - task logon account.** Out of the box the task registers with logon type
+> **`S4U`** (the shipped YAML passes no logon-type override). S4U runs **without network
+> credentials**, so it **cannot reach UNC paths** - neither the shared cache nor the
+> cluster `import` share. For a production UNC copy the task must run under an account that
+> carries a network identity: a **gMSA** (`ServiceAccount` logon) or a **stored-password**
+> principal. Provision that account with read on `SIDELOAD_CACHE_ROOT` and write on each
+> cluster's `import` share. If a copy task starts but immediately writes `Failed` with an
+> access / `ERROR 5` / "network path" message, this S4U caveat is almost always the cause.
+> (This is the cluster **WinRM** credential's sibling but a *different* identity - see
+> section 4.)
+
 ---
 
 ## 3. Shared state and multi-runner / multi-agent contract
@@ -92,7 +143,7 @@ Re-running is **always safe** - the state machine is idempotent.
 It holds three subfolders:
 
 - `state\` - one JSON document per cluster tracking the current transition + heartbeat.
-- `logs\`  - per-run copy / verify / import logs.
+- `logs\`  - one robocopy log per copy run, named `<cluster>.<yyyyMMddHHmmss>.robocopy.log` (the worker appends `/LOG:<that path>` to its robocopy switches). There are **no** separate verify/import log files - the SHA256-verify and `Add-SolutionUpdate` outcomes live in the state JSON `Message` field and the step summary.
 - `cache\` - the verified media cache (overridable via `SIDELOAD_CACHE_ROOT`; defaults
   to `<state-root>\cache`).
 
@@ -112,7 +163,10 @@ Two **distinct** identities are used - do not conflate them:
    tags. Defaults to `azure/login` OIDC; `enable-AzPSSession=true` is required because
    the Key Vault secrets are read via `Get-AzKeyVaultSecret` (Az PowerShell). For on-prem
    runners where OIDC is not viable, switch via the `SIDELOAD_KV_AUTH` variable
-   (`oidc | managedidentity | serviceprincipal`). Tag writes need only **Tag Contributor**
+   (`oidc | managedidentity | serviceprincipal`). This variable is **advisory only** - no
+   cmdlet reads it; it documents which `azure/login` / `Connect-AzAccount` pattern you wire
+   into the YAML to establish the Az PowerShell context that `Get-AzKeyVaultSecret` then
+   uses. Tag writes need only **Tag Contributor**
    (they reuse `Set-AzLocalClusterTagsMerge`).
 2. **Cluster WinRM credential** (fabric plane) - an Active Directory `[pscredential]`
    built at run time from **two Key Vault secrets** named in the matching sideload
@@ -202,6 +256,27 @@ packages:
 | `Update-AzLocalSideloadCatalog` | Auto-populates Solution rows by parsing the Microsoft Learn offline-updates table. SBE rows are added manually. |
 | `Reset-AzLocalSideloadedTag` | Operator escape hatch to clear a stuck `UpdateSideloaded` tag. |
 
+> **Automatic gate reset - you normally never run `Reset-AzLocalSideloadedTag` by hand.**
+> After a sideloaded cluster's update run **succeeds**, `Get-AzLocalUpdateRuns` (used by
+> Monitor: 3 / Monitor: 4) calls `Invoke-AzLocalSideloadedAutoReset`, which flips
+> `UpdateSideloaded` back to `False` and clears `UpdateVersionInProgress` - reopening the
+> gate so the cluster is ready to be sideloaded again next cycle (it also tidies stale
+> `UpdateLastAttempt` / `UpdateRetryAttempted` tags). `Reset-AzLocalSideloadedTag` is the
+> manual escape hatch for a payload you abandoned before it ever applied.
+
+### 7.1 What the status report shows
+
+`Export-AzLocalSideloadStatusReport` reads every `state\*.json` and renders a **`## Sideload
+status`** table - one row per cluster, columns `Cluster | Version | State | Progress | Mbps
+| ETA (UTC) | Owner | Retries | Message`. The rows that reached `Imported` **are** the list
+of clusters successfully sideloaded (there is no separate roll-up table). When the planner
+produced misconfiguration rows it also renders a **`### Plan warnings / errors`** table
+(`Cluster | Status | Message`, with statuses `NotInAllowList`, `UnknownAuthAccountId`,
+`NoCatalogEntry`, `NoneReady`). It writes `sideload-status.md` + `sideload-junit.xml` to the
+reports directory (uploaded as the `azlocal-sideload-updates-report_<UTC>` artefact); the
+JUnit test-suites name is `AzLocalSideload` with one `<testcase>` per cluster and `Failed`
+states emitted as `<failure Type='SideloadFailed'>`.
+
 ---
 
 ## 8. End-to-end runbook
@@ -280,4 +355,72 @@ operator having verified the `azlocal-sideload` capability is present in their
 self-hosted pool (Project Settings -> Agent pools -> &lt;pool&gt; -> Capabilities).
 If no matching agent is online the `Sideload` stage will sit `Queued` until
 manually cancelled.
+
+---
+
+## 10. External endpoints requirements
+
+The self-hosted runner/agent has **two independent network conversations** - its CI/CD
+control plane and the on-prem cluster fabric - plus an Azure control-plane conversation and
+an **optional** Microsoft update-media download. Plan firewall rules for each separately.
+
+### 10.1 CI/CD control-plane endpoints (runner/agent <-> GitHub / Azure DevOps)
+
+The runner/agent must reach its CI/CD service to receive jobs and upload logs/artefacts.
+These are the **standard self-hosted runner/agent endpoints** - not specific to this module -
+and the authoritative, always-current allow-list is in the vendor docs:
+
+- **GitHub Actions self-hosted runners** - [About self-hosted runners -> communication requirements](https://docs.github.com/en/actions/hosting-your-own-runners/managing-self-hosted-runners/about-self-hosted-runners). The commonly required hosts include `github.com`, `api.github.com`, `*.actions.githubusercontent.com`, `codeload.github.com`, and `objects.githubusercontent.com` (plus `*.pkg.github.com` / `ghcr.io` if you pull container actions). Treat the linked doc as canonical - GitHub changes the list over time. GitHub also publishes its ranges at [`https://api.github.com/meta`](https://api.github.com/meta).
+- **Azure DevOps self-hosted agents** - [Self-hosted agents: firewall URLs / allowed addresses](https://learn.microsoft.com/en-us/azure/devops/pipelines/agents/agents). Core hosts include `dev.azure.com`, `*.dev.azure.com`, `*.vssps.visualstudio.com`, and `*.vsblob.vsassets.io`; the doc's Azure DevOps IP/allow-list guidance is authoritative.
+
+### 10.2 Azure control-plane endpoints (pipeline identity)
+
+The `sideload` job reads the fleet via Azure Resource Graph, reads the Key Vault secrets,
+and writes the `UpdateSideloaded` / `UpdateVersionInProgress` tags. That needs outbound
+HTTPS to:
+
+- `https://management.azure.com` - Azure Resource Manager + Resource Graph.
+- `https://login.microsoftonline.com` - Entra ID token acquisition.
+- `https://<your-vault>.vault.azure.net` - Key Vault secret reads.
+
+### 10.3 Fabric-plane endpoints (runner/agent <-> clusters)
+
+- **SMB (TCP 445)** to each cluster's infrastructure `import` share for the robocopy.
+- **WinRM over HTTPS (TCP 5986)** to a cluster node for the SHA256 verify + `Add-SolutionUpdate`.
+
+These live on the fabric VLAN and are the reason the runner/agent must be on-prem.
+
+### 10.4 Microsoft update-media endpoints (OPTIONAL - only if the runner downloads bundles)
+
+**A fully air-gapped runner needs none of the endpoints in this subsection.** In that case
+you pre-stage the media yourself - set `localPath` on a `Solution` catalog row, or use an
+`SBE` `sourceFolder` - and the pipeline verifies + copies it with **no internet access**.
+
+If instead you allow the runner **limited egress** to fetch the Microsoft solution bundles
+automatically, the relevant Microsoft endpoints are:
+
+- **Update manifest (XML):** [`https://aka.ms/AzureEdgeUpdates`](https://aka.ms/AzureEdgeUpdates) - the unauthenticated Azure Edge Updates manifest (root element `ASZSolutionBundleUpdates`) that lists the currently-applicable solution-bundle versions. This is the same manifest the module uses to compute the supported-version window.
+- **Solution-bundle download URIs:** each catalog row's `downloadUri`, sourced from the Microsoft Learn *"[Import and discover updates offline](https://learn.microsoft.com/en-us/azure/azure-local/manage/import-discover-updates-offline-23h2)"* table. These bundles are served from Microsoft content-delivery hosts - **confirm the exact host of each `downloadUri` in your own catalog and allow-list it** rather than assuming a fixed CDN name (Microsoft may change hosts between releases).
+- **Catalog refresh (author's workstation, not necessarily the fabric runner):** `Update-AzLocalSideloadCatalog` fetches the Learn page above to populate/refresh the `Solution` rows in `sideload-catalog.yml`. Run it wherever you author the catalog.
+
+### 10.5 Should the pipeline auto-download, cache, and commit the catalog?
+
+**The download-and-cache behaviour already exists, and it does *not* require a Git commit.**
+`Get-AzLocalSolutionUpdateDownload` downloads a `Solution` bundle from its catalog
+`downloadUri` into `SIDELOAD_CACHE_ROOT` on first use, SHA256-verifies it (atomic move, so
+concurrent runners are safe), and serves every subsequent cluster from that cache. The
+cache is a **runtime UNC location**, not a source-controlled file - nothing is committed
+for the download itself, and only the first cluster of a given version pays the
+download + hash cost.
+
+The **only** thing that lives in Git is the catalog *metadata* (`version`, `downloadUri`,
+`sha256`, `availabilityDate`), and refreshing it is a **deliberate, reviewable** step you
+run with `Update-AzLocalSideloadCatalog` and merge via a normal PR. This split is by
+design - pinning the `sha256` in source control is what lets the runtime path **prove** the
+bundle it downloaded (or that you pre-staged) is exactly the one you reviewed. An
+auto-commit from the pipeline would defeat that supply-chain check and would require the
+pipeline identity to hold write access to your repository. Recommended split:
+
+- **Author / refresh the catalog** with `Update-AzLocalSideloadCatalog` -> review -> commit (occasional, human-in-the-loop).
+- **Let the runtime path download + cache + verify** against the committed `sha256` (automatic, every run, no commit).
 
