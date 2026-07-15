@@ -5,14 +5,37 @@
 ## Latest version:
 
 - Script: [`Get-HyperVVMCheckpointHealth.ps1`](./Get-HyperVVMCheckpointHealth.ps1)
-- Updated: 2026-07-14
-- Version: 0.2.11
+- Updated: 2026-07-15
+- Version: 0.2.12
 
 ## TL;DR
 
-An example PowerShell script that performs a **read-only** audit of a VM's **checkpoint / differencing-disk chain / replication** configuration, intended for use on an Azure Local or Windows Server Failover cluster.
+An example PowerShell script that performs a **read-only** audit of a VM's **checkpoint / differencing-disk chain, Hyper-V replication, and node event logs**. It automates the creation of a portable HTML Summary Report that highlights VMs with aged checkpoints, failing replication, and/or signals of concern that could occur during VM migration.
 
-Read-only health audit of a Hyper-V VM's **checkpoint / differencing-disk chain** on a Windows Server Failover Cluster or Azure Local cluster. It surfaces the specific failure mode where a checkpoint **fork-commit failure** leaves a VM's on-disk (`.vmcx`) chain metadata inconsistent — an inconsistency that can stay **dormant while the VM runs** and then be **materialised by a live migration or restart**, which can potentially cause the VM to roll the disks back to their base VHDX file(s), which can result in the data that is / was stored in the AVHDX file(s) being orphaned.
+This script provides insights that should be used as part of an operator investigation. It is NOT intended to troubleshoot active issues, nor does it provide a root-cause analysis (RCA). It is ONLY suitable as a tool to surface existing event data or configuration drift for VM checkpoints and/or replication issues.
+
+- **This script is NOT a supported service or offering from Microsoft. It is provided as example code only.**
+
+## Overview and details of intended use
+
+This example script performs a read-only audit of a Hyper-V VM's **checkpoint / differencing-disk chain, Hyper-V replication, and specific diagnostic event data** on an Azure Local or Windows Server Failover Cluster. It can be used to surface the specific failure mode where a checkpoint **fork-commit failure** leaves a VM's on-disk (`.vmcx`) chain metadata inconsistent — an inconsistency that can stay **dormant while the VM runs** and then be **materialised by a live migration or restart**, which can potentially cause the VM to roll the disks back to their base VHDX file(s), which can result in the data that is / was stored in the AVHDX file(s) being orphaned.
+
+The script is intended for Azure Local / Windows Server administrators / operators who need to audit the VMs running on a specific cluster — specifically for any anomalies in checkpoint, replication, or storage-related events. It generates automated output in the form of detailed `.txt` reports, `.csv` event-log data, and a portable **HTML summary** file that serves as the at-a-glance audit report.
+
+## Contents
+
+- [Safety — this script makes no changes](#safety--this-script-makes-no-changes)
+- [Requirements](#requirements)
+- [How it connects (no double-hop)](#how-it-connects-no-double-hop)
+- [Usage](#usage)
+- [Parameters](#parameters)
+- [What it reports](#what-it-reports)
+- [Portable HTML report & results bundle](#portable-html-report--results-bundle)
+- [Output files](#output-files-only-with--outputpath)
+- [Failure-signature reference](#failure-signature-reference)
+- [VM states (verdicts)](#vm-states-verdicts)
+- [Enabling the Analytic channel](#enabling-the-analytic-channel-optional-operators-choice)
+- [Return value](#return-value)
 
 ## Safety — this script makes no changes
 
@@ -181,7 +204,19 @@ Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/NeilBird/Azure-Local/m
 
 ## Portable HTML report & results bundle
 
-By default the run produces a single **self-contained HTML fleet report** (`VMCheckpointAudit-<Cluster>-<yyyy-MM-dd>.html`) — dark-themed, no external assets, safe to email or open on any device with a browser. It contains: summary cards; a **VM summary table** with distinct **Checkpoints** (`Get-VMSnapshot` count) and **AVHDX files** (differencing layers = Checkpoints × Disks) columns; a **Discovered high-risk VMs** section; **per-VM detailed information** (including, for HOLD STATE VMs, a copy/paste **Support Case summary**); a **Cluster storage health** section; and an anonymised **Information** section explaining the fork-commit signature and the exact Event IDs / HRESULTs that indicate it.
+By default the run produces a single **self-contained HTML fleet report** (`VMCheckpointAudit-<Cluster>-<yyyy-MM-dd>.html`) — dark-themed, no external assets, safe to email or open on any device with a browser. It contains: summary cards; a **Recommended next steps** list (see below); a **VM summary table** with distinct **Checkpoints** (`Get-VMSnapshot` count) and **AVHDX files** (differencing layers = Checkpoints × Disks) columns; a **Discovered high-risk VMs** section; **per-VM detailed information** (including, for HOLD STATE VMs, a copy/paste **Support Case summary**); a **Cluster storage health** section; and an anonymised **Information** section explaining the fork-commit signature and the exact Event IDs / HRESULTs that indicate it.
+
+### Recommended next steps (context-gated)
+
+Near the top of the report, a **Recommended next steps** list shows only the advice that is **actually actionable for this run** — each bullet is gated on what the audit found across the fleet, so a clean run stays short and a problem run surfaces exactly the relevant guidance:
+
+- **Backup team first** / **Confirm expected vs abandoned** — shown when ≥ 1 **stale** checkpoint was found across the fleet.
+- **INVESTIGATE (backup team first)** — shown when ≥ 1 VM is **INVESTIGATE** *and* there are **no** stale checkpoints in the fleet. It covers VMs flagged by an unhealthy VSS writer or VM-attributed concern events **without** a fork-commit signature — triage with the backup team/vendor first; **no immediate Microsoft Support case** is needed for these. When a stale checkpoint is the INVESTIGATE driver, the two stale-checkpoint bullets above already cover it, so this bullet is suppressed to avoid duplicate advice.
+- **Enable the Analytic channel** — shown only when a node still has the `Hyper-V-VMMS/Analytic` channel disabled (and the check was not skipped).
+- **Rule out storage-layer disruption** — shown only when the storage-health snapshot is **Degraded** / has active storage jobs.
+- **HOLD STATE VMs** and **Open a Microsoft Support case** — shown **only** when ≥ 1 VM is in **HOLD STATE** (a fork-commit signature is present somewhere in the fleet). On INVESTIGATE-only / clean runs the Microsoft-case line is deliberately omitted, because with no fork-commit signature the next step is backup-team / vendor triage, not a support case.
+
+When none of the above apply, a single **"No action required from this audit"** line is shown instead.
 
 When `-OutputPath` is used, a results **`.zip`** bundling the `.txt` + `.csv` + `.html` is also created (suppress with `-NoZip`), and the console prints guidance to **copy the zip to a device with a browser, unzip, and open the HTML**. The console itself is **quiet by default** (one-line verdict per VM); use `-Quiet:$false` for the full report on screen.
 
@@ -217,7 +252,7 @@ These indicate a genuine problem and are flagged **`Concern = YES`**:
 |---|---|---|
 | Worker | `3216` | Failed to switch to new differencing disks during checkpoint (`0x800703EE`) |
 | Worker | `3280` | Related checkpoint/disk error |
-| VMMS | `18590` | Checkpoint failed (fork-commit, `0x80048102`) — key signature |
+| VMMS | `18590` | Checkpoint operation reported a failure. When it carries a fork-commit HRESULT (e.g. `0x80048102`), **that HRESULT** is the fork-commit signature (see note below). |
 | Worker | `18590` | Guest OS bugcheck / fatal error — **same ID, different channel** (the VM crashed, e.g. after a migration reopened a rolled-back chain). Check the `Log` column to tell them apart. |
 | VMMS | `18012` | Checkpoint operation failed |
 | VMMS | `12240` | Attachment (`.avhdx`) not found |
@@ -225,6 +260,8 @@ These indicate a genuine problem and are flagged **`Concern = YES`**:
 | VMMS | `16300` | Cannot load a virtual machine configuration |
 | VMMS | `19090` | Background disk merge **interrupted** |
 | VMMS | `19100` | Background disk merge **failed** to complete (e.g. `0x80070020` sharing violation) |
+
+> **Fork-commit signature (drives `HOLD STATE`)** = a concern event **attributable to the VM** whose ID is `3216` **or** whose message contains one of the HRESULTs listed below (`0x80048102`, `0x800480BD`, `0x800480BC`, `0x800703EE`). **As of v0.2.12, event ID `18590` on its own is NOT treated as the signature** — the Worker-channel `18590` is a guest-OS bugcheck (e.g. Stop `0x7E`), not a checkpoint failure, so counting the bare ID produced false positives. A genuine VMMS checkpoint fork-commit is still caught by its `0x80048102` HRESULT. All the IDs above are still collected and flagged `Concern = YES` for the timeline; they just don't, by ID alone, force a HOLD STATE.
 
 ### Informational context event IDs (`-ContextEventIds`)
 
@@ -237,7 +274,7 @@ These are **surfaced for the timeline** but are **never** flagged as a concern (
 | VMMS | `19070` | Background disk merge started |
 | VMMS | `19080` | Background disk merge finished **successfully** |
 
-> Event-ID matching is intentionally **node-wide** — some of these events carry a blank or a different VM GUID, so scoping strictly to one VM would miss them.
+> Event **collection** is intentionally **node-wide** — some of these events carry a blank or a different VM GUID, so scoping the *query* strictly to one VM would miss them. The per-VM **verdict**, however, only counts events **attributable to that VM** (the message names the VM or its VM ID); node-wide events that reference *other* VMs are surfaced as a node-context note and do not change a VM's state (v0.2.12). See [VM states (verdicts)](#vm-states-verdicts).
 
 ### HRESULTs (`-ErrorCodePatterns`)
 
@@ -250,14 +287,32 @@ These are **surfaced for the timeline** but are **never** flagged as a concern (
 | `0x800703EE` | `ERROR_FILE_INVALID` | A volume changed underneath an open file |
 | `0x80070002` | `ERROR_FILE_NOT_FOUND` | The `.avhdx` / VM config file is missing |
 
-## Severity: HOLD STATE vs INVESTIGATE
+## VM states (verdicts)
 
-The summary classifies findings into two levels so an operator knows how urgent it is:
+Every audited VM is assigned exactly **one** state (the `Recommendation` property). The state is decided **per VM**, from that VM's own checkpoint chain plus only the Hyper-V events **attributable to that VM** (a concerning event counts toward a VM only when its message names that VM or its VM ID). Node-wide events that reference *other* VMs are reported as **context** and never, on their own, change a VM's verdict.
 
-- **HOLD STATE (data-loss risk)** — a confirmed checkpoint **fork-commit / merge-failure signature** (event `18590`, `3216`, or an HRESULT such as `0x80048102`) is present **together with** unmerged differencing disk(s). As a **precaution**, avoid live/quick/storage-migrating or restarting the VM until the chain has been validated (and merged if required) — reopening an inconsistent chain can roll disks back to base and lose intervening data. **Engage Microsoft Support** to confirm the safe path first.
-- **INVESTIGATE** — concern signals are present but the specific fork-commit signature was **not** observed. The likely cause is a **stalled / failed backup checkpoint** or an **unhealthy VSS writer** rather than on-disk chain corruption. **Engage your third-party backup vendor first** — their product creates the checkpoint and is responsible for requesting its **merge after a successful backup**, so a long-lived checkpoint usually means the backup did not complete or did not issue the merge. Review the backup tool and the **VSS Writer Health** section, and confirm whether any aged checkpoints are expected (by design). Open a Microsoft Support (CSS) case only if the vendor rules out their product, or if a fork-commit signature later appears. As a precaution, avoid an unnecessary migrate / restart until confirmed.
+### State matrix
 
-Continuing to run the VM in place is generally safe (Hyper-V keeps using the in-memory chain state). Both levels, and the report's Problem Statement, link the Microsoft Learn troubleshooting guide:
+| State | When it is assigned (precise logic) | Typical example | What to do |
+|---|---|---|---|
+| **HOLD STATE** &nbsp;(data-loss risk) | A **fork-commit / merge-failure signature for this VM** is present **AND** the VM has unmerged differencing disk(s). Signature = a concern event **attributable to this VM** whose ID is `3216` **or** whose message contains one of the HRESULTs `0x80048102`, `0x800480BD`, `0x800480BC`, `0x800703EE`. "Unmerged disk(s)" = `HasAttachedCheckpoints` **or** `StaleCheckpointCount > 0`. | VM is running on 2 active `.avhdx` layers **and** a `3216` (or `0x80048102`) event names this VM. | **Do not** live/quick/storage-migrate or restart the VM until the chain is validated/merged. **Engage Microsoft Support (CSS)** to confirm the safe path. |
+| **INVESTIGATE** | **Not** HOLD STATE, **and** at least one VM-scoped concern signal: `StaleCheckpointCount > 0` **or** `ConcernEventCount > 0` (concern events attributable to this VM) **or** an unhealthy VSS writer (`VssUnhealthyCount > 0`). | A backup checkpoint on this VM is 36 h old (≥ the 24 h `-StaleHours` threshold), or a VSS writer for this VM is in a failed/retryable state - but no fork-commit signature. | **Engage your third-party backup vendor first** (their product owns the checkpoint merge-after-backup). Review the backup job and the **VSS Writer Health** section; confirm whether an aged checkpoint is expected. Open a CSS case only if the vendor rules it out or a fork signature later appears. |
+| **OK** | None of the above - no fork signature, no stale checkpoint, no VM-attributable concern events, no unhealthy VSS writer for this VM. | VM has **no checkpoints**, is running normally, replication healthy. The node has concerning events, but they reference **other** VMs (shown as a node-context note). | No action required. The node-context note lists how many events belong to other VMs (see the events CSV `VmAttributed` column). |
+| **NOT FOUND** | The named VM was not found on any node of the cluster (collection outcome, not a health verdict). `ReportData` is `$null`; see `Detail`. | `-VMName 'Typo01'` where no such VM exists on the cluster. | Check the VM name / cluster; re-run. |
+| **ERROR** | The audit could not complete for this VM - e.g. the cluster name could not be resolved, or an unexpected exception occurred (collection outcome). `ReportData` is `$null`; see `Detail` and the console. | `-Cluster 'BadName'` cannot be resolved, or remoting to the owning node failed. | Fix the underlying access/name/remoting issue (see [How it connects](#how-it-connects-no-double-hop)) and re-run. |
+
+### Evaluation order (precedence)
+
+The states are mutually exclusive and decided in this order:
+
+1. **ERROR / NOT FOUND** - if data collection could not complete or the VM does not exist, that is the state (no health verdict is attempted).
+2. **HOLD STATE** - fork-commit signature **for this VM** *and* unmerged differencing disk(s).
+3. **INVESTIGATE** - not HOLD STATE, but at least one VM-scoped concern signal (stale checkpoint / this VM's concern events / unhealthy VSS).
+4. **OK** - none of the above.
+
+> **Why a checkpoint-free, healthy VM is `OK`, not `INVESTIGATE`:** the verdict only consumes events **attributable to the VM being audited**. A busy node can log many checkpoint/merge events for *other* VMs; those are surfaced as a node-context note but do not escalate a VM that has no checkpoints of its own and no concern events naming it. (This VM-scoping was introduced in v0.2.12; earlier versions counted node-wide events against every VM.)
+
+Continuing to run a HOLD STATE / INVESTIGATE VM **in place** is generally safe (Hyper-V keeps using the in-memory chain state) - the risk is materialised by a migrate/restart. Both levels, and the report's Problem Statement, link the Microsoft Learn troubleshooting guide:
 
 > [Troubleshoot Hyper-V Virtual Machine Backup, Checkpoint, and Storage Failures](https://learn.microsoft.com/en-us/troubleshoot/windows-server/virtualization/hyper-v-virtual-machine-backup-checkpoint-storage)
 
@@ -266,7 +321,7 @@ Continuing to run the VM in place is generally safe (Hyper-V keeps using the in-
 The internal per-disk `.vmcx` revert failure is traced only to `Hyper-V-VMMS/Analytic`, which is disabled by default. To capture it for future incidents, run **elevated on each node**:
 
 ```cmd
-wevtutil sl Microsoft-Windows-Hyper-V-VMMS/Analytic /e:true
+wevtutil sl Microsoft-Windows-Hyper-V-VMMS-Analytic /e:true /q:true
 ```
 
 ## Return value
@@ -287,7 +342,7 @@ Add **`-PassThru`** to emit **one `[pscustomobject]` per VM** to the pipeline, i
 | `HasOrphanedCheckpoints` | bool | Orphaned `.avhdx` present on disk (not part of any attached chain). |
 | `AttachedCheckpointCount` | int | Count of active differencing layers across attached disks. |
 | `StaleCheckpointCount` | int | Count of checkpoints ≥ `-StaleHours` old. |
-| `ConcernEventCount` | int | Count of `Concern = YES` Hyper-V events. |
+| `ConcernEventCount` | int | Count of `Concern = YES` Hyper-V events **attributable to this VM** (the message names this VM or its VM ID). Node-wide concern events that reference other VMs are reported as context and are **not** counted here. |
 | `ReportFile` | string | Path to this VM's `.txt` report (`$null` when `-OutputPath` omitted). |
 | `Detail` | string | Extra context for `NOT FOUND` / `ERROR` rows. |
 | `ReportData` | object | Rich per-VM detail (checkpoints, disks, replication, VSS, analytic, events, config version, and — for HOLD STATE — the Support Case summary) that the HTML fleet report renders. `$null` for `NOT FOUND` / `ERROR` rows. |
