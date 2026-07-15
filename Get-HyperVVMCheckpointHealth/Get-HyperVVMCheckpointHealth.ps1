@@ -103,6 +103,14 @@
         $results | Where-Object { $_.ReportData.HasForkSignature } |
             ForEach-Object { $_.ReportData.Checkpoints } | Format-Table Name, AgeHrs, Stale
 
+.EXAMPLE
+    .\Get-HyperVVMCheckpointHealth.ps1 -Cluster 'CLUS01' -VMName (Get-ClusterGroup -Cluster 'CLUS01' | Where-Object GroupType -eq 'VirtualMachine').Name -ExcludedVMListCsv 'C:\Temp\CheckPointAudit_Excluded_VMs.csv' -OutputPath 'C:\Temp\Reports'
+
+    Audits every clustered VM EXCEPT those listed in the exclusion CSV. The file has a single column
+    with a 'VMName' header (a headerless single-column file also works); each VM whose name matches
+    (case-INSENSITIVE) is skipped BEFORE it is audited. Handy to permanently omit known-noisy or
+    intentionally long-checkpointed VMs from a fleet run.
+
 .OUTPUTS
     None to the pipeline by default - the human-readable report goes to the host and, with -OutputPath,
     to a per-VM .txt transcript + events .csv. A single self-contained HTML fleet report is also written
@@ -183,6 +191,13 @@ param(
     # only names that resolve to real clustered VMs are added, their own discoveries are not expanded,
     # and the number added is capped (see $script:MaxDiscoveredToAudit).
     [switch]$IncludeDiscoveredVMs,
+
+    # Optional: path to a CSV file listing VM names to EXCLUDE from the audit. The file has a single
+    # column with a 'VMName' header (a headerless single-column file is also accepted). It is read ONCE
+    # at start; any requested / piped VM whose name matches (case-INSENSITIVE) is skipped BEFORE it is
+    # audited, and excluded VMs are NOT auto-audited via -IncludeDiscoveredVMs either. A missing or
+    # unreadable file is a non-fatal warning (the run proceeds with no exclusions).
+    [string]$ExcludedVMListCsv,
 
     # Age (in hours) at or beyond which a checkpoint / differencing disk is flagged as stale.
     [ValidateRange(0, 8760)]
@@ -2267,6 +2282,36 @@ $script:MaxDiscoveredToAudit = 25
 # Cluster storage-health snapshot (populated once, in the end block, unless -SkipStorageHealth).
 $script:ClusterStorageHealth = $null
 
+# Exclusion list: VM names to SKIP, read ONCE from -ExcludedVMListCsv into a case-INSENSITIVE HashSet
+# so the process-block membership test is O(1). A CSV with a 'VMName' header column is preferred; a
+# headerless single-column file also works. A missing / unreadable file is a non-fatal WARNING - the
+# run proceeds with no exclusions. $script:ExcludedMatched records the names actually skipped so the
+# end block can report them.
+$script:ExcludedVMNames = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+$script:ExcludedMatched = [System.Collections.Generic.List[string]]::new()
+if ($ExcludedVMListCsv) {
+    if (Test-Path -LiteralPath $ExcludedVMListCsv) {
+        try {
+            $exRows  = @(Import-Csv -LiteralPath $ExcludedVMListCsv -ErrorAction Stop)
+            $exNames = @()
+            if ($exRows.Count -gt 0 -and $exRows[0].PSObject.Properties['VMName']) {
+                $exNames = @($exRows | ForEach-Object { [string]$_.VMName })
+            } else {
+                # No 'VMName' header - treat it as a plain one-name-per-line list (skip a stray header).
+                $exNames = @(Get-Content -LiteralPath $ExcludedVMListCsv -ErrorAction Stop |
+                    ForEach-Object { $_.Trim().Trim('"') } |
+                    Where-Object { $_ -and $_ -ne 'VMName' })
+            }
+            foreach ($exName in $exNames) { if ($exName -and $exName.Trim()) { [void]$script:ExcludedVMNames.Add($exName.Trim()) } }
+            Write-Host ("Exclusion list: loaded {0} VM name(s) to skip from '{1}'." -f $script:ExcludedVMNames.Count, $ExcludedVMListCsv)
+        } catch {
+            Write-Alert ("WARNING: could not read -ExcludedVMListCsv '{0}': {1}. Proceeding with NO exclusions." -f $ExcludedVMListCsv, $_.Exception.Message) -Level Warning
+        }
+    } else {
+        Write-Alert ("WARNING: -ExcludedVMListCsv '{0}' was not found. Proceeding with NO exclusions." -f $ExcludedVMListCsv) -Level Warning
+    }
+}
+
 # Resolve a single per-run output sub-folder (once per invocation) so every VM in this run is
 # grouped together and repeated runs never collide. Only created when -OutputPath is supplied.
 $script:RunFolder = $null
@@ -2311,6 +2356,14 @@ process {
             continue
         }
 
+        # Skip VMs on the exclusion list (-ExcludedVMListCsv), matched case-INSENSITIVELY. Recorded so
+        # the end block can report which VMs were skipped.
+        if ($script:ExcludedVMNames.Count -gt 0 -and $script:ExcludedVMNames.Contains($singleVMName.Trim())) {
+            Write-Host ("Skipping '{0}': present in the -ExcludedVMListCsv exclusion list." -f $singleVMName)
+            [void]$script:ExcludedMatched.Add($singleVMName)
+            continue
+        }
+
         # Defer the actual audit to the end block, where the true total is known (accurate X of Y).
         $script:PendingVMNames.Add($singleVMName)
     }
@@ -2319,7 +2372,14 @@ process {
 # Audit each collected VM. Runs in the end block so the parent progress bar knows the total count.
 end {
     $vmTotal = $script:PendingVMNames.Count
-    if ($vmTotal -eq 0) { return }
+    # Report any VMs skipped by the exclusion list (always shown, even in quiet mode).
+    if (@($script:ExcludedMatched).Count -gt 0) {
+        Write-Alert ("Excluded {0} VM(s) from this run via -ExcludedVMListCsv: {1}" -f @($script:ExcludedMatched).Count, (@($script:ExcludedMatched | Sort-Object -Unique) -join ', ')) -Level Info
+    }
+    if ($vmTotal -eq 0) {
+        Write-Alert 'No VMs to audit (all requested VM(s) were excluded, or none were supplied).' -Level Warning
+        return
+    }
     $vmIndex = 0
     foreach ($name in $script:PendingVMNames) {
         $vmIndex++
@@ -2368,6 +2428,7 @@ end {
             $match = $clusterVmNames | Where-Object { $_ -eq $cand.Name } | Select-Object -First 1
             if (-not $match) { continue }
             if ($auditedNames -contains $match) { continue }
+            if ($script:ExcludedVMNames.Count -gt 0 -and $script:ExcludedVMNames.Contains($match)) { continue }
             if ($seenDisc.ContainsKey($match.ToLower())) { continue }
             $seenDisc[$match.ToLower()] = $true
             $discoveredVMs += [pscustomobject]@{ Name = $match; Reason = [string]$cand.Reason }
