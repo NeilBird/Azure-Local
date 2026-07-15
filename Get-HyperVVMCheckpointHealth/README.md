@@ -204,7 +204,19 @@ Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/NeilBird/Azure-Local/m
 
 ## Portable HTML report & results bundle
 
-By default the run produces a single **self-contained HTML fleet report** (`VMCheckpointAudit-<Cluster>-<yyyy-MM-dd>.html`) — dark-themed, no external assets, safe to email or open on any device with a browser. It contains: summary cards; a **VM summary table** with distinct **Checkpoints** (`Get-VMSnapshot` count) and **AVHDX files** (differencing layers = Checkpoints × Disks) columns; a **Discovered high-risk VMs** section; **per-VM detailed information** (including, for HOLD STATE VMs, a copy/paste **Support Case summary**); a **Cluster storage health** section; and an anonymised **Information** section explaining the fork-commit signature and the exact Event IDs / HRESULTs that indicate it.
+By default the run produces a single **self-contained HTML fleet report** (`VMCheckpointAudit-<Cluster>-<yyyy-MM-dd>.html`) — dark-themed, no external assets, safe to email or open on any device with a browser. It contains: summary cards; a **Recommended next steps** list (see below); a **VM summary table** with distinct **Checkpoints** (`Get-VMSnapshot` count) and **AVHDX files** (differencing layers = Checkpoints × Disks) columns; a **Discovered high-risk VMs** section; **per-VM detailed information** (including, for HOLD STATE VMs, a copy/paste **Support Case summary**); a **Cluster storage health** section; and an anonymised **Information** section explaining the fork-commit signature and the exact Event IDs / HRESULTs that indicate it.
+
+### Recommended next steps (context-gated)
+
+Near the top of the report, a **Recommended next steps** list shows only the advice that is **actually actionable for this run** — each bullet is gated on what the audit found across the fleet, so a clean run stays short and a problem run surfaces exactly the relevant guidance:
+
+- **Backup team first** / **Confirm expected vs abandoned** — shown when ≥ 1 **stale** checkpoint was found across the fleet.
+- **Investigate (backup team first)** — shown when ≥ 1 VM is **INVESTIGATE**. This is a fleet roll-up covering VMs flagged by a stale backup checkpoint, an unhealthy VSS writer, or VM-attributed concern events **without** a fork-commit signature — triage with the backup team/vendor first; **no immediate Microsoft Support case** is needed for these.
+- **Enable the Analytic channel** — shown only when a node still has the `Hyper-V-VMMS/Analytic` channel disabled (and the check was not skipped).
+- **Rule out storage-layer disruption** — shown only when the storage-health snapshot is **Degraded** / has active storage jobs.
+- **HOLD STATE VMs** and **Open a Microsoft Support case** — shown **only** when ≥ 1 VM is in **HOLD STATE** (a fork-commit signature is present somewhere in the fleet). On INVESTIGATE-only / clean runs the Microsoft-case line is deliberately omitted, because with no fork-commit signature the next step is backup-team / vendor triage, not a support case.
+
+When none of the above apply, a single **"No action required from this audit"** line is shown instead.
 
 When `-OutputPath` is used, a results **`.zip`** bundling the `.txt` + `.csv` + `.html` is also created (suppress with `-NoZip`), and the console prints guidance to **copy the zip to a device with a browser, unzip, and open the HTML**. The console itself is **quiet by default** (one-line verdict per VM); use `-Quiet:$false` for the full report on screen.
 

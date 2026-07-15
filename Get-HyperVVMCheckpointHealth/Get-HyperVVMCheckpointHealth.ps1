@@ -544,13 +544,20 @@ function ConvertTo-VMCheckpointAuditHtml {
     # Recommended next steps (placed up-front, right after the summary callouts). Every bullet is
     # CONTEXT-GATED so the list shows only advice that is actually actionable for this run:
     #   - the two stale-checkpoint bullets appear only when >=1 stale checkpoint was found;
+    #   - the INVESTIGATE bullet only when >=1 VM is INVESTIGATE ($countInv), covering the cases where
+    #     a VM was flagged by an unhealthy VSS writer or VM-attributed concern events with NO stale
+    #     checkpoint (so the stale-checkpoint bullets above would not otherwise cover it);
     #   - the Analytic-channel bullet only when a node still needs it enabled ($analyticNeedsEnable);
     #   - the storage bullet only when the storage snapshot is Degraded / has active jobs;
     #   - the HOLD STATE bullet only when >=1 VM is in HOLD STATE.
-    # When none of those apply a single 'no action required' line is shown instead; the final
-    # 'open a case only if a fork-commit signature appears' guard-rail line is ALWAYS shown.
+    # When none of those apply a single 'no action required' line is shown instead. The
+    # 'Open a Microsoft Support case' escalation line is a fleet roll-up shown ONLY when >=1 VM is in
+    # HOLD STATE (a fork-commit signature is present somewhere) - on INVESTIGATE-only / clean runs it
+    # is omitted, because with no fork-commit signature the next step is backup-team triage, not a case.
+    # NOTE: $countInv is included in $anyContextualStep so an INVESTIGATE-only run (e.g. VSS-writer /
+    # concern-event driven with zero stale checkpoints) never falls through to 'No action required'.
     $storageDegraded   = ($StorageHealth -and (@('Degraded', 'Active storage jobs') -contains "$($StorageHealth.Summary)"))
-    $anyContextualStep = ($staleTotal -gt 0) -or $analyticNeedsEnable -or $storageDegraded -or ($countHold -gt 0)
+    $anyContextualStep = ($staleTotal -gt 0) -or ($countInv -gt 0) -or $analyticNeedsEnable -or $storageDegraded -or ($countHold -gt 0)
     [void]$sb.Append(@'
 <h2>Recommended next steps</h2>
 <ol>
@@ -565,6 +572,11 @@ function ConvertTo-VMCheckpointAuditHtml {
   <li><strong>Backup team first:</strong> for each VM with a stale checkpoint, check the backup product's recent job history - did the last backup complete? A leftover checkpoint usually means a backup that did not finish or did not issue the post-backup merge.</li>
   <li><strong>Confirm expected vs abandoned:</strong> decide whether each stale checkpoint is expected (by design) or left behind by a failed backup, then merge / remove the abandoned ones (prefer the backup product over manual deletion).</li>
 '@)
+    }
+    if ($countInv -gt 0) {
+        [void]$sb.Append((@'
+  <li><strong>Investigate (backup team first):</strong> {0} VM(s) show concern signals (stale backup checkpoint, unhealthy VSS writer, or aged checkpoint) but no fork-commit signature - triage with your backup team/vendor before any action; no immediate Microsoft support case is needed for these (see per-VM detail).</li>
+'@ -f $countInv))
     }
     if ($analyticNeedsEnable) {
         [void]$sb.Append(@'
@@ -581,8 +593,17 @@ function ConvertTo-VMCheckpointAuditHtml {
   <li><strong>HOLD STATE VMs:</strong> engage Microsoft Support (CSS) and/or your backup vendor before any migration / restart.</li>
 '@)
     }
+    # Case-escalation line: shown ONLY when at least one VM is in HOLD STATE (a fork-commit signature
+    # is present somewhere in the fleet). This is a roll-up - if ANY audited VM has the signature a
+    # Microsoft case is warranted (the per-VM detail below shows which). On INVESTIGATE-only / clean
+    # runs it is deliberately omitted: with NO fork-commit signature the operator's next step is
+    # backup-team / vendor triage of the aged checkpoint(s), NOT opening a Microsoft case.
+    if ($countHold -gt 0) {
+        [void]$sb.Append(@'
+  <li><strong>Open a Microsoft Support case:</strong> a checkpoint fork-commit signature (event <code>3216</code> or an HRESULT such as <code>0x80048102</code>) is present on one or more VMs above - that is the condition that warrants a case (the per-VM detail shows which).</li>
+'@)
+    }
     [void]$sb.Append(@'
-  <li>Open a Microsoft Support case only if a fork-commit signature (event <code>3216</code> or an HRESULT such as <code>0x80048102</code>) appears, or the backup vendor rules out their product.</li>
 </ol>
 '@)
 
@@ -757,7 +778,7 @@ function ConvertTo-VMCheckpointAuditHtml {
 
     # Information (anonymised RCA background) + footer.
     [void]$sb.Append(@'
-<h2>Information: the checkpoint fork-commit / merge-failure signature</h2>
+<h2>Informational: technical details of the 'checkpoint fork-commit / merge-failure' signature</h2>
 <div class="callout info">
   <strong>Generic technical background</strong> - this section contains no customer, host or VM-specific data. It
   explains the failure mode this audit looks for and the exact Event IDs / error codes that indicate it is present.
@@ -1697,22 +1718,41 @@ function Invoke-VMCheckpointAudit {
             Write-Host ("  {0} event(s) matched ({1} shown after collapsing duplicates); {2} flagged as a Concern - {3} attributable to this VM, {4} node-wide (other VMs / none)." -f $workerEvents.Count, $displayRows.Count, $eventConcernCount, $vmEventConcernCount, ($eventConcernCount - $vmEventConcernCount))
             Write-Host  "  Informational lifecycle events (VM started, checkpoint completed, merge started / finished OK)"
             Write-Host  "  are listed for context but NOT flagged as a Concern."
+        } else {
+            Write-Host "  No matching events in the last $EventLookbackHours hours."
+            Write-Host ""
+        }
 
-            # Export the FULL event detail to CSV (no truncation) when an -OutputPath was supplied.
-            # The file name leads with the VM name and the UTC date (yyyy-MM-dd) so it sorts with the report.
-            if ($OutputPath) {
-                $csvFolder     = Split-Path -Parent $reportFile
-                $eventsCsvName = "{0}_Events_{1}.csv" -f ($VMName -replace '[^\w.\-]', '_'), [DateTime]::UtcNow.ToString('yyyy-MM-dd')
-                $csvPath       = Join-Path $csvFolder $eventsCsvName
+        # Export the event detail to CSV (no truncation) whenever an -OutputPath was supplied. This
+        # ALWAYS writes the CSV - even with ZERO matching events, in which case it contains a single
+        # 'no matching events' marker row - so every VM produces a CONSISTENT file set (.txt + .csv)
+        # and a missing CSV is never mistaken for a bug or an incomplete run. The file name leads with
+        # the VM name + UTC date (yyyy-MM-dd) so it sorts alongside the report.
+        if ($OutputPath -and $reportFile) {
+            $csvFolder     = Split-Path -Parent $reportFile
+            $eventsCsvName = "{0}_Events_{1}.csv" -f ($VMName -replace '[^\w.\-]', '_'), [DateTime]::UtcNow.ToString('yyyy-MM-dd')
+            $csvPath       = Join-Path $csvFolder $eventsCsvName
+            if ($workerEvents -and $workerEvents.Count -gt 0) {
                 $workerEvents | Select-Object 'Time (UTC)', Id, Level, Log, Concern, VmAttributed, FullMessage |
                     Export-Csv -LiteralPath $csvPath -NoTypeInformation -Encoding UTF8
                 Write-Host ""
                 Write-Host "  Full, untruncated event messages exported to CSV: $csvPath"
                 Write-Host "  (Use that CSV rather than the truncated console table above - it has the complete text.)"
+            } else {
+                # No matching events: still write the CSV (same columns) with one informational marker
+                # row, so the presence of the file confirms the scan ran and simply found nothing.
+                [pscustomobject]@{
+                    'Time (UTC)' = ''
+                    Id           = ''
+                    Level        = 'Info'
+                    Log          = ''
+                    Concern      = ''
+                    VmAttributed = ''
+                    FullMessage  = "No matching Hyper-V Worker/VMMS events in the last $EventLookbackHours hours (scan ran; nothing to report)."
+                } | Select-Object 'Time (UTC)', Id, Level, Log, Concern, VmAttributed, FullMessage |
+                    Export-Csv -LiteralPath $csvPath -NoTypeInformation -Encoding UTF8
+                Write-Host "  (No matching events - wrote an events CSV with a 'no matching events' marker row: $csvPath)"
             }
-        } else {
-            Write-Host "  No matching events in the last $EventLookbackHours hours."
-            Write-Host ""
         }
     }
 
