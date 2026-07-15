@@ -571,8 +571,8 @@ function ConvertTo-VMCheckpointAuditHtml {
     }
     if ($staleTotal -gt 0) {
         [void]$sb.Append(@'
-  <li><strong>Backup team first:</strong> for each VM with a stale checkpoint, check the backup product's recent job history - did the last backup complete? A leftover checkpoint usually means a backup that did not finish or did not issue the post-backup merge.</li>
-  <li><strong>Confirm expected vs abandoned:</strong> decide whether each stale checkpoint is expected (by design) or left behind by a failed backup, then merge / remove the abandoned ones (prefer the backup product over manual deletion).</li>
+  <li><strong>INVESTIGATE - backup team first:</strong> for each VM with a stale checkpoint, check the backup product's recent job history - did the last backup complete? A leftover checkpoint usually means a backup that did not finish or did not issue the post-backup merge.</li>
+  <li><strong>INVESTIGATE - confirm expected vs abandoned:</strong> decide whether each stale checkpoint is expected (by design) or left behind by a failed backup, then merge / remove the abandoned ones (prefer the backup product over manual deletion).</li>
 '@)
     }
     if ($countInv -gt 0 -and $staleTotal -eq 0) {
