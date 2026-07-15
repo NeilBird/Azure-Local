@@ -754,7 +754,7 @@ function ConvertTo-VMCheckpointAuditHtml {
         }
         # Orphaned .avhdx files table (present on disk in this VM's folder(s) but NOT attached to any chain).
         if (@($rd.Orphans).Count -gt 0) {
-            [void]$sb.Append("  <details open><summary>Orphaned .avhdx files ($($rd.OrphanCount)) - on disk but NOT attached to the VM</summary><table><thead><tr><th>Name</th><th>Size (GB)</th><th>Created (UTC)</th><th>LastWrite (UTC)</th><th>Full path</th></tr></thead><tbody>")
+            [void]$sb.Append("  <details open><summary>Orphaned .avhdx files ($($rd.OrphanCount)) - on disk but NOT attached to the VM</summary><table><thead><tr><th>File Name</th><th>Size (GB)</th><th>Created (UTC)</th><th>LastWrite (UTC)</th><th>Full path</th></tr></thead><tbody>")
             foreach ($o in @($rd.Orphans)) {
                 [void]$sb.Append("<tr><td>$(ConvertTo-HtmlText $o.Name)</td><td class='num'>$($o.SizeGB)</td><td>$(ConvertTo-HtmlText $o.Created)</td><td>$(ConvertTo-HtmlText $o.LastWrite)</td><td><code>$(ConvertTo-HtmlText $o.FullName)</code></td></tr>")
             }
@@ -1535,7 +1535,7 @@ function Invoke-VMCheckpointAudit {
         if ($orphans.Count -gt 0) {
             Write-Alert ("  {0} orphaned .avhdx file(s) found (present on disk but NOT part of any attached chain):" -f $orphans.Count) -Level Warning
             $orphans | Sort-Object LastWriteTimeUtc -Descending | Select-Object `
-                Name,
+                @{N='File Name';E={ $_.Name }},
                 @{N='SizeGB';E={ [math]::Round($_.Length / 1GB, 2) }},
                 @{N='Created (UTC)';E={ if ($_.CreationTimeUtc)  { $_.CreationTimeUtc.ToString('yyyy-MM-dd HH:mm:ss') }  else { '(unavailable)' } }},
                 @{N='LastWrite (UTC)';E={ if ($_.LastWriteTimeUtc) { $_.LastWriteTimeUtc.ToString('yyyy-MM-dd HH:mm:ss') } else { '(unavailable)' } }},
