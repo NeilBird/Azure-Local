@@ -544,9 +544,11 @@ function ConvertTo-VMCheckpointAuditHtml {
     # Recommended next steps (placed up-front, right after the summary callouts). Every bullet is
     # CONTEXT-GATED so the list shows only advice that is actually actionable for this run:
     #   - the two stale-checkpoint bullets appear only when >=1 stale checkpoint was found;
-    #   - the INVESTIGATE bullet only when >=1 VM is INVESTIGATE ($countInv), covering the cases where
-    #     a VM was flagged by an unhealthy VSS writer or VM-attributed concern events with NO stale
-    #     checkpoint (so the stale-checkpoint bullets above would not otherwise cover it);
+    #   - the INVESTIGATE bullet only when >=1 VM is INVESTIGATE ($countInv) AND there are NO stale
+    #     checkpoints ($staleTotal -eq 0) - i.e. the INVESTIGATE driver is an unhealthy VSS writer or
+    #     VM-attributed concern events rather than a stale checkpoint. When a stale checkpoint IS the
+    #     driver, the two stale-checkpoint bullets above already cover it, so this bullet is suppressed
+    #     to avoid duplicate 'backup team first' advice;
     #   - the Analytic-channel bullet only when a node still needs it enabled ($analyticNeedsEnable);
     #   - the storage bullet only when the storage snapshot is Degraded / has active jobs;
     #   - the HOLD STATE bullet only when >=1 VM is in HOLD STATE.
@@ -573,9 +575,9 @@ function ConvertTo-VMCheckpointAuditHtml {
   <li><strong>Confirm expected vs abandoned:</strong> decide whether each stale checkpoint is expected (by design) or left behind by a failed backup, then merge / remove the abandoned ones (prefer the backup product over manual deletion).</li>
 '@)
     }
-    if ($countInv -gt 0) {
+    if ($countInv -gt 0 -and $staleTotal -eq 0) {
         [void]$sb.Append((@'
-  <li><strong>Investigate (backup team first):</strong> {0} VM(s) show concern signals (stale backup checkpoint, unhealthy VSS writer, or aged checkpoint) but no fork-commit signature - triage with your backup team/vendor before any action; no immediate Microsoft support case is needed for these (see per-VM detail).</li>
+  <li><strong>INVESTIGATE (backup team first):</strong> {0} VM(s) show concern signals (unhealthy VSS writer or VM-attributed checkpoint/merge events) but no fork-commit signature - triage with your backup team/vendor before any action; no immediate Microsoft support case is needed for these (see per-VM detail).</li>
 '@ -f $countInv))
     }
     if ($analyticNeedsEnable) {
