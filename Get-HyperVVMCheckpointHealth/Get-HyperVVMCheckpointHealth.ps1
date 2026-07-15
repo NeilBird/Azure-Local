@@ -104,12 +104,14 @@
             ForEach-Object { $_.ReportData.Checkpoints } | Format-Table Name, AgeHrs, Stale
 
 .EXAMPLE
-    .\Get-HyperVVMCheckpointHealth.ps1 -Cluster 'CLUS01' -VMName (Get-ClusterGroup -Cluster 'CLUS01' | Where-Object GroupType -eq 'VirtualMachine').Name -ExcludedVMListCsv 'C:\Temp\CheckPointAudit_Excluded_VMs.csv' -OutputPath 'C:\Temp\Reports'
+    .\Get-HyperVVMCheckpointHealth.ps1 -Cluster 'CLUS01' -VMName (Get-ClusterGroup -Cluster 'CLUS01' | Where-Object GroupType -eq 'VirtualMachine').Name -ExcludedVMListCsv '.\CheckPointAudit_Excluded_VMs.csv' -OutputPath 'C:\Temp\Reports'
 
     Audits every clustered VM EXCEPT those listed in the exclusion CSV. The file has a single column
     with a 'VMName' header (a headerless single-column file also works); each VM whose name matches
     (case-INSENSITIVE) is skipped BEFORE it is audited. Handy to permanently omit known-noisy or
-    intentionally long-checkpointed VMs from a fleet run.
+    intentionally long-checkpointed VMs from a fleet run. A relative path (e.g. '.\CheckPointAudit_
+    Excluded_VMs.csv', in the same folder as the script) is resolved against the current directory; a
+    missing / unreadable file is a non-fatal warning and the run proceeds with no exclusions.
 
 .OUTPUTS
     None to the pipeline by default - the human-readable report goes to the host and, with -OutputPath,
