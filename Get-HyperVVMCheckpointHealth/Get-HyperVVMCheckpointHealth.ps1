@@ -115,8 +115,8 @@
 .NOTES
     Author  : Neil Bird, Microsoft
     Created : 2026-07-10
-    Updated : 2026-07-14
-    Version : 0.2.11
+    Updated : 2026-07-15
+    Version : 0.2.12
     
     Requires: Windows PowerShell 5.1 (this script is written for, and validated against, Windows
               PowerShell 5.1 ONLY - it is NOT intended or tested for PowerShell 7.x). Also requires the Hyper-V
@@ -524,7 +524,7 @@ function ConvertTo-VMCheckpointAuditHtml {
         [void]$sb.Append(@"
 <div class="callout ok">
   <strong>Headline:</strong> No VM shows the checkpoint <em>fork-commit / merge-failure</em> signature
-  (event <code>18590</code> / <code>0x80048102</code>) and none is in a HOLD STATE, so
+  (event <code>3216</code> or an HRESULT such as <code>0x80048102</code>) and none is in a HOLD STATE, so
   <strong>no Microsoft Support (CSS) case is warranted yet</strong>. $staleTotal stale backup checkpoint(s)
   were found for the operations / backup team to triage first.
 </div>
@@ -582,7 +582,7 @@ function ConvertTo-VMCheckpointAuditHtml {
 '@)
     }
     [void]$sb.Append(@'
-  <li>Open a Microsoft Support case only if a fork-commit signature (<code>18590</code> / <code>0x80048102</code>) appears, or the backup vendor rules out their product.</li>
+  <li>Open a Microsoft Support case only if a fork-commit signature (event <code>3216</code> or an HRESULT such as <code>0x80048102</code>) appears, or the backup vendor rules out their product.</li>
 </ol>
 '@)
 
@@ -676,7 +676,8 @@ function ConvertTo-VMCheckpointAuditHtml {
     <div class="k">VSS writers</div><div>$(ConvertTo-HtmlText $vss)</div>
     <div class="k">Analytic channel</div><div>$(ConvertTo-HtmlText $analytic)</div>
     <div class="k">Config behind latest</div><div>$verOld</div>
-    <div class="k">Node concerning events ($($rd.EventLookbackHours)h)</div><div>$($rd.EventConcernCount) (node-wide - see caveat above)</div>
+    <div class="k">Concerning events - this VM ($($rd.EventLookbackHours)h)</div><div>$($rd.VmEventConcernCount)</div>
+    <div class="k">Concerning events - node-wide ($($rd.EventLookbackHours)h)</div><div>$($rd.EventConcernCount) (references other VMs / none - context only)</div>
   </div>
 "@)
         # Assessment callout.
@@ -781,7 +782,8 @@ their base</strong>, orphaning everything written into the <code>.avhdx</code> l
 <table>
 <thead><tr><th>Signal</th><th>Channel</th><th>Meaning</th><th>Role</th></tr></thead>
 <tbody>
-  <tr><td>Event <code>18590</code> + <code>0x80048102</code></td><td>Hyper-V-VMMS</td><td><code>VM_E_COMMIT_FORKS_ERROR</code> - the checkpoint fork-commit failed</td><td><strong>Confirming</strong> (drives HOLD STATE)</td></tr>
+  <tr><td>HRESULT <code>0x80048102</code> (typically with VMMS event <code>18590</code>)</td><td>Hyper-V-VMMS</td><td><code>VM_E_COMMIT_FORKS_ERROR</code> - the checkpoint fork-commit failed</td><td><strong>Confirming</strong> (drives HOLD STATE)</td></tr>
+  <tr><td>Event <code>18590</code> <em>without</em> a fork-commit HRESULT</td><td>Hyper-V-Worker</td><td>Guest-OS bugcheck / fatal error (e.g. Stop <code>0x7E</code>) - the VM crashed; this is NOT a checkpoint fork-commit</td><td>Context only (does not drive HOLD STATE)</td></tr>
   <tr><td>Event <code>3216</code> + <code>0x800703EE</code></td><td>Hyper-V-Worker</td><td>Failed to switch to the new differencing disks during checkpoint</td><td><strong>Confirming</strong></td></tr>
   <tr><td><code>0x800480BD</code></td><td>Replica</td><td><code>VM_E_FR_CHANGE_TRACKING_FAILED</code></td><td>Leading indicator</td></tr>
   <tr><td><code>0x800480BC</code></td><td>Replica</td><td><code>VM_E_FR_RESYNC_REQUIRED</code></td><td>Leading indicator</td></tr>
@@ -1584,11 +1586,15 @@ function Invoke-VMCheckpointAudit {
     # checkpoint fork-commit failure (18590, 0x80048102) -> per-disk .vmcx revert leaves the chain
     # inconsistent -> backup product retries fail (0x80070020) -> the inconsistency stays dormant while
     # the VM runs -> a later live migration / restart reopens the chain and can roll disks back to base.
-    # Matching by event ID is node-wide on purpose: some of these events carry a blank or different VM GUID.
-    # Runs by default; use -SkipWorkerEvents to opt out.
-    $eventConcernCount = 0
-    $concernEvents     = @()
-    $eventsCsvName     = $null
+    # v0.2.12: event-ID / HRESULT matches are collected node-wide (some events carry a blank or a
+    # different VM GUID), but only events ATTRIBUTABLE TO THIS VM (message names this VM or its GUID)
+    # drive this VM's verdict; the rest are surfaced as node context. Runs by default; use
+    # -SkipWorkerEvents to opt out.
+    $eventConcernCount   = 0
+    $concernEvents       = @()
+    $vmConcernEvents     = @()
+    $vmEventConcernCount = 0
+    $eventsCsvName       = $null
     if (-not $SkipWorkerEvents) {
         Show-AuditProgress 'Scanning Hyper-V Worker/VMMS event logs'
         Write-Section "Hyper-V Worker/VMMS Admin Events (last $EventLookbackHours h on $OwningNode):"
@@ -1616,12 +1622,18 @@ function Invoke-VMCheckpointAudit {
                     # Concern = a genuine PROBLEM only: an HRESULT match, or an ID in the concern list.
                     # Informational lifecycle IDs (context list) are surfaced but NEVER flagged Concern.
                     $isConcern = (($codeRx -and $_.Message -match $codeRx) -or ($concernIds -contains $_.Id))
+                    # v0.2.12: is this event attributable to the AUDITED VM? Worker/VMMS messages name
+                    # the VM ('<name>') and/or its 'Virtual machine ID <GUID>'. Only VM-attributable
+                    # events drive this VM's verdict; ID/HRESULT-only matches that name a DIFFERENT VM
+                    # (or no VM) are node context, not a per-VM concern.
+                    $isVmAttributed = (($vmName -and $_.Message -match [regex]::Escape($vmName)) -or ($vmId -and $_.Message -match [regex]::Escape($vmId)))
                     [pscustomobject]@{
                         'Time (UTC)' = $_.TimeCreated.ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')
                         Id           = [int]$_.Id
                         Level        = [string]$_.LevelDisplayName
                         Log          = if ($_.LogName -like '*Worker*') { 'Worker' } elseif ($_.LogName -like '*VMMS*') { 'VMMS' } else { [string]$_.LogName }
                         Concern      = if ($isConcern) { 'YES' } else { '' }
+                        VmAttributed = [bool]$isVmAttributed
                         Message      = ($_.Message -split "`r?`n")[0]
                         FullMessage  = ($_.Message -replace "`r?`n", ' | ')
                     }
@@ -1636,6 +1648,9 @@ function Invoke-VMCheckpointAudit {
             $workerEvents      = @($workerEvents | Sort-Object 'Time (UTC)')
             $concernEvents     = @($workerEvents | Where-Object { $_.Concern -eq 'YES' })
             $eventConcernCount = $concernEvents.Count
+            # v0.2.12: split concern events into those attributable to THIS VM vs node-wide (other VMs).
+            $vmConcernEvents     = @($concernEvents | Where-Object { $_.VmAttributed })
+            $vmEventConcernCount = $vmConcernEvents.Count
 
             # Discover OTHER VMs referenced in this node's HIGH-RISK signals (background disk merge
             # interrupted / failed, or 'cannot load VM configuration'). Hyper-V messages quote the VM
@@ -1679,7 +1694,7 @@ function Invoke-VMCheckpointAudit {
             @($displayRows | Sort-Object 'Time (UTC)') | Format-Table 'Time (UTC)', Id, Level, Log, Concern, Message -AutoSize -Wrap | Out-Indented
             foreach ($note in $removedNotes) { Write-Host $note }
             if ($removedNotes.Count -gt 0) { Write-Host "" }
-            Write-Host ("  {0} event(s) matched ({1} shown after collapsing duplicates); {2} flagged as a Concern." -f $workerEvents.Count, $displayRows.Count, $eventConcernCount)
+            Write-Host ("  {0} event(s) matched ({1} shown after collapsing duplicates); {2} flagged as a Concern - {3} attributable to this VM, {4} node-wide (other VMs / none)." -f $workerEvents.Count, $displayRows.Count, $eventConcernCount, $vmEventConcernCount, ($eventConcernCount - $vmEventConcernCount))
             Write-Host  "  Informational lifecycle events (VM started, checkpoint completed, merge started / finished OK)"
             Write-Host  "  are listed for context but NOT flagged as a Concern."
 
@@ -1689,7 +1704,7 @@ function Invoke-VMCheckpointAudit {
                 $csvFolder     = Split-Path -Parent $reportFile
                 $eventsCsvName = "{0}_Events_{1}.csv" -f ($VMName -replace '[^\w.\-]', '_'), [DateTime]::UtcNow.ToString('yyyy-MM-dd')
                 $csvPath       = Join-Path $csvFolder $eventsCsvName
-                $workerEvents | Select-Object 'Time (UTC)', Id, Level, Log, Concern, FullMessage |
+                $workerEvents | Select-Object 'Time (UTC)', Id, Level, Log, Concern, VmAttributed, FullMessage |
                     Export-Csv -LiteralPath $csvPath -NoTypeInformation -Encoding UTF8
                 Write-Host ""
                 Write-Host "  Full, untruncated event messages exported to CSV: $csvPath"
@@ -1811,12 +1826,20 @@ function Invoke-VMCheckpointAudit {
     # data-loss risk if the VM is migrated / restarted) from symptom-only noise (e.g. repeated 15268
     # or an aged backup checkpoint), which usually points to a stalled / failed backup or an unhealthy
     # VSS writer rather than on-disk chain corruption.
-    $forkCommitIds    = @(3216, 18590)
+    # v0.2.12: 18590 REMOVED from the fork-commit signature IDs - in the field it is the
+    # Hyper-V-Worker "VM has encountered a fatal error" GUEST-OS bugcheck (e.g. Stop 0x7E), which is
+    # unrelated to a checkpoint fork-commit / merge failure. The signature is now event 3216 or one of
+    # the specific merge/commit HRESULTs, AND (v0.2.12) the event must be ATTRIBUTABLE TO THIS VM.
+    $forkCommitIds    = @(3216)
     $forkCommitRx     = (@('0x80048102', '0x800480BD', '0x800480BC', '0x800703EE') | ForEach-Object { [regex]::Escape($_) }) -join '|'
-    $hasForkSignature = (@($concernEvents | Where-Object { ($forkCommitIds -contains [int]$_.Id) -or ($_.FullMessage -match $forkCommitRx) }).Count -gt 0)
+    $hasForkSignature = (@($vmConcernEvents | Where-Object { ($forkCommitIds -contains [int]$_.Id) -or ($_.FullMessage -match $forkCommitRx) }).Count -gt 0)
     $holdState        = ($hasForkSignature -and ($hasCheckpoints -or $staleCheckpoints.Count -gt 0))
-    $investigate      = ((-not $holdState) -and (($staleCheckpoints.Count -gt 0) -or ($eventConcernCount -gt 0) -or ($vssUnhealthy.Count -gt 0)))
-    $concernIdSummary = (@($concernEvents | Group-Object Id | Sort-Object { [int]$_.Name } | ForEach-Object { "{0} x{1}" -f $_.Name, $_.Count }) -join ', ')
+    # v0.2.12: the verdict is scoped to THIS VM. Node-wide concern events that name OTHER VMs (or no VM)
+    # are reported as context only and do NOT, on their own, escalate a healthy, checkpoint-free VM.
+    $investigate      = ((-not $holdState) -and (($staleCheckpoints.Count -gt 0) -or ($vmEventConcernCount -gt 0) -or ($vssUnhealthy.Count -gt 0)))
+    $concernIdSummary     = (@($concernEvents   | Group-Object Id | Sort-Object { [int]$_.Name } | ForEach-Object { "{0} x{1}" -f $_.Name, $_.Count }) -join ', ')
+    $vmConcernIdSummary   = (@($vmConcernEvents | Group-Object Id | Sort-Object { [int]$_.Name } | ForEach-Object { "{0} x{1}" -f $_.Name, $_.Count }) -join ', ')
+    $nodeOnlyConcernCount = $eventConcernCount - $vmEventConcernCount
 
     # ---- Findings block for the operator / backup team (and, only when warranted, a CSS case) -------
     # A copy/paste-ready summary of the key findings. The framing ADAPTS to severity so we do NOT push
@@ -1852,13 +1875,20 @@ function Invoke-VMCheckpointAudit {
     } else {
         Write-Host  "  This VM currently has no active differencing (.avhdx) disk layers attached."
     }
-    if ($eventConcernCount -gt 0) {
+    if ($vmEventConcernCount -gt 0) {
         Write-Host ""
-        Write-Host ("  {0} concerning Hyper-V event(s) were found on {1} in the last {2} hours, by event ID:" -f $eventConcernCount, $OwningNode, $EventLookbackHours)
-        $concernEvents | Group-Object Id | Sort-Object { [int]$_.Name } | ForEach-Object {
+        Write-Host ("  {0} concerning Hyper-V event(s) attributable to THIS VM ({1}) on {2} in the last {3} hours, by event ID:" -f $vmEventConcernCount, $VMName, $OwningNode, $EventLookbackHours)
+        $vmConcernEvents | Group-Object Id | Sort-Object { [int]$_.Name } | ForEach-Object {
             $times = @($_.Group.'Time (UTC)' | Sort-Object)
             Write-Host ("    - ID {0}  x{1}   (first {2} UTC, last {3} UTC)" -f $_.Name, $_.Count, $times[0], $times[-1])
         }
+    }
+    if ($nodeOnlyConcernCount -gt 0) {
+        Write-Host ""
+        Write-Host ("  NOTE (node context): a further {0} concerning Hyper-V event(s) on {1} reference OTHER VMs (or no VM)" -f $nodeOnlyConcernCount, $OwningNode)
+        Write-Host  "  and are NOT attributed to this VM - they do not, on their own, mean this VM needs investigation."
+        Write-Host ("  Node-wide concern IDs (all VMs on {0}): [{1}]." -f $OwningNode, $concernIdSummary)
+        Write-Host  "  See the events CSV (VmAttributed column) for which events belong to which VM."
     }
     if ($vssUnhealthy.Count -gt 0) {
         Write-Host ""
@@ -1879,8 +1909,8 @@ function Invoke-VMCheckpointAudit {
         if ($staleCheckpoints.Count -gt 0) {
             Write-Host ("    - {0} checkpoint(s) at or beyond the {1}-hour stale threshold (set via -StaleHours; default 24)." -f $staleCheckpoints.Count, $StaleHours)
         }
-        if ($eventConcernCount -gt 0) {
-            Write-Host ("    - {0} concerning Hyper-V event(s) [{1}] on {2} in the last {3}h (see the events section above)." -f $eventConcernCount, $concernIdSummary, $OwningNode, $EventLookbackHours)
+        if ($vmEventConcernCount -gt 0) {
+            Write-Host ("    - {0} concerning Hyper-V event(s) for THIS VM [{1}] on {2} in the last {3}h (see the events section above)." -f $vmEventConcernCount, $vmConcernIdSummary, $OwningNode, $EventLookbackHours)
         }
         if ($vssUnhealthy.Count -gt 0) {
             Write-Host ("    - {0} unhealthy VSS writer(s) (see the VSS Writer Health section above)." -f $vssUnhealthy.Count)
@@ -1943,20 +1973,22 @@ function Invoke-VMCheckpointAudit {
     if ($staleCheckpoints.Count -gt 0) {
         Write-Alert "  WARNING: $($staleCheckpoints.Count) checkpoint(s) are >= $StaleHours hours old (possibly stuck)." -Level Warning
     }
-    if ($eventConcernCount -gt 0) {
-        Write-Alert "  WARNING: $eventConcernCount concerning Hyper-V event(s) found (see the Concern=YES rows above)." -Level Warning
+    if ($vmEventConcernCount -gt 0) {
+        Write-Alert "  WARNING: $vmEventConcernCount concerning Hyper-V event(s) attributable to this VM (see the Concern=YES rows above)." -Level Warning
+    } elseif ($nodeOnlyConcernCount -gt 0) {
+        Write-Alert "  NOTE: $nodeOnlyConcernCount concerning Hyper-V event(s) on $OwningNode reference OTHER VMs (node context - not this VM)." -Level Info
     }
     if ($holdState) {
         Write-Host ""
         Write-Alert "  HOLD STATE (data-loss risk): a checkpoint fork-commit / merge-failure signature AND" -Level Critical
         Write-Alert "  unmerged differencing disk(s) are present together." -Level Critical
-        Write-Alert ("  Why flagged: {0} active differencing (.avhdx) layer(s); fork-commit signature in event(s) [{1}]; {2} checkpoint(s) >= {3}h old." -f $totalCheckpoints, $concernIdSummary, $staleCheckpoints.Count, $StaleHours) -Level Critical
+        Write-Alert ("  Why flagged: {0} active differencing (.avhdx) layer(s); fork-commit signature in event(s) [{1}]; {2} checkpoint(s) >= {3}h old." -f $totalCheckpoints, $vmConcernIdSummary, $staleCheckpoints.Count, $StaleHours) -Level Critical
         Write-Alert "  See the PROBLEM STATEMENT section above for the recommended next steps and a copy/paste case summary." -Level Critical
     } elseif ($investigate) {
         Write-Host ""
         Write-Alert "  INVESTIGATE: concern signals are present, but the specific checkpoint fork-commit signature" -Level Warning
         Write-Alert "  was NOT observed (likely a stalled / failed backup checkpoint or an unhealthy VSS writer)." -Level Warning
-        Write-Alert ("  Why flagged: {0} concerning event(s) [{1}]; {2} checkpoint(s) >= {3}h old; {4} unhealthy VSS writer(s)." -f $eventConcernCount, $concernIdSummary, $staleCheckpoints.Count, $StaleHours, $vssUnhealthy.Count) -Level Warning
+        Write-Alert ("  Why flagged: {0} concerning event(s) for this VM [{1}]; {2} checkpoint(s) >= {3}h old; {4} unhealthy VSS writer(s)." -f $vmEventConcernCount, $vmConcernIdSummary, $staleCheckpoints.Count, $StaleHours, $vssUnhealthy.Count) -Level Warning
         Write-Alert "  See the FINDINGS TO INVESTIGATE section above for the suggested next steps (backup-team triage first; no Microsoft case needed yet)." -Level Warning
     }
     # Diagnostic-coverage TIP (independent of the verdict): if the Hyper-V-VMMS/Analytic channel is not
@@ -2081,6 +2113,7 @@ function Invoke-VMCheckpointAudit {
         HasOrphans           = [bool]$hasOrphans
         HasForkSignature     = [bool]$hasForkSignature
         EventConcernCount    = $eventConcernCount
+        VmEventConcernCount  = $vmEventConcernCount
         EventBreakdown       = $eventBreakdownForHtml
         EventLookbackHours   = $EventLookbackHours
         EventsCsvName        = [string]$eventsCsvName
@@ -2095,7 +2128,7 @@ function Invoke-VMCheckpointAudit {
         HasOrphanedCheckpoints  = $hasOrphans
         AttachedCheckpointCount = [int]$totalCheckpoints
         StaleCheckpointCount    = $staleCheckpoints.Count
-        ConcernEventCount       = $eventConcernCount
+        ConcernEventCount       = $vmEventConcernCount
         Owner                   = $OwningNode
         ReportData              = $reportData
     }
