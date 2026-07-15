@@ -34,8 +34,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $script:ModuleInfo | Should -Not -BeNullOrEmpty
         }
 
-        It 'Should have version 0.9.20' {
-            $script:ModuleInfo.Version | Should -Be '0.9.20'
+        It 'Should have version 0.9.21' {
+            $script:ModuleInfo.Version | Should -Be '0.9.21'
         }
 
         It 'Module version constants are in sync between .psm1 and .psd1' {
@@ -13927,6 +13927,14 @@ Describe 'Function: New-AzLocalFleetConnectivityStatusSummary' {
             $script:md | Should -Match '\*\*TOTAL FAILURES\*\* \| - \| \*\*6\*\* \| \(Critical=4, Warning=2\)'
         }
 
+        It 'v0.9.21: prefixes each KPI scope row with a bare-glyph status indicator' {
+            $cross = [string][char]0x274C
+            # In the fixture Clusters/Arc have failures and Critical=4, so the
+            # Clusters row and the TOTAL FAILURES row are prefixed with a red cross.
+            $script:md | Should -Match ([regex]::Escape($cross) + ' \*\*Clusters\*\*')
+            $script:md | Should -Match ([regex]::Escape($cross) + ' \*\*TOTAL FAILURES\*\*')
+        }
+
         It 'Includes the reconciliation table heading' {
             $script:md | Should -Match '### Node \+ ARB Coverage Reconciliation'
         }
@@ -18071,6 +18079,11 @@ Describe 'Thin-YAML Step.9: Export-AzLocalFleetHealthStatusReport' {
             Export-AzLocalFleetHealthStatusReport -OutputDirectory $global:_s9_payload.OutDir -Now $global:_s9_payload.Now -PassThru
         }
         $result.TotalClusters   | Should -Be 2   # alpha + bravo
+        # v0.9.21: split by highest severity. alpha has BOTH Critical + Warning
+        # -> counted in Critical only; bravo is Critical -> Critical=2. No
+        # cluster has only Warning checks -> Warning-only=0.
+        $result.CriticalClusters    | Should -Be 2
+        $result.WarningOnlyClusters | Should -Be 0
         $result.TotalFailures   | Should -Be 3
         $result.CriticalCount   | Should -Be 2
         $result.WarningCount    | Should -Be 1
@@ -18108,10 +18121,23 @@ Describe 'Thin-YAML Step.9: Export-AzLocalFleetHealthStatusReport' {
         $summary | Should -Match '\*\*Critical\*\* \| 2 \|'
         $summary | Should -Match '\*\*Warning\*\* \| 1 \|'
         $summary | Should -Match '\*\*Healthy Clusters\*\* \| 1 \|'
+        # v0.9.21: Cluster Counts split into Critical / Warning-only unhealthy
+        # rows (each cluster counted once by highest severity) + renamed Other.
+        # alpha (Critical+Warning) counts in Critical only -> Critical=2,
+        # Warning-only=0, Other=0.
+        $summary | Should -Match '\*\*Critical - Unhealthy Clusters \(with failing checks\)\*\* \| 2 \|'
+        $summary | Should -Match '\*\*Warning - Unhealthy Clusters \(with failing checks\)\*\* \| 0 \|'
+        $summary | Should -Match '\*\*Other - \(health check In progress / Unknown\)\*\* \| 0 \|'
+        # Regression: the severity-word must not be duplicated by the icon token
+        # (previously '❌ Critical **Critical**' / '❌ Critical **Unhealthy...**').
+        $summary | Should -Not -Match 'Critical \*\*Critical\*\*'
+        $summary | Should -Not -Match 'Critical \*\*Unhealthy'
         # step outputs
         $out = Get-Content -LiteralPath $script:_s9_ghOutputFile -Raw
         $out | Should -Match 'total_failures=3'
         $out | Should -Match 'critical_count=2'
+        $out | Should -Match 'critical_clusters=2'
+        $out | Should -Match 'warning_only_clusters=0'
         $out | Should -Match 'distinct_reasons=2'
         $out | Should -Match 'healthy_clusters=1'
         $out | Should -Match 'total_in_sub=3'
@@ -21732,6 +21758,31 @@ Describe 'v0.8.81: Step.10 Fleet Health Status - KPI counting fix + Description 
     }
     It 'Exposes OtherClusters on the -PassThru PSCustomObject' {
         $src10 | Should -Match 'OtherClusters\s*=\s*\[int\]\$otherClustersOut'
+    }
+    It 'v0.9.21: splits the unhealthy bucket into Critical / Warning-only rows counted by highest severity' {
+        # each cluster counted once: criticalClusters + warningOnlyClusters
+        $src10 | Should -Match '\$criticalClusters\s*=\s*\[int\]\$criticalClusterNames\.Count'
+        $src10 | Should -Match '\$warningClusterNames\s*\|\s*Where-Object\s*\{\s*\$criticalClusterNames\s*-notcontains'
+        $src10 | Should -Match 'Critical - Unhealthy Clusters \(with failing checks\)'
+        $src10 | Should -Match 'Warning - Unhealthy Clusters \(with failing checks\)'
+        $src10 | Should -Match 'Other - \(health check In progress / Unknown\)'
+    }
+    It 'v0.9.21: uses bare-glyph icon tokens (Success/Fail/Warn/Info) so the severity word is not duplicated in the label' {
+        # Cluster Counts + Failing Checks Breakdown rows must NOT reuse the
+        # word-carrying SeverityCritical/SeverityWarning/Healthy tokens in the
+        # count tables (those render '<glyph> Critical **Critical**').
+        $src10 | Should -Match "\`$iconMap\['Success'\]"
+        $src10 | Should -Match "\`$iconMap\['Fail'\]"
+        $src10 | Should -Match "\`$iconMap\['Warn'\]"
+        $src10 | Should -Match "\`$iconMap\['Info'\]"
+    }
+    It 'v0.9.21: emits critical_clusters and warning_only_clusters step outputs' {
+        $src10 | Should -Match "Set-AzLocalPipelineOutput\s+-Name\s+'critical_clusters'"
+        $src10 | Should -Match "Set-AzLocalPipelineOutput\s+-Name\s+'warning_only_clusters'"
+    }
+    It 'v0.9.21: exposes CriticalClusters and WarningOnlyClusters on the -PassThru PSCustomObject' {
+        $src10 | Should -Match 'CriticalClusters\s*=\s*\[int\]\$criticalClusters'
+        $src10 | Should -Match 'WarningOnlyClusters\s*=\s*\[int\]\$warningOnlyClusters'
     }
     It 'Detailed Results includes a Description column (collapsible drive/volume detail)' {
         $src10 | Should -Match '\|\s*Description\s*\|'
