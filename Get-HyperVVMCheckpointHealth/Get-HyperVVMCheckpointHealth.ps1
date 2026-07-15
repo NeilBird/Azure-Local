@@ -570,10 +570,10 @@ function ConvertTo-VMCheckpointAuditHtml {
 '@)
     }
     if ($staleTotal -gt 0) {
-        [void]$sb.Append(@'
-  <li><strong>INVESTIGATE - backup team first:</strong> for each VM with a stale checkpoint, check the backup product's recent job history - did the last backup complete? A leftover checkpoint usually means a backup that did not finish or did not issue the post-backup merge.</li>
-  <li><strong>INVESTIGATE - confirm expected vs abandoned:</strong> decide whether each stale checkpoint is expected (by design) or left behind by a failed backup, then merge / remove the abandoned ones (prefer the backup product over manual deletion).</li>
-'@)
+        [void]$sb.Append((@'
+  <li><strong>INVESTIGATE - backup team first:</strong> for each VM with a stale checkpoint older than {0} hours, check your backup product's recent job history - did the last backup complete? Or is this a manual checkpoint that has been overlooked? Stale checkpoints can be an indicator that a backup did not finish or that the post-backup merge was not requested or failed.</li>
+  <li><strong>INVESTIGATE - confirm expected vs abandoned:</strong> you need to confirm if the stale checkpoint(s) are expected (by design) or left behind by a failed backup. If from a point-in-time backup, the checkpoint should be removed / merged (preference for the backup product to perform the checkpoint removal action, over a manual deletion). If it is a deliberate manual checkpoint that is meant to be long-lived, it is fine to keep it (i.e. a stale flag is not always an issue that needs "fixing") - re-run this audit with <code>-StaleHours &lt;n&gt;</code> (e.g. a value above its age) so it is no longer flagged as stale.</li>
+'@ -f $StaleHours))
     }
     if ($countInv -gt 0 -and $staleTotal -eq 0) {
         [void]$sb.Append((@'
