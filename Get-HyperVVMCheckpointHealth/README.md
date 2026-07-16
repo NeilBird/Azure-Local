@@ -27,8 +27,9 @@ The script is intended for Azure Local / Windows Server administrators / operato
 - [Safety — this script makes no changes](#safety--this-script-makes-no-changes)
 - [Requirements](#requirements)
 - [How it connects (no double-hop)](#how-it-connects-no-double-hop)
-- [Usage](#usage)
-- [Parameters](#parameters)
+- [Download / save the script and run it](#download--save-the-script-and-run-it)
+- [Usage examples](#usage-examples)
+- [Parameters, syntax and helpful information](#parameters-syntax-and-helpful-information)
 - [What it reports](#what-it-reports)
 - [Portable HTML report & results bundle](#portable-html-report--results-bundle)
 - [Output files](#output-files-only-with--outputpath)
@@ -74,7 +75,38 @@ Two supported ways to run it, both single-hop:
 
 > **Do not** `Enter-PSSession` into a node and then run the script: if the VM is owned by a *different* node, reaching it is a **second (double) hop** and is blocked (`Access is denied` / `0x8009030e`) unless CredSSP/delegation is configured. The script detects this and tells you to run it on a node or use `-Cluster`.
 
-## Usage
+### Download / save the script and run it
+
+Review the source first: [`Get-HyperVVMCheckpointHealth.ps1`](./Get-HyperVVMCheckpointHealth.ps1). Then either download it with the `Invoke-WebRequest` example below to save it locally, or [copy and paste the entire script using the Raw link](https://raw.githubusercontent.com/NeilBird/Azure-Local/main/Get-HyperVVMCheckpointHealth/Get-HyperVVMCheckpointHealth.ps1) and save it locally. The example below shows executing the script for a VM named `TestVM`, saving output in the `C:\Temp\` folder:
+
+```powershell
+
+# Create C:\Temp folder if it does not exist
+if(-not(Test-Path C:\Temp)){
+    New-Item -Type Directory -Path C:\Temp
+}
+# Change directory to C:\Temp
+Push-Location C:\Temp
+
+# Download the script from GitHub and save it to the current folder
+Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/NeilBird/Azure-Local/main/Get-HyperVVMCheckpointHealth/Get-HyperVVMCheckpointHealth.ps1' -OutFile '.\Get-HyperVVMCheckpointHealth.ps1'
+
+# Logged directly onto a CLUSTER NODE, audit EVERY clustered VM. The bare Get-ClusterGroup targets the LOCAL
+# cluster (cluster API - RPC, no WinRM), so this form is for running on a node. It returns every
+# clustered VM across all nodes, so -IncludeDiscoveredVMs is not needed here (they are already in
+# the list); use that switch only when auditing a SUBSET of VMs.
+.\Get-HyperVVMCheckpointHealth.ps1 -VMName (Get-ClusterGroup | Where-Object GroupType -eq 'VirtualMachine').Name -OutputPath C:\Temp\
+
+# Or, alternatively run the downloaded script for a VM named 'TestVM', using -IncludeDiscoveredVMs switch
+.\Get-HyperVVMCheckpointHealth.ps1 -VMName 'TestVM' -OutputPath C:\Temp\ -IncludeDiscoveredVMs
+
+```
+
+> **Note:** Depending on your execution policy, you may need to unblock the downloaded file first: `Unblock-File -Path '.\Get-HyperVVMCheckpointHealth.ps1'`.
+
+> **Names or objects:** `-VMName` accepts VM **names** *or* VM **objects** (from `Get-VM`), as an array or via the pipeline. VM objects are normalized to their `.Name` inside the script, so `-VMName $VMs`, `-VMName $VMs.Name`, and `Get-VM | ...` all work. Each VM is audited **independently** - one VM not being found (or erroring) does not stop the rest. An input that resolves to no name, or to a string >100 chars (e.g. a mistakenly joined list), is skipped with a warning.
+
+## Usage examples
 
 ```powershell
 # Basic audit of one VM (console only)
@@ -136,29 +168,7 @@ $r | Where-Object HoldState | Format-Table VMName, OwningNode, Recommendation
 .\Get-HyperVVMCheckpointHealth.ps1 -VMName 'VM01' -OutputPath 'C:\Temp\Reports' -HtmlReportPath 'C:\Reports\audit.html' -NoZip
 ```
 
-### Download / save the script and run it
-
-Review the source first: [`Get-HyperVVMCheckpointHealth.ps1`](./Get-HyperVVMCheckpointHealth.ps1). Then either download it with the `Invoke-WebRequest` example below to save it locally, or [copy and paste the entire script using the Raw link](https://raw.githubusercontent.com/NeilBird/Azure-Local/main/Get-HyperVVMCheckpointHealth/Get-HyperVVMCheckpointHealth.ps1) and save it locally. The example below shows executing the script for a VM named `TestVM`, saving output in the `C:\Temp\` folder:
-
-```powershell
-# Download the script from GitHub and save it to the current folder
-Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/NeilBird/Azure-Local/main/Get-HyperVVMCheckpointHealth/Get-HyperVVMCheckpointHealth.ps1' -OutFile '.\Get-HyperVVMCheckpointHealth.ps1'
-
-# Run the downloaded script for a VM named 'TestVM'
-.\Get-HyperVVMCheckpointHealth.ps1 -VMName 'TestVM' -OutputPath C:\Temp\
-
-# Or, ON A CLUSTER NODE, audit EVERY clustered VM. The bare Get-ClusterGroup targets the LOCAL
-# cluster (cluster API - RPC, no WinRM), so this form is for running on a node. It returns every
-# clustered VM across all nodes, so -IncludeDiscoveredVMs is not needed here (they are already in
-# the list); use that switch only when auditing a SUBSET of VMs.
-.\Get-HyperVVMCheckpointHealth.ps1 -VMName (Get-ClusterGroup | Where-Object GroupType -eq 'VirtualMachine').Name -OutputPath C:\Temp\
-```
-
-> **Note:** Depending on your execution policy, you may need to unblock the downloaded file first: `Unblock-File -Path '.\Get-HyperVVMCheckpointHealth.ps1'`.
-
-> **Names or objects:** `-VMName` accepts VM **names** *or* VM **objects** (from `Get-VM`), as an array or via the pipeline. VM objects are normalized to their `.Name` inside the script, so `-VMName $VMs`, `-VMName $VMs.Name`, and `Get-VM | ...` all work. Each VM is audited **independently** - one VM not being found (or erroring) does not stop the rest. An input that resolves to no name, or to a string >100 chars (e.g. a mistakenly joined list), is skipped with a warning.
-
-## Parameters
+## Parameters, syntax and helpful information
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
