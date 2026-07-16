@@ -844,7 +844,7 @@ function ConvertTo-VMCheckpointAuditHtml {
                 $ageTxt = if ($null -ne $o.AgeDays) { "$($o.AgeDays)" } else { '-' }
                 [void]$sb.Append("<tr><td>$(ConvertTo-HtmlText $o.Name)</td><td class='num'>$($o.SizeGB)</td><td>$(ConvertTo-HtmlText $o.Created)</td><td>$(ConvertTo-HtmlText $o.LastWrite)</td><td class='num'>$ageTxt</td><td>$(ConvertTo-HtmlText $o.Likely)</td><td><code>$(ConvertTo-HtmlText $o.FullName)</code></td></tr>")
             }
-            [void]$sb.Append("</tbody></table><p class='muted'>Orphaned <code>.avhdx</code> are differencing files on disk that are not attached to the VM. They can be the aftermath of a rolled-back / stuck merge (which may hold un-recovered data) or leftover backup / live-mount files. <strong>Do not delete based on this report</strong> - confirm each with your backup team, and for a suspected rollback engage Microsoft Support (CSS). The action and decision rest with the operator.</p></details>`r`n")
+            [void]$sb.Append("</tbody></table><p class='muted'>Orphaned <code>.avhdx</code> are differencing files on disk that are not attached to the VM. They can be the aftermath of a rolled-back / stuck merge (which may hold un-recovered data) or leftover backup / live-mount files. <strong>Do not delete based on this report</strong> - Action: confirm each file with your backup team or VM owner. The action and decision to cleanup these old file(s) rests with you / the administrator.</p></details>`r`n")
         }
         # Historic cross-node event correlation (v0.2.14) - only present when this VM had orphans.
         if ($rd.PSObject.Properties['Historic'] -and $rd.Historic) {
