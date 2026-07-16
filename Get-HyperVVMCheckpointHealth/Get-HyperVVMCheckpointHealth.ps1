@@ -503,6 +503,10 @@ function ConvertTo-VMCheckpointAuditHtml {
      'code' rule breaks long words, so override it inside these cells. */
   td.nm{white-space:nowrap}
   td.nm code{white-space:nowrap;word-break:normal;overflow-wrap:normal}
+  /* VM-name cell: short names stay on one line, but a very long name (e.g. a Kubernetes
+     control-plane VM) is allowed to wrap so it never forces the whole table wider than the page. */
+  td.vmn{max-width:300px}
+  td.vmn code{white-space:normal;word-break:break-word;overflow-wrap:anywhere}
   .src{display:inline-block;margin-left:6px;padding:1px 7px;border-radius:999px;font-size:10.5px;
     font-weight:600;text-transform:uppercase;letter-spacing:.03em;vertical-align:middle}
   .src.input{background:#12303f;color:#7dd3fc;border:1px solid #1d4e6b}
@@ -711,7 +715,7 @@ function ConvertTo-VMCheckpointAuditHtml {
             $stateTxt = ConvertTo-HtmlText $rd.State
             [void]$sb.Append(@"
 <tr>
-  <td class="nm"><code>$(ConvertTo-HtmlText $r.VMName)</code>$srcBadge</td><td>$stateTxt</td><td class="nm">$(ConvertTo-HtmlText $node)</td><td>$(ConvertTo-HtmlText $rd.Version)</td>
+  <td class="vmn"><code>$(ConvertTo-HtmlText $r.VMName)</code>$srcBadge</td><td>$stateTxt</td><td class="nm">$(ConvertTo-HtmlText $node)</td><td>$(ConvertTo-HtmlText $rd.Version)</td>
   <td class="num">$($rd.AttachedDiskCount)</td><td class="num">$ckptCount</td><td class="num">$($rd.CheckpointLayers)</td>
   <td class="num">$($rd.OrphanCount)</td><td class="num">$($rd.StaleCheckpointCount)</td><td>$oldest</td>
   <td>$repl</td><td>$pill</td>
@@ -720,7 +724,7 @@ function ConvertTo-VMCheckpointAuditHtml {
         } else {
             [void]$sb.Append(@"
 <tr>
-  <td class="nm"><code>$(ConvertTo-HtmlText $r.VMName)</code>$srcBadge</td><td>-</td><td class="nm">$(ConvertTo-HtmlText $node)</td><td>-</td>
+  <td class="vmn"><code>$(ConvertTo-HtmlText $r.VMName)</code>$srcBadge</td><td>-</td><td class="nm">$(ConvertTo-HtmlText $node)</td><td>-</td>
   <td class="num">-</td><td class="num">-</td><td class="num">-</td>
   <td class="num">-</td><td class="num">-</td><td>-</td>
   <td>-</td><td>$pill</td>
