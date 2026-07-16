@@ -5,8 +5,8 @@
 ## Latest version:
 
 - Script: [`Get-HyperVVMCheckpointHealth.ps1`](./Get-HyperVVMCheckpointHealth.ps1)
-- Updated: 2026-07-15
-- Version: 0.2.13
+- Updated: 2026-07-16
+- Version: 0.2.14
 
 ## TL;DR
 
@@ -218,7 +218,7 @@ $r | Where-Object HoldState | Format-Table VMName, OwningNode, Recommendation
 
 ## Portable HTML report & results bundle
 
-By default the run produces a single **self-contained HTML fleet report** (`VMCheckpointAudit-<Cluster>-<yyyy-MM-dd>.html`) — dark-themed, no external assets, safe to email or open on any device with a browser. It contains: summary cards (including an **Orphaned .avhdx** count); a **Recommended next steps** list (see below); a **VM summary table** with distinct **Checkpoints** (`Get-VMSnapshot` count) and **AVHDX files** (differencing layers = Checkpoints × Disks) columns; a **Discovered high-risk VMs** section; **per-VM detailed information** (including a per-VM **Orphaned .avhdx files** table — name, size, created + last-write timestamps, full path — and, for HOLD STATE VMs, a copy/paste **Support Case summary**); a **Cluster storage health** section; and an anonymised **Information** section explaining the fork-commit signature and the exact Event IDs / HRESULTs that indicate it.
+By default the run produces a single **self-contained HTML fleet report** (`VMCheckpointAudit-<Cluster>-<yyyy-MM-dd>.html`) — dark-themed, no external assets, safe to email or open on any device with a browser. The header states the cluster, script version, and (from v0.2.14) a run summary line: **`Processed <N> VMs, across <M> cluster nodes, in hh:mm:ss`** — the end-to-end wall-clock time to audit the fleet and render the report. It contains: summary cards (including an **Orphaned .avhdx** count); a **Recommended next steps** list (see below); a **VM summary table** with distinct **Checkpoints** (`Get-VMSnapshot` count) and **AVHDX files** (differencing layers = Checkpoints × Disks) columns; a **Discovered high-risk VMs** section; **per-VM detailed information** (including a per-VM **Orphaned .avhdx files** table — name, size, created + last-write timestamps, full path — and, for HOLD STATE VMs, a copy/paste **Support Case summary**); a **Cluster storage health** section; and an anonymised **Information** section explaining the fork-commit signature and the exact Event IDs / HRESULTs that indicate it.
 
 ### Recommended next steps (context-gated)
 
@@ -244,12 +244,14 @@ When `-OutputPath` is used, a results **`.zip`** bundling the `.txt` + `.csv` + 
   VMCheckpointAudit-<ClusterName>-<yyyy-MM-dd>.zip        <- results bundle (default; suppress with -NoZip)
   CheckpointAudit_<yyyy-MM-dd_HHmmssZ>\                   <- one sub-folder per run
     <VMName>_VMAudit_<yyyyMMdd-HHmmss>.txt               <- full report for that VM
-    <VMName>_Events_<yyyy-MM-dd>.csv                     <- that VM's events, full untruncated text
+    <VMName>_Events_<yyyy-MM-dd>.csv                     <- that VM's own events (VM-attributed), full untruncated text
+    _NodeEvents_<node>_<yyyy-MM-dd>.csv                  <- node-wide events, written ONCE per node (shared context)
     VMCheckpointAudit-<ClusterName>-<yyyy-MM-dd>.html    <- portable fleet report (default; suppress with -NoHtml)
 ```
 
 - **`<VMName>_VMAudit_<yyyyMMdd-HHmmss>.txt`** — the full per-VM report (written from the captured output buffer; complete regardless of `-Quiet`).
-- **`<VMName>_Events_<yyyy-MM-dd>.csv`** — that VM's event scan with the **complete, untruncated** message text (newlines flattened to ` | `). The `.txt` collapses repeated rows for the same event ID (first few shown + a `Removed N duplicate...` note), so use this CSV for the full record of every event.
+- **`<VMName>_Events_<yyyy-MM-dd>.csv`** — that VM's **VM-attributed** events with the **complete, untruncated** message text (newlines flattened to ` | `). The `.txt` collapses repeated rows for the same event ID (first few shown + a `Removed N duplicate...` note), so use this CSV for the full record of every event.
+- **`_NodeEvents_<node>_<yyyy-MM-dd>.csv`** — (v0.2.14) the **node-wide** event scan for each owning node, written **once per node** rather than duplicated into every VM's CSV. Node-wide events (e.g. a repeated `15268` flood that references many VMs) are shared context, so keeping them in one per-node file — and each VM's CSV to just its own attributed rows — dramatically shrinks large fleet runs. Each per-VM report points to the relevant node CSV for the node-wide detail.
 - **`VMCheckpointAudit-<ClusterName>-<yyyy-MM-dd>.html`** — the single portable fleet report covering all audited VMs (see [Portable HTML report](#portable-html-report--results-bundle)).
 - **`VMCheckpointAudit-<ClusterName>-<yyyy-MM-dd>.zip`** — a bundle of the run folder (`.txt` + `.csv` + `.html`), for copying to a browser device / attaching to a support case in one file.
 
