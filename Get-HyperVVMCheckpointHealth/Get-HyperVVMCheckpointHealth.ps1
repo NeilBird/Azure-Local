@@ -125,8 +125,8 @@
 .NOTES
     Author  : Neil Bird, Microsoft
     Created : 2026-07-10
-    Updated : 2026-07-15
-    Version : 0.2.13
+    Updated : 2026-07-16
+    Version : 0.2.14
     
     Requires: Windows PowerShell 5.1 (this script is written for, and validated against, Windows
               PowerShell 5.1 ONLY - it is NOT intended or tested for PowerShell 7.x). Also requires the Hyper-V
@@ -306,6 +306,14 @@ Then run this in Windows PowerShell 5.1, on a cluster node or a workstation that
 "@
 }
 
+# Script version - single source of truth surfaced in the HTML report (header meta + footer) so a
+# saved / emailed report always states which build produced it. Keep in sync with the .NOTES Version.
+$script:ScriptVersion = '0.2.14'
+
+# v0.2.14: end-to-end run stopwatch - started as early as possible so the HTML report can state the
+# total time taken to audit the whole fleet and render the report ("Report generation time hh:mm:ss").
+$script:RunStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+
 # Microsoft Learn troubleshooting reference for Hyper-V VM backup / checkpoint / storage failures.
 # Surfaced in the summary and problem statement so operators have an authoritative next-read. Any
 # text quoted VERBATIM from this article in the report is attributed to it (title + URL below).
@@ -405,7 +413,9 @@ function ConvertTo-VMCheckpointAuditHtml {
         [string]$GeneratedUtc,
         [object[]]$DiscoveredVMs,
         [object]$StorageHealth,
-        [bool]$IncludeDiscoveredVMs
+        [bool]$IncludeDiscoveredVMs,
+        [string]$ScriptVersion,
+        [string]$ReportGenerationTime
     )
 
     function ConvertTo-HtmlText { param([object]$Value) if ($null -eq $Value) { '' } else { [System.Net.WebUtility]::HtmlEncode([string]$Value) } }
@@ -423,6 +433,8 @@ function ConvertTo-VMCheckpointAuditHtml {
 
     $rows       = @($Results)
     $countAll   = $rows.Count
+    # Distinct cluster nodes that actually owned an audited VM (blank/unknown owners excluded).
+    $nodeCount  = @($rows | ForEach-Object { [string]$_.OwningNode } | Where-Object { $_ } | Sort-Object -Unique).Count
     $countHold  = @($rows | Where-Object { $_.Recommendation -eq 'HOLD STATE' }).Count
     $countInv   = @($rows | Where-Object { $_.Recommendation -eq 'INVESTIGATE' }).Count
     $countOk    = @($rows | Where-Object { $_.Recommendation -eq 'OK' }).Count
@@ -487,6 +499,14 @@ function ConvertTo-VMCheckpointAuditHtml {
   th{background:var(--panel2);color:#cbd5e1;font-weight:600;white-space:nowrap}
   tbody tr:hover{background:#22304a}
   td.num{text-align:right;font-variant-numeric:tabular-nums}
+  /* VM name / node cells must NOT wrap (a wrapped name like KWDRPT02 was unreadable). The global
+     'code' rule breaks long words, so override it inside these cells. */
+  td.nm{white-space:nowrap}
+  td.nm code{white-space:nowrap;word-break:normal;overflow-wrap:normal}
+  .src{display:inline-block;margin-left:6px;padding:1px 7px;border-radius:999px;font-size:10.5px;
+    font-weight:600;text-transform:uppercase;letter-spacing:.03em;vertical-align:middle}
+  .src.input{background:#12303f;color:#7dd3fc;border:1px solid #1d4e6b}
+  .src.discovered{background:#3a2c07;color:#fcd34d;border:1px solid #7a5b12}
   .pill{display:inline-block;padding:2px 9px;border-radius:999px;font-size:11.5px;font-weight:700;white-space:nowrap}
   .pill.investigate{background:var(--amber-bg);color:#fcd34d;border:1px solid #7a5b12}
   .pill.high{background:var(--high-bg);color:#fda4af;border:1px solid #7a2438}
@@ -511,13 +531,15 @@ function ConvertTo-VMCheckpointAuditHtml {
     [void]$sb.Append($head)
 
     # Header + summary cards.
-    $vmWord = if ($countAll -eq 1) { 'VM' } else { 'VMs' }
+    $vmWord   = if ($countAll -eq 1) { 'VM' } else { 'VMs' }
+    $nodeWord = if ($nodeCount -eq 1) { 'cluster node' } else { 'cluster nodes' }
     [void]$sb.Append(@"
 <header class="top">
   <h1>Hyper-V VM Checkpoint Health Audit</h1>
   <div class="meta">
     Cluster <b>$(ConvertTo-HtmlText $ClusterName)</b> &nbsp;&bull;&nbsp; $countAll audited $vmWord
-    &nbsp;&bull;&nbsp; Report generated <b>$(ConvertTo-HtmlText $GeneratedUtc) UTC</b><br>
+    &nbsp;&bull;&nbsp; Report generated <b>$(ConvertTo-HtmlText $GeneratedUtc) UTC</b>
+    &nbsp;&bull;&nbsp; Script version <b>$(ConvertTo-HtmlText $ScriptVersion)</b>$(if ($ReportGenerationTime) { "&nbsp;&bull;&nbsp; Processed <b>$countAll</b> $vmWord, across <b>$nodeCount</b> $nodeWord, in <b>$(ConvertTo-HtmlText $ReportGenerationTime)</b>" })<br>
     Parameters: Stale CheckPoint threshold: $StaleHours h; Diagnostic events lookback: $EventLookbackHours h; Include discovered VMs: $(if ($IncludeDiscoveredVMs) { 'Yes' } else { 'No' }).<br>
     Read-only diagnostic - <b>no changes were made to any VM</b>.
   </div>
@@ -582,7 +604,11 @@ function ConvertTo-VMCheckpointAuditHtml {
     # NOTE: $countInv is included in $anyContextualStep so an INVESTIGATE-only run (e.g. VSS-writer /
     # concern-event driven with zero stale checkpoints) never falls through to 'No action required'.
     $storageDegraded   = ($StorageHealth -and (@('Degraded', 'Active storage jobs') -contains "$($StorageHealth.Summary)"))
-    $anyContextualStep = ($staleTotal -gt 0) -or ($countInv -gt 0) -or $analyticNeedsEnable -or $storageDegraded -or ($countHold -gt 0) -or ($orphanTotal -gt 0)
+    # v0.2.14 fleet roll-ups for the new gated bullets.
+    $rollbackVMs          = @($rows | Where-Object { $_.ReportData -and $_.ReportData.HasRollbackFingerprint })
+    $historicConfirmedVMs = @($rows | Where-Object { $_.ReportData -and $_.ReportData.HistoricForkConfirmed })
+    $replicaUnhealthyVMs  = @($rows | Where-Object { $_.ReportData -and $_.ReportData.ReplUnhealthy })
+    $anyContextualStep = ($staleTotal -gt 0) -or ($countInv -gt 0) -or $analyticNeedsEnable -or $storageDegraded -or ($countHold -gt 0) -or ($orphanTotal -gt 0) -or ($rollbackVMs.Count -gt 0) -or ($replicaUnhealthyVMs.Count -gt 0)
     [void]$sb.Append(@'
 <h2>Recommended next steps</h2>
 <ol>
@@ -591,6 +617,18 @@ function ConvertTo-VMCheckpointAuditHtml {
         [void]$sb.Append(@'
   <li><strong>No action required from this audit:</strong> no stale checkpoints, no HOLD STATE VMs, no storage-layer disruption, and the Analytic channel is enabled (or was not checked). Keep this report for your records.</li>
 '@)
+    }
+    if ($rollbackVMs.Count -gt 0) {
+        $rbNames = (@($rollbackVMs | ForEach-Object { ConvertTo-HtmlText $_.VMName }) -join ', ')
+        [void]$sb.Append((@'
+  <li><strong>PRIORITY - possible PAST rollback ({0} VM(s)):</strong> {1} show a cluster of orphaned <code>.avhdx</code> frozen at a common date - the signature of a materialised fork-commit rollback (disks rolled back to base, orphaning the checkpoint layers). Those files may hold un-recovered data. Do NOT remove them; engage Microsoft Support (CSS) / your backup vendor to recover. Because the original events may predate the {2}h lookback, <strong>re-run with a larger window</strong> (e.g. <code>-EventLookbackHours 720</code>) to try to capture them - and see each VM's "Historic event correlation" detail{3}.</li>
+'@ -f $rollbackVMs.Count, $rbNames, $EventLookbackHours, $(if ($historicConfirmedVMs.Count -gt 0) { ' (some are already CONFIRMED from recovered historic events)' } else { '' })))
+    }
+    if ($replicaUnhealthyVMs.Count -gt 0) {
+        $rcNames = (@($replicaUnhealthyVMs | ForEach-Object { ConvertTo-HtmlText $_.VMName }) -join ', ')
+        [void]$sb.Append((@'
+  <li><strong>Hyper-V Replica needs attention ({0} VM(s)):</strong> {1} report an unhealthy replica (e.g. Critical / resynchronize-required). Start / repair replication for these (this is separate from the checkpoint items).</li>
+'@ -f $replicaUnhealthyVMs.Count, $rcNames))
     }
     if ($staleTotal -gt 0) {
         [void]$sb.Append((@'
@@ -640,42 +678,51 @@ function ConvertTo-VMCheckpointAuditHtml {
     # VM summary table.
     [void]$sb.Append(@'
 <h2>VM summary table</h2>
-<p class="muted"><strong>Checkpoints</strong> = checkpoint objects (<code>Get-VMSnapshot</code>). <strong>AVHDX files</strong> = active differencing <code>.avhdx</code> files on disk = <strong>Checkpoints &times; Disks</strong> (one checkpoint freezes a layer on every attached disk).</p>
+<p class="muted"><strong>Src</strong> = <span class="src input">Input</span> (you requested it) or <span class="src discovered">Discovered</span> (auto-added via <code>-IncludeDiscoveredVMs</code>). <strong>Checkpoints</strong> = checkpoint objects (<code>Get-VMSnapshot</code>). <strong>AVHDX files</strong> = active differencing <code>.avhdx</code> layers = <strong>Checkpoints &times; Disks</strong>. <strong>Orphans</strong> = <code>.avhdx</code> on disk but NOT attached. Rows are ordered by severity within each verdict.</p>
 <table>
 <thead><tr>
-  <th>VM</th><th>Node</th><th>Cfg</th><th>Disks</th><th>Checkpoints</th><th>AVHDX files</th>
-  <th>Stale</th><th>Oldest ckpt age</th><th>Created</th><th>Hyper-V Replica</th><th>Verdict</th>
+  <th>VM</th><th>State</th><th>Node</th><th>Cfg</th><th>Disks</th><th>Checkpoints</th><th>AVHDX files</th>
+  <th>Orphans</th><th>Stale</th><th>Oldest ckpt age</th><th>Hyper-V Replica</th><th>Verdict</th>
 </tr></thead>
 <tbody>
 '@)
-    foreach ($r in ($rows | Sort-Object @{ Expression = { Get-VerdictRank $_.Recommendation } }, VMName)) {
+    $sortedRows = $rows | Sort-Object `
+        @{ Expression = { Get-VerdictRank $_.Recommendation } }, `
+        @{ Expression = { if ($_.ReportData) { [int]$_.ReportData.SeverityScore } else { 0 } }; Descending = $true }, `
+        VMName
+    foreach ($r in $sortedRows) {
         $node = (("$($r.OwningNode)" -split '\.')[0])
         $rd   = $r.ReportData
         $pill = Get-VerdictPill $r.Recommendation
+        # Source badge (Input vs Discovered) rendered next to the VM name.
+        $srcBadge = ''
+        if ($r.PSObject.Properties['Source'] -and $r.Source) {
+            $srcCls = if ("$($r.Source)" -eq 'Discovered') { 'discovered' } else { 'input' }
+            $srcBadge = "<span class=`"src $srcCls`">$(ConvertTo-HtmlText $r.Source)</span>"
+        }
         if ($rd) {
             $ckptCount = @($rd.Checkpoints).Count
             $ages = @($rd.Checkpoints | ForEach-Object { [double]$_.AgeHrs })
             if ($ages.Count -gt 0) {
                 $mx = ($ages | Measure-Object -Maximum).Maximum
                 $oldest = if ($mx -ge 168) { '~{0}h (~{1}d)' -f [math]::Round($mx, 1), [math]::Round($mx / 24, 0) } else { '~{0}h' -f [math]::Round($mx, 1) }
-                $oldestCkpt = @($rd.Checkpoints | Sort-Object AgeHrs -Descending)[0]
-                $created = ConvertTo-HtmlText $oldestCkpt.Created
-            } else { $oldest = '-'; $created = '-' }
+            } else { $oldest = '-' }
             $repl = if ($rd.Replication.Enabled) { ConvertTo-HtmlText ("{0} ({1})" -f $rd.Replication.State, $rd.Replication.Health) } else { 'Not enabled' }
+            $stateTxt = ConvertTo-HtmlText $rd.State
             [void]$sb.Append(@"
 <tr>
-  <td><code>$(ConvertTo-HtmlText $r.VMName)</code></td><td>$(ConvertTo-HtmlText $node)</td><td>$(ConvertTo-HtmlText $rd.Version)</td>
+  <td class="nm"><code>$(ConvertTo-HtmlText $r.VMName)</code>$srcBadge</td><td>$stateTxt</td><td class="nm">$(ConvertTo-HtmlText $node)</td><td>$(ConvertTo-HtmlText $rd.Version)</td>
   <td class="num">$($rd.AttachedDiskCount)</td><td class="num">$ckptCount</td><td class="num">$($rd.CheckpointLayers)</td>
-  <td class="num">$($rd.StaleCheckpointCount)</td><td>$oldest</td><td>$created</td>
+  <td class="num">$($rd.OrphanCount)</td><td class="num">$($rd.StaleCheckpointCount)</td><td>$oldest</td>
   <td>$repl</td><td>$pill</td>
 </tr>
 "@)
         } else {
             [void]$sb.Append(@"
 <tr>
-  <td><code>$(ConvertTo-HtmlText $r.VMName)</code></td><td>$(ConvertTo-HtmlText $node)</td><td>-</td>
+  <td class="nm"><code>$(ConvertTo-HtmlText $r.VMName)</code>$srcBadge</td><td>-</td><td class="nm">$(ConvertTo-HtmlText $node)</td><td>-</td>
   <td class="num">-</td><td class="num">-</td><td class="num">-</td>
-  <td class="num">-</td><td>-</td><td>-</td>
+  <td class="num">-</td><td class="num">-</td><td>-</td>
   <td>-</td><td>$pill</td>
 </tr>
 "@)
@@ -699,11 +746,16 @@ function ConvertTo-VMCheckpointAuditHtml {
 
     # Per-VM detail.
     [void]$sb.Append("<h2>Per-VM detailed information</h2>`r`n")
-    foreach ($r in ($rows | Sort-Object @{ Expression = { Get-VerdictRank $_.Recommendation } }, VMName)) {
+    foreach ($r in $sortedRows) {
         $rd   = $r.ReportData
         $pill = Get-VerdictPill $r.Recommendation
         $cls  = if ($r.Recommendation -eq 'HOLD STATE') { ' hold' } else { '' }
-        [void]$sb.Append("<div class=`"vm$cls`">`r`n  <h3><code>$(ConvertTo-HtmlText $r.VMName)</code> $pill</h3>`r`n")
+        $srcBadge = ''
+        if ($r.PSObject.Properties['Source'] -and $r.Source) {
+            $srcCls = if ("$($r.Source)" -eq 'Discovered') { 'discovered' } else { 'input' }
+            $srcBadge = "<span class=`"src $srcCls`">$(ConvertTo-HtmlText $r.Source)</span>"
+        }
+        [void]$sb.Append("<div class=`"vm$cls`">`r`n  <h3><code>$(ConvertTo-HtmlText $r.VMName)</code> $pill$srcBadge</h3>`r`n")
         if (-not $rd) {
             [void]$sb.Append("  <div class='callout warn'>$(ConvertTo-HtmlText $r.Detail)</div>`r`n</div>")
             continue
@@ -712,8 +764,12 @@ function ConvertTo-VMCheckpointAuditHtml {
         $verOld = if ($rd.VmVerOlder) { "Yes - v$(ConvertTo-HtmlText $rd.Version) vs cluster max v$(ConvertTo-HtmlText $rd.HostMaxVersion) (migration/start context only; not a checkpoint cause)." } else { 'No - at the latest supported version.' }
         $analytic = if (@($rd.AnalyticNodesNeedEnable) -contains $r.OwningNode) { 'Not enabled on this node' } else { 'Enabled (or not checked)' }
         $vss = switch ($rd.VssState) { 'Healthy' { "All $($rd.VssTotal) writer(s) Stable (no last error)" } 'Unhealthy' { "$($rd.VssUnhealthyCount) of $($rd.VssTotal) writer(s) NOT healthy" } default { 'Unavailable (needs elevated context on owner)' } }
+        $srcText   = if ($r.PSObject.Properties['Source'] -and $r.Source) { [string]$r.Source } else { 'Input' }
+        $nodeWideNote = if ($rd.PSObject.Properties['NodeDominantNote'] -and $rd.NodeDominantNote) { " ($($rd.NodeDominantNote))" } else { '' }
         [void]$sb.Append(@"
   <div class="kv">
+    <div class="k">Source</div><div>$(ConvertTo-HtmlText $srcText) $(if ($srcText -eq 'Discovered') { '(auto-added via -IncludeDiscoveredVMs)' } else { '(you requested this VM)' })</div>
+    <div class="k">VM state</div><div>$(ConvertTo-HtmlText $rd.State) / $(ConvertTo-HtmlText $rd.Status)</div>
     <div class="k">Owning node</div><div><code>$(ConvertTo-HtmlText $r.OwningNode)</code></div>
     <div class="k">Config version</div><div>$(ConvertTo-HtmlText $rd.Version) (cluster max $(ConvertTo-HtmlText $rd.HostMaxVersion))</div>
     <div class="k">Uptime</div><div>$(ConvertTo-HtmlText $rd.Uptime)</div>
@@ -727,17 +783,40 @@ function ConvertTo-VMCheckpointAuditHtml {
     <div class="k">VSS writers</div><div>$(ConvertTo-HtmlText $vss)</div>
     <div class="k">Analytic channel</div><div>$(ConvertTo-HtmlText $analytic)</div>
     <div class="k">Config behind latest</div><div>$verOld</div>
-    <div class="k">Concerning events - this VM ($($rd.EventLookbackHours)h)</div><div>$($rd.VmEventConcernCount)</div>
-    <div class="k">Concerning events - node-wide ($($rd.EventLookbackHours)h)</div><div>$($rd.EventConcernCount) (references other VMs / none - context only)</div>
+    <div class="k">Concerning events - this VM ($($rd.EventLookbackHours)h)</div><div>$($rd.VmEventConcernCount) ($(if ([int]$rd.VmHighConcernCount -gt 0) { "$($rd.VmHighConcernCount) high-signal" } else { 'low-signal only' }))</div>
+    <div class="k">Concerning events - node-wide ($($rd.EventLookbackHours)h)</div><div>$($rd.EventConcernCount)$nodeWideNote (references other VMs / none - context only)</div>
   </div>
 "@)
-        # Assessment callout.
+        # Assessment callout. v0.2.14: name the actual INVESTIGATE driver (so the operator sees WHY and
+        # HOW urgent), surface the 'possible past rollback' fingerprint + historic-correlation result,
+        # and add a low-key note on OK VMs whose only signal was low-signal chatter.
         if ($r.Recommendation -eq 'HOLD STATE') {
             [void]$sb.Append("  <div class='callout high'><strong>HOLD STATE (data-loss risk).</strong> A checkpoint fork-commit / merge-failure signature AND unmerged differencing disk(s) are present together. Do NOT migrate or restart this VM until the chain is validated (and merged if required); reopening an inconsistent chain can roll disks back to base. Engage Microsoft Support (CSS) and/or your backup vendor.</div>`r`n")
         } elseif ($r.Recommendation -eq 'INVESTIGATE') {
-            [void]$sb.Append("  <div class='callout warn'><strong>INVESTIGATE.</strong> Concern signals are present, but the specific checkpoint fork-commit signature was NOT observed - the likely cause is a stalled / failed backup checkpoint or an unhealthy VSS writer rather than on-disk chain corruption. Backup-team triage first; no Microsoft case needed yet.</div>`r`n")
+            # Build the driver phrase from the strongest signal down.
+            $drv = @()
+            if ($rd.HasRollbackFingerprint) { $drv += "possible PAST rollback - $($rd.OrphanCount) orphaned .avhdx frozen at a common date ($(ConvertTo-HtmlText $rd.RollbackDate))" }
+            elseif ($rd.HasStuckMergeOrphan) { $drv += "orphaned .avhdx with a matching stuck/failed-merge event" }
+            if ($rd.StaleCheckpointCount -gt 0) { $drv += "$($rd.StaleCheckpointCount) stale checkpoint(s)" }
+            if ($rd.ReplCritical) { $drv += "replica health Critical ($(ConvertTo-HtmlText $rd.ReplHealth))" }
+            elseif ($rd.ReplUnhealthy) { $drv += "replica health $(ConvertTo-HtmlText $rd.ReplHealth)" }
+            if (($rd.OrphanCount -gt 0) -and -not $rd.HasRollbackFingerprint -and -not $rd.HasStuckMergeOrphan) {
+                $drv += $(if ($rd.OrphanOnlyLiveMount) { "$($rd.OrphanCount) orphaned .avhdx (likely backup live-mount artifact)" } else { "$($rd.OrphanCount) orphaned .avhdx (leftover file)" })
+            }
+            if ($rd.VmHighConcernCount -gt 0) { $drv += "$($rd.VmHighConcernCount) high-signal event(s) for this VM" }
+            if ($rd.VssState -eq 'Unhealthy') { $drv += "$($rd.VssUnhealthyCount) unhealthy VSS writer(s)" }
+            $drvText = if ($drv.Count -gt 0) { (($drv) -join '; ') } else { 'concern signals present' }
+            if ($rd.HasRollbackFingerprint) {
+                [void]$sb.Append("  <div class='callout high'><strong>INVESTIGATE - possible PAST rollback.</strong> Driver: $drvText. The orphaned <code>.avhdx</code> appear to be the aftermath of a materialised fork-commit rollback on <strong>$(ConvertTo-HtmlText $rd.RollbackDate)</strong> - they may hold the data written between the checkpoint and the rollback. Do NOT remove them; engage Microsoft Support (CSS) / your backup vendor to recover. The original fork-commit events may predate the $($rd.EventLookbackHours)h lookback - see the historic correlation below.</div>`r`n")
+            } else {
+                [void]$sb.Append("  <div class='callout warn'><strong>INVESTIGATE.</strong> Driver: $drvText. The specific checkpoint fork-commit signature was NOT observed in the current window, so on-disk chain corruption is not confirmed - backup-team / operator triage first; no Microsoft case needed yet.</div>`r`n")
+            }
         } elseif ($r.Recommendation -eq 'OK') {
-            [void]$sb.Append("  <div class='callout ok'><strong>OK.</strong> No active checkpoint layers and no concern signals were found. No action required from this result.</div>`r`n")
+            if ($rd.LowSignalOnly) {
+                [void]$sb.Append("  <div class='callout ok'><strong>OK.</strong> No active checkpoint layers, no orphaned .avhdx, replica healthy and VSS stable. Note: $($rd.VmLowConcernCount) low-signal event(s) (e.g. 'failed to get disk information') are attributed to this VM - these are storage/housekeeping chatter and are not, on their own, a concern.</div>`r`n")
+            } else {
+                [void]$sb.Append("  <div class='callout ok'><strong>OK.</strong> No active checkpoint layers and no concern signals were found. No action required from this result.</div>`r`n")
+            }
         }
         # HOLD STATE: the copy/paste support-case summary lifted verbatim from the per-VM report (collapsed).
         if ($r.Recommendation -eq 'HOLD STATE' -and $rd.PSObject.Properties['SupportCaseSummary'] -and $rd.SupportCaseSummary) {
@@ -752,13 +831,40 @@ function ConvertTo-VMCheckpointAuditHtml {
             }
             [void]$sb.Append("</tbody></table></details>`r`n")
         }
-        # Orphaned .avhdx files table (present on disk in this VM's folder(s) but NOT attached to any chain).
+        # Orphaned .avhdx files table (present on disk in this VM's folder(s) but NOT attached to any
+        # chain). v0.2.14: per-orphan class + age + a neutral 'Likely / action' read. NEVER states
+        # 'safe to delete' - the action and decision always rest with the operator.
         if (@($rd.Orphans).Count -gt 0) {
-            [void]$sb.Append("  <details open><summary>Orphaned .avhdx files ($($rd.OrphanCount)) - on disk but NOT attached to the VM</summary><table><thead><tr><th>File Name</th><th>Size (GB)</th><th>Created (UTC)</th><th>LastWrite (UTC)</th><th>Full path</th></tr></thead><tbody>")
+            [void]$sb.Append("  <details open><summary>Orphaned .avhdx files ($($rd.OrphanCount)) - on disk but NOT attached to the VM</summary><table><thead><tr><th>File Name</th><th>Size (GB)</th><th>Created (UTC)</th><th>LastWrite (UTC)</th><th>Age (days)</th><th>Likely / action</th><th>Full path</th></tr></thead><tbody>")
             foreach ($o in @($rd.Orphans)) {
-                [void]$sb.Append("<tr><td>$(ConvertTo-HtmlText $o.Name)</td><td class='num'>$($o.SizeGB)</td><td>$(ConvertTo-HtmlText $o.Created)</td><td>$(ConvertTo-HtmlText $o.LastWrite)</td><td><code>$(ConvertTo-HtmlText $o.FullName)</code></td></tr>")
+                $ageTxt = if ($null -ne $o.AgeDays) { "$($o.AgeDays)" } else { '-' }
+                [void]$sb.Append("<tr><td>$(ConvertTo-HtmlText $o.Name)</td><td class='num'>$($o.SizeGB)</td><td>$(ConvertTo-HtmlText $o.Created)</td><td>$(ConvertTo-HtmlText $o.LastWrite)</td><td class='num'>$ageTxt</td><td>$(ConvertTo-HtmlText $o.Likely)</td><td><code>$(ConvertTo-HtmlText $o.FullName)</code></td></tr>")
             }
-            [void]$sb.Append("</tbody></table><p class='muted'>A stuck / failed merge or a leftover initial Hyper-V Replica checkpoint can leave these behind under specific scenarios. Confirm with your backup team before removing any (do not delete blindly). Open a Microsoft CSS case for guidance if required.</p></details>`r`n")
+            [void]$sb.Append("</tbody></table><p class='muted'>Orphaned <code>.avhdx</code> are differencing files on disk that are not attached to the VM. They can be the aftermath of a rolled-back / stuck merge (which may hold un-recovered data) or leftover backup / live-mount files. <strong>Do not delete based on this report</strong> - confirm each with your backup team, and for a suspected rollback engage Microsoft Support (CSS). The action and decision rest with the operator.</p></details>`r`n")
+        }
+        # Historic cross-node event correlation (v0.2.14) - only present when this VM had orphans.
+        if ($rd.PSObject.Properties['Historic'] -and $rd.Historic) {
+            $hc = $rd.Historic
+            $openAttr = if ([int]$hc.MatchCount -gt 0) { ' open' } else { '' }
+            [void]$sb.Append("  <details$openAttr><summary>Historic event correlation ($($hc.MatchCount) match(es) around orphan timestamps, across $(@($hc.NodesSearched).Count) node(s))</summary>")
+            [void]$sb.Append("<p class='muted'>Searched &plusmn;$($hc.WindowMinutes) min around each orphan's last-write time (windows: $(ConvertTo-HtmlText ((@($hc.Windows)) -join ', '))) across all cluster nodes, for this VM's fork-commit / merge events that may predate the $($rd.EventLookbackHours)h lookback.</p>")
+            if ([int]$hc.MatchCount -gt 0) {
+                if ($rd.HistoricForkConfirmed) {
+                    [void]$sb.Append("<div class='callout high'><strong>CONFIRMED past fork-commit / merge failure.</strong> Historic events for this VM were recovered around the orphan timestamps (outside the standard window). This is strong evidence the rollback DID occur - engage Microsoft Support (CSS) / your backup vendor to recover the orphaned data.</div>")
+                }
+                [void]$sb.Append("<table><thead><tr><th>Time (UTC)</th><th>Node</th><th>Log</th><th>Id</th><th>Message</th></tr></thead><tbody>")
+                foreach ($m in @($hc.Matches)) {
+                    [void]$sb.Append("<tr><td>$(ConvertTo-HtmlText $m.Time)</td><td>$(ConvertTo-HtmlText $m.Node)</td><td>$(ConvertTo-HtmlText $m.Log)</td><td><code>$($m.Id)</code></td><td>$(ConvertTo-HtmlText $m.Message)</td></tr>")
+                }
+                [void]$sb.Append("</tbody></table>")
+            } else {
+                if ($hc.LogsWrappedPastWindow) {
+                    [void]$sb.Append("<div class='callout warn'>No historic events found - but the event logs on the searched node(s) only go back to <strong>$(ConvertTo-HtmlText $hc.OldestAvailableUtc) UTC</strong>, which is AFTER the orphan timestamps. The logs have <strong>wrapped past</strong> the relevant window, so the original events are no longer available - <strong>absence here is NOT proof</strong> that no rollback occurred.</div>")
+                } else {
+                    [void]$sb.Append("<div class='callout ok'>No historic fork-commit / merge events for this VM in the searched windows, and the logs DO cover that period (oldest available $(ConvertTo-HtmlText $hc.OldestAvailableUtc) UTC). The orphans are less likely to be a fork-commit rollback - more likely leftover backup / live-mount files - but confirm with your backup team.</div>")
+                }
+            }
+            [void]$sb.Append("</details>`r`n")
         }
         # Concerning events breakdown.
         if ($rd.EventConcernCount -gt 0 -and @($rd.EventBreakdown).Count -gt 0) {
@@ -767,7 +873,10 @@ function ConvertTo-VMCheckpointAuditHtml {
                 [void]$sb.Append("<li><code>$($e.Id)</code> &times;$($e.Count) (first $(ConvertTo-HtmlText $e.First), last $(ConvertTo-HtmlText $e.Last)) - $(ConvertTo-HtmlText $e.Sample)</li>")
             }
             [void]$sb.Append("</ul>")
-            if ($rd.EventsCsvName) { [void]$sb.Append("<p class='muted'>Full, untruncated messages: <code>$(ConvertTo-HtmlText $rd.EventsCsvName)</code>.</p>") }
+            $csvPtr = @()
+            if ($rd.PSObject.Properties['NodeEventsCsvName'] -and $rd.NodeEventsCsvName) { $csvPtr += "node-wide detail in <code>$(ConvertTo-HtmlText $rd.NodeEventsCsvName)</code>" }
+            if ($rd.EventsCsvName) { $csvPtr += "this VM's events in <code>$(ConvertTo-HtmlText $rd.EventsCsvName)</code>" }
+            if ($csvPtr.Count -gt 0) { [void]$sb.Append("<p class='muted'>Full, untruncated messages: $((($csvPtr) -join '; ')).</p>") }
             [void]$sb.Append("</details>`r`n")
         }
         [void]$sb.Append("</div>")
@@ -860,7 +969,7 @@ checkpoint or an unhealthy VSS writer), which the operations / backup team shoul
 <p class="muted">Reference: Microsoft Learn - Troubleshoot Hyper-V Virtual Machine Backup, Checkpoint, and Storage Failures: <a href="https://learn.microsoft.com/en-us/troubleshoot/windows-server/virtualization/hyper-v-virtual-machine-backup-checkpoint-storage">learn.microsoft.com/en-us/troubleshoot/windows-server/virtualization/hyper-v-virtual-machine-backup-checkpoint-storage</a></p>
 
 <footer>
-  Generated by <code>Get-HyperVVMCheckpointHealth.ps1</code>. Read-only diagnostic report; no VM state was
+  Generated by <code>Get-HyperVVMCheckpointHealth.ps1</code> (version __SCRIPTVERSION__). Read-only diagnostic report; no VM state was
   modified. Verdict legend: <span class="pill hold">HOLD STATE</span> fork-commit signature + unmerged
   disks (case-worthy) &nbsp; <span class="pill investigate">INVESTIGATE</span> concern signals, ops/backup
   team first &nbsp; <span class="pill ok">OK</span> no concerns &nbsp; <span class="pill err">ERROR / NOT FOUND</span>.
@@ -869,7 +978,7 @@ checkpoint or an unhealthy VSS writer), which the operations / backup team shoul
 </body>
 </html>
 '@)
-    return $sb.ToString()
+    return ($sb.ToString() -replace '__SCRIPTVERSION__', [System.Net.WebUtility]::HtmlEncode([string]$ScriptVersion))
 }
 
 # Read-only, lightweight cluster storage-health snapshot (Storage Spaces Direct / CSV). Gathered ONCE
@@ -952,6 +1061,95 @@ function Get-ClusterStorageHealthSnapshot {
         Subsystem      = @($raw.Subsystem)
         CsvRedirected  = @($raw.CsvRedirected)
         Note           = ((@($raw.Notes)) -join '; ')
+    }
+}
+
+# Historic cross-node event correlation (v0.2.14). When a VM has orphaned .avhdx files, the ORIGINAL
+# fork-commit / merge events that produced them may be far older than -EventLookbackHours (e.g. a
+# rollback that happened weeks ago). This targeted, TIME-WINDOWED scan looks +/- WindowMinutes around
+# each orphan's last-write timestamp, ACROSS EVERY CLUSTER NODE (the VM may have been owned by a
+# different node at incident time), for events attributable to THIS VM that carry a fork-commit /
+# merge signature. It also records each log's OLDEST available event so we can tell "no events found -
+# window is covered" (meaningful) from "no events found - logs have WRAPPED past the window" (absence
+# is NOT proof). Each node is reached in a SINGLE hop from the script's own session (no double hop);
+# the query is narrow (a few +/-1h windows) so it stays cheap even weeks back. Read-only.
+function Get-HistoricVMEventCorrelation {
+    [OutputType([object])]
+    param(
+        [string]$VMName,
+        [string]$VMId,
+        [string[]]$Nodes,
+        [datetime[]]$Timestamps,
+        [int]$WindowMinutes = 60,
+        [int[]]$SignatureIds,
+        [string]$SignatureRx
+    )
+    # Collapse the orphan timestamps to distinct search windows (round to the hour) so a VM with many
+    # orphans frozen at the same moment produces ONE window, not dozens.
+    $windows = @($Timestamps | Where-Object { $_ } | ForEach-Object { $_.ToUniversalTime() } |
+        ForEach-Object { $_.AddMinutes(-($_.Minute)).AddSeconds(-($_.Second)) } | Sort-Object -Unique)
+    if ($windows.Count -eq 0) { return $null }
+
+    $localNode = $env:COMPUTERNAME
+    $scan = {
+        param($vmName, $vmId, $windows, $winMin, $sigIds, $sigRx)
+        $logs   = 'Microsoft-Windows-Hyper-V-Worker-Admin', 'Microsoft-Windows-Hyper-V-VMMS-Admin'
+        $oldest = $null
+        foreach ($lg in $logs) {
+            try {
+                $o = Get-WinEvent -LogName $lg -Oldest -MaxEvents 1 -ErrorAction Stop | Select-Object -First 1
+                if ($o -and ((-not $oldest) -or ($o.TimeCreated -lt $oldest))) { $oldest = $o.TimeCreated }
+            } catch { }
+        }
+        $hits = @()
+        foreach ($w in $windows) {
+            $start = $w.AddMinutes(-$winMin); $end = $w.AddMinutes($winMin)
+            try {
+                Get-WinEvent -FilterHashtable @{ LogName = $logs; StartTime = $start; EndTime = $end } -ErrorAction SilentlyContinue |
+                    Where-Object {
+                        # Attributable to THIS VM (name or GUID) AND carrying a signature ID / HRESULT.
+                        ((($vmName -and $_.Message -match [regex]::Escape($vmName)) -or ($vmId -and $_.Message -match [regex]::Escape($vmId)))) -and
+                        (($sigIds -contains $_.Id) -or ($sigRx -and $_.Message -match $sigRx))
+                    } | ForEach-Object {
+                        $hits += [pscustomobject]@{
+                            Node    = $env:COMPUTERNAME
+                            Time    = $_.TimeCreated.ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')
+                            Id      = [int]$_.Id
+                            Log     = if ($_.LogName -like '*Worker*') { 'Worker' } elseif ($_.LogName -like '*VMMS*') { 'VMMS' } else { [string]$_.LogName }
+                            Message = ($_.Message -split "`r?`n")[0]
+                        }
+                    }
+            } catch { }
+        }
+        [pscustomobject]@{ Node = $env:COMPUTERNAME; Oldest = $oldest; Matches = @($hits) }
+    }
+
+    $perNode = foreach ($node in @($Nodes | Where-Object { $_ } | Sort-Object -Unique)) {
+        try {
+            if ($node.Split('.')[0] -eq $localNode) {
+                & $scan $VMName $VMId $windows $WindowMinutes $SignatureIds $SignatureRx
+            } else {
+                Invoke-Command -ComputerName $node -ScriptBlock $scan -ArgumentList $VMName, $VMId, $windows, $WindowMinutes, $SignatureIds, $SignatureRx -ErrorAction Stop
+            }
+        } catch {
+            [pscustomobject]@{ Node = $node; Oldest = $null; Matches = @(); Error = "$($_.Exception.Message)" }
+        }
+    }
+
+    $allMatches = @($perNode | ForEach-Object { $_.Matches } | Where-Object { $_ } | Sort-Object Time)
+    $oldestVals = @($perNode | ForEach-Object { $_.Oldest } | Where-Object { $_ } | Sort-Object)
+    $oldestAll  = if ($oldestVals.Count -gt 0) { $oldestVals[0] } else { $null }
+    $earliestWindowStart = (@($windows | Sort-Object)[0]).AddMinutes(-$WindowMinutes)
+    [pscustomobject]@{
+        Windows            = @($windows | ForEach-Object { $_.ToString('yyyy-MM-dd HH:mm') + ' UTC' })
+        WindowMinutes      = $WindowMinutes
+        NodesSearched      = @($Nodes | Where-Object { $_ } | Sort-Object -Unique)
+        Matches            = $allMatches
+        MatchCount         = @($allMatches).Count
+        OldestAvailableUtc = if ($oldestAll) { $oldestAll.ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss') } else { $null }
+        # If the oldest available event is AFTER our earliest search window, the logs have wrapped past
+        # the incident and the original events are gone - so a nil result is inconclusive, not clean.
+        LogsWrappedPastWindow = if ($oldestAll) { ($oldestAll.ToUniversalTime() -gt $earliestWindowStart) } else { $true }
     }
 }
 
@@ -1055,11 +1253,16 @@ function Invoke-VMCheckpointAudit {
     # Resolve the cluster once. With -Cluster we target that NAMED cluster (remote management from a
     # workstation with the RSAT Failover Clustering tools); without it, this host must itself BE a
     # cluster node - the Get-Cluster guard rail below fails clearly if it is not.
+    # v0.2.14: the resolved name is cached for the whole run (Get-Cluster called once, not per VM).
     try {
-        if ($Cluster) {
+        if ($script:ClusterNameCache) {
+            $ClusterName = $script:ClusterNameCache
+        } elseif ($Cluster) {
             $ClusterName = (Get-Cluster -Name $Cluster -ErrorAction Stop).Name
+            $script:ClusterNameCache = $ClusterName
         } else {
             $ClusterName = (Get-Cluster -ErrorAction Stop).Name
+            $script:ClusterNameCache = $ClusterName
         }
     } catch {
         if ($Cluster) {
@@ -1079,31 +1282,52 @@ function Invoke-VMCheckpointAudit {
     # every data-collection command in the OWNER CONTEXT: directly (locally) when this node owns the
     # VM, otherwise through ONE remoting session to the owning node (see Invoke-OnOwner above).
     $LocalNode    = $env:COMPUTERNAME
-    $clusterNodes = @(Get-ClusterNode -Cluster $ClusterName -ErrorAction SilentlyContinue | ForEach-Object { [string]$_.Name })
+    # v0.2.14: cluster node list fetched once per run (Get-ClusterNode), reused for every VM.
+    if ($null -eq $script:ClusterNodesCache) {
+        $script:ClusterNodesCache = @(Get-ClusterNode -Cluster $ClusterName -ErrorAction SilentlyContinue | ForEach-Object { [string]$_.Name })
+    }
+    $clusterNodes = $script:ClusterNodesCache
 
     # (1a) Preferred: the VM's clustered role names the owner directly (cluster API - no hop).
-    $OwningNode = $null
-    $group = Get-ClusterGroup -Cluster $ClusterName -ErrorAction SilentlyContinue | Where-Object { $_.Name -eq $VMName }
-    if ($group) { $OwningNode = [string]$group.OwnerNode.Name }
-
-    # (1b) Fallback (non-clustered VM, or a role whose name differs from the VM name): loop each node
-    # and ask it LOCALLY which node runs the VM. Each probe is a single hop (or local) - never double.
-    if (-not $OwningNode) {
-        $probeNodes = if ($clusterNodes.Count -gt 0) { $clusterNodes } else { @($LocalNode) }
-        foreach ($node in $probeNodes) {
-            try {
-                if ($node.Split('.')[0] -eq $LocalNode) {
-                    if (Get-VM -Name $VMName -ErrorAction SilentlyContinue) { $OwningNode = $node; break }
-                } else {
-                    $found = Invoke-Command -ComputerName $node -ScriptBlock {
-                        param($n) [bool](Get-VM -Name $n -ErrorAction SilentlyContinue)
-                    } -ArgumentList $VMName -ErrorAction Stop
-                    if ($found) { $OwningNode = $node; break }
-                }
-            } catch {
-                # Could not reach this node in a single hop - keep looking on the others.
+    # v0.2.14: build the VMName -> OwnerNode map ONCE per run (a single Get-ClusterGroup for the whole
+    # cluster) instead of re-querying and filtering per VM - a large saving on big fleets. The hashtable
+    # is case-insensitive (PowerShell default), matching the previous -eq name comparison.
+    if ($null -eq $script:GroupOwnerByVm) {
+        $script:GroupOwnerByVm = @{}
+        foreach ($g in @(Get-ClusterGroup -Cluster $ClusterName -ErrorAction SilentlyContinue)) {
+            if ($g -and $g.Name -and -not $script:GroupOwnerByVm.ContainsKey([string]$g.Name)) {
+                $script:GroupOwnerByVm[[string]$g.Name] = [string]$g.OwnerNode.Name
             }
         }
+    }
+    $OwningNode = $null
+    if ($script:GroupOwnerByVm.ContainsKey($VMName)) { $OwningNode = [string]$script:GroupOwnerByVm[$VMName] }
+
+    # (1b) Fallback (non-clustered VM, or a role whose name differs from the VM name): consult a
+    # cluster-wide VMName -> node map built ONCE by asking each node LOCALLY for its full VM list (one
+    # single hop per node, per run - not per VM). Each probe is a single hop (or local) - never double.
+    if (-not $OwningNode) {
+        if ($null -eq $script:ProbeVmNodeMap) {
+            $script:ProbeVmNodeMap = @{}
+            $probeNodes = if ($clusterNodes.Count -gt 0) { $clusterNodes } else { @($LocalNode) }
+            foreach ($node in $probeNodes) {
+                try {
+                    if ($node.Split('.')[0] -eq $LocalNode) {
+                        $names = @(Get-VM -ErrorAction SilentlyContinue | ForEach-Object { [string]$_.Name })
+                    } else {
+                        $names = @(Invoke-Command -ComputerName $node -ScriptBlock {
+                            Get-VM -ErrorAction SilentlyContinue | ForEach-Object { [string]$_.Name }
+                        } -ErrorAction Stop)
+                    }
+                    foreach ($vmn in $names) {
+                        if ($vmn -and -not $script:ProbeVmNodeMap.ContainsKey($vmn)) { $script:ProbeVmNodeMap[$vmn] = $node }
+                    }
+                } catch {
+                    # Could not reach this node in a single hop - keep building from the others.
+                }
+            }
+        }
+        if ($script:ProbeVmNodeMap.ContainsKey($VMName)) { $OwningNode = [string]$script:ProbeVmNodeMap[$VMName] }
     }
 
     if (-not $OwningNode) {
@@ -1113,28 +1337,50 @@ function Invoke-VMCheckpointAudit {
 
     # (2) Establish the owner execution context: local when this node owns the VM (zero hops), else ONE
     # remoting session to the owning node. Every subsequent collection call goes through Invoke-OnOwner.
+    # v0.2.14: sessions are POOLED per owning node ($script:SessionByNode) and reused across every VM
+    # on that node - so a node with 40 VMs opens ONE session, not 40. A pooled session that is no
+    # longer 'Opened' (dropped/broken) is discarded and reopened. All pooled sessions are disposed
+    # together in the end block.
     $script:OwnerIsLocal = ($OwningNode.Split('.')[0] -eq $LocalNode)
     $script:OwnerSession = $null
     if (-not $script:OwnerIsLocal) {
-        try {
-            $script:OwnerSession = New-PSSession -ComputerName $OwningNode -ErrorAction Stop
-        } catch {
-            Write-Alert "  ERROR: could not open a remoting session to owning node '$OwningNode': $($_.Exception.Message)" -Level Critical
-            Write-Alert "  TIP: run this script directly ON the owning node (interactive / SConfig logon), or from a" -Level Critical
-            Write-Alert "       host that can reach it in a SINGLE hop. Reaching another node from inside a remoting" -Level Critical
-            Write-Alert "       session is a 'double hop' and is blocked unless CredSSP/delegation is configured." -Level Critical
-            return (New-AuditSummary -Recommendation 'ERROR' -Owner $OwningNode -Detail 'Could not open remoting session to owning node.')
+        $pooled = $script:SessionByNode[$OwningNode]
+        if ($pooled -and $pooled.State -ne 'Opened') {
+            Remove-PSSession -Session $pooled -ErrorAction SilentlyContinue
+            $script:SessionByNode.Remove($OwningNode)
+            $pooled = $null
         }
+        if (-not $pooled) {
+            try {
+                $pooled = New-PSSession -ComputerName $OwningNode -ErrorAction Stop
+                $script:SessionByNode[$OwningNode] = $pooled
+            } catch {
+                Write-Alert "  ERROR: could not open a remoting session to owning node '$OwningNode': $($_.Exception.Message)" -Level Critical
+                Write-Alert "  TIP: run this script directly ON the owning node (interactive / SConfig logon), or from a" -Level Critical
+                Write-Alert "       host that can reach it in a SINGLE hop. Reaching another node from inside a remoting" -Level Critical
+                Write-Alert "       session is a 'double hop' and is blocked unless CredSSP/delegation is configured." -Level Critical
+                return (New-AuditSummary -Recommendation 'ERROR' -Owner $OwningNode -Detail 'Could not open remoting session to owning node.')
+            }
+        }
+        $script:OwnerSession = $pooled
     }
 
     # Core VM properties, collected in the owner context as plain values (safe to render / serialize).
     # Also gathers the Hyper-V host's supported VM configuration versions (Get-VMHostSupportedVersion,
     # read-only) so we can compare the VM's version to the latest the owning node supports.
+    # v0.2.14: the host's supported-version list is identical for every VM on a node, so it is fetched
+    # ONCE per node ($script:HostVersionsByNode) and reused, rather than queried inside every VM scan.
+    if (-not $script:HostVersionsByNode.ContainsKey($OwningNode)) {
+        $script:HostVersionsByNode[$OwningNode] = @(Invoke-OnOwner -ScriptBlock {
+            Get-VMHostSupportedVersion -ErrorAction SilentlyContinue | ForEach-Object { [string]$_.Version }
+        })
+    }
+    $hostSupportedVersions = @($script:HostVersionsByNode[$OwningNode])
+
     $vm = Invoke-OnOwner -ScriptBlock {
         param($n)
         $v = Get-VM -Name $n -ErrorAction SilentlyContinue
         if (-not $v) { return $null }
-        $sv = Get-VMHostSupportedVersion -ErrorAction SilentlyContinue
         [pscustomobject]@{
             VMId                        = [string]$v.VMId
             Status                      = [string]$v.Status
@@ -1145,13 +1391,15 @@ function Invoke-VMCheckpointAudit {
             ConfigurationLocation       = [string]$v.ConfigurationLocation
             ReplicationState            = [string]$v.ReplicationState
             Version                     = [string]$v.Version
-            HostSupportedVersions       = @($sv | ForEach-Object { [string]$_.Version })
         }
     } -ArgumentList $VMName
     if (-not $vm) {
         Write-Host "VM '$VMName' could not be read on owning node '$OwningNode'."
         return (New-AuditSummary -Recommendation 'ERROR' -Owner $OwningNode -Detail 'VM object could not be read on the owning node.')
     }
+    # Attach the (cached) per-node supported-version list to the VM projection so downstream code that
+    # reads $vm.HostSupportedVersions is unchanged.
+    Add-Member -InputObject $vm -NotePropertyName HostSupportedVersions -NotePropertyValue $hostSupportedVersions -Force
 
     # Compare the VM's configuration version to the latest the owning node supports
     # (Get-VMHostSupportedVersion). A VM older than the latest can be upgraded (Update-VMVersion) and,
@@ -1412,7 +1660,12 @@ function Invoke-VMCheckpointAudit {
     Write-Section "Cluster Shared Volume Free Space (hosting this VM's disks):"
     try {
         $diskFolders = @($allChainPaths | ForEach-Object { Split-Path $_ -Parent } | Sort-Object -Unique)
-        $allCsv = Get-ClusterSharedVolume -Cluster $ClusterName -ErrorAction Stop
+        # v0.2.14: the cluster's CSV list is identical for every VM, so fetch it ONCE per run and reuse
+        # the cached snapshot (a point-in-time free-space reading, which is all a report needs).
+        if ($null -eq $script:ClusterCsvCache) {
+            $script:ClusterCsvCache = @(Get-ClusterSharedVolume -Cluster $ClusterName -ErrorAction Stop)
+        }
+        $allCsv = $script:ClusterCsvCache
         $relevantCsv = $allCsv | Where-Object {
             $mount = [string]$_.SharedVolumeInfo.FriendlyVolumeName
             $mount -and (@($diskFolders | Where-Object { $_.StartsWith($mount, [System.StringComparison]::OrdinalIgnoreCase) }).Count -gt 0)
@@ -1665,47 +1918,85 @@ function Invoke-VMCheckpointAudit {
         # Match on the VM GUID as well as the name - Worker/VMMS messages reference the
         # 'Virtual machine ID <GUID>', which is far more reliable than the long friendly name.
         $vmId = [string]$vm.VMId
-        try {
-            $workerEvents = @(Invoke-OnOwner -ScriptBlock {
-                param($lookbackHours, $vmName, $vmId, $concernIds, $contextIds, $codePatterns)
-                $start  = (Get-Date).AddHours(-$lookbackHours)
-                # Single alternation regex built from the (escaped) HRESULT strings:
-                $codeRx = ($codePatterns | ForEach-Object { [regex]::Escape($_) }) -join '|'
-                Get-WinEvent -FilterHashtable @{
-                    LogName   = 'Microsoft-Windows-Hyper-V-Worker-Admin', 'Microsoft-Windows-Hyper-V-VMMS-Admin'
-                    StartTime = $start
-                } -ErrorAction SilentlyContinue |
-                Where-Object {
-                    $_.Message -match [regex]::Escape($vmName) -or
-                    $_.Message -match [regex]::Escape($vmId)   -or
-                    ($codeRx -and $_.Message -match $codeRx)   -or
-                    ($concernIds -contains $_.Id)              -or
-                    ($contextIds -contains $_.Id)
-                } |
-                ForEach-Object {
-                    # Concern = a genuine PROBLEM only: an HRESULT match, or an ID in the concern list.
-                    # Informational lifecycle IDs (context list) are surfaced but NEVER flagged Concern.
-                    $isConcern = (($codeRx -and $_.Message -match $codeRx) -or ($concernIds -contains $_.Id))
-                    # v0.2.12: is this event attributable to the AUDITED VM? Worker/VMMS messages name
-                    # the VM ('<name>') and/or its 'Virtual machine ID <GUID>'. Only VM-attributable
-                    # events drive this VM's verdict; ID/HRESULT-only matches that name a DIFFERENT VM
-                    # (or no VM) are node context, not a per-VM concern.
-                    $isVmAttributed = (($vmName -and $_.Message -match [regex]::Escape($vmName)) -or ($vmId -and $_.Message -match [regex]::Escape($vmId)))
-                    [pscustomobject]@{
-                        'Time (UTC)' = $_.TimeCreated.ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')
-                        Id           = [int]$_.Id
-                        Level        = [string]$_.LevelDisplayName
-                        Log          = if ($_.LogName -like '*Worker*') { 'Worker' } elseif ($_.LogName -like '*VMMS*') { 'VMMS' } else { [string]$_.LogName }
-                        Concern      = if ($isConcern) { 'YES' } else { '' }
-                        VmAttributed = [bool]$isVmAttributed
-                        Message      = ($_.Message -split "`r?`n")[0]
-                        FullMessage  = ($_.Message -replace "`r?`n", ' | ')
+        # v0.2.14: per-NODE event cache. The Worker/VMMS scan is NODE-WIDE, so on a fleet run every VM
+        # on the same owning node would otherwise re-read the SAME (often huge) event set. Scan each
+        # node ONCE (keyed by node + lookback), cache the concern/context rows, then derive THIS VM's
+        # per-VM view (VmAttributed) locally from the cached set - a big speed-up and consistent
+        # node-wide counts across VMs that share a node.
+        $nodeCacheKey = "{0}|{1}" -f $OwningNode, $EventLookbackHours
+        if (-not $script:NodeEventCache.ContainsKey($nodeCacheKey)) {
+            try {
+                $nodeRows = @(Invoke-OnOwner -ScriptBlock {
+                    param($lookbackHours, $concernIds, $contextIds, $codePatterns)
+                    $start  = (Get-Date).AddHours(-$lookbackHours)
+                    # Single alternation regex built from the (escaped) HRESULT strings:
+                    $codeRx = ($codePatterns | ForEach-Object { [regex]::Escape($_) }) -join '|'
+                    Get-WinEvent -FilterHashtable @{
+                        LogName   = 'Microsoft-Windows-Hyper-V-Worker-Admin', 'Microsoft-Windows-Hyper-V-VMMS-Admin'
+                        StartTime = $start
+                    } -ErrorAction SilentlyContinue |
+                    Where-Object {
+                        # NODE-WIDE set: any event carrying a concern/context ID or an HRESULT. Per-VM
+                        # attribution is computed by the CALLER against the cached FullMessage.
+                        ($codeRx -and $_.Message -match $codeRx) -or ($concernIds -contains $_.Id) -or ($contextIds -contains $_.Id)
+                    } |
+                    ForEach-Object {
+                        # Concern = a genuine PROBLEM only: an HRESULT match, or an ID in the concern list.
+                        # Informational lifecycle IDs (context list) are surfaced but NEVER flagged Concern.
+                        $isConcern = (($codeRx -and $_.Message -match $codeRx) -or ($concernIds -contains $_.Id))
+                        [pscustomobject]@{
+                            'Time (UTC)' = $_.TimeCreated.ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')
+                            Id           = [int]$_.Id
+                            Level        = [string]$_.LevelDisplayName
+                            Log          = if ($_.LogName -like '*Worker*') { 'Worker' } elseif ($_.LogName -like '*VMMS*') { 'VMMS' } else { [string]$_.LogName }
+                            Concern      = if ($isConcern) { 'YES' } else { '' }
+                            Message      = ($_.Message -split "`r?`n")[0]
+                            FullMessage  = ($_.Message -replace "`r?`n", ' | ')
+                        }
+                    }
+                } -ArgumentList $EventLookbackHours, $WorkerEventIds, $ContextEventIds, $ErrorCodePatterns)
+                $script:NodeEventCache[$nodeCacheKey] = @($nodeRows)
+                # v0.2.14: write the NODE-WIDE event set ONCE per node to a shared _NodeEvents CSV, so
+                # the (often huge, e.g. thousands of 15268) node context is stored a single time rather
+                # than duplicated into every per-VM CSV on that node. Per-VM CSVs then carry only the
+                # events attributable to that VM (below). This can more than halve a busy run's CSV size.
+                if ($OutputPath -and @($nodeRows).Count -gt 0) {
+                    try {
+                        $nodeCsvName = "_NodeEvents_{0}_{1}.csv" -f ($OwningNode -replace '[^\w.\-]', '_'), [DateTime]::UtcNow.ToString('yyyy-MM-dd')
+                        $nodeCsvPath = Join-Path $OutputPath $nodeCsvName
+                        if (-not (Test-Path -LiteralPath $nodeCsvPath)) {
+                            @($nodeRows) | Select-Object 'Time (UTC)', Id, Level, Log, Concern, FullMessage |
+                                Export-Csv -LiteralPath $nodeCsvPath -NoTypeInformation -Encoding UTF8
+                        }
+                        $script:NodeCsvNameByNode[$OwningNode] = $nodeCsvName
+                    } catch {
+                        Write-Alert "  Could not write the node-wide events CSV for '$OwningNode': $($_.Exception.Message)" -Level Warning
                     }
                 }
-            } -ArgumentList $EventLookbackHours, $VMName, $vmId, $WorkerEventIds, $ContextEventIds, $ErrorCodePatterns)
-        } catch {
+            } catch {
+                $script:NodeEventCache[$nodeCacheKey] = $null
+                Write-Alert "  Could not read event logs on '$OwningNode': $($_.Exception.Message)" -Level Warning
+            }
+        }
+        $cachedNodeEvents = $script:NodeEventCache[$nodeCacheKey]
+        # Derive THIS VM's view from the cached node set: stamp VmAttributed (message names this VM or
+        # its GUID) onto each row. v0.2.12 semantics: only VM-attributed events drive this VM's verdict.
+        if ($null -ne $cachedNodeEvents) {
+            $workerEvents = @($cachedNodeEvents | ForEach-Object {
+                $isVmAttributed = (($VMName -and $_.FullMessage -match [regex]::Escape($VMName)) -or ($vmId -and $_.FullMessage -match [regex]::Escape($vmId)))
+                [pscustomobject]@{
+                    'Time (UTC)' = $_.'Time (UTC)'
+                    Id           = $_.Id
+                    Level        = $_.Level
+                    Log          = $_.Log
+                    Concern      = $_.Concern
+                    VmAttributed = [bool]$isVmAttributed
+                    Message      = $_.Message
+                    FullMessage  = $_.FullMessage
+                }
+            })
+        } else {
             $workerEvents = $null
-            Write-Alert "  Could not read event logs on '$OwningNode': $($_.Exception.Message)" -Level Warning
         }
 
         if ($workerEvents -and $workerEvents.Count -gt 0) {
@@ -1775,15 +2066,22 @@ function Invoke-VMCheckpointAudit {
             $csvFolder     = Split-Path -Parent $reportFile
             $eventsCsvName = "{0}_Events_{1}.csv" -f ($VMName -replace '[^\w.\-]', '_'), [DateTime]::UtcNow.ToString('yyyy-MM-dd')
             $csvPath       = Join-Path $csvFolder $eventsCsvName
-            if ($workerEvents -and $workerEvents.Count -gt 0) {
-                $workerEvents | Select-Object 'Time (UTC)', Id, Level, Log, Concern, VmAttributed, FullMessage |
+            $nodeCsvForVm  = [string]$script:NodeCsvNameByNode[$OwningNode]
+            # v0.2.14: the per-VM CSV now carries ONLY events attributable to THIS VM. The node-wide
+            # set (all concern/context events on the node, e.g. the 15268 flood) is written ONCE to the
+            # shared _NodeEvents_<node>_<date>.csv above - no longer duplicated into every VM's CSV.
+            $vmAttributedEvents = @($workerEvents | Where-Object { $_.VmAttributed })
+            if ($vmAttributedEvents.Count -gt 0) {
+                $vmAttributedEvents | Select-Object 'Time (UTC)', Id, Level, Log, Concern, VmAttributed, FullMessage |
                     Export-Csv -LiteralPath $csvPath -NoTypeInformation -Encoding UTF8
                 Write-Host ""
-                Write-Host "  Full, untruncated event messages exported to CSV: $csvPath"
-                Write-Host "  (Use that CSV rather than the truncated console table above - it has the complete text.)"
+                Write-Host "  This VM's full, untruncated event messages exported to CSV: $csvPath"
+                if ($nodeCsvForVm) { Write-Host "  Node-wide events (context, all VMs on $OwningNode) are in: $nodeCsvForVm" }
+                Write-Host "  (Use these CSVs rather than the truncated console table above - they have the complete text.)"
             } else {
-                # No matching events: still write the CSV (same columns) with one informational marker
-                # row, so the presence of the file confirms the scan ran and simply found nothing.
+                # No events attributable to THIS VM: still write the per-VM CSV (same columns) with one
+                # informational marker row, so the presence of the file confirms the scan ran.
+                $noneMsg = if ($nodeCsvForVm) { "No Hyper-V Worker/VMMS events attributable to this VM in the last $EventLookbackHours hours (scan ran). Node-wide events (all VMs on $OwningNode) are in $nodeCsvForVm." } else { "No matching Hyper-V Worker/VMMS events in the last $EventLookbackHours hours (scan ran; nothing to report)." }
                 [pscustomobject]@{
                     'Time (UTC)' = ''
                     Id           = ''
@@ -1791,10 +2089,10 @@ function Invoke-VMCheckpointAudit {
                     Log          = ''
                     Concern      = ''
                     VmAttributed = ''
-                    FullMessage  = "No matching Hyper-V Worker/VMMS events in the last $EventLookbackHours hours (scan ran; nothing to report)."
+                    FullMessage  = $noneMsg
                 } | Select-Object 'Time (UTC)', Id, Level, Log, Concern, VmAttributed, FullMessage |
                     Export-Csv -LiteralPath $csvPath -NoTypeInformation -Encoding UTF8
-                Write-Host "  (No matching events - wrote an events CSV with a 'no matching events' marker row: $csvPath)"
+                Write-Host "  (No events attributable to this VM - wrote a marker row: $csvPath$(if ($nodeCsvForVm) { "; node-wide events in $nodeCsvForVm" }))"
             }
         }
     }
@@ -1917,12 +2215,112 @@ function Invoke-VMCheckpointAudit {
     $forkCommitRx     = (@('0x80048102', '0x800480BD', '0x800480BC', '0x800703EE') | ForEach-Object { [regex]::Escape($_) }) -join '|'
     $hasForkSignature = (@($vmConcernEvents | Where-Object { ($forkCommitIds -contains [int]$_.Id) -or ($_.FullMessage -match $forkCommitRx) }).Count -gt 0)
     $holdState        = ($hasForkSignature -and ($hasCheckpoints -or $staleCheckpoints.Count -gt 0))
-    # v0.2.12: the verdict is scoped to THIS VM. Node-wide concern events that name OTHER VMs (or no VM)
-    # are reported as context only and do NOT, on their own, escalate a healthy, checkpoint-free VM.
-    $investigate      = ((-not $holdState) -and (($staleCheckpoints.Count -gt 0) -or ($vmEventConcernCount -gt 0) -or ($vssUnhealthy.Count -gt 0) -or $hasOrphans))
+
+    # v0.2.14: event SEVERITY split. Only HIGH-signal events attributable to THIS VM (its OWN
+    # checkpoint / merge actually failed, or a fork-commit HRESULT) should escalate a VM to INVESTIGATE.
+    # LOW-signal per-VM events (e.g. 15268 'failed to get disk information', 12240 attachment-not-found,
+    # 3280 could-not-initiate, 32510 stale .hrl delete) are storage / housekeeping chatter and, on
+    # their own, must NOT flag an otherwise-clean, running, checkpoint-free, replica-Normal VM.
+    $vmHighSignalIds     = @(3216, 18012, 19090, 19100, 16300)
+    $vmHighConcernEvents = @($vmConcernEvents | Where-Object { ($vmHighSignalIds -contains [int]$_.Id) -or ($_.FullMessage -match $forkCommitRx) })
+    $vmHighConcernCount  = @($vmHighConcernEvents).Count
+    $vmLowConcernCount   = $vmEventConcernCount - $vmHighConcernCount
+
+    # Replica health as a concern driver (v0.2.14). A Critical replica (e.g. resync required) or a
+    # Warning is a genuine per-VM issue even with no checkpoints / events, so it drives INVESTIGATE.
+    $replHealth    = if ($replInfo -and $replInfo.Repl) { "$($replInfo.Repl.Health)" } else { '' }
+    $replCritical  = ($replHealth -match 'Critical')
+    $replWarning   = ($replHealth -match 'Warning')
+    $replUnhealthy = ($replCritical -or $replWarning)
+
+    # v0.2.14: classify each orphaned .avhdx so the operator gets an ACTIONABLE read, and detect the
+    # 'past rollback' fingerprint (the KWDRPT02 pattern): several orphans across multiple disk folders
+    # that share a common last-write DATE = the disks were rolled back to base at that time, orphaning
+    # the checkpoint layers. That is the durable evidence of a MATERIALISED fork-commit event whose
+    # original events may now be older than -EventLookbackHours. NEVER states 'safe to delete' - the
+    # action and decision always rest with the operator.
+    $mergeFailIds     = @(19090, 19100, 16220, 32510)
+    $rollbackDate     = $null
+    $orphanClassified = @()
+    if (@($orphans).Count -gt 0) {
+        $orphanClassified = @($orphans | ForEach-Object {
+            $o = $_; $leaf = [string]$o.Name
+            $isLiveMount = ($o.FullName -match 'rubriklivemount') -or ($leaf -match '_temp_') -or ([long]$o.Length -eq 0)
+            $stuckEvt = @($concernEvents | Where-Object { ($mergeFailIds -contains [int]$_.Id) -and $leaf -and ($_.FullMessage -like "*$leaf*") })
+            $cls = if ($stuckEvt.Count -gt 0) { 'StuckMerge' } elseif ($isLiveMount) { 'LiveMount' } else { 'Leftover' }
+            [pscustomobject]@{ Orphan = $o; Class = $cls; MergeEventId = if ($stuckEvt.Count -gt 0) { [int](@($stuckEvt)[0].Id) } else { $null } }
+        })
+        # Rollback fingerprint: >=4 orphans sharing ONE last-write date across >=2 distinct folders.
+        $byDate = @($orphans | Where-Object { $_.LastWriteTimeUtc } | Group-Object { $_.LastWriteTimeUtc.Date } | Sort-Object Count -Descending)
+        if ($byDate.Count -gt 0) {
+            $topDate  = $byDate[0]
+            $folders  = @($topDate.Group | ForEach-Object { Split-Path $_.FullName -Parent } | Sort-Object -Unique)
+            if ([int]$topDate.Count -ge 4 -and $folders.Count -ge 2) {
+                $rollbackDate = ([datetime]$topDate.Name).ToString('yyyy-MM-dd')
+                foreach ($oc in $orphanClassified) {
+                    if ($oc.Orphan.LastWriteTimeUtc -and ($oc.Orphan.LastWriteTimeUtc.Date -eq [datetime]$topDate.Name) -and ($oc.Class -ne 'StuckMerge')) { $oc.Class = 'Rollback' }
+                }
+            }
+        }
+    }
+    $hasRollbackFingerprint = [bool]$rollbackDate
+    $hasStuckMergeOrphan    = (@($orphanClassified | Where-Object { $_.Class -eq 'StuckMerge' }).Count -gt 0)
+    $orphanOnlyLiveMount    = ((@($orphans).Count -gt 0) -and (@($orphanClassified | Where-Object { $_.Class -ne 'LiveMount' }).Count -eq 0))
+
+    # v0.2.14: INVESTIGATE is now driven by stale checkpoints, orphaned .avhdx, unhealthy VSS writers,
+    # an unhealthy replica, OR HIGH-signal per-VM events - NOT by low-signal storage chatter. A VM whose
+    # ONLY signal is LOW-signal per-VM events (and is otherwise clean) is reported OK with a low-key note.
+    $investigate      = ((-not $holdState) -and (($staleCheckpoints.Count -gt 0) -or $hasOrphans -or ($vssUnhealthy.Count -gt 0) -or $replUnhealthy -or ($vmHighConcernCount -gt 0)))
+    # True when the ONLY thing found is low-signal per-VM chatter (drives the OK 'note' wording below).
+    $lowSignalOnly    = ((-not $holdState) -and (-not $investigate) -and ($vmLowConcernCount -gt 0))
+
+    # Severity score used ONLY for ORDERING within a verdict band (higher sorts first). Lets orphan /
+    # stale / replica-Critical INVESTIGATE VMs bubble above events-only ones; live-mount-only sits lowest.
+    $severityScore = 0
+    if ($holdState) { $severityScore = 100 }
+    elseif ($investigate) {
+        if     ($hasRollbackFingerprint)                    { $severityScore = 90 }
+        elseif ($hasStuckMergeOrphan)                       { $severityScore = 80 }
+        elseif ($staleCheckpoints.Count -gt 0)              { $severityScore = 65 }
+        elseif ($replCritical)                              { $severityScore = 60 }
+        elseif ($hasOrphans -and -not $orphanOnlyLiveMount) { $severityScore = 50 }
+        elseif ($vmHighConcernCount -gt 0)                  { $severityScore = 45 }
+        elseif ($replWarning)                               { $severityScore = 42 }
+        elseif ($orphanOnlyLiveMount)                       { $severityScore = 30 }
+        else                                                { $severityScore = 20 }
+    }
+    elseif ($lowSignalOnly) { $severityScore = 5 }
+
     $concernIdSummary     = (@($concernEvents   | Group-Object Id | Sort-Object { [int]$_.Name } | ForEach-Object { "{0} x{1}" -f $_.Name, $_.Count }) -join ', ')
     $vmConcernIdSummary   = (@($vmConcernEvents | Group-Object Id | Sort-Object { [int]$_.Name } | ForEach-Object { "{0} x{1}" -f $_.Name, $_.Count }) -join ', ')
     $nodeOnlyConcernCount = $eventConcernCount - $vmEventConcernCount
+    # Dominant node-wide concern ID, for the 'mostly NNNNN' annotation on the node-wide KV row. Only
+    # annotated when a single ID makes up at least half of the node-wide concern events.
+    $nodeDominant     = if ($concernEvents.Count -gt 0) { @($concernEvents | Group-Object Id | Sort-Object Count -Descending)[0] } else { $null }
+    $nodeDominantNote = if ($nodeDominant -and ([int]$nodeDominant.Count -ge [int][math]::Ceiling($eventConcernCount * 0.5))) { "mostly {0}" -f $nodeDominant.Name } else { '' }
+
+    # v0.2.14: HISTORIC cross-node correlation. ONLY when this VM has orphaned .avhdx files - search
+    # +/-1h around each orphan's last-write time, across ALL cluster nodes, for THIS VM's fork-commit /
+    # merge events that may predate the -EventLookbackHours window. This is what catches a rollback
+    # that already materialised (e.g. weeks ago) while the event log still holds the original events -
+    # and, via each log's oldest-available-event time, tells us when the logs have WRAPPED past it.
+    $historicCorrelation = $null
+    if (@($orphans).Count -gt 0 -and @($clusterNodes).Count -gt 0) {
+        Show-AuditProgress 'Historic event correlation (around orphan timestamps)'
+        $orphanTimes = @($orphans | ForEach-Object { $_.LastWriteTimeUtc } | Where-Object { $_ })
+        if ($orphanTimes.Count -gt 0) {
+            try {
+                $historicCorrelation = Get-HistoricVMEventCorrelation -VMName $VMName -VMId ([string]$vm.VMId) `
+                    -Nodes $clusterNodes -Timestamps $orphanTimes -WindowMinutes 60 `
+                    -SignatureIds @(3216, 18012, 19090, 19100, 16300) -SignatureRx $forkCommitRx
+            } catch {
+                $historicCorrelation = $null
+            }
+        }
+    }
+    # A historic fork-commit signature is strong evidence the rollback DID happen for this VM (even
+    # though the events are outside the standard window). Surface it as its own flag.
+    $historicForkConfirmed = ($historicCorrelation -and (@($historicCorrelation.Matches | Where-Object { ([int]$_.Id -eq 3216) -or ($_.Message -match $forkCommitRx) }).Count -gt 0))
 
     # ---- Findings block for the operator / backup team (and, only when warranted, a CSS case) -------
     # A copy/paste-ready summary of the key findings. The framing ADAPTS to severity so we do NOT push
@@ -2183,13 +2581,29 @@ function Invoke-VMCheckpointAudit {
     }
     $vssStateForHtml = if (-not $vssWriters -or @($vssWriters).Count -eq 0) { 'Unavailable' } elseif ($vssUnhealthy.Count -gt 0) { 'Unhealthy' } else { 'Healthy' }
     # Orphaned .avhdx rows the HTML per-VM detail renders (name, size, created + last-write timestamps,
-    # full path). Newest-written first. Timestamps come straight from the file metadata gathered above.
+    # full path). Newest-written first. v0.2.14 adds a per-orphan CLASS (Rollback / StuckMerge /
+    # LiveMount / Leftover) + an age-in-days + a neutral 'Likely' read - NEVER 'safe to delete'.
+    $orphanClassLookup = @{}
+    foreach ($oc in $orphanClassified) { if ($oc.Orphan -and $oc.Orphan.FullName) { $orphanClassLookup[[string]$oc.Orphan.FullName] = $oc } }
     $orphanRowsForHtml = @($orphans | Sort-Object LastWriteTimeUtc -Descending | ForEach-Object {
+        $ocm     = $orphanClassLookup[[string]$_.FullName]
+        $cls     = if ($ocm) { [string]$ocm.Class } else { 'Leftover' }
+        $mergeId = if ($ocm) { $ocm.MergeEventId } else { $null }
+        $ageDays = if ($_.LastWriteTimeUtc) { [math]::Round(([DateTime]::UtcNow - $_.LastWriteTimeUtc).TotalDays, 1) } else { $null }
+        $likely  = switch ($cls) {
+            'Rollback'   { 'Possible PAST rollback aftermath - do NOT remove; investigate / recover' }
+            'StuckMerge' { ("Possible stuck / failed merge (event {0}) - investigate before any action" -f $mergeId) }
+            'LiveMount'  { 'Likely backup live-mount / temp artifact - confirm with backup team' }
+            default      { 'Leftover backup/replica file - confirm with backup team before any action' }
+        }
         [pscustomobject]@{
             Name      = [string]$_.Name
             SizeGB    = [math]::Round($_.Length / 1GB, 2)
             Created   = if ($_.CreationTimeUtc)  { $_.CreationTimeUtc.ToString('yyyy-MM-dd HH:mm:ss') }  else { '' }
             LastWrite = if ($_.LastWriteTimeUtc) { $_.LastWriteTimeUtc.ToString('yyyy-MM-dd HH:mm:ss') } else { '' }
+            AgeDays   = $ageDays
+            Class     = $cls
+            Likely    = $likely
             FullName  = [string]$_.FullName
         }
     })
@@ -2224,7 +2638,33 @@ function Invoke-VMCheckpointAudit {
         EventBreakdown       = $eventBreakdownForHtml
         EventLookbackHours   = $EventLookbackHours
         EventsCsvName        = [string]$eventsCsvName
+        NodeEventsCsvName    = [string]$script:NodeCsvNameByNode[$OwningNode]
         SupportCaseSummary   = [string]$supportCaseSummary
+        # v0.2.14 additions.
+        VmHighConcernCount   = [int]$vmHighConcernCount
+        VmLowConcernCount    = [int]$vmLowConcernCount
+        LowSignalOnly        = [bool]$lowSignalOnly
+        NodeDominantNote     = [string]$nodeDominantNote
+        ReplHealth           = [string]$replHealth
+        ReplUnhealthy        = [bool]$replUnhealthy
+        ReplCritical         = [bool]$replCritical
+        SeverityScore        = [int]$severityScore
+        HasRollbackFingerprint = [bool]$hasRollbackFingerprint
+        RollbackDate         = [string]$rollbackDate
+        HasStuckMergeOrphan  = [bool]$hasStuckMergeOrphan
+        OrphanOnlyLiveMount  = [bool]$orphanOnlyLiveMount
+        HistoricForkConfirmed = [bool]$historicForkConfirmed
+        Historic             = if ($historicCorrelation) {
+            [pscustomobject]@{
+                Windows            = @($historicCorrelation.Windows)
+                WindowMinutes      = [int]$historicCorrelation.WindowMinutes
+                NodesSearched      = @($historicCorrelation.NodesSearched)
+                MatchCount         = [int]$historicCorrelation.MatchCount
+                Matches            = @($historicCorrelation.Matches)
+                OldestAvailableUtc = [string]$historicCorrelation.OldestAvailableUtc
+                LogsWrappedPastWindow = [bool]$historicCorrelation.LogsWrappedPastWindow
+            }
+        } else { $null }
     }
 
     $summaryArgs = @{
@@ -2250,11 +2690,10 @@ function Invoke-VMCheckpointAudit {
         New-AuditSummary -Recommendation 'ERROR' -Owner $OwningNode -Detail $_.Exception.Message
     }
     finally {
-        # Close the single remoting session to the owning node (if one was opened for this VM).
-        if ($script:OwnerSession) {
-            Remove-PSSession -Session $script:OwnerSession -ErrorAction SilentlyContinue
-            $script:OwnerSession = $null
-        }
+        # v0.2.14: remoting sessions are POOLED per owning node ($script:SessionByNode) and reused
+        # across VMs; they are disposed together in the end block. Just drop this VM's reference here
+        # (do NOT close the pooled session - the next VM on this node reuses it).
+        $script:OwnerSession = $null
         # Flush the captured report buffer to the per-VM .txt (when -OutputPath was supplied), then
         # deactivate the buffer so begin/end-block messages are shown normally again.
         if ($reportFile -and $script:VMReportBuffer) {
@@ -2284,6 +2723,22 @@ $script:DiscoveredCandidates = [System.Collections.Generic.List[object]]::new()
 $script:MaxDiscoveredToAudit = 25
 # Cluster storage-health snapshot (populated once, in the end block, unless -SkipStorageHealth).
 $script:ClusterStorageHealth = $null
+# v0.2.14: per-node Worker/VMMS event cache (keyed 'node|lookbackHours'). The event scan is node-wide,
+# so caching it means each node is read ONCE per run rather than once per VM on that node.
+$script:NodeEventCache = @{}
+# v0.2.14: records the shared _NodeEvents_<node>_<date>.csv name written once per node, so each VM's
+# report can point to the node-wide event detail without duplicating it into every per-VM CSV.
+$script:NodeCsvNameByNode = @{}
+# v0.2.14 fleet-scale caches: cluster-wide data that is IDENTICAL for every VM in a run is fetched
+# ONCE and reused, instead of being re-queried per VM. On a large cluster (hundreds of VMs) this
+# removes the bulk of the redundant cluster-API round-trips and remoting-session churn.
+$script:ClusterNameCache    = $null   # resolved cluster name (Get-Cluster, once)
+$script:ClusterNodesCache   = $null   # node-name array (Get-ClusterNode, once)
+$script:GroupOwnerByVm      = $null   # hashtable VMName -> OwnerNode (Get-ClusterGroup, once)
+$script:ProbeVmNodeMap      = $null   # hashtable VMName -> node for non-clustered VMs (per-node Get-VM, once)
+$script:SessionByNode       = @{}     # pooled PSSession per owning node, reused across VMs, disposed in end block
+$script:HostVersionsByNode  = @{}     # hashtable node -> supported VM config versions (Get-VMHostSupportedVersion, once per node)
+$script:ClusterCsvCache     = $null   # Get-ClusterSharedVolume result (once)
 
 # Exclusion list: VM names to SKIP, read ONCE from -ExcludedVMListCsv into a case-INSENSITIVE HashSet
 # so the process-block membership test is O(1). A CSV with a 'VMName' header column is preferred; a
@@ -2398,7 +2853,12 @@ end {
         # Keep every per-VM result for the single HTML fleet report built after the loop (filter to real
         # summary objects so any stray pipeline output cannot become a phantom row).
         foreach ($s in @($vmSummary)) {
-            if ($s -and $s.PSObject.Properties['Recommendation']) { [void]$script:AllAuditResults.Add($s) }
+            if ($s -and $s.PSObject.Properties['Recommendation']) {
+                # v0.2.14: tag how this VM entered the run so the report can distinguish operator-
+                # requested (Input) VMs from ones the tool auto-added via -IncludeDiscoveredVMs.
+                Add-Member -InputObject $s -NotePropertyName Source -NotePropertyValue 'Input' -Force
+                [void]$script:AllAuditResults.Add($s)
+            }
         }
 
         # Emit the per-VM result object to the pipeline ONLY when -PassThru was requested; otherwise the
@@ -2414,8 +2874,11 @@ end {
     $clusterForName = @($script:AllAuditResults | ForEach-Object { $_.Cluster } | Where-Object { $_ })
     $clusterForName = if ($clusterForName.Count -gt 0) { [string]$clusterForName[0] } elseif ($Cluster) { $Cluster } else { 'cluster' }
     $safeCluster    = ($clusterForName -replace '[^\w.\-]', '_')
-    $dateStamp      = [DateTime]::UtcNow.ToString('yyyy-MM-dd')
-    $htmlFileName   = "VMCheckpointAudit-{0}-{1}.html" -f $safeCluster, $dateStamp
+    # Report / zip file-name timestamp. Reuse the per-run folder's UTC stamp (yyyy-MM-dd_HHmmssZ) so the
+    # HTML/zip names MATCH the run folder exactly and repeated same-day runs never overwrite each other.
+    # Falls back to a fresh UTC stamp when no -OutputPath run folder exists (console/current-dir run).
+    $runStamp       = if ($script:RunFolder) { (Split-Path $script:RunFolder -Leaf) -replace '^CheckpointAudit_', '' } else { [DateTime]::UtcNow.ToString('yyyy-MM-dd_HHmmss') + 'Z' }
+    $htmlFileName   = "VMCheckpointAudit-{0}-{1}.html" -f $safeCluster, $runStamp
 
     # Cross-check the high-risk VM names discovered in event data against REAL clustered VMs (this
     # discards paths / noise), drop any already audited, and de-duplicate. Always surfaced; only
@@ -2450,12 +2913,21 @@ end {
                 -WorkerEventIds $WorkerEventIds -ContextEventIds $ContextEventIds -ErrorCodePatterns $ErrorCodePatterns `
                 -SkipAnalyticCheck:$SkipAnalyticCheck
             foreach ($s in @($ds)) {
-                if ($s -and $s.PSObject.Properties['Recommendation']) { [void]$script:AllAuditResults.Add($s); if ($PassThru) { $s } }
+                if ($s -and $s.PSObject.Properties['Recommendation']) { Add-Member -InputObject $s -NotePropertyName Source -NotePropertyValue 'Discovered' -Force; [void]$script:AllAuditResults.Add($s); if ($PassThru) { $s } }
             }
         }
         # Remove the now-audited VMs from the discovered list (no re-expansion of new candidates).
         $auditedNames = @($script:AllAuditResults | ForEach-Object { [string]$_.VMName })
         $discoveredVMs = @($discoveredVMs | Where-Object { $auditedNames -notcontains $_.Name })
+    }
+
+    # v0.2.14: dispose the pooled per-node remoting sessions now that all VM audits are complete. The
+    # storage-health snapshot below opens its own short-lived session, so it is unaffected.
+    if ($script:SessionByNode -and $script:SessionByNode.Count -gt 0) {
+        foreach ($sess in @($script:SessionByNode.Values)) {
+            if ($sess) { Remove-PSSession -Session $sess -ErrorAction SilentlyContinue }
+        }
+        $script:SessionByNode = @{}
     }
 
     # Read-only cluster storage-health snapshot (once per run), unless suppressed. Query it from one of
@@ -2494,10 +2966,16 @@ end {
                 New-Item -ItemType Directory -Path $htmlDir -Force | Out-Null
             }
 
+            # End-to-end elapsed (floor the hours so 1h59m reads 01:59:xx, not 02:xx via [int] rounding).
+            $runElapsed  = $script:RunStopwatch.Elapsed
+            $genTimeText = '{0:00}:{1:00}:{2:00}' -f [int][math]::Floor($runElapsed.TotalHours), $runElapsed.Minutes, $runElapsed.Seconds
+
             $html = ConvertTo-VMCheckpointAuditHtml -Results $script:AllAuditResults.ToArray() `
                 -StaleHours $StaleHours -EventLookbackHours $EventLookbackHours `
                 -ClusterName $clusterForName -GeneratedUtc ([DateTime]::UtcNow.ToString('yyyy-MM-dd HH:mm:ss')) `
-                -DiscoveredVMs $discoveredVMs -StorageHealth $script:ClusterStorageHealth -IncludeDiscoveredVMs:$IncludeDiscoveredVMs
+                -DiscoveredVMs $discoveredVMs -StorageHealth $script:ClusterStorageHealth -IncludeDiscoveredVMs:$IncludeDiscoveredVMs `
+                -ScriptVersion $script:ScriptVersion `
+                -ReportGenerationTime $genTimeText
             [System.IO.File]::WriteAllText($htmlPath, $html, (New-Object System.Text.UTF8Encoding($false)))
             $htmlWritten = $htmlPath
             Write-Host ""
@@ -2514,7 +2992,7 @@ end {
     if (-not $NoZip) {
         if ($script:RunFolder -and (Test-Path -LiteralPath $script:RunFolder)) {
             try {
-                $zipPath = Join-Path $OutputPath ("VMCheckpointAudit-{0}-{1}.zip" -f $safeCluster, $dateStamp)
+                $zipPath = Join-Path $OutputPath ("VMCheckpointAudit-{0}-{1}.zip" -f $safeCluster, $runStamp)
                 if (Test-Path -LiteralPath $zipPath) { Remove-Item -LiteralPath $zipPath -Force }
                 Compress-Archive -Path (Join-Path $script:RunFolder '*') -DestinationPath $zipPath -Force
                 $zipWritten = $zipPath
