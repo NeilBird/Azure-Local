@@ -637,7 +637,7 @@ function ConvertTo-VMCheckpointAuditHtml {
     if ($staleTotal -gt 0) {
         [void]$sb.Append((@'
   <li><strong>INVESTIGATE - backup team first:</strong> for each VM with a stale checkpoint older than {0} hours, check your backup product's recent job history - did the last backup complete? Or is this a manual checkpoint that has been overlooked? Stale checkpoints can be an indicator that a backup did not finish or that the post-backup merge was not requested or failed.</li>
-  <li><strong>INVESTIGATE - confirm expected vs abandoned:</strong> you need to confirm if the stale checkpoint(s) are expected (by design) or left behind by a failed backup. If from a point-in-time backup, the checkpoint should be removed / merged (preference for the backup product to perform the checkpoint removal action, over a manual deletion). If it is a deliberate manual checkpoint that is meant to be long-lived, it is fine to keep it (i.e. a stale flag is not always an issue that needs "fixing") - re-run this audit with <code>-StaleHours &lt;n&gt;</code> (e.g. a value above its age) so it is no longer flagged as stale.</li>
+  <li><strong>INVESTIGATE - confirm expected vs abandoned:</strong> you need to confirm if the stale checkpoint(s) are expected (by design) or left behind by a failed backup. If from a point-in-time backup, the checkpoint should be removed / merged (preference for the backup product to perform the checkpoint removal action, over a manual deletion) - the action and decision rest with you / your backup team. If it is a deliberate manual checkpoint that is meant to be long-lived, it is fine to keep it (i.e. a stale flag is not always an issue that needs "fixing") - re-run this audit with <code>-StaleHours &lt;n&gt;</code> (e.g. a value above its age) so it is no longer flagged as stale.</li>
 '@ -f $StaleHours))
     }
     if ($countInv -gt 0 -and $staleTotal -eq 0) {
@@ -647,12 +647,12 @@ function ConvertTo-VMCheckpointAuditHtml {
     }
     if ($orphanTotal -gt 0) {
         [void]$sb.Append((@'
-  <li><strong>INVESTIGATE - orphaned .avhdx file(s):</strong> {0} .avhdx file(s) were found in VM disk folder(s) that are NOT attached to any VM chain - a stuck / failed merge or a leftover initial Hyper-V Replica checkpoint can leave these behind under specific scenarios. Confirm with your backup team before removing any (do not delete blindly); open a Microsoft CSS case for guidance if required. See each VM's "Orphaned .avhdx files" detail below for names, sizes and timestamps.</li>
+  <li><strong>INVESTIGATE - orphaned .avhdx file(s):</strong> {0} .avhdx file(s) were found in VM disk folder(s) that are NOT attached to any VM chain - a stuck / failed merge or a leftover initial Hyper-V Replica checkpoint can leave these behind under specific scenarios. Confirm each file with your backup team or VM owner before removing any (do not delete blindly); open a Microsoft CSS case for guidance if required. The action and decision to cleanup these old file(s) rests with you / the administrator. See each VM's "Orphaned .avhdx files" detail below for names, sizes and timestamps.</li>
 '@ -f $orphanTotal))
     }
     if ($analyticNeedsEnable) {
         [void]$sb.Append(@'
-  <li><strong>Enable the Analytic channel</strong> (elevated, per node) to capture the internal per-disk revert trace for the next occurrence: <code>wevtutil sl Microsoft-Windows-Hyper-V-VMMS-Analytic /e:true /q:true</code></li>
+  <li><strong>Enable the Analytic channel</strong> (operator's choice; elevated, per node) to capture the internal per-disk revert trace for the next occurrence: <code>wevtutil sl Microsoft-Windows-Hyper-V-VMMS-Analytic /e:true /q:true</code></li>
 '@)
     }
     if ($storageDegraded) {
