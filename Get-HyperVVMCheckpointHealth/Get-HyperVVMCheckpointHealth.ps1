@@ -644,7 +644,7 @@ function ConvertTo-VMCheckpointAuditHtml {
     if ($countHold -gt 0) {
         [void]$sb.Append(@"
 <div class="callout high">
-  <strong>Headline:</strong> $countHold VM(s) are in <strong>HOLD STATE</strong> - a checkpoint fork-commit /
+  <strong>Exec Summary:</strong> $countHold VM(s) are in <strong>HOLD STATE</strong> - a checkpoint fork-commit /
   merge-failure signature AND unmerged differencing disk(s) are present together. As a precaution do NOT
   live/quick/storage-migrate or restart those VMs until the differencing chain has been validated (and
   merged if required). Engage Microsoft Support (CSS) and/or your backup vendor for those VMs.
@@ -653,7 +653,7 @@ function ConvertTo-VMCheckpointAuditHtml {
     } else {
         [void]$sb.Append(@"
 <div class="callout ok">
-  <strong>Headline:</strong> No VM shows the checkpoint <em>fork-commit / merge-failure</em> signature
+  <strong>Exec Summary:</strong> No VM shows the checkpoint <em>fork-commit / merge-failure</em> signature
   (event <code>3216</code> or an HRESULT such as <code>0x80048102</code>) and none is in a HOLD STATE, so
   <strong>no Microsoft Support (CSS) case is warranted yet</strong>. $staleTotal stale backup checkpoint(s)
   were found for the operations / backup team to triage first.
@@ -661,13 +661,16 @@ function ConvertTo-VMCheckpointAuditHtml {
 "@)
     }
 
-    # Node-wide events caveat.
+    # Node-wide events caveat. v0.2.15: the report now shows TWO event counts per VM (per-VM attributed,
+    # which drives the verdict, and node-wide for context), so this explains both rather than a single
+    # node-wide figure.
     [void]$sb.Append(@'
 <div class="callout info">
-  <strong>Reading the event counts:</strong> the "concerning events" count is matched <strong>node-wide</strong>
-  on each VM's owning node, so it reflects checkpoint / merge activity across <strong>all</strong> VMs on that
-  node - the messages often reference <em>other</em> VMs. Treat it as node health context, not proof that the
-  audited VM itself is failing. Per-VM event detail is in each VM's section below.
+  <strong>Reading the event counts:</strong> each VM shows <strong>two</strong> figures - a <strong>per-VM</strong>
+  count of concern events whose message names <em>that</em> VM (these drive its verdict), and a <strong>node-wide</strong>
+  count for context (checkpoint / merge activity across <strong>all</strong> VMs on the owning node, often referencing
+  <em>other</em> VMs). Only the node-wide figure is node health context, not proof the audited VM is failing; each VM's
+  own attributed events are listed in its section below.
 </div>
 '@)
 
@@ -1066,6 +1069,7 @@ checkpoint or an unhealthy VSS writer), which the operations / backup team shoul
   modified. Verdict legend: <span class="pill hold">HOLD STATE</span> fork-commit signature + unmerged
   disks (case-worthy) &nbsp; <span class="pill investigate">INVESTIGATE</span> concern signals, ops/backup
   team first &nbsp; <span class="pill ok">OK</span> no concerns &nbsp; <span class="pill err">ERROR / NOT FOUND</span>.
+  <br><br>Share feedback / report an issue: <a href="https://aka.ms/Get-HyperVVMCheckpointHealth-Feedback">aka.ms/Get-HyperVVMCheckpointHealth-Feedback</a>
 </footer>
 </div>
 </body>
