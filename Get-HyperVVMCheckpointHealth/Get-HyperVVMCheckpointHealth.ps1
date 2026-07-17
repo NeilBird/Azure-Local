@@ -626,7 +626,8 @@ function ConvertTo-VMCheckpointAuditHtml {
     &nbsp;&bull;&nbsp; Script version <b>$(ConvertTo-HtmlText $ScriptVersion)</b>$(if ($ReportGenerationTime) { "&nbsp;&bull;&nbsp; Processed <b>$countAll</b> $vmWord, across <b>$nodeCount</b> owning $nodeWord, in <b>$(ConvertTo-HtmlText $ReportGenerationTime)</b>" })<br>$(if ($ClusterNodeCount -gt 0) { "
     Cluster size: <b>$ClusterNodeCount</b> $(if ($ClusterNodeCount -eq 1) { 'node' } else { 'nodes' }) &nbsp;&bull;&nbsp; <b>$ClusterCsvCount</b> Cluster Shared Volume$(if ($ClusterCsvCount -eq 1) { '' } else { 's' })<br>" })
     Parameters: Stale CheckPoint threshold: $StaleHours h; Diagnostic events lookback: $EventLookbackHours h; Include discovered VMs: $(if ($IncludeDiscoveredVMs) { 'Yes' } else { 'No' }).<br>
-    Read-only diagnostic - <b>no changes were made to any VM</b>.
+    Read-only diagnostic - <b>no changes were made to any VM</b>.<br>
+    <b>DISCLAIMER:</b> EXAMPLE code - <b>NOT a Microsoft-supported product or service offering</b>; provided AS IS with NO warranty of any kind. Diagnostic only - do NOT remediate based solely on this output; for interpretation / remediation open a Microsoft Support (CSS) case. See the script header / README.md.
   </div>
 </header>
 
@@ -1069,6 +1070,7 @@ checkpoint or an unhealthy VSS writer), which the operations / backup team shoul
   modified. Verdict legend: <span class="pill hold">HOLD STATE</span> fork-commit signature + unmerged
   disks (case-worthy) &nbsp; <span class="pill investigate">INVESTIGATE</span> concern signals, ops/backup
   team first &nbsp; <span class="pill ok">OK</span> no concerns &nbsp; <span class="pill err">ERROR / NOT FOUND</span>.
+  <br><br><strong>DISCLAIMER:</strong> EXAMPLE code - <strong>NOT a Microsoft-supported product or service offering</strong>; provided AS IS with NO warranty of any kind (see the MIT License and README.md). Diagnostic only - it does NOT determine root cause definitively and does NOT remediate anything. Do NOT take remediation action based solely on this output; for interpretation of the findings and any remediation, open a Microsoft Support (CSS) case and act on their advice.
   <br><br>Share feedback / report an issue: <a href="https://aka.ms/Get-HyperVVMCheckpointHealth-Feedback">aka.ms/Get-HyperVVMCheckpointHealth-Feedback</a>
 </footer>
 </div>
