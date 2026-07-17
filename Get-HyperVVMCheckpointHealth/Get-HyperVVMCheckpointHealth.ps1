@@ -1048,6 +1048,7 @@ function ConvertTo-VMCheckpointAuditHtml {
 <p class="muted">Reference material to help interpret this report. Both sections below are <strong>collapsed by default</strong>
 to keep the report concise - click the <strong style="color:#0b1220;background:#38bdf8;padding:1px 8px;border-radius:999px;font-size:11.5px">&#9654; Show</strong>
 button on either heading to expand it.</p>
+<p class="muted">Reference: Microsoft Learn - Troubleshoot Hyper-V Virtual Machine Backup, Checkpoint, and Storage Failures: <a href="https://learn.microsoft.com/en-us/troubleshoot/windows-server/virtualization/hyper-v-virtual-machine-backup-checkpoint-storage">learn.microsoft.com/en-us/troubleshoot/windows-server/virtualization/hyper-v-virtual-machine-backup-checkpoint-storage</a></p>
 
 <details class="appx">
 <summary>Diagnostic event IDs - severity classification (how this tool grades each signal)</summary>
@@ -1128,7 +1129,6 @@ their base</strong>, orphaning everything written into the <code>.avhdx</code> l
 (<code>.avhdx</code>) layers - that combination is the data-loss risk. Concern signals <em>without</em> a confirming
 fork-commit signature are flagged <span class="pill investigate">INVESTIGATE</span> (usually a stalled / failed backup
 checkpoint or an unhealthy VSS writer), which the operations / backup team should triage first.</p>
-<p class="muted">Reference: Microsoft Learn - Troubleshoot Hyper-V Virtual Machine Backup, Checkpoint, and Storage Failures: <a href="https://learn.microsoft.com/en-us/troubleshoot/windows-server/virtualization/hyper-v-virtual-machine-backup-checkpoint-storage">learn.microsoft.com/en-us/troubleshoot/windows-server/virtualization/hyper-v-virtual-machine-backup-checkpoint-storage</a></p>
 </div>
 </details>
 
