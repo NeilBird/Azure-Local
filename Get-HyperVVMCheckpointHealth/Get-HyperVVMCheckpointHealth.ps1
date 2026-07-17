@@ -573,6 +573,9 @@ function ConvertTo-VMCheckpointAuditHtml {
   .callout.warn{background:var(--amber-bg);border-color:#7a5b12}
   .callout.high{background:var(--high-bg);border-color:#7a2438}
   .callout.ok{background:var(--green-bg);border-color:#1c6b3a}
+  .disclaimer{background:var(--amber-bg);border:1px solid #7a5b12;border-radius:8px;
+    padding:10px 16px;margin:0 0 22px;color:#fcd34d;font-size:12.5px;line-height:1.5}
+  .disclaimer b{color:#fde68a}
   table{width:100%;border-collapse:collapse;margin:12px 0;font-size:13.5px;
     background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:hidden}
   th,td{padding:9px 11px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top}
@@ -611,6 +614,7 @@ function ConvertTo-VMCheckpointAuditHtml {
 </head>
 <body>
 <div class="wrap">
+<div class="disclaimer"><b>&#9888; Disclaimer:</b> This tool is EXAMPLE code - <b>NOT a Microsoft-supported product or service offering</b>; provided AS IS with NO warranty of any kind (see the MIT License and README.md). It is a READ-ONLY diagnostic - it does NOT determine root cause definitively and does NOT remediate anything. Do NOT take remediation action based solely on this output; for interpretation of the findings and any remediation, open a Microsoft Support (CSS) case and act on their advice.</div>
 '@
     [void]$sb.Append($head)
 
@@ -626,8 +630,7 @@ function ConvertTo-VMCheckpointAuditHtml {
     &nbsp;&bull;&nbsp; Script version <b>$(ConvertTo-HtmlText $ScriptVersion)</b>$(if ($ReportGenerationTime) { "&nbsp;&bull;&nbsp; Processed <b>$countAll</b> $vmWord, across <b>$nodeCount</b> owning $nodeWord, in <b>$(ConvertTo-HtmlText $ReportGenerationTime)</b>" })<br>$(if ($ClusterNodeCount -gt 0) { "
     Cluster size: <b>$ClusterNodeCount</b> $(if ($ClusterNodeCount -eq 1) { 'node' } else { 'nodes' }) &nbsp;&bull;&nbsp; <b>$ClusterCsvCount</b> Cluster Shared Volume$(if ($ClusterCsvCount -eq 1) { '' } else { 's' })<br>" })
     Parameters: Stale CheckPoint threshold: $StaleHours h; Diagnostic events lookback: $EventLookbackHours h; Include discovered VMs: $(if ($IncludeDiscoveredVMs) { 'Yes' } else { 'No' }).<br>
-    Read-only diagnostic - <b>no changes were made to any VM</b>.<br>
-    <b>DISCLAIMER:</b> EXAMPLE code - <b>NOT a Microsoft-supported product or service offering</b>; provided AS IS with NO warranty of any kind. Diagnostic only - do NOT remediate based solely on this output; for interpretation / remediation open a Microsoft Support (CSS) case. See the script header / README.md.
+    Read-only diagnostic - <b>no changes were made to any VM</b>.
   </div>
 </header>
 
