@@ -581,11 +581,15 @@ function ConvertTo-VMCheckpointAuditHtml {
   /* All tables fill the SAME width as the body text and cards (the .wrap container) and never grow
      wider than it. Header cells wrap (white-space:normal) instead of nowrap - a 13-column table with
      nowrap headers forces a minimum width past the container and pokes out past every other section,
-     giving a ragged right edge. Wrapping headers + word-break on cells lets any table collapse to the
-     shared 100% width, so tables, text and the whole page line up on one uniform right edge. */
+     giving a ragged right edge. Wrapping headers + overflow-wrap on cells lets any table collapse to
+     the shared 100% width, so tables, text and the whole page line up on one uniform right edge.
+     NOTE: use overflow-wrap:break-word (NOT word-break:break-word) on cells - word-break splits words
+     mid-character ('Runn ing', 'Siz e'); overflow-wrap only breaks a word when it truly cannot fit, so
+     normal words (Running, Size, Created, Parent) stay intact and headers wrap only at spaces. Long
+     file paths still break because the 'code' rule carries its own overflow-wrap:anywhere. */
   table{width:100%;max-width:100%;table-layout:auto;border-collapse:collapse;margin:12px 0;font-size:13.5px;
     background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:hidden}
-  th,td{padding:9px 11px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top;overflow-wrap:break-word;word-break:break-word}
+  th,td{padding:9px 11px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top;overflow-wrap:break-word}
   th{background:var(--panel2);color:#cbd5e1;font-weight:600;white-space:normal}
   tbody tr:hover{background:#22304a}
   td.num{text-align:right;font-variant-numeric:tabular-nums}
