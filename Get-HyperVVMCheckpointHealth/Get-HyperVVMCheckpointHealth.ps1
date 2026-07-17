@@ -588,9 +588,11 @@ function ConvertTo-VMCheckpointAuditHtml {
      'code' rule breaks long words, so override it inside these cells. */
   td.nm{white-space:nowrap}
   td.nm code{white-space:nowrap;word-break:normal;overflow-wrap:normal}
-  /* VM-name cell: short names stay on one line, but a very long name (e.g. a Kubernetes
-     control-plane VM) is allowed to wrap so it never forces the whole table wider than the page. */
-  td.vmn{max-width:300px}
+  /* VM-name cell: reserve at least ~24 characters (min-width:24ch) so short / normal names NEVER
+     wrap - without it, overflow-wrap:anywhere lets the browser shrink the column to one character and
+     wrap even short names. A very long name (e.g. a Kubernetes control-plane VM) still wraps within
+     the 300px ceiling so it never forces the whole table wider than the page. */
+  td.vmn{min-width:24ch;max-width:300px}
   td.vmn code{white-space:normal;word-break:break-word;overflow-wrap:anywhere}
   .src{display:inline-block;margin-left:6px;padding:1px 7px;border-radius:999px;font-size:10.5px;
     font-weight:600;text-transform:uppercase;letter-spacing:.03em;vertical-align:middle}
