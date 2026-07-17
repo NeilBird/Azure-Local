@@ -582,7 +582,7 @@ function ConvertTo-VMCheckpointAuditHtml {
   th{background:var(--panel2);color:#cbd5e1;font-weight:600;white-space:nowrap}
   tbody tr:hover{background:#22304a}
   td.num{text-align:right;font-variant-numeric:tabular-nums}
-  /* VM name / node cells must NOT wrap (a wrapped name like KWDRPT02 was unreadable). The global
+  /* VM name / node cells must NOT wrap (a wrapped long VM name was unreadable). The global
      'code' rule breaks long words, so override it inside these cells. */
   td.nm{white-space:nowrap}
   td.nm code{white-space:nowrap;word-break:normal;overflow-wrap:normal}
@@ -2397,7 +2397,7 @@ function Invoke-VMCheckpointAudit {
     $replUnhealthy = ($replCritical -or $replWarning)
 
     # v0.2.14: classify each orphaned .avhdx so the operator gets an ACTIONABLE read, and detect the
-    # 'past rollback' fingerprint (the KWDRPT02 pattern): several orphans across multiple disk folders
+    # 'past rollback' fingerprint: several orphans across multiple disk folders
     # that share a common last-write DATE = the disks were rolled back to base at that time, orphaning
     # the checkpoint layers. That is the durable evidence of a MATERIALISED fork-commit event whose
     # original events may now be older than -EventLookbackHours. NEVER states 'safe to delete' - the
