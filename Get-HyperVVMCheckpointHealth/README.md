@@ -5,8 +5,8 @@
 ## Latest version:
 
 - Script: [`Get-HyperVVMCheckpointHealth.ps1`](./Get-HyperVVMCheckpointHealth.ps1)
-- Updated: 2026-07-16
-- Version: 0.2.14
+- Updated: 2026-07-17
+- Version: 0.2.15
 
 ## TL;DR
 
@@ -83,7 +83,7 @@ Review the source first: [`Get-HyperVVMCheckpointHealth.ps1`](./Get-HyperVVMChec
 
 # Create C:\Temp folder if it does not exist
 if(-not(Test-Path C:\Temp)){
-    New-Item -Type Directory -Path C:\Temp
+    New-Item -Type Directory -Path C:\Temp | Out-Null
 }
 # Change directory to C:\Temp
 Push-Location C:\Temp
@@ -95,10 +95,10 @@ Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/NeilBird/Azure-Local/m
 # cluster (cluster API - RPC, no WinRM), so this form is for running on a node. It returns every
 # clustered VM across all nodes, so -IncludeDiscoveredVMs is not needed here (they are already in
 # the list); use that switch only when auditing a SUBSET of VMs.
-.\Get-HyperVVMCheckpointHealth.ps1 -VMName (Get-ClusterGroup | Where-Object GroupType -eq 'VirtualMachine').Name -OutputPath C:\Temp\
+.\Get-HyperVVMCheckpointHealth.ps1 -VMName (Get-ClusterGroup | Where-Object GroupType -eq 'VirtualMachine').Name -OutputPath C:\Temp\VM_Checkpoint_Reports
 
 # Or, alternatively run the downloaded script for a VM named 'TestVM', using -IncludeDiscoveredVMs switch
-.\Get-HyperVVMCheckpointHealth.ps1 -VMName 'TestVM' -OutputPath C:\Temp\ -IncludeDiscoveredVMs
+.\Get-HyperVVMCheckpointHealth.ps1 -VMName 'TestVM' -OutputPath C:\Temp\VM_Checkpoint_Reports -IncludeDiscoveredVMs
 
 ```
 
@@ -113,17 +113,17 @@ Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/NeilBird/Azure-Local/m
 .\Get-HyperVVMCheckpointHealth.ps1 -VMName 'TestVM01'
 
 # One VM, also writing a per-VM .txt report and events .csv into a folder
-.\Get-HyperVVMCheckpointHealth.ps1 -VMName 'TestVM01' -OutputPath 'C:\Temp\Reports'
+.\Get-HyperVVMCheckpointHealth.ps1 -VMName 'TestVM01' -OutputPath 'C:\Temp\VM_Checkpoint_Reports'
 
 # Multiple VMs by name (array) - each gets its own .txt and .csv in the folder
-.\Get-HyperVVMCheckpointHealth.ps1 -VMName 'TestVM01','TestVM02' -OutputPath 'C:\Temp\Reports'
+.\Get-HyperVVMCheckpointHealth.ps1 -VMName 'TestVM01','TestVM02' -OutputPath 'C:\Temp\VM_Checkpoint_Reports'
 
 # Every clustered VM - ON A NODE. The bare Get-ClusterGroup targets the LOCAL cluster, so this form
 # only works when run on a cluster node (for a workstation, use the -Cluster form below).
-.\Get-HyperVVMCheckpointHealth.ps1 -VMName (Get-ClusterGroup | Where-Object GroupType -eq 'VirtualMachine').Name -OutputPath 'C:\Temp\Reports'
+.\Get-HyperVVMCheckpointHealth.ps1 -VMName (Get-ClusterGroup | Where-Object GroupType -eq 'VirtualMachine').Name -OutputPath 'C:\Temp\VM_Checkpoint_Reports'
 
 # A specific list of VM names (piped) - the script resolves each VM's owning node itself
-'VM01','VM02','VM03' | .\Get-HyperVVMCheckpointHealth.ps1 -OutputPath 'C:\Temp\Reports'
+'VM01','VM02','VM03' | .\Get-HyperVVMCheckpointHealth.ps1 -OutputPath 'C:\Temp\VM_Checkpoint_Reports'
 
 # REMOTE: from a management workstation (RSAT Failover Clustering) - target a cluster by name.
 # STEP 1 - verify the RSAT Failover Clustering tools are present on THIS workstation (see Requirements
@@ -134,12 +134,12 @@ Get-Command Get-ClusterGroup -ErrorAction SilentlyContinue   # should resolve; b
 # STEP 2 - run it. NOTE: -Cluster must appear TWICE - the (Get-ClusterGroup -Cluster 'CLUS01' ...) that
 # builds the -VMName list is a SEPARATE local command that does NOT inherit the script's -Cluster, so it
 # needs its own; the script's -Cluster then governs the audit.
-.\Get-HyperVVMCheckpointHealth.ps1 -Cluster 'CLUS01' -VMName (Get-ClusterGroup -Cluster 'CLUS01' | Where-Object GroupType -eq 'VirtualMachine').Name -OutputPath 'C:\Temp\Reports'
+.\Get-HyperVVMCheckpointHealth.ps1 -Cluster 'CLUS01' -VMName (Get-ClusterGroup -Cluster 'CLUS01' | Where-Object GroupType -eq 'VirtualMachine').Name -OutputPath 'C:\Temp\VM_Checkpoint_Reports'
 
 # Equivalent remote pipeline form (names gathered from the remote cluster, then piped in)
 Get-ClusterGroup -Cluster 'CLUS01' | Where-Object GroupType -eq 'VirtualMachine' |
     Select-Object -ExpandProperty Name |
-    .\Get-HyperVVMCheckpointHealth.ps1 -Cluster 'CLUS01' -OutputPath 'C:\Temp\Reports'
+    .\Get-HyperVVMCheckpointHealth.ps1 -Cluster 'CLUS01' -OutputPath 'C:\Temp\VM_Checkpoint_Reports'
 
 # Wider event look-back (14 days, vs the 7-day default) and a lower stale threshold (12h)
 .\Get-HyperVVMCheckpointHealth.ps1 -VMName 'TestVM01' -EventLookbackHours 336 -StaleHours 12
@@ -148,24 +148,24 @@ Get-ClusterGroup -Cluster 'CLUS01' | Where-Object GroupType -eq 'VirtualMachine'
 .\Get-HyperVVMCheckpointHealth.ps1 -VMName 'TestVM01' -SkipWorkerEvents -SkipAnalyticCheck
 
 # -PassThru: also emit one object per VM to the pipeline (for Where-Object / Export-Csv / roll-ups)
-$r = .\Get-HyperVVMCheckpointHealth.ps1 -VMName 'TestVM01','TestVM02' -OutputPath 'C:\Temp\Reports' -PassThru
+$r = .\Get-HyperVVMCheckpointHealth.ps1 -VMName 'TestVM01','TestVM02' -OutputPath 'C:\Temp\VM_Checkpoint_Reports' -PassThru
 $r | Where-Object HoldState | Format-Table VMName, OwningNode, Recommendation
 
 # HTML fleet report + results .zip are produced BY DEFAULT (into the -OutputPath run folder). The
 # console is quiet by default (one-line verdict per VM); the .txt and HTML still hold the full detail.
-.\Get-HyperVVMCheckpointHealth.ps1 -VMName 'VM01','VM02' -OutputPath 'C:\Temp\Reports'
+.\Get-HyperVVMCheckpointHealth.ps1 -VMName 'VM01','VM02' -OutputPath 'C:\Temp\VM_Checkpoint_Reports'
 
 # Full per-VM report on the console as well as the files
-.\Get-HyperVVMCheckpointHealth.ps1 -VMName 'VM01' -OutputPath 'C:\Temp\Reports' -Quiet:$false
+.\Get-HyperVVMCheckpointHealth.ps1 -VMName 'VM01' -OutputPath 'C:\Temp\VM_Checkpoint_Reports' -Quiet:$false
 
 # Also audit high-risk VMs DISCOVERED in the event data (bounded, non-recursive)
-.\Get-HyperVVMCheckpointHealth.ps1 -VMName 'VM01' -OutputPath 'C:\Temp\Reports' -IncludeDiscoveredVMs
+.\Get-HyperVVMCheckpointHealth.ps1 -VMName 'VM01' -OutputPath 'C:\Temp\VM_Checkpoint_Reports' -IncludeDiscoveredVMs
 
 # Audit every clustered VM EXCEPT those named in an exclusion CSV (single 'VMName' column, case-insensitive)
-.\Get-HyperVVMCheckpointHealth.ps1 -VMName (Get-ClusterGroup | Where-Object GroupType -eq 'VirtualMachine').Name -ExcludedVMListCsv '.\CheckPointAudit_Excluded_VMs.csv' -OutputPath 'C:\Temp\Reports'
+.\Get-HyperVVMCheckpointHealth.ps1 -VMName (Get-ClusterGroup | Where-Object GroupType -eq 'VirtualMachine').Name -ExcludedVMListCsv '.\CheckPointAudit_Excluded_VMs.csv' -OutputPath 'C:\Temp\VM_Checkpoint_Reports'
 
 # Choose the HTML location explicitly (folder or full .html path); suppress the zip and/or HTML
-.\Get-HyperVVMCheckpointHealth.ps1 -VMName 'VM01' -OutputPath 'C:\Temp\Reports' -HtmlReportPath 'C:\Reports\audit.html' -NoZip
+.\Get-HyperVVMCheckpointHealth.ps1 -VMName 'VM01' -OutputPath 'C:\Temp\VM_Checkpoint_Reports' -HtmlReportPath 'C:\Reports\audit.html' -NoZip
 ```
 
 ## Parameters, syntax and helpful information
@@ -200,7 +200,7 @@ $r | Where-Object HoldState | Format-Table VMName, OwningNode, Recommendation
 2. **VM configuration (`.vmcx`)** — the config file path plus its last-write time and age (the failure mode hinges on stale on-disk chain metadata living here).
 3. **Disk chain** — presented in three parts: an **overview table** (one row per attached disk: type, size, chain depth, checkpoint count, stale), a **per-disk detail block** (labelled `Disk File Name` / `Disk Full Path` plus type, size, created/last-write (UTC), age, stale — full path never truncated), and **differencing-chain detail shown only for disks that actually have a checkpoint layer** (depth > 1).
 4. **Checkpoints** (`Get-VMSnapshot`) — name, type, a derived **Purpose** (backup vs Replica vs manual), age, stale flag, parent.
-5. **Orphaned `.avhdx`** — files on disk in the VM's VHD folders that are **not** part of any attached chain (a stuck / failed merge or a leftover replica recovery point can leave these behind). Each is listed with its **size, created (UTC) and last-write (UTC)** timestamps and full path. Finding **any** orphan flags the VM **INVESTIGATE** (confirm with your backup team before removing — the script never deletes anything).
+5. **Orphaned `.avhdx`** — files on disk in the VM's VHD folders that are **not** part of any attached chain (a stuck / failed merge or a leftover replica recovery point can leave these behind). Each is listed with its **size, created (UTC) and last-write (UTC)** timestamps and full path. Finding **any** orphan flags the VM **INVESTIGATE** (confirm with your backup team before removing — the script never deletes anything). In the HTML report each orphan is given a **class** and a neutral **Likely / action** read (v0.2.15): **Rollback** (part of a common-date cluster of orphans — the aftermath of a materialised fork-commit rollback; do NOT remove, investigate/recover), **StuckMerge** (a matching `19090`/`19100`/`32510` merge-failure event names the file), **SafeToDelete** (a `16220` delete-attempt for this VM was blocked by a transient in-use lock and the event itself states the file is *safe to delete at any time*), **LiveMount** (a backup live-mount / temp artifact), or **Leftover**. The report **never** instructs you to delete — the action and decision always rest with you / your backup team.
 6. **Replica change logs (`.hrl`)** — per-VHD replication logs with size/age (a large/stale `.hrl` = replication backlog).
 7. **Cluster Shared Volume free space** — scoped to the volume(s) hosting this VM's disks (falls back to all cluster volumes if it can't match); a stuck merge is often blocked by low free space.
 8. **Cluster role** (`Get-ClusterGroup`) — clustered role state and current owner.
@@ -215,10 +215,11 @@ $r | Where-Object HoldState | Format-Table VMName, OwningNode, Recommendation
 
 15. **Cluster storage health (Storage Spaces Direct / CSV)** — a read-only, cluster-wide snapshot (gathered **once** per run): active `Get-StorageJob` repair/resync jobs, CSVs in redirected/paused state, and any unhealthy virtual/physical disks. Storage-layer disruption is a plausible contributing factor for the merge / `0x80070020` / `16300` symptoms (files transiently locked or unavailable). The HTML also recommends Microsoft's CSS **Storage Diagnostic** (`Install-Module -Name Microsoft.AzLocal.CSSTools`; then `Start-AzsSupportStorageDiagnostic`) for a deep S2D / SBL analysis. Skip with `-SkipStorageHealth`.
 16. **Discovered high-risk VMs** — VMs referenced in the node's **high-risk** event signals (merge interrupted / failed, `0x80070020`, cannot-load-config) but **not** in the audit list, cross-checked against real clustered VMs. Always **surfaced** (console + HTML) with a ready-to-run command; audited automatically only with `-IncludeDiscoveredVMs` (bounded, non-recursive).
+17. **Historic cross-node event correlation** (v0.2.15) — shown **only** for a VM that has orphaned `.avhdx` files. The original fork-commit / merge events that produced the orphans can be far older than `-EventLookbackHours` (a rollback that happened days or weeks ago), so this targeted scan looks for **this VM's** fork-commit / merge events in windows around **both** each orphan's **creation** time (the checkpoint / fork-commit moment) **and** its **last-write** time (when a later migration / restart froze it — the two can be days apart), across **every** cluster node (single hop each — the VM may have been owned by a different node at the time). Overlapping / adjacent windows are merged into contiguous ranges (so one `Get-WinEvent` query covers them, correctly spanning midnight / month-end). It also reads each log's **oldest available event**, so a nil result can be qualified as *"the window is covered — genuinely nothing"* vs *"the logs have **wrapped past** the window — absence is not proof"*. A recovered fork-commit event here is treated as **CONFIRMED** evidence a past rollback occurred.
 
 ## Portable HTML report & results bundle
 
-By default the run produces a single **self-contained HTML fleet report** (`VMCheckpointAudit-<Cluster>-<yyyy-MM-dd>.html`) — dark-themed, no external assets, safe to email or open on any device with a browser. The header states the cluster, script version, and (from v0.2.14) a run summary line: **`Processed <N> VMs, across <M> cluster nodes, in hh:mm:ss`** — the end-to-end wall-clock time to audit the fleet and render the report. It contains: summary cards (including an **Orphaned .avhdx** count); a **Recommended next steps** list (see below); a **VM summary table** with distinct **Checkpoints** (`Get-VMSnapshot` count) and **AVHDX files** (differencing layers = Checkpoints × Disks) columns; a **Discovered high-risk VMs** section; **per-VM detailed information** (including a per-VM **Orphaned .avhdx files** table — name, size, created + last-write timestamps, full path — and, for HOLD STATE VMs, a copy/paste **Support Case summary**); a **Cluster storage health** section; and an anonymised **Information** section explaining the fork-commit signature and the exact Event IDs / HRESULTs that indicate it.
+By default the run produces a single **self-contained HTML fleet report** (`VMCheckpointAudit-<Cluster>-<yyyy-MM-dd>.html`) — dark-themed, no external assets, safe to email or open on any device with a browser. The header states the cluster, script version, and (from v0.2.14) a run summary line: **`Processed <N> VMs, across <M> cluster nodes, in hh:mm:ss`** — the end-to-end wall-clock time to audit the fleet and render the report. It contains: summary cards (including an **Orphaned .avhdx** count); a **Recommended next steps** list (see below); a **VM summary table** with distinct **Checkpoints** (`Get-VMSnapshot` count) and **AVHDX files** (differencing layers = Checkpoints × Disks) columns — and (v0.2.15) each VM name is an **anchor link** that jumps to that VM's detail card; a **Discovered high-risk VMs** section; **per-VM detailed information** (including a per-VM **Orphaned .avhdx files** table — name, size, created + last-write timestamps, per-orphan **class** and **Likely / action** read, full path — a **Historic event correlation** section when the VM has orphans, and, for HOLD STATE VMs, a copy/paste **Support Case summary**); a **Cluster storage health** section; and an anonymised **Information** section explaining the fork-commit signature and the exact Event IDs / HRESULTs that indicate it.
 
 ### Recommended next steps (context-gated)
 
@@ -247,6 +248,7 @@ When `-OutputPath` is used, a results **`.zip`** bundling the `.txt` + `.csv` + 
     <VMName>_Events_<yyyy-MM-dd>.csv                     <- that VM's own events (VM-attributed), full untruncated text
     _NodeEvents_<node>_<yyyy-MM-dd>.csv                  <- node-wide events, written ONCE per node (shared context)
     VMCheckpointAudit-<ClusterName>-<yyyy-MM-dd>.html    <- portable fleet report (default; suppress with -NoHtml)
+    code_execution_perf_telemetry_<ClusterName>_<stamp>.json  <- internal per-step timing telemetry (see note below)
 ```
 
 - **`<VMName>_VMAudit_<yyyyMMdd-HHmmss>.txt`** — the full per-VM report (written from the captured output buffer; complete regardless of `-Quiet`).
@@ -254,6 +256,7 @@ When `-OutputPath` is used, a results **`.zip`** bundling the `.txt` + `.csv` + 
 - **`_NodeEvents_<node>_<yyyy-MM-dd>.csv`** — (v0.2.14) the **node-wide** event scan for each owning node, written **once per node** rather than duplicated into every VM's CSV. Node-wide events (e.g. a repeated `15268` flood that references many VMs) are shared context, so keeping them in one per-node file — and each VM's CSV to just its own attributed rows — dramatically shrinks large fleet runs. Each per-VM report points to the relevant node CSV for the node-wide detail.
 - **`VMCheckpointAudit-<ClusterName>-<yyyy-MM-dd>.html`** — the single portable fleet report covering all audited VMs (see [Portable HTML report](#portable-html-report--results-bundle)).
 - **`VMCheckpointAudit-<ClusterName>-<yyyy-MM-dd>.zip`** — a bundle of the run folder (`.txt` + `.csv` + `.html`), for copying to a browser device / attaching to a support case in one file.
+- **`code_execution_perf_telemetry_<ClusterName>_<stamp>.json`** — (v0.2.15) an **internal** per-step performance-telemetry file (hierarchical step numbers with accurate start/end times per phase). It is written into the run folder and bundled into the `.zip`, but is **not** referenced by the HTML report; it exists purely to help us profile and tune the script's execution over time. Safe to ignore for normal audits. Add `-AnonymizeTelemetry` to replace the cluster / node / VM names in this file (and in its file name, which becomes `code_execution_perf_telemetry_anon_<stamp>.json`) with stable pseudonyms (`CLUSTER`, `NODE-01`, `VM-001`) so the timing data can be shared for performance analysis without exposing customer identifiers.
 
 File names lead with the **VM name** so per-VM reports sort together for easy reading. Running against many VMs produces one `.txt` + one `.csv` per VM, all grouped in a single per-run sub-folder so repeated runs never intermix. The run-folder path is printed at the start of the run.
 
@@ -369,10 +372,10 @@ A row is emitted for **every** VM — including `NOT FOUND` / `ERROR` cases — 
 ```powershell
 $r = .\Get-HyperVVMCheckpointHealth.ps1 -Cluster 'CLUS01' `
         -VMName (Get-ClusterGroup -Cluster 'CLUS01' | Where-Object GroupType -eq 'VirtualMachine').Name `
-        -OutputPath 'C:\Temp\Reports' -PassThru
+        -OutputPath 'C:\Temp\VM_Checkpoint_Reports' -PassThru
 
 $r | Where-Object HoldState | Format-Table VMName, OwningNode, Recommendation
-$r | Export-Csv 'C:\Temp\Reports\fleet-summary.csv' -NoTypeInformation
+$r | Export-Csv 'C:\Temp\VM_Checkpoint_Reports\fleet-summary.csv' -NoTypeInformation
 ```
 
 ### Drilling into `ReportData`
@@ -382,7 +385,7 @@ The flat top-level properties are ideal for quick `Where-Object` / `Export-Csv` 
 ```powershell
 $r = .\Get-HyperVVMCheckpointHealth.ps1 -Cluster 'CLUS01' `
         -VMName (Get-ClusterGroup -Cluster 'CLUS01' | Where-Object GroupType -eq 'VirtualMachine').Name `
-        -OutputPath 'C:\Temp\Reports' -PassThru
+        -OutputPath 'C:\Temp\VM_Checkpoint_Reports' -PassThru
 
 # Drill into the rich detail for any VM carrying the fork-commit signature
 $r | Where-Object { $_.ReportData.HasForkSignature } |
