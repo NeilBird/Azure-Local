@@ -126,7 +126,7 @@
     Author  : Neil Bird, Microsoft
     Created : 2026-07-10
     Updated : 2026-07-17
-    Version : 0.2.15
+    Version : 0.2.16
     
     Requires: Windows PowerShell 5.1 (this script is written for, and validated against, Windows
               PowerShell 5.1 ONLY - it is NOT intended or tested for PowerShell 7.x). Also requires the Hyper-V
@@ -314,7 +314,7 @@ Then run this in Windows PowerShell 5.1, on a cluster node or a workstation that
 
 # Script version - single source of truth surfaced in the HTML report (header meta + footer) so a
 # saved / emailed report always states which build produced it. Keep in sync with the .NOTES Version.
-$script:ScriptVersion = '0.2.15'
+$script:ScriptVersion = '0.2.16'
 
 # v0.2.14: end-to-end run stopwatch - started as early as possible so the HTML report can state the
 # total time taken to audit the whole fleet and render the report ("Report generation time hh:mm:ss").
@@ -335,6 +335,8 @@ $script:RunStopwatch          = [System.Diagnostics.Stopwatch]::StartNew()
 #   1.10            = per-VM audit (total)   - repeats once per audited VM (input AND discovered)
 #   1.10.NN         = per-VM audit section   - NN = 05,10,15,... (assigned at each Show-AuditProgress call)
 #   1.10.50.10      = node-wide event-log scan (a sub-step of section 1.10.50; runs once per node)
+#   1.10.60.10      = VSS writer scan (a sub-step of section 1.10.60; runs once per node)
+#   1.10.75         = rendering findings / RESULT text + building the per-VM result object
 #   1.20            = (reserved / free for a future pre-audit phase)
 #   1.30            = cluster storage-health snapshot
 #   1.40            = HTML report render + write
@@ -608,6 +610,18 @@ function ConvertTo-VMCheckpointAuditHtml {
   ul{margin:8px 0;padding-left:22px} li{margin:3px 0}
   details{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:6px 14px;margin:10px 0}
   summary{cursor:pointer;font-weight:600;color:#cbd5e1}
+  /* Appendix collapsibles: a clear 'Show / Hide' pill button on each heading bar so it is
+     obvious the section expands (the bare default disclosure arrow is easy to miss). */
+  details.appx{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:0;margin:14px 0;overflow:hidden}
+  details.appx>summary{list-style:none;cursor:pointer;padding:14px 18px;font-weight:600;font-size:15.5px;color:#fff;
+    background:var(--panel2);display:flex;align-items:center;gap:12px;user-select:none}
+  details.appx>summary::-webkit-details-marker{display:none}
+  details.appx>summary::before{content:'\25B6 Show';flex:0 0 auto;font-size:11.5px;font-weight:700;letter-spacing:.03em;
+    color:#0b1220;background:var(--accent);padding:4px 12px;border-radius:999px;min-width:78px;text-align:center}
+  details.appx[open]>summary::before{content:'\25BC Hide';background:var(--amber)}
+  details.appx>summary:hover{background:#2b3d59}
+  details.appx>summary:hover::before{filter:brightness(1.08)}
+  details.appx>.appx-body{padding:4px 18px 18px}
   .muted{color:var(--muted)}
   footer{margin-top:44px;border-top:1px solid var(--line);padding-top:16px;color:var(--muted);font-size:12.5px}
 </style>
@@ -770,11 +784,11 @@ function ConvertTo-VMCheckpointAuditHtml {
     # VM summary table.
     [void]$sb.Append(@'
 <h2>VM summary table</h2>
-<p class="muted"><strong>Src</strong> = <span class="src input">Input</span> (you requested it) or <span class="src discovered">Discovered</span> (auto-added via <code>-IncludeDiscoveredVMs</code>). <strong>Checkpoints</strong> = checkpoint objects (<code>Get-VMSnapshot</code>). <strong>AVHDX files</strong> = active differencing <code>.avhdx</code> layers = <strong>Checkpoints &times; Disks</strong>. <strong>Orphans</strong> = <code>.avhdx</code> on disk but NOT attached. Rows are ordered by severity within each verdict.</p>
+<p class="muted"><strong>Src</strong> = <span class="src input">Input</span> (you requested it) or <span class="src discovered">Discovered</span> (auto-added via <code>-IncludeDiscoveredVMs</code>). <strong>Checkpoints</strong> = checkpoint objects (<code>Get-VMSnapshot</code>). <strong>AVHDX files</strong> = active differencing <code>.avhdx</code> layers = <strong>Checkpoints &times; Disks</strong>. <strong>Orphans</strong> = <code>.avhdx</code> on disk but NOT attached. <strong>Concerning Events (VM)</strong> = count of concern events attributed to THIS VM (<code>hi</code> = high-signal that drive the verdict; <code>low</code> = transient / housekeeping only). Rows are ordered by severity within each verdict.</p>
 <table>
 <thead><tr>
   <th>VM</th><th>State</th><th>Node</th><th>Cfg</th><th>Disks</th><th>Checkpoints</th><th>AVHDX files</th>
-  <th>Orphans</th><th>Stale</th><th>Oldest ckpt age</th><th>Hyper-V Replica</th><th>Verdict</th>
+  <th>Orphans</th><th>Stale</th><th>Oldest ckpt age</th><th>Concerning<br>Events (VM)</th><th>Hyper-V Replica</th><th>Verdict</th>
 </tr></thead>
 <tbody>
 '@)
@@ -801,12 +815,17 @@ function ConvertTo-VMCheckpointAuditHtml {
             } else { $oldest = '-' }
             $repl = if ($rd.Replication.Enabled) { ConvertTo-HtmlText ("{0} ({1})" -f $rd.Replication.State, $rd.Replication.Health) } else { 'Not enabled' }
             $stateTxt = ConvertTo-HtmlText $rd.State
+            # Concern (VM) cell: attributed concern-event count for THIS VM, annotating whether any are
+            # high-signal (drive the verdict) vs low-signal only (transient / housekeeping - no action).
+            $concernCell = if ([int]$rd.VmEventConcernCount -gt 0) {
+                if ([int]$rd.VmHighConcernCount -gt 0) { "{0} ({1} hi)" -f $rd.VmEventConcernCount, $rd.VmHighConcernCount } else { "{0} (low)" -f $rd.VmEventConcernCount }
+            } else { '0' }
             [void]$sb.Append(@"
 <tr>
   <td class="vmn"><a href="#$(ConvertTo-Anchor $r.VMName)"><code>$(ConvertTo-HtmlText $r.VMName)</code></a>$srcBadge</td><td>$stateTxt</td><td class="nm">$(ConvertTo-HtmlText $node)</td><td>$(ConvertTo-HtmlText $rd.Version)</td>
   <td class="num">$($rd.AttachedDiskCount)</td><td class="num">$ckptCount</td><td class="num">$($rd.CheckpointLayers)</td>
   <td class="num">$($rd.OrphanCount)</td><td class="num">$($rd.StaleCheckpointCount)</td><td>$oldest</td>
-  <td>$repl</td><td>$pill</td>
+  <td class="num">$concernCell</td><td>$repl</td><td>$pill</td>
 </tr>
 "@)
         } else {
@@ -815,7 +834,7 @@ function ConvertTo-VMCheckpointAuditHtml {
   <td class="vmn"><a href="#$(ConvertTo-Anchor $r.VMName)"><code>$(ConvertTo-HtmlText $r.VMName)</code></a>$srcBadge</td><td>-</td><td class="nm">$(ConvertTo-HtmlText $node)</td><td>-</td>
   <td class="num">-</td><td class="num">-</td><td class="num">-</td>
   <td class="num">-</td><td class="num">-</td><td>-</td>
-  <td>-</td><td>$pill</td>
+  <td class="num">-</td><td>-</td><td>$pill</td>
 </tr>
 "@)
         }
@@ -905,7 +924,7 @@ function ConvertTo-VMCheckpointAuditHtml {
             }
         } elseif ($r.Recommendation -eq 'OK') {
             if ($rd.LowSignalOnly) {
-                [void]$sb.Append("  <div class='callout ok'><strong>OK.</strong> No active checkpoint layers, no orphaned .avhdx, replica healthy and VSS stable. Note: $($rd.VmLowConcernCount) low-signal event(s) (e.g. 'failed to get disk information') are attributed to this VM - these are storage/housekeeping chatter and are not, on their own, a concern.</div>`r`n")
+                [void]$sb.Append("  <div class='callout ok'><strong>OK.</strong> No active checkpoint layers, no orphaned .avhdx, replica healthy and VSS stable. Note: $($rd.VmLowConcernCount) low-signal event(s) are attributed to this VM - e.g. transient 'background disk merge interrupted' (<code>19090</code>) that subsequently completed (no leftover <code>.avhdx</code> remains), or 'failed to get disk information' (<code>15268</code>) storage / housekeeping chatter. These are not, on their own, a concern and need no action.</div>`r`n")
             } else {
                 [void]$sb.Append("  <div class='callout ok'><strong>OK.</strong> No active checkpoint layers and no concern signals were found. No action required from this result.</div>`r`n")
             }
@@ -1025,7 +1044,50 @@ function ConvertTo-VMCheckpointAuditHtml {
 
     # Information (anonymised RCA background) + footer.
     [void]$sb.Append(@'
-<h2>Informational: technical details of the 'checkpoint fork-commit / merge-failure' signature</h2>
+<h2>Appendix - Knowledge and Information</h2>
+<p class="muted">Reference material to help interpret this report. Both sections below are <strong>collapsed by default</strong>
+to keep the report concise - click the <strong style="color:#0b1220;background:#38bdf8;padding:1px 8px;border-radius:999px;font-size:11.5px">&#9654; Show</strong>
+button on either heading to expand it.</p>
+
+<details class="appx">
+<summary>Diagnostic event IDs - severity classification (how this tool grades each signal)</summary>
+<div class="appx-body">
+<div class="callout info">
+  This is how <strong>this tool</strong> classifies each Hyper-V event ID / HRESULT when deciding a VM''s verdict. It
+  scans two Windows event providers - <code>Microsoft-Windows-Hyper-V-Worker-Admin</code> and
+  <code>Microsoft-Windows-Hyper-V-VMMS-Admin</code> - and also matches the HRESULT strings
+  <code>0x80048102</code>, <code>0x800480BD</code>, <code>0x800480BC</code>, <code>0x80070020</code>,
+  <code>0x800703EE</code>, <code>0x80070002</code> in the message text. (The <em>failure-mode forensic role</em> of
+  each signal - leading / trigger / symptom - is described in the technical-details section below; that framing is
+  complementary to the verdict grading here.)
+</div>
+<table>
+<thead><tr><th>Classification</th><th>Channel</th><th>Event ID / HRESULT</th><th>Description</th><th>Effect on the verdict</th></tr></thead>
+<tbody>
+  <tr><td><span class="pill hold">HOLD STATE</span></td><td>Hyper-V-Worker</td><td>Event <code>3216</code> (<code>0x800703EE</code>)</td><td>Failed to switch to the new differencing disks during checkpoint</td><td rowspan="4">Fork-commit signature. Drives <strong>HOLD STATE</strong> when found together with one or more unmerged differencing (<code>.avhdx</code>) layer(s).</td></tr>
+  <tr><td><span class="pill hold">HOLD STATE</span></td><td>Hyper-V-VMMS</td><td><code>0x80048102</code></td><td><code>VM_E_COMMIT_FORKS_ERROR</code> - the checkpoint fork-commit failed</td></tr>
+  <tr><td><span class="pill hold">HOLD STATE</span></td><td>Hyper-V-VMMS (Replica)</td><td><code>0x800480BD</code></td><td><code>VM_E_FR_CHANGE_TRACKING_FAILED</code> - Replica change-tracking failure (leading indicator)</td></tr>
+  <tr><td><span class="pill hold">HOLD STATE</span></td><td>Hyper-V-VMMS (Replica)</td><td><code>0x800480BC</code></td><td><code>VM_E_FR_RESYNC_REQUIRED</code> - Replica relationship broken (leading indicator)</td></tr>
+  <tr><td><span class="pill investigate">INVESTIGATE</span></td><td>Hyper-V-VMMS</td><td>Event <code>18012</code></td><td>Checkpoint operation failed</td><td rowspan="3">High-signal for this VM. Drives <strong>INVESTIGATE</strong> even without a fork-commit signature.</td></tr>
+  <tr><td><span class="pill investigate">INVESTIGATE</span></td><td>Hyper-V-VMMS</td><td>Event <code>19100</code></td><td>Background disk merge FAILED to complete (e.g. <code>0x80070020</code> sharing violation)</td></tr>
+  <tr><td><span class="pill investigate">INVESTIGATE</span></td><td>Hyper-V-VMMS</td><td>Event <code>16300</code></td><td>Cannot load a virtual machine configuration</td></tr>
+  <tr><td><strong class="muted">Low-signal</strong></td><td>Hyper-V-Worker</td><td>Event <code>3280</code></td><td>Related checkpoint / disk error</td><td rowspan="5">Context only. Surfaced (and still drives <em>discovery</em> of at-risk VMs) but, on its own, does NOT change an otherwise-clean VM''s verdict - a genuine leftover is caught separately by the orphaned-<code>.avhdx</code> scan.</td></tr>
+  <tr><td><strong class="muted">Low-signal</strong></td><td>Hyper-V-VMMS</td><td>Event <code>12240</code></td><td>Attachment <code>.avhdx</code> not found (<code>0x80070002</code>)</td></tr>
+  <tr><td><strong class="muted">Low-signal</strong></td><td>Hyper-V-VMMS</td><td>Event <code>15268</code></td><td>Failed to get disk information (storage / housekeeping chatter)</td></tr>
+  <tr><td><strong class="muted">Low-signal</strong></td><td>Hyper-V-VMMS</td><td>Event <code>19090</code></td><td>Background disk merge INTERRUPTED - transient; Hyper-V normally completes the merge later</td></tr>
+  <tr><td><strong class="muted">Low-signal</strong></td><td>Hyper-V-VMMS</td><td>Event <code>32510</code></td><td>Stale <code>.hrl</code> delete / merge housekeeping</td></tr>
+  <tr><td><strong class="muted">Informational</strong></td><td>Hyper-V-VMMS</td><td>Event <code>18500</code></td><td>VM started successfully</td><td rowspan="4">Normal lifecycle. Listed for the timeline / context and NEVER flagged as a concern.</td></tr>
+  <tr><td><strong class="muted">Informational</strong></td><td>Hyper-V-VMMS</td><td>Event <code>18510</code></td><td>Checkpoint completed</td></tr>
+  <tr><td><strong class="muted">Informational</strong></td><td>Hyper-V-VMMS</td><td>Event <code>19070</code></td><td>Background disk merge started</td></tr>
+  <tr><td><strong class="muted">Informational</strong></td><td>Hyper-V-VMMS</td><td>Event <code>19080</code></td><td>Background disk merge FINISHED successfully</td></tr>
+</tbody>
+</table>
+</div>
+</details>
+
+<details class="appx">
+<summary>Technical details of the 'checkpoint fork-commit / merge-failure' signature</summary>
+<div class="appx-body">
 <div class="callout info">
   <strong>Generic technical background</strong> - this section contains no customer, host or VM-specific data. It
   explains the failure mode this audit looks for and the exact Event IDs / error codes that indicate it is present.
@@ -1067,6 +1129,8 @@ their base</strong>, orphaning everything written into the <code>.avhdx</code> l
 fork-commit signature are flagged <span class="pill investigate">INVESTIGATE</span> (usually a stalled / failed backup
 checkpoint or an unhealthy VSS writer), which the operations / backup team should triage first.</p>
 <p class="muted">Reference: Microsoft Learn - Troubleshoot Hyper-V Virtual Machine Backup, Checkpoint, and Storage Failures: <a href="https://learn.microsoft.com/en-us/troubleshoot/windows-server/virtualization/hyper-v-virtual-machine-backup-checkpoint-storage">learn.microsoft.com/en-us/troubleshoot/windows-server/virtualization/hyper-v-virtual-machine-backup-checkpoint-storage</a></p>
+</div>
+</details>
 
 <footer>
   Generated by <code>Get-HyperVVMCheckpointHealth.ps1</code> (version __SCRIPTVERSION__). Read-only diagnostic report; no VM state was
@@ -2300,25 +2364,42 @@ function Invoke-VMCheckpointAudit {
     # owning node; if that is unavailable the section degrades gracefully.
     Show-AuditProgress -Step 60 -Status 'Checking VSS writer health'
     Write-Section "VSS Writer Health (vssadmin list writers - read-only):"
+    # v0.2.16 PERF: VSS writer state is a NODE property ('vssadmin list writers' enumerates the owning
+    # node's writers, not this VM's), so cache it ONCE per owning node and reuse it for every VM on that
+    # node - exactly as the Worker/VMMS event scan is cached. On a fleet run this was the single biggest
+    # cost (per-VM vssadmin can take tens of seconds to minutes); caching cuts it from once-per-VM to
+    # once-per-node. A null cache entry means the query genuinely failed on that node (recorded so it is
+    # not retried per VM).
     $vssWriters = $null
-    try {
-        $vssWriters = @(Invoke-OnOwner -ScriptBlock {
-            $raw = & vssadmin list writers 2>$null
-            if (-not $raw) { return @() }
-            $text = ($raw -join "`n")
-            $out = @()
-            foreach ($b in ($text -split "(?m)^Writer name:")) {
-                if ($b -notmatch "'") { continue }
-                $name    = if ($b -match "'([^']+)'")      { $Matches[1] }        else { '' }
-                $state   = if ($b -match "State:\s*(.+)")   { $Matches[1].Trim() } else { '' }
-                $lastErr = if ($b -match "Last error:\s*(.+)") { $Matches[1].Trim() } else { '' }
-                if ($name) { $out += [pscustomobject]@{ Writer = $name; State = $state; 'Last error' = $lastErr } }
-            }
-            $out
-        })
-    } catch {
-        $vssWriters = $null
-        Write-Alert "  Could not query VSS writers on '$OwningNode' (needs an elevated context): $($_.Exception.Message)" -Level Warning
+    if ($script:VssByNode.ContainsKey($OwningNode)) {
+        $vssWriters = $script:VssByNode[$OwningNode]
+    } else {
+        # v0.2.16: time the once-per-node vssadmin scan as its own sub-step (1.10.60.10), mirroring the
+        # node event-log scan (1.10.50.10), so the telemetry cleanly isolates the per-node VSS cost from
+        # the per-VM overhead and can prove the caching saving on the next run.
+        $vssScanStart = Get-TelemetryNow
+        try {
+            $vssWriters = @(Invoke-OnOwner -ScriptBlock {
+                $raw = & vssadmin list writers 2>$null
+                if (-not $raw) { return @() }
+                $text = ($raw -join "`n")
+                $out = @()
+                foreach ($b in ($text -split "(?m)^Writer name:")) {
+                    if ($b -notmatch "'") { continue }
+                    $name    = if ($b -match "'([^']+)'")      { $Matches[1] }        else { '' }
+                    $state   = if ($b -match "State:\s*(.+)")   { $Matches[1].Trim() } else { '' }
+                    $lastErr = if ($b -match "Last error:\s*(.+)") { $Matches[1].Trim() } else { '' }
+                    if ($name) { $out += [pscustomobject]@{ Writer = $name; State = $state; 'Last error' = $lastErr } }
+                }
+                $out
+            })
+            $script:VssByNode[$OwningNode] = $vssWriters
+        } catch {
+            $vssWriters = $null
+            $script:VssByNode[$OwningNode] = $null
+            Write-Alert "  Could not query VSS writers on '$OwningNode' (needs an elevated context): $($_.Exception.Message)" -Level Warning
+        }
+        Add-TelemetryEntry -Step '1.10.60.10' -Phase 'VSS writer scan (once per node)' -Detail $OwningNode -StartUtc $vssScanStart -EndUtc (Get-TelemetryNow)
     }
     $vssUnhealthy = @()
     if ($vssWriters -and $vssWriters.Count -gt 0) {
@@ -2384,7 +2465,17 @@ function Invoke-VMCheckpointAudit {
     # LOW-signal per-VM events (e.g. 15268 'failed to get disk information', 12240 attachment-not-found,
     # 3280 could-not-initiate, 32510 stale .hrl delete) are storage / housekeeping chatter and, on
     # their own, must NOT flag an otherwise-clean, running, checkpoint-free, replica-Normal VM.
-    $vmHighSignalIds     = @(3216, 18012, 19090, 19100, 16300)
+    # v0.2.16: 19090 ('background disk merge INTERRUPTED') REMOVED from the high-signal set. An
+    # interrupted merge is TRANSIENT by nature - Hyper-V retries and normally COMPLETES the merge later
+    # (the field data shows 19070 'merge started' / 19080 'merge finished successfully' bracketing these).
+    # A merge that was interrupted and genuinely never completed leaves an orphaned .avhdx behind, which
+    # is caught independently by the orphan scan (and DOES drive INVESTIGATE via $hasOrphans). So a 19090
+    # with NO leftover orphan / attached layer means the merge resolved - it must NOT, on its own, flag an
+    # otherwise-clean VM (no orphans, no stale checkpoint, healthy replica) as INVESTIGATE with no
+    # actionable next step. A genuine merge FAILURE (19100), a failed checkpoint (18012), a fork-commit
+    # (3216) or cannot-load-config (16300) remain high-signal. 19090 is still shown (Concern=YES) and
+    # still drives DISCOVERY, but is treated as low-signal for the per-VM verdict.
+    $vmHighSignalIds     = @(3216, 18012, 19100, 16300)
     $vmHighConcernEvents = @($vmConcernEvents | Where-Object { ($vmHighSignalIds -contains [int]$_.Id) -or ($_.FullMessage -match $forkCommitRx) })
     $vmHighConcernCount  = @($vmHighConcernEvents).Count
     $vmLowConcernCount   = $vmEventConcernCount - $vmHighConcernCount
@@ -2506,16 +2597,60 @@ function Invoke-VMCheckpointAudit {
     # though the events are outside the standard window). Surface it as its own flag.
     $historicForkConfirmed = ($historicCorrelation -and (@($historicCorrelation.Matches | Where-Object { ([int]$_.Id -eq 3216) -or ($_.Message -match $forkCommitRx) }).Count -gt 0))
 
+    # v0.2.16: render the historic correlation in the CONSOLE / .txt report too (previously it was only
+    # emitted into the HTML, so the .txt - the artifact attached to a support case - omitted the single
+    # strongest piece of evidence and could even read 'fork-commit signature NOT observed' while the HTML
+    # said CONFIRMED). Only shown when the scan ran (i.e. the VM had orphaned .avhdx files).
+    if ($historicCorrelation) {
+        Write-Host ""
+        Write-Section "Historic Event Correlation (fork-commit / merge events around the orphan timestamps):"
+        Write-Host ("  Searched +/- {0} min around each orphan's create and last-write times, across {1} node(s)," -f $historicCorrelation.WindowMinutes, @($historicCorrelation.NodesSearched).Count)
+        Write-Host  "  for THIS VM's fork-commit / merge events that may predate the standard event lookback window."
+        Write-Host ("  Windows: {0}" -f ((@($historicCorrelation.Windows)) -join '; '))
+        if ([int]$historicCorrelation.MatchCount -gt 0) {
+            if ($historicForkConfirmed) {
+                Write-Alert  "  CONFIRMED past fork-commit / merge failure: historic events for this VM were recovered around" -Level Critical
+                Write-Alert  "  the orphan timestamps (outside the standard window). This is strong evidence the rollback DID" -Level Critical
+                Write-Alert  "  occur - engage Microsoft Support (CSS) / your backup vendor to recover the orphaned data." -Level Critical
+            } else {
+                Write-Alert ("  {0} historic event(s) recovered around the orphan timestamps (see below)." -f $historicCorrelation.MatchCount) -Level Warning
+            }
+            @($historicCorrelation.Matches) | Select-Object `
+                @{N='Time (UTC)';E={ $_.Time }}, @{N='Node';E={ $_.Node }}, @{N='Log';E={ $_.Log }}, Id, Message |
+                Format-Table -AutoSize -Wrap | Out-Indented
+        } else {
+            if ($historicCorrelation.LogsWrappedPastWindow) {
+                Write-Alert ("  No historic events found - but the event logs on the searched node(s) only go back to {0} UTC," -f $historicCorrelation.OldestAvailableUtc) -Level Warning
+                Write-Host  "  which is AFTER the orphan timestamps. The logs have WRAPPED past the relevant window, so the"
+                Write-Host  "  original events are no longer available - absence here is NOT proof that no rollback occurred."
+            } else {
+                Write-Host ("  No historic fork-commit / merge events for this VM in the searched windows, and the logs DO cover" )
+                Write-Host ("  that period (oldest available {0} UTC). The orphans are less likely to be a fork-commit rollback -" -f $historicCorrelation.OldestAvailableUtc)
+                Write-Host  "  more likely leftover backup / live-mount files - but confirm with your backup team."
+            }
+        }
+        Write-Host ""
+    }
+
     # ---- Findings block for the operator / backup team (and, only when warranted, a CSS case) -------
     # A copy/paste-ready summary of the key findings. The framing ADAPTS to severity so we do NOT push
     # operators toward a Microsoft Support (CSS) case when there is no fork-commit signature: only
     # HOLD STATE (a confirmed fork-commit signature alongside unmerged differencing disks) warrants a
     # CSS case up front; INVESTIGATE and clean results are for the operator / backup team to triage
     # FIRST. It references the events CSV for the full, untruncated detail.
+    # v0.2.16: open a dedicated 'Rendering findings + building result' section (1.10.75) here so the
+    # findings / RESULT text AND the ReportData object build are timed on their own, instead of being
+    # absorbed by the still-open 'Building summary' (1.10.65) / 'Historic event correlation' (1.10.70)
+    # section (which the finally block would otherwise close only at the very end of the VM audit).
+    Show-AuditProgress -Step 75 -Status 'Rendering findings + building result'
     if ($holdState) {
         $statementTitle = "PROBLEM STATEMENT (for a Microsoft Support (CSS) case and/or your backup vendor):"
     } elseif ($investigate) {
-        $statementTitle = "FINDINGS TO INVESTIGATE (for your operations / backup team - no Microsoft case needed yet):"
+        $statementTitle = if ($historicForkConfirmed) {
+            "FINDINGS - POSSIBLE PAST ROLLBACK (CONFIRMED historic fork-commit - engage Microsoft Support (CSS) / your backup vendor):"
+        } else {
+            "FINDINGS TO INVESTIGATE (for your operations / backup team - no Microsoft case needed yet):"
+        }
     } else {
         $statementTitle = "SUMMARY (for your records):"
     }
@@ -2578,9 +2713,18 @@ function Invoke-VMCheckpointAudit {
         Write-Host  "  merged if required); reopening an inconsistent chain can roll disks back to base and lose data."
     } elseif ($investigate) {
         Write-Host ""
-        Write-Host  "  ASSESSMENT: INVESTIGATE - the specific checkpoint fork-commit signature was NOT observed; the"
-        Write-Host  "  likely cause is a stalled / failed backup checkpoint or an unhealthy VSS writer rather than"
-        Write-Host  "  on-disk chain corruption. Concern signal(s) for this VM:"
+        if ($historicForkConfirmed) {
+            Write-Host  "  ASSESSMENT: INVESTIGATE (possible PAST rollback) - no CURRENT fork-commit signature and no attached"
+            Write-Host  "  differencing disk(s), BUT a PAST checkpoint fork-commit / merge failure for this VM was CONFIRMED"
+            Write-Host  "  via historic events recovered around the orphaned .avhdx timestamps (see the Historic Event"
+            Write-Host  "  Correlation section above). The orphaned file(s) are the likely aftermath of that materialised"
+            Write-Host  "  rollback and may hold un-recovered data - engage Microsoft Support (CSS) / your backup vendor to"
+            Write-Host  "  recover them; do NOT delete them. Concern signal(s) for this VM:"
+        } else {
+            Write-Host  "  ASSESSMENT: INVESTIGATE - the specific checkpoint fork-commit signature was NOT observed; the"
+            Write-Host  "  likely cause is a stalled / failed backup checkpoint or an unhealthy VSS writer rather than"
+            Write-Host  "  on-disk chain corruption. Concern signal(s) for this VM:"
+        }
         if ($staleCheckpoints.Count -gt 0) {
             Write-Host ("    - {0} checkpoint(s) at or beyond the {1}-hour stale threshold (set via -StaleHours; default 24)." -f $staleCheckpoints.Count, $StaleHours)
         }
@@ -2592,6 +2736,9 @@ function Invoke-VMCheckpointAudit {
         }
         if ($hasOrphans) {
             Write-Host ("    - {0} orphaned .avhdx file(s) in this VM's disk folder(s) (see the Orphaned .avhdx Files section above)." -f @($orphans).Count)
+        }
+        if ($historicForkConfirmed) {
+            Write-Host  "    - CONFIRMED historic fork-commit / merge event(s) recovered for this VM (see Historic Event Correlation above)."
         }
     }
     if ($staleCheckpoints.Count -gt 0) {
@@ -2609,16 +2756,34 @@ function Invoke-VMCheckpointAudit {
         Write-Host  "  Requested action: engage Microsoft Support (CSS) and/or your backup vendor to advise on the safe"
         Write-Host  "  next step to validate and merge / consolidate the differencing chain BEFORE any migration / restart."
     } elseif ($investigate) {
-        Write-Host  "  Suggested next steps (operator / backup team FIRST - a Microsoft Support (CSS) case is NOT needed"
-        Write-Host  "  for this result):"
-        Write-Host  "    1. Check your backup product's recent job history for this VM - did the last backup complete?"
-        Write-Host  "    2. Confirm whether the aged checkpoint is expected (by design) or was left behind by a failed backup."
-        Write-Host  "    3. If it is a leftover backup checkpoint, merge / remove it via the backup product (preferred), or"
-        Write-Host  "       via Hyper-V Manager once your backup team confirms it is safe to do so."
-        Write-Host  "    4. Only open a Microsoft Support (CSS) case if a fork-commit signature later appears, or your"
-        Write-Host  "       backup vendor rules out their product."
+        if ($historicForkConfirmed) {
+            Write-Host  "  Suggested next steps (a PAST fork-commit was CONFIRMED for this VM - treat as a recovery case):"
+            Write-Host  "    1. Do NOT delete the orphaned .avhdx file(s) - they may hold data written between the checkpoint"
+            Write-Host  "       and the rollback that has not been recovered."
+            Write-Host  "    2. Engage your backup vendor and open a Microsoft Support (CSS) case to advise on recovering the"
+            Write-Host  "       orphaned data and confirming the current chain is consistent before any migration / restart."
+            Write-Host  "    3. Re-run this audit with a larger -EventLookbackHours (e.g. 720) to capture more of the original"
+            Write-Host  "       event timeline for the case."
+        } else {
+            Write-Host  "  Suggested next steps (operator / backup team FIRST - a Microsoft Support (CSS) case is NOT needed"
+            Write-Host  "  for this result):"
+            Write-Host  "    1. Check your backup product's recent job history for this VM - did the last backup complete?"
+            Write-Host  "    2. Confirm whether the aged checkpoint is expected (by design) or was left behind by a failed backup."
+            Write-Host  "    3. If it is a leftover backup checkpoint, merge / remove it via the backup product (preferred), or"
+            Write-Host  "       via Hyper-V Manager once your backup team confirms it is safe to do so."
+            Write-Host  "    4. Only open a Microsoft Support (CSS) case if a fork-commit signature later appears, or your"
+            Write-Host  "       backup vendor rules out their product."
+        }
     } else {
-        Write-Host  "  No action required from this result - no active checkpoint layer(s) and no concern signals were found."
+        if ($lowSignalOnly) {
+            Write-Host ("  No action required from this result - no active checkpoint layer(s), no orphaned .avhdx, healthy replica" )
+            Write-Host  "  and stable VSS writers. This VM has no high-signal concern events; the low-signal event(s) attributed"
+            Write-Host  "  to it (e.g. a 'background disk merge interrupted' (19090) that subsequently completed with no leftover"
+            Write-Host  "  .avhdx, or 'failed to get disk information' (15268) storage / housekeeping chatter) are not, on their"
+            Write-Host  "  own, a concern and need no action."
+        } else {
+            Write-Host  "  No action required from this result - no active checkpoint layer(s) and no concern signals were found."
+        }
     }
     Write-Host ""
     if ($holdState) {
@@ -2667,10 +2832,17 @@ function Invoke-VMCheckpointAudit {
         Write-Alert "  See the PROBLEM STATEMENT section above for the recommended next steps and a copy/paste case summary." -Level Critical
     } elseif ($investigate) {
         Write-Host ""
-        Write-Alert "  INVESTIGATE: concern signals are present, but the specific checkpoint fork-commit signature" -Level Warning
-        Write-Alert "  was NOT observed (likely a stalled / failed backup checkpoint or an unhealthy VSS writer)." -Level Warning
-        Write-Alert ("  Why flagged: {0} concerning event(s) for this VM [{1}]; {2} checkpoint(s) >= {3}h old; {4} unhealthy VSS writer(s); {5} orphaned .avhdx file(s)." -f $vmEventConcernCount, $vmConcernIdSummary, $staleCheckpoints.Count, $StaleHours, $vssUnhealthy.Count, @($orphans).Count) -Level Warning
-        Write-Alert "  See the FINDINGS TO INVESTIGATE section above for the suggested next steps (backup-team triage first; no Microsoft case needed yet)." -Level Warning
+        if ($historicForkConfirmed) {
+            Write-Alert "  INVESTIGATE (possible PAST rollback): no CURRENT fork-commit signature, but a PAST checkpoint" -Level Critical
+            Write-Alert "  fork-commit / merge failure for this VM was CONFIRMED via historic events around the orphan timestamps." -Level Critical
+            Write-Alert ("  Why flagged: CONFIRMED historic fork-commit event(s); {0} orphaned .avhdx file(s); {1} concerning event(s) for this VM [{2}]." -f @($orphans).Count, $vmEventConcernCount, $vmConcernIdSummary) -Level Critical
+            Write-Alert "  See the Historic Event Correlation and FINDINGS TO INVESTIGATE sections above - engage Microsoft Support (CSS) / your backup vendor to recover the orphaned data." -Level Critical
+        } else {
+            Write-Alert "  INVESTIGATE: concern signals are present, but the specific checkpoint fork-commit signature" -Level Warning
+            Write-Alert "  was NOT observed (likely a stalled / failed backup checkpoint or an unhealthy VSS writer)." -Level Warning
+            Write-Alert ("  Why flagged: {0} concerning event(s) for this VM [{1}]; {2} checkpoint(s) >= {3}h old; {4} unhealthy VSS writer(s); {5} orphaned .avhdx file(s)." -f $vmEventConcernCount, $vmConcernIdSummary, $staleCheckpoints.Count, $StaleHours, $vssUnhealthy.Count, @($orphans).Count) -Level Warning
+            Write-Alert "  See the FINDINGS TO INVESTIGATE section above for the suggested next steps (backup-team triage first; no Microsoft case needed yet)." -Level Warning
+        }
     }
     # Diagnostic-coverage TIP (independent of the verdict): if the Hyper-V-VMMS/Analytic channel is not
     # enabled on one or more nodes, say so HERE in the RESULT block - mid-report it is easily missed.
@@ -2945,6 +3117,7 @@ $script:ProbeVmNodeMap      = $null   # hashtable VMName -> node for non-cluster
 $script:SessionByNode       = @{}     # pooled PSSession per owning node, reused across VMs, disposed in end block
 $script:HostVersionsByNode  = @{}     # hashtable node -> supported VM config versions (Get-VMHostSupportedVersion, once per node)
 $script:ClusterCsvCache     = $null   # Get-ClusterSharedVolume result (once)
+$script:VssByNode           = @{}     # hashtable node -> vssadmin writer rows (once per node; VSS writer state is node-scoped, not per-VM)
 
 # Exclusion list: VM names to SKIP, read ONCE from -ExcludedVMListCsv into a case-INSENSITIVE HashSet
 # so the process-block membership test is O(1). A CSV with a 'VMName' header column is preferred; a
@@ -3273,7 +3446,7 @@ end {
                 SkipWorkerEvents   = [bool]$SkipWorkerEvents
                 SkipStorageHealth  = [bool]$SkipStorageHealth
                 TotalRunSeconds    = [math]::Round($script:RunStopwatch.Elapsed.TotalSeconds, 3)
-                StepNumbering      = '1 = whole run; 1.10 = per-VM audit total (repeats per VM); 1.10.NN = per-VM section (NN two-digit, gaps of 5); 1.10.50.10 = node event-log scan (once per node); 1.20 reserved; 1.30 = storage-health snapshot; 1.40 = HTML render+write. Step numbers are HIERARCHICAL / NESTED: 1.10 is a TOTAL that CONTAINS its 1.10.NN sections, 1.10.50.10 is inside 1.10.50, and 1 contains everything - do NOT sum DurationSec across levels (you would multi-count). Order = completion order (a nested sub-step is emitted before its parent); sort by StartUtc for a true timeline. Step numbers intentionally REPEAT per VM - use the Detail field to distinguish.'
+                StepNumbering      = '1 = whole run; 1.10 = per-VM audit total (repeats per VM); 1.10.NN = per-VM section (NN two-digit, gaps of 5); 1.10.50.10 = node event-log scan (once per node); 1.10.60.10 = VSS writer scan (once per node); 1.10.75 = findings / RESULT render + result-object build; 1.20 reserved; 1.30 = storage-health snapshot; 1.40 = HTML render+write. The results-zip (Compress-Archive) is NOT a step here because this JSON is written BEFORE (and bundled INTO) the zip; its elapsed is printed on the console instead. Step numbers are HIERARCHICAL / NESTED: 1.10 is a TOTAL that CONTAINS its 1.10.NN sections, 1.10.50.10 is inside 1.10.50, and 1 contains everything - do NOT sum DurationSec across levels (you would multi-count). Order = completion order (a nested sub-step is emitted before its parent); sort by StartUtc for a true timeline. Step numbers intentionally REPEAT per VM - use the Detail field to distinguish.'
                 Steps              = $telSteps
             }
             $telJson = $telDoc | ConvertTo-Json -Depth 6
@@ -3293,9 +3466,15 @@ end {
             try {
                 $zipPath = Join-Path $OutputPath ("VMCheckpointAudit-{0}-{1}.zip" -f $safeCluster, $runStamp)
                 if (Test-Path -LiteralPath $zipPath) { Remove-Item -LiteralPath $zipPath -Force }
+                # v0.2.16: time the zip on its console line. It CANNOT go in the telemetry JSON step list
+                # because that JSON is written BEFORE the zip (so it is bundled INTO the zip) - a 1.50
+                # entry would be recorded after the file was already serialised and would be lost. The
+                # console elapsed is the practical way to see the (usually small) Compress-Archive cost.
+                $zipStart = Get-TelemetryNow
                 Compress-Archive -Path (Join-Path $script:RunFolder '*') -DestinationPath $zipPath -Force
+                $zipSecs  = [math]::Round(((Get-TelemetryNow) - $zipStart).TotalSeconds, 1)
                 $zipWritten = $zipPath
-                Write-Host "Results bundled to zip:       $zipPath"
+                Write-Host ("Results bundled to zip:       {0}  (took {1}s)" -f $zipPath, $zipSecs)
             } catch {
                 Write-Alert "  WARNING: could not create the results zip: $($_.Exception.Message)" -Level Warning
             }

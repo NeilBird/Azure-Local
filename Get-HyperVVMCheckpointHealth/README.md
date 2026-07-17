@@ -6,7 +6,7 @@
 
 - Script: [`Get-HyperVVMCheckpointHealth.ps1`](./Get-HyperVVMCheckpointHealth.ps1)
 - Updated: 2026-07-17
-- Version: 0.2.15
+- Version: 0.2.16
 
 ## TL;DR
 
