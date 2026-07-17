@@ -578,21 +578,26 @@ function ConvertTo-VMCheckpointAuditHtml {
   .disclaimer{background:var(--amber-bg);border:1px solid #7a5b12;border-radius:8px;
     padding:10px 16px;margin:0 0 22px;color:#fcd34d;font-size:12.5px;line-height:1.5}
   .disclaimer b{color:#fde68a}
-  table{width:100%;border-collapse:collapse;margin:12px 0;font-size:13.5px;
+  /* All tables fill the SAME width as the body text and cards (the .wrap container) and never grow
+     wider than it. Header cells wrap (white-space:normal) instead of nowrap - a 13-column table with
+     nowrap headers forces a minimum width past the container and pokes out past every other section,
+     giving a ragged right edge. Wrapping headers + word-break on cells lets any table collapse to the
+     shared 100% width, so tables, text and the whole page line up on one uniform right edge. */
+  table{width:100%;max-width:100%;table-layout:auto;border-collapse:collapse;margin:12px 0;font-size:13.5px;
     background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:hidden}
-  th,td{padding:9px 11px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top}
-  th{background:var(--panel2);color:#cbd5e1;font-weight:600;white-space:nowrap}
+  th,td{padding:9px 11px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top;overflow-wrap:break-word;word-break:break-word}
+  th{background:var(--panel2);color:#cbd5e1;font-weight:600;white-space:normal}
   tbody tr:hover{background:#22304a}
   td.num{text-align:right;font-variant-numeric:tabular-nums}
   /* VM name / node cells must NOT wrap (a wrapped long VM name was unreadable). The global
      'code' rule breaks long words, so override it inside these cells. */
   td.nm{white-space:nowrap}
   td.nm code{white-space:nowrap;word-break:normal;overflow-wrap:normal}
-  /* VM-name cell: reserve at least ~24 characters (min-width:24ch) so short / normal names NEVER
+  /* VM-name cell: reserve at least ~16 characters (min-width:16ch) so short / normal names NEVER
      wrap - without it, overflow-wrap:anywhere lets the browser shrink the column to one character and
      wrap even short names. A very long name (e.g. a Kubernetes control-plane VM) still wraps within
      the 300px ceiling so it never forces the whole table wider than the page. */
-  td.vmn{min-width:24ch;max-width:300px}
+  td.vmn{min-width:16ch;max-width:300px}
   td.vmn code{white-space:normal;word-break:break-word;overflow-wrap:anywhere}
   .src{display:inline-block;margin-left:6px;padding:1px 7px;border-radius:999px;font-size:10.5px;
     font-weight:600;text-transform:uppercase;letter-spacing:.03em;vertical-align:middle}
