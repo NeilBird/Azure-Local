@@ -651,9 +651,10 @@ function ConvertTo-VMCheckpointAuditHtml {
   .warnval{color:var(--amber);font-weight:600}
   .zero{color:var(--muted)}
   .hot{color:#fca5a5;font-weight:700}
-  /* Per-VM Checkpoints table: keep each Age value on ONE line ('202.2 h' / '8.4 d' never split
-     mid-value onto '202.2' + 'h') and cap the Name column a little (max-width) so a long checkpoint
-     name wraps slightly earlier, freeing the small amount of width the Age column needs. */
+  /* Age cells in the per-VM Checkpoints table AND the Orphaned .avhdx files table both render two
+     stacked values ('202.2 h' over '8.4 d'); ckptage keeps each value on ONE line (never split
+     mid-value onto '202.2' + 'h'). ckptname caps the checkpoint Name column a little (max-width) so a
+     long checkpoint name wraps slightly earlier, freeing the small amount of width the Age column needs. */
   td.ckptage{white-space:nowrap}
   td.ckptname{max-width:300px;overflow-wrap:anywhere}
   footer{margin-top:44px;border-top:1px solid var(--line);padding-top:16px;color:var(--muted);font-size:12.5px}
@@ -1083,10 +1084,11 @@ function ConvertTo-VMCheckpointAuditHtml {
         # chain). v0.2.14: per-orphan class + age + a neutral 'Likely / action' read. NEVER states
         # 'safe to delete' - the action and decision always rest with the operator.
         if (@($rd.Orphans).Count -gt 0) {
-            [void]$sb.Append("  <details open><summary>Orphaned .avhdx files ($($rd.OrphanCount)) - on disk but NOT attached to the VM</summary><table><thead><tr><th>File Name</th><th>Size (GB)</th><th>Created (UTC)</th><th>LastWrite (UTC)</th><th>Age (days)</th><th>Likely / action</th><th>Full path</th></tr></thead><tbody>")
+            [void]$sb.Append("  <details open><summary>Orphaned .avhdx files ($($rd.OrphanCount)) - on disk but NOT attached to the VM</summary><table><thead><tr><th>File Name</th><th>Size (GB)</th><th>Created (UTC)</th><th>LastWrite (UTC)</th><th>Age</th><th>Likely / action</th><th>Full path</th></tr></thead><tbody>")
             foreach ($o in @($rd.Orphans)) {
-                $ageTxt = if ($null -ne $o.AgeDays) { "$($o.AgeDays)" } else { '-' }
-                [void]$sb.Append("<tr><td>$(ConvertTo-HtmlText $o.Name)</td><td class='num'>$($o.SizeGB)</td><td>$(ConvertTo-HtmlText $o.Created)</td><td>$(ConvertTo-HtmlText $o.LastWrite)</td><td class='num'>$ageTxt</td><td>$(ConvertTo-HtmlText $o.Likely)</td><td><code>$(ConvertTo-HtmlText $o.FullName)</code></td></tr>")
+                # Age shown in BOTH hours and days (stacked), matching the Checkpoints table above.
+                $ageTxt = if ($null -ne $o.AgeHrs) { '{0} h<br>{1} d' -f $o.AgeHrs, $o.AgeDays } else { '-' }
+                [void]$sb.Append("<tr><td>$(ConvertTo-HtmlText $o.Name)</td><td class='num'>$($o.SizeGB)</td><td>$(ConvertTo-HtmlText $o.Created)</td><td>$(ConvertTo-HtmlText $o.LastWrite)</td><td class='num ckptage'>$ageTxt</td><td>$(ConvertTo-HtmlText $o.Likely)</td><td><code>$(ConvertTo-HtmlText $o.FullName)</code></td></tr>")
             }
             [void]$sb.Append("</tbody></table><p class='muted'>Orphaned <code>.avhdx</code> are differencing files on disk that are not attached to the VM. They can be the aftermath of a rolled-back / stuck merge (which may hold un-recovered data) or leftover backup / live-mount files. <strong>Do not delete based on this report.</strong> Action (backup team / VM owner): (1) match each file to a backup / restore / live-mount / replica-seed job for this VM at its Created / LastWrite time; (2) if it is a live-mount / instant-recovery file, unmount it THROUGH the backup product rather than deleting it by hand; (3) if it is a leftover initial-replica point, let Hyper-V Replica remove it (resume / resync); (4) before removing anything, confirm a current good backup exists, MOVE (rename) the file to a quarantine folder, keep it one retention cycle, verify the VM and its next backup are healthy, then delete. The 'Likely / action' column above gives the per-file read. The action and decision rest with you / the administrator.</p></details>`r`n")
         }
@@ -3222,6 +3224,7 @@ function Invoke-VMCheckpointAudit {
         $cls     = if ($ocm) { [string]$ocm.Class } else { 'Leftover' }
         $mergeId = if ($ocm) { $ocm.MergeEventId } else { $null }
         $lockTime = if ($ocm) { [string]$ocm.LockEventTime } else { $null }
+        $ageHrs  = if ($_.LastWriteTimeUtc) { [math]::Round(([DateTime]::UtcNow - $_.LastWriteTimeUtc).TotalHours, 1) } else { $null }
         $ageDays = if ($_.LastWriteTimeUtc) { [math]::Round(([DateTime]::UtcNow - $_.LastWriteTimeUtc).TotalDays, 1) } else { $null }
         $likely  = switch ($cls) {
             'Rollback'     { 'Possible PAST rollback aftermath - do NOT remove; investigate / recover' }
@@ -3235,6 +3238,7 @@ function Invoke-VMCheckpointAudit {
             SizeGB    = [math]::Round($_.Length / 1GB, 2)
             Created   = if ($_.CreationTimeUtc)  { $_.CreationTimeUtc.ToString('yyyy-MM-dd HH:mm:ss') }  else { '' }
             LastWrite = if ($_.LastWriteTimeUtc) { $_.LastWriteTimeUtc.ToString('yyyy-MM-dd HH:mm:ss') } else { '' }
+            AgeHrs    = $ageHrs
             AgeDays   = $ageDays
             Class     = $cls
             Likely    = $likely
