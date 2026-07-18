@@ -644,6 +644,13 @@ function ConvertTo-VMCheckpointAuditHtml {
   details.appx>summary:hover::before{filter:brightness(1.08)}
   details.appx>.appx-body{padding:4px 18px 18px}
   .muted{color:var(--muted)}
+  /* Semantic inline emphasis (used sparingly): amber for a warning value (stale YES, a non-zero
+     orphan / stale count, an oldest-checkpoint age at/over the stale threshold); muted grey for a
+     zero count so it recedes; soft-red bold for the single most important imperative inside a HOLD
+     callout. Colours are drawn from the existing palette so they stay accessible on the dark theme. */
+  .warnval{color:var(--amber);font-weight:600}
+  .zero{color:var(--muted)}
+  .hot{color:#fca5a5;font-weight:700}
   footer{margin-top:44px;border-top:1px solid var(--line);padding-top:16px;color:var(--muted);font-size:12.5px}
 </style>
 </head>
@@ -685,7 +692,7 @@ function ConvertTo-VMCheckpointAuditHtml {
 <div class="callout high">
   <strong>Exec Summary - action required:</strong> $countHold VM(s) are in <strong>HOLD STATE</strong> - a 'checkpoint fork-commit / merge-failure' signature AND unmerged differencing disk(s) are present together.
   <ul>
-    <li>Do NOT live/quick/storage-migrate or restart those VMs until the differencing chain has been validated (and merged if required).</li>
+    <li><span class="hot">Do NOT live/quick/storage-migrate or restart</span> those VMs until the differencing chain has been validated (and merged if required).</li>
     <li>Engage Microsoft Support (CSS) and/or your backup vendor for those VMs.</li>
     <li>See the per-VM detail below for which VMs are affected and why.</li>
   </ul>
@@ -903,6 +910,7 @@ function ConvertTo-VMCheckpointAuditHtml {
             if ($ages.Count -gt 0) {
                 $mx = ($ages | Measure-Object -Maximum).Maximum
                 $oldest = '~{0}h (~{1}d)' -f [math]::Round($mx, 1), [math]::Round($mx / 24, 1)
+                if ($mx -ge $StaleHours) { $oldest = "<span class='warnval'>$oldest</span>" }
             } else { $oldest = '-' }
             $repl = if ($rd.Replication.Enabled) { ConvertTo-HtmlText ("{0} ({1})" -f $rd.Replication.State, $rd.Replication.Health) } else { 'Not enabled' }
             $stateTxt = ConvertTo-HtmlText $rd.State
@@ -911,11 +919,15 @@ function ConvertTo-VMCheckpointAuditHtml {
             $concernCell = if ([int]$rd.VmEventConcernCount -gt 0) {
                 if ([int]$rd.VmHighConcernCount -gt 0) { "{0} ({1} hi)" -f $rd.VmEventConcernCount, $rd.VmHighConcernCount } else { "{0} (low)" -f $rd.VmEventConcernCount }
             } else { '0' }
+            # Orphan / stale count cells: amber when non-zero (a value to act on), muted grey when 0
+            # so a clean row recedes and a real count pops.
+            $orphanCell = if ([int]$rd.OrphanCount -gt 0) { "<span class='warnval'>$($rd.OrphanCount)</span>" } else { "<span class='zero'>0</span>" }
+            $staleCell  = if ([int]$rd.StaleCheckpointCount -gt 0) { "<span class='warnval'>$($rd.StaleCheckpointCount)</span>" } else { "<span class='zero'>0</span>" }
             [void]$sb.Append(@"
 <tr>
   <td class="vmn"><a href="#$(ConvertTo-Anchor $r.VMName)"><code>$(ConvertTo-HtmlText $r.VMName)</code></a>$srcBadge</td><td>$stateTxt</td><td class="nm">$(ConvertTo-HtmlText $node)</td><td>$(ConvertTo-HtmlText $rd.Version)</td>
   <td class="num">$($rd.AttachedDiskCount)</td><td class="num">$ckptCount</td><td class="num">$($rd.CheckpointLayers)</td>
-  <td class="num">$($rd.OrphanCount)</td><td class="num">$($rd.StaleCheckpointCount)</td><td>$oldest</td>
+  <td class="num">$orphanCell</td><td class="num">$staleCell</td><td>$oldest</td>
   <td class="num">$concernCell</td><td>$repl</td><td>$pill</td>
 </tr>
 "@)
@@ -993,7 +1005,7 @@ function ConvertTo-VMCheckpointAuditHtml {
         # HOW urgent), surface the 'possible past rollback' fingerprint + historic-correlation result,
         # and add a low-key note on OK VMs whose only signal was low-signal chatter.
         if ($r.Recommendation -eq 'HOLD STATE') {
-            [void]$sb.Append("  <div class='callout high'><strong>HOLD STATE (data-loss risk).</strong> A 'checkpoint fork-commit / merge-failure' signature AND unmerged differencing disk(s) are present together. Do NOT migrate or restart this VM until the chain is validated (and merged if required); reopening an inconsistent chain can roll disks back to base. Engage Microsoft Support (CSS) and/or your backup vendor.</div>`r`n")
+            [void]$sb.Append("  <div class='callout high'><strong>HOLD STATE (data-loss risk).</strong> A 'checkpoint fork-commit / merge-failure' signature AND unmerged differencing disk(s) are present together. <span class='hot'>Do NOT migrate or restart this VM</span> until the chain is validated (and merged if required); reopening an inconsistent chain can roll disks back to base. Engage Microsoft Support (CSS) and/or your backup vendor.</div>`r`n")
         } elseif ($r.Recommendation -eq 'INVESTIGATE') {
             # Build the driver phrase from the strongest signal down.
             $drv = @()
@@ -1042,7 +1054,7 @@ function ConvertTo-VMCheckpointAuditHtml {
         # v0.2.17: PROACTIVE active-checkpoint findings (pre-migration). Rendered for ANY verdict when set,
         # right after the main assessment, because the whole point is to warn BEFORE a migration/restart.
         if ($rd.PSObject.Properties['ActiveCkptForkConfirmed'] -and $rd.ActiveCkptForkConfirmed) {
-            [void]$sb.Append("  <div class='callout high'><strong>PRE-MIGRATION WARNING - fork-commit recorded at this active checkpoint's creation.</strong> This VM has an ACTIVE (still-attached) checkpoint created <strong>$(ConvertTo-HtmlText $rd.ActiveCkptOldestCreateUtc) UTC</strong> - OLDER than the $($rd.EventLookbackHours)h event lookback - and the historic cross-node scan recovered a 'fork-commit / merge-failure' event around that creation time. The differencing chain may be INCONSISTENT while the VM keeps running; a live/quick/storage migration or restart could materialise it and roll disks back to base. Do NOT migrate or restart this VM until the chain has been validated (and merged if required). Engage Microsoft Support (CSS) / your backup vendor. (This has NOT yet materialised into data loss - it is a dormant risk being flagged proactively.)</div>`r`n")
+            [void]$sb.Append("  <div class='callout high'><strong>PRE-MIGRATION WARNING - fork-commit recorded at this active checkpoint's creation.</strong> This VM has an ACTIVE (still-attached) checkpoint created <strong>$(ConvertTo-HtmlText $rd.ActiveCkptOldestCreateUtc) UTC</strong> - OLDER than the $($rd.EventLookbackHours)h event lookback - and the historic cross-node scan recovered a 'fork-commit / merge-failure' event around that creation time. The differencing chain may be INCONSISTENT while the VM keeps running; a live/quick/storage migration or restart could materialise it and roll disks back to base. <span class='hot'>Do NOT migrate or restart this VM</span> until the chain has been validated (and merged if required). Engage Microsoft Support (CSS) / your backup vendor. (This has NOT yet materialised into data loss - it is a dormant risk being flagged proactively.)</div>`r`n")
         } elseif ($rd.PSObject.Properties['CannotConfirmMigrationSafe'] -and $rd.CannotConfirmMigrationSafe) {
             $oldestAvail = if ($rd.ActiveCkptOldestAvailUtc) { "$(ConvertTo-HtmlText $rd.ActiveCkptOldestAvailUtc) UTC" } else { 'a time AFTER the checkpoint was created' }
             [void]$sb.Append("  <div class='callout warn'><strong>CANNOT CONFIRM from event data - event logs have wrapped past this active checkpoint's creation.</strong> This VM has an ACTIVE (still-attached) checkpoint created <strong>$(ConvertTo-HtmlText $rd.ActiveCkptOldestCreateUtc) UTC</strong>, but the Hyper-V Worker / VMMS event logs on the searched node(s) only go back to <strong>$oldestAvail</strong> - i.e. the logs have <strong>WRAPPED PAST</strong> the moment the checkpoint was created. This automation therefore <strong>cannot check for a 'fork-commit / merge-failure' at that time</strong>: absence of evidence here is NOT proof the chain is safe. As a precaution, validate the differencing chain (and consider a backup vendor / Microsoft Support (CSS) review) BEFORE any live/quick/storage migration or restart of this VM.</div>`r`n")
