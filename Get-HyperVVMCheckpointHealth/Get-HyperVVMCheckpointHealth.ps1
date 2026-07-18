@@ -1067,7 +1067,8 @@ function ConvertTo-VMCheckpointAuditHtml {
         if ($ckptCount -gt 0) {
             [void]$sb.Append("  <details open><summary>Checkpoints ($ckptCount)</summary><table><thead><tr><th>Name</th><th>Type</th><th>Purpose</th><th>Created (UTC)</th><th>Age</th><th>Stale</th><th>Parent</th></tr></thead><tbody>")
             foreach ($c in @($rd.Checkpoints | Sort-Object AgeHrs -Descending)) {
-                $staleTxt = if ($c.Stale) { 'YES' } else { 'NO' }
+                # Stale YES is amber (matches the summary table's stale-count colour); NO stays plain.
+                $staleTxt = if ($c.Stale) { "<span class='warnval'>YES</span>" } else { 'NO' }
                 $ageCell  = '{0} h<br>{1} d' -f $c.AgeHrs, [math]::Round([double]$c.AgeHrs / 24, 1)
                 [void]$sb.Append("<tr><td>$(ConvertTo-HtmlText $c.Name)</td><td>$(ConvertTo-HtmlText $c.Type)</td><td>$(ConvertTo-HtmlText $c.Purpose)</td><td>$(ConvertTo-HtmlText $c.Created)</td><td class='num'>$ageCell</td><td>$staleTxt</td><td>$(ConvertTo-HtmlText $c.Parent)</td></tr>")
             }
