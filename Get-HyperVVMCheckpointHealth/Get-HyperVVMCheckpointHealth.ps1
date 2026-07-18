@@ -683,10 +683,12 @@ function ConvertTo-VMCheckpointAuditHtml {
     if ($countHold -gt 0) {
         [void]$sb.Append(@"
 <div class="callout high">
-  <strong>Exec Summary:</strong> $countHold VM(s) are in <strong>HOLD STATE</strong> - a checkpoint fork-commit /
-  merge-failure signature AND unmerged differencing disk(s) are present together. As a precaution do NOT
-  live/quick/storage-migrate or restart those VMs until the differencing chain has been validated (and
-  merged if required). Engage Microsoft Support (CSS) and/or your backup vendor for those VMs.
+  <strong>Exec Summary - action required:</strong> $countHold VM(s) are in <strong>HOLD STATE</strong> - a checkpoint fork-commit / merge-failure signature AND unmerged differencing disk(s) are present together.
+  <ul>
+    <li>Do NOT live/quick/storage-migrate or restart those VMs until the differencing chain has been validated (and merged if required).</li>
+    <li>Engage Microsoft Support (CSS) and/or your backup vendor for those VMs.</li>
+    <li>See the per-VM detail below for which VMs are affected and why.</li>
+  </ul>
 </div>
 "@)
     } elseif ($pastRollbackAnyCount -gt 0) {
@@ -699,21 +701,37 @@ function ConvertTo-VMCheckpointAuditHtml {
         }
         [void]$sb.Append(@"
 <div class="callout high">
-  <strong>Exec Summary:</strong> $pastRollbackAnyCount VM(s) show evidence of a <strong>PAST checkpoint
-  fork-commit / merge-failure rollback</strong> ($confPhrase). This has ALREADY materialised (it is not a
-  dormant HOLD STATE), so the priority is DATA RECOVERY, not migration hold: do NOT delete the orphaned
-  <code>.avhdx</code> files (they may hold un-recovered data) and validate each affected VM's current
-  differencing chain before any live/quick/storage migration or restart. Engage Microsoft Support (CSS)
-  and/or your backup vendor for those VMs. See each VM's detail and the "Historic event correlation" below.
+  <strong>Exec Summary - data recovery:</strong> $pastRollbackAnyCount VM(s) show evidence of a <strong>PAST checkpoint fork-commit / merge-failure rollback</strong> ($confPhrase).
+  <ul>
+    <li>This has ALREADY materialised (it is not a dormant HOLD STATE), so the priority is DATA RECOVERY, not a migration hold.</li>
+    <li>Do NOT delete the orphaned <code>.avhdx</code> files - they may hold un-recovered data.</li>
+    <li>Validate each affected VM's current differencing chain before any live/quick/storage migration or restart.</li>
+    <li>Engage Microsoft Support (CSS) and/or your backup vendor for those VMs. See each VM's detail and the "Historic event correlation" below.</li>
+  </ul>
 </div>
 "@)
     } else {
+        # Summarise the triage findings (stale checkpoints AND orphaned .avhdx) + the INVESTIGATE count
+        # so the Exec Summary reflects EVERY driver, not just stale checkpoints.
+        $execBits = @()
+        if ($staleTotal -gt 0)  { $execBits += "$staleTotal stale checkpoint(s)" }
+        if ($orphanTotal -gt 0) { $execBits += "$orphanTotal orphaned .avhdx file(s)" }
+        $execTriageLi = if ($countInv -gt 0) {
+            $execFound = if ($execBits.Count -gt 0) { ' - findings: ' + ($execBits -join ', ') } else { '' }
+            "$countInv VM(s) are flagged INVESTIGATE for the operations / backup team to triage first (see Recommended next steps below)$execFound."
+        } elseif ($execBits.Count -gt 0) {
+            ($execBits -join ', ') + ' were found - for the operations / backup team to triage first (see Recommended next steps below).'
+        } else {
+            'No stale checkpoints or orphaned .avhdx files were found.'
+        }
         [void]$sb.Append(@"
 <div class="callout ok">
-  <strong>Exec Summary:</strong> No VM shows the checkpoint <em>fork-commit / merge-failure</em> signature
-  (event <code>3216</code> or an HRESULT such as <code>0x80048102</code>), no VM is in a HOLD STATE, and no
-  past-rollback evidence was found, so <strong>no Microsoft Support (CSS) case is warranted yet</strong>.
-  $staleTotal stale backup checkpoint(s) were found for the operations / backup team to triage first.
+  <strong>Exec Summary:</strong> <strong>Cluster / backup administrators should INVESTIGATE the items listed below. No Microsoft Support (CSS) case is warranted, unless additional guidance is required.</strong>
+  <ul>
+    <li>No VM shows the checkpoint <em>fork-commit / merge-failure</em> signature (event <code>3216</code> or an HRESULT such as <code>0x80048102</code>).</li>
+    <li>No VM is in a HOLD STATE, and no past-rollback evidence was found.</li>
+    <li>$execTriageLi</li>
+  </ul>
 </div>
 "@)
     }
@@ -771,6 +789,10 @@ function ConvertTo-VMCheckpointAuditHtml {
             (-not $_.ReportData.ReplUnhealthy) -and
             ($_.ReportData.VssState -ne 'Unhealthy')
         })
+    # v0.2.17: VM counts (not just item counts) for the stale-checkpoint and orphan next-step headlines,
+    # so each step reads "<N item(s)> across <M VM(s)>" for at-a-glance scanning.
+    $staleVMsCount  = @($rows | Where-Object { $_.ReportData -and ([int]$_.ReportData.StaleCheckpointCount -gt 0) }).Count
+    $orphanVMsCount = @($rows | Where-Object { $_.ReportData -and ([int]$_.ReportData.OrphanCount -gt 0) }).Count
     $anyContextualStep = ($staleTotal -gt 0) -or ($countInv -gt 0) -or $analyticNeedsEnable -or $storageDegraded -or ($countHold -gt 0) -or ($orphanTotal -gt 0) -or ($rollbackVMs.Count -gt 0) -or ($replicaUnhealthyVMs.Count -gt 0) -or ($activeCkptForkVMs.Count -gt 0) -or ($cannotConfirmVMs.Count -gt 0)
     [void]$sb.Append(@'
 <h2>Recommended next steps</h2>
@@ -807,9 +829,8 @@ function ConvertTo-VMCheckpointAuditHtml {
     }
     if ($staleTotal -gt 0) {
         [void]$sb.Append((@'
-  <li><strong>INVESTIGATE - backup team first:</strong> for each VM with a stale checkpoint older than {0} hours, check your backup product's recent job history - did the last backup complete? Or is this a manual checkpoint that has been overlooked? Stale checkpoints can be an indicator that a backup did not finish or that the post-backup merge was not requested or failed.</li>
-  <li><strong>INVESTIGATE - confirm expected vs abandoned:</strong> you need to confirm if the stale checkpoint(s) are expected (by design) or left behind by a failed backup. If from a point-in-time backup, the checkpoint should be removed / merged (preference for the backup product to perform the checkpoint removal action, over a manual deletion) - the action and decision rest with you / your backup team. If it is a deliberate manual checkpoint that is meant to be long-lived, it is fine to keep it (i.e. a stale flag is not always an issue that needs "fixing") - re-run this audit with <code>-StaleHours &lt;n&gt;</code> (e.g. a value above its age) so it is no longer flagged as stale.</li>
-'@ -f $StaleHours))
+  <li><strong>INVESTIGATE - {0} stale checkpoint(s) across {1} VM(s):</strong> backup team first. For each, check your backup product's recent job history (did the last backup complete?) and confirm whether the checkpoint is <em>expected</em> (a deliberately long-lived manual checkpoint) or was <em>left behind</em> by a failed / incomplete backup. If it is a leftover point-in-time backup checkpoint, have the backup product merge / remove it (preferred over a manual deletion); if it is expected, re-run with <code>-StaleHours &lt;n&gt;</code> above its age so it is no longer flagged. The action and decision rest with you / your backup team.</li>
+'@ -f $staleTotal, $staleVMsCount))
     }
     if ($eventsOnlyInvVMs.Count -gt 0) {
         $eoNames = (@($eventsOnlyInvVMs | ForEach-Object { ConvertTo-HtmlText $_.VMName }) -join ', ')
@@ -819,8 +840,8 @@ function ConvertTo-VMCheckpointAuditHtml {
     }
     if ($orphanTotal -gt 0) {
         [void]$sb.Append((@'
-  <li><strong>INVESTIGATE - orphaned .avhdx file(s):</strong> {0} .avhdx file(s) were found in VM disk folder(s) that are NOT attached to any VM chain - a stuck / failed merge, a failed backup checkpoint, an interrupted instant-recovery / live-mount, or a leftover initial Hyper-V Replica checkpoint can leave these behind. Do NOT delete blindly. Prescriptive checks (backup team / VM owner): <ol><li><strong>Match each file to a job:</strong> in your backup product's job / activity history, find the backup, restore, instant-recovery / live-mount or replica-seed job for THAT VM that was running at the file's <em>Created</em> / <em>LastWrite</em> time (shown in each VM's detail) - a job that failed or aborted then is the usual cause.</li><li><strong>If it is a live-mount / instant-recovery file</strong> (path contains a mount / recovery folder, or the product shows an active mount): tear the mount down THROUGH the backup product (unmount / stop the recovery session) - do NOT delete the file by hand, which leaves the product's catalog inconsistent.</li><li><strong>If it is a leftover initial-replica recovery point:</strong> check Hyper-V Replica health (<code>Get-VMReplication</code>) and let replication remove it (resume / resync) rather than deleting it manually.</li><li><strong>Before removing anything:</strong> confirm a current, verified backup of the VM exists, then MOVE (rename) the orphan to a quarantine folder instead of deleting, keep it for one retention cycle, confirm the VM stays healthy and its next backup succeeds, and only then delete.</li></ol> Open a Microsoft CSS case for guidance if a file cannot be matched to a job or you are unsure. The action and decision to clean up these file(s) rests with you / the administrator. See each VM's "Orphaned .avhdx files" detail below for names, sizes, timestamps and a per-file read.</li>
-'@ -f $orphanTotal))
+  <li><strong>INVESTIGATE - {0} orphaned .avhdx file(s) across {1} VM(s):</strong> do NOT delete blindly - a stuck / failed merge, a failed backup checkpoint, an interrupted instant-recovery / live-mount, or a leftover initial Hyper-V Replica checkpoint can leave these behind. Prescriptive checks (backup team / VM owner): <ol><li><strong>Match each file to a job:</strong> in your backup product's job / activity history, find the backup, restore, instant-recovery / live-mount or replica-seed job for THAT VM that was running at the file's <em>Created</em> / <em>LastWrite</em> time (shown in each VM's detail) - a job that failed or aborted then is the usual cause.</li><li><strong>If it is a live-mount / instant-recovery file</strong> (path contains a mount / recovery folder, or the product shows an active mount): tear the mount down THROUGH the backup product (unmount / stop the recovery session) - do NOT delete the file by hand, which leaves the product's catalog inconsistent.</li><li><strong>If it is a leftover initial-replica recovery point:</strong> check Hyper-V Replica health (<code>Get-VMReplication</code>) and let replication remove it (resume / resync) rather than deleting it manually.</li><li><strong>Before removing anything:</strong> confirm a current, verified backup of the VM exists, then MOVE (rename) the orphan to a quarantine folder instead of deleting, keep it for one retention cycle, confirm the VM stays healthy and its next backup succeeds, and only then delete.</li></ol> Open a Microsoft CSS case for guidance if a file cannot be matched to a job or you are unsure. The action and decision to clean up these file(s) rests with you / the administrator. See each VM's "Orphaned .avhdx files" detail below for names, sizes, timestamps and a per-file read.</li>
+'@ -f $orphanTotal, $orphanVMsCount))
     }
     if ($analyticNeedsEnable) {
         [void]$sb.Append(@'
