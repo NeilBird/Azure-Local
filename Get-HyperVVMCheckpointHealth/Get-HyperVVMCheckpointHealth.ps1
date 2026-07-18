@@ -902,7 +902,7 @@ function ConvertTo-VMCheckpointAuditHtml {
             $ages = @($rd.Checkpoints | ForEach-Object { [double]$_.AgeHrs })
             if ($ages.Count -gt 0) {
                 $mx = ($ages | Measure-Object -Maximum).Maximum
-                $oldest = if ($mx -ge 168) { '~{0}h (~{1}d)' -f [math]::Round($mx, 1), [math]::Round($mx / 24, 0) } else { '~{0}h' -f [math]::Round($mx, 1) }
+                $oldest = '~{0}h (~{1}d)' -f [math]::Round($mx, 1), [math]::Round($mx / 24, 1)
             } else { $oldest = '-' }
             $repl = if ($rd.Replication.Enabled) { ConvertTo-HtmlText ("{0} ({1})" -f $rd.Replication.State, $rd.Replication.Health) } else { 'Not enabled' }
             $stateTxt = ConvertTo-HtmlText $rd.State
@@ -1053,10 +1053,11 @@ function ConvertTo-VMCheckpointAuditHtml {
         }
         # Checkpoints table.
         if ($ckptCount -gt 0) {
-            [void]$sb.Append("  <details open><summary>Checkpoints ($ckptCount)</summary><table><thead><tr><th>Name</th><th>Type</th><th>Purpose</th><th>Created (UTC)</th><th>Age (hrs)</th><th>Stale</th><th>Parent</th></tr></thead><tbody>")
+            [void]$sb.Append("  <details open><summary>Checkpoints ($ckptCount)</summary><table><thead><tr><th>Name</th><th>Type</th><th>Purpose</th><th>Created (UTC)</th><th>Age</th><th>Stale</th><th>Parent</th></tr></thead><tbody>")
             foreach ($c in @($rd.Checkpoints | Sort-Object AgeHrs -Descending)) {
                 $staleTxt = if ($c.Stale) { 'YES' } else { 'NO' }
-                [void]$sb.Append("<tr><td>$(ConvertTo-HtmlText $c.Name)</td><td>$(ConvertTo-HtmlText $c.Type)</td><td>$(ConvertTo-HtmlText $c.Purpose)</td><td>$(ConvertTo-HtmlText $c.Created)</td><td class='num'>$($c.AgeHrs)</td><td>$staleTxt</td><td>$(ConvertTo-HtmlText $c.Parent)</td></tr>")
+                $ageCell  = '{0} h<br>{1} d' -f $c.AgeHrs, [math]::Round([double]$c.AgeHrs / 24, 1)
+                [void]$sb.Append("<tr><td>$(ConvertTo-HtmlText $c.Name)</td><td>$(ConvertTo-HtmlText $c.Type)</td><td>$(ConvertTo-HtmlText $c.Purpose)</td><td>$(ConvertTo-HtmlText $c.Created)</td><td class='num'>$ageCell</td><td>$staleTxt</td><td>$(ConvertTo-HtmlText $c.Parent)</td></tr>")
             }
             [void]$sb.Append("</tbody></table></details>`r`n")
         }
