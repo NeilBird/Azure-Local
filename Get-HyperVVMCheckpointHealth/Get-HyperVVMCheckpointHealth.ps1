@@ -651,6 +651,11 @@ function ConvertTo-VMCheckpointAuditHtml {
   .warnval{color:var(--amber);font-weight:600}
   .zero{color:var(--muted)}
   .hot{color:#fca5a5;font-weight:700}
+  /* Per-VM Checkpoints table: keep each Age value on ONE line ('202.2 h' / '8.4 d' never split
+     mid-value onto '202.2' + 'h') and cap the Name column a little (max-width) so a long checkpoint
+     name wraps slightly earlier, freeing the small amount of width the Age column needs. */
+  td.ckptage{white-space:nowrap}
+  td.ckptname{max-width:300px;overflow-wrap:anywhere}
   footer{margin-top:44px;border-top:1px solid var(--line);padding-top:16px;color:var(--muted);font-size:12.5px}
 </style>
 </head>
@@ -1070,7 +1075,7 @@ function ConvertTo-VMCheckpointAuditHtml {
                 # Stale YES is amber (matches the summary table's stale-count colour); NO stays plain.
                 $staleTxt = if ($c.Stale) { "<span class='warnval'>YES</span>" } else { 'NO' }
                 $ageCell  = '{0} h<br>{1} d' -f $c.AgeHrs, [math]::Round([double]$c.AgeHrs / 24, 1)
-                [void]$sb.Append("<tr><td>$(ConvertTo-HtmlText $c.Name)</td><td>$(ConvertTo-HtmlText $c.Type)</td><td>$(ConvertTo-HtmlText $c.Purpose)</td><td>$(ConvertTo-HtmlText $c.Created)</td><td class='num'>$ageCell</td><td>$staleTxt</td><td>$(ConvertTo-HtmlText $c.Parent)</td></tr>")
+                [void]$sb.Append("<tr><td class='ckptname'>$(ConvertTo-HtmlText $c.Name)</td><td>$(ConvertTo-HtmlText $c.Type)</td><td>$(ConvertTo-HtmlText $c.Purpose)</td><td>$(ConvertTo-HtmlText $c.Created)</td><td class='num ckptage'>$ageCell</td><td>$staleTxt</td><td>$(ConvertTo-HtmlText $c.Parent)</td></tr>")
             }
             [void]$sb.Append("</tbody></table></details>`r`n")
         }
