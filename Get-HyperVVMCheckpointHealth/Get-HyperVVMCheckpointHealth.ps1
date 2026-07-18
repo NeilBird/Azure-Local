@@ -819,7 +819,7 @@ function ConvertTo-VMCheckpointAuditHtml {
     }
     if ($orphanTotal -gt 0) {
         [void]$sb.Append((@'
-  <li><strong>INVESTIGATE - orphaned .avhdx file(s):</strong> {0} .avhdx file(s) were found in VM disk folder(s) that are NOT attached to any VM chain - a stuck / failed merge or a leftover initial Hyper-V Replica checkpoint can leave these behind under specific scenarios. Confirm each file with your backup team or VM owner before removing any (do not delete blindly); open a Microsoft CSS case for guidance if required. The action and decision to cleanup these old file(s) rests with you / the administrator. See each VM's "Orphaned .avhdx files" detail below for names, sizes and timestamps.</li>
+  <li><strong>INVESTIGATE - orphaned .avhdx file(s):</strong> {0} .avhdx file(s) were found in VM disk folder(s) that are NOT attached to any VM chain - a stuck / failed merge, a failed backup checkpoint, an interrupted instant-recovery / live-mount, or a leftover initial Hyper-V Replica checkpoint can leave these behind. Do NOT delete blindly. Prescriptive checks (backup team / VM owner): <ol><li><strong>Match each file to a job:</strong> in your backup product's job / activity history, find the backup, restore, instant-recovery / live-mount or replica-seed job for THAT VM that was running at the file's <em>Created</em> / <em>LastWrite</em> time (shown in each VM's detail) - a job that failed or aborted then is the usual cause.</li><li><strong>If it is a live-mount / instant-recovery file</strong> (path contains a mount / recovery folder, or the product shows an active mount): tear the mount down THROUGH the backup product (unmount / stop the recovery session) - do NOT delete the file by hand, which leaves the product's catalog inconsistent.</li><li><strong>If it is a leftover initial-replica recovery point:</strong> check Hyper-V Replica health (<code>Get-VMReplication</code>) and let replication remove it (resume / resync) rather than deleting it manually.</li><li><strong>Before removing anything:</strong> confirm a current, verified backup of the VM exists, then MOVE (rename) the orphan to a quarantine folder instead of deleting, keep it for one retention cycle, confirm the VM stays healthy and its next backup succeeds, and only then delete.</li></ol> Open a Microsoft CSS case for guidance if a file cannot be matched to a job or you are unsure. The action and decision to clean up these file(s) rests with you / the administrator. See each VM's "Orphaned .avhdx files" detail below for names, sizes, timestamps and a per-file read.</li>
 '@ -f $orphanTotal))
     }
     if ($analyticNeedsEnable) {
@@ -1048,7 +1048,7 @@ function ConvertTo-VMCheckpointAuditHtml {
                 $ageTxt = if ($null -ne $o.AgeDays) { "$($o.AgeDays)" } else { '-' }
                 [void]$sb.Append("<tr><td>$(ConvertTo-HtmlText $o.Name)</td><td class='num'>$($o.SizeGB)</td><td>$(ConvertTo-HtmlText $o.Created)</td><td>$(ConvertTo-HtmlText $o.LastWrite)</td><td class='num'>$ageTxt</td><td>$(ConvertTo-HtmlText $o.Likely)</td><td><code>$(ConvertTo-HtmlText $o.FullName)</code></td></tr>")
             }
-            [void]$sb.Append("</tbody></table><p class='muted'>Orphaned <code>.avhdx</code> are differencing files on disk that are not attached to the VM. They can be the aftermath of a rolled-back / stuck merge (which may hold un-recovered data) or leftover backup / live-mount files. <strong>Do not delete based on this report</strong> - Action: confirm each file with your backup team or VM owner. The action and decision to cleanup these old file(s) rests with you / the administrator.</p></details>`r`n")
+            [void]$sb.Append("</tbody></table><p class='muted'>Orphaned <code>.avhdx</code> are differencing files on disk that are not attached to the VM. They can be the aftermath of a rolled-back / stuck merge (which may hold un-recovered data) or leftover backup / live-mount files. <strong>Do not delete based on this report.</strong> Action (backup team / VM owner): (1) match each file to a backup / restore / live-mount / replica-seed job for this VM at its Created / LastWrite time; (2) if it is a live-mount / instant-recovery file, unmount it THROUGH the backup product rather than deleting it by hand; (3) if it is a leftover initial-replica point, let Hyper-V Replica remove it (resume / resync); (4) before removing anything, confirm a current good backup exists, MOVE (rename) the file to a quarantine folder, keep it one retention cycle, verify the VM and its next backup are healthy, then delete. The 'Likely / action' column above gives the per-file read. The action and decision rest with you / the administrator.</p></details>`r`n")
         }
         # Historic cross-node event correlation (v0.2.14) - only present when this VM had orphans.
         if ($rd.PSObject.Properties['Historic'] -and $rd.Historic) {
@@ -1069,7 +1069,7 @@ function ConvertTo-VMCheckpointAuditHtml {
                 if ($hc.LogsWrappedPastWindow) {
                     [void]$sb.Append("<div class='callout warn'>No historic events found - but the event logs on the searched node(s) only go back to <strong>$(ConvertTo-HtmlText $hc.OldestAvailableUtc) UTC</strong>, which is AFTER the orphan timestamps. The logs have <strong>wrapped past</strong> the relevant window, so the original events are no longer available - <strong>absence here is NOT proof</strong> that no rollback occurred.</div>")
                 } else {
-                    [void]$sb.Append("<div class='callout ok'>No historic fork-commit / merge events for this VM in the searched windows, and the logs DO cover that period (oldest available $(ConvertTo-HtmlText $hc.OldestAvailableUtc) UTC). The orphans are less likely to be a fork-commit rollback - more likely leftover backup / live-mount files - but confirm with your backup team.</div>")
+                    [void]$sb.Append("<div class='callout ok'>No historic fork-commit / merge events for this VM in the searched windows, and the logs DO cover that period (oldest available $(ConvertTo-HtmlText $hc.OldestAvailableUtc) UTC). The orphans are less likely to be a fork-commit rollback - more likely leftover backup / live-mount files. Confirm by matching each file to a backup / restore / live-mount job for this VM at its timestamps; if it is a live-mount, unmount it through the backup product rather than deleting it by hand (see the orphaned-files guidance above for the full steps).</div>")
                 }
             }
             [void]$sb.Append("</details>`r`n")
@@ -2114,9 +2114,19 @@ function Invoke-VMCheckpointAudit {
                 @{N='Created (UTC)';E={ if ($_.CreationTimeUtc)  { $_.CreationTimeUtc.ToString('yyyy-MM-dd HH:mm:ss') }  else { '(unavailable)' } }},
                 @{N='LastWrite (UTC)';E={ if ($_.LastWriteTimeUtc) { $_.LastWriteTimeUtc.ToString('yyyy-MM-dd HH:mm:ss') } else { '(unavailable)' } }},
                 FullName | Format-Table -AutoSize -Wrap | Out-Indented
-            Write-Host  "  These are NOT attached to the VM - a stuck / failed merge or a leftover initial Hyper-V Replica"
-            Write-Host  "  checkpoint can leave these behind under specific scenarios. Confirm with your backup team before"
-            Write-Host  "  removing any (do not delete blindly). Open a Microsoft CSS case for guidance if required."
+            Write-Host  "  These are NOT attached to the VM - a stuck / failed merge, a failed backup checkpoint, an"
+            Write-Host  "  interrupted instant-recovery / live-mount, or a leftover initial Hyper-V Replica checkpoint can"
+            Write-Host  "  leave these behind. Do NOT delete blindly. To confirm whether each file is safe to remove:"
+            Write-Host  "    1. Match it to a job: in your backup product's history, find the backup / restore / live-mount /"
+            Write-Host  "       replica-seed job for THIS VM running at the file's Created / LastWrite time (above) - a job that"
+            Write-Host  "       failed or aborted then is the usual cause."
+            Write-Host  "    2. If it is a live-mount / instant-recovery file, unmount it THROUGH the backup product (stop the"
+            Write-Host  "       recovery session) - do NOT delete the file by hand (that leaves the product's catalog inconsistent)."
+            Write-Host  "    3. If it is a leftover initial-replica recovery point, check Get-VMReplication and let replication"
+            Write-Host  "       remove it (resume / resync) rather than deleting it manually."
+            Write-Host  "    4. Before removing anything: confirm a current, verified backup exists, MOVE (rename) the file to a"
+            Write-Host  "       quarantine folder, keep it one retention cycle, confirm the VM and its next backup are healthy,"
+            Write-Host  "       then delete. Open a Microsoft CSS case if a file cannot be matched to a job or you are unsure."
         } else {
             Write-Host "  None found - every .avhdx in the VM's folders is part of an attached chain."
             Write-Host ""
@@ -2808,7 +2818,9 @@ function Invoke-VMCheckpointAudit {
             } else {
                 Write-Host ("  No historic fork-commit / merge events for this VM in the searched windows, and the logs DO cover" )
                 Write-Host ("  that period (oldest available {0} UTC). The orphans are less likely to be a fork-commit rollback -" -f $historicCorrelation.OldestAvailableUtc)
-                Write-Host  "  more likely leftover backup / live-mount files - but confirm with your backup team."
+                Write-Host  "  more likely leftover backup / live-mount files. Confirm by matching each file to a backup / restore /"
+                Write-Host  "  live-mount job for this VM at its timestamps; if it is a live-mount, unmount it through the backup"
+                Write-Host  "  product rather than deleting it by hand (see the Orphaned .avhdx Files section above for the full steps)."
             }
         }
         Write-Host ""
@@ -2910,8 +2922,15 @@ function Invoke-VMCheckpointAudit {
     if ($hasOrphans) {
         Write-Host ""
         Write-Host ("  {0} orphaned .avhdx file(s) are present in this VM's disk folder(s) but are NOT attached to the VM." -f @($orphans).Count)
-        Write-Host  "  A stuck / failed merge or a leftover replica recovery point can leave these behind - confirm with"
-        Write-Host  "  your backup team before removing any (see the Orphaned .avhdx Files section above for details)."
+        Write-Host  "  A stuck / failed merge, a failed backup checkpoint, an interrupted live-mount, or a leftover replica"
+        Write-Host  "  recovery point can leave these behind. Do NOT delete blindly. To confirm each file is safe to remove:"
+        Write-Host  "    1. Match it to a job: find the backup / restore / live-mount / replica-seed job for THIS VM in your"
+        Write-Host  "       backup product's history at the file's Created / LastWrite time (see the Orphaned .avhdx Files section)."
+        Write-Host  "    2. If it is a live-mount / instant-recovery file, unmount it THROUGH the backup product - do not delete by hand."
+        Write-Host  "    3. If it is a leftover initial-replica point, let Hyper-V Replica remove it (resume / resync)."
+        Write-Host  "    4. Before removing: confirm a good backup exists, quarantine (move / rename) the file first, keep one"
+        Write-Host  "       retention cycle, confirm the VM and its next backup are healthy, then delete. Open a Microsoft CSS"
+        Write-Host  "       case for guidance if a file cannot be matched to a job or you are unsure."
     }
     if ($holdState) {
         Write-Host ""
@@ -3168,8 +3187,8 @@ function Invoke-VMCheckpointAudit {
             'Rollback'     { 'Possible PAST rollback aftermath - do NOT remove; investigate / recover' }
             'StuckMerge'   { ("Possible stuck / failed merge (event {0}) - investigate before any action" -f $mergeId) }
             'SafeToDelete' { if ($lockTime) { "Likely SAFE to delete - a delete was attempted on $lockTime UTC but blocked by a transient in-use lock (event 16220, 0x80070020); the event states the file is 'safe to delete at any time'. Confirm with your backup team / VM owner, then remove." } else { "Likely SAFE to delete - a prior delete was blocked by a transient in-use lock (event 16220, 0x80070020); the event states the file is 'safe to delete at any time'. Confirm with your backup team / VM owner, then remove." } }
-            'LiveMount'    { 'Likely backup live-mount / temp artifact - confirm with backup team' }
-            default        { 'Leftover backup/replica file - confirm with backup team before any action' }
+            'LiveMount'    { 'Likely backup live-mount / instant-recovery artifact - match to the mount / restore job for this VM at its timestamp, then unmount it THROUGH the backup product (do NOT delete the file by hand)' }
+            default        { 'Leftover backup / replica file - match to a backup / restore / replica-seed job for this VM at its Created / LastWrite time; quarantine (move / rename) before deleting, and confirm the VM and its next backup are healthy first' }
         }
         [pscustomobject]@{
             Name      = [string]$_.Name
