@@ -683,7 +683,7 @@ function ConvertTo-VMCheckpointAuditHtml {
     if ($countHold -gt 0) {
         [void]$sb.Append(@"
 <div class="callout high">
-  <strong>Exec Summary - action required:</strong> $countHold VM(s) are in <strong>HOLD STATE</strong> - a checkpoint fork-commit / merge-failure signature AND unmerged differencing disk(s) are present together.
+  <strong>Exec Summary - action required:</strong> $countHold VM(s) are in <strong>HOLD STATE</strong> - a 'checkpoint fork-commit / merge-failure' signature AND unmerged differencing disk(s) are present together.
   <ul>
     <li>Do NOT live/quick/storage-migrate or restart those VMs until the differencing chain has been validated (and merged if required).</li>
     <li>Engage Microsoft Support (CSS) and/or your backup vendor for those VMs.</li>
@@ -701,7 +701,7 @@ function ConvertTo-VMCheckpointAuditHtml {
         }
         [void]$sb.Append(@"
 <div class="callout high">
-  <strong>Exec Summary - data recovery:</strong> $pastRollbackAnyCount VM(s) show evidence of a <strong>PAST checkpoint fork-commit / merge-failure rollback</strong> ($confPhrase).
+  <strong>Exec Summary - data recovery:</strong> $pastRollbackAnyCount VM(s) show evidence of a <strong>PAST 'checkpoint fork-commit / merge-failure' rollback</strong> ($confPhrase).
   <ul>
     <li>This has ALREADY materialised (it is not a dormant HOLD STATE), so the priority is DATA RECOVERY, not a migration hold.</li>
     <li>Do NOT delete the orphaned <code>.avhdx</code> files - they may hold un-recovered data.</li>
@@ -728,7 +728,7 @@ function ConvertTo-VMCheckpointAuditHtml {
 <div class="callout ok">
   <strong>Exec Summary:</strong> <strong>Cluster / backup administrators should INVESTIGATE the items listed below. No Microsoft Support (CSS) case is warranted, unless additional guidance is required.</strong>
   <ul>
-    <li>No VM shows the checkpoint <em>fork-commit / merge-failure</em> signature (event <code>3216</code> or an HRESULT such as <code>0x80048102</code>).</li>
+    <li>No VM shows the '<em>checkpoint fork-commit / merge-failure</em>' signature (event <code>3216</code> or an HRESULT such as <code>0x80048102</code>).</li>
     <li>No VM is in a HOLD STATE, and no past-rollback evidence was found.</li>
     <li>$execTriageLi</li>
   </ul>
@@ -818,7 +818,7 @@ function ConvertTo-VMCheckpointAuditHtml {
     if ($activeCkptForkVMs.Count -gt 0) {
         $acfNames = (@($activeCkptForkVMs | ForEach-Object { ConvertTo-HtmlText $_.VMName }) -join ', ')
         [void]$sb.Append((@'
-  <li><strong>PRE-MIGRATION - fork-commit recorded at an active checkpoint's creation ({0} VM(s)):</strong> {1} carry an ACTIVE (still-attached) checkpoint created OUTSIDE the {2}h window, and the historic cross-node scan recovered a fork-commit / merge-failure event around that creation time. The chain may be inconsistent while the VM runs. Do NOT live/quick/storage-migrate or restart these VMs until the differencing chain has been validated (and merged if required); engage Microsoft Support (CSS) / your backup vendor. This is a proactive (dormant-risk) flag - it has not yet materialised into data loss.</li>
+  <li><strong>PRE-MIGRATION - fork-commit recorded at an active checkpoint's creation ({0} VM(s)):</strong> {1} carry an ACTIVE (still-attached) checkpoint created OUTSIDE the {2}h window, and the historic cross-node scan recovered a 'fork-commit / merge-failure' event around that creation time. The chain may be inconsistent while the VM runs. Do NOT live/quick/storage-migrate or restart these VMs until the differencing chain has been validated (and merged if required); engage Microsoft Support (CSS) / your backup vendor. This is a proactive (dormant-risk) flag - it has not yet materialised into data loss.</li>
 '@ -f $activeCkptForkVMs.Count, $acfNames, $EventLookbackHours))
     }
     if ($cannotConfirmVMs.Count -gt 0) {
@@ -875,7 +875,7 @@ function ConvertTo-VMCheckpointAuditHtml {
     # VM summary table.
     [void]$sb.Append(@'
 <h2>VM summary table</h2>
-<p class="muted"><strong>Src</strong> = <span class="src input">Input</span> (you requested it) or <span class="src discovered">Discovered</span> (auto-added via <code>-IncludeDiscoveredVMs</code>). <strong>Checkpoints</strong> = checkpoint objects (<code>Get-VMSnapshot</code>). <strong>AVHDX files</strong> = active differencing <code>.avhdx</code> layers = <strong>Checkpoints &times; Disks</strong>. <strong>Orphans</strong> = <code>.avhdx</code> on disk but NOT attached. <strong>Concerning Events (VM)</strong> = count of concern events attributed to THIS VM (<code>hi</code> = high-signal that drive the verdict; <code>low</code> = transient / housekeeping only). Rows are ordered by severity within each verdict.</p>
+<p class="muted"><strong>VM Source</strong> = <span class="src input">Input</span> (you requested it) or <span class="src discovered">Discovered</span> (auto-added via <code>-IncludeDiscoveredVMs</code>). <strong>Checkpoints</strong> = checkpoint objects (<code>Get-VMSnapshot</code>). <strong>AVHDX files</strong> = active differencing <code>.avhdx</code> layers = <strong>Checkpoints &times; Disks</strong>. <strong>Orphans</strong> = <code>.avhdx</code> on disk but NOT attached. <strong>Concerning Events (VM)</strong> = count of concern events attributed to THIS VM (<code>hi</code> = high-signal that drive the verdict; <code>low</code> = transient / housekeeping only). Rows are ordered by severity within each verdict.</p>
 <table>
 <thead><tr>
   <th>VM</th><th>State</th><th>Node</th><th>Cfg</th><th>Disks</th><th>Checkpoints</th><th>AVHDX files</th>
@@ -993,7 +993,7 @@ function ConvertTo-VMCheckpointAuditHtml {
         # HOW urgent), surface the 'possible past rollback' fingerprint + historic-correlation result,
         # and add a low-key note on OK VMs whose only signal was low-signal chatter.
         if ($r.Recommendation -eq 'HOLD STATE') {
-            [void]$sb.Append("  <div class='callout high'><strong>HOLD STATE (data-loss risk).</strong> A checkpoint fork-commit / merge-failure signature AND unmerged differencing disk(s) are present together. Do NOT migrate or restart this VM until the chain is validated (and merged if required); reopening an inconsistent chain can roll disks back to base. Engage Microsoft Support (CSS) and/or your backup vendor.</div>`r`n")
+            [void]$sb.Append("  <div class='callout high'><strong>HOLD STATE (data-loss risk).</strong> A 'checkpoint fork-commit / merge-failure' signature AND unmerged differencing disk(s) are present together. Do NOT migrate or restart this VM until the chain is validated (and merged if required); reopening an inconsistent chain can roll disks back to base. Engage Microsoft Support (CSS) and/or your backup vendor.</div>`r`n")
         } elseif ($r.Recommendation -eq 'INVESTIGATE') {
             # Build the driver phrase from the strongest signal down.
             $drv = @()
@@ -1042,10 +1042,10 @@ function ConvertTo-VMCheckpointAuditHtml {
         # v0.2.17: PROACTIVE active-checkpoint findings (pre-migration). Rendered for ANY verdict when set,
         # right after the main assessment, because the whole point is to warn BEFORE a migration/restart.
         if ($rd.PSObject.Properties['ActiveCkptForkConfirmed'] -and $rd.ActiveCkptForkConfirmed) {
-            [void]$sb.Append("  <div class='callout high'><strong>PRE-MIGRATION WARNING - fork-commit recorded at this active checkpoint's creation.</strong> This VM has an ACTIVE (still-attached) checkpoint created <strong>$(ConvertTo-HtmlText $rd.ActiveCkptOldestCreateUtc) UTC</strong> - OLDER than the $($rd.EventLookbackHours)h event lookback - and the historic cross-node scan recovered a fork-commit / merge-failure event around that creation time. The differencing chain may be INCONSISTENT while the VM keeps running; a live/quick/storage migration or restart could materialise it and roll disks back to base. Do NOT migrate or restart this VM until the chain has been validated (and merged if required). Engage Microsoft Support (CSS) / your backup vendor. (This has NOT yet materialised into data loss - it is a dormant risk being flagged proactively.)</div>`r`n")
+            [void]$sb.Append("  <div class='callout high'><strong>PRE-MIGRATION WARNING - fork-commit recorded at this active checkpoint's creation.</strong> This VM has an ACTIVE (still-attached) checkpoint created <strong>$(ConvertTo-HtmlText $rd.ActiveCkptOldestCreateUtc) UTC</strong> - OLDER than the $($rd.EventLookbackHours)h event lookback - and the historic cross-node scan recovered a 'fork-commit / merge-failure' event around that creation time. The differencing chain may be INCONSISTENT while the VM keeps running; a live/quick/storage migration or restart could materialise it and roll disks back to base. Do NOT migrate or restart this VM until the chain has been validated (and merged if required). Engage Microsoft Support (CSS) / your backup vendor. (This has NOT yet materialised into data loss - it is a dormant risk being flagged proactively.)</div>`r`n")
         } elseif ($rd.PSObject.Properties['CannotConfirmMigrationSafe'] -and $rd.CannotConfirmMigrationSafe) {
             $oldestAvail = if ($rd.ActiveCkptOldestAvailUtc) { "$(ConvertTo-HtmlText $rd.ActiveCkptOldestAvailUtc) UTC" } else { 'a time AFTER the checkpoint was created' }
-            [void]$sb.Append("  <div class='callout warn'><strong>CANNOT CONFIRM from event data - event logs have wrapped past this active checkpoint's creation.</strong> This VM has an ACTIVE (still-attached) checkpoint created <strong>$(ConvertTo-HtmlText $rd.ActiveCkptOldestCreateUtc) UTC</strong>, but the Hyper-V Worker / VMMS event logs on the searched node(s) only go back to <strong>$oldestAvail</strong> - i.e. the logs have <strong>WRAPPED PAST</strong> the moment the checkpoint was created. This automation therefore <strong>cannot check for a fork-commit / merge-failure at that time</strong>: absence of evidence here is NOT proof the chain is safe. As a precaution, validate the differencing chain (and consider a backup vendor / Microsoft Support (CSS) review) BEFORE any live/quick/storage migration or restart of this VM.</div>`r`n")
+            [void]$sb.Append("  <div class='callout warn'><strong>CANNOT CONFIRM from event data - event logs have wrapped past this active checkpoint's creation.</strong> This VM has an ACTIVE (still-attached) checkpoint created <strong>$(ConvertTo-HtmlText $rd.ActiveCkptOldestCreateUtc) UTC</strong>, but the Hyper-V Worker / VMMS event logs on the searched node(s) only go back to <strong>$oldestAvail</strong> - i.e. the logs have <strong>WRAPPED PAST</strong> the moment the checkpoint was created. This automation therefore <strong>cannot check for a 'fork-commit / merge-failure' at that time</strong>: absence of evidence here is NOT proof the chain is safe. As a precaution, validate the differencing chain (and consider a backup vendor / Microsoft Support (CSS) review) BEFORE any live/quick/storage migration or restart of this VM.</div>`r`n")
         }
         # HOLD STATE: the copy/paste support-case summary lifted verbatim from the per-VM report (collapsed).
         if ($r.Recommendation -eq 'HOLD STATE' -and $rd.PSObject.Properties['SupportCaseSummary'] -and $rd.SupportCaseSummary) {
@@ -1079,7 +1079,7 @@ function ConvertTo-VMCheckpointAuditHtml {
             [void]$sb.Append("<p class='muted'>Searched &plusmn;$($hc.WindowMinutes) min around each orphan's create and last-write times (windows: $(ConvertTo-HtmlText ((@($hc.Windows)) -join ', '))) across all cluster nodes, for this VM's fork-commit / merge events that may predate the $($rd.EventLookbackHours)h lookback.</p>")
             if ([int]$hc.MatchCount -gt 0) {
                 if ($rd.HistoricForkConfirmed) {
-                    [void]$sb.Append("<div class='callout high'><strong>CONFIRMED past fork-commit / merge failure.</strong> Historic events for this VM were recovered around the orphan timestamps (outside the standard window). This is strong evidence the rollback DID occur - engage Microsoft Support (CSS) / your backup vendor to recover the orphaned data.</div>")
+                    [void]$sb.Append("<div class='callout high'><strong>CONFIRMED past 'fork-commit / merge failure'.</strong> Historic events for this VM were recovered around the orphan timestamps (outside the standard window). This is strong evidence the rollback DID occur - engage Microsoft Support (CSS) / your backup vendor to recover the orphaned data.</div>")
                 }
                 [void]$sb.Append("<table><thead><tr><th>Time (UTC)</th><th>Node</th><th>Log</th><th>Id</th><th>Message</th></tr></thead><tbody>")
                 foreach ($m in @($hc.Matches)) {
@@ -2822,7 +2822,7 @@ function Invoke-VMCheckpointAudit {
         Write-Host ("  Windows: {0}" -f ((@($historicCorrelation.Windows)) -join '; '))
         if ([int]$historicCorrelation.MatchCount -gt 0) {
             if ($historicForkConfirmed) {
-                Write-Alert  "  CONFIRMED past fork-commit / merge failure: historic events for this VM were recovered around" -Level Critical
+                Write-Alert  "  CONFIRMED past 'fork-commit / merge failure': historic events for this VM were recovered around" -Level Critical
                 Write-Alert  "  the orphan timestamps (outside the standard window). This is strong evidence the rollback DID" -Level Critical
                 Write-Alert  "  occur - engage Microsoft Support (CSS) / your backup vendor to recover the orphaned data." -Level Critical
             } else {
@@ -2854,7 +2854,7 @@ function Invoke-VMCheckpointAudit {
         Write-Host ("  This VM has an active checkpoint created {0} UTC - older than the {1}h event lookback." -f $activeCkptOldestCreateUtc, $EventLookbackHours)
         Write-Host ("  Searched +/- {0} min around the checkpoint create time(s), across {1} node(s)." -f $activeCkptHistoric.WindowMinutes, @($activeCkptHistoric.NodesSearched).Count)
         if ($activeCkptForkConfirmed) {
-            Write-Alert  "  PRE-MIGRATION WARNING: a fork-commit / merge-failure event was recorded at this active checkpoint's" -Level Critical
+            Write-Alert  "  PRE-MIGRATION WARNING: a 'fork-commit / merge-failure' event was recorded at this active checkpoint's" -Level Critical
             Write-Alert  "  creation. The differencing chain may be inconsistent while the VM runs; a live migration / restart" -Level Critical
             Write-Alert  "  could materialise it. Do NOT migrate or restart until the chain is validated - engage Microsoft" -Level Critical
             Write-Alert  "  Support (CSS) / your backup vendor. (Dormant risk - not yet materialised into data loss.)" -Level Critical
@@ -2905,12 +2905,12 @@ function Invoke-VMCheckpointAudit {
     Write-Host ""
     if ($hasCheckpoints -and $holdState) {
         Write-Host ("  This VM is running on {0} active differencing (.avhdx checkpoint) disk layer(s) over its base" -f $totalCheckpoints)
-        Write-Host  "  VHD(s), together with a checkpoint fork-commit / merge-failure signature. That combination can"
+        Write-Host  "  VHD(s), together with a 'checkpoint fork-commit / merge-failure' signature. That combination can"
         Write-Host  "  leave the on-disk chain inconsistent and, if the VM is later migrated or restarted, roll the"
         Write-Host  "  disks back to base and orphan the data held in the .avhdx layer(s)."
     } elseif ($hasCheckpoints) {
         Write-Host ("  This VM is running on {0} active differencing (.avhdx checkpoint) disk layer(s) over its base" -f $totalCheckpoints)
-        Write-Host  "  VHD(s). No checkpoint fork-commit / merge-failure signature was found, so these layer(s) are"
+        Write-Host  "  VHD(s). No 'checkpoint fork-commit / merge-failure' signature was found, so these layer(s) are"
         Write-Host  "  most likely a backup checkpoint that has not yet been merged - review them with your backup"
         Write-Host  "  team before taking any action (this is NOT, on its own, a reason to open a Microsoft case)."
     } else {
@@ -2955,7 +2955,7 @@ function Invoke-VMCheckpointAudit {
     }
     if ($holdState) {
         Write-Host ""
-        Write-Host  "  ASSESSMENT: HOLD STATE (data-loss risk) - a checkpoint fork-commit / merge-failure signature AND"
+        Write-Host  "  ASSESSMENT: HOLD STATE (data-loss risk) - a 'checkpoint fork-commit / merge-failure' signature AND"
         Write-Host  "  unmerged differencing disk(s) are present together. As a precaution this VM should NOT be"
         Write-Host  "  live/quick/storage-migrated or restarted until the differencing chain has been validated (and"
         Write-Host  "  merged if required); reopening an inconsistent chain can roll disks back to base and lose data."
@@ -2963,7 +2963,7 @@ function Invoke-VMCheckpointAudit {
         Write-Host ""
         if ($historicForkConfirmed) {
             Write-Host  "  ASSESSMENT: INVESTIGATE (possible PAST rollback) - no CURRENT fork-commit signature and no attached"
-            Write-Host  "  differencing disk(s), BUT a PAST checkpoint fork-commit / merge failure for this VM was CONFIRMED"
+            Write-Host  "  differencing disk(s), BUT a PAST 'checkpoint fork-commit / merge failure' for this VM was CONFIRMED"
             Write-Host  "  via historic events recovered around the orphaned .avhdx timestamps (see the Historic Event"
             Write-Host  "  Correlation section above). The orphaned file(s) are the likely aftermath of that materialised"
             Write-Host  "  rollback and may hold un-recovered data - engage Microsoft Support (CSS) / your backup vendor to"
@@ -3074,15 +3074,15 @@ function Invoke-VMCheckpointAudit {
     }
     if ($holdState) {
         Write-Host ""
-        Write-Alert "  HOLD STATE (data-loss risk): a checkpoint fork-commit / merge-failure signature AND" -Level Critical
+        Write-Alert "  HOLD STATE (data-loss risk): a 'checkpoint fork-commit / merge-failure' signature AND" -Level Critical
         Write-Alert "  unmerged differencing disk(s) are present together." -Level Critical
         Write-Alert ("  Why flagged: {0} active differencing (.avhdx) layer(s); fork-commit signature in event(s) [{1}]; {2} checkpoint(s) >= {3}h old." -f $totalCheckpoints, $vmConcernIdSummary, $staleCheckpoints.Count, $StaleHours) -Level Critical
         Write-Alert "  See the PROBLEM STATEMENT section above for the recommended next steps and a copy/paste case summary." -Level Critical
     } elseif ($investigate) {
         Write-Host ""
         if ($historicForkConfirmed) {
-            Write-Alert "  INVESTIGATE (possible PAST rollback): no CURRENT fork-commit signature, but a PAST checkpoint" -Level Critical
-            Write-Alert "  fork-commit / merge failure for this VM was CONFIRMED via historic events around the orphan timestamps." -Level Critical
+            Write-Alert "  INVESTIGATE (possible PAST rollback): no CURRENT fork-commit signature, but a PAST 'checkpoint" -Level Critical
+            Write-Alert "  fork-commit / merge failure' for this VM was CONFIRMED via historic events around the orphan timestamps." -Level Critical
             Write-Alert ("  Why flagged: CONFIRMED historic fork-commit event(s); {0} orphaned .avhdx file(s); {1} concerning event(s) for this VM [{2}]." -f @($orphans).Count, $vmEventConcernCount, $vmConcernIdSummary) -Level Critical
             Write-Alert "  See the Historic Event Correlation and FINDINGS TO INVESTIGATE sections above - engage Microsoft Support (CSS) / your backup vendor to recover the orphaned data." -Level Critical
         } else {
