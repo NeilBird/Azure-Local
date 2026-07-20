@@ -1,5 +1,7 @@
 # Test Results (entire generated artefact folder - regenerated on each Pester run)
 **/TestResults/
+Get-HyperVVMCheckpointHealth/pester-testing/results/
+Get-HyperVVMCheckpointHealth/release/
 
 # PowerShell logs
 *.log
@@ -33,6 +35,7 @@ AzLocal.UpdateManagement/Test-Pipelines.ps1
 # Agent-generated planning / review docs (kept locally, never committed)
 # Per-module consolidation folder (preferred location for all review artefacts):
 AzLocal.UpdateManagement/Module-reviews/
+Get-HyperVVMCheckpointHealth/specs/
 # Defensive guards for stray files anywhere in the tree:
 **/COMBINED-REVIEW-ACTION-PLAN.md
 **/MODULE-REVIEW-AND-RECOMMENDATIONS.md

@@ -1,0 +1,48 @@
+# Get-HyperVVMCheckpointHealth optional policy
+schemaVersion: 1
+
+storage:
+  # Additional full-path regular expressions for shared image, template, or library virtual disks.
+  # An exact ImageStore path segment is always excluded from housekeeping findings, even with [].
+  # No additional patterns are active in this template. Replace [] with a YAML list to add exclusions.
+  imageLibraryPathPatterns: []
+  # Example replacement (remove the [] line above before uncommenting):
+  # imageLibraryPathPatterns:
+    # - '(?i)[\\/](?:image|images|template|templates|library|gallery|golden)(?:[\\/]|$)'
+    # - '(?i)^C:\\ClusterStorage\\UserStorage_1\\VM-Images(?:\\|$)'
+
+orphan:
+  # Full-path regular expressions for backup live-mount or instant-recovery artifacts.
+  # No patterns are active in this template. Replace [] with a YAML list to enable matching.
+  liveMountPathPatterns: []
+  # Example replacement (remove the [] line above before uncommenting):
+  # liveMountPathPatterns:
+    # - '(?i)rubriklivemount'
+    # - '(?i)_temp_'
+    # - '(?i)[\\/]VeeamFLR[\\/]'
+  classifyZeroByteAsLiveMount: true
+
+# CSV free-space thresholds are disabled by default. Uncomment to make a breach an INVESTIGATE driver.
+# csvFreeSpace:
+#   enabled: true
+#   minimumFreePercent: 15
+#   minimumFreeGB: 100
+
+replication:
+  hrl:
+    # Controls cadence-aware assessment of Hyper-V Replica .hrl change-log files only.
+    # It does not disable the normal Get-VMReplication / Measure-VMReplication health checks.
+    enabled: true
+
+    # An HRL exceeds cadence when its age in minutes is at least:
+    #   max(minimumStaleMinutes, (Replica FrequencySec / 60) * cadenceMultiplier)
+    # Example: FrequencySec=300 and cadenceMultiplier=10 gives a 50-minute threshold.
+    cadenceMultiplier: 10
+
+    # Lower bound used when the calculated cadence is shorter, or FrequencySec is unavailable/zero.
+    minimumStaleMinutes: 15
+
+    # Recommended: true. HRL age alone remains context and does not drive INVESTIGATE unless
+    # typed Replica health or measurements independently report a concern. Set false only when
+    # your operational policy intentionally allows an aged HRL by itself to drive INVESTIGATE.
+    requireReplicationConcern: true
