@@ -1,0 +1,296 @@
+[CmdletBinding()]
+[OutputType([System.IO.FileInfo])]
+param(
+    [string]$OutputPath
+)
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+
+if (-not $OutputPath) {
+    $OutputPath = Join-Path $PSScriptRoot 'VMCheckpointAudit-contoso01-example.html'
+}
+
+$toolRoot = Split-Path $PSScriptRoot -Parent
+$modulePath = Join-Path $toolRoot 'Get-HyperVVMCheckpointHealth.psm1'
+$tokens = $null
+$parseErrors = $null
+$moduleAst = [System.Management.Automation.Language.Parser]::ParseFile(
+    $modulePath,
+    [ref]$tokens,
+    [ref]$parseErrors
+)
+if (@($parseErrors).Count -gt 0) {
+    throw "Cannot parse the module renderer: $($parseErrors[0].Message)"
+}
+
+$rendererAst = $moduleAst.FindAll({
+        param($node)
+        $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -eq 'ConvertTo-VMCheckpointAuditHtml'
+    }, $true) | Select-Object -First 1
+if (-not $rendererAst) {
+    throw 'ConvertTo-VMCheckpointAuditHtml was not found in the module.'
+}
+Invoke-Expression $rendererAst.Extent.Text
+
+$baseReportData = [pscustomobject]@{
+    State = 'Running'; Status = 'Operating normally'; Version = '12.0'; HostMaxVersion = '12.0'
+    VmVerOlder = $false; Uptime = '12.08:34:21'; CheckpointType = 'Production'
+    AutomaticCheckpoints = $false; AttachedDiskCount = 2; CheckpointLayers = 0
+    Checkpoints = @(); StaleCheckpointCount = 0; StaleHours = 24
+    StaleAttachedLayerCount = 0; StaleSnapshotCount = 0; SnapshotLayerMismatch = $false
+    ChainComplete = $true; IncompleteChainCount = 0; StateConsistencyStatus = 'Stable'
+    Replication = [pscustomobject]@{ Enabled = $false; State = ''; Health = '' }
+    VssState = 'Healthy'; VssTotal = 10; VssUnhealthyCount = 0; VssUnhealthy = @()
+    AnalyticNodesNeedEnable = @(); CsvVolumes = @(); OrphanCount = 0; Orphans = @()
+    HasOrphans = $false; HasForkSignature = $false; EventConcernCount = 0
+    VmEventConcernCount = 0; EventBreakdown = @(); EventLookbackHours = 168
+    EventsCsvName = ''; NodeEventsCsvName = ''; SupportCaseSummary = ''
+    VmHighConcernCount = 0; VmLowConcernCount = 0; VmCriticalCount = 0
+    VmHighOpCount = 0; VmEscalatingConcernCount = 0; HighOpSelfResolved = $false
+    VmHighConcernIds = ''; LowSignalOnly = $false; NodeDominantNote = ''
+    ReplHealth = ''; ReplUnhealthy = $false; ReplCritical = $false
+    SeverityScore = 0; HasRollbackFingerprint = $false; RollbackDate = ''
+    HasStuckMergeOrphan = $false; OrphanOnlyLiveMount = $false
+    HistoricForkConfirmed = $false; Historic = $null; ActiveCkptForkConfirmed = $false
+    ActiveCkptLogsWrapped = $false; ActiveCkptCoverageIncomplete = $false
+    CannotConfirmMigrationSafe = $false; ActiveCkptOldestCreateUtc = ''
+    ActiveCkptOldestAvailUtc = ''; ActiveCkptHistoric = $null
+    PolicySource = 'BuiltInDefaults'; CsvFreeSpaceAssessment = $null; HrlAssessment = $null
+}
+
+$historicReportData = $baseReportData.PSObject.Copy()
+$historicReportData.Uptime = '4.03:18:42'
+$historicReportData.OrphanCount = 2
+$historicReportData.HasOrphans = $true
+$historicReportData.HasRollbackFingerprint = $true
+$historicReportData.RollbackDate = '2026-06-14'
+$historicReportData.HistoricForkConfirmed = $true
+$historicReportData.SeverityScore = 95
+$historicReportData.EventsCsvName = 'TestVM01_Events_2026-07-20.csv'
+$historicReportData.NodeEventsCsvName = '_NodeEvents_node01_2026-07-20.csv'
+$historicReportData.Orphans = @(
+    [pscustomobject]@{
+        Name = 'TestVM01_Data_recovery.avhdx'; SizeGB = 18.4
+        Created = '2026-06-14 02:10:12'; LastWrite = '2026-06-14 02:16:45'
+        AgeHrs = 874.1; AgeDays = 36.4
+        Likely = 'Historic merge artifact. Preserve and correlate with the backup job before any action.'
+        FullName = 'C:\ClusterStorage\UserStorage_1\TestVM01\Virtual Hard Disks\TestVM01_Data_recovery.avhdx'
+    },
+    [pscustomobject]@{
+        Name = 'TestVM01_OS_recovery.avhdx'; SizeGB = 6.8
+        Created = '2026-06-14 02:10:11'; LastWrite = '2026-06-14 02:16:46'
+        AgeHrs = 874.1; AgeDays = 36.4
+        Likely = 'Historic merge artifact. Preserve and correlate with the backup job before any action.'
+        FullName = 'C:\ClusterStorage\UserStorage_2\TestVM01\Virtual Hard Disks\TestVM01_OS_recovery.avhdx'
+    }
+)
+$historicReportData.Historic = [pscustomobject]@{
+    MatchCount = 2; WindowMinutes = 30
+    NodesSearched = @(1..10 | ForEach-Object { 'node{0:d2}' -f $_ })
+    Windows = @('2026-06-14 01:40:11 to 2026-06-14 02:46:46 UTC')
+    CoverageComplete = $true; OldestAvailableUtc = '2026-05-01 00:00:00'
+    Coverage = @()
+    Matches = @(
+        [pscustomobject]@{
+            Time = '2026-06-14 02:14:08'; Node = 'node01'
+            Log = 'Microsoft-Windows-Hyper-V-VMMS-Admin'; Id = 3216
+            Message = 'Synthetic example: the checkpoint operation for TestVM01 could not commit the differencing chain.'
+        },
+        [pscustomobject]@{
+            Time = '2026-06-14 02:15:31'; Node = 'node01'
+            Log = 'Microsoft-Windows-Hyper-V-Worker-Admin'; Id = 19100
+            Message = 'Synthetic example: the background merge for TestVM01 did not complete.'
+        }
+    )
+}
+
+$results = @(
+    [pscustomobject]@{
+        VMName = 'TestVM01'; OwningNode = 'node01'; Recommendation = 'INVESTIGATE'
+        Source = 'Input'; StaleCheckpointCount = 0; ReportData = $historicReportData; Detail = ''
+    }
+    foreach ($vmNumber in 2..20) {
+        $healthyReportData = $baseReportData.PSObject.Copy()
+        $healthyReportData.AttachedDiskCount = if (($vmNumber % 4) -eq 0) { 2 } else { 1 }
+        $healthyReportData.Uptime = '{0}.{1:d2}:{2:d2}:{3:d2}' -f `
+            (6 + $vmNumber), ($vmNumber % 24), (($vmNumber * 3) % 60), (($vmNumber * 7) % 60)
+        $recommendation = 'OK'
+        switch ($vmNumber) {
+            2 {
+                $healthyReportData.OrphanCount = 1
+                $healthyReportData.HasOrphans = $true
+                $healthyReportData.HasStuckMergeOrphan = $true
+                $healthyReportData.SeverityScore = 75
+                $healthyReportData.Orphans = @([pscustomobject]@{
+                    Name = 'TestVM02_Data_orphan.avhdx'; SizeGB = 11.2
+                    Created = '2026-07-16 01:22:04'; LastWrite = '2026-07-16 01:38:19'
+                    AgeHrs = 107.6; AgeDays = 4.5
+                    Likely = 'Possible stuck merge artifact. Match it to the synthetic backup window before any action.'
+                    FullName = 'C:\ClusterStorage\UserStorage_1\TestVM02\Virtual Hard Disks\TestVM02_Data_orphan.avhdx'
+                })
+                $recommendation = 'INVESTIGATE'
+            }
+            3 {
+                $healthyReportData.CheckpointLayers = 1
+                $healthyReportData.StaleAttachedLayerCount = 1
+                $healthyReportData.StaleCheckpointCount = 1
+                $healthyReportData.Checkpoints = @([pscustomobject]@{
+                    Name = 'Backup checkpoint - synthetic'; Type = 'Recovery'; Purpose = 'Backup'
+                    Created = '2026-07-17 00:15:00'; AgeHrs = 83.8; Stale = $true; Parent = ''
+                })
+                $healthyReportData.SeverityScore = 70
+                $recommendation = 'INVESTIGATE'
+            }
+            4 {
+                $healthyReportData.CheckpointLayers = 1
+                $healthyReportData.StaleAttachedLayerCount = 1
+                $healthyReportData.SnapshotLayerMismatch = $true
+                $healthyReportData.SeverityScore = 72
+                $recommendation = 'INVESTIGATE'
+            }
+            5 {
+                $healthyReportData.Replication = [pscustomobject]@{ Enabled = $true; State = 'Error'; Health = 'Critical' }
+                $healthyReportData.ReplHealth = 'Critical'
+                $healthyReportData.ReplUnhealthy = $true
+                $healthyReportData.ReplCritical = $true
+                $healthyReportData.SeverityScore = 65
+                $recommendation = 'INVESTIGATE'
+            }
+            6 {
+                $healthyReportData.Replication = [pscustomobject]@{ Enabled = $true; State = 'Resynchronizing'; Health = 'Warning' }
+                $healthyReportData.ReplHealth = 'Warning'
+                $healthyReportData.ReplUnhealthy = $true
+                $healthyReportData.SeverityScore = 55
+                $recommendation = 'INVESTIGATE'
+            }
+            7 {
+                $healthyReportData.CheckpointLayers = 1
+                $healthyReportData.StaleAttachedLayerCount = 1
+                $healthyReportData.StaleCheckpointCount = 1
+                $healthyReportData.Checkpoints = @([pscustomobject]@{
+                    Name = 'Active checkpoint with historic fork evidence'; Type = 'Recovery'; Purpose = 'Backup'
+                    Created = '2026-07-10 04:20:00'; AgeHrs = 248.7; Stale = $true; Parent = ''
+                })
+                $healthyReportData.ActiveCkptForkConfirmed = $true
+                $healthyReportData.ActiveCkptOldestCreateUtc = '2026-07-10 04:20:00'
+                $healthyReportData.ActiveCkptHistoric = [pscustomobject]@{
+                    WindowMinutes = 120; NodesSearched = @(1..10 | ForEach-Object { 'node{0:d2}' -f $_ })
+                    Coverage = @(); CoverageComplete = $true; Matches = @([pscustomobject]@{
+                        Time = '2026-07-10 04:23:18'; Node = 'node07'; Log = 'Worker'; Id = 3216
+                        Message = 'Synthetic example: fork-commit evidence at TestVM07 checkpoint creation.'
+                    })
+                }
+                $healthyReportData.SeverityScore = 100
+                $recommendation = 'HOLD STATE'
+            }
+            17 {
+                $healthyReportData.CheckpointLayers = 1
+                $healthyReportData.StaleAttachedLayerCount = 1
+                $healthyReportData.StaleCheckpointCount = 1
+                $healthyReportData.Checkpoints = @([pscustomobject]@{
+                    Name = 'Discovered backup checkpoint - synthetic'; Type = 'Recovery'; Purpose = 'Backup'
+                    Created = '2026-07-18 03:30:00'; AgeHrs = 56.5; Stale = $true; Parent = ''
+                })
+                $healthyReportData.OrphanCount = 1
+                $healthyReportData.HasOrphans = $true
+                $healthyReportData.SeverityScore = 80
+                $healthyReportData.Orphans = @([pscustomobject]@{
+                    Name = 'TestVM17_OS_orphan.avhdx'; SizeGB = 4.6
+                    Created = '2026-07-18 03:31:10'; LastWrite = '2026-07-18 03:44:52'
+                    AgeHrs = 56.3; AgeDays = 2.3
+                    Likely = 'Unattached backup checkpoint artifact. Preserve it until the synthetic job history is reviewed.'
+                    FullName = 'C:\ClusterStorage\UserStorage_2\TestVM17\Virtual Hard Disks\TestVM17_OS_orphan.avhdx'
+                })
+                $recommendation = 'INVESTIGATE'
+            }
+        }
+        [pscustomobject]@{
+            VMName = 'TestVM{0:d2}' -f $vmNumber
+            OwningNode = 'node{0:d2}' -f ((($vmNumber - 1) % 10) + 1)
+            Recommendation = $recommendation
+            Source = if ($vmNumber -le 16) { 'Input' } else { 'Discovered' }
+            StaleCheckpointCount = $healthyReportData.StaleCheckpointCount
+            ReportData = $healthyReportData
+            Detail = ''
+        }
+    }
+)
+
+$storageHealth = [pscustomobject]@{
+    Summary = 'Healthy'; Source = 'node01'; StorageJobs = @(); CsvRedirected = @()
+    VDiskUnhealthy = @(); PDiskUnhealthy = @()
+    Subsystem = @([pscustomobject]@{ Name = 'contoso01 S2D on contoso01'; Health = 'Healthy' })
+    Note = ''
+}
+
+$housekeepingFindings = @(
+    [pscustomobject]@{
+        Category = 'Placement inconsistency'; Scope = 'TestVM03, TestVM08'
+        FileName = 'TestVM03_Data.vhdx'
+        Observation = 'Virtual disk placement and VM ownership associations differ: C:\ClusterStorage\UserStorage_1\TestVM08\Virtual Hard Disks\TestVM03_Data.vhdx'
+        Review = 'Confirm the intended owner and storage layout with the VM, backup, and storage owners. Do not move the file based only on this report.'
+    },
+    [pscustomobject]@{
+        Category = 'Unattached base disk candidate'; Scope = 'TestVM08'
+        FileName = 'TestVM08_LegacyData.vhdx'
+        Observation = 'No VM or snapshot chain references this base disk under complete coverage: C:\ClusterStorage\UserStorage_1\TestVM08\Virtual Hard Disks\TestVM08_LegacyData.vhdx'
+        Review = 'If this virtual disk belongs to an image library, exclude its full path with storage.imageLibraryPathPatterns in a checkpoint-health-policy.yml file supplied via -PolicyPath (see README.md). Otherwise, confirm intended ownership and storage layout with the VM, backup, and storage owners. Do not modify the file based only on this report.'
+    },
+    [pscustomobject]@{
+        Category = 'Unattached base disk candidate'; Scope = 'TestVM12'
+        FileName = 'TestVM12_Archive.vhdx'
+        Observation = 'No VM or snapshot chain references this base disk under complete coverage: C:\ClusterStorage\UserStorage_2\TestVM12\Virtual Hard Disks\TestVM12_Archive.vhdx'
+        Review = 'If this virtual disk belongs to an image library, exclude its full path with storage.imageLibraryPathPatterns in a checkpoint-health-policy.yml file supplied via -PolicyPath (see README.md). Otherwise, confirm intended ownership and storage layout with the VM, backup, and storage owners. Do not modify the file based only on this report.'
+    },
+    [pscustomobject]@{
+        Category = 'Shared virtual disk reference'; Scope = 'TestVM14, TestVM15'
+        FileName = 'SharedData01.vhdx'
+        Observation = 'More than one VM or snapshot inventory references this path: C:\ClusterStorage\UserStorage_2\TestVM14\Virtual Hard Disks\SharedData01.vhdx'
+        Review = 'Confirm that the shared reference is intentional and supported for this workload. Do not modify the file based only on this report.'
+    }
+)
+
+$discoverySummary = [pscustomobject]@{
+    EligibleCount = 4; AuditedCount = 4; DeferredCount = 0; Cap = $null
+}
+
+$html = ConvertTo-VMCheckpointAuditHtml -Results $results -StaleHours 24 `
+    -EventLookbackHours 168 -ClusterName 'contoso01' -GeneratedUtc '2026-07-20 12:00:00' `
+    -DiscoveredVMs @() -DiscoverySummary $discoverySummary -StorageHealth $storageHealth `
+    -HousekeepingFindings $housekeepingFindings -IncludeDiscoveredVMs:$true `
+    -ScriptVersion '0.2.18' -ReportGenerationTime '00:01:24' -ClusterNodeCount 10 -ClusterCsvCount 2
+
+$syntheticNotice = @'
+<div class="callout info synthetic-example"><strong>Synthetic example report.</strong> Every cluster, node, VM, path, timestamp, and event message in this file is invented for documentation. TestVM07 demonstrates an active-checkpoint HOLD STATE confirmed by historic event evidence; seven VMs demonstrate historic rollback, orphaned AVHDX, stale checkpoint/layer, and Hyper-V Replica INVESTIGATE findings; 12 VMs are healthy comparisons. The inventory contains 16 input VMs and 4 automatically discovered VMs.</div>
+'@
+$html = $html.Replace('<div class="wrap">', "<div class=`"wrap`">`r`n$syntheticNotice")
+
+$allowedNames = @('contoso01') + @(1..20 | ForEach-Object { 'TestVM{0:d2}' -f $_ }) + `
+    @(1..10 | ForEach-Object { 'node{0:d2}' -f $_ })
+$identityValues = @(
+    'contoso01'
+    @($results | ForEach-Object { $_.VMName; $_.OwningNode })
+    @($historicReportData.Historic.NodesSearched)
+    $storageHealth.Source
+)
+$unexpectedNames = @($identityValues | Where-Object { $_ -and $allowedNames -notcontains $_ } | Sort-Object -Unique)
+if ($unexpectedNames.Count -gt 0) {
+    throw "Unexpected identity values in synthetic report data: $($unexpectedNames -join ', ')"
+}
+if ($html -match '(?i)\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b') {
+    throw 'An email address was found in the synthetic report.'
+}
+$clusterPaths = @([regex]::Matches($html, '(?i)C:\\ClusterStorage\\[^<\s]+') | ForEach-Object { [System.Net.WebUtility]::HtmlDecode($_.Value) })
+$unexpectedPaths = @($clusterPaths | Where-Object { $_ -notmatch '^C:\\ClusterStorage\\UserStorage_[12]\\TestVM(?:0[1-9]|1[0-9]|20)\\' })
+if ($unexpectedPaths.Count -gt 0) {
+    throw "Unexpected ClusterStorage path in synthetic report: $($unexpectedPaths -join ', ')"
+}
+
+$outputDirectory = Split-Path $OutputPath -Parent
+if ($outputDirectory -and -not (Test-Path -LiteralPath $outputDirectory -PathType Container)) {
+    New-Item -ItemType Directory -Path $outputDirectory -Force | Out-Null
+}
+[System.IO.File]::WriteAllText($OutputPath, $html, [System.Text.UTF8Encoding]::new($false))
+Get-Item -LiteralPath $OutputPath

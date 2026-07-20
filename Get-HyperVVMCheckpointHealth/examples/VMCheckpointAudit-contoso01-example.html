@@ -1,0 +1,956 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hyper-V VM Checkpoint Health Audit</title>
+<style>
+  :root{
+    --bg:#0f172a; --panel:#1e293b; --panel2:#243349; --ink:#e2e8f0; --muted:#94a3b8;
+    --line:#334155; --accent:#38bdf8;
+    --amber:#f59e0b; --amber-bg:#3a2c07; --red:#ef4444; --red-bg:#3a0d0d;
+    --green:#22c55e; --green-bg:#0f2e1a; --high:#fb7185; --high-bg:#3a1420;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:Segoe UI,-apple-system,Roboto,Helvetica,Arial,sans-serif;
+    background:var(--bg);color:var(--ink);line-height:1.55;font-size:15px}
+  .wrap{max-width:1120px;margin:0 auto;padding:32px 24px 80px}
+  header.top{border-bottom:2px solid var(--line);padding-bottom:18px;margin-bottom:28px}
+  header.top h1{margin:0 0 6px;font-size:26px;color:#fff}
+  .meta{color:var(--muted);font-size:13px}
+  .meta b{color:var(--ink)}
+  h2{margin:38px 0 14px;font-size:20px;color:#fff;border-left:4px solid var(--accent);padding-left:10px}
+  h3{margin:22px 0 8px;font-size:16px;color:#fff}
+  p{margin:8px 0}
+  a{color:var(--accent)}
+  code{background:#0b1220;color:#7dd3fc;padding:1px 6px;border-radius:4px;font-size:13px;
+    font-family:Consolas,Monaco,monospace;overflow-wrap:anywhere;word-break:break-word}
+  pre{white-space:pre-wrap;word-break:break-word;background:#0b1220;color:#cbd5e1;padding:12px;
+    border-radius:8px;font-size:12.5px;line-height:1.4;font-family:Consolas,Monaco,monospace;overflow:auto;max-height:560px}
+    .cards{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:14px;margin:8px 0 6px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;
+        padding:14px 18px;min-width:0}
+    .card.lead{grid-column:1/-1}
+  .card .n{font-size:30px;font-weight:700;color:#fff;line-height:1.1}
+  .card .l{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.04em;margin-top:4px}
+  .card.amber .n{color:var(--amber)} .card.high .n{color:var(--high)} .card.green .n{color:var(--green)}
+  .callout{border-radius:10px;padding:14px 18px;margin:16px 0;border:1px solid var(--line)}
+  .callout.info{background:#0b2436;border-color:#1d4e6b}
+  .callout.warn{background:var(--amber-bg);border-color:#7a5b12}
+  .callout.high{background:var(--high-bg);border-color:#7a2438}
+  .callout.ok{background:var(--green-bg);border-color:#1c6b3a}
+  .disclaimer{background:var(--amber-bg);border:1px solid #7a5b12;border-radius:8px;
+    padding:10px 16px;margin:0 0 22px;color:#fcd34d;font-size:12.5px;line-height:1.5}
+  .disclaimer b{color:#fde68a}
+  /* All tables fill the SAME width as the body text and cards (the .wrap container) and never grow
+     wider than it. Header cells wrap (white-space:normal) instead of nowrap - a 13-column table with
+     nowrap headers forces a minimum width past the container and pokes out past every other section,
+     giving a ragged right edge. Wrapping headers + overflow-wrap on cells lets any table collapse to
+     the shared 100% width, so tables, text and the whole page line up on one uniform right edge.
+     NOTE: use overflow-wrap:break-word (NOT word-break:break-word) on cells - word-break splits words
+     mid-character ('Runn ing', 'Siz e'); overflow-wrap only breaks a word when it truly cannot fit, so
+     normal words (Running, Size, Created, Parent) stay intact and headers wrap only at spaces. Long
+     file paths still break because the 'code' rule carries its own overflow-wrap:anywhere. */
+  table{width:100%;max-width:100%;table-layout:auto;border-collapse:collapse;margin:12px 0;font-size:13.5px;
+    background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+  th,td{padding:9px 11px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top;overflow-wrap:break-word}
+  th{background:var(--panel2);color:#cbd5e1;font-weight:600;white-space:normal}
+  tbody tr:hover{background:#22304a}
+  td.num{text-align:right;font-variant-numeric:tabular-nums}
+  /* VM name / node cells must NOT wrap (a wrapped long VM name was unreadable). The global
+     'code' rule breaks long words, so override it inside these cells. */
+  td.nm{white-space:nowrap}
+  td.nm code{white-space:nowrap;word-break:normal;overflow-wrap:normal}
+  /* VM-name cell: reserve at least ~16 characters (min-width:16ch) so short / normal names NEVER
+     wrap - without it, overflow-wrap:anywhere lets the browser shrink the column to one character and
+     wrap even short names. A very long name (e.g. a Kubernetes control-plane VM) still wraps within
+     the 300px ceiling so it never forces the whole table wider than the page. */
+  td.vmn{min-width:16ch;max-width:300px}
+  td.vmn code{white-space:normal;word-break:break-word;overflow-wrap:anywhere}
+  /* Housekeeping rows contain both long VM/path identifiers and prose. A fixed, explicit column
+      allocation prevents the path from consuming the table and crushing Scope/Review into letters. */
+  table.housekeeping{table-layout:fixed}
+  table.housekeeping col.hk-category{width:16%}
+    table.housekeeping col.hk-scope{width:20%}
+    table.housekeeping col.hk-observation{width:36%}
+    table.housekeeping col.hk-review{width:28%}
+  table.housekeeping td{overflow-wrap:anywhere}
+  table.housekeeping td code{white-space:normal;word-break:break-word;overflow-wrap:anywhere}
+    table.housekeeping .hk-file{margin-bottom:10px;font-weight:700}
+    table.housekeeping .hk-observation{margin:0}
+  .src{display:inline-block;margin-left:6px;padding:1px 7px;border-radius:999px;font-size:10.5px;
+    font-weight:600;text-transform:uppercase;letter-spacing:.03em;vertical-align:middle}
+  .src.input{background:#12303f;color:#7dd3fc;border:1px solid #1d4e6b}
+  .src.discovered{background:#3a2c07;color:#fcd34d;border:1px solid #7a5b12}
+  .pill{display:inline-block;padding:2px 9px;border-radius:999px;font-size:11.5px;font-weight:700;white-space:nowrap}
+  .pill.investigate{background:var(--amber-bg);color:#fcd34d;border:1px solid #7a5b12}
+  .pill.high{background:var(--high-bg);color:#fda4af;border:1px solid #7a2438}
+  .pill.ok{background:var(--green-bg);color:#86efac;border:1px solid #1c6b3a}
+  .pill.hold{background:var(--red-bg);color:#fca5a5;border:1px solid #7a1f1f}
+  .pill.err{background:#2a2f3a;color:#cbd5e1;border:1px solid #475569}
+  .vm{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:6px 20px 18px;margin:16px 0}
+  .vm.hold{border-color:#7a1f1f;box-shadow:0 0 0 1px #7a1f1f inset}
+    .vm h3{display:flex;align-items:center;flex-wrap:wrap;gap:10px}
+    .vm-label{color:var(--muted);font-weight:600}
+  .kv{display:grid;grid-template-columns:230px 1fr;gap:2px 14px;margin:10px 0}
+  .kv div.k{color:var(--muted)}
+  ul{margin:8px 0;padding-left:22px} li{margin:3px 0}
+  details{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:6px 14px;margin:10px 0}
+  summary{cursor:pointer;font-weight:600;color:#cbd5e1}
+  /* Appendix collapsibles: a clear 'Show / Hide' pill button on each heading bar so it is
+     obvious the section expands (the bare default disclosure arrow is easy to miss). */
+  details.appx{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:0;margin:14px 0;overflow:hidden}
+  details.appx>summary{list-style:none;cursor:pointer;padding:14px 18px;font-weight:600;font-size:15.5px;color:#fff;
+    background:var(--panel2);display:flex;align-items:center;gap:12px;user-select:none}
+  details.appx>summary::-webkit-details-marker{display:none}
+  details.appx>summary::before{content:'\25B6 Show';flex:0 0 auto;font-size:11.5px;font-weight:700;letter-spacing:.03em;
+    color:#0b1220;background:var(--accent);padding:4px 12px;border-radius:999px;min-width:78px;text-align:center}
+  details.appx[open]>summary::before{content:'\25BC Hide';background:var(--amber)}
+  details.appx>summary:hover{background:#2b3d59}
+  details.appx>summary:hover::before{filter:brightness(1.08)}
+  details.appx>.appx-body{padding:4px 18px 18px}
+  .muted{color:var(--muted)}
+  /* Semantic inline emphasis (used sparingly): amber for a warning value (stale YES, a non-zero
+     orphan / stale count, an oldest-checkpoint age at/over the stale threshold); muted grey for a
+     zero count so it recedes; soft-red bold for the single most important imperative inside a HOLD
+     callout. Colours are drawn from the existing palette so they stay accessible on the dark theme. */
+  .warnval{color:var(--amber);font-weight:600}
+  .zero{color:var(--muted)}
+  .hot{color:#fca5a5;font-weight:700}
+  /* Age cells in the per-VM Checkpoints table AND the Orphaned .avhdx files table both render two
+     stacked values ('202.2 h' over '8.4 d'); ckptage keeps each value on ONE line (never split
+     mid-value onto '202.2' + 'h'). ckptname caps the checkpoint Name column a little (max-width) so a
+     long checkpoint name wraps slightly earlier, freeing the small amount of width the Age column needs. */
+  td.ckptage{white-space:nowrap}
+  td.ckptname{max-width:300px;overflow-wrap:anywhere}
+    @media(max-width:980px){.cards{grid-template-columns:repeat(4,minmax(0,1fr))}}
+        @media(max-width:760px){
+            table:not(.housekeeping){display:block;overflow-x:auto}
+            table.housekeeping,table.housekeeping tbody,table.housekeeping tr,table.housekeeping td{display:block;width:100%}
+            table.housekeeping{border:0;background:transparent}
+            table.housekeeping thead{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+            table.housekeeping tr{margin:0 0 14px;border:1px solid var(--line);border-radius:8px;background:var(--panel);overflow:hidden}
+            table.housekeeping td{display:grid;grid-template-columns:110px minmax(0,1fr);gap:12px;padding:9px 11px}
+            table.housekeeping td::before{content:attr(data-label);color:var(--muted);font-weight:600}
+            table.housekeeping td .hk-observation{grid-column:2;min-width:0}
+        }
+    @media(max-width:640px){.cards{grid-template-columns:repeat(2,minmax(0,1fr))}}
+    @media(max-width:390px){.cards{grid-template-columns:1fr}}
+  footer{margin-top:44px;border-top:1px solid var(--line);padding-top:16px;color:var(--muted);font-size:12.5px}
+</style>
+</head>
+<body>
+<div class="wrap">
+<div class="callout info synthetic-example"><strong>Synthetic example report.</strong> Every cluster, node, VM, path, timestamp, and event message in this file is invented for documentation. TestVM07 demonstrates an active-checkpoint HOLD STATE confirmed by historic event evidence; seven VMs demonstrate historic rollback, orphaned AVHDX, stale checkpoint/layer, and Hyper-V Replica INVESTIGATE findings; 12 VMs are healthy comparisons. The inventory contains 16 input VMs and 4 automatically discovered VMs.</div>
+<div class="disclaimer"><b>&#9888; Disclaimer:</b> This tool is EXAMPLE code only - <b>it is NOT a Microsoft-supported product or service offering</b>; provided AS IS with NO warranty of any kind (see the MIT License and <a href="https://aka.ms/Get-HyperVVMCheckpointHealth#readme" target="_blank" rel="noopener noreferrer">README.md</a>). It collects READ-ONLY diagnostic data to render this report - it does NOT determine root cause definitively and does NOT remediate anything. Each VM's status is a data-driven analysis of cluster / VM state, diagnostic events and file-system objects. If you require assistance to interpret any findings, or need guidance prior to any remediation, open a Microsoft Support (CSS) support request (SR) case and act on their advice.</div><header class="top">
+  <h1>Hyper-V VM Checkpoint Health Audit</h1>
+  <div class="meta">
+    Cluster <b>contoso01</b> &nbsp;&bull;&nbsp; 20 audited VMs
+    &nbsp;&bull;&nbsp; Report generated <b>2026-07-20 12:00:00 UTC</b>
+    &nbsp;&bull;&nbsp; Module version <b>0.2.18</b>&nbsp;&bull;&nbsp; Processed <b>20</b> VMs, across <b>10</b> owning cluster nodes, in <b>00:01:24</b><br>
+    Cluster size: <b>10</b> nodes &nbsp;&bull;&nbsp; <b>2</b> Cluster Shared Volumes<br>
+    Parameters: Stale CheckPoint threshold: 24 h; Diagnostic events lookback: 168 h; Include discovered VMs: Yes.<br>
+    Read-only diagnostic - <b>no changes were made to any VM</b>.<br>Discovery: <b>4</b> eligible &nbsp;&bull;&nbsp; <b>4</b> auto-audited &nbsp;&bull;&nbsp; <b>0</b> deferred &nbsp;&bull;&nbsp; cap: <b>None</b>.
+  </div>
+</header>
+
+<div class="cards">
+    <div class="card lead"><div class="n">20</div><div class="l">VMs audited</div></div>
+  <div class="card high"><div class="n">1</div><div class="l">Hold state</div></div>
+  <div class="card amber"><div class="n">7</div><div class="l">Investigate</div></div>
+  <div class="card green"><div class="n">12</div><div class="l">OK</div></div>
+    <div class="card amber"><div class="n">0</div><div class="l">Incomplete</div></div>
+    <div class="card amber"><div class="n">4</div><div class="l">Stale AVHDX layers</div></div>
+    <div class="card amber"><div class="n">3</div><div class="l">Stale snapshots</div></div>
+  <div class="card amber"><div class="n">4</div><div class="l">Orphaned .avhdx</div></div>
+</div><div class="callout high">
+  <strong>Exec Summary - action required:</strong> 1 VM(s) are in <strong>HOLD STATE</strong> - a 'checkpoint fork-commit / merge-failure' signature AND unmerged differencing disk(s) are present together.
+  <ul>
+    <li><span class="hot">Do NOT live/quick/storage-migrate or restart</span> those VMs until the differencing chain has been validated (and merged if required).</li>
+    <li>Engage Microsoft Support (CSS) and/or your backup vendor for those VMs.</li>
+    <li>See the per-VM detail below for which VMs are affected and why.</li>
+    <li><strong>7 additional VM(s) are flagged INVESTIGATE:</strong> these require separate operations / backup-team triage and are not included in the HOLD count.</li>
+    <li><strong>Fleet-wide checkpoint / replication evidence:</strong> 4 stale attached AVHDX layer(s), 3 stale named snapshot(s), 4 orphaned .avhdx file(s), 2 VM(s) with unhealthy Hyper-V Replica. See Recommended next steps and the per-VM detail below.</li>
+  </ul>
+</div><div class="callout info">
+  <strong>Reading the event counts:</strong> each VM shows <strong>two</strong> figures - a <strong>per-VM</strong>
+  count of concern events whose message names <em>that</em> VM (these drive its verdict), and a <strong>node-wide</strong>
+  count for context (checkpoint / merge activity across <strong>all</strong> VMs on the owning node, often referencing
+  <em>other</em> VMs). Only the node-wide figure is node health context, not proof the audited VM is failing; each VM's
+  own attributed events are listed in its section below.
+</div><h2>Recommended next steps</h2>
+<ol>    <li><strong>PRIORITY - possible historic rollback (1 VM(s)):</strong> TestVM01 show a cluster of orphaned <code>.avhdx</code> frozen at a common date - the signature of a materialised fork-commit rollback (disks rolled back to base, orphaning the checkpoint layers). Those files may hold un-recovered data. Do NOT remove them; engage Microsoft Support (CSS) / your backup vendor to recover. Because the original events may predate the 168h lookback, <strong>re-run with a larger window</strong> (e.g. <code>-EventLookbackHours 720</code>) to try to capture them - and see each VM's "Historic event correlation" detail (some are already CONFIRMED from recovered historic events).</li>  <li><strong>Hyper-V Replica needs attention (2 VM(s)):</strong> TestVM05, TestVM06 report an unhealthy replica (e.g. Critical / resynchronize-required). Start / repair replication for these (this is separate from the checkpoint items).</li>    <li><strong>HOLD STATE - fork-commit recorded at an active checkpoint's creation (1 VM(s)):</strong> TestVM07 carry an ACTIVE (still-attached) checkpoint created OUTSIDE the 168h window, and the historic cross-node scan recovered a 'fork-commit / merge-failure' event around that creation time. The chain may be inconsistent while the VM runs. Do NOT live/quick/storage-migrate or restart these VMs until the differencing chain has been validated (and merged if required); engage Microsoft Support (CSS) / your backup vendor. This is a proactive dormant-risk flag - it has not yet materialised into data loss.</li>    <li><strong>INVESTIGATE - 4 stale attached AVHDX layer(s) across 4 VM(s):</strong> these are readable layers in the active disk chains, regardless of whether <code>Get-VMSnapshot</code> exposes a matching named snapshot. Validate the chain and backup job before migration/restart or any merge/removal action.</li>    <li><strong>INVESTIGATE - 3 stale named snapshot(s) across 3 VM(s):</strong> backup team first. For each, check your backup product's recent job history (did the last backup complete?) and confirm whether the snapshot is <em>expected</em> or was <em>left behind</em> by a failed / incomplete backup. The action and decision rest with you / your backup team.</li>  <li><strong>INVESTIGATE - 4 orphaned .avhdx file(s) across 3 VM(s):</strong> do NOT delete blindly - a stuck / failed merge, a failed backup checkpoint, an interrupted instant-recovery / live-mount, or a leftover initial Hyper-V Replica checkpoint can leave these behind. Prescriptive checks (backup team / VM owner): <ol><li><strong>Match each file to a job:</strong> in your backup product's job / activity history, find the backup, restore, instant-recovery / live-mount or replica-seed job for THAT VM that was running at the file's <em>Created</em> / <em>LastWrite</em> time (shown in each VM's detail) - a job that failed or aborted then is the usual cause.</li><li><strong>If it is a live-mount / instant-recovery file</strong> (path contains a mount / recovery folder, or the product shows an active mount): tear the mount down THROUGH the backup product (unmount / stop the recovery session) - do NOT delete the file by hand, which leaves the product's catalog inconsistent.</li><li><strong>If it is a leftover initial-replica recovery point:</strong> check Hyper-V Replica health (<code>Get-VMReplication</code>) and let replication remove it (resume / resync) rather than deleting it manually.</li><li><strong>Before removing anything:</strong> confirm a current, verified backup of the VM exists, then MOVE (rename) the orphan to a quarantine folder instead of deleting, keep it for one retention cycle, confirm the VM stays healthy and its next backup succeeds, and only then delete.</li></ol> Open a Microsoft CSS case for guidance if a file cannot be matched to a job or you are unsure. The action and decision to clean up these file(s) rests with you / the administrator. See each VM's "Orphaned .avhdx files" detail below for names, sizes, timestamps and a per-file read.</li>  <li><strong>HOLD STATE VMs:</strong> engage Microsoft Support (CSS) and/or your backup vendor before any migration / restart.</li>  <li><strong>Open a Microsoft Support case:</strong> a checkpoint fork-commit signature (event <code>3216</code> or an HRESULT such as <code>0x80048102</code>) is present on one or more VMs above - that is the condition that warrants a case (the per-VM detail shows which).</li></ol><h2>VM summary table</h2>
+<p class="muted"><strong>VM Source</strong> = <span class="src input">Input</span> (you requested it) or <span class="src discovered">Discovered</span> (auto-added via <code>-IncludeDiscoveredVMs</code>). <strong>Checkpoints</strong> = checkpoint objects (<code>Get-VMSnapshot</code>). <strong>AVHDX files</strong> = active differencing <code>.avhdx</code> layers = <strong>Checkpoints &times; Disks</strong>. <strong>Orphans</strong> = <code>.avhdx</code> on disk but NOT attached. <strong>Stale evidence</strong> = attached AVHDX layers / named snapshots at or beyond the stale threshold. <strong>Concerning Events (VM)</strong> = count of concern events attributed to THIS VM (<code>hi</code> = high-signal that drive the verdict; <code>low</code> = transient / housekeeping only). Rows are ordered by severity within each verdict.</p>
+<table>
+<thead><tr>
+  <th>VM</th><th>State</th><th>Node</th><th>Cfg</th><th>Disks</th><th>Checkpoints</th><th>AVHDX files</th>
+    <th>Orphans</th><th>Stale<br>evidence</th><th>Oldest ckpt age</th><th>Concerning<br>Events (VM)</th><th>Hyper-V Replica</th><th>Verdict</th>
+</tr></thead>
+<tbody><tr>
+  <td class="vmn"><a href="#vm-TestVM07"><code>TestVM07</code></a><span class="src input">Input</span></td><td>Running</td><td class="nm">node07</td><td>12.0</td>
+  <td class="num">1</td><td class="num">1</td><td class="num">1</td>
+  <td class="num"><span class='zero'>0</span></td><td class="num"><span class='warnval'>1 layer / 1 snapshot</span></td><td><span class='warnval'>~248.7h (~10.4d)</span></td>
+  <td class="num">0</td><td>Not enabled</td><td><span class="pill hold">HOLD STATE</span></td>
+</tr><tr>
+  <td class="vmn"><a href="#vm-TestVM01"><code>TestVM01</code></a><span class="src input">Input</span></td><td>Running</td><td class="nm">node01</td><td>12.0</td>
+  <td class="num">2</td><td class="num">0</td><td class="num">0</td>
+  <td class="num"><span class='warnval'>2</span></td><td class="num"><span class='zero'>0 layers / 0 snapshots</span></td><td>-</td>
+  <td class="num">0</td><td>Not enabled</td><td><span class="pill investigate">INVESTIGATE</span></td>
+</tr><tr>
+  <td class="vmn"><a href="#vm-TestVM17"><code>TestVM17</code></a><span class="src discovered">Discovered</span></td><td>Running</td><td class="nm">node07</td><td>12.0</td>
+  <td class="num">1</td><td class="num">1</td><td class="num">1</td>
+  <td class="num"><span class='warnval'>1</span></td><td class="num"><span class='warnval'>1 layer / 1 snapshot</span></td><td><span class='warnval'>~56.5h (~2.4d)</span></td>
+  <td class="num">0</td><td>Not enabled</td><td><span class="pill investigate">INVESTIGATE</span></td>
+</tr><tr>
+  <td class="vmn"><a href="#vm-TestVM02"><code>TestVM02</code></a><span class="src input">Input</span></td><td>Running</td><td class="nm">node02</td><td>12.0</td>
+  <td class="num">1</td><td class="num">0</td><td class="num">0</td>
+  <td class="num"><span class='warnval'>1</span></td><td class="num"><span class='zero'>0 layers / 0 snapshots</span></td><td>-</td>
+  <td class="num">0</td><td>Not enabled</td><td><span class="pill investigate">INVESTIGATE</span></td>
+</tr><tr>
+  <td class="vmn"><a href="#vm-TestVM04"><code>TestVM04</code></a><span class="src input">Input</span></td><td>Running</td><td class="nm">node04</td><td>12.0</td>
+  <td class="num">2</td><td class="num">0</td><td class="num">1</td>
+  <td class="num"><span class='zero'>0</span></td><td class="num"><span class='warnval'>1 layer / 0 snapshots</span></td><td>-</td>
+  <td class="num">0</td><td>Not enabled</td><td><span class="pill investigate">INVESTIGATE</span></td>
+</tr><tr>
+  <td class="vmn"><a href="#vm-TestVM03"><code>TestVM03</code></a><span class="src input">Input</span></td><td>Running</td><td class="nm">node03</td><td>12.0</td>
+  <td class="num">1</td><td class="num">1</td><td class="num">1</td>
+  <td class="num"><span class='zero'>0</span></td><td class="num"><span class='warnval'>1 layer / 1 snapshot</span></td><td><span class='warnval'>~83.8h (~3.5d)</span></td>
+  <td class="num">0</td><td>Not enabled</td><td><span class="pill investigate">INVESTIGATE</span></td>
+</tr><tr>
+  <td class="vmn"><a href="#vm-TestVM05"><code>TestVM05</code></a><span class="src input">Input</span></td><td>Running</td><td class="nm">node05</td><td>12.0</td>
+  <td class="num">1</td><td class="num">0</td><td class="num">0</td>
+  <td class="num"><span class='zero'>0</span></td><td class="num"><span class='zero'>0 layers / 0 snapshots</span></td><td>-</td>
+  <td class="num">0</td><td><span class='warnval'>Error (Critical)</span></td><td><span class="pill investigate">INVESTIGATE</span></td>
+</tr><tr>
+  <td class="vmn"><a href="#vm-TestVM06"><code>TestVM06</code></a><span class="src input">Input</span></td><td>Running</td><td class="nm">node06</td><td>12.0</td>
+  <td class="num">1</td><td class="num">0</td><td class="num">0</td>
+  <td class="num"><span class='zero'>0</span></td><td class="num"><span class='zero'>0 layers / 0 snapshots</span></td><td>-</td>
+  <td class="num">0</td><td><span class='warnval'>Resynchronizing (Warning)</span></td><td><span class="pill investigate">INVESTIGATE</span></td>
+</tr><tr>
+  <td class="vmn"><a href="#vm-TestVM08"><code>TestVM08</code></a><span class="src input">Input</span></td><td>Running</td><td class="nm">node08</td><td>12.0</td>
+  <td class="num">2</td><td class="num">0</td><td class="num">0</td>
+  <td class="num"><span class='zero'>0</span></td><td class="num"><span class='zero'>0 layers / 0 snapshots</span></td><td>-</td>
+  <td class="num">0</td><td>Not enabled</td><td><span class="pill ok">OK</span></td>
+</tr><tr>
+  <td class="vmn"><a href="#vm-TestVM09"><code>TestVM09</code></a><span class="src input">Input</span></td><td>Running</td><td class="nm">node09</td><td>12.0</td>
+  <td class="num">1</td><td class="num">0</td><td class="num">0</td>
+  <td class="num"><span class='zero'>0</span></td><td class="num"><span class='zero'>0 layers / 0 snapshots</span></td><td>-</td>
+  <td class="num">0</td><td>Not enabled</td><td><span class="pill ok">OK</span></td>
+</tr><tr>
+  <td class="vmn"><a href="#vm-TestVM10"><code>TestVM10</code></a><span class="src input">Input</span></td><td>Running</td><td class="nm">node10</td><td>12.0</td>
+  <td class="num">1</td><td class="num">0</td><td class="num">0</td>
+  <td class="num"><span class='zero'>0</span></td><td class="num"><span class='zero'>0 layers / 0 snapshots</span></td><td>-</td>
+  <td class="num">0</td><td>Not enabled</td><td><span class="pill ok">OK</span></td>
+</tr><tr>
+  <td class="vmn"><a href="#vm-TestVM11"><code>TestVM11</code></a><span class="src input">Input</span></td><td>Running</td><td class="nm">node01</td><td>12.0</td>
+  <td class="num">1</td><td class="num">0</td><td class="num">0</td>
+  <td class="num"><span class='zero'>0</span></td><td class="num"><span class='zero'>0 layers / 0 snapshots</span></td><td>-</td>
+  <td class="num">0</td><td>Not enabled</td><td><span class="pill ok">OK</span></td>
+</tr><tr>
+  <td class="vmn"><a href="#vm-TestVM12"><code>TestVM12</code></a><span class="src input">Input</span></td><td>Running</td><td class="nm">node02</td><td>12.0</td>
+  <td class="num">2</td><td class="num">0</td><td class="num">0</td>
+  <td class="num"><span class='zero'>0</span></td><td class="num"><span class='zero'>0 layers / 0 snapshots</span></td><td>-</td>
+  <td class="num">0</td><td>Not enabled</td><td><span class="pill ok">OK</span></td>
+</tr><tr>
+  <td class="vmn"><a href="#vm-TestVM13"><code>TestVM13</code></a><span class="src input">Input</span></td><td>Running</td><td class="nm">node03</td><td>12.0</td>
+  <td class="num">1</td><td class="num">0</td><td class="num">0</td>
+  <td class="num"><span class='zero'>0</span></td><td class="num"><span class='zero'>0 layers / 0 snapshots</span></td><td>-</td>
+  <td class="num">0</td><td>Not enabled</td><td><span class="pill ok">OK</span></td>
+</tr><tr>
+  <td class="vmn"><a href="#vm-TestVM14"><code>TestVM14</code></a><span class="src input">Input</span></td><td>Running</td><td class="nm">node04</td><td>12.0</td>
+  <td class="num">1</td><td class="num">0</td><td class="num">0</td>
+  <td class="num"><span class='zero'>0</span></td><td class="num"><span class='zero'>0 layers / 0 snapshots</span></td><td>-</td>
+  <td class="num">0</td><td>Not enabled</td><td><span class="pill ok">OK</span></td>
+</tr><tr>
+  <td class="vmn"><a href="#vm-TestVM15"><code>TestVM15</code></a><span class="src input">Input</span></td><td>Running</td><td class="nm">node05</td><td>12.0</td>
+  <td class="num">1</td><td class="num">0</td><td class="num">0</td>
+  <td class="num"><span class='zero'>0</span></td><td class="num"><span class='zero'>0 layers / 0 snapshots</span></td><td>-</td>
+  <td class="num">0</td><td>Not enabled</td><td><span class="pill ok">OK</span></td>
+</tr><tr>
+  <td class="vmn"><a href="#vm-TestVM16"><code>TestVM16</code></a><span class="src input">Input</span></td><td>Running</td><td class="nm">node06</td><td>12.0</td>
+  <td class="num">2</td><td class="num">0</td><td class="num">0</td>
+  <td class="num"><span class='zero'>0</span></td><td class="num"><span class='zero'>0 layers / 0 snapshots</span></td><td>-</td>
+  <td class="num">0</td><td>Not enabled</td><td><span class="pill ok">OK</span></td>
+</tr><tr>
+  <td class="vmn"><a href="#vm-TestVM18"><code>TestVM18</code></a><span class="src discovered">Discovered</span></td><td>Running</td><td class="nm">node08</td><td>12.0</td>
+  <td class="num">1</td><td class="num">0</td><td class="num">0</td>
+  <td class="num"><span class='zero'>0</span></td><td class="num"><span class='zero'>0 layers / 0 snapshots</span></td><td>-</td>
+  <td class="num">0</td><td>Not enabled</td><td><span class="pill ok">OK</span></td>
+</tr><tr>
+  <td class="vmn"><a href="#vm-TestVM19"><code>TestVM19</code></a><span class="src discovered">Discovered</span></td><td>Running</td><td class="nm">node09</td><td>12.0</td>
+  <td class="num">1</td><td class="num">0</td><td class="num">0</td>
+  <td class="num"><span class='zero'>0</span></td><td class="num"><span class='zero'>0 layers / 0 snapshots</span></td><td>-</td>
+  <td class="num">0</td><td>Not enabled</td><td><span class="pill ok">OK</span></td>
+</tr><tr>
+  <td class="vmn"><a href="#vm-TestVM20"><code>TestVM20</code></a><span class="src discovered">Discovered</span></td><td>Running</td><td class="nm">node10</td><td>12.0</td>
+  <td class="num">2</td><td class="num">0</td><td class="num">0</td>
+  <td class="num"><span class='zero'>0</span></td><td class="num"><span class='zero'>0 layers / 0 snapshots</span></td><td>-</td>
+  <td class="num">0</td><td>Not enabled</td><td><span class="pill ok">OK</span></td>
+</tr></tbody></table>
+<h2>Per-VM detailed information</h2>
+<div class="vm hold" id="vm-TestVM07">
+  <h3><span class="vm-label">VM Name:</span> <code>TestVM07</code> <span class="pill hold">HOLD STATE</span><span class="src input">Input</span></h3>
+  <div class="kv">
+    <div class="k">Source</div><div>Input (you requested this VM)</div>
+    <div class="k">VM state</div><div>Running / Operating normally</div>
+    <div class="k">Owning node</div><div><code>node07</code></div>
+    <div class="k">Config version</div><div>12.0 (cluster max 12.0)</div>
+    <div class="k">Uptime</div><div>13.07:21:49</div>
+    <div class="k">Attached disks</div><div>1</div>
+    <div class="k">Checkpoints (Get-VMSnapshot)</div><div>1</div>
+    <div class="k">Differencing (.avhdx) files</div><div>1 (= checkpoints &times; disks)</div>
+    <div class="k">VHD chain completeness</div><div>Complete</div>
+    <div class="k">Stale attached AVHDX layers (&ge;24h)</div><div>1</div>
+    <div class="k">Stale named snapshots (&ge;24h)</div><div>1</div>
+    <div class="k">Snapshot/layer representation</div><div>Consistent presence</div>
+    <div class="k">Checkpoint type</div><div>Production</div>
+    <div class="k">Orphaned .avhdx</div><div>0</div>
+    <div class="k">Hyper-V Replica</div><div>Not enabled</div>
+    <div class="k">VSS writers</div><div>All 10 writer(s) Stable (no last error)</div>
+    <div class="k">Analytic channel</div><div>Enabled (or not checked)</div>
+    <div class="k">Policy source</div><div><code>BuiltInDefaults</code></div>
+    <div class="k">CSV free-space policy</div><div>Disabled</div>
+    <div class="k">HRL cadence assessment</div><div>Unavailable</div>
+    <div class="k">Config behind latest</div><div>No - at the latest supported version.</div>
+    <div class="k">Concerning events - this VM (168h)</div><div>0 (low-signal only)</div>
+    <div class="k">Concerning events - node-wide (168h)</div><div>0 (references other VMs / none - context only)</div>
+  </div>  <div class='callout high'><strong>HOLD STATE (data-loss risk).</strong> A 'checkpoint fork-commit / merge-failure' signature AND unmerged differencing disk(s) are present together. <span class='hot'>Do NOT migrate or restart this VM</span> until the chain is validated (and merged if required); reopening an inconsistent chain can roll disks back to base. Engage Microsoft Support (CSS) and/or your backup vendor.</div>
+  <div class='callout high'><strong>HOLD STATE - fork-commit recorded at this active checkpoint's creation.</strong> This VM has an ACTIVE (still-attached) checkpoint created <strong>2026-07-10 04:20:00 UTC</strong> - OLDER than the 168h event lookback - and the historic cross-node scan recovered a 'fork-commit / merge-failure' event around that creation time. The differencing chain may be INCONSISTENT while the VM keeps running; a live/quick/storage migration or restart could materialise it and roll disks back to base. <span class='hot'>Do NOT migrate or restart this VM</span> until the chain has been validated (and merged if required). Engage Microsoft Support (CSS) / your backup vendor. (This has NOT yet materialised into data loss - it is a dormant risk being flagged proactively.)</div>
+  <details open><summary>Checkpoints (1)</summary><table><thead><tr><th>Name</th><th>Type</th><th>Purpose</th><th>Created (UTC)</th><th>Age</th><th>Stale</th><th>Parent</th></tr></thead><tbody><tr><td class='ckptname'>Active checkpoint with historic fork evidence</td><td>Recovery</td><td>Backup</td><td>2026-07-10 04:20:00</td><td class='num ckptage'>248.7 h<br>10.4 d</td><td><span class='warnval'>YES</span></td><td></td></tr></tbody></table></details>
+</div><div class="vm" id="vm-TestVM01">
+  <h3><span class="vm-label">VM Name:</span> <code>TestVM01</code> <span class="pill investigate">INVESTIGATE</span><span class="src input">Input</span></h3>
+  <div class="kv">
+    <div class="k">Source</div><div>Input (you requested this VM)</div>
+    <div class="k">VM state</div><div>Running / Operating normally</div>
+    <div class="k">Owning node</div><div><code>node01</code></div>
+    <div class="k">Config version</div><div>12.0 (cluster max 12.0)</div>
+    <div class="k">Uptime</div><div>4.03:18:42</div>
+    <div class="k">Attached disks</div><div>2</div>
+    <div class="k">Checkpoints (Get-VMSnapshot)</div><div>0</div>
+    <div class="k">Differencing (.avhdx) files</div><div>0 (no checkpoints)</div>
+    <div class="k">VHD chain completeness</div><div>Complete</div>
+    <div class="k">Stale attached AVHDX layers (&ge;24h)</div><div>0</div>
+    <div class="k">Stale named snapshots (&ge;24h)</div><div>0</div>
+    <div class="k">Snapshot/layer representation</div><div>Consistent presence</div>
+    <div class="k">Checkpoint type</div><div>Production</div>
+    <div class="k">Orphaned .avhdx</div><div>2</div>
+    <div class="k">Hyper-V Replica</div><div>Not enabled</div>
+    <div class="k">VSS writers</div><div>All 10 writer(s) Stable (no last error)</div>
+    <div class="k">Analytic channel</div><div>Enabled (or not checked)</div>
+    <div class="k">Policy source</div><div><code>BuiltInDefaults</code></div>
+    <div class="k">CSV free-space policy</div><div>Disabled</div>
+    <div class="k">HRL cadence assessment</div><div>Unavailable</div>
+    <div class="k">Config behind latest</div><div>No - at the latest supported version.</div>
+    <div class="k">Concerning events - this VM (168h)</div><div>0 (low-signal only)</div>
+    <div class="k">Concerning events - node-wide (168h)</div><div>0 (references other VMs / none - context only)</div>
+  </div>  <div class='callout high'><strong>INVESTIGATE - possible historic rollback.</strong> Driver: possible historic rollback - 2 orphaned .avhdx frozen at a common date (2026-06-14). The orphaned <code>.avhdx</code> appear to be the aftermath of a materialised fork-commit rollback on <strong>2026-06-14</strong> - they may hold the data written between the checkpoint and the rollback. Do NOT remove them; engage Microsoft Support (CSS) / your backup vendor to recover. The original fork-commit events may predate the 168h lookback - see the historic correlation below.</div>
+  <details open><summary>Orphaned .avhdx files (2) - on disk but NOT attached to the VM</summary><table><thead><tr><th>File Name</th><th>Size (GB)</th><th>Created (UTC)</th><th>LastWrite (UTC)</th><th>Age</th><th>Likely / action</th><th>Full path</th></tr></thead><tbody><tr><td>TestVM01_Data_recovery.avhdx</td><td class='num'>18.4</td><td>2026-06-14 02:10:12</td><td>2026-06-14 02:16:45</td><td class='num ckptage'>874.1 h<br>36.4 d</td><td>Historic merge artifact. Preserve and correlate with the backup job before any action.</td><td><code>C:\ClusterStorage\UserStorage_1\TestVM01\Virtual Hard Disks\TestVM01_Data_recovery.avhdx</code></td></tr><tr><td>TestVM01_OS_recovery.avhdx</td><td class='num'>6.8</td><td>2026-06-14 02:10:11</td><td>2026-06-14 02:16:46</td><td class='num ckptage'>874.1 h<br>36.4 d</td><td>Historic merge artifact. Preserve and correlate with the backup job before any action.</td><td><code>C:\ClusterStorage\UserStorage_2\TestVM01\Virtual Hard Disks\TestVM01_OS_recovery.avhdx</code></td></tr></tbody></table><p class='muted'>Orphaned <code>.avhdx</code> are differencing files on disk that are not attached to the VM. They can be the aftermath of a rolled-back / stuck merge (which may hold un-recovered data) or leftover backup / live-mount files. <strong>Do not delete based on this report.</strong> Action (backup team / VM owner): (1) match each file to a backup / restore / live-mount / replica-seed job for this VM at its Created / LastWrite time; (2) if it is a live-mount / instant-recovery file, unmount it THROUGH the backup product rather than deleting it by hand; (3) if it is a leftover initial-replica point, let Hyper-V Replica remove it (resume / resync); (4) before removing anything, confirm a current good backup exists, MOVE (rename) the file to a quarantine folder, keep it one retention cycle, verify the VM and its next backup are healthy, then delete. The 'Likely / action' column above gives the per-file read. The action and decision rest with you / the administrator.</p></details>
+  <details open><summary>Historic event correlation (2 match(es) around orphan timestamps, across 10 node(s))</summary><p class='muted'>Searched &plusmn;30 min around each orphan's create and last-write times (windows: 2026-06-14 01:40:11 to 2026-06-14 02:46:46 UTC) across all cluster nodes, for this VM's fork-commit / merge events that may predate the 168h lookback.</p><div class='callout high'><strong>Confirmed historic 'fork-commit / merge failure'.</strong> Historic events for this VM were recovered around the orphan timestamps (outside the standard window). This is strong evidence the rollback DID occur - engage Microsoft Support (CSS) / your backup vendor to recover the orphaned data.</div><table><thead><tr><th>Time (UTC)</th><th>Node</th><th>Log</th><th>Id</th><th>Message</th></tr></thead><tbody><tr><td>2026-06-14 02:14:08</td><td>node01</td><td>Microsoft-Windows-Hyper-V-VMMS-Admin</td><td><code>3216</code></td><td>Synthetic example: the checkpoint operation for TestVM01 could not commit the differencing chain.</td></tr><tr><td>2026-06-14 02:15:31</td><td>node01</td><td>Microsoft-Windows-Hyper-V-Worker-Admin</td><td><code>19100</code></td><td>Synthetic example: the background merge for TestVM01 did not complete.</td></tr></tbody></table></details>
+</div><div class="vm" id="vm-TestVM17">
+  <h3><span class="vm-label">VM Name:</span> <code>TestVM17</code> <span class="pill investigate">INVESTIGATE</span><span class="src discovered">Discovered</span></h3>
+  <div class="kv">
+    <div class="k">Source</div><div>Discovered (auto-added via -IncludeDiscoveredVMs)</div>
+    <div class="k">VM state</div><div>Running / Operating normally</div>
+    <div class="k">Owning node</div><div><code>node07</code></div>
+    <div class="k">Config version</div><div>12.0 (cluster max 12.0)</div>
+    <div class="k">Uptime</div><div>23.17:51:59</div>
+    <div class="k">Attached disks</div><div>1</div>
+    <div class="k">Checkpoints (Get-VMSnapshot)</div><div>1</div>
+    <div class="k">Differencing (.avhdx) files</div><div>1 (= checkpoints &times; disks)</div>
+    <div class="k">VHD chain completeness</div><div>Complete</div>
+    <div class="k">Stale attached AVHDX layers (&ge;24h)</div><div>1</div>
+    <div class="k">Stale named snapshots (&ge;24h)</div><div>1</div>
+    <div class="k">Snapshot/layer representation</div><div>Consistent presence</div>
+    <div class="k">Checkpoint type</div><div>Production</div>
+    <div class="k">Orphaned .avhdx</div><div>1</div>
+    <div class="k">Hyper-V Replica</div><div>Not enabled</div>
+    <div class="k">VSS writers</div><div>All 10 writer(s) Stable (no last error)</div>
+    <div class="k">Analytic channel</div><div>Enabled (or not checked)</div>
+    <div class="k">Policy source</div><div><code>BuiltInDefaults</code></div>
+    <div class="k">CSV free-space policy</div><div>Disabled</div>
+    <div class="k">HRL cadence assessment</div><div>Unavailable</div>
+    <div class="k">Config behind latest</div><div>No - at the latest supported version.</div>
+    <div class="k">Concerning events - this VM (168h)</div><div>0 (low-signal only)</div>
+    <div class="k">Concerning events - node-wide (168h)</div><div>0 (references other VMs / none - context only)</div>
+  </div>  <div class='callout warn'><strong>INVESTIGATE.</strong> Driver: 1 stale attached AVHDX layer(s); 1 stale named snapshot(s); 1 orphaned .avhdx (leftover file). The specific checkpoint fork-commit signature was NOT observed in the current window, so on-disk chain corruption is not confirmed - backup-team / operator triage first; no Microsoft case needed yet.</div>
+  <details open><summary>Checkpoints (1)</summary><table><thead><tr><th>Name</th><th>Type</th><th>Purpose</th><th>Created (UTC)</th><th>Age</th><th>Stale</th><th>Parent</th></tr></thead><tbody><tr><td class='ckptname'>Discovered backup checkpoint - synthetic</td><td>Recovery</td><td>Backup</td><td>2026-07-18 03:30:00</td><td class='num ckptage'>56.5 h<br>2.4 d</td><td><span class='warnval'>YES</span></td><td></td></tr></tbody></table></details>
+  <details open><summary>Orphaned .avhdx files (1) - on disk but NOT attached to the VM</summary><table><thead><tr><th>File Name</th><th>Size (GB)</th><th>Created (UTC)</th><th>LastWrite (UTC)</th><th>Age</th><th>Likely / action</th><th>Full path</th></tr></thead><tbody><tr><td>TestVM17_OS_orphan.avhdx</td><td class='num'>4.6</td><td>2026-07-18 03:31:10</td><td>2026-07-18 03:44:52</td><td class='num ckptage'>56.3 h<br>2.3 d</td><td>Unattached backup checkpoint artifact. Preserve it until the synthetic job history is reviewed.</td><td><code>C:\ClusterStorage\UserStorage_2\TestVM17\Virtual Hard Disks\TestVM17_OS_orphan.avhdx</code></td></tr></tbody></table><p class='muted'>Orphaned <code>.avhdx</code> are differencing files on disk that are not attached to the VM. They can be the aftermath of a rolled-back / stuck merge (which may hold un-recovered data) or leftover backup / live-mount files. <strong>Do not delete based on this report.</strong> Action (backup team / VM owner): (1) match each file to a backup / restore / live-mount / replica-seed job for this VM at its Created / LastWrite time; (2) if it is a live-mount / instant-recovery file, unmount it THROUGH the backup product rather than deleting it by hand; (3) if it is a leftover initial-replica point, let Hyper-V Replica remove it (resume / resync); (4) before removing anything, confirm a current good backup exists, MOVE (rename) the file to a quarantine folder, keep it one retention cycle, verify the VM and its next backup are healthy, then delete. The 'Likely / action' column above gives the per-file read. The action and decision rest with you / the administrator.</p></details>
+</div><div class="vm" id="vm-TestVM02">
+  <h3><span class="vm-label">VM Name:</span> <code>TestVM02</code> <span class="pill investigate">INVESTIGATE</span><span class="src input">Input</span></h3>
+  <div class="kv">
+    <div class="k">Source</div><div>Input (you requested this VM)</div>
+    <div class="k">VM state</div><div>Running / Operating normally</div>
+    <div class="k">Owning node</div><div><code>node02</code></div>
+    <div class="k">Config version</div><div>12.0 (cluster max 12.0)</div>
+    <div class="k">Uptime</div><div>8.02:06:14</div>
+    <div class="k">Attached disks</div><div>1</div>
+    <div class="k">Checkpoints (Get-VMSnapshot)</div><div>0</div>
+    <div class="k">Differencing (.avhdx) files</div><div>0 (no checkpoints)</div>
+    <div class="k">VHD chain completeness</div><div>Complete</div>
+    <div class="k">Stale attached AVHDX layers (&ge;24h)</div><div>0</div>
+    <div class="k">Stale named snapshots (&ge;24h)</div><div>0</div>
+    <div class="k">Snapshot/layer representation</div><div>Consistent presence</div>
+    <div class="k">Checkpoint type</div><div>Production</div>
+    <div class="k">Orphaned .avhdx</div><div>1</div>
+    <div class="k">Hyper-V Replica</div><div>Not enabled</div>
+    <div class="k">VSS writers</div><div>All 10 writer(s) Stable (no last error)</div>
+    <div class="k">Analytic channel</div><div>Enabled (or not checked)</div>
+    <div class="k">Policy source</div><div><code>BuiltInDefaults</code></div>
+    <div class="k">CSV free-space policy</div><div>Disabled</div>
+    <div class="k">HRL cadence assessment</div><div>Unavailable</div>
+    <div class="k">Config behind latest</div><div>No - at the latest supported version.</div>
+    <div class="k">Concerning events - this VM (168h)</div><div>0 (low-signal only)</div>
+    <div class="k">Concerning events - node-wide (168h)</div><div>0 (references other VMs / none - context only)</div>
+  </div>  <div class='callout warn'><strong>INVESTIGATE.</strong> Driver: orphaned .avhdx with a matching stuck/failed-merge event. The specific checkpoint fork-commit signature was NOT observed in the current window, so on-disk chain corruption is not confirmed - backup-team / operator triage first; no Microsoft case needed yet.</div>
+  <details open><summary>Orphaned .avhdx files (1) - on disk but NOT attached to the VM</summary><table><thead><tr><th>File Name</th><th>Size (GB)</th><th>Created (UTC)</th><th>LastWrite (UTC)</th><th>Age</th><th>Likely / action</th><th>Full path</th></tr></thead><tbody><tr><td>TestVM02_Data_orphan.avhdx</td><td class='num'>11.2</td><td>2026-07-16 01:22:04</td><td>2026-07-16 01:38:19</td><td class='num ckptage'>107.6 h<br>4.5 d</td><td>Possible stuck merge artifact. Match it to the synthetic backup window before any action.</td><td><code>C:\ClusterStorage\UserStorage_1\TestVM02\Virtual Hard Disks\TestVM02_Data_orphan.avhdx</code></td></tr></tbody></table><p class='muted'>Orphaned <code>.avhdx</code> are differencing files on disk that are not attached to the VM. They can be the aftermath of a rolled-back / stuck merge (which may hold un-recovered data) or leftover backup / live-mount files. <strong>Do not delete based on this report.</strong> Action (backup team / VM owner): (1) match each file to a backup / restore / live-mount / replica-seed job for this VM at its Created / LastWrite time; (2) if it is a live-mount / instant-recovery file, unmount it THROUGH the backup product rather than deleting it by hand; (3) if it is a leftover initial-replica point, let Hyper-V Replica remove it (resume / resync); (4) before removing anything, confirm a current good backup exists, MOVE (rename) the file to a quarantine folder, keep it one retention cycle, verify the VM and its next backup are healthy, then delete. The 'Likely / action' column above gives the per-file read. The action and decision rest with you / the administrator.</p></details>
+</div><div class="vm" id="vm-TestVM04">
+  <h3><span class="vm-label">VM Name:</span> <code>TestVM04</code> <span class="pill investigate">INVESTIGATE</span><span class="src input">Input</span></h3>
+  <div class="kv">
+    <div class="k">Source</div><div>Input (you requested this VM)</div>
+    <div class="k">VM state</div><div>Running / Operating normally</div>
+    <div class="k">Owning node</div><div><code>node04</code></div>
+    <div class="k">Config version</div><div>12.0 (cluster max 12.0)</div>
+    <div class="k">Uptime</div><div>10.04:12:28</div>
+    <div class="k">Attached disks</div><div>2</div>
+    <div class="k">Checkpoints (Get-VMSnapshot)</div><div>0</div>
+    <div class="k">Differencing (.avhdx) files</div><div>1 (= checkpoints &times; disks)</div>
+    <div class="k">VHD chain completeness</div><div>Complete</div>
+    <div class="k">Stale attached AVHDX layers (&ge;24h)</div><div>1</div>
+    <div class="k">Stale named snapshots (&ge;24h)</div><div>0</div>
+    <div class="k">Snapshot/layer representation</div><div>MISMATCH - only one representation is present</div>
+    <div class="k">Checkpoint type</div><div>Production</div>
+    <div class="k">Orphaned .avhdx</div><div>0</div>
+    <div class="k">Hyper-V Replica</div><div>Not enabled</div>
+    <div class="k">VSS writers</div><div>All 10 writer(s) Stable (no last error)</div>
+    <div class="k">Analytic channel</div><div>Enabled (or not checked)</div>
+    <div class="k">Policy source</div><div><code>BuiltInDefaults</code></div>
+    <div class="k">CSV free-space policy</div><div>Disabled</div>
+    <div class="k">HRL cadence assessment</div><div>Unavailable</div>
+    <div class="k">Config behind latest</div><div>No - at the latest supported version.</div>
+    <div class="k">Concerning events - this VM (168h)</div><div>0 (low-signal only)</div>
+    <div class="k">Concerning events - node-wide (168h)</div><div>0 (references other VMs / none - context only)</div>
+  </div>  <div class='callout warn'><strong>INVESTIGATE.</strong> Driver: 1 stale attached AVHDX layer(s); snapshot/layer representation mismatch. The specific checkpoint fork-commit signature was NOT observed in the current window, so on-disk chain corruption is not confirmed - backup-team / operator triage first; no Microsoft case needed yet.</div>
+</div><div class="vm" id="vm-TestVM03">
+  <h3><span class="vm-label">VM Name:</span> <code>TestVM03</code> <span class="pill investigate">INVESTIGATE</span><span class="src input">Input</span></h3>
+  <div class="kv">
+    <div class="k">Source</div><div>Input (you requested this VM)</div>
+    <div class="k">VM state</div><div>Running / Operating normally</div>
+    <div class="k">Owning node</div><div><code>node03</code></div>
+    <div class="k">Config version</div><div>12.0 (cluster max 12.0)</div>
+    <div class="k">Uptime</div><div>9.03:09:21</div>
+    <div class="k">Attached disks</div><div>1</div>
+    <div class="k">Checkpoints (Get-VMSnapshot)</div><div>1</div>
+    <div class="k">Differencing (.avhdx) files</div><div>1 (= checkpoints &times; disks)</div>
+    <div class="k">VHD chain completeness</div><div>Complete</div>
+    <div class="k">Stale attached AVHDX layers (&ge;24h)</div><div>1</div>
+    <div class="k">Stale named snapshots (&ge;24h)</div><div>1</div>
+    <div class="k">Snapshot/layer representation</div><div>Consistent presence</div>
+    <div class="k">Checkpoint type</div><div>Production</div>
+    <div class="k">Orphaned .avhdx</div><div>0</div>
+    <div class="k">Hyper-V Replica</div><div>Not enabled</div>
+    <div class="k">VSS writers</div><div>All 10 writer(s) Stable (no last error)</div>
+    <div class="k">Analytic channel</div><div>Enabled (or not checked)</div>
+    <div class="k">Policy source</div><div><code>BuiltInDefaults</code></div>
+    <div class="k">CSV free-space policy</div><div>Disabled</div>
+    <div class="k">HRL cadence assessment</div><div>Unavailable</div>
+    <div class="k">Config behind latest</div><div>No - at the latest supported version.</div>
+    <div class="k">Concerning events - this VM (168h)</div><div>0 (low-signal only)</div>
+    <div class="k">Concerning events - node-wide (168h)</div><div>0 (references other VMs / none - context only)</div>
+  </div>  <div class='callout warn'><strong>INVESTIGATE.</strong> Driver: 1 stale attached AVHDX layer(s); 1 stale named snapshot(s). The specific checkpoint fork-commit signature was NOT observed in the current window, so on-disk chain corruption is not confirmed - backup-team / operator triage first; no Microsoft case needed yet.</div>
+  <details open><summary>Checkpoints (1)</summary><table><thead><tr><th>Name</th><th>Type</th><th>Purpose</th><th>Created (UTC)</th><th>Age</th><th>Stale</th><th>Parent</th></tr></thead><tbody><tr><td class='ckptname'>Backup checkpoint - synthetic</td><td>Recovery</td><td>Backup</td><td>2026-07-17 00:15:00</td><td class='num ckptage'>83.8 h<br>3.5 d</td><td><span class='warnval'>YES</span></td><td></td></tr></tbody></table></details>
+</div><div class="vm" id="vm-TestVM05">
+  <h3><span class="vm-label">VM Name:</span> <code>TestVM05</code> <span class="pill investigate">INVESTIGATE</span><span class="src input">Input</span></h3>
+  <div class="kv">
+    <div class="k">Source</div><div>Input (you requested this VM)</div>
+    <div class="k">VM state</div><div>Running / Operating normally</div>
+    <div class="k">Owning node</div><div><code>node05</code></div>
+    <div class="k">Config version</div><div>12.0 (cluster max 12.0)</div>
+    <div class="k">Uptime</div><div>11.05:15:35</div>
+    <div class="k">Attached disks</div><div>1</div>
+    <div class="k">Checkpoints (Get-VMSnapshot)</div><div>0</div>
+    <div class="k">Differencing (.avhdx) files</div><div>0 (no checkpoints)</div>
+    <div class="k">VHD chain completeness</div><div>Complete</div>
+    <div class="k">Stale attached AVHDX layers (&ge;24h)</div><div>0</div>
+    <div class="k">Stale named snapshots (&ge;24h)</div><div>0</div>
+    <div class="k">Snapshot/layer representation</div><div>Consistent presence</div>
+    <div class="k">Checkpoint type</div><div>Production</div>
+    <div class="k">Orphaned .avhdx</div><div>0</div>
+    <div class="k">Hyper-V Replica</div><div>Error (Critical)</div>
+    <div class="k">VSS writers</div><div>All 10 writer(s) Stable (no last error)</div>
+    <div class="k">Analytic channel</div><div>Enabled (or not checked)</div>
+    <div class="k">Policy source</div><div><code>BuiltInDefaults</code></div>
+    <div class="k">CSV free-space policy</div><div>Disabled</div>
+    <div class="k">HRL cadence assessment</div><div>Unavailable</div>
+    <div class="k">Config behind latest</div><div>No - at the latest supported version.</div>
+    <div class="k">Concerning events - this VM (168h)</div><div>0 (low-signal only)</div>
+    <div class="k">Concerning events - node-wide (168h)</div><div>0 (references other VMs / none - context only)</div>
+  </div>  <div class='callout warn'><strong>INVESTIGATE.</strong> Driver: replica health Critical (Critical). The specific checkpoint fork-commit signature was NOT observed in the current window, so on-disk chain corruption is not confirmed - backup-team / operator triage first; no Microsoft case needed yet.</div>
+</div><div class="vm" id="vm-TestVM06">
+  <h3><span class="vm-label">VM Name:</span> <code>TestVM06</code> <span class="pill investigate">INVESTIGATE</span><span class="src input">Input</span></h3>
+  <div class="kv">
+    <div class="k">Source</div><div>Input (you requested this VM)</div>
+    <div class="k">VM state</div><div>Running / Operating normally</div>
+    <div class="k">Owning node</div><div><code>node06</code></div>
+    <div class="k">Config version</div><div>12.0 (cluster max 12.0)</div>
+    <div class="k">Uptime</div><div>12.06:18:42</div>
+    <div class="k">Attached disks</div><div>1</div>
+    <div class="k">Checkpoints (Get-VMSnapshot)</div><div>0</div>
+    <div class="k">Differencing (.avhdx) files</div><div>0 (no checkpoints)</div>
+    <div class="k">VHD chain completeness</div><div>Complete</div>
+    <div class="k">Stale attached AVHDX layers (&ge;24h)</div><div>0</div>
+    <div class="k">Stale named snapshots (&ge;24h)</div><div>0</div>
+    <div class="k">Snapshot/layer representation</div><div>Consistent presence</div>
+    <div class="k">Checkpoint type</div><div>Production</div>
+    <div class="k">Orphaned .avhdx</div><div>0</div>
+    <div class="k">Hyper-V Replica</div><div>Resynchronizing (Warning)</div>
+    <div class="k">VSS writers</div><div>All 10 writer(s) Stable (no last error)</div>
+    <div class="k">Analytic channel</div><div>Enabled (or not checked)</div>
+    <div class="k">Policy source</div><div><code>BuiltInDefaults</code></div>
+    <div class="k">CSV free-space policy</div><div>Disabled</div>
+    <div class="k">HRL cadence assessment</div><div>Unavailable</div>
+    <div class="k">Config behind latest</div><div>No - at the latest supported version.</div>
+    <div class="k">Concerning events - this VM (168h)</div><div>0 (low-signal only)</div>
+    <div class="k">Concerning events - node-wide (168h)</div><div>0 (references other VMs / none - context only)</div>
+  </div>  <div class='callout warn'><strong>INVESTIGATE.</strong> Driver: replica health Warning. The specific checkpoint fork-commit signature was NOT observed in the current window, so on-disk chain corruption is not confirmed - backup-team / operator triage first; no Microsoft case needed yet.</div>
+</div><div class="vm" id="vm-TestVM08">
+  <h3><span class="vm-label">VM Name:</span> <code>TestVM08</code> <span class="pill ok">OK</span><span class="src input">Input</span></h3>
+  <div class="kv">
+    <div class="k">Source</div><div>Input (you requested this VM)</div>
+    <div class="k">VM state</div><div>Running / Operating normally</div>
+    <div class="k">Owning node</div><div><code>node08</code></div>
+    <div class="k">Config version</div><div>12.0 (cluster max 12.0)</div>
+    <div class="k">Uptime</div><div>14.08:24:56</div>
+    <div class="k">Attached disks</div><div>2</div>
+    <div class="k">Checkpoints (Get-VMSnapshot)</div><div>0</div>
+    <div class="k">Differencing (.avhdx) files</div><div>0 (no checkpoints)</div>
+    <div class="k">VHD chain completeness</div><div>Complete</div>
+    <div class="k">Stale attached AVHDX layers (&ge;24h)</div><div>0</div>
+    <div class="k">Stale named snapshots (&ge;24h)</div><div>0</div>
+    <div class="k">Snapshot/layer representation</div><div>Consistent presence</div>
+    <div class="k">Checkpoint type</div><div>Production</div>
+    <div class="k">Orphaned .avhdx</div><div>0</div>
+    <div class="k">Hyper-V Replica</div><div>Not enabled</div>
+    <div class="k">VSS writers</div><div>All 10 writer(s) Stable (no last error)</div>
+    <div class="k">Analytic channel</div><div>Enabled (or not checked)</div>
+    <div class="k">Policy source</div><div><code>BuiltInDefaults</code></div>
+    <div class="k">CSV free-space policy</div><div>Disabled</div>
+    <div class="k">HRL cadence assessment</div><div>Unavailable</div>
+    <div class="k">Config behind latest</div><div>No - at the latest supported version.</div>
+    <div class="k">Concerning events - this VM (168h)</div><div>0 (low-signal only)</div>
+    <div class="k">Concerning events - node-wide (168h)</div><div>0 (references other VMs / none - context only)</div>
+  </div>  <div class='callout ok'><strong>OK.</strong> No active checkpoint layers and no concern signals were found. No action required from this result.</div>
+</div><div class="vm" id="vm-TestVM09">
+  <h3><span class="vm-label">VM Name:</span> <code>TestVM09</code> <span class="pill ok">OK</span><span class="src input">Input</span></h3>
+  <div class="kv">
+    <div class="k">Source</div><div>Input (you requested this VM)</div>
+    <div class="k">VM state</div><div>Running / Operating normally</div>
+    <div class="k">Owning node</div><div><code>node09</code></div>
+    <div class="k">Config version</div><div>12.0 (cluster max 12.0)</div>
+    <div class="k">Uptime</div><div>15.09:27:03</div>
+    <div class="k">Attached disks</div><div>1</div>
+    <div class="k">Checkpoints (Get-VMSnapshot)</div><div>0</div>
+    <div class="k">Differencing (.avhdx) files</div><div>0 (no checkpoints)</div>
+    <div class="k">VHD chain completeness</div><div>Complete</div>
+    <div class="k">Stale attached AVHDX layers (&ge;24h)</div><div>0</div>
+    <div class="k">Stale named snapshots (&ge;24h)</div><div>0</div>
+    <div class="k">Snapshot/layer representation</div><div>Consistent presence</div>
+    <div class="k">Checkpoint type</div><div>Production</div>
+    <div class="k">Orphaned .avhdx</div><div>0</div>
+    <div class="k">Hyper-V Replica</div><div>Not enabled</div>
+    <div class="k">VSS writers</div><div>All 10 writer(s) Stable (no last error)</div>
+    <div class="k">Analytic channel</div><div>Enabled (or not checked)</div>
+    <div class="k">Policy source</div><div><code>BuiltInDefaults</code></div>
+    <div class="k">CSV free-space policy</div><div>Disabled</div>
+    <div class="k">HRL cadence assessment</div><div>Unavailable</div>
+    <div class="k">Config behind latest</div><div>No - at the latest supported version.</div>
+    <div class="k">Concerning events - this VM (168h)</div><div>0 (low-signal only)</div>
+    <div class="k">Concerning events - node-wide (168h)</div><div>0 (references other VMs / none - context only)</div>
+  </div>  <div class='callout ok'><strong>OK.</strong> No active checkpoint layers and no concern signals were found. No action required from this result.</div>
+</div><div class="vm" id="vm-TestVM10">
+  <h3><span class="vm-label">VM Name:</span> <code>TestVM10</code> <span class="pill ok">OK</span><span class="src input">Input</span></h3>
+  <div class="kv">
+    <div class="k">Source</div><div>Input (you requested this VM)</div>
+    <div class="k">VM state</div><div>Running / Operating normally</div>
+    <div class="k">Owning node</div><div><code>node10</code></div>
+    <div class="k">Config version</div><div>12.0 (cluster max 12.0)</div>
+    <div class="k">Uptime</div><div>16.10:30:10</div>
+    <div class="k">Attached disks</div><div>1</div>
+    <div class="k">Checkpoints (Get-VMSnapshot)</div><div>0</div>
+    <div class="k">Differencing (.avhdx) files</div><div>0 (no checkpoints)</div>
+    <div class="k">VHD chain completeness</div><div>Complete</div>
+    <div class="k">Stale attached AVHDX layers (&ge;24h)</div><div>0</div>
+    <div class="k">Stale named snapshots (&ge;24h)</div><div>0</div>
+    <div class="k">Snapshot/layer representation</div><div>Consistent presence</div>
+    <div class="k">Checkpoint type</div><div>Production</div>
+    <div class="k">Orphaned .avhdx</div><div>0</div>
+    <div class="k">Hyper-V Replica</div><div>Not enabled</div>
+    <div class="k">VSS writers</div><div>All 10 writer(s) Stable (no last error)</div>
+    <div class="k">Analytic channel</div><div>Enabled (or not checked)</div>
+    <div class="k">Policy source</div><div><code>BuiltInDefaults</code></div>
+    <div class="k">CSV free-space policy</div><div>Disabled</div>
+    <div class="k">HRL cadence assessment</div><div>Unavailable</div>
+    <div class="k">Config behind latest</div><div>No - at the latest supported version.</div>
+    <div class="k">Concerning events - this VM (168h)</div><div>0 (low-signal only)</div>
+    <div class="k">Concerning events - node-wide (168h)</div><div>0 (references other VMs / none - context only)</div>
+  </div>  <div class='callout ok'><strong>OK.</strong> No active checkpoint layers and no concern signals were found. No action required from this result.</div>
+</div><div class="vm" id="vm-TestVM11">
+  <h3><span class="vm-label">VM Name:</span> <code>TestVM11</code> <span class="pill ok">OK</span><span class="src input">Input</span></h3>
+  <div class="kv">
+    <div class="k">Source</div><div>Input (you requested this VM)</div>
+    <div class="k">VM state</div><div>Running / Operating normally</div>
+    <div class="k">Owning node</div><div><code>node01</code></div>
+    <div class="k">Config version</div><div>12.0 (cluster max 12.0)</div>
+    <div class="k">Uptime</div><div>17.11:33:17</div>
+    <div class="k">Attached disks</div><div>1</div>
+    <div class="k">Checkpoints (Get-VMSnapshot)</div><div>0</div>
+    <div class="k">Differencing (.avhdx) files</div><div>0 (no checkpoints)</div>
+    <div class="k">VHD chain completeness</div><div>Complete</div>
+    <div class="k">Stale attached AVHDX layers (&ge;24h)</div><div>0</div>
+    <div class="k">Stale named snapshots (&ge;24h)</div><div>0</div>
+    <div class="k">Snapshot/layer representation</div><div>Consistent presence</div>
+    <div class="k">Checkpoint type</div><div>Production</div>
+    <div class="k">Orphaned .avhdx</div><div>0</div>
+    <div class="k">Hyper-V Replica</div><div>Not enabled</div>
+    <div class="k">VSS writers</div><div>All 10 writer(s) Stable (no last error)</div>
+    <div class="k">Analytic channel</div><div>Enabled (or not checked)</div>
+    <div class="k">Policy source</div><div><code>BuiltInDefaults</code></div>
+    <div class="k">CSV free-space policy</div><div>Disabled</div>
+    <div class="k">HRL cadence assessment</div><div>Unavailable</div>
+    <div class="k">Config behind latest</div><div>No - at the latest supported version.</div>
+    <div class="k">Concerning events - this VM (168h)</div><div>0 (low-signal only)</div>
+    <div class="k">Concerning events - node-wide (168h)</div><div>0 (references other VMs / none - context only)</div>
+  </div>  <div class='callout ok'><strong>OK.</strong> No active checkpoint layers and no concern signals were found. No action required from this result.</div>
+</div><div class="vm" id="vm-TestVM12">
+  <h3><span class="vm-label">VM Name:</span> <code>TestVM12</code> <span class="pill ok">OK</span><span class="src input">Input</span></h3>
+  <div class="kv">
+    <div class="k">Source</div><div>Input (you requested this VM)</div>
+    <div class="k">VM state</div><div>Running / Operating normally</div>
+    <div class="k">Owning node</div><div><code>node02</code></div>
+    <div class="k">Config version</div><div>12.0 (cluster max 12.0)</div>
+    <div class="k">Uptime</div><div>18.12:36:24</div>
+    <div class="k">Attached disks</div><div>2</div>
+    <div class="k">Checkpoints (Get-VMSnapshot)</div><div>0</div>
+    <div class="k">Differencing (.avhdx) files</div><div>0 (no checkpoints)</div>
+    <div class="k">VHD chain completeness</div><div>Complete</div>
+    <div class="k">Stale attached AVHDX layers (&ge;24h)</div><div>0</div>
+    <div class="k">Stale named snapshots (&ge;24h)</div><div>0</div>
+    <div class="k">Snapshot/layer representation</div><div>Consistent presence</div>
+    <div class="k">Checkpoint type</div><div>Production</div>
+    <div class="k">Orphaned .avhdx</div><div>0</div>
+    <div class="k">Hyper-V Replica</div><div>Not enabled</div>
+    <div class="k">VSS writers</div><div>All 10 writer(s) Stable (no last error)</div>
+    <div class="k">Analytic channel</div><div>Enabled (or not checked)</div>
+    <div class="k">Policy source</div><div><code>BuiltInDefaults</code></div>
+    <div class="k">CSV free-space policy</div><div>Disabled</div>
+    <div class="k">HRL cadence assessment</div><div>Unavailable</div>
+    <div class="k">Config behind latest</div><div>No - at the latest supported version.</div>
+    <div class="k">Concerning events - this VM (168h)</div><div>0 (low-signal only)</div>
+    <div class="k">Concerning events - node-wide (168h)</div><div>0 (references other VMs / none - context only)</div>
+  </div>  <div class='callout ok'><strong>OK.</strong> No active checkpoint layers and no concern signals were found. No action required from this result.</div>
+</div><div class="vm" id="vm-TestVM13">
+  <h3><span class="vm-label">VM Name:</span> <code>TestVM13</code> <span class="pill ok">OK</span><span class="src input">Input</span></h3>
+  <div class="kv">
+    <div class="k">Source</div><div>Input (you requested this VM)</div>
+    <div class="k">VM state</div><div>Running / Operating normally</div>
+    <div class="k">Owning node</div><div><code>node03</code></div>
+    <div class="k">Config version</div><div>12.0 (cluster max 12.0)</div>
+    <div class="k">Uptime</div><div>19.13:39:31</div>
+    <div class="k">Attached disks</div><div>1</div>
+    <div class="k">Checkpoints (Get-VMSnapshot)</div><div>0</div>
+    <div class="k">Differencing (.avhdx) files</div><div>0 (no checkpoints)</div>
+    <div class="k">VHD chain completeness</div><div>Complete</div>
+    <div class="k">Stale attached AVHDX layers (&ge;24h)</div><div>0</div>
+    <div class="k">Stale named snapshots (&ge;24h)</div><div>0</div>
+    <div class="k">Snapshot/layer representation</div><div>Consistent presence</div>
+    <div class="k">Checkpoint type</div><div>Production</div>
+    <div class="k">Orphaned .avhdx</div><div>0</div>
+    <div class="k">Hyper-V Replica</div><div>Not enabled</div>
+    <div class="k">VSS writers</div><div>All 10 writer(s) Stable (no last error)</div>
+    <div class="k">Analytic channel</div><div>Enabled (or not checked)</div>
+    <div class="k">Policy source</div><div><code>BuiltInDefaults</code></div>
+    <div class="k">CSV free-space policy</div><div>Disabled</div>
+    <div class="k">HRL cadence assessment</div><div>Unavailable</div>
+    <div class="k">Config behind latest</div><div>No - at the latest supported version.</div>
+    <div class="k">Concerning events - this VM (168h)</div><div>0 (low-signal only)</div>
+    <div class="k">Concerning events - node-wide (168h)</div><div>0 (references other VMs / none - context only)</div>
+  </div>  <div class='callout ok'><strong>OK.</strong> No active checkpoint layers and no concern signals were found. No action required from this result.</div>
+</div><div class="vm" id="vm-TestVM14">
+  <h3><span class="vm-label">VM Name:</span> <code>TestVM14</code> <span class="pill ok">OK</span><span class="src input">Input</span></h3>
+  <div class="kv">
+    <div class="k">Source</div><div>Input (you requested this VM)</div>
+    <div class="k">VM state</div><div>Running / Operating normally</div>
+    <div class="k">Owning node</div><div><code>node04</code></div>
+    <div class="k">Config version</div><div>12.0 (cluster max 12.0)</div>
+    <div class="k">Uptime</div><div>20.14:42:38</div>
+    <div class="k">Attached disks</div><div>1</div>
+    <div class="k">Checkpoints (Get-VMSnapshot)</div><div>0</div>
+    <div class="k">Differencing (.avhdx) files</div><div>0 (no checkpoints)</div>
+    <div class="k">VHD chain completeness</div><div>Complete</div>
+    <div class="k">Stale attached AVHDX layers (&ge;24h)</div><div>0</div>
+    <div class="k">Stale named snapshots (&ge;24h)</div><div>0</div>
+    <div class="k">Snapshot/layer representation</div><div>Consistent presence</div>
+    <div class="k">Checkpoint type</div><div>Production</div>
+    <div class="k">Orphaned .avhdx</div><div>0</div>
+    <div class="k">Hyper-V Replica</div><div>Not enabled</div>
+    <div class="k">VSS writers</div><div>All 10 writer(s) Stable (no last error)</div>
+    <div class="k">Analytic channel</div><div>Enabled (or not checked)</div>
+    <div class="k">Policy source</div><div><code>BuiltInDefaults</code></div>
+    <div class="k">CSV free-space policy</div><div>Disabled</div>
+    <div class="k">HRL cadence assessment</div><div>Unavailable</div>
+    <div class="k">Config behind latest</div><div>No - at the latest supported version.</div>
+    <div class="k">Concerning events - this VM (168h)</div><div>0 (low-signal only)</div>
+    <div class="k">Concerning events - node-wide (168h)</div><div>0 (references other VMs / none - context only)</div>
+  </div>  <div class='callout ok'><strong>OK.</strong> No active checkpoint layers and no concern signals were found. No action required from this result.</div>
+</div><div class="vm" id="vm-TestVM15">
+  <h3><span class="vm-label">VM Name:</span> <code>TestVM15</code> <span class="pill ok">OK</span><span class="src input">Input</span></h3>
+  <div class="kv">
+    <div class="k">Source</div><div>Input (you requested this VM)</div>
+    <div class="k">VM state</div><div>Running / Operating normally</div>
+    <div class="k">Owning node</div><div><code>node05</code></div>
+    <div class="k">Config version</div><div>12.0 (cluster max 12.0)</div>
+    <div class="k">Uptime</div><div>21.15:45:45</div>
+    <div class="k">Attached disks</div><div>1</div>
+    <div class="k">Checkpoints (Get-VMSnapshot)</div><div>0</div>
+    <div class="k">Differencing (.avhdx) files</div><div>0 (no checkpoints)</div>
+    <div class="k">VHD chain completeness</div><div>Complete</div>
+    <div class="k">Stale attached AVHDX layers (&ge;24h)</div><div>0</div>
+    <div class="k">Stale named snapshots (&ge;24h)</div><div>0</div>
+    <div class="k">Snapshot/layer representation</div><div>Consistent presence</div>
+    <div class="k">Checkpoint type</div><div>Production</div>
+    <div class="k">Orphaned .avhdx</div><div>0</div>
+    <div class="k">Hyper-V Replica</div><div>Not enabled</div>
+    <div class="k">VSS writers</div><div>All 10 writer(s) Stable (no last error)</div>
+    <div class="k">Analytic channel</div><div>Enabled (or not checked)</div>
+    <div class="k">Policy source</div><div><code>BuiltInDefaults</code></div>
+    <div class="k">CSV free-space policy</div><div>Disabled</div>
+    <div class="k">HRL cadence assessment</div><div>Unavailable</div>
+    <div class="k">Config behind latest</div><div>No - at the latest supported version.</div>
+    <div class="k">Concerning events - this VM (168h)</div><div>0 (low-signal only)</div>
+    <div class="k">Concerning events - node-wide (168h)</div><div>0 (references other VMs / none - context only)</div>
+  </div>  <div class='callout ok'><strong>OK.</strong> No active checkpoint layers and no concern signals were found. No action required from this result.</div>
+</div><div class="vm" id="vm-TestVM16">
+  <h3><span class="vm-label">VM Name:</span> <code>TestVM16</code> <span class="pill ok">OK</span><span class="src input">Input</span></h3>
+  <div class="kv">
+    <div class="k">Source</div><div>Input (you requested this VM)</div>
+    <div class="k">VM state</div><div>Running / Operating normally</div>
+    <div class="k">Owning node</div><div><code>node06</code></div>
+    <div class="k">Config version</div><div>12.0 (cluster max 12.0)</div>
+    <div class="k">Uptime</div><div>22.16:48:52</div>
+    <div class="k">Attached disks</div><div>2</div>
+    <div class="k">Checkpoints (Get-VMSnapshot)</div><div>0</div>
+    <div class="k">Differencing (.avhdx) files</div><div>0 (no checkpoints)</div>
+    <div class="k">VHD chain completeness</div><div>Complete</div>
+    <div class="k">Stale attached AVHDX layers (&ge;24h)</div><div>0</div>
+    <div class="k">Stale named snapshots (&ge;24h)</div><div>0</div>
+    <div class="k">Snapshot/layer representation</div><div>Consistent presence</div>
+    <div class="k">Checkpoint type</div><div>Production</div>
+    <div class="k">Orphaned .avhdx</div><div>0</div>
+    <div class="k">Hyper-V Replica</div><div>Not enabled</div>
+    <div class="k">VSS writers</div><div>All 10 writer(s) Stable (no last error)</div>
+    <div class="k">Analytic channel</div><div>Enabled (or not checked)</div>
+    <div class="k">Policy source</div><div><code>BuiltInDefaults</code></div>
+    <div class="k">CSV free-space policy</div><div>Disabled</div>
+    <div class="k">HRL cadence assessment</div><div>Unavailable</div>
+    <div class="k">Config behind latest</div><div>No - at the latest supported version.</div>
+    <div class="k">Concerning events - this VM (168h)</div><div>0 (low-signal only)</div>
+    <div class="k">Concerning events - node-wide (168h)</div><div>0 (references other VMs / none - context only)</div>
+  </div>  <div class='callout ok'><strong>OK.</strong> No active checkpoint layers and no concern signals were found. No action required from this result.</div>
+</div><div class="vm" id="vm-TestVM18">
+  <h3><span class="vm-label">VM Name:</span> <code>TestVM18</code> <span class="pill ok">OK</span><span class="src discovered">Discovered</span></h3>
+  <div class="kv">
+    <div class="k">Source</div><div>Discovered (auto-added via -IncludeDiscoveredVMs)</div>
+    <div class="k">VM state</div><div>Running / Operating normally</div>
+    <div class="k">Owning node</div><div><code>node08</code></div>
+    <div class="k">Config version</div><div>12.0 (cluster max 12.0)</div>
+    <div class="k">Uptime</div><div>24.18:54:06</div>
+    <div class="k">Attached disks</div><div>1</div>
+    <div class="k">Checkpoints (Get-VMSnapshot)</div><div>0</div>
+    <div class="k">Differencing (.avhdx) files</div><div>0 (no checkpoints)</div>
+    <div class="k">VHD chain completeness</div><div>Complete</div>
+    <div class="k">Stale attached AVHDX layers (&ge;24h)</div><div>0</div>
+    <div class="k">Stale named snapshots (&ge;24h)</div><div>0</div>
+    <div class="k">Snapshot/layer representation</div><div>Consistent presence</div>
+    <div class="k">Checkpoint type</div><div>Production</div>
+    <div class="k">Orphaned .avhdx</div><div>0</div>
+    <div class="k">Hyper-V Replica</div><div>Not enabled</div>
+    <div class="k">VSS writers</div><div>All 10 writer(s) Stable (no last error)</div>
+    <div class="k">Analytic channel</div><div>Enabled (or not checked)</div>
+    <div class="k">Policy source</div><div><code>BuiltInDefaults</code></div>
+    <div class="k">CSV free-space policy</div><div>Disabled</div>
+    <div class="k">HRL cadence assessment</div><div>Unavailable</div>
+    <div class="k">Config behind latest</div><div>No - at the latest supported version.</div>
+    <div class="k">Concerning events - this VM (168h)</div><div>0 (low-signal only)</div>
+    <div class="k">Concerning events - node-wide (168h)</div><div>0 (references other VMs / none - context only)</div>
+  </div>  <div class='callout ok'><strong>OK.</strong> No active checkpoint layers and no concern signals were found. No action required from this result.</div>
+</div><div class="vm" id="vm-TestVM19">
+  <h3><span class="vm-label">VM Name:</span> <code>TestVM19</code> <span class="pill ok">OK</span><span class="src discovered">Discovered</span></h3>
+  <div class="kv">
+    <div class="k">Source</div><div>Discovered (auto-added via -IncludeDiscoveredVMs)</div>
+    <div class="k">VM state</div><div>Running / Operating normally</div>
+    <div class="k">Owning node</div><div><code>node09</code></div>
+    <div class="k">Config version</div><div>12.0 (cluster max 12.0)</div>
+    <div class="k">Uptime</div><div>25.19:57:13</div>
+    <div class="k">Attached disks</div><div>1</div>
+    <div class="k">Checkpoints (Get-VMSnapshot)</div><div>0</div>
+    <div class="k">Differencing (.avhdx) files</div><div>0 (no checkpoints)</div>
+    <div class="k">VHD chain completeness</div><div>Complete</div>
+    <div class="k">Stale attached AVHDX layers (&ge;24h)</div><div>0</div>
+    <div class="k">Stale named snapshots (&ge;24h)</div><div>0</div>
+    <div class="k">Snapshot/layer representation</div><div>Consistent presence</div>
+    <div class="k">Checkpoint type</div><div>Production</div>
+    <div class="k">Orphaned .avhdx</div><div>0</div>
+    <div class="k">Hyper-V Replica</div><div>Not enabled</div>
+    <div class="k">VSS writers</div><div>All 10 writer(s) Stable (no last error)</div>
+    <div class="k">Analytic channel</div><div>Enabled (or not checked)</div>
+    <div class="k">Policy source</div><div><code>BuiltInDefaults</code></div>
+    <div class="k">CSV free-space policy</div><div>Disabled</div>
+    <div class="k">HRL cadence assessment</div><div>Unavailable</div>
+    <div class="k">Config behind latest</div><div>No - at the latest supported version.</div>
+    <div class="k">Concerning events - this VM (168h)</div><div>0 (low-signal only)</div>
+    <div class="k">Concerning events - node-wide (168h)</div><div>0 (references other VMs / none - context only)</div>
+  </div>  <div class='callout ok'><strong>OK.</strong> No active checkpoint layers and no concern signals were found. No action required from this result.</div>
+</div><div class="vm" id="vm-TestVM20">
+  <h3><span class="vm-label">VM Name:</span> <code>TestVM20</code> <span class="pill ok">OK</span><span class="src discovered">Discovered</span></h3>
+  <div class="kv">
+    <div class="k">Source</div><div>Discovered (auto-added via -IncludeDiscoveredVMs)</div>
+    <div class="k">VM state</div><div>Running / Operating normally</div>
+    <div class="k">Owning node</div><div><code>node10</code></div>
+    <div class="k">Config version</div><div>12.0 (cluster max 12.0)</div>
+    <div class="k">Uptime</div><div>26.20:00:20</div>
+    <div class="k">Attached disks</div><div>2</div>
+    <div class="k">Checkpoints (Get-VMSnapshot)</div><div>0</div>
+    <div class="k">Differencing (.avhdx) files</div><div>0 (no checkpoints)</div>
+    <div class="k">VHD chain completeness</div><div>Complete</div>
+    <div class="k">Stale attached AVHDX layers (&ge;24h)</div><div>0</div>
+    <div class="k">Stale named snapshots (&ge;24h)</div><div>0</div>
+    <div class="k">Snapshot/layer representation</div><div>Consistent presence</div>
+    <div class="k">Checkpoint type</div><div>Production</div>
+    <div class="k">Orphaned .avhdx</div><div>0</div>
+    <div class="k">Hyper-V Replica</div><div>Not enabled</div>
+    <div class="k">VSS writers</div><div>All 10 writer(s) Stable (no last error)</div>
+    <div class="k">Analytic channel</div><div>Enabled (or not checked)</div>
+    <div class="k">Policy source</div><div><code>BuiltInDefaults</code></div>
+    <div class="k">CSV free-space policy</div><div>Disabled</div>
+    <div class="k">HRL cadence assessment</div><div>Unavailable</div>
+    <div class="k">Config behind latest</div><div>No - at the latest supported version.</div>
+    <div class="k">Concerning events - this VM (168h)</div><div>0 (low-signal only)</div>
+    <div class="k">Concerning events - node-wide (168h)</div><div>0 (references other VMs / none - context only)</div>
+  </div>  <div class='callout ok'><strong>OK.</strong> No active checkpoint layers and no concern signals were found. No action required from this result.</div>
+</div><h2>Cluster storage health (Storage Spaces Direct / CSV)</h2>
+<div class='callout ok'><strong>Storage status: Healthy.</strong> Read-only snapshot (source node <code>node01</code>). Storage-layer disruption - S2D repair / resync jobs, CSV block-redirected or paused state, or unhealthy disks - can cause the very symptoms behind checkpoint / merge failures (files transiently locked or unavailable: <code>0x80070020</code>, <code>0x80070002</code>, 'cannot load VM configuration'). Note: on Azure Local / S2D an <strong>ReFS CSV normally reports File System Redirected mode with reason <code>FileSystemReFs</code></strong> (from <code>Get-ClusterSharedVolumeState</code>) - that is by design (S2D serves the I/O over the software storage bus, so there is no redirect penalty) and is NOT flagged here. Only a NON-ReFS file-system redirect, block redirection, or a paused / offline volume is treated as abnormal.</div>
+<p class='muted'>Storage subsystem health: contoso01 S2D on contoso01: Healthy. (A <em>Warning</em> here is often a minor, non-storage fault such as 'update available' - use the CSS diagnostic below for the exact fault.)</p><p class='muted'>No active storage jobs, no redirected CSVs, and no unhealthy virtual / physical disks were detected at snapshot time.</p><div class='callout info'><strong>Deeper analysis (recommended):</strong> this is a lightweight snapshot. For a full Storage Spaces Direct / SBL diagnostic - including storage event-channel analysis around the incident window - run Microsoft's CSS Storage Diagnostic, which performs far more checks:<br><code>Install-Module -Name Microsoft.AzLocal.CSSTools</code><br><code>Start-AzsSupportStorageDiagnostic</code><br><a href='https://github.com/Azure/AzureLocal-Supportability/blob/main/tools/CSSTools/1.2605.5.1611/functions/Start-AzsSupportStorageDiagnostic.md'>Start-AzsSupportStorageDiagnostic documentation</a></div>
+<h2 id="housekeeping">Cluster / storage housekeeping to review:</h2>
+<div class="callout info">
+  <strong>Operational excellence and consistent storage practices improve reliability and reduce operational complexity.</strong>
+  The observations in this section are not necessarily VM health failures. They identify file placement, ownership,
+  naming, inventory, or storage-layout conditions that may make future troubleshooting, backup, migration, and recovery
+    operations more difficult. Review each observation before making changes. <strong>Do not move, rename, merge, or delete virtual disk files based solely on this report.</strong>
+</div><table class="housekeeping"><colgroup><col class="hk-category"><col class="hk-scope"><col class="hk-observation"><col class="hk-review"></colgroup><thead><tr><th>Category</th><th>Scope (VM, node, or storage path)</th><th>Observation</th><th>Review</th></tr></thead><tbody><tr><td data-label='Category'>Placement inconsistency</td><td data-label='Scope'><code>TestVM03, TestVM08</code></td><td data-label='Observation'><div class='hk-file'><code>TestVM03_Data.vhdx</code></div><p class='hk-observation'>Virtual disk placement and VM ownership associations differ: C:\ClusterStorage\UserStorage_1\TestVM08\Virtual Hard Disks\TestVM03_Data.vhdx</p></td><td data-label='Review'>Confirm the intended owner and storage layout with the VM, backup, and storage owners. Do not move the file based only on this report.</td></tr><tr><td data-label='Category'>Unattached base disk candidate</td><td data-label='Scope'><code>TestVM08</code></td><td data-label='Observation'><div class='hk-file'><code>TestVM08_LegacyData.vhdx</code></div><p class='hk-observation'>No VM or snapshot chain references this base disk under complete coverage: C:\ClusterStorage\UserStorage_1\TestVM08\Virtual Hard Disks\TestVM08_LegacyData.vhdx</p></td><td data-label='Review'>If this virtual disk belongs to an image library, exclude its full path with storage.imageLibraryPathPatterns in a checkpoint-health-policy.yml file supplied via -PolicyPath (see <a href="https://aka.ms/Get-HyperVVMCheckpointHealth#readme" target="_blank" rel="noopener noreferrer">README.md</a>). Otherwise, confirm intended ownership and storage layout with the VM, backup, and storage owners. Do not modify the file based only on this report.</td></tr><tr><td data-label='Category'>Unattached base disk candidate</td><td data-label='Scope'><code>TestVM12</code></td><td data-label='Observation'><div class='hk-file'><code>TestVM12_Archive.vhdx</code></div><p class='hk-observation'>No VM or snapshot chain references this base disk under complete coverage: C:\ClusterStorage\UserStorage_2\TestVM12\Virtual Hard Disks\TestVM12_Archive.vhdx</p></td><td data-label='Review'>If this virtual disk belongs to an image library, exclude its full path with storage.imageLibraryPathPatterns in a checkpoint-health-policy.yml file supplied via -PolicyPath (see <a href="https://aka.ms/Get-HyperVVMCheckpointHealth#readme" target="_blank" rel="noopener noreferrer">README.md</a>). Otherwise, confirm intended ownership and storage layout with the VM, backup, and storage owners. Do not modify the file based only on this report.</td></tr><tr><td data-label='Category'>Shared virtual disk reference</td><td data-label='Scope'><code>TestVM14, TestVM15</code></td><td data-label='Observation'><div class='hk-file'><code>SharedData01.vhdx</code></div><p class='hk-observation'>More than one VM or snapshot inventory references this path: C:\ClusterStorage\UserStorage_2\TestVM14\Virtual Hard Disks\SharedData01.vhdx</p></td><td data-label='Review'>Confirm that the shared reference is intentional and supported for this workload. Do not modify the file based only on this report.</td></tr></tbody></table>
+<h2>Appendix - Knowledge and Information</h2>
+<p class="muted">Reference material to help interpret this report. Both sections below are <strong>collapsed by default</strong>
+to keep the report concise - click the <strong style="color:#0b1220;background:#38bdf8;padding:1px 8px;border-radius:999px;font-size:11.5px">&#9654; Show</strong>
+button on either heading to expand it.</p>
+<p class="muted">Reference: Microsoft Learn - Troubleshoot Hyper-V Virtual Machine Backup, Checkpoint, and Storage Failures: <a href="https://learn.microsoft.com/en-us/troubleshoot/windows-server/virtualization/hyper-v-virtual-machine-backup-checkpoint-storage">learn.microsoft.com/en-us/troubleshoot/windows-server/virtualization/hyper-v-virtual-machine-backup-checkpoint-storage</a></p>
+
+<details class="appx">
+<summary>Diagnostic event IDs - severity classification (how this tool grades each signal)</summary>
+<div class="appx-body">
+<div class="callout info">
+  This is how <strong>this tool</strong> classifies each Hyper-V event ID / HRESULT when deciding a VM''s verdict. It
+  scans two Windows event providers - <code>Microsoft-Windows-Hyper-V-Worker-Admin</code> and
+  <code>Microsoft-Windows-Hyper-V-VMMS-Admin</code> - and also matches the HRESULT strings
+  <code>0x80048102</code>, <code>0x800480BD</code>, <code>0x800480BC</code>, <code>0x80070020</code>,
+  <code>0x800703EE</code>, <code>0x80070002</code> in the message text. (The <em>failure-mode forensic role</em> of
+  each signal - leading / trigger / symptom - is described in the technical-details section below; that framing is
+  complementary to the verdict grading here.)
+</div>
+<table>
+<thead><tr><th>Classification</th><th>Channel</th><th>Event ID / HRESULT</th><th>Description</th><th>Effect on the verdict</th></tr></thead>
+<tbody>
+  <tr><td><span class="pill hold">HOLD STATE</span></td><td>Hyper-V-Worker</td><td>Event <code>3216</code> (<code>0x800703EE</code>)</td><td>Failed to switch to the new differencing disks during checkpoint</td><td rowspan="4">Fork-commit signature. Drives <strong>HOLD STATE</strong> when found together with one or more unmerged differencing (<code>.avhdx</code>) layer(s).</td></tr>
+  <tr><td><span class="pill hold">HOLD STATE</span></td><td>Hyper-V-VMMS</td><td><code>0x80048102</code></td><td><code>VM_E_COMMIT_FORKS_ERROR</code> - the checkpoint fork-commit failed</td></tr>
+  <tr><td><span class="pill hold">HOLD STATE</span></td><td>Hyper-V-VMMS (Replica)</td><td><code>0x800480BD</code></td><td><code>VM_E_FR_CHANGE_TRACKING_FAILED</code> - Replica change-tracking failure (leading indicator)</td></tr>
+  <tr><td><span class="pill hold">HOLD STATE</span></td><td>Hyper-V-VMMS (Replica)</td><td><code>0x800480BC</code></td><td><code>VM_E_FR_RESYNC_REQUIRED</code> - Replica relationship broken (leading indicator)</td></tr>
+  <tr><td><span class="pill investigate">INVESTIGATE</span></td><td>Hyper-V-VMMS</td><td>Event <code>18012</code></td><td>Checkpoint operation failed</td><td rowspan="3">High-signal (operation-failure class) for this VM. Drives <strong>INVESTIGATE</strong> only when it did NOT self-resolve - i.e. it was <em>not</em> followed by a successful background merge (<code>19080</code>) and left an orphan / stale layer. A failure that WAS followed by a successful merge with no leftover layer is treated as benign self-healing backup activity (reported OK with a note), not INVESTIGATE.</td></tr>
+  <tr><td><span class="pill investigate">INVESTIGATE</span></td><td>Hyper-V-VMMS</td><td>Event <code>19100</code></td><td>Background disk merge FAILED to complete (e.g. <code>0x80070020</code> sharing violation)</td></tr>
+  <tr><td><span class="pill investigate">INVESTIGATE</span></td><td>Hyper-V-VMMS</td><td>Event <code>16300</code></td><td>Cannot load a virtual machine configuration</td></tr>
+  <tr><td><strong class="muted">Low-signal</strong></td><td>Hyper-V-Worker</td><td>Event <code>3280</code></td><td>Related checkpoint / disk error</td><td rowspan="5">Context only. Surfaced (and still drives <em>discovery</em> of at-risk VMs) but, on its own, does NOT change an otherwise-clean VM''s verdict - a genuine leftover is caught separately by the orphaned-<code>.avhdx</code> scan.</td></tr>
+  <tr><td><strong class="muted">Low-signal</strong></td><td>Hyper-V-VMMS</td><td>Event <code>12240</code></td><td>Attachment <code>.avhdx</code> not found (<code>0x80070002</code>)</td></tr>
+  <tr><td><strong class="muted">Low-signal</strong></td><td>Hyper-V-VMMS</td><td>Event <code>15268</code></td><td>Failed to get disk information (storage / housekeeping chatter)</td></tr>
+  <tr><td><strong class="muted">Low-signal</strong></td><td>Hyper-V-VMMS</td><td>Event <code>19090</code></td><td>Background disk merge INTERRUPTED - transient; Hyper-V normally completes the merge later</td></tr>
+  <tr><td><strong class="muted">Low-signal</strong></td><td>Hyper-V-VMMS</td><td>Event <code>32510</code></td><td>Stale <code>.hrl</code> delete / merge housekeeping</td></tr>
+  <tr><td><strong class="muted">Informational</strong></td><td>Hyper-V-VMMS</td><td>Event <code>18500</code></td><td>VM started successfully</td><td rowspan="4">Normal lifecycle. Listed for the timeline / context and NEVER flagged as a concern.</td></tr>
+  <tr><td><strong class="muted">Informational</strong></td><td>Hyper-V-VMMS</td><td>Event <code>18510</code></td><td>Checkpoint completed</td></tr>
+  <tr><td><strong class="muted">Informational</strong></td><td>Hyper-V-VMMS</td><td>Event <code>19070</code></td><td>Background disk merge started</td></tr>
+  <tr><td><strong class="muted">Informational</strong></td><td>Hyper-V-VMMS</td><td>Event <code>19080</code></td><td>Background disk merge FINISHED successfully</td></tr>
+</tbody>
+</table>
+</div>
+</details>
+
+<details class="appx">
+<summary>Technical details of the 'checkpoint fork-commit / merge-failure' signature</summary>
+<div class="appx-body">
+<div class="callout info">
+  <strong>Generic technical background</strong> - this section contains no customer, host or VM-specific data. It
+  explains the failure mode this audit looks for and the exact Event IDs / error codes that indicate it is present.
+</div>
+<p><strong>What it is.</strong> When Hyper-V takes a checkpoint (including the checkpoint a backup product creates
+automatically), the running disk is frozen and writes are redirected into a new differencing <code>.avhdx</code>.
+When the checkpoint is later removed, Hyper-V must <em>commit</em> (merge) that fork back into its parent and rewrite
+each disk''s on-disk configuration (<code>.vmcx</code>). If that <strong>fork-commit</strong> step fails, the per-disk
+<code>.vmcx</code> can be reverted <em>inconsistently</em>: the VM keeps running normally on its in-memory chain, but
+the on-disk chain metadata no longer matches. The inconsistency stays <strong>dormant</strong> until the VM is
+live-migrated or restarted - at which point Hyper-V reopens the on-disk chain and can <strong>roll the disks back to
+their base</strong>, orphaning everything written into the <code>.avhdx</code> layer(s) since the checkpoint.</p>
+<p><strong>How it typically unfolds:</strong></p>
+<ol>
+  <li><strong>Leading indicators</strong> - Hyper-V Replica change-tracking / resync failures (<code>0x800480BD</code>, <code>0x800480BC</code>).</li>
+  <li><strong>Trigger</strong> - the checkpoint fork-commit fails: VMMS event <code>18590</code> with <code>0x80048102</code> (<code>VM_E_COMMIT_FORKS_ERROR</code>), or Worker event <code>3216</code> (<code>0x800703EE</code>, failed to switch to the new differencing disks).</li>
+  <li><strong>Per-disk revert</strong> leaves the <code>.vmcx</code> chain inconsistent (traced only on the Hyper-V-VMMS/Analytic channel, which is off by default).</li>
+  <li><strong>Symptoms</strong> - backup retries then fail to open the disk (<code>0x80070020</code>, sharing violation); follow-on merges are interrupted / fail (<code>19090</code> / <code>19100</code>).</li>
+  <li><strong>Dormant, then materialised</strong> - the VM runs fine until a live migration or restart reopens the chain and rolls the disks back.</li>
+</ol>
+<p><strong>Event IDs and error codes treated as the signature:</strong></p>
+<table>
+<thead><tr><th>Signal</th><th>Channel</th><th>Meaning</th><th>Role</th></tr></thead>
+<tbody>
+  <tr><td>HRESULT <code>0x80048102</code> (typically with VMMS event <code>18590</code>)</td><td>Hyper-V-VMMS</td><td><code>VM_E_COMMIT_FORKS_ERROR</code> - the checkpoint fork-commit failed</td><td><strong>Confirming</strong> (drives HOLD STATE)</td></tr>
+  <tr><td>Event <code>18590</code> <em>without</em> a fork-commit HRESULT</td><td>Hyper-V-Worker</td><td>Guest-OS bugcheck / fatal error (e.g. Stop <code>0x7E</code>) - the VM crashed; this is NOT a checkpoint fork-commit</td><td>Context only (does not drive HOLD STATE)</td></tr>
+  <tr><td>Event <code>3216</code> + <code>0x800703EE</code></td><td>Hyper-V-Worker</td><td>Failed to switch to the new differencing disks during checkpoint</td><td><strong>Confirming</strong></td></tr>
+  <tr><td><code>0x800480BD</code></td><td>Replica</td><td><code>VM_E_FR_CHANGE_TRACKING_FAILED</code></td><td>Leading indicator</td></tr>
+  <tr><td><code>0x800480BC</code></td><td>Replica</td><td><code>VM_E_FR_RESYNC_REQUIRED</code></td><td>Leading indicator</td></tr>
+  <tr><td>Event <code>18012</code></td><td>Hyper-V-VMMS</td><td>Checkpoint operation failed</td><td>Corroborating</td></tr>
+  <tr><td>Event <code>19090</code> / <code>19100</code></td><td>Hyper-V-VMMS</td><td>Background disk merge interrupted / failed (<code>0x80070020</code>)</td><td>Corroborating</td></tr>
+  <tr><td>Event <code>12240</code> / <code>15268</code></td><td>Hyper-V-VMMS</td><td>Attachment <code>.avhdx</code> not found / failed to get disk information (<code>0x80070002</code>)</td><td>Corroborating</td></tr>
+  <tr><td>Event <code>16300</code></td><td>Hyper-V-VMMS</td><td>Cannot load a virtual machine configuration</td><td>Corroborating</td></tr>
+</tbody>
+</table>
+<p><strong>How the verdict is decided.</strong> A VM is flagged <span class="pill hold">HOLD STATE</span> only when a
+<strong>confirming</strong> signal above is found <em>together with</em> one or more unmerged differencing
+(<code>.avhdx</code>) layers - that combination is the data-loss risk. Concern signals <em>without</em> a confirming
+fork-commit signature are flagged <span class="pill investigate">INVESTIGATE</span> (usually a stalled / failed backup
+checkpoint or an unhealthy VSS writer), which the operations / backup team should triage first.</p>
+</div>
+</details>
+
+<footer>
+    Generated by <code>Get-HyperVVMCheckpointHealth</code> (version 0.2.18). Read-only diagnostic report; no VM state was
+  modified. Verdict legend: <span class="pill hold">HOLD STATE</span> fork-commit signature + unmerged
+  disks (case-worthy) &nbsp; <span class="pill investigate">INVESTIGATE</span> concern signals, ops/backup
+  team first &nbsp; <span class="pill ok">OK</span> no concerns &nbsp; <span class="pill err">ERROR / NOT FOUND</span>.
+  <br><br><strong>DISCLAIMER:</strong> EXAMPLE code only - <strong>it is NOT a Microsoft-supported product or service offering</strong>; provided AS IS with NO warranty of any kind (see the MIT License and <a href="https://aka.ms/Get-HyperVVMCheckpointHealth#readme" target="_blank" rel="noopener noreferrer">README.md</a>). It collects READ-ONLY diagnostic data to render this report - it does NOT determine root cause definitively and does NOT remediate anything. Each VM's status is a data-driven analysis of cluster / VM state, diagnostic events and file-system objects. If you require assistance to interpret any findings, or need guidance prior to any remediation, open a Microsoft Support (CSS) support request (SR) case and act on their advice.
+  <br><br><a href="https://aka.ms/Get-HyperVVMCheckpointHealth-Feedback" target="_blank" rel="noopener noreferrer">Share feedback / report an issue</a>
+</footer>
+</div>
+<script>
+window.addEventListener('load', function () {
+    if (!window.location.hash) { return; }
+    window.setTimeout(function () {
+        var target = document.getElementById(window.location.hash.substring(1));
+        if (target) { target.scrollIntoView({ block: 'start' }); window.scrollBy(0, -70); }
+    }, 0);
+});
+</script>
+</body>
+</html>
