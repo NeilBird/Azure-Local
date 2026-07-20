@@ -4,8 +4,7 @@
 
 ## Latest version:
 
-- Module manifest: [`Get-HyperVVMCheckpointHealth.psd1`](./Get-HyperVVMCheckpointHealth.psd1)
-- Module command: `Get-HyperVVMCheckpointHealth`
+- Module: `Get-HyperVVMCheckpointHealth`
 - Updated: 2026-07-20
 - Version: 0.2.18
 
