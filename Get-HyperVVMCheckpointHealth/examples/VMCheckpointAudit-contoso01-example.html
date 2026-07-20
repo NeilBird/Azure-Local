@@ -71,11 +71,13 @@
       allocation prevents the path from consuming the table and crushing Scope/Review into letters. */
   table.housekeeping{table-layout:fixed}
   table.housekeeping col.hk-category{width:16%}
-  table.housekeeping col.hk-scope{width:24%}
-  table.housekeeping col.hk-observation{width:40%}
-  table.housekeeping col.hk-review{width:20%}
+    table.housekeeping col.hk-scope{width:20%}
+    table.housekeeping col.hk-observation{width:36%}
+    table.housekeeping col.hk-review{width:28%}
   table.housekeeping td{overflow-wrap:anywhere}
   table.housekeeping td code{white-space:normal;word-break:break-word;overflow-wrap:anywhere}
+    table.housekeeping .hk-file{margin-bottom:10px;font-weight:700}
+    table.housekeeping .hk-observation{margin:0}
   .src{display:inline-block;margin-left:6px;padding:1px 7px;border-radius:999px;font-size:10.5px;
     font-weight:600;text-transform:uppercase;letter-spacing:.03em;vertical-align:middle}
   .src.input{background:#12303f;color:#7dd3fc;border:1px solid #1d4e6b}
@@ -130,6 +132,7 @@
             table.housekeeping tr{margin:0 0 14px;border:1px solid var(--line);border-radius:8px;background:var(--panel);overflow:hidden}
             table.housekeeping td{display:grid;grid-template-columns:110px minmax(0,1fr);gap:12px;padding:9px 11px}
             table.housekeeping td::before{content:attr(data-label);color:var(--muted);font-weight:600}
+            table.housekeeping td .hk-observation{grid-column:2;min-width:0}
         }
     @media(max-width:640px){.cards{grid-template-columns:repeat(2,minmax(0,1fr))}}
     @media(max-width:390px){.cards{grid-template-columns:1fr}}
@@ -836,13 +839,13 @@
 </div><h2>Cluster storage health (Storage Spaces Direct / CSV)</h2>
 <div class='callout ok'><strong>Storage status: Healthy.</strong> Read-only snapshot (source node <code>node01</code>). Storage-layer disruption - S2D repair / resync jobs, CSV block-redirected or paused state, or unhealthy disks - can cause the very symptoms behind checkpoint / merge failures (files transiently locked or unavailable: <code>0x80070020</code>, <code>0x80070002</code>, 'cannot load VM configuration'). Note: on Azure Local / S2D an <strong>ReFS CSV normally reports File System Redirected mode with reason <code>FileSystemReFs</code></strong> (from <code>Get-ClusterSharedVolumeState</code>) - that is by design (S2D serves the I/O over the software storage bus, so there is no redirect penalty) and is NOT flagged here. Only a NON-ReFS file-system redirect, block redirection, or a paused / offline volume is treated as abnormal.</div>
 <p class='muted'>Storage subsystem health: contoso01 S2D on contoso01: Healthy. (A <em>Warning</em> here is often a minor, non-storage fault such as 'update available' - use the CSS diagnostic below for the exact fault.)</p><p class='muted'>No active storage jobs, no redirected CSVs, and no unhealthy virtual / physical disks were detected at snapshot time.</p><div class='callout info'><strong>Deeper analysis (recommended):</strong> this is a lightweight snapshot. For a full Storage Spaces Direct / SBL diagnostic - including storage event-channel analysis around the incident window - run Microsoft's CSS Storage Diagnostic, which performs far more checks:<br><code>Install-Module -Name Microsoft.AzLocal.CSSTools</code><br><code>Start-AzsSupportStorageDiagnostic</code><br><a href='https://github.com/Azure/AzureLocal-Supportability/blob/main/tools/CSSTools/1.2605.5.1611/functions/Start-AzsSupportStorageDiagnostic.md'>Start-AzsSupportStorageDiagnostic documentation</a></div>
-<h2>Cluster / storage housekeeping to review:</h2>
+<h2 id="housekeeping">Cluster / storage housekeeping to review:</h2>
 <div class="callout info">
   <strong>Operational excellence and consistent storage practices improve reliability and reduce operational complexity.</strong>
   The observations in this section are not necessarily VM health failures. They identify file placement, ownership,
   naming, inventory, or storage-layout conditions that may make future troubleshooting, backup, migration, and recovery
     operations more difficult. Review each observation before making changes. <strong>Do not move, rename, merge, or delete virtual disk files based solely on this report.</strong>
-</div><table class="housekeeping"><colgroup><col class="hk-category"><col class="hk-scope"><col class="hk-observation"><col class="hk-review"></colgroup><thead><tr><th>Category</th><th>Scope</th><th>Observation</th><th>Review</th></tr></thead><tbody><tr><td data-label='Category'>Placement inconsistency</td><td data-label='Scope'><code>TestVM03, TestVM08</code></td><td data-label='Observation'>Virtual disk placement and VM ownership associations differ: C:\ClusterStorage\UserStorage_1\TestVM08\Virtual Hard Disks\TestVM03_Data.vhdx</td><td data-label='Review'>Confirm the intended owner and storage layout with the VM, backup, and storage owners. Do not move the file based only on this report.</td></tr><tr><td data-label='Category'>Unattached base disk candidate</td><td data-label='Scope'><code>TestVM08</code></td><td data-label='Observation'>No VM or snapshot chain references this base disk under complete coverage: C:\ClusterStorage\UserStorage_1\TestVM08\Virtual Hard Disks\TestVM08_LegacyData.vhdx</td><td data-label='Review'>Confirm whether this is a retired disk, an offline data disk, or an image-library asset. Do not delete the file based only on this report.</td></tr><tr><td data-label='Category'>Unattached base disk candidate</td><td data-label='Scope'><code>TestVM12</code></td><td data-label='Observation'>No VM or snapshot chain references this base disk under complete coverage: C:\ClusterStorage\UserStorage_2\TestVM12\Virtual Hard Disks\TestVM12_Archive.vhdx</td><td data-label='Review'>Confirm intended ownership and retention with the VM, backup, and storage owners. Do not modify the file based only on this report.</td></tr><tr><td data-label='Category'>Shared virtual disk reference</td><td data-label='Scope'><code>TestVM14, TestVM15</code></td><td data-label='Observation'>More than one VM or snapshot inventory references this path: C:\ClusterStorage\UserStorage_2\TestVM14\Virtual Hard Disks\SharedData01.vhdx</td><td data-label='Review'>Confirm that the shared reference is intentional and supported for this workload. Do not modify the file based only on this report.</td></tr></tbody></table>
+</div><table class="housekeeping"><colgroup><col class="hk-category"><col class="hk-scope"><col class="hk-observation"><col class="hk-review"></colgroup><thead><tr><th>Category</th><th>Scope (VM, node, or storage path)</th><th>Observation</th><th>Review</th></tr></thead><tbody><tr><td data-label='Category'>Placement inconsistency</td><td data-label='Scope'><code>TestVM03, TestVM08</code></td><td data-label='Observation'><div class='hk-file'><code>TestVM03_Data.vhdx</code></div><p class='hk-observation'>Virtual disk placement and VM ownership associations differ: C:\ClusterStorage\UserStorage_1\TestVM08\Virtual Hard Disks\TestVM03_Data.vhdx</p></td><td data-label='Review'>Confirm the intended owner and storage layout with the VM, backup, and storage owners. Do not move the file based only on this report.</td></tr><tr><td data-label='Category'>Unattached base disk candidate</td><td data-label='Scope'><code>TestVM08</code></td><td data-label='Observation'><div class='hk-file'><code>TestVM08_LegacyData.vhdx</code></div><p class='hk-observation'>No VM or snapshot chain references this base disk under complete coverage: C:\ClusterStorage\UserStorage_1\TestVM08\Virtual Hard Disks\TestVM08_LegacyData.vhdx</p></td><td data-label='Review'>If this virtual disk belongs to an image library, exclude its full path with storage.imageLibraryPathPatterns in a checkpoint-health-policy.yml file supplied via -PolicyPath (see README.md). Otherwise, confirm intended ownership and storage layout with the VM, backup, and storage owners. Do not modify the file based only on this report.</td></tr><tr><td data-label='Category'>Unattached base disk candidate</td><td data-label='Scope'><code>TestVM12</code></td><td data-label='Observation'><div class='hk-file'><code>TestVM12_Archive.vhdx</code></div><p class='hk-observation'>No VM or snapshot chain references this base disk under complete coverage: C:\ClusterStorage\UserStorage_2\TestVM12\Virtual Hard Disks\TestVM12_Archive.vhdx</p></td><td data-label='Review'>If this virtual disk belongs to an image library, exclude its full path with storage.imageLibraryPathPatterns in a checkpoint-health-policy.yml file supplied via -PolicyPath (see README.md). Otherwise, confirm intended ownership and storage layout with the VM, backup, and storage owners. Do not modify the file based only on this report.</td></tr><tr><td data-label='Category'>Shared virtual disk reference</td><td data-label='Scope'><code>TestVM14, TestVM15</code></td><td data-label='Observation'><div class='hk-file'><code>SharedData01.vhdx</code></div><p class='hk-observation'>More than one VM or snapshot inventory references this path: C:\ClusterStorage\UserStorage_2\TestVM14\Virtual Hard Disks\SharedData01.vhdx</p></td><td data-label='Review'>Confirm that the shared reference is intentional and supported for this workload. Do not modify the file based only on this report.</td></tr></tbody></table>
 <h2>Appendix - Knowledge and Information</h2>
 <p class="muted">Reference material to help interpret this report. Both sections below are <strong>collapsed by default</strong>
 to keep the report concise - click the <strong style="color:#0b1220;background:#38bdf8;padding:1px 8px;border-radius:999px;font-size:11.5px">&#9654; Show</strong>
@@ -940,5 +943,14 @@ checkpoint or an unhealthy VSS writer), which the operations / backup team shoul
   <br><br><a href="https://aka.ms/Get-HyperVVMCheckpointHealth-Feedback" target="_blank" rel="noopener noreferrer">Share feedback / report an issue</a>
 </footer>
 </div>
+<script>
+window.addEventListener('load', function () {
+    if (!window.location.hash) { return; }
+    window.setTimeout(function () {
+        var target = document.getElementById(window.location.hash.substring(1));
+        if (target) { target.scrollIntoView({ block: 'start' }); window.scrollBy(0, -70); }
+    }, 0);
+});
+</script>
 </body>
 </html>

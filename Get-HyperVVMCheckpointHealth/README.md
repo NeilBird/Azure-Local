@@ -25,6 +25,8 @@ This example module performs a read-only audit of a Hyper-V VM's **checkpoint / 
 
 The module is intended for Azure Local / Windows Server administrators / operators who need to audit the VMs running on a specific cluster — specifically for any anomalies in checkpoint, replication, or storage-related events. It generates automated output in the form of detailed `.txt` reports, `.csv` event-log data, and a portable **HTML summary** file that serves as the at-a-glance audit report.
 
+Version 0.2.18 also improves supportability when a customer environment behaves differently from the test lab. The performance telemetry times every major collection/report phase, including virtual-disk housekeeping and historic event correlation. When an operation still fails after retries, the run writes a conditional `_debug_log_*.txt` with the exact exception, command and source-line context, stack trace, active phase, and retry count. See the [usage documentation](https://aka.ms/Get-HyperVVMCheckpointHealth#readme); report a reproducible failure through [feedback / GitHub issues](https://aka.ms/Get-HyperVVMCheckpointHealth-Feedback).
+
 ## Contents
 
 - [Safety — this module makes no changes](#safety--this-module-makes-no-changes)
@@ -49,12 +51,12 @@ The module is **read-only** with respect to the VMs, disks, checkpoints, cluster
 
 - It **never** creates/deletes/merges checkpoints, migrates, or changes VM/cluster state.
 - The Analytic-channel enable command is **printed only** — never executed.
-- The **only** filesystem writes are diagnostic **artifacts**: per-VM `.txt` reports, event `.csv` files, and performance-telemetry JSON (with `-OutputPath`); a single self-contained **HTML** fleet report (on by default - in the `-OutputPath` run folder, or the current directory if `-OutputPath` is omitted); and a results **`.zip`** containing the run-folder artifacts (on by default when `-OutputPath` is used). Suppress the HTML/ZIP with `-NoHtml` / `-NoZip`. None of these change the VM, disks, checkpoints, or cluster.
+- The **only** filesystem writes are diagnostic **artifacts**: per-VM `.txt` reports, event `.csv` files, performance-telemetry JSON, and a conditional `_debug_log_*.txt` for unrecovered failures (with `-OutputPath`); a single self-contained **HTML** fleet report (on by default - in the `-OutputPath` run folder, or the current directory if `-OutputPath` is omitted); and a results **`.zip`** containing the run-folder artifacts (on by default when `-OutputPath` is used). Suppress the HTML/ZIP with `-NoHtml` / `-NoZip`. None of these change the VM, disks, checkpoints, or cluster.
 - It is **diagnostic only** — it does not determine root cause definitively or remediate anything. For **backup / checkpoint-merge or VSS** findings, engage your **third-party backup vendor first** (their product owns the checkpoint lifecycle); **open a Microsoft Support (CSS) case** for a confirmed fork-commit signature, or when the vendor rules out their product. Act on their advice before taking action.
 
 ## Sensitive data handling
 
-Treat every saved audit artifact as **sensitive operational data**. The `.txt`, `.csv`, `.html`, telemetry JSON, and `.zip` can contain VM and node names, identifiers, storage paths, event payloads, and application details.
+Treat every saved audit artifact as **sensitive operational data**. The `.txt`, `.csv`, `.html`, telemetry JSON, `_debug_log_*.txt`, and `.zip` can contain VM and node names, identifiers, storage paths, event payloads, command context, and application details.
 
 - Write reports only to an access-controlled, operator-owned location. Do not use a broadly writable share or a public synchronization folder.
 - Transfer artifacts to backup vendors or Microsoft Support only through your organization's approved secure support channel.
@@ -62,6 +64,7 @@ Treat every saved audit artifact as **sensitive operational data**. The `.txt`, 
 - Retain artifacts only for the active investigation and your required audit period, then delete all extracted copies and bundles according to policy.
 - `-AnonymizeTelemetry` applies **only** to the performance-telemetry JSON. It does not redact TXT, CSV, HTML, ZIP content, file names, paths, or free-text event messages. Do not describe the report bundle as anonymized.
 - Review event messages before wider sharing because free text can contain guest, application, account, or file information that deterministic name replacement would not reliably remove.
+- The debug log is **not anonymized**. Review it before sharing and send it only through an approved secure support channel. It intentionally avoids credentials, bound-parameter dumps, and environment-variable dumps, but exact errors, paths, target objects, and source context can still be sensitive.
 
 ## Requirements
 
@@ -389,7 +392,7 @@ Near the top of the report, a **Recommended next steps** list shows only the adv
 
 When none of the above apply, a single **"No action required from this audit"** line is shown instead.
 
-When `-OutputPath` is used, a results **`.zip`** bundling the run folder's `.txt`, `.csv`, `.html`, and telemetry `.json` artifacts is also created (suppress with `-NoZip`), and the console prints guidance to **copy the zip to a device with a browser, unzip, and open the HTML**. The console itself is **quiet by default** (one-line verdict per VM); use `-Quiet:$false` for the full report on screen.
+When `-OutputPath` is used, a results **`.zip`** bundling the run folder's `.txt`, `.csv`, `.html`, telemetry `.json`, and any conditional `_debug_log_*.txt` artifact is also created (suppress with `-NoZip`), and the console prints guidance to **copy the zip to a device with a browser, unzip, and open the HTML**. The console itself is **quiet by default** (one-line verdict per VM); use `-Quiet:$false` for the full report on screen.
 
 ## Output files (only with `-OutputPath`)
 
@@ -404,14 +407,16 @@ When `-OutputPath` is used, a results **`.zip`** bundling the run folder's `.txt
     _NodeEvents_<node>_<yyyy-MM-dd>.csv                  <- node-wide events, written ONCE per node (shared context)
     VMCheckpointAudit-<ClusterName>-<yyyy-MM-dd>.html    <- portable fleet report (default; suppress with -NoHtml)
     code_execution_perf_telemetry_<ClusterName>_<stamp>.json  <- internal per-step timing telemetry (see note below)
+    _debug_log_<stamp>.txt                              <- only when an operation fails after recovery/retries
 ```
 
 - **`<VMName>_VMAudit_<yyyyMMdd-HHmmss>.txt`** — the full per-VM report (written from the captured output buffer; complete regardless of `-Quiet`).
 - **`<VMName>_Events_<yyyy-MM-dd>.csv`** — that VM's **VM-attributed** events with the **complete, untruncated** message text (newlines flattened to ` | `). The `.txt` collapses repeated rows for the same event ID (first few shown + a `Removed N duplicate...` note), so use this CSV for the full record of every event.
 - **`_NodeEvents_<node>_<yyyy-MM-dd>.csv`** — (v0.2.14) the **node-wide** event scan for each owning node, written **once per node** rather than duplicated into every VM's CSV. Node-wide events (e.g. a repeated `15268` flood that references many VMs) are shared context, so keeping them in one per-node file — and each VM's CSV to just its own attributed rows — dramatically shrinks large fleet runs. Each per-VM report points to the relevant node CSV for the node-wide detail.
 - **`VMCheckpointAudit-<ClusterName>-<yyyy-MM-dd>.html`** — the single portable fleet report covering all audited VMs (see [Portable HTML report](#portable-html-report--results-bundle)).
-- **`VMCheckpointAudit-<ClusterName>-<yyyy-MM-dd>.zip`** — a bundle of the run folder (`.txt` + `.csv` + `.html` + telemetry `.json`), for copying to a browser device / attaching to a support case in one file.
-- **`code_execution_perf_telemetry_<ClusterName>_<stamp>.json`** — (v0.2.15) an **internal** per-step performance-telemetry file (hierarchical step numbers with accurate start/end times per phase). It is written into the run folder and bundled into the `.zip`, but is **not** referenced by the HTML report; it exists purely to help us profile and tune the module's execution over time. Safe to ignore for normal audits. Add `-AnonymizeTelemetry` to replace the cluster / node / VM names in this file (and in its file name, which becomes `code_execution_perf_telemetry_anon_<stamp>.json`) with stable pseudonyms (`CLUSTER`, `NODE-01`, `VM-001`) so the timing data can be shared for performance analysis without exposing customer identifiers.
+- **`VMCheckpointAudit-<ClusterName>-<yyyy-MM-dd>.zip`** — a bundle of the run folder (`.txt` + `.csv` + `.html` + telemetry `.json` + conditional debug log), for copying to a browser device / attaching to a support case in one file.
+- **`code_execution_perf_telemetry_<ClusterName>_<stamp>.json`** — (v0.2.15, expanded in v0.2.18) an **internal** per-step performance-telemetry file with hierarchical step numbers and accurate start/end times. It includes parent sections for every major report phase plus focused nested timings for chain validation, all four virtual-disk housekeeping stages, replication/HRL, event scan/attribution/recovery, Analytic state, VSS, staleness, historic correlation, state consistency, per-VM TXT writes, discovery, storage health, and HTML rendering. Parent and child durations overlap and must not be summed. It is written into the run folder and bundled into the `.zip`, but is not referenced by the HTML report. Add `-AnonymizeTelemetry` to replace cluster/node/VM names in this file and its file name with stable pseudonyms.
+- **`_debug_log_<stamp>.txt`** — (v0.2.18) written only when an operation remains failed after retries/recovery or a report artifact cannot be written. It records UTC time, operation/scope, active telemetry phase, retry count, exception type/message/HResult, inner exceptions, category and error ID, safely truncated target context, command/script/line/column/position, stack trace, and basic PowerShell/OS/module context. The console prints its exact path. Review it for sensitive data before sharing it securely, then use [feedback / GitHub issues](https://aka.ms/Get-HyperVVMCheckpointHealth-Feedback) for a reproducible module failure.
 
 File names lead with the **VM name** so per-VM reports sort together for easy reading. Running against many VMs produces one `.txt` + one `.csv` per VM, all grouped in a single per-run sub-folder so repeated runs never intermix. The run-folder path is printed at the start of the run.
 

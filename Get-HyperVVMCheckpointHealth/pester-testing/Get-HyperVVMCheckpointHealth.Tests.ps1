@@ -64,7 +64,21 @@ Describe 'Get-HyperVVMCheckpointHealth source contracts' {
         $script:Source | Should -Match "Add-TelemetryEntry\s+-Step '1\.10\.35\.20'\s+-Phase 'Cluster virtual disk file inventory'"
         $script:Source | Should -Match "Add-TelemetryEntry\s+-Step '1\.10\.35\.30'\s+-Phase 'Virtual disk housekeeping classification'"
         $script:Source | Should -Match "Add-TelemetryEntry\s+-Step '1\.10\.35\.40'\s+-Phase 'Per-VM orphan candidate classification'"
+        $script:Source | Should -Match "Add-TelemetryEntry\s+-Step '1\.10\.45\.10'\s+-Phase 'HRL collection and cadence assessment'"
+        $script:Source | Should -Match "Add-TelemetryEntry\s+-Step '1\.10\.85'\s+-Phase 'Per-VM text report write'"
         $script:Source | Should -Match 'VirtualDiskInventory\s*=\s*\[pscustomobject\]'
+    }
+
+    It 'captures unrecovered failures with exact support links' {
+        $script:Source | Should -Match 'function Add-AuditDiagnostic'
+        $script:Source | Should -Match 'function Write-AuditDebugLog'
+        $script:Source | Should -Match 'https://aka\.ms/Get-HyperVVMCheckpointHealth#readme'
+        $script:Source | Should -Match 'https://aka\.ms/Get-HyperVVMCheckpointHealth-Feedback'
+        $script:Source | Should -Match "-DiagnosticOperation 'Scan node-wide Worker/VMMS event logs'"
+        $script:Source | Should -Match "-Operation 'Enumerate VMs on node \(fallback discovery\)'"
+        $script:Source | Should -Match "-Operation 'Capture initial VM state token'"
+        $script:Source | Should -Match "-Operation 'Capture final VM state token'"
+        $script:Source | Should -Match "-Operation 'Write node-wide events CSV'"
     }
 
     It 'keeps node event scan failures distinct from successful empty results' {
@@ -475,10 +489,30 @@ Describe 'HTML fleet report usability' {
             -DiscoveredVMs @([pscustomobject]@{ Name = 'TEST-VM-DEFERRED'; Reason = 'Synthetic deferred evidence' }) `
             -DiscoverySummary $discoverySummary -StorageHealth $null -IncludeDiscoveredVMs:$true -ScriptVersion '0.2.18' `
             -ReportGenerationTime '00:00:01' -ClusterNodeCount 2 -ClusterCsvCount 1 `
-            -HousekeepingFindings @([pscustomobject]@{
-                Category = 'Placement inconsistency'; Scope = 'TEST-VM-NORMAL'
-                Observation = 'Attached disk is stored under another VM folder <review>'
-                Review = 'Confirm the intended storage layout.'
+            -HousekeepingFindings @(
+                [pscustomobject]@{
+                    Category = 'Placement inconsistency'; Scope = 'TEST-VM-NORMAL'
+                    FileName = 'Data<review>.vhdx'
+                    Observation = 'Attached disk is stored under another VM folder <review>'
+                    Review = 'Confirm the intended storage layout.'
+                }
+                [pscustomobject]@{
+                    Category = 'Inventory coverage'; Scope = 'TEST-NODE-02'
+                    FileName = ''
+                    Observation = 'The node inventory query did not complete.'
+                    Review = 'Review the debug log before rerunning the audit.'
+                }
+            )
+        $script:CleanRenderedHtml = ConvertTo-VMCheckpointAuditHtml `
+            -Results @([pscustomobject]@{ VMName = 'TEST-VM-NORMAL'; OwningNode = 'TEST-NODE-01'; Recommendation = 'OK'; Source = 'Input'; StaleCheckpointCount = 0; ReportData = $normalReportData; Detail = '' }) `
+            -StaleHours 24 -EventLookbackHours 168 -ClusterName 'CONTOSO-CLUSTER-01' -GeneratedUtc '2026-01-01 00:00:00' `
+            -DiscoveredVMs @() -DiscoverySummary ([pscustomobject]@{ EligibleCount = 0; AuditedCount = 0; DeferredCount = 0; Cap = $null }) `
+            -StorageHealth $null -IncludeDiscoveredVMs:$false -ScriptVersion '0.2.18' -ReportGenerationTime '00:00:01' `
+            -ClusterNodeCount 2 -ClusterCsvCount 1 -HousekeepingFindings @([pscustomobject]@{
+                Category = 'Unattached base disk candidate'; Scope = 'C:\ClusterStorage\UserStorage_1'
+                FileName = 'BaseDisk.vhdx'
+                Observation = 'No VM or snapshot chain references this base disk under complete coverage: C:\ClusterStorage\UserStorage_1\BaseDisk.vhdx'
+                Review = 'Confirm intended ownership. Do not modify the file based only on this report.'
             })
     }
 
@@ -486,6 +520,9 @@ Describe 'HTML fleet report usability' {
         $script:RenderedHtml | Should -Match '<div class="l">Incomplete</div>'
         $script:RenderedHtml | Should -Match '<div class="n">1</div><div class="l">Incomplete</div>'
         $script:RenderedHtml | Should -Match 'Incomplete assessment:.*1 VM.*NOT FOUND or ERROR'
+        $script:RenderedHtml | Should -Match '_debug_log_\*\.txt'
+        $script:RenderedHtml | Should -Match 'https://aka\.ms/Get-HyperVVMCheckpointHealth#readme'
+        $script:RenderedHtml | Should -Match 'https://aka\.ms/Get-HyperVVMCheckpointHealth-Feedback'
     }
 
     It 'warn-highlights abnormal Replica state while leaving normal replication neutral' {
@@ -590,17 +627,96 @@ Describe 'HTML fleet report usability' {
         $script:RenderedHtml.IndexOf('Cluster / storage housekeeping to review:') | Should -BeLessThan $script:RenderedHtml.IndexOf('Appendix - Knowledge and Information')
     }
 
+    It 'keeps clean VM-health wording distinct from review-only housekeeping' {
+        $script:CleanRenderedHtml | Should -Match 'Exec Summary - no VM health action required:'
+        $script:CleanRenderedHtml | Should -Match 'No VM-health action required from this audit:'
+        $script:CleanRenderedHtml | Should -Match 'Review the separate cluster / storage housekeeping observations'
+        $script:CleanRenderedHtml | Should -Not -Match 'Cluster / backup administrators should INVESTIGATE'
+    }
+
     It 'gives housekeeping findings readable desktop columns and stacked mobile labels' {
         $script:RenderedHtml | Should -Match '<table class="housekeeping"><colgroup>'
         $script:RenderedHtml | Should -Match '<col class="hk-category"><col class="hk-scope"><col class="hk-observation"><col class="hk-review">'
+        $script:RenderedHtml | Should -Match '<th>Scope \(VM, node, or storage path\)</th>'
         $script:RenderedHtml | Should -Match "<td data-label='Scope'><code>TEST-VM-NORMAL</code></td>"
+        $script:RenderedHtml | Should -Match "<td data-label='Scope'><code>TEST-NODE-02</code></td>"
+        $script:RenderedHtml | Should -Match "<div class='hk-file'><code>Data&lt;review&gt;\.vhdx</code></div><p class='hk-observation'>Attached disk is stored under another VM folder &lt;review&gt;</p>"
         $script:RenderedHtml | Should -Match 'table\.housekeeping\{table-layout:fixed\}'
-        $script:RenderedHtml | Should -Match 'table\.housekeeping col\.hk-observation\{width:40%\}'
+        $script:RenderedHtml | Should -Match 'table\.housekeeping col\.hk-observation\{width:36%\}'
+        $script:RenderedHtml | Should -Match 'table\.housekeeping col\.hk-review\{width:28%\}'
         $script:RenderedHtml | Should -Match 'table\.housekeeping td::before\{content:attr\(data-label\)'
+        $script:RenderedHtml | Should -Match 'table\.housekeeping td \.hk-observation\{grid-column:2;min-width:0\}'
     }
 
     It 'contains wide non-housekeeping tables on narrow screens' {
         $script:RenderedHtml | Should -Match '@media\(max-width:760px\)\{\s*table:not\(\.housekeeping\)\{display:block;overflow-x:auto\}'
+    }
+}
+
+Describe 'Unrecovered-failure debug log' {
+    BeforeAll {
+        $toolRoot = Split-Path $PSScriptRoot -Parent
+        $modulePath = Join-Path $toolRoot 'Get-HyperVVMCheckpointHealth.psm1'
+        $tokens = $null
+        $parseErrors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($modulePath, [ref]$tokens, [ref]$parseErrors)
+        foreach ($functionName in @('Get-TelemetryNow', 'Write-AuditDebugLog', 'Add-AuditDiagnostic', 'Invoke-WithRetry')) {
+            $functionAst = $ast.FindAll({
+                param($node)
+                $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $functionName
+            }, $true) | Select-Object -First 1
+            Invoke-Expression $functionAst.Extent.Text
+        }
+    }
+
+    BeforeEach {
+        $script:RunStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+        $script:TelemetryClockBaseUtc = [DateTimeOffset]::UtcNow
+        $script:ScriptVersion = '0.2.18'
+        $script:VMSectionStepNo = 45
+        $script:VMSectionName = 'Scanning Replica change logs (.hrl)'
+        $script:AuditDiagnostics = [System.Collections.Generic.List[object]]::new()
+        $script:DebugLogPath = Join-Path $TestDrive '_debug_log_test.txt'
+        Remove-Item -LiteralPath $script:DebugLogPath -Force -ErrorAction SilentlyContinue
+    }
+
+    It 'writes exact ErrorRecord context, phase, stack, and support guidance' {
+        function Invoke-SyntheticDiagnosticFailure {
+            throw [System.InvalidOperationException]::new('synthetic diagnostic failure')
+        }
+
+        try { Invoke-SyntheticDiagnosticFailure } catch { $errorRecord = $_ }
+        Add-AuditDiagnostic -ErrorRecord $errorRecord -Operation 'Synthetic collector' -Scope 'VM=TEST-VM-01' -AttemptCount 3
+
+        $content = Get-Content -LiteralPath $script:DebugLogPath -Raw
+        $content | Should -Match 'Operation: Synthetic collector'
+        $content | Should -Match 'Scope: VM=TEST-VM-01'
+        $content | Should -Match 'TelemetryStep: 45'
+        $content | Should -Match 'TelemetryPhase: Scanning Replica change logs \(\.hrl\)'
+        $content | Should -Match 'AttemptCount: 3'
+        $content | Should -Match 'ExceptionType: System\.InvalidOperationException'
+        $content | Should -Match 'ExceptionMessage: synthetic diagnostic failure'
+        $content | Should -Match 'ScriptLineNumber: [1-9][0-9]*'
+        $content | Should -Match 'PositionMessage:'
+        $content | Should -Match 'ScriptStackTrace:.*Invoke-SyntheticDiagnosticFailure'
+        $content | Should -Match 'https://aka\.ms/Get-HyperVVMCheckpointHealth#readme'
+        $content | Should -Match 'https://aka\.ms/Get-HyperVVMCheckpointHealth-Feedback'
+    }
+
+    It 'does not create a debug log when no failures were captured' {
+        Write-AuditDebugLog
+        Test-Path -LiteralPath $script:DebugLogPath | Should -BeFalse
+    }
+
+    It 'records the final retry attempt before rethrowing' {
+        $script:RetryAttempts = 0
+        { Invoke-WithRetry -MaxAttempts 2 -DelayMs 0 -DiagnosticOperation 'Synthetic retry' -DiagnosticScope 'Node=TEST-NODE-01' -ScriptBlock { $script:RetryAttempts++; throw 'retry failed' } } | Should -Throw '*retry failed*'
+
+        $content = Get-Content -LiteralPath $script:DebugLogPath -Raw
+        $script:RetryAttempts | Should -Be 2
+        $content | Should -Match 'Operation: Synthetic retry'
+        $content | Should -Match 'Scope: Node=TEST-NODE-01'
+        $content | Should -Match 'AttemptCount: 2'
     }
 }
 
@@ -665,7 +781,7 @@ Describe 'Synthetic HTML example report' {
         $script:ExampleHtml | Should -Match 'Shared virtual disk reference'
         $script:ExampleHtml | Should -Match 'TestVM08_LegacyData\.vhdx'
         $script:ExampleHtml | Should -Match 'TestVM12_Archive\.vhdx'
-        $script:ExampleHtml | Should -Match 'Do not delete the file based only on this report\.'
+        $script:ExampleHtml | Should -Match 'If this virtual disk belongs to an image library, exclude its full path with storage\.imageLibraryPathPatterns in a checkpoint-health-policy\.yml file supplied via -PolicyPath \(see README\.md\)\.'
         $script:ExampleHtml | Should -Match 'Do not modify the file based only on this report\.'
     }
 }

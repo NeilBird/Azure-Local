@@ -228,21 +228,25 @@ $storageHealth = [pscustomobject]@{
 $housekeepingFindings = @(
     [pscustomobject]@{
         Category = 'Placement inconsistency'; Scope = 'TestVM03, TestVM08'
+        FileName = 'TestVM03_Data.vhdx'
         Observation = 'Virtual disk placement and VM ownership associations differ: C:\ClusterStorage\UserStorage_1\TestVM08\Virtual Hard Disks\TestVM03_Data.vhdx'
         Review = 'Confirm the intended owner and storage layout with the VM, backup, and storage owners. Do not move the file based only on this report.'
     },
     [pscustomobject]@{
         Category = 'Unattached base disk candidate'; Scope = 'TestVM08'
+        FileName = 'TestVM08_LegacyData.vhdx'
         Observation = 'No VM or snapshot chain references this base disk under complete coverage: C:\ClusterStorage\UserStorage_1\TestVM08\Virtual Hard Disks\TestVM08_LegacyData.vhdx'
-        Review = 'Confirm whether this is a retired disk, an offline data disk, or an image-library asset. Do not delete the file based only on this report.'
+        Review = 'If this virtual disk belongs to an image library, exclude its full path with storage.imageLibraryPathPatterns in a checkpoint-health-policy.yml file supplied via -PolicyPath (see README.md). Otherwise, confirm intended ownership and storage layout with the VM, backup, and storage owners. Do not modify the file based only on this report.'
     },
     [pscustomobject]@{
         Category = 'Unattached base disk candidate'; Scope = 'TestVM12'
+        FileName = 'TestVM12_Archive.vhdx'
         Observation = 'No VM or snapshot chain references this base disk under complete coverage: C:\ClusterStorage\UserStorage_2\TestVM12\Virtual Hard Disks\TestVM12_Archive.vhdx'
-        Review = 'Confirm intended ownership and retention with the VM, backup, and storage owners. Do not modify the file based only on this report.'
+        Review = 'If this virtual disk belongs to an image library, exclude its full path with storage.imageLibraryPathPatterns in a checkpoint-health-policy.yml file supplied via -PolicyPath (see README.md). Otherwise, confirm intended ownership and storage layout with the VM, backup, and storage owners. Do not modify the file based only on this report.'
     },
     [pscustomobject]@{
         Category = 'Shared virtual disk reference'; Scope = 'TestVM14, TestVM15'
+        FileName = 'SharedData01.vhdx'
         Observation = 'More than one VM or snapshot inventory references this path: C:\ClusterStorage\UserStorage_2\TestVM14\Virtual Hard Disks\SharedData01.vhdx'
         Review = 'Confirm that the shared reference is intentional and supported for this workload. Do not modify the file based only on this report.'
     }

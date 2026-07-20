@@ -365,6 +365,10 @@ $script:RunStopwatch          = [System.Diagnostics.Stopwatch]::StartNew()
 #   1.30            = cluster storage-health snapshot
 #   1.40            = HTML report render + write
 $script:Telemetry = [System.Collections.Generic.List[object]]::new()
+$script:AuditDiagnostics = [System.Collections.Generic.List[object]]::new()
+$script:DebugLogPath = $null
+$script:VMSectionStepNo = $null
+$script:VMSectionName = $null
 
 # High-resolution 'now' for telemetry (monotonic UTC). Returns a [DateTimeOffset].
 function Get-TelemetryNow { $script:TelemetryClockBaseUtc.AddTicks($script:RunStopwatch.Elapsed.Ticks) }
@@ -380,13 +384,18 @@ function Invoke-WithRetry {
         [Parameter(Mandatory = $true)][scriptblock]$ScriptBlock,
         [int]$MaxAttempts = 3,
         [int]$DelayMs = 750,
-        [ref]$AttemptCount
+        [ref]$AttemptCount,
+        [string]$DiagnosticOperation = 'Read-only operation after retries',
+        [string]$DiagnosticScope = ''
     )
     for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
         if ($AttemptCount) { $AttemptCount.Value = $attempt }
         try { return (& $ScriptBlock) }
         catch {
-            if ($attempt -ge $MaxAttempts) { throw }
+            if ($attempt -ge $MaxAttempts) {
+                Add-AuditDiagnostic -ErrorRecord $_ -Operation $DiagnosticOperation -Scope $DiagnosticScope -AttemptCount $attempt
+                throw
+            }
             Start-Sleep -Milliseconds ($DelayMs * $attempt)
         }
     }
@@ -755,6 +764,102 @@ function Add-TelemetryEntry {
         DurationMs  = [long][math]::Round($dur.TotalMilliseconds)
         DurationSec = [math]::Round($dur.TotalSeconds, 3)
     })
+}
+
+# Capture an unrecovered ErrorRecord without allowing diagnostic collection to interrupt the audit.
+function Add-AuditDiagnostic {
+    param(
+        [Parameter(Mandatory = $true)][System.Management.Automation.ErrorRecord]$ErrorRecord,
+        [Parameter(Mandatory = $true)][string]$Operation,
+        [string]$Scope = '',
+        [int]$AttemptCount = 0
+    )
+
+    try {
+        $invocation = $ErrorRecord.InvocationInfo
+        $exception = $ErrorRecord.Exception
+        $innerExceptions = [System.Collections.Generic.List[string]]::new()
+        $inner = if ($exception) { $exception.InnerException } else { $null }
+        while ($inner) {
+            [void]$innerExceptions.Add(('{0}: {1}' -f $inner.GetType().FullName, $inner.Message))
+            $inner = $inner.InnerException
+        }
+        $targetText = if ($null -eq $ErrorRecord.TargetObject) { '' } else { [string]$ErrorRecord.TargetObject }
+        if ($targetText.Length -gt 2000) { $targetText = $targetText.Substring(0, 2000) + '... [truncated]' }
+
+        [void]$script:AuditDiagnostics.Add([pscustomobject]@{
+            Sequence              = $script:AuditDiagnostics.Count + 1
+            TimestampUtc          = (Get-TelemetryNow).ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'")
+            Operation             = $Operation
+            Scope                 = $Scope
+            TelemetryStep         = [string]$script:VMSectionStepNo
+            TelemetryPhase        = [string]$script:VMSectionName
+            AttemptCount          = $AttemptCount
+            ExceptionType         = if ($exception) { $exception.GetType().FullName } else { '' }
+            ExceptionMessage      = if ($exception) { [string]$exception.Message } else { [string]$ErrorRecord }
+            HResult               = if ($exception) { ('0x{0:X8}' -f ($exception.HResult -band 0xffffffffL)) } else { '' }
+            InnerExceptions       = $innerExceptions.ToArray()
+            CategoryInfo          = [string]$ErrorRecord.CategoryInfo
+            FullyQualifiedErrorId = [string]$ErrorRecord.FullyQualifiedErrorId
+            ErrorDetails          = if ($ErrorRecord.ErrorDetails) { [string]$ErrorRecord.ErrorDetails.Message } else { '' }
+            TargetObjectType      = if ($null -ne $ErrorRecord.TargetObject) { $ErrorRecord.TargetObject.GetType().FullName } else { '' }
+            TargetObject          = $targetText
+            CommandName           = if ($invocation -and $invocation.MyCommand) { [string]$invocation.MyCommand.Name } else { '' }
+            ScriptName            = if ($invocation) { [string]$invocation.ScriptName } else { '' }
+            ScriptLineNumber      = if ($invocation) { [int]$invocation.ScriptLineNumber } else { 0 }
+            OffsetInLine          = if ($invocation) { [int]$invocation.OffsetInLine } else { 0 }
+            SourceLine            = if ($invocation) { [string]$invocation.Line } else { '' }
+            PositionMessage       = if ($invocation) { [string]$invocation.PositionMessage } else { '' }
+            ScriptStackTrace      = [string]$ErrorRecord.ScriptStackTrace
+        })
+        Write-AuditDebugLog
+    } catch {
+        Write-Warning "Could not capture detailed audit diagnostics: $($_.Exception.Message)"
+    }
+}
+
+function Write-AuditDebugLog {
+    if (-not $script:DebugLogPath -or $script:AuditDiagnostics.Count -eq 0) { return }
+
+    try {
+        $lines = [System.Collections.Generic.List[string]]::new()
+        [void]$lines.Add('Get-HyperVVMCheckpointHealth unrecovered-failure debug log')
+        [void]$lines.Add('')
+        [void]$lines.Add('SENSITIVE DATA: This log can contain VM/node names, paths, command context, and error details.')
+        [void]$lines.Add('Review it before sharing and use only an approved secure support channel.')
+        [void]$lines.Add(('Usage documentation: {0}' -f 'https://aka.ms/Get-HyperVVMCheckpointHealth#readme'))
+        [void]$lines.Add(('Feedback / GitHub issue: {0}' -f 'https://aka.ms/Get-HyperVVMCheckpointHealth-Feedback'))
+        [void]$lines.Add('')
+        [void]$lines.Add(('GeneratedUtc: {0}' -f (Get-TelemetryNow).ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'")))
+        [void]$lines.Add(('ToolVersion: {0}' -f $script:ScriptVersion))
+        [void]$lines.Add(('PowerShellVersion: {0}' -f $PSVersionTable.PSVersion))
+        [void]$lines.Add(('PSEdition: {0}' -f $PSVersionTable.PSEdition))
+        [void]$lines.Add(('OSVersion: {0}' -f [Environment]::OSVersion.VersionString))
+        [void]$lines.Add(('Machine: {0}' -f $env:COMPUTERNAME))
+        [void]$lines.Add(('FailureCount: {0}' -f $script:AuditDiagnostics.Count))
+
+        foreach ($diagnostic in $script:AuditDiagnostics) {
+            [void]$lines.Add('')
+            [void]$lines.Add(('=' * 80))
+            [void]$lines.Add(('Failure #{0}' -f $diagnostic.Sequence))
+            foreach ($propertyName in @(
+                'TimestampUtc', 'Operation', 'Scope', 'TelemetryStep', 'TelemetryPhase', 'AttemptCount',
+                'ExceptionType', 'ExceptionMessage', 'HResult', 'CategoryInfo', 'FullyQualifiedErrorId',
+                'ErrorDetails', 'TargetObjectType', 'TargetObject', 'CommandName', 'ScriptName',
+                'ScriptLineNumber', 'OffsetInLine', 'SourceLine', 'PositionMessage', 'ScriptStackTrace'
+            )) {
+                [void]$lines.Add(('{0}: {1}' -f $propertyName, $diagnostic.$propertyName))
+            }
+            if (@($diagnostic.InnerExceptions).Count -gt 0) {
+                [void]$lines.Add('InnerExceptions:')
+                foreach ($innerException in $diagnostic.InnerExceptions) { [void]$lines.Add(('  {0}' -f $innerException)) }
+            }
+        }
+
+        [System.IO.File]::WriteAllLines($script:DebugLogPath, $lines.ToArray(), (New-Object System.Text.UTF8Encoding($false)))
+    } catch {
+        Write-Warning "Could not write the audit debug log '$script:DebugLogPath': $($_.Exception.Message)"
+    }
 }
 
 # Render a Format-Table / Format-List result consistently: strip the leading and trailing blank
@@ -1159,13 +1264,14 @@ function Get-ClusterVirtualDiskOwnershipInventory {
                     $session = $null
                 }
                 if (-not $session) {
-                    $session = Invoke-WithRetry { New-PSSession -ComputerName $node -ErrorAction Stop }
+                    $session = Invoke-WithRetry -DiagnosticOperation 'Open ownership-inventory remoting session' -DiagnosticScope ("Node={0}" -f $node) -ScriptBlock { New-PSSession -ComputerName $node -ErrorAction Stop }
                     $SessionByNode[$node] = $session
                 }
                 $result = Invoke-Command -Session $session -ScriptBlock $collector -ErrorAction Stop
             }
             [void]$nodeResults.Add([pscustomobject]@{ Node = $node; Complete = [bool]$result.Complete; Result = $result; Error = '' })
         } catch {
+            Add-AuditDiagnostic -ErrorRecord $_ -Operation 'Collect cluster virtual disk ownership inventory' -Scope ("Node={0}" -f $node)
             [void]$nodeResults.Add([pscustomobject]@{ Node = $node; Complete = $false; Result = $null; Error = $_.Exception.Message })
         }
     }
@@ -1241,7 +1347,7 @@ function Get-ClusterVirtualDiskFileInventory {
                 $session = $null
             }
             if (-not $session) {
-                $session = Invoke-WithRetry { New-PSSession -ComputerName $TargetNode -ErrorAction Stop }
+                $session = Invoke-WithRetry -DiagnosticOperation 'Open virtual-disk inventory remoting session' -DiagnosticScope ("Node={0}" -f $TargetNode) -ScriptBlock { New-PSSession -ComputerName $TargetNode -ErrorAction Stop }
                 $SessionByNode[$TargetNode] = $session
             }
             $result = Invoke-Command -Session $session -ScriptBlock $collector -ArgumentList (,$roots) -ErrorAction Stop
@@ -1255,6 +1361,7 @@ function Get-ClusterVirtualDiskFileInventory {
             Errors   = @($rootStatus | Where-Object { $_.Error } | ForEach-Object { "Root '$($_.Root)': $($_.Error)" })
         }
     } catch {
+        Add-AuditDiagnostic -ErrorRecord $_ -Operation 'Collect cluster virtual disk file inventory' -Scope ("Node={0}" -f $TargetNode)
         [pscustomobject]@{
             Complete = $false
             Files    = @()
@@ -1488,11 +1595,13 @@ function ConvertTo-VMCheckpointAuditHtml {
       allocation prevents the path from consuming the table and crushing Scope/Review into letters. */
   table.housekeeping{table-layout:fixed}
   table.housekeeping col.hk-category{width:16%}
-  table.housekeeping col.hk-scope{width:24%}
-  table.housekeeping col.hk-observation{width:40%}
-  table.housekeeping col.hk-review{width:20%}
+    table.housekeeping col.hk-scope{width:20%}
+    table.housekeeping col.hk-observation{width:36%}
+    table.housekeeping col.hk-review{width:28%}
   table.housekeeping td{overflow-wrap:anywhere}
   table.housekeeping td code{white-space:normal;word-break:break-word;overflow-wrap:anywhere}
+    table.housekeeping .hk-file{margin-bottom:10px;font-weight:700}
+    table.housekeeping .hk-observation{margin:0}
   .src{display:inline-block;margin-left:6px;padding:1px 7px;border-radius:999px;font-size:10.5px;
     font-weight:600;text-transform:uppercase;letter-spacing:.03em;vertical-align:middle}
   .src.input{background:#12303f;color:#7dd3fc;border:1px solid #1d4e6b}
@@ -1547,6 +1656,7 @@ function ConvertTo-VMCheckpointAuditHtml {
             table.housekeeping tr{margin:0 0 14px;border:1px solid var(--line);border-radius:8px;background:var(--panel);overflow:hidden}
             table.housekeeping td{display:grid;grid-template-columns:110px minmax(0,1fr);gap:12px;padding:9px 11px}
             table.housekeeping td::before{content:attr(data-label);color:var(--muted);font-weight:600}
+            table.housekeeping td .hk-observation{grid-column:2;min-width:0}
         }
     @media(max-width:640px){.cards{grid-template-columns:repeat(2,minmax(0,1fr))}}
     @media(max-width:390px){.cards{grid-template-columns:1fr}}
@@ -1595,6 +1705,7 @@ function ConvertTo-VMCheckpointAuditHtml {
         [void]$sb.Append(@"
 <div class="callout warn">
   <strong>Incomplete assessment:</strong> $countIncomplete VM(s) returned <strong>NOT FOUND or ERROR</strong> ($countNotFound not found; $countError error). Those VMs were not fully assessed and must not be treated as healthy based on this report.
+    When the run was saved with <code>-OutputPath</code>, review the run folder's <code>_debug_log_*.txt</code> for exact failure context. It can contain sensitive operational data. For usage guidance, see <a href="https://aka.ms/Get-HyperVVMCheckpointHealth#readme" target="_blank" rel="noopener noreferrer">the README</a>; to report a reproducible failure, use <a href="https://aka.ms/Get-HyperVVMCheckpointHealth-Feedback" target="_blank" rel="noopener noreferrer">feedback / GitHub issues</a>.
 </div>
 "@)
     }
@@ -1659,7 +1770,8 @@ function ConvertTo-VMCheckpointAuditHtml {
         } else {
             'No stale attached AVHDX layers, stale named snapshots, or orphaned .avhdx files were found.'
         }
-        [void]$sb.Append(@"
+                if ($countInv -gt 0) {
+                        [void]$sb.Append(@"
 <div class="callout ok">
   <strong>Exec Summary:</strong> <strong>Cluster / backup administrators should INVESTIGATE the items listed below. No Microsoft Support (CSS) case is warranted, unless additional guidance is required.</strong>
   <ul>
@@ -1669,6 +1781,23 @@ function ConvertTo-VMCheckpointAuditHtml {
   </ul>
 </div>
 "@)
+                } else {
+                        $housekeepingSummary = if (@($HousekeepingFindings).Count -gt 0) {
+                                'Review the separate cluster / storage housekeeping observations below; they do not change the VM health verdict and do not authorize file modification.'
+                        } else {
+                                'No cluster / storage housekeeping observations were produced by the checks performed in this run.'
+                        }
+                        [void]$sb.Append(@"
+<div class="callout ok">
+    <strong>Exec Summary - no VM health action required:</strong> no VM is in HOLD STATE or INVESTIGATE, and no historic rollback evidence was found.
+    <ul>
+        <li>No VM shows the '<em>checkpoint fork-commit / merge-failure</em>' signature (event <code>3216</code> or an HRESULT such as <code>0x80048102</code>).</li>
+        <li>$execTriageLi</li>
+        <li>$housekeepingSummary</li>
+    </ul>
+</div>
+"@)
+                }
     }
 
     # Node-wide events caveat. v0.2.15: the report now shows TWO event counts per VM (per-VM attributed,
@@ -1738,9 +1867,12 @@ function ConvertTo-VMCheckpointAuditHtml {
 <ol>
 '@)
     if (-not $anyContextualStep) {
-        [void]$sb.Append(@'
-    <li><strong>No action required from this audit:</strong> no stale attached AVHDX layers or named snapshots, no HOLD STATE VMs, no storage-layer disruption, and the Analytic channel is enabled (or was not checked). Keep this report for your records.</li>
-'@)
+        $cleanNextStep = if (@($HousekeepingFindings).Count -gt 0) {
+            '<li><strong>No VM-health action required from this audit:</strong> no stale attached AVHDX layers or named snapshots, no HOLD STATE or INVESTIGATE VMs, and no storage-layer disruption. Review the separate cluster / storage housekeeping observations before making any storage-layout changes.</li>'
+        } else {
+            '<li><strong>No action required from this audit:</strong> no stale attached AVHDX layers or named snapshots, no HOLD STATE or INVESTIGATE VMs, no storage-layer disruption, and no cluster / storage housekeeping observations were produced. Keep this report for your records.</li>'
+        }
+        [void]$sb.Append("    $cleanNextStep`r`n")
     }
     if ($rollbackVMs.Count -gt 0) {
         $rbNames = (@($rollbackVMs | ForEach-Object { ConvertTo-HtmlText $_.VMName }) -join ', ')
@@ -2181,7 +2313,7 @@ function ConvertTo-VMCheckpointAuditHtml {
     # Operational observations are intentionally separate from VM health verdicts. These findings
     # improve supportability and consistency but do not, by themselves, prove corruption or root cause.
     [void]$sb.Append(@'
-<h2>Cluster / storage housekeeping to review:</h2>
+<h2 id="housekeeping">Cluster / storage housekeeping to review:</h2>
 <div class="callout info">
   <strong>Operational excellence and consistent storage practices improve reliability and reduce operational complexity.</strong>
   The observations in this section are not necessarily VM health failures. They identify file placement, ownership,
@@ -2190,11 +2322,14 @@ function ConvertTo-VMCheckpointAuditHtml {
 </div>
 '@)
     if (@($HousekeepingFindings).Count -gt 0) {
-        [void]$sb.Append('<table class="housekeeping"><colgroup><col class="hk-category"><col class="hk-scope"><col class="hk-observation"><col class="hk-review"></colgroup><thead><tr><th>Category</th><th>Scope</th><th>Observation</th><th>Review</th></tr></thead><tbody>')
+        [void]$sb.Append('<table class="housekeeping"><colgroup><col class="hk-category"><col class="hk-scope"><col class="hk-observation"><col class="hk-review"></colgroup><thead><tr><th>Category</th><th>Scope (VM, node, or storage path)</th><th>Observation</th><th>Review</th></tr></thead><tbody>')
         foreach ($finding in @($HousekeepingFindings)) {
-            [void]$sb.Append(("<tr><td data-label='Category'>{0}</td><td data-label='Scope'><code>{1}</code></td><td data-label='Observation'>{2}</td><td data-label='Review'>{3}</td></tr>" -f `
+            $fileNameHtml = if ($finding.PSObject.Properties['FileName'] -and $finding.FileName) {
+                "<div class='hk-file'><code>$(ConvertTo-HtmlText $finding.FileName)</code></div>"
+            } else { '' }
+            [void]$sb.Append(("<tr><td data-label='Category'>{0}</td><td data-label='Scope'><code>{1}</code></td><td data-label='Observation'>{2}<p class='hk-observation'>{3}</p></td><td data-label='Review'>{4}</td></tr>" -f `
                 (ConvertTo-HtmlText $finding.Category), (ConvertTo-HtmlText $finding.Scope), `
-                (ConvertTo-HtmlText $finding.Observation), (ConvertTo-HtmlText $finding.Review)))
+                $fileNameHtml, (ConvertTo-HtmlText $finding.Observation), (ConvertTo-HtmlText $finding.Review)))
         }
         [void]$sb.Append("</tbody></table>`r`n")
     } else {
@@ -2300,6 +2435,15 @@ checkpoint or an unhealthy VSS writer), which the operations / backup team shoul
   <br><br><a href="https://aka.ms/Get-HyperVVMCheckpointHealth-Feedback" target="_blank" rel="noopener noreferrer">Share feedback / report an issue</a>
 </footer>
 </div>
+<script>
+window.addEventListener('load', function () {
+    if (!window.location.hash) { return; }
+    window.setTimeout(function () {
+        var target = document.getElementById(window.location.hash.substring(1));
+        if (target) { target.scrollIntoView({ block: 'start' }); window.scrollBy(0, -70); }
+    }, 0);
+});
+</script>
 </body>
 </html>
 '@)
@@ -2777,10 +2921,10 @@ function Invoke-VMCheckpointAudit {
         if ($script:ClusterNameCache) {
             $ClusterName = $script:ClusterNameCache
         } elseif ($Cluster) {
-            $ClusterName = (Invoke-WithRetry { Get-Cluster -Name $Cluster -ErrorAction Stop }).Name
+            $ClusterName = (Invoke-WithRetry -DiagnosticOperation 'Resolve requested cluster' -DiagnosticScope ("Cluster={0}; VM={1}" -f $Cluster, $VMName) -ScriptBlock { Get-Cluster -Name $Cluster -ErrorAction Stop }).Name
             $script:ClusterNameCache = $ClusterName
         } else {
-            $ClusterName = (Invoke-WithRetry { Get-Cluster -ErrorAction Stop }).Name
+            $ClusterName = (Invoke-WithRetry -DiagnosticOperation 'Resolve local cluster' -DiagnosticScope ("VM={0}" -f $VMName) -ScriptBlock { Get-Cluster -ErrorAction Stop }).Name
             $script:ClusterNameCache = $ClusterName
         }
     } catch {
@@ -2804,7 +2948,7 @@ function Invoke-VMCheckpointAudit {
     # v0.2.14: cluster node list fetched once per run (Get-ClusterNode), reused for every VM.
     if ($null -eq $script:ClusterNodesCache) {
         try {
-            $script:ClusterNodesCache = @(Invoke-WithRetry { Get-ClusterNode -Cluster $ClusterName -ErrorAction Stop } | ForEach-Object { [string]$_.Name })
+            $script:ClusterNodesCache = @(Invoke-WithRetry -DiagnosticOperation 'Enumerate cluster nodes' -DiagnosticScope ("Cluster={0}" -f $ClusterName) -ScriptBlock { Get-ClusterNode -Cluster $ClusterName -ErrorAction Stop } | ForEach-Object { [string]$_.Name })
         } catch {
             $script:ClusterNodesCache = @()
             Write-Alert "  Could not enumerate cluster nodes (after retries): $($_.Exception.Message)" -Level Warning
@@ -2820,7 +2964,7 @@ function Invoke-VMCheckpointAudit {
         $script:GroupOwnerByVm = @{}
         $script:ClusterGroupByVm = @{}
         $allClusterGroups = @()
-        try { $allClusterGroups = @(Invoke-WithRetry { Get-ClusterGroup -Cluster $ClusterName -ErrorAction Stop }) }
+        try { $allClusterGroups = @(Invoke-WithRetry -DiagnosticOperation 'Enumerate cluster groups' -DiagnosticScope ("Cluster={0}" -f $ClusterName) -ScriptBlock { Get-ClusterGroup -Cluster $ClusterName -ErrorAction Stop }) }
         catch { Write-Alert "  Could not enumerate cluster groups (after retries): $($_.Exception.Message)" -Level Warning }
         foreach ($g in $allClusterGroups) {
             if ($g -and $g.Name -and -not $script:GroupOwnerByVm.ContainsKey([string]$g.Name)) {
@@ -2846,16 +2990,17 @@ function Invoke-VMCheckpointAudit {
             foreach ($node in $probeNodes) {
                 try {
                     if ($node.Split('.')[0] -eq $LocalNode) {
-                        $names = @(Get-VM -ErrorAction SilentlyContinue | ForEach-Object { [string]$_.Name })
+                        $names = @(Get-VM -ErrorAction Stop | ForEach-Object { [string]$_.Name })
                     } else {
                         $names = @(Invoke-Command -ComputerName $node -ScriptBlock {
-                            Get-VM -ErrorAction SilentlyContinue | ForEach-Object { [string]$_.Name }
+                            Get-VM -ErrorAction Stop | ForEach-Object { [string]$_.Name }
                         } -ErrorAction Stop)
                     }
                     foreach ($vmn in $names) {
                         if ($vmn -and -not $script:ProbeVmNodeMap.ContainsKey($vmn)) { $script:ProbeVmNodeMap[$vmn] = $node }
                     }
                 } catch {
+                    Add-AuditDiagnostic -ErrorRecord $_ -Operation 'Enumerate VMs on node (fallback discovery)' -Scope ("Node={0}; Cluster={1}; RequestedVM={2}" -f $node, $ClusterName, $VMName)
                     # Could not reach this node in a single hop - keep building from the others.
                 }
             }
@@ -2885,7 +3030,7 @@ function Invoke-VMCheckpointAudit {
         }
         if (-not $pooled) {
             try {
-                $pooled = Invoke-WithRetry { New-PSSession -ComputerName $OwningNode -ErrorAction Stop }
+                $pooled = Invoke-WithRetry -DiagnosticOperation 'Open VM-owner remoting session' -DiagnosticScope ("VM={0}; Owner={1}" -f $VMName, $OwningNode) -ScriptBlock { New-PSSession -ComputerName $OwningNode -ErrorAction Stop }
                 $script:SessionByNode[$OwningNode] = $pooled
             } catch {
                 Write-Alert "  ERROR: could not open a remoting session to owning node '$OwningNode': $($_.Exception.Message)" -Level Critical
@@ -2944,6 +3089,7 @@ function Invoke-VMCheckpointAudit {
             & $collectStateToken -VMName $name -OwnerNode $owner
         } -ArgumentList $VMName, $OwningNode, $stateTokenCollectorDefinition
     } catch {
+        Add-AuditDiagnostic -ErrorRecord $_ -Operation 'Capture initial VM state token' -Scope ("VM={0}; Owner={1}" -f $VMName, $OwningNode)
         $stateTokenStartError = $_.Exception.Message
         Write-Alert "  Could not capture the initial VM state token: $stateTokenStartError" -Level Warning
     }
@@ -3417,6 +3563,7 @@ function Invoke-VMCheckpointAudit {
                     [void]$script:HousekeepingFindings.Add([pscustomobject]@{
                         Category    = 'Shared virtual disk reference'
                         Scope       = @($classification.Owners) -join ', '
+                        FileName    = [string]$diskFile.Name
                         Observation = "More than one VM or snapshot inventory references this path: $($diskFile.FullName)"
                         Review      = 'Confirm that the shared reference is intentional and supported for this workload. Do not modify the file based only on this report.'
                     })
@@ -3437,6 +3584,7 @@ function Invoke-VMCheckpointAudit {
                 [void]$script:HousekeepingFindings.Add([pscustomobject]@{
                     Category    = $category
                     Scope       = $scope
+                    FileName    = [string]$diskFile.Name
                     Observation = $observation
                     Review      = 'If this virtual disk belongs to an image library, exclude its full path with storage.imageLibraryPathPatterns in a checkpoint-health-policy.yml file supplied via -PolicyPath (see README.md). Otherwise, confirm intended ownership and storage layout with the VM, backup, and storage owners. Do not modify the file based only on this report.'
                 })
@@ -3571,6 +3719,7 @@ function Invoke-VMCheckpointAudit {
     # (NOT .avhdx). A large or stale .hrl usually means replication is backlogged or stuck.
     Show-AuditProgress -Step 45 -Status 'Scanning Replica change logs (.hrl)'
     Write-Section "Hyper-V Replica Change Logs (.hrl):"
+    $hrlStart = Get-TelemetryNow
     $hrlFiles = @()
     $hrlAssessment = $null
     if ($vhdFolders) {
@@ -3584,6 +3733,7 @@ function Invoke-VMCheckpointAudit {
                 }
             } -ArgumentList (,$vhdFolders))
         } catch {
+            Add-AuditDiagnostic -ErrorRecord $_ -Operation 'Scan Hyper-V Replica change logs' -Scope ("VM={0}; Owner={1}" -f $VMName, $OwningNode)
             $hrlFiles = @()
             Write-Alert "  Could not scan for .hrl logs on '$OwningNode': $($_.Exception.Message)" -Level Warning
         }
@@ -3614,6 +3764,9 @@ function Invoke-VMCheckpointAudit {
         Write-AuditReportLine "  No VHD folders resolved to scan."
         Write-AuditReportLine ""
     }
+    Add-TelemetryEntry -Step '1.10.45.10' -Phase 'HRL collection and cadence assessment' `
+        -Detail ("VM={0}; Source={1}; Files={2}; Assessed={3}; Concern={4}" -f $VMName, $script:CurrentVMSource, @($hrlFiles).Count, [bool]$hrlAssessment, [bool]($hrlAssessment -and $hrlAssessment.IsConcern)) `
+        -StartUtc $hrlStart -EndUtc (Get-TelemetryNow)
 
     # Scan the owning node's Hyper-V event logs for the checkpoint fork-commit / merge failure mode.
     # The documented chain is: Replica change-tracking / resync failures (leading indicators) ->
@@ -3649,7 +3802,9 @@ function Invoke-VMCheckpointAudit {
             $nodeScanStart = Get-TelemetryNow
             $nodeScanAttempts = 0
             try {
-                $nodeSnapshot = Invoke-WithRetry -AttemptCount ([ref]$nodeScanAttempts) -ScriptBlock {
+                $nodeSnapshot = Invoke-WithRetry -AttemptCount ([ref]$nodeScanAttempts) `
+                    -DiagnosticOperation 'Scan node-wide Worker/VMMS event logs' `
+                    -DiagnosticScope ("Node={0}; LookbackHours={1}" -f $OwningNode, $EventLookbackHours) -ScriptBlock {
                     Invoke-OnOwner -ScriptBlock {
                     param($lookbackHours, $concernIds, $contextIds, $codePatterns)
                     $start  = (Get-Date).AddHours(-$lookbackHours)
@@ -3709,6 +3864,7 @@ function Invoke-VMCheckpointAudit {
                         }
                         $script:NodeCsvNameByNode[$OwningNode] = $nodeCsvName
                     } catch {
+                        Add-AuditDiagnostic -ErrorRecord $_ -Operation 'Write node-wide events CSV' -Scope ("Node={0}; File={1}" -f $OwningNode, $nodeCsvPath)
                         Write-Alert "  Could not write the node-wide events CSV for '$OwningNode': $($_.Exception.Message)" -Level Warning
                     }
                 }
@@ -4370,6 +4526,7 @@ function Invoke-VMCheckpointAudit {
             $stateConsistencyReasons = @('InitialStateTokenUnavailable')
         }
     } catch {
+        Add-AuditDiagnostic -ErrorRecord $_ -Operation 'Capture final VM state token' -Scope ("VM={0}; StartOwner={1}; CurrentOwner={2}" -f $VMName, $OwningNode, $currentOwnerNode)
         $stateTokenEndError = $_.Exception.Message
         $stateConsistencyReasons = @('FinalStateTokenUnavailable')
     }
@@ -4983,6 +5140,7 @@ function Invoke-VMCheckpointAudit {
         # Safety net: any unexpected terminating error for THIS VM is reported and swallowed so a
         # multi-VM run continues with the next VM instead of aborting the whole batch. Still emit a
         # per-VM result object (Recommendation = 'ERROR') so a -PassThru fleet run has a row per VM.
+        Add-AuditDiagnostic -ErrorRecord $_ -Operation 'Per-VM audit' -Scope ("VM={0}; Owner={1}; Source={2}" -f $VMName, $OwningNode, $script:CurrentVMSource)
         Write-Alert "  ERROR auditing '$VMName': $($_.Exception.Message)" -Level Critical
         New-AuditSummary -Recommendation 'ERROR' -Owner $OwningNode -Detail $_.Exception.Message
     }
@@ -5002,11 +5160,15 @@ function Invoke-VMCheckpointAudit {
         # Flush the captured report buffer to the per-VM .txt (when -OutputPath was supplied), then
         # deactivate the buffer so begin/end-block messages are shown normally again.
         if ($reportFile -and $script:VMReportBuffer) {
+            $reportWriteStart = Get-TelemetryNow
             try {
                 [System.IO.File]::WriteAllLines($reportFile, $script:VMReportBuffer.ToArray(), (New-Object System.Text.UTF8Encoding($false)))
                 if (-not $script:QuietConsole) { Write-AuditStatus "Report saved to: $reportFile" }
             } catch {
+                Add-AuditDiagnostic -ErrorRecord $_ -Operation 'Write per-VM text report' -Scope ("VM={0}; File={1}" -f $VMName, $reportFile)
                 Write-Warning "Could not write the per-VM report file '$reportFile': $($_.Exception.Message)"
+            } finally {
+                Add-TelemetryEntry -Step '1.10.85' -Phase 'Per-VM text report write' -Detail ("VM={0}; Source={1}; File={2}" -f $VMName, $script:CurrentVMSource, (Split-Path $reportFile -Leaf)) -StartUtc $reportWriteStart -EndUtc (Get-TelemetryNow)
             }
         }
         $script:VMReportBuffer = $null
@@ -5120,6 +5282,8 @@ if ($OutputPath) {
     if (-not (Test-Path -LiteralPath $script:RunFolder)) {
         New-Item -ItemType Directory -Path $script:RunFolder -Force | Out-Null
     }
+    $script:DebugLogPath = Join-Path $script:RunFolder ("_debug_log_{0}.txt" -f $stamp)
+    Write-AuditDebugLog
     Write-AuditReportLine "Writing per-VM reports to: $script:RunFolder"
 } else {
     # Option C: no -OutputPath means console output only (nothing saved). Warn UP FRONT so the operator
@@ -5359,6 +5523,7 @@ end {
             Write-AuditReportLine ""
             Write-AuditReportLine "HTML fleet report written to: $htmlPath"
         } catch {
+            Add-AuditDiagnostic -ErrorRecord $_ -Operation 'Write HTML fleet report' -Scope ("Cluster={0}; File={1}" -f $clusterForName, $htmlPath)
             Write-Alert "  WARNING: could not write the HTML fleet report: $($_.Exception.Message)" -Level Warning
         }
     }
@@ -5436,13 +5601,14 @@ end {
                 SkipWorkerEvents   = [bool]$SkipWorkerEvents
                 SkipStorageHealth  = [bool]$SkipStorageHealth
                 TotalRunSeconds    = [math]::Round($script:RunStopwatch.Elapsed.TotalSeconds, 3)
-                StepNumbering      = '1 = whole run; 1.10 = per-VM audit total (repeats per VM); 1.10.NN = per-VM section (NN two-digit, gaps of 5); 1.10.20.10 = VHD chain collection+validation (inside disk section); 1.10.50.10 = node event-log scan (once per node); 1.10.60.10 = VSS writer scan (once per node); 1.10.65.10 = attached-layer+snapshot staleness assessment; 1.10.75 = findings / RESULT render + result-object build; 1.20 = discovered VM validation+selection (once per run); 1.30 = storage-health snapshot; 1.40 = HTML render+write. The results-zip (Compress-Archive) is NOT a step here because this JSON is written BEFORE (and bundled INTO) the zip; its elapsed is printed on the console instead. Step numbers are HIERARCHICAL / NESTED: 1.10 is a TOTAL that CONTAINS its 1.10.NN sections, 1.10.20.10 is inside 1.10.20, 1.10.50.10 is inside 1.10.50, 1.10.65.10 is inside 1.10.65, and 1 contains everything - do NOT sum DurationSec across levels (you would multi-count). Order = completion order (a nested sub-step is emitted before its parent); sort by StartUtc for a true timeline. Step numbers intentionally REPEAT per VM - use the Detail field to distinguish.'
+                StepNumbering      = '1 = whole run; 1.10 = per-VM audit total (repeats per VM); 1.10.NN = per-VM section (NN two-digit, gaps of 5); 1.10.20.10 = VHD chain collection+validation; 1.10.35.10-.40 = ownership/file inventory and housekeeping classification; 1.10.40.10 = typed replication assessment; 1.10.45.10 = HRL collection+assessment; 1.10.50.10 = node event-log scan; 1.10.50.20 = per-VM event attribution; 1.10.50.30 = operation recovery correlation; 1.10.55.10 = Analytic channel status; 1.10.60.10 = VSS writer scan; 1.10.65.10 = attached-layer+snapshot staleness assessment; 1.10.70 = historic event correlation (repeats by search window); 1.10.75 = findings / RESULT render + result-object build; 1.10.80.10 = collection state consistency recheck; 1.10.85 = per-VM text report write; 1.20 = discovered VM validation+selection; 1.30 = storage-health snapshot; 1.40 = HTML render+write. The results ZIP is timed on the console because this JSON is written before and bundled into it. Step numbers are HIERARCHICAL / NESTED: parent and child durations overlap, so do NOT sum DurationSec across levels. Order is completion order; sort by StartUtc for a true timeline. Step numbers intentionally repeat per VM - use Detail to distinguish them.'
                 Steps              = $telSteps
             }
             $telJson = $telDoc | ConvertTo-Json -Depth 6
             [System.IO.File]::WriteAllText($telPath, $telJson, (New-Object System.Text.UTF8Encoding($false)))
             Write-AuditReportLine "Performance telemetry written to: $telPath"
         } catch {
+            Add-AuditDiagnostic -ErrorRecord $_ -Operation 'Write performance telemetry' -Scope ("Cluster={0}; RunFolder={1}" -f $clusterForName, $script:RunFolder)
             Write-Alert "  WARNING: could not write the performance telemetry file: $($_.Exception.Message)" -Level Warning
         }
     }
@@ -5466,6 +5632,7 @@ end {
                 $zipWritten = $zipPath
                 Write-AuditReportLine ("Results bundled to zip:       {0}  (took {1}s)" -f $zipPath, $zipSecs)
             } catch {
+                Add-AuditDiagnostic -ErrorRecord $_ -Operation 'Create results ZIP' -Scope ("Cluster={0}; File={1}" -f $clusterForName, $zipPath)
                 Write-Alert "  WARNING: could not create the results zip: $($_.Exception.Message)" -Level Warning
             }
         } else {
@@ -5481,6 +5648,13 @@ end {
     } elseif ($htmlWritten) {
         Write-AuditReportLine ""
         Write-AuditReportLine "  To review: open '$htmlFileName' (titled 'Hyper-V VM Checkpoint Health Audit') in a web browser."
+    }
+
+    if ($script:DebugLogPath -and (Test-Path -LiteralPath $script:DebugLogPath)) {
+        Write-Alert "  Detailed failure diagnostics written to: $script:DebugLogPath" -Level Warning
+        Write-Alert "  SENSITIVE DATA: review the debug log before sharing it through an approved secure channel." -Level Warning
+        Write-AuditReportLine "  Usage documentation: https://aka.ms/Get-HyperVVMCheckpointHealth#readme"
+        Write-AuditReportLine "  Feedback / GitHub issue: https://aka.ms/Get-HyperVVMCheckpointHealth-Feedback"
     }
 
     # Surface any high-risk VMs discovered in event data but not audited (always shown, even in quiet).
