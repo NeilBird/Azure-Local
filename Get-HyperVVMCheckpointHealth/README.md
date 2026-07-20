@@ -118,44 +118,31 @@ Two supported ways to run it, both single-hop:
 
 Download the versioned ZIP from the repository's [GitHub Releases page](https://github.com/NeilBird/Azure-Local/releases). The supported 0.2.18 release asset is `Get-HyperVVMCheckpointHealth-0.2.18.zip`; it contains the manifest, root module, three private modules, example policy YAML, README, and license. Do not use a raw single-file link because the module requires its manifest and sibling private modules.
 
-The following example downloads the versioned release asset, optionally verifies its published SHA256 checksum file, extracts it, unblocks the PowerShell files, and imports the manifest:
+The release also publishes [`Setup-Get-HyperVVMCheckpointHealth.ps1`](Setup-Get-HyperVVMCheckpointHealth.ps1) as a separate asset outside the ZIP. The setup script is pinned to the supported version and SHA256 hash, replaces only `C:\Tools\Get-HyperVVMCheckpointHealth`, validates the staged manifest/version, imports the module, and verifies the command. It does not run an audit.
+
+Download the ZIP, download the setup script, and run the setup script:
 
 ```powershell
-$version = '0.2.18'
-$releaseTag = "Get-HyperVVMCheckpointHealth-v$version"
-$assetName = "Get-HyperVVMCheckpointHealth-$version.zip"
-$installRoot = 'C:\Tools'
-$zipPath = Join-Path $env:TEMP $assetName
-$checksumPath = "$zipPath.sha256"
-$releaseBase = "https://github.com/NeilBird/Azure-Local/releases/download/$releaseTag"
-
-Invoke-WebRequest -Uri "$releaseBase/$assetName" -OutFile $zipPath
-Invoke-WebRequest -Uri "$releaseBase/$assetName.sha256" -OutFile $checksumPath
-
-$expectedHash = ((Get-Content -LiteralPath $checksumPath -Raw).Trim() -split '\s+')[0]
-$actualHash = (Get-FileHash -LiteralPath $zipPath -Algorithm SHA256).Hash
-if (-not $actualHash.Equals($expectedHash, [StringComparison]::OrdinalIgnoreCase)) {
-    throw 'Release ZIP SHA256 verification failed.'
-}
-
-Expand-Archive -LiteralPath $zipPath -DestinationPath $installRoot -Force
-$moduleRoot = Join-Path $installRoot 'Get-HyperVVMCheckpointHealth'
-Get-ChildItem -LiteralPath $moduleRoot -Recurse -File | Unblock-File
-Import-Module (Join-Path $moduleRoot 'Get-HyperVVMCheckpointHealth.psd1') -Force
-Get-Command Get-HyperVVMCheckpointHealth
-
-# Logged directly onto a CLUSTER NODE, audit EVERY clustered VM. The bare Get-ClusterGroup targets the LOCAL
-# cluster (cluster API - RPC, no WinRM), so this form is for running on a node. It returns every
-# clustered VM across all nodes, so -IncludeDiscoveredVMs is not needed here (they are already in
-# the list); use that switch only when auditing a SUBSET of VMs.
-Get-HyperVVMCheckpointHealth -VMName (Get-ClusterGroup | Where-Object GroupType -eq 'VirtualMachine').Name -OutputPath C:\Temp\VM_Checkpoint_Reports
-
-# Or audit a subset and include any additional VMs discovered from high-risk event evidence.
-Get-HyperVVMCheckpointHealth -VMName 'TestVM' -OutputPath C:\Temp\VM_Checkpoint_Reports -IncludeDiscoveredVMs
-
+Invoke-WebRequest 'https://github.com/NeilBird/Azure-Local/releases/download/Get-HyperVVMCheckpointHealth-v0.2.18/Get-HyperVVMCheckpointHealth-0.2.18.zip' -OutFile "$env:TEMP\Get-HyperVVMCheckpointHealth-0.2.18.zip"
+Invoke-WebRequest 'https://github.com/NeilBird/Azure-Local/releases/download/Get-HyperVVMCheckpointHealth-v0.2.18/Setup-Get-HyperVVMCheckpointHealth.ps1' -OutFile "$env:TEMP\Setup-Get-HyperVVMCheckpointHealth.ps1"
+Unblock-File "$env:TEMP\Setup-Get-HyperVVMCheckpointHealth.ps1"; & "$env:TEMP\Setup-Get-HyperVVMCheckpointHealth.ps1" -ZipPath "$env:TEMP\Get-HyperVVMCheckpointHealth-0.2.18.zip"
 ```
 
-The release tag and asset must exist before the `Invoke-WebRequest` example works. Until the GitHub release is published, build or clone the repository and import the local manifest directly.
+Then run the audit separately. On a cluster node:
+
+```powershell
+Get-HyperVVMCheckpointHealth -ProcessAllVMs -OutputPath C:\Temp\VM_Checkpoint_Reports
+```
+
+From a management workstation with the RSAT Failover Clustering tools installed:
+
+```powershell
+Get-HyperVVMCheckpointHealth -Cluster 'CLUS01' -ProcessAllVMs -OutputPath C:\Temp\VM_Checkpoint_Reports
+```
+
+`-ProcessAllVMs` and `-VMName` are mutually exclusive. Use `-VMName` to audit a subset, with optional `-IncludeDiscoveredVMs` for additional VMs found through high-risk event evidence.
+
+The release tag and all three assets must exist before the `Invoke-WebRequest` example works. Until the GitHub release is published, build or clone the repository and import the local manifest directly.
 
 To install the extracted module into the current user's standard Windows PowerShell module path and import it later by name:
 
@@ -186,9 +173,8 @@ Get-HyperVVMCheckpointHealth -VMName 'TestVM01' -OutputPath 'C:\Temp\VM_Checkpoi
 # Multiple VMs by name (array) - each gets its own .txt and .csv in the folder
 Get-HyperVVMCheckpointHealth -VMName 'TestVM01','TestVM02' -OutputPath 'C:\Temp\VM_Checkpoint_Reports'
 
-# Every clustered VM - ON A NODE. The bare Get-ClusterGroup targets the LOCAL cluster, so this form
-# only works when run on a cluster node (for a workstation, use the -Cluster form below).
-Get-HyperVVMCheckpointHealth -VMName (Get-ClusterGroup | Where-Object GroupType -eq 'VirtualMachine').Name -OutputPath 'C:\Temp\VM_Checkpoint_Reports'
+# Every clustered VM - ON A NODE.
+Get-HyperVVMCheckpointHealth -ProcessAllVMs -OutputPath 'C:\Temp\VM_Checkpoint_Reports'
 
 # A specific list of VM names (piped) - the module resolves each VM's owning node itself
 'VM01','VM02','VM03' | Get-HyperVVMCheckpointHealth -OutputPath 'C:\Temp\VM_Checkpoint_Reports'
@@ -199,10 +185,8 @@ Get-HyperVVMCheckpointHealth -VMName (Get-ClusterGroup | Where-Object GroupType 
 if (Get-Module -ListAvailable FailoverClusters) { 'FailoverClusters: OK' } else { 'FailoverClusters: MISSING - install RSAT (see Requirements)' }
 Get-Command Get-ClusterGroup -ErrorAction SilentlyContinue   # should resolve; blank = tools not installed
 
-# STEP 2 - run it. NOTE: -Cluster must appear TWICE - the (Get-ClusterGroup -Cluster 'CLUS01' ...) that
-# builds the -VMName list is a SEPARATE local command that does NOT inherit the command's -Cluster, so it
-# needs its own; Get-HyperVVMCheckpointHealth's -Cluster then governs the audit.
-Get-HyperVVMCheckpointHealth -Cluster 'CLUS01' -VMName (Get-ClusterGroup -Cluster 'CLUS01' | Where-Object GroupType -eq 'VirtualMachine').Name -OutputPath 'C:\Temp\VM_Checkpoint_Reports'
+# STEP 2 - run it. -ProcessAllVMs enumerates the named cluster, so -Cluster is supplied once.
+Get-HyperVVMCheckpointHealth -Cluster 'CLUS01' -ProcessAllVMs -OutputPath 'C:\Temp\VM_Checkpoint_Reports'
 
 # Equivalent remote pipeline form (names gathered from the remote cluster, then piped in)
 Get-ClusterGroup -Cluster 'CLUS01' | Where-Object GroupType -eq 'VirtualMachine' |
@@ -230,7 +214,7 @@ Get-HyperVVMCheckpointHealth -VMName 'VM01' -OutputPath 'C:\Temp\VM_Checkpoint_R
 Get-HyperVVMCheckpointHealth -VMName 'VM01' -OutputPath 'C:\Temp\VM_Checkpoint_Reports' -IncludeDiscoveredVMs
 
 # Audit every clustered VM EXCEPT those named in an exclusion CSV (single 'VMName' column, case-insensitive)
-Get-HyperVVMCheckpointHealth -VMName (Get-ClusterGroup | Where-Object GroupType -eq 'VirtualMachine').Name -ExcludedVMListCsv '.\CheckPointAudit_Excluded_VMs.csv' -OutputPath 'C:\Temp\VM_Checkpoint_Reports'
+Get-HyperVVMCheckpointHealth -ProcessAllVMs -ExcludedVMListCsv '.\CheckPointAudit_Excluded_VMs.csv' -OutputPath 'C:\Temp\VM_Checkpoint_Reports'
 
 # Apply an optional schema-versioned policy for image/live-mount paths, CSV free space, and HRL cadence.
 # powershell-yaml is required only when -PolicyPath is supplied.
@@ -591,10 +575,10 @@ release\Get-HyperVVMCheckpointHealth-0.2.18.zip
 release\Get-HyperVVMCheckpointHealth-0.2.18.zip.sha256
 ```
 
-Create the GitHub release with tag `Get-HyperVVMCheckpointHealth-v0.2.18` and upload both generated files. Before publishing a future version:
+Create the GitHub release with tag `Get-HyperVVMCheckpointHealth-v0.2.18` and upload the generated ZIP, its SHA256 file, and `Setup-Get-HyperVVMCheckpointHealth.ps1` as three separate assets. The setup script remains outside the ZIP. Before publishing a future version:
 
 1. Update the version in the root module, manifest, README, and release notes.
 2. Run the redirected Windows PowerShell 5.1 Pester suite.
-3. Run `Build-Release.ps1`; use `-Force` only when intentionally replacing a local build for the same version.
+3. Run `Build-Release.ps1`; use `-Force` only when intentionally replacing a local build for the same version. Copy the resulting SHA256 into the setup script's pinned hash.
 4. Extract the ZIP into a clean directory, import its manifest under Windows PowerShell 5.1, and verify `Get-Command Get-HyperVVMCheckpointHealth`.
 5. Publish the ZIP and checksum as release assets using the tag and asset naming convention above.

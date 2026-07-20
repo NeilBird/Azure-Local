@@ -120,10 +120,25 @@ Describe 'Get-HyperVVMCheckpointHealth source contracts' {
     }
 
     It 'rechecks VM state and makes changed collection state inconclusive' {
+        $script:Source | Should -Match "Show-AuditProgress\s+-Step 80\s+-Status 'Rechecking VM collection state consistency'"
         $script:Source | Should -Match "Add-TelemetryEntry\s+-Step '1\.10\.80\.10'\s+-Phase 'VM collection state consistency recheck'"
         $script:Source | Should -Match '\$stateChangedDuringCollection\s*=\s*\(\$stateConsistencyStatus\s*-eq\s*''Changed''\)'
         $script:Source | Should -Match '\$investigate\s*=\s*\$true'
         $script:Source | Should -Match 'StateConsistency\s*=\s*\[pscustomobject\]'
+    }
+
+    It 'supports mutually exclusive named and all-cluster VM selectors' {
+        $script:Source | Should -Match "CmdletBinding\(DefaultParameterSetName = 'ByName'\)"
+        $script:Source | Should -Match '(?s)ParameterSetName=''ByName''.+?\[object\[\]\]\$VMName'
+        $script:Source | Should -Match 'ParameterSetName=''AllVMs''\)\]\s*\[switch\]\$ProcessAllVMs'
+        $script:Source | Should -Match 'Get-ClusterGroup -Cluster \$resolvedClusterName -ErrorAction Stop'
+        $script:Source | Should -Match "Phase 'Process all clustered VMs selection'"
+    }
+
+    It 'keeps clean text guidance distinct from review-only housekeeping' {
+        $script:Source | Should -Match 'No VM-health action required from this result'
+        $script:Source | Should -Match 'Review the separate cluster / storage housekeeping observations in the HTML report'
+        $script:Source | Should -Match '\$script:HousekeepingFindings\.Count\s+-gt\s+0'
     }
 
     It 'caches cluster roles and Analytic status once per run' {
@@ -346,14 +361,29 @@ Describe 'Module distribution contracts' {
         $buildSource | Should -Match 'Get-HyperVVMCheckpointHealth\.Policy\.psm1'
         $buildSource | Should -Match 'checkpoint-health-policy\.example\.yml'
         $buildSource | Should -Match 'Get-FileHash.+SHA256'
+        $buildSource | Should -Not -Match 'Setup-Get-HyperVVMCheckpointHealth\.ps1'
+    }
+
+    It 'provides an external hash-pinned setup script that installs without running an audit' {
+        $setupPath = Join-Path $script:ModuleRoot 'Setup-Get-HyperVVMCheckpointHealth.ps1'
+        Test-Path -LiteralPath $setupPath -PathType Leaf | Should -BeTrue
+        $setupSource = Get-Content -LiteralPath $setupPath -Raw
+        $setupSource | Should -Match "\$version = '0\.2\.18'"
+        $setupSource | Should -Match "\$expectedSha256 = '[0-9a-f]{64}'"
+        $setupSource | Should -Match 'Get-FileHash.+SHA256'
+        $setupSource | Should -Match 'Test-ModuleManifest'
+        $setupSource | Should -Not -Match 'Get-ClusterGroup'
+        $setupSource | Should -Not -Match '& \$moduleName -VMName'
+        $setupSource | Should -Not -Match 'Remove-Item \$installRoot'
     }
 
     It 'documents the module ZIP as the supported installation unit' {
         $readme = Get-Content -LiteralPath (Join-Path $script:ModuleRoot 'README.md') -Raw
         $readme | Should -Match 'Download and import the module'
-        $readme | Should -Match 'Import-Module.+Get-HyperVVMCheckpointHealth\.psd1'
         $readme | Should -Match 'single exported command'
-        $readme | Should -Not -Match 'Get-HyperVVMCheckpointHealth\.ps1'
+        $readme | Should -Match 'Setup-Get-HyperVVMCheckpointHealth\.ps1'
+        $readme | Should -Match 'setup script remains outside the ZIP'
+        $readme | Should -Not -Match '(?<!Setup-)Get-HyperVVMCheckpointHealth\.ps1'
     }
 
     It 'documents current historic coverage and HTML card semantics' {
@@ -512,7 +542,7 @@ Describe 'HTML fleet report usability' {
                 Category = 'Unattached base disk candidate'; Scope = 'C:\ClusterStorage\UserStorage_1'
                 FileName = 'BaseDisk.vhdx'
                 Observation = 'No VM or snapshot chain references this base disk under complete coverage: C:\ClusterStorage\UserStorage_1\BaseDisk.vhdx'
-                Review = 'Confirm intended ownership. Do not modify the file based only on this report.'
+                Review = 'If this virtual disk belongs to an image library, exclude its full path with storage.imageLibraryPathPatterns in a checkpoint-health-policy.yml file supplied via -PolicyPath (see README.md). Otherwise, confirm intended ownership. Do not modify the file based only on this report.'
             })
     }
 
@@ -632,6 +662,11 @@ Describe 'HTML fleet report usability' {
         $script:CleanRenderedHtml | Should -Match 'No VM-health action required from this audit:'
         $script:CleanRenderedHtml | Should -Match 'Review the separate cluster / storage housekeeping observations'
         $script:CleanRenderedHtml | Should -Not -Match 'Cluster / backup administrators should INVESTIGATE'
+    }
+
+    It 'links unattached base disk README guidance in a new tab' {
+        $script:CleanRenderedHtml | Should -Match 'supplied via -PolicyPath \(see <a href="https://aka\.ms/Get-HyperVVMCheckpointHealth#readme" target="_blank" rel="noopener noreferrer">README\.md</a>\)\.'
+        $script:CleanRenderedHtml | Should -Not -Match '\(see README\.md\)'
     }
 
     It 'gives housekeeping findings readable desktop columns and stacked mobile labels' {
@@ -781,7 +816,7 @@ Describe 'Synthetic HTML example report' {
         $script:ExampleHtml | Should -Match 'Shared virtual disk reference'
         $script:ExampleHtml | Should -Match 'TestVM08_LegacyData\.vhdx'
         $script:ExampleHtml | Should -Match 'TestVM12_Archive\.vhdx'
-        $script:ExampleHtml | Should -Match 'If this virtual disk belongs to an image library, exclude its full path with storage\.imageLibraryPathPatterns in a checkpoint-health-policy\.yml file supplied via -PolicyPath \(see README\.md\)\.'
+        $script:ExampleHtml | Should -Match 'If this virtual disk belongs to an image library, exclude its full path with storage\.imageLibraryPathPatterns in a checkpoint-health-policy\.yml file supplied via -PolicyPath \(see <a href="https://aka\.ms/Get-HyperVVMCheckpointHealth#readme" target="_blank" rel="noopener noreferrer">README\.md</a>\)\.'
         $script:ExampleHtml | Should -Match 'Do not modify the file based only on this report\.'
     }
 }

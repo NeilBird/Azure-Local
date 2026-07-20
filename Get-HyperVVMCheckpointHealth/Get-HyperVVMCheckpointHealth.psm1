@@ -46,13 +46,10 @@ function Get-HyperVVMCheckpointHealth {
     Audits a single VM by name and writes the default HTML report to the current directory.
 
 .EXAMPLE
-    Get-HyperVVMCheckpointHealth -VMName (Get-ClusterGroup | Where-Object GroupType -eq 'VirtualMachine').Name -OutputPath 'C:\Temp\Reports'
+    Get-HyperVVMCheckpointHealth -ProcessAllVMs -OutputPath 'C:\Temp\Reports'
 
-    Audits EVERY clustered VM when run ON a cluster node. The VM names come from the cluster API
-    (Get-ClusterGroup - RPC, no WinRM and no double hop). NOTE: the bare Get-ClusterGroup sub-expression
-    is a SEPARATE command that runs in YOUR session and targets the LOCAL cluster, so this form only
-    works on a node. To do the same from a management workstation, see the -Cluster example below
-    (you must add -Cluster to the inner Get-ClusterGroup as well). Writes a per-VM .txt and events .csv.
+    Audits EVERY clustered VM when run ON a cluster node. VM names are resolved from the local cluster
+    through the cluster API (RPC, no WinRM and no double hop). Writes per-VM .txt and events .csv files.
 
 .EXAMPLE
     'VM01','VM02','VM03' | Get-HyperVVMCheckpointHealth -OutputPath 'C:\Temp\Reports'
@@ -66,7 +63,7 @@ function Get-HyperVVMCheckpointHealth {
     Fastest run: disk / checkpoint / chain state only, skipping the event-log scan and Analytic check.
 
 .EXAMPLE
-    Get-HyperVVMCheckpointHealth -Cluster 'CLUS01' -VMName (Get-ClusterGroup -Cluster 'CLUS01' | Where-Object GroupType -eq 'VirtualMachine').Name -OutputPath 'C:\Temp\Reports'
+    Get-HyperVVMCheckpointHealth -Cluster 'CLUS01' -ProcessAllVMs -OutputPath 'C:\Temp\Reports'
 
     A single self-contained HTML fleet report is written by DEFAULT. With -OutputPath it lands in the
     per-run sub-folder as 'VMCheckpointAudit-<ClusterName>-yyyy-MM-dd.html' alongside the .txt/.csv;
@@ -76,21 +73,16 @@ function Get-HyperVVMCheckpointHealth {
     or attach to a backup-vendor / Microsoft (CSS) case.
 
 .EXAMPLE
-    Get-HyperVVMCheckpointHealth -Cluster 'CLUS01' -VMName (Get-ClusterGroup -Cluster 'CLUS01' | Where-Object GroupType -eq 'VirtualMachine').Name -OutputPath 'C:\Temp\Reports'
+    Get-HyperVVMCheckpointHealth -Cluster 'CLUS01' -ProcessAllVMs -OutputPath 'C:\Temp\Reports'
 
     Runs REMOTELY from a management workstation (with the RSAT 'Failover Clustering' tools). -Cluster
     targets the named cluster via the cluster RPC API and each owning node is reached in a SINGLE hop -
     no double hop. Without -Cluster the command must be run ON a cluster node.
 
-    IMPORTANT: -Cluster must appear TWICE. The (Get-ClusterGroup -Cluster 'CLUS01' ...) sub-expression
-    that builds the -VMName list is a SEPARATE command that runs in your local session BEFORE the
-    command starts; it does NOT inherit the command's -Cluster, so it needs its own -Cluster to point at
-    the remote cluster. Get-HyperVVMCheckpointHealth's -Cluster then governs the audit itself. (Equivalent pipeline
-    form: Get-ClusterGroup -Cluster 'CLUS01' | Where-Object GroupType -eq 'VirtualMachine' |
-    Select-Object -ExpandProperty Name | Get-HyperVVMCheckpointHealth -Cluster 'CLUS01' ...)
+    -ProcessAllVMs enumerates the named cluster directly, so -Cluster is supplied only once.
 
 .EXAMPLE
-    $results = Get-HyperVVMCheckpointHealth -Cluster 'CLUS01' -VMName (Get-ClusterGroup -Cluster 'CLUS01' | Where-Object GroupType -eq 'VirtualMachine').Name -OutputPath 'C:\Temp\Reports' -PassThru
+    $results = Get-HyperVVMCheckpointHealth -Cluster 'CLUS01' -ProcessAllVMs -OutputPath 'C:\Temp\Reports' -PassThru
     $results | Where-Object HoldState | Format-Table VMName, OwningNode, Recommendation
 
     With -PassThru the command emits ONE [pscustomobject] per VM to the pipeline (in addition to the
@@ -108,7 +100,7 @@ function Get-HyperVVMCheckpointHealth {
             ForEach-Object { $_.ReportData.Checkpoints } | Format-Table Name, AgeHrs, Stale
 
 .EXAMPLE
-    Get-HyperVVMCheckpointHealth -Cluster 'CLUS01' -VMName (Get-ClusterGroup -Cluster 'CLUS01' | Where-Object GroupType -eq 'VirtualMachine').Name -ExcludedVMListCsv '.\CheckPointAudit_Excluded_VMs.csv' -OutputPath 'C:\Temp\Reports'
+    Get-HyperVVMCheckpointHealth -Cluster 'CLUS01' -ProcessAllVMs -ExcludedVMListCsv '.\CheckPointAudit_Excluded_VMs.csv' -OutputPath 'C:\Temp\Reports'
 
     Audits every clustered VM EXCEPT those listed in the exclusion CSV. The file has a single column
     with a 'VMName' header (a headerless single-column file also works); each VM whose name matches
@@ -167,14 +159,20 @@ function Get-HyperVVMCheckpointHealth {
 # 'Failover Clustering' tools). Hyper-V is intentionally NOT required locally: with -Cluster the
 # Hyper-V cmdlets run inside the owning-node session, so a management workstation need not have it.
 
-[CmdletBinding()]
+[CmdletBinding(DefaultParameterSetName = 'ByName')]
 param(
-    [Parameter(Mandatory=$true, Position=0, ValueFromPipeline=$true, ValueFromPipelineByPropertyName=$true)]
+    [Parameter(Mandatory=$true, Position=0, ValueFromPipeline=$true, ValueFromPipelineByPropertyName=$true, ParameterSetName='ByName')]
     [ValidateNotNullOrEmpty()]
     [Alias('Name','VM')]
     # Accepts VM name(s) OR VM objects (from Get-VM). Objects are normalized to their .Name in the
     # process block, so -VMName $VMs (objects), -VMName $VMs.Name (strings), and 'Get-VM | ...' all work.
     [object[]]$VMName,
+
+    # Audit every clustered virtual machine returned by Get-ClusterGroup. Use without -Cluster when
+    # logged directly onto a cluster node, or combine with -Cluster from an RSAT management workstation.
+    # Mutually exclusive with -VMName so the requested fleet has one unambiguous source.
+    [Parameter(Mandatory=$true, ParameterSetName='AllVMs')]
+    [switch]$ProcessAllVMs,
 
     # Optional: target a cluster BY NAME so the command can be run from a management workstation (with
     # the RSAT 'Failover Clustering' tools installed) instead of on a node. The cluster queries use the
@@ -354,6 +352,7 @@ $script:RunStopwatch          = [System.Diagnostics.Stopwatch]::StartNew()
 # Step-number scheme (single-digit root; two-digit sub-steps with GAPS of 5 for future insertion;
 # numbers intentionally REPEAT for every VM in the audit loop, distinguished by the Detail field):
 #   1               = whole module run (total)
+#   1.05.15         = all-cluster VM selection when -ProcessAllVMs is used
 #   1.10            = per-VM audit (total)   - repeats once per audited VM (input AND discovered)
 #   1.10.NN         = per-VM audit section   - NN = 05,10,15,... (assigned at each Show-AuditProgress call)
 #   1.10.20.10      = VHD chain collection and validation (inside per-VM disk section)
@@ -361,6 +360,8 @@ $script:RunStopwatch          = [System.Diagnostics.Stopwatch]::StartNew()
 #   1.10.60.10      = VSS writer scan (a sub-step of section 1.10.60; runs once per node)
 #   1.10.65.10      = attached-layer and named-snapshot staleness assessment
 #   1.10.75         = rendering findings / RESULT text + building the per-VM result object
+#   1.10.80         = VM collection state consistency section
+#   1.10.80.10      = VM collection state consistency recheck
 #   1.20            = discovered VM validation and selection (once per run)
 #   1.30            = cluster storage-health snapshot
 #   1.40            = HTML report render + write
@@ -2327,9 +2328,16 @@ function ConvertTo-VMCheckpointAuditHtml {
             $fileNameHtml = if ($finding.PSObject.Properties['FileName'] -and $finding.FileName) {
                 "<div class='hk-file'><code>$(ConvertTo-HtmlText $finding.FileName)</code></div>"
             } else { '' }
+            $reviewHtml = ConvertTo-HtmlText $finding.Review
+            if ([string]$finding.Category -eq 'Unattached base disk candidate') {
+                $reviewHtml = $reviewHtml.Replace(
+                    '(see README.md)',
+                    '(see <a href="https://aka.ms/Get-HyperVVMCheckpointHealth#readme" target="_blank" rel="noopener noreferrer">README.md</a>)'
+                )
+            }
             [void]$sb.Append(("<tr><td data-label='Category'>{0}</td><td data-label='Scope'><code>{1}</code></td><td data-label='Observation'>{2}<p class='hk-observation'>{3}</p></td><td data-label='Review'>{4}</td></tr>" -f `
                 (ConvertTo-HtmlText $finding.Category), (ConvertTo-HtmlText $finding.Scope), `
-                $fileNameHtml, (ConvertTo-HtmlText $finding.Observation), (ConvertTo-HtmlText $finding.Review)))
+                $fileNameHtml, (ConvertTo-HtmlText $finding.Observation), $reviewHtml))
         }
         [void]$sb.Append("</tbody></table>`r`n")
     } else {
@@ -4495,6 +4503,7 @@ function Invoke-VMCheckpointAudit {
         Write-AuditReportLine ""
     }
 
+    Show-AuditProgress -Step 80 -Status 'Rechecking VM collection state consistency'
     $stateRecheckStart = Get-TelemetryNow
     $stateTokenEnd = $null
     $stateTokenEndError = ''
@@ -4722,13 +4731,17 @@ function Invoke-VMCheckpointAudit {
         }
     } else {
         if ($lowSignalOnly) {
-            Write-AuditReportLine ("  No action required from this result - no active checkpoint layer(s), no orphaned .avhdx, healthy replica" )
+            Write-AuditReportLine ("  No VM-health action required from this result - no active checkpoint layer(s), no orphaned .avhdx, healthy replica" )
             Write-AuditReportLine  "  and stable VSS writers. This VM has no high-signal concern events; the low-signal event(s) attributed"
             Write-AuditReportLine  "  to it (e.g. a 'background disk merge interrupted' (19090) that subsequently completed with no leftover"
             Write-AuditReportLine  "  .avhdx, or 'failed to get disk information' (15268) storage / housekeeping chatter) are not, on their"
             Write-AuditReportLine  "  own, a concern and need no action."
         } else {
-            Write-AuditReportLine  "  No action required from this result - no active checkpoint layer(s) and no concern signals were found."
+            Write-AuditReportLine  "  No VM-health action required from this result - no active checkpoint layer(s) and no concern signals were found."
+        }
+        if ($script:HousekeepingFindings.Count -gt 0) {
+            Write-AuditReportLine  "  Review the separate cluster / storage housekeeping observations in the HTML report before making"
+            Write-AuditReportLine  "  any storage-layout changes; those review-only items do not change this VM's health verdict."
         }
     }
     Write-AuditReportLine ""
@@ -5273,6 +5286,35 @@ if ($ExcludedVMListCsv) {
     }
 }
 
+if ($ProcessAllVMs) {
+    $processAllStart = Get-TelemetryNow
+    $resolvedClusterName = if ($Cluster) {
+        (Invoke-WithRetry -DiagnosticOperation 'Resolve cluster for ProcessAllVMs' -DiagnosticScope ("Cluster={0}" -f $Cluster) `
+            -ScriptBlock { Get-Cluster -Name $Cluster -ErrorAction Stop }).Name
+    } else {
+        (Invoke-WithRetry -DiagnosticOperation 'Resolve local cluster for ProcessAllVMs' `
+            -ScriptBlock { Get-Cluster -ErrorAction Stop }).Name
+    }
+    $clusterVmNames = @(Invoke-WithRetry -DiagnosticOperation 'Enumerate clustered VMs for ProcessAllVMs' `
+        -DiagnosticScope ("Cluster={0}" -f $resolvedClusterName) `
+        -ScriptBlock { Get-ClusterGroup -Cluster $resolvedClusterName -ErrorAction Stop } |
+        Where-Object { $_.GroupType -eq 'VirtualMachine' } |
+        ForEach-Object { [string]$_.Name } |
+        Where-Object { $_ } |
+        Sort-Object -Unique)
+    foreach ($clusterVmName in $clusterVmNames) {
+        if ($script:ExcludedVMNames.Count -gt 0 -and $script:ExcludedVMNames.Contains($clusterVmName)) {
+            [void]$script:ExcludedMatched.Add($clusterVmName)
+            continue
+        }
+        [void]$script:PendingVMNames.Add($clusterVmName)
+    }
+    $script:ClusterNameCache = [string]$resolvedClusterName
+    Add-TelemetryEntry -Step '1.05.15' -Phase 'Process all clustered VMs selection' `
+        -Detail ("Cluster={0}; Found={1}; Selected={2}; Excluded={3}" -f $resolvedClusterName, $clusterVmNames.Count, $script:PendingVMNames.Count, $script:ExcludedMatched.Count) `
+        -StartUtc $processAllStart -EndUtc (Get-TelemetryNow)
+}
+
 # Resolve a single per-run output sub-folder (once per invocation) so every VM in this run is
 # grouped together and repeated runs never collide. Only created when -OutputPath is supplied.
 $script:RunFolder = $null
@@ -5308,6 +5350,7 @@ if ($OutputPath -or -not $NoHtml) {
 # Each VM is audited independently, so one VM's failure does not stop the rest. With -OutputPath,
 # each VM gets its own .txt transcript and .csv event export.
 process {
+    if ($PSCmdlet.ParameterSetName -ne 'ByName') { return }
     foreach ($item in $VMName) {
         # Normalize each input to a VM name string: accept a plain string, or a VM object (Get-VM)
         # via its .VMName / .Name property. This lets callers pass -VMName $VMs (objects),
@@ -5601,7 +5644,7 @@ end {
                 SkipWorkerEvents   = [bool]$SkipWorkerEvents
                 SkipStorageHealth  = [bool]$SkipStorageHealth
                 TotalRunSeconds    = [math]::Round($script:RunStopwatch.Elapsed.TotalSeconds, 3)
-                StepNumbering      = '1 = whole run; 1.10 = per-VM audit total (repeats per VM); 1.10.NN = per-VM section (NN two-digit, gaps of 5); 1.10.20.10 = VHD chain collection+validation; 1.10.35.10-.40 = ownership/file inventory and housekeeping classification; 1.10.40.10 = typed replication assessment; 1.10.45.10 = HRL collection+assessment; 1.10.50.10 = node event-log scan; 1.10.50.20 = per-VM event attribution; 1.10.50.30 = operation recovery correlation; 1.10.55.10 = Analytic channel status; 1.10.60.10 = VSS writer scan; 1.10.65.10 = attached-layer+snapshot staleness assessment; 1.10.70 = historic event correlation (repeats by search window); 1.10.75 = findings / RESULT render + result-object build; 1.10.80.10 = collection state consistency recheck; 1.10.85 = per-VM text report write; 1.20 = discovered VM validation+selection; 1.30 = storage-health snapshot; 1.40 = HTML render+write. The results ZIP is timed on the console because this JSON is written before and bundled into it. Step numbers are HIERARCHICAL / NESTED: parent and child durations overlap, so do NOT sum DurationSec across levels. Order is completion order; sort by StartUtc for a true timeline. Step numbers intentionally repeat per VM - use Detail to distinguish them.'
+                StepNumbering      = '1 = whole run; 1.05.15 = all-cluster VM selection for -ProcessAllVMs; 1.10 = per-VM audit total (repeats per VM); 1.10.NN = per-VM section (NN two-digit, gaps of 5); 1.10.20.10 = VHD chain collection+validation; 1.10.35.10-.40 = ownership/file inventory and housekeeping classification; 1.10.40.10 = typed replication assessment; 1.10.45.10 = HRL collection+assessment; 1.10.50.10 = node event-log scan; 1.10.50.20 = per-VM event attribution; 1.10.50.30 = operation recovery correlation; 1.10.55.10 = Analytic channel status; 1.10.60.10 = VSS writer scan; 1.10.65.10 = attached-layer+snapshot staleness assessment; 1.10.70 = historic event correlation (repeats by search window); 1.10.75 = findings / RESULT render + result-object build; 1.10.80 = collection state consistency section; 1.10.80.10 = collection state consistency recheck; 1.10.85 = per-VM text report write; 1.20 = discovered VM validation+selection; 1.30 = storage-health snapshot; 1.40 = HTML render+write. The results ZIP is timed on the console because this JSON is written before and bundled into it. Step numbers are HIERARCHICAL / NESTED: parent and child durations overlap, so do NOT sum DurationSec across levels. Order is completion order; sort by StartUtc for a true timeline. Step numbers intentionally repeat per VM - use Detail to distinguish them.'
                 Steps              = $telSteps
             }
             $telJson = $telDoc | ConvertTo-Json -Depth 6
