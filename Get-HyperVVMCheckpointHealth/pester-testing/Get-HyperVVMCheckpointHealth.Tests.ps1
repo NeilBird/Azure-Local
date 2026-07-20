@@ -370,6 +370,7 @@ Describe 'Module distribution contracts' {
         $setupSource = Get-Content -LiteralPath $setupPath -Raw
         $setupSource | Should -Match "\$version = '0\.2\.18'"
         $setupSource | Should -Match "\$expectedSha256 = '[0-9a-f]{64}'"
+        $setupSource | Should -Match '\[string\]\$InstallRoot = ''C:\\Temp'''
         $setupSource | Should -Match 'Get-FileHash.+SHA256'
         $setupSource | Should -Match 'Test-ModuleManifest'
         $setupSource | Should -Not -Match 'Get-ClusterGroup'
@@ -655,6 +656,19 @@ Describe 'HTML fleet report usability' {
         $script:RenderedHtml | Should -Match 'Attached disk is stored under another VM folder &lt;review&gt;'
         $script:RenderedHtml | Should -Match 'Do not move, rename, merge, or delete virtual disk files based solely on this report.'
         $script:RenderedHtml.IndexOf('Cluster / storage housekeeping to review:') | Should -BeLessThan $script:RenderedHtml.IndexOf('Appendix - Knowledge and Information')
+    }
+
+    It 'shows an explicit message instead of an empty housekeeping table' {
+        $html = ConvertTo-VMCheckpointAuditHtml `
+            -Results @([pscustomobject]@{ VMName = 'TEST-VM-NORMAL'; OwningNode = 'TEST-NODE-01'; Recommendation = 'OK'; Source = 'Input'; StaleCheckpointCount = 0; ReportData = $normalReportData; Detail = '' }) `
+            -StaleHours 24 -EventLookbackHours 168 -ClusterName 'CONTOSO-CLUSTER-01' -GeneratedUtc '2026-01-01 00:00:00' `
+            -DiscoveredVMs @() -DiscoverySummary ([pscustomobject]@{ EligibleCount = 0; AuditedCount = 0; DeferredCount = 0; Cap = $null }) `
+            -StorageHealth $null -ScriptVersion '0.2.18' -ReportGenerationTime '00:00:01' `
+            -ClusterNodeCount 2 -ClusterCsvCount 1 -HousekeepingFindings @()
+
+        $html | Should -Match 'No cluster or storage housekeeping observations were produced by the checks performed in this run\.'
+        $html | Should -Match 'This is not a comprehensive storage-layout certification\.'
+        $html | Should -Not -Match '<table class="housekeeping">'
     }
 
     It 'keeps clean VM-health wording distinct from review-only housekeeping' {
@@ -1625,6 +1639,34 @@ Describe 'Virtual disk housekeeping classification' {
 
             $result.Classification | Should -Be 'ExcludedImageLibraryAsset'
             $result.MatchedImageSegment | Should -Be 'ImageStore'
+        }
+    }
+
+    It 'always excludes versioned ARB CBL-Mariner appliance image VHDX files' {
+        foreach ($fileName in @(
+            'linux-cblmariner-0.11.26.10605.vhdx',
+            'LINUX-CBLMARINER-12.3.456.78901.VHDX'
+        )) {
+            $result = Get-VirtualDiskHousekeepingClassification `
+                -Path ("C:\TEST\CSV01\unassociated\{0}" -f $fileName) -Owners @() -VMAssociatedFolders @() `
+                -CoverageComplete $true -ImageLibraryPathPatterns @()
+
+            $result.Classification | Should -Be 'ExcludedImageLibraryAsset'
+            $result.MatchedImageSegment | Should -Be $fileName
+        }
+    }
+
+    It 'does not broadly exclude similar CBL-Mariner virtual disk names' {
+        foreach ($case in @(
+            [pscustomobject]@{ FileName = 'linux-cblmariner-latest.vhdx'; Expected = 'UnattachedBaseDiskCandidate' },
+            [pscustomobject]@{ FileName = 'linux-cblmariner-0.11.26.10605-copy.vhdx'; Expected = 'UnattachedBaseDiskCandidate' },
+            [pscustomobject]@{ FileName = 'linux-cblmariner-0.11.26.10605.avhdx'; Expected = 'UnattachedDifferencingCandidate' }
+        )) {
+            $result = Get-VirtualDiskHousekeepingClassification `
+                -Path ("C:\TEST\CSV01\unassociated\{0}" -f $case.FileName) -Owners @() -VMAssociatedFolders @() `
+                -CoverageComplete $true -ImageLibraryPathPatterns @()
+
+            $result.Classification | Should -Be $case.Expected
         }
     }
 

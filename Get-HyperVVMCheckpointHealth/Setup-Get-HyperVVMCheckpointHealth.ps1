@@ -12,6 +12,7 @@
     Path to the previously downloaded versioned release ZIP.
 .PARAMETER InstallRoot
     Parent directory under which the Get-HyperVVMCheckpointHealth module folder is installed.
+    Defaults to C:\Temp.
 .OUTPUTS
     A PSCustomObject describing the verified installation.
 #>
@@ -22,7 +23,7 @@ param(
     [string]$ZipPath = (Join-Path $env:TEMP 'Get-HyperVVMCheckpointHealth-0.2.18.zip'),
 
     [ValidateNotNullOrEmpty()]
-    [string]$InstallRoot = 'C:\Tools'
+    [string]$InstallRoot = 'C:\Temp'
 )
 
 Set-StrictMode -Version Latest
@@ -30,7 +31,7 @@ $ErrorActionPreference = 'Stop'
 
 $moduleName = 'Get-HyperVVMCheckpointHealth'
 $version = '0.2.18'
-$expectedSha256 = '9989dce8ddb1652d871760f9b30adc73e4f1abc9d3122031c595ce3ef0aa7a61'
+$expectedSha256 = '87da7db0b63d3fb3ad52d9629021c64f0f00d32c0d468938703167cd043115df'
 $expectedAssetName = "$moduleName-$version.zip"
 
 if (-not (Test-Path -LiteralPath $ZipPath -PathType Leaf)) {

@@ -1406,10 +1406,11 @@ function Get-VirtualDiskHousekeepingClassification {
     $ownerSet = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
     foreach ($owner in @($Owners)) { if ($owner) { [void]$ownerSet.Add($owner) } }
     $folderOwnerMismatch = @($associatedRows | Where-Object { $_.VMName -and -not $ownerSet.Contains([string]$_.VMName) }).Count -gt 0
-    # ImageStore is an Azure Local image repository and is always excluded from housekeeping findings,
-    # even when a supplied policy intentionally replaces the configurable pattern list with an empty array.
+    # Azure Local ImageStore paths and versioned ARB appliance images are always excluded from
+    # housekeeping, even when policy replaces the configurable pattern list with an empty array.
     $automaticImageStorePattern = '(?i)[\\/]imagestore(?:[\\/]|$)'
-    $effectiveImagePatterns = @($automaticImageStorePattern) + @($ImageLibraryPathPatterns)
+    $automaticArbImagePattern = '(?i)(?:^|[\\/])linux-cblmariner-[0-9]+(?:\.[0-9]+){3}\.vhdx$'
+    $effectiveImagePatterns = @($automaticImageStorePattern, $automaticArbImagePattern) + @($ImageLibraryPathPatterns)
     $matchedImagePattern = @($effectiveImagePatterns | Where-Object { $normalizedPath -match $_ } | Select-Object -First 1)
     $matchedImageText = if ($matchedImagePattern.Count -gt 0) {
         ([regex]::Match($normalizedPath, [string]$matchedImagePattern[0]).Value).Trim('\', '/')

@@ -118,7 +118,7 @@ Two supported ways to run it, both single-hop:
 
 Download the versioned ZIP from the repository's [GitHub Releases page](https://github.com/NeilBird/Azure-Local/releases). The supported 0.2.18 release asset is `Get-HyperVVMCheckpointHealth-0.2.18.zip`; it contains the manifest, root module, three private modules, example policy YAML, README, and license. Do not use a raw single-file link because the module requires its manifest and sibling private modules.
 
-The release also publishes [`Setup-Get-HyperVVMCheckpointHealth.ps1`](Setup-Get-HyperVVMCheckpointHealth.ps1) as a separate asset outside the ZIP. The setup script is pinned to the supported version and SHA256 hash, replaces only `C:\Tools\Get-HyperVVMCheckpointHealth`, validates the staged manifest/version, imports the module, and verifies the command. It does not run an audit.
+The release also publishes [`Setup-Get-HyperVVMCheckpointHealth.ps1`](Setup-Get-HyperVVMCheckpointHealth.ps1) as a separate asset outside the ZIP. The setup script is pinned to the supported version and SHA256 hash, replaces only `C:\Temp\Get-HyperVVMCheckpointHealth` by default, validates the staged manifest/version, imports the module, and verifies the command. It does not run an audit. Use `-InstallRoot` to choose another parent directory.
 
 Download the ZIP, download the setup script, and run the setup script:
 
@@ -236,7 +236,7 @@ Get-HyperVVMCheckpointHealth -VMName 'VM01' -OutputPath 'C:\Temp\VM_Checkpoint_R
 
 ```powershell
 Get-HyperVVMCheckpointHealth -VMName 'VM01' `
-    -PolicyPath 'C:\Tools\Get-HyperVVMCheckpointHealth\checkpoint-health-policy.example.yml' `
+    -PolicyPath 'C:\Temp\Get-HyperVVMCheckpointHealth\checkpoint-health-policy.example.yml' `
     -OutputPath 'C:\Temp\VM_Checkpoint_Reports'
 ```
 
@@ -245,7 +245,7 @@ Without `-PolicyPath`, the command does not search the current directory, module
 | Policy setting | Built-in value | Effect |
 |---|---|---|
 | `schemaVersion` | `1` | Identifies the supported YAML contract. A supplied policy must contain `schemaVersion: 1`. |
-| `storage.imageLibraryPathPatterns` | `(?i)[\\/](?:image|images|imagestore|template|templates|library|gallery|golden)(?:[\\/]|$)` | Excludes matching VHD, VHDX, and AVHDX paths from cluster/storage housekeeping findings. An exact `ImageStore` path segment is always excluded, including when a supplied policy uses `[]`; add patterns for other known image repositories. This affects housekeeping observations only and never changes VM health verdicts. |
+| `storage.imageLibraryPathPatterns` | `(?i)[\\/](?:image|images|imagestore|template|templates|library|gallery|golden)(?:[\\/]|$)` | Excludes matching VHD, VHDX, and AVHDX paths from cluster/storage housekeeping findings. Exact `ImageStore` path segments and versioned `linux-cblmariner-x.x.x.x.vhdx` ARB appliance images are always excluded, including when a supplied policy uses `[]`; add patterns for other known image repositories. This affects housekeeping observations only and never changes VM health verdicts. |
 | `orphan.liveMountPathPatterns` | `(?i)rubriklivemount`, `(?i)_temp_` | Classifies matching orphan AVHDX paths as backup live-mount/instant-recovery evidence. |
 | `orphan.classifyZeroByteAsLiveMount` | `true` | Also classifies a zero-byte orphan AVHDX as live-mount evidence. |
 | `csvFreeSpace.enabled` | `false` | CSV free-space policy does not affect the verdict unless explicitly enabled. |
@@ -256,9 +256,9 @@ Without `-PolicyPath`, the command does not search the current directory, module
 | `replication.hrl.minimumStaleMinutes` | `15` | Sets the minimum HRL age threshold. Effective threshold: `max(15 minutes, FrequencySec / 60 x 10)`. |
 | `replication.hrl.requireReplicationConcern` | `true` | Prevents HRL age alone from escalating a healthy or idle Replica relationship. Typed Replica health or measurement concern must corroborate it. |
 
-When `-PolicyPath` is supplied, the loader starts with these built-in values and overlays only the keys present in the YAML file. Omitted sections and properties retain their built-in values. A supplied `imageLibraryPathPatterns` or `liveMountPathPatterns` array replaces the complete configurable built-in array; it is not appended. Use `[]` to intentionally configure no additional patterns for that category. The exact `ImageStore` segment remains an automatic housekeeping exclusion even when `imageLibraryPathPatterns: []` is supplied.
+When `-PolicyPath` is supplied, the loader starts with these built-in values and overlays only the keys present in the YAML file. Omitted sections and properties retain their built-in values. A supplied `imageLibraryPathPatterns` or `liveMountPathPatterns` array replaces the complete configurable built-in array; it is not appended. Use `[]` to intentionally configure no additional patterns for that category. Exact `ImageStore` segments and versioned `linux-cblmariner-x.x.x.x.vhdx` ARB appliance image names remain automatic housekeeping exclusions even when `imageLibraryPathPatterns: []` is supplied.
 
-The **Cluster / storage housekeeping to review** table omits virtual disks whose full paths match the automatic `ImageStore` exclusion or a configured `storage.imageLibraryPathPatterns` expression. For another known image repository, create a policy file and pass it explicitly:
+The **Cluster / storage housekeeping to review** table omits virtual disks whose full paths match the automatic `ImageStore` exclusion, whose file name matches the versioned ARB appliance image form `linux-cblmariner-x.x.x.x.vhdx` (numeric components), or whose path matches a configured `storage.imageLibraryPathPatterns` expression. For another known image repository, create a policy file and pass it explicitly:
 
 ```yaml
 schemaVersion: 1

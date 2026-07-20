@@ -3,7 +3,8 @@ schemaVersion: 1
 
 storage:
   # Additional full-path regular expressions for shared image, template, or library virtual disks.
-  # An exact ImageStore path segment is always excluded from housekeeping findings, even with [].
+  # Exact ImageStore paths and versioned linux-cblmariner-x.x.x.x.vhdx ARB appliance images are
+  # always excluded from housekeeping findings, even with [].
   # No additional patterns are active in this template. Replace [] with a YAML list to add exclusions.
   imageLibraryPathPatterns: []
   # Example replacement (remove the [] line above before uncommenting):
