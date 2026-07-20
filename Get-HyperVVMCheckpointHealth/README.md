@@ -583,8 +583,8 @@ release\Get-HyperVVMCheckpointHealth-0.2.18.zip.sha256
 
 Create the GitHub release with tag `Get-HyperVVMCheckpointHealth-v0.2.18` and upload the generated ZIP, its SHA256 file, and `Setup-Get-HyperVVMCheckpointHealth.ps1` as three separate assets. The setup script remains outside the ZIP. Before publishing a future version:
 
-1. Update the version in the root module, manifest, README, and release notes.
+1. Update the version in the root module, manifest, README, release notes, and the setup script's `$version` value.
 2. Run the redirected Windows PowerShell 5.1 Pester suite.
-3. Run `Build-Release.ps1`; use `-Force` only when intentionally replacing a local build for the same version. Copy the resulting SHA256 into the setup script's pinned hash.
+3. After every file included in the ZIP is final, run `Build-Release.ps1`; use `-Force` only when intentionally replacing a local build for the same version. Copy the resulting SHA256 into the setup script's `$expectedSha256` value. Any later change to an in-ZIP file requires rebuilding the ZIP and repinning this hash again.
 4. Extract the ZIP into a clean directory, import its manifest under Windows PowerShell 5.1, and verify `Get-Command Get-HyperVVMCheckpointHealth`.
 5. Publish the ZIP and checksum as release assets using the tag and asset naming convention above.
