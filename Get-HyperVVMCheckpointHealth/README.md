@@ -131,6 +131,11 @@ Unblock-File "$env:TEMP\Setup-Get-HyperVVMCheckpointHealth.ps1"; & "$env:TEMP\Se
 Then run the audit separately. On a cluster node:
 
 ```powershell
+
+# One VM, also writing a per-VM .txt report and events .csv into a folder
+Get-HyperVVMCheckpointHealth -VMName 'TestVM01' -OutputPath 'C:\Temp\VM_Checkpoint_Reports'
+
+# Audit all VMs:
 Get-HyperVVMCheckpointHealth -ProcessAllVMs -OutputPath C:\Temp\VM_Checkpoint_Reports
 ```
 
@@ -278,7 +283,8 @@ These YAML settings are separate from normal command parameters such as `-StaleH
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `-VMName` | object[] (mandatory) | — | One or more VM **names** or VM **objects** (from `Get-VM`). Accepts an array and pipeline input (aliases `Name`, `VM`). Objects are normalized to `.Name`; names >100 chars are skipped with a warning. |
+| `-VMName` | object[] (mandatory in `ByName`) | — | One or more VM **names** or VM **objects** (from `Get-VM`). Accepts an array and pipeline input (aliases `Name`, `VM`). Objects are normalized to `.Name`; names >100 chars are skipped with a warning. Mutually exclusive with `-ProcessAllVMs`. |
+| `-ProcessAllVMs` | switch (mandatory in `AllVMs`) | off | Audit every clustered VM on the local cluster, or on the cluster named by `-Cluster`. Mutually exclusive with `-VMName`; `-ExcludedVMListCsv` still applies. |
 | `-Cluster` | string | — | Optional. Target a cluster **by name** so the module can run from a **management workstation** (RSAT Failover Clustering) instead of on a node — cluster queries use RPC and each owning node is reached in a **single** hop. When omitted, the command targets the **local** cluster and a `Get-Cluster` guard rail requires you to be **on a cluster node** (it fails clearly if not). |
 | `-OutputPath` | string | — | Optional **base folder** for reports. Each run creates a timestamped sub-folder containing per-VM `.txt` transcripts, event `.csv` files, telemetry JSON, and the default HTML report; the ZIP is written beside that folder. If omitted, no run folder, TXT, CSV, telemetry JSON, or ZIP is created, but the default HTML report is still written to the current directory unless `-NoHtml` is supplied. |
 | `-StaleHours` | int | `24` | Age (hours) at/beyond which a checkpoint or differencing disk is flagged `Stale = YES`. If your backup product legitimately keeps checkpoints for longer (e.g. a 48-hour retention window), raise this (e.g. `-StaleHours 48`) so expected long-lived checkpoints are not flagged. |
