@@ -236,6 +236,15 @@ function ConvertTo-VMCheckpointAuditHtml {
   ul{margin:8px 0;padding-left:22px} li{margin:3px 0}
   details{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:6px 14px;margin:10px 0}
   summary{cursor:pointer;font-weight:600;color:#cbd5e1}
+    details.report-section{background:transparent;border:0;border-radius:0;padding:0;margin:24px 0}
+    details.report-section>summary{display:flex;align-items:center;gap:10px;list-style:none;padding:10px 12px;
+        background:var(--panel2);border:1px solid var(--line);border-radius:8px;user-select:none}
+    details.report-section>summary::-webkit-details-marker{display:none}
+    details.report-section>summary::before{content:'\25B6';color:var(--accent);font-size:14px;line-height:1}
+    details.report-section[open]>summary::before{content:'\25BC'}
+    details.report-section>summary:hover{background:#2b3d59}
+    details.report-section>summary h2{margin:0;color:#fff;font-size:22px}
+    details.report-section>.report-section-body{padding-top:4px}
   /* Appendix collapsibles: a clear 'Show / Hide' pill button on each heading bar so it is
      obvious the section expands (the bare default disclosure arrow is easy to miss). */
   details.appx{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:0;margin:14px 0;overflow:hidden}
@@ -717,8 +726,9 @@ function ConvertTo-VMCheckpointAuditHtml {
         }
     }
 
-    # Per-VM detail.
-    [void]$sb.Append("<h2>Per-VM detailed information</h2>`r`n")
+    # Per-VM detail. The native disclosure remains open by default but lets operators collapse the
+    # large card collection without JavaScript; housekeeping uses the same report-section treatment.
+    [void]$sb.Append("<details class='report-section' open><summary><h2>Per-VM detailed information</h2></summary><div class='report-section-body'>`r`n")
     foreach ($r in $sortedRows) {
         $rd   = $r.ReportData
         $pill = Get-VerdictPill $r.Recommendation
@@ -827,21 +837,43 @@ function ConvertTo-VMCheckpointAuditHtml {
             if ($rd.PSObject.Properties['HrlAssessment'] -and $rd.HrlAssessment -and $rd.HrlAssessment.IsConcern) {
                 $drv += "$($rd.HrlAssessment.ExceedsCadenceCount) HRL file(s) beyond cadence with Replica corroboration"
             }
+            $investigationDrivers = if ($rd.PSObject.Properties['InvestigationDrivers']) { $rd.InvestigationDrivers } else { $null }
+            if ($investigationDrivers -and $investigationDrivers.PSObject.Properties['Labels'] -and @($investigationDrivers.Labels).Count -gt 0) {
+                $drv = @($investigationDrivers.Labels | ForEach-Object { ConvertTo-HtmlText $_ })
+            }
             $drvText = if ($drv.Count -gt 0) { (($drv) -join '; ') } else { 'concern signals present' }
             if ($rd.HasRollbackFingerprint) {
                 [void]$sb.Append("  <div class='callout high'><strong>INVESTIGATE - possible historic rollback.</strong> Driver: $drvText. The orphaned <code>.avhdx</code> appear to be the aftermath of a materialised fork-commit rollback on <strong>$(ConvertTo-HtmlText $rd.RollbackDate)</strong> - they may hold the data written between the checkpoint and the rollback. Do NOT remove them; engage Microsoft Support (CSS) / your backup vendor to recover. The original fork-commit events may predate the $($rd.EventLookbackHours)h lookback - see the historic correlation below.</div>`r`n")
             } else {
-                $hasCheckpointStorageDriver =
+                $hasCheckpointStorageDriver = if ($investigationDrivers -and $investigationDrivers.PSObject.Properties['HasCheckpointArtifact']) {
+                    [bool]$investigationDrivers.HasCheckpointArtifact
+                } else {
                     ($rd.PSObject.Properties['StaleAttachedLayerCount'] -and ([int]$rd.StaleAttachedLayerCount -gt 0)) -or
                     ([int]$rd.StaleCheckpointCount -gt 0) -or
                     ($rd.PSObject.Properties['SnapshotLayerMismatch'] -and $rd.SnapshotLayerMismatch) -or
                     ($rd.PSObject.Properties['ChainComplete'] -and -not $rd.ChainComplete) -or
-                    ([int]$rd.OrphanCount -gt 0) -or
-                    ([int]$rd.VmEscalatingConcernCount -gt 0)
+                    ([int]$rd.OrphanCount -gt 0)
+                }
+                $hasEventDriver = if ($investigationDrivers -and $investigationDrivers.PSObject.Properties['HasEvents']) { [bool]$investigationDrivers.HasEvents } else { [int]$rd.VmEscalatingConcernCount -gt 0 }
+                $hasStateDriver = if ($investigationDrivers -and $investigationDrivers.PSObject.Properties['HasStateInconclusive']) { [bool]$investigationDrivers.HasStateInconclusive } else { $rd.PSObject.Properties['StateConsistencyStatus'] -and $rd.StateConsistencyStatus -ne 'Stable' }
+                $hasReplicaDriver = if ($investigationDrivers -and $investigationDrivers.PSObject.Properties['HasReplica']) { [bool]$investigationDrivers.HasReplica } else { $rd.PSObject.Properties['ReplAssessment'] -and $rd.ReplAssessment -and $rd.ReplAssessment.IsConcern }
                 $investigateGuidance = if ($hasCheckpointStorageDriver) {
-                    'The specific checkpoint fork-commit signature was NOT observed in the current window, so on-disk chain corruption is not confirmed - review the attached-chain, checkpoint, orphan, event, and backup-job evidence below before any merge/removal action.'
-                } elseif ($rd.PSObject.Properties['ReplAssessment'] -and $rd.ReplAssessment -and $rd.ReplAssessment.IsConcern) {
+                    $artifactEvidence = [System.Collections.Generic.List[string]]::new()
+                    if ($rd.PSObject.Properties['ChainComplete'] -and -not $rd.ChainComplete) { [void]$artifactEvidence.Add('VHD chain') }
+                    if ($rd.PSObject.Properties['StaleAttachedLayerCount'] -and ([int]$rd.StaleAttachedLayerCount -gt 0)) { [void]$artifactEvidence.Add('attached AVHDX layer') }
+                    if ([int]$rd.StaleCheckpointCount -gt 0) { [void]$artifactEvidence.Add('stale snapshot') }
+                    if ($rd.PSObject.Properties['SnapshotLayerMismatch'] -and $rd.SnapshotLayerMismatch) { [void]$artifactEvidence.Add('snapshot/layer mismatch') }
+                    if ([int]$rd.OrphanCount -gt 0) { [void]$artifactEvidence.Add('orphaned .avhdx') }
+                    $artifactEvidenceText = if ($artifactEvidence.Count -gt 0) { $artifactEvidence.ToArray() -join ' and ' } else { 'checkpoint/storage evidence' }
+                    "No confirming checkpoint fork-commit signature was observed, so on-disk chain corruption is not established. Validate the $artifactEvidenceText with the backup/storage owner before merging, removing, renaming, or deleting anything."
+                } elseif ($hasEventDriver -and -not ($hasReplicaDriver -or $hasStateDriver)) {
+                    'Review the VM-attributed failure events and corresponding backup/checkpoint jobs for recurrence. No stale checkpoint, orphan, or attached AVHDX residue was found, so this is checkpoint reliability evidence rather than proof of chain corruption; there is no disk merge or removal action from this result.'
+                } elseif ($hasReplicaDriver -and -not ($hasEventDriver -or $hasStateDriver)) {
                     'Review the Hyper-V Replica details below, confirm connectivity and capacity on both replication partners, address the breached effective limits, then verify that replication returns to Normal and the backlog drains.'
+                } elseif ($hasStateDriver -and -not ($hasEventDriver -or $hasReplicaDriver)) {
+                    'The collected evidence may span different VM states. Rerun the audit after migration, checkpoint, merge, replication, or power-state activity has settled; do not infer a checkpoint-chain problem from this inconclusive result.'
+                } elseif ($investigationDrivers -and $investigationDrivers.PSObject.Properties['AssessmentText']) {
+                    "$(ConvertTo-HtmlText $investigationDrivers.AssessmentText) Follow the driver-specific evidence and actions below, then rerun the audit."
                 } else {
                     'Review the detailed evidence below, correlate it with the responsible workload or platform owner, and re-run the audit after remediation.'
                 }
@@ -1035,6 +1067,7 @@ function ConvertTo-VMCheckpointAuditHtml {
         }
         [void]$sb.Append("</div>")
     }
+    [void]$sb.Append("</div></details>`r`n")
 
     # Cluster storage-health snapshot (S2D / CSV) - a strong candidate contributing factor for the
     # checkpoint/merge symptoms (files transiently locked / unavailable during repair-resync or CSV
@@ -1080,7 +1113,9 @@ function ConvertTo-VMCheckpointAuditHtml {
     # Operational observations are intentionally separate from VM health verdicts. These findings
     # improve supportability and consistency but do not, by themselves, prove corruption or root cause.
     [void]$sb.Append(@'
-<h2 id="housekeeping">Cluster / storage housekeeping to review:</h2>
+<details class="report-section" id="housekeeping" open>
+<summary><h2>Cluster / storage housekeeping to review:</h2></summary>
+<div class="report-section-body">
 <div class="callout info">
   <strong>Operational excellence and consistent storage practices improve reliability and reduce operational complexity.</strong>
   The observations in this section are not necessarily VM health failures. They identify file placement, ownership,
@@ -1140,6 +1175,7 @@ function ConvertTo-VMCheckpointAuditHtml {
     } else {
         [void]$sb.Append('<p class="muted">No cluster or storage housekeeping observations were produced by the checks performed in this run. This is not a comprehensive storage-layout certification.</p>')
     }
+    [void]$sb.Append("</div></details>`r`n")
 
     # Information (anonymised RCA background) + footer.
     [void]$sb.Append(@'
@@ -1168,9 +1204,9 @@ button on either heading to expand it.</p>
   <tr><td><span class="pill hold">HOLD STATE</span></td><td>Hyper-V-VMMS</td><td><code>0x80048102</code></td><td><code>VM_E_COMMIT_FORKS_ERROR</code> - the checkpoint fork-commit failed</td></tr>
   <tr><td><span class="pill hold">HOLD STATE</span></td><td>Hyper-V-VMMS (Replica)</td><td><code>0x800480BD</code></td><td><code>VM_E_FR_CHANGE_TRACKING_FAILED</code> - Replica change-tracking failure (leading indicator)</td></tr>
   <tr><td><span class="pill hold">HOLD STATE</span></td><td>Hyper-V-VMMS (Replica)</td><td><code>0x800480BC</code></td><td><code>VM_E_FR_RESYNC_REQUIRED</code> - Replica relationship broken (leading indicator)</td></tr>
-  <tr><td><span class="pill investigate">INVESTIGATE</span></td><td>Hyper-V-VMMS</td><td>Event <code>18012</code></td><td>Checkpoint operation failed</td><td rowspan="3">High-signal (operation-failure class) for this VM. Drives <strong>INVESTIGATE</strong> only when it did NOT self-resolve - i.e. it was <em>not</em> followed by a successful background merge (<code>19080</code>) and left an orphan / stale layer. A failure that WAS followed by a successful merge with no leftover layer is treated as benign self-healing backup activity (reported OK with a note), not INVESTIGATE.</td></tr>
-  <tr><td><span class="pill investigate">INVESTIGATE</span></td><td>Hyper-V-VMMS</td><td>Event <code>19100</code></td><td>Background disk merge FAILED to complete (e.g. <code>0x80070020</code> sharing violation)</td></tr>
-  <tr><td><span class="pill investigate">INVESTIGATE</span></td><td>Hyper-V-VMMS</td><td>Event <code>16300</code></td><td>Cannot load a virtual machine configuration</td></tr>
+    <tr><td><span class="pill investigate">INVESTIGATE</span></td><td>Hyper-V-VMMS</td><td>Event <code>18012</code></td><td>Checkpoint operation failed</td><td>High-signal checkpoint-request failure. A later background-merge completion (<code>19080</code>) may belong to another operation and does not prove this request recovered; review recurrence and the corresponding backup/checkpoint job.</td></tr>
+    <tr><td><span class="pill investigate">INVESTIGATE</span></td><td>Hyper-V-VMMS</td><td>Event <code>19100</code></td><td>Background disk merge FAILED to complete (e.g. <code>0x80070020</code> sharing violation)</td><td>High-signal merge failure. A bounded later <code>19080</code> can provide apparent recovery, or confirmed recovery when the failure and completion share exact disk/operation evidence and no durable artifact remains.</td></tr>
+    <tr><td><span class="pill investigate">INVESTIGATE</span></td><td>Hyper-V-VMMS</td><td>Event <code>16300</code></td><td>Cannot load a virtual machine configuration</td><td>High-signal configuration-load failure. A later merge completion does not resolve this separate failure class.</td></tr>
   <tr><td><strong class="muted">Low-signal</strong></td><td>Hyper-V-Worker</td><td>Event <code>3280</code></td><td>Related checkpoint / disk error</td><td rowspan="5">Context only. Surfaced (and still drives <em>discovery</em> of at-risk VMs) but, on its own, does NOT change an otherwise-clean VM''s verdict - a genuine leftover is caught separately by the orphaned-<code>.avhdx</code> scan.</td></tr>
   <tr><td><strong class="muted">Low-signal</strong></td><td>Hyper-V-VMMS</td><td>Event <code>12240</code></td><td>Attachment <code>.avhdx</code> not found (<code>0x80070002</code>)</td></tr>
   <tr><td><strong class="muted">Low-signal</strong></td><td>Hyper-V-VMMS</td><td>Event <code>15268</code></td><td>Failed to get disk information (storage / housekeeping chatter)</td></tr>
