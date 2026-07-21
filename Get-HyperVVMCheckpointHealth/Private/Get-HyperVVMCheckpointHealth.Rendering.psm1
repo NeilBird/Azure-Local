@@ -28,6 +28,14 @@ function ConvertTo-VMCheckpointAuditHtml {
         if ($Bytes -ge 1KB) { return ('{0:N2} KB' -f ($Bytes / 1KB)) }
         return ("$Bytes bytes")
     }
+    function ConvertTo-HousekeepingSizeText {
+        [OutputType([string])]
+        param([long]$Bytes)
+
+        if ($Bytes -le 0) { return '0 KB' }
+        if ($Bytes -lt 1KB) { return '< 1 KB' }
+        return ConvertTo-ByteText $Bytes
+    }
     function Get-OptionalPropertyValue {
         param([object]$InputObject, [string]$Name, [object]$DefaultValue = $null)
         if ($InputObject -and $InputObject.PSObject.Properties[$Name]) { return $InputObject.$Name }
@@ -1075,9 +1083,7 @@ function ConvertTo-VMCheckpointAuditHtml {
                 $housekeepingTotalBytes += [long]$finding.Length
             }
         }
-        $housekeepingTotalText = if ($housekeepingTotalBytes -ge 1024) {
-            '{0} ({1} bytes)' -f (ConvertTo-ByteText $housekeepingTotalBytes), $housekeepingTotalBytes
-        } else { ConvertTo-ByteText $housekeepingTotalBytes }
+        $housekeepingTotalText = ConvertTo-HousekeepingSizeText $housekeepingTotalBytes
         [void]$sb.Append("<div class='hk-tools'><strong>Housekeeping filters</strong><div class='muted'>All categories are selected by default. Uncheck a category to remove its rows and update the visible totals and charts.</div><div class='hk-categories' role='group' aria-label='Housekeeping categories'>")
         foreach ($category in $housekeepingCategories) { $text = ConvertTo-HtmlText $category; [void]$sb.Append("<label><input class='hk-category-filter' type='checkbox' value='$text' checked> $text</label>") }
         [void]$sb.Append("</div><div class='hk-actions'><button type='button' id='hk-select-all'>Select all</button><button type='button' id='hk-clear-all'>Clear all</button></div><div class='hk-filters'><label>Search filename or path<input id='hk-search' type='search' placeholder='Search findings'></label><label>Storage root<select id='hk-root'><option value=''>All roots</option>")
@@ -1097,7 +1103,7 @@ function ConvertTo-VMCheckpointAuditHtml {
                 "<div class='hk-file'><code>$(ConvertTo-HtmlText $finding.FileName)</code></div>"
             } else { '' }
             $pathHtml = if ($findingFullName) { "$fileNameHtml<code>$(ConvertTo-HtmlText $findingFullName)</code>" } else { $fileNameHtml }
-            $sizeHtml = if ($findingFullName) { "$(ConvertTo-HtmlText (ConvertTo-ByteText $findingLength))<br><span class='muted'>$findingLength bytes</span>" } else { '<span class="muted">n/a</span>' }
+            $sizeHtml = if ($findingFullName) { ConvertTo-HtmlText (ConvertTo-HousekeepingSizeText $findingLength) } else { '<span class="muted">n/a</span>' }
             $reviewHtml = ConvertTo-HtmlText $finding.Review
             if ([string]$finding.Category -eq 'Unattached base disk candidate') {
                 $reviewHtml = $reviewHtml.Replace(
@@ -1230,12 +1236,12 @@ window.addEventListener('load', function () {
         var empty = document.getElementById('hk-empty');
         var sortAscending = {};
         function formatBytes(bytes) {
-            var readable = bytes + ' bytes';
+            var readable = bytes > 0 ? '< 1 KB' : '0 KB';
             if (bytes >= 1099511627776) { readable = (bytes / 1099511627776).toFixed(2) + ' TB'; }
             else if (bytes >= 1073741824) { readable = (bytes / 1073741824).toFixed(2) + ' GB'; }
             else if (bytes >= 1048576) { readable = (bytes / 1048576).toFixed(2) + ' MB'; }
             else if (bytes >= 1024) { readable = (bytes / 1024).toFixed(2) + ' KB'; }
-            return readable + (bytes >= 1024 ? ' (' + bytes + ' bytes)' : '');
+            return readable;
         }
         function drawChart(id, values) {
             var svg = document.getElementById(id);

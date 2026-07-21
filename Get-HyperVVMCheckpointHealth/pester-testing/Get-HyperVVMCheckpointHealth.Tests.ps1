@@ -861,6 +861,11 @@ Describe 'HTML fleet report usability' {
         $html | Should -Not -Match '<table class="housekeeping">'
     }
 
+    It 'uses a human-readable zero for housekeeping rows without file-size data' {
+        $script:RenderedHtml | Should -Not -Match "id='hk-visible-bytes'>0 bytes"
+        $script:RenderedHtml | Should -Match "var readable = bytes > 0 \? '< 1 KB' : '0 KB';"
+    }
+
     It 'keeps clean VM-health wording distinct from review-only housekeeping' {
         $script:CleanRenderedHtml | Should -Match 'Exec Summary - no VM health action required:'
         $script:CleanRenderedHtml | Should -Match 'No VM-health action required from this audit:'
@@ -880,7 +885,8 @@ Describe 'HTML fleet report usability' {
         $script:RenderedHtml | Should -Match "<td data-label='Scope'><code>TEST-VM-NORMAL</code></td>"
         $script:RenderedHtml | Should -Match "<td data-label='Scope'><code>TEST-NODE-02</code></td>"
         $script:RenderedHtml | Should -Match "<div class='hk-file'><code>Data&lt;review&gt;\.vhdx</code></div><code>C:\\ClusterStorage"
-        $script:RenderedHtml | Should -Match "data-label='Size' class='num'>1\.50 MB<br><span class='muted'>1572864 bytes</span>"
+        $script:RenderedHtml | Should -Match "data-label='Size' class='num'>1\.50 MB</td>"
+        $script:RenderedHtml | Should -Not -Match '1572864 bytes'
         $script:RenderedHtml | Should -Match 'table\.housekeeping\{table-layout:fixed\}'
         $script:RenderedHtml | Should -Match 'table\.housekeeping col\.hk-filecol\{width:24%\}'
         $script:RenderedHtml | Should -Match 'table\.housekeeping col\.hk-review\{width:16%\}'
@@ -892,7 +898,7 @@ Describe 'HTML fleet report usability' {
         $script:RenderedHtml | Should -Match "class='hk-category-filter' type='checkbox'.*checked"
         $script:RenderedHtml | Should -Match "id='hk-select-all'>Select all"
         $script:RenderedHtml | Should -Match "id='hk-clear-all'>Clear all"
-        $script:RenderedHtml | Should -Match "id='hk-visible-bytes'>1\.50 MB \(1572864 bytes\)"
+        $script:RenderedHtml | Should -Match "id='hk-visible-bytes'>1\.50 MB</strong>"
         $script:RenderedHtml | Should -Match "id='hk-category-chart'"
         $script:RenderedHtml | Should -Match "id='hk-path-chart'"
         $script:RenderedHtml | Should -Match 'function applyFilters\(\)'
@@ -912,8 +918,24 @@ Describe 'HTML fleet report usability' {
             -StorageHealth $null -ScriptVersion '0.2.19' -ReportGenerationTime '00:00:01' -ClusterNodeCount 1 -ClusterCsvCount 1 `
             -HousekeepingFindings $duplicateFindings
 
-        ([regex]::Matches($html, 'Unfiltered unique-file storage: <strong>1\.50 MB \(1572864 bytes\)</strong>')).Count | Should -Be 1
+        ([regex]::Matches($html, 'Unfiltered unique-file storage: <strong>1\.50 MB</strong>')).Count | Should -Be 1
+        $html | Should -Not -Match '1572864 bytes'
         $html | Should -Not -Match '3\.00 MB'
+    }
+
+    It 'scales housekeeping storage display to TB without exposing raw byte counts' {
+        $twoTerabytes = 2TB
+        $html = ConvertTo-VMCheckpointAuditHtml -Results @(
+            [pscustomobject]@{ VMName = 'TEST-VM'; OwningNode = 'TEST-NODE'; Recommendation = 'OK'; Source = 'Input'; StaleCheckpointCount = 0; ReportData = $normalReportData; Detail = '' }
+        ) -StaleHours 24 -EventLookbackHours 168 -ClusterName 'TEST-CLUSTER' -GeneratedUtc '2026-01-01 00:00:00' `
+            -DiscoveredVMs @() -DiscoverySummary ([pscustomobject]@{ EligibleCount = 0; AuditedCount = 0; DeferredCount = 0; Cap = $null }) `
+            -StorageHealth $null -ScriptVersion '0.2.19' -ReportGenerationTime '00:00:01' -ClusterNodeCount 1 -ClusterCsvCount 1 `
+            -HousekeepingFindings @([pscustomobject]@{ Category = 'Placement'; Scope = 'TEST-VM'; FileName = 'Large.vhdx'; FullName = 'C:\ClusterStorage\Volume1\Large.vhdx'; ParentPath = 'C:\ClusterStorage\Volume1'; CsvRoot = 'C:\ClusterStorage\Volume1'; Extension = '.vhdx'; Length = $twoTerabytes; Observation = 'Synthetic'; Review = 'Review.' })
+
+        $html | Should -Match "id='hk-visible-bytes'>2\.00 TB</strong>"
+        $html | Should -Match "data-label='Size' class='num'>2\.00 TB</td>"
+        $html | Should -Not -Match "$twoTerabytes bytes"
+        $html | Should -Match 'return readable;'
     }
 
     It 'contains wide non-housekeeping tables on narrow screens' {
