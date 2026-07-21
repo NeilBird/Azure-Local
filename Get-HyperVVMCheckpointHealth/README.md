@@ -6,7 +6,7 @@
 
 - Module: `Get-HyperVVMCheckpointHealth`
 - Updated: 2026-07-21
-- Version: 0.2.19
+- Version: 0.2.20
 
 ## TL;DR
 
@@ -88,7 +88,7 @@ Treat every saved audit artifact as **sensitive operational data**. The `.txt`, 
 
 ### Internal structure
 
-Version 0.2.19 is distributed as a PowerShell module with a single exported command and manifest-managed private nested modules. Keep the extracted directory intact:
+Version 0.2.20 is distributed as a PowerShell module with a single exported command and manifest-managed private nested modules. Keep the extracted directory intact:
 
 ```text
 Get-HyperVVMCheckpointHealth\
@@ -125,16 +125,16 @@ Two supported ways to run it, both single-hop:
 
 ### Download and import the module
 
-Download the versioned ZIP from the repository's [GitHub Releases page](https://github.com/NeilBird/Azure-Local/releases). The supported 0.2.19 release asset is `Get-HyperVVMCheckpointHealth-0.2.19.zip`; it contains the manifest, root module, five private modules, example policy YAML, README, and license. Do not use a raw single-file link because the module requires its manifest and sibling private modules.
+Download the versioned ZIP from the repository's [GitHub Releases page](https://github.com/NeilBird/Azure-Local/releases). The supported 0.2.20 release asset is `Get-HyperVVMCheckpointHealth-0.2.20.zip`; it contains the manifest, root module, five private modules, example policy YAML, README, and license. Do not use a raw single-file link because the module requires its manifest and sibling private modules.
 
 The release also publishes [`Setup-Get-HyperVVMCheckpointHealth.ps1`](Setup-Get-HyperVVMCheckpointHealth.ps1) as a separate asset outside the ZIP. The setup script is pinned to the supported version and SHA256 hash, replaces only `C:\Temp\Get-HyperVVMCheckpointHealth` by default, validates the staged manifest/version, imports the module, and verifies the command. It does not run an audit. Use `-InstallRoot` to choose another parent directory.
 
 Download the ZIP, download the setup script, and run the setup script:
 
 ```powershell
-Invoke-WebRequest 'https://github.com/NeilBird/Azure-Local/releases/download/Get-HyperVVMCheckpointHealth-v0.2.19/Get-HyperVVMCheckpointHealth-0.2.19.zip' -OutFile "$env:TEMP\Get-HyperVVMCheckpointHealth-0.2.19.zip"
-Invoke-WebRequest 'https://github.com/NeilBird/Azure-Local/releases/download/Get-HyperVVMCheckpointHealth-v0.2.19/Setup-Get-HyperVVMCheckpointHealth.ps1' -OutFile "$env:TEMP\Setup-Get-HyperVVMCheckpointHealth.ps1"
-Unblock-File "$env:TEMP\Setup-Get-HyperVVMCheckpointHealth.ps1"; & "$env:TEMP\Setup-Get-HyperVVMCheckpointHealth.ps1" -ZipPath "$env:TEMP\Get-HyperVVMCheckpointHealth-0.2.19.zip"
+Invoke-WebRequest 'https://github.com/NeilBird/Azure-Local/releases/download/Get-HyperVVMCheckpointHealth-v0.2.20/Get-HyperVVMCheckpointHealth-0.2.20.zip' -OutFile "$env:TEMP\Get-HyperVVMCheckpointHealth-0.2.20.zip"
+Invoke-WebRequest 'https://github.com/NeilBird/Azure-Local/releases/download/Get-HyperVVMCheckpointHealth-v0.2.20/Setup-Get-HyperVVMCheckpointHealth.ps1' -OutFile "$env:TEMP\Setup-Get-HyperVVMCheckpointHealth.ps1"
+Unblock-File "$env:TEMP\Setup-Get-HyperVVMCheckpointHealth.ps1"; & "$env:TEMP\Setup-Get-HyperVVMCheckpointHealth.ps1" -ZipPath "$env:TEMP\Get-HyperVVMCheckpointHealth-0.2.20.zip"
 ```
 
 Then run the audit separately. On a cluster node:
@@ -456,8 +456,8 @@ Every audited VM is assigned exactly **one** state (the `Recommendation` propert
 | State | When it is assigned (precise logic) | Typical example | What to do |
 |---|---|---|---|
 | **HOLD STATE** &nbsp;(data-loss risk) | A **fork-commit / merge-failure signature for this VM** is present **AND** the VM has unmerged differencing disk(s). The confirming event may be in the normal lookback or recovered by the cross-node historic scan around a still-attached checkpoint's creation time. Signature = a concern event **attributable to this VM** whose ID is `3216` **or** whose message contains one of the HRESULTs `0x80048102`, `0x800480BD`, `0x800480BC`, `0x800703EE`. "Unmerged disk(s)" = `HasAttachedCheckpoints` **or** `StaleCheckpointCount > 0`. | VM is running on 2 active `.avhdx` layers **and** a current or historically recovered `3216` (or `0x80048102`) event names this VM. | **Do not** live/quick/storage-migrate or restart the VM until the chain is validated/merged. **Engage Microsoft Support (CSS)** to confirm the safe path. |
-| **INVESTIGATE** | **Not** HOLD STATE, **and** at least one VM-scoped concern signal: a **stale** checkpoint (`StaleCheckpointCount > 0`), an **orphaned** `.avhdx` (`OrphanCount > 0`), an **unhealthy VSS writer** (`VssUnhealthyCount > 0`), an **unhealthy replica** (Critical / Warning), an **UNRESOLVED HIGH-signal** per-VM concern event - ID `3216`/`18012`/`19100`/`16300`, or a fork-commit HRESULT, that did **not** self-resolve (v0.2.17) - **or** an active checkpoint whose creation-time Worker/VMMS coverage is incomplete, so migration safety cannot be confirmed from event data. **Low-signal** per-VM chatter alone (e.g. a transient `19090` that completed, or `15268`), **and** a HIGH operation-failure that **self-resolved** (followed by a successful `19080` merge with no leftover layer), do **not** trigger INVESTIGATE (see the OK row). | A backup checkpoint on this VM is 36 h old (≥ the 24 h `-StaleHours` threshold), an orphaned `.avhdx` is present, the replica is Critical, a VSS writer for this VM is in a failed/retryable state, or the VM's own checkpoint/merge is repeatedly failing with no successful merge afterwards - but no confirming fork-commit signature. | **Engage your third-party backup vendor first** (their product owns the checkpoint merge-after-backup). Review the backup job and the **VSS Writer Health** section; confirm whether an aged checkpoint is expected. Open a CSS case if a fork signature appears, required historic evidence confirms one, or the vendor rules out their product. |
-| **OK** | None of the INVESTIGATE drivers above - no fork signature, no stale checkpoint, no orphaned `.avhdx`, no unhealthy VSS writer, no unhealthy replica, and no **high-signal** VM-attributed concern event. A VM whose **only** signal is **low-signal** per-VM chatter (e.g. a transient `19090` that later completed with no leftover `.avhdx`, or `15268` storage/housekeeping noise) is still **OK**, with a low-key note explaining the low-signal events. | VM has **no checkpoints**, is running normally, replication healthy - or its only events are low-signal and left nothing behind. The node may have concerning events, but they reference **other** VMs (shown as a node-context note). | No action required. The note lists any low-signal events / how many events belong to other VMs (see the events CSV `VmAttributed` column). |
+| **INVESTIGATE** | **Not** HOLD STATE, and at least one VM-scoped driver: an incomplete/unreadable VHD chain; stale attached AVHDX or named snapshot; snapshot/layer mismatch; orphaned `.avhdx`; unhealthy VSS; Replica product/measurement or corroborated HRL-cadence concern; hosting-CSV free-space policy breach; unresolved high-signal VM event (`3216`, `18012`, `19100`, `16300`, or fork HRESULT); required event evidence unavailable; active-checkpoint creation-time coverage incomplete; or final collection state Changed/Unavailable. A bounded `19080` can recover merge failure `19100`, but never proves recovery from `18012` or `16300`. Low-signal chatter alone (`3280`, `12240`, `15268`, `19090`, `32510`) does not trigger INVESTIGATE. | A checkpoint is stale, an orphan exists, Replica is Critical, the VHD chain is unreadable, the VM's own checkpoint request repeatedly fails, required logs are unavailable, or the VM changed state during collection - without the HOLD STATE combination. | Follow the report's typed driver list: route checkpoint/artifact evidence to backup/storage, event recurrence to the checkpoint-job owner, Replica/HRL to the Replica owner, VSS to the workload/backup owner, CSV capacity to storage, and inconclusive state/evidence to a settled rerun. Open a CSS case for a confirming fork signature, unresolved durable artifact/persistent merge failure, or after the responsible owner rules out their component. |
+| **OK** | None of the INVESTIGATE drivers above. Low-signal per-VM chatter remains visible but does not change the verdict. A merge failure `19100` may also be reported OK-with-note when a bounded later `19080` provides recovery evidence and no stale checkpoint, attached layer, mismatch, or orphan remains. | VM has no health/evidence concern, or only low-signal events; alternatively, a merge-eligible failure has bounded recovery evidence and leaves no durable artifact. Node events for other VMs remain context only. | No VM-health action required. Review the note/event CSV if a recovered or low-signal pattern recurs. |
 | **NOT FOUND** | The named VM was not found on any node of the cluster (collection outcome, not a health verdict). `ReportData` is `$null`; see `Detail`. | `-VMName 'Typo01'` where no such VM exists on the cluster. | Check the VM name / cluster; re-run. |
 | **ERROR** | The audit could not complete for this VM - e.g. the cluster name could not be resolved, or an unexpected exception occurred (collection outcome). `ReportData` is `$null`; see `Detail` and the console. | `-Cluster 'BadName'` cannot be resolved, or remoting to the owning node failed. | Fix the underlying access/name/remoting issue (see [How it connects](#how-it-connects-no-double-hop)) and re-run. |
 
@@ -467,7 +467,7 @@ The states are mutually exclusive and decided in this order:
 
 1. **ERROR / NOT FOUND** - if data collection could not complete or the VM does not exist, that is the state (no health verdict is attempted).
 2. **HOLD STATE** - fork-commit signature **for this VM** *and* unmerged differencing disk(s).
-3. **INVESTIGATE** - not HOLD STATE, but at least one VM-scoped concern signal: a stale checkpoint, an orphaned `.avhdx`, an unhealthy VSS writer, an unhealthy replica (Critical / Warning), or a **high-signal** per-VM concern event (`3216`/`18012`/`19100`/`16300` or a fork-commit HRESULT). **Low-signal-only** per-VM chatter (e.g. a transient `19090` or `15268`) does **not** trigger INVESTIGATE.
+3. **INVESTIGATE** - not HOLD STATE, but at least one typed driver from the matrix above: chain/artifact/staleness/mismatch, VSS, Replica/HRL, CSV capacity, unresolved high-signal VM event, required evidence/coverage, or inconclusive collection state. Low-signal-only chatter does not trigger INVESTIGATE.
 4. **OK** - none of the above (a low-signal-only VM lands here with a note).
 
 > **Why a checkpoint-free, healthy VM is `OK`, not `INVESTIGATE`:** the verdict only consumes events **attributable to the VM being audited**. A busy node can log many checkpoint/merge events for *other* VMs; those are surfaced as a node-context note but do not escalate a VM that has no checkpoints of its own and no concern events naming it. (This VM-scoping was introduced in v0.2.12; earlier versions counted node-wide events against every VM.)
@@ -564,11 +564,11 @@ Set-Location .\Get-HyperVVMCheckpointHealth
 Generated assets are written to the ignored `release` directory:
 
 ```text
-release\Get-HyperVVMCheckpointHealth-0.2.19.zip
-release\Get-HyperVVMCheckpointHealth-0.2.19.zip.sha256
+release\Get-HyperVVMCheckpointHealth-0.2.20.zip
+release\Get-HyperVVMCheckpointHealth-0.2.20.zip.sha256
 ```
 
-Create the GitHub release with tag `Get-HyperVVMCheckpointHealth-v0.2.19` and upload the generated ZIP, its SHA256 file, and `Setup-Get-HyperVVMCheckpointHealth.ps1` as three separate assets. The setup script remains outside the ZIP. Before publishing a future version:
+Create the GitHub release with tag `Get-HyperVVMCheckpointHealth-v0.2.20` and upload the generated ZIP, its SHA256 file, and `Setup-Get-HyperVVMCheckpointHealth.ps1` as three separate assets. The setup script remains outside the ZIP. Before publishing a future version:
 
 1. Update the version in the root module, manifest, README, release notes, and the setup script's `$version` value.
 2. Run the redirected Windows PowerShell 5.1 Pester suite.
@@ -577,6 +577,14 @@ Create the GitHub release with tag `Get-HyperVVMCheckpointHealth-v0.2.19` and up
 5. Publish the ZIP and checksum as release assets using the tag and asset naming convention above.
 
 ## What's New
+
+### Version 0.2.20
+
+- Uses one typed investigation-driver model for TXT and HTML output so the assessment, reason list, and recommended actions remain aligned.
+- Adds collection-state inconsistency, Hyper-V Replica, event, VSS, CSV free-space, HRL cadence, required event evidence, incomplete chain, stale checkpoint/layer, mismatch, and orphan causes to the final `Why flagged` output.
+- Gives event-only findings checkpoint-job reliability guidance without implying that an AVHDX merge or removal is required; gives state-only findings rerun guidance; and keeps Replica-only findings focused on replication health and recovery.
+- Retains the conservative operation-recovery policy: a later merge completion can correlate with merge failure `19100`, but does not prove recovery from checkpoint-request failure `18012` or configuration-load failure `16300`.
+- Makes the **Per-VM detailed information** and **Cluster / storage housekeeping to review** sections matching, accessible disclosure panels that are open by default and can be collapsed from their heading arrows.
 
 ### Version 0.2.19
 
@@ -654,7 +662,7 @@ These indicate a genuine problem and are flagged **`Concern = YES`**:
 >
 > **Low-signal vs high-signal for the per-VM verdict (v0.2.14 / v0.2.16 / v0.2.17):** only **high-signal** per-VM events - `3216`, `18012`, `19100`, `16300`, or a fork-commit HRESULT - can escalate an otherwise-clean VM to **INVESTIGATE**. The remaining concern IDs (`3280`, `12240`, `15268`, and - **as of v0.2.16** - `19090` *background disk merge interrupted*) are **low-signal**: still collected, still flagged `Concern = YES`, and still used for **discovery**, but they do **not**, on their own, change a VM's verdict. `19090` was reclassified because an interrupted merge is transient and normally completes later; a merge that genuinely never finished leaves an orphaned `.avhdx`, which is caught independently by the orphan scan.
 >
-> **CRITICAL vs HIGH-operation split + self-resolution (v0.2.17):** the high-signal set is refined into a **CRITICAL** class (`3216` + fork-commit HRESULTs — the on-disk chain / data-loss signature, never demoted) and a **HIGH operation-failure** class (`18012` checkpoint-op-failed, `19100` merge-failed, `16300` cannot-load-config). A HIGH operation-failure event escalates to **INVESTIGATE only when it did *not* self-resolve** — i.e. it was **not** followed by a successful background merge (`19080`) for that VM **and** left an orphan / stale layer behind. This was added after real-fleet data showed some backup products log a **nightly** `18012` “checkpoint operation failed” that is immediately followed by `19070` → `19080` “merge finished **successfully**”, leaving no orphan / stale layer — benign, self-healing activity that previously produced a permanent, un-actionable INVESTIGATE. Such self-resolved failures are now reported **OK with an explicit note** (visible, never hidden); genuinely **unresolved** failures (no following `19080`) are reported as *“backup checkpoint / merge appears to be failing”* with concrete steps.
+> **CRITICAL vs HIGH-operation split + recovery correlation (v0.2.17 / v0.2.19):** the high-signal set is refined into a **CRITICAL** class (`3216` + fork-commit HRESULTs - the on-disk chain / data-loss signature, never demoted) and a **HIGH operation-failure** class (`18012` checkpoint-op-failed, `19100` merge-failed, `16300` cannot-load-config). Recovery correlation is deliberately operation-specific. A bounded later merge completion (`19080`) can provide apparent recovery for merge failure `19100`, or confirmed recovery when both events share exact disk/operation evidence and no durable artifact remains. It does **not** prove recovery from checkpoint-request failure `18012` or configuration-load failure `16300`; those remain **INVESTIGATE** concerns even when no AVHDX residue remains. For `18012`, review recurrence and the corresponding backup/checkpoint job rather than inferring chain corruption or a required merge/removal action.
 
 ### Informational context event IDs (`-ContextEventIds`)
 

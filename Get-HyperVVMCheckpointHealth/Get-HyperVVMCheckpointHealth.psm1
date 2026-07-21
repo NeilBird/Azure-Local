@@ -122,7 +122,7 @@ function Get-HyperVVMCheckpointHealth {
     Author  : Neil Bird, Microsoft
     Created : 2026-07-10
     Updated : 2026-07-21
-    Version : 0.2.19
+    Version : 0.2.20
     
     Requires: Windows PowerShell 5.1 (this module is written for, and validated against, Windows
               PowerShell 5.1 ONLY - it is NOT intended or tested for PowerShell 7.x). Requires the
@@ -370,7 +370,7 @@ Then run this in Windows PowerShell 5.1, on a cluster node or a workstation that
 
 # Module version - single source of truth surfaced in the HTML report (header meta + footer) so a
 # saved / emailed report always states which build produced it. Keep in sync with the .NOTES Version.
-$script:ScriptVersion = '0.2.19'
+$script:ScriptVersion = '0.2.20'
 
 # v0.2.14: end-to-end run stopwatch - started as early as possible so the HTML report can state the
 # total time taken to audit the whole fleet and render the report ("Report generation time hh:mm:ss").
@@ -2708,13 +2708,11 @@ function Invoke-VMCheckpointAudit {
     $vmLowConcernCount   = $vmEventConcernCount - $vmHighConcernCount
 
     # v0.2.17: separate the CRITICAL (fork-commit / on-disk chain, data-loss) class from the HIGH
-    # OPERATION-FAILURE class, and detect SELF-RESOLUTION. Real fleet data shows a nightly backup logging
-    # 18012 'Checkpoint operation for <VM> failed' that is IMMEDIATELY followed by 19070 'merge started'
-    # -> 19080 'merge finished SUCCESSFULLY', leaving NO orphan and NO stale checkpoint. That is benign,
-    # self-healing backup activity (operators / users are not impacted), yet 0.2.16 flagged it a permanent
-    # INVESTIGATE with no actionable fix - pure noise. So an operation-failure event that SELF-RESOLVED and
-    # left no durable artifact must NOT escalate; only genuinely UNRESOLVED failures do. A CRITICAL
-    # fork-commit event is NEVER demoted, regardless of any following merge.
+    # OPERATION-FAILURE class, and detect causal or bounded recovery only where the failure represents a
+    # merge operation. A later 19080 can resolve merge failure 19100, but it cannot prove recovery from
+    # checkpoint-request failure 18012 (a merge may belong to another operation) or configuration-load
+    # failure 16300. Those failures remain operational concerns even when no durable artifact is present.
+    # A CRITICAL fork-commit event is NEVER demoted, regardless of any following merge.
     $vmHighOpIds      = @($script:EventPolicy.OperationFailureIds)
     $vmCriticalEvents = @($vmConcernEvents | Where-Object { $_.IsConfirmingFork })
     $vmHighOpEvents   = @($vmConcernEvents | Where-Object { (($vmHighOpIds -contains [int]$_.Id) -or ($_.SignalRole -eq 'Leading')) -and -not $_.IsConfirmingFork })
@@ -2818,8 +2816,8 @@ function Invoke-VMCheckpointAudit {
     $holdState = [bool]$verdictAssessment.HoldState
     $investigate = [bool]$verdictAssessment.Investigate
     # True when the ONLY thing found is low-signal per-VM chatter (drives the OK 'note' wording below).
-    # v0.2.17: a VM whose ONLY high-signal events SELF-RESOLVED (benign nightly backup 18012->19080) is
-    # NOT INVESTIGATE - it falls here and is reported OK with a specific 'self-resolved' note.
+    # v0.2.17: a VM whose only merge-eligible high-signal events were causally or apparently recovered is
+    # NOT INVESTIGATE - it falls here and is reported OK with a specific recovery note.
     $lowSignalOnly    = ((-not $holdState) -and (-not $investigate) -and (($vmLowConcernCount -gt 0) -or $highOpSelfResolved))
 
     # Severity score used ONLY for ORDERING within a verdict band (higher sorts first). Lets orphan /
@@ -3061,6 +3059,73 @@ function Invoke-VMCheckpointAudit {
             @($stateConsistencyReasons).Count, $(if ($stateTokenEndError) { 1 } else { 0 })) `
         -StartUtc $stateRecheckStart -EndUtc (Get-TelemetryNow)
 
+    # Build one typed explanation model after every verdict input is known, including the final
+    # collection-state recheck. TXT and HTML consume this same model so each active verdict driver
+    # receives matching, actionable wording.
+    $investigationDriverLabels = [System.Collections.Generic.List[string]]::new()
+    $hasCheckpointArtifactDriver = ($hasIncompleteChain -or ($staleAttachedLayerCount -gt 0) -or
+        ($staleCheckpoints.Count -gt 0) -or $snapshotLayerMismatch -or $hasOrphans)
+    $hasEventDriver = ($vmEscalatingConcernCount -gt 0)
+    $hasReplicaDriver = ($replUnhealthy -or $hrlConcern)
+    $hasStateDriver = ($stateChangedDuringCollection -or $stateConsistencyUnavailable)
+    $hasVssDriver = ($vssUnhealthy.Count -gt 0)
+    $hasStorageDriver = $csvFreeSpaceConcern
+    $hasEvidenceDriver = ($eventEvidenceUnavailable -or $cannotConfirmMigrationSafe)
+
+    if ($hasIncompleteChain) { [void]$investigationDriverLabels.Add(("{0} incomplete or unreadable VHD chain(s)" -f $incompleteChains.Count)) }
+    if ($staleAttachedLayerCount -gt 0) { [void]$investigationDriverLabels.Add(("{0} stale attached AVHDX layer(s)" -f $staleAttachedLayerCount)) }
+    if ($staleCheckpoints.Count -gt 0) { [void]$investigationDriverLabels.Add(("{0} stale named snapshot(s) at or beyond {1}h" -f $staleCheckpoints.Count, $StaleHours)) }
+    if ($snapshotLayerMismatch) { [void]$investigationDriverLabels.Add('snapshot/layer representation mismatch') }
+    if ($hasOrphans) { [void]$investigationDriverLabels.Add(("{0} orphaned .avhdx file(s)" -f @($orphans).Count)) }
+    if ($hasEventDriver) { [void]$investigationDriverLabels.Add(("{0} unresolved VM-attributed checkpoint/merge operation failure event(s) [{1}]" -f $vmEscalatingConcernCount, $vmConcernIdSummary)) }
+    if ($hasVssDriver) { [void]$investigationDriverLabels.Add(("{0} unhealthy VSS writer(s)" -f $vssUnhealthy.Count)) }
+    if ($hasReplicaDriver) {
+        if ($replUnhealthy) { [void]$investigationDriverLabels.Add(("Hyper-V Replica product health/state concern ({0} / {1})" -f $replAssessment.State, $replAssessment.Health)) }
+        if ($hrlConcern) { [void]$investigationDriverLabels.Add(("{0} HRL file(s) beyond the cadence-aware threshold with Replica corroboration" -f $hrlAssessment.ExceedsCadenceCount)) }
+    }
+    if ($hasStorageDriver) { [void]$investigationDriverLabels.Add(("{0} CSV free-space policy breach(es)" -f @($csvFreeSpaceAssessment.Breaches).Count)) }
+    if ($hasEvidenceDriver) {
+        $evidenceLabel = if ($cannotConfirmMigrationSafe) { 'required Worker/VMMS history around active-checkpoint creation is incomplete' } else { 'required Hyper-V event evidence unavailable' }
+        [void]$investigationDriverLabels.Add($evidenceLabel)
+    }
+    if ($hasStateDriver) {
+        $stateReasonText = if ($stateConsistencyReasons.Count -gt 0) { $stateConsistencyReasons -join ', ' } else { 'state token unavailable' }
+        [void]$investigationDriverLabels.Add(("INCONCLUSIVE collection state ({0}: {1})" -f $stateConsistencyStatus, $stateReasonText))
+    }
+
+    $investigationAssessmentText = if ($hasCheckpointArtifactDriver) {
+        "Checkpoint or virtual-disk evidence requires validation. The specific checkpoint fork-commit signature was not observed in the current window, so on-disk chain corruption is not confirmed."
+    } elseif ($hasEventDriver -and -not ($hasReplicaDriver -or $hasStateDriver -or $hasVssDriver -or $hasStorageDriver -or $hasEvidenceDriver)) {
+        "Recurring checkpoint or merge operation failures require job-history review. No durable checkpoint disk residue or confirming fork-commit signature was found, so this is reliability evidence rather than proof of chain corruption."
+    } elseif ($hasReplicaDriver -and -not ($hasStateDriver -or $hasVssDriver -or $hasStorageDriver -or $hasEvidenceDriver)) {
+        "Hyper-V Replica health, state, or cadence requires attention. This concern is independent of checkpoint-chain corruption."
+    } elseif ($hasStateDriver -and -not ($hasReplicaDriver -or $hasVssDriver -or $hasStorageDriver -or $hasEvidenceDriver)) {
+        "The VM changed state during collection or its final state could not be verified, so the evidence is inconclusive and may combine different VM states."
+    } else {
+        "Multiple independent health or evidence-coverage concerns require review; use the driver list below to route each item to the responsible owner."
+    }
+
+    $investigationActionLines = [System.Collections.Generic.List[string]]::new()
+    if ($hasCheckpointArtifactDriver) { [void]$investigationActionLines.Add('Review the attached VHD chain, checkpoint and orphan evidence with the backup/storage owner before any merge, removal, migration, or restart action.') }
+    if ($hasEventDriver) { [void]$investigationActionLines.Add('Compare the VM event CSV timestamps and IDs with backup/checkpoint job history; engage the job owner if failures recur, and re-run after the next backup cycle.') }
+    if ($hasReplicaDriver) { [void]$investigationActionLines.Add('Review Get-VMReplication health, relationship state, cadence and capacity on both partners; remediate or resynchronize through the Replica owner, then verify that health returns to Normal.') }
+    if ($hasStateDriver) { [void]$investigationActionLines.Add('Rerun the audit after migration, checkpoint, merge, replication, or power-state activity has settled.') }
+    if ($hasVssDriver) { [void]$investigationActionLines.Add('Resolve unhealthy VSS writers with the workload or backup owner, then rerun the affected backup and this audit.') }
+    if ($hasStorageDriver) { [void]$investigationActionLines.Add('Restore the hosting CSV volumes to the configured free-space policy before retrying checkpoint-intensive operations.') }
+    if ($hasEvidenceDriver) { [void]$investigationActionLines.Add('Restore required Worker/VMMS event-log access or retention and rerun; absence of unavailable evidence is not proof of health.') }
+    $investigationDrivers = [pscustomobject]@{
+        Labels = $investigationDriverLabels.ToArray()
+        AssessmentText = [string]$investigationAssessmentText
+        ActionLines = $investigationActionLines.ToArray()
+        HasCheckpointArtifact = [bool]$hasCheckpointArtifactDriver
+        HasEvents = [bool]$hasEventDriver
+        HasReplica = [bool]$hasReplicaDriver
+        HasStateInconclusive = [bool]$hasStateDriver
+        HasVss = [bool]$hasVssDriver
+        HasStorage = [bool]$hasStorageDriver
+        HasEvidenceUnavailable = [bool]$hasEvidenceDriver
+    }
+
     # ---- Findings block for the operator / backup team (and, only when warranted, a CSS case) -------
     # A copy/paste-ready summary of the key findings. The framing ADAPTS to severity so we do NOT push
     # operators toward a Microsoft Support (CSS) case when there is no fork-commit signature: only
@@ -3157,38 +3222,13 @@ function Invoke-VMCheckpointAudit {
             Write-AuditReportLine  "  rollback and may hold un-recovered data - engage Microsoft Support (CSS) / your backup vendor to"
             Write-AuditReportLine  "  recover them; do NOT delete them. Concern signal(s) for this VM:"
         } else {
-            Write-AuditReportLine  "  ASSESSMENT: INVESTIGATE - the specific checkpoint fork-commit signature was NOT observed; the"
-            if ($vssUnhealthy.Count -gt 0) {
-                Write-AuditReportLine  "  evidence is more consistent with a stalled / failed backup checkpoint involving unhealthy"
-                Write-AuditReportLine  "  VSS writers than on-disk chain corruption. Concern signal(s) for this VM:"
-            } else {
-                Write-AuditReportLine  "  evidence is more consistent with a stalled / failed backup checkpoint or another operational"
-                Write-AuditReportLine  "  checkpoint workflow than on-disk chain corruption. Concern signal(s) for this VM:"
+            Write-AuditReportLine ("  ASSESSMENT: INVESTIGATE - {0}" -f $investigationDrivers.AssessmentText)
+            Write-AuditReportLine  "  Concern signal(s) for this VM:"
+        }
+        if (-not $historicForkConfirmed) {
+            foreach ($driverLabel in @($investigationDrivers.Labels)) {
+                Write-AuditReportLine ("    - {0}." -f $driverLabel)
             }
-        }
-        if ($staleCheckpoints.Count -gt 0) {
-            Write-AuditReportLine ("    - {0} named snapshot(s) at or beyond the {1}-hour stale threshold (set via -StaleHours; default 24)." -f $staleCheckpoints.Count, $StaleHours)
-        }
-        if ($staleAttachedLayerCount -gt 0) {
-            Write-AuditReportLine ("    - {0} attached AVHDX layer(s) at or beyond the {1}-hour stale threshold." -f $staleAttachedLayerCount, $StaleHours)
-        }
-        if ($snapshotLayerMismatch) {
-            Write-AuditReportLine "    - Snapshot/layer representation mismatch: only one of named snapshots or attached AVHDX layers is present."
-        }
-        if ($vmEventConcernCount -gt 0) {
-            Write-AuditReportLine ("    - {0} concerning Hyper-V event(s) for THIS VM [{1}] on {2} in the last {3}h (see the events section above)." -f $vmEventConcernCount, $vmConcernIdSummary, $OwningNode, $EventLookbackHours)
-        }
-        if ($vssUnhealthy.Count -gt 0) {
-            Write-AuditReportLine ("    - {0} unhealthy VSS writer(s) (see the VSS Writer Health section above)." -f $vssUnhealthy.Count)
-        }
-        if ($hasOrphans) {
-            Write-AuditReportLine ("    - {0} orphaned .avhdx file(s) in this VM's disk folder(s) (see the Orphaned .avhdx Files section above)." -f @($orphans).Count)
-        }
-        if ($csvFreeSpaceConcern) {
-            Write-AuditReportLine ("    - {0} hosting CSV volume(s) breach the configured free-space policy." -f @($csvFreeSpaceAssessment.Breaches).Count)
-        }
-        if ($hrlConcern) {
-            Write-AuditReportLine ("    - {0} HRL file(s) exceed the cadence-aware threshold and Replica health corroborates the concern." -f $hrlAssessment.ExceedsCadenceCount)
         }
         if ($historicForkConfirmed) {
             Write-AuditReportLine  "    - CONFIRMED historic fork-commit / merge event(s) recovered for this VM (see Historic Event Correlation above)."
@@ -3225,14 +3265,13 @@ function Invoke-VMCheckpointAudit {
             Write-AuditReportLine  "    3. Re-run this audit with a larger -EventLookbackHours (e.g. 720) to capture more of the original"
             Write-AuditReportLine  "       event timeline for the case."
         } else {
-            Write-AuditReportLine  "  Suggested next steps (operator / backup team FIRST - a Microsoft Support (CSS) case is NOT needed"
-            Write-AuditReportLine  "  for this result):"
-            Write-AuditReportLine  "    1. Check your backup product's recent job history for this VM - did the last backup complete?"
-            Write-AuditReportLine  "    2. Confirm whether the aged snapshot or attached AVHDX layer is expected or was left behind by a failed backup."
-            Write-AuditReportLine  "    3. If it is a leftover backup checkpoint, merge / remove it via the backup product (preferred), or"
-            Write-AuditReportLine  "       via Hyper-V Manager once your backup team confirms it is safe to do so."
-            Write-AuditReportLine  "    4. Only open a Microsoft Support (CSS) case if a fork-commit signature later appears, or your"
-            Write-AuditReportLine  "       backup vendor rules out their product."
+            Write-AuditReportLine  "  Suggested next steps (route each driver to the responsible operations, backup, Replica, or storage owner):"
+            $actionNumber = 0
+            foreach ($actionLine in @($investigationDrivers.ActionLines)) {
+                $actionNumber++
+                Write-AuditReportLine ("    {0}. {1}" -f $actionNumber, $actionLine)
+            }
+            Write-AuditReportLine ("    {0}. Open a Microsoft Support case if a confirming fork-commit signature appears, a persistent merge failure or durable disk artifact cannot be resolved, or the responsible owner rules out their component." -f ($actionNumber + 1))
         }
     } else {
         if ($lowSignalOnly) {
@@ -3253,7 +3292,7 @@ function Invoke-VMCheckpointAudit {
     if ($holdState) {
         Write-AuditReportLine  "  Artifacts from this audit to attach to the case:"
     } else {
-        Write-AuditReportLine  "  Artifacts from this audit (for your records / to share with your backup team):"
+        Write-AuditReportLine  "  Artifacts from this audit (for your records / to share with the responsible owner):"
     }
     if ($OutputPath -and $reportFile) {
         Write-AuditReportLine ("    - Text report : {0}" -f $reportFile)
@@ -3308,16 +3347,9 @@ function Invoke-VMCheckpointAudit {
             Write-Alert ("  Why flagged: CONFIRMED historic fork-commit event(s); {0} orphaned .avhdx file(s); {1} concerning event(s) for this VM [{2}]." -f @($orphans).Count, $vmEventConcernCount, $vmConcernIdSummary) -Level Critical
             Write-Alert "  See the Historic Event Correlation and FINDINGS TO INVESTIGATE sections above - engage Microsoft Support (CSS) / your backup vendor to recover the orphaned data." -Level Critical
         } else {
-            Write-Alert "  INVESTIGATE: concern signals are present, but the specific checkpoint fork-commit signature" -Level Warning
-            if ($vssUnhealthy.Count -gt 0) {
-                Write-Alert "  was NOT observed (evidence is more consistent with a stalled / failed backup checkpoint" -Level Warning
-                Write-Alert "  involving unhealthy VSS writers than on-disk chain corruption)." -Level Warning
-            } else {
-                Write-Alert "  was NOT observed (evidence is more consistent with a stalled / failed backup checkpoint" -Level Warning
-                Write-Alert "  or another operational checkpoint workflow than on-disk chain corruption)." -Level Warning
-            }
-            Write-Alert ("  Why flagged: {0} concerning event(s) for this VM [{1}]; {2} stale attached AVHDX layer(s); {3} stale named snapshot(s) >= {4}h; mismatch={5}; {6} unhealthy VSS writer(s); {7} orphaned .avhdx file(s)." -f $vmEventConcernCount, $vmConcernIdSummary, $staleAttachedLayerCount, $staleCheckpoints.Count, $StaleHours, $snapshotLayerMismatch, $vssUnhealthy.Count, @($orphans).Count) -Level Warning
-            Write-Alert "  See the FINDINGS TO INVESTIGATE section above for the suggested next steps (backup-team triage first; no Microsoft case needed yet)." -Level Warning
+            Write-Alert ("  INVESTIGATE: {0}" -f $investigationDrivers.AssessmentText) -Level Warning
+            Write-Alert ("  Why flagged: {0}." -f (@($investigationDrivers.Labels) -join '; ')) -Level Warning
+            Write-Alert "  See the FINDINGS TO INVESTIGATE section above for driver-specific next steps and responsible-owner routing." -Level Warning
         }
     }
     # Diagnostic-coverage TIP (independent of the verdict): if the Hyper-V-VMMS/Analytic channel is not
@@ -3544,6 +3576,7 @@ function Invoke-VMCheckpointAudit {
         StateConsistencyStatus = [string]$stateConsistencyStatus
         StateChangedDuringCollection = [bool]$stateChangedDuringCollection
         StateConsistencyReasons = @($stateConsistencyReasons)
+        InvestigationDrivers = $investigationDrivers
         AssessmentConfidence = [string]$assessmentConfidence
         CollectionStatus     = [pscustomobject]@{
             VhdChains = [pscustomobject]@{

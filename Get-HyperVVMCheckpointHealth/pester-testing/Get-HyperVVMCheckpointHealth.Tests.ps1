@@ -155,9 +155,10 @@ Describe 'Get-HyperVVMCheckpointHealth source contracts' {
         $script:Source | Should -Match '\$script:HousekeepingFindings\.Count\s+-gt\s+0'
     }
 
-    It 'mentions unhealthy VSS in INVESTIGATE guidance only when unhealthy writers were collected' {
-        $script:Source | Should -Match '(?s)if \(\$vssUnhealthy\.Count -gt 0\) \{\s+Write-AuditReportLine\s+"  evidence is more consistent with a stalled / failed backup checkpoint involving unhealthy"\s+Write-AuditReportLine\s+"  VSS writers than on-disk chain corruption.*?\} else \{\s+Write-AuditReportLine\s+"  evidence is more consistent with a stalled / failed backup checkpoint or another operational"\s+Write-AuditReportLine\s+"  checkpoint workflow than on-disk chain corruption'
-        $script:Source | Should -Match '(?s)if \(\$vssUnhealthy\.Count -gt 0\) \{\s+Write-Alert\s+"  was NOT observed \(evidence is more consistent with a stalled / failed backup checkpoint".*?"  involving unhealthy VSS writers than on-disk chain corruption\).*?\} else \{\s+Write-Alert\s+"  was NOT observed \(evidence is more consistent with a stalled / failed backup checkpoint".*?"  or another operational checkpoint workflow than on-disk chain corruption\)."'
+    It 'includes unhealthy VSS in the shared driver model only when unhealthy writers were collected' {
+        $script:Source | Should -Match '\$hasVssDriver\s*=\s*\(\$vssUnhealthy\.Count -gt 0\)'
+        $script:Source | Should -Match '(?s)if \(\$hasVssDriver\) \{ \[void\]\$investigationDriverLabels\.Add\(\("\{0\} unhealthy VSS writer\(s\)" -f \$vssUnhealthy\.Count\)\) \}'
+        $script:Source | Should -Match "Resolve unhealthy VSS writers with the workload or backup owner"
         $script:Source | Should -Not -Match 'likely cause is a stalled / failed backup checkpoint or an unhealthy VSS writer rather than'
         $script:Source | Should -Not -Match 'likely a stalled / failed backup checkpoint or an unhealthy VSS writer'
     }
@@ -377,8 +378,8 @@ Describe 'Module distribution contracts' {
         $script:ModuleCommand = Get-Command Get-HyperVVMCheckpointHealth -Module Get-HyperVVMCheckpointHealth
     }
 
-    It 'imports a valid 0.2.19 module manifest' {
-        $script:Manifest.Version.ToString() | Should -Be '0.2.19'
+    It 'imports a valid 0.2.20 module manifest' {
+        $script:Manifest.Version.ToString() | Should -Be '0.2.20'
         $script:Manifest.ExportedFunctions.Keys | Should -Contain 'Get-HyperVVMCheckpointHealth'
     }
 
@@ -488,7 +489,7 @@ Describe 'Module distribution contracts' {
         $setupPath = Join-Path $script:ModuleRoot 'Setup-Get-HyperVVMCheckpointHealth.ps1'
         Test-Path -LiteralPath $setupPath -PathType Leaf | Should -BeTrue
         $setupSource = Get-Content -LiteralPath $setupPath -Raw
-        $setupSource | Should -Match "\$version = '0\.2\.19'"
+        $setupSource | Should -Match "\$version = '0\.2\.20'"
         $setupSource | Should -Match "\$expectedSha256 = '[0-9a-f]{64}'"
         $setupSource | Should -Match '\[string\]\$InstallRoot = ''C:\\Temp'''
         $setupSource | Should -Match 'Get-FileHash.+SHA256'
@@ -673,7 +674,7 @@ Describe 'HTML fleet report usability' {
         $script:RenderedHtml = ConvertTo-VMCheckpointAuditHtml -Results $results -StaleHours 24 `
             -EventLookbackHours 168 -ClusterName 'CONTOSO-CLUSTER-01' -GeneratedUtc '2026-01-01 00:00:00' `
             -DiscoveredVMs @([pscustomobject]@{ Name = 'TEST-VM-DEFERRED'; Reason = 'Synthetic deferred evidence' }) `
-            -DiscoverySummary $discoverySummary -StorageHealth $null -IncludeDiscoveredVMs:$true -ScriptVersion '0.2.19' `
+            -DiscoverySummary $discoverySummary -StorageHealth $null -IncludeDiscoveredVMs:$true -ScriptVersion '0.2.20' `
             -ReportGenerationTime '00:00:01' -ClusterNodeCount 2 -ClusterCsvCount 1 `
             -HousekeepingFindings @(
                 [pscustomobject]@{
@@ -705,7 +706,7 @@ Describe 'HTML fleet report usability' {
             -Results @([pscustomobject]@{ VMName = 'TEST-VM-NORMAL'; OwningNode = 'TEST-NODE-01'; Recommendation = 'OK'; Source = 'Input'; StaleCheckpointCount = 0; ReportData = $normalReportData; Detail = '' }) `
             -StaleHours 24 -EventLookbackHours 168 -ClusterName 'CONTOSO-CLUSTER-01' -GeneratedUtc '2026-01-01 00:00:00' `
             -DiscoveredVMs $null -DiscoverySummary ([pscustomobject]@{ EligibleCount = 0; AuditedCount = 0; DeferredCount = 0; Cap = $null }) `
-            -StorageHealth $null -IncludeDiscoveredVMs:$false -ScriptVersion '0.2.19' -ReportGenerationTime '00:00:01' `
+            -StorageHealth $null -IncludeDiscoveredVMs:$false -ScriptVersion '0.2.20' -ReportGenerationTime '00:00:01' `
             -ClusterNodeCount 2 -ClusterCsvCount 1 -HousekeepingFindings @([pscustomobject]@{
                 Category = 'Unattached base disk candidate'; Scope = 'C:\ClusterStorage\UserStorage_1'
                 FileName = 'BaseDisk.vhdx'
@@ -725,7 +726,7 @@ Describe 'HTML fleet report usability' {
             -Results @([pscustomobject]@{ VMName = 'TEST-VM-ADVISORY'; OwningNode = 'TEST-NODE-01'; Recommendation = 'OK'; Source = 'Input'; StaleCheckpointCount = 0; ReportData = $advisoryReportData; Detail = '' }) `
             -StaleHours 24 -EventLookbackHours 168 -ClusterName 'CONTOSO-CLUSTER-01' -GeneratedUtc '2026-01-01 10:00:00' `
             -DiscoveredVMs @() -DiscoverySummary ([pscustomobject]@{ EligibleCount = 0; AuditedCount = 0; DeferredCount = 0; Cap = $null }) `
-            -StorageHealth $null -HousekeepingFindings @() -IncludeDiscoveredVMs:$false -ScriptVersion '0.2.19' `
+            -StorageHealth $null -HousekeepingFindings @() -IncludeDiscoveredVMs:$false -ScriptVersion '0.2.20' `
             -ReportGenerationTime '00:00:01' -ClusterNodeCount 2 -ClusterCsvCount 1
     }
 
@@ -775,6 +776,13 @@ Describe 'HTML fleet report usability' {
         $script:RenderedHtml | Should -Match '<h3><span class="vm-label">VM Name:</span> <code>TEST-VM-MISSING</code>'
     }
 
+    It 'renders the per-VM and housekeeping sections as matching default-open disclosures' {
+        $script:RenderedHtml | Should -Match "<details class='report-section' open><summary><h2>Per-VM detailed information</h2></summary><div class='report-section-body'>"
+        $script:RenderedHtml | Should -Match '<details class="report-section" id="housekeeping" open>\s*<summary><h2>Cluster / storage housekeeping to review:</h2></summary>\s*<div class="report-section-body">'
+        $script:RenderedHtml | Should -Match 'details\.report-section>summary::before\{content:''\\25B6'''
+        $script:RenderedHtml | Should -Match 'details\.report-section\[open\]>summary::before\{content:''\\25BC''\}'
+    }
+
     It 'uses a full-width audited-VM lead card and keeps orphaned AVHDX last' {
         $script:RenderedHtml | Should -Match '<div class="card lead"><div class="n">4</div><div class="l">VMs audited</div></div>'
         $script:RenderedHtml | Should -Match '(?s)<div class="cards">.*VMs audited.*Hold state.*Investigate.*OK.*Incomplete.*Stale AVHDX layers.*Stale snapshots.*Orphaned \.avhdx.*</div>'
@@ -800,7 +808,7 @@ Describe 'HTML fleet report usability' {
         ) -StaleHours 24 -EventLookbackHours 168 -ClusterName 'CONTOSO-CLUSTER-01' `
             -GeneratedUtc '2026-07-20 12:26:52' -DiscoveredVMs @() `
             -DiscoverySummary ([pscustomobject]@{ EligibleCount = 0; AuditedCount = 0; DeferredCount = 0; Cap = $null }) `
-            -StorageHealth $null -ScriptVersion '0.2.19' -ReportGenerationTime '00:00:01' `
+            -StorageHealth $null -ScriptVersion '0.2.20' -ReportGenerationTime '00:00:01' `
             -ClusterNodeCount 1 -ClusterCsvCount 1 -HousekeepingFindings @()
 
         $html | Should -Match 'required Worker/VMMS coverage is incomplete'
@@ -819,7 +827,7 @@ Describe 'HTML fleet report usability' {
         ) -StaleHours 24 -EventLookbackHours 168 -ClusterName 'CONTOSO-CLUSTER-01' `
             -GeneratedUtc '2026-07-20 12:26:52' -DiscoveredVMs @() `
             -DiscoverySummary ([pscustomobject]@{ EligibleCount = 0; AuditedCount = 0; DeferredCount = 0; Cap = $null }) `
-            -StorageHealth $null -ScriptVersion '0.2.19' -ReportGenerationTime '00:00:01' `
+            -StorageHealth $null -ScriptVersion '0.2.20' -ReportGenerationTime '00:00:01' `
             -ClusterNodeCount 1 -ClusterCsvCount 1 -HousekeepingFindings @()
 
         $html | Should -Match 'Analytic channel.*Not enabled on this node'
@@ -851,6 +859,91 @@ Describe 'HTML fleet report usability' {
         $replicaCard | Should -Not -Match 'checkpoint fork-commit signature was NOT observed'
     }
 
+    It 'uses reliability guidance without merge or removal advice for an event-only INVESTIGATE result' {
+        $reportData = $normalReportData.PSObject.Copy()
+        $reportData.VmEventConcernCount = 7
+        $reportData.VmHighConcernCount = 7
+        $reportData.VmHighOpCount = 7
+        $reportData.VmEscalatingConcernCount = 7
+        $reportData.VmHighConcernIds = '18012 x7'
+        $reportData.EventsCsvName = 'TEST-VM-EVENTS_Events.csv'
+        $reportData | Add-Member -NotePropertyName InvestigationDrivers -NotePropertyValue ([pscustomobject]@{
+            Labels = @('7 unresolved VM-attributed checkpoint/merge operation failure event(s) [18012 x7]')
+            AssessmentText = 'Recurring checkpoint or merge operation failures require job-history review.'
+            ActionLines = @('Compare the VM event CSV timestamps and IDs with backup/checkpoint job history.')
+            HasCheckpointArtifact = $false; HasEvents = $true; HasReplica = $false
+            HasStateInconclusive = $false; HasVss = $false; HasStorage = $false; HasEvidenceUnavailable = $false
+        })
+        $html = ConvertTo-VMCheckpointAuditHtml -Results @(
+            [pscustomobject]@{ VMName = 'TEST-VM-EVENTS'; OwningNode = 'TEST-NODE-01'; Recommendation = 'INVESTIGATE'; Source = 'Input'; StaleCheckpointCount = 0; ReportData = $reportData; Detail = '' }
+        ) -StaleHours 24 -EventLookbackHours 168 -ClusterName 'CONTOSO-CLUSTER-01' `
+            -GeneratedUtc '2026-07-21 12:00:00' -DiscoveredVMs @() `
+            -DiscoverySummary ([pscustomobject]@{ EligibleCount = 0; AuditedCount = 0; DeferredCount = 0; Cap = $null }) `
+            -StorageHealth $null -ScriptVersion '0.2.20' -ReportGenerationTime '00:00:01' `
+            -ClusterNodeCount 1 -ClusterCsvCount 1 -HousekeepingFindings @()
+
+        $html | Should -Match 'checkpoint reliability evidence rather than proof of chain corruption'
+        $html | Should -Match 'there is no disk merge or removal action from this result'
+        $html | Should -Not -Match 'before any merge/removal action'
+    }
+
+    It 'names only the present snapshot and orphan evidence in artifact guidance' {
+        $reportData = $normalReportData.PSObject.Copy()
+        $reportData.StaleCheckpointCount = 1
+        $reportData.OrphanCount = 1
+        $reportData.HasOrphans = $true
+        $reportData | Add-Member -NotePropertyName InvestigationDrivers -NotePropertyValue ([pscustomobject]@{
+            Labels = @('1 stale named snapshot(s) at or beyond 24h', '1 orphaned .avhdx file(s)')
+            AssessmentText = 'Checkpoint or virtual-disk evidence requires validation.'
+            ActionLines = @('Review the snapshot and orphan evidence with the backup/storage owner.')
+            HasCheckpointArtifact = $true; HasEvents = $false; HasReplica = $false
+            HasStateInconclusive = $false; HasVss = $false; HasStorage = $false; HasEvidenceUnavailable = $false
+        })
+        $html = ConvertTo-VMCheckpointAuditHtml -Results @(
+            [pscustomobject]@{ VMName = 'TEST-VM-ARTIFACT'; OwningNode = 'TEST-NODE-01'; Recommendation = 'INVESTIGATE'; Source = 'Input'; StaleCheckpointCount = 1; ReportData = $reportData; Detail = '' }
+        ) -StaleHours 24 -EventLookbackHours 168 -ClusterName 'CONTOSO-CLUSTER-01' `
+            -GeneratedUtc '2026-07-21 12:00:00' -DiscoveredVMs @() `
+            -DiscoverySummary ([pscustomobject]@{ EligibleCount = 0; AuditedCount = 0; DeferredCount = 0; Cap = $null }) `
+            -StorageHealth $null -ScriptVersion '0.2.20' -ReportGenerationTime '00:00:01' `
+            -ClusterNodeCount 1 -ClusterCsvCount 1 -HousekeepingFindings @()
+
+        $html | Should -Match 'No confirming checkpoint fork-commit signature was observed, so on-disk chain corruption is not established\.'
+        $html | Should -Match 'Validate the stale snapshot and orphaned \.avhdx with the backup/storage owner before merging, removing, renaming, or deleting anything\.'
+        $html | Should -Not -Match 'attached-chain, checkpoint, orphan, event, and backup-job evidence'
+    }
+
+    It 'uses rerun guidance and names the driver for a state-only INVESTIGATE result' {
+        $reportData = $normalReportData.PSObject.Copy()
+        $reportData | Add-Member -NotePropertyName StateConsistencyStatus -NotePropertyValue 'Changed'
+        $reportData | Add-Member -NotePropertyName InvestigationDrivers -NotePropertyValue ([pscustomobject]@{
+            Labels = @('INCONCLUSIVE collection state (Changed: ConfigLastWriteUtc)')
+            AssessmentText = 'The VM changed state during collection, so the evidence is inconclusive.'
+            ActionLines = @('Rerun the audit after activity has settled.')
+            HasCheckpointArtifact = $false; HasEvents = $false; HasReplica = $false
+            HasStateInconclusive = $true; HasVss = $false; HasStorage = $false; HasEvidenceUnavailable = $false
+        })
+        $html = ConvertTo-VMCheckpointAuditHtml -Results @(
+            [pscustomobject]@{ VMName = 'TEST-VM-STATE'; OwningNode = 'TEST-NODE-01'; Recommendation = 'INVESTIGATE'; Source = 'Input'; StaleCheckpointCount = 0; ReportData = $reportData; Detail = '' }
+        ) -StaleHours 24 -EventLookbackHours 168 -ClusterName 'CONTOSO-CLUSTER-01' `
+            -GeneratedUtc '2026-07-21 12:00:00' -DiscoveredVMs @() `
+            -DiscoverySummary ([pscustomobject]@{ EligibleCount = 0; AuditedCount = 0; DeferredCount = 0; Cap = $null }) `
+            -StorageHealth $null -ScriptVersion '0.2.20' -ReportGenerationTime '00:00:01' `
+            -ClusterNodeCount 1 -ClusterCsvCount 1 -HousekeepingFindings @()
+
+        $html | Should -Match 'INCONCLUSIVE collection state \(Changed: ConfigLastWriteUtc\)'
+        $html | Should -Match 'Rerun the audit after migration, checkpoint, merge, replication, or power-state activity has settled'
+        $html | Should -Not -Match 'stalled / failed backup checkpoint'
+    }
+
+    It 'uses the shared investigation driver model for TXT findings and final reasons' {
+        $moduleSourcePath = Join-Path (Split-Path $PSScriptRoot -Parent) 'Get-HyperVVMCheckpointHealth.psm1'
+        $moduleSource = Get-Content -LiteralPath $moduleSourcePath -Raw
+        $moduleSource | Should -Match 'InvestigationDrivers = \$investigationDrivers'
+        $moduleSource | Should -Match 'foreach \(\$driverLabel in @\(\$investigationDrivers\.Labels\)\)'
+        $moduleSource | Should -Match 'Why flagged: \{0\}.*investigationDrivers\.Labels'
+        $moduleSource | Should -Not -Match 'Why flagged: \{0\} concerning event\(s\).*stale attached AVHDX'
+    }
+
     It 'labels stale snapshot counts instead of rendering an ambiguous ratio' {
         $reportData = $normalReportData.PSObject.Copy()
         $reportData.StaleCheckpointCount = 1
@@ -859,7 +952,7 @@ Describe 'HTML fleet report usability' {
         ) -StaleHours 24 -EventLookbackHours 168 -ClusterName 'CONTOSO-CLUSTER-01' `
             -GeneratedUtc '2026-07-20 12:26:52' -DiscoveredVMs @() `
             -DiscoverySummary ([pscustomobject]@{ EligibleCount = 0; AuditedCount = 0; DeferredCount = 0; Cap = $null }) `
-            -StorageHealth $null -ScriptVersion '0.2.19' -ReportGenerationTime '00:00:01' `
+            -StorageHealth $null -ScriptVersion '0.2.20' -ReportGenerationTime '00:00:01' `
             -ClusterNodeCount 1 -ClusterCsvCount 1 -HousekeepingFindings @()
 
         $html | Should -Match '0 layers / 1 snapshot'
@@ -879,7 +972,7 @@ Describe 'HTML fleet report usability' {
             -Results @([pscustomobject]@{ VMName = 'TEST-VM-NORMAL'; OwningNode = 'TEST-NODE-01'; Recommendation = 'OK'; Source = 'Input'; StaleCheckpointCount = 0; ReportData = $normalReportData; Detail = '' }) `
             -StaleHours 24 -EventLookbackHours 168 -ClusterName 'CONTOSO-CLUSTER-01' -GeneratedUtc '2026-01-01 00:00:00' `
             -DiscoveredVMs $null -DiscoverySummary ([pscustomobject]@{ EligibleCount = 0; AuditedCount = 0; DeferredCount = 0; Cap = $null }) `
-            -StorageHealth $null -ScriptVersion '0.2.19' -ReportGenerationTime '00:00:01' `
+            -StorageHealth $null -ScriptVersion '0.2.20' -ReportGenerationTime '00:00:01' `
             -ClusterNodeCount 2 -ClusterCsvCount 1 -HousekeepingFindings $null
 
         $html | Should -Match 'No cluster or storage housekeeping observations were produced by the checks performed in this run\.'
@@ -971,7 +1064,7 @@ Describe 'HTML fleet report usability' {
             [pscustomobject]@{ VMName = 'TEST-VM'; OwningNode = 'TEST-NODE'; Recommendation = 'OK'; Source = 'Input'; StaleCheckpointCount = 0; ReportData = $normalReportData; Detail = '' }
         ) -StaleHours 24 -EventLookbackHours 168 -ClusterName 'TEST-CLUSTER' -GeneratedUtc '2026-01-01 00:00:00' `
             -DiscoveredVMs @() -DiscoverySummary ([pscustomobject]@{ EligibleCount = 0; AuditedCount = 0; DeferredCount = 0; Cap = $null }) `
-            -StorageHealth $null -ScriptVersion '0.2.19' -ReportGenerationTime '00:00:01' -ClusterNodeCount 1 -ClusterCsvCount 1 `
+            -StorageHealth $null -ScriptVersion '0.2.20' -ReportGenerationTime '00:00:01' -ClusterNodeCount 1 -ClusterCsvCount 1 `
             -HousekeepingFindings $duplicateFindings
 
         ([regex]::Matches($html, 'Unfiltered unique-file storage: <strong>1\.50 MB</strong>')).Count | Should -Be 1
@@ -985,7 +1078,7 @@ Describe 'HTML fleet report usability' {
             [pscustomobject]@{ VMName = 'TEST-VM'; OwningNode = 'TEST-NODE'; Recommendation = 'OK'; Source = 'Input'; StaleCheckpointCount = 0; ReportData = $normalReportData; Detail = '' }
         ) -StaleHours 24 -EventLookbackHours 168 -ClusterName 'TEST-CLUSTER' -GeneratedUtc '2026-01-01 00:00:00' `
             -DiscoveredVMs @() -DiscoverySummary ([pscustomobject]@{ EligibleCount = 0; AuditedCount = 0; DeferredCount = 0; Cap = $null }) `
-            -StorageHealth $null -ScriptVersion '0.2.19' -ReportGenerationTime '00:00:01' -ClusterNodeCount 1 -ClusterCsvCount 1 `
+            -StorageHealth $null -ScriptVersion '0.2.20' -ReportGenerationTime '00:00:01' -ClusterNodeCount 1 -ClusterCsvCount 1 `
             -HousekeepingFindings @([pscustomobject]@{ Category = 'Placement'; Scope = 'TEST-VM'; FileName = 'Large.vhdx'; FullName = 'C:\ClusterStorage\Volume1\Large.vhdx'; ParentPath = 'C:\ClusterStorage\Volume1'; CsvRoot = 'C:\ClusterStorage\Volume1'; Extension = '.vhdx'; Length = $twoTerabytes; Observation = 'Synthetic'; Review = 'Review.' })
 
         $html | Should -Match "id='hk-visible-bytes'>2\.00 TB</strong>"
@@ -1025,7 +1118,7 @@ Describe 'Unrecovered-failure debug log' {
     BeforeEach {
         $script:RunStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
         $script:TelemetryClockBaseUtc = [DateTimeOffset]::UtcNow
-        $script:ScriptVersion = '0.2.19'
+        $script:ScriptVersion = '0.2.20'
         $script:VMSectionStepNo = 45
         $script:VMSectionName = 'Scanning Replica change logs (.hrl)'
         $script:AuditDiagnostics = [System.Collections.Generic.List[object]]::new()
