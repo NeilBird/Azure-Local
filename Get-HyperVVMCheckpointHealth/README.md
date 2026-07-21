@@ -282,7 +282,20 @@ Get-HyperVVMCheckpointHealth -VMName 'VM01' `
         -OutputPath 'C:\Temp\VM_Checkpoint_Reports'
 ```
 
-Patterns are evaluated against the complete path and should identify an intentional repository directory, not a broad incidental substring. Exclusion only removes that file from housekeeping observations; it does not authorize file modification or deletion. For a file-backed **Unattached base disk candidate**, the HTML provides a **Filter out as VM image** checkbox. Selecting it hides that row from the open report and recalculates its visible totals and charts. A conditional section below the housekeeping table lists the hidden paths, generates exact-path `storage.imageLibraryPathPatterns` YAML, provides a copy button, and explains how to paste the complete block into a new policy or append only its list entries to an existing policy before repeating the original command with `-PolicyPath`. The checkbox itself is report-local and does not modify a policy file or affect a future audit.
+Patterns are evaluated against the complete path and should identify an intentional repository directory, not a broad incidental substring. Exclusion only removes that file from housekeeping observations; it does not authorize file modification or deletion.
+
+#### Export VM image exclusions from the HTML report
+
+For a file-backed **Unattached base disk candidate**, the HTML provides a **Filter out as VM image** checkbox. It is available only for `.vhd` and `.vhdx` base-disk candidates; it is never offered for `.avhdx` checkpoint/differencing files. Selecting one or more candidates hides those rows from the open report and recalculates its visible totals and charts. The checkbox is report-local and does not modify a policy file or affect a future audit.
+
+When at least one candidate is selected, a **Persistent VM image policy settings** section appears below the housekeeping table:
+
+1. Review the selected full paths, then choose **Copy policy settings**. The generated entries are case-insensitive, start/end anchored, and regex-escape the exact path.
+2. For a new policy, paste the complete generated `schemaVersion`, `storage`, and `imageLibraryPathPatterns` block into `checkpoint-health-policy.yml`.
+3. For an existing policy, copy only the generated `- '(?i)^...$'` entries into its existing `storage.imageLibraryPathPatterns` array. Preserve its current entries and do not create duplicate `schemaVersion`, `storage`, or `imageLibraryPathPatterns` keys.
+4. Save the YAML file and repeat the original audit command with `-PolicyPath '.\checkpoint-health-policy.yml'`. Confirm that the new report omits the selected files and shows the expected policy source.
+
+`storage.imageLibraryPathPatterns` is a replacement array. A supplied array replaces the configurable built-in repository regex rather than appending to it. If a new policy should retain that general repository matching as well as the generated exact paths, include the built-in expression from the policy table above as another array entry. Automatic exact `ImageStore` segment and versioned ARB appliance-image exclusions remain active regardless.
 
 The policy is loaded once before cluster collection. The module imports `powershell-yaml` only for this path. It stops the run for a missing/empty file, unsupported schema version, invalid regex, `minimumFreePercent` outside `0..100`, negative `minimumFreeGB`, `cadenceMultiplier` below `1`, or `minimumStaleMinutes` below `1`. The HTML and `-PassThru` `ReportData.PolicySource` value show `BuiltInDefaults` or the full loaded policy path so an operator can confirm which source was active.
 

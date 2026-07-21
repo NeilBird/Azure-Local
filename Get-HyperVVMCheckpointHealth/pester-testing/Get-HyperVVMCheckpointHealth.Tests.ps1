@@ -155,6 +155,11 @@ Describe 'Get-HyperVVMCheckpointHealth source contracts' {
         $script:Source | Should -Match '\$script:HousekeepingFindings\.Count\s+-gt\s+0'
     }
 
+    It 'mentions unhealthy VSS in INVESTIGATE guidance only when unhealthy writers were collected' {
+        $script:Source | Should -Match '(?s)if \(\$vssUnhealthy\.Count -gt 0\) \{\s+Write-AuditReportLine\s+"  evidence is more consistent with a stalled / failed backup checkpoint involving unhealthy VSS writers than"\s+\} else \{\s+Write-AuditReportLine\s+"  evidence is more consistent with a stalled / failed backup checkpoint or other operational checkpoint workflow than"'
+        $script:Source | Should -Not -Match 'likely cause is a stalled / failed backup checkpoint or an unhealthy VSS writer rather than'
+    }
+
     It 'preserves exact file metadata for housekeeping totals and filtering' {
         $script:Source | Should -Match 'Length\s+=\s+\[long\]\$diskFile\.Length'
         $script:Source | Should -Match 'FullName\s+=\s+\[string\]\$diskFile\.FullName'
@@ -498,6 +503,16 @@ Describe 'Module distribution contracts' {
         $readme | Should -Match 'Setup-Get-HyperVVMCheckpointHealth\.ps1'
         $readme | Should -Match 'setup script remains outside the ZIP'
         $readme | Should -Not -Match '(?<!Setup-)Get-HyperVVMCheckpointHealth\.ps1'
+    }
+
+    It 'documents exporting exact VM image exclusions into new and existing policies' {
+        $readme = Get-Content -LiteralPath (Join-Path $script:ModuleRoot 'README.md') -Raw
+        $readme | Should -Match 'Export VM image exclusions from the HTML report'
+        $readme | Should -Match 'available only for `\.vhd` and `\.vhdx` base-disk candidates; it is never offered for `\.avhdx`'
+        $readme | Should -Match 'For a new policy, paste the complete generated `schemaVersion`, `storage`, and `imageLibraryPathPatterns` block'
+        $readme | Should -Match 'For an existing policy, copy only the generated.*entries into its existing `storage\.imageLibraryPathPatterns` array'
+        $readme | Should -Match 'repeat the original audit command with `-PolicyPath ''\.\\checkpoint-health-policy\.yml''`'
+        $readme | Should -Match '`storage\.imageLibraryPathPatterns` is a replacement array'
     }
 
     It 'documents current historic coverage and HTML card semantics' {

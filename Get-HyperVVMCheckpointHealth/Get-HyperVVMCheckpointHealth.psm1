@@ -3138,7 +3138,11 @@ function Invoke-VMCheckpointAudit {
             Write-AuditReportLine  "  recover them; do NOT delete them. Concern signal(s) for this VM:"
         } else {
             Write-AuditReportLine  "  ASSESSMENT: INVESTIGATE - the specific checkpoint fork-commit signature was NOT observed; the"
-            Write-AuditReportLine  "  likely cause is a stalled / failed backup checkpoint or an unhealthy VSS writer rather than"
+            if ($vssUnhealthy.Count -gt 0) {
+                Write-AuditReportLine  "  evidence is more consistent with a stalled / failed backup checkpoint involving unhealthy VSS writers than"
+            } else {
+                Write-AuditReportLine  "  evidence is more consistent with a stalled / failed backup checkpoint or other operational checkpoint workflow than"
+            }
             Write-AuditReportLine  "  on-disk chain corruption. Concern signal(s) for this VM:"
         }
         if ($staleCheckpoints.Count -gt 0) {
