@@ -156,8 +156,10 @@ Describe 'Get-HyperVVMCheckpointHealth source contracts' {
     }
 
     It 'mentions unhealthy VSS in INVESTIGATE guidance only when unhealthy writers were collected' {
-        $script:Source | Should -Match '(?s)if \(\$vssUnhealthy\.Count -gt 0\) \{\s+Write-AuditReportLine\s+"  evidence is more consistent with a stalled / failed backup checkpoint involving unhealthy VSS writers than"\s+\} else \{\s+Write-AuditReportLine\s+"  evidence is more consistent with a stalled / failed backup checkpoint or other operational checkpoint workflow than"'
+        $script:Source | Should -Match '(?s)if \(\$vssUnhealthy\.Count -gt 0\) \{\s+Write-AuditReportLine\s+"  evidence is more consistent with a stalled / failed backup checkpoint involving unhealthy"\s+Write-AuditReportLine\s+"  VSS writers than on-disk chain corruption.*?\} else \{\s+Write-AuditReportLine\s+"  evidence is more consistent with a stalled / failed backup checkpoint or another operational"\s+Write-AuditReportLine\s+"  checkpoint workflow than on-disk chain corruption'
+        $script:Source | Should -Match '(?s)if \(\$vssUnhealthy\.Count -gt 0\) \{\s+Write-Alert\s+"  was NOT observed \(evidence is more consistent with a stalled / failed backup checkpoint".*?"  involving unhealthy VSS writers than on-disk chain corruption\).*?\} else \{\s+Write-Alert\s+"  was NOT observed \(evidence is more consistent with a stalled / failed backup checkpoint".*?"  or another operational checkpoint workflow than on-disk chain corruption\)."'
         $script:Source | Should -Not -Match 'likely cause is a stalled / failed backup checkpoint or an unhealthy VSS writer rather than'
+        $script:Source | Should -Not -Match 'likely a stalled / failed backup checkpoint or an unhealthy VSS writer'
     }
 
     It 'preserves exact file metadata for housekeeping totals and filtering' {
@@ -925,6 +927,12 @@ Describe 'HTML fleet report usability' {
         $script:RenderedHtml | Should -Match "id='hk-visible-bytes'>1\.50 MB</strong>"
         $script:RenderedHtml | Should -Match "id='hk-category-chart'"
         $script:RenderedHtml | Should -Match "id='hk-path-chart'"
+        $script:RenderedHtml | Should -Match 'Cluster Shared Volume \(CSV\) paths'
+        $script:RenderedHtml | Should -Match "aria-label='Visible housekeeping storage by Cluster Shared Volume'"
+        $script:RenderedHtml | Should -Match 'function csvVolumeName\(rootPath\)'
+        $script:RenderedHtml | Should -Match "var csvVolume = csvVolumeName\(row\.getAttribute\('data-root'\)\)"
+        $script:RenderedHtml | Should -Match 'byCsvVolume\[csvVolume\]'
+        $script:RenderedHtml | Should -Not -Match 'Top visible parent paths'
         $script:RenderedHtml | Should -Match 'function applyFilters\(\)'
         $script:RenderedHtml | Should -Match "box\.addEventListener\('change', applyFilters\)"
         $script:RenderedHtml | Should -Match 'seen\[identity\]'
@@ -1116,13 +1124,15 @@ Describe 'Synthetic HTML example report' {
                 [System.Net.WebUtility]::HtmlDecode($_.Value)
             })
         @($paths).Count | Should -BeGreaterThan 0
-        @($paths | Where-Object { $_ -notmatch '^C:\\ClusterStorage\\UserStorage_[12](?:$|\\TestVM(?:0[1-9]|1[0-9]|20)\\)' }).Count | Should -Be 0
+        @($paths | Where-Object { $_ -notmatch '^C:\\ClusterStorage\\UserStorage_[12](?:$|\\(?:TestVM(?:0[1-9]|1[0-9]|20)|GuestCluster)(?:$|\\))' }).Count | Should -Be 0
     }
 
     It 'demonstrates review-only virtual disk housekeeping findings' {
         $script:ExampleHtml | Should -Match 'Placement inconsistency'
         $script:ExampleHtml | Should -Match 'Unattached base disk candidate'
         $script:ExampleHtml | Should -Match 'Shared virtual disk reference'
+        $script:ExampleHtml | Should -Match 'Shared VHD Set reference'
+        $script:ExampleHtml | Should -Match 'GuestClusterData\.vhds'
         $script:ExampleHtml | Should -Match 'TestVM08_LegacyData\.vhdx'
         $script:ExampleHtml | Should -Match 'TestVM12_Archive\.vhdx'
         ([regex]::Matches($script:ExampleHtml, "class='hk-image-filter' type='checkbox'> Filter out as VM image")).Count | Should -Be 2
@@ -1728,6 +1738,16 @@ Describe 'Per-VM cluster orphan candidate selection' {
 
         @($result).Count | Should -Be 0
     }
+
+    It 'does not return a VHD Set-managed AVHDX as a per-VM orphan candidate' {
+        $managedFolder = 'C:\TEST\CSV01\GuestCluster'
+        $result = Get-VMOrphanCandidatesFromClusterInventory `
+            -Inventory @([pscustomobject]@{ Name = 'data-guid.avhdx'; FullName = "$managedFolder\data-guid.avhdx" }) `
+            -Ownership @() -CurrentVMName 'GUEST-NODE-01' -VhdFolders @($managedFolder) `
+            -CoverageComplete $true -VhdSetManagedFolders @($managedFolder.ToLowerInvariant())
+
+        @($result).Count | Should -Be 0
+    }
 }
 
 Describe 'Cluster virtual disk runtime collectors' {
@@ -1759,7 +1779,7 @@ Describe 'Cluster virtual disk runtime collectors' {
         $csvRoot = Join-Path $TestDrive 'CSV01'
         $nested = Join-Path $csvRoot 'Nested'
         New-Item -ItemType Directory -Path $nested -Force | Out-Null
-        foreach ($name in @('base.vhd', 'data.vhdx', 'checkpoint.avhdx', 'ignore.txt')) {
+        foreach ($name in @('base.vhd', 'data.vhdx', 'checkpoint.avhdx', 'guest-cluster.vhds', 'ignore.txt')) {
             New-Item -ItemType File -Path (Join-Path $nested $name) -Force | Out-Null
         }
         $csv = [pscustomobject]@{ SharedVolumeInfo = [pscustomobject]@{ FriendlyVolumeName = $csvRoot } }
@@ -1768,8 +1788,8 @@ Describe 'Cluster virtual disk runtime collectors' {
             -TargetNode $env:COMPUTERNAME -LocalNode $env:COMPUTERNAME -SessionByNode @{}
 
         $result.Complete | Should -BeTrue
-        @($result.Files).Count | Should -Be 3
-        @($result.Files.Extension | Sort-Object) | Should -Be @('.avhdx', '.vhd', '.vhdx')
+        @($result.Files).Count | Should -Be 4
+        @($result.Files.Extension | Sort-Object) | Should -Be @('.avhdx', '.vhd', '.vhds', '.vhdx')
         @($result.Roots).Count | Should -Be 1
         $result.Roots[0].Complete | Should -BeTrue
     }
@@ -1883,6 +1903,48 @@ Describe 'Virtual disk housekeeping classification' {
         $result.HealthVerdictImpact | Should -BeFalse
     }
 
+    It 'protects an ownerless AVHDX in an attached VHD Set directory from orphan conclusions' {
+        $result = Get-VirtualDiskHousekeepingClassification `
+            -Path 'C:\TEST\CSV01\GuestCluster\data-guid.avhdx' -Owners @() `
+            -VMAssociatedFolders @([pscustomobject]@{ VMName = 'GUEST-NODE-01'; Path = 'C:\TEST\CSV01\GuestCluster' }) `
+            -CoverageComplete $true -ImageLibraryPathPatterns $script:ImageLibraryPathPatterns `
+            -VhdSetManagedFolders @('c:\test\csv01\guestcluster')
+
+        $result.Classification | Should -Be 'VhdSetManagedAsset'
+        $result.VhdSetManagedFolder | Should -Be 'c:\test\csv01\guestcluster'
+        $result.HealthVerdictImpact | Should -BeFalse
+    }
+
+    It 'does not extend VHD Set protection into nested directories' {
+        $result = Get-VirtualDiskHousekeepingClassification `
+            -Path 'C:\TEST\CSV01\GuestCluster\Archive\detached.avhdx' -Owners @() `
+            -VMAssociatedFolders @() -CoverageComplete $true `
+            -ImageLibraryPathPatterns $script:ImageLibraryPathPatterns `
+            -VhdSetManagedFolders @('C:\TEST\CSV01\GuestCluster')
+
+        $result.Classification | Should -Be 'UnattachedDifferencingCandidate'
+    }
+
+    It 'does not hide an attached AVHDX in a VHD Set directory' {
+        $result = Get-VirtualDiskHousekeepingClassification `
+            -Path 'C:\TEST\CSV01\GuestCluster\attached.avhdx' -Owners @('GUEST-NODE-01') `
+            -VMAssociatedFolders @() -CoverageComplete $true `
+            -ImageLibraryPathPatterns $script:ImageLibraryPathPatterns `
+            -VhdSetManagedFolders @('C:\TEST\CSV01\GuestCluster')
+
+        $result.Classification | Should -Be 'AttachedVirtualDisk'
+    }
+
+    It 'classifies an unattached VHDS separately from base disks' {
+        $result = Get-VirtualDiskHousekeepingClassification `
+            -Path 'C:\TEST\CSV01\GuestCluster\detached.vhds' -Owners @() `
+            -VMAssociatedFolders @() -CoverageComplete $true `
+            -ImageLibraryPathPatterns $script:ImageLibraryPathPatterns
+
+        $result.Classification | Should -Be 'UnattachedVhdSetCandidate'
+        $result.HealthVerdictImpact | Should -BeFalse
+    }
+
     It 'excludes an exact configured image-library path segment from housekeeping' {
         $result = Get-VirtualDiskHousekeepingClassification `
             -Path 'C:\TEST\CSV01\Images\base-os.vhdx' -Owners @() -VMAssociatedFolders @() -CoverageComplete $true `
@@ -1937,9 +1999,25 @@ Describe 'Virtual disk housekeeping classification' {
 
     It 'omits excluded image assets and explains custom policy exclusions' {
         $source = Get-Content -LiteralPath (Join-Path (Split-Path $PSScriptRoot -Parent) 'Get-HyperVVMCheckpointHealth.psm1') -Raw
-        $source | Should -Match "Classification -eq 'ExcludedImageLibraryAsset'\) \{ continue \}"
+        $source | Should -Match "'ExcludedImageLibraryAsset', 'VhdSetManagedAsset'"
         $source | Should -Match 'exclude its full path with storage\.imageLibraryPathPatterns'
         $source | Should -Match 'checkpoint-health-policy\.yml file supplied via -PolicyPath'
+    }
+
+    It 'documents and reports VHD Set-managed storage conservatively' {
+        $toolRoot = Split-Path $PSScriptRoot -Parent
+        $source = Get-Content -LiteralPath (Join-Path $toolRoot 'Get-HyperVVMCheckpointHealth.psm1') -Raw
+        $storageSource = Get-Content -LiteralPath (Join-Path $toolRoot 'Private\Get-HyperVVMCheckpointHealth.Storage.psm1') -Raw
+        $readme = Get-Content -LiteralPath (Join-Path $toolRoot 'README.md') -Raw
+
+        $source | Should -Match 'Category\s+= if \(\$isVhdSet\) \{ ''Shared VHD Set reference'' \}'
+        $source | Should -Match "'ExcludedImageLibraryAsset', 'VhdSetManagedAsset'"
+        $source | Should -Match '\$currentVmVhdSetManagedFolders = @\('
+        $source | Should -Match '\$_\.VMName -eq \$VMName'
+        $source | Should -Match '''n/a \(shared VHD Set\)'''
+        $source | Should -Match '''Active VHD Set \(top\)'''
+        $storageSource | Should -Match 'https://learn\.microsoft\.com/en-us/windows-server/virtualization/hyper-v/manage/create-vhdset-file'
+        $readme | Should -Match 'ownerless `\.avhdx` files in that exact attached-VHDS directory'
     }
 
     It 'does not use an incidental image substring as an image-library hint' {

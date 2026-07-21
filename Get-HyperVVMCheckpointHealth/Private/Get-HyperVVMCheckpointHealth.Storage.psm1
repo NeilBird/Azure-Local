@@ -169,7 +169,8 @@ function Get-VMOrphanCandidatesFromClusterInventory {
         [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Ownership,
         [Parameter(Mandatory)][ValidateNotNullOrEmpty()][string]$CurrentVMName,
         [Parameter(Mandatory)][AllowEmptyCollection()][string[]]$VhdFolders,
-        [Parameter(Mandatory)][bool]$CoverageComplete
+        [Parameter(Mandatory)][bool]$CoverageComplete,
+        [AllowEmptyCollection()][string[]]$VhdSetManagedFolders = @()
     )
 
     if (-not $CoverageComplete -or $VhdFolders.Count -eq 0) { return }
@@ -182,6 +183,9 @@ function Get-VMOrphanCandidatesFromClusterInventory {
         $path = [string]$_.FullName
         if ([System.IO.Path]::GetExtension($path) -ne '.avhdx') { return $false }
         $parent = [System.IO.Path]::GetDirectoryName($path)
+        if (@($VhdSetManagedFolders | Where-Object {
+            $parent -and $parent.Equals(([string]$_).TrimEnd('\', '/'), [System.StringComparison]::OrdinalIgnoreCase)
+        }).Count -gt 0) { return $false }
         foreach ($folder in $folderSet) {
             if ($parent.Equals($folder, [System.StringComparison]::OrdinalIgnoreCase) -or
                 $parent.StartsWith($folder + '\', [System.StringComparison]::OrdinalIgnoreCase) -or
@@ -218,7 +222,10 @@ function Get-VirtualDiskHousekeepingClassification {
 
         [Parameter(Mandatory)]
         [AllowEmptyCollection()]
-        [string[]]$ImageLibraryPathPatterns
+        [string[]]$ImageLibraryPathPatterns,
+
+        [AllowEmptyCollection()]
+        [string[]]$VhdSetManagedFolders = @()
     )
 
     $normalizedPath = $Path.TrimEnd('\', '/')
@@ -240,17 +247,27 @@ function Get-VirtualDiskHousekeepingClassification {
         ([regex]::Match($normalizedPath, [string]$matchedImagePattern[0]).Value).Trim('\', '/')
     } else { '' }
     $extension = [System.IO.Path]::GetExtension($normalizedPath).ToLowerInvariant()
+    $parentPath = [System.IO.Path]::GetDirectoryName($normalizedPath)
+    # VHD Sets expose an attached .vhds metadata path while Hyper-V manages companion files.
+    # https://learn.microsoft.com/en-us/windows-server/virtualization/hyper-v/manage/create-vhdset-file
+    $vhdSetManagedFolder = @($VhdSetManagedFolders | Where-Object {
+        $parentPath -and $parentPath.Equals(([string]$_).TrimEnd('\', '/'), [System.StringComparison]::OrdinalIgnoreCase)
+    } | Select-Object -First 1)
 
     $classification = if (-not $CoverageComplete) {
         'OwnershipAmbiguous'
     } elseif ($matchedImagePattern.Count -gt 0) {
         'ExcludedImageLibraryAsset'
+    } elseif ($extension -eq '.avhdx' -and $ownerSet.Count -eq 0 -and $vhdSetManagedFolder.Count -gt 0) {
+        'VhdSetManagedAsset'
     } elseif ($folderOwnerMismatch -or (($ownerSet.Count -eq 0) -and ($associatedRows.Count -gt 0))) {
         'PlacementInconsistency'
     } elseif ($ownerSet.Count -gt 0) {
         'AttachedVirtualDisk'
     } elseif ($extension -eq '.avhdx') {
         'UnattachedDifferencingCandidate'
+    } elseif ($extension -eq '.vhds') {
+        'UnattachedVhdSetCandidate'
     } else {
         'UnattachedBaseDiskCandidate'
     }
@@ -262,6 +279,7 @@ function Get-VirtualDiskHousekeepingClassification {
         AssociatedVMs          = @($associatedRows | ForEach-Object { [string]$_.VMName } | Where-Object { $_ } | Sort-Object -Unique)
         MatchedImageSegment    = $matchedImageText
         MatchedImagePattern    = if ($matchedImagePattern.Count -gt 0) { [string]$matchedImagePattern[0] } else { '' }
+        VhdSetManagedFolder    = if ($vhdSetManagedFolder.Count -gt 0) { [string]$vhdSetManagedFolder[0] } else { '' }
         HealthVerdictImpact    = $false
         CoverageComplete       = $CoverageComplete
     }

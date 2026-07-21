@@ -1100,7 +1100,7 @@ function ConvertTo-VMCheckpointAuditHtml {
         [void]$sb.Append("</select></label><label>Extension<select id='hk-extension'><option value=''>All extensions</option>")
         foreach ($extension in $housekeepingExtensions) { $text = ConvertTo-HtmlText $extension; [void]$sb.Append("<option value='$text'>$text</option>") }
         [void]$sb.Append("</select></label><label>Minimum size (MB)<input id='hk-min-size' type='number' min='0' step='1' value='0'></label></div><div class='hk-live' aria-live='polite'><span>Visible findings: <strong id='hk-visible-count'>$(@($HousekeepingFindings).Count)</strong> of $(@($HousekeepingFindings).Count)</span><span>Visible unique-file storage: <strong id='hk-visible-bytes'>$(ConvertTo-HtmlText $housekeepingTotalText)</strong></span><span>Unfiltered unique-file storage: <strong>$(ConvertTo-HtmlText $housekeepingTotalText)</strong></span></div></div>")
-        [void]$sb.Append("<div class='hk-charts'><div class='hk-chart'><h3>Visible storage by category</h3><svg id='hk-category-chart' role='img' aria-label='Visible housekeeping storage by category'></svg></div><div class='hk-chart'><h3>Top visible parent paths</h3><svg id='hk-path-chart' role='img' aria-label='Top visible housekeeping parent paths'></svg></div></div><div class='hk-empty' id='hk-empty'>No housekeeping findings match the active filters.</div>")
+        [void]$sb.Append("<div class='hk-charts'><div class='hk-chart'><h3>Visible storage by category</h3><svg id='hk-category-chart' role='img' aria-label='Visible housekeeping storage by category'></svg></div><div class='hk-chart'><h3>Cluster Shared Volume (CSV) paths</h3><svg id='hk-path-chart' role='img' aria-label='Visible housekeeping storage by Cluster Shared Volume'></svg></div></div><div class='hk-empty' id='hk-empty'>No housekeeping findings match the active filters.</div>")
         [void]$sb.Append('<table class="housekeeping" id="hk-table"><colgroup><col class="hk-category"><col class="hk-scope"><col class="hk-filecol"><col class="hk-size"><col class="hk-observation"><col class="hk-review"></colgroup><thead><tr><th><button class="hk-sort" type="button" data-sort="category">Category</button></th><th><button class="hk-sort" type="button" data-sort="scope">Scope</button></th><th><button class="hk-sort" type="button" data-sort="path">File / path</button></th><th><button class="hk-sort" type="button" data-sort="bytes">Size</button></th><th>Observation</th><th>Review</th></tr></thead><tbody>')
         foreach ($finding in @($HousekeepingFindings)) {
             $findingLength = if ($finding.PSObject.Properties['Length']) { [long]$finding.Length } else { 0 }
@@ -1293,6 +1293,10 @@ window.addEventListener('load', function () {
         function selectedImageBoxes() {
             return imageBoxes.filter(function (box) { return box.checked; });
         }
+        function csvVolumeName(rootPath) {
+            var match = /^c:\\clusterstorage\\([^\\]+)(?:\\|$)/i.exec(rootPath || '');
+            return match ? match[1] : (rootPath || 'Unspecified');
+        }
         function updateImagePolicy() {
             var selectedBoxes = selectedImageBoxes();
             imagePolicy.hidden = selectedBoxes.length === 0;
@@ -1316,7 +1320,7 @@ window.addEventListener('load', function () {
             categoryBoxes.forEach(function (box) { if (box.checked) { selected[box.value] = true; } });
             var query = search.value.toLowerCase();
             var minimumBytes = (parseFloat(minSize.value) || 0) * 1048576;
-            var count = 0, bytes = 0, seen = {}, byCategory = {}, byParent = {};
+            var count = 0, bytes = 0, seen = {}, byCategory = {}, byCsvVolume = {};
             rows.forEach(function (row) {
                 var path = row.getAttribute('data-path') || '';
                 var rowBytes = parseInt(row.getAttribute('data-bytes') || '0', 10);
@@ -1331,15 +1335,15 @@ window.addEventListener('load', function () {
                     if (path && !seen[identity]) {
                         seen[identity] = true; bytes += rowBytes;
                         var category = row.getAttribute('data-category') || 'Unspecified';
-                        var parent = row.getAttribute('data-parent') || 'Unspecified';
+                        var csvVolume = csvVolumeName(row.getAttribute('data-root'));
                         byCategory[category] = (byCategory[category] || 0) + rowBytes;
-                        byParent[parent] = (byParent[parent] || 0) + rowBytes;
+                        byCsvVolume[csvVolume] = (byCsvVolume[csvVolume] || 0) + rowBytes;
                     }
                 }
             });
             visibleCount.textContent = count; visibleBytes.textContent = formatBytes(bytes);
             empty.style.display = count ? 'none' : 'block'; table.style.display = count ? '' : 'none';
-            drawChart('hk-category-chart', byCategory); drawChart('hk-path-chart', byParent);
+            drawChart('hk-category-chart', byCategory); drawChart('hk-path-chart', byCsvVolume);
             updateImagePolicy();
         }
         categoryBoxes.forEach(function (box) { box.addEventListener('change', applyFilters); });

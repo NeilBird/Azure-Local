@@ -282,6 +282,16 @@ $housekeepingFindings = @(
         FileName = 'SharedData01.vhdx'
         Observation = 'More than one VM or snapshot inventory references this path: C:\ClusterStorage\UserStorage_2\TestVM14\Virtual Hard Disks\SharedData01.vhdx'
         Review = 'Confirm that the shared reference is intentional and supported for this workload. Do not modify the file based only on this report.'
+    },
+    [pscustomobject]@{
+        Category = 'Shared VHD Set reference'; Scope = 'TestVM16, TestVM17'
+        FileName = 'GuestClusterData.vhds'
+        FullName = 'C:\ClusterStorage\UserStorage_2\GuestCluster\GuestClusterData.vhds'
+        ParentPath = 'C:\ClusterStorage\UserStorage_2\GuestCluster'
+        CsvRoot = 'C:\ClusterStorage\UserStorage_2'; Extension = '.vhds'; Length = 4194304
+        Classification = 'AttachedVirtualDisk'
+        Observation = 'More than one VM references this VHD Set path: C:\ClusterStorage\UserStorage_2\GuestCluster\GuestClusterData.vhds'
+        Review = 'VHD Sets are designed for shared guest-cluster storage. Confirm that the listed VMs are the intended guest-cluster nodes. Do not modify the VHDS or its Hyper-V-managed files based only on this report.'
     }
 )
 
@@ -316,7 +326,7 @@ if ($html -match '(?i)\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b') {
     throw 'An email address was found in the synthetic report.'
 }
 $clusterPaths = @([regex]::Matches($html, '(?i)C:\\ClusterStorage\\[^<\s''"]+') | ForEach-Object { [System.Net.WebUtility]::HtmlDecode($_.Value) })
-$unexpectedPaths = @($clusterPaths | Where-Object { $_ -notmatch '^C:\\ClusterStorage\\UserStorage_[12](?:$|\\TestVM(?:0[1-9]|1[0-9]|20)\\)' })
+$unexpectedPaths = @($clusterPaths | Where-Object { $_ -notmatch '^C:\\ClusterStorage\\UserStorage_[12](?:$|\\(?:TestVM(?:0[1-9]|1[0-9]|20)|GuestCluster)(?:$|\\))' })
 if ($unexpectedPaths.Count -gt 0) {
     throw "Unexpected ClusterStorage path in synthetic report: $($unexpectedPaths -join ', ')"
 }

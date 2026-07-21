@@ -884,7 +884,7 @@ function Get-ClusterVirtualDiskFileInventory {
                             } elseif (-not ($child.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) {
                                 $pendingPaths.Enqueue([string]$child.FullName)
                             }
-                        } elseif ($child.Extension -in @('.vhd', '.vhdx', '.avhdx')) {
+                        } elseif ($child.Extension -in @('.vhd', '.vhdx', '.avhdx', '.vhds')) {
                             [void]$rootFiles.Add($child)
                         }
                     }
@@ -1731,8 +1731,12 @@ function Invoke-VMCheckpointAudit {
             $topAge = [math]::Round(([DateTime]::UtcNow - $top.LastWrite).TotalHours, 1)
             Write-AuditReportLine ("  LastWrite (UTC): {0}" -f $top.LastWrite.ToString('yyyy-MM-dd HH:mm:ss'))
             Write-AuditReportLine ("  Age (hrs)      : {0}  (hours since last write; ~0 = active / in-use)" -f $topAge)
-            # Stale only applies to a DIFFERENCING (.avhdx) layer; a base disk's old timestamp is normal.
-            $topStale = if ($top.Type -eq 'Differencing') { if ($topAge -ge $StaleHours) { 'YES' } else { 'NO' } } else { 'n/a (base disk)' }
+            # Stale only applies to a DIFFERENCING (.avhdx) layer; other attached disk types are not aged as checkpoints.
+            $topStale = if ($top.Type -eq 'Differencing') {
+                if ($topAge -ge $StaleHours) { 'YES' } else { 'NO' }
+            } elseif ([System.IO.Path]::GetExtension([string]$top.Path).Equals('.vhds', [System.StringComparison]::OrdinalIgnoreCase)) {
+                'n/a (shared VHD Set)'
+            } elseif ($top.Type -in @('Dynamic', 'Fixed')) { 'n/a (base disk)' } else { "n/a ($($top.Type))" }
             Write-AuditReportLine ("  Stale          : {0}" -f $topStale)
         } else {
             Write-AuditReportLine "  LastWrite (UTC): (unavailable)"
@@ -1755,7 +1759,11 @@ function Invoke-VMCheckpointAudit {
             # hierarchy and total depth are unambiguous. SizeGB here is each LAYER's own size.
             $chainRows = for ($li = 0; $li -lt $d.Chain.Count; $li++) {
                 $c = $d.Chain[$li]
-                $role = if ($c.Type -eq 'Differencing') { if ($li -eq 0) { 'Active (top)' } else { 'Checkpoint' } } else { 'Base' }
+                $role = if ($c.Type -eq 'Differencing') {
+                    if ($li -eq 0) { 'Active (top)' } else { 'Checkpoint' }
+                } elseif ([System.IO.Path]::GetExtension([string]$c.Path).Equals('.vhds', [System.StringComparison]::OrdinalIgnoreCase)) {
+                    if ($li -eq 0) { 'Active VHD Set (top)' } else { 'VHD Set' }
+                } elseif ($c.Type -in @('Dynamic', 'Fixed')) { 'Base' } else { "Attached ($($c.Type))" }
                 [pscustomobject]@{
                     Level             = $li
                     Role              = $role
@@ -1928,6 +1936,9 @@ function Invoke-VMCheckpointAudit {
             -StartUtc $fileInventoryStart -EndUtc (Get-TelemetryNow)
     }
     $virtualDiskCoverageComplete = [bool]($script:VirtualDiskOwnershipInventory.Complete -and $script:VirtualDiskFileInventory.Complete)
+    $vhdSetManagedFolders = @($script:VirtualDiskOwnershipInventory.Rows | Where-Object {
+        $_.Path -and [System.IO.Path]::GetExtension([string]$_.Path).Equals('.vhds', [System.StringComparison]::OrdinalIgnoreCase)
+    } | ForEach-Object { [System.IO.Path]::GetDirectoryName([string]$_.Path) } | Where-Object { $_ } | Sort-Object -Unique)
     if (-not $script:VirtualDiskHousekeepingBuilt) {
         $classificationStart = Get-TelemetryNow
         $ownersByPath = New-Object 'System.Collections.Generic.Dictionary[string,System.Collections.Generic.HashSet[string]]' ([System.StringComparer]::OrdinalIgnoreCase)
@@ -1974,13 +1985,15 @@ function Invoke-VMCheckpointAudit {
                 $diskOwners = @(if ($ownersByPath.ContainsKey([string]$diskFile.FullName)) { @($ownersByPath[[string]$diskFile.FullName]) } else { @() })
                 $classification = Get-VirtualDiskHousekeepingClassification -Path ([string]$diskFile.FullName) `
                     -Owners $diskOwners -VMAssociatedFolders @($script:VirtualDiskOwnershipInventory.Folders) `
-                    -CoverageComplete $true -ImageLibraryPathPatterns $script:CheckpointHealthPolicy.Storage.ImageLibraryPathPatterns
+                    -CoverageComplete $true -ImageLibraryPathPatterns $script:CheckpointHealthPolicy.Storage.ImageLibraryPathPatterns `
+                    -VhdSetManagedFolders $vhdSetManagedFolders
                 if (-not $classificationCounts.ContainsKey($classification.Classification)) { $classificationCounts[$classification.Classification] = 0 }
                 $classificationCounts[$classification.Classification]++
-                if ($classification.Classification -eq 'ExcludedImageLibraryAsset') { continue }
+                if ($classification.Classification -in @('ExcludedImageLibraryAsset', 'VhdSetManagedAsset')) { continue }
                 if (@($classification.Owners).Count -gt 1) {
+                    $isVhdSet = ([string]$diskFile.Extension).Equals('.vhds', [System.StringComparison]::OrdinalIgnoreCase)
                     [void]$script:HousekeepingFindings.Add([pscustomobject]@{
-                        Category    = 'Shared virtual disk reference'
+                        Category    = if ($isVhdSet) { 'Shared VHD Set reference' } else { 'Shared virtual disk reference' }
                         Scope       = @($classification.Owners) -join ', '
                         FileName    = [string]$diskFile.Name
                         FullName    = [string]$diskFile.FullName
@@ -1991,14 +2004,15 @@ function Invoke-VMCheckpointAudit {
                         CreationTimeUtc = $diskFile.CreationTimeUtc
                         LastWriteTimeUtc = $diskFile.LastWriteTimeUtc
                         Classification = [string]$classification.Classification
-                        Observation = "More than one VM or snapshot inventory references this path: $($diskFile.FullName)"
-                        Review      = 'Confirm that the shared reference is intentional and supported for this workload. Do not modify the file based only on this report.'
+                        Observation = if ($isVhdSet) { "More than one VM references this VHD Set path: $($diskFile.FullName)" } else { "More than one VM or snapshot inventory references this path: $($diskFile.FullName)" }
+                        Review      = if ($isVhdSet) { 'VHD Sets are designed for shared guest-cluster storage. Confirm that the listed VMs are the intended guest-cluster nodes. Do not modify the VHDS or its Hyper-V-managed files based only on this report.' } else { 'Confirm that the shared reference is intentional and supported for this workload. Do not modify the file based only on this report.' }
                     })
                 }
                 if ($classification.Classification -eq 'AttachedVirtualDisk') { continue }
                 $category = switch ($classification.Classification) {
                     'PlacementInconsistency'          { 'Placement inconsistency' }
                     'UnattachedDifferencingCandidate' { 'Unattached differencing disk candidate' }
+                    'UnattachedVhdSetCandidate'       { 'Unattached VHD Set candidate' }
                     default                           { 'Unattached base disk candidate' }
                 }
                 $scopeNames = @((@($classification.Owners) + @($classification.AssociatedVMs)) | Where-Object { $_ } | Sort-Object -Unique)
@@ -2006,6 +2020,7 @@ function Invoke-VMCheckpointAudit {
                 $observation = switch ($classification.Classification) {
                     'PlacementInconsistency'          { "Virtual disk placement and VM ownership associations differ: $($diskFile.FullName)" }
                     'UnattachedDifferencingCandidate' { "No VM or snapshot chain references this AVHDX under complete coverage: $($diskFile.FullName)" }
+                    'UnattachedVhdSetCandidate'       { "No VM or snapshot inventory references this VHDS under complete coverage: $($diskFile.FullName)" }
                     default                           { "No VM or snapshot chain references this base disk under complete coverage: $($diskFile.FullName)" }
                 }
                 [void]$script:HousekeepingFindings.Add([pscustomobject]@{
@@ -2037,10 +2052,15 @@ function Invoke-VMCheckpointAudit {
 
     $vmOrphanClassificationStart = Get-TelemetryNow
     if ($vhdFolders -and $virtualDiskCoverageComplete) {
+        $currentVmVhdSetManagedFolders = @($script:VirtualDiskOwnershipInventory.Rows | Where-Object {
+            $_.VMName -eq $VMName -and $_.Path -and
+            [System.IO.Path]::GetExtension([string]$_.Path).Equals('.vhds', [System.StringComparison]::OrdinalIgnoreCase)
+        } | ForEach-Object { [System.IO.Path]::GetDirectoryName([string]$_.Path) } | Where-Object { $_ } | Sort-Object -Unique)
         $orphans = @(Get-VMOrphanCandidatesFromClusterInventory `
             -Inventory @($script:VirtualDiskFileInventory.Files) `
             -Ownership @($script:VirtualDiskOwnershipInventory.Rows) `
-            -CurrentVMName $VMName -VhdFolders $vhdFolders -CoverageComplete $true)
+            -CurrentVMName $VMName -VhdFolders $vhdFolders -CoverageComplete $true `
+            -VhdSetManagedFolders $currentVmVhdSetManagedFolders)
         $hasOrphans = ($orphans.Count -gt 0)
         if ($orphans.Count -gt 0) {
             Write-Alert ("  {0} unattached .avhdx candidate(s) found (not referenced by any VM/snapshot chain):" -f $orphans.Count) -Level Warning
@@ -3139,11 +3159,12 @@ function Invoke-VMCheckpointAudit {
         } else {
             Write-AuditReportLine  "  ASSESSMENT: INVESTIGATE - the specific checkpoint fork-commit signature was NOT observed; the"
             if ($vssUnhealthy.Count -gt 0) {
-                Write-AuditReportLine  "  evidence is more consistent with a stalled / failed backup checkpoint involving unhealthy VSS writers than"
+                Write-AuditReportLine  "  evidence is more consistent with a stalled / failed backup checkpoint involving unhealthy"
+                Write-AuditReportLine  "  VSS writers than on-disk chain corruption. Concern signal(s) for this VM:"
             } else {
-                Write-AuditReportLine  "  evidence is more consistent with a stalled / failed backup checkpoint or other operational checkpoint workflow than"
+                Write-AuditReportLine  "  evidence is more consistent with a stalled / failed backup checkpoint or another operational"
+                Write-AuditReportLine  "  checkpoint workflow than on-disk chain corruption. Concern signal(s) for this VM:"
             }
-            Write-AuditReportLine  "  on-disk chain corruption. Concern signal(s) for this VM:"
         }
         if ($staleCheckpoints.Count -gt 0) {
             Write-AuditReportLine ("    - {0} named snapshot(s) at or beyond the {1}-hour stale threshold (set via -StaleHours; default 24)." -f $staleCheckpoints.Count, $StaleHours)
@@ -3288,7 +3309,13 @@ function Invoke-VMCheckpointAudit {
             Write-Alert "  See the Historic Event Correlation and FINDINGS TO INVESTIGATE sections above - engage Microsoft Support (CSS) / your backup vendor to recover the orphaned data." -Level Critical
         } else {
             Write-Alert "  INVESTIGATE: concern signals are present, but the specific checkpoint fork-commit signature" -Level Warning
-            Write-Alert "  was NOT observed (likely a stalled / failed backup checkpoint or an unhealthy VSS writer)." -Level Warning
+            if ($vssUnhealthy.Count -gt 0) {
+                Write-Alert "  was NOT observed (evidence is more consistent with a stalled / failed backup checkpoint" -Level Warning
+                Write-Alert "  involving unhealthy VSS writers than on-disk chain corruption)." -Level Warning
+            } else {
+                Write-Alert "  was NOT observed (evidence is more consistent with a stalled / failed backup checkpoint" -Level Warning
+                Write-Alert "  or another operational checkpoint workflow than on-disk chain corruption)." -Level Warning
+            }
             Write-Alert ("  Why flagged: {0} concerning event(s) for this VM [{1}]; {2} stale attached AVHDX layer(s); {3} stale named snapshot(s) >= {4}h; mismatch={5}; {6} unhealthy VSS writer(s); {7} orphaned .avhdx file(s)." -f $vmEventConcernCount, $vmConcernIdSummary, $staleAttachedLayerCount, $staleCheckpoints.Count, $StaleHours, $snapshotLayerMismatch, $vssUnhealthy.Count, @($orphans).Count) -Level Warning
             Write-Alert "  See the FINDINGS TO INVESTIGATE section above for the suggested next steps (backup-team triage first; no Microsoft case needed yet)." -Level Warning
         }
