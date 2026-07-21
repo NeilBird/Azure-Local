@@ -439,19 +439,6 @@ function ConvertTo-VMCheckpointAuditHtml {
                 }
     }
 
-    # Node-wide events caveat. v0.2.15: the report now shows TWO event counts per VM (per-VM attributed,
-    # which drives the verdict, and node-wide for context), so this explains both rather than a single
-    # node-wide figure.
-    [void]$sb.Append(@'
-<div class="callout info">
-  <strong>Reading the event counts:</strong> each VM shows <strong>two</strong> figures - a <strong>per-VM</strong>
-  count of concern events whose message names <em>that</em> VM (these drive its verdict), and a <strong>node-wide</strong>
-  count for context (checkpoint / merge activity across <strong>all</strong> VMs on the owning node, often referencing
-  <em>other</em> VMs). Only the node-wide figure is node health context, not proof the audited VM is failing; each VM's
-  own attributed events are listed in its section below.
-</div>
-'@)
-
     # Recommended next steps (placed up-front, right after the summary callouts). Every bullet is
     # CONTEXT-GATED so the list shows only advice that is actually actionable for this run:
     #   - the two stale-checkpoint bullets appear only when >=1 stale checkpoint was found;
@@ -605,6 +592,18 @@ function ConvertTo-VMCheckpointAuditHtml {
     }
     [void]$sb.Append(@'
 </ol>
+'@)
+
+    # Node-wide events caveat. Place it immediately before the summary table where both event counts
+    # are first interpreted: per-VM attributed events drive the verdict; node-wide events are context.
+    [void]$sb.Append(@'
+<div class="callout info">
+  <strong>Reading the event counts:</strong> each VM shows <strong>two</strong> figures - a <strong>per-VM</strong>
+  count of concern events whose message names <em>that</em> VM (these drive its verdict), and a <strong>node-wide</strong>
+  count for context (checkpoint / merge activity across <strong>all</strong> VMs on the owning node, often referencing
+  <em>other</em> VMs). Only the node-wide figure is node health context, not proof the audited VM is failing; each VM's
+  own attributed events are listed in its section below.
+</div>
 '@)
 
     # VM summary table.

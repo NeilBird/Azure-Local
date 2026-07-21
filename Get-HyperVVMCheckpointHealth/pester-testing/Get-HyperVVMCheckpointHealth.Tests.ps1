@@ -934,6 +934,12 @@ Describe 'HTML fleet report usability' {
         $script:RenderedHtml | Should -Match 'byCsvVolume\[csvVolume\]'
         $script:RenderedHtml | Should -Not -Match 'Top visible parent paths'
         $script:RenderedHtml | Should -Match 'function applyFilters\(\)'
+        $recommendedIndex = $script:RenderedHtml.IndexOf('<h2>Recommended next steps</h2>')
+        $eventCountsIndex = $script:RenderedHtml.IndexOf('<strong>Reading the event counts:</strong>')
+        $summaryTableIndex = $script:RenderedHtml.IndexOf('<h2>VM summary table</h2>')
+        $recommendedIndex | Should -BeGreaterThan -1
+        $eventCountsIndex | Should -BeGreaterThan $recommendedIndex
+        $summaryTableIndex | Should -BeGreaterThan $eventCountsIndex
         $script:RenderedHtml | Should -Match "box\.addEventListener\('change', applyFilters\)"
         $script:RenderedHtml | Should -Match 'seen\[identity\]'
     }
