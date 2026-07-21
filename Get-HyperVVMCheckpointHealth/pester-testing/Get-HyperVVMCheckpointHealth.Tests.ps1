@@ -176,7 +176,8 @@ Describe 'Get-HyperVVMCheckpointHealth source contracts' {
         $script:Source | Should -Match "DiagnosticOperation 'Invoke ownership inventory on cluster node'"
         $script:Source | Should -Match "DiagnosticOperation 'Invoke virtual-disk file inventory on cluster node'"
         $script:Source | Should -Match 'Add-AuditDiagnosticMessage -Message \(\[string\]\$collectionError\)'
-        $script:Source | Should -Match 'Add-AuditDiagnosticMessage -Message \(\[string\]\$failedRoot\.Error\)'
+        $script:Source | Should -Match 'Add-AuditDiagnosticMessage -Message \(\[string\]\$pathError\.Error\)'
+        $script:Source | Should -Match 'Scope \("Node=\{0\}; Path=\{1\}" -f \$TargetNode, \$pathError\.Path\)'
     }
 
     It 'times and retry-protects Replica monitoring settings collection' {
@@ -1653,6 +1654,9 @@ Describe 'Cluster virtual disk runtime collectors' {
         function Get-VMHardDiskDrive { param($VM, $VMSnapshot) }
         function Get-VMSnapshot { param($VM) }
         function Get-VHD { param($Path) }
+        function Add-AuditDiagnosticMessage { param($Message, $Operation, $Scope) }
+        function Add-AuditDiagnostic { param($ErrorRecord, $Operation, $Scope) }
+        function Invoke-WithRetry { param($ScriptBlock, $DiagnosticOperation, $DiagnosticScope) & $ScriptBlock }
     }
 
     It 'recursively inventories all supported virtual disk extensions and reports root completeness' {
@@ -1672,6 +1676,71 @@ Describe 'Cluster virtual disk runtime collectors' {
         @($result.Files.Extension | Sort-Object) | Should -Be @('.avhdx', '.vhd', '.vhdx')
         @($result.Roots).Count | Should -Be 1
         $result.Roots[0].Complete | Should -BeTrue
+    }
+
+    It 'skips System Volume Information without making CSV coverage incomplete' {
+        $csvRoot = Join-Path $TestDrive 'CSV-SystemMetadata'
+        $workload = Join-Path $csvRoot 'Workload'
+        $systemMetadata = Join-Path $csvRoot 'System Volume Information'
+        New-Item -ItemType Directory -Path $workload,$systemMetadata -Force | Out-Null
+        New-Item -ItemType File -Path (Join-Path $workload 'workload.vhdx') -Force | Out-Null
+        New-Item -ItemType File -Path (Join-Path $systemMetadata 'ignored.vhdx') -Force | Out-Null
+        $csv = [pscustomobject]@{ SharedVolumeInfo = [pscustomobject]@{ FriendlyVolumeName = $csvRoot } }
+
+        $result = Get-ClusterVirtualDiskFileInventory -CsvVolumes @($csv) `
+            -TargetNode $env:COMPUTERNAME -LocalNode $env:COMPUTERNAME -SessionByNode @{}
+
+        $result.Complete | Should -BeTrue
+        @($result.Files).Count | Should -Be 1
+        $result.Files[0].Name | Should -Be 'workload.vhdx'
+        @($result.PathErrors).Count | Should -Be 0
+        @($result.SkippedPaths).Count | Should -Be 1
+        $result.SkippedPaths[0] | Should -Be $systemMetadata
+    }
+
+    It 'retains readable files and records an unexpected inaccessible sub-folder' {
+        $csvRoot = Join-Path $TestDrive 'CSV-Partial'
+        $readable = Join-Path $csvRoot 'Readable'
+        $blocked = Join-Path $csvRoot 'Blocked'
+        New-Item -ItemType Directory -Path $readable,$blocked -Force | Out-Null
+        New-Item -ItemType File -Path (Join-Path $readable 'readable.avhdx') -Force | Out-Null
+        $csv = [pscustomobject]@{ SharedVolumeInfo = [pscustomobject]@{ FriendlyVolumeName = $csvRoot } }
+        Mock Get-ChildItem {
+            throw [System.UnauthorizedAccessException]::new("Access to the path '$blocked' is denied.")
+        } -ParameterFilter { $LiteralPath -eq $blocked }
+
+        $result = Get-ClusterVirtualDiskFileInventory -CsvVolumes @($csv) `
+            -TargetNode $env:COMPUTERNAME -LocalNode $env:COMPUTERNAME -SessionByNode @{}
+
+        $result.Complete | Should -BeFalse
+        @($result.Files).Count | Should -Be 1
+        $result.Files[0].Name | Should -Be 'readable.avhdx'
+        @($result.PathErrors).Count | Should -Be 1
+        $result.PathErrors[0].Path | Should -Be $blocked
+        $result.PathErrors[0].IsRoot | Should -BeFalse
+        $result.Errors[0] | Should -Match 'Blocked'
+    }
+
+    It 'uses distinct housekeeping categories for root and CSV folder inventory failures' {
+        $source = Get-Content -LiteralPath $modulePath -Raw
+        $source | Should -Match 'if \(\$pathError\.IsRoot\) \{ ''CSV root incomplete'' \} else \{ ''CSV folder path inaccessible'' \}'
+    }
+
+    It 'returns structured root failures when the inventory command cannot run' {
+        $csvRoot = Join-Path $TestDrive 'CSV-RemoteFailure'
+        $csv = [pscustomobject]@{ SharedVolumeInfo = [pscustomobject]@{ FriendlyVolumeName = $csvRoot } }
+        Mock New-PSSession { throw 'Remote session unavailable.' }
+
+        $result = Get-ClusterVirtualDiskFileInventory -CsvVolumes @($csv) `
+            -TargetNode 'REMOTE-NODE' -LocalNode $env:COMPUTERNAME -SessionByNode @{}
+
+        $result.Complete | Should -BeFalse
+        @($result.Files).Count | Should -Be 0
+        @($result.PathErrors).Count | Should -Be 1
+        $result.PathErrors[0].Path | Should -Be $csvRoot
+        $result.PathErrors[0].IsRoot | Should -BeTrue
+        @($result.SkippedPaths).Count | Should -Be 0
+        @($result.Roots[0].PathErrors).Count | Should -Be 1
     }
 
     It 'collects current, snapshot, and parent-chain ownership paths with workload counts' {

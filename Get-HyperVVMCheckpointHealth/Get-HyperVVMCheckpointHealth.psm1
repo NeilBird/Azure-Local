@@ -858,27 +858,61 @@ function Get-ClusterVirtualDiskFileInventory {
         $rootStatus = [System.Collections.Generic.List[object]]::new()
         foreach ($root in $Roots) {
             $rootStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+            $rootFiles = [System.Collections.Generic.List[object]]::new()
+            $pathErrors = [System.Collections.Generic.List[object]]::new()
+            $skippedPaths = [System.Collections.Generic.List[string]]::new()
             try {
                 if (-not (Test-Path -LiteralPath $root -PathType Container)) { throw "CSV root is not accessible: $root" }
-                $rootFiles = @(Get-ChildItem -LiteralPath $root -Recurse -File -Force -ErrorAction Stop |
-                    Where-Object { $_.Extension -in @('.vhd', '.vhdx', '.avhdx') })
-                foreach ($file in $rootFiles) {
-                    [void]$files.Add([pscustomobject]@{
-                        Name             = [string]$file.Name
-                        FullName         = [string]$file.FullName
-                        Extension        = [string]$file.Extension
-                        Length           = [long]$file.Length
-                        CreationTimeUtc  = $file.CreationTimeUtc
-                        LastWriteTimeUtc = $file.LastWriteTimeUtc
-                        CsvRoot          = $root
-                    })
+                $pendingPaths = [System.Collections.Generic.Queue[string]]::new()
+                $pendingPaths.Enqueue($root)
+                while ($pendingPaths.Count -gt 0) {
+                    $currentPath = $pendingPaths.Dequeue()
+                    try {
+                        $children = @(Get-ChildItem -LiteralPath $currentPath -Force -ErrorAction Stop)
+                    } catch {
+                        [void]$pathErrors.Add([pscustomobject]@{
+                            Path   = $currentPath
+                            IsRoot = $currentPath.Equals($root, [StringComparison]::OrdinalIgnoreCase)
+                            Error  = $_.Exception.Message
+                        })
+                        continue
+                    }
+                    foreach ($child in $children) {
+                        if ($child.PSIsContainer) {
+                            if ($child.Name -eq 'System Volume Information') {
+                                [void]$skippedPaths.Add([string]$child.FullName)
+                            } elseif (-not ($child.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) {
+                                $pendingPaths.Enqueue([string]$child.FullName)
+                            }
+                        } elseif ($child.Extension -in @('.vhd', '.vhdx', '.avhdx')) {
+                            [void]$rootFiles.Add($child)
+                        }
+                    }
                 }
-                $rootStopwatch.Stop()
-                [void]$rootStatus.Add([pscustomobject]@{ Root = $root; Complete = $true; DurationMs = [long]$rootStopwatch.ElapsedMilliseconds; FileCount = $rootFiles.Count; Error = '' })
             } catch {
-                $rootStopwatch.Stop()
-                [void]$rootStatus.Add([pscustomobject]@{ Root = $root; Complete = $false; DurationMs = [long]$rootStopwatch.ElapsedMilliseconds; FileCount = 0; Error = $_.Exception.Message })
+                [void]$pathErrors.Add([pscustomobject]@{ Path = $root; IsRoot = $true; Error = $_.Exception.Message })
             }
+            foreach ($file in $rootFiles) {
+                [void]$files.Add([pscustomobject]@{
+                    Name             = [string]$file.Name
+                    FullName         = [string]$file.FullName
+                    Extension        = [string]$file.Extension
+                    Length           = [long]$file.Length
+                    CreationTimeUtc  = $file.CreationTimeUtc
+                    LastWriteTimeUtc = $file.LastWriteTimeUtc
+                    CsvRoot          = $root
+                })
+            }
+            $rootStopwatch.Stop()
+            [void]$rootStatus.Add([pscustomobject]@{
+                Root             = $root
+                Complete         = ($pathErrors.Count -eq 0)
+                DurationMs       = [long]$rootStopwatch.ElapsedMilliseconds
+                FileCount        = $rootFiles.Count
+                Error            = if ($pathErrors.Count -gt 0) { [string]$pathErrors[0].Error } else { '' }
+                PathErrors       = $pathErrors.ToArray()
+                SkippedPaths     = $skippedPaths.ToArray()
+            })
         }
         [pscustomobject]@{ Files = $files.ToArray(); Roots = $rootStatus.ToArray() }
     }
@@ -904,22 +938,36 @@ function Get-ClusterVirtualDiskFileInventory {
         }
         $files = @($result.Files | Sort-Object FullName -Unique)
         $rootStatus = @($result.Roots)
-        foreach ($failedRoot in @($rootStatus | Where-Object { $_.Error })) {
-            Add-AuditDiagnosticMessage -Message ([string]$failedRoot.Error) `
-                -Operation 'Collect cluster virtual disk file inventory' -Scope ("Node={0}; Root={1}" -f $TargetNode, $failedRoot.Root)
+        $pathErrors = @($rootStatus | ForEach-Object { @($_.PathErrors) })
+        foreach ($pathError in $pathErrors) {
+            Add-AuditDiagnosticMessage -Message ([string]$pathError.Error) `
+                -Operation 'Collect cluster virtual disk file inventory' -Scope ("Node={0}; Path={1}" -f $TargetNode, $pathError.Path)
         }
         [pscustomobject]@{
             Complete = ($roots.Count -gt 0 -and @($rootStatus | Where-Object { -not $_.Complete }).Count -eq 0)
             Files    = $files
             Roots    = $rootStatus
-            Errors   = @($rootStatus | Where-Object { $_.Error } | ForEach-Object { "Root '$($_.Root)': $($_.Error)" })
+            PathErrors = $pathErrors
+            SkippedPaths = @($rootStatus | ForEach-Object { @($_.SkippedPaths) })
+            Errors   = @($pathErrors | ForEach-Object { "Path '$($_.Path)': $($_.Error)" })
         }
     } catch {
         Add-AuditDiagnostic -ErrorRecord $_ -Operation 'Collect cluster virtual disk file inventory' -Scope ("Node={0}" -f $TargetNode)
         [pscustomobject]@{
             Complete = $false
             Files    = @()
-            Roots    = @($roots | ForEach-Object { [pscustomobject]@{ Root = $_; Complete = $false; FileCount = 0; Error = 'Inventory command failed.' } })
+            Roots    = @($roots | ForEach-Object {
+                [pscustomobject]@{
+                    Root         = $_
+                    Complete     = $false
+                    FileCount    = 0
+                    Error        = 'Inventory command failed.'
+                    PathErrors   = @([pscustomobject]@{ Path = $_; IsRoot = $true; Error = 'Inventory command failed.' })
+                    SkippedPaths = @()
+                }
+            })
+            PathErrors = @($roots | ForEach-Object { [pscustomobject]@{ Path = $_; IsRoot = $true; Error = 'Inventory command failed.' } })
+            SkippedPaths = @()
             Errors   = @("Node '$TargetNode': $($_.Exception.Message)")
         }
     }
@@ -1911,12 +1959,13 @@ function Invoke-VMCheckpointAudit {
                     Review      = 'Restore read-only Hyper-V and remoting access to this node, then rerun the inventory.'
                 })
             }
-            foreach ($rootResult in @($script:VirtualDiskFileInventory.Roots | Where-Object { -not $_.Complete })) {
+            foreach ($pathError in @($script:VirtualDiskFileInventory.PathErrors)) {
+                $category = if ($pathError.IsRoot) { 'CSV root incomplete' } else { 'CSV folder path inaccessible' }
                 [void]$script:HousekeepingFindings.Add([pscustomobject]@{
-                    Category    = 'CSV root incomplete'
-                    Scope       = [string]$rootResult.Root
-                    Observation = if ($rootResult.Error) { [string]$rootResult.Error } else { 'The CSV root inventory did not complete.' }
-                    Review      = 'Restore read-only access to this CSV root, then rerun the inventory.'
+                    Category    = $category
+                    Scope       = [string]$pathError.Path
+                    Observation = if ($pathError.Error) { [string]$pathError.Error } else { 'The path could not be inventoried.' }
+                    Review      = if ($pathError.IsRoot) { 'Restore read-only access to this CSV root, then rerun the inventory.' } else { 'Restore read-only access to this sub-folder, then rerun the inventory.' }
                 })
             }
             $classificationCounts['OwnershipAmbiguous'] = @($script:VirtualDiskFileInventory.Files).Count
