@@ -88,6 +88,8 @@ The table below is the ground truth for what each shipped YAML does **out of the
 
 ## Monitor: 1 - Fleet Connectivity Status
 
+> **Scaling change in v0.9.22 - lean, byte-safe ARG queries**: all five data-collection queries now project only fields consumed by the report and order by stable resource IDs. Full cluster node arrays, update-summary health arrays, Arc-machine property bags, and repeated edge-device NIC documents no longer cross the wire. Every call also inherits the shared `ResponsePayloadTooLarge` adaptive page-size fallback.
+
 > **Behaviour change in v0.9.21 - KPI table gains per-row status glyphs**: each row of the **Fleet Connectivity Status Summary** KPI table (Clusters / Arc Agents / Physical NICs / Azure Resource Bridges / TOTAL FAILURES) is now prefixed with a bare-glyph status indicator (green tick when the scope has zero failures, red cross otherwise; the TOTAL row shows a warning glyph when only Warnings are present), for visual consistency with the other pipeline step-summary tables. Counts and columns are unchanged.
 
 | Aspect | Value |
@@ -223,6 +225,8 @@ The table below is the ground truth for what each shipped YAML does **out of the
 ---
 
 ## Monitor: 2 - Fleet Health Status
+
+> **Scaling change in v0.9.22 - complete health arrays with conservative paging**: the health-detail query starts at 50 cluster rows and orders by resource ID. Complete `healthCheckResult` arrays remain client-expanded to avoid bounded `mv-expand` truncation. The shared helper automatically halves an oversized page and follows continuation tokens, so expanded RBAC scope no longer causes the initial response to fail before pagination starts.
 
 > **Behaviour change in v0.9.21 - Cluster Counts split by highest severity + no duplicated severity word**: the **Cluster Counts** table now counts each cluster **once**, by its **highest** failing-check severity. The single **Unhealthy Clusters (with failing checks)** row (previously stamped with the Critical `:x:` icon even when it also contained warning-only clusters) is split into **Critical - Unhealthy Clusters (with failing checks)** and **Warning - Unhealthy Clusters (with failing checks)**; a cluster with **both** Critical and Warning failing checks is counted in the Critical row only (`Healthy + Critical + Warning-only + Other = Total`). The **Other** bucket is renamed **Other - (health check In progress / Unknown)**. Count-table rows now use bare-glyph icons (check / cross / warning / info) so the severity word is no longer duplicated (previously rendered `:x: Critical **Critical**` / `:x: Critical **Unhealthy Clusters...**`). New step outputs `critical_clusters` + `warning_only_clusters`; `-PassThru` gains `CriticalClusters` + `WarningOnlyClusters`.
 

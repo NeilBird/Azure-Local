@@ -34,8 +34,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $script:ModuleInfo | Should -Not -BeNullOrEmpty
         }
 
-        It 'Should have version 0.9.21' {
-            $script:ModuleInfo.Version | Should -Be '0.9.21'
+        It 'Should have version 0.9.22' {
+            $script:ModuleInfo.Version | Should -Be '0.9.22'
         }
 
         It 'Module version constants are in sync between .psm1 and .psd1' {
@@ -4135,6 +4135,88 @@ Describe 'Internal Helper: Invoke-AzResourceGraphQuery' {
                 ($warnings -join ' ') | Should -Match 'safety cap'
             }
         }
+
+        It 'Should reduce page size on ResponsePayloadTooLarge and retain it across continuation pages' {
+            InModuleScope AzLocal.UpdateManagement {
+                $script:PayloadCalls = [System.Collections.Generic.List[object]]::new()
+                function az {
+                    [void]$script:PayloadCalls.Add(@($args))
+                    $firstIndex = [Array]::IndexOf($args, '--first')
+                    $requestedFirst = [int]$args[$firstIndex + 1]
+                    if ($script:PayloadCalls.Count -eq 1) {
+                        Write-Error -ErrorAction Continue 'ERROR: (ResponsePayloadTooLarge) Response payload size is 171679930 and exceeded the limit of 16777216.'
+                        $global:LASTEXITCODE = 1
+                        return
+                    }
+                    $global:LASTEXITCODE = 0
+                    if ($script:PayloadCalls.Count -eq 2) {
+                        $requestedFirst | Should -Be 500
+                        return '{"count":2,"data":[{"id":"a"},{"id":"b"}],"skip_token":"tok1","total_records":3}'
+                    }
+                    $requestedFirst | Should -Be 500
+                    $args | Should -Contain 'tok1'
+                    return '{"count":1,"data":[{"id":"c"}],"total_records":3}'
+                }
+
+                $rows = Invoke-AzResourceGraphQuery -Query 'resources | project id | order by id asc' -WarningAction SilentlyContinue
+
+                $rows | Should -HaveCount 3
+                @($rows.id) | Should -Be @('a', 'b', 'c')
+                $script:PayloadCalls | Should -HaveCount 3
+                $script:LastResourceGraphPayloadReduced | Should -BeTrue
+                $script:LastResourceGraphPayloadRetryCount | Should -Be 1
+                $script:LastResourceGraphEffectivePageSize | Should -Be 500
+                $script:LastResourceGraphThrottled | Should -BeFalse
+                $script:LastResourceGraphTransientNetwork | Should -BeFalse
+            }
+        }
+
+        It 'Should require a leaner projection when one row exceeds the payload limit' {
+            InModuleScope AzLocal.UpdateManagement {
+                $script:SingleRowPayloadCalls = 0
+                function az {
+                    $script:SingleRowPayloadCalls++
+                    Write-Error -ErrorAction Continue 'ERROR: code=ResponsePayloadTooLarge; response payload size exceeded the limit of 16777216.'
+                    $global:LASTEXITCODE = 1
+                }
+
+                {
+                    Invoke-AzResourceGraphQuery -Query 'resources | project properties' -First 1 -WarningAction SilentlyContinue
+                } | Should -Throw -ExpectedMessage '*one result row exceeds*Project fewer or smaller fields*'
+                $script:SingleRowPayloadCalls | Should -Be 1
+                $script:LastResourceGraphPayloadReduced | Should -BeTrue
+                $script:LastResourceGraphPayloadRetryCount | Should -Be 0
+                $script:LastResourceGraphEffectivePageSize | Should -Be 1
+            }
+        }
+
+        It 'Should reset payload diagnostics at the start of every call' {
+            InModuleScope AzLocal.UpdateManagement {
+                $script:PayloadResetCalls = 0
+                function az {
+                    $script:PayloadResetCalls++
+                    if ($script:PayloadResetCalls -eq 1) {
+                        Write-Error -ErrorAction Continue 'ERROR: ResponsePayloadTooLarge - response payload size exceeded the limit.'
+                        $global:LASTEXITCODE = 1
+                        return
+                    }
+                    $global:LASTEXITCODE = 0
+                    return '{"count":0,"data":[],"total_records":0}'
+                }
+                [void](Invoke-AzResourceGraphQuery -Query 'resources | project id | order by id asc' -WarningAction SilentlyContinue)
+                $script:LastResourceGraphPayloadReduced | Should -BeTrue
+                $script:LastResourceGraphEffectivePageSize | Should -Be 500
+
+                function az {
+                    $global:LASTEXITCODE = 0
+                    return '{"count":0,"data":[],"total_records":0}'
+                }
+                [void](Invoke-AzResourceGraphQuery -Query 'resources | project id | order by id asc' -First 200)
+                $script:LastResourceGraphPayloadReduced | Should -BeFalse
+                $script:LastResourceGraphPayloadRetryCount | Should -Be 0
+                $script:LastResourceGraphEffectivePageSize | Should -Be 200
+            }
+        }
     }
 
     Context 'cp1252 stderr WARNING does not corrupt JSON parse (v0.7.66 regression)' {
@@ -4568,6 +4650,31 @@ azure.core.exceptions.HttpResponseError: ("Connection broken: ConnectionResetErr
 }
 
 #endregion Internal Helper: Invoke-AzResourceGraphQuery
+
+Describe 'v0.9.22 fleet-scale ARG payload contracts' {
+    BeforeAll {
+        $script:fleetHealthSource = Get-Content -LiteralPath (Join-Path $PSScriptRoot '..\Public\Get-AzLocalFleetHealthFailures.ps1') -Raw
+        $script:connectivitySource = Get-Content -LiteralPath (Join-Path $PSScriptRoot '..\Public\Get-AzLocalFleetConnectivityStatus.ps1') -Raw
+    }
+
+    It 'Fleet health detail starts dynamic-array paging at 50 rows and orders by resource ID' {
+        @([regex]::Matches($script:fleetHealthSource, 'Invoke-AzResourceGraphQuery\s+-Query\s+\$kql[^\r\n]*-First\s+50')).Count | Should -Be 2
+        $script:fleetHealthSource | Should -Match '\| order by ClusterResourceId asc'
+    }
+
+    It 'Fleet connectivity queries project lean fields before paging' {
+        $script:connectivitySource | Should -Match 'ConnectivityStatus = tostring\(properties\.connectivityStatus\)'
+        $script:connectivitySource | Should -Match 'NodeCount = array_length\(properties\.reportedProperties\.nodes\)'
+        $script:connectivitySource | Should -Match 'CurrentVersion = tostring\(properties\.currentVersion\)'
+        $script:connectivitySource | Should -Match 'ParentClusterResourceId = tostring\(properties\.parentClusterResourceId\)'
+        $script:connectivitySource | Should -Match '(?s)mv-expand nic = nicDetails.*?\| project id, resourceGroup, subscriptionId, edgeMachineName'
+        $script:connectivitySource | Should -Match 'ArbStatus = tostring\(properties\.status\)'
+    }
+
+    It 'Every fleet connectivity wire query has deterministic ordering' {
+        @([regex]::Matches($script:connectivitySource, '\| order by ')).Count | Should -Be 5
+    }
+}
 
 Describe 'Internal Helper: Invoke-AzCliJson (v0.7.67)' {
     # New in v0.7.67. Generic wrapper around 'az <subcommand>' that applies the

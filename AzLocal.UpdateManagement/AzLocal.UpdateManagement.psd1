@@ -3,7 +3,7 @@
     RootModule = 'AzLocal.UpdateManagement.psm1'
 
     # Version number of this module.
-    ModuleVersion = '0.9.21'
+    ModuleVersion = '0.9.22'
 
     # Supported PSEditions
     CompatiblePSEditions = @('Desktop', 'Core')
@@ -365,6 +365,8 @@
 
             # ReleaseNotes of this module
             ReleaseNotes = @'
+## Version 0.9.22 - ARG payload hardening. The shared query helper recovers from ResponsePayloadTooLarge by halving --first and retaining the smaller size across skip-token pages. Monitor: 2 starts health-result paging at 50 rows; Monitor: 1 projects only consumed fields. No public/export change (69). Pipeline pins bumped to 0.9.22.
+
 ## Version 0.9.21 - Monitor: 2 - Fleet Health Status: the "Cluster Counts" summary table now counts each cluster ONCE by its HIGHEST failing-check severity. The single "Unhealthy Clusters (with failing checks)" row (previously stamped with the Critical icon even when it also contained warning-only clusters) is split into a Critical row and a Warning-only row; a cluster with BOTH Critical and Warning failing checks is counted in the Critical row only. The "Other" bucket is renamed to make clear it holds clusters whose health check is In progress / Unknown with no failing detail rows. Count-table rows now use bare-glyph icons (check / cross / warning / info) so the severity word is no longer duplicated (previously rendered "Critical Critical" / "Critical Unhealthy..."). New step outputs critical_clusters + warning_only_clusters and new PassThru properties CriticalClusters + WarningOnlyClusters. Monitor: 1 - Fleet Connectivity Status: each row of the "Fleet Connectivity Status Summary" KPI table is now prefixed with a bare-glyph status indicator (green tick / red cross) for visual consistency with the other pipeline step-summary tables. No public function or export-count change (still 69). `GENERATED_AGAINST_MODULE_VERSION` bumped to `'0.9.21'`.
 
 ## Version 0.9.20 - Monitor: 3 - Fleet Update Status: the "Fleet - SBE Version(s) Distribution" table is reworked to group by hardware OEM provider and read the correct YYMM. Solution Builder Extension (SBE) packages are vendor-specific, so the table now leads with an "OEM Provider" first column and groups clusters PRIMARILY by hardware OEM (Dell / HPE / Lenovo / Microsoft / ...) then by SBE YYMM. The OEM is resolved from each cluster's reported node manufacturer (properties.reportedProperties.nodes[].manufacturer) via the new private helper Resolve-AzLocalHardwareOem; a new readiness-row field SbeOemProvider carries it (also in readiness-status.csv). SBE YYMM is now read from the THIRD version octet (<major>.<minor>.<YYMM>.<build>, e.g. 5.0.2605.1000 -> 2605, 5.0.2603.1522 -> 2603); v0.9.19 incorrectly used the second octet. Clusters with no vendor SBE (the base placeholders 2.0.0.0 / 2.1.0.0 and any cluster with no SBE package) now show "N/A - No SBE Installed" for YYMM (genuinely not present, not "unknown") while still grouping under their hardware OEM. Export count unchanged at 69 (Resolve-AzLocalHardwareOem is private). Renders identically on GitHub Actions and Azure DevOps. `GENERATED_AGAINST_MODULE_VERSION` bumped to `'0.9.20'`.

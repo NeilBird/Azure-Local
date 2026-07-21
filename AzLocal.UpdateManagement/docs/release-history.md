@@ -4,9 +4,13 @@
 >
 > **For older releases**, this is the canonical reference; the main README intentionally stays slim so the most recent block is easy to find.
 >
-> **For v0.9.21 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0921) `What's New in v0.9.21` section.
+> **For v0.9.22 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0922) `What's New in v0.9.22` section.
 
 ---
+
+### What's New in v0.9.22
+
+**Azure Resource Graph queries now scale safely when expanded RBAC exposes large fleets.** The shared `Invoke-AzResourceGraphQuery` helper detects `ResponsePayloadTooLarge`, halves `--first`, retries the same logical page without consuming transient retry budget, and retains the successful page size across continuation pages. A one-row overflow now gives focused projection guidance. **Monitor: 2 - Fleet Health Status** starts its complete `healthCheckResult` array query at 50 rows and orders by resource ID. **Monitor: 1 - Fleet Connectivity Status** projects only consumed fields across all five deterministically ordered queries instead of downloading full resource documents. New diagnostics and regressions cover reduction, continuation completeness, reset behavior, health paging, and lean projections. No public function or export-count change (still **69**). `GENERATED_AGAINST_MODULE_VERSION` bumped to `0.9.22`. See [CHANGELOG.md](../CHANGELOG.md#0922---2026-07-21) for the full entry.
 
 ### What's New in v0.9.21
 

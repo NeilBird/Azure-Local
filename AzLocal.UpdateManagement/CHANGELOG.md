@@ -5,6 +5,28 @@ All notable changes to the AzLocal.UpdateManagement module (renamed from AzStack
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.22] - 2026-07-21
+
+**Fleet-scale Azure Resource Graph payload hardening** - all ARG-backed
+pipelines now inherit byte-limit-aware adaptive paging from the shared query
+helper. Monitor: 1 and Monitor: 2 also reduce their wire payloads at source.
+
+### Fixed
+
+- **`Invoke-AzResourceGraphQuery` now recovers from `ResponsePayloadTooLarge`.** ARG's `--first` control limits rows, not bytes, so a fleet can return fewer than 1,000 very large rows and exceed the 16 MiB response cap before ARG emits a `skip_token`. The shared helper detects the deterministic payload error, halves `--first`, and retries the same logical page immediately. It retains the successful smaller page size across continuation pages and does not consume the throttle/network retry budget or arm the cross-call throttle cooldown.
+- **A single oversized resource now fails with actionable guidance.** If `--first 1` still exceeds the service cap, the helper explains that one result row is too large and the caller must project fewer or smaller fields instead of reporting a generic CLI failure.
+- **Monitor: 2 - Fleet Health Status starts its dynamic health-result query at 50 rows.** `Get-AzLocalFleetHealthFailures` intentionally retrieves complete `properties.healthCheckResult` arrays client-side to avoid ARG's bounded `mv-expand` behaviour. It now uses a conservative initial page size and stable resource-ID ordering; adaptive paging remains the safety net for unusually large clusters.
+- **Monitor: 1 - Fleet Connectivity Status no longer downloads full resource documents.** Its five ARG queries explicitly project only consumed cluster, update-summary, Arc-machine, expanded-NIC, and Resource Bridge fields. This removes large node, health-result, and NIC property bags from the response while preserving legacy full-resource response fallbacks in PowerShell.
+
+### Added
+
+- **Per-call payload diagnostics**: `$script:LastResourceGraphPayloadReduced`, `$script:LastResourceGraphPayloadRetryCount`, and `$script:LastResourceGraphEffectivePageSize` expose adaptive page-size behaviour to callers and tests.
+- **Scaling regressions** cover adaptive halving, continuation-token completeness, one-row failure guidance, diagnostic reset, Monitor: 2's 50-row initial page, lean Monitor: 1 projections, and deterministic ordering.
+
+### Notes
+
+- No public function or export-count change (still **69**). `GENERATED_AGAINST_MODULE_VERSION` bumped to `0.9.22` across all bundled GitHub Actions and Azure DevOps templates.
+
 ## [0.9.21] - 2026-07-15
 
 **Monitor: 2 - Fleet Health Status** - the **Cluster Counts** summary table now

@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------------------
-# Per-release LIVE integration smoke test  -  template pinned to v0.9.21.
+# Per-release LIVE integration smoke test  -  template pinned to v0.9.22.
 #
 # Purpose
 #   A read-only, end-to-end smoke test that runs the REAL report cmdlets against
@@ -21,7 +21,7 @@
 #   4. Run it after the source edits but BEFORE the version bump, to confirm the
 #      live output matches the requested format.
 #
-# What v0.9.21 asserts (and the standing v0.8.97 / v0.9.11 shapes that must still render):
+# What v0.9.22 asserts (and the standing v0.8.97 / v0.9.11 shapes that must still render):
 #   - Get-AzLocalUpdateRunFailures -View Detail        : UpdateRing property
 #   - Monitor:3 Fleet Update Status run-history table   : "Update Ring" column
 #   - Monitor:3                                         : "Clusters - Ready for Update" table
@@ -33,6 +33,12 @@
 #     severity word, PassThru CriticalClusters/WarningOnlyClusters, H+C+W+O=Total
 #   - Monitor:1 Fleet Connectivity Status (v0.9.21)     : KPI table rows carry a
 #     bare-glyph status indicator
+#   - Shared ARG transport (v0.9.22)                    : payload-reduction
+#     diagnostics exist after real Az CLI calls
+#   - Monitor:2 Fleet Health Status (v0.9.22)           : dynamic health arrays
+#     start at 50 rows and order by resource ID
+#   - Monitor:1 Fleet Connectivity Status (v0.9.22)     : five lean projected
+#     wire queries with stable ordering
 #   - Apply Updates readiness gate                      : stale-assessment Status override + Support column
 #   - shipped pipeline templates: uniform 25-attempt install-step retry + soft No Clusters Ready job
 #
@@ -44,7 +50,7 @@
 #requires -Version 5.1
 [CmdletBinding()]
 param(
-    [string]$ReleaseVersion = '0.9.21',
+    [string]$ReleaseVersion = '0.9.22',
     [string]$SubscriptionId,
     [string]$ModulePath,
     [string[]]$Rings = @('Prod', 'Ring1', 'Ring2', 'Canary', 'DevTest'),
@@ -101,6 +107,7 @@ $env:GITHUB_OUTPUT = $ghOutput
 $env:GITHUB_ACTIONS = 'true'
 
 $report = [ordered]@{}
+$report['Loaded module version is release version'] = if ($moduleVersion.ToString() -eq $ReleaseVersion) { 'PASS' } else { "FAIL (loaded=$moduleVersion expected=$ReleaseVersion)" }
 
 try {
     # 1) Get-AzLocalUpdateRunFailures -View Detail : expect UpdateRing property
@@ -171,6 +178,17 @@ try {
         $report['Monitor2 no duplicated severity word (v0.9.21)'] = if ($md -notmatch 'Critical \*\*Critical\*\*' -and $md -notmatch 'Critical \*\*Unhealthy') { 'PASS' } else { 'FAIL - double-wording present' }
         $report['Monitor2 PassThru Critical/Warning-only counts (v0.9.21)'] = if ($r4.PSObject.Properties['CriticalClusters'] -and $r4.PSObject.Properties['WarningOnlyClusters']) { "PASS (C=$($r4.CriticalClusters) W=$($r4.WarningOnlyClusters))" } else { 'FAIL - properties missing' }
         $report['Monitor2 bucket sanity H+C+W+O=Total (v0.9.21)'] = if (($r4.HealthyClusters + $r4.CriticalClusters + $r4.WarningOnlyClusters + $r4.OtherClusters) -eq $r4.TotalInSub) { 'PASS' } else { "FAIL ($($r4.HealthyClusters)+$($r4.CriticalClusters)+$($r4.WarningOnlyClusters)+$($r4.OtherClusters) != $($r4.TotalInSub))" }
+        $fleetHealthSource = Get-Content -LiteralPath (Join-Path (Split-Path $ModulePath -Parent) 'Public\Get-AzLocalFleetHealthFailures.ps1') -Raw
+        $healthFirst50Calls = ([regex]::Matches($fleetHealthSource, 'Invoke-AzResourceGraphQuery\s+-Query\s+\$kql[^\r\n]*-First\s+50')).Count
+        $report['Monitor2 50-row initial paging + stable order (v0.9.22)'] = if ($healthFirst50Calls -eq 2 -and $fleetHealthSource -match '\| order by ClusterResourceId asc') { 'PASS' } else { "FAIL (First50 calls=$healthFirst50Calls)" }
+        $moduleDiagnostics = & (Get-Module AzLocal.UpdateManagement | Sort-Object Version -Descending | Select-Object -First 1) {
+            [PSCustomObject]@{
+                PayloadReduced    = $script:LastResourceGraphPayloadReduced
+                PayloadRetryCount = $script:LastResourceGraphPayloadRetryCount
+                EffectivePageSize = $script:LastResourceGraphEffectivePageSize
+            }
+        }
+        $report['Shared ARG payload diagnostics available (v0.9.22)'] = if ($null -ne $moduleDiagnostics.PayloadReduced -and $moduleDiagnostics.EffectivePageSize -ge 1) { "PASS (reduced=$($moduleDiagnostics.PayloadReduced), retries=$($moduleDiagnostics.PayloadRetryCount), first=$($moduleDiagnostics.EffectivePageSize))" } else { 'FAIL - diagnostics unavailable' }
     }
     catch { $report['Export-AzLocalFleetHealthStatusReport'] = "ERROR: $($_.Exception.Message)" }
 
@@ -184,6 +202,16 @@ try {
         $cross = [string][char]0x274C
         $hasGlyph = ($md -match ([regex]::Escape($tick) + ' \*\*Clusters\*\*')) -or ($md -match ([regex]::Escape($cross) + ' \*\*Clusters\*\*'))
         $report['Monitor1 KPI row status glyph (v0.9.21)'] = if (($md -match '## Fleet Connectivity Status Summary') -and $hasGlyph) { 'PASS' } else { 'FAIL - no KPI glyph' }
+        $connectivitySource = Get-Content -LiteralPath (Join-Path (Split-Path $ModulePath -Parent) 'Public\Get-AzLocalFleetConnectivityStatus.ps1') -Raw
+        $leanProjectionSignals = @(
+            'NodeCount = array_length(properties.reportedProperties.nodes)',
+            'CurrentVersion = tostring(properties.currentVersion)',
+            'ParentClusterResourceId = tostring(properties.parentClusterResourceId)',
+            'ArbStatus = tostring(properties.status)'
+        )
+        $allLeanSignalsPresent = @($leanProjectionSignals | Where-Object { $connectivitySource -notmatch [regex]::Escape($_) }).Count -eq 0
+        $orderedQueryCount = ([regex]::Matches($connectivitySource, '\| order by ')).Count
+        $report['Monitor1 lean ordered ARG queries (v0.9.22)'] = if ($allLeanSignalsPresent -and $orderedQueryCount -eq 5) { 'PASS' } else { "FAIL (lean=$allLeanSignalsPresent, ordered=$orderedQueryCount)" }
     }
     catch { $report['Export-AzLocalFleetConnectivityStatusReport'] = "ERROR: $($_.Exception.Message)" }
 

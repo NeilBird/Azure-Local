@@ -159,15 +159,16 @@ extensibilityresources
     ClusterPortalUrl,
     HealthCheckResult = properties.healthCheckResult,
     HealthCheckCount  = array_length(properties.healthCheckResult)
+| order by ClusterResourceId asc
 "@
 
     Write-Log -Message "Querying Azure Resource Graph for fleet health-check failures (View=$View, Severity=$Severity$(if($UpdateRingTag){", UpdateRingTag=$UpdateRingTag"})..." -Level Info
 
     try {
         $clusterRows = if ($SubscriptionId) {
-            Invoke-AzResourceGraphQuery -Query $kql -SubscriptionId $SubscriptionId
+            Invoke-AzResourceGraphQuery -Query $kql -SubscriptionId $SubscriptionId -First 50
         } else {
-            Invoke-AzResourceGraphQuery -Query $kql
+            Invoke-AzResourceGraphQuery -Query $kql -First 50
         }
     }
     catch {

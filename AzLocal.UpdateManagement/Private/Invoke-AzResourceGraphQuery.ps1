@@ -37,7 +37,9 @@ function Invoke-AzResourceGraphQuery {
         Optional. If supplied, scopes the query to that subscription via
         --subscriptions. Omit to query across all accessible subscriptions.
     .PARAMETER First
-        Page size. Defaults to 1000 (the ARG maximum).
+        Initial page size. Defaults to 1000 (the ARG maximum). If ARG rejects
+        a page with ResponsePayloadTooLarge, the helper halves the page size
+        and retries the same page until it succeeds or reaches one row.
     .PARAMETER MaxPages
         Safety cap. Defaults to 100 (= 100,000 rows). Bumped from 50 in
         v0.7.68 so that fleets up to ~100K clusters paginate without operator
@@ -93,6 +95,16 @@ function Invoke-AzResourceGraphQuery {
           '502/503/504', 'gateway time(out)', 'timed out', 'temporarily
           unavailable'. These share the -MaxRetries budget and the exponential
           backoff with throttling but do NOT arm the cross-call cooldown.
+
+                v0.9.22 payload-size handling exposes three module-scope diagnostics,
+                reset at the start of every call:
+                    $script:LastResourceGraphPayloadReduced    - $true if ARG rejected a
+                                                                                                             page as too large
+                    $script:LastResourceGraphPayloadRetryCount - page-size reductions
+                    $script:LastResourceGraphEffectivePageSize - final --first value
+                ResponsePayloadTooLarge is deterministic request shaping, not a
+                transient service failure. The helper retries immediately with half
+                the row count and does not consume -MaxRetries or sleep.
         v0.7.84 cross-call coordination adds two more module-scope items:
           $script:ArgCrossCallCooldownUntil               - [DateTime]; until this
                                                             instant the NEXT call
@@ -198,6 +210,14 @@ function Invoke-AzResourceGraphQuery {
     $script:LastResourceGraphTransientNetwork = $false
     $script:LastResourceGraphTransientRetryCount = 0
 
+    # v0.9.22: response-payload diagnostics. ARG enforces a response byte cap
+    # independently of its 1,000-row cap, so a page can be rejected before it
+    # returns a skip token. The retry loop below reduces --first for that same
+    # logical page and retains the successful size for all subsequent pages.
+    $script:LastResourceGraphPayloadReduced = $false
+    $script:LastResourceGraphPayloadRetryCount = 0
+    $script:LastResourceGraphEffectivePageSize = $First
+
     # v0.7.84: cross-call ARG cooldown coordination. The per-page retry loop
     # handles bursts WITHIN one call; this block adds coordination ACROSS
     # sequential calls. State is module-scope and initialised lazily on
@@ -230,6 +250,7 @@ function Invoke-AzResourceGraphQuery {
     $allRows = [System.Collections.Generic.List[object]]::new()
     $skipToken = $null
     $pages = 0
+    $effectiveFirst = $First
 
     # Force Azure CLI (Python) to write UTF-8 to stdout/stderr regardless of the
     # host console code page. Without this, any non-cp1252 character in an ARG
@@ -255,7 +276,7 @@ function Invoke-AzResourceGraphQuery {
                 break
             }
 
-            $azArgs = @('graph', 'query', '-q', $Query, '--first', $First, '--only-show-errors')
+            $azArgs = @('graph', 'query', '-q', $Query, '--first', $effectiveFirst, '--only-show-errors')
             if ($SubscriptionId) { $azArgs += @('--subscriptions', $SubscriptionId) }
             if ($skipToken) { $azArgs += @('--skip-token', $skipToken) }
 
@@ -287,6 +308,7 @@ function Invoke-AzResourceGraphQuery {
                 }
 
                 $errText = ((($stderrLines + $stdoutLines) | Out-String).Trim())
+                $isPayloadTooLarge = $errText -match '(?i)(ResponsePayloadTooLarge|response payload size.*exceed(?:ed|s).*limit|payload.*too large)'
                 $isThrottle = $errText -match '(?i)(rate.?limit|throttl|\b429\b|too many requests)'
 
                 # v0.8.95: transient network / connection-reset classifier.
@@ -305,6 +327,22 @@ function Invoke-AzResourceGraphQuery {
                 # Non-transient failures (auth, bad KQL, permissions) do not
                 # match either pattern and still fall through to the throw.
                 $isTransientNetwork = $errText -match '(?i)(connection (?:reset|aborted|broken|refused)|forcibly closed|\b10054\b|connectionreseterror|remotedisconnected|remote end closed|max retries exceeded|\bECONNRESET\b|\bservice unavailable\b|\b50[234]\b|gateway time|\btimed? ?out\b|temporar(?:ily|y) unavailable|operation timed out)'
+
+                if ($isPayloadTooLarge) {
+                    $script:LastResourceGraphPayloadReduced = $true
+                    if ($effectiveFirst -le 1) {
+                        throw "Azure Resource Graph query failed: one result row exceeds the ARG response payload limit. Project fewer or smaller fields in the query. Details: $(ConvertTo-ScrubbedCliOutput -Text $errText)"
+                    }
+
+                    $previousFirst = $effectiveFirst
+                    $effectiveFirst = [Math]::Max(1, [int][Math]::Floor($effectiveFirst / 2))
+                    $script:LastResourceGraphPayloadRetryCount++
+                    $script:LastResourceGraphEffectivePageSize = $effectiveFirst
+                    $firstArgIndex = [Array]::IndexOf($azArgs, '--first')
+                    $azArgs[$firstArgIndex + 1] = $effectiveFirst
+                    Write-Warning ("Invoke-AzResourceGraphQuery: ARG response payload exceeded the service limit on page {0}; reducing --first from {1} to {2} and retrying the same page." -f $pages, $previousFirst, $effectiveFirst)
+                    continue
+                }
 
                 if (($isThrottle -or $isTransientNetwork) -and $retryAttempt -lt $MaxRetries) {
                     $retryAttempt++

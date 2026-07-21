@@ -148,7 +148,7 @@ $ringFilter
 | extend HealthResultsAgeDays = iif(isnull(LastChecked), -1, datetime_diff('day', now(), LastChecked))
 | extend ClusterPortalUrl = strcat('https://portal.azure.com/#@/resource', ClusterResourceId)
 | project ClusterName, ClusterPortalUrl, HealthStatus = case(isempty(HealthState),'Unknown', HealthState =~ 'Success','Healthy', HealthState =~ 'Failure','Critical', HealthState =~ 'InProgress','In progress', HealthState =~ 'NotKnown','Unknown', HealthState), UpdateStatus = iif(isempty(UpdateState),'Unknown',UpdateState), CurrentVersion = iif(isempty(CurrentVersion),'(unknown)',CurrentVersion), SbeVersion = '', PackageVersions, AzureConnection = iif(isempty(AzureConnection),'Unknown',AzureConnection), LastChecked, HealthResultsAgeDays, ResourceGroup, NodeCount, SubscriptionId
-| order by HealthResultsAgeDays desc, ClusterName asc
+| order by HealthResultsAgeDays desc, SubscriptionId asc, ClusterName asc
 "@
 
     Write-Log -Message "Querying Azure Resource Graph for fleet health overview$(if($UpdateRingTag){", UpdateRingTag=$UpdateRingTag"})..." -Level Info
