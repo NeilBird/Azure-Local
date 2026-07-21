@@ -43,6 +43,7 @@ function Resolve-HyperVOperationRecovery {
         [object[]]$Events = @(),
         [int[]]$FailureIds = @(18012, 19100, 16300),
         [int[]]$CompletionIds = @(19080),
+        [int[]]$CompletionEligibleFailureIds = @(19100),
         [ValidateRange(1, 1440)][int]$MaxMinutes = 30
     )
 
@@ -54,7 +55,7 @@ function Resolve-HyperVOperationRecovery {
     $unresolvedCount = 0
     $evidencePattern = '(?i)(?:[a-z]:\\[^\r\n|"''<>]+?\.(?:avhdx|vhdx|vhd)|(?<![0-9a-f])[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?![0-9a-f]))'
     foreach ($failure in $failures) {
-        if ([int]$failure.Id -eq 16300) { $unresolvedCount++; continue }
+        if ($CompletionEligibleFailureIds -notcontains [int]$failure.Id) { $unresolvedCount++; continue }
         try { $failureTime = [datetime]::ParseExact([string]$failure.'Time (UTC)', 'yyyy-MM-dd HH:mm:ss', [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::AssumeUniversal) } catch { $unresolvedCount++; continue }
         $boundedCompletions = @($completions | Where-Object {
             try {
@@ -100,32 +101,90 @@ function Get-HyperVReplicationAssessment {
         [long]$PendingBytes = 0,
         [double]$LatencySeconds = 0,
         [long]$MissedCount = 0,
+        [double]$FrequencySeconds = 0,
+        [long]$AverageReplicationBytes = 0,
+        [long]$SuccessfulCount = -1,
+        [double]$MonitoringIntervalSeconds = 0,
         [datetime]$NowUtc = [datetime]::UtcNow,
         [int]$MaxAgeMinutes = 60,
         [long]$MaxPendingMB = 1024,
         [int]$MaxLatencySeconds = 300,
-        [int]$MaxMissedCount = 0
+        [int]$MaxMissedCount = 0,
+        [double]$MaxAgeCycles = 12,
+        [double]$MaxPendingCycles = 2,
+        [double]$MaxLatencyCycles = 2,
+        [double]$MaxMissedRatePercent = 10,
+        [long]$MinMissedCountForConcern = 3
     )
-    if (-not $Enabled) { return [pscustomobject]@{ Severity = 'NotApplicable'; IsConcern = $false; IsCritical = $false; State = $State; Health = $Health; Mode = $Mode; Reason = 'Hyper-V Replica is disabled.'; ThresholdBreaches = @(); MeasurementsAvailable = $false } }
+    if (-not $Enabled) {
+        return [pscustomobject]@{
+            Severity = 'NotApplicable'; ProductSeverity = 'NotApplicable'; MeasurementStatus = 'NotApplicable'
+            IsConcern = $false; HasAdvisory = $false; IsCritical = $false
+            State = $State; Health = $Health; Mode = $Mode; Reason = 'Hyper-V Replica is disabled.'
+            ThresholdBreaches = @(); ConcernBreaches = @(); AdvisoryBreaches = @(); MeasurementsAvailable = $false
+        }
+    }
     $normalizedHealth = $Health.Trim()
     $normalizedState = $State.Trim()
-    $severity = switch ($normalizedHealth.ToLowerInvariant()) { 'critical' { 'Critical'; break } 'warning' { 'Warning'; break } 'normal' { if ($normalizedState) { 'Healthy' } else { 'Unknown' }; break } default { 'Unknown' } }
+    $productSeverity = switch ($normalizedHealth.ToLowerInvariant()) { 'critical' { 'Critical'; break } 'warning' { 'Warning'; break } 'normal' { if ($normalizedState) { 'Healthy' } else { 'Unknown' }; break } default { 'Unknown' } }
     $thresholdBreaches = [System.Collections.Generic.List[string]]::new()
-    if ($MeasurementsAvailable) {
-        if (($LastReplicationTimeUtc -ne [datetime]::MinValue) -and (($NowUtc.ToUniversalTime() - $LastReplicationTimeUtc.ToUniversalTime()).TotalMinutes -gt $MaxAgeMinutes)) { [void]$thresholdBreaches.Add('LastReplicationAge') }
-        if ($PendingBytes -gt ($MaxPendingMB * 1MB)) { [void]$thresholdBreaches.Add('PendingBytes') }
-        if ($LatencySeconds -gt $MaxLatencySeconds) { [void]$thresholdBreaches.Add('Latency') }
-        if ($MissedCount -gt $MaxMissedCount) { [void]$thresholdBreaches.Add('MissedCount') }
-        if ($severity -eq 'Healthy' -and $thresholdBreaches.Count -gt 0) { $severity = 'Warning' }
+    $concernBreaches = [System.Collections.Generic.List[string]]::new()
+    $advisoryBreaches = [System.Collections.Generic.List[string]]::new()
+    $effectiveAgeMinutes = [double]$MaxAgeMinutes
+    $effectivePendingBytes = [long]($MaxPendingMB * 1MB)
+    $effectiveLatencySeconds = [double]$MaxLatencySeconds
+    if ($FrequencySeconds -gt 0) {
+        $effectiveAgeMinutes = [math]::Max($effectiveAgeMinutes, (($FrequencySeconds * $MaxAgeCycles) / 60.0))
+        $effectiveLatencySeconds = [math]::Max($effectiveLatencySeconds, ($FrequencySeconds * $MaxLatencyCycles))
     }
-    $isConcern = ($severity -in @('Critical', 'Warning', 'Unknown'))
+    if ($AverageReplicationBytes -gt 0) {
+        $relativePendingBytes = [double]$AverageReplicationBytes * $MaxPendingCycles
+        if ($relativePendingBytes -gt $effectivePendingBytes) { $effectivePendingBytes = [long][math]::Ceiling($relativePendingBytes) }
+    }
+    $lastReplicationAgeMinutes = $null
+    $missedRatePercent = $null
+    if ($MeasurementsAvailable) {
+        if ($LastReplicationTimeUtc -ne [datetime]::MinValue) {
+            $lastReplicationAgeMinutes = ($NowUtc.ToUniversalTime() - $LastReplicationTimeUtc.ToUniversalTime()).TotalMinutes
+            if ($lastReplicationAgeMinutes -gt $MaxAgeMinutes) {
+                [void]$thresholdBreaches.Add('LastReplicationAge')
+                if ($lastReplicationAgeMinutes -gt $effectiveAgeMinutes) { [void]$concernBreaches.Add('LastReplicationAge') } else { [void]$advisoryBreaches.Add('LastReplicationAge') }
+            }
+        }
+        if ($PendingBytes -gt ($MaxPendingMB * 1MB)) {
+            [void]$thresholdBreaches.Add('PendingBytes')
+            if ($PendingBytes -gt $effectivePendingBytes) { [void]$concernBreaches.Add('PendingBytes') } else { [void]$advisoryBreaches.Add('PendingBytes') }
+        }
+        if ($LatencySeconds -gt $MaxLatencySeconds) {
+            [void]$thresholdBreaches.Add('Latency')
+            if ($LatencySeconds -gt $effectiveLatencySeconds) { [void]$concernBreaches.Add('Latency') } else { [void]$advisoryBreaches.Add('Latency') }
+        }
+        if ($MissedCount -gt $MaxMissedCount) {
+            [void]$thresholdBreaches.Add('MissedCount')
+            $totalMeasuredCount = $SuccessfulCount + $MissedCount
+            if ($SuccessfulCount -ge 0 -and $totalMeasuredCount -gt 0) { $missedRatePercent = (100.0 * $MissedCount) / $totalMeasuredCount }
+            $missedIsConcern = ($MissedCount -ge $MinMissedCountForConcern) -and (($null -eq $missedRatePercent) -or ($missedRatePercent -gt $MaxMissedRatePercent))
+            if ($missedIsConcern) { [void]$concernBreaches.Add('MissedCount') } else { [void]$advisoryBreaches.Add('MissedCount') }
+        }
+    }
+    $measurementStatus = if ($concernBreaches.Count -gt 0) { 'Concern' } elseif ($advisoryBreaches.Count -gt 0) { 'Advisory' } elseif ($MeasurementsAvailable) { 'Healthy' } else { 'Unavailable' }
+    $severity = if ($productSeverity -eq 'Healthy' -and $measurementStatus -eq 'Concern') { 'Warning' } else { $productSeverity }
+    $isConcern = ($productSeverity -in @('Critical', 'Warning', 'Unknown')) -or ($measurementStatus -eq 'Concern')
     [pscustomobject]@{
-        Severity = $severity; IsConcern = $isConcern; IsCritical = ($severity -eq 'Critical')
+        Severity = $severity; ProductSeverity = $productSeverity; MeasurementStatus = $measurementStatus
+        IsConcern = $isConcern; HasAdvisory = ($measurementStatus -eq 'Advisory'); IsCritical = ($productSeverity -eq 'Critical')
         State = $normalizedState; Health = $normalizedHealth; Mode = $Mode.Trim()
         MeasurementsAvailable = $MeasurementsAvailable; LastReplicationTimeUtc = $LastReplicationTimeUtc
+        LastReplicationAgeMinutes = $lastReplicationAgeMinutes
         PendingBytes = $PendingBytes; LatencySeconds = $LatencySeconds; MissedCount = $MissedCount
+        FrequencySeconds = $FrequencySeconds; AverageReplicationBytes = $AverageReplicationBytes
+        SuccessfulCount = $SuccessfulCount; MissedRatePercent = $missedRatePercent
+        MonitoringIntervalSeconds = $MonitoringIntervalSeconds
+        EffectiveMaxAgeMinutes = $effectiveAgeMinutes; EffectiveMaxPendingBytes = $effectivePendingBytes
+        EffectiveMaxLatencySeconds = $effectiveLatencySeconds; MaxMissedRatePercent = $MaxMissedRatePercent
         ThresholdBreaches = $thresholdBreaches.ToArray()
-        Reason = switch ($severity) { 'Critical' { 'Hyper-V Replica health is Critical.' } 'Warning' { if ($thresholdBreaches.Count -gt 0) { 'Hyper-V Replica measurements exceed one or more configured thresholds.' } else { 'Hyper-V Replica health is Warning.' } } 'Healthy' { 'Hyper-V Replica reports Normal health with an available state.' } default { 'Hyper-V Replica is enabled but health or state evidence is unavailable.' } }
+        ConcernBreaches = $concernBreaches.ToArray(); AdvisoryBreaches = $advisoryBreaches.ToArray()
+        Reason = if ($productSeverity -eq 'Critical') { 'Hyper-V Replica health is Critical.' } elseif ($productSeverity -eq 'Warning') { 'Hyper-V Replica health is Warning.' } elseif ($productSeverity -eq 'Unknown') { 'Hyper-V Replica is enabled but health or state evidence is unavailable.' } elseif ($measurementStatus -eq 'Concern') { 'Hyper-V Replica measurements materially exceed effective relationship-aware limits.' } elseif ($measurementStatus -eq 'Advisory') { 'Hyper-V Replica reports Normal health with measurement drift that warrants observation.' } else { 'Hyper-V Replica reports Normal health with an available state.' }
     }
 }
 
@@ -210,4 +269,107 @@ function Get-VMCheckpointVerdictAssessment {
     }
 }
 
-Export-ModuleMember -Function Get-HyperVEventPolicy, Get-HyperVEventSignalAssessment, Resolve-HyperVOperationRecovery, Compare-VMCollectionStateToken, Get-HyperVReplicationAssessment, Resolve-HyperVEventAttribution, Resolve-EventCoverage, Get-VMCheckpointVerdictAssessment
+function Select-DiscoveredVMsForAudit {
+    [OutputType([pscustomobject])]
+    param(
+        [object[]]$Candidates,
+        [Nullable[int]]$Maximum
+    )
+
+    if ($null -ne $Maximum -and ($Maximum -lt 1 -or $Maximum -gt 1000)) {
+        throw 'Maximum must be between 1 and 1000 when specified.'
+    }
+
+    $byName = @{}
+    foreach ($candidate in @($Candidates)) {
+        if (-not $candidate -or -not $candidate.Name) { continue }
+        $name = [string]$candidate.Name
+        $key = $name.ToLowerInvariant()
+        if (-not $byName.ContainsKey($key)) {
+            $byName[$key] = [pscustomobject]@{
+                Name    = $name
+                Reasons = [System.Collections.Generic.List[string]]::new()
+                Score   = 0
+            }
+        }
+
+        $reason = [string]$candidate.Reason
+        if ($reason -and -not $byName[$key].Reasons.Contains($reason)) {
+            [void]$byName[$key].Reasons.Add($reason)
+        }
+        $reasonScore = if ($reason -match 'fork|3216|0x80048102') {
+            400
+        } elseif ($reason -match '19100|16300') {
+            300
+        } elseif ($reason -match '0x80070020|sharing violation') {
+            200
+        } elseif ($reason -match '19090') {
+            100
+        } else {
+            0
+        }
+        if ($reasonScore -gt $byName[$key].Score) { $byName[$key].Score = $reasonScore }
+    }
+
+    $ranked = @($byName.Values | ForEach-Object {
+        $orderedReasons = @($_.Reasons | Sort-Object {
+            if ($_ -match 'fork|3216|0x80048102') { 0 }
+            elseif ($_ -match '19100|16300') { 1 }
+            elseif ($_ -match '0x80070020|sharing violation') { 2 }
+            elseif ($_ -match '19090') { 3 }
+            else { 4 }
+        }, { $_ })
+        [pscustomobject]@{
+            Name    = $_.Name
+            Reason  = if ($orderedReasons.Count -gt 0) { $orderedReasons[0] } else { 'High-risk checkpoint/merge signal' }
+            Reasons = $orderedReasons
+            Score   = $_.Score
+        }
+    } | Sort-Object @{ Expression = { $_.Score }; Descending = $true }, Name)
+
+    $audit = $ranked
+    $deferred = @()
+    if ($null -ne $Maximum) {
+        $audit = @($ranked | Select-Object -First $Maximum)
+        $deferred = @($ranked | Select-Object -Skip $Maximum)
+    }
+
+    [pscustomobject]@{
+        EligibleCount = $ranked.Count
+        Audit         = @($audit)
+        Deferred      = @($deferred)
+        Cap           = $Maximum
+    }
+}
+
+function Resolve-ActiveCheckpointHistoricVerdict {
+    [OutputType([object])]
+    param(
+        [bool]$HoldState,
+        [bool]$Investigate,
+        [bool]$LowSignalOnly,
+        [int]$SeverityScore,
+        [bool]$ForkConfirmed,
+        [bool]$CoverageIncomplete
+    )
+
+    if ($ForkConfirmed) {
+        $HoldState = $true
+        $Investigate = $false
+        $LowSignalOnly = $false
+        $SeverityScore = 100
+    } elseif ($CoverageIncomplete -and -not $HoldState) {
+        $Investigate = $true
+        $LowSignalOnly = $false
+        if ($SeverityScore -lt 55) { $SeverityScore = 55 }
+    }
+
+    [pscustomobject]@{
+        HoldState = $HoldState
+        Investigate = $Investigate
+        LowSignalOnly = $LowSignalOnly
+        SeverityScore = $SeverityScore
+    }
+}
+
+Export-ModuleMember -Function Get-HyperVEventPolicy, Get-HyperVEventSignalAssessment, Resolve-HyperVOperationRecovery, Compare-VMCollectionStateToken, Get-HyperVReplicationAssessment, Resolve-HyperVEventAttribution, Resolve-EventCoverage, Get-VMCheckpointVerdictAssessment, Select-DiscoveredVMsForAudit, Resolve-ActiveCheckpointHistoricVerdict

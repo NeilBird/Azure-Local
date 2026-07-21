@@ -47,6 +47,8 @@ $releaseFiles = @(
     'Private\Get-HyperVVMCheckpointHealth.Assessment.psm1',
     'Private\Get-HyperVVMCheckpointHealth.Collection.psm1',
     'Private\Get-HyperVVMCheckpointHealth.Policy.psm1',
+    'Private\Get-HyperVVMCheckpointHealth.Rendering.psm1',
+    'Private\Get-HyperVVMCheckpointHealth.Storage.psm1',
     'checkpoint-health-policy.example.yml'
 )
 foreach ($relativePath in $releaseFiles) {

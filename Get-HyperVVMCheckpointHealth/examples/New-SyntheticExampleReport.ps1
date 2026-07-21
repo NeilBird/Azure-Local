@@ -12,27 +12,8 @@ if (-not $OutputPath) {
 }
 
 $toolRoot = Split-Path $PSScriptRoot -Parent
-$modulePath = Join-Path $toolRoot 'Get-HyperVVMCheckpointHealth.psm1'
-$tokens = $null
-$parseErrors = $null
-$moduleAst = [System.Management.Automation.Language.Parser]::ParseFile(
-    $modulePath,
-    [ref]$tokens,
-    [ref]$parseErrors
-)
-if (@($parseErrors).Count -gt 0) {
-    throw "Cannot parse the module renderer: $($parseErrors[0].Message)"
-}
-
-$rendererAst = $moduleAst.FindAll({
-        param($node)
-        $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
-            $node.Name -eq 'ConvertTo-VMCheckpointAuditHtml'
-    }, $true) | Select-Object -First 1
-if (-not $rendererAst) {
-    throw 'ConvertTo-VMCheckpointAuditHtml was not found in the module.'
-}
-Invoke-Expression $rendererAst.Extent.Text
+$renderingModulePath = Join-Path $toolRoot 'Private\Get-HyperVVMCheckpointHealth.Rendering.psm1'
+Import-Module $renderingModulePath -Force -ErrorAction Stop
 
 $baseReportData = [pscustomobject]@{
     State = 'Running'; Status = 'Operating normally'; Version = '12.0'; HostMaxVersion = '12.0'
@@ -41,7 +22,7 @@ $baseReportData = [pscustomobject]@{
     Checkpoints = @(); StaleCheckpointCount = 0; StaleHours = 24
     StaleAttachedLayerCount = 0; StaleSnapshotCount = 0; SnapshotLayerMismatch = $false
     ChainComplete = $true; IncompleteChainCount = 0; StateConsistencyStatus = 'Stable'
-    Replication = [pscustomobject]@{ Enabled = $false; State = ''; Health = '' }
+    Replication = [pscustomobject]@{ Enabled = $false; State = ''; Health = ''; Mode = ''; Primary = ''; Replica = ''; LastReplicationTime = '' }
     VssState = 'Healthy'; VssTotal = 10; VssUnhealthyCount = 0; VssUnhealthy = @()
     AnalyticNodesNeedEnable = @(); CsvVolumes = @(); OrphanCount = 0; Orphans = @()
     HasOrphans = $false; HasForkSignature = $false; EventConcernCount = 0
@@ -50,7 +31,8 @@ $baseReportData = [pscustomobject]@{
     VmHighConcernCount = 0; VmLowConcernCount = 0; VmCriticalCount = 0
     VmHighOpCount = 0; VmEscalatingConcernCount = 0; HighOpSelfResolved = $false
     VmHighConcernIds = ''; LowSignalOnly = $false; NodeDominantNote = ''
-    ReplHealth = ''; ReplUnhealthy = $false; ReplCritical = $false
+    ReplHealth = ''; ReplUnhealthy = $false; ReplAdvisory = $false; ReplCritical = $false
+    ReplAssessment = $null
     SeverityScore = 0; HasRollbackFingerprint = $false; RollbackDate = ''
     HasStuckMergeOrphan = $false; OrphanOnlyLiveMount = $false
     HistoricForkConfirmed = $false; Historic = $null; ActiveCkptForkConfirmed = $false
@@ -151,17 +133,48 @@ $results = @(
                 $recommendation = 'INVESTIGATE'
             }
             5 {
-                $healthyReportData.Replication = [pscustomobject]@{ Enabled = $true; State = 'Error'; Health = 'Critical' }
+                $healthyReportData.Replication = [pscustomobject]@{
+                    Enabled = $true; State = 'Error'; Health = 'Critical'; Mode = 'Primary'
+                    Primary = 'node05'; Replica = 'node06'; LastReplicationTime = '2026-07-20 10:15:00'
+                }
                 $healthyReportData.ReplHealth = 'Critical'
                 $healthyReportData.ReplUnhealthy = $true
                 $healthyReportData.ReplCritical = $true
+                $healthyReportData.ReplAssessment = [pscustomobject]@{
+                    Severity = 'Critical'; ProductSeverity = 'Critical'; MeasurementStatus = 'Concern'
+                    State = 'Error'; Health = 'Critical'; Mode = 'Primary'; IsConcern = $true; HasAdvisory = $false; IsCritical = $true
+                    Reason = 'Hyper-V Replica health is Critical.'; MeasurementsAvailable = $true
+                    LastReplicationTimeUtc = [datetime]'2026-07-20T10:15:00Z'; LastReplicationAgeMinutes = 105
+                    PendingBytes = 3GB; LatencySeconds = 900; MissedCount = 5; FrequencySeconds = 300
+                    AverageReplicationBytes = 256MB; SuccessfulCount = 95; MissedRatePercent = 5
+                    MonitoringIntervalSeconds = 3600; EffectiveMaxAgeMinutes = 60
+                    EffectiveMaxPendingBytes = 1GB; EffectiveMaxLatencySeconds = 600; MaxMissedRatePercent = 10
+                    ThresholdBreaches = @('LastReplicationAge', 'PendingBytes', 'Latency', 'MissedCount')
+                    ConcernBreaches = @('LastReplicationAge', 'PendingBytes', 'Latency'); AdvisoryBreaches = @('MissedCount')
+                }
                 $healthyReportData.SeverityScore = 65
                 $recommendation = 'INVESTIGATE'
             }
             6 {
-                $healthyReportData.Replication = [pscustomobject]@{ Enabled = $true; State = 'Resynchronizing'; Health = 'Warning' }
+                $healthyReportData.Replication = [pscustomobject]@{
+                    Enabled = $true; State = 'Resynchronizing'; Health = 'Warning'; Mode = 'Primary'
+                    Primary = 'node06'; Replica = 'node05'; LastReplicationTime = '2026-07-20 11:40:00'
+                }
                 $healthyReportData.ReplHealth = 'Warning'
                 $healthyReportData.ReplUnhealthy = $true
+                $healthyReportData.ReplAdvisory = $true
+                $healthyReportData.ReplAssessment = [pscustomobject]@{
+                    Severity = 'Warning'; ProductSeverity = 'Warning'; MeasurementStatus = 'Advisory'
+                    State = 'Resynchronizing'; Health = 'Warning'; Mode = 'Primary'; IsConcern = $true; HasAdvisory = $true; IsCritical = $false
+                    Reason = 'Hyper-V Replica health is Warning with measurement drift that warrants observation.'; MeasurementsAvailable = $true
+                    LastReplicationTimeUtc = [datetime]'2026-07-20T11:40:00Z'; LastReplicationAgeMinutes = 20
+                    PendingBytes = 1536MB; LatencySeconds = 350; MissedCount = 1; FrequencySeconds = 300
+                    AverageReplicationBytes = 1GB; SuccessfulCount = 99; MissedRatePercent = 1
+                    MonitoringIntervalSeconds = 3600; EffectiveMaxAgeMinutes = 60
+                    EffectiveMaxPendingBytes = 2GB; EffectiveMaxLatencySeconds = 600; MaxMissedRatePercent = 10
+                    ThresholdBreaches = @('PendingBytes', 'Latency', 'MissedCount'); ConcernBreaches = @()
+                    AdvisoryBreaches = @('PendingBytes', 'Latency', 'MissedCount')
+                }
                 $healthyReportData.SeverityScore = 55
                 $recommendation = 'INVESTIGATE'
             }
@@ -260,7 +273,7 @@ $html = ConvertTo-VMCheckpointAuditHtml -Results $results -StaleHours 24 `
     -EventLookbackHours 168 -ClusterName 'contoso01' -GeneratedUtc '2026-07-20 12:00:00' `
     -DiscoveredVMs @() -DiscoverySummary $discoverySummary -StorageHealth $storageHealth `
     -HousekeepingFindings $housekeepingFindings -IncludeDiscoveredVMs:$true `
-    -ScriptVersion '0.2.18' -ReportGenerationTime '00:01:24' -ClusterNodeCount 10 -ClusterCsvCount 2
+    -ScriptVersion '0.2.19' -ReportGenerationTime '00:01:24' -ClusterNodeCount 10 -ClusterCsvCount 2
 
 $syntheticNotice = @'
 <div class="callout info synthetic-example"><strong>Synthetic example report.</strong> Every cluster, node, VM, path, timestamp, and event message in this file is invented for documentation. TestVM07 demonstrates an active-checkpoint HOLD STATE confirmed by historic event evidence; seven VMs demonstrate historic rollback, orphaned AVHDX, stale checkpoint/layer, and Hyper-V Replica INVESTIGATE findings; 12 VMs are healthy comparisons. The inventory contains 16 input VMs and 4 automatically discovered VMs.</div>
