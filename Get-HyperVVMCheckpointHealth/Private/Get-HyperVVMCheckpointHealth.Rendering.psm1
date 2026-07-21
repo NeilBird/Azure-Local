@@ -294,7 +294,7 @@ function ConvertTo-VMCheckpointAuditHtml {
 </header>
 
 <div class="callout info">
-    <strong class="scope-label">Report scope:</strong> This report is a point-in-time, read-only assessment of the <strong>$countAll $vmWord audited in this run</strong>, generated at <strong>$(ConvertTo-HtmlText $GeneratedUtc) UTC</strong>. Its findings should be considered alongside a wider assessment of the cluster, storage, backup platform, workloads, and relevant operational history. It is not a complete cluster health assessment and does not represent the health of VMs that were not audited.$unauditedDiscoveryNote
+    <strong class="scope-label">Report scope:</strong> This report is a point-in-time, read-only assessment of the <strong>$countAll $vmWord audited in this run</strong>, generated at <strong>$(ConvertTo-HtmlText $GeneratedUtc) UTC</strong>. Its findings should be considered alongside a wider assessment of the cluster, storage, backup solution, workloads, and relevant operational history. It is not a complete cluster health assessment and does not represent the health of VMs that were not audited.$unauditedDiscoveryNote
 </div>
 
 <div class="cards">

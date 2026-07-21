@@ -714,6 +714,7 @@ Describe 'HTML fleet report usability' {
 
     It 'states the point-in-time report scope and audited VM count in every report' {
         $script:RenderedHtml | Should -Match '<strong class="scope-label">Report scope:</strong> This report is a point-in-time, read-only assessment of the <strong>4 VMs audited in this run</strong>, generated at <strong>2026-01-01 00:00:00 UTC</strong>\.'
+        $script:RenderedHtml | Should -Match 'wider assessment of the cluster, storage, backup solution, workloads, and relevant operational history\.'
         $script:RenderedHtml | Should -Match '\.scope-label\{color:#d97706;font-weight:700\}'
         $script:RenderedHtml | Should -Match 'It is not a complete cluster health assessment and does not represent the health of VMs that were not audited\.'
         $script:CleanRenderedHtml | Should -Match '<strong>1 VM audited in this run</strong>'
