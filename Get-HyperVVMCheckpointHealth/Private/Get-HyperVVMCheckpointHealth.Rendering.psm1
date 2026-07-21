@@ -660,7 +660,7 @@ function ConvertTo-VMCheckpointAuditHtml {
     [void]$sb.Append("</tbody></table>`r`n")
 
     # Discovered high-risk VMs (referenced in event data but not in the audit list).
-    if (@($DiscoveredVMs).Count -gt 0) {
+    if ($null -ne $DiscoveredVMs -and $DiscoveredVMs.Count -gt 0) {
         $capReached = $IncludeDiscoveredVMs -and $DiscoverySummary -and ([int]$DiscoverySummary.DeferredCount -gt 0)
         $discoveryHeading = if ($capReached) { 'Discovered VMs not audited - discovery cap reached' } else { 'Discovered high-risk VMs (recommended to audit)' }
         $discoveryCallout = if ($capReached) {

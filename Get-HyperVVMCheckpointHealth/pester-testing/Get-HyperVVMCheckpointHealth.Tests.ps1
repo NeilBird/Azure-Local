@@ -663,7 +663,7 @@ Describe 'HTML fleet report usability' {
         $script:CleanRenderedHtml = ConvertTo-VMCheckpointAuditHtml `
             -Results @([pscustomobject]@{ VMName = 'TEST-VM-NORMAL'; OwningNode = 'TEST-NODE-01'; Recommendation = 'OK'; Source = 'Input'; StaleCheckpointCount = 0; ReportData = $normalReportData; Detail = '' }) `
             -StaleHours 24 -EventLookbackHours 168 -ClusterName 'CONTOSO-CLUSTER-01' -GeneratedUtc '2026-01-01 00:00:00' `
-            -DiscoveredVMs @() -DiscoverySummary ([pscustomobject]@{ EligibleCount = 0; AuditedCount = 0; DeferredCount = 0; Cap = $null }) `
+            -DiscoveredVMs $null -DiscoverySummary ([pscustomobject]@{ EligibleCount = 0; AuditedCount = 0; DeferredCount = 0; Cap = $null }) `
             -StorageHealth $null -IncludeDiscoveredVMs:$false -ScriptVersion '0.2.19' -ReportGenerationTime '00:00:01' `
             -ClusterNodeCount 2 -ClusterCsvCount 1 -HousekeepingFindings @([pscustomobject]@{
                 Category = 'Unattached base disk candidate'; Scope = 'C:\ClusterStorage\UserStorage_1'
