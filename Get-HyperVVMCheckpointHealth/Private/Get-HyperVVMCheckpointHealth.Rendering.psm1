@@ -394,7 +394,7 @@ function ConvertTo-VMCheckpointAuditHtml {
 </div>
 "@)
                 } else {
-                        $housekeepingSummary = if (@($HousekeepingFindings).Count -gt 0) {
+                        $housekeepingSummary = if ($null -ne $HousekeepingFindings -and $HousekeepingFindings.Count -gt 0) {
                                 'Review the separate cluster / storage housekeeping observations below; they do not change the VM health verdict and do not authorize file modification.'
                         } else {
                                 'No cluster / storage housekeeping observations were produced by the checks performed in this run.'
@@ -487,7 +487,7 @@ function ConvertTo-VMCheckpointAuditHtml {
 <ol>
 '@)
     if (-not $anyContextualStep) {
-        $cleanNextStep = if (@($HousekeepingFindings).Count -gt 0) {
+        $cleanNextStep = if ($null -ne $HousekeepingFindings -and $HousekeepingFindings.Count -gt 0) {
             '<li><strong>No VM-health action required from this audit:</strong> no stale attached AVHDX layers or named snapshots, no HOLD STATE or INVESTIGATE VMs, and no storage-layer disruption. Review the separate cluster / storage housekeeping observations before making any storage-layout changes.</li>'
         } else {
             '<li><strong>No action required from this audit:</strong> no stale attached AVHDX layers or named snapshots, no HOLD STATE or INVESTIGATE VMs, no storage-layer disruption, and no cluster / storage housekeeping observations were produced. Keep this report for your records.</li>'
@@ -1028,7 +1028,7 @@ function ConvertTo-VMCheckpointAuditHtml {
     operations more difficult. Review each observation before making changes. <strong>Do not move, rename, merge, or delete virtual disk files based solely on this report.</strong>
 </div>
 '@)
-    if (@($HousekeepingFindings).Count -gt 0) {
+    if ($null -ne $HousekeepingFindings -and $HousekeepingFindings.Count -gt 0) {
         $housekeepingCategories = @($HousekeepingFindings | ForEach-Object { [string]$_.Category } | Where-Object { $_ } | Sort-Object -Unique)
         $housekeepingRoots = @($HousekeepingFindings | ForEach-Object { if ($_.PSObject.Properties['CsvRoot']) { [string]$_.CsvRoot } } | Where-Object { $_ } | Sort-Object -Unique)
         $housekeepingExtensions = @($HousekeepingFindings | ForEach-Object { if ($_.PSObject.Properties['Extension']) { [string]$_.Extension } } | Where-Object { $_ } | Sort-Object -Unique)

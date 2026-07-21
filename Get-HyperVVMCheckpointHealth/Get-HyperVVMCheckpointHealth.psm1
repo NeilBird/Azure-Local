@@ -3653,6 +3653,7 @@ $script:ClusterStorageHealth = $null
 # Run-level operational observations populated by cluster-wide ownership and storage checks. These
 # are rendered separately from VM health verdicts and never imply that a file is safe to remove.
 $script:HousekeepingFindings = [System.Collections.Generic.List[object]]::new()
+$policyInitializationStart = Get-TelemetryNow
 $script:CheckpointHealthPolicy = if ($PolicyPath) { Import-CheckpointHealthPolicy -Path $PolicyPath } else { Get-CheckpointHealthDefaultPolicy }
 Add-TelemetryEntry -Step '1.05.07' -Phase 'Checkpoint health policy initialization' `
     -Detail ("Schema={0}; Source={1}; ImagePatterns={2}; LiveMountPatterns={3}; CsvPolicyEnabled={4}; HrlPolicyEnabled={5}" -f `
@@ -3660,7 +3661,7 @@ Add-TelemetryEntry -Step '1.05.07' -Phase 'Checkpoint health policy initializati
         @($script:CheckpointHealthPolicy.Storage.ImageLibraryPathPatterns).Count,
         @($script:CheckpointHealthPolicy.Orphan.LiveMountPathPatterns).Count,
         $script:CheckpointHealthPolicy.CsvFreeSpace.Enabled, $script:CheckpointHealthPolicy.Replication.Hrl.Enabled) `
-    -StartUtc $privateModuleImportStart -EndUtc (Get-TelemetryNow)
+    -StartUtc $policyInitializationStart -EndUtc (Get-TelemetryNow)
 # v0.2.14: per-node Worker/VMMS event cache (keyed 'node|lookbackHours'). The event scan is node-wide,
 # so caching it means each node is read ONCE per run rather than once per VM on that node.
 $script:NodeEventCache = @{}
@@ -4139,10 +4140,10 @@ end {
     }
 
     # Surface any high-risk VMs discovered in event data but not audited (always shown, even in quiet).
-    if (@($discoveredVMs).Count -gt 0) {
+    if ($null -ne $discoveredVMs -and $discoveredVMs.Count -gt 0) {
         Write-AuditStatus ""
         $notAuditedHeading = if ($IncludeDiscoveredVMs) { "  {0} discovered VM(s) were NOT audited because the explicit discovery cap was reached:" } else { "  {0} high-risk VM(s) were referenced in event data but were NOT audited:" }
-        Write-AuditStatus ($notAuditedHeading -f @($discoveredVMs).Count) -ForegroundColor Yellow
+        Write-AuditStatus ($notAuditedHeading -f $discoveredVMs.Count) -ForegroundColor Yellow
         foreach ($dv in $discoveredVMs) {
             $reasonText = if ($dv.PSObject.Properties['Reasons'] -and @($dv.Reasons).Count -gt 0) { @($dv.Reasons) -join '; ' } else { [string]$dv.Reason }
             Write-AuditStatus ("    - {0}  ({1})" -f $dv.Name, $reasonText) -ForegroundColor Yellow

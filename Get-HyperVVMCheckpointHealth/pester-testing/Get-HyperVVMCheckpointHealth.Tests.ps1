@@ -65,6 +65,11 @@ Describe 'Get-HyperVVMCheckpointHealth source contracts' {
     }
 
     It 'records dedicated telemetry for new chain and discovery runtime work' {
+        $script:Source | Should -Match '\$policyInitializationStart\s*=\s*Get-TelemetryNow'
+        $script:Source | Should -Match 'Add-TelemetryEntry\s+-Step ''1\.05\.07''\s+-Phase ''Checkpoint health policy initialization''[\s\S]*?-StartUtc \$policyInitializationStart'
+        $script:Source | Should -Not -Match '\$privateModuleImportStart'
+        $script:Source | Should -Match 'if \(\$null -ne \$discoveredVMs -and \$discoveredVMs\.Count -gt 0\)'
+        $script:Source | Should -Not -Match 'if \(@\(\$discoveredVMs\)\.Count -gt 0\)'
         $script:Source | Should -Match "Add-TelemetryEntry\s+-Step '1\.10\.20\.10'\s+-Phase 'VHD chain collection and validation'"
         $script:Source | Should -Match "Add-TelemetryEntry\s+-Step '1\.10\.65\.10'\s+-Phase 'Checkpoint staleness assessment'"
         $script:Source | Should -Match "Add-TelemetryEntry\s+-Step '1\.20'\s+-Phase 'Discovered VM validation and selection'"
@@ -816,9 +821,9 @@ Describe 'HTML fleet report usability' {
         $html = ConvertTo-VMCheckpointAuditHtml `
             -Results @([pscustomobject]@{ VMName = 'TEST-VM-NORMAL'; OwningNode = 'TEST-NODE-01'; Recommendation = 'OK'; Source = 'Input'; StaleCheckpointCount = 0; ReportData = $normalReportData; Detail = '' }) `
             -StaleHours 24 -EventLookbackHours 168 -ClusterName 'CONTOSO-CLUSTER-01' -GeneratedUtc '2026-01-01 00:00:00' `
-            -DiscoveredVMs @() -DiscoverySummary ([pscustomobject]@{ EligibleCount = 0; AuditedCount = 0; DeferredCount = 0; Cap = $null }) `
+            -DiscoveredVMs $null -DiscoverySummary ([pscustomobject]@{ EligibleCount = 0; AuditedCount = 0; DeferredCount = 0; Cap = $null }) `
             -StorageHealth $null -ScriptVersion '0.2.19' -ReportGenerationTime '00:00:01' `
-            -ClusterNodeCount 2 -ClusterCsvCount 1 -HousekeepingFindings @()
+            -ClusterNodeCount 2 -ClusterCsvCount 1 -HousekeepingFindings $null
 
         $html | Should -Match 'No cluster or storage housekeeping observations were produced by the checks performed in this run\.'
         $html | Should -Match 'This is not a comprehensive storage-layout certification\.'
