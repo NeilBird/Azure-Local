@@ -282,7 +282,7 @@ Get-HyperVVMCheckpointHealth -VMName 'VM01' `
         -OutputPath 'C:\Temp\VM_Checkpoint_Reports'
 ```
 
-Patterns are evaluated against the complete path and should identify an intentional repository directory, not a broad incidental substring. Exclusion only removes that file from housekeeping observations; it does not authorize file modification or deletion. For a non-excluded finding, the HTML asks whether it belongs to an image library and points to this policy mechanism before advising the operator to confirm ownership and storage layout.
+Patterns are evaluated against the complete path and should identify an intentional repository directory, not a broad incidental substring. Exclusion only removes that file from housekeeping observations; it does not authorize file modification or deletion. For a file-backed **Unattached base disk candidate**, the HTML provides a **Filter out as VM image** checkbox. Selecting it hides that row from the open report and recalculates its visible totals and charts. A conditional section below the housekeeping table lists the hidden paths, generates exact-path `storage.imageLibraryPathPatterns` YAML, provides a copy button, and explains how to paste the complete block into a new policy or append only its list entries to an existing policy before repeating the original command with `-PolicyPath`. The checkbox itself is report-local and does not modify a policy file or affect a future audit.
 
 The policy is loaded once before cluster collection. The module imports `powershell-yaml` only for this path. It stops the run for a missing/empty file, unsupported schema version, invalid regex, `minimumFreePercent` outside `0..100`, negative `minimumFreeGB`, `cadenceMultiplier` below `1`, or `minimumStaleMinutes` below `1`. The HTML and `-PassThru` `ReportData.PolicySource` value show `BuiltInDefaults` or the full loaded policy path so an operator can confirm which source was active.
 
@@ -574,6 +574,7 @@ Create the GitHub release with tag `Get-HyperVVMCheckpointHealth-v0.2.19` and up
 - Prewarms cluster-wide virtual-disk ownership and file inventories before per-VM auditing, caches repeated VHD metadata reads, and records total, per-node, and per-root performance timings.
 - Extends retry and diagnostics coverage to the new Replica monitoring and inventory paths. Terminal read failures are written to the conditional `_debug_log_*.txt` with operation, scope, retry, exception, command, source, and stack context.
 - Enforces the read-only target-cluster invariant with an AST-based regression gate and adds release/package integrity coverage.
+- Adds a report-local **Filter out as VM image** control for unattached VHD/VHDX candidates, with recalculated housekeeping totals/charts and a conditional copyable YAML section below the findings table for persistent `storage.imageLibraryPathPatterns` exclusions.
 
 ### Version 0.2.18
 

@@ -674,6 +674,15 @@ Describe 'HTML fleet report usability' {
                     Observation = 'The node inventory query did not complete.'
                     Review = 'Review the debug log before rerunning the audit.'
                 }
+                [pscustomobject]@{
+                    Category = 'Unattached base disk candidate'; Scope = 'C:\ClusterStorage\Volume1'
+                    FileName = 'BaseImage.vhdx'
+                    FullName = 'C:\ClusterStorage\Volume1\BaseImage.vhdx'
+                    ParentPath = 'C:\ClusterStorage\Volume1'
+                    CsvRoot = 'C:\ClusterStorage\Volume1'; Extension = '.vhdx'; Length = 0
+                    Observation = 'No VM or snapshot chain references this base disk under complete coverage.'
+                    Review = 'If this virtual disk belongs to an image library, exclude its full path with storage.imageLibraryPathPatterns in a checkpoint-health-policy.yml file supplied via -PolicyPath (see README.md). Otherwise, confirm intended ownership.'
+                }
             )
         $script:CleanRenderedHtml = ConvertTo-VMCheckpointAuditHtml `
             -Results @([pscustomobject]@{ VMName = 'TEST-VM-NORMAL'; OwningNode = 'TEST-NODE-01'; Recommendation = 'OK'; Source = 'Input'; StaleCheckpointCount = 0; ReportData = $normalReportData; Detail = '' }) `
@@ -906,6 +915,24 @@ Describe 'HTML fleet report usability' {
         $script:RenderedHtml | Should -Match 'seen\[identity\]'
     }
 
+    It 'filters selected unattached VHDX rows and reveals copyable persistent policy settings below the table' {
+        ([regex]::Matches($script:RenderedHtml, "class='hk-image-filter' type='checkbox'> Filter out as VM image")).Count | Should -Be 1
+        $script:RenderedHtml | Should -Match "id='hk-image-policy' hidden><h3>Persistent VM image policy settings</h3>"
+        $script:RenderedHtml | Should -Match "id='hk-image-policy-yaml' readonly aria-label='Generated VM image policy settings'"
+        $script:RenderedHtml | Should -Match "id='hk-copy-policy'>Copy policy settings</button>"
+        $script:RenderedHtml | Should -Match "id='hk-restore-images'>Restore all rows</button>"
+        $script:RenderedHtml.IndexOf('</tbody></table>') | Should -BeLessThan $script:RenderedHtml.IndexOf("id='hk-image-policy'")
+        $script:RenderedHtml.IndexOf("id='hk-image-policy'") | Should -BeLessThan $script:RenderedHtml.IndexOf('Appendix - Knowledge and Information')
+        $script:RenderedHtml | Should -Match "var matches = \(!imageBox \|\| !imageBox\.checked\)"
+        $script:RenderedHtml | Should -Match "yamlLines = \['schemaVersion: 1', 'storage:', '    imageLibraryPathPatterns:'\]"
+        $script:RenderedHtml | Should -Match "escapeRegex\(path\)"
+        $script:RenderedHtml | Should -Match "hidden only in this open report"
+        $script:RenderedHtml | Should -Match 'For a new policy file, paste the complete generated block'
+        $script:RenderedHtml | Should -Match 'For an existing policy, copy only the generated <code>- .* entries into its existing <code>storage\.imageLibraryPathPatterns</code> list'
+        $script:RenderedHtml | Should -Match "repeat the original audit command with <code>-PolicyPath '\.\\checkpoint-health-policy\.yml'</code>"
+        $script:RenderedHtml | Should -Match 'do not change VM health verdicts or authorize modifying the selected files'
+    }
+
     It 'counts duplicate housekeeping file paths once in storage totals' {
         $duplicateFindings = @(
             [pscustomobject]@{ Category = 'Placement'; Scope = 'TEST-VM'; FileName = 'Disk.vhdx'; FullName = 'C:\ClusterStorage\Volume1\Disk.vhdx'; ParentPath = 'C:\ClusterStorage\Volume1'; CsvRoot = 'C:\ClusterStorage\Volume1'; Extension = '.vhdx'; Length = 1572864; Observation = 'Synthetic'; Review = 'Review.' },
@@ -1070,11 +1097,11 @@ Describe 'Synthetic HTML example report' {
     It 'contains only synthetic identities and approved UserStorage paths' {
         $script:ExampleHtml | Should -Not -Match '(?i)Legal (?:&|&amp;) General|KWDRPT|GBKOS|ALCSS'
         $script:ExampleHtml | Should -Not -Match '(?i)\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b'
-        $paths = @([regex]::Matches($script:ExampleHtml, '(?i)C:\\ClusterStorage\\[^<\s]+') | ForEach-Object {
+        $paths = @([regex]::Matches($script:ExampleHtml, '(?i)C:\\ClusterStorage\\[^<\s''"]+') | ForEach-Object {
                 [System.Net.WebUtility]::HtmlDecode($_.Value)
             })
         @($paths).Count | Should -BeGreaterThan 0
-        @($paths | Where-Object { $_ -notmatch '^C:\\ClusterStorage\\UserStorage_[12]\\TestVM(?:0[1-9]|1[0-9]|20)\\' }).Count | Should -Be 0
+        @($paths | Where-Object { $_ -notmatch '^C:\\ClusterStorage\\UserStorage_[12](?:$|\\TestVM(?:0[1-9]|1[0-9]|20)\\)' }).Count | Should -Be 0
     }
 
     It 'demonstrates review-only virtual disk housekeeping findings' {
@@ -1083,6 +1110,8 @@ Describe 'Synthetic HTML example report' {
         $script:ExampleHtml | Should -Match 'Shared virtual disk reference'
         $script:ExampleHtml | Should -Match 'TestVM08_LegacyData\.vhdx'
         $script:ExampleHtml | Should -Match 'TestVM12_Archive\.vhdx'
+        ([regex]::Matches($script:ExampleHtml, "class='hk-image-filter' type='checkbox'> Filter out as VM image")).Count | Should -Be 2
+        $script:ExampleHtml | Should -Match "id='hk-image-policy' hidden><h3>Persistent VM image policy settings</h3>"
         $script:ExampleHtml | Should -Match 'If this virtual disk belongs to an image library, exclude its full path with storage\.imageLibraryPathPatterns in a checkpoint-health-policy\.yml file supplied via -PolicyPath \(see <a href="https://aka\.ms/Get-HyperVVMCheckpointHealth#readme" target="_blank" rel="noopener noreferrer">README\.md</a>\)\.'
         $script:ExampleHtml | Should -Match 'Do not modify the file based only on this report\.'
     }

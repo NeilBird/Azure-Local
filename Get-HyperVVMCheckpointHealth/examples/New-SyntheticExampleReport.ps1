@@ -262,12 +262,18 @@ $housekeepingFindings = @(
     [pscustomobject]@{
         Category = 'Unattached base disk candidate'; Scope = 'TestVM08'
         FileName = 'TestVM08_LegacyData.vhdx'
+        FullName = 'C:\ClusterStorage\UserStorage_1\TestVM08\Virtual Hard Disks\TestVM08_LegacyData.vhdx'
+        ParentPath = 'C:\ClusterStorage\UserStorage_1\TestVM08\Virtual Hard Disks'
+        CsvRoot = 'C:\ClusterStorage\UserStorage_1'; Extension = '.vhdx'; Length = 21474836480
         Observation = 'No VM or snapshot chain references this base disk under complete coverage: C:\ClusterStorage\UserStorage_1\TestVM08\Virtual Hard Disks\TestVM08_LegacyData.vhdx'
         Review = 'If this virtual disk belongs to an image library, exclude its full path with storage.imageLibraryPathPatterns in a checkpoint-health-policy.yml file supplied via -PolicyPath (see README.md). Otherwise, confirm intended ownership and storage layout with the VM, backup, and storage owners. Do not modify the file based only on this report.'
     },
     [pscustomobject]@{
         Category = 'Unattached base disk candidate'; Scope = 'TestVM12'
         FileName = 'TestVM12_Archive.vhdx'
+        FullName = 'C:\ClusterStorage\UserStorage_2\TestVM12\Virtual Hard Disks\TestVM12_Archive.vhdx'
+        ParentPath = 'C:\ClusterStorage\UserStorage_2\TestVM12\Virtual Hard Disks'
+        CsvRoot = 'C:\ClusterStorage\UserStorage_2'; Extension = '.vhdx'; Length = 10737418240
         Observation = 'No VM or snapshot chain references this base disk under complete coverage: C:\ClusterStorage\UserStorage_2\TestVM12\Virtual Hard Disks\TestVM12_Archive.vhdx'
         Review = 'If this virtual disk belongs to an image library, exclude its full path with storage.imageLibraryPathPatterns in a checkpoint-health-policy.yml file supplied via -PolicyPath (see README.md). Otherwise, confirm intended ownership and storage layout with the VM, backup, and storage owners. Do not modify the file based only on this report.'
     },
@@ -309,8 +315,8 @@ if ($unexpectedNames.Count -gt 0) {
 if ($html -match '(?i)\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b') {
     throw 'An email address was found in the synthetic report.'
 }
-$clusterPaths = @([regex]::Matches($html, '(?i)C:\\ClusterStorage\\[^<\s]+') | ForEach-Object { [System.Net.WebUtility]::HtmlDecode($_.Value) })
-$unexpectedPaths = @($clusterPaths | Where-Object { $_ -notmatch '^C:\\ClusterStorage\\UserStorage_[12]\\TestVM(?:0[1-9]|1[0-9]|20)\\' })
+$clusterPaths = @([regex]::Matches($html, '(?i)C:\\ClusterStorage\\[^<\s''"]+') | ForEach-Object { [System.Net.WebUtility]::HtmlDecode($_.Value) })
+$unexpectedPaths = @($clusterPaths | Where-Object { $_ -notmatch '^C:\\ClusterStorage\\UserStorage_[12](?:$|\\TestVM(?:0[1-9]|1[0-9]|20)\\)' })
 if ($unexpectedPaths.Count -gt 0) {
     throw "Unexpected ClusterStorage path in synthetic report: $($unexpectedPaths -join ', ')"
 }

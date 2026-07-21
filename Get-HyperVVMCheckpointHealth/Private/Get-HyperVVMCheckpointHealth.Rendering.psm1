@@ -199,6 +199,15 @@ function ConvertTo-VMCheckpointAuditHtml {
     .hk-categories label{display:flex;align-items:center;gap:7px;color:#cbd5e1;font-size:13px}
     .hk-categories input{accent-color:var(--accent)}
     .hk-actions button,.hk-sort{background:var(--panel2);color:var(--ink);border:1px solid var(--line);border-radius:5px;padding:6px 10px;cursor:pointer}
+    .hk-image-option{margin-top:12px;padding-top:10px;border-top:1px solid var(--line)}
+    .hk-image-option label{display:flex;align-items:flex-start;gap:7px;color:#fcd34d;font-size:13px;font-weight:600;cursor:pointer}
+    .hk-image-option input{margin-top:2px;accent-color:var(--accent)}
+    .hk-image-policy{background:#172033;border:1px solid #7a5b12;border-radius:8px;padding:14px;margin:14px 0}
+    .hk-image-policy[hidden]{display:none}
+    .hk-image-policy textarea{width:100%;min-height:140px;box-sizing:border-box;margin:10px 0;background:#0f172a;color:var(--ink);border:1px solid var(--line);border-radius:5px;padding:10px;font-family:Consolas,monospace;resize:vertical}
+    .hk-image-policy-list{margin:10px 0;padding:0;list-style:none}
+    .hk-image-policy-list li{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:7px 0;border-bottom:1px solid var(--line)}
+    .hk-image-policy-list code{overflow-wrap:anywhere}
     .hk-sort{width:100%;text-align:left;font-weight:600}
     .hk-filters{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px}
     .hk-filters label{display:flex;flex-direction:column;gap:4px;color:#cbd5e1;font-size:13px}
@@ -1110,6 +1119,9 @@ function ConvertTo-VMCheckpointAuditHtml {
                     '(see README.md)',
                     '(see <a href="https://aka.ms/Get-HyperVVMCheckpointHealth#readme" target="_blank" rel="noopener noreferrer">README.md</a>)'
                 )
+                if ($findingFullName -and $findingExtension -match '^\.vhdx?$') {
+                    $reviewHtml += "<div class='hk-image-option'><label><input class='hk-image-filter' type='checkbox'> Filter out as VM image</label></div>"
+                }
             }
             [void]$sb.Append(("<tr data-category='{0}' data-scope='{1}' data-path='{2}' data-parent='{3}' data-root='{4}' data-extension='{5}' data-bytes='{6}'><td data-label='Category'>{0}</td><td data-label='Scope'><code>{1}</code></td><td data-label='File / path'>{7}</td><td data-label='Size' class='num'>{8}</td><td data-label='Observation'><p class='hk-observation'>{9}</p></td><td data-label='Review'>{10}</td></tr>" -f `
                 (ConvertTo-HtmlText $finding.Category), (ConvertTo-HtmlText $finding.Scope), (ConvertTo-HtmlText $findingFullName), `
@@ -1117,6 +1129,7 @@ function ConvertTo-VMCheckpointAuditHtml {
                 $findingLength, $pathHtml, $sizeHtml, (ConvertTo-HtmlText $finding.Observation), $reviewHtml))
         }
         [void]$sb.Append("</tbody></table>`r`n")
+        [void]$sb.Append("<div class='hk-image-policy' id='hk-image-policy' hidden><h3>Persistent VM image policy settings</h3><p class='muted'>The selected <span id='hk-image-count'>0</span> VM image file(s) are hidden only in this open report. Use the generated settings below to exclude them from future audits.</p><ol><li>Select <strong>Copy policy settings</strong>.</li><li>For a new policy file, paste the complete generated block into <code>checkpoint-health-policy.yml</code>. For an existing policy, copy only the generated <code>- '(?i)^...$'</code> entries into its existing <code>storage.imageLibraryPathPatterns</code> list; do not add duplicate <code>schemaVersion</code>, <code>storage</code>, or <code>imageLibraryPathPatterns</code> keys.</li><li>Save the YAML file, repeat the original audit command with <code>-PolicyPath '.\checkpoint-health-policy.yml'</code>, and review the newly generated report.</li></ol><p class='muted'>These settings affect housekeeping observations only. They do not change VM health verdicts or authorize modifying the selected files.</p><ul class='hk-image-policy-list' id='hk-image-policy-list'></ul><textarea id='hk-image-policy-yaml' readonly aria-label='Generated VM image policy settings'></textarea><div class='hk-actions'><button type='button' id='hk-copy-policy'>Copy policy settings</button><button type='button' id='hk-restore-images'>Restore all rows</button><span class='muted' id='hk-copy-status' aria-live='polite'></span></div></div>`r`n")
     } else {
         [void]$sb.Append('<p class="muted">No cluster or storage housekeeping observations were produced by the checks performed in this run. This is not a comprehensive storage-layout certification.</p>')
     }
@@ -1234,6 +1247,12 @@ window.addEventListener('load', function () {
         var visibleCount = document.getElementById('hk-visible-count');
         var visibleBytes = document.getElementById('hk-visible-bytes');
         var empty = document.getElementById('hk-empty');
+        var imageBoxes = Array.prototype.slice.call(document.querySelectorAll('.hk-image-filter'));
+        var imagePolicy = document.getElementById('hk-image-policy');
+        var imageCount = document.getElementById('hk-image-count');
+        var imageList = document.getElementById('hk-image-policy-list');
+        var imageYaml = document.getElementById('hk-image-policy-yaml');
+        var copyStatus = document.getElementById('hk-copy-status');
         var sortAscending = {};
         function formatBytes(bytes) {
             var readable = bytes > 0 ? '< 1 KB' : '0 KB';
@@ -1268,6 +1287,30 @@ window.addEventListener('load', function () {
                 value.setAttribute('x', '475'); value.setAttribute('y', y + 14); value.setAttribute('fill', '#e2e8f0'); value.setAttribute('font-size', '11'); value.textContent = formatBytes(entry.value); svg.appendChild(value);
             });
         }
+        function escapeRegex(value) {
+            return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        }
+        function selectedImageBoxes() {
+            return imageBoxes.filter(function (box) { return box.checked; });
+        }
+        function updateImagePolicy() {
+            var selectedBoxes = selectedImageBoxes();
+            imagePolicy.hidden = selectedBoxes.length === 0;
+            imageCount.textContent = selectedBoxes.length;
+            while (imageList.firstChild) { imageList.removeChild(imageList.firstChild); }
+            var yamlLines = ['schemaVersion: 1', 'storage:', '    imageLibraryPathPatterns:'];
+            selectedBoxes.forEach(function (box) {
+                var path = box.closest('tr').getAttribute('data-path') || '';
+                yamlLines.push("        - '(?i)^" + escapeRegex(path).replace(/'/g, "''") + "$'");
+                var item = document.createElement('li');
+                var code = document.createElement('code'); code.textContent = path; item.appendChild(code);
+                var restore = document.createElement('button'); restore.type = 'button'; restore.textContent = 'Restore';
+                restore.addEventListener('click', function () { box.checked = false; applyFilters(); });
+                item.appendChild(restore); imageList.appendChild(item);
+            });
+            imageYaml.value = selectedBoxes.length ? yamlLines.join('\n') : '';
+            copyStatus.textContent = '';
+        }
         function applyFilters() {
             var selected = {};
             categoryBoxes.forEach(function (box) { if (box.checked) { selected[box.value] = true; } });
@@ -1278,7 +1321,8 @@ window.addEventListener('load', function () {
                 var path = row.getAttribute('data-path') || '';
                 var rowBytes = parseInt(row.getAttribute('data-bytes') || '0', 10);
                 var searchable = (path + ' ' + (row.getAttribute('data-scope') || '')).toLowerCase();
-                var matches = !!selected[row.getAttribute('data-category')] && (!query || searchable.indexOf(query) >= 0) &&
+                var imageBox = row.querySelector('.hk-image-filter');
+                var matches = (!imageBox || !imageBox.checked) && !!selected[row.getAttribute('data-category')] && (!query || searchable.indexOf(query) >= 0) &&
                     (!root.value || row.getAttribute('data-root') === root.value) && (!extension.value || row.getAttribute('data-extension') === extension.value) && rowBytes >= minimumBytes;
                 row.style.display = matches ? '' : 'none';
                 if (matches) {
@@ -1296,11 +1340,22 @@ window.addEventListener('load', function () {
             visibleCount.textContent = count; visibleBytes.textContent = formatBytes(bytes);
             empty.style.display = count ? 'none' : 'block'; table.style.display = count ? '' : 'none';
             drawChart('hk-category-chart', byCategory); drawChart('hk-path-chart', byParent);
+            updateImagePolicy();
         }
         categoryBoxes.forEach(function (box) { box.addEventListener('change', applyFilters); });
+        imageBoxes.forEach(function (box) { box.addEventListener('change', applyFilters); });
         [search, root, extension, minSize].forEach(function (control) { control.addEventListener('input', applyFilters); control.addEventListener('change', applyFilters); });
         document.getElementById('hk-select-all').addEventListener('click', function () { categoryBoxes.forEach(function (box) { box.checked = true; }); applyFilters(); });
         document.getElementById('hk-clear-all').addEventListener('click', function () { categoryBoxes.forEach(function (box) { box.checked = false; }); applyFilters(); });
+        document.getElementById('hk-restore-images').addEventListener('click', function () { imageBoxes.forEach(function (box) { box.checked = false; }); applyFilters(); });
+        document.getElementById('hk-copy-policy').addEventListener('click', function () {
+            imageYaml.select(); imageYaml.setSelectionRange(0, imageYaml.value.length);
+            var copied = false;
+            try { copied = document.execCommand('copy'); } catch (error) { copied = false; }
+            if (!copied && navigator.clipboard && window.isSecureContext) {
+                navigator.clipboard.writeText(imageYaml.value).then(function () { copyStatus.textContent = 'Copied.'; }, function () { copyStatus.textContent = 'Select the policy text and copy it manually.'; });
+            } else { copyStatus.textContent = copied ? 'Copied.' : 'Select the policy text and copy it manually.'; }
+        });
         Array.prototype.slice.call(document.querySelectorAll('.hk-sort')).forEach(function (button) {
             button.addEventListener('click', function () {
                 var key = button.getAttribute('data-sort'); sortAscending[key] = !sortAscending[key];
