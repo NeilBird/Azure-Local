@@ -263,9 +263,9 @@ function ConvertTo-VMCheckpointAuditHtml {
      long checkpoint name wraps slightly earlier, freeing the small amount of width the Age column needs. */
   td.ckptage{white-space:nowrap}
   td.ckptname{max-width:300px;overflow-wrap:anywhere}
+        @media(max-width:1120px){table:not(.housekeeping){display:block;overflow-x:auto}}
     @media(max-width:980px){.cards{grid-template-columns:repeat(4,minmax(0,1fr))}}
         @media(max-width:760px){
-            table:not(.housekeeping){display:block;overflow-x:auto}
             table.housekeeping,table.housekeeping tbody,table.housekeeping tr,table.housekeeping td{display:block;width:100%}
             table.housekeeping{border:0;background:transparent}
             table.housekeeping thead{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
@@ -274,8 +274,16 @@ function ConvertTo-VMCheckpointAuditHtml {
             table.housekeeping td::before{content:attr(data-label);color:var(--muted);font-weight:600}
             table.housekeeping td .hk-observation{grid-column:2;min-width:0}
         }
-    @media(max-width:640px){.cards{grid-template-columns:repeat(2,minmax(0,1fr))}}
-    @media(max-width:390px){.cards{grid-template-columns:1fr}}
+    @media(max-width:640px){
+        .cards{grid-template-columns:repeat(2,minmax(0,1fr))}
+        .kv{grid-template-columns:minmax(0,1fr);gap:0}
+        .kv div{min-width:0}
+        .kv div.k{margin-top:8px}
+    }
+    @media(max-width:390px){
+        .cards{grid-template-columns:1fr}
+        .hk-charts{grid-template-columns:minmax(0,1fr)}
+    }
   footer{margin-top:44px;border-top:1px solid var(--line);padding-top:16px;color:var(--muted);font-size:12.5px}
 </style>
 </head>

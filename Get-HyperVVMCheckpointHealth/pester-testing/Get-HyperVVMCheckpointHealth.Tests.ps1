@@ -995,7 +995,14 @@ Describe 'HTML fleet report usability' {
     }
 
     It 'contains wide non-housekeeping tables on narrow screens' {
-        $script:RenderedHtml | Should -Match '@media\(max-width:760px\)\{\s*table:not\(\.housekeeping\)\{display:block;overflow-x:auto\}'
+        $script:RenderedHtml | Should -Match '@media\(max-width:1120px\)\{table:not\(\.housekeeping\)\{display:block;overflow-x:auto\}\}'
+    }
+
+    It 'stacks per-VM key-value details on narrow screens' {
+        $script:RenderedHtml | Should -Match '@media\(max-width:640px\)\{[^}]*\.cards\{[^}]+\}\s*\.kv\{grid-template-columns:minmax\(0,1fr\);gap:0\}'
+        $script:RenderedHtml | Should -Match '\.kv div\{min-width:0\}'
+        $script:RenderedHtml | Should -Match '\.kv div\.k\{margin-top:8px\}'
+        $script:RenderedHtml | Should -Match '@media\(max-width:390px\)\{[^}]*\.cards\{grid-template-columns:1fr\}\s*\.hk-charts\{grid-template-columns:minmax\(0,1fr\)\}'
     }
 }
 
