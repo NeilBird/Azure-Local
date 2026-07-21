@@ -12,27 +12,8 @@ if (-not $OutputPath) {
 }
 
 $toolRoot = Split-Path $PSScriptRoot -Parent
-$modulePath = Join-Path $toolRoot 'Get-HyperVVMCheckpointHealth.psm1'
-$tokens = $null
-$parseErrors = $null
-$moduleAst = [System.Management.Automation.Language.Parser]::ParseFile(
-    $modulePath,
-    [ref]$tokens,
-    [ref]$parseErrors
-)
-if (@($parseErrors).Count -gt 0) {
-    throw "Cannot parse the module renderer: $($parseErrors[0].Message)"
-}
-
-$rendererAst = $moduleAst.FindAll({
-        param($node)
-        $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
-            $node.Name -eq 'ConvertTo-VMCheckpointAuditHtml'
-    }, $true) | Select-Object -First 1
-if (-not $rendererAst) {
-    throw 'ConvertTo-VMCheckpointAuditHtml was not found in the module.'
-}
-Invoke-Expression $rendererAst.Extent.Text
+$renderingModulePath = Join-Path $toolRoot 'Private\Get-HyperVVMCheckpointHealth.Rendering.psm1'
+Import-Module $renderingModulePath -Force -ErrorAction Stop
 
 $baseReportData = [pscustomobject]@{
     State = 'Running'; Status = 'Operating normally'; Version = '12.0'; HostMaxVersion = '12.0'
@@ -41,7 +22,8 @@ $baseReportData = [pscustomobject]@{
     Checkpoints = @(); StaleCheckpointCount = 0; StaleHours = 24
     StaleAttachedLayerCount = 0; StaleSnapshotCount = 0; SnapshotLayerMismatch = $false
     ChainComplete = $true; IncompleteChainCount = 0; StateConsistencyStatus = 'Stable'
-    Replication = [pscustomobject]@{ Enabled = $false; State = ''; Health = '' }
+    AttachedVhdLayers = @()
+    Replication = [pscustomobject]@{ Enabled = $false; State = ''; Health = ''; Mode = ''; Primary = ''; Replica = ''; LastReplicationTime = '' }
     VssState = 'Healthy'; VssTotal = 10; VssUnhealthyCount = 0; VssUnhealthy = @()
     AnalyticNodesNeedEnable = @(); CsvVolumes = @(); OrphanCount = 0; Orphans = @()
     HasOrphans = $false; HasForkSignature = $false; EventConcernCount = 0
@@ -50,7 +32,8 @@ $baseReportData = [pscustomobject]@{
     VmHighConcernCount = 0; VmLowConcernCount = 0; VmCriticalCount = 0
     VmHighOpCount = 0; VmEscalatingConcernCount = 0; HighOpSelfResolved = $false
     VmHighConcernIds = ''; LowSignalOnly = $false; NodeDominantNote = ''
-    ReplHealth = ''; ReplUnhealthy = $false; ReplCritical = $false
+    ReplHealth = ''; ReplUnhealthy = $false; ReplAdvisory = $false; ReplCritical = $false
+    ReplAssessment = $null
     SeverityScore = 0; HasRollbackFingerprint = $false; RollbackDate = ''
     HasStuckMergeOrphan = $false; OrphanOnlyLiveMount = $false
     HistoricForkConfirmed = $false; Historic = $null; ActiveCkptForkConfirmed = $false
@@ -147,21 +130,65 @@ $results = @(
                 $healthyReportData.CheckpointLayers = 1
                 $healthyReportData.StaleAttachedLayerCount = 1
                 $healthyReportData.SnapshotLayerMismatch = $true
+                $healthyReportData.AttachedVhdLayers = @(
+                    [pscustomobject]@{
+                        Disk = 'TestVM04_OS_9f42.avhdx'; Layer = 1; Type = 'Differencing'; SizeGB = 18.6
+                        Created = '2026-07-17 06:10:00'; LastWrite = '2026-07-17 06:42:00'; AgeHrs = 77.4; Stale = $true
+                        Path = 'C:\ClusterStorage\UserStorage_1\TestVM04\Virtual Hard Disks\TestVM04_OS_9f42.avhdx'
+                        ParentPath = 'C:\ClusterStorage\UserStorage_1\TestVM04\Virtual Hard Disks\TestVM04_OS.vhdx'
+                    },
+                    [pscustomobject]@{
+                        Disk = 'TestVM04_OS_9f42.avhdx'; Layer = 2; Type = 'Dynamic'; SizeGB = 64.0
+                        Created = '2026-03-02 09:00:00'; LastWrite = '2026-07-17 06:10:00'; AgeHrs = 77.9; Stale = $false
+                        Path = 'C:\ClusterStorage\UserStorage_1\TestVM04\Virtual Hard Disks\TestVM04_OS.vhdx'; ParentPath = ''
+                    }
+                )
                 $healthyReportData.SeverityScore = 72
                 $recommendation = 'INVESTIGATE'
             }
             5 {
-                $healthyReportData.Replication = [pscustomobject]@{ Enabled = $true; State = 'Error'; Health = 'Critical' }
+                $healthyReportData.Replication = [pscustomobject]@{
+                    Enabled = $true; State = 'Error'; Health = 'Critical'; Mode = 'Primary'
+                    Primary = 'node05'; Replica = 'node06'; LastReplicationTime = '2026-07-20 10:15:00'
+                }
                 $healthyReportData.ReplHealth = 'Critical'
                 $healthyReportData.ReplUnhealthy = $true
                 $healthyReportData.ReplCritical = $true
+                $healthyReportData.ReplAssessment = [pscustomobject]@{
+                    Severity = 'Critical'; ProductSeverity = 'Critical'; MeasurementStatus = 'Concern'
+                    State = 'Error'; Health = 'Critical'; Mode = 'Primary'; IsConcern = $true; HasAdvisory = $false; IsCritical = $true
+                    Reason = 'Hyper-V Replica health is Critical.'; MeasurementsAvailable = $true
+                    LastReplicationTimeUtc = [datetime]'2026-07-20T10:15:00Z'; LastReplicationAgeMinutes = 105
+                    PendingBytes = 3GB; LatencySeconds = 900; MissedCount = 5; FrequencySeconds = 300
+                    AverageReplicationBytes = 256MB; SuccessfulCount = 95; MissedRatePercent = 5
+                    MonitoringIntervalSeconds = 3600; EffectiveMaxAgeMinutes = 60
+                    EffectiveMaxPendingBytes = 1GB; EffectiveMaxLatencySeconds = 600; MaxMissedRatePercent = 10
+                    ThresholdBreaches = @('LastReplicationAge', 'PendingBytes', 'Latency', 'MissedCount')
+                    ConcernBreaches = @('LastReplicationAge', 'PendingBytes', 'Latency'); AdvisoryBreaches = @('MissedCount')
+                }
                 $healthyReportData.SeverityScore = 65
                 $recommendation = 'INVESTIGATE'
             }
             6 {
-                $healthyReportData.Replication = [pscustomobject]@{ Enabled = $true; State = 'Resynchronizing'; Health = 'Warning' }
+                $healthyReportData.Replication = [pscustomobject]@{
+                    Enabled = $true; State = 'Resynchronizing'; Health = 'Warning'; Mode = 'Primary'
+                    Primary = 'node06'; Replica = 'node05'; LastReplicationTime = '2026-07-20 11:40:00'
+                }
                 $healthyReportData.ReplHealth = 'Warning'
                 $healthyReportData.ReplUnhealthy = $true
+                $healthyReportData.ReplAdvisory = $true
+                $healthyReportData.ReplAssessment = [pscustomobject]@{
+                    Severity = 'Warning'; ProductSeverity = 'Warning'; MeasurementStatus = 'Advisory'
+                    State = 'Resynchronizing'; Health = 'Warning'; Mode = 'Primary'; IsConcern = $true; HasAdvisory = $true; IsCritical = $false
+                    Reason = 'Hyper-V Replica health is Warning with measurement drift that warrants observation.'; MeasurementsAvailable = $true
+                    LastReplicationTimeUtc = [datetime]'2026-07-20T11:40:00Z'; LastReplicationAgeMinutes = 20
+                    PendingBytes = 1536MB; LatencySeconds = 350; MissedCount = 1; FrequencySeconds = 300
+                    AverageReplicationBytes = 1GB; SuccessfulCount = 99; MissedRatePercent = 1
+                    MonitoringIntervalSeconds = 3600; EffectiveMaxAgeMinutes = 60
+                    EffectiveMaxPendingBytes = 2GB; EffectiveMaxLatencySeconds = 600; MaxMissedRatePercent = 10
+                    ThresholdBreaches = @('PendingBytes', 'Latency', 'MissedCount'); ConcernBreaches = @()
+                    AdvisoryBreaches = @('PendingBytes', 'Latency', 'MissedCount')
+                }
                 $healthyReportData.SeverityScore = 55
                 $recommendation = 'INVESTIGATE'
             }
@@ -235,12 +262,18 @@ $housekeepingFindings = @(
     [pscustomobject]@{
         Category = 'Unattached base disk candidate'; Scope = 'TestVM08'
         FileName = 'TestVM08_LegacyData.vhdx'
+        FullName = 'C:\ClusterStorage\UserStorage_1\TestVM08\Virtual Hard Disks\TestVM08_LegacyData.vhdx'
+        ParentPath = 'C:\ClusterStorage\UserStorage_1\TestVM08\Virtual Hard Disks'
+        CsvRoot = 'C:\ClusterStorage\UserStorage_1'; Extension = '.vhdx'; Length = 21474836480
         Observation = 'No VM or snapshot chain references this base disk under complete coverage: C:\ClusterStorage\UserStorage_1\TestVM08\Virtual Hard Disks\TestVM08_LegacyData.vhdx'
         Review = 'If this virtual disk belongs to an image library, exclude its full path with storage.imageLibraryPathPatterns in a checkpoint-health-policy.yml file supplied via -PolicyPath (see README.md). Otherwise, confirm intended ownership and storage layout with the VM, backup, and storage owners. Do not modify the file based only on this report.'
     },
     [pscustomobject]@{
         Category = 'Unattached base disk candidate'; Scope = 'TestVM12'
         FileName = 'TestVM12_Archive.vhdx'
+        FullName = 'C:\ClusterStorage\UserStorage_2\TestVM12\Virtual Hard Disks\TestVM12_Archive.vhdx'
+        ParentPath = 'C:\ClusterStorage\UserStorage_2\TestVM12\Virtual Hard Disks'
+        CsvRoot = 'C:\ClusterStorage\UserStorage_2'; Extension = '.vhdx'; Length = 10737418240
         Observation = 'No VM or snapshot chain references this base disk under complete coverage: C:\ClusterStorage\UserStorage_2\TestVM12\Virtual Hard Disks\TestVM12_Archive.vhdx'
         Review = 'If this virtual disk belongs to an image library, exclude its full path with storage.imageLibraryPathPatterns in a checkpoint-health-policy.yml file supplied via -PolicyPath (see README.md). Otherwise, confirm intended ownership and storage layout with the VM, backup, and storage owners. Do not modify the file based only on this report.'
     },
@@ -249,6 +282,16 @@ $housekeepingFindings = @(
         FileName = 'SharedData01.vhdx'
         Observation = 'More than one VM or snapshot inventory references this path: C:\ClusterStorage\UserStorage_2\TestVM14\Virtual Hard Disks\SharedData01.vhdx'
         Review = 'Confirm that the shared reference is intentional and supported for this workload. Do not modify the file based only on this report.'
+    },
+    [pscustomobject]@{
+        Category = 'Shared VHD Set reference'; Scope = 'TestVM16, TestVM17'
+        FileName = 'GuestClusterData.vhds'
+        FullName = 'C:\ClusterStorage\UserStorage_2\GuestCluster\GuestClusterData.vhds'
+        ParentPath = 'C:\ClusterStorage\UserStorage_2\GuestCluster'
+        CsvRoot = 'C:\ClusterStorage\UserStorage_2'; Extension = '.vhds'; Length = 4194304
+        Classification = 'AttachedVirtualDisk'
+        Observation = 'More than one VM references this VHD Set path: C:\ClusterStorage\UserStorage_2\GuestCluster\GuestClusterData.vhds'
+        Review = 'VHD Sets are designed for shared guest-cluster storage. Confirm that the listed VMs are the intended guest-cluster nodes. Do not modify the VHDS or its Hyper-V-managed files based only on this report.'
     }
 )
 
@@ -260,7 +303,7 @@ $html = ConvertTo-VMCheckpointAuditHtml -Results $results -StaleHours 24 `
     -EventLookbackHours 168 -ClusterName 'contoso01' -GeneratedUtc '2026-07-20 12:00:00' `
     -DiscoveredVMs @() -DiscoverySummary $discoverySummary -StorageHealth $storageHealth `
     -HousekeepingFindings $housekeepingFindings -IncludeDiscoveredVMs:$true `
-    -ScriptVersion '0.2.18' -ReportGenerationTime '00:01:24' -ClusterNodeCount 10 -ClusterCsvCount 2
+    -ScriptVersion '0.2.19' -ReportGenerationTime '00:01:24' -ClusterNodeCount 10 -ClusterCsvCount 2
 
 $syntheticNotice = @'
 <div class="callout info synthetic-example"><strong>Synthetic example report.</strong> Every cluster, node, VM, path, timestamp, and event message in this file is invented for documentation. TestVM07 demonstrates an active-checkpoint HOLD STATE confirmed by historic event evidence; seven VMs demonstrate historic rollback, orphaned AVHDX, stale checkpoint/layer, and Hyper-V Replica INVESTIGATE findings; 12 VMs are healthy comparisons. The inventory contains 16 input VMs and 4 automatically discovered VMs.</div>
@@ -282,8 +325,8 @@ if ($unexpectedNames.Count -gt 0) {
 if ($html -match '(?i)\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b') {
     throw 'An email address was found in the synthetic report.'
 }
-$clusterPaths = @([regex]::Matches($html, '(?i)C:\\ClusterStorage\\[^<\s]+') | ForEach-Object { [System.Net.WebUtility]::HtmlDecode($_.Value) })
-$unexpectedPaths = @($clusterPaths | Where-Object { $_ -notmatch '^C:\\ClusterStorage\\UserStorage_[12]\\TestVM(?:0[1-9]|1[0-9]|20)\\' })
+$clusterPaths = @([regex]::Matches($html, '(?i)C:\\ClusterStorage\\[^<\s''"]+') | ForEach-Object { [System.Net.WebUtility]::HtmlDecode($_.Value) })
+$unexpectedPaths = @($clusterPaths | Where-Object { $_ -notmatch '^C:\\ClusterStorage\\UserStorage_[12](?:$|\\(?:TestVM(?:0[1-9]|1[0-9]|20)|GuestCluster)(?:$|\\))' })
 if ($unexpectedPaths.Count -gt 0) {
     throw "Unexpected ClusterStorage path in synthetic report: $($unexpectedPaths -join ', ')"
 }

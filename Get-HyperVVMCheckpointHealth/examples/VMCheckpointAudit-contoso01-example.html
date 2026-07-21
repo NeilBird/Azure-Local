@@ -70,14 +70,39 @@
   /* Housekeeping rows contain both long VM/path identifiers and prose. A fixed, explicit column
       allocation prevents the path from consuming the table and crushing Scope/Review into letters. */
   table.housekeeping{table-layout:fixed}
-  table.housekeeping col.hk-category{width:16%}
-    table.housekeeping col.hk-scope{width:20%}
-    table.housekeeping col.hk-observation{width:36%}
-    table.housekeeping col.hk-review{width:28%}
+    table.housekeeping col.hk-category{width:15%}
+        table.housekeeping col.hk-scope{width:13%}
+        table.housekeeping col.hk-filecol{width:24%}
+        table.housekeeping col.hk-size{width:10%}
+        table.housekeeping col.hk-observation{width:22%}
+        table.housekeeping col.hk-review{width:16%}
   table.housekeeping td{overflow-wrap:anywhere}
   table.housekeeping td code{white-space:normal;word-break:break-word;overflow-wrap:anywhere}
     table.housekeeping .hk-file{margin-bottom:10px;font-weight:700}
     table.housekeeping .hk-observation{margin:0}
+    .hk-tools{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:14px;margin:14px 0}
+    .hk-categories,.hk-actions,.hk-live{display:flex;flex-wrap:wrap;gap:8px 16px;margin:10px 0}
+    .hk-categories label{display:flex;align-items:center;gap:7px;color:#cbd5e1;font-size:13px}
+    .hk-categories input{accent-color:var(--accent)}
+    .hk-actions button,.hk-sort{background:var(--panel2);color:var(--ink);border:1px solid var(--line);border-radius:5px;padding:6px 10px;cursor:pointer}
+    .hk-image-option{margin-top:12px;padding-top:10px;border-top:1px solid var(--line)}
+    .hk-image-option label{display:flex;align-items:flex-start;gap:7px;color:#fcd34d;font-size:13px;font-weight:600;cursor:pointer}
+    .hk-image-option input{margin-top:2px;accent-color:var(--accent)}
+    .hk-image-policy{background:#172033;border:1px solid #7a5b12;border-radius:8px;padding:14px;margin:14px 0}
+    .hk-image-policy[hidden]{display:none}
+    .hk-image-policy textarea{width:100%;min-height:140px;box-sizing:border-box;margin:10px 0;background:#0f172a;color:var(--ink);border:1px solid var(--line);border-radius:5px;padding:10px;font-family:Consolas,monospace;resize:vertical}
+    .hk-image-policy-list{margin:10px 0;padding:0;list-style:none}
+    .hk-image-policy-list li{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:7px 0;border-bottom:1px solid var(--line)}
+    .hk-image-policy-list code{overflow-wrap:anywhere}
+    .hk-sort{width:100%;text-align:left;font-weight:600}
+    .hk-filters{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px}
+    .hk-filters label{display:flex;flex-direction:column;gap:4px;color:#cbd5e1;font-size:13px}
+    .hk-filters input,.hk-filters select{width:100%;box-sizing:border-box;background:#0f172a;color:var(--ink);border:1px solid var(--line);border-radius:5px;padding:7px}
+    .hk-live strong{color:#fff}
+    .hk-charts{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px;margin:14px 0}
+    .hk-chart{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px;min-height:150px}
+    .hk-chart h3{font-size:14px;margin:0 0 8px}.hk-chart svg{width:100%;height:auto;display:block}
+    .hk-empty{display:none;padding:18px;text-align:center;background:var(--panel);border:1px solid var(--line);color:var(--muted)}
   .src{display:inline-block;margin-left:6px;padding:1px 7px;border-radius:999px;font-size:10.5px;
     font-weight:600;text-transform:uppercase;letter-spacing:.03em;vertical-align:middle}
   .src.input{background:#12303f;color:#7dd3fc;border:1px solid #1d4e6b}
@@ -110,6 +135,7 @@
   details.appx>summary:hover::before{filter:brightness(1.08)}
   details.appx>.appx-body{padding:4px 18px 18px}
   .muted{color:var(--muted)}
+    .scope-label{color:#d97706;font-weight:700}
   /* Semantic inline emphasis (used sparingly): amber for a warning value (stale YES, a non-zero
      orphan / stale count, an oldest-checkpoint age at/over the stale threshold); muted grey for a
      zero count so it recedes; soft-red bold for the single most important imperative inside a HOLD
@@ -123,9 +149,9 @@
      long checkpoint name wraps slightly earlier, freeing the small amount of width the Age column needs. */
   td.ckptage{white-space:nowrap}
   td.ckptname{max-width:300px;overflow-wrap:anywhere}
+        @media(max-width:1120px){table:not(.housekeeping){display:block;overflow-x:auto}}
     @media(max-width:980px){.cards{grid-template-columns:repeat(4,minmax(0,1fr))}}
         @media(max-width:760px){
-            table:not(.housekeeping){display:block;overflow-x:auto}
             table.housekeeping,table.housekeeping tbody,table.housekeeping tr,table.housekeeping td{display:block;width:100%}
             table.housekeeping{border:0;background:transparent}
             table.housekeeping thead{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
@@ -134,8 +160,16 @@
             table.housekeeping td::before{content:attr(data-label);color:var(--muted);font-weight:600}
             table.housekeeping td .hk-observation{grid-column:2;min-width:0}
         }
-    @media(max-width:640px){.cards{grid-template-columns:repeat(2,minmax(0,1fr))}}
-    @media(max-width:390px){.cards{grid-template-columns:1fr}}
+    @media(max-width:640px){
+        .cards{grid-template-columns:repeat(2,minmax(0,1fr))}
+        .kv{grid-template-columns:minmax(0,1fr);gap:0}
+        .kv div{min-width:0}
+        .kv div.k{margin-top:8px}
+    }
+    @media(max-width:390px){
+        .cards{grid-template-columns:1fr}
+        .hk-charts{grid-template-columns:minmax(0,1fr)}
+    }
   footer{margin-top:44px;border-top:1px solid var(--line);padding-top:16px;color:var(--muted);font-size:12.5px}
 </style>
 </head>
@@ -147,12 +181,16 @@
   <div class="meta">
     Cluster <b>contoso01</b> &nbsp;&bull;&nbsp; 20 audited VMs
     &nbsp;&bull;&nbsp; Report generated <b>2026-07-20 12:00:00 UTC</b>
-    &nbsp;&bull;&nbsp; Module version <b>0.2.18</b>&nbsp;&bull;&nbsp; Processed <b>20</b> VMs, across <b>10</b> owning cluster nodes, in <b>00:01:24</b><br>
+    &nbsp;&bull;&nbsp; Module version <b>0.2.19</b>&nbsp;&bull;&nbsp; Processed <b>20</b> VMs, across <b>10</b> owning cluster nodes, in <b>00:01:24</b><br>
     Cluster size: <b>10</b> nodes &nbsp;&bull;&nbsp; <b>2</b> Cluster Shared Volumes<br>
     Parameters: Stale CheckPoint threshold: 24 h; Diagnostic events lookback: 168 h; Include discovered VMs: Yes.<br>
     Read-only diagnostic - <b>no changes were made to any VM</b>.<br>Discovery: <b>4</b> eligible &nbsp;&bull;&nbsp; <b>4</b> auto-audited &nbsp;&bull;&nbsp; <b>0</b> deferred &nbsp;&bull;&nbsp; cap: <b>None</b>.
   </div>
 </header>
+
+<div class="callout info">
+    <strong class="scope-label">Report scope:</strong> This report is a point-in-time, read-only assessment of the <strong>20 VMs audited in this run</strong>, generated at <strong>2026-07-20 12:00:00 UTC</strong>. Its findings should be considered alongside a wider assessment of the cluster, storage, backup solution, workloads, and relevant operational history. It is not a complete cluster health assessment and does not represent the health of VMs that were not audited.
+</div>
 
 <div class="cards">
     <div class="card lead"><div class="n">20</div><div class="l">VMs audited</div></div>
@@ -170,16 +208,16 @@
     <li>Engage Microsoft Support (CSS) and/or your backup vendor for those VMs.</li>
     <li>See the per-VM detail below for which VMs are affected and why.</li>
     <li><strong>7 additional VM(s) are flagged INVESTIGATE:</strong> these require separate operations / backup-team triage and are not included in the HOLD count.</li>
-    <li><strong>Fleet-wide checkpoint / replication evidence:</strong> 4 stale attached AVHDX layer(s), 3 stale named snapshot(s), 4 orphaned .avhdx file(s), 2 VM(s) with unhealthy Hyper-V Replica. See Recommended next steps and the per-VM detail below.</li>
+    <li><strong>Fleet-wide checkpoint / replication evidence:</strong> 4 stale attached AVHDX layer(s), 3 stale named snapshot(s), 4 orphaned .avhdx file(s), 2 VM(s) with Replica product-health/state concerns, 1 VM(s) with material Replica measurement concerns, 1 VM(s) with Replica measurement advisories. See Recommended next steps and the per-VM detail below.</li>
   </ul>
-</div><div class="callout info">
+</div><h2>Recommended next steps</h2>
+<ol>    <li><strong>PRIORITY - possible historic rollback (1 VM(s)):</strong> TestVM01 show a cluster of orphaned <code>.avhdx</code> frozen at a common date - the signature of a materialised fork-commit rollback (disks rolled back to base, orphaning the checkpoint layers). Those files may hold un-recovered data. Do NOT remove them; engage Microsoft Support (CSS) / your backup vendor to recover. Because the original events may predate the 168h lookback, <strong>re-run with a larger window</strong> (e.g. <code>-EventLookbackHours 720</code>) to try to capture them - and see each VM's "Historic event correlation" detail (some are already CONFIRMED from recovered historic events).</li>  <li><strong>Hyper-V Replica product health/state needs attention (2 VM(s)):</strong> TestVM05, TestVM06 report Warning, Critical, an abnormal state, or unavailable required relationship evidence. Review <code>Get-VMReplication</code> health details and the relationship state; this is separate from checkpoint-chain evidence. The audit is read-only and does not start, repair, resume, or resynchronize replication.</li>  <li><strong>Hyper-V Replica measurements need attention (1 VM(s)):</strong> TestVM05 materially exceed relationship-aware age, backlog, latency, or missed-replication limits. Review the observed and effective values in each VM card, the monitoring window, and recent network/storage demand. Re-run after the next monitoring interval; escalate to the Replica owner if the condition persists or product health becomes Warning/Critical.</li>  <li><strong>Hyper-V Replica measurement advisory (1 VM(s), no verdict escalation by itself):</strong> TestVM06 have raw health <code>Normal</code> with isolated measurement drift. Review the per-VM values and re-run after the next monitoring interval; investigate only if the drift persists, becomes corroborated, or product health/state degrades.</li>    <li><strong>HOLD STATE - fork-commit recorded at an active checkpoint's creation (1 VM(s)):</strong> TestVM07 carry an ACTIVE (still-attached) checkpoint created OUTSIDE the 168h window, and the historic cross-node scan recovered a 'fork-commit / merge-failure' event around that creation time. The chain may be inconsistent while the VM runs. Do NOT live/quick/storage-migrate or restart these VMs until the differencing chain has been validated (and merged if required); engage Microsoft Support (CSS) / your backup vendor. This is a proactive dormant-risk flag - it has not yet materialised into data loss.</li>    <li><strong>INVESTIGATE - 4 stale attached AVHDX layer(s) across 4 VM(s):</strong> these are readable layers in the active disk chains, regardless of whether <code>Get-VMSnapshot</code> exposes a matching named snapshot. Validate the chain and backup job before migration/restart or any merge/removal action.</li>    <li><strong>INVESTIGATE - 3 stale named snapshot(s) across 3 VM(s):</strong> backup team first. For each, check your backup product's recent job history (did the last backup complete?) and confirm whether the snapshot is <em>expected</em> or was <em>left behind</em> by a failed / incomplete backup. The action and decision rest with you / your backup team.</li>  <li><strong>INVESTIGATE - 4 orphaned .avhdx file(s) across 3 VM(s):</strong> do NOT delete blindly - a stuck / failed merge, a failed backup checkpoint, an interrupted instant-recovery / live-mount, or a leftover initial Hyper-V Replica checkpoint can leave these behind. Prescriptive checks (backup team / VM owner): <ol><li><strong>Match each file to a job:</strong> in your backup product's job / activity history, find the backup, restore, instant-recovery / live-mount or replica-seed job for THAT VM that was running at the file's <em>Created</em> / <em>LastWrite</em> time (shown in each VM's detail) - a job that failed or aborted then is the usual cause.</li><li><strong>If it is a live-mount / instant-recovery file</strong> (path contains a mount / recovery folder, or the product shows an active mount): tear the mount down THROUGH the backup product (unmount / stop the recovery session) - do NOT delete the file by hand, which leaves the product's catalog inconsistent.</li><li><strong>If it is a leftover initial-replica recovery point:</strong> check Hyper-V Replica health (<code>Get-VMReplication</code>) and let replication remove it (resume / resync) rather than deleting it manually.</li><li><strong>Before removing anything:</strong> confirm a current, verified backup of the VM exists, then MOVE (rename) the orphan to a quarantine folder instead of deleting, keep it for one retention cycle, confirm the VM stays healthy and its next backup succeeds, and only then delete.</li></ol> Open a Microsoft CSS case for guidance if a file cannot be matched to a job or you are unsure. The action and decision to clean up these file(s) rests with you / the administrator. See each VM's "Orphaned .avhdx files" detail below for names, sizes, timestamps and a per-file read.</li>  <li><strong>HOLD STATE VMs:</strong> engage Microsoft Support (CSS) and/or your backup vendor before any migration / restart.</li>  <li><strong>Open a Microsoft Support case:</strong> a checkpoint fork-commit signature (event <code>3216</code> or an HRESULT such as <code>0x80048102</code>) is present on one or more VMs above - that is the condition that warrants a case (the per-VM detail shows which).</li></ol><div class="callout info">
   <strong>Reading the event counts:</strong> each VM shows <strong>two</strong> figures - a <strong>per-VM</strong>
   count of concern events whose message names <em>that</em> VM (these drive its verdict), and a <strong>node-wide</strong>
   count for context (checkpoint / merge activity across <strong>all</strong> VMs on the owning node, often referencing
   <em>other</em> VMs). Only the node-wide figure is node health context, not proof the audited VM is failing; each VM's
   own attributed events are listed in its section below.
-</div><h2>Recommended next steps</h2>
-<ol>    <li><strong>PRIORITY - possible historic rollback (1 VM(s)):</strong> TestVM01 show a cluster of orphaned <code>.avhdx</code> frozen at a common date - the signature of a materialised fork-commit rollback (disks rolled back to base, orphaning the checkpoint layers). Those files may hold un-recovered data. Do NOT remove them; engage Microsoft Support (CSS) / your backup vendor to recover. Because the original events may predate the 168h lookback, <strong>re-run with a larger window</strong> (e.g. <code>-EventLookbackHours 720</code>) to try to capture them - and see each VM's "Historic event correlation" detail (some are already CONFIRMED from recovered historic events).</li>  <li><strong>Hyper-V Replica needs attention (2 VM(s)):</strong> TestVM05, TestVM06 report an unhealthy replica (e.g. Critical / resynchronize-required). Start / repair replication for these (this is separate from the checkpoint items).</li>    <li><strong>HOLD STATE - fork-commit recorded at an active checkpoint's creation (1 VM(s)):</strong> TestVM07 carry an ACTIVE (still-attached) checkpoint created OUTSIDE the 168h window, and the historic cross-node scan recovered a 'fork-commit / merge-failure' event around that creation time. The chain may be inconsistent while the VM runs. Do NOT live/quick/storage-migrate or restart these VMs until the differencing chain has been validated (and merged if required); engage Microsoft Support (CSS) / your backup vendor. This is a proactive dormant-risk flag - it has not yet materialised into data loss.</li>    <li><strong>INVESTIGATE - 4 stale attached AVHDX layer(s) across 4 VM(s):</strong> these are readable layers in the active disk chains, regardless of whether <code>Get-VMSnapshot</code> exposes a matching named snapshot. Validate the chain and backup job before migration/restart or any merge/removal action.</li>    <li><strong>INVESTIGATE - 3 stale named snapshot(s) across 3 VM(s):</strong> backup team first. For each, check your backup product's recent job history (did the last backup complete?) and confirm whether the snapshot is <em>expected</em> or was <em>left behind</em> by a failed / incomplete backup. The action and decision rest with you / your backup team.</li>  <li><strong>INVESTIGATE - 4 orphaned .avhdx file(s) across 3 VM(s):</strong> do NOT delete blindly - a stuck / failed merge, a failed backup checkpoint, an interrupted instant-recovery / live-mount, or a leftover initial Hyper-V Replica checkpoint can leave these behind. Prescriptive checks (backup team / VM owner): <ol><li><strong>Match each file to a job:</strong> in your backup product's job / activity history, find the backup, restore, instant-recovery / live-mount or replica-seed job for THAT VM that was running at the file's <em>Created</em> / <em>LastWrite</em> time (shown in each VM's detail) - a job that failed or aborted then is the usual cause.</li><li><strong>If it is a live-mount / instant-recovery file</strong> (path contains a mount / recovery folder, or the product shows an active mount): tear the mount down THROUGH the backup product (unmount / stop the recovery session) - do NOT delete the file by hand, which leaves the product's catalog inconsistent.</li><li><strong>If it is a leftover initial-replica recovery point:</strong> check Hyper-V Replica health (<code>Get-VMReplication</code>) and let replication remove it (resume / resync) rather than deleting it manually.</li><li><strong>Before removing anything:</strong> confirm a current, verified backup of the VM exists, then MOVE (rename) the orphan to a quarantine folder instead of deleting, keep it for one retention cycle, confirm the VM stays healthy and its next backup succeeds, and only then delete.</li></ol> Open a Microsoft CSS case for guidance if a file cannot be matched to a job or you are unsure. The action and decision to clean up these file(s) rests with you / the administrator. See each VM's "Orphaned .avhdx files" detail below for names, sizes, timestamps and a per-file read.</li>  <li><strong>HOLD STATE VMs:</strong> engage Microsoft Support (CSS) and/or your backup vendor before any migration / restart.</li>  <li><strong>Open a Microsoft Support case:</strong> a checkpoint fork-commit signature (event <code>3216</code> or an HRESULT such as <code>0x80048102</code>) is present on one or more VMs above - that is the condition that warrants a case (the per-VM detail shows which).</li></ol><h2>VM summary table</h2>
+</div><h2>VM summary table</h2>
 <p class="muted"><strong>VM Source</strong> = <span class="src input">Input</span> (you requested it) or <span class="src discovered">Discovered</span> (auto-added via <code>-IncludeDiscoveredVMs</code>). <strong>Checkpoints</strong> = checkpoint objects (<code>Get-VMSnapshot</code>). <strong>AVHDX files</strong> = active differencing <code>.avhdx</code> layers = <strong>Checkpoints &times; Disks</strong>. <strong>Orphans</strong> = <code>.avhdx</code> on disk but NOT attached. <strong>Stale evidence</strong> = attached AVHDX layers / named snapshots at or beyond the stale threshold. <strong>Concerning Events (VM)</strong> = count of concern events attributed to THIS VM (<code>hi</code> = high-signal that drive the verdict; <code>low</code> = transient / housekeeping only). Rows are ordered by severity within each verdict.</p>
 <table>
 <thead><tr>
@@ -306,6 +344,7 @@
     <div class="k">Checkpoint type</div><div>Production</div>
     <div class="k">Orphaned .avhdx</div><div>0</div>
     <div class="k">Hyper-V Replica</div><div>Not enabled</div>
+    <div class="k">Replica measurement assessment</div><div>Unavailable</div>
     <div class="k">VSS writers</div><div>All 10 writer(s) Stable (no last error)</div>
     <div class="k">Analytic channel</div><div>Enabled (or not checked)</div>
     <div class="k">Policy source</div><div><code>BuiltInDefaults</code></div>
@@ -335,6 +374,7 @@
     <div class="k">Checkpoint type</div><div>Production</div>
     <div class="k">Orphaned .avhdx</div><div>2</div>
     <div class="k">Hyper-V Replica</div><div>Not enabled</div>
+    <div class="k">Replica measurement assessment</div><div>Unavailable</div>
     <div class="k">VSS writers</div><div>All 10 writer(s) Stable (no last error)</div>
     <div class="k">Analytic channel</div><div>Enabled (or not checked)</div>
     <div class="k">Policy source</div><div><code>BuiltInDefaults</code></div>
@@ -364,6 +404,7 @@
     <div class="k">Checkpoint type</div><div>Production</div>
     <div class="k">Orphaned .avhdx</div><div>1</div>
     <div class="k">Hyper-V Replica</div><div>Not enabled</div>
+    <div class="k">Replica measurement assessment</div><div>Unavailable</div>
     <div class="k">VSS writers</div><div>All 10 writer(s) Stable (no last error)</div>
     <div class="k">Analytic channel</div><div>Enabled (or not checked)</div>
     <div class="k">Policy source</div><div><code>BuiltInDefaults</code></div>
@@ -372,7 +413,7 @@
     <div class="k">Config behind latest</div><div>No - at the latest supported version.</div>
     <div class="k">Concerning events - this VM (168h)</div><div>0 (low-signal only)</div>
     <div class="k">Concerning events - node-wide (168h)</div><div>0 (references other VMs / none - context only)</div>
-  </div>  <div class='callout warn'><strong>INVESTIGATE.</strong> Driver: 1 stale attached AVHDX layer(s); 1 stale named snapshot(s); 1 orphaned .avhdx (leftover file). The specific checkpoint fork-commit signature was NOT observed in the current window, so on-disk chain corruption is not confirmed - backup-team / operator triage first; no Microsoft case needed yet.</div>
+  </div>  <div class='callout warn'><strong>INVESTIGATE.</strong> Driver: 1 stale attached AVHDX layer(s); 1 stale named snapshot(s); 1 orphaned .avhdx (leftover file). The specific checkpoint fork-commit signature was NOT observed in the current window, so on-disk chain corruption is not confirmed - review the attached-chain, checkpoint, orphan, event, and backup-job evidence below before any merge/removal action.</div>
   <details open><summary>Checkpoints (1)</summary><table><thead><tr><th>Name</th><th>Type</th><th>Purpose</th><th>Created (UTC)</th><th>Age</th><th>Stale</th><th>Parent</th></tr></thead><tbody><tr><td class='ckptname'>Discovered backup checkpoint - synthetic</td><td>Recovery</td><td>Backup</td><td>2026-07-18 03:30:00</td><td class='num ckptage'>56.5 h<br>2.4 d</td><td><span class='warnval'>YES</span></td><td></td></tr></tbody></table></details>
   <details open><summary>Orphaned .avhdx files (1) - on disk but NOT attached to the VM</summary><table><thead><tr><th>File Name</th><th>Size (GB)</th><th>Created (UTC)</th><th>LastWrite (UTC)</th><th>Age</th><th>Likely / action</th><th>Full path</th></tr></thead><tbody><tr><td>TestVM17_OS_orphan.avhdx</td><td class='num'>4.6</td><td>2026-07-18 03:31:10</td><td>2026-07-18 03:44:52</td><td class='num ckptage'>56.3 h<br>2.3 d</td><td>Unattached backup checkpoint artifact. Preserve it until the synthetic job history is reviewed.</td><td><code>C:\ClusterStorage\UserStorage_2\TestVM17\Virtual Hard Disks\TestVM17_OS_orphan.avhdx</code></td></tr></tbody></table><p class='muted'>Orphaned <code>.avhdx</code> are differencing files on disk that are not attached to the VM. They can be the aftermath of a rolled-back / stuck merge (which may hold un-recovered data) or leftover backup / live-mount files. <strong>Do not delete based on this report.</strong> Action (backup team / VM owner): (1) match each file to a backup / restore / live-mount / replica-seed job for this VM at its Created / LastWrite time; (2) if it is a live-mount / instant-recovery file, unmount it THROUGH the backup product rather than deleting it by hand; (3) if it is a leftover initial-replica point, let Hyper-V Replica remove it (resume / resync); (4) before removing anything, confirm a current good backup exists, MOVE (rename) the file to a quarantine folder, keep it one retention cycle, verify the VM and its next backup are healthy, then delete. The 'Likely / action' column above gives the per-file read. The action and decision rest with you / the administrator.</p></details>
 </div><div class="vm" id="vm-TestVM02">
@@ -393,6 +434,7 @@
     <div class="k">Checkpoint type</div><div>Production</div>
     <div class="k">Orphaned .avhdx</div><div>1</div>
     <div class="k">Hyper-V Replica</div><div>Not enabled</div>
+    <div class="k">Replica measurement assessment</div><div>Unavailable</div>
     <div class="k">VSS writers</div><div>All 10 writer(s) Stable (no last error)</div>
     <div class="k">Analytic channel</div><div>Enabled (or not checked)</div>
     <div class="k">Policy source</div><div><code>BuiltInDefaults</code></div>
@@ -401,7 +443,7 @@
     <div class="k">Config behind latest</div><div>No - at the latest supported version.</div>
     <div class="k">Concerning events - this VM (168h)</div><div>0 (low-signal only)</div>
     <div class="k">Concerning events - node-wide (168h)</div><div>0 (references other VMs / none - context only)</div>
-  </div>  <div class='callout warn'><strong>INVESTIGATE.</strong> Driver: orphaned .avhdx with a matching stuck/failed-merge event. The specific checkpoint fork-commit signature was NOT observed in the current window, so on-disk chain corruption is not confirmed - backup-team / operator triage first; no Microsoft case needed yet.</div>
+  </div>  <div class='callout warn'><strong>INVESTIGATE.</strong> Driver: orphaned .avhdx with a matching stuck/failed-merge event. The specific checkpoint fork-commit signature was NOT observed in the current window, so on-disk chain corruption is not confirmed - review the attached-chain, checkpoint, orphan, event, and backup-job evidence below before any merge/removal action.</div>
   <details open><summary>Orphaned .avhdx files (1) - on disk but NOT attached to the VM</summary><table><thead><tr><th>File Name</th><th>Size (GB)</th><th>Created (UTC)</th><th>LastWrite (UTC)</th><th>Age</th><th>Likely / action</th><th>Full path</th></tr></thead><tbody><tr><td>TestVM02_Data_orphan.avhdx</td><td class='num'>11.2</td><td>2026-07-16 01:22:04</td><td>2026-07-16 01:38:19</td><td class='num ckptage'>107.6 h<br>4.5 d</td><td>Possible stuck merge artifact. Match it to the synthetic backup window before any action.</td><td><code>C:\ClusterStorage\UserStorage_1\TestVM02\Virtual Hard Disks\TestVM02_Data_orphan.avhdx</code></td></tr></tbody></table><p class='muted'>Orphaned <code>.avhdx</code> are differencing files on disk that are not attached to the VM. They can be the aftermath of a rolled-back / stuck merge (which may hold un-recovered data) or leftover backup / live-mount files. <strong>Do not delete based on this report.</strong> Action (backup team / VM owner): (1) match each file to a backup / restore / live-mount / replica-seed job for this VM at its Created / LastWrite time; (2) if it is a live-mount / instant-recovery file, unmount it THROUGH the backup product rather than deleting it by hand; (3) if it is a leftover initial-replica point, let Hyper-V Replica remove it (resume / resync); (4) before removing anything, confirm a current good backup exists, MOVE (rename) the file to a quarantine folder, keep it one retention cycle, verify the VM and its next backup are healthy, then delete. The 'Likely / action' column above gives the per-file read. The action and decision rest with you / the administrator.</p></details>
 </div><div class="vm" id="vm-TestVM04">
   <h3><span class="vm-label">VM Name:</span> <code>TestVM04</code> <span class="pill investigate">INVESTIGATE</span><span class="src input">Input</span></h3>
@@ -421,6 +463,7 @@
     <div class="k">Checkpoint type</div><div>Production</div>
     <div class="k">Orphaned .avhdx</div><div>0</div>
     <div class="k">Hyper-V Replica</div><div>Not enabled</div>
+    <div class="k">Replica measurement assessment</div><div>Unavailable</div>
     <div class="k">VSS writers</div><div>All 10 writer(s) Stable (no last error)</div>
     <div class="k">Analytic channel</div><div>Enabled (or not checked)</div>
     <div class="k">Policy source</div><div><code>BuiltInDefaults</code></div>
@@ -429,7 +472,8 @@
     <div class="k">Config behind latest</div><div>No - at the latest supported version.</div>
     <div class="k">Concerning events - this VM (168h)</div><div>0 (low-signal only)</div>
     <div class="k">Concerning events - node-wide (168h)</div><div>0 (references other VMs / none - context only)</div>
-  </div>  <div class='callout warn'><strong>INVESTIGATE.</strong> Driver: 1 stale attached AVHDX layer(s); snapshot/layer representation mismatch. The specific checkpoint fork-commit signature was NOT observed in the current window, so on-disk chain corruption is not confirmed - backup-team / operator triage first; no Microsoft case needed yet.</div>
+  </div>  <div class='callout warn'><strong>INVESTIGATE.</strong> Driver: 1 stale attached AVHDX layer(s); snapshot/layer representation mismatch. The specific checkpoint fork-commit signature was NOT observed in the current window, so on-disk chain corruption is not confirmed - review the attached-chain, checkpoint, orphan, event, and backup-job evidence below before any merge/removal action.</div>
+  <details open><summary>Attached VHD chain evidence (2 layer(s))</summary><table><thead><tr><th>Disk</th><th>Layer</th><th>Type</th><th>Size (GB)</th><th>Created (UTC)</th><th>LastWrite (UTC)</th><th>Age</th><th>Stale</th><th>Full path</th><th>Parent path</th></tr></thead><tbody><tr><td>TestVM04_OS_9f42.avhdx</td><td class='num'>1</td><td>Differencing</td><td class='num'>18.6</td><td>2026-07-17 06:10:00</td><td>2026-07-17 06:42:00</td><td class='num ckptage'>77.4 h<br>3.2 d</td><td><span class='warnval'>YES</span></td><td><code>C:\ClusterStorage\UserStorage_1\TestVM04\Virtual Hard Disks\TestVM04_OS_9f42.avhdx</code></td><td><code>C:\ClusterStorage\UserStorage_1\TestVM04\Virtual Hard Disks\TestVM04_OS.vhdx</code></td></tr><tr><td>TestVM04_OS_9f42.avhdx</td><td class='num'>2</td><td>Dynamic</td><td class='num'>64</td><td>2026-03-02 09:00:00</td><td>2026-07-17 06:10:00</td><td class='num ckptage'>77.9 h<br>3.2 d</td><td>n/a</td><td><code>C:\ClusterStorage\UserStorage_1\TestVM04\Virtual Hard Disks\TestVM04_OS.vhdx</code></td><td><code></code></td></tr></tbody></table><p class='muted'>These are the files in the VM's currently attached VHD chain. A differencing <code>.avhdx</code> layer can remain attached even when <code>Get-VMSnapshot</code> exposes no named checkpoint. Validate the chain and the responsible backup/checkpoint job before migration, restart, merge, or removal.</p></details>
 </div><div class="vm" id="vm-TestVM03">
   <h3><span class="vm-label">VM Name:</span> <code>TestVM03</code> <span class="pill investigate">INVESTIGATE</span><span class="src input">Input</span></h3>
   <div class="kv">
@@ -448,6 +492,7 @@
     <div class="k">Checkpoint type</div><div>Production</div>
     <div class="k">Orphaned .avhdx</div><div>0</div>
     <div class="k">Hyper-V Replica</div><div>Not enabled</div>
+    <div class="k">Replica measurement assessment</div><div>Unavailable</div>
     <div class="k">VSS writers</div><div>All 10 writer(s) Stable (no last error)</div>
     <div class="k">Analytic channel</div><div>Enabled (or not checked)</div>
     <div class="k">Policy source</div><div><code>BuiltInDefaults</code></div>
@@ -456,7 +501,7 @@
     <div class="k">Config behind latest</div><div>No - at the latest supported version.</div>
     <div class="k">Concerning events - this VM (168h)</div><div>0 (low-signal only)</div>
     <div class="k">Concerning events - node-wide (168h)</div><div>0 (references other VMs / none - context only)</div>
-  </div>  <div class='callout warn'><strong>INVESTIGATE.</strong> Driver: 1 stale attached AVHDX layer(s); 1 stale named snapshot(s). The specific checkpoint fork-commit signature was NOT observed in the current window, so on-disk chain corruption is not confirmed - backup-team / operator triage first; no Microsoft case needed yet.</div>
+  </div>  <div class='callout warn'><strong>INVESTIGATE.</strong> Driver: 1 stale attached AVHDX layer(s); 1 stale named snapshot(s). The specific checkpoint fork-commit signature was NOT observed in the current window, so on-disk chain corruption is not confirmed - review the attached-chain, checkpoint, orphan, event, and backup-job evidence below before any merge/removal action.</div>
   <details open><summary>Checkpoints (1)</summary><table><thead><tr><th>Name</th><th>Type</th><th>Purpose</th><th>Created (UTC)</th><th>Age</th><th>Stale</th><th>Parent</th></tr></thead><tbody><tr><td class='ckptname'>Backup checkpoint - synthetic</td><td>Recovery</td><td>Backup</td><td>2026-07-17 00:15:00</td><td class='num ckptage'>83.8 h<br>3.5 d</td><td><span class='warnval'>YES</span></td><td></td></tr></tbody></table></details>
 </div><div class="vm" id="vm-TestVM05">
   <h3><span class="vm-label">VM Name:</span> <code>TestVM05</code> <span class="pill investigate">INVESTIGATE</span><span class="src input">Input</span></h3>
@@ -476,6 +521,7 @@
     <div class="k">Checkpoint type</div><div>Production</div>
     <div class="k">Orphaned .avhdx</div><div>0</div>
     <div class="k">Hyper-V Replica</div><div>Error (Critical)</div>
+    <div class="k">Replica measurement assessment</div><div>Concern - last replication age 105.0 min (effective limit 60.0 min); pending data 3.00 GB (effective limit 1.00 GB); average latency 900.0 sec (effective limit 600.0 sec)</div>
     <div class="k">VSS writers</div><div>All 10 writer(s) Stable (no last error)</div>
     <div class="k">Analytic channel</div><div>Enabled (or not checked)</div>
     <div class="k">Policy source</div><div><code>BuiltInDefaults</code></div>
@@ -484,7 +530,8 @@
     <div class="k">Config behind latest</div><div>No - at the latest supported version.</div>
     <div class="k">Concerning events - this VM (168h)</div><div>0 (low-signal only)</div>
     <div class="k">Concerning events - node-wide (168h)</div><div>0 (references other VMs / none - context only)</div>
-  </div>  <div class='callout warn'><strong>INVESTIGATE.</strong> Driver: replica health Critical (Critical). The specific checkpoint fork-commit signature was NOT observed in the current window, so on-disk chain corruption is not confirmed - backup-team / operator triage first; no Microsoft case needed yet.</div>
+  </div>  <div class='callout warn'><strong>INVESTIGATE.</strong> Driver: Replica product health/state Critical (Error / Critical); Replica measurement concern: last replication age 105.0 min (effective limit 60.0 min); pending data 3.00 GB (effective limit 1.00 GB); average latency 900.0 sec (effective limit 600.0 sec). Review the Hyper-V Replica details below, confirm connectivity and capacity on both replication partners, address the breached effective limits, then verify that replication returns to Normal and the backlog drains.</div>
+  <details open><summary>Hyper-V Replica details - Error / Critical; measurements Concern</summary><table><thead><tr><th>Signal</th><th>Observed</th><th>Effective guardrail / context</th><th>Assessment</th></tr></thead><tbody><tr><td>Product state and health</td><td>Error / Critical</td><td>Authoritative Get-VMReplication evidence</td><td><span class='warnval'>Critical</span></td></tr><tr><td>Relationship</td><td>Mode Primary</td><td>Primary node05; replica node06</td><td>Context</td></tr><tr><td>Replication cadence</td><td>300.0 sec</td><td>Used to calculate relationship-aware limits</td><td>Context</td></tr><tr><td>Monitoring window</td><td>01:00:00</td><td>Get-VMReplicationServer monitoring interval</td><td>Context</td></tr><tr><td>Last replication</td><td>2026-07-20 10:15:00 UTC (105.0 min ago)</td><td>60.0 min effective maximum age</td><td><span class='warnval'>Concern</span></td></tr><tr><td>Average replication size</td><td>256.00 MB</td><td>Workload baseline for pending-data limit</td><td>Context</td></tr><tr><td>Pending replication data</td><td>3.00 GB</td><td>1.00 GB effective maximum</td><td><span class='warnval'>Concern</span></td></tr><tr><td>Average replication latency</td><td>900.0 sec</td><td>600.0 sec effective maximum</td><td><span class='warnval'>Concern</span></td></tr><tr><td>Measured replication cycles</td><td>Successful 95; missed 5; missed rate 5.00%</td><td>10.00% maximum missed rate</td><td><span class='warnval'>Advisory</span></td></tr></tbody></table><p class='muted'>Hyper-V Replica health is Critical. Product health/state remains authoritative; measurement advisories do not change the VM verdict by themselves.</p></details>
 </div><div class="vm" id="vm-TestVM06">
   <h3><span class="vm-label">VM Name:</span> <code>TestVM06</code> <span class="pill investigate">INVESTIGATE</span><span class="src input">Input</span></h3>
   <div class="kv">
@@ -503,6 +550,7 @@
     <div class="k">Checkpoint type</div><div>Production</div>
     <div class="k">Orphaned .avhdx</div><div>0</div>
     <div class="k">Hyper-V Replica</div><div>Resynchronizing (Warning)</div>
+    <div class="k">Replica measurement assessment</div><div>Advisory - pending data 1.50 GB (effective limit 2.00 GB); average latency 350.0 sec (effective limit 600.0 sec); missed replications 1; 1.00% of measured attempts</div>
     <div class="k">VSS writers</div><div>All 10 writer(s) Stable (no last error)</div>
     <div class="k">Analytic channel</div><div>Enabled (or not checked)</div>
     <div class="k">Policy source</div><div><code>BuiltInDefaults</code></div>
@@ -511,7 +559,8 @@
     <div class="k">Config behind latest</div><div>No - at the latest supported version.</div>
     <div class="k">Concerning events - this VM (168h)</div><div>0 (low-signal only)</div>
     <div class="k">Concerning events - node-wide (168h)</div><div>0 (references other VMs / none - context only)</div>
-  </div>  <div class='callout warn'><strong>INVESTIGATE.</strong> Driver: replica health Warning. The specific checkpoint fork-commit signature was NOT observed in the current window, so on-disk chain corruption is not confirmed - backup-team / operator triage first; no Microsoft case needed yet.</div>
+  </div>  <div class='callout warn'><strong>INVESTIGATE.</strong> Driver: Replica product health/state Warning (Resynchronizing / Warning). Review the Hyper-V Replica details below, confirm connectivity and capacity on both replication partners, address the breached effective limits, then verify that replication returns to Normal and the backlog drains.</div>
+  <details open><summary>Hyper-V Replica details - Resynchronizing / Warning; measurements Advisory</summary><table><thead><tr><th>Signal</th><th>Observed</th><th>Effective guardrail / context</th><th>Assessment</th></tr></thead><tbody><tr><td>Product state and health</td><td>Resynchronizing / Warning</td><td>Authoritative Get-VMReplication evidence</td><td><span class='warnval'>Warning</span></td></tr><tr><td>Relationship</td><td>Mode Primary</td><td>Primary node06; replica node05</td><td>Context</td></tr><tr><td>Replication cadence</td><td>300.0 sec</td><td>Used to calculate relationship-aware limits</td><td>Context</td></tr><tr><td>Monitoring window</td><td>01:00:00</td><td>Get-VMReplicationServer monitoring interval</td><td>Context</td></tr><tr><td>Last replication</td><td>2026-07-20 11:40:00 UTC (20.0 min ago)</td><td>60.0 min effective maximum age</td><td>Within effective limit</td></tr><tr><td>Average replication size</td><td>1.00 GB</td><td>Workload baseline for pending-data limit</td><td>Context</td></tr><tr><td>Pending replication data</td><td>1.50 GB</td><td>2.00 GB effective maximum</td><td><span class='warnval'>Advisory</span></td></tr><tr><td>Average replication latency</td><td>350.0 sec</td><td>600.0 sec effective maximum</td><td><span class='warnval'>Advisory</span></td></tr><tr><td>Measured replication cycles</td><td>Successful 99; missed 1; missed rate 1.00%</td><td>10.00% maximum missed rate</td><td><span class='warnval'>Advisory</span></td></tr></tbody></table><p class='muted'>Hyper-V Replica health is Warning with measurement drift that warrants observation. Product health/state remains authoritative; measurement advisories do not change the VM verdict by themselves.</p></details>
 </div><div class="vm" id="vm-TestVM08">
   <h3><span class="vm-label">VM Name:</span> <code>TestVM08</code> <span class="pill ok">OK</span><span class="src input">Input</span></h3>
   <div class="kv">
@@ -530,6 +579,7 @@
     <div class="k">Checkpoint type</div><div>Production</div>
     <div class="k">Orphaned .avhdx</div><div>0</div>
     <div class="k">Hyper-V Replica</div><div>Not enabled</div>
+    <div class="k">Replica measurement assessment</div><div>Unavailable</div>
     <div class="k">VSS writers</div><div>All 10 writer(s) Stable (no last error)</div>
     <div class="k">Analytic channel</div><div>Enabled (or not checked)</div>
     <div class="k">Policy source</div><div><code>BuiltInDefaults</code></div>
@@ -557,6 +607,7 @@
     <div class="k">Checkpoint type</div><div>Production</div>
     <div class="k">Orphaned .avhdx</div><div>0</div>
     <div class="k">Hyper-V Replica</div><div>Not enabled</div>
+    <div class="k">Replica measurement assessment</div><div>Unavailable</div>
     <div class="k">VSS writers</div><div>All 10 writer(s) Stable (no last error)</div>
     <div class="k">Analytic channel</div><div>Enabled (or not checked)</div>
     <div class="k">Policy source</div><div><code>BuiltInDefaults</code></div>
@@ -584,6 +635,7 @@
     <div class="k">Checkpoint type</div><div>Production</div>
     <div class="k">Orphaned .avhdx</div><div>0</div>
     <div class="k">Hyper-V Replica</div><div>Not enabled</div>
+    <div class="k">Replica measurement assessment</div><div>Unavailable</div>
     <div class="k">VSS writers</div><div>All 10 writer(s) Stable (no last error)</div>
     <div class="k">Analytic channel</div><div>Enabled (or not checked)</div>
     <div class="k">Policy source</div><div><code>BuiltInDefaults</code></div>
@@ -611,6 +663,7 @@
     <div class="k">Checkpoint type</div><div>Production</div>
     <div class="k">Orphaned .avhdx</div><div>0</div>
     <div class="k">Hyper-V Replica</div><div>Not enabled</div>
+    <div class="k">Replica measurement assessment</div><div>Unavailable</div>
     <div class="k">VSS writers</div><div>All 10 writer(s) Stable (no last error)</div>
     <div class="k">Analytic channel</div><div>Enabled (or not checked)</div>
     <div class="k">Policy source</div><div><code>BuiltInDefaults</code></div>
@@ -638,6 +691,7 @@
     <div class="k">Checkpoint type</div><div>Production</div>
     <div class="k">Orphaned .avhdx</div><div>0</div>
     <div class="k">Hyper-V Replica</div><div>Not enabled</div>
+    <div class="k">Replica measurement assessment</div><div>Unavailable</div>
     <div class="k">VSS writers</div><div>All 10 writer(s) Stable (no last error)</div>
     <div class="k">Analytic channel</div><div>Enabled (or not checked)</div>
     <div class="k">Policy source</div><div><code>BuiltInDefaults</code></div>
@@ -665,6 +719,7 @@
     <div class="k">Checkpoint type</div><div>Production</div>
     <div class="k">Orphaned .avhdx</div><div>0</div>
     <div class="k">Hyper-V Replica</div><div>Not enabled</div>
+    <div class="k">Replica measurement assessment</div><div>Unavailable</div>
     <div class="k">VSS writers</div><div>All 10 writer(s) Stable (no last error)</div>
     <div class="k">Analytic channel</div><div>Enabled (or not checked)</div>
     <div class="k">Policy source</div><div><code>BuiltInDefaults</code></div>
@@ -692,6 +747,7 @@
     <div class="k">Checkpoint type</div><div>Production</div>
     <div class="k">Orphaned .avhdx</div><div>0</div>
     <div class="k">Hyper-V Replica</div><div>Not enabled</div>
+    <div class="k">Replica measurement assessment</div><div>Unavailable</div>
     <div class="k">VSS writers</div><div>All 10 writer(s) Stable (no last error)</div>
     <div class="k">Analytic channel</div><div>Enabled (or not checked)</div>
     <div class="k">Policy source</div><div><code>BuiltInDefaults</code></div>
@@ -719,6 +775,7 @@
     <div class="k">Checkpoint type</div><div>Production</div>
     <div class="k">Orphaned .avhdx</div><div>0</div>
     <div class="k">Hyper-V Replica</div><div>Not enabled</div>
+    <div class="k">Replica measurement assessment</div><div>Unavailable</div>
     <div class="k">VSS writers</div><div>All 10 writer(s) Stable (no last error)</div>
     <div class="k">Analytic channel</div><div>Enabled (or not checked)</div>
     <div class="k">Policy source</div><div><code>BuiltInDefaults</code></div>
@@ -746,6 +803,7 @@
     <div class="k">Checkpoint type</div><div>Production</div>
     <div class="k">Orphaned .avhdx</div><div>0</div>
     <div class="k">Hyper-V Replica</div><div>Not enabled</div>
+    <div class="k">Replica measurement assessment</div><div>Unavailable</div>
     <div class="k">VSS writers</div><div>All 10 writer(s) Stable (no last error)</div>
     <div class="k">Analytic channel</div><div>Enabled (or not checked)</div>
     <div class="k">Policy source</div><div><code>BuiltInDefaults</code></div>
@@ -773,6 +831,7 @@
     <div class="k">Checkpoint type</div><div>Production</div>
     <div class="k">Orphaned .avhdx</div><div>0</div>
     <div class="k">Hyper-V Replica</div><div>Not enabled</div>
+    <div class="k">Replica measurement assessment</div><div>Unavailable</div>
     <div class="k">VSS writers</div><div>All 10 writer(s) Stable (no last error)</div>
     <div class="k">Analytic channel</div><div>Enabled (or not checked)</div>
     <div class="k">Policy source</div><div><code>BuiltInDefaults</code></div>
@@ -800,6 +859,7 @@
     <div class="k">Checkpoint type</div><div>Production</div>
     <div class="k">Orphaned .avhdx</div><div>0</div>
     <div class="k">Hyper-V Replica</div><div>Not enabled</div>
+    <div class="k">Replica measurement assessment</div><div>Unavailable</div>
     <div class="k">VSS writers</div><div>All 10 writer(s) Stable (no last error)</div>
     <div class="k">Analytic channel</div><div>Enabled (or not checked)</div>
     <div class="k">Policy source</div><div><code>BuiltInDefaults</code></div>
@@ -827,6 +887,7 @@
     <div class="k">Checkpoint type</div><div>Production</div>
     <div class="k">Orphaned .avhdx</div><div>0</div>
     <div class="k">Hyper-V Replica</div><div>Not enabled</div>
+    <div class="k">Replica measurement assessment</div><div>Unavailable</div>
     <div class="k">VSS writers</div><div>All 10 writer(s) Stable (no last error)</div>
     <div class="k">Analytic channel</div><div>Enabled (or not checked)</div>
     <div class="k">Policy source</div><div><code>BuiltInDefaults</code></div>
@@ -845,7 +906,8 @@
   The observations in this section are not necessarily VM health failures. They identify file placement, ownership,
   naming, inventory, or storage-layout conditions that may make future troubleshooting, backup, migration, and recovery
     operations more difficult. Review each observation before making changes. <strong>Do not move, rename, merge, or delete virtual disk files based solely on this report.</strong>
-</div><table class="housekeeping"><colgroup><col class="hk-category"><col class="hk-scope"><col class="hk-observation"><col class="hk-review"></colgroup><thead><tr><th>Category</th><th>Scope (VM, node, or storage path)</th><th>Observation</th><th>Review</th></tr></thead><tbody><tr><td data-label='Category'>Placement inconsistency</td><td data-label='Scope'><code>TestVM03, TestVM08</code></td><td data-label='Observation'><div class='hk-file'><code>TestVM03_Data.vhdx</code></div><p class='hk-observation'>Virtual disk placement and VM ownership associations differ: C:\ClusterStorage\UserStorage_1\TestVM08\Virtual Hard Disks\TestVM03_Data.vhdx</p></td><td data-label='Review'>Confirm the intended owner and storage layout with the VM, backup, and storage owners. Do not move the file based only on this report.</td></tr><tr><td data-label='Category'>Unattached base disk candidate</td><td data-label='Scope'><code>TestVM08</code></td><td data-label='Observation'><div class='hk-file'><code>TestVM08_LegacyData.vhdx</code></div><p class='hk-observation'>No VM or snapshot chain references this base disk under complete coverage: C:\ClusterStorage\UserStorage_1\TestVM08\Virtual Hard Disks\TestVM08_LegacyData.vhdx</p></td><td data-label='Review'>If this virtual disk belongs to an image library, exclude its full path with storage.imageLibraryPathPatterns in a checkpoint-health-policy.yml file supplied via -PolicyPath (see <a href="https://aka.ms/Get-HyperVVMCheckpointHealth#readme" target="_blank" rel="noopener noreferrer">README.md</a>). Otherwise, confirm intended ownership and storage layout with the VM, backup, and storage owners. Do not modify the file based only on this report.</td></tr><tr><td data-label='Category'>Unattached base disk candidate</td><td data-label='Scope'><code>TestVM12</code></td><td data-label='Observation'><div class='hk-file'><code>TestVM12_Archive.vhdx</code></div><p class='hk-observation'>No VM or snapshot chain references this base disk under complete coverage: C:\ClusterStorage\UserStorage_2\TestVM12\Virtual Hard Disks\TestVM12_Archive.vhdx</p></td><td data-label='Review'>If this virtual disk belongs to an image library, exclude its full path with storage.imageLibraryPathPatterns in a checkpoint-health-policy.yml file supplied via -PolicyPath (see <a href="https://aka.ms/Get-HyperVVMCheckpointHealth#readme" target="_blank" rel="noopener noreferrer">README.md</a>). Otherwise, confirm intended ownership and storage layout with the VM, backup, and storage owners. Do not modify the file based only on this report.</td></tr><tr><td data-label='Category'>Shared virtual disk reference</td><td data-label='Scope'><code>TestVM14, TestVM15</code></td><td data-label='Observation'><div class='hk-file'><code>SharedData01.vhdx</code></div><p class='hk-observation'>More than one VM or snapshot inventory references this path: C:\ClusterStorage\UserStorage_2\TestVM14\Virtual Hard Disks\SharedData01.vhdx</p></td><td data-label='Review'>Confirm that the shared reference is intentional and supported for this workload. Do not modify the file based only on this report.</td></tr></tbody></table>
+</div><div class='hk-tools'><strong>Housekeeping filters</strong><div class='muted'>All categories are selected by default. Uncheck a category to remove its rows and update the visible totals and charts.</div><div class='hk-categories' role='group' aria-label='Housekeeping categories'><label><input class='hk-category-filter' type='checkbox' value='Placement inconsistency' checked> Placement inconsistency</label><label><input class='hk-category-filter' type='checkbox' value='Shared VHD Set reference' checked> Shared VHD Set reference</label><label><input class='hk-category-filter' type='checkbox' value='Shared virtual disk reference' checked> Shared virtual disk reference</label><label><input class='hk-category-filter' type='checkbox' value='Unattached base disk candidate' checked> Unattached base disk candidate</label></div><div class='hk-actions'><button type='button' id='hk-select-all'>Select all</button><button type='button' id='hk-clear-all'>Clear all</button></div><div class='hk-filters'><label>Search filename or path<input id='hk-search' type='search' placeholder='Search findings'></label><label>Storage root<select id='hk-root'><option value=''>All roots</option><option value='C:\ClusterStorage\UserStorage_1'>C:\ClusterStorage\UserStorage_1</option><option value='C:\ClusterStorage\UserStorage_2'>C:\ClusterStorage\UserStorage_2</option></select></label><label>Extension<select id='hk-extension'><option value=''>All extensions</option><option value='.vhds'>.vhds</option><option value='.vhdx'>.vhdx</option></select></label><label>Minimum size (MB)<input id='hk-min-size' type='number' min='0' step='1' value='0'></label></div><div class='hk-live' aria-live='polite'><span>Visible findings: <strong id='hk-visible-count'>5</strong> of 5</span><span>Visible unique-file storage: <strong id='hk-visible-bytes'>30.00 GB</strong></span><span>Unfiltered unique-file storage: <strong>30.00 GB</strong></span></div></div><div class='hk-charts'><div class='hk-chart'><h3>Visible storage by category</h3><svg id='hk-category-chart' role='img' aria-label='Visible housekeeping storage by category'></svg></div><div class='hk-chart'><h3>Cluster Shared Volume (CSV) paths</h3><svg id='hk-path-chart' role='img' aria-label='Visible housekeeping storage by Cluster Shared Volume'></svg></div></div><div class='hk-empty' id='hk-empty'>No housekeeping findings match the active filters.</div><table class="housekeeping" id="hk-table"><colgroup><col class="hk-category"><col class="hk-scope"><col class="hk-filecol"><col class="hk-size"><col class="hk-observation"><col class="hk-review"></colgroup><thead><tr><th><button class="hk-sort" type="button" data-sort="category">Category</button></th><th><button class="hk-sort" type="button" data-sort="scope">Scope</button></th><th><button class="hk-sort" type="button" data-sort="path">File / path</button></th><th><button class="hk-sort" type="button" data-sort="bytes">Size</button></th><th>Observation</th><th>Review</th></tr></thead><tbody><tr data-category='Placement inconsistency' data-scope='TestVM03, TestVM08' data-path='' data-parent='' data-root='' data-extension='' data-bytes='0'><td data-label='Category'>Placement inconsistency</td><td data-label='Scope'><code>TestVM03, TestVM08</code></td><td data-label='File / path'><div class='hk-file'><code>TestVM03_Data.vhdx</code></div></td><td data-label='Size' class='num'><span class="muted">n/a</span></td><td data-label='Observation'><p class='hk-observation'>Virtual disk placement and VM ownership associations differ: C:\ClusterStorage\UserStorage_1\TestVM08\Virtual Hard Disks\TestVM03_Data.vhdx</p></td><td data-label='Review'>Confirm the intended owner and storage layout with the VM, backup, and storage owners. Do not move the file based only on this report.</td></tr><tr data-category='Unattached base disk candidate' data-scope='TestVM08' data-path='C:\ClusterStorage\UserStorage_1\TestVM08\Virtual Hard Disks\TestVM08_LegacyData.vhdx' data-parent='C:\ClusterStorage\UserStorage_1\TestVM08\Virtual Hard Disks' data-root='C:\ClusterStorage\UserStorage_1' data-extension='.vhdx' data-bytes='21474836480'><td data-label='Category'>Unattached base disk candidate</td><td data-label='Scope'><code>TestVM08</code></td><td data-label='File / path'><div class='hk-file'><code>TestVM08_LegacyData.vhdx</code></div><code>C:\ClusterStorage\UserStorage_1\TestVM08\Virtual Hard Disks\TestVM08_LegacyData.vhdx</code></td><td data-label='Size' class='num'>20.00 GB</td><td data-label='Observation'><p class='hk-observation'>No VM or snapshot chain references this base disk under complete coverage: C:\ClusterStorage\UserStorage_1\TestVM08\Virtual Hard Disks\TestVM08_LegacyData.vhdx</p></td><td data-label='Review'>If this virtual disk belongs to an image library, exclude its full path with storage.imageLibraryPathPatterns in a checkpoint-health-policy.yml file supplied via -PolicyPath (see <a href="https://aka.ms/Get-HyperVVMCheckpointHealth#readme" target="_blank" rel="noopener noreferrer">README.md</a>). Otherwise, confirm intended ownership and storage layout with the VM, backup, and storage owners. Do not modify the file based only on this report.<div class='hk-image-option'><label><input class='hk-image-filter' type='checkbox'> Filter out as VM image</label></div></td></tr><tr data-category='Unattached base disk candidate' data-scope='TestVM12' data-path='C:\ClusterStorage\UserStorage_2\TestVM12\Virtual Hard Disks\TestVM12_Archive.vhdx' data-parent='C:\ClusterStorage\UserStorage_2\TestVM12\Virtual Hard Disks' data-root='C:\ClusterStorage\UserStorage_2' data-extension='.vhdx' data-bytes='10737418240'><td data-label='Category'>Unattached base disk candidate</td><td data-label='Scope'><code>TestVM12</code></td><td data-label='File / path'><div class='hk-file'><code>TestVM12_Archive.vhdx</code></div><code>C:\ClusterStorage\UserStorage_2\TestVM12\Virtual Hard Disks\TestVM12_Archive.vhdx</code></td><td data-label='Size' class='num'>10.00 GB</td><td data-label='Observation'><p class='hk-observation'>No VM or snapshot chain references this base disk under complete coverage: C:\ClusterStorage\UserStorage_2\TestVM12\Virtual Hard Disks\TestVM12_Archive.vhdx</p></td><td data-label='Review'>If this virtual disk belongs to an image library, exclude its full path with storage.imageLibraryPathPatterns in a checkpoint-health-policy.yml file supplied via -PolicyPath (see <a href="https://aka.ms/Get-HyperVVMCheckpointHealth#readme" target="_blank" rel="noopener noreferrer">README.md</a>). Otherwise, confirm intended ownership and storage layout with the VM, backup, and storage owners. Do not modify the file based only on this report.<div class='hk-image-option'><label><input class='hk-image-filter' type='checkbox'> Filter out as VM image</label></div></td></tr><tr data-category='Shared virtual disk reference' data-scope='TestVM14, TestVM15' data-path='' data-parent='' data-root='' data-extension='' data-bytes='0'><td data-label='Category'>Shared virtual disk reference</td><td data-label='Scope'><code>TestVM14, TestVM15</code></td><td data-label='File / path'><div class='hk-file'><code>SharedData01.vhdx</code></div></td><td data-label='Size' class='num'><span class="muted">n/a</span></td><td data-label='Observation'><p class='hk-observation'>More than one VM or snapshot inventory references this path: C:\ClusterStorage\UserStorage_2\TestVM14\Virtual Hard Disks\SharedData01.vhdx</p></td><td data-label='Review'>Confirm that the shared reference is intentional and supported for this workload. Do not modify the file based only on this report.</td></tr><tr data-category='Shared VHD Set reference' data-scope='TestVM16, TestVM17' data-path='C:\ClusterStorage\UserStorage_2\GuestCluster\GuestClusterData.vhds' data-parent='C:\ClusterStorage\UserStorage_2\GuestCluster' data-root='C:\ClusterStorage\UserStorage_2' data-extension='.vhds' data-bytes='4194304'><td data-label='Category'>Shared VHD Set reference</td><td data-label='Scope'><code>TestVM16, TestVM17</code></td><td data-label='File / path'><div class='hk-file'><code>GuestClusterData.vhds</code></div><code>C:\ClusterStorage\UserStorage_2\GuestCluster\GuestClusterData.vhds</code></td><td data-label='Size' class='num'>4.00 MB</td><td data-label='Observation'><p class='hk-observation'>More than one VM references this VHD Set path: C:\ClusterStorage\UserStorage_2\GuestCluster\GuestClusterData.vhds</p></td><td data-label='Review'>VHD Sets are designed for shared guest-cluster storage. Confirm that the listed VMs are the intended guest-cluster nodes. Do not modify the VHDS or its Hyper-V-managed files based only on this report.</td></tr></tbody></table>
+<div class='hk-image-policy' id='hk-image-policy' hidden><h3>Persistent VM image policy settings</h3><p class='muted'>The selected <span id='hk-image-count'>0</span> VM image file(s) are hidden only in this open report. Use the generated settings below to exclude them from future audits.</p><ol><li>Select <strong>Copy policy settings</strong>.</li><li>For a new policy file, paste the complete generated block into <code>checkpoint-health-policy.yml</code>. For an existing policy, copy only the generated <code>- '(?i)^...$'</code> entries into its existing <code>storage.imageLibraryPathPatterns</code> list; do not add duplicate <code>schemaVersion</code>, <code>storage</code>, or <code>imageLibraryPathPatterns</code> keys.</li><li>Save the YAML file, repeat the original audit command with <code>-PolicyPath '.\checkpoint-health-policy.yml'</code>, and review the newly generated report.</li></ol><p class='muted'>These settings affect housekeeping observations only. They do not change VM health verdicts or authorize modifying the selected files.</p><ul class='hk-image-policy-list' id='hk-image-policy-list'></ul><textarea id='hk-image-policy-yaml' readonly aria-label='Generated VM image policy settings'></textarea><div class='hk-actions'><button type='button' id='hk-copy-policy'>Copy policy settings</button><button type='button' id='hk-restore-images'>Restore all rows</button><span class='muted' id='hk-copy-status' aria-live='polite'></span></div></div>
 <h2>Appendix - Knowledge and Information</h2>
 <p class="muted">Reference material to help interpret this report. Both sections below are <strong>collapsed by default</strong>
 to keep the report concise - click the <strong style="color:#0b1220;background:#38bdf8;padding:1px 8px;border-radius:999px;font-size:11.5px">&#9654; Show</strong>
@@ -935,7 +997,7 @@ checkpoint or an unhealthy VSS writer), which the operations / backup team shoul
 </details>
 
 <footer>
-    Generated by <code>Get-HyperVVMCheckpointHealth</code> (version 0.2.18). Read-only diagnostic report; no VM state was
+    Generated by <code>Get-HyperVVMCheckpointHealth</code> (version 0.2.19). Read-only diagnostic report; no VM state was
   modified. Verdict legend: <span class="pill hold">HOLD STATE</span> fork-commit signature + unmerged
   disks (case-worthy) &nbsp; <span class="pill investigate">INVESTIGATE</span> concern signals, ops/backup
   team first &nbsp; <span class="pill ok">OK</span> no concerns &nbsp; <span class="pill err">ERROR / NOT FOUND</span>.
@@ -945,6 +1007,144 @@ checkpoint or an unhealthy VSS writer), which the operations / backup team shoul
 </div>
 <script>
 window.addEventListener('load', function () {
+    var table = document.getElementById('hk-table');
+    if (table) {
+        var body = table.tBodies[0];
+        var rows = Array.prototype.slice.call(body.rows);
+        var categoryBoxes = Array.prototype.slice.call(document.querySelectorAll('.hk-category-filter'));
+        var search = document.getElementById('hk-search');
+        var root = document.getElementById('hk-root');
+        var extension = document.getElementById('hk-extension');
+        var minSize = document.getElementById('hk-min-size');
+        var visibleCount = document.getElementById('hk-visible-count');
+        var visibleBytes = document.getElementById('hk-visible-bytes');
+        var empty = document.getElementById('hk-empty');
+        var imageBoxes = Array.prototype.slice.call(document.querySelectorAll('.hk-image-filter'));
+        var imagePolicy = document.getElementById('hk-image-policy');
+        var imageCount = document.getElementById('hk-image-count');
+        var imageList = document.getElementById('hk-image-policy-list');
+        var imageYaml = document.getElementById('hk-image-policy-yaml');
+        var copyStatus = document.getElementById('hk-copy-status');
+        var sortAscending = {};
+        function formatBytes(bytes) {
+            var readable = bytes > 0 ? '< 1 KB' : '0 KB';
+            if (bytes >= 1099511627776) { readable = (bytes / 1099511627776).toFixed(2) + ' TB'; }
+            else if (bytes >= 1073741824) { readable = (bytes / 1073741824).toFixed(2) + ' GB'; }
+            else if (bytes >= 1048576) { readable = (bytes / 1048576).toFixed(2) + ' MB'; }
+            else if (bytes >= 1024) { readable = (bytes / 1024).toFixed(2) + ' KB'; }
+            return readable;
+        }
+        function drawChart(id, values) {
+            var svg = document.getElementById(id);
+            while (svg.firstChild) { svg.removeChild(svg.firstChild); }
+            var entries = Object.keys(values).map(function (key) { return { key: key || 'Unspecified', value: values[key] }; });
+            entries.sort(function (left, right) { return right.value - left.value; });
+            entries = entries.slice(0, 8);
+            var width = 620, rowHeight = 30, height = Math.max(60, entries.length * rowHeight + 10);
+            svg.setAttribute('viewBox', '0 0 ' + width + ' ' + height);
+            if (!entries.length) {
+                var none = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+                none.setAttribute('x', '8'); none.setAttribute('y', '30'); none.setAttribute('fill', '#94a3b8');
+                none.textContent = 'No visible file-size data'; svg.appendChild(none); return;
+            }
+            var max = entries[0].value || 1;
+            entries.forEach(function (entry, index) {
+                var y = index * rowHeight + 5;
+                var label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+                label.setAttribute('x', '0'); label.setAttribute('y', y + 14); label.setAttribute('fill', '#cbd5e1'); label.setAttribute('font-size', '11');
+                label.textContent = entry.key.length > 30 ? entry.key.substring(0, 29) + '...' : entry.key; svg.appendChild(label);
+                var bar = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+                bar.setAttribute('x', '215'); bar.setAttribute('y', y); bar.setAttribute('width', Math.max(1, 250 * entry.value / max)); bar.setAttribute('height', '17'); bar.setAttribute('rx', '2'); bar.setAttribute('fill', '#38bdf8'); svg.appendChild(bar);
+                var value = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+                value.setAttribute('x', '475'); value.setAttribute('y', y + 14); value.setAttribute('fill', '#e2e8f0'); value.setAttribute('font-size', '11'); value.textContent = formatBytes(entry.value); svg.appendChild(value);
+            });
+        }
+        function escapeRegex(value) {
+            return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        }
+        function selectedImageBoxes() {
+            return imageBoxes.filter(function (box) { return box.checked; });
+        }
+        function csvVolumeName(rootPath) {
+            var match = /^c:\\clusterstorage\\([^\\]+)(?:\\|$)/i.exec(rootPath || '');
+            return match ? match[1] : (rootPath || 'Unspecified');
+        }
+        function updateImagePolicy() {
+            var selectedBoxes = selectedImageBoxes();
+            imagePolicy.hidden = selectedBoxes.length === 0;
+            imageCount.textContent = selectedBoxes.length;
+            while (imageList.firstChild) { imageList.removeChild(imageList.firstChild); }
+            var yamlLines = ['schemaVersion: 1', 'storage:', '    imageLibraryPathPatterns:'];
+            selectedBoxes.forEach(function (box) {
+                var path = box.closest('tr').getAttribute('data-path') || '';
+                yamlLines.push("        - '(?i)^" + escapeRegex(path).replace(/'/g, "''") + "$'");
+                var item = document.createElement('li');
+                var code = document.createElement('code'); code.textContent = path; item.appendChild(code);
+                var restore = document.createElement('button'); restore.type = 'button'; restore.textContent = 'Restore';
+                restore.addEventListener('click', function () { box.checked = false; applyFilters(); });
+                item.appendChild(restore); imageList.appendChild(item);
+            });
+            imageYaml.value = selectedBoxes.length ? yamlLines.join('\n') : '';
+            copyStatus.textContent = '';
+        }
+        function applyFilters() {
+            var selected = {};
+            categoryBoxes.forEach(function (box) { if (box.checked) { selected[box.value] = true; } });
+            var query = search.value.toLowerCase();
+            var minimumBytes = (parseFloat(minSize.value) || 0) * 1048576;
+            var count = 0, bytes = 0, seen = {}, byCategory = {}, byCsvVolume = {};
+            rows.forEach(function (row) {
+                var path = row.getAttribute('data-path') || '';
+                var rowBytes = parseInt(row.getAttribute('data-bytes') || '0', 10);
+                var searchable = (path + ' ' + (row.getAttribute('data-scope') || '')).toLowerCase();
+                var imageBox = row.querySelector('.hk-image-filter');
+                var matches = (!imageBox || !imageBox.checked) && !!selected[row.getAttribute('data-category')] && (!query || searchable.indexOf(query) >= 0) &&
+                    (!root.value || row.getAttribute('data-root') === root.value) && (!extension.value || row.getAttribute('data-extension') === extension.value) && rowBytes >= minimumBytes;
+                row.style.display = matches ? '' : 'none';
+                if (matches) {
+                    count++;
+                    var identity = path.toLowerCase();
+                    if (path && !seen[identity]) {
+                        seen[identity] = true; bytes += rowBytes;
+                        var category = row.getAttribute('data-category') || 'Unspecified';
+                        var csvVolume = csvVolumeName(row.getAttribute('data-root'));
+                        byCategory[category] = (byCategory[category] || 0) + rowBytes;
+                        byCsvVolume[csvVolume] = (byCsvVolume[csvVolume] || 0) + rowBytes;
+                    }
+                }
+            });
+            visibleCount.textContent = count; visibleBytes.textContent = formatBytes(bytes);
+            empty.style.display = count ? 'none' : 'block'; table.style.display = count ? '' : 'none';
+            drawChart('hk-category-chart', byCategory); drawChart('hk-path-chart', byCsvVolume);
+            updateImagePolicy();
+        }
+        categoryBoxes.forEach(function (box) { box.addEventListener('change', applyFilters); });
+        imageBoxes.forEach(function (box) { box.addEventListener('change', applyFilters); });
+        [search, root, extension, minSize].forEach(function (control) { control.addEventListener('input', applyFilters); control.addEventListener('change', applyFilters); });
+        document.getElementById('hk-select-all').addEventListener('click', function () { categoryBoxes.forEach(function (box) { box.checked = true; }); applyFilters(); });
+        document.getElementById('hk-clear-all').addEventListener('click', function () { categoryBoxes.forEach(function (box) { box.checked = false; }); applyFilters(); });
+        document.getElementById('hk-restore-images').addEventListener('click', function () { imageBoxes.forEach(function (box) { box.checked = false; }); applyFilters(); });
+        document.getElementById('hk-copy-policy').addEventListener('click', function () {
+            imageYaml.select(); imageYaml.setSelectionRange(0, imageYaml.value.length);
+            var copied = false;
+            try { copied = document.execCommand('copy'); } catch (error) { copied = false; }
+            if (!copied && navigator.clipboard && window.isSecureContext) {
+                navigator.clipboard.writeText(imageYaml.value).then(function () { copyStatus.textContent = 'Copied.'; }, function () { copyStatus.textContent = 'Select the policy text and copy it manually.'; });
+            } else { copyStatus.textContent = copied ? 'Copied.' : 'Select the policy text and copy it manually.'; }
+        });
+        Array.prototype.slice.call(document.querySelectorAll('.hk-sort')).forEach(function (button) {
+            button.addEventListener('click', function () {
+                var key = button.getAttribute('data-sort'); sortAscending[key] = !sortAscending[key];
+                rows.sort(function (left, right) {
+                    var leftValue = key === 'bytes' ? parseInt(left.getAttribute('data-bytes'), 10) : (left.getAttribute('data-' + key) || '').toLowerCase();
+                    var rightValue = key === 'bytes' ? parseInt(right.getAttribute('data-bytes'), 10) : (right.getAttribute('data-' + key) || '').toLowerCase();
+                    return (leftValue < rightValue ? -1 : leftValue > rightValue ? 1 : 0) * (sortAscending[key] ? 1 : -1);
+                });
+                rows.forEach(function (row) { body.appendChild(row); });
+            });
+        });
+        applyFilters();
+    }
     if (!window.location.hash) { return; }
     window.setTimeout(function () {
         var target = document.getElementById(window.location.hash.substring(1));
