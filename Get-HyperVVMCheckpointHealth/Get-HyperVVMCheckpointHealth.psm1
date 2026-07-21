@@ -3448,6 +3448,26 @@ function Invoke-VMCheckpointAudit {
         ChainComplete        = (-not $hasIncompleteChain)
         IncompleteChainCount = $incompleteChains.Count
         IncompleteChains     = @($incompleteChains | ForEach-Object { [pscustomobject]@{ Disk = [string]$_.Attached; FailurePath = [string]$_.FailurePath; Error = [string]$_.ChainError; TerminalType = [string]$_.TerminalType; DepthLimitReached = [bool]$_.DepthLimitReached } })
+        AttachedVhdLayers    = @($diskReports | ForEach-Object {
+            $diskReport = $_
+            $diskChain = @($diskReport.Chain)
+            for ($layerIndex = 0; $layerIndex -lt $diskChain.Count; $layerIndex++) {
+                $layer = $diskChain[$layerIndex]
+                $lastWriteUtc = if ($layer.LastWrite) { ([datetime]$layer.LastWrite).ToUniversalTime() } else { $null }
+                [pscustomobject]@{
+                    Disk       = [string]$diskReport.Attached
+                    Layer      = $layerIndex + 1
+                    Path       = [string]$layer.Path
+                    Type       = [string]$layer.Type
+                    SizeGB     = $layer.SizeGB
+                    Created    = if ($layer.Created) { ([datetime]$layer.Created).ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss') } else { '' }
+                    LastWrite  = if ($lastWriteUtc) { $lastWriteUtc.ToString('yyyy-MM-dd HH:mm:ss') } else { '' }
+                    AgeHrs     = if ($lastWriteUtc) { [math]::Round(([datetime]::UtcNow - $lastWriteUtc).TotalHours, 1) } else { $null }
+                    Stale      = ([string]$layer.Type -eq 'Differencing') -and $lastWriteUtc -and (([datetime]::UtcNow - $lastWriteUtc).TotalHours -ge $StaleHours)
+                    ParentPath = if (($layerIndex + 1) -lt $diskChain.Count) { [string]$diskChain[$layerIndex + 1].Path } else { '' }
+                }
+            }
+        })
         Checkpoints          = $ckptRowsForHtml
         StaleCheckpointCount = $staleCheckpoints.Count
         StaleHours           = $StaleHours

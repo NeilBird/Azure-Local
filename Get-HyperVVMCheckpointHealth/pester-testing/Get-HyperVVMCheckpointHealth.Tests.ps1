@@ -579,6 +579,7 @@ Describe 'HTML fleet report usability' {
             AutomaticCheckpoints = $false; AttachedDiskCount = 1; CheckpointLayers = 0
             Checkpoints = @(); StaleCheckpointCount = 0; StaleHours = 24
             StaleAttachedLayerCount = 0; StaleSnapshotCount = 0; SnapshotLayerMismatch = $false
+            AttachedVhdLayers = @()
             Replication = [pscustomobject]@{
                 Enabled = $true; State = 'Replicating'; Health = 'Normal'; Mode = 'Primary'
                 Primary = 'TEST-NODE-01'; Replica = 'TEST-REPLICA-01'; LastReplicationTime = '2026-01-01 09:59:00'
@@ -633,6 +634,14 @@ Describe 'HTML fleet report usability' {
         $staleLayerReportData.CheckpointLayers = 1
         $staleLayerReportData.StaleAttachedLayerCount = 1
         $staleLayerReportData.SnapshotLayerMismatch = $true
+        $staleLayerReportData.AttachedVhdLayers = @(
+            [pscustomobject]@{
+                Disk = 'TEST-VM-STALE-LAYER_OS.avhdx'; Layer = 1; Type = 'Differencing'; SizeGB = 8.5
+                Created = '2025-12-29 10:00:00'; LastWrite = '2025-12-30 10:00:00'; AgeHrs = 38; Stale = $true
+                Path = 'C:\ClusterStorage\Volume1\TEST-VM-STALE-LAYER_OS.avhdx'
+                ParentPath = 'C:\ClusterStorage\Volume1\TEST-VM-STALE-LAYER_OS.vhdx'
+            }
+        )
         $staleLayerReportData.SeverityScore = 70
 
         $results = @(
@@ -701,6 +710,18 @@ Describe 'HTML fleet report usability' {
         $script:RenderedHtml | Should -Match '_debug_log_\*\.txt'
         $script:RenderedHtml | Should -Match 'https://aka\.ms/Get-HyperVVMCheckpointHealth#readme'
         $script:RenderedHtml | Should -Match 'https://aka\.ms/Get-HyperVVMCheckpointHealth-Feedback'
+    }
+
+    It 'states the point-in-time report scope and audited VM count in every report' {
+        $script:RenderedHtml | Should -Match '<strong class="scope-label">Report scope:</strong> This report is a point-in-time, read-only assessment of the <strong>4 VMs audited in this run</strong>, generated at <strong>2026-01-01 00:00:00 UTC</strong>\.'
+        $script:RenderedHtml | Should -Match '\.scope-label\{color:#d97706;font-weight:700\}'
+        $script:RenderedHtml | Should -Match 'It is not a complete cluster health assessment and does not represent the health of VMs that were not audited\.'
+        $script:CleanRenderedHtml | Should -Match '<strong>1 VM audited in this run</strong>'
+    }
+
+    It 'states additional unaudited discovery coverage only when applicable' {
+        $script:RenderedHtml | Should -Match '<strong>Audit coverage:</strong> <strong>1 additional discovered VM was not audited in this run</strong> and is not represented by the findings or summary totals below\.'
+        $script:CleanRenderedHtml | Should -Not -Match '<strong>Audit coverage:</strong>'
     }
 
     It 'warn-highlights abnormal Replica state while leaving normal replication neutral' {
@@ -793,6 +814,14 @@ Describe 'HTML fleet report usability' {
         $script:RenderedHtml | Should -Match 'Stale attached AVHDX layers \(&ge;24h\)</div><div>1</div>'
         $script:RenderedHtml | Should -Match 'Snapshot/layer representation</div><div>MISMATCH'
         $script:RenderedHtml | Should -Match '1 stale attached AVHDX layer\(s\)'
+        $script:RenderedHtml | Should -Match 'Attached VHD chain evidence \(1 layer\(s\)\)'
+        $script:RenderedHtml | Should -Match 'TEST-VM-STALE-LAYER_OS\.avhdx'
+    }
+
+    It 'uses Replica-specific guidance for a Replica-only INVESTIGATE result' {
+        $script:RenderedHtml | Should -Match 'Review the Hyper-V Replica details below, confirm connectivity and capacity on both replication partners'
+        $replicaCard = [regex]::Match($script:RenderedHtml, '(?s)<div class="vm" id="vm-TEST-VM-REPLICA">.*?(?=<div class="vm"|</main>)').Value
+        $replicaCard | Should -Not -Match 'checkpoint fork-commit signature was NOT observed'
     }
 
     It 'labels stale snapshot counts instead of rendering an ambiguous ratio' {

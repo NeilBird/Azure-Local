@@ -22,6 +22,7 @@ $baseReportData = [pscustomobject]@{
     Checkpoints = @(); StaleCheckpointCount = 0; StaleHours = 24
     StaleAttachedLayerCount = 0; StaleSnapshotCount = 0; SnapshotLayerMismatch = $false
     ChainComplete = $true; IncompleteChainCount = 0; StateConsistencyStatus = 'Stable'
+    AttachedVhdLayers = @()
     Replication = [pscustomobject]@{ Enabled = $false; State = ''; Health = ''; Mode = ''; Primary = ''; Replica = ''; LastReplicationTime = '' }
     VssState = 'Healthy'; VssTotal = 10; VssUnhealthyCount = 0; VssUnhealthy = @()
     AnalyticNodesNeedEnable = @(); CsvVolumes = @(); OrphanCount = 0; Orphans = @()
@@ -129,6 +130,19 @@ $results = @(
                 $healthyReportData.CheckpointLayers = 1
                 $healthyReportData.StaleAttachedLayerCount = 1
                 $healthyReportData.SnapshotLayerMismatch = $true
+                $healthyReportData.AttachedVhdLayers = @(
+                    [pscustomobject]@{
+                        Disk = 'TestVM04_OS_9f42.avhdx'; Layer = 1; Type = 'Differencing'; SizeGB = 18.6
+                        Created = '2026-07-17 06:10:00'; LastWrite = '2026-07-17 06:42:00'; AgeHrs = 77.4; Stale = $true
+                        Path = 'C:\ClusterStorage\UserStorage_1\TestVM04\Virtual Hard Disks\TestVM04_OS_9f42.avhdx'
+                        ParentPath = 'C:\ClusterStorage\UserStorage_1\TestVM04\Virtual Hard Disks\TestVM04_OS.vhdx'
+                    },
+                    [pscustomobject]@{
+                        Disk = 'TestVM04_OS_9f42.avhdx'; Layer = 2; Type = 'Dynamic'; SizeGB = 64.0
+                        Created = '2026-03-02 09:00:00'; LastWrite = '2026-07-17 06:10:00'; AgeHrs = 77.9; Stale = $false
+                        Path = 'C:\ClusterStorage\UserStorage_1\TestVM04\Virtual Hard Disks\TestVM04_OS.vhdx'; ParentPath = ''
+                    }
+                )
                 $healthyReportData.SeverityScore = 72
                 $recommendation = 'INVESTIGATE'
             }

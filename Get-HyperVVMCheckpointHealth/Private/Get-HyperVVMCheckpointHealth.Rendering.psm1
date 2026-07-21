@@ -232,6 +232,7 @@ function ConvertTo-VMCheckpointAuditHtml {
   details.appx>summary:hover::before{filter:brightness(1.08)}
   details.appx>.appx-body{padding:4px 18px 18px}
   .muted{color:var(--muted)}
+    .scope-label{color:#d97706;font-weight:700}
   /* Semantic inline emphasis (used sparingly): amber for a warning value (stale YES, a non-zero
      orphan / stale count, an oldest-checkpoint age at/over the stale threshold); muted grey for a
      zero count so it recedes; soft-red bold for the single most important imperative inside a HOLD
@@ -270,6 +271,11 @@ function ConvertTo-VMCheckpointAuditHtml {
     # Header + summary cards.
     $vmWord   = if ($countAll -eq 1) { 'VM' } else { 'VMs' }
     $nodeWord = if ($nodeCount -eq 1) { 'cluster node' } else { 'cluster nodes' }
+    $unauditedDiscoveryCount = if ($null -ne $DiscoveredVMs) { $DiscoveredVMs.Count } else { 0 }
+    $unauditedDiscoveryNote = if ($unauditedDiscoveryCount -gt 0) {
+        $discoveredVmWord = if ($unauditedDiscoveryCount -eq 1) { 'VM was' } else { 'VMs were' }
+        "<br><strong>Audit coverage:</strong> <strong>$unauditedDiscoveryCount additional discovered $discoveredVmWord not audited in this run</strong> and $(if ($unauditedDiscoveryCount -eq 1) { 'is' } else { 'are' }) not represented by the findings or summary totals below."
+    } else { '' }
     $discoveryMeta = if ($DiscoverySummary) {
         $capText = if ($null -eq $DiscoverySummary.Cap) { 'None' } else { [string]$DiscoverySummary.Cap }
         "<br>Discovery: <b>$($DiscoverySummary.EligibleCount)</b> eligible &nbsp;&bull;&nbsp; <b>$($DiscoverySummary.AuditedCount)</b> auto-audited &nbsp;&bull;&nbsp; <b>$($DiscoverySummary.DeferredCount)</b> deferred &nbsp;&bull;&nbsp; cap: <b>$(ConvertTo-HtmlText $capText)</b>."
@@ -286,6 +292,10 @@ function ConvertTo-VMCheckpointAuditHtml {
     Read-only diagnostic - <b>no changes were made to any VM</b>.$discoveryMeta
   </div>
 </header>
+
+<div class="callout info">
+    <strong class="scope-label">Report scope:</strong> This report is a point-in-time, read-only assessment of the <strong>$countAll $vmWord audited in this run</strong>, generated at <strong>$(ConvertTo-HtmlText $GeneratedUtc) UTC</strong>. Its findings should be considered alongside a wider assessment of the cluster, storage, backup platform, workloads, and relevant operational history. It is not a complete cluster health assessment and does not represent the health of VMs that were not audited.$unauditedDiscoveryNote
+</div>
 
 <div class="cards">
     <div class="card lead"><div class="n">$countAll</div><div class="l">$vmWord audited</div></div>
@@ -797,7 +807,21 @@ function ConvertTo-VMCheckpointAuditHtml {
             if ($rd.HasRollbackFingerprint) {
                 [void]$sb.Append("  <div class='callout high'><strong>INVESTIGATE - possible historic rollback.</strong> Driver: $drvText. The orphaned <code>.avhdx</code> appear to be the aftermath of a materialised fork-commit rollback on <strong>$(ConvertTo-HtmlText $rd.RollbackDate)</strong> - they may hold the data written between the checkpoint and the rollback. Do NOT remove them; engage Microsoft Support (CSS) / your backup vendor to recover. The original fork-commit events may predate the $($rd.EventLookbackHours)h lookback - see the historic correlation below.</div>`r`n")
             } else {
-                [void]$sb.Append("  <div class='callout warn'><strong>INVESTIGATE.</strong> Driver: $drvText. The specific checkpoint fork-commit signature was NOT observed in the current window, so on-disk chain corruption is not confirmed - backup-team / operator triage first; no Microsoft case needed yet.</div>`r`n")
+                $hasCheckpointStorageDriver =
+                    ($rd.PSObject.Properties['StaleAttachedLayerCount'] -and ([int]$rd.StaleAttachedLayerCount -gt 0)) -or
+                    ([int]$rd.StaleCheckpointCount -gt 0) -or
+                    ($rd.PSObject.Properties['SnapshotLayerMismatch'] -and $rd.SnapshotLayerMismatch) -or
+                    ($rd.PSObject.Properties['ChainComplete'] -and -not $rd.ChainComplete) -or
+                    ([int]$rd.OrphanCount -gt 0) -or
+                    ([int]$rd.VmEscalatingConcernCount -gt 0)
+                $investigateGuidance = if ($hasCheckpointStorageDriver) {
+                    'The specific checkpoint fork-commit signature was NOT observed in the current window, so on-disk chain corruption is not confirmed - review the attached-chain, checkpoint, orphan, event, and backup-job evidence below before any merge/removal action.'
+                } elseif ($rd.PSObject.Properties['ReplAssessment'] -and $rd.ReplAssessment -and $rd.ReplAssessment.IsConcern) {
+                    'Review the Hyper-V Replica details below, confirm connectivity and capacity on both replication partners, address the breached effective limits, then verify that replication returns to Normal and the backlog drains.'
+                } else {
+                    'Review the detailed evidence below, correlate it with the responsible workload or platform owner, and re-run the audit after remediation.'
+                }
+                [void]$sb.Append("  <div class='callout warn'><strong>INVESTIGATE.</strong> Driver: $drvText. $investigateGuidance</div>`r`n")
                 # v0.2.17: when this VM's driver includes HIGH-signal VM-attributed event(s), give a concrete
                 # step list naming the actual IDs - otherwise the operator sees 'INVESTIGATE' with no action.
                 # These IDs are the VM's OWN checkpoint / merge operations failing (not node-wide chatter),
@@ -914,6 +938,18 @@ function ConvertTo-VMCheckpointAuditHtml {
                 [void]$sb.Append("<tr><td class='ckptname'>$(ConvertTo-HtmlText $c.Name)</td><td>$(ConvertTo-HtmlText $c.Type)</td><td>$(ConvertTo-HtmlText $c.Purpose)</td><td>$(ConvertTo-HtmlText $c.Created)</td><td class='num ckptage'>$ageCell</td><td>$staleTxt</td><td>$(ConvertTo-HtmlText $c.Parent)</td></tr>")
             }
             [void]$sb.Append("</tbody></table></details>`r`n")
+        }
+        # Attached chain evidence supports stale-layer and representation-mismatch findings even when
+        # Get-VMSnapshot exposes no corresponding named checkpoint.
+        $attachedVhdLayers = if ($rd.PSObject.Properties['AttachedVhdLayers']) { @($rd.AttachedVhdLayers) } else { @() }
+        if (@($attachedVhdLayers | Where-Object { $_.Type -eq 'Differencing' }).Count -gt 0) {
+            [void]$sb.Append("  <details open><summary>Attached VHD chain evidence ($(@($attachedVhdLayers).Count) layer(s))</summary><table><thead><tr><th>Disk</th><th>Layer</th><th>Type</th><th>Size (GB)</th><th>Created (UTC)</th><th>LastWrite (UTC)</th><th>Age</th><th>Stale</th><th>Full path</th><th>Parent path</th></tr></thead><tbody>")
+            foreach ($layer in $attachedVhdLayers) {
+                $layerStale = if ($layer.Stale) { "<span class='warnval'>YES</span>" } elseif ($layer.Type -eq 'Differencing') { 'NO' } else { 'n/a' }
+                $layerAge = if ($null -ne $layer.AgeHrs) { '{0} h<br>{1} d' -f $layer.AgeHrs, [math]::Round([double]$layer.AgeHrs / 24, 1) } else { '-' }
+                [void]$sb.Append("<tr><td>$(ConvertTo-HtmlText $layer.Disk)</td><td class='num'>$($layer.Layer)</td><td>$(ConvertTo-HtmlText $layer.Type)</td><td class='num'>$($layer.SizeGB)</td><td>$(ConvertTo-HtmlText $layer.Created)</td><td>$(ConvertTo-HtmlText $layer.LastWrite)</td><td class='num ckptage'>$layerAge</td><td>$layerStale</td><td><code>$(ConvertTo-HtmlText $layer.Path)</code></td><td><code>$(ConvertTo-HtmlText $layer.ParentPath)</code></td></tr>")
+            }
+            [void]$sb.Append("</tbody></table><p class='muted'>These are the files in the VM's currently attached VHD chain. A differencing <code>.avhdx</code> layer can remain attached even when <code>Get-VMSnapshot</code> exposes no named checkpoint. Validate the chain and the responsible backup/checkpoint job before migration, restart, merge, or removal.</p></details>`r`n")
         }
         # Orphaned .avhdx files table (present on disk in this VM's folder(s) but NOT attached to any
         # chain). v0.2.14: per-orphan class + age + a neutral 'Likely / action' read. NEVER states
