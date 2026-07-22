@@ -1,8 +1,8 @@
 # Sideload Updates (on-prem, opt-in) - Update: 2
 
-> **Introduced in v0.8.7. Preflight job added in v0.8.76.** Opt-in, off by default.
-> The job is inert unless the repository (GH) / pipeline (ADO) variable
-> `SIDELOAD_UPDATES` is one of `'true'`, `'True'`, `'TRUE'`, or `'1'`.
+> **Introduced in v0.8.7. Hardened in v0.9.22.** Opt-in, off by default.
+> The sole runtime configuration source is `config/sideload-settings.yml`; the
+> pipeline is inert while that file contains `enabled: false`.
 >
 > Every run starts with a `preflight` job/stage (~10s on a Microsoft-hosted Windows
 > runner) that writes a clear panel to the run step summary explaining what is set,
@@ -72,21 +72,16 @@ walk each cluster through the persisted `State` values (the `State` field in eac
 cluster's state JSON under `state\`):
 
 ```
-(plan status: Planned) --> Copying --> Copied --> Imported
-                              |           |
-                              v           v
-                           Failed      Verified   (NeedsSbe: the Microsoft solution
-                        (retries        imported, but an OEM SBE package is
-                         exhausted)      still required)
+(plan status: Planned) -> Copying -> Copied -> Discovering -> Imported
+                              |          |             |
+                              v          v             v
+                           Failed   ImportFailed    NeedsSbe
 ```
 
-The full on-disk `State` enum is `Copying | Copied | Verified | Imported | Failed`.
-`Planned` is a **plan** status emitted by `Resolve-AzLocalSideloadPlan` (a cluster due
-within `SIDELOAD_LEAD_DAYS`), **not** a persisted state. `Copied` means the media landed;
-the SHA256 verify + `Add-SolutionUpdate` import step then promotes it straight to
-`Imported`. `Verified` is written **only** for the `NeedsSbe` case. There is no
-`SideloadFlagged` state - the `UpdateSideloaded=True` **tag** (not a state) is what the
-downstream apply pipelines gate on.
+`Planned` is a plan status, not persisted state. Copy retries are separate from
+import retries: `ImportFailed` reuses the copied media and does not launch another
+robocopy. `Discovering` polls an already-submitted import without expanding the bundle
+or calling `Add-SolutionUpdate` again. `NeedsSbe` is an explicit manual-action state.
 
 Per cluster, the current shared state determines the action taken by
 `Invoke-AzLocalSideloadUpdate`:
@@ -95,9 +90,12 @@ Per cluster, the current shared state determines the action taken by
 |---|---|
 | (no state) + due now | Set `UpdateSideloaded=False`, ensure the verified bundle is in the shared cache, register + start the detached copy Scheduled Task, write `Copying` state. |
 | `Copying` + fresh heartbeat | Report progress, leave the task running. |
-| `Copying` + **stale** heartbeat (> `SIDELOAD_HEARTBEAT_STALE_MINUTES`) | Treat the host as dead and re-drive on the current (live) host, up to `MaxRetries`. |
+| `Copying` + stale heartbeat or no progress | Stop/replace the old task and re-drive with a new operation ID, up to the copy retry limit. |
 | `Copied` | Open a WinRM session, verify the remote SHA256, run `Add-SolutionUpdate` + discovery, flip `UpdateSideloaded=True` + stamp `UpdateVersionInProgress`, mark `Imported`, remove the task. |
-| `Failed` | Bounded retry, else surface the error as a JUnit `<failure>`. |
+| `Discovering` | Poll discovery only; do not expand or submit the update again. |
+| `NeedsSbe` | Surface the required OEM action; retain media and state. |
+| `ImportFailed` | Bounded import-only retry; do not recopy media. |
+| `Failed` | Bounded copy retry, else surface the error as a JUnit `<failure>`. |
 | `Imported` | Done - nothing to do. |
 
 Re-running is **always safe** - the state machine is idempotent.
@@ -106,13 +104,10 @@ Re-running is **always safe** - the state machine is idempotent.
 
 There is **no separate heartbeat or marker file**. Each cluster's `state\<cluster>.json`
 holds both the current `State` and the progress fields the detached worker rewrites
-roughly every **30 seconds** while the copy runs: `LastHeartbeatUtc`, `OwningMachine`,
-`TotalBytes`, `CopiedBytes`, `Mbps`, `EtaUtc`, `ExitCode`, `Retries`, `TaskName`,
-`LogPath`, `Message`. The state machine branches on `State` plus the freshness of
-`LastHeartbeatUtc` - it does **not** parse the robocopy log. A `Copying` record whose
-`LastHeartbeatUtc` is older than `SIDELOAD_HEARTBEAT_STALE_MINUTES` (default 60) is treated
-as a dead host and re-driven on the current runner, up to `MaxRetries` (fixed at **3**;
-not currently exposed as a `SIDELOAD_*` variable).
+roughly every configured heartbeat interval while the copy runs. It includes
+`OperationId`, `LastHeartbeatUtc`, `LastProgressUtc`, `OwningMachine`, worker and
+robocopy process IDs, byte progress, throughput, ETA, exit code, retries, task name,
+log path, and message. A superseded worker cannot overwrite a newer operation's state.
 
 ### 2.2 The detached copy Scheduled Task (and an important account caveat)
 
@@ -124,14 +119,11 @@ only when the cluster reaches `Imported`. A terminally `Failed`, `Verified` (Nee
 still-importing task is **left registered**; the next retry re-registers the same-named
 task, which replaces the old one.
 
-> **IMPORTANT - task logon account.** Out of the box the task registers with logon type
-> **`S4U`** (the shipped YAML passes no logon-type override). S4U runs **without network
-> credentials**, so it **cannot reach UNC paths** - neither the shared cache nor the
-> cluster `import` share. For a production UNC copy the task must run under an account that
-> carries a network identity: a **gMSA** (`ServiceAccount` logon) or a **stored-password**
-> principal. Provision that account with read on `SIDELOAD_CACHE_ROOT` and write on each
-> cluster's `import` share. If a copy task starts but immediately writes `Failed` with an
-> access / `ERROR 5` / "network path" message, this S4U caveat is almost always the cause.
+> **IMPORTANT - task logon account.** S4U and Interactive are rejected for UNC-backed
+> copies. Configure a **gMSA/service account** (`ServiceAccount`) or a principal with a
+> Key Vault-backed stored password (`Password`). `principalUserId` is required when
+> sideloading is enabled. Provision read access to `paths.cacheRoot` and read/write access
+> to `paths.stateRoot` and every cluster import share.
 > (This is the cluster **WinRM** credential's sibling but a *different* identity - see
 > section 4.)
 
@@ -139,12 +131,12 @@ task, which replaces the old one.
 
 ## 3. Shared state and multi-runner / multi-agent contract
 
-`SIDELOAD_STATE_ROOT` must be a **UNC path that every runner/agent can read and write**.
+`paths.stateRoot` must be a **UNC path that every runner/agent can read and write**.
 It holds three subfolders:
 
 - `state\` - one JSON document per cluster tracking the current transition + heartbeat.
 - `logs\`  - one robocopy log per copy run, named `<cluster>.<yyyyMMddHHmmss>.robocopy.log` (the worker appends `/LOG:<that path>` to its robocopy switches). There are **no** separate verify/import log files - the SHA256-verify and `Add-SolutionUpdate` outcomes live in the state JSON `Message` field and the step summary.
-- `cache\` - the verified media cache (overridable via `SIDELOAD_CACHE_ROOT`; defaults
+- `cache\` - the verified media cache (overridable via `paths.cacheRoot`; defaults
   to `<state-root>\cache`).
 
 Because a bundle is downloaded and hashed **once** into the shared cache and then reused
@@ -162,9 +154,8 @@ Two **distinct** identities are used - do not conflate them:
    the Key Vault secrets, and writes the `UpdateSideloaded` / `UpdateVersionInProgress`
    tags. Defaults to `azure/login` OIDC; `enable-AzPSSession=true` is required because
    the Key Vault secrets are read via `Get-AzKeyVaultSecret` (Az PowerShell). For on-prem
-   runners where OIDC is not viable, switch via the `SIDELOAD_KV_AUTH` variable
-   (`oidc | managedidentity | serviceprincipal`). This variable is **advisory only** - no
-   cmdlet reads it; it documents which `azure/login` / `Connect-AzAccount` pattern you wire
+   runners where OIDC is not viable, use the `identity.keyVaultAuth` setting to document
+   the `azure/login` / `Connect-AzAccount` pattern you wire
    into the YAML to establish the Az PowerShell context that `Get-AzKeyVaultSecret` then
    uses. Tag writes need only **Tag Contributor**
    (they reuse `Set-AzLocalClusterTagsMerge`).
@@ -175,7 +166,7 @@ Two **distinct** identities are used - do not conflate them:
    detached copy Scheduled Task runs as the runner service account, which needs UNC
    rights to the shared cache and the cluster import share.
 
-### 4.1 Sideload auth-map CSV (`SIDELOAD_AUTH_MAP_PATH`)
+### 4.1 Sideload auth-map CSV (`paths.authMap`)
 
 Maps the numeric `UpdateAuthAccountId` tag (written onto clusters by Config: 2) to the Key
 Vault + secret names that hold the AD credential:
@@ -192,7 +183,7 @@ UpdateAuthAccountId,KeyVaultName,UsernameSecretName,PasswordSecretName
 
 ---
 
-## 5. Catalog (`SIDELOAD_CATALOG_PATH`)
+## 5. Catalog (`paths.catalog`)
 
 A source-controlled YAML describing the media available to the automation. Two package
 classes are supported via `packageType`:
@@ -228,21 +219,17 @@ packages:
 
 ---
 
-## 6. Configuration (repository variables)
+## 6. Configuration (`config/sideload-settings.yml`)
 
-| Variable | Default | Purpose |
-|---|---|---|
-| `SIDELOAD_UPDATES` | (unset) | **Master gate.** The job is skipped unless this is one of `'true'`, `'True'`, `'TRUE'`, or `'1'`. Any other value (including blanks, `'false'`, `'yes'`) keeps the pipeline inert. |
-| `SIDELOAD_STATE_ROOT` | (none) | Shared UNC root holding `state\`, `logs\`, `cache\`. **Required** when enabled. Validated by the preflight (section 9). |
-| `SIDELOAD_CACHE_ROOT` | `<state-root>\cache` | Shared verified media cache. |
-| `SIDELOAD_AUTH_MAP_PATH` | `./config/sideload-auth-map.csv` | Auth-map CSV (see 4.1). `Copy-AzLocalPipelineExample` drops a header-only starter here (same `config/` folder on GitHub and Azure DevOps). |
-| `SIDELOAD_CATALOG_PATH` | `./config/sideload-catalog.yml` | Catalog YAML (see 5). `Copy-AzLocalPipelineExample` drops an empty skeleton starter here. |
-| `SIDELOAD_LEAD_DAYS` | `7` | Days before a cluster's next apply window that media should be sideloaded. |
-| `SIDELOAD_ROBOCOPY_SWITCHES` | `/R:5 /W:30` | Extra robocopy switches for the detached worker (see [sideload-robocopy.md](sideload-robocopy.md)). |
-| `SIDELOAD_HEARTBEAT_STALE_MINUTES` | `60` | Minutes after which a `Copying` heartbeat is considered stale and re-driven. |
-| `SIDELOAD_REMOTING_FQDN_SUFFIX` | (empty) | Global FQDN suffix appended to a cluster name to form the WinRM host when the auth-map row does not override it. |
-| `SIDELOAD_KV_AUTH` | `oidc` | Key Vault auth mode for the on-prem runner. |
-| `APPLY_UPDATES_SCHEDULE_PATH` | `./config/apply-updates-schedule.yml` | Ring-aware apply-updates schedule; the planner reads it to find each cluster's next apply window. |
+The committed schema-1 file controls enablement, paths, planning lead time,
+heartbeat/no-progress thresholds, maximum concurrent copies, named copy profiles,
+task identity, remoting, and reporting. Secrets are referenced by Key Vault name and
+secret name; no secret value belongs in YAML.
+
+`Copy-AzLocalPipelineExample` and `Update-AzLocalPipelineExample` create the current
+starter when it is absent. They never overwrite, merge, or migrate an existing file.
+The runtime rejects unsupported schema versions with a clear error. There is no
+`SIDELOAD_*` compatibility fallback.
 
 ---
 
@@ -283,22 +270,23 @@ states emitted as `<failure Type='SideloadFailed'>`.
 
 1. **Stand up the runner/agent** on the cluster fabric network and label it
    `azlocal-sideload` (GH) / give the pool the `azlocal-sideload` demand (ADO).
-2. **Create the shared UNC root** (`SIDELOAD_STATE_ROOT`) readable + writable by the
-   runner service account, and grant that account rights to each cluster's import share.
+2. **Create the shared UNC root** (`paths.stateRoot`) readable + writable by the
+   configured task principal, and grant that principal rights to each cluster's import share.
 3. **Populate Key Vault** with the per-fabric AD username/password secrets and author
    `sideload-auth-map.csv`.
 4. **Author `sideload-catalog.yml`** - run `Update-AzLocalSideloadCatalog` to fill the
    Microsoft Solution rows, then add any OEM SBE rows manually.
 5. **Tag the fleet** (Config: 1 / Config: 2): set `UpdateRing`, `UpdateStartWindow`, and
    `UpdateAuthAccountId` on each sideloaded cluster.
-6. **Set the repository variables** (section 6), starting with `SIDELOAD_UPDATES=true`.
+6. **Configure `sideload-settings.yml`**, including the paths and network-capable task
+   principal, then set `enabled: true`.
 7. **Dry run**: trigger the pipeline manually with `dry_run=true` and review the planned
    transitions + the `sideload-status` artefacts.
 8. **Enable the CRON**: uncomment the bundled `*/30 * * * *` schedule inside the
    `BEGIN/END-AZLOCAL-CUSTOMIZE:schedule-triggers` block (preserved across
    `Update-AzLocalPipelineExample` upgrades). The Config: 3 schedule-coverage audit can
-   recommend a lead-time-aware cron (apply window minus `SIDELOAD_LEAD_DAYS`).
-9. The state machine advances each cluster to `Imported` / `SideloadFlagged`; the
+   recommend a lead-time-aware cron based on `planning.leadDays`.
+9. The state machine advances each cluster to `Imported`; the
    downstream **Update: 3 - Apply Updates** wave then applies the staged update during the
    cluster's `UpdateStartWindow`.
 
@@ -315,18 +303,17 @@ gave operators no actionable feedback. v0.8.76 prepends a `preflight` job
 
 ### Behaviour matrix
 
-| `SIDELOAD_UPDATES` | `SIDELOAD_STATE_ROOT` | Self-hosted runner (GH only) | Preflight outcome | `sideload` job |
+| `enabled` | Required settings/identity | Self-hosted runner (GH only) | Preflight outcome | `sideload` job |
 |---|---|---|---|---|
-| unset / `'false'` / other | n/a | n/a | **Succeeds** with enablement walkthrough in step summary + `::notice` annotation | Skipped by its own `if:` / `condition:` |
-| `'true'` / `'True'` / `'TRUE'` / `'1'` | unset | n/a | **Fails** (exit 1) with "missing variable" panel + `::error` | Skipped (`needs:` / `dependsOn:` unmet) |
-| accepted | set | no online `azlocal-sideload` runner AND runners API returned a list | **Fails** (exit 1) with "no online runner" panel + `::error` | Skipped |
-| accepted | set | runners API returned 403/404 (most repos) | **Succeeds** with warning ("could not enumerate runners - verify manually") | Runs |
-| accepted | set | online `azlocal-sideload` runner found | **Succeeds** with "Preflight passed" panel | Runs |
+| `false` | n/a | n/a | **Succeeds** with enablement walkthrough | Skipped |
+| `true` | missing path, unsupported schema, or invalid task identity | n/a | **Fails** before self-hosted dispatch | Skipped |
+| `true` | valid | no online matching runner | **Succeeds**; self-hosted job waits in queue | Queued |
+| `true` | valid | online matching runner | **Succeeds** | Runs |
 
 ### Why a Microsoft-hosted Windows runner is fine for preflight
 
 The preflight does NOT touch the cluster fabric, Key Vault, or any Azure resource.
-It only reads workflow / pipeline variables, optionally queries the GH runners API,
+It only reads and validates the committed settings file,
 and writes markdown to the step summary. There is no domain-membership or
 VLAN-reachability requirement, so `windows-latest` is the correct minimal-cost host.
 
@@ -348,7 +335,7 @@ the exact set of matching online runners.
 
 ### Azure DevOps does not enumerate agents
 
-The ADO preflight stage validates the gate + `SIDELOAD_STATE_ROOT` only. The
+The ADO preflight stage validates the settings schema, required paths, and task identity. The
 `Agent Pools (read)` scope required to call the ADO agent enumeration API is
 not normally granted to the pipeline identity, so the preflight relies on the
 operator having verified the `azlocal-sideload` capability is present in their
@@ -407,7 +394,7 @@ automatically, the relevant Microsoft endpoints are:
 
 **The download-and-cache behaviour already exists, and it does *not* require a Git commit.**
 `Get-AzLocalSolutionUpdateDownload` downloads a `Solution` bundle from its catalog
-`downloadUri` into `SIDELOAD_CACHE_ROOT` on first use, SHA256-verifies it (atomic move, so
+`downloadUri` into `paths.cacheRoot` on first use, SHA256-verifies it (atomic move, so
 concurrent runners are safe), and serves every subsequent cluster from that cache. The
 cache is a **runtime UNC location**, not a source-controlled file - nothing is committed
 for the download itself, and only the first cluster of a given version pays the

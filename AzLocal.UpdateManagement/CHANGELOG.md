@@ -13,6 +13,10 @@ helper. Monitor: 1 and Monitor: 2 also reduce their wire payloads at source.
 
 ### Fixed
 
+- **Sideload Scheduled Task launch and ownership are race-safe.** The initial `Copying` state is persisted before task start, each launch receives a unique operation ID, and superseded workers cannot overwrite newer state. Re-drives stop and replace the old task.
+- **Sideload state transitions now match the real operation.** Discovery-only retries no longer repeat bundle expansion or `Add-SolutionUpdate`; `NeedsSbe` and `ImportFailed` are persisted explicitly; import retries reuse copied media instead of restarting robocopy.
+- **UNC copy identity is enforced before launch.** S4U and Interactive task logons are rejected for network paths. Enabled configurations require an explicit ServiceAccount/gMSA or Password principal, with Key Vault references required for Password mode.
+- **Detached-worker exceptions are observable.** Terminal failures persist the exception, operation ID, worker/robocopy process IDs, and log path instead of leaving an ambiguous stale `Copying` record.
 - **`Invoke-AzResourceGraphQuery` now recovers from `ResponsePayloadTooLarge`.** ARG's `--first` control limits rows, not bytes, so a fleet can return fewer than 1,000 very large rows and exceed the 16 MiB response cap before ARG emits a `skip_token`. The shared helper detects the deterministic payload error, halves `--first`, and retries the same logical page immediately. It retains the successful smaller page size across continuation pages and does not consume the throttle/network retry budget or arm the cross-call throttle cooldown.
 - **A single oversized resource now fails with actionable guidance.** If `--first 1` still exceeds the service cap, the helper explains that one result row is too large and the caller must project fewer or smaller fields instead of reporting a generic CLI failure.
 - **Monitor: 2 - Fleet Health Status starts its dynamic health-result query at 50 rows.** `Get-AzLocalFleetHealthFailures` intentionally retrieves complete `properties.healthCheckResult` arrays client-side to avoid ARG's bounded `mv-expand` behaviour. It now uses a conservative initial page size and stable resource-ID ordering; adaptive paging remains the safety net for unusually large clusters.
@@ -20,6 +24,10 @@ helper. Monitor: 1 and Monitor: 2 also reduce their wire payloads at source.
 
 ### Added
 
+- **Authoritative `config/sideload-settings.yml`.** `Get-AzLocalSideloadSettings` validates schema 1, paths, reconciliation limits, copy profiles, task identity, remoting, and reporting. The sideload and schedule-audit pipelines consume it directly; all `SIDELOAD_*` runtime fallbacks are removed.
+- **Create-only settings deployment.** `Copy-AzLocalPipelineExample` and `Update-AzLocalPipelineExample` create the disabled starter only when absent and preserve existing settings byte-for-byte. No speculative schema migration command is included; unsupported schemas fail clearly.
+- **Bounded sideload reconciliation.** Configurable heartbeat cadence, heartbeat staleness, no-progress detection, and maximum concurrent copies protect shared links and prevent duplicate work.
+- **Expanded sideload reporting.** Markdown/JUnit reports surface unreadable state records, `ImportFailed`, operation/process metadata, logs, and state-specific remediation.
 - **Per-call payload diagnostics**: `$script:LastResourceGraphPayloadReduced`, `$script:LastResourceGraphPayloadRetryCount`, and `$script:LastResourceGraphEffectivePageSize` expose adaptive page-size behaviour to callers and tests.
 - **Scaling regressions** cover adaptive halving, continuation-token completeness, one-row failure guidance, diagnostic reset, Monitor: 2's 50-row initial page, lean Monitor: 1 projections, and deterministic ordering.
 - **Optional, schema-versioned `config/fleet-settings.yml`.** `Copy-AzLocalPipelineExample` and `Update-AzLocalPipelineExample` create a fully commented starter without overwriting operator settings. With no active management groups, existing implicit subscription discovery is unchanged. Active `scope.managementGroups` entries avoid the Azure CLI/Azure PowerShell implicit-scope ceiling of 1,000 accessible subscriptions; explicit `-SubscriptionId` values still take precedence. `Get-AzLocalFleetSettings` exposes the resolved scope and reporting/ITSM limits.
@@ -29,7 +37,7 @@ helper. Monitor: 1 and Monitor: 2 also reduce their wire payloads at source.
 
 ### Notes
 
-- Public function count **69 -> 70** (`Get-AzLocalFleetSettings`). `GENERATED_AGAINST_MODULE_VERSION` bumped to `0.9.22` across all bundled GitHub Actions and Azure DevOps templates.
+- Public function count **69 -> 71** (`Get-AzLocalFleetSettings`, `Get-AzLocalSideloadSettings`). `GENERATED_AGAINST_MODULE_VERSION` bumped to `0.9.22` across all bundled GitHub Actions and Azure DevOps templates.
 
 ## [0.9.21] - 2026-07-15
 

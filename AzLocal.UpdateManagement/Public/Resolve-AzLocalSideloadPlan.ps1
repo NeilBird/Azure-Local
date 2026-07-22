@@ -37,7 +37,7 @@ function Resolve-AzLocalSideloadPlan {
 
     .PARAMETER FqdnSuffix
         Global default FQDN suffix appended to a cluster name to form the remoting
-        host when the auth-map row does not override it (SIDELOAD_REMOTING_FQDN_SUFFIX).
+        host when the auth-map row does not override it.
 
     .PARAMETER Now
         The reference time (UTC). Defaults to now.

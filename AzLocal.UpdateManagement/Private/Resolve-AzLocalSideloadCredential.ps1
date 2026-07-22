@@ -12,7 +12,7 @@ function Resolve-AzLocalSideloadCredential {
 
         Key Vault authentication is assumed to be already established by the
         pipeline (azure/login OIDC, managed identity, or service principal) per
-        the SIDELOAD_KV_AUTH variable - this helper only calls
+        the identity.keyVaultAuth setting - this helper only calls
         Get-AzKeyVaultSecret. The actual KV read is isolated in the thin wrapper
         Get-AzLocalKeyVaultSecretText so it can be mocked in unit tests.
 

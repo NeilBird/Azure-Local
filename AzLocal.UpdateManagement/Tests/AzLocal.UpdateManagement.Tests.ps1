@@ -393,7 +393,10 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $content | Should -Match '(?ms)preflight:.*?runs-on:\s*windows-latest' -Because "GH preflight job must run on windows-latest (no fabric / Key Vault access required)"
             $content | Should -Match '(?ms)preflight:.*?permissions:.*?actions:\s*read' -Because "GH preflight needs actions:read to call the runners API"
             $content | Should -Match '(?m)^\s*needs:\s*preflight\s*$' -Because "the sideload job must gate on preflight"
-            $content | Should -Match 'contains\(fromJSON\(.*true.*True.*TRUE.*1.*\),\s*vars\.SIDELOAD_UPDATES\)' -Because "master gate must accept true/True/TRUE/1 (v0.8.76)"
+            $content | Should -Match 'Get-Content' -Because "preflight must parse repository configuration"
+            $content | Should -Match 'config/sideload-settings\.yml' -Because "preflight must read the authoritative settings file"
+            $content | Should -Match "needs\.preflight\.outputs\.enabled == 'true'" -Because "the self-hosted job must use the hosted preflight output"
+            $content | Should -Not -Match 'SIDELOAD_[A-Z0-9_]+' -Because "sideload environment-variable compatibility was intentionally removed"
         }
 
         It 'v0.8.76: sideload-updates.yml (Azure DevOps) has a Preflight stage on windows-latest' {
@@ -405,8 +408,10 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $content | Should -Match '(?ms)stage:\s*Preflight.*?vmImage:\s*windows-latest' -Because "ADO Preflight stage must run on windows-latest"
             $content | Should -Match '(?m)^\s*dependsOn:\s*Preflight\s*$' -Because "the Sideload stage must depend on Preflight"
             $content | Should -Match '##vso\[task\.uploadsummary\]' -Because "ADO preflight must write the markdown panel via uploadsummary"
-            $content | Should -Match "eq\(variables\['SIDELOAD_UPDATES'\],\s*'true'\)" -Because "ADO gate must accept 'true'"
-            $content | Should -Match "eq\(variables\['SIDELOAD_UPDATES'\],\s*'1'\)" -Because "ADO gate must accept '1' (v0.8.76)"
+            $content | Should -Match 'Get-Content' -Because "preflight must parse repository configuration"
+            $content | Should -Match 'config/sideload-settings\.yml' -Because "preflight must read the authoritative settings file"
+            $content | Should -Match "dependencies\.Preflight\.outputs\['PreflightCheck\.preflight\.enabled'\]" -Because "the self-hosted stage must use the hosted preflight output"
+            $content | Should -Not -Match 'SIDELOAD_[A-Z0-9_]+' -Because "sideload environment-variable compatibility was intentionally removed"
         }
 
         It 'v0.8.90: monitor-updates.yml (GitHub Actions) defaults to a 6-hour cron and wires the event-driven trigger + -SkipWhenIdle' {
@@ -455,9 +460,9 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $content | Should -Match 'MonitorInFlightHours'       -Because "$Platform audit plumbs in-flight hours into the cmdlet"
         }
 
-        It 'Should export exactly 70 functions' {
+        It 'Should export exactly 71 functions' {
 
-            $script:ModuleInfo.ExportedFunctions.Count | Should -Be 70
+            $script:ModuleInfo.ExportedFunctions.Count | Should -Be 71
         }
 
         It 'Should export the expected functions' {
@@ -551,6 +556,7 @@ Describe 'Module: AzLocal.UpdateManagement' {
                 'Invoke-AzLocalItsmTicketingFromArtifact',
                 # On-Prem Sideloading Automation (v0.8.7) - catalog refresh + plan resolution + readiness-gated sideload apply + status report + step summary
                 'Update-AzLocalSideloadCatalog',
+                'Get-AzLocalSideloadSettings',
                 'Resolve-AzLocalSideloadPlan',
                 'Invoke-AzLocalSideloadUpdate',
                 'Export-AzLocalSideloadStatusReport',
@@ -561,7 +567,9 @@ Describe 'Module: AzLocal.UpdateManagement' {
                 'Add-AzLocalFailedUpdateRetryHintSummary',
                 # Pipeline preflight guards (v0.9.12) - fail meaningfully + run-summary-visible on zero subscriptions / missing reports
                 'Assert-AzLocalAzureSubscriptionAccess',
-                'Assert-AzLocalPipelineReport'
+                'Assert-AzLocalPipelineReport',
+                # Typed fleet scope/reporting/ITSM settings (v0.9.22)
+                'Get-AzLocalFleetSettings'
             )
             
             foreach ($func in $expectedFunctions) {
@@ -8087,6 +8095,7 @@ Describe 'Function: Copy-AzLocalPipelineExample' {
 
         Copy-AzLocalPipelineExample -Destination $dest -Platform GitHub 6>$null | Out-Null
 
+        Test-Path (Join-Path $repoRoot 'config\sideload-settings.yml') | Should -BeTrue
         Test-Path (Join-Path $repoRoot 'config\sideload-auth-map.csv') | Should -BeTrue
         Test-Path (Join-Path $repoRoot 'config\sideload-catalog.yml')  | Should -BeTrue
     }
@@ -8098,6 +8107,7 @@ Describe 'Function: Copy-AzLocalPipelineExample' {
 
         Copy-AzLocalPipelineExample -Destination $dest -Platform AzureDevOps 6>$null | Out-Null
 
+        Test-Path (Join-Path $repoRoot 'config\sideload-settings.yml') | Should -BeTrue
         Test-Path (Join-Path $repoRoot 'config\sideload-auth-map.csv') | Should -BeTrue
         Test-Path (Join-Path $repoRoot 'config\sideload-catalog.yml')  | Should -BeTrue
     }
@@ -8138,12 +8148,16 @@ Describe 'Function: Copy-AzLocalPipelineExample' {
         New-Item -Path (Join-Path $repoRoot 'config') -ItemType Directory -Force | Out-Null
 
         $authMapPath = Join-Path $repoRoot 'config\sideload-auth-map.csv'
+        $settingsPath = Join-Path $repoRoot 'config\sideload-settings.yml'
         $sentinel = '# OPERATOR SENTINEL - must never be overwritten'
         Set-Content -LiteralPath $authMapPath -Value $sentinel -Encoding ASCII
+        [IO.File]::WriteAllText($settingsPath, "schemaVersion: 1`nenabled: false`n# OPERATOR SETTINGS SENTINEL`n", [Text.UTF8Encoding]::new($false))
+        $settingsBefore = [Convert]::ToBase64String([IO.File]::ReadAllBytes($settingsPath))
 
         Copy-AzLocalPipelineExample -Destination $dest -Platform GitHub 6>$null | Out-Null
 
         (Get-Content -LiteralPath $authMapPath -Raw) | Should -Match 'OPERATOR SENTINEL'
+        [Convert]::ToBase64String([IO.File]::ReadAllBytes($settingsPath)) | Should -BeExactly $settingsBefore
     }
 
     It 'v0.8.7: -SkipStarterSideloadConfig suppresses the sideload starter drop entirely' {
@@ -8153,6 +8167,7 @@ Describe 'Function: Copy-AzLocalPipelineExample' {
 
         Copy-AzLocalPipelineExample -Destination $dest -Platform GitHub -SkipStarterSideloadConfig 6>$null | Out-Null
 
+        Test-Path (Join-Path $repoRoot 'config\sideload-settings.yml') | Should -BeFalse
         Test-Path (Join-Path $repoRoot 'config\sideload-auth-map.csv') | Should -BeFalse
         Test-Path (Join-Path $repoRoot 'config\sideload-catalog.yml')  | Should -BeFalse
     }
@@ -13013,8 +13028,8 @@ Describe 'Function: Get-AzLocalFleetHealthOverview - v0.7.70 (ARG-first fleet he
             $cmd.CommandType | Should -Be 'Function'
         }
 
-        It 'BS7: Module exports exactly 70 functions (v0.9.22 adds Get-AzLocalFleetSettings)' {
-            (Get-Module AzLocal.UpdateManagement).ExportedFunctions.Count | Should -Be 70
+        It 'BS7: Module exports exactly 71 functions (v0.9.22 adds fleet and sideload settings readers)' {
+            (Get-Module AzLocal.UpdateManagement).ExportedFunctions.Count | Should -Be 71
         }
     }
 
@@ -21495,6 +21510,40 @@ Describe 'Sideload (v0.8.7): Resolve-AzLocalSideloadPlan' {
 
             @($plan).Count | Should -Be 1
             $plan[0].Status | Should -Be 'NoCatalogEntry'
+        }
+    }
+}
+
+Describe 'Sideload (v0.9.22): typed settings and task safety' {
+    It 'parses the bundled disabled schema-1 settings file' {
+        $path = Join-Path $PSScriptRoot '..\Automation-Pipeline-Examples\sideload-settings.example.yml'
+        $settings = Get-AzLocalSideloadSettings -Path $path
+        $settings.SchemaVersion | Should -Be 1
+        $settings.Enabled | Should -BeFalse
+        $settings.Identity.task.logonType | Should -Be 'ServiceAccount'
+    }
+
+    It 'rejects an enabled settings file without an explicit task principal' {
+        $source = Join-Path $PSScriptRoot '..\Automation-Pipeline-Examples\sideload-settings.example.yml'
+        $path = Join-Path $TestDrive 'enabled-without-principal.yml'
+        (Get-Content -LiteralPath $source -Raw) -replace 'enabled: false', 'enabled: true' | Set-Content -LiteralPath $path -Encoding UTF8
+        { Get-AzLocalSideloadSettings -Path $path } | Should -Throw '*principalUserId is required*'
+    }
+
+    It 'creates state with unique operation and process diagnostic fields' {
+        $first = InModuleScope AzLocal.UpdateManagement { New-AzLocalSideloadState -ClusterName c1 -Version 1.0 }
+        $second = InModuleScope AzLocal.UpdateManagement { New-AzLocalSideloadState -ClusterName c1 -Version 1.0 }
+        $first.OperationId | Should -Not -BeNullOrEmpty
+        $first.OperationId | Should -Not -Be $second.OperationId
+        $first.PSObject.Properties.Name | Should -Contain 'WorkerProcessId'
+        $first.PSObject.Properties.Name | Should -Contain 'RobocopyProcessId'
+        $first.PSObject.Properties.Name | Should -Contain 'LastProgressUtc'
+    }
+
+    It 'rejects S4U for UNC-backed copy tasks before task registration' {
+        InModuleScope AzLocal.UpdateManagement {
+            { Register-AzLocalSideloadCopyTask -TaskName t1 -ClusterName c1 -Version 1.0 -OperationId op1 -SourcePath '\\server\cache\x.zip' -TargetPath '\\cluster\share' -StateRoot '\\server\state' -PrincipalUserId 'CONTOSO\svc' -LogonType S4U } |
+                Should -Throw '*cannot be used for sideload UNC paths*'
         }
     }
 }

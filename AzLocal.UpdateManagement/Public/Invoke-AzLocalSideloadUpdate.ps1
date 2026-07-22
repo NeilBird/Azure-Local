@@ -82,15 +82,31 @@ function Invoke-AzLocalSideloadUpdate {
         [int]$HeartbeatStaleMinutes = 60,
 
         [Parameter(Mandatory = $false)]
+        [ValidateRange(5, 3600)]
+        [int]$HeartbeatSeconds = 30,
+
+        [Parameter(Mandatory = $false)]
+        [ValidateRange(1, 1440)]
+        [int]$NoProgressMinutes = 90,
+
+        [Parameter(Mandatory = $false)]
+        [ValidateRange(1, 100)]
+        [int]$MaxConcurrentCopies = 2,
+
+        [Parameter(Mandatory = $false)]
         [ValidateRange(0, 20)]
         [int]$MaxRetries = 3,
+
+        [Parameter(Mandatory = $false)]
+        [ValidateRange(0, 20)]
+        [int]$MaxImportRetries = 3,
 
         [Parameter(Mandatory = $false)]
         [bool]$UseSsl = $true,
 
         [Parameter(Mandatory = $false)]
         [ValidateSet('S4U', 'Password', 'ServiceAccount', 'Interactive')]
-        [string]$TaskLogonType = 'S4U',
+        [string]$TaskLogonType = 'ServiceAccount',
 
         [Parameter(Mandatory = $false)]
         [string]$TaskPrincipalUserId,
@@ -104,6 +120,15 @@ function Invoke-AzLocalSideloadUpdate {
     }
 
     $results = New-Object System.Collections.Generic.List[object]
+    $activeCopies = 0
+    foreach ($candidate in $Plan) {
+        $candidateState = Get-AzLocalSideloadState -StateRoot $StateRoot -ClusterName ([string]$candidate.ClusterName)
+        if ($null -ne $candidateState -and [string]$candidateState.State -eq 'Copying' -and
+            -not (Test-AzLocalSideloadHeartbeatStale -State $candidateState -StaleMinutes $HeartbeatStaleMinutes) -and
+            -not (Test-AzLocalSideloadProgressStale -State $candidateState -StaleMinutes $NoProgressMinutes)) {
+            $activeCopies++
+        }
+    }
 
     foreach ($p in $Plan) {
         $clusterName = [string]$p.ClusterName
@@ -129,14 +154,21 @@ function Invoke-AzLocalSideloadUpdate {
                         break
                     }
                     'Copying' {
-                        if (Test-AzLocalSideloadHeartbeatStale -State $state -StaleMinutes $HeartbeatStaleMinutes) {
+                        $heartbeatStale = Test-AzLocalSideloadHeartbeatStale -State $state -StaleMinutes $HeartbeatStaleMinutes
+                        $progressStale = Test-AzLocalSideloadProgressStale -State $state -StaleMinutes $NoProgressMinutes
+                        if ($heartbeatStale -or $progressStale) {
                             if ([int]$state.Retries -ge $MaxRetries) {
-                                $state.State = 'Failed'; $state.Message = "Copy heartbeat stale and max retries ($MaxRetries) reached."
+                                $staleReason = if ($heartbeatStale) { 'heartbeat' } else { 'progress' }
+                                $state.State = 'Failed'; $state.Message = "Copy $staleReason stale and max retries ($MaxRetries) reached."
                                 if ($PSCmdlet.ShouldProcess($clusterName, 'Persist Failed state (stale, retries exhausted)')) { Set-AzLocalSideloadState -StateRoot $StateRoot -State $state }
                                 $results.Add([PSCustomObject]@{ ClusterName = $clusterName; Action = 'Failed'; State = 'Failed'; Version = [string]$state.Version; Message = $state.Message })
                             }
+                            elseif ($activeCopies -ge $MaxConcurrentCopies) {
+                                $results.Add([PSCustomObject]@{ ClusterName = $clusterName; Action = 'Deferred'; State = 'Copying'; Version = [string]$state.Version; Message = "Re-drive deferred; copy concurrency limit $MaxConcurrentCopies reached." })
+                            }
                             else {
-                                $advanced = Invoke-SideloadCopyStart -Plan $p -StateRoot $StateRoot -CacheRoot $CacheRoot -RobocopySwitches $RobocopySwitches -TaskLogonType $TaskLogonType -TaskPrincipalUserId $TaskPrincipalUserId -TaskPassword $TaskPassword -Retries ([int]$state.Retries + 1) -SkipGateFlip
+                                $advanced = Invoke-SideloadCopyStart -Plan $p -StateRoot $StateRoot -CacheRoot $CacheRoot -RobocopySwitches $RobocopySwitches -HeartbeatSeconds $HeartbeatSeconds -TaskLogonType $TaskLogonType -TaskPrincipalUserId $TaskPrincipalUserId -TaskPassword $TaskPassword -Retries ([int]$state.Retries + 1) -SkipGateFlip
+                                $activeCopies++
                                 $results.Add([PSCustomObject]@{ ClusterName = $clusterName; Action = 'ReDrive'; State = 'Copying'; Version = [string]$p.SelectedVersion; Message = "Stale heartbeat; re-driven (retry $($advanced.Retries))." })
                             }
                         }
@@ -151,10 +183,40 @@ function Invoke-AzLocalSideloadUpdate {
                         $results.Add([PSCustomObject]@{ ClusterName = $clusterName; Action = 'Import'; State = $imp.State; Version = [string]$state.Version; Message = $imp.Message })
                         break
                     }
+                    'Discovering' {
+                        $imp = Complete-SideloadImport -Plan $p -State $state -StateRoot $StateRoot -UseSsl $UseSsl -DiscoveryOnly
+                        $results.Add([PSCustomObject]@{ ClusterName = $clusterName; Action = 'Discover'; State = $imp.State; Version = [string]$state.Version; Message = $imp.Message })
+                        break
+                    }
+                    'NeedsSbe' {
+                        $results.Add([PSCustomObject]@{ ClusterName = $clusterName; Action = 'ManualAction'; State = 'NeedsSbe'; Version = [string]$state.Version; Message = [string]$state.Message })
+                        break
+                    }
+                    'ImportFailed' {
+                        $importRetries = if ($state.PSObject.Properties['ImportRetries']) { [int]$state.ImportRetries } else { [int]0 }
+                        if ($importRetries -ge $MaxImportRetries) {
+                            $results.Add([PSCustomObject]@{ ClusterName = $clusterName; Action = 'Failed'; State = 'ImportFailed'; Version = [string]$state.Version; Message = "Import failed; max retries ($MaxImportRetries) reached. $($state.Message)" })
+                        }
+                        else {
+                            if (-not $state.PSObject.Properties['ImportRetries']) {
+                                $state | Add-Member -NotePropertyName ImportRetries -NotePropertyValue ([int]0)
+                            }
+                            $state.ImportRetries = $importRetries + 1
+                            $imp = Complete-SideloadImport -Plan $p -State $state -StateRoot $StateRoot -UseSsl $UseSsl
+                            $results.Add([PSCustomObject]@{ ClusterName = $clusterName; Action = 'ImportRetry'; State = $imp.State; Version = [string]$state.Version; Message = $imp.Message })
+                        }
+                        break
+                    }
                     'Failed' {
                         if ([int]$state.Retries -lt $MaxRetries) {
-                            $advanced = Invoke-SideloadCopyStart -Plan $p -StateRoot $StateRoot -CacheRoot $CacheRoot -RobocopySwitches $RobocopySwitches -TaskLogonType $TaskLogonType -TaskPrincipalUserId $TaskPrincipalUserId -TaskPassword $TaskPassword -Retries ([int]$state.Retries + 1) -SkipGateFlip
-                            $results.Add([PSCustomObject]@{ ClusterName = $clusterName; Action = 'Retry'; State = 'Copying'; Version = [string]$p.SelectedVersion; Message = "Retrying copy (retry $($advanced.Retries))." })
+                            if ($activeCopies -ge $MaxConcurrentCopies) {
+                                $results.Add([PSCustomObject]@{ ClusterName = $clusterName; Action = 'Deferred'; State = 'Failed'; Version = [string]$state.Version; Message = "Copy retry deferred; concurrency limit $MaxConcurrentCopies reached." })
+                            }
+                            else {
+                                $advanced = Invoke-SideloadCopyStart -Plan $p -StateRoot $StateRoot -CacheRoot $CacheRoot -RobocopySwitches $RobocopySwitches -HeartbeatSeconds $HeartbeatSeconds -TaskLogonType $TaskLogonType -TaskPrincipalUserId $TaskPrincipalUserId -TaskPassword $TaskPassword -Retries ([int]$state.Retries + 1) -SkipGateFlip
+                                $activeCopies++
+                                $results.Add([PSCustomObject]@{ ClusterName = $clusterName; Action = 'Retry'; State = 'Copying'; Version = [string]$p.SelectedVersion; Message = "Retrying copy (retry $($advanced.Retries))." })
+                            }
                         }
                         else {
                             $results.Add([PSCustomObject]@{ ClusterName = $clusterName; Action = 'Failed'; State = 'Failed'; Version = [string]$state.Version; Message = "Copy failed; max retries ($MaxRetries) reached. $($state.Message)" })
@@ -170,8 +232,14 @@ function Invoke-AzLocalSideloadUpdate {
             }
             else {
                 # ---------------- No state + due now: kick off the copy ----------------
-                $null = Invoke-SideloadCopyStart -Plan $p -StateRoot $StateRoot -CacheRoot $CacheRoot -RobocopySwitches $RobocopySwitches -TaskLogonType $TaskLogonType -TaskPrincipalUserId $TaskPrincipalUserId -TaskPassword $TaskPassword -Retries 0
-                $results.Add([PSCustomObject]@{ ClusterName = $clusterName; Action = 'Start'; State = 'Copying'; Version = [string]$p.SelectedVersion; Message = "Sideload started; media staged and copy task launched." })
+                if ($activeCopies -ge $MaxConcurrentCopies) {
+                    $results.Add([PSCustomObject]@{ ClusterName = $clusterName; Action = 'Deferred'; State = 'Queued'; Version = [string]$p.SelectedVersion; Message = "Copy deferred; concurrency limit $MaxConcurrentCopies reached." })
+                }
+                else {
+                    $null = Invoke-SideloadCopyStart -Plan $p -StateRoot $StateRoot -CacheRoot $CacheRoot -RobocopySwitches $RobocopySwitches -HeartbeatSeconds $HeartbeatSeconds -TaskLogonType $TaskLogonType -TaskPrincipalUserId $TaskPrincipalUserId -TaskPassword $TaskPassword -Retries 0
+                    $activeCopies++
+                    $results.Add([PSCustomObject]@{ ClusterName = $clusterName; Action = 'Start'; State = 'Copying'; Version = [string]$p.SelectedVersion; Message = "Sideload started; media staged and copy task launched." })
+                }
             }
         }
         catch {
@@ -191,6 +259,7 @@ function Invoke-SideloadCopyStart {
         [string]$StateRoot,
         [string]$CacheRoot,
         [string]$RobocopySwitches,
+        [int]$HeartbeatSeconds,
         [string]$TaskLogonType,
         [string]$TaskPrincipalUserId,
         [System.Security.SecureString]$TaskPassword,
@@ -222,27 +291,39 @@ function Invoke-SideloadCopyStart {
         $mediaFileName = Split-Path -Path $download.MediaPath -Leaf
     }
 
-    # 4. Register + start the detached copy Scheduled Task.
+    # 4. Persist operation ownership before the worker can start. A re-drive gets
+    # a new ID so a superseded worker cannot overwrite the current state.
     $taskName = ('AzLocalSideload_{0}' -f ($clusterName -replace '[^A-Za-z0-9._-]', '_'))
+    $operationId = [guid]::NewGuid().ToString('N')
+    $state = New-AzLocalSideloadState -ClusterName $clusterName -Version ([string]$Plan.SelectedVersion) -State 'Copying' -TaskName $taskName -MediaPath ([string]$download.MediaPath) -TargetPath $dest -OperationId $operationId
+    $state.Retries = $Retries
+    $state.Message = if ($Retries -gt 0) { "Copy re-drive queued (retry $Retries)." } else { 'Copy task queued.' }
+    Set-AzLocalSideloadState -StateRoot $StateRoot -State $state
+
+    # 5. Register + start the detached copy Scheduled Task.
     $regParams = @{
         TaskName         = $taskName
         ClusterName      = $clusterName
         Version          = [string]$Plan.SelectedVersion
+        OperationId      = $operationId
         SourcePath       = [string]$download.MediaPath
         TargetPath       = $dest
         StateRoot        = $StateRoot
         RobocopySwitches = $RobocopySwitches
+        HeartbeatSeconds = $HeartbeatSeconds
         LogonType        = $TaskLogonType
     }
     if ($TaskPrincipalUserId) { $regParams['PrincipalUserId'] = $TaskPrincipalUserId }
     if ($TaskPassword) { $regParams['Password'] = $TaskPassword }
-    Register-AzLocalSideloadCopyTask @regParams | Out-Null
-
-    # 5. Write initial Copying state (carrying media/dest details + retries).
-    $state = New-AzLocalSideloadState -ClusterName $clusterName -Version ([string]$Plan.SelectedVersion) -State 'Copying' -TaskName $taskName -MediaPath ([string]$download.MediaPath) -TargetPath $dest
-    $state.Retries = $Retries
-    $state.Message = if ($Retries -gt 0) { "Copy re-driven (retry $Retries)." } else { 'Copy task launched.' }
-    Set-AzLocalSideloadState -StateRoot $StateRoot -State $state
+    try {
+        Register-AzLocalSideloadCopyTask @regParams | Out-Null
+    }
+    catch {
+        $state.State = 'Failed'
+        $state.Message = "Copy task launch failed: $($_.Exception.Message)"
+        Set-AzLocalSideloadState -StateRoot $StateRoot -State $state
+        throw
+    }
 
     return [PSCustomObject]@{ Retries = $Retries; MediaFileName = $mediaFileName }
 }
@@ -255,7 +336,8 @@ function Complete-SideloadImport {
         [PSCustomObject]$Plan,
         [PSCustomObject]$State,
         [string]$StateRoot,
-        [bool]$UseSsl = $true
+        [bool]$UseSsl = $true,
+        [switch]$DiscoveryOnly
     )
 
     $clusterName = [string]$Plan.ClusterName
@@ -278,7 +360,7 @@ function Complete-SideloadImport {
 
         if ($isSbe) {
             # SBE content lives under the node import root in its named subfolder.
-            $importState = Invoke-AzLocalRemoteSolutionImport -Session $session -ImportRoot $nodeImportRoot -MediaFileName $mediaLeaf -PackageType 'SBE' -Version ([string]$State.Version)
+            $importState = Invoke-AzLocalRemoteSolutionImport -Session $session -ImportRoot $nodeImportRoot -MediaFileName $mediaLeaf -PackageType 'SBE' -Version ([string]$State.Version) -DiscoveryOnly:$DiscoveryOnly
         }
         else {
             $mediaFileName = Split-Path -Path ([string]$State.MediaPath) -Leaf
@@ -292,7 +374,7 @@ function Complete-SideloadImport {
                     return [PSCustomObject]@{ State = 'Failed'; Message = $State.Message }
                 }
             }
-            $importState = Invoke-AzLocalRemoteSolutionImport -Session $session -ImportRoot $nodeImportRoot -MediaFileName $mediaFileName -PackageType 'Solution' -Version ([string]$State.Version)
+            $importState = Invoke-AzLocalRemoteSolutionImport -Session $session -ImportRoot $nodeImportRoot -MediaFileName $mediaFileName -PackageType 'Solution' -Version ([string]$State.Version) -DiscoveryOnly:$DiscoveryOnly
         }
 
         switch ($importState.ImportState) {
@@ -310,19 +392,20 @@ function Complete-SideloadImport {
                 return [PSCustomObject]@{ State = 'Imported'; Message = $State.Message }
             }
             'NeedsSbe' {
-                $State.State = 'Verified'; $State.Message = "Solution discovered but requires OEM SBE content (AdditionalContentRequired). Stage SBE and re-run."
+                $State.State = 'NeedsSbe'; $State.Message = "Solution discovered but requires OEM SBE content (AdditionalContentRequired). Stage SBE and re-run."
                 Set-AzLocalSideloadState -StateRoot $StateRoot -State $State
                 return [PSCustomObject]@{ State = 'NeedsSbe'; Message = $State.Message }
             }
             'Discovering' {
+                $State.State = 'Discovering'
                 $State.Message = $importState.Message
                 Set-AzLocalSideloadState -StateRoot $StateRoot -State $State
                 return [PSCustomObject]@{ State = 'Discovering'; Message = $importState.Message }
             }
             default {
-                $State.State = 'Failed'; $State.Message = $importState.Message
+                $State.State = 'ImportFailed'; $State.Message = $importState.Message
                 Set-AzLocalSideloadState -StateRoot $StateRoot -State $State
-                return [PSCustomObject]@{ State = 'Failed'; Message = $importState.Message }
+                return [PSCustomObject]@{ State = 'ImportFailed'; Message = $importState.Message }
             }
         }
     }

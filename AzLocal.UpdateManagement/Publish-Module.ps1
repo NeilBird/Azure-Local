@@ -3,11 +3,14 @@
 .SYNOPSIS
     Publishes AzLocal.UpdateManagement to the PowerShell Gallery.
 .DESCRIPTION
-    Copies the module to a clean staging folder (C:\Temp\AzLocal.UpdateManagement),
-    removes files that should not be included in the published package (tests),
-    validates the manifest, then publishes via Publish-Module.
+    Copies an explicit allow-list of module content to a clean staging folder
+    (C:\Temp\AzLocal.UpdateManagement), validates the manifest, then publishes
+    via Publish-Module.
 
     The NuGet API key is prompted interactively and is never stored on disk.
+.PARAMETER StageOnly
+    Builds and validates the allow-listed staging package, then exits without
+    prompting for an API key or publishing.
 .NOTES
     Author  : Neil Bird, MSFT
     Version : 1.0
@@ -15,7 +18,9 @@
 #>
 ########################################
 [CmdletBinding(SupportsShouldProcess)]
-param()
+param(
+    [switch]$StageOnly
+)
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -31,61 +36,47 @@ if (Test-Path $StagingDir) {
     Remove-Item $StagingDir -Recurse -Force
 }
 
-# --- 2. Copy module to staging -----------------------------------------------
-Write-Host "[$ModuleName] Copying module to staging..." -ForegroundColor Cyan
-Copy-Item -Path $SourceDir -Destination $StagingDir -Recurse -Force
+# --- 2. Copy approved module content to staging ------------------------------
+# Every published path must be declared here. New repository files remain out
+# of the package until a maintainer deliberately adds them to this allow-list.
+$sourceManifestPath = Join-Path $SourceDir "$ModuleName.psd1"
+$sourceManifest = Import-PowerShellDataFile -Path $sourceManifestPath
 
-# --- 3. Remove files/folders not needed in published package -----------------
-Write-Host "[$ModuleName] Removing files not needed for publishing..." -ForegroundColor Cyan
+$IncludePaths = @(@(
+    "$ModuleName.psd1"
+    [string]$sourceManifest.RootModule
+    @($sourceManifest.NestedModules)
+    'README.md'
+    'example-update-request.json'
+    'Automation-Pipeline-Examples'
+    'ITSM'
+    'docs\cmdlet-reference.md'
+    'docs\concepts.md'
+    'docs\images'
+    'docs\rbac.md'
+    'docs\release-history.md'
+    'docs\troubleshooting.md'
+    # Required at runtime by Register-AzLocalSideloadCopyTask.
+    'Tools\Invoke-AzLocalSideloadCopyTask.ps1'
+) | Select-Object -Unique)
 
-$RemovePaths = @(
-    # Tests
-    'Tests'
-    # This publish script itself
-    'Publish-Module.ps1'
-    # One-off refactor helper used during the v0.7.3 monolith split.
-    # No runtime value to consumers; keep in the repo only.
-    'Tools'
-    # Internal module-review artefacts (action plans, review notes,
-    # combined-review documents). These are repository-only working
-    # files - consumers see them on GitHub if they want, they have
-    # no runtime value, and they must NOT leak into the published
-    # PSGallery package. Added in v0.7.76 after the Finding 8
-    # consolidation that moved review files under this folder
-    # (commit 1230f7b).
-    'Module-reviews'
-    # Maintainer-only release runbook. The file itself states
-    # "This document is the maintainer-facing release checklist.
-    # Consumers do not need to read it." - it has no runtime value
-    # and should not take up space inside every user's installed
-    # module folder. Repo copy on GitHub remains the reference.
-    'docs\RELEASE-PROCESS.md'
-)
+Write-Host "[$ModuleName] Copying approved module content to staging..." -ForegroundColor Cyan
+New-Item -Path $StagingDir -ItemType Directory -Force | Out-Null
 
-foreach ($relativePath in $RemovePaths) {
-    $fullPath = Join-Path $StagingDir $relativePath
-    if (Test-Path $fullPath) {
-        Remove-Item $fullPath -Recurse -Force
-        Write-Host "  Removed: $relativePath" -ForegroundColor DarkGray
+foreach ($relativePath in $IncludePaths) {
+    $sourcePath = Join-Path $SourceDir $relativePath
+    if (-not (Test-Path -LiteralPath $sourcePath)) {
+        throw "Required publish path is missing: $relativePath"
     }
+
+    $destinationParent = Split-Path -Parent (Join-Path $StagingDir $relativePath)
+    if (-not (Test-Path -LiteralPath $destinationParent)) {
+        New-Item -Path $destinationParent -ItemType Directory -Force | Out-Null
+    }
+
+    Copy-Item -LiteralPath $sourcePath -Destination $destinationParent -Recurse -Force
+    Write-Host "  Included: $relativePath" -ForegroundColor DarkGray
 }
-
-# Remove root-level *.md files EXCEPT README.md. Markdown files at the module
-# root (CHANGELOG.md, in-progress review notes, internal design docs, etc.)
-# are repository-only artefacts - consumers see them on GitHub and do not
-# need them inside the installed module footprint. README.md is preserved
-# because PowerShell Gallery surfaces it on the module page and it is the
-# documented entry point. Subfolder *.md files (e.g. ITSM/*.md,
-# Automation-Pipeline-Examples/README.md, docs/*.md) are RETAINED because
-# they carry user-facing setup / reference content that is linked from the
-# module help and the README.
-Write-Host "[$ModuleName] Removing root-level .md files (except README.md)..." -ForegroundColor Cyan
-Get-ChildItem -Path $StagingDir -Filter '*.md' -File |
-    Where-Object { $_.Name -ne 'README.md' } |
-    ForEach-Object {
-        Remove-Item -LiteralPath $_.FullName -Force
-        Write-Host "  Removed root markdown: $($_.Name)" -ForegroundColor DarkGray
-    }
 
 # --- 4. Show what will be published ------------------------------------------
 Write-Host ""
@@ -101,6 +92,11 @@ $manifestPath = Join-Path $StagingDir "$ModuleName.psd1"
 $manifest = Test-ModuleManifest -Path $manifestPath -ErrorAction Stop
 Write-Host "  Module:  $($manifest.Name)" -ForegroundColor Green
 Write-Host "  Version: $($manifest.Version)" -ForegroundColor Green
+
+if ($StageOnly) {
+    Write-Host "[$ModuleName] Staging validation completed; publishing was not requested." -ForegroundColor Green
+    return
+}
 
 # --- 6. Prompt for API key (masked) and publish ------------------------------
 Write-Host ""

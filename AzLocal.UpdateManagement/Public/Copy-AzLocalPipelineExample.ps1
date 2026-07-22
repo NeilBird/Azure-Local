@@ -109,22 +109,19 @@ function Copy-AzLocalPipelineExample {
     .PARAMETER SkipStarterSideloadConfig
         Only meaningful with `-Platform GitHub` or `-Platform AzureDevOps`.
 
-        By default (v0.8.7+) the function ALSO drops two starter on-prem
+                By default the function ALSO drops three on-prem
         sideloading config files into the SAME `config\` folder as the
         starter schedule and the ring CSV (one path, both platforms):
+                    - `sideload-settings.yml`  - authoritative, versioned runtime settings.
           - `sideload-auth-map.csv`  - header row + guidance comments only.
           - `sideload-catalog.yml`   - `schemaVersion` + an empty `packages:`
                                        list.
 
-        Both starters are HEADER / SKELETON ONLY (no demo data rows), so they
-        are inert even if `SIDELOAD_UPDATES` is flipped to `true` before they
-        are populated: an empty auth-map produces an `UnknownAuthAccountId`
-        status and an empty catalog produces `NoCatalogEntry` - neither
-        performs a Key Vault lookup or stages any media. The Step.6 sideload
-        pipeline is itself hard-gated OFF unless `SIDELOAD_UPDATES == 'true'`,
-        so the files have zero effect for operators who never opt in.
+        The settings starter has `enabled: false`; the auth-map and catalog are
+        HEADER / SKELETON ONLY. No Key Vault lookup or media staging occurs
+        until the operator populates the files and sets `enabled: true`.
 
-        As with the starter schedule, existing files are NEVER overwritten.
+        Existing settings, auth-map, and catalog files are never overwritten.
 
         Pass `-SkipStarterSideloadConfig` to suppress the drop entirely. Has
         no effect when `-Platform All` is in use.
@@ -282,7 +279,7 @@ function Copy-AzLocalPipelineExample {
                       overwritten. Pass `-SkipStarterSchedule` /
                       `-SkipStarterSideloadConfig` to suppress. The sideload
                       starters are inert until populated AND
-                      `SIDELOAD_UPDATES=true`, so they are safe for operators
+                      sideloading is enabled, so they are safe for operators
                       who never sideload.
         Changed in  : v0.8.98 - for `-Platform GitHub|AzureDevOps` the function
                       now ALSO drops a turnkey `Update-Module-And-Pipelines.ps1`
@@ -323,7 +320,7 @@ function Copy-AzLocalPipelineExample {
         [switch]$SkipStarterFleetSettings,
 
         # v0.8.7: when set, suppress the default starter sideload-config
-        # drop (sideload-auth-map.csv + sideload-catalog.yml) for
+        # drop (sideload-settings.yml + auth-map + catalog) for
         # Platform=GitHub|AzureDevOps. Default OFF. Existing files are
         # always preserved regardless of this switch.
         [switch]$SkipStarterSideloadConfig,
@@ -702,24 +699,22 @@ function Copy-AzLocalPipelineExample {
 
     # ------------------------------------------------------------------
     # 6b (v0.8.7). Starter on-prem sideloading config drop
-    #    (sideload-auth-map.csv + sideload-catalog.yml). Default-on for
+    #    (sideload-settings.yml + auth-map + catalog). Default-on for
     #    -Platform GitHub|AzureDevOps; suppressed by
     #    -SkipStarterSideloadConfig. Lands in the SAME `config\` folder as
     #    the starter schedule and the ring CSV, so all operator config files
     #    sit together at the repo root. Both files are HEADER / SKELETON
-    #    ONLY (no demo data rows), so they are inert even if SIDELOAD_UPDATES
-    #    is flipped on before they are populated: an empty auth-map yields
-    #    UnknownAuthAccountId and an empty catalog yields NoCatalogEntry -
-    #    neither performs a Key Vault lookup nor stages media. The Step.6
-    #    sideload pipeline is itself hard-gated OFF unless
-    #    SIDELOAD_UPDATES == 'true'. NEVER overwrites an existing file.
+    #    ONLY (no demo data rows), and sideload-settings.yml defaults to
+    #    enabled:false. Existing files are never overwritten.
     # ------------------------------------------------------------------
     $sideloadAuthMapDest  = $null
     $sideloadCatalogDest  = $null
+    $sideloadSettingsDest = $null
     $sideloadConfigAction = $null   # 'Copied' | 'Preserved' | 'Skipped' | 'SkippedBySwitch'
     if ($Platform -in @('GitHub', 'AzureDevOps')) {
         $sideloadAuthMapDest = Join-Path -Path $configDir -ChildPath 'sideload-auth-map.csv'
         $sideloadCatalogDest = Join-Path -Path $configDir -ChildPath 'sideload-catalog.yml'
+        $sideloadSettingsDest = Join-Path -Path $configDir -ChildPath 'sideload-settings.yml'
 
         if ($SkipStarterSideloadConfig.IsPresent) {
             $sideloadConfigAction = 'SkippedBySwitch'
@@ -747,6 +742,24 @@ function Copy-AzLocalPipelineExample {
 
             $sideloadWroteAny = $false
             $sideloadPreservedAny = $false
+
+            $settingsTemplate = Join-Path -Path $sourceRoot -ChildPath 'sideload-settings.example.yml'
+            if (Test-Path -LiteralPath $sideloadSettingsDest -PathType Leaf) {
+                $sideloadPreservedAny = $true
+                Write-Verbose ("Copy-AzLocalPipelineExample: sideload-settings.yml preserved (already exists at '{0}')." -f $sideloadSettingsDest)
+            }
+            elseif (-not (Test-Path -LiteralPath $settingsTemplate -PathType Leaf)) {
+                Write-Warning "Copy-AzLocalPipelineExample: sideload settings template not found at '$settingsTemplate'."
+            }
+            elseif ($PSCmdlet.ShouldProcess($sideloadSettingsDest, 'Write starter sideload-settings.yml')) {
+                $settingsParent = Split-Path -Parent $sideloadSettingsDest
+                if (-not (Test-Path -LiteralPath $settingsParent)) {
+                    $null = New-Item -ItemType Directory -Path $settingsParent -Force -ErrorAction Stop
+                }
+                Copy-Item -LiteralPath $settingsTemplate -Destination $sideloadSettingsDest -ErrorAction Stop
+                $sideloadWroteAny = $true
+            }
+
             foreach ($drop in @(
                 @{ Dest = $sideloadAuthMapDest; Content = $authMapStarter; Label = 'sideload-auth-map.csv' }
                 @{ Dest = $sideloadCatalogDest; Content = $catalogStarter; Label = 'sideload-catalog.yml' }
@@ -1117,11 +1130,12 @@ function Copy-AzLocalPipelineExample {
         Write-Host ("  Starter schedule preserved (existing file): {0}" -f $scheduleDest) -ForegroundColor Yellow
     }
     if ($sideloadConfigAction -eq 'Copied') {
-        Write-Host ("  Starter sideload config dropped at: {0}" -f $sideloadAuthMapDest) -ForegroundColor Green
+        Write-Host ("  Sideload settings created at: {0}" -f $sideloadSettingsDest) -ForegroundColor Green
+        Write-Host ("                                      {0}" -f $sideloadAuthMapDest) -ForegroundColor Green
         Write-Host ("                                      {0}" -f $sideloadCatalogDest) -ForegroundColor Green
     }
     elseif ($sideloadConfigAction -eq 'Preserved') {
-        Write-Host "  Starter sideload config preserved (existing sideload-auth-map.csv / sideload-catalog.yml left untouched)" -ForegroundColor Yellow
+        Write-Host "  Sideload config preserved (existing settings/auth-map/catalog left untouched)" -ForegroundColor Yellow
     }
     if ($exclusionsAction -eq 'Copied') {
         Write-Host ("  Starter subscription-exclusion CSV dropped at: {0}" -f $exclusionsDest) -ForegroundColor Green
@@ -1199,13 +1213,14 @@ function Copy-AzLocalPipelineExample {
     }
     # Optional sideload (Step.6) sub-message - only emitted when a starter
     # sideload config was dropped or already exists. Sideloading is OFF by
-    # default (SIDELOAD_UPDATES gate), so this is purely informational.
+    # default (enabled:false in sideload-settings.yml), so this is informational.
     $sideloadHintLines = @()
     if ($sideloadConfigAction -in @('Copied', 'Preserved')) {
-        $sideloadHintLines += "  *. OPTIONAL on-prem sideloading (Step.6, OFF by default): two starter config files are in place:"
+        $sideloadHintLines += "  *. OPTIONAL on-prem sideloading (Step.6, OFF by default): three config files are in place:"
+        if ($sideloadSettingsDest) { $sideloadHintLines += ("       {0}" -f $sideloadSettingsDest) }
         if ($sideloadAuthMapDest) { $sideloadHintLines += ("       {0}" -f $sideloadAuthMapDest) }
         if ($sideloadCatalogDest) { $sideloadHintLines += ("       {0}" -f $sideloadCatalogDest) }
-        $sideloadHintLines += "     Populate both, set repository variable SIDELOAD_UPDATES=true, then dry-run the sideload-updates pipeline. Until then they are inert. See Automation-Pipeline-Examples/docs/sideload.md."
+        $sideloadHintLines += "     Populate the auth-map/catalog, review the settings, set enabled:true, then dry-run the sideload-updates pipeline. Until then it is inert. See Automation-Pipeline-Examples/docs/sideload.md."
     }
     # Optional subscription-exclusion sub-message - only emitted when a starter
     # Excluded-Subscription-Ids.csv was dropped or already exists. The CSV is

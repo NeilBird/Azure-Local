@@ -255,7 +255,7 @@ $script:UpdateRetryAttemptedTagName = 'UpdateRetryAttempted'
 # v0.8.7: numeric account id (1-3 digits, e.g. 001) that maps a cluster to a
 # row in the sideload auth-map CSV (Key Vault + remoting settings) used by the
 # on-prem solution-update sideloading automation. Written/exported by Step.1
-# and Step.2 only when SIDELOAD_UPDATES is enabled; absent otherwise.
+# and Step.2 only when sideload inventory columns are explicitly enabled.
 $script:UpdateAuthAccountIdTagName = 'UpdateAuthAccountId'
 
 # Current apply-updates-schedule.yml schema version produced + consumed by
@@ -285,6 +285,7 @@ $script:ScheduleSchemaCurrentVersion = 2
 # - the framework is in place so a future non-additive catalog format change
 # (e.g. v1 -> v2) is a small, comment-preserving, idempotent recipe addition.
 $script:SideloadCatalogSchemaCurrentVersion = 1
+$script:SideloadSettingsSchemaCurrentVersion = 1
 
 $script:DayMap = [ordered]@{
     'Mon' = [DayOfWeek]::Monday
@@ -409,6 +410,7 @@ Export-ModuleMember -Function @(
     'Invoke-AzLocalItsmTicketingFromArtifact',
     # On-prem solution-update sideloading automation (v0.8.7)
     'Update-AzLocalSideloadCatalog',
+    'Get-AzLocalSideloadSettings',
     'Resolve-AzLocalSideloadPlan',
     'Invoke-AzLocalSideloadUpdate',
     'Export-AzLocalSideloadStatusReport',

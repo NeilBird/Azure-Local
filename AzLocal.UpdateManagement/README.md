@@ -71,7 +71,8 @@ If you are new to this module, work through these in order from a regular PowerS
 | **Daily fleet health audit (v0.7.65)** | `Get-AzLocalFleetHealthFailures -View Summary -ExportPath fleet-health-summary.csv` -> review top failure reasons by cluster impact -> drill into [`Get-AzLocalFleetHealthFailures -View Detail`](docs/cmdlet-reference.md#get-azlocalfleethealthfailures) for per-cluster remediation |
 | **Schedule coverage drift audit (v0.7.65)** | `Test-AzLocalApplyUpdatesScheduleCoverage -View Audit -PipelineYamlPath .\.github\workflows` -> for any `Uncovered` rows, copy the `RequiredCronUTC` value and paste it into `apply-updates.yml` -> re-run `-View Audit` to confirm `Covered` -> wire the bundled `apply-updates-schedule-audit.yml` pipeline (weekly Mon 05:00 UTC) so future tag drift is caught automatically. Full runbook: [`Automation-Pipeline-Examples/README.md` section 8.3](./Automation-Pipeline-Examples/README.md#83-end-to-end-runbook-apply-updates-schedule-coverage-audit) |
 | **Pre-update health gate (CI/CD)** | `Test-AzLocalClusterHealth -BlockingOnly` -> `Test-AzLocalUpdateScheduleAllowed` -> `Test-AzLocalFleetHealthGate` -> proceed only on pass |
-| **Sideloaded payload (v0.7.1)** | Operator sets `UpdateSideloaded=False` -> stage payload out-of-band -> operator flips `UpdateSideloaded=True` -> `Start-AzLocalClusterUpdate` (auto-stamps `UpdateVersionInProgress`) -> `Get-AzLocalUpdateRuns` (auto-resets tags on success) -> `Reset-AzLocalSideloadedTag -Force` only if a tag gets stuck |
+| **Manual sideloaded-payload gate (v0.7.1)** | Operator sets `UpdateSideloaded=False` -> stage payload out-of-band -> operator flips `UpdateSideloaded=True` -> `Start-AzLocalClusterUpdate` (auto-stamps `UpdateVersionInProgress`) -> `Get-AzLocalUpdateRuns` (auto-resets tags on success) -> `Reset-AzLocalSideloadedTag -Force` only if a tag gets stuck |
+| **Automated disconnected-cluster sideload (Update: 2)** | Configure `config/sideload-settings.yml` -> populate the catalog and auth map -> run `sideload-updates.yml` on a self-hosted runner -> review `Export-AzLocalSideloadStatusReport` -> let Update: 3 apply the imported update. See the [sideload operations guide](Automation-Pipeline-Examples/docs/sideload.md). |
 | **Pause / resume long fleet run** | `Stop-AzLocalFleetUpdate -SaveState` -> ... -> `Resume-AzLocalFleetUpdate -StateFilePath ...` |
 | **Recover from emergency** | `Stop-AzLocalFleetUpdate` -> `Test-AzLocalClusterHealth` (assess) -> `Resume-AzLocalFleetUpdate -RetryFailed` |
 
@@ -79,7 +80,7 @@ If you are new to this module, work through these in order from a regular PowerS
 
 ## What's New in v0.9.22
 
-**Azure Resource Graph queries now scale safely when expanded RBAC exposes hundreds of subscriptions and clusters.** The shared query helper handles ARG's byte limit in addition to its row limit, and the two fleet-monitor pipelines stop downloading property bags they do not consume.
+**Azure Resource Graph queries now scale safely when expanded RBAC exposes hundreds of subscriptions and clusters, and the disconnected-cluster sideload workflow is hardened for customer operation.** The shared query helper handles ARG's byte limit in addition to its row limit, the two fleet-monitor pipelines stop downloading property bags they do not consume, and Update: 2 now uses one typed settings file with race-safe task ownership and actionable state reporting.
 
 ### Fixed
 
@@ -94,6 +95,8 @@ If you are new to this module, work through these in order from a regular PowerS
 - **Optional fleet settings for estates beyond 1,000 subscriptions.** Generated pipeline repos now receive an inert, fully commented `config/fleet-settings.yml`. Activating `scope.managementGroups` makes all central ARG queries use management-group scope; explicit `-SubscriptionId` values override it, and leaving the file commented preserves implicit subscription discovery. `Get-AzLocalFleetSettings` reports the effective settings.
 - **Bounded summaries, complete artifacts.** High-cardinality Markdown tables default to 100 rows with `X of Y` notices, and the shared writer stays below a configurable 900,000-byte UTF-8 budget. CSV, JSON, JUnit, and HTML artifacts are not truncated.
 - **Scale-safe enrichment and ticketing.** Inventory uses one ARG subscription-name lookup, readiness avoids fleet-sized command lines, failed-run health evidence uses one scoped query, and ServiceNow fan-out defaults to 25 incidents with a five-consecutive-failure circuit breaker.
+- **Authoritative sideload settings and bounded reconciliation.** `Get-AzLocalSideloadSettings` validates `config/sideload-settings.yml`; Copy/Update creates the disabled starter only when absent and preserves existing files byte-for-byte. The pipeline no longer reads `SIDELOAD_*` variables, and no speculative settings migration command is included. Operation IDs prevent superseded Scheduled Task workers from overwriting current state; concurrency, heartbeat, no-progress, copy-retry, and import-retry controls are explicit.
+- **Sideload identity and diagnostics hardening.** UNC-backed copies reject S4U/Interactive task logons and require a network-capable principal. Reports expose `NeedsSbe`, `ImportFailed`, unreadable state records, operation/process IDs, logs, and state-specific remediation. See the [Update: 2 operations guide](Automation-Pipeline-Examples/docs/sideload.md).
 
 > Previous release notes have moved into the [Release History](#release-history) appendix at the bottom of this document.
 
@@ -394,6 +397,8 @@ Start-AzLocalClusterUpdate -ScopeByUpdateRingTag -UpdateRingValue "Production" -
 ### 7a. Sideloaded Payload Workflow (v0.7.1)
 
 Use this workflow when an admin manually copies an Azure Local update payload onto a cluster (sideloading) and wants the module to gate `Start-AzLocalClusterUpdate` until the payload is in place, then automatically clear the gate once the run succeeds.
+
+> **Automating this flow for disconnected clusters:** use the self-hosted **Update: 2 - Sideload Updates** pipeline. Its authoritative configuration is `config/sideload-settings.yml`; it handles catalog planning, bounded Robocopy, verification, import/discovery, state ownership, and reporting. See the [sideload operations guide](Automation-Pipeline-Examples/docs/sideload.md). The manual tag flow below remains available for one-off staging.
 
 > ✅ **Fully opt-in.** Clusters that do not have the `UpdateSideloaded` tag behave exactly as in v0.7.0 - the gate is bypassed entirely and updates proceed through the existing schedule/health checks. You only "join" the workflow by setting the tag on a specific cluster when you want to stage a sideloaded payload. No new RBAC, no fleet-wide opt-out switch needed.
 

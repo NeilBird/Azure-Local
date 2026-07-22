@@ -22,7 +22,8 @@ function New-AzLocalSideloadState {
         [string]$MediaPath = '',
         [string]$TargetPath = '',
         [string]$LogPath = '',
-        [ValidateSet('Queued', 'Copying', 'Copied', 'Verified', 'Imported', 'Failed', 'Stale')]
+        [string]$OperationId = ([guid]::NewGuid().ToString('N')),
+        [ValidateSet('Queued', 'Copying', 'Copied', 'Verified', 'Discovering', 'NeedsSbe', 'ImportFailed', 'Imported', 'Failed', 'Stale')]
         [string]$State = 'Queued'
     )
 
@@ -30,6 +31,7 @@ function New-AzLocalSideloadState {
     return [PSCustomObject]@{
         ClusterName       = $ClusterName
         Version           = $Version
+        OperationId       = $OperationId
         State             = $State
         OwningMachine     = $env:COMPUTERNAME
         TaskName          = $TaskName
@@ -43,7 +45,11 @@ function New-AzLocalSideloadState {
         Mbps              = [double]0
         EtaUtc            = ''
         ExitCode          = $null
+        WorkerProcessId   = $null
+        RobocopyProcessId = $null
+        LastProgressUtc   = $nowUtc
         Retries           = [int]0
+        ImportRetries     = [int]0
         Message           = ''
     }
 }
@@ -159,4 +165,30 @@ function Test-AzLocalSideloadHeartbeatStale {
     }
     $ageMinutes = ([DateTime]::UtcNow - $last.ToUniversalTime()).TotalMinutes
     return ($ageMinutes -gt $StaleMinutes)
+}
+
+function Test-AzLocalSideloadProgressStale {
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param(
+        [Parameter(Mandatory = $true)][ValidateNotNull()][PSCustomObject]$State,
+        [Parameter(Mandatory = $true)][int]$StaleMinutes
+    )
+
+    if ($State.State -ne 'Copying') { return $false }
+    [DateTime]$lastProgress = [DateTime]::MinValue
+    if ($State.PSObject.Properties['LastProgressUtc']) {
+        $progressValue = [string]$State.LastProgressUtc
+    }
+    elseif ($State.PSObject.Properties['StartUtc']) {
+        $progressValue = [string]$State.StartUtc
+    }
+    elseif ($State.PSObject.Properties['LastHeartbeatUtc']) {
+        $progressValue = [string]$State.LastHeartbeatUtc
+    }
+    else {
+        return $false
+    }
+    if (-not [DateTime]::TryParse($progressValue, [ref]$lastProgress)) { return $true }
+    return (([DateTime]::UtcNow - $lastProgress.ToUniversalTime()).TotalMinutes -gt $StaleMinutes)
 }

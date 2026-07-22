@@ -21,8 +21,8 @@
 #   30 minutes) so the state machine progresses Copying -> Copied -> Verified ->
 #   Imported across successive short runs. Re-running is always safe.
 #
-# GATE: the whole job is skipped unless the pipeline variable
-#   SIDELOAD_UPDATES == 'true'. When unset/false this file is inert.
+# GATE: the self-hosted stage runs only when
+#   config/sideload-settings.yml has enabled: true.
 #
 # AUTHENTICATION:
 #   - Azure CLI context (ARG fleet read via 'az graph query' + UpdateSideloaded
@@ -32,7 +32,7 @@
 #     established inside the script from the federated token that
 #     addSpnToEnvironment exposes. For a secret-based service principal or a
 #     self-hosted agent managed identity, replace that Connect-AzAccount line per
-#     the SIDELOAD_KV_AUTH variable (see inline comments).
+#     the identity.keyVaultAuth setting (see inline comments).
 #   - Cluster WinRM remoting uses an Active Directory [pscredential] built from
 #     two Key Vault secrets named in the sideload auth-map row (NOT the pipeline
 #     identity).
@@ -93,20 +93,6 @@ variables:
   #   AZLOCAL_EXCLUDED_SUBSCRIPTIONS_PATH  (default '') - optional subscription
   #       exclusion CSV path; when non-empty every Azure Resource Graph query
   #       in this pipeline excludes the listed subscriptions.
-  #   ---- Sideload configuration (Step.6 opt-in) ----
-  #   SIDELOAD_UPDATES                 master gate; the Sideload stage is skipped
-  #                                    unless this is the literal string 'true'.
-  #   SIDELOAD_STATE_ROOT              shared UNC root all agents read+write
-  #                                    (e.g. '\\\\fileserver\\azlocal-sideload').
-  #   SIDELOAD_CACHE_ROOT              ''  - defaults (in the cmdlet) to <state-root>\cache
-  #   SIDELOAD_AUTH_MAP_PATH           './config/sideload-auth-map.csv'
-  #   SIDELOAD_CATALOG_PATH            './config/sideload-catalog.yml'
-  #   SIDELOAD_LEAD_DAYS               '7'
-  #   SIDELOAD_ROBOCOPY_SWITCHES       '/R:5 /W:30'
-  #   SIDELOAD_HEARTBEAT_STALE_MINUTES '60'
-  #   SIDELOAD_REMOTING_FQDN_SUFFIX    ''  (e.g. '.corp.contoso.com')
-  #   SIDELOAD_KV_AUTH                 'oidc' | 'managedidentity' | 'serviceprincipal'
-  #   APPLY_UPDATES_SCHEDULE_PATH      './config/apply-updates-schedule.yml'
   # Create the group once (Library > Variable groups, or
   # `az pipelines variable-group create`). See Automation-Pipeline-Examples/README.md
   # section 5. A variable redefined inline would OVERRIDE the group, so these are
@@ -125,10 +111,10 @@ stages:
 # Cost: ~10s on windows-latest. No Azure / Key Vault access. Always runs.
 #
 # Outcomes:
-#   - Gate OFF (SIDELOAD_UPDATES unset / not in 'true'|'True'|'TRUE'|'1'):
+#   - Gate OFF (config/sideload-settings.yml has enabled: false):
 #       Preflight succeeds with an informational panel showing how to enable
 #       Step.6. The `Sideload` stage is then SKIPPED by its own condition.
-#   - Gate ON + SIDELOAD_STATE_ROOT missing: Preflight FAILS with a panel
+#   - Gate ON + paths.stateRoot missing: Preflight FAILS with a panel
 #       listing the missing variable(s). The `Sideload` stage is skipped
 #       because its `dependsOn: Preflight` cannot be satisfied.
 #   - All checks pass: Preflight succeeds, `Sideload` proceeds onto your
@@ -149,14 +135,13 @@ stages:
       vmImage: windows-latest
     # END-AZLOCAL-CUSTOMIZE:runner-target-PreflightCheck
     steps:
+    - checkout: self
+      displayName: 'Checkout repository'
+
     - task: PowerShell@2
       displayName: 'Run Step.6 preflight'
+      name: preflight
       env:
-        SIDELOAD_UPDATES: $(SIDELOAD_UPDATES)
-        SIDELOAD_STATE_ROOT: $(SIDELOAD_STATE_ROOT)
-        SIDELOAD_AUTH_MAP_PATH: $(SIDELOAD_AUTH_MAP_PATH)
-        SIDELOAD_CATALOG_PATH: $(SIDELOAD_CATALOG_PATH)
-        APPLY_UPDATES_SCHEDULE_PATH: $(APPLY_UPDATES_SCHEDULE_PATH)
         AGENT_TEMPDIRECTORY: $(Agent.TempDirectory)
       inputs:
         targetType: 'inline'
@@ -167,9 +152,18 @@ stages:
           $lines = [System.Collections.Generic.List[string]]::new()
           function Append-Summary([string]$line) { [void]$lines.Add($line) }
 
-          # Master gate: case-insensitive 'true'/'True'/'TRUE' OR literal '1'.
-          $gateRaw = "$($env:SIDELOAD_UPDATES)".Trim()
-          $gateOn  = ($gateRaw -in @('true','True','TRUE','1'))
+            Install-Module powershell-yaml -Scope CurrentUser -Force -AllowClobber
+            Import-Module powershell-yaml -Force
+            $settingsPath = './config/sideload-settings.yml'
+            if (-not (Test-Path -LiteralPath $settingsPath -PathType Leaf)) {
+              throw "Required sideload settings file not found: $settingsPath. Run Copy-AzLocalPipelineExample to create it."
+            }
+            $settings = ConvertFrom-Yaml -Yaml (Get-Content -LiteralPath $settingsPath -Raw) -Ordered:$false
+            if ([int]$settings.schemaVersion -ne 1) {
+              throw "Unsupported sideload settings schemaVersion '$($settings.schemaVersion)'; this pipeline requires 1."
+            }
+            $gateOn = [bool]$settings.enabled
+            Write-Host "##vso[task.setvariable variable=enabled;isOutput=true]$($gateOn.ToString().ToLowerInvariant())"
 
           Append-Summary '## Step.6 - Sideload Updates - Preflight'
           Append-Summary ''
@@ -178,25 +172,20 @@ stages:
               Append-Summary '> [!NOTE]'
               Append-Summary '> **Step.6 (Sideload Updates) is OPT-IN and currently OFF.**'
               Append-Summary '>'
-              if ([string]::IsNullOrWhiteSpace($gateRaw)) {
-                  Append-Summary '> The pipeline variable `SIDELOAD_UPDATES` is **not set**. The `Sideload` stage for this run was skipped.'
-              } else {
-                  Append-Summary "> The pipeline variable ``SIDELOAD_UPDATES`` is set to ``'$gateRaw'`` which is not one of the accepted opt-in values (``'true'`` / ``'True'`` / ``'TRUE'`` / ``'1'``). The ``Sideload`` stage for this run was skipped."
-              }
+                Append-Summary '> `config/sideload-settings.yml` has `enabled: false`. The `Sideload` stage for this run was skipped.'
               Append-Summary ''
               Append-Summary '### How to enable Step.6'
               Append-Summary ''
               Append-Summary '1. **Provision an on-prem self-hosted agent** on the same network as your Azure Local clusters. Add it to a self-hosted POOL and give the agent a custom capability named `azlocal-sideload` (Project Settings -> Agent pools -> <pool> -> <agent> -> Capabilities -> User-defined). See [Self-hosted Windows agents](https://learn.microsoft.com/azure/devops/pipelines/agents/windows-agent).'
               Append-Summary '2. **Replace `<your-self-hosted-pool>` in this YAML** with your pool name (under the `Sideload` stage `pool.name`).'
               Append-Summary '3. **Stage the config files** in your repository under `./config/`:'
+              Append-Summary '   - `sideload-settings.yml` (the sole sideload runtime configuration source)'
               Append-Summary '   - `apply-updates-schedule.yml` (the ring-aware apply schedule - generated by Step.3 Schedule Audit)'
               Append-Summary '   - `sideload-auth-map.csv` (per-cluster Key Vault + secret-name map for WinRM credentials)'
               Append-Summary '   - `sideload-catalog.yml` (committed catalog of approved `CombinedSolutionBundle` versions, `Version` -> `DownloadUri` + `Sha256`)'
-              Append-Summary '4. **Set the pipeline Variables** (Pipeline -> Edit -> Variables, or a Variable Group):'
-              Append-Summary '   - `SIDELOAD_STATE_ROOT` = shared UNC path the agent can read/write (e.g. `\\fileserver\azlocal-sideload`)'
-              Append-Summary '   - Optional: `SIDELOAD_CACHE_ROOT`, `SIDELOAD_LEAD_DAYS`, `SIDELOAD_ROBOCOPY_SWITCHES`, `SIDELOAD_HEARTBEAT_STALE_MINUTES`, `SIDELOAD_REMOTING_FQDN_SUFFIX`, `SIDELOAD_KV_AUTH`'
+              Append-Summary '4. **Configure `sideload-settings.yml`**, including the shared UNC state root, copy profile, and task identity.'
               Append-Summary '5. **Configure the service connection** named `AzureLocal-ServiceConnection` (Workload Identity Federation) with read access to your Resource Graph + Key Vault.'
-              Append-Summary '6. **Flip the master gate**: set pipeline variable `SIDELOAD_UPDATES` = `true` (also accepted: `True`, `TRUE`, `1`).'
+              Append-Summary '6. **Enable the workflow**: set `enabled: true` in `sideload-settings.yml`.'
               Append-Summary ''
               Append-Summary '> [!IMPORTANT]'
               Append-Summary '> Step.6 cannot run on a Microsoft-hosted agent. The job copies multi-GB update media to the cluster `import` SMB share and PowerShell-remotes into a cluster node - both require line-of-sight to the on-prem fabric VLAN and (typically) AD domain membership.'
@@ -205,28 +194,42 @@ stages:
 
               [System.IO.File]::WriteAllLines($summaryPath, $lines)
               Write-Host "##vso[task.uploadsummary]$summaryPath"
-              Write-Host "##[warning]Step.6 sideload is OPT-IN - SIDELOAD_UPDATES is not set to an opt-in value ('true'/'True'/'TRUE'/'1'). See the stage summary for enablement instructions."
+              Write-Host '##[warning]Step.6 sideload is disabled in config/sideload-settings.yml.'
               exit 0
           }
 
           # Gate is ON - validate required configuration.
           Append-Summary '### Master gate'
           Append-Summary ''
-          Append-Summary "- ``SIDELOAD_UPDATES`` = ``'$gateRaw'`` (opt-in)"
+          Append-Summary '- `enabled: true` in `config/sideload-settings.yml`'
           Append-Summary ''
           Append-Summary '### Required configuration'
           Append-Summary ''
           $missing = [System.Collections.Generic.List[string]]::new()
-          $stateRoot = "$($env:SIDELOAD_STATE_ROOT)".Trim()
+          $stateRoot = "$($settings.paths.stateRoot)".Trim()
           if ([string]::IsNullOrWhiteSpace($stateRoot)) {
-              [void]$missing.Add('SIDELOAD_STATE_ROOT')
-              Append-Summary '- `SIDELOAD_STATE_ROOT` - **MISSING** (required: shared UNC root reachable from the self-hosted agent, e.g. `\\fileserver\azlocal-sideload`)'
+              [void]$missing.Add('paths.stateRoot')
+              Append-Summary '- `paths.stateRoot` - **MISSING** (required shared UNC root)'
           } else {
-              Append-Summary "- ``SIDELOAD_STATE_ROOT`` = ``$stateRoot``"
+              Append-Summary "- ``paths.stateRoot`` = ``$stateRoot``"
           }
-          Append-Summary "- ``SIDELOAD_AUTH_MAP_PATH`` = ``$($env:SIDELOAD_AUTH_MAP_PATH)``"
-          Append-Summary "- ``SIDELOAD_CATALOG_PATH`` = ``$($env:SIDELOAD_CATALOG_PATH)``"
-          Append-Summary "- ``APPLY_UPDATES_SCHEDULE_PATH`` = ``$($env:APPLY_UPDATES_SCHEDULE_PATH)``"
+            $taskLogonType = [string]$settings.identity.task.logonType
+            if ($taskLogonType -notin @('ServiceAccount','Password')) {
+              [void]$missing.Add('identity.task.logonType (ServiceAccount or Password)')
+            }
+            if ([string]::IsNullOrWhiteSpace([string]$settings.identity.task.principalUserId)) {
+              [void]$missing.Add('identity.task.principalUserId')
+            }
+            if ($taskLogonType -eq 'Password') {
+              foreach ($required in @('passwordKeyVaultName','passwordSecretName')) {
+                if ([string]::IsNullOrWhiteSpace([string]$settings.identity.task[$required])) {
+                  [void]$missing.Add("identity.task.$required")
+                }
+              }
+            }
+          Append-Summary "- ``paths.authMap`` = ``$($settings.paths.authMap)``"
+          Append-Summary "- ``paths.catalog`` = ``$($settings.paths.catalog)``"
+          Append-Summary "- ``paths.applySchedule`` = ``$($settings.paths.applySchedule)``"
           Append-Summary ''
 
           if ($missing.Count -gt 0) {
@@ -259,18 +262,7 @@ stages:
   # If preflight FAILS (missing config), this stage is skipped (`dependsOn` unmet).
   # If preflight succeeds with the gate OFF, this stage is skipped by its own `condition`.
   dependsOn: Preflight
-  # Master opt-in gate: do nothing unless SIDELOAD_UPDATES is one of the
-  # accepted truthy values (case-insensitive 'true' or literal '1').
-  condition: |
-    and(
-      succeeded(),
-      or(
-        eq(variables['SIDELOAD_UPDATES'], 'true'),
-        eq(variables['SIDELOAD_UPDATES'], 'True'),
-        eq(variables['SIDELOAD_UPDATES'], 'TRUE'),
-        eq(variables['SIDELOAD_UPDATES'], '1')
-      )
-    )
+  condition: and(succeeded(), eq(dependencies.Preflight.outputs['PreflightCheck.preflight.enabled'], 'true'))
   jobs:
   - job: AdvanceSideload
     displayName: 'Advance Sideload State Machine'
@@ -315,6 +307,7 @@ stages:
           while ($true) {
               $installAttempt++
               try {
+                  Install-Module powershell-yaml -Scope CurrentUser -Force -AllowClobber
                   Install-Module @installArgs
                   break
               } catch {
@@ -361,15 +354,6 @@ stages:
       env:
         INPUT_UPDATE_RING: ${{ parameters.updateRing }}
         INPUT_DRY_RUN: ${{ parameters.dryRun }}
-        APPLY_UPDATES_SCHEDULE_PATH: $(APPLY_UPDATES_SCHEDULE_PATH)
-        SIDELOAD_STATE_ROOT: $(SIDELOAD_STATE_ROOT)
-        SIDELOAD_CACHE_ROOT: $(SIDELOAD_CACHE_ROOT)
-        SIDELOAD_AUTH_MAP_PATH: $(SIDELOAD_AUTH_MAP_PATH)
-        SIDELOAD_CATALOG_PATH: $(SIDELOAD_CATALOG_PATH)
-        SIDELOAD_LEAD_DAYS: $(SIDELOAD_LEAD_DAYS)
-        SIDELOAD_ROBOCOPY_SWITCHES: $(SIDELOAD_ROBOCOPY_SWITCHES)
-        SIDELOAD_HEARTBEAT_STALE_MINUTES: $(SIDELOAD_HEARTBEAT_STALE_MINUTES)
-        SIDELOAD_REMOTING_FQDN_SUFFIX: $(SIDELOAD_REMOTING_FQDN_SUFFIX)
         reportsPath: $(reportsPath)
       inputs:
         # BEGIN-AZLOCAL-CUSTOMIZE:service-connection-AdvanceSideload
@@ -385,14 +369,12 @@ stages:
           $ErrorActionPreference = 'Stop'
           Import-Module AzLocal.UpdateManagement -Force
 
-          if ([string]::IsNullOrWhiteSpace($env:SIDELOAD_STATE_ROOT)) {
-              throw "SIDELOAD_STATE_ROOT is not set. Configure the shared UNC state root pipeline variable before running this pipeline."
-          }
+            $settings = Get-AzLocalSideloadSettings -Path './config/sideload-settings.yml'
 
           # Establish an Az PowerShell context for the Key Vault credential read.
           # WIF service connection -> federated token. For a secret-based service
           # principal use -ServicePrincipal -Credential; for a self-hosted agent
-          # managed identity use Connect-AzAccount -Identity (per SIDELOAD_KV_AUTH).
+          # Managed identity environments can use Connect-AzAccount -Identity.
           if ($env:idToken -and $env:servicePrincipalId -and $env:tenantId) {
               Connect-AzAccount -ServicePrincipal `
                   -ApplicationId $env:servicePrincipalId `
@@ -402,35 +384,58 @@ stages:
 
           # 1. Resolve the per-cluster plan (read-only).
           $planParams = @{
-              SchedulePath = $env:APPLY_UPDATES_SCHEDULE_PATH
-              AuthMapPath  = $env:SIDELOAD_AUTH_MAP_PATH
-              CatalogPath  = $env:SIDELOAD_CATALOG_PATH
-              LeadDays     = [int]$env:SIDELOAD_LEAD_DAYS
+              SchedulePath = [string]$settings.Paths.applySchedule
+              AuthMapPath  = [string]$settings.Paths.authMap
+              CatalogPath  = [string]$settings.Paths.catalog
+              LeadDays     = [int]$settings.Planning.leadDays
           }
-          if ($env:INPUT_UPDATE_RING)             { $planParams['UpdateRingValue'] = $env:INPUT_UPDATE_RING }
-          if ($env:SIDELOAD_REMOTING_FQDN_SUFFIX) { $planParams['FqdnSuffix']      = $env:SIDELOAD_REMOTING_FQDN_SUFFIX }
+          if ($env:INPUT_UPDATE_RING) { $planParams['UpdateRingValue'] = $env:INPUT_UPDATE_RING }
+          if ($settings.Remoting.fqdnSuffix) { $planParams['FqdnSuffix'] = [string]$settings.Remoting.fqdnSuffix }
           $plan = @(Resolve-AzLocalSideloadPlan @planParams)
           Write-Host ("Resolved {0} cluster plan row(s)." -f $plan.Count)
 
           # 2. Advance the re-entrant state machine by one transition per cluster.
           $applyParams = @{
-              Plan        = $plan
-              StateRoot   = $env:SIDELOAD_STATE_ROOT
+                Plan         = $plan
+                StateRoot    = [string]$settings.Paths.stateRoot
+                HeartbeatSeconds = [int]$settings.Reconciliation.heartbeatIntervalSeconds
+                HeartbeatStaleMinutes = [int]$settings.Reconciliation.heartbeatStaleMinutes
+                NoProgressMinutes = [int]$settings.Reconciliation.noProgressMinutes
+                MaxConcurrentCopies = [int]$settings.Reconciliation.maxConcurrentCopies
+                TaskLogonType = [string]$settings.Identity.task.logonType
+                TaskPrincipalUserId = [string]$settings.Identity.task.principalUserId
               ErrorAction = 'Stop'
           }
-          if ($env:SIDELOAD_CACHE_ROOT)              { $applyParams['CacheRoot']             = $env:SIDELOAD_CACHE_ROOT }
-          if ($env:SIDELOAD_ROBOCOPY_SWITCHES)       { $applyParams['RobocopySwitches']      = $env:SIDELOAD_ROBOCOPY_SWITCHES }
-          if ($env:SIDELOAD_HEARTBEAT_STALE_MINUTES) { $applyParams['HeartbeatStaleMinutes'] = [int]$env:SIDELOAD_HEARTBEAT_STALE_MINUTES }
+              if ($settings.Paths.cacheRoot) { $applyParams['CacheRoot'] = [string]$settings.Paths.cacheRoot }
+              $profile = $settings.Copy.profiles[[string]$settings.Copy.defaultProfile]
+              $switches = @("/R:$($profile.retryCount)", "/W:$($profile.waitSeconds)")
+              if ([int]$profile.interPacketGapMilliseconds -gt 0) { $switches += "/IPG:$($profile.interPacketGapMilliseconds)" }
+              if ([bool]$profile.restartable) { $switches += '/Z' }
+              if ([bool]$profile.unbuffered) { $switches += '/J' }
+              $applyParams['RobocopySwitches'] = $switches -join ' '
+              $taskPassword = $null
+              if ([string]$settings.Identity.task.logonType -eq 'Password') {
+                  $taskSecret = Get-AzKeyVaultSecret -VaultName ([string]$settings.Identity.task.passwordKeyVaultName) -Name ([string]$settings.Identity.task.passwordSecretName) -ErrorAction Stop
+                  $taskPassword = $taskSecret.SecretValue
+                  $taskSecret = $null
+                $applyParams['TaskPassword'] = $taskPassword
+              }
           if ($env:INPUT_DRY_RUN -eq 'true' -or $env:INPUT_DRY_RUN -eq 'True') {
               $applyParams['WhatIf'] = $true
               Write-Host 'DRY RUN MODE - no media staged, no tasks registered, no tags flipped.'
           }
-          $results = @(Invoke-AzLocalSideloadUpdate @applyParams)
+            try {
+              $results = @(Invoke-AzLocalSideloadUpdate @applyParams)
+            }
+            finally {
+              $taskPassword = $null
+              $applyParams.Remove('TaskPassword')
+            }
           Write-Host ("Processed {0} cluster(s)." -f $results.Count)
 
           # 3. Render the status report (markdown step summary + JUnit XML + sideload-status.md).
           New-Item -ItemType Directory -Path $env:reportsPath -Force | Out-Null
-          $report = Add-AzLocalSideloadStepSummary -StateRoot $env:SIDELOAD_STATE_ROOT -Plan $plan -OutputPath $env:reportsPath
+          $report = Add-AzLocalSideloadStepSummary -StateRoot ([string]$settings.Paths.stateRoot) -Plan $plan -OutputPath $env:reportsPath
 
           if ($report.HasFailures) {
               Write-Host '##vso[task.logissue type=warning]One or more clusters are in a Failed state or have plan errors - see the Sideload status report.'

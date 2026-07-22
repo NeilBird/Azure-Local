@@ -57,7 +57,7 @@ function Get-AzLocalSideloadAuthMap {
     )
 
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
-        throw "Sideload auth-map CSV not found at '$Path'. Set SIDELOAD_AUTH_MAP_PATH (or pass -Path) to a CSV with columns UpdateAuthAccountId,KeyVaultName,UsernameSecretName,PasswordSecretName."
+        throw "Sideload auth-map CSV not found at '$Path'. Configure paths.authMap in sideload-settings.yml (or pass -Path) to a CSV with columns UpdateAuthAccountId,KeyVaultName,UsernameSecretName,PasswordSecretName."
     }
 
     try {

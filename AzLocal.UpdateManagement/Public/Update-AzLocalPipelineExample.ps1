@@ -861,7 +861,59 @@ function Update-AzLocalPipelineExample {
     }
 
     # ------------------------------------------------------------------
-    # 8 (v0.9.1; split in v0.9.10). Subscription-exclusion starter drop parity
+    # 8. Sideload settings/config parity with Copy-AzLocalPipelineExample.
+    # Settings, auth-map, and catalog files are created only when absent and
+    # are never overwritten here.
+    # ------------------------------------------------------------------
+    $trimmedTarget = $destResolved.TrimEnd('\', '/')
+    $oneLevelUp = Split-Path -Parent $trimmedTarget
+    if ($Platform -eq 'GitHub' -and ($trimmedTarget -match '[\\/]\.github[\\/]workflows$')) {
+        $repoRoot = Split-Path -Parent $oneLevelUp
+    }
+    else {
+        $repoRoot = $oneLevelUp
+    }
+    if ([string]::IsNullOrWhiteSpace($repoRoot)) { $repoRoot = $trimmedTarget }
+
+    $sideloadConfigDir = Join-Path -Path $repoRoot -ChildPath 'config'
+    $sideloadSettingsDest = Join-Path -Path $sideloadConfigDir -ChildPath 'sideload-settings.yml'
+    $sideloadAuthMapDest = Join-Path -Path $sideloadConfigDir -ChildPath 'sideload-auth-map.csv'
+    $sideloadCatalogDest = Join-Path -Path $sideloadConfigDir -ChildPath 'sideload-catalog.yml'
+
+    $sideloadSettingsSrc = Join-Path -Path $sourceRoot -ChildPath 'sideload-settings.example.yml'
+    if (Test-Path -LiteralPath $sideloadSettingsDest -PathType Leaf) {
+        Write-Verbose ("Update-AzLocalPipelineExample: sideload-settings.yml preserved (already exists at '{0}')." -f $sideloadSettingsDest)
+    }
+    elseif (-not (Test-Path -LiteralPath $sideloadSettingsSrc -PathType Leaf)) {
+        Write-Log -Message "  Note    : sideload settings template not found at '$sideloadSettingsSrc'." -Level Warning
+    }
+    elseif ($PSCmdlet.ShouldProcess($sideloadSettingsDest, 'Create starter sideload-settings.yml')) {
+        if (-not (Test-Path -LiteralPath $sideloadConfigDir)) {
+            $null = New-Item -ItemType Directory -Path $sideloadConfigDir -Force -ErrorAction Stop
+        }
+        Copy-Item -LiteralPath $sideloadSettingsSrc -Destination $sideloadSettingsDest -ErrorAction Stop
+        Write-Log -Message "  Created : starter '$sideloadSettingsDest'" -Level Success
+    }
+
+    foreach ($sideloadDataFile in @(
+        @{ Path = $sideloadAuthMapDest; Lines = @(
+            '# Sideload auth-map. The first four columns are required.'
+            'UpdateAuthAccountId,KeyVaultName,UsernameSecretName,PasswordSecretName,RemotingTargetFqdn,FqdnSuffix,AuthMechanism,ImportSharePath,CopyProfile'
+        ) }
+        @{ Path = $sideloadCatalogDest; Lines = @('schemaVersion: 1', 'packages:') }
+    )) {
+        if (-not (Test-Path -LiteralPath $sideloadDataFile.Path -PathType Leaf) -and
+            $PSCmdlet.ShouldProcess($sideloadDataFile.Path, 'Create starter sideload data file')) {
+            if (-not (Test-Path -LiteralPath $sideloadConfigDir)) {
+                $null = New-Item -ItemType Directory -Path $sideloadConfigDir -Force -ErrorAction Stop
+            }
+            Set-Content -LiteralPath $sideloadDataFile.Path -Value $sideloadDataFile.Lines -Encoding ASCII -ErrorAction Stop
+            Write-Log -Message "  Created : starter '$($sideloadDataFile.Path)'" -Level Success
+        }
+    }
+
+    # ------------------------------------------------------------------
+    # 9 (v0.9.1; split in v0.9.10). Subscription-exclusion starter drop parity
     #    with Copy-AzLocalPipelineExample (section 6b-2). Existing users upgrade
     #    via Update, so Update must also drop BOTH starter files into config\
     #    when absent: a CLEAN, comment-free Excluded-Subscription-Ids.csv (header

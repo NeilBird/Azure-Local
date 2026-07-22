@@ -80,10 +80,8 @@ function Invoke-AzLocalClusterInventory {
         Opt-in switch for the on-prem sideload workflow (Step.6). When set,
         the exported CSV/JSON gains an extra `UpdateAuthAccountId` column
         (placed before `ResourceId`) carrying each cluster's numeric
-        sideload auth-map account id tag. When NOT explicitly passed, the
-        switch is resolved from the `SIDELOAD_UPDATES` repo variable
-        (true/1/yes/on, case-insensitive). When unset/false the artifacts
-        are byte-identical to prior versions.
+        sideload auth-map account id tag. When unset the artifacts omit the
+        column.
 
     .PARAMETER PassThru
         When set, returns a single PSCustomObject summarising the run
@@ -157,16 +155,6 @@ function Invoke-AzLocalClusterInventory {
 
     $pipelineHost = Get-AzLocalPipelineHost
 
-    # Resolve the opt-in sideload gate. When the caller did not explicitly pass
-    # -IncludeSideloadColumns, fall back to the SIDELOAD_UPDATES repo variable
-    # (the same bool gate the Step.6 sideload pipeline keys off). Accepts
-    # true/1/yes/on (case-insensitive). When unset/false the inventory output
-    # is byte-identical to prior versions (no UpdateAuthAccountId column).
-    if (-not $PSBoundParameters.ContainsKey('IncludeSideloadColumns')) {
-        $sideloadFlag = ([string]$env:SIDELOAD_UPDATES).Trim().ToLowerInvariant()
-        $IncludeSideloadColumns = $sideloadFlag -in @('true', '1', 'yes', 'on')
-    }
-
     if (-not $OutputDirectory) {
         if ($pipelineHost -eq 'AzureDevOps' -and $env:BUILD_ARTIFACTSTAGINGDIRECTORY) {
             $OutputDirectory = $env:BUILD_ARTIFACTSTAGINGDIRECTORY
@@ -199,7 +187,7 @@ function Invoke-AzLocalClusterInventory {
     $invParams['PassThru']   = $true
     if ($IncludeSideloadColumns) {
         $invParams['IncludeSideloadColumns'] = $true
-        Write-Host 'Sideload mode (SIDELOAD_UPDATES) enabled - including UpdateAuthAccountId column'
+        Write-Host 'Sideload inventory columns enabled - including UpdateAuthAccountId column'
     }
     $inventory = Get-AzLocalClusterInventory @invParams
     if ($null -eq $inventory) { $inventory = @() }

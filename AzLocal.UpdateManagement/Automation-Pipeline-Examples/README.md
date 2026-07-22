@@ -186,8 +186,8 @@ In one sentence: **`apply-updates-schedule.yml` picks the days, the cron picks t
 | Permissions to create app registrations in Microsoft Entra ID, or an existing one | Required so you can either set up Workload Identity Federation (recommended) or, as a fallback, a Service Principal + client secret. |
 | GitHub repository **or** Azure DevOps project | The pipeline YAMLs are checked in to one of these and run on the platform's hosted Windows agents (or your self-hosted runners). |
 | PowerShell 5.1 or later | Used by every pipeline step. Microsoft-hosted `windows-latest` agents ship with PowerShell 5.1 and PowerShell 7+ already installed - no extra install needed there. |
-| `Az.Accounts` + `Az.KeyVault` modules | `Az.Accounts` is required by all pipelines. `Az.KeyVault` is required only if you opt in to the ITSM connector with Key Vault-sourced secrets (recommended). The pipelines install these on the agent as needed. |
-| `powershell-yaml` module | Required only if you opt in to the ITSM connector and your matrix config is YAML (default). JSON config works on stock PowerShell. The pipeline installs this on the agent only when the ITSM step runs. |
+| `Az.Accounts` + `Az.KeyVault` modules | `Az.Accounts` is required by all pipelines. `Az.KeyVault` is required by the ITSM connector and by sideload Password-mode task identity; the pipelines install these modules on the agent as needed. |
+| `powershell-yaml` module | Required by the opt-in sideload pipeline for `config/sideload-settings.yml`, and by the ITSM connector when its matrix config is YAML (default). The relevant pipelines install it on the agent before parsing YAML. |
 
 You do **not** need any cluster-side prerequisites for the inventory, tag-management, readiness, or fleet-status pipelines. The Apply Updates pipeline does require the clusters be in a healthy ARM state for the update API to accept the request - that is what the readiness pre-flight in section 6.4 measures.
 
@@ -794,7 +794,7 @@ $spObjectId = az ad sp show --id $adoSpAppId --query id -o tsv
 az ad group member add --group <operators-group-objectId> --member-id $spObjectId
 ```
 
-> **ADO variable groups**: there are **no `AZURE_*` secrets to manage** - the service connection holds `clientId` / `tenantId` / `subscriptionId` and the federated identity, so there's no `AZURE_CLIENT_SECRET` to protect. The example pipelines do, however, source their **shared non-secret settings** (exclusion path, schedule path, sideload + monitor toggles) from a required variable group named **`AzureLocal-Pipeline-Settings`** - the ADO equivalent of GitHub repo Variables. Create it once as described in [section 5.2.1](#521-the-azurelocal-pipeline-settings-variable-group-shared-settings-set-once). Do **not** put `AZURE_*` auth values in it - they belong on the service connection.
+> **ADO variable groups**: there are **no `AZURE_*` secrets to manage** - the service connection holds `clientId` / `tenantId` / `subscriptionId` and the federated identity, so there's no `AZURE_CLIENT_SECRET` to protect. The example pipelines do, however, source their **shared non-secret settings** (exclusion path, schedule path, and monitor/retry controls) from a required variable group named **`AzureLocal-Pipeline-Settings`** - the ADO equivalent of GitHub repo Variables. Sideload configuration lives in committed `config/sideload-settings.yml`, not this group. Create the group once as described in [section 5.2.1](#521-the-azurelocal-pipeline-settings-variable-group-shared-settings-set-once). Do **not** put `AZURE_*` auth values in it - they belong on the service connection.
 
 </details>
 
@@ -1098,18 +1098,11 @@ Why a group instead of inline variables? Azure DevOps variable **precedence** ru
 | `APPLY_UPDATES_SCHEDULE_PATH` | `./config/apply-updates-schedule.yml` | Path to the apply schedule / allow-list. | `apply-updates`, `assess-update-readiness` |
 | `MONITOR_TRIGGER_DELAY_MINUTES` | `0` (no delay) | One-off startup sleep on the **event-driven** monitor run so the snapshot lands after the run registers `InProgress`. Honoured range 15-240. | `monitor-updates` |
 | `FAILED_UPDATES_SINGLE_RETRY` | unset (`off`) | Opt-in guarded one-time retry of failed update runs. Set `true` to enable. See [8.5](#85-opt-in-single-retry-of-failed-updates-failed_updates_single_retry). | `apply-updates` |
-| `SIDELOAD_UPDATES` | `false` | Master gate for the sideload pipeline (accepts `true`/`1`). | `sideload-updates` |
-| `SIDELOAD_LEAD_DAYS` | `7` | Days ahead of a maintenance window to stage sideloaded content. | `sideload-updates`, `apply-updates-schedule-audit` |
-| `SIDELOAD_STATE_ROOT` | `''` | Durable state root for sideload progress/heartbeat. | `sideload-updates` |
-| `SIDELOAD_CACHE_ROOT` | `''` | Local cache root for staged update content. | `sideload-updates` |
-| `SIDELOAD_AUTH_MAP_PATH` | `''` | Path to the per-cluster remoting auth map. | `sideload-updates` |
-| `SIDELOAD_CATALOG_PATH` | `''` | Path to the update catalogue. | `sideload-updates` |
-| `SIDELOAD_ROBOCOPY_SWITCHES` | `''` | Override robocopy switches for content staging. | `sideload-updates` |
-| `SIDELOAD_HEARTBEAT_STALE_MINUTES` | `''` | Minutes before a sideload heartbeat is considered stale. | `sideload-updates` |
-| `SIDELOAD_REMOTING_FQDN_SUFFIX` | `''` | FQDN suffix appended when building remoting targets. | `sideload-updates` |
-| `SIDELOAD_KV_AUTH` | `''` | Key Vault reference for sideload remoting credentials. | `sideload-updates` |
+Sideload configuration is not stored in repository/pipeline variables. Use the
+committed `config/sideload-settings.yml` file described in [docs/sideload.md](docs/sideload.md).
+Copy/Update creates it only when absent and never overwrites or migrates an existing file.
 
-**Create the group (one-time).** Use the `azure-devops` `az` extension (installed in [4.2](#42-azure-devops-with-workload-identity-federation-recommended)). The example below seeds every member with its shipped default; delete the lines you do not need (they fall back to the same defaults) and set real paths for the sideload values only if you run the sideload pipeline:
+**Create the group (one-time).** Use the `azure-devops` `az` extension (installed in [4.2](#42-azure-devops-with-workload-identity-federation-recommended)). The example below seeds every member with its shipped default; delete the lines you do not need because omitted values fall back to the same defaults:
 
 ```powershell
 # Run after 'az devops configure --defaults organization=... project=...' (see 4.2).
@@ -1121,8 +1114,6 @@ az pipelines variable-group create `
         APPLY_UPDATES_SCHEDULE_PATH='./config/apply-updates-schedule.yml' `
         MONITOR_TRIGGER_DELAY_MINUTES='0' `
         FAILED_UPDATES_SINGLE_RETRY='false' `
-        SIDELOAD_UPDATES='false' `
-        SIDELOAD_LEAD_DAYS='7'
 
 # Verify the group exists and is authorized for all pipelines.
 az pipelines variable-group list `
@@ -1162,7 +1153,7 @@ The example pipelines have **near-100% functional parity** across GitHub Actions
   ```
 
   > Since **v0.8.94** each `azureSubscription:` line is wrapped in a `# BEGIN/END-AZLOCAL-CUSTOMIZE:service-connection-<job>` marker, so your renamed connection name **survives `Update-AzLocalPipelineExample`** (including with `-Force`). The agent pool (`# ...:runner-target-<job>`) and the sideload self-hosted pool (`# ...:sideload-runner-<job>`) are wrapped the same way. See [4.2](#42-azure-devops-with-workload-identity-federation-recommended) and the [version-pinning appendix](docs/appendix-module-version-pinning.md) for the upgrade workflow.
-- [ ] **Create the `AzureLocal-Pipeline-Settings` variable group** (see [5.2.1](#521-the-azurelocal-pipeline-settings-variable-group-shared-settings-set-once)). This is **required** - every ADO pipeline references it via `- group: AzureLocal-Pipeline-Settings`, and a missing group is a **compile error** (the run fails before any job starts). It is the ADO equivalent of GitHub repo Variables: set the shared, non-secret settings (exclusion path, schedule path, sideload + monitor toggles) **once** and all ten pipelines inherit them. Seed it with the shipped defaults via `az pipelines variable-group create` (or **Pipelines -> Library**), and grant it access to all pipelines (`--authorize true`).
+- [ ] **Create the `AzureLocal-Pipeline-Settings` variable group** (see [5.2.1](#521-the-azurelocal-pipeline-settings-variable-group-shared-settings-set-once)). This is **required** - every ADO pipeline references it via `- group: AzureLocal-Pipeline-Settings`, and a missing group is a **compile error** (the run fails before any job starts). It is the ADO equivalent of GitHub repo Variables: set the shared, non-secret exclusion, schedule, monitor, and retry settings **once** and the bundled pipelines inherit them. Sideload settings remain in `config/sideload-settings.yml`. Seed the group with the shipped defaults via `az pipelines variable-group create` (or **Pipelines -> Library**), and grant it access to all pipelines (`--authorize true`).
 - [ ] **(Optional) Create the other variable groups** in **Pipelines -> Library**: `AzureLocal-Config` for run defaults (e.g. the most-common `UpdateRing`), and - only if you plan to raise ITSM tickets - `AzureLocal-ITSM-Secrets` (see [section 7](#7-optional-open-itsm-tickets-for-clusters-needing-operator-action)).
 
 #### Per-pipeline (after import)
@@ -2275,7 +2266,7 @@ Automation-Pipeline-Examples/
 
 > **Opt-in, off by default. Requires a self-hosted runner/agent on the cluster fabric network.**
 
-Clusters that **cannot pull updates from Azure directly** (dark, air-gapped, or restricted-egress fabrics) can still be updated by **pre-staging** the solution-update media onto each cluster's infrastructure `import` SMB share, importing it over WinRM, and then letting the normal **Update: 3 - Apply Updates** wave install it. This is the **Sideload Updates** pipeline (`sideload-updates.yml`, shown as **Update: 2**); it is inert unless you set the repository (GitHub) / pipeline (Azure DevOps) variable `SIDELOAD_UPDATES=true`.
+Clusters that **cannot pull updates from Azure directly** (dark, air-gapped, or restricted-egress fabrics) can still be updated by **pre-staging** the solution-update media onto each cluster's infrastructure `import` SMB share, importing it over WinRM, and then letting the normal **Update: 3 - Apply Updates** wave install it. This is the **Sideload Updates** pipeline (`sideload-updates.yml`, shown as **Update: 2**); it is inert while `config/sideload-settings.yml` has `enabled: false`.
 
 Because a multi-GB bundle copy can take hours over a constrained on-prem link, the pipeline is a **re-entrant state machine**: each short run advances every in-scope cluster by one step, while the actual robocopy runs in a **detached Windows Scheduled Task** that survives the pipeline run ending and the agent recycling. Progress is tracked in shared-UNC state JSON so any runner in the pool can pick it up and report. Once the media is staged, SHA256-verified, and imported, the pipeline flips the `UpdateSideloaded=True` tag - the gate that **Update: 1 - Assess Update Readiness** and **Update: 3 - Apply Updates** check before they allow a disconnected cluster to update.
 
@@ -2284,12 +2275,13 @@ At a glance, sideloading involves:
 - a **self-hosted runner/agent** labelled `azlocal-sideload` on the fabric network (Microsoft-hosted runners cannot reach on-prem clusters);
 - a source-controlled **catalog** (`sideload-catalog.yml`) listing the Microsoft Solution bundles (auto-populated from the Microsoft Learn offline-updates table) and any OEM SBE packages;
 - an **auth-map** (`sideload-auth-map.csv`) mapping each cluster's `UpdateAuthAccountId` tag to the Key Vault secrets that hold the Active Directory credential used for the WinRM import;
-- a **shared UNC state root** (`SIDELOAD_STATE_ROOT`) holding per-cluster state JSON, robocopy logs, and the verified media cache.
+- a **shared UNC state root** (`paths.stateRoot`) holding per-cluster state JSON, robocopy logs, and the verified media cache;
+- a network-capable Scheduled Task principal configured under `identity.task`.
 
 **Full setup, configuration, the state machine, the scheduled-task / robocopy model, authentication, the catalog and auth-map formats, external-endpoint requirements, reporting, and the preflight are documented in the dedicated guide:**
 
 - **[docs/sideload.md](docs/sideload.md)** - complete sideload setup and operations guide (Update: 2), including the **External endpoints requirements** section.
-- **[docs/sideload-robocopy.md](docs/sideload-robocopy.md)** - robocopy throttling / `SIDELOAD_ROBOCOPY_SWITCHES` guidance.
+- **[docs/sideload-robocopy.md](docs/sideload-robocopy.md)** - typed copy-profile and throttling guidance.
 - Per-pipeline reference card: [docs/appendix-pipelines.md - Update: 2](docs/appendix-pipelines.md#update-2---sideload-updates-opt-in).
 
 ---

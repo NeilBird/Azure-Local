@@ -21,15 +21,14 @@
 #   30 minutes) so the state machine progresses Copying -> Copied -> Verified ->
 #   Imported across successive short runs. Re-running is always safe.
 #
-# GATE: the whole job is skipped unless the repository variable
-#   SIDELOAD_UPDATES == 'true'. When unset/false this file is inert.
+# GATE: the self-hosted job runs only when
+#   config/sideload-settings.yml has enabled: true.
 #
 # AUTHENTICATION:
 #   - Azure (ARG fleet read + Key Vault secret read + UpdateSideloaded tag flip):
 #     azure/login OIDC by default. enable-AzPSSession=true is REQUIRED because
 #     the Key Vault secrets are read via Get-AzKeyVaultSecret (Az PowerShell).
-#     For on-prem runners where OIDC is not viable, switch to managed identity
-#     or a service principal per the SIDELOAD_KV_AUTH variable (see comments).
+#     Alternative authentication modes are configured in sideload-settings.yml.
 #   - Cluster WinRM remoting: an Active Directory [pscredential] built from two
 #     Key Vault secrets named in the sideload auth-map row (NOT the pipeline
 #     identity). The detached copy Scheduled Task runs as the runner service
@@ -50,7 +49,7 @@ on:
   # runner is online, UNCOMMENT the cron below to drive the re-entrant state
   # machine. A frequent poll (every 30 min) lets a single short run advance the
   # multi-hour copy without staying alive. The Step.3 schedule-coverage audit can
-  # recommend a lead-time-aware cron (apply window minus SIDELOAD_LEAD_DAYS).
+  # recommend a lead-time-aware cron using planning.leadDays.
   #
   # schedule:
   #   - cron: '*/30 * * * *'   # every 30 minutes - advance/report sideload state
@@ -103,38 +102,6 @@ env:
   # When set, every AzLocal.UpdateManagement Azure Resource Graph query in this
   # workflow excludes the listed subscriptions. Leave it unset to exclude nothing.
   AZLOCAL_EXCLUDED_SUBSCRIPTIONS_PATH: ${{ vars.AZLOCAL_EXCLUDED_SUBSCRIPTIONS_PATH }}
-  # Path to the ring-aware apply-updates-schedule.yml (relative to repo root). Defaults
-  # to `config/` so it sits alongside the auth-map + catalog (this is where
-  # Copy-AzLocalPipelineExample drops the starter). The planner reads it to find each
-  # cluster's next apply window. Override the variable to relocate it.
-  APPLY_UPDATES_SCHEDULE_PATH: ${{ vars.APPLY_UPDATES_SCHEDULE_PATH || './config/apply-updates-schedule.yml' }}
-
-  # ---- Sideload configuration (repository Variables, vars.*) ----
-  # Master gate. The job is skipped unless this is the literal string 'true'.
-  SIDELOAD_UPDATES: ${{ vars.SIDELOAD_UPDATES || 'false' }}
-  # Shared UNC root that ALL runners/agents can read+write: holds state\, logs\, cache\.
-  SIDELOAD_STATE_ROOT: ${{ vars.SIDELOAD_STATE_ROOT || '' }}
-  # Shared verified media cache. Defaults (in the cmdlet) to <state-root>\cache.
-  SIDELOAD_CACHE_ROOT: ${{ vars.SIDELOAD_CACHE_ROOT || '' }}
-  # Path to the sideload auth-map CSV (UpdateAuthAccountId -> Key Vault + secret names).
-  # Defaults to `config/` so it sits alongside apply-updates-schedule.yml and
-  # ClusterUpdateRings.csv (this is where Copy-AzLocalPipelineExample drops the
-  # starter). Override the variable to relocate it.
-  SIDELOAD_AUTH_MAP_PATH: ${{ vars.SIDELOAD_AUTH_MAP_PATH || './config/sideload-auth-map.csv' }}
-  # Path to the committed sideload catalog YAML (Version -> DownloadUri/Sha256).
-  # Defaults to `config/` alongside the auth-map + schedule. Override to relocate.
-  SIDELOAD_CATALOG_PATH: ${{ vars.SIDELOAD_CATALOG_PATH || './config/sideload-catalog.yml' }}
-  # Days before a cluster's next apply window that media should be sideloaded.
-  SIDELOAD_LEAD_DAYS: ${{ vars.SIDELOAD_LEAD_DAYS || '7' }}
-  # Extra robocopy switches for the detached copy worker (throttling / retries).
-  SIDELOAD_ROBOCOPY_SWITCHES: ${{ vars.SIDELOAD_ROBOCOPY_SWITCHES || '/R:5 /W:30' }}
-  # Minutes after which a Copying heartbeat is considered stale (dead runner) and re-driven.
-  SIDELOAD_HEARTBEAT_STALE_MINUTES: ${{ vars.SIDELOAD_HEARTBEAT_STALE_MINUTES || '60' }}
-  # Global FQDN suffix appended to a cluster name to form the WinRM host when the
-  # auth-map row does not override it (e.g. '.corp.contoso.com'). Empty = bare name.
-  SIDELOAD_REMOTING_FQDN_SUFFIX: ${{ vars.SIDELOAD_REMOTING_FQDN_SUFFIX || '' }}
-  # Key Vault auth mode for the on-prem runner: oidc | managedidentity | serviceprincipal.
-  SIDELOAD_KV_AUTH: ${{ vars.SIDELOAD_KV_AUTH || 'oidc' }}
 
 # Prevent overlapping sideload runs from racing on the same shared state.
 # cancel-in-progress=false queues a newly-triggered run behind an in-flight one.
@@ -154,10 +121,10 @@ jobs:
   # Cost: ~10s on windows-latest. No Azure/Key Vault access. Always runs.
   #
   # Outcomes:
-  #   - Gate OFF (SIDELOAD_UPDATES unset / not in 'true'|'True'|'TRUE'|'1'):
+  #   - Gate OFF (config/sideload-settings.yml has enabled: false):
   #       preflight succeeds (exit 0) with an informational panel showing how
   #       to enable Step.6. The `sideload` job is then SKIPPED by its own `if:`.
-  #   - Gate ON + SIDELOAD_STATE_ROOT missing: preflight FAILS (exit 1) with
+  #   - Gate ON + paths.stateRoot missing: preflight FAILS (exit 1) with
   #       a panel listing the missing variable(s). The `sideload` job is
   #       skipped because its `needs: preflight` is unmet.
   #   - Gate ON + best-effort runner check shows no online `azlocal-sideload`
@@ -174,150 +141,59 @@ jobs:
     permissions:
       actions: read      # Best-effort runner enumeration (may 403 - graceful fallback)
       contents: read
+    outputs:
+      enabled: ${{ steps.settings.outputs.enabled }}
     steps:
-    - name: Validate opt-in, configuration, and self-hosted runner
+    - name: Checkout repository
+      uses: actions/checkout@v5
+
+    - name: Validate sideload settings
+      id: settings
       shell: pwsh
-      env:
-        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
-        $ErrorActionPreference = 'Stop'
-        $summaryPath = $env:GITHUB_STEP_SUMMARY
-        function Append-Summary([string]$line) {
-            Add-Content -LiteralPath $summaryPath -Value $line -Encoding utf8
-        }
-
-        # Master gate: case-insensitive 'true'/'True'/'TRUE' OR literal '1'.
-        $gateRaw = "$($env:SIDELOAD_UPDATES)".Trim()
-        $gateOn  = ($gateRaw -in @('true','True','TRUE','1'))
-
-        Append-Summary '## Step.6 - Sideload Updates - Preflight'
-        Append-Summary ''
-
-        if (-not $gateOn) {
-            Append-Summary '> [!NOTE]'
-            Append-Summary '> **Step.6 (Sideload Updates) is OPT-IN and currently OFF.**'
-            Append-Summary '>'
-            if ([string]::IsNullOrWhiteSpace($gateRaw)) {
-                Append-Summary '> The repository variable `SIDELOAD_UPDATES` is **not set**. The `sideload` job for this run was skipped.'
-            } else {
-                Append-Summary "> The repository variable ``SIDELOAD_UPDATES`` is set to ``'$gateRaw'`` which is not one of the accepted opt-in values (``'true'`` / ``'True'`` / ``'TRUE'`` / ``'1'``). The ``sideload`` job for this run was skipped."
-            }
-            Append-Summary ''
-            Append-Summary '### How to enable Step.6'
-            Append-Summary ''
-            Append-Summary '1. **Provision an on-prem self-hosted runner** on the same network as your Azure Local clusters. Register it with **both** labels `self-hosted` (default) and `azlocal-sideload` (custom). Use a dedicated runner group if you want to restrict which repos can target it. See [Adding self-hosted runners](https://docs.github.com/en/actions/hosting-your-own-runners/managing-self-hosted-runners/adding-self-hosted-runners).'
-            Append-Summary '2. **Stage the config files** in your repository under `./config/`:'
-            Append-Summary '   - `apply-updates-schedule.yml` (the ring-aware apply schedule - generated by Step.3 Schedule Audit)'
-            Append-Summary '   - `sideload-auth-map.csv` (per-cluster Key Vault + secret-name map for WinRM credentials)'
-            Append-Summary '   - `sideload-catalog.yml` (committed catalog of approved `CombinedSolutionBundle` versions, `Version` -> `DownloadUri` + `Sha256`)'
-            Append-Summary '3. **Set the repository Variables** (Settings -> Secrets and variables -> Actions -> Variables):'
-            Append-Summary '   - `SIDELOAD_STATE_ROOT` = shared UNC path the runner can read/write (e.g. `\\fileserver\azlocal-sideload`)'
-            Append-Summary '   - `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID` (Azure login)'
-            Append-Summary '   - Optional: `SIDELOAD_CACHE_ROOT`, `SIDELOAD_LEAD_DAYS`, `SIDELOAD_ROBOCOPY_SWITCHES`, `SIDELOAD_HEARTBEAT_STALE_MINUTES`, `SIDELOAD_REMOTING_FQDN_SUFFIX`, `SIDELOAD_KV_AUTH`'
-            Append-Summary '4. **Set the repository Secret** `AZURE_CLIENT_ID` (the OIDC app registration used by `azure/login`).'
-            Append-Summary '5. **Flip the master gate**: set repository variable `SIDELOAD_UPDATES` = `true` (also accepted: `True`, `TRUE`, `1`).'
-            Append-Summary ''
-            Append-Summary '> [!IMPORTANT]'
-            Append-Summary '> Step.6 cannot run on a Microsoft-hosted runner. The job copies multi-GB update media to the cluster `import` SMB share and PowerShell-remotes into a cluster node - both require line-of-sight to the on-prem fabric VLAN and (typically) AD domain membership.'
-            Append-Summary ''
-            Append-Summary 'See `Automation-Pipeline-Examples/README.md` section 8.6 (Sideload Updates) for the full setup walkthrough.'
-            Write-Output "::notice title=Step.6 sideload is OPT-IN::SIDELOAD_UPDATES is not set to an opt-in value ('true'/'True'/'TRUE'/'1'). See the run summary for enablement instructions."
+          $ErrorActionPreference = 'Stop'
+          Install-Module powershell-yaml -Scope CurrentUser -Force -AllowClobber
+          Import-Module powershell-yaml -Force
+          $path = './config/sideload-settings.yml'
+          if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+            throw "Required sideload settings file not found: $path. Run Copy-AzLocalPipelineExample to create it."
+          }
+          $settings = ConvertFrom-Yaml -Yaml (Get-Content -LiteralPath $path -Raw) -Ordered:$false
+          if ([int]$settings.schemaVersion -ne 1) {
+            throw "Unsupported sideload settings schemaVersion '$($settings.schemaVersion)'; this workflow requires 1."
+          }
+          $enabled = [bool]$settings.enabled
+          "enabled=$($enabled.ToString().ToLowerInvariant())" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Value @(
+            '## Step.6 - Sideload Updates - Preflight',
+            '',
+            "- Settings: ``$path`` (schema $($settings.schemaVersion))",
+            "- Enabled: ``$enabled``",
+            "- State root: ``$($settings.paths.stateRoot)``"
+          )
+          if (-not $enabled) {
+            Write-Output '::notice title=Sideload disabled::Set enabled: true in config/sideload-settings.yml after completing the documented prerequisites.'
             exit 0
-        }
-
-        # Gate is ON - validate required configuration.
-        Append-Summary '### Master gate'
-        Append-Summary ''
-        Append-Summary "- ``SIDELOAD_UPDATES`` = ``'$gateRaw'`` (opt-in)"
-        Append-Summary ''
-        Append-Summary '### Required configuration'
-        Append-Summary ''
-        $missing = [System.Collections.Generic.List[string]]::new()
-        $stateRoot = "$($env:SIDELOAD_STATE_ROOT)".Trim()
-        if ([string]::IsNullOrWhiteSpace($stateRoot)) {
-            [void]$missing.Add('SIDELOAD_STATE_ROOT')
-            Append-Summary '- `SIDELOAD_STATE_ROOT` - **MISSING** (required: shared UNC root reachable from the self-hosted runner, e.g. `\\fileserver\azlocal-sideload`)'
-        } else {
-            Append-Summary "- ``SIDELOAD_STATE_ROOT`` = ``$stateRoot``"
-        }
-        Append-Summary "- ``SIDELOAD_AUTH_MAP_PATH`` = ``$($env:SIDELOAD_AUTH_MAP_PATH)``"
-        Append-Summary "- ``SIDELOAD_CATALOG_PATH`` = ``$($env:SIDELOAD_CATALOG_PATH)``"
-        Append-Summary "- ``APPLY_UPDATES_SCHEDULE_PATH`` = ``$($env:APPLY_UPDATES_SCHEDULE_PATH)``"
-        Append-Summary ''
-
-        if ($missing.Count -gt 0) {
-            Append-Summary '> [!CAUTION]'
-            Append-Summary "> **Setup incomplete.** Missing required variable(s): ``$($missing -join '`, `')``. The ``sideload`` job will not run."
-            Append-Summary ''
-            Append-Summary 'See `Automation-Pipeline-Examples/README.md` section 8.6 (Sideload Updates) for the full setup walkthrough.'
-            Write-Output "::error title=Step.6 preflight failed::Required variable(s) not set: $($missing -join ', ')"
-            exit 1
-        }
-
-        # Best-effort: query the runners API to confirm an online self-hosted runner
-        # with the 'azlocal-sideload' label is registered. The repo runners API
-        # requires admin permission; GITHUB_TOKEN typically does NOT have it, so
-        # 403/404 is expected for most callers and downgrades the check to a warning.
-        Append-Summary '### Self-hosted runner'
-        Append-Summary ''
-        $runnerCheckPassed = $false
-        $runnerCheckSkipped = $false
-        try {
-            $headers = @{
-                Authorization          = "Bearer $env:GH_TOKEN"
-                Accept                 = 'application/vnd.github+json'
-                'X-GitHub-Api-Version' = '2022-11-28'
-                'User-Agent'           = 'AzLocal.UpdateManagement-preflight'
+          }
+          foreach ($required in @('stateRoot','authMap','catalog','applySchedule')) {
+            if ([string]::IsNullOrWhiteSpace([string]$settings.paths[$required])) {
+              throw "sideload-settings.yml paths.$required is required when enabled is true."
             }
-            $uri      = "https://api.github.com/repos/$env:GITHUB_REPOSITORY/actions/runners?per_page=100"
-            $response = Invoke-RestMethod -Uri $uri -Headers $headers -ErrorAction Stop
-            $matching = @($response.runners | Where-Object {
-                $labelNames = @($_.labels | ForEach-Object { $_.name })
-                ($labelNames -contains 'self-hosted') -and ($labelNames -contains 'azlocal-sideload')
-            })
-            $online   = @($matching | Where-Object { $_.status -eq 'online' })
-            if ($online.Count -gt 0) {
-                Append-Summary "- **Found $($online.Count) online runner(s)** with the ``azlocal-sideload`` label:"
-                foreach ($r in $online) {
-                    Append-Summary "  - ``$($r.name)`` (os: $($r.os), status: $($r.status), busy: $($r.busy))"
-                }
-                $runnerCheckPassed = $true
-            } elseif ($matching.Count -gt 0) {
-                Append-Summary "- **Found $($matching.Count) runner(s)** with the ``azlocal-sideload`` label, but **none are online**:"
-                foreach ($r in $matching) {
-                    Append-Summary "  - ``$($r.name)`` - status: $($r.status)"
-                }
-            } else {
-                Append-Summary '- **No self-hosted runner registered with the `azlocal-sideload` label.**'
+          }
+          $logonType = [string]$settings.identity.task.logonType
+          if ($logonType -notin @('ServiceAccount','Password')) {
+            throw "identity.task.logonType must be ServiceAccount or Password for UNC access."
+          }
+          if ([string]::IsNullOrWhiteSpace([string]$settings.identity.task.principalUserId)) {
+            throw "identity.task.principalUserId is required when sideloading is enabled."
+          }
+          if ($logonType -eq 'Password') {
+            foreach ($required in @('passwordKeyVaultName','passwordSecretName')) {
+              if ([string]::IsNullOrWhiteSpace([string]$settings.identity.task[$required])) {
+                throw "identity.task.$required is required when logonType is Password."
+              }
             }
-        }
-        catch {
-            $runnerCheckSkipped = $true
-            $msg = $_.Exception.Message
-            Append-Summary "- Unable to enumerate runners via the GitHub API ($msg)."
-            Append-Summary '  - The repo runners API requires admin permission; `GITHUB_TOKEN` usually cannot read it. This is expected and not necessarily a problem.'
-            Append-Summary '  - **Manual verification:** Settings -> Actions -> Runners. Confirm a self-hosted runner exists with the `azlocal-sideload` label and is **Idle** (green).'
-        }
-        Append-Summary ''
-
-        if (-not $runnerCheckPassed -and -not $runnerCheckSkipped) {
-            Append-Summary '> [!CAUTION]'
-            Append-Summary '> **No online `azlocal-sideload` runner.** The `sideload` job would queue indefinitely (default GH Actions job queue timeout: 24h) until a matching runner comes online. Failing preflight now to prevent a stuck run.'
-            Append-Summary ''
-            Append-Summary 'Register a self-hosted runner on a Windows machine on the cluster network, label it with `azlocal-sideload` (the `self-hosted` label is added automatically), then re-run this workflow. See `Automation-Pipeline-Examples/README.md` section 8.6.'
-            Write-Output "::error title=Step.6 preflight failed::No online self-hosted runner with the 'azlocal-sideload' label was found in this repository."
-            exit 1
-        }
-
-        if ($runnerCheckSkipped) {
-            Append-Summary '> [!WARNING]'
-            Append-Summary '> Preflight could not verify runner availability. If no `azlocal-sideload` runner is registered the `sideload` job will queue silently for up to 24h.'
-            Append-Summary ''
-        } else {
-            Append-Summary '> [!TIP]'
-            Append-Summary '> **Preflight passed.** The `Advance Sideload State Machine` job will run on your self-hosted runner.'
-            Append-Summary ''
-        }
+          }
 
   sideload:
     name: Advance Sideload State Machine
@@ -331,9 +207,7 @@ jobs:
     # BEGIN-AZLOCAL-CUSTOMIZE:sideload-runner-sideload
     runs-on: [self-hosted, azlocal-sideload]
     # END-AZLOCAL-CUSTOMIZE:sideload-runner-sideload
-    # Master opt-in gate: do nothing unless SIDELOAD_UPDATES is one of the
-    # accepted truthy values (case-insensitive 'true' or literal '1').
-    if: ${{ contains(fromJSON('["true","True","TRUE","1"]'), vars.SIDELOAD_UPDATES) }}
+    if: ${{ needs.preflight.outputs.enabled == 'true' }}
     permissions:
       id-token: write
       contents: read
@@ -346,7 +220,7 @@ jobs:
     # Azure auth. enable-AzPSSession=true sets up BOTH the az CLI context (ARG +
     # az rest tag writes) AND the Az PowerShell context (Get-AzKeyVaultSecret).
     #
-    # SIDELOAD_KV_AUTH alternatives for on-prem runners where OIDC is not viable:
+    # identity.keyVaultAuth alternatives for on-prem runners where OIDC is not viable:
     #   - managedidentity: replace this step with
     #       run: Connect-AzAccount -Identity
     #   - serviceprincipal: store AZURE_CLIENT_SECRET as a repo secret and use
@@ -419,6 +293,7 @@ jobs:
                 Start-Sleep -Seconds $installRetryDelay
             }
         }
+        Install-Module powershell-yaml -Scope CurrentUser -Force -AllowClobber
         Import-Module AzLocal.UpdateManagement -Force
         Add-AzLocalPipelineVersionBanner `
             -GeneratedAgainstVersion $env:GENERATED_AGAINST_MODULE_VERSION `
@@ -445,41 +320,62 @@ jobs:
         $ErrorActionPreference = 'Stop'
         Import-Module AzLocal.UpdateManagement -Force
 
-        if ([string]::IsNullOrWhiteSpace($env:SIDELOAD_STATE_ROOT)) {
-            throw "SIDELOAD_STATE_ROOT is not set. Configure the shared UNC state root repository variable before running this pipeline."
-        }
+        $settings = Get-AzLocalSideloadSettings -Path './config/sideload-settings.yml'
 
         # 1. Resolve the per-cluster plan (read-only).
         $planParams = @{
-            SchedulePath = $env:APPLY_UPDATES_SCHEDULE_PATH
-            AuthMapPath  = $env:SIDELOAD_AUTH_MAP_PATH
-            CatalogPath  = $env:SIDELOAD_CATALOG_PATH
-            LeadDays     = [int]$env:SIDELOAD_LEAD_DAYS
+            SchedulePath = [string]$settings.Paths.applySchedule
+            AuthMapPath  = [string]$settings.Paths.authMap
+            CatalogPath  = [string]$settings.Paths.catalog
+            LeadDays     = [int]$settings.Planning.leadDays
         }
-        if ($env:INPUT_UPDATE_RING)             { $planParams['UpdateRingValue'] = $env:INPUT_UPDATE_RING }
-        if ($env:SIDELOAD_REMOTING_FQDN_SUFFIX) { $planParams['FqdnSuffix']      = $env:SIDELOAD_REMOTING_FQDN_SUFFIX }
+        if ($env:INPUT_UPDATE_RING) { $planParams['UpdateRingValue'] = $env:INPUT_UPDATE_RING }
+        if ($settings.Remoting.fqdnSuffix) { $planParams['FqdnSuffix'] = [string]$settings.Remoting.fqdnSuffix }
         $plan = @(Resolve-AzLocalSideloadPlan @planParams)
         Write-Host ("Resolved {0} cluster plan row(s)." -f $plan.Count)
 
         # 2. Advance the re-entrant state machine by one transition per cluster.
         $applyParams = @{
             Plan         = $plan
-            StateRoot    = $env:SIDELOAD_STATE_ROOT
+            StateRoot    = [string]$settings.Paths.stateRoot
+            HeartbeatSeconds = [int]$settings.Reconciliation.heartbeatIntervalSeconds
+            HeartbeatStaleMinutes = [int]$settings.Reconciliation.heartbeatStaleMinutes
+            NoProgressMinutes = [int]$settings.Reconciliation.noProgressMinutes
+            MaxConcurrentCopies = [int]$settings.Reconciliation.maxConcurrentCopies
+            TaskLogonType = [string]$settings.Identity.task.logonType
+            TaskPrincipalUserId = [string]$settings.Identity.task.principalUserId
             ErrorAction  = 'Stop'
         }
-        if ($env:SIDELOAD_CACHE_ROOT)             { $applyParams['CacheRoot']             = $env:SIDELOAD_CACHE_ROOT }
-        if ($env:SIDELOAD_ROBOCOPY_SWITCHES)      { $applyParams['RobocopySwitches']      = $env:SIDELOAD_ROBOCOPY_SWITCHES }
-        if ($env:SIDELOAD_HEARTBEAT_STALE_MINUTES) { $applyParams['HeartbeatStaleMinutes'] = [int]$env:SIDELOAD_HEARTBEAT_STALE_MINUTES }
+          if ($settings.Paths.cacheRoot) { $applyParams['CacheRoot'] = [string]$settings.Paths.cacheRoot }
+          $profile = $settings.Copy.profiles[[string]$settings.Copy.defaultProfile]
+          $switches = @("/R:$($profile.retryCount)", "/W:$($profile.waitSeconds)")
+          if ([int]$profile.interPacketGapMilliseconds -gt 0) { $switches += "/IPG:$($profile.interPacketGapMilliseconds)" }
+          if ([bool]$profile.restartable) { $switches += '/Z' }
+          if ([bool]$profile.unbuffered) { $switches += '/J' }
+          $applyParams['RobocopySwitches'] = $switches -join ' '
+        $taskPassword = $null
+        if ([string]$settings.Identity.task.logonType -eq 'Password') {
+          $taskSecret = Get-AzKeyVaultSecret -VaultName ([string]$settings.Identity.task.passwordKeyVaultName) -Name ([string]$settings.Identity.task.passwordSecretName) -ErrorAction Stop
+          $taskPassword = $taskSecret.SecretValue
+          $taskSecret = $null
+          $applyParams['TaskPassword'] = $taskPassword
+        }
         if ($env:INPUT_DRY_RUN -eq 'true') {
             $applyParams['WhatIf'] = $true
             Write-Host 'DRY RUN MODE - no media staged, no tasks registered, no tags flipped.'
         }
-        $results = @(Invoke-AzLocalSideloadUpdate @applyParams)
+        try {
+          $results = @(Invoke-AzLocalSideloadUpdate @applyParams)
+        }
+        finally {
+          $taskPassword = $null
+          $applyParams.Remove('TaskPassword')
+        }
         Write-Host ("Processed {0} cluster(s)." -f $results.Count)
 
         # 3. Render the status report (markdown step summary + JUnit XML + sideload-status.md).
         New-Item -ItemType Directory -Path ./reports -Force | Out-Null
-        $report = Add-AzLocalSideloadStepSummary -StateRoot $env:SIDELOAD_STATE_ROOT -Plan $plan -OutputPath ./reports
+        $report = Add-AzLocalSideloadStepSummary -StateRoot ([string]$settings.Paths.stateRoot) -Plan $plan -OutputPath ./reports
 
         if ($report.HasFailures) {
             Write-Host '::warning::One or more clusters are in a Failed state or have plan errors - see the Sideload status report.'

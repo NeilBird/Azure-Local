@@ -296,10 +296,6 @@ jobs:
         INPUT_MONITOR_IN_FLIGHT_HOURS:       ${{ github.event.inputs.monitor_in_flight_hours || '2' }}
         INPUT_DEBUG:             ${{ github.event.inputs.debug || 'false' }}
         INSTALLED_MODULE_VERSION: ${{ steps.module-version.outputs.installed_module_version }}
-        # v0.8.7 sideload advisor (opt-in). When SIDELOAD_UPDATES=true the audit
-        # appends a "Recommended sideload schedule" section. Inert when unset/false.
-        SIDELOAD_UPDATES:        ${{ vars.SIDELOAD_UPDATES || 'false' }}
-        SIDELOAD_LEAD_DAYS:      ${{ vars.SIDELOAD_LEAD_DAYS || '7' }}
       run: |
         $ErrorActionPreference = 'Stop'
         Import-Module AzLocal.UpdateManagement -Force
@@ -331,6 +327,13 @@ jobs:
         if ([int]::TryParse([string]$env:INPUT_MONITOR_POLL_INTERVAL_MINUTES, [ref]$mInt) -and $mInt -gt 0) { $params['MonitorPollIntervalMinutes'] = $mInt }
         if ([int]::TryParse([string]$env:INPUT_MONITOR_TRAILING_DAYS, [ref]$mInt) -and $mInt -ge 0)         { $params['MonitorTrailingDays']        = $mInt }
         if ([int]::TryParse([string]$env:INPUT_MONITOR_IN_FLIGHT_HOURS, [ref]$mInt) -and $mInt -ge 0)       { $params['MonitorInFlightHours']       = $mInt }
+        if (Test-Path -LiteralPath './config/sideload-settings.yml' -PathType Leaf) {
+          Install-Module powershell-yaml -Scope CurrentUser -Force -AllowClobber
+          Import-Module powershell-yaml -Force
+          $sideloadSettings = ConvertFrom-Yaml -Yaml (Get-Content -LiteralPath './config/sideload-settings.yml' -Raw) -Ordered:$false
+          $params['SideloadEnabled'] = [bool]$sideloadSettings.enabled
+          $params['SideloadLeadDays'] = [int]$sideloadSettings.planning.leadDays
+        }
 
         Export-AzLocalApplyUpdatesScheduleAudit @params
 

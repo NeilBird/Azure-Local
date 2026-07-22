@@ -1,0 +1,50 @@
+# Azure Local sideload settings
+# This file is the sole runtime configuration source for sideload-updates.yml.
+# Secrets do not belong here; use Key Vault references in sideload-auth-map.csv.
+schemaVersion: 1
+enabled: false
+
+paths:
+  stateRoot: '\\fileserver\azlocal-sideload'
+  cacheRoot: ''
+  authMap: './config/sideload-auth-map.csv'
+  catalog: './config/sideload-catalog.yml'
+  applySchedule: './config/apply-updates-schedule.yml'
+
+planning:
+  leadDays: 7
+
+reconciliation:
+  heartbeatIntervalSeconds: 30
+  heartbeatStaleMinutes: 60
+  noProgressMinutes: 90
+  maxConcurrentCopies: 2
+
+copy:
+  defaultProfile: balanced
+  profiles:
+    balanced:
+      retryCount: 5
+      waitSeconds: 30
+      interPacketGapMilliseconds: 0
+      restartable: true
+      unbuffered: false
+
+identity:
+  keyVaultAuth: oidc
+  task:
+    logonType: ServiceAccount
+    principalUserId: ''
+    passwordKeyVaultName: ''
+    passwordSecretName: ''
+
+remoting:
+  fqdnSuffix: ''
+  useSsl: true
+  port: 5986
+  authentication: Negotiate
+  skipCaCheck: false
+
+reporting:
+  logTailLines: 20
+  retentionDays: 30

@@ -100,6 +100,7 @@
         'Private/Get-AzLocalSideloadAuthMap.ps1',
         'Private/Get-AzLocalSideloadCatalog.ps1',
         'Private/Convert-AzLocalSideloadCatalogSchemaVersion.ps1',
+        'Private/ConvertTo-AzLocalSideloadSettingsHashtable.ps1',
         'Private/Select-AzLocalNextUpdateForCluster.ps1',
         # Readiness allow-list override (v0.9.1) - per-ring/global precedence resolver
         'Private/Resolve-AzLocalClusterAllowList.ps1',
@@ -194,6 +195,7 @@
         'Public/New-AzLocalFleetConnectivityStatusSummary.ps1',
         # On-prem solution-update sideloading automation (v0.8.7) - catalog maintenance
         'Public/Update-AzLocalSideloadCatalog.ps1',
+        'Public/Get-AzLocalSideloadSettings.ps1',
         # On-prem solution-update sideloading automation (v0.8.7) - planner, orchestrator, reporting
         'Public/Resolve-AzLocalSideloadPlan.ps1',
         'Public/Invoke-AzLocalSideloadUpdate.ps1',
@@ -331,6 +333,7 @@
         'Invoke-AzLocalItsmTicketingFromArtifact',
         # On-prem solution-update sideloading automation (v0.8.7)
         'Update-AzLocalSideloadCatalog',
+        'Get-AzLocalSideloadSettings',
         'Resolve-AzLocalSideloadPlan',
         'Invoke-AzLocalSideloadUpdate',
         'Export-AzLocalSideloadStatusReport',

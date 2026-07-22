@@ -126,15 +126,12 @@ function Export-AzLocalApplyUpdatesScheduleAudit {
 
     .PARAMETER SideloadEnabled
         Opt-in switch for the v0.8.7 "Recommended sideload schedule" section.
-        When not explicitly bound, it is resolved from the SIDELOAD_UPDATES
-        environment variable (true/1/yes/on => enabled). When disabled the
-        section is omitted entirely and the audit is byte-identical to v0.8.6.
+        When disabled the section is omitted entirely.
 
     .PARAMETER SideloadLeadDays
         How many days before a ring's apply window the media should already be
         sideloaded (drives the recommended sideload kickoff cron = apply firing
-        shifted back this many days). When not explicitly bound it is resolved
-        from the SIDELOAD_LEAD_DAYS environment variable, defaulting to 7.
+        shifted back this many days). Defaults to 7.
 
     .PARAMETER MonitorPollIntervalMinutes
         Desired frequency the "Recommended in-flight monitor schedule" section
@@ -800,10 +797,9 @@ function Export-AzLocalApplyUpdatesScheduleAudit {
     }
 
     # ---- Recommended sideload schedule (Step.6, opt-in v0.8.7) ------------
-    # Gated on SIDELOAD_UPDATES (parameter override -> env var). When disabled
-    # the section is omitted and the audit output is byte-identical to v0.8.6.
+    # Gated explicitly by -SideloadEnabled. When disabled the section is omitted.
     # The on-prem Step.6 sideload pipeline is re-entrant and driven by a
-    # frequent poll cron; its planner uses SIDELOAD_LEAD_DAYS to decide when a
+    # frequent poll cron; its planner uses the configured lead days to decide when a
     # cluster is "due". This section reuses the apply-window crons already read
     # from PipelineYamlPath to recommend, per apply firing, the EARLIEST weekly
     # cron at which staging should begin (apply firing shifted back LeadDays).
@@ -813,22 +809,10 @@ function Export-AzLocalApplyUpdatesScheduleAudit {
     # alias the [bool]$SideloadEnabled parameter and clobber the bound value to
     # $false on the first assignment (silent: -SideloadEnabled $true then
     # rendered nothing while only the env-var path worked).
-    $emitSideloadSection = $false
-    if ($PSBoundParameters.ContainsKey('SideloadEnabled')) {
-        $emitSideloadSection = $SideloadEnabled
-    }
-    elseif ($env:SIDELOAD_UPDATES) {
-        $emitSideloadSection = (([string]$env:SIDELOAD_UPDATES).Trim().ToLowerInvariant() -in @('true', '1', 'yes', 'on'))
-    }
+    $emitSideloadSection = $SideloadEnabled
     $sideloadScheduleIncluded = $false
     if ($emitSideloadSection) {
         $leadDays = $SideloadLeadDays
-        if (-not $PSBoundParameters.ContainsKey('SideloadLeadDays') -and $env:SIDELOAD_LEAD_DAYS) {
-            $parsedLead = 0
-            if ([int]::TryParse((([string]$env:SIDELOAD_LEAD_DAYS).Trim()), [ref]$parsedLead) -and $parsedLead -ge 0 -and $parsedLead -le 365) {
-                $leadDays = $parsedLead
-            }
-        }
 
         # Distinct apply-window weekly firings (DayOfWeek + TimeOfDay) from the
         # apply pipeline crons. Read-AzLocalApplyUpdatesYamlCrons uses a
@@ -859,7 +843,7 @@ function Export-AzLocalApplyUpdatesScheduleAudit {
 
         [void]$md.Add('### Recommended sideload schedule (sideload-updates - opt-in)')
         [void]$md.Add('')
-        [void]$md.Add("`SIDELOAD_UPDATES` is enabled, so media must be pre-staged on each cluster **$leadDays day(s)** before its apply window opens. The on-prem **Sideload Updates** pipeline is re-entrant: drive it on a frequent poll cron and its planner uses `SIDELOAD_LEAD_DAYS=$leadDays` to decide when each cluster is due.")
+        [void]$md.Add("Sideloading is enabled in `config/sideload-settings.yml`, so media must be pre-staged on each cluster **$leadDays day(s)** before its apply window opens. The on-prem **Sideload Updates** pipeline is re-entrant: drive it on a frequent poll cron and its planner uses `planning.leadDays=$leadDays` to decide when each cluster is due.")
         [void]$md.Add('')
         [void]$md.Add('Recommended sideload-updates poll cron (every 30 minutes) - paste into the `schedule:`/`schedules:` block of `sideload-updates.yml`:')
         [void]$md.Add('')
@@ -893,7 +877,7 @@ function Export-AzLocalApplyUpdatesScheduleAudit {
             [void]$md.Add('')
         }
         else {
-            [void]$md.Add('> No simple weekly apply-window firings were found in the pipeline YAML, so a per-window kickoff cron could not be derived. Drive sideload-updates on the recommended poll cron above; its planner will stage each cluster `SIDELOAD_LEAD_DAYS` days before its apply window.')
+            [void]$md.Add('> No simple weekly apply-window firings were found in the pipeline YAML, so a per-window kickoff cron could not be derived. Drive sideload-updates on the recommended poll cron above; its planner will stage each cluster `planning.leadDays` days before its apply window.')
             [void]$md.Add('')
         }
         $sideloadScheduleIncluded = $true
