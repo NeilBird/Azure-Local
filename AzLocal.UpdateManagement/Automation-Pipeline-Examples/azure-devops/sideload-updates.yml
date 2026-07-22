@@ -307,6 +307,8 @@ stages:
           while ($true) {
               $installAttempt++
               try {
+                Install-Module Az.Accounts -Scope CurrentUser -Force -AllowClobber
+                Install-Module Az.KeyVault -Scope CurrentUser -Force -AllowClobber
                   Install-Module powershell-yaml -Scope CurrentUser -Force -AllowClobber
                   Install-Module @installArgs
                   break

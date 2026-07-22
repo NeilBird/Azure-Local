@@ -281,6 +281,9 @@ jobs:
         while ($true) {
             $installAttempt++
             try {
+            Install-Module Az.Accounts -Scope CurrentUser -Force -AllowClobber
+            Install-Module Az.KeyVault -Scope CurrentUser -Force -AllowClobber
+            Install-Module powershell-yaml -Scope CurrentUser -Force -AllowClobber
                 Install-Module @installArgs
                 break
             } catch {
@@ -293,7 +296,6 @@ jobs:
                 Start-Sleep -Seconds $installRetryDelay
             }
         }
-        Install-Module powershell-yaml -Scope CurrentUser -Force -AllowClobber
         Import-Module AzLocal.UpdateManagement -Force
         Add-AzLocalPipelineVersionBanner `
             -GeneratedAgainstVersion $env:GENERATED_AGAINST_MODULE_VERSION `
