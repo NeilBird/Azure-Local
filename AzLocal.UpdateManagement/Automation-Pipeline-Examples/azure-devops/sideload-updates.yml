@@ -405,6 +405,7 @@ stages:
                 HeartbeatStaleMinutes = [int]$settings.Reconciliation.heartbeatStaleMinutes
                 NoProgressMinutes = [int]$settings.Reconciliation.noProgressMinutes
                 MaxConcurrentCopies = [int]$settings.Reconciliation.maxConcurrentCopies
+                MaxConcurrentCopiesPerRunner = [int]$settings.Reconciliation.maxConcurrentCopiesPerRunner
                 TaskLogonType = [string]$settings.Identity.task.logonType
                 TaskPrincipalUserId = [string]$settings.Identity.task.principalUserId
               ErrorAction = 'Stop'

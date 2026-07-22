@@ -21521,6 +21521,24 @@ Describe 'Sideload (v0.9.22): typed settings and task safety' {
         $settings.SchemaVersion | Should -Be 1
         $settings.Enabled | Should -BeFalse
         $settings.Identity.task.logonType | Should -Be 'ServiceAccount'
+        $settings.Reconciliation.maxConcurrentCopiesPerRunner | Should -Be 2
+    }
+
+    It 'defaults an omitted per-runner copy cap to the fleet cap for existing schema-1 files' {
+        $source = Join-Path $PSScriptRoot '..\Automation-Pipeline-Examples\sideload-settings.example.yml'
+        $path = Join-Path $TestDrive 'legacy-settings.yml'
+        (Get-Content -LiteralPath $source -Raw) -replace '(?m)^\s*maxConcurrentCopiesPerRunner:.*\r?\n', '' | Set-Content -LiteralPath $path -Encoding UTF8
+
+        $settings = Get-AzLocalSideloadSettings -Path $path
+        $settings.Reconciliation.maxConcurrentCopiesPerRunner | Should -Be $settings.Reconciliation.maxConcurrentCopies
+    }
+
+    It 'rejects a per-runner copy cap above the fleet cap' {
+        $source = Join-Path $PSScriptRoot '..\Automation-Pipeline-Examples\sideload-settings.example.yml'
+        $path = Join-Path $TestDrive 'invalid-runner-cap.yml'
+        (Get-Content -LiteralPath $source -Raw) -replace 'maxConcurrentCopiesPerRunner: 2', 'maxConcurrentCopiesPerRunner: 3' | Set-Content -LiteralPath $path -Encoding UTF8
+
+        { Get-AzLocalSideloadSettings -Path $path } | Should -Throw '*maxConcurrentCopiesPerRunner cannot exceed*'
     }
 
     It 'rejects an enabled settings file without an explicit task principal' {
@@ -21574,6 +21592,53 @@ Describe 'Sideload (v0.8.7): Invoke-AzLocalSideloadUpdate state machine' {
 
             $res[0].Action | Should -Be 'Start'
             $res[0].State | Should -Be 'Copying'
+            Assert-MockCalled Invoke-SideloadCopyStart -Times 1 -Scope It
+        }
+    }
+
+    It 'defers a new copy when the current runner has reached its host cap' {
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalSideloadState {
+                if ($ClusterName -eq 'active') {
+                    return [PSCustomObject]@{ ClusterName = 'active'; State = 'Copying'; Version = '12.0'; OwningMachine = $env:COMPUTERNAME; Retries = 0; TotalBytes = 100; CopiedBytes = 50; Mbps = 1; EtaUtc = '' }
+                }
+                return $null
+            }
+            Mock Test-AzLocalSideloadHeartbeatStale { $false }
+            Mock Test-AzLocalSideloadProgressStale { $false }
+            Mock Invoke-SideloadCopyStart { [PSCustomObject]@{ Retries = 0 } }
+
+            $plan = @(
+                [PSCustomObject]@{ ClusterName = 'active'; Status = 'Planned'; SelectedVersion = '12.0' }
+                [PSCustomObject]@{ ClusterName = 'queued'; Status = 'Planned'; SelectedVersion = '12.0' }
+            )
+            $res = Invoke-AzLocalSideloadUpdate -Plan $plan -StateRoot 'TestDrive:\state' -MaxConcurrentCopies 10 -MaxConcurrentCopiesPerRunner 1 -Confirm:$false
+
+            $res[1].Action | Should -Be 'Deferred'
+            $res[1].Message | Should -Match 'runner.*copy limit 1 reached'
+            Assert-MockCalled Invoke-SideloadCopyStart -Times 0 -Scope It
+        }
+    }
+
+    It 'does not charge another runner active copy against the current runner cap' {
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalSideloadState {
+                if ($ClusterName -eq 'remote-active') {
+                    return [PSCustomObject]@{ ClusterName = 'remote-active'; State = 'Copying'; Version = '12.0'; OwningMachine = 'OTHER-RUNNER'; Retries = 0; TotalBytes = 100; CopiedBytes = 50; Mbps = 1; EtaUtc = '' }
+                }
+                return $null
+            }
+            Mock Test-AzLocalSideloadHeartbeatStale { $false }
+            Mock Test-AzLocalSideloadProgressStale { $false }
+            Mock Invoke-SideloadCopyStart { [PSCustomObject]@{ Retries = 0 } }
+
+            $plan = @(
+                [PSCustomObject]@{ ClusterName = 'remote-active'; Status = 'Planned'; SelectedVersion = '12.0' }
+                [PSCustomObject]@{ ClusterName = 'queued'; Status = 'Planned'; SelectedVersion = '12.0' }
+            )
+            $res = Invoke-AzLocalSideloadUpdate -Plan $plan -StateRoot 'TestDrive:\state' -MaxConcurrentCopies 10 -MaxConcurrentCopiesPerRunner 1 -Confirm:$false
+
+            $res[1].Action | Should -Be 'Start'
             Assert-MockCalled Invoke-SideloadCopyStart -Times 1 -Scope It
         }
     }

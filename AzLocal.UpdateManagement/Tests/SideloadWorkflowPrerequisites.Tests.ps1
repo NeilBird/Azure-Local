@@ -19,6 +19,7 @@ Describe 'Sideload self-hosted workflow prerequisites' -Tag 'ReleaseGate' {
         $workflow | Should -Match 'Install-Module Az\.KeyVault -Scope CurrentUser -Force -AllowClobber'
         $workflow | Should -Match 'Install-Module powershell-yaml -Scope CurrentUser -Force -AllowClobber'
         $workflow | Should -Match 'Install-Module @installArgs'
+        $workflow | Should -Match 'MaxConcurrentCopiesPerRunner = \[int\]\$settings\.Reconciliation\.maxConcurrentCopiesPerRunner'
     }
 
     It 'installs Az.Accounts before GitHub Azure Login enables an Az PowerShell session' {
@@ -48,6 +49,8 @@ Describe 'Sideload self-hosted workflow prerequisites' -Tag 'ReleaseGate' {
         $guide | Should -Match '100 due clusters'
         $guide | Should -Match 'Runner-local task affinity and failover'
         $guide | Should -Match 'active/passive runner pool'
+        $guide | Should -Match 'maxConcurrentCopiesPerRunner: 10'
+        $guide | Should -Match 'PowerShell remoting between pool members'
         $guide | Should -Match 'logs\\\*\.robocopy\.log'
         $guide | Should -Match 'does \*\*not\*\* automatically purge'
     }

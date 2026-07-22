@@ -59,11 +59,20 @@ function Get-AzLocalSideloadSettings {
     $heartbeatStaleMinutes = [int]$config.reconciliation.heartbeatStaleMinutes
     $noProgressMinutes = [int]$config.reconciliation.noProgressMinutes
     $maxConcurrentCopies = [int]$config.reconciliation.maxConcurrentCopies
+    $maxConcurrentCopiesPerRunner = if ($config.reconciliation.ContainsKey('maxConcurrentCopiesPerRunner')) {
+        [int]$config.reconciliation.maxConcurrentCopiesPerRunner
+    }
+    else {
+        $maxConcurrentCopies
+    }
     if ($leadDays -lt 0 -or $leadDays -gt 365) { throw 'Get-AzLocalSideloadSettings: planning.leadDays must be between 0 and 365.' }
     if ($heartbeatIntervalSeconds -lt 10 -or $heartbeatIntervalSeconds -gt 300) { throw 'Get-AzLocalSideloadSettings: reconciliation.heartbeatIntervalSeconds must be between 10 and 300.' }
     if ($heartbeatStaleMinutes -lt 1 -or $heartbeatStaleMinutes -gt 1440) { throw 'Get-AzLocalSideloadSettings: reconciliation.heartbeatStaleMinutes must be between 1 and 1440.' }
     if ($noProgressMinutes -lt 1 -or $noProgressMinutes -gt 1440) { throw 'Get-AzLocalSideloadSettings: reconciliation.noProgressMinutes must be between 1 and 1440.' }
     if ($maxConcurrentCopies -lt 1 -or $maxConcurrentCopies -gt 64) { throw 'Get-AzLocalSideloadSettings: reconciliation.maxConcurrentCopies must be between 1 and 64.' }
+    if ($maxConcurrentCopiesPerRunner -lt 1 -or $maxConcurrentCopiesPerRunner -gt 64) { throw 'Get-AzLocalSideloadSettings: reconciliation.maxConcurrentCopiesPerRunner must be between 1 and 64.' }
+    if ($maxConcurrentCopiesPerRunner -gt $maxConcurrentCopies) { throw 'Get-AzLocalSideloadSettings: reconciliation.maxConcurrentCopiesPerRunner cannot exceed reconciliation.maxConcurrentCopies.' }
+    $config.reconciliation['maxConcurrentCopiesPerRunner'] = $maxConcurrentCopiesPerRunner
 
     $defaultProfileName = [string]$config.copy.defaultProfile
     if ([string]::IsNullOrWhiteSpace($defaultProfileName) -or -not $config.copy.profiles.ContainsKey($defaultProfileName)) {

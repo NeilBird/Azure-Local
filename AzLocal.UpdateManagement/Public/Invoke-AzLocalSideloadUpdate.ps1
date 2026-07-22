@@ -48,6 +48,13 @@ function Invoke-AzLocalSideloadUpdate {
     .PARAMETER HeartbeatStaleMinutes
         Minutes after which a Copying heartbeat is considered stale (dead host).
 
+    .PARAMETER MaxConcurrentCopies
+        Fleet-wide ceiling for fresh Copying operations across all runners.
+
+    .PARAMETER MaxConcurrentCopiesPerRunner
+        Ceiling for fresh Copying operations owned by the current runner. Zero
+        uses MaxConcurrentCopies for backward compatibility.
+
     .PARAMETER MaxRetries
         Maximum copy re-drive attempts per cluster.
 
@@ -94,6 +101,10 @@ function Invoke-AzLocalSideloadUpdate {
         [int]$MaxConcurrentCopies = 2,
 
         [Parameter(Mandatory = $false)]
+        [ValidateRange(0, 100)]
+        [int]$MaxConcurrentCopiesPerRunner = 0,
+
+        [Parameter(Mandatory = $false)]
         [ValidateRange(0, 20)]
         [int]$MaxRetries = 3,
 
@@ -118,15 +129,23 @@ function Invoke-AzLocalSideloadUpdate {
     if ([string]::IsNullOrWhiteSpace($CacheRoot)) {
         $CacheRoot = Join-Path -Path $StateRoot -ChildPath 'cache'
     }
+    if ($MaxConcurrentCopiesPerRunner -eq 0) {
+        $MaxConcurrentCopiesPerRunner = $MaxConcurrentCopies
+    }
 
     $results = New-Object System.Collections.Generic.List[object]
     $activeCopies = 0
+    $activeCopiesOnCurrentRunner = 0
     foreach ($candidate in $Plan) {
         $candidateState = Get-AzLocalSideloadState -StateRoot $StateRoot -ClusterName ([string]$candidate.ClusterName)
         if ($null -ne $candidateState -and [string]$candidateState.State -eq 'Copying' -and
             -not (Test-AzLocalSideloadHeartbeatStale -State $candidateState -StaleMinutes $HeartbeatStaleMinutes) -and
             -not (Test-AzLocalSideloadProgressStale -State $candidateState -StaleMinutes $NoProgressMinutes)) {
             $activeCopies++
+            $owningMachine = if ($candidateState.PSObject.Properties['OwningMachine']) { [string]$candidateState.OwningMachine } else { '' }
+            if ($owningMachine -eq $env:COMPUTERNAME) {
+                $activeCopiesOnCurrentRunner++
+            }
         }
     }
 
@@ -166,9 +185,13 @@ function Invoke-AzLocalSideloadUpdate {
                             elseif ($activeCopies -ge $MaxConcurrentCopies) {
                                 $results.Add([PSCustomObject]@{ ClusterName = $clusterName; Action = 'Deferred'; State = 'Copying'; Version = [string]$state.Version; Message = "Re-drive deferred; copy concurrency limit $MaxConcurrentCopies reached." })
                             }
+                            elseif ($activeCopiesOnCurrentRunner -ge $MaxConcurrentCopiesPerRunner) {
+                                $results.Add([PSCustomObject]@{ ClusterName = $clusterName; Action = 'Deferred'; State = 'Copying'; Version = [string]$state.Version; Message = "Re-drive deferred; runner '$env:COMPUTERNAME' copy limit $MaxConcurrentCopiesPerRunner reached." })
+                            }
                             else {
                                 $advanced = Invoke-SideloadCopyStart -Plan $p -StateRoot $StateRoot -CacheRoot $CacheRoot -RobocopySwitches $RobocopySwitches -HeartbeatSeconds $HeartbeatSeconds -TaskLogonType $TaskLogonType -TaskPrincipalUserId $TaskPrincipalUserId -TaskPassword $TaskPassword -Retries ([int]$state.Retries + 1) -SkipGateFlip
                                 $activeCopies++
+                                $activeCopiesOnCurrentRunner++
                                 $results.Add([PSCustomObject]@{ ClusterName = $clusterName; Action = 'ReDrive'; State = 'Copying'; Version = [string]$p.SelectedVersion; Message = "Stale heartbeat; re-driven (retry $($advanced.Retries))." })
                             }
                         }
@@ -212,9 +235,13 @@ function Invoke-AzLocalSideloadUpdate {
                             if ($activeCopies -ge $MaxConcurrentCopies) {
                                 $results.Add([PSCustomObject]@{ ClusterName = $clusterName; Action = 'Deferred'; State = 'Failed'; Version = [string]$state.Version; Message = "Copy retry deferred; concurrency limit $MaxConcurrentCopies reached." })
                             }
+                            elseif ($activeCopiesOnCurrentRunner -ge $MaxConcurrentCopiesPerRunner) {
+                                $results.Add([PSCustomObject]@{ ClusterName = $clusterName; Action = 'Deferred'; State = 'Failed'; Version = [string]$state.Version; Message = "Copy retry deferred; runner '$env:COMPUTERNAME' copy limit $MaxConcurrentCopiesPerRunner reached." })
+                            }
                             else {
                                 $advanced = Invoke-SideloadCopyStart -Plan $p -StateRoot $StateRoot -CacheRoot $CacheRoot -RobocopySwitches $RobocopySwitches -HeartbeatSeconds $HeartbeatSeconds -TaskLogonType $TaskLogonType -TaskPrincipalUserId $TaskPrincipalUserId -TaskPassword $TaskPassword -Retries ([int]$state.Retries + 1) -SkipGateFlip
                                 $activeCopies++
+                                $activeCopiesOnCurrentRunner++
                                 $results.Add([PSCustomObject]@{ ClusterName = $clusterName; Action = 'Retry'; State = 'Copying'; Version = [string]$p.SelectedVersion; Message = "Retrying copy (retry $($advanced.Retries))." })
                             }
                         }
@@ -235,9 +262,13 @@ function Invoke-AzLocalSideloadUpdate {
                 if ($activeCopies -ge $MaxConcurrentCopies) {
                     $results.Add([PSCustomObject]@{ ClusterName = $clusterName; Action = 'Deferred'; State = 'Queued'; Version = [string]$p.SelectedVersion; Message = "Copy deferred; concurrency limit $MaxConcurrentCopies reached." })
                 }
+                elseif ($activeCopiesOnCurrentRunner -ge $MaxConcurrentCopiesPerRunner) {
+                    $results.Add([PSCustomObject]@{ ClusterName = $clusterName; Action = 'Deferred'; State = 'Queued'; Version = [string]$p.SelectedVersion; Message = "Copy deferred; runner '$env:COMPUTERNAME' copy limit $MaxConcurrentCopiesPerRunner reached." })
+                }
                 else {
                     $null = Invoke-SideloadCopyStart -Plan $p -StateRoot $StateRoot -CacheRoot $CacheRoot -RobocopySwitches $RobocopySwitches -HeartbeatSeconds $HeartbeatSeconds -TaskLogonType $TaskLogonType -TaskPrincipalUserId $TaskPrincipalUserId -TaskPassword $TaskPassword -Retries 0
                     $activeCopies++
+                    $activeCopiesOnCurrentRunner++
                     $results.Add([PSCustomObject]@{ ClusterName = $clusterName; Action = 'Start'; State = 'Copying'; Version = [string]$p.SelectedVersion; Message = "Sideload started; media staged and copy task launched." })
                 }
             }

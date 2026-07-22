@@ -224,18 +224,18 @@ jobs:
       shell: pwsh
       run: |
         $ErrorActionPreference = 'Stop'
-        $installMaxAttempts = 25
-        for ($installAttempt = 1; $installAttempt -le $installMaxAttempts; $installAttempt++) {
+        $prerequisiteMaxAttempts = 25
+        for ($prerequisiteAttempt = 1; $prerequisiteAttempt -le $prerequisiteMaxAttempts; $prerequisiteAttempt++) {
           try {
             Install-Module Az.Accounts -Scope CurrentUser -Force -AllowClobber
             Install-Module Az.KeyVault -Scope CurrentUser -Force -AllowClobber
             Install-Module powershell-yaml -Scope CurrentUser -Force -AllowClobber
             break
           } catch {
-            if ($installAttempt -ge $installMaxAttempts) { throw }
-            $installRetryDelay = [math]::Min(60, 10 * [math]::Pow(2, $installAttempt - 1)) + (Get-Random -Minimum 0 -Maximum 5)
-            Write-Host "Prerequisite install attempt $installAttempt of $installMaxAttempts failed: $($_.Exception.Message). Retrying in $installRetryDelay second(s)..."
-            Start-Sleep -Seconds $installRetryDelay
+            if ($prerequisiteAttempt -ge $prerequisiteMaxAttempts) { throw }
+            $prerequisiteRetryDelay = [math]::Min(60, 10 * [math]::Pow(2, $prerequisiteAttempt - 1)) + (Get-Random -Maximum 5)
+            Write-Host "Prerequisite install attempt $prerequisiteAttempt of $prerequisiteMaxAttempts failed: $($_.Exception.Message). Retrying in $prerequisiteRetryDelay second(s)..."
+            Start-Sleep -Seconds $prerequisiteRetryDelay
           }
         }
 
@@ -363,6 +363,7 @@ jobs:
             HeartbeatStaleMinutes = [int]$settings.Reconciliation.heartbeatStaleMinutes
             NoProgressMinutes = [int]$settings.Reconciliation.noProgressMinutes
             MaxConcurrentCopies = [int]$settings.Reconciliation.maxConcurrentCopies
+            MaxConcurrentCopiesPerRunner = [int]$settings.Reconciliation.maxConcurrentCopiesPerRunner
             TaskLogonType = [string]$settings.Identity.task.logonType
             TaskPrincipalUserId = [string]$settings.Identity.task.principalUserId
             ErrorAction  = 'Stop'

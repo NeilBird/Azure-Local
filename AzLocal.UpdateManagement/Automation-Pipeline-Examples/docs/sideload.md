@@ -150,12 +150,27 @@ runner/agent. It does not split a 100-cluster plan across 100 runners. That sele
 can register up to `reconciliation.maxConcurrentCopies` detached Scheduled Tasks; later
 reconciliation jobs may be assigned to a different host.
 
-`maxConcurrentCopies` is a fleet-wide copy ceiling when reconciliation jobs are
-serialized: each run counts every fresh `Copying` record in the shared state before it
-starts another copy. Adding runners therefore improves **job availability**, but does not
-multiply copy throughput. Increase `maxConcurrentCopies` only after measuring the shared
-cache/file-server IOPS, WAN/SMB bandwidth, per-cluster import-share capacity, and the
-aggregate effect on production traffic.
+`maxConcurrentCopies` is the fleet/network ceiling. The optional
+`maxConcurrentCopiesPerRunner` is the host ceiling; existing schema-1 files that omit it
+fall back to `maxConcurrentCopies`. Each serialized run counts every fresh `Copying`
+record globally, then counts records whose `OwningMachine` is the current host. A new copy
+starts only when both limits have capacity.
+
+For example, a pool whose runners have been tested with ten throttled copies could use:
+
+```yaml
+reconciliation:
+   maxConcurrentCopies: 30
+   maxConcurrentCopiesPerRunner: 10
+```
+
+This permits at most 30 copies across the fabric and at most 10 on any one runner. It does
+not guarantee even distribution: the CI/CD scheduler chooses the host for each serialized
+reconciliation job, and the same available host may receive successive jobs. Increase
+either limit only after measuring the shared cache/file-server IOPS, WAN/SMB bandwidth,
+per-cluster import-share capacity, and aggregate effect on production traffic. Configure a
+copy profile with an appropriate `interPacketGapMilliseconds` when throttling is required;
+an inter-packet gap is pacing, not a precise bandwidth reservation.
 
 For 100 due clusters with the default `maxConcurrentCopies: 2`, work proceeds in roughly
 50 copy waves. A new wave can start only on the next reconciliation after capacity becomes
@@ -199,6 +214,14 @@ Unregister-ScheduledTask -TaskName 'AzLocalSideload_<cluster>' -Confirm:$false
 
 Do not delete shared state to move ownership. Let heartbeat/no-progress staleness trigger
 the bounded re-drive, which creates a new operation ID and records the new owner.
+
+PowerShell remoting between pool members can be used as an operator break-glass tool, but
+it is deliberately not the orchestration control plane. Making it automatic would require
+mutual WinRM/Kerberos or HTTPS trust, firewall paths between every runner, a privileged
+identity able to administer every peer, and race protection around remote task actions.
+It would also widen the blast radius of a compromised runner without deciding which host
+should own new work. Shared state, operation ownership, stale re-drive, and the two copy
+limits provide failover and capacity control without that peer-administration dependency.
 
 ### 3.3 HA and consistency contract
 

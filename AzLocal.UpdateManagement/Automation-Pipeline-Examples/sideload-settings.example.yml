@@ -20,7 +20,13 @@ reconciliation:
   heartbeatIntervalSeconds: 30
   heartbeatStaleMinutes: 60
   noProgressMinutes: 90
+  # Fleet/network ceiling across all runners. Raise only after measuring the
+  # shared cache, SMB links, and cluster import shares.
   maxConcurrentCopies: 2
+  # Host ceiling. A capable, throttled runner can be set to 10 while retaining
+  # a separate fleet-wide cap above. Existing schema-1 files that omit this
+  # field use maxConcurrentCopies for backward compatibility.
+  maxConcurrentCopiesPerRunner: 2
 
 copy:
   defaultProfile: balanced
