@@ -34,6 +34,7 @@ It is written in the same step-by-step style as [`ITSM/README.md`](../ITSM/READM
 6. [End-to-end runbook: bring an estate online](#6-end-to-end-runbook-bring-an-estate-online)
    - [6.1 Inventory the estate](#61-inventory-the-estate)
      - [6.1.1 (Optional) Exclude whole subscriptions from every fleet scan](#611-optional-exclude-whole-subscriptions-from-every-fleet-scan)
+     - [6.1.2 (Optional) Scope estates beyond 1,000 subscriptions by management group](#612-optional-scope-estates-beyond-1000-subscriptions-by-management-group)
    - [6.2 Plan update rings, windows, and exclusions](#62-plan-update-rings-windows-and-exclusions)
    - [6.3 Apply tags](#63-apply-tags)
    - [6.4 Pre-flight readiness assessment](#64-pre-flight-readiness-assessment)
@@ -1411,6 +1412,29 @@ Get-AzLocalClusterInventory -ExportPath ./cluster-inventory.csv   # now skips th
 ```
 
 > **Secrets note:** this list is **non-secret** scoping metadata (subscription GUIDs are not credentials), so it belongs in source control / the `AzureLocal-Pipeline-Settings` group - never in a secret store. Azure authentication still flows through OIDC / the WIF service connection as before.
+
+#### 6.1.2 (Optional) Scope estates beyond 1,000 subscriptions by management group
+
+Azure CLI and Azure PowerShell forward only the first 1,000 accessible subscriptions when Azure Resource Graph scope is implicit. For larger or growing estates, activate management-group scope in the generated `config/fleet-settings.yml`. Use management-group IDs, not display names or full resource IDs:
+
+```yaml
+schemaVersion: 1
+scope:
+  managementGroups:
+    - contoso-platform
+    - contoso-edge
+reporting:
+  maxRowsPerTable: 100
+  maxSummaryBytes: 900000
+itsm:
+  maxIncidentsPerRun: 25
+```
+
+`Copy-AzLocalPipelineExample` and `Update-AzLocalPipelineExample` create this file as a fully commented starter and never overwrite active operator configuration. The precedence is: explicit `-SubscriptionId`, configured management groups, then existing implicit subscription discovery. A missing, empty, or fully commented file therefore changes nothing. The pipeline identity needs read access on the target management-group hierarchy; management-group scope can cover the first 10,000 subscriptions beneath it.
+
+The reporting values cap only human-readable Markdown. Complete CSV, JSON, JUnit, and HTML artifacts remain available for automation and detailed investigation. `maxSummaryBytes` is measured as UTF-8 and defaults below GitHub Actions' 1 MiB per-step summary limit. `maxIncidentsPerRun` bounds ServiceNow fan-out; set it to `0` to suppress new incident creation while retaining deterministic skipped result rows.
+
+Run `Get-AzLocalFleetSettings | Format-List` from the repo root to verify the effective scope and limits before enabling scheduled pipelines. Set `AZLOCAL_FLEET_SETTINGS_PATH` only when the file lives somewhere other than `./config/fleet-settings.yml`.
 
 ### 6.2 Plan update rings, windows, and exclusions
 

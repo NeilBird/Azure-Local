@@ -84,7 +84,7 @@ function Get-AzLocalFleetConnectivityStatus {
     [OutputType([PSCustomObject])]
     param(
         [Parameter(Mandatory = $false)]
-        [string]$SubscriptionId,
+        [string[]]$SubscriptionId,
 
         [Parameter(Mandatory = $false)]
         [string]$ExportPath,

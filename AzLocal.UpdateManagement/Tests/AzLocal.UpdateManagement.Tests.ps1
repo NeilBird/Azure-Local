@@ -27,6 +27,168 @@ AfterAll {
     Remove-Module AzLocal.UpdateManagement -Force -ErrorAction SilentlyContinue
 }
 
+Describe 'v0.9.22: Fleet settings and management-group scope' {
+    BeforeEach {
+        $script:fleetSettingsPath = Join-Path $env:TEMP ("fleet-settings-{0}.yml" -f [guid]::NewGuid())
+        $script:savedFleetSettingsPath = $env:AZLOCAL_FLEET_SETTINGS_PATH
+        $env:AZLOCAL_FLEET_SETTINGS_PATH = $script:fleetSettingsPath
+    }
+
+    AfterEach {
+        if ($null -ne $script:savedFleetSettingsPath) { $env:AZLOCAL_FLEET_SETTINGS_PATH = $script:savedFleetSettingsPath }
+        else { Remove-Item Env:\AZLOCAL_FLEET_SETTINGS_PATH -ErrorAction SilentlyContinue }
+        Remove-Item -LiteralPath $script:fleetSettingsPath -Force -ErrorAction SilentlyContinue
+        Remove-Item function:\az -Force -ErrorAction SilentlyContinue
+        Remove-Variable capturedAzArgs -Scope Global -ErrorAction SilentlyContinue
+    }
+
+    It 'Keeps implicit subscription scope when the file is missing' {
+        $settings = Get-AzLocalFleetSettings
+        $settings.FileFound | Should -BeFalse
+        $settings.ScopeMode | Should -Be 'ImplicitSubscriptions'
+        @($settings.ManagementGroups).Count | Should -Be 0
+    }
+
+    It 'Keeps defaults when the file is fully commented' {
+        @'
+# schemaVersion: 1
+# scope:
+#   managementGroups:
+#     - contoso-platform
+'@ | Set-Content -LiteralPath $script:fleetSettingsPath -Encoding ASCII
+
+        $settings = Get-AzLocalFleetSettings
+        $settings.FileFound | Should -BeTrue
+        $settings.ScopeMode | Should -Be 'ImplicitSubscriptions'
+        $settings.MaxRowsPerTable | Should -Be 100
+        $settings.MaxSummaryBytes | Should -Be 900000
+        $settings.MaxIncidentsPerRun | Should -Be 25
+    }
+
+    It 'Parses all supported sections and deduplicates management groups' {
+        @'
+schemaVersion: 1
+scope:
+  managementGroups:
+    - group-a
+    - group-a
+    - 'group-b'
+reporting:
+  maxRowsPerTable: 250
+  maxSummaryBytes: 500000
+itsm:
+  maxIncidentsPerRun: 40
+'@ | Set-Content -LiteralPath $script:fleetSettingsPath -Encoding ASCII
+
+        $settings = Get-AzLocalFleetSettings
+        $settings.ScopeMode | Should -Be 'ManagementGroups'
+        $settings.ManagementGroups | Should -Be @('group-a', 'group-b')
+        $settings.MaxRowsPerTable | Should -Be 250
+        $settings.MaxSummaryBytes | Should -Be 500000
+        $settings.MaxIncidentsPerRun | Should -Be 40
+    }
+
+    It 'Rejects malformed, unsupported, and out-of-range active settings' -TestCases @(
+        @{ Content = "scope:`n  managementGroups:`n    - group-a"; Expected = '*must declare schemaVersion*' }
+        @{ Content = "schemaVersion: 2"; Expected = '*unsupported schemaVersion*' }
+        @{ Content = "schemaVersion: 1`nreporting:`n  maxRowsPerTable: 0"; Expected = '*maxRowsPerTable must be between 1 and 1000*' }
+        @{ Content = "schemaVersion: 1`nreporting:`n  maxSummaryBytes: 9999"; Expected = '*maxSummaryBytes must be between 10000 and 1000000*' }
+        @{ Content = "schemaVersion: 1`nitsm:`n  maxIncidentsPerRun: 1001"; Expected = '*maxIncidentsPerRun must be between 0 and 1000*' }
+        @{ Content = "schemaVersion: one"; Expected = '*must declare schemaVersion*' }
+    ) {
+        param($Content, $Expected)
+        Set-Content -LiteralPath $script:fleetSettingsPath -Value $Content -Encoding ASCII
+        { Get-AzLocalFleetSettings } | Should -Throw -ExpectedMessage $Expected
+    }
+
+    It 'Prefers an explicit path over the environment setting' {
+        Set-Content -LiteralPath $script:fleetSettingsPath -Value 'schemaVersion: 2' -Encoding ASCII
+        $explicitPath = Join-Path $env:TEMP ("fleet-settings-explicit-{0}.yml" -f [guid]::NewGuid())
+        try {
+            Set-Content -LiteralPath $explicitPath -Value 'schemaVersion: 1' -Encoding ASCII
+            $settings = Get-AzLocalFleetSettings -Path $explicitPath
+            $settings.Path | Should -Be ([System.IO.Path]::GetFullPath($explicitPath))
+            $settings.SchemaVersion | Should -Be 1
+        }
+        finally {
+            Remove-Item -LiteralPath $explicitPath -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'Parses one management group and forwards it to Azure CLI' {
+        @'
+schemaVersion: 1
+scope:
+  managementGroups:
+    - contoso-platform
+'@ | Set-Content -LiteralPath $script:fleetSettingsPath -Encoding ASCII
+
+        $settings = Get-AzLocalFleetSettings
+        $settings.ScopeMode | Should -Be 'ManagementGroups'
+        @($settings.ManagementGroups).Count | Should -Be 1
+
+        function global:az {
+            param([Parameter(ValueFromRemainingArguments = $true)]$Remaining)
+            $global:capturedAzArgs = @($Remaining)
+            $global:LASTEXITCODE = 0
+            return '{"data":[]}'
+        }
+        InModuleScope AzLocal.UpdateManagement {
+            Invoke-AzResourceGraphQuery -Query 'resources | project id' | Out-Null
+        }
+        $groupSwitchIndex = [array]::IndexOf($global:capturedAzArgs, '--management-groups')
+        $groupSwitchIndex | Should -BeGreaterThan -1
+        $global:capturedAzArgs[$groupSwitchIndex + 1] | Should -Be 'contoso-platform'
+        $global:capturedAzArgs | Should -Not -Contain '--subscriptions'
+    }
+
+    It 'Uses explicit subscriptions instead of configured management groups' {
+        @'
+schemaVersion: 1
+scope:
+  managementGroups:
+    - contoso-platform
+'@ | Set-Content -LiteralPath $script:fleetSettingsPath -Encoding ASCII
+
+        function global:az {
+            param([Parameter(ValueFromRemainingArguments = $true)]$Remaining)
+            $global:capturedAzArgs = @($Remaining)
+            $global:LASTEXITCODE = 0
+            return '{"data":[]}'
+        }
+        InModuleScope AzLocal.UpdateManagement {
+            Invoke-AzResourceGraphQuery -Query 'resources | project id' -SubscriptionId @('sub-b', 'sub-a') | Out-Null
+        }
+        $subscriptionSwitchIndex = [array]::IndexOf($global:capturedAzArgs, '--subscriptions')
+        $subscriptionSwitchIndex | Should -BeGreaterThan -1
+        $global:capturedAzArgs[$subscriptionSwitchIndex + 1] | Should -Be 'sub-b'
+        $global:capturedAzArgs[$subscriptionSwitchIndex + 2] | Should -Be 'sub-a'
+        $global:capturedAzArgs | Should -Not -Contain '--management-groups'
+    }
+
+    It 'Batches 81 values into three ARG calls and retains every row' {
+        InModuleScope AzLocal.UpdateManagement {
+            $script:batchQueries = [System.Collections.Generic.List[string]]::new()
+            Mock Invoke-AzResourceGraphQuery {
+                [void]$script:batchQueries.Add($Query)
+                $firstValue = (($script:batchQueries.Count - 1) * 40) + 1
+                $lastValue = [Math]::Min($firstValue + 39, 81)
+                for ($valueNumber = $firstValue; $valueNumber -le $lastValue; $valueNumber++) {
+                    [pscustomobject]@{ Value = "cluster-$valueNumber" }
+                }
+            }
+
+            $values = 1..81 | ForEach-Object { "cluster-$_" }
+            $rows = Invoke-AzLocalResourceGraphValueBatches -Value $values -QueryTemplate 'resources | where name in~ ({0}) | project name' -BatchSize 40
+
+            $script:batchQueries.Count | Should -Be 3
+            @($rows).Count | Should -Be 81
+            $rows[0].Value | Should -Be 'cluster-1'
+            $rows[80].Value | Should -Be 'cluster-81'
+        }
+    }
+}
+
 Describe 'Module: AzLocal.UpdateManagement' {
     
     Context 'Module Load' {
@@ -293,9 +455,9 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $content | Should -Match 'MonitorInFlightHours'       -Because "$Platform audit plumbs in-flight hours into the cmdlet"
         }
 
-        It 'Should export exactly 69 functions' {
+        It 'Should export exactly 70 functions' {
 
-            $script:ModuleInfo.ExportedFunctions.Count | Should -Be 69
+            $script:ModuleInfo.ExportedFunctions.Count | Should -Be 70
         }
 
         It 'Should export the expected functions' {
@@ -7157,6 +7319,45 @@ Describe 'ITSM: New-AzLocalIncident' {
         $resultsArr[0].Action| Should -Be 'Skipped'
         $resultsArr[0].Reason| Should -Match 'missing ClusterResourceId'
     }
+
+    It 'Applies MaxIncidentsPerRun to potential creates in DryRun mode' {
+        $results = & (Get-Module AzLocal.UpdateManagement) {
+            param($junit, $cfg)
+            New-AzLocalIncident -InputArtifactPath $junit -Config $cfg -DryRun -MaxIncidentsPerRun 0
+        } $script:junitPath $script:cfg
+
+        $failed = $results | Where-Object ClusterName -eq 'cluster-a'
+        $failed.Action | Should -Be 'Skipped'
+        $failed.Reason | Should -Match 'creation limit reached'
+    }
+
+    It 'Opens the circuit breaker after consecutive create failures' {
+        $breakerPath = Join-Path $script:incDir 'breaker.xml'
+        $testCases = 1..3 | ForEach-Object {
+            "<testcase classname=`"Update`" name=`"cluster-$_`"><failure>failed</failure><properties><property name=`"Status`" value=`"Failed`"/><property name=`"ClusterName`" value=`"cluster-$_`"/><property name=`"ClusterResourceId`" value=`"/subscriptions/s/resourceGroups/r/providers/Microsoft.AzureStackHCI/clusters/cluster-$_`"/><property name=`"UpdateName`" value=`"2511.0.10.0`"/></properties></testcase>"
+        }
+        "<testsuites><testsuite>$($testCases -join '')</testsuite></testsuites>" | Set-Content -LiteralPath $breakerPath -Encoding ASCII
+
+        $results = InModuleScope AzLocal.UpdateManagement -Parameters @{ path = $breakerPath; cfg = $script:cfg } {
+            param($path, $cfg)
+            Mock Resolve-AzLocalItsmSecret { param($Reference) if ($Reference -like 'literal://*') { $Reference.Substring(10) } else { 'secret' } }
+            Mock Invoke-AzLocalServiceNowAdapter {
+                param($Action)
+                switch ($Action) {
+                    'GetToken' { [pscustomobject]@{ AccessToken = 'token' } }
+                    'FindByDedupe' { $null }
+                    'CreateIncident' { throw 'simulated ServiceNow outage' }
+                }
+            }
+            $output = @(New-AzLocalIncident -InputArtifactPath $path -Config $cfg -MaxIncidentsPerRun 10 -ConsecutiveApiFailureLimit 2 -Confirm:$false)
+            Should -Invoke Invoke-AzLocalServiceNowAdapter -ParameterFilter { $Action -eq 'CreateIncident' } -Times 2 -Exactly
+            return $output
+        }
+
+        @($results | Where-Object Action -eq 'CreateFailed').Count | Should -Be 2
+        $results[2].Action | Should -Be 'Skipped'
+        $results[2].Reason | Should -Match 'circuit breaker opened'
+    }
 }
 
 Describe 'ITSM: Invoke-AzLocalItsmHttp' {
@@ -8473,6 +8674,47 @@ Describe 'Function: Copy-AzLocalPipelineExample' {
 
             Test-Path (Join-Path $dest 'authentication-test.yml') | Should -BeTrue
             Test-Path (Join-Path $dest 'inventory-clusters.yml')  | Should -BeTrue
+        }
+    }
+
+    Context 'Fleet settings starter lifecycle' {
+        It 'Creates the inert starter at the repository config path' {
+            $repoRoot = Join-Path $script:cpDestRoot 'fleet-settings-create'
+            $dest = Join-Path $repoRoot '.github\workflows'
+            New-Item -Path $dest -ItemType Directory -Force | Out-Null
+
+            Copy-AzLocalPipelineExample -Destination $dest -Platform GitHub -Confirm:$false 6>$null | Out-Null
+
+            $settingsPath = Join-Path $repoRoot 'config\fleet-settings.yml'
+            Test-Path -LiteralPath $settingsPath | Should -BeTrue
+            (Get-AzLocalFleetSettings -Path $settingsPath).ScopeMode | Should -Be 'ImplicitSubscriptions'
+        }
+
+        It 'Preserves an existing operator-owned settings file' {
+            $repoRoot = Join-Path $script:cpDestRoot 'fleet-settings-preserve'
+            $dest = Join-Path $repoRoot '.github\workflows'
+            $settingsPath = Join-Path $repoRoot 'config\fleet-settings.yml'
+            New-Item -Path $dest -ItemType Directory -Force | Out-Null
+            New-Item -Path (Split-Path -Parent $settingsPath) -ItemType Directory -Force | Out-Null
+            Set-Content -LiteralPath $settingsPath -Value "schemaVersion: 1`n# OPERATOR SENTINEL" -Encoding ASCII
+
+            Copy-AzLocalPipelineExample -Destination $dest -Platform GitHub -Confirm:$false 6>$null | Out-Null
+
+            (Get-Content -LiteralPath $settingsPath -Raw) | Should -Match 'OPERATOR SENTINEL'
+        }
+
+        It 'Does not create the starter when skipped or under WhatIf' -TestCases @(
+            @{ Name = 'skip'; Arguments = @{ SkipStarterFleetSettings = $true; Confirm = $false } }
+            @{ Name = 'whatif'; Arguments = @{ WhatIf = $true } }
+        ) {
+            param($Name, $Arguments)
+            $repoRoot = Join-Path $script:cpDestRoot ("fleet-settings-{0}" -f $Name)
+            $dest = Join-Path $repoRoot '.github\workflows'
+            New-Item -Path $dest -ItemType Directory -Force | Out-Null
+
+            Copy-AzLocalPipelineExample -Destination $dest -Platform GitHub @Arguments 6>$null | Out-Null
+
+            Test-Path -LiteralPath (Join-Path $repoRoot 'config\fleet-settings.yml') | Should -BeFalse
         }
     }
 }
@@ -10458,6 +10700,49 @@ Describe 'Function: Update-AzLocalPipelineExample' {
         It 'Throws when -Destination does not exist' {
             { Update-AzLocalPipelineExample -Destination "$env:TEMP\does-not-exist-$([guid]::NewGuid())" -Platform GitHub -PassThru } |
                 Should -Throw -ExpectedMessage '*Destination*does not exist*'
+        }
+    }
+
+    Context 'Fleet settings starter lifecycle' {
+        It 'Exposes -SkipStarterFleetSettings as a switch parameter' {
+            $parameter = (Get-Command Update-AzLocalPipelineExample).Parameters['SkipStarterFleetSettings']
+            $parameter | Should -Not -BeNullOrEmpty
+            $parameter.ParameterType | Should -Be ([switch])
+        }
+
+        It 'Creates a missing starter and preserves an existing operator file' {
+            $repoRoot = Join-Path $env:TEMP "upe-fleet-settings-$([guid]::NewGuid())"
+            $dest = Join-Path $repoRoot '.github\workflows'
+            $settingsPath = Join-Path $repoRoot 'config\fleet-settings.yml'
+            New-Item -Path $dest -ItemType Directory -Force | Out-Null
+            try {
+                Update-AzLocalPipelineExample -Destination $dest -Platform GitHub -Confirm:$false 6>$null 4>$null | Out-Null
+                Test-Path -LiteralPath $settingsPath | Should -BeTrue
+
+                Set-Content -LiteralPath $settingsPath -Value "schemaVersion: 1`n# OPERATOR SENTINEL" -Encoding ASCII
+                Update-AzLocalPipelineExample -Destination $dest -Platform GitHub -Confirm:$false 6>$null 4>$null | Out-Null
+                (Get-Content -LiteralPath $settingsPath -Raw) | Should -Match 'OPERATOR SENTINEL'
+            }
+            finally {
+                Remove-Item -Path $repoRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+
+        It 'Does not create the starter when skipped or under WhatIf' -TestCases @(
+            @{ Name = 'skip'; Arguments = @{ SkipStarterFleetSettings = $true; Confirm = $false } }
+            @{ Name = 'whatif'; Arguments = @{ WhatIf = $true } }
+        ) {
+            param($Name, $Arguments)
+            $repoRoot = Join-Path $env:TEMP ("upe-fleet-settings-{0}-{1}" -f $Name, [guid]::NewGuid())
+            $dest = Join-Path $repoRoot '.github\workflows'
+            New-Item -Path $dest -ItemType Directory -Force | Out-Null
+            try {
+                Update-AzLocalPipelineExample -Destination $dest -Platform GitHub @Arguments 6>$null 4>$null | Out-Null
+                Test-Path -LiteralPath (Join-Path $repoRoot 'config\fleet-settings.yml') | Should -BeFalse
+            }
+            finally {
+                Remove-Item -Path $repoRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
         }
     }
 
@@ -12728,8 +13013,8 @@ Describe 'Function: Get-AzLocalFleetHealthOverview - v0.7.70 (ARG-first fleet he
             $cmd.CommandType | Should -Be 'Function'
         }
 
-        It 'BS7: Module exports exactly 69 functions (was 55 after Step.6 thin-YAML port; v0.8.7 sideload automation adds 5 cmdlets; v0.8.88 adds Sync-AzLocalClusterUpdateSummary; v0.8.95 adds Invoke-AzLocalFailedUpdateRetry + Invoke-AzLocalReadinessGatedFailedUpdateRetry + Add-AzLocalFailedUpdateRetryHintSummary; v0.9.1 adds Get-AzLocalExcludedSubscription + Set-AzLocalExcludedSubscription; v0.9.12 adds Assert-AzLocalAzureSubscriptionAccess + Assert-AzLocalPipelineReport; v0.9.18 adds Add-AzLocalPipelineSupportFooter)' {
-            (Get-Module AzLocal.UpdateManagement).ExportedFunctions.Count | Should -Be 69
+        It 'BS7: Module exports exactly 70 functions (v0.9.22 adds Get-AzLocalFleetSettings)' {
+            (Get-Module AzLocal.UpdateManagement).ExportedFunctions.Count | Should -Be 70
         }
     }
 
@@ -12790,10 +13075,10 @@ Describe 'Function: Get-AzLocalUpdateRunFailures - v0.7.70 fleet-scale failure-d
                 Mock Invoke-AzResourceGraphQuery {
                     return @(
                         [PSCustomObject]@{
-                            ClusterName          = 'Arizona'
-                            ResourceGroup        = 'arizona'
+                            ClusterName          = 'cluster-example-01'
+                            ResourceGroup        = 'rg-example-01'
                             SubscriptionId       = 'fbaf508b-cb61-4383-9cda-a42bfa0c7bc9'
-                            ClusterResourceId    = '/subscriptions/fbaf508b-cb61-4383-9cda-a42bfa0c7bc9/resourceGroups/arizona/providers/Microsoft.AzureStackHCI/clusters/Arizona'
+                            ClusterResourceId    = '/subscriptions/fbaf508b-cb61-4383-9cda-a42bfa0c7bc9/resourceGroups/rg-example-01/providers/Microsoft.AzureStackHCI/clusters/cluster-example-01'
                             UpdateName           = 'Solution12.2604.1003.1005'
                             RunId                = 'add1f87d-4174-4997-ae39-d9d41088be27'
                             State                = 'Failed'
@@ -14708,6 +14993,21 @@ Describe 'Pipeline output helpers: Add-AzLocalPipelineStepSummary' {
         } finally {
             Remove-Item -LiteralPath $returned -ErrorAction SilentlyContinue
         }
+    }
+
+    It 'GitHub: replaces an over-budget multibyte append with an artifact notice' {
+        $env:GITHUB_ACTIONS = 'true'
+        $env:GITHUB_STEP_SUMMARY = $script:_ghSummaryFile
+        $multibyteMarkdown = ([string][char]0x20ac) * 4000
+        InModuleScope AzLocal.UpdateManagement -Parameters @{ md = $multibyteMarkdown } {
+            param($md)
+            Mock Get-AzLocalFleetSettings { [pscustomobject]@{ MaxSummaryBytes = 10000 } }
+            Add-AzLocalPipelineStepSummary -Markdown $md | Out-Null
+        }
+        $content = Get-Content -LiteralPath $script:_ghSummaryFile -Raw
+        $content | Should -Match 'Summary size limit reached'
+        $content | Should -Not -Match ([regex]::Escape(([string][char]0x20ac)))
+        (Get-Item -LiteralPath $script:_ghSummaryFile).Length | Should -BeLessThan 10000
     }
 }
 
@@ -19415,7 +19715,7 @@ Describe 'Thin-YAML Step.4: Export-AzLocalFleetConnectivityStatusReport' {
         }
     }
 
-    It 'SubscriptionFilter (comma list) forwards the FIRST sub-id to Get-AzLocalFleetConnectivityStatus' {
+    It 'SubscriptionFilter (comma list) forwards all sub-ids to Get-AzLocalFleetConnectivityStatus' {
         $env:GITHUB_ACTIONS      = 'true'
         $env:GITHUB_OUTPUT       = $script:_s4_ghOutputFile
         $env:GITHUB_STEP_SUMMARY = $script:_s4_ghSummaryFile
@@ -19427,7 +19727,9 @@ Describe 'Thin-YAML Step.4: Export-AzLocalFleetConnectivityStatusReport' {
                 -OutputDirectory $env:_S4_OUTDIR `
                 -SubscriptionFilter '11111111-1111-1111-1111-111111111111, 22222222-2222-2222-2222-222222222222' | Out-Null
             Assert-MockCalled Get-AzLocalFleetConnectivityStatus -Times 1 -Exactly -Scope It -ParameterFilter {
-                $SubscriptionId -eq '11111111-1111-1111-1111-111111111111'
+                @($SubscriptionId).Count -eq 2 -and
+                $SubscriptionId[0] -eq '11111111-1111-1111-1111-111111111111' -and
+                $SubscriptionId[1] -eq '22222222-2222-2222-2222-222222222222'
             }
         }
     }
@@ -21579,6 +21881,24 @@ Describe 'v0.8.80 Q1: Get-AzLocalUpdateRunHealthEvidence helper' {
             $r.Count | Should -Be 0
         }
     }
+
+    It 'Should retrieve multiple clusters with one scoped ARG call' {
+        InModuleScope AzLocal.UpdateManagement {
+            $start = [datetime]'2026-01-01T10:00:00Z'
+            $end = [datetime]'2026-01-01T11:00:00Z'
+            $ids = @('/subscriptions/s/resourceGroups/r/providers/Microsoft.AzureStackHCI/clusters/c1', '/subscriptions/s/resourceGroups/r/providers/Microsoft.AzureStackHCI/clusters/c2')
+            Mock Invoke-AzResourceGraphQuery {
+                @(
+                    [pscustomobject]@{ ClusterResourceId = $ids[0]; HealthCheckResult = @([pscustomobject]@{ status='Failed'; severity='Critical'; timestamp='2026-01-01T10:30:00Z'; title='A' }) },
+                    [pscustomobject]@{ ClusterResourceId = $ids[1]; HealthCheckResult = @([pscustomobject]@{ status='Failed'; severity='Critical'; timestamp='2026-01-01T10:45:00Z'; title='B' }) }
+                )
+            }
+            $result = @(Get-AzLocalUpdateRunHealthEvidence -ClusterResourceId $ids -RunStartTime $start -RunEndTime $end)
+            $result.Count | Should -Be 2
+            @($result.ClusterResourceId | Select-Object -Unique).Count | Should -Be 2
+            Should -Invoke Invoke-AzResourceGraphQuery -Times 1 -Exactly
+        }
+    }
 }
 
 Describe 'v0.8.80 Q2: Get-AzLocalFleetHealthFailures exposes Title + TargetResourceID' {
@@ -22749,6 +23069,24 @@ Describe 'v0.8.97: Get-AzLocalReadyForUpdateTableMarkdown private helper' {
         $joined | Should -Match 'Wave1'
         $joined | Should -Match '12\.2511\.1002\.5'
         $joined | Should -Match 'href="https://portal\.azure\.com/#@/resource/sub/s/rg/alpha"'
+    }
+
+    It 'Caps a 2,000-cluster fleet and reports the full count' {
+        $lines = InModuleScope AzLocal.UpdateManagement {
+            $rows = @(1..2000 | ForEach-Object {
+                [pscustomobject]@{
+                    ClusterName = "cluster-$_"
+                    UpdateRing = 'Wave1'
+                    CurrentVersion = '10.0.0.1'
+                    RecommendedUpdate = '10.0.0.2'
+                    ClusterResourceId = "/subscriptions/s/resourceGroups/r/providers/Microsoft.AzureStackHCI/clusters/cluster-$_"
+                }
+            })
+            Get-AzLocalReadyForUpdateTableMarkdown -ReadyRows $rows -MaxRows 100
+        }
+        $joined = $lines -join "`n"
+        $joined | Should -Match 'Showing first 100 of 2000 ready clusters'
+        ([regex]::Matches($joined, 'href="https://portal\.azure\.com/')).Count | Should -Be 100
     }
 }
 

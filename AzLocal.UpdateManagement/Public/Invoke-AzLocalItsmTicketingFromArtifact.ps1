@@ -75,6 +75,14 @@ function Invoke-AzLocalItsmTicketingFromArtifact {
 
         [switch]$ForceCreate,
 
+        [Parameter(Mandatory = $false)]
+        [ValidateRange(-1, 1000)]
+        [int]$MaxIncidentsPerRun = -1,
+
+        [Parameter(Mandatory = $false)]
+        [ValidateRange(0, 100)]
+        [int]$ConsecutiveApiFailureLimit = 5,
+
         [switch]$PassThru
     )
 
@@ -177,6 +185,8 @@ function Invoke-AzLocalItsmTicketingFromArtifact {
         RunMetadata       = $runMeta
         DryRun            = [bool]$DryRun
         ForceCreate       = [bool]$ForceCreate
+        MaxIncidentsPerRun = $MaxIncidentsPerRun
+        ConsecutiveApiFailureLimit = $ConsecutiveApiFailureLimit
         ExportPath        = $exportCsvPath
         ExportJUnitPath   = $exportJUnitPath
     }

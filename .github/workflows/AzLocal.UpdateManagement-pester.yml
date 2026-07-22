@@ -2,7 +2,7 @@ name: AzLocal.UpdateManagement - Pester
 
 # Runs the AzLocal.UpdateManagement Pester unit suite on every PR + push to main
 # that touches the module. Live-tagged Azure integration tests are excluded
-# (they need az login + the AdaptiveCloudLab subscription and are gated by
+# (they need az login + the approved maintainer test subscription and are gated by
 # -IncludeLive in the local Invoke-Tests.ps1).
 #
 # Runner choice: windows-latest is required so the tests exercise the same

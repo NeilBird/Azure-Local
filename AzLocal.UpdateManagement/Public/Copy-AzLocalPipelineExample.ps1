@@ -318,6 +318,10 @@ function Copy-AzLocalPipelineExample {
         # always preserved, regardless of this switch).
         [switch]$SkipStarterSchedule,
 
+        # Suppress the default inert config\fleet-settings.yml drop. The
+        # generated file is fully commented and existing files are preserved.
+        [switch]$SkipStarterFleetSettings,
+
         # v0.8.7: when set, suppress the default starter sideload-config
         # drop (sideload-auth-map.csv + sideload-catalog.yml) for
         # Platform=GitHub|AzureDevOps. Default OFF. Existing files are
@@ -658,6 +662,41 @@ function Copy-AzLocalPipelineExample {
         $scheduleAction = 'SkippedBySwitch'
         if ($configDir) {
             $scheduleDest = Join-Path -Path $configDir -ChildPath 'apply-updates-schedule.yml'
+        }
+    }
+
+    # ------------------------------------------------------------------
+    # 6a-2. Optional fleet-wide settings. The bundled starter is fully
+    # commented, so its presence does not change query scope. Operators with
+    # large estates can uncomment scope.managementGroups. Never overwrite an
+    # existing operator-owned file.
+    # ------------------------------------------------------------------
+    $fleetSettingsSrc = Join-Path -Path $sourceRoot -ChildPath 'fleet-settings.example.yml'
+    $fleetSettingsDest = $null
+    $fleetSettingsAction = $null
+    if ($Platform -in @('GitHub', 'AzureDevOps')) {
+        $fleetSettingsDest = Join-Path -Path $configDir -ChildPath 'fleet-settings.yml'
+        if ($SkipStarterFleetSettings.IsPresent) {
+            $fleetSettingsAction = 'SkippedBySwitch'
+        }
+        elseif (-not (Test-Path -LiteralPath $fleetSettingsSrc -PathType Leaf)) {
+            $fleetSettingsAction = 'Missing'
+            Write-Warning ("Copy-AzLocalPipelineExample: fleet settings source '{0}' not found; skipping starter copy." -f $fleetSettingsSrc)
+        }
+        elseif (Test-Path -LiteralPath $fleetSettingsDest -PathType Leaf) {
+            $fleetSettingsAction = 'Preserved'
+            Write-Verbose ("Copy-AzLocalPipelineExample: fleet-settings.yml preserved (already exists at '{0}')." -f $fleetSettingsDest)
+        }
+        elseif ($PSCmdlet.ShouldProcess($fleetSettingsDest, "Copy starter fleet-settings.yml from '$fleetSettingsSrc'")) {
+            $fleetSettingsParent = Split-Path -Parent $fleetSettingsDest
+            if (-not (Test-Path -LiteralPath $fleetSettingsParent)) {
+                $null = New-Item -ItemType Directory -Path $fleetSettingsParent -Force -ErrorAction Stop
+            }
+            Copy-Item -LiteralPath $fleetSettingsSrc -Destination $fleetSettingsDest -ErrorAction Stop
+            $fleetSettingsAction = 'Copied'
+        }
+        else {
+            $fleetSettingsAction = 'Skipped'
         }
     }
 

@@ -79,6 +79,7 @@
         'Private/Invoke-AzLocalSideloadedAutoResetForCluster.ps1',
         'Private/Invoke-AzLocalItsmHttp.ps1',
         'Private/Invoke-AzLocalServiceNowAdapter.ps1',
+        'Private/Invoke-AzLocalResourceGraphValueBatches.ps1',
         'Private/Invoke-AzResourceGraphQuery.ps1',
         'Private/Invoke-AzRestJson.ps1',
         'Private/Invoke-AzLocalUpdateApply.ps1',
@@ -157,6 +158,7 @@
         'Public/Get-AzLocalClusterInventory.ps1',
         'Public/Get-AzLocalClusterUpdateReadiness.ps1',
         'Public/Get-AzLocalFleetProgress.ps1',
+        'Public/Get-AzLocalFleetSettings.ps1',
         'Public/Get-AzLocalFleetStatusData.ps1',
         'Public/Get-AzLocalFleetHealthFailures.ps1',
         'Public/Get-AzLocalFleetHealthOverview.ps1',
@@ -336,7 +338,9 @@
         # Optional subscription-exclusion list (v0.9.1) - central ARG-query filter
         # driven by AZLOCAL_EXCLUDED_SUBSCRIPTIONS_PATH / Set-AzLocalExcludedSubscription
         'Get-AzLocalExcludedSubscription',
-        'Set-AzLocalExcludedSubscription'
+        'Set-AzLocalExcludedSubscription',
+        # Optional fleet-wide ARG scope and reporting/ITSM limits (v0.9.22)
+        'Get-AzLocalFleetSettings'
     )
 
     # Cmdlets to export from this module, for best performance, do not use wildcards and do not delete the entry, use an empty array if there are no cmdlets to export.

@@ -91,6 +91,9 @@ If you are new to this module, work through these in order from a regular PowerS
 ### Added
 
 - **Payload diagnostics and regression coverage.** Module-scope diagnostics expose whether adaptive reduction occurred, how many reductions were needed, and the final page size. Tests cover oversized first pages, continuation completeness, one-row overflow guidance, diagnostic reset, conservative health paging, and lean connectivity projections.
+- **Optional fleet settings for estates beyond 1,000 subscriptions.** Generated pipeline repos now receive an inert, fully commented `config/fleet-settings.yml`. Activating `scope.managementGroups` makes all central ARG queries use management-group scope; explicit `-SubscriptionId` values override it, and leaving the file commented preserves implicit subscription discovery. `Get-AzLocalFleetSettings` reports the effective settings.
+- **Bounded summaries, complete artifacts.** High-cardinality Markdown tables default to 100 rows with `X of Y` notices, and the shared writer stays below a configurable 900,000-byte UTF-8 budget. CSV, JSON, JUnit, and HTML artifacts are not truncated.
+- **Scale-safe enrichment and ticketing.** Inventory uses one ARG subscription-name lookup, readiness avoids fleet-sized command lines, failed-run health evidence uses one scoped query, and ServiceNow fan-out defaults to 25 incidents with a five-consecutive-failure circuit breaker.
 
 > Previous release notes have moved into the [Release History](#release-history) appendix at the bottom of this document.
 

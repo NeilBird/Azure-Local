@@ -34,8 +34,11 @@ function Invoke-AzResourceGraphQuery {
         KQL query string. Normalised to single-line before being passed to
         'az graph query -q'. See .DESCRIPTION for the Windows az.cmd reason.
     .PARAMETER SubscriptionId
-        Optional. If supplied, scopes the query to that subscription via
-        --subscriptions. Omit to query across all accessible subscriptions.
+        Optional. If supplied, scopes the query to those subscriptions via
+        --subscriptions. Explicit subscriptions take precedence over management
+        groups configured in fleet-settings.yml. Omit to use configured
+        management groups, or the existing implicit accessible-subscription
+        scope when no management groups are configured.
     .PARAMETER First
         Initial page size. Defaults to 1000 (the ARG maximum). If ARG rejects
         a page with ResponsePayloadTooLarge, the helper halves the page size
@@ -132,7 +135,7 @@ function Invoke-AzResourceGraphQuery {
         [string]$Query,
 
         [Parameter(Mandatory = $false)]
-        [string]$SubscriptionId,
+        [string[]]$SubscriptionId,
 
         [Parameter(Mandatory = $false)]
         [ValidateRange(1, 1000)]
@@ -170,6 +173,39 @@ function Invoke-AzResourceGraphQuery {
     # such as `'https://portal.azure.com/...'`. If you need to annotate your
     # KQL, do it in PowerShell `#` comments OUTSIDE the here-string.
     $Query = ($Query -replace '\s+', ' ').Trim()
+
+    # Explicit subscription scope always wins. Otherwise, consult the optional
+    # fleet settings file. A missing or fully commented file deliberately leaves
+    # the az CLI call unscoped, preserving the pre-v0.9.22 behavior for smaller
+    # environments. Management-group scope avoids the CLI/PowerShell implicit
+    # first-1,000-subscriptions limit for large estates.
+    $subscriptionIds = @($SubscriptionId | ForEach-Object {
+        $_ -split ','
+    } | ForEach-Object {
+        $_.Trim()
+    } | Where-Object {
+        -not [string]::IsNullOrWhiteSpace($_)
+    } | Select-Object -Unique)
+    $managementGroupIds = @()
+    if ($subscriptionIds.Count -eq 0) {
+        $fleetSettings = Get-AzLocalFleetSettings
+        $managementGroupIds = @($fleetSettings.ManagementGroups)
+    }
+    $script:LastResourceGraphScopeMode = if ($subscriptionIds.Count -gt 0) {
+        'ExplicitSubscriptions'
+    }
+    elseif ($managementGroupIds.Count -gt 0) {
+        'ManagementGroups'
+    }
+    else {
+        'ImplicitSubscriptions'
+    }
+    $script:LastResourceGraphScopeCount = if ($subscriptionIds.Count -gt 0) {
+        $subscriptionIds.Count
+    }
+    else {
+        $managementGroupIds.Count
+    }
 
     # v0.9.1: central subscription-exclusion injection. Every ARG query in this
     # module begins with a bare table token ('resources' / 'extensibilityresources')
@@ -277,7 +313,14 @@ function Invoke-AzResourceGraphQuery {
             }
 
             $azArgs = @('graph', 'query', '-q', $Query, '--first', $effectiveFirst, '--only-show-errors')
-            if ($SubscriptionId) { $azArgs += @('--subscriptions', $SubscriptionId) }
+            if ($subscriptionIds.Count -gt 0) {
+                $azArgs += @('--subscriptions')
+                $azArgs += $subscriptionIds
+            }
+            elseif ($managementGroupIds.Count -gt 0) {
+                $azArgs += @('--management-groups')
+                $azArgs += $managementGroupIds
+            }
             if ($skipToken) { $azArgs += @('--skip-token', $skipToken) }
 
             # v0.7.68: per-page retry loop for transient ARG throttling. ARG

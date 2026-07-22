@@ -508,6 +508,27 @@ resources
         # Detail view. Tag with IsUnresolved (always populated, see comment
         # above) and optionally filter. Drop ProgressJson when -IncludeRawProgress
         # was not supplied so the default output is pipeline-friendly.
+        $allHealthEvidence = @()
+        if ($EnrichWithHealthEvidence) {
+            $healthRuns = @($rows | Where-Object {
+                $_.ErrorCategory -eq 'HealthCheck' -and $_.ClusterResourceId -and $_.StartTime -and $_.EndTime
+            })
+            if ($healthRuns.Count -gt 0) {
+                try {
+                    $earliestStart = [datetime](($healthRuns | Measure-Object -Property StartTime -Minimum).Minimum)
+                    $latestEnd = [datetime](($healthRuns | Measure-Object -Property EndTime -Maximum).Maximum)
+                    $allHealthEvidence = @(Get-AzLocalUpdateRunHealthEvidence `
+                        -ClusterResourceId @($healthRuns.ClusterResourceId) `
+                        -RunStartTime $earliestStart `
+                        -RunEndTime $latestEnd `
+                        -SubscriptionId:$SubscriptionId)
+                }
+                catch {
+                    Write-Log -Message "HealthCheck evidence batch enrichment failed: $($_.Exception.Message)" -Level Warning
+                }
+            }
+        }
+
         $rowsTagged = foreach ($r in $rows) {
             $key = "$(($r.ClusterResourceId).ToLower())|$($r.UpdateName)"
             $latestSucc = $null
@@ -583,25 +604,16 @@ resources
             if ($IncludeRawProgress) {
                 $obj | Add-Member -NotePropertyName 'ProgressJson' -NotePropertyValue $r.ProgressJson
             }
-            # v0.8.80: fetch same-cluster Critical healthCheckResult entries
-            # that fired within a +/-2h window of the run, so renderers can
-            # show WHICH check fired on a HealthCheck-category failure.
-            # Scoped to ErrorCategory='HealthCheck' to keep ARG query count
-            # bounded (one extra hop per failed-with-health-cat row, not
-            # per row). Skipped when -EnrichWithHealthEvidence:$false.
+            # Correlate the single fleet-scoped health-evidence result set to
+            # this run's cluster and +/- time window in memory.
             if ($EnrichWithHealthEvidence -and $r.ErrorCategory -eq 'HealthCheck' -and $r.ClusterResourceId -and $r.StartTime -and $r.EndTime) {
-                try {
-                    $evidenceRows = Get-AzLocalUpdateRunHealthEvidence `
-                        -ClusterResourceId $r.ClusterResourceId `
-                        -RunStartTime ([datetime]$r.StartTime) `
-                        -RunEndTime   ([datetime]$r.EndTime) `
-                        -SubscriptionId:$SubscriptionId
-                    $obj | Add-Member -NotePropertyName 'HealthCheckEvidence' -NotePropertyValue (@($evidenceRows))
-                }
-                catch {
-                    Write-Log -Message "HealthCheck evidence enrichment failed for $($r.ClusterName)/$($r.RunId): $($_.Exception.Message)" -Level Warning
-                    $obj | Add-Member -NotePropertyName 'HealthCheckEvidence' -NotePropertyValue (@())
-                }
+                $clusterId = ([string]$r.ClusterResourceId).ToLower()
+                $windowFrom = ([datetime]$r.StartTime).ToUniversalTime().AddHours(-2)
+                $windowTo = ([datetime]$r.EndTime).ToUniversalTime().AddHours(1)
+                $evidenceRows = @($allHealthEvidence | Where-Object {
+                    $_.ClusterResourceId -eq $clusterId -and $_.Timestamp -ge $windowFrom -and $_.Timestamp -le $windowTo
+                } | Sort-Object -Property Timestamp -Descending)
+                $obj | Add-Member -NotePropertyName 'HealthCheckEvidence' -NotePropertyValue $evidenceRows
             }
             else {
                 $obj | Add-Member -NotePropertyName 'HealthCheckEvidence' -NotePropertyValue (@())

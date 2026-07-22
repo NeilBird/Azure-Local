@@ -49,9 +49,7 @@ Describe 'PII Guard: Tests folder' {
 
         $script:AllowedGuids = @(
             '00000000-0000-0000-0000-000000000000',
-            'fbaf508b-cb61-4383-9cda-a42bfa0c7bc9',
-            'add1f87d-4174-4997-ae39-d9d41088be27',
-            '1084e062-5d0b-48c0-b4d6-c1693b575bc1'
+            '11111111-1111-1111-1111-111111111111'
         )
 
         $script:AllowedEmailDomains = @(

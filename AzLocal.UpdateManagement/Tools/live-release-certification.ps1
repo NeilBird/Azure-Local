@@ -1,10 +1,10 @@
 # ---------------------------------------------------------------------------
-# Per-release LIVE integration smoke test  -  template pinned to v0.9.22.
+# LIVE release-certification smoke test.
 #
 # Purpose
 #   A read-only, end-to-end smoke test that runs the REAL report cmdlets against
 #   a live subscription (via Az CLI / Azure Resource Graph + the public update
-#   manifest) and asserts that each release's data shapes actually render.
+#   manifest) and asserts that the supported data shapes actually render.
 #   Unlike the per-pipeline smoke tests (smoke-test-*.ps1, which validate the
 #   cmdlet OBJECT schema), this one captures the RENDERED GitHub step-summary
 #   markdown and greps it for the columns / tables / notes each release relies
@@ -12,16 +12,14 @@
 #   shape changed), so it ALSO verifies the shipped YAML templates carry the
 #   uniform 25-attempt install-step retry and the soft "No Clusters Ready" job.
 #
-# How to mirror this for a future release
-#   1. Copy this file to Tools\live-integration-v<new>.ps1.
-#   2. Update the -ReleaseVersion default and the assertions in each section to
-#      cover that release's new output (new column header, table heading,
-#      PassThru property, etc.).
-#   3. Adjust -Rings if the target subscription uses different UpdateRing tags.
-#   4. Run it after the source edits but BEFORE the version bump, to confirm the
-#      live output matches the requested format.
+# How to maintain this for a future release
+#   1. Add durable behavior assertions for new output shapes without copying
+#      this script or encoding the release number in assertion names.
+#   2. Adjust -Rings if the target subscription uses different UpdateRing tags.
+#   3. Run after the manifest version bump. By default, the expected version is
+#      read from that manifest; -ExpectedVersion can pin an external expectation.
 #
-# What v0.9.22 asserts (and the standing v0.8.97 / v0.9.11 shapes that must still render):
+# Durable behavior contracts asserted by this script:
 #   - Get-AzLocalUpdateRunFailures -View Detail        : UpdateRing property
 #   - Monitor:3 Fleet Update Status run-history table   : "Update Ring" column
 #   - Monitor:3                                         : "Clusters - Ready for Update" table
@@ -33,24 +31,24 @@
 #     severity word, PassThru CriticalClusters/WarningOnlyClusters, H+C+W+O=Total
 #   - Monitor:1 Fleet Connectivity Status (v0.9.21)     : KPI table rows carry a
 #     bare-glyph status indicator
-#   - Shared ARG transport (v0.9.22)                    : payload-reduction
+#   - Shared ARG transport                              : payload-reduction
 #     diagnostics exist after real Az CLI calls
-#   - Monitor:2 Fleet Health Status (v0.9.22)           : dynamic health arrays
+#   - Monitor:2 Fleet Health Status                     : dynamic health arrays
 #     start at 50 rows and order by resource ID
-#   - Monitor:1 Fleet Connectivity Status (v0.9.22)     : five lean projected
+#   - Monitor:1 Fleet Connectivity Status               : five lean projected
 #     wire queries with stable ordering
 #   - Apply Updates readiness gate                      : stale-assessment Status override + Support column
 #   - shipped pipeline templates: uniform 25-attempt install-step retry + soft No Clusters Ready job
 #
 # Requires: `az login`; signed-in identity has Reader on the target subscription.
-# Output  : $env:TEMP\azlocal-live-v<ReleaseVersion>\*.txt  (rendered markdown,
+# Output  : $env:TEMP\azlocal-live-v<ExpectedVersion>\*.txt (rendered markdown,
 #           CSVs and a 0-REPORT.txt PASS/FAIL roll-up).
 # Safety  : 100% read-only. No ARM writes, no update actions are triggered.
 # ---------------------------------------------------------------------------
 #requires -Version 5.1
 [CmdletBinding()]
 param(
-    [string]$ReleaseVersion = '0.9.22',
+    [version]$ExpectedVersion,
     [string]$SubscriptionId,
     [string]$ModulePath,
     [string[]]$Rings = @('Prod', 'Ring1', 'Ring2', 'Canary', 'DevTest'),
@@ -64,7 +62,11 @@ if (-not $ModulePath) {
 }
 if (-not (Test-Path $ModulePath)) { throw "Module manifest not found at: $ModulePath" }
 
-$outDir = Join-Path $env:TEMP "azlocal-live-v$ReleaseVersion"
+if (-not $PSBoundParameters.ContainsKey('ExpectedVersion')) {
+    $ExpectedVersion = [version](Import-PowerShellDataFile -Path $ModulePath).ModuleVersion
+}
+
+$outDir = Join-Path $env:TEMP "azlocal-live-v$ExpectedVersion"
 $artDir = Join-Path $outDir 'artifacts'
 New-Item -ItemType Directory -Path $artDir -Force | Out-Null
 
@@ -107,7 +109,7 @@ $env:GITHUB_OUTPUT = $ghOutput
 $env:GITHUB_ACTIONS = 'true'
 
 $report = [ordered]@{}
-$report['Loaded module version is release version'] = if ($moduleVersion.ToString() -eq $ReleaseVersion) { 'PASS' } else { "FAIL (loaded=$moduleVersion expected=$ReleaseVersion)" }
+$report['Loaded module version matches expected version'] = if ($moduleVersion -eq $ExpectedVersion) { 'PASS' } else { "FAIL (loaded=$moduleVersion expected=$ExpectedVersion)" }
 
 try {
     # 1) Get-AzLocalUpdateRunFailures -View Detail : expect UpdateRing property
@@ -180,7 +182,7 @@ try {
         $report['Monitor2 bucket sanity H+C+W+O=Total (v0.9.21)'] = if (($r4.HealthyClusters + $r4.CriticalClusters + $r4.WarningOnlyClusters + $r4.OtherClusters) -eq $r4.TotalInSub) { 'PASS' } else { "FAIL ($($r4.HealthyClusters)+$($r4.CriticalClusters)+$($r4.WarningOnlyClusters)+$($r4.OtherClusters) != $($r4.TotalInSub))" }
         $fleetHealthSource = Get-Content -LiteralPath (Join-Path (Split-Path $ModulePath -Parent) 'Public\Get-AzLocalFleetHealthFailures.ps1') -Raw
         $healthFirst50Calls = ([regex]::Matches($fleetHealthSource, 'Invoke-AzResourceGraphQuery\s+-Query\s+\$kql[^\r\n]*-First\s+50')).Count
-        $report['Monitor2 50-row initial paging + stable order (v0.9.22)'] = if ($healthFirst50Calls -eq 2 -and $fleetHealthSource -match '\| order by ClusterResourceId asc') { 'PASS' } else { "FAIL (First50 calls=$healthFirst50Calls)" }
+        $report['Monitor2 50-row initial paging + stable order'] = if ($healthFirst50Calls -eq 2 -and $fleetHealthSource -match '\| order by ClusterResourceId asc') { 'PASS' } else { "FAIL (First50 calls=$healthFirst50Calls)" }
         $moduleDiagnostics = & (Get-Module AzLocal.UpdateManagement | Sort-Object Version -Descending | Select-Object -First 1) {
             [PSCustomObject]@{
                 PayloadReduced    = $script:LastResourceGraphPayloadReduced
@@ -188,7 +190,7 @@ try {
                 EffectivePageSize = $script:LastResourceGraphEffectivePageSize
             }
         }
-        $report['Shared ARG payload diagnostics available (v0.9.22)'] = if ($null -ne $moduleDiagnostics.PayloadReduced -and $moduleDiagnostics.EffectivePageSize -ge 1) { "PASS (reduced=$($moduleDiagnostics.PayloadReduced), retries=$($moduleDiagnostics.PayloadRetryCount), first=$($moduleDiagnostics.EffectivePageSize))" } else { 'FAIL - diagnostics unavailable' }
+        $report['Shared ARG payload diagnostics available'] = if ($null -ne $moduleDiagnostics.PayloadReduced -and $moduleDiagnostics.EffectivePageSize -ge 1) { "PASS (reduced=$($moduleDiagnostics.PayloadReduced), retries=$($moduleDiagnostics.PayloadRetryCount), first=$($moduleDiagnostics.EffectivePageSize))" } else { 'FAIL - diagnostics unavailable' }
     }
     catch { $report['Export-AzLocalFleetHealthStatusReport'] = "ERROR: $($_.Exception.Message)" }
 
@@ -211,7 +213,7 @@ try {
         )
         $allLeanSignalsPresent = @($leanProjectionSignals | Where-Object { $connectivitySource -notmatch [regex]::Escape($_) }).Count -eq 0
         $orderedQueryCount = ([regex]::Matches($connectivitySource, '\| order by ')).Count
-        $report['Monitor1 lean ordered ARG queries (v0.9.22)'] = if ($allLeanSignalsPresent -and $orderedQueryCount -eq 5) { 'PASS' } else { "FAIL (lean=$allLeanSignalsPresent, ordered=$orderedQueryCount)" }
+        $report['Monitor1 lean ordered ARG queries'] = if ($allLeanSignalsPresent -and $orderedQueryCount -eq 5) { 'PASS' } else { "FAIL (lean=$allLeanSignalsPresent, ordered=$orderedQueryCount)" }
     }
     catch { $report['Export-AzLocalFleetConnectivityStatusReport'] = "ERROR: $($_.Exception.Message)" }
 
@@ -291,6 +293,6 @@ finally {
 }
 
 Save '0-REPORT' ($report.GetEnumerator() | ForEach-Object { '{0,-55} : {1}' -f $_.Key, $_.Value })
-Write-Host "`n==== SUMMARY (v$ReleaseVersion) ====" -ForegroundColor Cyan
+Write-Host "`n==== SUMMARY (v$ExpectedVersion) ====" -ForegroundColor Cyan
 $report.GetEnumerator() | ForEach-Object { '{0,-55} : {1}' -f $_.Key, $_.Value }
 Write-Host "`nFull rendered output under: $outDir" -ForegroundColor Cyan

@@ -326,6 +326,7 @@ Export-ModuleMember -Function @(
     # Fleet-Scale Operations (v0.5.6)
     'Invoke-AzLocalFleetOperation',
     'Get-AzLocalFleetProgress',
+    'Get-AzLocalFleetSettings',
     'Test-AzLocalFleetHealthGate',
     'Export-AzLocalFleetState',
     'Resume-AzLocalFleetUpdate',

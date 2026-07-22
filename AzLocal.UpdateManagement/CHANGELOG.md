@@ -22,10 +22,14 @@ helper. Monitor: 1 and Monitor: 2 also reduce their wire payloads at source.
 
 - **Per-call payload diagnostics**: `$script:LastResourceGraphPayloadReduced`, `$script:LastResourceGraphPayloadRetryCount`, and `$script:LastResourceGraphEffectivePageSize` expose adaptive page-size behaviour to callers and tests.
 - **Scaling regressions** cover adaptive halving, continuation-token completeness, one-row failure guidance, diagnostic reset, Monitor: 2's 50-row initial page, lean Monitor: 1 projections, and deterministic ordering.
+- **Optional, schema-versioned `config/fleet-settings.yml`.** `Copy-AzLocalPipelineExample` and `Update-AzLocalPipelineExample` create a fully commented starter without overwriting operator settings. With no active management groups, existing implicit subscription discovery is unchanged. Active `scope.managementGroups` entries avoid the Azure CLI/Azure PowerShell implicit-scope ceiling of 1,000 accessible subscriptions; explicit `-SubscriptionId` values still take precedence. `Get-AzLocalFleetSettings` exposes the resolved scope and reporting/ITSM limits.
+- **Bounded human-readable summaries with complete artifacts.** Ready, recent-success, in-flight, unresolved-failure, and attempt-gap Markdown tables default to 100 rows and include `X of Y` notices. CSV, JSON, JUnit, and HTML artifacts remain complete. The shared summary writer also enforces a configurable UTF-8 byte budget (900,000 by default) below GitHub's 1 MiB per-step limit.
+- **Fleet-scale query reductions.** Inventory resolves subscription names in one scoped ARG query, explicit readiness value lists are command-safe batched, readiness evidence avoids fleet-sized KQL lists, and failed-run health evidence is fetched once per scope then correlated in memory.
+- **ITSM fan-out safeguards.** ServiceNow creation defaults to 25 potential incidents per run and opens a circuit breaker after five consecutive creation failures. Limit- and breaker-skipped rows remain in CSV/JUnit results for auditability.
 
 ### Notes
 
-- No public function or export-count change (still **69**). `GENERATED_AGAINST_MODULE_VERSION` bumped to `0.9.22` across all bundled GitHub Actions and Azure DevOps templates.
+- Public function count **69 -> 70** (`Get-AzLocalFleetSettings`). `GENERATED_AGAINST_MODULE_VERSION` bumped to `0.9.22` across all bundled GitHub Actions and Azure DevOps templates.
 
 ## [0.9.21] - 2026-07-15
 
@@ -2616,7 +2620,7 @@ If you created the custom role against the v0.7.79-or-earlier definition in `doc
   so any cluster whose `healthCheckResult` array exceeded 128 entries was
   losing every check past position 128 - including Failed ones - before
   the function ever saw them. Empirical measurement against an
-  AdaptiveCloudLab subscription showed **16 of 20 clusters affected** and
+  maintainer test subscription showed **16 of 20 clusters affected** and
   **2,711 healthCheckResult entries silently dropped fleet-wide**, with
   the worst offender (NewYorkCity, 380 entries) losing 66% of its checks
   and reporting only 4 Failed entries when ARM had additional Failed
@@ -2808,7 +2812,7 @@ If you created the custom role against the v0.7.79-or-earlier definition in `doc
   the query parses + executes cleanly, and asserts the documented
   required-column set is present on the first returned row. Use this
   before shipping a Step.4 KQL edit to catch column-rename / schema-
-  drift bugs against a live AdaptiveCloudLab subscription.
+  drift bugs against a live maintainer test subscription.
 
 - **New `Step.4_fleet-connectivity-status.yml` pipeline (GitHub Actions
   and Azure DevOps).** A daily fleet-wide network connectivity audit

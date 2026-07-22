@@ -749,6 +749,8 @@ function Export-AzLocalUpdateRunMonitorReport {
     Set-AzLocalPipelineOutput -Name 'attempts_without_run' -Value ([string]$attemptGaps.Count)
 
     # ---- Markdown step summary -------------------------------------------
+    $fleetSettings = Get-AzLocalFleetSettings
+    $maxSummaryRows = $fleetSettings.MaxRowsPerTable
     $md = New-Object 'System.Collections.Generic.List[string]'
     [void]$md.Add('## In-Flight Update Monitor')
     [void]$md.Add('')
@@ -811,7 +813,7 @@ function Export-AzLocalUpdateRunMonitorReport {
         [void]$md.Add('')
         [void]$md.Add('| Cluster | Update | State | Progress Status | Current Step | Progress | Step Started (UTC) | Step Elapsed | Run Started (UTC) | Run Elapsed | Last Activity (UTC) | Flags |')
         [void]$md.Add('|---------|--------|-------|-----------------|--------------|----------|--------------------|--------------|-------------------|-------------|---------------------|-------|')
-        foreach ($r in ($inFlight | Sort-Object @{Expression='SeverityScore';Descending=$true}, ClusterName)) {
+        foreach ($r in ($inFlight | Sort-Object @{Expression='SeverityScore';Descending=$true}, ClusterName | Select-Object -First $maxSummaryRows)) {
             $cs = if ($r.CurrentStep) { $r.CurrentStep } else { '-' }
             $pg = if ($r.Progress) { $r.Progress } else { '-' }
             $stepStart = if ($r.StepStartTimeUtc) { $r.StepStartTimeUtc } else { '-' }
@@ -839,6 +841,10 @@ function Export-AzLocalUpdateRunMonitorReport {
             $updateCell  = if ($r.UpdateRunPortalUrl) { '<a href="' + $r.UpdateRunPortalUrl + '">' + $r.UpdateName  + '</a>' } else { $r.UpdateName }
             [void]$md.Add("| $clusterCell | $updateCell | $stateCell | $statusCell | $cs | $pg | $stepStart | $stepEl | $($r.StartTimeUtc) | $runEl | $lastAct | $flagCell |")
         }
+        if ($inFlight.Count -gt $maxSummaryRows) {
+            [void]$md.Add('')
+            [void]$md.Add("_Showing $maxSummaryRows of $($inFlight.Count) in-flight runs, worst first. Download ``$CsvFileName`` for the full list._")
+        }
         # v0.8.96: when any in-flight row is stalled/orphaned, spell out the
         # manual remediation under the table. These runs still report InProgress
         # so the failed-update single-retry job skips them - operator action only.
@@ -859,7 +865,7 @@ function Export-AzLocalUpdateRunMonitorReport {
         [void]$md.Add('')
         [void]$md.Add('| Cluster | Update | Ended (UTC) | Failed Step | Verbose Error Details | Recent |')
         [void]$md.Add('|---------|--------|-------------|-------------|-----------------------|--------|')
-        foreach ($r in ($unresolvedFailed | Sort-Object @{Expression='EndTimeUtc';Descending=$true})) {
+        foreach ($r in ($unresolvedFailed | Sort-Object @{Expression='EndTimeUtc';Descending=$true} | Select-Object -First $maxSummaryRows)) {
             $cs = if ($r.CurrentStep) { $r.CurrentStep } else { '-' }
             # v0.8.80: combine the deepest step's description (the human
             # 'what step was running') with its errorMessage (the trace).
@@ -884,6 +890,10 @@ function Export-AzLocalUpdateRunMonitorReport {
             $updateCell  = if ($r.UpdateRunPortalUrl) { '<a href="' + $r.UpdateRunPortalUrl + '">' + $r.UpdateName  + '</a>' } else { $r.UpdateName }
             [void]$md.Add("| $clusterCell | $updateCell | $($r.EndTimeUtc) | $cs | $detailCell | $recentTag |")
         }
+        if ($unresolvedFailed.Count -gt $maxSummaryRows) {
+            [void]$md.Add('')
+            [void]$md.Add("_Showing $maxSummaryRows of $($unresolvedFailed.Count) unresolved failed runs, most recent first. Download ``$CsvFileName`` for the full list._")
+        }
         [void]$md.Add('')
     }
     if ($attemptGaps.Count -gt 0) {
@@ -893,7 +903,7 @@ function Export-AzLocalUpdateRunMonitorReport {
         [void]$md.Add('')
         [void]$md.Add('| Cluster | Outcome | Update | Attempted (UTC) | Reason |')
         [void]$md.Add('|---------|---------|--------|-----------------|--------|')
-        foreach ($gap in ($attemptGaps | Sort-Object @{Expression='AttemptUtc';Descending=$true}, ClusterName)) {
+        foreach ($gap in ($attemptGaps | Sort-Object @{Expression='AttemptUtc';Descending=$true}, ClusterName | Select-Object -First $maxSummaryRows)) {
             $clusterCell = Get-AzLocalClusterPortalLink -ClusterName ([string]$gap.ClusterName) -ClusterResourceId ([string]$gap.ClusterResourceId)
             $updateLabel = if ([string]::IsNullOrWhiteSpace($gap.UpdateName)) { '-' } else { $gap.UpdateName }
             $reasonText = if ([string]::IsNullOrWhiteSpace($gap.Reason)) { '-' } else {
@@ -901,6 +911,10 @@ function Export-AzLocalUpdateRunMonitorReport {
                 ($gap.Reason -replace '\|', '\|')
             }
             [void]$md.Add("| $clusterCell | $($gap.Outcome) | $updateLabel | $($gap.AttemptUtcText) | $reasonText |")
+        }
+        if ($attemptGaps.Count -gt $maxSummaryRows) {
+            [void]$md.Add('')
+            [void]$md.Add("_Showing $maxSummaryRows of $($attemptGaps.Count) recent attempt gaps, most recent first. Download ``$CsvFileName`` for the full list._")
         }
         [void]$md.Add('')
         [void]$md.Add('> **What this means.** The module recorded an apply attempt against this cluster, but the corresponding `updateRun` resource cannot be queried via Azure Resource Graph. Either URP rejected the orchestration after the audit-log `apply/action` succeeded (typical for package-internal pre-install health failures), or the run was created and then deleted before this report ran.')

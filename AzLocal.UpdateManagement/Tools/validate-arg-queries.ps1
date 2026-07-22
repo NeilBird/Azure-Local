@@ -1,6 +1,6 @@
 # ARG-query / live-cmdlet validation harness for ALL pipeline-driver cmdlets
 # in the AzLocal.UpdateManagement module. Runs each cmdlet the bundled
-# Step.N pipelines call against the live AdaptiveCloudLab subscription (or
+# Step.N pipelines call against the approved maintainer test subscription (or
 # whichever subscription `az account show` reports) and asserts the returned
 # schema matches the documented shape.
 #
