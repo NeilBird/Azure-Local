@@ -20,4 +20,13 @@ Describe 'Sideload self-hosted workflow prerequisites' -Tag 'ReleaseGate' {
         $workflow | Should -Match 'Install-Module powershell-yaml -Scope CurrentUser -Force -AllowClobber'
         $workflow | Should -Match 'Install-Module @installArgs'
     }
+
+    It 'installs Az.Accounts before GitHub Azure Login enables an Az PowerShell session' {
+        $workflow = Get-Content -LiteralPath $script:WorkflowPaths[0] -Raw
+        $accountsInstallIndex = $workflow.IndexOf('Install-Module Az.Accounts')
+        $azureLoginIndex = $workflow.IndexOf('uses: azure/login@v3')
+
+        $accountsInstallIndex | Should -BeGreaterThan -1
+        $azureLoginIndex | Should -BeGreaterThan $accountsInstallIndex
+    }
 }

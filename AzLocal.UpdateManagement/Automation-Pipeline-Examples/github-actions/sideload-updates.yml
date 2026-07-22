@@ -217,6 +217,28 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v5
 
+    # azure/login with enable-AzPSSession requires Az.Accounts to be available
+    # before the action runs. Install every PowerShell prerequisite used by the
+    # self-hosted job here so a clean runner does not depend on image state.
+    - name: Install sideload PowerShell prerequisites
+      shell: pwsh
+      run: |
+        $ErrorActionPreference = 'Stop'
+        $installMaxAttempts = 25
+        for ($installAttempt = 1; $installAttempt -le $installMaxAttempts; $installAttempt++) {
+          try {
+            Install-Module Az.Accounts -Scope CurrentUser -Force -AllowClobber
+            Install-Module Az.KeyVault -Scope CurrentUser -Force -AllowClobber
+            Install-Module powershell-yaml -Scope CurrentUser -Force -AllowClobber
+            break
+          } catch {
+            if ($installAttempt -ge $installMaxAttempts) { throw }
+            $installRetryDelay = [math]::Min(60, 10 * [math]::Pow(2, $installAttempt - 1)) + (Get-Random -Minimum 0 -Maximum 5)
+            Write-Host "Prerequisite install attempt $installAttempt of $installMaxAttempts failed: $($_.Exception.Message). Retrying in $installRetryDelay second(s)..."
+            Start-Sleep -Seconds $installRetryDelay
+          }
+        }
+
     # Azure auth. enable-AzPSSession=true sets up BOTH the az CLI context (ARG +
     # az rest tag writes) AND the Az PowerShell context (Get-AzKeyVaultSecret).
     #
@@ -281,9 +303,6 @@ jobs:
         while ($true) {
             $installAttempt++
             try {
-            Install-Module Az.Accounts -Scope CurrentUser -Force -AllowClobber
-            Install-Module Az.KeyVault -Scope CurrentUser -Force -AllowClobber
-            Install-Module powershell-yaml -Scope CurrentUser -Force -AllowClobber
                 Install-Module @installArgs
                 break
             } catch {
