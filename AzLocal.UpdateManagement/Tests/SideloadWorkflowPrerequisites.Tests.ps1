@@ -29,4 +29,26 @@ Describe 'Sideload self-hosted workflow prerequisites' -Tag 'ReleaseGate' {
         $accountsInstallIndex | Should -BeGreaterThan -1
         $azureLoginIndex | Should -BeGreaterThan $accountsInstallIndex
     }
+
+    It 'serializes GitHub runs and batches the Azure DevOps schedule' {
+        $githubWorkflow = Get-Content -LiteralPath $script:WorkflowPaths[0] -Raw
+        $adoWorkflow = Get-Content -LiteralPath $script:WorkflowPaths[1] -Raw
+
+        $githubWorkflow | Should -Match '(?m)^concurrency:\r?$'
+        $githubWorkflow | Should -Match ([regex]::Escape('group: sideload-updates-${{ github.workflow }}'))
+        $githubWorkflow | Should -Match '(?m)^\s+cancel-in-progress: false\r?$'
+        $adoWorkflow | Should -Match "(?m)^#\s+batch: true\s+# never overlap scheduled reconciliation runs\r?$"
+    }
+
+    It 'documents runner affinity, centralized logs, HA boundaries, and 100-cluster sizing' {
+        $guidePath = Join-Path $PSScriptRoot '..\Automation-Pipeline-Examples\docs\sideload.md'
+        $guide = Get-Content -LiteralPath $guidePath -Raw
+
+        $guide | Should -Match 'Scaling considerations for the self-hosted runner pool'
+        $guide | Should -Match '100 due clusters'
+        $guide | Should -Match 'Runner-local task affinity and failover'
+        $guide | Should -Match 'active/passive runner pool'
+        $guide | Should -Match 'logs\\\*\.robocopy\.log'
+        $guide | Should -Match 'does \*\*not\*\* automatically purge'
+    }
 }

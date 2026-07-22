@@ -55,6 +55,7 @@ trigger: none  # Manual or scheduled only
 #       include:
 #         - main
 #     always: true
+#     batch: true              # never overlap scheduled reconciliation runs
 # END-AZLOCAL-CUSTOMIZE:schedule-triggers
 
 parameters:

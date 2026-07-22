@@ -141,8 +141,95 @@ It holds three subfolders:
 
 Because a bundle is downloaded and hashed **once** into the shared cache and then reused
 across every cluster that needs that version, only the first cluster pays the download +
-hash cost. The pipeline's `concurrency` / queueing settings serialize overlapping runs so
-they do not race on the same shared state.
+hash cost.
+
+### 3.1 Scaling considerations for the self-hosted runner pool
+
+The CI/CD scheduler assigns the entire sideload reconciliation job to **one** eligible
+runner/agent. It does not split a 100-cluster plan across 100 runners. That selected host
+can register up to `reconciliation.maxConcurrentCopies` detached Scheduled Tasks; later
+reconciliation jobs may be assigned to a different host.
+
+`maxConcurrentCopies` is a fleet-wide copy ceiling when reconciliation jobs are
+serialized: each run counts every fresh `Copying` record in the shared state before it
+starts another copy. Adding runners therefore improves **job availability**, but does not
+multiply copy throughput. Increase `maxConcurrentCopies` only after measuring the shared
+cache/file-server IOPS, WAN/SMB bandwidth, per-cluster import-share capacity, and the
+aggregate effect on production traffic.
+
+For 100 due clusters with the default `maxConcurrentCopies: 2`, work proceeds in roughly
+50 copy waves. A new wave can start only on the next reconciliation after capacity becomes
+free, so a practical lower-bound estimate is:
+
+```text
+copy waves = ceiling(cluster count / maxConcurrentCopies)
+wave time   = copy duration rounded up to the reconciliation interval
+total copy stage ~= copy waves * wave time
+```
+
+For example, if each copy takes about two hours and reconciliation runs every 30 minutes,
+the copy stage is approximately 50 x 2 hours = 100 hours, before allowing for import time,
+retries, or uneven links. Raising the limit to 10 gives about 10 waves, but only if the
+storage and network can sustain ten concurrent copies. More runners alone do not change
+that calculation.
+
+### 3.2 Runner-local task affinity and failover
+
+Each `AzLocalSideload_<cluster>` Scheduled Task exists only on the runner/agent that
+started that copy. Its `OwningMachine`, task name, operation ID, worker PID, robocopy PID,
+heartbeat, progress, and central log path are recorded in shared state.
+
+If the next job lands on another host, that host can:
+
+- read and report the existing heartbeat and progress;
+- see `Copied` and perform remote verification/import;
+- re-drive stale work with a new operation ID so the superseded worker cannot overwrite
+   the current state.
+
+It cannot manage Windows Task Scheduler on the previous host. In particular, importing
+from Runner B cannot unregister the completed task definition left on Runner A. That task
+is no longer doing copy work, but its definition can remain until Runner A next replaces
+it for the same cluster or an operator removes it. For cleanup, use the `OwningMachine`
+and `TaskName` fields from `state\<cluster>.json` and run on that host:
+
+```powershell
+Stop-ScheduledTask -TaskName 'AzLocalSideload_<cluster>' -ErrorAction SilentlyContinue
+Unregister-ScheduledTask -TaskName 'AzLocalSideload_<cluster>' -Confirm:$false
+```
+
+Do not delete shared state to move ownership. Let heartbeat/no-progress staleness trigger
+the bounded re-drive, which creates a new operation ID and records the new owner.
+
+### 3.3 HA and consistency contract
+
+v0.9.22 supports an **active/passive runner pool**: multiple identically configured hosts
+may be eligible so another host can run the next reconciliation when one is offline, but
+only one reconciliation job may execute at a time. It is not an active-active sharding
+system and does not contain a distributed lease that makes simultaneous jobs safe.
+
+- GitHub Actions already enforces one run at a time with the workflow `concurrency` group
+   and `cancel-in-progress: false`.
+- For Azure DevOps, keep `batch: true` on every YAML schedule and configure the pipeline
+   so manual and scheduled runs cannot overlap. Pool size or agent demands do not serialize
+   runs by themselves.
+- Every eligible host must use the same settings/catalog/auth-map revision, module version,
+   task identity, and UNC paths.
+- `paths.stateRoot` and `paths.cacheRoot` are control-plane dependencies. Put them on
+   resilient SMB storage with backups, adequate capacity/IOPS, and consistent ACLs. If the
+   share is unavailable, do not start another reconciliation against a different state root.
+
+Operational control and reporting are centralized by `paths.stateRoot`, not by the runner:
+
+- `state\*.json` is the current fleet control state and survives runner loss;
+- `logs\*.robocopy.log` is the central copy log history from every runner;
+- each pipeline summary/JUnit artifact is a point-in-time rendering of those shared records,
+   so a later job on another runner reports the same underlying state;
+- process IDs are meaningful only on the recorded `OwningMachine`.
+
+The `reporting.retentionDays` value records the intended log-retention policy, but v0.9.22
+does **not** automatically purge `logs\`. Apply a file-server lifecycle/cleanup policy and
+exclude active logs referenced by a `Copying` state. Monitor free space on both the log and
+cache volumes.
 
 ---
 

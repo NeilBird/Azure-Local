@@ -5,6 +5,8 @@ schemaVersion: 1
 enabled: false
 
 paths:
+  # Shared control plane used by every eligible runner: state\, logs\, and the
+  # default cache\. Use resilient SMB storage with consistent ACLs and backups.
   stateRoot: '\\fileserver\azlocal-sideload'
   cacheRoot: ''
   authMap: './config/sideload-auth-map.csv'
@@ -47,4 +49,6 @@ remoting:
 
 reporting:
   logTailLines: 20
+  # Retention policy for operators/file-server lifecycle tooling. v0.9.22 does
+  # not automatically purge central robocopy logs.
   retentionDays: 30
