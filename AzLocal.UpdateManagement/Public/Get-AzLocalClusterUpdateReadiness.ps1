@@ -212,12 +212,11 @@ function Get-AzLocalClusterUpdateReadiness {
         # v0.7.68: resolve every supplied ResourceId with a single ARG batch
         # lookup so we can pick up tags and properties (status / connectivityStatus)
         # in one round trip, mirroring the ByTag projection.
-        $idListKql = ($ClusterResourceIds | ForEach-Object { "'$($_.ToLower())'" }) -join ','
-        $argQuery = "resources | where type =~ 'microsoft.azurestackhci/clusters' | where tolower(id) in~ ($idListKql) | project id, name, resourceGroup, subscriptionId, tags, properties"
+        $argQueryTemplate = "resources | where type =~ 'microsoft.azurestackhci/clusters' | where tolower(id) in~ ({0}) | project id, name, resourceGroup, subscriptionId, tags, properties"
         try {
-            $argParams = @{ Query = $argQuery }
-            if ($SubscriptionId) { $argParams['SubscriptionId'] = $SubscriptionId }
-            $clusterRows = Invoke-AzResourceGraphQuery @argParams
+            $batchParams = @{ Value = $ClusterResourceIds; QueryTemplate = $argQueryTemplate }
+            if ($SubscriptionId) { $batchParams['SubscriptionId'] = $SubscriptionId }
+            $clusterRows = Invoke-AzLocalResourceGraphValueBatches @batchParams
         }
         catch {
             Write-Log -Message "Error resolving cluster resource IDs via Azure Resource Graph: $_" -Level Error
@@ -261,16 +260,15 @@ function Get-AzLocalClusterUpdateReadiness {
         # ByName - resolve names to resource IDs via a single ARG batch lookup
         # (v0.7.68). Replaces the previous per-name Get-AzLocalClusterInfo
         # ARM REST loop.
-        $nameListKql = ($ClusterNames | ForEach-Object { "'$($_.ToLower())'" }) -join ','
         $rgFilter = ''
         if ($ResourceGroupName) {
             $rgFilter = "| where tolower(resourceGroup) =~ '$($ResourceGroupName.ToLower())'"
         }
-        $argQuery = "resources | where type =~ 'microsoft.azurestackhci/clusters' | where tolower(name) in~ ($nameListKql) $rgFilter | project id, name, resourceGroup, subscriptionId, tags, properties"
+        $argQueryTemplate = "resources | where type =~ 'microsoft.azurestackhci/clusters' | where tolower(name) in~ ({0}) $rgFilter | project id, name, resourceGroup, subscriptionId, tags, properties"
         try {
-            $argParams = @{ Query = $argQuery }
-            if ($SubscriptionId) { $argParams['SubscriptionId'] = $SubscriptionId }
-            $clusterRows = Invoke-AzResourceGraphQuery @argParams
+            $batchParams = @{ Value = $ClusterNames; QueryTemplate = $argQueryTemplate }
+            if ($SubscriptionId) { $batchParams['SubscriptionId'] = $SubscriptionId }
+            $clusterRows = Invoke-AzLocalResourceGraphValueBatches @batchParams
         }
         catch {
             Write-Log -Message "Error resolving cluster names via Azure Resource Graph: $_" -Level Error
@@ -327,10 +325,11 @@ function Get-AzLocalClusterUpdateReadiness {
     # the readiness/recommendation logic inline against the cached data. No
     # background jobs, no -ThrottleLimit knob.
 
-    $idListKql = ($clustersToProcess | ForEach-Object { "'$($_.ResourceId.ToLower())'" }) -join ','
-
-    # ARG #1: per-cluster update summaries.
-    $summariesKql = "extensibilityresources | where type =~ 'microsoft.azurestackhci/clusters/updatesummaries' | extend ids = split(id, '/') | extend ClusterResourceId_ = tolower(strcat('/subscriptions/', tostring(ids[2]), '/resourceGroups/', tostring(ids[4]), '/providers/Microsoft.AzureStackHCI/clusters/', tostring(ids[8]))) | where ClusterResourceId_ in~ ($idListKql) | project id, name, properties, ClusterResourceId_"
+    # ARG #1: update summaries in the effective subscription/management-group
+    # scope. Do not embed every cluster ID in the KQL: at 2,000 clusters that
+    # exceeds the Windows az.cmd command-line limit. Downstream indexing keeps
+    # only rows for $clustersToProcess.
+    $summariesKql = "extensibilityresources | where type =~ 'microsoft.azurestackhci/clusters/updatesummaries' | extend ids = split(id, '/') | extend ClusterResourceId_ = tolower(strcat('/subscriptions/', tostring(ids[2]), '/resourceGroups/', tostring(ids[4]), '/providers/Microsoft.AzureStackHCI/clusters/', tostring(ids[8]))) | project id, name, properties, ClusterResourceId_"
     try {
         $argParams = @{ Query = $summariesKql }
         if ($SubscriptionId) { $argParams['SubscriptionId'] = $SubscriptionId }
@@ -343,7 +342,7 @@ function Get-AzLocalClusterUpdateReadiness {
     Write-Log -Message "Returned $(@($summaryRows).Count) update-summary record(s) via Azure Resource Graph" -Level Success
 
     # ARG #2: per-cluster available updates.
-    $updatesKql = "extensibilityresources | where type =~ 'microsoft.azurestackhci/clusters/updates' | extend ids = split(id, '/') | extend ClusterName_ = tostring(ids[8]), UpdateName_ = tostring(ids[10]) | extend ClusterResourceId_ = tolower(strcat('/subscriptions/', tostring(ids[2]), '/resourceGroups/', tostring(ids[4]), '/providers/Microsoft.AzureStackHCI/clusters/', ClusterName_)) | where ClusterResourceId_ in~ ($idListKql) | project name, properties, ClusterResourceId_, UpdateName_"
+    $updatesKql = "extensibilityresources | where type =~ 'microsoft.azurestackhci/clusters/updates' | extend ids = split(id, '/') | extend ClusterName_ = tostring(ids[8]), UpdateName_ = tostring(ids[10]) | extend ClusterResourceId_ = tolower(strcat('/subscriptions/', tostring(ids[2]), '/resourceGroups/', tostring(ids[4]), '/providers/Microsoft.AzureStackHCI/clusters/', ClusterName_)) | project name, properties, ClusterResourceId_, UpdateName_"
     try {
         $argParams = @{ Query = $updatesKql }
         if ($SubscriptionId) { $argParams['SubscriptionId'] = $SubscriptionId }

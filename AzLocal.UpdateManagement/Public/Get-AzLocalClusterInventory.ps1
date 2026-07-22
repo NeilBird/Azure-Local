@@ -277,25 +277,24 @@ function Get-AzLocalClusterInventory {
     }
 
     try {
-        # Get subscription names for better readability
-        Write-Log -Message "Retrieving subscription details..." -Level Info
+        # Get all subscription display names in one ARG request. The previous
+        # per-subscription `az account show` loop launched up to one CLI process
+        # per cluster in one-subscription-per-cluster estates.
+        Write-Log -Message "Retrieving subscription details via Azure Resource Graph..." -Level Info
         $subscriptionMap = @{}
-        $uniqueSubIds = $clusterData | Select-Object -ExpandProperty subscriptionId -Unique
-        
-        foreach ($subId in $uniqueSubIds) {
-            # v0.7.67: use the stream-split Invoke-AzCliJson helper instead of
-            # piping `az account show ... 2>&1` directly to ConvertFrom-Json.
-            # The merged-stream pipe would silently corrupt JSON whenever the
-            # CLI emitted a stderr warning (e.g. the cp1252 encode warning on
-            # non-UTF-8 Windows runners), losing the subscription name even
-            # when the lookup itself succeeded.
-            $sub = Invoke-AzCliJson -Arguments @('account', 'show', '--subscription', $subId)
-            if ($sub.Ok -and $sub.Data -and $sub.Data.name) {
-                $subscriptionMap[$subId] = $sub.Data.name
+        $subscriptionQuery = "resourcecontainers | where type =~ 'microsoft.resources/subscriptions' | project subscriptionId, name"
+        $subscriptionParams = @{ Query = $subscriptionQuery }
+        if ($SubscriptionId) { $subscriptionParams['SubscriptionId'] = $SubscriptionId }
+        try {
+            $subscriptionRows = Invoke-AzResourceGraphQuery @subscriptionParams
+            foreach ($subscriptionRow in @($subscriptionRows)) {
+                if ($subscriptionRow.subscriptionId -and $subscriptionRow.name) {
+                    $subscriptionMap[[string]$subscriptionRow.subscriptionId] = [string]$subscriptionRow.name
+                }
             }
-            else {
-                $subscriptionMap[$subId] = "(Unable to retrieve name)"
-            }
+        }
+        catch {
+            Write-Log -Message "Subscription display names could not be resolved in bulk: $($_.Exception.Message). Subscription IDs will be shown instead." -Level Warning
         }
 
         # Build inventory results
@@ -322,7 +321,7 @@ function Get-AzLocalClusterInventory {
                 ClusterName             = $cluster.name
                 ResourceGroup           = $cluster.resourceGroup
                 SubscriptionId          = $cluster.subscriptionId
-                SubscriptionName        = $subscriptionMap[$cluster.subscriptionId]
+                SubscriptionName        = if ($subscriptionMap.ContainsKey([string]$cluster.subscriptionId)) { $subscriptionMap[[string]$cluster.subscriptionId] } else { [string]$cluster.subscriptionId }
                 UpdateRing              = if ($ringTagValue) { $ringTagValue } else { "" }
                 HasUpdateRingTag        = if ($ringTagValue) { "Yes" } else { "No" }
                 UpdateStartWindow       = if ($windowTagValue) { $windowTagValue } else { "" }

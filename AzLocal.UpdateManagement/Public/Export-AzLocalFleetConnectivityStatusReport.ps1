@@ -160,8 +160,8 @@ function Export-AzLocalFleetConnectivityStatusReport {
     if ($SubscriptionFilter) {
         $subList = $SubscriptionFilter -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ }
         if ($subList -and @($subList).Count -gt 0) {
-            $invokeArgs['SubscriptionId'] = [string]$subList[0]
-            Write-Host "Subscription filter active (first sub): $($subList[0])"
+            $invokeArgs['SubscriptionId'] = [string[]]@($subList)
+            Write-Host ("Subscription filter active ({0} subscription(s))." -f @($subList).Count)
         }
     }
     if (-not $invokeArgs.ContainsKey('SubscriptionId')) {

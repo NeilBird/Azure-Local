@@ -905,6 +905,8 @@ function Export-AzLocalFleetUpdateStatusReport {
 
     # ---- Step 6: render markdown summary ----------------------------------
     $generatedUtc = $Now.ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss UTC')
+    $fleetSettings = Get-AzLocalFleetSettings
+    $maxSummaryRows = $fleetSettings.MaxRowsPerTable
     $md = New-Object 'System.Collections.Generic.List[string]'
     [void]$md.Add("## Fleet Update Status Summary  _(generated $generatedUtc)_")
     [void]$md.Add('')
@@ -1177,13 +1179,17 @@ function Export-AzLocalFleetUpdateStatusReport {
                 [void]$md.Add('')
                 [void]$md.Add('| Cluster Name | Update Ring | Update Name | Duration | Time Started | Time Completed |')
                 [void]$md.Add('|---|---|---|---|---|---|')
-                foreach ($r in $recentSuccessList) {
+                foreach ($r in ($recentSuccessList | Sort-Object @{Expression='EndTime';Descending=$true}, ClusterName | Select-Object -First $maxSummaryRows)) {
                     $rid = if ($r.PSObject.Properties['ClusterResourceId']) { [string]$r.ClusterResourceId } else { '' }
                     $clusterCell = if ($rid) { '<a href="https://portal.azure.com/#@/resource{0}">{1}</a>' -f $rid, $r.ClusterName } else { [string]$r.ClusterName }
                     $runRid  = if ($r.PSObject.Properties['RunResourceId']) { [string]$r.RunResourceId } else { '' }
                     $updCell = if ($runRid) { '<a href="https://portal.azure.com/#@/resource{0}">{1}</a>' -f $runRid, $r.UpdateName } else { [string]$r.UpdateName }
                     $ringCell = if ($rid -and $ringByResourceId.ContainsKey($rid)) { ([string]$ringByResourceId[$rid]) -replace '\|','\|' } else { '-' }
                     [void]$md.Add("| $clusterCell | $ringCell | $updCell | $($r.Duration) | $($r.StartTime) | $($r.EndTime) |")
+                }
+                if ($recentSuccessList.Count -gt $maxSummaryRows) {
+                    [void]$md.Add('')
+                    [void]$md.Add("_Showing $maxSummaryRows of $($recentSuccessList.Count) recent successful updates. Download ``$RunsCsvFileName`` for the full list._")
                 }
                 [void]$md.Add('')
             }
@@ -1197,7 +1203,7 @@ function Export-AzLocalFleetUpdateStatusReport {
     # with the Assess Update Readiness pipeline so both surfaces stay in sync.
     try {
         $readyForUpdateRows = @(Get-AzLocalReadyForUpdateRows -ReadinessRows $readiness -RingByResourceId $ringByResourceId)
-        foreach ($line in (Get-AzLocalReadyForUpdateTableMarkdown -ReadyRows $readyForUpdateRows)) {
+        foreach ($line in (Get-AzLocalReadyForUpdateTableMarkdown -ReadyRows $readyForUpdateRows -MaxRows $maxSummaryRows)) {
             [void]$md.Add($line)
         }
     }

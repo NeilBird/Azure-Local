@@ -4,9 +4,13 @@
 >
 > **For older releases**, this is the canonical reference; the main README intentionally stays slim so the most recent block is easy to find.
 >
-> **For v0.9.21 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0921) `What's New in v0.9.21` section.
+> **For v0.9.22 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0922) `What's New in v0.9.22` section.
 
 ---
+
+### What's New in v0.9.22
+
+**Azure Resource Graph queries and pipeline summaries now scale safely for large fleets.** The shared ARG helper handles `ResponsePayloadTooLarge`, deterministic continuation, explicit multi-subscription scope, and optional management-group scope from the new inert `config/fleet-settings.yml` starter. Explicit `-SubscriptionId` values take precedence; a missing or fully commented file preserves implicit discovery. Inventory resolves subscription names in bulk, readiness avoids fleet-sized command lines, and failed-run health evidence uses one scoped query. High-cardinality Markdown tables are capped with `X of Y` notices while complete CSV/JSON/JUnit/HTML artifacts remain available; a UTF-8 byte guard stays below GitHub's 1 MiB summary limit. ServiceNow fan-out defaults to 25 potential incidents and opens a circuit breaker after five consecutive creation failures. Public function count **69 -> 70** (`Get-AzLocalFleetSettings`). `GENERATED_AGAINST_MODULE_VERSION` bumped to `0.9.22`. See [CHANGELOG.md](../CHANGELOG.md#0922---2026-07-21) for the full entry.
 
 ### What's New in v0.9.21
 

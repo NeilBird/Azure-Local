@@ -4,7 +4,7 @@
     Durable LIVE-AZURE integration tests for the AzLocal.UpdateManagement module.
 
 .DESCRIPTION
-    These tests run against the real AdaptiveCloudLab subscription
+    These tests run against the approved maintainer test subscription
     (fbaf508b-cb61-4383-9cda-a42bfa0c7bc9) via the Azure CLI ARG transport
     used by Get-AzLocalFleetHealthOverview / Get-AzLocalFleetHealthFailures /
     Get-AzLocalUpdateRunFailures.
@@ -17,10 +17,14 @@
         # or
         Invoke-Pester -Path .\Tests\Live-Integration.Tests.ps1 -Tag Live
 
+    For release certification, run Tools\live-release-certification.ps1.
+    That durable runner derives the expected version from the module manifest
+    by default; use -ExpectedVersion only when independently pinning a release.
+
     Each Describe additionally Skips itself when:
         - az CLI is not on PATH, OR
         - az is not logged in, OR
-        - The signed-in subscription is not the expected AdaptiveCloudLab id.
+        - The signed-in subscription is not the expected test subscription id.
 
     These guards mean the suite is safe to leave permanently in the repo and
     safe to run on any developer machine - it auto-skips when the live
@@ -50,7 +54,7 @@
 #>
 
 BeforeDiscovery {
-    # Expected live subscription. AdaptiveCloudLab tenant - 20 clusters under
+    # Expected live subscription. The approved maintainer lab has clusters under
     # management as of v0.7.70. Hard-coded in the repo source because (a) a
     # subscription id alone is not a credential and (b) it makes the durable
     # safety gate "are we pointed at the right tenant?" trivially auditable.
@@ -94,7 +98,7 @@ BeforeDiscovery {
 
     # The provider-operations catalog (az provider operation show) is GLOBAL -
     # it is not scoped to any subscription - so the checkUpdates catalog tripwire
-    # only needs az to be logged in; it does NOT require the AdaptiveCloudLab
+    # only needs az to be logged in; it does NOT require the approved test
     # subscription that the rest of the Live suite targets. Compute a lighter
     # gate that skips only when az is unavailable or not logged in.
     $CatalogGateReason = $null
@@ -149,6 +153,41 @@ Describe 'Live-Integration: Authentication and ARG transport pre-conditions' -Ta
     }
 }
 
+Describe 'Live-Integration: Fleet settings configuration' -Tag 'Live' -Skip:$SkipLive {
+
+    It 'Bundled starter is inert and preserves implicit subscription scope' {
+        $starterPath = Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples\fleet-settings.example.yml'
+        $settings = Get-AzLocalFleetSettings -Path $starterPath
+
+        $settings.FileFound | Should -BeTrue
+        $settings.ScopeMode | Should -Be 'ImplicitSubscriptions'
+        @($settings.ManagementGroups).Count | Should -Be 0
+    }
+
+    It 'Parses active reporting and ITSM settings without changing Azure scope' {
+        $settingsPath = Join-Path $env:TEMP ("azlocal-live-settings-{0}.yml" -f [guid]::NewGuid())
+        try {
+            @'
+schemaVersion: 1
+reporting:
+  maxRowsPerTable: 20
+  maxSummaryBytes: 250000
+itsm:
+  maxIncidentsPerRun: 10
+'@ | Set-Content -LiteralPath $settingsPath -Encoding ASCII
+
+            $settings = Get-AzLocalFleetSettings -Path $settingsPath
+            $settings.ScopeMode | Should -Be 'ImplicitSubscriptions'
+            $settings.MaxRowsPerTable | Should -Be 20
+            $settings.MaxSummaryBytes | Should -Be 250000
+            $settings.MaxIncidentsPerRun | Should -Be 10
+        }
+        finally {
+            Remove-Item -LiteralPath $settingsPath -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
 Describe 'Live-Integration: Get-AzLocalFleetHealthOverview' -Tag 'Live' -Skip:$SkipLive {
 
     It 'Returns at least one cluster row' {
@@ -156,7 +195,7 @@ Describe 'Live-Integration: Get-AzLocalFleetHealthOverview' -Tag 'Live' -Skip:$S
         $rows.Count | Should -BeGreaterThan 0
     }
 
-    It 'Every row exposes the v0.7.70 ARG-first projection columns' {
+    It 'Every row exposes the documented ARG-first projection columns' {
         $expected = @(
             'ClusterName'
             'ClusterPortalUrl'
@@ -172,7 +211,7 @@ Describe 'Live-Integration: Get-AzLocalFleetHealthOverview' -Tag 'Live' -Skip:$S
         foreach ($row in $rows) {
             $present = @($row.PSObject.Properties.Name)
             $missing = @($expected | Where-Object { $present -notcontains $_ })
-            $missing | Should -BeNullOrEmpty -Because "row for $($row.ClusterName) must expose every v0.7.70 column"
+            $missing | Should -BeNullOrEmpty -Because "row for $($row.ClusterName) must expose every documented column"
         }
     }
 
@@ -211,7 +250,7 @@ Describe 'Live-Integration: Get-AzLocalFleetHealthFailures' -Tag 'Live' -Skip:$S
         $detail.Count | Should -BeGreaterThan 0
     }
 
-    It 'Detail rows expose the documented v0.7.70 columns' {
+    It 'Detail rows expose the documented columns' {
         $expected = @('ClusterName', 'ClusterPortalUrl', 'Severity', 'FailureReason', 'Description', 'Remediation')
         $detail = @() + (Get-AzLocalFleetHealthFailures -View Detail -PassThru -ErrorAction Stop)
         $sample = if ($detail.Count -gt 5) { 5 } else { $detail.Count }
@@ -219,7 +258,7 @@ Describe 'Live-Integration: Get-AzLocalFleetHealthFailures' -Tag 'Live' -Skip:$S
             $row = $detail[$i]
             $present = @($row.PSObject.Properties.Name)
             $missing = @($expected | Where-Object { $present -notcontains $_ })
-            $missing | Should -BeNullOrEmpty -Because "detail row must include every v0.7.70 column"
+            $missing | Should -BeNullOrEmpty -Because "detail row must include every documented column"
         }
     }
 
@@ -250,7 +289,7 @@ Describe 'Live-Integration: Get-AzLocalUpdateRunFailures' -Tag 'Live' -Skip:$Ski
         $rows.Count | Should -BeGreaterThan 0
     }
 
-    It 'Every row exposes the v0.7.70 update-history columns' {
+    It 'Every row exposes the documented update-history columns' {
         $expected = @(
             'ClusterName'
             'Status'
@@ -267,7 +306,7 @@ Describe 'Live-Integration: Get-AzLocalUpdateRunFailures' -Tag 'Live' -Skip:$Ski
             $row = $rows[$i]
             $present = @($row.PSObject.Properties.Name)
             $missing = @($expected | Where-Object { $present -notcontains $_ })
-            $missing | Should -BeNullOrEmpty -Because "update-failure row must include every v0.7.70 column"
+            $missing | Should -BeNullOrEmpty -Because "update-failure row must include every documented column"
         }
     }
 
@@ -288,7 +327,7 @@ Describe 'Live-Integration: Get-AzLocalUpdateRunFailures' -Tag 'Live' -Skip:$Ski
     }
 }
 
-Describe 'Live-Integration: Get-AzLocalFleetConnectivityStatus (v0.7.79)' -Tag 'Live' -Skip:$SkipLive {
+Describe 'Live-Integration: Get-AzLocalFleetConnectivityStatus' -Tag 'Live' -Skip:$SkipLive {
     # v0.7.79: End-to-end validation of the new module cmdlet that replaced Step.4's
     # inline ARG queries. Validates that all 7 output properties are present, schemas
     # are correct, and ArcSummary is grouped client-side (not via KQL summarize).
@@ -387,7 +426,7 @@ Describe 'Live-Integration: Get-AzLocalFleetConnectivityStatus (v0.7.79)' -Tag '
     }
 }
 
-Describe 'Live-Integration: Export-*Report cmdlets emit non-empty artifacts (v0.8.5 thin-YAML wrappers)' -Tag 'Live' -Skip:$SkipLive {
+Describe 'Live-Integration: Export-*Report cmdlets emit non-empty artifacts' -Tag 'Live' -Skip:$SkipLive {
     # v0.8.5: One read-only round-trip per non-destructive Export-* cmdlet
     # added by the thin-YAML refactor. Asserts the cmdlet produces the
     # documented artifact files (CSV / JSON / JUnit XML / markdown) and the

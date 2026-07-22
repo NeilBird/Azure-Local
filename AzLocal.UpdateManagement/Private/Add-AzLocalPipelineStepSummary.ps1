@@ -49,18 +49,14 @@ function Add-AzLocalPipelineStepSummary {
     )
 
     $pipelineHost = Get-AzLocalPipelineHost
+    $summaryFile = $null
+    $isFirstWrite = $false
     switch ($pipelineHost) {
         'GitHub' {
             $summaryFile = $env:GITHUB_STEP_SUMMARY
             if (-not $summaryFile) {
                 throw "Add-AzLocalPipelineStepSummary: GITHUB_ACTIONS is true but GITHUB_STEP_SUMMARY env var is not set. This indicates a corrupt runner environment."
             }
-            # -WhatIf:$false: a step summary is diagnostic reporting, not a state
-            # change to the managed system. It must always be emitted even when
-            # an upstream cmdlet runs under -WhatIf (which sets $WhatIfPreference
-            # and would otherwise suppress this Out-File via the WhatIf cascade).
-            $Markdown | Out-File -FilePath $summaryFile -Encoding utf8 -Append -WhatIf:$false
-            return $summaryFile
         }
         'AzureDevOps' {
             $stagingDir = $env:BUILD_ARTIFACTSTAGINGDIRECTORY
@@ -68,21 +64,42 @@ function Add-AzLocalPipelineStepSummary {
             if (-not $stagingDir) {
                 throw "Add-AzLocalPipelineStepSummary: TF_BUILD is true but neither BUILD_ARTIFACTSTAGINGDIRECTORY nor AGENT_TEMPDIRECTORY is set. This indicates a corrupt agent environment."
             }
-            $summaryPath = Join-Path -Path $stagingDir -ChildPath $SummaryFileName
-            $isFirstWrite = -not (Test-Path -LiteralPath $summaryPath)
-            $Markdown | Out-File -FilePath $summaryPath -Encoding utf8 -Append -WhatIf:$false
-            if ($isFirstWrite) {
-                Write-Host "##vso[task.uploadsummary]$summaryPath"
-            }
-            return $summaryPath
+            $summaryFile = Join-Path -Path $stagingDir -ChildPath $SummaryFileName
+            $isFirstWrite = -not (Test-Path -LiteralPath $summaryFile)
         }
         default {
             $localDir = $env:TEMP
             if (-not $localDir) { $localDir = [System.IO.Path]::GetTempPath() }
-            $summaryPath = Join-Path -Path $localDir -ChildPath $SummaryFileName
-            $Markdown | Out-File -FilePath $summaryPath -Encoding utf8 -Append -WhatIf:$false
-            Write-Host "[pipeline-step-summary] $summaryPath"
-            return $summaryPath
+            $summaryFile = Join-Path -Path $localDir -ChildPath $SummaryFileName
         }
     }
+
+    $maxSummaryBytes = (Get-AzLocalFleetSettings).MaxSummaryBytes
+    $currentBytes = if (Test-Path -LiteralPath $summaryFile -PathType Leaf) {
+        (Get-Item -LiteralPath $summaryFile).Length
+    }
+    else { 0 }
+    $utf8 = [System.Text.UTF8Encoding]::new($false)
+    $appendBytes = $utf8.GetByteCount($Markdown + [Environment]::NewLine)
+    if (($currentBytes + $appendBytes) -gt $maxSummaryBytes) {
+        $skippedBytes = $appendBytes
+        $Markdown = '> **Summary size limit reached.** Additional detail was omitted from this pipeline summary. Download the CSV, JSON, JUnit, and HTML report artifacts for the complete results.'
+        $appendBytes = $utf8.GetByteCount($Markdown + [Environment]::NewLine)
+        Write-Warning ("Add-AzLocalPipelineStepSummary: skipped {0:N0} UTF-8 bytes because appending them would exceed the configured {1:N0}-byte summary limit." -f $skippedBytes, $maxSummaryBytes)
+        if (($currentBytes + $appendBytes) -gt $maxSummaryBytes) {
+            return $summaryFile
+        }
+    }
+
+    # -WhatIf:$false: a step summary is diagnostic reporting, not a state
+    # change to the managed system. It must always be emitted even when an
+    # upstream cmdlet runs under -WhatIf.
+    $Markdown | Out-File -FilePath $summaryFile -Encoding utf8 -Append -WhatIf:$false
+    if ($pipelineHost -eq 'AzureDevOps' -and $isFirstWrite) {
+        Write-Host "##vso[task.uploadsummary]$summaryFile"
+    }
+    elseif ($pipelineHost -eq 'Local') {
+        Write-Host "[pipeline-step-summary] $summaryFile"
+    }
+    return $summaryFile
 }

@@ -62,7 +62,7 @@ param(
     [Alias('Details')]
     [switch]$Full,
 
-    [Parameter(Mandatory = $false, HelpMessage = 'Include the -Tag Live durable live-Azure integration suite. Default: excluded. Requires az login + the AdaptiveCloudLab subscription to be active.')]
+    [Parameter(Mandatory = $false, HelpMessage = 'Include the -Tag Live durable live-Azure integration suite. Default: excluded. Requires az login + the approved maintainer test subscription to be active.')]
     [switch]$IncludeLive,
 
     [Parameter(Mandatory = $false, HelpMessage = 'Run ONLY the -Tag Live suite. Implies -IncludeLive.')]

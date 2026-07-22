@@ -50,6 +50,10 @@ function Invoke-AzLocalRemoteSolutionImport {
     .PARAMETER PollSeconds
         Seconds between discovery polls. Default 30.
 
+    .PARAMETER DiscoveryOnly
+        Poll for an already-submitted update without expanding media or calling
+        Add-SolutionUpdate again.
+
     .OUTPUTS
         [PSCustomObject] with:
           ImportState     'Imported' | 'NeedsSbe' | 'Discovering' | 'Failed'
@@ -83,7 +87,8 @@ function Invoke-AzLocalRemoteSolutionImport {
         [string]$Version,
 
         [int]$DiscoveryTimeoutMinutes = 30,
-        [int]$PollSeconds = 30
+        [int]$PollSeconds = 30,
+        [switch]$DiscoveryOnly
     )
 
     if (-not $PSCmdlet.ShouldProcess($Session.ComputerName, "Import solution update '$Version'")) {
@@ -96,7 +101,7 @@ function Invoke-AzLocalRemoteSolutionImport {
     }
 
     $remote = Invoke-Command -Session $Session -ScriptBlock {
-        param($ImportRoot, $MediaFileName, $PackageType, $Version, $DiscoveryTimeoutMinutes, $PollSeconds)
+        param($ImportRoot, $MediaFileName, $PackageType, $Version, $DiscoveryTimeoutMinutes, $PollSeconds, $DiscoveryOnly)
 
         $result = @{
             ImportState    = 'Failed'
@@ -106,32 +111,34 @@ function Invoke-AzLocalRemoteSolutionImport {
         }
 
         try {
-            if ($PackageType -eq 'Solution') {
-                $zip = Join-Path -Path $ImportRoot -ChildPath $MediaFileName
-                if (-not (Test-Path -LiteralPath $zip -PathType Leaf)) {
-                    $result.Message = "Solution bundle '$zip' not found on node."
+            if (-not $DiscoveryOnly) {
+                if ($PackageType -eq 'Solution') {
+                    $zip = Join-Path -Path $ImportRoot -ChildPath $MediaFileName
+                    if (-not (Test-Path -LiteralPath $zip -PathType Leaf)) {
+                        $result.Message = "Solution bundle '$zip' not found on node."
+                        return $result
+                    }
+                    $solutionFolder = Join-Path -Path $ImportRoot -ChildPath 'Solution'
+                    if (-not (Test-Path -LiteralPath $solutionFolder)) {
+                        New-Item -ItemType Directory -Path $solutionFolder -Force | Out-Null
+                    }
+                    Expand-Archive -LiteralPath $zip -DestinationPath $solutionFolder -Force
+                }
+                else {
+                    $solutionFolder = Join-Path -Path $ImportRoot -ChildPath $MediaFileName
+                    if (-not (Test-Path -LiteralPath $solutionFolder)) {
+                        $result.Message = "SBE source folder '$solutionFolder' not found on node."
+                        return $result
+                    }
+                }
+
+                if (-not (Get-Command Add-SolutionUpdate -ErrorAction SilentlyContinue)) {
+                    $result.Message = 'Add-SolutionUpdate is not available on the node (Azure Local update cmdlets missing).'
                     return $result
                 }
-                $solutionFolder = Join-Path -Path $ImportRoot -ChildPath 'Solution'
-                if (-not (Test-Path -LiteralPath $solutionFolder)) {
-                    New-Item -ItemType Directory -Path $solutionFolder -Force | Out-Null
-                }
-                Expand-Archive -LiteralPath $zip -DestinationPath $solutionFolder -Force
-            }
-            else {
-                $solutionFolder = Join-Path -Path $ImportRoot -ChildPath $MediaFileName
-                if (-not (Test-Path -LiteralPath $solutionFolder)) {
-                    $result.Message = "SBE source folder '$solutionFolder' not found on node."
-                    return $result
-                }
-            }
 
-            if (-not (Get-Command Add-SolutionUpdate -ErrorAction SilentlyContinue)) {
-                $result.Message = 'Add-SolutionUpdate is not available on the node (Azure Local update cmdlets missing).'
-                return $result
+                Add-SolutionUpdate -SolutionUpdateContentFolderPath $solutionFolder -ErrorAction Stop
             }
-
-            Add-SolutionUpdate -SolutionUpdateContentFolderPath $solutionFolder -ErrorAction Stop
 
             $deadline = (Get-Date).AddMinutes($DiscoveryTimeoutMinutes)
             do {
@@ -165,7 +172,7 @@ function Invoke-AzLocalRemoteSolutionImport {
             $result.Message = "Import failed on node: $($_.Exception.Message)"
             return $result
         }
-    } -ArgumentList $ImportRoot, $MediaFileName, $PackageType, $Version, $DiscoveryTimeoutMinutes, $PollSeconds
+    } -ArgumentList $ImportRoot, $MediaFileName, $PackageType, $Version, $DiscoveryTimeoutMinutes, $PollSeconds, ([bool]$DiscoveryOnly)
 
     return [PSCustomObject]@{
         ImportState    = [string]$remote.ImportState

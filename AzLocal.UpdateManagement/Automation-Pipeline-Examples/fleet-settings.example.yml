@@ -1,0 +1,27 @@
+# AzLocal.UpdateManagement fleet settings (schema version 1)
+#
+# This starter is intentionally fully commented. In this state, every pipeline
+# keeps the existing behavior and queries the subscriptions visible to its Azure
+# identity. Uncomment the block below only when management-group scope is needed,
+# such as when the identity can access more than 1,000 subscriptions.
+#
+# Use management-group IDs, not display names or full Azure resource IDs. Multiple
+# management groups are supported. The pipeline identity needs Reader access (or
+# equivalent resource read permissions) at each configured scope.
+#
+# schemaVersion: 1
+# scope:
+#   managementGroups:
+#     - contoso-platform
+#     - contoso-landing-zones
+#
+# Optional pipeline-summary controls. Full CSV/JSON/JUnit artifacts are never
+# truncated by these values.
+# reporting:
+#   maxRowsPerTable: 100
+#   maxSummaryBytes: 900000
+#
+# Optional ServiceNow safety limit. Set to 0 to disable incident creation while
+# preserving ITSM result generation; use -ForceCreate only for dedupe behavior.
+# itsm:
+#   maxIncidentsPerRun: 25

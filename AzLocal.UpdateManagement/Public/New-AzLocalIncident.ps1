@@ -50,6 +50,14 @@ function New-AzLocalIncident {
         [switch]$ForceCreate,
 
         [Parameter(Mandatory = $false)]
+        [ValidateRange(-1, 1000)]
+        [int]$MaxIncidentsPerRun = -1,
+
+        [Parameter(Mandatory = $false)]
+        [ValidateRange(0, 100)]
+        [int]$ConsecutiveApiFailureLimit = 5,
+
+        [Parameter(Mandatory = $false)]
         [string]$ExportPath,
 
         [Parameter(Mandatory = $false)]
@@ -61,6 +69,9 @@ function New-AzLocalIncident {
     }
 
     if (-not $RunMetadata) { $RunMetadata = @{} }
+    if ($MaxIncidentsPerRun -lt 0) {
+        $MaxIncidentsPerRun = (Get-AzLocalFleetSettings).MaxIncidentsPerRun
+    }
 
     # 1. Parse JUnit -> per-cluster rows ------------------------------------
     [xml]$xml = Get-Content -Path $InputArtifactPath -Raw
@@ -127,6 +138,8 @@ function New-AzLocalIncident {
 
     # 3. Evaluate triggers + create / dedupe per row ------------------------
     $results = New-Object System.Collections.ArrayList
+    $incidentAttempts = 0
+    $consecutiveApiFailures = 0
     $defaults = $Config.Defaults
     $titleTemplate = if ($defaults -and $defaults['templates'] -and $defaults['templates']['titleTemplate']) {
         [string]$defaults['templates']['titleTemplate']
@@ -230,14 +243,25 @@ function New-AzLocalIncident {
 
         if ($existing) {
             $action       = 'DedupedToExisting'
+            $consecutiveApiFailures = 0
             $sysId        = [string]$existing.sys_id
             $ticketNumber = [string]$existing.number
             $ticketUrl    = "$instanceUrl/nav_to.do?uri=incident.do?sys_id=$sysId"
         }
+        elseif ($incidentAttempts -ge $MaxIncidentsPerRun) {
+            $action = 'Skipped'
+            $extraReason = "Incident creation limit reached ($MaxIncidentsPerRun per run)."
+        }
+        elseif ($ConsecutiveApiFailureLimit -gt 0 -and $consecutiveApiFailures -ge $ConsecutiveApiFailureLimit) {
+            $action = 'Skipped'
+            $extraReason = "ServiceNow circuit breaker opened after $consecutiveApiFailures consecutive incident creation failures."
+        }
         elseif ($DryRun) {
+            $incidentAttempts++
             $action = 'DryRun'
         }
         else {
+            $incidentAttempts++
             $impact, $urgency = Get-AzLocalItsmPriorityFromSeverity -Severity $decision.Severity
             $fields = @{
                 short_description              = $title
@@ -262,9 +286,11 @@ function New-AzLocalIncident {
                     $sysId        = [string]$created.sys_id
                     $ticketNumber = [string]$created.number
                     $ticketUrl    = "$instanceUrl/nav_to.do?uri=incident.do?sys_id=$sysId"
+                    $consecutiveApiFailures = 0
                 }
                 catch {
                     $action = 'CreateFailed'
+                    $consecutiveApiFailures++
                     Write-Warning "New-AzLocalIncident: CreateIncident failed for $($row.ClusterName): $($_.Exception.Message)"
                 }
             }

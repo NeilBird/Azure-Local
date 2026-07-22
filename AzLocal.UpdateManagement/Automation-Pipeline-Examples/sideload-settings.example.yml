@@ -1,0 +1,60 @@
+# Azure Local sideload settings
+# This file is the sole runtime configuration source for sideload-updates.yml.
+# Secrets do not belong here; use Key Vault references in sideload-auth-map.csv.
+schemaVersion: 1
+enabled: false
+
+paths:
+  # Shared control plane used by every eligible runner: state\, logs\, and the
+  # default cache\. Use resilient SMB storage with consistent ACLs and backups.
+  stateRoot: '\\fileserver\azlocal-sideload'
+  cacheRoot: ''
+  authMap: './config/sideload-auth-map.csv'
+  catalog: './config/sideload-catalog.yml'
+  applySchedule: './config/apply-updates-schedule.yml'
+
+planning:
+  leadDays: 7
+
+reconciliation:
+  heartbeatIntervalSeconds: 30
+  heartbeatStaleMinutes: 60
+  noProgressMinutes: 90
+  # Fleet/network ceiling across all runners. Raise only after measuring the
+  # shared cache, SMB links, and cluster import shares.
+  maxConcurrentCopies: 2
+  # Host ceiling. A capable, throttled runner can be set to 10 while retaining
+  # a separate fleet-wide cap above. Existing schema-1 files that omit this
+  # field use maxConcurrentCopies for backward compatibility.
+  maxConcurrentCopiesPerRunner: 2
+
+copy:
+  defaultProfile: balanced
+  profiles:
+    balanced:
+      retryCount: 5
+      waitSeconds: 30
+      interPacketGapMilliseconds: 0
+      restartable: true
+      unbuffered: false
+
+identity:
+  keyVaultAuth: oidc
+  task:
+    logonType: ServiceAccount
+    principalUserId: ''
+    passwordKeyVaultName: ''
+    passwordSecretName: ''
+
+remoting:
+  fqdnSuffix: ''
+  useSsl: true
+  port: 5986
+  authentication: Negotiate
+  skipCaCheck: false
+
+reporting:
+  logTailLines: 20
+  # Retention policy for operators/file-server lifecycle tooling. v0.9.22 does
+  # not automatically purge central robocopy logs.
+  retentionDays: 30

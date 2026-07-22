@@ -35,7 +35,11 @@ function Get-AzLocalReadyForUpdateTableMarkdown {
 
         [Parameter(Mandatory = $false)]
         [ValidateNotNullOrEmpty()]
-        [string]$Heading = '### Clusters - Ready for Update'
+        [string]$Heading = '### Clusters - Ready for Update',
+
+        [Parameter(Mandatory = $false)]
+        [ValidateRange(0, 1000)]
+        [int]$MaxRows = 0
     )
 
     $lines = New-Object 'System.Collections.Generic.List[string]'
@@ -43,6 +47,9 @@ function Get-AzLocalReadyForUpdateTableMarkdown {
     [void]$lines.Add('')
 
     $rows = @($ReadyRows)
+    if ($MaxRows -eq 0) {
+        $MaxRows = (Get-AzLocalFleetSettings).MaxRowsPerTable
+    }
     if ($rows.Count -eq 0) {
         [void]$lines.Add('_No clusters are currently Ready for Update._')
         [void]$lines.Add('')
@@ -55,13 +62,17 @@ function Get-AzLocalReadyForUpdateTableMarkdown {
     [void]$lines.Add('')
     [void]$lines.Add('| Cluster | Update Ring | Current Update | Recommended Update |')
     [void]$lines.Add('|---------|-------------|----------------|--------------------|')
-    foreach ($r in $rows) {
+    foreach ($r in ($rows | Select-Object -First $MaxRows)) {
         $clusterResId = if ($r.PSObject.Properties['ClusterResourceId'] -and $r.ClusterResourceId) { [string]$r.ClusterResourceId } else { '' }
         $clusterCell = Get-AzLocalClusterPortalLink -ClusterName ([string]$r.ClusterName) -ClusterResourceId $clusterResId
         $ring = if ($r.PSObject.Properties['UpdateRing'] -and $r.UpdateRing) { ([string]$r.UpdateRing) -replace '\|', '\|' } else { '-' }
         $cv = if ($r.PSObject.Properties['CurrentVersion'] -and $r.CurrentVersion) { ([string]$r.CurrentVersion) -replace '\|', '\|' } else { '-' }
         $ru = if ($r.PSObject.Properties['RecommendedUpdate'] -and $r.RecommendedUpdate) { ([string]$r.RecommendedUpdate) -replace '\|', '\|' } else { '-' }
         [void]$lines.Add("| $clusterCell | $ring | $cv | $ru |")
+    }
+    if ($rows.Count -gt $MaxRows) {
+        [void]$lines.Add('')
+        [void]$lines.Add("_Showing first $MaxRows of $($rows.Count) ready clusters. Download the ready-for-update CSV artifact for the full list._")
     }
     [void]$lines.Add('')
     return $lines.ToArray()

@@ -7,7 +7,8 @@ function Export-AzLocalSideloadStatusReport {
     .DESCRIPTION
         Public reporting helper for the v0.8.7 on-prem sideloading automation. Reads
         every per-cluster state JSON under StateRoot\state, summarises progress by
-        state (Queued / Copying / Copied / Verified / Imported / Failed / Stale)
+        state (Queued / Copying / Copied / Discovering / NeedsSbe / ImportFailed /
+        Imported / Failed / Stale)
         with throughput + ETA, and appends any plan error rows (NotInAllowList,
         UnknownAuthAccountId, NoCatalogEntry). Optionally writes the markdown and a
         JUnit XML (one test case per cluster; Failed/error rows fail) to disk.
@@ -35,10 +36,15 @@ function Export-AzLocalSideloadStatusReport {
 
     $stateDir = Join-Path -Path $StateRoot -ChildPath 'state'
     $states = @()
+    $stateReadErrors = New-Object System.Collections.Generic.List[object]
     if (Test-Path -LiteralPath $stateDir) {
         $states = @(
             Get-ChildItem -LiteralPath $stateDir -Filter '*.json' -File -ErrorAction SilentlyContinue | ForEach-Object {
-                try { Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json } catch { $null }
+                try { Get-Content -LiteralPath $_.FullName -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop }
+                catch {
+                    $stateReadErrors.Add([PSCustomObject]@{ Path = $_.FullName; Message = $_.Exception.Message })
+                    $null
+                }
             } | Where-Object { $null -ne $_ }
         )
     }
@@ -63,6 +69,37 @@ function Export-AzLocalSideloadStatusReport {
         $lines.Add('')
     }
 
+    $diagnosticStates = @($states | Where-Object { [string]$_.State -in @('Copying', 'Failed', 'ImportFailed', 'NeedsSbe') })
+    if ($diagnosticStates.Count -gt 0) {
+        $lines.Add('### Diagnostics and remediation')
+        $lines.Add('')
+        $lines.Add('| Cluster | Operation | Worker PID | Robocopy PID | Log | Remediation |')
+        $lines.Add('| --- | --- | --- | --- | --- | --- |')
+        foreach ($s in $diagnosticStates) {
+            $operationId = if ($s.PSObject.Properties['OperationId']) { [string]$s.OperationId } else { '-' }
+            $workerPid = if ($s.PSObject.Properties['WorkerProcessId'] -and $s.WorkerProcessId) { [string]$s.WorkerProcessId } else { '-' }
+            $robocopyPid = if ($s.PSObject.Properties['RobocopyProcessId'] -and $s.RobocopyProcessId) { [string]$s.RobocopyProcessId } else { '-' }
+            $logPath = if ($s.PSObject.Properties['LogPath'] -and $s.LogPath) { [string]$s.LogPath } else { '-' }
+            $remediation = switch ([string]$s.State) {
+                'NeedsSbe' { 'Stage the required OEM SBE package, then rerun reconciliation.' }
+                'ImportFailed' { 'Review the WinRM/import error and rerun; media is retained and will not be recopied.' }
+                'Failed' { 'Review the worker log and task identity/share permissions, then rerun.' }
+                default { 'Confirm heartbeat/progress and that the listed worker processes are running.' }
+            }
+            $lines.Add(('| {0} | {1} | {2} | {3} | {4} | {5} |' -f $s.ClusterName, $operationId, $workerPid, $robocopyPid, $logPath, $remediation))
+        }
+        $lines.Add('')
+    }
+
+    if ($stateReadErrors.Count -gt 0) {
+        $lines.Add('### Unreadable state records')
+        $lines.Add('')
+        foreach ($readError in $stateReadErrors) {
+            $lines.Add(('- `{0}`: {1}' -f $readError.Path, $readError.Message))
+        }
+        $lines.Add('')
+    }
+
     $errorRows = @()
     if ($Plan) {
         $errorRows = @($Plan | Where-Object { @('NotInAllowList', 'UnknownAuthAccountId', 'NoCatalogEntry', 'NoneReady') -contains [string]$_.Status })
@@ -83,8 +120,8 @@ function Export-AzLocalSideloadStatusReport {
     # JUnit: one case per cluster state; Failed (and plan errors) fail.
     $cases = New-Object System.Collections.Generic.List[object]
     foreach ($s in $states) {
-        if ([string]$s.State -eq 'Failed') {
-            $cases.Add(@{ Name = ('{0} ({1})' -f $s.ClusterName, $s.Version); Failure = @{ Message = [string]$s.Message; Type = 'SideloadFailed' } })
+        if ([string]$s.State -in @('Failed', 'ImportFailed')) {
+            $cases.Add(@{ Name = ('{0} ({1})' -f $s.ClusterName, $s.Version); Failure = @{ Message = [string]$s.Message; Type = ('Sideload{0}' -f $s.State) } })
         }
         else {
             $cases.Add(@{ Name = ('{0} ({1}) [{2}]' -f $s.ClusterName, $s.Version, $s.State) })
@@ -93,12 +130,15 @@ function Export-AzLocalSideloadStatusReport {
     foreach ($e in $errorRows) {
         $cases.Add(@{ Name = ('{0} [{1}]' -f $e.ClusterName, $e.Status); Failure = @{ Message = [string]$e.Message; Type = [string]$e.Status } })
     }
+    foreach ($readError in $stateReadErrors) {
+        $cases.Add(@{ Name = ('Unreadable state: {0}' -f (Split-Path -Leaf $readError.Path)); Failure = @{ Message = [string]$readError.Message; Type = 'StateReadError' } })
+    }
 
     $suites = @(@{ Name = 'Sideload'; TestCases = $cases.ToArray() })
     $junit = New-AzLocalPipelineJUnitXml -TestSuitesName 'AzLocalSideload' -Suites $suites
 
     $counts = $states | Group-Object State | ForEach-Object { [PSCustomObject]@{ State = $_.Name; Count = $_.Count } }
-    $hasFailures = (@($states | Where-Object { [string]$_.State -eq 'Failed' }).Count -gt 0) -or ($errorRows.Count -gt 0)
+    $hasFailures = (@($states | Where-Object { [string]$_.State -in @('Failed', 'ImportFailed') }).Count -gt 0) -or ($errorRows.Count -gt 0) -or ($stateReadErrors.Count -gt 0)
 
     if (-not [string]::IsNullOrWhiteSpace($OutputPath)) {
         if (-not (Test-Path -LiteralPath $OutputPath)) { New-Item -ItemType Directory -Path $OutputPath -Force | Out-Null }

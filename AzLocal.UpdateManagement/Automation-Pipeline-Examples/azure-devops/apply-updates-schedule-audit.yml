@@ -118,7 +118,7 @@ variables:
   # to the latest on PSGallery and warns if the YAML looks stale - prompting a
   # refresh via Copy-AzLocalPipelineExample -Update.
   - name: GENERATED_AGAINST_MODULE_VERSION
-    value: '0.9.21'
+    value: '0.9.22'
   # Resolution order for the module version pin: queue-time parameter 'moduleVersion'
   # > empty (latest). Leave empty for the default fix-forward behaviour.
   - name: REQUIRED_MODULE_VERSION
@@ -132,9 +132,7 @@ variables:
   #   AZLOCAL_EXCLUDED_SUBSCRIPTIONS_PATH  (default '')      - optional subscription
   #       exclusion CSV path (repo-relative). When non-empty, every Azure Resource
   #       Graph query in this pipeline excludes the listed subscriptions.
-  #   SIDELOAD_UPDATES                     (default 'false') - set 'true' to enable
-  #       the recommended-sideload-schedule section of the audit.
-  #   SIDELOAD_LEAD_DAYS                   (default '7')
+  # Sideload advisor settings come from config/sideload-settings.yml when present.
   # Create the group once (Library > Variable groups, or
   # `az pipelines variable-group create`). See Automation-Pipeline-Examples/README.md
   # section 5. A variable redefined inline would OVERRIDE the group, so these are
@@ -255,10 +253,6 @@ stages:
         INPUT_DEBUG:             ${{ lower(parameters.debug) }}
         INSTALLED_MODULE_VERSION: $(moduleVersion.installed_module_version)
         REPORTS_PATH: $(reportsPath)
-        # v0.8.7 sideload advisor (opt-in). When SIDELOAD_UPDATES=true the audit
-        # appends a "Recommended sideload schedule" section. Inert when unset/false.
-        SIDELOAD_UPDATES: $(SIDELOAD_UPDATES)
-        SIDELOAD_LEAD_DAYS: $(SIDELOAD_LEAD_DAYS)
       inputs:
         # Replace with your service connection name
         # BEGIN-AZLOCAL-CUSTOMIZE:service-connection-Audit
@@ -298,6 +292,13 @@ stages:
           if ([int]::TryParse([string]$env:INPUT_MONITOR_POLL_INTERVAL_MINUTES, [ref]$mInt) -and $mInt -gt 0) { $params['MonitorPollIntervalMinutes'] = $mInt }
           if ([int]::TryParse([string]$env:INPUT_MONITOR_TRAILING_DAYS, [ref]$mInt) -and $mInt -ge 0)         { $params['MonitorTrailingDays']        = $mInt }
           if ([int]::TryParse([string]$env:INPUT_MONITOR_IN_FLIGHT_HOURS, [ref]$mInt) -and $mInt -ge 0)       { $params['MonitorInFlightHours']       = $mInt }
+            if (Test-Path -LiteralPath './config/sideload-settings.yml' -PathType Leaf) {
+              Install-Module powershell-yaml -Scope CurrentUser -Force -AllowClobber
+              Import-Module powershell-yaml -Force
+              $sideloadSettings = ConvertFrom-Yaml -Yaml (Get-Content -LiteralPath './config/sideload-settings.yml' -Raw) -Ordered:$false
+              $params['SideloadEnabled'] = [bool]$sideloadSettings.enabled
+              $params['SideloadLeadDays'] = [int]$sideloadSettings.planning.leadDays
+            }
 
           Export-AzLocalApplyUpdatesScheduleAudit @params
 

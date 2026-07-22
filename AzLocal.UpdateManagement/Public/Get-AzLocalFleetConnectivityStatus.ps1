@@ -9,9 +9,10 @@
     Replaces the inline PowerShell query block previously embedded in the
     Step.4_fleet-connectivity-status YAML pipelines. All four data-collection
     scopes are now handled here using the module's Invoke-AzResourceGraphQuery
-    helper, with ALL field extraction and aggregation done client-side so the
-    function is immune to ARG silently ignoring '| project' and '| summarize'
-    clauses in the az CLI layer.
+    helper. Each query projects only the fields consumed by the report to keep
+    fleet-scale ARG responses below the service payload limit. Aggregation and
+    joins remain client-side; field extraction accepts both the lean projected
+    schema and the legacy full-resource schema.
 
     The function runs five ARG queries:
       1. microsoft.azurestackhci/clusters           - cluster connectivity
@@ -83,7 +84,7 @@ function Get-AzLocalFleetConnectivityStatus {
     [OutputType([PSCustomObject])]
     param(
         [Parameter(Mandatory = $false)]
-        [string]$SubscriptionId,
+        [string[]]$SubscriptionId,
 
         [Parameter(Mandatory = $false)]
         [string]$ExportPath,
@@ -128,19 +129,29 @@ function Get-AzLocalFleetConnectivityStatus {
     # ------------------------------------------------------------------
     Write-Log -Message '[1/5] Querying cluster connectivity...' -Level Info
 
-    $clusterKql = "resources | where type =~ 'microsoft.azurestackhci/clusters'"
+    $clusterKql = @"
+resources
+| where type =~ 'microsoft.azurestackhci/clusters'
+| project id, name, resourceGroup, subscriptionId, location,
+          ConnectivityStatus = tostring(properties.connectivityStatus),
+          ClusterStatus = tostring(properties.status),
+          NodeCount = array_length(properties.reportedProperties.nodes)
+| order by id asc
+"@
     $clusterRaw = Invoke-AzResourceGraphQuery -Query $clusterKql @invokeArgs
 
     $clusterRows = @($clusterRaw | ForEach-Object {
         $r = $_
-        $connStatus = CoerceStr (Get-NestedProp $r 'properties.connectivityStatus')
-        $clsStatus  = CoerceStr (Get-NestedProp $r 'properties.status')
+        $connStatusValue = if ($r.PSObject.Properties['ConnectivityStatus']) { $r.ConnectivityStatus } else { Get-NestedProp $r 'properties.connectivityStatus' }
+        $clusterStatusValue = if ($r.PSObject.Properties['ClusterStatus']) { $r.ClusterStatus } else { Get-NestedProp $r 'properties.status' }
+        $connStatus = CoerceStr $connStatusValue
+        $clsStatus  = CoerceStr $clusterStatusValue
         # v0.7.84 fix: cluster ARG records expose 'properties.reportedProperties.nodes' (array),
         # NOT a 'nodeCount' scalar. Previously reading 'nodeCount' returned $null for every
         # cluster which surfaced as Nodes=0 in the Step.4 summary and a misleading
         # 'Node coverage delta' of -(Arc-joined nodes).
-        $nodes      = Get-NestedProp $r 'properties.reportedProperties.nodes'
-        $nodeCount  = if ($nodes) { @($nodes).Count } else { 0 }
+        $nodes = Get-NestedProp $r 'properties.reportedProperties.nodes'
+        $nodeCount = if ($r.PSObject.Properties['NodeCount'] -and $null -ne $r.NodeCount) { [int]$r.NodeCount } elseif ($nodes) { @($nodes).Count } else { 0 }
         [PSCustomObject][ordered]@{
             ClusterName        = CoerceStr $r.name (CoerceStr $r.resourceGroup 'Unknown')
             ClusterId          = CoerceStr $r.id
@@ -176,7 +187,7 @@ function Get-AzLocalFleetConnectivityStatus {
     # ------------------------------------------------------------------
     Write-Log -Message '[2/5] Querying update summaries for cluster versions...' -Level Info
 
-    $versionKql = "extensibilityresources | where type =~ 'microsoft.azurestackhci/clusters/updatesummaries'"
+    $versionKql = "extensibilityresources | where type =~ 'microsoft.azurestackhci/clusters/updatesummaries' | project id, CurrentVersion = tostring(properties.currentVersion) | order by id asc"
     $versionRaw = Invoke-AzResourceGraphQuery -Query $versionKql @invokeArgs
 
     $clusterVersionMap = @{}
@@ -187,7 +198,8 @@ function Get-AzLocalFleetConnectivityStatus {
         $sepIdx = $rawId.ToLowerInvariant().IndexOf('/updatesummaries/')
         $cIdLower = if ($sepIdx -gt 0) { $rawId.Substring(0, $sepIdx).ToLowerInvariant() } else { $rawId.ToLowerInvariant() }
         if (-not $clusterVersionMap.ContainsKey($cIdLower)) {
-            $clusterVersionMap[$cIdLower] = CoerceStr (Get-NestedProp $us 'properties.currentVersion')
+            $currentVersion = if ($us.PSObject.Properties['CurrentVersion']) { $us.CurrentVersion } else { Get-NestedProp $us 'properties.currentVersion' }
+            $clusterVersionMap[$cIdLower] = CoerceStr $currentVersion
         }
     }
 
@@ -199,12 +211,26 @@ function Get-AzLocalFleetConnectivityStatus {
     # ------------------------------------------------------------------
     Write-Log -Message '[3/5] Querying Arc machine status...' -Level Info
 
-    $machinesKql = "resources | where type =~ 'microsoft.hybridcompute/machines' | where properties.cloudMetadata.provider =~ 'AzSHCI' | where kind !~ 'HCI'"
+    $machinesKql = @"
+resources
+| where type =~ 'microsoft.hybridcompute/machines'
+| where properties.cloudMetadata.provider =~ 'AzSHCI'
+| where kind !~ 'HCI'
+| project id, name, resourceGroup, subscriptionId,
+          ParentClusterResourceId = tostring(properties.parentClusterResourceId),
+          AgentStatus = tostring(properties.status),
+          OsSku = tostring(properties.osSku),
+          OsVersion = tostring(properties.osVersion),
+          AgentVersion = tostring(properties.agentVersion),
+          LastStatusChange = tostring(properties.lastStatusChange)
+| order by id asc
+"@
     $machinesRaw = Invoke-AzResourceGraphQuery -Query $machinesKql @invokeArgs
 
     $allMachines = @($machinesRaw | ForEach-Object {
         $m = $_
-        $clusterId   = CoerceStr (Get-NestedProp $m 'properties.parentClusterResourceId')
+        $parentClusterResourceId = if ($m.PSObject.Properties['ParentClusterResourceId']) { $m.ParentClusterResourceId } else { Get-NestedProp $m 'properties.parentClusterResourceId' }
+        $clusterId = CoerceStr $parentClusterResourceId
         # v0.7.84 fix: extract the cluster name (last segment of the ARM ID).
         # Pre-fix code cast the WHOLE split array to a string (joining the
         # elements with spaces) before indexing with -1, which then returned
@@ -220,12 +246,12 @@ function Get-AzLocalFleetConnectivityStatus {
             MachineId        = CoerceStr $m.id
             ClusterName      = $clusterName
             ClusterId        = $clusterId
-            AgentStatus      = CoerceStr (Get-NestedProp $m 'properties.status') 'Unknown'
-            OsSku            = CoerceStr (Get-NestedProp $m 'properties.osSku')
-            OsVersion        = CoerceStr (Get-NestedProp $m 'properties.osVersion')
+            AgentStatus      = CoerceStr $(if ($m.PSObject.Properties['AgentStatus']) { $m.AgentStatus } else { Get-NestedProp $m 'properties.status' }) 'Unknown'
+            OsSku            = CoerceStr $(if ($m.PSObject.Properties['OsSku']) { $m.OsSku } else { Get-NestedProp $m 'properties.osSku' })
+            OsVersion        = CoerceStr $(if ($m.PSObject.Properties['OsVersion']) { $m.OsVersion } else { Get-NestedProp $m 'properties.osVersion' })
             ClusterVersion   = $version
-            AgentVersion     = CoerceStr (Get-NestedProp $m 'properties.agentVersion')
-            LastStatusChange = CoerceStr (Get-NestedProp $m 'properties.lastStatusChange')
+            AgentVersion     = CoerceStr $(if ($m.PSObject.Properties['AgentVersion']) { $m.AgentVersion } else { Get-NestedProp $m 'properties.agentVersion' })
+            LastStatusChange = CoerceStr $(if ($m.PSObject.Properties['LastStatusChange']) { $m.LastStatusChange } else { Get-NestedProp $m 'properties.lastStatusChange' })
             ResourceGroup    = CoerceStr $m.resourceGroup
             SubscriptionId   = CoerceStr $m.subscriptionId
         }
@@ -278,6 +304,10 @@ extensibilityresources
 | extend DefaultGateway = tostring(nic.defaultGateway)
 | extend DnsServers = strcat_array(nic.dnsServers, ', ')
 | extend MacAddress = tostring(nic.macAddress)
+| project id, resourceGroup, subscriptionId, edgeMachineName, NicName, NicStatus,
+          DriverVersion, InterfaceDescription, NicType, Ip4Address, SubnetMask,
+          DefaultGateway, DnsServers, MacAddress
+| order by id asc, NicName asc
 '@
     $nicRaw = Invoke-AzResourceGraphQuery -Query $nicKql @invokeArgs
 
@@ -334,7 +364,7 @@ extensibilityresources
     # which caused DaysSinceLastModified to fall through to the -1 sentinel for
     # every ARB regardless of status. The extend guarantees the column is present
     # in the row dictionary (empty string if truly missing).
-    $arbKql = "resources | where type =~ 'microsoft.resourceconnector/appliances' | extend lastModifiedAt = tostring(systemData.lastModifiedAt)"
+    $arbKql = "resources | where type =~ 'microsoft.resourceconnector/appliances' | extend lastModifiedAt = tostring(systemData.lastModifiedAt) | project id, name, resourceGroup, subscriptionId, ArbStatus = tostring(properties.status), lastModifiedAt | order by id asc"
     $arbRaw  = Invoke-AzResourceGraphQuery -Query $arbKql @invokeArgs
 
     $arbRows = @($arbRaw | ForEach-Object {
@@ -356,7 +386,8 @@ extensibilityresources
         $clusterId     = if ($matchedCount -gt 0) { ($matched | ForEach-Object { $_.ClusterId })     -join ', ' } else { '' }
         $clusterStatus = if ($matchedCount -gt 0) { ($matched | ForEach-Object { $_.ClusterStatus }) -join ', ' } else { '' }
 
-        $status = CoerceStr (Get-NestedProp $a 'properties.status') 'Unknown'
+        $arbStatus = if ($a.PSObject.Properties['ArbStatus']) { $a.ArbStatus } else { Get-NestedProp $a 'properties.status' }
+        $status = CoerceStr $arbStatus 'Unknown'
         # Read the extended top-level column first, fall back to systemData.lastModifiedAt
         # in case the ARG CLI strips the extend column too (defence in depth).
         $lastMod = CoerceStr $a.lastModifiedAt

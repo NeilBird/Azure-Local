@@ -5,6 +5,40 @@ All notable changes to the AzLocal.UpdateManagement module (renamed from AzStack
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.22] - 2026-07-21
+
+**Fleet-scale Azure Resource Graph payload hardening** - all ARG-backed
+pipelines now inherit byte-limit-aware adaptive paging from the shared query
+helper. Monitor: 1 and Monitor: 2 also reduce their wire payloads at source.
+
+### Fixed
+
+- **Sideload Scheduled Task launch and ownership are race-safe.** The initial `Copying` state is persisted before task start, each launch receives a unique operation ID, and superseded workers cannot overwrite newer state. Re-drives stop and replace the old task.
+- **Sideload state transitions now match the real operation.** Discovery-only retries no longer repeat bundle expansion or `Add-SolutionUpdate`; `NeedsSbe` and `ImportFailed` are persisted explicitly; import retries reuse copied media instead of restarting robocopy.
+- **UNC copy identity is enforced before launch.** S4U and Interactive task logons are rejected for network paths. Enabled configurations require an explicit ServiceAccount/gMSA or Password principal, with Key Vault references required for Password mode.
+- **Detached-worker exceptions are observable.** Terminal failures persist the exception, operation ID, worker/robocopy process IDs, and log path instead of leaving an ambiguous stale `Copying` record.
+- **`Invoke-AzResourceGraphQuery` now recovers from `ResponsePayloadTooLarge`.** ARG's `--first` control limits rows, not bytes, so a fleet can return fewer than 1,000 very large rows and exceed the 16 MiB response cap before ARG emits a `skip_token`. The shared helper detects the deterministic payload error, halves `--first`, and retries the same logical page immediately. It retains the successful smaller page size across continuation pages and does not consume the throttle/network retry budget or arm the cross-call throttle cooldown.
+- **A single oversized resource now fails with actionable guidance.** If `--first 1` still exceeds the service cap, the helper explains that one result row is too large and the caller must project fewer or smaller fields instead of reporting a generic CLI failure.
+- **Monitor: 2 - Fleet Health Status starts its dynamic health-result query at 50 rows.** `Get-AzLocalFleetHealthFailures` intentionally retrieves complete `properties.healthCheckResult` arrays client-side to avoid ARG's bounded `mv-expand` behaviour. It now uses a conservative initial page size and stable resource-ID ordering; adaptive paging remains the safety net for unusually large clusters.
+- **Monitor: 1 - Fleet Connectivity Status no longer downloads full resource documents.** Its five ARG queries explicitly project only consumed cluster, update-summary, Arc-machine, expanded-NIC, and Resource Bridge fields. This removes large node, health-result, and NIC property bags from the response while preserving legacy full-resource response fallbacks in PowerShell.
+
+### Added
+
+- **Authoritative `config/sideload-settings.yml`.** `Get-AzLocalSideloadSettings` validates schema 1, paths, reconciliation limits, copy profiles, task identity, remoting, and reporting. The sideload and schedule-audit pipelines consume it directly; all `SIDELOAD_*` runtime fallbacks are removed.
+- **Create-only settings deployment.** `Copy-AzLocalPipelineExample` and `Update-AzLocalPipelineExample` create the disabled starter only when absent and preserve existing settings byte-for-byte. No speculative schema migration command is included; unsupported schemas fail clearly.
+- **Bounded sideload reconciliation.** Configurable heartbeat cadence, heartbeat staleness, and no-progress detection protect shared links and prevent duplicate work. `maxConcurrentCopies` is the fleet/network ceiling and optional `maxConcurrentCopiesPerRunner` is the host ceiling; the latter defaults to the fleet value when omitted so existing schema-1 settings remain valid. Shared `OwningMachine` state lets a serialized run enforce both limits without opening privileged WinRM administration between runner-pool members.
+- **Expanded sideload reporting.** Markdown/JUnit reports surface unreadable state records, `ImportFailed`, operation/process metadata, logs, and state-specific remediation.
+- **Per-call payload diagnostics**: `$script:LastResourceGraphPayloadReduced`, `$script:LastResourceGraphPayloadRetryCount`, and `$script:LastResourceGraphEffectivePageSize` expose adaptive page-size behaviour to callers and tests.
+- **Scaling regressions** cover adaptive halving, continuation-token completeness, one-row failure guidance, diagnostic reset, Monitor: 2's 50-row initial page, lean Monitor: 1 projections, and deterministic ordering.
+- **Optional, schema-versioned `config/fleet-settings.yml`.** `Copy-AzLocalPipelineExample` and `Update-AzLocalPipelineExample` create a fully commented starter without overwriting operator settings. With no active management groups, existing implicit subscription discovery is unchanged. Active `scope.managementGroups` entries avoid the Azure CLI/Azure PowerShell implicit-scope ceiling of 1,000 accessible subscriptions; explicit `-SubscriptionId` values still take precedence. `Get-AzLocalFleetSettings` exposes the resolved scope and reporting/ITSM limits.
+- **Bounded human-readable summaries with complete artifacts.** Ready, recent-success, in-flight, unresolved-failure, and attempt-gap Markdown tables default to 100 rows and include `X of Y` notices. CSV, JSON, JUnit, and HTML artifacts remain complete. The shared summary writer also enforces a configurable UTF-8 byte budget (900,000 by default) below GitHub's 1 MiB per-step limit.
+- **Fleet-scale query reductions.** Inventory resolves subscription names in one scoped ARG query, explicit readiness value lists are command-safe batched, readiness evidence avoids fleet-sized KQL lists, and failed-run health evidence is fetched once per scope then correlated in memory.
+- **ITSM fan-out safeguards.** ServiceNow creation defaults to 25 potential incidents per run and opens a circuit breaker after five consecutive creation failures. Limit- and breaker-skipped rows remain in CSV/JUnit results for auditability.
+
+### Notes
+
+- Public function count **69 -> 71** (`Get-AzLocalFleetSettings`, `Get-AzLocalSideloadSettings`). `GENERATED_AGAINST_MODULE_VERSION` bumped to `0.9.22` across all bundled GitHub Actions and Azure DevOps templates.
+
 ## [0.9.21] - 2026-07-15
 
 **Monitor: 2 - Fleet Health Status** - the **Cluster Counts** summary table now
@@ -2594,7 +2628,7 @@ If you created the custom role against the v0.7.79-or-earlier definition in `doc
   so any cluster whose `healthCheckResult` array exceeded 128 entries was
   losing every check past position 128 - including Failed ones - before
   the function ever saw them. Empirical measurement against an
-  AdaptiveCloudLab subscription showed **16 of 20 clusters affected** and
+  maintainer test subscription showed **16 of 20 clusters affected** and
   **2,711 healthCheckResult entries silently dropped fleet-wide**, with
   the worst offender (NewYorkCity, 380 entries) losing 66% of its checks
   and reporting only 4 Failed entries when ARM had additional Failed
@@ -2786,7 +2820,7 @@ If you created the custom role against the v0.7.79-or-earlier definition in `doc
   the query parses + executes cleanly, and asserts the documented
   required-column set is present on the first returned row. Use this
   before shipping a Step.4 KQL edit to catch column-rename / schema-
-  drift bugs against a live AdaptiveCloudLab subscription.
+  drift bugs against a live maintainer test subscription.
 
 - **New `Step.4_fleet-connectivity-status.yml` pipeline (GitHub Actions
   and Azure DevOps).** A daily fleet-wide network connectivity audit

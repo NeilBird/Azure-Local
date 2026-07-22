@@ -68,7 +68,7 @@ function Get-AzLocalSideloadCatalog {
     )
 
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
-        throw "Sideload catalog YAML not found at '$Path'. Set SIDELOAD_CATALOG_PATH (or pass -Path) to a catalog file. Generate / refresh one with Update-AzLocalSideloadCatalog."
+        throw "Sideload catalog YAML not found at '$Path'. Configure paths.catalog in sideload-settings.yml (or pass -Path) to a catalog file. Generate or refresh one with Update-AzLocalSideloadCatalog."
     }
 
     $lines = @(Get-Content -LiteralPath $Path -ErrorAction Stop)

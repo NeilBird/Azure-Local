@@ -25,6 +25,10 @@
 .PARAMETER Version
     The solution-update version being copied (recorded in state).
 
+.PARAMETER OperationId
+    Unique operation identifier. The worker exits when a newer operation owns
+    the cluster state file.
+
 .PARAMETER SourcePath
     The verified media path: a .zip file (Solution) or a folder (SBE).
 
@@ -44,6 +48,7 @@
 param(
     [Parameter(Mandatory = $true)][string]$ClusterName,
     [Parameter(Mandatory = $true)][string]$Version,
+    [Parameter(Mandatory = $true)][string]$OperationId,
     [Parameter(Mandatory = $true)][string]$SourcePath,
     [Parameter(Mandatory = $true)][string]$TargetPath,
     [Parameter(Mandatory = $true)][string]$StateRoot,
@@ -53,6 +58,43 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+$statePath = $null
+$state = $null
+$logPath = ''
+
+trap {
+    $failureMessage = "Copy worker failed: $($_.Exception.Message)"
+    try {
+        if ($null -eq $statePath) {
+            $statePath = Get-StateFilePath -Root $StateRoot -Cluster $ClusterName
+        }
+        if ($null -eq $state) {
+            $nowUtc = [DateTime]::UtcNow.ToString('o')
+            $state = [PSCustomObject]@{
+                ClusterName = $ClusterName; Version = $Version; OperationId = $OperationId
+                State = 'Failed'; OwningMachine = $env:COMPUTERNAME; TaskName = ''
+                MediaPath = $SourcePath; TargetPath = $TargetPath; LogPath = $logPath
+                StartUtc = $nowUtc; LastHeartbeatUtc = $nowUtc; LastProgressUtc = $nowUtc
+                TotalBytes = [long]0; CopiedBytes = [long]0; Mbps = [double]0; EtaUtc = ''
+                ExitCode = $null; WorkerProcessId = $PID; RobocopyProcessId = $null
+                Retries = [int]0; ImportRetries = [int]0; Message = $failureMessage
+            }
+        }
+        else {
+            $state.State = 'Failed'
+            $state.LastHeartbeatUtc = [DateTime]::UtcNow.ToString('o')
+            $state.Message = $failureMessage
+        }
+        Write-StateAtomic -Path $statePath -State $state
+        if (-not [string]::IsNullOrWhiteSpace($logPath)) {
+            Add-Content -LiteralPath $logPath -Value $failureMessage -Encoding UTF8 -ErrorAction SilentlyContinue
+        }
+    }
+    catch {
+        Write-Error "$failureMessage State persistence also failed: $($_.Exception.Message)" -ErrorAction Continue
+    }
+    exit 1
+}
 
 function Get-StateFilePath {
     param([string]$Root, [string]$Cluster)
@@ -64,6 +106,13 @@ function Get-StateFilePath {
 
 function Write-StateAtomic {
     param([string]$Path, [PSCustomObject]$State)
+
+    if (Test-Path -LiteralPath $Path -PathType Leaf) {
+        $current = Get-Content -LiteralPath $Path -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+        if ([string]$current.OperationId -ne [string]$State.OperationId) {
+            throw "Sideload operation '$($State.OperationId)' no longer owns state '$Path'."
+        }
+    }
     $json = $State | ConvertTo-Json -Depth 6
     $temp = "{0}.{1}.partial" -f $Path, ([guid]::NewGuid().ToString('N'))
     try {
@@ -104,6 +153,7 @@ $totalBytes = Get-FolderSize -Path $SourcePath
 $state = [PSCustomObject]@{
     ClusterName      = $ClusterName
     Version          = $Version
+    OperationId      = $OperationId
     State            = 'Copying'
     OwningMachine    = $env:COMPUTERNAME
     TaskName         = if ($existing) { [string]$existing.TaskName } else { '' }
@@ -117,7 +167,11 @@ $state = [PSCustomObject]@{
     Mbps             = [double]0
     EtaUtc           = ''
     ExitCode         = $null
+    WorkerProcessId  = $PID
+    RobocopyProcessId = $null
+    LastProgressUtc  = $startUtc.ToString('o')
     Retries          = if ($existing) { [int]$existing.Retries } else { [int]0 }
+    ImportRetries    = if ($existing -and $existing.PSObject.Properties['ImportRetries']) { [int]$existing.ImportRetries } else { [int]0 }
     Message          = 'Copy started.'
 }
 Write-StateAtomic -Path $statePath -State $state
@@ -140,6 +194,9 @@ $roboArgs += ($RobocopySwitches -split '\s+' | Where-Object { $_ })
 $roboArgs += @('/NP', '/NJH', '/NJS', ("/LOG:{0}" -f $logPath))
 
 $proc = Start-Process -FilePath 'robocopy.exe' -ArgumentList $roboArgs -PassThru
+$state.RobocopyProcessId = $proc.Id
+$state.Message = "Copy started (worker PID $PID, robocopy PID $($proc.Id))."
+Write-StateAtomic -Path $statePath -State $state
 while (-not $proc.HasExited) {
     Start-Sleep -Seconds $HeartbeatSeconds
     $copied = Get-FolderSize -Path $TargetPath
@@ -152,6 +209,9 @@ while (-not $proc.HasExited) {
             $remainingSec = ($totalBytes - $copied) / $bytesPerSec
             $eta = [DateTime]::UtcNow.AddSeconds($remainingSec).ToString('o')
         }
+    }
+    if ($copied -gt [long]$state.CopiedBytes) {
+        $state.LastProgressUtc = [DateTime]::UtcNow.ToString('o')
     }
     $state.CopiedBytes = [long]$copied
     $state.Mbps = [double]$mbps

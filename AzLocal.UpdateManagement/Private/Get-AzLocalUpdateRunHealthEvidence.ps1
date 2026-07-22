@@ -76,7 +76,7 @@ function Get-AzLocalUpdateRunHealthEvidence {
     param(
         [Parameter(Mandatory = $true)]
         [ValidateNotNullOrEmpty()]
-        [string]$ClusterResourceId,
+        [string[]]$ClusterResourceId,
 
         [Parameter(Mandatory = $true)]
         [datetime]$RunStartTime,
@@ -98,7 +98,9 @@ function Get-AzLocalUpdateRunHealthEvidence {
         [string]$SubscriptionId
     )
 
-    $clusterId = $ClusterResourceId.ToLower()
+    $clusterIds = @($ClusterResourceId | ForEach-Object { $_.Trim().ToLower() } | Where-Object { $_ } | Select-Object -Unique)
+    $clusterIdSet = @{}
+    foreach ($clusterId in $clusterIds) { $clusterIdSet[$clusterId] = $true }
     $windowFrom = $RunStartTime.ToUniversalTime() - $WindowBefore
     $windowTo   = $RunEndTime.ToUniversalTime()   + $WindowAfter
 
@@ -114,13 +116,12 @@ extensibilityresources
     ResourceGroup  = tostring(segments[4]),
     ClusterName    = tostring(segments[8])
 | extend ClusterResourceId = tolower(strcat('/subscriptions/', SubscriptionId, '/resourceGroups/', ResourceGroup, '/providers/Microsoft.AzureStackHCI/clusters/', ClusterName))
-| where ClusterResourceId == '$clusterId'
 | project
     ClusterResourceId,
     HealthCheckResult = properties.healthCheckResult
 "@
 
-    Write-Verbose "Get-AzLocalUpdateRunHealthEvidence: ARG query for cluster '$clusterId' window [$windowFrom .. $windowTo] severity>=$MinSeverity"
+    Write-Verbose "Get-AzLocalUpdateRunHealthEvidence: one scoped ARG query for $($clusterIds.Count) cluster(s), window [$windowFrom .. $windowTo], severity>=$MinSeverity"
 
     try {
         $rows = if ($SubscriptionId) {
@@ -140,6 +141,8 @@ extensibilityresources
 
     $evidence = New-Object System.Collections.ArrayList
     foreach ($cluster in @($rows)) {
+        $currentClusterId = if ($cluster.PSObject.Properties['ClusterResourceId']) { ([string]$cluster.ClusterResourceId).ToLower() } else { '' }
+        if (-not $clusterIdSet.ContainsKey($currentClusterId)) { continue }
         $hcr = if ($cluster.PSObject.Properties['HealthCheckResult']) { $cluster.HealthCheckResult } else { $null }
         if (-not $hcr) { continue }
         foreach ($hc in @($hcr)) {
@@ -156,6 +159,7 @@ extensibilityresources
             if ($ts -lt $windowFrom -or $ts -gt $windowTo) { continue }
 
             [void]$evidence.Add([PSCustomObject]@{
+                ClusterResourceId   = $currentClusterId
                 Timestamp          = $ts
                 Severity           = $sev
                 Title              = "$($hc.title)"

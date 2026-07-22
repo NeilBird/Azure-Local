@@ -2,7 +2,7 @@
 
 > ⚠️ **Disclaimer**: This module is **NOT** a Microsoft supported service offering or product. It is provided as example code only, with no warranty or official support. Refer to the [MIT license](https://github.com/NeilBird/Azure-Local/blob/main/LICENSE) for further information.
 
-**Latest Version:** v0.9.21 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.9.21)
+**Latest Version:** v0.9.22 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.9.22)
 
 This folder contains the 'AzLocal.UpdateManagement' PowerShell module for managing updates on Azure Local (formerly Azure Stack HCI) clusters using the Azure Local REST API. The module supports both interactive use and CI/CD automation via Service Principal or Managed Identity authentication.
 
@@ -14,7 +14,7 @@ Azure Local REST API specification (includes update management endpoints): https
 **This README (overview + most-recent release notes):**
 
 - [Where to Start](#where-to-start)
-- [What's New in v0.9.21](#whats-new-in-v0921)
+- [What's New in v0.9.22](#whats-new-in-v0922)
 - [Files](#files)
 - [Prerequisites](#prerequisites)
 - [RBAC Requirements](#rbac-requirements) (summary; full reference in [docs/rbac.md](docs/rbac.md))
@@ -71,34 +71,36 @@ If you are new to this module, work through these in order from a regular PowerS
 | **Daily fleet health audit (v0.7.65)** | `Get-AzLocalFleetHealthFailures -View Summary -ExportPath fleet-health-summary.csv` -> review top failure reasons by cluster impact -> drill into [`Get-AzLocalFleetHealthFailures -View Detail`](docs/cmdlet-reference.md#get-azlocalfleethealthfailures) for per-cluster remediation |
 | **Schedule coverage drift audit (v0.7.65)** | `Test-AzLocalApplyUpdatesScheduleCoverage -View Audit -PipelineYamlPath .\.github\workflows` -> for any `Uncovered` rows, copy the `RequiredCronUTC` value and paste it into `apply-updates.yml` -> re-run `-View Audit` to confirm `Covered` -> wire the bundled `apply-updates-schedule-audit.yml` pipeline (weekly Mon 05:00 UTC) so future tag drift is caught automatically. Full runbook: [`Automation-Pipeline-Examples/README.md` section 8.3](./Automation-Pipeline-Examples/README.md#83-end-to-end-runbook-apply-updates-schedule-coverage-audit) |
 | **Pre-update health gate (CI/CD)** | `Test-AzLocalClusterHealth -BlockingOnly` -> `Test-AzLocalUpdateScheduleAllowed` -> `Test-AzLocalFleetHealthGate` -> proceed only on pass |
-| **Sideloaded payload (v0.7.1)** | Operator sets `UpdateSideloaded=False` -> stage payload out-of-band -> operator flips `UpdateSideloaded=True` -> `Start-AzLocalClusterUpdate` (auto-stamps `UpdateVersionInProgress`) -> `Get-AzLocalUpdateRuns` (auto-resets tags on success) -> `Reset-AzLocalSideloadedTag -Force` only if a tag gets stuck |
+| **Manual sideloaded-payload gate (v0.7.1)** | Operator sets `UpdateSideloaded=False` -> stage payload out-of-band -> operator flips `UpdateSideloaded=True` -> `Start-AzLocalClusterUpdate` (auto-stamps `UpdateVersionInProgress`) -> `Get-AzLocalUpdateRuns` (auto-resets tags on success) -> `Reset-AzLocalSideloadedTag -Force` only if a tag gets stuck |
+| **Automated disconnected-cluster sideload (Update: 2)** | Configure `config/sideload-settings.yml` -> populate the catalog and auth map -> run `sideload-updates.yml` on a self-hosted runner -> review `Export-AzLocalSideloadStatusReport` -> let Update: 3 apply the imported update. See the [sideload operations guide](Automation-Pipeline-Examples/docs/sideload.md). |
 | **Pause / resume long fleet run** | `Stop-AzLocalFleetUpdate -SaveState` -> ... -> `Resume-AzLocalFleetUpdate -StateFilePath ...` |
 | **Recover from emergency** | `Stop-AzLocalFleetUpdate` -> `Test-AzLocalClusterHealth` (assess) -> `Resume-AzLocalFleetUpdate -RetryFailed` |
 
 > Most CI/CD pipelines in [Automation-Pipeline-Examples/](Automation-Pipeline-Examples/) are direct implementations of one of these workflows. Start there if you want a copy-pasteable end-to-end pipeline.
 
-## What's New in v0.9.21
+## What's New in v0.9.22
 
-**Monitor: 2 - Fleet Health Status - the "Cluster Counts" summary table now counts each cluster once, by its highest failing-check severity, and the icons no longer duplicate the severity word.**
+**Azure Resource Graph queries now scale safely when expanded RBAC exposes hundreds of subscriptions and clusters, and the disconnected-cluster sideload workflow is hardened for customer operation.** The shared query helper handles ARG's byte limit in addition to its row limit, the two fleet-monitor pipelines stop downloading property bags they do not consume, and Update: 2 now uses one typed settings file with race-safe task ownership and actionable state reporting.
 
-### Changed
+### Fixed
 
-- **The unhealthy bucket is split by highest severity.** The single **Unhealthy Clusters (with failing checks)** row - previously stamped with the Critical (`❌`) icon even when it also contained warning-only clusters - is now two rows: **Critical - Unhealthy Clusters (with failing checks)** (at least one Critical failing check) and **Warning - Unhealthy Clusters (with failing checks)** (failing checks all Warning). A cluster with **both** Critical and Warning failing checks is counted in the **Critical** row only, so each cluster is counted exactly once and `Healthy + Critical + Warning-only + Other = Total`.
-- **The "Other" bucket is renamed** to **Other - (health check In progress / Unknown)** so it no longer reads as a severity.
-- **Count-table rows now use bare-glyph icons** (`✅` / `❌` / `⚠️` / `ℹ️`) so the severity word is no longer duplicated (previously `❌ Critical **Critical**` / `❌ Critical **Unhealthy Clusters...**`).
-- **Monitor: 1 - Fleet Connectivity Status:** each row of the **Fleet Connectivity Status Summary** KPI table is now prefixed with a bare-glyph status indicator (green tick / red cross), for visual consistency with the other pipeline step-summary tables.
+- **All ARG-backed cmdlets inherit adaptive payload paging.** When ARG rejects a page with `ResponsePayloadTooLarge`, `Invoke-AzResourceGraphQuery` halves `--first`, retries the same logical page, and retains the successful size across continuation pages. This correction is immediate and separate from throttle/network retries. If one row still exceeds the service limit, the error now tells the caller to project fewer fields.
+- **Monitor: 2 - Fleet Health Status uses byte-safe health-result pages.** `Get-AzLocalFleetHealthFailures` begins its complete `healthCheckResult` array query at 50 cluster rows and orders by resource ID. Client-side expansion remains deliberate so checks beyond ARG's bounded `mv-expand` behavior are not silently dropped.
+- **Monitor: 1 - Fleet Connectivity Status sends lean queries.** Cluster, update-summary, Arc-machine, expanded-NIC, and Resource Bridge requests now project only fields used by the report. Full node, health, and NIC property bags are no longer repeated across fleet responses.
+- **Paged fleet queries are deterministic.** The touched Monitor: 1 and Monitor: 2 queries order by stable resource identifiers before following continuation tokens.
 
 ### Added
 
-- **New `Export-AzLocalFleetHealthStatusReport` step outputs** `critical_clusters` and `warning_only_clusters`, and new `-PassThru` properties `CriticalClusters` and `WarningOnlyClusters`.
-
-### Documentation
-
-- **Sideload updates (Update: 2) now has its own section + table-of-contents entry** in the CI/CD README ([`Automation-Pipeline-Examples/README.md`](Automation-Pipeline-Examples/README.md)), linking to the detailed [`docs/sideload.md`](Automation-Pipeline-Examples/docs/sideload.md) guide. That guide gains a new **External endpoints requirements** section (CI/CD, Azure, cluster-fabric, and the optional Microsoft update-media download endpoints) and an accuracy pass on the state machine, the detached scheduled task + **S4U logon caveat**, retry / housekeeping, the automatic `UpdateSideloaded` gate reset, and the status-report columns.
+- **Payload diagnostics and regression coverage.** Module-scope diagnostics expose whether adaptive reduction occurred, how many reductions were needed, and the final page size. Tests cover oversized first pages, continuation completeness, one-row overflow guidance, diagnostic reset, conservative health paging, and lean connectivity projections.
+- **Optional fleet settings for estates beyond 1,000 subscriptions.** Generated pipeline repos now receive an inert, fully commented `config/fleet-settings.yml`. Activating `scope.managementGroups` makes all central ARG queries use management-group scope; explicit `-SubscriptionId` values override it, and leaving the file commented preserves implicit subscription discovery. `Get-AzLocalFleetSettings` reports the effective settings.
+- **Bounded summaries, complete artifacts.** High-cardinality Markdown tables default to 100 rows with `X of Y` notices, and the shared writer stays below a configurable 900,000-byte UTF-8 budget. CSV, JSON, JUnit, and HTML artifacts are not truncated.
+- **Scale-safe enrichment and ticketing.** Inventory uses one ARG subscription-name lookup, readiness avoids fleet-sized command lines, failed-run health evidence uses one scoped query, and ServiceNow fan-out defaults to 25 incidents with a five-consecutive-failure circuit breaker.
+- **Authoritative sideload settings and bounded reconciliation.** `Get-AzLocalSideloadSettings` validates `config/sideload-settings.yml`; Copy/Update creates the disabled starter only when absent and preserves existing files byte-for-byte. The pipeline no longer reads `SIDELOAD_*` variables, and no speculative settings migration command is included. Operation IDs prevent superseded Scheduled Task workers from overwriting current state; heartbeat, no-progress, copy-retry, and import-retry controls are explicit. `maxConcurrentCopies` caps the whole fabric while optional `maxConcurrentCopiesPerRunner` caps each host (for example, 30 fleet-wide and 10 per tested/throttled runner); existing schema-1 files that omit the host cap retain their prior behavior.
+- **Sideload identity and diagnostics hardening.** UNC-backed copies reject S4U/Interactive task logons and require a network-capable principal. Reports expose `NeedsSbe`, `ImportFailed`, unreadable state records, operation/process IDs, logs, and state-specific remediation. See the [Update: 2 operations guide](Automation-Pipeline-Examples/docs/sideload.md).
 
 > Previous release notes have moved into the [Release History](#release-history) appendix at the bottom of this document.
 
-See [CHANGELOG.md](CHANGELOG.md) for full release details. See [`What's New in v0.9.20`](#whats-new-in-v0920) in the Release History for the previous release.
+See [CHANGELOG.md](CHANGELOG.md) for full release details. See [`What's New in v0.9.21`](#whats-new-in-v0921) in the Release History for the previous release.
 
 ## Files
 
@@ -396,6 +398,8 @@ Start-AzLocalClusterUpdate -ScopeByUpdateRingTag -UpdateRingValue "Production" -
 
 Use this workflow when an admin manually copies an Azure Local update payload onto a cluster (sideloading) and wants the module to gate `Start-AzLocalClusterUpdate` until the payload is in place, then automatically clear the gate once the run succeeds.
 
+> **Automating this flow for disconnected clusters:** use the self-hosted **Update: 2 - Sideload Updates** pipeline. Its authoritative configuration is `config/sideload-settings.yml`; it handles catalog planning, bounded Robocopy, verification, import/discovery, state ownership, and reporting. See the [sideload operations guide](Automation-Pipeline-Examples/docs/sideload.md). The manual tag flow below remains available for one-off staging.
+
 > ✅ **Fully opt-in.** Clusters that do not have the `UpdateSideloaded` tag behave exactly as in v0.7.0 - the gate is bypassed entirely and updates proceed through the existing schedule/health checks. You only "join" the workflow by setting the tag on a specific cluster when you want to stage a sideloaded payload. No new RBAC, no fleet-wide opt-out switch needed.
 
 **Two tags coordinate the workflow:**
@@ -594,7 +598,11 @@ This code is provided as-is for educational and reference purposes.
 
 The full What's-New history (v0.7.81 and earlier) has moved to [docs/release-history.md](docs/release-history.md).
 
-The most recent release notes for **v0.9.21** stay above under [`What's New in v0.9.21`](#whats-new-in-v0921).
+The most recent release notes for **v0.9.22** stay above under [`What's New in v0.9.22`](#whats-new-in-v0922).
+
+### What's New in v0.9.21
+
+**Monitor: 2 - Fleet Health Status: the "Cluster Counts" summary table now counts each cluster once, by its highest failing-check severity, and the icons no longer duplicate the severity word.** The unhealthy bucket is split into Critical and Warning-only rows; a cluster with both severities is counted in Critical only. The Other bucket is renamed for In progress / Unknown health, count rows use bare-glyph icons, and new outputs expose `critical_clusters` / `warning_only_clusters`. **Monitor: 1** adds bare-glyph status indicators to each connectivity KPI row. The Sideload updates guide also gains dedicated navigation, external endpoint requirements, and an accuracy pass. No public function or export-count change (69). See [CHANGELOG.md](CHANGELOG.md#0921---2026-07-15) for full details.
 
 ### What's New in v0.9.20
 

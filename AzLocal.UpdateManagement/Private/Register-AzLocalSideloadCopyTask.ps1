@@ -28,6 +28,9 @@ function Register-AzLocalSideloadCopyTask {
     .PARAMETER Version
         Solution-update version (passed to the worker).
 
+    .PARAMETER OperationId
+        Unique operation identifier used to reject writes from superseded workers.
+
     .PARAMETER SourcePath
         Verified media path (.zip or staged SBE folder).
 
@@ -48,8 +51,8 @@ function Register-AzLocalSideloadCopyTask {
         'CONTOSO\gmsa-azl$'). Defaults to the current user.
 
     .PARAMETER LogonType
-        Scheduled-task logon type. Default S4U. Use Password (with -Password) or
-        ServiceAccount (gMSA) for network/UNC access.
+        Scheduled-task logon type. ServiceAccount (including gMSA) and Password
+        carry network credentials required by UNC copies.
 
     .PARAMETER Password
         Secure password when -LogonType is Password.
@@ -63,16 +66,38 @@ function Register-AzLocalSideloadCopyTask {
         [Parameter(Mandatory = $true)][string]$TaskName,
         [Parameter(Mandatory = $true)][string]$ClusterName,
         [Parameter(Mandatory = $true)][string]$Version,
+        [Parameter(Mandatory = $true)][string]$OperationId,
         [Parameter(Mandatory = $true)][string]$SourcePath,
         [Parameter(Mandatory = $true)][string]$TargetPath,
         [Parameter(Mandatory = $true)][string]$StateRoot,
         [string]$RobocopySwitches = '/R:5 /W:30',
         [int]$HeartbeatSeconds = 30,
-        [string]$PrincipalUserId = ("{0}\{1}" -f $env:USERDOMAIN, $env:USERNAME),
+        [string]$PrincipalUserId,
         [ValidateSet('S4U', 'Password', 'ServiceAccount', 'Interactive')]
-        [string]$LogonType = 'S4U',
+        [string]$LogonType = 'ServiceAccount',
         [System.Security.SecureString]$Password
     )
+
+    $networkPaths = @(@($SourcePath, $TargetPath, $StateRoot) | Where-Object { $_ -match '^\\\\' })
+    if ($networkPaths.Count -gt 0 -and $LogonType -in @('S4U', 'Interactive')) {
+        throw "LogonType '$LogonType' cannot be used for sideload UNC paths because it does not provide reusable network credentials. Configure ServiceAccount (for example a gMSA) or Password."
+    }
+    if ([string]::IsNullOrWhiteSpace($PrincipalUserId)) {
+        throw "Register-AzLocalSideloadCopyTask: -PrincipalUserId is required for LogonType '$LogonType'."
+    }
+    if ($LogonType -eq 'Password' -and -not $Password) {
+        throw "LogonType 'Password' requires -Password."
+    }
+
+    $robocopyTokens = @($RobocopySwitches -split '\s+' | Where-Object { $_ })
+    foreach ($token in $robocopyTokens) {
+        if ($token -notmatch '^/(R|W|IPG):\d+$' -and $token -notin @('/Z', '/J')) {
+            throw "Unsupported robocopy switch '$token'. Sideload profiles permit /R:n, /W:n, /IPG:n, /Z, and /J only."
+        }
+    }
+    if ($robocopyTokens -contains '/Z' -and $robocopyTokens -contains '/J') {
+        throw "Robocopy switches /Z and /J cannot be combined."
+    }
 
     if (-not (Get-Command Register-ScheduledTask -ErrorAction SilentlyContinue)) {
         throw "ScheduledTasks module is not available on this host. On-prem sideloading requires a Windows runner/agent with the ScheduledTasks module."
@@ -90,6 +115,7 @@ function Register-AzLocalSideloadCopyTask {
         '-File', ('"{0}"' -f $worker),
         '-ClusterName', ('"{0}"' -f $ClusterName),
         '-Version', ('"{0}"' -f $Version),
+        '-OperationId', ('"{0}"' -f $OperationId),
         '-SourcePath', ('"{0}"' -f $SourcePath),
         '-TargetPath', ('"{0}"' -f $TargetPath),
         '-StateRoot', ('"{0}"' -f $StateRoot),
@@ -102,7 +128,6 @@ function Register-AzLocalSideloadCopyTask {
 
     switch ($LogonType) {
         'Password' {
-            if (-not $Password) { throw "LogonType 'Password' requires -Password." }
             $plain = [System.Net.NetworkCredential]::new('', $Password).Password
             $principal = $null  # password principal passed to Register-ScheduledTask directly
         }
@@ -121,7 +146,8 @@ function Register-AzLocalSideloadCopyTask {
         return $TaskName
     }
 
-    # Replace any pre-existing task of the same name.
+    # Stop and replace any pre-existing task of the same name.
+    Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
     Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue
 
     try {
@@ -155,5 +181,6 @@ function Remove-AzLocalSideloadCopyTask {
 
     if (-not (Get-Command Unregister-ScheduledTask -ErrorAction SilentlyContinue)) { return }
     if (-not $PSCmdlet.ShouldProcess($TaskName, 'Unregister sideload copy Scheduled Task')) { return }
+    Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
     Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue
 }

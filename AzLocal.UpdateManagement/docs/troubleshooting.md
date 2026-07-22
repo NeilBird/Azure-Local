@@ -20,6 +20,23 @@
 
 5. **"Service Principal authentication failed"**: Verify the `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`, and `AZURE_TENANT_ID` values are correct and the Service Principal has the required permissions.
 
+### ARG `ResponsePayloadTooLarge` / response exceeds 16 MiB
+
+**Symptom**
+
+- A fleet pipeline fails in `az graph query` with code `ResponsePayloadTooLarge` and text similar to `Response payload size ... exceeded the limit of 16777216`.
+- The fleet can contain fewer than 1,000 clusters, so the failure appears even though ordinary row-count pagination should not yet be necessary.
+
+**Cause**
+
+ARG limits response bytes independently of its 1,000-row maximum. Dynamic arrays such as `properties.healthCheckResult`, nested update-run progress trees, or unprojected full resource documents can exceed 16 MiB before ARG returns the first page or a `skip_token`.
+
+**Fix**
+
+Upgrade to **AzLocal.UpdateManagement v0.9.22 or later**. Every ARG-backed cmdlet uses the shared `Invoke-AzResourceGraphQuery` helper, which now halves `--first` and retries the same page when this error occurs. Monitor: 1 also projects lean response shapes, and Monitor: 2 begins its intentionally dynamic health-result query at 50 cluster rows.
+
+If the error says **one result row exceeds the ARG response payload limit**, that individual resource is too large to fix through paging. Reduce the fields returned by the custom KQL query; do not increase `MaxPages`, because pagination cannot begin until one page succeeds.
+
 ### `WARNING: Unable to encode the output with cp1252 encoding`
 
 **Symptom**

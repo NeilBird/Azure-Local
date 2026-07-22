@@ -34,6 +34,7 @@ It is written in the same step-by-step style as [`ITSM/README.md`](../ITSM/READM
 6. [End-to-end runbook: bring an estate online](#6-end-to-end-runbook-bring-an-estate-online)
    - [6.1 Inventory the estate](#61-inventory-the-estate)
      - [6.1.1 (Optional) Exclude whole subscriptions from every fleet scan](#611-optional-exclude-whole-subscriptions-from-every-fleet-scan)
+     - [6.1.2 (Optional) Scope estates beyond 1,000 subscriptions by management group](#612-optional-scope-estates-beyond-1000-subscriptions-by-management-group)
    - [6.2 Plan update rings, windows, and exclusions](#62-plan-update-rings-windows-and-exclusions)
    - [6.3 Apply tags](#63-apply-tags)
    - [6.4 Pre-flight readiness assessment](#64-pre-flight-readiness-assessment)
@@ -185,8 +186,8 @@ In one sentence: **`apply-updates-schedule.yml` picks the days, the cron picks t
 | Permissions to create app registrations in Microsoft Entra ID, or an existing one | Required so you can either set up Workload Identity Federation (recommended) or, as a fallback, a Service Principal + client secret. |
 | GitHub repository **or** Azure DevOps project | The pipeline YAMLs are checked in to one of these and run on the platform's hosted Windows agents (or your self-hosted runners). |
 | PowerShell 5.1 or later | Used by every pipeline step. Microsoft-hosted `windows-latest` agents ship with PowerShell 5.1 and PowerShell 7+ already installed - no extra install needed there. |
-| `Az.Accounts` + `Az.KeyVault` modules | `Az.Accounts` is required by all pipelines. `Az.KeyVault` is required only if you opt in to the ITSM connector with Key Vault-sourced secrets (recommended). The pipelines install these on the agent as needed. |
-| `powershell-yaml` module | Required only if you opt in to the ITSM connector and your matrix config is YAML (default). JSON config works on stock PowerShell. The pipeline installs this on the agent only when the ITSM step runs. |
+| `Az.Accounts` + `Az.KeyVault` modules | `Az.Accounts` is required by all pipelines. `Az.KeyVault` is required by the ITSM connector and by sideload Password-mode task identity; the pipelines install these modules on the agent as needed. |
+| `powershell-yaml` module | Required by the opt-in sideload pipeline for `config/sideload-settings.yml`, and by the ITSM connector when its matrix config is YAML (default). The relevant pipelines install it on the agent before parsing YAML. |
 
 You do **not** need any cluster-side prerequisites for the inventory, tag-management, readiness, or fleet-status pipelines. The Apply Updates pipeline does require the clusters be in a healthy ARM state for the update API to accept the request - that is what the readiness pre-flight in section 6.4 measures.
 
@@ -793,7 +794,7 @@ $spObjectId = az ad sp show --id $adoSpAppId --query id -o tsv
 az ad group member add --group <operators-group-objectId> --member-id $spObjectId
 ```
 
-> **ADO variable groups**: there are **no `AZURE_*` secrets to manage** - the service connection holds `clientId` / `tenantId` / `subscriptionId` and the federated identity, so there's no `AZURE_CLIENT_SECRET` to protect. The example pipelines do, however, source their **shared non-secret settings** (exclusion path, schedule path, sideload + monitor toggles) from a required variable group named **`AzureLocal-Pipeline-Settings`** - the ADO equivalent of GitHub repo Variables. Create it once as described in [section 5.2.1](#521-the-azurelocal-pipeline-settings-variable-group-shared-settings-set-once). Do **not** put `AZURE_*` auth values in it - they belong on the service connection.
+> **ADO variable groups**: there are **no `AZURE_*` secrets to manage** - the service connection holds `clientId` / `tenantId` / `subscriptionId` and the federated identity, so there's no `AZURE_CLIENT_SECRET` to protect. The example pipelines do, however, source their **shared non-secret settings** (exclusion path, schedule path, and monitor/retry controls) from a required variable group named **`AzureLocal-Pipeline-Settings`** - the ADO equivalent of GitHub repo Variables. Sideload configuration lives in committed `config/sideload-settings.yml`, not this group. Create the group once as described in [section 5.2.1](#521-the-azurelocal-pipeline-settings-variable-group-shared-settings-set-once). Do **not** put `AZURE_*` auth values in it - they belong on the service connection.
 
 </details>
 
@@ -1097,18 +1098,11 @@ Why a group instead of inline variables? Azure DevOps variable **precedence** ru
 | `APPLY_UPDATES_SCHEDULE_PATH` | `./config/apply-updates-schedule.yml` | Path to the apply schedule / allow-list. | `apply-updates`, `assess-update-readiness` |
 | `MONITOR_TRIGGER_DELAY_MINUTES` | `0` (no delay) | One-off startup sleep on the **event-driven** monitor run so the snapshot lands after the run registers `InProgress`. Honoured range 15-240. | `monitor-updates` |
 | `FAILED_UPDATES_SINGLE_RETRY` | unset (`off`) | Opt-in guarded one-time retry of failed update runs. Set `true` to enable. See [8.5](#85-opt-in-single-retry-of-failed-updates-failed_updates_single_retry). | `apply-updates` |
-| `SIDELOAD_UPDATES` | `false` | Master gate for the sideload pipeline (accepts `true`/`1`). | `sideload-updates` |
-| `SIDELOAD_LEAD_DAYS` | `7` | Days ahead of a maintenance window to stage sideloaded content. | `sideload-updates`, `apply-updates-schedule-audit` |
-| `SIDELOAD_STATE_ROOT` | `''` | Durable state root for sideload progress/heartbeat. | `sideload-updates` |
-| `SIDELOAD_CACHE_ROOT` | `''` | Local cache root for staged update content. | `sideload-updates` |
-| `SIDELOAD_AUTH_MAP_PATH` | `''` | Path to the per-cluster remoting auth map. | `sideload-updates` |
-| `SIDELOAD_CATALOG_PATH` | `''` | Path to the update catalogue. | `sideload-updates` |
-| `SIDELOAD_ROBOCOPY_SWITCHES` | `''` | Override robocopy switches for content staging. | `sideload-updates` |
-| `SIDELOAD_HEARTBEAT_STALE_MINUTES` | `''` | Minutes before a sideload heartbeat is considered stale. | `sideload-updates` |
-| `SIDELOAD_REMOTING_FQDN_SUFFIX` | `''` | FQDN suffix appended when building remoting targets. | `sideload-updates` |
-| `SIDELOAD_KV_AUTH` | `''` | Key Vault reference for sideload remoting credentials. | `sideload-updates` |
+Sideload configuration is not stored in repository/pipeline variables. Use the
+committed `config/sideload-settings.yml` file described in [docs/sideload.md](docs/sideload.md).
+Copy/Update creates it only when absent and never overwrites or migrates an existing file.
 
-**Create the group (one-time).** Use the `azure-devops` `az` extension (installed in [4.2](#42-azure-devops-with-workload-identity-federation-recommended)). The example below seeds every member with its shipped default; delete the lines you do not need (they fall back to the same defaults) and set real paths for the sideload values only if you run the sideload pipeline:
+**Create the group (one-time).** Use the `azure-devops` `az` extension (installed in [4.2](#42-azure-devops-with-workload-identity-federation-recommended)). The example below seeds every member with its shipped default; delete the lines you do not need because omitted values fall back to the same defaults:
 
 ```powershell
 # Run after 'az devops configure --defaults organization=... project=...' (see 4.2).
@@ -1120,8 +1114,6 @@ az pipelines variable-group create `
         APPLY_UPDATES_SCHEDULE_PATH='./config/apply-updates-schedule.yml' `
         MONITOR_TRIGGER_DELAY_MINUTES='0' `
         FAILED_UPDATES_SINGLE_RETRY='false' `
-        SIDELOAD_UPDATES='false' `
-        SIDELOAD_LEAD_DAYS='7'
 
 # Verify the group exists and is authorized for all pipelines.
 az pipelines variable-group list `
@@ -1161,7 +1153,7 @@ The example pipelines have **near-100% functional parity** across GitHub Actions
   ```
 
   > Since **v0.8.94** each `azureSubscription:` line is wrapped in a `# BEGIN/END-AZLOCAL-CUSTOMIZE:service-connection-<job>` marker, so your renamed connection name **survives `Update-AzLocalPipelineExample`** (including with `-Force`). The agent pool (`# ...:runner-target-<job>`) and the sideload self-hosted pool (`# ...:sideload-runner-<job>`) are wrapped the same way. See [4.2](#42-azure-devops-with-workload-identity-federation-recommended) and the [version-pinning appendix](docs/appendix-module-version-pinning.md) for the upgrade workflow.
-- [ ] **Create the `AzureLocal-Pipeline-Settings` variable group** (see [5.2.1](#521-the-azurelocal-pipeline-settings-variable-group-shared-settings-set-once)). This is **required** - every ADO pipeline references it via `- group: AzureLocal-Pipeline-Settings`, and a missing group is a **compile error** (the run fails before any job starts). It is the ADO equivalent of GitHub repo Variables: set the shared, non-secret settings (exclusion path, schedule path, sideload + monitor toggles) **once** and all ten pipelines inherit them. Seed it with the shipped defaults via `az pipelines variable-group create` (or **Pipelines -> Library**), and grant it access to all pipelines (`--authorize true`).
+- [ ] **Create the `AzureLocal-Pipeline-Settings` variable group** (see [5.2.1](#521-the-azurelocal-pipeline-settings-variable-group-shared-settings-set-once)). This is **required** - every ADO pipeline references it via `- group: AzureLocal-Pipeline-Settings`, and a missing group is a **compile error** (the run fails before any job starts). It is the ADO equivalent of GitHub repo Variables: set the shared, non-secret exclusion, schedule, monitor, and retry settings **once** and the bundled pipelines inherit them. Sideload settings remain in `config/sideload-settings.yml`. Seed the group with the shipped defaults via `az pipelines variable-group create` (or **Pipelines -> Library**), and grant it access to all pipelines (`--authorize true`).
 - [ ] **(Optional) Create the other variable groups** in **Pipelines -> Library**: `AzureLocal-Config` for run defaults (e.g. the most-common `UpdateRing`), and - only if you plan to raise ITSM tickets - `AzureLocal-ITSM-Secrets` (see [section 7](#7-optional-open-itsm-tickets-for-clusters-needing-operator-action)).
 
 #### Per-pipeline (after import)
@@ -1412,6 +1404,29 @@ Get-AzLocalClusterInventory -ExportPath ./cluster-inventory.csv   # now skips th
 
 > **Secrets note:** this list is **non-secret** scoping metadata (subscription GUIDs are not credentials), so it belongs in source control / the `AzureLocal-Pipeline-Settings` group - never in a secret store. Azure authentication still flows through OIDC / the WIF service connection as before.
 
+#### 6.1.2 (Optional) Scope estates beyond 1,000 subscriptions by management group
+
+Azure CLI and Azure PowerShell forward only the first 1,000 accessible subscriptions when Azure Resource Graph scope is implicit. For larger or growing estates, activate management-group scope in the generated `config/fleet-settings.yml`. Use management-group IDs, not display names or full resource IDs:
+
+```yaml
+schemaVersion: 1
+scope:
+  managementGroups:
+    - contoso-platform
+    - contoso-edge
+reporting:
+  maxRowsPerTable: 100
+  maxSummaryBytes: 900000
+itsm:
+  maxIncidentsPerRun: 25
+```
+
+`Copy-AzLocalPipelineExample` and `Update-AzLocalPipelineExample` create this file as a fully commented starter and never overwrite active operator configuration. The precedence is: explicit `-SubscriptionId`, configured management groups, then existing implicit subscription discovery. A missing, empty, or fully commented file therefore changes nothing. The pipeline identity needs read access on the target management-group hierarchy; management-group scope can cover the first 10,000 subscriptions beneath it.
+
+The reporting values cap only human-readable Markdown. Complete CSV, JSON, JUnit, and HTML artifacts remain available for automation and detailed investigation. `maxSummaryBytes` is measured as UTF-8 and defaults below GitHub Actions' 1 MiB per-step summary limit. `maxIncidentsPerRun` bounds ServiceNow fan-out; set it to `0` to suppress new incident creation while retaining deterministic skipped result rows.
+
+Run `Get-AzLocalFleetSettings | Format-List` from the repo root to verify the effective scope and limits before enabling scheduled pipelines. Set `AZLOCAL_FLEET_SETTINGS_PATH` only when the file lives somewhere other than `./config/fleet-settings.yml`.
+
 ### 6.2 Plan update rings, windows, and exclusions
 
 Open the CSV and fill in three columns:
@@ -1595,7 +1610,7 @@ A practical starting point is `30` minutes - long enough for the `updateRun` to 
 
 > **Net effect:** between waves the monitor is effectively free (one ARG probe every 6h via `-SkipWhenIdle`); during a wave it triggers itself off Apply and - with `MONITOR_TRIGGER_DELAY_MINUTES` set - lands its first snapshot right after updates go `InProgress`, with zero manual cron juggling.
 
-**Fleet Connectivity Status** *(introduced in v0.7.79, enhanced in v0.7.85)* runs daily at 05:30 UTC and answers the upstream question every other steady-state pipeline depends on: *"can the pipeline identity actually see every cluster, every physical node, and every Resource Bridge it is supposed to manage?"* The Monitor: 1 reconciliation table compares each cluster's `reportedProperties.nodes` count against the Arc-tagged physical machines visible in Resource Graph and flags both directions of drift (positive = Arc has more machines than the cluster reports; negative = cluster reports more nodes than Arc can see). The v0.7.85 *"How to interpret + act on a non-zero reconciliation"* subsection in the pipeline summary gives operators per-direction remediation lists and an inline Resource Graph query template for triage. RBAC: `Reader` plus `Microsoft.ResourceGraph/resources/read`, `Microsoft.AzureStackHCI/edgeDevices/read`, `Microsoft.HybridCompute/machines/read`, and `Microsoft.ResourceConnector/appliances/read` - all already in the **`Azure Stack HCI Update Operator (custom)`** custom role definition shipped in [section 3.1](#31-custom-role-azure-stack-hci-update-operator-custom).
+**Fleet Connectivity Status** *(introduced in v0.7.79, enhanced in v0.7.85 and v0.9.22)* runs daily at 05:30 UTC and answers the upstream question every other steady-state pipeline depends on: *"can the pipeline identity actually see every cluster, every physical node, and every Resource Bridge it is supposed to manage?"* The Monitor: 1 reconciliation table compares each cluster's `reportedProperties.nodes` count against the Arc-tagged physical machines visible in Resource Graph and flags both directions of drift (positive = Arc has more machines than the cluster reports; negative = cluster reports more nodes than Arc can see). The v0.7.85 *"How to interpret + act on a non-zero reconciliation"* subsection in the pipeline summary gives operators per-direction remediation lists and an inline Resource Graph query template for triage. **v0.9.22 scaling:** all five ARG calls project only the scalar fields consumed by the report and use deterministic ordering; they no longer download full cluster, update-summary, Arc-machine, NIC, or Resource Bridge documents. RBAC: `Reader` plus `Microsoft.ResourceGraph/resources/read`, `Microsoft.AzureStackHCI/edgeDevices/read`, `Microsoft.HybridCompute/machines/read`, and `Microsoft.ResourceConnector/appliances/read` - all already in the **`Azure Stack HCI Update Operator (custom)`** custom role definition shipped in [section 3.1](#31-custom-role-azure-stack-hci-update-operator-custom).
 
 **Fleet Update Status** is scheduled to run daily at 06:00 UTC once you push the YAML. It does no writes - it builds a fleet-wide JUnit + CSV + JSON snapshot for dashboards and alerting.
 
@@ -1613,6 +1628,8 @@ A practical starting point is `30` minutes - long enough for the `updateRun` to 
 | `update-runs.csv` | Recent run history per cluster (durations, failure summaries) - this is what section 6.6's "size the next maintenance window" advice consumes. |
 
 **Fleet Health Status** *(new in v0.7.65)* runs daily at 07:00 UTC and surfaces the **24-hour system health-check failures** across every cluster the service connection can read - including clusters that are already "up to date". The 24-hour health checks continue to run on the cluster independently of update activity, so this pipeline is the dedicated place to triage fleet-wide health issues that exist OUTSIDE the update workflow.
+
+**v0.9.22 scaling:** the complete `healthCheckResult` arrays are still expanded client-side so ARG's bounded `mv-expand` behavior cannot silently drop checks, but the wire query now begins at 50 cluster rows per page and orders by resource ID. If even that page is too large, the shared ARG helper automatically halves it and follows continuation tokens until the complete fleet is returned.
 
 It calls the new [`Get-AzLocalFleetHealthFailures`](../README.md#get-azlocalfleethealthfailures) cmdlet under the covers.
 
@@ -2136,6 +2153,12 @@ Azure Resource Graph has per-tenant rate limits. `Invoke-AzResourceGraphQuery` (
 
 If you see ARG-side `429 TooManyRequests` in the verbose logs from `Invoke-AzResourceGraphQuery`, the most common causes are: (a) running every pipeline on the same cron tick (stagger schedules at least 2-3 minutes apart), and (b) running multiple read pipelines from the same identity in a tight loop during development (add `Start-Sleep -Seconds 30` between iterations of an interactive harness).
 
+### Response-size scaling (`ResponsePayloadTooLarge`)
+
+ARG's `--first` option limits **rows**, not response bytes. A query returning fewer than 1,000 rows can therefore exceed the service's 16 MiB response cap when rows contain large dynamic arrays or full `properties` bags. Since v0.9.22, the shared `Invoke-AzResourceGraphQuery` helper used by every ARG-backed pipeline detects `ResponsePayloadTooLarge`, halves the requested page size, retries the same logical page, and keeps the successful size for subsequent `skip_token` pages. This is separate from 429/network retries and requires no pipeline-specific retry code.
+
+If the helper reports that **one result row exceeds the payload limit**, paging cannot make that individual row smaller. A custom query must project fewer fields; use the Monitor: 1 and Monitor: 2 v0.9.22 queries as examples. Subscription batching can reduce scope but is not a substitute for lean projection and byte-safe paging.
+
 ---
 
 ## 10. Standalone HTML report (no pipeline)
@@ -2243,7 +2266,7 @@ Automation-Pipeline-Examples/
 
 > **Opt-in, off by default. Requires a self-hosted runner/agent on the cluster fabric network.**
 
-Clusters that **cannot pull updates from Azure directly** (dark, air-gapped, or restricted-egress fabrics) can still be updated by **pre-staging** the solution-update media onto each cluster's infrastructure `import` SMB share, importing it over WinRM, and then letting the normal **Update: 3 - Apply Updates** wave install it. This is the **Sideload Updates** pipeline (`sideload-updates.yml`, shown as **Update: 2**); it is inert unless you set the repository (GitHub) / pipeline (Azure DevOps) variable `SIDELOAD_UPDATES=true`.
+Clusters that **cannot pull updates from Azure directly** (dark, air-gapped, or restricted-egress fabrics) can still be updated by **pre-staging** the solution-update media onto each cluster's infrastructure `import` SMB share, importing it over WinRM, and then letting the normal **Update: 3 - Apply Updates** wave install it. This is the **Sideload Updates** pipeline (`sideload-updates.yml`, shown as **Update: 2**); it is inert while `config/sideload-settings.yml` has `enabled: false`.
 
 Because a multi-GB bundle copy can take hours over a constrained on-prem link, the pipeline is a **re-entrant state machine**: each short run advances every in-scope cluster by one step, while the actual robocopy runs in a **detached Windows Scheduled Task** that survives the pipeline run ending and the agent recycling. Progress is tracked in shared-UNC state JSON so any runner in the pool can pick it up and report. Once the media is staged, SHA256-verified, and imported, the pipeline flips the `UpdateSideloaded=True` tag - the gate that **Update: 1 - Assess Update Readiness** and **Update: 3 - Apply Updates** check before they allow a disconnected cluster to update.
 
@@ -2252,12 +2275,13 @@ At a glance, sideloading involves:
 - a **self-hosted runner/agent** labelled `azlocal-sideload` on the fabric network (Microsoft-hosted runners cannot reach on-prem clusters);
 - a source-controlled **catalog** (`sideload-catalog.yml`) listing the Microsoft Solution bundles (auto-populated from the Microsoft Learn offline-updates table) and any OEM SBE packages;
 - an **auth-map** (`sideload-auth-map.csv`) mapping each cluster's `UpdateAuthAccountId` tag to the Key Vault secrets that hold the Active Directory credential used for the WinRM import;
-- a **shared UNC state root** (`SIDELOAD_STATE_ROOT`) holding per-cluster state JSON, robocopy logs, and the verified media cache.
+- a **shared UNC state root** (`paths.stateRoot`) holding per-cluster state JSON, robocopy logs, and the verified media cache;
+- a network-capable Scheduled Task principal configured under `identity.task`.
 
 **Full setup, configuration, the state machine, the scheduled-task / robocopy model, authentication, the catalog and auth-map formats, external-endpoint requirements, reporting, and the preflight are documented in the dedicated guide:**
 
 - **[docs/sideload.md](docs/sideload.md)** - complete sideload setup and operations guide (Update: 2), including the **External endpoints requirements** section.
-- **[docs/sideload-robocopy.md](docs/sideload-robocopy.md)** - robocopy throttling / `SIDELOAD_ROBOCOPY_SWITCHES` guidance.
+- **[docs/sideload-robocopy.md](docs/sideload-robocopy.md)** - typed copy-profile and throttling guidance.
 - Per-pipeline reference card: [docs/appendix-pipelines.md - Update: 2](docs/appendix-pipelines.md#update-2---sideload-updates-opt-in).
 
 ---
