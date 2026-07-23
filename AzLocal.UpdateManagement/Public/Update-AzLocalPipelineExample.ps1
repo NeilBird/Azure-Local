@@ -153,13 +153,14 @@ function Update-AzLocalPipelineExample {
 
     .PARAMETER UpgradeFleetSettingsSchema
         Retained for backward compatibility. Existing active
-        config/fleet-settings.yml schema version 1 files are upgraded to
-        version 2 automatically during every update. The file is validated
-        first, its exact original bytes are saved as
+        config/fleet-settings.yml schema version 1 files, and legacy fully
+        commented v1 starters, are upgraded to version 2 automatically during
+        every update. The file is validated first, its exact original bytes are saved as
         config/fleet-settings_v1.bak.yml, and the active schemaVersion is
-        changed before a fully commented clusterTagFilters example is
-        appended. Existing operator values, comments, order, and line endings
-        are preserved. Supports -WhatIf and -Confirm.
+        changed (or the legacy commented declaration is changed) before a
+        fully commented clusterTagFilters example is appended. Existing
+        operator values, comments, order, and line endings are preserved. A
+        commented starter remains inert. Supports -WhatIf and -Confirm.
 
     .OUTPUTS
         PSCustomObject[] (with -PassThru) - one row per source file with:
@@ -266,8 +267,9 @@ function Update-AzLocalPipelineExample {
         # operator-owned files are always preserved.
         [switch]$SkipStarterFleetSettings,
 
-        # v0.9.23 compatibility switch. Active schema-v1 fleet settings are
-        # now backed up and migrated automatically during every normal update.
+        # v0.9.23 compatibility switch. Active schema-v1 fleet settings and
+        # legacy commented v1 starters are now backed up and migrated during
+        # every normal update.
         [switch]$UpgradeFleetSettingsSchema,
 
         [switch]$PassThru

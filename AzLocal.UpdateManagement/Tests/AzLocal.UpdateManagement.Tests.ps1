@@ -10900,6 +10900,30 @@ Describe 'Function: Update-AzLocalPipelineExample' {
             }
         }
 
+        It 'Automatically upgrades a legacy fully commented schema v1 starter' {
+            $repoRoot = Join-Path $env:TEMP "upe-fleet-settings-commented-upgrade-$([guid]::NewGuid())"
+            $dest = Join-Path $repoRoot '.github\workflows'
+            $settingsPath = Join-Path $repoRoot 'config\fleet-settings.yml'
+            $backupPath = Join-Path $repoRoot 'config\fleet-settings_v1.bak.yml'
+            New-Item -Path $dest -ItemType Directory -Force | Out-Null
+            New-Item -Path (Split-Path -Parent $settingsPath) -ItemType Directory -Force | Out-Null
+            $before = "# Legacy inert starter`r`n# schemaVersion: 1`r`n# scope:`r`n#   managementGroups:`r`n#     - contoso-platform`r`n"
+            [IO.File]::WriteAllText($settingsPath, $before, [Text.UTF8Encoding]::new($false))
+            try {
+                Update-AzLocalPipelineExample -Destination $dest -Platform GitHub -Confirm:$false 6>$null 4>$null | Out-Null
+                $after = [IO.File]::ReadAllText($settingsPath)
+                [IO.File]::ReadAllText($backupPath) | Should -BeExactly $before
+                $after | Should -Match '(?m)^# schemaVersion: 2\r?$'
+                $after | Should -Match '(?m)^#   clusterTagFilters:\r?$'
+                $after | Should -Match '(?m)^# AZLOCAL-FLEET-SETTINGS-SCHEMA-V2\r?$'
+                (Get-AzLocalFleetSettings -Path $settingsPath).SchemaVersion | Should -Be 1
+                (Get-AzLocalFleetSettings -Path $settingsPath).ScopeMode | Should -Be 'ImplicitSubscriptions'
+            }
+            finally {
+                Remove-Item -Path $repoRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+
         It 'Automatically upgrades active schema v1 while preserving operator content and line endings' {
             $repoRoot = Join-Path $env:TEMP "upe-fleet-settings-upgrade-$([guid]::NewGuid())"
             $dest = Join-Path $repoRoot '.github\workflows'

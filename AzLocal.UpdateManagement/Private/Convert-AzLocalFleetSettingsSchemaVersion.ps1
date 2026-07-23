@@ -4,10 +4,10 @@ function Convert-AzLocalFleetSettingsSchemaVersion {
         Upgrades active fleet-settings.yml schema v1 text to schema v2.
     .DESCRIPTION
         Performs narrow text surgery on the active top-level schemaVersion
-        declaration, then appends the new schema-v2 clusterTagFilters settings
-        as a fully commented example. Existing text, comments, ordering, and
-        line endings are preserved. Fully commented or already-v2 text is
-        returned unchanged.
+        declaration, or on the single commented declaration in a legacy inert
+        starter, then appends the new schema-v2 clusterTagFilters settings as a
+        fully commented example. Existing text, comments, ordering, and line
+        endings are preserved. Already-v2 text is returned unchanged.
     #>
     [CmdletBinding()]
     [OutputType([PSCustomObject])]
@@ -22,16 +22,19 @@ function Convert-AzLocalFleetSettingsSchemaVersion {
 
     $matches = [regex]::Matches($Text, '(?m)^(\s*schemaVersion\s*:\s*)(\d+)(\s*(?:#.*)?)$')
     if ($matches.Count -eq 0) {
-        return [pscustomobject]@{
-            Migrated    = $false
-            FromVersion = $null
-            ToVersion   = 2
-            NewText     = $Text
-            Reason      = 'NoActiveSchema'
+        $matches = [regex]::Matches($Text, '(?m)^(\s*#\s*schemaVersion\s*:\s*)(\d+)(\s*)$')
+        if ($matches.Count -eq 0) {
+            return [pscustomobject]@{
+                Migrated    = $false
+                FromVersion = $null
+                ToVersion   = 2
+                NewText     = $Text
+                Reason      = 'NoSchemaDeclaration'
+            }
         }
     }
     if ($matches.Count -ne 1) {
-        throw "Convert-AzLocalFleetSettingsSchemaVersion: '$SourcePath' contains multiple active schemaVersion declarations."
+        throw "Convert-AzLocalFleetSettingsSchemaVersion: '$SourcePath' contains multiple schemaVersion declarations."
     }
 
     $currentVersion = [int]$matches[0].Groups[2].Value
