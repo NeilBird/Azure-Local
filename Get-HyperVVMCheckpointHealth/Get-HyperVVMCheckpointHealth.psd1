@@ -7,7 +7,7 @@
         'Private\Get-HyperVVMCheckpointHealth.Rendering.psm1'
         'Private\Get-HyperVVMCheckpointHealth.Storage.psm1'
     )
-    ModuleVersion = '0.2.22'
+    ModuleVersion = '0.2.23'
     CompatiblePSEditions = @('Desktop')
     GUID = '8b35df55-2975-48f8-bdb8-c8bc8da4a49c'
     Author = 'Neil Bird, Microsoft'
@@ -24,7 +24,7 @@
             Tags = @('AzureLocal', 'Hyper-V', 'FailoverCluster', 'Checkpoint', 'Diagnostics')
             LicenseUri = 'https://github.com/NeilBird/Azure-Local/blob/main/LICENSE'
             ProjectUri = 'https://aka.ms/Get-HyperVVMCheckpointHealth'
-            ReleaseNotes = 'Version 0.2.22 improvements: distinguishes processed, fully assessed, and incomplete VM counts in HTML, telemetry, and -PassThru run data while retaining legacy count fields; widens the responsive HTML report canvas so summary verdicts and evidence tables have more desktop space; surfaces verdict-driving queued HRL counts in the VM-summary Replica column; and uses the canonical VM-name casing returned by Hyper-V for successful results and artifacts.'
+            ReleaseNotes = 'Version 0.2.23 improvements: adds bounded cross-node event and VSS prefetch with same-node serialization, retries, deterministic cache merging, sequential fallback, and performance telemetry; adds read-only Health Service fault evidence and degraded-storage Executive Summary detail while retaining the CSS Storage Diagnostic as the sole recommendation; adds visible accessible housekeeping sort arrows; and clarifies that housekeeping category rows may overlap and are not unique-file counts.'
         }
     }
 }

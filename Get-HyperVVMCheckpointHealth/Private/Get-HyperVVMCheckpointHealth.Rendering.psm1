@@ -213,7 +213,9 @@ function ConvertTo-VMCheckpointAuditHtml {
     .hk-image-policy-list{margin:10px 0;padding:0;list-style:none}
     .hk-image-policy-list li{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:7px 0;border-bottom:1px solid var(--line)}
     .hk-image-policy-list code{overflow-wrap:anywhere}
-    .hk-sort{width:100%;text-align:left;font-weight:600}
+    .hk-sort{width:100%;min-height:34px;display:flex;align-items:center;justify-content:space-between;gap:8px;text-align:left;font-weight:600}
+    .hk-sort-arrows{flex:0 0 12px;display:grid;grid-template-rows:10px 10px;align-items:center;justify-items:center;color:var(--muted);font-size:10px;line-height:10px}
+    .hk-sort[data-direction='ascending'] .hk-sort-up,.hk-sort[data-direction='descending'] .hk-sort-down{color:var(--accent)}
     .hk-filters{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px}
     .hk-filters label{display:flex;flex-direction:column;gap:4px;color:#cbd5e1;font-size:13px}
     .hk-filters input,.hk-filters select{width:100%;box-sizing:border-box;background:#0f172a;color:var(--ink);border:1px solid var(--line);border-radius:5px;padding:7px}
@@ -386,6 +388,31 @@ function ConvertTo-VMCheckpointAuditHtml {
     if ($replicaAdvisoryCount -gt 0) { $investigateEvidence += "$replicaAdvisoryCount VM(s) with Replica measurement advisories" }
     $investigateEvidenceText = if ($investigateEvidence.Count -gt 0) { $investigateEvidence -join ', ' } else { 'see the per-VM findings below' }
 
+    $storageDegraded = ($StorageHealth -and (@('Degraded', 'Active storage jobs') -contains "$($StorageHealth.Summary)"))
+    $storageFaults = @()
+    $unhealthySubsystems = @()
+    if ($StorageHealth) {
+        $storageFaults = @(Get-OptionalPropertyValue -InputObject $StorageHealth -Name 'HealthFaults' -DefaultValue @())
+        $unhealthySubsystems = @($StorageHealth.Subsystem | Where-Object { "$($_.Health)" -eq 'Unhealthy' })
+    }
+    $storageFaultCollectionStatus = if ($StorageHealth) { [string](Get-OptionalPropertyValue -InputObject $StorageHealth -Name 'HealthFaultCollectionStatus' -DefaultValue 'Not collected') } else { 'Not collected' }
+    $storageReasonText = if ($storageFaults.Count -gt 0) {
+        $faultReasons = @($storageFaults | ForEach-Object {
+            $reason = [string](Get-OptionalPropertyValue -InputObject $_ -Name 'Reason' -DefaultValue '')
+            if ($reason) { ConvertTo-HtmlText $reason } else { 'unspecified Health Service fault' }
+        } | Sort-Object -Unique)
+        "$($storageFaults.Count) active Health Service fault(s): $($faultReasons -join '; ')"
+    } elseif ($unhealthySubsystems.Count -gt 0) {
+        "$($unhealthySubsystems.Count) storage subsystem(s) report Unhealthy, but no active Health Service fault detail was returned (collection status: $(ConvertTo-HtmlText $storageFaultCollectionStatus))"
+    } elseif ($StorageHealth -and @($StorageHealth.StorageJobs).Count -gt 0) {
+        "$(@($StorageHealth.StorageJobs).Count) active storage job(s)"
+    } else {
+        'the lightweight storage snapshot reported a non-healthy state'
+    }
+    $storageExecSummaryLi = if ($storageDegraded) {
+        "<li><strong>Cluster storage requires investigation:</strong> $storageReasonText. See Cluster storage health and the existing CSS Storage Diagnostic guidance below.</li>"
+    } else { '' }
+
     # Adaptive headline.
     if ($countHold -gt 0) {
         [void]$sb.Append(@"
@@ -397,6 +424,7 @@ function ConvertTo-VMCheckpointAuditHtml {
     <li>See the per-VM detail below for which VMs are affected and why.</li>
     <li><strong>$countInv additional VM(s) are flagged INVESTIGATE:</strong> these require separate operations / backup-team triage and are not included in the HOLD count.</li>
     <li><strong>Fleet-wide checkpoint / replication evidence:</strong> $investigateEvidenceText. See Recommended next steps and the per-VM detail below.</li>
+    $storageExecSummaryLi
   </ul>
 </div>
 "@)
@@ -419,6 +447,7 @@ function ConvertTo-VMCheckpointAuditHtml {
     <li>Engage Microsoft Support (CSS) and/or your backup vendor for those VMs. See each VM's detail and the "Historic event correlation" below.</li>
         <li><strong>$countInv VM(s) are flagged INVESTIGATE in total:</strong> $pastRollbackAnyCount historic rollback recovery case(s) above and $additionalInvestigateCount additional VM(s) requiring operations / backup-team triage.</li>
         <li><strong>Fleet-wide INVESTIGATE evidence:</strong> $investigateEvidenceText. See Recommended next steps and the per-VM detail below.</li>
+$storageExecSummaryLi
   </ul>
 </div>
 "@)
@@ -438,6 +467,7 @@ function ConvertTo-VMCheckpointAuditHtml {
     <li>No VM shows the '<em>checkpoint fork-commit / merge-failure</em>' signature (event <code>3216</code> or an HRESULT such as <code>0x80048102</code>).</li>
     <li>No VM is in a HOLD STATE, and no historic rollback evidence was found.</li>
     <li>$execTriageLi</li>
+    $storageExecSummaryLi
   </ul>
 </div>
 "@)
@@ -454,6 +484,7 @@ function ConvertTo-VMCheckpointAuditHtml {
         <li>No VM shows the '<em>checkpoint fork-commit / merge-failure</em>' signature (event <code>3216</code> or an HRESULT such as <code>0x80048102</code>).</li>
         <li>$execTriageLi</li>
         <li>$housekeepingSummary</li>
+    $storageExecSummaryLi
     </ul>
 </div>
 "@)
@@ -477,7 +508,6 @@ function ConvertTo-VMCheckpointAuditHtml {
     # is omitted, because with no fork-commit signature the next step is backup-team triage, not a case.
     # NOTE: $countInv is included in $anyContextualStep so an INVESTIGATE-only run (e.g. VSS-writer /
     # concern-event driven with zero stale checkpoints) never falls through to 'No action required'.
-    $storageDegraded   = ($StorageHealth -and (@('Degraded', 'Active storage jobs') -contains "$($StorageHealth.Summary)"))
     # v0.2.14 fleet roll-ups for the new gated bullets.
     $rollbackVMs          = @($rows | Where-Object { $_.ReportData -and $_.ReportData.HasRollbackFingerprint })
     $historicConfirmedVMs = @($rows | Where-Object { $_.ReportData -and $_.ReportData.HistoricForkConfirmed })
@@ -602,9 +632,9 @@ function ConvertTo-VMCheckpointAuditHtml {
 '@)
     }
     if ($storageDegraded) {
-        [void]$sb.Append(@'
-  <li><strong>Rule out storage-layer disruption:</strong> the storage-health section shows active S2D repair / resync jobs, CSV redirection, or unhealthy disks - treat it as a probable contributing factor and run the CSS Storage Diagnostic (<code>Install-Module -Name Microsoft.AzLocal.CSSTools</code>; then <code>Start-AzsSupportStorageDiagnostic</code>).</li>
-'@)
+                [void]$sb.Append((@'
+    <li><strong>Investigate the degraded cluster-storage snapshot:</strong> {0}. This is observed state, not a root-cause determination. See the existing Deeper analysis guidance in the storage section.</li>
+'@ -f $storageReasonText))
     }
     if ($countHold -gt 0) {
         [void]$sb.Append(@'
@@ -1120,6 +1150,22 @@ function ConvertTo-VMCheckpointAuditHtml {
         $badge = switch ("$($sh.Summary)") { 'Healthy' { 'ok' } 'Unavailable' { 'info' } default { 'warn' } }
         [void]$sb.Append("<h2>Cluster storage health (Storage Spaces Direct / CSV)</h2>`r`n")
         [void]$sb.Append("<div class='callout $badge'><strong>Storage status: $(ConvertTo-HtmlText $sh.Summary).</strong> Read-only snapshot (source node <code>$(ConvertTo-HtmlText $sh.Source)</code>). Storage-layer disruption - S2D repair / resync jobs, CSV block-redirected or paused state, or unhealthy disks - can cause the very symptoms behind checkpoint / merge failures (files transiently locked or unavailable: <code>0x80070020</code>, <code>0x80070002</code>, 'cannot load VM configuration'). Note: on Azure Local / S2D an <strong>ReFS CSV normally reports File System Redirected mode with reason <code>FileSystemReFs</code></strong> (from <code>Get-ClusterSharedVolumeState</code>) - that is by design (S2D serves the I/O over the software storage bus, so there is no redirect penalty) and is NOT flagged here. Only a NON-ReFS file-system redirect, block redirection, or a paused / offline volume is treated as abnormal.</div>`r`n")
+        if ($storageDegraded) {
+            [void]$sb.Append("<div class='callout warn'><strong>Why this snapshot is non-healthy:</strong> $storageReasonText. This is read-only observed evidence; it does not establish root cause.</div>`r`n")
+        }
+        if ($storageFaults.Count -gt 0) {
+            [void]$sb.Append("<h3>Active Health Service faults (read-only evidence)</h3><table><thead><tr><th>Severity</th><th>Reason</th><th>Affected object</th><th>Location</th></tr></thead><tbody>")
+            foreach ($fault in $storageFaults) {
+                $severity = Get-OptionalPropertyValue -InputObject $fault -Name 'Severity' -DefaultValue ''
+                $reason = Get-OptionalPropertyValue -InputObject $fault -Name 'Reason' -DefaultValue ''
+                $affectedObject = Get-OptionalPropertyValue -InputObject $fault -Name 'FaultingObjectDescription' -DefaultValue ''
+                $location = Get-OptionalPropertyValue -InputObject $fault -Name 'FaultingObjectLocation' -DefaultValue ''
+                [void]$sb.Append("<tr><td>$(ConvertTo-HtmlText $severity)</td><td>$(ConvertTo-HtmlText $reason)</td><td>$(ConvertTo-HtmlText $affectedObject)</td><td>$(ConvertTo-HtmlText $location)</td></tr>")
+            }
+            [void]$sb.Append("</tbody></table><p class='muted'>Health Service fault records are displayed as observed diagnostic evidence only. This report does not execute or reproduce fault-specific recommended actions.</p>")
+        } elseif ($unhealthySubsystems.Count -gt 0) {
+            [void]$sb.Append("<p class='muted'><strong>Health Service detail unavailable:</strong> the subsystem state is Unhealthy, but <code>Get-HealthFault</code> returned no active fault records (collection status: $(ConvertTo-HtmlText $storageFaultCollectionStatus)). Use the Deeper analysis guidance below for the full diagnostic.</p>")
+        }
         if (@($sh.StorageJobs).Count -gt 0) {
             [void]$sb.Append("<h3>Active storage jobs</h3><table><thead><tr><th>Job</th><th>State</th><th>% complete</th></tr></thead><tbody>")
             foreach ($j in @($sh.StorageJobs)) { [void]$sb.Append("<tr><td>$(ConvertTo-HtmlText $j.Name)</td><td>$(ConvertTo-HtmlText $j.State)</td><td class='num'>$(ConvertTo-HtmlText $j.Pct)</td></tr>") }
@@ -1163,7 +1209,8 @@ function ConvertTo-VMCheckpointAuditHtml {
   <strong>Operational excellence and consistent storage practices improve reliability and reduce operational complexity.</strong>
   The observations in this section are not necessarily VM health failures. They identify file placement, ownership,
   naming, inventory, or storage-layout conditions that may make future troubleshooting, backup, migration, and recovery
-    operations more difficult. Review each observation before making changes. <strong>Do not move, rename, merge, or delete virtual disk files based solely on this report.</strong>
+        operations more difficult. One file can appear in more than one category, so row and category totals may overlap and are not unique-file counts.
+        Review each observation before making changes. <strong>Do not move, rename, merge, or delete virtual disk files based solely on this report.</strong>
 </div>
 '@)
     if ($null -ne $HousekeepingFindings -and $HousekeepingFindings.Count -gt 0) {
@@ -1186,7 +1233,7 @@ function ConvertTo-VMCheckpointAuditHtml {
         foreach ($extension in $housekeepingExtensions) { $text = ConvertTo-HtmlText $extension; [void]$sb.Append("<option value='$text'>$text</option>") }
         [void]$sb.Append("</select></label><label>Minimum size (MB)<input id='hk-min-size' type='number' min='0' step='1' value='0'></label></div><div class='hk-live' aria-live='polite'><span>Visible findings: <strong id='hk-visible-count'>$(@($HousekeepingFindings).Count)</strong> of $(@($HousekeepingFindings).Count)</span><span>Visible unique-file storage: <strong id='hk-visible-bytes'>$(ConvertTo-HtmlText $housekeepingTotalText)</strong></span><span>Unfiltered unique-file storage: <strong>$(ConvertTo-HtmlText $housekeepingTotalText)</strong></span></div></div>")
         [void]$sb.Append("<div class='hk-charts'><div class='hk-chart'><h3>Visible storage by category</h3><svg id='hk-category-chart' role='img' aria-label='Visible housekeeping storage by category'></svg></div><div class='hk-chart'><h3>Cluster Shared Volume (CSV) paths</h3><svg id='hk-path-chart' role='img' aria-label='Visible housekeeping storage by Cluster Shared Volume'></svg></div></div><div class='hk-empty' id='hk-empty'>No housekeeping findings match the active filters.</div>")
-        [void]$sb.Append('<table class="housekeeping" id="hk-table"><colgroup><col class="hk-category"><col class="hk-scope"><col class="hk-filecol"><col class="hk-size"><col class="hk-observation"><col class="hk-review"></colgroup><thead><tr><th><button class="hk-sort" type="button" data-sort="category">Category</button></th><th><button class="hk-sort" type="button" data-sort="scope">Scope</button></th><th><button class="hk-sort" type="button" data-sort="path">File / path</button></th><th><button class="hk-sort" type="button" data-sort="bytes">Size</button></th><th>Observation</th><th>Review</th></tr></thead><tbody>')
+        [void]$sb.Append('<table class="housekeeping" id="hk-table"><colgroup><col class="hk-category"><col class="hk-scope"><col class="hk-filecol"><col class="hk-size"><col class="hk-observation"><col class="hk-review"></colgroup><thead><tr><th aria-sort="none"><button class="hk-sort" type="button" data-sort="category" data-direction="none" aria-label="Sort by Category"><span>Category</span><span class="hk-sort-arrows" aria-hidden="true"><span class="hk-sort-up">&#9650;</span><span class="hk-sort-down">&#9660;</span></span></button></th><th aria-sort="none"><button class="hk-sort" type="button" data-sort="scope" data-direction="none" aria-label="Sort by Scope"><span>Scope</span><span class="hk-sort-arrows" aria-hidden="true"><span class="hk-sort-up">&#9650;</span><span class="hk-sort-down">&#9660;</span></span></button></th><th aria-sort="none"><button class="hk-sort" type="button" data-sort="path" data-direction="none" aria-label="Sort by File or path"><span>File / path</span><span class="hk-sort-arrows" aria-hidden="true"><span class="hk-sort-up">&#9650;</span><span class="hk-sort-down">&#9660;</span></span></button></th><th aria-sort="none"><button class="hk-sort" type="button" data-sort="bytes" data-direction="none" aria-label="Sort by Size"><span>Size</span><span class="hk-sort-arrows" aria-hidden="true"><span class="hk-sort-up">&#9650;</span><span class="hk-sort-down">&#9660;</span></span></button></th><th>Observation</th><th>Review</th></tr></thead><tbody>')
         foreach ($finding in @($HousekeepingFindings)) {
             $findingLength = if ($finding.PSObject.Properties['Length']) { [long]$finding.Length } else { 0 }
             $findingFullName = if ($finding.PSObject.Properties['FullName']) { [string]$finding.FullName } else { '' }
@@ -1481,6 +1528,14 @@ window.addEventListener('load', function () {
         Array.prototype.slice.call(document.querySelectorAll('.hk-sort')).forEach(function (button) {
             button.addEventListener('click', function () {
                 var key = button.getAttribute('data-sort'); sortAscending[key] = !sortAscending[key];
+                Array.prototype.slice.call(document.querySelectorAll('.hk-sort')).forEach(function (sortButton) {
+                    sortButton.setAttribute('data-direction', 'none');
+                    sortButton.parentNode.setAttribute('aria-sort', 'none');
+                });
+                var direction = sortAscending[key] ? 'ascending' : 'descending';
+                button.setAttribute('data-direction', direction);
+                button.setAttribute('aria-label', 'Sort by ' + button.querySelector('span').textContent + ', currently ' + direction);
+                button.parentNode.setAttribute('aria-sort', direction);
                 rows.sort(function (left, right) {
                     var leftValue = key === 'bytes' ? parseInt(left.getAttribute('data-bytes'), 10) : (left.getAttribute('data-' + key) || '').toLowerCase();
                     var rightValue = key === 'bytes' ? parseInt(right.getAttribute('data-bytes'), 10) : (right.getAttribute('data-' + key) || '').toLowerCase();
@@ -1501,7 +1556,8 @@ window.addEventListener('load', function () {
 </body>
 </html>
 '@)
-    return ($sb.ToString() -replace '__SCRIPTVERSION__', [System.Net.WebUtility]::HtmlEncode([string]$ScriptVersion))
+    $html = $sb.ToString() -replace '__SCRIPTVERSION__', [System.Net.WebUtility]::HtmlEncode([string]$ScriptVersion)
+    return [regex]::Replace($html, '(?m)^[ \t]+(?=\r?$)', '')
 }
 
 Export-ModuleMember -Function ConvertTo-VMCheckpointAuditHtml

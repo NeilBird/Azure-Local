@@ -6,7 +6,7 @@
 
 - Module: `Get-HyperVVMCheckpointHealth`
 - Updated: 2026-07-23
-- Version: 0.2.22
+- Version: 0.2.23
 
 ## TL;DR
 
@@ -30,6 +30,7 @@ The module is intended for Azure Local / Windows Server administrators / operato
 
 - [Safety — this module makes no changes](#safety--this-module-makes-no-changes)
 - [Recovery technical reference](#recovery-technical-reference)
+- [Anonymized performance observations](#anonymized-performance-observations)
 - [Requirements](#requirements)
 - [How it connects (no double-hop)](#how-it-connects-no-double-hop)
 - [Download and import the module](#download-and-import-the-module)
@@ -66,6 +67,22 @@ Read-only does not mean zero resource use. The module performs metadata, event-l
 
 When running with `-ProcessAllVMs`, consider scheduling the audit outside core business hours, particularly on large or busy clusters. Review elapsed time and the performance-telemetry JSON to understand the impact in your environment before making fleet-wide runs part of a regular operating schedule.
 
+## Anonymized performance observations
+
+Version 0.2.21 introduced bounded cross-node overlap for the cluster virtual-disk ownership inventory when the command runs on a verified target-cluster node. Two anonymized v0.2.22 field runs subsequently completed that phase with no failed ownership workers and materially lower coordinator wall time than aggregate worker time:
+
+| Aggregate observation | 23-VM run | 57-VM run |
+|---|---:|---:|
+| Total audit runtime | 1,563.7 s | 2,215.1 s |
+| Owning nodes scanned for events and VSS | 5 | 7 |
+| Ownership worker time, summed across nodes | 714.4 s | 669.7 s |
+| Ownership coordinator wall time | 268.7 s | approximately 216 s |
+| Event and VSS work, currently serial across nodes | 940.0 s | 1,210.8 s |
+
+The larger run audited 2.48 times as many VMs but took 1.42 times as long. In these observations, runtime correlated more strongly with owning-node count and cluster inventory cardinality than with VM count alone. Results from two runs are directional and are not general performance guarantees.
+
+Version 0.2.23 implements bounded node-diagnostic prefetch for the nodes that own selected VMs. Up to four independent nodes run concurrently, while each node performs its event read first and VSS read second to limit node-local pressure. Transient reads are retried up to three times; partial failures remain explicit, missing fan-out results retry sequentially, coordinator setup failures fall back to the established lazy per-node path, and newly selected discovered-VM owners are prefetched only when their caches are absent. Applying this schedule to the observed timings gives a conservative model of approximately 12.0 minutes saved on the 23-VM run and 16.5 minutes saved on the 57-VM run. These are opportunity estimates before coordinator overhead, WinRM startup, event-log service contention, CPU, storage, and VSS variance. Actual improvement must be established through post-change telemetry and evidence-equivalence testing.
+
 The separate setup script changes files only beneath `<InstallRoot>\Get-HyperVVMCheckpointHealth` (`C:\Temp\Get-HyperVVMCheckpointHealth` by default). It verifies the release ZIP hash and staged module version before replacing that directory, restores the previous directory if installation validation fails, imports the command without running an audit, and supports `-WhatIf` for a no-change preview. Do not use an installation root where the `Get-HyperVVMCheckpointHealth` child directory contains unrelated files.
 
 ## Sensitive data handling
@@ -96,7 +113,7 @@ Treat every saved audit artifact as **sensitive operational data**. The `.txt`, 
 
 ### Internal structure
 
-Version 0.2.22 is distributed as a PowerShell module with a single exported command and manifest-managed private nested modules. Keep the extracted directory intact:
+Version 0.2.23 is distributed as a PowerShell module with a single exported command and manifest-managed private nested modules. Keep the extracted directory intact:
 
 ```text
 Get-HyperVVMCheckpointHealth\
@@ -133,16 +150,16 @@ Two supported ways to run it, both single-hop:
 
 ### Download and import the module
 
-Download the versioned ZIP from the repository's [GitHub Releases page](https://github.com/NeilBird/Azure-Local/releases). The supported 0.2.22 release asset is `Get-HyperVVMCheckpointHealth-0.2.22.zip`; it contains the manifest, root module, five private modules, example policy YAML, README, and license. Do not use a raw single-file link because the module requires its manifest and sibling private modules.
+Download the versioned ZIP from the repository's [GitHub Releases page](https://github.com/NeilBird/Azure-Local/releases). The supported 0.2.23 release asset is `Get-HyperVVMCheckpointHealth-0.2.23.zip`; it contains the manifest, root module, five private modules, example policy YAML, README, and license. Do not use a raw single-file link because the module requires its manifest and sibling private modules.
 
 The release also publishes [`Setup-Get-HyperVVMCheckpointHealth.ps1`](Setup-Get-HyperVVMCheckpointHealth.ps1) as a separate asset outside the ZIP. The setup script is pinned to the supported version and SHA256 hash, replaces only `C:\Temp\Get-HyperVVMCheckpointHealth` by default, validates the staged manifest/version, imports the module, and verifies the command. It does not run an audit. Use `-InstallRoot` to choose another parent directory.
 
 Download the ZIP, download the setup script, and run the setup script:
 
 ```powershell
-Invoke-WebRequest 'https://github.com/NeilBird/Azure-Local/releases/download/Get-HyperVVMCheckpointHealth-v0.2.22/Get-HyperVVMCheckpointHealth-0.2.22.zip' -OutFile "$env:TEMP\Get-HyperVVMCheckpointHealth-0.2.22.zip"
-Invoke-WebRequest 'https://github.com/NeilBird/Azure-Local/releases/download/Get-HyperVVMCheckpointHealth-v0.2.22/Setup-Get-HyperVVMCheckpointHealth.ps1' -OutFile "$env:TEMP\Setup-Get-HyperVVMCheckpointHealth.ps1"
-Unblock-File "$env:TEMP\Setup-Get-HyperVVMCheckpointHealth.ps1"; & "$env:TEMP\Setup-Get-HyperVVMCheckpointHealth.ps1" -ZipPath "$env:TEMP\Get-HyperVVMCheckpointHealth-0.2.22.zip"
+Invoke-WebRequest 'https://github.com/NeilBird/Azure-Local/releases/download/Get-HyperVVMCheckpointHealth-v0.2.23/Get-HyperVVMCheckpointHealth-0.2.23.zip' -OutFile "$env:TEMP\Get-HyperVVMCheckpointHealth-0.2.23.zip"
+Invoke-WebRequest 'https://github.com/NeilBird/Azure-Local/releases/download/Get-HyperVVMCheckpointHealth-v0.2.23/Setup-Get-HyperVVMCheckpointHealth.ps1' -OutFile "$env:TEMP\Setup-Get-HyperVVMCheckpointHealth.ps1"
+Unblock-File "$env:TEMP\Setup-Get-HyperVVMCheckpointHealth.ps1"; & "$env:TEMP\Setup-Get-HyperVVMCheckpointHealth.ps1" -ZipPath "$env:TEMP\Get-HyperVVMCheckpointHealth-0.2.23.zip"
 ```
 
 Then run the audit separately. On a cluster node:
@@ -367,7 +384,7 @@ These YAML settings are separate from normal command parameters such as `-StaleH
 
 > **Progress:** while running, the command shows a parent progress bar (`VM X of Y`) with a per-VM sub-bar that updates through each section (resolving the VM, cluster role, disks, checkpoints, the event-log scan, etc.) — useful on a busy or large cluster where operations like the event-log scan can take time. Progress uses the PowerShell progress stream, so it never appears in the transcript, redirected output, or the returned value.
 
-15. **Cluster storage health (Storage Spaces Direct / CSV)** — a read-only, cluster-wide snapshot (gathered **once** per run): active `Get-StorageJob` repair/resync jobs, CSVs in redirected/paused state, and any unhealthy virtual/physical disks. Storage-layer disruption is a plausible contributing factor for the merge / `0x80070020` / `16300` symptoms (files transiently locked or unavailable). The HTML also recommends Microsoft's CSS **Storage Diagnostic** (`Install-Module -Name Microsoft.AzLocal.CSSTools`; then `Start-AzsSupportStorageDiagnostic`) for a deep S2D / SBL analysis. Skip with `-SkipStorageHealth`.
+15. **Cluster storage health (Storage Spaces Direct / CSV)** — a read-only, cluster-wide snapshot (gathered **once** per run): active `Get-StorageJob` repair/resync jobs, CSVs in redirected/paused state, unhealthy storage subsystems and virtual/physical disks, plus observed Health Service fault evidence from `Get-HealthFault` when that command is available. The HTML surfaces degraded storage in the Executive Summary and lists each fault's severity, reason, affected-object description, and location. If a subsystem is unhealthy but no active fault detail is returned, the report says so and preserves the collection status instead of treating the absence as healthy evidence. Fault-specific `RecommendedActions` are intentionally neither collected nor displayed. The sole recommended follow-up remains Microsoft's CSS **Storage Diagnostic** (`Install-Module -Name Microsoft.AzLocal.CSSTools`; then `Start-AzsSupportStorageDiagnostic`) for a deep S2D / SBL analysis. Storage-layer disruption is a plausible contributing factor for the merge / `0x80070020` / `16300` symptoms (files transiently locked or unavailable). Skip with `-SkipStorageHealth`.
 16. **Discovered high-risk VMs** — VMs referenced in the node's **high-risk** event signals (merge interrupted / failed, `0x80070020`, cannot-load-config) but **not** in the audit list, cross-checked against real clustered VMs. Always **surfaced** (console + HTML) with a ready-to-run command; audited automatically only with `-IncludeDiscoveredVMs` (non-recursive and uncapped unless `-MaxDiscoveredVMs` is supplied).
 17. **Historic cross-node event correlation** (v0.2.15) — shown **only** for a VM that has orphaned `.avhdx` files. The original fork-commit / merge events that produced the orphans can be far older than `-EventLookbackHours` (a rollback that happened days or weeks ago), so this targeted scan looks for **this VM's** fork-commit / merge events in windows around **both** each orphan's **creation** time (the checkpoint / fork-commit moment) **and** its **last-write** time (when a later migration / restart froze it — the two can be days apart), across **every** cluster node (single hop each — the VM may have been owned by a different node at the time). Overlapping / adjacent windows are merged into contiguous ranges (so one `Get-WinEvent` query covers them, correctly spanning midnight / month-end). It checks enablement and reads the oldest available event in each required `Hyper-V-Worker/Admin` and `Hyper-V-VMMS/Admin` log. An enabled channel with zero records is classified `EnabledEmpty` and is valid negative evidence; it is common on a node that has not emitted Worker events. A disabled or unqueryable required Admin channel is incomplete, while retained history newer than the search window is `Wrapped`. A recovered fork-commit event here is treated as **CONFIRMED** evidence a past rollback occurred.
 18. **Active-checkpoint historic look-back + required-channel coverage check** (v0.2.17 / v0.2.18) — the same shared cross-node scan is now **also** run **proactively** for a VM that carries an **active (still-attached) checkpoint whose creation time predates `-EventLookbackHours`**. Because the standard node scan cannot reach back to when such a checkpoint was created, a fork-commit at that moment would otherwise be invisible while the VM keeps running with a dormant, inconsistent chain that a later live migration or restart could materialise. If a **confirming fork-commit** event is recovered at the checkpoint's creation time, the still-attached chain is classified **HOLD STATE** with clear "do not migrate/restart until the chain is validated" steps. If **no** event is found and any required Worker/VMMS Admin scope is `Wrapped`, `Disabled`, or `Unavailable` (including a failed query), the VM remains **INVESTIGATE / CANNOT CONFIRM**: incomplete coverage is not confirming evidence, but absence of evidence is not proof that migration or restart is safe. The report identifies the incomplete node/channel scopes; a `Wrapped` scope also shows the **checkpoint created** vs **oldest available event** timestamps. An enabled required Admin channel with zero records is `EnabledEmpty`, which is sufficient coverage and does **not** cause **CANNOT CONFIRM**. This scan is cluster-wide by design (a long-lived checkpoint may have survived migrations across nodes) and cheap (a few narrow windows). The optional VMMS Analytic channel is excluded from this coverage decision.
@@ -405,13 +422,13 @@ GitHub displays repository HTML as source rather than running it. To use the int
 
 ![Synthetic review-only virtual disk placement and inventory findings](./docs/images/checkpoint-health-example-housekeeping.png)
 
-The housekeeping findings deliberately include `.vhdx` files that are not referenced by a VM or snapshot chain, a disk stored beneath another VM's folder, and a shared-reference candidate. These are **review observations, not deletion instructions**. A base `.vhdx` candidate is not an orphaned checkpoint AVHDX and does not change a VM health verdict; confirm ownership, image-library intent, backup retention, and storage layout before moving or deleting anything.
+The housekeeping findings deliberately include `.vhdx` files that are not referenced by a VM or snapshot chain, a disk stored beneath another VM's folder, and a shared-reference candidate. These are **review observations, not deletion instructions**. One file can appear in more than one category, so category and row totals may overlap and must not be interpreted as unique-file counts. A base `.vhdx` candidate is not an orphaned checkpoint AVHDX and does not change a VM health verdict; confirm ownership, image-library intent, backup retention, and storage layout before moving or deleting anything.
 
 VHD Sets are recognized by their genuine `.vhds` attachment path. When two or more VMs reference the same `.vhds`, housekeeping reports a **Shared VHD Set reference** advisory listing those VMs; this is expected for guest-cluster shared storage and does not affect VM health. Hyper-V manages the companion files behind the `.vhds` abstraction, so ownerless `.avhdx` files in that exact attached-VHDS directory are classified as VHD Set-managed and are not presented as orphan or placement anomalies. Protection does not extend to sibling or nested directories. See [Create Hyper-V VHD Set files](https://learn.microsoft.com/en-us/windows-server/virtualization/hyper-v/manage/create-vhdset-file).
 
 CSV inventory skips the exact Windows metadata folder `System Volume Information`; it cannot contain workload virtual disks and its normal access restrictions do not make coverage incomplete. If another folder beneath a readable CSV cannot be enumerated, readable branches are retained but coverage remains incomplete and the report adds **CSV folder path inaccessible** with the exact failed path. A CSV root that cannot be opened remains **CSV root incomplete**.
 
-The self-contained HTML retains each finding's exact byte length, extension, full path, parent path, CSV root, and timestamps. It shows human-readable and exact-byte totals, deduplicated case-insensitively by full path. All category checkboxes are enabled by default; unchecking a category removes its rows and updates the visible count, unique-file bytes, storage-by-category chart, and top-parent-path chart. Search, CSV-root, extension, minimum-size, and sortable-column controls require no network connection or external JavaScript.
+The self-contained HTML retains each finding's exact byte length, extension, full path, parent path, CSV root, and timestamps. It shows human-readable and exact-byte totals, deduplicated case-insensitively by full path. All category checkboxes are enabled by default; unchecking a category removes its rows and updates the visible count, unique-file bytes, storage-by-category chart, and top-parent-path chart. Search, CSV-root, extension, minimum-size, and sortable-column controls require no network connection or external JavaScript. Sortable housekeeping columns show persistent up/down arrows; the active arrow and `aria-sort` state identify the current direction without changing the table width.
 
 Every HTML Executive Summary includes a persistent **Report scope** notice stating the processed, fully assessed, and incomplete VM counts plus the UTC generation time. It clarifies that the findings form part of a wider cluster, storage, backup, workload, and operational-history assessment rather than a complete cluster health assessment. When discoveries remain unaudited, an additional **Audit coverage** sentence states their count and excludes them explicitly from the findings and summary totals.
 
@@ -452,7 +469,7 @@ When `-OutputPath` is used, a results **`.zip`** bundling the run folder's `.txt
 - **`_NodeEvents_<node>_<yyyy-MM-dd>.csv`** — (v0.2.14) the **node-wide** event scan for each owning node, written **once per node** rather than duplicated into every VM's CSV. Node-wide events (e.g. a repeated `15268` flood that references many VMs) are shared context, so keeping them in one per-node file — and each VM's CSV to just its own attributed rows — dramatically shrinks large fleet runs. Each per-VM report points to the relevant node CSV for the node-wide detail.
 - **`VMCheckpointAudit-<ClusterName>-<yyyy-MM-dd>.html`** — the single portable fleet report covering all audited VMs (see [Portable HTML report](#portable-html-report--results-bundle)).
 - **`VMCheckpointAudit-<ClusterName>-<yyyy-MM-dd>.zip`** — a bundle of the run folder (`.txt` + `.csv` + `.html` + telemetry `.json` + conditional debug log), for copying to a browser device / attaching to a support case in one file.
-- **`code_execution_perf_telemetry_<ClusterName>_<stamp>.json`** — (v0.2.15, expanded in v0.2.18) an **internal** per-step performance-telemetry file with hierarchical step numbers and accurate start/end times. It includes parent sections for every major report phase plus focused nested timings for chain validation, all four virtual-disk housekeeping stages, replication/HRL, event scan/attribution/recovery, Analytic state, VSS, staleness, historic correlation, state consistency, per-VM TXT writes, discovery, storage health, and HTML rendering. Parent and child durations overlap and must not be summed. It is written into the run folder and bundled into the `.zip`, but is not referenced by the HTML report. Add `-AnonymizeTelemetry` to replace cluster/node/VM names in this file and its file name with stable pseudonyms.
+- **`code_execution_perf_telemetry_<ClusterName>_<stamp>.json`** — (v0.2.15, expanded in v0.2.18) an **internal** per-step performance-telemetry file with hierarchical step numbers and accurate start/end times. It includes parent sections for every major report phase plus focused nested timings for chain validation, all four virtual-disk housekeeping stages, replication/HRL, event scan/attribution/recovery, Analytic state, VSS, staleness, historic correlation, state consistency, per-VM TXT writes, discovery, storage health, and HTML rendering. Parent and child durations overlap and must not be summed. Run outcome fields such as `VMsProcessed`, `VMsFullyAssessed`, `OutcomeHoldState`, `OutcomeInvestigate`, `OutcomeOk`, `OutcomeNotFound`, and `OutcomeError` are top-level telemetry properties, not a nested `RunData` object. It is written into the run folder and bundled into the `.zip`, but is not referenced by the HTML report. Add `-AnonymizeTelemetry` to replace cluster/node/VM names in this file and its file name with stable pseudonyms.
 - **`_debug_log_<stamp>.txt`** — (v0.2.18) written only when an operation remains failed after retries/recovery or a report artifact cannot be written. It records UTC time, operation/scope, active telemetry phase, retry count, exception type/message/HResult, inner exceptions, category and error ID, safely truncated target context, command/script/line/column/position, stack trace, and basic PowerShell/OS/module context. The console prints its exact path. Review it for sensitive data before sharing it securely, then use [feedback / GitHub issues](https://aka.ms/Get-HyperVVMCheckpointHealth-Feedback) for a reproducible module failure.
 
 File names lead with the **VM name** so per-VM reports sort together for easy reading. Running against many VMs produces one `.txt` + one `.csv` per VM, all grouped in a single per-run sub-folder so repeated runs never intermix. The run-folder path is printed at the start of the run.
@@ -602,11 +619,11 @@ Set-Location .\Get-HyperVVMCheckpointHealth
 Generated assets are written to the ignored `release` directory:
 
 ```text
-release\Get-HyperVVMCheckpointHealth-0.2.22.zip
-release\Get-HyperVVMCheckpointHealth-0.2.22.zip.sha256
+release\Get-HyperVVMCheckpointHealth-0.2.23.zip
+release\Get-HyperVVMCheckpointHealth-0.2.23.zip.sha256
 ```
 
-Create the GitHub release with tag `Get-HyperVVMCheckpointHealth-v0.2.22` and upload the generated ZIP, its SHA256 file, and `Setup-Get-HyperVVMCheckpointHealth.ps1` as three separate assets. The setup script remains outside the ZIP. Before publishing a future version:
+Create the GitHub release with tag `Get-HyperVVMCheckpointHealth-v0.2.23` and upload the generated ZIP, its SHA256 file, and `Setup-Get-HyperVVMCheckpointHealth.ps1` as three separate assets. The setup script remains outside the ZIP. Before publishing a future version:
 
 1. Update the version in the root module, manifest, README, release notes, and the setup script's `$version` value.
 2. Run the redirected Windows PowerShell 5.1 Pester suite.
@@ -615,6 +632,13 @@ Create the GitHub release with tag `Get-HyperVVMCheckpointHealth-v0.2.22` and up
 5. Publish the ZIP and checksum as release assets using the tag and asset naming convention above.
 
 ## What's New
+
+### Version 0.2.23
+
+- Adds read-only `Get-HealthFault` evidence to degraded cluster-storage reporting, surfaces the reason in the Executive Summary, and preserves an explicit no-detail fallback when an unhealthy subsystem returns no active fault rows. Fault-specific `RecommendedActions` are neither collected nor displayed; the existing CSS Storage Diagnostic block remains the sole recommended follow-up.
+- Adds persistent up/down arrows and accessible active-direction state to sortable housekeeping columns.
+- Clarifies that housekeeping rows and category totals can overlap and are not unique-file counts; the section remains review-only and never authorizes moving, renaming, merging, or deleting virtual disks.
+- Adds bounded cross-node event/VSS diagnostic prefetch for the owners of input and selected discovered VMs. Up to four nodes overlap while event and VSS remain sequential within each node. Three-attempt read retries, missing-result sequential recovery, coordinator fallback, deterministic cache/CSV merging, explicit partial failures, cleanup, and dedicated worker/coordinator telemetry preserve the existing evidence and failure contracts.
 
 ### Version 0.2.22
 

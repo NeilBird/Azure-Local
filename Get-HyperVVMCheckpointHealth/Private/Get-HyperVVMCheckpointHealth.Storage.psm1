@@ -297,6 +297,8 @@ function Get-ClusterStorageHealthSnapshot {
             VDiskUnhealthy = @()
             PDiskUnhealthy = @()
             Subsystem      = @()
+            HealthFaults   = @()
+            HealthFaultCollectionStatus = 'Not attempted'
             CsvRedirected  = @()
             Notes          = @()
         }
@@ -304,6 +306,24 @@ function Get-ClusterStorageHealthSnapshot {
         try { $o.VDiskUnhealthy = @(Get-VirtualDisk -ErrorAction Stop | Where-Object { "$($_.HealthStatus)" -ne 'Healthy' -or "$($_.OperationalStatus)" -notmatch '^(OK|Completed)$' } | ForEach-Object { [pscustomobject]@{ Name = [string]$_.FriendlyName; Health = [string]$_.HealthStatus; Operational = [string]($_.OperationalStatus -join ',') } }) } catch { $o.Notes += "VirtualDisk: $($_.Exception.Message)" }
         try { $o.PDiskUnhealthy = @(Get-PhysicalDisk -ErrorAction Stop | Where-Object { "$($_.HealthStatus)" -ne 'Healthy' } | ForEach-Object { [pscustomobject]@{ Name = [string]$_.FriendlyName; Health = [string]$_.HealthStatus; Operational = [string]($_.OperationalStatus -join ','); Usage = [string]$_.Usage } }) } catch { $o.Notes += "PhysicalDisk: $($_.Exception.Message)" }
         try { $o.Subsystem = @(Get-StorageSubSystem -ErrorAction Stop | ForEach-Object { [pscustomobject]@{ Name = [string]$_.FriendlyName; Health = [string]$_.HealthStatus } }) } catch { $o.Notes += "Subsystem: $($_.Exception.Message)" }
+        if (Get-Command Get-HealthFault -ErrorAction SilentlyContinue) {
+            try {
+                $o.HealthFaults = @(Get-HealthFault -ErrorAction Stop | ForEach-Object {
+                    [pscustomobject]@{
+                        Severity                  = if ($_.PSObject.Properties['PerceivedSeverity']) { [string]$_.PerceivedSeverity } elseif ($_.PSObject.Properties['Severity']) { [string]$_.Severity } else { '' }
+                        Reason                    = if ($_.PSObject.Properties['Reason']) { [string]$_.Reason } else { '' }
+                        FaultingObjectDescription = if ($_.PSObject.Properties['FaultingObjectDescription']) { [string]$_.FaultingObjectDescription } else { '' }
+                        FaultingObjectLocation    = if ($_.PSObject.Properties['FaultingObjectLocation']) { [string]$_.FaultingObjectLocation } else { '' }
+                    }
+                })
+                $o.HealthFaultCollectionStatus = 'Success'
+            } catch {
+                $o.HealthFaultCollectionStatus = 'Failed'
+                $o.Notes += "HealthFault: $($_.Exception.Message)"
+            }
+        } else {
+            $o.HealthFaultCollectionStatus = 'Cmdlet unavailable'
+        }
         try {
             # IMPORTANT: on Azure Local / S2D with ReFS, CSVs run in FileSystemRedirected mode BY DESIGN
             # (FileSystemRedirectedIOReason = FileSystemReFs) - that is NORMAL and must NOT be flagged as
@@ -345,7 +365,7 @@ function Get-ClusterStorageHealthSnapshot {
             $raw = & $scan
         }
     } catch {
-        return [pscustomobject]@{ Available = $false; Source = $TargetNode; Summary = 'Unavailable'; Note = $_.Exception.Message; StorageJobs = @(); VDiskUnhealthy = @(); PDiskUnhealthy = @(); Subsystem = @(); CsvRedirected = @() }
+        return [pscustomobject]@{ Available = $false; Source = $TargetNode; Summary = 'Unavailable'; Note = $_.Exception.Message; StorageJobs = @(); VDiskUnhealthy = @(); PDiskUnhealthy = @(); Subsystem = @(); HealthFaults = @(); HealthFaultCollectionStatus = 'Not attempted'; CsvRedirected = @() }
     }
 
     $degraded = (@($raw.VDiskUnhealthy).Count -gt 0) -or (@($raw.PDiskUnhealthy).Count -gt 0) -or
@@ -359,6 +379,8 @@ function Get-ClusterStorageHealthSnapshot {
         VDiskUnhealthy = @($raw.VDiskUnhealthy)
         PDiskUnhealthy = @($raw.PDiskUnhealthy)
         Subsystem      = @($raw.Subsystem)
+        HealthFaults   = @($raw.HealthFaults)
+        HealthFaultCollectionStatus = [string]$raw.HealthFaultCollectionStatus
         CsvRedirected  = @($raw.CsvRedirected)
         Note           = ((@($raw.Notes)) -join '; ')
     }
