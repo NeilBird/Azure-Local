@@ -4,8 +4,10 @@ function Convert-AzLocalFleetSettingsSchemaVersion {
         Upgrades active fleet-settings.yml schema v1 text to schema v2.
     .DESCRIPTION
         Performs narrow text surgery on the active top-level schemaVersion
-        declaration. All other text, comments, ordering, and line endings are
-        preserved. Fully commented or already-v2 text is returned unchanged.
+        declaration, then appends the new schema-v2 clusterTagFilters settings
+        as a fully commented example. Existing text, comments, ordering, and
+        line endings are preserved. Fully commented or already-v2 text is
+        returned unchanged.
     #>
     [CmdletBinding()]
     [OutputType([PSCustomObject])]
@@ -52,6 +54,27 @@ function Convert-AzLocalFleetSettingsSchemaVersion {
     $match = $matches[0]
     $replacement = $match.Groups[1].Value + '2' + $match.Groups[3].Value
     $newText = $Text.Substring(0, $match.Index) + $replacement + $Text.Substring($match.Index + $match.Length)
+
+    $newline = if ($Text.Contains("`r`n")) { "`r`n" } else { "`n" }
+    $settingsMarker = '# AZLOCAL-FLEET-SETTINGS-SCHEMA-V2'
+    if ($newText -notmatch '(?im)^\s*#?\s*clusterTagFilters\s*:') {
+        $commentedSettings = @(
+            $settingsMarker
+            '# Optional global cluster admission policy. Every pair must match (AND).'
+            '# Matching is exact and case-insensitive; a missing tag excludes the cluster.'
+            '# Add these lines beneath your active scope block when enabling the policy:'
+            '#   clusterTagFilters:'
+            '#     - name: Environment'
+            '#       value: Production'
+            '#     - name: ManagedBy'
+            '#       value: CentralIT'
+        ) -join $newline
+        if ($newText.Length -gt 0 -and -not $newText.EndsWith($newline)) {
+            $newText += $newline
+        }
+        $newText += $newline + $commentedSettings + $newline
+    }
+
     return [pscustomobject]@{
         Migrated    = $true
         FromVersion = 1

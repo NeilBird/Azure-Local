@@ -10,7 +10,7 @@
 
 ### What's New in v0.9.23
 
-Fleet settings schema v2 adds global `scope.clusterTagFilters` admission policy across all pipeline reads and writes. Multiple pairs use AND semantics, missing tags exclude clusters, explicit-ID mutations are revalidated, filtered connectivity uses cluster-reported physical-node membership, and ARB shared-resource-group ambiguity is surfaced. Schema v1 remains supported; `Update-AzLocalPipelineExample -UpgradeFleetSettingsSchema` provides an explicit, text-preserving, `WhatIf`-aware upgrade.
+Fleet settings schema v2 adds global `scope.clusterTagFilters` admission policy across all pipeline reads and writes. Multiple pairs use AND semantics, missing tags exclude clusters, explicit-ID mutations are revalidated, filtered connectivity uses cluster-reported physical-node membership, and ARB shared-resource-group ambiguity is surfaced. Schema v1 remains supported. A normal `Update-AzLocalPipelineExample` run automatically saves the exact v1 file as `config/fleet-settings_v1.bak.yml`, updates the active version declaration, and appends a fully commented, idempotent `clusterTagFilters` example while preserving operator content and line endings. `-WhatIf` is supported, and the former `-UpgradeFleetSettingsSchema` switch remains accepted for compatibility.
 
 ### What's New in v0.9.22
 

@@ -10864,7 +10864,7 @@ Describe 'Function: Update-AzLocalPipelineExample' {
             $parameter.ParameterType | Should -Be ([switch])
         }
 
-        It 'Creates a missing starter and preserves an existing operator file' {
+        It 'Creates a missing starter and automatically upgrades an existing operator file' {
             $repoRoot = Join-Path $env:TEMP "upe-fleet-settings-$([guid]::NewGuid())"
             $dest = Join-Path $repoRoot '.github\workflows'
             $settingsPath = Join-Path $repoRoot 'config\fleet-settings.yml'
@@ -10876,6 +10876,7 @@ Describe 'Function: Update-AzLocalPipelineExample' {
                 Set-Content -LiteralPath $settingsPath -Value "schemaVersion: 1`n# OPERATOR SENTINEL" -Encoding ASCII
                 Update-AzLocalPipelineExample -Destination $dest -Platform GitHub -Confirm:$false 6>$null 4>$null | Out-Null
                 (Get-Content -LiteralPath $settingsPath -Raw) | Should -Match 'OPERATOR SENTINEL'
+                (Get-AzLocalFleetSettings -Path $settingsPath).SchemaVersion | Should -Be 2
             }
             finally {
                 Remove-Item -Path $repoRoot -Recurse -Force -ErrorAction SilentlyContinue
@@ -10899,7 +10900,7 @@ Describe 'Function: Update-AzLocalPipelineExample' {
             }
         }
 
-        It 'Explicitly upgrades active schema v1 while preserving operator content and line endings' {
+        It 'Automatically upgrades active schema v1 while preserving operator content and line endings' {
             $repoRoot = Join-Path $env:TEMP "upe-fleet-settings-upgrade-$([guid]::NewGuid())"
             $dest = Join-Path $repoRoot '.github\workflows'
             $settingsPath = Join-Path $repoRoot 'config\fleet-settings.yml'
@@ -10908,10 +10909,21 @@ Describe 'Function: Update-AzLocalPipelineExample' {
             $before = "schemaVersion: 1`r`nscope:`r`n  managementGroups:`r`n    - group-a`r`n# OPERATOR SENTINEL`r`n"
             [IO.File]::WriteAllText($settingsPath, $before, [Text.UTF8Encoding]::new($false))
             try {
-                Update-AzLocalPipelineExample -Destination $dest -Platform GitHub -UpgradeFleetSettingsSchema -Confirm:$false 6>$null 4>$null | Out-Null
+                Update-AzLocalPipelineExample -Destination $dest -Platform GitHub -Confirm:$false 6>$null 4>$null | Out-Null
                 $after = [IO.File]::ReadAllText($settingsPath)
-                $after | Should -BeExactly ($before -replace 'schemaVersion: 1', 'schemaVersion: 2')
+                $backupPath = Join-Path (Split-Path -Parent $settingsPath) 'fleet-settings_v1.bak.yml'
+                [IO.File]::ReadAllText($backupPath) | Should -BeExactly $before
+                $after.StartsWith(($before -replace 'schemaVersion: 1', 'schemaVersion: 2')) | Should -BeTrue
+                $after | Should -Match '(?m)^# AZLOCAL-FLEET-SETTINGS-SCHEMA-V2\r?$'
+                $after | Should -Match '(?m)^#   clusterTagFilters:\r?$'
+                $after | Should -Match '(?m)^#     - name: Environment\r?$'
+                $after | Should -Match '(?m)^#       value: Production\r?$'
+                ([regex]::Matches($after, '(?m)^# AZLOCAL-FLEET-SETTINGS-SCHEMA-V2\r?$')).Count | Should -Be 1
                 (Get-AzLocalFleetSettings -Path $settingsPath).SchemaVersion | Should -Be 2
+
+                Update-AzLocalPipelineExample -Destination $dest -Platform GitHub -Confirm:$false 6>$null 4>$null | Out-Null
+                [IO.File]::ReadAllText($settingsPath) | Should -BeExactly $after
+                [IO.File]::ReadAllText($backupPath) | Should -BeExactly $before
             }
             finally {
                 Remove-Item -Path $repoRoot -Recurse -Force -ErrorAction SilentlyContinue
@@ -10927,8 +10939,48 @@ Describe 'Function: Update-AzLocalPipelineExample' {
             [IO.File]::WriteAllText($settingsPath, "schemaVersion: 1`n# OPERATOR SENTINEL`n", [Text.UTF8Encoding]::new($false))
             try {
                 $before = [Convert]::ToBase64String([IO.File]::ReadAllBytes($settingsPath))
-                Update-AzLocalPipelineExample -Destination $dest -Platform GitHub -UpgradeFleetSettingsSchema -WhatIf 6>$null 4>$null | Out-Null
+                Update-AzLocalPipelineExample -Destination $dest -Platform GitHub -WhatIf 6>$null 4>$null | Out-Null
                 [Convert]::ToBase64String([IO.File]::ReadAllBytes($settingsPath)) | Should -BeExactly $before
+                Test-Path -LiteralPath (Join-Path (Split-Path -Parent $settingsPath) 'fleet-settings_v1.bak.yml') | Should -BeFalse
+            }
+            finally {
+                Remove-Item -Path $repoRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+
+        It 'Refuses to overwrite a different existing schema v1 backup' {
+            $repoRoot = Join-Path $env:TEMP "upe-fleet-settings-backup-conflict-$([guid]::NewGuid())"
+            $dest = Join-Path $repoRoot '.github\workflows'
+            $settingsPath = Join-Path $repoRoot 'config\fleet-settings.yml'
+            $backupPath = Join-Path $repoRoot 'config\fleet-settings_v1.bak.yml'
+            New-Item -Path $dest -ItemType Directory -Force | Out-Null
+            New-Item -Path (Split-Path -Parent $settingsPath) -ItemType Directory -Force | Out-Null
+            $before = "schemaVersion: 1`n# CURRENT OPERATOR SETTINGS`n"
+            $existingBackup = "schemaVersion: 1`n# EARLIER OPERATOR SETTINGS`n"
+            [IO.File]::WriteAllText($settingsPath, $before, [Text.UTF8Encoding]::new($false))
+            [IO.File]::WriteAllText($backupPath, $existingBackup, [Text.UTF8Encoding]::new($false))
+            try {
+                { Update-AzLocalPipelineExample -Destination $dest -Platform GitHub -Confirm:$false 6>$null 4>$null | Out-Null } |
+                    Should -Throw -ExpectedMessage '*already exists with different content*'
+                [IO.File]::ReadAllText($settingsPath) | Should -BeExactly $before
+                [IO.File]::ReadAllText($backupPath) | Should -BeExactly $existingBackup
+            }
+            finally {
+                Remove-Item -Path $repoRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+
+        It 'Upgrades an existing schema v1 file when starter creation is skipped' {
+            $repoRoot = Join-Path $env:TEMP "upe-fleet-settings-skip-upgrade-$([guid]::NewGuid())"
+            $dest = Join-Path $repoRoot '.github\workflows'
+            $settingsPath = Join-Path $repoRoot 'config\fleet-settings.yml'
+            New-Item -Path $dest -ItemType Directory -Force | Out-Null
+            New-Item -Path (Split-Path -Parent $settingsPath) -ItemType Directory -Force | Out-Null
+            [IO.File]::WriteAllText($settingsPath, "schemaVersion: 1`n# OPERATOR SENTINEL`n", [Text.UTF8Encoding]::new($false))
+            try {
+                Update-AzLocalPipelineExample -Destination $dest -Platform GitHub -SkipStarterFleetSettings -Confirm:$false 6>$null 4>$null | Out-Null
+                (Get-AzLocalFleetSettings -Path $settingsPath).SchemaVersion | Should -Be 2
+                (Get-Content -LiteralPath $settingsPath -Raw) | Should -Match 'OPERATOR SENTINEL'
             }
             finally {
                 Remove-Item -Path $repoRoot -Recurse -Force -ErrorAction SilentlyContinue

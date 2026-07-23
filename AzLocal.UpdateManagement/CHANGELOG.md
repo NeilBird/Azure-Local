@@ -12,13 +12,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fleet settings schema v2 adds `scope.clusterTagFilters`, with one or more literal name/value pairs combined using AND semantics. Exact comparisons are case-insensitive and missing tags exclude clusters.
 - All cluster discovery paths apply the policy at cluster-resource scope. Child update resources inherit membership through normalized parent cluster IDs; filtered Arc machine and NIC reporting uses cluster-reported node names.
 - Update applies, shared cluster-tag writes, sideload actions, and Config: 2 CSV targets revalidate global membership immediately before mutation. Excluded Config: 2 rows report `GlobalFilterMismatch`.
-- `Update-AzLocalPipelineExample -UpgradeFleetSettingsSchema` explicitly migrates active schema v1 files to v2 while preserving operator content and supporting `-WhatIf`. Schema v1 remains executable without migration.
+- `Update-AzLocalPipelineExample` automatically migrates active schema-v1 files during a normal update. It saves the exact original bytes as `config/fleet-settings_v1.bak.yml`, updates the active version declaration, and appends the new `clusterTagFilters` properties as a fully commented, idempotent example while preserving operator content and line endings. `-WhatIf` is supported, the former `-UpgradeFleetSettingsSchema` switch remains accepted for compatibility, and schema v1 remains executable without migration.
 - Every pipeline version banner snapshots active management-group IDs and cluster tag filters into the persisted run summary. Single-line JSON outputs (`management_groups` and `cluster_tag_filters`) preserve the same values for automation and retrospective audit; absent or fully commented fleet settings render no scope block.
 
 ### Changed
 
 - Resource Bridge attribution now keys on subscription plus resource group and exposes exact, ambiguous, or no-cluster attribution instead of implying one-to-one ownership in shared resource groups.
-- The inert fleet settings starter now documents schema v2. Normal pipeline refreshes continue to preserve existing operator-owned settings.
+- The inert fleet settings starter now documents schema v2. New Copy and Update deployments receive it by default; existing operator-owned settings are only changed by the narrow, backed-up v1-to-v2 migration.
 
 ## [0.9.22] - 2026-07-21
 
