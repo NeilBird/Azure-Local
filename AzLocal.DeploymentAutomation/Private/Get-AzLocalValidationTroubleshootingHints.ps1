@@ -336,7 +336,7 @@ Function Get-AzLocalValidationTroubleshootingHints {
             foreach ($step in $hint.Remediation) {
                 Write-AzLocalLog "        - $step" -Level Info -NoTimestamp
             }
-            if ($hint.Reference) {
+            if ($hint.PSObject.Properties['Reference'] -and $hint.Reference) {
                 Write-AzLocalLog "" -Level Info -NoTimestamp
                 Write-AzLocalLog "      Reference: $($hint.Reference)" -Level Info -NoTimestamp
             }

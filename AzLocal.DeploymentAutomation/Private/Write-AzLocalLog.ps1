@@ -71,7 +71,7 @@
     # Log file output (all levels, always written if path is set)
     if ($script:AzLocalLogFilePath) {
         try {
-            $logLine | Out-File -FilePath $script:AzLocalLogFilePath -Append -Encoding utf8 -ErrorAction Stop
+            $logLine | Out-File -FilePath $script:AzLocalLogFilePath -Append -Encoding utf8 -ErrorAction Stop -WhatIf:$false
         } catch {
             # Warn once about log write failure, then disable file logging to avoid repeated warnings
             Write-Host "WARNING: Failed to write to log file '$($script:AzLocalLogFilePath)': $($_.Exception.Message)" -ForegroundColor Yellow

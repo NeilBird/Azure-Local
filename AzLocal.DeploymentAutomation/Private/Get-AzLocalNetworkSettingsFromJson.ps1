@@ -143,7 +143,7 @@
         if (-not [int]::TryParse([string]$san.sanNetworkVlanId, [ref]$sanVlan) -or $sanVlan -lt 0 -or $sanVlan -gt 4095) {
             throw "sanSettings.sanNetworkVlanId must be an integer 0-4095."
         }
-        if ([string]$san.sanNetworkAddressPrefix -notmatch '^(\d{1,3}\.){3}\d{1,3}/\d{1,2}$') {
+        if (-not (Test-AzLocalIPv4Cidr -Value ([string]$san.sanNetworkAddressPrefix))) {
             throw "sanSettings.sanNetworkAddressPrefix must be valid CIDR notation (e.g. 10.10.30.0/24)."
         }
         $sanSettings = [PsCustomObject][Ordered]@{

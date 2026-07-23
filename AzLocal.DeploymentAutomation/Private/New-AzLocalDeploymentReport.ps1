@@ -56,7 +56,11 @@ Function New-AzLocalDeploymentReport {
 
     # Categorise results
     $succeeded  = @($StatusResults | Where-Object { $_.DeploymentStatus -in @('DeploySucceeded','ValidateSucceeded','ClusterExists') }).Count
-    $failed     = @($StatusResults | Where-Object { $_.DeploymentStatus -like '*Failed*' -or $_.DeploymentStatus -eq 'ContextError' }).Count
+    $failed     = @($StatusResults | Where-Object {
+        $_.DeploymentStatus -like '*Failed*' -or
+        $_.DeploymentStatus -like '*Error' -or
+        $_.DeploymentStatus -like '*Canceled*'
+    }).Count
     $inProgress = @($StatusResults | Where-Object { $_.DeploymentStatus -like '*InProgress*' }).Count
     $notStarted = @($StatusResults | Where-Object { $_.DeploymentStatus -eq 'NotStarted' }).Count
 
@@ -70,9 +74,9 @@ Function New-AzLocalDeploymentReport {
 
         $outputDir = Split-Path $HtmlOutputPath -Parent
         if ($outputDir -and -not (Test-Path $outputDir)) {
-            New-Item -Path $outputDir -ItemType Directory -Force | Out-Null
+            New-Item -Path $outputDir -ItemType Directory -Force -WhatIf:$false | Out-Null
         }
-        $htmlContent | Out-File -FilePath $HtmlOutputPath -Encoding utf8 -Force
+        $htmlContent | Out-File -FilePath $HtmlOutputPath -Encoding utf8 -Force -WhatIf:$false
         Write-AzLocalLog "HTML deployment report written to '$HtmlOutputPath'." -Level Success
     }
 
@@ -86,9 +90,9 @@ Function New-AzLocalDeploymentReport {
 
         $outputDir = Split-Path $MarkdownOutputPath -Parent
         if ($outputDir -and -not (Test-Path $outputDir)) {
-            New-Item -Path $outputDir -ItemType Directory -Force | Out-Null
+            New-Item -Path $outputDir -ItemType Directory -Force -WhatIf:$false | Out-Null
         }
-        $markdownContent | Out-File -FilePath $MarkdownOutputPath -Encoding utf8 -Force
+        $markdownContent | Out-File -FilePath $MarkdownOutputPath -Encoding utf8 -Force -WhatIf:$false
         Write-AzLocalLog "Markdown deployment report written to '$MarkdownOutputPath'." -Level Success
     }
 
@@ -116,8 +120,14 @@ Function ConvertTo-AzLocalDeploymentHtml {
         [int]$NotStarted
     )
 
-    # Load System.Web for HtmlEncode
-    Add-Type -AssemblyName System.Web -ErrorAction SilentlyContinue
+    # Load System.Web for HtmlEncode with an actionable failure if unavailable.
+    if (-not ([System.Management.Automation.PSTypeName]'System.Web.HttpUtility').Type) {
+        try {
+            Add-Type -AssemblyName System.Web -ErrorAction Stop
+        } catch {
+            throw "Unable to generate HTML deployment report because System.Web could not be loaded. $($_.Exception.Message)"
+        }
+    }
 
     # Calculate progress percentages
     $pctSucceeded  = if ($Total -gt 0) { [math]::Round(($Succeeded  / $Total) * 100, 1) } else { 0 }
@@ -319,7 +329,8 @@ Function ConvertTo-AzLocalDeploymentHtml {
             'ValidateSucceeded'  { 'status-succeeded' }
             'ClusterExists'      { 'status-succeeded' }
             '*Failed*'           { 'status-failed' }
-            'ContextError'       { 'status-failed' }
+            '*Error'             { 'status-failed' }
+            '*Canceled*'         { 'status-failed' }
             '*InProgress*'       { 'status-inprogress' }
             'NotStarted'         { 'status-notstarted' }
             default              { 'status-notstarted' }
@@ -420,7 +431,8 @@ Function ConvertTo-AzLocalDeploymentMarkdown {
                 'ValidateSucceeded' { '[PASS]' }
                 'ClusterExists'     { '[PASS]' }
                 '*Failed*'          { '[FAIL]' }
-                'ContextError'      { '[FAIL]' }
+                '*Error'            { '[FAIL]' }
+                '*Canceled*'        { '[FAIL]' }
                 '*InProgress*'      { '[....]' }
                 'NotStarted'        { '[----]' }
                 default             { '[????]' }
@@ -431,7 +443,11 @@ Function ConvertTo-AzLocalDeploymentMarkdown {
     }
 
     # Add failed cluster details if any
-    $failedResults = @($StatusResults | Where-Object { $_.DeploymentStatus -like '*Failed*' -or $_.DeploymentStatus -eq 'ContextError' })
+    $failedResults = @($StatusResults | Where-Object {
+        $_.DeploymentStatus -like '*Failed*' -or
+        $_.DeploymentStatus -like '*Error' -or
+        $_.DeploymentStatus -like '*Canceled*'
+    })
     if ($failedResults.Count -gt 0) {
         [void]$sb.AppendLine("### Failed Deployments")
         [void]$sb.AppendLine("")

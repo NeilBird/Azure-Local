@@ -61,12 +61,14 @@ jobs:
         client-id: ${{ secrets.AZURE_CLIENT_ID }}
         tenant-id: ${{ secrets.AZURE_TENANT_ID }}
         subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        enable-AzPSSession: true
 
     # OPTION 2: Client Secret - LEGACY (uncomment if OIDC not available)
     # - name: Azure Login (Client Secret)
     #   uses: azure/login@v2
     #   with:
     #     creds: '{"clientId":"${{ secrets.AZURE_CLIENT_ID }}","clientSecret":"${{ secrets.AZURE_CLIENT_SECRET }}","subscriptionId":"${{ secrets.AZURE_SUBSCRIPTION_ID }}","tenantId":"${{ secrets.AZURE_TENANT_ID }}"}'
+    #     enable-AzPSSession: true
 
     - name: Install Az PowerShell Modules
       shell: pwsh
@@ -104,13 +106,15 @@ jobs:
             -NamingConfigPath $namingConfigPath `
             -JUnitOutputPath (Join-Path $outputDir "pre-deploy-status.xml")
 
-        # Check if any clusters have failed validation
-        $failedValidation = @($statusResults | Where-Object { $_.DeploymentStatus -like '*Failed*' })
+        # Only a completed validation (or an already deployed cluster) is safe to deploy.
+        $validationBlockers = @($statusResults | Where-Object {
+          $_.DeploymentStatus -notin @('ValidateSucceeded', 'DeploySucceeded', 'ClusterExists')
+        })
 
-        if ($failedValidation.Count -gt 0) {
-            Write-Host "##[error]$($failedValidation.Count) cluster(s) have failed validation. Run the Validate workflow first."
-            foreach ($fail in $failedValidation) {
-                Write-Host "  - $($fail.UniqueID): $($fail.Message)" -ForegroundColor Red
+        if ($validationBlockers.Count -gt 0) {
+          Write-Host "##[error]$($validationBlockers.Count) cluster(s) are not ready for deployment. Run the Validate workflow first."
+          foreach ($blocker in $validationBlockers) {
+            Write-Host "  - $($blocker.UniqueID): $($blocker.DeploymentStatus) - $($blocker.Message)" -ForegroundColor Red
             }
             exit 1
         }
@@ -155,7 +159,7 @@ jobs:
         echo "SKIPPED=$skipped" >> $env:GITHUB_OUTPUT
 
         if ($failed -gt 0) {
-            Write-Host "##[error]$failed cluster(s) failed to deploy."
+          throw "$failed cluster(s) failed to deploy."
         }
 
     - name: Upload Deploy Reports

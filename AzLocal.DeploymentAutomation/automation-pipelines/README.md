@@ -357,14 +357,14 @@ Copy the YAML files from `github-actions/` to your repository's `.github/workflo
 2. Select your repository
 3. Choose **Existing Azure Pipelines YAML file**
 4. Select each YAML from `AzLocal.DeploymentAutomation/automation-pipelines/azure-devops/`
-5. Repeat for all three pipelines
+5. Repeat for all four pipelines
 
 ### Step 3: Run
 
 1. Run **Validate Deployments** pipeline
 2. Review pre-flight and validation results in the **Tests** tab
 3. If validation passes, run **Deploy Clusters** pipeline
-4. **Deployment Monitor** runs automatically on schedule
+4. **Deployment Monitor** and **Deployment Status Report** run automatically on their schedules
 
 ---
 

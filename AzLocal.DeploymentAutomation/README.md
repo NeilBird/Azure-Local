@@ -1,6 +1,6 @@
 # AzLocal.DeploymentAutomation
 
-### Latest Version: **1.0.2**
+### Latest Version: **1.0.3**
 
 ```powershell
 # Install the module (initial setup)
@@ -101,6 +101,7 @@ AzLocal.DeploymentAutomation/
 │   ├── Write-AzLocalLog.ps1                   # Logging helper
 │   ├── Initialize-AzLocalLogFile.ps1          # Log file initialisation
 │   ├── Get-ValidUniqueID.ps1                  # Unique ID generation
+│   ├── Get-AzLocalArmResource.ps1             # Existence-aware ARM lookup with API fallback
 │   ├── Get-AzLocalDeploymentNetworkSettings.ps1
 │   ├── Get-AzLocalNetworkSettingsFromJson.ps1
 │   ├── Get-AzLocalParameterFilePath.ps1
@@ -115,20 +116,24 @@ AzLocal.DeploymentAutomation/
 │   ├── New-AzLocalJUnitXml.ps1                # JUnit XML report generation
 │   ├── Import-AzLocalDeploymentCsv.ps1        # CSV import and validation
 │   ├── Test-AzLocalClusterPreFlight.ps1       # Pre-flight validation checks
+│   ├── Test-AzLocalIPv4Cidr.ps1               # Semantic IPv4 CIDR validation
 │   ├── Test-AzLocalNamingConfigDefaults.ps1   # Config default-value validation
+│   ├── Test-AzLocalNotFoundError.ps1          # Azure not-found error classification
 │   ├── Test-AzLocalAzurePrerequisites.ps1     # Azure RP registration + RBAC checks
 │   └── Get-AzLocalValidationTroubleshootingHints.ps1  # Deployment failure analysis + remediation hints
 ├── .config/
 │   └── naming-standards-config.json           # Naming standards and default values
 ├── templates/
-│   └── azure-local-deployment-template.json      # ARM deployment template
+│   ├── azure-local-deployment-template.json      # Standard ARM deployment template
+│   └── azure-local-deployment-template-san.json  # Disaggregated/SAN ARM deployment template
 ├── template-parameter-files/                  # Base parameter templates (do not edit directly)
 │   ├── single-node-parameters-file.json
 │   ├── storage-switchless-2node-parameters-file.json
 │   ├── storage-switchless-3node-parameters-file.json
 │   ├── storage-switchless-4node-parameters-file.json
 │   ├── storage-switched-parameters-file.json
-│   └── rack-aware-parameters-file.json
+│   ├── rack-aware-parameters-file.json
+│   └── disaggregated-parameters-file.json
 ├── cluster-specific-parameter-files/          # Example cluster-specific files
 ├── deployment-parameter-files/                # Generated per-deployment parameter files (auto-created)
 ├── automation-pipelines/                      # CI/CD pipeline examples (GitHub Actions & Azure DevOps)
@@ -606,7 +611,13 @@ Checks the current ARM deployment status for all clusters with `ReadyToDeploy = 
 | `DeployInProgress` | ARM Deploy is running |
 | `DeploySucceeded` | ARM Deploy completed successfully |
 | `DeployFailed` | ARM Deploy failed |
+| `ValidateCanceled` | ARM Validate was canceled |
+| `DeployCanceled` | ARM Deploy was canceled |
 | `ClusterExists` | Cluster resource already exists in Azure |
+| `ContextError` | The Azure subscription/tenant context could not be established |
+| `CheckError` | Azure resource or deployment status could not be checked because of an authentication, RBAC, API, or transport error |
+
+Any other ARM provisioning state is returned unchanged so callers can see new or uncommon platform states rather than having them masked. Reports and monitoring pipelines classify `*Failed*`, `*Error*`, and `*Canceled*` outcomes as unsuccessful.
 
 #### Usage
 
@@ -831,7 +842,7 @@ Start-AzLocalTemplateDeployment `
 
 ## Configuration
 
-All naming standards and environment defaults are managed centrally in `.config/naming-standards-config.json`. This file is loaded at runtime and values are applied to the ARM template parameters.
+Naming standards and environment defaults are loaded from the explicit `-NamingConfigPath` when supplied, otherwise from `$env:USERPROFILE\.AzLocalDeploymentAutomation\naming-standards-config.json`. On first use, the module copies `.config/naming-standards-config.json` to that profile location. Edit the profile copy rather than the installed module file so customisations survive `Update-Module`.
 
 ### Naming Standards
 
@@ -841,7 +852,7 @@ Naming patterns use placeholders that are replaced at runtime:
 |------------|-------------|---------|
 | `{UniqueID}` | The Unique ID entered during deployment (2–8 alphanumeric characters) | `STORE01`, `NYC01`, `AB` |
 | `{NodeNumber}` | Zero-padded node number (auto-generated, 2 digits) | `01`, `02` |
-| `{TypeOfDeployment}` | The deployment type | `SingleNode`, `StorageSwitchless`, `StorageSwitched`, `RackAware` |
+| `{TypeOfDeployment}` | The deployment type | `SingleNode`, `StorageSwitchless`, `StorageSwitched`, `RackAware`, `Disaggregated` |
 
 #### Default Naming Patterns
 
@@ -903,39 +914,22 @@ The `environment` section contains tenant-specific values that **must be updated
 
 ### Configuration Validation
 
-The module validates that critical settings have been customised from their shipped defaults before any deployment is attempted. If any of the following placeholder values are detected, the deployment is blocked with a clear error listing all values that need updating:
+The module validates the complete runtime configuration before deployment or status checks. Invalid configuration is blocked with one error that lists every issue found:
 
-| Setting | Shipped Default | Action Required |
-|---------|----------------|------------------|
-| `environment.tenantId` | `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx` | Set to your Entra ID tenant GUID |
-| `defaults.domainFqdn` | `contoso.com` | Set to your Active Directory domain FQDN |
-| `namingStandards.adouPath` | `DC=contoso,DC=com` | Update to match your AD structure |
+| Validation Area | Requirements |
+|-----------------|--------------|
+| Sections | `environment`, `defaults`, and `namingStandards` must exist |
+| Environment | `tenantId` is required, must be a GUID, and cannot use the shipped placeholder; optional `hciResourceProviderObjectID` must be a GUID when specified |
+| Scalar defaults | `domainFqdn`, `namingPrefix`, `azureStackLCMAdminUsername`, `location`, and `storageAccountType` must be present and non-empty |
+| Array defaults | `dnsServers`, `computeManagementAdapters`, and `storageAdapters` must each contain at least one non-empty value; every DNS entry must be a valid IP address |
+| Naming standards | All ten patterns shown in [Default Naming Patterns](#default-naming-patterns) must be present and non-empty |
+| Shipped examples | `defaults.domainFqdn` cannot remain `contoso.com`, and `namingStandards.adouPath` cannot retain `DC=contoso,DC=com` |
 
 This check runs in `Start-AzLocalTemplateDeployment`, `Start-AzLocalCsvDeployment`, and `Get-AzLocalDeploymentStatus` immediately after the configuration is loaded, and prevents deployments with settings that would always fail.
 
-### Example Configuration
+### Configuration Template
 
-```json
-{
-    "namingStandards": {
-        "clusterName": "AZCLUSTER{UniqueID}",
-        "resourceGroupName": "rg-{UniqueID}-azurelocal-prod",
-        "keyVaultName": "kv-{UniqueID}-azlocal",
-        "nodeNamePattern": "{UniqueID}NODE{NodeNumber}"
-    },
-    "defaults": {
-        "location": "westeurope",
-        "domainFqdn": "contoso.com",
-        "dnsServers": ["10.0.0.1", "10.0.0.2"],
-        "computeManagementAdapters": ["MGMT_COMP_Slot1_Port1", "MGMT_COMP_Slot1_Port2"],
-        "storageAdapters": ["SMB_Slot2_Port1", "SMB_Slot2_Port2"]
-    },
-    "environment": {
-        "tenantId": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
-        "hciResourceProviderObjectID": ""
-    }
-}
-```
+Use the complete [`.config/naming-standards-config.json`](.config/naming-standards-config.json) template, or let the module create the profile copy automatically. Do not build a configuration from a partial excerpt: every documented naming pattern and default is required. The shipped tenant, domain, DNS, adapter, and OU values are examples and must be reviewed for your environment.
 
 ---
 
@@ -1079,8 +1073,8 @@ The online search:
 | HCI Resource Provider not found | Run `Get-AzADServicePrincipal -DisplayName "Microsoft.AzureStackHCI Resource Provider"` to verify |
 | Validation fails | Review the Azure portal deployment details for specific validation errors |
 | Deploy fails after Validate | Check the deployment phase output for the specific error. Ensure Validate completed successfully first |
-| Naming config not found | Ensure `.config/naming-standards-config.json` exists in the module directory |
-| Template file not found | Ensure `templates/azure-local-deployment-template.json` exists |
+| Naming config not found | Verify `-NamingConfigPath` when supplied, or ensure `$env:USERPROFILE` is set so the module can create/load `.AzLocalDeploymentAutomation\naming-standards-config.json` |
+| Template file not found | Ensure the module installation contains `templates/azure-local-deployment-template.json` and, for Disaggregated deployments, `templates/azure-local-deployment-template-san.json` |
 | Key Vault access denied | Ensure `Az.KeyVault` module is installed and the identity has **Key Vault Secrets User** role on the vault |
 
 ---
@@ -1140,7 +1134,7 @@ The test suite validates:
 | Validation Troubleshooting Hints | Known pattern matching (10 patterns), hint output structure, online TSG search keyword extraction, empty/null input handling, `-SkipOnlineTSGSearch` parameter on exported functions |
 | CSV Deployment | Batch deployment with pre-flight, JUnit output, skip logic (mocked) |
 | Deployment Status | Status monitoring with all status categories (mocked) |
-| CI/CD Pipelines | Automation pipeline file structure, CSV format, workflow file existence |
+| CI/CD Pipelines | Workflow file structure, authenticated Az PowerShell sessions, ADO task input structure, preflight eligibility, deployment gates, and failed/error/canceled status accounting |
 | Code Quality | `Set-StrictMode` declaration, `OutputType` attributes, `Join-Path` usage, credential cleanup in `finally` block, `Az.KeyVault` availability check, no dead code patterns |
 
 ### Output

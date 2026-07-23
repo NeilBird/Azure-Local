@@ -4,7 +4,7 @@
     RootModule = 'AzLocal.DeploymentAutomation.psm1'
 
     # Version number of this module.
-    ModuleVersion = '1.0.2'
+    ModuleVersion = '1.0.3'
 
     # ID used to uniquely identify this module
     GUID = 'a3e4b8c1-6f2d-4e5a-9b1c-7d8e3f0a2b4c'
@@ -56,7 +56,9 @@
         'Private\Resolve-AzLocalResourceName.ps1'
         'Private\Test-AzLocalAzurePrerequisites.ps1'
         'Private\Test-AzLocalClusterPreFlight.ps1'
+        'Private\Test-AzLocalIPv4Cidr.ps1'
         'Private\Test-AzLocalNamingConfigDefaults.ps1'
+        'Private\Test-AzLocalNotFoundError.ps1'
         'Private\Test-AzLocalResourceNames.ps1'
         'Private\Write-AzLocalLog.ps1'
 
@@ -98,6 +100,28 @@
 
             # Release notes for this version
             ReleaseNotes = @'
+## v1.0.3 - July 2026
+
+### Reliability and diagnostic hardening
+- Azure resource, resource-group, and deployment lookups now distinguish genuine not-found responses from authentication, RBAC, context, API-version, and transport failures instead of masking every lookup failure as an absent resource.
+- Resource-provider registration now waits for completion with a bounded timeout before deployment continues.
+- Resource-provider registration honors `-WhatIf` without registering or entering the readiness polling loop.
+- Strict-mode-safe handling was added for optional ARM error, duration, detail, and troubleshooting-hint properties.
+- User configuration, logs, parameter files, JUnit output, and deployment reports are written reliably when diagnostic/scaffolding helpers inherit `-WhatIf` from a parent deployment cmdlet.
+- GitHub Actions now establish an Az PowerShell session, while Azure DevOps examples use authenticated `AzurePowerShell@5` tasks; validation gates reject every state except successful validation/deployment or an existing cluster.
+
+### Validation, reporting, and performance
+- Ready CSV rows now require complete non-interactive deployment values, with semantic DNS and IPv4 CIDR validation; draft rows can remain incomplete.
+- Naming configuration validation now checks all required sections, naming patterns, scalar and array defaults, GUIDs, DNS addresses, and shipped placeholders before Azure operations begin.
+- SAN address prefixes now require a valid IPv4 network and prefix length from 0 through 32.
+- JUnit generation now uses invariant numeric formatting, safely handles arbitrary error text and sparse result objects, and no longer mixes XML content with file-output pipeline results.
+- HTML and Markdown reports and monitoring pipelines classify all `*Failed*`, `*Error*`, and `*Canceled*` outcomes as unsuccessful and surface report-generation dependency errors clearly.
+- Fleet result accumulation now uses linear-time generic lists while preserving object-array output.
+
+### Safer publishing
+- `Publish-Module.ps1` now builds the package from an explicit file allowlist derived from the manifest plus approved assets. The staged package matches every functional file in the published 1.0.2 package and adds only the two new validation helpers.
+- Publishing fails closed when a required allowlisted file is missing, an unexpected file appears in staging, or the existing secret scan detects sensitive content.
+
 ## v1.0.2 - June 2026
 
 ### Hardened Azure resource existence checks (fixes misleading "Arc node not found")
@@ -108,48 +132,12 @@ Existence checks used `Get-AzResource -ErrorAction SilentlyContinue`, which swal
 - `Start-AzLocalTemplateDeployment` now pins context via `Set-AzContext -SubscriptionId -TenantId` on the direct path (multi-subscription tenants could otherwise default to the wrong subscription).
 
 ## v1.0.1 - May 2026
-
-### Optional `dnsServers` override in `-NetworkSettingsJson`
-Adds an optional `dnsServers` array to the JSON payload accepted by the `-NetworkSettingsJson` parameter on `Start-AzLocalTemplateDeployment`. When present, it overrides the environment-wide `defaults.dnsServers` from `naming-standards-config.json` for that single deployment, without requiring a config file change. This makes it easier to support multiple sites with different DNS servers from one shared config file (e.g. CI/CD pipelines driving deployments to multiple regions).
-
-- `Get-AzLocalNetworkSettingsFromJson` now parses an optional top-level `dnsServers` array. Each entry is validated as a valid IPv4/IPv6 address via `[System.Net.IPAddress]::Parse`; empty/whitespace entries throw with a clear actionable error. An absent field, `$null`, or an empty `[]` array are all treated as "no override" (config default is used) - this is backwards compatible with all existing JSON payloads.
-- `Start-AzLocalTemplateDeployment` now uses a three-tier precedence chain for DNS resolution:
-  1. `-DnsServers` parameter (explicit CLI override) - highest priority
-  2. `dnsServers` array inside `-NetworkSettingsJson` (per-deployment override) - NEW in v1.0.1
-  3. `NamingConfig.defaults.dnsServers` from `naming-standards-config.json` (environment-wide default)
-- `Start-AzLocalCsvDeployment` is unchanged - the `DnsServers` column in `cluster-deployments.csv` continues to map to the top-level `-DnsServers` parameter and therefore still wins over anything embedded in the JSON, so existing CSV-driven pipelines are unaffected.
-- Added 6 new Pester unit tests under `Describe 'Function: Get-AzLocalNetworkSettingsFromJson'` -> `Context 'Optional dnsServers override (v1.0.1)'` covering: omitted field (back-compat), empty array, single entry, multiple entries, invalid IP, and whitespace-only entry.
-- Added a source-text precedence assertion under `Describe 'Module Content'` to guard against regression of the three-tier resolution order.
-- Updated README.md: documented the optional field in the Network Settings JSON table, added a "DNS Servers Precedence (v1.0.1)" subsection, and updated the Default Values override column to reflect both override paths.
-
-### Backwards-compatibility notes
-- All existing `-NetworkSettingsJson` payloads continue to work unchanged - `dnsServers` is strictly optional.
-- The interactive code path (`Get-AzLocalDeploymentNetworkSettings`) does not collect DNS servers; interactive deployments still inherit the config default. Set `-DnsServers` on the cmdlet to override interactively.
-- The shape of the object returned by `Get-AzLocalNetworkSettingsFromJson` gained a new `dnsServers` property (value `$null` when not provided); existing consumers that only read the previously-documented fields are unaffected.
+- Added an optional validated `dnsServers` array to `-NetworkSettingsJson` for per-deployment DNS overrides.
+- DNS precedence is explicit parameter, JSON payload, then naming-config defaults. Existing payloads remain compatible.
 
 ## v1.0.0 - April 2026
-
-### New deployment topology: Disaggregated (SAN storage)
-Adds first-class support for SAN-backed Azure Local clusters of up to **64 nodes**, modeled on the official quickstart [microsoft.azurestackhci/create-cluster-san](https://github.com/Azure/azure-quickstart-templates/tree/master/quickstarts/microsoft.azurestackhci/create-cluster-san). Disaggregated clusters use external SAN LUNs (e.g. Pure Storage, NetApp, Dell PowerStore) instead of Storage Spaces Direct, and require additional infrastructure + performance LUN identifiers and a dedicated SAN cluster network.
-
-- Added new TypeOfDeployment value: `Disaggregated` (1-64 nodes, SAN storage)
-- Added new ARM template: `templates/azure-local-deployment-template-san.json` (uses `Microsoft.AzureStackHCI` API `2026-04-01-preview`, sets `storage.storageType = SAN`, `storage.san.{infraVolLunId,infraPerfLunId}`, replaces `hostNetwork.storageNetworks` with `hostNetwork.sanNetworks` object)
-- Added new parameter-file template: `template-parameter-files/disaggregated-parameters-file.json`
-- Added new parameters to `Start-AzLocalTemplateDeployment`: `-InfraVolLunId`, `-InfraPerfLunId`, `-SanNetworkAdapterName`, `-SanNetworkVlanId` (0-4095), `-SanNetworkAddressPrefix` (CIDR), `-SanBandwidthPercentageSmb` (1-97, default 50), `-SanJumboPacket` (1514|9014, default 9014)
-- `configurationMode` is forced to `InfraOnly` for Disaggregated (the only value supported by the SAN deploymentSettings schema)
-- Raised `-NodeCount` ValidateRange to (1, 64) - existing topology checks (SingleNode<=1, StorageSwitched 2-16, StorageSwitchless 2-4, RackAware 2/4/6/8) still apply
-- `Start-AzLocalCsvDeployment` now accepts and forwards five new optional CSV columns: `InfraVolLunId`, `InfraPerfLunId`, `SanNetworkAdapterName`, `SanNetworkVlanId`, `SanNetworkAddressPrefix` (required only when TypeOfDeployment = Disaggregated)
-- `Get-AzLocalNetworkSettingsFromJson` accepts a new optional `sanSettings` block (infraVolLunId, infraPerfLunId, sanNetworkAdapterName, sanNetworkVlanId, sanNetworkAddressPrefix) for non-interactive Disaggregated deployments
-- `Get-AzLocalDeploymentNetworkSettings` prompts interactively for the SAN-specific values when TypeOfDeployment = Disaggregated
-- `Import-AzLocalDeploymentCsv` validates the SAN columns (presence, VLAN range 0-4095, CIDR format) when a row is Disaggregated; non-Disaggregated rows can leave those columns blank
-- Updated example `automation-pipelines/cluster-deployments.csv` with a Store005 Disaggregated 8-node row
-- Per-phase parameter-file regeneration now skips the storageNetworkList override when running against the SAN template (the SAN template has no storageNetworkList; it uses sanNetworkList instead)
-- Pre-flight, naming resolution, and KeyVault credential paths are unchanged - Disaggregated reuses all existing helpers
-
-### Backwards-compatibility notes (v1.0.0)
-- Existing parameter files, ARM template, and all four prior deployment topologies are unchanged
-- `clusterPattern` and `localAvailabilityZones` parameters are emitted only for non-Disaggregated deployments (the SAN template does not declare them)
-- The default `-NodeCount` ValidateRange has changed from (2, 16) to (1, 64). Calls passing NodeCount=1 explicitly are now accepted at the parameter-validation layer (still rejected for SingleNode by the topology check, which is unchanged)
+- Added first-class Disaggregated/SAN deployments for 1-64 nodes, including dedicated ARM and parameter templates, SAN network and LUN settings, CSV/JSON/interactive inputs, and topology validation.
+- Existing SingleNode, StorageSwitched, StorageSwitchless, and RackAware workflows remain compatible.
 
 ## v0.9.81 - April 2026
 - Fixed bug in Start-AzLocalTemplateDeployment where $_ was shadowed by a nested catch block, causing ARM deployment error details to be silently lost

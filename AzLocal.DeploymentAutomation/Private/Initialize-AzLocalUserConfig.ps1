@@ -34,7 +34,7 @@ Function Initialize-AzLocalUserConfig {
     # Create the user config directory if it doesn't exist
     if (-not (Test-Path $userConfigDir)) {
         try {
-            New-Item -Path $userConfigDir -ItemType Directory -Force -ErrorAction Stop | Out-Null
+            New-Item -Path $userConfigDir -ItemType Directory -Force -ErrorAction Stop -WhatIf:$false | Out-Null
             Write-AzLocalLog "Created user configuration directory: $userConfigDir" -Level Success
         } catch {
             throw "Failed to create user configuration directory '$userConfigDir'. $($_.Exception.Message)"
@@ -47,7 +47,7 @@ Function Initialize-AzLocalUserConfig {
             throw "Module naming configuration file not found at '$sourceConfigFile'. Module installation may be corrupt."
         }
         try {
-            Copy-Item -Path $sourceConfigFile -Destination $userConfigFile -Force -ErrorAction Stop
+            Copy-Item -Path $sourceConfigFile -Destination $userConfigFile -Force -ErrorAction Stop -WhatIf:$false
             Write-AzLocalLog "Copied default naming configuration to: $userConfigFile" -Level Success
         } catch {
             throw "Failed to copy naming configuration to '$userConfigFile'. $($_.Exception.Message)"
@@ -87,7 +87,7 @@ You can specify a custom config file path per-invocation using the ``-NamingConf
 Start-AzLocalTemplateDeployment -NamingConfigPath 'C:\MyConfigs\site-1-config.json' ...
 ``````
 "@
-        Set-Content -Path $userReadmePath -Value $readmeContent -Encoding UTF8
+        Set-Content -Path $userReadmePath -Value $readmeContent -Encoding UTF8 -WhatIf:$false
         Write-AzLocalLog "Created README at: $userReadmePath" -Level Info
     }
 

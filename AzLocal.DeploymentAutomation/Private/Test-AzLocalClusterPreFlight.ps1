@@ -104,7 +104,25 @@
     }
 
     # 2. Check resource group exists
-    $rg = Get-AzResourceGroup -Name $resourceGroupName -ErrorAction SilentlyContinue
+    $rg = $null
+    try {
+        $rg = Get-AzResourceGroup -Name $resourceGroupName -ErrorAction Stop
+    } catch {
+        if (-not (Test-AzLocalNotFoundError -ErrorRecord $_ -ErrorCode @('ResourceGroupNotFound', 'ResourceNotFound'))) {
+            $status = 'Failed'
+            $messages += "Resource group '$resourceGroupName': ERROR checking existence - $($_.Exception.Message)"
+            $duration = ((Get-Date) - $startTime).TotalSeconds
+            return [PSCustomObject]@{
+                UniqueID          = $uniqueID
+                ClusterName       = $clusterName
+                ResourceGroupName = $resourceGroupName
+                DeploymentName    = $deploymentName
+                Status            = $status
+                Messages          = $messages
+                Duration          = [math]::Round($duration, 2)
+            }
+        }
+    }
     if (-not $rg) {
         $status = 'Failed'
         $messages += "Resource group '$resourceGroupName': NOT FOUND"
@@ -217,7 +235,15 @@
     $messages += "Cluster '$clusterName': Not yet deployed (eligible)"
 
     # 6. Check for in-progress deployment
-    $existingDeployment = Get-AzResourceGroupDeployment -ResourceGroupName $resourceGroupName -Name $deploymentName -ErrorAction SilentlyContinue
+    $existingDeployment = $null
+    try {
+        $existingDeployment = Get-AzResourceGroupDeployment -ResourceGroupName $resourceGroupName -Name $deploymentName -ErrorAction Stop
+    } catch {
+        if (-not (Test-AzLocalNotFoundError -ErrorRecord $_ -ErrorCode @('ResourceGroupDeploymentNotFound', 'DeploymentNotFound', 'ResourceNotFound'))) {
+            $status = 'Failed'
+            $messages += "Deployment '$deploymentName': ERROR checking status - $($_.Exception.Message)"
+        }
+    }
     if ($existingDeployment) {
         $provState = $existingDeployment.ProvisioningState
         if ($provState -eq 'Running' -or $provState -eq 'Accepted') {

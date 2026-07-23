@@ -320,6 +320,7 @@
     # before the deployment-phase foreach loop is entered (StrictMode otherwise throws
     # "variable not set" inside the catch and masks the real root cause).
     $phase = '<pre-deployment>'
+    $ClusterDeploymentError = $null
 
     # Wrap all post-credential code in try/finally to ensure SecureString disposal on any failure path
     try{
@@ -485,6 +486,7 @@
         Write-Verbose "Get-AzADServicePrincipal lookup failed: $($_.Exception.Message)"
     }
     if (-not $hciResourceProviderObjectID -and $NamingConfig.PSObject.Properties['environment'] -and
+        $NamingConfig.environment -and $NamingConfig.environment.PSObject.Properties['hciResourceProviderObjectID'] -and
         -not [string]::IsNullOrWhiteSpace($NamingConfig.environment.hciResourceProviderObjectID)) {
         $hciResourceProviderObjectID = $NamingConfig.environment.hciResourceProviderObjectID
         Write-AzLocalLog "HCI Resource Provider Object ID loaded from config: $hciResourceProviderObjectID" -Level Success
@@ -540,6 +542,9 @@
             $list = $missingSan -join ', '
             Write-AzLocalLog "Disaggregated deployment is missing required SAN parameters: $list" -Level Error
             throw "Disaggregated deployment requires SAN parameters: $list (or supply them via -NetworkSettingsJson sanSettings block)."
+        }
+        if (-not (Test-AzLocalIPv4Cidr -Value $SanNetworkAddressPrefix)) {
+            throw "SanNetworkAddressPrefix '$SanNetworkAddressPrefix' is not valid IPv4 CIDR notation."
         }
 
         # Build the sanNetworks object that the deploymentSettings.hostNetwork.sanNetworks expects.
@@ -623,7 +628,14 @@
     if ($SkipPreFlightChecks) {
         Write-Verbose "Skipping pre-flight checks (already performed by caller)."
     } else {
-        $ResourceGroup = Get-AzResourceGroup -Name $ResourceGroupName -ErrorAction SilentlyContinue
+        $ResourceGroup = $null
+        try {
+            $ResourceGroup = Get-AzResourceGroup -Name $ResourceGroupName -ErrorAction Stop
+        } catch {
+            if (-not (Test-AzLocalNotFoundError -ErrorRecord $_ -ErrorCode @('ResourceGroupNotFound', 'ResourceNotFound'))) {
+                throw "Failed to query resource group '$ResourceGroupName': $($_.Exception.Message)"
+            }
+        }
         if(-not($ResourceGroup)) {
             Write-AzLocalLog "Resource group '$ResourceGroupName' not found in Subscription: $SubscriptionID." -Level Error
             Write-AzLocalLog "Unable to proceed - Arc Node(s) cannot exist in Azure if the resource group does not exist." -Level Error
@@ -728,10 +740,16 @@
         $deployError = $_
         Write-AzLocalLog "Error during '$phase' deployment: $($deployError.Exception.Message)" -Level Error
 
+        $errorDetailsMessage = $null
+        if ($deployError.PSObject.Properties['ErrorDetails'] -and $deployError.ErrorDetails -and
+            $deployError.ErrorDetails.PSObject.Properties['Message']) {
+            $errorDetailsMessage = [string]$deployError.ErrorDetails.Message
+        }
+
         # Surface ARM inner error details when available (InvalidTemplateDeployment wraps the real errors)
-        if ($deployError.ErrorDetails.Message) {
+        if (-not [string]::IsNullOrWhiteSpace($errorDetailsMessage)) {
             try {
-                $errorBody = $deployError.ErrorDetails.Message | ConvertFrom-Json
+                $errorBody = $errorDetailsMessage | ConvertFrom-Json
                 if ($errorBody.error.details) {
                     Write-AzLocalLog "ARM validation inner errors:" -Level Error
                     foreach ($detail in $errorBody.error.details) {
@@ -740,7 +758,7 @@
                 }
             } catch {
                 # ErrorDetails wasn't JSON - log it raw
-                Write-AzLocalLog "Error details: $($deployError.ErrorDetails.Message)" -Level Error
+                Write-AzLocalLog "Error details: $errorDetailsMessage" -Level Error
             }
         }
 
@@ -751,7 +769,7 @@
 
         # Provide troubleshooting hints for common validation/deployment failures
         $troubleshootErrorText = "$($deployError.Exception.Message)"
-        if ($deployError.ErrorDetails.Message) { $troubleshootErrorText += " $($deployError.ErrorDetails.Message)" }
+        if (-not [string]::IsNullOrWhiteSpace($errorDetailsMessage)) { $troubleshootErrorText += " $errorDetailsMessage" }
         $troubleshootParams = @{ ErrorText = $troubleshootErrorText }
         if (-not $SkipOnlineTSGSearch) { $troubleshootParams['SearchOnline'] = $true }
         Get-AzLocalValidationTroubleshootingHints @troubleshootParams

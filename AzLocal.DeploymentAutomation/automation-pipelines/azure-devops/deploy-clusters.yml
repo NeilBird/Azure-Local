@@ -54,15 +54,13 @@ stages:
           - checkout: self
             displayName: 'Checkout Repository'
 
-          - task: AzureCLI@2
+          - task: AzurePowerShell@5
             displayName: 'Check Validation Status'
             name: validationCheck
             inputs:
               azureSubscription: 'AzureLocal-ServiceConnection'  # Update with your service connection name
-              scriptType: 'pscore'
-              scriptLocation: 'inlineScript'
-              addSpnToEnvironment: true
-              inlineScript: |
+              ScriptType: 'InlineScript'
+              Inline: |
                 Import-Module "$(modulePath)/AzLocal.DeploymentAutomation.psd1" -Force
 
                 $csvPath = "${{ parameters.csvFilePath }}"
@@ -83,17 +81,21 @@ stages:
                     -NamingConfigPath "${{ parameters.namingConfigPath }}" `
                     -JUnitOutputPath (Join-Path $outputDir "pre-deploy-status.xml")
 
-                $failedValidation = @($statusResults | Where-Object { $_.DeploymentStatus -like '*Failed*' })
+                $validationBlockers = @($statusResults | Where-Object {
+                  $_.DeploymentStatus -notin @('ValidateSucceeded', 'DeploySucceeded', 'ClusterExists')
+                })
 
-                if ($failedValidation.Count -gt 0) {
-                    Write-Host "##vso[task.logissue type=error]$($failedValidation.Count) cluster(s) have failed validation. Run the Validate pipeline first."
-                    foreach ($fail in $failedValidation) {
-                        Write-Host "  - $($fail.UniqueID): $($fail.Message)" -ForegroundColor Red
+                if ($validationBlockers.Count -gt 0) {
+                  Write-Host "##vso[task.logissue type=error]$($validationBlockers.Count) cluster(s) are not ready for deployment. Run the Validate pipeline first."
+                  foreach ($blocker in $validationBlockers) {
+                    Write-Host "  - $($blocker.UniqueID): $($blocker.DeploymentStatus) - $($blocker.Message)" -ForegroundColor Red
                     }
                     exit 1
                 }
 
                 Write-Host "Validation status check passed." -ForegroundColor Green
+              azurePowerShellVersion: 'LatestVersion'
+              pwsh: true
 
           - task: PublishTestResults@2
             displayName: 'Publish Validation Check Results'
@@ -134,15 +136,13 @@ stages:
           - checkout: self
             displayName: 'Checkout Repository'
 
-          - task: AzureCLI@2
+          - task: AzurePowerShell@5
             displayName: 'Deploy Clusters'
             name: deploy
             inputs:
               azureSubscription: 'AzureLocal-ServiceConnection'  # Update with your service connection name
-              scriptType: 'pscore'
-              scriptLocation: 'inlineScript'
-              addSpnToEnvironment: true
-              inlineScript: |
+              ScriptType: 'InlineScript'
+              Inline: |
                 Import-Module "$(modulePath)/AzLocal.DeploymentAutomation.psd1" -Force
 
                 $csvPath = "${{ parameters.csvFilePath }}"
@@ -171,7 +171,7 @@ stages:
                 Write-Host "##vso[task.setvariable variable=Skipped;isOutput=true]$skipped"
 
                 if ($failed -gt 0) {
-                    Write-Host "##vso[task.logissue type=error]$failed cluster(s) failed to deploy."
+                  throw "$failed cluster(s) failed to deploy."
                 }
 
                 Write-Host ""
@@ -181,6 +181,8 @@ stages:
                 Write-Host "Submitted: $passed"
                 Write-Host "Failed: $failed"
                 Write-Host "Skipped: $skipped"
+              azurePowerShellVersion: 'LatestVersion'
+              pwsh: true
 
           - task: PublishTestResults@2
             displayName: 'Publish Deployment Results'
