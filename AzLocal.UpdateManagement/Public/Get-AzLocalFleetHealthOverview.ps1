@@ -97,6 +97,7 @@ function Get-AzLocalFleetHealthOverview {
     if ($UpdateRingTag) {
         $ringFilter = ConvertTo-AzLocalUpdateRingKqlFilter -UpdateRingValue $UpdateRingTag -TagAccessor "tostring(tags['UpdateRing'])"
     }
+    $globalTagFilter = Get-AzLocalClusterTagFilterKqlClause
 
     # KQL: join clusters with their updateSummaries/default child, project
     # the raw packageVersions array (rolled up to SbeVersion client-side
@@ -128,6 +129,7 @@ function Get-AzLocalFleetHealthOverview {
     $kql = @"
 resources
 | where type =~ 'microsoft.azurestackhci/clusters'
+$globalTagFilter
 $ringFilter
 | extend ClusterResourceIdLower = tolower(tostring(id))
 | extend NodeCount = iif(isnull(properties.reportedProperties.nodes), 0, toint(array_length(properties.reportedProperties.nodes)))

@@ -281,9 +281,11 @@ function Test-AzLocalApplyUpdatesScheduleCoverage {
     # Invoke-AzResourceGraphQuery (collapses any whitespace into single spaces
     # before invoking az). KQL is whitespace-agnostic so the projection,
     # filtering and ordering semantics are preserved.
+    $globalTagFilter = Get-AzLocalClusterTagFilterKqlClause
     $kql = @"
 resources
 | where type =~ 'microsoft.azurestackhci/clusters'
+$globalTagFilter
 | project
     ClusterName            = name,
     ResourceGroup          = resourceGroup,

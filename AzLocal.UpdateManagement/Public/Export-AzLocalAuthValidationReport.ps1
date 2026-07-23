@@ -247,7 +247,8 @@ function Export-AzLocalAuthValidationReport {
     Write-Host ''
     Write-Host '--- 4. Resource Graph query (proves cluster reachability) ---'
     [void](Install-AzGraphExtension)
-    $clusterKql = "resources | where type =~ 'microsoft.azurestackhci/clusters' | project name, resourceGroup, subscriptionId"
+    $globalTagFilter = Get-AzLocalClusterTagFilterKqlClause
+    $clusterKql = "resources | where type =~ 'microsoft.azurestackhci/clusters' $globalTagFilter | project name, resourceGroup, subscriptionId"
     $clusterRows = @()
     try {
         # NOTE: Invoke-AzResourceGraphQuery uses unary-comma return (`return , $allRows.ToArray()`).

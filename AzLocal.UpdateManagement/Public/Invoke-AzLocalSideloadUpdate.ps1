@@ -134,6 +134,7 @@ function Invoke-AzLocalSideloadUpdate {
     }
 
     $results = New-Object System.Collections.Generic.List[object]
+    $globalTagFilters = @((Get-AzLocalFleetSettings).ClusterTagFilters)
     $activeCopies = 0
     $activeCopiesOnCurrentRunner = 0
     foreach ($candidate in $Plan) {
@@ -151,6 +152,19 @@ function Invoke-AzLocalSideloadUpdate {
 
     foreach ($p in $Plan) {
         $clusterName = [string]$p.ClusterName
+        $planClusterResourceId = if ($p.PSObject.Properties['ClusterResourceId']) { [string]$p.ClusterResourceId } else { '' }
+        if ($globalTagFilters.Count -gt 0 -and
+            ([string]::IsNullOrWhiteSpace($planClusterResourceId) -or
+             -not (Test-AzLocalClusterResourceInGlobalScope -ClusterResourceId $planClusterResourceId))) {
+            $results.Add([PSCustomObject]@{
+                ClusterName = $clusterName
+                Action      = 'Skip'
+                State       = 'GlobalFilterMismatch'
+                Version     = [string]$p.SelectedVersion
+                Message     = 'Cluster does not match the configured scope.clusterTagFilters policy. No sideload action was performed.'
+            })
+            continue
+        }
         $state = Get-AzLocalSideloadState -StateRoot $StateRoot -ClusterName $clusterName
 
         # Skip clusters that are neither due now nor already in flight.

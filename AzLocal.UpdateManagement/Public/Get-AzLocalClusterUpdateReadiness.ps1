@@ -178,7 +178,8 @@ function Get-AzLocalClusterUpdateReadiness {
         # readiness computation can read status / connectivityStatus / tags without
         # an additional ARM REST round trip per cluster.
         $ringFilter = ConvertTo-AzLocalUpdateRingKqlFilter -UpdateRingValue $UpdateRingValue
-        $argQuery = "resources | where type =~ 'microsoft.azurestackhci/clusters' $ringFilter | project id, name, resourceGroup, subscriptionId, tags, properties"
+        $globalTagFilter = Get-AzLocalClusterTagFilterKqlClause
+        $argQuery = "resources | where type =~ 'microsoft.azurestackhci/clusters' $globalTagFilter $ringFilter | project id, name, resourceGroup, subscriptionId, tags, properties"
 
         try {
             $argParams = @{ Query = $argQuery }
@@ -212,7 +213,8 @@ function Get-AzLocalClusterUpdateReadiness {
         # v0.7.68: resolve every supplied ResourceId with a single ARG batch
         # lookup so we can pick up tags and properties (status / connectivityStatus)
         # in one round trip, mirroring the ByTag projection.
-        $argQueryTemplate = "resources | where type =~ 'microsoft.azurestackhci/clusters' | where tolower(id) in~ ({0}) | project id, name, resourceGroup, subscriptionId, tags, properties"
+        $globalTagFilter = Get-AzLocalClusterTagFilterKqlClause
+        $argQueryTemplate = "resources | where type =~ 'microsoft.azurestackhci/clusters' $globalTagFilter | where tolower(id) in~ ({0}) | project id, name, resourceGroup, subscriptionId, tags, properties"
         try {
             $batchParams = @{ Value = $ClusterResourceIds; QueryTemplate = $argQueryTemplate }
             if ($SubscriptionId) { $batchParams['SubscriptionId'] = $SubscriptionId }
@@ -264,7 +266,8 @@ function Get-AzLocalClusterUpdateReadiness {
         if ($ResourceGroupName) {
             $rgFilter = "| where tolower(resourceGroup) =~ '$($ResourceGroupName.ToLower())'"
         }
-        $argQueryTemplate = "resources | where type =~ 'microsoft.azurestackhci/clusters' | where tolower(name) in~ ({0}) $rgFilter | project id, name, resourceGroup, subscriptionId, tags, properties"
+        $globalTagFilter = Get-AzLocalClusterTagFilterKqlClause
+        $argQueryTemplate = "resources | where type =~ 'microsoft.azurestackhci/clusters' $globalTagFilter | where tolower(name) in~ ({0}) $rgFilter | project id, name, resourceGroup, subscriptionId, tags, properties"
         try {
             $batchParams = @{ Value = $ClusterNames; QueryTemplate = $argQueryTemplate }
             if ($SubscriptionId) { $batchParams['SubscriptionId'] = $SubscriptionId }

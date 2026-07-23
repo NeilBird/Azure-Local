@@ -119,6 +119,13 @@ function Get-AzLocalFleetConnectivityStatus {
         return $s
     }
 
+    function NormalizeNodeName {
+        param([object]$Value)
+        $nodeName = CoerceStr $Value
+        if (-not $nodeName) { return '' }
+        return (($nodeName.Trim().TrimEnd('.') -split '\.')[0]).ToLowerInvariant()
+    }
+
     $invokeArgs = @{}
     if ($PSBoundParameters.ContainsKey('SubscriptionId') -and $SubscriptionId) {
         $invokeArgs['SubscriptionId'] = $SubscriptionId
@@ -129,13 +136,17 @@ function Get-AzLocalFleetConnectivityStatus {
     # ------------------------------------------------------------------
     Write-Log -Message '[1/5] Querying cluster connectivity...' -Level Info
 
+    $globalTagFilter = Get-AzLocalClusterTagFilterKqlClause
+    $globalFilterEnabled = -not [string]::IsNullOrWhiteSpace($globalTagFilter)
     $clusterKql = @"
 resources
 | where type =~ 'microsoft.azurestackhci/clusters'
+$globalTagFilter
 | project id, name, resourceGroup, subscriptionId, location,
           ConnectivityStatus = tostring(properties.connectivityStatus),
           ClusterStatus = tostring(properties.status),
-          NodeCount = array_length(properties.reportedProperties.nodes)
+          NodeCount = array_length(properties.reportedProperties.nodes),
+          ReportedNodes = properties.reportedProperties.nodes
 | order by id asc
 "@
     $clusterRaw = Invoke-AzResourceGraphQuery -Query $clusterKql @invokeArgs
@@ -172,14 +183,29 @@ resources
         if ($c.ClusterId) { $clusterById[$c.ClusterId.ToLowerInvariant()] = $c }
     }
 
-    # Cluster resource group (lower) -> array of cluster rows (multi-cluster RG safe)
+    # Subscription + resource group -> cluster rows (multi-cluster RG safe).
     $clustersByRg = @{}
     foreach ($c in $clusterRows) {
-        $rg = $c.ResourceGroup.ToLowerInvariant()
+        $rg = '{0}|{1}' -f $c.SubscriptionId.ToLowerInvariant(), $c.ResourceGroup.ToLowerInvariant()
         if (-not $clustersByRg.ContainsKey($rg)) {
             $clustersByRg[$rg] = [System.Collections.Generic.List[object]]::new()
         }
         [void]$clustersByRg[$rg].Add($c)
+    }
+
+    # Cluster-reported node names are the authoritative physical-machine map.
+    $clusterByNodeName = @{}
+    foreach ($rawCluster in @($clusterRaw)) {
+        $rawClusterId = CoerceStr $rawCluster.id
+        if (-not $rawClusterId -or -not $clusterById.ContainsKey($rawClusterId.ToLowerInvariant())) { continue }
+        $reportedNodes = if ($rawCluster.PSObject.Properties['ReportedNodes']) { $rawCluster.ReportedNodes } else { Get-NestedProp $rawCluster 'properties.reportedProperties.nodes' }
+        foreach ($reportedNode in @($reportedNodes)) {
+            $reportedNodeName = if ($reportedNode.PSObject.Properties['name']) { $reportedNode.name } elseif ($reportedNode.PSObject.Properties['nodeName']) { $reportedNode.nodeName } else { '' }
+            $shortNodeName = NormalizeNodeName $reportedNodeName
+            if ($shortNodeName -and -not $clusterByNodeName.ContainsKey($shortNodeName)) {
+                $clusterByNodeName[$shortNodeName] = $clusterById[$rawClusterId.ToLowerInvariant()]
+            }
+        }
     }
 
     # ------------------------------------------------------------------
@@ -229,8 +255,11 @@ resources
 
     $allMachines = @($machinesRaw | ForEach-Object {
         $m = $_
+        $shortNodeName = NormalizeNodeName $m.name
+        $cluster = if ($clusterByNodeName.ContainsKey($shortNodeName)) { $clusterByNodeName[$shortNodeName] } else { $null }
         $parentClusterResourceId = if ($m.PSObject.Properties['ParentClusterResourceId']) { $m.ParentClusterResourceId } else { Get-NestedProp $m 'properties.parentClusterResourceId' }
-        $clusterId = CoerceStr $parentClusterResourceId
+        if ($null -eq $cluster -and $globalFilterEnabled) { return }
+        $clusterId = if ($cluster) { $cluster.ClusterId } else { CoerceStr $parentClusterResourceId }
         # v0.7.84 fix: extract the cluster name (last segment of the ARM ID).
         # Pre-fix code cast the WHOLE split array to a string (joining the
         # elements with spaces) before indexing with -1, which then returned
@@ -239,7 +268,7 @@ resources
         # This surfaced as a corrupted ClusterName column in the
         # 'Non-Connected Machines' table. The fix indexes the split array
         # directly with [-1], no string cast.
-        $clusterName = if ($clusterId) { CoerceStr (($clusterId -split '/')[-1]) } else { '' }
+        $clusterName = if ($cluster) { $cluster.ClusterName } elseif ($clusterId) { CoerceStr (($clusterId -split '/')[-1]) } else { '' }
         $version     = if ($clusterId) { CoerceStr $clusterVersionMap[$clusterId.ToLowerInvariant()] } else { '' }
         [PSCustomObject][ordered]@{
             NodeName         = CoerceStr $m.name
@@ -274,7 +303,7 @@ resources
     # Build short-name lookup for NIC join (edge device name == machine short name)
     $machineByShortName = @{}
     foreach ($m in $allMachines) {
-        $short = $m.NodeName.ToLowerInvariant()
+        $short = NormalizeNodeName $m.NodeName
         if ($short -and -not $machineByShortName.ContainsKey($short)) {
             $machineByShortName[$short] = $m
         }
@@ -313,8 +342,9 @@ extensibilityresources
 
     $nicAllRows = @($nicRaw | ForEach-Object {
         $n = $_
-        $edgeName = CoerceStr $n.edgeMachineName
+        $edgeName = NormalizeNodeName $n.edgeMachineName
         $machine  = $machineByShortName[$edgeName]
+        if ($globalFilterEnabled -and $null -eq $machine) { return }
         [PSCustomObject][ordered]@{
             NodeName             = if ($machine) { $machine.NodeName } else { $edgeName }
             MachineId            = if ($machine) { $machine.MachineId } else { '' }
@@ -369,7 +399,7 @@ extensibilityresources
 
     $arbRows = @($arbRaw | ForEach-Object {
         $a  = $_
-        $rg = ([string]$a.resourceGroup).ToLowerInvariant()
+        $rg = '{0}|{1}' -f ([string]$a.subscriptionId).ToLowerInvariant(), ([string]$a.resourceGroup).ToLowerInvariant()
         # v0.8.6-fix3: when the RG has no matching cluster, do NOT use @($null) -
         # PowerShell's @() wrap on a $null produces an Object[1] containing $null
         # (not an empty array), so $matched.Count is 1 and downstream $_.ClusterName
@@ -381,6 +411,7 @@ extensibilityresources
             $matched = @()
         }
         $matchedCount = $matched.Count
+        if ($globalFilterEnabled -and $matchedCount -eq 0) { return }
 
         $clusterName   = if ($matchedCount -gt 0) { ($matched | ForEach-Object { $_.ClusterName })   -join ', ' } else { '(no cluster)' }
         $clusterId     = if ($matchedCount -gt 0) { ($matched | ForEach-Object { $_.ClusterId })     -join ', ' } else { '' }
@@ -408,6 +439,8 @@ extensibilityresources
             ClusterName           = $clusterName
             ClusterId             = $clusterId
             ClusterStatus         = $clusterStatus
+            ClusterAttribution    = if ($matchedCount -eq 1) { 'Exact' } elseif ($matchedCount -gt 1) { 'Ambiguous' } else { 'NoCluster' }
+            CandidateClusterCount = $matchedCount
             LastModified          = $lastMod
             DaysSinceLastModified = $daysSince
             ResourceGroup         = CoerceStr $a.resourceGroup

@@ -151,6 +151,17 @@ function Update-AzLocalPipelineExample {
         operator-owned and is never modified; remove the marker line to freeze
         a managed README as your own. Pass -SkipReadme to suppress entirely.
 
+    .PARAMETER UpgradeFleetSettingsSchema
+        Retained for backward compatibility. Existing active
+        config/fleet-settings.yml schema version 1 files, and legacy fully
+        commented v1 starters, are upgraded to version 2 automatically during
+        every update. The file is validated first, its exact original bytes are saved as
+        config/fleet-settings_v1.bak.yml, and the active schemaVersion is
+        changed (or the legacy commented declaration is changed) before a
+        fully commented clusterTagFilters example is appended. Existing
+        operator values, comments, order, and line endings are preserved. A
+        commented starter remains inert. Supports -WhatIf and -Confirm.
+
     .OUTPUTS
         PSCustomObject[] (with -PassThru) - one row per source file with:
             File              - destination path (always the CANONICAL,
@@ -255,6 +266,11 @@ function Update-AzLocalPipelineExample {
         # Suppress the default inert config\fleet-settings.yml drop. Existing
         # operator-owned files are always preserved.
         [switch]$SkipStarterFleetSettings,
+
+        # v0.9.23 compatibility switch. Active schema-v1 fleet settings and
+        # legacy commented v1 starters are now backed up and migrated during
+        # every normal update.
+        [switch]$UpgradeFleetSettingsSchema,
 
         [switch]$PassThru
     )
@@ -827,37 +843,60 @@ function Update-AzLocalPipelineExample {
     # ------------------------------------------------------------------
     # 7. Fleet settings starter drop parity with Copy-AzLocalPipelineExample.
     # Existing repos upgraded via Update receive the fully commented starter;
-    # an existing operator-owned file is never overwritten.
+    # an existing schema v1 file is backed up before the v2 settings are added.
     # ------------------------------------------------------------------
-    if (-not $SkipStarterFleetSettings.IsPresent) {
-        $trimmedTarget = $destResolved.TrimEnd('\', '/')
-        $oneLevelUp = Split-Path -Parent $trimmedTarget
-        if ($Platform -eq 'GitHub' -and ($trimmedTarget -match '[\\/]\.github[\\/]workflows$')) {
-            $repoRoot = Split-Path -Parent $oneLevelUp
-        }
-        else {
-            $repoRoot = $oneLevelUp
-        }
-        if ([string]::IsNullOrWhiteSpace($repoRoot)) {
-            $repoRoot = $trimmedTarget
-        }
+    $trimmedTarget = $destResolved.TrimEnd('\', '/')
+    $oneLevelUp = Split-Path -Parent $trimmedTarget
+    if ($Platform -eq 'GitHub' -and ($trimmedTarget -match '[\\/]\.github[\\/]workflows$')) {
+        $repoRoot = Split-Path -Parent $oneLevelUp
+    }
+    else {
+        $repoRoot = $oneLevelUp
+    }
+    if ([string]::IsNullOrWhiteSpace($repoRoot)) {
+        $repoRoot = $trimmedTarget
+    }
 
-        $fleetSettingsSrc = Join-Path -Path $sourceRoot -ChildPath 'fleet-settings.example.yml'
-        $fleetSettingsDest = Join-Path -Path (Join-Path -Path $repoRoot -ChildPath 'config') -ChildPath 'fleet-settings.yml'
-        if (-not (Test-Path -LiteralPath $fleetSettingsSrc -PathType Leaf)) {
-            Write-Log -Message ("  Note    : fleet settings source '{0}' not found; skipping starter copy." -f $fleetSettingsSrc) -Level Warning
-        }
-        elseif (Test-Path -LiteralPath $fleetSettingsDest -PathType Leaf) {
-            Write-Verbose ("Update-AzLocalPipelineExample: fleet-settings.yml preserved (already exists at '{0}')." -f $fleetSettingsDest)
-        }
-        elseif ($PSCmdlet.ShouldProcess($fleetSettingsDest, 'Write starter fleet-settings.yml')) {
-            $fleetSettingsParent = Split-Path -Parent $fleetSettingsDest
-            if (-not (Test-Path -LiteralPath $fleetSettingsParent)) {
-                $null = New-Item -ItemType Directory -Path $fleetSettingsParent -Force -ErrorAction Stop
+    $fleetSettingsSrc = Join-Path -Path $sourceRoot -ChildPath 'fleet-settings.example.yml'
+    $fleetSettingsDest = Join-Path -Path (Join-Path -Path $repoRoot -ChildPath 'config') -ChildPath 'fleet-settings.yml'
+    if (Test-Path -LiteralPath $fleetSettingsDest -PathType Leaf) {
+        $validatedSettings = Get-AzLocalFleetSettings -Path $fleetSettingsDest
+        $settingsBytes = [System.IO.File]::ReadAllBytes($fleetSettingsDest)
+        $settingsText = [System.IO.File]::ReadAllText($fleetSettingsDest, [System.Text.UTF8Encoding]::new($false))
+        $conversion = Convert-AzLocalFleetSettingsSchemaVersion -Text $settingsText -SourcePath $fleetSettingsDest
+        if ($validatedSettings.SchemaVersion -eq 1 -and $conversion.Migrated -and
+            $PSCmdlet.ShouldProcess($fleetSettingsDest, 'Back up schema v1 and upgrade fleet-settings.yml to schema v2')) {
+            $fleetSettingsBackup = Join-Path -Path (Split-Path -Parent $fleetSettingsDest) -ChildPath 'fleet-settings_v1.bak.yml'
+            if (Test-Path -LiteralPath $fleetSettingsBackup -PathType Leaf) {
+                $backupBytes = [System.IO.File]::ReadAllBytes($fleetSettingsBackup)
+                if ([Convert]::ToBase64String($backupBytes) -ne [Convert]::ToBase64String($settingsBytes)) {
+                    throw "Update-AzLocalPipelineExample: Backup '$fleetSettingsBackup' already exists with different content. Preserve or rename it before retrying the schema upgrade."
+                }
             }
-            Copy-Item -LiteralPath $fleetSettingsSrc -Destination $fleetSettingsDest -ErrorAction Stop
-            Write-Log -Message "  Created : inert starter fleet-settings.yml at '$fleetSettingsDest'" -Level Success
+            else {
+                [System.IO.File]::WriteAllBytes($fleetSettingsBackup, $settingsBytes)
+                Write-Log -Message "  Created : schema v1 backup at '$fleetSettingsBackup'" -Level Success
+            }
+            [System.IO.File]::WriteAllText($fleetSettingsDest, $conversion.NewText, [System.Text.UTF8Encoding]::new($false))
+            Write-Log -Message "  Updated : fleet-settings.yml upgraded from schema v1 to v2 at '$fleetSettingsDest'" -Level Success
         }
+        elseif (-not $conversion.Migrated) {
+            Write-Verbose ("Update-AzLocalPipelineExample: fleet-settings.yml schema upgrade not required ({0})." -f $conversion.Reason)
+        }
+    }
+    elseif ($SkipStarterFleetSettings.IsPresent) {
+        Write-Verbose 'Update-AzLocalPipelineExample: starter fleet-settings.yml creation skipped by -SkipStarterFleetSettings.'
+    }
+    elseif (-not (Test-Path -LiteralPath $fleetSettingsSrc -PathType Leaf)) {
+        Write-Log -Message ("  Note    : fleet settings source '{0}' not found; skipping starter copy." -f $fleetSettingsSrc) -Level Warning
+    }
+    elseif ($PSCmdlet.ShouldProcess($fleetSettingsDest, 'Write starter fleet-settings.yml')) {
+        $fleetSettingsParent = Split-Path -Parent $fleetSettingsDest
+        if (-not (Test-Path -LiteralPath $fleetSettingsParent)) {
+            $null = New-Item -ItemType Directory -Path $fleetSettingsParent -Force -ErrorAction Stop
+        }
+        Copy-Item -LiteralPath $fleetSettingsSrc -Destination $fleetSettingsDest -ErrorAction Stop
+        Write-Log -Message "  Created : inert starter fleet-settings.yml at '$fleetSettingsDest'" -Level Success
     }
 
     # ------------------------------------------------------------------

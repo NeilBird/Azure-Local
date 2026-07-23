@@ -378,11 +378,13 @@ $clusterClause
 
     # Optional UpdateRing tag filter via secondary ARG query. The updateruns
     # resource does NOT carry the cluster's tags, so a second hop is needed.
-    if ($UpdateRingTag) {
-        $ringFilter = ConvertTo-AzLocalUpdateRingKqlFilter -UpdateRingValue $UpdateRingTag -TagAccessor "tostring(tags['UpdateRing'])"
+    $globalTagFilter = Get-AzLocalClusterTagFilterKqlClause
+    if ($UpdateRingTag -or $globalTagFilter) {
+        $ringFilter = if ($UpdateRingTag) { ConvertTo-AzLocalUpdateRingKqlFilter -UpdateRingValue $UpdateRingTag -TagAccessor "tostring(tags['UpdateRing'])" } else { '' }
         $tagKql = @"
 resources
 | where type =~ 'microsoft.azurestackhci/clusters'
+$globalTagFilter
 $ringFilter
 | project id = tolower(id)
 "@
@@ -401,7 +403,7 @@ $ringFilter
         foreach ($r in @($tagRows)) { $allowed[$r.id] = $true }
         $before = $rows.Count
         $rows   = @($rows | Where-Object { $allowed.ContainsKey(($_.ClusterResourceId).ToLower()) })
-        Write-Log -Message "Filtered to UpdateRing='$UpdateRingTag': $($rows.Count) of $before row(s) retained." -Level Info
+        Write-Log -Message "Filtered to the configured global scope and UpdateRing='$UpdateRingTag': $($rows.Count) of $before row(s) retained." -Level Info
     }
 
     # Always compute the latest-succeeded lookup (cheap second ARG query)
@@ -456,6 +458,7 @@ extensibilityresources
         $ringKql = @"
 resources
 | where type =~ 'microsoft.azurestackhci/clusters'
+$globalTagFilter
 | project id = tolower(id), UpdateRing = tostring(tags['UpdateRing'])
 "@
         try {

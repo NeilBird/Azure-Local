@@ -193,7 +193,8 @@ function Sync-AzLocalClusterUpdateSummary {
         if ($PSCmdlet.ParameterSetName -eq 'ByTag') {
             Write-Log -Message "Querying Azure Resource Graph for clusters with tag 'UpdateRing' = '$UpdateRingValue'..." -Level Info
             $ringFilter = ConvertTo-AzLocalUpdateRingKqlFilter -UpdateRingValue $UpdateRingValue
-            $argQuery = "resources | where type =~ 'microsoft.azurestackhci/clusters' $ringFilter | project id, name, resourceGroup, subscriptionId"
+            $globalTagFilter = Get-AzLocalClusterTagFilterKqlClause
+            $argQuery = "resources | where type =~ 'microsoft.azurestackhci/clusters' $globalTagFilter $ringFilter | project id, name, resourceGroup, subscriptionId"
         }
         else {
             $nameListKql = ($ClusterNames | ForEach-Object { "'$($_.ToLower())'" }) -join ','
@@ -201,7 +202,8 @@ function Sync-AzLocalClusterUpdateSummary {
             if ($ResourceGroupName) {
                 $rgFilter = "| where tolower(resourceGroup) =~ '$($ResourceGroupName.ToLower())'"
             }
-            $argQuery = "resources | where type =~ 'microsoft.azurestackhci/clusters' | where tolower(name) in~ ($nameListKql) $rgFilter | project id, name, resourceGroup, subscriptionId"
+            $globalTagFilter = Get-AzLocalClusterTagFilterKqlClause
+            $argQuery = "resources | where type =~ 'microsoft.azurestackhci/clusters' $globalTagFilter | where tolower(name) in~ ($nameListKql) $rgFilter | project id, name, resourceGroup, subscriptionId"
         }
 
         try {

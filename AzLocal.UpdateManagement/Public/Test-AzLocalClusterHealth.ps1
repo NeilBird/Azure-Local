@@ -146,7 +146,8 @@ function Test-AzLocalClusterHealth {
 
     if ($PSCmdlet.ParameterSetName -eq 'ByTag') {
         $ringFilter = ConvertTo-AzLocalUpdateRingKqlFilter -UpdateRingValue $UpdateRingValue
-        $argQuery = "resources | where type =~ 'microsoft.azurestackhci/clusters' $ringFilter | project id, name, resourceGroup, subscriptionId"
+        $globalTagFilter = Get-AzLocalClusterTagFilterKqlClause
+        $argQuery = "resources | where type =~ 'microsoft.azurestackhci/clusters' $globalTagFilter $ringFilter | project id, name, resourceGroup, subscriptionId"
         try {
             $argParams = @{ Query = $argQuery }
             if ($SubscriptionId) { $argParams['SubscriptionId'] = $SubscriptionId }
@@ -175,7 +176,8 @@ function Test-AzLocalClusterHealth {
         $nameListKql = ($ClusterNames | ForEach-Object { "'$($_.ToLower())'" }) -join ','
         $rgFilter = ''
         if ($ResourceGroupName) { $rgFilter = "| where tolower(resourceGroup) =~ '$($ResourceGroupName.ToLower())'" }
-        $argQuery = "resources | where type =~ 'microsoft.azurestackhci/clusters' | where tolower(name) in~ ($nameListKql) $rgFilter | project id, name, resourceGroup, subscriptionId"
+        $globalTagFilter = Get-AzLocalClusterTagFilterKqlClause
+        $argQuery = "resources | where type =~ 'microsoft.azurestackhci/clusters' $globalTagFilter | where tolower(name) in~ ($nameListKql) $rgFilter | project id, name, resourceGroup, subscriptionId"
         try {
             $argParams = @{ Query = $argQuery }
             if ($SubscriptionId) { $argParams['SubscriptionId'] = $SubscriptionId }

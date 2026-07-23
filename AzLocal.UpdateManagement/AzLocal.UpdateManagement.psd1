@@ -3,7 +3,7 @@
     RootModule = 'AzLocal.UpdateManagement.psm1'
 
     # Version number of this module.
-    ModuleVersion = '0.9.22'
+    ModuleVersion = '0.9.23'
 
     # Supported PSEditions
     CompatiblePSEditions = @('Desktop', 'Core')
@@ -38,6 +38,8 @@
         'Private/ConvertFrom-AzLocalUpdateLastAttemptTagValue.ps1',
         'Private/ConvertFrom-AzLocalUpdateWindow.ps1',
         'Private/Convert-AzLocalScheduleSchemaVersion.ps1',
+        'Private/Convert-AzLocalFleetSettingsSchemaVersion.ps1',
+        'Private/ConvertTo-AzLocalClusterTagFilterKqlClause.ps1',
         'Private/ConvertTo-AzLocalAdditionalProperties.ps1',
         'Private/ConvertTo-SafeCsvCollection.ps1',
         'Private/ConvertTo-SafeCsvField.ps1',
@@ -50,6 +52,8 @@
         'Private/Format-AzLocalUpdateLastAttemptTagValue.ps1',
         'Private/Get-AzLocalApplyScheduleSourceBanner.ps1',
         'Private/Get-AzLocalClusterReadinessStatus.ps1',
+        'Private/Get-AzLocalClusterTagFilterKqlClause.ps1',
+        'Private/Get-AzLocalGlobalClusterScope.ps1',
         'Private/Get-AzLocalClusterUpdateRuns.ps1',
         'Private/Get-AzLocalItsmDedupeKey.ps1',
         'Private/Get-AzLocalItsmTriggerDecision.ps1',
@@ -93,6 +97,8 @@
         'Private/Resolve-SafeOutputPath.ps1',
         'Private/Resolve-WildcardDate.ps1',
         'Private/Resolve-WildcardDateRange.ps1',
+        'Private/Test-AzLocalClusterMatchesTagFilter.ps1',
+        'Private/Test-AzLocalClusterResourceInGlobalScope.ps1',
         'Private/Set-AzLocalClusterTagsMerge.ps1',
         'Private/Test-AzLocalUpdateRunsInFlight.ps1',
         'Private/Write-AzLocalUpdateLastAttemptTag.ps1',
@@ -372,6 +378,8 @@
 
             # ReleaseNotes of this module
             ReleaseNotes = @'
+## Version 0.9.23 - Global cluster tag admission policy. Fleet settings schema v2 adds one or more scope.clusterTagFilters pairs with AND semantics across all pipeline reads and mutation boundaries. Child resources inherit selected parent cluster membership; filtered connectivity uses reported physical nodes and subscription/resource-group ARB attribution. Pipeline banners snapshot active management groups and tag filters for retrospective audit. Normal pipeline updates automatically back up active or legacy fully commented schema v1 files as config/fleet-settings_v1.bak.yml, update the declaration, and append the new properties as a commented example; commented starters remain inert, -WhatIf is supported, and -UpgradeFleetSettingsSchema remains accepted for compatibility. No public/export change (71). Pipeline pins bumped to 0.9.23.
+
 ## Version 0.9.22 - ARG payload hardening. The shared query helper recovers from ResponsePayloadTooLarge by halving --first and retaining the smaller size across skip-token pages. Monitor: 2 starts health-result paging at 50 rows; Monitor: 1 projects only consumed fields. No public/export change (69). Pipeline pins bumped to 0.9.22.
 
 ## Version 0.9.21 - Monitor: 2 - Fleet Health Status: the "Cluster Counts" summary table now counts each cluster ONCE by its HIGHEST failing-check severity. The single "Unhealthy Clusters (with failing checks)" row (previously stamped with the Critical icon even when it also contained warning-only clusters) is split into a Critical row and a Warning-only row; a cluster with BOTH Critical and Warning failing checks is counted in the Critical row only. The "Other" bucket is renamed to make clear it holds clusters whose health check is In progress / Unknown with no failing detail rows. Count-table rows now use bare-glyph icons (check / cross / warning / info) so the severity word is no longer duplicated (previously rendered "Critical Critical" / "Critical Unhealthy..."). New step outputs critical_clusters + warning_only_clusters and new PassThru properties CriticalClusters + WarningOnlyClusters. Monitor: 1 - Fleet Connectivity Status: each row of the "Fleet Connectivity Status Summary" KPI table is now prefixed with a bare-glyph status indicator (green tick / red cross) for visual consistency with the other pipeline step-summary tables. No public function or export-count change (still 69). `GENERATED_AGAINST_MODULE_VERSION` bumped to `'0.9.21'`.
@@ -383,8 +391,6 @@
 ## Version 0.9.18 - Follow-up strict-mode hardening after v0.9.17. A live re-run of Update: 3 - Apply Updates showed the failed-update single-retry STILL crashed on one cluster with "The property 'steps' cannot be found on this object". v0.9.17 guarded only the TOP-LEVEL progress.steps read in Format-AzLocalUpdateRun; the recursive step-tree walkers it calls (Get-DeepestActiveStep, Get-CurrentStepPath, Get-DeepestErrorMessage, Find-DeepestError) still read $step.steps/status/name/errorMessage BARE and threw under Set-StrictMode -Version Latest on a LEAF step omitting `steps`. All walker reads are now guarded; a broader strict-mode audit hardened more optional-field bare reads across Get-AzLocalUpdateSummary, Get-AzLocalAvailableUpdates, Get-AzLocalClusterUpdateReadiness, Get-AzLocalFleetStatusData, Get-AzLocalUpdateRunHealthEvidence and Get-AzLocalFleetHealthFailures. Also new: a Support disclaimer footer (new exported helper Add-AzLocalPipelineSupportFooter, wired as a final if:always() step in all 20 templates) renders at the bottom of every pipeline run summary, plus a caveat line on the install-step version banner. Export count 68 -> 69. `GENERATED_AGAINST_MODULE_VERSION` bumped to `'0.9.18'`.
 
 ## Version 0.9.17 - PSGallery install-step retry hardened to survive a PROLONGED search-index outage. After a customer hit a PSGallery blip that outlasted the v0.9.16 5-attempt / ~2.5-min window (all 5 attempts failed with "No match was found ... 'AzLocal.UpdateManagement'"), the shared install step in all 20 GitHub Actions + Azure DevOps templates (26 install blocks) now retries up to 25 attempts (~25 min) with the same capped exponential backoff + jitter (10s, 20s, 40s, then a 60s cap). This is ONE uniform mechanism on BOTH platforms - a single long-retry run - deliberately chosen over a self-re-queue so GitHub Actions and Azure DevOps behave identically and no extra permissions (GH 'actions: write' / ADO Queue-builds) are required. ~25 min stays under the ADO 60-min hosted-agent job cap; GitHub-hosted runners have a 6-hour cap. Normal-path behaviour is unchanged (a healthy install returns on the first attempt) and the latest module version is still installed. ALSO in this release: the Update: 3 - Apply Updates step summaries (readiness gate + apply) now open, on scheduled/cron runs, with a banner making it explicit that the targeted UpdateRing(s) are derived from the operator's own apply-updates-schedule.yml (path + current cycle day + matched rings), with the Apply banner recommending Config: 3 - Apply-Updates Schedule Coverage Audit for the full per-day cycle (new Private helper Get-AzLocalApplyScheduleSourceBanner; renders nothing on manual runs); the Apply-Updates "Cluster Readiness" table gains an UpdateRing column after Cluster (plus a matching UpdateRing field on every readiness row / readiness-report.csv); and a Set-StrictMode -Version Latest crash retrying a failed update whose ARM run omits `location` or `progress.steps` (Format-AzLocalUpdateRun, also hardened in Get-AzLocalFleetStatusData + Get-LastUpdateRunErrorSummary) is fixed with PSObject.Properties guards. No public function or export-count change (still 68). `GENERATED_AGAINST_MODULE_VERSION` bumped to `'0.9.17'`.
-
-## Version 0.9.16 - Pipeline bootstrap hardening (Update: 3 - Apply Updates and every other template). The shared "Install AzLocal.UpdateManagement from PSGallery" step in all 20 GitHub Actions + Azure DevOps templates (26 install blocks) now retries a transient PSGallery search-index blip ("No match was found ... 'AzLocal.UpdateManagement'") up to 5 attempts (was 3) with a CAPPED exponential backoff plus jitter (~10s, 20s, 40s, 60s + 0-4s random) so fanned-out fleet jobs no longer retry in lockstep and a >30s index blip is ridden out. A customer and the internal fleet both hit a run where the module installed cleanly in one job but a sibling job failed all 3 old attempts seconds later (~30s window was too short). The benign "No Clusters Ready" reporting job in apply-updates (GH job no-clusters-ready / ADO stage NoClustersReady) is now non-fatal (continue-on-error / continueOnError): a persistent install blip on a nothing-to-apply run no longer turns a healthy no-op red. Jobs that genuinely need the module still fail hard after the hardened retry. No public function, parameter or export-count change (still 68). `GENERATED_AGAINST_MODULE_VERSION` bumped to `'0.9.16'`.
 
 For full release notes see:
 https://github.com/NeilBird/Azure-Local/blob/main/AzLocal.UpdateManagement/CHANGELOG.md
