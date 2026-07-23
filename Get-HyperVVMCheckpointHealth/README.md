@@ -6,7 +6,7 @@
 
 - Module: `Get-HyperVVMCheckpointHealth`
 - Updated: 2026-07-23
-- Version: 0.2.21
+- Version: 0.2.22
 
 ## TL;DR
 
@@ -18,6 +18,8 @@ This module provides insights that should be used as part of an operator investi
 
 > **See an example / fictitious report before running the module:** review the [synthetic Contoso HTML report](./examples/VMCheckpointAudit-contoso01-example.html) and the [screenshots below](#synthetic-example-report). It contains only invented `contoso01`, `node01`-`node10`, `TestVM01`-`TestVM20`, event, timestamp, and `C:\ClusterStorage\UserStorage_X\` volumes.
 
+> **Recovery knowledge reference:** [Hyper-V AVHDX Parent-Chain Recovery Technical Reference](./docs/Hyper-V-AVHDX-Chain-Recovery-Reference.md) provides informational background on chain evidence, stop conditions, and relevant Hyper-V cmdlets. It is not module remediation guidance or an approved customer change procedure. For any live customer support issue involving a broken or potentially inconsistent VHDX/AVHDX chain, open a Microsoft Support (CSS) case before making changes.
+
 ## Overview and details of intended use
 
 This example module performs a read-only audit of a Hyper-V VM's **checkpoint / differencing-disk chain, Hyper-V replication, and specific diagnostic event data** on an Azure Local or Windows Server Failover Cluster. It can be used to surface the specific failure mode where a checkpoint **fork-commit failure** leaves a VM's on-disk (`.vmcx`) chain metadata inconsistent — an inconsistency that can stay **dormant while the VM runs** and then be **materialised by a live migration or restart**, which can potentially cause the VM to roll the disks back to their base VHDX file(s), which can result in the data that is / was stored in the AVHDX file(s) being orphaned.
@@ -27,6 +29,7 @@ The module is intended for Azure Local / Windows Server administrators / operato
 ## Contents
 
 - [Safety — this module makes no changes](#safety--this-module-makes-no-changes)
+- [Recovery technical reference](#recovery-technical-reference)
 - [Requirements](#requirements)
 - [How it connects (no double-hop)](#how-it-connects-no-double-hop)
 - [Download and import the module](#download-and-import-the-module)
@@ -42,6 +45,7 @@ The module is intended for Azure Local / Windows Server administrators / operato
 - [Release packaging](#release-packaging-maintainers)
 - [What's New](#whats-new)
 - [Failure-signature reference](#failure-signature-reference)
+- [Related technical reference](#related-technical-reference)
 
 ## Safety — this module makes no changes
 
@@ -51,6 +55,10 @@ The module is **read-only** with respect to the VMs, disks, checkpoints, cluster
 - The Analytic-channel enable command is **printed only** — never executed.
 - The **only** filesystem writes are diagnostic **artifacts**: per-VM `.txt` reports, event `.csv` files, performance-telemetry JSON, and a conditional `_debug_log_*.txt` for unrecovered failures (with `-OutputPath`); a single self-contained **HTML** fleet report (on by default - in the `-OutputPath` run folder, or the current directory if `-OutputPath` is omitted); and a results **`.zip`** containing the run-folder artifacts (on by default when `-OutputPath` is used). Suppress the HTML/ZIP with `-NoHtml` / `-NoZip`. None of these change the VM, disks, checkpoints, or cluster.
 - It is **diagnostic only** — it does not determine root cause definitively or remediate anything. For **backup / checkpoint-merge or VSS** findings, engage your **third-party backup vendor first** (their product owns the checkpoint lifecycle); **open a Microsoft Support (CSS) case** for a confirmed fork-commit signature, or when the vendor rules out their product. Act on their advice before taking action.
+
+## Recovery technical reference
+
+The separate [Hyper-V AVHDX Parent-Chain Recovery Technical Reference](./docs/Hyper-V-AVHDX-Chain-Recovery-Reference.md) explains differencing-disk chain evidence and relevant supported cmdlets for experienced administrators. It is **knowledge and informational guidance only**. It is not executed or consumed by this module, is not included in the runtime release ZIP, and must not be treated as authorization to remediate a finding from the audit. For any live customer support issue involving a broken or potentially inconsistent VHDX/AVHDX chain, open a **Microsoft Support (CSS) case before making changes**.
 
 ### Operational impact
 
@@ -88,7 +96,7 @@ Treat every saved audit artifact as **sensitive operational data**. The `.txt`, 
 
 ### Internal structure
 
-Version 0.2.21 is distributed as a PowerShell module with a single exported command and manifest-managed private nested modules. Keep the extracted directory intact:
+Version 0.2.22 is distributed as a PowerShell module with a single exported command and manifest-managed private nested modules. Keep the extracted directory intact:
 
 ```text
 Get-HyperVVMCheckpointHealth\
@@ -125,16 +133,16 @@ Two supported ways to run it, both single-hop:
 
 ### Download and import the module
 
-Download the versioned ZIP from the repository's [GitHub Releases page](https://github.com/NeilBird/Azure-Local/releases). The supported 0.2.21 release asset is `Get-HyperVVMCheckpointHealth-0.2.21.zip`; it contains the manifest, root module, five private modules, example policy YAML, README, and license. Do not use a raw single-file link because the module requires its manifest and sibling private modules.
+Download the versioned ZIP from the repository's [GitHub Releases page](https://github.com/NeilBird/Azure-Local/releases). The supported 0.2.22 release asset is `Get-HyperVVMCheckpointHealth-0.2.22.zip`; it contains the manifest, root module, five private modules, example policy YAML, README, and license. Do not use a raw single-file link because the module requires its manifest and sibling private modules.
 
 The release also publishes [`Setup-Get-HyperVVMCheckpointHealth.ps1`](Setup-Get-HyperVVMCheckpointHealth.ps1) as a separate asset outside the ZIP. The setup script is pinned to the supported version and SHA256 hash, replaces only `C:\Temp\Get-HyperVVMCheckpointHealth` by default, validates the staged manifest/version, imports the module, and verifies the command. It does not run an audit. Use `-InstallRoot` to choose another parent directory.
 
 Download the ZIP, download the setup script, and run the setup script:
 
 ```powershell
-Invoke-WebRequest 'https://github.com/NeilBird/Azure-Local/releases/download/Get-HyperVVMCheckpointHealth-v0.2.21/Get-HyperVVMCheckpointHealth-0.2.21.zip' -OutFile "$env:TEMP\Get-HyperVVMCheckpointHealth-0.2.21.zip"
-Invoke-WebRequest 'https://github.com/NeilBird/Azure-Local/releases/download/Get-HyperVVMCheckpointHealth-v0.2.21/Setup-Get-HyperVVMCheckpointHealth.ps1' -OutFile "$env:TEMP\Setup-Get-HyperVVMCheckpointHealth.ps1"
-Unblock-File "$env:TEMP\Setup-Get-HyperVVMCheckpointHealth.ps1"; & "$env:TEMP\Setup-Get-HyperVVMCheckpointHealth.ps1" -ZipPath "$env:TEMP\Get-HyperVVMCheckpointHealth-0.2.21.zip"
+Invoke-WebRequest 'https://github.com/NeilBird/Azure-Local/releases/download/Get-HyperVVMCheckpointHealth-v0.2.22/Get-HyperVVMCheckpointHealth-0.2.22.zip' -OutFile "$env:TEMP\Get-HyperVVMCheckpointHealth-0.2.22.zip"
+Invoke-WebRequest 'https://github.com/NeilBird/Azure-Local/releases/download/Get-HyperVVMCheckpointHealth-v0.2.22/Setup-Get-HyperVVMCheckpointHealth.ps1' -OutFile "$env:TEMP\Setup-Get-HyperVVMCheckpointHealth.ps1"
+Unblock-File "$env:TEMP\Setup-Get-HyperVVMCheckpointHealth.ps1"; & "$env:TEMP\Setup-Get-HyperVVMCheckpointHealth.ps1" -ZipPath "$env:TEMP\Get-HyperVVMCheckpointHealth-0.2.22.zip"
 ```
 
 Then run the audit separately. On a cluster node:
@@ -350,7 +358,7 @@ These YAML settings are separate from normal command parameters such as `-StaleH
 6. **Replica change logs (`.hrl`)** — per-VHD replication logs assessed against Replica cadence: `max(minimumStaleMinutes, FrequencySec x cadenceMultiplier)`. By default, age escalates only when typed Replica health or measurements independently indicate a concern, avoiding false alarms for idle but healthy relationships.
 7. **Cluster Shared Volume free space** — scoped to the volume(s) hosting this VM's disks (falls back to all cluster volumes if it cannot match). The optional YAML policy can enable both minimum-free-percent and minimum-free-GB thresholds; either breach drives `INVESTIGATE` as storage capacity evidence, never as fork-commit proof.
 8. **Cluster role** (`Get-ClusterGroup`) — clustered role state and current owner, projected from the once-per-run cluster-group cache.
-9. **Hyper-V Replica** - `Get-VMReplication` product health/state remains authoritative, while `Measure-VMReplication` supplies throughput, backlog, latency, successful cycles, and missed cycles. The assessment uses each relationship's actual `FrequencySec`, average replication size, and the host's read-only `Get-VMReplicationServer` monitoring window. Absolute parameters remain guardrails. A measurement can be **Advisory** without changing the VM verdict; only product Warning/Critical/Unknown evidence or a material measurement concern drives `INVESTIGATE`. Each Replica-enabled per-VM card retains a concise summary and adds a relationship/measurement details table. The table is collapsed when healthy and opens automatically for advisory, concern, abnormal product health/state, or unavailable measurement evidence.
+9. **Hyper-V Replica** - `Get-VMReplication` product health/state remains authoritative, while `Measure-VMReplication` supplies throughput, backlog, latency, successful cycles, and missed cycles. The assessment uses each relationship's actual `FrequencySec`, average replication size, and the host's read-only `Get-VMReplicationServer` monitoring window. Absolute parameters remain guardrails. A measurement can be **Advisory** without changing the VM verdict; only product Warning/Critical/Unknown evidence or a material measurement concern drives `INVESTIGATE`. Each Replica-enabled per-VM card retains a concise summary and adds a relationship/measurement details table. The table is collapsed when healthy and opens automatically for advisory, concern, abnormal product health/state, or unavailable measurement evidence. **Hyper-V Replica is NOT a backup:** it provides asynchronous disaster-recovery replication and can replicate corruption, deletion, encryption, or unwanted changes. Replica recovery points do not replace a separately protected, application-consistent, tested backup.
 10. **Worker/VMMS event scan** — recent events matching the VM (name **or** GUID), any listed HRESULT, or any listed event ID. Each row is marked `Concern = YES` **only** for a genuine problem (an HRESULT match or a concern event ID); informational lifecycle events (VM started, checkpoint completed, merge started / finished OK) are listed for context but left blank. To keep the report readable, repeated rows for the same event ID are **collapsed** in the console / `.txt` (the first few are shown, followed by a `Removed N duplicate Event ID X entries - Review CSV file for full details.` note); the **full untruncated text of every event is written to the CSV**.
 11. **Analytic channel (per node)** — whether `Hyper-V-VMMS/Analytic` is enabled; prints the enable command where it is not. The cluster-wide state is queried once per run and reused for every VM. This channel is optional diagnostic context only: its enabled, disabled, or empty state never drives **CANNOT CONFIRM**, `INVESTIGATE`, or assessment confidence.
 12. **VSS writer health** (`vssadmin list writers` — read-only) — flags any VSS writer whose state is not `Stable` or that reports a last error. Failed / timed-out VSS writers are a leading cause of Hyper-V checkpoint / backup failures (per the Microsoft troubleshooting guide).
@@ -366,6 +374,8 @@ These YAML settings are separate from normal command parameters such as `-StaleH
 19. **VHD Set-aware virtual-disk housekeeping** (v0.2.19) — recursively inventories `.vhds` alongside VHD/VHDX/AVHDX, preserves every VM attached to the same VHD Set, and reports the relationship as a review-only **Shared VHD Set reference**. Ownerless companion AVHDX files in the exact directory of an attached `.vhds` are treated as Hyper-V-managed VHD Set assets rather than orphan or placement anomalies; sibling and nested directories remain subject to normal classification. Attached VHD Sets are labelled explicitly in disk-chain output and never counted as differencing/checkpoint layers.
 
 ## Portable HTML report & results bundle
+
+Version 0.2.22 expands the responsive report canvas from 1120 to 1440 pixels, giving the VM-summary Verdict column and every section table more desktop room while retaining contained horizontal scrolling on narrow viewports. The Executive Summary distinguishes all processed result rows from VMs that were fully assessed and incomplete `NOT FOUND` / `ERROR` rows.
 
 By default the run produces a single **self-contained HTML fleet report** (`VMCheckpointAudit-<Cluster>-<yyyy-MM-dd>.html`) — dark-themed, no external assets, safe to email or open on any device with a browser. The header states the cluster, module version, and (from v0.2.14) a run summary line: **`Processed <N> VMs, across <M> cluster nodes, in hh:mm:ss`** — the end-to-end wall-clock time to audit the fleet and render the report. Its summary starts with a full-width **VM(s) audited** card, followed on desktop by one seven-card metric row: **Hold state**, **Investigate**, **OK**, **Incomplete**, **Stale AVHDX layers**, **Stale snapshots**, and **Orphaned .avhdx** (the last card sits at the far right). The grid responsively reduces to four, two, then one column on narrower screens. The report also contains: a **Recommended next steps** list (see below); a **VM summary table** with a **VM Source** column (Input vs auto-**Discovered**), distinct **Checkpoints** (`Get-VMSnapshot` count) and **AVHDX files** (differencing layers = Checkpoints × Disks) columns, an **Oldest ckpt age** shown in **both hours and days** — and (v0.2.15) each VM name is an **anchor link** that jumps to that VM's detail card; a **Discovered high-risk VMs** section; **per-VM detailed information** (including a per-VM **Checkpoints** table whose **Age** column shows each checkpoint's age in **hours and days**, a per-VM **Orphaned .avhdx files** table — name, size, created + last-write timestamps, per-orphan **class** and **Likely / action** read, full path — a **Historic event correlation** section when the VM has orphans, and, for HOLD STATE VMs, a copy/paste **Support Case summary**); a **Cluster storage health** section; and (v0.2.16) an **Appendix - Knowledge and Information** section whose two reference blocks are **collapsed by default** behind a clear **&#9654; Show / &#9660; Hide** button - a **Diagnostic event IDs - severity classification** table (how the tool grades each ID / HRESULT into the HOLD STATE / INVESTIGATE / low-signal / informational tiers) and the anonymised **technical background** explaining the fork-commit signature and the exact Event IDs / HRESULTs that indicate it. The Microsoft Learn troubleshooting reference sits at the top of the Appendix (always visible).
 
@@ -403,7 +413,7 @@ CSV inventory skips the exact Windows metadata folder `System Volume Information
 
 The self-contained HTML retains each finding's exact byte length, extension, full path, parent path, CSV root, and timestamps. It shows human-readable and exact-byte totals, deduplicated case-insensitively by full path. All category checkboxes are enabled by default; unchecking a category removes its rows and updates the visible count, unique-file bytes, storage-by-category chart, and top-parent-path chart. Search, CSV-root, extension, minimum-size, and sortable-column controls require no network connection or external JavaScript.
 
-Every HTML Executive Summary includes a persistent **Report scope** notice stating the audited VM count, UTC generation time, and point-in-time nature of the read-only assessment. It clarifies that the findings form part of a wider cluster, storage, backup, workload, and operational-history assessment rather than a complete cluster health assessment. When discoveries remain unaudited, an additional **Audit coverage** sentence states their count and excludes them explicitly from the findings and summary totals.
+Every HTML Executive Summary includes a persistent **Report scope** notice stating the processed, fully assessed, and incomplete VM counts plus the UTC generation time. It clarifies that the findings form part of a wider cluster, storage, backup, workload, and operational-history assessment rather than a complete cluster health assessment. When discoveries remain unaudited, an additional **Audit coverage** sentence states their count and excludes them explicitly from the findings and summary totals.
 
 ### Recommended next steps (context-gated)
 
@@ -492,7 +502,7 @@ Add **`-PassThru`** to emit **one `[pscustomobject]` per VM** after all VM audit
 
 | Property | Type | Meaning |
 |---|---|---|
-| `VMName` | string | VM name audited. |
+| `VMName` | string | Canonical VM name returned by Hyper-V for successful resolutions; unresolved rows retain the supplied input name. |
 | `Cluster` | string | Cluster name. |
 | `OwningNode` | string | Node that owns/runs the VM. |
 | `Source` | string | `Input` when requested by the caller or `Discovered` when auto-added through `-IncludeDiscoveredVMs`. |
@@ -576,6 +586,8 @@ $run.Artifacts
 
 `RunData` is shared by reference across rows in the live PowerShell session, so use `$r[0].RunData` rather than exporting the same run snapshot once per VM. `Export-Csv` flattens nested objects to type names; use `ConvertTo-Json -Depth 12`, `Export-Clixml`, or select/expand the nested collection being exported. Both `ReportData.VmEvents` and `RunData.NodeEventContext.Events` can contain sensitive full event messages.
 
+`RunData.OutcomeSummary.Processed` counts all result rows; `FullyAssessed` excludes `NOT FOUND` and `ERROR`. The legacy `Audited` property remains available in 0.2.x and is equivalent to `Processed` for backward compatibility. Performance telemetry exposes the same distinction as `VMsProcessed` and `VMsFullyAssessed`, while retaining legacy `VMsAudited`.
+
 Array members of `ReportData` and `RunData` display as `System.Object[]` in a default list view; enumerate them to see their elements. `ReportData` is `$null` for `NOT FOUND` / `ERROR`, so guard it before drilling in. Top-level `AssessmentConfidence`, `CollectionStatus`, and `RunData` remain available on those rows.
 
 ## Release packaging (maintainers)
@@ -590,11 +602,11 @@ Set-Location .\Get-HyperVVMCheckpointHealth
 Generated assets are written to the ignored `release` directory:
 
 ```text
-release\Get-HyperVVMCheckpointHealth-0.2.21.zip
-release\Get-HyperVVMCheckpointHealth-0.2.21.zip.sha256
+release\Get-HyperVVMCheckpointHealth-0.2.22.zip
+release\Get-HyperVVMCheckpointHealth-0.2.22.zip.sha256
 ```
 
-Create the GitHub release with tag `Get-HyperVVMCheckpointHealth-v0.2.21` and upload the generated ZIP, its SHA256 file, and `Setup-Get-HyperVVMCheckpointHealth.ps1` as three separate assets. The setup script remains outside the ZIP. Before publishing a future version:
+Create the GitHub release with tag `Get-HyperVVMCheckpointHealth-v0.2.22` and upload the generated ZIP, its SHA256 file, and `Setup-Get-HyperVVMCheckpointHealth.ps1` as three separate assets. The setup script remains outside the ZIP. Before publishing a future version:
 
 1. Update the version in the root module, manifest, README, release notes, and the setup script's `$version` value.
 2. Run the redirected Windows PowerShell 5.1 Pester suite.
@@ -603,6 +615,13 @@ Create the GitHub release with tag `Get-HyperVVMCheckpointHealth-v0.2.21` and up
 5. Publish the ZIP and checksum as release assets using the tag and asset naming convention above.
 
 ## What's New
+
+### Version 0.2.22
+
+- Distinguishes processed, fully assessed, and incomplete VM counts throughout the HTML report. Adds explicit `Processed` / `FullyAssessed` values to `RunData.OutcomeSummary` and `VMsProcessed` / `VMsFullyAssessed` to performance telemetry while retaining the legacy `Audited` fields for 0.2.x compatibility.
+- Expands the responsive HTML report canvas from 1120 to 1440 pixels so the VM-summary Verdict column and per-VM evidence tables have more desktop room; narrow viewports retain contained horizontal scrolling.
+- Adds an orange second line to the VM-summary **Hyper-V Replica** cell when cadence-breaching queued HRL files are independently corroborated and contribute to an `INVESTIGATE` verdict. Healthy and advisory-only Replica rows remain neutral.
+- Uses the canonical VM-name casing returned by Hyper-V for successful results, HTML rows, telemetry, and artifacts. `NOT FOUND` and early `ERROR` rows preserve the supplied input for traceability.
 
 ### Version 0.2.21
 
@@ -724,3 +743,7 @@ These are **surfaced for the timeline** but are **never** flagged as a concern (
 | `0x80070020` | `ERROR_SHARING_VIOLATION` | Backup product cannot open the disk — symptom |
 | `0x800703EE` | `ERROR_FILE_INVALID` | A volume changed underneath an open file |
 | `0x80070002` | `ERROR_FILE_NOT_FOUND` | The `.avhdx` / VM config file is missing |
+
+## Related technical reference
+
+For knowledge and informational guidance about parent-chain evidence, mandatory stop conditions, and the Hyper-V cmdlets relevant to a possible repair, see the [Hyper-V AVHDX Parent-Chain Recovery Technical Reference](./docs/Hyper-V-AVHDX-Chain-Recovery-Reference.md). It is not module remediation guidance or an approved customer change procedure. For any live customer support issue involving a broken or potentially inconsistent VHDX/AVHDX chain, open a **Microsoft Support (CSS) case before making changes**.

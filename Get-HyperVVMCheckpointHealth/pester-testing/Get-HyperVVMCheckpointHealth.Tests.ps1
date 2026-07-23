@@ -111,6 +111,16 @@ Describe 'Get-HyperVVMCheckpointHealth source contracts' {
         $script:Source | Should -Match 'StorageHealth\s*=\s*\$script:ClusterStorageHealth'
         $script:Source | Should -Match 'NodeEventContext\s*=\s*\$nodeEventContext'
         $script:Source | Should -Match 'Complete-CheckpointHealthPassThruResult\s+-Result\s+\$auditResult\s+-RunData\s+\$runData'
+        $script:Source | Should -Match 'VMsProcessed\s*=\s*\$script:AllAuditResults\.Count'
+        $script:Source | Should -Match 'VMsFullyAssessed\s*=\s*@\(\$script:AllAuditResults\s*\|\s*Where-Object'
+        $script:Source | Should -Match 'Processed\s*=\s*\$script:AllAuditResults\.Count'
+        $script:Source | Should -Match 'FullyAssessed\s*=\s*@\(\$script:AllAuditResults\s*\|\s*Where-Object'
+    }
+
+    It 'uses the Hyper-V canonical VM name for successful results and artifacts' {
+        $script:Source | Should -Match 'Name\s*=\s*\[string\]\$v\.Name'
+        $script:Source | Should -Match 'if \(\$vm\.Name\) \{\s*\$VMName\s*=\s*\[string\]\$vm\.Name'
+        $script:Source | Should -Match '\$reportFile\s*=\s*Join-Path \$OutputPath \("\{0\}_VMAudit_\{1\}\.txt" -f \$safeName, \$reportTimestamp\)'
     }
 
     It 'prevents unavailable event evidence from producing an unqualified clean verdict' {
@@ -498,8 +508,8 @@ Describe 'Module distribution contracts' {
         $script:ModuleCommand = Get-Command Get-HyperVVMCheckpointHealth -Module Get-HyperVVMCheckpointHealth
     }
 
-    It 'imports a valid 0.2.21 module manifest' {
-        $script:Manifest.Version.ToString() | Should -Be '0.2.21'
+    It 'imports a valid 0.2.22 module manifest' {
+        $script:Manifest.Version.ToString() | Should -Be '0.2.22'
         $script:Manifest.ExportedFunctions.Keys | Should -Contain 'Get-HyperVVMCheckpointHealth'
     }
 
@@ -625,7 +635,7 @@ Describe 'Module distribution contracts' {
         $setupPath = Join-Path $script:ModuleRoot 'Setup-Get-HyperVVMCheckpointHealth.ps1'
         Test-Path -LiteralPath $setupPath -PathType Leaf | Should -BeTrue
         $setupSource = Get-Content -LiteralPath $setupPath -Raw
-        $setupSource | Should -Match "\$version = '0\.2\.21'"
+        $setupSource | Should -Match "\$version = '0\.2\.22'"
         $setupSource | Should -Match "\$expectedSha256 = '[0-9a-f]{64}'"
         $setupSource | Should -Match '\[string\]\$InstallRoot = ''C:\\Temp'''
         $setupSource | Should -Match 'Get-FileHash.+SHA256'
@@ -896,12 +906,13 @@ Describe 'HTML fleet report usability' {
         $script:RenderedHtml | Should -Match 'https://aka\.ms/Get-HyperVVMCheckpointHealth-Feedback'
     }
 
-    It 'states the point-in-time report scope and audited VM count in every report' {
-        $script:RenderedHtml | Should -Match '<strong class="scope-label">Report scope:</strong> This report is a point-in-time, read-only assessment of the <strong>4 VMs audited in this run</strong>, generated at <strong>2026-01-01 00:00:00 UTC</strong>\.'
+    It 'distinguishes processed, fully assessed, and incomplete VM counts in every report' {
+        $script:RenderedHtml | Should -Match 'Cluster <b>CONTOSO-CLUSTER-01</b> &nbsp;&bull;&nbsp; 4 processed VMs &nbsp;&bull;&nbsp; 3 fully assessed'
+        $script:RenderedHtml | Should -Match '<strong class="scope-label">Report scope:</strong> This report processed <strong>4 VMs</strong>; <strong>3 were fully assessed</strong> and <strong>1 was incomplete</strong>, as of <strong>2026-01-01 00:00:00 UTC</strong>\.'
         $script:RenderedHtml | Should -Match 'wider assessment of the cluster, storage, backup solution, workloads, and relevant operational history\.'
         $script:RenderedHtml | Should -Match '\.scope-label\{color:#d97706;font-weight:700\}'
-        $script:RenderedHtml | Should -Match 'It is not a complete cluster health assessment and does not represent the health of VMs that were not audited\.'
-        $script:CleanRenderedHtml | Should -Match '<strong>1 VM audited in this run</strong>'
+        $script:RenderedHtml | Should -Match 'It is not a complete cluster health assessment and does not represent the health of VMs that were not fully assessed\.'
+        $script:CleanRenderedHtml | Should -Match '<strong>1 VM</strong>; <strong>1 was fully assessed</strong> and <strong>0 were incomplete</strong>'
     }
 
     It 'states additional unaudited discovery coverage only when applicable' {
@@ -965,7 +976,10 @@ Describe 'HTML fleet report usability' {
     It 'rolls HRL-only concerns into the ordinary summary and a dedicated action' {
         $script:HrlConcernHtml | Should -Match 'findings: 1 VM\(s\) with cadence-breaching HRL evidence\.'
         $script:HrlConcernHtml | Should -Match 'Hyper-V Replica log cadence needs attention \(1 VM\(s\)\):</strong> TEST-VM-HRL'
+        $script:HrlConcernHtml | Should -Match "<td>Replicating \(Normal\)<br><span class='warnval'>12 queued HRL files beyond cadence</span></td>"
         $script:HrlConcernHtml | Should -Match 'Do not delete or modify <code>\.hrl</code> files based on this report\.'
+        $script:CleanRenderedHtml | Should -Not -Match 'queued HRL files beyond cadence'
+        $script:AdvisoryReplicaHtml | Should -Not -Match 'queued HRL files beyond cadence'
     }
 
     It 'renders the per-VM and housekeeping sections as matching default-open disclosures' {
@@ -976,8 +990,8 @@ Describe 'HTML fleet report usability' {
     }
 
     It 'uses a full-width audited-VM lead card and keeps orphaned AVHDX last' {
-        $script:RenderedHtml | Should -Match '<div class="card lead"><div class="n">4</div><div class="l">VMs audited</div></div>'
-        $script:RenderedHtml | Should -Match '(?s)<div class="cards">.*VMs audited.*Hold state.*Investigate.*OK.*Incomplete.*Stale AVHDX layers.*Stale snapshots.*Orphaned \.avhdx.*</div>'
+        $script:RenderedHtml | Should -Match '<div class="card lead"><div class="n">4</div><div class="l">VMs processed \(3 fully assessed\)</div></div>'
+        $script:RenderedHtml | Should -Match '(?s)<div class="cards">.*VMs processed.*Hold state.*Investigate.*OK.*Incomplete.*Stale AVHDX layers.*Stale snapshots.*Orphaned \.avhdx.*</div>'
         $script:RenderedHtml | Should -Match '\.cards\{display:grid;grid-template-columns:repeat\(7,minmax\(0,1fr\)\)'
         $script:RenderedHtml | Should -Match '\.card\.lead\{grid-column:1/-1\}'
     }
@@ -1292,7 +1306,8 @@ Describe 'HTML fleet report usability' {
     }
 
     It 'contains wide non-housekeeping tables on narrow screens' {
-        $script:RenderedHtml | Should -Match '@media\(max-width:1120px\)\{table:not\(\.housekeeping\)\{display:block;overflow-x:auto\}\}'
+        $script:RenderedHtml | Should -Match '\.wrap\{width:100%;max-width:1440px;margin:0 auto;padding:32px 24px 80px\}'
+        $script:RenderedHtml | Should -Match '@media\(max-width:1440px\)\{table:not\(\.housekeeping\)\{display:block;overflow-x:auto\}\}'
     }
 
     It 'contains only the VM summary table within the shared report width on desktop' {
@@ -1328,7 +1343,7 @@ Describe 'Unrecovered-failure debug log' {
     BeforeEach {
         $script:RunStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
         $script:TelemetryClockBaseUtc = [DateTimeOffset]::UtcNow
-        $script:ScriptVersion = '0.2.21'
+        $script:ScriptVersion = '0.2.22'
         $script:VMSectionStepNo = 45
         $script:VMSectionName = 'Scanning Replica change logs (.hrl)'
         $script:AuditDiagnostics = [System.Collections.Generic.List[object]]::new()
@@ -1403,7 +1418,7 @@ Describe 'Synthetic HTML example report' {
         $script:ExampleHtml | Should -Match '<strong>Synthetic example report\.</strong>'
         $script:ExampleHtml | Should -Match 'Cluster <b>contoso01</b>'
         $script:ExampleHtml | Should -Match 'Cluster size: <b>10</b> nodes'
-        $script:ExampleHtml | Should -Match '<div class="n">20</div><div class="l">VMs audited</div>'
+        $script:ExampleHtml | Should -Match '<div class="n">20</div><div class="l">VMs processed \(20 fully assessed\)</div>'
         @($script:DetailBlocks).Count | Should -Be 20
         @($script:DetailBlocks | ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique).Count | Should -Be 20
     }
