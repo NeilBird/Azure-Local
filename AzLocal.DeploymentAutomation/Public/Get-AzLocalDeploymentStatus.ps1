@@ -18,10 +18,14 @@
     - ValidateInProgress: Validation deployment is running
     - ValidateSucceeded: Validation completed successfully (ready for Deploy)
     - ValidateFailed: Validation failed
+    - ValidateCanceled: Validation was canceled
     - DeployInProgress: Deploy deployment is running
     - DeploySucceeded: Deployment completed successfully
     - DeployFailed: Deployment failed
+    - DeployCanceled: Deployment was canceled
     - ClusterExists: Cluster resource already exists
+    - ContextError: Azure subscription/tenant context could not be established
+    - CheckError: Azure resource or deployment status lookup failed
 
     .PARAMETER CsvFilePath
     Path to the cluster deployments CSV file.

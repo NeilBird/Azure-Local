@@ -50,15 +50,13 @@ jobs:
       - checkout: self
         displayName: 'Checkout Repository'
 
-      - task: AzureCLI@2
+      - task: AzurePowerShell@5
         displayName: 'Generate Deployment Status Report'
         name: report
         inputs:
           azureSubscription: 'AzureLocal-ServiceConnection'  # Update with your service connection name
-          scriptType: 'pscore'
-          scriptLocation: 'inlineScript'
-          addSpnToEnvironment: true
-          inlineScript: |
+          ScriptType: 'InlineScript'
+          Inline: |
             Import-Module "$(modulePath)/AzLocal.DeploymentAutomation.psd1" -Force
 
             $csvPath = "${{ parameters.csvFilePath }}"
@@ -92,7 +90,11 @@ jobs:
             $notStarted = @($results | Where-Object { $_.DeploymentStatus -eq 'NotStarted' }).Count
             $inProgress = @($results | Where-Object { $_.DeploymentStatus -like '*InProgress*' }).Count
             $succeeded = @($results | Where-Object { $_.DeploymentStatus -in @('DeploySucceeded','ValidateSucceeded','ClusterExists') }).Count
-            $failed = @($results | Where-Object { $_.DeploymentStatus -like '*Failed*' }).Count
+            $failed = @($results | Where-Object {
+              $_.DeploymentStatus -like '*Failed*' -or
+              $_.DeploymentStatus -like '*Error*' -or
+              $_.DeploymentStatus -like '*Canceled*'
+            }).Count
             $total = $results.Count
 
             Write-Host ""
@@ -122,6 +124,8 @@ jobs:
             elseif ($succeeded -eq $total -and $total -gt 0) {
                 Write-Host "All $total cluster(s) deployed successfully!" -ForegroundColor Green
             }
+          azurePowerShellVersion: 'LatestVersion'
+          pwsh: true
 
       - task: PublishTestResults@2
         displayName: 'Publish Status Results'

@@ -753,6 +753,60 @@ Describe 'Function: Get-AzLocalNamingConfig' {
     }
 }
 
+Describe 'Function: Test-AzLocalNamingConfigDefaults' {
+    BeforeAll {
+        $configPath = Join-Path -Path $PSScriptRoot -ChildPath '..\.config\naming-standards-config.json'
+        $script:ValidNamingConfig = Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json
+        $script:ValidNamingConfig.environment.tenantId = '11111111-2222-3333-4444-555555555555'
+        $script:ValidNamingConfig.defaults.domainFqdn = 'example.internal'
+        $script:ValidNamingConfig.namingStandards.adouPath = 'OU=AzLocal-{UniqueID},DC=example,DC=internal'
+    }
+
+    It 'Should accept a complete customised configuration' {
+        $config = $script:ValidNamingConfig | ConvertTo-Json -Depth 10 | ConvertFrom-Json
+        InModuleScope AzLocal.DeploymentAutomation -Parameters @{ TestConfig = $config } {
+            param($TestConfig)
+            { Test-AzLocalNamingConfigDefaults -Config $TestConfig } | Should -Not -Throw
+        }
+    }
+
+    It 'Should report a missing tenantId without a strict-mode property error' {
+        $config = $script:ValidNamingConfig | ConvertTo-Json -Depth 10 | ConvertFrom-Json
+        $config.environment.PSObject.Properties.Remove('tenantId')
+        InModuleScope AzLocal.DeploymentAutomation -Parameters @{ TestConfig = $config } {
+            param($TestConfig)
+            { Test-AzLocalNamingConfigDefaults -Config $TestConfig } | Should -Throw '*environment.tenantId is missing or empty*'
+        }
+    }
+
+    It 'Should report a missing runtime naming pattern' {
+        $config = $script:ValidNamingConfig | ConvertTo-Json -Depth 10 | ConvertFrom-Json
+        $config.namingStandards.PSObject.Properties.Remove('deploymentName')
+        InModuleScope AzLocal.DeploymentAutomation -Parameters @{ TestConfig = $config } {
+            param($TestConfig)
+            { Test-AzLocalNamingConfigDefaults -Config $TestConfig } | Should -Throw '*namingStandards.deploymentName is missing or empty*'
+        }
+    }
+
+    It 'Should reject an invalid default DNS server' {
+        $config = $script:ValidNamingConfig | ConvertTo-Json -Depth 10 | ConvertFrom-Json
+        $config.defaults.dnsServers = @('not-an-ip')
+        InModuleScope AzLocal.DeploymentAutomation -Parameters @{ TestConfig = $config } {
+            param($TestConfig)
+            { Test-AzLocalNamingConfigDefaults -Config $TestConfig } | Should -Throw "*defaults.dnsServers contains invalid IP address 'not-an-ip'*"
+        }
+    }
+
+    It 'Should allow the optional HCI resource provider object ID to be omitted' {
+        $config = $script:ValidNamingConfig | ConvertTo-Json -Depth 10 | ConvertFrom-Json
+        $config.environment.PSObject.Properties.Remove('hciResourceProviderObjectID')
+        InModuleScope AzLocal.DeploymentAutomation -Parameters @{ TestConfig = $config } {
+            param($TestConfig)
+            { Test-AzLocalNamingConfigDefaults -Config $TestConfig } | Should -Not -Throw
+        }
+    }
+}
+
 # ============================================================================
 # Publish-Module package allowlist
 # ============================================================================
@@ -804,6 +858,93 @@ Describe 'Publish-Module package allowlist' {
     It 'Should fail when an allowlisted file is missing or staging contains an extra file' {
         $script:PublishScript | Should -Match 'Required package file is missing'
         $script:PublishScript | Should -Match 'Staged package contains files outside the allowlist'
+    }
+}
+
+# ============================================================================
+# Automation pipeline contracts
+# ============================================================================
+Describe 'Automation pipeline contracts' {
+    BeforeAll {
+        $pipelineRoot = Join-Path -Path $PSScriptRoot -ChildPath '..\automation-pipelines'
+        $script:GitHubPipelines = @(Get-ChildItem (Join-Path $pipelineRoot 'github-actions') -Filter '*.yml' | ForEach-Object {
+            [PSCustomObject]@{ Name = $_.Name; Content = Get-Content -LiteralPath $_.FullName -Raw }
+        })
+        $script:AdoPipelines = @(Get-ChildItem (Join-Path $pipelineRoot 'azure-devops') -Filter '*.yml' | ForEach-Object {
+            [PSCustomObject]@{ Name = $_.Name; Content = Get-Content -LiteralPath $_.FullName -Raw }
+        })
+    }
+
+    It 'Should establish an Az PowerShell session for every active GitHub Azure login' {
+        foreach ($pipeline in $script:GitHubPipelines) {
+            $loginCount = [regex]::Matches($pipeline.Content, '(?m)^\s+uses: azure/login@v2\s*$').Count
+            $sessionCount = [regex]::Matches($pipeline.Content, '(?m)^\s+enable-AzPSSession: true\s*$').Count
+            $sessionCount | Should -Be $loginCount -Because "$($pipeline.Name) must authenticate Az PowerShell for Set-AzContext/Get-Az* calls"
+        }
+    }
+
+    It 'Should run every ADO module invocation in an authenticated Azure PowerShell task' {
+        foreach ($pipeline in $script:AdoPipelines) {
+            $pipeline.Content | Should -Not -Match 'AzureCLI@2'
+            $taskCount = [regex]::Matches($pipeline.Content, '(?m)^\s+- task: AzurePowerShell@5\s*$').Count
+            $versionCount = [regex]::Matches($pipeline.Content, "(?m)^\s+azurePowerShellVersion: 'LatestVersion'\s*$").Count
+            $pwshCount = [regex]::Matches($pipeline.Content, '(?m)^\s+pwsh: true\s*$').Count
+            $taskCount | Should -BeGreaterThan 0
+            $versionCount | Should -Be $taskCount
+            $pwshCount | Should -Be $taskCount
+
+            $lines = @($pipeline.Content -split "`r?`n")
+            $taskIndexes = @(0..($lines.Count - 1) | Where-Object { $lines[$_] -match '^\s+- task: AzurePowerShell@5\s*$' })
+            foreach ($taskIndex in $taskIndexes) {
+                $nextTaskIndex = @($taskIndexes | Where-Object { $_ -gt $taskIndex } | Select-Object -First 1)
+                $blockEnd = if ($nextTaskIndex.Count -gt 0) { $nextTaskIndex[0] - 1 } else { $lines.Count - 1 }
+                $taskBlock = @($lines[$taskIndex..$blockEnd])
+                $subscriptionLine = @($taskBlock | Where-Object { $_ -match '^\s+azureSubscription:' } | Select-Object -First 1)
+                $versionLine = @($taskBlock | Where-Object { $_ -match '^\s+azurePowerShellVersion:' } | Select-Object -First 1)
+                $pwshLine = @($taskBlock | Where-Object { $_ -match '^\s+pwsh:' } | Select-Object -First 1)
+                $subscriptionLine.Count | Should -Be 1
+                $versionLine.Count | Should -Be 1
+                $pwshLine.Count | Should -Be 1
+                ([regex]::Match($versionLine[0], '^\s*').Value.Length) | Should -Be ([regex]::Match($subscriptionLine[0], '^\s*').Value.Length)
+                ([regex]::Match($pwshLine[0], '^\s*').Value.Length) | Should -Be ([regex]::Match($subscriptionLine[0], '^\s*').Value.Length)
+            }
+        }
+    }
+
+    It 'Should count only passed preflight rows as eligible clusters' {
+        foreach ($pipelineName in @('validate-deployments.yml')) {
+            foreach ($pipeline in @($script:GitHubPipelines + $script:AdoPipelines | Where-Object Name -eq $pipelineName)) {
+                $pipeline.Content | Should -Match "ClassName -eq 'AzLocalDeploymentAutomation\.PreFlight'"
+                $pipeline.Content | Should -Match "Status -eq 'Passed'"
+                $pipeline.Content | Should -Not -Match "Status -eq 'Passed' -or \$_.Status -eq 'Skipped'"
+            }
+        }
+    }
+
+    It 'Should block deployment until validation has completed successfully' {
+        foreach ($pipeline in @($script:GitHubPipelines + $script:AdoPipelines | Where-Object Name -eq 'deploy-clusters.yml')) {
+            $pipeline.Content | Should -Match '\$validationBlockers'
+            $pipeline.Content | Should -Match "ValidateSucceeded', 'DeploySucceeded', 'ClusterExists"
+            $pipeline.Content | Should -Match 'DeploymentStatus\) - \$\(\$blocker\.Message\)'
+        }
+    }
+
+    It 'Should count failed, error, and canceled states as failures in monitoring pipelines' {
+        foreach ($pipelineName in @('deployment-monitor.yml', 'deployment-status-report.yml')) {
+            foreach ($pipeline in @($script:GitHubPipelines + $script:AdoPipelines | Where-Object Name -eq $pipelineName)) {
+                $pipeline.Content | Should -Match "DeploymentStatus -like '\*Failed\*'"
+                $pipeline.Content | Should -Match "DeploymentStatus -like '\*Error\*'"
+                $pipeline.Content | Should -Match "DeploymentStatus -like '\*Canceled\*'"
+            }
+        }
+    }
+
+    It 'Should terminate validate and deploy tasks when result rows fail' {
+        foreach ($pipelineName in @('validate-deployments.yml', 'deploy-clusters.yml')) {
+            foreach ($pipeline in @($script:GitHubPipelines + $script:AdoPipelines | Where-Object Name -eq $pipelineName)) {
+                $pipeline.Content | Should -Match 'throw "\$failed cluster\(s\) (failed validation|failed to deploy)\."'
+            }
+        }
     }
 }
 
@@ -3557,6 +3698,32 @@ Describe 'Function: Test-AzLocalAzurePrerequisites' {
             Should -Invoke Start-Sleep -Times 1 -ModuleName AzLocal.DeploymentAutomation
         }
 
+        It 'Should not register or poll an unregistered provider in WhatIf mode' {
+            Mock Get-AzResourceProvider {
+                param($ProviderNamespace)
+                $state = if ($ProviderNamespace -eq 'Microsoft.HybridCompute') { 'NotRegistered' } else { 'Registered' }
+                return @([PSCustomObject]@{ RegistrationState = $state })
+            } -ModuleName AzLocal.DeploymentAutomation
+            Mock Register-AzResourceProvider { return $null } -ModuleName AzLocal.DeploymentAutomation
+            Mock Start-Sleep {} -ModuleName AzLocal.DeploymentAutomation
+            Mock Get-AzContext {
+                return @{ Account = @{ Id = 'user@contoso.com'; Type = 'User' } }
+            } -ModuleName AzLocal.DeploymentAutomation
+            Mock Get-AzRoleAssignment {
+                return @([PSCustomObject]@{ RoleDefinitionName = 'Owner' })
+            } -ModuleName AzLocal.DeploymentAutomation
+
+            $result = Test-AzLocalAzurePrerequisites `
+                -SubscriptionId '12345678-1234-1234-1234-123456789abc' `
+                -ResourceGroupName 'rg-test' `
+                -WhatIf
+
+            $result.Status | Should -Be 'Failed'
+            ($result.Messages -join '; ') | Should -Match 'registration not requested in WhatIf mode'
+            Should -Invoke Register-AzResourceProvider -Times 0 -ModuleName AzLocal.DeploymentAutomation
+            Should -Invoke Start-Sleep -Times 0 -ModuleName AzLocal.DeploymentAutomation
+        }
+
         It 'Should fail when provider registration does not become ready' {
             Mock Get-AzResourceProvider {
                 return @([PSCustomObject]@{ RegistrationState = 'Registering' })
@@ -4845,6 +5012,28 @@ Describe 'Function: New-AzLocalDeploymentReport' {
                 (Get-Content $htmlPath -Raw) | Should -Match 'status-failed'
                 (Get-Content $mdPath -Raw) | Should -Match 'Failed \| 1'
                 (Get-Content $mdPath -Raw) | Should -Match 'Failed Deployments'
+            }
+        }
+
+        It 'Should handle canceled deployment status as failed' {
+            InModuleScope AzLocal.DeploymentAutomation {
+                $canceled = @(
+                    [PSCustomObject]@{
+                        UniqueID = 'C1'; ClusterName = 'cluster-c1'; ResourceGroupName = 'rg-c1'
+                        DeploymentName = 'd1'; DeploymentStatus = 'DeployCanceled'
+                        ProvisioningState = 'Canceled'; Message = 'Deployment was canceled.'; Duration = 1
+                    }
+                )
+                $htmlPath = Join-Path $TestDrive 'canceled.html'
+                $mdPath = Join-Path $TestDrive 'canceled.md'
+                New-AzLocalDeploymentReport -StatusResults $canceled -HtmlOutputPath $htmlPath -MarkdownOutputPath $mdPath | Out-Null
+
+                $html = Get-Content $htmlPath -Raw
+                $markdown = Get-Content $mdPath -Raw
+                $html | Should -Match 'status-failed">DeployCanceled'
+                $markdown | Should -Match 'Failed \| 1'
+                $markdown | Should -Match '\[FAIL\] DeployCanceled'
+                $markdown | Should -Match 'Failed Deployments'
             }
         }
     }

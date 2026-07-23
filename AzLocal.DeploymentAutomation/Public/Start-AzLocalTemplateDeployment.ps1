@@ -486,6 +486,7 @@
         Write-Verbose "Get-AzADServicePrincipal lookup failed: $($_.Exception.Message)"
     }
     if (-not $hciResourceProviderObjectID -and $NamingConfig.PSObject.Properties['environment'] -and
+        $NamingConfig.environment -and $NamingConfig.environment.PSObject.Properties['hciResourceProviderObjectID'] -and
         -not [string]::IsNullOrWhiteSpace($NamingConfig.environment.hciResourceProviderObjectID)) {
         $hciResourceProviderObjectID = $NamingConfig.environment.hciResourceProviderObjectID
         Write-AzLocalLog "HCI Resource Provider Object ID loaded from config: $hciResourceProviderObjectID" -Level Success

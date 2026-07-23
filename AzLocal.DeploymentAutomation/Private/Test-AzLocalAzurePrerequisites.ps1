@@ -28,7 +28,7 @@ Function Test-AzLocalAzurePrerequisites {
     #>
 
     [OutputType([PSCustomObject])]
-    [CmdletBinding()]
+    [CmdletBinding(SupportsShouldProcess = $true)]
     param (
         [Parameter(Mandatory = $true, Position = 0)]
         [string]$SubscriptionId,
@@ -81,6 +81,13 @@ Function Test-AzLocalAzurePrerequisites {
                 $messages += "Resource provider '$provider': REGISTERED"
                 Write-AzLocalLog "Resource provider '$provider': Registered" -Level Success
             } else {
+                if (-not $PSCmdlet.ShouldProcess($provider, 'Register Azure resource provider')) {
+                    $messages += "Resource provider '$provider': NOT REGISTERED - registration not requested in WhatIf mode"
+                    Write-AzLocalLog "Resource provider '$provider' is '$regState'. WhatIf mode did not request registration." -Level Error
+                    $rpFailed = $true
+                    continue
+                }
+
                 # Auto-register the missing provider
                 Write-AzLocalLog "Resource provider '$provider' is '$regState'. Attempting auto-registration..." -Level Warning
                 try {

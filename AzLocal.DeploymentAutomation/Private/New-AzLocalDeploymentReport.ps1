@@ -56,7 +56,11 @@ Function New-AzLocalDeploymentReport {
 
     # Categorise results
     $succeeded  = @($StatusResults | Where-Object { $_.DeploymentStatus -in @('DeploySucceeded','ValidateSucceeded','ClusterExists') }).Count
-    $failed     = @($StatusResults | Where-Object { $_.DeploymentStatus -like '*Failed*' -or $_.DeploymentStatus -like '*Error' }).Count
+    $failed     = @($StatusResults | Where-Object {
+        $_.DeploymentStatus -like '*Failed*' -or
+        $_.DeploymentStatus -like '*Error' -or
+        $_.DeploymentStatus -like '*Canceled*'
+    }).Count
     $inProgress = @($StatusResults | Where-Object { $_.DeploymentStatus -like '*InProgress*' }).Count
     $notStarted = @($StatusResults | Where-Object { $_.DeploymentStatus -eq 'NotStarted' }).Count
 
@@ -326,6 +330,7 @@ Function ConvertTo-AzLocalDeploymentHtml {
             'ClusterExists'      { 'status-succeeded' }
             '*Failed*'           { 'status-failed' }
             '*Error'             { 'status-failed' }
+            '*Canceled*'         { 'status-failed' }
             '*InProgress*'       { 'status-inprogress' }
             'NotStarted'         { 'status-notstarted' }
             default              { 'status-notstarted' }
@@ -427,6 +432,7 @@ Function ConvertTo-AzLocalDeploymentMarkdown {
                 'ClusterExists'     { '[PASS]' }
                 '*Failed*'          { '[FAIL]' }
                 '*Error'            { '[FAIL]' }
+                '*Canceled*'        { '[FAIL]' }
                 '*InProgress*'      { '[....]' }
                 'NotStarted'        { '[----]' }
                 default             { '[????]' }
@@ -437,7 +443,11 @@ Function ConvertTo-AzLocalDeploymentMarkdown {
     }
 
     # Add failed cluster details if any
-    $failedResults = @($StatusResults | Where-Object { $_.DeploymentStatus -like '*Failed*' -or $_.DeploymentStatus -like '*Error' })
+    $failedResults = @($StatusResults | Where-Object {
+        $_.DeploymentStatus -like '*Failed*' -or
+        $_.DeploymentStatus -like '*Error' -or
+        $_.DeploymentStatus -like '*Canceled*'
+    })
     if ($failedResults.Count -gt 0) {
         [void]$sb.AppendLine("### Failed Deployments")
         [void]$sb.AppendLine("")

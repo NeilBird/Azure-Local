@@ -105,14 +105,17 @@
 ### Reliability and diagnostic hardening
 - Azure resource, resource-group, and deployment lookups now distinguish genuine not-found responses from authentication, RBAC, context, API-version, and transport failures instead of masking every lookup failure as an absent resource.
 - Resource-provider registration now waits for completion with a bounded timeout before deployment continues.
+- Resource-provider registration honors `-WhatIf` without registering or entering the readiness polling loop.
 - Strict-mode-safe handling was added for optional ARM error, duration, detail, and troubleshooting-hint properties.
 - User configuration, logs, parameter files, JUnit output, and deployment reports are written reliably when diagnostic/scaffolding helpers inherit `-WhatIf` from a parent deployment cmdlet.
+- GitHub Actions now establish an Az PowerShell session, while Azure DevOps examples use authenticated `AzurePowerShell@5` tasks; validation gates reject every state except successful validation/deployment or an existing cluster.
 
 ### Validation, reporting, and performance
 - Ready CSV rows now require complete non-interactive deployment values, with semantic DNS and IPv4 CIDR validation; draft rows can remain incomplete.
+- Naming configuration validation now checks all required sections, naming patterns, scalar and array defaults, GUIDs, DNS addresses, and shipped placeholders before Azure operations begin.
 - SAN address prefixes now require a valid IPv4 network and prefix length from 0 through 32.
 - JUnit generation now uses invariant numeric formatting, safely handles arbitrary error text and sparse result objects, and no longer mixes XML content with file-output pipeline results.
-- HTML and Markdown reports classify all `*Error` outcomes as failures and surface report-generation dependency errors clearly.
+- HTML and Markdown reports and monitoring pipelines classify all `*Failed*`, `*Error*`, and `*Canceled*` outcomes as unsuccessful and surface report-generation dependency errors clearly.
 - Fleet result accumulation now uses linear-time generic lists while preserving object-array output.
 
 ### Safer publishing

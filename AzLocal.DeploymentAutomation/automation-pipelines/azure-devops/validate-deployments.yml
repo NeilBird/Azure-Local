@@ -51,15 +51,13 @@ stages:
           - checkout: self
             displayName: 'Checkout Repository'
 
-          - task: AzureCLI@2
+          - task: AzurePowerShell@5
             displayName: 'Run Pre-Flight Checks'
             name: preflight
             inputs:
               azureSubscription: 'AzureLocal-ServiceConnection'  # Update with your service connection name
-              scriptType: 'pscore'
-              scriptLocation: 'inlineScript'
-              addSpnToEnvironment: true
-              inlineScript: |
+              ScriptType: 'InlineScript'
+              Inline: |
                 Import-Module "$(modulePath)/AzLocal.DeploymentAutomation.psd1" -Force
 
                 $csvPath = "${{ parameters.csvFilePath }}"
@@ -102,10 +100,14 @@ stages:
 
                 $results = Start-AzLocalCsvDeployment @params
 
-                $eligible = @($results | Where-Object { $_.Status -eq 'Passed' -or $_.Status -eq 'Skipped' }).Count
+                $eligible = @($results | Where-Object {
+                  $_.ClassName -eq 'AzLocalDeploymentAutomation.PreFlight' -and $_.Status -eq 'Passed'
+                }).Count
 
                 Write-Host "##vso[task.setvariable variable=EligibleCount;isOutput=true]$eligible"
                 Write-Host "##vso[task.setvariable variable=TotalCount;isOutput=true]$readyCount"
+              azurePowerShellVersion: 'LatestVersion'
+              pwsh: true
 
           - task: PublishTestResults@2
             displayName: 'Publish Pre-Flight Results'
@@ -142,15 +144,13 @@ stages:
           - checkout: self
             displayName: 'Checkout Repository'
 
-          - task: AzureCLI@2
+          - task: AzurePowerShell@5
             displayName: 'ARM Validate Deployments'
             name: validate
             inputs:
               azureSubscription: 'AzureLocal-ServiceConnection'  # Update with your service connection name
-              scriptType: 'pscore'
-              scriptLocation: 'inlineScript'
-              addSpnToEnvironment: true
-              inlineScript: |
+              ScriptType: 'InlineScript'
+              Inline: |
                 Import-Module "$(modulePath)/AzLocal.DeploymentAutomation.psd1" -Force
 
                 $csvPath = "${{ parameters.csvFilePath }}"
@@ -179,8 +179,10 @@ stages:
                 Write-Host "##vso[task.setvariable variable=Skipped;isOutput=true]$skipped"
 
                 if ($failed -gt 0) {
-                    Write-Host "##vso[task.logissue type=error]$failed cluster(s) failed validation."
+                    throw "$failed cluster(s) failed validation."
                 }
+              azurePowerShellVersion: 'LatestVersion'
+              pwsh: true
 
           - task: PublishTestResults@2
             displayName: 'Publish Validation Results'
