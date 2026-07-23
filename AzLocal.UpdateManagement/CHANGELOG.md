@@ -5,6 +5,21 @@ All notable changes to the AzLocal.UpdateManagement module (renamed from AzStack
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.23] - 2026-07-23
+
+### Added
+
+- Fleet settings schema v2 adds `scope.clusterTagFilters`, with one or more literal name/value pairs combined using AND semantics. Exact comparisons are case-insensitive and missing tags exclude clusters.
+- All cluster discovery paths apply the policy at cluster-resource scope. Child update resources inherit membership through normalized parent cluster IDs; filtered Arc machine and NIC reporting uses cluster-reported node names.
+- Update applies, shared cluster-tag writes, sideload actions, and Config: 2 CSV targets revalidate global membership immediately before mutation. Excluded Config: 2 rows report `GlobalFilterMismatch`.
+- `Update-AzLocalPipelineExample -UpgradeFleetSettingsSchema` explicitly migrates active schema v1 files to v2 while preserving operator content and supporting `-WhatIf`. Schema v1 remains executable without migration.
+- Every pipeline version banner snapshots active management-group IDs and cluster tag filters into the persisted run summary. Single-line JSON outputs (`management_groups` and `cluster_tag_filters`) preserve the same values for automation and retrospective audit; absent or fully commented fleet settings render no scope block.
+
+### Changed
+
+- Resource Bridge attribution now keys on subscription plus resource group and exposes exact, ambiguous, or no-cluster attribution instead of implying one-to-one ownership in shared resource groups.
+- The inert fleet settings starter now documents schema v2. Normal pipeline refreshes continue to preserve existing operator-owned settings.
+
 ## [0.9.22] - 2026-07-21
 
 **Fleet-scale Azure Resource Graph payload hardening** - all ARG-backed

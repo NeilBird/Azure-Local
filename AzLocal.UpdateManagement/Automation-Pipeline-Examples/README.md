@@ -1404,16 +1404,21 @@ Get-AzLocalClusterInventory -ExportPath ./cluster-inventory.csv   # now skips th
 
 > **Secrets note:** this list is **non-secret** scoping metadata (subscription GUIDs are not credentials), so it belongs in source control / the `AzureLocal-Pipeline-Settings` group - never in a secret store. Azure authentication still flows through OIDC / the WIF service connection as before.
 
-#### 6.1.2 (Optional) Scope estates beyond 1,000 subscriptions by management group
+#### 6.1.2 (Optional) Scope the fleet by management group and cluster tags
 
 Azure CLI and Azure PowerShell forward only the first 1,000 accessible subscriptions when Azure Resource Graph scope is implicit. For larger or growing estates, activate management-group scope in the generated `config/fleet-settings.yml`. Use management-group IDs, not display names or full resource IDs:
 
 ```yaml
-schemaVersion: 1
+schemaVersion: 2
 scope:
   managementGroups:
     - contoso-platform
     - contoso-edge
+  clusterTagFilters:
+    - name: Environment
+      value: Production
+    - name: ManagedBy
+      value: CentralIT
 reporting:
   maxRowsPerTable: 100
   maxSummaryBytes: 900000
@@ -1421,7 +1426,11 @@ itsm:
   maxIncidentsPerRun: 25
 ```
 
-`Copy-AzLocalPipelineExample` and `Update-AzLocalPipelineExample` create this file as a fully commented starter and never overwrite active operator configuration. The precedence is: explicit `-SubscriptionId`, configured management groups, then existing implicit subscription discovery. A missing, empty, or fully commented file therefore changes nothing. The pipeline identity needs read access on the target management-group hierarchy; management-group scope can cover the first 10,000 subscriptions beneath it.
+`clusterTagFilters` is a global admission policy used by all pipeline workloads. Every pair must match (`AND`); names and values use exact, case-insensitive comparison, and a missing tag excludes the cluster. Tag strings are treated as literals. Do not use module-owned control tags such as `UpdateRing`, `UpdateStartWindow`, `UpdateSideloaded`, or retry-state tags as selectors; establish stable admission tags through Azure Policy, onboarding, or another enterprise tagging process. Config: 2 validates live tags before mutation and reports `GlobalFilterMismatch` for excluded rows.
+
+At the start of each pipeline report, the shared version banner records the effective management-group IDs and cluster tag name/value pairs as a **run snapshot**. This remains attached to the historic GitHub Actions or Azure DevOps run even if `fleet-settings.yml` later changes. The install step also emits compact JSON outputs named `management_groups` and `cluster_tag_filters`. When the optional file is missing, empty, fully commented, or contains no scope selectors, no fleet-scope block is rendered.
+
+`Copy-AzLocalPipelineExample` and `Update-AzLocalPipelineExample` create this file as a fully commented starter and never overwrite active operator configuration during a normal refresh. Schema v1 remains supported. To update an active v1 declaration without changing comments, values, order, or line endings, run `Update-AzLocalPipelineExample ... -UpgradeFleetSettingsSchema`; `-WhatIf` previews the operation. The precedence is: explicit `-SubscriptionId`, configured management groups, then existing implicit subscription discovery. A missing, empty, or fully commented file therefore changes nothing. The pipeline identity needs read access on the target management-group hierarchy; management-group scope can cover the first 10,000 subscriptions beneath it.
 
 The reporting values cap only human-readable Markdown. Complete CSV, JSON, JUnit, and HTML artifacts remain available for automation and detailed investigation. `maxSummaryBytes` is measured as UTF-8 and defaults below GitHub Actions' 1 MiB per-step summary limit. `maxIncidentsPerRun` bounds ServiceNow fan-out; set it to `0` to suppress new incident creation while retaining deterministic skipped result rows.
 

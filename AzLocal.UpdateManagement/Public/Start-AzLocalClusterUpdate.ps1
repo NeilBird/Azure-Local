@@ -234,7 +234,8 @@ function Start-AzLocalClusterUpdate {
             
             # Build Azure Resource Graph query to find clusters by tag - use single line to avoid escaping issues with az CLI
             $ringFilter = ConvertTo-AzLocalUpdateRingKqlFilter -UpdateRingValue $UpdateRingValue
-            $argQuery = "resources | where type =~ 'microsoft.azurestackhci/clusters' $ringFilter | project id, name, resourceGroup, subscriptionId, tags"
+            $globalTagFilter = Get-AzLocalClusterTagFilterKqlClause
+            $argQuery = "resources | where type =~ 'microsoft.azurestackhci/clusters' $globalTagFilter $ringFilter | project id, name, resourceGroup, subscriptionId, tags"
             
             Write-Verbose "ARG Query: $argQuery"
             

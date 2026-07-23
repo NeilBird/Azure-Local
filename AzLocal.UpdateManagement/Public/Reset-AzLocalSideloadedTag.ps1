@@ -129,9 +129,11 @@ function Reset-AzLocalSideloadedTag {
         'ByTag' {
             # v0.7.66: support semicolon-delimited rings and '*' (match all).
             $ringFilter = ConvertTo-AzLocalUpdateRingKqlFilter -UpdateRingValue $UpdateRingValue
+            $globalTagFilter = Get-AzLocalClusterTagFilterKqlClause
             $kqlQuery = @"
 resources
 | where type =~ 'microsoft.azurestackhci/clusters'
+$globalTagFilter
 $ringFilter
 | project name, id
 "@

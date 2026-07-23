@@ -26,11 +26,11 @@ function Add-AzLocalPipelineVersionBanner {
                - WARNING when installed < generated (YAML newer than module)
                - NOTICE  when installed > generated (YAML older than module)
                - NOTICE  when latest    > installed (newer module on PSGallery)
-          5. Appends a one-line banner to the rendered step summary via
-             Add-AzLocalPipelineStepSummary
-          6. Emits three step outputs via Set-AzLocalPipelineOutput:
+            5. Appends the version banner and active fleet-scope snapshot
+                 to the rendered step summary via Add-AzLocalPipelineStepSummary
+            6. Emits five step outputs via Set-AzLocalPipelineOutput:
                installed_module_version, generated_against_version,
-               latest_on_psgallery
+                latest_on_psgallery, management_groups, cluster_tag_filters
           7. Optionally returns a PSCustomObject describing the verdict
              when -PassThru is set (for test harnesses + downstream steps).
 
@@ -87,6 +87,9 @@ function Add-AzLocalPipelineVersionBanner {
                                        'YAML newer than module - check REQUIRED_MODULE_VERSION'
                                        'YAML older than module - run Update-AzLocalPipelineExample to refresh'
                                        'newer module available on PSGallery'
+          ClusterTagFilters        [object[]] - exact name/value snapshot used by the run
+          ClusterTagFilterMode     [string] - 'All' when filters are active, otherwise empty
+          ManagementGroups         [string[]] - exact management-group scope used by the run
 
     .EXAMPLE
         Add-AzLocalPipelineVersionBanner -GeneratedAgainstVersion '0.8.5'
@@ -173,6 +176,26 @@ function Add-AzLocalPipelineVersionBanner {
     Write-Host "  Latest on PSGallery       : $(if ($SkipPSGalleryQuery) { '(skipped)' } elseif ($latest) { $latest } else { '(lookup failed - check network)' })"
     Write-Host "  Pin status                : $pinStatus"
     Write-Host "  Verdict                   : $verdict"
+
+    $fleetSettings = Get-AzLocalFleetSettings
+    $clusterTagFilters = @($fleetSettings.ClusterTagFilters | ForEach-Object {
+        [pscustomobject][ordered]@{
+            Name  = [string]$_.Name
+            Value = [string]$_.Value
+        }
+    })
+    $managementGroups = [string[]]@($fleetSettings.ManagementGroups)
+    $managementGroupsJson = ConvertTo-Json -InputObject @($managementGroups) -Compress
+    $clusterTagFilterJson = ConvertTo-Json -InputObject @($clusterTagFilters) -Compress
+    if ($managementGroups.Count -gt 0) {
+        Write-Host ("  Management group scope     : {0}" -f ($managementGroups -join ', '))
+    }
+    if ($clusterTagFilters.Count -gt 0) {
+        Write-Host '  Cluster tag filtering     : Applied (All/AND)'
+        foreach ($filter in $clusterTagFilters) {
+            Write-Host ("    {0} = {1}" -f $filter.Name, $filter.Value)
+        }
+    }
     Write-Host ''
 
     if ($installed -lt $generated) {
@@ -191,12 +214,33 @@ function Add-AzLocalPipelineVersionBanner {
             -Message "$ModuleName v$latest is available on PSGallery; this run installed v$installed. Review the module CHANGELOG before bumping REQUIRED_MODULE_VERSION (or clear the pin to install the latest automatically)."
     }
 
-    $banner = "_Pipeline YAML v$generated | Module v$installed installed ($pinStatus) | PSGallery latest $latestStr | ${verdict}_`n`n_Support caveat: The automation pipelines provided in the $ModuleName module are NOT a supported Microsoft service offering._`n"
+    $scopeBannerLines = [System.Collections.Generic.List[string]]::new()
+    if ($managementGroups.Count -gt 0) {
+        $renderedManagementGroups = @($managementGroups | ForEach-Object {
+            '<code>{0}</code>' -f [System.Net.WebUtility]::HtmlEncode($_)
+        }) -join ', '
+        [void]$scopeBannerLines.Add("> **Management group scope (run snapshot):** $renderedManagementGroups")
+    }
+    if ($clusterTagFilters.Count -gt 0) {
+        $renderedFilters = @($clusterTagFilters | ForEach-Object {
+            '<code>{0}</code> = <code>{1}</code>' -f [System.Net.WebUtility]::HtmlEncode($_.Name), [System.Net.WebUtility]::HtmlEncode($_.Value)
+        }) -join '; '
+        [void]$scopeBannerLines.Add("> **Cluster tag filtering applied (run snapshot):** $renderedFilters")
+        [void]$scopeBannerLines.Add('> **Match mode:** All filters must match (AND)')
+    }
+    $scopeBanner = ''
+    if ($scopeBannerLines.Count -gt 0) {
+        [void]$scopeBannerLines.Add("> **Fleet settings schema:** v$($fleetSettings.SchemaVersion)")
+        $scopeBanner = "`n$($scopeBannerLines -join "  `n")`n"
+    }
+    $banner = "_Pipeline YAML v$generated | Module v$installed installed ($pinStatus) | PSGallery latest $latestStr | ${verdict}_`n$scopeBanner`n_Support caveat: The automation pipelines provided in the $ModuleName module are NOT a supported Microsoft service offering._`n"
     [void](Add-AzLocalPipelineStepSummary -Markdown $banner -SummaryFileName $SummaryFileName)
 
     Set-AzLocalPipelineOutput -Name 'installed_module_version'  -Value $installed.ToString()
     Set-AzLocalPipelineOutput -Name 'generated_against_version' -Value $generated.ToString()
     Set-AzLocalPipelineOutput -Name 'latest_on_psgallery'       -Value $(if ($latest) { $latest.ToString() } else { '' })
+    Set-AzLocalPipelineOutput -Name 'management_groups'         -Value $managementGroupsJson
+    Set-AzLocalPipelineOutput -Name 'cluster_tag_filters'       -Value $clusterTagFilterJson
 
     if ($PassThru) {
         [PSCustomObject]@{
@@ -205,6 +249,9 @@ function Add-AzLocalPipelineVersionBanner {
             LatestOnPSGallery       = $latest
             PinStatus               = $pinStatus
             Verdict                 = $verdict
+            ClusterTagFilters       = $clusterTagFilters
+            ClusterTagFilterMode    = if ($clusterTagFilters.Count -gt 0) { 'All' } else { '' }
+            ManagementGroups        = $managementGroups
         }
     }
 }

@@ -151,6 +151,14 @@ function Update-AzLocalPipelineExample {
         operator-owned and is never modified; remove the marker line to freeze
         a managed README as your own. Pass -SkipReadme to suppress entirely.
 
+    .PARAMETER UpgradeFleetSettingsSchema
+        Explicitly upgrade an existing active config/fleet-settings.yml from
+        schema version 1 to version 2. The file is validated first, and only
+        its active schemaVersion declaration is changed; operator values,
+        comments, order, and line endings are preserved. Normal pipeline
+        updates never rewrite this operator-owned file. Supports -WhatIf and
+        -Confirm. Existing schema version 1 files remain supported.
+
     .OUTPUTS
         PSCustomObject[] (with -PassThru) - one row per source file with:
             File              - destination path (always the CANONICAL,
@@ -255,6 +263,10 @@ function Update-AzLocalPipelineExample {
         # Suppress the default inert config\fleet-settings.yml drop. Existing
         # operator-owned files are always preserved.
         [switch]$SkipStarterFleetSettings,
+
+        # v0.9.23: explicitly migrate an active operator-owned fleet settings
+        # file from schema v1 to v2. Normal updates remain preserve-only.
+        [switch]$UpgradeFleetSettingsSchema,
 
         [switch]$PassThru
     )
@@ -829,7 +841,7 @@ function Update-AzLocalPipelineExample {
     # Existing repos upgraded via Update receive the fully commented starter;
     # an existing operator-owned file is never overwritten.
     # ------------------------------------------------------------------
-    if (-not $SkipStarterFleetSettings.IsPresent) {
+    if (-not $SkipStarterFleetSettings.IsPresent -or $UpgradeFleetSettingsSchema.IsPresent) {
         $trimmedTarget = $destResolved.TrimEnd('\', '/')
         $oneLevelUp = Split-Path -Parent $trimmedTarget
         if ($Platform -eq 'GitHub' -and ($trimmedTarget -match '[\\/]\.github[\\/]workflows$')) {
@@ -844,7 +856,20 @@ function Update-AzLocalPipelineExample {
 
         $fleetSettingsSrc = Join-Path -Path $sourceRoot -ChildPath 'fleet-settings.example.yml'
         $fleetSettingsDest = Join-Path -Path (Join-Path -Path $repoRoot -ChildPath 'config') -ChildPath 'fleet-settings.yml'
-        if (-not (Test-Path -LiteralPath $fleetSettingsSrc -PathType Leaf)) {
+        if ((Test-Path -LiteralPath $fleetSettingsDest -PathType Leaf) -and $UpgradeFleetSettingsSchema.IsPresent) {
+            $validatedSettings = Get-AzLocalFleetSettings -Path $fleetSettingsDest
+            $settingsText = [System.IO.File]::ReadAllText($fleetSettingsDest, [System.Text.UTF8Encoding]::new($false))
+            $conversion = Convert-AzLocalFleetSettingsSchemaVersion -Text $settingsText -SourcePath $fleetSettingsDest
+            if ($validatedSettings.SchemaVersion -eq 1 -and $conversion.Migrated -and
+                $PSCmdlet.ShouldProcess($fleetSettingsDest, 'Upgrade fleet-settings.yml schemaVersion from 1 to 2')) {
+                [System.IO.File]::WriteAllText($fleetSettingsDest, $conversion.NewText, [System.Text.UTF8Encoding]::new($false))
+                Write-Log -Message "  Updated : fleet-settings.yml schemaVersion upgraded from 1 to 2 at '$fleetSettingsDest'" -Level Success
+            }
+            elseif (-not $conversion.Migrated) {
+                Write-Verbose ("Update-AzLocalPipelineExample: fleet-settings.yml schema upgrade not required ({0})." -f $conversion.Reason)
+            }
+        }
+        elseif (-not (Test-Path -LiteralPath $fleetSettingsSrc -PathType Leaf)) {
             Write-Log -Message ("  Note    : fleet settings source '{0}' not found; skipping starter copy." -f $fleetSettingsSrc) -Level Warning
         }
         elseif (Test-Path -LiteralPath $fleetSettingsDest -PathType Leaf) {

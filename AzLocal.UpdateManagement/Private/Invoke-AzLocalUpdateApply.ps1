@@ -12,6 +12,10 @@ function Invoke-AzLocalUpdateApply {
         [string]$ApiVersion = $script:DefaultApiVersion
     )
 
+    if (-not (Test-AzLocalClusterResourceInGlobalScope -ClusterResourceId $ClusterResourceId)) {
+        throw "GlobalFilterMismatch: cluster '$ClusterResourceId' does not match the configured scope.clusterTagFilters policy. No update was started."
+    }
+
     # Ensure Azure CLI is available
     Test-AzCliAvailable | Out-Null
 

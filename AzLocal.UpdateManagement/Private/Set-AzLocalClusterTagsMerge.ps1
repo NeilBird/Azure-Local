@@ -58,6 +58,10 @@ function Set-AzLocalClusterTagsMerge {
         return $true
     }
 
+    if (-not (Test-AzLocalClusterResourceInGlobalScope -ClusterResourceId $ClusterResourceId)) {
+        throw "GlobalFilterMismatch: cluster '$ClusterResourceId' does not match the configured scope.clusterTagFilters policy. No tags were changed."
+    }
+
     # Tags subresource is implemented by ARM itself (not by the HCI RP) and uses a
     # fixed api-version. Do not substitute the cluster RP's api-version here.
     $tagsApiVersion = '2021-04-01'

@@ -27,7 +27,7 @@ AfterAll {
     Remove-Module AzLocal.UpdateManagement -Force -ErrorAction SilentlyContinue
 }
 
-Describe 'v0.9.22: Fleet settings and management-group scope' {
+Describe 'v0.9.23: Fleet settings, management-group scope, and global cluster tag filters' {
     BeforeEach {
         $script:fleetSettingsPath = Join-Path $env:TEMP ("fleet-settings-{0}.yml" -f [guid]::NewGuid())
         $script:savedFleetSettingsPath = $env:AZLOCAL_FLEET_SETTINGS_PATH
@@ -47,6 +47,8 @@ Describe 'v0.9.22: Fleet settings and management-group scope' {
         $settings.FileFound | Should -BeFalse
         $settings.ScopeMode | Should -Be 'ImplicitSubscriptions'
         @($settings.ManagementGroups).Count | Should -Be 0
+        @($settings.ClusterTagFilters).Count | Should -Be 0
+        $settings.ClusterTagFilterMode | Should -Be 'All'
     }
 
     It 'Keeps defaults when the file is fully commented' {
@@ -88,13 +90,45 @@ itsm:
         $settings.MaxIncidentsPerRun | Should -Be 40
     }
 
+    It 'Parses schema v2 cluster tag pairs in declared order with ALL semantics' {
+        @(
+            'schemaVersion: 2'
+            'scope:'
+            '  managementGroups:'
+            '    - group-a'
+            '  clusterTagFilters:'
+            '    - name: Environment'
+            '      value: Production'
+            "    - name: 'ManagedBy'"
+            "      value: 'Central IT #1'"
+        ) | Set-Content -LiteralPath $script:fleetSettingsPath -Encoding ASCII
+
+        $settings = Get-AzLocalFleetSettings
+        $settings.SchemaVersion | Should -Be 2
+        $settings.ClusterTagFilterMode | Should -Be 'All'
+        @($settings.ClusterTagFilters).Count | Should -Be 2
+        $settings.ClusterTagFilters[0].Name | Should -Be 'Environment'
+        $settings.ClusterTagFilters[0].Value | Should -Be 'Production'
+        $settings.ClusterTagFilters[1].Name | Should -Be 'ManagedBy'
+        $settings.ClusterTagFilters[1].Value | Should -Be 'Central IT #1'
+        InModuleScope AzLocal.UpdateManagement -Parameters @{ Filters = $settings.ClusterTagFilters } {
+            param($Filters)
+            ConvertTo-AzLocalClusterTagFilterKqlClause -ClusterTagFilters $Filters | Should -Match "tags\['Environment'\]"
+        }
+        }
+
     It 'Rejects malformed, unsupported, and out-of-range active settings' -TestCases @(
         @{ Content = "scope:`n  managementGroups:`n    - group-a"; Expected = '*must declare schemaVersion*' }
-        @{ Content = "schemaVersion: 2"; Expected = '*unsupported schemaVersion*' }
+                @{ Content = "schemaVersion: 3"; Expected = '*unsupported schemaVersion*' }
         @{ Content = "schemaVersion: 1`nreporting:`n  maxRowsPerTable: 0"; Expected = '*maxRowsPerTable must be between 1 and 1000*' }
         @{ Content = "schemaVersion: 1`nreporting:`n  maxSummaryBytes: 9999"; Expected = '*maxSummaryBytes must be between 10000 and 1000000*' }
         @{ Content = "schemaVersion: 1`nitsm:`n  maxIncidentsPerRun: 1001"; Expected = '*maxIncidentsPerRun must be between 0 and 1000*' }
         @{ Content = "schemaVersion: one"; Expected = '*must declare schemaVersion*' }
+                @{ Content = "schemaVersion: 1`nscope:`n  clusterTagFilters:`n    - name: Environment`n      value: Production"; Expected = '*requires schemaVersion: 2*' }
+                @{ Content = "schemaVersion: 2`nscope:`n  clusterTagFilters:"; Expected = '*must contain at least one*' }
+                @{ Content = "schemaVersion: 2`nscope:`n  clusterTagFilters:`n    - name: Environment"; Expected = '*requires non-empty name and value*' }
+                @{ Content = "schemaVersion: 2`nscope:`n  clusterTagFilters:`n    - name: Environment`n      value: Production`n    - name: environment`n      value: Test"; Expected = '*duplicate*Environment*' }
+                @{ Content = "schemaVersion: 2`nscope:`n  clusterTagFilters:`n    - name: UpdateRing`n      value: Production"; Expected = '*module-owned control tag*UpdateRing*' }
     ) {
         param($Content, $Expected)
         Set-Content -LiteralPath $script:fleetSettingsPath -Value $Content -Encoding ASCII
@@ -102,7 +136,7 @@ itsm:
     }
 
     It 'Prefers an explicit path over the environment setting' {
-        Set-Content -LiteralPath $script:fleetSettingsPath -Value 'schemaVersion: 2' -Encoding ASCII
+        Set-Content -LiteralPath $script:fleetSettingsPath -Value 'schemaVersion: 3' -Encoding ASCII
         $explicitPath = Join-Path $env:TEMP ("fleet-settings-explicit-{0}.yml" -f [guid]::NewGuid())
         try {
             Set-Content -LiteralPath $explicitPath -Value 'schemaVersion: 1' -Encoding ASCII
@@ -166,6 +200,105 @@ scope:
         $global:capturedAzArgs | Should -Not -Contain '--management-groups'
     }
 
+    It 'Builds escaped cluster-only KQL clauses with ALL semantics' {
+        InModuleScope AzLocal.UpdateManagement {
+            $filters = @(
+                [pscustomobject]@{ Name = "Owner's Team"; Value = "O'Brien" }
+                [pscustomobject]@{ Name = 'Environment'; Value = 'Production' }
+            )
+
+            $clause = ConvertTo-AzLocalClusterTagFilterKqlClause -ClusterTagFilters $filters
+
+            $clause | Should -BeExactly "| where tostring(tags['Owner''s Team']) =~ 'O''Brien' | where tostring(tags['Environment']) =~ 'Production'"
+        }
+    }
+
+    It 'Matches every tag pair case-insensitively and fails closed on a missing pair' {
+        InModuleScope AzLocal.UpdateManagement {
+            $filters = @(
+                [pscustomobject]@{ Name = 'Environment'; Value = 'Production' }
+                [pscustomobject]@{ Name = 'ManagedBy'; Value = 'CentralIT' }
+            )
+
+            Test-AzLocalClusterMatchesTagFilter -Tags ([ordered]@{ environment = 'PRODUCTION'; ManagedBy = 'centralit' }) -ClusterTagFilters $filters | Should -BeTrue
+            Test-AzLocalClusterMatchesTagFilter -Tags ([pscustomobject]@{ Environment = 'Production' }) -ClusterTagFilters $filters | Should -BeFalse
+            Test-AzLocalClusterMatchesTagFilter -Tags $null -ClusterTagFilters $filters | Should -BeFalse
+        }
+    }
+
+    It 'Injects the global filter into inventory cluster queries without changing the shared ARG transport' {
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalFleetSettings {
+                [pscustomobject]@{
+                    ClusterTagFilters = @([pscustomobject]@{ Name = 'Environment'; Value = 'Production' })
+                }
+            }
+            Mock Invoke-AzResourceGraphQuery {
+                if ($Query -match "microsoft\.azurestackhci/clusters") {
+                    return @([pscustomobject]@{
+                        id = '/subscriptions/sub-1/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/cluster-1'
+                        name = 'cluster-1'
+                        resourceGroup = 'rg'
+                        subscriptionId = 'sub-1'
+                        tags = [pscustomobject]@{ Environment = 'Production' }
+                    })
+                }
+                return @([pscustomobject]@{ subscriptionId = 'sub-1'; name = 'Subscription 1' })
+            }
+
+            $result = @(Get-AzLocalClusterInventory)
+
+            $result.Count | Should -Be 1
+            Should -Invoke Invoke-AzResourceGraphQuery -ParameterFilter {
+                $Query -match "type =~ 'microsoft\.azurestackhci/clusters'" -and
+                $Query -match "tostring\(tags\['Environment'\]\) =~ 'Production'"
+            } -Times 1
+        }
+    }
+
+    It 'Resolves authoritative selected cluster IDs for child-resource joins' {
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalFleetSettings {
+                [pscustomobject]@{
+                    ClusterTagFilters = @([pscustomobject]@{ Name = 'Environment'; Value = 'Production' })
+                }
+            }
+            Mock Invoke-AzResourceGraphQuery {
+                @(
+                    [pscustomobject]@{ id = '/subscriptions/sub-1/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/one'; tags = [pscustomobject]@{ Environment = 'Production' } }
+                    [pscustomobject]@{ id = '/subscriptions/sub-1/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/two'; tags = [pscustomobject]@{ Environment = 'Test' } }
+                )
+            }
+
+            $scope = Get-AzLocalGlobalClusterScope -SubscriptionId 'sub-1' -IncludeReportedNodes
+
+            $scope.Enabled | Should -BeTrue
+            @($scope.ClusterIds).Count | Should -Be 1
+            $scope.ClusterById.ContainsKey('/SUBSCRIPTIONS/SUB-1/RESOURCEGROUPS/RG/PROVIDERS/MICROSOFT.AZURESTACKHCI/CLUSTERS/ONE') | Should -BeTrue
+            Should -Invoke Invoke-AzResourceGraphQuery -ParameterFilter {
+                $SubscriptionId -eq 'sub-1' -and
+                $Query -match "tags\['Environment'\]" -and
+                $Query -match ', properties'
+            } -Times 1
+        }
+    }
+
+    It 'Fails closed when an explicit cluster resource ID is outside global scope' {
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalFleetSettings {
+                [pscustomobject]@{
+                    ClusterTagFilters = @([pscustomobject]@{ Name = 'Environment'; Value = 'Production' })
+                }
+            }
+            Mock Invoke-AzResourceGraphQuery { @() }
+
+            Test-AzLocalClusterResourceInGlobalScope -ClusterResourceId '/subscriptions/sub-1/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/one' | Should -BeFalse
+            Should -Invoke Invoke-AzResourceGraphQuery -ParameterFilter {
+                $SubscriptionId -eq 'sub-1' -and $Query -match "tags\['Environment'\]"
+            } -Times 1
+        }
+    }
+
     It 'Batches 81 values into three ARG calls and retains every row' {
         InModuleScope AzLocal.UpdateManagement {
             $script:batchQueries = [System.Collections.Generic.List[string]]::new()
@@ -196,8 +329,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $script:ModuleInfo | Should -Not -BeNullOrEmpty
         }
 
-        It 'Should have version 0.9.22' {
-            $script:ModuleInfo.Version | Should -Be '0.9.22'
+        It 'Should have version 0.9.23' {
+            $script:ModuleInfo.Version | Should -Be '0.9.23'
         }
 
         It 'Module version constants are in sync between .psm1 and .psd1' {
@@ -10725,6 +10858,12 @@ Describe 'Function: Update-AzLocalPipelineExample' {
             $parameter.ParameterType | Should -Be ([switch])
         }
 
+        It 'Exposes -UpgradeFleetSettingsSchema as a switch parameter' {
+            $parameter = (Get-Command Update-AzLocalPipelineExample).Parameters['UpgradeFleetSettingsSchema']
+            $parameter | Should -Not -BeNullOrEmpty
+            $parameter.ParameterType | Should -Be ([switch])
+        }
+
         It 'Creates a missing starter and preserves an existing operator file' {
             $repoRoot = Join-Path $env:TEMP "upe-fleet-settings-$([guid]::NewGuid())"
             $dest = Join-Path $repoRoot '.github\workflows'
@@ -10754,6 +10893,42 @@ Describe 'Function: Update-AzLocalPipelineExample' {
             try {
                 Update-AzLocalPipelineExample -Destination $dest -Platform GitHub @Arguments 6>$null 4>$null | Out-Null
                 Test-Path -LiteralPath (Join-Path $repoRoot 'config\fleet-settings.yml') | Should -BeFalse
+            }
+            finally {
+                Remove-Item -Path $repoRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+
+        It 'Explicitly upgrades active schema v1 while preserving operator content and line endings' {
+            $repoRoot = Join-Path $env:TEMP "upe-fleet-settings-upgrade-$([guid]::NewGuid())"
+            $dest = Join-Path $repoRoot '.github\workflows'
+            $settingsPath = Join-Path $repoRoot 'config\fleet-settings.yml'
+            New-Item -Path $dest -ItemType Directory -Force | Out-Null
+            New-Item -Path (Split-Path -Parent $settingsPath) -ItemType Directory -Force | Out-Null
+            $before = "schemaVersion: 1`r`nscope:`r`n  managementGroups:`r`n    - group-a`r`n# OPERATOR SENTINEL`r`n"
+            [IO.File]::WriteAllText($settingsPath, $before, [Text.UTF8Encoding]::new($false))
+            try {
+                Update-AzLocalPipelineExample -Destination $dest -Platform GitHub -UpgradeFleetSettingsSchema -Confirm:$false 6>$null 4>$null | Out-Null
+                $after = [IO.File]::ReadAllText($settingsPath)
+                $after | Should -BeExactly ($before -replace 'schemaVersion: 1', 'schemaVersion: 2')
+                (Get-AzLocalFleetSettings -Path $settingsPath).SchemaVersion | Should -Be 2
+            }
+            finally {
+                Remove-Item -Path $repoRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+
+        It 'Does not rewrite schema v1 under WhatIf' {
+            $repoRoot = Join-Path $env:TEMP "upe-fleet-settings-upgrade-whatif-$([guid]::NewGuid())"
+            $dest = Join-Path $repoRoot '.github\workflows'
+            $settingsPath = Join-Path $repoRoot 'config\fleet-settings.yml'
+            New-Item -Path $dest -ItemType Directory -Force | Out-Null
+            New-Item -Path (Split-Path -Parent $settingsPath) -ItemType Directory -Force | Out-Null
+            [IO.File]::WriteAllText($settingsPath, "schemaVersion: 1`n# OPERATOR SENTINEL`n", [Text.UTF8Encoding]::new($false))
+            try {
+                $before = [Convert]::ToBase64String([IO.File]::ReadAllBytes($settingsPath))
+                Update-AzLocalPipelineExample -Destination $dest -Platform GitHub -UpgradeFleetSettingsSchema -WhatIf 6>$null 4>$null | Out-Null
+                [Convert]::ToBase64String([IO.File]::ReadAllBytes($settingsPath)) | Should -BeExactly $before
             }
             finally {
                 Remove-Item -Path $repoRoot -Recurse -Force -ErrorAction SilentlyContinue
@@ -13818,6 +13993,78 @@ Describe 'Function: Get-AzLocalFleetConnectivityStatus (v0.7.79)' {
         }
     }
 
+    Context 'Global tag filter membership joins' {
+
+        BeforeAll {
+            Mock Get-AzLocalClusterTagFilterKqlClause -ModuleName AzLocal.UpdateManagement {
+                "| where tostring(tags['Environment']) =~ 'Production'"
+            }
+            Mock Invoke-AzResourceGraphQuery -ModuleName AzLocal.UpdateManagement {
+                param([string]$Query)
+                if ($Query -match 'microsoft\.azurestackhci/clusters' -and $Query -notmatch 'updateSummaries') {
+                    return @(
+                        [pscustomobject]@{
+                            id = '/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.AzureStackHCI/clusters/cluster-a'
+                            name = 'cluster-a'; resourceGroup = 'rg1'; subscriptionId = 'sub1'; location = 'eastus'
+                            ConnectivityStatus = 'Connected'; ClusterStatus = 'Succeeded'; NodeCount = 1
+                            ReportedNodes = @([pscustomobject]@{ name = 'NODE-A.contoso.com' })
+                        },
+                        [pscustomobject]@{
+                            id = '/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.AzureStackHCI/clusters/cluster-b'
+                            name = 'cluster-b'; resourceGroup = 'rg1'; subscriptionId = 'sub1'; location = 'eastus'
+                            ConnectivityStatus = 'Connected'; ClusterStatus = 'Succeeded'; NodeCount = 1
+                            ReportedNodes = @([pscustomobject]@{ name = 'node-b.contoso.com' })
+                        }
+                    )
+                }
+                if ($Query -match 'updateSummaries') { return @() }
+                if ($Query -match 'hybridcompute/machines') {
+                    return @(
+                        [pscustomobject]@{
+                            id = '/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.HybridCompute/machines/node-a'
+                            name = 'node-a'; resourceGroup = 'rg1'; subscriptionId = 'sub1'
+                            AgentStatus = 'Connected'; ParentClusterResourceId = ''
+                        },
+                        [pscustomobject]@{
+                            id = '/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.HybridCompute/machines/guest'
+                            name = 'guest'; resourceGroup = 'rg1'; subscriptionId = 'sub1'
+                            AgentStatus = 'Disconnected'
+                            ParentClusterResourceId = '/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.AzureStackHCI/clusters/cluster-a'
+                        }
+                    )
+                }
+                if ($Query -match 'edgedevices') {
+                    return @(
+                        [pscustomobject]@{ edgeMachineName = 'NODE-A.contoso.com'; NicName = 'pNIC1'; NicType = 'Physical'; NicStatus = 'Up'; resourceGroup = 'rg1'; subscriptionId = 'sub1' },
+                        [pscustomobject]@{ edgeMachineName = 'guest'; NicName = 'pNIC2'; NicType = 'Physical'; NicStatus = 'Down'; resourceGroup = 'rg1'; subscriptionId = 'sub1' }
+                    )
+                }
+                if ($Query -match 'resourceconnector/appliances') {
+                    return @([pscustomobject]@{
+                        id = '/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.ResourceConnector/appliances/arb1'
+                        name = 'arb1'; resourceGroup = 'rg1'; subscriptionId = 'sub1'; ArbStatus = 'Running'; lastModifiedAt = ''
+                    })
+                }
+                return @()
+            }
+            Mock Write-Log -ModuleName AzLocal.UpdateManagement { }
+            $script:filteredConnectivity = Get-AzLocalFleetConnectivityStatus -PassThru
+        }
+
+        It 'uses admitted reported nodes for machine and NIC membership and marks shared-RG ARB attribution ambiguous' {
+            $script:filteredConnectivity.ArcSummary.Count | Should -Be 1
+            $script:filteredConnectivity.ArcSummary[0].AgentStatus | Should -Be 'Connected'
+            $script:filteredConnectivity.ArcSummary[0].Count | Should -Be 1
+            $script:filteredConnectivity.NonConnectedMachines.Count | Should -Be 0
+            $script:filteredConnectivity.NicAll.Count | Should -Be 1
+            $script:filteredConnectivity.NicAll[0].NodeName | Should -Be 'node-a'
+            $script:filteredConnectivity.NicAll[0].ClusterName | Should -Be 'cluster-a'
+            $script:filteredConnectivity.ArbRows.Count | Should -Be 1
+            $script:filteredConnectivity.ArbRows[0].ClusterAttribution | Should -Be 'Ambiguous'
+            $script:filteredConnectivity.ArbRows[0].CandidateClusterCount | Should -Be 2
+        }
+    }
+
     Context 'ArcSummary groups by AgentStatus client-side (not via KQL summarize)' {
 
         BeforeAll {
@@ -15157,7 +15404,7 @@ Describe 'Thin-YAML foundation: Add-AzLocalPipelineVersionBanner' {
         $info.PinStatus | Should -Be 'latest (fix-forward)'
     }
 
-    It 'GitHub: emits installed_module_version + generated_against_version + latest_on_psgallery step outputs' {
+    It 'GitHub: emits version and fleet-scope step outputs' {
         $env:GITHUB_ACTIONS      = 'true'
         $env:GITHUB_OUTPUT       = $script:_ghOutputFile
         $env:GITHUB_STEP_SUMMARY = $script:_ghSummaryFile
@@ -15169,6 +15416,8 @@ Describe 'Thin-YAML foundation: Add-AzLocalPipelineVersionBanner' {
         $contents | Should -Match '(?m)^installed_module_version=\d+\.\d+\.\d+'
         $contents | Should -Match '(?m)^generated_against_version=\d+\.\d+\.\d+'
         $contents | Should -Match '(?m)^latest_on_psgallery=\s*$'
+        $contents | Should -Match '(?m)^management_groups=\[\]\r?$'
+        $contents | Should -Match '(?m)^cluster_tag_filters=\[\]\r?$'
     }
 
     It 'GitHub: appends a one-line banner row to $env:GITHUB_STEP_SUMMARY (markdown italics + pipes)' {
@@ -15183,6 +15432,88 @@ Describe 'Thin-YAML foundation: Add-AzLocalPipelineVersionBanner' {
         $md | Should -Match '_Pipeline YAML v\d+\.\d+\.\d+ \| Module v\d+\.\d+\.\d+ installed \(.+?\) \| PSGallery latest .+? \| .+?_'
         # v0.9.18: a support-caveat line is appended below the version banner.
         $md | Should -Match 'Support caveat: The automation pipelines provided in the AzLocal\.UpdateManagement module are NOT a supported Microsoft service offering'
+    }
+
+    It 'GitHub: snapshots active cluster tag filters in the banner, JSON output, and PassThru result' {
+        $settingsPath = Join-Path -Path $env:TEMP -ChildPath ("vb-fleet-settings-{0}.yml" -f ([Guid]::NewGuid()))
+        $savedSettingsPath = $env:AZLOCAL_FLEET_SETTINGS_PATH
+        @(
+            'schemaVersion: 2'
+            'scope:'
+            '  managementGroups:'
+            '    - contoso-platform'
+            '  clusterTagFilters:'
+            "    - name: 'Created By'"
+            "      value: 'Michael Godfrey & Team'"
+            "    - name: 'Environment'"
+            "      value: 'Production'"
+        ) | Set-Content -LiteralPath $settingsPath -Encoding utf8
+        try {
+            $env:AZLOCAL_FLEET_SETTINGS_PATH = $settingsPath
+            $env:GITHUB_ACTIONS      = 'true'
+            $env:GITHUB_OUTPUT       = $script:_ghOutputFile
+            $env:GITHUB_STEP_SUMMARY = $script:_ghSummaryFile
+            $info = InModuleScope AzLocal.UpdateManagement {
+                $real = (Get-Module AzLocal.UpdateManagement | Sort-Object Version -Descending | Select-Object -First 1).Version.ToString()
+                Add-AzLocalPipelineVersionBanner -GeneratedAgainstVersion $real -SkipPSGalleryQuery -PassThru
+            }
+
+            $md = Get-Content -LiteralPath $script:_ghSummaryFile -Raw
+            $md | Should -Match 'Management group scope \(run snapshot\):\*\* <code>contoso-platform</code>'
+            $md | Should -Match 'Cluster tag filtering applied \(run snapshot\)'
+            $md | Should -Match '<code>Created By</code> = <code>Michael Godfrey &amp; Team</code>; <code>Environment</code> = <code>Production</code>'
+            $md | Should -Match 'Match mode:\*\* All filters must match \(AND\)'
+            $md | Should -Match 'Fleet settings schema:\*\* v2'
+
+            $outputs = Get-Content -LiteralPath $script:_ghOutputFile -Raw
+            $outputs | Should -Match '(?m)^management_groups=\["contoso-platform"\]\r?$'
+            $outputMatch = [regex]::Match($outputs, '(?m)^cluster_tag_filters=(?<json>.+)$')
+            $outputMatch.Success | Should -BeTrue
+            $outputFilters = @($outputMatch.Groups['json'].Value | ConvertFrom-Json)
+            $outputFilters.Count | Should -Be 2
+            $outputFilters[0].Name | Should -Be 'Created By'
+            $outputFilters[0].Value | Should -Be 'Michael Godfrey & Team'
+            $outputFilters[1].Name | Should -Be 'Environment'
+            $outputFilters[1].Value | Should -Be 'Production'
+
+            $info.ClusterTagFilterMode | Should -Be 'All'
+            @($info.ManagementGroups).Count | Should -Be 1
+            $info.ManagementGroups[0] | Should -Be 'contoso-platform'
+            @($info.ClusterTagFilters).Count | Should -Be 2
+            $info.ClusterTagFilters[0].Name | Should -Be 'Created By'
+            $info.ClusterTagFilters[0].Value | Should -Be 'Michael Godfrey & Team'
+        }
+        finally {
+            if ($null -ne $savedSettingsPath) { $env:AZLOCAL_FLEET_SETTINGS_PATH = $savedSettingsPath } else { Remove-Item Env:\AZLOCAL_FLEET_SETTINGS_PATH -ErrorAction SilentlyContinue }
+            Remove-Item -LiteralPath $settingsPath -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    It 'GitHub: omits the fleet-scope block when optional fleet settings are absent' {
+        $savedSettingsPath = $env:AZLOCAL_FLEET_SETTINGS_PATH
+        try {
+            $env:AZLOCAL_FLEET_SETTINGS_PATH = Join-Path -Path $env:TEMP -ChildPath ("vb-missing-settings-{0}.yml" -f ([Guid]::NewGuid()))
+            $env:GITHUB_ACTIONS      = 'true'
+            $env:GITHUB_OUTPUT       = $script:_ghOutputFile
+            $env:GITHUB_STEP_SUMMARY = $script:_ghSummaryFile
+            InModuleScope AzLocal.UpdateManagement {
+                $real = (Get-Module AzLocal.UpdateManagement | Sort-Object Version -Descending | Select-Object -First 1).Version.ToString()
+                Add-AzLocalPipelineVersionBanner -GeneratedAgainstVersion $real -SkipPSGalleryQuery
+            }
+
+            $md = Get-Content -LiteralPath $script:_ghSummaryFile -Raw
+            $md | Should -Not -Match 'Management group scope \(run snapshot\)'
+            $md | Should -Not -Match 'Cluster tag filtering applied \(run snapshot\)'
+            $md | Should -Not -Match 'Match mode:'
+            $md | Should -Not -Match 'Fleet settings schema:'
+
+            $outputs = Get-Content -LiteralPath $script:_ghOutputFile -Raw
+            $outputs | Should -Match '(?m)^management_groups=\[\]\r?$'
+            $outputs | Should -Match '(?m)^cluster_tag_filters=\[\]\r?$'
+        }
+        finally {
+            if ($null -ne $savedSettingsPath) { $env:AZLOCAL_FLEET_SETTINGS_PATH = $savedSettingsPath } else { Remove-Item Env:\AZLOCAL_FLEET_SETTINGS_PATH -ErrorAction SilentlyContinue }
+        }
     }
 
     It 'YAML newer than module -> WARNING annotation on GH' {

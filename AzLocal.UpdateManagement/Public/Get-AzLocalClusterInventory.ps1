@@ -162,6 +162,7 @@ function Get-AzLocalClusterInventory {
 
     # Build cluster data based on parameter set
     $clusterData = @()
+    $fleetSettings = $null
 
     if ($PSCmdlet.ParameterSetName -eq 'ByResourceId') {
         # Direct REST lookup for each Resource ID
@@ -228,7 +229,9 @@ function Get-AzLocalClusterInventory {
         # Query by UpdateRing tag via ARG
         Write-Log -Message "Querying Azure Resource Graph for clusters with tag 'UpdateRing' = '$UpdateRingValue'..." -Level Info
         $ringFilter = ConvertTo-AzLocalUpdateRingKqlFilter -UpdateRingValue $UpdateRingValue
-        $argQuery = "resources | where type =~ 'microsoft.azurestackhci/clusters' $ringFilter | project id, name, resourceGroup, subscriptionId, tags | order by name asc"
+        $fleetSettings = Get-AzLocalFleetSettings
+        $globalTagFilter = ConvertTo-AzLocalClusterTagFilterKqlClause -ClusterTagFilters $fleetSettings.ClusterTagFilters
+        $argQuery = "resources | where type =~ 'microsoft.azurestackhci/clusters' $globalTagFilter $ringFilter | project id, name, resourceGroup, subscriptionId, tags | order by name asc"
         try {
             $clusters = Invoke-AzResourceGraphQuery -Query $argQuery
             if (-not $clusters -or $clusters.Count -eq 0) {
@@ -248,7 +251,9 @@ function Get-AzLocalClusterInventory {
         Write-Log -Message "Querying Azure Resource Graph for all Azure Local clusters..." -Level Info
 
         # Build Azure Resource Graph query - use single line to avoid escaping issues with az CLI
-        $argQuery = "resources | where type =~ 'microsoft.azurestackhci/clusters' | project id, name, resourceGroup, subscriptionId, tags | order by name asc"
+        $fleetSettings = Get-AzLocalFleetSettings
+        $globalTagFilter = ConvertTo-AzLocalClusterTagFilterKqlClause -ClusterTagFilters $fleetSettings.ClusterTagFilters
+        $argQuery = "resources | where type =~ 'microsoft.azurestackhci/clusters' $globalTagFilter | project id, name, resourceGroup, subscriptionId, tags | order by name asc"
 
         try {
             if ($SubscriptionId) {
@@ -267,6 +272,19 @@ function Get-AzLocalClusterInventory {
         }
         catch {
             Write-Log -Message "Error querying Azure Resource Graph: $($_.Exception.Message)" -Level Error
+            return @()
+        }
+    }
+
+    if (-not $fleetSettings) {
+        $fleetSettings = Get-AzLocalFleetSettings
+    }
+    if (@($fleetSettings.ClusterTagFilters).Count -gt 0) {
+        $clusterData = @($clusterData | Where-Object {
+            Test-AzLocalClusterMatchesTagFilter -Tags $_.tags -ClusterTagFilters $fleetSettings.ClusterTagFilters
+        })
+        if ($clusterData.Count -eq 0) {
+            Write-Log -Message 'No clusters matched the global fleet tag filter.' -Level Warning
             return @()
         }
     }

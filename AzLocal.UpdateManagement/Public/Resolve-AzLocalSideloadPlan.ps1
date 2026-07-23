@@ -66,7 +66,8 @@ function Resolve-AzLocalSideloadPlan {
     $catalog = @(Get-AzLocalSideloadCatalog -Path $CatalogPath)
 
     $ringFilter = ConvertTo-AzLocalUpdateRingKqlFilter -UpdateRingValue $UpdateRingValue
-    $argQuery = "resources | where type =~ 'microsoft.azurestackhci/clusters' | where isnotempty(tags['UpdateAuthAccountId']) $ringFilter | project id, name, resourceGroup, subscriptionId, tags"
+    $globalTagFilter = Get-AzLocalClusterTagFilterKqlClause
+    $argQuery = "resources | where type =~ 'microsoft.azurestackhci/clusters' $globalTagFilter | where isnotempty(tags['UpdateAuthAccountId']) $ringFilter | project id, name, resourceGroup, subscriptionId, tags"
 
     $clusterRows = if ($PSBoundParameters.ContainsKey('SubscriptionId') -and $SubscriptionId) {
         Invoke-AzResourceGraphQuery -Query $argQuery -SubscriptionId $SubscriptionId

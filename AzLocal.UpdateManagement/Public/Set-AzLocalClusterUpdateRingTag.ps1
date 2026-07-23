@@ -429,6 +429,28 @@ function Set-AzLocalClusterUpdateRingTag {
                 continue
             }
 
+            $fleetSettings = Get-AzLocalFleetSettings
+            if (-not (Test-AzLocalClusterMatchesTagFilter -Tags $clusterInfo.tags -ClusterTagFilters $fleetSettings.ClusterTagFilters)) {
+                $action = 'Skipped'
+                $status = 'GlobalFilterMismatch'
+                $message = 'Cluster does not match the configured scope.clusterTagFilters policy. No tags were changed.'
+                Write-Log -Message "$message ResourceId: $resourceId" -Level Warning
+                $csvLine = "`"$clusterName`",`"$resourceGroup`",`"$subscriptionId`",`"$resourceId`",`"$action`",`"$previousTagValue`",`"$currentUpdateRingValue`",`"$status`",`"$message`""
+                Add-Content -Path $csvLogPath -Value $csvLine -WhatIf:$false
+                $results += [PSCustomObject]@{
+                    ClusterName      = $clusterName
+                    ResourceGroup    = $resourceGroup
+                    SubscriptionId   = $subscriptionId
+                    ResourceId       = $resourceId
+                    Action           = $action
+                    PreviousTagValue = $previousTagValue
+                    NewTagValue      = $currentUpdateRingValue
+                    Status           = $status
+                    Message          = $message
+                }
+                continue
+            }
+
             # Verify the resource type from the API response
             if ($clusterInfo.type -notlike "Microsoft.AzureStackHCI/clusters" -and $clusterInfo.type -notlike "microsoft.azurestackhci/clusters") {
                 Write-Log -Message "Resource type mismatch. Expected Azure Local cluster, got: $($clusterInfo.type)" -Level Error

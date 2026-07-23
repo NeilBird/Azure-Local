@@ -119,9 +119,11 @@ function New-AzLocalApplyUpdatesScheduleConfig {
 
     # ---- 2. Discover (or accept) the ring list ----------------------
     if (-not $Rings -or @($Rings).Count -eq 0) {
+        $globalTagFilter = Get-AzLocalClusterTagFilterKqlClause
         $kql = @"
 resources
 | where type =~ 'microsoft.azurestackhci/clusters'
+    $globalTagFilter
 | project UpdateRing = tostring(tags['UpdateRing'])
 | where isnotempty(UpdateRing)
 | distinct UpdateRing

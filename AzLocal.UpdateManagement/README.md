@@ -2,7 +2,7 @@
 
 > ⚠️ **Disclaimer**: This module is **NOT** a Microsoft supported service offering or product. It is provided as example code only, with no warranty or official support. Refer to the [MIT license](https://github.com/NeilBird/Azure-Local/blob/main/LICENSE) for further information.
 
-**Latest Version:** v0.9.22 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.9.22)
+**Latest Version:** v0.9.23 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.9.23)
 
 This folder contains the 'AzLocal.UpdateManagement' PowerShell module for managing updates on Azure Local (formerly Azure Stack HCI) clusters using the Azure Local REST API. The module supports both interactive use and CI/CD automation via Service Principal or Managed Identity authentication.
 
@@ -14,7 +14,7 @@ Azure Local REST API specification (includes update management endpoints): https
 **This README (overview + most-recent release notes):**
 
 - [Where to Start](#where-to-start)
-- [What's New in v0.9.22](#whats-new-in-v0922)
+- [What's New in v0.9.23](#whats-new-in-v0923)
 - [Files](#files)
 - [Prerequisites](#prerequisites)
 - [RBAC Requirements](#rbac-requirements) (summary; full reference in [docs/rbac.md](docs/rbac.md))
@@ -78,18 +78,32 @@ If you are new to this module, work through these in order from a regular PowerS
 
 > Most CI/CD pipelines in [Automation-Pipeline-Examples/](Automation-Pipeline-Examples/) are direct implementations of one of these workflows. Start there if you want a copy-pasteable end-to-end pipeline.
 
-## What's New in v0.9.22
+## What's New in v0.9.23
+
+**Fleet settings schema v2 adds one global, source-controlled cluster admission policy across every GitHub Actions and Azure DevOps pipeline.** Configure one or more `scope.clusterTagFilters` name/value pairs; all pairs must match, missing tags exclude a cluster, and matching is exact and case-insensitive.
+
+### Added
+
+- **Consistent read and write scope.** Cluster inventory, readiness, updates, health, connectivity, schedules, sideloading, and monitor reports share the same selected cluster membership. Child update resources inherit scope through normalized parent cluster IDs rather than assuming child resources carry tags.
+- **Write-boundary enforcement.** Explicit resource IDs and CSV-derived targets are revalidated before update POSTs or tag changes. Out-of-scope Config: 2 rows report `GlobalFilterMismatch` and receive no mutation.
+- **Authoritative physical-node joins.** Filtered connectivity runs map selected clusters' `reportedProperties.nodes[]` short hostnames to Arc machines and NICs. ARB association uses subscription plus resource group and reports ambiguous attribution when multiple selected clusters share a resource group.
+- **Safe schema migration.** Schema v1 remains fully supported. `Update-AzLocalPipelineExample -UpgradeFleetSettingsSchema` explicitly upgrades only the active version declaration, preserving operator values, comments, order, and line endings; normal updates remain non-destructive and `-WhatIf` is supported.
+- **Auditable run scope.** Every pipeline version banner snapshots configured management groups and cluster tag filters into the persisted run summary, with matching single-line JSON outputs for automation. Missing, empty, or fully commented fleet settings add no scope block.
+
+See the [pipeline fleet-settings guide](Automation-Pipeline-Examples/README.md#612-optional-scope-the-fleet-by-management-group-and-cluster-tags) for configuration and migration examples.
+
+### What's New in v0.9.22
 
 **Azure Resource Graph queries now scale safely when expanded RBAC exposes hundreds of subscriptions and clusters, and the disconnected-cluster sideload workflow is hardened for customer operation.** The shared query helper handles ARG's byte limit in addition to its row limit, the two fleet-monitor pipelines stop downloading property bags they do not consume, and Update: 2 now uses one typed settings file with race-safe task ownership and actionable state reporting.
 
-### Fixed
+#### Fixed
 
 - **All ARG-backed cmdlets inherit adaptive payload paging.** When ARG rejects a page with `ResponsePayloadTooLarge`, `Invoke-AzResourceGraphQuery` halves `--first`, retries the same logical page, and retains the successful size across continuation pages. This correction is immediate and separate from throttle/network retries. If one row still exceeds the service limit, the error now tells the caller to project fewer fields.
 - **Monitor: 2 - Fleet Health Status uses byte-safe health-result pages.** `Get-AzLocalFleetHealthFailures` begins its complete `healthCheckResult` array query at 50 cluster rows and orders by resource ID. Client-side expansion remains deliberate so checks beyond ARG's bounded `mv-expand` behavior are not silently dropped.
 - **Monitor: 1 - Fleet Connectivity Status sends lean queries.** Cluster, update-summary, Arc-machine, expanded-NIC, and Resource Bridge requests now project only fields used by the report. Full node, health, and NIC property bags are no longer repeated across fleet responses.
 - **Paged fleet queries are deterministic.** The touched Monitor: 1 and Monitor: 2 queries order by stable resource identifiers before following continuation tokens.
 
-### Added
+#### Added
 
 - **Payload diagnostics and regression coverage.** Module-scope diagnostics expose whether adaptive reduction occurred, how many reductions were needed, and the final page size. Tests cover oversized first pages, continuation completeness, one-row overflow guidance, diagnostic reset, conservative health paging, and lean connectivity projections.
 - **Optional fleet settings for estates beyond 1,000 subscriptions.** Generated pipeline repos now receive an inert, fully commented `config/fleet-settings.yml`. Activating `scope.managementGroups` makes all central ARG queries use management-group scope; explicit `-SubscriptionId` values override it, and leaving the file commented preserves implicit subscription discovery. `Get-AzLocalFleetSettings` reports the effective settings.

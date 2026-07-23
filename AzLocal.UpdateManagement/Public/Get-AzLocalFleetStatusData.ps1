@@ -139,7 +139,8 @@ function Get-AzLocalFleetStatusData {
                 return $null
             }
             $ringFilter = ConvertTo-AzLocalUpdateRingKqlFilter -UpdateRingValue $UpdateRingValue
-            $argQuery = "resources | where type =~ 'microsoft.azurestackhci/clusters' $ringFilter | project id"
+            $globalTagFilter = Get-AzLocalClusterTagFilterKqlClause
+            $argQuery = "resources | where type =~ 'microsoft.azurestackhci/clusters' $globalTagFilter $ringFilter | project id"
             try {
                 $tagData = Invoke-AzResourceGraphQuery -Query $argQuery
             }

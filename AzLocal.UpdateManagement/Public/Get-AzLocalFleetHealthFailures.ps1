@@ -246,15 +246,17 @@ extensibilityresources
     # joining inside KQL because the updateSummaries resource does NOT carry
     # the cluster's tags - tags live on the cluster resource itself. A
     # separate ARG hop is required to map ResourceId -> UpdateRing.
-    if ($UpdateRingTag) {
+    $globalTagFilter = Get-AzLocalClusterTagFilterKqlClause
+    if ($UpdateRingTag -or $globalTagFilter) {
         # v0.7.66: support semicolon-delimited rings and the literal '***'
         # wildcard (three stars). Single '*', double '**', and quadruple '****'
         # are deliberately rejected by [ValidatePattern] so a one-character
         # typo cannot accidentally widen the scope.
-        $ringFilter = ConvertTo-AzLocalUpdateRingKqlFilter -UpdateRingValue $UpdateRingTag -TagAccessor "tostring(tags['UpdateRing'])"
+        $ringFilter = if ($UpdateRingTag) { ConvertTo-AzLocalUpdateRingKqlFilter -UpdateRingValue $UpdateRingTag -TagAccessor "tostring(tags['UpdateRing'])" } else { '' }
         $tagKql = @"
 resources
 | where type =~ 'microsoft.azurestackhci/clusters'
+    $globalTagFilter
 $ringFilter
 | project id = tolower(id)
 "@
@@ -273,7 +275,7 @@ $ringFilter
         foreach ($r in @($tagRows)) { $allowed[$r.id] = $true }
         $before = $rows.Count
         $rows   = @($rows | Where-Object { $allowed.ContainsKey(($_.ClusterResourceId).ToLower()) })
-        Write-Log -Message "Filtered to UpdateRing='$UpdateRingTag': $($rows.Count) of $before rows retained." -Level Info
+        Write-Log -Message "Filtered to the configured global scope and UpdateRing='$UpdateRingTag': $($rows.Count) of $before rows retained." -Level Info
     }
 
     # Build the output the caller asked for.

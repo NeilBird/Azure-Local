@@ -286,7 +286,8 @@ function Get-AzLocalUpdateRuns {
         Write-Log -Message "Querying Azure Resource Graph for clusters with tag 'UpdateRing' = '$UpdateRingValue'..." -Level Info
 
         $ringFilter = ConvertTo-AzLocalUpdateRingKqlFilter -UpdateRingValue $UpdateRingValue
-        $argQuery = "resources | where type =~ 'microsoft.azurestackhci/clusters' $ringFilter | project id, name, resourceGroup, subscriptionId, tags"
+        $globalTagFilter = Get-AzLocalClusterTagFilterKqlClause
+        $argQuery = "resources | where type =~ 'microsoft.azurestackhci/clusters' $globalTagFilter $ringFilter | project id, name, resourceGroup, subscriptionId, tags"
 
         try {
             $argParams = @{ Query = $argQuery }
@@ -330,7 +331,8 @@ function Get-AzLocalUpdateRuns {
         # instead of one ARM REST call per cluster. Works cross-subscription
         # when -SubscriptionId is not passed.
         $nameListKql = ($ClusterNames | ForEach-Object { "'$_'" }) -join ','
-        $nameQuery = "resources | where type =~ 'microsoft.azurestackhci/clusters' | where name in~ ($nameListKql) | project id, name, resourceGroup, subscriptionId"
+        $globalTagFilter = Get-AzLocalClusterTagFilterKqlClause
+        $nameQuery = "resources | where type =~ 'microsoft.azurestackhci/clusters' $globalTagFilter | where name in~ ($nameListKql) | project id, name, resourceGroup, subscriptionId"
         try {
             $argParams = @{ Query = $nameQuery }
             if ($SubscriptionId) { $argParams['SubscriptionId'] = $SubscriptionId }
