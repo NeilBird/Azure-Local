@@ -89,6 +89,23 @@ function Compare-VMCollectionStateToken {
     [pscustomobject]@{ Changed = ($reasons.Count -gt 0); Reasons = $reasons.ToArray() }
 }
 
+function Get-VMCollectionStateImpact {
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory)][ValidateSet('Stable', 'Changed', 'Unavailable')][string]$Status,
+        [string[]]$Reasons = @(),
+        [bool]$ReplicationEnabled = $false,
+        [AllowEmptyString()][string]$ReplicaProductSeverity,
+        [AllowEmptyString()][string]$ReplicaState
+    )
+    if ($Status -eq 'Stable') { return 'Stable' }
+    $healthyReplicaConfigWrite = ($Status -eq 'Changed' -and @($Reasons).Count -eq 1 -and $Reasons[0] -eq 'ConfigLastWriteUtc' -and
+        $ReplicationEnabled -and $ReplicaProductSeverity -eq 'Healthy' -and
+        $ReplicaState.Equals('Replicating', [StringComparison]::OrdinalIgnoreCase))
+    if ($healthyReplicaConfigWrite) { return 'Advisory' }
+    'Inconclusive'
+}
+
 function Get-HyperVReplicationAssessment {
     [OutputType([pscustomobject])]
     param(
@@ -372,4 +389,67 @@ function Resolve-ActiveCheckpointHistoricVerdict {
     }
 }
 
-Export-ModuleMember -Function Get-HyperVEventPolicy, Get-HyperVEventSignalAssessment, Resolve-HyperVOperationRecovery, Compare-VMCollectionStateToken, Get-HyperVReplicationAssessment, Resolve-HyperVEventAttribution, Resolve-EventCoverage, Get-VMCheckpointVerdictAssessment, Select-DiscoveredVMsForAudit, Resolve-ActiveCheckpointHistoricVerdict
+function Complete-CheckpointHealthPassThruResult {
+    [CmdletBinding()]
+    [OutputType([pscustomobject])]
+    param(
+        [Parameter(Mandatory, ValueFromPipeline)]
+        [object]$Result,
+
+        [Parameter(Mandatory)]
+        [object]$RunData
+    )
+
+    process {
+        $reportData = if ($Result.PSObject.Properties['ReportData']) { $Result.ReportData } else { $null }
+        $source = if ($Result.PSObject.Properties['Source'] -and $Result.Source) { [string]$Result.Source } else { 'Input' }
+        $recommendation = if ($Result.PSObject.Properties['Recommendation'] -and $Result.Recommendation) { [string]$Result.Recommendation } else { 'ERROR' }
+        $detail = if ($Result.PSObject.Properties['Detail']) { [string]$Result.Detail } else { '' }
+        if (-not $detail -and $recommendation -eq 'INVESTIGATE' -and $reportData -and
+            $reportData.PSObject.Properties['InvestigationDrivers'] -and $reportData.InvestigationDrivers -and
+            $reportData.InvestigationDrivers.PSObject.Properties['AssessmentText']) {
+            $detail = [string]$reportData.InvestigationDrivers.AssessmentText
+        }
+        $assessmentConfidence = if ($reportData -and $reportData.PSObject.Properties['AssessmentConfidence']) {
+            [string]$reportData.AssessmentConfidence
+        } else {
+            'Incomplete'
+        }
+        $nestedStatus = if ($reportData -and $reportData.PSObject.Properties['CollectionStatus']) { $reportData.CollectionStatus } else { $null }
+        $notCollected = [pscustomobject]@{ Status = 'NotCollected' }
+        $collectionStatus = [pscustomobject][ordered]@{
+            Outcome = [pscustomobject]@{ Status = $recommendation; Detail = $detail }
+            VhdChains = if ($nestedStatus -and $nestedStatus.PSObject.Properties['VhdChains']) { $nestedStatus.VhdChains } else { $notCollected }
+            VirtualDiskInventory = if ($nestedStatus -and $nestedStatus.PSObject.Properties['VirtualDiskInventory']) { $nestedStatus.VirtualDiskInventory } else { $notCollected }
+            EventLogs = if ($nestedStatus -and $nestedStatus.PSObject.Properties['EventLogs']) { $nestedStatus.EventLogs } else { $notCollected }
+            HistoricEvents = if ($nestedStatus -and $nestedStatus.PSObject.Properties['HistoricEvents']) { $nestedStatus.HistoricEvents } else { $notCollected }
+            StateConsistency = if ($nestedStatus -and $nestedStatus.PSObject.Properties['StateConsistency']) { $nestedStatus.StateConsistency } else { $notCollected }
+            VssWriters = if ($nestedStatus -and $nestedStatus.PSObject.Properties['VssWriters']) { $nestedStatus.VssWriters } else { $notCollected }
+        }
+
+        [pscustomobject][ordered]@{
+            VMName                  = if ($Result.PSObject.Properties['VMName']) { [string]$Result.VMName } else { '' }
+            Cluster                 = if ($Result.PSObject.Properties['Cluster']) { [string]$Result.Cluster } else { '' }
+            OwningNode              = if ($Result.PSObject.Properties['OwningNode']) { [string]$Result.OwningNode } else { '' }
+            Source                  = $source
+            Recommendation          = $recommendation
+            HoldState               = [bool]($Result.PSObject.Properties['HoldState'] -and $Result.HoldState)
+            HasAttachedCheckpoints  = [bool]($Result.PSObject.Properties['HasAttachedCheckpoints'] -and $Result.HasAttachedCheckpoints)
+            HasStaleCheckpoints     = [bool]($Result.PSObject.Properties['HasStaleCheckpoints'] -and $Result.HasStaleCheckpoints)
+            HasOrphanedCheckpoints  = [bool]($Result.PSObject.Properties['HasOrphanedCheckpoints'] -and $Result.HasOrphanedCheckpoints)
+            AttachedCheckpointCount = if ($Result.PSObject.Properties['AttachedCheckpointCount']) { [int]$Result.AttachedCheckpointCount } else { 0 }
+            StaleCheckpointCount    = if ($Result.PSObject.Properties['StaleCheckpointCount']) { [int]$Result.StaleCheckpointCount } else { 0 }
+            StaleAttachedLayerCount = if ($Result.PSObject.Properties['StaleAttachedLayerCount']) { [int]$Result.StaleAttachedLayerCount } else { 0 }
+            SnapshotLayerMismatch   = [bool]($Result.PSObject.Properties['SnapshotLayerMismatch'] -and $Result.SnapshotLayerMismatch)
+            ConcernEventCount       = if ($Result.PSObject.Properties['ConcernEventCount']) { [int]$Result.ConcernEventCount } else { 0 }
+            AssessmentConfidence    = $assessmentConfidence
+            CollectionStatus        = $collectionStatus
+            ReportFile              = if ($Result.PSObject.Properties['ReportFile']) { $Result.ReportFile } else { $null }
+            Detail                  = $detail
+            ReportData              = $reportData
+            RunData                 = $RunData
+        }
+    }
+}
+
+Export-ModuleMember -Function Get-HyperVEventPolicy, Get-HyperVEventSignalAssessment, Resolve-HyperVOperationRecovery, Compare-VMCollectionStateToken, Get-VMCollectionStateImpact, Get-HyperVReplicationAssessment, Resolve-HyperVEventAttribution, Resolve-EventCoverage, Get-VMCheckpointVerdictAssessment, Select-DiscoveredVMsForAudit, Resolve-ActiveCheckpointHistoricVerdict, Complete-CheckpointHealthPassThruResult

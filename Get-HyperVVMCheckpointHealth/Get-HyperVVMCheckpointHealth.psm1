@@ -26,9 +26,9 @@ function Get-HyperVVMCheckpointHealth {
 
     The HTML report is the primary human-readable output. Detailed text is captured for the optional
     .txt transcript and is only echoed to the console with -Quiet:$false. By default NOTHING is written
-    to the pipeline. Pass -PassThru to also emit one [pscustomobject] per VM to the pipeline (VMName,
-    OwningNode, Recommendation, HoldState, Has* flags, counts, plus a nested ReportData object with the
-    full per-VM detail) for Where-Object / Export-Csv / fleet roll-ups.
+    to the pipeline. Pass -PassThru to emit one [pscustomobject] per VM after the run is complete. Each
+    object has a stable flat summary, complete per-VM ReportData, and the same shared RunData snapshot
+    containing run-level housekeeping, storage, discovery, event-context, metadata, and artifact data.
 
     DISCLAIMER / CAVEATS:
       - EXAMPLE code. NOT a Microsoft-supported product or service offering; provided with NO warranty
@@ -85,17 +85,13 @@ function Get-HyperVVMCheckpointHealth {
     $results = Get-HyperVVMCheckpointHealth -Cluster 'CLUS01' -ProcessAllVMs -OutputPath 'C:\Temp\Reports' -PassThru
     $results | Where-Object HoldState | Format-Table VMName, OwningNode, Recommendation
 
-    With -PassThru the command emits ONE [pscustomobject] per VM to the pipeline (in addition to the
-    HTML report and, with -OutputPath, the per-VM .txt/.csv files). Without -PassThru nothing is
-    written to the pipeline. The object carries: VMName, Cluster, OwningNode, Recommendation
-    ('HOLD STATE' / 'INVESTIGATE' / 'OK' / 'NOT FOUND' / 'ERROR'), HoldState, HasAttachedCheckpoints,
-    HasStaleCheckpoints, HasOrphanedCheckpoints, AttachedCheckpointCount, StaleCheckpointCount,
-    ConcernEventCount, ReportFile, Detail - ideal for Where-Object / Export-Csv / fleet roll-ups.
-    It ALSO carries a nested ReportData object with the rich per-VM detail the HTML report renders
-    (Checkpoints[], AttachedDiskCount, CheckpointLayers, StaleCheckpointCount, Replication, VssState,
-    VssUnhealthy[], AnalyticNodesNeedEnable[], CsvVolumes[], OrphanCount, Orphans[], HasForkSignature,
-    EventBreakdown[], Version/HostMaxVersion, and - for HOLD STATE - SupportCaseSummary). ReportData
-    is $null for NOT FOUND / ERROR rows. Drill in, e.g.:
+    With -PassThru the command emits ONE [pscustomobject] per VM after all collection and artifact
+    writes finish. Every row has the same stable property set, including Source, AssessmentConfidence,
+    CollectionStatus, ReportData, and RunData. ReportData contains complete per-VM assessment evidence,
+    typed InvestigationDrivers, and full VM-attributed event rows. RunData is one shared, non-circular
+    snapshot containing cluster/storage housekeeping, storage health, discovery candidates, node event
+    context, run metadata, and artifact paths. ReportData is $null for NOT FOUND / ERROR rows, while
+    their top-level AssessmentConfidence and CollectionStatus remain usable. Drill in, e.g.:
         $results | Where-Object { $_.ReportData.HasForkSignature } |
             ForEach-Object { $_.ReportData.Checkpoints } | Format-Table Name, AgeHrs, Stale
 
@@ -115,14 +111,14 @@ function Get-HyperVVMCheckpointHealth {
     and events are also written to per-VM .txt/.csv files. With -PassThru, one
     [pscustomobject] per VM is emitted to the pipeline - flat properties (VMName, Recommendation,
     HoldState, Has* flags, counts, ReportFile, Detail) for quick Where-Object / Export-Csv roll-ups,
-    PLUS a nested ReportData object with the full per-VM detail the HTML renders (see the -PassThru
-    example above for the ReportData fields and a drill-in snippet).
+    plus nested ReportData and shared RunData objects for complete per-VM and run-level automation
+    (see the -PassThru example above). Rows are emitted after the run and artifact writes complete.
 
 .NOTES
     Author  : Neil Bird, Microsoft
     Created : 2026-07-10
-    Updated : 2026-07-21
-    Version : 0.2.20
+    Updated : 2026-07-23
+    Version : 0.2.21
     
     Requires: Windows PowerShell 5.1 (this module is written for, and validated against, Windows
               PowerShell 5.1 ONLY - it is NOT intended or tested for PowerShell 7.x). Requires the
@@ -370,7 +366,7 @@ Then run this in Windows PowerShell 5.1, on a cluster node or a workstation that
 
 # Module version - single source of truth surfaced in the HTML report (header meta + footer) so a
 # saved / emailed report always states which build produced it. Keep in sync with the .NOTES Version.
-$script:ScriptVersion = '0.2.20'
+$script:ScriptVersion = '0.2.21'
 
 # v0.2.14: end-to-end run stopwatch - started as early as possible so the HTML report can state the
 # total time taken to audit the whole fleet and render the report ("Report generation time hh:mm:ss").
@@ -683,6 +679,8 @@ function Get-ClusterVirtualDiskOwnershipInventory {
     )
 
     $collector = {
+        $workerStartUtc = [DateTime]::UtcNow
+        $workerStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
         $rows = [System.Collections.Generic.List[object]]::new()
         $folders = [System.Collections.Generic.List[object]]::new()
         $errors = [System.Collections.Generic.List[string]]::new()
@@ -740,7 +738,8 @@ function Get-ClusterVirtualDiskOwnershipInventory {
         try {
             $vms = @(Get-VM -ErrorAction Stop)
         } catch {
-            return [pscustomobject]@{ Complete = $false; VMCount = 0; SnapshotCount = 0; Rows = @(); Folders = @(); Errors = @("Get-VM failed: $($_.Exception.Message)") }
+            $workerStopwatch.Stop()
+            return [pscustomobject]@{ Complete = $false; VMCount = 0; SnapshotCount = 0; Rows = @(); Folders = @(); Errors = @("Get-VM failed: $($_.Exception.Message)"); WorkerStartUtc = $workerStartUtc; WorkerEndUtc = [DateTime]::UtcNow; WorkerDurationMs = [long]$workerStopwatch.ElapsedMilliseconds }
         }
 
         foreach ($vmItem in $vms) {
@@ -775,6 +774,7 @@ function Get-ClusterVirtualDiskOwnershipInventory {
                 [void]$errors.Add("Snapshot query failed for '$vmName': $($_.Exception.Message)")
             }
         }
+        $workerStopwatch.Stop()
         [pscustomobject]@{
             Complete      = [bool]$state.Complete
             VMCount       = $vmCount
@@ -782,61 +782,176 @@ function Get-ClusterVirtualDiskOwnershipInventory {
             Rows          = $rows.ToArray()
             Folders       = $folders.ToArray()
             Errors        = $errors.ToArray()
+            WorkerStartUtc = $workerStartUtc
+            WorkerEndUtc  = [DateTime]::UtcNow
+            WorkerDurationMs = [long]$workerStopwatch.ElapsedMilliseconds
         }
     }
 
+    $orderedNodes = @($Nodes | Where-Object { $_ } | Sort-Object -Unique)
+    $localNodeShort = $LocalNode.Split('.')[0]
+    $localClusterNode = @($orderedNodes | Where-Object { $_.Split('.')[0] -eq $localNodeShort }).Count -gt 0
+    $remoteNodes = @($orderedNodes | Where-Object { $_.Split('.')[0] -ne $localNodeShort })
     $nodeResults = [System.Collections.Generic.List[object]]::new()
-    foreach ($node in @($Nodes | Where-Object { $_ } | Sort-Object -Unique)) {
+    $coordinatorStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+    $executionMode = 'Sequential'
+    $throttleLimit = 1
+
+    $addNodeResult = {
+        param([string]$Node, $Result, [long]$DurationMs, [string]$Mode, [string]$ErrorMessage)
+        [void]$nodeResults.Add([pscustomobject]@{
+            Node          = $Node
+            Complete      = ($Result -and [bool]$Result.Complete)
+            DurationMs    = $DurationMs
+            ExecutionMode = $Mode
+            Result        = $Result
+            Error         = $ErrorMessage
+        })
+        if ($Result) {
+            foreach ($collectionError in @($Result.Errors)) {
+                Add-AuditDiagnosticMessage -Message ([string]$collectionError) `
+                    -Operation 'Collect cluster virtual disk ownership inventory' -Scope ("Node={0}" -f $Node)
+            }
+        }
+    }
+
+    $collectSequentialNode = {
+        param([string]$Node)
         $nodeStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
         try {
-            if ($node.Split('.')[0] -eq $LocalNode.Split('.')[0]) {
+            if ($Node.Split('.')[0] -eq $localNodeShort) {
                 $result = & $collector
             } else {
-                $session = $SessionByNode[$node]
+                $session = $SessionByNode[$Node]
                 if ($session -and $session.State -ne 'Opened') {
                     Remove-PSSession -Session $session -ErrorAction SilentlyContinue
-                    $SessionByNode.Remove($node)
+                    $SessionByNode.Remove($Node)
                     $session = $null
                 }
                 if (-not $session) {
-                    $session = Invoke-WithRetry -DiagnosticOperation 'Open ownership-inventory remoting session' -DiagnosticScope ("Node={0}" -f $node) -ScriptBlock { New-PSSession -ComputerName $node -ErrorAction Stop }
-                    $SessionByNode[$node] = $session
+                    $session = Invoke-WithRetry -DiagnosticOperation 'Open ownership-inventory remoting session' -DiagnosticScope ("Node={0}" -f $Node) -ScriptBlock { New-PSSession -ComputerName $Node -ErrorAction Stop }
+                    $SessionByNode[$Node] = $session
                 }
                 $result = Invoke-WithRetry -DiagnosticOperation 'Invoke ownership inventory on cluster node' `
-                    -DiagnosticScope ("Node={0}" -f $node) -ScriptBlock {
+                    -DiagnosticScope ("Node={0}" -f $Node) -ScriptBlock {
                         Invoke-Command -Session $session -ScriptBlock $collector -ErrorAction Stop
                     }
             }
             $nodeStopwatch.Stop()
-            [void]$nodeResults.Add([pscustomobject]@{ Node = $node; Complete = [bool]$result.Complete; DurationMs = [long]$nodeStopwatch.ElapsedMilliseconds; Result = $result; Error = '' })
-            foreach ($collectionError in @($result.Errors)) {
-                Add-AuditDiagnosticMessage -Message ([string]$collectionError) `
-                    -Operation 'Collect cluster virtual disk ownership inventory' -Scope ("Node={0}" -f $node)
-            }
+            & $addNodeResult $Node $result ([long]$nodeStopwatch.ElapsedMilliseconds) `
+                $(if ($Node.Split('.')[0] -eq $localNodeShort) { 'Local' } else { 'SequentialRemote' }) ''
         } catch {
             $nodeStopwatch.Stop()
-            Add-AuditDiagnostic -ErrorRecord $_ -Operation 'Collect cluster virtual disk ownership inventory' -Scope ("Node={0}" -f $node)
-            [void]$nodeResults.Add([pscustomobject]@{ Node = $node; Complete = $false; DurationMs = [long]$nodeStopwatch.ElapsedMilliseconds; Result = $null; Error = $_.Exception.Message })
+            Add-AuditDiagnostic -ErrorRecord $_ -Operation 'Collect cluster virtual disk ownership inventory' -Scope ("Node={0}" -f $Node)
+            & $addNodeResult $Node $null ([long]$nodeStopwatch.ElapsedMilliseconds) `
+                $(if ($Node.Split('.')[0] -eq $localNodeShort) { 'Local' } else { 'SequentialRemote' }) $_.Exception.Message
         }
     }
 
-    $rows = @($nodeResults | ForEach-Object { if ($_.Result) { $_.Result.Rows } } | Where-Object { $_ } |
+    if ($localClusterNode -and $remoteNodes.Count -gt 0) {
+        $temporarySessions = [System.Collections.Generic.List[object]]::new()
+        $sessionByShortName = @{}
+        $fanoutJob = $null
+        try {
+            foreach ($remoteNode in $remoteNodes) {
+                $session = Invoke-WithRetry -DiagnosticOperation 'Open concurrent ownership-inventory remoting session' `
+                    -DiagnosticScope ("Node={0}" -f $remoteNode) -ScriptBlock { New-PSSession -ComputerName $remoteNode -ErrorAction Stop }
+                [void]$temporarySessions.Add($session)
+                $sessionByShortName[$remoteNode.Split('.')[0].ToLowerInvariant()] = $session
+            }
+
+            $executionMode = 'ConcurrentRemote'
+            $throttleLimit = [math]::Min(8, $remoteNodes.Count)
+
+            $fanoutStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+            $fanoutErrors = @()
+            $fanoutJob = Invoke-Command -Session $temporarySessions.ToArray() -ScriptBlock $collector `
+                -ThrottleLimit $throttleLimit -AsJob -ErrorAction Stop
+
+            foreach ($localMatch in @($orderedNodes | Where-Object { $_.Split('.')[0] -eq $localNodeShort })) {
+                & $collectSequentialNode $localMatch
+            }
+
+            Wait-Job -Job $fanoutJob -ErrorAction Stop | Out-Null
+            $remoteResults = @(Receive-Job -Job $fanoutJob -ErrorAction SilentlyContinue -ErrorVariable fanoutErrors)
+            $fanoutStopwatch.Stop()
+
+            foreach ($remoteNode in $remoteNodes) {
+                $nodeShort = $remoteNode.Split('.')[0]
+                $remoteResult = @($remoteResults | Where-Object {
+                    $_.PSComputerName -and $_.PSComputerName.Split('.')[0].Equals($nodeShort, [StringComparison]::OrdinalIgnoreCase)
+                } | Select-Object -First 1)
+                if ($remoteResult.Count -gt 0) {
+                    $workerDurationMs = if ($remoteResult[0].PSObject.Properties['WorkerDurationMs']) { [long]$remoteResult[0].WorkerDurationMs } else { [long]$fanoutStopwatch.ElapsedMilliseconds }
+                    & $addNodeResult $remoteNode $remoteResult[0] $workerDurationMs 'ConcurrentRemote' ''
+                } else {
+                    $session = $sessionByShortName[$nodeShort.ToLowerInvariant()]
+                    $retryStopwatch = $null
+                    try {
+                        $retryStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+                        $result = Invoke-WithRetry -DiagnosticOperation 'Retry ownership inventory after concurrent fan-out' `
+                            -DiagnosticScope ("Node={0}" -f $remoteNode) -ScriptBlock {
+                                Invoke-Command -Session $session -ScriptBlock $collector -ErrorAction Stop
+                            }
+                        $retryStopwatch.Stop()
+                        & $addNodeResult $remoteNode $result ([long]$retryStopwatch.ElapsedMilliseconds) 'SequentialRetry' ''
+                    } catch {
+                        if ($retryStopwatch) { $retryStopwatch.Stop() }
+                        $retryDurationMs = if ($retryStopwatch) { [long]$retryStopwatch.ElapsedMilliseconds } else { 0L }
+                        Add-AuditDiagnostic -ErrorRecord $_ -Operation 'Collect cluster virtual disk ownership inventory' -Scope ("Node={0}" -f $remoteNode)
+                        & $addNodeResult $remoteNode $null $retryDurationMs 'SequentialRetry' $_.Exception.Message
+                    }
+                }
+            }
+            foreach ($fanoutError in @($fanoutErrors)) {
+                Add-AuditDiagnostic -ErrorRecord $fanoutError -Operation 'Concurrent ownership inventory fan-out' `
+                    -Scope ("Nodes={0}; Throttle={1}" -f $remoteNodes.Count, $throttleLimit)
+            }
+        } catch {
+            if ($fanoutJob) {
+                Stop-Job -Job $fanoutJob -ErrorAction SilentlyContinue
+                Remove-Job -Job $fanoutJob -Force -ErrorAction SilentlyContinue
+                $fanoutJob = $null
+            }
+            Add-AuditDiagnostic -ErrorRecord $_ -Operation 'Prepare concurrent ownership inventory' `
+                -Scope ("Nodes={0}; FallingBack=Sequential" -f $remoteNodes.Count)
+            $executionMode = 'SequentialFallback'
+            $throttleLimit = 1
+            $nodeResults.Clear()
+            foreach ($node in $orderedNodes) { & $collectSequentialNode $node }
+        } finally {
+            if ($fanoutJob) { Remove-Job -Job $fanoutJob -Force -ErrorAction SilentlyContinue }
+            foreach ($temporarySession in @($temporarySessions)) {
+                if ($temporarySession) { Remove-PSSession -Session $temporarySession -ErrorAction SilentlyContinue }
+            }
+        }
+    } else {
+        foreach ($node in $orderedNodes) { & $collectSequentialNode $node }
+    }
+
+    $coordinatorStopwatch.Stop()
+    $orderedNodeResults = @($nodeResults | Sort-Object { [array]::IndexOf($orderedNodes, [string]$_.Node) })
+
+    $rows = @($orderedNodeResults | ForEach-Object { if ($_.Result) { $_.Result.Rows } } | Where-Object { $_ } |
         Sort-Object VMName, Path, Source -Unique)
-    $folders = @($nodeResults | ForEach-Object { if ($_.Result) { $_.Result.Folders } } | Where-Object { $_ } |
+    $folders = @($orderedNodeResults | ForEach-Object { if ($_.Result) { $_.Result.Folders } } | Where-Object { $_ } |
         Sort-Object VMName, Path -Unique)
-    $errors = @($nodeResults | ForEach-Object {
+    $errors = @($orderedNodeResults | ForEach-Object {
         $nodeResult = $_
         if ($nodeResult.Error) { "Node '$($nodeResult.Node)': $($nodeResult.Error)" }
         if ($nodeResult.Result) { $nodeResult.Result.Errors | ForEach-Object { "Node '$($nodeResult.Node)': $_" } }
     })
     [pscustomobject]@{
-        Complete      = ($Nodes.Count -gt 0 -and @($nodeResults | Where-Object { -not $_.Complete }).Count -eq 0)
-        Nodes         = $nodeResults.ToArray()
+        Complete      = ($orderedNodes.Count -gt 0 -and @($orderedNodeResults | Where-Object { -not $_.Complete }).Count -eq 0)
+        ExecutionMode = $executionMode
+        ThrottleLimit = $throttleLimit
+        CoordinatorDurationMs = [long]$coordinatorStopwatch.ElapsedMilliseconds
+        Nodes         = $orderedNodeResults
         Rows          = $rows
         Folders       = $folders
         Errors        = $errors
-        VMCount       = [int](($nodeResults | ForEach-Object { if ($_.Result) { $_.Result.VMCount } } | Measure-Object -Sum).Sum)
-        SnapshotCount = [int](($nodeResults | ForEach-Object { if ($_.Result) { $_.Result.SnapshotCount } } | Measure-Object -Sum).Sum)
+        VMCount       = [int](($orderedNodeResults | ForEach-Object { if ($_.Result) { $_.Result.VMCount } } | Measure-Object -Sum).Sum)
+        SnapshotCount = [int](($orderedNodeResults | ForEach-Object { if ($_.Result) { $_.Result.SnapshotCount } } | Measure-Object -Sum).Sum)
     }
 }
 
@@ -1186,10 +1301,39 @@ function Initialize-ClusterVirtualDiskInventories {
         $targetNode = if ($script:GroupOwnerByVm.ContainsKey($FirstVMName)) { [string]$script:GroupOwnerByVm[$FirstVMName] } else { $localNode }
         $ownershipStart = Get-TelemetryNow
         $script:VirtualDiskOwnershipInventory = Get-ClusterVirtualDiskOwnershipInventory -Nodes $nodes -LocalNode $localNode -SessionByNode $script:SessionByNode
+        $ownershipEnd = Get-TelemetryNow
+        foreach ($nodeTiming in @($script:VirtualDiskOwnershipInventory.Nodes)) {
+            $nodeEnd = if ($nodeTiming.Result -and $nodeTiming.Result.PSObject.Properties['WorkerEndUtc']) { [DateTime]$nodeTiming.Result.WorkerEndUtc } else { $ownershipEnd }
+            $workerDurationMs = if ($nodeTiming.Result -and $nodeTiming.Result.PSObject.Properties['WorkerDurationMs']) { [long]$nodeTiming.Result.WorkerDurationMs } else { [long]$nodeTiming.DurationMs }
+            $rawWorkerStart = if ($nodeTiming.Result -and $nodeTiming.Result.PSObject.Properties['WorkerStartUtc']) { [DateTime]$nodeTiming.Result.WorkerStartUtc } else { $nodeEnd.AddMilliseconds(-1 * $workerDurationMs) }
+            $clockAdjustmentMs = [long][math]::Round((($nodeEnd - $rawWorkerStart).TotalMilliseconds) - $workerDurationMs)
+            $nodeStart = $nodeEnd.AddMilliseconds(-1 * $workerDurationMs)
+            Add-TelemetryEntry -Step '1.07.10.10' -Phase 'Ownership inventory worker' `
+                -Detail ("Node={0}; Mode={1}; Complete={2}; VMs={3}; Snapshots={4}; Paths={5}; Error={6}; ClockAdjustmentMs={7}" -f `
+                    $nodeTiming.Node, $nodeTiming.ExecutionMode, $nodeTiming.Complete,
+                    $(if ($nodeTiming.Result) { [int]$nodeTiming.Result.VMCount } else { 0 }),
+                    $(if ($nodeTiming.Result) { [int]$nodeTiming.Result.SnapshotCount } else { 0 }),
+                    $(if ($nodeTiming.Result) { @($nodeTiming.Result.Rows).Count } else { 0 }),
+                    [bool]$nodeTiming.Error, $clockAdjustmentMs) -StartUtc $nodeStart -EndUtc $nodeEnd
+        }
+        Add-TelemetryEntry -Step '1.07.10.20' -Phase 'Ownership inventory worker coordination' `
+            -Detail ("Mode={0}; Nodes={1}; RemoteNodes={2}; Throttle={3}; FailedNodes={4}; WorkerDurationMs={5}; NodeElapsedMs={6}; WallDurationMs={7}" -f `
+                $script:VirtualDiskOwnershipInventory.ExecutionMode, $nodes.Count,
+                @($nodes | Where-Object { $_.Split('.')[0] -ne $localNode.Split('.')[0] }).Count,
+                $script:VirtualDiskOwnershipInventory.ThrottleLimit,
+                @($script:VirtualDiskOwnershipInventory.Nodes | Where-Object { -not $_.Complete }).Count,
+                [long](($script:VirtualDiskOwnershipInventory.Nodes | ForEach-Object {
+                    if ($_.Result -and $_.Result.PSObject.Properties['WorkerDurationMs']) { [long]$_.Result.WorkerDurationMs } else { [long]$_.DurationMs }
+                } | Measure-Object -Sum).Sum),
+                [long](($script:VirtualDiskOwnershipInventory.Nodes | Measure-Object DurationMs -Sum).Sum),
+                $script:VirtualDiskOwnershipInventory.CoordinatorDurationMs) `
+            -StartUtc $ownershipStart -EndUtc $ownershipEnd
         $nodeTimings = @($script:VirtualDiskOwnershipInventory.Nodes | ForEach-Object { '{0}={1}ms' -f $_.Node, $_.DurationMs }) -join ';'
         Add-TelemetryEntry -Step '1.07.10' -Phase 'Preflight cluster virtual disk ownership inventory' `
-            -Detail ("Nodes={0}; Paths={1}; Timings={2}; Complete={3}" -f $nodes.Count, @($script:VirtualDiskOwnershipInventory.Rows).Count, $nodeTimings, $script:VirtualDiskOwnershipInventory.Complete) `
-            -StartUtc $ownershipStart -EndUtc (Get-TelemetryNow)
+            -Detail ("Mode={0}; Throttle={1}; Nodes={2}; Paths={3}; Timings={4}; Complete={5}" -f `
+                $script:VirtualDiskOwnershipInventory.ExecutionMode, $script:VirtualDiskOwnershipInventory.ThrottleLimit,
+                $nodes.Count, @($script:VirtualDiskOwnershipInventory.Rows).Count, $nodeTimings,
+                $script:VirtualDiskOwnershipInventory.Complete) -StartUtc $ownershipStart -EndUtc $ownershipEnd
 
         $fileStart = Get-TelemetryNow
         $script:VirtualDiskFileInventory = Get-ClusterVirtualDiskFileInventory -CsvVolumes @($script:ClusterCsvCache) `
@@ -2405,12 +2549,16 @@ function Invoke-VMCheckpointAudit {
             AttemptCount  = [int]$cachedNodeSnapshot.AttemptCount
             ChannelStatus = @($cachedNodeSnapshot.ChannelStatus)
         }
-        $cachedNodeEvents = if ($cachedNodeSnapshot.Status -eq 'Success') { @($cachedNodeSnapshot.Rows) } else { $null }
+        $cachedNodeEvents = $null
+        if ($cachedNodeSnapshot.Status -eq 'Success') {
+            [object[]]$cachedNodeEvents = @($cachedNodeSnapshot.Rows)
+        }
         $eventAttributionStart = Get-TelemetryNow
         # Derive THIS VM's view from the cached node set. Structured GUID/name evidence is exact;
         # bounded friendly-name fallback is retained with explicit low confidence.
+        $workerEvents = $null
         if ($null -ne $cachedNodeEvents) {
-            $workerEvents = @($cachedNodeEvents | ForEach-Object {
+            [object[]]$workerEvents = @($cachedNodeEvents | ForEach-Object {
                 $attribution = Resolve-HyperVEventAttribution -Message ([string]$_.FullMessage) -VMName $VMName -VMId $vmId
                 $signalAssessment = Get-HyperVEventSignalAssessment -EventId ([int]$_.Id) -Log ([string]$_.Log) `
                     -Message ([string]$_.FullMessage) -Policy $script:EventPolicy
@@ -2734,7 +2882,8 @@ function Invoke-VMCheckpointAudit {
         -StartUtc $operationRecoveryStart -EndUtc (Get-TelemetryNow)
     # The event count that ACTUALLY escalates a VM to INVESTIGATE on events alone: every CRITICAL event,
     # plus operation-failure events ONLY when they did not self-resolve.
-    $vmEscalatingConcernCount = $vmCriticalCount + $(if ($highOpSelfResolved) { 0 } else { $vmHighOpCount })
+    $vmEscalatingConcernEvents = @($vmCriticalEvents) + @(if (-not $highOpSelfResolved) { $vmHighOpEvents })
+    $vmEscalatingConcernCount = @($vmEscalatingConcernEvents).Count
 
     # Replica health as a concern driver (v0.2.14). A Critical replica (e.g. resync required) or a
     # Warning is a genuine per-VM issue even with no checkpoints / events, so it drives INVESTIGATE.
@@ -2842,6 +2991,7 @@ function Invoke-VMCheckpointAudit {
 
     $concernIdSummary     = (@($concernEvents   | Group-Object Id | Sort-Object { [int]$_.Name } | ForEach-Object { "{0} x{1}" -f $_.Name, $_.Count }) -join ', ')
     $vmConcernIdSummary   = (@($vmConcernEvents | Group-Object Id | Sort-Object { [int]$_.Name } | ForEach-Object { "{0} x{1}" -f $_.Name, $_.Count }) -join ', ')
+    $vmEscalatingIdSummary = (@($vmEscalatingConcernEvents | Group-Object Id | Sort-Object { [int]$_.Name } | ForEach-Object { "{0} x{1}" -f $_.Name, $_.Count }) -join ', ')
     $nodeOnlyConcernCount = $eventConcernCount - $vmEventConcernCount
     # Dominant node-wide concern ID, for the 'mostly NNNNN' annotation on the node-wide KV row. Only
     # annotated when a single ID makes up at least half of the node-wide concern events.
@@ -3007,6 +3157,7 @@ function Invoke-VMCheckpointAudit {
     $stateTokenEndError = ''
     $stateConsistencyReasons = @()
     $stateConsistencyStatus = 'Unavailable'
+    $stateConsistencyImpact = 'Inconclusive'
     $currentOwnerNode = $OwningNode
     try {
         $currentGroup = Get-ClusterGroup -Cluster $ClusterName -ErrorAction Stop | Where-Object { $_.Name -eq $VMName } | Select-Object -First 1
@@ -3039,7 +3190,12 @@ function Invoke-VMCheckpointAudit {
     }
     $stateChangedDuringCollection = ($stateConsistencyStatus -eq 'Changed')
     $stateConsistencyUnavailable = ($stateConsistencyStatus -eq 'Unavailable')
-    if ($stateChangedDuringCollection -or $stateConsistencyUnavailable) {
+    $stateConsistencyImpact = Get-VMCollectionStateImpact -Status $stateConsistencyStatus -Reasons $stateConsistencyReasons `
+        -ReplicationEnabled $replicationEnabled -ReplicaProductSeverity ([string]$replAssessment.ProductSeverity) `
+        -ReplicaState ([string]$replAssessment.State)
+    $replicaConfigWriteAdvisory = ($stateConsistencyImpact -eq 'Advisory')
+    $stateInconclusive = ($stateConsistencyImpact -eq 'Inconclusive')
+    if ($stateInconclusive) {
         if (-not $holdState) { $investigate = $true }
         $lowSignalOnly = $false
         if ($severityScore -lt 70) { $severityScore = 70 }
@@ -3052,10 +3208,18 @@ function Invoke-VMCheckpointAudit {
         }
         Write-AuditReportLine "  Rerun the audit after migration, checkpoint, merge, or power-state activity has settled."
         Write-AuditReportLine ""
+    } elseif ($replicaConfigWriteAdvisory) {
+        Write-AuditReportLine ""
+        Write-Section "Collection State Consistency:"
+        Write-AuditReportLine "  ADVISORY - only the VM configuration last-write timestamp changed during collection while"
+        Write-AuditReportLine "  Hyper-V Replica remained Replicating / Normal. Normal Replica metadata activity can cause this."
+        Write-AuditReportLine "  Owner, power state, checkpoint count, and attached disk paths remained stable, so this does not"
+        Write-AuditReportLine "  make the checkpoint evidence inconclusive or change the VM health verdict."
+        Write-AuditReportLine ""
     }
     Add-TelemetryEntry -Step '1.10.80.10' -Phase 'VM collection state consistency recheck' `
-        -Detail ("VM={0}; Status={1}; StartOwner={2}; EndOwner={3}; Reasons={4}; Errors={5}" -f `
-            $VMName, $stateConsistencyStatus, $OwningNode, $currentOwnerNode,
+        -Detail ("VM={0}; Status={1}; Impact={2}; StartOwner={3}; EndOwner={4}; Reasons={5}; Errors={6}" -f `
+            $VMName, $stateConsistencyStatus, $stateConsistencyImpact, $OwningNode, $currentOwnerNode,
             @($stateConsistencyReasons).Count, $(if ($stateTokenEndError) { 1 } else { 0 })) `
         -StartUtc $stateRecheckStart -EndUtc (Get-TelemetryNow)
 
@@ -3067,7 +3231,7 @@ function Invoke-VMCheckpointAudit {
         ($staleCheckpoints.Count -gt 0) -or $snapshotLayerMismatch -or $hasOrphans)
     $hasEventDriver = ($vmEscalatingConcernCount -gt 0)
     $hasReplicaDriver = ($replUnhealthy -or $hrlConcern)
-    $hasStateDriver = ($stateChangedDuringCollection -or $stateConsistencyUnavailable)
+    $hasStateDriver = $stateInconclusive
     $hasVssDriver = ($vssUnhealthy.Count -gt 0)
     $hasStorageDriver = $csvFreeSpaceConcern
     $hasEvidenceDriver = ($eventEvidenceUnavailable -or $cannotConfirmMigrationSafe)
@@ -3077,7 +3241,7 @@ function Invoke-VMCheckpointAudit {
     if ($staleCheckpoints.Count -gt 0) { [void]$investigationDriverLabels.Add(("{0} stale named snapshot(s) at or beyond {1}h" -f $staleCheckpoints.Count, $StaleHours)) }
     if ($snapshotLayerMismatch) { [void]$investigationDriverLabels.Add('snapshot/layer representation mismatch') }
     if ($hasOrphans) { [void]$investigationDriverLabels.Add(("{0} orphaned .avhdx file(s)" -f @($orphans).Count)) }
-    if ($hasEventDriver) { [void]$investigationDriverLabels.Add(("{0} unresolved VM-attributed checkpoint/merge operation failure event(s) [{1}]" -f $vmEscalatingConcernCount, $vmConcernIdSummary)) }
+    if ($hasEventDriver) { [void]$investigationDriverLabels.Add(("{0} unresolved VM-attributed checkpoint/merge operation failure event(s) [{1}]" -f $vmEscalatingConcernCount, $vmEscalatingIdSummary)) }
     if ($hasVssDriver) { [void]$investigationDriverLabels.Add(("{0} unhealthy VSS writer(s)" -f $vssUnhealthy.Count)) }
     if ($hasReplicaDriver) {
         if ($replUnhealthy) { [void]$investigationDriverLabels.Add(("Hyper-V Replica product health/state concern ({0} / {1})" -f $replAssessment.State, $replAssessment.Health)) }
@@ -3376,7 +3540,7 @@ function Invoke-VMCheckpointAudit {
     $recommendation = if ($holdState) { 'HOLD STATE' } elseif ($investigate) { 'INVESTIGATE' } else { 'OK' }
     $historicCoverageIncomplete = (($historicCorrelation -and -not $historicCorrelation.CoverageComplete) -or `
         ($activeCkptHistoric -and -not $activeCkptHistoric.CoverageComplete))
-    $assessmentConfidence = if ($hasIncompleteChain -or (-not $virtualDiskCoverageComplete) -or $eventEvidenceUnavailable -or $historicCoverageIncomplete -or $stateChangedDuringCollection -or $stateConsistencyUnavailable) {
+    $assessmentConfidence = if ($hasIncompleteChain -or (-not $virtualDiskCoverageComplete) -or $eventEvidenceUnavailable -or $historicCoverageIncomplete -or $stateInconclusive) {
         'Low'
     } elseif ($eventCollectionStatus.Status -eq 'Skipped' -or -not $vssWriters -or @($vssWriters).Count -eq 0) {
         'Moderate'
@@ -3570,10 +3734,28 @@ function Invoke-VMCheckpointAudit {
         EventConcernCount    = $eventConcernCount
         VmEventConcernCount  = $vmEventConcernCount
         EventBreakdown       = $eventBreakdownForHtml
+        VmEvents             = @($workerEvents | Where-Object { $_.VmAttributed } | ForEach-Object {
+            [pscustomobject][ordered]@{
+                TimeUtc                = [string]$_.'Time (UTC)'
+                Id                     = [int]$_.Id
+                Level                  = [string]$_.Level
+                Log                    = [string]$_.Log
+                Concern                = [string]$_.Concern
+                AttributionMethod      = [string]$_.AttributionMethod
+                AttributionConfidence  = [string]$_.AttributionConfidence
+                SignalRole             = [string]$_.SignalRole
+                IsConfirmingFork       = [bool]$_.IsConfirmingFork
+                Message                = [string]$_.Message
+                FullMessage            = [string]$_.FullMessage
+            }
+        })
         EventLookbackHours   = $EventLookbackHours
         EventsCsvName        = [string]$eventsCsvName
+        EventsCsvPath        = if ($eventsCsvName -and $reportFile) { Join-Path (Split-Path -Parent $reportFile) $eventsCsvName } else { '' }
         NodeEventsCsvName    = [string]$script:NodeCsvNameByNode[$OwningNode]
+        NodeEventsCsvPath    = if ($script:NodeCsvNameByNode[$OwningNode] -and $reportFile) { Join-Path (Split-Path -Parent $reportFile) ([string]$script:NodeCsvNameByNode[$OwningNode]) } else { '' }
         StateConsistencyStatus = [string]$stateConsistencyStatus
+        StateConsistencyImpact = [string]$stateConsistencyImpact
         StateChangedDuringCollection = [bool]$stateChangedDuringCollection
         StateConsistencyReasons = @($stateConsistencyReasons)
         InvestigationDrivers = $investigationDrivers
@@ -3598,6 +3780,7 @@ function Invoke-VMCheckpointAudit {
             }
             StateConsistency = [pscustomobject]@{
                 Status = [string]$stateConsistencyStatus
+                Impact = [string]$stateConsistencyImpact
                 Reasons = @($stateConsistencyReasons)
                 Error = [string]$stateTokenEndError
             }
@@ -3632,7 +3815,7 @@ function Invoke-VMCheckpointAudit {
         }
         # v0.2.17: summary of the HIGH-signal event IDs attributed to THIS VM (e.g. '18012 x3, 19100 x1'),
         # so the events-only INVESTIGATE step list can name the actual IDs the operator must chase.
-        VmHighConcernIds     = (@($vmHighConcernEvents | Group-Object Id | Sort-Object { [int]$_.Name } | ForEach-Object { "{0} x{1}" -f $_.Name, $_.Count }) -join ', ')
+        VmHighConcernIds     = [string]$vmEscalatingIdSummary
         LowSignalOnly        = [bool]$lowSignalOnly
         NodeDominantNote     = [string]$nodeDominantNote
         ReplHealth           = [string]$replHealth
@@ -3990,10 +4173,6 @@ end {
             }
         }
 
-        # Emit the per-VM result object to the pipeline ONLY when -PassThru was requested; otherwise the
-        # run is 'report to host / files' only and the pipeline stays empty.
-        if ($PassThru) { $vmSummary }
-
         # Clear this VM's sub-progress bar before moving to the next VM.
         Write-Progress -Id 2 -ParentId 1 -Activity ("Auditing VM: {0}" -f $name) -Completed
     }
@@ -4055,7 +4234,7 @@ end {
                     -WorkerEventIds $WorkerEventIds -ContextEventIds $ContextEventIds -ErrorCodePatterns $ErrorCodePatterns `
                     -SkipAnalyticCheck:$SkipAnalyticCheck
                 foreach ($s in @($ds)) {
-                    if ($s -and $s.PSObject.Properties['Recommendation']) { Add-Member -InputObject $s -NotePropertyName Source -NotePropertyValue 'Discovered' -Force; [void]$script:AllAuditResults.Add($s); if ($PassThru) { $s } }
+                    if ($s -and $s.PSObject.Properties['Recommendation']) { Add-Member -InputObject $s -NotePropertyName Source -NotePropertyValue 'Discovered' -Force; [void]$script:AllAuditResults.Add($s) }
                 }
             }
         } finally {
@@ -4147,6 +4326,7 @@ end {
     # to the run folder BEFORE the zip is built, so it is bundled into the results zip. It is for our
     # own future performance tuning; it is deliberately NOT surfaced in the HTML report. Only written
     # when a run folder exists (i.e. -OutputPath was supplied). Non-fatal on failure.
+    $telWritten = $null
     if ($script:RunFolder -and (Test-Path -LiteralPath $script:RunFolder)) {
         try {
             $telNodeCount = if ($script:ClusterNodesCache) { @($script:ClusterNodesCache).Count } else { 0 }
@@ -4216,11 +4396,12 @@ end {
                 SkipWorkerEvents   = [bool]$SkipWorkerEvents
                 SkipStorageHealth  = [bool]$SkipStorageHealth
                 TotalRunSeconds    = [math]::Round($script:RunStopwatch.Elapsed.TotalSeconds, 3)
-                StepNumbering      = '1 = whole run; 1.05.15 = all-cluster VM selection for -ProcessAllVMs; 1.07 = cluster virtual-disk inventory preflight total; 1.07.10-.20 = preflight ownership/file inventory; 1.10 = per-VM audit total (repeats per VM); 1.10.NN = per-VM section (NN two-digit, gaps of 5); 1.10.20.10 = VHD chain collection+validation; 1.10.35.10-.40 = ownership/file inventory and housekeeping classification; 1.10.40.05 = Replica relationship+monitoring collection; 1.10.40.10 = typed replication assessment; 1.10.45.10 = HRL collection+assessment; 1.10.50.10 = node event-log scan; 1.10.50.20 = per-VM event attribution; 1.10.50.30 = operation recovery correlation; 1.10.55.10 = Analytic channel status; 1.10.60.10 = VSS writer scan; 1.10.65.10 = attached-layer+snapshot staleness assessment; 1.10.70 = historic event correlation (repeats by search window); 1.10.75 = findings / RESULT render + result-object build; 1.10.80 = collection state consistency section; 1.10.80.10 = collection state consistency recheck; 1.10.85 = per-VM text report write; 1.20 = discovered VM validation+selection; 1.30 = storage-health snapshot; 1.40 = HTML render+write. The results ZIP is timed on the console because this JSON is written before and bundled into it. Step numbers are HIERARCHICAL / NESTED: parent and child durations overlap, so do NOT sum DurationSec across levels. Order is completion order; sort by StartUtc for a true timeline. Step numbers intentionally repeat per VM - use Detail to distinguish them.'
+                StepNumbering      = '1 = whole run; 1.05.15 = all-cluster VM selection for -ProcessAllVMs; 1.07 = cluster virtual-disk inventory preflight total; 1.07.10 = ownership inventory total; 1.07.10.10 = ownership worker timing per node; 1.07.10.20 = ownership worker coordination; 1.07.20 = file inventory; 1.10 = per-VM audit total (repeats per VM); 1.10.NN = per-VM section (NN two-digit, gaps of 5); 1.10.20.10 = VHD chain collection+validation; 1.10.35.10-.40 = ownership/file inventory and housekeeping classification; 1.10.40.05 = Replica relationship+monitoring collection; 1.10.40.10 = typed replication assessment; 1.10.45.10 = HRL collection+assessment; 1.10.50.10 = node event-log scan; 1.10.50.20 = per-VM event attribution; 1.10.50.30 = operation recovery correlation; 1.10.55.10 = Analytic channel status; 1.10.60.10 = VSS writer scan; 1.10.65.10 = attached-layer+snapshot staleness assessment; 1.10.70 = historic event correlation (repeats by search window); 1.10.75 = findings / RESULT render + result-object build; 1.10.80 = collection state consistency section; 1.10.80.10 = collection state consistency recheck; 1.10.85 = per-VM text report write; 1.20 = discovered VM validation+selection; 1.30 = storage-health snapshot; 1.40 = HTML render+write. The results ZIP is timed on the console because this JSON is written before and bundled into it. Step numbers are HIERARCHICAL / NESTED: parent and child durations overlap, so do NOT sum DurationSec across levels. Order is completion order; sort by StartUtc for a true timeline. Step numbers intentionally repeat per VM - use Detail to distinguish them.'
                 Steps              = $telSteps
             }
             $telJson = $telDoc | ConvertTo-Json -Depth 6
             [System.IO.File]::WriteAllText($telPath, $telJson, (New-Object System.Text.UTF8Encoding($false)))
+            $telWritten = $telPath
             Write-AuditReportLine "Performance telemetry written to: $telPath"
         } catch {
             Add-AuditDiagnostic -ErrorRecord $_ -Operation 'Write performance telemetry' -Scope ("Cluster={0}; RunFolder={1}" -f $clusterForName, $script:RunFolder)
@@ -4295,6 +4476,83 @@ end {
     if (-not $OutputPath) {
         Write-Alert "WARNING: no report was saved (no -OutputPath) - console output only. Re-run with -OutputPath <folder>" -Level Warning
         Write-Alert "         to capture the .txt report and events .csv to attach to a backup-vendor / Microsoft (CSS) case." -Level Warning
+    }
+
+    # Finalize automation output only after every VM, discovery pass, run-level assessment, and artifact
+    # write has completed. This keeps -PassThru homogeneous (one object per VM) while giving every row
+    # the same complete run snapshot. The snapshot deliberately does not contain Results, avoiding a
+    # circular object graph; the pipeline itself is the result collection.
+    if ($PassThru) {
+        $nodeEventContext = @($script:NodeEventCache.GetEnumerator() | Sort-Object Name | ForEach-Object {
+            $nodeEventSnapshot = $_.Value
+            [pscustomobject][ordered]@{
+                Node          = [string]$_.Key
+                Status        = if ($nodeEventSnapshot.PSObject.Properties['Status']) { [string]$nodeEventSnapshot.Status } else { 'Unavailable' }
+                Error         = if ($nodeEventSnapshot.PSObject.Properties['Error']) { [string]$nodeEventSnapshot.Error } else { '' }
+                AttemptedUtc  = if ($nodeEventSnapshot.PSObject.Properties['AttemptedUtc']) { $nodeEventSnapshot.AttemptedUtc } else { $null }
+                AttemptCount  = if ($nodeEventSnapshot.PSObject.Properties['AttemptCount']) { [int]$nodeEventSnapshot.AttemptCount } else { 0 }
+                ChannelStatus = if ($nodeEventSnapshot.PSObject.Properties['ChannelStatus']) { @($nodeEventSnapshot.ChannelStatus) } else { @() }
+                Events        = if ($nodeEventSnapshot.PSObject.Properties['Rows']) { @($nodeEventSnapshot.Rows) } else { @() }
+            }
+        })
+        $runArtifactFiles = if ($script:RunFolder -and (Test-Path -LiteralPath $script:RunFolder)) {
+            @(Get-ChildItem -LiteralPath $script:RunFolder -File | Sort-Object Name | ForEach-Object {
+                [pscustomobject]@{ Name = $_.Name; FullName = $_.FullName; LengthBytes = [long]$_.Length; LastWriteTimeUtc = $_.LastWriteTimeUtc }
+            })
+        } else {
+            @()
+        }
+        $eligibleCandidates = @($discoverySelection.Audit; $discoverySelection.Deferred)
+        $runData = [pscustomobject][ordered]@{
+            Tool                  = 'Get-HyperVVMCheckpointHealth'
+            ScriptVersion         = [string]$script:ScriptVersion
+            Cluster               = [string]$clusterForName
+            GeneratedUtc          = (Get-TelemetryNow).ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'")
+            TotalRunSeconds       = [math]::Round($script:RunStopwatch.Elapsed.TotalSeconds, 3)
+            ClusterNodeCount      = if ($script:ClusterNodesCache) { @($script:ClusterNodesCache).Count } else { 0 }
+            ClusterCsvCount       = if ($script:ClusterCsvCache) { @($script:ClusterCsvCache).Count } else { 0 }
+            PolicySource          = [string]$script:CheckpointHealthPolicy.Source
+            Parameters            = [pscustomobject][ordered]@{
+                StaleHours          = [int]$StaleHours
+                EventLookbackHours  = [int]$EventLookbackHours
+                IncludeDiscoveredVMs = [bool]$IncludeDiscoveredVMs
+                DiscoveryCap        = $MaxDiscoveredVMs
+                SkipWorkerEvents    = [bool]$SkipWorkerEvents
+                SkipAnalyticCheck   = [bool]$SkipAnalyticCheck
+                SkipStorageHealth   = [bool]$SkipStorageHealth
+                AnonymizeTelemetry  = [bool]$AnonymizeTelemetry
+            }
+            OutcomeSummary        = [pscustomobject][ordered]@{
+                Audited     = $script:AllAuditResults.Count
+                HoldState   = @($script:AllAuditResults | Where-Object { $_.Recommendation -eq 'HOLD STATE' }).Count
+                Investigate = @($script:AllAuditResults | Where-Object { $_.Recommendation -eq 'INVESTIGATE' }).Count
+                Ok          = @($script:AllAuditResults | Where-Object { $_.Recommendation -eq 'OK' }).Count
+                NotFound    = @($script:AllAuditResults | Where-Object { $_.Recommendation -eq 'NOT FOUND' }).Count
+                Error       = @($script:AllAuditResults | Where-Object { $_.Recommendation -eq 'ERROR' }).Count
+            }
+            Discovery             = [pscustomobject][ordered]@{
+                Summary               = $discoverySummary
+                EligibleCandidates    = $eligibleCandidates
+                AuditedCandidates     = @($toAudit)
+                NotAuditedCandidates  = @($discoveredVMs)
+            }
+            ExcludedVMs           = @($script:ExcludedMatched | Sort-Object -Unique)
+            HousekeepingFindings  = $script:HousekeepingFindings.ToArray()
+            StorageHealth         = $script:ClusterStorageHealth
+            NodeEventContext      = $nodeEventContext
+            Artifacts             = [pscustomobject][ordered]@{
+                RunFolder      = [string]$script:RunFolder
+                HtmlReport     = [string]$htmlWritten
+                TelemetryJson  = [string]$telWritten
+                DebugLog       = if ($script:DebugLogPath -and (Test-Path -LiteralPath $script:DebugLogPath)) { [string]$script:DebugLogPath } else { '' }
+                Zip            = [string]$zipWritten
+                Files          = $runArtifactFiles
+            }
+        }
+
+        foreach ($auditResult in $script:AllAuditResults.ToArray()) {
+            Complete-CheckpointHealthPassThruResult -Result $auditResult -RunData $runData
+        }
     }
 }
 }
