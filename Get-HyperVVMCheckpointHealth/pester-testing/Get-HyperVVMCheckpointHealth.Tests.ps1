@@ -14,6 +14,7 @@ Describe 'Get-HyperVVMCheckpointHealth source contracts' {
         $script:ReadmePath = Join-Path $script:ToolRoot 'README.md'
         $script:Source = Get-Content -LiteralPath $script:ModulePath -Raw
         $script:AssessmentSource = Get-Content -LiteralPath $script:AssessmentModulePath -Raw
+        $script:RenderingSource = Get-Content -LiteralPath $script:RenderingModulePath -Raw
         $script:StorageSource = Get-Content -LiteralPath $script:StorageModulePath -Raw
         $tokens = $null
         $parseErrors = $null
@@ -33,6 +34,13 @@ Describe 'Get-HyperVVMCheckpointHealth source contracts' {
         $script:Source | Should -Match '#Requires -Version 5\.1'
         $script:Source | Should -Not -Match '\?\?'
         $script:Source | Should -Not -Match '\?\.'
+    }
+
+    It 'opens every external renderer link safely in a new tab' {
+        $externalAnchors = @([regex]::Matches($script:RenderingSource, '<a\s+[^>]*href=(["''])https?://[^>]*>'))
+        $externalAnchors.Count | Should -BeGreaterThan 0
+        @($externalAnchors | Where-Object { $_.Value -notmatch '\starget=(["''])_blank\1' }).Count | Should -Be 0
+        @($externalAnchors | Where-Object { $_.Value -notmatch '\srel=(["''])noopener noreferrer\1' }).Count | Should -Be 0
     }
 
     It 'does not array-wrap known generic lists to obtain their count' {
@@ -114,7 +122,11 @@ Describe 'Get-HyperVVMCheckpointHealth source contracts' {
     It 'collects storage Health Service faults as read-only evidence only' {
         $script:StorageSource | Should -Match 'Get-HealthFault -ErrorAction Stop'
         $script:StorageSource | Should -Match 'HealthFaultCollectionStatus'
-        $script:StorageSource | Should -Not -Match 'RecommendedActions'
+        $script:StorageSource | Should -Match 'Microsoft\\\.Health\\\.\(\?:FaultType\|EntityType\)'
+        $script:StorageSource | Should -Match 'FaultDomain\|PhysicalDisk\|StorageEnclosure\|StoragePool\|StorageScaleUnit\|VirtualDisks\|Volume'
+        $script:StorageSource | Should -Match '@\(\$Snapshot\.HealthFaults\)\.Count -gt 0'
+        $script:StorageSource | Should -Match '\$summary = Get-StorageHealthSummary -Snapshot \$raw'
+        $script:StorageSource | Should -Match 'RecommendedActions\s+= if \(\$_\.PSObject\.Properties\[''RecommendedActions''\]\)'
         $script:StorageSource | Should -Not -Match 'Debug-StorageSubSystem|Repair-Storage|Set-Storage|Start-Storage'
     }
 
@@ -894,6 +906,7 @@ Describe 'HTML fleet report usability' {
             HealthFaults = @([pscustomobject]@{
                 Severity = 'Warning'; Reason = 'Synthetic storage health fault <review>'
                 FaultingObjectDescription = 'Synthetic affected object'; FaultingObjectLocation = 'Synthetic location'
+                RecommendedActions = @('Inspect the affected storage object <carefully>.', 'Open a CSS case if the fault persists.')
             })
         }
         $script:DegradedStorageHtml = ConvertTo-VMCheckpointAuditHtml `
@@ -971,15 +984,18 @@ Describe 'HTML fleet report usability' {
         $script:CleanRenderedHtml | Should -Not -Match '<strong>Audit coverage:</strong>'
     }
 
-    It 'surfaces read-only storage fault evidence and retains only the existing CSS diagnostic guidance' {
-        $script:DegradedStorageHtml | Should -Match '<strong>Cluster storage requires investigation:</strong> 1 active Health Service fault\(s\): Synthetic storage health fault &lt;review&gt;\.'
-        $script:DegradedStorageHtml | Should -Match '<strong>Why this snapshot is non-healthy:</strong> 1 active Health Service fault\(s\): Synthetic storage health fault &lt;review&gt;\.'
-        $script:DegradedStorageHtml | Should -Match '<h3>Active Health Service faults \(read-only evidence\)</h3>'
-        $script:DegradedStorageHtml | Should -Match '<td>Warning</td><td>Synthetic storage health fault &lt;review&gt;</td><td>Synthetic affected object</td><td>Synthetic location</td>'
+    It 'surfaces storage fault actions and retains CSS deep-analysis guidance' {
+        $script:DegradedStorageHtml | Should -Match '<strong>Cluster storage requires investigation:</strong> 1 active storage Health Service fault\(s\): Synthetic storage health fault &lt;review&gt;\.'
+        $script:DegradedStorageHtml | Should -Match '<strong>Why this snapshot is non-healthy:</strong> 1 active storage Health Service fault\(s\): Synthetic storage health fault &lt;review&gt;\.'
+        $script:DegradedStorageHtml | Should -Match '<h3>Active storage Health Service faults \(read-only evidence\)</h3>'
+        $script:DegradedStorageHtml | Should -Match '<th>Recommended action\(s\)</th>'
+        $script:DegradedStorageHtml | Should -Match '<td>Warning</td><td>Synthetic storage health fault &lt;review&gt;</td><td>Synthetic affected object</td><td>Synthetic location</td><td>Inspect the affected storage object &lt;carefully&gt;\.<br>Open a CSS case if the fault persists\.</td>'
+        $script:DegradedStorageHtml | Should -Match 'These records come from <code>Get-HealthFault</code> and are displayed as observed diagnostic evidence\.'
+        $script:DegradedStorageHtml | Should -Match 'Recommended actions are shown exactly as supplied by the matching storage fault\.'
         $script:DegradedStorageHtml | Should -Match '<strong>Deeper analysis \(recommended\):</strong> this is a lightweight snapshot\.'
         $script:DegradedStorageHtml | Should -Match 'Install-Module -Name Microsoft\.AzLocal\.CSSTools'
-        $script:DegradedStorageHtml | Should -Match 'Start-AzsSupportStorageDiagnostic documentation'
-        $script:DegradedStorageHtml | Should -Not -Match 'RecommendedActions|Debug-StorageSubSystem|Repair-Storage|Set-Storage'
+        $script:DegradedStorageHtml | Should -Match "<a href='https://github\.com/Azure/AzureLocal-Supportability/blob/main/tools/CSSTools/1\.2605\.5\.1611/functions/Start-AzsSupportStorageDiagnostic\.md' target='_blank' rel='noopener noreferrer'>Start-AzsSupportStorageDiagnostic documentation</a>"
+        $script:DegradedStorageHtml | Should -Not -Match 'Debug-StorageSubSystem|Repair-Storage|Set-Storage'
     }
 
     It 'states when an unhealthy subsystem returns no Health Service fault detail' {
@@ -2892,5 +2908,55 @@ Describe 'Virtual disk housekeeping classification' {
             -ImageLibraryPathPatterns $script:ImageLibraryPathPatterns
 
         $result.Classification | Should -Be 'OwnershipAmbiguous'
+    }
+}
+
+Describe 'Storage Health Service fault classification' {
+    BeforeAll {
+        $storageModulePath = Join-Path (Split-Path $PSScriptRoot -Parent) 'Private\Get-HyperVVMCheckpointHealth.Storage.psm1'
+        Import-Module $storageModulePath -Force
+    }
+
+    It 'excludes a cluster update-availability fault from storage evidence' {
+        InModuleScope Get-HyperVVMCheckpointHealth.Storage {
+            $fault = [pscustomobject]@{
+                FaultType = 'Microsoft.Health.FaultType.Cluster.UpdateAvailable'
+                FaultingObjectType = 'Microsoft.Health.EntityType.Cluster'
+                FaultingObjectDescription = 'UpdateAvailable'
+                Reason = 'Your cluster has one or more updates available.'
+            }
+
+            Test-StorageHealthFault -Fault $fault | Should -BeFalse
+        }
+    }
+
+    It 'includes Microsoft StorHealth fault types' {
+        InModuleScope Get-HyperVVMCheckpointHealth.Storage {
+            foreach ($entityType in @('FaultDomain', 'PhysicalDisk', 'StorageEnclosure', 'StoragePool', 'StorageScaleUnit', 'VirtualDisks', 'Volume')) {
+                $fault = [pscustomobject]@{
+                    FaultType = "Microsoft.Health.FaultType.$entityType.SyntheticFault"
+                    FaultingObjectType = $entityType
+                }
+                Test-StorageHealthFault -Fault $fault | Should -BeTrue
+            }
+        }
+    }
+
+    It 'uses the storage object type when the fault type is unavailable' {
+        InModuleScope Get-HyperVVMCheckpointHealth.Storage {
+            Test-StorageHealthFault -Fault ([pscustomobject]@{ FaultingObjectType = 'Microsoft.Health.EntityType.PhysicalDisk' }) | Should -BeTrue
+        }
+    }
+
+    It 'marks an otherwise healthy snapshot degraded when a storage fault remains' {
+        InModuleScope Get-HyperVVMCheckpointHealth.Storage {
+            $snapshot = [pscustomobject]@{
+                StorageModule = $true; StorageJobs = @(); VDiskUnhealthy = @(); PDiskUnhealthy = @()
+                CsvRedirected = @(); Subsystem = @(); HealthFaults = @([pscustomobject]@{ FaultType = 'Microsoft.Health.FaultType.Volume.CapacityLow' })
+            }
+            Get-StorageHealthSummary -Snapshot $snapshot | Should -Be 'Degraded'
+            $snapshot.HealthFaults = @()
+            Get-StorageHealthSummary -Snapshot $snapshot | Should -Be 'Healthy'
+        }
     }
 }

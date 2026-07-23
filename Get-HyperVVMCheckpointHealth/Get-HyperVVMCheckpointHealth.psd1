@@ -24,7 +24,7 @@
             Tags = @('AzureLocal', 'Hyper-V', 'FailoverCluster', 'Checkpoint', 'Diagnostics')
             LicenseUri = 'https://github.com/NeilBird/Azure-Local/blob/main/LICENSE'
             ProjectUri = 'https://aka.ms/Get-HyperVVMCheckpointHealth'
-            ReleaseNotes = 'Version 0.2.23 improvements: adds bounded cross-node event and VSS prefetch with same-node serialization, retries, deterministic cache merging, sequential fallback, and performance telemetry; adds read-only Health Service fault evidence and degraded-storage Executive Summary detail while retaining the CSS Storage Diagnostic as the sole recommendation; adds visible accessible housekeeping sort arrows; and clarifies that housekeeping category rows may overlap and are not unique-file counts.'
+            ReleaseNotes = 'Version 0.2.23 improvements: adds bounded cross-node event and VSS prefetch with same-node serialization, retries, deterministic cache merging, sequential fallback, and performance telemetry; adds read-only storage Health Service fault evidence, fault-specific recommended actions, and degraded-storage Executive Summary detail while excluding unrelated cluster faults and retaining the CSS Storage Diagnostic as the general deep-analysis follow-up; adds visible accessible housekeeping sort arrows; and clarifies that housekeeping category rows may overlap and are not unique-file counts.'
         }
     }
 }

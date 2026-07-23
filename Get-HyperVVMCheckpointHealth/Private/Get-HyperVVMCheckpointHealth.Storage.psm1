@@ -285,6 +285,31 @@ function Get-VirtualDiskHousekeepingClassification {
     }
 }
 
+function Test-StorageHealthFault {
+    [OutputType([bool])]
+    param([Parameter(Mandatory = $true)][object]$Fault)
+
+    # These are the entity types assigned to the StorHealth provider in Microsoft's published
+    # Azure Local Health Service fault catalog. Other providers emit unrelated cluster faults.
+    $storageFaultTypePattern = '^(?:Microsoft\.Health\.(?:FaultType|EntityType)\.)?(?:FaultDomain|PhysicalDisk|StorageEnclosure|StoragePool|StorageScaleUnit|VirtualDisks|Volume)(?:\.|$)'
+    $faultType = if ($Fault.PSObject.Properties['FaultType']) { [string]$Fault.FaultType } else { '' }
+    $faultingObjectType = if ($Fault.PSObject.Properties['FaultingObjectType']) { [string]$Fault.FaultingObjectType } else { '' }
+    return (($faultType -match $storageFaultTypePattern) -or ($faultingObjectType -match $storageFaultTypePattern))
+}
+
+function Get-StorageHealthSummary {
+    [OutputType([string])]
+    param([Parameter(Mandatory = $true)][object]$Snapshot)
+
+    if (-not $Snapshot.StorageModule) { return 'Unavailable' }
+    $degraded = (@($Snapshot.VDiskUnhealthy).Count -gt 0) -or (@($Snapshot.PDiskUnhealthy).Count -gt 0) -or
+        (@($Snapshot.HealthFaults).Count -gt 0) -or
+        (@($Snapshot.CsvRedirected).Count -gt 0) -or (@($Snapshot.Subsystem | Where-Object { "$($_.Health)" -eq 'Unhealthy' }).Count -gt 0)
+    if ($degraded) { return 'Degraded' }
+    if (@($Snapshot.StorageJobs).Count -gt 0) { return 'Active storage jobs' }
+    return 'Healthy'
+}
+
 function Get-ClusterStorageHealthSnapshot {
     [OutputType([object])]
     param([string]$TargetNode)
@@ -308,12 +333,15 @@ function Get-ClusterStorageHealthSnapshot {
         try { $o.Subsystem = @(Get-StorageSubSystem -ErrorAction Stop | ForEach-Object { [pscustomobject]@{ Name = [string]$_.FriendlyName; Health = [string]$_.HealthStatus } }) } catch { $o.Notes += "Subsystem: $($_.Exception.Message)" }
         if (Get-Command Get-HealthFault -ErrorAction SilentlyContinue) {
             try {
-                $o.HealthFaults = @(Get-HealthFault -ErrorAction Stop | ForEach-Object {
+                $o.HealthFaults = @(Get-HealthFault -ErrorAction Stop | Where-Object { Test-StorageHealthFault -Fault $_ } | ForEach-Object {
                     [pscustomobject]@{
+                        FaultType                 = if ($_.PSObject.Properties['FaultType']) { [string]$_.FaultType } else { '' }
+                        FaultingObjectType        = if ($_.PSObject.Properties['FaultingObjectType']) { [string]$_.FaultingObjectType } else { '' }
                         Severity                  = if ($_.PSObject.Properties['PerceivedSeverity']) { [string]$_.PerceivedSeverity } elseif ($_.PSObject.Properties['Severity']) { [string]$_.Severity } else { '' }
                         Reason                    = if ($_.PSObject.Properties['Reason']) { [string]$_.Reason } else { '' }
                         FaultingObjectDescription = if ($_.PSObject.Properties['FaultingObjectDescription']) { [string]$_.FaultingObjectDescription } else { '' }
                         FaultingObjectLocation    = if ($_.PSObject.Properties['FaultingObjectLocation']) { [string]$_.FaultingObjectLocation } else { '' }
+                        RecommendedActions        = if ($_.PSObject.Properties['RecommendedActions']) { @($_.RecommendedActions | ForEach-Object { [string]$_ } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) } else { @() }
                     }
                 })
                 $o.HealthFaultCollectionStatus = 'Success'
@@ -368,9 +396,7 @@ function Get-ClusterStorageHealthSnapshot {
         return [pscustomobject]@{ Available = $false; Source = $TargetNode; Summary = 'Unavailable'; Note = $_.Exception.Message; StorageJobs = @(); VDiskUnhealthy = @(); PDiskUnhealthy = @(); Subsystem = @(); HealthFaults = @(); HealthFaultCollectionStatus = 'Not attempted'; CsvRedirected = @() }
     }
 
-    $degraded = (@($raw.VDiskUnhealthy).Count -gt 0) -or (@($raw.PDiskUnhealthy).Count -gt 0) -or
-        (@($raw.CsvRedirected).Count -gt 0) -or (@($raw.Subsystem | Where-Object { "$($_.Health)" -eq 'Unhealthy' }).Count -gt 0)
-    $summary = if (-not $raw.StorageModule) { 'Unavailable' } elseif ($degraded) { 'Degraded' } elseif (@($raw.StorageJobs).Count -gt 0) { 'Active storage jobs' } else { 'Healthy' }
+    $summary = Get-StorageHealthSummary -Snapshot $raw
     [pscustomobject]@{
         Available      = [bool]$raw.StorageModule
         Source         = [string]$raw.ComputerName

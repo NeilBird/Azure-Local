@@ -399,9 +399,9 @@ function ConvertTo-VMCheckpointAuditHtml {
     $storageReasonText = if ($storageFaults.Count -gt 0) {
         $faultReasons = @($storageFaults | ForEach-Object {
             $reason = [string](Get-OptionalPropertyValue -InputObject $_ -Name 'Reason' -DefaultValue '')
-            if ($reason) { ConvertTo-HtmlText $reason } else { 'unspecified Health Service fault' }
+            if ($reason) { ConvertTo-HtmlText $reason } else { 'unspecified storage Health Service fault' }
         } | Sort-Object -Unique)
-        "$($storageFaults.Count) active Health Service fault(s): $($faultReasons -join '; ')"
+        "$($storageFaults.Count) active storage Health Service fault(s): $($faultReasons -join '; ')"
     } elseif ($unhealthySubsystems.Count -gt 0) {
         "$($unhealthySubsystems.Count) storage subsystem(s) report Unhealthy, but no active Health Service fault detail was returned (collection status: $(ConvertTo-HtmlText $storageFaultCollectionStatus))"
     } elseif ($StorageHealth -and @($StorageHealth.StorageJobs).Count -gt 0) {
@@ -1154,15 +1154,17 @@ $storageExecSummaryLi
             [void]$sb.Append("<div class='callout warn'><strong>Why this snapshot is non-healthy:</strong> $storageReasonText. This is read-only observed evidence; it does not establish root cause.</div>`r`n")
         }
         if ($storageFaults.Count -gt 0) {
-            [void]$sb.Append("<h3>Active Health Service faults (read-only evidence)</h3><table><thead><tr><th>Severity</th><th>Reason</th><th>Affected object</th><th>Location</th></tr></thead><tbody>")
+            [void]$sb.Append("<h3>Active storage Health Service faults (read-only evidence)</h3><table><thead><tr><th>Severity</th><th>Reason</th><th>Affected object</th><th>Location</th><th>Recommended action(s)</th></tr></thead><tbody>")
             foreach ($fault in $storageFaults) {
                 $severity = Get-OptionalPropertyValue -InputObject $fault -Name 'Severity' -DefaultValue ''
                 $reason = Get-OptionalPropertyValue -InputObject $fault -Name 'Reason' -DefaultValue ''
                 $affectedObject = Get-OptionalPropertyValue -InputObject $fault -Name 'FaultingObjectDescription' -DefaultValue ''
                 $location = Get-OptionalPropertyValue -InputObject $fault -Name 'FaultingObjectLocation' -DefaultValue ''
-                [void]$sb.Append("<tr><td>$(ConvertTo-HtmlText $severity)</td><td>$(ConvertTo-HtmlText $reason)</td><td>$(ConvertTo-HtmlText $affectedObject)</td><td>$(ConvertTo-HtmlText $location)</td></tr>")
+                $recommendedActions = @(Get-OptionalPropertyValue -InputObject $fault -Name 'RecommendedActions' -DefaultValue @())
+                $recommendedActionsHtml = if ($recommendedActions.Count -gt 0) { (@($recommendedActions | ForEach-Object { ConvertTo-HtmlText $_ }) -join '<br>') } else { '' }
+                [void]$sb.Append("<tr><td>$(ConvertTo-HtmlText $severity)</td><td>$(ConvertTo-HtmlText $reason)</td><td>$(ConvertTo-HtmlText $affectedObject)</td><td>$(ConvertTo-HtmlText $location)</td><td>$recommendedActionsHtml</td></tr>")
             }
-            [void]$sb.Append("</tbody></table><p class='muted'>Health Service fault records are displayed as observed diagnostic evidence only. This report does not execute or reproduce fault-specific recommended actions.</p>")
+            [void]$sb.Append("</tbody></table><p class='muted'>These records come from <code>Get-HealthFault</code> and are displayed as observed diagnostic evidence. Only faults classified under Microsoft's StorHealth entity types are included; unrelated cluster Health Service faults are excluded. Recommended actions are shown exactly as supplied by the matching storage fault.</p>")
         } elseif ($unhealthySubsystems.Count -gt 0) {
             [void]$sb.Append("<p class='muted'><strong>Health Service detail unavailable:</strong> the subsystem state is Unhealthy, but <code>Get-HealthFault</code> returned no active fault records (collection status: $(ConvertTo-HtmlText $storageFaultCollectionStatus)). Use the Deeper analysis guidance below for the full diagnostic.</p>")
         }
@@ -1196,7 +1198,7 @@ $storageExecSummaryLi
         if ("$($sh.Summary)" -eq 'Unavailable' -and $sh.Note) {
             [void]$sb.Append("<p class='muted'>Storage cmdlets were not available from the snapshot node: $(ConvertTo-HtmlText $sh.Note)</p>")
         }
-        [void]$sb.Append("<div class='callout info'><strong>Deeper analysis (recommended):</strong> this is a lightweight snapshot. For a full Storage Spaces Direct / SBL diagnostic - including storage event-channel analysis around the incident window - run Microsoft's CSS Storage Diagnostic, which performs far more checks:<br><code>Install-Module -Name Microsoft.AzLocal.CSSTools</code><br><code>Start-AzsSupportStorageDiagnostic</code><br><a href='https://github.com/Azure/AzureLocal-Supportability/blob/main/tools/CSSTools/1.2605.5.1611/functions/Start-AzsSupportStorageDiagnostic.md'>Start-AzsSupportStorageDiagnostic documentation</a></div>`r`n")
+        [void]$sb.Append("<div class='callout info'><strong>Deeper analysis (recommended):</strong> this is a lightweight snapshot. For a full Storage Spaces Direct / SBL diagnostic - including storage event-channel analysis around the incident window - run Microsoft's CSS Storage Diagnostic, which performs far more checks:<br><code>Install-Module -Name Microsoft.AzLocal.CSSTools</code><br><code>Start-AzsSupportStorageDiagnostic</code><br><a href='https://github.com/Azure/AzureLocal-Supportability/blob/main/tools/CSSTools/1.2605.5.1611/functions/Start-AzsSupportStorageDiagnostic.md' target='_blank' rel='noopener noreferrer'>Start-AzsSupportStorageDiagnostic documentation</a></div>`r`n")
     }
 
     # Operational observations are intentionally separate from VM health verdicts. These findings
@@ -1277,7 +1279,7 @@ $storageExecSummaryLi
 <p class="muted">Reference material to help interpret this report. Both sections below are <strong>collapsed by default</strong>
 to keep the report concise - click the <strong style="color:#0b1220;background:#38bdf8;padding:1px 8px;border-radius:999px;font-size:11.5px">&#9654; Show</strong>
 button on either heading to expand it.</p>
-<p class="muted">Reference: Microsoft Learn - Troubleshoot Hyper-V Virtual Machine Backup, Checkpoint, and Storage Failures: <a href="https://learn.microsoft.com/en-us/troubleshoot/windows-server/virtualization/hyper-v-virtual-machine-backup-checkpoint-storage">learn.microsoft.com/en-us/troubleshoot/windows-server/virtualization/hyper-v-virtual-machine-backup-checkpoint-storage</a></p>
+<p class="muted">Reference: Microsoft Learn - Troubleshoot Hyper-V Virtual Machine Backup, Checkpoint, and Storage Failures: <a href="https://learn.microsoft.com/en-us/troubleshoot/windows-server/virtualization/hyper-v-virtual-machine-backup-checkpoint-storage" target="_blank" rel="noopener noreferrer">learn.microsoft.com/en-us/troubleshoot/windows-server/virtualization/hyper-v-virtual-machine-backup-checkpoint-storage</a></p>
 
 <details class="appx">
 <summary>Diagnostic event IDs - severity classification (how this tool grades each signal)</summary>
