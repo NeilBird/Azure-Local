@@ -7,7 +7,7 @@
         'Private\Get-HyperVVMCheckpointHealth.Rendering.psm1'
         'Private\Get-HyperVVMCheckpointHealth.Storage.psm1'
     )
-    ModuleVersion = '0.2.21'
+    ModuleVersion = '0.2.22'
     CompatiblePSEditions = @('Desktop')
     GUID = '8b35df55-2975-48f8-bdb8-c8bc8da4a49c'
     Author = 'Neil Bird, Microsoft'
@@ -24,7 +24,7 @@
             Tags = @('AzureLocal', 'Hyper-V', 'FailoverCluster', 'Checkpoint', 'Diagnostics')
             LicenseUri = 'https://github.com/NeilBird/Azure-Local/blob/main/LICENSE'
             ProjectUri = 'https://aka.ms/Get-HyperVVMCheckpointHealth'
-            ReleaseNotes = 'Version 0.2.21 improvements: prevents healthy Replica metadata writes from causing state-only INVESTIGATE verdicts; aligns fleet Replica, HRL, and event evidence; highlights abnormal Replica observations; adds collapsible per-VM cards and complete housekeeping CSV export; contains the VM summary table within the shared report width; submits bounded Windows PowerShell 5.1 remote ownership-inventory workers before local collection to permit overlap when run on a verified target-cluster node, including two-node clusters, with single-node/workstation sequential behavior, fallback, and expanded worker/coordinator telemetry; and makes -PassThru a stable tested automation contract with full per-VM event evidence plus shared run-level housekeeping, storage, discovery, node-event, metadata, outcome, and artifact data.'
+            ReleaseNotes = 'Version 0.2.22 improvements: distinguishes processed, fully assessed, and incomplete VM counts in HTML, telemetry, and -PassThru run data while retaining legacy count fields; widens the responsive HTML report canvas so summary verdicts and evidence tables have more desktop space; surfaces verdict-driving queued HRL counts in the VM-summary Replica column; and uses the canonical VM-name casing returned by Hyper-V for successful results and artifacts.'
         }
     }
 }

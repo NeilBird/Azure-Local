@@ -118,7 +118,7 @@ function Get-HyperVVMCheckpointHealth {
     Author  : Neil Bird, Microsoft
     Created : 2026-07-10
     Updated : 2026-07-23
-    Version : 0.2.21
+    Version : 0.2.22
     
     Requires: Windows PowerShell 5.1 (this module is written for, and validated against, Windows
               PowerShell 5.1 ONLY - it is NOT intended or tested for PowerShell 7.x). Requires the
@@ -366,7 +366,7 @@ Then run this in Windows PowerShell 5.1, on a cluster node or a workstation that
 
 # Module version - single source of truth surfaced in the HTML report (header meta + footer) so a
 # saved / emailed report always states which build produced it. Keep in sync with the .NOTES Version.
-$script:ScriptVersion = '0.2.21'
+$script:ScriptVersion = '0.2.22'
 
 # v0.2.14: end-to-end run stopwatch - started as early as possible so the HTML report can state the
 # total time taken to audit the whole fleet and render the report ("Report generation time hh:mm:ss").
@@ -1383,13 +1383,14 @@ function Invoke-VMCheckpointAudit {
     $script:VMSectionStepNo   = $null
     $script:VMSectionName     = $null
     $reportFile = $null
+    $reportTimestamp = [DateTime]::UtcNow.ToString('yyyyMMdd-HHmmss')
     if ($OutputPath) {
         if (-not (Test-Path -LiteralPath $OutputPath)) {
             New-Item -ItemType Directory -Path $OutputPath -Force | Out-Null
         }
         $safeName   = ($VMName -replace '[^\w.\-]', '_')
         # VM name FIRST in the file name so per-VM reports sort together alphabetically for humans.
-        $reportFile = Join-Path $OutputPath ("{0}_VMAudit_{1}.txt" -f $safeName, [DateTime]::UtcNow.ToString('yyyyMMdd-HHmmss'))
+        $reportFile = Join-Path $OutputPath ("{0}_VMAudit_{1}.txt" -f $safeName, $reportTimestamp)
     }
 
     # Per-VM sub-progress (child of the "VM X of Y" bar). v0.2.15: each call also CLOSES the previous
@@ -1622,6 +1623,7 @@ function Invoke-VMCheckpointAudit {
         $v = Get-VM -Name $n -ErrorAction SilentlyContinue
         if (-not $v) { return $null }
         [pscustomobject]@{
+            Name                        = [string]$v.Name
             VMId                        = [string]$v.VMId
             Status                      = [string]$v.Status
             State                       = [string]$v.State
@@ -1636,6 +1638,15 @@ function Invoke-VMCheckpointAudit {
     if (-not $vm) {
         Write-AuditReportLine "VM '$VMName' could not be read on owning node '$OwningNode'."
         return (New-AuditSummary -Recommendation 'ERROR' -Owner $OwningNode -Detail 'VM object could not be read on the owning node.')
+    }
+    # Use Hyper-V's canonical VM-name casing for successful results and artifacts. Preserve the
+    # operator-supplied name for NOT FOUND / ERROR rows where no authoritative VM object exists.
+    if ($vm.Name) {
+        $VMName = [string]$vm.Name
+        if ($OutputPath) {
+            $safeName = ($VMName -replace '[^\w.\-]', '_')
+            $reportFile = Join-Path $OutputPath ("{0}_VMAudit_{1}.txt" -f $safeName, $reportTimestamp)
+        }
     }
     # Attach the (cached) per-node supported-version list to the VM projection so downstream code that
     # reads $vm.HostSupportedVersions is unchanged.
@@ -4380,6 +4391,9 @@ end {
                 Cluster            = $telClusterField
                 Anonymized         = [bool]$AnonymizeTelemetry
                 GeneratedUtc       = (Get-TelemetryNow).ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'")
+                VMsProcessed       = $script:AllAuditResults.Count
+                VMsFullyAssessed   = @($script:AllAuditResults | Where-Object { $_.Recommendation -notin @('NOT FOUND', 'ERROR') }).Count
+                # Retained for telemetry consumers created before 0.2.22; equivalent to VMsProcessed.
                 VMsAudited         = $script:AllAuditResults.Count
                 OutcomeHoldState   = @($script:AllAuditResults | Where-Object { $_.Recommendation -eq 'HOLD STATE' }).Count
                 OutcomeInvestigate = @($script:AllAuditResults | Where-Object { $_.Recommendation -eq 'INVESTIGATE' }).Count
@@ -4523,6 +4537,9 @@ end {
                 AnonymizeTelemetry  = [bool]$AnonymizeTelemetry
             }
             OutcomeSummary        = [pscustomobject][ordered]@{
+                Processed   = $script:AllAuditResults.Count
+                FullyAssessed = @($script:AllAuditResults | Where-Object { $_.Recommendation -notin @('NOT FOUND', 'ERROR') }).Count
+                # Retained for automation consumers created before 0.2.22; equivalent to Processed.
                 Audited     = $script:AllAuditResults.Count
                 HoldState   = @($script:AllAuditResults | Where-Object { $_.Recommendation -eq 'HOLD STATE' }).Count
                 Investigate = @($script:AllAuditResults | Where-Object { $_.Recommendation -eq 'INVESTIGATE' }).Count

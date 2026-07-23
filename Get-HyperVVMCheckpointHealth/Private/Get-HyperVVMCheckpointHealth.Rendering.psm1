@@ -84,6 +84,9 @@ function ConvertTo-VMCheckpointAuditHtml {
     $countNotFound = @($rows | Where-Object { $_.Recommendation -eq 'NOT FOUND' }).Count
     $countError = @($rows | Where-Object { $_.Recommendation -eq 'ERROR' }).Count
     $countIncomplete = $countNotFound + $countError
+    $countAssessed = $countAll - $countIncomplete
+    $assessedVerb = if ($countAssessed -eq 1) { 'was' } else { 'were' }
+    $incompleteVerb = if ($countIncomplete -eq 1) { 'was' } else { 'were' }
     $staleSnapshotTotal = (@($rows | ForEach-Object { [int]$_.StaleCheckpointCount }) | Measure-Object -Sum).Sum
     if (-not $staleSnapshotTotal) { $staleSnapshotTotal = 0 }
     $staleAttachedTotal = (@($rows | ForEach-Object {
@@ -128,7 +131,7 @@ function ConvertTo-VMCheckpointAuditHtml {
   *{box-sizing:border-box}
   body{margin:0;font-family:Segoe UI,-apple-system,Roboto,Helvetica,Arial,sans-serif;
     background:var(--bg);color:var(--ink);line-height:1.55;font-size:15px}
-    .wrap{max-width:1120px;margin:0 auto;padding:32px 24px 80px}
+    .wrap{width:100%;max-width:1440px;margin:0 auto;padding:32px 24px 80px}
   header.top{border-bottom:2px solid var(--line);padding-bottom:18px;margin-bottom:28px}
   header.top h1{margin:0 0 6px;font-size:26px;color:#fff}
   .meta{color:var(--muted);font-size:13px}
@@ -280,7 +283,7 @@ function ConvertTo-VMCheckpointAuditHtml {
      long checkpoint name wraps slightly earlier, freeing the small amount of width the Age column needs. */
   td.ckptage{white-space:nowrap}
   td.ckptname{max-width:300px;overflow-wrap:anywhere}
-        @media(max-width:1120px){table:not(.housekeeping){display:block;overflow-x:auto}}
+        @media(max-width:1440px){table:not(.housekeeping){display:block;overflow-x:auto}}
     @media(max-width:980px){.cards{grid-template-columns:repeat(4,minmax(0,1fr))}}
         @media(max-width:760px){
             table.housekeeping,table.housekeeping tbody,table.housekeeping tr,table.housekeeping td{display:block;width:100%}
@@ -326,7 +329,7 @@ function ConvertTo-VMCheckpointAuditHtml {
 <header class="top">
   <h1>Hyper-V VM Checkpoint Health Audit</h1>
   <div class="meta">
-    Cluster <b>$(ConvertTo-HtmlText $ClusterName)</b> &nbsp;&bull;&nbsp; $countAll audited $vmWord
+        Cluster <b>$(ConvertTo-HtmlText $ClusterName)</b> &nbsp;&bull;&nbsp; $countAll processed $vmWord &nbsp;&bull;&nbsp; $countAssessed fully assessed
     &nbsp;&bull;&nbsp; Report generated <b>$(ConvertTo-HtmlText $GeneratedUtc) UTC</b>
     &nbsp;&bull;&nbsp; Module version <b>$(ConvertTo-HtmlText $ScriptVersion)</b>$(if ($ReportGenerationTime) { "&nbsp;&bull;&nbsp; Processed <b>$countAll</b> $vmWord, across <b>$nodeCount</b> owning $nodeWord, in <b>$(ConvertTo-HtmlText $ReportGenerationTime)</b>" })<br>$(if ($ClusterNodeCount -gt 0) { "
     Cluster size: <b>$ClusterNodeCount</b> $(if ($ClusterNodeCount -eq 1) { 'node' } else { 'nodes' }) &nbsp;&bull;&nbsp; <b>$ClusterCsvCount</b> Cluster Shared Volume$(if ($ClusterCsvCount -eq 1) { '' } else { 's' })<br>" })
@@ -336,11 +339,11 @@ function ConvertTo-VMCheckpointAuditHtml {
 </header>
 
 <div class="callout info">
-    <strong class="scope-label">Report scope:</strong> This report is a point-in-time, read-only assessment of the <strong>$countAll $vmWord audited in this run</strong>, generated at <strong>$(ConvertTo-HtmlText $GeneratedUtc) UTC</strong>. Its findings should be considered alongside a wider assessment of the cluster, storage, backup solution, workloads, and relevant operational history. It is not a complete cluster health assessment and does not represent the health of VMs that were not audited.$unauditedDiscoveryNote
+    <strong class="scope-label">Report scope:</strong> This report processed <strong>$countAll $vmWord</strong>; <strong>$countAssessed $assessedVerb fully assessed</strong> and <strong>$countIncomplete $incompleteVerb incomplete</strong>, as of <strong>$(ConvertTo-HtmlText $GeneratedUtc) UTC</strong>. Its findings should be considered alongside a wider assessment of the cluster, storage, backup solution, workloads, and relevant operational history. It is not a complete cluster health assessment and does not represent the health of VMs that were not fully assessed.$unauditedDiscoveryNote
 </div>
 
 <div class="cards">
-    <div class="card lead"><div class="n">$countAll</div><div class="l">$vmWord audited</div></div>
+    <div class="card lead"><div class="n">$countAll</div><div class="l">$vmWord processed ($countAssessed fully assessed)</div></div>
   <div class="card high"><div class="n">$countHold</div><div class="l">Hold state</div></div>
   <div class="card amber"><div class="n">$countInv</div><div class="l">Investigate</div></div>
   <div class="card green"><div class="n">$countOk</div><div class="l">OK</div></div>
@@ -674,6 +677,10 @@ function ConvertTo-VMCheckpointAuditHtml {
                     $replText
                 } else {
                     "<span class='warnval'>$replText</span>"
+                }
+                if ($rd.PSObject.Properties['HrlAssessment'] -and $rd.HrlAssessment -and $rd.HrlAssessment.IsConcern -and ([int]$rd.HrlAssessment.ExceedsCadenceCount -gt 0)) {
+                    $hrlFileWord = if ([int]$rd.HrlAssessment.ExceedsCadenceCount -eq 1) { 'file' } else { 'files' }
+                    $repl += "<br><span class='warnval'>$($rd.HrlAssessment.ExceedsCadenceCount) queued HRL $hrlFileWord beyond cadence</span>"
                 }
             } else {
                 $repl = 'Not enabled'
