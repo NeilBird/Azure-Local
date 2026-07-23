@@ -98,6 +98,19 @@ Describe 'Get-HyperVVMCheckpointHealth source contracts' {
         $script:Source | Should -Match '\$script:NodeEventCache\[\$nodeCacheKey\]\s*=\s*\[pscustomobject\]'
         $script:Source | Should -Not -Match '\$script:NodeEventCache\[\$nodeCacheKey\]\s*=\s*\$null'
         $script:Source | Should -Match 'EventCollectionStatus\s*=\s*\[pscustomobject\]'
+        $script:Source | Should -Match '\$cachedNodeEvents\s*=\s*\$null\s*if\s*\(\$cachedNodeSnapshot\.Status\s*-eq\s*''Success''\)\s*\{\s*\[object\[\]\]\$cachedNodeEvents\s*=\s*@\(\$cachedNodeSnapshot\.Rows\)'
+        $script:Source | Should -Match '\$workerEvents\s*=\s*\$null\s*if\s*\(\$null\s*-ne\s*\$cachedNodeEvents\)\s*\{\s*\[object\[\]\]\$workerEvents\s*=\s*@\('
+    }
+
+    It 'finalizes complete PassThru automation rows only after run artifacts exist' {
+        $script:Source | Should -Not -Match 'if \(\$PassThru\) \{ \$vmSummary \}'
+        $script:Source | Should -Not -Match 'if \(\$PassThru\) \{ \$s \}'
+        $script:Source | Should -Match 'VmEvents\s*=\s*@\(\$workerEvents\s*\|\s*Where-Object\s*\{\s*\$_\.VmAttributed\s*\}'
+        $script:Source | Should -Match '\$runData\s*=\s*\[pscustomobject\]\[ordered\]@\{'
+        $script:Source | Should -Match 'HousekeepingFindings\s*=\s*\$script:HousekeepingFindings\.ToArray\(\)'
+        $script:Source | Should -Match 'StorageHealth\s*=\s*\$script:ClusterStorageHealth'
+        $script:Source | Should -Match 'NodeEventContext\s*=\s*\$nodeEventContext'
+        $script:Source | Should -Match 'Complete-CheckpointHealthPassThruResult\s+-Result\s+\$auditResult\s+-RunData\s+\$runData'
     }
 
     It 'prevents unavailable event evidence from producing an unqualified clean verdict' {
@@ -136,9 +149,22 @@ Describe 'Get-HyperVVMCheckpointHealth source contracts' {
     It 'rechecks VM state and makes changed collection state inconclusive' {
         $script:Source | Should -Match "Show-AuditProgress\s+-Step 80\s+-Status 'Rechecking VM collection state consistency'"
         $script:Source | Should -Match "Add-TelemetryEntry\s+-Step '1\.10\.80\.10'\s+-Phase 'VM collection state consistency recheck'"
-        $script:Source | Should -Match '\$stateChangedDuringCollection\s*=\s*\(\$stateConsistencyStatus\s*-eq\s*''Changed''\)'
+        $script:Source | Should -Match '\$stateInconclusive\s*=\s*\(\$stateConsistencyImpact\s*-eq\s*''Inconclusive''\)'
         $script:Source | Should -Match '\$investigate\s*=\s*\$true'
         $script:Source | Should -Match 'StateConsistency\s*=\s*\[pscustomobject\]'
+    }
+
+    It 'keeps healthy Replica-only configuration writes advisory' {
+        $script:Source | Should -Match '\$stateConsistencyImpact\s*=\s*Get-VMCollectionStateImpact'
+        $script:Source | Should -Match '\$replicaConfigWriteAdvisory\s*=\s*\(\$stateConsistencyImpact\s*-eq\s*''Advisory''\)'
+        $script:Source | Should -Match 'StateConsistencyImpact\s*=\s*\[string\]\$stateConsistencyImpact'
+    }
+
+    It 'builds event driver counts and ID labels from the same escalating subset' {
+        $script:Source | Should -Match '\$vmEscalatingConcernEvents\s*=\s*@\(\$vmCriticalEvents\)'
+        $script:Source | Should -Match '\$vmEscalatingConcernCount\s*=\s*@\(\$vmEscalatingConcernEvents\)\.Count'
+        $script:Source | Should -Match '\$vmEscalatingIdSummary\s*=\s*\(@\(\$vmEscalatingConcernEvents\s*\|\s*Group-Object Id'
+        $script:Source | Should -Match '\$vmEscalatingConcernCount,\s*\$vmEscalatingIdSummary'
     }
 
     It 'supports mutually exclusive named and all-cluster VM selectors' {
@@ -175,7 +201,9 @@ Describe 'Get-HyperVVMCheckpointHealth source contracts' {
         $vmLoop = $script:Source.LastIndexOf('foreach ($name in $script:PendingVMNames)')
         $prewarmCall | Should -BeGreaterThan 0
         $vmLoop | Should -BeGreaterThan $prewarmCall
-        $script:Source | Should -Match 'DurationMs\s+=\s+\[long\]\$nodeStopwatch\.ElapsedMilliseconds'
+        $script:Source | Should -Match 'WorkerDurationMs\s+=\s+\[long\]\$workerStopwatch\.ElapsedMilliseconds'
+        $script:Source | Should -Match 'WorkerStartUtc\s+=\s+\$workerStartUtc'
+        $script:Source | Should -Match 'WorkerEndUtc\s+=\s+\[DateTime\]::UtcNow'
         $script:Source | Should -Match 'DurationMs\s+=\s+\[long\]\$rootStopwatch\.ElapsedMilliseconds'
         $script:Source | Should -Match 'parentPathByVhd\.ContainsKey\(\$cursor\)'
         $script:Source | Should -Match 'vhdWithoutParent\.Contains\(\$cursor\)'
@@ -368,6 +396,69 @@ Describe 'Active-checkpoint historic verdict fixtures' {
     }
 }
 
+Describe 'PassThru automation result contract' {
+    BeforeAll {
+        $modulePath = Join-Path (Split-Path $PSScriptRoot -Parent) 'Private\Get-HyperVVMCheckpointHealth.Assessment.psm1'
+        Import-Module $modulePath -Force
+        $script:ExpectedPassThruProperties = @(
+            'VMName', 'Cluster', 'OwningNode', 'Source', 'Recommendation', 'HoldState',
+            'HasAttachedCheckpoints', 'HasStaleCheckpoints', 'HasOrphanedCheckpoints',
+            'AttachedCheckpointCount', 'StaleCheckpointCount', 'StaleAttachedLayerCount',
+            'SnapshotLayerMismatch', 'ConcernEventCount', 'AssessmentConfidence',
+            'CollectionStatus', 'ReportFile', 'Detail', 'ReportData', 'RunData'
+        )
+    }
+
+    It 'emits the exact stable property set and promotes nested assessment status' {
+        $nestedStatus = [pscustomobject]@{
+            VhdChains = [pscustomobject]@{ Status = 'Complete' }
+            VirtualDiskInventory = [pscustomobject]@{ Status = 'Complete' }
+            EventLogs = [pscustomobject]@{ Status = 'Success' }
+            HistoricEvents = [pscustomobject]@{ Status = 'NotRequired' }
+            StateConsistency = [pscustomobject]@{ Status = 'Stable' }
+            VssWriters = [pscustomobject]@{ Status = 'Healthy' }
+        }
+        $reportData = [pscustomobject]@{ AssessmentConfidence = 'Complete'; CollectionStatus = $nestedStatus }
+        $runData = [pscustomobject]@{ Cluster = 'TEST-CLUSTER'; HousekeepingFindings = @() }
+        $inputResult = [pscustomobject]@{
+            VMName = 'TEST-VM'; Cluster = 'TEST-CLUSTER'; OwningNode = 'TEST-NODE'; Source = 'Discovered'
+            Recommendation = 'OK'; HoldState = $false; HasAttachedCheckpoints = $true
+            HasStaleCheckpoints = $false; HasOrphanedCheckpoints = $false; AttachedCheckpointCount = 1
+            StaleCheckpointCount = 0; StaleAttachedLayerCount = 0; SnapshotLayerMismatch = $false
+            ConcernEventCount = 0; ReportFile = 'C:\Temp\TEST-VM.txt'; Detail = ''; ReportData = $reportData
+        }
+
+        $result = Complete-CheckpointHealthPassThruResult -Result $inputResult -RunData $runData
+
+        @($result.PSObject.Properties.Name) | Should -Be $script:ExpectedPassThruProperties
+        $result.Source | Should -Be 'Discovered'
+        $result.AssessmentConfidence | Should -Be 'Complete'
+        $result.CollectionStatus.EventLogs.Status | Should -Be 'Success'
+        $result.CollectionStatus.Outcome.Status | Should -Be 'OK'
+        [object]::ReferenceEquals($result.RunData, $runData) | Should -BeTrue
+    }
+
+    It 'returns predictable incomplete status for NOT FOUND and ERROR rows' {
+        $runData = [pscustomobject]@{ Cluster = 'TEST-CLUSTER' }
+        $inputs = @(
+            [pscustomobject]@{ VMName = 'MISSING'; Cluster = 'TEST-CLUSTER'; Recommendation = 'NOT FOUND'; Detail = 'Not found.'; ReportData = $null }
+            [pscustomobject]@{ VMName = 'FAILED'; Cluster = 'TEST-CLUSTER'; Recommendation = 'ERROR'; Detail = 'Collection failed.'; ReportData = $null }
+        )
+
+        $results = @($inputs | Complete-CheckpointHealthPassThruResult -RunData $runData)
+
+        $results.Count | Should -Be 2
+        foreach ($result in $results) {
+            @($result.PSObject.Properties.Name) | Should -Be $script:ExpectedPassThruProperties
+            $result.AssessmentConfidence | Should -Be 'Incomplete'
+            $result.CollectionStatus.VhdChains.Status | Should -Be 'NotCollected'
+            $result.CollectionStatus.Outcome.Status | Should -Be $result.Recommendation
+            $result.CollectionStatus.Outcome.Detail | Should -Be $result.Detail
+            $result.ReportFile | Should -BeNullOrEmpty
+        }
+    }
+}
+
 Describe 'Module distribution contracts' {
     BeforeAll {
         $script:ModuleRoot = Split-Path $PSScriptRoot -Parent
@@ -378,8 +469,8 @@ Describe 'Module distribution contracts' {
         $script:ModuleCommand = Get-Command Get-HyperVVMCheckpointHealth -Module Get-HyperVVMCheckpointHealth
     }
 
-    It 'imports a valid 0.2.20 module manifest' {
-        $script:Manifest.Version.ToString() | Should -Be '0.2.20'
+    It 'imports a valid 0.2.21 module manifest' {
+        $script:Manifest.Version.ToString() | Should -Be '0.2.21'
         $script:Manifest.ExportedFunctions.Keys | Should -Contain 'Get-HyperVVMCheckpointHealth'
     }
 
@@ -451,6 +542,18 @@ Describe 'Module distribution contracts' {
         $script:ModuleCommand.Parameters['NoColour'].Aliases | Should -Contain 'NoColor'
     }
 
+    It 'documents the complete PassThru automation contract and correct nesting' {
+        $readme = Get-Content -LiteralPath (Join-Path $script:ModuleRoot 'README.md') -Raw
+        $readme | Should -Match '\| `Source` \| string \|'
+        $readme | Should -Match '\| `AssessmentConfidence` \| string \| Top-level automation field:'
+        $readme | Should -Match '\| `CollectionStatus` \| object \| Top-level, consistently shaped status'
+        $readme | Should -Match '\| `RunData` \| object \| Shared final run snapshot'
+        $readme | Should -Match 'ReportData\.VmEvents'
+        $readme | Should -Match '\$run = \$r\[0\]\.RunData'
+        $readme | Should -Match '\$vmResult\.VMName'
+        $readme | Should -Not -Match "Select-Object @\{n='VM';e=\{ \$_\.Name \}\}, AgeHrs"
+    }
+
     It 'retains every runtime file required by the module' {
         @(
             'Get-HyperVVMCheckpointHealth.psd1',
@@ -489,7 +592,7 @@ Describe 'Module distribution contracts' {
         $setupPath = Join-Path $script:ModuleRoot 'Setup-Get-HyperVVMCheckpointHealth.ps1'
         Test-Path -LiteralPath $setupPath -PathType Leaf | Should -BeTrue
         $setupSource = Get-Content -LiteralPath $setupPath -Raw
-        $setupSource | Should -Match "\$version = '0\.2\.20'"
+        $setupSource | Should -Match "\$version = '0\.2\.21'"
         $setupSource | Should -Match "\$expectedSha256 = '[0-9a-f]{64}'"
         $setupSource | Should -Match '\[string\]\$InstallRoot = ''C:\\Temp'''
         $setupSource | Should -Match 'Get-FileHash.+SHA256'
@@ -674,7 +777,7 @@ Describe 'HTML fleet report usability' {
         $script:RenderedHtml = ConvertTo-VMCheckpointAuditHtml -Results $results -StaleHours 24 `
             -EventLookbackHours 168 -ClusterName 'CONTOSO-CLUSTER-01' -GeneratedUtc '2026-01-01 00:00:00' `
             -DiscoveredVMs @([pscustomobject]@{ Name = 'TEST-VM-DEFERRED'; Reason = 'Synthetic deferred evidence' }) `
-            -DiscoverySummary $discoverySummary -StorageHealth $null -IncludeDiscoveredVMs:$true -ScriptVersion '0.2.20' `
+            -DiscoverySummary $discoverySummary -StorageHealth $null -IncludeDiscoveredVMs:$true -ScriptVersion '0.2.21' `
             -ReportGenerationTime '00:00:01' -ClusterNodeCount 2 -ClusterCsvCount 1 `
             -HousekeepingFindings @(
                 [pscustomobject]@{
@@ -706,7 +809,7 @@ Describe 'HTML fleet report usability' {
             -Results @([pscustomobject]@{ VMName = 'TEST-VM-NORMAL'; OwningNode = 'TEST-NODE-01'; Recommendation = 'OK'; Source = 'Input'; StaleCheckpointCount = 0; ReportData = $normalReportData; Detail = '' }) `
             -StaleHours 24 -EventLookbackHours 168 -ClusterName 'CONTOSO-CLUSTER-01' -GeneratedUtc '2026-01-01 00:00:00' `
             -DiscoveredVMs $null -DiscoverySummary ([pscustomobject]@{ EligibleCount = 0; AuditedCount = 0; DeferredCount = 0; Cap = $null }) `
-            -StorageHealth $null -IncludeDiscoveredVMs:$false -ScriptVersion '0.2.20' -ReportGenerationTime '00:00:01' `
+            -StorageHealth $null -IncludeDiscoveredVMs:$false -ScriptVersion '0.2.21' -ReportGenerationTime '00:00:01' `
             -ClusterNodeCount 2 -ClusterCsvCount 1 -HousekeepingFindings @([pscustomobject]@{
                 Category = 'Unattached base disk candidate'; Scope = 'C:\ClusterStorage\UserStorage_1'
                 FileName = 'BaseDisk.vhdx'
@@ -726,7 +829,28 @@ Describe 'HTML fleet report usability' {
             -Results @([pscustomobject]@{ VMName = 'TEST-VM-ADVISORY'; OwningNode = 'TEST-NODE-01'; Recommendation = 'OK'; Source = 'Input'; StaleCheckpointCount = 0; ReportData = $advisoryReportData; Detail = '' }) `
             -StaleHours 24 -EventLookbackHours 168 -ClusterName 'CONTOSO-CLUSTER-01' -GeneratedUtc '2026-01-01 10:00:00' `
             -DiscoveredVMs @() -DiscoverySummary ([pscustomobject]@{ EligibleCount = 0; AuditedCount = 0; DeferredCount = 0; Cap = $null }) `
-            -StorageHealth $null -HousekeepingFindings @() -IncludeDiscoveredVMs:$false -ScriptVersion '0.2.20' `
+            -StorageHealth $null -HousekeepingFindings @() -IncludeDiscoveredVMs:$false -ScriptVersion '0.2.21' `
+            -ReportGenerationTime '00:00:01' -ClusterNodeCount 2 -ClusterCsvCount 1
+        $stateAdvisoryReportData = $normalReportData.PSObject.Copy()
+        $stateAdvisoryReportData | Add-Member -NotePropertyName StateConsistencyStatus -NotePropertyValue 'Changed'
+        $stateAdvisoryReportData | Add-Member -NotePropertyName StateConsistencyImpact -NotePropertyValue 'Advisory'
+        $stateAdvisoryReportData | Add-Member -NotePropertyName StateConsistencyReasons -NotePropertyValue @('ConfigLastWriteUtc')
+        $script:StateAdvisoryHtml = ConvertTo-VMCheckpointAuditHtml `
+            -Results @([pscustomobject]@{ VMName = 'TEST-VM-STATE-ADVISORY'; OwningNode = 'TEST-NODE-01'; Recommendation = 'OK'; Source = 'Input'; StaleCheckpointCount = 0; ReportData = $stateAdvisoryReportData; Detail = '' }) `
+            -StaleHours 24 -EventLookbackHours 168 -ClusterName 'CONTOSO-CLUSTER-01' -GeneratedUtc '2026-01-01 10:00:00' `
+            -DiscoveredVMs @() -DiscoverySummary ([pscustomobject]@{ EligibleCount = 0; AuditedCount = 0; DeferredCount = 0; Cap = $null }) `
+            -StorageHealth $null -HousekeepingFindings @() -IncludeDiscoveredVMs:$false -ScriptVersion '0.2.21' `
+            -ReportGenerationTime '00:00:01' -ClusterNodeCount 2 -ClusterCsvCount 1
+        $hrlConcernReportData = $normalReportData.PSObject.Copy()
+        $hrlConcernReportData | Add-Member -NotePropertyName HrlAssessment -NotePropertyValue ([pscustomobject]@{
+            Enabled = $true; ReplicationEnabled = $true; ThresholdMinutes = 50
+            ExceedsCadenceCount = 12; CorroboratedByReplication = $true; IsConcern = $true
+        })
+        $script:HrlConcernHtml = ConvertTo-VMCheckpointAuditHtml `
+            -Results @([pscustomobject]@{ VMName = 'TEST-VM-HRL'; OwningNode = 'TEST-NODE-01'; Recommendation = 'INVESTIGATE'; Source = 'Input'; StaleCheckpointCount = 0; ReportData = $hrlConcernReportData; Detail = '' }) `
+            -StaleHours 24 -EventLookbackHours 168 -ClusterName 'CONTOSO-CLUSTER-01' -GeneratedUtc '2026-01-01 10:00:00' `
+            -DiscoveredVMs @() -DiscoverySummary ([pscustomobject]@{ EligibleCount = 0; AuditedCount = 0; DeferredCount = 0; Cap = $null }) `
+            -StorageHealth $null -HousekeepingFindings @() -IncludeDiscoveredVMs:$false -ScriptVersion '0.2.21' `
             -ReportGenerationTime '00:00:01' -ClusterNodeCount 2 -ClusterCsvCount 1
     }
 
@@ -769,11 +893,46 @@ Describe 'HTML fleet report usability' {
             $script:RenderedHtml | Should -Match ([regex]::Escape("<td>$signal</td>"))
         }
         $script:AdvisoryReplicaHtml | Should -Match "<span class='warnval'>Advisory</span>"
+        $script:RenderedHtml | Should -Match "<td><span class='warnval'>Error / Critical</span></td>"
+        $script:RenderedHtml | Should -Match "<td>Replicating / Normal</td>"
     }
 
     It 'labels every per-VM card heading explicitly' {
         $script:RenderedHtml | Should -Match '<h3><span class="vm-label">VM Name:</span> <code>TEST-VM-NORMAL</code>'
         $script:RenderedHtml | Should -Match '<h3><span class="vm-label">VM Name:</span> <code>TEST-VM-MISSING</code>'
+    }
+
+    It 'renders every per-VM card as an individually collapsible default-open disclosure' {
+        $script:RenderedHtml | Should -Match '<details class="vm" id="vm-TEST-VM-NORMAL" open>\s*<summary><h3><span class="vm-label">VM Name:</span>'
+        $script:RenderedHtml | Should -Match '<details class="vm" id="vm-TEST-VM-MISSING" open>\s*<summary><h3><span class="vm-label">VM Name:</span>'
+        $script:RenderedHtml | Should -Match '\.vm>summary::before\{content:''\\25B6'''
+        $script:RenderedHtml | Should -Match '\.vm\[open\]>summary::before\{content:''\\25BC''\}'
+        ([regex]::Matches($script:RenderedHtml, '<details class="vm(?: hold)?" id="vm-')).Count | Should -Be 4
+    }
+
+    It 'sorts per-VM cards by verdict criticality and descending severity' {
+        $detailsStart = $script:RenderedHtml.IndexOf('Per-VM detailed information')
+        $stalePosition = $script:RenderedHtml.IndexOf('id="vm-TEST-VM-STALE-LAYER"', $detailsStart)
+        $replicaPosition = $script:RenderedHtml.IndexOf('id="vm-TEST-VM-REPLICA"', $detailsStart)
+        $normalPosition = $script:RenderedHtml.IndexOf('id="vm-TEST-VM-NORMAL"', $detailsStart)
+        $missingPosition = $script:RenderedHtml.IndexOf('id="vm-TEST-VM-MISSING"', $detailsStart)
+        $stalePosition | Should -BeLessThan $replicaPosition
+        $replicaPosition | Should -BeLessThan $normalPosition
+        $normalPosition | Should -BeLessThan $missingPosition
+    }
+
+    It 'explains healthy Replica config-write changes as non-escalating advisories' {
+        $script:StateAdvisoryHtml | Should -Match 'Collection state consistency</div><div>Changed / Advisory'
+        $script:StateAdvisoryHtml | Should -Match 'Normal Replica metadata activity can cause this\.'
+        $script:StateAdvisoryHtml | Should -Match 'no checkpoint-chain action is required from this observation'
+        $script:StateAdvisoryHtml | Should -Match '<span class="pill ok">OK</span>'
+        $script:StateAdvisoryHtml | Should -Not -Match '<strong>INVESTIGATE\.</strong>'
+    }
+
+    It 'rolls HRL-only concerns into the ordinary summary and a dedicated action' {
+        $script:HrlConcernHtml | Should -Match 'findings: 1 VM\(s\) with cadence-breaching HRL evidence\.'
+        $script:HrlConcernHtml | Should -Match 'Hyper-V Replica log cadence needs attention \(1 VM\(s\)\):</strong> TEST-VM-HRL'
+        $script:HrlConcernHtml | Should -Match 'Do not delete or modify <code>\.hrl</code> files based on this report\.'
     }
 
     It 'renders the per-VM and housekeeping sections as matching default-open disclosures' {
@@ -808,7 +967,7 @@ Describe 'HTML fleet report usability' {
         ) -StaleHours 24 -EventLookbackHours 168 -ClusterName 'CONTOSO-CLUSTER-01' `
             -GeneratedUtc '2026-07-20 12:26:52' -DiscoveredVMs @() `
             -DiscoverySummary ([pscustomobject]@{ EligibleCount = 0; AuditedCount = 0; DeferredCount = 0; Cap = $null }) `
-            -StorageHealth $null -ScriptVersion '0.2.20' -ReportGenerationTime '00:00:01' `
+            -StorageHealth $null -ScriptVersion '0.2.21' -ReportGenerationTime '00:00:01' `
             -ClusterNodeCount 1 -ClusterCsvCount 1 -HousekeepingFindings @()
 
         $html | Should -Match 'required Worker/VMMS coverage is incomplete'
@@ -827,7 +986,7 @@ Describe 'HTML fleet report usability' {
         ) -StaleHours 24 -EventLookbackHours 168 -ClusterName 'CONTOSO-CLUSTER-01' `
             -GeneratedUtc '2026-07-20 12:26:52' -DiscoveredVMs @() `
             -DiscoverySummary ([pscustomobject]@{ EligibleCount = 0; AuditedCount = 0; DeferredCount = 0; Cap = $null }) `
-            -StorageHealth $null -ScriptVersion '0.2.20' -ReportGenerationTime '00:00:01' `
+            -StorageHealth $null -ScriptVersion '0.2.21' -ReportGenerationTime '00:00:01' `
             -ClusterNodeCount 1 -ClusterCsvCount 1 -HousekeepingFindings @()
 
         $html | Should -Match 'Analytic channel.*Not enabled on this node'
@@ -855,7 +1014,7 @@ Describe 'HTML fleet report usability' {
 
     It 'uses Replica-specific guidance for a Replica-only INVESTIGATE result' {
         $script:RenderedHtml | Should -Match 'Review the Hyper-V Replica details below, confirm connectivity and capacity on both replication partners'
-        $replicaCard = [regex]::Match($script:RenderedHtml, '(?s)<div class="vm" id="vm-TEST-VM-REPLICA">.*?(?=<div class="vm"|</main>)').Value
+        $replicaCard = [regex]::Match($script:RenderedHtml, '(?s)<details class="vm" id="vm-TEST-VM-REPLICA" open>.*?</details>').Value
         $replicaCard | Should -Not -Match 'checkpoint fork-commit signature was NOT observed'
     }
 
@@ -879,7 +1038,7 @@ Describe 'HTML fleet report usability' {
         ) -StaleHours 24 -EventLookbackHours 168 -ClusterName 'CONTOSO-CLUSTER-01' `
             -GeneratedUtc '2026-07-21 12:00:00' -DiscoveredVMs @() `
             -DiscoverySummary ([pscustomobject]@{ EligibleCount = 0; AuditedCount = 0; DeferredCount = 0; Cap = $null }) `
-            -StorageHealth $null -ScriptVersion '0.2.20' -ReportGenerationTime '00:00:01' `
+            -StorageHealth $null -ScriptVersion '0.2.21' -ReportGenerationTime '00:00:01' `
             -ClusterNodeCount 1 -ClusterCsvCount 1 -HousekeepingFindings @()
 
         $html | Should -Match 'checkpoint reliability evidence rather than proof of chain corruption'
@@ -904,7 +1063,7 @@ Describe 'HTML fleet report usability' {
         ) -StaleHours 24 -EventLookbackHours 168 -ClusterName 'CONTOSO-CLUSTER-01' `
             -GeneratedUtc '2026-07-21 12:00:00' -DiscoveredVMs @() `
             -DiscoverySummary ([pscustomobject]@{ EligibleCount = 0; AuditedCount = 0; DeferredCount = 0; Cap = $null }) `
-            -StorageHealth $null -ScriptVersion '0.2.20' -ReportGenerationTime '00:00:01' `
+            -StorageHealth $null -ScriptVersion '0.2.21' -ReportGenerationTime '00:00:01' `
             -ClusterNodeCount 1 -ClusterCsvCount 1 -HousekeepingFindings @()
 
         $html | Should -Match 'No confirming checkpoint fork-commit signature was observed, so on-disk chain corruption is not established\.'
@@ -927,7 +1086,7 @@ Describe 'HTML fleet report usability' {
         ) -StaleHours 24 -EventLookbackHours 168 -ClusterName 'CONTOSO-CLUSTER-01' `
             -GeneratedUtc '2026-07-21 12:00:00' -DiscoveredVMs @() `
             -DiscoverySummary ([pscustomobject]@{ EligibleCount = 0; AuditedCount = 0; DeferredCount = 0; Cap = $null }) `
-            -StorageHealth $null -ScriptVersion '0.2.20' -ReportGenerationTime '00:00:01' `
+            -StorageHealth $null -ScriptVersion '0.2.21' -ReportGenerationTime '00:00:01' `
             -ClusterNodeCount 1 -ClusterCsvCount 1 -HousekeepingFindings @()
 
         $html | Should -Match 'INCONCLUSIVE collection state \(Changed: ConfigLastWriteUtc\)'
@@ -952,7 +1111,7 @@ Describe 'HTML fleet report usability' {
         ) -StaleHours 24 -EventLookbackHours 168 -ClusterName 'CONTOSO-CLUSTER-01' `
             -GeneratedUtc '2026-07-20 12:26:52' -DiscoveredVMs @() `
             -DiscoverySummary ([pscustomobject]@{ EligibleCount = 0; AuditedCount = 0; DeferredCount = 0; Cap = $null }) `
-            -StorageHealth $null -ScriptVersion '0.2.20' -ReportGenerationTime '00:00:01' `
+            -StorageHealth $null -ScriptVersion '0.2.21' -ReportGenerationTime '00:00:01' `
             -ClusterNodeCount 1 -ClusterCsvCount 1 -HousekeepingFindings @()
 
         $html | Should -Match '0 layers / 1 snapshot'
@@ -972,7 +1131,7 @@ Describe 'HTML fleet report usability' {
             -Results @([pscustomobject]@{ VMName = 'TEST-VM-NORMAL'; OwningNode = 'TEST-NODE-01'; Recommendation = 'OK'; Source = 'Input'; StaleCheckpointCount = 0; ReportData = $normalReportData; Detail = '' }) `
             -StaleHours 24 -EventLookbackHours 168 -ClusterName 'CONTOSO-CLUSTER-01' -GeneratedUtc '2026-01-01 00:00:00' `
             -DiscoveredVMs $null -DiscoverySummary ([pscustomobject]@{ EligibleCount = 0; AuditedCount = 0; DeferredCount = 0; Cap = $null }) `
-            -StorageHealth $null -ScriptVersion '0.2.20' -ReportGenerationTime '00:00:01' `
+            -StorageHealth $null -ScriptVersion '0.2.21' -ReportGenerationTime '00:00:01' `
             -ClusterNodeCount 2 -ClusterCsvCount 1 -HousekeepingFindings $null
 
         $html | Should -Match 'No cluster or storage housekeeping observations were produced by the checks performed in this run\.'
@@ -994,7 +1153,7 @@ Describe 'HTML fleet report usability' {
 
     It 'links unattached base disk README guidance in a new tab' {
         $script:CleanRenderedHtml | Should -Match 'supplied via -PolicyPath \(see <a href="https://aka\.ms/Get-HyperVVMCheckpointHealth#readme" target="_blank" rel="noopener noreferrer">README\.md</a>\)\.'
-        $script:CleanRenderedHtml | Should -Not -Match '\(see README\.md\)'
+        $script:CleanRenderedHtml | Should -Not -Match "<td data-label='Review'>[^<]*\(see README\.md\)"
     }
 
     It 'gives housekeeping findings readable desktop columns and stacked mobile labels' {
@@ -1037,6 +1196,17 @@ Describe 'HTML fleet report usability' {
         $script:RenderedHtml | Should -Match 'seen\[identity\]'
     }
 
+    It 'exports every housekeeping row to CSV using embedded report metadata' {
+        $script:RenderedHtml | Should -Match "id='hk-export-csv' data-cluster='CONTOSO-CLUSTER-01' data-generated='2026-01-01 00:00:00'"
+        $script:RenderedHtml | Should -Match 'Download all findings \(CSV\)'
+        $script:RenderedHtml | Should -Match 'function csvEscape\(value\)'
+        $script:RenderedHtml | Should -Match 'rows\.forEach\(function \(row\)'
+        $script:RenderedHtml | Should -Match "return 'CheckpointHousekeeping-' \+ cluster \+ '-' \+ timestamp \+ '\.csv'"
+        $script:RenderedHtml | Should -Match "new Blob\(\['\\uFEFF' \+ lines\.join\('\\r\\n'\)\]"
+        $script:RenderedHtml | Should -Match "data-file-name='Data&lt;review&gt;\.vhdx'.*data-observation='Attached disk is stored under another VM folder &lt;review&gt;'"
+        $script:RenderedHtml | Should -Match "getElementById\('hk-export-csv'\)\.addEventListener\('click', exportHousekeepingCsv\)"
+    }
+
     It 'filters selected unattached VHDX rows and reveals copyable persistent policy settings below the table' {
         ([regex]::Matches($script:RenderedHtml, "class='hk-image-filter' type='checkbox'> Filter out as VM image")).Count | Should -Be 1
         $script:RenderedHtml | Should -Match "id='hk-image-policy' hidden><h3>Persistent VM image policy settings</h3>"
@@ -1064,7 +1234,7 @@ Describe 'HTML fleet report usability' {
             [pscustomobject]@{ VMName = 'TEST-VM'; OwningNode = 'TEST-NODE'; Recommendation = 'OK'; Source = 'Input'; StaleCheckpointCount = 0; ReportData = $normalReportData; Detail = '' }
         ) -StaleHours 24 -EventLookbackHours 168 -ClusterName 'TEST-CLUSTER' -GeneratedUtc '2026-01-01 00:00:00' `
             -DiscoveredVMs @() -DiscoverySummary ([pscustomobject]@{ EligibleCount = 0; AuditedCount = 0; DeferredCount = 0; Cap = $null }) `
-            -StorageHealth $null -ScriptVersion '0.2.20' -ReportGenerationTime '00:00:01' -ClusterNodeCount 1 -ClusterCsvCount 1 `
+            -StorageHealth $null -ScriptVersion '0.2.21' -ReportGenerationTime '00:00:01' -ClusterNodeCount 1 -ClusterCsvCount 1 `
             -HousekeepingFindings $duplicateFindings
 
         ([regex]::Matches($html, 'Unfiltered unique-file storage: <strong>1\.50 MB</strong>')).Count | Should -Be 1
@@ -1078,7 +1248,7 @@ Describe 'HTML fleet report usability' {
             [pscustomobject]@{ VMName = 'TEST-VM'; OwningNode = 'TEST-NODE'; Recommendation = 'OK'; Source = 'Input'; StaleCheckpointCount = 0; ReportData = $normalReportData; Detail = '' }
         ) -StaleHours 24 -EventLookbackHours 168 -ClusterName 'TEST-CLUSTER' -GeneratedUtc '2026-01-01 00:00:00' `
             -DiscoveredVMs @() -DiscoverySummary ([pscustomobject]@{ EligibleCount = 0; AuditedCount = 0; DeferredCount = 0; Cap = $null }) `
-            -StorageHealth $null -ScriptVersion '0.2.20' -ReportGenerationTime '00:00:01' -ClusterNodeCount 1 -ClusterCsvCount 1 `
+            -StorageHealth $null -ScriptVersion '0.2.21' -ReportGenerationTime '00:00:01' -ClusterNodeCount 1 -ClusterCsvCount 1 `
             -HousekeepingFindings @([pscustomobject]@{ Category = 'Placement'; Scope = 'TEST-VM'; FileName = 'Large.vhdx'; FullName = 'C:\ClusterStorage\Volume1\Large.vhdx'; ParentPath = 'C:\ClusterStorage\Volume1'; CsvRoot = 'C:\ClusterStorage\Volume1'; Extension = '.vhdx'; Length = $twoTerabytes; Observation = 'Synthetic'; Review = 'Review.' })
 
         $html | Should -Match "id='hk-visible-bytes'>2\.00 TB</strong>"
@@ -1089,6 +1259,12 @@ Describe 'HTML fleet report usability' {
 
     It 'contains wide non-housekeeping tables on narrow screens' {
         $script:RenderedHtml | Should -Match '@media\(max-width:1120px\)\{table:not\(\.housekeeping\)\{display:block;overflow-x:auto\}\}'
+    }
+
+    It 'contains only the VM summary table within the shared report width on desktop' {
+        $script:RenderedHtml | Should -Match '\.vm-summary-scroll\{width:100%;max-width:100%;overflow-x:auto\}'
+        $script:RenderedHtml | Should -Match '(?s)<h2>VM summary table</h2>.*?<div class="vm-summary-scroll">\s*<table>.*?</tbody></table></div>'
+        ([regex]::Matches($script:RenderedHtml, '<div class="vm-summary-scroll">')).Count | Should -Be 1
     }
 
     It 'stacks per-VM key-value details on narrow screens' {
@@ -1118,7 +1294,7 @@ Describe 'Unrecovered-failure debug log' {
     BeforeEach {
         $script:RunStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
         $script:TelemetryClockBaseUtc = [DateTimeOffset]::UtcNow
-        $script:ScriptVersion = '0.2.20'
+        $script:ScriptVersion = '0.2.21'
         $script:VMSectionStepNo = 45
         $script:VMSectionName = 'Scanning Replica change logs (.hrl)'
         $script:AuditDiagnostics = [System.Collections.Generic.List[object]]::new()
@@ -1185,7 +1361,7 @@ Describe 'Synthetic HTML example report' {
         $script:ExampleHtml = Get-Content -LiteralPath $script:ExamplePath -Raw
         $script:DetailBlocks = [regex]::Matches(
             $script:ExampleHtml,
-            '(?s)<div class="vm(?: hold)?" id="vm-(TestVM\d{2})">(.*?)(?=<div class="vm(?: hold)?" id="vm-|<h2>Cluster storage health)'
+            '(?s)<details class="vm(?: hold)?" id="vm-(TestVM\d{2})" open>(.*?)(?=<details class="vm(?: hold)?" id="vm-|<h2>Cluster storage health)'
         )
     }
 
@@ -1811,6 +1987,21 @@ Describe 'VM collection state consistency' {
         $result.Reasons | Should -Contain 'State'
         $result.Reasons | Should -Contain 'ConfigLastWriteUtc'
     }
+
+    It 'treats a sole config write under healthy active Replica as advisory' {
+        Get-VMCollectionStateImpact -Status Changed -Reasons @('ConfigLastWriteUtc') `
+            -ReplicationEnabled $true -ReplicaProductSeverity Healthy -ReplicaState Replicating | Should -Be 'Advisory'
+    }
+
+    It 'keeps a config write plus another state change inconclusive' {
+        Get-VMCollectionStateImpact -Status Changed -Reasons @('ConfigLastWriteUtc', 'CheckpointCount') `
+            -ReplicationEnabled $true -ReplicaProductSeverity Healthy -ReplicaState Replicating | Should -Be 'Inconclusive'
+    }
+
+    It 'keeps a config-only change without healthy active Replica inconclusive' {
+        Get-VMCollectionStateImpact -Status Changed -Reasons @('ConfigLastWriteUtc') `
+            -ReplicationEnabled $true -ReplicaProductSeverity Critical -ReplicaState WaitingForStartResynchronize | Should -Be 'Inconclusive'
+    }
 }
 
 Describe 'Per-VM cluster orphan candidate selection' {
@@ -1989,6 +2180,173 @@ Describe 'Cluster virtual disk runtime collectors' {
         @($result.Rows).Count | Should -Be 4
         @($result.Rows.Path) | Should -Contain 'C:\TEST\CSV01\TEST-VM-01\base.vhdx'
         @($result.Rows.Path) | Should -Contain 'C:\TEST\CSV01\TEST-VM-01\snapshot-parent.vhdx'
+    }
+
+    It 'fans remote ownership collection out once and restores stable node order' {
+        $localNode = $env:COMPUTERNAME
+        $remoteNodes = @('REMOTE-NODE-B', 'REMOTE-NODE-A')
+        $script:FanoutJob = Start-Job -ScriptBlock { }
+        Mock New-PSSession {
+            [System.Runtime.Serialization.FormatterServices]::GetUninitializedObject(
+                [System.Management.Automation.Runspaces.PSSession]
+            )
+        }
+        Mock Remove-PSSession { }
+        Mock Wait-Job { $Job }
+        Mock Receive-Job {
+            foreach ($remoteNode in @('REMOTE-NODE-B', 'REMOTE-NODE-A')) {
+                $remoteResult = [pscustomobject]@{
+                    Complete = $true; VMCount = 1; SnapshotCount = 0
+                    Rows = @([pscustomobject]@{ VMName = "VM-$remoteNode"; Path = "C:\TEST\$remoteNode.vhdx"; Source = 'Current' })
+                    Folders = @(); Errors = @(); WorkerDurationMs = 25
+                }
+                Add-Member -InputObject $remoteResult -NotePropertyName PSComputerName -NotePropertyValue $remoteNode
+                $remoteResult
+            }
+        }
+        Mock Remove-Job { }
+        Mock Get-VM { @() }
+        Mock Invoke-Command {
+            if ($AsJob) { $script:FanoutJob } else { & $ScriptBlock }
+        }
+
+        $result = Get-ClusterVirtualDiskOwnershipInventory -Nodes @($remoteNodes[0], $localNode, $remoteNodes[1]) `
+            -LocalNode $localNode -SessionByNode @{}
+
+        $result.Complete | Should -BeTrue
+        $result.ExecutionMode | Should -Be 'ConcurrentRemote'
+        $result.ThrottleLimit | Should -Be 2
+        @($result.Nodes.Node) | Should -Be @('REMOTE-NODE-A', 'REMOTE-NODE-B', $localNode)
+        @($result.Rows).Count | Should -Be 2
+        Should -Invoke Invoke-Command -Times 1 -Exactly -ParameterFilter { @($Session).Count -eq 2 -and $ThrottleLimit -eq 2 -and $AsJob }
+        Should -Invoke Wait-Job -Times 1 -Exactly
+        Should -Invoke Receive-Job -Times 1 -Exactly
+        Should -Invoke Remove-PSSession -Times 2 -Exactly
+    }
+
+    It 'overlaps one remote worker with local collection on a two-node cluster' {
+        $localNode = $env:COMPUTERNAME
+        $script:OrchestrationOrder = [System.Collections.Generic.List[string]]::new()
+        $script:FanoutJob = Start-Job -ScriptBlock { }
+        Mock New-PSSession {
+            [System.Runtime.Serialization.FormatterServices]::GetUninitializedObject(
+                [System.Management.Automation.Runspaces.PSSession]
+            )
+        }
+        Mock Remove-PSSession { }
+        Mock Wait-Job { $Job }
+        Mock Receive-Job {
+            $remoteResult = [pscustomobject]@{
+                Complete = $true; VMCount = 0; SnapshotCount = 0
+                Rows = @(); Folders = @(); Errors = @(); WorkerDurationMs = 25
+            }
+            Add-Member -InputObject $remoteResult -NotePropertyName PSComputerName -NotePropertyValue 'REMOTE-NODE-A'
+            $remoteResult
+        }
+        Mock Remove-Job { }
+        Mock Get-VM { [void]$script:OrchestrationOrder.Add('LocalCollected'); @() }
+        Mock Invoke-Command {
+            if ($AsJob) {
+                [void]$script:OrchestrationOrder.Add('RemoteStarted')
+                $script:FanoutJob
+            } else {
+                & $ScriptBlock
+            }
+        }
+
+        $result = Get-ClusterVirtualDiskOwnershipInventory -Nodes @($localNode, 'REMOTE-NODE-A') `
+            -LocalNode $localNode -SessionByNode @{}
+
+        $result.Complete | Should -BeTrue
+        $result.ExecutionMode | Should -Be 'ConcurrentRemote'
+        $result.ThrottleLimit | Should -Be 1
+        @($result.Nodes.Node) | Should -Be @('REMOTE-NODE-A', $localNode)
+        @($script:OrchestrationOrder) | Should -Be @('RemoteStarted', 'LocalCollected')
+        Should -Invoke Invoke-Command -Times 1 -Exactly -ParameterFilter { @($Session).Count -eq 1 -and $ThrottleLimit -eq 1 -and $AsJob }
+        Should -Invoke Wait-Job -Times 1 -Exactly
+        Should -Invoke Receive-Job -Times 1 -Exactly
+        Should -Invoke Remove-Job -Times 1 -Exactly
+    }
+
+    It 'keeps a single-node cluster local and sequential' {
+        Mock Get-VM { @() }
+        Mock New-PSSession { throw 'New-PSSession must not run for one local node.' }
+        Mock Invoke-Command { throw 'Invoke-Command must not run for one local node.' }
+
+        $result = Get-ClusterVirtualDiskOwnershipInventory -Nodes @($env:COMPUTERNAME) `
+            -LocalNode $env:COMPUTERNAME -SessionByNode @{}
+
+        $result.Complete | Should -BeTrue
+        $result.ExecutionMode | Should -Be 'Sequential'
+        $result.ThrottleLimit | Should -Be 1
+        @($result.Nodes.Node) | Should -Be @($env:COMPUTERNAME)
+        Should -Invoke New-PSSession -Times 0 -Exactly
+        Should -Invoke Invoke-Command -Times 0 -Exactly
+    }
+
+    It 'keeps management-workstation ownership collection sequential' {
+        Mock New-PSSession {
+            [System.Runtime.Serialization.FormatterServices]::GetUninitializedObject(
+                [System.Management.Automation.Runspaces.PSSession]
+            )
+        }
+        Mock Get-VM { @() }
+        Mock Invoke-Command { & $ScriptBlock }
+
+        $result = Get-ClusterVirtualDiskOwnershipInventory -Nodes @('REMOTE-NODE-B', 'REMOTE-NODE-A') `
+            -LocalNode $env:COMPUTERNAME -SessionByNode @{}
+
+        $result.Complete | Should -BeTrue
+        $result.ExecutionMode | Should -Be 'Sequential'
+        $result.ThrottleLimit | Should -Be 1
+        Should -Invoke Invoke-Command -Times 2 -Exactly -ParameterFilter { @($Session).Count -eq 1 }
+    }
+
+    It 'falls back to sequential collection when concurrent session preparation fails' {
+        $script:SessionOpenAttempt = 0
+        Mock New-PSSession {
+            $script:SessionOpenAttempt++
+            if ($script:SessionOpenAttempt -eq 2) { throw 'Concurrent session preparation failed.' }
+            [System.Runtime.Serialization.FormatterServices]::GetUninitializedObject(
+                [System.Management.Automation.Runspaces.PSSession]
+            )
+        }
+        Mock Remove-PSSession { }
+        Mock Get-VM { @() }
+        Mock Invoke-Command { & $ScriptBlock }
+
+        $result = Get-ClusterVirtualDiskOwnershipInventory `
+            -Nodes @($env:COMPUTERNAME, 'REMOTE-NODE-A', 'REMOTE-NODE-B') `
+            -LocalNode $env:COMPUTERNAME -SessionByNode @{}
+
+        $result.Complete | Should -BeTrue
+        $result.ExecutionMode | Should -Be 'SequentialFallback'
+        $result.ThrottleLimit | Should -Be 1
+        @($result.Nodes).Count | Should -Be 3
+        Should -Invoke Invoke-Command -Times 2 -Exactly -ParameterFilter { @($Session).Count -eq 1 }
+        Should -Invoke Remove-PSSession -Times 1 -Exactly
+    }
+}
+
+Describe 'Ownership inventory performance telemetry contracts' {
+    BeforeAll {
+        $modulePath = Join-Path (Split-Path $PSScriptRoot -Parent) 'Get-HyperVVMCheckpointHealth.psm1'
+        $source = Get-Content -LiteralPath $modulePath -Raw
+    }
+
+    It 'records worker and coordinator timing with execution mode and throttle' {
+        $source | Should -Match "Add-TelemetryEntry -Step '1\.07\.10\.10' -Phase 'Ownership inventory worker'"
+        $source | Should -Match "Add-TelemetryEntry -Step '1\.07\.10\.20' -Phase 'Ownership inventory worker coordination'"
+        $source | Should -Match 'Mode=\{0\}; Nodes=\{1\}; RemoteNodes=\{2\}; Throttle=\{3\}'
+        $source | Should -Match 'WorkerDurationMs=\{5\}; NodeElapsedMs=\{6\}; WallDurationMs=\{7\}'
+        $source | Should -Match 'ClockAdjustmentMs=\{7\}'
+        $source | Should -Match '\$nodeStart = \$nodeEnd\.AddMilliseconds\(-1 \* \$workerDurationMs\)'
+        $source | Should -Match 'WorkerStartUtc = \$workerStartUtc'
+        $source | Should -Match 'WorkerEndUtc\s+= \[DateTime\]::UtcNow'
+        $source | Should -Match "\$executionMode = 'ConcurrentRemote'"
+        $source | Should -Match '\$remoteNodes\.Count -gt 0'
+        $source | Should -Match '-ThrottleLimit \$throttleLimit -AsJob -ErrorAction Stop'
+        $source | Should -Match '\$throttleLimit = \[math\]::Min\(8, \$remoteNodes\.Count\)'
     }
 }
 

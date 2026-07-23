@@ -5,8 +5,8 @@
 ## Latest version:
 
 - Module: `Get-HyperVVMCheckpointHealth`
-- Updated: 2026-07-21
-- Version: 0.2.20
+- Updated: 2026-07-22
+- Version: 0.2.21
 
 ## TL;DR
 
@@ -88,7 +88,7 @@ Treat every saved audit artifact as **sensitive operational data**. The `.txt`, 
 
 ### Internal structure
 
-Version 0.2.20 is distributed as a PowerShell module with a single exported command and manifest-managed private nested modules. Keep the extracted directory intact:
+Version 0.2.21 is distributed as a PowerShell module with a single exported command and manifest-managed private nested modules. Keep the extracted directory intact:
 
 ```text
 Get-HyperVVMCheckpointHealth\
@@ -125,16 +125,16 @@ Two supported ways to run it, both single-hop:
 
 ### Download and import the module
 
-Download the versioned ZIP from the repository's [GitHub Releases page](https://github.com/NeilBird/Azure-Local/releases). The supported 0.2.20 release asset is `Get-HyperVVMCheckpointHealth-0.2.20.zip`; it contains the manifest, root module, five private modules, example policy YAML, README, and license. Do not use a raw single-file link because the module requires its manifest and sibling private modules.
+Download the versioned ZIP from the repository's [GitHub Releases page](https://github.com/NeilBird/Azure-Local/releases). The supported 0.2.21 release asset is `Get-HyperVVMCheckpointHealth-0.2.21.zip`; it contains the manifest, root module, five private modules, example policy YAML, README, and license. Do not use a raw single-file link because the module requires its manifest and sibling private modules.
 
 The release also publishes [`Setup-Get-HyperVVMCheckpointHealth.ps1`](Setup-Get-HyperVVMCheckpointHealth.ps1) as a separate asset outside the ZIP. The setup script is pinned to the supported version and SHA256 hash, replaces only `C:\Temp\Get-HyperVVMCheckpointHealth` by default, validates the staged manifest/version, imports the module, and verifies the command. It does not run an audit. Use `-InstallRoot` to choose another parent directory.
 
 Download the ZIP, download the setup script, and run the setup script:
 
 ```powershell
-Invoke-WebRequest 'https://github.com/NeilBird/Azure-Local/releases/download/Get-HyperVVMCheckpointHealth-v0.2.20/Get-HyperVVMCheckpointHealth-0.2.20.zip' -OutFile "$env:TEMP\Get-HyperVVMCheckpointHealth-0.2.20.zip"
-Invoke-WebRequest 'https://github.com/NeilBird/Azure-Local/releases/download/Get-HyperVVMCheckpointHealth-v0.2.20/Setup-Get-HyperVVMCheckpointHealth.ps1' -OutFile "$env:TEMP\Setup-Get-HyperVVMCheckpointHealth.ps1"
-Unblock-File "$env:TEMP\Setup-Get-HyperVVMCheckpointHealth.ps1"; & "$env:TEMP\Setup-Get-HyperVVMCheckpointHealth.ps1" -ZipPath "$env:TEMP\Get-HyperVVMCheckpointHealth-0.2.20.zip"
+Invoke-WebRequest 'https://github.com/NeilBird/Azure-Local/releases/download/Get-HyperVVMCheckpointHealth-v0.2.21/Get-HyperVVMCheckpointHealth-0.2.21.zip' -OutFile "$env:TEMP\Get-HyperVVMCheckpointHealth-0.2.21.zip"
+Invoke-WebRequest 'https://github.com/NeilBird/Azure-Local/releases/download/Get-HyperVVMCheckpointHealth-v0.2.21/Setup-Get-HyperVVMCheckpointHealth.ps1' -OutFile "$env:TEMP\Setup-Get-HyperVVMCheckpointHealth.ps1"
+Unblock-File "$env:TEMP\Setup-Get-HyperVVMCheckpointHealth.ps1"; & "$env:TEMP\Setup-Get-HyperVVMCheckpointHealth.ps1" -ZipPath "$env:TEMP\Get-HyperVVMCheckpointHealth-0.2.21.zip"
 ```
 
 Then run the audit separately. On a cluster node:
@@ -145,13 +145,13 @@ Then run the audit separately. On a cluster node:
 Get-HyperVVMCheckpointHealth -VMName 'TestVM01' -OutputPath 'C:\Temp\VM_Checkpoint_Reports'
 
 # Audit all VMs:
-Get-HyperVVMCheckpointHealth -ProcessAllVMs -OutputPath C:\Temp\VM_Checkpoint_Reports
+Get-HyperVVMCheckpointHealth -ProcessAllVMs -OutputPath 'C:\Temp\VM_Checkpoint_Reports'
 ```
 
 From a management workstation with the RSAT Failover Clustering tools installed:
 
 ```powershell
-Get-HyperVVMCheckpointHealth -Cluster 'CLUS01' -ProcessAllVMs -OutputPath C:\Temp\VM_Checkpoint_Reports
+Get-HyperVVMCheckpointHealth -Cluster 'CLUS01' -ProcessAllVMs -OutputPath 'C:\Temp\VM_Checkpoint_Reports'
 ```
 
 `-ProcessAllVMs` and `-VMName` are mutually exclusive. Use `-VMName` to audit a subset, with optional `-IncludeDiscoveredVMs` for additional VMs found through high-risk event evidence.
@@ -488,13 +488,14 @@ wevtutil sl Microsoft-Windows-Hyper-V-VMMS-Analytic /e:true /q:true
 
 By **default the command writes nothing to the pipeline**. The HTML file is the primary human-readable report; the console shows concise status, and `-OutputPath` also creates the per-VM `.txt` transcript and events `.csv`. This keeps `$x = Get-HyperVVMCheckpointHealth ...` clean.
 
-Add **`-PassThru`** to emit **one `[pscustomobject]` per VM** to the pipeline, in addition to the report files:
+Add **`-PassThru`** to emit **one `[pscustomobject]` per VM** after all VM audits, run-level collection, and artifact writes complete. Every row has the same property set and references the same non-circular `RunData` snapshot:
 
 | Property | Type | Meaning |
 |---|---|---|
 | `VMName` | string | VM name audited. |
 | `Cluster` | string | Cluster name. |
 | `OwningNode` | string | Node that owns/runs the VM. |
+| `Source` | string | `Input` when requested by the caller or `Discovered` when auto-added through `-IncludeDiscoveredVMs`. |
 | `Recommendation` | string | `HOLD STATE` / `INVESTIGATE` / `OK` / `NOT FOUND` / `ERROR`. |
 | `HoldState` | bool | Fork-commit / merge-failure signature **and** unmerged differencing disk(s) present together (data-loss risk). |
 | `HasAttachedCheckpoints` | bool | One or more active differencing (`.avhdx`) layers attached. |
@@ -505,11 +506,12 @@ Add **`-PassThru`** to emit **one `[pscustomobject]` per VM** to the pipeline, i
 | `StaleAttachedLayerCount` | int | Count of attached differencing layers at/beyond `-StaleHours`, independent of named snapshot metadata. |
 | `SnapshotLayerMismatch` | bool | Snapshot and attached-layer representations disagree; treated as inconclusive evidence requiring investigation. |
 | `ConcernEventCount` | int | Count of `Concern = YES` Hyper-V events **attributable to this VM** (the message names this VM or its VM ID). Node-wide concern events that reference other VMs are reported as context and are **not** counted here. |
-| `AssessmentConfidence` | string | `Complete` only when required chain, inventory, event, historic, and state-consistency evidence is complete; otherwise `Incomplete`. |
-| `CollectionStatus` | object | Machine-readable status for chain, virtual-disk, event, historic, and state-consistency collection. Required event scopes distinguish `Covered`, `EnabledEmpty`, `Wrapped`, `Disabled`, and `Unavailable`; an enabled-empty Admin log is sufficient, while wrapped, disabled, or unavailable evidence is incomplete. `Changed` and `Skipped` remain distinct for other collectors. |
+| `AssessmentConfidence` | string | Top-level automation field: `Complete` only when required chain, inventory, event, historic, state-consistency, and VSS evidence is complete; otherwise `Incomplete`. It remains present for `NOT FOUND` and `ERROR`. |
+| `CollectionStatus` | object | Top-level, consistently shaped status for outcome, chain, virtual-disk, event, historic, state-consistency, and VSS collection. Sources that were not reached on `NOT FOUND` / `ERROR` rows report `NotCollected`. |
 | `ReportFile` | string | Path to this VM's `.txt` report (`$null` when `-OutputPath` omitted). |
 | `Detail` | string | Extra context for `NOT FOUND` / `ERROR` rows. |
-| `ReportData` | object | Rich per-VM detail (checkpoints, `AttachedVhdLayers`, disks, replication, VSS, analytic, events, config version, and — for HOLD STATE — the Support Case summary) that the HTML fleet report renders. `$null` for `NOT FOUND` / `ERROR` rows. |
+| `ReportData` | object | Complete per-VM evidence: typed investigation drivers/actions, checkpoints and attached layers, orphan details, Replica/HRL, VSS, CSV capacity, state consistency, collection coverage, historic correlation, full VM-attributed `VmEvents`, event summaries, artifact paths, and — for HOLD STATE — the Support Case summary. `$null` for `NOT FOUND` / `ERROR`. |
+| `RunData` | object | Shared final run snapshot containing housekeeping findings, storage health, discovery candidates/summary, complete node event context, exclusions, parameters, outcomes, metadata, and artifact paths. It deliberately omits the result rows to avoid a circular graph. |
 
 Negative evidence is reassuring only when its required collection status is complete. An enabled required Admin channel with zero records is a valid no-event result; a missing query, wrapped history, disabled required channel, changed VM state, or skipped source is retained as incomplete evidence and cannot silently produce an unqualified clean verdict. The optional Analytic channel is excluded from this confidence decision. Orphan labels are evidence classifications only; they never authorize deletion or remediation.
 
@@ -526,7 +528,7 @@ $r | Export-Csv 'C:\Temp\VM_Checkpoint_Reports\fleet-summary.csv' -NoTypeInforma
 
 ### Drilling into `ReportData`
 
-The flat top-level properties are ideal for quick `Where-Object` / `Export-Csv` roll-ups. For deeper integration, the nested `ReportData` object exposes the same rich per-VM detail the HTML report renders — checkpoints, disks, replication, VSS writers, the Analytic-channel state, the concerning-event breakdown, config-version comparison, and (for HOLD STATE) the copy/paste Support Case summary:
+The flat top-level properties are ideal for quick `Where-Object` / `Export-Csv` roll-ups. `ReportData` contains per-VM evidence and `RunData` contains the run-level evidence that is not owned by one VM:
 
 ```powershell
 $r = Get-HyperVVMCheckpointHealth -Cluster 'CLUS01' `
@@ -540,17 +542,41 @@ $r | Where-Object { $_.ReportData.HasForkSignature } |
 
 # Every stale checkpoint across the whole fleet
 $r | ForEach-Object {
-    $_.ReportData.Checkpoints | Where-Object Stale |
-        Select-Object @{n='VM';e={ $_.Name }}, AgeHrs
+    $vmResult = $_
+    $vmResult.ReportData.Checkpoints | Where-Object Stale |
+        Select-Object @{n='VM';e={ $vmResult.VMName }}, Name, AgeHrs
 }
 
 # Hyper-V Replica health (ReportData.Replication is a nested object, not a flat string)
 $r | Where-Object { $_.ReportData.Replication.Enabled } |
     Select-Object VMName, @{n='ReplState';e={ $_.ReportData.Replication.State }},
                           @{n='ReplHealth';e={ $_.ReportData.Replication.Health }}
+
+# Typed reason and action data used by the TXT and HTML findings
+$r | Where-Object Recommendation -ne 'OK' |
+    Select-Object VMName, Recommendation,
+        @{n='Drivers';e={$_.ReportData.InvestigationDrivers.Labels -join '; '}},
+        @{n='Actions';e={$_.ReportData.InvestigationDrivers.ActionLines -join '; '}}
+
+# Full VM-attributed event records; no CSV parsing is required
+$r | ForEach-Object {
+    $vmResult = $_
+    $vmResult.ReportData.VmEvents |
+        Select-Object @{n='VM';e={$vmResult.VMName}}, TimeUtc, Id, SignalRole, FullMessage
+}
+
+# RunData is the same object on every row; read it once
+$run = $r[0].RunData
+$run.HousekeepingFindings | Export-Csv '.\housekeeping.csv' -NoTypeInformation
+$run.StorageHealth
+$run.Discovery.NotAuditedCandidates
+$run.NodeEventContext | ForEach-Object Events
+$run.Artifacts
 ```
 
-> **Note:** array members of `ReportData` (`Checkpoints`, `Orphans`, `VssUnhealthy`, `CsvVolumes`, `EventBreakdown`, `AnalyticNodesNeedEnable`) display as `System.Object[]` in a default list view — that is just the formatter; enumerate them (as above) to see the elements. `ReportData` is `$null` for `NOT FOUND` / `ERROR` rows, so guard with `Where-Object { $_.ReportData }` first if needed.
+`RunData` is shared by reference across rows in the live PowerShell session, so use `$r[0].RunData` rather than exporting the same run snapshot once per VM. `Export-Csv` flattens nested objects to type names; use `ConvertTo-Json -Depth 12`, `Export-Clixml`, or select/expand the nested collection being exported. Both `ReportData.VmEvents` and `RunData.NodeEventContext.Events` can contain sensitive full event messages.
+
+Array members of `ReportData` and `RunData` display as `System.Object[]` in a default list view; enumerate them to see their elements. `ReportData` is `$null` for `NOT FOUND` / `ERROR`, so guard it before drilling in. Top-level `AssessmentConfidence`, `CollectionStatus`, and `RunData` remain available on those rows.
 
 ## Release packaging (maintainers)
 
@@ -564,11 +590,11 @@ Set-Location .\Get-HyperVVMCheckpointHealth
 Generated assets are written to the ignored `release` directory:
 
 ```text
-release\Get-HyperVVMCheckpointHealth-0.2.20.zip
-release\Get-HyperVVMCheckpointHealth-0.2.20.zip.sha256
+release\Get-HyperVVMCheckpointHealth-0.2.21.zip
+release\Get-HyperVVMCheckpointHealth-0.2.21.zip.sha256
 ```
 
-Create the GitHub release with tag `Get-HyperVVMCheckpointHealth-v0.2.20` and upload the generated ZIP, its SHA256 file, and `Setup-Get-HyperVVMCheckpointHealth.ps1` as three separate assets. The setup script remains outside the ZIP. Before publishing a future version:
+Create the GitHub release with tag `Get-HyperVVMCheckpointHealth-v0.2.21` and upload the generated ZIP, its SHA256 file, and `Setup-Get-HyperVVMCheckpointHealth.ps1` as three separate assets. The setup script remains outside the ZIP. Before publishing a future version:
 
 1. Update the version in the root module, manifest, README, release notes, and the setup script's `$version` value.
 2. Run the redirected Windows PowerShell 5.1 Pester suite.
@@ -577,6 +603,16 @@ Create the GitHub release with tag `Get-HyperVVMCheckpointHealth-v0.2.20` and up
 5. Publish the ZIP and checksum as release assets using the tag and asset naming convention above.
 
 ## What's New
+
+### Version 0.2.21
+
+- Makes `-PassThru` a stable, tested automation contract. Rows are emitted after run completion with top-level confidence/collection status, full per-VM event evidence in `ReportData.VmEvents`, and shared `RunData` containing housekeeping, storage health, discovery, node event context, metadata, outcomes, exclusions, and artifact paths.
+- Treats a sole `.vmcx` last-write change as advisory when Hyper-V Replica remains actively `Replicating / Normal`, while preserving the factual state-change evidence and continuing to escalate owner, power-state, checkpoint-count, disk-path, unavailable-token, and mixed changes.
+- Includes Replica product health, Replica measurement, and cadence-breaching HRL evidence in the ordinary INVESTIGATE executive summary, and adds a dedicated HRL action with affected VM names.
+- Builds event-driver counts and event-ID breakdowns from the same escalating event subset, preventing low-signal context events from appearing in an unresolved-event label.
+- Makes every per-VM card independently collapsible and open by default, highlights abnormal Replica observed values in dark orange, and keeps only the wide VM summary table inside a horizontal overflow boundary aligned with the report.
+- Adds a browser-side **Download all findings (CSV)** action for the complete, unfiltered housekeeping dataset. The filename is derived from the cluster name and report generation time embedded in the report, so renaming the HTML file does not alter it.
+- Reduces the cluster virtual-disk ownership preflight when run on a verified target-cluster node by starting one bounded Windows PowerShell 5.1 remote fan-out job (up to eight remote nodes) before collecting the local node, permitting local and remote ownership reads to overlap even on a two-node cluster when remote startup timing allows it. A single-node cluster remains local and sequential; management-workstation mode remains sequential; failed fan-out preparation or execution falls back to the existing sequential path. Telemetry records execution mode, throttle, monotonic worker durations/counts, remote-clock adjustment, aggregate coordinator-observed node elapsed time, failures, and coordinator wall time.
 
 ### Version 0.2.20
 

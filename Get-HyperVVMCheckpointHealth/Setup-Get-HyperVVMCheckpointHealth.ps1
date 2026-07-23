@@ -20,7 +20,7 @@
 [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'Medium')]
 [OutputType([pscustomobject])]
 param(
-    [string]$ZipPath = (Join-Path $env:TEMP 'Get-HyperVVMCheckpointHealth-0.2.20.zip'),
+    [string]$ZipPath = (Join-Path $env:TEMP 'Get-HyperVVMCheckpointHealth-0.2.21.zip'),
 
     [ValidateNotNullOrEmpty()]
     [string]$InstallRoot = 'C:\Temp'
@@ -30,8 +30,8 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $moduleName = 'Get-HyperVVMCheckpointHealth'
-$version = '0.2.20'
-$expectedSha256 = '51b4d1e2b8545da3d0b93b62f1b60a89155e5884ada9784378b059cd99944522'
+$version = '0.2.21'
+$expectedSha256 = '6ca3fd0abebc5d0f7a4b112ba758ced1f079a11e8d2aa5b6ebbd0eebdb8618d4'
 $expectedAssetName = "$moduleName-$version.zip"
 
 if (-not (Test-Path -LiteralPath $ZipPath -PathType Leaf)) {

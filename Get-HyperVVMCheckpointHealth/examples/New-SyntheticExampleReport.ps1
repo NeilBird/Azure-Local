@@ -303,7 +303,7 @@ $html = ConvertTo-VMCheckpointAuditHtml -Results $results -StaleHours 24 `
     -EventLookbackHours 168 -ClusterName 'contoso01' -GeneratedUtc '2026-07-20 12:00:00' `
     -DiscoveredVMs @() -DiscoverySummary $discoverySummary -StorageHealth $storageHealth `
     -HousekeepingFindings $housekeepingFindings -IncludeDiscoveredVMs:$true `
-    -ScriptVersion '0.2.20' -ReportGenerationTime '00:01:24' -ClusterNodeCount 10 -ClusterCsvCount 2
+    -ScriptVersion '0.2.21' -ReportGenerationTime '00:01:24' -ClusterNodeCount 10 -ClusterCsvCount 2
 
 $syntheticNotice = @'
 <div class="callout info synthetic-example"><strong>Synthetic example report.</strong> Every cluster, node, VM, path, timestamp, and event message in this file is invented for documentation. TestVM07 demonstrates an active-checkpoint HOLD STATE confirmed by historic event evidence; seven VMs demonstrate historic rollback, orphaned AVHDX, stale checkpoint/layer, and Hyper-V Replica INVESTIGATE findings; 12 VMs are healthy comparisons. The inventory contains 16 input VMs and 4 automatically discovered VMs.</div>
