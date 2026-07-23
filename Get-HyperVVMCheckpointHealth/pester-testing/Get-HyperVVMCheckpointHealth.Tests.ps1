@@ -14,6 +14,7 @@ Describe 'Get-HyperVVMCheckpointHealth source contracts' {
         $script:ReadmePath = Join-Path $script:ToolRoot 'README.md'
         $script:Source = Get-Content -LiteralPath $script:ModulePath -Raw
         $script:AssessmentSource = Get-Content -LiteralPath $script:AssessmentModulePath -Raw
+        $script:StorageSource = Get-Content -LiteralPath $script:StorageModulePath -Raw
         $tokens = $null
         $parseErrors = $null
         $script:Ast = [System.Management.Automation.Language.Parser]::ParseFile(
@@ -82,6 +83,22 @@ Describe 'Get-HyperVVMCheckpointHealth source contracts' {
         $script:Source | Should -Match 'VirtualDiskInventory\s*=\s*\[pscustomobject\]'
     }
 
+    It 'prefetches node diagnostics with bounded concurrency before input and discovered audits' {
+        $script:Source | Should -Match 'function Get-NodeDiagnosticSnapshot'
+        $script:Source | Should -Match 'function Invoke-NodeDiagnosticPrefetch'
+        $script:Source | Should -Match 'function Initialize-NodeDiagnosticPrefetch'
+        $script:Source | Should -Match '-ThrottleLimit 4 -SkipEvents:\$SkipEvents'
+        $script:Source | Should -Match '\$initialDiagnosticNodes[\s\S]*?Initialize-NodeDiagnosticPrefetch[\s\S]*?foreach \(\$name in \$script:PendingVMNames\)'
+        $script:Source | Should -Match '\$discoveredDiagnosticNodes[\s\S]*?Initialize-NodeDiagnosticPrefetch[\s\S]*?foreach \(\$dv in \$toAudit\)'
+        $script:Source | Should -Match "Add-TelemetryEntry -Step '1\.08\.10' -Phase 'Node diagnostic prefetch coordination'"
+        $script:Source | Should -Match "Add-TelemetryEntry -Step '1\.08\.10\.10' -Phase 'Event prefetch worker'"
+        $script:Source | Should -Match "Add-TelemetryEntry -Step '1\.08\.10\.20' -Phase 'VSS prefetch worker'"
+        $script:Source | Should -Match 'NodePrefetchMode\s*=\s*if'
+        $script:Source | Should -Match 'NodePrefetchThrottle\s*=\s*if'
+        $script:Source | Should -Match 'NodePrefetchNodes\s*=\s*@\('
+        $script:Source | Should -Match 'NodePrefetchFailed\s*=\s*@\('
+    }
+
     It 'captures unrecovered failures with exact support links' {
         $script:Source | Should -Match 'function Add-AuditDiagnostic'
         $script:Source | Should -Match 'function Write-AuditDebugLog'
@@ -92,6 +109,13 @@ Describe 'Get-HyperVVMCheckpointHealth source contracts' {
         $script:Source | Should -Match "-Operation 'Capture initial VM state token'"
         $script:Source | Should -Match "-Operation 'Capture final VM state token'"
         $script:Source | Should -Match "-Operation 'Write node-wide events CSV'"
+    }
+
+    It 'collects storage Health Service faults as read-only evidence only' {
+        $script:StorageSource | Should -Match 'Get-HealthFault -ErrorAction Stop'
+        $script:StorageSource | Should -Match 'HealthFaultCollectionStatus'
+        $script:StorageSource | Should -Not -Match 'RecommendedActions'
+        $script:StorageSource | Should -Not -Match 'Debug-StorageSubSystem|Repair-Storage|Set-Storage|Start-Storage'
     }
 
     It 'keeps node event scan failures distinct from successful empty results' {
@@ -508,8 +532,8 @@ Describe 'Module distribution contracts' {
         $script:ModuleCommand = Get-Command Get-HyperVVMCheckpointHealth -Module Get-HyperVVMCheckpointHealth
     }
 
-    It 'imports a valid 0.2.22 module manifest' {
-        $script:Manifest.Version.ToString() | Should -Be '0.2.22'
+    It 'imports a valid 0.2.23 module manifest' {
+        $script:Manifest.Version.ToString() | Should -Be '0.2.23'
         $script:Manifest.ExportedFunctions.Keys | Should -Contain 'Get-HyperVVMCheckpointHealth'
     }
 
@@ -635,7 +659,7 @@ Describe 'Module distribution contracts' {
         $setupPath = Join-Path $script:ModuleRoot 'Setup-Get-HyperVVMCheckpointHealth.ps1'
         Test-Path -LiteralPath $setupPath -PathType Leaf | Should -BeTrue
         $setupSource = Get-Content -LiteralPath $setupPath -Raw
-        $setupSource | Should -Match "\$version = '0\.2\.22'"
+        $setupSource | Should -Match "\$version = '0\.2\.23'"
         $setupSource | Should -Match "\$expectedSha256 = '[0-9a-f]{64}'"
         $setupSource | Should -Match '\[string\]\$InstallRoot = ''C:\\Temp'''
         $setupSource | Should -Match 'Get-FileHash.+SHA256'
@@ -859,6 +883,33 @@ Describe 'HTML fleet report usability' {
                 Observation = 'No VM or snapshot chain references this base disk under complete coverage: C:\ClusterStorage\UserStorage_1\BaseDisk.vhdx'
                 Review = 'If this virtual disk belongs to an image library, exclude its full path with storage.imageLibraryPathPatterns in a checkpoint-health-policy.yml file supplied via -PolicyPath (see README.md). Otherwise, confirm intended ownership. Do not modify the file based only on this report.'
             })
+        $degradedStorage = [pscustomobject]@{
+            Summary = 'Degraded'; Source = 'TEST-NODE-01'; StorageJobs = @(); CsvRedirected = @()
+            VDiskUnhealthy = @(); PDiskUnhealthy = @(); Note = ''
+            HealthFaultCollectionStatus = 'Success'
+            Subsystem = @(
+                [pscustomobject]@{ Name = 'Clustered Windows Storage'; Health = 'Unhealthy' }
+                [pscustomobject]@{ Name = 'Windows Storage'; Health = 'Healthy' }
+            )
+            HealthFaults = @([pscustomobject]@{
+                Severity = 'Warning'; Reason = 'Synthetic storage health fault <review>'
+                FaultingObjectDescription = 'Synthetic affected object'; FaultingObjectLocation = 'Synthetic location'
+            })
+        }
+        $script:DegradedStorageHtml = ConvertTo-VMCheckpointAuditHtml `
+            -Results @([pscustomobject]@{ VMName = 'TEST-VM-NORMAL'; OwningNode = 'TEST-NODE-01'; Recommendation = 'OK'; Source = 'Input'; StaleCheckpointCount = 0; ReportData = $normalReportData; Detail = '' }) `
+            -StaleHours 24 -EventLookbackHours 168 -ClusterName 'CONTOSO-CLUSTER-01' -GeneratedUtc '2026-01-01 00:00:00' `
+            -DiscoveredVMs $null -DiscoverySummary ([pscustomobject]@{ EligibleCount = 0; AuditedCount = 0; DeferredCount = 0; Cap = $null }) `
+            -StorageHealth $degradedStorage -IncludeDiscoveredVMs:$false -ScriptVersion '0.2.23' -ReportGenerationTime '00:00:01' `
+            -ClusterNodeCount 2 -ClusterCsvCount 1 -HousekeepingFindings @()
+        $degradedStorageWithoutFaults = $degradedStorage.PSObject.Copy()
+        $degradedStorageWithoutFaults.HealthFaults = @()
+        $script:DegradedStorageNoFaultHtml = ConvertTo-VMCheckpointAuditHtml `
+            -Results @([pscustomobject]@{ VMName = 'TEST-VM-NORMAL'; OwningNode = 'TEST-NODE-01'; Recommendation = 'OK'; Source = 'Input'; StaleCheckpointCount = 0; ReportData = $normalReportData; Detail = '' }) `
+            -StaleHours 24 -EventLookbackHours 168 -ClusterName 'CONTOSO-CLUSTER-01' -GeneratedUtc '2026-01-01 00:00:00' `
+            -DiscoveredVMs $null -DiscoverySummary ([pscustomobject]@{ EligibleCount = 0; AuditedCount = 0; DeferredCount = 0; Cap = $null }) `
+            -StorageHealth $degradedStorageWithoutFaults -IncludeDiscoveredVMs:$false -ScriptVersion '0.2.23' -ReportGenerationTime '00:00:01' `
+            -ClusterNodeCount 2 -ClusterCsvCount 1 -HousekeepingFindings @()
         $advisoryReportData = $normalReportData.PSObject.Copy()
         $advisoryReportData.ReplAssessment = $normalReportData.ReplAssessment.PSObject.Copy()
         $advisoryReportData.ReplAssessment.MeasurementStatus = 'Advisory'
@@ -920,6 +971,23 @@ Describe 'HTML fleet report usability' {
         $script:CleanRenderedHtml | Should -Not -Match '<strong>Audit coverage:</strong>'
     }
 
+    It 'surfaces read-only storage fault evidence and retains only the existing CSS diagnostic guidance' {
+        $script:DegradedStorageHtml | Should -Match '<strong>Cluster storage requires investigation:</strong> 1 active Health Service fault\(s\): Synthetic storage health fault &lt;review&gt;\.'
+        $script:DegradedStorageHtml | Should -Match '<strong>Why this snapshot is non-healthy:</strong> 1 active Health Service fault\(s\): Synthetic storage health fault &lt;review&gt;\.'
+        $script:DegradedStorageHtml | Should -Match '<h3>Active Health Service faults \(read-only evidence\)</h3>'
+        $script:DegradedStorageHtml | Should -Match '<td>Warning</td><td>Synthetic storage health fault &lt;review&gt;</td><td>Synthetic affected object</td><td>Synthetic location</td>'
+        $script:DegradedStorageHtml | Should -Match '<strong>Deeper analysis \(recommended\):</strong> this is a lightweight snapshot\.'
+        $script:DegradedStorageHtml | Should -Match 'Install-Module -Name Microsoft\.AzLocal\.CSSTools'
+        $script:DegradedStorageHtml | Should -Match 'Start-AzsSupportStorageDiagnostic documentation'
+        $script:DegradedStorageHtml | Should -Not -Match 'RecommendedActions|Debug-StorageSubSystem|Repair-Storage|Set-Storage'
+    }
+
+    It 'states when an unhealthy subsystem returns no Health Service fault detail' {
+        $script:DegradedStorageNoFaultHtml | Should -Match '1 storage subsystem\(s\) report Unhealthy, but no active Health Service fault detail was returned \(collection status: Success\)'
+        $script:DegradedStorageNoFaultHtml | Should -Match '<strong>Health Service detail unavailable:</strong> the subsystem state is Unhealthy, but <code>Get-HealthFault</code> returned no active fault records'
+        $script:CleanRenderedHtml | Should -Not -Match 'Cluster storage requires investigation'
+    }
+
     It 'warn-highlights abnormal Replica state while leaving normal replication neutral' {
         $script:RenderedHtml | Should -Match "<span class='warnval'>Error \(Critical\)</span>"
         $script:RenderedHtml | Should -Match '<td>Replicating \(Normal\)</td>'
@@ -936,7 +1004,7 @@ Describe 'HTML fleet report usability' {
         foreach ($signal in @('Product state and health', 'Relationship', 'Replication cadence', 'Monitoring window', 'Last replication', 'Average replication size', 'Pending replication data', 'Average replication latency', 'Measured replication cycles')) {
             $script:RenderedHtml | Should -Match ([regex]::Escape("<td>$signal</td>"))
         }
-        $script:AdvisoryReplicaHtml | Should -Match "<span class='warnval'>Advisory</span>"
+            $script:AdvisoryReplicaHtml | Should -Match "<span class='warnval'>Advisory</span>"
         $script:RenderedHtml | Should -Match "<td><span class='warnval'>Error / Critical</span></td>"
         $script:RenderedHtml | Should -Match "<td>Replicating / Normal</td>"
     }
@@ -1171,6 +1239,7 @@ Describe 'HTML fleet report usability' {
         $script:RenderedHtml | Should -Match 'Operational excellence and consistent storage practices improve reliability and reduce operational complexity.'
         $script:RenderedHtml | Should -Match 'Attached disk is stored under another VM folder &lt;review&gt;'
         $script:RenderedHtml | Should -Match 'Do not move, rename, merge, or delete virtual disk files based solely on this report.'
+        $script:RenderedHtml | Should -Match 'row and category totals may overlap and are not unique-file counts'
         $script:RenderedHtml.IndexOf('Cluster / storage housekeeping to review:') | Should -BeLessThan $script:RenderedHtml.IndexOf('Appendix - Knowledge and Information')
     }
 
@@ -1207,7 +1276,7 @@ Describe 'HTML fleet report usability' {
     It 'gives housekeeping findings readable desktop columns and stacked mobile labels' {
         $script:RenderedHtml | Should -Match '<table class="housekeeping" id="hk-table"><colgroup>'
         $script:RenderedHtml | Should -Match '<col class="hk-category"><col class="hk-scope"><col class="hk-filecol"><col class="hk-size"><col class="hk-observation"><col class="hk-review">'
-        $script:RenderedHtml | Should -Match 'data-sort="scope">Scope</button>'
+        $script:RenderedHtml | Should -Match 'data-sort="scope" data-direction="none" aria-label="Sort by Scope"><span>Scope</span><span class="hk-sort-arrows" aria-hidden="true"><span class="hk-sort-up">&#9650;</span><span class="hk-sort-down">&#9660;</span>'
         $script:RenderedHtml | Should -Match "<td data-label='Scope'><code>TEST-VM-NORMAL</code></td>"
         $script:RenderedHtml | Should -Match "<td data-label='Scope'><code>TEST-NODE-02</code></td>"
         $script:RenderedHtml | Should -Match "<div class='hk-file'><code>Data&lt;review&gt;\.vhdx</code></div><code>C:\\ClusterStorage"
@@ -1218,6 +1287,9 @@ Describe 'HTML fleet report usability' {
         $script:RenderedHtml | Should -Match 'table\.housekeeping col\.hk-review\{width:16%\}'
         $script:RenderedHtml | Should -Match 'table\.housekeeping td::before\{content:attr\(data-label\)'
         $script:RenderedHtml | Should -Match 'table\.housekeeping td \.hk-observation\{grid-column:2;min-width:0\}'
+        ([regex]::Matches($script:RenderedHtml, 'class="hk-sort-arrows"')).Count | Should -Be 4
+        $script:RenderedHtml | Should -Match "parentNode\.setAttribute\('aria-sort', direction\)"
+        $script:RenderedHtml | Should -Match "data-direction='ascending'.*hk-sort-up"
     }
 
     It 'enables all housekeeping categories and exposes live filtering and chart surfaces' {
@@ -1343,7 +1415,7 @@ Describe 'Unrecovered-failure debug log' {
     BeforeEach {
         $script:RunStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
         $script:TelemetryClockBaseUtc = [DateTimeOffset]::UtcNow
-        $script:ScriptVersion = '0.2.22'
+        $script:ScriptVersion = '0.2.23'
         $script:VMSectionStepNo = 45
         $script:VMSectionName = 'Scanning Replica change logs (.hrl)'
         $script:AuditDiagnostics = [System.Collections.Generic.List[object]]::new()
@@ -2374,6 +2446,260 @@ Describe 'Cluster virtual disk runtime collectors' {
         @($result.Nodes).Count | Should -Be 3
         Should -Invoke Invoke-Command -Times 2 -Exactly -ParameterFilter { @($Session).Count -eq 1 }
         Should -Invoke Remove-PSSession -Times 1 -Exactly
+    }
+}
+
+Describe 'Node diagnostic prefetch runtime' {
+    BeforeAll {
+        $toolRoot = Split-Path $PSScriptRoot -Parent
+        $modulePath = Join-Path $toolRoot 'Get-HyperVVMCheckpointHealth.psm1'
+        $tokens = $null
+        $parseErrors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($modulePath, [ref]$tokens, [ref]$parseErrors)
+        foreach ($functionName in @('Get-NodeDiagnosticSnapshot', 'Invoke-NodeDiagnosticPrefetch', 'Initialize-NodeDiagnosticPrefetch')) {
+            $functionAst = $ast.FindAll({
+                param($node)
+                $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+                    $node.Name -eq $functionName
+            }, $true) | Select-Object -First 1
+            $functionAst | Should -Not -BeNullOrEmpty
+            Invoke-Expression $functionAst.Extent.Text
+        }
+        function Add-AuditDiagnosticMessage { param($Message, $Operation, $Scope) }
+        function Add-AuditDiagnostic { param($ErrorRecord, $Operation, $Scope) }
+        function Invoke-WithRetry {
+            param($ScriptBlock, $DiagnosticOperation, $DiagnosticScope, [ref]$AttemptCount)
+            if ($AttemptCount) { $AttemptCount.Value = 1 }
+            & $ScriptBlock
+        }
+        function Write-AuditReportLine { param($Message) }
+        function Write-Alert { param($Message, $Level) }
+        function Get-TelemetryNow { [DateTimeOffset]::UtcNow }
+        function Add-TelemetryEntry { param($Step, $Phase, $Detail, $StartUtc, $EndUtc) }
+        function global:vssadmin { }
+        function New-TestNodeDiagnosticSnapshot {
+            param([string]$Node = 'REMOTE-NODE')
+            [pscustomobject]@{
+                Complete = $true; EventStatus = 'Success'; EventRows = @(); ChannelStatus = @(
+                    [pscustomobject]@{ Channel = 'Worker'; Status = 'Success'; Error = '' }
+                    [pscustomobject]@{ Channel = 'VMMS'; Status = 'Success'; Error = '' }
+                ); EventError = ''; EventAttempts = 1; EventDurationMs = 20L
+                VssStatus = 'Success'; VssRows = @(); VssError = ''; VssAttempts = 1; VssDurationMs = 10L
+                Errors = @(); WorkerStartUtc = [DateTime]::UtcNow.AddMilliseconds(-30)
+                WorkerEndUtc = [DateTime]::UtcNow; WorkerDurationMs = 30L
+            }
+        }
+    }
+
+    AfterAll {
+        Remove-Item function:\global:vssadmin -ErrorAction SilentlyContinue
+    }
+
+    BeforeEach {
+        $script:NodeEventCache = @{}
+        $script:VssByNode = @{}
+        $script:NodeCsvNameByNode = @{}
+        $script:SessionByNode = @{}
+    }
+
+    It 'retries transient event reads before running VSS on the same node' {
+        $script:CollectionOrder = [System.Collections.Generic.List[string]]::new()
+        $script:EventCallCount = 0
+        Mock Get-WinEvent {
+            [void]$script:CollectionOrder.Add('Event')
+            $script:EventCallCount++
+            if ($script:EventCallCount -eq 1) { throw 'Transient event read failure.' }
+            [pscustomobject]@{
+                TimeCreated = [DateTime]'2026-07-23T12:00:00Z'; Id = 19100
+                LevelDisplayName = 'Error'; Message = "VM 'TEST-VM' merge failed."
+            }
+        }
+        Mock vssadmin {
+            [void]$script:CollectionOrder.Add('VSS')
+            "Writer name: 'Test Writer'"
+            '   State: [1] Stable'
+            '   Last error: No error'
+        }
+
+        $result = Get-NodeDiagnosticSnapshot -LookbackHours 168 -ConcernIds @(19100) `
+            -ContextIds @() -CodePatterns @() -MaxAttempts 3 -DelayMs 0
+
+        $result.Complete | Should -BeTrue
+        $result.EventAttempts | Should -Be 2
+        $result.EventStatus | Should -Be 'Success'
+        @($result.EventRows).Count | Should -Be 2
+        $result.VssStatus | Should -Be 'Success'
+        @($result.VssRows).Count | Should -Be 1
+        @($script:CollectionOrder)[-1] | Should -Be 'VSS'
+    }
+
+    It 'continues to VSS and returns explicit partial failure when event retries are exhausted' {
+        Mock Get-WinEvent { throw 'Event service unavailable.' }
+        Mock vssadmin {
+            "Writer name: 'Test Writer'"
+            '   State: [1] Stable'
+            '   Last error: No error'
+        }
+
+        $result = Get-NodeDiagnosticSnapshot -LookbackHours 168 -ConcernIds @() `
+            -ContextIds @() -CodePatterns @() -MaxAttempts 2 -DelayMs 0
+
+        $result.Complete | Should -BeFalse
+        $result.EventStatus | Should -Be 'Unavailable'
+        $result.EventAttempts | Should -Be 2
+        $result.VssStatus | Should -Be 'Success'
+        @($result.Errors).Count | Should -Be 1
+        $result.Errors[0].Operation | Should -Be 'Event'
+    }
+
+    It 'fans remote nodes out with a bounded throttle while collecting the local node' {
+        $localNode = $env:COMPUTERNAME
+        $remoteNodes = @('REMOTE-NODE-B', 'REMOTE-NODE-A')
+        $script:PrefetchOrder = [System.Collections.Generic.List[string]]::new()
+        $script:FanoutJob = Start-Job -ScriptBlock { }
+        Mock New-PSSession {
+            [System.Runtime.Serialization.FormatterServices]::GetUninitializedObject(
+                [System.Management.Automation.Runspaces.PSSession]
+            )
+        }
+        Mock Remove-PSSession { }
+        Mock Remove-Job { }
+        Mock Wait-Job { $Job }
+        Mock Get-WinEvent { [void]$script:PrefetchOrder.Add('LocalEvent'); @() }
+        Mock vssadmin { @() }
+        Mock Receive-Job {
+            foreach ($remoteNode in $remoteNodes) {
+                $remoteResult = New-TestNodeDiagnosticSnapshot -Node $remoteNode
+                Add-Member -InputObject $remoteResult -NotePropertyName PSComputerName -NotePropertyValue $remoteNode
+                $remoteResult
+            }
+        }
+        Mock Invoke-Command {
+            if ($AsJob) {
+                [void]$script:PrefetchOrder.Add('RemoteStarted')
+                $script:FanoutJob
+            } else {
+                & $ScriptBlock @ArgumentList
+            }
+        }
+
+        $result = Invoke-NodeDiagnosticPrefetch -Nodes @($remoteNodes[0], $localNode, $remoteNodes[1]) `
+            -LocalNode $localNode -SessionByNode @{} -LookbackHours 168 `
+            -ConcernIds @() -ContextIds @() -CodePatterns @() -ThrottleLimit 2 -MaxAttempts 1 -DelayMs 0
+
+        $result.Complete | Should -BeTrue
+        $result.ExecutionMode | Should -Be 'Concurrent'
+        $result.ThrottleLimit | Should -Be 2
+        @($result.Nodes.Node) | Should -Be @($remoteNodes[0], $remoteNodes[1], $localNode | Sort-Object)
+        @($script:PrefetchOrder)[0] | Should -Be 'RemoteStarted'
+        Should -Invoke Invoke-Command -Times 1 -Exactly -ParameterFilter {
+            @($Session).Count -eq 2 -and $ThrottleLimit -eq 2 -and $AsJob
+        }
+        Should -Invoke Remove-PSSession -Times 2 -Exactly
+    }
+
+    It 'retries a remote node sequentially when fan-out returns no result for it' {
+        $localNode = $env:COMPUTERNAME
+        $remoteNodes = @('REMOTE-NODE-A', 'REMOTE-NODE-B')
+        $script:FanoutJob = Start-Job -ScriptBlock { }
+        Mock New-PSSession {
+            [System.Runtime.Serialization.FormatterServices]::GetUninitializedObject(
+                [System.Management.Automation.Runspaces.PSSession]
+            )
+        }
+        Mock Remove-PSSession { }
+        Mock Remove-Job { }
+        Mock Wait-Job { $Job }
+        Mock Receive-Job {
+            $remoteResult = New-TestNodeDiagnosticSnapshot -Node 'REMOTE-NODE-A'
+            Add-Member -InputObject $remoteResult -NotePropertyName PSComputerName -NotePropertyValue 'REMOTE-NODE-A'
+            $remoteResult
+        }
+        Mock Invoke-Command {
+            if ($AsJob) { $script:FanoutJob } else { New-TestNodeDiagnosticSnapshot }
+        }
+
+        $result = Invoke-NodeDiagnosticPrefetch -Nodes $remoteNodes -LocalNode $localNode `
+            -SessionByNode @{} -LookbackHours 168 -ConcernIds @() -ContextIds @() `
+            -CodePatterns @() -ThrottleLimit 2 -MaxAttempts 1 -DelayMs 0
+
+        $result.Complete | Should -BeTrue
+        @($result.Nodes | Where-Object { $_.Node -eq 'REMOTE-NODE-B' }).ExecutionMode | Should -Be 'SequentialRetry'
+        Should -Invoke Invoke-Command -Times 1 -Exactly -ParameterFilter { -not $AsJob }
+    }
+
+    It 'falls back to sequential collection when concurrent session preparation fails' {
+        $localNode = $env:COMPUTERNAME
+        $script:SessionOpenCount = 0
+        Mock New-PSSession {
+            $script:SessionOpenCount++
+            if ($script:SessionOpenCount -eq 2) { throw 'Concurrent session preparation failed.' }
+            [System.Runtime.Serialization.FormatterServices]::GetUninitializedObject(
+                [System.Management.Automation.Runspaces.PSSession]
+            )
+        }
+        Mock Remove-PSSession { }
+        Mock Get-WinEvent { @() }
+        Mock vssadmin { @() }
+        Mock Invoke-Command { & $ScriptBlock @ArgumentList }
+
+        $result = Invoke-NodeDiagnosticPrefetch `
+            -Nodes @($localNode, 'REMOTE-NODE-A', 'REMOTE-NODE-B') -LocalNode $localNode `
+            -SessionByNode @{} -LookbackHours 168 -ConcernIds @() -ContextIds @() `
+            -CodePatterns @() -ThrottleLimit 2 -MaxAttempts 1 -DelayMs 0
+
+        $result.Complete | Should -BeTrue
+        $result.ExecutionMode | Should -Be 'SequentialFallback'
+        $result.ThrottleLimit | Should -Be 1
+        @($result.Nodes).Count | Should -Be 3
+        @($result.Nodes.ExecutionMode | Sort-Object -Unique) | Should -Be @('SequentialFallback')
+        Should -Invoke Invoke-Command -Times 2 -Exactly -ParameterFilter { -not $AsJob }
+        Should -Invoke Remove-PSSession -Times 1 -Exactly
+    }
+
+    It 'does not launch prefetch again when both node caches are populated' {
+        $node = 'REMOTE-NODE-A'
+        $script:NodeEventCache["$node|168"] = [pscustomobject]@{ Status = 'Success'; Rows = @() }
+        $script:VssByNode[$node] = @()
+        Mock Invoke-NodeDiagnosticPrefetch { throw 'Coordinator must not run for cached nodes.' }
+
+        $result = Initialize-NodeDiagnosticPrefetch -Nodes @($node) -LocalNode $env:COMPUTERNAME `
+            -OutputPath '' -LookbackHours 168 -ConcernIds @() -ContextIds @() -CodePatterns @()
+
+        $result.ExecutionMode | Should -Be 'Cached'
+        @($result.Nodes).Count | Should -Be 0
+        Should -Invoke Invoke-NodeDiagnosticPrefetch -Times 0 -Exactly
+    }
+
+    It 'merges prefetched event and VSS evidence and writes the node CSV once' {
+        $node = 'REMOTE-NODE-A'
+        $eventRow = [pscustomobject]@{
+            'Time (UTC)' = '2026-07-23 12:00:00'; Id = 19100; Level = 'Error'; Log = 'VMMS'
+            Concern = 'YES'; Message = 'Merge failed'; FullMessage = 'Merge failed'
+        }
+        $snapshot = New-TestNodeDiagnosticSnapshot -Node $node
+        $snapshot.EventRows = @($eventRow)
+        $snapshot.VssRows = @([pscustomobject]@{ Writer = 'Test Writer'; State = '[1] Stable'; 'Last error' = 'No error' })
+        Mock Invoke-NodeDiagnosticPrefetch {
+            [pscustomobject]@{
+                Complete = $true; ExecutionMode = 'Concurrent'; ThrottleLimit = 1
+                CoordinatorDurationMs = 30L
+                Nodes = @([pscustomobject]@{
+                    Node = $node; Complete = $true; DurationMs = 30L
+                    ExecutionMode = 'ConcurrentRemote'; Result = $snapshot; Error = ''
+                })
+            }
+        }
+
+        $result = Initialize-NodeDiagnosticPrefetch -Nodes @($node) -LocalNode $env:COMPUTERNAME `
+            -OutputPath $TestDrive -LookbackHours 168 -ConcernIds @(19100) -ContextIds @() -CodePatterns @()
+
+        $result.Complete | Should -BeTrue
+        $script:NodeEventCache["$node|168"].Status | Should -Be 'Success'
+        @($script:NodeEventCache["$node|168"].Rows).Count | Should -Be 1
+        @($script:VssByNode[$node]).Count | Should -Be 1
+        $script:NodeCsvNameByNode[$node] | Should -Not -BeNullOrEmpty
+        Test-Path -LiteralPath (Join-Path $TestDrive $script:NodeCsvNameByNode[$node]) | Should -BeTrue
     }
 }
 

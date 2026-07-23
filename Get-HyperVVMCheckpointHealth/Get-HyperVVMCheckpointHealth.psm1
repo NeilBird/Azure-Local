@@ -118,7 +118,7 @@ function Get-HyperVVMCheckpointHealth {
     Author  : Neil Bird, Microsoft
     Created : 2026-07-10
     Updated : 2026-07-23
-    Version : 0.2.22
+    Version : 0.2.23
     
     Requires: Windows PowerShell 5.1 (this module is written for, and validated against, Windows
               PowerShell 5.1 ONLY - it is NOT intended or tested for PowerShell 7.x). Requires the
@@ -366,7 +366,7 @@ Then run this in Windows PowerShell 5.1, on a cluster node or a workstation that
 
 # Module version - single source of truth surfaced in the HTML report (header meta + footer) so a
 # saved / emailed report always states which build produced it. Keep in sync with the .NOTES Version.
-$script:ScriptVersion = '0.2.22'
+$script:ScriptVersion = '0.2.23'
 
 # v0.2.14: end-to-end run stopwatch - started as early as possible so the HTML report can state the
 # total time taken to audit the whole fleet and render the report ("Report generation time hh:mm:ss").
@@ -385,6 +385,9 @@ $script:RunStopwatch          = [System.Diagnostics.Stopwatch]::StartNew()
 # numbers intentionally REPEAT for every VM in the audit loop, distinguished by the Detail field):
 #   1               = whole module run (total)
 #   1.05.15         = all-cluster VM selection when -ProcessAllVMs is used
+#   1.08.10         = bounded node diagnostic prefetch coordination
+#   1.08.10.10      = event prefetch worker per owning node
+#   1.08.10.20      = VSS prefetch worker per owning node
 #   1.10            = per-VM audit (total)   - repeats once per audited VM (input AND discovered)
 #   1.10.NN         = per-VM audit section   - NN = 05,10,15,... (assigned at each Show-AuditProgress call)
 #   1.10.20.10      = VHD chain collection and validation (inside per-VM disk section)
@@ -668,6 +671,458 @@ function Out-Indented {
 
 
 
+
+function Get-NodeDiagnosticSnapshot {
+    [CmdletBinding()]
+    [OutputType([pscustomobject])]
+    param(
+        [Parameter(Mandatory)][ValidateRange(1, 8760)][int]$LookbackHours,
+        [Parameter(Mandatory)][AllowEmptyCollection()][int[]]$ConcernIds,
+        [Parameter(Mandatory)][AllowEmptyCollection()][int[]]$ContextIds,
+        [Parameter(Mandatory)][AllowEmptyCollection()][string[]]$CodePatterns,
+        [ValidateRange(1, 10)][int]$MaxAttempts = 3,
+        [ValidateRange(0, 60000)][int]$DelayMs = 750,
+        [bool]$SkipEvents = $false
+    )
+
+    $workerStartUtc = [DateTime]::UtcNow
+    $workerStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+    $errors = [System.Collections.Generic.List[object]]::new()
+
+    $eventStatus = if ($SkipEvents) { 'Skipped' } else { 'Unavailable' }
+    $eventRows = @()
+    $channelStatus = @()
+    $eventError = ''
+    $eventAttempts = 0
+    $eventDurationMs = 0L
+    if (-not $SkipEvents) {
+        $eventStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+        for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
+            $eventAttempts = $attempt
+            try {
+                $start = (Get-Date).AddHours(-$LookbackHours)
+                $codeRx = ($CodePatterns | ForEach-Object { [regex]::Escape($_) }) -join '|'
+                $attemptRows = [System.Collections.Generic.List[object]]::new()
+                $attemptChannels = [System.Collections.Generic.List[object]]::new()
+                foreach ($log in @(
+                    [pscustomobject]@{ Name = 'Microsoft-Windows-Hyper-V-Worker-Admin'; Channel = 'Worker' }
+                    [pscustomobject]@{ Name = 'Microsoft-Windows-Hyper-V-VMMS-Admin'; Channel = 'VMMS' }
+                )) {
+                    try {
+                        $events = @(Get-WinEvent -FilterHashtable @{ LogName = $log.Name; StartTime = $start } -ErrorAction Stop)
+                        foreach ($eventRecord in $events) {
+                            if (-not (($codeRx -and $eventRecord.Message -match $codeRx) -or ($ConcernIds -contains $eventRecord.Id) -or ($ContextIds -contains $eventRecord.Id))) { continue }
+                            $isConcern = (($codeRx -and $eventRecord.Message -match $codeRx) -or ($ConcernIds -contains $eventRecord.Id))
+                            [void]$attemptRows.Add([pscustomobject]@{
+                                'Time (UTC)' = $eventRecord.TimeCreated.ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')
+                                Id           = [int]$eventRecord.Id
+                                Level        = [string]$eventRecord.LevelDisplayName
+                                Log          = $log.Channel
+                                Concern      = if ($isConcern) { 'YES' } else { '' }
+                                Message      = ($eventRecord.Message -split "`r?`n")[0]
+                                FullMessage  = ($eventRecord.Message -replace "`r?`n", ' | ')
+                            })
+                        }
+                        [void]$attemptChannels.Add([pscustomobject]@{ Channel = $log.Channel; Status = 'Success'; Error = '' })
+                    } catch {
+                        if ($_.FullyQualifiedErrorId -like 'NoMatchingEventsFound*') {
+                            [void]$attemptChannels.Add([pscustomobject]@{ Channel = $log.Channel; Status = 'Success'; Error = '' })
+                        } else {
+                            throw ("{0} query failed: {1}" -f $log.Channel, $_.Exception.Message)
+                        }
+                    }
+                }
+                $eventRows = $attemptRows.ToArray()
+                $channelStatus = $attemptChannels.ToArray()
+                $eventStatus = 'Success'
+                $eventError = ''
+                break
+            } catch {
+                $eventError = $_.Exception.Message
+                if ($attempt -lt $MaxAttempts -and $DelayMs -gt 0) {
+                    Start-Sleep -Milliseconds ($DelayMs * $attempt)
+                }
+            }
+        }
+        $eventStopwatch.Stop()
+        $eventDurationMs = [long]$eventStopwatch.ElapsedMilliseconds
+        if ($eventStatus -ne 'Success') {
+            $channelStatus = @(
+                [pscustomobject]@{ Channel = 'Worker'; Status = 'Unavailable'; Error = $eventError }
+                [pscustomobject]@{ Channel = 'VMMS'; Status = 'Unavailable'; Error = $eventError }
+            )
+            [void]$errors.Add([pscustomobject]@{ Operation = 'Event'; Message = $eventError; AttemptCount = $eventAttempts })
+        }
+    }
+
+    $vssStatus = 'Unavailable'
+    $vssRows = @()
+    $vssError = ''
+    $vssAttempts = 0
+    $vssStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+    for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
+        $vssAttempts = $attempt
+        try {
+            $raw = @(& vssadmin list writers 2>$null)
+            $text = ($raw -join "`n")
+            $writers = [System.Collections.Generic.List[object]]::new()
+            foreach ($block in ($text -split '(?m)^Writer name:')) {
+                if ($block -notmatch "'") { continue }
+                $name = if ($block -match "'([^']+)'") { $Matches[1] } else { '' }
+                $state = if ($block -match 'State:\s*(.+)') { $Matches[1].Trim() } else { '' }
+                $lastError = if ($block -match 'Last error:\s*(.+)') { $Matches[1].Trim() } else { '' }
+                if ($name) {
+                    [void]$writers.Add([pscustomobject]@{ Writer = $name; State = $state; 'Last error' = $lastError })
+                }
+            }
+            $vssRows = $writers.ToArray()
+            $vssStatus = 'Success'
+            $vssError = ''
+            break
+        } catch {
+            $vssError = $_.Exception.Message
+            if ($attempt -lt $MaxAttempts -and $DelayMs -gt 0) {
+                Start-Sleep -Milliseconds ($DelayMs * $attempt)
+            }
+        }
+    }
+    $vssStopwatch.Stop()
+    if ($vssStatus -ne 'Success') {
+        [void]$errors.Add([pscustomobject]@{ Operation = 'VSS'; Message = $vssError; AttemptCount = $vssAttempts })
+    }
+
+    $workerStopwatch.Stop()
+    [pscustomobject]@{
+        Complete         = (($SkipEvents -or $eventStatus -eq 'Success') -and $vssStatus -eq 'Success')
+        EventStatus      = $eventStatus
+        EventRows        = @($eventRows)
+        ChannelStatus    = @($channelStatus)
+        EventError       = $eventError
+        EventAttempts    = $eventAttempts
+        EventDurationMs  = $eventDurationMs
+        VssStatus        = $vssStatus
+        VssRows          = @($vssRows)
+        VssError         = $vssError
+        VssAttempts      = $vssAttempts
+        VssDurationMs    = [long]$vssStopwatch.ElapsedMilliseconds
+        Errors           = $errors.ToArray()
+        WorkerStartUtc   = $workerStartUtc
+        WorkerEndUtc     = [DateTime]::UtcNow
+        WorkerDurationMs = [long]$workerStopwatch.ElapsedMilliseconds
+    }
+}
+
+function Invoke-NodeDiagnosticPrefetch {
+    [CmdletBinding()]
+    [OutputType([pscustomobject])]
+    param(
+        [Parameter(Mandatory)][AllowEmptyCollection()][string[]]$Nodes,
+        [Parameter(Mandatory)][ValidateNotNullOrEmpty()][string]$LocalNode,
+        [Parameter(Mandatory)][System.Collections.IDictionary]$SessionByNode,
+        [Parameter(Mandatory)][ValidateRange(1, 8760)][int]$LookbackHours,
+        [Parameter(Mandatory)][AllowEmptyCollection()][int[]]$ConcernIds,
+        [Parameter(Mandatory)][AllowEmptyCollection()][int[]]$ContextIds,
+        [Parameter(Mandatory)][AllowEmptyCollection()][string[]]$CodePatterns,
+        [ValidateRange(1, 8)][int]$ThrottleLimit = 4,
+        [ValidateRange(1, 10)][int]$MaxAttempts = 3,
+        [ValidateRange(0, 60000)][int]$DelayMs = 750,
+        [switch]$SkipEvents
+    )
+
+    $orderedNodes = @($Nodes | Where-Object { $_ } | Sort-Object -Unique)
+    $coordinatorStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+    if ($orderedNodes.Count -eq 0) {
+        $coordinatorStopwatch.Stop()
+        return [pscustomobject]@{
+            Complete = $true; ExecutionMode = 'None'; ThrottleLimit = 0; Nodes = @(); CoordinatorDurationMs = 0L
+        }
+    }
+
+    $collector = ${function:Get-NodeDiagnosticSnapshot}
+    # Each comma-wrapped array must remain one positional ArgumentList value in Windows PowerShell 5.1.
+    # Removing the unary comma flattens IDs/patterns and shifts every parameter that follows them.
+    $collectorArguments = @(
+        $LookbackHours
+        (,$ConcernIds)
+        (,$ContextIds)
+        (,$CodePatterns)
+        $MaxAttempts
+        $DelayMs
+        [bool]$SkipEvents
+    )
+    $localNodeShort = $LocalNode.Split('.')[0]
+    $localNodes = @($orderedNodes | Where-Object { $_.Split('.')[0] -eq $localNodeShort })
+    $remoteNodes = @($orderedNodes | Where-Object { $_.Split('.')[0] -ne $localNodeShort })
+    $nodeResults = [System.Collections.Generic.List[object]]::new()
+    $executionMode = 'Sequential'
+    $effectiveThrottle = 1
+
+    $addNodeResult = {
+        param([string]$Node, $Result, [long]$DurationMs, [string]$Mode, [string]$ErrorMessage)
+        [void]$nodeResults.Add([pscustomobject]@{
+            Node          = $Node
+            Complete      = ($Result -and [bool]$Result.Complete)
+            DurationMs    = $DurationMs
+            ExecutionMode = $Mode
+            Result        = $Result
+            Error         = $ErrorMessage
+        })
+        if ($Result) {
+            foreach ($collectionError in @($Result.Errors)) {
+                Add-AuditDiagnosticMessage -Message ([string]$collectionError.Message) `
+                    -Operation ("Prefetch node {0} diagnostics" -f $collectionError.Operation) `
+                    -Scope ("Node={0}; Attempts={1}" -f $Node, $collectionError.AttemptCount)
+            }
+        }
+    }
+
+    $collectSequentialNode = {
+        param([string]$Node, [string]$Mode)
+        $nodeStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+        try {
+            if ($Node.Split('.')[0] -eq $localNodeShort) {
+                $result = & $collector @collectorArguments
+            } else {
+                $session = $SessionByNode[$Node]
+                if ($session -and $session.State -ne 'Opened') {
+                    Remove-PSSession -Session $session -ErrorAction SilentlyContinue
+                    $SessionByNode.Remove($Node)
+                    $session = $null
+                }
+                if (-not $session) {
+                    $session = Invoke-WithRetry -DiagnosticOperation 'Open node-diagnostic prefetch remoting session' `
+                        -DiagnosticScope ("Node={0}" -f $Node) -ScriptBlock {
+                            New-PSSession -ComputerName $Node -ErrorAction Stop
+                        }
+                    $SessionByNode[$Node] = $session
+                }
+                $result = Invoke-WithRetry -DiagnosticOperation 'Invoke node-diagnostic prefetch' `
+                    -DiagnosticScope ("Node={0}" -f $Node) -ScriptBlock {
+                        Invoke-Command -Session $session -ScriptBlock $collector -ArgumentList $collectorArguments -ErrorAction Stop
+                    }
+            }
+            $nodeStopwatch.Stop()
+            & $addNodeResult $Node $result ([long]$nodeStopwatch.ElapsedMilliseconds) $Mode ''
+        } catch {
+            $nodeStopwatch.Stop()
+            Add-AuditDiagnostic -ErrorRecord $_ -Operation 'Prefetch node diagnostics' -Scope ("Node={0}; Mode={1}" -f $Node, $Mode)
+            & $addNodeResult $Node $null ([long]$nodeStopwatch.ElapsedMilliseconds) $Mode $_.Exception.Message
+        }
+    }
+
+    if ($orderedNodes.Count -gt 1 -and $remoteNodes.Count -gt 0) {
+        $temporarySessions = [System.Collections.Generic.List[object]]::new()
+        $sessionByShortName = @{}
+        $fanoutJob = $null
+        try {
+            foreach ($remoteNode in $remoteNodes) {
+                $session = Invoke-WithRetry -DiagnosticOperation 'Open concurrent node-diagnostic prefetch session' `
+                    -DiagnosticScope ("Node={0}" -f $remoteNode) -ScriptBlock {
+                        New-PSSession -ComputerName $remoteNode -ErrorAction Stop
+                    }
+                [void]$temporarySessions.Add($session)
+                $sessionByShortName[$remoteNode.Split('.')[0].ToLowerInvariant()] = $session
+            }
+
+            $executionMode = 'Concurrent'
+            $effectiveThrottle = [math]::Min($ThrottleLimit, $remoteNodes.Count)
+            $fanoutErrors = @()
+            $fanoutJob = Invoke-Command -Session $temporarySessions.ToArray() -ScriptBlock $collector `
+                -ArgumentList $collectorArguments -ThrottleLimit $effectiveThrottle -AsJob -ErrorAction Stop
+
+            foreach ($localMatch in $localNodes) {
+                & $collectSequentialNode $localMatch 'Local'
+            }
+
+            Wait-Job -Job $fanoutJob -ErrorAction Stop | Out-Null
+            $remoteResults = @(Receive-Job -Job $fanoutJob -ErrorAction SilentlyContinue -ErrorVariable fanoutErrors)
+            foreach ($childJob in @($fanoutJob.ChildJobs)) {
+                foreach ($childError in @($childJob.Error)) {
+                    Add-AuditDiagnostic -ErrorRecord $childError -Operation 'Concurrent node-diagnostic prefetch child job' `
+                        -Scope ("Location={0}; Throttle={1}" -f $childJob.Location, $effectiveThrottle)
+                }
+            }
+            foreach ($remoteNode in $remoteNodes) {
+                $nodeShort = $remoteNode.Split('.')[0]
+                $remoteResult = @($remoteResults | Where-Object {
+                    $_.PSComputerName -and $_.PSComputerName.Split('.')[0].Equals($nodeShort, [StringComparison]::OrdinalIgnoreCase)
+                } | Select-Object -First 1)
+                if ($remoteResult.Count -gt 0) {
+                    $workerDurationMs = if ($remoteResult[0].PSObject.Properties['WorkerDurationMs']) {
+                        [long]$remoteResult[0].WorkerDurationMs
+                    } else { 0L }
+                    & $addNodeResult $remoteNode $remoteResult[0] $workerDurationMs 'ConcurrentRemote' ''
+                } else {
+                    $session = $sessionByShortName[$nodeShort.ToLowerInvariant()]
+                    $retryStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+                    try {
+                        $result = Invoke-WithRetry -DiagnosticOperation 'Retry node diagnostics after concurrent fan-out' `
+                            -DiagnosticScope ("Node={0}" -f $remoteNode) -ScriptBlock {
+                                Invoke-Command -Session $session -ScriptBlock $collector -ArgumentList $collectorArguments -ErrorAction Stop
+                            }
+                        $retryStopwatch.Stop()
+                        & $addNodeResult $remoteNode $result ([long]$retryStopwatch.ElapsedMilliseconds) 'SequentialRetry' ''
+                    } catch {
+                        $retryStopwatch.Stop()
+                        Add-AuditDiagnostic -ErrorRecord $_ -Operation 'Retry node diagnostics after concurrent fan-out' `
+                            -Scope ("Node={0}" -f $remoteNode)
+                        & $addNodeResult $remoteNode $null ([long]$retryStopwatch.ElapsedMilliseconds) 'SequentialRetry' $_.Exception.Message
+                    }
+                }
+            }
+            foreach ($fanoutError in @($fanoutErrors)) {
+                Add-AuditDiagnostic -ErrorRecord $fanoutError -Operation 'Concurrent node-diagnostic prefetch fan-out' `
+                    -Scope ("Nodes={0}; Throttle={1}" -f $remoteNodes.Count, $effectiveThrottle)
+            }
+        } catch {
+            if ($fanoutJob) {
+                Stop-Job -Job $fanoutJob -ErrorAction SilentlyContinue
+                Remove-Job -Job $fanoutJob -Force -ErrorAction SilentlyContinue
+                $fanoutJob = $null
+            }
+            Add-AuditDiagnostic -ErrorRecord $_ -Operation 'Prepare concurrent node-diagnostic prefetch' `
+                -Scope ("Nodes={0}; FallingBack=Sequential" -f $orderedNodes.Count)
+            $executionMode = 'SequentialFallback'
+            $effectiveThrottle = 1
+            $nodeResults.Clear()
+            foreach ($node in $orderedNodes) { & $collectSequentialNode $node 'SequentialFallback' }
+        } finally {
+            if ($fanoutJob) { Remove-Job -Job $fanoutJob -Force -ErrorAction SilentlyContinue }
+            foreach ($temporarySession in @($temporarySessions)) {
+                if ($temporarySession) { Remove-PSSession -Session $temporarySession -ErrorAction SilentlyContinue }
+            }
+        }
+    } else {
+        foreach ($node in $orderedNodes) {
+            & $collectSequentialNode $node $(if ($localNodes -contains $node) { 'Local' } else { 'SequentialRemote' })
+        }
+    }
+
+    $coordinatorStopwatch.Stop()
+    $orderedNodeResults = @($nodeResults | Sort-Object { [array]::IndexOf($orderedNodes, [string]$_.Node) })
+    [pscustomobject]@{
+        Complete              = (@($orderedNodeResults | Where-Object { -not $_.Complete }).Count -eq 0)
+        ExecutionMode         = $executionMode
+        ThrottleLimit         = $effectiveThrottle
+        Nodes                 = $orderedNodeResults
+        CoordinatorDurationMs = [long]$coordinatorStopwatch.ElapsedMilliseconds
+    }
+}
+
+function Initialize-NodeDiagnosticPrefetch {
+    [CmdletBinding()]
+    [OutputType([pscustomobject])]
+    param(
+        [Parameter(Mandatory)][AllowEmptyCollection()][string[]]$Nodes,
+        [Parameter(Mandatory)][ValidateNotNullOrEmpty()][string]$LocalNode,
+        [AllowEmptyString()][string]$OutputPath,
+        [Parameter(Mandatory)][ValidateRange(1, 8760)][int]$LookbackHours,
+        [Parameter(Mandatory)][AllowEmptyCollection()][int[]]$ConcernIds,
+        [Parameter(Mandatory)][AllowEmptyCollection()][int[]]$ContextIds,
+        [Parameter(Mandatory)][AllowEmptyCollection()][string[]]$CodePatterns,
+        [switch]$SkipEvents
+    )
+
+    $nodesToCollect = @($Nodes | Where-Object {
+        if (-not $_) { return $false }
+        $eventCacheKey = "{0}|{1}" -f $_, $LookbackHours
+        ((-not $SkipEvents) -and -not $script:NodeEventCache.ContainsKey($eventCacheKey)) -or
+            (-not $script:VssByNode.ContainsKey($_))
+    } | Sort-Object -Unique)
+    if ($nodesToCollect.Count -eq 0) {
+        return [pscustomobject]@{
+            Complete = $true; ExecutionMode = 'Cached'; ThrottleLimit = 0; Nodes = @(); CoordinatorDurationMs = 0L
+        }
+    }
+
+    Write-AuditReportLine ("Prefetching read-only event/VSS diagnostics from {0} owning node(s), with bounded cross-node concurrency." -f $nodesToCollect.Count)
+    $prefetchStart = Get-TelemetryNow
+    $prefetch = Invoke-NodeDiagnosticPrefetch -Nodes $nodesToCollect -LocalNode $LocalNode `
+        -SessionByNode $script:SessionByNode -LookbackHours $LookbackHours `
+        -ConcernIds $ConcernIds -ContextIds $ContextIds -CodePatterns $CodePatterns `
+        -ThrottleLimit 4 -SkipEvents:$SkipEvents
+    $prefetchEnd = Get-TelemetryNow
+
+    foreach ($nodeResult in @($prefetch.Nodes)) {
+        $node = [string]$nodeResult.Node
+        $snapshot = $nodeResult.Result
+        if (-not $snapshot) {
+            if (-not $SkipEvents) {
+                $eventCacheKey = "{0}|{1}" -f $node, $LookbackHours
+                $script:NodeEventCache[$eventCacheKey] = [pscustomobject]@{
+                    Status = 'Unavailable'; Rows = @(); ChannelStatus = @(
+                        [pscustomobject]@{ Channel = 'Worker'; Status = 'Unavailable'; Error = [string]$nodeResult.Error }
+                        [pscustomobject]@{ Channel = 'VMMS'; Status = 'Unavailable'; Error = [string]$nodeResult.Error }
+                    ); Error = [string]$nodeResult.Error; AttemptedUtc = [DateTime]::UtcNow; AttemptCount = 0
+                }
+            }
+            $script:VssByNode[$node] = $null
+            Write-Alert ("  Node diagnostic prefetch failed for '{0}': {1}. Event/VSS evidence is marked unavailable; the audit will continue." -f $node, $nodeResult.Error) -Level Warning
+            continue
+        }
+
+        if (-not $SkipEvents) {
+            $eventCacheKey = "{0}|{1}" -f $node, $LookbackHours
+            $script:NodeEventCache[$eventCacheKey] = [pscustomobject]@{
+                Status        = [string]$snapshot.EventStatus
+                Rows          = @($snapshot.EventRows)
+                ChannelStatus = @($snapshot.ChannelStatus)
+                Error         = [string]$snapshot.EventError
+                AttemptedUtc  = [DateTime]$snapshot.WorkerEndUtc
+                AttemptCount  = [int]$snapshot.EventAttempts
+            }
+            if ($snapshot.EventStatus -eq 'Success' -and $OutputPath -and @($snapshot.EventRows).Count -gt 0) {
+                $nodeCsvPath = $null
+                try {
+                    $nodeCsvName = "_NodeEvents_{0}_{1}.csv" -f ($node -replace '[^\w.\-]', '_'), [DateTime]::UtcNow.ToString('yyyy-MM-dd')
+                    $nodeCsvPath = Join-Path $OutputPath $nodeCsvName
+                    if (-not (Test-Path -LiteralPath $nodeCsvPath)) {
+                        @($snapshot.EventRows) | Select-Object 'Time (UTC)', Id, Level, Log, Concern, FullMessage |
+                            Export-Csv -LiteralPath $nodeCsvPath -NoTypeInformation -Encoding UTF8
+                    }
+                    $script:NodeCsvNameByNode[$node] = $nodeCsvName
+                } catch {
+                    Add-AuditDiagnostic -ErrorRecord $_ -Operation 'Write prefetched node-wide events CSV' `
+                        -Scope ("Node={0}; File={1}" -f $node, $nodeCsvPath)
+                    Write-Alert "  Could not write the prefetched node-wide events CSV for '$node': $($_.Exception.Message)" -Level Warning
+                }
+            }
+        }
+
+        $script:VssByNode[$node] = if ($snapshot.VssStatus -eq 'Success') { @($snapshot.VssRows) } else { $null }
+        if ($snapshot.EventStatus -eq 'Unavailable') {
+            Write-Alert ("  Event prefetch was unavailable on '{0}' after {1} attempt(s): {2}" -f $node, $snapshot.EventAttempts, $snapshot.EventError) -Level Warning
+        }
+        if ($snapshot.VssStatus -eq 'Unavailable') {
+            Write-Alert ("  VSS prefetch was unavailable on '{0}' after {1} attempt(s): {2}" -f $node, $snapshot.VssAttempts, $snapshot.VssError) -Level Warning
+        }
+
+        $workerStart = [DateTimeOffset]$snapshot.WorkerStartUtc
+        $eventStart = $workerStart
+        $eventEnd = $eventStart.AddMilliseconds([long]$snapshot.EventDurationMs)
+        $vssStart = $eventEnd
+        $vssEnd = $vssStart.AddMilliseconds([long]$snapshot.VssDurationMs)
+        Add-TelemetryEntry -Step '1.08.10.10' -Phase 'Event prefetch worker' `
+            -Detail ("Node={0}; Mode={1}; Status={2}; Rows={3}; Attempts={4}; ChannelErrors={5}" -f `
+                $node, $nodeResult.ExecutionMode, $snapshot.EventStatus, @($snapshot.EventRows).Count,
+                $snapshot.EventAttempts, @($snapshot.ChannelStatus | Where-Object { $_.Status -ne 'Success' }).Count) `
+            -StartUtc $eventStart -EndUtc $eventEnd
+        Add-TelemetryEntry -Step '1.08.10.20' -Phase 'VSS prefetch worker' `
+            -Detail ("Node={0}; Mode={1}; Status={2}; Writers={3}; Attempts={4}" -f `
+                $node, $nodeResult.ExecutionMode, $snapshot.VssStatus, @($snapshot.VssRows).Count, $snapshot.VssAttempts) `
+            -StartUtc $vssStart -EndUtc $vssEnd
+    }
+
+    Add-TelemetryEntry -Step '1.08.10' -Phase 'Node diagnostic prefetch coordination' `
+        -Detail ("Mode={0}; Nodes={1}; Throttle={2}; CompleteNodes={3}; FailedNodes={4}; EventRows={5}; VssWriters={6}; WallDurationMs={7}" -f `
+            $prefetch.ExecutionMode, $nodesToCollect.Count, $prefetch.ThrottleLimit,
+            @($prefetch.Nodes | Where-Object { $_.Complete }).Count,
+            @($prefetch.Nodes | Where-Object { -not $_.Complete }).Count,
+            [long](($prefetch.Nodes | ForEach-Object { if ($_.Result) { @($_.Result.EventRows).Count } else { 0 } } | Measure-Object -Sum).Sum),
+            [long](($prefetch.Nodes | ForEach-Object { if ($_.Result) { @($_.Result.VssRows).Count } else { 0 } } | Measure-Object -Sum).Sum),
+            $prefetch.CoordinatorDurationMs) -StartUtc $prefetchStart -EndUtc $prefetchEnd
+    return $prefetch
+}
 
 function Get-ClusterVirtualDiskOwnershipInventory {
     [CmdletBinding()]
@@ -2759,28 +3214,36 @@ function Invoke-VMCheckpointAudit {
         # node event-log scan (1.10.50.10), so the telemetry cleanly isolates the per-node VSS cost from
         # the per-VM overhead and can prove the caching saving on the next run.
         $vssScanStart = Get-TelemetryNow
+        $vssScanAttempts = 0
         try {
-            $vssWriters = @(Invoke-OnOwner -ScriptBlock {
-                $raw = & vssadmin list writers 2>$null
-                if (-not $raw) { return @() }
-                $text = ($raw -join "`n")
-                $out = [System.Collections.Generic.List[object]]::new()
-                foreach ($b in ($text -split "(?m)^Writer name:")) {
-                    if ($b -notmatch "'") { continue }
-                    $name    = if ($b -match "'([^']+)'")      { $Matches[1] }        else { '' }
-                    $state   = if ($b -match "State:\s*(.+)")   { $Matches[1].Trim() } else { '' }
-                    $lastErr = if ($b -match "Last error:\s*(.+)") { $Matches[1].Trim() } else { '' }
-                    if ($name) { [void]$out.Add([pscustomobject]@{ Writer = $name; State = $state; 'Last error' = $lastErr }) }
-                }
-                $out.ToArray()
-            })
+            $vssWriters = @(Invoke-WithRetry -AttemptCount ([ref]$vssScanAttempts) `
+                -DiagnosticOperation 'Query VSS writers on owning node' `
+                -DiagnosticScope ("Node={0}" -f $OwningNode) -ScriptBlock {
+                    Invoke-OnOwner -ScriptBlock {
+                        $raw = & vssadmin list writers 2>$null
+                        if (-not $raw) { return @() }
+                        $text = ($raw -join "`n")
+                        $out = [System.Collections.Generic.List[object]]::new()
+                        foreach ($b in ($text -split "(?m)^Writer name:")) {
+                            if ($b -notmatch "'") { continue }
+                            $name    = if ($b -match "'([^']+)'")      { $Matches[1] }        else { '' }
+                            $state   = if ($b -match "State:\s*(.+)")   { $Matches[1].Trim() } else { '' }
+                            $lastErr = if ($b -match "Last error:\s*(.+)") { $Matches[1].Trim() } else { '' }
+                            if ($name) { [void]$out.Add([pscustomobject]@{ Writer = $name; State = $state; 'Last error' = $lastErr }) }
+                        }
+                        $out.ToArray()
+                    }
+                })
             $script:VssByNode[$OwningNode] = $vssWriters
         } catch {
             $vssWriters = $null
             $script:VssByNode[$OwningNode] = $null
-            Write-Alert "  Could not query VSS writers on '$OwningNode' (needs an elevated context): $($_.Exception.Message)" -Level Warning
+            Write-Alert "  Could not query VSS writers on '$OwningNode' after $vssScanAttempts attempt(s) (needs an elevated context): $($_.Exception.Message)" -Level Warning
         }
-        Add-TelemetryEntry -Step '1.10.60.10' -Phase 'VSS writer scan (once per node)' -Detail $OwningNode -StartUtc $vssScanStart -EndUtc (Get-TelemetryNow)
+        Add-TelemetryEntry -Step '1.10.60.10' -Phase 'VSS writer scan (once per node)' `
+            -Detail ("Node={0}; Status={1}; Writers={2}; Attempts={3}" -f $OwningNode,
+                $(if ($null -ne $vssWriters) { 'Success' } else { 'Unavailable' }), @($vssWriters).Count, $vssScanAttempts) `
+            -StartUtc $vssScanStart -EndUtc (Get-TelemetryNow)
     }
     $vssUnhealthy = @()
     if ($vssWriters -and $vssWriters.Count -gt 0) {
@@ -4016,6 +4479,7 @@ $script:SessionByNode       = @{}     # pooled PSSession per owning node, reused
 $script:HostVersionsByNode  = @{}     # hashtable node -> supported VM config versions (Get-VMHostSupportedVersion, once per node)
 $script:ClusterCsvCache     = $null   # Get-ClusterSharedVolume result (once)
 $script:VssByNode           = @{}     # hashtable node -> vssadmin writer rows (once per node; VSS writer state is node-scoped, not per-VM)
+$script:NodeDiagnosticPrefetchRuns = [System.Collections.Generic.List[object]]::new() # actual initial/discovered-node prefetch coordinator results
 $script:ReplicationServerSettingsByNode = @{} # read-only Replica monitoring interval/start settings (once per owner node)
 $script:VirtualDiskOwnershipInventory = $null # all-node VM/snapshot/chain path ownership (once)
 $script:VirtualDiskFileInventory = $null      # all-CSV .vhd/.vhdx/.avhdx file inventory (once)
@@ -4161,6 +4625,24 @@ end {
         return
     }
     Initialize-ClusterVirtualDiskInventories -Cluster $Cluster -FirstVMName ([string]$script:PendingVMNames[0])
+    $initialDiagnosticNodes = @($script:PendingVMNames | ForEach-Object {
+        if ($script:GroupOwnerByVm -and $script:GroupOwnerByVm.ContainsKey([string]$_)) {
+            [string]$script:GroupOwnerByVm[[string]$_]
+        }
+    } | Where-Object { $_ } | Sort-Object -Unique)
+    if ($initialDiagnosticNodes.Count -gt 0) {
+        try {
+            $prefetchRun = Initialize-NodeDiagnosticPrefetch -Nodes $initialDiagnosticNodes `
+                -LocalNode $env:COMPUTERNAME -OutputPath $script:RunFolder -LookbackHours $EventLookbackHours `
+                -ConcernIds $WorkerEventIds -ContextIds $ContextEventIds -CodePatterns $ErrorCodePatterns `
+                -SkipEvents:$SkipWorkerEvents
+            if (@($prefetchRun.Nodes).Count -gt 0) { [void]$script:NodeDiagnosticPrefetchRuns.Add($prefetchRun) }
+        } catch {
+            Add-AuditDiagnostic -ErrorRecord $_ -Operation 'Initialize node diagnostic prefetch' `
+                -Scope ("Nodes={0}; FallingBack=LazyCollection" -f $initialDiagnosticNodes.Count)
+            Write-Alert ("  Node diagnostic prefetch could not initialize: {0}. The audit will use the existing lazy per-node collection path." -f $_.Exception.Message) -Level Warning
+        }
+    }
     $vmIndex = 0
     foreach ($name in $script:PendingVMNames) {
         $vmIndex++
@@ -4239,6 +4721,24 @@ end {
             Write-AuditStatus ""
             $capDisplay = if ($null -eq $discoverySummary.Cap) { 'None' } else { [string]$discoverySummary.Cap }
             Write-AuditStatus ("  Discovery: {0} eligible; auditing {1}; deferred {2}; cap {3}." -f $discoverySummary.EligibleCount, $discoverySummary.AuditedCount, $discoverySummary.DeferredCount, $capDisplay) -ForegroundColor Cyan
+            $discoveredDiagnosticNodes = @($toAudit | ForEach-Object {
+                if ($script:GroupOwnerByVm -and $script:GroupOwnerByVm.ContainsKey([string]$_.Name)) {
+                    [string]$script:GroupOwnerByVm[[string]$_.Name]
+                }
+            } | Where-Object { $_ } | Sort-Object -Unique)
+            if ($discoveredDiagnosticNodes.Count -gt 0) {
+                try {
+                    $prefetchRun = Initialize-NodeDiagnosticPrefetch -Nodes $discoveredDiagnosticNodes `
+                        -LocalNode $env:COMPUTERNAME -OutputPath $script:RunFolder -LookbackHours $EventLookbackHours `
+                        -ConcernIds $WorkerEventIds -ContextIds $ContextEventIds -CodePatterns $ErrorCodePatterns `
+                        -SkipEvents:$SkipWorkerEvents
+                    if (@($prefetchRun.Nodes).Count -gt 0) { [void]$script:NodeDiagnosticPrefetchRuns.Add($prefetchRun) }
+                } catch {
+                    Add-AuditDiagnostic -ErrorRecord $_ -Operation 'Initialize discovered-node diagnostic prefetch' `
+                        -Scope ("Nodes={0}; FallingBack=LazyCollection" -f $discoveredDiagnosticNodes.Count)
+                    Write-Alert ("  Discovered-node diagnostic prefetch could not initialize: {0}. The audit will use lazy per-node collection for missing evidence." -f $_.Exception.Message) -Level Warning
+                }
+            }
             foreach ($dv in $toAudit) {
                 $ds = Invoke-VMCheckpointAudit -VMName $dv.Name -Cluster $Cluster -OutputPath $script:RunFolder -StaleHours $StaleHours `
                     -SkipWorkerEvents:$SkipWorkerEvents -EventLookbackHours $EventLookbackHours `
@@ -4385,6 +4885,8 @@ end {
             }
             $telName = "code_execution_perf_telemetry_{0}_{1}.json" -f $telFileCluster, $runStamp
             $telPath = Join-Path $script:RunFolder $telName
+            $prefetchNodeResults = @($script:NodeDiagnosticPrefetchRuns | ForEach-Object { $_.Nodes })
+            $prefetchModes = @($script:NodeDiagnosticPrefetchRuns | ForEach-Object { [string]$_.ExecutionMode } | Where-Object { $_ } | Sort-Object -Unique)
             $telDoc  = [ordered]@{
                 Tool               = 'Get-HyperVVMCheckpointHealth'
                 ScriptVersion      = $script:ScriptVersion
@@ -4409,8 +4911,13 @@ end {
                 EventLookbackHours = $EventLookbackHours
                 SkipWorkerEvents   = [bool]$SkipWorkerEvents
                 SkipStorageHealth  = [bool]$SkipStorageHealth
+                NodePrefetchRuns   = $script:NodeDiagnosticPrefetchRuns.Count
+                NodePrefetchMode   = if ($prefetchModes.Count -gt 0) { $prefetchModes -join ',' } else { 'NotRun' }
+                NodePrefetchThrottle = if ($script:NodeDiagnosticPrefetchRuns.Count -gt 0) { [int](($script:NodeDiagnosticPrefetchRuns | Measure-Object ThrottleLimit -Maximum).Maximum) } else { 0 }
+                NodePrefetchNodes  = @($prefetchNodeResults | ForEach-Object { [string]$_.Node } | Where-Object { $_ } | Sort-Object -Unique).Count
+                NodePrefetchFailed = @($prefetchNodeResults | Where-Object { -not $_.Complete }).Count
                 TotalRunSeconds    = [math]::Round($script:RunStopwatch.Elapsed.TotalSeconds, 3)
-                StepNumbering      = '1 = whole run; 1.05.15 = all-cluster VM selection for -ProcessAllVMs; 1.07 = cluster virtual-disk inventory preflight total; 1.07.10 = ownership inventory total; 1.07.10.10 = ownership worker timing per node; 1.07.10.20 = ownership worker coordination; 1.07.20 = file inventory; 1.10 = per-VM audit total (repeats per VM); 1.10.NN = per-VM section (NN two-digit, gaps of 5); 1.10.20.10 = VHD chain collection+validation; 1.10.35.10-.40 = ownership/file inventory and housekeeping classification; 1.10.40.05 = Replica relationship+monitoring collection; 1.10.40.10 = typed replication assessment; 1.10.45.10 = HRL collection+assessment; 1.10.50.10 = node event-log scan; 1.10.50.20 = per-VM event attribution; 1.10.50.30 = operation recovery correlation; 1.10.55.10 = Analytic channel status; 1.10.60.10 = VSS writer scan; 1.10.65.10 = attached-layer+snapshot staleness assessment; 1.10.70 = historic event correlation (repeats by search window); 1.10.75 = findings / RESULT render + result-object build; 1.10.80 = collection state consistency section; 1.10.80.10 = collection state consistency recheck; 1.10.85 = per-VM text report write; 1.20 = discovered VM validation+selection; 1.30 = storage-health snapshot; 1.40 = HTML render+write. The results ZIP is timed on the console because this JSON is written before and bundled into it. Step numbers are HIERARCHICAL / NESTED: parent and child durations overlap, so do NOT sum DurationSec across levels. Order is completion order; sort by StartUtc for a true timeline. Step numbers intentionally repeat per VM - use Detail to distinguish them.'
+                StepNumbering      = '1 = whole run; 1.05.15 = all-cluster VM selection for -ProcessAllVMs; 1.07 = cluster virtual-disk inventory preflight total; 1.07.10 = ownership inventory total; 1.07.10.10 = ownership worker timing per node; 1.07.10.20 = ownership worker coordination; 1.07.20 = file inventory; 1.08.10 = bounded node diagnostic prefetch coordination; 1.08.10.10 = event prefetch worker per node; 1.08.10.20 = VSS prefetch worker per node; 1.10 = per-VM audit total (repeats per VM); 1.10.NN = per-VM section (NN two-digit, gaps of 5); 1.10.20.10 = VHD chain collection+validation; 1.10.35.10-.40 = ownership/file inventory and housekeeping classification; 1.10.40.05 = Replica relationship+monitoring collection; 1.10.40.10 = typed replication assessment; 1.10.45.10 = HRL collection+assessment; 1.10.50.10 = lazy node event-log scan fallback; 1.10.50.20 = per-VM event attribution; 1.10.50.30 = operation recovery correlation; 1.10.55.10 = Analytic channel status; 1.10.60.10 = lazy VSS writer scan fallback; 1.10.65.10 = attached-layer+snapshot staleness assessment; 1.10.70 = historic event correlation (repeats by search window); 1.10.75 = findings / RESULT render + result-object build; 1.10.80 = collection state consistency section; 1.10.80.10 = collection state consistency recheck; 1.10.85 = per-VM text report write; 1.20 = discovered VM validation+selection; 1.30 = storage-health snapshot; 1.40 = HTML render+write. The results ZIP is timed on the console because this JSON is written before and bundled into it. Step numbers are HIERARCHICAL / NESTED: parent and child durations overlap, so do NOT sum DurationSec across levels. Order is completion order; sort by StartUtc for a true timeline. Step numbers intentionally repeat per VM - use Detail to distinguish them.'
                 Steps              = $telSteps
             }
             $telJson = $telDoc | ConvertTo-Json -Depth 6
