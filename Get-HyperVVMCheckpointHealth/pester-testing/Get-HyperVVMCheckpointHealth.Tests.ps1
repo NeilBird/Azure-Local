@@ -438,6 +438,35 @@ Describe 'PassThru automation result contract' {
         [object]::ReferenceEquals($result.RunData, $runData) | Should -BeTrue
     }
 
+    It 'promotes the assessment text into Detail for an INVESTIGATE result' {
+        $assessmentText = 'Checkpoint or virtual-disk evidence requires validation.'
+        $nestedStatus = [pscustomobject]@{
+            VhdChains = [pscustomobject]@{ Status = 'Complete' }
+            VirtualDiskInventory = [pscustomobject]@{ Status = 'Complete' }
+            EventLogs = [pscustomobject]@{ Status = 'Success' }
+            HistoricEvents = [pscustomobject]@{ Status = 'Complete' }
+            StateConsistency = [pscustomobject]@{ Status = 'Stable' }
+            VssWriters = [pscustomobject]@{ Status = 'Healthy' }
+        }
+        $reportData = [pscustomobject]@{
+            AssessmentConfidence = 'High'
+            CollectionStatus = $nestedStatus
+            InvestigationDrivers = [pscustomobject]@{ AssessmentText = $assessmentText }
+        }
+        $inputResult = [pscustomobject]@{
+            VMName = 'TEST-VM'; Cluster = 'TEST-CLUSTER'; OwningNode = 'TEST-NODE'
+            Recommendation = 'INVESTIGATE'; Detail = ''; ReportData = $reportData
+        }
+
+        $result = Complete-CheckpointHealthPassThruResult -Result $inputResult -RunData ([pscustomobject]@{ Cluster = 'TEST-CLUSTER' })
+
+        $result.Detail | Should -Be $assessmentText
+        $result.CollectionStatus.Outcome.Detail | Should -Be $assessmentText
+        $result.CollectionStatus.VhdChains.Status | Should -Be 'Complete'
+        $result.CollectionStatus.EventLogs.Status | Should -Be 'Success'
+        $result.CollectionStatus.VssWriters.Status | Should -Be 'Healthy'
+    }
+
     It 'returns predictable incomplete status for NOT FOUND and ERROR rows' {
         $runData = [pscustomobject]@{ Cluster = 'TEST-CLUSTER' }
         $inputs = @(
@@ -552,6 +581,10 @@ Describe 'Module distribution contracts' {
         $readme | Should -Match '\$run = \$r\[0\]\.RunData'
         $readme | Should -Match '\$vmResult\.VMName'
         $readme | Should -Not -Match "Select-Object @\{n='VM';e=\{ \$_\.Name \}\}, AgeHrs"
+        $readme | Should -Match 'dark orange identifies the observed value that supports a concern'
+        $readme | Should -Match 'stale checkpoint or attached-layer `YES` and the age that breached `-StaleHours`'
+        $readme | Should -Match 'driver-specific `Detail` text for `INVESTIGATE`'
+        $readme | Should -Match 'event-attribution telemetry records `Rows=0`'
     }
 
     It 'retains every runtime file required by the module' {
@@ -1005,11 +1038,12 @@ Describe 'HTML fleet report usability' {
         $script:RenderedHtml | Should -Match '<th>Stale<br>evidence</th>'
         $script:RenderedHtml | Should -Match '1 layer / 0 snapshots'
         $script:RenderedHtml | Should -Not -Match '>1 / 0<'
-        $script:RenderedHtml | Should -Match 'Stale attached AVHDX layers \(&ge;24h\)</div><div>1</div>'
-        $script:RenderedHtml | Should -Match 'Snapshot/layer representation</div><div>MISMATCH'
+        $script:RenderedHtml | Should -Match "Stale attached AVHDX layers \(&ge;24h\)</div><div><span class='warnval'>1</span></div>"
+        $script:RenderedHtml | Should -Match "Snapshot/layer representation</div><div><span class='warnval'>MISMATCH"
         $script:RenderedHtml | Should -Match '1 stale attached AVHDX layer\(s\)'
         $script:RenderedHtml | Should -Match 'Attached VHD chain evidence \(1 layer\(s\)\)'
         $script:RenderedHtml | Should -Match 'TEST-VM-STALE-LAYER_OS\.avhdx'
+        $script:RenderedHtml | Should -Match "class='num ckptage'><span class='warnval'>[0-9.]+ h<br>[0-9.]+ d</span></td><td><span class='warnval'>YES</span>"
     }
 
     It 'uses Replica-specific guidance for a Replica-only INVESTIGATE result' {

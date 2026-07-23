@@ -405,6 +405,11 @@ function Complete-CheckpointHealthPassThruResult {
         $source = if ($Result.PSObject.Properties['Source'] -and $Result.Source) { [string]$Result.Source } else { 'Input' }
         $recommendation = if ($Result.PSObject.Properties['Recommendation'] -and $Result.Recommendation) { [string]$Result.Recommendation } else { 'ERROR' }
         $detail = if ($Result.PSObject.Properties['Detail']) { [string]$Result.Detail } else { '' }
+        if (-not $detail -and $recommendation -eq 'INVESTIGATE' -and $reportData -and
+            $reportData.PSObject.Properties['InvestigationDrivers'] -and $reportData.InvestigationDrivers -and
+            $reportData.InvestigationDrivers.PSObject.Properties['AssessmentText']) {
+            $detail = [string]$reportData.InvestigationDrivers.AssessmentText
+        }
         $assessmentConfidence = if ($reportData -and $reportData.PSObject.Properties['AssessmentConfidence']) {
             [string]$reportData.AssessmentConfidence
         } else {

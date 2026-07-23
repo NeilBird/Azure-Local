@@ -781,6 +781,23 @@ function ConvertTo-VMCheckpointAuditHtml {
             $measurementEvidence = Get-ReplicaMeasurementEvidence -Assessment $replicaAssessment -Breaches $breachesToShow
             if ($measurementEvidence) { "$($replicaAssessment.MeasurementStatus) - $measurementEvidence" } else { [string]$replicaAssessment.MeasurementStatus }
         } else { 'Unavailable' }
+        $chainCompleteText = if ($rd.PSObject.Properties['ChainComplete'] -and $rd.ChainComplete) { 'Complete' } elseif ($rd.PSObject.Properties['IncompleteChainCount']) { "INCOMPLETE ($($rd.IncompleteChainCount) disk(s) unreadable)" } else { 'Unavailable' }
+        $chainCompleteHtml = if ($chainCompleteText -eq 'Complete') { $chainCompleteText } else { "<span class='warnval'>$(ConvertTo-HtmlText $chainCompleteText)</span>" }
+        $staleAttachedCount = if ($rd.PSObject.Properties['StaleAttachedLayerCount']) { [int]$rd.StaleAttachedLayerCount } else { 0 }
+        $staleAttachedHtml = if ($staleAttachedCount -gt 0) { "<span class='warnval'>$staleAttachedCount</span>" } else { '0' }
+        $staleSnapshotCount = [int]$rd.StaleCheckpointCount
+        $staleSnapshotHtml = if ($staleSnapshotCount -gt 0) { "<span class='warnval'>$staleSnapshotCount</span>" } else { '0' }
+        $snapshotLayerMismatch = ($rd.PSObject.Properties['SnapshotLayerMismatch'] -and $rd.SnapshotLayerMismatch)
+        $snapshotLayerHtml = if ($snapshotLayerMismatch) { "<span class='warnval'>MISMATCH - only one representation is present</span>" } else { 'Consistent presence' }
+        $orphanCount = [int]$rd.OrphanCount
+        $orphanCountHtml = if ($orphanCount -gt 0) { "<span class='warnval'>$orphanCount</span>" } else { '0' }
+        $vssHtml = if ($rd.VssState -eq 'Healthy') { ConvertTo-HtmlText $vss } else { "<span class='warnval'>$(ConvertTo-HtmlText $vss)</span>" }
+        $csvPolicyHtml = if ($rd.PSObject.Properties['CsvFreeSpaceAssessment'] -and $rd.CsvFreeSpaceAssessment -and $rd.CsvFreeSpaceAssessment.IsConcern) { "<span class='warnval'>$(ConvertTo-HtmlText $csvPolicyText)</span>" } else { ConvertTo-HtmlText $csvPolicyText }
+        $hrlPolicyConcern = ($rd.PSObject.Properties['HrlAssessment'] -and $rd.HrlAssessment -and $rd.HrlAssessment.Enabled -and ([int]$rd.HrlAssessment.ExceedsCadenceCount -gt 0) -and $rd.HrlAssessment.CorroboratedByReplication)
+        $hrlPolicyHtml = if ($hrlPolicyConcern) { "<span class='warnval'>$(ConvertTo-HtmlText $hrlPolicyText)</span>" } else { ConvertTo-HtmlText $hrlPolicyText }
+        $vmEventHtml = if ([int]$rd.VmHighConcernCount -gt 0) { "<span class='warnval'>$($rd.VmEventConcernCount) ($($rd.VmHighConcernCount) high-signal)</span>" } else { "$($rd.VmEventConcernCount) (low-signal only)" }
+        $stateConsistencyText = if ($rd.PSObject.Properties['StateConsistencyImpact']) { "$($rd.StateConsistencyStatus) / $($rd.StateConsistencyImpact)" } else { 'Stable' }
+        $stateConsistencyHtml = if ($rd.PSObject.Properties['StateConsistencyImpact'] -and $rd.StateConsistencyImpact -eq 'Inconclusive') { "<span class='warnval'>$(ConvertTo-HtmlText $stateConsistencyText)</span>" } else { ConvertTo-HtmlText $stateConsistencyText }
         [void]$sb.Append(@"
   <div class="kv">
     <div class="k">Source</div><div>$(ConvertTo-HtmlText $srcText) $(if ($srcText -eq 'Discovered') { '(auto-added via -IncludeDiscoveredVMs)' } else { '(you requested this VM)' })</div>
@@ -791,23 +808,23 @@ function ConvertTo-VMCheckpointAuditHtml {
     <div class="k">Attached disks</div><div>$($rd.AttachedDiskCount)</div>
     <div class="k">Checkpoints (Get-VMSnapshot)</div><div>$ckptCount</div>
     <div class="k">Differencing (.avhdx) files</div><div>$(if ([int]$rd.CheckpointLayers -gt 0) { "$($rd.CheckpointLayers) (= checkpoints &times; disks)" } else { '0 (no checkpoints)' })</div>
-    <div class="k">VHD chain completeness</div><div>$(if ($rd.PSObject.Properties['ChainComplete'] -and $rd.ChainComplete) { 'Complete' } elseif ($rd.PSObject.Properties['IncompleteChainCount']) { "INCOMPLETE ($($rd.IncompleteChainCount) disk(s) unreadable)" } else { 'Unavailable' })</div>
-    <div class="k">Stale attached AVHDX layers (&ge;$($rd.StaleHours)h)</div><div>$(if ($rd.PSObject.Properties['StaleAttachedLayerCount']) { $rd.StaleAttachedLayerCount } else { 0 })</div>
-    <div class="k">Stale named snapshots (&ge;$($rd.StaleHours)h)</div><div>$($rd.StaleCheckpointCount)</div>
-    <div class="k">Snapshot/layer representation</div><div>$(if ($rd.PSObject.Properties['SnapshotLayerMismatch'] -and $rd.SnapshotLayerMismatch) { 'MISMATCH - only one representation is present' } else { 'Consistent presence' })</div>
+    <div class="k">VHD chain completeness</div><div>$chainCompleteHtml</div>
+    <div class="k">Stale attached AVHDX layers (&ge;$($rd.StaleHours)h)</div><div>$staleAttachedHtml</div>
+    <div class="k">Stale named snapshots (&ge;$($rd.StaleHours)h)</div><div>$staleSnapshotHtml</div>
+    <div class="k">Snapshot/layer representation</div><div>$snapshotLayerHtml</div>
     <div class="k">Checkpoint type</div><div>$(ConvertTo-HtmlText $rd.CheckpointType)</div>
-    <div class="k">Orphaned .avhdx</div><div>$($rd.OrphanCount)</div>
+    <div class="k">Orphaned .avhdx</div><div>$orphanCountHtml</div>
     <div class="k">Hyper-V Replica</div><div>$(if ($rd.Replication.Enabled) { ConvertTo-HtmlText ("{0} ({1})" -f $rd.Replication.State, $rd.Replication.Health) } else { 'Not enabled' })</div>
     <div class="k">Replica measurement assessment</div><div>$(ConvertTo-HtmlText $replicaMeasurementText)</div>
-    <div class="k">VSS writers</div><div>$(ConvertTo-HtmlText $vss)</div>
+    <div class="k">VSS writers</div><div>$vssHtml</div>
     <div class="k">Analytic channel</div><div>$(ConvertTo-HtmlText $analytic)</div>
     <div class="k">Policy source</div><div><code>$(ConvertTo-HtmlText $policySourceText)</code></div>
-    <div class="k">CSV free-space policy</div><div>$(ConvertTo-HtmlText $csvPolicyText)</div>
-    <div class="k">HRL cadence assessment</div><div>$(ConvertTo-HtmlText $hrlPolicyText)</div>
+    <div class="k">CSV free-space policy</div><div>$csvPolicyHtml</div>
+    <div class="k">HRL cadence assessment</div><div>$hrlPolicyHtml</div>
     <div class="k">Config behind latest</div><div>$verOld</div>
-    <div class="k">Concerning events - this VM ($($rd.EventLookbackHours)h)</div><div>$($rd.VmEventConcernCount) ($(if ([int]$rd.VmHighConcernCount -gt 0) { "$($rd.VmHighConcernCount) high-signal" } else { 'low-signal only' }))</div>
+    <div class="k">Concerning events - this VM ($($rd.EventLookbackHours)h)</div><div>$vmEventHtml</div>
     <div class="k">Concerning events - node-wide ($($rd.EventLookbackHours)h)</div><div>$($rd.EventConcernCount)$nodeWideNote (references other VMs / none - context only)</div>
-        <div class="k">Collection state consistency</div><div>$(if ($rd.PSObject.Properties['StateConsistencyImpact']) { "$(ConvertTo-HtmlText $rd.StateConsistencyStatus) / $(ConvertTo-HtmlText $rd.StateConsistencyImpact)" } else { 'Stable' })</div>
+        <div class="k">Collection state consistency</div><div>$stateConsistencyHtml</div>
   </div>
 "@)
         # Assessment callout. v0.2.14: name the actual INVESTIGATE driver (so the operator sees WHY and
@@ -1007,7 +1024,8 @@ function ConvertTo-VMCheckpointAuditHtml {
             foreach ($c in @($rd.Checkpoints | Sort-Object AgeHrs -Descending)) {
                 # Stale YES is amber (matches the summary table's stale-count colour); NO stays plain.
                 $staleTxt = if ($c.Stale) { "<span class='warnval'>YES</span>" } else { 'NO' }
-                $ageCell  = '{0} h<br>{1} d' -f $c.AgeHrs, [math]::Round([double]$c.AgeHrs / 24, 1)
+                $ageText = '{0} h<br>{1} d' -f $c.AgeHrs, [math]::Round([double]$c.AgeHrs / 24, 1)
+                $ageCell = if ($c.Stale) { "<span class='warnval'>$ageText</span>" } else { $ageText }
                 [void]$sb.Append("<tr><td class='ckptname'>$(ConvertTo-HtmlText $c.Name)</td><td>$(ConvertTo-HtmlText $c.Type)</td><td>$(ConvertTo-HtmlText $c.Purpose)</td><td>$(ConvertTo-HtmlText $c.Created)</td><td class='num ckptage'>$ageCell</td><td>$staleTxt</td><td>$(ConvertTo-HtmlText $c.Parent)</td></tr>")
             }
             [void]$sb.Append("</tbody></table></details>`r`n")
@@ -1019,7 +1037,8 @@ function ConvertTo-VMCheckpointAuditHtml {
             [void]$sb.Append("  <details open><summary>Attached VHD chain evidence ($(@($attachedVhdLayers).Count) layer(s))</summary><table><thead><tr><th>Disk</th><th>Layer</th><th>Type</th><th>Size (GB)</th><th>Created (UTC)</th><th>LastWrite (UTC)</th><th>Age</th><th>Stale</th><th>Full path</th><th>Parent path</th></tr></thead><tbody>")
             foreach ($layer in $attachedVhdLayers) {
                 $layerStale = if ($layer.Stale) { "<span class='warnval'>YES</span>" } elseif ($layer.Type -eq 'Differencing') { 'NO' } else { 'n/a' }
-                $layerAge = if ($null -ne $layer.AgeHrs) { '{0} h<br>{1} d' -f $layer.AgeHrs, [math]::Round([double]$layer.AgeHrs / 24, 1) } else { '-' }
+                $layerAgeText = if ($null -ne $layer.AgeHrs) { '{0} h<br>{1} d' -f $layer.AgeHrs, [math]::Round([double]$layer.AgeHrs / 24, 1) } else { '-' }
+                $layerAge = if ($layer.Stale -and $null -ne $layer.AgeHrs) { "<span class='warnval'>$layerAgeText</span>" } else { $layerAgeText }
                 [void]$sb.Append("<tr><td>$(ConvertTo-HtmlText $layer.Disk)</td><td class='num'>$($layer.Layer)</td><td>$(ConvertTo-HtmlText $layer.Type)</td><td class='num'>$($layer.SizeGB)</td><td>$(ConvertTo-HtmlText $layer.Created)</td><td>$(ConvertTo-HtmlText $layer.LastWrite)</td><td class='num ckptage'>$layerAge</td><td>$layerStale</td><td><code>$(ConvertTo-HtmlText $layer.Path)</code></td><td><code>$(ConvertTo-HtmlText $layer.ParentPath)</code></td></tr>")
             }
             [void]$sb.Append("</tbody></table><p class='muted'>These are the files in the VM's currently attached VHD chain. A differencing <code>.avhdx</code> layer can remain attached even when <code>Get-VMSnapshot</code> exposes no named checkpoint. Validate the chain and the responsible backup/checkpoint job before migration, restart, merge, or removal.</p></details>`r`n")
@@ -1031,7 +1050,7 @@ function ConvertTo-VMCheckpointAuditHtml {
             [void]$sb.Append("  <details open><summary>Orphaned .avhdx files ($($rd.OrphanCount)) - on disk but NOT attached to the VM</summary><table><thead><tr><th>File Name</th><th>Size (GB)</th><th>Created (UTC)</th><th>LastWrite (UTC)</th><th>Age</th><th>Likely / action</th><th>Full path</th></tr></thead><tbody>")
             foreach ($o in @($rd.Orphans)) {
                 # Age shown in BOTH hours and days (stacked), matching the Checkpoints table above.
-                $ageTxt = if ($null -ne $o.AgeHrs) { '{0} h<br>{1} d' -f $o.AgeHrs, $o.AgeDays } else { '-' }
+                $ageTxt = if ($null -ne $o.AgeHrs) { "<span class='warnval'>$('{0} h<br>{1} d' -f $o.AgeHrs, $o.AgeDays)</span>" } else { '-' }
                 [void]$sb.Append("<tr><td>$(ConvertTo-HtmlText $o.Name)</td><td class='num'>$($o.SizeGB)</td><td>$(ConvertTo-HtmlText $o.Created)</td><td>$(ConvertTo-HtmlText $o.LastWrite)</td><td class='num ckptage'>$ageTxt</td><td>$(ConvertTo-HtmlText $o.Likely)</td><td><code>$(ConvertTo-HtmlText $o.FullName)</code></td></tr>")
             }
             [void]$sb.Append("</tbody></table><p class='muted'>Orphaned <code>.avhdx</code> are differencing files on disk that are not attached to the VM. They can be the aftermath of a rolled-back / stuck merge (which may hold un-recovered data) or leftover backup / live-mount files. <strong>Do not delete based on this report.</strong> Action (backup team / VM owner): (1) match each file to a backup / restore / live-mount / replica-seed job for this VM at its Created / LastWrite time; (2) if it is a live-mount / instant-recovery file, unmount it THROUGH the backup product rather than deleting it by hand; (3) if it is a leftover initial-replica point, let Hyper-V Replica remove it (resume / resync); (4) before removing anything, confirm a current good backup exists, MOVE (rename) the file to a quarantine folder, keep it one retention cycle, verify the VM and its next backup are healthy, then delete. The 'Likely / action' column above gives the per-file read. The action and decision rest with you / the administrator.</p></details>`r`n")
