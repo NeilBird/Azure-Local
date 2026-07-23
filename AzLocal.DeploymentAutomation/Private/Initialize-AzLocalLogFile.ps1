@@ -25,7 +25,7 @@
     $logDir = Split-Path $LogFilePath -Parent
     if ($logDir -and -not (Test-Path $logDir)) {
         try {
-            New-Item -Path $logDir -ItemType Directory -Force -ErrorAction Stop | Out-Null
+            New-Item -Path $logDir -ItemType Directory -Force -ErrorAction Stop -WhatIf:$false | Out-Null
         } catch {
             Write-Host "WARNING: Failed to create log directory '$logDir': $($_.Exception.Message)" -ForegroundColor Yellow
         }

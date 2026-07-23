@@ -115,7 +115,9 @@
     # Check if the deployment is already in a terminal state
     if ($deployment.ProvisioningState -in $terminalStates) {
         Write-AzLocalLog "Deployment is already in terminal state: $($deployment.ProvisioningState)" -Level Warning
-        Write-AzLocalLog "  Duration: $($deployment.Duration)" -Level Verbose
+        if ($deployment.PSObject.Properties['Duration'] -and $deployment.Duration) {
+            Write-AzLocalLog "  Duration: $($deployment.Duration)" -Level Verbose
+        }
 
         if ($PassThru) { return $deployment }
         return
@@ -184,7 +186,7 @@
             Write-AzLocalLog "  Deployment: $DeploymentName" -Level Info -NoTimestamp
             Write-AzLocalLog "  Final State: $currentStatus" -Level $finalLevel -NoTimestamp
             Write-AzLocalLog "  Total Monitoring Time: $($totalElapsed.ToString('hh\:mm\:ss'))" -Level Info -NoTimestamp
-            if ($deployment.Duration) {
+            if ($deployment.PSObject.Properties['Duration'] -and $deployment.Duration) {
                 Write-AzLocalLog "  ARM Deployment Duration: $($deployment.Duration)" -Level Info -NoTimestamp
             }
 
@@ -201,11 +203,11 @@
                 Write-AzLocalLog "Deployment failed. Check the Azure Portal for detailed error information." -Level Error
                 # Attempt to display error details if available
                 $troubleshootErrorText = ""
-                if ($deployment.Error) {
+                if ($deployment.PSObject.Properties['Error'] -and $deployment.Error) {
                     Write-AzLocalLog "  Error Code: $($deployment.Error.Code)" -Level Error -NoTimestamp
                     Write-AzLocalLog "  Error Message: $($deployment.Error.Message)" -Level Error -NoTimestamp
                     $troubleshootErrorText = "$($deployment.Error.Code) $($deployment.Error.Message)"
-                    if ($deployment.Error.Details) {
+                    if ($deployment.Error.PSObject.Properties['Details'] -and $deployment.Error.Details) {
                         foreach ($errDetail in $deployment.Error.Details) {
                             $troubleshootErrorText += " $($errDetail.Code) $($errDetail.Message)"
                         }

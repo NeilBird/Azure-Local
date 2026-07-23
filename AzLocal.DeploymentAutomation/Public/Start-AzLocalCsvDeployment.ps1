@@ -100,7 +100,7 @@
 
     Write-AzLocalLog "Processing $($clusters.Count) cluster(s) with ReadyToDeploy = TRUE." -Level Success
 
-    $allResults = @()
+    $allResults = New-Object 'System.Collections.Generic.List[object]'
 
     foreach ($cluster in $clusters) {
         $uniqueID = $cluster.UniqueID
@@ -114,13 +114,13 @@
             Write-AzLocalLog "Azure context set to subscription '$($cluster.SubscriptionId)'." -Level Success
         } catch {
             Write-AzLocalLog "Failed to set Azure context for ${uniqueID}: $($_.Exception.Message)" -Level Error
-            $allResults += [PSCustomObject]@{
+            $allResults.Add([PSCustomObject]@{
                 TestName  = "PreFlight-$uniqueID"
                 ClassName = "AzLocalDeploymentAutomation.PreFlight"
                 Status    = 'Failed'
                 Message   = "Failed to set Azure context: $($_.Exception.Message)"
                 Duration  = 0
-            }
+            }) | Out-Null
             continue
         }
 
@@ -128,13 +128,13 @@
         $preFlightResult = Test-AzLocalClusterPreFlight -ClusterRow $cluster -NamingConfig $NamingConfig -DeploymentMode $DeploymentMode
 
         # Record pre-flight result
-        $allResults += [PSCustomObject]@{
+        $allResults.Add([PSCustomObject]@{
             TestName  = "PreFlight-$uniqueID"
             ClassName = "AzLocalDeploymentAutomation.PreFlight"
             Status    = $preFlightResult.Status
             Message   = ($preFlightResult.Messages -join "`n")
             Duration  = $preFlightResult.Duration
-        }
+        }) | Out-Null
 
         # Only proceed to deployment if pre-flight passed
         if ($preFlightResult.Status -ne 'Passed') {
@@ -215,43 +215,43 @@
                 $deployDuration = ((Get-Date) - $deployStartTime).TotalSeconds
 
                 if ($deploymentResult -and $deploymentResult.ProvisioningState -eq 'Succeeded') {
-                    $allResults += [PSCustomObject]@{
+                    $allResults.Add([PSCustomObject]@{
                         TestName  = "$DeploymentMode-$uniqueID"
                         ClassName = "AzLocalDeploymentAutomation.$DeploymentMode"
                         Status    = 'Passed'
                         Message   = "$DeploymentMode succeeded for cluster '$uniqueID'. Duration: $($deploymentResult.Duration)"
                         Duration  = [math]::Round($deployDuration, 2)
-                    }
+                    }) | Out-Null
                     Write-AzLocalLog "$DeploymentMode SUCCEEDED for $uniqueID." -Level Success
                 } else {
                     $provState = if ($deploymentResult) { $deploymentResult.ProvisioningState } else { "Unknown" }
-                    $allResults += [PSCustomObject]@{
+                    $allResults.Add([PSCustomObject]@{
                         TestName  = "$DeploymentMode-$uniqueID"
                         ClassName = "AzLocalDeploymentAutomation.$DeploymentMode"
                         Status    = 'Failed'
                         Message   = "$DeploymentMode failed for cluster '$uniqueID'. ProvisioningState: $provState"
                         Duration  = [math]::Round($deployDuration, 2)
-                    }
+                    }) | Out-Null
                     Write-AzLocalLog "$DeploymentMode FAILED for $uniqueID (State: $provState)." -Level Error
                 }
             } else {
-                $allResults += [PSCustomObject]@{
+                $allResults.Add([PSCustomObject]@{
                     TestName  = "$DeploymentMode-$uniqueID"
                     ClassName = "AzLocalDeploymentAutomation.$DeploymentMode"
                     Status    = 'Skipped'
                     Message   = "$DeploymentMode skipped by user (WhatIf/Confirm)."
                     Duration  = 0
-                }
+                }) | Out-Null
             }
         } catch {
             $deployDuration = ((Get-Date) - $deployStartTime).TotalSeconds
-            $allResults += [PSCustomObject]@{
+            $allResults.Add([PSCustomObject]@{
                 TestName  = "$DeploymentMode-$uniqueID"
                 ClassName = "AzLocalDeploymentAutomation.$DeploymentMode"
                 Status    = 'Failed'
                 Message   = "$DeploymentMode failed for cluster '$uniqueID': $($_.Exception.Message)"
                 Duration  = [math]::Round($deployDuration, 2)
-            }
+            }) | Out-Null
             Write-AzLocalLog "$DeploymentMode FAILED for ${uniqueID}: $($_.Exception.Message)" -Level Error
         }
     }
@@ -271,5 +271,5 @@
     Write-AzLocalLog "  Passed: $passed | Failed: $failed | Skipped: $skipped" -Level Info -NoTimestamp
     Write-AzLocalLog "========================================================" -Level Info -NoTimestamp
 
-    return $allResults
+    return $allResults.ToArray()
 }

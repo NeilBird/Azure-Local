@@ -90,7 +90,7 @@
             throw "Invalid SAN network VLAN ID '$sanVlanRaw'. Must be an integer between 0 and 4095."
         }
         $sanAddressPrefix = Read-Host "`nPlease enter the SAN network address prefix in CIDR notation (e.g. 10.10.30.0/24)" -ErrorAction Stop
-        if ($sanAddressPrefix -notmatch '^(\d{1,3}\.){3}\d{1,3}/\d{1,2}$') {
+        if (-not (Test-AzLocalIPv4Cidr -Value $sanAddressPrefix)) {
             throw "Invalid SAN network address prefix '$sanAddressPrefix'. Must be valid CIDR notation (e.g. 10.10.30.0/24)."
         }
         $sanSettings = [PsCustomObject][Ordered]@{

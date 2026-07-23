@@ -34,7 +34,15 @@ Function Test-AzLocalAzurePrerequisites {
         [string]$SubscriptionId,
 
         [Parameter(Mandatory = $true, Position = 1)]
-        [string]$ResourceGroupName
+        [string]$ResourceGroupName,
+
+        [Parameter(Mandatory = $false)]
+        [ValidateRange(1, 300)]
+        [int]$RegistrationPollingIntervalSeconds = 15,
+
+        [Parameter(Mandatory = $false)]
+        [ValidateRange(1, 120)]
+        [int]$RegistrationMaxAttempts = 60
     )
 
     $messages = @()
@@ -77,8 +85,28 @@ Function Test-AzLocalAzurePrerequisites {
                 Write-AzLocalLog "Resource provider '$provider' is '$regState'. Attempting auto-registration..." -Level Warning
                 try {
                     Register-AzResourceProvider -ProviderNamespace $provider -ErrorAction Stop | Out-Null
-                    $messages += "Resource provider '$provider': AUTO-REGISTERED (was $regState) - registration may take 5-15 minutes to propagate"
-                    Write-AzLocalLog "Resource provider '$provider': Auto-registered. WARNING: Registration may take 5-15 minutes to propagate. If subsequent checks fail, wait and retry." -Level Warning
+                    Write-AzLocalLog "Resource provider '$provider': Registration requested. Waiting for state 'Registered'..." -Level Warning
+
+                    $registered = $false
+                    for ($attempt = 1; $attempt -le $RegistrationMaxAttempts; $attempt++) {
+                        Start-Sleep -Seconds $RegistrationPollingIntervalSeconds
+                        $rp = Get-AzResourceProvider -ProviderNamespace $provider -ErrorAction Stop
+                        $regState = $rp[0].RegistrationState
+                        if ($regState -eq 'Registered') {
+                            $registered = $true
+                            break
+                        }
+                        Write-Verbose "Resource provider '$provider' registration state is '$regState' (attempt $attempt of $RegistrationMaxAttempts)."
+                    }
+
+                    if ($registered) {
+                        $messages += "Resource provider '$provider': AUTO-REGISTERED (was not registered)"
+                        Write-AzLocalLog "Resource provider '$provider': Registered." -Level Success
+                    } else {
+                        $messages += "Resource provider '$provider': REGISTRATION TIMED OUT - last state '$regState'"
+                        Write-AzLocalLog "Resource provider '$provider': Registration did not reach 'Registered' after $RegistrationMaxAttempts attempts." -Level Error
+                        $rpFailed = $true
+                    }
                 } catch {
                     $messages += "Resource provider '$provider': FAILED TO REGISTER - $($_.Exception.Message)"
                     Write-AzLocalLog "Resource provider '$provider': Failed to register - $($_.Exception.Message)" -Level Error

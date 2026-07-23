@@ -63,10 +63,6 @@ Function Get-AzLocalArmResource {
         [string]$ApiVersion
     )
 
-    # Error-message fragments that indicate the resource genuinely does not exist
-    # (as opposed to a transport / validation / authorization failure).
-    $notFoundPattern = 'ResourceNotFound|was not found|could not be found|StatusCode:\s*404'
-
     # Seed the first call with a caller-supplied api-version when provided (e.g. the
     # known GA version for the resource type). If ARM rejects it, the catch block
     # below self-heals by parsing ARM's supported-versions list and retrying.
@@ -79,7 +75,7 @@ Function Get-AzLocalArmResource {
         $msg = [string]$_.Exception.Message
 
         # Genuine absence -> this is an expected, non-error outcome.
-        if ($msg -match $notFoundPattern) {
+        if (Test-AzLocalNotFoundError -ErrorRecord $_ -ErrorCode @('ResourceNotFound')) {
             Write-Verbose "$ResourceKind '$ResourceId' not found (genuine 404)."
             return $null
         }
@@ -108,7 +104,7 @@ Function Get-AzLocalArmResource {
                     return Get-AzResource -ResourceId $ResourceId -ApiVersion $retryVersion -ErrorAction Stop
                 } catch {
                     $retryMsg = [string]$_.Exception.Message
-                    if ($retryMsg -match $notFoundPattern) {
+                    if (Test-AzLocalNotFoundError -ErrorRecord $_ -ErrorCode @('ResourceNotFound')) {
                         Write-Verbose "$ResourceKind '$ResourceId' not found (genuine 404) at api-version '$retryVersion'."
                         return $null
                     }

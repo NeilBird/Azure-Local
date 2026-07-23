@@ -91,6 +91,16 @@
             $errors += "Row $rowNum (UniqueID=$uid): ReadyToDeploy must be TRUE or FALSE."
         }
 
+        # Rows selected for automation must be complete and non-interactive. Draft rows
+        # may remain incomplete while ReadyToDeploy is FALSE.
+        if ($row.ReadyToDeploy -eq 'TRUE') {
+            foreach ($requiredValue in @('CredentialKeyVaultName', 'SubnetMask', 'DefaultGateway', 'StartingIPAddress', 'EndingIPAddress', 'NodeIPAddresses')) {
+                if ([string]::IsNullOrWhiteSpace([string]$row.$requiredValue)) {
+                    $errors += "Row $rowNum (UniqueID=$uid): $requiredValue is required when ReadyToDeploy is TRUE."
+                }
+            }
+        }
+
         # GUID validation
         $guidPattern = '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
         if ($row.SubscriptionId -notmatch $guidPattern) {
@@ -139,7 +149,7 @@
                 }
             }
             if ($row.PSObject.Properties['SanNetworkAddressPrefix'] -and -not [string]::IsNullOrWhiteSpace($row.SanNetworkAddressPrefix) -and
-                $row.SanNetworkAddressPrefix -notmatch '^(\d{1,3}\.){3}\d{1,3}/\d{1,2}$') {
+                -not (Test-AzLocalIPv4Cidr -Value $row.SanNetworkAddressPrefix)) {
                 $errors += "Row $rowNum (UniqueID=$uid): SanNetworkAddressPrefix must be valid CIDR (e.g. 10.10.30.0/24), got '$($row.SanNetworkAddressPrefix)'."
             }
         }
@@ -171,6 +181,18 @@
             $expectedCount = if ($row.TypeOfDeployment -eq 'SingleNode') { 1 } else { $nodeCount }
             if ($nodeCount -gt 0 -and $validNodeIPs.Count -ne $expectedCount) {
                 $errors += "Row $rowNum (UniqueID=$uid): NodeIPAddresses count ($($validNodeIPs.Count)) does not match expected node count ($expectedCount)."
+            }
+        }
+
+        # Optional DNS servers (semicolon-separated) must contain valid IP addresses.
+        if ($row.PSObject.Properties['DnsServers'] -and -not [string]::IsNullOrWhiteSpace($row.DnsServers)) {
+            foreach ($dnsServer in @($row.DnsServers -split ';')) {
+                $dnsServer = $dnsServer.Trim()
+                $parsedDns = [System.Net.IPAddress]::None
+                if ([string]::IsNullOrWhiteSpace($dnsServer) -or
+                    -not [System.Net.IPAddress]::TryParse($dnsServer, [ref]$parsedDns)) {
+                    $errors += "Row $rowNum (UniqueID=$uid): DnsServers entry '$dnsServer' is not a valid IP address."
+                }
             }
         }
     }

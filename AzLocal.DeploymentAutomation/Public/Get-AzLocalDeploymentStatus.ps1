@@ -112,7 +112,7 @@
 
     Write-AzLocalLog "Checking status for $($clusters.Count) cluster(s)." -Level Info
 
-    $allResults = @()
+    $allResults = New-Object 'System.Collections.Generic.List[object]'
 
     foreach ($cluster in $clusters) {
         $uniqueID = $cluster.UniqueID
@@ -129,7 +129,7 @@
         try {
             Set-AzContext -SubscriptionId $cluster.SubscriptionId -TenantId $cluster.TenantId -ErrorAction Stop | Out-Null
         } catch {
-            $allResults += [PSCustomObject]@{
+            $allResults.Add([PSCustomObject]@{
                 UniqueID          = $uniqueID
                 ClusterName       = $clusterName
                 ResourceGroupName = $resourceGroupName
@@ -138,7 +138,7 @@
                 ProvisioningState = 'N/A'
                 Message           = "Failed to set Azure context: $($_.Exception.Message)"
                 Duration          = 0
-            }
+            }) | Out-Null
             continue
         }
 
@@ -153,7 +153,7 @@
         } catch {
             $duration = ((Get-Date) - $startTime).TotalSeconds
             Write-AzLocalLog "  ${uniqueID}: Error checking cluster existence - $($_.Exception.Message)" -Level Error
-            $allResults += [PSCustomObject]@{
+            $allResults.Add([PSCustomObject]@{
                 UniqueID          = $uniqueID
                 ClusterName       = $clusterName
                 ResourceGroupName = $resourceGroupName
@@ -162,13 +162,13 @@
                 ProvisioningState = 'N/A'
                 Message           = "Failed to check cluster existence: $($_.Exception.Message)"
                 Duration          = [math]::Round($duration, 2)
-            }
+            }) | Out-Null
             continue
         }
         if ($existingCluster) {
             $duration = ((Get-Date) - $startTime).TotalSeconds
             Write-AzLocalLog "  ${uniqueID}: Cluster already exists." -Level Success
-            $allResults += [PSCustomObject]@{
+            $allResults.Add([PSCustomObject]@{
                 UniqueID          = $uniqueID
                 ClusterName       = $clusterName
                 ResourceGroupName = $resourceGroupName
@@ -177,16 +177,35 @@
                 ProvisioningState = 'Succeeded'
                 Message           = "Cluster '$clusterName' exists in resource group '$resourceGroupName'."
                 Duration          = [math]::Round($duration, 2)
-            }
+            }) | Out-Null
             continue
         }
 
         # Check resource group exists
-        $rg = Get-AzResourceGroup -Name $resourceGroupName -ErrorAction SilentlyContinue
+        $rg = $null
+        try {
+            $rg = Get-AzResourceGroup -Name $resourceGroupName -ErrorAction Stop
+        } catch {
+            if (-not (Test-AzLocalNotFoundError -ErrorRecord $_ -ErrorCode @('ResourceGroupNotFound', 'ResourceNotFound'))) {
+                $duration = ((Get-Date) - $startTime).TotalSeconds
+                Write-AzLocalLog "  ${uniqueID}: Error checking resource group - $($_.Exception.Message)" -Level Error
+                $allResults.Add([PSCustomObject]@{
+                    UniqueID          = $uniqueID
+                    ClusterName       = $clusterName
+                    ResourceGroupName = $resourceGroupName
+                    DeploymentName    = $deploymentName
+                    DeploymentStatus  = 'CheckError'
+                    ProvisioningState = 'N/A'
+                    Message           = "Failed to check resource group existence: $($_.Exception.Message)"
+                    Duration          = [math]::Round($duration, 2)
+                }) | Out-Null
+                continue
+            }
+        }
         if (-not $rg) {
             $duration = ((Get-Date) - $startTime).TotalSeconds
             Write-AzLocalLog "  ${uniqueID}: Resource group not found." -Level Warning
-            $allResults += [PSCustomObject]@{
+            $allResults.Add([PSCustomObject]@{
                 UniqueID          = $uniqueID
                 ClusterName       = $clusterName
                 ResourceGroupName = $resourceGroupName
@@ -195,17 +214,36 @@
                 ProvisioningState = 'N/A'
                 Message           = "Resource group '$resourceGroupName' does not exist."
                 Duration          = [math]::Round($duration, 2)
-            }
+            }) | Out-Null
             continue
         }
 
         # Check deployment status
-        $deployment = Get-AzResourceGroupDeployment -ResourceGroupName $resourceGroupName -Name $deploymentName -ErrorAction SilentlyContinue
+        $deployment = $null
+        try {
+            $deployment = Get-AzResourceGroupDeployment -ResourceGroupName $resourceGroupName -Name $deploymentName -ErrorAction Stop
+        } catch {
+            if (-not (Test-AzLocalNotFoundError -ErrorRecord $_ -ErrorCode @('ResourceGroupDeploymentNotFound', 'DeploymentNotFound', 'ResourceNotFound'))) {
+                $duration = ((Get-Date) - $startTime).TotalSeconds
+                Write-AzLocalLog "  ${uniqueID}: Error checking deployment status - $($_.Exception.Message)" -Level Error
+                $allResults.Add([PSCustomObject]@{
+                    UniqueID          = $uniqueID
+                    ClusterName       = $clusterName
+                    ResourceGroupName = $resourceGroupName
+                    DeploymentName    = $deploymentName
+                    DeploymentStatus  = 'CheckError'
+                    ProvisioningState = 'N/A'
+                    Message           = "Failed to check deployment status: $($_.Exception.Message)"
+                    Duration          = [math]::Round($duration, 2)
+                }) | Out-Null
+                continue
+            }
+        }
         $duration = ((Get-Date) - $startTime).TotalSeconds
 
         if (-not $deployment) {
             Write-AzLocalLog "  ${uniqueID}: No deployment found." -Level Info
-            $allResults += [PSCustomObject]@{
+            $allResults.Add([PSCustomObject]@{
                 UniqueID          = $uniqueID
                 ClusterName       = $clusterName
                 ResourceGroupName = $resourceGroupName
@@ -214,12 +252,12 @@
                 ProvisioningState = 'N/A'
                 Message           = "No deployment '$deploymentName' found."
                 Duration          = [math]::Round($duration, 2)
-            }
+            }) | Out-Null
             continue
         }
 
         $provState = $deployment.ProvisioningState
-        $deploymentDuration = if ($deployment.Duration) { $deployment.Duration.ToString() } else { "N/A" }
+        $deploymentDuration = if ($deployment.PSObject.Properties['Duration'] -and $deployment.Duration) { $deployment.Duration.ToString() } else { "N/A" }
 
         # Determine deployment status category
         # Check the deploymentMode parameter in the deployment to know if it was a Validate or Deploy
@@ -248,7 +286,7 @@
 
         Write-AzLocalLog "  ${uniqueID}: $statusCategory (ARM Duration: $deploymentDuration)" -Level $levelColour
 
-        $allResults += [PSCustomObject]@{
+        $allResults.Add([PSCustomObject]@{
             UniqueID          = $uniqueID
             ClusterName       = $clusterName
             ResourceGroupName = $resourceGroupName
@@ -257,7 +295,7 @@
             ProvisioningState = $provState
             Message           = "Deployment '$deploymentName' state: $provState (Mode: $deployedMode, Duration: $deploymentDuration)"
             Duration          = [math]::Round($duration, 2)
-        }
+        }) | Out-Null
     }
 
     # Generate JUnit XML report
@@ -300,5 +338,5 @@
     }
     Write-AzLocalLog "========================================================" -Level Info -NoTimestamp
 
-    return $allResults
+    return $allResults.ToArray()
 }

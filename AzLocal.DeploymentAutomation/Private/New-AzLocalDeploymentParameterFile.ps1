@@ -65,7 +65,7 @@
     $DeploymentParameterFilePath = Join-Path $OutputDirectory "$($UniqueID)-$($parameterFileMap[$TypeOfDeployment])"
     # Check if the directory exists, if not create it
     if(-not(Test-Path $OutputDirectory)) {
-        New-Item -Path $OutputDirectory -ItemType Directory -Force | Out-Null
+        New-Item -Path $OutputDirectory -ItemType Directory -Force -WhatIf:$false | Out-Null
     }
 
     # Update $ParameterFileSettings with the new values from $Parameters
@@ -125,7 +125,7 @@
 
     # Save the updated JSON to the specified file
     try{
-        $UpdateParameterFileJSON | Out-File -FilePath $DeploymentParameterFilePath -Encoding utf8 -ErrorAction Stop -Force
+        $UpdateParameterFileJSON | Out-File -FilePath $DeploymentParameterFilePath -Encoding utf8 -ErrorAction Stop -Force -WhatIf:$false
         Write-AzLocalLog "Deployment parameter file created at $DeploymentParameterFilePath" -Level Success
     } catch {
         Write-AzLocalLog "Error writing to file: $DeploymentParameterFilePath" -Level Error
