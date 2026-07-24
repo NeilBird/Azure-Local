@@ -38,6 +38,7 @@ function Get-HealthCheckFailureSummary {
     $seenEntries = New-Object 'System.Collections.Generic.HashSet[string]'
 
     foreach ($check in $healthChecks) {
+        if ($null -eq $check) { continue }
         if ($check.status -eq "Failed") {
             $severity = if ($check.severity) { $check.severity } else { "Unknown" }
             # Only include Critical and Warning severities (skip Informational)

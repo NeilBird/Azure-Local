@@ -87,8 +87,8 @@ function Add-AzLocalPipelineVersionBanner {
                                        'YAML newer than module - check REQUIRED_MODULE_VERSION'
                                        'YAML older than module - run Update-AzLocalPipelineExample to refresh'
                                        'newer module available on PSGallery'
-          ClusterTagFilters        [object[]] - exact name/value snapshot used by the run
-          ClusterTagFilterMode     [string] - 'All' when filters are active, otherwise empty
+          ClusterTagFilters        [object[]] - exact grouped tag snapshot used by the run
+          ClusterTagFilterMode     [string] - 'AnyGroup' when filters are active, otherwise empty
           ManagementGroups         [string[]] - exact management-group scope used by the run
 
     .EXAMPLE
@@ -180,20 +180,26 @@ function Add-AzLocalPipelineVersionBanner {
     $fleetSettings = Get-AzLocalFleetSettings
     $clusterTagFilters = @($fleetSettings.ClusterTagFilters | ForEach-Object {
         [pscustomobject][ordered]@{
-            Name  = [string]$_.Name
-            Value = [string]$_.Value
+            Name = [string]$_.Name
+            Tags = @($_.Tags | ForEach-Object {
+                [pscustomobject][ordered]@{
+                    Name  = [string]$_.Name
+                    Value = [string]$_.Value
+                }
+            })
         }
     })
     $managementGroups = [string[]]@($fleetSettings.ManagementGroups)
     $managementGroupsJson = ConvertTo-Json -InputObject @($managementGroups) -Compress
-    $clusterTagFilterJson = ConvertTo-Json -InputObject @($clusterTagFilters) -Compress
+    $clusterTagFilterJson = ConvertTo-Json -InputObject @($clusterTagFilters) -Depth 5 -Compress
     if ($managementGroups.Count -gt 0) {
         Write-Host ("  Management group scope     : {0}" -f ($managementGroups -join ', '))
     }
     if ($clusterTagFilters.Count -gt 0) {
-        Write-Host '  Cluster tag filtering     : Applied (All/AND)'
-        foreach ($filter in $clusterTagFilters) {
-            Write-Host ("    {0} = {1}" -f $filter.Name, $filter.Value)
+        Write-Host '  Cluster tag filtering     : Applied (AND within groups; OR across groups)'
+        foreach ($group in $clusterTagFilters) {
+            $renderedTags = @($group.Tags | ForEach-Object { "{0} = {1}" -f $_.Name, $_.Value }) -join ' AND '
+            Write-Host ("    {0}: {1}" -f $group.Name, $renderedTags)
         }
     }
     Write-Host ''
@@ -223,10 +229,13 @@ function Add-AzLocalPipelineVersionBanner {
     }
     if ($clusterTagFilters.Count -gt 0) {
         $renderedFilters = @($clusterTagFilters | ForEach-Object {
-            '<code>{0}</code> = <code>{1}</code>' -f [System.Net.WebUtility]::HtmlEncode($_.Name), [System.Net.WebUtility]::HtmlEncode($_.Value)
+            $renderedTags = @($_.Tags | ForEach-Object {
+                '<code>{0}</code> = <code>{1}</code>' -f [System.Net.WebUtility]::HtmlEncode($_.Name), [System.Net.WebUtility]::HtmlEncode($_.Value)
+            }) -join ' AND '
+            '<strong>{0}</strong>: ({1})' -f [System.Net.WebUtility]::HtmlEncode($_.Name), $renderedTags
         }) -join '; '
         [void]$scopeBannerLines.Add("> **Cluster tag filtering applied (run snapshot):** $renderedFilters")
-        [void]$scopeBannerLines.Add('> **Match mode:** All filters must match (AND)')
+        [void]$scopeBannerLines.Add('> **Match mode:** All tags within a group must match (AND); any group may match (OR)')
     }
     $scopeBanner = ''
     if ($scopeBannerLines.Count -gt 0) {
@@ -250,7 +259,7 @@ function Add-AzLocalPipelineVersionBanner {
             PinStatus               = $pinStatus
             Verdict                 = $verdict
             ClusterTagFilters       = $clusterTagFilters
-            ClusterTagFilterMode    = if ($clusterTagFilters.Count -gt 0) { 'All' } else { '' }
+            ClusterTagFilterMode    = if ($clusterTagFilters.Count -gt 0) { 'AnyGroup' } else { '' }
             ManagementGroups        = $managementGroups
         }
     }

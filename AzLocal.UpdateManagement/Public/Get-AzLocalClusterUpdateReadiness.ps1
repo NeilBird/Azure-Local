@@ -624,7 +624,8 @@ function Get-AzLocalClusterUpdateReadiness {
                     $currentVersion = [string]$sumProps.currentVersion
                 }
                 if ($sumProps.PSObject.Properties['packageVersions'] -and $sumProps.packageVersions) {
-                    $sbePkgs = @($sumProps.packageVersions | Where-Object { $_.packageType -eq 'SBE' -and $_.version })
+                    $packageVersions = @($sumProps.packageVersions | Where-Object { $null -ne $_ })
+                    $sbePkgs = @($packageVersions | Where-Object { $_.packageType -eq 'SBE' -and $_.version })
                     if ($sbePkgs.Count -gt 0) {
                         $latestSbe = $sbePkgs |
                             Sort-Object -Property @{
@@ -646,7 +647,7 @@ function Get-AzLocalClusterUpdateReadiness {
                     # Pull the most-recent lastUpdated across every package row
                     # (Solution, SBE, services). Use ISO-8601 round-trip format
                     # so the markdown/CSV/JSON outputs are timezone-unambiguous.
-                    $stamps = @($sumProps.packageVersions |
+                    $stamps = @($packageVersions |
                         Where-Object { $_.PSObject.Properties['lastUpdated'] -and $_.lastUpdated } |
                         ForEach-Object {
                             try { [datetime]$_.lastUpdated } catch { $null }

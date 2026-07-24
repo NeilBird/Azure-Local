@@ -456,7 +456,10 @@ function Invoke-AzResourceGraphQuery {
             }
 
             if ($rows) {
-                foreach ($row in $rows) { [void]$allRows.Add($row) }
+                foreach ($row in $rows) {
+                    if ($null -eq $row) { continue }
+                    [void]$allRows.Add($row)
+                }
             }
 
             if (-not $nextToken) { break }

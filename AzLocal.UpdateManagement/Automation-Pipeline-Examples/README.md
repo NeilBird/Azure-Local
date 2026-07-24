@@ -1409,16 +1409,22 @@ Get-AzLocalClusterInventory -ExportPath ./cluster-inventory.csv   # now skips th
 Azure CLI and Azure PowerShell forward only the first 1,000 accessible subscriptions when Azure Resource Graph scope is implicit. For larger or growing estates, activate management-group scope in the generated `config/fleet-settings.yml`. Use management-group IDs, not display names or full resource IDs:
 
 ```yaml
-schemaVersion: 2
+schemaVersion: 3
 scope:
   managementGroups:
     - contoso-platform
     - contoso-edge
   clusterTagFilters:
-    - name: Environment
-      value: Production
-    - name: ManagedBy
-      value: CentralIT
+    - name: Live
+      tags:
+        - name: Live-Environment
+          value: Yes
+        - name: ManagedBy
+          value: CentralIT
+    - name: Test
+      tags:
+        - name: Test-Environment
+          value: Yes
 reporting:
   maxRowsPerTable: 100
   maxSummaryBytes: 900000
@@ -1426,11 +1432,25 @@ itsm:
   maxIncidentsPerRun: 25
 ```
 
-`clusterTagFilters` is a global admission policy used by all pipeline workloads. Every pair must match (`AND`); names and values use exact, case-insensitive comparison, and a missing tag excludes the cluster. Tag strings are treated as literals. Do not use module-owned control tags such as `UpdateRing`, `UpdateStartWindow`, `UpdateSideloaded`, or retry-state tags as selectors; establish stable admission tags through Azure Policy, onboarding, or another enterprise tagging process. Config: 2 validates live tags before mutation and reports `GlobalFilterMismatch` for excluded rows.
+YAML indentation is part of the schema. Use spaces only (never tabs) and preserve this hierarchy:
 
-At the start of each pipeline report, the shared version banner records the effective management-group IDs and cluster tag name/value pairs as a **run snapshot**. This remains attached to the historic GitHub Actions or Azure DevOps run even if `fleet-settings.yml` later changes. The install step also emits compact JSON outputs named `management_groups` and `cluster_tag_filters`. When the optional file is missing, empty, fully commented, or contains no scope selectors, no fleet-scope block is rendered.
+| Level | Exact indentation | Property |
+|---|---:|---|
+| Document root | 0 spaces | `schemaVersion`, `scope`, `reporting`, `itsm` |
+| Scope property | 2 spaces | `managementGroups`, `clusterTagFilters` |
+| Management-group item | 4 spaces | `- <management-group-id>` |
+| Filter group | 4 spaces | `- name: <group-name>` |
+| Group tag collection | 6 spaces | `tags:` |
+| Tag entry | 8 spaces | `- name: <Azure-tag-name>` |
+| Tag value | 10 spaces | `value: <Azure-tag-value>` |
 
-`Copy-AzLocalPipelineExample` and `Update-AzLocalPipelineExample` create a fully commented schema-v2 starter when the file is missing. During a normal Update, an active schema-v1 file or legacy fully commented v1 starter is validated and automatically migrated: its exact original bytes are saved as `config/fleet-settings_v1.bak.yml`, its schema declaration changes to v2, and the new `clusterTagFilters` properties are appended as a fully commented example. Existing comments, values, order, and line endings are preserved, a commented starter remains inert, and reruns do not duplicate the block. `-WhatIf` previews the operation; the former `-UpgradeFleetSettingsSchema` switch remains accepted for compatibility. Schema v1 remains executable when Update has not migrated it. The precedence is: explicit `-SubscriptionId`, configured management groups, then existing implicit subscription discovery. A missing, empty, or fully commented file therefore preserves existing runtime scope. The pipeline identity needs read access on the target management-group hierarchy; management-group scope can cover the first 10,000 subscriptions beneath it.
+Each item under `clusterTagFilters` is a **group**, not an Azure tag itself. In the example, the `Live` group requires both `Live-Environment=Yes` **AND** `ManagedBy=CentralIT`. The `Test` group requires only `Test-Environment=Yes`. A cluster is admitted when the complete `Live` group **OR** the complete `Test` group matches. A missing tag fails only its group; another complete group can still admit the cluster. A one-tag group is therefore the supported singular `OR` case.
+
+`clusterTagFilters` is a global admission policy used by all pipeline workloads. Names and values use exact, case-insensitive comparison, and tag strings are treated as literals. Group names must be unique; tag names must be unique within a group. Do not use module-owned control tags such as `UpdateRing`, `UpdateStartWindow`, `UpdateSideloaded`, or retry-state tags as selectors; establish stable admission tags through Azure Policy, onboarding, or another enterprise tagging process. Config: 2 validates live tags before mutation and reports `GlobalFilterMismatch` for excluded rows.
+
+At the start of each pipeline report, the shared version banner records the effective management-group IDs and grouped tag filters as a **run snapshot**. This remains attached to the historic GitHub Actions or Azure DevOps run even if `fleet-settings.yml` later changes. The install step also emits compact JSON outputs named `management_groups` and `cluster_tag_filters`; the latter preserves each group and its nested tags. When the optional file is missing, empty, fully commented, or contains no scope selectors, no fleet-scope block is rendered.
+
+`Copy-AzLocalPipelineExample` and `Update-AzLocalPipelineExample` create a fully commented schema-v3 starter when the file is missing. During a normal Update, schema v1 or v2 is automatically migrated after its exact original bytes are saved as `config/fleet-settings_v1.bak.yml` or `config/fleet-settings_v2.bak.yml`. A flat v2 pair becomes a named one-tag group, so multiple old pairs become `OR` alternatives in v3; review an active migrated policy before its next scheduled run. Existing comments, values, order, and line endings are preserved. A fully commented source remains fully commented and inert, and reruns are byte-for-byte idempotent. `-WhatIf` previews the operation; `-UpgradeFleetSettingsSchema` remains accepted but is no longer required. Runtime parsing accepts schema v1 without tag filters and schema v3; schema v2 must be upgraded. The precedence is: explicit `-SubscriptionId`, configured management groups, then existing implicit subscription discovery. A missing, empty, or fully commented file therefore preserves existing runtime scope. The pipeline identity needs read access on the target management-group hierarchy; management-group scope can cover the first 10,000 subscriptions beneath it.
 
 The reporting values cap only human-readable Markdown. Complete CSV, JSON, JUnit, and HTML artifacts remain available for automation and detailed investigation. `maxSummaryBytes` is measured as UTF-8 and defaults below GitHub Actions' 1 MiB per-step summary limit. `maxIncidentsPerRun` bounds ServiceNow fan-out; set it to `0` to suppress new incident creation while retaining deterministic skipped result rows.
 

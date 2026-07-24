@@ -194,10 +194,12 @@ extensibilityresources
     $totalChecksScanned   = 0
     $clustersWithChecks   = 0
     foreach ($cluster in @($clusterRows)) {
+        if ($null -eq $cluster) { continue }
         $hcr = if ($cluster.PSObject.Properties['HealthCheckResult']) { $cluster.HealthCheckResult } else { $null }
         if (-not $hcr) { continue }
         $clustersWithChecks++
         foreach ($hc in @($hcr)) {
+            if ($null -eq $hc) { continue }
             $totalChecksScanned++
             $status = "$($hc.status)"
             if ($status -ne 'Failed') { continue }

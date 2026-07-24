@@ -152,6 +152,7 @@ function Get-AzLocalAvailableUpdates {
 
         $enriched = @()
         foreach ($update in $result.value) {
+            if ($null -eq $update) { continue }
             $props = $update.properties
             $state = if ($props.PSObject.Properties['state'] -and $props.state) { $props.state } else { "Unknown" }
             $packageType = if ($props.PSObject.Properties['packageType'] -and $props.packageType) { $props.packageType } else { "" }

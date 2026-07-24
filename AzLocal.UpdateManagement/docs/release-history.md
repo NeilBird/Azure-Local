@@ -4,9 +4,13 @@
 >
 > **For older releases**, this is the canonical reference; the main README intentionally stays slim so the most recent block is easy to find.
 >
-> **For v0.9.23 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0923) `What's New in v0.9.23` section.
+> **For v0.9.24 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0924) `What's New in v0.9.24` section.
 
 ---
+
+### What's New in v0.9.24
+
+**Fleet settings gain grouped tag admission, and sparse Azure payloads no longer cause strict-mode collection failures.** Schema v3 uses AND semantics for tags inside each named `scope.clusterTagFilters` group and OR semantics across groups; a one-tag group is a singular alternative. Normal pipeline refreshes create an exact version-specific backup and migrate schema v1/v2 to v3, including fully commented files that remain inert. Shared ARG and Azure CLI JSON boundaries discard null top-level rows, and ARM REST plus nested cloud arrays skip null placeholders before inspecting properties. `reporting.maxRowsPerTable` now accepts up to 2,000 rows. No public function or export-count change (71); pipeline pins are updated to `0.9.24`. See [CHANGELOG.md](../CHANGELOG.md#0924---2026-07-24) for full details and the [CI/CD runbook](../Automation-Pipeline-Examples/README.md#612-optional-scope-the-fleet-by-management-group-and-cluster-tags) for the exact schema hierarchy and indentation.
 
 ### What's New in v0.9.23
 

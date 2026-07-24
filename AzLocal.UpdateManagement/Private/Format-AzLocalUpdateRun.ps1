@@ -85,8 +85,9 @@ function Format-AzLocalUpdateRun {
             # Defensive fallback: no leaf steps resolved (e.g. an empty nested array). Use the
             # top-level Success count so the column is never blank. Guarded property read keeps
             # this safe under Set-StrictMode -Version Latest.
-            $completedSteps = @($steps | Where-Object { $_.PSObject.Properties['status'] -and $_.status -eq 'Success' }).Count
-            $totalSteps = @($steps).Count
+            $validSteps = @($steps | Where-Object { $null -ne $_ })
+            $completedSteps = @($validSteps | Where-Object { $_.PSObject.Properties['status'] -and $_.status -eq 'Success' }).Count
+            $totalSteps = $validSteps.Count
             $progress = "$completedSteps/$totalSteps steps"
         }
 

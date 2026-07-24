@@ -246,7 +246,7 @@ function Get-AzLocalFleetStatusData {
             # packageType == 'SBE'; pick the newest by lastUpdated then [version].
             $currentSbeVersion = "N/A"
             if ($hasSummary -and $updateSummary.properties.PSObject.Properties['packageVersions'] -and $updateSummary.properties.packageVersions) {
-                $sbePkgs = @($updateSummary.properties.packageVersions | Where-Object { $_.packageType -eq 'SBE' -and $_.version })
+                $sbePkgs = @($updateSummary.properties.packageVersions | Where-Object { $null -ne $_ -and $_.packageType -eq 'SBE' -and $_.version })
                 if ($sbePkgs.Count -gt 0) {
                     $latestSbe = $sbePkgs |
                         Sort-Object -Property @{
@@ -269,7 +269,7 @@ function Get-AzLocalFleetStatusData {
             $updatesUri = "https://management.azure.com${rid}/updates?api-version=$apiVer"
             $updatesResponse = (Invoke-AzRestJson -Uri $updatesUri).Data
             $hasUpdates = ($LASTEXITCODE -eq 0 -and $null -ne $updatesResponse -and $null -ne $updatesResponse.value)
-            $availableUpdates = if ($hasUpdates) { @($updatesResponse.value) } else { @() }
+            $availableUpdates = if ($hasUpdates) { @($updatesResponse.value | Where-Object { $null -ne $_ }) } else { @() }
             $readyUpdates = @($availableUpdates | Where-Object { $_.properties.state -in $script:ReadyStates })
             $prereqUpdates = @($availableUpdates | Where-Object { $_.properties.state -in $script:PrereqStates })
 
@@ -350,7 +350,10 @@ function Get-AzLocalFleetStatusData {
                     $runsUri = "https://management.azure.com${rid}/updates/$($update.name)/updateRuns?api-version=$apiVer"
                     $runsResult = (Invoke-AzRestJson -Uri $runsUri).Data
                     if ($LASTEXITCODE -eq 0 -and $runsResult.value) {
-                        foreach ($run in $runsResult.value) { [void]$allRunsForCluster.Add($run) }
+                        foreach ($run in $runsResult.value) {
+                            if ($null -eq $run) { continue }
+                            [void]$allRunsForCluster.Add($run)
+                        }
                     }
                 }
                 if ($allRunsForCluster.Count -gt 0) {
@@ -431,8 +434,9 @@ function Get-AzLocalFleetStatusData {
                             else {
                                 # Defensive fallback: no leaves resolved. Use the top-level Success
                                 # count so the column is never blank. Guarded property read for strict mode.
-                                $completedSteps = @($steps | Where-Object { $_.PSObject.Properties['status'] -and $_.status -eq 'Success' }).Count
-                                $totalSteps = @($steps).Count
+                                $validSteps = @($steps | Where-Object { $null -ne $_ })
+                                $completedSteps = @($validSteps | Where-Object { $_.PSObject.Properties['status'] -and $_.status -eq 'Success' }).Count
+                                $totalSteps = $validSteps.Count
                                 $runProgress = "$completedSteps/$totalSteps steps"
                             }
                             # Walk to the deepest InProgress/Error/Failed step rather than the
@@ -477,6 +481,7 @@ function Get-AzLocalFleetStatusData {
                 $hasHCR   = $hcrProps -and $updateSummary.properties.PSObject.Properties['healthCheckResult'] -and $updateSummary.properties.healthCheckResult
                 if ($hasHCR) {
                     foreach ($check in $updateSummary.properties.healthCheckResult) {
+                        if ($null -eq $check) { continue }
                         if ($check.status -eq "Failed") {
                             $sev = if ($check.severity) { $check.severity } else { "Unknown" }
                             $displayName = if ($check.displayName) { $check.displayName } elseif ($check.name) { ($check.name -split '/')[0] } else { "Unknown" }

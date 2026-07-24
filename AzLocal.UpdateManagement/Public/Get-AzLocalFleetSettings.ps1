@@ -8,14 +8,14 @@ function Get-AzLocalFleetSettings {
         empty, or fully commented file returns the existing implicit Azure
         subscription scope used by earlier module versions.
 
-        Schema versions 1 and 2 support scope.managementGroups. When one or more
+        Schema versions 1 and 3 support scope.managementGroups. When one or more
         management-group IDs are configured, Azure Resource Graph queries that
         do not already specify an explicit subscription use those management
         groups as their query scope.
 
-        Schema version 2 adds scope.clusterTagFilters. Every configured tag
-        name/value pair must match for a cluster to be included in fleet reads
-        and state-changing operations.
+        Schema version 3 adds grouped scope.clusterTagFilters. Tags within one
+        named group use AND semantics; groups use OR semantics. A group with one
+        tag is therefore a singular alternative.
 
         The parser is deliberately limited to this small operator-owned schema
         so the core fleet pipelines do not require powershell-yaml.
@@ -89,7 +89,7 @@ function Get-AzLocalFleetSettings {
         ScopeMode          = 'ImplicitSubscriptions'
         ManagementGroups   = [string[]]@()
         ClusterTagFilters  = [object[]]@()
-        ClusterTagFilterMode = 'All'
+        ClusterTagFilterMode = 'AnyGroup'
         MaxRowsPerTable    = 100
         MaxSummaryBytes    = 900000
         MaxIncidentsPerRun = 25
@@ -117,7 +117,8 @@ function Get-AzLocalFleetSettings {
     $activeSection = ''
     $managementGroups = [System.Collections.Generic.List[string]]::new()
     $clusterTagFilters = [System.Collections.Generic.List[object]]::new()
-    $currentTagFilter = $null
+    $currentTagFilterGroup = $null
+    $currentTagFilterTag = $null
 
     foreach ($line in $activeLines) {
         if ($line -match '^\s*schemaVersion\s*:\s*([0-9]+)\s*(?:#.*)?$') {
@@ -129,7 +130,8 @@ function Get-AzLocalFleetSettings {
             $inScope = $true
             $inManagementGroups = $false
             $inClusterTagFilters = $false
-            $currentTagFilter = $null
+            $currentTagFilterGroup = $null
+            $currentTagFilterTag = $null
             continue
         }
         if ($line -match '^reporting\s*:\s*(?:#.*)?$') {
@@ -137,7 +139,8 @@ function Get-AzLocalFleetSettings {
             $inScope = $false
             $inManagementGroups = $false
             $inClusterTagFilters = $false
-            $currentTagFilter = $null
+            $currentTagFilterGroup = $null
+            $currentTagFilterTag = $null
             continue
         }
         if ($line -match '^itsm\s*:\s*(?:#.*)?$') {
@@ -145,7 +148,8 @@ function Get-AzLocalFleetSettings {
             $inScope = $false
             $inManagementGroups = $false
             $inClusterTagFilters = $false
-            $currentTagFilter = $null
+            $currentTagFilterGroup = $null
+            $currentTagFilterTag = $null
             continue
         }
         if ($line -match '^\S') {
@@ -153,26 +157,30 @@ function Get-AzLocalFleetSettings {
             $inScope = $false
             $inManagementGroups = $false
             $inClusterTagFilters = $false
-            $currentTagFilter = $null
+            $currentTagFilterGroup = $null
+            $currentTagFilterTag = $null
             continue
         }
         if ($inScope -and $line -match '^\s{2}managementGroups\s*:\s*(?:#.*)?$') {
             $inManagementGroups = $true
             $inClusterTagFilters = $false
-            $currentTagFilter = $null
+            $currentTagFilterGroup = $null
+            $currentTagFilterTag = $null
             continue
         }
         if ($inScope -and $line -match '^\s{2}clusterTagFilters\s*:\s*(?:#.*)?$') {
             $clusterTagFiltersDeclared = $true
             $inManagementGroups = $false
             $inClusterTagFilters = $true
-            $currentTagFilter = $null
+            $currentTagFilterGroup = $null
+            $currentTagFilterTag = $null
             continue
         }
         if ($inScope -and $line -match '^\s{2}\S') {
             $inManagementGroups = $false
             $inClusterTagFilters = $false
-            $currentTagFilter = $null
+            $currentTagFilterGroup = $null
+            $currentTagFilterTag = $null
             throw "Get-AzLocalFleetSettings: unsupported or malformed active YAML at '$($result.Path)': $($line.Trim())"
         }
         if ($inManagementGroups -and $line -match '^\s{4}-\s*([^#]+?)\s*(?:#.*)?$') {
@@ -189,18 +197,36 @@ function Get-AzLocalFleetSettings {
             continue
         }
         if ($inClusterTagFilters -and $line -match '^\s{4}-\s*name\s*:\s*(.*?)\s*$') {
-            $currentTagFilter = [ordered]@{
-                Name  = ConvertFrom-AzLocalFleetSettingsScalar -RawValue $Matches[1] -PropertyName 'scope.clusterTagFilters.name'
-                Value = $null
+            $currentTagFilterGroup = [ordered]@{
+                Name = ConvertFrom-AzLocalFleetSettingsScalar -RawValue $Matches[1] -PropertyName 'scope.clusterTagFilters.name'
+                Tags = [System.Collections.Generic.List[object]]::new()
             }
-            [void]$clusterTagFilters.Add($currentTagFilter)
+            $currentTagFilterTag = $null
+            [void]$clusterTagFilters.Add($currentTagFilterGroup)
             continue
         }
-        if ($inClusterTagFilters -and $line -match '^\s{6}value\s*:\s*(.*?)\s*$') {
-            if ($null -eq $currentTagFilter -or $null -ne $currentTagFilter.Value) {
-                throw "Get-AzLocalFleetSettings: each scope.clusterTagFilters entry must contain one name followed by one value."
+        if ($inClusterTagFilters -and $line -match '^\s{6}tags\s*:\s*(?:#.*)?$') {
+            if ($null -eq $currentTagFilterGroup) {
+                throw "Get-AzLocalFleetSettings: each scope.clusterTagFilters group must contain one name followed by tags."
             }
-            $currentTagFilter.Value = ConvertFrom-AzLocalFleetSettingsScalar -RawValue $Matches[1] -PropertyName 'scope.clusterTagFilters.value'
+            continue
+        }
+        if ($inClusterTagFilters -and $line -match '^\s{8}-\s*name\s*:\s*(.*?)\s*$') {
+            if ($null -eq $currentTagFilterGroup) {
+                throw "Get-AzLocalFleetSettings: tag entries must be nested beneath a named scope.clusterTagFilters group."
+            }
+            $currentTagFilterTag = [ordered]@{
+                Name  = ConvertFrom-AzLocalFleetSettingsScalar -RawValue $Matches[1] -PropertyName 'scope.clusterTagFilters.tags.name'
+                Value = $null
+            }
+            [void]$currentTagFilterGroup.Tags.Add($currentTagFilterTag)
+            continue
+        }
+        if ($inClusterTagFilters -and $line -match '^\s{10}value\s*:\s*(.*?)\s*$') {
+            if ($null -eq $currentTagFilterTag -or $null -ne $currentTagFilterTag.Value) {
+                throw "Get-AzLocalFleetSettings: each grouped tag entry must contain one name followed by one value."
+            }
+            $currentTagFilterTag.Value = ConvertFrom-AzLocalFleetSettingsScalar -RawValue $Matches[1] -PropertyName 'scope.clusterTagFilters.tags.value'
             continue
         }
         if ($activeSection -eq 'reporting' -and $line -match '^\s{2}maxRowsPerTable\s*:\s*([0-9]+)\s*(?:#.*)?$') {
@@ -220,19 +246,19 @@ function Get-AzLocalFleetSettings {
     }
 
     if ($null -eq $schemaVersion) {
-        throw "Get-AzLocalFleetSettings: active settings in '$($result.Path)' must declare schemaVersion: 1 or 2."
+        throw "Get-AzLocalFleetSettings: active settings in '$($result.Path)' must declare schemaVersion: 1 or 3."
     }
-    if ($schemaVersion -notin @(1, 2)) {
-        throw "Get-AzLocalFleetSettings: unsupported schemaVersion '$schemaVersion' in '$($result.Path)'. This module supports schemaVersion 1 and 2."
+    if ($schemaVersion -notin @(1, 3)) {
+        throw "Get-AzLocalFleetSettings: unsupported schemaVersion '$schemaVersion' in '$($result.Path)'. This module supports schemaVersion 1 and 3."
     }
     if ($schemaVersion -eq 1 -and $clusterTagFiltersDeclared) {
-        throw "Get-AzLocalFleetSettings: scope.clusterTagFilters requires schemaVersion: 2."
+        throw "Get-AzLocalFleetSettings: scope.clusterTagFilters requires schemaVersion: 3."
     }
     if ($clusterTagFiltersDeclared -and $clusterTagFilters.Count -eq 0) {
-        throw "Get-AzLocalFleetSettings: scope.clusterTagFilters must contain at least one name/value pair."
+        throw "Get-AzLocalFleetSettings: scope.clusterTagFilters must contain at least one named group."
     }
 
-    $tagNames = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    $groupNames = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
     $reservedTagNames = [System.Collections.Generic.HashSet[string]]::new(
         [string[]]@(
             'UpdateRing',
@@ -247,31 +273,44 @@ function Get-AzLocalFleetSettings {
         ),
         [System.StringComparer]::OrdinalIgnoreCase
     )
-    foreach ($tagFilter in $clusterTagFilters) {
-        $tagName = [string]$tagFilter.Name
-        $tagValue = [string]$tagFilter.Value
-        if ([string]::IsNullOrWhiteSpace($tagName) -or [string]::IsNullOrWhiteSpace($tagValue)) {
-            throw "Get-AzLocalFleetSettings: each scope.clusterTagFilters entry requires non-empty name and value properties."
+    foreach ($tagGroup in $clusterTagFilters) {
+        $groupName = [string]$tagGroup.Name
+        if ([string]::IsNullOrWhiteSpace($groupName)) {
+            throw "Get-AzLocalFleetSettings: each scope.clusterTagFilters group requires a non-empty name."
         }
-        if ($tagName.Length -gt 512) {
-            throw "Get-AzLocalFleetSettings: scope.clusterTagFilters name must not exceed 512 characters."
+        if (-not $groupNames.Add($groupName)) {
+            throw "Get-AzLocalFleetSettings: duplicate scope.clusterTagFilters group name '$groupName'."
         }
-        if ($tagValue.Length -gt 256) {
-            throw "Get-AzLocalFleetSettings: scope.clusterTagFilters value must not exceed 256 characters."
+        if ($tagGroup.Tags.Count -eq 0) {
+            throw "Get-AzLocalFleetSettings: scope.clusterTagFilters group '$groupName' must contain at least one tag."
         }
-        if ($tagName.IndexOfAny(@([char]0x0A, [char]0x0D)) -ge 0 -or
-            $tagValue.IndexOfAny(@([char]0x0A, [char]0x0D)) -ge 0) {
-            throw "Get-AzLocalFleetSettings: scope.clusterTagFilters names and values must be single-line strings."
-        }
-        if (-not $tagNames.Add($tagName)) {
-            throw "Get-AzLocalFleetSettings: duplicate scope.clusterTagFilters name '$tagName'. Each tag name may appear only once."
-        }
-        if ($reservedTagNames.Contains($tagName)) {
-            throw "Get-AzLocalFleetSettings: scope.clusterTagFilters cannot use module-owned control tag '$tagName'. Use an externally governed admission tag such as Environment or ManagedBy."
+        $tagNames = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+        foreach ($tagFilter in $tagGroup.Tags) {
+            $tagName = [string]$tagFilter.Name
+            $tagValue = [string]$tagFilter.Value
+            if ([string]::IsNullOrWhiteSpace($tagName) -or [string]::IsNullOrWhiteSpace($tagValue)) {
+                throw "Get-AzLocalFleetSettings: each tag in group '$groupName' requires non-empty name and value properties."
+            }
+            if ($tagName.Length -gt 512) {
+                throw "Get-AzLocalFleetSettings: tag name in group '$groupName' must not exceed 512 characters."
+            }
+            if ($tagValue.Length -gt 256) {
+                throw "Get-AzLocalFleetSettings: tag value in group '$groupName' must not exceed 256 characters."
+            }
+            if ($tagName.IndexOfAny(@([char]0x0A, [char]0x0D)) -ge 0 -or
+                $tagValue.IndexOfAny(@([char]0x0A, [char]0x0D)) -ge 0) {
+                throw "Get-AzLocalFleetSettings: tag names and values must be single-line strings."
+            }
+            if (-not $tagNames.Add($tagName)) {
+                throw "Get-AzLocalFleetSettings: duplicate tag name '$tagName' in group '$groupName'."
+            }
+            if ($reservedTagNames.Contains($tagName)) {
+                throw "Get-AzLocalFleetSettings: scope.clusterTagFilters cannot use module-owned control tag '$tagName'. Use an externally governed admission tag such as Environment or ManagedBy."
+            }
         }
     }
-    if ($result.MaxRowsPerTable -lt 1 -or $result.MaxRowsPerTable -gt 1000) {
-        throw "Get-AzLocalFleetSettings: reporting.maxRowsPerTable must be between 1 and 1000."
+    if ($result.MaxRowsPerTable -lt 1 -or $result.MaxRowsPerTable -gt 2000) {
+        throw "Get-AzLocalFleetSettings: reporting.maxRowsPerTable must be between 1 and 2000."
     }
     if ($result.MaxSummaryBytes -lt 10000 -or $result.MaxSummaryBytes -gt 1000000) {
         throw "Get-AzLocalFleetSettings: reporting.maxSummaryBytes must be between 10000 and 1000000."
@@ -282,7 +321,9 @@ function Get-AzLocalFleetSettings {
 
     $result.SchemaVersion = $schemaVersion
     $result.ManagementGroups = $managementGroups.ToArray()
-    $result.ClusterTagFilters = $clusterTagFilters.ToArray()
+    $result.ClusterTagFilters = @($clusterTagFilters | ForEach-Object {
+        [pscustomobject]@{ Name = $_.Name; Tags = $_.Tags.ToArray() }
+    })
     if ($result.ManagementGroups.Count -gt 0) {
         $result.ScopeMode = 'ManagementGroups'
     }

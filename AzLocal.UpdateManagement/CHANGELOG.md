@@ -5,6 +5,29 @@ All notable changes to the AzLocal.UpdateManagement module (renamed from AzStack
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.24] - 2026-07-24
+
+### Added
+
+- Fleet settings schema v3 introduces named `scope.clusterTagFilters` groups. Tags inside a group use AND semantics; groups use OR semantics. A one-tag group is a singular alternative. ARG filtering, local mutation-boundary checks, pipeline summaries, and JSON scope snapshots use the same truth table.
+- `Update-AzLocalPipelineExample` automatically backs up and migrates schema v1 or v2 to v3 during a normal refresh. Flat v2 pairs become separate one-tag groups. Active and fully commented files use version-specific exact-byte backups; fully commented files remain inert and repeated updates are idempotent.
+
+### Fixed
+
+- Cloud collection boundaries now discard null placeholders before property inspection. The shared ARG and generic Azure CLI JSON helpers filter null top-level rows, while ARM REST `value` arrays and nested `reportedProperties.nodes`, `progress.steps`, `packageVersions`, and `healthCheckResult` arrays skip null elements locally.
+- Connectivity reporting no longer fails under strict mode when a cluster's projected `ReportedNodes` array contains a null member. The same protection now covers recursive update-run progress walkers, failed-run error extraction, readiness package-version processing, available updates, update runs, and fleet health expansion.
+- Progress fallback counts exclude null placeholders from both completed and total step counts instead of treating them as work items.
+
+### Changed
+
+- `reporting.maxRowsPerTable` in `fleet-settings.yml` now accepts values from 1 through 2,000 (previously 1 through 1,000), allowing complete Markdown tables for larger fleets when the configured summary byte budget permits it.
+- The generated fleet-settings starter and CI/CD runbook now document the schema-v3 hierarchy, exact indentation, and AND-within/OR-across evaluation model.
+- No public function or export-count change (71). Bundled GitHub Actions and Azure DevOps pipeline pins are updated to `0.9.24`.
+
+### Validation
+
+- Live smoke tests passed for connectivity, readiness/blocking health, fleet update status, and fleet health against the maintainer subscription. The durable live Pester suite passed 43/43; the full non-live suite passed 1,711 with 0 failures and 1 skipped test.
+
 ## [0.9.23] - 2026-07-23
 
 ### Added

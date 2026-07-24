@@ -294,6 +294,7 @@ function Test-AzLocalClusterHealth {
             # not support the `u{XXXX} escape so we build the char explicitly.
             $usSep = [char]0x1F
             foreach ($check in $healthChecks) {
+                if ($null -eq $check) { continue }
                 if ($check.status -eq "Failed") {
                     $sev = if ($check.severity) { $check.severity } else { "Unknown" }
                     if ($BlockingOnly -and $sev -ne "Critical") { continue }
