@@ -443,7 +443,7 @@ GitHub displays repository HTML as source rather than running it. To use the int
 
 The housekeeping findings deliberately include `.vhdx` files that are not referenced by a VM or snapshot chain, a disk stored beneath another VM's folder, and a shared-reference candidate. These are **review observations, not deletion instructions**. One file can appear in more than one category, so category and row totals may overlap and must not be interpreted as unique-file counts. A base `.vhdx` candidate is not an orphaned checkpoint AVHDX and does not change a VM health verdict; confirm ownership, image-library intent, backup retention, and storage layout before moving or deleting anything.
 
-VHD Sets are recognized by their genuine `.vhds` attachment path. When two or more VMs reference the same `.vhds`, housekeeping reports a **Shared VHD Set reference** advisory listing those VMs; this is expected for guest-cluster shared storage and does not affect VM health. Hyper-V manages the companion files behind the `.vhds` abstraction, so ownerless `.avhdx` files in that exact attached-VHDS directory are classified as VHD Set-managed and are not presented as orphan or placement anomalies. Protection does not extend to sibling or nested directories. See [Create Hyper-V VHD Set files](https://learn.microsoft.com/en-us/windows-server/virtualization/hyper-v/manage/create-vhdset-file).
+VHD Sets are recognized by their genuine `.vhds` attachment path. When two or more VMs reference the same `.vhds`, housekeeping reports a **Shared VHD Set reference** advisory listing those VMs; this is expected for guest-cluster shared storage and does not affect VM health. Hyper-V manages the companion files behind the `.vhds` abstraction, so ownerless `.avhdx` files in that exact attached-VHDS directory are classified as VHD Set-managed and are not presented as orphan or placement anomalies. Protection does not extend to sibling or nested directories. See [Create Hyper-V VHD Set files](https://learn.microsoft.com/windows-server/virtualization/hyper-v/manage/create-vhdset-file).
 
 CSV inventory skips the exact Windows metadata folder `System Volume Information`; it cannot contain workload virtual disks and its normal access restrictions do not make coverage incomplete. If another folder beneath a readable CSV cannot be enumerated, readable branches are retained but coverage remains incomplete and the report adds **CSV folder path inaccessible** with the exact failed path. A CSV root that cannot be opened remains **CSV root incomplete**.
 
@@ -520,7 +520,7 @@ The states are mutually exclusive and decided in this order:
 
 Do not treat a **HOLD STATE** or **INVESTIGATE** verdict as permission to continue operating the VM without review. Follow the guidance for the specific finding. For a dormant checkpoint-chain risk, do not perform a live migration, quick migration, storage migration, or restart until the chain is validated. Both levels, and the report's Problem Statement, link the Microsoft Learn troubleshooting guide:
 
-> [Troubleshoot Hyper-V Virtual Machine Backup, Checkpoint, and Storage Failures](https://learn.microsoft.com/en-us/troubleshoot/windows-server/virtualization/hyper-v-virtual-machine-backup-checkpoint-storage)
+> [Troubleshoot Hyper-V Virtual Machine Backup, Checkpoint, and Storage Failures](https://learn.microsoft.com/troubleshoot/windows-server/virtualization/hyper-v-virtual-machine-backup-checkpoint-storage)
 
 ## Enabling the Analytic channel (optional, operator's choice)
 
