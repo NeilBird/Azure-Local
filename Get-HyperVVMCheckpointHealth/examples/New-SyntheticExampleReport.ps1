@@ -266,7 +266,7 @@ $housekeepingFindings = @(
         ParentPath = 'C:\ClusterStorage\UserStorage_1\TestVM08\Virtual Hard Disks'
         CsvRoot = 'C:\ClusterStorage\UserStorage_1'; Extension = '.vhdx'; Length = 21474836480
         Observation = 'No VM or snapshot chain references this base disk under complete coverage: C:\ClusterStorage\UserStorage_1\TestVM08\Virtual Hard Disks\TestVM08_LegacyData.vhdx'
-        Review = 'If this virtual disk belongs to an image library, exclude its full path with storage.imageLibraryPathPatterns in a checkpoint-health-policy.yml file supplied via -PolicyPath (see README.md). Otherwise, confirm intended ownership and storage layout with the VM, backup, and storage owners. Do not modify the file based only on this report.'
+        Review = 'If this virtual disk belongs to an image library, exclude its full path with storage.imageLibraryPathPatterns in a checkpoint-health-policy.yml file supplied via -PolicyPath (see housekeeping guidance). Otherwise, confirm intended ownership and storage layout with the VM, backup, and storage owners. Do not modify the file based only on this report.'
     },
     [pscustomobject]@{
         Category = 'Unattached base disk candidate'; Scope = 'TestVM12'
@@ -275,7 +275,7 @@ $housekeepingFindings = @(
         ParentPath = 'C:\ClusterStorage\UserStorage_2\TestVM12\Virtual Hard Disks'
         CsvRoot = 'C:\ClusterStorage\UserStorage_2'; Extension = '.vhdx'; Length = 10737418240
         Observation = 'No VM or snapshot chain references this base disk under complete coverage: C:\ClusterStorage\UserStorage_2\TestVM12\Virtual Hard Disks\TestVM12_Archive.vhdx'
-        Review = 'If this virtual disk belongs to an image library, exclude its full path with storage.imageLibraryPathPatterns in a checkpoint-health-policy.yml file supplied via -PolicyPath (see README.md). Otherwise, confirm intended ownership and storage layout with the VM, backup, and storage owners. Do not modify the file based only on this report.'
+        Review = 'If this virtual disk belongs to an image library, exclude its full path with storage.imageLibraryPathPatterns in a checkpoint-health-policy.yml file supplied via -PolicyPath (see housekeeping guidance). Otherwise, confirm intended ownership and storage layout with the VM, backup, and storage owners. Do not modify the file based only on this report.'
     },
     [pscustomobject]@{
         Category = 'Shared virtual disk reference'; Scope = 'TestVM14, TestVM15'
@@ -303,7 +303,7 @@ $html = ConvertTo-VMCheckpointAuditHtml -Results $results -StaleHours 24 `
     -EventLookbackHours 168 -ClusterName 'contoso01' -GeneratedUtc '2026-07-20 12:00:00' `
     -DiscoveredVMs @() -DiscoverySummary $discoverySummary -StorageHealth $storageHealth `
     -HousekeepingFindings $housekeepingFindings -IncludeDiscoveredVMs:$true `
-    -ScriptVersion '0.2.23' -ReportGenerationTime '00:01:24' -ClusterNodeCount 10 -ClusterCsvCount 2
+    -ScriptVersion '0.2.24' -ReportGenerationTime '00:01:24' -ClusterNodeCount 10 -ClusterCsvCount 2
 
 $syntheticNotice = @'
 <div class="callout info synthetic-example"><strong>Synthetic example report.</strong> Every cluster, node, VM, path, timestamp, and event message in this file is invented for documentation. TestVM07 demonstrates an active-checkpoint HOLD STATE confirmed by historic event evidence; seven VMs demonstrate historic rollback, orphaned AVHDX, stale checkpoint/layer, and Hyper-V Replica INVESTIGATE findings; 12 VMs are healthy comparisons. The inventory contains 16 input VMs and 4 automatically discovered VMs.</div>

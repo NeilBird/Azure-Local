@@ -544,8 +544,8 @@ Describe 'Module distribution contracts' {
         $script:ModuleCommand = Get-Command Get-HyperVVMCheckpointHealth -Module Get-HyperVVMCheckpointHealth
     }
 
-    It 'imports a valid 0.2.23 module manifest' {
-        $script:Manifest.Version.ToString() | Should -Be '0.2.23'
+    It 'imports a valid 0.2.24 module manifest' {
+        $script:Manifest.Version.ToString() | Should -Be '0.2.24'
         $script:Manifest.ExportedFunctions.Keys | Should -Contain 'Get-HyperVVMCheckpointHealth'
     }
 
@@ -671,7 +671,7 @@ Describe 'Module distribution contracts' {
         $setupPath = Join-Path $script:ModuleRoot 'Setup-Get-HyperVVMCheckpointHealth.ps1'
         Test-Path -LiteralPath $setupPath -PathType Leaf | Should -BeTrue
         $setupSource = Get-Content -LiteralPath $setupPath -Raw
-        $setupSource | Should -Match "\$version = '0\.2\.23'"
+        $setupSource | Should -Match "\$version = '0\.2\.24'"
         $setupSource | Should -Match "\$expectedSha256 = '[0-9a-f]{64}'"
         $setupSource | Should -Match '\[string\]\$InstallRoot = ''C:\\Temp'''
         $setupSource | Should -Match 'Get-FileHash.+SHA256'
@@ -881,7 +881,7 @@ Describe 'HTML fleet report usability' {
                     ParentPath = 'C:\ClusterStorage\Volume1'
                     CsvRoot = 'C:\ClusterStorage\Volume1'; Extension = '.vhdx'; Length = 0
                     Observation = 'No VM or snapshot chain references this base disk under complete coverage.'
-                    Review = 'If this virtual disk belongs to an image library, exclude its full path with storage.imageLibraryPathPatterns in a checkpoint-health-policy.yml file supplied via -PolicyPath (see README.md). Otherwise, confirm intended ownership.'
+                    Review = 'If this virtual disk belongs to an image library, exclude its full path with storage.imageLibraryPathPatterns in a checkpoint-health-policy.yml file supplied via -PolicyPath (see housekeeping guidance). Otherwise, confirm intended ownership.'
                 }
             )
         $script:CleanRenderedHtml = ConvertTo-VMCheckpointAuditHtml `
@@ -893,7 +893,7 @@ Describe 'HTML fleet report usability' {
                 Category = 'Unattached base disk candidate'; Scope = 'C:\ClusterStorage\UserStorage_1'
                 FileName = 'BaseDisk.vhdx'
                 Observation = 'No VM or snapshot chain references this base disk under complete coverage: C:\ClusterStorage\UserStorage_1\BaseDisk.vhdx'
-                Review = 'If this virtual disk belongs to an image library, exclude its full path with storage.imageLibraryPathPatterns in a checkpoint-health-policy.yml file supplied via -PolicyPath (see README.md). Otherwise, confirm intended ownership. Do not modify the file based only on this report.'
+                Review = 'If this virtual disk belongs to an image library, exclude its full path with storage.imageLibraryPathPatterns in a checkpoint-health-policy.yml file supplied via -PolicyPath (see housekeeping guidance). Otherwise, confirm intended ownership. Do not modify the file based only on this report.'
             })
         $degradedStorage = [pscustomobject]@{
             Summary = 'Degraded'; Source = 'TEST-NODE-01'; StorageJobs = @(); CsvRedirected = @()
@@ -913,7 +913,7 @@ Describe 'HTML fleet report usability' {
             -Results @([pscustomobject]@{ VMName = 'TEST-VM-NORMAL'; OwningNode = 'TEST-NODE-01'; Recommendation = 'OK'; Source = 'Input'; StaleCheckpointCount = 0; ReportData = $normalReportData; Detail = '' }) `
             -StaleHours 24 -EventLookbackHours 168 -ClusterName 'CONTOSO-CLUSTER-01' -GeneratedUtc '2026-01-01 00:00:00' `
             -DiscoveredVMs $null -DiscoverySummary ([pscustomobject]@{ EligibleCount = 0; AuditedCount = 0; DeferredCount = 0; Cap = $null }) `
-            -StorageHealth $degradedStorage -IncludeDiscoveredVMs:$false -ScriptVersion '0.2.23' -ReportGenerationTime '00:00:01' `
+            -StorageHealth $degradedStorage -IncludeDiscoveredVMs:$false -ScriptVersion '0.2.24' -ReportGenerationTime '00:00:01' `
             -ClusterNodeCount 2 -ClusterCsvCount 1 -HousekeepingFindings @()
         $degradedStorageWithoutFaults = $degradedStorage.PSObject.Copy()
         $degradedStorageWithoutFaults.HealthFaults = @()
@@ -921,7 +921,7 @@ Describe 'HTML fleet report usability' {
             -Results @([pscustomobject]@{ VMName = 'TEST-VM-NORMAL'; OwningNode = 'TEST-NODE-01'; Recommendation = 'OK'; Source = 'Input'; StaleCheckpointCount = 0; ReportData = $normalReportData; Detail = '' }) `
             -StaleHours 24 -EventLookbackHours 168 -ClusterName 'CONTOSO-CLUSTER-01' -GeneratedUtc '2026-01-01 00:00:00' `
             -DiscoveredVMs $null -DiscoverySummary ([pscustomobject]@{ EligibleCount = 0; AuditedCount = 0; DeferredCount = 0; Cap = $null }) `
-            -StorageHealth $degradedStorageWithoutFaults -IncludeDiscoveredVMs:$false -ScriptVersion '0.2.23' -ReportGenerationTime '00:00:01' `
+            -StorageHealth $degradedStorageWithoutFaults -IncludeDiscoveredVMs:$false -ScriptVersion '0.2.24' -ReportGenerationTime '00:00:01' `
             -ClusterNodeCount 2 -ClusterCsvCount 1 -HousekeepingFindings @()
         $advisoryReportData = $normalReportData.PSObject.Copy()
         $advisoryReportData.ReplAssessment = $normalReportData.ReplAssessment.PSObject.Copy()
@@ -937,6 +937,24 @@ Describe 'HTML fleet report usability' {
             -StaleHours 24 -EventLookbackHours 168 -ClusterName 'CONTOSO-CLUSTER-01' -GeneratedUtc '2026-01-01 10:00:00' `
             -DiscoveredVMs @() -DiscoverySummary ([pscustomobject]@{ EligibleCount = 0; AuditedCount = 0; DeferredCount = 0; Cap = $null }) `
             -StorageHealth $null -HousekeepingFindings @() -IncludeDiscoveredVMs:$false -ScriptVersion '0.2.21' `
+            -ReportGenerationTime '00:00:01' -ClusterNodeCount 2 -ClusterCsvCount 1
+        $measurementConcernReportData = $normalReportData.PSObject.Copy()
+        $measurementConcernReportData.ReplUnhealthy = $true
+        $measurementConcernReportData.ReplAssessment = $normalReportData.ReplAssessment.PSObject.Copy()
+        $measurementConcernReportData.ReplAssessment.Severity = 'Warning'
+        $measurementConcernReportData.ReplAssessment.ProductSeverity = 'Healthy'
+        $measurementConcernReportData.ReplAssessment.MeasurementStatus = 'Concern'
+        $measurementConcernReportData.ReplAssessment.IsConcern = $true
+        $measurementConcernReportData.ReplAssessment.PendingBytes = 3GB
+        $measurementConcernReportData.ReplAssessment.EffectiveMaxPendingBytes = 1GB
+        $measurementConcernReportData.ReplAssessment.ConcernBreaches = @('PendingBytes')
+        $measurementConcernReportData.ReplAssessment.ThresholdBreaches = @('PendingBytes')
+        $measurementConcernReportData.ReplAssessment.Reason = 'Pending replication data materially exceeds the effective relationship-aware limit.'
+        $script:MeasurementConcernReplicaHtml = ConvertTo-VMCheckpointAuditHtml `
+            -Results @([pscustomobject]@{ VMName = 'TEST-VM-MEASUREMENT'; OwningNode = 'TEST-NODE-01'; Recommendation = 'INVESTIGATE'; Source = 'Input'; StaleCheckpointCount = 0; ReportData = $measurementConcernReportData; Detail = '' }) `
+            -StaleHours 24 -EventLookbackHours 168 -ClusterName 'CONTOSO-CLUSTER-01' -GeneratedUtc '2026-01-01 10:00:00' `
+            -DiscoveredVMs @() -DiscoverySummary ([pscustomobject]@{ EligibleCount = 0; AuditedCount = 0; DeferredCount = 0; Cap = $null }) `
+            -StorageHealth $null -HousekeepingFindings @() -IncludeDiscoveredVMs:$false -ScriptVersion '0.2.24' `
             -ReportGenerationTime '00:00:01' -ClusterNodeCount 2 -ClusterCsvCount 1
         $stateAdvisoryReportData = $normalReportData.PSObject.Copy()
         $stateAdvisoryReportData | Add-Member -NotePropertyName StateConsistencyStatus -NotePropertyValue 'Changed'
@@ -964,10 +982,48 @@ Describe 'HTML fleet report usability' {
     It 'shows an incomplete count for NOT FOUND and ERROR rows' {
         $script:RenderedHtml | Should -Match '<div class="l">Incomplete</div>'
         $script:RenderedHtml | Should -Match '<div class="n">1</div><div class="l">Incomplete</div>'
-        $script:RenderedHtml | Should -Match 'Incomplete assessment:.*1 VM.*NOT FOUND or ERROR'
-        $script:RenderedHtml | Should -Match '_debug_log_\*\.txt'
-        $script:RenderedHtml | Should -Match 'https://aka\.ms/Get-HyperVVMCheckpointHealth#readme'
-        $script:RenderedHtml | Should -Match 'https://aka\.ms/Get-HyperVVMCheckpointHealth-Feedback'
+        $script:RenderedHtml | Should -Match 'Assessment incomplete:.*1 VM.*For <strong>NOT FOUND</strong>, verify the VM name and cluster.*For <strong>ERROR</strong>, review permissions, connectivity, and the debug log'
+        $script:RenderedHtml | Should -Match 'Input VM name\(s\) not found on this cluster: <strong>TEST-VM-MISSING</strong>'
+        $script:RenderedHtml | Should -Match 'INVESTIGATE - input VM name\(s\) not found on this cluster \(1\):</strong> TEST-VM-MISSING'
+        $script:RenderedHtml | Should -Match 'Get-HyperVVMCheckpointHealth -VMName &#39;TEST-VM-MISSING&#39; -OutputPath &lt;folder&gt;'
+        $script:RenderedHtml | Should -Not -Match '_debug_log_\*\.txt'
+    }
+
+    It 'places VM source badges below VM names in the summary table' {
+        $script:RenderedHtml | Should -Match '\.vmn>a\{display:block\}'
+        $script:RenderedHtml | Should -Match '\.vmn>\.src\{display:block;width:max-content;margin:4px 0 0\}'
+        $script:RenderedHtml | Should -Match '<td class="vmn"><a[^>]+><code>TEST-VM-NORMAL</code></a><span class="src input">Input</span></td>'
+    }
+
+    It 'warn-highlights verdict-driving event counts while leaving low-signal counts neutral' {
+        $highSignalReportData = $normalReportData.PSObject.Copy()
+        $highSignalReportData.VmEventConcernCount = 7
+        $highSignalReportData.VmHighConcernCount = 5
+        $highSignalHtml = ConvertTo-VMCheckpointAuditHtml `
+            -Results @([pscustomobject]@{ VMName = 'TEST-VM-HIGH-EVENTS'; OwningNode = 'TEST-NODE-01'; Recommendation = 'INVESTIGATE'; Source = 'Input'; StaleCheckpointCount = 0; ReportData = $highSignalReportData; Detail = '' }) `
+            -StaleHours 24 -EventLookbackHours 168 -ClusterName 'CONTOSO-CLUSTER-01' -GeneratedUtc '2026-01-01 10:00:00' `
+            -DiscoveredVMs @() -DiscoverySummary ([pscustomobject]@{ EligibleCount = 0; AuditedCount = 0; DeferredCount = 0; Cap = $null }) `
+            -StorageHealth $null -HousekeepingFindings @() -IncludeDiscoveredVMs:$false `
+            -ScriptVersion '0.2.24' -ReportGenerationTime '00:00:01' -ClusterNodeCount 2 -ClusterCsvCount 1
+
+        $highSignalHtml | Should -Match '<td class="num">7 <span class=''warnval''>\(5 hi\)</span></td>'
+        $script:RenderedHtml | Should -Not -Match '<span class=''warnval''>\([^<]+ low\)</span>'
+    }
+
+    It 'shows debug-log guidance only when unrecovered diagnostics were recorded' {
+        $html = ConvertTo-VMCheckpointAuditHtml `
+            -Results @([pscustomobject]@{ VMName = 'TEST-VM-ERROR'; OwningNode = ''; Recommendation = 'ERROR'; Source = 'Input'; StaleCheckpointCount = 0; ReportData = $null; Detail = 'Synthetic collection error.' }) `
+            -StaleHours 24 -EventLookbackHours 168 -ClusterName 'CONTOSO-CLUSTER-01' -GeneratedUtc '2026-01-01 10:00:00' `
+            -DiscoveredVMs @() -DiscoverySummary ([pscustomobject]@{ EligibleCount = 0; AuditedCount = 0; DeferredCount = 0; Cap = $null }) `
+            -StorageHealth $null -HousekeepingFindings @() -IncludeDiscoveredVMs:$false -DebugLogAvailable:$true `
+            -ScriptVersion '0.2.24' -ReportGenerationTime '00:00:01' -ClusterNodeCount 2 -ClusterCsvCount 1
+
+        $html | Should -Match 'Unrecovered collection errors were logged'
+        $html | Should -Match '_debug_log_\*\.txt'
+        $html | Should -Match 'https://aka\.ms/Get-HyperVVMCheckpointHealth#readme'
+        $html | Should -Match 'https://aka\.ms/Get-HyperVVMCheckpointHealth-Feedback'
+        $html | Should -Match 'Exec Summary - assessment incomplete:'
+        $html | Should -Not -Match 'Exec Summary - no VM health action required:'
     }
 
     It 'distinguishes processed, fully assessed, and incomplete VM counts in every report' {
@@ -985,17 +1041,36 @@ Describe 'HTML fleet report usability' {
     }
 
     It 'surfaces storage fault actions and retains CSS deep-analysis guidance' {
-        $script:DegradedStorageHtml | Should -Match '<strong>Cluster storage requires investigation:</strong> 1 active storage Health Service fault\(s\): Synthetic storage health fault &lt;review&gt;\.'
+        $script:DegradedStorageHtml | Should -Match "<strong><a href='#cluster-storage-health'>Cluster storage requires investigation:</a></strong> 1 active storage Health Service fault\(s\): Synthetic storage health fault &lt;review&gt;\."
+        $script:DegradedStorageHtml | Should -Match "<details class='report-section' id='cluster-storage-health' open><summary><h2>Cluster storage health \(Storage Spaces Direct / CSV\)</h2></summary><div class='report-section-body'>"
+        $script:DegradedStorageHtml | Should -Match '<strong>Storage status: Degraded\.</strong> Read-only snapshot \(source node <code>TEST-NODE-01</code>\)\.</div>'
+        $script:DegradedStorageHtml | Should -Not -Match 'Storage-layer disruption - S2D repair / resync jobs'
+        $script:DegradedStorageHtml | Should -Match '<p class=''muted''><strong>Why this check matters:</strong> storage repair/resync activity, abnormal CSV redirection or state, and unhealthy disks can make checkpoint or merge files temporarily locked or unavailable\.'
+        $script:DegradedStorageHtml | Should -Match 'A ReFS CSV reporting File System Redirected mode with reason <code>FileSystemReFs</code> is normal on Azure Local / S2D and is not flagged'
         $script:DegradedStorageHtml | Should -Match '<strong>Why this snapshot is non-healthy:</strong> 1 active storage Health Service fault\(s\): Synthetic storage health fault &lt;review&gt;\.'
         $script:DegradedStorageHtml | Should -Match '<h3>Active storage Health Service faults \(read-only evidence\)</h3>'
         $script:DegradedStorageHtml | Should -Match '<th>Recommended action\(s\)</th>'
-        $script:DegradedStorageHtml | Should -Match '<td>Warning</td><td>Synthetic storage health fault &lt;review&gt;</td><td>Synthetic affected object</td><td>Synthetic location</td><td>Inspect the affected storage object &lt;carefully&gt;\.<br>Open a CSS case if the fault persists\.</td>'
-        $script:DegradedStorageHtml | Should -Match 'These records come from <code>Get-HealthFault</code> and are displayed as observed diagnostic evidence\.'
+        $script:DegradedStorageHtml | Should -Match '<td><span class=''warnval''>Warning</span></td><td>Synthetic storage health fault &lt;review&gt;</td><td>Synthetic affected object</td><td>Synthetic location</td><td>Inspect the affected storage object &lt;carefully&gt;\.<br>Open a CSS case if the fault persists\.</td>'
+        $script:DegradedStorageHtml | Should -Match '<strong>EVIDENCE - </strong>These records come from <code>Get-HealthFault</code> and are displayed as observed diagnostic evidence\.'
         $script:DegradedStorageHtml | Should -Match 'Recommended actions are shown exactly as supplied by the matching storage fault\.'
         $script:DegradedStorageHtml | Should -Match '<strong>Deeper analysis \(recommended\):</strong> this is a lightweight snapshot\.'
         $script:DegradedStorageHtml | Should -Match 'Install-Module -Name Microsoft\.AzLocal\.CSSTools'
         $script:DegradedStorageHtml | Should -Match "<a href='https://github\.com/Azure/AzureLocal-Supportability/blob/main/tools/CSSTools/1\.2605\.5\.1611/functions/Start-AzsSupportStorageDiagnostic\.md' target='_blank' rel='noopener noreferrer'>Start-AzsSupportStorageDiagnostic documentation</a>"
+        $script:DegradedStorageHtml | Should -Match "<a href='https://learn\.microsoft\.com/en-us/windows-server/failover-clustering/health-service-faults' target='_blank' rel='noopener noreferrer'>Health Service faults \| Microsoft Learn</a>"
+        $script:DegradedStorageHtml | Should -Match "<a href='https://learn\.microsoft\.com/en-us/windows-server/storage/storage-spaces/troubleshooting-storage-spaces' target='_blank' rel='noopener noreferrer'>Storage Spaces Direct troubleshooting \| Microsoft Learn</a>"
+        $script:DegradedStorageHtml | Should -Match 'Open a Microsoft Support \(CSS\) support request if you need additional guidance before taking action\.'
+        $script:DegradedStorageHtml | Should -Not -Match 'A <em>Warning</em> here is often a minor, non-storage fault'
         $script:DegradedStorageHtml | Should -Not -Match 'Debug-StorageSubSystem|Repair-Storage|Set-Storage'
+    }
+
+    It 'labels the housekeeping rationale clearly' {
+        $script:RenderedHtml | Should -Match '<strong>WHY THIS MATTERS:</strong> Operational excellence and consistent storage practices improve reliability and reduce operational complexity\.'
+        $script:RenderedHtml | Should -Match '<strong>Do not move, rename, merge, or delete virtual disk files based solely on this report, all decisions and actions are your responsibility\.</strong>'
+    }
+
+    It 'links a deduplicated housekeeping roll-up from the Executive Summary' {
+        $script:RenderedHtml | Should -Match "<strong><a href='#housekeeping'>Cluster storage \(VHD and checkpoint\) housekeeping audit results:</a></strong> identified <strong>3</strong> item\(s\), with a total unique-file storage size of <strong>1\.50 MB</strong>, across <strong>1</strong> Cluster Shared Volume\(s\)\. <strong>Action:</strong> review this section to determine whether the files are required VM images or orphaned objects\."
+        $script:CleanRenderedHtml | Should -Match "<strong><a href='#housekeeping'>Cluster storage \(VHD and checkpoint\) housekeeping audit results:</a></strong> identified <strong>1</strong> item\(s\), with a total unique-file storage size of <strong>0 KB</strong>, across <strong>0</strong> Cluster Shared Volume\(s\)\."
     }
 
     It 'states when an unhealthy subsystem returns no Health Service fault detail' {
@@ -1006,7 +1081,9 @@ Describe 'HTML fleet report usability' {
 
     It 'warn-highlights abnormal Replica state while leaving normal replication neutral' {
         $script:RenderedHtml | Should -Match "<span class='warnval'>Error \(Critical\)</span>"
+        $script:RenderedHtml | Should -Match ([regex]::Escape('<div class="k">Hyper-V Replica</div><div><span class=''warnval''>Error (Critical)</span></div>'))
         $script:RenderedHtml | Should -Match '<td>Replicating \(Normal\)</td>'
+        $script:RenderedHtml | Should -Match '<div class="k">Hyper-V Replica</div><div>Replicating \(Normal\)</div>'
         $script:RenderedHtml | Should -Not -Match "<span class='warnval'>Replicating \(Normal\)</span>"
         $script:RenderedHtml | Should -Not -Match 'unhealthy Hyper-V Replica'
         $script:RenderedHtml | Should -Not -Match 'replica health Normal'
@@ -1025,9 +1102,19 @@ Describe 'HTML fleet report usability' {
         $script:RenderedHtml | Should -Match "<td>Replicating / Normal</td>"
     }
 
+    It 'keeps product health Normal while warn-highlighting exact measurement concern evidence' {
+        $script:MeasurementConcernReplicaHtml | Should -Match '<details open><summary>Hyper-V Replica details - Replicating / Normal; measurements Concern</summary>'
+        $script:MeasurementConcernReplicaHtml | Should -Match "<td>Replicating \(Normal\)<br><span class='warnval'>Concern - pending data 3\.00 GB \(effective limit 1\.00 GB\)</span></td>"
+        $script:MeasurementConcernReplicaHtml | Should -Match "Replica measurement assessment</div><div><span class='warnval'>Concern - pending data 3\.00 GB \(effective limit 1\.00 GB\)</span>"
+        $script:MeasurementConcernReplicaHtml | Should -Match 'Hyper-V Replica measurements need attention \(1 VM\(s\)\):</strong> the measured replication age, backlog, latency, or missed cycles for TEST-VM-MEASUREMENT'
+        $script:MeasurementConcernReplicaHtml | Should -Not -Match 'Hyper-V Replica product health/state needs attention'
+    }
+
     It 'labels every per-VM card heading explicitly' {
         $script:RenderedHtml | Should -Match '<h3><span class="vm-label">VM Name:</span> <code>TEST-VM-NORMAL</code>'
         $script:RenderedHtml | Should -Match '<h3><span class="vm-label">VM Name:</span> <code>TEST-VM-MISSING</code>'
+        $script:RenderedHtml | Should -Match '<div class="k">VM name</div><div><code>TEST-VM-NORMAL</code></div>\s*<div class="k">Source</div>'
+        $script:RenderedHtml | Should -Match "<div class='kv'><div class='k'>VM name</div><div><code>TEST-VM-MISSING</code></div></div>"
     }
 
     It 'renders every per-VM card as an individually collapsible default-open disclosure' {
@@ -1059,16 +1146,21 @@ Describe 'HTML fleet report usability' {
 
     It 'rolls HRL-only concerns into the ordinary summary and a dedicated action' {
         $script:HrlConcernHtml | Should -Match 'findings: 1 VM\(s\) with cadence-breaching HRL evidence\.'
-        $script:HrlConcernHtml | Should -Match 'Hyper-V Replica log cadence needs attention \(1 VM\(s\)\):</strong> TEST-VM-HRL'
+        $script:HrlConcernHtml | Should -Match 'Hyper-V Replica log cadence needs attention \(1 VM\(s\)\):</strong> the <code>\.hrl</code> files for TEST-VM-HRL exceed the age limit'
         $script:HrlConcernHtml | Should -Match "<td>Replicating \(Normal\)<br><span class='warnval'>12 queued HRL files beyond cadence</span></td>"
         $script:HrlConcernHtml | Should -Match 'Do not delete or modify <code>\.hrl</code> files based on this report\.'
         $script:CleanRenderedHtml | Should -Not -Match 'queued HRL files beyond cadence'
         $script:AdvisoryReplicaHtml | Should -Not -Match 'queued HRL files beyond cadence'
     }
 
-    It 'renders the per-VM and housekeeping sections as matching default-open disclosures' {
+    It 'renders every top-level report section as a matching default-open disclosure' {
+        $script:RenderedHtml | Should -Match '<details class="report-section" id="recommended-next-steps" open>\s*<summary><h2>Recommended next steps</h2></summary>\s*<div class="report-section-body">'
+        $script:RenderedHtml | Should -Match '<details class="report-section" id="vm-summary" open>\s*<summary><h2>VM summary table</h2></summary>\s*<div class="report-section-body">'
+        $script:RenderedHtml | Should -Match "<details class='report-section' id='discovered-vms' open><summary><h2>Discovered VMs not audited - discovery cap reached</h2></summary><div class='report-section-body'>"
         $script:RenderedHtml | Should -Match "<details class='report-section' open><summary><h2>Per-VM detailed information</h2></summary><div class='report-section-body'>"
+        $script:DegradedStorageHtml | Should -Match "<details class='report-section' id='cluster-storage-health' open><summary><h2>Cluster storage health \(Storage Spaces Direct / CSV\)</h2></summary><div class='report-section-body'>"
         $script:RenderedHtml | Should -Match '<details class="report-section" id="housekeeping" open>\s*<summary><h2>Cluster / storage housekeeping to review:</h2></summary>\s*<div class="report-section-body">'
+        $script:RenderedHtml | Should -Match '<details class="report-section" id="appendix" open>\s*<summary><h2>Appendix - Knowledge and Information</h2></summary>\s*<div class="report-section-body">'
         $script:RenderedHtml | Should -Match 'details\.report-section>summary::before\{content:''\\25B6'''
         $script:RenderedHtml | Should -Match 'details\.report-section\[open\]>summary::before\{content:''\\25BC''\}'
     }
@@ -1101,10 +1193,19 @@ Describe 'HTML fleet report usability' {
             -StorageHealth $null -ScriptVersion '0.2.21' -ReportGenerationTime '00:00:01' `
             -ClusterNodeCount 1 -ClusterCsvCount 1 -HousekeepingFindings @()
 
-        $html | Should -Match 'required Worker/VMMS coverage is incomplete'
+        $html | Should -Match 'required Worker/VMMS logs are incomplete'
         $html | Should -Match 'TEST-NODE-01/Worker=Disabled'
         $html | Should -Not -Match 'wrapped past this active checkpoint'
         $html | Should -Not -Match 'only go back to'
+    }
+
+    It 'uses direct plain-English safety and recovery guidance' {
+        $script:RenderedHtml | Should -Match '<strong>Reason for this verdict:</strong>'
+        $script:RenderedHtml | Should -Match 'Do not move, rename, merge, or delete virtual disk files based solely on this report'
+        $script:RenderedHtml | Should -Not -Match 'absence of evidence is not proof'
+        $script:RenderedHtml | Should -Not -Match 'quarantine folder'
+        $script:RenderedHtml | Should -Not -Match 'Driver:'
+        $script:RenderedHtml | Should -Not -Match 'bounded operation window'
     }
 
     It 'never treats optional Analytic-channel status as CANNOT CONFIRM coverage' {
@@ -1158,6 +1259,7 @@ Describe 'HTML fleet report usability' {
         $reportData.VmEscalatingConcernCount = 7
         $reportData.VmHighConcernIds = '18012 x7'
         $reportData.EventsCsvName = 'TEST-VM-EVENTS_Events.csv'
+        $reportData.EventBreakdown = @([pscustomobject]@{ Id = 18012; Count = 7; First = '2026-07-15 22:00:20'; Last = '2026-07-21 22:00:20'; Sample = 'Checkpoint operation failed.' })
         $reportData | Add-Member -NotePropertyName InvestigationDrivers -NotePropertyValue ([pscustomobject]@{
             Labels = @('7 unresolved VM-attributed checkpoint/merge operation failure event(s) [18012 x7]')
             AssessmentText = 'Recurring checkpoint or merge operation failures require job-history review.'
@@ -1175,6 +1277,15 @@ Describe 'HTML fleet report usability' {
 
         $html | Should -Match 'checkpoint reliability evidence rather than proof of chain corruption'
         $html | Should -Match 'there is no disk merge or removal action from this result'
+        $html | Should -Match '<details open><summary>Concerning events attributable to this VM \(7 in 168h\)</summary>'
+        $html | Should -Match '<strong>What to INVESTIGATE for this VM - recurring backup/checkpoint reliability:</strong> This <code>18012</code> finding does not, by itself, require Microsoft Support involvement\.'
+        $html | Should -Match '<strong>Observed pattern:</strong> Review the expanded event evidence below for the first/last timestamps and recurrence\.'
+        $html | Should -Match 'Event <code>18012</code> alone does not identify a virtual-disk file that requires operator action\.'
+        $html | Should -Match 'If Hyper-V or the backup product is already performing a checkpoint cleanup or merge, allow that managed operation to complete'
+        $html | Should -Match 'For repeated failures, if applicable, check with your backup solution vendor for assistance and guidance\.'
+        $html | Should -Match 'open a support request \(SR\) case with Microsoft Support when recurring checkpoint failures remain after the backup/checkpoint owner has ruled out their component\.'
+        $html | Should -Not -Match 'Do not place the VM under a migration/restart hold based on event <code>18012</code> alone\.'
+        $html | Should -Not -Match 'Escalate to Microsoft Support when|durable disk artifact|disk residue|do not manually merge'
         $html | Should -Not -Match 'before any merge/removal action'
     }
 
@@ -1284,9 +1395,9 @@ Describe 'HTML fleet report usability' {
         $script:CleanRenderedHtml | Should -Not -Match 'Cluster / backup administrators should INVESTIGATE'
     }
 
-    It 'links unattached base disk README guidance in a new tab' {
-        $script:CleanRenderedHtml | Should -Match 'supplied via -PolicyPath \(see <a href="https://aka\.ms/Get-HyperVVMCheckpointHealth#readme" target="_blank" rel="noopener noreferrer">README\.md</a>\)\.'
-        $script:CleanRenderedHtml | Should -Not -Match "<td data-label='Review'>[^<]*\(see README\.md\)"
+    It 'links unattached base disk housekeeping guidance in a new tab' {
+        $script:CleanRenderedHtml | Should -Match 'supplied via -PolicyPath \(see <a href="https://aka\.ms/Get-HyperVVMCheckpointHealth#cluster-storage-housekeeping" target="_blank" rel="noopener noreferrer">housekeeping guidance</a>\)\.'
+        $script:CleanRenderedHtml | Should -Not -Match "<td data-label='Review'>[^<]*\(see housekeeping guidance\)"
     }
 
     It 'gives housekeeping findings readable desktop columns and stacked mobile labels' {
@@ -1326,13 +1437,14 @@ Describe 'HTML fleet report usability' {
         $eventCountsIndex = $script:RenderedHtml.IndexOf('<strong>Reading the event counts:</strong>')
         $summaryTableIndex = $script:RenderedHtml.IndexOf('<h2>VM summary table</h2>')
         $recommendedIndex | Should -BeGreaterThan -1
-        $eventCountsIndex | Should -BeGreaterThan $recommendedIndex
-        $summaryTableIndex | Should -BeGreaterThan $eventCountsIndex
+        $summaryTableIndex | Should -BeGreaterThan $recommendedIndex
+        $eventCountsIndex | Should -BeGreaterThan $summaryTableIndex
         $script:RenderedHtml | Should -Match "box\.addEventListener\('change', applyFilters\)"
         $script:RenderedHtml | Should -Match 'seen\[identity\]'
     }
 
     It 'exports every housekeeping row to CSV using embedded report metadata' {
+        $script:RenderedHtml | Should -Match "class='hk-tools-header'>.*class='hk-export' type='button' id='hk-export-csv'"
         $script:RenderedHtml | Should -Match "id='hk-export-csv' data-cluster='CONTOSO-CLUSTER-01' data-generated='2026-01-01 00:00:00'"
         $script:RenderedHtml | Should -Match 'Download all findings \(CSV\)'
         $script:RenderedHtml | Should -Match 'function csvEscape\(value\)'
@@ -1341,6 +1453,15 @@ Describe 'HTML fleet report usability' {
         $script:RenderedHtml | Should -Match "new Blob\(\['\\uFEFF' \+ lines\.join\('\\r\\n'\)\]"
         $script:RenderedHtml | Should -Match "data-file-name='Data&lt;review&gt;\.vhdx'.*data-observation='Attached disk is stored under another VM folder &lt;review&gt;'"
         $script:RenderedHtml | Should -Match "getElementById\('hk-export-csv'\)\.addEventListener\('click', exportHousekeepingCsv\)"
+    }
+
+    It 'sorts housekeeping findings by size descending by default' {
+        $script:RenderedHtml | Should -Match 'aria-sort="descending"><button class="hk-sort" type="button" data-sort="bytes" data-direction="descending" aria-label="Sort by Size, currently descending"'
+        $script:RenderedHtml | Should -Match 'var sortAscending = \{ bytes: false \};'
+        $largeRowIndex = $script:RenderedHtml.IndexOf("data-file-name='Data&lt;review&gt;.vhdx'")
+        $zeroByteRowIndex = $script:RenderedHtml.IndexOf("data-file-name='BaseImage.vhdx'")
+        $largeRowIndex | Should -BeGreaterThan -1
+        $zeroByteRowIndex | Should -BeGreaterThan $largeRowIndex
     }
 
     It 'filters selected unattached VHDX rows and reveals copyable persistent policy settings below the table' {
@@ -1431,7 +1552,7 @@ Describe 'Unrecovered-failure debug log' {
     BeforeEach {
         $script:RunStopwatch = [System.Diagnostics.Stopwatch]::StartNew()
         $script:TelemetryClockBaseUtc = [DateTimeOffset]::UtcNow
-        $script:ScriptVersion = '0.2.23'
+        $script:ScriptVersion = '0.2.24'
         $script:VMSectionStepNo = 45
         $script:VMSectionName = 'Scanning Replica change logs (.hrl)'
         $script:AuditDiagnostics = [System.Collections.Generic.List[object]]::new()
@@ -1498,7 +1619,7 @@ Describe 'Synthetic HTML example report' {
         $script:ExampleHtml = Get-Content -LiteralPath $script:ExamplePath -Raw
         $script:DetailBlocks = [regex]::Matches(
             $script:ExampleHtml,
-            '(?s)<details class="vm(?: hold)?" id="vm-(TestVM\d{2})" open>(.*?)(?=<details class="vm(?: hold)?" id="vm-|<h2>Cluster storage health)'
+            '(?s)<details class="vm(?: hold)?" id="vm-(TestVM\d{2})" open>(.*?)(?=<details class="vm(?: hold)?" id="vm-|</div></details>\s*<details class=''report-section'' id=''cluster-storage-health'')'
         )
     }
 
@@ -1556,7 +1677,7 @@ Describe 'Synthetic HTML example report' {
         $script:ExampleHtml | Should -Match 'TestVM12_Archive\.vhdx'
         ([regex]::Matches($script:ExampleHtml, "class='hk-image-filter' type='checkbox'> Filter out as VM image")).Count | Should -Be 2
         $script:ExampleHtml | Should -Match "id='hk-image-policy' hidden><h3>Persistent VM image policy settings</h3>"
-        $script:ExampleHtml | Should -Match 'If this virtual disk belongs to an image library, exclude its full path with storage\.imageLibraryPathPatterns in a checkpoint-health-policy\.yml file supplied via -PolicyPath \(see <a href="https://aka\.ms/Get-HyperVVMCheckpointHealth#readme" target="_blank" rel="noopener noreferrer">README\.md</a>\)\.'
+        $script:ExampleHtml | Should -Match 'If this virtual disk belongs to an image library, exclude its full path with storage\.imageLibraryPathPatterns in a checkpoint-health-policy\.yml file supplied via -PolicyPath \(see <a href="https://aka\.ms/Get-HyperVVMCheckpointHealth#cluster-storage-housekeeping" target="_blank" rel="noopener noreferrer">housekeeping guidance</a>\)\.'
         $script:ExampleHtml | Should -Match 'Do not modify the file based only on this report\.'
     }
 }
@@ -1957,6 +2078,12 @@ Describe 'Typed Hyper-V replication assessment' {
         $result.HasAdvisory | Should -BeTrue
         $result.IsConcern | Should -BeFalse
         $result.AdvisoryBreaches | Should -Contain 'MissedCount'
+    }
+
+    It 'reports a zero missed rate when measured cycles are available' {
+        $result = Get-HyperVReplicationAssessment -Enabled $true -State 'Replicating' -Health 'Normal' -Mode 'Primary' `
+            -MeasurementsAvailable $true -FrequencySeconds 300 -SuccessfulCount 120 -MissedCount 0
+        $result.MissedRatePercent | Should -Be 0
     }
 
     It 'uses normal replication size to avoid an absolute-backlog false concern' {
@@ -2857,6 +2984,20 @@ Describe 'Virtual disk housekeeping classification' {
         $source | Should -Match "'ExcludedImageLibraryAsset', 'VhdSetManagedAsset'"
         $source | Should -Match 'exclude its full path with storage\.imageLibraryPathPatterns'
         $source | Should -Match 'checkpoint-health-policy\.yml file supplied via -PolicyPath'
+    }
+
+    It 'keeps image-library guidance off attached placement inconsistencies' {
+        $source = Get-Content -LiteralPath (Join-Path (Split-Path $PSScriptRoot -Parent) 'Get-HyperVVMCheckpointHealth.psm1') -Raw
+        $source | Should -Match "'PlacementInconsistency'\s+\{ 'This virtual disk is attached to or referenced by a VM, but its path does not align with the detected VM ownership folders\."
+        $source | Should -Match "default\s+\{ 'If this virtual disk belongs to an image library, exclude its full path with storage\.imageLibraryPathPatterns"
+    }
+
+    It 'documents housekeeping categories and the attached-disk boundary at a dedicated anchor' {
+        $readme = Get-Content -LiteralPath (Join-Path (Split-Path $PSScriptRoot -Parent) 'README.md') -Raw
+        $readme | Should -Match '(?m)^## Cluster storage housekeeping\r?$'
+        $readme | Should -Match 'Placement inconsistency.+attached to or referenced by at least one VM'
+        $readme | Should -Match 'not.+unattached image-library candidate'
+        $readme | Should -Match 'Filter out as VM image.+only.+Unattached base disk candidate'
     }
 
     It 'documents and reports VHD Set-managed storage conservatively' {
