@@ -161,6 +161,10 @@ function Get-HyperVReplicationAssessment {
     $lastReplicationAgeMinutes = $null
     $missedRatePercent = $null
     if ($MeasurementsAvailable) {
+        $totalMeasuredCount = $SuccessfulCount + $MissedCount
+        if ($SuccessfulCount -ge 0 -and $totalMeasuredCount -gt 0) {
+            $missedRatePercent = (100.0 * $MissedCount) / $totalMeasuredCount
+        }
         if ($LastReplicationTimeUtc -ne [datetime]::MinValue) {
             $lastReplicationAgeMinutes = ($NowUtc.ToUniversalTime() - $LastReplicationTimeUtc.ToUniversalTime()).TotalMinutes
             if ($lastReplicationAgeMinutes -gt $MaxAgeMinutes) {
@@ -178,8 +182,6 @@ function Get-HyperVReplicationAssessment {
         }
         if ($MissedCount -gt $MaxMissedCount) {
             [void]$thresholdBreaches.Add('MissedCount')
-            $totalMeasuredCount = $SuccessfulCount + $MissedCount
-            if ($SuccessfulCount -ge 0 -and $totalMeasuredCount -gt 0) { $missedRatePercent = (100.0 * $MissedCount) / $totalMeasuredCount }
             $missedIsConcern = ($MissedCount -ge $MinMissedCountForConcern) -and (($null -eq $missedRatePercent) -or ($missedRatePercent -gt $MaxMissedRatePercent))
             if ($missedIsConcern) { [void]$concernBreaches.Add('MissedCount') } else { [void]$advisoryBreaches.Add('MissedCount') }
         }
@@ -201,7 +203,7 @@ function Get-HyperVReplicationAssessment {
         EffectiveMaxLatencySeconds = $effectiveLatencySeconds; MaxMissedRatePercent = $MaxMissedRatePercent
         ThresholdBreaches = $thresholdBreaches.ToArray()
         ConcernBreaches = $concernBreaches.ToArray(); AdvisoryBreaches = $advisoryBreaches.ToArray()
-        Reason = if ($productSeverity -eq 'Critical') { 'Hyper-V Replica health is Critical.' } elseif ($productSeverity -eq 'Warning') { 'Hyper-V Replica health is Warning.' } elseif ($productSeverity -eq 'Unknown') { 'Hyper-V Replica is enabled but health or state evidence is unavailable.' } elseif ($measurementStatus -eq 'Concern') { 'Hyper-V Replica measurements materially exceed effective relationship-aware limits.' } elseif ($measurementStatus -eq 'Advisory') { 'Hyper-V Replica reports Normal health with measurement drift that warrants observation.' } else { 'Hyper-V Replica reports Normal health with an available state.' }
+        Reason = if ($productSeverity -eq 'Critical') { 'Hyper-V Replica health is Critical.' } elseif ($productSeverity -eq 'Warning') { 'Hyper-V Replica health is Warning.' } elseif ($productSeverity -eq 'Unknown') { 'Hyper-V Replica is enabled but health or state evidence is unavailable.' } elseif ($measurementStatus -eq 'Concern') { "Hyper-V Replica measurements significantly exceed the limits calculated for this VM's replication frequency." } elseif ($measurementStatus -eq 'Advisory') { 'One Hyper-V Replica measurement is outside its expected range while product health remains Normal.' } else { 'Hyper-V Replica reports Normal health with an available state.' }
     }
 }
 
