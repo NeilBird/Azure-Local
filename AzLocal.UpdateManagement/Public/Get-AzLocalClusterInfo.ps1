@@ -69,7 +69,7 @@ function Get-AzLocalClusterInfo {
         
         $allClusters = (Invoke-AzRestJson -Uri $uri).Data
         if ($LASTEXITCODE -eq 0 -and $allClusters.value) {
-            $cluster = $allClusters.value | Where-Object { $_.name -eq $ClusterName }
+            $cluster = $allClusters.value | Where-Object { $null -ne $_ -and $_.name -eq $ClusterName }
             if ($cluster) {
                 return $cluster
             }

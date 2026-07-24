@@ -33,12 +33,13 @@ function Get-LastUpdateRunErrorSummary {
         $allFailedRuns = @()
         
         foreach ($update in $updatesResult.value) {
+            if ($null -eq $update) { continue }
             $updateName = $update.name
             $runsUri = "https://management.azure.com$ClusterResourceId/updates/$updateName/updateRuns?api-version=$ApiVersion"
             $runsResult = (Invoke-AzRestJson -Uri $runsUri).Data
             
             if ($LASTEXITCODE -eq 0 -and $runsResult.value) {
-                $failedRuns = $runsResult.value | Where-Object { $_.properties.state -eq "Failed" }
+                $failedRuns = $runsResult.value | Where-Object { $null -ne $_ -and $_.properties.state -eq "Failed" }
                 if ($failedRuns) {
                     $allFailedRuns += $failedRuns
                 }
@@ -76,6 +77,7 @@ function Get-LastUpdateRunErrorSummary {
         function Find-DeepestError {
             param($steps)
             foreach ($step in $steps) {
+                if ($null -eq $step) { continue }
                 # v0.9.18: guard status/steps/errorMessage/name under Set-StrictMode -Version
                 # Latest - a leaf step in a failed run can omit these and a bare read THROWS.
                 $stepStatus = if ($step.PSObject.Properties['status']) { $step.status } else { $null }

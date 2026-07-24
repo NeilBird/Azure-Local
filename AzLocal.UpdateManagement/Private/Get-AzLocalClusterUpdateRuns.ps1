@@ -9,7 +9,10 @@ function Get-AzLocalClusterUpdateRuns {
         $uri = "https://management.azure.com$resourceId/updates/$updateNameFilter/updateRuns?api-version=$apiVer"
         $result = (Invoke-AzRestJson -Uri $uri).Data
         if ($LASTEXITCODE -eq 0 -and $result.value) {
-            foreach ($_run in @($result.value)) { $allRuns.Add($_run) | Out-Null }
+            foreach ($_run in @($result.value)) {
+                if ($null -eq $_run) { continue }
+                $allRuns.Add($_run) | Out-Null
+            }
         }
     }
     else {
@@ -18,7 +21,10 @@ function Get-AzLocalClusterUpdateRuns {
             $uri = "https://management.azure.com$resourceId/updates/$($update.name)/updateRuns?api-version=$apiVer"
             $runs = (Invoke-AzRestJson -Uri $uri).Data
             if ($runs.value) {
-                foreach ($_run in @($runs.value)) { $allRuns.Add($_run) | Out-Null }
+                foreach ($_run in @($runs.value)) {
+                    if ($null -eq $_run) { continue }
+                    $allRuns.Add($_run) | Out-Null
+                }
             }
         }
     }

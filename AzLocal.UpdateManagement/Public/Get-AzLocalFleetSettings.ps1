@@ -270,8 +270,8 @@ function Get-AzLocalFleetSettings {
             throw "Get-AzLocalFleetSettings: scope.clusterTagFilters cannot use module-owned control tag '$tagName'. Use an externally governed admission tag such as Environment or ManagedBy."
         }
     }
-    if ($result.MaxRowsPerTable -lt 1 -or $result.MaxRowsPerTable -gt 1000) {
-        throw "Get-AzLocalFleetSettings: reporting.maxRowsPerTable must be between 1 and 1000."
+    if ($result.MaxRowsPerTable -lt 1 -or $result.MaxRowsPerTable -gt 2000) {
+        throw "Get-AzLocalFleetSettings: reporting.maxRowsPerTable must be between 1 and 2000."
     }
     if ($result.MaxSummaryBytes -lt 10000 -or $result.MaxSummaryBytes -gt 1000000) {
         throw "Get-AzLocalFleetSettings: reporting.maxSummaryBytes must be between 10000 and 1000000."

@@ -90,6 +90,13 @@ itsm:
         $settings.MaxIncidentsPerRun | Should -Be 40
     }
 
+    It 'Accepts reporting.maxRowsPerTable at the 2000-row upper boundary' {
+        "schemaVersion: 1`nreporting:`n  maxRowsPerTable: 2000" |
+            Set-Content -LiteralPath $script:fleetSettingsPath -Encoding ASCII
+
+        (Get-AzLocalFleetSettings).MaxRowsPerTable | Should -Be 2000
+    }
+
     It 'Parses schema v2 cluster tag pairs in declared order with ALL semantics' {
         @(
             'schemaVersion: 2'
@@ -120,7 +127,8 @@ itsm:
     It 'Rejects malformed, unsupported, and out-of-range active settings' -TestCases @(
         @{ Content = "scope:`n  managementGroups:`n    - group-a"; Expected = '*must declare schemaVersion*' }
                 @{ Content = "schemaVersion: 3"; Expected = '*unsupported schemaVersion*' }
-        @{ Content = "schemaVersion: 1`nreporting:`n  maxRowsPerTable: 0"; Expected = '*maxRowsPerTable must be between 1 and 1000*' }
+        @{ Content = "schemaVersion: 1`nreporting:`n  maxRowsPerTable: 0"; Expected = '*maxRowsPerTable must be between 1 and 2000*' }
+        @{ Content = "schemaVersion: 1`nreporting:`n  maxRowsPerTable: 2001"; Expected = '*maxRowsPerTable must be between 1 and 2000*' }
         @{ Content = "schemaVersion: 1`nreporting:`n  maxSummaryBytes: 9999"; Expected = '*maxSummaryBytes must be between 10000 and 1000000*' }
         @{ Content = "schemaVersion: 1`nitsm:`n  maxIncidentsPerRun: 1001"; Expected = '*maxIncidentsPerRun must be between 0 and 1000*' }
         @{ Content = "schemaVersion: one"; Expected = '*must declare schemaVersion*' }
@@ -329,8 +337,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $script:ModuleInfo | Should -Not -BeNullOrEmpty
         }
 
-        It 'Should have version 0.9.23' {
-            $script:ModuleInfo.Version | Should -Be '0.9.23'
+        It 'Should have version 0.9.24' {
+            $script:ModuleInfo.Version | Should -Be '0.9.24'
         }
 
         It 'Module version constants are in sync between .psm1 and .psd1' {
@@ -2515,8 +2523,12 @@ Describe 'Helper Function: Format-AzLocalUpdateRun (Internal)' {
             InModuleScope AzLocal.UpdateManagement {
                 Set-StrictMode -Version Latest
                 $steps = @(
+                    $null
                     [PSCustomObject]@{ name = 'a'; status = 'Success' }
-                    [PSCustomObject]@{ name = 'b'; status = 'Failed'; errorMessage = 'boom' }
+                    [PSCustomObject]@{
+                        name = 'parent'; status = 'Failed'
+                        steps = @($null, [PSCustomObject]@{ name = 'b'; status = 'Failed'; errorMessage = 'boom' })
+                    }
                 )
                 $active = $null
                 { $active = Get-DeepestActiveStep -Steps $steps } | Should -Not -Throw
@@ -2611,6 +2623,24 @@ Describe 'Helper Function: Get-AzLocalUpdateRunStepStats (Internal)' {
             $s.CompletedLeaf | Should -Be 0
             $s.InProgressLeaf | Should -Be 0
             $s.FailedLeaf | Should -Be 0
+        }
+    }
+
+    It 'Should ignore null elements at top-level and nested step arrays' {
+        InModuleScope AzLocal.UpdateManagement {
+            Set-StrictMode -Version Latest
+            $steps = @(
+                $null
+                [PSCustomObject]@{ name = 'a'; status = 'Success' }
+                [PSCustomObject]@{
+                    name = 'parent'; status = 'InProgress'
+                    steps = @($null, [PSCustomObject]@{ name = 'b'; status = 'Failed' })
+                }
+            )
+            $s = Get-AzLocalUpdateRunStepStats -Steps $steps
+            $s.TotalLeaf | Should -Be 2
+            $s.CompletedLeaf | Should -Be 1
+            $s.FailedLeaf | Should -Be 1
         }
     }
 
@@ -4414,6 +4444,17 @@ Describe 'Internal Helper: Invoke-AzResourceGraphQuery' {
                 $rows = Invoke-AzResourceGraphQuery -Query 'resources | where 1==0'
                 ,$rows | Should -BeOfType ([object[]])
                 $rows.Count | Should -Be 0
+            }
+        }
+
+        It 'Should omit null rows while preserving valid ARG rows' {
+            InModuleScope AzLocal.UpdateManagement {
+                function az { return '{"count":2,"data":[null,{"id":"a"}],"total_records":2}' }
+                $global:LASTEXITCODE = 0
+
+                $rows = Invoke-AzResourceGraphQuery -Query 'resources | project id'
+                $rows | Should -HaveCount 1
+                $rows[0].id | Should -Be 'a'
             }
         }
 
@@ -14083,7 +14124,7 @@ Describe 'Function: Get-AzLocalFleetConnectivityStatus (v0.7.79)' {
                             id = '/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.AzureStackHCI/clusters/cluster-a'
                             name = 'cluster-a'; resourceGroup = 'rg1'; subscriptionId = 'sub1'; location = 'eastus'
                             ConnectivityStatus = 'Connected'; ClusterStatus = 'Succeeded'; NodeCount = 1
-                            ReportedNodes = @([pscustomobject]@{ name = 'NODE-A.contoso.com' })
+                            ReportedNodes = @($null, [pscustomobject]@{ name = 'NODE-A.contoso.com' })
                         },
                         [pscustomobject]@{
                             id = '/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.AzureStackHCI/clusters/cluster-b'

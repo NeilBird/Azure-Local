@@ -84,6 +84,9 @@ function Invoke-AzCliJson {
         }
         try {
             $parsed = $rawText | ConvertFrom-Json -ErrorAction Stop
+            if ($parsed -is [System.Array]) {
+                $parsed = @($parsed | Where-Object { $null -ne $_ })
+            }
             return [PSCustomObject]@{ Ok = $true; Data = $parsed; Error = $null }
         }
         catch {

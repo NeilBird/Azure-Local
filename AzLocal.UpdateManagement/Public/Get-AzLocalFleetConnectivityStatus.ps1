@@ -200,6 +200,7 @@ $globalTagFilter
         if (-not $rawClusterId -or -not $clusterById.ContainsKey($rawClusterId.ToLowerInvariant())) { continue }
         $reportedNodes = if ($rawCluster.PSObject.Properties['ReportedNodes']) { $rawCluster.ReportedNodes } else { Get-NestedProp $rawCluster 'properties.reportedProperties.nodes' }
         foreach ($reportedNode in @($reportedNodes)) {
+            if ($null -eq $reportedNode) { continue }
             $reportedNodeName = if ($reportedNode.PSObject.Properties['name']) { $reportedNode.name } elseif ($reportedNode.PSObject.Properties['nodeName']) { $reportedNode.nodeName } else { '' }
             $shortNodeName = NormalizeNodeName $reportedNodeName
             if ($shortNodeName -and -not $clusterByNodeName.ContainsKey($shortNodeName)) {

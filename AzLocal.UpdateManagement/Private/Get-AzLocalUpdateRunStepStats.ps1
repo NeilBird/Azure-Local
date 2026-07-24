@@ -48,6 +48,7 @@ function Get-AzLocalUpdateRunStepStats {
     if (-not $Steps -or @($Steps).Count -eq 0 -or $MaxDepth -le 0) { return $stats }
 
     foreach ($step in $Steps) {
+        if ($null -eq $step) { continue }
         $children = if ($step.PSObject.Properties['steps']) { $step.steps } else { $null }
 
         if ($children -and @($children).Count -gt 0) {

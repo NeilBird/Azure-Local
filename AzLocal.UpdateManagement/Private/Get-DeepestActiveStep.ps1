@@ -22,6 +22,7 @@ function Get-DeepestActiveStep {
     if (-not $Steps -or $Steps.Count -eq 0 -or $MaxDepth -le 0) { return $null }
 
     foreach ($step in $Steps) {
+        if ($null -eq $step) { continue }
         # v0.9.18: guard status/steps under Set-StrictMode -Version Latest. A leaf step in
         # a failed run can omit the `steps` (and even `status`) property; a bare read THROWS
         # "The property 'steps' cannot be found on this object" (observed live: Tacoma failed

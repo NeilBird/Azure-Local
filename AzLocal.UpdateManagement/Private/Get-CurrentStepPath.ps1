@@ -26,6 +26,7 @@ function Get-CurrentStepPath {
     if (-not $Steps -or $Steps.Count -eq 0 -or $MaxDepth -le 0) { return "" }
 
     foreach ($step in $Steps) {
+        if ($null -eq $step) { continue }
         # v0.9.18: guard name/status/steps/errorMessage under Set-StrictMode -Version Latest.
         # A leaf step in a failed run can omit these; a bare read THROWS "The property
         # 'steps' cannot be found on this object" (observed live: Tacoma failed run bae9704e).

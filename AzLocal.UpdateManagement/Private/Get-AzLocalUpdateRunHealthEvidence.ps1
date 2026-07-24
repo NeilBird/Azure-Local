@@ -141,11 +141,13 @@ extensibilityresources
 
     $evidence = New-Object System.Collections.ArrayList
     foreach ($cluster in @($rows)) {
+        if ($null -eq $cluster) { continue }
         $currentClusterId = if ($cluster.PSObject.Properties['ClusterResourceId']) { ([string]$cluster.ClusterResourceId).ToLower() } else { '' }
         if (-not $clusterIdSet.ContainsKey($currentClusterId)) { continue }
         $hcr = if ($cluster.PSObject.Properties['HealthCheckResult']) { $cluster.HealthCheckResult } else { $null }
         if (-not $hcr) { continue }
         foreach ($hc in @($hcr)) {
+            if ($null -eq $hc) { continue }
             $status = "$($hc.status)"
             if ($status -ne 'Failed') { continue }
             $sev = "$($hc.severity)"

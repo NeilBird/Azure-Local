@@ -2,7 +2,7 @@
 
 > ⚠️ **Disclaimer**: This module is **NOT** a Microsoft supported service offering or product. It is provided as example code only, with no warranty or official support. Refer to the [MIT license](https://github.com/NeilBird/Azure-Local/blob/main/LICENSE) for further information.
 
-**Latest Version:** v0.9.23 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.9.23)
+**Latest Version:** v0.9.24 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.9.24)
 
 This folder contains the 'AzLocal.UpdateManagement' PowerShell module for managing updates on Azure Local (formerly Azure Stack HCI) clusters using the Azure Local REST API. The module supports both interactive use and CI/CD automation via Service Principal or Managed Identity authentication.
 
@@ -14,7 +14,7 @@ Azure Local REST API specification (includes update management endpoints): https
 **This README (overview + most-recent release notes):**
 
 - [Where to Start](#where-to-start)
-- [What's New in v0.9.23](#whats-new-in-v0923)
+- [What's New in v0.9.24](#whats-new-in-v0924)
 - [Files](#files)
 - [Prerequisites](#prerequisites)
 - [RBAC Requirements](#rbac-requirements) (summary; full reference in [docs/rbac.md](docs/rbac.md))
@@ -78,43 +78,29 @@ If you are new to this module, work through these in order from a regular PowerS
 
 > Most CI/CD pipelines in [Automation-Pipeline-Examples/](Automation-Pipeline-Examples/) are direct implementations of one of these workflows. Start there if you want a copy-pasteable end-to-end pipeline.
 
-## What's New in v0.9.23
+## What's New in v0.9.24
 
-**Fleet settings schema v2 adds one global, source-controlled cluster admission policy across every GitHub Actions and Azure DevOps pipeline.** Configure one or more `scope.clusterTagFilters` name/value pairs; all pairs must match, missing tags exclude a cluster, and matching is exact and case-insensitive.
+**Sparse Azure payloads no longer cause strict-mode failures in fleet pipelines.** Azure Resource Graph, Azure CLI JSON, and ARM REST responses can contain null placeholders inside otherwise valid arrays; collection boundaries now remove or skip those placeholders before property inspection.
 
-### Added
+### Fixed
 
-- **Consistent read and write scope.** Cluster inventory, readiness, updates, health, connectivity, schedules, sideloading, and monitor reports share the same selected cluster membership. Child update resources inherit scope through normalized parent cluster IDs rather than assuming child resources carry tags.
-- **Write-boundary enforcement.** Explicit resource IDs and CSV-derived targets are revalidated before update POSTs or tag changes. Out-of-scope Config: 2 rows report `GlobalFilterMismatch` and receive no mutation.
-- **Authoritative physical-node joins.** Filtered connectivity runs map selected clusters' `reportedProperties.nodes[]` short hostnames to Arc machines and NICs. ARB association uses subscription plus resource group and reports ambiguous attribution when multiple selected clusters share a resource group.
-- **Safe automatic schema migration.** Schema v1 remains fully supported. For an active v1 file or a legacy fully commented v1 starter, a normal `Update-AzLocalPipelineExample` run saves the exact original file as `config/fleet-settings_v1.bak.yml`, changes its schema declaration to v2, and appends the new `clusterTagFilters` properties as a fully commented example. Existing operator values, comments, order, and line endings are preserved; a commented starter remains inert, reruns are idempotent, and `-WhatIf` is supported. The former `-UpgradeFleetSettingsSchema` switch remains accepted for compatibility.
-- **Auditable run scope.** Every pipeline version banner snapshots configured management groups and cluster tag filters into the persisted run summary, with matching single-line JSON outputs for automation. Missing, empty, or fully commented fleet settings add no scope block.
+- **Connectivity status tolerates sparse reported-node arrays.** A null member in `reportedProperties.nodes[]` no longer reaches `.PSObject.Properties` and aborts Monitor: 1 after cluster normalization.
+- **Update-run progress walkers tolerate sparse trees.** Top-level and nested null `progress.steps` members are ignored consistently by leaf statistics, current-step paths, deepest active/error selection, failed-run summaries, and progress fallbacks. Null placeholders are excluded from both completed and total step counts.
+- **Readiness and health collectors tolerate sparse nested data.** Null `packageVersions`, `healthCheckResult`, available-update, update-run, and REST `value` members are ignored while valid siblings continue through normal processing.
+- **Top-level query normalization is consistent.** Shared ARG and generic Azure CLI JSON helpers omit null result rows once at the transport boundary so all callers receive arrays containing real result objects only.
 
-See the [pipeline fleet-settings guide](Automation-Pipeline-Examples/README.md#612-optional-scope-the-fleet-by-management-group-and-cluster-tags) for configuration and migration examples.
+### Changed
 
-### What's New in v0.9.22
+- **Larger configurable Markdown tables.** `reporting.maxRowsPerTable` in `fleet-settings.yml` now accepts values from 1 through 2,000 (previously 1 through 1,000). Existing defaults and the independent summary byte budget are unchanged.
+- No public function or export-count change (71). Bundled GitHub Actions and Azure DevOps pipeline pins are updated to `0.9.24`.
 
-**Azure Resource Graph queries now scale safely when expanded RBAC exposes hundreds of subscriptions and clusters, and the disconnected-cluster sideload workflow is hardened for customer operation.** The shared query helper handles ARG's byte limit in addition to its row limit, the two fleet-monitor pipelines stop downloading property bags they do not consume, and Update: 2 now uses one typed settings file with race-safe task ownership and actionable state reporting.
+### Validation
 
-#### Fixed
-
-- **All ARG-backed cmdlets inherit adaptive payload paging.** When ARG rejects a page with `ResponsePayloadTooLarge`, `Invoke-AzResourceGraphQuery` halves `--first`, retries the same logical page, and retains the successful size across continuation pages. This correction is immediate and separate from throttle/network retries. If one row still exceeds the service limit, the error now tells the caller to project fewer fields.
-- **Monitor: 2 - Fleet Health Status uses byte-safe health-result pages.** `Get-AzLocalFleetHealthFailures` begins its complete `healthCheckResult` array query at 50 cluster rows and orders by resource ID. Client-side expansion remains deliberate so checks beyond ARG's bounded `mv-expand` behavior are not silently dropped.
-- **Monitor: 1 - Fleet Connectivity Status sends lean queries.** Cluster, update-summary, Arc-machine, expanded-NIC, and Resource Bridge requests now project only fields used by the report. Full node, health, and NIC property bags are no longer repeated across fleet responses.
-- **Paged fleet queries are deterministic.** The touched Monitor: 1 and Monitor: 2 queries order by stable resource identifiers before following continuation tokens.
-
-#### Added
-
-- **Payload diagnostics and regression coverage.** Module-scope diagnostics expose whether adaptive reduction occurred, how many reductions were needed, and the final page size. Tests cover oversized first pages, continuation completeness, one-row overflow guidance, diagnostic reset, conservative health paging, and lean connectivity projections.
-- **Optional fleet settings for estates beyond 1,000 subscriptions.** Generated pipeline repos now receive an inert, fully commented `config/fleet-settings.yml`. Activating `scope.managementGroups` makes all central ARG queries use management-group scope; explicit `-SubscriptionId` values override it, and leaving the file commented preserves implicit subscription discovery. `Get-AzLocalFleetSettings` reports the effective settings.
-- **Bounded summaries, complete artifacts.** High-cardinality Markdown tables default to 100 rows with `X of Y` notices, and the shared writer stays below a configurable 900,000-byte UTF-8 budget. CSV, JSON, JUnit, and HTML artifacts are not truncated.
-- **Scale-safe enrichment and ticketing.** Inventory uses one ARG subscription-name lookup, readiness avoids fleet-sized command lines, failed-run health evidence uses one scoped query, and ServiceNow fan-out defaults to 25 incidents with a five-consecutive-failure circuit breaker.
-- **Authoritative sideload settings and bounded reconciliation.** `Get-AzLocalSideloadSettings` validates `config/sideload-settings.yml`; Copy/Update creates the disabled starter only when absent and preserves existing files byte-for-byte. The pipeline no longer reads `SIDELOAD_*` variables, and no speculative settings migration command is included. Operation IDs prevent superseded Scheduled Task workers from overwriting current state; heartbeat, no-progress, copy-retry, and import-retry controls are explicit. `maxConcurrentCopies` caps the whole fabric while optional `maxConcurrentCopiesPerRunner` caps each host (for example, 30 fleet-wide and 10 per tested/throttled runner); existing schema-1 files that omit the host cap retain their prior behavior.
-- **Sideload identity and diagnostics hardening.** UNC-backed copies reject S4U/Interactive task logons and require a network-capable principal. Reports expose `NeedsSbe`, `ImportFailed`, unreadable state records, operation/process IDs, logs, and state-specific remediation. See the [Update: 2 operations guide](Automation-Pipeline-Examples/docs/sideload.md).
+- Live connectivity, readiness/blocking-health, fleet-update, and fleet-health smoke tests passed against the maintainer subscription. The durable live suite passed 43/43; the complete non-live suite passed 1,711 with zero failures and one skipped test.
 
 > Previous release notes have moved into the [Release History](#release-history) appendix at the bottom of this document.
 
-See [CHANGELOG.md](CHANGELOG.md) for full release details. See [`What's New in v0.9.21`](#whats-new-in-v0921) in the Release History for the previous release.
+See [CHANGELOG.md](CHANGELOG.md) for full release details. See [`What's New in v0.9.23`](#whats-new-in-v0923) in the Release History for the previous release.
 
 ## Files
 
@@ -612,7 +598,11 @@ This code is provided as-is for educational and reference purposes.
 
 The full What's-New history (v0.7.81 and earlier) has moved to [docs/release-history.md](docs/release-history.md).
 
-The most recent release notes for **v0.9.22** stay above under [`What's New in v0.9.22`](#whats-new-in-v0922).
+The most recent release notes for **v0.9.24** stay above under [`What's New in v0.9.24`](#whats-new-in-v0924).
+
+### What's New in v0.9.23
+
+**Fleet settings schema v2 adds one global, source-controlled cluster admission policy across every GitHub Actions and Azure DevOps pipeline.** Configure one or more `scope.clusterTagFilters` name/value pairs; all pairs must match, missing tags exclude a cluster, and matching is exact and case-insensitive. Cluster discovery and mutation paths share that membership, child update resources inherit it through normalized parent IDs, connectivity uses cluster-reported physical nodes, and Resource Bridge attribution reports ambiguity in shared resource groups. Normal pipeline updates safely migrate active or legacy commented schema-v1 settings with an exact backup while preserving operator content; every pipeline banner snapshots active management groups and tag filters. No public/export change (71). See [CHANGELOG.md](CHANGELOG.md#0923---2026-07-23) for full details.
 
 ### What's New in v0.9.21
 
