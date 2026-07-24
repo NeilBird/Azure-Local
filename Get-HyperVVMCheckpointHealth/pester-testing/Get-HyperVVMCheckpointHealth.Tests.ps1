@@ -1101,12 +1101,16 @@ Describe 'HTML fleet report usability' {
         $script:DegradedStorageHtml | Should -Match '<td><span class=''warnval''>Warning</span></td><td>Synthetic storage health fault &lt;review&gt;</td><td>Synthetic affected object</td><td>Synthetic location</td><td>Inspect the affected storage object &lt;carefully&gt;\.<br>Open a CSS case if the fault persists\.</td>'
         $script:DegradedStorageHtml | Should -Match '<strong>EVIDENCE - </strong>These records come from <code>Get-HealthFault</code> and are displayed as observed diagnostic evidence\.'
         $script:DegradedStorageHtml | Should -Not -Match '<p class=''muted''><strong>EVIDENCE - </strong>'
+        $script:DegradedStorageHtml | Should -Match "(?s)<strong>EVIDENCE - </strong>.*?</p><p><strong>Storage knowledge links:</strong></p><ul><li><a href='https://learn\.microsoft\.com/en-us/windows-server/failover-clustering/health-service-faults'.*?</a></li><li><a href='https://learn\.microsoft\.com/en-us/windows-server/storage/storage-spaces/troubleshooting-storage-spaces'.*?</a></li></ul>"
         $script:DegradedStorageHtml | Should -Match 'Recommended actions are shown exactly as supplied by the matching storage fault\.'
         $script:DegradedStorageHtml | Should -Match '<strong>Deeper analysis \(recommended\):</strong> this is a lightweight snapshot\.'
         $script:DegradedStorageHtml | Should -Match 'Install-Module -Name Microsoft\.AzLocal\.CSSTools'
         $script:DegradedStorageHtml | Should -Match "<a href='https://github\.com/Azure/AzureLocal-Supportability/blob/main/tools/CSSTools/1\.2605\.5\.1611/functions/Start-AzsSupportStorageDiagnostic\.md' target='_blank' rel='noopener noreferrer'>Start-AzsSupportStorageDiagnostic documentation</a>"
         $script:DegradedStorageHtml | Should -Match "<a href='https://learn\.microsoft\.com/en-us/windows-server/failover-clustering/health-service-faults' target='_blank' rel='noopener noreferrer'>Health Service faults \| Microsoft Learn</a>"
         $script:DegradedStorageHtml | Should -Match "<a href='https://learn\.microsoft\.com/en-us/windows-server/storage/storage-spaces/troubleshooting-storage-spaces' target='_blank' rel='noopener noreferrer'>Storage Spaces Direct troubleshooting \| Microsoft Learn</a>"
+        $deeperAnalysis = [regex]::Match($script:DegradedStorageHtml, "(?s)<div class='callout info'><strong>Deeper analysis \(recommended\):</strong>.*?</div>").Value
+        $deeperAnalysis | Should -Not -Match 'Health Service faults \| Microsoft Learn'
+        $deeperAnalysis | Should -Not -Match 'Storage Spaces Direct troubleshooting \| Microsoft Learn'
         $script:DegradedStorageHtml | Should -Match 'Open a Microsoft Support \(CSS\) support request if you need additional guidance before taking action\.'
         $script:DegradedStorageHtml | Should -Not -Match 'A <em>Warning</em> here is often a minor, non-storage fault'
         $script:DegradedStorageHtml | Should -Not -Match 'Debug-StorageSubSystem|Repair-Storage|Set-Storage'
@@ -1125,6 +1129,9 @@ Describe 'HTML fleet report usability' {
     It 'states when an unhealthy subsystem returns no Health Service fault detail' {
         $script:DegradedStorageNoFaultHtml | Should -Match '1 storage subsystem\(s\) report Unhealthy, but no active Health Service fault detail was returned \(collection status: Success\)'
         $script:DegradedStorageNoFaultHtml | Should -Match '<strong>Health Service detail unavailable:</strong> the subsystem state is Unhealthy, but <code>Get-HealthFault</code> returned no active fault records'
+        $script:DegradedStorageNoFaultHtml | Should -Match '<p><strong>Storage knowledge links:</strong></p><ul>'
+        $script:DegradedStorageNoFaultHtml | Should -Match 'Health Service faults \| Microsoft Learn'
+        $script:DegradedStorageNoFaultHtml | Should -Match 'Storage Spaces Direct troubleshooting \| Microsoft Learn'
         $script:CleanRenderedHtml | Should -Not -Match 'Cluster storage requires investigation'
     }
 
