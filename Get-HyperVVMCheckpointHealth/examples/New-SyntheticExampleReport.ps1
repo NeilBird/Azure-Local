@@ -56,14 +56,14 @@ $historicReportData.NodeEventsCsvName = '_NodeEvents_node01_2026-07-20.csv'
 $historicReportData.Orphans = @(
     [pscustomobject]@{
         Name = 'TestVM01_Data_recovery.avhdx'; SizeGB = 18.4
-        Created = '2026-06-14 02:10:12'; LastWrite = '2026-06-14 02:16:45'
+        Created = '2026-06-14 02:10:12Z'; LastWrite = '2026-06-14 02:16:45Z'
         AgeHrs = 874.1; AgeDays = 36.4
         Likely = 'Historic merge artifact. Preserve and correlate with the backup job before any action.'
         FullName = 'C:\ClusterStorage\UserStorage_1\TestVM01\Virtual Hard Disks\TestVM01_Data_recovery.avhdx'
     },
     [pscustomobject]@{
         Name = 'TestVM01_OS_recovery.avhdx'; SizeGB = 6.8
-        Created = '2026-06-14 02:10:11'; LastWrite = '2026-06-14 02:16:46'
+        Created = '2026-06-14 02:10:11Z'; LastWrite = '2026-06-14 02:16:46Z'
         AgeHrs = 874.1; AgeDays = 36.4
         Likely = 'Historic merge artifact. Preserve and correlate with the backup job before any action.'
         FullName = 'C:\ClusterStorage\UserStorage_2\TestVM01\Virtual Hard Disks\TestVM01_OS_recovery.avhdx'
@@ -72,17 +72,17 @@ $historicReportData.Orphans = @(
 $historicReportData.Historic = [pscustomobject]@{
     MatchCount = 2; WindowMinutes = 30
     NodesSearched = @(1..10 | ForEach-Object { 'node{0:d2}' -f $_ })
-    Windows = @('2026-06-14 01:40:11 to 2026-06-14 02:46:46 UTC')
-    CoverageComplete = $true; OldestAvailableUtc = '2026-05-01 00:00:00'
+    Windows = @('2026-06-14 01:40:11Z - 2026-06-14 02:46:46Z')
+    CoverageComplete = $true; OldestAvailableUtc = '2026-05-01 00:00:00Z'
     Coverage = @()
     Matches = @(
         [pscustomobject]@{
-            Time = '2026-06-14 02:14:08'; Node = 'node01'
+            Time = '2026-06-14 02:14:08Z'; Node = 'node01'
             Log = 'Microsoft-Windows-Hyper-V-VMMS-Admin'; Id = 3216
             Message = 'Synthetic example: the checkpoint operation for TestVM01 could not commit the differencing chain.'
         },
         [pscustomobject]@{
-            Time = '2026-06-14 02:15:31'; Node = 'node01'
+            Time = '2026-06-14 02:15:31Z'; Node = 'node01'
             Log = 'Microsoft-Windows-Hyper-V-Worker-Admin'; Id = 19100
             Message = 'Synthetic example: the background merge for TestVM01 did not complete.'
         }
@@ -108,7 +108,7 @@ $results = @(
                 $healthyReportData.SeverityScore = 75
                 $healthyReportData.Orphans = @([pscustomobject]@{
                     Name = 'TestVM02_Data_orphan.avhdx'; SizeGB = 11.2
-                    Created = '2026-07-16 01:22:04'; LastWrite = '2026-07-16 01:38:19'
+                    Created = '2026-07-16 01:22:04Z'; LastWrite = '2026-07-16 01:38:19Z'
                     AgeHrs = 107.6; AgeDays = 4.5
                     Likely = 'Possible stuck merge artifact. Match it to the synthetic backup window before any action.'
                     FullName = 'C:\ClusterStorage\UserStorage_1\TestVM02\Virtual Hard Disks\TestVM02_Data_orphan.avhdx'
@@ -121,7 +121,7 @@ $results = @(
                 $healthyReportData.StaleCheckpointCount = 1
                 $healthyReportData.Checkpoints = @([pscustomobject]@{
                     Name = 'Backup checkpoint - synthetic'; Type = 'Recovery'; Purpose = 'Backup'
-                    Created = '2026-07-17 00:15:00'; AgeHrs = 83.8; Stale = $true; Parent = ''
+                    Created = '2026-07-17 00:15:00Z'; AgeHrs = 83.8; Stale = $true; Parent = ''
                 })
                 $healthyReportData.SeverityScore = 70
                 $recommendation = 'INVESTIGATE'
@@ -133,13 +133,13 @@ $results = @(
                 $healthyReportData.AttachedVhdLayers = @(
                     [pscustomobject]@{
                         Disk = 'TestVM04_OS_9f42.avhdx'; Layer = 1; Type = 'Differencing'; SizeGB = 18.6
-                        Created = '2026-07-17 06:10:00'; LastWrite = '2026-07-17 06:42:00'; AgeHrs = 77.4; Stale = $true
+                        Created = '2026-07-17 06:10:00Z'; LastWrite = '2026-07-17 06:42:00Z'; AgeHrs = 77.4; Stale = $true
                         Path = 'C:\ClusterStorage\UserStorage_1\TestVM04\Virtual Hard Disks\TestVM04_OS_9f42.avhdx'
                         ParentPath = 'C:\ClusterStorage\UserStorage_1\TestVM04\Virtual Hard Disks\TestVM04_OS.vhdx'
                     },
                     [pscustomobject]@{
                         Disk = 'TestVM04_OS_9f42.avhdx'; Layer = 2; Type = 'Dynamic'; SizeGB = 64.0
-                        Created = '2026-03-02 09:00:00'; LastWrite = '2026-07-17 06:10:00'; AgeHrs = 77.9; Stale = $false
+                        Created = '2026-03-02 09:00:00Z'; LastWrite = '2026-07-17 06:10:00Z'; AgeHrs = 77.9; Stale = $false
                         Path = 'C:\ClusterStorage\UserStorage_1\TestVM04\Virtual Hard Disks\TestVM04_OS.vhdx'; ParentPath = ''
                     }
                 )
@@ -149,7 +149,7 @@ $results = @(
             5 {
                 $healthyReportData.Replication = [pscustomobject]@{
                     Enabled = $true; State = 'Error'; Health = 'Critical'; Mode = 'Primary'
-                    Primary = 'node05'; Replica = 'node06'; LastReplicationTime = '2026-07-20 10:15:00'
+                    Primary = 'node05'; Replica = 'node06'; LastReplicationTime = '2026-07-20 10:15:00Z'
                 }
                 $healthyReportData.ReplHealth = 'Critical'
                 $healthyReportData.ReplUnhealthy = $true
@@ -172,7 +172,7 @@ $results = @(
             6 {
                 $healthyReportData.Replication = [pscustomobject]@{
                     Enabled = $true; State = 'Resynchronizing'; Health = 'Warning'; Mode = 'Primary'
-                    Primary = 'node06'; Replica = 'node05'; LastReplicationTime = '2026-07-20 11:40:00'
+                    Primary = 'node06'; Replica = 'node05'; LastReplicationTime = '2026-07-20 11:40:00Z'
                 }
                 $healthyReportData.ReplHealth = 'Warning'
                 $healthyReportData.ReplUnhealthy = $true
@@ -198,14 +198,14 @@ $results = @(
                 $healthyReportData.StaleCheckpointCount = 1
                 $healthyReportData.Checkpoints = @([pscustomobject]@{
                     Name = 'Active checkpoint with historic fork evidence'; Type = 'Recovery'; Purpose = 'Backup'
-                    Created = '2026-07-10 04:20:00'; AgeHrs = 248.7; Stale = $true; Parent = ''
+                    Created = '2026-07-10 04:20:00Z'; AgeHrs = 248.7; Stale = $true; Parent = ''
                 })
                 $healthyReportData.ActiveCkptForkConfirmed = $true
-                $healthyReportData.ActiveCkptOldestCreateUtc = '2026-07-10 04:20:00'
+                $healthyReportData.ActiveCkptOldestCreateUtc = '2026-07-10 04:20:00Z'
                 $healthyReportData.ActiveCkptHistoric = [pscustomobject]@{
                     WindowMinutes = 120; NodesSearched = @(1..10 | ForEach-Object { 'node{0:d2}' -f $_ })
                     Coverage = @(); CoverageComplete = $true; Matches = @([pscustomobject]@{
-                        Time = '2026-07-10 04:23:18'; Node = 'node07'; Log = 'Worker'; Id = 3216
+                        Time = '2026-07-10 04:23:18Z'; Node = 'node07'; Log = 'Worker'; Id = 3216
                         Message = 'Synthetic example: fork-commit evidence at TestVM07 checkpoint creation.'
                     })
                 }
@@ -218,14 +218,14 @@ $results = @(
                 $healthyReportData.StaleCheckpointCount = 1
                 $healthyReportData.Checkpoints = @([pscustomobject]@{
                     Name = 'Discovered backup checkpoint - synthetic'; Type = 'Recovery'; Purpose = 'Backup'
-                    Created = '2026-07-18 03:30:00'; AgeHrs = 56.5; Stale = $true; Parent = ''
+                    Created = '2026-07-18 03:30:00Z'; AgeHrs = 56.5; Stale = $true; Parent = ''
                 })
                 $healthyReportData.OrphanCount = 1
                 $healthyReportData.HasOrphans = $true
                 $healthyReportData.SeverityScore = 80
                 $healthyReportData.Orphans = @([pscustomobject]@{
                     Name = 'TestVM17_OS_orphan.avhdx'; SizeGB = 4.6
-                    Created = '2026-07-18 03:31:10'; LastWrite = '2026-07-18 03:44:52'
+                    Created = '2026-07-18 03:31:10Z'; LastWrite = '2026-07-18 03:44:52Z'
                     AgeHrs = 56.3; AgeDays = 2.3
                     Likely = 'Unattached backup checkpoint artifact. Preserve it until the synthetic job history is reviewed.'
                     FullName = 'C:\ClusterStorage\UserStorage_2\TestVM17\Virtual Hard Disks\TestVM17_OS_orphan.avhdx'
@@ -303,7 +303,7 @@ $html = ConvertTo-VMCheckpointAuditHtml -Results $results -StaleHours 24 `
     -EventLookbackHours 168 -ClusterName 'contoso01' -GeneratedUtc '2026-07-20 12:00:00' `
     -DiscoveredVMs @() -DiscoverySummary $discoverySummary -StorageHealth $storageHealth `
     -HousekeepingFindings $housekeepingFindings -IncludeDiscoveredVMs:$true `
-    -ScriptVersion '0.2.24' -ReportGenerationTime '00:01:24' -ClusterNodeCount 10 -ClusterCsvCount 2
+    -ScriptVersion '0.2.25' -ReportGenerationTime '00:01:24' -ClusterNodeCount 10 -ClusterCsvCount 2
 
 $syntheticNotice = @'
 <div class="callout info synthetic-example"><strong>Synthetic example report.</strong> Every cluster, node, VM, path, timestamp, and event message in this file is invented for documentation. TestVM07 demonstrates an active-checkpoint HOLD STATE confirmed by historic event evidence; seven VMs demonstrate historic rollback, orphaned AVHDX, stale checkpoint/layer, and Hyper-V Replica INVESTIGATE findings; 12 VMs are healthy comparisons. The inventory contains 16 input VMs and 4 automatically discovered VMs.</div>

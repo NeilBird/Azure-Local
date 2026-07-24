@@ -332,6 +332,53 @@ Describe 'Get-HyperVVMCheckpointHealth source contracts' {
             $script:Source | Should -Not -Match ("function\s+{0}\b" -f [regex]::Escape($helperName))
         }
     }
+
+    It 'uses native event identity for deterministic equal-time ordering without changing CSV columns' {
+        ([regex]::Matches($script:Source, 'RecordId\s*=\s*\[long\]\$eventRecord\.RecordId')).Count | Should -Be 2
+        $script:Source | Should -Match "Sort-Object 'Time \(UTC\)', Log, RecordId, Id, FullMessage"
+        $script:Source | Should -Match "Select-Object 'Time \(UTC\)', Id, Level, Log, Concern, VmAttributed, FullMessage"
+        $script:Source | Should -Not -Match "Select-Object 'Time \(UTC\)', RecordId"
+    }
+
+    It 'normalizes Replica relationship timestamps to Zulu before stringification' {
+        $script:Source | Should -Match 'LastReplicationTime\s*=\s*if \(\$r\.LastReplicationTime\)'
+        $script:Source | Should -Match '\(\[datetime\]\$r\.LastReplicationTime\)\.ToUniversalTime\(\)\.ToString\(''yyyy-MM-dd HH:mm:ssZ''\)'
+        $script:Source | Should -Not -Match 'LastReplicationTime\s*=\s*\[string\]\$r\.LastReplicationTime'
+    }
+
+    It 'renders historic correlation timestamps as Zulu without redundant UTC suffixes' {
+        $script:Source | Should -Match "Windows\s+=.*ToUniversalTime\(\)\.ToString\('yyyy-MM-dd HH:mm:ssZ'\)"
+        $script:Source | Should -Not -Match 'OldestAvailableUtc\) UTC'
+        $script:Source | Should -Not -Match 'active checkpoint created \{0\} UTC'
+        $script:Source | Should -Not -Match 'oldest available \{0\} UTC'
+    }
+}
+
+Describe 'Per-VM event marker CSV contract' {
+    BeforeAll {
+        $modulePath = Join-Path (Split-Path $PSScriptRoot -Parent) 'Get-HyperVVMCheckpointHealth.psm1'
+        $tokens = $null
+        $parseErrors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($modulePath, [ref]$tokens, [ref]$parseErrors)
+        $functionAst = $ast.FindAll({
+            param($node)
+            $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Write-VMEventsMarkerCsv'
+        }, $true) | Select-Object -First 1
+        Invoke-Expression $functionAst.Extent.Text
+    }
+
+    It 'writes a schema-consistent marker when a VM is not found' {
+        $OutputPath = $TestDrive
+        $VMName = 'MISSING-VM'
+        $reportFile = Join-Path $TestDrive 'MISSING-VM_VMAudit_test.txt'
+
+        $csvName = Write-VMEventsMarkerCsv -Message "VM 'MISSING-VM' was not found; event collection was not attempted."
+        $row = Import-Csv -LiteralPath (Join-Path $TestDrive $csvName)
+
+        @($row.PSObject.Properties.Name) | Should -Be @('Time (UTC)', 'Id', 'Level', 'Log', 'Concern', 'VmAttributed', 'FullMessage')
+        $row.Level | Should -Be 'Info'
+        $row.FullMessage | Should -Match 'was not found; event collection was not attempted'
+    }
 }
 
 Describe 'Checkpoint health policy fixtures' {
@@ -544,8 +591,8 @@ Describe 'Module distribution contracts' {
         $script:ModuleCommand = Get-Command Get-HyperVVMCheckpointHealth -Module Get-HyperVVMCheckpointHealth
     }
 
-    It 'imports a valid 0.2.24 module manifest' {
-        $script:Manifest.Version.ToString() | Should -Be '0.2.24'
+    It 'imports a valid 0.2.25 module manifest' {
+        $script:Manifest.Version.ToString() | Should -Be '0.2.25'
         $script:Manifest.ExportedFunctions.Keys | Should -Contain 'Get-HyperVVMCheckpointHealth'
     }
 
@@ -671,7 +718,7 @@ Describe 'Module distribution contracts' {
         $setupPath = Join-Path $script:ModuleRoot 'Setup-Get-HyperVVMCheckpointHealth.ps1'
         Test-Path -LiteralPath $setupPath -PathType Leaf | Should -BeTrue
         $setupSource = Get-Content -LiteralPath $setupPath -Raw
-        $setupSource | Should -Match "\$version = '0\.2\.24'"
+        $setupSource | Should -Match "\$version = '0\.2\.25'"
         $setupSource | Should -Match "\$expectedSha256 = '[0-9a-f]{64}'"
         $setupSource | Should -Match '\[string\]\$InstallRoot = ''C:\\Temp'''
         $setupSource | Should -Match 'Get-FileHash.+SHA256'
@@ -1028,11 +1075,18 @@ Describe 'HTML fleet report usability' {
 
     It 'distinguishes processed, fully assessed, and incomplete VM counts in every report' {
         $script:RenderedHtml | Should -Match 'Cluster <b>CONTOSO-CLUSTER-01</b> &nbsp;&bull;&nbsp; 4 processed VMs &nbsp;&bull;&nbsp; 3 fully assessed'
-        $script:RenderedHtml | Should -Match '<strong class="scope-label">Report scope:</strong> This report processed <strong>4 VMs</strong>; <strong>3 were fully assessed</strong> and <strong>1 was incomplete</strong>, as of <strong>2026-01-01 00:00:00 UTC</strong>\.'
+        $script:RenderedHtml | Should -Match '<strong class="scope-label">Report scope:</strong> This report processed <strong>4 VMs</strong>; <strong>3 were fully assessed</strong> and <strong>1 was incomplete</strong>, as of <strong>2026-01-01 00:00:00Z</strong>\.'
         $script:RenderedHtml | Should -Match 'wider assessment of the cluster, storage, backup solution, workloads, and relevant operational history\.'
         $script:RenderedHtml | Should -Match '\.scope-label\{color:#d97706;font-weight:700\}'
         $script:RenderedHtml | Should -Match 'It is not a complete cluster health assessment and does not represent the health of VMs that were not fully assessed\.'
         $script:CleanRenderedHtml | Should -Match '<strong>1 VM</strong>; <strong>1 was fully assessed</strong> and <strong>0 were incomplete</strong>'
+    }
+
+    It 'keeps healthy Replica timestamp-only activity as quiet state detail' {
+        $script:StateAdvisoryHtml | Should -Match '<div class="k">Collection state consistency</div><div>Stable - VM configuration \(\.vmcx\) file timestamp changed during audit</div>'
+        $script:StateAdvisoryHtml | Should -Not -Match 'Advisory - collection metadata changed'
+        $script:StateAdvisoryHtml | Should -Not -Match 'No action is required for this advisory'
+        $script:StateAdvisoryHtml | Should -Match "<div class='callout ok'><strong>OK\.</strong>"
     }
 
     It 'states additional unaudited discovery coverage only when applicable' {
@@ -1045,19 +1099,25 @@ Describe 'HTML fleet report usability' {
         $script:DegradedStorageHtml | Should -Match "<details class='report-section' id='cluster-storage-health' open><summary><h2>Cluster storage health \(Storage Spaces Direct / CSV\)</h2></summary><div class='report-section-body'>"
         $script:DegradedStorageHtml | Should -Match '<strong>Storage status: Degraded\.</strong> Read-only snapshot \(source node <code>TEST-NODE-01</code>\)\.</div>'
         $script:DegradedStorageHtml | Should -Not -Match 'Storage-layer disruption - S2D repair / resync jobs'
-        $script:DegradedStorageHtml | Should -Match '<p class=''muted''><strong>Why this check matters:</strong> storage repair/resync activity, abnormal CSV redirection or state, and unhealthy disks can make checkpoint or merge files temporarily locked or unavailable\.'
+        $script:DegradedStorageHtml | Should -Match '<p><strong>Why this check matters:</strong> storage repair/resync activity, abnormal CSV redirection or state, and unhealthy disks can make checkpoint or merge files temporarily locked or unavailable\.'
+        $script:DegradedStorageHtml | Should -Not -Match '<p class=''muted''><strong>Why this check matters:</strong>'
         $script:DegradedStorageHtml | Should -Match 'A ReFS CSV reporting File System Redirected mode with reason <code>FileSystemReFs</code> is normal on Azure Local / S2D and is not flagged'
         $script:DegradedStorageHtml | Should -Match '<strong>Why this snapshot is non-healthy:</strong> 1 active storage Health Service fault\(s\): Synthetic storage health fault &lt;review&gt;\.'
         $script:DegradedStorageHtml | Should -Match '<h3>Active storage Health Service faults \(read-only evidence\)</h3>'
         $script:DegradedStorageHtml | Should -Match '<th>Recommended action\(s\)</th>'
         $script:DegradedStorageHtml | Should -Match '<td><span class=''warnval''>Warning</span></td><td>Synthetic storage health fault &lt;review&gt;</td><td>Synthetic affected object</td><td>Synthetic location</td><td>Inspect the affected storage object &lt;carefully&gt;\.<br>Open a CSS case if the fault persists\.</td>'
         $script:DegradedStorageHtml | Should -Match '<strong>EVIDENCE - </strong>These records come from <code>Get-HealthFault</code> and are displayed as observed diagnostic evidence\.'
+        $script:DegradedStorageHtml | Should -Not -Match '<p class=''muted''><strong>EVIDENCE - </strong>'
+        $script:DegradedStorageHtml | Should -Match "(?s)<strong>EVIDENCE - </strong>.*?</p><p><strong>Storage knowledge links:</strong></p><ul><li><a href='https://learn\.microsoft\.com/en-us/windows-server/failover-clustering/health-service-faults'.*?</a></li><li><a href='https://learn\.microsoft\.com/en-us/windows-server/storage/storage-spaces/troubleshooting-storage-spaces'.*?</a></li></ul>"
         $script:DegradedStorageHtml | Should -Match 'Recommended actions are shown exactly as supplied by the matching storage fault\.'
         $script:DegradedStorageHtml | Should -Match '<strong>Deeper analysis \(recommended\):</strong> this is a lightweight snapshot\.'
         $script:DegradedStorageHtml | Should -Match 'Install-Module -Name Microsoft\.AzLocal\.CSSTools'
         $script:DegradedStorageHtml | Should -Match "<a href='https://github\.com/Azure/AzureLocal-Supportability/blob/main/tools/CSSTools/1\.2605\.5\.1611/functions/Start-AzsSupportStorageDiagnostic\.md' target='_blank' rel='noopener noreferrer'>Start-AzsSupportStorageDiagnostic documentation</a>"
         $script:DegradedStorageHtml | Should -Match "<a href='https://learn\.microsoft\.com/en-us/windows-server/failover-clustering/health-service-faults' target='_blank' rel='noopener noreferrer'>Health Service faults \| Microsoft Learn</a>"
         $script:DegradedStorageHtml | Should -Match "<a href='https://learn\.microsoft\.com/en-us/windows-server/storage/storage-spaces/troubleshooting-storage-spaces' target='_blank' rel='noopener noreferrer'>Storage Spaces Direct troubleshooting \| Microsoft Learn</a>"
+        $deeperAnalysis = [regex]::Match($script:DegradedStorageHtml, "(?s)<div class='callout info'><strong>Deeper analysis \(recommended\):</strong>.*?</div>").Value
+        $deeperAnalysis | Should -Not -Match 'Health Service faults \| Microsoft Learn'
+        $deeperAnalysis | Should -Not -Match 'Storage Spaces Direct troubleshooting \| Microsoft Learn'
         $script:DegradedStorageHtml | Should -Match 'Open a Microsoft Support \(CSS\) support request if you need additional guidance before taking action\.'
         $script:DegradedStorageHtml | Should -Not -Match 'A <em>Warning</em> here is often a minor, non-storage fault'
         $script:DegradedStorageHtml | Should -Not -Match 'Debug-StorageSubSystem|Repair-Storage|Set-Storage'
@@ -1069,13 +1129,16 @@ Describe 'HTML fleet report usability' {
     }
 
     It 'links a deduplicated housekeeping roll-up from the Executive Summary' {
-        $script:RenderedHtml | Should -Match "<strong><a href='#housekeeping'>Cluster storage \(VHD and checkpoint\) housekeeping audit results:</a></strong> identified <strong>3</strong> item\(s\), with a total unique-file storage size of <strong>1\.50 MB</strong>, across <strong>1</strong> Cluster Shared Volume\(s\)\. <strong>Action:</strong> review this section to determine whether the files are required VM images or orphaned objects\."
+        $script:RenderedHtml | Should -Match "<strong><a href='#housekeeping'>Cluster storage \(VHD and checkpoint\) housekeeping audit results:</a></strong> identified <strong>3</strong> item\(s\), with a total unique-file storage size of <strong>1\.50 MB</strong>, across <strong>1</strong> Cluster Shared Volume\(s\)\. <strong>Action:</strong> review this section to determine whether the files are required VM images, inconsistent VM VHD paths, and/or unrequired orphaned objects\."
         $script:CleanRenderedHtml | Should -Match "<strong><a href='#housekeeping'>Cluster storage \(VHD and checkpoint\) housekeeping audit results:</a></strong> identified <strong>1</strong> item\(s\), with a total unique-file storage size of <strong>0 KB</strong>, across <strong>0</strong> Cluster Shared Volume\(s\)\."
     }
 
     It 'states when an unhealthy subsystem returns no Health Service fault detail' {
         $script:DegradedStorageNoFaultHtml | Should -Match '1 storage subsystem\(s\) report Unhealthy, but no active Health Service fault detail was returned \(collection status: Success\)'
         $script:DegradedStorageNoFaultHtml | Should -Match '<strong>Health Service detail unavailable:</strong> the subsystem state is Unhealthy, but <code>Get-HealthFault</code> returned no active fault records'
+        $script:DegradedStorageNoFaultHtml | Should -Match '<p><strong>Storage knowledge links:</strong></p><ul>'
+        $script:DegradedStorageNoFaultHtml | Should -Match 'Health Service faults \| Microsoft Learn'
+        $script:DegradedStorageNoFaultHtml | Should -Match 'Storage Spaces Direct troubleshooting \| Microsoft Learn'
         $script:CleanRenderedHtml | Should -Not -Match 'Cluster storage requires investigation'
     }
 
@@ -1117,12 +1180,14 @@ Describe 'HTML fleet report usability' {
         $script:RenderedHtml | Should -Match "<div class='kv'><div class='k'>VM name</div><div><code>TEST-VM-MISSING</code></div></div>"
     }
 
-    It 'renders every per-VM card as an individually collapsible default-open disclosure' {
-        $script:RenderedHtml | Should -Match '<details class="vm" id="vm-TEST-VM-NORMAL" open>\s*<summary><h3><span class="vm-label">VM Name:</span>'
+    It 'collapses OK per-VM cards and keeps non-OK cards open by default' {
+        $script:RenderedHtml | Should -Match '<details class="vm" id="vm-TEST-VM-NORMAL">\s*<summary><h3><span class="vm-label">VM Name:</span>'
+        $script:RenderedHtml | Should -Not -Match '<details class="vm" id="vm-TEST-VM-NORMAL" open>'
         $script:RenderedHtml | Should -Match '<details class="vm" id="vm-TEST-VM-MISSING" open>\s*<summary><h3><span class="vm-label">VM Name:</span>'
         $script:RenderedHtml | Should -Match '\.vm>summary::before\{content:''\\25B6'''
         $script:RenderedHtml | Should -Match '\.vm\[open\]>summary::before\{content:''\\25BC''\}'
         ([regex]::Matches($script:RenderedHtml, '<details class="vm(?: hold)?" id="vm-')).Count | Should -Be 4
+        ([regex]::Matches($script:RenderedHtml, '<details class="vm(?: hold)?" id="vm-[^"]+" open>')).Count | Should -Be 3
     }
 
     It 'sorts per-VM cards by verdict criticality and descending severity' {
@@ -1136,10 +1201,10 @@ Describe 'HTML fleet report usability' {
         $normalPosition | Should -BeLessThan $missingPosition
     }
 
-    It 'explains healthy Replica config-write changes as non-escalating advisories' {
-        $script:StateAdvisoryHtml | Should -Match 'Collection state consistency</div><div>Changed / Advisory'
-        $script:StateAdvisoryHtml | Should -Match 'Normal Replica metadata activity can cause this\.'
-        $script:StateAdvisoryHtml | Should -Match 'no checkpoint-chain action is required from this observation'
+    It 'reports healthy Replica config-write changes as quiet stable detail' {
+        $script:StateAdvisoryHtml | Should -Match 'Collection state consistency</div><div>Stable - VM configuration \(\.vmcx\) file timestamp changed during audit'
+        $script:StateAdvisoryHtml | Should -Not -Match 'Normal Replica metadata activity can cause this\.'
+        $script:StateAdvisoryHtml | Should -Not -Match 'Advisory - collection metadata changed'
         $script:StateAdvisoryHtml | Should -Match '<span class="pill ok">OK</span>'
         $script:StateAdvisoryHtml | Should -Not -Match '<strong>INVESTIGATE\.</strong>'
     }
@@ -1445,7 +1510,7 @@ Describe 'HTML fleet report usability' {
 
     It 'exports every housekeeping row to CSV using embedded report metadata' {
         $script:RenderedHtml | Should -Match "class='hk-tools-header'>.*class='hk-export' type='button' id='hk-export-csv'"
-        $script:RenderedHtml | Should -Match "id='hk-export-csv' data-cluster='CONTOSO-CLUSTER-01' data-generated='2026-01-01 00:00:00'"
+        $script:RenderedHtml | Should -Match "id='hk-export-csv' data-cluster='CONTOSO-CLUSTER-01' data-generated='2026-01-01 00:00:00Z'"
         $script:RenderedHtml | Should -Match 'Download all findings \(CSV\)'
         $script:RenderedHtml | Should -Match 'function csvEscape\(value\)'
         $script:RenderedHtml | Should -Match 'rows\.forEach\(function \(row\)'
@@ -1517,6 +1582,32 @@ Describe 'HTML fleet report usability' {
     It 'contains wide non-housekeeping tables on narrow screens' {
         $script:RenderedHtml | Should -Match '\.wrap\{width:100%;max-width:1440px;margin:0 auto;padding:32px 24px 80px\}'
         $script:RenderedHtml | Should -Match '@media\(max-width:1440px\)\{table:not\(\.housekeeping\)\{display:block;overflow-x:auto\}\}'
+    }
+
+    It 'wraps long generated tokens inside mobile callouts' {
+        $script:RenderedHtml | Should -Match '\.callout\{[^}]*overflow-wrap:anywhere'
+        $script:RenderedHtml | Should -Match '\.callout li\{min-width:0;overflow-wrap:anywhere\}'
+    }
+
+    It 'uses confirmed wording prominently when historic event evidence confirms rollback' {
+        $confirmedReportData = $normalReportData.PSObject.Copy()
+        $confirmedReportData.HasRollbackFingerprint = $true
+        $confirmedReportData.HistoricForkConfirmed = $true
+        $confirmedReportData.RollbackDate = '2025-12-01'
+        $confirmedReportData.OrphanCount = 2
+        $confirmedReportData.HasOrphans = $true
+        $confirmedReportData.SeverityScore = 90
+        $html = ConvertTo-VMCheckpointAuditHtml -Results @(
+            [pscustomobject]@{ VMName = 'TEST-VM-CONFIRMED'; OwningNode = 'TEST-NODE'; Recommendation = 'INVESTIGATE'; Source = 'Input'; StaleCheckpointCount = 0; ReportData = $confirmedReportData; Detail = '' }
+        ) -StaleHours 24 -EventLookbackHours 168 -ClusterName 'TEST-CLUSTER' -GeneratedUtc '2026-01-01 00:00:00' `
+            -DiscoveredVMs @() -DiscoverySummary ([pscustomobject]@{ EligibleCount = 0; AuditedCount = 0; DeferredCount = 0; Cap = $null }) `
+            -StorageHealth $null -HousekeepingFindings @() -IncludeDiscoveredVMs:$false -ScriptVersion '0.2.25' `
+            -ReportGenerationTime '00:00:01' -ClusterNodeCount 1 -ClusterCsvCount 1
+
+        $html | Should -Match 'PRIORITY - CONFIRMED historic rollback \(1 VM\(s\)\)'
+        $html | Should -Match 'INVESTIGATE - CONFIRMED historic rollback\.'
+        $html | Should -Not -Match 'PRIORITY - possible historic rollback'
+        $html | Should -Not -Match 'INVESTIGATE - possible historic rollback\.'
     }
 
     It 'contains only the VM summary table within the shared report width on desktop' {
@@ -1619,7 +1710,7 @@ Describe 'Synthetic HTML example report' {
         $script:ExampleHtml = Get-Content -LiteralPath $script:ExamplePath -Raw
         $script:DetailBlocks = [regex]::Matches(
             $script:ExampleHtml,
-            '(?s)<details class="vm(?: hold)?" id="vm-(TestVM\d{2})" open>(.*?)(?=<details class="vm(?: hold)?" id="vm-|</div></details>\s*<details class=''report-section'' id=''cluster-storage-health'')'
+            '(?s)<details class="vm(?: hold)?" id="vm-(TestVM\d{2})"(?: open)?>(.*?)(?=<details class="vm(?: hold)?" id="vm-|</div></details>\s*<details class=''report-section'' id=''cluster-storage-health'')'
         )
     }
 
@@ -1630,6 +1721,11 @@ Describe 'Synthetic HTML example report' {
         $script:ExampleHtml | Should -Match '<div class="n">20</div><div class="l">VMs processed \(20 fully assessed\)</div>'
         @($script:DetailBlocks).Count | Should -Be 20
         @($script:DetailBlocks | ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique).Count | Should -Be 20
+    }
+
+    It 'uses Zulu notation for every displayed absolute timestamp' {
+        [regex]::Matches($script:ExampleHtml, '(?<!\d)20\d{2}-\d{2}-\d{2} \d{2}:\d{2}(?::\d{2})?(?![Z\d:])').Count | Should -Be 0
+        $script:ExampleHtml | Should -Not -Match '20\d{2}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}Z UTC'
     }
 
     It 'contains sixteen input VMs and four discovered VMs' {
@@ -2020,6 +2116,7 @@ Describe 'Historic event correlation coverage aggregation' {
             -SignatureIds @(3216) -SignatureRx '0x80048102'
 
         $result.CoverageComplete | Should -BeTrue
+        $result.Windows | Should -Be @('2026-07-10 10:00:00Z - 2026-07-10 14:00:00Z')
         @($result.Coverage | Where-Object Status -eq 'EnabledEmpty').Count | Should -Be 1
         @($result.Coverage | Where-Object Status -eq 'Wrapped').Count | Should -Be 0
         $result.LogsWrappedPastWindow | Should -BeFalse

@@ -20,6 +20,8 @@ function ConvertTo-VMCheckpointAuditHtml {
         [int]$ClusterCsvCount
     )
 
+    if ($GeneratedUtc -and $GeneratedUtc -notmatch 'Z$') { $GeneratedUtc = $GeneratedUtc.TrimEnd() + 'Z' }
+
     function ConvertTo-HtmlText { param([object]$Value) if ($null -eq $Value) { '' } else { [System.Net.WebUtility]::HtmlEncode([string]$Value) } }
     function ConvertTo-ByteText {
         param([long]$Bytes)
@@ -153,7 +155,8 @@ function ConvertTo-VMCheckpointAuditHtml {
   .card .n{font-size:30px;font-weight:700;color:#fff;line-height:1.1}
   .card .l{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.04em;margin-top:4px}
   .card.amber .n{color:var(--amber)} .card.high .n{color:var(--high)} .card.green .n{color:var(--green)}
-  .callout{border-radius:10px;padding:14px 18px;margin:16px 0;border:1px solid var(--line)}
+    .callout{border-radius:10px;padding:14px 18px;margin:16px 0;border:1px solid var(--line);overflow-wrap:anywhere}
+    .callout li{min-width:0;overflow-wrap:anywhere}
   .callout.info{background:#0b2436;border-color:#1d4e6b}
   .callout.warn{background:var(--amber-bg);border-color:#7a5b12}
   .callout.high{background:var(--high-bg);border-color:#7a2438}
@@ -341,7 +344,7 @@ function ConvertTo-VMCheckpointAuditHtml {
   <h1>Hyper-V VM Checkpoint Health Audit</h1>
   <div class="meta">
         Cluster <b>$(ConvertTo-HtmlText $ClusterName)</b> &nbsp;&bull;&nbsp; $countAll processed $vmWord &nbsp;&bull;&nbsp; $countAssessed fully assessed
-    &nbsp;&bull;&nbsp; Report generated <b>$(ConvertTo-HtmlText $GeneratedUtc) UTC</b>
+    &nbsp;&bull;&nbsp; Report generated <b>$(ConvertTo-HtmlText $GeneratedUtc)</b>
     &nbsp;&bull;&nbsp; Module version <b>$(ConvertTo-HtmlText $ScriptVersion)</b>$(if ($ReportGenerationTime) { "&nbsp;&bull;&nbsp; Processed <b>$countAll</b> $vmWord, across <b>$nodeCount</b> owning $nodeWord, in <b>$(ConvertTo-HtmlText $ReportGenerationTime)</b>" })<br>$(if ($ClusterNodeCount -gt 0) { "
     Cluster size: <b>$ClusterNodeCount</b> $(if ($ClusterNodeCount -eq 1) { 'node' } else { 'nodes' }) &nbsp;&bull;&nbsp; <b>$ClusterCsvCount</b> Cluster Shared Volume$(if ($ClusterCsvCount -eq 1) { '' } else { 's' })<br>" })
     Parameters: Stale CheckPoint threshold: $StaleHours h; Diagnostic events lookback: $EventLookbackHours h; Include discovered VMs: $(if ($IncludeDiscoveredVMs) { 'Yes' } else { 'No' }).<br>
@@ -350,7 +353,7 @@ function ConvertTo-VMCheckpointAuditHtml {
 </header>
 
 <div class="callout info">
-    <strong class="scope-label">Report scope:</strong> This report processed <strong>$countAll $vmWord</strong>; <strong>$countAssessed $assessedVerb fully assessed</strong> and <strong>$countIncomplete $incompleteVerb incomplete</strong>, as of <strong>$(ConvertTo-HtmlText $GeneratedUtc) UTC</strong>. Its findings should be considered alongside a wider assessment of the cluster, storage, backup solution, workloads, and relevant operational history. It is not a complete cluster health assessment and does not represent the health of VMs that were not fully assessed.$unauditedDiscoveryNote
+    <strong class="scope-label">Report scope:</strong> This report processed <strong>$countAll $vmWord</strong>; <strong>$countAssessed $assessedVerb fully assessed</strong> and <strong>$countIncomplete $incompleteVerb incomplete</strong>, as of <strong>$(ConvertTo-HtmlText $GeneratedUtc)</strong>. Its findings should be considered alongside a wider assessment of the cluster, storage, backup solution, workloads, and relevant operational history. It is not a complete cluster health assessment and does not represent the health of VMs that were not fully assessed.$unauditedDiscoveryNote
 </div>
 
 <div class="cards">
@@ -414,7 +417,7 @@ function ConvertTo-VMCheckpointAuditHtml {
         }
     }
     $housekeepingTotalText = ConvertTo-HousekeepingSizeText $housekeepingTotalBytes
-    $housekeepingExecSummaryLi = "<li><strong><a href='#housekeeping'>Cluster storage (VHD and checkpoint) housekeeping audit results:</a></strong> identified <strong>$housekeepingFindingsCount</strong> item(s), with a total unique-file storage size of <strong>$(ConvertTo-HtmlText $housekeepingTotalText)</strong>, across <strong>$($housekeepingRoots.Count)</strong> Cluster Shared Volume(s). <strong>Action:</strong> review this section to determine whether the files are required VM images or orphaned objects.</li>"
+    $housekeepingExecSummaryLi = "<li><strong><a href='#housekeeping'>Cluster storage (VHD and checkpoint) housekeeping audit results:</a></strong> identified <strong>$housekeepingFindingsCount</strong> item(s), with a total unique-file storage size of <strong>$(ConvertTo-HtmlText $housekeepingTotalText)</strong>, across <strong>$($housekeepingRoots.Count)</strong> Cluster Shared Volume(s). <strong>Action:</strong> review this section to determine whether the files are required VM images, inconsistent VM VHD paths, and/or unrequired orphaned objects.</li>"
 
     $storageDegraded = ($StorageHealth -and (@('Degraded', 'Active storage jobs') -contains "$($StorageHealth.Summary)"))
     $storageFaults = @()
@@ -609,11 +612,18 @@ $storageExecSummaryLi
         }
         [void]$sb.Append("    $cleanNextStep`r`n")
     }
-    if ($rollbackVMs.Count -gt 0) {
-        $rbNames = (@($rollbackVMs | ForEach-Object { ConvertTo-HtmlText $_.VMName }) -join ', ')
+    if ($historicConfirmedVMs.Count -gt 0) {
+        $confirmedNames = (@($historicConfirmedVMs | ForEach-Object { ConvertTo-HtmlText $_.VMName }) -join ', ')
         [void]$sb.Append((@'
-    <li><strong>PRIORITY - possible historic rollback ({0} VM(s)):</strong> {1} have a group of orphaned <code>.avhdx</code> files with matching dates. This may indicate that the disks already rolled back to their base disks and left the checkpoint layers unattached. Those files may contain data that is no longer accessible to the VM. Do NOT remove them. Engage Microsoft Support (CSS) or your backup vendor for recovery guidance. The original events may be older than the {2}h lookback. <strong>Rerun with a larger window</strong> (for example, <code>-EventLookbackHours 720</code>) and review each VM's "Historic event correlation" detail{3}.</li>
-'@ -f $rollbackVMs.Count, $rbNames, $EventLookbackHours, $(if ($historicConfirmedVMs.Count -gt 0) { ' (some are already CONFIRMED from recovered historic events)' } else { '' })))
+    <li><strong>PRIORITY - CONFIRMED historic rollback ({0} VM(s)):</strong> recovered historic fork-commit / merge-failure events confirm this scenario for {1}. Orphaned <code>.avhdx</code> files may contain data that is no longer accessible to the VM. Do NOT remove them. Engage Microsoft Support (CSS) or your backup vendor for recovery guidance.</li>
+'@ -f $historicConfirmedVMs.Count, $confirmedNames))
+    }
+    $possibleRollbackVMs = @($rollbackVMs | Where-Object { -not $_.ReportData.HistoricForkConfirmed })
+    if ($possibleRollbackVMs.Count -gt 0) {
+        $possibleNames = (@($possibleRollbackVMs | ForEach-Object { ConvertTo-HtmlText $_.VMName }) -join ', ')
+        [void]$sb.Append((@'
+    <li><strong>PRIORITY - possible historic rollback ({0} VM(s)):</strong> {1} have a group of orphaned <code>.avhdx</code> files with matching dates. This may indicate that the disks already rolled back to their base disks and left the checkpoint layers unattached. Those files may contain data that is no longer accessible to the VM. Do NOT remove them. Engage Microsoft Support (CSS) or your backup vendor for recovery guidance. The original events may be older than the {2}h lookback. <strong>Rerun with a larger window</strong> (for example, <code>-EventLookbackHours 720</code>) and review each VM's "Historic event correlation" detail.</li>
+'@ -f $possibleRollbackVMs.Count, $possibleNames, $EventLookbackHours))
     }
     if ($replicaProductConcernVMs.Count -gt 0) {
         $rcNames = (@($replicaProductConcernVMs | ForEach-Object { ConvertTo-HtmlText $_.VMName }) -join ', ')
@@ -840,19 +850,19 @@ $storageExecSummaryLi
         [void]$sb.Append("</div></details>`r`n")
     }
 
-    # Per-VM detail. The native disclosure remains open by default but lets operators collapse the
-    # large card collection without JavaScript; housekeeping uses the same report-section treatment.
+    # Per-VM detail. Keep findings and incomplete assessments open; collapse OK cards by default.
     [void]$sb.Append("<details class='report-section' open><summary><h2>Per-VM detailed information</h2></summary><div class='report-section-body'>`r`n")
     foreach ($r in $sortedRows) {
         $rd   = $r.ReportData
         $pill = Get-VerdictPill $r.Recommendation
         $cls  = if ($r.Recommendation -eq 'HOLD STATE') { ' hold' } else { '' }
+        $openAttr = if ($r.Recommendation -eq 'OK') { '' } else { ' open' }
         $srcBadge = ''
         if ($r.PSObject.Properties['Source'] -and $r.Source) {
             $srcCls = if ("$($r.Source)" -eq 'Discovered') { 'discovered' } else { 'input' }
             $srcBadge = "<span class=`"src $srcCls`">$(ConvertTo-HtmlText $r.Source)</span>"
         }
-        [void]$sb.Append("<details class=`"vm$cls`" id=`"$(ConvertTo-Anchor $r.VMName)`" open>`r`n  <summary><h3><span class=`"vm-label`">VM Name:</span> <code>$(ConvertTo-HtmlText $r.VMName)</code> $pill$srcBadge</h3></summary>`r`n  <div class=`"vm-body`">`r`n")
+        [void]$sb.Append("<details class=`"vm$cls`" id=`"$(ConvertTo-Anchor $r.VMName)`"$openAttr>`r`n  <summary><h3><span class=`"vm-label`">VM Name:</span> <code>$(ConvertTo-HtmlText $r.VMName)</code> $pill$srcBadge</h3></summary>`r`n  <div class=`"vm-body`">`r`n")
         if (-not $rd) {
             [void]$sb.Append("  <div class='kv'><div class='k'>VM name</div><div><code>$(ConvertTo-HtmlText $r.VMName)</code></div></div>`r`n")
             [void]$sb.Append("  <div class='callout warn'>$(ConvertTo-HtmlText $r.Detail)</div>`r`n  </div>`r`n</details>")
@@ -910,7 +920,13 @@ $storageExecSummaryLi
         $hrlPolicyConcern = ($rd.PSObject.Properties['HrlAssessment'] -and $rd.HrlAssessment -and $rd.HrlAssessment.Enabled -and ([int]$rd.HrlAssessment.ExceedsCadenceCount -gt 0) -and $rd.HrlAssessment.CorroboratedByReplication)
         $hrlPolicyHtml = if ($hrlPolicyConcern) { "<span class='warnval'>$(ConvertTo-HtmlText $hrlPolicyText)</span>" } else { ConvertTo-HtmlText $hrlPolicyText }
         $vmEventHtml = if ([int]$rd.VmHighConcernCount -gt 0) { "<span class='warnval'>$($rd.VmEventConcernCount) ($($rd.VmHighConcernCount) high-signal)</span>" } else { "$($rd.VmEventConcernCount) (low-signal only)" }
-        $stateConsistencyText = if ($rd.PSObject.Properties['StateConsistencyImpact']) { "$($rd.StateConsistencyStatus) / $($rd.StateConsistencyImpact)" } else { 'Stable' }
+        $stateConsistencyText = if ($rd.PSObject.Properties['StateConsistencyImpact'] -and $rd.StateConsistencyImpact -eq 'Advisory') {
+            'Stable - VM configuration (.vmcx) file timestamp changed during audit'
+        } elseif ($rd.PSObject.Properties['StateConsistencyImpact']) {
+            "$($rd.StateConsistencyStatus) / $($rd.StateConsistencyImpact)"
+        } else {
+            'Stable'
+        }
         $stateConsistencyHtml = if ($rd.PSObject.Properties['StateConsistencyImpact'] -and $rd.StateConsistencyImpact -eq 'Inconclusive') { "<span class='warnval'>$(ConvertTo-HtmlText $stateConsistencyText)</span>" } else { ConvertTo-HtmlText $stateConsistencyText }
         [void]$sb.Append(@"
   <div class="kv">
@@ -987,7 +1003,9 @@ $storageExecSummaryLi
                 $drv = @($investigationDrivers.Labels | ForEach-Object { ConvertTo-HtmlText $_ })
             }
             $drvText = if ($drv.Count -gt 0) { (($drv) -join '; ') } else { 'concern signals present' }
-            if ($rd.HasRollbackFingerprint) {
+            if ($rd.HistoricForkConfirmed) {
+                [void]$sb.Append("  <div class='callout high'><strong>INVESTIGATE - CONFIRMED historic rollback.</strong> <strong>Reason for this verdict:</strong> recovered historic fork-commit / merge-failure events confirm this scenario; $drvText. The orphaned <code>.avhdx</code> files may contain data that is no longer accessible to the VM. Do NOT remove them. Engage Microsoft Support (CSS) or your backup vendor for recovery guidance.</div>`r`n")
+            } elseif ($rd.HasRollbackFingerprint) {
                 [void]$sb.Append("  <div class='callout high'><strong>INVESTIGATE - possible historic rollback.</strong> <strong>Reason for this verdict:</strong> $drvText. The orphaned <code>.avhdx</code> files may remain from a fork-commit rollback on <strong>$(ConvertTo-HtmlText $rd.RollbackDate)</strong>. They may contain data that is no longer accessible to the VM. Do NOT remove them. Engage Microsoft Support (CSS) or your backup vendor for recovery guidance. The original fork-commit events may be older than the $($rd.EventLookbackHours)h lookback; see the historic correlation below.</div>`r`n")
             } else {
                 $hasCheckpointStorageDriver = if ($investigationDrivers -and $investigationDrivers.PSObject.Properties['HasCheckpointArtifact']) {
@@ -1038,9 +1056,7 @@ $storageExecSummaryLi
                 }
             }
         } elseif ($r.Recommendation -eq 'OK') {
-            if ($rd.PSObject.Properties['StateConsistencyImpact'] -and $rd.StateConsistencyImpact -eq 'Advisory') {
-                [void]$sb.Append("  <div class='callout info'><strong>Advisory - collection metadata changed, but the VM evidence remains consistent.</strong> Only the VM configuration last-write timestamp changed while Hyper-V Replica remained <code>Replicating / Normal</code>. Normal Replica metadata activity can cause this. Owner, power state, checkpoint count, and attached disk paths remained stable; no checkpoint-chain action is required from this observation. Re-run only if you need a fully static point-in-time capture.</div>`r`n")
-            } elseif ($rd.PSObject.Properties['HighOpSelfResolved'] -and $rd.HighOpSelfResolved) {
+            if ($rd.PSObject.Properties['HighOpSelfResolved'] -and $rd.HighOpSelfResolved) {
                 $recoveryStatus = if ($rd.PSObject.Properties['OperationRecoveryStatus']) { [string]$rd.OperationRecoveryStatus } else { 'ApparentlyRecovered' }
                 if ($recoveryStatus -eq 'ConfirmedRecovered') {
                     [void]$sb.Append("  <div class='callout ok'><strong>OK - correlated recovery observed.</strong> $($rd.VmHighOpCount) checkpoint or merge failure event(s) are attributed to this VM. A later merge-success event occurred within the configured correlation window and contains the same disk or operation identifier. No orphaned <code>.avhdx</code>, stale attached layer, or stale snapshot remains. Review the events CSV and backup history if the pattern occurs again.</div>`r`n")
@@ -1056,12 +1072,12 @@ $storageExecSummaryLi
         # v0.2.17: PROACTIVE active-checkpoint findings (pre-migration). Rendered for ANY verdict when set,
         # right after the main assessment, because the whole point is to warn BEFORE a migration/restart.
         if ($rd.PSObject.Properties['ActiveCkptForkConfirmed'] -and $rd.ActiveCkptForkConfirmed) {
-            [void]$sb.Append("  <div class='callout high'><strong>HOLD STATE - fork-commit recorded at this active checkpoint's creation.</strong> This VM has an ACTIVE (still-attached) checkpoint created <strong>$(ConvertTo-HtmlText $rd.ActiveCkptOldestCreateUtc) UTC</strong>, before the $($rd.EventLookbackHours)h event lookback. The historic cross-node scan detected a 'fork-commit / merge-failure' event around that creation time. The differencing chain may be inconsistent while the VM continues to run. A live migration, quick migration, storage migration, or restart could expose the inconsistency and cause the VM disks to roll back to their base disks. <span class='hot'>Do NOT migrate or restart this VM</span> until the chain is validated and, if required, merged. Engage Microsoft Support (CSS) or your backup vendor. This warning identifies a dormant risk; the report has not detected that data loss has occurred.</div>`r`n")
+            [void]$sb.Append("  <div class='callout high'><strong>HOLD STATE - fork-commit recorded at this active checkpoint's creation.</strong> This VM has an ACTIVE (still-attached) checkpoint created <strong>$(ConvertTo-HtmlText $rd.ActiveCkptOldestCreateUtc)</strong>, before the $($rd.EventLookbackHours)h event lookback. The historic cross-node scan detected a 'fork-commit / merge-failure' event around that creation time. The differencing chain may be inconsistent while the VM continues to run. A live migration, quick migration, storage migration, or restart could expose the inconsistency and cause the VM disks to roll back to their base disks. <span class='hot'>Do NOT migrate or restart this VM</span> until the chain is validated and, if required, merged. Engage Microsoft Support (CSS) or your backup vendor. This warning identifies a dormant risk; the report has not detected that data loss has occurred.</div>`r`n")
         } elseif ($rd.PSObject.Properties['CannotConfirmMigrationSafe'] -and $rd.CannotConfirmMigrationSafe) {
             $activeCoverage = @(if ($rd.PSObject.Properties['ActiveCkptHistoric'] -and $rd.ActiveCkptHistoric) { @($rd.ActiveCkptHistoric.Coverage) } else { @() })
             $incompleteScopes = @($activeCoverage | Where-Object { -not $_.Sufficient } | ForEach-Object {
                 $scope = "{0}/{1}={2}" -f $_.Node, $_.Channel, $_.Status
-                if ($_.Status -eq 'Wrapped' -and $_.OldestAvailable) { $scope += " (oldest $(([datetime]$_.OldestAvailable).ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')) UTC)" }
+                if ($_.Status -eq 'Wrapped' -and $_.OldestAvailable) { $scope += " (oldest $(([datetime]$_.OldestAvailable).ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ssZ')))" }
                 $scope
             }) -join '; '
             $coverageReason = if ($rd.PSObject.Properties['ActiveCkptLogsWrapped'] -and $rd.ActiveCkptLogsWrapped) {
@@ -1069,7 +1085,7 @@ $storageExecSummaryLi
             } else {
                 'No required log was shown to have wrapped past the checkpoint-creation window, but at least one required scope is disabled, unavailable, or failed.'
             }
-            [void]$sb.Append("  <div class='callout warn'><strong>SAFETY COULD NOT BE VERIFIED - required Worker/VMMS logs are incomplete.</strong> This VM has an ACTIVE (still-attached) checkpoint created <strong>$(ConvertTo-HtmlText $rd.ActiveCkptOldestCreateUtc) UTC</strong>. Incomplete node/channel scopes: <strong>$(ConvertTo-HtmlText $incompleteScopes)</strong>. $(ConvertTo-HtmlText $coverageReason) The missing logs may contain evidence of a 'fork-commit / merge-failure' that this audit could not detect. Validate the differencing chain and consider a backup vendor or Microsoft Support (CSS) review BEFORE any live migration, quick migration, storage migration, or restart of this VM.</div>`r`n")
+            [void]$sb.Append("  <div class='callout warn'><strong>SAFETY COULD NOT BE VERIFIED - required Worker/VMMS logs are incomplete.</strong> This VM has an ACTIVE (still-attached) checkpoint created <strong>$(ConvertTo-HtmlText $rd.ActiveCkptOldestCreateUtc)</strong>. Incomplete node/channel scopes: <strong>$(ConvertTo-HtmlText $incompleteScopes)</strong>. $(ConvertTo-HtmlText $coverageReason) The missing logs may contain evidence of a 'fork-commit / merge-failure' that this audit could not detect. Validate the differencing chain and consider a backup vendor or Microsoft Support (CSS) review BEFORE any live migration, quick migration, storage migration, or restart of this VM.</div>`r`n")
         }
         # HOLD STATE: the copy/paste support-case summary lifted verbatim from the per-VM report (collapsed).
         if ($r.Recommendation -eq 'HOLD STATE' -and $rd.PSObject.Properties['SupportCaseSummary'] -and $rd.SupportCaseSummary) {
@@ -1102,7 +1118,7 @@ $storageExecSummaryLi
             $lastReplicationTimeUtc = Get-OptionalPropertyValue $replicaAssessment 'LastReplicationTimeUtc' $null
             $lastReplicationAgeMinutes = Get-OptionalPropertyValue $replicaAssessment 'LastReplicationAgeMinutes' $null
             $lastReplicationText = if ($measurementsAvailable -and $lastReplicationTimeUtc -and ([datetime]$lastReplicationTimeUtc -ne [datetime]::MinValue)) {
-                '{0} UTC ({1:N1} min ago)' -f ([datetime]$lastReplicationTimeUtc).ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss'), [double]$lastReplicationAgeMinutes
+                '{0} ({1:N1} min ago)' -f ([datetime]$lastReplicationTimeUtc).ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ssZ'), [double]$lastReplicationAgeMinutes
             } else { 'Unavailable' }
             $averageReplicationBytes = [long](Get-OptionalPropertyValue $replicaAssessment 'AverageReplicationBytes' 0)
             $pendingBytes = [long](Get-OptionalPropertyValue $replicaAssessment 'PendingBytes' 0)
@@ -1193,9 +1209,9 @@ $storageExecSummaryLi
             } else {
                 if (-not $hc.CoverageComplete) {
                     $incompleteScopes = @($hc.Coverage | Where-Object { -not $_.Sufficient } | ForEach-Object { "{0}/{1}={2}" -f $_.Node, $_.Channel, $_.Status }) -join '; '
-                    [void]$sb.Append("<div class='callout warn'>No historic events found, but event coverage is <strong>incomplete</strong> ($(ConvertTo-HtmlText $incompleteScopes)). The least-retained available history starts at <strong>$(ConvertTo-HtmlText $hc.OldestAvailableUtc) UTC</strong>. A required node/channel was wrapped, disabled, unavailable, or failed, so <strong>absence here is NOT proof</strong> that no rollback occurred.</div>")
+                    [void]$sb.Append("<div class='callout warn'>No historic events found, but event coverage is <strong>incomplete</strong> ($(ConvertTo-HtmlText $incompleteScopes)). The least-retained available history starts at <strong>$(ConvertTo-HtmlText $hc.OldestAvailableUtc)</strong>. A required node/channel was wrapped, disabled, unavailable, or failed, so <strong>absence here is NOT proof</strong> that no rollback occurred.</div>")
                 } else {
-                    [void]$sb.Append("<div class='callout ok'>No historic fork-commit / merge events for this VM in the searched windows, and the logs DO cover that period (oldest available $(ConvertTo-HtmlText $hc.OldestAvailableUtc) UTC). The orphans are less likely to be a fork-commit rollback - more likely leftover backup / live-mount files. Confirm by matching each file to a backup / restore / live-mount job for this VM at its timestamps; if it is a live-mount, unmount it through the backup product rather than deleting it by hand (see the orphaned-files guidance above for the full steps).</div>")
+                    [void]$sb.Append("<div class='callout ok'>No historic fork-commit / merge events for this VM in the searched windows, and the logs DO cover that period (oldest available $(ConvertTo-HtmlText $hc.OldestAvailableUtc)). The orphans are less likely to be a fork-commit rollback - more likely leftover backup / live-mount files. Confirm by matching each file to a backup / restore / live-mount job for this VM at its timestamps; if it is a live-mount, unmount it through the backup product rather than deleting it by hand (see the orphaned-files guidance above for the full steps).</div>")
                 }
             }
             [void]$sb.Append("</details>`r`n")
@@ -1234,7 +1250,7 @@ $storageExecSummaryLi
         $badge = switch ("$($sh.Summary)") { 'Healthy' { 'ok' } 'Unavailable' { 'info' } default { 'warn' } }
         [void]$sb.Append("<details class='report-section' id='cluster-storage-health' open><summary><h2>Cluster storage health (Storage Spaces Direct / CSV)</h2></summary><div class='report-section-body'>`r`n")
         [void]$sb.Append("<div class='callout $badge'><strong>Storage status: $(ConvertTo-HtmlText $sh.Summary).</strong> Read-only snapshot (source node <code>$(ConvertTo-HtmlText $sh.Source)</code>).</div>`r`n")
-        [void]$sb.Append("<p class='muted'><strong>Why this check matters:</strong> storage repair/resync activity, abnormal CSV redirection or state, and unhealthy disks can make checkpoint or merge files temporarily locked or unavailable. A ReFS CSV reporting File System Redirected mode with reason <code>FileSystemReFs</code> is normal on Azure Local / S2D and is not flagged; non-ReFS file-system redirection, block redirection, and paused or offline volumes are treated as abnormal.</p>`r`n")
+        [void]$sb.Append("<p><strong>Why this check matters:</strong> storage repair/resync activity, abnormal CSV redirection or state, and unhealthy disks can make checkpoint or merge files temporarily locked or unavailable. A ReFS CSV reporting File System Redirected mode with reason <code>FileSystemReFs</code> is normal on Azure Local / S2D and is not flagged; non-ReFS file-system redirection, block redirection, and paused or offline volumes are treated as abnormal.</p>`r`n")
         if ($storageDegraded) {
             [void]$sb.Append("<div class='callout warn'><strong>Why this snapshot is non-healthy:</strong> $storageReasonText. This is read-only observed evidence; it does not establish root cause.</div>`r`n")
         }
@@ -1249,10 +1265,11 @@ $storageExecSummaryLi
                 $recommendedActionsHtml = if ($recommendedActions.Count -gt 0) { (@($recommendedActions | ForEach-Object { ConvertTo-HtmlText $_ }) -join '<br>') } else { '' }
                 [void]$sb.Append("<tr><td><span class='warnval'>$(ConvertTo-HtmlText $severity)</span></td><td>$(ConvertTo-HtmlText $reason)</td><td>$(ConvertTo-HtmlText $affectedObject)</td><td>$(ConvertTo-HtmlText $location)</td><td>$recommendedActionsHtml</td></tr>")
             }
-            [void]$sb.Append("</tbody></table><p class='muted'><strong>EVIDENCE - </strong>These records come from <code>Get-HealthFault</code> and are displayed as observed diagnostic evidence. Only faults classified under Microsoft's StorHealth entity types are included; unrelated cluster Health Service faults are excluded. Recommended actions are shown exactly as supplied by the matching storage fault.</p>")
+            [void]$sb.Append("</tbody></table><p><strong>EVIDENCE - </strong>These records come from <code>Get-HealthFault</code> and are displayed as observed diagnostic evidence. Only faults classified under Microsoft's StorHealth entity types are included; unrelated cluster Health Service faults are excluded. Recommended actions are shown exactly as supplied by the matching storage fault.</p>")
         } elseif ($unhealthySubsystems.Count -gt 0) {
             [void]$sb.Append("<p class='muted'><strong>Health Service detail unavailable:</strong> the subsystem state is Unhealthy, but <code>Get-HealthFault</code> returned no active fault records (collection status: $(ConvertTo-HtmlText $storageFaultCollectionStatus)). Use the Deeper analysis guidance below for the full diagnostic.</p>")
         }
+        [void]$sb.Append("<p><strong>Storage knowledge links:</strong></p><ul><li><a href='https://learn.microsoft.com/en-us/windows-server/failover-clustering/health-service-faults' target='_blank' rel='noopener noreferrer'>Health Service faults | Microsoft Learn</a></li><li><a href='https://learn.microsoft.com/en-us/windows-server/storage/storage-spaces/troubleshooting-storage-spaces' target='_blank' rel='noopener noreferrer'>Storage Spaces Direct troubleshooting | Microsoft Learn</a></li></ul>")
         if (@($sh.StorageJobs).Count -gt 0) {
             [void]$sb.Append("<h3>Active storage jobs</h3><table><thead><tr><th>Job</th><th>State</th><th>% complete</th></tr></thead><tbody>")
             foreach ($j in @($sh.StorageJobs)) { [void]$sb.Append("<tr><td>$(ConvertTo-HtmlText $j.Name)</td><td>$(ConvertTo-HtmlText $j.State)</td><td class='num'>$(ConvertTo-HtmlText $j.Pct)</td></tr>") }
@@ -1279,7 +1296,7 @@ $storageExecSummaryLi
         if ("$($sh.Summary)" -eq 'Unavailable' -and $sh.Note) {
             [void]$sb.Append("<p class='muted'>Storage cmdlets were not available from the snapshot node: $(ConvertTo-HtmlText $sh.Note)</p>")
         }
-        [void]$sb.Append("<div class='callout info'><strong>Deeper analysis (recommended):</strong> this is a lightweight snapshot. Validate the current fault state and use your cluster maintenance procedures before performing any recommended action. For a full Storage Spaces Direct / SBL diagnostic - including storage event-channel analysis around the incident window - run Microsoft's CSS Storage Diagnostic, which performs far more checks. Open a Microsoft Support (CSS) support request if you need additional guidance before taking action.<br><code>Install-Module -Name Microsoft.AzLocal.CSSTools</code><br><code>Start-AzsSupportStorageDiagnostic</code><br><a href='https://github.com/Azure/AzureLocal-Supportability/blob/main/tools/CSSTools/1.2605.5.1611/functions/Start-AzsSupportStorageDiagnostic.md' target='_blank' rel='noopener noreferrer'>Start-AzsSupportStorageDiagnostic documentation</a><br><a href='https://learn.microsoft.com/en-us/windows-server/failover-clustering/health-service-faults' target='_blank' rel='noopener noreferrer'>Health Service faults | Microsoft Learn</a><br><a href='https://learn.microsoft.com/en-us/windows-server/storage/storage-spaces/troubleshooting-storage-spaces' target='_blank' rel='noopener noreferrer'>Storage Spaces Direct troubleshooting | Microsoft Learn</a></div>`r`n")
+        [void]$sb.Append("<div class='callout info'><strong>Deeper analysis (recommended):</strong> this is a lightweight snapshot. Validate the current fault state and use your cluster maintenance procedures before performing any recommended action. For a full Storage Spaces Direct / SBL diagnostic - including storage event-channel analysis around the incident window - run Microsoft's CSS Storage Diagnostic, which performs far more checks. Open a Microsoft Support (CSS) support request if you need additional guidance before taking action.<br><code>Install-Module -Name Microsoft.AzLocal.CSSTools</code><br><code>Start-AzsSupportStorageDiagnostic</code><br><a href='https://github.com/Azure/AzureLocal-Supportability/blob/main/tools/CSSTools/1.2605.5.1611/functions/Start-AzsSupportStorageDiagnostic.md' target='_blank' rel='noopener noreferrer'>Start-AzsSupportStorageDiagnostic documentation</a></div>`r`n")
         [void]$sb.Append("</div></details>`r`n")
     }
 
