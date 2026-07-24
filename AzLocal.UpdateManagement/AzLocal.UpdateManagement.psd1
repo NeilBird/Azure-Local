@@ -378,9 +378,9 @@
 
             # ReleaseNotes of this module
             ReleaseNotes = @'
-## Version 0.9.24 - Sparse Azure payload hardening. Null ARG/CLI rows and nested ARM/REST elements are skipped before property access, preventing strict-mode Properties failures. reporting.maxRowsPerTable now accepts 2,000. No public/export change (71). Pipeline pins bumped to 0.9.24.
+## Version 0.9.24 - Fleet settings schema v3 adds named tag groups: tags use AND within a group and groups use OR. Normal pipeline updates back up and migrate schema v1/v2, including fully commented inert files. Sparse ARG/CLI/ARM payloads are null-safe, and reporting.maxRowsPerTable accepts 2,000. No public/export change (71). Pipeline pins bumped to 0.9.24.
 
-## Version 0.9.23 - Global cluster tag admission policy. Fleet settings schema v2 adds one or more scope.clusterTagFilters pairs with AND semantics across all pipeline reads and mutation boundaries. Child resources inherit selected parent cluster membership; filtered connectivity uses reported physical nodes and subscription/resource-group ARB attribution. Pipeline banners snapshot active management groups and tag filters for retrospective audit. Normal pipeline updates automatically back up active or legacy fully commented schema v1 files as config/fleet-settings_v1.bak.yml, update the declaration, and append the new properties as a commented example; commented starters remain inert, -WhatIf is supported, and -UpgradeFleetSettingsSchema remains accepted for compatibility. No public/export change (71). Pipeline pins bumped to 0.9.23.
+## Version 0.9.23 - Global cluster tag admission policy introduced flat schema-v2 AND filters across pipeline reads and mutation boundaries, with cluster inheritance, connectivity attribution, run snapshots, and backed-up v1 migration. No public/export change (71). Pipeline pins bumped to 0.9.23.
 
 ## Version 0.9.22 - ARG payload hardening. The shared query helper recovers from ResponsePayloadTooLarge by halving --first and retaining the smaller size across skip-token pages. Monitor: 2 starts health-result paging at 50 rows; Monitor: 1 projects only consumed fields. No public/export change (69). Pipeline pins bumped to 0.9.22.
 

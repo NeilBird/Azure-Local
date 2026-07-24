@@ -1,4 +1,4 @@
-# AzLocal.UpdateManagement fleet settings (schema version 2)
+# AzLocal.UpdateManagement fleet settings (schema version 3)
 #
 # This starter is intentionally fully commented. In this state, every pipeline
 # keeps the existing behavior and queries the subscriptions visible to its Azure
@@ -8,27 +8,33 @@
 # management groups are supported. The pipeline identity needs Reader access (or
 # equivalent resource read permissions) at each configured scope.
 #
-# schemaVersion: 2
+# schemaVersion: 3
 # scope:
 #   managementGroups:
 #     - contoso-platform
 #     - contoso-landing-zones
 #
-#   # Optional global cluster admission policy. Every name/value pair must
-#   # match (AND). Matching is exact and case-insensitive; a missing tag
-#   # excludes the cluster. Use externally governed tags, not module-owned
-#   # UpdateRing, scheduling, retry, or sideload control tags.
+#   # Optional global cluster admission policy. Tags inside one named group
+#   # must all match (AND); matching any group includes the cluster (OR).
+#   # A one-tag group is a singular alternative. Matching is exact and
+#   # case-insensitive. Use externally governed tags, not module-owned control tags.
 #   clusterTagFilters:
-#     - name: Environment
-#       value: Production
-#     - name: ManagedBy
-#       value: CentralIT
+#     - name: Live
+#       tags:
+#         - name: Live-Environment
+#           value: Yes
+#         - name: ManagedBy
+#           value: CentralIT
+#     - name: Test
+#       tags:
+#         - name: Test-Environment
+#           value: Yes
 #
 # Optional pipeline-summary controls. Full CSV/JSON/JUnit artifacts are never
 # truncated by these values.
 # reporting:
-#   maxRowsPerTable: 100
-#   maxSummaryBytes: 900000
+#   maxRowsPerTable: 1000
+#   maxSummaryBytes: 950000
 #
 # Optional ServiceNow safety limit. Set to 0 to disable incident creation while
 # preserving ITSM result generation; use -ForceCreate only for dedupe behavior.

@@ -1,10 +1,10 @@
 function Test-AzLocalClusterMatchesTagFilter {
     <#
     .SYNOPSIS
-        Tests cluster tags against every configured global fleet tag filter.
+        Tests cluster tags against grouped global fleet tag filters.
     .DESCRIPTION
-        Tag names and values are compared case-insensitively. A missing tag or
-        any value mismatch returns false. An empty filter list returns true.
+        Tag names and values are compared case-insensitively. Tags within a
+        group use AND semantics; groups use OR semantics. An empty list passes.
     #>
     [CmdletBinding()]
     [OutputType([bool])]
@@ -25,7 +25,10 @@ function Test-AzLocalClusterMatchesTagFilter {
         return $false
     }
 
-    foreach ($filter in $ClusterTagFilters) {
+    foreach ($group in $ClusterTagFilters) {
+        $filters = if ($group.PSObject.Properties['Tags']) { @($group.Tags) } else { @($group) }
+        $groupMatches = $true
+        foreach ($filter in $filters) {
         $expectedName = [string]$filter.Name
         $expectedValue = [string]$filter.Value
         $actualValue = $null
@@ -50,11 +53,16 @@ function Test-AzLocalClusterMatchesTagFilter {
             }
         }
 
-        if (-not $found -or
-            -not [string]::Equals($actualValue, $expectedValue, [System.StringComparison]::OrdinalIgnoreCase)) {
-            return $false
+            if (-not $found -or
+                -not [string]::Equals($actualValue, $expectedValue, [System.StringComparison]::OrdinalIgnoreCase)) {
+                $groupMatches = $false
+                break
+            }
+        }
+        if ($groupMatches) {
+            return $true
         }
     }
 
-    return $true
+    return $false
 }

@@ -80,7 +80,12 @@ If you are new to this module, work through these in order from a regular PowerS
 
 ## What's New in v0.9.24
 
-**Sparse Azure payloads no longer cause strict-mode failures in fleet pipelines.** Azure Resource Graph, Azure CLI JSON, and ARM REST responses can contain null placeholders inside otherwise valid arrays; collection boundaries now remove or skip those placeholders before property inspection.
+**Fleet settings now support grouped cluster-tag admission, and sparse Azure payloads no longer cause strict-mode failures in fleet pipelines.** Schema v3 combines tags with `AND` inside each named group and combines groups with `OR`, allowing policies such as `(Live-Environment=Yes AND ManagedBy=CentralIT) OR (Test-Environment=Yes)`. Azure Resource Graph, Azure CLI JSON, and ARM REST responses can contain null placeholders inside otherwise valid arrays; collection boundaries now remove or skip those placeholders before property inspection.
+
+### Added
+
+- **Grouped cluster-tag filters.** `scope.clusterTagFilters` now contains named groups with nested `tags`. Every tag in one group must match (`AND`); matching any complete group admits the cluster (`OR`). A group containing one tag is a singular alternative. Tag names and values remain exact, case-insensitive literals.
+- **Automatic schema v3 migration.** A normal `Update-AzLocalPipelineExample` run backs up schema v1 or v2 as `config/fleet-settings_v1.bak.yml` or `config/fleet-settings_v2.bak.yml`, then writes schema v3. Fully commented files remain fully commented and inert. Flat v2 pairs become separate one-tag groups. See the [CI/CD fleet-settings hierarchy and indentation guide](Automation-Pipeline-Examples/README.md#612-optional-scope-the-fleet-by-management-group-and-cluster-tags).
 
 ### Fixed
 
@@ -92,6 +97,7 @@ If you are new to this module, work through these in order from a regular PowerS
 ### Changed
 
 - **Larger configurable Markdown tables.** `reporting.maxRowsPerTable` in `fleet-settings.yml` now accepts values from 1 through 2,000 (previously 1 through 1,000). Existing defaults and the independent summary byte budget are unchanged.
+- **Pipeline scope snapshots preserve groups.** Version banners, Markdown summaries, `cluster_tag_filters` JSON output, ARG queries, and mutation-boundary checks all use the same AND-within/OR-across truth table.
 - No public function or export-count change (71). Bundled GitHub Actions and Azure DevOps pipeline pins are updated to `0.9.24`.
 
 ### Validation

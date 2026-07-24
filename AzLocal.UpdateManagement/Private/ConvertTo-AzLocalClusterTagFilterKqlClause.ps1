@@ -3,9 +3,9 @@ function ConvertTo-AzLocalClusterTagFilterKqlClause {
     .SYNOPSIS
         Builds cluster-resource KQL clauses for global fleet tag filters.
     .DESCRIPTION
-        Produces one case-insensitive equality clause per configured tag pair.
-        Adjacent clauses use AND semantics. This helper is only for queries
-        whose current rows are microsoft.azurestackhci/clusters resources.
+        Produces one case-insensitive expression with AND semantics within each
+        tag group and OR semantics across groups. This helper is only for
+        queries whose current rows are microsoft.azurestackhci/clusters.
     #>
     [CmdletBinding()]
     [OutputType([string])]
@@ -19,8 +19,11 @@ function ConvertTo-AzLocalClusterTagFilterKqlClause {
         return ''
     }
 
-    $clauses = [System.Collections.Generic.List[string]]::new()
-    foreach ($filter in $ClusterTagFilters) {
+    $groupClauses = [System.Collections.Generic.List[string]]::new()
+    foreach ($group in $ClusterTagFilters) {
+        $filters = if ($group.PSObject.Properties['Tags']) { @($group.Tags) } else { @($group) }
+        $tagClauses = [System.Collections.Generic.List[string]]::new()
+        foreach ($filter in $filters) {
         $hasName = $null -ne $filter -and (
             ($filter -is [System.Collections.IDictionary] -and $filter.Contains('Name')) -or
             ($filter -isnot [System.Collections.IDictionary] -and $filter.PSObject.Properties['Name'])
@@ -37,8 +40,13 @@ function ConvertTo-AzLocalClusterTagFilterKqlClause {
         $filterValue = if ($filter -is [System.Collections.IDictionary]) { $filter['Value'] } else { $filter.Value }
         $escapedName = ([string]$filterName) -replace "'", "''"
         $escapedValue = ([string]$filterValue) -replace "'", "''"
-        [void]$clauses.Add("| where tostring(tags['$escapedName']) =~ '$escapedValue'")
+            [void]$tagClauses.Add("tostring(tags['$escapedName']) =~ '$escapedValue'")
+        }
+        if ($tagClauses.Count -eq 0) {
+            throw 'ConvertTo-AzLocalClusterTagFilterKqlClause: each group requires at least one tag.'
+        }
+        [void]$groupClauses.Add("($($tagClauses -join ' and '))")
     }
 
-    return ($clauses -join ' ')
+    return "| where $($groupClauses -join ' or ')"
 }
