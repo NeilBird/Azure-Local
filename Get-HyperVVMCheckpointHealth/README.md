@@ -16,7 +16,7 @@ This module provides insights that should be used as part of an operator investi
 
 - **This module is NOT a supported service or offering from Microsoft. It is provided as example code only.**
 
-> **See an example / fictitious report before running the module:** review the [synthetic Contoso HTML report](./examples/VMCheckpointAudit-contoso01-example.html) and the [screenshots below](#synthetic-example-report). It contains only invented `contoso01`, `node01`-`node10`, `TestVM01`-`TestVM20`, event, timestamp, and `C:\ClusterStorage\UserStorage_X\` volumes.
+> **See an example / fictitious report before running the module:** review the [synthetic Contoso HTML report](./examples/VMCheckpointAudit-contoso01-example.html) and the [screenshots below](#synthetic-example-report). To view the interactive report, download the HTML file and open it locally. It contains only invented `contoso01`, `node01`-`node10`, `TestVM01`-`TestVM20`, event, timestamp, and `C:\ClusterStorage\UserStorage_X\` values.
 
 > **Recovery knowledge reference:** [Hyper-V AVHDX Parent-Chain Recovery Technical Reference](./docs/Hyper-V-AVHDX-Chain-Recovery-Reference.md) provides informational background on chain evidence, stop conditions, and relevant Hyper-V cmdlets. It is not module remediation guidance or an approved customer change procedure. For any live customer support issue involving a broken or potentially inconsistent VHDX/AVHDX chain, open a Microsoft Support (CSS) case before making changes.
 
