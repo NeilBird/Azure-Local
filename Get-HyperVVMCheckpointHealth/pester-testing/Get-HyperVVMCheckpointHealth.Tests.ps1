@@ -345,6 +345,13 @@ Describe 'Get-HyperVVMCheckpointHealth source contracts' {
         $script:Source | Should -Match '\(\[datetime\]\$r\.LastReplicationTime\)\.ToUniversalTime\(\)\.ToString\(''yyyy-MM-dd HH:mm:ssZ''\)'
         $script:Source | Should -Not -Match 'LastReplicationTime\s*=\s*\[string\]\$r\.LastReplicationTime'
     }
+
+    It 'renders historic correlation timestamps as Zulu without redundant UTC suffixes' {
+        $script:Source | Should -Match "Windows\s+=.*ToUniversalTime\(\)\.ToString\('yyyy-MM-dd HH:mm:ssZ'\)"
+        $script:Source | Should -Not -Match 'OldestAvailableUtc\) UTC'
+        $script:Source | Should -Not -Match 'active checkpoint created \{0\} UTC'
+        $script:Source | Should -Not -Match 'oldest available \{0\} UTC'
+    }
 }
 
 Describe 'Per-VM event marker CSV contract' {
@@ -1716,6 +1723,11 @@ Describe 'Synthetic HTML example report' {
         @($script:DetailBlocks | ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique).Count | Should -Be 20
     }
 
+    It 'uses Zulu notation for every displayed absolute timestamp' {
+        [regex]::Matches($script:ExampleHtml, '(?<!\d)20\d{2}-\d{2}-\d{2} \d{2}:\d{2}(?::\d{2})?(?![Z\d:])').Count | Should -Be 0
+        $script:ExampleHtml | Should -Not -Match '20\d{2}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}Z UTC'
+    }
+
     It 'contains sixteen input VMs and four discovered VMs' {
         @($script:DetailBlocks | Where-Object { $_.Groups[2].Value -match '<span class="src input">Input</span>' }).Count | Should -Be 16
         @($script:DetailBlocks | Where-Object { $_.Groups[2].Value -match '<span class="src discovered">Discovered</span>' }).Count | Should -Be 4
@@ -2104,6 +2116,7 @@ Describe 'Historic event correlation coverage aggregation' {
             -SignatureIds @(3216) -SignatureRx '0x80048102'
 
         $result.CoverageComplete | Should -BeTrue
+        $result.Windows | Should -Be @('2026-07-10 10:00:00Z - 2026-07-10 14:00:00Z')
         @($result.Coverage | Where-Object Status -eq 'EnabledEmpty').Count | Should -Be 1
         @($result.Coverage | Where-Object Status -eq 'Wrapped').Count | Should -Be 0
         $result.LogsWrappedPastWindow | Should -BeFalse

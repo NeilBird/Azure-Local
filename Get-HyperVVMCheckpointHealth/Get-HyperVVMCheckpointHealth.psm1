@@ -1692,7 +1692,7 @@ function Get-HistoricVMEventCorrelation {
     $oldestVals = @($coverageAssessment.Rows | ForEach-Object { $_.OldestAvailable } | Where-Object { $_ } | Sort-Object)
     $oldestAll = if ($oldestVals.Count -gt 0) { $oldestVals[-1] } else { $null }
     [pscustomobject]@{
-        Windows            = @($ranges | Sort-Object Start | ForEach-Object { "{0} - {1} UTC" -f $_.Start.ToString('yyyy-MM-dd HH:mm'), $_.End.ToString('yyyy-MM-dd HH:mm') })
+        Windows            = @($ranges | Sort-Object Start | ForEach-Object { "{0} - {1}" -f $_.Start.ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ssZ'), $_.End.ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ssZ') })
         WindowMinutes      = $WindowMinutes
         NodesSearched      = @($Nodes | Where-Object { $_ } | Sort-Object -Unique)
         Matches            = $allMatches
@@ -3614,7 +3614,7 @@ function Invoke-VMCheckpointAudit {
                 Write-AuditReportLine  "  no rollback occurred. Review collection status before drawing a clean conclusion."
             } else {
                 Write-AuditReportLine ("  No historic fork-commit / merge events for this VM in the searched windows, and the logs DO cover" )
-                Write-AuditReportLine ("  that period (oldest available {0} UTC). The orphans are less likely to be a fork-commit rollback -" -f $historicCorrelation.OldestAvailableUtc)
+                Write-AuditReportLine ("  that period (oldest available {0}). The orphans are less likely to be a fork-commit rollback -" -f $historicCorrelation.OldestAvailableUtc)
                 Write-AuditReportLine  "  more likely leftover backup / live-mount files. Confirm by matching each file to a backup / restore /"
                 Write-AuditReportLine  "  live-mount job for this VM at its timestamps; if it is a live-mount, unmount it through the backup"
                 Write-AuditReportLine  "  product rather than deleting it by hand (see the Orphaned .avhdx Files section above for the full steps)."
@@ -3627,7 +3627,7 @@ function Invoke-VMCheckpointAudit {
     if ($activeCkptHistoric) {
         Write-AuditReportLine ""
         Write-Section "Active-Checkpoint Historic Look-back (fork-commit / merge events around the checkpoint create time):"
-        Write-AuditReportLine ("  This VM has an active checkpoint created {0} UTC - older than the {1}h event lookback." -f $activeCkptOldestCreateUtc, $EventLookbackHours)
+        Write-AuditReportLine ("  This VM has an active checkpoint created {0} - older than the {1}h event lookback." -f $activeCkptOldestCreateUtc, $EventLookbackHours)
         Write-AuditReportLine ("  Searched +/- {0} min around the checkpoint create time(s), across {1} node(s)." -f $activeCkptHistoric.WindowMinutes, @($activeCkptHistoric.NodesSearched).Count)
         if ($activeCkptForkConfirmed) {
             Write-Alert  "  HOLD STATE: a 'fork-commit / merge-failure' event was recorded at this active checkpoint's" -Level Critical
@@ -3647,7 +3647,7 @@ function Invoke-VMCheckpointAudit {
             Write-AuditReportLine  "  before any live migration, quick migration, storage migration, or restart."
         } else {
             Write-AuditReportLine ("  No fork-commit / merge events at the checkpoint create time, and the logs DO cover that period" )
-            Write-AuditReportLine ("  (oldest available {0} UTC). No pre-migration event-based concern for this active checkpoint." -f $activeCkptOldestAvailUtc)
+            Write-AuditReportLine ("  (oldest available {0}). No pre-migration event-based concern for this active checkpoint." -f $activeCkptOldestAvailUtc)
         }
         Write-AuditReportLine ""
     }
