@@ -30,7 +30,6 @@ The module is intended for Azure Local / Windows Server administrators / operato
 
 - [Safety — this module makes no changes](#safety--this-module-makes-no-changes)
 - [Recovery technical reference](#recovery-technical-reference)
-- [Anonymized performance observations](#anonymized-performance-observations)
 - [Requirements](#requirements)
 - [How it connects (no double-hop)](#how-it-connects-no-double-hop)
 - [Download and import the module](#download-and-import-the-module)
@@ -44,6 +43,7 @@ The module is intended for Azure Local / Windows Server administrators / operato
 - [VM states (verdicts)](#vm-states-verdicts)
 - [Enabling the Analytic channel](#enabling-the-analytic-channel-optional-operators-choice)
 - [Return value](#return-value)
+- [Anonymized performance observations](#anonymized-performance-observations)
 - [Release packaging](#release-packaging-maintainers)
 - [What's New](#whats-new)
 - [Failure-signature reference](#failure-signature-reference)
@@ -67,24 +67,6 @@ The separate [Hyper-V AVHDX Parent-Chain Recovery Technical Reference](./docs/Hy
 Read-only does not mean zero resource use. The module performs metadata, event-log, RPC/WinRM, and filesystem reads. In particular, virtual-disk housekeeping enumerates VM/snapshot ownership across the cluster and recursively inventories VHD/VHDX/AVHDX/VHDS files on Cluster Shared Volumes. Event-log scans and `vssadmin list writers` can also take time. These operations do not reconfigure workloads, but a broad run can add temporary CPU, storage, network, and management-plane load.
 
 When running with `-ProcessAllVMs`, consider scheduling the audit outside core business hours, particularly on large or busy clusters. Review elapsed time and the performance-telemetry JSON to understand the impact in your environment before making fleet-wide runs part of a regular operating schedule.
-
-## Anonymized performance observations
-
-Version 0.2.21 introduced bounded cross-node overlap for the cluster virtual-disk ownership inventory when the command runs on a verified target-cluster node. Two anonymized v0.2.22 field runs subsequently completed that phase with no failed ownership workers and materially lower coordinator wall time than aggregate worker time:
-
-| Aggregate observation | 23-VM run | 57-VM run |
-|---|---:|---:|
-| Total audit runtime | 1,563.7 s | 2,215.1 s |
-| Owning nodes scanned for events and VSS | 5 | 7 |
-| Ownership worker time, summed across nodes | 714.4 s | 669.7 s |
-| Ownership coordinator wall time | 268.7 s | approximately 216 s |
-| Event and VSS work, currently serial across nodes | 940.0 s | 1,210.8 s |
-
-The larger run audited 2.48 times as many VMs but took 1.42 times as long. In these observations, runtime correlated more strongly with owning-node count and cluster inventory cardinality than with VM count alone. Results from two runs are directional and are not general performance guarantees.
-
-Version 0.2.23 implements bounded node-diagnostic prefetch for the nodes that own selected VMs. Up to four independent nodes run concurrently, while each node performs its event read first and VSS read second to limit node-local pressure. Transient reads are retried up to three times; partial failures remain explicit, missing fan-out results retry sequentially, coordinator setup failures fall back to the established lazy per-node path, and newly selected discovered-VM owners are prefetched only when their caches are absent. Applying this schedule to the observed timings gives a conservative model of approximately 12.0 minutes saved on the 23-VM run and 16.5 minutes saved on the 57-VM run. These are opportunity estimates before coordinator overhead, WinRM startup, event-log service contention, CPU, storage, and VSS variance. Actual improvement must be established through post-change telemetry and evidence-equivalence testing.
-
-The separate setup script changes files only beneath `<InstallRoot>\Get-HyperVVMCheckpointHealth` (`C:\Temp\Get-HyperVVMCheckpointHealth` by default). It verifies the release ZIP hash and staged module version before replacing that directory, restores the previous directory if installation validation fails, imports the command without running an audit, and supports `-WhatIf` for a no-change preview. Do not use an installation root where the `Get-HyperVVMCheckpointHealth` child directory contains unrelated files.
 
 ## Sensitive data handling
 
@@ -153,7 +135,7 @@ Two supported ways to run it, both single-hop:
 
 Download the versioned ZIP from the repository's [GitHub Releases page](https://github.com/NeilBird/Azure-Local/releases). The supported 0.2.24 release asset is `Get-HyperVVMCheckpointHealth-0.2.24.zip`; it contains the manifest, root module, five private modules, example policy YAML, README, and license. Do not use a raw single-file link because the module requires its manifest and sibling private modules.
 
-The release also publishes [`Setup-Get-HyperVVMCheckpointHealth.ps1`](Setup-Get-HyperVVMCheckpointHealth.ps1) as a separate asset outside the ZIP. The setup script is pinned to the supported version and SHA256 hash, replaces only `C:\Temp\Get-HyperVVMCheckpointHealth` by default, validates the staged manifest/version, imports the module, and verifies the command. It does not run an audit. Use `-InstallRoot` to choose another parent directory.
+The release also publishes [`Setup-Get-HyperVVMCheckpointHealth.ps1`](Setup-Get-HyperVVMCheckpointHealth.ps1) as a separate asset outside the ZIP. The setup script is pinned to the supported version and SHA256 hash and changes files only beneath `<InstallRoot>\Get-HyperVVMCheckpointHealth` (`C:\Temp\Get-HyperVVMCheckpointHealth` by default). It validates the staged manifest/version before replacing that directory, restores the previous directory if installation validation fails, imports the module, and verifies the command without running an audit. Use `-InstallRoot` to choose another parent directory and `-WhatIf` for a no-change preview. Do not use an installation root where the `Get-HyperVVMCheckpointHealth` child directory contains unrelated files.
 
 Download the ZIP, download the setup script, and run the setup script:
 
@@ -443,7 +425,7 @@ GitHub displays repository HTML as source rather than running it. To use the int
 
 The housekeeping findings deliberately include `.vhdx` files that are not referenced by a VM or snapshot chain, a disk stored beneath another VM's folder, and a shared-reference candidate. These are **review observations, not deletion instructions**. One file can appear in more than one category, so category and row totals may overlap and must not be interpreted as unique-file counts. A base `.vhdx` candidate is not an orphaned checkpoint AVHDX and does not change a VM health verdict; confirm ownership, image-library intent, backup retention, and storage layout before moving or deleting anything.
 
-VHD Sets are recognized by their genuine `.vhds` attachment path. When two or more VMs reference the same `.vhds`, housekeeping reports a **Shared VHD Set reference** advisory listing those VMs; this is expected for guest-cluster shared storage and does not affect VM health. Hyper-V manages the companion files behind the `.vhds` abstraction, so ownerless `.avhdx` files in that exact attached-VHDS directory are classified as VHD Set-managed and are not presented as orphan or placement anomalies. Protection does not extend to sibling or nested directories. See [Create Hyper-V VHD Set files](https://learn.microsoft.com/en-us/windows-server/virtualization/hyper-v/manage/create-vhdset-file).
+VHD Sets are recognized by their genuine `.vhds` attachment path. When two or more VMs reference the same `.vhds`, housekeeping reports a **Shared VHD Set reference** advisory listing those VMs; this is expected for guest-cluster shared storage and does not affect VM health. Hyper-V manages the companion files behind the `.vhds` abstraction, so ownerless `.avhdx` files in that exact attached-VHDS directory are classified as VHD Set-managed and are not presented as orphan or placement anomalies. Protection does not extend to sibling or nested directories. See [Create Hyper-V VHD Set files](https://learn.microsoft.com/windows-server/virtualization/hyper-v/manage/create-vhdset-file).
 
 CSV inventory skips the exact Windows metadata folder `System Volume Information`; it cannot contain workload virtual disks and its normal access restrictions do not make coverage incomplete. If another folder beneath a readable CSV cannot be enumerated, readable branches are retained but coverage remains incomplete and the report adds **CSV folder path inaccessible** with the exact failed path. A CSV root that cannot be opened remains **CSV root incomplete**.
 
@@ -520,7 +502,7 @@ The states are mutually exclusive and decided in this order:
 
 Do not treat a **HOLD STATE** or **INVESTIGATE** verdict as permission to continue operating the VM without review. Follow the guidance for the specific finding. For a dormant checkpoint-chain risk, do not perform a live migration, quick migration, storage migration, or restart until the chain is validated. Both levels, and the report's Problem Statement, link the Microsoft Learn troubleshooting guide:
 
-> [Troubleshoot Hyper-V Virtual Machine Backup, Checkpoint, and Storage Failures](https://learn.microsoft.com/en-us/troubleshoot/windows-server/virtualization/hyper-v-virtual-machine-backup-checkpoint-storage)
+> [Troubleshoot Hyper-V Virtual Machine Backup, Checkpoint, and Storage Failures](https://learn.microsoft.com/troubleshoot/windows-server/virtualization/hyper-v-virtual-machine-backup-checkpoint-storage)
 
 ## Enabling the Analytic channel (optional, operator's choice)
 
@@ -625,6 +607,24 @@ $run.Artifacts
 `RunData.OutcomeSummary.Processed` counts all result rows; `FullyAssessed` excludes `NOT FOUND` and `ERROR`. The legacy `Audited` property remains available in 0.2.x and is equivalent to `Processed` for backward compatibility. Performance telemetry exposes the same distinction as `VMsProcessed` and `VMsFullyAssessed`, while retaining legacy `VMsAudited`.
 
 Array members of `ReportData` and `RunData` display as `System.Object[]` in a default list view; enumerate them to see their elements. `ReportData` is `$null` for `NOT FOUND` / `ERROR`, so guard it before drilling in. Top-level `AssessmentConfidence`, `CollectionStatus`, and `RunData` remain available on those rows.
+
+## Anonymized performance observations
+
+These observations describe two anonymized v0.2.22 field runs and are historical measurements, not benchmark guarantees. Version 0.2.21 had introduced bounded cross-node overlap for cluster virtual-disk ownership inventory when the command runs on a verified target-cluster node. Both runs completed that phase with no failed ownership workers and materially lower coordinator wall time than aggregate worker time:
+
+| Aggregate observation | ~20-VM run | ~60-VM run |
+|---|---:|---:|
+| Total audit runtime | 1,563.7 s | 2,215.1 s |
+| Owning nodes scanned for events and VSS | 5 | 7 |
+| Ownership worker time, summed across nodes | 714.4 s | 669.7 s |
+| Ownership coordinator wall time | 268.7 s | approximately 216 s |
+| Event and VSS work in these v0.2.22 runs (before diagnostic prefetch) | 940.0 s | 1,210.8 s |
+
+The larger run audited roughly three times as many VMs but took approximately 1.4 times as long. In these observations, runtime correlated more strongly with owning-node count and cluster inventory cardinality than with VM count alone.
+
+Since v0.2.23, bounded diagnostic prefetch overlaps collection across up to four independent owner nodes; event collection and VSS collection remain sequential within each node to limit node-local pressure. Transient reads are retried up to three times, missing fan-out results retry sequentially, coordinator setup failures fall back to lazy per-node collection, and partial failures remain explicit. Version 0.2.24 retains this scheduling model.
+
+Applying the v0.2.23 schedule to the earlier component timings modeled opportunities of approximately 12.0 minutes for the ~20-VM run and 16.5 minutes for the ~60-VM run. Those figures are historical estimates, not measured post-change savings. Actual runtime depends on owner-node count, cluster inventory cardinality, event volume, WinRM startup, event-log service contention, CPU, storage, and VSS latency. Use the performance-telemetry JSON from representative runs in your own environment when evaluating operational impact or scheduling recurring audits; parent and child durations overlap and must not be summed.
 
 ## Release packaging (maintainers)
 
