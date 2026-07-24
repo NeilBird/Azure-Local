@@ -118,7 +118,7 @@ function Get-HyperVVMCheckpointHealth {
     Author  : Neil Bird, Microsoft
     Created : 2026-07-10
     Updated : 2026-07-24
-    Version : 0.2.24
+    Version : 0.2.25
     
     Requires: Windows PowerShell 5.1 (this module is written for, and validated against, Windows
               PowerShell 5.1 ONLY - it is NOT intended or tested for PowerShell 7.x). Requires the
@@ -366,7 +366,7 @@ Then run this in Windows PowerShell 5.1, on a cluster node or a workstation that
 
 # Module version - single source of truth surfaced in the HTML report (header meta + footer) so a
 # saved / emailed report always states which build produced it. Keep in sync with the .NOTES Version.
-$script:ScriptVersion = '0.2.24'
+$script:ScriptVersion = '0.2.25'
 
 # v0.2.14: end-to-end run stopwatch - started as early as possible so the HTML report can state the
 # total time taken to audit the whole fleet and render the report ("Report generation time hh:mm:ss").
@@ -714,7 +714,8 @@ function Get-NodeDiagnosticSnapshot {
                             if (-not (($codeRx -and $eventRecord.Message -match $codeRx) -or ($ConcernIds -contains $eventRecord.Id) -or ($ContextIds -contains $eventRecord.Id))) { continue }
                             $isConcern = (($codeRx -and $eventRecord.Message -match $codeRx) -or ($ConcernIds -contains $eventRecord.Id))
                             [void]$attemptRows.Add([pscustomobject]@{
-                                'Time (UTC)' = $eventRecord.TimeCreated.ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')
+                                'Time (UTC)' = $eventRecord.TimeCreated.ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ssZ')
+                                RecordId     = [long]$eventRecord.RecordId
                                 Id           = [int]$eventRecord.Id
                                 Level        = [string]$eventRecord.LevelDisplayName
                                 Log          = $log.Channel
@@ -1634,7 +1635,7 @@ function Get-HistoricVMEventCorrelation {
                             } | ForEach-Object {
                                 [void]$hits.Add([pscustomobject]@{
                                     Node    = $env:COMPUTERNAME
-                                    Time    = $_.TimeCreated.ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')
+                                    Time    = $_.TimeCreated.ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ssZ')
                                     Id      = [int]$_.Id
                                     Log     = $log.Channel
                                     Message = ($_.Message -split "`r?`n")[0]
@@ -1696,7 +1697,7 @@ function Get-HistoricVMEventCorrelation {
         NodesSearched      = @($Nodes | Where-Object { $_ } | Sort-Object -Unique)
         Matches            = $allMatches
         MatchCount         = @($allMatches).Count
-        OldestAvailableUtc = if ($oldestAll) { $oldestAll.ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss') } else { $null }
+        OldestAvailableUtc = if ($oldestAll) { $oldestAll.ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ssZ') } else { $null }
         CoverageComplete   = [bool]$coverageAssessment.Complete
         CoverageStatus     = [string]$coverageAssessment.OverallStatus
         Coverage           = @($coverageAssessment.Rows)
@@ -1838,6 +1839,7 @@ function Invoke-VMCheckpointAudit {
     $script:VMSectionStepNo   = $null
     $script:VMSectionName     = $null
     $reportFile = $null
+    $eventsCsvName = $null
     $reportTimestamp = [DateTime]::UtcNow.ToString('yyyyMMdd-HHmmss')
     if ($OutputPath) {
         if (-not (Test-Path -LiteralPath $OutputPath)) {
@@ -1926,6 +1928,26 @@ function Invoke-VMCheckpointAudit {
             Detail                  = $Detail
             ReportData              = $ReportData
         }
+    }
+
+    function Write-VMEventsMarkerCsv {
+        param([Parameter(Mandatory = $true)][string]$Message)
+
+        if (-not $OutputPath -or -not $reportFile) { return $null }
+
+        $markerCsvName = "{0}_Events_{1}.csv" -f ($VMName -replace '[^\w.\-]', '_'), [DateTime]::UtcNow.ToString('yyyy-MM-dd')
+        $markerCsvPath = Join-Path (Split-Path -Parent $reportFile) $markerCsvName
+        [pscustomobject]@{
+            'Time (UTC)' = ''
+            Id           = ''
+            Level        = 'Info'
+            Log          = ''
+            Concern      = ''
+            VmAttributed = ''
+            FullMessage  = $Message
+        } | Select-Object 'Time (UTC)', Id, Level, Log, Concern, VmAttributed, FullMessage |
+            Export-Csv -LiteralPath $markerCsvPath -NoTypeInformation -Encoding UTF8
+        return $markerCsvName
     }
 
     try {
@@ -2028,6 +2050,10 @@ function Invoke-VMCheckpointAudit {
 
     if (-not $OwningNode) {
         Write-AuditReportLine "VM '$VMName' not found on any node of cluster '$ClusterName'."
+        $eventsCsvName = Write-VMEventsMarkerCsv -Message "VM '$VMName' was not found on any node of cluster '$ClusterName'; event collection was not attempted."
+        if ($eventsCsvName) {
+            Write-AuditReportLine ("Events CSV marker written to: {0}" -f (Join-Path (Split-Path -Parent $reportFile) $eventsCsvName))
+        }
         return (New-AuditSummary -Recommendation 'NOT FOUND' -Detail 'VM not found on any cluster node.')
     }
 
@@ -2170,7 +2196,7 @@ function Invoke-VMCheckpointAudit {
         Write-AuditReportLine ("  {0,-27} : {1}" -f 'Checkpoint Type', $vm.CheckpointType)
     }
     Write-AuditReportLine ("  {0,-27} : {1} hours (flagged as 'YES')" -f 'Stale >=', $StaleHours)
-    Write-AuditReportLine ("  {0,-27} : {1} UTC" -f 'Report Generated', [DateTime]::UtcNow.ToString('yyyy-MM-dd HH:mm:ss'))
+    Write-AuditReportLine ("  {0,-27} : {1}" -f 'Report Generated', [DateTime]::UtcNow.ToString('yyyy-MM-dd HH:mm:ssZ'))
     Write-AuditReportLine "==================================================================="
 
     # Clustered role state / current owner (should match the Owning Node above):
@@ -2202,7 +2228,7 @@ function Invoke-VMCheckpointAudit {
     }
     if ($vmcxInfo) {
         Write-AuditReportLine ("  Path           : {0}" -f $vmcxInfo.FullName)
-        Write-AuditReportLine ("  LastWrite (UTC): {0}" -f $vmcxInfo.LastWriteTimeUtc.ToString('yyyy-MM-dd HH:mm:ss'))
+        Write-AuditReportLine ("  LastWrite (UTC): {0}" -f $vmcxInfo.LastWriteTimeUtc.ToString('yyyy-MM-dd HH:mm:ssZ'))
         Write-AuditReportLine ("  Age (hrs)      : {0}" -f [math]::Round(([DateTime]::UtcNow - $vmcxInfo.LastWriteTimeUtc).TotalHours, 1))
     } else {
         Write-AuditReportLine ("  Config file not found at expected path (older .xml format?): {0}" -f $vmcxPath)
@@ -2333,13 +2359,13 @@ function Invoke-VMCheckpointAudit {
             Write-Alert "  This disk's parent chain is incomplete; do not treat its layer counts as authoritative." -Level Critical
         }
         if ($top -and $top.Created) {
-            Write-AuditReportLine ("  Created (UTC)  : {0}" -f $top.Created.ToString('yyyy-MM-dd HH:mm:ss'))
+            Write-AuditReportLine ("  Created (UTC)  : {0}" -f $top.Created.ToString('yyyy-MM-dd HH:mm:ssZ'))
         } else {
             Write-AuditReportLine "  Created (UTC)  : (unavailable)"
         }
         if ($top -and $top.LastWrite) {
             $topAge = [math]::Round(([DateTime]::UtcNow - $top.LastWrite).TotalHours, 1)
-            Write-AuditReportLine ("  LastWrite (UTC): {0}" -f $top.LastWrite.ToString('yyyy-MM-dd HH:mm:ss'))
+            Write-AuditReportLine ("  LastWrite (UTC): {0}" -f $top.LastWrite.ToString('yyyy-MM-dd HH:mm:ssZ'))
             Write-AuditReportLine ("  Age (hrs)      : {0}  (hours since last write; ~0 = active / in-use)" -f $topAge)
             # Stale only applies to a DIFFERENCING (.avhdx) layer; other attached disk types are not aged as checkpoints.
             $topStale = if ($top.Type -eq 'Differencing') {
@@ -2380,7 +2406,7 @@ function Invoke-VMCheckpointAudit {
                     'VHD File Name'   = Split-Path $c.Path -Leaf
                     Type              = $c.Type
                     SizeGB            = $c.SizeGB
-                    'LastWrite (UTC)' = if ($c.LastWrite) { $c.LastWrite.ToString('yyyy-MM-dd HH:mm:ss') } else { '(unavailable)' }
+                    'LastWrite (UTC)' = if ($c.LastWrite) { $c.LastWrite.ToString('yyyy-MM-dd HH:mm:ssZ') } else { '(unavailable)' }
                     'Age (hrs)'       = if ($c.LastWrite) { [math]::Round(([DateTime]::UtcNow - $c.LastWrite).TotalHours, 1) } else { $null }
                     # Only DIFFERENCING (.avhdx) layers can be 'stale'. A Base disk's old timestamp is
                     # expected and healthy, so it shows 'n/a' rather than YES/NO.
@@ -2492,7 +2518,7 @@ function Invoke-VMCheckpointAudit {
                     default          { if ($_.SnapType) { $_.SnapType } else { 'Unknown' } }
                 }
             }},
-            @{N='Created (UTC)';E={ $_.CreationTimeUtc.ToString('yyyy-MM-dd HH:mm:ss') }},
+            @{N='Created (UTC)';E={ $_.CreationTimeUtc.ToString('yyyy-MM-dd HH:mm:ssZ') }},
             @{N='Age (hrs)';E={ [math]::Round(([DateTime]::UtcNow - $_.CreationTimeUtc).TotalHours, 1) }},
             @{N='Stale';E={ if (([DateTime]::UtcNow - $_.CreationTimeUtc).TotalHours -ge $StaleHours) { 'YES' } else { 'NO' } }},
             @{N='Parent';E={ $_.Parent }} | Out-Indented
@@ -2683,8 +2709,8 @@ function Invoke-VMCheckpointAudit {
             $orphans | Sort-Object LastWriteTimeUtc -Descending | Select-Object `
                 @{N='File Name';E={ $_.Name }},
                 @{N='SizeGB';E={ [math]::Round($_.Length / 1GB, 2) }},
-                @{N='Created (UTC)';E={ if ($_.CreationTimeUtc)  { $_.CreationTimeUtc.ToString('yyyy-MM-dd HH:mm:ss') }  else { '(unavailable)' } }},
-                @{N='LastWrite (UTC)';E={ if ($_.LastWriteTimeUtc) { $_.LastWriteTimeUtc.ToString('yyyy-MM-dd HH:mm:ss') } else { '(unavailable)' } }},
+                @{N='Created (UTC)';E={ if ($_.CreationTimeUtc)  { $_.CreationTimeUtc.ToString('yyyy-MM-dd HH:mm:ssZ') }  else { '(unavailable)' } }},
+                @{N='LastWrite (UTC)';E={ if ($_.LastWriteTimeUtc) { $_.LastWriteTimeUtc.ToString('yyyy-MM-dd HH:mm:ssZ') } else { '(unavailable)' } }},
                 FullName | Format-Table -AutoSize -Wrap | Out-Indented
             Write-AuditReportLine  "  Complete cluster ownership coverage found no VM or snapshot chain referencing these files."
             Write-AuditReportLine  "  A stuck / failed merge, a failed backup checkpoint, an interrupted instant-recovery /"
@@ -2763,7 +2789,7 @@ function Invoke-VMCheckpointAudit {
                     ReplicationRelationshipType = [string]$r.ReplicationRelationshipType
                     PrimaryServerName           = [string]$r.PrimaryServerName
                     ReplicaServerName           = [string]$r.ReplicaServerName
-                    LastReplicationTime         = [string]$r.LastReplicationTime
+                    LastReplicationTime         = if ($r.LastReplicationTime) { ([datetime]$r.LastReplicationTime).ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ssZ') } else { '' }
                     FrequencySec                = [string]$r.FrequencySec
                     ReplicationHealthDetails    = [string]($r.ReplicationHealthDetails -join '; ')
                 } } else { $null }
@@ -2868,7 +2894,7 @@ function Invoke-VMCheckpointAudit {
             $hrlAssessment.Rows | Sort-Object Name | Select-Object `
                 Name,
                 @{N='SizeMB';E={ [math]::Round($_.Length / 1MB, 2) }},
-                @{N='LastWrite (UTC)';E={ $_.LastWriteTimeUtc.ToString('yyyy-MM-dd HH:mm:ss') }},
+                @{N='LastWrite (UTC)';E={ $_.LastWriteTimeUtc.ToString('yyyy-MM-dd HH:mm:ssZ') }},
                 @{N='Age (mins)';E={ [math]::Round($_.AgeMinutes, 1) }},
                 @{N='Exceeds cadence';E={ if ($_.ExceedsCadence) { 'YES' } else { 'NO' } }},
                 FullName | Format-Table -AutoSize -Wrap | Out-Indented
@@ -2904,7 +2930,6 @@ function Invoke-VMCheckpointAudit {
     $concernEvents       = @()
     $vmConcernEvents     = @()
     $vmEventConcernCount = 0
-    $eventsCsvName       = $null
     $eventCollectionStatus = [pscustomobject]@{
         Status = 'Skipped'; Error = ''; SourceNode = $OwningNode; AttemptedUtc = $null; AttemptCount = 0; ChannelStatus = @()
     }
@@ -2944,7 +2969,8 @@ function Invoke-VMCheckpointAudit {
                                 if (-not (($codeRx -and $eventRecord.Message -match $codeRx) -or ($concernIds -contains $eventRecord.Id) -or ($contextIds -contains $eventRecord.Id))) { continue }
                                 $isConcern = (($codeRx -and $eventRecord.Message -match $codeRx) -or ($concernIds -contains $eventRecord.Id))
                                 [void]$rows.Add([pscustomobject]@{
-                                    'Time (UTC)' = $eventRecord.TimeCreated.ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')
+                                    'Time (UTC)' = $eventRecord.TimeCreated.ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ssZ')
+                                    RecordId     = [long]$eventRecord.RecordId
                                     Id           = [int]$eventRecord.Id
                                     Level        = [string]$eventRecord.LevelDisplayName
                                     Log          = $log.Channel
@@ -3036,6 +3062,7 @@ function Invoke-VMCheckpointAudit {
                     -Message ([string]$_.FullMessage) -Policy $script:EventPolicy
                 [pscustomobject]@{
                     'Time (UTC)' = $_.'Time (UTC)'
+                    RecordId     = $_.RecordId
                     Id           = $_.Id
                     Level        = $_.Level
                     Log          = $_.Log
@@ -3062,7 +3089,7 @@ function Invoke-VMCheckpointAudit {
             -StartUtc $eventAttributionStart -EndUtc (Get-TelemetryNow)
 
         if ($workerEvents -and $workerEvents.Count -gt 0) {
-            $workerEvents      = @($workerEvents | Sort-Object 'Time (UTC)')
+            $workerEvents      = @($workerEvents | Sort-Object 'Time (UTC)', Log, RecordId, Id, FullMessage)
             $concernEvents     = @($workerEvents | Where-Object { $_.Concern -eq 'YES' })
             $eventConcernCount = $concernEvents.Count
             # v0.2.12: split concern events into those attributable to THIS VM vs node-wide (other VMs).
@@ -3101,14 +3128,14 @@ function Invoke-VMCheckpointAudit {
             $displayRows  = [System.Collections.Generic.List[object]]::new()
             $removedNotes = [System.Collections.Generic.List[string]]::new()
             $workerEvents | Group-Object Id | Sort-Object { [int]$_.Name } | ForEach-Object {
-                $grp = @($_.Group | Sort-Object 'Time (UTC)')
+                $grp = @($_.Group | Sort-Object 'Time (UTC)', Log, RecordId, Id, FullMessage)
                 foreach ($e in ($grp | Select-Object -First $perIdCap)) { $displayRows.Add($e) }
                 if ($grp.Count -gt $perIdCap) {
                     $removedNotes.Add(("  Removed {0} duplicate Event ID {1} entries (showing first {2}) - Review CSV file for full details." -f ($grp.Count - $perIdCap), $_.Name, $perIdCap))
                 }
             }
             # Console table shows the first message line only (readability); full text is in the CSV.
-            @($displayRows | Sort-Object 'Time (UTC)') | Format-Table 'Time (UTC)', Id, Level, Log, Concern, Message -AutoSize -Wrap | Out-Indented
+            @($displayRows | Sort-Object 'Time (UTC)', Log, RecordId, Id, FullMessage) | Format-Table 'Time (UTC)', Id, Level, Log, Concern, Message -AutoSize -Wrap | Out-Indented
             foreach ($note in $removedNotes) { Write-AuditReportLine $note }
             if ($removedNotes.Count -gt 0) { Write-AuditReportLine "" }
             Write-AuditReportLine ("  {0} event(s) matched ({1} shown after collapsing duplicates); {2} flagged as a Concern - {3} attributable to this VM, {4} node-wide (other VMs / none)." -f $workerEvents.Count, $displayRows.Count, $eventConcernCount, $vmEventConcernCount, ($eventConcernCount - $vmEventConcernCount))
@@ -3144,16 +3171,7 @@ function Invoke-VMCheckpointAudit {
                 # No events attributable to THIS VM: still write the per-VM CSV (same columns) with one
                 # informational marker row, so the presence of the file confirms the scan ran.
                 $noneMsg = if ($nodeCsvForVm) { "No Hyper-V Worker/VMMS events attributable to this VM in the last $EventLookbackHours hours (scan ran). Node-wide events (all VMs on $OwningNode) are in $nodeCsvForVm." } else { "No matching Hyper-V Worker/VMMS events in the last $EventLookbackHours hours (scan ran; nothing to report)." }
-                [pscustomobject]@{
-                    'Time (UTC)' = ''
-                    Id           = ''
-                    Level        = 'Info'
-                    Log          = ''
-                    Concern      = ''
-                    VmAttributed = ''
-                    FullMessage  = $noneMsg
-                } | Select-Object 'Time (UTC)', Id, Level, Log, Concern, VmAttributed, FullMessage |
-                    Export-Csv -LiteralPath $csvPath -NoTypeInformation -Encoding UTF8
+                $eventsCsvName = Write-VMEventsMarkerCsv -Message $noneMsg
                 Write-AuditReportLine "  (No events attributable to this VM - wrote a marker row: $csvPath$(if ($nodeCsvForVm) { "; node-wide events in $nodeCsvForVm" }))"
             }
         }
@@ -3531,7 +3549,7 @@ function Invoke-VMCheckpointAudit {
         if (@($oldActiveCkpts).Count -gt 0) {
             Show-AuditProgress -Step 70 -Status 'Historic event correlation (around active checkpoint create times)'
             $activeCkptTimes           = @($oldActiveCkpts | ForEach-Object { $_.CreationTimeUtc } | Where-Object { $_ })
-            $activeCkptOldestCreateUtc = (@($activeCkptTimes | Sort-Object)[0]).ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss')
+            $activeCkptOldestCreateUtc = (@($activeCkptTimes | Sort-Object)[0]).ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ssZ')
             try {
                 $activeCkptHistoric = Get-HistoricVMEventCorrelation -VMName $VMName -VMId ([string]$vm.VMId) `
                     -Nodes $clusterNodes -Timestamps $activeCkptTimes -WindowMinutes 120 `
@@ -3808,7 +3826,7 @@ function Invoke-VMCheckpointAudit {
     Write-AuditReportLine ("  Cluster / Owner : {0} / {1}" -f $ClusterName, $OwningNode)
     Write-AuditReportLine ("  VM              : {0}  (Id {1})" -f $VMName, $vm.VMId)
     Write-AuditReportLine ("  VM State/Status : {0} / {1}" -f $vm.State, $vm.Status)
-    Write-AuditReportLine ("  Report run at   : {0} UTC" -f [DateTime]::UtcNow.ToString('yyyy-MM-dd HH:mm:ss'))
+    Write-AuditReportLine ("  Report run at   : {0}" -f [DateTime]::UtcNow.ToString('yyyy-MM-dd HH:mm:ssZ'))
     Write-AuditReportLine ""
     if ($hasCheckpoints -and $holdState) {
         Write-AuditReportLine ("  This VM is running on {0} active differencing (.avhdx checkpoint) disk layer(s) over its base" -f $totalCheckpoints)
@@ -4084,7 +4102,7 @@ function Invoke-VMCheckpointAudit {
             Name    = [string]$_.Name
             Type    = [string]$_.Type
             Purpose = $purpose
-            Created = $_.CreationTimeUtc.ToString('yyyy-MM-dd HH:mm:ss')
+            Created = $_.CreationTimeUtc.ToString('yyyy-MM-dd HH:mm:ssZ')
             AgeHrs  = $ageH
             Stale   = ($ageH -ge $StaleHours)
             Parent  = [string]$_.Parent
@@ -4134,15 +4152,15 @@ function Invoke-VMCheckpointAudit {
         $likely  = switch ($cls) {
             'RollbackFingerprintCandidate' { 'Common-date rollback fingerprint candidate - do NOT remove; investigate / recover' }
             'StuckMerge'   { ("Possible stuck / failed merge (event {0}) - investigate before any action" -f $mergeId) }
-            'TransientDeleteLockObserved' { if ($lockTime) { "A delete was attempted on $lockTime UTC and blocked by a transient in-use lock (event 16220, 0x80070020). This records evidence only; it does not establish current ownership or authorize removal. Validate with the backup team and VM owner before any action." } else { "A prior delete attempt was blocked by a transient in-use lock (event 16220, 0x80070020). This records evidence only; it does not establish current ownership or authorize removal. Validate with the backup team and VM owner before any action." } }
+            'TransientDeleteLockObserved' { if ($lockTime) { "A delete was attempted on $lockTime and blocked by a transient in-use lock (event 16220, 0x80070020). This records evidence only; it does not establish current ownership or authorize removal. Validate with the backup team and VM owner before any action." } else { "A prior delete attempt was blocked by a transient in-use lock (event 16220, 0x80070020). This records evidence only; it does not establish current ownership or authorize removal. Validate with the backup team and VM owner before any action." } }
             'LiveMount'    { 'Likely backup live-mount / instant-recovery artifact - match to the mount / restore job for this VM at its timestamp, then unmount it THROUGH the backup product (do NOT delete the file by hand)' }
             default        { 'Possible leftover backup or Replica file. Match it to a backup, restore, or replica-seed job for this VM at its Created and LastWrite times. Do not move, rename, merge, or delete it until ownership and purpose are confirmed. Use a procedure approved by the backup vendor or Microsoft Support.' }
         }
         [pscustomobject]@{
             Name      = [string]$_.Name
             SizeGB    = [math]::Round($_.Length / 1GB, 2)
-            Created   = if ($_.CreationTimeUtc)  { $_.CreationTimeUtc.ToString('yyyy-MM-dd HH:mm:ss') }  else { '' }
-            LastWrite = if ($_.LastWriteTimeUtc) { $_.LastWriteTimeUtc.ToString('yyyy-MM-dd HH:mm:ss') } else { '' }
+            Created   = if ($_.CreationTimeUtc)  { $_.CreationTimeUtc.ToString('yyyy-MM-dd HH:mm:ssZ') }  else { '' }
+            LastWrite = if ($_.LastWriteTimeUtc) { $_.LastWriteTimeUtc.ToString('yyyy-MM-dd HH:mm:ssZ') } else { '' }
             AgeHrs    = $ageHrs
             AgeDays   = $ageDays
             Class     = $cls
@@ -4180,8 +4198,8 @@ function Invoke-VMCheckpointAudit {
                     Path       = [string]$layer.Path
                     Type       = [string]$layer.Type
                     SizeGB     = $layer.SizeGB
-                    Created    = if ($layer.Created) { ([datetime]$layer.Created).ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ss') } else { '' }
-                    LastWrite  = if ($lastWriteUtc) { $lastWriteUtc.ToString('yyyy-MM-dd HH:mm:ss') } else { '' }
+                    Created    = if ($layer.Created) { ([datetime]$layer.Created).ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ssZ') } else { '' }
+                    LastWrite  = if ($lastWriteUtc) { $lastWriteUtc.ToString('yyyy-MM-dd HH:mm:ssZ') } else { '' }
                     AgeHrs     = if ($lastWriteUtc) { [math]::Round(([datetime]::UtcNow - $lastWriteUtc).TotalHours, 1) } else { $null }
                     Stale      = ([string]$layer.Type -eq 'Differencing') -and $lastWriteUtc -and (([datetime]::UtcNow - $lastWriteUtc).TotalHours -ge $StaleHours)
                     ParentPath = if (($layerIndex + 1) -lt $diskChain.Count) { [string]$diskChain[$layerIndex + 1].Path } else { '' }
@@ -4834,7 +4852,7 @@ end {
             $htmlStart = Get-TelemetryNow
             $html = ConvertTo-VMCheckpointAuditHtml -Results $script:AllAuditResults.ToArray() `
                 -StaleHours $StaleHours -EventLookbackHours $EventLookbackHours `
-                -ClusterName $clusterForName -GeneratedUtc ([DateTime]::UtcNow.ToString('yyyy-MM-dd HH:mm:ss')) `
+                -ClusterName $clusterForName -GeneratedUtc ([DateTime]::UtcNow.ToString('yyyy-MM-dd HH:mm:ssZ')) `
                 -DiscoveredVMs $discoveredVMs -DiscoverySummary $discoverySummary `
                 -StorageHealth $script:ClusterStorageHealth -HousekeepingFindings $script:HousekeepingFindings.ToArray() `
                 -IncludeDiscoveredVMs:$IncludeDiscoveredVMs `

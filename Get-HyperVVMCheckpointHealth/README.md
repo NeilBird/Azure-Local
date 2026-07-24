@@ -6,7 +6,7 @@
 
 - Module: `Get-HyperVVMCheckpointHealth`
 - Updated: 2026-07-24
-- Version: 0.2.24
+- Version: 0.2.25
 
 ## TL;DR
 
@@ -18,7 +18,7 @@ This module provides insights that should be used as part of an operator investi
 
 > **See an example / fictitious report before running the module:** review the [synthetic Contoso HTML report](./examples/VMCheckpointAudit-contoso01-example.html) and the [screenshots below](#synthetic-example-report). To view the interactive report, download the HTML file and open it locally. It contains only invented `contoso01`, `node01`-`node10`, `TestVM01`-`TestVM20`, event, timestamp, and `C:\ClusterStorage\UserStorage_X\` values.
 
-> **Recovery knowledge reference:** [Hyper-V AVHDX Parent-Chain Recovery Technical Reference](./docs/Hyper-V-AVHDX-Chain-Recovery-Reference.md) provides informational background on chain evidence, stop conditions, and relevant Hyper-V cmdlets. It is not module remediation guidance or an approved customer change procedure. For any live customer support issue involving a broken or potentially inconsistent VHDX/AVHDX chain, open a Microsoft Support (CSS) case before making changes.
+> **Safety stop:** For a suspected broken or inconsistent VHDX/AVHDX chain, do not modify the files based on this report; open a Microsoft Support (CSS) case before making changes. The informational recovery reference is described [below](#recovery-technical-reference).
 
 ## Overview and details of intended use
 
@@ -60,7 +60,7 @@ The module is **read-only** with respect to the VMs, disks, checkpoints, cluster
 
 ## Recovery technical reference
 
-The separate [Hyper-V AVHDX Parent-Chain Recovery Technical Reference](./docs/Hyper-V-AVHDX-Chain-Recovery-Reference.md) explains differencing-disk chain evidence and relevant supported cmdlets for experienced administrators. It is **knowledge and informational guidance only**. It is not executed or consumed by this module, is not included in the runtime release ZIP, and must not be treated as authorization to remediate a finding from the audit. For any live customer support issue involving a broken or potentially inconsistent VHDX/AVHDX chain, open a **Microsoft Support (CSS) case before making changes**.
+The separate [Hyper-V AVHDX Parent-Chain Recovery Technical Reference](./docs/Hyper-V-AVHDX-Chain-Recovery-Reference.md) explains differencing-disk chain evidence, stop conditions, and relevant supported cmdlets for experienced administrators. It is **knowledge and informational guidance only**, not module remediation guidance or an approved customer change procedure. It is not executed or consumed by this module, is not included in the runtime release ZIP, and must not be treated as authorization to remediate a finding from the audit. For any live customer support issue involving a broken or potentially inconsistent VHDX/AVHDX chain, open a **Microsoft Support (CSS) case before making changes**.
 
 ### Operational impact
 
@@ -96,7 +96,7 @@ Treat every saved audit artifact as **sensitive operational data**. The `.txt`, 
 
 ### Internal structure
 
-Version 0.2.24 is distributed as a PowerShell module with a single exported command and manifest-managed private nested modules. Keep the extracted directory intact:
+Version 0.2.25 is distributed as a PowerShell module with a single exported command and manifest-managed private nested modules. Keep the extracted directory intact:
 
 ```text
 Get-HyperVVMCheckpointHealth\
@@ -133,16 +133,16 @@ Two supported ways to run it, both single-hop:
 
 ### Download and import the module
 
-Download the versioned ZIP from the repository's [GitHub Releases page](https://github.com/NeilBird/Azure-Local/releases). The supported 0.2.24 release asset is `Get-HyperVVMCheckpointHealth-0.2.24.zip`; it contains the manifest, root module, five private modules, example policy YAML, README, and license. Do not use a raw single-file link because the module requires its manifest and sibling private modules.
+Download the versioned ZIP from the repository's [GitHub Releases page](https://github.com/NeilBird/Azure-Local/releases). The supported 0.2.25 release asset is `Get-HyperVVMCheckpointHealth-0.2.25.zip`; it contains the manifest, root module, five private modules, example policy YAML, README, and license. Do not use a raw single-file link because the module requires its manifest and sibling private modules.
 
 The release also publishes [`Setup-Get-HyperVVMCheckpointHealth.ps1`](Setup-Get-HyperVVMCheckpointHealth.ps1) as a separate asset outside the ZIP. The setup script is pinned to the supported version and SHA256 hash and changes files only beneath `<InstallRoot>\Get-HyperVVMCheckpointHealth` (`C:\Temp\Get-HyperVVMCheckpointHealth` by default). It validates the staged manifest/version before replacing that directory, restores the previous directory if installation validation fails, imports the module, and verifies the command without running an audit. Use `-InstallRoot` to choose another parent directory and `-WhatIf` for a no-change preview. Do not use an installation root where the `Get-HyperVVMCheckpointHealth` child directory contains unrelated files.
 
 Download the ZIP, download the setup script, and run the setup script:
 
 ```powershell
-Invoke-WebRequest 'https://github.com/NeilBird/Azure-Local/releases/download/Get-HyperVVMCheckpointHealth-v0.2.24/Get-HyperVVMCheckpointHealth-0.2.24.zip' -OutFile "$env:TEMP\Get-HyperVVMCheckpointHealth-0.2.24.zip"
-Invoke-WebRequest 'https://github.com/NeilBird/Azure-Local/releases/download/Get-HyperVVMCheckpointHealth-v0.2.24/Setup-Get-HyperVVMCheckpointHealth.ps1' -OutFile "$env:TEMP\Setup-Get-HyperVVMCheckpointHealth.ps1"
-Unblock-File "$env:TEMP\Setup-Get-HyperVVMCheckpointHealth.ps1"; & "$env:TEMP\Setup-Get-HyperVVMCheckpointHealth.ps1" -ZipPath "$env:TEMP\Get-HyperVVMCheckpointHealth-0.2.24.zip"
+Invoke-WebRequest 'https://github.com/NeilBird/Azure-Local/releases/download/Get-HyperVVMCheckpointHealth-v0.2.25/Get-HyperVVMCheckpointHealth-0.2.25.zip' -OutFile "$env:TEMP\Get-HyperVVMCheckpointHealth-0.2.25.zip"
+Invoke-WebRequest 'https://github.com/NeilBird/Azure-Local/releases/download/Get-HyperVVMCheckpointHealth-v0.2.25/Setup-Get-HyperVVMCheckpointHealth.ps1' -OutFile "$env:TEMP\Setup-Get-HyperVVMCheckpointHealth.ps1"
+Unblock-File "$env:TEMP\Setup-Get-HyperVVMCheckpointHealth.ps1"; & "$env:TEMP\Setup-Get-HyperVVMCheckpointHealth.ps1" -ZipPath "$env:TEMP\Get-HyperVVMCheckpointHealth-0.2.25.zip"
 ```
 
 Then run the audit separately. On a cluster node:
@@ -348,6 +348,8 @@ These YAML settings are separate from normal command parameters such as `-StaleH
 
 ## What it reports
 
+All displayed absolute timestamps are normalized to **UTC/Zulu** and use a trailing `Z` (for example, `2026-07-24 10:54:04Z`). This applies consistently across TXT reports, event CSVs, the HTML report, and generated report metadata so evidence collected from nodes in different local time zones can be compared directly. Relative durations and ages remain expressed in their documented units.
+
 1. **Header** — cluster, VM name, VM Id (GUID), owning node, status/state, **VM config version** and the **latest version supported by the cluster** (via `Get-VMHostSupportedVersion`), uptime, then two checkpoint-config fields, the stale threshold and run time (UTC). When the VM's config version is older than the latest, a separate low **VM Configuration Version** section notes this as *migration / start* context — with the exact wording from the Microsoft guide and the `Update-VMVersion` remediation — and states explicitly that it is **not** a cause of the checkpoint/merge failure being investigated.
    - **Auto Checkpoints** (`AutomaticCheckpointsEnabled`) — when `True`, Hyper-V takes a checkpoint **automatically every time the VM starts** (a Client Hyper-V default; normally `False` on servers/clusters). A `True` here explains "unexpected" `.avhdx` layers appearing on boot.
    - **Checkpoint Type** (`CheckpointType`) — the style of checkpoint the VM is configured to take, which governs how each checkpoint's fork is committed: `Production` = app-consistent via in-guest VSS (falls back to Standard if VSS is unavailable); `ProductionOnly` = same but fails with no fallback; `Standard` = captures saved memory/running state (dev/test); `Disabled` = checkpoints not allowed. The value is annotated inline in the output.
@@ -466,7 +468,7 @@ When `-OutputPath` is used, a results **`.zip`** bundling the run folder's `.txt
 ```
 
 - **`<VMName>_VMAudit_<yyyyMMdd-HHmmss>.txt`** — the full per-VM report (written from the captured output buffer; complete regardless of `-Quiet`).
-- **`<VMName>_Events_<yyyy-MM-dd>.csv`** — that VM's **VM-attributed** events with the **complete, untruncated** message text (newlines flattened to ` | `). The `.txt` collapses repeated rows for the same event ID (first few shown + a `Removed N duplicate...` note), so use this CSV for the full record of every event.
+- **`<VMName>_Events_<yyyy-MM-dd>.csv`** — that VM's **VM-attributed** events with the **complete, untruncated** message text (newlines flattened to ` | `). The `.txt` collapses repeated rows for the same event ID (first few shown + a `Removed N duplicate...` note), so use this CSV for the full record of every event. Rows with the same second are ordered deterministically using the native event record identity. A `NOT FOUND` VM still receives this CSV with the same seven-column schema and one informational marker row explaining that event collection was not attempted.
 - **`_NodeEvents_<node>_<yyyy-MM-dd>.csv`** — (v0.2.14) the **node-wide** event scan for each owning node, written **once per node** rather than duplicated into every VM's CSV. Node-wide events (e.g. a repeated `15268` flood that references many VMs) are shared context, so keeping them in one per-node file — and each VM's CSV to just its own attributed rows — dramatically shrinks large fleet runs. Each per-VM report points to the relevant node CSV for the node-wide detail.
 - **`VMCheckpointAudit-<ClusterName>-<yyyy-MM-dd>.html`** — the single portable fleet report covering all audited VMs (see [Portable HTML report](#portable-html-report--results-bundle)).
 - **`VMCheckpointAudit-<ClusterName>-<yyyy-MM-dd>.zip`** — a bundle of the run folder (`.txt` + `.csv` + `.html` + telemetry `.json` + conditional debug log), for copying to a browser device / attaching to a support case in one file.
@@ -638,11 +640,11 @@ Set-Location .\Get-HyperVVMCheckpointHealth
 Generated assets are written to the ignored `release` directory:
 
 ```text
-release\Get-HyperVVMCheckpointHealth-0.2.24.zip
-release\Get-HyperVVMCheckpointHealth-0.2.24.zip.sha256
+release\Get-HyperVVMCheckpointHealth-0.2.25.zip
+release\Get-HyperVVMCheckpointHealth-0.2.25.zip.sha256
 ```
 
-Create the GitHub release with tag `Get-HyperVVMCheckpointHealth-v0.2.24` and upload the generated ZIP, its SHA256 file, and `Setup-Get-HyperVVMCheckpointHealth.ps1` as three separate assets. The setup script remains outside the ZIP. Before publishing a future version:
+Create the GitHub release with tag `Get-HyperVVMCheckpointHealth-v0.2.25` and upload the generated ZIP, its SHA256 file, and `Setup-Get-HyperVVMCheckpointHealth.ps1` as three separate assets. The setup script remains outside the ZIP. Before publishing a future version:
 
 1. Update the version in the root module, manifest, README, release notes, and the setup script's `$version` value.
 2. Run the redirected Windows PowerShell 5.1 Pester suite.
@@ -651,6 +653,15 @@ Create the GitHub release with tag `Get-HyperVVMCheckpointHealth-v0.2.24` and up
 5. Publish the ZIP and checksum as release assets using the tag and asset naming convention above.
 
 ## What's New
+
+### Version 0.2.25
+
+- Uses **CONFIRMED** wording in the executive summary and primary per-VM callout when recovered historic fork-commit / merge-failure events confirm the scenario; fingerprint-only cases remain **possible**.
+- Normalizes all displayed absolute timestamps to UTC/Zulu with a trailing `Z`, including Hyper-V Replica relationship times.
+- Writes a schema-consistent informational event CSV for `NOT FOUND` VMs, preserving the one-TXT-plus-one-CSV per-VM artifact contract.
+- Orders events with identical second-resolution timestamps deterministically using their channel and native event record identity while keeping the public CSV columns unchanged.
+- Wraps long generated node/channel scope tokens in mobile callouts instead of clipping them.
+- Expands the housekeeping executive-summary action to include required VM images, inconsistent VM VHD paths, and unrequired orphaned objects.
 
 ### Version 0.2.24
 
