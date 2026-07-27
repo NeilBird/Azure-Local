@@ -118,7 +118,7 @@ function Get-HyperVVMCheckpointHealth {
     Author  : Neil Bird, Microsoft
     Created : 2026-07-10
     Updated : 2026-07-27
-    Version : 0.2.27
+    Version : 0.2.28
     
     Requires: Windows PowerShell 5.1 (this module is written for, and validated against, Windows
               PowerShell 5.1 ONLY - it is NOT intended or tested for PowerShell 7.x). Requires the
@@ -366,7 +366,7 @@ Then run this in Windows PowerShell 5.1, on a cluster node or a workstation that
 
 # Module version - single source of truth surfaced in the HTML report (header meta + footer) so a
 # saved / emailed report always states which build produced it. Keep in sync with the .NOTES Version.
-$script:ScriptVersion = '0.2.27'
+$script:ScriptVersion = '0.2.28'
 
 # v0.2.14: end-to-end run stopwatch - started as early as possible so the HTML report can state the
 # total time taken to audit the whole fleet and render the report ("Report generation time hh:mm:ss").
@@ -691,7 +691,7 @@ function Get-ReplicaAssessmentRows {
         'Within effective limit'
     }
     $lastReplicationText = if ($Assessment.MeasurementsAvailable -and $Assessment.LastReplicationTimeUtc -and ([datetime]$Assessment.LastReplicationTimeUtc -ne [datetime]::MinValue)) {
-        '{0} ({1:N1} min ago)' -f ([datetime]$Assessment.LastReplicationTimeUtc).ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ssZ'), [double]$Assessment.LastReplicationAgeMinutes
+        '{0} ({1} ago)' -f ([datetime]$Assessment.LastReplicationTimeUtc).ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ssZ'), (ConvertTo-ReplicaDurationText -Minutes ([double]$Assessment.LastReplicationAgeMinutes))
     } else { 'Unavailable' }
     $cycleText = if ($Assessment.MeasurementsAvailable) {
         'Successful {0}; missed {1}; missed rate {2}' -f $(if ([long]$Assessment.SuccessfulCount -ge 0) { [long]$Assessment.SuccessfulCount } else { 'Unavailable' }), [long]$Assessment.MissedCount, $(if ($null -ne $Assessment.MissedRatePercent) { '{0:N2}%' -f [double]$Assessment.MissedRatePercent } else { 'Unavailable' })
@@ -702,7 +702,7 @@ function Get-ReplicaAssessmentRows {
         [pscustomobject]@{ Signal = 'Relationship'; Observed = "Mode $($Assessment.Mode)"; Guardrail = "Primary $PrimaryServer; replica $ReplicaServer"; Assessment = 'Context' }
         [pscustomobject]@{ Signal = 'Replication cadence'; Observed = $(if ([double]$Assessment.FrequencySeconds -gt 0) { '{0:N1} sec' -f [double]$Assessment.FrequencySeconds } else { 'Unavailable' }); Guardrail = 'Used to calculate relationship-aware limits'; Assessment = 'Context' }
         [pscustomobject]@{ Signal = 'Monitoring window'; Observed = $(if ([double]$Assessment.MonitoringIntervalSeconds -gt 0) { [timespan]::FromSeconds([double]$Assessment.MonitoringIntervalSeconds).ToString() } else { 'Unavailable' }); Guardrail = 'Get-VMReplicationServer monitoring interval'; Assessment = 'Context' }
-        [pscustomobject]@{ Signal = 'Last replication'; Observed = $lastReplicationText; Guardrail = $(if ([double]$Assessment.EffectiveMaxAgeMinutes -gt 0) { '{0:N1} min effective maximum age' -f [double]$Assessment.EffectiveMaxAgeMinutes } else { 'Unavailable' }); Assessment = (& $getMetricAssessment 'LastReplicationAge') }
+        [pscustomobject]@{ Signal = 'Last replication'; Observed = $lastReplicationText; Guardrail = $(if ([double]$Assessment.EffectiveMaxAgeMinutes -gt 0) { '{0} effective maximum age' -f (ConvertTo-ReplicaDurationText -Minutes ([double]$Assessment.EffectiveMaxAgeMinutes)) } else { 'Unavailable' }); Assessment = (& $getMetricAssessment 'LastReplicationAge') }
         [pscustomobject]@{ Signal = 'Average replication size'; Observed = $(if ($Assessment.MeasurementsAvailable) { ConvertTo-AuditByteText ([long]$Assessment.AverageReplicationBytes) } else { 'Unavailable' }); Guardrail = 'Workload baseline for pending-data limit'; Assessment = 'Context' }
         [pscustomobject]@{ Signal = 'Pending replication data'; Observed = $(if ($Assessment.MeasurementsAvailable) { ConvertTo-AuditByteText ([long]$Assessment.PendingBytes) } else { 'Unavailable' }); Guardrail = $(if ([long]$Assessment.EffectiveMaxPendingBytes -gt 0) { "$(ConvertTo-AuditByteText ([long]$Assessment.EffectiveMaxPendingBytes)) effective maximum" } else { 'Unavailable' }); Assessment = (& $getMetricAssessment 'PendingBytes') }
         [pscustomobject]@{ Signal = 'Average replication latency'; Observed = $(if ($Assessment.MeasurementsAvailable) { '{0:N1} sec' -f [double]$Assessment.LatencySeconds } else { 'Unavailable' }); Guardrail = $(if ([double]$Assessment.EffectiveMaxLatencySeconds -gt 0) { '{0:N1} sec effective maximum' -f [double]$Assessment.EffectiveMaxLatencySeconds } else { 'Unavailable' }); Assessment = (& $getMetricAssessment 'Latency') }
@@ -1614,17 +1614,29 @@ function Get-HistoricVMEventCorrelation {
         [string]$VMId,
         [string[]]$Nodes,
         [datetime[]]$Timestamps,
+        [object[]]$CorrelationAnchors = @(),
         [int]$WindowMinutes = 60,
         [int[]]$SignatureIds,
-        [string]$SignatureRx
+        [string]$SignatureRx,
+        [ValidateSet('HistoricOrphanWindow', 'HistoricActiveCheckpointWindow')]
+        [string]$EvidenceScope = 'HistoricOrphanWindow'
     )
     # Collapse the orphan timestamps to distinct search windows (round DOWN to the hour) so many
     # orphans frozen at the same moment produce ONE window, not dozens. NOTE: build a fresh
     # hour-truncated DateTime (zeroing minutes/seconds AND milliseconds) - subtracting whole minutes /
     # seconds leaves the sub-second component intact, which defeats Sort-Object -Unique and produces
     # many near-identical windows.
-    $hourWindows = @($Timestamps | Where-Object { $_ } | ForEach-Object {
-            $u = $_.ToUniversalTime()
+    $anchorRows = if (@($CorrelationAnchors).Count -gt 0) {
+        @($CorrelationAnchors | Where-Object { $_ -and $_.Time } | ForEach-Object {
+            [pscustomobject]@{ Time = ([datetime]$_.Time).ToUniversalTime(); Type = [string]$_.Type }
+        })
+    } else {
+        @($Timestamps | Where-Object { $_ } | ForEach-Object {
+            [pscustomobject]@{ Time = $_.ToUniversalTime(); Type = 'Unspecified' }
+        })
+    }
+    $hourWindows = @($anchorRows | ForEach-Object {
+            $u = $_.Time
             [datetime]::new($u.Year, $u.Month, $u.Day, $u.Hour, 0, 0, [System.DateTimeKind]::Utc)
         } | Sort-Object -Unique)
     if ($hourWindows.Count -eq 0) { return $null }
@@ -1646,10 +1658,14 @@ function Get-HistoricVMEventCorrelation {
             $ranges.Add([pscustomobject]@{ Start = $s; End = $e })
         }
     }
+    foreach ($range in $ranges) {
+        $rangeAnchors = @($anchorRows | Where-Object { $_.Time -ge $range.Start -and $_.Time -le $range.End } | ForEach-Object { $_.Type } | Sort-Object -Unique)
+        Add-Member -InputObject $range -NotePropertyName Anchor -NotePropertyValue ($rangeAnchors -join '+') -Force
+    }
 
     $localNode = $env:COMPUTERNAME
     $scan = {
-        param($vmName, $vmId, $ranges, $sigIds, $sigRx)
+        param($vmName, $vmId, $ranges, $sigIds, $sigRx, $evidenceScope)
         $logs = @(
             [pscustomobject]@{ Name = 'Microsoft-Windows-Hyper-V-Worker-Admin'; Channel = 'Worker' }
             [pscustomobject]@{ Name = 'Microsoft-Windows-Hyper-V-VMMS-Admin'; Channel = 'VMMS' }
@@ -1684,9 +1700,16 @@ function Get-HistoricVMEventCorrelation {
                                 [void]$hits.Add([pscustomobject]@{
                                     Node    = $env:COMPUTERNAME
                                     Time    = $_.TimeCreated.ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ssZ')
+                                    RecordId = [long]$_.RecordId
                                     Id      = [int]$_.Id
+                                    Level   = [string]$_.LevelDisplayName
                                     Log     = $log.Channel
                                     Message = ($_.Message -split "`r?`n")[0]
+                                    FullMessage = ($_.Message -replace "`r?`n", ' | ')
+                                    EvidenceScope = $evidenceScope
+                                    CorrelationAnchor = [string]$range.Anchor
+                                    CorrelationWindowStartUtc = $range.Start.ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ssZ')
+                                    CorrelationWindowEndUtc = $range.End.ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ssZ')
                                 })
                             }
                     } catch {
@@ -1713,9 +1736,9 @@ function Get-HistoricVMEventCorrelation {
     $perNode = foreach ($node in @($Nodes | Where-Object { $_ } | Sort-Object -Unique)) {
         try {
             if ($node.Split('.')[0] -eq $localNode) {
-                & $scan $VMName $VMId $ranges $SignatureIds $SignatureRx
+                & $scan $VMName $VMId $ranges $SignatureIds $SignatureRx $EvidenceScope
             } else {
-                Invoke-Command -ComputerName $node -ScriptBlock $scan -ArgumentList $VMName, $VMId, $ranges, $SignatureIds, $SignatureRx -ErrorAction Stop
+                Invoke-Command -ComputerName $node -ScriptBlock $scan -ArgumentList $VMName, $VMId, $ranges, $SignatureIds, $SignatureRx, $EvidenceScope -ErrorAction Stop
             }
         } catch {
             [pscustomobject]@{
@@ -1729,7 +1752,9 @@ function Get-HistoricVMEventCorrelation {
         }
     }
 
-    $allMatches = @($perNode | ForEach-Object { $_.Matches } | Where-Object { $_ } | Sort-Object Time)
+    $allMatches = @($perNode | ForEach-Object { $_.Matches } | Where-Object { $_ } |
+        Group-Object { if ([long]$_.RecordId -gt 0) { '{0}|{1}|{2}' -f $_.Node, $_.Log, $_.RecordId } else { '{0}|{1}|{2}|{3}|{4}' -f $_.Node, $_.Log, $_.Time, $_.Id, $_.FullMessage } } |
+        ForEach-Object { $_.Group | Select-Object -First 1 } | Sort-Object Time, Node, Log, RecordId)
     # Earliest point actually searched = the Start of the first merged range (it already includes the
     # -WindowMinutes expansion), so every node/channel is compared against the true search floor.
     $earliestWindowStart = (@($ranges | Sort-Object Start)[0]).Start
@@ -1987,18 +2012,28 @@ function Invoke-VMCheckpointAudit {
         $markerCsvPath = Join-Path (Split-Path -Parent $reportFile) $markerCsvName
         [pscustomobject]@{
             'Time (UTC)' = ''
+            Node         = ''
             Id           = ''
             Level        = 'Info'
             Log          = ''
             Concern      = ''
             VmAttributed = ''
-            FullMessage  = $Message
+            AttributionMethod = ''
+            AttributionConfidence = ''
+            EvidenceScope = 'StandardLookback'
+            CorrelationAnchor = ''
+            CorrelationWindowStartUtc = ''
+            CorrelationWindowEndUtc = ''
             EventClassification = 'Informational'
             VerdictDriver = $false
+            IsConfirmingFork = $false
             RecoveryDisposition = 'NotApplicable'
             DispositionReason = 'Marker row; no event was assessed.'
-        } | Select-Object 'Time (UTC)', Id, Level, Log, Concern, VmAttributed, FullMessage,
-            EventClassification, VerdictDriver, RecoveryDisposition, DispositionReason |
+            FullMessage  = $Message
+        } | Select-Object 'Time (UTC)', Node, Id, Level, Log, Concern, VmAttributed, AttributionMethod,
+            AttributionConfidence, EvidenceScope, CorrelationAnchor, CorrelationWindowStartUtc,
+            CorrelationWindowEndUtc, EventClassification, VerdictDriver, IsConfirmingFork,
+            RecoveryDisposition, DispositionReason, FullMessage |
             Export-Csv -LiteralPath $markerCsvPath -NoTypeInformation -Encoding UTF8
         return $markerCsvName
     }
@@ -2261,7 +2296,7 @@ function Invoke-VMCheckpointAudit {
         Write-AuditReportLine ("  {0,-27} : {1}" -f 'Checkpoint Type', $vm.CheckpointType)
     }
     Write-AuditReportLine ("  {0,-27} : {1} hours (flagged as 'YES')" -f 'Stale >=', $StaleHours)
-    Write-AuditReportLine ("  {0,-27} : {1}" -f 'Report Generated', [DateTime]::UtcNow.ToString('yyyy-MM-dd HH:mm:ssZ'))
+    Write-AuditReportLine ("  {0,-27} : {1}" -f 'Collection started (UTC)', [DateTime]::UtcNow.ToString('yyyy-MM-dd HH:mm:ssZ'))
     Write-AuditReportLine "==================================================================="
 
     # Clustered role state / current owner (should match the Owning Node above):
@@ -3007,6 +3042,9 @@ function Invoke-VMCheckpointAudit {
     $concernEvents       = @()
     $vmConcernEvents     = @()
     $vmEventConcernCount = 0
+    $workerEvents        = @()
+    $vmAttributedEvents  = @()
+    $vmId                = [string]$vm.VMId
     $eventCollectionStatus = [pscustomobject]@{
         Status = 'Skipped'; Error = ''; SourceNode = $OwningNode; AttemptedUtc = $null; AttemptCount = 0; ChannelStatus = @()
     }
@@ -3015,7 +3053,6 @@ function Invoke-VMCheckpointAudit {
         Write-Section "Hyper-V Worker/VMMS Admin Events (last $EventLookbackHours h on $OwningNode):"
         # Match on the VM GUID as well as the name - Worker/VMMS messages reference the
         # 'Virtual machine ID <GUID>', which is far more reliable than the long friendly name.
-        $vmId = [string]$vm.VMId
         # v0.2.14: per-NODE event cache. The Worker/VMMS scan is NODE-WIDE, so on a fleet run every VM
         # on the same owning node would otherwise re-read the SAME (often huge) event set. Scan each
         # node ONCE (keyed by node + lookback), cache the concern/context rows, then derive THIS VM's
@@ -3245,8 +3282,8 @@ function Invoke-VMCheckpointAudit {
             # shared _NodeEvents_<node>_<date>.csv above - no longer duplicated into every VM's CSV.
             $vmAttributedEvents = @($workerEvents | Where-Object { $_.VmAttributed })
             if ($vmAttributedEvents.Count -gt 0) {
-                $vmAttributedEvents | Select-Object 'Time (UTC)', Id, Level, Log, Concern, VmAttributed, FullMessage,
-                    EventClassification, VerdictDriver, RecoveryDisposition, DispositionReason |
+                ConvertTo-HyperVEventCsvRows -Events $vmAttributedEvents -Policy $script:EventPolicy `
+                    -VMName $VMName -VMId $vmId -DefaultNode $OwningNode |
                     Export-Csv -LiteralPath $csvPath -NoTypeInformation -Encoding UTF8
                 Write-AuditReportLine ""
                 Write-AuditReportLine "  This VM's full, untruncated event messages exported to CSV: $csvPath"
@@ -3594,11 +3631,16 @@ function Invoke-VMCheckpointAudit {
     $historicCorrelation = $null
     if (@($orphans).Count -gt 0 -and @($clusterNodes).Count -gt 0) {
         Show-AuditProgress -Step 70 -Status 'Historic event correlation (around orphan timestamps)'
-        $orphanTimes = @($orphans | ForEach-Object { $_.CreationTimeUtc; $_.LastWriteTimeUtc } | Where-Object { $_ })
+        $orphanAnchors = @($orphans | ForEach-Object {
+            if ($_.CreationTimeUtc) { [pscustomobject]@{ Time = $_.CreationTimeUtc; Type = 'OrphanCreate' } }
+            if ($_.LastWriteTimeUtc) { [pscustomobject]@{ Time = $_.LastWriteTimeUtc; Type = 'OrphanLastWrite' } }
+        })
+        $orphanTimes = @($orphanAnchors | ForEach-Object { $_.Time })
         if ($orphanTimes.Count -gt 0) {
             try {
                 $historicCorrelation = Get-HistoricVMEventCorrelation -VMName $VMName -VMId ([string]$vm.VMId) `
                     -Nodes $clusterNodes -Timestamps $orphanTimes -WindowMinutes 120 `
+                    -CorrelationAnchors $orphanAnchors -EvidenceScope HistoricOrphanWindow `
                     -SignatureIds @(3216, 18012, 19090, 19100, 16300) -SignatureRx $forkCommitRx
             } catch {
                 $historicCorrelation = $null
@@ -3638,6 +3680,8 @@ function Invoke-VMCheckpointAudit {
             try {
                 $activeCkptHistoric = Get-HistoricVMEventCorrelation -VMName $VMName -VMId ([string]$vm.VMId) `
                     -Nodes $clusterNodes -Timestamps $activeCkptTimes -WindowMinutes 120 `
+                    -CorrelationAnchors @($activeCkptTimes | ForEach-Object { [pscustomobject]@{ Time = $_; Type = 'ActiveCheckpointCreate' } }) `
+                    -EvidenceScope HistoricActiveCheckpointWindow `
                     -SignatureIds @(3216, 18012, 19090, 19100, 16300) -SignatureRx $forkCommitRx
             } catch {
                 $activeCkptHistoric = $null
@@ -3657,6 +3701,19 @@ function Invoke-VMCheckpointAudit {
     # v0.2.17: proactive 'cannot confirm safe to migrate' signal - an active checkpoint predates the
     # reachable event history, so the window that would contain a fork-commit at its creation is gone.
     $cannotConfirmMigrationSafe = ($activeCkptCoverageIncomplete -and -not $activeCkptForkConfirmed)
+
+    if ($OutputPath -and $reportFile) {
+        $historicMatches = @()
+        if ($historicCorrelation) { $historicMatches += @($historicCorrelation.Matches) }
+        if ($activeCkptHistoric) { $historicMatches += @($activeCkptHistoric.Matches) }
+        if ($historicMatches.Count -gt 0) {
+            $allVmEvidence = @($vmAttributedEvents) + @($historicMatches)
+            ConvertTo-HyperVEventCsvRows -Events $allVmEvidence -Policy $script:EventPolicy `
+                -VMName $VMName -VMId $vmId -DefaultNode $OwningNode |
+                Export-Csv -LiteralPath $csvPath -NoTypeInformation -Encoding UTF8
+            Write-AuditReportLine ("  Historic evidence appended to this VM's event CSV: {0}" -f $csvPath)
+        }
+    }
     # A confirming fork-commit at the creation of a STILL-ATTACHED checkpoint is the dormant chain-risk
     # condition HOLD STATE exists to prevent: migration or restart could materialise the inconsistency.
     # Incomplete event coverage is not confirming evidence, so it remains INVESTIGATE / CANNOT CONFIRM.
@@ -3684,6 +3741,11 @@ function Invoke-VMCheckpointAudit {
                 Write-Alert  "  Confirmed historic 'fork-commit / merge failure': events for this VM were recovered around" -Level Critical
                 Write-Alert  "  the orphan timestamps (outside the standard window). This is strong evidence the rollback DID" -Level Critical
                 Write-Alert  "  occur - engage Microsoft Support (CSS) / your backup vendor to recover the orphaned data." -Level Critical
+                Write-AuditReportLine "  Source-node provenance: a historic event can remain valid when recorded on a former owner node;"
+                Write-AuditReportLine "  current VM ownership does not invalidate VM-ID-attributed evidence from another cluster node."
+                if ($eventsCsvName) {
+                    Write-AuditReportLine ("  Structured evidence: this VM's events CSV ({0}) includes the historic rows used by this verdict." -f $eventsCsvName)
+                }
             } else {
                 Write-Alert ("  {0} historic event(s) recovered around the orphan timestamps (see below)." -f $historicCorrelation.MatchCount) -Level Warning
             }
@@ -4548,6 +4610,8 @@ function Invoke-VMCheckpointAudit {
         # Flush the captured report buffer to the per-VM .txt (when -OutputPath was supplied), then
         # deactivate the buffer so begin/end-block messages are shown normally again.
         if ($reportFile -and $script:VMReportBuffer) {
+            Write-AuditReportLine ''
+            Write-AuditReportLine ("VM assessment completed (UTC): {0}" -f [DateTime]::UtcNow.ToString('yyyy-MM-dd HH:mm:ssZ'))
             $reportWriteStart = Get-TelemetryNow
             try {
                 [System.IO.File]::WriteAllLines($reportFile, $script:VMReportBuffer.ToArray(), (New-Object System.Text.UTF8Encoding($false)))
@@ -4913,6 +4977,19 @@ end {
         Write-Progress -Id 1 -Activity 'Hyper-V VM checkpoint / differencing-disk audit' -Completed
     }
 
+    $nodeEventContext = @($script:NodeEventCache.GetEnumerator() | Sort-Object Name | ForEach-Object {
+        $nodeEventSnapshot = $_.Value
+        [pscustomobject][ordered]@{
+            Node          = [string]$_.Key
+            Status        = if ($nodeEventSnapshot.PSObject.Properties['Status']) { [string]$nodeEventSnapshot.Status } else { 'Unavailable' }
+            Error         = if ($nodeEventSnapshot.PSObject.Properties['Error']) { [string]$nodeEventSnapshot.Error } else { '' }
+            AttemptedUtc  = if ($nodeEventSnapshot.PSObject.Properties['AttemptedUtc']) { $nodeEventSnapshot.AttemptedUtc } else { $null }
+            AttemptCount  = if ($nodeEventSnapshot.PSObject.Properties['AttemptCount']) { [int]$nodeEventSnapshot.AttemptCount } else { 0 }
+            ChannelStatus = if ($nodeEventSnapshot.PSObject.Properties['ChannelStatus']) { @($nodeEventSnapshot.ChannelStatus) } else { @() }
+            Events        = if ($nodeEventSnapshot.PSObject.Properties['Rows']) { @($nodeEventSnapshot.Rows) } else { @() }
+        }
+    })
+
     # Single self-contained HTML fleet report (ON by default; suppress with -NoHtml). Destination:
     # explicit -HtmlReportPath (a folder, or a full path ending in .html) > the -OutputPath per-run
     # sub-folder > the current directory. Any failure here is non-fatal to the run.
@@ -4956,6 +5033,7 @@ end {
                 -ClusterName $clusterForName -GeneratedUtc ([DateTime]::UtcNow.ToString('yyyy-MM-dd HH:mm:ssZ')) `
                 -DiscoveredVMs $discoveredVMs -DiscoverySummary $discoverySummary `
                 -StorageHealth $script:ClusterStorageHealth -HousekeepingFindings $script:HousekeepingFindings.ToArray() `
+                -NodeEventContext $nodeEventContext `
                 -IncludeDiscoveredVMs:$IncludeDiscoveredVMs `
                 -DebugLogAvailable:($script:DebugLogPath -and (Test-Path -LiteralPath $script:DebugLogPath)) `
                 -ScriptVersion $script:ScriptVersion `
@@ -5143,18 +5221,6 @@ end {
     # the same complete run snapshot. The snapshot deliberately does not contain Results, avoiding a
     # circular object graph; the pipeline itself is the result collection.
     if ($PassThru) {
-        $nodeEventContext = @($script:NodeEventCache.GetEnumerator() | Sort-Object Name | ForEach-Object {
-            $nodeEventSnapshot = $_.Value
-            [pscustomobject][ordered]@{
-                Node          = [string]$_.Key
-                Status        = if ($nodeEventSnapshot.PSObject.Properties['Status']) { [string]$nodeEventSnapshot.Status } else { 'Unavailable' }
-                Error         = if ($nodeEventSnapshot.PSObject.Properties['Error']) { [string]$nodeEventSnapshot.Error } else { '' }
-                AttemptedUtc  = if ($nodeEventSnapshot.PSObject.Properties['AttemptedUtc']) { $nodeEventSnapshot.AttemptedUtc } else { $null }
-                AttemptCount  = if ($nodeEventSnapshot.PSObject.Properties['AttemptCount']) { [int]$nodeEventSnapshot.AttemptCount } else { 0 }
-                ChannelStatus = if ($nodeEventSnapshot.PSObject.Properties['ChannelStatus']) { @($nodeEventSnapshot.ChannelStatus) } else { @() }
-                Events        = if ($nodeEventSnapshot.PSObject.Properties['Rows']) { @($nodeEventSnapshot.Rows) } else { @() }
-            }
-        })
         $runArtifactFiles = if ($script:RunFolder -and (Test-Path -LiteralPath $script:RunFolder)) {
             @(Get-ChildItem -LiteralPath $script:RunFolder -File | Sort-Object Name | ForEach-Object {
                 [pscustomobject]@{ Name = $_.Name; FullName = $_.FullName; LengthBytes = [long]$_.Length; LastWriteTimeUtc = $_.LastWriteTimeUtc }

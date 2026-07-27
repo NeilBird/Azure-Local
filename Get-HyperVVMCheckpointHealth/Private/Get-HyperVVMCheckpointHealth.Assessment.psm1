@@ -121,6 +121,139 @@ function Get-HyperVEventCsvDisposition {
     }
 }
 
+function ConvertTo-HyperVEventCsvRows {
+    [OutputType([object[]])]
+    param(
+        [AllowEmptyCollection()][object[]]$Events = @(),
+        [Parameter(Mandatory)][object]$Policy,
+        [AllowEmptyString()][string]$VMName,
+        [AllowEmptyString()][string]$VMId,
+        [AllowEmptyString()][string]$DefaultNode,
+        [ValidateSet('StandardLookback', 'HistoricOrphanWindow', 'HistoricActiveCheckpointWindow')]
+        [string]$DefaultEvidenceScope = 'StandardLookback'
+    )
+
+    $projected = [System.Collections.Generic.List[object]]::new()
+    $seen = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($eventRow in @($Events)) {
+        if (-not $eventRow) { continue }
+        $timeUtc = if ($eventRow.PSObject.Properties['Time (UTC)']) { [string]$eventRow.'Time (UTC)' } elseif ($eventRow.PSObject.Properties['Time']) { [string]$eventRow.Time } else { '' }
+        $node = if ($eventRow.PSObject.Properties['Node'] -and $eventRow.Node) { [string]$eventRow.Node } else { $DefaultNode }
+        $recordId = if ($eventRow.PSObject.Properties['RecordId']) { [long]$eventRow.RecordId } else { 0L }
+        $fullMessage = if ($eventRow.PSObject.Properties['FullMessage']) { [string]$eventRow.FullMessage } elseif ($eventRow.PSObject.Properties['Message']) { [string]$eventRow.Message } else { '' }
+        $identityKey = if ($recordId -gt 0) {
+            '{0}|{1}|{2}' -f $node, [string]$eventRow.Log, $recordId
+        } else {
+            '{0}|{1}|{2}|{3}|{4}' -f $node, [string]$eventRow.Log, $timeUtc, [int]$eventRow.Id, $fullMessage
+        }
+        if (-not $seen.Add($identityKey)) { continue }
+
+        $attribution = if ($eventRow.PSObject.Properties['VmAttributed']) {
+            [pscustomobject]@{
+                Attributed = [bool]$eventRow.VmAttributed
+                Method = if ($eventRow.PSObject.Properties['AttributionMethod']) { [string]$eventRow.AttributionMethod } else { 'ExistingAssessment' }
+                Confidence = if ($eventRow.PSObject.Properties['AttributionConfidence']) { [string]$eventRow.AttributionConfidence } else { 'Unknown' }
+            }
+        } else {
+            Resolve-HyperVEventAttribution -Message $fullMessage -VMName $VMName -VMId $VMId
+        }
+        $signal = Get-HyperVEventSignalAssessment -EventId ([int]$eventRow.Id) -Log ([string]$eventRow.Log) -Message $fullMessage -Policy $Policy
+        $concern = if ($eventRow.PSObject.Properties['Concern']) {
+            [string]$eventRow.Concern
+        } elseif ($signal.Role -in @('Confirming', 'Leading', 'Operational')) {
+            'YES'
+        } else {
+            ''
+        }
+        $scope = if ($eventRow.PSObject.Properties['EvidenceScope'] -and $eventRow.EvidenceScope) { [string]$eventRow.EvidenceScope } else { $DefaultEvidenceScope }
+        $row = [pscustomobject][ordered]@{
+            'Time (UTC)' = $timeUtc
+            Node = $node
+            Id = [int]$eventRow.Id
+            Level = if ($eventRow.PSObject.Properties['Level']) { [string]$eventRow.Level } else { '' }
+            Log = [string]$eventRow.Log
+            Concern = $concern
+            VmAttributed = [bool]$attribution.Attributed
+            AttributionMethod = [string]$attribution.Method
+            AttributionConfidence = [string]$attribution.Confidence
+            EvidenceScope = $scope
+            CorrelationAnchor = if ($eventRow.PSObject.Properties['CorrelationAnchor']) { [string]$eventRow.CorrelationAnchor } else { '' }
+            CorrelationWindowStartUtc = if ($eventRow.PSObject.Properties['CorrelationWindowStartUtc']) { [string]$eventRow.CorrelationWindowStartUtc } else { '' }
+            CorrelationWindowEndUtc = if ($eventRow.PSObject.Properties['CorrelationWindowEndUtc']) { [string]$eventRow.CorrelationWindowEndUtc } else { '' }
+            EventClassification = ''
+            VerdictDriver = $false
+            IsConfirmingFork = [bool]$signal.IsConfirmingFork
+            RecoveryDisposition = ''
+            DispositionReason = ''
+            FullMessage = $fullMessage
+        }
+        $disposition = Get-HyperVEventCsvDisposition -Event $row -Events $Events -Policy $Policy
+        $row.EventClassification = [string]$disposition.EventClassification
+        $row.VerdictDriver = [bool]$disposition.VerdictDriver
+        $row.RecoveryDisposition = [string]$disposition.RecoveryDisposition
+        $row.DispositionReason = [string]$disposition.DispositionReason
+        [void]$projected.Add($row)
+    }
+    $projected.ToArray()
+}
+
+function Get-HyperVEventFloodObservations {
+    [OutputType([object[]])]
+    param(
+        [AllowEmptyCollection()][object[]]$NodeEventContext = @(),
+        [int]$EventId = 15268,
+        [ValidateRange(1, 1000000)][int]$MinimumCount = 100,
+        [ValidateRange(1, 10080)][int]$MinimumSpanMinutes = 30,
+        [ValidateRange(1, 1000000)][int]$BurstCount = 10,
+        [ValidateRange(1, 1440)][int]$BurstWindowMinutes = 10
+    )
+
+    $observations = [System.Collections.Generic.List[object]]::new()
+    foreach ($nodeContext in @($NodeEventContext)) {
+        if (-not $nodeContext) { continue }
+        $node = [string]$nodeContext.Node
+        $parsedRows = @($nodeContext.Events | Where-Object { [int]$_.Id -eq $EventId } | ForEach-Object {
+            $rawTime = if ($_.PSObject.Properties['Time (UTC)']) { [string]$_.'Time (UTC)' } elseif ($_.PSObject.Properties['Time']) { [string]$_.Time } else { '' }
+            $parsedTime = [datetime]::MinValue
+            if ([datetime]::TryParse($rawTime, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::AssumeUniversal, [ref]$parsedTime)) {
+                [pscustomobject]@{ Time = $parsedTime.ToUniversalTime(); Message = if ($_.PSObject.Properties['FullMessage']) { [string]$_.FullMessage } else { [string]$_.Message } }
+            }
+        } | Sort-Object Time)
+        if ($parsedRows.Count -eq 0) { continue }
+
+        $first = [datetime]$parsedRows[0].Time
+        $last = [datetime]$parsedRows[-1].Time
+        $durationMinutes = [math]::Max(0, ($last - $first).TotalMinutes)
+        $burstDetected = $false
+        $windowStart = 0
+        for ($windowEnd = 0; $windowEnd -lt $parsedRows.Count; $windowEnd++) {
+            while ($windowStart -lt $windowEnd -and ([datetime]$parsedRows[$windowEnd].Time - [datetime]$parsedRows[$windowStart].Time).TotalMinutes -gt $BurstWindowMinutes) {
+                $windowStart++
+            }
+            if (($windowEnd - $windowStart + 1) -ge $BurstCount) { $burstDetected = $true; break }
+        }
+        $sustained = ($parsedRows.Count -ge $MinimumCount -and $durationMinutes -ge $MinimumSpanMinutes)
+        if (-not ($sustained -or $burstDetected)) { continue }
+
+        $durationHours = [math]::Max($durationMinutes / 60, 1 / 60)
+        [void]$observations.Add([pscustomobject][ordered]@{
+            Node = $node
+            EventId = $EventId
+            Count = $parsedRows.Count
+            FirstUtc = $first.ToString('yyyy-MM-dd HH:mm:ssZ')
+            LastUtc = $last.ToString('yyyy-MM-dd HH:mm:ssZ')
+            DurationMinutes = [math]::Round($durationMinutes, 1)
+            AverageRatePerHour = [math]::Round($parsedRows.Count / $durationHours, 1)
+            DistinctMessageCount = @($parsedRows | ForEach-Object { $_.Message } | Sort-Object -Unique).Count
+            Trigger = if ($sustained) { 'SustainedVolume' } else { 'BurstRate' }
+            AffectedNodeCount = 0
+        })
+    }
+    $affectedNodeCount = @($observations | ForEach-Object { $_.Node } | Sort-Object -Unique).Count
+    foreach ($observation in $observations) { $observation.AffectedNodeCount = $affectedNodeCount }
+    $observations.ToArray()
+}
+
 function Compare-VMCollectionStateToken {
     [OutputType([pscustomobject])]
     param([Parameter(Mandatory)]$StartToken, [Parameter(Mandatory)]$EndToken)
@@ -150,6 +283,20 @@ function Get-VMCollectionStateImpact {
         $ReplicaState.Equals('Replicating', [StringComparison]::OrdinalIgnoreCase))
     if ($healthyReplicaConfigWrite) { return 'Advisory' }
     'Inconclusive'
+}
+
+function ConvertTo-ReplicaDurationText {
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory)][ValidateRange(0, [double]::MaxValue)][double]$Minutes
+    )
+
+    $minuteText = '{0:N1} min' -f $Minutes
+    if ($Minutes -lt 1440) { return $minuteText }
+
+    $days = $Minutes / 1440
+    $dayUnit = if ([math]::Round($days, 1) -eq 1.0) { 'day' } else { 'days' }
+    '{0} ({1:N1} {2})' -f $minuteText, $days, $dayUnit
 }
 
 function Get-HyperVReplicationAssessment {
@@ -500,4 +647,4 @@ function Complete-CheckpointHealthPassThruResult {
     }
 }
 
-Export-ModuleMember -Function Get-HyperVEventPolicy, Get-HyperVEventSignalAssessment, Resolve-HyperVOperationRecovery, Get-HyperVEventCsvDisposition, Compare-VMCollectionStateToken, Get-VMCollectionStateImpact, Get-HyperVReplicationAssessment, Resolve-HyperVEventAttribution, Resolve-EventCoverage, Get-VMCheckpointVerdictAssessment, Select-DiscoveredVMsForAudit, Resolve-ActiveCheckpointHistoricVerdict, Complete-CheckpointHealthPassThruResult
+Export-ModuleMember -Function Get-HyperVEventPolicy, Get-HyperVEventSignalAssessment, Resolve-HyperVOperationRecovery, Get-HyperVEventCsvDisposition, ConvertTo-HyperVEventCsvRows, Get-HyperVEventFloodObservations, Compare-VMCollectionStateToken, Get-VMCollectionStateImpact, ConvertTo-ReplicaDurationText, Get-HyperVReplicationAssessment, Resolve-HyperVEventAttribution, Resolve-EventCoverage, Get-VMCheckpointVerdictAssessment, Select-DiscoveredVMsForAudit, Resolve-ActiveCheckpointHistoricVerdict, Complete-CheckpointHealthPassThruResult

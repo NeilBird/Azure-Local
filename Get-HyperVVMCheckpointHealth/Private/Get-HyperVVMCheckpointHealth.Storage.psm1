@@ -324,6 +324,7 @@ function Get-ClusterStorageHealthSnapshot {
             Subsystem      = @()
             HealthFaults   = @()
             HealthFaultCollectionStatus = 'Not attempted'
+            HealthFaultCollection = [ordered]@{ Operation = 'Get-HealthFault'; Status = 'Not attempted'; ExceptionType = ''; ErrorCategory = ''; Message = ''; Scope = $env:COMPUTERNAME }
             CsvRedirected  = @()
             Notes          = @()
         }
@@ -345,12 +346,19 @@ function Get-ClusterStorageHealthSnapshot {
                     }
                 })
                 $o.HealthFaultCollectionStatus = 'Success'
+                $o.HealthFaultCollection.Status = 'Success'
             } catch {
                 $o.HealthFaultCollectionStatus = 'Failed'
+                $o.HealthFaultCollection.Status = 'Failed'
+                $o.HealthFaultCollection.ExceptionType = $_.Exception.GetType().FullName
+                $o.HealthFaultCollection.ErrorCategory = if ($_.CategoryInfo) { [string]$_.CategoryInfo.Category } else { [string]$_.FullyQualifiedErrorId }
+                $o.HealthFaultCollection.Message = [string]$_.Exception.Message
                 $o.Notes += "HealthFault: $($_.Exception.Message)"
             }
         } else {
             $o.HealthFaultCollectionStatus = 'Cmdlet unavailable'
+            $o.HealthFaultCollection.Status = 'Cmdlet unavailable'
+            $o.HealthFaultCollection.Message = 'Get-HealthFault is not available on the queried node.'
         }
         try {
             # IMPORTANT: on Azure Local / S2D with ReFS, CSVs run in FileSystemRedirected mode BY DESIGN
@@ -393,7 +401,7 @@ function Get-ClusterStorageHealthSnapshot {
             $raw = & $scan
         }
     } catch {
-        return [pscustomobject]@{ Available = $false; Source = $TargetNode; Summary = 'Unavailable'; Note = $_.Exception.Message; StorageJobs = @(); VDiskUnhealthy = @(); PDiskUnhealthy = @(); Subsystem = @(); HealthFaults = @(); HealthFaultCollectionStatus = 'Not attempted'; CsvRedirected = @() }
+        return [pscustomobject]@{ Available = $false; Source = $TargetNode; Summary = 'Unavailable'; Note = $_.Exception.Message; StorageJobs = @(); VDiskUnhealthy = @(); PDiskUnhealthy = @(); Subsystem = @(); HealthFaults = @(); HealthFaultCollectionStatus = 'Not attempted'; HealthFaultCollection = [pscustomobject]@{ Operation = 'Get-ClusterStorageHealthSnapshot'; Status = 'Failed'; ExceptionType = $_.Exception.GetType().FullName; ErrorCategory = if ($_.CategoryInfo) { [string]$_.CategoryInfo.Category } else { [string]$_.FullyQualifiedErrorId }; Message = [string]$_.Exception.Message; Scope = $TargetNode }; CsvRedirected = @() }
     }
 
     $summary = Get-StorageHealthSummary -Snapshot $raw
@@ -407,6 +415,7 @@ function Get-ClusterStorageHealthSnapshot {
         Subsystem      = @($raw.Subsystem)
         HealthFaults   = @($raw.HealthFaults)
         HealthFaultCollectionStatus = [string]$raw.HealthFaultCollectionStatus
+        HealthFaultCollection = [pscustomobject]$raw.HealthFaultCollection
         CsvRedirected  = @($raw.CsvRedirected)
         Note           = ((@($raw.Notes)) -join '; ')
     }

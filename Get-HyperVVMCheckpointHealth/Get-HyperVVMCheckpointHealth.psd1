@@ -7,7 +7,7 @@
         'Private\Get-HyperVVMCheckpointHealth.Rendering.psm1'
         'Private\Get-HyperVVMCheckpointHealth.Storage.psm1'
     )
-    ModuleVersion = '0.2.27'
+    ModuleVersion = '0.2.28'
     CompatiblePSEditions = @('Desktop')
     GUID = '8b35df55-2975-48f8-bdb8-c8bc8da4a49c'
     Author = 'Neil Bird, Microsoft'
@@ -24,7 +24,7 @@
             Tags = @('AzureLocal', 'Hyper-V', 'FailoverCluster', 'Checkpoint', 'Diagnostics')
             LicenseUri = 'https://github.com/NeilBird/Azure-Local/blob/main/LICENSE'
             ProjectUri = 'https://aka.ms/Get-HyperVVMCheckpointHealth'
-            ReleaseNotes = 'Version 0.2.27 improves artifact parity and policy usability: adds downloadable checkpoint-health-policy.yml generation for selected housekeeping VM images; mirrors typed Replica effective limits in TXT; appends event classification and verdict-disposition fields to per-VM CSVs; makes NOT FOUND TXT reports self-contained; labels root and unavailable checkpoint parents explicitly; and uses driver-specific escalation guidance.'
+            ReleaseNotes = 'Version 0.2.28 improves evidence quality: exports deduplicated historic correlation events in per-VM CSVs with typed scope, attribution, correlation, classification, and disposition fields; explains former-owner event provenance; adds fleet-only 15268 flood observations; distinguishes storage fault collection failure from successful empty results; clarifies timestamps, run-scope arithmetic, collection-state advisories, and artifact-specific safety guidance; and displays long Replica ages in days plus exact minutes.'
         }
     }
 }
