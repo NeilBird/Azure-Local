@@ -4242,7 +4242,7 @@ function Invoke-VMCheckpointAudit {
             'StuckMerge'   { ("Possible stuck / failed merge (event {0}) - investigate before any action" -f $mergeId) }
             'TransientDeleteLockObserved' { if ($lockTime) { "A delete was attempted on $lockTime and blocked by a transient in-use lock (event 16220, 0x80070020). This records evidence only; it does not establish current ownership or authorize removal. Validate with the backup team and VM owner before any action." } else { "A prior delete attempt was blocked by a transient in-use lock (event 16220, 0x80070020). This records evidence only; it does not establish current ownership or authorize removal. Validate with the backup team and VM owner before any action." } }
             'LiveMount'    { 'Likely backup live-mount / instant-recovery artifact - match to the mount / restore job for this VM at its timestamp, then unmount it THROUGH the backup product (do NOT delete the file by hand)' }
-            default        { 'Possible leftover backup or Replica file. Match it to a backup, restore, or replica-seed job for this VM at its Created and LastWrite times. Do not move, rename, merge, or delete it until ownership and purpose are confirmed. Use a procedure approved by the backup vendor or Microsoft Support.' }
+            default        { 'Possible leftover backup or Replica file. Match it to a backup, restore, or replica-seed job for this VM at its Created and LastWrite times. Do not move, rename, merge, or delete it until ownership and purpose are confirmed. Use a procedure approved by the backup vendor and/or based on your own investigation into this orphaned checkpoint file.' }
         }
         [pscustomobject]@{
             Name      = [string]$_.Name
