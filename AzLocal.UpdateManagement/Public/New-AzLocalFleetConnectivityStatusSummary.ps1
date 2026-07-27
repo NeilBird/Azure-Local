@@ -412,7 +412,8 @@ function New-AzLocalFleetConnectivityStatusSummary {
         param($r)
         $sev          = Get-ClusterSev $r.ConnectivityStatus
         $icon         = Get-StatusIcon $sev
-        $clusterCell  = if ($r.ClusterId) { '[{0}](https://portal.azure.com/#@/resource{1})' -f $r.ClusterName, $r.ClusterId } else { $r.ClusterName }
+        $clusterLabel = ConvertTo-AzLocalMarkdownTableCell -Value ([string]$r.ClusterName)
+        $clusterCell  = if ($r.ClusterId) { '[{0}](https://portal.azure.com/#@/resource{1})' -f $clusterLabel, $r.ClusterId } else { $clusterLabel }
 
         $arb = $null
         if ($r.ClusterId) { $arb = $arbByClusterId[$r.ClusterId.ToLowerInvariant()] }
@@ -420,8 +421,9 @@ function New-AzLocalFleetConnectivityStatusSummary {
         if ($arb) {
             $arbSev        = Get-ArbSev $arb.ArbStatus
             $arbIcon       = Get-StatusIcon $arbSev
-            $arbCell       = if ($arb.ArbId) { '[{0}](https://portal.azure.com/#@/resource{1})' -f $arb.ArbName, $arb.ArbId } else { $arb.ArbName }
-            $arbStatusCell = '{0} {1}' -f $arbIcon, $arb.ArbStatus
+            $arbLabel      = ConvertTo-AzLocalMarkdownTableCell -Value ([string]$arb.ArbName)
+            $arbCell       = if ($arb.ArbId) { '[{0}](https://portal.azure.com/#@/resource{1})' -f $arbLabel, $arb.ArbId } else { $arbLabel }
+            $arbStatusCell = ConvertTo-AzLocalMarkdownTableCell -Value ('{0} {1}' -f $arbIcon, $arb.ArbStatus)
             $arbDaysCell   = $arb.DaysSinceLastModified
         }
         else {
@@ -430,7 +432,11 @@ function New-AzLocalFleetConnectivityStatusSummary {
             $arbDaysCell   = '-'
         }
 
-        ('| {0} | {1} {2} | {3} | {4} | {5} | {6} | {7} | {8} | {9} |' -f $clusterCell, $icon, $r.ConnectivityStatus, $r.ClusterStatus, $r.NodeCount, $arbCell, $arbStatusCell, $arbDaysCell, $r.ResourceGroup, $r.Location)
+        $connectivityCell = ConvertTo-AzLocalMarkdownTableCell -Value ([string]$r.ConnectivityStatus)
+        $clusterStatusCell = ConvertTo-AzLocalMarkdownTableCell -Value ([string]$r.ClusterStatus)
+        $resourceGroupCell = ConvertTo-AzLocalMarkdownTableCell -Value ([string]$r.ResourceGroup)
+        $locationCell = ConvertTo-AzLocalMarkdownTableCell -Value ([string]$r.Location)
+        ('| {0} | {1} {2} | {3} | {4} | {5} | {6} | {7} | {8} | {9} |' -f $clusterCell, $icon, $connectivityCell, $clusterStatusCell, $r.NodeCount, $arbCell, $arbStatusCell, $arbDaysCell, $resourceGroupCell, $locationCell)
     }
 
     # Classify each cluster as healthy (Connected + matched ARB Running) or with issues.
@@ -509,8 +515,11 @@ function New-AzLocalFleetConnectivityStatusSummary {
         foreach ($a in ($orphanArbs | Select-Object -First 50)) {
             $arbSev  = Get-ArbSev $a.ArbStatus
             $arbIcon = Get-StatusIcon $arbSev
-            $arbCell = if ($a.ArbId) { '[{0}](https://portal.azure.com/#@/resource{1})' -f $a.ArbName, $a.ArbId } else { $a.ArbName }
-            [void]$sb.AppendLine(('| {0} | {1} {2} | {3} | {4} |' -f $arbCell, $arbIcon, $a.ArbStatus, $a.ResourceGroup, $a.DaysSinceLastModified))
+            $arbLabel = ConvertTo-AzLocalMarkdownTableCell -Value ([string]$a.ArbName)
+            $arbCell = if ($a.ArbId) { '[{0}](https://portal.azure.com/#@/resource{1})' -f $arbLabel, $a.ArbId } else { $arbLabel }
+            $arbStatusCell = ConvertTo-AzLocalMarkdownTableCell -Value ([string]$a.ArbStatus)
+            $resourceGroupCell = ConvertTo-AzLocalMarkdownTableCell -Value ([string]$a.ResourceGroup)
+            [void]$sb.AppendLine(('| {0} | {1} {2} | {3} | {4} |' -f $arbCell, $arbIcon, $arbStatusCell, $resourceGroupCell, $a.DaysSinceLastModified))
         }
     }
 
@@ -527,7 +536,8 @@ function New-AzLocalFleetConnectivityStatusSummary {
         foreach ($r in ($ArcSummary | Sort-Object @{Expression = { [int]$_.Count }; Descending = $true })) {
             $sev  = Get-ArcSev $r.AgentStatus
             $icon = Get-StatusIcon $sev
-            [void]$sb.AppendLine(('| {0} | {1} | {2} {3} |' -f $r.AgentStatus, $r.Count, $icon, $sev))
+            $agentStatusCell = ConvertTo-AzLocalMarkdownTableCell -Value ([string]$r.AgentStatus)
+            [void]$sb.AppendLine(('| {0} | {1} | {2} {3} |' -f $agentStatusCell, $r.Count, $icon, $sev))
         }
     }
 
@@ -547,9 +557,17 @@ function New-AzLocalFleetConnectivityStatusSummary {
         foreach ($r in ($arcSorted | Select-Object -First 100)) {
             $sev         = Get-ArcSev $r.AgentStatus
             $icon        = Get-StatusIcon $sev
-            $nodeCell    = if ($r.MachineId) { '[{0}](https://portal.azure.com/#@/resource{1})' -f $r.NodeName, $r.MachineId } else { $r.NodeName }
-            $clusterCell = if ($r.ClusterId) { '[{0}](https://portal.azure.com/#@/resource{1})' -f $r.ClusterName, $r.ClusterId } else { $r.ClusterName }
-            [void]$sb.AppendLine(('| {0} | {1} | {2} {3} | {4} | {5} | {6} | {7} | {8} | {9} |' -f $nodeCell, $clusterCell, $icon, $r.AgentStatus, $r.OsSku, $r.OsVersion, $r.ClusterVersion, $r.LastStatusChange, $r.ResourceGroup, $r.SubscriptionId))
+            $nodeLabel = ConvertTo-AzLocalMarkdownTableCell -Value ([string]$r.NodeName)
+            $clusterLabel = ConvertTo-AzLocalMarkdownTableCell -Value ([string]$r.ClusterName)
+            $nodeCell    = if ($r.MachineId) { '[{0}](https://portal.azure.com/#@/resource{1})' -f $nodeLabel, $r.MachineId } else { $nodeLabel }
+            $clusterCell = if ($r.ClusterId) { '[{0}](https://portal.azure.com/#@/resource{1})' -f $clusterLabel, $r.ClusterId } else { $clusterLabel }
+            $agentStatusCell = ConvertTo-AzLocalMarkdownTableCell -Value ([string]$r.AgentStatus)
+            $osSkuCell = ConvertTo-AzLocalMarkdownTableCell -Value ([string]$r.OsSku)
+            $osVersionCell = ConvertTo-AzLocalMarkdownTableCell -Value ([string]$r.OsVersion)
+            $clusterVersionCell = ConvertTo-AzLocalMarkdownTableCell -Value ([string]$r.ClusterVersion)
+            $resourceGroupCell = ConvertTo-AzLocalMarkdownTableCell -Value ([string]$r.ResourceGroup)
+            $subscriptionCell = ConvertTo-AzLocalMarkdownTableCell -Value ([string]$r.SubscriptionId)
+            [void]$sb.AppendLine(('| {0} | {1} | {2} {3} | {4} | {5} | {6} | {7} | {8} | {9} |' -f $nodeCell, $clusterCell, $icon, $agentStatusCell, $osSkuCell, $osVersionCell, $clusterVersionCell, $r.LastStatusChange, $resourceGroupCell, $subscriptionCell))
         }
         if ($ArcRows.Count -gt 100) {
             [void]$sb.AppendLine('')
@@ -572,7 +590,9 @@ function New-AzLocalFleetConnectivityStatusSummary {
         foreach ($r in ($NicStats | Sort-Object NicType, @{Expression = { [int]$_.Count }; Descending = $true })) {
             $sev  = Get-NicSev $r.NicStatus
             $icon = Get-StatusIcon $sev
-            [void]$sb.AppendLine(('| {0} | {1} | {2} | {3} {4} |' -f $r.NicType, $r.NicStatus, $r.Count, $icon, $sev))
+            $nicTypeCell = ConvertTo-AzLocalMarkdownTableCell -Value ([string]$r.NicType)
+            $nicStatusCell = ConvertTo-AzLocalMarkdownTableCell -Value ([string]$r.NicStatus)
+            [void]$sb.AppendLine(('| {0} | {1} | {2} | {3} {4} |' -f $nicTypeCell, $nicStatusCell, $r.Count, $icon, $sev))
         }
     }
 
@@ -590,7 +610,14 @@ function New-AzLocalFleetConnectivityStatusSummary {
         foreach ($r in ($nicSorted | Select-Object -First 100)) {
             $sev  = Get-NicSev $r.NicStatus
             $icon = Get-StatusIcon $sev
-            [void]$sb.AppendLine(('| {0} | {1} | {2} {3} | {4} | {5} | {6} | {7} |' -f $r.NodeName, $r.NicName, $icon, $r.NicStatus, $r.DriverVersion, $r.Ip4Address, $r.InterfaceDescription, $r.ClusterName))
+            $nodeCell = ConvertTo-AzLocalMarkdownTableCell -Value ([string]$r.NodeName)
+            $nicNameCell = ConvertTo-AzLocalMarkdownTableCell -Value ([string]$r.NicName)
+            $nicStatusCell = ConvertTo-AzLocalMarkdownTableCell -Value ([string]$r.NicStatus)
+            $driverCell = ConvertTo-AzLocalMarkdownTableCell -Value ([string]$r.DriverVersion)
+            $ipCell = ConvertTo-AzLocalMarkdownTableCell -Value ([string]$r.Ip4Address)
+            $interfaceCell = ConvertTo-AzLocalMarkdownTableCell -Value ([string]$r.InterfaceDescription)
+            $clusterCell = ConvertTo-AzLocalMarkdownTableCell -Value ([string]$r.ClusterName)
+            [void]$sb.AppendLine(('| {0} | {1} | {2} {3} | {4} | {5} | {6} | {7} |' -f $nodeCell, $nicNameCell, $icon, $nicStatusCell, $driverCell, $ipCell, $interfaceCell, $clusterCell))
         }
         if ($NicRows.Count -gt 100) {
             [void]$sb.AppendLine('')

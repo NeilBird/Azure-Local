@@ -11,9 +11,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The shared **Clusters - Ready for Update** Markdown renderer now accepts the complete documented `reporting.maxRowsPerTable` range of 1 through 2,000. In v0.9.24, fleet settings accepted values above 1,000 but the renderer retained `[ValidateRange(0, 1000)]`; assigning a configured value such as 1,600 to that constrained parameter variable terminated Update: 1 - Assess Update Readiness and could terminate Monitor: 3 - Fleet Update Status.
 - Regression coverage exercises both report call shapes at 1,600 and 2,000 rows: implicit fleet-settings lookup used by Update: 1 and explicit `-MaxRows` forwarding used by Monitor: 3.
+- Pipeline Markdown tables now use one shared cell normalizer for dynamic ARM, ARG, tag, and free-text values. Embedded newlines become `<br>`, while pipes and backticks are escaped, so values cannot terminate a row. The audit covered Assess Readiness, Apply Updates readiness and skip summaries, Fleet Connectivity, Fleet Health, Fleet Update Status, Update Run Monitor, and schedule-coverage exclusion tables. Fleet Health remediation commands such as `Get-NetIntentStatus` now remain inside their intended row.
 
 ### Changed
 
+- `apply-updates-schedule.yml` documentation and regression coverage now explicitly confirm that multiple rows may use the same `weeksInCycle` value to target different rings on different days. Each row is matched independently by `(cycleWeek, dayOfWeek)`; rows matching the same tuple continue to union and deduplicate their rings. Per-row `allowedUpdateVersions` key order is also covered: below `rings` and before `notes` is the recommended style, but below `notes` is equally valid.
+- Config: 3 - Apply-Updates Schedule Coverage Audit renders the potentially large missing-`UpdateRing`/`UpdateStartWindow` remediation table inside an expanded-by-default disclosure section. Its cycle calendar now shows the first four matching CRON firings per day before the `(+N)` suffix, previously two.
 - No public function or export-count change (71). Bundled GitHub Actions and Azure DevOps pipeline pins are updated to `0.9.25`.
 
 ## [0.9.24] - 2026-07-24

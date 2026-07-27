@@ -41,6 +41,7 @@
         'Private/Convert-AzLocalFleetSettingsSchemaVersion.ps1',
         'Private/ConvertTo-AzLocalClusterTagFilterKqlClause.ps1',
         'Private/ConvertTo-AzLocalAdditionalProperties.ps1',
+        'Private/ConvertTo-AzLocalMarkdownTableCell.ps1',
         'Private/ConvertTo-SafeCsvCollection.ps1',
         'Private/ConvertTo-SafeCsvField.ps1',
         'Private/ConvertTo-ScrubbedCliOutput.ps1',
@@ -378,7 +379,7 @@
 
             # ReleaseNotes of this module
             ReleaseNotes = @'
-## Version 0.9.25 - Fixes readiness-summary rendering when reporting.maxRowsPerTable is configured from 1,001 through 2,000. The shared Ready-for-Update renderer now honors the full documented range for both implicit fleet-settings lookup and explicit Monitor: 3 forwarding. No public/export change (71). Pipeline pins bumped to 0.9.25.
+## Version 0.9.25 - Fixes readiness summaries configured for 1,001 through 2,000 rows. Shared Markdown normalization keeps dynamic ARM, ARG, tag, and free-text values inside pipeline table rows. Config: 3 adds an open collapsible missing-tag table and shows four CRON firings per day. Same-week schedule rows and order-independent per-row allowedUpdateVersions are documented and tested. No public/export change (71). Pipeline pins bumped to 0.9.25.
 
 ## Version 0.9.24 - Fleet settings schema v3 adds named tag groups: tags use AND within a group and groups use OR. Normal pipeline updates back up and migrate schema v1/v2, including fully commented inert files. Sparse ARG/CLI/ARM payloads are null-safe, and reporting.maxRowsPerTable accepts 2,000. No public/export change (71). Pipeline pins bumped to 0.9.24.
 

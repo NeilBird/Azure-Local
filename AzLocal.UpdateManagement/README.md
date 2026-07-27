@@ -80,15 +80,18 @@ If you are new to this module, work through these in order from a regular PowerS
 
 ## What's New in v0.9.25
 
-**Configured fleet-summary limits above 1,000 now render correctly.** Version 0.9.24 expanded `reporting.maxRowsPerTable` to 2,000, but the shared Ready-for-Update renderer retained its former 1,000-row validation ceiling. Update: 1 - Assess Update Readiness terminated while building Markdown when a valid value such as 1,600 was configured; Monitor: 3 - Fleet Update Status could fail through the same helper.
+**Configured fleet-summary limits above 1,000 now render correctly, and dynamic pipeline table values remain inside their rows.** Version 0.9.24 expanded `reporting.maxRowsPerTable` to 2,000, but the shared Ready-for-Update renderer retained its former 1,000-row validation ceiling. Pipeline tables also used inconsistent escaping for ARM, ARG, tag, and free-text values containing pipes, backticks, or newlines.
 
 ### Fixed
 
 - **Ready-for-Update tables honor the documented range.** The shared renderer now accepts `MaxRows` from 0 through 2,000, matching fleet-settings validation. `0` continues to mean resolve the value from `fleet-settings.yml`.
 - **Both report call paths are covered.** Regression tests exercise configured values of 1,600 and 2,000 through the implicit settings lookup used by Update: 1 and the explicit `-MaxRows` forwarding used by Monitor: 3.
+- **Pipeline tables share one normalization boundary.** Assess Readiness, Apply Updates, Fleet Connectivity, Fleet Health, Fleet Update Status, Update Run Monitor, and schedule-coverage tables now escape dynamic cell values consistently. Multiline remediation commands such as `Get-NetIntentStatus` stay inside the intended row.
 
 ### Changed
 
+- **Same-week schedule rows are explicitly supported.** Separate entries can use the same `weeksInCycle` value with different `daysOfWeek` and rings. Per-row `allowedUpdateVersions` may appear before or after `notes`; below `rings` is the recommended readable order.
+- **Config: 3 scales better in the run summary.** The missing-tag remediation table is collapsible but expanded by default, and the cycle calendar shows four matching CRON firings per day before `(+N)`, previously two.
 - No public function or export-count change (71). Bundled GitHub Actions and Azure DevOps pipeline pins are updated to `0.9.25`.
 
 > Previous release notes have moved into the [Release History](#release-history) appendix at the bottom of this document.

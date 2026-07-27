@@ -628,10 +628,16 @@ function Export-AzLocalClusterUpdateReadinessReport {
                 $br = $derived
             }
             $clusterResId = if ($r.PSObject.Properties['ClusterResourceId'] -and $r.ClusterResourceId) { [string]$r.ClusterResourceId } else { '' }
-            $clusterCell = Get-AzLocalClusterPortalLink -ClusterName ([string]$r.ClusterName) -ClusterResourceId $clusterResId
+            $clusterCell = Get-AzLocalClusterPortalLink -ClusterName ([string]$r.ClusterName) -ClusterResourceId $clusterResId -MarkdownTableCell
             $statusCell = if ($iconMap.ContainsKey($statusKey)) { $iconMap[$statusKey] } else { $iconMap['NeedsInvestigation'] }
             if ($statusKey -eq 'SbeBlocked') { $anySbeBlocked = $true }
-            [void]$md.Add("| $clusterCell | $ring | $cv | $statusChecked | $($r.UpdateState) | $($r.HealthState) | $statusCell | $br |")
+            $ringCell = ConvertTo-AzLocalMarkdownTableCell -Value ([string]$ring)
+            $currentVersionCell = ConvertTo-AzLocalMarkdownTableCell -Value ([string]$cv)
+            $statusCheckedCell = ConvertTo-AzLocalMarkdownTableCell -Value ([string]$statusChecked)
+            $updateStateCell = ConvertTo-AzLocalMarkdownTableCell -Value ([string]$r.UpdateState)
+            $healthStateCell = ConvertTo-AzLocalMarkdownTableCell -Value ([string]$r.HealthState)
+            $blockingCell = ConvertTo-AzLocalMarkdownTableCell -Value ([string]$br)
+            [void]$md.Add("| $clusterCell | $ringCell | $currentVersionCell | $statusCheckedCell | $updateStateCell | $healthStateCell | $statusCell | $blockingCell |")
         }
         # v0.9.15: SBE-prerequisite clusters need a manual, hardware-vendor
         # (OEM) step the pipeline cannot perform - explain it once, only when
@@ -656,8 +662,10 @@ function Export-AzLocalClusterUpdateReadinessReport {
         [void]$md.Add('|---------|------------|--------------|----------|---------|')
         foreach ($r in ($criticalRows | Sort-Object @{Expression={[int]$_.CriticalCount}; Descending=$true}, ClusterName)) {
             $invMatch = $inventory | Where-Object { $_.ClusterName -eq $r.ClusterName } | Select-Object -First 1
-            $ring = if ($invMatch -and $invMatch.UpdateRing) { $invMatch.UpdateRing } else { '-' }
-            [void]$md.Add("| $($r.ClusterName) | $ring | $($r.HealthState) | $($r.CriticalCount) | $($r.WarningCount) |")
+            $clusterCell = ConvertTo-AzLocalMarkdownTableCell -Value ([string]$r.ClusterName)
+            $ring = if ($invMatch -and $invMatch.UpdateRing) { ConvertTo-AzLocalMarkdownTableCell -Value ([string]$invMatch.UpdateRing) } else { '-' }
+            $healthStateCell = ConvertTo-AzLocalMarkdownTableCell -Value ([string]$r.HealthState)
+            [void]$md.Add("| $clusterCell | $ring | $healthStateCell | $($r.CriticalCount) | $($r.WarningCount) |")
         }
         [void]$md.Add('')
     }
@@ -673,7 +681,8 @@ function Export-AzLocalClusterUpdateReadinessReport {
             $gReady = @($g.Group | Where-Object { (Get-AzLocalClusterReadinessStatus -ReadinessRow $_) -eq 'ReadyForUpdate' }).Count
             $gUpToDate = @($g.Group | Where-Object { (Get-AzLocalClusterReadinessStatus -ReadinessRow $_) -eq 'UpToDate' }).Count
             $gNotReady = $g.Count - $gReady - $gUpToDate
-            [void]$md.Add("| $($g.Name) | $($g.Count) | $gReady | $gUpToDate | $gNotReady |")
+            $ringCell = ConvertTo-AzLocalMarkdownTableCell -Value ([string]$g.Name)
+            [void]$md.Add("| $ringCell | $($g.Count) | $gReady | $gUpToDate | $gNotReady |")
         }
         [void]$md.Add('')
     }
@@ -699,18 +708,21 @@ function Export-AzLocalClusterUpdateReadinessReport {
             $readyRaw = if ($r.PSObject.Properties['ReadyUpdates'] -and $r.ReadyUpdates) { [string]$r.ReadyUpdates } else { '' }
             $readyItems = @($readyRaw -split ';' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
             if ($readyItems.Count -eq 1) {
-                $availCell = $readyItems[0]
+                $availCell = ConvertTo-AzLocalMarkdownTableCell -Value $readyItems[0]
             }
             elseif ($readyItems.Count -gt 1) {
-                $availCell = ('<details><summary>{0} update(s)</summary>{1}</details>' -f $readyItems.Count, ($readyItems -join '<br>'))
+                $safeReadyItems = @($readyItems | ForEach-Object { ConvertTo-AzLocalMarkdownTableCell -Value $_ })
+                $availCell = ('<details><summary>{0} update(s)</summary>{1}</details>' -f $safeReadyItems.Count, ($safeReadyItems -join '<br>'))
             }
             else {
                 $availCell = '-'
             }
-            $allowRule = if ($r.PSObject.Properties['AllowedUpdateVersions'] -and $r.AllowedUpdateVersions) { [string]$r.AllowedUpdateVersions } else { '-' }
+            $allowRule = if ($r.PSObject.Properties['AllowedUpdateVersions'] -and $r.AllowedUpdateVersions) { ConvertTo-AzLocalMarkdownTableCell -Value ([string]$r.AllowedUpdateVersions) } else { '-' }
             $clusterResId = if ($r.PSObject.Properties['ClusterResourceId'] -and $r.ClusterResourceId) { [string]$r.ClusterResourceId } else { '' }
-            $clusterCell = Get-AzLocalClusterPortalLink -ClusterName ([string]$r.ClusterName) -ClusterResourceId $clusterResId
-            [void]$md.Add("| $clusterCell | $ring | $cv | $availCell | $allowRule |")
+            $clusterCell = Get-AzLocalClusterPortalLink -ClusterName ([string]$r.ClusterName) -ClusterResourceId $clusterResId -MarkdownTableCell
+            $ringCell = ConvertTo-AzLocalMarkdownTableCell -Value ([string]$ring)
+            $currentVersionCell = ConvertTo-AzLocalMarkdownTableCell -Value ([string]$cv)
+            [void]$md.Add("| $clusterCell | $ringCell | $currentVersionCell | $availCell | $allowRule |")
         }
         [void]$md.Add('')
     }
@@ -732,9 +744,9 @@ function Export-AzLocalClusterUpdateReadinessReport {
         [void]$md.Add('| Filtered-out Update | Allow-list Scope | Update Ring(s) | Clusters Affected |')
         [void]$md.Add('|---------------------|------------------|----------------|-------------------|')
         foreach ($fr in $filteredUpdateRows) {
-            $updCell   = ([string]$fr.Update) -replace '\|', '\|'
-            $scopeCell = [string]$fr.Scope
-            $ringCell  = ([string]$fr.Ring) -replace '\|', '\|'
+            $updCell   = ConvertTo-AzLocalMarkdownTableCell -Value ([string]$fr.Update)
+            $scopeCell = ConvertTo-AzLocalMarkdownTableCell -Value ([string]$fr.Scope)
+            $ringCell  = ConvertTo-AzLocalMarkdownTableCell -Value ([string]$fr.Ring)
             [void]$md.Add("| $updCell | $scopeCell | $ringCell | $($fr.Clusters.Count) |")
         }
         [void]$md.Add('')
@@ -796,7 +808,7 @@ function Export-AzLocalClusterUpdateReadinessReport {
             $statusKey = Get-AzLocalClusterReadinessStatus -ReadinessRow $r
             $statusCell = if ($iconMap.ContainsKey($statusKey)) { $iconMap[$statusKey] } else { $iconMap['NeedsInvestigation'] }
             $clusterResId = if ($r.PSObject.Properties['ClusterResourceId'] -and $r.ClusterResourceId) { [string]$r.ClusterResourceId } else { '' }
-            $clusterCell = Get-AzLocalClusterPortalLink -ClusterName ([string]$r.ClusterName) -ClusterResourceId $clusterResId
+            $clusterCell = Get-AzLocalClusterPortalLink -ClusterName ([string]$r.ClusterName) -ClusterResourceId $clusterResId -MarkdownTableCell
             # Per-cell list of the Ready updates available for this cluster
             # (name/version exactly as Azure reports them). A single update is
             # rendered inline; 2+ collapse behind a <details> expander. '-' when
@@ -811,10 +823,11 @@ function Export-AzLocalClusterUpdateReadinessReport {
                 # the tell-tale "UpToDate yet one update available" allow-list
                 # mismatch is visible at a glance - the single most common case
                 # for a silently-suppressed OEM SBE - without needing a click.
-                $availCell = $readyItems[0]
+                $availCell = ConvertTo-AzLocalMarkdownTableCell -Value $readyItems[0]
             }
             else {
-                $availCell = ('<details><summary>{0} update(s)</summary>{1}</details>' -f $readyItems.Count, ($readyItems -join '<br>'))
+                $safeReadyItems = @($readyItems | ForEach-Object { ConvertTo-AzLocalMarkdownTableCell -Value $_ })
+                $availCell = ('<details><summary>{0} update(s)</summary>{1}</details>' -f $safeReadyItems.Count, ($safeReadyItems -join '<br>'))
             }
             # v0.9.14: a cluster reporting 'Up to Date' while it STILL has Ready
             # updates can only be in that state because the allow-list excluded
@@ -825,7 +838,15 @@ function Export-AzLocalClusterUpdateReadinessReport {
                 $statusCell = "$statusCell *"
                 $anyAllowListSuppressed = $true
             }
-            [void]$detailRows.Add("| $clusterCell | $ring | $cv | $csv | $($r.UpdateState) | $($r.HealthState) | $statusCell | $sc | $lu | $ru | $availCell |")
+            $ringCell = ConvertTo-AzLocalMarkdownTableCell -Value ([string]$ring)
+            $currentVersionCell = ConvertTo-AzLocalMarkdownTableCell -Value ([string]$cv)
+            $sbeVersionCell = ConvertTo-AzLocalMarkdownTableCell -Value ([string]$csv)
+            $updateStateCell = ConvertTo-AzLocalMarkdownTableCell -Value ([string]$r.UpdateState)
+            $healthStateCell = ConvertTo-AzLocalMarkdownTableCell -Value ([string]$r.HealthState)
+            $statusCheckedCell = ConvertTo-AzLocalMarkdownTableCell -Value ([string]$sc)
+            $lastUpdatedCell = ConvertTo-AzLocalMarkdownTableCell -Value ([string]$lu)
+            $recommendedUpdateCell = ConvertTo-AzLocalMarkdownTableCell -Value ([string]$ru)
+            [void]$detailRows.Add("| $clusterCell | $ringCell | $currentVersionCell | $sbeVersionCell | $updateStateCell | $healthStateCell | $statusCell | $statusCheckedCell | $lastUpdatedCell | $recommendedUpdateCell | $availCell |")
         }
         # v0.9.14: footnote (only when at least one cluster is suppressed) that
         # explains the ' *' Status marker and points at the exact remediation.
@@ -867,8 +888,9 @@ function Export-AzLocalClusterUpdateReadinessReport {
         [void]$md.Add('| Cluster | Installed version | Installed YYMM | Latest released YYMM |')
         [void]$md.Add('|---------|-------------------|----------------|----------------------|')
         foreach ($s in ($staleClusters | Sort-Object ClusterName)) {
-            $cvCell = if ($s.CurrentVersion) { $s.CurrentVersion } else { '-' }
-            [void]$md.Add("| $($s.ClusterName) | $cvCell | $($s.ClusterYYMM) | $($s.LatestYYMM) |")
+            $clusterCell = ConvertTo-AzLocalMarkdownTableCell -Value ([string]$s.ClusterName)
+            $cvCell = if ($s.CurrentVersion) { ConvertTo-AzLocalMarkdownTableCell -Value ([string]$s.CurrentVersion) } else { '-' }
+            [void]$md.Add("| $clusterCell | $cvCell | $($s.ClusterYYMM) | $($s.LatestYYMM) |")
         }
         [void]$md.Add('')
     }

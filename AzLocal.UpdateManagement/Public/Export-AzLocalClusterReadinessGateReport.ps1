@@ -265,15 +265,17 @@ function Export-AzLocalClusterReadinessGateReport {
         }
         $blocking = "$($r.BlockingReasons)"
         if ($blocking.Length -gt 200) { $blocking = $blocking.Substring(0, 197) + '...' }
-        $blocking = $blocking -replace '\|', '\|' -replace '\r?\n', ' '
-        $reco = if ($r.RecommendedUpdate) { '`' + $r.RecommendedUpdate + '`' } else { '-' }
-        $curr = if ($r.CurrentVersion) { '`' + $r.CurrentVersion + '`' } else { '-' }
+        $blocking = ConvertTo-AzLocalMarkdownTableCell -Value $blocking
+        $reco = if ($r.RecommendedUpdate) { ConvertTo-AzLocalMarkdownTableCell -Value ([string]$r.RecommendedUpdate) } else { '-' }
+        $curr = if ($r.CurrentVersion) { ConvertTo-AzLocalMarkdownTableCell -Value ([string]$r.CurrentVersion) } else { '-' }
         $clusterResId = if ($r.PSObject.Properties['ClusterResourceId'] -and $r.ClusterResourceId) { [string]$r.ClusterResourceId } else { '' }
-        $clusterCell = Get-AzLocalClusterPortalLink -ClusterName ([string]$r.ClusterName) -ClusterResourceId $clusterResId
+        $clusterCell = Get-AzLocalClusterPortalLink -ClusterName ([string]$r.ClusterName) -ClusterResourceId $clusterResId -MarkdownTableCell
         # v0.9.17: per-cluster UpdateRing tag - the readiness gate can be scoped to a
         # ';'-joined multi-ring value, so show which ring each cluster belongs to.
-        $ringCell = if ($r.PSObject.Properties['UpdateRing'] -and $r.UpdateRing) { '`' + ([string]$r.UpdateRing) + '`' } else { '-' }
-        [void]$sb.AppendLine("| $clusterCell | $ringCell | $curr | $($r.UpdateState) | $hCell | $statusCell | $supportCell | $reco | $blocking |")
+        $ringCell = if ($r.PSObject.Properties['UpdateRing'] -and $r.UpdateRing) { ConvertTo-AzLocalMarkdownTableCell -Value ([string]$r.UpdateRing) } else { '-' }
+        $updateStateCell = ConvertTo-AzLocalMarkdownTableCell -Value ([string]$r.UpdateState)
+        $healthCell = ConvertTo-AzLocalMarkdownTableCell -Value ([string]$hCell)
+        [void]$sb.AppendLine("| $clusterCell | $ringCell | $curr | $updateStateCell | $healthCell | $statusCell | $supportCell | $reco | $blocking |")
         $rendered++
     }
 

@@ -164,6 +164,14 @@ allowedUpdateVersions: 'Latest'
 #                 dayOfWeek) match. Useful for per-ring policies
 #                 (canary gets new cumulative immediately, prod ring
 #                 waits for the feature update).
+#                 Key order within a row is not significant. Placing this
+#                 below `rings` and before `notes` is recommended only for
+#                 readability; placing it below `notes` is equally valid.
+#
+# Multiple rows MAY use the same weeksInCycle value. Each row is matched
+# independently by both week and day, so week 1 Monday can target Canary
+# while a separate week 1 Tuesday row targets DevTest. If multiple rows
+# match the same week AND day, their rings are UNIONed and deduplicated.
 schedule:
   - weeksInCycle: '1'
     daysOfWeek:   'Mon-Fri'

@@ -1123,9 +1123,11 @@ function Export-AzLocalFleetUpdateStatusReport {
                         $evBullets = (@($r.HealthCheckEvidence) | Select-Object -First 10 | ForEach-Object {
                             $tsTxt    = if ($_.Timestamp) { ([datetime]$_.Timestamp).ToString('s') + 'Z' } else { '' }
                             $titleTxt = if ($_.Title) { $_.Title } elseif ($_.FailureReason) { $_.FailureReason } else { '(unknown)' }
-                            $titleTxt = $titleTxt -replace '&','&amp;' -replace '<','&lt;' -replace '>','&gt;' -replace '\|','\|'
+                            $titleTxt = $titleTxt -replace '&','&amp;' -replace '<','&lt;' -replace '>','&gt;'
+                            $titleTxt = ConvertTo-AzLocalMarkdownTableCell -Value $titleTxt
                             $tgtTxt   = if ($_.TargetResourceName) { $_.TargetResourceName } else { '-' }
-                            $tgtTxt   = $tgtTxt -replace '&','&amp;' -replace '<','&lt;' -replace '>','&gt;' -replace '\|','\|'
+                            $tgtTxt   = $tgtTxt -replace '&','&amp;' -replace '<','&lt;' -replace '>','&gt;'
+                            $tgtTxt   = ConvertTo-AzLocalMarkdownTableCell -Value $tgtTxt
                             ('&bull; [' + $tsTxt + '] ' + $titleTxt + ' <i>(' + $_.Severity + ', target ' + $tgtTxt + ')</i>')
                         }) -join '<br>'
                         $evCount   = @($r.HealthCheckEvidence).Count
@@ -1146,10 +1148,18 @@ function Export-AzLocalFleetUpdateStatusReport {
                 # target="_blank" intentionally omitted: GitHub Actions + ADO step-summary
                 # markdown sanitisers strip it (and force `rel="nofollow"`). The Tip above
                 # the table tells operators to Ctrl-click to open in a new tab.
-                $clusterCell = if ($r.ClusterResourceId) { '<a href="https://portal.azure.com/#@/resource{0}">{1}</a>' -f $r.ClusterResourceId, $r.ClusterName } else { [string]$r.ClusterName }
-                $updCell     = if ($r.UpdateRunPortalUrl) { '<a href="{0}">{1}</a>' -f $r.UpdateRunPortalUrl, $r.UpdateName } else { [string]$r.UpdateName }
-                $ringCell    = if ($r.PSObject.Properties['UpdateRing'] -and $r.UpdateRing) { ([string]$r.UpdateRing) -replace '\|','\|' } else { '-' }
-                [void]$md.Add("| $clusterCell | $ringCell | $updCell | $($r.State) | $($r.Status) | $($r.CurrentStep) | $errCell | $($r.Duration) | $($r.StartTime) | $($r.LastUpdated) |")
+                $clusterLabel = ConvertTo-AzLocalMarkdownTableCell -Value ([string]$r.ClusterName)
+                $updateLabel  = ConvertTo-AzLocalMarkdownTableCell -Value ([string]$r.UpdateName)
+                $clusterCell = if ($r.ClusterResourceId) { '<a href="https://portal.azure.com/#@/resource{0}">{1}</a>' -f $r.ClusterResourceId, $clusterLabel } else { $clusterLabel }
+                $updCell     = if ($r.UpdateRunPortalUrl) { '<a href="{0}">{1}</a>' -f $r.UpdateRunPortalUrl, $updateLabel } else { $updateLabel }
+                $ringCell    = if ($r.PSObject.Properties['UpdateRing'] -and $r.UpdateRing) { ConvertTo-AzLocalMarkdownTableCell -Value ([string]$r.UpdateRing) } else { '-' }
+                $stateCell   = ConvertTo-AzLocalMarkdownTableCell -Value ([string]$r.State)
+                $statusCell  = ConvertTo-AzLocalMarkdownTableCell -Value ([string]$r.Status)
+                $stepCell    = ConvertTo-AzLocalMarkdownTableCell -Value ([string]$r.CurrentStep)
+                $durationCell = ConvertTo-AzLocalMarkdownTableCell -Value ([string]$r.Duration)
+                $startTimeCell = ConvertTo-AzLocalMarkdownTableCell -Value ([string]$r.StartTime)
+                $lastUpdatedCell = ConvertTo-AzLocalMarkdownTableCell -Value ([string]$r.LastUpdated)
+                [void]$md.Add("| $clusterCell | $ringCell | $updCell | $stateCell | $statusCell | $stepCell | $errCell | $durationCell | $startTimeCell | $lastUpdatedCell |")
             }
             [void]$md.Add('')
         }
@@ -1181,11 +1191,16 @@ function Export-AzLocalFleetUpdateStatusReport {
                 [void]$md.Add('|---|---|---|---|---|---|')
                 foreach ($r in ($recentSuccessList | Sort-Object @{Expression='EndTime';Descending=$true}, ClusterName | Select-Object -First $maxSummaryRows)) {
                     $rid = if ($r.PSObject.Properties['ClusterResourceId']) { [string]$r.ClusterResourceId } else { '' }
-                    $clusterCell = if ($rid) { '<a href="https://portal.azure.com/#@/resource{0}">{1}</a>' -f $rid, $r.ClusterName } else { [string]$r.ClusterName }
+                    $clusterLabel = ConvertTo-AzLocalMarkdownTableCell -Value ([string]$r.ClusterName)
+                    $clusterCell = if ($rid) { '<a href="https://portal.azure.com/#@/resource{0}">{1}</a>' -f $rid, $clusterLabel } else { $clusterLabel }
                     $runRid  = if ($r.PSObject.Properties['RunResourceId']) { [string]$r.RunResourceId } else { '' }
-                    $updCell = if ($runRid) { '<a href="https://portal.azure.com/#@/resource{0}">{1}</a>' -f $runRid, $r.UpdateName } else { [string]$r.UpdateName }
-                    $ringCell = if ($rid -and $ringByResourceId.ContainsKey($rid)) { ([string]$ringByResourceId[$rid]) -replace '\|','\|' } else { '-' }
-                    [void]$md.Add("| $clusterCell | $ringCell | $updCell | $($r.Duration) | $($r.StartTime) | $($r.EndTime) |")
+                    $updateLabel = ConvertTo-AzLocalMarkdownTableCell -Value ([string]$r.UpdateName)
+                    $updCell = if ($runRid) { '<a href="https://portal.azure.com/#@/resource{0}">{1}</a>' -f $runRid, $updateLabel } else { $updateLabel }
+                    $ringCell = if ($rid -and $ringByResourceId.ContainsKey($rid)) { ConvertTo-AzLocalMarkdownTableCell -Value ([string]$ringByResourceId[$rid]) } else { '-' }
+                    $durationCell = ConvertTo-AzLocalMarkdownTableCell -Value ([string]$r.Duration)
+                    $startTimeCell = ConvertTo-AzLocalMarkdownTableCell -Value ([string]$r.StartTime)
+                    $endTimeCell = ConvertTo-AzLocalMarkdownTableCell -Value ([string]$r.EndTime)
+                    [void]$md.Add("| $clusterCell | $ringCell | $updCell | $durationCell | $startTimeCell | $endTimeCell |")
                 }
                 if ($recentSuccessList.Count -gt $maxSummaryRows) {
                     [void]$md.Add('')

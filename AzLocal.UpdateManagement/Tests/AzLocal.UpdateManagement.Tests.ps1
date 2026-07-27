@@ -9945,7 +9945,9 @@ cB,rg1,s1,Ring1,
                 $md | Should -Match 'NoWindowTag remediation'
                 $md | Should -Match '`Mon-Fri_22:00-06:00`'
                 $md | Should -Match 'matched by \*\*ResourceId\*\*'
-                $md | Should -Match 'Only peer in `Ring1` \(`cA`\)'
+                $md | Should -Match 'Only peer in \\`Ring1\\` \(\\`cA\\`\)'
+                $md | Should -Match '<details open><summary>Clusters missing UpdateRing and/or UpdateStartWindow tags \(1 cluster\(s\)\)</summary>'
+                $md | Should -Match '(?s)<details open>.*\| Cluster \| ResourceGroup \| UpdateRing \|.*</details>'
             }
         }
 
@@ -9981,7 +9983,7 @@ cB,rg1,s1,Ring1,
                 $md = Get-Content -Path $out -Raw
                 $md | Should -Match '\*\*Not in CSV\.\*\*'
                 $md | Should -Match 'Re-run the cluster inventory pipeline'
-                $md | Should -Match 'replace `[^`]+` in source control with the artifact'
+                $md | Should -Match 'replace \\`[^`]+\\` in source control with the artifact'
             }
         }
 
@@ -9999,8 +10001,8 @@ cB,rg1,s1,Ring1,
                 $out = Join-Path $nwtDir 'reco-mixed.md'
                 Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend -PipelineYamlPath (Join-Path $nwtDir 'github-actions') -ClusterCsvPath $csv -ExportPath $out 6>$null | Out-Null
                 $md = Get-Content -Path $out -Raw
-                $md | Should -Match '2 of 3 peer\(s\) in `Ring1` use `Mon-Fri_22:00-06:00`'
-                $md | Should -Match 'Alternatives: `Sat-Sun_08:00-20:00` \(1\)'
+                $md | Should -Match '2 of 3 peer\(s\) in \\`Ring1\\` use \\`Mon-Fri_22:00-06:00\\`'
+                $md | Should -Match 'Alternatives: \\`Sat-Sun_08:00-20:00\\` \(1\)'
             }
         }
 
@@ -10138,6 +10140,29 @@ on:
                 $md | Should -Match '`2025-12-10/2026-01-06`'
                 $md | Should -Match 'Clusters with NO `UpdateExclusionsWindow` tag'
                 $md | Should -Match '\*\*Prod\*\* - 1 cluster\(s\)'
+            }
+        }
+
+        It 'Keeps ARG tag and cluster values containing Markdown delimiters inside one exclusion-table row' {
+            InModuleScope AzLocal.UpdateManagement -Parameters @{ exclDir = $script:exclDir } {
+                param($exclDir)
+                Mock Invoke-AzResourceGraphQuery {
+                    @(
+                        [PSCustomObject]@{
+                            ClusterName='cluster|`one`'; ResourceGroup='rg1'; SubscriptionId='s1'; ClusterResourceId='/s/r/c1'
+                            UpdateRing='Prod|`Canary`'; UpdateStartWindow='Mon-Fri_22:00-06:00'; UpdateExclusionsWindow="2025-12-10|freeze`n2026-01-06"
+                        }
+                    )
+                }
+                $out = Join-Path $exclDir 'reco-excl-poison.md'
+                Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend -PipelineYamlPath (Join-Path $exclDir 'github-actions') -ExportPath $out 6>$null | Out-Null
+                $md = Get-Content -Path $out -Raw
+                $dataRow = @($md -split "`r?`n" | Where-Object { $_ -match '^\| Prod' })
+
+                $dataRow | Should -HaveCount 1
+                $dataRow[0] | Should -Match 'Prod\\\|\\`Canary\\`'
+                $dataRow[0] | Should -Match '2025-12-10\\\|freeze<br>2026-01-06'
+                $dataRow[0] | Should -Match 'cluster\\\|\\`one\\`'
             }
         }
 
@@ -11781,6 +11806,20 @@ schedule:
         $r.Rings           | Should -Contain 'Canary'
         $r.UpdateRingValue | Should -Be 'Canary'
     }
+    It 'Supports a separate week-1 Tuesday row targeting a different ring' {
+        $sameWeekSchedule = [pscustomobject]@{
+            CycleWeeks = 4; CycleAnchorISOWeek = 1; CycleAnchorYear = 2026
+            Schedule = @(
+                [pscustomobject]@{ weeksInCycle = '1'; daysOfWeek = 'Mon'; rings = 'Canary' }
+                [pscustomobject]@{ weeksInCycle = '1'; daysOfWeek = 'Tue'; rings = 'DevTest' }
+            )
+        }
+        $r = Resolve-AzLocalCurrentUpdateRing -Schedule $sameWeekSchedule -Now $script:sv_wk1Mon.AddDays(1).AddHours(12)
+        $r.CycleWeek       | Should -Be 1
+        $r.DayOfWeekName   | Should -Be 'Tue'
+        $r.UpdateRingValue | Should -Be 'DevTest'
+        @($r.MatchedRows).Count | Should -Be 1
+    }
     It 'Resolves week-2 Monday to Ring1' {
         $r = Resolve-AzLocalCurrentUpdateRing -Schedule $script:sv_cfg -Now $script:sv_wk1Mon.AddDays(7).AddHours(12)
         $r.CycleWeek       | Should -Be 2
@@ -11791,8 +11830,8 @@ schedule:
         $r.CycleWeek | Should -Be 1
     }
     It 'Returns empty Rings with explanatory Reason on no match' {
-        # Tuesday is unscheduled in this config.
-        $r = Resolve-AzLocalCurrentUpdateRing -Schedule $script:sv_cfg -Now $script:sv_wk1Mon.AddDays(1).AddHours(12)
+        # Wednesday is unscheduled in this config.
+        $r = Resolve-AzLocalCurrentUpdateRing -Schedule $script:sv_cfg -Now $script:sv_wk1Mon.AddDays(2).AddHours(12)
         @($r.Rings).Count   | Should -Be 0
         $r.UpdateRingValue  | Should -BeNullOrEmpty
         $r.Reason           | Should -Match 'No schedule row matches'
@@ -12161,6 +12200,38 @@ schedule:
             @($r.AllowedUpdateVersions).Count | Should -Be 1
             $r.AllowedUpdateVersions[0]    | Should -Be 'row.4.5.6'
             $r.AllowedUpdateVersionsValue  | Should -Be 'row.4.5.6'
+        }
+
+        It 'Accepts per-row allowedUpdateVersions before or after notes with identical results' {
+            $results = foreach ($placement in @('BeforeNotes', 'AfterNotes')) {
+                $p = Join-Path $script:av_tmp ("res-row-order-{0}.yml" -f $placement)
+                $rowFields = if ($placement -eq 'BeforeNotes') {
+                    "    allowedUpdateVersions: 'row.4.5.6'`n    notes: 'change reference'"
+                } else {
+                    "    notes: 'change reference'`n    allowedUpdateVersions: 'row.4.5.6'"
+                }
+                $body = @"
+schemaVersion: 2
+cycleWeeks: 4
+cycleAnchorISOWeek: 1
+cycleAnchorYear: 2026
+allowedUpdateVersions: 'top.1.2.3'
+schedule:
+  - weeksInCycle: '1'
+    daysOfWeek: 'Mon'
+    rings: 'Canary'
+$rowFields
+"@
+                Set-Content -LiteralPath $p -Value $body -Encoding utf8
+                $cfg = Get-AzLocalApplyUpdatesScheduleConfig -Path $p
+                Resolve-AzLocalCurrentUpdateRing -Schedule $cfg -Now $script:av_wk1Mon.AddHours(12)
+            }
+
+            @($results).Count | Should -Be 2
+            $results[0].AllowedUpdateVersionsValue | Should -Be 'row.4.5.6'
+            $results[1].AllowedUpdateVersionsValue | Should -Be 'row.4.5.6'
+            $results[0].MatchedRows[0].notes | Should -Be 'change reference'
+            $results[1].MatchedRows[0].notes | Should -Be 'change reference'
         }
 
         It "Falls back to top-level when NO matched row has the field (Source = 'top-level')" {
@@ -16167,15 +16238,15 @@ schedule:
         $md | Should -Match '\| Date \(UTC\) \| Day \| CycleWeek \| Eligible rings \(cluster count\) \| AllowedUpdateVersions \|'
         # Day-0 (W1 Monday) has Canary -> inline count of (3) should appear in the row cell
         $w1MonStr = $script:ccmd_wk1Mon.ToString('yyyy-MM-dd')
-        $md | Should -Match "$w1MonStr.*``Canary`` \(3\)"
+        $md | Should -Match "$w1MonStr.*Canary \(3\)"
     }
 
     It '-ClusterRingCounts on an overlap day shows each ring with its own inline count' {
         $counts = @{ Canary = 3; Ring1 = 2; Prod = 9 }
         $md = Get-AzLocalApplyUpdatesScheduleCycleCalendar -Schedule $script:ccmd_multi -StartDate $script:ccmd_wk1Mon -Days 5 -AsMarkdown -ClusterRingCounts $counts
         # Friday of W1: Canary + Ring1, each with its own inline count.
-        $md | Should -Match '`Canary` \(3\)'
-        $md | Should -Match '`Ring1` \(2\)'
+        $md | Should -Match 'Canary \(3\)'
+        $md | Should -Match 'Ring1 \(2\)'
     }
 
     It '-ClusterRingCounts with -IncludePerRingSummary adds Cluster count column on the per-ring projection table' {
@@ -16199,7 +16270,7 @@ schedule:
         $counts = @{ canary = 7 }
         $md = Get-AzLocalApplyUpdatesScheduleCycleCalendar -Schedule $script:ccmd_clean -StartDate $script:ccmd_wk1Mon -AsMarkdown -ClusterRingCounts $counts
         $w1MonStr = $script:ccmd_wk1Mon.ToString('yyyy-MM-dd')
-        $md | Should -Match "$w1MonStr.*``Canary`` \(7\)"
+        $md | Should -Match "$w1MonStr.*Canary \(7\)"
     }
 
     It '-ClusterRingCounts on dead days shows the dead-day cell' {
@@ -16303,9 +16374,9 @@ schedule:
         $md | Should -Match '\| Date \(UTC\) \| Day \| CycleWeek \| Eligible rings \| Tag Start Window Match \(>=95%\) \| AllowedUpdateVersions \|'
         $md | Should -Not -Match 'Ring CRON Start Time'
         # Cdn weekday rows: True 29/30
-        $md | Should -Match '`Cdn`: True 29/30 \(97%\)'
+        $md | Should -Match 'Cdn: True 29/30 \(97%\)'
         # Prod weekend rows: False 1/40 (2%)
-        $md | Should -Match '`Prod`: False 1/40 \(2%\)'
+        $md | Should -Match 'Prod: False 1/40 \(2%\)'
     }
 
     It 'Both params produce both columns in correct positions (7-column header)' {
@@ -16322,28 +16393,28 @@ schedule:
         }
         $md = Get-AzLocalApplyUpdatesScheduleCycleCalendar -Schedule $script:cccol_cfg -StartDate $script:cccol_wk1Mon -Days 7 -AsMarkdown -CronFiringsByDate $cron -WindowMatchByRingAndDate $wm
         $md | Should -Match '\| Date \(UTC\) \| Ring CRON Start Time<br>\(apply-updates pipeline\) \| Day \| CycleWeek \| Eligible rings \| Tag Start Window Match \(>=95%\) \| AllowedUpdateVersions \|'
-        $md | Should -Match '`Cdn`: True 30/30 \(100%\)'
-        $md | Should -Match '`Prod`: True 40/40 \(100%\)'
+        $md | Should -Match 'Cdn: True 30/30 \(100%\)'
+        $md | Should -Match 'Prod: True 40/40 \(100%\)'
     }
 
-    It 'CronFiringsByDate renders 1 firing verbatim, 2 firings joined by comma' {
+    It 'CronFiringsByDate renders up to 4 firings verbatim' {
         $cron = @{}
         $d0 = $script:cccol_wk1Mon.ToString('yyyy-MM-dd')
         $d1 = $script:cccol_wk1Mon.AddDays(1).ToString('yyyy-MM-dd')
         $cron[$d0] = @('02:00')
-        $cron[$d1] = @('02:00','04:00')
+        $cron[$d1] = @('02:00','04:00','06:00','08:00')
         $md = Get-AzLocalApplyUpdatesScheduleCycleCalendar -Schedule $script:cccol_cfg -StartDate $script:cccol_wk1Mon -Days 2 -AsMarkdown -CronFiringsByDate $cron
         $md | Should -Match "\| $d0 \| 02:00 \|"
-        $md | Should -Match "\| $d1 \| 02:00, 04:00 \|"
+        $md | Should -Match "\| $d1 \| 02:00, 04:00, 06:00, 08:00 \|"
         $md | Should -Not -Match '\(\+'
     }
 
-    It 'CronFiringsByDate with 3+ firings shows first 2 + (+N) suffix' {
+    It 'CronFiringsByDate with 5+ firings shows first 4 + (+N) suffix' {
         $cron = @{}
         $d0 = $script:cccol_wk1Mon.ToString('yyyy-MM-dd')
-        $cron[$d0] = @('02:00','04:00','06:00','08:00')
+        $cron[$d0] = @('02:00','04:00','06:00','08:00','10:00','12:00')
         $md = Get-AzLocalApplyUpdatesScheduleCycleCalendar -Schedule $script:cccol_cfg -StartDate $script:cccol_wk1Mon -Days 1 -AsMarkdown -CronFiringsByDate $cron
-        $md | Should -Match "\| $d0 \| 02:00, 04:00 \(\+2\) \|"
+        $md | Should -Match "\| $d0 \| 02:00, 04:00, 06:00, 08:00 \(\+2\) \|"
     }
 
     It 'CronFiringsByDate with no entry for a date renders _(none)_ on eligible days' {
@@ -16354,29 +16425,29 @@ schedule:
     It 'WindowMatchByRingAndDate boundary: 95/100 -> True, 94/100 -> False' {
         $wm95 = @{ Cdn = @{ ($script:cccol_wk1Mon.ToString('yyyy-MM-dd')) = @{ Matching = 95; Total = 100 } } }
         $md95 = Get-AzLocalApplyUpdatesScheduleCycleCalendar -Schedule $script:cccol_cfg -StartDate $script:cccol_wk1Mon -Days 1 -AsMarkdown -WindowMatchByRingAndDate $wm95
-        $md95 | Should -Match '`Cdn`: True 95/100 \(95%\)'
+        $md95 | Should -Match 'Cdn: True 95/100 \(95%\)'
 
         $wm94 = @{ Cdn = @{ ($script:cccol_wk1Mon.ToString('yyyy-MM-dd')) = @{ Matching = 94; Total = 100 } } }
         $md94 = Get-AzLocalApplyUpdatesScheduleCycleCalendar -Schedule $script:cccol_cfg -StartDate $script:cccol_wk1Mon -Days 1 -AsMarkdown -WindowMatchByRingAndDate $wm94
-        $md94 | Should -Match '`Cdn`: False 94/100 \(94%\)'
+        $md94 | Should -Match 'Cdn: False 94/100 \(94%\)'
     }
 
     It 'WindowMatchByRingAndDate with Total=0 renders _(0 clusters)_' {
         $wm = @{ Cdn = @{ ($script:cccol_wk1Mon.ToString('yyyy-MM-dd')) = @{ Matching = 0; Total = 0 } } }
         $md = Get-AzLocalApplyUpdatesScheduleCycleCalendar -Schedule $script:cccol_cfg -StartDate $script:cccol_wk1Mon -Days 1 -AsMarkdown -WindowMatchByRingAndDate $wm
-        $md | Should -Match '`Cdn`: _\(0 clusters\)_'
+        $md | Should -Match 'Cdn: _\(0 clusters\)_'
     }
 
     It 'WindowMatchByRingAndDate with no entry for the ring on that date renders _(n/a)_' {
         $wm = @{ Cdn = @{ '9999-01-01' = @{ Matching = 1; Total = 1 } } }
         $md = Get-AzLocalApplyUpdatesScheduleCycleCalendar -Schedule $script:cccol_cfg -StartDate $script:cccol_wk1Mon -Days 1 -AsMarkdown -WindowMatchByRingAndDate $wm
-        $md | Should -Match '`Cdn`: _\(n/a\)_'
+        $md | Should -Match 'Cdn: _\(n/a\)_'
     }
 
     It 'WindowMatchByRingAndDate is case-insensitive on ring keys' {
         $wm = @{ 'cdn' = @{ ($script:cccol_wk1Mon.ToString('yyyy-MM-dd')) = @{ Matching = 10; Total = 10 } } }
         $md = Get-AzLocalApplyUpdatesScheduleCycleCalendar -Schedule $script:cccol_cfg -StartDate $script:cccol_wk1Mon -Days 1 -AsMarkdown -WindowMatchByRingAndDate $wm
-        $md | Should -Match '`Cdn`: True 10/10 \(100%\)'
+        $md | Should -Match 'Cdn: True 10/10 \(100%\)'
     }
 
     It 'CronFiringsByDate is case-insensitive on date keys (yyyy-MM-dd should not be affected anyway, but explicit guard)' {
@@ -19086,6 +19157,36 @@ Describe 'Thin-YAML Step.9: Export-AzLocalFleetHealthStatusReport' {
         $out | Should -Match 'total_in_sub=3'
     }
 
+    It 'Keeps multiline remediation commands inside one Markdown table row' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s9_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s9_ghSummaryFile
+        $global:_s9_payload = @{
+            Detail = @(
+                [pscustomobject]@{
+                    ClusterName='alpha'; Severity='Critical'; Title=''; FailureReason='Test Network intent on existing cluster nodes';
+                    Description='Checking if network intent is healthy on existing nodes';
+                    FailureName='AzStackHci_Network_Test_Network_Cluster_Intent_Status';
+                    Remediation="To check cluster network intent status, run below cmdlet on your cluster:`r`nGet-NetIntentStatus";
+                    LastOccurrence=$script:_s9_now; ResourceGroup='rg1'; ClusterPortalUrl='https://portal/alpha';
+                    TargetResourceName=''; TargetResourceType=''
+                }
+            )
+            Overview = @()
+            OutDir = $script:_s9_outDir; Now = $script:_s9_now
+        }
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalFleetHealthFailures { @($global:_s9_payload.Detail) }
+            Mock Get-AzLocalFleetHealthOverview { @($global:_s9_payload.Overview) }
+            Export-AzLocalFleetHealthStatusReport -OutputDirectory $global:_s9_payload.OutDir -Now $global:_s9_payload.Now | Out-Null
+        }
+
+        $summary = Get-Content -Raw -LiteralPath $script:_s9_ghSummaryFile
+        $summary | Should -Match 'cluster:<br>Get-NetIntentStatus'
+        @($summary -split "`r?`n" | Where-Object { $_ -match 'Get-NetIntentStatus' }).Count | Should -Be 1
+        $summary | Should -Not -Match "cluster:`r?`nGet-NetIntentStatus"
+    }
+
     It 'Scope by-update-ring forwards UpdateRing as -UpdateRingTag to both source cmdlets' {
         $env:GITHUB_ACTIONS      = 'true'
         $env:GITHUB_OUTPUT       = $script:_s9_ghOutputFile
@@ -19895,10 +19996,21 @@ Describe 'Thin-YAML Step.7: Export-AzLocalClusterReadinessGateReport' {
         $summary | Should -Match '\| Status \|'
         # v0.9.17: UpdateRing column is rendered after Cluster.
         $summary | Should -Match '\| Cluster \| UpdateRing \|'
-        $summary | Should -Match '\| `Wave1` \|'
+        $summary | Should -Match '\| Wave1 \|'
     }
 }
 #endregion v0.8.74: Export-AzLocalClusterReadinessGateReport
+
+Describe 'Helper Function: ConvertTo-AzLocalMarkdownTableCell (Internal)' {
+    It 'Escapes pipes and backticks and keeps multiline values in one table row' {
+        $result = InModuleScope AzLocal.UpdateManagement {
+            ConvertTo-AzLocalMarkdownTableCell -Value "left|``code`` `r`nright"
+        }
+
+        $result | Should -Be 'left\|\`code\` <br>right'
+        @($result -split "`r?`n").Count | Should -Be 1
+    }
+}
 
 #region v0.9.17: Get-AzLocalApplyScheduleSourceBanner (schedule-source banner)
 Describe 'Helper Function: Get-AzLocalApplyScheduleSourceBanner (Internal)' {
@@ -22981,7 +23093,8 @@ Describe 'v0.8.82: Export-AzLocalClusterUpdateReadinessReport adds Last Updated 
         $script:src5Rep | Should -Match '\| Cluster \| UpdateRing \| Current version \| Current SBE version \| Update state \| Health \| Status \| Status checked \(UTC\) \| Last Updated \| Recommended update \|'
     }
     It 'Detail rows include a Last Updated cell after Status' {
-        $script:src5Rep | Should -Match '\| \$statusCell \| \$sc \| \$lu \| \$ru \|'
+        $script:src5Rep | Should -Match '\| \$statusCell \| \$statusCheckedCell \| \$lastUpdatedCell \| \$recommendedUpdateCell \|'
+        $script:src5Rep | Should -Match '\$lastUpdatedCell = ConvertTo-AzLocalMarkdownTableCell -Value \(\[string\]\$lu\)'
     }
     It 'Sort order is UpdateRing -> Status -> ClusterName (ring first, not status first)' {
         # The Sort-Object now leads with the UpdateRing expression before the status priority.
@@ -23811,12 +23924,12 @@ Describe 'v0.9.14: Assess Readiness allow-list mismatch surfacing' {
     }
     It 'Report renders a lone Ready update inline and 2+ as a collapsed details block' {
         $src05Allow | Should -Match '\$readyItems\.Count -eq 1'
-        $src05Allow | Should -Match '\$availCell = \$readyItems\[0\]'
+        $src05Allow | Should -Match '\$availCell = ConvertTo-AzLocalMarkdownTableCell -Value \$readyItems\[0\]'
         $src05Allow | Should -Match '<details><summary>\{0\} update\(s\)</summary>\{1\}</details>'
         $src05Allow | Should -Match '\$readyItems'
     }
     It 'Report row appends the collapsible available-updates cell' {
-        $src05Allow | Should -Match '\$ru \| \$availCell \|'
+        $src05Allow | Should -Match '\$recommendedUpdateCell \| \$availCell \|'
     }
     It 'Report flags allow-list-suppressed UpToDate rows with a Status marker' {
         $src05Allow | Should -Match "\`$isAllowListSuppressed = \(\`$statusKey -eq 'UpToDate'\) -and \(\`$readyItems\.Count -gt 0\)"
