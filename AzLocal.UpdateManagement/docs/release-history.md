@@ -4,9 +4,13 @@
 >
 > **For older releases**, this is the canonical reference; the main README intentionally stays slim so the most recent block is easy to find.
 >
-> **For v0.9.25 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0925) `What's New in v0.9.25` section.
+> **For v0.9.26 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0926) `What's New in v0.9.26` section.
 
 ---
+
+### What's New in v0.9.26
+
+**Update: 1 now scopes Azure Resource Graph child-resource reads to admitted cluster IDs, collects readiness and blocking health once each, and preserves actionable Ready updates.** A Ready solution update outranks a separate `HasPrerequisite` SBE; when ARG temporarily omits that Ready row, a sparse direct ARM verification refreshes only the contradictory cluster. Blocking-health ARG reads use the same command-line-safe batching, and clean fleets emit zero-test health JUnit so the combined assessment and diagnostic publishers always have valid files. No public function or export-count change (71); pipeline pins are updated to `0.9.26`. See [CHANGELOG.md](../CHANGELOG.md#0926---2026-07-27) for full details.
 
 ### What's New in v0.9.25
 

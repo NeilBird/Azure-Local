@@ -26,13 +26,10 @@ function Export-AzLocalClusterUpdateReadinessReport {
           3. When -Scope is 'all' and the inventory is empty, short-
              circuits with zero counts, an IDLE markdown summary, and
              empty step outputs (matches the v0.8.4 yml early-exit).
-          4. Calls `Get-AzLocalClusterUpdateReadiness` TWICE so the
-             cmdlet's native -ExportPath emitter produces both the
-             readiness.csv (humans) and readiness.xml (JUnit, one
-             <testcase> per cluster). This preserves the v0.8.4
-             dorny/test-reporter contract byte-for-byte.
-          5. Calls `Test-AzLocalClusterHealth -BlockingOnly` TWICE
-             (CSV + JUnit) for the same reason.
+             4. Calls `Get-AzLocalClusterUpdateReadiness` once and uses the
+                 returned rows for both readiness.csv and readiness.xml.
+             5. Calls `Test-AzLocalClusterHealth -BlockingOnly` once and
+                 uses the returned failures for both CSV and JUnit output.
           6. Computes the 3-bucket model that matches the
              Get-AzLocalClusterUpdateReadiness Summary:
              ReadyForUpdate / UpToDate / NotReady.
@@ -294,8 +291,8 @@ function Export-AzLocalClusterUpdateReadinessReport {
     Write-Host 'Step 1: Readiness (Get-AzLocalClusterUpdateReadiness)'
     Write-Host '========================================'
 
-    # v0.9.1: forward the schedule allow-list to BOTH readiness calls so the
-    # CSV and the JUnit XML reflect the same constrained Ready/UpToDate buckets.
+    # v0.9.1: forward the schedule allow-list so the CSV and the JUnit XML
+    # reflect the same constrained Ready/UpToDate buckets.
     # SchedulePath is added to a readiness-only clone so it does NOT leak into
     # $scopeParams (which is also reused by Test-AzLocalClusterHealth, which has
     # no -SchedulePath parameter).
@@ -305,17 +302,33 @@ function Export-AzLocalClusterUpdateReadinessReport {
         Write-Host "Allow-list: apply-updates schedule '$SchedulePath'"
     }
 
-    # CSV for humans
+    # Collect once for both CSV and JUnit. Re-running the cmdlet for each
+    # format repeats every ARG phase and any sparse ARM verification.
     $readiness = Get-AzLocalClusterUpdateReadiness @readinessParams `
         -ExportPath $readinessCsv `
         -PassThru
 
-    # JUnit XML for the test reporter (ExportPath .xml auto-detects JUnitXml).
-    # Two calls intentionally - this preserves the v0.8.4 dorny/test-reporter
-    # contract byte-for-byte (the cmdlet's native JUnit shape is what operators
-    # have screenshots / automations for). ARG round-trip is cheap.
-    $null = Get-AzLocalClusterUpdateReadiness @readinessParams `
-        -ExportPath $readinessXml
+    $readinessJUnitRows = @($readiness | ForEach-Object {
+        $statusVal = if ($_.ReadyForUpdate -eq $true) {
+            'Ready'
+        } elseif ($_.PSObject.Properties['BlockingReasons'] -and $_.BlockingReasons -ne '') {
+            'Blocked'
+        } elseif ($_.HealthState -eq 'Failure') {
+            'Failed'
+        } else {
+            'Skipped'
+        }
+        $currentSbeVersion = if ($_.PSObject.Properties['CurrentSbeVersion']) { $_.CurrentSbeVersion } else { '' }
+        [pscustomobject]@{
+            ClusterName  = $_.ClusterName
+            Status       = $statusVal
+            Message      = "CurrentVersion: $($_.CurrentVersion), CurrentSbeVersion: $currentSbeVersion, UpdateState: $($_.UpdateState), HealthState: $($_.HealthState), RecommendedUpdate: $($_.RecommendedUpdate), BlockingReasons: $($_.BlockingReasons)"
+            UpdateName   = $_.RecommendedUpdate
+            CurrentState = $_.UpdateState
+        }
+    })
+    Export-ResultsToJUnitXml -Results $readinessJUnitRows -OutputPath $readinessXml `
+        -TestSuiteName 'AzureLocalClusterReadiness' -OperationType 'ReadinessCheck'
 
     # v0.7.99: 3-bucket model matches Get-AzLocalClusterUpdateReadiness Summary.
     # UpToDate clusters are NOT rolled into NotReady - they are a distinct bucket.
@@ -466,14 +479,27 @@ function Export-AzLocalClusterUpdateReadinessReport {
     Write-Host 'Step 2: Blocking health (Test-AzLocalClusterHealth -BlockingOnly)'
     Write-Host '========================================'
 
-    $health = Test-AzLocalClusterHealth @scopeParams `
-        -BlockingOnly `
-        -ExportPath $healthCsv `
-        -PassThru
-
-    $null = Test-AzLocalClusterHealth @scopeParams `
-        -BlockingOnly `
-        -ExportPath $healthXml
+    $health = Test-AzLocalClusterHealth @scopeParams -BlockingOnly -PassThru
+    $healthFailures = @($health | ForEach-Object { @($_.Failures) } | Where-Object { $_ })
+    if ($healthFailures.Count -gt 0) {
+        $healthFailures | ConvertTo-SafeCsvCollection | Export-Csv -Path $healthCsv -NoTypeInformation -Encoding UTF8
+    }
+    else {
+        Set-Content -Path $healthCsv -Value '"ClusterName","CheckName","Severity","Title","Description","Remediation","TargetResourceName","TargetResourceID","Timestamp"' -Encoding ASCII
+    }
+    $healthJUnitRows = @($healthFailures | ForEach-Object {
+        $junitNodeInfo = if ($_.TargetResourceName) { " (Node: $($_.TargetResourceName))" } else { '' }
+        $junitTitle = if ($_.PSObject.Properties['Title'] -and $_.Title) { [string]$_.Title } else { [string]$_.CheckName }
+        [pscustomobject]@{
+            ClusterName  = $_.ClusterName
+            Status       = 'Failed'
+            Message      = "$($_.Severity): $junitTitle$junitNodeInfo - $($_.Description)"
+            UpdateName   = $_.CheckName
+            CurrentState = $_.Severity
+        }
+    })
+    Export-ResultsToJUnitXml -Results $healthJUnitRows -OutputPath $healthXml `
+        -TestSuiteName 'AzureLocalClusterHealth' -OperationType 'HealthCheck'
 
     # ---- Combined JUnit XML ------------------------------------------------
     # Merge readiness.xml + health-blocking.xml into assess-readiness.xml so

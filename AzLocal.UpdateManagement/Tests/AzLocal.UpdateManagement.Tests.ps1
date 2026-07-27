@@ -357,8 +357,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $script:ModuleInfo | Should -Not -BeNullOrEmpty
         }
 
-        It 'Should have version 0.9.25' {
-            $script:ModuleInfo.Version | Should -Be '0.9.25'
+        It 'Should have version 0.9.26' {
+            $script:ModuleInfo.Version | Should -Be '0.9.26'
         }
 
         It 'Module version constants are in sync between .psm1 and .psd1' {
@@ -4413,6 +4413,26 @@ Describe 'Function: Test-AzLocalClusterHealth' {
             }
         }
     }
+
+    Context 'Fleet-scale ARG query batching' {
+        It 'Routes more than one value batch of cluster IDs through the shared batch helper' {
+            InModuleScope AzLocal.UpdateManagement {
+                $resourceIds = @(1..41 | ForEach-Object {
+                    "/subscriptions/sub/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/cluster-$_"
+                })
+                Mock Test-AzCliAvailable { return $true }
+                Mock Install-AzGraphExtension { return $true }
+                Mock Invoke-AzLocalResourceGraphValueBatches { return @() }
+
+                $result = Test-AzLocalClusterHealth -ClusterResourceIds $resourceIds -PassThru 6>$null
+
+                $result | Should -HaveCount 41
+                Assert-MockCalled Invoke-AzLocalResourceGraphValueBatches -Times 1 -Exactly -Scope It -ParameterFilter {
+                    $Value.Count -eq 41 -and $QueryTemplate -match '\| where ClusterResourceId_ in~ \(\{0\}\)'
+                }
+            }
+        }
+    }
 }
 
 #endregion Pre-Update Health Validation Tests
@@ -6394,13 +6414,138 @@ Describe 'Start-AzLocalClusterUpdate (prefetched pass-through)' {
 
 #region Integration: Get-AzLocalClusterUpdateReadiness parallel dispatch
 
-# v0.7.68 ARG-first refactor: multi-cluster readiness now issues three ARG
-# queries (cluster lookup, updatesummaries, updates) instead of per-cluster
-# ARM REST fan-out. Rewritten to mock Invoke-AzResourceGraphQuery and to
-# discriminate by query text (resources vs updatesummaries vs updates).
+# v0.7.68 ARG-first refactor: multi-cluster readiness uses three ARG query
+# phases (cluster lookup, updatesummaries, updates) instead of per-cluster ARM
+# REST fan-out. Child-resource phases are split into command-line-safe target-ID
+# batches. Mocks discriminate by query text.
 Describe 'Get-AzLocalClusterUpdateReadiness (ARG-batch dispatch)' {
 
-    Context 'Three ARG batches (clusters, updatesummaries, updates)' {
+    Context 'Cluster, update-summary, and available-update ARG phases' {
+
+        It 'Scopes child-resource queries to target clusters and lets a Ready solution outrank a prerequisite SBE' {
+            InModuleScope AzLocal.UpdateManagement {
+                function global:az { $global:LASTEXITCODE = 0; return '{}' }
+                Mock Test-AzCliAvailable       { return $true }
+                Mock Install-AzGraphExtension { return $true }
+                Mock Get-HealthCheckFailureSummary { return '' }
+                Mock Write-Log {}
+
+                $clusterId = '/subscriptions/s/resourceGroups/r/providers/Microsoft.AzureStackHCI/clusters/mixed-update-state'
+                Mock Invoke-AzResourceGraphQuery {
+                    param($Query)
+                    if ($Query -match 'updatesummaries') {
+                        return @([PSCustomObject]@{
+                            ClusterResourceId_ = $clusterId.ToLowerInvariant()
+                            properties = [PSCustomObject]@{ state = 'UpdateAvailable'; healthState = 'Success' }
+                        })
+                    }
+                    if ($Query -match "clusters/updates'") {
+                        return @(
+                            [PSCustomObject]@{
+                                ClusterResourceId_ = $clusterId.ToLowerInvariant()
+                                UpdateName_ = '12.2604.1003.1006'
+                                name = '12.2604.1003.1006'
+                                properties = [PSCustomObject]@{ state = 'Ready'; packageType = 'Solution' }
+                            }
+                            [PSCustomObject]@{
+                                ClusterResourceId_ = $clusterId.ToLowerInvariant()
+                                UpdateName_ = 'Vendor-SBE-4.2.0'
+                                name = 'Vendor-SBE-4.2.0'
+                                properties = [PSCustomObject]@{ state = 'HasPrerequisite'; packageType = 'SBE' }
+                            }
+                        )
+                    }
+                    return @([PSCustomObject]@{
+                        id = $clusterId
+                        name = 'mixed-update-state'; resourceGroup = 'r'; subscriptionId = 's'; tags = $null
+                        properties = [PSCustomObject]@{ status = 'ConnectedRecently' }
+                    })
+                }
+
+                $result = Get-AzLocalClusterUpdateReadiness `
+                    -ClusterResourceIds @($clusterId) `
+                    -AllowedUpdateVersions @('12.2604.1003.1006') `
+                    -PassThru
+
+                $result | Should -HaveCount 1
+                $result[0].ReadyForUpdate | Should -BeTrue
+                $result[0].RecommendedUpdate | Should -Be '12.2604.1003.1006'
+                $result[0].ReadyUpdates | Should -Be '12.2604.1003.1006'
+                $result[0].HasPrerequisiteUpdates | Should -Be 'Vendor-SBE-4.2.0'
+
+                $excludedResult = Get-AzLocalClusterUpdateReadiness `
+                    -ClusterResourceIds @($clusterId) `
+                    -AllowedUpdateVersions @('12.9999.0.0') `
+                    -PassThru
+
+                $excludedResult | Should -HaveCount 1
+                $excludedResult[0].ReadyForUpdate | Should -BeFalse
+                $excludedResult[0].RecommendedUpdate | Should -BeNullOrEmpty
+                $excludedResult[0].AllowListSuppressedUpdates | Should -Be '12.2604.1003.1006'
+                (Get-AzLocalClusterReadinessStatus -ReadinessRow $excludedResult[0]) | Should -Be 'SbeBlocked'
+
+                Assert-MockCalled Invoke-AzResourceGraphQuery -Times 4 -ParameterFilter {
+                    $Query -match 'extensibilityresources' -and
+                    $Query -match 'mixed-update-state'
+                }
+            }
+        }
+
+        It 'Recovers a Ready solution from ARM when ARG exposes only a prerequisite SBE' {
+            InModuleScope AzLocal.UpdateManagement {
+                function global:az { $global:LASTEXITCODE = 0; return '{}' }
+                Mock Test-AzCliAvailable       { return $true }
+                Mock Install-AzGraphExtension { return $true }
+                Mock Get-HealthCheckFailureSummary { return '' }
+
+                $clusterId = '/subscriptions/s/resourceGroups/r/providers/Microsoft.AzureStackHCI/clusters/stale-arg-state'
+                Mock Invoke-AzResourceGraphQuery {
+                    param($Query)
+                    if ($Query -match 'updatesummaries') {
+                        return @([PSCustomObject]@{
+                            ClusterResourceId_ = $clusterId.ToLowerInvariant()
+                            properties = [PSCustomObject]@{ state = 'UpdateAvailable'; healthState = 'Success' }
+                        })
+                    }
+                    if ($Query -match "clusters/updates'") {
+                        return @([PSCustomObject]@{
+                            ClusterResourceId_ = $clusterId.ToLowerInvariant()
+                            UpdateName_ = 'Vendor-SBE-4.2.0'
+                            name = 'Vendor-SBE-4.2.0'
+                            properties = [PSCustomObject]@{ state = 'HasPrerequisite'; packageType = 'SBE' }
+                        })
+                    }
+                    return @([PSCustomObject]@{
+                        id = $clusterId
+                        name = 'stale-arg-state'; resourceGroup = 'r'; subscriptionId = 's'; tags = $null
+                        properties = [PSCustomObject]@{ status = 'ConnectedRecently' }
+                    })
+                }
+                Mock Get-AzLocalAvailableUpdates {
+                    return @(
+                        [PSCustomObject]@{
+                            name = '12.2604.1003.1006'
+                            properties = [PSCustomObject]@{ state = 'Ready'; packageType = 'Solution' }
+                        }
+                        [PSCustomObject]@{
+                            name = 'Vendor-SBE-4.2.0'
+                            properties = [PSCustomObject]@{ state = 'HasPrerequisite'; packageType = 'SBE' }
+                        }
+                    )
+                }
+
+                $result = Get-AzLocalClusterUpdateReadiness -ClusterResourceIds @($clusterId) -PassThru
+
+                $result | Should -HaveCount 1
+                $result[0].ReadyForUpdate | Should -BeTrue
+                $result[0].RecommendedUpdate | Should -Be '12.2604.1003.1006'
+                $result[0].ReadyUpdates | Should -Be '12.2604.1003.1006'
+                $result[0].HasPrerequisiteUpdates | Should -Be 'Vendor-SBE-4.2.0'
+                Assert-MockCalled Get-AzLocalAvailableUpdates -Times 1 -Exactly -ParameterFilter {
+                    $ClusterResourceId -eq $clusterId -and $Raw
+                }
+            }
+        }
 
         It 'Aggregates one row per cluster, tallies recommended versions, and strips internal __ columns' {
             InModuleScope AzLocal.UpdateManagement {
@@ -6496,8 +6641,8 @@ Describe 'Get-AzLocalClusterUpdateReadiness (ARG-batch dispatch)' {
                     $r.PSObject.Properties.Name | Should -Not -Contain 'ClusterResourceId_'
                 }
 
-                # ARG-first contract: exactly 3 ARG calls (cluster lookup +
-                # updateSummaries + updates) for the entire fleet.
+                # Three input IDs fit one batch per phase: cluster lookup +
+                # updateSummaries + updates.
                 Assert-MockCalled Invoke-AzResourceGraphQuery -Times 3 -Exactly
             }
         }
@@ -6509,7 +6654,7 @@ Describe 'Get-AzLocalClusterUpdateReadiness (ARG-batch dispatch)' {
 #region Readiness gates (v0.7.61: ClusterState + Critical health checks)
 
 # v0.7.68 ARG-first refactor: rewritten to mock Invoke-AzResourceGraphQuery
-# (the cmdlet issues 3 ARG batches: cluster lookup, updatesummaries, updates).
+# across the cluster lookup, updatesummaries, and updates phases.
 Describe 'Get-AzLocalClusterUpdateReadiness readiness gates' {
 
     Context 'BlockingReasons column and ReadyForUpdate gating' {
@@ -19354,9 +19499,12 @@ Describe 'Thin-YAML Step.5: Export-AzLocalClusterUpdateReadinessReport' {
             Mock Get-AzLocalClusterUpdateReadiness { @($global:_s5_payload.Readiness) }
             Mock Test-AzLocalClusterHealth         { @($global:_s5_payload.Health) }
             Export-AzLocalClusterUpdateReadinessReport -OutputDirectory $global:_s5_payload.OutDir -Scope 'all' | Out-Null
-            Assert-MockCalled Get-AzLocalClusterUpdateReadiness -Times 2 -Exactly -Scope It -ParameterFilter {
+            Assert-MockCalled Get-AzLocalClusterUpdateReadiness -Times 1 -Exactly -Scope It -ParameterFilter {
                 $ClusterResourceIds -and $ClusterResourceIds[0] -like '*/clusters/alpha'
             }
+            Assert-MockCalled Test-AzLocalClusterHealth -Times 1 -Exactly -Scope It
+            Test-Path -LiteralPath (Join-Path $global:_s5_payload.OutDir 'readiness.xml') | Should -BeTrue
+            Test-Path -LiteralPath (Join-Path $global:_s5_payload.OutDir 'health-blocking.xml') | Should -BeTrue
         }
     }
 
@@ -19381,9 +19529,10 @@ Describe 'Thin-YAML Step.5: Export-AzLocalClusterUpdateReadinessReport' {
             Mock Get-AzLocalClusterUpdateReadiness { @($global:_s5_payload.Readiness) }
             Mock Test-AzLocalClusterHealth         { @($global:_s5_payload.Health) }
             Export-AzLocalClusterUpdateReadinessReport -OutputDirectory $global:_s5_payload.OutDir -Scope 'by-update-ring' -UpdateRing 'Prod' | Out-Null
-            Assert-MockCalled Get-AzLocalClusterUpdateReadiness -Times 2 -Exactly -Scope It -ParameterFilter {
+            Assert-MockCalled Get-AzLocalClusterUpdateReadiness -Times 1 -Exactly -Scope It -ParameterFilter {
                 $ScopeByUpdateRingTag -eq $true -and $UpdateRingValue -eq 'Prod'
             }
+            Assert-MockCalled Test-AzLocalClusterHealth -Times 1 -Exactly -Scope It
         }
     }
 
@@ -19590,20 +19739,6 @@ Describe 'Thin-YAML Step.5: Export-AzLocalClusterUpdateReadinessReport' {
             Health = @([pscustomobject]@{ ClusterName='gamma'; HealthState='Success'; Passed=$true; CriticalCount=0; WarningCount=0; Failures='' })
             OutDir = $script:_s5_outDir
         }
-        # Pre-create the per-cmdlet JUnit XML files so the cmdlet's
-        # combined-XML merge has something to read. The mocks below cannot
-        # write to $ExportPath inside a Pester Mock body reliably (Pester
-        # rebinds parameter scopes), so we materialize the inputs here.
-        $readinessXmlContent = @'
-<?xml version="1.0" encoding="utf-8"?>
-<testsuites name="Update Readiness"><testsuite name="Update Readiness" tests="1" failures="0"><testcase classname="Cluster Update Readiness" name="gamma" time="0"/></testsuite></testsuites>
-'@
-        $healthXmlContent = @'
-<?xml version="1.0" encoding="utf-8"?>
-<testsuites name="Cluster Health"><testsuite name="Cluster Health (Blocking)" tests="1" failures="0"><testcase classname="Cluster Health (Blocking)" name="gamma" time="0"/></testsuite></testsuites>
-'@
-        [System.IO.File]::WriteAllText((Join-Path $script:_s5_outDir 'readiness.xml'),       $readinessXmlContent, [System.Text.UTF8Encoding]::new($false))
-        [System.IO.File]::WriteAllText((Join-Path $script:_s5_outDir 'health-blocking.xml'), $healthXmlContent,    [System.Text.UTF8Encoding]::new($false))
         $result = InModuleScope AzLocal.UpdateManagement {
             Mock Get-AzLocalClusterInventory       { @($global:_s5_payload.Inventory) }
             Mock Get-AzLocalClusterUpdateReadiness { @($global:_s5_payload.Readiness) }
@@ -19611,9 +19746,12 @@ Describe 'Thin-YAML Step.5: Export-AzLocalClusterUpdateReadinessReport' {
             Export-AzLocalClusterUpdateReadinessReport -OutputDirectory $global:_s5_payload.OutDir -PassThru
         }
         Test-Path -LiteralPath $result.CombinedXmlPath | Should -BeTrue
+        Test-Path -LiteralPath $result.ReadinessXmlPath | Should -BeTrue
+        Test-Path -LiteralPath $result.HealthXmlPath | Should -BeTrue
         $xml = [System.IO.File]::ReadAllText($result.CombinedXmlPath)
         $xml | Should -Match '<testsuites name="Update Readiness Assessment"'
-        $xml | Should -Match '<testsuite'
+        ([regex]::Matches($xml, '<testsuite ')).Count | Should -Be 2
+        ([xml]([System.IO.File]::ReadAllText($result.HealthXmlPath))).testsuites.testsuite.tests | Should -Be '0'
     }
 
     It 'PassThru object exposes all 13 documented properties' {

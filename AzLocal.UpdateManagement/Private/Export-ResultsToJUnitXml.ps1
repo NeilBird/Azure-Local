@@ -25,6 +25,7 @@ function Export-ResultsToJUnitXml {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
         [array]$Results,
 
         [Parameter(Mandatory = $true)]

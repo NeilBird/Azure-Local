@@ -225,12 +225,12 @@ function Test-AzLocalClusterHealth {
         $summaryByCluster[$clustersToCheck[0].ResourceId.ToLower()] = $UpdateSummary
     }
     else {
-        $idListKql = ($clustersToCheck | ForEach-Object { "'$($_.ResourceId.ToLower())'" }) -join ','
-        $summariesKql = "extensibilityresources | where type =~ 'microsoft.azurestackhci/clusters/updatesummaries' | extend ids = split(id, '/') | extend ClusterResourceId_ = tolower(strcat('/subscriptions/', tostring(ids[2]), '/resourceGroups/', tostring(ids[4]), '/providers/Microsoft.AzureStackHCI/clusters/', tostring(ids[8]))) | where ClusterResourceId_ in~ ($idListKql) | project id, name, properties, ClusterResourceId_"
+        $targetClusterIds = @($clustersToCheck | ForEach-Object { $_.ResourceId })
+        $summariesKqlTemplate = "extensibilityresources | where type =~ 'microsoft.azurestackhci/clusters/updatesummaries' | extend ids = split(id, '/') | extend ClusterResourceId_ = tolower(strcat('/subscriptions/', tostring(ids[2]), '/resourceGroups/', tostring(ids[4]), '/providers/Microsoft.AzureStackHCI/clusters/', tostring(ids[8]))) | where ClusterResourceId_ in~ ({0}) | project id, name, properties, ClusterResourceId_"
         try {
-            $argParams = @{ Query = $summariesKql }
-            if ($SubscriptionId) { $argParams['SubscriptionId'] = $SubscriptionId }
-            $summaryRows = Invoke-AzResourceGraphQuery @argParams
+            $batchParams = @{ Value = $targetClusterIds; QueryTemplate = $summariesKqlTemplate }
+            if ($SubscriptionId) { $batchParams['SubscriptionId'] = $SubscriptionId }
+            $summaryRows = Invoke-AzLocalResourceGraphValueBatches @batchParams
         }
         catch {
             Write-Log -Message "Azure Resource Graph query for update summaries failed: $($_.Exception.Message)" -Level Error
