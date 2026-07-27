@@ -2,7 +2,7 @@
 
 > ⚠️ **Disclaimer**: This module is **NOT** a Microsoft supported service offering or product. It is provided as example code only, with no warranty or official support. Refer to the [MIT license](https://github.com/NeilBird/Azure-Local/blob/main/LICENSE) for further information.
 
-**Latest Version:** v0.9.25 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.9.25)
+**Latest Version:** v0.9.26 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.9.26)
 
 This folder contains the 'AzLocal.UpdateManagement' PowerShell module for managing updates on Azure Local (formerly Azure Stack HCI) clusters using the Azure Local REST API. The module supports both interactive use and CI/CD automation via Service Principal or Managed Identity authentication.
 
@@ -14,7 +14,7 @@ Azure Local REST API specification (includes update management endpoints): https
 **This README (overview + most-recent release notes):**
 
 - [Where to Start](#where-to-start)
-- [What's New in v0.9.25](#whats-new-in-v0925)
+- [What's New in v0.9.26](#whats-new-in-v0926)
 - [Files](#files)
 - [Prerequisites](#prerequisites)
 - [RBAC Requirements](#rbac-requirements) (summary; full reference in [docs/rbac.md](docs/rbac.md))
@@ -78,25 +78,26 @@ If you are new to this module, work through these in order from a regular PowerS
 
 > Most CI/CD pipelines in [Automation-Pipeline-Examples/](Automation-Pipeline-Examples/) are direct implementations of one of these workflows. Start there if you want a copy-pasteable end-to-end pipeline.
 
-## What's New in v0.9.25
+## What's New in v0.9.26
 
-**Configured fleet-summary limits above 1,000 now render correctly, and dynamic pipeline table values remain inside their rows.** Version 0.9.24 expanded `reporting.maxRowsPerTable` to 2,000, but the shared Ready-for-Update renderer retained its former 1,000-row validation ceiling. Pipeline tables also used inconsistent escaping for ARM, ARG, tag, and free-text values containing pipes, backticks, or newlines.
+**Update: 1 now respects fleet admission before collecting child resources, avoids duplicate Azure reads, and keeps a Ready solution actionable when a separate SBE update has prerequisites.** The report also recovers from temporary ARG freshness gaps and always creates its JUnit artifacts on healthy fleets.
 
 ### Fixed
 
-- **Ready-for-Update tables honor the documented range.** The shared renderer now accepts `MaxRows` from 0 through 2,000, matching fleet-settings validation. `0` continues to mean resolve the value from `fleet-settings.yml`.
-- **Both report call paths are covered.** Regression tests exercise configured values of 1,600 and 2,000 through the implicit settings lookup used by Update: 1 and the explicit `-MaxRows` forwarding used by Monitor: 3.
-- **Pipeline tables share one normalization boundary.** Assess Readiness, Apply Updates, Fleet Connectivity, Fleet Health, Fleet Update Status, Update Run Monitor, and schedule-coverage tables now escape dynamic cell values consistently. Multiline remediation commands such as `Get-NetIntentStatus` stay inside the intended row.
+- **Ready plus prerequisite SBE remains Ready.** When a solution update is `Ready` and a separate SBE update is `HasPrerequisite`, the cluster is classified as **Ready for Update**. Only a cluster with prerequisite updates and no Ready update is SBE-blocked.
+- **ARG freshness gaps are reconciled narrowly.** If the update summary says `UpdateAvailable` but ARG returns only prerequisite rows, the collector verifies that contradictory cluster through ARM and restores an omitted Ready update before classification.
+- **Clean runs always publish JUnit.** A fleet with no blocking health findings now receives a valid zero-test `health-blocking.xml`, allowing `assess-readiness.xml` and every diagnostic publisher to succeed.
 
 ### Changed
 
-- **Same-week schedule rows are explicitly supported.** Separate entries can use the same `weeksInCycle` value with different `daysOfWeek` and rings. Per-row `allowedUpdateVersions` may appear before or after `notes`; below `rings` is the recommended readable order.
-- **Config: 3 scales better in the run summary.** The missing-tag remediation table is collapsible but expanded by default, and the cycle calendar shows four matching CRON firings per day before `(+N)`, previously two.
-- No public function or export-count change (71). Bundled GitHub Actions and Azure DevOps pipeline pins are updated to `0.9.25`.
+- **Tag admission happens before child-resource collection.** Update-summary, available-update, and blocking-health ARG queries are constrained to admitted cluster IDs in command-line-safe batches.
+- **Readiness and blocking health are collected once each.** CSV and JUnit outputs are generated from the retained rows instead of repeating both Azure-backed workloads solely for a second file format.
+- **No general job fan-out.** ARG remains the fleet-scale collection boundary to avoid job startup, module-import, serialization, and concurrent-throttling overhead.
+- No public function or export-count change (71). Bundled GitHub Actions and Azure DevOps pipeline pins are updated to `0.9.26`.
 
 > Previous release notes have moved into the [Release History](#release-history) appendix at the bottom of this document.
 
-See [CHANGELOG.md](CHANGELOG.md) for full release details. See [`What's New in v0.9.24`](#whats-new-in-v0924) in the Release History for the previous release.
+See [CHANGELOG.md](CHANGELOG.md) for full release details. See [`What's New in v0.9.25`](#whats-new-in-v0925) in the Release History for the previous release.
 
 ## Files
 
@@ -594,7 +595,11 @@ This code is provided as-is for educational and reference purposes.
 
 The full What's-New history (v0.7.81 and earlier) has moved to [docs/release-history.md](docs/release-history.md).
 
-The most recent release notes for **v0.9.25** stay above under [`What's New in v0.9.25`](#whats-new-in-v0925).
+The most recent release notes for **v0.9.26** stay above under [`What's New in v0.9.26`](#whats-new-in-v0926).
+
+### What's New in v0.9.25
+
+**Configured fleet-summary limits above 1,000 now render correctly, and dynamic pipeline table values remain inside their Markdown rows.** The Ready-for-Update renderer accepts the documented 2,000-row range. A shared normalizer hardens ARM, ARG, tag, and free-text cells across readiness, apply, connectivity, health, update-status, monitor, and schedule reports. Config: 3 makes its missing-tag remediation table collapsible but open by default and shows four CRON firings per calendar day before truncation. The schedule template explicitly documents same-week/different-day rows and order-independent per-row `allowedUpdateVersions`. No public function or export-count change (71); pipeline pins are updated to `0.9.25`. See [CHANGELOG.md](CHANGELOG.md#0925---2026-07-27) for full details.
 
 ### What's New in v0.9.24
 

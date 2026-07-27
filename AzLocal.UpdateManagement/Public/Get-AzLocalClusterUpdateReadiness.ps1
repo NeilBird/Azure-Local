@@ -319,24 +319,20 @@ function Get-AzLocalClusterUpdateReadiness {
     # Per-cluster readiness computation - v0.7.68 ARG-first design.
     #
     # The pre-0.7.68 implementation fanned out to Start-Job workers; each job
-    # made three ARM REST calls per cluster (cluster GET, updateSummaries GET,
-    # updates GET), yielding 3N round trips and significant runspace overhead
-    # on fleets of dozens of clusters. The current design issues two batched
-    # Azure Resource Graph queries (updatesummaries + updates) against every
-    # input cluster in one round trip each - the cluster resource itself was
-    # already pulled into $clustersToProcess during discovery - and then runs
-    # the readiness/recommendation logic inline against the cached data. No
-    # background jobs, no -ThrottleLimit knob.
+    # made three ARM REST calls per cluster. The ARG-first design keeps the
+    # cluster resource cached from discovery, then retrieves child resources in
+    # command-line-safe ID batches. Filtering each batch before projecting the
+    # large properties bag prevents unrelated clusters in the effective ARG
+    # scope from driving payload-size reduction and pagination.
+    $targetClusterIds = @($clustersToProcess | Where-Object { -not $_.NotFound } | ForEach-Object { $_.ResourceId })
 
-    # ARG #1: update summaries in the effective subscription/management-group
-    # scope. Do not embed every cluster ID in the KQL: at 2,000 clusters that
-    # exceeds the Windows az.cmd command-line limit. Downstream indexing keeps
-    # only rows for $clustersToProcess.
-    $summariesKql = "extensibilityresources | where type =~ 'microsoft.azurestackhci/clusters/updatesummaries' | extend ids = split(id, '/') | extend ClusterResourceId_ = tolower(strcat('/subscriptions/', tostring(ids[2]), '/resourceGroups/', tostring(ids[4]), '/providers/Microsoft.AzureStackHCI/clusters/', tostring(ids[8]))) | project id, name, properties, ClusterResourceId_"
+    # ARG #1: update summaries for only the resolved target clusters. The value
+    # batch helper keeps each generated KQL command below az.cmd's Windows limit.
+    $summariesKqlTemplate = "extensibilityresources | where type =~ 'microsoft.azurestackhci/clusters/updatesummaries' | extend ids = split(id, '/') | extend ClusterResourceId_ = tolower(strcat('/subscriptions/', tostring(ids[2]), '/resourceGroups/', tostring(ids[4]), '/providers/Microsoft.AzureStackHCI/clusters/', tostring(ids[8]))) | where ClusterResourceId_ in~ ({0}) | project id, name, properties, ClusterResourceId_"
     try {
-        $argParams = @{ Query = $summariesKql }
-        if ($SubscriptionId) { $argParams['SubscriptionId'] = $SubscriptionId }
-        $summaryRows = Invoke-AzResourceGraphQuery @argParams
+        $batchParams = @{ Value = $targetClusterIds; QueryTemplate = $summariesKqlTemplate }
+        if ($SubscriptionId) { $batchParams['SubscriptionId'] = $SubscriptionId }
+        $summaryRows = Invoke-AzLocalResourceGraphValueBatches @batchParams
     }
     catch {
         Write-Log -Message "Azure Resource Graph query for update summaries failed: $($_.Exception.Message)" -Level Error
@@ -344,12 +340,12 @@ function Get-AzLocalClusterUpdateReadiness {
     }
     Write-Log -Message "Returned $(@($summaryRows).Count) update-summary record(s) via Azure Resource Graph" -Level Success
 
-    # ARG #2: per-cluster available updates.
-    $updatesKql = "extensibilityresources | where type =~ 'microsoft.azurestackhci/clusters/updates' | extend ids = split(id, '/') | extend ClusterName_ = tostring(ids[8]), UpdateName_ = tostring(ids[10]) | extend ClusterResourceId_ = tolower(strcat('/subscriptions/', tostring(ids[2]), '/resourceGroups/', tostring(ids[4]), '/providers/Microsoft.AzureStackHCI/clusters/', ClusterName_)) | project name, properties, ClusterResourceId_, UpdateName_"
+    # ARG #2: available updates for only the resolved target clusters.
+    $updatesKqlTemplate = "extensibilityresources | where type =~ 'microsoft.azurestackhci/clusters/updates' | extend ids = split(id, '/') | extend ClusterName_ = tostring(ids[8]), UpdateName_ = tostring(ids[10]) | extend ClusterResourceId_ = tolower(strcat('/subscriptions/', tostring(ids[2]), '/resourceGroups/', tostring(ids[4]), '/providers/Microsoft.AzureStackHCI/clusters/', ClusterName_)) | where ClusterResourceId_ in~ ({0}) | project name, properties, ClusterResourceId_, UpdateName_"
     try {
-        $argParams = @{ Query = $updatesKql }
-        if ($SubscriptionId) { $argParams['SubscriptionId'] = $SubscriptionId }
-        $updateRows = Invoke-AzResourceGraphQuery @argParams
+        $batchParams = @{ Value = $targetClusterIds; QueryTemplate = $updatesKqlTemplate }
+        if ($SubscriptionId) { $batchParams['SubscriptionId'] = $SubscriptionId }
+        $updateRows = Invoke-AzLocalResourceGraphValueBatches @batchParams
     }
     catch {
         Write-Log -Message "Azure Resource Graph query for available updates failed: $($_.Exception.Message)" -Level Error
@@ -428,6 +424,35 @@ function Get-AzLocalClusterUpdateReadiness {
 
             $readyUpdates = @($availableUpdates | Where-Object { $_.properties.state -in $script:ReadyStates })
             $prereqUpdates = @($availableUpdates | Where-Object { $_.properties.state -in $script:PrereqStates })
+
+            # ARG indexing can lag the cluster update API. When the summary says
+            # an update is available but ARG exposes only prerequisite items,
+            # verify that contradictory cluster through ARM before classifying it
+            # as SBE-blocked. This is intentionally a sparse fallback, not a
+            # return to per-cluster fleet fan-out.
+            if ($updateState -eq 'UpdateAvailable' -and $readyUpdates.Count -eq 0 -and $prereqUpdates.Count -gt 0) {
+                try {
+                    $armUpdates = @(Get-AzLocalAvailableUpdates -ClusterResourceId $cluster.ResourceId -ApiVersion $ApiVersion -Raw -ErrorAction Stop)
+                    if ($armUpdates.Count -gt 0) {
+                        $availableUpdates = @($armUpdates | ForEach-Object {
+                                [PSCustomObject]@{
+                                    name               = [string]$_.name
+                                    properties         = $_.properties
+                                    ClusterResourceId_ = $key
+                                    UpdateName_        = [string]$_.name
+                                }
+                            })
+                        $readyUpdates = @($availableUpdates | Where-Object { $_.properties.state -in $script:ReadyStates })
+                        $prereqUpdates = @($availableUpdates | Where-Object { $_.properties.state -in $script:PrereqStates })
+                        if ($readyUpdates.Count -gt 0) {
+                            Write-Log -Message "ARG update inventory for '$clusterName' omitted a Ready update; readiness was refreshed from the cluster update API." -Level Warning
+                        }
+                    }
+                }
+                catch {
+                    Write-Log -Message "Could not verify the prerequisite-only ARG update inventory for '$clusterName' through ARM: $($_.Exception.Message)" -Level Warning
+                }
+            }
 
             # Build legacy ARM-shaped update objects with a .name property so
             # Get-LatestUpdateByYYMM (which sorts on .name parsing) keeps working.
@@ -784,7 +809,7 @@ function Get-AzLocalClusterUpdateReadiness {
     $upToDateClusters = @($results | Where-Object { (Get-AzLocalClusterReadinessStatus -ReadinessRow $_) -eq 'UpToDate' }).Count
     $notReadyForUpdateClusters = $totalClusters - $readyForUpdateClusters - $upToDateClusters
     $inProgressClusters = @($results | Where-Object { $_.UpdateState -eq "UpdateInProgress" }).Count
-    $prereqClusters = @($results | Where-Object { $_.HasPrerequisiteUpdates -ne "" }).Count
+    $prereqClusters = @($results | Where-Object { (Get-AzLocalClusterReadinessStatus -ReadinessRow $_) -eq 'SbeBlocked' }).Count
     $blockedClusters = @($results | Where-Object { $_.PSObject.Properties['BlockingReasons'] -and $_.BlockingReasons -ne "" }).Count
 
     Write-Log -Message "" -Level Info
@@ -800,8 +825,12 @@ function Get-AzLocalClusterUpdateReadiness {
         Write-Log -Message "Blocked by SBE Prereq:     $prereqClusters" -Level Warning
     }
     
-    # Show SBE dependency details for clusters with HasPrerequisite updates
-    $clustersWithSBEDeps = @($results | Where-Object { $_.SBEDependency -ne "" })
+    # Show dependency details only when the SBE prerequisite actually blocks
+    # the cluster. A separate Ready solution keeps the cluster actionable.
+    $clustersWithSBEDeps = @($results | Where-Object {
+            $_.SBEDependency -ne '' -and
+            (Get-AzLocalClusterReadinessStatus -ReadinessRow $_) -eq 'SbeBlocked'
+        })
     if ($clustersWithSBEDeps.Count -gt 0) {
         Write-Log -Message "" -Level Info
         Write-Log -Message "Clusters Blocked by SBE Prerequisites:" -Level Warning

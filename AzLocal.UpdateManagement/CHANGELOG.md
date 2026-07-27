@@ -5,6 +5,22 @@ All notable changes to the AzLocal.UpdateManagement module (renamed from AzStack
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.26] - 2026-07-27
+
+### Fixed
+
+- Update: 1 no longer hides a genuinely Ready solution update when a separate SBE update is in `HasPrerequisite`. The canonical classifier treats the cluster as Ready for Update whenever a Ready update is present; only prerequisite-only clusters remain SBE-blocked. Summary counts and dependency details use the same classifier.
+- Azure Resource Graph can temporarily expose the prerequisite SBE row before the Ready solution row. When the update summary says `UpdateAvailable` but ARG returns prerequisite rows and no Ready row, readiness now performs a sparse direct ARM verification for that contradictory cluster and restores the current update inventory before classification.
+- Healthy blocking-health assessments now emit valid `health-blocking.xml` JUnit with zero tests and a header-only CSV. The combined `assess-readiness.xml` is therefore created on clean runs, avoiding misleading "No test report files were found" errors in the diagnostic publishers.
+
+### Changed
+
+- Readiness update-summary and available-update ARG queries are constrained up front to globally admitted cluster IDs in command-line-safe batches. Unrelated child resources no longer drive payload-size reduction and pagination before tag filtering.
+- `Export-AzLocalClusterUpdateReadinessReport` collects readiness once and blocking health once, then creates CSV and JUnit artifacts from the retained rows. This removes two complete serial Azure collection passes.
+- Blocking-health update-summary collection also uses the shared 40-ID ARG batch helper, avoiding oversized Windows command lines for large admitted fleets.
+- General PowerShell job fan-out is intentionally not introduced: fleet reads remain batched through ARG to avoid process startup, module import, serialization, and concurrent throttling overhead.
+- No public function or export-count change (71). Bundled GitHub Actions and Azure DevOps pipeline pins are updated to `0.9.26`.
+
 ## [0.9.25] - 2026-07-27
 
 ### Fixed

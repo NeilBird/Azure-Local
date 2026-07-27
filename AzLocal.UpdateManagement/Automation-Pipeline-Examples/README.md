@@ -1503,10 +1503,12 @@ Either way verifies the tags in Azure with a follow-up read. Both paths use the 
 
 Run **Assess Update Readiness** for the ring you are about to roll. It produces two JUnit XML files (visible in the Tests / Checks tab) and three CSV artefacts:
 
+Since v0.9.26, the report constrains update-summary, available-update, and blocking-health ARG reads to the clusters admitted by `fleet-settings.yml`, then collects readiness and blocking health once each. The retained rows produce both CSV and JUnit output, avoiding the former duplicate Azure collection passes. A Ready solution remains actionable when a separate SBE update is `HasPrerequisite`; if ARG temporarily omits the Ready row, a sparse direct ARM check reconciles only that contradictory cluster.
+
 | Artefact | What it shows |
 |---|---|
 | `readiness.xml` / `readiness.csv` | One test per cluster from `Get-AzLocalClusterUpdateReadiness`. Fails if `ReadyForUpdate = $false` (e.g. missing SBE prerequisite, no updates available, cluster in `Updating`). |
-| `health-blocking.xml` / `health-blocking.csv` | One test per cluster from `Test-AzLocalClusterHealth -BlockingOnly`. Fails if any **Critical** health failure exists. Non-critical findings are surfaced but do not fail the test. |
+| `health-blocking.xml` / `health-blocking.csv` | One failed test per **Critical blocking finding** from `Test-AzLocalClusterHealth -BlockingOnly`. A clean fleet emits a valid zero-test JUnit suite and a header-only CSV, so the combined report and diagnostic publishers still succeed. |
 | `ready-for-update.csv` (v0.8.97) | The subset of clusters that passed every readiness check and are ready to roll, grouped by `UpdateRing` - mirrors the new **"Clusters - Ready for Update"** summary table in the step summary. |
 
 The step summary now leads with the **"Clusters - Ready for Update"** table; the verbose **"All clusters detail"** table is collapsed behind an `Expand to view clusters` block (v0.8.97).
