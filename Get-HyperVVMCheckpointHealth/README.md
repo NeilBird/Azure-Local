@@ -5,8 +5,8 @@
 ## Latest version:
 
 - Module: `Get-HyperVVMCheckpointHealth`
-- Updated: 2026-07-24
-- Version: 0.2.25
+- Updated: 2026-07-27
+- Version: 0.2.26
 
 ## TL;DR
 
@@ -96,7 +96,7 @@ Treat every saved audit artifact as **sensitive operational data**. The `.txt`, 
 
 ### Internal structure
 
-Version 0.2.25 is distributed as a PowerShell module with a single exported command and manifest-managed private nested modules. Keep the extracted directory intact:
+Version 0.2.26 is distributed as a PowerShell module with a single exported command and manifest-managed private nested modules. Keep the extracted directory intact:
 
 ```text
 Get-HyperVVMCheckpointHealth\
@@ -133,16 +133,16 @@ Two supported ways to run it, both single-hop:
 
 ### Download and import the module
 
-Download the versioned ZIP from the repository's [GitHub Releases page](https://github.com/NeilBird/Azure-Local/releases). The supported 0.2.25 release asset is `Get-HyperVVMCheckpointHealth-0.2.25.zip`; it contains the manifest, root module, five private modules, example policy YAML, README, and license. Do not use a raw single-file link because the module requires its manifest and sibling private modules.
+Download the versioned ZIP from the repository's [GitHub Releases page](https://github.com/NeilBird/Azure-Local/releases). The supported 0.2.26 release asset is `Get-HyperVVMCheckpointHealth-0.2.26.zip`; it contains the manifest, root module, five private modules, example policy YAML, README, and license. Do not use a raw single-file link because the module requires its manifest and sibling private modules.
 
 The release also publishes [`Setup-Get-HyperVVMCheckpointHealth.ps1`](Setup-Get-HyperVVMCheckpointHealth.ps1) as a separate asset outside the ZIP. The setup script is pinned to the supported version and SHA256 hash and changes files only beneath `<InstallRoot>\Get-HyperVVMCheckpointHealth` (`C:\Temp\Get-HyperVVMCheckpointHealth` by default). It validates the staged manifest/version before replacing that directory, restores the previous directory if installation validation fails, imports the module, and verifies the command without running an audit. Use `-InstallRoot` to choose another parent directory and `-WhatIf` for a no-change preview. Do not use an installation root where the `Get-HyperVVMCheckpointHealth` child directory contains unrelated files.
 
 Download the ZIP, download the setup script, and run the setup script:
 
 ```powershell
-Invoke-WebRequest 'https://github.com/NeilBird/Azure-Local/releases/download/Get-HyperVVMCheckpointHealth-v0.2.25/Get-HyperVVMCheckpointHealth-0.2.25.zip' -OutFile "$env:TEMP\Get-HyperVVMCheckpointHealth-0.2.25.zip"
-Invoke-WebRequest 'https://github.com/NeilBird/Azure-Local/releases/download/Get-HyperVVMCheckpointHealth-v0.2.25/Setup-Get-HyperVVMCheckpointHealth.ps1' -OutFile "$env:TEMP\Setup-Get-HyperVVMCheckpointHealth.ps1"
-Unblock-File "$env:TEMP\Setup-Get-HyperVVMCheckpointHealth.ps1"; & "$env:TEMP\Setup-Get-HyperVVMCheckpointHealth.ps1" -ZipPath "$env:TEMP\Get-HyperVVMCheckpointHealth-0.2.25.zip"
+Invoke-WebRequest 'https://github.com/NeilBird/Azure-Local/releases/download/Get-HyperVVMCheckpointHealth-v0.2.26/Get-HyperVVMCheckpointHealth-0.2.26.zip' -OutFile "$env:TEMP\Get-HyperVVMCheckpointHealth-0.2.26.zip"
+Invoke-WebRequest 'https://github.com/NeilBird/Azure-Local/releases/download/Get-HyperVVMCheckpointHealth-v0.2.26/Setup-Get-HyperVVMCheckpointHealth.ps1' -OutFile "$env:TEMP\Setup-Get-HyperVVMCheckpointHealth.ps1"
+Unblock-File "$env:TEMP\Setup-Get-HyperVVMCheckpointHealth.ps1"; & "$env:TEMP\Setup-Get-HyperVVMCheckpointHealth.ps1" -ZipPath "$env:TEMP\Get-HyperVVMCheckpointHealth-0.2.26.zip"
 ```
 
 Then run the audit separately. On a cluster node:
@@ -399,9 +399,9 @@ Version 0.2.22 expands the responsive report canvas from 1120 to 1440 pixels, gi
 
 By default the run produces a single **self-contained HTML fleet report** (`VMCheckpointAudit-<Cluster>-<yyyy-MM-dd>.html`) — dark-themed, no external assets, safe to email or open on any device with a browser. The header states the cluster, module version, and (from v0.2.14) a run summary line: **`Processed <N> VMs, across <M> cluster nodes, in hh:mm:ss`** — the end-to-end wall-clock time to audit the fleet and render the report. Its summary starts with a full-width **VM(s) audited** card, followed on desktop by one seven-card metric row: **Hold state**, **Investigate**, **OK**, **Incomplete**, **Stale AVHDX layers**, **Stale snapshots**, and **Orphaned .avhdx** (the last card sits at the far right). The grid responsively reduces to four, two, then one column on narrower screens. The report also contains: a **Recommended next steps** list (see below); a **VM summary table** with a **VM Source** column (Input vs auto-**Discovered**), distinct **Checkpoints** (`Get-VMSnapshot` count) and **AVHDX files** (differencing layers = Checkpoints × Disks) columns, an **Oldest ckpt age** shown in **both hours and days** — and (v0.2.15) each VM name is an **anchor link** that jumps to that VM's detail card; a **Discovered high-risk VMs** section; **per-VM detailed information** (including a per-VM **Checkpoints** table whose **Age** column shows each checkpoint's age in **hours and days**, a per-VM **Orphaned .avhdx files** table — name, size, created + last-write timestamps, per-orphan **class** and **Likely / action** read, full path — a **Historic event correlation** section when the VM has orphans, and, for HOLD STATE VMs, a copy/paste **Support Case summary**); a **Cluster storage health** section; and (v0.2.16) an **Appendix - Knowledge and Information** section whose two reference blocks are **collapsed by default** behind a clear **&#9654; Show / &#9660; Hide** button - a **Diagnostic event IDs - severity classification** table (how the tool grades each ID / HRESULT into the HOLD STATE / INVESTIGATE / low-signal / informational tiers) and the anonymised **technical background** explaining the fork-commit signature and the exact Event IDs / HRESULTs that indicate it. The Microsoft Learn troubleshooting reference sits at the top of the Appendix (always visible).
 
-**Actionable per-VM evidence (v0.2.19):** whenever a differencing layer is present, the VM card includes an open **Attached VHD chain evidence** table with the layer type, size, timestamps, age/stale assessment, full path, and parent path. This substantiates stale-layer and snapshot/layer-mismatch findings even when `Get-VMSnapshot` exposes no matching named checkpoint. `INVESTIGATE` guidance follows the finding that caused the verdict: checkpoint/storage findings retain chain-validation context, while Replica-only findings direct the operator to the Replica evidence and breached effective limits rather than displaying an unrelated fork-commit disclaimer.
+**Actionable per-VM evidence (updated in v0.2.26):** whenever a differencing layer is present, the VM card includes an open **Attached VHD chain evidence** table. Each child-to-parent row shows its actual layer filename and role: **Active (top)**, zero or more intermediate **Checkpoint** layers, then the terminal **Base** VHDX. **Checkpoint age** is measured from AVHDX creation and controls `-StaleHours`; **Last activity** is measured separately from `LastWrite` and can remain near zero while an old active checkpoint is continuously written. Base VHDX rows are not checkpoints and always show **Checkpoint stale = n/a (base)**. The table also includes type, size, timestamps, full path, and parent path. This substantiates stale-layer and snapshot/layer-mismatch findings even when `Get-VMSnapshot` exposes no matching named checkpoint. `INVESTIGATE` guidance follows the finding that caused the verdict: checkpoint/storage findings retain chain-validation context, while Replica-only findings direct the operator to the Replica evidence and breached effective limits rather than displaying an unrelated fork-commit disclaimer.
 
-**Readability - sparing, semantic colour (v0.2.21):** the report uses colour only where it aids triage, drawn from the dark theme so it stays legible. Verdict pills use **HOLD STATE** red / **INVESTIGATE** amber / **OK** green. Within tables and per-VM key/value summaries, **dark orange identifies the observed value that supports a concern**; it does not introduce another verdict or severity level. Examples include an abnormal Replica observed value and its assessment, a stale checkpoint or attached-layer `YES` and the age that breached `-StaleHours`, every orphan age and non-zero orphan count, non-zero stale counts, an incomplete VHD chain, snapshot/layer mismatch, unhealthy or unavailable VSS evidence, a breached CSV/HRL policy, high-signal VM event counts, and inconclusive collection state. Healthy/context values stay neutral, while a **muted grey `0`** in the fleet table lets clean rows recede. **Bold soft-red** remains reserved for the single most important imperative (*"Do NOT migrate or restart this VM"* / *"Do NOT live/quick/storage-migrate or restart"*) inside a HOLD STATE / pre-migration callout. Always interpret a highlighted value with its row label, effective threshold/guardrail, assessment, and the VM's final verdict; colour alone is not a remediation instruction.
+**Readability - sparing, semantic colour (v0.2.21):** the report uses colour only where it aids triage, drawn from the dark theme so it stays legible. Verdict pills use **HOLD STATE** red / **INVESTIGATE** amber / **OK** green. Within tables and per-VM key/value summaries, **dark orange identifies the observed value that supports a concern**; it does not introduce another verdict or severity level. Examples include an abnormal Replica observed value and its assessment, a stale checkpoint or attached AVHDX `YES` and the checkpoint creation age that breached `-StaleHours`, every orphan age and non-zero orphan count, non-zero stale counts, an incomplete VHD chain, snapshot/layer mismatch, unhealthy or unavailable VSS evidence, a breached CSV/HRL policy, high-signal VM event counts, and inconclusive collection state. Last activity remains neutral because recent writes do not make an old checkpoint young; base VHDX rows show `n/a (base)`. Healthy/context values stay neutral, while a **muted grey `0`** in the fleet table lets clean rows recede. **Bold soft-red** remains reserved for the single most important imperative (*"Do NOT migrate or restart this VM"* / *"Do NOT live/quick/storage-migrate or restart"*) inside a HOLD STATE / pre-migration callout. Always interpret a highlighted value with its row label, effective threshold/guardrail, assessment, and the VM's final verdict; colour alone is not a remediation instruction.
 
 ### Synthetic example report
 
@@ -640,11 +640,11 @@ Set-Location .\Get-HyperVVMCheckpointHealth
 Generated assets are written to the ignored `release` directory:
 
 ```text
-release\Get-HyperVVMCheckpointHealth-0.2.25.zip
-release\Get-HyperVVMCheckpointHealth-0.2.25.zip.sha256
+release\Get-HyperVVMCheckpointHealth-0.2.26.zip
+release\Get-HyperVVMCheckpointHealth-0.2.26.zip.sha256
 ```
 
-Create the GitHub release with tag `Get-HyperVVMCheckpointHealth-v0.2.25` and upload the generated ZIP, its SHA256 file, and `Setup-Get-HyperVVMCheckpointHealth.ps1` as three separate assets. The setup script remains outside the ZIP. Before publishing a future version:
+Create the GitHub release with tag `Get-HyperVVMCheckpointHealth-v0.2.26` and upload the generated ZIP, its SHA256 file, and `Setup-Get-HyperVVMCheckpointHealth.ps1` as three separate assets. The setup script remains outside the ZIP. Before publishing a future version:
 
 1. Update the version in the root module, manifest, README, release notes, and the setup script's `$version` value.
 2. Run the redirected Windows PowerShell 5.1 Pester suite.
@@ -653,6 +653,12 @@ Create the GitHub release with tag `Get-HyperVVMCheckpointHealth-v0.2.25` and up
 5. Publish the ZIP and checksum as release assets using the tag and asset naming convention above.
 
 ## What's New
+
+### Version 0.2.26
+
+- Calculates attached AVHDX checkpoint staleness from the layer's creation time instead of its `LastWrite` activity. An old active checkpoint is now highlighted even when the VM is continuously writing to its top AVHDX layer.
+- Separates **Checkpoint age** from **Last activity** in TXT and HTML chain evidence. Base VHDX rows always report **Checkpoint stale = n/a (base)**.
+- Labels child-to-parent chain roles as **Active (top)**, **Checkpoint**, and **Base**, and displays each row's actual layer filename rather than repeating the attached top AVHDX name on parent rows.
 
 ### Version 0.2.25
 

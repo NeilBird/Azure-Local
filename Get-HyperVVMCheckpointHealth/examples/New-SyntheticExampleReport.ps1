@@ -132,14 +132,20 @@ $results = @(
                 $healthyReportData.SnapshotLayerMismatch = $true
                 $healthyReportData.AttachedVhdLayers = @(
                     [pscustomobject]@{
-                        Disk = 'TestVM04_OS_9f42.avhdx'; Layer = 1; Type = 'Differencing'; SizeGB = 18.6
-                        Created = '2026-07-17 06:10:00Z'; LastWrite = '2026-07-17 06:42:00Z'; AgeHrs = 77.4; Stale = $true
+                        Chain = 'TestVM04_OS_9f42.avhdx'; FileName = 'TestVM04_OS_9f42.avhdx'
+                        Layer = 1; Role = 'Active (top)'; Type = 'Differencing'; SizeGB = 18.6
+                        Created = '2026-07-17 06:10:00Z'; LastWrite = '2026-07-20 11:58:00Z'
+                        CheckpointAgeHrs = 77.9; LastActivityAgeHrs = 0.1; CheckpointStale = $true
+                        AgeHrs = 77.9; Stale = $true
                         Path = 'C:\ClusterStorage\UserStorage_1\TestVM04\Virtual Hard Disks\TestVM04_OS_9f42.avhdx'
                         ParentPath = 'C:\ClusterStorage\UserStorage_1\TestVM04\Virtual Hard Disks\TestVM04_OS.vhdx'
                     },
                     [pscustomobject]@{
-                        Disk = 'TestVM04_OS_9f42.avhdx'; Layer = 2; Type = 'Dynamic'; SizeGB = 64.0
-                        Created = '2026-03-02 09:00:00Z'; LastWrite = '2026-07-17 06:10:00Z'; AgeHrs = 77.9; Stale = $false
+                        Chain = 'TestVM04_OS_9f42.avhdx'; FileName = 'TestVM04_OS.vhdx'
+                        Layer = 2; Role = 'Base'; Type = 'Dynamic'; SizeGB = 64.0
+                        Created = '2026-03-02 09:00:00Z'; LastWrite = '2026-07-17 06:10:00Z'
+                        CheckpointAgeHrs = $null; LastActivityAgeHrs = 77.9; CheckpointStale = $false
+                        AgeHrs = $null; Stale = $false
                         Path = 'C:\ClusterStorage\UserStorage_1\TestVM04\Virtual Hard Disks\TestVM04_OS.vhdx'; ParentPath = ''
                     }
                 )
@@ -303,7 +309,7 @@ $html = ConvertTo-VMCheckpointAuditHtml -Results $results -StaleHours 24 `
     -EventLookbackHours 168 -ClusterName 'contoso01' -GeneratedUtc '2026-07-20 12:00:00' `
     -DiscoveredVMs @() -DiscoverySummary $discoverySummary -StorageHealth $storageHealth `
     -HousekeepingFindings $housekeepingFindings -IncludeDiscoveredVMs:$true `
-    -ScriptVersion '0.2.25' -ReportGenerationTime '00:01:24' -ClusterNodeCount 10 -ClusterCsvCount 2
+    -ScriptVersion '0.2.26' -ReportGenerationTime '00:01:24' -ClusterNodeCount 10 -ClusterCsvCount 2
 
 $syntheticNotice = @'
 <div class="callout info synthetic-example"><strong>Synthetic example report.</strong> Every cluster, node, VM, path, timestamp, and event message in this file is invented for documentation. TestVM07 demonstrates an active-checkpoint HOLD STATE confirmed by historic event evidence; seven VMs demonstrate historic rollback, orphaned AVHDX, stale checkpoint/layer, and Hyper-V Replica INVESTIGATE findings; 12 VMs are healthy comparisons. The inventory contains 16 input VMs and 4 automatically discovered VMs.</div>

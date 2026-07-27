@@ -20,7 +20,7 @@
 [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'Medium')]
 [OutputType([pscustomobject])]
 param(
-    [string]$ZipPath = (Join-Path $env:TEMP 'Get-HyperVVMCheckpointHealth-0.2.25.zip'),
+    [string]$ZipPath = (Join-Path $env:TEMP 'Get-HyperVVMCheckpointHealth-0.2.26.zip'),
 
     [ValidateNotNullOrEmpty()]
     [string]$InstallRoot = 'C:\Temp'
@@ -30,8 +30,8 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $moduleName = 'Get-HyperVVMCheckpointHealth'
-$version = '0.2.25'
-$expectedSha256 = '22383d1632bd853ba67f70fa19f59aab805ddda11eeca30a6d64b45993034af4'
+$version = '0.2.26'
+$expectedSha256 = 'b5cbd8c9f569e11bfb878c4a078a87750b124f8dda0a58f1ad51ff991f5bcacb'
 $expectedAssetName = "$moduleName-$version.zip"
 
 if (-not (Test-Path -LiteralPath $ZipPath -PathType Leaf)) {
@@ -41,7 +41,10 @@ if ([System.IO.Path]::GetFileName($ZipPath) -ne $expectedAssetName) {
     throw "Expected release asset '$expectedAssetName', but received '$([System.IO.Path]::GetFileName($ZipPath))'."
 }
 
-$actualSha256 = (Get-FileHash -LiteralPath $ZipPath -Algorithm SHA256 -ErrorAction Stop).Hash
+$actualSha256 = & {
+    $WhatIfPreference = $false
+    (Get-FileHash -LiteralPath $ZipPath -Algorithm SHA256 -ErrorAction Stop).Hash
+}
 if (-not $actualSha256.Equals($expectedSha256, [StringComparison]::OrdinalIgnoreCase)) {
     throw "Release ZIP SHA256 verification failed. Expected $expectedSha256; received $actualSha256. Delete the ZIP and download it again from the documented release."
 }

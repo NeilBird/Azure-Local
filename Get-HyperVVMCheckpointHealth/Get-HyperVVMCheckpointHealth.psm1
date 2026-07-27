@@ -117,8 +117,8 @@ function Get-HyperVVMCheckpointHealth {
 .NOTES
     Author  : Neil Bird, Microsoft
     Created : 2026-07-10
-    Updated : 2026-07-24
-    Version : 0.2.25
+    Updated : 2026-07-27
+    Version : 0.2.26
     
     Requires: Windows PowerShell 5.1 (this module is written for, and validated against, Windows
               PowerShell 5.1 ONLY - it is NOT intended or tested for PowerShell 7.x). Requires the
@@ -366,7 +366,7 @@ Then run this in Windows PowerShell 5.1, on a cluster node or a workstation that
 
 # Module version - single source of truth surfaced in the HTML report (header meta + footer) so a
 # saved / emailed report always states which build produced it. Keep in sync with the .NOTES Version.
-$script:ScriptVersion = '0.2.25'
+$script:ScriptVersion = '0.2.26'
 
 # v0.2.14: end-to-end run stopwatch - started as early as possible so the HTML report can state the
 # total time taken to audit the whole fleet and render the report ("Report generation time hh:mm:ss").
@@ -2304,9 +2304,9 @@ function Invoke-VMCheckpointAudit {
             # $null when EXACTLY ONE item matches (the common single-checkpoint case), which silently
             # zeroed this count and made the summary wrongly report 'No CheckPoint AVHDX disks'.
             CheckpointCount = @($chain | Where-Object { $_.Type -eq 'Differencing' }).Count
-            # Stale applies to DIFFERENCING (.avhdx) layers only - a base (Fixed/Dynamic) disk legitimately
-            # has an old timestamp and must NOT be flagged stale (that was a false alarm).
-            AnyStale        = (@($chain | Where-Object { $_.Type -eq 'Differencing' -and $_.LastWrite -and ([DateTime]::UtcNow - $_.LastWrite).TotalHours -ge $StaleHours }).Count -gt 0)
+            # Checkpoint age comes from the DIFFERENCING layer's creation time. LastWrite is activity
+            # evidence only: an active AVHDX can be written continuously while its checkpoint grows old.
+            AnyStale        = (@($chain | Where-Object { $_.Type -eq 'Differencing' -and $_.Created -and ([DateTime]::UtcNow - $_.Created).TotalHours -ge $StaleHours }).Count -gt 0)
             Chain           = $chain
             ChainComplete   = [bool]$rd.Complete
             ChainError      = [string]$rd.ChainError
@@ -2359,23 +2359,26 @@ function Invoke-VMCheckpointAudit {
             Write-Alert "  This disk's parent chain is incomplete; do not treat its layer counts as authoritative." -Level Critical
         }
         if ($top -and $top.Created) {
+            $topCheckpointAge = [math]::Round(([DateTime]::UtcNow - $top.Created).TotalHours, 1)
             Write-AuditReportLine ("  Created (UTC)  : {0}" -f $top.Created.ToString('yyyy-MM-dd HH:mm:ssZ'))
+            Write-AuditReportLine ("  Checkpoint age : {0} hours (since AVHDX creation)" -f $topCheckpointAge)
         } else {
             Write-AuditReportLine "  Created (UTC)  : (unavailable)"
+            Write-AuditReportLine "  Checkpoint age : (unavailable)"
         }
         if ($top -and $top.LastWrite) {
-            $topAge = [math]::Round(([DateTime]::UtcNow - $top.LastWrite).TotalHours, 1)
+            $topActivityAge = [math]::Round(([DateTime]::UtcNow - $top.LastWrite).TotalHours, 1)
             Write-AuditReportLine ("  LastWrite (UTC): {0}" -f $top.LastWrite.ToString('yyyy-MM-dd HH:mm:ssZ'))
-            Write-AuditReportLine ("  Age (hrs)      : {0}  (hours since last write; ~0 = active / in-use)" -f $topAge)
-            # Stale only applies to a DIFFERENCING (.avhdx) layer; other attached disk types are not aged as checkpoints.
+            Write-AuditReportLine ("  Last activity  : {0} hours (since last write; ~0 = active / in-use)" -f $topActivityAge)
             $topStale = if ($top.Type -eq 'Differencing') {
-                if ($topAge -ge $StaleHours) { 'YES' } else { 'NO' }
+                if ($top.Created -and $topCheckpointAge -ge $StaleHours) { 'YES' } else { 'NO' }
             } elseif ([System.IO.Path]::GetExtension([string]$top.Path).Equals('.vhds', [System.StringComparison]::OrdinalIgnoreCase)) {
                 'n/a (shared VHD Set)'
-            } elseif ($top.Type -in @('Dynamic', 'Fixed')) { 'n/a (base disk)' } else { "n/a ($($top.Type))" }
-            Write-AuditReportLine ("  Stale          : {0}" -f $topStale)
+            } elseif ($top.Type -in @('Dynamic', 'Fixed')) { 'n/a (base)' } else { "n/a ($($top.Type))" }
+            Write-AuditReportLine ("  Checkpoint stale: {0}" -f $topStale)
         } else {
             Write-AuditReportLine "  LastWrite (UTC): (unavailable)"
+            Write-AuditReportLine "  Last activity  : (unavailable)"
         }
         Write-AuditReportLine ""
     }
@@ -2389,8 +2392,8 @@ function Invoke-VMCheckpointAudit {
             Write-AuditReportLine "  $($d.Attached):"
             Write-AuditReportLine "  Level 0 = the ACTIVE disk the VM writes to (child); each level's parent is the"
             Write-AuditReportLine "  level below it; the highest level is the BASE. Chains can be many layers deep."
-            Write-AuditReportLine "  Age (hrs) = hours since that layer was last written (0 = written within the hour;"
-            Write-AuditReportLine "  the active top layer is normally ~0 because the VM is writing to it right now)."
+            Write-AuditReportLine "  CheckpointAgeHrs = hours since an AVHDX layer was created; LastActivityHrs = hours"
+            Write-AuditReportLine "  since it was last written. Base disks are not checkpoints and show n/a (base)."
             # Project the chain with an explicit Level (0 = active top) and Role so the parent -> child
             # hierarchy and total depth are unambiguous. SizeGB here is each LAYER's own size.
             $chainRows = for ($li = 0; $li -lt $d.Chain.Count; $li++) {
@@ -2406,14 +2409,12 @@ function Invoke-VMCheckpointAudit {
                     'VHD File Name'   = Split-Path $c.Path -Leaf
                     Type              = $c.Type
                     SizeGB            = $c.SizeGB
-                    'LastWrite (UTC)' = if ($c.LastWrite) { $c.LastWrite.ToString('yyyy-MM-dd HH:mm:ssZ') } else { '(unavailable)' }
-                    'Age (hrs)'       = if ($c.LastWrite) { [math]::Round(([DateTime]::UtcNow - $c.LastWrite).TotalHours, 1) } else { $null }
-                    # Only DIFFERENCING (.avhdx) layers can be 'stale'. A Base disk's old timestamp is
-                    # expected and healthy, so it shows 'n/a' rather than YES/NO.
-                    Stale             = if ($c.Type -ne 'Differencing') { 'n/a' } elseif ($c.LastWrite -and ([DateTime]::UtcNow - $c.LastWrite).TotalHours -ge $StaleHours) { 'YES' } else { 'NO' }
+                    CheckpointAgeHrs  = if ($c.Type -eq 'Differencing' -and $c.Created) { [math]::Round(([DateTime]::UtcNow - $c.Created).TotalHours, 1) } else { $null }
+                    LastActivityHrs   = if ($c.LastWrite) { [math]::Round(([DateTime]::UtcNow - $c.LastWrite).TotalHours, 1) } else { $null }
+                    CheckpointStale   = if ($c.Type -in @('Dynamic', 'Fixed')) { 'n/a (base)' } elseif ($c.Type -ne 'Differencing') { 'n/a' } elseif ($c.Created -and ([DateTime]::UtcNow - $c.Created).TotalHours -ge $StaleHours) { 'YES' } else { 'NO' }
                 }
             }
-            $chainRows | Format-Table Level, Role, 'VHD File Name', Type, SizeGB, 'LastWrite (UTC)', 'Age (hrs)', Stale -AutoSize | Out-Indented
+            $chainRows | Format-Table Level, Role, 'VHD File Name', Type, SizeGB, CheckpointAgeHrs, LastActivityHrs, CheckpointStale -AutoSize | Out-Indented
         }
     } else {
         Write-Section "Differencing Chains: none (no attached disk has a checkpoint layer)."
@@ -4191,18 +4192,31 @@ function Invoke-VMCheckpointAudit {
             $diskChain = @($diskReport.Chain)
             for ($layerIndex = 0; $layerIndex -lt $diskChain.Count; $layerIndex++) {
                 $layer = $diskChain[$layerIndex]
+                $createdUtc = if ($layer.Created) { ([datetime]$layer.Created).ToUniversalTime() } else { $null }
                 $lastWriteUtc = if ($layer.LastWrite) { ([datetime]$layer.LastWrite).ToUniversalTime() } else { $null }
+                $isDifferencing = ([string]$layer.Type -eq 'Differencing')
+                $checkpointAgeHrs = if ($isDifferencing -and $createdUtc) { [math]::Round(([datetime]::UtcNow - $createdUtc).TotalHours, 1) } else { $null }
+                $lastActivityAgeHrs = if ($lastWriteUtc) { [math]::Round(([datetime]::UtcNow - $lastWriteUtc).TotalHours, 1) } else { $null }
+                $checkpointStale = $isDifferencing -and $createdUtc -and (([datetime]::UtcNow - $createdUtc).TotalHours -ge $StaleHours)
+                $role = if ($isDifferencing) {
+                    if ($layerIndex -eq 0) { 'Active (top)' } else { 'Checkpoint' }
+                } elseif ([string]$layer.Type -in @('Dynamic', 'Fixed')) { 'Base' } else { "Attached ($($layer.Type))" }
                 [pscustomobject]@{
-                    Disk       = [string]$diskReport.Attached
-                    Layer      = $layerIndex + 1
-                    Path       = [string]$layer.Path
-                    Type       = [string]$layer.Type
-                    SizeGB     = $layer.SizeGB
-                    Created    = if ($layer.Created) { ([datetime]$layer.Created).ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ssZ') } else { '' }
-                    LastWrite  = if ($lastWriteUtc) { $lastWriteUtc.ToString('yyyy-MM-dd HH:mm:ssZ') } else { '' }
-                    AgeHrs     = if ($lastWriteUtc) { [math]::Round(([datetime]::UtcNow - $lastWriteUtc).TotalHours, 1) } else { $null }
-                    Stale      = ([string]$layer.Type -eq 'Differencing') -and $lastWriteUtc -and (([datetime]::UtcNow - $lastWriteUtc).TotalHours -ge $StaleHours)
-                    ParentPath = if (($layerIndex + 1) -lt $diskChain.Count) { [string]$diskChain[$layerIndex + 1].Path } else { '' }
+                    Chain              = [string]$diskReport.Attached
+                    FileName           = Split-Path ([string]$layer.Path) -Leaf
+                    Layer              = $layerIndex + 1
+                    Role               = $role
+                    Path               = [string]$layer.Path
+                    Type               = [string]$layer.Type
+                    SizeGB             = $layer.SizeGB
+                    Created            = if ($createdUtc) { $createdUtc.ToString('yyyy-MM-dd HH:mm:ssZ') } else { '' }
+                    LastWrite          = if ($lastWriteUtc) { $lastWriteUtc.ToString('yyyy-MM-dd HH:mm:ssZ') } else { '' }
+                    CheckpointAgeHrs   = $checkpointAgeHrs
+                    LastActivityAgeHrs = $lastActivityAgeHrs
+                    CheckpointStale    = [bool]$checkpointStale
+                    AgeHrs             = $checkpointAgeHrs
+                    Stale              = [bool]$checkpointStale
+                    ParentPath         = if (($layerIndex + 1) -lt $diskChain.Count) { [string]$diskChain[$layerIndex + 1].Path } else { '' }
                 }
             }
         })
