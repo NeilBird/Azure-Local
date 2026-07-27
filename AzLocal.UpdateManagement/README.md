@@ -2,7 +2,7 @@
 
 > ⚠️ **Disclaimer**: This module is **NOT** a Microsoft supported service offering or product. It is provided as example code only, with no warranty or official support. Refer to the [MIT license](https://github.com/NeilBird/Azure-Local/blob/main/LICENSE) for further information.
 
-**Latest Version:** v0.9.24 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.9.24)
+**Latest Version:** v0.9.25 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.9.25)
 
 This folder contains the 'AzLocal.UpdateManagement' PowerShell module for managing updates on Azure Local (formerly Azure Stack HCI) clusters using the Azure Local REST API. The module supports both interactive use and CI/CD automation via Service Principal or Managed Identity authentication.
 
@@ -14,7 +14,7 @@ Azure Local REST API specification (includes update management endpoints): https
 **This README (overview + most-recent release notes):**
 
 - [Where to Start](#where-to-start)
-- [What's New in v0.9.24](#whats-new-in-v0924)
+- [What's New in v0.9.25](#whats-new-in-v0925)
 - [Files](#files)
 - [Prerequisites](#prerequisites)
 - [RBAC Requirements](#rbac-requirements) (summary; full reference in [docs/rbac.md](docs/rbac.md))
@@ -78,35 +78,22 @@ If you are new to this module, work through these in order from a regular PowerS
 
 > Most CI/CD pipelines in [Automation-Pipeline-Examples/](Automation-Pipeline-Examples/) are direct implementations of one of these workflows. Start there if you want a copy-pasteable end-to-end pipeline.
 
-## What's New in v0.9.24
+## What's New in v0.9.25
 
-**Fleet settings now support grouped cluster-tag admission, and sparse Azure payloads no longer cause strict-mode failures in fleet pipelines.** Schema v3 combines tags with `AND` inside each named group and combines groups with `OR`, allowing policies such as `(Live-Environment=Yes AND ManagedBy=CentralIT) OR (Test-Environment=Yes)`. Azure Resource Graph, Azure CLI JSON, and ARM REST responses can contain null placeholders inside otherwise valid arrays; collection boundaries now remove or skip those placeholders before property inspection.
-
-### Added
-
-- **Grouped cluster-tag filters.** `scope.clusterTagFilters` now contains named groups with nested `tags`. Every tag in one group must match (`AND`); matching any complete group admits the cluster (`OR`). A group containing one tag is a singular alternative. Tag names and values remain exact, case-insensitive literals.
-- **Automatic schema v3 migration.** A normal `Update-AzLocalPipelineExample` run backs up schema v1 or v2 as `config/fleet-settings_v1.bak.yml` or `config/fleet-settings_v2.bak.yml`, then writes schema v3. Fully commented files remain fully commented and inert. Flat v2 pairs become separate one-tag groups. See the [CI/CD fleet-settings hierarchy and indentation guide](Automation-Pipeline-Examples/README.md#612-optional-scope-the-fleet-by-management-group-and-cluster-tags).
+**Configured fleet-summary limits above 1,000 now render correctly.** Version 0.9.24 expanded `reporting.maxRowsPerTable` to 2,000, but the shared Ready-for-Update renderer retained its former 1,000-row validation ceiling. Update: 1 - Assess Update Readiness terminated while building Markdown when a valid value such as 1,600 was configured; Monitor: 3 - Fleet Update Status could fail through the same helper.
 
 ### Fixed
 
-- **Connectivity status tolerates sparse reported-node arrays.** A null member in `reportedProperties.nodes[]` no longer reaches `.PSObject.Properties` and aborts Monitor: 1 after cluster normalization.
-- **Update-run progress walkers tolerate sparse trees.** Top-level and nested null `progress.steps` members are ignored consistently by leaf statistics, current-step paths, deepest active/error selection, failed-run summaries, and progress fallbacks. Null placeholders are excluded from both completed and total step counts.
-- **Readiness and health collectors tolerate sparse nested data.** Null `packageVersions`, `healthCheckResult`, available-update, update-run, and REST `value` members are ignored while valid siblings continue through normal processing.
-- **Top-level query normalization is consistent.** Shared ARG and generic Azure CLI JSON helpers omit null result rows once at the transport boundary so all callers receive arrays containing real result objects only.
+- **Ready-for-Update tables honor the documented range.** The shared renderer now accepts `MaxRows` from 0 through 2,000, matching fleet-settings validation. `0` continues to mean resolve the value from `fleet-settings.yml`.
+- **Both report call paths are covered.** Regression tests exercise configured values of 1,600 and 2,000 through the implicit settings lookup used by Update: 1 and the explicit `-MaxRows` forwarding used by Monitor: 3.
 
 ### Changed
 
-- **Larger configurable Markdown tables.** `reporting.maxRowsPerTable` in `fleet-settings.yml` now accepts values from 1 through 2,000 (previously 1 through 1,000). Existing defaults and the independent summary byte budget are unchanged.
-- **Pipeline scope snapshots preserve groups.** Version banners, Markdown summaries, `cluster_tag_filters` JSON output, ARG queries, and mutation-boundary checks all use the same AND-within/OR-across truth table.
-- No public function or export-count change (71). Bundled GitHub Actions and Azure DevOps pipeline pins are updated to `0.9.24`.
-
-### Validation
-
-- Live connectivity, readiness/blocking-health, fleet-update, and fleet-health smoke tests passed against the maintainer subscription. The durable live suite passed 43/43; the complete non-live suite passed 1,711 with zero failures and one skipped test.
+- No public function or export-count change (71). Bundled GitHub Actions and Azure DevOps pipeline pins are updated to `0.9.25`.
 
 > Previous release notes have moved into the [Release History](#release-history) appendix at the bottom of this document.
 
-See [CHANGELOG.md](CHANGELOG.md) for full release details. See [`What's New in v0.9.23`](#whats-new-in-v0923) in the Release History for the previous release.
+See [CHANGELOG.md](CHANGELOG.md) for full release details. See [`What's New in v0.9.24`](#whats-new-in-v0924) in the Release History for the previous release.
 
 ## Files
 
@@ -604,7 +591,11 @@ This code is provided as-is for educational and reference purposes.
 
 The full What's-New history (v0.7.81 and earlier) has moved to [docs/release-history.md](docs/release-history.md).
 
-The most recent release notes for **v0.9.24** stay above under [`What's New in v0.9.24`](#whats-new-in-v0924).
+The most recent release notes for **v0.9.25** stay above under [`What's New in v0.9.25`](#whats-new-in-v0925).
+
+### What's New in v0.9.24
+
+**Fleet settings gain grouped tag admission, and sparse Azure payloads no longer cause strict-mode collection failures.** Schema v3 uses AND semantics for tags inside each named `scope.clusterTagFilters` group and OR semantics across groups; a one-tag group is a singular alternative. Normal pipeline refreshes create an exact version-specific backup and migrate schema v1/v2 to v3, including fully commented files that remain inert. Shared ARG and Azure CLI JSON boundaries discard null top-level rows, and ARM REST plus nested cloud arrays skip null placeholders before inspecting properties. `reporting.maxRowsPerTable` accepts up to 2,000 rows. No public function or export-count change (71); pipeline pins are updated to `0.9.24`. See [CHANGELOG.md](CHANGELOG.md#0924---2026-07-24) for full details.
 
 ### What's New in v0.9.23
 

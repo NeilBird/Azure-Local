@@ -3,7 +3,7 @@
     RootModule = 'AzLocal.UpdateManagement.psm1'
 
     # Version number of this module.
-    ModuleVersion = '0.9.24'
+    ModuleVersion = '0.9.25'
 
     # Supported PSEditions
     CompatiblePSEditions = @('Desktop', 'Core')
@@ -378,6 +378,8 @@
 
             # ReleaseNotes of this module
             ReleaseNotes = @'
+## Version 0.9.25 - Fixes readiness-summary rendering when reporting.maxRowsPerTable is configured from 1,001 through 2,000. The shared Ready-for-Update renderer now honors the full documented range for both implicit fleet-settings lookup and explicit Monitor: 3 forwarding. No public/export change (71). Pipeline pins bumped to 0.9.25.
+
 ## Version 0.9.24 - Fleet settings schema v3 adds named tag groups: tags use AND within a group and groups use OR. Normal pipeline updates back up and migrate schema v1/v2, including fully commented inert files. Sparse ARG/CLI/ARM payloads are null-safe, and reporting.maxRowsPerTable accepts 2,000. No public/export change (71). Pipeline pins bumped to 0.9.24.
 
 ## Version 0.9.23 - Global cluster tag admission policy introduced flat schema-v2 AND filters across pipeline reads and mutation boundaries, with cluster inheritance, connectivity attribution, run snapshots, and backed-up v1 migration. No public/export change (71). Pipeline pins bumped to 0.9.23.

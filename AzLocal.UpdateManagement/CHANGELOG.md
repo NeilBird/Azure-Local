@@ -5,6 +5,17 @@ All notable changes to the AzLocal.UpdateManagement module (renamed from AzStack
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.25] - 2026-07-27
+
+### Fixed
+
+- The shared **Clusters - Ready for Update** Markdown renderer now accepts the complete documented `reporting.maxRowsPerTable` range of 1 through 2,000. In v0.9.24, fleet settings accepted values above 1,000 but the renderer retained `[ValidateRange(0, 1000)]`; assigning a configured value such as 1,600 to that constrained parameter variable terminated Update: 1 - Assess Update Readiness and could terminate Monitor: 3 - Fleet Update Status.
+- Regression coverage exercises both report call shapes at 1,600 and 2,000 rows: implicit fleet-settings lookup used by Update: 1 and explicit `-MaxRows` forwarding used by Monitor: 3.
+
+### Changed
+
+- No public function or export-count change (71). Bundled GitHub Actions and Azure DevOps pipeline pins are updated to `0.9.25`.
+
 ## [0.9.24] - 2026-07-24
 
 ### Added

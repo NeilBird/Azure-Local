@@ -4,9 +4,13 @@
 >
 > **For older releases**, this is the canonical reference; the main README intentionally stays slim so the most recent block is easy to find.
 >
-> **For v0.9.24 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0924) `What's New in v0.9.24` section.
+> **For v0.9.25 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0925) `What's New in v0.9.25` section.
 
 ---
+
+### What's New in v0.9.25
+
+**Configured fleet-summary limits above 1,000 now render correctly.** Version 0.9.24 expanded `reporting.maxRowsPerTable` to 2,000, but the shared Ready-for-Update renderer retained its former 1,000-row validation ceiling. The renderer now accepts the complete documented range for both the implicit fleet-settings lookup used by Update: 1 - Assess Update Readiness and the explicit `-MaxRows` forwarding used by Monitor: 3 - Fleet Update Status. Regression tests exercise 1,600 and 2,000 through both paths. No public function or export-count change (71); pipeline pins are updated to `0.9.25`. See [CHANGELOG.md](../CHANGELOG.md#0925---2026-07-27) for full details.
 
 ### What's New in v0.9.24
 

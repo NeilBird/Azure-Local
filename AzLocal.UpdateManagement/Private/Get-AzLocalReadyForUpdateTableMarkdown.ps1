@@ -38,7 +38,7 @@ function Get-AzLocalReadyForUpdateTableMarkdown {
         [string]$Heading = '### Clusters - Ready for Update',
 
         [Parameter(Mandatory = $false)]
-        [ValidateRange(0, 1000)]
+        [ValidateRange(0, 2000)]
         [int]$MaxRows = 0
     )
 

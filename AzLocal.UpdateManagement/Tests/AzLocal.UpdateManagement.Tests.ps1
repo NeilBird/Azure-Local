@@ -27,7 +27,7 @@ AfterAll {
     Remove-Module AzLocal.UpdateManagement -Force -ErrorAction SilentlyContinue
 }
 
-Describe 'v0.9.24: Fleet settings, management-group scope, and grouped cluster tag filters' {
+Describe 'v0.9.25: Fleet settings, management-group scope, and grouped cluster tag filters' {
     BeforeEach {
         $script:fleetSettingsPath = Join-Path $env:TEMP ("fleet-settings-{0}.yml" -f [guid]::NewGuid())
         $script:savedFleetSettingsPath = $env:AZLOCAL_FLEET_SETTINGS_PATH
@@ -357,8 +357,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $script:ModuleInfo | Should -Not -BeNullOrEmpty
         }
 
-        It 'Should have version 0.9.24' {
-            $script:ModuleInfo.Version | Should -Be '0.9.24'
+        It 'Should have version 0.9.25' {
+            $script:ModuleInfo.Version | Should -Be '0.9.25'
         }
 
         It 'Module version constants are in sync between .psm1 and .psd1' {
@@ -23722,6 +23722,41 @@ Describe 'v0.8.97: Get-AzLocalReadyForUpdateTableMarkdown private helper' {
         $joined = $lines -join "`n"
         $joined | Should -Match 'Showing first 100 of 2000 ready clusters'
         ([regex]::Matches($joined, 'href="https://portal\.azure\.com/')).Count | Should -Be 100
+    }
+
+    It 'Accepts configured MaxRowsPerTable above the former 1,000-row limit' -TestCases @(
+        @{ MaxRows = 1600 }
+        @{ MaxRows = 2000 }
+    ) {
+        param($MaxRows)
+
+        $settingsPath = Join-Path $TestDrive "fleet-settings-$MaxRows.yml"
+        "schemaVersion: 1`nreporting:`n  maxRowsPerTable: $MaxRows" |
+            Set-Content -LiteralPath $settingsPath -Encoding UTF8
+        $previousSettingsPath = $env:AZLOCAL_FLEET_SETTINGS_PATH
+        try {
+            $env:AZLOCAL_FLEET_SETTINGS_PATH = $settingsPath
+            $rendered = InModuleScope AzLocal.UpdateManagement -Parameters @{ ExpectedMaxRows = $MaxRows } {
+                param($ExpectedMaxRows)
+                $rows = @(
+                    [pscustomobject]@{ ClusterName = 'alpha'; UpdateRing = 'Wave1'; CurrentVersion = '1'; RecommendedUpdate = '2'; ClusterResourceId = '/alpha' }
+                )
+                [pscustomobject]@{
+                    FromSettings = (Get-AzLocalReadyForUpdateTableMarkdown -ReadyRows $rows) -join "`n"
+                    Explicit = (Get-AzLocalReadyForUpdateTableMarkdown -ReadyRows $rows -MaxRows $ExpectedMaxRows) -join "`n"
+                }
+            }
+            $rendered.FromSettings | Should -Match 'alpha'
+            $rendered.Explicit | Should -Match 'alpha'
+        }
+        finally {
+            if ($null -eq $previousSettingsPath) {
+                Remove-Item Env:AZLOCAL_FLEET_SETTINGS_PATH -ErrorAction SilentlyContinue
+            }
+            else {
+                $env:AZLOCAL_FLEET_SETTINGS_PATH = $previousSettingsPath
+            }
+        }
     }
 }
 
