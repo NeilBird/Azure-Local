@@ -39,6 +39,10 @@ function Get-AzLocalClusterPortalLink {
         Force HTML escaping of the cluster name inside the anchor. Off by
         default - cluster names come from ARG and never contain markup.
 
+    .PARAMETER MarkdownTableCell
+        Escape Markdown table delimiters and convert embedded line breaks in
+        the visible cluster name so the returned link cannot split a table row.
+
     .OUTPUTS
         [string] - HTML anchor (when a URL is available) or plain name.
 
@@ -61,7 +65,10 @@ function Get-AzLocalClusterPortalLink {
         [string]$ClusterPortalUrl,
 
         [Parameter()]
-        [switch]$Escape
+        [switch]$Escape,
+
+        [Parameter()]
+        [switch]$MarkdownTableCell
     )
 
     Set-StrictMode -Version Latest
@@ -72,6 +79,9 @@ function Get-AzLocalClusterPortalLink {
         $ClusterName -replace '&', '&amp;' -replace '<', '&lt;' -replace '>', '&gt;'
     } else {
         $ClusterName
+    }
+    if ($MarkdownTableCell) {
+        $name = ConvertTo-AzLocalMarkdownTableCell -Value $name
     }
 
     $url = if ($ClusterPortalUrl) {

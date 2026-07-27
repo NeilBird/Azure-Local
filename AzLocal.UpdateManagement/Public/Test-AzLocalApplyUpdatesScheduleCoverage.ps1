@@ -878,6 +878,8 @@ $globalTagFilter
                 [void]$fullSb.AppendLine()
                 [void]$fullSb.AppendLine("### How to fix - edit ``$ClusterCsvPath``")
                 [void]$fullSb.AppendLine()
+                [void]$fullSb.AppendLine("<details open><summary>Clusters missing UpdateRing and/or UpdateStartWindow tags ($($untaggedClusters.Count) cluster(s))</summary>")
+                [void]$fullSb.AppendLine()
                 [void]$fullSb.AppendLine('| Cluster | ResourceGroup | UpdateRing | Suggested UpdateStartWindow | Source | CSV row |')
                 [void]$fullSb.AppendLine('|---|---|---|---|---|---|')
                 $noWindowSorted = $untaggedClusters | Sort-Object @{Expression={ if ($_.UpdateRing) { $_.UpdateRing } else { '~' } }}, @{Expression={$_.ClusterName}}
@@ -927,14 +929,16 @@ $globalTagFilter
                     if (-not $found) {
                         $csvOutcome = "**Not in CSV.** Re-run the cluster inventory pipeline to regenerate the cluster inventory artifact, unzip it, and replace ``$ClusterCsvPath`` in source control with the artifact's CSV. The new row will appear with a blank ``UpdateStartWindow`` cell - fill it in with the suggested value above, then commit and re-run the Manage UpdateRing Tags pipeline."
                     }
-                    $clusterEsc = ($nwt.ClusterName  -replace '\|','\|')
-                    $rgEsc      = ($nwt.ResourceGroup -replace '\|','\|')
-                    $ringEsc    = ($ring             -replace '\|','\|')
-                    $suggEsc    = ($suggested        -replace '\|','\|')
-                    $srcEsc     = ($sourceLabel      -replace '\|','\|')
-                    $csvEsc     = ($csvOutcome       -replace '\|','\|')
-                    [void]$fullSb.AppendLine("| ``$clusterEsc`` | ``$rgEsc`` | ``$ringEsc`` | ``$suggEsc`` | $srcEsc | $csvEsc |")
+                    $clusterEsc = ConvertTo-AzLocalMarkdownTableCell -Value ([string]$nwt.ClusterName)
+                    $rgEsc      = ConvertTo-AzLocalMarkdownTableCell -Value ([string]$nwt.ResourceGroup)
+                    $ringEsc    = ConvertTo-AzLocalMarkdownTableCell -Value ([string]$ring)
+                    $suggEsc    = ConvertTo-AzLocalMarkdownTableCell -Value ([string]$suggested)
+                    $srcEsc     = ConvertTo-AzLocalMarkdownTableCell -Value ([string]$sourceLabel)
+                    $csvEsc     = ConvertTo-AzLocalMarkdownTableCell -Value ([string]$csvOutcome)
+                    [void]$fullSb.AppendLine("| $clusterEsc | $rgEsc | $ringEsc | $suggEsc | $srcEsc | $csvEsc |")
                 }
+                [void]$fullSb.AppendLine()
+                [void]$fullSb.AppendLine('</details>')
                 [void]$fullSb.AppendLine()
                 [void]$fullSb.AppendLine('**Format reminder.** `UpdateStartWindow` values are `DaysOfWeek_HH:MM-HH:MM` with hyphenated weekday ranges and 24-hour times. Examples: `Mon-Fri_22:00-06:00` (weekday overnights), `Sat-Sun_08:00-20:00` (weekend daytime), `Sun_03:00-05:00` (single day). Multiple windows on one cluster are comma-separated.')
                 [void]$fullSb.AppendLine()
@@ -999,11 +1003,11 @@ $globalTagFilter
                     $first = $g.Group | Select-Object -First 1
                     $ring  = if ($first.UpdateRing) { $first.UpdateRing } else { '(none)' }
                     $win   = $first.UpdateExclusionsWindow
-                    $names = (($g.Group | Sort-Object ClusterName | Select-Object -First 10 | ForEach-Object { '``' + $_.ClusterName + '``' }) -join ', ')
+                    $names = (($g.Group | Sort-Object ClusterName | Select-Object -First 10 | ForEach-Object { ConvertTo-AzLocalMarkdownTableCell -Value ([string]$_.ClusterName) }) -join ', ')
                     $more  = if ($g.Count -gt 10) { ", +$($g.Count - 10) more" } else { '' }
-                    $ringEsc = ($ring -replace '\|','\|')
-                    $winEsc  = ($win  -replace '\|','\|')
-                    [void]$fullSb.AppendLine("| ``$ringEsc`` | ``$winEsc`` | $($g.Count) | $names$more |")
+                    $ringEsc = ConvertTo-AzLocalMarkdownTableCell -Value ([string]$ring)
+                    $winEsc  = ConvertTo-AzLocalMarkdownTableCell -Value ([string]$win)
+                    [void]$fullSb.AppendLine("| $ringEsc | $winEsc | $($g.Count) | $names$more |")
                 }
                 $untaggedExcl = @($clusters | Where-Object { [string]::IsNullOrWhiteSpace($_.UpdateExclusionsWindow) })
                 if ($untaggedExcl.Count -gt 0) {

@@ -38,7 +38,7 @@ function Get-AzLocalReadyForUpdateTableMarkdown {
         [string]$Heading = '### Clusters - Ready for Update',
 
         [Parameter(Mandatory = $false)]
-        [ValidateRange(0, 1000)]
+        [ValidateRange(0, 2000)]
         [int]$MaxRows = 0
     )
 
@@ -64,10 +64,10 @@ function Get-AzLocalReadyForUpdateTableMarkdown {
     [void]$lines.Add('|---------|-------------|----------------|--------------------|')
     foreach ($r in ($rows | Select-Object -First $MaxRows)) {
         $clusterResId = if ($r.PSObject.Properties['ClusterResourceId'] -and $r.ClusterResourceId) { [string]$r.ClusterResourceId } else { '' }
-        $clusterCell = Get-AzLocalClusterPortalLink -ClusterName ([string]$r.ClusterName) -ClusterResourceId $clusterResId
-        $ring = if ($r.PSObject.Properties['UpdateRing'] -and $r.UpdateRing) { ([string]$r.UpdateRing) -replace '\|', '\|' } else { '-' }
-        $cv = if ($r.PSObject.Properties['CurrentVersion'] -and $r.CurrentVersion) { ([string]$r.CurrentVersion) -replace '\|', '\|' } else { '-' }
-        $ru = if ($r.PSObject.Properties['RecommendedUpdate'] -and $r.RecommendedUpdate) { ([string]$r.RecommendedUpdate) -replace '\|', '\|' } else { '-' }
+        $clusterCell = Get-AzLocalClusterPortalLink -ClusterName ([string]$r.ClusterName) -ClusterResourceId $clusterResId -MarkdownTableCell
+        $ring = if ($r.PSObject.Properties['UpdateRing'] -and $r.UpdateRing) { ConvertTo-AzLocalMarkdownTableCell -Value ([string]$r.UpdateRing) } else { '-' }
+        $cv = if ($r.PSObject.Properties['CurrentVersion'] -and $r.CurrentVersion) { ConvertTo-AzLocalMarkdownTableCell -Value ([string]$r.CurrentVersion) } else { '-' }
+        $ru = if ($r.PSObject.Properties['RecommendedUpdate'] -and $r.RecommendedUpdate) { ConvertTo-AzLocalMarkdownTableCell -Value ([string]$r.RecommendedUpdate) } else { '-' }
         [void]$lines.Add("| $clusterCell | $ring | $cv | $ru |")
     }
     if ($rows.Count -gt $MaxRows) {

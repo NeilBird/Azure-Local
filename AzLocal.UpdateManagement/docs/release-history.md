@@ -4,9 +4,13 @@
 >
 > **For older releases**, this is the canonical reference; the main README intentionally stays slim so the most recent block is easy to find.
 >
-> **For v0.9.24 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0924) `What's New in v0.9.24` section.
+> **For v0.9.25 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0925) `What's New in v0.9.25` section.
 
 ---
+
+### What's New in v0.9.25
+
+**Configured fleet-summary limits above 1,000 now render correctly, and dynamic pipeline table values remain inside their Markdown rows.** The Ready-for-Update renderer accepts the documented 2,000-row range. A shared normalizer hardens ARM, ARG, tag, and free-text cells across readiness, apply, connectivity, health, update-status, monitor, and schedule reports. Config: 3 makes its missing-tag remediation table collapsible but open by default and shows four CRON firings per calendar day before truncation. The schedule template explicitly documents same-week/different-day rows and order-independent per-row `allowedUpdateVersions`. No public function or export-count change (71); pipeline pins are updated to `0.9.25`. See [CHANGELOG.md](../CHANGELOG.md#0925---2026-07-27) for full details.
 
 ### What's New in v0.9.24
 

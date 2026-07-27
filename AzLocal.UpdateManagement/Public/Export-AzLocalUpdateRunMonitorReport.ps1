@@ -814,13 +814,15 @@ function Export-AzLocalUpdateRunMonitorReport {
         [void]$md.Add('| Cluster | Update | State | Progress Status | Current Step | Progress | Step Started (UTC) | Step Elapsed | Run Started (UTC) | Run Elapsed | Last Activity (UTC) | Flags |')
         [void]$md.Add('|---------|--------|-------|-----------------|--------------|----------|--------------------|--------------|-------------------|-------------|---------------------|-------|')
         foreach ($r in ($inFlight | Sort-Object @{Expression='SeverityScore';Descending=$true}, ClusterName | Select-Object -First $maxSummaryRows)) {
-            $cs = if ($r.CurrentStep) { $r.CurrentStep } else { '-' }
-            $pg = if ($r.Progress) { $r.Progress } else { '-' }
-            $stepStart = if ($r.StepStartTimeUtc) { $r.StepStartTimeUtc } else { '-' }
+            $cs = if ($r.CurrentStep) { ConvertTo-AzLocalMarkdownTableCell -Value ([string]$r.CurrentStep) } else { '-' }
+            $pg = if ($r.Progress) { ConvertTo-AzLocalMarkdownTableCell -Value ([string]$r.Progress) } else { '-' }
+            $stepStart = if ($r.StepStartTimeUtc) { ConvertTo-AzLocalMarkdownTableCell -Value ([string]$r.StepStartTimeUtc) } else { '-' }
             $stateCell = if ($r.StateIcon) { "$($r.StateIcon) $($r.State)" } else { [string]$r.State }
+            $stateCell = ConvertTo-AzLocalMarkdownTableCell -Value $stateCell
             $statusCell = if (-not $r.Status) { '-' }
                           elseif ($r.StatusIcon) { "$($r.StatusIcon) $($r.Status)" }
                           else { [string]$r.Status }
+            $statusCell = ConvertTo-AzLocalMarkdownTableCell -Value $statusCell
             $stepElPrefix = switch ($r.StepSeverity) { 'crit' { ':rotating_light: ' } 'warn' { ':warning: ' } default { '' } }
             $runElPrefix  = switch ($r.RunSeverity)  { 'skull' { ':skull: ' } 'crit' { ':rotating_light: ' } 'warn' { ':warning: ' } default { '' } }
             $stepEl = if ($r.StepElapsedDisplay) { $stepElPrefix + $r.StepElapsedDisplay } else { '-' }
@@ -833,13 +835,16 @@ function Export-AzLocalUpdateRunMonitorReport {
                 $stallPrefix = if ($r.IsStalled) { ':zzz: ' } else { '' }
                 $stallPrefix + $r.LastUpdatedUtc + $sinceTxt
             } else { '-' }
-            $flagCell = if ($r.Flags) { $r.Flags } else { '-' }
+            $flagCell = if ($r.Flags) { ConvertTo-AzLocalMarkdownTableCell -Value ([string]$r.Flags) } else { '-' }
             # target="_blank" intentionally omitted: GitHub Actions + ADO step-summary
             # markdown sanitisers strip it (and force `rel="nofollow"`). The Tip above
             # the table tells operators to Ctrl-click to open in a new tab.
-            $clusterCell = if ($r.ClusterPortalUrl)   { '<a href="' + $r.ClusterPortalUrl   + '">' + $r.ClusterName + '</a>' } else { $r.ClusterName }
-            $updateCell  = if ($r.UpdateRunPortalUrl) { '<a href="' + $r.UpdateRunPortalUrl + '">' + $r.UpdateName  + '</a>' } else { $r.UpdateName }
-            [void]$md.Add("| $clusterCell | $updateCell | $stateCell | $statusCell | $cs | $pg | $stepStart | $stepEl | $($r.StartTimeUtc) | $runEl | $lastAct | $flagCell |")
+            $clusterLabel = ConvertTo-AzLocalMarkdownTableCell -Value ([string]$r.ClusterName)
+            $updateLabel  = ConvertTo-AzLocalMarkdownTableCell -Value ([string]$r.UpdateName)
+            $clusterCell = if ($r.ClusterPortalUrl)   { '<a href="' + $r.ClusterPortalUrl   + '">' + $clusterLabel + '</a>' } else { $clusterLabel }
+            $updateCell  = if ($r.UpdateRunPortalUrl) { '<a href="' + $r.UpdateRunPortalUrl + '">' + $updateLabel  + '</a>' } else { $updateLabel }
+            $runStartCell = ConvertTo-AzLocalMarkdownTableCell -Value ([string]$r.StartTimeUtc)
+            [void]$md.Add("| $clusterCell | $updateCell | $stateCell | $statusCell | $cs | $pg | $stepStart | $stepEl | $runStartCell | $runEl | $lastAct | $flagCell |")
         }
         if ($inFlight.Count -gt $maxSummaryRows) {
             [void]$md.Add('')
@@ -866,7 +871,7 @@ function Export-AzLocalUpdateRunMonitorReport {
         [void]$md.Add('| Cluster | Update | Ended (UTC) | Failed Step | Verbose Error Details | Recent |')
         [void]$md.Add('|---------|--------|-------------|-------------|-----------------------|--------|')
         foreach ($r in ($unresolvedFailed | Sort-Object @{Expression='EndTimeUtc';Descending=$true} | Select-Object -First $maxSummaryRows)) {
-            $cs = if ($r.CurrentStep) { $r.CurrentStep } else { '-' }
+            $cs = if ($r.CurrentStep) { ConvertTo-AzLocalMarkdownTableCell -Value ([string]$r.CurrentStep) } else { '-' }
             # v0.8.80: combine the deepest step's description (the human
             # 'what step was running') with its errorMessage (the trace).
             # Falls back through ErrorMessage -> ErrorDescription -> CurrentStepDetail.
@@ -886,8 +891,10 @@ function Export-AzLocalUpdateRunMonitorReport {
             }
             $recentTag = if ($r.IsRecentFailure) { ":fire: last ${RecentFailureWindowHours}h" } else { '-' }
             # target="_blank" intentionally omitted (see in-flight table above).
-            $clusterCell = if ($r.ClusterPortalUrl)   { '<a href="' + $r.ClusterPortalUrl   + '">' + $r.ClusterName + '</a>' } else { $r.ClusterName }
-            $updateCell  = if ($r.UpdateRunPortalUrl) { '<a href="' + $r.UpdateRunPortalUrl + '">' + $r.UpdateName  + '</a>' } else { $r.UpdateName }
+            $clusterLabel = ConvertTo-AzLocalMarkdownTableCell -Value ([string]$r.ClusterName)
+            $updateLabel  = ConvertTo-AzLocalMarkdownTableCell -Value ([string]$r.UpdateName)
+            $clusterCell = if ($r.ClusterPortalUrl)   { '<a href="' + $r.ClusterPortalUrl   + '">' + $clusterLabel + '</a>' } else { $clusterLabel }
+            $updateCell  = if ($r.UpdateRunPortalUrl) { '<a href="' + $r.UpdateRunPortalUrl + '">' + $updateLabel  + '</a>' } else { $updateLabel }
             [void]$md.Add("| $clusterCell | $updateCell | $($r.EndTimeUtc) | $cs | $detailCell | $recentTag |")
         }
         if ($unresolvedFailed.Count -gt $maxSummaryRows) {
@@ -904,13 +911,14 @@ function Export-AzLocalUpdateRunMonitorReport {
         [void]$md.Add('| Cluster | Outcome | Update | Attempted (UTC) | Reason |')
         [void]$md.Add('|---------|---------|--------|-----------------|--------|')
         foreach ($gap in ($attemptGaps | Sort-Object @{Expression='AttemptUtc';Descending=$true}, ClusterName | Select-Object -First $maxSummaryRows)) {
-            $clusterCell = Get-AzLocalClusterPortalLink -ClusterName ([string]$gap.ClusterName) -ClusterResourceId ([string]$gap.ClusterResourceId)
-            $updateLabel = if ([string]::IsNullOrWhiteSpace($gap.UpdateName)) { '-' } else { $gap.UpdateName }
+            $clusterCell = Get-AzLocalClusterPortalLink -ClusterName ([string]$gap.ClusterName) -ClusterResourceId ([string]$gap.ClusterResourceId) -MarkdownTableCell
+            $updateLabel = if ([string]::IsNullOrWhiteSpace($gap.UpdateName)) { '-' } else { ConvertTo-AzLocalMarkdownTableCell -Value ([string]$gap.UpdateName) }
             $reasonText = if ([string]::IsNullOrWhiteSpace($gap.Reason)) { '-' } else {
-                # escape pipe so it does not break the table row
-                ($gap.Reason -replace '\|', '\|')
+                ConvertTo-AzLocalMarkdownTableCell -Value ([string]$gap.Reason)
             }
-            [void]$md.Add("| $clusterCell | $($gap.Outcome) | $updateLabel | $($gap.AttemptUtcText) | $reasonText |")
+            $outcomeCell = ConvertTo-AzLocalMarkdownTableCell -Value ([string]$gap.Outcome)
+            $attemptTimeCell = ConvertTo-AzLocalMarkdownTableCell -Value ([string]$gap.AttemptUtcText)
+            [void]$md.Add("| $clusterCell | $outcomeCell | $updateLabel | $attemptTimeCell | $reasonText |")
         }
         if ($attemptGaps.Count -gt $maxSummaryRows) {
             [void]$md.Add('')

@@ -71,7 +71,7 @@ function Get-AzLocalApplyUpdatesScheduleCycleCalendar {
         date. When supplied AND -AsMarkdown is set, the per-day calendar
         table gains a centered "Ring CRON Start Time (apply-updates pipeline)"
         column immediately after "Date (UTC)". The cell renders up to 2
-        firing times verbatim; any additional firings beyond the first 2
+        firing times verbatim; any additional firings beyond the first 4
         are summarised as "(+N)" (e.g. "02:00, 04:00 (+1)" when there
         are 3 firings). Days with no entry in the hashtable, no firings
         for the day, or that are "dead days" (no eligible rings) render
@@ -370,16 +370,16 @@ function Get-AzLocalApplyUpdatesScheduleCycleCalendar {
                 if ($hasCounts) {
                     $cnt = 0
                     if ($ringCounts.ContainsKey($_)) { $cnt = $ringCounts[$_] }
-                    '`' + $_ + '` (' + $cnt + ')'
+                    (ConvertTo-AzLocalMarkdownTableCell -Value ([string]$_)) + ' (' + $cnt + ')'
                 } else {
-                    '`' + $_ + '`'
+                    ConvertTo-AzLocalMarkdownTableCell -Value ([string]$_)
                 }
             }) -join ', '
         } else {
             '_(none - dead day)_'
         }
         $allowCell = if (@($r.AllowedUpdateVersions).Count -gt 0) {
-            (@($r.AllowedUpdateVersions) | ForEach-Object { '`' + $_ + '`' }) -join ', '
+            (@($r.AllowedUpdateVersions) | ForEach-Object { ConvertTo-AzLocalMarkdownTableCell -Value ([string]$_) }) -join ', '
         } else {
             '_(no constraint)_'
         }
@@ -392,11 +392,11 @@ function Get-AzLocalApplyUpdatesScheduleCycleCalendar {
                 if ($cronFirings.ContainsKey($dateKey)) { $fires = @($cronFirings[$dateKey]) }
                 if ($fires.Count -eq 0) {
                     $cronCell = '_(none)_'
-                } elseif ($fires.Count -le 2) {
+                } elseif ($fires.Count -le 4) {
                     $cronCell = ($fires -join ', ')
                 } else {
-                    $extra = $fires.Count - 2
-                    $cronCell = (($fires | Select-Object -First 2) -join ', ') + " (+$extra)"
+                    $extra = $fires.Count - 4
+                    $cronCell = (($fires | Select-Object -First 4) -join ', ') + " (+$extra)"
                 }
             }
         }
@@ -407,23 +407,24 @@ function Get-AzLocalApplyUpdatesScheduleCycleCalendar {
             } else {
                 $parts = @()
                 foreach ($rg in @($r.Rings)) {
+                    $ringLabel = ConvertTo-AzLocalMarkdownTableCell -Value ([string]$rg)
                     $perDate = $null
                     if ($windowMatch.ContainsKey($rg)) { $perDate = $windowMatch[$rg] }
                     if ($null -eq $perDate -or -not $perDate.ContainsKey($dateKey)) {
-                        $parts += "``$rg``: _(n/a)_"
+                        $parts += "${ringLabel}: _(n/a)_"
                         continue
                     }
                     $leaf = $perDate[$dateKey]
                     $tot  = [int]$leaf['Total']
                     $mat  = [int]$leaf['Matching']
                     if ($tot -le 0) {
-                        $parts += "``$rg``: _(0 clusters)_"
+                        $parts += "${ringLabel}: _(0 clusters)_"
                         continue
                     }
                     $pct  = [double]$leaf['Pct']
                     $isOk = ($pct -ge 0.95)
                     $pctTxt = [int][math]::Round($pct * 100)
-                    $parts += "``$rg``: $isOk $mat/$tot ($pctTxt%)"
+                    $parts += "${ringLabel}: $isOk $mat/$tot ($pctTxt%)"
                 }
                 $matchCell = ($parts -join '; ')
             }

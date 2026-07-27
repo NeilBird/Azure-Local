@@ -274,14 +274,15 @@ function Add-AzLocalApplyUpdatesStepSummary {
                         elseif ($failedStates -contains $st) { $iconFail }
                         elseif ($blockedStates -contains $st) { $iconBlock }
                         else { $iconSkip }
-                $upd = if ($r.UpdateName) { '`' + $r.UpdateName + '`' } else { '-' }
-                $dur = if ($r.Duration) { "$($r.Duration)" } else { '-' }
+                $upd = if ($r.UpdateName) { ConvertTo-AzLocalMarkdownTableCell -Value ([string]$r.UpdateName) } else { '-' }
+                $dur = if ($r.Duration) { ConvertTo-AzLocalMarkdownTableCell -Value ([string]$r.Duration) } else { '-' }
                 $msg = "$($r.Message)"
                 if ($msg.Length -gt 180) { $msg = $msg.Substring(0, 177) + '...' }
-                $msg = $msg -replace '\|', '\|' -replace '\r?\n', ' '
+                $msg = ConvertTo-AzLocalMarkdownTableCell -Value $msg
                 $clusterResId = if ($clusterIdByName.ContainsKey([string]$r.ClusterName)) { $clusterIdByName[[string]$r.ClusterName] } else { '' }
-                $clusterCell = Get-AzLocalClusterPortalLink -ClusterName ([string]$r.ClusterName) -ClusterResourceId $clusterResId
-                [void]$sb.AppendLine("| $clusterCell | $icon $st | $upd | $dur | $msg |")
+                $clusterCell = Get-AzLocalClusterPortalLink -ClusterName ([string]$r.ClusterName) -ClusterResourceId $clusterResId -MarkdownTableCell
+                $statusCell = ConvertTo-AzLocalMarkdownTableCell -Value ("{0} {1}" -f $icon, $st)
+                [void]$sb.AppendLine("| $clusterCell | $statusCell | $upd | $dur | $msg |")
                 $actionsRendered++
             }
         }
@@ -305,9 +306,9 @@ function Add-AzLocalApplyUpdatesStepSummary {
                 if ($skippedRendered -ge $MaxSkippedRows) { break }
                 $blocking = "$($b.BlockingReasons)"
                 if ($blocking.Length -gt 200) { $blocking = $blocking.Substring(0, 197) + '...' }
-                $blocking = $blocking -replace '\|', '\|' -replace '\r?\n', ' '
-                $reco = if ($b.RecommendedUpdate) { '`' + $b.RecommendedUpdate + '`' } else { '-' }
-                $curr = if ($b.CurrentVersion) { '`' + $b.CurrentVersion + '`' } else { '-' }
+                $blocking = ConvertTo-AzLocalMarkdownTableCell -Value $blocking
+                $reco = if ($b.RecommendedUpdate) { ConvertTo-AzLocalMarkdownTableCell -Value ([string]$b.RecommendedUpdate) } else { '-' }
+                $curr = if ($b.CurrentVersion) { ConvertTo-AzLocalMarkdownTableCell -Value ([string]$b.CurrentVersion) } else { '-' }
                 $hSt  = "$($b.HealthState)"
                 $hCell = switch -Regex ($hSt) {
                     '^Success$' { "$iconSuccess $hSt"; break }
@@ -316,8 +317,10 @@ function Add-AzLocalApplyUpdatesStepSummary {
                     default     { $hSt }
                 }
                 $clusterResId = if ($b.PSObject.Properties['ClusterResourceId'] -and $b.ClusterResourceId) { [string]$b.ClusterResourceId } else { '' }
-                $clusterCell = Get-AzLocalClusterPortalLink -ClusterName ([string]$b.ClusterName) -ClusterResourceId $clusterResId
-                [void]$sb.AppendLine("| $clusterCell | $($b.UpdateState) | $hCell | $curr | $reco | $blocking |")
+                $clusterCell = Get-AzLocalClusterPortalLink -ClusterName ([string]$b.ClusterName) -ClusterResourceId $clusterResId -MarkdownTableCell
+                $updateStateCell = ConvertTo-AzLocalMarkdownTableCell -Value ([string]$b.UpdateState)
+                $healthCell = ConvertTo-AzLocalMarkdownTableCell -Value ([string]$hCell)
+                [void]$sb.AppendLine("| $clusterCell | $updateStateCell | $healthCell | $curr | $reco | $blocking |")
                 $skippedRendered++
             }
             if ($blockedRows.Count -gt $MaxSkippedRows) {

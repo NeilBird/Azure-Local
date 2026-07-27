@@ -24,6 +24,7 @@
 #   - Monitor:3 Fleet Update Status run-history table   : "Update Ring" column
 #   - Monitor:3                                         : "Clusters - Ready for Update" table
 #   - Assess Readiness                                  : ready-for-update.csv + collapsed detail
+#     (-SkipStaleAssessmentScan keeps certification read-only)
 #   - Export-AzLocalClusterUpdateReadinessReport -SchedulePath : must NOT throw
 #     (standing v0.9.11 fix: -SchedulePath no longer leaks into Test-AzLocalClusterHealth)
 #   - Monitor:2 Fleet Health Status (v0.9.21)           : Cluster Counts split into
@@ -138,7 +139,7 @@ try {
     # 3) Assess Readiness - Ready-for-Update table + CSV + collapsed detail
     try {
         Set-Content -Path $summaryFile -Value '' -Encoding UTF8
-        $r5 = Export-AzLocalClusterUpdateReadinessReport -Scope all -OutputDirectory $artDir -PassThru -ErrorAction Stop
+        $r5 = Export-AzLocalClusterUpdateReadinessReport -Scope all -OutputDirectory $artDir -SkipStaleAssessmentScan -PassThru -ErrorAction Stop
         $md = Get-Content -Path $summaryFile -Raw
         Save '3-assess-readiness-summary' $md
         $csvPath = $r5.ReadyForUpdateCsvPath
@@ -157,7 +158,7 @@ try {
     if ($SchedulePath -and (Test-Path $SchedulePath)) {
         try {
             Set-Content -Path $summaryFile -Value '' -Encoding UTF8
-            $null = Export-AzLocalClusterUpdateReadinessReport -Scope all -OutputDirectory $artDir -SchedulePath $SchedulePath -PassThru -ErrorAction Stop
+            $null = Export-AzLocalClusterUpdateReadinessReport -Scope all -OutputDirectory $artDir -SchedulePath $SchedulePath -SkipStaleAssessmentScan -PassThru -ErrorAction Stop
             $report['AssessReadiness -SchedulePath (no scopeParams leak)'] = 'PASS'
         }
         catch { $report['AssessReadiness -SchedulePath'] = "FAIL - $($_.Exception.Message)" }

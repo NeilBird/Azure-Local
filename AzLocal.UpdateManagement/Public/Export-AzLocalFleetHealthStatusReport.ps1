@@ -525,7 +525,7 @@ function Export-AzLocalFleetHealthStatusReport {
         [void]$md.Add('|---------|--------|---------------|------------------|--------------|------------------|---------------|--------------------------|------------|')
         foreach ($o in (@($overview) | Select-Object -First $MaxOverviewRows)) {
             # target="_blank" intentionally omitted: sanitiser strips it. See Tip above.
-            $clusterCell = Get-AzLocalClusterPortalLink -ClusterName ([string]$o.ClusterName) -ClusterPortalUrl ([string]$o.ClusterPortalUrl)
+            $clusterCell = Get-AzLocalClusterPortalLink -ClusterName ([string]$o.ClusterName) -ClusterPortalUrl ([string]$o.ClusterPortalUrl) -MarkdownTableCell
             # v0.8.81: use shared icon map - keep readable status names rather
             # than inlining glyph constants.
             $healthTag = switch ($o.HealthStatus) {
@@ -537,7 +537,12 @@ function Export-AzLocalFleetHealthStatusReport {
                 'Unknown'             { $iconMap['Unknown'] }
                 default               { '[' + [string]$o.HealthStatus + ']' }
             }
-            [void]$md.Add(('| {0} | {1} | {2} | {3} | {4} | {5} | {6} | {7} | {8} |' -f $clusterCell, $healthTag, $o.UpdateStatus, $o.CurrentVersion, $o.SbeVersion, $o.AzureConnection, $o.LastChecked, $o.HealthResultsAgeDays, $o.NodeCount))
+            $updateStatusCell = ConvertTo-AzLocalMarkdownTableCell -Value ([string]$o.UpdateStatus)
+            $currentVersionCell = ConvertTo-AzLocalMarkdownTableCell -Value ([string]$o.CurrentVersion)
+            $sbeVersionCell = ConvertTo-AzLocalMarkdownTableCell -Value ([string]$o.SbeVersion)
+            $azureConnectionCell = ConvertTo-AzLocalMarkdownTableCell -Value ([string]$o.AzureConnection)
+            $lastCheckedCell = ConvertTo-AzLocalMarkdownTableCell -Value ([string]$o.LastChecked)
+            [void]$md.Add(('| {0} | {1} | {2} | {3} | {4} | {5} | {6} | {7} | {8} |' -f $clusterCell, $healthTag, $updateStatusCell, $currentVersionCell, $sbeVersionCell, $azureConnectionCell, $lastCheckedCell, $o.HealthResultsAgeDays, $o.NodeCount))
         }
         if ($overview.Count -gt $MaxOverviewRows) {
             [void]$md.Add('')
@@ -559,6 +564,7 @@ function Export-AzLocalFleetHealthStatusReport {
         [void]$md.Add('|----------|----------------|---------------|---------------|--------------------|--------|')
         foreach ($r in (@($summary) | Select-Object -First $MaxSummaryRows)) {
             $sevTag = if ($r.Severity -eq 'Critical') { $iconMap['SeverityCritical'] } else { $iconMap['SeverityWarning'] }
+            $failureReasonCell = ConvertTo-AzLocalMarkdownTableCell -Value ([string]$r.FailureReason)
             # Keep @() OUTSIDE the 'if' so single-element splits do not unwrap
             # to a bare String (PowerShell scalar-unwrap guard).
             $names = @(if ($r.AffectedClusters)          { $r.AffectedClusters          -split '; ' } else { @() })
@@ -575,7 +581,7 @@ function Export-AzLocalFleetHealthStatusReport {
             else {
                 (($linkedParts | Select-Object -First 10) -join ', ') + (' ... (+{0} more)' -f ($linkedParts.Count - 10))
             }
-            [void]$md.Add(('| {0} | {1} | {2} | {3} | {4} | {5} |' -f $sevTag, $r.FailureReason, $r.ClusterCount, $r.FailureCount, $clList, $r.LatestOccurrence))
+            [void]$md.Add(('| {0} | {1} | {2} | {3} | {4} | {5} |' -f $sevTag, $failureReasonCell, $r.ClusterCount, $r.FailureCount, $clList, $r.LatestOccurrence))
         }
         if ($summary.Count -gt $MaxSummaryRows) {
             [void]$md.Add('')
@@ -625,7 +631,7 @@ function Export-AzLocalFleetHealthStatusReport {
             if ($cl.WarningCount  -gt 0) { $sevParts += ('[Warning] x {0}'  -f $cl.WarningCount)  }
             $sevTally = $sevParts -join ' &nbsp;&middot;&nbsp; '
 
-            $clusterCell = Get-AzLocalClusterPortalLink -ClusterName ([string]$cl.ClusterName) -ClusterPortalUrl ([string]$cl.ClusterPortalUrl)
+            $clusterCell = Get-AzLocalClusterPortalLink -ClusterName ([string]$cl.ClusterName) -ClusterPortalUrl ([string]$cl.ClusterPortalUrl) -MarkdownTableCell
             $lastOccStr = if ($cl.LastOccurrence) { ('{0:yyyy-MM-ddTHH:mm:ssZ}' -f $cl.LastOccurrence) } else { '-' }
 
             [void]$md.Add('<details>')
@@ -649,7 +655,7 @@ function Export-AzLocalFleetHealthStatusReport {
             foreach ($r in $cl.Rows) {
                 $sevTag = if ($r.Severity -eq 'Critical') { $iconMap['SeverityCritical'] } else { $iconMap['SeverityWarning'] }
                 $rem    = if ($r.PSObject.Properties.Match('Remediation').Count -gt 0) { [string]$r.Remediation } else { '' }
-                $remCell = if ($rem -and $rem.StartsWith('https://')) { ('<a href="{0}">link</a>' -f $rem) } else { $rem }
+                $remCell = if ($rem -and $rem.StartsWith('https://')) { ('<a href="{0}">link</a>' -f $rem) } else { ConvertTo-AzLocalMarkdownTableCell -Value $rem }
                 $tName = if ($r.PSObject.Properties.Match('TargetResourceName').Count -gt 0) { [string]$r.TargetResourceName } else { '' }
                 $tType = if ($r.PSObject.Properties.Match('TargetResourceType').Count -gt 0) { [string]$r.TargetResourceType } else { '' }
                 $tTitle = if ($r.PSObject.Properties.Match('Title').Count -gt 0) { [string]$r.Title } else { '' }
@@ -660,7 +666,8 @@ function Export-AzLocalFleetHealthStatusReport {
                 # v0.8.81: collapse Title when it duplicates the Failure Reason
                 # verbatim (cluster-rollup checks often have identical title +
                 # displayName). em-dash keeps the column visually distinct.
-                $titleCell = if ($tTitle -and ($tTitle -ne [string]$r.FailureReason)) { $tTitle } else { ([string][char]0x2014) }
+                $titleCell = if ($tTitle -and ($tTitle -ne [string]$r.FailureReason)) { ConvertTo-AzLocalMarkdownTableCell -Value $tTitle } else { ([string][char]0x2014) }
+                $reasonCell = ConvertTo-AzLocalMarkdownTableCell -Value ([string]$r.FailureReason)
 
                 # v0.8.81: collapsible Description cell (operators told us they
                 # could not see *which volume* was corrupt - the file path lives
@@ -670,9 +677,7 @@ function Export-AzLocalFleetHealthStatusReport {
                 # so short single-sentence descriptions render inline and only
                 # long multi-line descriptions collapse behind 'view'.
                 $descCell = if ($tDesc) {
-                    $descEscaped = $tDesc -replace '\|', '\|' -replace '`', '\`'
-                    # Markdown tables forbid raw newlines in cells - render as <br>.
-                    $descEscaped = $descEscaped -replace "`r`n", '<br>' -replace "`n", '<br>'
+                    $descEscaped = ConvertTo-AzLocalMarkdownTableCell -Value $tDesc
                     if ($descEscaped.Length -gt 280) {
                         '<details><summary>view</summary>{0}</details>' -f $descEscaped
                     } else {
@@ -680,16 +685,19 @@ function Export-AzLocalFleetHealthStatusReport {
                     }
                 } else { '' }
 
-                $nameRawCell = if ($tName_raw) { ('`{0}`' -f $tName_raw) } else { '' }
+                $nameRawCell = if ($tName_raw) { ('`{0}`' -f (ConvertTo-AzLocalMarkdownTableCell -Value $tName_raw)) } else { '' }
 
+                $targetNameCell = ConvertTo-AzLocalMarkdownTableCell -Value $tName
                 $tNameCell = if ($tResId -and $tName) {
-                    '<a href="https://portal.azure.com/#@/resource{0}">{1}</a>' -f $tResId, $tName
+                    '<a href="https://portal.azure.com/#@/resource{0}">{1}</a>' -f $tResId, $targetNameCell
                 } elseif ($tResId) {
                     '<a href="https://portal.azure.com/#@/resource{0}">link</a>' -f $tResId
                 } else {
-                    $tName
+                    $targetNameCell
                 }
-                [void]$md.Add(('| {0} | {1} | {2} | {3} | {4} | {5} | {6} | {7} | {8} | {9} |' -f $sevTag, $titleCell, $r.FailureReason, $descCell, $nameRawCell, $remCell, $tNameCell, $tType, $r.LastOccurrence, $r.ResourceGroup))
+                $typeCell = ConvertTo-AzLocalMarkdownTableCell -Value $tType
+                $resourceGroupCell = ConvertTo-AzLocalMarkdownTableCell -Value ([string]$r.ResourceGroup)
+                [void]$md.Add(('| {0} | {1} | {2} | {3} | {4} | {5} | {6} | {7} | {8} | {9} |' -f $sevTag, $titleCell, $reasonCell, $descCell, $nameRawCell, $remCell, $tNameCell, $typeCell, $r.LastOccurrence, $resourceGroupCell))
             }
             [void]$md.Add('</details>')
             [void]$md.Add('')
