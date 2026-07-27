@@ -295,6 +295,13 @@ function ConvertTo-VMCheckpointAuditHtml {
      long checkpoint name wraps slightly earlier, freeing the small amount of width the Age column needs. */
   td.ckptage{white-space:nowrap}
   td.ckptname{max-width:300px;overflow-wrap:anywhere}
+    .chain-scroll{width:100%;max-width:100%;overflow-x:auto}
+    table.chain-evidence{min-width:1040px;margin-bottom:8px}
+    table.chain-evidence .chain-group th{background:#17243a;color:var(--text);padding:8px 11px}
+    table.chain-evidence .chain-file{width:30%;overflow-wrap:anywhere}
+    table.chain-evidence .chain-time{white-space:nowrap}
+    .chain-paths{margin:8px 0 12px}
+    .chain-paths table{min-width:900px}
         @media(max-width:1440px){table:not(.housekeeping){display:block;overflow-x:auto}}
     @media(max-width:980px){.cards{grid-template-columns:repeat(4,minmax(0,1fr))}}
         @media(max-width:760px){
@@ -1170,7 +1177,8 @@ $storageExecSummaryLi
         # Get-VMSnapshot exposes no corresponding named checkpoint.
         $attachedVhdLayers = if ($rd.PSObject.Properties['AttachedVhdLayers']) { @($rd.AttachedVhdLayers) } else { @() }
         if (@($attachedVhdLayers | Where-Object { $_.Type -eq 'Differencing' }).Count -gt 0) {
-            [void]$sb.Append("  <details open><summary>Attached VHD chain evidence ($(@($attachedVhdLayers).Count) layer(s))</summary><table><thead><tr><th>Attached chain</th><th>Layer</th><th>Role</th><th>Layer file</th><th>Type</th><th>Size (GB)</th><th>Created (UTC)</th><th>LastWrite (UTC)</th><th>Checkpoint age</th><th>Last activity</th><th>Checkpoint stale</th><th>Full path</th><th>Parent path</th></tr></thead><tbody>")
+            [void]$sb.Append("  <details open><summary>Attached VHD chain evidence ($(@($attachedVhdLayers).Count) layer(s))</summary><div class='chain-scroll'><table class='chain-evidence'><thead><tr><th>Layer</th><th>Role</th><th>Layer file</th><th>Type</th><th>Size (GB)</th><th>Created (UTC)</th><th>Checkpoint age</th><th>Last activity</th><th>Checkpoint stale</th></tr></thead><tbody>")
+            $previousChainName = $null
             foreach ($layer in $attachedVhdLayers) {
                 $checkpointStale = [bool](Get-OptionalPropertyValue $layer 'CheckpointStale' (Get-OptionalPropertyValue $layer 'Stale' $false))
                 $checkpointAgeHrs = Get-OptionalPropertyValue $layer 'CheckpointAgeHrs' (Get-OptionalPropertyValue $layer 'AgeHrs' $null)
@@ -1181,10 +1189,19 @@ $storageExecSummaryLi
                 $checkpointStaleText = if ($layer.Type -in @('Dynamic', 'Fixed')) { 'n/a (base)' } elseif ($checkpointStale) { "<span class='warnval'>YES</span>" } elseif ($layer.Type -eq 'Differencing') { 'NO' } else { 'n/a' }
                 $checkpointAgeText = if ($null -ne $checkpointAgeHrs) { '{0} h<br>{1} d' -f $checkpointAgeHrs, [math]::Round([double]$checkpointAgeHrs / 24, 1) } else { 'n/a' }
                 $checkpointAge = if ($checkpointStale -and $null -ne $checkpointAgeHrs) { "<span class='warnval'>$checkpointAgeText</span>" } else { $checkpointAgeText }
-                $lastActivityText = if ($null -ne $lastActivityAgeHrs) { '{0} h<br>{1} d' -f $lastActivityAgeHrs, [math]::Round([double]$lastActivityAgeHrs / 24, 1) } else { '-' }
-                [void]$sb.Append("<tr><td>$(ConvertTo-HtmlText $chainName)</td><td class='num'>$($layer.Layer)</td><td>$(ConvertTo-HtmlText $role)</td><td>$(ConvertTo-HtmlText $fileName)</td><td>$(ConvertTo-HtmlText $layer.Type)</td><td class='num'>$($layer.SizeGB)</td><td>$(ConvertTo-HtmlText $layer.Created)</td><td>$(ConvertTo-HtmlText $layer.LastWrite)</td><td class='num ckptage'>$checkpointAge</td><td class='num ckptage'>$lastActivityText</td><td>$checkpointStaleText</td><td><code>$(ConvertTo-HtmlText $layer.Path)</code></td><td><code>$(ConvertTo-HtmlText $layer.ParentPath)</code></td></tr>")
+                $lastActivityText = if ($null -ne $lastActivityAgeHrs) { '{0} h<br>{1} d<br><span class="muted">{2}</span>' -f $lastActivityAgeHrs, [math]::Round([double]$lastActivityAgeHrs / 24, 1), (ConvertTo-HtmlText $layer.LastWrite) } else { '-' }
+                if ($chainName -ne $previousChainName) {
+                    [void]$sb.Append("<tr class='chain-group'><th colspan='9'>Attached chain: <code>$(ConvertTo-HtmlText $chainName)</code></th></tr>")
+                    $previousChainName = $chainName
+                }
+                [void]$sb.Append("<tr><td class='num'>$($layer.Layer)</td><td>$(ConvertTo-HtmlText $role)</td><td class='chain-file'>$(ConvertTo-HtmlText $fileName)</td><td>$(ConvertTo-HtmlText $layer.Type)</td><td class='num'>$($layer.SizeGB)</td><td class='chain-time'>$(ConvertTo-HtmlText $layer.Created)</td><td class='num ckptage'>$checkpointAge</td><td class='num ckptage'>$lastActivityText</td><td>$checkpointStaleText</td></tr>")
             }
-            [void]$sb.Append("</tbody></table><p class='muted'><strong>Layer order:</strong> Active (top) is the child the VM currently writes to; each Checkpoint row is its next differencing-disk parent; Base is the terminal VHDX parent. Checkpoint age is measured from AVHDX creation. Last activity is measured independently from LastWrite and can remain near zero while an old active checkpoint is continuously written. Base VHDX files are not checkpoints and always show <code>n/a (base)</code>. A differencing <code>.avhdx</code> layer can remain attached even when <code>Get-VMSnapshot</code> exposes no named checkpoint. Validate the chain and the responsible backup/checkpoint job before migration, restart, merge, or removal.</p></details>`r`n")
+            [void]$sb.Append("</tbody></table></div><details class='chain-paths'><summary>Full path and parent-path evidence</summary><div class='chain-scroll'><table><thead><tr><th>Layer file</th><th>Full path</th><th>Parent path</th></tr></thead><tbody>")
+            foreach ($layer in $attachedVhdLayers) {
+                $fileName = [string](Get-OptionalPropertyValue $layer 'FileName' (Split-Path ([string]$layer.Path) -Leaf))
+                [void]$sb.Append("<tr><td>$(ConvertTo-HtmlText $fileName)</td><td><code>$(ConvertTo-HtmlText $layer.Path)</code></td><td><code>$(ConvertTo-HtmlText $layer.ParentPath)</code></td></tr>")
+            }
+            [void]$sb.Append("</tbody></table></div></details><p class='muted'><strong>Layer order:</strong> Active (top) is the child the VM currently writes to; each Checkpoint row is its next differencing-disk parent; Base is the terminal VHDX parent. Checkpoint age is measured from AVHDX creation. Last activity is measured independently from LastWrite and can remain near zero while an old active checkpoint is continuously written. Base VHDX files are not checkpoints and always show <code>n/a (base)</code>. A differencing <code>.avhdx</code> layer can remain attached even when <code>Get-VMSnapshot</code> exposes no named checkpoint. Validate the chain and the responsible backup/checkpoint job before migration, restart, merge, or removal.</p></details>`r`n")
         }
         # Orphaned .avhdx files table (present on disk in this VM's folder(s) but NOT attached to any
         # chain). v0.2.14: per-orphan class + age + a neutral 'Likely / action' read. NEVER states

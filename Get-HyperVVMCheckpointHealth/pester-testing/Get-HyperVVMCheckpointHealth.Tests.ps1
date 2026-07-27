@@ -1324,13 +1324,16 @@ Describe 'HTML fleet report usability' {
         $script:RenderedHtml | Should -Match "Snapshot/layer representation</div><div><span class='warnval'>MISMATCH"
         $script:RenderedHtml | Should -Match '2 stale attached AVHDX layer\(s\)'
         $script:RenderedHtml | Should -Match 'Attached VHD chain evidence \(3 layer\(s\)\)'
-        $script:RenderedHtml | Should -Match '<th>Attached chain</th><th>Layer</th><th>Role</th><th>Layer file</th>'
-        $script:RenderedHtml | Should -Match '>Active \(top\)</td><td>TEST-VM-STALE-LAYER_OS-CURRENT\.avhdx</td>'
-        $script:RenderedHtml | Should -Match '>Checkpoint</td><td>TEST-VM-STALE-LAYER_OS-OLDER\.avhdx</td>'
-        $script:RenderedHtml | Should -Match '>Base</td><td>TEST-VM-STALE-LAYER_OS\.vhdx</td>'
+        $script:RenderedHtml | Should -Match "<div class='chain-scroll'><table class='chain-evidence'>"
+        $script:RenderedHtml | Should -Match '<th>Layer</th><th>Role</th><th>Layer file</th>'
+        $script:RenderedHtml | Should -Match "<tr class='chain-group'><th colspan='9'>Attached chain: <code>TEST-VM-STALE-LAYER_OS-CURRENT\.avhdx</code>"
+        $script:RenderedHtml | Should -Match ">Active \(top\)</td><td class='chain-file'>TEST-VM-STALE-LAYER_OS-CURRENT\.avhdx</td>"
+        $script:RenderedHtml | Should -Match ">Checkpoint</td><td class='chain-file'>TEST-VM-STALE-LAYER_OS-OLDER\.avhdx</td>"
+        $script:RenderedHtml | Should -Match ">Base</td><td class='chain-file'>TEST-VM-STALE-LAYER_OS\.vhdx</td>"
         $script:RenderedHtml | Should -Match '<th>Checkpoint age</th><th>Last activity</th><th>Checkpoint stale</th>'
+        $script:RenderedHtml | Should -Match '<summary>Full path and parent-path evidence</summary>'
         $script:RenderedHtml | Should -Match "<span class='warnval'>74 h<br>3\.1 d</span>.*0\.1 h<br>0 d.*<span class='warnval'>YES</span>"
-        $script:RenderedHtml | Should -Match "class='num ckptage'>n/a</td><td class='num ckptage'>98 h<br>4\.1 d</td><td>n/a \(base\)</td>"
+        $script:RenderedHtml | Should -Match 'class=''num ckptage''>n/a</td><td class=''num ckptage''>98 h<br>4\.1 d<br><span class="muted">.*?</span></td><td>n/a \(base\)</td>'
     }
 
     It 'uses Replica-specific guidance for a Replica-only INVESTIGATE result' {
