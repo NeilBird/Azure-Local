@@ -478,6 +478,52 @@ Describe 'Checkpoint health policy fixtures' {
         @($emptyArrayProperty.Value).Count | Should -Be 0
     }
 
+    It 'loads the shipped policy template without an external YAML module' {
+        $policyPath = Join-Path (Split-Path $PSScriptRoot -Parent) 'checkpoint-health-policy.example.yml'
+
+        $policy = Import-CheckpointHealthPolicy -Path $policyPath
+
+        $policy.SchemaVersion | Should -Be 1
+        @($policy.Storage.ImageLibraryPathPatterns).Count | Should -Be 0
+        @($policy.Orphan.LiveMountPathPatterns).Count | Should -Be 0
+        $policy.Orphan.ClassifyZeroByteAsLiveMount | Should -BeTrue
+        $policy.Replication.Hrl.Enabled | Should -BeTrue
+        $policy.Replication.Hrl.CadenceMultiplier | Should -Be 10
+        $policySource = Get-Content -LiteralPath $policyModulePath -Raw
+        $policySource | Should -Not -Match 'powershell-yaml|ConvertFrom-Yaml'
+    }
+
+    It 'loads a downloaded minimal image policy without an external YAML module' {
+        $policyPath = Join-Path $TestDrive 'checkpoint-health-policy.yml'
+        @'
+schemaVersion: 1
+storage:
+    imageLibraryPathPatterns:
+        - '(?i)^C:\\ClusterStorage\\UserStorage_3\\image\.vhd$'
+'@ | Set-Content -LiteralPath $policyPath -Encoding ASCII
+
+        $policy = Import-CheckpointHealthPolicy -Path $policyPath
+
+        @($policy.Storage.ImageLibraryPathPatterns).Count | Should -Be 1
+        Test-CheckpointHealthPathPattern -Path 'C:\ClusterStorage\UserStorage_3\image.vhd' -Patterns $policy.Storage.ImageLibraryPathPatterns | Should -BeTrue
+        $policy.CsvFreeSpace.Enabled | Should -BeFalse
+        $policy.Replication.Hrl.Enabled | Should -BeTrue
+    }
+
+    It 'rejects unsupported YAML constructs instead of guessing' {
+        $policyPath = Join-Path $TestDrive 'unsupported-policy.yml'
+        "schemaVersion: 1`nunsupported: value" | Set-Content -LiteralPath $policyPath -Encoding ASCII
+
+        { Import-CheckpointHealthPolicy -Path $policyPath } | Should -Throw '*Unsupported policy YAML value*line 2*'
+    }
+
+    It 'rejects an empty policy explicitly' {
+        $policyPath = Join-Path $TestDrive 'empty-policy.yml'
+        Set-Content -LiteralPath $policyPath -Value '' -Encoding ASCII
+
+        { Import-CheckpointHealthPolicy -Path $policyPath } | Should -Throw '*policy file is empty*'
+    }
+
     It 'flags configured CSV percentage or absolute free-space breaches only when enabled' {
         $volumes = @([pscustomobject]@{ Volume = 'CSV01'; FreePct = 20; FreeGB = 50 })
         $disabled = Get-CsvFreeSpaceAssessment -Volumes $volumes -Policy ([pscustomobject]@{ Enabled = $false; MinimumFreePercent = 15; MinimumFreeGB = 100 })

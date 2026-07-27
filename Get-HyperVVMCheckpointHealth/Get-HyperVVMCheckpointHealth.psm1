@@ -203,7 +203,7 @@ param(
     [string]$ExcludedVMListCsv,
 
     # Optional schema-versioned YAML policy for image-library paths, live-mount patterns, CSV free-space
-    # thresholds, and cadence-aware HRL assessment. Requires powershell-yaml only when supplied.
+    # thresholds, and cadence-aware HRL assessment. Parsed by the module with no external dependency.
     [string]$PolicyPath,
 
     # Age (in hours) at or beyond which a checkpoint / differencing disk is flagged as stale.
