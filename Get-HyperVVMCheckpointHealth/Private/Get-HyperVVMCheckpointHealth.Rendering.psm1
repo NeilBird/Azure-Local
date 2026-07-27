@@ -1169,7 +1169,8 @@ $storageExecSummaryLi
                 $staleTxt = if ($c.Stale) { "<span class='warnval'>YES</span>" } else { 'NO' }
                 $ageText = '{0} h<br>{1} d' -f $c.AgeHrs, [math]::Round([double]$c.AgeHrs / 24, 1)
                 $ageCell = if ($c.Stale) { "<span class='warnval'>$ageText</span>" } else { $ageText }
-                [void]$sb.Append("<tr><td class='ckptname'>$(ConvertTo-HtmlText $c.Name)</td><td>$(ConvertTo-HtmlText $c.Type)</td><td>$(ConvertTo-HtmlText $c.Purpose)</td><td>$(ConvertTo-HtmlText $c.Created)</td><td class='num ckptage'>$ageCell</td><td>$staleTxt</td><td>$(ConvertTo-HtmlText $c.Parent)</td></tr>")
+                $parentDisplay = if ($c.PSObject.Properties['ParentDisplay']) { [string]$c.ParentDisplay } elseif ([string]::IsNullOrWhiteSpace([string]$c.Parent)) { 'n/a (root)' } else { [string]$c.Parent }
+                [void]$sb.Append("<tr><td class='ckptname'>$(ConvertTo-HtmlText $c.Name)</td><td>$(ConvertTo-HtmlText $c.Type)</td><td>$(ConvertTo-HtmlText $c.Purpose)</td><td>$(ConvertTo-HtmlText $c.Created)</td><td class='num ckptage'>$ageCell</td><td>$staleTxt</td><td>$(ConvertTo-HtmlText $parentDisplay)</td></tr>")
             }
             [void]$sb.Append("</tbody></table></details>`r`n")
         }

@@ -6,7 +6,7 @@
 
 - Module: `Get-HyperVVMCheckpointHealth`
 - Updated: 2026-07-27
-- Version: 0.2.26
+- Version: 0.2.27
 
 ## TL;DR
 
@@ -96,7 +96,7 @@ Treat every saved audit artifact as **sensitive operational data**. The `.txt`, 
 
 ### Internal structure
 
-Version 0.2.26 is distributed as a PowerShell module with a single exported command and manifest-managed private nested modules. Keep the extracted directory intact:
+Version 0.2.27 is distributed as a PowerShell module with a single exported command and manifest-managed private nested modules. Keep the extracted directory intact:
 
 ```text
 Get-HyperVVMCheckpointHealth\
@@ -133,16 +133,16 @@ Two supported ways to run it, both single-hop:
 
 ### Download and import the module
 
-Download the versioned ZIP from the repository's [GitHub Releases page](https://github.com/NeilBird/Azure-Local/releases). The supported 0.2.26 release asset is `Get-HyperVVMCheckpointHealth-0.2.26.zip`; it contains the manifest, root module, five private modules, example policy YAML, README, and license. Do not use a raw single-file link because the module requires its manifest and sibling private modules.
+Download the versioned ZIP from the repository's [GitHub Releases page](https://github.com/NeilBird/Azure-Local/releases). The supported 0.2.27 release asset is `Get-HyperVVMCheckpointHealth-0.2.27.zip`; it contains the manifest, root module, five private modules, example policy YAML, README, and license. Do not use a raw single-file link because the module requires its manifest and sibling private modules.
 
 The release also publishes [`Setup-Get-HyperVVMCheckpointHealth.ps1`](Setup-Get-HyperVVMCheckpointHealth.ps1) as a separate asset outside the ZIP. The setup script is pinned to the supported version and SHA256 hash and changes files only beneath `<InstallRoot>\Get-HyperVVMCheckpointHealth` (`C:\Temp\Get-HyperVVMCheckpointHealth` by default). It validates the staged manifest/version before replacing that directory, restores the previous directory if installation validation fails, imports the module, and verifies the command without running an audit. Use `-InstallRoot` to choose another parent directory and `-WhatIf` for a no-change preview. Do not use an installation root where the `Get-HyperVVMCheckpointHealth` child directory contains unrelated files.
 
 Download the ZIP, download the setup script, and run the setup script:
 
 ```powershell
-Invoke-WebRequest 'https://github.com/NeilBird/Azure-Local/releases/download/Get-HyperVVMCheckpointHealth-v0.2.26/Get-HyperVVMCheckpointHealth-0.2.26.zip' -OutFile "$env:TEMP\Get-HyperVVMCheckpointHealth-0.2.26.zip"
-Invoke-WebRequest 'https://github.com/NeilBird/Azure-Local/releases/download/Get-HyperVVMCheckpointHealth-v0.2.26/Setup-Get-HyperVVMCheckpointHealth.ps1' -OutFile "$env:TEMP\Setup-Get-HyperVVMCheckpointHealth.ps1"
-Unblock-File "$env:TEMP\Setup-Get-HyperVVMCheckpointHealth.ps1"; & "$env:TEMP\Setup-Get-HyperVVMCheckpointHealth.ps1" -ZipPath "$env:TEMP\Get-HyperVVMCheckpointHealth-0.2.26.zip"
+Invoke-WebRequest 'https://github.com/NeilBird/Azure-Local/releases/download/Get-HyperVVMCheckpointHealth-v0.2.27/Get-HyperVVMCheckpointHealth-0.2.27.zip' -OutFile "$env:TEMP\Get-HyperVVMCheckpointHealth-0.2.27.zip"
+Invoke-WebRequest 'https://github.com/NeilBird/Azure-Local/releases/download/Get-HyperVVMCheckpointHealth-v0.2.27/Setup-Get-HyperVVMCheckpointHealth.ps1' -OutFile "$env:TEMP\Setup-Get-HyperVVMCheckpointHealth.ps1"
+Unblock-File "$env:TEMP\Setup-Get-HyperVVMCheckpointHealth.ps1"; & "$env:TEMP\Setup-Get-HyperVVMCheckpointHealth.ps1" -ZipPath "$env:TEMP\Get-HyperVVMCheckpointHealth-0.2.27.zip"
 ```
 
 Then run the audit separately. On a cluster node:
@@ -298,10 +298,9 @@ For a file-backed **Unattached base disk candidate**, the HTML provides a **Filt
 
 When at least one candidate is selected, a **Persistent VM image policy settings** section appears below the housekeeping table:
 
-1. Review the selected full paths, then choose **Copy policy settings**. The generated entries are case-insensitive, start/end anchored, and regex-escape the exact path.
-2. For a new policy, paste the complete generated `schemaVersion`, `storage`, and `imageLibraryPathPatterns` block into `checkpoint-health-policy.yml`.
-3. For an existing policy, copy only the generated `- '(?i)^...$'` entries into its existing `storage.imageLibraryPathPatterns` array. Preserve its current entries and do not create duplicate `schemaVersion`, `storage`, or `imageLibraryPathPatterns` keys.
-4. Save the YAML file and repeat the original audit command with `-PolicyPath '.\checkpoint-health-policy.yml'`. Confirm that the new report omits the selected files and shows the expected policy source.
+1. Review the selected full paths. For a new policy, choose **Download checkpoint-health-policy.yml**; the report creates a ready-to-use YAML file containing the complete generated `schemaVersion`, `storage`, and `imageLibraryPathPatterns` block.
+2. For an existing policy, choose **Copy policy settings**, then copy only the generated `- '(?i)^...$'` entries into its existing `storage.imageLibraryPathPatterns` array. Preserve its current entries and do not create duplicate `schemaVersion`, `storage`, or `imageLibraryPathPatterns` keys.
+3. Save the YAML file and repeat the original audit command with `-PolicyPath '.\checkpoint-health-policy.yml'`. Confirm that the new report omits the selected files and shows the expected policy source.
 
 `storage.imageLibraryPathPatterns` is a replacement array. A supplied array replaces the configurable built-in repository regex rather than appending to it. If a new policy should retain that general repository matching as well as the generated exact paths, include the built-in expression from the policy table above as another array entry. Automatic exact `ImageStore` segment and versioned ARB appliance-image exclusions remain active regardless.
 
@@ -640,11 +639,11 @@ Set-Location .\Get-HyperVVMCheckpointHealth
 Generated assets are written to the ignored `release` directory:
 
 ```text
-release\Get-HyperVVMCheckpointHealth-0.2.26.zip
-release\Get-HyperVVMCheckpointHealth-0.2.26.zip.sha256
+release\Get-HyperVVMCheckpointHealth-0.2.27.zip
+release\Get-HyperVVMCheckpointHealth-0.2.27.zip.sha256
 ```
 
-Create the GitHub release with tag `Get-HyperVVMCheckpointHealth-v0.2.26` and upload the generated ZIP, its SHA256 file, and `Setup-Get-HyperVVMCheckpointHealth.ps1` as three separate assets. The setup script remains outside the ZIP. Before publishing a future version:
+Create the GitHub release with tag `Get-HyperVVMCheckpointHealth-v0.2.27` and upload the generated ZIP, its SHA256 file, and `Setup-Get-HyperVVMCheckpointHealth.ps1` as three separate assets. The setup script remains outside the ZIP. Before publishing a future version:
 
 1. Update the version in the root module, manifest, README, release notes, and the setup script's `$version` value.
 2. Run the redirected Windows PowerShell 5.1 Pester suite.
@@ -653,6 +652,14 @@ Create the GitHub release with tag `Get-HyperVVMCheckpointHealth-v0.2.26` and up
 5. Publish the ZIP and checksum as release assets using the tag and asset naming convention above.
 
 ## What's New
+
+### Version 0.2.27
+
+- Adds a **Download checkpoint-health-policy.yml** action to the HTML housekeeping VM-image exclusion workflow. Generated exact-path expressions can be used directly with `-PolicyPath`; copying remains available for merging entries into an existing policy.
+- Adds a typed **Hyper-V Replica Effective Limit Assessment** table to each Replica-enabled TXT report, matching the HTML signals, observed values, relationship-aware guardrails, and assessment states.
+- Appends `EventClassification`, `VerdictDriver`, `RecoveryDisposition`, and `DispositionReason` to per-VM event CSVs while preserving the existing columns and their order.
+- Makes `NOT FOUND` TXT reports self-contained with cluster identity, an incomplete-assessment warning, marker CSV location, verification steps, a ready-to-edit rerun command, and explicit evidence boundaries.
+- Displays named-checkpoint parent state as **n/a (root)** or **Unavailable** instead of an ambiguous blank, and tightens TXT escalation guidance around the actual checkpoint, event, Replica, HRL, or collection driver.
 
 ### Version 0.2.26
 
