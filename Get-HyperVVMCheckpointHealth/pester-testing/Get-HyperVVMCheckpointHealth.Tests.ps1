@@ -375,9 +375,76 @@ Describe 'Per-VM event marker CSV contract' {
         $csvName = Write-VMEventsMarkerCsv -Message "VM 'MISSING-VM' was not found; event collection was not attempted."
         $row = Import-Csv -LiteralPath (Join-Path $TestDrive $csvName)
 
-        @($row.PSObject.Properties.Name) | Should -Be @('Time (UTC)', 'Id', 'Level', 'Log', 'Concern', 'VmAttributed', 'FullMessage')
+        @($row.PSObject.Properties.Name) | Should -Be @(
+            'Time (UTC)', 'Id', 'Level', 'Log', 'Concern', 'VmAttributed', 'FullMessage',
+            'EventClassification', 'VerdictDriver', 'RecoveryDisposition', 'DispositionReason'
+        )
         $row.Level | Should -Be 'Info'
         $row.FullMessage | Should -Match 'was not found; event collection was not attempted'
+        $row.EventClassification | Should -Be 'Informational'
+        $row.VerdictDriver | Should -Be 'False'
+        $row.RecoveryDisposition | Should -Be 'NotApplicable'
+    }
+
+    It 'keeps the NOT FOUND text report self-contained' {
+        $source = Get-Content -LiteralPath (Join-Path (Split-Path $PSScriptRoot -Parent) 'Get-HyperVVMCheckpointHealth.psm1') -Raw
+
+        $source | Should -Match 'RESULT: NOT FOUND - this VM was not fully assessed\. Do not treat it as healthy based on this report\.'
+        $source | Should -Match 'Event collection was not attempted for the missing VM\.'
+        $source | Should -Match "Rerun: Get-HyperVVMCheckpointHealth -VMName '<confirmed-name>' -Cluster"
+        $source | Should -Match 'No checkpoint, disk, Replica, VSS, or event conclusion was produced for this VM\.'
+    }
+}
+
+Describe 'TXT Replica effective-limit evidence' {
+    BeforeAll {
+        $modulePath = Join-Path (Split-Path $PSScriptRoot -Parent) 'Get-HyperVVMCheckpointHealth.psm1'
+        $tokens = $null
+        $parseErrors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($modulePath, [ref]$tokens, [ref]$parseErrors)
+        foreach ($functionName in @('ConvertTo-AuditByteText', 'Get-ReplicaAssessmentRows')) {
+            $functionAst = $ast.FindAll({
+                param($node)
+                $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $functionName
+            }, $true) | Select-Object -First 1
+            Invoke-Expression $functionAst.Extent.Text
+        }
+    }
+
+    It 'renders the same typed Replica guardrails used by HTML' {
+        $assessment = [pscustomobject]@{
+            State = 'Replicating'; Health = 'Normal'; Mode = 'Primary'; ProductSeverity = 'Healthy'
+            MeasurementsAvailable = $true; LastReplicationTimeUtc = [datetime]'2026-01-01T09:59:00Z'; LastReplicationAgeMinutes = 1
+            FrequencySeconds = 300; MonitoringIntervalSeconds = 3600; AverageReplicationBytes = 64MB
+            PendingBytes = 3GB; LatencySeconds = 9; SuccessfulCount = 120; MissedCount = 0; MissedRatePercent = 0
+            EffectiveMaxAgeMinutes = 60; EffectiveMaxPendingBytes = 1GB; EffectiveMaxLatencySeconds = 600; MaxMissedRatePercent = 10
+            ConcernBreaches = @('PendingBytes'); AdvisoryBreaches = @()
+        }
+
+        $rows = @(Get-ReplicaAssessmentRows -Assessment $assessment -PrimaryServer 'PRIMARY-01' -ReplicaServer 'REPLICA-01')
+
+        $rows.Count | Should -Be 9
+        ($rows | Where-Object Signal -eq 'Pending replication data').Observed | Should -Be '3.00 GB'
+        ($rows | Where-Object Signal -eq 'Pending replication data').Guardrail | Should -Be '1.00 GB effective maximum'
+        ($rows | Where-Object Signal -eq 'Pending replication data').Assessment | Should -Be 'Concern'
+        ($rows | Where-Object Signal -eq 'Last replication').Observed | Should -Match 'Z \(1\.0 min ago\)'
+    }
+
+    It 'uses Unavailable instead of zero when measurements are absent' {
+        $assessment = [pscustomobject]@{
+            State = 'Waiting'; Health = 'Warning'; Mode = 'Primary'; ProductSeverity = 'Warning'
+            MeasurementsAvailable = $false; LastReplicationTimeUtc = [datetime]::MinValue; LastReplicationAgeMinutes = $null
+            FrequencySeconds = 0; MonitoringIntervalSeconds = 0; AverageReplicationBytes = 0
+            PendingBytes = 0; LatencySeconds = 0; SuccessfulCount = -1; MissedCount = 0; MissedRatePercent = $null
+            EffectiveMaxAgeMinutes = 60; EffectiveMaxPendingBytes = 1GB; EffectiveMaxLatencySeconds = 300; MaxMissedRatePercent = 10
+            ConcernBreaches = @(); AdvisoryBreaches = @()
+        }
+
+        $rows = @(Get-ReplicaAssessmentRows -Assessment $assessment -PrimaryServer '' -ReplicaServer '')
+
+        ($rows | Where-Object Signal -eq 'Pending replication data').Observed | Should -Be 'Unavailable'
+        ($rows | Where-Object Signal -eq 'Pending replication data').Assessment | Should -Be 'Unavailable'
+        ($rows | Where-Object Signal -eq 'Measured replication cycles').Observed | Should -Be 'Unavailable'
     }
 }
 
@@ -409,6 +476,52 @@ Describe 'Checkpoint health policy fixtures' {
         }
         $emptyArrayProperty.Exists | Should -BeTrue
         @($emptyArrayProperty.Value).Count | Should -Be 0
+    }
+
+    It 'loads the shipped policy template without an external YAML module' {
+        $policyPath = Join-Path (Split-Path $PSScriptRoot -Parent) 'checkpoint-health-policy.example.yml'
+
+        $policy = Import-CheckpointHealthPolicy -Path $policyPath
+
+        $policy.SchemaVersion | Should -Be 1
+        @($policy.Storage.ImageLibraryPathPatterns).Count | Should -Be 0
+        @($policy.Orphan.LiveMountPathPatterns).Count | Should -Be 0
+        $policy.Orphan.ClassifyZeroByteAsLiveMount | Should -BeTrue
+        $policy.Replication.Hrl.Enabled | Should -BeTrue
+        $policy.Replication.Hrl.CadenceMultiplier | Should -Be 10
+        $policySource = Get-Content -LiteralPath $policyModulePath -Raw
+        $policySource | Should -Not -Match 'powershell-yaml|ConvertFrom-Yaml'
+    }
+
+    It 'loads a downloaded minimal image policy without an external YAML module' {
+        $policyPath = Join-Path $TestDrive 'checkpoint-health-policy.yml'
+        @'
+schemaVersion: 1
+storage:
+    imageLibraryPathPatterns:
+        - '(?i)^C:\\ClusterStorage\\UserStorage_3\\image\.vhd$'
+'@ | Set-Content -LiteralPath $policyPath -Encoding ASCII
+
+        $policy = Import-CheckpointHealthPolicy -Path $policyPath
+
+        @($policy.Storage.ImageLibraryPathPatterns).Count | Should -Be 1
+        Test-CheckpointHealthPathPattern -Path 'C:\ClusterStorage\UserStorage_3\image.vhd' -Patterns $policy.Storage.ImageLibraryPathPatterns | Should -BeTrue
+        $policy.CsvFreeSpace.Enabled | Should -BeFalse
+        $policy.Replication.Hrl.Enabled | Should -BeTrue
+    }
+
+    It 'rejects unsupported YAML constructs instead of guessing' {
+        $policyPath = Join-Path $TestDrive 'unsupported-policy.yml'
+        "schemaVersion: 1`nunsupported: value" | Set-Content -LiteralPath $policyPath -Encoding ASCII
+
+        { Import-CheckpointHealthPolicy -Path $policyPath } | Should -Throw '*Unsupported policy YAML value*line 2*'
+    }
+
+    It 'rejects an empty policy explicitly' {
+        $policyPath = Join-Path $TestDrive 'empty-policy.yml'
+        Set-Content -LiteralPath $policyPath -Value '' -Encoding ASCII
+
+        { Import-CheckpointHealthPolicy -Path $policyPath } | Should -Throw '*policy file is empty*'
     }
 
     It 'flags configured CSV percentage or absolute free-space breaches only when enabled' {
@@ -591,8 +704,8 @@ Describe 'Module distribution contracts' {
         $script:ModuleCommand = Get-Command Get-HyperVVMCheckpointHealth -Module Get-HyperVVMCheckpointHealth
     }
 
-    It 'imports a valid 0.2.26 module manifest' {
-        $script:Manifest.Version.ToString() | Should -Be '0.2.26'
+    It 'imports a valid 0.2.27 module manifest' {
+        $script:Manifest.Version.ToString() | Should -Be '0.2.27'
         $script:Manifest.ExportedFunctions.Keys | Should -Contain 'Get-HyperVVMCheckpointHealth'
     }
 
@@ -719,7 +832,7 @@ Describe 'Module distribution contracts' {
         $setupPath = Join-Path $script:ModuleRoot 'Setup-Get-HyperVVMCheckpointHealth.ps1'
         Test-Path -LiteralPath $setupPath -PathType Leaf | Should -BeTrue
         $setupSource = Get-Content -LiteralPath $setupPath -Raw
-        $setupSource | Should -Match "\$version = '0\.2\.26'"
+        $setupSource | Should -Match "\$version = '0\.2\.27'"
         $setupSource | Should -Match "\$expectedSha256 = '[0-9a-f]{64}'"
         $setupSource | Should -Match '\[string\]\$InstallRoot = ''C:\\Temp'''
         $setupSource | Should -Match '\$WhatIfPreference\s*=\s*\$false[\s\S]+Get-FileHash.+SHA256'
@@ -742,8 +855,8 @@ Describe 'Module distribution contracts' {
         $readme = Get-Content -LiteralPath (Join-Path $script:ModuleRoot 'README.md') -Raw
         $readme | Should -Match 'Export VM image exclusions from the HTML report'
         $readme | Should -Match 'available only for `\.vhd` and `\.vhdx` base-disk candidates; it is never offered for `\.avhdx`'
-        $readme | Should -Match 'For a new policy, paste the complete generated `schemaVersion`, `storage`, and `imageLibraryPathPatterns` block'
-        $readme | Should -Match 'For an existing policy, copy only the generated.*entries into its existing `storage\.imageLibraryPathPatterns` array'
+        $readme | Should -Match 'For a new policy, choose \*\*Download checkpoint-health-policy\.yml\*\*'
+        $readme | Should -Match 'For an existing policy, choose \*\*Copy policy settings\*\*.*copy only the generated.*entries into its existing `storage\.imageLibraryPathPatterns` array'
         $readme | Should -Match 'repeat the original audit command with `-PolicyPath ''\.\\checkpoint-health-policy\.yml''`'
         $readme | Should -Match '`storage\.imageLibraryPathPatterns` is a replacement array'
     }
@@ -1336,6 +1449,35 @@ Describe 'HTML fleet report usability' {
         $script:RenderedHtml | Should -Match 'class=''num ckptage''>n/a</td><td class=''num ckptage''>98 h<br>4\.1 d<br><span class="muted">.*?</span></td><td>n/a \(base\)</td>'
     }
 
+    It 'renders root and unavailable named-checkpoint parents explicitly' {
+        $reportData = $normalReportData.PSObject.Copy()
+        $reportData.Checkpoints = @(
+            [pscustomobject]@{ Name = 'Root'; Type = 'Production'; Purpose = 'Production checkpoint (backup)'; Created = '2026-01-01 08:00:00Z'; AgeHrs = 2; Stale = $false; Parent = ''; ParentDisplay = 'n/a (root)' }
+            [pscustomobject]@{ Name = 'Child'; Type = 'Production'; Purpose = 'Production checkpoint (backup)'; Created = '2026-01-01 09:00:00Z'; AgeHrs = 1; Stale = $false; Parent = 'Root'; ParentDisplay = 'Root' }
+            [pscustomobject]@{ Name = 'Unknown'; Type = 'Production'; Purpose = 'Production checkpoint (backup)'; Created = '2026-01-01 09:30:00Z'; AgeHrs = 0.5; Stale = $false; Parent = ''; ParentDisplay = 'Unavailable' }
+        )
+        $html = ConvertTo-VMCheckpointAuditHtml -Results @(
+            [pscustomobject]@{ VMName = 'TEST-VM-PARENTS'; OwningNode = 'TEST-NODE-01'; Recommendation = 'OK'; Source = 'Input'; StaleCheckpointCount = 0; ReportData = $reportData; Detail = '' }
+        ) -StaleHours 24 -EventLookbackHours 168 -ClusterName 'CONTOSO-CLUSTER-01' -GeneratedUtc '2026-01-01 10:00:00' `
+            -DiscoveredVMs @() -DiscoverySummary ([pscustomobject]@{ EligibleCount = 0; AuditedCount = 0; DeferredCount = 0; Cap = $null }) `
+            -StorageHealth $null -HousekeepingFindings @() -IncludeDiscoveredVMs:$false -ScriptVersion '0.2.27' `
+            -ReportGenerationTime '00:00:01' -ClusterNodeCount 2 -ClusterCsvCount 1
+
+        $html | Should -Match '<td class=''ckptname''>Root</td>.*<td>n/a \(root\)</td>'
+        $html | Should -Match '<td class=''ckptname''>Child</td>.*<td>Root</td>'
+        $html | Should -Match '<td class=''ckptname''>Unknown</td>.*<td>Unavailable</td>'
+    }
+
+    It 'uses driver-specific TXT escalation language' {
+        $source = Get-Content -LiteralPath (Join-Path (Split-Path $PSScriptRoot -Parent) 'Get-HyperVVMCheckpointHealth.psm1') -Raw
+
+        $source | Should -Match 'This event evidence does not identify a disk requiring manual action\.'
+        $source | Should -Match 'Escalate if a merge failure or durable artifact persists, ownership or purpose cannot be established'
+        $source | Should -Match 'Escalate if the abnormal state persists after connectivity, capacity, and configuration review\.'
+        $source | Should -Match 'Route first to the collection owner'
+        $source | Should -Match 'Do not modify HRL files based on this report\.'
+    }
+
     It 'uses Replica-specific guidance for a Replica-only INVESTIGATE result' {
         $script:RenderedHtml | Should -Match 'Review the Hyper-V Replica details below, confirm connectivity and capacity on both replication partners'
         $replicaCard = [regex]::Match($script:RenderedHtml, '(?s)<details class="vm" id="vm-TEST-VM-REPLICA" open>.*?</details>').Value
@@ -1555,10 +1697,11 @@ Describe 'HTML fleet report usability' {
         $zeroByteRowIndex | Should -BeGreaterThan $largeRowIndex
     }
 
-    It 'filters selected unattached VHDX rows and reveals copyable persistent policy settings below the table' {
+    It 'filters selected unattached VHDX rows and offers a downloadable persistent policy below the table' {
         ([regex]::Matches($script:RenderedHtml, "class='hk-image-filter' type='checkbox'> Filter out as VM image")).Count | Should -Be 1
         $script:RenderedHtml | Should -Match "id='hk-image-policy' hidden><h3>Persistent VM image policy settings</h3>"
         $script:RenderedHtml | Should -Match "id='hk-image-policy-yaml' readonly aria-label='Generated VM image policy settings'"
+        $script:RenderedHtml | Should -Match "id='hk-download-policy'>Download checkpoint-health-policy\.yml</button>"
         $script:RenderedHtml | Should -Match "id='hk-copy-policy'>Copy policy settings</button>"
         $script:RenderedHtml | Should -Match "id='hk-restore-images'>Restore all rows</button>"
         $script:RenderedHtml.IndexOf('</tbody></table>') | Should -BeLessThan $script:RenderedHtml.IndexOf("id='hk-image-policy'")
@@ -1566,10 +1709,14 @@ Describe 'HTML fleet report usability' {
         $script:RenderedHtml | Should -Match "var matches = \(!imageBox \|\| !imageBox\.checked\)"
         $script:RenderedHtml | Should -Match "yamlLines = \['schemaVersion: 1', 'storage:', '    imageLibraryPathPatterns:'\]"
         $script:RenderedHtml | Should -Match "escapeRegex\(path\)"
+        $script:RenderedHtml | Should -Match "function downloadImagePolicy\(\)"
+        $script:RenderedHtml | Should -Match "new Blob\(\[content\], \{ type: 'application/yaml;charset=utf-8' \}\)"
+        $script:RenderedHtml | Should -Match "link\.download = 'checkpoint-health-policy\.yml'"
+        $script:RenderedHtml | Should -Match "getElementById\('hk-download-policy'\)\.addEventListener\('click', downloadImagePolicy\)"
         $script:RenderedHtml | Should -Match "hidden only in this open report"
-        $script:RenderedHtml | Should -Match 'For a new policy file, paste the complete generated block'
-        $script:RenderedHtml | Should -Match 'For an existing policy, copy only the generated <code>- .* entries into its existing <code>storage\.imageLibraryPathPatterns</code> list'
-        $script:RenderedHtml | Should -Match "repeat the original audit command with <code>-PolicyPath '\.\\checkpoint-health-policy\.yml'</code>"
+        $script:RenderedHtml | Should -Match 'For a new policy, select <strong>Download checkpoint-health-policy\.yml</strong>'
+        $script:RenderedHtml | Should -Match 'For an existing policy, select <strong>Copy policy settings</strong>.*copy only the generated <code>- .* entries into its existing <code>storage\.imageLibraryPathPatterns</code> list'
+        $script:RenderedHtml | Should -Match "Supply the saved YAML file to the original audit command with <code>-PolicyPath '\.\\checkpoint-health-policy\.yml'</code>"
         $script:RenderedHtml | Should -Match 'do not change VM health verdicts or authorize modifying the selected files'
     }
 
@@ -2346,6 +2493,32 @@ Describe 'Hyper-V operation recovery correlation' {
         $result = Resolve-HyperVOperationRecovery -Events $events -MaxMinutes 30
         $result.Status | Should -Be 'ConfirmedRecovered'
         $result.CausalMatchCount | Should -Be 1
+    }
+
+    It 'marks unresolved checkpoint request failures as verdict-driving CSV evidence' {
+        $policy = Get-HyperVEventPolicy
+        $event = [pscustomobject]@{ Id = 18012; 'Time (UTC)' = '2026-01-01 10:00:00'; FullMessage = 'Checkpoint operation failed.'; SignalRole = 'Operational'; IsConfirmingFork = $false }
+        $result = Get-HyperVEventCsvDisposition -Event $event -Events @($event) -Policy $policy
+
+        $result.EventClassification | Should -Be 'High-signal'
+        $result.VerdictDriver | Should -BeTrue
+        $result.RecoveryDisposition | Should -Be 'Unresolved'
+    }
+
+    It 'marks recovered merge failures and low-signal events as non-driving context' {
+        $policy = Get-HyperVEventPolicy
+        $failure = [pscustomobject]@{ Id = 19100; 'Time (UTC)' = '2026-01-01 10:00:00'; FullMessage = 'Merge failed for C:\ClusterStorage\Volume1\VM-TEST\disk-test.avhdx.'; SignalRole = 'Operational'; IsConfirmingFork = $false }
+        $completion = [pscustomobject]@{ Id = 19080; 'Time (UTC)' = '2026-01-01 10:03:00'; FullMessage = 'Merge completed for C:\ClusterStorage\Volume1\VM-TEST\disk-test.avhdx.'; SignalRole = 'Context'; IsConfirmingFork = $false }
+        $lowSignal = [pscustomobject]@{ Id = 19090; 'Time (UTC)' = '2026-01-01 10:04:00'; FullMessage = 'Background merge interrupted.'; SignalRole = 'Operational'; IsConfirmingFork = $false }
+
+        $recovered = Get-HyperVEventCsvDisposition -Event $failure -Events @($failure, $completion) -Policy $policy
+        $context = Get-HyperVEventCsvDisposition -Event $lowSignal -Events @($failure, $completion, $lowSignal) -Policy $policy
+
+        $recovered.VerdictDriver | Should -BeFalse
+        $recovered.RecoveryDisposition | Should -Be 'ConfirmedRecovered'
+        $context.EventClassification | Should -Be 'Low-signal'
+        $context.VerdictDriver | Should -BeFalse
+        $context.RecoveryDisposition | Should -Be 'ContextOnly'
     }
 }
 

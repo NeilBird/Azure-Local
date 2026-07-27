@@ -118,7 +118,7 @@ function Get-HyperVVMCheckpointHealth {
     Author  : Neil Bird, Microsoft
     Created : 2026-07-10
     Updated : 2026-07-27
-    Version : 0.2.26
+    Version : 0.2.27
     
     Requires: Windows PowerShell 5.1 (this module is written for, and validated against, Windows
               PowerShell 5.1 ONLY - it is NOT intended or tested for PowerShell 7.x). Requires the
@@ -203,7 +203,7 @@ param(
     [string]$ExcludedVMListCsv,
 
     # Optional schema-versioned YAML policy for image-library paths, live-mount patterns, CSV free-space
-    # thresholds, and cadence-aware HRL assessment. Requires powershell-yaml only when supplied.
+    # thresholds, and cadence-aware HRL assessment. Parsed by the module with no external dependency.
     [string]$PolicyPath,
 
     # Age (in hours) at or beyond which a checkpoint / differencing disk is flagged as stale.
@@ -366,7 +366,7 @@ Then run this in Windows PowerShell 5.1, on a cluster node or a workstation that
 
 # Module version - single source of truth surfaced in the HTML report (header meta + footer) so a
 # saved / emailed report always states which build produced it. Keep in sync with the .NOTES Version.
-$script:ScriptVersion = '0.2.26'
+$script:ScriptVersion = '0.2.27'
 
 # v0.2.14: end-to-end run stopwatch - started as early as possible so the HTML report can state the
 # total time taken to audit the whole fleet and render the report ("Report generation time hh:mm:ss").
@@ -660,6 +660,54 @@ function Out-Indented {
         for ($i = $startIdx; $i -le $endIdx; $i++) { Write-AuditReportLine ('  ' + $lines[$i]) }
         Write-AuditReportLine ''
     }
+}
+
+function ConvertTo-AuditByteText {
+    [OutputType([string])]
+    param([long]$Bytes)
+
+    if ($Bytes -ge 1TB) { return ('{0:N2} TB' -f ($Bytes / 1TB)) }
+    if ($Bytes -ge 1GB) { return ('{0:N2} GB' -f ($Bytes / 1GB)) }
+    if ($Bytes -ge 1MB) { return ('{0:N2} MB' -f ($Bytes / 1MB)) }
+    if ($Bytes -ge 1KB) { return ('{0:N2} KB' -f ($Bytes / 1KB)) }
+    return ("$Bytes bytes")
+}
+
+function Get-ReplicaAssessmentRows {
+    [OutputType([object[]])]
+    param(
+        [Parameter(Mandatory = $true)][object]$Assessment,
+        [AllowEmptyString()][string]$PrimaryServer,
+        [AllowEmptyString()][string]$ReplicaServer
+    )
+
+    $concernBreaches = @($Assessment.ConcernBreaches)
+    $advisoryBreaches = @($Assessment.AdvisoryBreaches)
+    $getMetricAssessment = {
+        param([string]$Breach)
+        if (-not $Assessment.MeasurementsAvailable) { return 'Unavailable' }
+        if ($concernBreaches -contains $Breach) { return 'Concern' }
+        if ($advisoryBreaches -contains $Breach) { return 'Advisory' }
+        'Within effective limit'
+    }
+    $lastReplicationText = if ($Assessment.MeasurementsAvailable -and $Assessment.LastReplicationTimeUtc -and ([datetime]$Assessment.LastReplicationTimeUtc -ne [datetime]::MinValue)) {
+        '{0} ({1:N1} min ago)' -f ([datetime]$Assessment.LastReplicationTimeUtc).ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ssZ'), [double]$Assessment.LastReplicationAgeMinutes
+    } else { 'Unavailable' }
+    $cycleText = if ($Assessment.MeasurementsAvailable) {
+        'Successful {0}; missed {1}; missed rate {2}' -f $(if ([long]$Assessment.SuccessfulCount -ge 0) { [long]$Assessment.SuccessfulCount } else { 'Unavailable' }), [long]$Assessment.MissedCount, $(if ($null -ne $Assessment.MissedRatePercent) { '{0:N2}%' -f [double]$Assessment.MissedRatePercent } else { 'Unavailable' })
+    } else { 'Unavailable' }
+
+    @(
+        [pscustomobject]@{ Signal = 'Product state and health'; Observed = "$($Assessment.State) / $($Assessment.Health)"; Guardrail = 'Authoritative Get-VMReplication evidence'; Assessment = [string]$Assessment.ProductSeverity }
+        [pscustomobject]@{ Signal = 'Relationship'; Observed = "Mode $($Assessment.Mode)"; Guardrail = "Primary $PrimaryServer; replica $ReplicaServer"; Assessment = 'Context' }
+        [pscustomobject]@{ Signal = 'Replication cadence'; Observed = $(if ([double]$Assessment.FrequencySeconds -gt 0) { '{0:N1} sec' -f [double]$Assessment.FrequencySeconds } else { 'Unavailable' }); Guardrail = 'Used to calculate relationship-aware limits'; Assessment = 'Context' }
+        [pscustomobject]@{ Signal = 'Monitoring window'; Observed = $(if ([double]$Assessment.MonitoringIntervalSeconds -gt 0) { [timespan]::FromSeconds([double]$Assessment.MonitoringIntervalSeconds).ToString() } else { 'Unavailable' }); Guardrail = 'Get-VMReplicationServer monitoring interval'; Assessment = 'Context' }
+        [pscustomobject]@{ Signal = 'Last replication'; Observed = $lastReplicationText; Guardrail = $(if ([double]$Assessment.EffectiveMaxAgeMinutes -gt 0) { '{0:N1} min effective maximum age' -f [double]$Assessment.EffectiveMaxAgeMinutes } else { 'Unavailable' }); Assessment = (& $getMetricAssessment 'LastReplicationAge') }
+        [pscustomobject]@{ Signal = 'Average replication size'; Observed = $(if ($Assessment.MeasurementsAvailable) { ConvertTo-AuditByteText ([long]$Assessment.AverageReplicationBytes) } else { 'Unavailable' }); Guardrail = 'Workload baseline for pending-data limit'; Assessment = 'Context' }
+        [pscustomobject]@{ Signal = 'Pending replication data'; Observed = $(if ($Assessment.MeasurementsAvailable) { ConvertTo-AuditByteText ([long]$Assessment.PendingBytes) } else { 'Unavailable' }); Guardrail = $(if ([long]$Assessment.EffectiveMaxPendingBytes -gt 0) { "$(ConvertTo-AuditByteText ([long]$Assessment.EffectiveMaxPendingBytes)) effective maximum" } else { 'Unavailable' }); Assessment = (& $getMetricAssessment 'PendingBytes') }
+        [pscustomobject]@{ Signal = 'Average replication latency'; Observed = $(if ($Assessment.MeasurementsAvailable) { '{0:N1} sec' -f [double]$Assessment.LatencySeconds } else { 'Unavailable' }); Guardrail = $(if ([double]$Assessment.EffectiveMaxLatencySeconds -gt 0) { '{0:N1} sec effective maximum' -f [double]$Assessment.EffectiveMaxLatencySeconds } else { 'Unavailable' }); Assessment = (& $getMetricAssessment 'Latency') }
+        [pscustomobject]@{ Signal = 'Measured replication cycles'; Observed = $cycleText; Guardrail = $(if ([double]$Assessment.MaxMissedRatePercent -gt 0) { '{0:N2}% maximum missed rate' -f [double]$Assessment.MaxMissedRatePercent } else { 'Count and rate guardrails' }); Assessment = (& $getMetricAssessment 'MissedCount') }
+    )
 }
 
 
@@ -1945,7 +1993,12 @@ function Invoke-VMCheckpointAudit {
             Concern      = ''
             VmAttributed = ''
             FullMessage  = $Message
-        } | Select-Object 'Time (UTC)', Id, Level, Log, Concern, VmAttributed, FullMessage |
+            EventClassification = 'Informational'
+            VerdictDriver = $false
+            RecoveryDisposition = 'NotApplicable'
+            DispositionReason = 'Marker row; no event was assessed.'
+        } | Select-Object 'Time (UTC)', Id, Level, Log, Concern, VmAttributed, FullMessage,
+            EventClassification, VerdictDriver, RecoveryDisposition, DispositionReason |
             Export-Csv -LiteralPath $markerCsvPath -NoTypeInformation -Encoding UTF8
         return $markerCsvName
     }
@@ -2049,12 +2102,24 @@ function Invoke-VMCheckpointAudit {
     }
 
     if (-not $OwningNode) {
-        Write-AuditReportLine "VM '$VMName' not found on any node of cluster '$ClusterName'."
-        $eventsCsvName = Write-VMEventsMarkerCsv -Message "VM '$VMName' was not found on any node of cluster '$ClusterName'; event collection was not attempted."
+        $notFoundReason = "VM '$VMName' was not found on any node of cluster '$ClusterName'; event collection was not attempted."
+        Write-Section 'RESULT: NOT FOUND - this VM was not fully assessed. Do not treat it as healthy based on this report.'
+        Write-AuditReportLine ("  Input VM name: {0}" -f $VMName)
+        Write-AuditReportLine ("  Cluster: {0}" -f $ClusterName)
+        Write-AuditReportLine ("  Reason: VM was not found on any cluster node.")
+        Write-AuditReportLine "  Event collection was not attempted for the missing VM."
+        $eventsCsvName = Write-VMEventsMarkerCsv -Message $notFoundReason
         if ($eventsCsvName) {
             Write-AuditReportLine ("Events CSV marker written to: {0}" -f (Join-Path (Split-Path -Parent $reportFile) $eventsCsvName))
         }
-        return (New-AuditSummary -Recommendation 'NOT FOUND' -Detail 'VM not found on any cluster node.')
+        Write-AuditReportLine ""
+        Write-Section 'Required follow-up:'
+        Write-AuditReportLine "  1. Verify the VM name spelling and any naming differences."
+        Write-AuditReportLine "  2. Verify that '$ClusterName' is the cluster that owns the VM."
+        Write-AuditReportLine ("  3. Rerun: Get-HyperVVMCheckpointHealth -VMName '<confirmed-name>' -Cluster '{0}' -OutputPath '{1}'" -f $ClusterName, $OutputPath)
+        Write-AuditReportLine ""
+        Write-AuditReportLine "  No checkpoint, disk, Replica, VSS, or event conclusion was produced for this VM."
+        return (New-AuditSummary -Recommendation 'NOT FOUND' -Detail $notFoundReason)
     }
 
     # (2) Establish the owner execution context: local when this node owns the VM (zero hops), else ONE
@@ -2487,13 +2552,15 @@ function Invoke-VMCheckpointAudit {
         foreach ($s in $snaps) {
             $snapType = if ($s.PSObject.Properties['SnapshotType']) { [string]$s.SnapshotType } elseif ($s.PSObject.Properties['CheckpointType']) { [string]$s.CheckpointType } else { '' }
             $typeVal  = if ($s.PSObject.Properties['CheckpointType']) { [string]$s.CheckpointType } else { [string]$s.SnapshotType }
-            $parent   = if ($s.PSObject.Properties['ParentCheckpointName']) { [string]$s.ParentCheckpointName } else { [string]$s.ParentSnapshotName }
+            $parentProperty = if ($s.PSObject.Properties['ParentCheckpointName']) { $s.PSObject.Properties['ParentCheckpointName'] } else { $s.PSObject.Properties['ParentSnapshotName'] }
+            $parent = if ($parentProperty) { [string]$parentProperty.Value } else { '' }
             [void]$rows.Add([pscustomobject]@{
                 Name            = [string]$s.Name
                 Type            = $typeVal
                 SnapType        = $snapType
                 CreationTimeUtc = $s.CreationTime.ToUniversalTime()
                 Parent          = $parent
+                ParentDisplay   = if (-not $parentProperty) { 'Unavailable' } elseif ([string]::IsNullOrWhiteSpace($parent)) { 'n/a (root)' } else { $parent }
             })
             foreach ($hd in (Get-VMHardDiskDrive -VMSnapshot $s -ErrorAction SilentlyContinue)) {
                 if ($hd.Path) { [void]$folders.Add((Split-Path $hd.Path -Parent)) }
@@ -2522,7 +2589,7 @@ function Invoke-VMCheckpointAudit {
             @{N='Created (UTC)';E={ $_.CreationTimeUtc.ToString('yyyy-MM-dd HH:mm:ssZ') }},
             @{N='Age (hrs)';E={ [math]::Round(([DateTime]::UtcNow - $_.CreationTimeUtc).TotalHours, 1) }},
             @{N='Stale';E={ if (([DateTime]::UtcNow - $_.CreationTimeUtc).TotalHours -ge $StaleHours) { 'YES' } else { 'NO' } }},
-            @{N='Parent';E={ $_.Parent }} | Out-Indented
+            @{N='Parent';E={ $_.ParentDisplay }} | Out-Indented
     } else {
         Write-AuditReportLine "  No checkpoints present on '$VMName'."
         Write-AuditReportLine ""
@@ -2864,6 +2931,15 @@ function Invoke-VMCheckpointAudit {
             $replAssessment.MeasurementsAvailable, @($replAssessment.ConcernBreaches).Count,
             @($replAssessment.AdvisoryBreaches).Count) `
         -StartUtc $replicationAssessmentStart -EndUtc (Get-TelemetryNow)
+    if ($replicationEnabled) {
+        Write-Section "Hyper-V Replica Effective Limit Assessment:"
+        Get-ReplicaAssessmentRows -Assessment $replAssessment `
+            -PrimaryServer $(if ($replInfo -and $replInfo.Repl) { [string]$replInfo.Repl.PrimaryServerName } else { '' }) `
+            -ReplicaServer $(if ($replInfo -and $replInfo.Repl) { [string]$replInfo.Repl.ReplicaServerName } else { '' }) |
+            Format-Table Signal, Observed, @{N='Effective guardrail / context';E={ $_.Guardrail }}, Assessment -AutoSize -Wrap | Out-Indented
+        Write-AuditReportLine ("  {0} Product health/state remains authoritative; measurement advisories do not change the VM verdict by themselves." -f $replAssessment.Reason)
+        Write-AuditReportLine ""
+    }
 
     # Hyper-V Replica change logs (.hrl): on the PRIMARY, Replica tracks writes in per-VHD .hrl logs
     # (NOT .avhdx). A large or stale .hrl usually means replication is backlogged or stuck.
@@ -3091,6 +3167,13 @@ function Invoke-VMCheckpointAudit {
 
         if ($workerEvents -and $workerEvents.Count -gt 0) {
             $workerEvents      = @($workerEvents | Sort-Object 'Time (UTC)', Log, RecordId, Id, FullMessage)
+            foreach ($eventRow in $workerEvents) {
+                $eventDisposition = Get-HyperVEventCsvDisposition -Event $eventRow -Events $workerEvents -Policy $script:EventPolicy
+                Add-Member -InputObject $eventRow -NotePropertyName EventClassification -NotePropertyValue $eventDisposition.EventClassification -Force
+                Add-Member -InputObject $eventRow -NotePropertyName VerdictDriver -NotePropertyValue ([bool]$eventDisposition.VerdictDriver) -Force
+                Add-Member -InputObject $eventRow -NotePropertyName RecoveryDisposition -NotePropertyValue $eventDisposition.RecoveryDisposition -Force
+                Add-Member -InputObject $eventRow -NotePropertyName DispositionReason -NotePropertyValue $eventDisposition.DispositionReason -Force
+            }
             $concernEvents     = @($workerEvents | Where-Object { $_.Concern -eq 'YES' })
             $eventConcernCount = $concernEvents.Count
             # v0.2.12: split concern events into those attributable to THIS VM vs node-wide (other VMs).
@@ -3162,7 +3245,8 @@ function Invoke-VMCheckpointAudit {
             # shared _NodeEvents_<node>_<date>.csv above - no longer duplicated into every VM's CSV.
             $vmAttributedEvents = @($workerEvents | Where-Object { $_.VmAttributed })
             if ($vmAttributedEvents.Count -gt 0) {
-                $vmAttributedEvents | Select-Object 'Time (UTC)', Id, Level, Log, Concern, VmAttributed, FullMessage |
+                $vmAttributedEvents | Select-Object 'Time (UTC)', Id, Level, Log, Concern, VmAttributed, FullMessage,
+                    EventClassification, VerdictDriver, RecoveryDisposition, DispositionReason |
                     Export-Csv -LiteralPath $csvPath -NoTypeInformation -Encoding UTF8
                 Write-AuditReportLine ""
                 Write-AuditReportLine "  This VM's full, untruncated event messages exported to CSV: $csvPath"
@@ -3777,15 +3861,17 @@ function Invoke-VMCheckpointAudit {
     }
 
     $investigationActionLines = [System.Collections.Generic.List[string]]::new()
-    if ($hasCheckpointArtifactDriver) { [void]$investigationActionLines.Add('Review the attached VHD chain, checkpoint and orphan evidence with the backup/storage owner before any merge, removal, migration, or restart action.') }
-    if ($hasEventDriver) { [void]$investigationActionLines.Add('Compare the VM event CSV timestamps and IDs with backup/checkpoint job history; engage the job owner if failures recur, and re-run after the next backup cycle.') }
-    if ($replProductConcern) { [void]$investigationActionLines.Add('Review Get-VMReplication health and relationship state on both partners; remediate through the Replica owner, then verify that product health returns to Normal and the relationship returns to its expected state.') }
+    if ($hasCheckpointArtifactDriver) {
+        [void]$investigationActionLines.Add('Review the attached VHD chain, checkpoint, and orphan evidence with the backup/storage owner before any merge, removal, migration, or restart action. Escalate if a merge failure or durable artifact persists, ownership or purpose cannot be established, or that owner rules out its component.')
+    }
+    if ($hasEventDriver) { [void]$investigationActionLines.Add('This event evidence does not identify a disk requiring manual action. Compare the VM event CSV timestamps and IDs with backup/checkpoint job history; engage the job owner if failures recur, and re-run after the next backup cycle.') }
+    if ($replProductConcern) { [void]$investigationActionLines.Add('Review Get-VMReplication health and relationship state on both partners; remediate through the Replica owner, then verify that product health returns to Normal and the relationship returns to its expected state. Escalate if the abnormal state persists after connectivity, capacity, and configuration review.') }
     if ($replMeasurementConcern) { [void]$investigationActionLines.Add('Review the breached Replica measurements and effective limits, monitoring window, network/storage demand, and capacity on both partners; re-run after the next monitoring interval and escalate to the Replica owner if the breach persists.') }
     if ($hrlConcern) { [void]$investigationActionLines.Add('Review the queued HRL files and cadence threshold with the Replica owner; verify replication progress and storage availability, then re-run after the next monitoring interval. Do not modify HRL files based on this report.') }
     if ($hasStateDriver) { [void]$investigationActionLines.Add('Rerun the audit after migration, checkpoint, merge, replication, or power-state activity has settled.') }
     if ($hasVssDriver) { [void]$investigationActionLines.Add('Resolve unhealthy VSS writers with the workload or backup owner, then rerun the affected backup and this audit.') }
     if ($hasStorageDriver) { [void]$investigationActionLines.Add('Restore the hosting CSV volumes to the configured free-space policy before retrying checkpoint-intensive operations.') }
-    if ($hasEvidenceDriver) { [void]$investigationActionLines.Add('Restore required Worker/VMMS event-log access or retention and rerun; absence of unavailable evidence is not proof of health.') }
+    if ($hasEvidenceDriver) { [void]$investigationActionLines.Add('Route first to the collection owner to restore required Worker/VMMS event-log access or retention, then rerun and involve the relevant component owner if evidence remains unavailable. Absence of unavailable evidence is not proof of health.') }
     $investigationDrivers = [pscustomobject]@{
         Labels = $investigationDriverLabels.ToArray()
         AssessmentText = [string]$investigationAssessmentText
@@ -4107,6 +4193,7 @@ function Invoke-VMCheckpointAudit {
             AgeHrs  = $ageH
             Stale   = ($ageH -ge $StaleHours)
             Parent  = [string]$_.Parent
+            ParentDisplay = [string]$_.ParentDisplay
         }
     })
     # v0.2.15: the per-VM detail's event breakdown is built from events ATTRIBUTABLE TO THIS VM only

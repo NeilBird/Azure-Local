@@ -6,7 +6,7 @@
 
 - Module: `Get-HyperVVMCheckpointHealth`
 - Updated: 2026-07-27
-- Version: 0.2.26
+- Version: 0.2.27
 
 ## TL;DR
 
@@ -96,7 +96,7 @@ Treat every saved audit artifact as **sensitive operational data**. The `.txt`, 
 
 ### Internal structure
 
-Version 0.2.26 is distributed as a PowerShell module with a single exported command and manifest-managed private nested modules. Keep the extracted directory intact:
+Version 0.2.27 is distributed as a PowerShell module with a single exported command and manifest-managed private nested modules. Keep the extracted directory intact:
 
 ```text
 Get-HyperVVMCheckpointHealth\
@@ -133,16 +133,16 @@ Two supported ways to run it, both single-hop:
 
 ### Download and import the module
 
-Download the versioned ZIP from the repository's [GitHub Releases page](https://github.com/NeilBird/Azure-Local/releases). The supported 0.2.26 release asset is `Get-HyperVVMCheckpointHealth-0.2.26.zip`; it contains the manifest, root module, five private modules, example policy YAML, README, and license. Do not use a raw single-file link because the module requires its manifest and sibling private modules.
+Download the versioned ZIP from the repository's [GitHub Releases page](https://github.com/NeilBird/Azure-Local/releases). The supported 0.2.27 release asset is `Get-HyperVVMCheckpointHealth-0.2.27.zip`; it contains the manifest, root module, five private modules, example policy YAML, README, and license. Do not use a raw single-file link because the module requires its manifest and sibling private modules.
 
 The release also publishes [`Setup-Get-HyperVVMCheckpointHealth.ps1`](Setup-Get-HyperVVMCheckpointHealth.ps1) as a separate asset outside the ZIP. The setup script is pinned to the supported version and SHA256 hash and changes files only beneath `<InstallRoot>\Get-HyperVVMCheckpointHealth` (`C:\Temp\Get-HyperVVMCheckpointHealth` by default). It validates the staged manifest/version before replacing that directory, restores the previous directory if installation validation fails, imports the module, and verifies the command without running an audit. Use `-InstallRoot` to choose another parent directory and `-WhatIf` for a no-change preview. Do not use an installation root where the `Get-HyperVVMCheckpointHealth` child directory contains unrelated files.
 
 Download the ZIP, download the setup script, and run the setup script:
 
 ```powershell
-Invoke-WebRequest 'https://github.com/NeilBird/Azure-Local/releases/download/Get-HyperVVMCheckpointHealth-v0.2.26/Get-HyperVVMCheckpointHealth-0.2.26.zip' -OutFile "$env:TEMP\Get-HyperVVMCheckpointHealth-0.2.26.zip"
-Invoke-WebRequest 'https://github.com/NeilBird/Azure-Local/releases/download/Get-HyperVVMCheckpointHealth-v0.2.26/Setup-Get-HyperVVMCheckpointHealth.ps1' -OutFile "$env:TEMP\Setup-Get-HyperVVMCheckpointHealth.ps1"
-Unblock-File "$env:TEMP\Setup-Get-HyperVVMCheckpointHealth.ps1"; & "$env:TEMP\Setup-Get-HyperVVMCheckpointHealth.ps1" -ZipPath "$env:TEMP\Get-HyperVVMCheckpointHealth-0.2.26.zip"
+Invoke-WebRequest 'https://github.com/NeilBird/Azure-Local/releases/download/Get-HyperVVMCheckpointHealth-v0.2.27/Get-HyperVVMCheckpointHealth-0.2.27.zip' -OutFile "$env:TEMP\Get-HyperVVMCheckpointHealth-0.2.27.zip"
+Invoke-WebRequest 'https://github.com/NeilBird/Azure-Local/releases/download/Get-HyperVVMCheckpointHealth-v0.2.27/Setup-Get-HyperVVMCheckpointHealth.ps1' -OutFile "$env:TEMP\Setup-Get-HyperVVMCheckpointHealth.ps1"
+Unblock-File "$env:TEMP\Setup-Get-HyperVVMCheckpointHealth.ps1"; & "$env:TEMP\Setup-Get-HyperVVMCheckpointHealth.ps1" -ZipPath "$env:TEMP\Get-HyperVVMCheckpointHealth-0.2.27.zip"
 ```
 
 Then run the audit separately. On a cluster node:
@@ -239,8 +239,7 @@ Get-HyperVVMCheckpointHealth -VMName 'VM01' -OutputPath 'C:\Temp\VM_Checkpoint_R
 Get-HyperVVMCheckpointHealth -ProcessAllVMs -ExcludedVMListCsv '.\CheckPointAudit_Excluded_VMs.csv' -OutputPath 'C:\Temp\VM_Checkpoint_Reports'
 
 # Apply an optional schema-versioned policy for image/live-mount paths, CSV free space, and HRL cadence.
-# powershell-yaml is required only when -PolicyPath is supplied.
-Install-Module powershell-yaml -Scope CurrentUser
+# Policy parsing is built in; no additional PowerShell module is required.
 Get-HyperVVMCheckpointHealth -VMName 'VM01' -PolicyPath '.\checkpoint-health-policy.yml' -OutputPath 'C:\Temp\VM_Checkpoint_Reports'
 
 # Choose the HTML location explicitly (folder or full .html path); suppress the zip and/or HTML
@@ -257,7 +256,7 @@ Get-HyperVVMCheckpointHealth -VMName 'VM01' `
     -OutputPath 'C:\Temp\VM_Checkpoint_Reports'
 ```
 
-Without `-PolicyPath`, the command does not search the current directory, module directory, or `-OutputPath`; it uses the built-in policy below and does not require `powershell-yaml`.
+Without `-PolicyPath`, the command does not search the current directory, module directory, or `-OutputPath`; it uses the built-in policy below. Policy parsing has no external module dependency.
 
 | Policy setting | Built-in value | Effect |
 |---|---|---|
@@ -298,14 +297,13 @@ For a file-backed **Unattached base disk candidate**, the HTML provides a **Filt
 
 When at least one candidate is selected, a **Persistent VM image policy settings** section appears below the housekeeping table:
 
-1. Review the selected full paths, then choose **Copy policy settings**. The generated entries are case-insensitive, start/end anchored, and regex-escape the exact path.
-2. For a new policy, paste the complete generated `schemaVersion`, `storage`, and `imageLibraryPathPatterns` block into `checkpoint-health-policy.yml`.
-3. For an existing policy, copy only the generated `- '(?i)^...$'` entries into its existing `storage.imageLibraryPathPatterns` array. Preserve its current entries and do not create duplicate `schemaVersion`, `storage`, or `imageLibraryPathPatterns` keys.
-4. Save the YAML file and repeat the original audit command with `-PolicyPath '.\checkpoint-health-policy.yml'`. Confirm that the new report omits the selected files and shows the expected policy source.
+1. Review the selected full paths. For a new policy, choose **Download checkpoint-health-policy.yml**; the report creates a ready-to-use YAML file containing the complete generated `schemaVersion`, `storage`, and `imageLibraryPathPatterns` block.
+2. For an existing policy, choose **Copy policy settings**, then copy only the generated `- '(?i)^...$'` entries into its existing `storage.imageLibraryPathPatterns` array. Preserve its current entries and do not create duplicate `schemaVersion`, `storage`, or `imageLibraryPathPatterns` keys.
+3. Save the YAML file and repeat the original audit command with `-PolicyPath '.\checkpoint-health-policy.yml'`. Confirm that the new report omits the selected files and shows the expected policy source.
 
 `storage.imageLibraryPathPatterns` is a replacement array. A supplied array replaces the configurable built-in repository regex rather than appending to it. If a new policy should retain that general repository matching as well as the generated exact paths, include the built-in expression from the policy table above as another array entry. Automatic exact `ImageStore` segment and versioned ARB appliance-image exclusions remain active regardless.
 
-The policy is loaded once before cluster collection. The module imports `powershell-yaml` only for this path. It stops the run for a missing/empty file, unsupported schema version, invalid regex, `minimumFreePercent` outside `0..100`, negative `minimumFreeGB`, `cadenceMultiplier` below `1`, or `minimumStaleMinutes` below `1`. The HTML and `-PassThru` `ReportData.PolicySource` value show `BuiltInDefaults` or the full loaded policy path so an operator can confirm which source was active.
+The policy is loaded once before cluster collection using the module's strict built-in parser; no gallery download or additional PowerShell module is required. The parser accepts the documented schema's nested mappings, comments, booleans, numbers, empty arrays, and single-quoted regex list entries. It stops the run for unsupported YAML syntax or properties, a missing/empty file, unsupported schema version, invalid regex, `minimumFreePercent` outside `0..100`, negative `minimumFreeGB`, `cadenceMultiplier` below `1`, or `minimumStaleMinutes` below `1`. The HTML and `-PassThru` `ReportData.PolicySource` value show `BuiltInDefaults` or the full loaded policy path so an operator can confirm which source was active.
 
 These YAML settings are separate from normal command parameters such as `-StaleHours`, the absolute Replica limits, and the cadence-aware Replica limits; those parameter defaults remain documented in the table below and are not changed by the YAML policy.
 
@@ -341,7 +339,7 @@ These YAML settings are separate from normal command parameters such as `-StaleH
 | `-IncludeDiscoveredVMs` | switch | off | Also audit VMs **discovered** in the owning node's event data with a **high-risk** signal (merge interrupted/failed, sharing violation `0x80070020`, or cannot-load-config) but not in the audit list. Such VMs are **always surfaced** (console + HTML); this switch additionally audits all validated discoveries, non-recursively. |
 | `-MaxDiscoveredVMs` | nullable int | — | Optional explicit cap for `-IncludeDiscoveredVMs`. When omitted, every validated discovery is audited. When supplied, strongest evidence is selected first and deferred VMs remain visible in output. |
 | `-ExcludedVMListCsv` | string | — | Optional path to a CSV listing VM names to **exclude** from the audit. Single column with a `VMName` header (a headerless single-column file also works). Read **once** at start; any requested / piped VM whose name matches (**case-insensitive**) is skipped **before** it is audited, and excluded VMs are **not** auto-audited via `-IncludeDiscoveredVMs` either. A relative path (e.g. `.\CheckPointAudit_Excluded_VMs.csv`, in the module folder) resolves against the current directory. There is **no** `Test-Path` parameter validation — a missing / unreadable file is a non-fatal warning (the run proceeds with no exclusions). Handy to permanently omit known-noisy or intentionally long-checkpointed VMs from a fleet run. |
-| `-PolicyPath` | string | — | Optional path to a `schemaVersion: 1` YAML policy. It can replace full-path regex lists used for image-library and backup live-mount classification, enable CSV percentage/absolute free-space thresholds, and tune cadence-aware HRL assessment. The file is loaded once before cluster collection and invalid schemas, values, or regexes stop the run. Requires the optional `powershell-yaml` module only when supplied. Start from `checkpoint-health-policy.example.yml`. |
+| `-PolicyPath` | string | — | Optional path to a `schemaVersion: 1` YAML policy. It can replace full-path regex lists used for image-library and backup live-mount classification, enable CSV percentage/absolute free-space thresholds, and tune cadence-aware HRL assessment. The file is loaded once before cluster collection by the built-in parser; no additional module is required. Invalid schemas, unsupported YAML, values, or regexes stop the run. Start from `checkpoint-health-policy.example.yml`. |
 | `-SkipStorageHealth` | switch | off | Skip the read-only cluster storage-health snapshot (S2D storage jobs, CSV state, virtual/physical disk health). On by default; gathered once per run. |
 | `-AnonymizeTelemetry` | switch | off | Anonymise the internal per-step performance-telemetry JSON (v0.2.15). When set, the cluster / node / VM names in the telemetry file **and** its file name (which becomes `code_execution_perf_telemetry_anon_<stamp>.json`) are replaced with stable pseudonyms (`CLUSTER`, `NODE-01`, `VM-001`) so the timing data can be shared for performance analysis without exposing customer identifiers. Affects **only** the telemetry JSON — the `.txt` / `.csv` / `.html` are unchanged. |
 | `-NoColour` (`-NoColor`) | switch | off | Colour is **on by default** for interactive consoles (headings + RESULT/WARNING/HOLD STATE). It auto-disables when output is redirected (`> file`, `Out-File`, `$x = Get-HyperVVMCheckpointHealth ...`) so captured text stays readable; the `-OutputPath` transcript captures the lines as plain text either way. Pass `-NoColour` to force plain output. |
@@ -640,11 +638,11 @@ Set-Location .\Get-HyperVVMCheckpointHealth
 Generated assets are written to the ignored `release` directory:
 
 ```text
-release\Get-HyperVVMCheckpointHealth-0.2.26.zip
-release\Get-HyperVVMCheckpointHealth-0.2.26.zip.sha256
+release\Get-HyperVVMCheckpointHealth-0.2.27.zip
+release\Get-HyperVVMCheckpointHealth-0.2.27.zip.sha256
 ```
 
-Create the GitHub release with tag `Get-HyperVVMCheckpointHealth-v0.2.26` and upload the generated ZIP, its SHA256 file, and `Setup-Get-HyperVVMCheckpointHealth.ps1` as three separate assets. The setup script remains outside the ZIP. Before publishing a future version:
+Create the GitHub release with tag `Get-HyperVVMCheckpointHealth-v0.2.27` and upload the generated ZIP, its SHA256 file, and `Setup-Get-HyperVVMCheckpointHealth.ps1` as three separate assets. The setup script remains outside the ZIP. Before publishing a future version:
 
 1. Update the version in the root module, manifest, README, release notes, and the setup script's `$version` value.
 2. Run the redirected Windows PowerShell 5.1 Pester suite.
@@ -653,6 +651,15 @@ Create the GitHub release with tag `Get-HyperVVMCheckpointHealth-v0.2.26` and up
 5. Publish the ZIP and checksum as release assets using the tag and asset naming convention above.
 
 ## What's New
+
+### Version 0.2.27
+
+- Adds a **Download checkpoint-health-policy.yml** action to the HTML housekeeping VM-image exclusion workflow. Generated exact-path expressions can be used directly with `-PolicyPath`; copying remains available for merging entries into an existing policy.
+- Parses the documented policy schema internally, removing the `powershell-yaml` installation requirement from cluster nodes and offline management systems.
+- Adds a typed **Hyper-V Replica Effective Limit Assessment** table to each Replica-enabled TXT report, matching the HTML signals, observed values, relationship-aware guardrails, and assessment states.
+- Appends `EventClassification`, `VerdictDriver`, `RecoveryDisposition`, and `DispositionReason` to per-VM event CSVs while preserving the existing columns and their order.
+- Makes `NOT FOUND` TXT reports self-contained with cluster identity, an incomplete-assessment warning, marker CSV location, verification steps, a ready-to-edit rerun command, and explicit evidence boundaries.
+- Displays named-checkpoint parent state as **n/a (root)** or **Unavailable** instead of an ambiguous blank, and tightens TXT escalation guidance around the actual checkpoint, event, Replica, HRL, or collection driver.
 
 ### Version 0.2.26
 

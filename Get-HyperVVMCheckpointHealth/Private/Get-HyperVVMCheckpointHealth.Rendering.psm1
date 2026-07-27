@@ -1169,7 +1169,8 @@ $storageExecSummaryLi
                 $staleTxt = if ($c.Stale) { "<span class='warnval'>YES</span>" } else { 'NO' }
                 $ageText = '{0} h<br>{1} d' -f $c.AgeHrs, [math]::Round([double]$c.AgeHrs / 24, 1)
                 $ageCell = if ($c.Stale) { "<span class='warnval'>$ageText</span>" } else { $ageText }
-                [void]$sb.Append("<tr><td class='ckptname'>$(ConvertTo-HtmlText $c.Name)</td><td>$(ConvertTo-HtmlText $c.Type)</td><td>$(ConvertTo-HtmlText $c.Purpose)</td><td>$(ConvertTo-HtmlText $c.Created)</td><td class='num ckptage'>$ageCell</td><td>$staleTxt</td><td>$(ConvertTo-HtmlText $c.Parent)</td></tr>")
+                $parentDisplay = if ($c.PSObject.Properties['ParentDisplay']) { [string]$c.ParentDisplay } elseif ([string]::IsNullOrWhiteSpace([string]$c.Parent)) { 'n/a (root)' } else { [string]$c.Parent }
+                [void]$sb.Append("<tr><td class='ckptname'>$(ConvertTo-HtmlText $c.Name)</td><td>$(ConvertTo-HtmlText $c.Type)</td><td>$(ConvertTo-HtmlText $c.Purpose)</td><td>$(ConvertTo-HtmlText $c.Created)</td><td class='num ckptage'>$ageCell</td><td>$staleTxt</td><td>$(ConvertTo-HtmlText $parentDisplay)</td></tr>")
             }
             [void]$sb.Append("</tbody></table></details>`r`n")
         }
@@ -1382,7 +1383,7 @@ $storageExecSummaryLi
                 (ConvertTo-HtmlText $findingFileName), (ConvertTo-HtmlText $findingObservation), (ConvertTo-HtmlText $findingReview)))
         }
         [void]$sb.Append("</tbody></table>`r`n")
-        [void]$sb.Append("<div class='hk-image-policy' id='hk-image-policy' hidden><h3>Persistent VM image policy settings</h3><p class='muted'>The selected <span id='hk-image-count'>0</span> VM image file(s) are hidden only in this open report. Use the generated settings below to exclude them from future audits.</p><ol><li>Select <strong>Copy policy settings</strong>.</li><li>For a new policy file, paste the complete generated block into <code>checkpoint-health-policy.yml</code>. For an existing policy, copy only the generated <code>- '(?i)^...$'</code> entries into its existing <code>storage.imageLibraryPathPatterns</code> list; do not add duplicate <code>schemaVersion</code>, <code>storage</code>, or <code>imageLibraryPathPatterns</code> keys.</li><li>Save the YAML file, repeat the original audit command with <code>-PolicyPath '.\checkpoint-health-policy.yml'</code>, and review the newly generated report.</li></ol><p class='muted'>These settings affect housekeeping observations only. They do not change VM health verdicts or authorize modifying the selected files.</p><ul class='hk-image-policy-list' id='hk-image-policy-list'></ul><textarea id='hk-image-policy-yaml' readonly aria-label='Generated VM image policy settings'></textarea><div class='hk-actions'><button type='button' id='hk-copy-policy'>Copy policy settings</button><button type='button' id='hk-restore-images'>Restore all rows</button><span class='muted' id='hk-copy-status' aria-live='polite'></span></div></div>`r`n")
+        [void]$sb.Append("<div class='hk-image-policy' id='hk-image-policy' hidden><h3>Persistent VM image policy settings</h3><p class='muted'>The selected <span id='hk-image-count'>0</span> VM image file(s) are hidden only in this open report. Use the generated settings below to exclude them from future audits.</p><ol><li>For a new policy, select <strong>Download checkpoint-health-policy.yml</strong>.</li><li>For an existing policy, select <strong>Copy policy settings</strong>, then copy only the generated <code>- '(?i)^...$'</code> entries into its existing <code>storage.imageLibraryPathPatterns</code> list. Preserve existing entries; do not add duplicate <code>schemaVersion</code>, <code>storage</code>, or <code>imageLibraryPathPatterns</code> keys.</li><li>Supply the saved YAML file to the original audit command with <code>-PolicyPath '.\checkpoint-health-policy.yml'</code>, then review the newly generated report.</li></ol><p class='muted'>These settings affect housekeeping observations only. They do not change VM health verdicts or authorize modifying the selected files.</p><ul class='hk-image-policy-list' id='hk-image-policy-list'></ul><textarea id='hk-image-policy-yaml' readonly aria-label='Generated VM image policy settings'></textarea><div class='hk-actions'><button type='button' id='hk-download-policy'>Download checkpoint-health-policy.yml</button><button type='button' id='hk-copy-policy'>Copy policy settings</button><button type='button' id='hk-restore-images'>Restore all rows</button><span class='muted' id='hk-policy-status' aria-live='polite'></span></div></div>`r`n")
     } else {
         [void]$sb.Append('<p class="muted">No cluster or storage housekeeping observations were produced by the checks performed in this run. This is not a comprehensive storage-layout certification.</p>')
     }
@@ -1511,7 +1512,7 @@ window.addEventListener('load', function () {
         var imageCount = document.getElementById('hk-image-count');
         var imageList = document.getElementById('hk-image-policy-list');
         var imageYaml = document.getElementById('hk-image-policy-yaml');
-        var copyStatus = document.getElementById('hk-copy-status');
+        var policyStatus = document.getElementById('hk-policy-status');
         var sortAscending = { bytes: false };
         function formatBytes(bytes) {
             var readable = bytes > 0 ? '< 1 KB' : '0 KB';
@@ -1599,7 +1600,17 @@ window.addEventListener('load', function () {
                 item.appendChild(restore); imageList.appendChild(item);
             });
             imageYaml.value = selectedBoxes.length ? yamlLines.join('\n') : '';
-            copyStatus.textContent = '';
+            policyStatus.textContent = '';
+        }
+        function downloadImagePolicy() {
+            if (!imageYaml.value) { return; }
+            var content = imageYaml.value.replace(/\r?\n/g, '\r\n') + '\r\n';
+            var blob = new Blob([content], { type: 'application/yaml;charset=utf-8' });
+            var url = URL.createObjectURL(blob);
+            var link = document.createElement('a');
+            link.href = url; link.download = 'checkpoint-health-policy.yml'; document.body.appendChild(link); link.click(); link.remove();
+            window.setTimeout(function () { URL.revokeObjectURL(url); }, 0);
+            policyStatus.textContent = 'Downloaded checkpoint-health-policy.yml.';
         }
         function applyFilters() {
             var selected = {};
@@ -1639,13 +1650,14 @@ window.addEventListener('load', function () {
         document.getElementById('hk-clear-all').addEventListener('click', function () { categoryBoxes.forEach(function (box) { box.checked = false; }); applyFilters(); });
         document.getElementById('hk-export-csv').addEventListener('click', exportHousekeepingCsv);
         document.getElementById('hk-restore-images').addEventListener('click', function () { imageBoxes.forEach(function (box) { box.checked = false; }); applyFilters(); });
+        document.getElementById('hk-download-policy').addEventListener('click', downloadImagePolicy);
         document.getElementById('hk-copy-policy').addEventListener('click', function () {
             imageYaml.select(); imageYaml.setSelectionRange(0, imageYaml.value.length);
             var copied = false;
             try { copied = document.execCommand('copy'); } catch (error) { copied = false; }
             if (!copied && navigator.clipboard && window.isSecureContext) {
-                navigator.clipboard.writeText(imageYaml.value).then(function () { copyStatus.textContent = 'Copied.'; }, function () { copyStatus.textContent = 'Select the policy text and copy it manually.'; });
-            } else { copyStatus.textContent = copied ? 'Copied.' : 'Select the policy text and copy it manually.'; }
+                navigator.clipboard.writeText(imageYaml.value).then(function () { policyStatus.textContent = 'Copied.'; }, function () { policyStatus.textContent = 'Select the policy text and copy it manually.'; });
+            } else { policyStatus.textContent = copied ? 'Copied.' : 'Select the policy text and copy it manually.'; }
         });
         Array.prototype.slice.call(document.querySelectorAll('.hk-sort')).forEach(function (button) {
             button.addEventListener('click', function () {

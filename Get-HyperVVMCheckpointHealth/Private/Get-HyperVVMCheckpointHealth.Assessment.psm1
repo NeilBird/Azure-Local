@@ -75,6 +75,52 @@ function Resolve-HyperVOperationRecovery {
     [pscustomobject]@{ Status = $status; FailureCount = $failures.Count; CompletionCount = $completions.Count; CausalMatchCount = $causalMatchCount; ApparentMatchCount = $apparentMatchCount; UnresolvedCount = $unresolvedCount }
 }
 
+function Get-HyperVEventCsvDisposition {
+    [OutputType([pscustomobject])]
+    param(
+        [Parameter(Mandatory)][object]$Event,
+        [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Events,
+        [Parameter(Mandatory)][object]$Policy
+    )
+
+    $eventId = [int]$Event.Id
+    $signalRole = if ($Event.PSObject.Properties['SignalRole']) { [string]$Event.SignalRole } else { '' }
+    $isConfirmingFork = [bool]($Event.PSObject.Properties['IsConfirmingFork'] -and $Event.IsConfirmingFork)
+    if ($isConfirmingFork -or $signalRole -eq 'Confirming') {
+        return [pscustomobject]@{
+            EventClassification = 'High-signal'; VerdictDriver = $true; RecoveryDisposition = 'Unresolved'
+            DispositionReason = 'Confirming checkpoint fork-commit or rollback evidence contributes to the VM verdict.'
+        }
+    }
+    if ($Policy.OperationFailureIds -contains $eventId) {
+        $completionEvents = @($Events | Where-Object { $Policy.MergeSuccessIds -contains [int]$_.Id })
+        $recovery = Resolve-HyperVOperationRecovery -Events (@($Event) + $completionEvents) `
+            -FailureIds $Policy.OperationFailureIds -CompletionIds $Policy.MergeSuccessIds
+        $verdictDriver = ($recovery.Status -eq 'Unresolved')
+        return [pscustomobject]@{
+            EventClassification = 'High-signal'; VerdictDriver = [bool]$verdictDriver
+            RecoveryDisposition = [string]$recovery.Status
+            DispositionReason = if ($verdictDriver) { 'The VM-attributed operation failure has no eligible bounded recovery evidence and contributes to the VM verdict.' } else { 'Bounded merge-completion evidence reduces this operation failure to recovered context.' }
+        }
+    }
+    if ($Policy.LowSignalIds -contains $eventId) {
+        return [pscustomobject]@{
+            EventClassification = 'Low-signal'; VerdictDriver = $false; RecoveryDisposition = 'ContextOnly'
+            DispositionReason = 'The event is retained as low-signal operational context and does not drive the VM verdict by itself.'
+        }
+    }
+    if (($Policy.ContextIds -contains $eventId) -or ($Policy.MergeSuccessIds -contains $eventId) -or $signalRole -eq 'Context') {
+        return [pscustomobject]@{
+            EventClassification = 'Corroborating'; VerdictDriver = $false; RecoveryDisposition = 'ContextOnly'
+            DispositionReason = 'The event is retained as lifecycle or recovery context and does not drive the VM verdict.'
+        }
+    }
+    [pscustomobject]@{
+        EventClassification = 'Informational'; VerdictDriver = $false; RecoveryDisposition = 'NotApplicable'
+        DispositionReason = 'The event is informational and has no checkpoint-operation recovery disposition.'
+    }
+}
+
 function Compare-VMCollectionStateToken {
     [OutputType([pscustomobject])]
     param([Parameter(Mandatory)]$StartToken, [Parameter(Mandatory)]$EndToken)
@@ -454,4 +500,4 @@ function Complete-CheckpointHealthPassThruResult {
     }
 }
 
-Export-ModuleMember -Function Get-HyperVEventPolicy, Get-HyperVEventSignalAssessment, Resolve-HyperVOperationRecovery, Compare-VMCollectionStateToken, Get-VMCollectionStateImpact, Get-HyperVReplicationAssessment, Resolve-HyperVEventAttribution, Resolve-EventCoverage, Get-VMCheckpointVerdictAssessment, Select-DiscoveredVMsForAudit, Resolve-ActiveCheckpointHistoricVerdict, Complete-CheckpointHealthPassThruResult
+Export-ModuleMember -Function Get-HyperVEventPolicy, Get-HyperVEventSignalAssessment, Resolve-HyperVOperationRecovery, Get-HyperVEventCsvDisposition, Compare-VMCollectionStateToken, Get-VMCollectionStateImpact, Get-HyperVReplicationAssessment, Resolve-HyperVEventAttribution, Resolve-EventCoverage, Get-VMCheckpointVerdictAssessment, Select-DiscoveredVMsForAudit, Resolve-ActiveCheckpointHistoricVerdict, Complete-CheckpointHealthPassThruResult

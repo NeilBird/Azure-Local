@@ -60,19 +60,99 @@ function Test-CheckpointHealthRegexPatterns {
     }
 }
 
+function ConvertFrom-CheckpointHealthPolicyYaml {
+    [OutputType([System.Collections.IDictionary])]
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Yaml)
+
+    $parsed = [ordered]@{}
+    $context = [System.Collections.Generic.List[object]]::new()
+    $lines = $Yaml -split "`r?`n"
+    for ($lineNumber = 1; $lineNumber -le $lines.Count; $lineNumber++) {
+        $line = $lines[$lineNumber - 1]
+        if ([string]::IsNullOrWhiteSpace($line) -or $line -match '^\s*#') { continue }
+        if ($line -match "`t") { throw "Policy YAML line $lineNumber contains a tab. Use spaces for indentation." }
+        $indent = $line.Length - $line.TrimStart(' ').Length
+        $content = $line.Trim()
+
+        while ($context.Count -gt 0 -and [int]$context[$context.Count - 1].Indent -ge $indent) {
+            $context.RemoveAt($context.Count - 1)
+        }
+
+        if ($content -match '^\-\s+(.+)$') {
+            $path = @($context | ForEach-Object Name) -join '.'
+            if ($path -notin @('storage.imageLibraryPathPatterns', 'orphan.liveMountPathPatterns')) {
+                throw "Unsupported policy YAML list at line $lineNumber."
+            }
+            $listValue = $Matches[1].Trim()
+            if ($listValue -notmatch "^'(.*)'$") {
+                throw "Policy YAML list value at line $lineNumber must be single-quoted."
+            }
+            $listValue = $Matches[1] -replace "''", "'"
+            if ($path -eq 'storage.imageLibraryPathPatterns') {
+                $parsed.storage.imageLibraryPathPatterns = @($parsed.storage.imageLibraryPathPatterns) + @($listValue)
+            } else {
+                $parsed.orphan.liveMountPathPatterns = @($parsed.orphan.liveMountPathPatterns) + @($listValue)
+            }
+            continue
+        }
+
+        if ($content -notmatch '^([A-Za-z][A-Za-z0-9]*):(?:\s*(.*))?$') {
+            throw "Unsupported policy YAML syntax at line $lineNumber."
+        }
+        $name = $Matches[1]
+        $valueText = $Matches[2].Trim()
+        $parentPath = @($context | ForEach-Object Name) -join '.'
+        $path = (@($parentPath, $name) | Where-Object { $_ }) -join '.'
+        if ($valueText -eq '') {
+            if ($path -notin @('storage', 'orphan', 'csvFreeSpace', 'replication', 'replication.hrl', 'storage.imageLibraryPathPatterns', 'orphan.liveMountPathPatterns')) {
+                throw "Unsupported policy YAML property '$path' at line $lineNumber."
+            }
+            switch ($path) {
+                'storage' { $parsed.storage = [ordered]@{} }
+                'orphan' { $parsed.orphan = [ordered]@{} }
+                'csvFreeSpace' { $parsed.csvFreeSpace = [ordered]@{} }
+                'replication' { $parsed.replication = [ordered]@{} }
+                'replication.hrl' { $parsed.replication.hrl = [ordered]@{} }
+                'storage.imageLibraryPathPatterns' { $parsed.storage.imageLibraryPathPatterns = @() }
+                'orphan.liveMountPathPatterns' { $parsed.orphan.liveMountPathPatterns = @() }
+            }
+            [void]$context.Add([pscustomobject]@{ Indent = $indent; Name = $name })
+            continue
+        }
+
+        $value = if ($valueText -eq '[]') { @() }
+            elseif ($valueText -match '^(?i:true|false)$') { [bool]::Parse($valueText) }
+            elseif ($valueText -match '^-?\d+(?:\.\d+)?$') { [double]::Parse($valueText, [Globalization.CultureInfo]::InvariantCulture) }
+            elseif ($valueText -match "^'(.*)'$") { $Matches[1] -replace "''", "'" }
+            else { throw "Unsupported policy YAML value at line $lineNumber. Use a boolean, number, [], or single-quoted string." }
+
+        switch ($path) {
+            'schemaVersion' { $parsed.schemaVersion = $value }
+            'storage.imageLibraryPathPatterns' { $parsed.storage.imageLibraryPathPatterns = @($value) }
+            'orphan.liveMountPathPatterns' { $parsed.orphan.liveMountPathPatterns = @($value) }
+            'orphan.classifyZeroByteAsLiveMount' { $parsed.orphan.classifyZeroByteAsLiveMount = $value }
+            'csvFreeSpace.enabled' { $parsed.csvFreeSpace.enabled = $value }
+            'csvFreeSpace.minimumFreePercent' { $parsed.csvFreeSpace.minimumFreePercent = $value }
+            'csvFreeSpace.minimumFreeGB' { $parsed.csvFreeSpace.minimumFreeGB = $value }
+            'replication.hrl.enabled' { $parsed.replication.hrl.enabled = $value }
+            'replication.hrl.cadenceMultiplier' { $parsed.replication.hrl.cadenceMultiplier = $value }
+            'replication.hrl.minimumStaleMinutes' { $parsed.replication.hrl.minimumStaleMinutes = $value }
+            'replication.hrl.requireReplicationConcern' { $parsed.replication.hrl.requireReplicationConcern = $value }
+            default { throw "Unsupported policy YAML property '$path' at line $lineNumber." }
+        }
+    }
+    return $parsed
+}
+
 function Import-CheckpointHealthPolicy {
     [CmdletBinding()]
     [OutputType([pscustomobject])]
     param([Parameter(Mandatory)][ValidateNotNullOrEmpty()][string]$Path)
 
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { throw "Policy file was not found: $Path" }
-    $yamlCommand = Get-Command ConvertFrom-Yaml -ErrorAction SilentlyContinue
-    if (-not $yamlCommand) {
-        try { Import-Module powershell-yaml -ErrorAction Stop }
-        catch { throw "Reading -PolicyPath requires the optional 'powershell-yaml' module. Install it with: Install-Module powershell-yaml -Scope CurrentUser" }
-    }
-    $raw = Get-Content -LiteralPath $Path -Raw -ErrorAction Stop | ConvertFrom-Yaml
-    if ($null -eq $raw) { throw 'The policy file is empty.' }
+    $rawText = Get-Content -LiteralPath $Path -Raw -ErrorAction Stop
+    if ([string]::IsNullOrWhiteSpace($rawText)) { throw 'The policy file is empty.' }
+    $raw = ConvertFrom-CheckpointHealthPolicyYaml -Yaml $rawText
 
     $schemaProperty = Get-CheckpointHealthPolicyProperty -Object $raw -Name 'schemaVersion'
     if (-not $schemaProperty.Exists -or [int]$schemaProperty.Value -ne 1) {
