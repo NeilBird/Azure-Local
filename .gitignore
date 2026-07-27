@@ -36,7 +36,6 @@ AzLocal.UpdateManagement/Test-Pipelines.ps1
 # Per-module consolidation folder (preferred location for all review artefacts):
 AzLocal.UpdateManagement/Module-reviews/
 Get-HyperVVMCheckpointHealth/specs/*
-!Get-HyperVVMCheckpointHealth/specs/v0.2.26-output-quality-review-findings.md
 # Defensive guards for stray files anywhere in the tree:
 **/COMBINED-REVIEW-ACTION-PLAN.md
 **/MODULE-REVIEW-AND-RECOMMENDATIONS.md
