@@ -7,7 +7,7 @@
         'Private\Get-HyperVVMCheckpointHealth.Rendering.psm1'
         'Private\Get-HyperVVMCheckpointHealth.Storage.psm1'
     )
-    ModuleVersion = '0.2.25'
+    ModuleVersion = '0.2.26'
     CompatiblePSEditions = @('Desktop')
     GUID = '8b35df55-2975-48f8-bdb8-c8bc8da4a49c'
     Author = 'Neil Bird, Microsoft'
@@ -24,7 +24,7 @@
             Tags = @('AzureLocal', 'Hyper-V', 'FailoverCluster', 'Checkpoint', 'Diagnostics')
             LicenseUri = 'https://github.com/NeilBird/Azure-Local/blob/main/LICENSE'
             ProjectUri = 'https://aka.ms/Get-HyperVVMCheckpointHealth'
-            ReleaseNotes = 'Version 0.2.25 improvements: uses CONFIRMED wording in prominent HTML findings when recovered historic fork-commit evidence confirms the scenario; displays absolute timestamps consistently in UTC/Zulu notation; writes a schema-consistent event CSV marker for NOT FOUND VMs; orders equal-time events deterministically using native event record identity; reports healthy Replica timestamp-only collection changes as quiet stable detail; collapses OK per-VM detail cards by default while keeping non-OK cards open; wraps long generated warning tokens on mobile; and expands the housekeeping summary action to include inconsistent VM VHD paths.'
+            ReleaseNotes = 'Version 0.2.26 corrections: calculates attached AVHDX checkpoint staleness from layer creation time instead of LastWrite activity; separates checkpoint age from last activity in TXT and HTML evidence; labels multi-layer chain roles as Active (top), Checkpoint, and Base; displays each row''s actual layer filename; and reports base VHDX checkpoint status as n/a (base).'
         }
     }
 }

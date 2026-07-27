@@ -591,8 +591,8 @@ Describe 'Module distribution contracts' {
         $script:ModuleCommand = Get-Command Get-HyperVVMCheckpointHealth -Module Get-HyperVVMCheckpointHealth
     }
 
-    It 'imports a valid 0.2.25 module manifest' {
-        $script:Manifest.Version.ToString() | Should -Be '0.2.25'
+    It 'imports a valid 0.2.26 module manifest' {
+        $script:Manifest.Version.ToString() | Should -Be '0.2.26'
         $script:Manifest.ExportedFunctions.Keys | Should -Contain 'Get-HyperVVMCheckpointHealth'
     }
 
@@ -675,7 +675,8 @@ Describe 'Module distribution contracts' {
         $readme | Should -Match '\$vmResult\.VMName'
         $readme | Should -Not -Match "Select-Object @\{n='VM';e=\{ \$_\.Name \}\}, AgeHrs"
         $readme | Should -Match 'dark orange identifies the observed value that supports a concern'
-        $readme | Should -Match 'stale checkpoint or attached-layer `YES` and the age that breached `-StaleHours`'
+        $readme | Should -Match 'stale checkpoint or attached AVHDX `YES` and the checkpoint creation age that breached `-StaleHours`'
+        $readme | Should -Match 'Base VHDX rows are not checkpoints and always show \*\*Checkpoint stale = n/a \(base\)\*\*'
         $readme | Should -Match 'driver-specific `Detail` text for `INVESTIGATE`'
         $readme | Should -Match 'event-attribution telemetry records `Rows=0`'
     }
@@ -718,10 +719,10 @@ Describe 'Module distribution contracts' {
         $setupPath = Join-Path $script:ModuleRoot 'Setup-Get-HyperVVMCheckpointHealth.ps1'
         Test-Path -LiteralPath $setupPath -PathType Leaf | Should -BeTrue
         $setupSource = Get-Content -LiteralPath $setupPath -Raw
-        $setupSource | Should -Match "\$version = '0\.2\.25'"
+        $setupSource | Should -Match "\$version = '0\.2\.26'"
         $setupSource | Should -Match "\$expectedSha256 = '[0-9a-f]{64}'"
         $setupSource | Should -Match '\[string\]\$InstallRoot = ''C:\\Temp'''
-        $setupSource | Should -Match 'Get-FileHash.+SHA256'
+        $setupSource | Should -Match '\$WhatIfPreference\s*=\s*\$false[\s\S]+Get-FileHash.+SHA256'
         $setupSource | Should -Match 'Test-ModuleManifest'
         $setupSource | Should -Not -Match 'Get-ClusterGroup'
         $setupSource | Should -Not -Match '& \$moduleName -VMName'
@@ -878,15 +879,32 @@ Describe 'HTML fleet report usability' {
         }
         $criticalReportData.SeverityScore = 60
         $staleLayerReportData = $normalReportData.PSObject.Copy()
-        $staleLayerReportData.CheckpointLayers = 1
-        $staleLayerReportData.StaleAttachedLayerCount = 1
+        $staleLayerReportData.CheckpointLayers = 2
+        $staleLayerReportData.StaleAttachedLayerCount = 2
         $staleLayerReportData.SnapshotLayerMismatch = $true
         $staleLayerReportData.AttachedVhdLayers = @(
             [pscustomobject]@{
-                Disk = 'TEST-VM-STALE-LAYER_OS.avhdx'; Layer = 1; Type = 'Differencing'; SizeGB = 8.5
-                Created = '2025-12-29 10:00:00'; LastWrite = '2025-12-30 10:00:00'; AgeHrs = 38; Stale = $true
-                Path = 'C:\ClusterStorage\Volume1\TEST-VM-STALE-LAYER_OS.avhdx'
+                Chain = 'TEST-VM-STALE-LAYER_OS-CURRENT.avhdx'; FileName = 'TEST-VM-STALE-LAYER_OS-CURRENT.avhdx'
+                Layer = 1; Role = 'Active (top)'; Type = 'Differencing'; SizeGB = 8.5
+                Created = '2025-12-29 10:00:00Z'; LastWrite = '2026-01-01 09:55:00Z'
+                CheckpointAgeHrs = 74; LastActivityAgeHrs = 0.1; CheckpointStale = $true
+                Path = 'C:\ClusterStorage\Volume1\TEST-VM-STALE-LAYER_OS-CURRENT.avhdx'
+                ParentPath = 'C:\ClusterStorage\Volume1\TEST-VM-STALE-LAYER_OS-OLDER.avhdx'
+            }
+            [pscustomobject]@{
+                Chain = 'TEST-VM-STALE-LAYER_OS-CURRENT.avhdx'; FileName = 'TEST-VM-STALE-LAYER_OS-OLDER.avhdx'
+                Layer = 2; Role = 'Checkpoint'; Type = 'Differencing'; SizeGB = 4.25
+                Created = '2025-12-28 10:00:00Z'; LastWrite = '2025-12-29 10:00:00Z'
+                CheckpointAgeHrs = 98; LastActivityAgeHrs = 74; CheckpointStale = $true
+                Path = 'C:\ClusterStorage\Volume1\TEST-VM-STALE-LAYER_OS-OLDER.avhdx'
                 ParentPath = 'C:\ClusterStorage\Volume1\TEST-VM-STALE-LAYER_OS.vhdx'
+            }
+            [pscustomobject]@{
+                Chain = 'TEST-VM-STALE-LAYER_OS-CURRENT.avhdx'; FileName = 'TEST-VM-STALE-LAYER_OS.vhdx'
+                Layer = 3; Role = 'Base'; Type = 'Dynamic'; SizeGB = 64
+                Created = '2025-01-01 10:00:00Z'; LastWrite = '2025-12-28 10:00:00Z'
+                CheckpointAgeHrs = $null; LastActivityAgeHrs = 98; CheckpointStale = $false
+                Path = 'C:\ClusterStorage\Volume1\TEST-VM-STALE-LAYER_OS.vhdx'; ParentPath = ''
             }
         )
         $staleLayerReportData.SeverityScore = 70
@@ -1297,17 +1315,22 @@ Describe 'HTML fleet report usability' {
     }
 
     It 'reports stale attached layers separately from named snapshots' {
-        $script:RenderedHtml | Should -Match '<div class="n">1</div><div class="l">Stale AVHDX layers</div>'
+        $script:RenderedHtml | Should -Match '<div class="n">2</div><div class="l">Stale AVHDX layers</div>'
         $script:RenderedHtml | Should -Match '<div class="n">0</div><div class="l">Stale snapshots</div>'
         $script:RenderedHtml | Should -Match '<th>Stale<br>evidence</th>'
-        $script:RenderedHtml | Should -Match '1 layer / 0 snapshots'
-        $script:RenderedHtml | Should -Not -Match '>1 / 0<'
-        $script:RenderedHtml | Should -Match "Stale attached AVHDX layers \(&ge;24h\)</div><div><span class='warnval'>1</span></div>"
+        $script:RenderedHtml | Should -Match '2 layers / 0 snapshots'
+        $script:RenderedHtml | Should -Not -Match '>2 / 0<'
+        $script:RenderedHtml | Should -Match "Stale attached AVHDX layers \(&ge;24h\)</div><div><span class='warnval'>2</span></div>"
         $script:RenderedHtml | Should -Match "Snapshot/layer representation</div><div><span class='warnval'>MISMATCH"
-        $script:RenderedHtml | Should -Match '1 stale attached AVHDX layer\(s\)'
-        $script:RenderedHtml | Should -Match 'Attached VHD chain evidence \(1 layer\(s\)\)'
-        $script:RenderedHtml | Should -Match 'TEST-VM-STALE-LAYER_OS\.avhdx'
-        $script:RenderedHtml | Should -Match "class='num ckptage'><span class='warnval'>[0-9.]+ h<br>[0-9.]+ d</span></td><td><span class='warnval'>YES</span>"
+        $script:RenderedHtml | Should -Match '2 stale attached AVHDX layer\(s\)'
+        $script:RenderedHtml | Should -Match 'Attached VHD chain evidence \(3 layer\(s\)\)'
+        $script:RenderedHtml | Should -Match '<th>Attached chain</th><th>Layer</th><th>Role</th><th>Layer file</th>'
+        $script:RenderedHtml | Should -Match '>Active \(top\)</td><td>TEST-VM-STALE-LAYER_OS-CURRENT\.avhdx</td>'
+        $script:RenderedHtml | Should -Match '>Checkpoint</td><td>TEST-VM-STALE-LAYER_OS-OLDER\.avhdx</td>'
+        $script:RenderedHtml | Should -Match '>Base</td><td>TEST-VM-STALE-LAYER_OS\.vhdx</td>'
+        $script:RenderedHtml | Should -Match '<th>Checkpoint age</th><th>Last activity</th><th>Checkpoint stale</th>'
+        $script:RenderedHtml | Should -Match "<span class='warnval'>74 h<br>3\.1 d</span>.*0\.1 h<br>0 d.*<span class='warnval'>YES</span>"
+        $script:RenderedHtml | Should -Match "class='num ckptage'>n/a</td><td class='num ckptage'>98 h<br>4\.1 d</td><td>n/a \(base\)</td>"
     }
 
     It 'uses Replica-specific guidance for a Replica-only INVESTIGATE result' {
@@ -1601,7 +1624,7 @@ Describe 'HTML fleet report usability' {
             [pscustomobject]@{ VMName = 'TEST-VM-CONFIRMED'; OwningNode = 'TEST-NODE'; Recommendation = 'INVESTIGATE'; Source = 'Input'; StaleCheckpointCount = 0; ReportData = $confirmedReportData; Detail = '' }
         ) -StaleHours 24 -EventLookbackHours 168 -ClusterName 'TEST-CLUSTER' -GeneratedUtc '2026-01-01 00:00:00' `
             -DiscoveredVMs @() -DiscoverySummary ([pscustomobject]@{ EligibleCount = 0; AuditedCount = 0; DeferredCount = 0; Cap = $null }) `
-            -StorageHealth $null -HousekeepingFindings @() -IncludeDiscoveredVMs:$false -ScriptVersion '0.2.25' `
+            -StorageHealth $null -HousekeepingFindings @() -IncludeDiscoveredVMs:$false -ScriptVersion '0.2.26' `
             -ReportGenerationTime '00:00:01' -ClusterNodeCount 1 -ClusterCsvCount 1
 
         $html | Should -Match 'PRIORITY - CONFIRMED historic rollback \(1 VM\(s\)\)'
@@ -1921,9 +1944,13 @@ Describe 'Checkpoint staleness assessment' {
         $script:AssessmentNow = [datetime]'2026-07-20T12:00:00Z'
     }
 
-    It 'flags a stale attached AVHDX even when no named snapshot exists' {
+    It 'flags an old attached AVHDX even when it was written recently and no named snapshot exists' {
         $assessment = Get-CheckpointStalenessAssessment -DiskReports @(
-            [pscustomobject]@{ Chain = @([pscustomobject]@{ Type = 'Differencing'; LastWrite = $script:AssessmentNow.AddHours(-30) }) }
+            [pscustomobject]@{ Chain = @([pscustomobject]@{
+                Type = 'Differencing'
+                Created = $script:AssessmentNow.AddHours(-30)
+                LastWrite = $script:AssessmentNow.AddMinutes(-5)
+            }) }
         ) -Snapshots @() -StaleHours 24 -NowUtc $script:AssessmentNow
 
         $assessment.StaleAttachedLayerCount | Should -Be 1
@@ -1943,8 +1970,8 @@ Describe 'Checkpoint staleness assessment' {
 
     It 'does not equate one snapshot with one layer on a multi-disk VM' {
         $assessment = Get-CheckpointStalenessAssessment -DiskReports @(
-            [pscustomobject]@{ Chain = @([pscustomobject]@{ Type = 'Differencing'; LastWrite = $script:AssessmentNow.AddHours(-30) }) }
-            [pscustomobject]@{ Chain = @([pscustomobject]@{ Type = 'Differencing'; LastWrite = $script:AssessmentNow.AddHours(-30) }) }
+            [pscustomobject]@{ Chain = @([pscustomobject]@{ Type = 'Differencing'; Created = $script:AssessmentNow.AddHours(-30); LastWrite = $script:AssessmentNow.AddMinutes(-5) }) }
+            [pscustomobject]@{ Chain = @([pscustomobject]@{ Type = 'Differencing'; Created = $script:AssessmentNow.AddHours(-30); LastWrite = $script:AssessmentNow.AddMinutes(-10) }) }
         ) -Snapshots @([pscustomobject]@{ CreationTimeUtc = $script:AssessmentNow.AddHours(-30) }) `
             -StaleHours 24 -NowUtc $script:AssessmentNow
 
@@ -1956,9 +1983,9 @@ Describe 'Checkpoint staleness assessment' {
     It 'counts an old checkpoint layer beneath a recently written active top layer' {
         $assessment = Get-CheckpointStalenessAssessment -DiskReports @(
             [pscustomobject]@{ Chain = @(
-                [pscustomobject]@{ Type = 'Differencing'; LastWrite = $script:AssessmentNow.AddMinutes(-5) }
-                [pscustomobject]@{ Type = 'Differencing'; LastWrite = $script:AssessmentNow.AddHours(-48) }
-                [pscustomobject]@{ Type = 'Dynamic'; LastWrite = $script:AssessmentNow.AddDays(-100) }
+                [pscustomobject]@{ Type = 'Differencing'; Created = $script:AssessmentNow.AddHours(-1); LastWrite = $script:AssessmentNow.AddMinutes(-5) }
+                [pscustomobject]@{ Type = 'Differencing'; Created = $script:AssessmentNow.AddHours(-48); LastWrite = $script:AssessmentNow.AddHours(-1) }
+                [pscustomobject]@{ Type = 'Dynamic'; Created = $script:AssessmentNow.AddDays(-100); LastWrite = $script:AssessmentNow.AddDays(-100) }
             ) }
         ) -Snapshots @([pscustomobject]@{ CreationTimeUtc = $script:AssessmentNow.AddHours(-48) }) `
             -StaleHours 24 -NowUtc $script:AssessmentNow

@@ -90,7 +90,7 @@ function Get-CheckpointStalenessAssessment {
     $attachedLayers = @($DiskReports | ForEach-Object { @($_.Chain) } | Where-Object { $_.Type -eq 'Differencing' })
     $snapshotRows = @($Snapshots)
     $staleAttachedLayers = @($attachedLayers | Where-Object {
-        $_.LastWrite -and ($NowUtc - ([datetime]$_.LastWrite).ToUniversalTime()).TotalHours -ge $StaleHours
+        $_.Created -and ($NowUtc - ([datetime]$_.Created).ToUniversalTime()).TotalHours -ge $StaleHours
     })
     $staleSnapshots = @($snapshotRows | Where-Object {
         $_.CreationTimeUtc -and ($NowUtc - ([datetime]$_.CreationTimeUtc).ToUniversalTime()).TotalHours -ge $StaleHours
