@@ -197,63 +197,6 @@ function ConvertTo-HyperVEventCsvRows {
     $projected.ToArray()
 }
 
-function Get-HyperVEventFloodObservations {
-    [OutputType([object[]])]
-    param(
-        [AllowEmptyCollection()][object[]]$NodeEventContext = @(),
-        [int]$EventId = 15268,
-        [ValidateRange(1, 1000000)][int]$MinimumCount = 100,
-        [ValidateRange(1, 10080)][int]$MinimumSpanMinutes = 30,
-        [ValidateRange(1, 1000000)][int]$BurstCount = 10,
-        [ValidateRange(1, 1440)][int]$BurstWindowMinutes = 10
-    )
-
-    $observations = [System.Collections.Generic.List[object]]::new()
-    foreach ($nodeContext in @($NodeEventContext)) {
-        if (-not $nodeContext) { continue }
-        $node = [string]$nodeContext.Node
-        $parsedRows = @($nodeContext.Events | Where-Object { [int]$_.Id -eq $EventId } | ForEach-Object {
-            $rawTime = if ($_.PSObject.Properties['Time (UTC)']) { [string]$_.'Time (UTC)' } elseif ($_.PSObject.Properties['Time']) { [string]$_.Time } else { '' }
-            $parsedTime = [datetime]::MinValue
-            if ([datetime]::TryParse($rawTime, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::AssumeUniversal, [ref]$parsedTime)) {
-                [pscustomobject]@{ Time = $parsedTime.ToUniversalTime(); Message = if ($_.PSObject.Properties['FullMessage']) { [string]$_.FullMessage } else { [string]$_.Message } }
-            }
-        } | Sort-Object Time)
-        if ($parsedRows.Count -eq 0) { continue }
-
-        $first = [datetime]$parsedRows[0].Time
-        $last = [datetime]$parsedRows[-1].Time
-        $durationMinutes = [math]::Max(0, ($last - $first).TotalMinutes)
-        $burstDetected = $false
-        $windowStart = 0
-        for ($windowEnd = 0; $windowEnd -lt $parsedRows.Count; $windowEnd++) {
-            while ($windowStart -lt $windowEnd -and ([datetime]$parsedRows[$windowEnd].Time - [datetime]$parsedRows[$windowStart].Time).TotalMinutes -gt $BurstWindowMinutes) {
-                $windowStart++
-            }
-            if (($windowEnd - $windowStart + 1) -ge $BurstCount) { $burstDetected = $true; break }
-        }
-        $sustained = ($parsedRows.Count -ge $MinimumCount -and $durationMinutes -ge $MinimumSpanMinutes)
-        if (-not ($sustained -or $burstDetected)) { continue }
-
-        $durationHours = [math]::Max($durationMinutes / 60, 1 / 60)
-        [void]$observations.Add([pscustomobject][ordered]@{
-            Node = $node
-            EventId = $EventId
-            Count = $parsedRows.Count
-            FirstUtc = $first.ToString('yyyy-MM-dd HH:mm:ssZ')
-            LastUtc = $last.ToString('yyyy-MM-dd HH:mm:ssZ')
-            DurationMinutes = [math]::Round($durationMinutes, 1)
-            AverageRatePerHour = [math]::Round($parsedRows.Count / $durationHours, 1)
-            DistinctMessageCount = @($parsedRows | ForEach-Object { $_.Message } | Sort-Object -Unique).Count
-            Trigger = if ($sustained) { 'SustainedVolume' } else { 'BurstRate' }
-            AffectedNodeCount = 0
-        })
-    }
-    $affectedNodeCount = @($observations | ForEach-Object { $_.Node } | Sort-Object -Unique).Count
-    foreach ($observation in $observations) { $observation.AffectedNodeCount = $affectedNodeCount }
-    $observations.ToArray()
-}
-
 function Compare-VMCollectionStateToken {
     [OutputType([pscustomobject])]
     param([Parameter(Mandatory)]$StartToken, [Parameter(Mandatory)]$EndToken)
@@ -283,20 +226,6 @@ function Get-VMCollectionStateImpact {
         $ReplicaState.Equals('Replicating', [StringComparison]::OrdinalIgnoreCase))
     if ($healthyReplicaConfigWrite) { return 'Advisory' }
     'Inconclusive'
-}
-
-function ConvertTo-ReplicaDurationText {
-    [OutputType([string])]
-    param(
-        [Parameter(Mandatory)][ValidateRange(0, [double]::MaxValue)][double]$Minutes
-    )
-
-    $minuteText = '{0:N1} min' -f $Minutes
-    if ($Minutes -lt 1440) { return $minuteText }
-
-    $days = $Minutes / 1440
-    $dayUnit = if ([math]::Round($days, 1) -eq 1.0) { 'day' } else { 'days' }
-    '{0} ({1:N1} {2})' -f $minuteText, $days, $dayUnit
 }
 
 function Get-HyperVReplicationAssessment {
@@ -647,4 +576,4 @@ function Complete-CheckpointHealthPassThruResult {
     }
 }
 
-Export-ModuleMember -Function Get-HyperVEventPolicy, Get-HyperVEventSignalAssessment, Resolve-HyperVOperationRecovery, Get-HyperVEventCsvDisposition, ConvertTo-HyperVEventCsvRows, Get-HyperVEventFloodObservations, Compare-VMCollectionStateToken, Get-VMCollectionStateImpact, ConvertTo-ReplicaDurationText, Get-HyperVReplicationAssessment, Resolve-HyperVEventAttribution, Resolve-EventCoverage, Get-VMCheckpointVerdictAssessment, Select-DiscoveredVMsForAudit, Resolve-ActiveCheckpointHistoricVerdict, Complete-CheckpointHealthPassThruResult
+Export-ModuleMember -Function Get-HyperVEventPolicy, Get-HyperVEventSignalAssessment, Resolve-HyperVOperationRecovery, Get-HyperVEventCsvDisposition, ConvertTo-HyperVEventCsvRows, Compare-VMCollectionStateToken, Get-VMCollectionStateImpact, Get-HyperVReplicationAssessment, Resolve-HyperVEventAttribution, Resolve-EventCoverage, Get-VMCheckpointVerdictAssessment, Select-DiscoveredVMsForAudit, Resolve-ActiveCheckpointHistoricVerdict, Complete-CheckpointHealthPassThruResult

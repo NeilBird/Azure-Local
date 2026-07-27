@@ -470,8 +470,8 @@ Describe 'Structured historic event evidence contract' {
 
 Describe 'Cluster low-signal event flood contract' {
     BeforeAll {
-        $assessmentModulePath = Join-Path (Split-Path $PSScriptRoot -Parent) 'Private\Get-HyperVVMCheckpointHealth.Assessment.psm1'
-        Import-Module $assessmentModulePath -Force
+        $renderingModulePath = Join-Path (Split-Path $PSScriptRoot -Parent) 'Private\Get-HyperVVMCheckpointHealth.Rendering.psm1'
+        Import-Module $renderingModulePath -Force
     }
 
     It 'surfaces sustained 15268 volume without producing a VM verdict' {
@@ -859,6 +859,23 @@ Describe 'Module distribution contracts' {
                 Get-Command $helperName -CommandType Function -ErrorAction Stop | Should -Not -BeNullOrEmpty
             }
         }
+    }
+
+    It 'renders fleet-only helpers through the manifest-managed module topology' {
+        $module = Get-Module Get-HyperVVMCheckpointHealth
+        $events = @(0..9 | ForEach-Object {
+            [pscustomobject]@{ 'Time (UTC)' = ([datetime]'2026-07-01T00:00:00Z').AddSeconds($_ * 30).ToString('yyyy-MM-dd HH:mm:ssZ'); Id = 15268; FullMessage = 'Failed to get the disk information' }
+        })
+        $html = & $module {
+            param($nodeEvents)
+            ConvertTo-VMCheckpointAuditHtml -Results @() -StaleHours 24 -EventLookbackHours 168 `
+                -ClusterName 'TEST-CLUSTER' -GeneratedUtc '2026-07-01 01:00:00Z' -DiscoveredVMs @() `
+                -DiscoverySummary ([pscustomobject]@{ EligibleCount = 0; AuditedCount = 0; DeferredCount = 0; Cap = $null }) `
+                -StorageHealth $null -HousekeepingFindings @() -NodeEventContext @([pscustomobject]@{ Node = 'TEST-NODE'; Events = $nodeEvents }) `
+                -IncludeDiscoveredVMs:$false -ScriptVersion '0.2.28' -ReportGenerationTime '00:00:01' -ClusterNodeCount 1 -ClusterCsvCount 1
+        } $events
+        $html | Should -Match 'Cluster-level low-signal event observation'
+        & $module { ConvertTo-ReplicaDurationText -Minutes 20160 } | Should -Be '20,160.0 min (14.0 days)'
     }
 
     It 'rejects execution after importing the bare root module' {
