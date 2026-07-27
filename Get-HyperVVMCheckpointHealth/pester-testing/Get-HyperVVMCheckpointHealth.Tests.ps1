@@ -1555,10 +1555,11 @@ Describe 'HTML fleet report usability' {
         $zeroByteRowIndex | Should -BeGreaterThan $largeRowIndex
     }
 
-    It 'filters selected unattached VHDX rows and reveals copyable persistent policy settings below the table' {
+    It 'filters selected unattached VHDX rows and offers a downloadable persistent policy below the table' {
         ([regex]::Matches($script:RenderedHtml, "class='hk-image-filter' type='checkbox'> Filter out as VM image")).Count | Should -Be 1
         $script:RenderedHtml | Should -Match "id='hk-image-policy' hidden><h3>Persistent VM image policy settings</h3>"
         $script:RenderedHtml | Should -Match "id='hk-image-policy-yaml' readonly aria-label='Generated VM image policy settings'"
+        $script:RenderedHtml | Should -Match "id='hk-download-policy'>Download checkpoint-health-policy\.yml</button>"
         $script:RenderedHtml | Should -Match "id='hk-copy-policy'>Copy policy settings</button>"
         $script:RenderedHtml | Should -Match "id='hk-restore-images'>Restore all rows</button>"
         $script:RenderedHtml.IndexOf('</tbody></table>') | Should -BeLessThan $script:RenderedHtml.IndexOf("id='hk-image-policy'")
@@ -1566,10 +1567,14 @@ Describe 'HTML fleet report usability' {
         $script:RenderedHtml | Should -Match "var matches = \(!imageBox \|\| !imageBox\.checked\)"
         $script:RenderedHtml | Should -Match "yamlLines = \['schemaVersion: 1', 'storage:', '    imageLibraryPathPatterns:'\]"
         $script:RenderedHtml | Should -Match "escapeRegex\(path\)"
+        $script:RenderedHtml | Should -Match "function downloadImagePolicy\(\)"
+        $script:RenderedHtml | Should -Match "new Blob\(\[content\], \{ type: 'application/yaml;charset=utf-8' \}\)"
+        $script:RenderedHtml | Should -Match "link\.download = 'checkpoint-health-policy\.yml'"
+        $script:RenderedHtml | Should -Match "getElementById\('hk-download-policy'\)\.addEventListener\('click', downloadImagePolicy\)"
         $script:RenderedHtml | Should -Match "hidden only in this open report"
-        $script:RenderedHtml | Should -Match 'For a new policy file, paste the complete generated block'
-        $script:RenderedHtml | Should -Match 'For an existing policy, copy only the generated <code>- .* entries into its existing <code>storage\.imageLibraryPathPatterns</code> list'
-        $script:RenderedHtml | Should -Match "repeat the original audit command with <code>-PolicyPath '\.\\checkpoint-health-policy\.yml'</code>"
+        $script:RenderedHtml | Should -Match 'For a new policy, select <strong>Download checkpoint-health-policy\.yml</strong>'
+        $script:RenderedHtml | Should -Match 'For an existing policy, select <strong>Copy policy settings</strong>.*copy only the generated <code>- .* entries into its existing <code>storage\.imageLibraryPathPatterns</code> list'
+        $script:RenderedHtml | Should -Match "Supply the saved YAML file to the original audit command with <code>-PolicyPath '\.\\checkpoint-health-policy\.yml'</code>"
         $script:RenderedHtml | Should -Match 'do not change VM health verdicts or authorize modifying the selected files'
     }
 
