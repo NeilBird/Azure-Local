@@ -24,7 +24,7 @@
             Tags = @('AzureLocal', 'Hyper-V', 'FailoverCluster', 'Checkpoint', 'Diagnostics')
             LicenseUri = 'https://github.com/NeilBird/Azure-Local/blob/main/LICENSE'
             ProjectUri = 'https://aka.ms/Get-HyperVVMCheckpointHealth'
-            ReleaseNotes = 'Version 0.2.28 improves evidence quality: exports deduplicated historic correlation events in per-VM CSVs with typed scope, attribution, correlation, classification, and disposition fields; explains former-owner event provenance; adds fleet-only 15268 flood observations; distinguishes storage fault collection failure from successful empty results; clarifies timestamps, run-scope arithmetic, collection-state advisories, and artifact-specific safety guidance; and displays long Replica ages in days plus exact minutes.'
+            ReleaseNotes = 'Version 0.2.28 improves evidence quality: exports deduplicated historic correlation events in per-VM CSVs with typed scope, attribution, correlation, classification, and disposition fields; explains former-owner event provenance; adds fleet-only 15268 flood observations; distinguishes storage fault collection failure from successful empty results; keeps remote storage filtering self-contained; records historic-query failures as incomplete evidence; honors SkipWorkerEvents for targeted historic scans; preserves node identity in event context; clarifies timestamps, run-scope arithmetic, collection-state advisories, and artifact-specific safety guidance; and displays long Replica ages in days plus exact minutes.'
         }
     }
 }

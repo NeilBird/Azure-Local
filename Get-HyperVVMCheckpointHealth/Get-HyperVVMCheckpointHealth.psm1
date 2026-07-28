@@ -117,7 +117,7 @@ function Get-HyperVVMCheckpointHealth {
 .NOTES
     Author  : Neil Bird, Microsoft
     Created : 2026-07-10
-    Updated : 2026-07-27
+    Updated : 2026-07-28
     Version : 0.2.28
     
     Requires: Windows PowerShell 5.1 (this module is written for, and validated against, Windows
