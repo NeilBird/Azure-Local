@@ -314,7 +314,9 @@ function Get-ClusterStorageHealthSnapshot {
     [OutputType([object])]
     param([string]$TargetNode)
 
+    $storageFaultTypePattern = '^(?:Microsoft\.Health\.(?:FaultType|EntityType)\.)?(?:FaultDomain|PhysicalDisk|StorageEnclosure|StoragePool|StorageScaleUnit|VirtualDisks|Volume)(?:\.|$)'
     $scan = {
+        param($StorageFaultTypePattern)
         $o = [ordered]@{
             ComputerName   = $env:COMPUTERNAME
             StorageModule  = [bool](Get-Command Get-StorageJob -ErrorAction SilentlyContinue)
@@ -334,7 +336,11 @@ function Get-ClusterStorageHealthSnapshot {
         try { $o.Subsystem = @(Get-StorageSubSystem -ErrorAction Stop | ForEach-Object { [pscustomobject]@{ Name = [string]$_.FriendlyName; Health = [string]$_.HealthStatus } }) } catch { $o.Notes += "Subsystem: $($_.Exception.Message)" }
         if (Get-Command Get-HealthFault -ErrorAction SilentlyContinue) {
             try {
-                $o.HealthFaults = @(Get-HealthFault -ErrorAction Stop | Where-Object { Test-StorageHealthFault -Fault $_ } | ForEach-Object {
+                $o.HealthFaults = @(Get-HealthFault -ErrorAction Stop | Where-Object {
+                    $faultType = if ($_.PSObject.Properties['FaultType']) { [string]$_.FaultType } else { '' }
+                    $faultingObjectType = if ($_.PSObject.Properties['FaultingObjectType']) { [string]$_.FaultingObjectType } else { '' }
+                    ($faultType -match $StorageFaultTypePattern) -or ($faultingObjectType -match $StorageFaultTypePattern)
+                } | ForEach-Object {
                     [pscustomobject]@{
                         FaultType                 = if ($_.PSObject.Properties['FaultType']) { [string]$_.FaultType } else { '' }
                         FaultingObjectType        = if ($_.PSObject.Properties['FaultingObjectType']) { [string]$_.FaultingObjectType } else { '' }
@@ -396,9 +402,9 @@ function Get-ClusterStorageHealthSnapshot {
     try {
         $local = $env:COMPUTERNAME
         if ($TargetNode -and ($TargetNode.Split('.')[0] -ne $local)) {
-            $raw = Invoke-Command -ComputerName $TargetNode -ScriptBlock $scan -ErrorAction Stop
+            $raw = Invoke-Command -ComputerName $TargetNode -ScriptBlock $scan -ArgumentList $storageFaultTypePattern -ErrorAction Stop
         } else {
-            $raw = & $scan
+            $raw = & $scan $storageFaultTypePattern
         }
     } catch {
         return [pscustomobject]@{ Available = $false; Source = $TargetNode; Summary = 'Unavailable'; Note = $_.Exception.Message; StorageJobs = @(); VDiskUnhealthy = @(); PDiskUnhealthy = @(); Subsystem = @(); HealthFaults = @(); HealthFaultCollectionStatus = 'Not attempted'; HealthFaultCollection = [pscustomobject]@{ Operation = 'Get-ClusterStorageHealthSnapshot'; Status = 'Failed'; ExceptionType = $_.Exception.GetType().FullName; ErrorCategory = if ($_.CategoryInfo) { [string]$_.CategoryInfo.Category } else { [string]$_.FullyQualifiedErrorId }; Message = [string]$_.Exception.Message; Scope = $TargetNode }; CsvRedirected = @() }

@@ -140,6 +140,28 @@ Describe 'Get-HyperVVMCheckpointHealth source contracts' {
         $script:RenderingSource | Should -Match 'Review the run debug log for full diagnostic context'
     }
 
+    It 'keeps remote storage fault filtering self-contained' {
+        $script:StorageSource | Should -Match '\$scan\s*=\s*\{\s*param\(\$StorageFaultTypePattern\)'
+        $script:StorageSource | Should -Match 'Invoke-Command.+-ArgumentList \$storageFaultTypePattern'
+        $script:StorageSource | Should -Not -Match 'Where-Object \{ Test-StorageHealthFault'
+    }
+
+    It 'preserves conservative historic and skipped-event behavior' {
+        $script:Source | Should -Match 'if \(-not \$SkipWorkerEvents -and @\(\$orphans\)\.Count -gt 0'
+        $script:Source | Should -Match "Operation 'Historic event correlation around orphan timestamps'"
+        $script:Source | Should -Match "Operation 'Historic event correlation around active checkpoint creation'"
+        $script:Source | Should -Match '\$activeCkptHistoric\s*=\s*\$null\s*\$activeCkptCoverageIncomplete\s*=\s*\$true'
+    }
+
+    It 'uses the snapshot node rather than the cache key in fleet event context' {
+        $script:Source | Should -Match 'Node\s*=\s*\[string\]\$OwningNode'
+        $script:Source | Should -Match 'Node\s*=\s*if \(\$nodeEventSnapshot\.PSObject\.Properties\[''Node''\]\)'
+    }
+
+    It 'initializes Replica server settings for disabled relationships' {
+        $script:Source | Should -Match '\$replicationServerSettings\s*=\s*\$null'
+    }
+
     It 'keeps node event scan failures distinct from successful empty results' {
         $script:Source | Should -Match '\$script:NodeEventCache\[\$nodeCacheKey\]\s*=\s*\[pscustomobject\]'
         $script:Source | Should -Not -Match '\$script:NodeEventCache\[\$nodeCacheKey\]\s*=\s*\$null'
@@ -3544,6 +3566,33 @@ Describe 'Storage Health Service fault classification' {
             Get-StorageHealthSummary -Snapshot $snapshot | Should -Be 'Degraded'
             $snapshot.HealthFaults = @()
             Get-StorageHealthSummary -Snapshot $snapshot | Should -Be 'Healthy'
+        }
+    }
+
+    It 'filters storage faults when the scan executes in isolated remote scope' {
+        InModuleScope Get-HyperVVMCheckpointHealth.Storage {
+            Mock Invoke-Command {
+                param($ComputerName, $ScriptBlock, $ArgumentList)
+                & $ScriptBlock $ArgumentList[0]
+            }
+            function Get-StorageJob { @() }
+            function Get-VirtualDisk { @() }
+            function Get-PhysicalDisk { @() }
+            function Get-StorageSubSystem { [pscustomobject]@{ FriendlyName = 'S2D'; HealthStatus = 'Healthy' } }
+            function Get-ClusterSharedVolumeState { @() }
+            function Get-HealthFault {
+                @(
+                    [pscustomobject]@{ FaultType = 'Microsoft.Health.FaultType.Volume.CapacityLow'; Reason = 'Storage fault' }
+                    [pscustomobject]@{ FaultType = 'Microsoft.Health.FaultType.Cluster.UpdateAvailable'; Reason = 'Update fault' }
+                )
+            }
+
+            $result = Get-ClusterStorageHealthSnapshot -TargetNode 'REMOTE-NODE'
+
+            $result.HealthFaultCollectionStatus | Should -Be 'Success'
+            @($result.HealthFaults).Count | Should -Be 1
+            $result.HealthFaults[0].Reason | Should -Be 'Storage fault'
+            $result.Summary | Should -Be 'Degraded'
         }
     }
 }

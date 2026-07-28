@@ -1099,7 +1099,7 @@ function Initialize-NodeDiagnosticPrefetch {
             if (-not $SkipEvents) {
                 $eventCacheKey = "{0}|{1}" -f $node, $LookbackHours
                 $script:NodeEventCache[$eventCacheKey] = [pscustomobject]@{
-                    Status = 'Unavailable'; Rows = @(); ChannelStatus = @(
+                    Node = $node; Status = 'Unavailable'; Rows = @(); ChannelStatus = @(
                         [pscustomobject]@{ Channel = 'Worker'; Status = 'Unavailable'; Error = [string]$nodeResult.Error }
                         [pscustomobject]@{ Channel = 'VMMS'; Status = 'Unavailable'; Error = [string]$nodeResult.Error }
                     ); Error = [string]$nodeResult.Error; AttemptedUtc = [DateTime]::UtcNow; AttemptCount = 0
@@ -1113,6 +1113,7 @@ function Initialize-NodeDiagnosticPrefetch {
         if (-not $SkipEvents) {
             $eventCacheKey = "{0}|{1}" -f $node, $LookbackHours
             $script:NodeEventCache[$eventCacheKey] = [pscustomobject]@{
+                Node          = $node
                 Status        = [string]$snapshot.EventStatus
                 Rows          = @($snapshot.EventRows)
                 ChannelStatus = @($snapshot.ChannelStatus)
@@ -2348,6 +2349,7 @@ function Invoke-VMCheckpointAudit {
     # Hyper-V Replica object for this VM (null unless replication is enabled; read by the HTML build).
     $replInfo = $null
     $replAssessment = $null
+    $replicationServerSettings = $null
     # Nodes whose Hyper-V-VMMS/Analytic channel is NOT actively enabled (disabled, or 'not found').
     # Populated by the Analytic section below and surfaced as a TIP in the RESULT block so the operator
     # can choose to enable it for extra diagnostic detail on the NEXT occurrence (it is easily missed
@@ -3106,6 +3108,7 @@ function Invoke-VMCheckpointAudit {
                     } -ArgumentList $EventLookbackHours, $WorkerEventIds, $ContextEventIds, $ErrorCodePatterns
                 }
                 $script:NodeEventCache[$nodeCacheKey] = [pscustomobject]@{
+                    Node          = [string]$OwningNode
                     Status        = 'Success'
                     Rows          = @($nodeSnapshot.Rows)
                     ChannelStatus = @($nodeSnapshot.ChannelStatus)
@@ -3133,6 +3136,7 @@ function Invoke-VMCheckpointAudit {
                 }
             } catch {
                 $script:NodeEventCache[$nodeCacheKey] = [pscustomobject]@{
+                    Node          = [string]$OwningNode
                     Status        = 'Unavailable'
                     Rows          = @()
                     ChannelStatus = @(
@@ -3629,7 +3633,7 @@ function Invoke-VMCheckpointAudit {
     # fork-commit; anchoring on BOTH timestamps captures the fork-commit AND the rollback. Via each
     # log's oldest-available-event time we also tell when the logs have WRAPPED past the window.
     $historicCorrelation = $null
-    if (@($orphans).Count -gt 0 -and @($clusterNodes).Count -gt 0) {
+    if (-not $SkipWorkerEvents -and @($orphans).Count -gt 0 -and @($clusterNodes).Count -gt 0) {
         Show-AuditProgress -Step 70 -Status 'Historic event correlation (around orphan timestamps)'
         $orphanAnchors = @($orphans | ForEach-Object {
             if ($_.CreationTimeUtc) { [pscustomobject]@{ Time = $_.CreationTimeUtc; Type = 'OrphanCreate' } }
@@ -3643,6 +3647,8 @@ function Invoke-VMCheckpointAudit {
                     -CorrelationAnchors $orphanAnchors -EvidenceScope HistoricOrphanWindow `
                     -SignatureIds @(3216, 18012, 19090, 19100, 16300) -SignatureRx $forkCommitRx
             } catch {
+                Add-AuditDiagnostic -ErrorRecord $_ -Operation 'Historic event correlation around orphan timestamps' `
+                    -Scope ("VM={0}; Nodes={1}" -f $VMName, (@($clusterNodes) -join ','))
                 $historicCorrelation = $null
             }
         }
@@ -3684,7 +3690,10 @@ function Invoke-VMCheckpointAudit {
                     -EvidenceScope HistoricActiveCheckpointWindow `
                     -SignatureIds @(3216, 18012, 19090, 19100, 16300) -SignatureRx $forkCommitRx
             } catch {
+                Add-AuditDiagnostic -ErrorRecord $_ -Operation 'Historic event correlation around active checkpoint creation' `
+                    -Scope ("VM={0}; Nodes={1}" -f $VMName, (@($clusterNodes) -join ','))
                 $activeCkptHistoric = $null
+                $activeCkptCoverageIncomplete = $true
             }
             if ($activeCkptHistoric) {
                 $activeCkptForkConfirmed  = (@($activeCkptHistoric.Matches | Where-Object {
@@ -4980,7 +4989,7 @@ end {
     $nodeEventContext = @($script:NodeEventCache.GetEnumerator() | Sort-Object Name | ForEach-Object {
         $nodeEventSnapshot = $_.Value
         [pscustomobject][ordered]@{
-            Node          = [string]$_.Key
+            Node          = if ($nodeEventSnapshot.PSObject.Properties['Node']) { [string]$nodeEventSnapshot.Node } else { ([string]$_.Key -split '\|', 2)[0] }
             Status        = if ($nodeEventSnapshot.PSObject.Properties['Status']) { [string]$nodeEventSnapshot.Status } else { 'Unavailable' }
             Error         = if ($nodeEventSnapshot.PSObject.Properties['Error']) { [string]$nodeEventSnapshot.Error } else { '' }
             AttemptedUtc  = if ($nodeEventSnapshot.PSObject.Properties['AttemptedUtc']) { $nodeEventSnapshot.AttemptedUtc } else { $null }
