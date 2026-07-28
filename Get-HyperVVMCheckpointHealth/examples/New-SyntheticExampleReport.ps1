@@ -254,7 +254,12 @@ $results = @(
 )
 
 $storageHealth = [pscustomobject]@{
-    Summary = 'Healthy'; Source = 'node01'; StorageJobs = @(); CsvRedirected = @()
+    Summary = 'Degraded'; Source = 'node01'; StorageJobs = @()
+    CsvRedirected = @([pscustomobject]@{
+        Volume = 'UserStorage_1'; Nodes = 'node01, node02'
+        State = 'FileSystemRedirected'; BlockReason = ''
+        FsReason = 'IncompatibleFileSystemFilter, FileSystemReFs'
+    })
     VDiskUnhealthy = @(); PDiskUnhealthy = @()
     Subsystem = @([pscustomobject]@{ Name = 'contoso01 S2D on contoso01'; Health = 'Healthy' })
     Note = ''

@@ -1275,6 +1275,22 @@ Describe 'HTML fleet report usability' {
             -DiscoveredVMs $null -DiscoverySummary ([pscustomobject]@{ EligibleCount = 0; AuditedCount = 0; DeferredCount = 0; Cap = $null }) `
             -StorageHealth $degradedStorage -IncludeDiscoveredVMs:$false -ScriptVersion '0.2.24' -ReportGenerationTime '00:00:01' `
             -ClusterNodeCount 2 -ClusterCsvCount 1 -HousekeepingFindings @()
+        $filterRedirectedStorage = [pscustomobject]@{
+            Summary = 'Degraded'; Source = 'TEST-NODE-01'; StorageJobs = @()
+            CsvRedirected = @([pscustomobject]@{
+                Volume = 'UserStorage_1'; Nodes = 'TEST-NODE-01, TEST-NODE-02'
+                State = 'FileSystemRedirected'; BlockReason = ''
+                FsReason = 'IncompatibleFileSystemFilter, FileSystemReFs'
+            })
+            VDiskUnhealthy = @(); PDiskUnhealthy = @(); Subsystem = @(); HealthFaults = @(); Note = ''
+            HealthFaultCollectionStatus = 'Success'
+        }
+        $script:FilterRedirectedStorageHtml = ConvertTo-VMCheckpointAuditHtml `
+            -Results @([pscustomobject]@{ VMName = 'TEST-VM-NORMAL'; OwningNode = 'TEST-NODE-01'; Recommendation = 'OK'; Source = 'Input'; StaleCheckpointCount = 0; ReportData = $normalReportData; Detail = '' }) `
+            -StaleHours 24 -EventLookbackHours 168 -ClusterName 'CONTOSO-CLUSTER-01' -GeneratedUtc '2026-01-01 00:00:00' `
+            -DiscoveredVMs $null -DiscoverySummary ([pscustomobject]@{ EligibleCount = 0; AuditedCount = 0; DeferredCount = 0; Cap = $null }) `
+            -StorageHealth $filterRedirectedStorage -IncludeDiscoveredVMs:$false -ScriptVersion '0.2.29' -ReportGenerationTime '00:00:01' `
+            -ClusterNodeCount 2 -ClusterCsvCount 1 -HousekeepingFindings @()
         $degradedStorageWithoutFaults = $degradedStorage.PSObject.Copy()
         $degradedStorageWithoutFaults.HealthFaults = @()
         $script:DegradedStorageNoFaultHtml = ConvertTo-VMCheckpointAuditHtml `
@@ -1452,6 +1468,17 @@ Describe 'HTML fleet report usability' {
         $script:DegradedStorageHtml | Should -Match 'Open a Microsoft Support \(CSS\) support request if you need additional guidance before taking action\.'
         $script:DegradedStorageHtml | Should -Not -Match 'A <em>Warning</em> here is often a minor, non-storage fault'
         $script:DegradedStorageHtml | Should -Not -Match 'Debug-StorageSubSystem|Repair-Storage|Set-Storage'
+    }
+
+    It 'adds read-only minifilter guidance only for incompatible CSV file-system filters' {
+        $script:FilterRedirectedStorageHtml | Should -Match '<strong>Incompatible file-system filter reported:</strong>'
+        $script:FilterRedirectedStorageHtml | Should -Match '<code>FileSystemReFs</code> remains expected for ReFS CSVs'
+        $script:FilterRedirectedStorageHtml | Should -Match 'Get-ClusterSharedVolumeState \| Sort-Object VolumeFriendlyName, Node'
+        $script:FilterRedirectedStorageHtml | Should -Match 'Invoke-Command -ComputerName \$nodes -ScriptBlock \{ fltmc filters; fltmc instances \}'
+        $script:FilterRedirectedStorageHtml | Should -Match 'Id=5120,5142'
+        $script:FilterRedirectedStorageHtml | Should -Match 'Do not unload or remove a filter based only on this report'
+        $script:DegradedStorageHtml | Should -Not -Match '<strong>Incompatible file-system filter reported:</strong>'
+        $script:CleanRenderedHtml | Should -Not -Match 'fltmc filters'
     }
 
     It 'labels the housekeeping rationale clearly' {
@@ -2119,6 +2146,13 @@ Describe 'Synthetic HTML example report' {
         $script:ExampleHtml | Should -Match 'Error \(Critical\)'
         $script:ExampleHtml | Should -Match 'Resynchronizing \(Warning\)'
         [regex]::Matches($script:ExampleHtml, '<div class="k">VSS writers</div><div>All 10 writer\(s\) Stable \(no last error\)</div>').Count | Should -Be 20
+    }
+
+    It 'demonstrates conditional incompatible file-system filter guidance' {
+        $script:ExampleHtml | Should -Match 'Incompatible file-system filter reported:'
+        $script:ExampleHtml | Should -Match 'IncompatibleFileSystemFilter, FileSystemReFs'
+        $script:ExampleHtml | Should -Match 'fltmc filters'
+        $script:ExampleHtml | Should -Match 'Do not unload or remove a filter based only on this report'
     }
 
     It 'rolls every INVESTIGATE VM into the HOLD executive summary' {
