@@ -442,7 +442,7 @@ function ConvertTo-VMCheckpointAuditHtml {
 </div>
 
 <div class="callout info">
-    <strong>Event CSV interpretation:</strong> <code>Concern</code> means <strong>Collected as concern</strong> and is retained as a broad compatibility/catalog flag. <code>VerdictDriver</code>, <code>EventClassification</code>, <code>RecoveryDisposition</code>, and <code>DispositionReason</code> are authoritative for how each row affected the result. A low-signal row can therefore retain <code>Concern=YES</code> while correctly showing <code>VerdictDriver=False</code> and <code>RecoveryDisposition=ContextOnly</code>.
+    <strong>Event CSV interpretation:</strong> <code>Concern</code> is retained as a compatibility field; the adjacent Boolean <code>CollectedAsConcern</code> states the same broad collection/catalog decision unambiguously. <code>VerdictDriver</code>, <code>EventClassification</code>, <code>RecoveryDisposition</code>, and <code>DispositionReason</code> are authoritative for how each row affected the result. A low-signal row can therefore show <code>Concern=YES</code> and <code>CollectedAsConcern=True</code> while correctly showing <code>VerdictDriver=False</code> and <code>RecoveryDisposition=ContextOnly</code>.
 </div>
 
 <div class="cards">
@@ -451,7 +451,7 @@ function ConvertTo-VMCheckpointAuditHtml {
   <div class="card amber"><div class="n">$countInv</div><div class="l">Investigate</div></div>
   <div class="card green"><div class="n">$countOk</div><div class="l">OK</div></div>
     <div class="card amber"><div class="n">$countIncomplete</div><div class="l">Incomplete</div></div>
-    <div class="card amber"><div class="n">$staleAttachedTotal</div><div class="l">Stale AVHDX layers</div></div>
+    <div class="card amber"><div class="n">$staleAttachedTotal</div><div class="l">Stale attached AVHDX layers</div></div>
     <div class="card amber"><div class="n">$staleSnapshotTotal</div><div class="l">Stale snapshots</div></div>
   <div class="card amber"><div class="n">$orphanTotal</div><div class="l">Orphaned .avhdx</div></div>
 </div>
@@ -473,18 +473,21 @@ function ConvertTo-VMCheckpointAuditHtml {
     }
 
     $eventFloodObservations = @(Get-HyperVEventFloodObservations -NodeEventContext $NodeEventContext)
+    $eventFloodHtml = ''
     if ($eventFloodObservations.Count -gt 0) {
         $affectedNodeCount = [int]$eventFloodObservations[0].AffectedNodeCount
-        [void]$sb.Append("<div class='callout warn'><strong>Cluster-level low-signal event observation:</strong> Event <code>15268</code> remains low-signal for individual VM checkpoint verdicts, but repeated <code>Failed to get the disk information</code> errors were observed at cluster scale on <strong>$affectedNodeCount node(s)</strong>. Review storage, VMMS, and backup activity for the affected nodes. This observation does not attribute the errors to every VM and does not establish checkpoint-chain corruption.<ul>")
+        $eventFloodBuilder = [System.Text.StringBuilder]::new()
+        [void]$eventFloodBuilder.Append("<div class='callout warn' id='cluster-low-signal-events'><strong>Cluster-level low-signal event observation:</strong> Event <code>15268</code> remains low-signal for individual VM checkpoint verdicts, but repeated <code>Failed to get the disk information</code> errors were observed at cluster scale on <strong>$affectedNodeCount node(s)</strong>. Review storage, VMMS, and backup activity for the affected nodes. This observation is event-driven only; it does not attribute the errors to every VM and does not establish checkpoint-chain corruption.<ul>")
         foreach ($observation in $eventFloodObservations) {
             $nodeCsvName = '_NodeEvents_{0}_*.csv' -f (([string]$observation.Node) -replace '[^\w.\-]', '_')
-            [void]$sb.Append(("<li><code>{0}</code>: {1:N0} event(s), {2} to {3}, {4:N1} minutes, approximately {5:N1}/hour, {6} distinct message signature(s). Evidence: <code>{7}</code>.</li>" -f
+            [void]$eventFloodBuilder.Append(("<li><code>{0}</code>: {1:N0} event(s), {2} to {3}, {4:N1} minutes, approximately {5:N1}/hour, {6} distinct message signature(s). Evidence: <code>{7}</code>.</li>" -f
                 (ConvertTo-HtmlText $observation.Node), [int]$observation.Count,
                 (ConvertTo-HtmlText $observation.FirstUtc), (ConvertTo-HtmlText $observation.LastUtc),
                 [double]$observation.DurationMinutes, [double]$observation.AverageRatePerHour,
                 [int]$observation.DistinctMessageCount, (ConvertTo-HtmlText $nodeCsvName)))
         }
-        [void]$sb.Append('</ul></div>')
+        [void]$eventFloodBuilder.Append('</ul></div>')
+        $eventFloodHtml = $eventFloodBuilder.ToString()
     }
 
     # Shared fleet evidence used by mixed HOLD / historic-recovery / INVESTIGATE headlines.
@@ -548,6 +551,9 @@ function ConvertTo-VMCheckpointAuditHtml {
     $storageExecSummaryLi = if ($storageDegraded) {
         "<li><strong><a href='#cluster-storage-health'>Cluster storage requires investigation:</a></strong> $storageReasonText. See Cluster storage health and the existing CSS Storage Diagnostic guidance below.</li>"
     } else { '' }
+    $eventFloodExecSummaryLi = if ($eventFloodObservations.Count -gt 0) {
+        "<li><strong><a href='#cluster-low-signal-events'>Cluster-level low-signal event observation:</a></strong> repeated event <code>15268</code> activity was observed on <strong>$([int]$eventFloodObservations[0].AffectedNodeCount) node(s)</strong>. This is event-driven cluster context only; it does not change individual VM verdicts. See the bottom of Cluster storage health.</li>"
+    } else { '' }
 
     # Adaptive headline.
     if ($countHold -gt 0) {
@@ -562,6 +568,7 @@ function ConvertTo-VMCheckpointAuditHtml {
     <li><strong>Fleet-wide checkpoint / replication evidence:</strong> $investigateEvidenceText. See Recommended next steps and the per-VM detail below.</li>
     $housekeepingExecSummaryLi
     $storageExecSummaryLi
+    $eventFloodExecSummaryLi
   </ul>
 </div>
 "@)
@@ -586,6 +593,7 @@ function ConvertTo-VMCheckpointAuditHtml {
         <li><strong>Fleet-wide INVESTIGATE evidence:</strong> $investigateEvidenceText. See Recommended next steps and the per-VM detail below.</li>
     $housekeepingExecSummaryLi
 $storageExecSummaryLi
+$eventFloodExecSummaryLi
   </ul>
 </div>
 "@)
@@ -607,6 +615,7 @@ $storageExecSummaryLi
     <li>$execTriageLi</li>
     $housekeepingExecSummaryLi
     $storageExecSummaryLi
+    $eventFloodExecSummaryLi
   </ul>
 </div>
 "@)
@@ -620,6 +629,7 @@ $storageExecSummaryLi
         <li>$execTriageLi</li>
     $housekeepingExecSummaryLi
     $storageExecSummaryLi
+    $eventFloodExecSummaryLi
     </ul>
 </div>
 "@)
@@ -637,6 +647,7 @@ $storageExecSummaryLi
         <li>$execTriageLi</li>
     $housekeepingExecSummaryLi
     $storageExecSummaryLi
+    $eventFloodExecSummaryLi
     </ul>
 </div>
 "@)
@@ -1172,9 +1183,14 @@ $storageExecSummaryLi
                     [void]$sb.Append("  <div class='callout info'><strong>OK - apparently recovered operation.</strong> $($rd.VmHighOpCount) checkpoint or merge failure event(s) are followed by a successful merge within the configured correlation window, and no persistent file or checkpoint remains. The events do <strong>not</strong> contain the same disk or operation identifier, so the report cannot prove that the success event resolved the earlier failure. Review the events CSV and backup history if this pattern occurs again.</div>`r`n")
                 }
             } elseif ($rd.LowSignalOnly) {
-                [void]$sb.Append("  <div class='callout ok'><strong>OK.</strong> No active checkpoint layers, no orphaned .avhdx, replica healthy and VSS stable. Note: $($rd.VmLowConcernCount) low-signal event(s) are attributed to this VM - e.g. transient 'background disk merge interrupted' (<code>19090</code>) that subsequently completed (no leftover <code>.avhdx</code> remains), or 'failed to get disk information' (<code>15268</code>) storage / housekeeping chatter. These are not, on their own, a concern and need no action.</div>`r`n")
+                $replicaSummary = if ($rd.PSObject.Properties['ReplAssessment'] -and $rd.ReplAssessment -and $rd.ReplAssessment.MeasurementStatus -eq 'Advisory') { 'no verdict-driving Replica concern; one measurement advisory is recorded' } else { 'Replica product state and measurements are healthy' }
+                [void]$sb.Append("  <div class='callout ok'><strong>OK.</strong> No active checkpoint layers, no orphaned .avhdx, $replicaSummary, and VSS is stable. Note: $($rd.VmLowConcernCount) low-signal event(s) are attributed to this VM - e.g. transient 'background disk merge interrupted' (<code>19090</code>) that subsequently completed (no leftover <code>.avhdx</code> remains), or 'failed to get disk information' (<code>15268</code>) storage / housekeeping chatter. These are not, on their own, a concern and need no action.</div>`r`n")
             } else {
-                [void]$sb.Append("  <div class='callout ok'><strong>OK.</strong> No active checkpoint layers and no concern signals were found. No action required from this result.</div>`r`n")
+                if ($rd.PSObject.Properties['ReplAssessment'] -and $rd.ReplAssessment -and $rd.ReplAssessment.MeasurementStatus -eq 'Advisory') {
+                    [void]$sb.Append("  <div class='callout ok'><strong>OK.</strong> No active checkpoint layers or verdict-driving concern was found; one Replica measurement advisory is recorded below the verdict threshold. No action required from this result.</div>`r`n")
+                } else {
+                    [void]$sb.Append("  <div class='callout ok'><strong>OK.</strong> No active checkpoint layers and no concern signals were found. No action required from this result.</div>`r`n")
+                }
             }
         }
         # v0.2.17: PROACTIVE active-checkpoint findings (pre-migration). Rendered for ANY verdict when set,
@@ -1433,7 +1449,13 @@ $storageExecSummaryLi
         if ("$($sh.Summary)" -eq 'Unavailable' -and $sh.Note) {
             [void]$sb.Append("<p class='muted'>Storage cmdlets were not available from the snapshot node: $(ConvertTo-HtmlText $sh.Note)</p>")
         }
+        if ($eventFloodHtml) { [void]$sb.Append($eventFloodHtml) }
         [void]$sb.Append("<div class='callout info'><strong>Deeper analysis (recommended):</strong> this is a lightweight snapshot. Validate the current fault state and use your cluster maintenance procedures before performing any recommended action. For a full Storage Spaces Direct / SBL diagnostic - including storage event-channel analysis around the incident window - run Microsoft's CSS Storage Diagnostic, which performs far more checks. Open a Microsoft Support (CSS) support request if you need additional guidance before taking action.<br><code>Install-Module -Name Microsoft.AzLocal.CSSTools</code><br><code>Start-AzsSupportStorageDiagnostic</code><br><a href='https://github.com/Azure/AzureLocal-Supportability/blob/main/tools/CSSTools/1.2605.5.1611/functions/Start-AzsSupportStorageDiagnostic.md' target='_blank' rel='noopener noreferrer'>Start-AzsSupportStorageDiagnostic documentation</a></div>`r`n")
+        [void]$sb.Append("</div></details>`r`n")
+    } elseif ($eventFloodHtml) {
+        [void]$sb.Append("<details class='report-section' id='cluster-storage-health' open><summary><h2>Cluster storage health (Storage Spaces Direct / CSV)</h2></summary><div class='report-section-body'>`r`n")
+        [void]$sb.Append("<div class='callout info'><strong>Storage snapshot not collected.</strong> The event-driven observation below remains available, but no storage-health conclusion was produced.</div>`r`n")
+        [void]$sb.Append($eventFloodHtml)
         [void]$sb.Append("</div></details>`r`n")
     }
 

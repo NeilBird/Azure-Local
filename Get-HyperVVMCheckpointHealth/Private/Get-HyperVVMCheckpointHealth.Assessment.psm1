@@ -173,6 +173,7 @@ function ConvertTo-HyperVEventCsvRows {
             Level = if ($eventRow.PSObject.Properties['Level']) { [string]$eventRow.Level } else { '' }
             Log = [string]$eventRow.Log
             Concern = $concern
+            CollectedAsConcern = ($concern -eq 'YES')
             VmAttributed = [bool]$attribution.Attributed
             AttributionMethod = [string]$attribution.Method
             AttributionConfidence = [string]$attribution.Confidence

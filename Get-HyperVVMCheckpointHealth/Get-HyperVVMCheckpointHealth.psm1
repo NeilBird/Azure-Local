@@ -118,7 +118,7 @@ function Get-HyperVVMCheckpointHealth {
     Author  : Neil Bird, Microsoft
     Created : 2026-07-10
     Updated : 2026-07-28
-    Version : 0.2.28
+    Version : 0.2.29
     
     Requires: Windows PowerShell 5.1 (this module is written for, and validated against, Windows
               PowerShell 5.1 ONLY - it is NOT intended or tested for PowerShell 7.x). Requires the
@@ -366,7 +366,7 @@ Then run this in Windows PowerShell 5.1, on a cluster node or a workstation that
 
 # Module version - single source of truth surfaced in the HTML report (header meta + footer) so a
 # saved / emailed report always states which build produced it. Keep in sync with the .NOTES Version.
-$script:ScriptVersion = '0.2.28'
+$script:ScriptVersion = '0.2.29'
 
 # v0.2.14: end-to-end run stopwatch - started as early as possible so the HTML report can state the
 # total time taken to audit the whole fleet and render the report ("Report generation time hh:mm:ss").
@@ -2018,6 +2018,7 @@ function Invoke-VMCheckpointAudit {
             Level        = 'Info'
             Log          = ''
             Concern      = ''
+            CollectedAsConcern = $false
             VmAttributed = ''
             AttributionMethod = ''
             AttributionConfidence = ''
@@ -2031,7 +2032,7 @@ function Invoke-VMCheckpointAudit {
             RecoveryDisposition = 'NotApplicable'
             DispositionReason = 'Marker row; no event was assessed.'
             FullMessage  = $Message
-        } | Select-Object 'Time (UTC)', Node, Id, Level, Log, Concern, VmAttributed, AttributionMethod,
+        } | Select-Object 'Time (UTC)', Node, Id, Level, Log, Concern, CollectedAsConcern, VmAttributed, AttributionMethod,
             AttributionConfidence, EvidenceScope, CorrelationAnchor, CorrelationWindowStartUtc,
             CorrelationWindowEndUtc, EventClassification, VerdictDriver, IsConfirmingFork,
             RecoveryDisposition, DispositionReason, FullMessage |
@@ -2463,10 +2464,20 @@ function Invoke-VMCheckpointAudit {
         if ($top -and $top.Created) {
             $topCheckpointAge = [math]::Round(([DateTime]::UtcNow - $top.Created).TotalHours, 1)
             Write-AuditReportLine ("  Created (UTC)  : {0}" -f $top.Created.ToString('yyyy-MM-dd HH:mm:ssZ'))
-            Write-AuditReportLine ("  Checkpoint age : {0} hours (since AVHDX creation)" -f $topCheckpointAge)
+            if ($top.Type -eq 'Differencing') {
+                Write-AuditReportLine ("  Checkpoint age : {0} hours (since AVHDX creation)" -f $topCheckpointAge)
+            } elseif ($top.Type -in @('Dynamic', 'Fixed')) {
+                Write-AuditReportLine ("  Disk age       : {0} hours (since base disk creation)" -f $topCheckpointAge)
+            } else {
+                Write-AuditReportLine ("  Disk age       : {0} hours (since file creation)" -f $topCheckpointAge)
+            }
         } else {
             Write-AuditReportLine "  Created (UTC)  : (unavailable)"
-            Write-AuditReportLine "  Checkpoint age : (unavailable)"
+            if ($top -and $top.Type -eq 'Differencing') {
+                Write-AuditReportLine "  Checkpoint age : (unavailable)"
+            } else {
+                Write-AuditReportLine "  Disk age       : (unavailable)"
+            }
         }
         if ($top -and $top.LastWrite) {
             $topActivityAge = [math]::Round(([DateTime]::UtcNow - $top.LastWrite).TotalHours, 1)
@@ -2758,14 +2769,28 @@ function Invoke-VMCheckpointAudit {
                 }
                 $scopeNames = @((@($classification.Owners) + @($classification.AssociatedVMs)) | Where-Object { $_ } | Sort-Object -Unique)
                 $scope = if ($scopeNames.Count -gt 0) { $scopeNames -join ', ' } elseif ($diskFile.CsvRoot) { [string]$diskFile.CsvRoot } else { 'Cluster storage' }
+                $ownerText = if (@($classification.Owners).Count -gt 0) { @($classification.Owners) -join ', ' } else { 'none' }
+                $associatedVmText = if (@($classification.AssociatedVMs).Count -gt 0) { @($classification.AssociatedVMs) -join ', ' } else { 'none' }
                 $observation = switch ($classification.Classification) {
-                    'PlacementInconsistency'          { "Virtual disk placement and VM ownership associations differ: $($diskFile.FullName)" }
+                    'PlacementInconsistency'          {
+                        if ($classification.PlacementReason -eq 'UnreferencedInVMAssociatedFolder') {
+                            "No VM or snapshot inventory references this virtual disk under complete coverage, but its path is inside a folder associated with VM(s): $associatedVmText. Filename text is not used as ownership evidence: $($diskFile.FullName)"
+                        } else {
+                            "This virtual disk is referenced by VM(s): $ownerText, but its path is inside a folder associated with different VM(s): $associatedVmText. Filename text is not used as ownership evidence: $($diskFile.FullName)"
+                        }
+                    }
                     'UnattachedDifferencingCandidate' { "No VM or snapshot chain references this AVHDX under complete coverage: $($diskFile.FullName)" }
                     'UnattachedVhdSetCandidate'       { "No VM or snapshot inventory references this VHDS under complete coverage: $($diskFile.FullName)" }
                     default                           { "No VM or snapshot chain references this base disk under complete coverage: $($diskFile.FullName)" }
                 }
                 $review = switch ($classification.Classification) {
-                    'PlacementInconsistency'          { 'This virtual disk is attached to or referenced by a VM, but its path does not align with the detected VM ownership folders. Confirm the intended owner and storage layout with the VM, backup, and storage owners. Do not move the file based only on this report.' }
+                    'PlacementInconsistency'          {
+                        if ($classification.PlacementReason -eq 'UnreferencedInVMAssociatedFolder') {
+                            'Confirm whether this unreferenced disk is a required image, retired workload disk, backup/live-mount artifact, or intentionally retained data. Verify its history with the VM and backup owners. Do not attach, move, rename, or delete it based only on this report.'
+                        } else {
+                            'Confirm whether the authoritative VM reference and the different VM-associated storage folder are intentional. Review the VM configuration and storage layout with the VM, backup, and storage owners. Do not move or rename the file based only on this report.'
+                        }
+                    }
                     'UnattachedDifferencingCandidate' { 'Confirm whether this unreferenced differencing disk contains required recovery data with the VM and backup owners. Do not merge, move, or delete the file based only on this report.' }
                     'UnattachedVhdSetCandidate'       { 'Confirm whether this unreferenced VHD Set is still required by a guest cluster with the VM, backup, and storage owners. Do not modify the VHDS or its Hyper-V-managed files based only on this report.' }
                     default                           { 'If this virtual disk belongs to an image library, exclude its full path with storage.imageLibraryPathPatterns in a checkpoint-health-policy.yml file supplied via -PolicyPath (see housekeeping guidance). Otherwise, confirm intended ownership and storage layout with the VM, backup, and storage owners. Do not modify the file based only on this report.' }
@@ -2782,6 +2807,9 @@ function Invoke-VMCheckpointAudit {
                     CreationTimeUtc = $diskFile.CreationTimeUtc
                     LastWriteTimeUtc = $diskFile.LastWriteTimeUtc
                     Classification = [string]$classification.Classification
+                    PlacementReason = [string]$classification.PlacementReason
+                    Owners       = @($classification.Owners)
+                    AssociatedVMs = @($classification.AssociatedVMs)
                     Observation = $observation
                     Review      = $review
                 })
@@ -3246,26 +3274,32 @@ function Invoke-VMCheckpointAudit {
                 }
             }
 
-            # The console / .txt table can be swamped by thousands of identical rows (e.g. repeated
-            # 15268). Cap each event ID to the first few rows here; the CSV keeps EVERY event, and a
-            # note states how many duplicates were collapsed and points to the CSV for full detail.
+            # Keep the per-VM TXT focused on evidence attributable to this VM. Node-wide context is
+            # summarized below and retained in its shared CSV rather than copied into every VM table.
+            $txtVmEvents = @($workerEvents | Where-Object { $_.VmAttributed })
             $perIdCap     = 5
             $displayRows  = [System.Collections.Generic.List[object]]::new()
             $removedNotes = [System.Collections.Generic.List[string]]::new()
-            $workerEvents | Group-Object Id | Sort-Object { [int]$_.Name } | ForEach-Object {
+            $txtVmEvents | Group-Object Id | Sort-Object { [int]$_.Name } | ForEach-Object {
                 $grp = @($_.Group | Sort-Object 'Time (UTC)', Log, RecordId, Id, FullMessage)
                 foreach ($e in ($grp | Select-Object -First $perIdCap)) { $displayRows.Add($e) }
                 if ($grp.Count -gt $perIdCap) {
                     $removedNotes.Add(("  Removed {0} duplicate Event ID {1} entries (showing first {2}) - Review CSV file for full details." -f ($grp.Count - $perIdCap), $_.Name, $perIdCap))
                 }
             }
-            # Console table shows the first message line only (readability); full text is in the CSV.
-            @($displayRows | Sort-Object 'Time (UTC)', Log, RecordId, Id, FullMessage) | Format-Table 'Time (UTC)', Id, Level, Log, Concern, Message -AutoSize -Wrap | Out-Indented
+            if ($txtVmEvents.Count -gt 0) {
+                # Console table shows the first message line only (readability); full text is in the CSV.
+                @($displayRows | Sort-Object 'Time (UTC)', Log, RecordId, Id, FullMessage) | Format-Table 'Time (UTC)', Id, Level, Log, Concern, Message -AutoSize -Wrap | Out-Indented
+            } else {
+                Write-AuditReportLine "  No matching events were attributable to this VM."
+            }
             foreach ($note in $removedNotes) { Write-AuditReportLine $note }
             if ($removedNotes.Count -gt 0) { Write-AuditReportLine "" }
-            Write-AuditReportLine ("  {0} event(s) matched ({1} shown after collapsing duplicates); {2} flagged as a Concern - {3} attributable to this VM, {4} node-wide (other VMs / none)." -f $workerEvents.Count, $displayRows.Count, $eventConcernCount, $vmEventConcernCount, ($eventConcernCount - $vmEventConcernCount))
+            Write-AuditReportLine ("  {0} event(s) attributable to this VM ({1} shown after collapsing duplicates); {2} collected as concern." -f $txtVmEvents.Count, $displayRows.Count, $vmEventConcernCount)
+            Write-AuditReportLine "  Node-wide event context is summarized below and exported separately; it is not listed in this VM table."
+            Write-AuditReportLine ("  Node-wide context: {0} other event(s), including {1} collected as concern for other VMs or no VM." -f ($workerEvents.Count - $txtVmEvents.Count), ($eventConcernCount - $vmEventConcernCount))
             Write-AuditReportLine  "  Informational lifecycle events (VM started, checkpoint completed, merge started / finished OK)"
-            Write-AuditReportLine  "  are listed for context but NOT flagged as a Concern."
+            Write-AuditReportLine  "  attributable to this VM are listed for context but are not verdict drivers by themselves."
         } else {
             Write-AuditReportLine "  No matching events in the last $EventLookbackHours hours."
             Write-AuditReportLine ""
@@ -3869,7 +3903,7 @@ function Invoke-VMCheckpointAudit {
         Write-AuditReportLine ""
         Write-Section "Collection State Consistency:"
         Write-AuditReportLine "  ADVISORY - only the VM configuration last-write timestamp changed during collection while"
-        Write-AuditReportLine "  Hyper-V Replica remained Replicating / Normal. Normal Replica metadata activity can cause this."
+        Write-AuditReportLine "  Hyper-V Replica remained Replicating / Normal. The audit did not identify the writer of this timestamp-only change."
         Write-AuditReportLine "  Owner, power state, checkpoint count, and attached disk paths remained stable, so this does not"
         Write-AuditReportLine "  make the checkpoint evidence inconclusive or change the VM health verdict."
         Write-AuditReportLine ""
@@ -4104,14 +4138,26 @@ function Invoke-VMCheckpointAudit {
             Write-AuditReportLine ("    {0}. Open a Microsoft Support case if a confirming fork-commit signature appears, a persistent merge failure or durable disk artifact cannot be resolved, or the responsible owner rules out their component." -f ($actionNumber + 1))
         }
     } else {
+        $replicaAdvisorySummary = ($replAssessment -and $replAssessment.MeasurementStatus -eq 'Advisory')
         if ($lowSignalOnly) {
-            Write-AuditReportLine ("  No VM-health action required from this result - no active checkpoint layer(s), no orphaned .avhdx, healthy replica" )
-            Write-AuditReportLine  "  and stable VSS writers. This VM has no high-signal concern events; the low-signal event(s) attributed"
+            if ($replicaAdvisorySummary) {
+                Write-AuditReportLine "  No VM-health action required from this result - no active checkpoint layer(s), no orphaned .avhdx,"
+                Write-AuditReportLine "  no verdict-driving Replica concern; one measurement advisory is recorded, and VSS writers are stable."
+            } else {
+                Write-AuditReportLine "  No VM-health action required from this result - no active checkpoint layer(s), no orphaned .avhdx, healthy replica"
+                Write-AuditReportLine "  and stable VSS writers."
+            }
+            Write-AuditReportLine  "  This VM has no high-signal concern events; the low-signal event(s) attributed"
             Write-AuditReportLine  "  to it (e.g. a 'background disk merge interrupted' (19090) that subsequently completed with no leftover"
             Write-AuditReportLine  "  .avhdx, or 'failed to get disk information' (15268) storage / housekeeping chatter) are not, on their"
             Write-AuditReportLine  "  own, a concern and need no action."
         } else {
-            Write-AuditReportLine  "  No VM-health action required from this result - no active checkpoint layer(s) and no concern signals were found."
+            if ($replicaAdvisorySummary) {
+                Write-AuditReportLine "  No VM-health action required from this result - no active checkpoint layer(s) and no verdict-driving"
+                Write-AuditReportLine "  Replica concern; one measurement advisory is recorded below the verdict threshold."
+            } else {
+                Write-AuditReportLine "  No VM-health action required from this result - no active checkpoint layer(s) and no concern signals were found."
+            }
         }
         if ($script:HousekeepingFindings.Count -gt 0) {
             Write-AuditReportLine  "  Review the separate cluster / storage housekeeping observations in the HTML report before making"

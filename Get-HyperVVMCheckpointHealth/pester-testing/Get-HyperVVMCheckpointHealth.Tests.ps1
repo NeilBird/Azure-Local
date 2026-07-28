@@ -405,7 +405,7 @@ Describe 'Get-HyperVVMCheckpointHealth source contracts' {
 
     It 'documents explicit scope arithmetic and authoritative event CSV semantics' {
         $script:RenderingSource | Should -Match '\$inputCount input \+ \$autoAuditedCount automatically discovered = \$countAll processed'
-        $script:RenderingSource | Should -Match 'Concern.*Collected as concern'
+        $script:RenderingSource | Should -Match 'Concern.*compatibility field.*CollectedAsConcern'
         $script:RenderingSource | Should -Match 'VerdictDriver.*authoritative'
     }
 
@@ -438,7 +438,7 @@ Describe 'Per-VM event marker CSV contract' {
         $row = Import-Csv -LiteralPath (Join-Path $TestDrive $csvName)
 
         @($row.PSObject.Properties.Name) | Should -Be @(
-            'Time (UTC)', 'Node', 'Id', 'Level', 'Log', 'Concern', 'VmAttributed',
+            'Time (UTC)', 'Node', 'Id', 'Level', 'Log', 'Concern', 'CollectedAsConcern', 'VmAttributed',
             'AttributionMethod', 'AttributionConfidence', 'EvidenceScope', 'CorrelationAnchor',
             'CorrelationWindowStartUtc', 'CorrelationWindowEndUtc', 'EventClassification',
             'VerdictDriver', 'IsConfirmingFork', 'RecoveryDisposition', 'DispositionReason', 'FullMessage'
@@ -484,6 +484,8 @@ Describe 'Structured historic event evidence contract' {
         $rows[0].AttributionConfidence | Should -Be 'High'
         $rows[0].EvidenceScope | Should -Be 'HistoricOrphanWindow'
         $rows[0].CorrelationAnchor | Should -Be 'OrphanCreate'
+        $rows[0].Concern | Should -Be 'YES'
+        $rows[0].CollectedAsConcern | Should -BeTrue
         $rows[0].IsConfirmingFork | Should -BeTrue
         $rows[0].VerdictDriver | Should -BeTrue
         $rows[0].FullMessage | Should -Match 'Preserve evidence'
@@ -855,8 +857,8 @@ Describe 'Module distribution contracts' {
         $script:ModuleCommand = Get-Command Get-HyperVVMCheckpointHealth -Module Get-HyperVVMCheckpointHealth
     }
 
-    It 'imports a valid 0.2.28 module manifest' {
-        $script:Manifest.Version.ToString() | Should -Be '0.2.28'
+    It 'imports a valid 0.2.29 module manifest' {
+        $script:Manifest.Version.ToString() | Should -Be '0.2.29'
         $script:Manifest.ExportedFunctions.Keys | Should -Contain 'Get-HyperVVMCheckpointHealth'
     }
 
@@ -888,15 +890,27 @@ Describe 'Module distribution contracts' {
         $events = @(0..9 | ForEach-Object {
             [pscustomobject]@{ 'Time (UTC)' = ([datetime]'2026-07-01T00:00:00Z').AddSeconds($_ * 30).ToString('yyyy-MM-dd HH:mm:ssZ'); Id = 15268; FullMessage = 'Failed to get the disk information' }
         })
+        $storageHealth = [pscustomobject]@{
+            Summary = 'Healthy'; Source = 'TEST-NODE'; StorageJobs = @(); CsvRedirected = @()
+            VDiskUnhealthy = @(); PDiskUnhealthy = @(); Note = ''; HealthFaultCollectionStatus = 'Success'
+            HealthFaults = @(); Subsystem = @()
+        }
         $html = & $module {
-            param($nodeEvents)
+            param($nodeEvents, $storageSnapshot)
             ConvertTo-VMCheckpointAuditHtml -Results @() -StaleHours 24 -EventLookbackHours 168 `
                 -ClusterName 'TEST-CLUSTER' -GeneratedUtc '2026-07-01 01:00:00Z' -DiscoveredVMs @() `
                 -DiscoverySummary ([pscustomobject]@{ EligibleCount = 0; AuditedCount = 0; DeferredCount = 0; Cap = $null }) `
-                -StorageHealth $null -HousekeepingFindings @() -NodeEventContext @([pscustomobject]@{ Node = 'TEST-NODE'; Events = $nodeEvents }) `
-                -IncludeDiscoveredVMs:$false -ScriptVersion '0.2.28' -ReportGenerationTime '00:00:01' -ClusterNodeCount 1 -ClusterCsvCount 1
-        } $events
+                -StorageHealth $storageSnapshot -HousekeepingFindings @() -NodeEventContext @([pscustomobject]@{ Node = 'TEST-NODE'; Events = $nodeEvents }) `
+                -IncludeDiscoveredVMs:$false -ScriptVersion '0.2.29' -ReportGenerationTime '00:00:01' -ClusterNodeCount 1 -ClusterCsvCount 1
+        } $events $storageHealth
         $html | Should -Match 'Cluster-level low-signal event observation'
+        $html | Should -Match "<a href='#cluster-low-signal-events'>Cluster-level low-signal event observation:</a>"
+        $html | Should -Match "id='cluster-low-signal-events'"
+        $storageStart = $html.IndexOf("id='cluster-storage-health'")
+        $observationStart = $html.IndexOf("id='cluster-low-signal-events'")
+        $deeperAnalysisStart = $html.IndexOf('Deeper analysis (recommended)')
+        $storageStart | Should -BeLessThan $observationStart
+        $observationStart | Should -BeLessThan $deeperAnalysisStart
         & $module { ConvertTo-ReplicaDurationText -Minutes 20160 } | Should -Be '20,160.0 min (14.0 days)'
     }
 
@@ -957,7 +971,7 @@ Describe 'Module distribution contracts' {
         $readme | Should -Not -Match "Select-Object @\{n='VM';e=\{ \$_\.Name \}\}, AgeHrs"
         $readme | Should -Match 'dark orange identifies the observed value that supports a concern'
         $readme | Should -Match 'stale checkpoint or attached AVHDX `YES` and the checkpoint creation age that breached `-StaleHours`'
-        $readme | Should -Match 'Base VHDX rows are not checkpoints and always show \*\*Checkpoint stale = n/a \(base\)\*\*'
+        $readme | Should -Match 'Base VHDX rows are not checkpoints: their creation interval is labelled \*\*Disk age\*\*, and \*\*Checkpoint stale = n/a \(base\)\*\*'
         $readme | Should -Match 'driver-specific `Detail` text for `INVESTIGATE`'
         $readme | Should -Match 'event-attribution telemetry records `Rows=0`'
     }
@@ -1388,6 +1402,24 @@ Describe 'HTML fleet report usability' {
         $script:StateAdvisoryHtml | Should -Match "<div class='callout ok'><strong>OK\.</strong>"
     }
 
+    It 'uses evidence-scoped labels and advisory-aware summary prose' {
+        $moduleSource = Get-Content -LiteralPath (Join-Path (Split-Path $PSScriptRoot -Parent) 'Get-HyperVVMCheckpointHealth.psm1') -Raw
+
+        $script:RenderedHtml | Should -Match '<div class="l">Stale attached AVHDX layers</div>'
+        $moduleSource | Should -Match "Disk age\s+: \{0\} hours \(since base disk creation\)"
+        $moduleSource | Should -Match 'if \(\$top\.Type -eq ''Differencing''\)[\s\S]+Checkpoint age : \{0\} hours \(since AVHDX creation\)[\s\S]+elseif \(\$top\.Type -in @\(''Dynamic'', ''Fixed''\)\)[\s\S]+Disk age\s+: \{0\} hours \(since base disk creation\)'
+        $moduleSource | Should -Match 'no verdict-driving Replica concern; one measurement advisory is recorded'
+        $moduleSource | Should -Match 'The audit did not identify the writer of this timestamp-only change\.'
+        $moduleSource | Should -Not -Match 'Normal Replica metadata activity can cause this\.'
+    }
+
+    It 'prints VM-attributed events before summarizing node-wide context in TXT reports' {
+        $moduleSource = Get-Content -LiteralPath (Join-Path (Split-Path $PSScriptRoot -Parent) 'Get-HyperVVMCheckpointHealth.psm1') -Raw
+
+        $moduleSource | Should -Match '\$txtVmEvents\s*=\s*@\(\$workerEvents \| Where-Object \{ \$_\.VmAttributed \}\)'
+        $moduleSource | Should -Match 'Node-wide event context is summarized below and exported separately; it is not listed in this VM table\.'
+    }
+
     It 'states additional unaudited discovery coverage only when applicable' {
         $script:RenderedHtml | Should -Match '<strong>Audit coverage:</strong> <strong>1 additional discovered VM was not audited in this run</strong> and is not represented by the findings or summary totals below\.'
         $script:CleanRenderedHtml | Should -Not -Match '<strong>Audit coverage:</strong>'
@@ -1531,7 +1563,7 @@ Describe 'HTML fleet report usability' {
 
     It 'uses a full-width audited-VM lead card and keeps orphaned AVHDX last' {
         $script:RenderedHtml | Should -Match '<div class="card lead"><div class="n">4</div><div class="l">VMs processed \(3 fully assessed\)</div></div>'
-        $script:RenderedHtml | Should -Match '(?s)<div class="cards">.*VMs processed.*Hold state.*Investigate.*OK.*Incomplete.*Stale AVHDX layers.*Stale snapshots.*Orphaned \.avhdx.*</div>'
+        $script:RenderedHtml | Should -Match '(?s)<div class="cards">.*VMs processed.*Hold state.*Investigate.*OK.*Incomplete.*Stale attached AVHDX layers.*Stale snapshots.*Orphaned \.avhdx.*</div>'
         $script:RenderedHtml | Should -Match '\.cards\{display:grid;grid-template-columns:repeat\(7,minmax\(0,1fr\)\)'
         $script:RenderedHtml | Should -Match '\.card\.lead\{grid-column:1/-1\}'
     }
@@ -1596,7 +1628,7 @@ Describe 'HTML fleet report usability' {
     }
 
     It 'reports stale attached layers separately from named snapshots' {
-        $script:RenderedHtml | Should -Match '<div class="n">2</div><div class="l">Stale AVHDX layers</div>'
+        $script:RenderedHtml | Should -Match '<div class="n">2</div><div class="l">Stale attached AVHDX layers</div>'
         $script:RenderedHtml | Should -Match '<div class="n">0</div><div class="l">Stale snapshots</div>'
         $script:RenderedHtml | Should -Match '<th>Stale<br>evidence</th>'
         $script:RenderedHtml | Should -Match '2 layers / 0 snapshots'
@@ -2080,7 +2112,7 @@ Describe 'Synthetic HTML example report' {
         $script:ExampleHtml | Should -Match '<div class="n">7</div><div class="l">Investigate</div>'
         $script:ExampleHtml | Should -Match '<div class="n">12</div><div class="l">OK</div>'
         $script:ExampleHtml | Should -Match '<div class="n">4</div><div class="l">Orphaned \.avhdx</div>'
-        $script:ExampleHtml | Should -Match '<div class="n">4</div><div class="l">Stale AVHDX layers</div>'
+        $script:ExampleHtml | Should -Match '<div class="n">4</div><div class="l">Stale attached AVHDX layers</div>'
         $script:ExampleHtml | Should -Match '<div class="n">3</div><div class="l">Stale snapshots</div>'
         $script:ExampleHtml | Should -Match "Confirmed historic 'fork-commit / merge failure'"
         $script:ExampleHtml | Should -Match "HOLD STATE - fork-commit recorded at this active checkpoint's creation"
@@ -3350,7 +3382,32 @@ Describe 'Virtual disk housekeeping classification' {
             -CoverageComplete $true -ImageLibraryPathPatterns $script:ImageLibraryPathPatterns
 
         $result.Classification | Should -Be 'PlacementInconsistency'
+        $result.PlacementReason | Should -Be 'UnreferencedInVMAssociatedFolder'
+        $result.Owners | Should -BeNullOrEmpty
+        $result.AssociatedVMs | Should -Be @('TEST-VM-01')
         $result.HealthVerdictImpact | Should -BeFalse
+    }
+
+    It 'distinguishes an authoritative owner from a different VM-associated folder' {
+        $result = Get-VirtualDiskHousekeepingClassification `
+            -Path 'C:\TEST\CSV01\FOLDER-VM\attached.vhdx' -Owners @('OWNER-VM') `
+            -VMAssociatedFolders @([pscustomobject]@{ VMName = 'FOLDER-VM'; Path = 'C:\TEST\CSV01\FOLDER-VM' }) `
+            -CoverageComplete $true -ImageLibraryPathPatterns $script:ImageLibraryPathPatterns
+
+        $result.Classification | Should -Be 'PlacementInconsistency'
+        $result.PlacementReason | Should -Be 'ReferencedOwnerFolderMismatch'
+        $result.Owners | Should -Be @('OWNER-VM')
+        $result.AssociatedVMs | Should -Be @('FOLDER-VM')
+    }
+
+    It 'allows an attached disk outside detected VM folders' {
+        $result = Get-VirtualDiskHousekeepingClassification `
+            -Path 'C:\TEST\CSV01\SharedData\attached.vhdx' -Owners @('OWNER-VM') `
+            -VMAssociatedFolders @([pscustomobject]@{ VMName = 'OWNER-VM'; Path = 'C:\TEST\CSV01\OWNER-VM' }) `
+            -CoverageComplete $true -ImageLibraryPathPatterns $script:ImageLibraryPathPatterns
+
+        $result.Classification | Should -Be 'AttachedVirtualDisk'
+        $result.PlacementReason | Should -BeNullOrEmpty
     }
 
     It 'protects an ownerless AVHDX in an attached VHD Set directory from orphan conclusions' {
@@ -3456,15 +3513,20 @@ Describe 'Virtual disk housekeeping classification' {
 
     It 'keeps image-library guidance off attached placement inconsistencies' {
         $source = Get-Content -LiteralPath (Join-Path (Split-Path $PSScriptRoot -Parent) 'Get-HyperVVMCheckpointHealth.psm1') -Raw
-        $source | Should -Match "'PlacementInconsistency'\s+\{ 'This virtual disk is attached to or referenced by a VM, but its path does not align with the detected VM ownership folders\."
+        $source | Should -Match 'No VM or snapshot inventory references this virtual disk under complete coverage, but its path is inside a folder associated with VM\(s\)'
+        $source | Should -Match 'This virtual disk is referenced by VM\(s\).+but its path is inside a folder associated with different VM\(s\)'
+        $source | Should -Match 'Filename text is not used as ownership evidence'
+        $source | Should -Match 'Do not attach, move, rename, or delete it based only on this report\.'
         $source | Should -Match "default\s+\{ 'If this virtual disk belongs to an image library, exclude its full path with storage\.imageLibraryPathPatterns"
     }
 
     It 'documents housekeeping categories and the attached-disk boundary at a dedicated anchor' {
         $readme = Get-Content -LiteralPath (Join-Path (Split-Path $PSScriptRoot -Parent) 'README.md') -Raw
         $readme | Should -Match '(?m)^## Cluster storage housekeeping\r?$'
-        $readme | Should -Match 'Placement inconsistency.+attached to or referenced by at least one VM'
-        $readme | Should -Match 'not.+unattached image-library candidate'
+        $readme | Should -Match 'Placement inconsistency.+authoritative VM or snapshot reference'
+        $readme | Should -Match 'disk referenced by one VM is located inside a folder associated with a different VM'
+        $readme | Should -Match 'Filename tokens are never treated as ownership evidence'
+        $readme | Should -Match 'attached disk outside all detected VM folders is allowed'
         $readme | Should -Match 'Filter out as VM image.+only.+Unattached base disk candidate'
     }
 
