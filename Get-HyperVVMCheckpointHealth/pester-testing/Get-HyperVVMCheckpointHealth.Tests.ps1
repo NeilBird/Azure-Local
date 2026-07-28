@@ -122,12 +122,44 @@ Describe 'Get-HyperVVMCheckpointHealth source contracts' {
     It 'collects storage Health Service faults as read-only evidence only' {
         $script:StorageSource | Should -Match 'Get-HealthFault -ErrorAction Stop'
         $script:StorageSource | Should -Match 'HealthFaultCollectionStatus'
+        $script:StorageSource | Should -Match 'HealthFaultCollection\s*='
+        $script:StorageSource | Should -Match 'ExceptionType\s*=\s*\$_\.Exception\.GetType\(\)\.FullName'
+        $script:StorageSource | Should -Match 'ErrorCategory\s*='
         $script:StorageSource | Should -Match 'Microsoft\\\.Health\\\.\(\?:FaultType\|EntityType\)'
         $script:StorageSource | Should -Match 'FaultDomain\|PhysicalDisk\|StorageEnclosure\|StoragePool\|StorageScaleUnit\|VirtualDisks\|Volume'
         $script:StorageSource | Should -Match '@\(\$Snapshot\.HealthFaults\)\.Count -gt 0'
         $script:StorageSource | Should -Match '\$summary = Get-StorageHealthSummary -Snapshot \$raw'
         $script:StorageSource | Should -Match 'RecommendedActions\s+= if \(\$_\.PSObject\.Properties\[''RecommendedActions''\]\)'
         $script:StorageSource | Should -Not -Match 'Debug-StorageSubSystem|Repair-Storage|Set-Storage|Start-Storage'
+    }
+
+    It 'distinguishes successful-empty and failed Health Service collection in HTML' {
+        $script:RenderingSource | Should -Match 'Health Service collection status: Success; zero active faults returned'
+        $script:RenderingSource | Should -Match 'Health Service collection status: Failed'
+        $script:RenderingSource | Should -Match 'missing fault detail does not negate an observed unhealthy subsystem'
+        $script:RenderingSource | Should -Match 'Review the run debug log for full diagnostic context'
+    }
+
+    It 'keeps remote storage fault filtering self-contained' {
+        $script:StorageSource | Should -Match '\$scan\s*=\s*\{\s*param\(\$StorageFaultTypePattern\)'
+        $script:StorageSource | Should -Match 'Invoke-Command.+-ArgumentList \$storageFaultTypePattern'
+        $script:StorageSource | Should -Not -Match 'Where-Object \{ Test-StorageHealthFault'
+    }
+
+    It 'preserves conservative historic and skipped-event behavior' {
+        $script:Source | Should -Match 'if \(-not \$SkipWorkerEvents -and @\(\$orphans\)\.Count -gt 0'
+        $script:Source | Should -Match "Operation 'Historic event correlation around orphan timestamps'"
+        $script:Source | Should -Match "Operation 'Historic event correlation around active checkpoint creation'"
+        $script:Source | Should -Match '\$activeCkptHistoric\s*=\s*\$null\s*\$activeCkptCoverageIncomplete\s*=\s*\$true'
+    }
+
+    It 'uses the snapshot node rather than the cache key in fleet event context' {
+        $script:Source | Should -Match 'Node\s*=\s*\[string\]\$OwningNode'
+        $script:Source | Should -Match 'Node\s*=\s*if \(\$nodeEventSnapshot\.PSObject\.Properties\[''Node''\]\)'
+    }
+
+    It 'initializes Replica server settings for disabled relationships' {
+        $script:Source | Should -Match '\$replicationServerSettings\s*=\s*\$null'
     }
 
     It 'keeps node event scan failures distinct from successful empty results' {
@@ -333,11 +365,14 @@ Describe 'Get-HyperVVMCheckpointHealth source contracts' {
         }
     }
 
-    It 'uses native event identity for deterministic equal-time ordering without changing CSV columns' {
+    It 'uses native event identity for deterministic ordering and structured CSV projection' {
         ([regex]::Matches($script:Source, 'RecordId\s*=\s*\[long\]\$eventRecord\.RecordId')).Count | Should -Be 2
         $script:Source | Should -Match "Sort-Object 'Time \(UTC\)', Log, RecordId, Id, FullMessage"
-        $script:Source | Should -Match "Select-Object 'Time \(UTC\)', Id, Level, Log, Concern, VmAttributed, FullMessage"
-        $script:Source | Should -Not -Match "Select-Object 'Time \(UTC\)', RecordId"
+        $script:AssessmentSource | Should -Match 'function ConvertTo-HyperVEventCsvRows'
+        $script:AssessmentSource | Should -Match 'EvidenceScope\s*=\s*\$scope'
+        $script:AssessmentSource | Should -Match 'CorrelationWindowStartUtc'
+        $script:AssessmentSource | Should -Match 'IsConfirmingFork\s*=\s*\[bool\]\$signal\.IsConfirmingFork'
+        $script:AssessmentSource | Should -Match '\$seen\.Add\(\$identityKey\)'
     }
 
     It 'normalizes Replica relationship timestamps to Zulu before stringification' {
@@ -351,6 +386,33 @@ Describe 'Get-HyperVVMCheckpointHealth source contracts' {
         $script:Source | Should -Not -Match 'OldestAvailableUtc\) UTC'
         $script:Source | Should -Not -Match 'active checkpoint created \{0\} UTC'
         $script:Source | Should -Not -Match 'oldest available \{0\} UTC'
+    }
+
+    It 'explains former-owner historic provenance and names the structured artifact' {
+        $script:Source | Should -Match 'current VM ownership does not invalidate VM-ID-attributed evidence from another cluster node'
+        $script:Source | Should -Match "events CSV \(\{0\}\) includes the historic rows used by this verdict"
+        $script:RenderingSource | Should -Match 'current VM ownership does not invalidate VM-ID-attributed evidence from another cluster node'
+        $script:RenderingSource | Should -Match "structured rows used by this verdict are in this VM's events CSV"
+    }
+
+    It 'labels timestamp scope and uses artifact-specific safety language' {
+        $script:Source | Should -Match 'Collection started \(UTC\)'
+        $script:Source | Should -Match 'VM assessment completed \(UTC\)'
+        $script:RenderingSource | Should -Match 'Fleet report finalized \(UTC\)'
+        $script:RenderingSource | Should -Match 'Before modifying any checkpoint-related AVHDX/VHD artifact or differencing chain'
+        $script:RenderingSource | Should -Not -Match 'before merging, removing, renaming, or deleting anything'
+    }
+
+    It 'documents explicit scope arithmetic and authoritative event CSV semantics' {
+        $script:RenderingSource | Should -Match '\$inputCount input \+ \$autoAuditedCount automatically discovered = \$countAll processed'
+        $script:RenderingSource | Should -Match 'Concern.*Collected as concern'
+        $script:RenderingSource | Should -Match 'VerdictDriver.*authoritative'
+    }
+
+    It 'renders collection-state impact and detail without a stable advisory contradiction' {
+        $script:RenderingSource | Should -Match 'Advisory - VM configuration \(\.vmcx\) timestamp changed during collection'
+        $script:RenderingSource | Should -Match 'Inconclusive - material collection-state change'
+        $script:RenderingSource | Should -Not -Match 'Stable - VM configuration \(\.vmcx\) file timestamp changed'
     }
 }
 
@@ -376,8 +438,10 @@ Describe 'Per-VM event marker CSV contract' {
         $row = Import-Csv -LiteralPath (Join-Path $TestDrive $csvName)
 
         @($row.PSObject.Properties.Name) | Should -Be @(
-            'Time (UTC)', 'Id', 'Level', 'Log', 'Concern', 'VmAttributed', 'FullMessage',
-            'EventClassification', 'VerdictDriver', 'RecoveryDisposition', 'DispositionReason'
+            'Time (UTC)', 'Node', 'Id', 'Level', 'Log', 'Concern', 'VmAttributed',
+            'AttributionMethod', 'AttributionConfidence', 'EvidenceScope', 'CorrelationAnchor',
+            'CorrelationWindowStartUtc', 'CorrelationWindowEndUtc', 'EventClassification',
+            'VerdictDriver', 'IsConfirmingFork', 'RecoveryDisposition', 'DispositionReason', 'FullMessage'
         )
         $row.Level | Should -Be 'Info'
         $row.FullMessage | Should -Match 'was not found; event collection was not attempted'
@@ -393,6 +457,69 @@ Describe 'Per-VM event marker CSV contract' {
         $source | Should -Match 'Event collection was not attempted for the missing VM\.'
         $source | Should -Match "Rerun: Get-HyperVVMCheckpointHealth -VMName '<confirmed-name>' -Cluster"
         $source | Should -Match 'No checkpoint, disk, Replica, VSS, or event conclusion was produced for this VM\.'
+    }
+}
+
+Describe 'Structured historic event evidence contract' {
+    BeforeAll {
+        $assessmentModulePath = Join-Path (Split-Path $PSScriptRoot -Parent) 'Private\Get-HyperVVMCheckpointHealth.Assessment.psm1'
+        Import-Module $assessmentModulePath -Force
+        $script:EventPolicy = Get-HyperVEventPolicy
+    }
+
+    It 'projects one confirming former-owner row from overlapping historic windows' {
+        $message = "Checkpoint fork commit failed for VM 'ContosoVM01' (11111111-1111-1111-1111-111111111111) with 0x800703EE.`r`nPreserve evidence."
+        $matches = @(
+            [pscustomobject]@{ Time = '2026-07-01 10:00:00Z'; Node = 'Node01'; RecordId = 42; Id = 3216; Level = 'Error'; Log = 'Worker'; Message = $message.Split("`r")[0]; FullMessage = ($message -replace "`r?`n", ' | '); EvidenceScope = 'HistoricOrphanWindow'; CorrelationAnchor = 'OrphanCreate'; CorrelationWindowStartUtc = '2026-07-01 08:00:00Z'; CorrelationWindowEndUtc = '2026-07-01 12:00:00Z' }
+            [pscustomobject]@{ Time = '2026-07-01 10:00:00Z'; Node = 'Node01'; RecordId = 42; Id = 3216; Level = 'Error'; Log = 'Worker'; Message = $message.Split("`r")[0]; FullMessage = ($message -replace "`r?`n", ' | '); EvidenceScope = 'HistoricOrphanWindow'; CorrelationAnchor = 'OrphanLastWrite'; CorrelationWindowStartUtc = '2026-07-01 09:00:00Z'; CorrelationWindowEndUtc = '2026-07-01 13:00:00Z' }
+        )
+
+        $rows = @(ConvertTo-HyperVEventCsvRows -Events $matches -Policy $script:EventPolicy `
+            -VMName 'ContosoVM01' -VMId '11111111-1111-1111-1111-111111111111' -DefaultNode 'Node02')
+
+        $rows.Count | Should -Be 1
+        $rows[0].Node | Should -Be 'Node01'
+        $rows[0].VmAttributed | Should -BeTrue
+        $rows[0].AttributionMethod | Should -Be 'StructuredGuid'
+        $rows[0].AttributionConfidence | Should -Be 'High'
+        $rows[0].EvidenceScope | Should -Be 'HistoricOrphanWindow'
+        $rows[0].CorrelationAnchor | Should -Be 'OrphanCreate'
+        $rows[0].IsConfirmingFork | Should -BeTrue
+        $rows[0].VerdictDriver | Should -BeTrue
+        $rows[0].FullMessage | Should -Match 'Preserve evidence'
+    }
+}
+
+Describe 'Cluster low-signal event flood contract' {
+    BeforeAll {
+        $renderingModulePath = Join-Path (Split-Path $PSScriptRoot -Parent) 'Private\Get-HyperVVMCheckpointHealth.Rendering.psm1'
+        Import-Module $renderingModulePath -Force
+    }
+
+    It 'surfaces sustained 15268 volume without producing a VM verdict' {
+        $start = [datetime]'2026-07-01T00:00:00Z'
+        $events = @(0..1999 | ForEach-Object {
+            [pscustomobject]@{ 'Time (UTC)' = $start.AddSeconds($_ * 72).ToString('yyyy-MM-dd HH:mm:ssZ'); Id = 15268; FullMessage = 'Failed to get the disk information' }
+        })
+
+        $observations = @(Get-HyperVEventFloodObservations -NodeEventContext @([pscustomobject]@{ Node = 'Node01'; Events = $events }))
+
+        $observations.Count | Should -Be 1
+        $observations[0].Count | Should -Be 2000
+        $observations[0].DurationMinutes | Should -BeGreaterThan 2398
+        $observations[0].DistinctMessageCount | Should -Be 1
+        $observations[0].PSObject.Properties.Name | Should -Not -Contain 'Recommendation'
+    }
+
+    It 'does not surface isolated low-signal rows' {
+        $events = @(
+            [pscustomobject]@{ 'Time (UTC)' = '2026-07-01 00:00:00Z'; Id = 15268; FullMessage = 'Failed to get the disk information' }
+            [pscustomobject]@{ 'Time (UTC)' = '2026-07-02 00:00:00Z'; Id = 15268; FullMessage = 'Failed to get the disk information' }
+            [pscustomobject]@{ 'Time (UTC)' = '2026-07-03 00:00:00Z'; Id = 15268; FullMessage = 'Failed to get the disk information' }
+            [pscustomobject]@{ 'Time (UTC)' = '2026-07-04 00:00:00Z'; Id = 15268; FullMessage = 'Failed to get the disk information' }
+        )
+
+        @(Get-HyperVEventFloodObservations -NodeEventContext @([pscustomobject]@{ Node = 'Node01'; Events = $events })).Count | Should -Be 0
     }
 }
 
@@ -445,6 +572,30 @@ Describe 'TXT Replica effective-limit evidence' {
         ($rows | Where-Object Signal -eq 'Pending replication data').Observed | Should -Be 'Unavailable'
         ($rows | Where-Object Signal -eq 'Pending replication data').Assessment | Should -Be 'Unavailable'
         ($rows | Where-Object Signal -eq 'Measured replication cycles').Observed | Should -Be 'Unavailable'
+    }
+}
+
+Describe 'Replica duration display contract' {
+    BeforeAll {
+        $assessmentModulePath = Join-Path (Split-Path $PSScriptRoot -Parent) 'Private\Get-HyperVVMCheckpointHealth.Assessment.psm1'
+        Import-Module $assessmentModulePath -Force
+    }
+
+    It 'keeps sub-day ages in minutes' {
+        ConvertTo-ReplicaDurationText -Minutes 1439.9 | Should -Be '1,439.9 min'
+    }
+
+    It 'uses singular day at the exact boundary' {
+        ConvertTo-ReplicaDurationText -Minutes 1440 | Should -Be '1,440.0 min (1.0 day)'
+    }
+
+    It 'adds operator-readable days to multi-week ages' -TestCases @(
+        @{ Minutes = 45047.1; Expected = '45,047.1 min (31.3 days)' }
+        @{ Minutes = 62843.2; Expected = '62,843.2 min (43.6 days)' }
+    ) {
+        param($Minutes, $Expected)
+
+        ConvertTo-ReplicaDurationText -Minutes $Minutes | Should -Be $Expected
     }
 }
 
@@ -704,8 +855,8 @@ Describe 'Module distribution contracts' {
         $script:ModuleCommand = Get-Command Get-HyperVVMCheckpointHealth -Module Get-HyperVVMCheckpointHealth
     }
 
-    It 'imports a valid 0.2.27 module manifest' {
-        $script:Manifest.Version.ToString() | Should -Be '0.2.27'
+    It 'imports a valid 0.2.28 module manifest' {
+        $script:Manifest.Version.ToString() | Should -Be '0.2.28'
         $script:Manifest.ExportedFunctions.Keys | Should -Contain 'Get-HyperVVMCheckpointHealth'
     }
 
@@ -730,6 +881,23 @@ Describe 'Module distribution contracts' {
                 Get-Command $helperName -CommandType Function -ErrorAction Stop | Should -Not -BeNullOrEmpty
             }
         }
+    }
+
+    It 'renders fleet-only helpers through the manifest-managed module topology' {
+        $module = Get-Module Get-HyperVVMCheckpointHealth
+        $events = @(0..9 | ForEach-Object {
+            [pscustomobject]@{ 'Time (UTC)' = ([datetime]'2026-07-01T00:00:00Z').AddSeconds($_ * 30).ToString('yyyy-MM-dd HH:mm:ssZ'); Id = 15268; FullMessage = 'Failed to get the disk information' }
+        })
+        $html = & $module {
+            param($nodeEvents)
+            ConvertTo-VMCheckpointAuditHtml -Results @() -StaleHours 24 -EventLookbackHours 168 `
+                -ClusterName 'TEST-CLUSTER' -GeneratedUtc '2026-07-01 01:00:00Z' -DiscoveredVMs @() `
+                -DiscoverySummary ([pscustomobject]@{ EligibleCount = 0; AuditedCount = 0; DeferredCount = 0; Cap = $null }) `
+                -StorageHealth $null -HousekeepingFindings @() -NodeEventContext @([pscustomobject]@{ Node = 'TEST-NODE'; Events = $nodeEvents }) `
+                -IncludeDiscoveredVMs:$false -ScriptVersion '0.2.28' -ReportGenerationTime '00:00:01' -ClusterNodeCount 1 -ClusterCsvCount 1
+        } $events
+        $html | Should -Match 'Cluster-level low-signal event observation'
+        & $module { ConvertTo-ReplicaDurationText -Minutes 20160 } | Should -Be '20,160.0 min (14.0 days)'
     }
 
     It 'rejects execution after importing the bare root module' {
@@ -832,7 +1000,7 @@ Describe 'Module distribution contracts' {
         $setupPath = Join-Path $script:ModuleRoot 'Setup-Get-HyperVVMCheckpointHealth.ps1'
         Test-Path -LiteralPath $setupPath -PathType Leaf | Should -BeTrue
         $setupSource = Get-Content -LiteralPath $setupPath -Raw
-        $setupSource | Should -Match "\$version = '0\.2\.27'"
+        $setupSource | Should -Match ("\`$version = '{0}'" -f [regex]::Escape($script:Manifest.Version.ToString()))
         $setupSource | Should -Match "\$expectedSha256 = '[0-9a-f]{64}'"
         $setupSource | Should -Match '\[string\]\$InstallRoot = ''C:\\Temp'''
         $setupSource | Should -Match '\$WhatIfPreference\s*=\s*\$false[\s\S]+Get-FileHash.+SHA256'
@@ -1206,16 +1374,16 @@ Describe 'HTML fleet report usability' {
 
     It 'distinguishes processed, fully assessed, and incomplete VM counts in every report' {
         $script:RenderedHtml | Should -Match 'Cluster <b>CONTOSO-CLUSTER-01</b> &nbsp;&bull;&nbsp; 4 processed VMs &nbsp;&bull;&nbsp; 3 fully assessed'
-        $script:RenderedHtml | Should -Match '<strong class="scope-label">Report scope:</strong> This report processed <strong>4 VMs</strong>; <strong>3 were fully assessed</strong> and <strong>1 was incomplete</strong>, as of <strong>2026-01-01 00:00:00Z</strong>\.'
+        $script:RenderedHtml | Should -Match '<strong class="scope-label">Report scope:</strong> <strong>4 input \+ 0 automatically discovered = 4 processed</strong>; <strong>3 were fully assessed</strong>; <strong>1 was incomplete</strong>\.'
+        $script:RenderedHtml | Should -Match 'Fleet report finalized \(UTC\): <strong>2026-01-01 00:00:00Z</strong>\.'
         $script:RenderedHtml | Should -Match 'wider assessment of the cluster, storage, backup solution, workloads, and relevant operational history\.'
         $script:RenderedHtml | Should -Match '\.scope-label\{color:#d97706;font-weight:700\}'
         $script:RenderedHtml | Should -Match 'It is not a complete cluster health assessment and does not represent the health of VMs that were not fully assessed\.'
-        $script:CleanRenderedHtml | Should -Match '<strong>1 VM</strong>; <strong>1 was fully assessed</strong> and <strong>0 were incomplete</strong>'
+        $script:CleanRenderedHtml | Should -Match '<strong>1 input \+ 0 automatically discovered = 1 processed</strong>; <strong>1 was fully assessed</strong>; <strong>0 were incomplete</strong>'
     }
 
     It 'keeps healthy Replica timestamp-only activity as quiet state detail' {
-        $script:StateAdvisoryHtml | Should -Match '<div class="k">Collection state consistency</div><div>Stable - VM configuration \(\.vmcx\) file timestamp changed during audit</div>'
-        $script:StateAdvisoryHtml | Should -Not -Match 'Advisory - collection metadata changed'
+        $script:StateAdvisoryHtml | Should -Match '<div class="k">Collection state consistency</div><div>Advisory - VM configuration \(\.vmcx\) timestamp changed during collection; core state and disk paths remained stable</div>'
         $script:StateAdvisoryHtml | Should -Not -Match 'No action is required for this advisory'
         $script:StateAdvisoryHtml | Should -Match "<div class='callout ok'><strong>OK\.</strong>"
     }
@@ -1266,7 +1434,8 @@ Describe 'HTML fleet report usability' {
 
     It 'states when an unhealthy subsystem returns no Health Service fault detail' {
         $script:DegradedStorageNoFaultHtml | Should -Match '1 storage subsystem\(s\) report Unhealthy, but no active Health Service fault detail was returned \(collection status: Success\)'
-        $script:DegradedStorageNoFaultHtml | Should -Match '<strong>Health Service detail unavailable:</strong> the subsystem state is Unhealthy, but <code>Get-HealthFault</code> returned no active fault records'
+        $script:DegradedStorageNoFaultHtml | Should -Match '<strong>Health Service collection status: Success; zero active faults returned\.</strong>'
+        $script:DegradedStorageNoFaultHtml | Should -Match '<strong>Health Service detail unavailable:</strong> the subsystem state is Unhealthy, but no active fault records are available'
         $script:DegradedStorageNoFaultHtml | Should -Match '<p><strong>Storage knowledge links:</strong></p><ul>'
         $script:DegradedStorageNoFaultHtml | Should -Match 'Health Service faults \| Microsoft Learn'
         $script:DegradedStorageNoFaultHtml | Should -Match 'Storage Spaces Direct troubleshooting \| Microsoft Learn'
@@ -1333,9 +1502,8 @@ Describe 'HTML fleet report usability' {
     }
 
     It 'reports healthy Replica config-write changes as quiet stable detail' {
-        $script:StateAdvisoryHtml | Should -Match 'Collection state consistency</div><div>Stable - VM configuration \(\.vmcx\) file timestamp changed during audit'
+        $script:StateAdvisoryHtml | Should -Match 'Collection state consistency</div><div>Advisory - VM configuration \(\.vmcx\) timestamp changed during collection; core state and disk paths remained stable'
         $script:StateAdvisoryHtml | Should -Not -Match 'Normal Replica metadata activity can cause this\.'
-        $script:StateAdvisoryHtml | Should -Not -Match 'Advisory - collection metadata changed'
         $script:StateAdvisoryHtml | Should -Match '<span class="pill ok">OK</span>'
         $script:StateAdvisoryHtml | Should -Not -Match '<strong>INVESTIGATE\.</strong>'
     }
@@ -1543,7 +1711,7 @@ Describe 'HTML fleet report usability' {
             -ClusterNodeCount 1 -ClusterCsvCount 1 -HousekeepingFindings @()
 
         $html | Should -Match 'No confirming checkpoint fork-commit signature was observed, so on-disk chain corruption is not established\.'
-        $html | Should -Match 'Validate the stale snapshot and orphaned \.avhdx with the backup/storage owner before merging, removing, renaming, or deleting anything\.'
+        $html | Should -Match 'Before modifying any checkpoint-related AVHDX/VHD artifact or differencing chain, validate the stale snapshot and orphaned \.avhdx with the backup/storage owner, confirm ownership and purpose, verify current backup protection, and follow an approved procedure\.'
         $html | Should -Not -Match 'attached-chain, checkpoint, orphan, event, and backup-job evidence'
     }
 
@@ -3398,6 +3566,33 @@ Describe 'Storage Health Service fault classification' {
             Get-StorageHealthSummary -Snapshot $snapshot | Should -Be 'Degraded'
             $snapshot.HealthFaults = @()
             Get-StorageHealthSummary -Snapshot $snapshot | Should -Be 'Healthy'
+        }
+    }
+
+    It 'filters storage faults when the scan executes in isolated remote scope' {
+        InModuleScope Get-HyperVVMCheckpointHealth.Storage {
+            Mock Invoke-Command {
+                param($ComputerName, $ScriptBlock, $ArgumentList)
+                & $ScriptBlock $ArgumentList[0]
+            }
+            function Get-StorageJob { @() }
+            function Get-VirtualDisk { @() }
+            function Get-PhysicalDisk { @() }
+            function Get-StorageSubSystem { [pscustomobject]@{ FriendlyName = 'S2D'; HealthStatus = 'Healthy' } }
+            function Get-ClusterSharedVolumeState { @() }
+            function Get-HealthFault {
+                @(
+                    [pscustomobject]@{ FaultType = 'Microsoft.Health.FaultType.Volume.CapacityLow'; Reason = 'Storage fault' }
+                    [pscustomobject]@{ FaultType = 'Microsoft.Health.FaultType.Cluster.UpdateAvailable'; Reason = 'Update fault' }
+                )
+            }
+
+            $result = Get-ClusterStorageHealthSnapshot -TargetNode 'REMOTE-NODE'
+
+            $result.HealthFaultCollectionStatus | Should -Be 'Success'
+            @($result.HealthFaults).Count | Should -Be 1
+            $result.HealthFaults[0].Reason | Should -Be 'Storage fault'
+            $result.Summary | Should -Be 'Degraded'
         }
     }
 }

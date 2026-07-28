@@ -1,5 +1,76 @@
 Set-StrictMode -Version Latest
 
+function ConvertTo-ReplicaDurationText {
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory)][ValidateRange(0, [double]::MaxValue)][double]$Minutes
+    )
+
+    $minuteText = '{0:N1} min' -f $Minutes
+    if ($Minutes -lt 1440) { return $minuteText }
+
+    $days = $Minutes / 1440
+    $dayUnit = if ([math]::Round($days, 1) -eq 1.0) { 'day' } else { 'days' }
+    '{0} ({1:N1} {2})' -f $minuteText, $days, $dayUnit
+}
+
+function Get-HyperVEventFloodObservations {
+    [OutputType([object[]])]
+    param(
+        [AllowEmptyCollection()][object[]]$NodeEventContext = @(),
+        [int]$EventId = 15268,
+        [ValidateRange(1, 1000000)][int]$MinimumCount = 100,
+        [ValidateRange(1, 10080)][int]$MinimumSpanMinutes = 30,
+        [ValidateRange(1, 1000000)][int]$BurstCount = 10,
+        [ValidateRange(1, 1440)][int]$BurstWindowMinutes = 10
+    )
+
+    $observations = [System.Collections.Generic.List[object]]::new()
+    foreach ($nodeContext in @($NodeEventContext)) {
+        if (-not $nodeContext) { continue }
+        $node = [string]$nodeContext.Node
+        $parsedRows = @($nodeContext.Events | Where-Object { [int]$_.Id -eq $EventId } | ForEach-Object {
+            $rawTime = if ($_.PSObject.Properties['Time (UTC)']) { [string]$_.'Time (UTC)' } elseif ($_.PSObject.Properties['Time']) { [string]$_.Time } else { '' }
+            $parsedTime = [datetime]::MinValue
+            if ([datetime]::TryParse($rawTime, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::AssumeUniversal, [ref]$parsedTime)) {
+                [pscustomobject]@{ Time = $parsedTime.ToUniversalTime(); Message = if ($_.PSObject.Properties['FullMessage']) { [string]$_.FullMessage } else { [string]$_.Message } }
+            }
+        } | Sort-Object Time)
+        if ($parsedRows.Count -eq 0) { continue }
+
+        $first = [datetime]$parsedRows[0].Time
+        $last = [datetime]$parsedRows[-1].Time
+        $durationMinutes = [math]::Max(0, ($last - $first).TotalMinutes)
+        $burstDetected = $false
+        $windowStart = 0
+        for ($windowEnd = 0; $windowEnd -lt $parsedRows.Count; $windowEnd++) {
+            while ($windowStart -lt $windowEnd -and ([datetime]$parsedRows[$windowEnd].Time - [datetime]$parsedRows[$windowStart].Time).TotalMinutes -gt $BurstWindowMinutes) {
+                $windowStart++
+            }
+            if (($windowEnd - $windowStart + 1) -ge $BurstCount) { $burstDetected = $true; break }
+        }
+        $sustained = ($parsedRows.Count -ge $MinimumCount -and $durationMinutes -ge $MinimumSpanMinutes)
+        if (-not ($sustained -or $burstDetected)) { continue }
+
+        $durationHours = [math]::Max($durationMinutes / 60, 1 / 60)
+        [void]$observations.Add([pscustomobject][ordered]@{
+            Node = $node
+            EventId = $EventId
+            Count = $parsedRows.Count
+            FirstUtc = $first.ToString('yyyy-MM-dd HH:mm:ssZ')
+            LastUtc = $last.ToString('yyyy-MM-dd HH:mm:ssZ')
+            DurationMinutes = [math]::Round($durationMinutes, 1)
+            AverageRatePerHour = [math]::Round($parsedRows.Count / $durationHours, 1)
+            DistinctMessageCount = @($parsedRows | ForEach-Object { $_.Message } | Sort-Object -Unique).Count
+            Trigger = if ($sustained) { 'SustainedVolume' } else { 'BurstRate' }
+            AffectedNodeCount = 0
+        })
+    }
+    $affectedNodeCount = @($observations | ForEach-Object { $_.Node } | Sort-Object -Unique).Count
+    foreach ($observation in $observations) { $observation.AffectedNodeCount = $affectedNodeCount }
+    $observations.ToArray()
+}
+
 function ConvertTo-VMCheckpointAuditHtml {
     [OutputType([string])]
     param(
@@ -12,6 +83,7 @@ function ConvertTo-VMCheckpointAuditHtml {
         [object]$DiscoverySummary,
         [object]$StorageHealth,
         [object[]]$HousekeepingFindings,
+        [object[]]$NodeEventContext = @(),
         [bool]$IncludeDiscoveredVMs,
         [bool]$DebugLogAvailable = $false,
         [string]$ScriptVersion,
@@ -50,7 +122,11 @@ function ConvertTo-VMCheckpointAuditHtml {
         $parts = @()
         foreach ($breach in @($Breaches)) {
             switch ($breach) {
-                'LastReplicationAge' { $parts += ('last replication age {0:N1} min (effective limit {1:N1} min)' -f [double]$Assessment.LastReplicationAgeMinutes, [double]$Assessment.EffectiveMaxAgeMinutes) }
+                'LastReplicationAge' {
+                    $ageText = ConvertTo-ReplicaDurationText -Minutes ([double]$Assessment.LastReplicationAgeMinutes)
+                    $limitText = ConvertTo-ReplicaDurationText -Minutes ([double]$Assessment.EffectiveMaxAgeMinutes)
+                    $parts += ('last replication age {0}; effective limit {1}' -f $ageText, $limitText)
+                }
                 'PendingBytes' { $parts += ('pending data {0} (effective limit {1})' -f (ConvertTo-ByteText ([long]$Assessment.PendingBytes)), (ConvertTo-ByteText ([long]$Assessment.EffectiveMaxPendingBytes))) }
                 'Latency' { $parts += ('average latency {0:N1} sec (effective limit {1:N1} sec)' -f [double]$Assessment.LatencySeconds, [double]$Assessment.EffectiveMaxLatencySeconds) }
                 'MissedCount' {
@@ -337,6 +413,8 @@ function ConvertTo-VMCheckpointAuditHtml {
     # Header + summary cards.
     $vmWord   = if ($countAll -eq 1) { 'VM' } else { 'VMs' }
     $nodeWord = if ($nodeCount -eq 1) { 'cluster node' } else { 'cluster nodes' }
+    $inputCount = @($rows | Where-Object { -not $_.PSObject.Properties['Source'] -or $_.Source -ne 'Discovered' }).Count
+    $autoAuditedCount = @($rows | Where-Object { $_.PSObject.Properties['Source'] -and $_.Source -eq 'Discovered' }).Count
     $unauditedDiscoveryCount = if ($null -ne $DiscoveredVMs) { $DiscoveredVMs.Count } else { 0 }
     $unauditedDiscoveryNote = if ($unauditedDiscoveryCount -gt 0) {
         $discoveredVmWord = if ($unauditedDiscoveryCount -eq 1) { 'VM was' } else { 'VMs were' }
@@ -351,7 +429,7 @@ function ConvertTo-VMCheckpointAuditHtml {
   <h1>Hyper-V VM Checkpoint Health Audit</h1>
   <div class="meta">
         Cluster <b>$(ConvertTo-HtmlText $ClusterName)</b> &nbsp;&bull;&nbsp; $countAll processed $vmWord &nbsp;&bull;&nbsp; $countAssessed fully assessed
-    &nbsp;&bull;&nbsp; Report generated <b>$(ConvertTo-HtmlText $GeneratedUtc)</b>
+    &nbsp;&bull;&nbsp; Fleet report finalized (UTC) <b>$(ConvertTo-HtmlText $GeneratedUtc)</b>
     &nbsp;&bull;&nbsp; Module version <b>$(ConvertTo-HtmlText $ScriptVersion)</b>$(if ($ReportGenerationTime) { "&nbsp;&bull;&nbsp; Processed <b>$countAll</b> $vmWord, across <b>$nodeCount</b> owning $nodeWord, in <b>$(ConvertTo-HtmlText $ReportGenerationTime)</b>" })<br>$(if ($ClusterNodeCount -gt 0) { "
     Cluster size: <b>$ClusterNodeCount</b> $(if ($ClusterNodeCount -eq 1) { 'node' } else { 'nodes' }) &nbsp;&bull;&nbsp; <b>$ClusterCsvCount</b> Cluster Shared Volume$(if ($ClusterCsvCount -eq 1) { '' } else { 's' })<br>" })
     Parameters: Stale CheckPoint threshold: $StaleHours h; Diagnostic events lookback: $EventLookbackHours h; Include discovered VMs: $(if ($IncludeDiscoveredVMs) { 'Yes' } else { 'No' }).<br>
@@ -360,7 +438,11 @@ function ConvertTo-VMCheckpointAuditHtml {
 </header>
 
 <div class="callout info">
-    <strong class="scope-label">Report scope:</strong> This report processed <strong>$countAll $vmWord</strong>; <strong>$countAssessed $assessedVerb fully assessed</strong> and <strong>$countIncomplete $incompleteVerb incomplete</strong>, as of <strong>$(ConvertTo-HtmlText $GeneratedUtc)</strong>. Its findings should be considered alongside a wider assessment of the cluster, storage, backup solution, workloads, and relevant operational history. It is not a complete cluster health assessment and does not represent the health of VMs that were not fully assessed.$unauditedDiscoveryNote
+    <strong class="scope-label">Report scope:</strong> <strong>$inputCount input + $autoAuditedCount automatically discovered = $countAll processed</strong>; <strong>$countAssessed $assessedVerb fully assessed</strong>; <strong>$countIncomplete $incompleteVerb incomplete</strong>. Eligible discoveries: <strong>$(if ($DiscoverySummary) { [int]$DiscoverySummary.EligibleCount } else { 0 })</strong>; deferred: <strong>$(if ($DiscoverySummary) { [int]$DiscoverySummary.DeferredCount } else { 0 })</strong>. Input VMs that were also discovered were deduplicated and retained as input results. Fleet report finalized (UTC): <strong>$(ConvertTo-HtmlText $GeneratedUtc)</strong>. Its findings should be considered alongside a wider assessment of the cluster, storage, backup solution, workloads, and relevant operational history. It is not a complete cluster health assessment and does not represent the health of VMs that were not fully assessed.$unauditedDiscoveryNote
+</div>
+
+<div class="callout info">
+    <strong>Event CSV interpretation:</strong> <code>Concern</code> means <strong>Collected as concern</strong> and is retained as a broad compatibility/catalog flag. <code>VerdictDriver</code>, <code>EventClassification</code>, <code>RecoveryDisposition</code>, and <code>DispositionReason</code> are authoritative for how each row affected the result. A low-signal row can therefore retain <code>Concern=YES</code> while correctly showing <code>VerdictDriver=False</code> and <code>RecoveryDisposition=ContextOnly</code>.
 </div>
 
 <div class="cards">
@@ -388,6 +470,21 @@ function ConvertTo-VMCheckpointAuditHtml {
 </div>
 "@)
                 }
+    }
+
+    $eventFloodObservations = @(Get-HyperVEventFloodObservations -NodeEventContext $NodeEventContext)
+    if ($eventFloodObservations.Count -gt 0) {
+        $affectedNodeCount = [int]$eventFloodObservations[0].AffectedNodeCount
+        [void]$sb.Append("<div class='callout warn'><strong>Cluster-level low-signal event observation:</strong> Event <code>15268</code> remains low-signal for individual VM checkpoint verdicts, but repeated <code>Failed to get the disk information</code> errors were observed at cluster scale on <strong>$affectedNodeCount node(s)</strong>. Review storage, VMMS, and backup activity for the affected nodes. This observation does not attribute the errors to every VM and does not establish checkpoint-chain corruption.<ul>")
+        foreach ($observation in $eventFloodObservations) {
+            $nodeCsvName = '_NodeEvents_{0}_*.csv' -f (([string]$observation.Node) -replace '[^\w.\-]', '_')
+            [void]$sb.Append(("<li><code>{0}</code>: {1:N0} event(s), {2} to {3}, {4:N1} minutes, approximately {5:N1}/hour, {6} distinct message signature(s). Evidence: <code>{7}</code>.</li>" -f
+                (ConvertTo-HtmlText $observation.Node), [int]$observation.Count,
+                (ConvertTo-HtmlText $observation.FirstUtc), (ConvertTo-HtmlText $observation.LastUtc),
+                [double]$observation.DurationMinutes, [double]$observation.AverageRatePerHour,
+                [int]$observation.DistinctMessageCount, (ConvertTo-HtmlText $nodeCsvName)))
+        }
+        [void]$sb.Append('</ul></div>')
     }
 
     # Shared fleet evidence used by mixed HOLD / historic-recovery / INVESTIGATE headlines.
@@ -434,6 +531,7 @@ function ConvertTo-VMCheckpointAuditHtml {
         $unhealthySubsystems = @($StorageHealth.Subsystem | Where-Object { "$($_.Health)" -eq 'Unhealthy' })
     }
     $storageFaultCollectionStatus = if ($StorageHealth) { [string](Get-OptionalPropertyValue -InputObject $StorageHealth -Name 'HealthFaultCollectionStatus' -DefaultValue 'Not collected') } else { 'Not collected' }
+    $storageFaultCollection = if ($StorageHealth) { Get-OptionalPropertyValue -InputObject $StorageHealth -Name 'HealthFaultCollection' -DefaultValue $null } else { $null }
     $storageReasonText = if ($storageFaults.Count -gt 0) {
         $faultReasons = @($storageFaults | ForEach-Object {
             $reason = [string](Get-OptionalPropertyValue -InputObject $_ -Name 'Reason' -DefaultValue '')
@@ -928,11 +1026,14 @@ $storageExecSummaryLi
         $hrlPolicyHtml = if ($hrlPolicyConcern) { "<span class='warnval'>$(ConvertTo-HtmlText $hrlPolicyText)</span>" } else { ConvertTo-HtmlText $hrlPolicyText }
         $vmEventHtml = if ([int]$rd.VmHighConcernCount -gt 0) { "<span class='warnval'>$($rd.VmEventConcernCount) ($($rd.VmHighConcernCount) high-signal)</span>" } else { "$($rd.VmEventConcernCount) (low-signal only)" }
         $stateConsistencyText = if ($rd.PSObject.Properties['StateConsistencyImpact'] -and $rd.StateConsistencyImpact -eq 'Advisory') {
-            'Stable - VM configuration (.vmcx) file timestamp changed during audit'
-        } elseif ($rd.PSObject.Properties['StateConsistencyImpact']) {
-            "$($rd.StateConsistencyStatus) / $($rd.StateConsistencyImpact)"
+            'Advisory - VM configuration (.vmcx) timestamp changed during collection; core state and disk paths remained stable'
+        } elseif ($rd.PSObject.Properties['StateConsistencyStatus'] -and $rd.StateConsistencyStatus -eq 'Unavailable') {
+            'Unavailable - final collection-state recheck evidence was not available'
+        } elseif ($rd.PSObject.Properties['StateConsistencyImpact'] -and $rd.StateConsistencyImpact -eq 'Inconclusive') {
+            $changedFields = if ($rd.PSObject.Properties['StateConsistencyReasons'] -and @($rd.StateConsistencyReasons).Count -gt 0) { @($rd.StateConsistencyReasons) -join ', ' } else { 'state token evidence unavailable' }
+            "Inconclusive - material collection-state change: $changedFields; rerun after VM activity settles"
         } else {
-            'Stable'
+            'Stable - no owner, state, checkpoint, disk-path, or configuration timestamp changes detected'
         }
         $stateConsistencyHtml = if ($rd.PSObject.Properties['StateConsistencyImpact'] -and $rd.StateConsistencyImpact -eq 'Inconclusive') { "<span class='warnval'>$(ConvertTo-HtmlText $stateConsistencyText)</span>" } else { ConvertTo-HtmlText $stateConsistencyText }
         [void]$sb.Append(@"
@@ -979,7 +1080,7 @@ $storageExecSummaryLi
             if ($rd.StaleCheckpointCount -gt 0) { $drv += "$($rd.StaleCheckpointCount) stale named snapshot(s)" }
             if ($rd.PSObject.Properties['SnapshotLayerMismatch'] -and $rd.SnapshotLayerMismatch) { $drv += 'snapshot/layer representation mismatch' }
             if ($rd.PSObject.Properties['ChainComplete'] -and -not $rd.ChainComplete) { $drv += "$($rd.IncompleteChainCount) incomplete/unreadable VHD chain(s)" }
-            if ($rd.PSObject.Properties['StateConsistencyStatus'] -and $rd.StateConsistencyStatus -ne 'Stable') { $drv += "INCONCLUSIVE collection state ($($rd.StateConsistencyStatus))" }
+            if ($rd.PSObject.Properties['StateConsistencyImpact'] -and $rd.StateConsistencyImpact -eq 'Inconclusive') { $drv += "INCONCLUSIVE collection state ($($rd.StateConsistencyStatus))" }
             if ($rd.PSObject.Properties['ReplAssessment'] -and $rd.ReplAssessment) {
                 if ($rd.ReplAssessment.ProductSeverity -in @('Critical', 'Warning', 'Unknown')) {
                     $drv += "Replica product health/state $($rd.ReplAssessment.ProductSeverity) ($(ConvertTo-HtmlText $rd.ReplAssessment.State) / $(ConvertTo-HtmlText $rd.ReplAssessment.Health))"
@@ -1035,7 +1136,7 @@ $storageExecSummaryLi
                     if ($rd.PSObject.Properties['SnapshotLayerMismatch'] -and $rd.SnapshotLayerMismatch) { [void]$artifactEvidence.Add('snapshot/layer mismatch') }
                     if ([int]$rd.OrphanCount -gt 0) { [void]$artifactEvidence.Add('orphaned .avhdx') }
                     $artifactEvidenceText = if ($artifactEvidence.Count -gt 0) { $artifactEvidence.ToArray() -join ' and ' } else { 'checkpoint/storage evidence' }
-                    "No confirming checkpoint fork-commit signature was observed, so on-disk chain corruption is not established. Validate the $artifactEvidenceText with the backup/storage owner before merging, removing, renaming, or deleting anything."
+                    "No confirming checkpoint fork-commit signature was observed, so on-disk chain corruption is not established. Before modifying any checkpoint-related AVHDX/VHD artifact or differencing chain, validate the $artifactEvidenceText with the backup/storage owner, confirm ownership and purpose, verify current backup protection, and follow an approved procedure."
                 } elseif ($hasEventDriver -and -not ($hasReplicaDriver -or $hasStateDriver)) {
                     'Review the VM-attributed failure events and corresponding backup/checkpoint jobs for recurrence. No stale checkpoint, orphan, or attached AVHDX residue was found, so this is checkpoint reliability evidence rather than proof of chain corruption; there is no disk merge or removal action from this result.'
                 } elseif ($hasReplicaDriver -and -not ($hasEventDriver -or $hasStateDriver)) {
@@ -1125,7 +1226,7 @@ $storageExecSummaryLi
             $lastReplicationTimeUtc = Get-OptionalPropertyValue $replicaAssessment 'LastReplicationTimeUtc' $null
             $lastReplicationAgeMinutes = Get-OptionalPropertyValue $replicaAssessment 'LastReplicationAgeMinutes' $null
             $lastReplicationText = if ($measurementsAvailable -and $lastReplicationTimeUtc -and ([datetime]$lastReplicationTimeUtc -ne [datetime]::MinValue)) {
-                '{0} ({1:N1} min ago)' -f ([datetime]$lastReplicationTimeUtc).ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ssZ'), [double]$lastReplicationAgeMinutes
+                '{0} ({1} ago)' -f ([datetime]$lastReplicationTimeUtc).ToUniversalTime().ToString('yyyy-MM-dd HH:mm:ssZ'), (ConvertTo-ReplicaDurationText -Minutes ([double]$lastReplicationAgeMinutes))
             } else { 'Unavailable' }
             $averageReplicationBytes = [long](Get-OptionalPropertyValue $replicaAssessment 'AverageReplicationBytes' 0)
             $pendingBytes = [long](Get-OptionalPropertyValue $replicaAssessment 'PendingBytes' 0)
@@ -1145,7 +1246,7 @@ $storageExecSummaryLi
                 [pscustomobject]@{ Signal = 'Relationship'; Observed = "Mode $replicaMode"; Guardrail = "Primary $primaryServer; replica $replicaServer"; Assessment = 'Context' }
                 [pscustomobject]@{ Signal = 'Replication cadence'; Observed = $(if ($frequencySeconds -gt 0) { '{0:N1} sec' -f $frequencySeconds } else { 'Unavailable' }); Guardrail = 'Used to calculate relationship-aware limits'; Assessment = 'Context' }
                 [pscustomobject]@{ Signal = 'Monitoring window'; Observed = $(if ($monitoringIntervalSeconds -gt 0) { [timespan]::FromSeconds($monitoringIntervalSeconds).ToString() } else { 'Unavailable' }); Guardrail = 'Get-VMReplicationServer monitoring interval'; Assessment = 'Context' }
-                [pscustomobject]@{ Signal = 'Last replication'; Observed = $lastReplicationText; Guardrail = $(if ($effectiveMaxAgeMinutes -gt 0) { '{0:N1} min effective maximum age' -f $effectiveMaxAgeMinutes } else { 'Unavailable' }); Assessment = (& $getMetricAssessment 'LastReplicationAge') }
+                [pscustomobject]@{ Signal = 'Last replication'; Observed = $lastReplicationText; Guardrail = $(if ($effectiveMaxAgeMinutes -gt 0) { '{0} effective maximum age' -f (ConvertTo-ReplicaDurationText -Minutes $effectiveMaxAgeMinutes) } else { 'Unavailable' }); Assessment = (& $getMetricAssessment 'LastReplicationAge') }
                 [pscustomobject]@{ Signal = 'Average replication size'; Observed = $(if ($measurementsAvailable) { ConvertTo-ByteText $averageReplicationBytes } else { 'Unavailable' }); Guardrail = 'Workload baseline for pending-data limit'; Assessment = 'Context' }
                 [pscustomobject]@{ Signal = 'Pending replication data'; Observed = $(if ($measurementsAvailable) { ConvertTo-ByteText $pendingBytes } else { 'Unavailable' }); Guardrail = $(if ($effectiveMaxPendingBytes -gt 0) { "$(ConvertTo-ByteText $effectiveMaxPendingBytes) effective maximum" } else { 'Unavailable' }); Assessment = (& $getMetricAssessment 'PendingBytes') }
                 [pscustomobject]@{ Signal = 'Average replication latency'; Observed = $(if ($measurementsAvailable) { '{0:N1} sec' -f $latencySeconds } else { 'Unavailable' }); Guardrail = $(if ($effectiveMaxLatencySeconds -gt 0) { '{0:N1} sec effective maximum' -f $effectiveMaxLatencySeconds } else { 'Unavailable' }); Assessment = (& $getMetricAssessment 'Latency') }
@@ -1224,7 +1325,8 @@ $storageExecSummaryLi
             [void]$sb.Append("<p class='muted'>Searched &plusmn;$($hc.WindowMinutes) min around each orphan's create and last-write times (windows: $(ConvertTo-HtmlText ((@($hc.Windows)) -join ', '))) across all cluster nodes, for this VM's fork-commit / merge events that may predate the $($rd.EventLookbackHours)h lookback.</p>")
             if ([int]$hc.MatchCount -gt 0) {
                 if ($rd.HistoricForkConfirmed) {
-                    [void]$sb.Append("<div class='callout high'><strong>Confirmed historic 'fork-commit / merge failure'.</strong> Historic events for this VM were recovered around the orphan timestamps (outside the standard window). This is strong evidence the rollback DID occur - engage Microsoft Support (CSS) / your backup vendor to recover the orphaned data.</div>")
+                    $historicCsvText = if ($rd.EventsCsvName) { " The structured rows used by this verdict are in this VM's events CSV, <code>$(ConvertTo-HtmlText $rd.EventsCsvName)</code>." } else { '' }
+                    [void]$sb.Append("<div class='callout high'><strong>Confirmed historic 'fork-commit / merge failure'.</strong> Historic events for this VM were recovered around the orphan timestamps (outside the standard window). A historic event can remain valid when recorded on a former owner node: current VM ownership does not invalidate VM-ID-attributed evidence from another cluster node.$historicCsvText This is strong evidence the rollback DID occur - engage Microsoft Support (CSS) / your backup vendor to recover the orphaned data.</div>")
                 }
                 [void]$sb.Append("<table><thead><tr><th>Time (UTC)</th><th>Node</th><th>Log</th><th>Id</th><th>Message</th></tr></thead><tbody>")
                 foreach ($m in @($hc.Matches)) {
@@ -1276,6 +1378,16 @@ $storageExecSummaryLi
         [void]$sb.Append("<details class='report-section' id='cluster-storage-health' open><summary><h2>Cluster storage health (Storage Spaces Direct / CSV)</h2></summary><div class='report-section-body'>`r`n")
         [void]$sb.Append("<div class='callout $badge'><strong>Storage status: $(ConvertTo-HtmlText $sh.Summary).</strong> Read-only snapshot (source node <code>$(ConvertTo-HtmlText $sh.Source)</code>).</div>`r`n")
         [void]$sb.Append("<p><strong>Why this check matters:</strong> storage repair/resync activity, abnormal CSV redirection or state, and unhealthy disks can make checkpoint or merge files temporarily locked or unavailable. A ReFS CSV reporting File System Redirected mode with reason <code>FileSystemReFs</code> is normal on Azure Local / S2D and is not flagged; non-ReFS file-system redirection, block redirection, and paused or offline volumes are treated as abnormal.</p>`r`n")
+        if ($storageFaultCollectionStatus -eq 'Success' -and $storageFaults.Count -eq 0) {
+            [void]$sb.Append("<div class='callout info'><strong>Health Service collection status: Success; zero active faults returned.</strong> The subsystem health snapshot was collected independently.</div>`r`n")
+        } elseif ($storageFaultCollectionStatus -eq 'Failed') {
+            $collectionOperation = if ($storageFaultCollection) { [string](Get-OptionalPropertyValue -InputObject $storageFaultCollection -Name 'Operation' -DefaultValue 'Get-HealthFault') } else { 'Get-HealthFault' }
+            $collectionCategory = if ($storageFaultCollection) { [string](Get-OptionalPropertyValue -InputObject $storageFaultCollection -Name 'ErrorCategory' -DefaultValue 'Unspecified') } else { 'Unspecified' }
+            $collectionException = if ($storageFaultCollection) { [string](Get-OptionalPropertyValue -InputObject $storageFaultCollection -Name 'ExceptionType' -DefaultValue 'Unspecified') } else { 'Unspecified' }
+            $collectionMessage = if ($storageFaultCollection) { [string](Get-OptionalPropertyValue -InputObject $storageFaultCollection -Name 'Message' -DefaultValue 'No sanitized error message was captured.') } else { 'No sanitized error message was captured.' }
+            $collectionScope = if ($storageFaultCollection) { [string](Get-OptionalPropertyValue -InputObject $storageFaultCollection -Name 'Scope' -DefaultValue $sh.Source) } else { [string]$sh.Source }
+            [void]$sb.Append("<div class='callout warn'><strong>Health Service collection status: Failed.</strong> Operation <code>$(ConvertTo-HtmlText $collectionOperation)</code>; scope <code>$(ConvertTo-HtmlText $collectionScope)</code>; category <code>$(ConvertTo-HtmlText $collectionCategory)</code>; exception <code>$(ConvertTo-HtmlText $collectionException)</code>; message: $(ConvertTo-HtmlText $collectionMessage). The subsystem health snapshot was collected independently, so missing fault detail does not negate an observed unhealthy subsystem.$(if ($DebugLogAvailable) { ' Review the run debug log for full diagnostic context.' })</div>`r`n")
+        }
         if ($storageDegraded) {
             [void]$sb.Append("<div class='callout warn'><strong>Why this snapshot is non-healthy:</strong> $storageReasonText. This is read-only observed evidence; it does not establish root cause.</div>`r`n")
         }
@@ -1292,7 +1404,7 @@ $storageExecSummaryLi
             }
             [void]$sb.Append("</tbody></table><p><strong>EVIDENCE - </strong>These records come from <code>Get-HealthFault</code> and are displayed as observed diagnostic evidence. Only faults classified under Microsoft's StorHealth entity types are included; unrelated cluster Health Service faults are excluded. Recommended actions are shown exactly as supplied by the matching storage fault.</p>")
         } elseif ($unhealthySubsystems.Count -gt 0) {
-            [void]$sb.Append("<p class='muted'><strong>Health Service detail unavailable:</strong> the subsystem state is Unhealthy, but <code>Get-HealthFault</code> returned no active fault records (collection status: $(ConvertTo-HtmlText $storageFaultCollectionStatus)). Use the Deeper analysis guidance below for the full diagnostic.</p>")
+            [void]$sb.Append("<p class='muted'><strong>Health Service detail unavailable:</strong> the subsystem state is Unhealthy, but no active fault records are available (collection status: $(ConvertTo-HtmlText $storageFaultCollectionStatus)). This does not negate the unhealthy subsystem observation. Use the Deeper analysis guidance below for the full diagnostic.</p>")
         }
         [void]$sb.Append("<p><strong>Storage knowledge links:</strong></p><ul><li><a href='https://learn.microsoft.com/en-us/windows-server/failover-clustering/health-service-faults' target='_blank' rel='noopener noreferrer'>Health Service faults | Microsoft Learn</a></li><li><a href='https://learn.microsoft.com/en-us/windows-server/storage/storage-spaces/troubleshooting-storage-spaces' target='_blank' rel='noopener noreferrer'>Storage Spaces Direct troubleshooting | Microsoft Learn</a></li></ul>")
         if (@($sh.StorageJobs).Count -gt 0) {
@@ -1694,4 +1806,4 @@ window.addEventListener('load', function () {
     return [regex]::Replace($html, '(?m)^[ \t]+(?=\r?$)', '')
 }
 
-Export-ModuleMember -Function ConvertTo-VMCheckpointAuditHtml
+Export-ModuleMember -Function ConvertTo-VMCheckpointAuditHtml, ConvertTo-ReplicaDurationText, Get-HyperVEventFloodObservations

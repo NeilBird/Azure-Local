@@ -121,6 +121,82 @@ function Get-HyperVEventCsvDisposition {
     }
 }
 
+function ConvertTo-HyperVEventCsvRows {
+    [OutputType([object[]])]
+    param(
+        [AllowEmptyCollection()][object[]]$Events = @(),
+        [Parameter(Mandatory)][object]$Policy,
+        [AllowEmptyString()][string]$VMName,
+        [AllowEmptyString()][string]$VMId,
+        [AllowEmptyString()][string]$DefaultNode,
+        [ValidateSet('StandardLookback', 'HistoricOrphanWindow', 'HistoricActiveCheckpointWindow')]
+        [string]$DefaultEvidenceScope = 'StandardLookback'
+    )
+
+    $projected = [System.Collections.Generic.List[object]]::new()
+    $seen = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($eventRow in @($Events)) {
+        if (-not $eventRow) { continue }
+        $timeUtc = if ($eventRow.PSObject.Properties['Time (UTC)']) { [string]$eventRow.'Time (UTC)' } elseif ($eventRow.PSObject.Properties['Time']) { [string]$eventRow.Time } else { '' }
+        $node = if ($eventRow.PSObject.Properties['Node'] -and $eventRow.Node) { [string]$eventRow.Node } else { $DefaultNode }
+        $recordId = if ($eventRow.PSObject.Properties['RecordId']) { [long]$eventRow.RecordId } else { 0L }
+        $fullMessage = if ($eventRow.PSObject.Properties['FullMessage']) { [string]$eventRow.FullMessage } elseif ($eventRow.PSObject.Properties['Message']) { [string]$eventRow.Message } else { '' }
+        $identityKey = if ($recordId -gt 0) {
+            '{0}|{1}|{2}' -f $node, [string]$eventRow.Log, $recordId
+        } else {
+            '{0}|{1}|{2}|{3}|{4}' -f $node, [string]$eventRow.Log, $timeUtc, [int]$eventRow.Id, $fullMessage
+        }
+        if (-not $seen.Add($identityKey)) { continue }
+
+        $attribution = if ($eventRow.PSObject.Properties['VmAttributed']) {
+            [pscustomobject]@{
+                Attributed = [bool]$eventRow.VmAttributed
+                Method = if ($eventRow.PSObject.Properties['AttributionMethod']) { [string]$eventRow.AttributionMethod } else { 'ExistingAssessment' }
+                Confidence = if ($eventRow.PSObject.Properties['AttributionConfidence']) { [string]$eventRow.AttributionConfidence } else { 'Unknown' }
+            }
+        } else {
+            Resolve-HyperVEventAttribution -Message $fullMessage -VMName $VMName -VMId $VMId
+        }
+        $signal = Get-HyperVEventSignalAssessment -EventId ([int]$eventRow.Id) -Log ([string]$eventRow.Log) -Message $fullMessage -Policy $Policy
+        $concern = if ($eventRow.PSObject.Properties['Concern']) {
+            [string]$eventRow.Concern
+        } elseif ($signal.Role -in @('Confirming', 'Leading', 'Operational')) {
+            'YES'
+        } else {
+            ''
+        }
+        $scope = if ($eventRow.PSObject.Properties['EvidenceScope'] -and $eventRow.EvidenceScope) { [string]$eventRow.EvidenceScope } else { $DefaultEvidenceScope }
+        $row = [pscustomobject][ordered]@{
+            'Time (UTC)' = $timeUtc
+            Node = $node
+            Id = [int]$eventRow.Id
+            Level = if ($eventRow.PSObject.Properties['Level']) { [string]$eventRow.Level } else { '' }
+            Log = [string]$eventRow.Log
+            Concern = $concern
+            VmAttributed = [bool]$attribution.Attributed
+            AttributionMethod = [string]$attribution.Method
+            AttributionConfidence = [string]$attribution.Confidence
+            EvidenceScope = $scope
+            CorrelationAnchor = if ($eventRow.PSObject.Properties['CorrelationAnchor']) { [string]$eventRow.CorrelationAnchor } else { '' }
+            CorrelationWindowStartUtc = if ($eventRow.PSObject.Properties['CorrelationWindowStartUtc']) { [string]$eventRow.CorrelationWindowStartUtc } else { '' }
+            CorrelationWindowEndUtc = if ($eventRow.PSObject.Properties['CorrelationWindowEndUtc']) { [string]$eventRow.CorrelationWindowEndUtc } else { '' }
+            EventClassification = ''
+            VerdictDriver = $false
+            IsConfirmingFork = [bool]$signal.IsConfirmingFork
+            RecoveryDisposition = ''
+            DispositionReason = ''
+            FullMessage = $fullMessage
+        }
+        $disposition = Get-HyperVEventCsvDisposition -Event $row -Events $Events -Policy $Policy
+        $row.EventClassification = [string]$disposition.EventClassification
+        $row.VerdictDriver = [bool]$disposition.VerdictDriver
+        $row.RecoveryDisposition = [string]$disposition.RecoveryDisposition
+        $row.DispositionReason = [string]$disposition.DispositionReason
+        [void]$projected.Add($row)
+    }
+    $projected.ToArray()
+}
+
 function Compare-VMCollectionStateToken {
     [OutputType([pscustomobject])]
     param([Parameter(Mandatory)]$StartToken, [Parameter(Mandatory)]$EndToken)
@@ -500,4 +576,4 @@ function Complete-CheckpointHealthPassThruResult {
     }
 }
 
-Export-ModuleMember -Function Get-HyperVEventPolicy, Get-HyperVEventSignalAssessment, Resolve-HyperVOperationRecovery, Get-HyperVEventCsvDisposition, Compare-VMCollectionStateToken, Get-VMCollectionStateImpact, Get-HyperVReplicationAssessment, Resolve-HyperVEventAttribution, Resolve-EventCoverage, Get-VMCheckpointVerdictAssessment, Select-DiscoveredVMsForAudit, Resolve-ActiveCheckpointHistoricVerdict, Complete-CheckpointHealthPassThruResult
+Export-ModuleMember -Function Get-HyperVEventPolicy, Get-HyperVEventSignalAssessment, Resolve-HyperVOperationRecovery, Get-HyperVEventCsvDisposition, ConvertTo-HyperVEventCsvRows, Compare-VMCollectionStateToken, Get-VMCollectionStateImpact, Get-HyperVReplicationAssessment, Resolve-HyperVEventAttribution, Resolve-EventCoverage, Get-VMCheckpointVerdictAssessment, Select-DiscoveredVMsForAudit, Resolve-ActiveCheckpointHistoricVerdict, Complete-CheckpointHealthPassThruResult
