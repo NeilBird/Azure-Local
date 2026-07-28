@@ -41,7 +41,7 @@ on:
   # evening update window so a coverage drift report lands in the inbox before the
   # next scheduled apply-updates run.
   schedule:
-    - cron: '0 5 * * 1'   # Mondays at 05:00 UTC
+    - cron: '17 5 * * 1'  # Mondays at 05:17 UTC
   # END-AZLOCAL-CUSTOMIZE:schedule-triggers
 
   workflow_dispatch:
@@ -55,9 +55,9 @@ on:
         required: false
         default: 'config/apply-updates-schedule.yml'
       lead_time_minutes:
-        description: 'Minutes before UpdateStartWindow opens that the pipeline should fire (0-60). Default 5.'
+        description: 'Minutes before UpdateStartWindow opens that the pipeline should fire (0-60). Default 7 avoids crowded scheduler boundaries.'
         required: false
-        default: '5'
+        default: '7'
       fires_per_window:
         description: 'Cron entries the Recommend view should emit per UpdateStartWindow segment. 2 (default, recommended) = belt-and-braces: opening edge + one mid-window retry capped at +60min, so GitHub Actions schedule jitter and transient first-fire failures cannot silently skip a cluster for the day. 1 = opening edge only. The runtime gate + in-flight guard prevent double-triggering. Audit semantics are unchanged either way.'
         required: false
@@ -120,7 +120,7 @@ env:
   # this to the version actually installed and to the latest on PSGallery, and emits a
   # ::notice annotation if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.9.26'
+  GENERATED_AGAINST_MODULE_VERSION: '0.9.27'
   REQUIRED_MODULE_VERSION: ${{ github.event.inputs.module_version || vars.REQUIRED_MODULE_VERSION || '' }}
   # v0.8.4 - opt this workflow into Node.js 24 for all JavaScript actions
   # (actions/checkout, actions/download-artifact, actions/upload-artifact,
@@ -144,6 +144,7 @@ jobs:
     # BEGIN-AZLOCAL-CUSTOMIZE:runner-target-audit
     runs-on: windows-latest
     # END-AZLOCAL-CUSTOMIZE:runner-target-audit
+    timeout-minutes: ${{ fromJSON(vars.AZLOCAL_MAX_PIPELINE_RUNTIME_MINUTES || '120') }}
     permissions:
       id-token: write
       contents: read

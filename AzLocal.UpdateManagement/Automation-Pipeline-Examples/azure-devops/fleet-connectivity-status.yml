@@ -57,9 +57,9 @@ name: 'Monitor: 1 - Fleet Connectivity Status'
 trigger: none  # Manual or scheduled only
 
 schedules:
-  # Daily at 05:30 UTC - offset 30 min ahead of Step.9 (06:00) and Step.10 (07:00)
+  # Daily at 05:17 UTC - staggered ahead of Monitor: 3 (06:17) and Monitor: 2 (07:17)
   # so the three fleet-scope read pipelines stagger their ARG calls.
-  - cron: '30 5 * * *'
+  - cron: '17 5 * * *'
     displayName: 'Daily Fleet Connectivity Check'
     branches:
       include:
@@ -111,7 +111,7 @@ variables:
   # to the latest on PSGallery and warns if the YAML looks stale - prompting a
   # refresh via Copy-AzLocalPipelineExample -Update.
   - name: GENERATED_AGAINST_MODULE_VERSION
-    value: '0.9.26'
+    value: '0.9.27'
   # Resolution order for the module version pin: queue-time parameter 'moduleVersion'
   # > empty (latest). Leave empty for the default fix-forward behaviour.
   - name: REQUIRED_MODULE_VERSION
@@ -129,6 +129,8 @@ variables:
   # section 5. A variable redefined inline would OVERRIDE the group, so it is
   # intentionally not redefined here - the group is the single source of truth.
   - group: AzureLocal-Pipeline-Settings
+  - name: AZLOCAL_EFFECTIVE_PIPELINE_RUNTIME_MINUTES
+    value: $[coalesce(variables['AZLOCAL_MAX_PIPELINE_RUNTIME_MINUTES'], 120)]
   # ITSM connector (opt-in, secrets). When raiseItsmTicket=true the Raise ITSM
   # task below references $(ITSM_SN_INSTANCE_URL), $(ITSM_SN_CLIENT_ID),
   # $(ITSM_SN_CLIENT_SECRET). Bind them via a SEPARATE variable group named
@@ -143,6 +145,7 @@ stages:
   displayName: 'Collect Fleet Connectivity Status'
   jobs:
   - job: CollectConnectivity
+    timeoutInMinutes: $(AZLOCAL_EFFECTIVE_PIPELINE_RUNTIME_MINUTES)
     displayName: 'Collect and Report Fleet Connectivity'
     # BEGIN-AZLOCAL-CUSTOMIZE:runner-target-CollectConnectivity
     pool:

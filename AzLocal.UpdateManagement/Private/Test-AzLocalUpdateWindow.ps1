@@ -9,6 +9,12 @@ function Test-AzLocalUpdateWindow {
         The UpdateStartWindow tag value to evaluate.
     .PARAMETER TestTime
         The UTC time to test against. Defaults to current UTC time.
+    .PARAMETER AllowBeforeMinutes
+        Minutes before the configured window opens that an update attempt is
+        allowed to start. Default 0.
+    .PARAMETER AllowAfterMinutes
+        Minutes after the configured window closes that an update attempt is
+        allowed to start. Default 0.
     .OUTPUTS
         PSCustomObject with Allowed (bool), Reason (string), MatchedWindow (string or $null)
     .EXAMPLE
@@ -21,7 +27,15 @@ function Test-AzLocalUpdateWindow {
         [string]$WindowString,
 
         [Parameter(Mandatory = $false)]
-        [datetime]$TestTime = (Get-Date).ToUniversalTime()
+        [datetime]$TestTime = (Get-Date).ToUniversalTime(),
+
+        [Parameter(Mandatory = $false)]
+        [ValidateRange(0, 60)]
+        [int]$AllowBeforeMinutes = 0,
+
+        [Parameter(Mandatory = $false)]
+        [ValidateRange(0, 60)]
+        [int]$AllowAfterMinutes = 0
     )
 
     # Maintenance windows are evaluated in UTC. If caller accidentally supplies
@@ -34,40 +48,35 @@ function Test-AzLocalUpdateWindow {
 
     $windows = ConvertFrom-AzLocalUpdateWindow -WindowString $WindowString
 
-    $testDay = $TestTime.DayOfWeek
-    $testTimeOfDay = $TestTime.TimeOfDay
-
     foreach ($window in $windows) {
-        if ($window.Overnight) {
-            # Overnight window: Check if we're in the evening portion (same day) or morning portion (next day)
-            # Evening: testDay is in Days AND time >= start
-            # Morning: previous day is in Days AND time < end
-            $inEvening = ($testDay -in $window.Days) -and ($testTimeOfDay -ge $window.StartTime)
-
-            # Calculate previous day
-            $prevDay = if ($testDay -eq [DayOfWeek]::Sunday) { [DayOfWeek]::Saturday }
-                       elseif ($testDay -eq [DayOfWeek]::Monday) { [DayOfWeek]::Sunday }
-                       elseif ($testDay -eq [DayOfWeek]::Tuesday) { [DayOfWeek]::Monday }
-                       elseif ($testDay -eq [DayOfWeek]::Wednesday) { [DayOfWeek]::Tuesday }
-                       elseif ($testDay -eq [DayOfWeek]::Thursday) { [DayOfWeek]::Wednesday }
-                       elseif ($testDay -eq [DayOfWeek]::Friday) { [DayOfWeek]::Thursday }
-                       else { [DayOfWeek]::Friday }
-            $inMorning = ($prevDay -in $window.Days) -and ($testTimeOfDay -lt $window.EndTime)
-
-            if ($inEvening -or $inMorning) {
-                return [PSCustomObject]@{
-                    Allowed       = $true
-                    Reason        = "Within maintenance window: $($window.Raw)"
-                    MatchedWindow = $window.Raw
-                }
+        # Evaluate the previous, current, and next UTC dates as possible window
+        # opening dates. The next date is required when a before allowance crosses
+        # midnight; the previous date covers overnight and after allowances.
+        foreach ($openingDate in @($TestTime.Date.AddDays(-1), $TestTime.Date, $TestTime.Date.AddDays(1))) {
+            if ($openingDate.DayOfWeek -notin $window.Days) {
+                continue
             }
-        }
-        else {
-            # Same-day window: testDay in Days AND time between start and end
-            if (($testDay -in $window.Days) -and ($testTimeOfDay -ge $window.StartTime) -and ($testTimeOfDay -lt $window.EndTime)) {
+
+            $windowStart = $openingDate.Add($window.StartTime)
+            $windowEnd = if ($window.Overnight) {
+                $openingDate.AddDays(1).Add($window.EndTime)
+            }
+            else {
+                $openingDate.Add($window.EndTime)
+            }
+            $effectiveStart = $windowStart.AddMinutes(-$AllowBeforeMinutes)
+            $effectiveEnd = $windowEnd.AddMinutes($AllowAfterMinutes)
+
+            if ($TestTime -ge $effectiveStart -and $TestTime -lt $effectiveEnd) {
+                $allowanceDetail = if ($AllowBeforeMinutes -gt 0 -or $AllowAfterMinutes -gt 0) {
+                    " (allowance: $AllowBeforeMinutes minute(s) before, $AllowAfterMinutes minute(s) after)"
+                }
+                else {
+                    ''
+                }
                 return [PSCustomObject]@{
                     Allowed       = $true
-                    Reason        = "Within maintenance window: $($window.Raw)"
+                    Reason        = "Within maintenance window: $($window.Raw)$allowanceDetail"
                     MatchedWindow = $window.Raw
                 }
             }
@@ -78,7 +87,7 @@ function Test-AzLocalUpdateWindow {
     $dayNames = ($windows | ForEach-Object { $_.Raw }) -join '; '
     return [PSCustomObject]@{
         Allowed       = $false
-        Reason        = "Current time ($(($TestTime).ToString('yyyy-MM-dd HH:mm')) UTC, $testDay) is outside all maintenance windows: $dayNames"
+        Reason        = "Current time ($(($TestTime).ToString('yyyy-MM-dd HH:mm')) UTC, $($TestTime.DayOfWeek)) is outside all maintenance windows: $dayNames (allowance: $AllowBeforeMinutes minute(s) before, $AllowAfterMinutes minute(s) after)"
         MatchedWindow = $null
     }
 }

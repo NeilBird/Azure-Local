@@ -153,6 +153,10 @@ function Start-AzLocalClusterUpdate {
     )
 
     begin {
+        $scheduleToleranceLoaded = $false
+        $updateStartWindowAllowBeforeMinutes = 0
+        $updateStartWindowAllowAfterMinutes = 0
+
         # Pre-flight: Validate export path is writable before expensive operations
         if ($ExportResultsPath) {
             try { Test-ExportPathWritable -Path $ExportResultsPath | Out-Null }
@@ -852,9 +856,23 @@ function Start-AzLocalClusterUpdate {
                     if ($exclusionTagValue) { Write-Log -Message "  UpdateExclusionsWindow tag: $exclusionTagValue" -Level Info }
 
                     try {
+                        if (-not $scheduleToleranceLoaded) {
+                            $fleetSettings = Get-AzLocalFleetSettings
+                            if ($fleetSettings.PSObject.Properties['UpdateStartWindowAllowBeforeMinutes']) {
+                                $updateStartWindowAllowBeforeMinutes = [int]$fleetSettings.UpdateStartWindowAllowBeforeMinutes
+                            }
+                            if ($fleetSettings.PSObject.Properties['UpdateStartWindowAllowAfterMinutes']) {
+                                $updateStartWindowAllowAfterMinutes = [int]$fleetSettings.UpdateStartWindowAllowAfterMinutes
+                            }
+                            $scheduleToleranceLoaded = $true
+                            Write-Log -Message "  UpdateStartWindow allowance: $updateStartWindowAllowBeforeMinutes minute(s) before, $updateStartWindowAllowAfterMinutes minute(s) after" -Level Info
+                        }
+
                         $scheduleResult = Test-AzLocalUpdateScheduleAllowed `
                             -UpdateStartWindow $windowTagValue `
-                            -UpdateExclusionsWindow $exclusionTagValue
+                            -UpdateExclusionsWindow $exclusionTagValue `
+                            -AllowBeforeMinutes $updateStartWindowAllowBeforeMinutes `
+                            -AllowAfterMinutes $updateStartWindowAllowAfterMinutes
 
                         if (-not $scheduleResult.Allowed) {
                             Write-Log -Message "Cluster '$clusterName' is outside its maintenance schedule: $($scheduleResult.Reason)" -Level Warning

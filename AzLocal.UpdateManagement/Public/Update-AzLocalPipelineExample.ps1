@@ -153,11 +153,12 @@ function Update-AzLocalPipelineExample {
 
     .PARAMETER UpgradeFleetSettingsSchema
         Retained for backward compatibility. Existing active or commented
-        config/fleet-settings.yml schema version 1 or 2 files are upgraded to
-        version 3 automatically during every update. Exact original bytes are
+        config/fleet-settings.yml schema version 1, 2, or 3 files are upgraded to
+        version 4 automatically during every update. Exact original bytes are
         saved as config/fleet-settings_v<old>.bak.yml. Flat schema-v2 pairs
         become named one-tag groups. Existing comments, order, and line endings
-        are preserved. Supports -WhatIf and -Confirm.
+        are preserved, and top-level sections are placed in canonical v4 order.
+        Supports -WhatIf and -Confirm.
 
     .OUTPUTS
         PSCustomObject[] (with -PassThru) - one row per source file with:
@@ -264,9 +265,8 @@ function Update-AzLocalPipelineExample {
         # operator-owned files are always preserved.
         [switch]$SkipStarterFleetSettings,
 
-        # v0.9.23 compatibility switch. Active schema-v1 fleet settings and
-        # legacy commented v1 starters are now backed up and migrated during
-        # every normal update.
+        # Compatibility switch. Schema-v1/v2/v3 fleet settings are backed up
+        # and migrated to v4 during every normal update.
         [switch]$UpgradeFleetSettingsSchema,
 
         [switch]$PassThru
@@ -840,7 +840,7 @@ function Update-AzLocalPipelineExample {
     # ------------------------------------------------------------------
     # 7. Fleet settings starter drop parity with Copy-AzLocalPipelineExample.
     # Existing repos upgraded via Update receive the fully commented starter;
-    # an existing schema v1/v2 file is backed up before migration to v3.
+    # an existing schema v1/v2/v3 file is backed up before migration to v4.
     # ------------------------------------------------------------------
     $trimmedTarget = $destResolved.TrimEnd('\', '/')
     $oneLevelUp = Split-Path -Parent $trimmedTarget
@@ -861,7 +861,7 @@ function Update-AzLocalPipelineExample {
         $settingsText = [System.IO.File]::ReadAllText($fleetSettingsDest, [System.Text.UTF8Encoding]::new($false))
         $conversion = Convert-AzLocalFleetSettingsSchemaVersion -Text $settingsText -SourcePath $fleetSettingsDest
         if ($conversion.Migrated -and
-            $PSCmdlet.ShouldProcess($fleetSettingsDest, "Back up schema v$($conversion.FromVersion) and upgrade fleet-settings.yml to schema v3")) {
+            $PSCmdlet.ShouldProcess($fleetSettingsDest, "Back up schema v$($conversion.FromVersion) and upgrade fleet-settings.yml to schema v4")) {
             $fleetSettingsBackup = Join-Path -Path (Split-Path -Parent $fleetSettingsDest) -ChildPath ("fleet-settings_v{0}.bak.yml" -f $conversion.FromVersion)
             if (Test-Path -LiteralPath $fleetSettingsBackup -PathType Leaf) {
                 $backupBytes = [System.IO.File]::ReadAllBytes($fleetSettingsBackup)
@@ -875,7 +875,7 @@ function Update-AzLocalPipelineExample {
             }
             [System.IO.File]::WriteAllText($fleetSettingsDest, $conversion.NewText, [System.Text.UTF8Encoding]::new($false))
             $null = Get-AzLocalFleetSettings -Path $fleetSettingsDest
-            Write-Log -Message "  Updated : fleet-settings.yml upgraded from schema v$($conversion.FromVersion) to v3 at '$fleetSettingsDest'" -Level Success
+            Write-Log -Message "  Updated : fleet-settings.yml upgraded from schema v$($conversion.FromVersion) to v4 at '$fleetSettingsDest'" -Level Success
         }
         elseif (-not $conversion.Migrated) {
             Write-Verbose ("Update-AzLocalPipelineExample: fleet-settings.yml schema upgrade not required ({0})." -f $conversion.Reason)

@@ -171,7 +171,7 @@ In one sentence: **`apply-updates-schedule.yml` picks the days, the cron picks t
    - a **recommended apply cron** for **Update: 3 - Apply Updates** (`apply-updates.yml`), and
    - a **recommended in-flight monitor cron** for **Update: 4 - Monitor In-Flight Updates** (`monitor-updates.yml`).
 4. **Paste the apply cron into `apply-updates.yml`.** Copy the recommended apply cron from the Config: 3 summary into the `schedule:` block (GitHub Actions) / `schedules:` block (Azure DevOps) of `apply-updates.yml`, inside the `BEGIN/END-AZLOCAL-CUSTOMIZE:schedule-triggers` marker. Commit. Update: 3 now wakes on exactly the eligible days.
-5. **(Optional, v0.8.90+) Tighten the monitor poll cadence.** `monitor-updates.yml` already self-drives - it ships an active every-6h `0 */6 * * *` cron that runs a cheap `-SkipWhenIdle` heartbeat, and Apply fires it event-driven the moment an update starts (see [section 6.7](#67-continuous-fleet-monitoring)), so you **no longer need to paste a monitor cron** for the monitor to run. If you want tighter in-wave polling than every 6h, copy the recommended monitor cron from the Config: 3 summary into the `schedule:` block of `monitor-updates.yml` to override the default.
+5. **(Optional, v0.8.90+) Tighten the monitor poll cadence.** `monitor-updates.yml` already self-drives - it ships an active every-6h `17 */6 * * *` cron that runs a cheap `-SkipWhenIdle` heartbeat, and Apply fires it event-driven the moment an update starts (see [section 6.7](#67-continuous-fleet-monitoring)), so you **no longer need to paste a monitor cron** for the monitor to run. If you want tighter in-wave polling than every 6h, copy the minute-17 phased monitor cron from the Config: 3 summary into the `schedule:` block of `monitor-updates.yml` to override the default.
 6. **Re-run Config: 3 whenever tags or the schedule change** to catch drift and regenerate the crons. The weekly `apply-updates-schedule-audit.yml` does this automatically (see [section 8.3](#83-end-to-end-runbook-apply-updates-schedule-coverage-audit)).
 
 > **Config: 3 is the glue.** Once layers 1 and 3 are in place, it derives the layer-2 apply cron (and an optional tighter monitor cron) - so you never hand-craft cron expressions, and Update: 3 and Update: 4 stay aligned to your rings and maintenance windows.
@@ -611,6 +611,8 @@ Subject-claim patterns for other trigger types:
 No `AZURE_CLIENT_SECRET` is needed.
 
 > **Optional extra Variable (v0.8.90):** `MONITOR_TRIGGER_DELAY_MINUTES` lets you delay the in-flight monitor when it is fired automatically by Apply Updates, so its first snapshot lands after the new `updateRun` registers as `InProgress`. It is opt-in (unset/0 = no delay), non-sensitive (a plain integer, so a Variable not a Secret), and honoured in the `15`-`240` range. See [6.7 Continuous fleet monitoring -> Event-driven monitor trigger](#67-continuous-fleet-monitoring) for the full end-to-end behaviour.
+
+> **Optional maximum runtime Variable (v0.9.27):** `AZLOCAL_MAX_PIPELINE_RUNTIME_MINUTES` reduces the native timeout applied to every job. Leave it unset for the shipped 120-minute default, or set a positive whole number such as `90`. The limit is per job because GitHub Actions exposes `timeout-minutes` at job scope.
 
 For public repositories, prefer [environment secrets with required reviewers](https://docs.github.com/en/actions/deployment/targeting-different-environments/using-environments-for-deployment#environment-secrets) over repository-level secrets - they restrict who can run the workflow against production identities.
 
@@ -1088,7 +1090,7 @@ Both platforms expect the YAML files inside this folder to land in a platform-sp
 
 `AzureLocal-Pipeline-Settings` holds the **non-secret, fleet-wide settings** that previously had to be edited inline in each YAML. None of these are credentials - **authentication (subscription / tenant / client) stays on the Workload Identity Federation service connection**, never in this group (see [4.2](#42-azure-devops-with-workload-identity-federation-recommended)).
 
-Why a group instead of inline variables? Azure DevOps variable **precedence** runs (highest to lowest): job-level > stage-level > pipeline-root inline YAML > queue-time > variable group / Pipeline-UI. A variable group sits **below** pipeline-root inline YAML, so an inline variable of the same name would silently **override** the group. The example pipelines therefore **do not** redefine any group member inline - the group is the single source of truth. To change a setting fleet-wide, edit the group; to override it for one run, pass it as a **queue-time** variable (which outranks the group).
+Why a group instead of inline variables? Azure DevOps variable **precedence** runs (highest to lowest): job-level > stage-level > pipeline-root inline YAML > queue-time > variable group / Pipeline-UI. A variable group sits **below** pipeline-root inline YAML, so the examples never redefine a group member with the same name. The timeout implementation computes a separate internal `AZLOCAL_EFFECTIVE_PIPELINE_RUNTIME_MINUTES` value from the optional group member and falls back to 120; the customer-facing group variable remains authoritative.
 
 **Members** (all optional - each ships with a safe default so an unset value never breaks a run):
 
@@ -1098,6 +1100,7 @@ Why a group instead of inline variables? Azure DevOps variable **precedence** ru
 | `APPLY_UPDATES_SCHEDULE_PATH` | `./config/apply-updates-schedule.yml` | Path to the apply schedule / allow-list. | `apply-updates`, `assess-update-readiness` |
 | `MONITOR_TRIGGER_DELAY_MINUTES` | `0` (no delay) | One-off startup sleep on the **event-driven** monitor run so the snapshot lands after the run registers `InProgress`. Honoured range 15-240. | `monitor-updates` |
 | `FAILED_UPDATES_SINGLE_RETRY` | unset (`off`) | Opt-in guarded one-time retry of failed update runs. Set `true` to enable. See [8.5](#85-opt-in-single-retry-of-failed-updates-failed_updates_single_retry). | `apply-updates` |
+| `AZLOCAL_MAX_PIPELINE_RUNTIME_MINUTES` | unset (effective default `120`) | Native maximum runtime for each job. Set a positive whole number to reduce the two-hour cap. Multi-job pipelines can exceed this value in total elapsed time because the control is job-scoped. | All pipelines |
 Sideload configuration is not stored in repository/pipeline variables. Use the
 committed `config/sideload-settings.yml` file described in [docs/sideload.md](docs/sideload.md).
 Copy/Update creates it only when absent and never overwrites or migrates an existing file.
@@ -1114,6 +1117,7 @@ az pipelines variable-group create `
         APPLY_UPDATES_SCHEDULE_PATH='./config/apply-updates-schedule.yml' `
         MONITOR_TRIGGER_DELAY_MINUTES='0' `
         FAILED_UPDATES_SINGLE_RETRY='false' `
+        AZLOCAL_MAX_PIPELINE_RUNTIME_MINUTES='120'
 
 # Verify the group exists and is authorized for all pipelines.
 az pipelines variable-group list `
@@ -1153,7 +1157,7 @@ The example pipelines have **near-100% functional parity** across GitHub Actions
   ```
 
   > Since **v0.8.94** each `azureSubscription:` line is wrapped in a `# BEGIN/END-AZLOCAL-CUSTOMIZE:service-connection-<job>` marker, so your renamed connection name **survives `Update-AzLocalPipelineExample`** (including with `-Force`). The agent pool (`# ...:runner-target-<job>`) and the sideload self-hosted pool (`# ...:sideload-runner-<job>`) are wrapped the same way. See [4.2](#42-azure-devops-with-workload-identity-federation-recommended) and the [version-pinning appendix](docs/appendix-module-version-pinning.md) for the upgrade workflow.
-- [ ] **Create the `AzureLocal-Pipeline-Settings` variable group** (see [5.2.1](#521-the-azurelocal-pipeline-settings-variable-group-shared-settings-set-once)). This is **required** - every ADO pipeline references it via `- group: AzureLocal-Pipeline-Settings`, and a missing group is a **compile error** (the run fails before any job starts). It is the ADO equivalent of GitHub repo Variables: set the shared, non-secret exclusion, schedule, monitor, and retry settings **once** and the bundled pipelines inherit them. Sideload settings remain in `config/sideload-settings.yml`. Seed the group with the shipped defaults via `az pipelines variable-group create` (or **Pipelines -> Library**), and grant it access to all pipelines (`--authorize true`).
+- [ ] **Create the `AzureLocal-Pipeline-Settings` variable group** (see [5.2.1](#521-the-azurelocal-pipeline-settings-variable-group-shared-settings-set-once)). This is **required** - every ADO pipeline references it via `- group: AzureLocal-Pipeline-Settings`, and a missing group is a **compile error** (the run fails before any job starts). It is the ADO equivalent of GitHub repo Variables: set the shared, non-secret exclusion, schedule, monitor, retry, and runtime settings **once** and the bundled pipelines inherit them. Sideload settings remain in `config/sideload-settings.yml`. Seed the group with the shipped defaults via `az pipelines variable-group create` (or **Pipelines -> Library**), and grant it access to all pipelines (`--authorize true`).
 - [ ] **(Optional) Create the other variable groups** in **Pipelines -> Library**: `AzureLocal-Config` for run defaults (e.g. the most-common `UpdateRing`), and - only if you plan to raise ITSM tickets - `AzureLocal-ITSM-Secrets` (see [section 7](#7-optional-open-itsm-tickets-for-clusters-needing-operator-action)).
 
 #### Per-pipeline (after import)
@@ -1404,12 +1408,12 @@ Get-AzLocalClusterInventory -ExportPath ./cluster-inventory.csv   # now skips th
 
 > **Secrets note:** this list is **non-secret** scoping metadata (subscription GUIDs are not credentials), so it belongs in source control / the `AzureLocal-Pipeline-Settings` group - never in a secret store. Azure authentication still flows through OIDC / the WIF service connection as before.
 
-#### 6.1.2 (Optional) Scope the fleet by management group and cluster tags
+#### 6.1.2 (Optional) Configure fleet scope, update-window allowances, and reporting
 
 Azure CLI and Azure PowerShell forward only the first 1,000 accessible subscriptions when Azure Resource Graph scope is implicit. For larger or growing estates, activate management-group scope in the generated `config/fleet-settings.yml`. Use management-group IDs, not display names or full resource IDs:
 
 ```yaml
-schemaVersion: 3
+schemaVersion: 4
 scope:
   managementGroups:
     - contoso-platform
@@ -1425,6 +1429,9 @@ scope:
       tags:
         - name: Test-Environment
           value: Yes
+updateStartWindow:
+  allowBeforeMinutes: 0
+  allowAfterMinutes: 0
 reporting:
   maxRowsPerTable: 100
   maxSummaryBytes: 900000
@@ -1436,8 +1443,9 @@ YAML indentation is part of the schema. Use spaces only (never tabs) and preserv
 
 | Level | Exact indentation | Property |
 |---|---:|---|
-| Document root | 0 spaces | `schemaVersion`, `scope`, `reporting`, `itsm` |
+| Document root | 0 spaces | `schemaVersion`, `scope`, `updateStartWindow`, `reporting`, `itsm` |
 | Scope property | 2 spaces | `managementGroups`, `clusterTagFilters` |
+| Update-window allowance | 2 spaces | `allowBeforeMinutes`, `allowAfterMinutes` |
 | Management-group item | 4 spaces | `- <management-group-id>` |
 | Filter group | 4 spaces | `- name: <group-name>` |
 | Group tag collection | 6 spaces | `tags:` |
@@ -1448,9 +1456,22 @@ Each item under `clusterTagFilters` is a **group**, not an Azure tag itself. In 
 
 `clusterTagFilters` is a global admission policy used by all pipeline workloads. Names and values use exact, case-insensitive comparison, and tag strings are treated as literals. Group names must be unique; tag names must be unique within a group. Do not use module-owned control tags such as `UpdateRing`, `UpdateStartWindow`, `UpdateSideloaded`, or retry-state tags as selectors; establish stable admission tags through Azure Policy, onboarding, or another enterprise tagging process. Config: 2 validates live tags before mutation and reports `GlobalFilterMismatch` for excluded rows.
 
+`updateStartWindow` controls a fleet-wide UTC allowance around every cluster's existing `UpdateStartWindow` tag. It does not rewrite the tag. `allowBeforeMinutes` permits an update attempt to start that many minutes before the tagged opening; `allowAfterMinutes` permits an attempt to start that many minutes after the tagged closing. Each value is independent, accepts `0-60`, and defaults to `0`. With both at `0`, the original behavior is unchanged: the opening instant is inclusive and the closing instant is exclusive.
+
+For `UpdateStartWindow=Sat_02:00-06:00`:
+
+| Configuration | Effective update-attempt start interval | Use case |
+|---|---|---|
+| `allowBeforeMinutes: 20`, `allowAfterMinutes: 0` | Saturday 01:40 inclusive through 06:00 exclusive | Permit a pipeline pre-warm run to reach the update gate early |
+| `allowBeforeMinutes: 0`, `allowAfterMinutes: 20` | Saturday 02:00 inclusive through 06:20 exclusive | Absorb scheduler or authentication delay after the closing edge |
+| `allowBeforeMinutes: 20`, `allowAfterMinutes: 20` | Saturday 01:40 inclusive through 06:20 exclusive | Allow variance on both edges |
+| `allowBeforeMinutes: 0`, `allowAfterMinutes: 0` | Saturday 02:00 inclusive through 06:00 exclusive | Preserve the strict tagged window |
+
+The allowance controls only when the module may **start** an update attempt; it does not wait, queue, stop, or cancel an update at either boundary. The setting applies fleet-wide, including overnight windows and day-boundary crossings. Keep the values as small as operationally necessary, and leave `allowAfterMinutes` at `0` when the tagged closing time is a hard prohibition on starting new work. `UpdateExclusionsWindow` and the `UpdateExcluded` operator override remain higher-priority blocks and are not widened by these values. The manual break-glass `force_immediate_update` option still bypasses schedule tags entirely.
+
 At the start of each pipeline report, the shared version banner records the effective management-group IDs and grouped tag filters as a **run snapshot**. This remains attached to the historic GitHub Actions or Azure DevOps run even if `fleet-settings.yml` later changes. The install step also emits compact JSON outputs named `management_groups` and `cluster_tag_filters`; the latter preserves each group and its nested tags. When the optional file is missing, empty, fully commented, or contains no scope selectors, no fleet-scope block is rendered.
 
-`Copy-AzLocalPipelineExample` and `Update-AzLocalPipelineExample` create a fully commented schema-v3 starter when the file is missing. During a normal Update, schema v1 or v2 is automatically migrated after its exact original bytes are saved as `config/fleet-settings_v1.bak.yml` or `config/fleet-settings_v2.bak.yml`. A flat v2 pair becomes a named one-tag group, so multiple old pairs become `OR` alternatives in v3; review an active migrated policy before its next scheduled run. Existing comments, values, order, and line endings are preserved. A fully commented source remains fully commented and inert, and reruns are byte-for-byte idempotent. `-WhatIf` previews the operation; `-UpgradeFleetSettingsSchema` remains accepted but is no longer required. Runtime parsing accepts schema v1 without tag filters and schema v3; schema v2 must be upgraded. The precedence is: explicit `-SubscriptionId`, configured management groups, then existing implicit subscription discovery. A missing, empty, or fully commented file therefore preserves existing runtime scope. The pipeline identity needs read access on the target management-group hierarchy; management-group scope can cover the first 10,000 subscriptions beneath it.
+`Copy-AzLocalPipelineExample` and `Update-AzLocalPipelineExample` create a fully commented schema-v4 starter when the file is missing. During a normal Update, schema v1, v2, or v3 is automatically migrated after its exact original bytes are saved as `config/fleet-settings_v1.bak.yml`, `config/fleet-settings_v2.bak.yml`, or `config/fleet-settings_v3.bak.yml`. A flat v2 pair becomes a named one-tag group, so multiple old pairs remain `OR` alternatives. The migrated top-level order matches the v4 starter: `schemaVersion`, `scope`, `updateStartWindow`, `reporting`, `itsm`; comments associated with each section move with it. The new allowance values are added as commented defaults, so migration does not widen any window until an operator explicitly activates them. Existing values and line endings are preserved. A fully commented source remains fully commented and inert, and reruns are byte-for-byte idempotent. `-WhatIf` previews the operation; `-UpgradeFleetSettingsSchema` remains accepted but is no longer required. Runtime parsing accepts schemas v1, v3, and v4; schema v2 must be upgraded. The precedence is: explicit `-SubscriptionId`, configured management groups, then existing implicit subscription discovery. A missing, empty, or fully commented file therefore preserves existing runtime scope and exact window enforcement. The pipeline identity needs read access on the target management-group hierarchy; management-group scope can cover the first 10,000 subscriptions beneath it.
 
 The reporting values cap only human-readable Markdown. Complete CSV, JSON, JUnit, and HTML artifacts remain available for automation and detailed investigation. `maxSummaryBytes` is measured as UTF-8 and defaults below GitHub Actions' 1 MiB per-step summary limit. `maxIncidentsPerRun` bounds ServiceNow fan-out; set it to `0` to suppress new incident creation while retaining deterministic skipped result rows.
 
@@ -1592,7 +1613,7 @@ The "steady-state" phase ships **three complementary pipelines**, all read-only,
 | `fleet-update-status.yml` | 06:00 UTC | *"Is each cluster up-to-date? Which ones need an apply, which ones are SBE-blocked, which ones failed?"* | JUnit + CSV/JSON + Markdown summary; one test case per cluster |
 | `fleet-health-status.yml` *(v0.7.65, Monitor: 2)* | 07:00 UTC | *"Do clusters have actionable health issues even when up-to-date? What failure reasons hit the most clusters?"* | JUnit + CSV/JSON + Markdown summary; one test case per (cluster, failing 24-hour health check) grouped under Critical / Warning testsuites |
 
-The four run in distinct (offset) cron slots so they don't contend for the same agent. **v0.8.90:** `monitor-updates.yml` now ships with an active 6-hourly `0 */6 * * *` cron that runs a low-cost `-SkipWhenIdle` heartbeat (one fleet-wide "anything in flight?" probe that short-circuits when idle), and is additionally fired event-driven by `apply-updates.yml` the moment it starts an update - so you no longer have to manually turn a cron on during a wave.
+The four run in distinct (offset) cron slots so they don't contend for the same agent. **v0.9.27:** every `Monitor: X` schedule starts at minute 17 rather than a crowded five-minute boundary. `monitor-updates.yml` ships with an active 6-hourly `17 */6 * * *` cron that runs a low-cost `-SkipWhenIdle` heartbeat and is additionally fired event-driven by `apply-updates.yml` the moment it starts an update.
 
 ![Update: 4 - Monitor In-Flight Updates summary tab: red Fleet Status CRITICAL header (1 run > 6d, 1 step > 4h, 4 unresolved failures, 20 clusters scoped), the new Tip line explaining Ctrl/Cmd/middle-click for new-tab opens (GitHub markdown strips target="_blank"), the In-flight runs table with the new deep-tree Progress column showing `132/167 steps (79%)` for the Arizona Solution12.2604.1003.1005 CAU Attempt step, and the Failed runs table with plain-anchor Cluster + Update hyperlinks for Toronto / Virginia / NewYorkCity](../docs/images/monitor-inflight-updates.png)
 
@@ -1602,7 +1623,7 @@ The four run in distinct (offset) cron slots so they don't contend for the same 
 
 Before v0.8.90 the in-flight monitor only ran on a manual/uncommented cron, so an operator had to remember to turn it on for a wave and off again afterwards. v0.8.90 makes the monitor **self-driving** by combining three changes that work together:
 
-1. **An always-on 6-hourly heartbeat** - `monitor-updates.yml` now ships an active `0 */6 * * *` cron. By itself that would generate four idle runs/day, so...
+1. **An always-on 6-hourly heartbeat** - `monitor-updates.yml` ships an active `17 */6 * * *` cron. By itself that generates four idle runs/day, so...
 2. **`-SkipWhenIdle`** - every scheduled run first does one cheap fleet-wide Resource Graph probe ("is *any* `updateRun` `InProgress`?"). If nothing is in flight it emits an `IDLE` result and **skips the per-cluster sweep entirely**, so off-wave runs cost a single ARG query. (Fail-safe: if the probe itself errors, the monitor does NOT skip - it runs the full sweep.)
 3. **An event-driven trigger from Apply** - the moment `apply-updates.yml` starts >=1 update, it fires `monitor-updates.yml` directly, tagged `triggered_by=apply-updates`, so the monitor catches the run within minutes instead of waiting up to 6 hours for the next cron slot.
 
@@ -1745,9 +1766,9 @@ The `UpdateStartWindow` and `UpdateExclusionsWindow` tags on each cluster contro
 >
 > | Cluster `UpdateStartWindow` tag | GitHub Actions `cron` | Azure DevOps `cron` | Notes |
 > |---|---|---|---|
-> | `Sat-Sun_02:00-06:00` | `'55 1 * * 6,0'` | `'55 1 * * 6,0'` | Fires Sat + Sun at 01:55 UTC so cluster enumeration + auth completes before the 02:00 window opens. |
-> | `Mon-Fri_22:00-04:00` | `'55 21 * * 1-5'` | `'55 21 * * 1-5'` | Fires weeknights at 21:55 UTC. The overnight wrap is handled by `Test-AzLocalUpdateScheduleAllowed`, you only need one cron per window opening. |
-> | `Sun_03:00-07:00` | `'55 2 * * 0'` | `'55 2 * * 0'` | Single weekly maintenance slot. |
+> | `Sat-Sun_02:00-06:00` | `'53 1 * * 6,0'` | `'53 1 * * 6,0'` | Fires Sat + Sun at 01:53 UTC, using the default seven-minute lead. |
+> | `Mon-Fri_22:00-04:00` | `'53 21 * * 1-5'` | `'53 21 * * 1-5'` | Fires weeknights at 21:53 UTC. The overnight wrap is handled by `Test-AzLocalUpdateScheduleAllowed`; only one opening cron is needed. |
+> | `Sun_03:00-07:00` | `'53 2 * * 0'` | `'53 2 * * 0'` | Single weekly maintenance slot using the default seven-minute lead. |
 >
 > Inside the pipeline, `Test-AzLocalUpdateScheduleAllowed` is the per-cluster gate - clusters whose `UpdateStartWindow` does not cover "now" (or whose `UpdateExclusionsWindow` does cover "now") are skipped with `Status = ScheduleBlocked`. Running the pipeline outside any window is therefore safe but wasted - **running it during a window is the only way an update ever starts.** Separately, clusters with `UpdateExcluded = True` are skipped with `Status = ExcludedByTag` regardless of schedule.
 >
@@ -1914,22 +1935,22 @@ Followed by the per-row detail (Uncovered first):
 
 ```
 | Status    | UpdateRing  | UpdateStartWindow            | Clusters | Required Cron (UTC) | Recommendation               |
-| Uncovered | Wave2       | Mon-Fri_22:00-04:00     | 47       | 55 21 * * 1-5       | Add: 55 21 * * 1-5           |
-| Uncovered | Production  | Sun_03:00-07:00         | 312      | 55 2 * * 0          | Add: 55 2 * * 0              |
-| Covered   | Pilot       | Sat-Sun_02:00-06:00     | 3        | 55 1 * * 6,0        | OK - keep the current schedule. |
+| Uncovered | Wave2       | Mon-Fri_22:00-04:00     | 47       | 53 21 * * 1-5       | Add: 53 21 * * 1-5           |
+| Uncovered | Production  | Sun_03:00-07:00         | 312      | 53 2 * * 0          | Add: 53 2 * * 0              |
+| Covered   | Pilot       | Sat-Sun_02:00-06:00     | 3        | 53 1 * * 6,0        | OK - keep the current schedule. |
 ```
 
-And finally the **ready-to-paste cron block** (Recommend view). With the default `firesPerWindow: 2`, every window emits **two** cron entries - one tagged `(open)` that fires `leadTimeMinutes` BEFORE the window opens, and one tagged `(retry)` that fires inside the window at the lesser of the window midpoint or +60 min after it opens:
+And finally the **ready-to-paste cron block** (Recommend view). With the default `firesPerWindow: 2`, every window emits **two** cron entries: `(open)` uses the default seven-minute lead, while `(retry)` is phased seven minutes before the lesser of the midpoint or +60-minute target and remains inside the window:
 
 ````yaml
 # --- GitHub Actions: paste under apply-updates.yml `on:` ---
 # schedule:
-#   - cron: '55 1 * * 6,0'    # Sat-Sun_02:00-06:00 (open)  (rings: Pilot, 3 cluster(s))
-#   - cron: '3 3 * * 6,0'     # Sat-Sun_02:00-06:00 (retry) (rings: Pilot, 3 cluster(s))
-#   - cron: '55 2 * * 0'      # Sun_03:00-07:00     (open)  (rings: Production, 312 cluster(s))
-#   - cron: '0 4 * * 0'       # Sun_03:00-07:00     (retry) (rings: Production, 312 cluster(s))
-#   - cron: '55 21 * * 1-5'   # Mon-Fri_22:00-04:00 (open)  (rings: Wave2, 47 cluster(s))
-#   - cron: '0 23 * * 1-5'    # Mon-Fri_22:00-04:00 (retry) (rings: Wave2, 47 cluster(s))
+#   - cron: '53 1 * * 6,0'    # Sat-Sun_02:00-06:00 (open)  (rings: Pilot, 3 cluster(s))
+#   - cron: '53 2 * * 6,0'    # Sat-Sun_02:00-06:00 (retry) (rings: Pilot, 3 cluster(s))
+#   - cron: '53 2 * * 0'      # Sun_03:00-07:00     (open)  (rings: Production, 312 cluster(s))
+#   - cron: '53 3 * * 0'      # Sun_03:00-07:00     (retry) (rings: Production, 312 cluster(s))
+#   - cron: '53 21 * * 1-5'   # Mon-Fri_22:00-04:00 (open)  (rings: Wave2, 47 cluster(s))
+#   - cron: '53 22 * * 1-5'   # Mon-Fri_22:00-04:00 (retry) (rings: Wave2, 47 cluster(s))
 ````
 
 ##### Visual: example Config: 3 step summary

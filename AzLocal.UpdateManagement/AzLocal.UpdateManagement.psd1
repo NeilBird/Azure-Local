@@ -3,7 +3,7 @@
     RootModule = 'AzLocal.UpdateManagement.psm1'
 
     # Version number of this module.
-    ModuleVersion = '0.9.26'
+    ModuleVersion = '0.9.27'
 
     # Supported PSEditions
     CompatiblePSEditions = @('Desktop', 'Core')
@@ -379,9 +379,11 @@
 
             # ReleaseNotes of this module
             ReleaseNotes = @'
-## Version 0.9.26 - Update: 1 scopes and batches ARG reads, collects readiness and health once, keeps a Ready solution actionable beside a prerequisite SBE, recovers ARG-stale Ready rows through sparse ARM checks, and always emits valid JUnit artifacts. No export change (71). Pins bumped to 0.9.26.
+## Version 0.9.27 - Minute-17 schedules, seven-minute Apply lead, and job timeouts. Schema v4 adds strict UpdateStartWindow allowances and backed-up v1/v2/v3 migration. No export change (71).
 
-## Version 0.9.25 - Fixes 1,001-2,000-row readiness summaries, normalizes dynamic Markdown cells, expands Config: 3 remediation, and documents schedule-row flexibility. No export change (71). Pins bumped to 0.9.25.
+## Version 0.9.26 - Update: 1 scopes and batches ARG reads, preserves Ready solutions beside prerequisite SBE, reconciles stale ARG rows, and emits clean-run JUnit. No export change (71).
+
+## Version 0.9.25 - Fixes large readiness summaries, normalizes Markdown cells, and expands Config: 3 remediation. No export change (71).
 
 ## Version 0.9.24 - Fleet settings schema v3 adds named tag groups: tags use AND within a group and groups use OR. Normal pipeline updates back up and migrate schema v1/v2, including fully commented inert files. Sparse ARG/CLI/ARM payloads are null-safe, and reporting.maxRowsPerTable accepts 2,000. No public/export change (71). Pipeline pins bumped to 0.9.24.
 

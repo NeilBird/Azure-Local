@@ -38,7 +38,8 @@ function Convert-AzLocalUpdateWindowToCron {
     .PARAMETER UpdateStartWindow
         The raw UpdateStartWindow tag value.
     .PARAMETER LeadTimeMinutes
-        Minutes before the window opens that the pipeline should fire. Default 5.
+        Minutes before the window opens that the pipeline should fire. Default 7
+        to avoid crowded five-minute scheduler boundaries.
     .PARAMETER FiresPerWindow
         How many cron entries to emit per window segment. Default 1 (opening
         edge only - back-compat for v0.7.91 and earlier callers). Set to 2
@@ -59,13 +60,13 @@ function Convert-AzLocalUpdateWindowToCron {
             IsRetry        - $false for the opening-edge cron, $true for the
                              belt-and-braces mid-window retry
     .EXAMPLE
-        Convert-AzLocalUpdateWindowToCron -UpdateStartWindow 'Sat-Sun_02:00-06:00' -LeadTimeMinutes 5
-        # Returns one row, CronExpression = '55 1 * * 6,0'
+        Convert-AzLocalUpdateWindowToCron -UpdateStartWindow 'Sat-Sun_02:00-06:00'
+        # Returns one row, CronExpression = '53 1 * * 6,0'
     .EXAMPLE
         Convert-AzLocalUpdateWindowToCron -UpdateStartWindow 'Mon-Fri_20:00-23:00' -FiresPerWindow 2
         # Returns two rows:
-        #   '55 19 * * 1-5' (IsRetry=$false, opening edge minus 5min lead)
-        #   '0 21 * * 1-5'  (IsRetry=$true, window midpoint capped at +60min)
+        #   '53 19 * * 1-5' (IsRetry=$false, opening edge minus 7min lead)
+        #   '53 20 * * 1-5' (IsRetry=$true, de-contented retry before the +60min target)
     #>
     [CmdletBinding()]
     [OutputType([PSCustomObject[]])]
@@ -75,7 +76,7 @@ function Convert-AzLocalUpdateWindowToCron {
 
         [Parameter(Mandatory = $false)]
         [ValidateRange(0, 60)]
-        [int]$LeadTimeMinutes = 5,
+        [int]$LeadTimeMinutes = 7,
 
         [Parameter(Mandatory = $false)]
         [ValidateRange(1, 2)]
@@ -177,7 +178,11 @@ function Convert-AzLocalUpdateWindowToCron {
             # rather than emit a duplicate cron.
             if ($retryOffset -le 0) { continue }
 
-            $retryFireMinutes = $startMinutes + $retryOffset
+            # Prefer seven minutes before the natural retry target so generated
+            # schedules do not land on crowded :00/:05 boundaries. For short
+            # windows, clamp to one minute after opening so the retry remains
+            # strictly inside the window.
+            $retryFireMinutes = [math]::Max(($startMinutes + 1), ($startMinutes + $retryOffset - 7))
             $retryDayShift    = $false
             if ($retryFireMinutes -ge (24 * 60)) {
                 $retryFireMinutes -= (24 * 60)

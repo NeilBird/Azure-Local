@@ -28,7 +28,7 @@ trigger: none  # Manual or scheduled only
 
 schedules:
   # Run daily at 6 AM UTC
-  - cron: '0 6 * * *'
+  - cron: '17 6 * * *'
     displayName: 'Daily Fleet Status Check'
     branches:
       include:
@@ -94,7 +94,7 @@ variables:
   # to the latest on PSGallery and warns if the YAML looks stale - prompting a
   # refresh via Copy-AzLocalPipelineExample -Update.
   - name: GENERATED_AGAINST_MODULE_VERSION
-    value: '0.9.26'
+    value: '0.9.27'
   # Resolution order for the module version pin: queue-time parameter 'moduleVersion'
   # > empty (latest). Leave empty for the default fix-forward behaviour.
   - name: REQUIRED_MODULE_VERSION
@@ -112,6 +112,8 @@ variables:
   # section 5. A variable redefined inline would OVERRIDE the group, so it is
   # intentionally not redefined here - the group is the single source of truth.
   - group: AzureLocal-Pipeline-Settings
+  - name: AZLOCAL_EFFECTIVE_PIPELINE_RUNTIME_MINUTES
+    value: $[coalesce(variables['AZLOCAL_MAX_PIPELINE_RUNTIME_MINUTES'], 120)]
   # ITSM connector (opt-in, secrets). When raiseItsmTicket=true the Raise ITSM
   # task below references $(ITSM_SN_INSTANCE_URL), $(ITSM_SN_CLIENT_ID),
   # $(ITSM_SN_CLIENT_SECRET). Bind them via a SEPARATE variable group named
@@ -126,6 +128,7 @@ stages:
   displayName: 'Collect Fleet Update Status'
   jobs:
   - job: CollectStatus
+    timeoutInMinutes: $(AZLOCAL_EFFECTIVE_PIPELINE_RUNTIME_MINUTES)
     displayName: 'Collect and Report Fleet Status'
     # BEGIN-AZLOCAL-CUSTOMIZE:runner-target-CollectStatus
     pool:

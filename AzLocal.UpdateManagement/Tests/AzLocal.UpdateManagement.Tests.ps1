@@ -49,6 +49,8 @@ Describe 'v0.9.25: Fleet settings, management-group scope, and grouped cluster t
         @($settings.ManagementGroups).Count | Should -Be 0
         @($settings.ClusterTagFilters).Count | Should -Be 0
         $settings.ClusterTagFilterMode | Should -Be 'AnyGroup'
+        $settings.UpdateStartWindowAllowBeforeMinutes | Should -Be 0
+        $settings.UpdateStartWindowAllowAfterMinutes | Should -Be 0
     }
 
     It 'Keeps defaults when the file is fully commented' {
@@ -65,6 +67,8 @@ Describe 'v0.9.25: Fleet settings, management-group scope, and grouped cluster t
         $settings.MaxRowsPerTable | Should -Be 100
         $settings.MaxSummaryBytes | Should -Be 900000
         $settings.MaxIncidentsPerRun | Should -Be 25
+        $settings.UpdateStartWindowAllowBeforeMinutes | Should -Be 0
+        $settings.UpdateStartWindowAllowAfterMinutes | Should -Be 0
     }
 
     It 'Parses all supported sections and deduplicates management groups' {
@@ -95,6 +99,20 @@ itsm:
             Set-Content -LiteralPath $script:fleetSettingsPath -Encoding ASCII
 
         (Get-AzLocalFleetSettings).MaxRowsPerTable | Should -Be 2000
+    }
+
+    It 'Parses independent schema v4 UpdateStartWindow allowances' {
+        @'
+schemaVersion: 4
+updateStartWindow:
+  allowBeforeMinutes: 20
+  allowAfterMinutes: 15
+'@ | Set-Content -LiteralPath $script:fleetSettingsPath -Encoding ASCII
+
+        $settings = Get-AzLocalFleetSettings
+        $settings.SchemaVersion | Should -Be 4
+        $settings.UpdateStartWindowAllowBeforeMinutes | Should -Be 20
+        $settings.UpdateStartWindowAllowAfterMinutes | Should -Be 15
     }
 
     It 'Parses schema v3 tag groups in declared order with AND-within and OR-across semantics' {
@@ -146,6 +164,11 @@ itsm:
             @{ Content = "schemaVersion: 3`nscope:`n  clusterTagFilters:`n    - name: Live`n      tags:`n        - name: Environment"; Expected = '*requires non-empty name and value*' }
             @{ Content = "schemaVersion: 3`nscope:`n  clusterTagFilters:`n    - name: Live`n      tags:`n        - name: Environment`n          value: Production`n        - name: environment`n          value: Test"; Expected = '*duplicate tag name*Environment*Live*' }
             @{ Content = "schemaVersion: 3`nscope:`n  clusterTagFilters:`n    - name: Live`n      tags:`n        - name: UpdateRing`n          value: Production"; Expected = '*module-owned control tag*UpdateRing*' }
+            @{ Content = "schemaVersion: 3`nupdateStartWindow:`n  allowBeforeMinutes: 20"; Expected = '*require schemaVersion: 4*' }
+            @{ Content = "schemaVersion: 4`nupdateStartWindow:`n  allowBeforeMinutes: -1"; Expected = '*allowBeforeMinutes must be between 0 and 60*' }
+            @{ Content = "schemaVersion: 4`nupdateStartWindow:`n  allowBeforeMinutes: 61"; Expected = '*allowBeforeMinutes must be between 0 and 60*' }
+            @{ Content = "schemaVersion: 4`nupdateStartWindow:`n  allowAfterMinutes: -1"; Expected = '*allowAfterMinutes must be between 0 and 60*' }
+            @{ Content = "schemaVersion: 4`nupdateStartWindow:`n  allowAfterMinutes: 61"; Expected = '*allowAfterMinutes must be between 0 and 60*' }
     ) {
         param($Content, $Expected)
         Set-Content -LiteralPath $script:fleetSettingsPath -Value $Content -Encoding ASCII
@@ -357,8 +380,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $script:ModuleInfo | Should -Not -BeNullOrEmpty
         }
 
-        It 'Should have version 0.9.26' {
-            $script:ModuleInfo.Version | Should -Be '0.9.26'
+        It 'Should have version 0.9.27' {
+            $script:ModuleInfo.Version | Should -Be '0.9.27'
         }
 
         It 'Module version constants are in sync between .psm1 and .psd1' {
@@ -575,11 +598,11 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $content | Should -Not -Match 'SIDELOAD_[A-Z0-9_]+' -Because "sideload environment-variable compatibility was intentionally removed"
         }
 
-        It 'v0.8.90: monitor-updates.yml (GitHub Actions) defaults to a 6-hour cron and wires the event-driven trigger + -SkipWhenIdle' {
+        It 'v0.9.27: monitor-updates.yml (GitHub Actions) defaults to an offset 6-hour cron and wires the event-driven trigger + -SkipWhenIdle' {
             $yamlPath = Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples\github-actions\monitor-updates.yml'
             Test-Path $yamlPath | Should -BeTrue
             $content = Get-Content -Path $yamlPath -Raw
-            $content | Should -Match "cron:\s*'0 \*/6 \* \* \*'" -Because "monitor default cron is every 6h (v0.8.90)"
+            $content | Should -Match "cron:\s*'17 \*/6 \* \* \*'" -Because "monitor default cron is every 6h from minute 17 (v0.9.27)"
             $content | Should -Match '(?m)^\s+skip_when_idle:' -Because "monitor exposes the skip_when_idle dispatch input"
             $content | Should -Match '(?m)^\s+triggered_by:' -Because "monitor accepts the triggered_by event marker"
             $content | Should -Match 'MONITOR_TRIGGER_DELAY_MINUTES' -Because "monitor reads the trigger-delay var for the event-driven sleep"
@@ -587,11 +610,11 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $content | Should -Match "\`$params\['SkipWhenIdle'\]\s*=\s*\`$true" -Because "monitor passes -SkipWhenIdle to the cmdlet unless explicitly disabled"
         }
 
-        It 'v0.8.90: monitor-updates.yml (Azure DevOps) defaults to a 6-hour cron and wires triggeredBy + skipWhenIdle' {
+        It 'v0.9.27: monitor-updates.yml (Azure DevOps) defaults to an offset 6-hour cron and wires triggeredBy + skipWhenIdle' {
             $yamlPath = Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples\azure-devops\monitor-updates.yml'
             Test-Path $yamlPath | Should -BeTrue
             $content = Get-Content -Path $yamlPath -Raw
-            $content | Should -Match '0 \*/6 \* \* \*' -Because "ADO monitor default cron is every 6h (v0.8.90)"
+            $content | Should -Match '17 \*/6 \* \* \*' -Because "ADO monitor default cron is every 6h from minute 17 (v0.9.27)"
             $content | Should -Match '(?m)^\s*-\s*name:\s*skipWhenIdle' -Because "ADO monitor exposes the skipWhenIdle parameter"
             $content | Should -Match '(?m)^\s*-\s*name:\s*triggeredBy' -Because "ADO monitor accepts the triggeredBy marker"
             $content | Should -Match "eq\('\`$\{\{ parameters\.triggeredBy \}\}',\s*'apply-updates'\)" -Because "the ADO startup delay only runs for apply-driven triggers"
@@ -619,6 +642,43 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $content | Should -Match 'MonitorPollIntervalMinutes' -Because "$Platform audit plumbs the poll interval into the cmdlet"
             $content | Should -Match 'MonitorTrailingDays'        -Because "$Platform audit plumbs trailing days into the cmdlet"
             $content | Should -Match 'MonitorInFlightHours'       -Because "$Platform audit plumbs in-flight hours into the cmdlet"
+        }
+
+        It 'v0.9.27: every GitHub Actions job has the variable-backed 120-minute timeout fallback' {
+            $pipelineRoot = Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples\github-actions'
+            $files = @(Get-ChildItem -LiteralPath $pipelineRoot -Filter '*.yml' -File)
+            $files | Should -HaveCount 10
+            foreach ($file in $files) {
+                $content = Get-Content -LiteralPath $file.FullName -Raw
+                $jobCount = ([regex]::Matches($content, '(?m)^\s{4}runs-on:')).Count
+                $timeoutCount = ([regex]::Matches($content, "(?m)^\s{4}timeout-minutes:\s*\`$\{\{ fromJSON\(vars\.AZLOCAL_MAX_PIPELINE_RUNTIME_MINUTES \|\| '120'\) \}\}\s*\r?\n")).Count
+                $jobCount | Should -BeGreaterThan 0 -Because "$($file.Name) must contain at least one job"
+                $timeoutCount | Should -Be $jobCount -Because "$($file.Name) must apply the runtime cap to every job"
+            }
+        }
+
+        It 'v0.9.27: every Azure DevOps job has the group-overridable 120-minute timeout fallback' {
+            $pipelineRoot = Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples\azure-devops'
+            $files = @(Get-ChildItem -LiteralPath $pipelineRoot -Filter '*.yml' -File)
+            $files | Should -HaveCount 10
+            foreach ($file in $files) {
+                $content = Get-Content -LiteralPath $file.FullName -Raw
+                $jobCount = ([regex]::Matches($content, '(?m)^\s+- job:\s*')).Count
+                $timeoutCount = ([regex]::Matches($content, '(?m)^\s+timeoutInMinutes:\s*\$\(AZLOCAL_EFFECTIVE_PIPELINE_RUNTIME_MINUTES\)\s*$')).Count
+                $content | Should -Match "(?ms)- group:\s*AzureLocal-Pipeline-Settings\s+- name:\s*AZLOCAL_EFFECTIVE_PIPELINE_RUNTIME_MINUTES\s+value:\s*\`$\[coalesce\(variables\['AZLOCAL_MAX_PIPELINE_RUNTIME_MINUTES'\], 120\)\]" -Because "$($file.Name) must let the optional group member override the 120-minute fallback"
+                $jobCount | Should -BeGreaterThan 0 -Because "$($file.Name) must contain at least one job"
+                $timeoutCount | Should -Be $jobCount -Because "$($file.Name) must apply the runtime cap to every job"
+            }
+        }
+
+        It 'v0.9.27: every shipped active cron uses a non-crowded minute' -ForEach @('github-actions', 'azure-devops') {
+            $pipelineRoot = Join-Path -Path $PSScriptRoot -ChildPath "..\Automation-Pipeline-Examples\$_"
+            foreach ($file in @(Get-ChildItem -LiteralPath $pipelineRoot -Filter '*.yml' -File)) {
+                $content = Get-Content -LiteralPath $file.FullName -Raw
+                foreach ($cronMatch in [regex]::Matches($content, "(?m)^\s*- cron:\s*'(?<minute>\d+)\s+[^']+'")) {
+                    ([int]$cronMatch.Groups['minute'].Value % 5) | Should -Not -Be 0 -Because "$($file.Name) active cron must avoid five-minute scheduler boundaries"
+                }
+            }
         }
 
         It 'Should export exactly 71 functions' {
@@ -3611,6 +3671,32 @@ Describe 'Helper Function: Test-AzLocalUpdateWindow (Internal)' {
         }
     }
 
+    Context 'Schema v4 before and after allowances' {
+        It 'Evaluates allowance boundaries independently' -TestCases @(
+            @{ Window = 'Sat_02:00-06:00'; Time = '2026-04-18 01:40'; Before = 20; After = 0; Expected = $true }
+            @{ Window = 'Sat_02:00-06:00'; Time = '2026-04-18 01:39'; Before = 20; After = 0; Expected = $false }
+            @{ Window = 'Sat_02:00-06:00'; Time = '2026-04-18 06:14'; Before = 0; After = 15; Expected = $true }
+            @{ Window = 'Sat_02:00-06:00'; Time = '2026-04-18 06:15'; Before = 0; After = 15; Expected = $false }
+            @{ Window = 'Sat_02:00-06:00'; Time = '2026-04-18 06:01'; Before = 20; After = 0; Expected = $false }
+            @{ Window = 'Sat_22:00-06:00'; Time = '2026-04-19 06:14'; Before = 0; After = 15; Expected = $true }
+            @{ Window = 'Mon_00:00-04:00'; Time = '2026-04-19 23:50'; Before = 20; After = 0; Expected = $true }
+        ) {
+            param($Window, $Time, $Before, $After, $Expected)
+
+            $testTime = [datetime]::SpecifyKind(
+                [datetime]::ParseExact($Time, 'yyyy-MM-dd HH:mm', $null),
+                [System.DateTimeKind]::Utc
+            )
+            $result = & (Get-Module $moduleName) {
+                param($w, $tt, $beforeMinutes, $afterMinutes)
+                Test-AzLocalUpdateWindow -WindowString $w -TestTime $tt `
+                    -AllowBeforeMinutes $beforeMinutes -AllowAfterMinutes $afterMinutes
+            } $Window $testTime $Before $After
+
+            $result.Allowed | Should -Be $Expected
+        }
+    }
+
     Context 'Output properties' {
         It 'Returns MatchedWindow when allowed' {
             $testTime = [datetime]::ParseExact('2026-04-18 03:00', 'yyyy-MM-dd HH:mm', $null)
@@ -3738,6 +3824,23 @@ Describe 'Helper Function: Test-AzLocalUpdateScheduleAllowed (Internal)' {
             $result.WindowOpen | Should -Be $true
         }
 
+        It 'Forwards before and after allowances to the maintenance-window gate' -TestCases @(
+            @{ Time = '2026-04-18 01:45'; Before = 20; After = 0 }
+            @{ Time = '2026-04-18 06:10'; Before = 0; After = 15 }
+        ) {
+            param($Time, $Before, $After)
+
+            $testTime = [datetime]::SpecifyKind(
+                [datetime]::ParseExact($Time, 'yyyy-MM-dd HH:mm', $null),
+                [System.DateTimeKind]::Utc
+            )
+            $result = Test-AzLocalUpdateScheduleAllowed -UpdateStartWindow 'Sat_02:00-06:00' `
+                -AllowBeforeMinutes $Before -AllowAfterMinutes $After -TestTime $testTime
+
+            $result.Allowed | Should -BeTrue
+            $result.WindowOpen | Should -BeTrue
+        }
+
         It 'Returns Allowed=false when outside maintenance window' {
             $testTime = [datetime]::ParseExact('2026-04-18 10:00', 'yyyy-MM-dd HH:mm', $null)  # Saturday
             $result = & (Get-Module $moduleName) { param($tt) Test-AzLocalUpdateScheduleAllowed -UpdateStartWindow 'Sat_02:00-06:00' -TestTime $tt } $testTime
@@ -3834,6 +3937,17 @@ Describe 'Function: Test-AzLocalUpdateScheduleAllowed (Exported)' {
         It 'Should have TestTime parameter' {
             $command = Get-Command Test-AzLocalUpdateScheduleAllowed
             $command.Parameters.Keys | Should -Contain 'TestTime'
+        }
+
+        It 'Should expose before and after allowances constrained to 0-60 minutes' {
+            $command = Get-Command Test-AzLocalUpdateScheduleAllowed
+            foreach ($parameterName in @('AllowBeforeMinutes', 'AllowAfterMinutes')) {
+                $command.Parameters.Keys | Should -Contain $parameterName
+                $range = $command.Parameters[$parameterName].Attributes |
+                    Where-Object { $_ -is [System.Management.Automation.ValidateRangeAttribute] }
+                $range.MinRange | Should -Be 0
+                $range.MaxRange | Should -Be 60
+            }
         }
     }
 }
@@ -9042,6 +9156,11 @@ Describe 'Function: Copy-AzLocalPipelineExample' {
             $settingsPath = Join-Path $repoRoot 'config\fleet-settings.yml'
             Test-Path -LiteralPath $settingsPath | Should -BeTrue
             (Get-AzLocalFleetSettings -Path $settingsPath).ScopeMode | Should -Be 'ImplicitSubscriptions'
+            $starterText = Get-Content -LiteralPath $settingsPath -Raw
+            $starterText | Should -Match '(?m)^# schemaVersion: 4\r?$'
+            $starterText | Should -Match '(?m)^# updateStartWindow:\r?$'
+            $starterText | Should -Match '(?m)^#   allowBeforeMinutes: 0\r?$'
+            $starterText | Should -Match '(?m)^#   allowAfterMinutes: 0\r?$'
         }
 
         It 'Preserves an existing operator-owned settings file' {
@@ -9069,6 +9188,17 @@ Describe 'Function: Copy-AzLocalPipelineExample' {
             Copy-AzLocalPipelineExample -Destination $dest -Platform GitHub @Arguments 6>$null | Out-Null
 
             Test-Path -LiteralPath (Join-Path $repoRoot 'config\fleet-settings.yml') | Should -BeFalse
+        }
+    }
+
+    Context 'Schema v4 UpdateStartWindow allowance wiring' {
+        It 'Reads both fleet settings allowances and forwards them to the schedule gate' {
+            $source = Get-Content -LiteralPath (Join-Path $PSScriptRoot '..\Public\Start-AzLocalClusterUpdate.ps1') -Raw
+
+            $source | Should -Match 'Get-AzLocalFleetSettings'
+            $source | Should -Match 'UpdateStartWindowAllowBeforeMinutes'
+            $source | Should -Match 'UpdateStartWindowAllowAfterMinutes'
+            $source | Should -Match '(?s)Test-AzLocalUpdateScheduleAllowed.+-AllowBeforeMinutes \$updateStartWindowAllowBeforeMinutes.+-AllowAfterMinutes \$updateStartWindowAllowAfterMinutes'
         }
     }
 }
@@ -9262,6 +9392,14 @@ Describe 'Function: Test-AzLocalApplyUpdatesScheduleCoverage' {
     }
 
     Context 'Private helper: Convert-AzLocalUpdateWindowToCron' {
+        It 'Uses a seven-minute default to avoid crowded scheduler boundaries' {
+            InModuleScope AzLocal.UpdateManagement {
+                $r = Convert-AzLocalUpdateWindowToCron -UpdateStartWindow 'Sat-Sun_02:00-06:00'
+                $r | Should -HaveCount 1
+                $r[0].CronExpression | Should -Be '53 1 * * 6,0'
+            }
+        }
+
         It 'Sat-Sun_02:00-06:00 with lead 5 -> 55 1 * * 6,0' {
             InModuleScope AzLocal.UpdateManagement {
                 $r = Convert-AzLocalUpdateWindowToCron -UpdateStartWindow 'Sat-Sun_02:00-06:00' -LeadTimeMinutes 5
@@ -9314,70 +9452,70 @@ Describe 'Function: Test-AzLocalApplyUpdatesScheduleCoverage' {
             }
         }
 
-        It '4h window Sat-Sun_02:00-06:00: open at 01:55, retry at +60min cap (03:00)' {
+        It '4h window Sat-Sun_02:00-06:00: open at 01:55, retry de-contented before the +60min target' {
             InModuleScope AzLocal.UpdateManagement {
                 $r = Convert-AzLocalUpdateWindowToCron -UpdateStartWindow 'Sat-Sun_02:00-06:00' -LeadTimeMinutes 5 -FiresPerWindow 2
                 $r | Should -HaveCount 2
                 $r[0].CronExpression | Should -Be '55 1 * * 6,0'
                 $r[0].IsRetry | Should -BeFalse
-                $r[1].CronExpression | Should -Be '0 3 * * 6,0'
+                $r[1].CronExpression | Should -Be '53 2 * * 6,0'
                 $r[1].IsRetry | Should -BeTrue
                 $r[1].DayShift | Should -BeFalse
             }
         }
 
-        It '3h window Mon-Fri_20:00-23:00: open at 19:55, retry at midpoint 21:00 (180/2=90, capped to 60)' {
+        It '3h window Mon-Fri_20:00-23:00: open at 19:55, retry de-contented before the +60min target' {
             InModuleScope AzLocal.UpdateManagement {
                 $r = Convert-AzLocalUpdateWindowToCron -UpdateStartWindow 'Mon-Fri_20:00-23:00' -LeadTimeMinutes 5 -FiresPerWindow 2
                 $r | Should -HaveCount 2
                 $r[0].CronExpression | Should -Be '55 19 * * 1-5'
-                $r[1].CronExpression | Should -Be '0 21 * * 1-5'
+                $r[1].CronExpression | Should -Be '53 20 * * 1-5'
                 $r[1].IsRetry | Should -BeTrue
             }
         }
 
-        It '6h overnight Mon-Fri_22:00-04:00: retry at 23:00 (no day shift, window has not crossed midnight yet)' {
+        It '6h overnight Mon-Fri_22:00-04:00: retry at 22:53 with no day shift' {
             InModuleScope AzLocal.UpdateManagement {
                 $r = Convert-AzLocalUpdateWindowToCron -UpdateStartWindow 'Mon-Fri_22:00-04:00' -LeadTimeMinutes 5 -FiresPerWindow 2
                 $r | Should -HaveCount 2
                 $r[0].CronExpression | Should -Be '55 21 * * 1-5'
-                $r[1].CronExpression | Should -Be '0 23 * * 1-5'
+                $r[1].CronExpression | Should -Be '53 22 * * 1-5'
                 $r[1].IsRetry | Should -BeTrue
                 $r[1].DayShift | Should -BeFalse
             }
         }
 
-        It 'Short window Sat_03:00-03:30 (30min): retry at midpoint 03:15' {
+        It 'Short window Sat_03:00-03:30 (30min): retry de-contented to 03:08' {
             InModuleScope AzLocal.UpdateManagement {
                 $r = Convert-AzLocalUpdateWindowToCron -UpdateStartWindow 'Sat_03:00-03:30' -LeadTimeMinutes 5 -FiresPerWindow 2
                 $r | Should -HaveCount 2
                 $r[0].CronExpression | Should -Be '55 2 * * 6'
-                $r[1].CronExpression | Should -Be '15 3 * * 6'
+                $r[1].CronExpression | Should -Be '8 3 * * 6'
                 $r[1].IsRetry | Should -BeTrue
             }
         }
 
-        It 'Overnight crossing midnight: Mon_23:30-00:30 retry at 24:00 forward-day-shifts to Tue 00:00' {
+        It 'Overnight crossing midnight: Mon_23:30-00:30 retry de-contented to Mon 23:53' {
             InModuleScope AzLocal.UpdateManagement {
                 $r = Convert-AzLocalUpdateWindowToCron -UpdateStartWindow 'Mon_23:30-00:30' -LeadTimeMinutes 5 -FiresPerWindow 2
                 $r | Should -HaveCount 2
                 # Open: 23:30 - 5min lead = 23:25 Mon (no shift, still Mon).
                 $r[0].CronExpression | Should -Be '25 23 * * 1'
                 $r[0].DayShift | Should -BeFalse
-                # Retry: 23:30 + 30min midpoint = 24:00 -> 00:00 Tue (forward day shift).
-                $r[1].CronExpression | Should -Be '0 0 * * 2'
+                # Retry target is midnight; seven-minute de-contention keeps it on Monday.
+                $r[1].CronExpression | Should -Be '53 23 * * 1'
                 $r[1].IsRetry | Should -BeTrue
-                $r[1].DayShift | Should -BeTrue
+                $r[1].DayShift | Should -BeFalse
             }
         }
 
-        It '24h-style window Mon-Fri_00:00-23:00: retry capped at +60min (01:00, same day, no shift)' {
+        It '24h-style window Mon-Fri_00:00-23:00: retry de-contented before the +60min target' {
             InModuleScope AzLocal.UpdateManagement {
                 $r = Convert-AzLocalUpdateWindowToCron -UpdateStartWindow 'Mon-Fri_00:00-23:00' -LeadTimeMinutes 0 -FiresPerWindow 2
                 $r | Should -HaveCount 2
                 $r[0].CronExpression | Should -Be '0 0 * * 1-5'
                 # 23h = 1380min, midpoint 690min, capped to 60 -> 01:00.
-                $r[1].CronExpression | Should -Be '0 1 * * 1-5'
+                $r[1].CronExpression | Should -Be '53 0 * * 1-5'
                 $r[1].IsRetry | Should -BeTrue
                 $r[1].DayShift | Should -BeFalse
             }
@@ -9652,7 +9790,7 @@ on:
                 $rWave.Status | Should -Be 'Covered'
                 $rWave.ClusterCount | Should -Be 2
                 $rProd.Status | Should -Be 'Uncovered'
-                $rProd.RequiredCronUTC | Should -Be '55 21 * * 1-5'
+                $rProd.RequiredCronUTC | Should -Be '53 21 * * 1-5'
             }
         }
 
@@ -9665,7 +9803,7 @@ on:
                 }
                 $result = Test-AzLocalApplyUpdatesScheduleCoverage -View Matrix -PassThru 6>$null
                 $result | Should -HaveCount 1
-                $result[0].RequiredCronUTC | Should -Be '55 1 * * 6,0'
+                $result[0].RequiredCronUTC | Should -Be '53 1 * * 6,0'
                 $result[0].ClusterCount | Should -Be 1
             }
         }
@@ -9681,7 +9819,7 @@ on:
                 # Pin to FiresPerWindow=1 (pre-v0.7.92 behaviour) so the single-cron dedupe assertion still holds.
                 $result = Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend -RecommendFiresPerWindow 1 -PassThru 6>$null
                 $result | Should -HaveCount 1
-                $result[0].CronExpression | Should -Be '55 1 * * 6,0'
+                $result[0].CronExpression | Should -Be '53 1 * * 6,0'
                 $result[0].ClusterCount   | Should -Be 2
                 ($result[0].Rings | Sort-Object) | Should -Be @('Pilot','Wave1')
                 $result[0].Snippet | Should -Match "schedule:"
@@ -9781,7 +9919,7 @@ on:
             @"
 on:
   schedule:
-    - cron: '55 1 * * 6,0'
+    - cron: '53 1 * * 6,0'
 "@ | Set-Content -Path (Join-Path $script:beltYamlDir 'github-actions\Step.7_apply-updates.yml') -Encoding ASCII
         }
         AfterAll {
@@ -9797,8 +9935,8 @@ on:
                 }
                 $result = Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend -PassThru 6>$null
                 @($result).Count | Should -Be 2
-                $open  = $result | Where-Object CronExpression -eq '55 1 * * 6,0'
-                $retry = $result | Where-Object CronExpression -eq '0 3 * * 6,0'
+                $open  = $result | Where-Object CronExpression -eq '53 1 * * 6,0'
+                $retry = $result | Where-Object CronExpression -eq '53 2 * * 6,0'
                 $open  | Should -Not -BeNullOrEmpty
                 $retry | Should -Not -BeNullOrEmpty
                 $open.Snippet  | Should -Match '\(open\)'
@@ -9815,7 +9953,7 @@ on:
                 }
                 $result = Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend -RecommendFiresPerWindow 1 -PassThru 6>$null
                 @($result).Count | Should -Be 1
-                $result[0].CronExpression | Should -Be '55 1 * * 6,0'
+                $result[0].CronExpression | Should -Be '53 1 * * 6,0'
             }
         }
 
@@ -9970,13 +10108,13 @@ on:
             $script:pruneYamlDir = Join-Path $env:TEMP "schedule-cov-prune-$(Get-Random)"
             New-Item -ItemType Directory -Path (Join-Path $script:pruneYamlDir 'github-actions') -Force | Out-Null
             # Pre-existing Step.6 already covers the Sat-Sun_02:00-06:00 opening
-            # edge (cron '55 1 * * 6,0' = 5 min before 02:00 UTC on Sat+Sun).
-            # With FiresPerWindow=1, Recommend would propose ONLY '55 1 * * 6,0';
+            # edge (cron '53 1 * * 6,0' = 7 min before 02:00 UTC on Sat+Sun).
+            # With FiresPerWindow=1, Recommend would propose ONLY '53 1 * * 6,0';
             # diff-prune should drop it -> zero recommended rows.
             @"
 on:
   schedule:
-    - cron: '55 1 * * 6,0'
+    - cron: '53 1 * * 6,0'
 "@ | Set-Content -Path (Join-Path $script:pruneYamlDir 'github-actions\Step.7_apply-updates.yml') -Encoding ASCII
         }
         AfterAll {
@@ -9992,7 +10130,7 @@ on:
                     )
                 }
                 $result = Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend -RecommendFiresPerWindow 1 -PipelineYamlPath $pruneYamlDir -PassThru 6>$null
-                @($result).Count | Should -Be 0 -Because 'the only recommended cron (55 1 * * 6,0) is already present in the supplied Step.6 yml'
+                @($result).Count | Should -Be 0 -Because 'the only recommended cron (53 1 * * 6,0) is already present in the supplied Step.6 yml'
             }
         }
 
@@ -10005,7 +10143,7 @@ on:
                 }
                 $result = Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend -RecommendFiresPerWindow 1 -PassThru 6>$null
                 @($result).Count | Should -Be 1
-                $result[0].CronExpression | Should -Be '55 1 * * 6,0'
+                $result[0].CronExpression | Should -Be '53 1 * * 6,0'
             }
         }
 
@@ -10017,11 +10155,11 @@ on:
                         [PSCustomObject]@{ ClusterName='c1'; ResourceGroup='r'; SubscriptionId='s'; ClusterResourceId='/s/r/c1'; UpdateRing='Pilot'; UpdateStartWindow='Sat-Sun_02:00-06:00' }
                     )
                 }
-                # FiresPerWindow=2 emits opening (55 1 * * 6,0) + retry (0 3 * * 6,0).
+                # FiresPerWindow=2 emits opening (53 1 * * 6,0) + retry (53 2 * * 6,0).
                 # The pre-existing yml only has the opening, so retry remains.
                 $result = Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend -RecommendFiresPerWindow 2 -PipelineYamlPath $pruneYamlDir -PassThru 6>$null
                 @($result).Count | Should -Be 1 -Because 'opening cron already present, retry remains'
-                $result[0].CronExpression | Should -Be '0 3 * * 6,0'
+                $result[0].CronExpression | Should -Be '53 2 * * 6,0'
                 $result[0].Snippet        | Should -Match '\(retry\)'
             }
         }
@@ -11107,7 +11245,7 @@ Describe 'Function: Update-AzLocalPipelineExample' {
                 Set-Content -LiteralPath $settingsPath -Value "schemaVersion: 1`n# OPERATOR SENTINEL" -Encoding ASCII
                 Update-AzLocalPipelineExample -Destination $dest -Platform GitHub -Confirm:$false 6>$null 4>$null | Out-Null
                 (Get-Content -LiteralPath $settingsPath -Raw) | Should -Match 'OPERATOR SENTINEL'
-                (Get-AzLocalFleetSettings -Path $settingsPath).SchemaVersion | Should -Be 3
+                (Get-AzLocalFleetSettings -Path $settingsPath).SchemaVersion | Should -Be 4
             }
             finally {
                 Remove-Item -Path $repoRoot -Recurse -Force -ErrorAction SilentlyContinue
@@ -11144,9 +11282,10 @@ Describe 'Function: Update-AzLocalPipelineExample' {
                 Update-AzLocalPipelineExample -Destination $dest -Platform GitHub -Confirm:$false 6>$null 4>$null | Out-Null
                 $after = [IO.File]::ReadAllText($settingsPath)
                 [IO.File]::ReadAllText($backupPath) | Should -BeExactly $before
-                $after | Should -Match '(?m)^# schemaVersion: 3\r?$'
+                $after | Should -Match '(?m)^# schemaVersion: 4\r?$'
                 $after | Should -Match '(?m)^#   clusterTagFilters:\r?$'
-                $after | Should -Match '(?m)^# AZLOCAL-FLEET-SETTINGS-SCHEMA-V3\r?$'
+                $after | Should -Match '(?m)^# AZLOCAL-FLEET-SETTINGS-SCHEMA-V4\r?$'
+                $after | Should -Match '(?m)^# updateStartWindow:\r?$'
                 (Get-AzLocalFleetSettings -Path $settingsPath).SchemaVersion | Should -Be 1
                 (Get-AzLocalFleetSettings -Path $settingsPath).ScopeMode | Should -Be 'ImplicitSubscriptions'
             }
@@ -11168,14 +11307,19 @@ Describe 'Function: Update-AzLocalPipelineExample' {
                 $after = [IO.File]::ReadAllText($settingsPath)
                 $backupPath = Join-Path (Split-Path -Parent $settingsPath) 'fleet-settings_v1.bak.yml'
                 [IO.File]::ReadAllText($backupPath) | Should -BeExactly $before
-                $after.StartsWith(($before -replace 'schemaVersion: 1', 'schemaVersion: 3')) | Should -BeTrue
-                $after | Should -Match '(?m)^# AZLOCAL-FLEET-SETTINGS-SCHEMA-V3\r?$'
+                $after | Should -Match '(?m)^schemaVersion: 4\r$'
+                $after | Should -Match '(?m)^scope:\r$'
+                $after | Should -Match '(?m)^  managementGroups:\r$'
+                $after | Should -Match '(?m)^    - group-a\r$'
+                $after | Should -Match '(?m)^# OPERATOR SENTINEL\r$'
+                $after | Should -Not -Match '(?<!\r)\n'
+                $after | Should -Match '(?m)^# AZLOCAL-FLEET-SETTINGS-SCHEMA-V4\r?$'
                 $after | Should -Match '(?m)^#   clusterTagFilters:\r?$'
                 $after | Should -Match '(?m)^#     - name: Production\r?$'
                 $after | Should -Match '(?m)^#       tags:\r?$'
                 $after | Should -Match '(?m)^#           value: Production\r?$'
-                ([regex]::Matches($after, '(?m)^# AZLOCAL-FLEET-SETTINGS-SCHEMA-V3\r?$')).Count | Should -Be 1
-                (Get-AzLocalFleetSettings -Path $settingsPath).SchemaVersion | Should -Be 3
+                ([regex]::Matches($after, '(?m)^# AZLOCAL-FLEET-SETTINGS-SCHEMA-V4\r?$')).Count | Should -Be 1
+                (Get-AzLocalFleetSettings -Path $settingsPath).SchemaVersion | Should -Be 4
 
                 Update-AzLocalPipelineExample -Destination $dest -Platform GitHub -Confirm:$false 6>$null 4>$null | Out-Null
                 [IO.File]::ReadAllText($settingsPath) | Should -BeExactly $after
@@ -11210,11 +11354,11 @@ Describe 'Function: Update-AzLocalPipelineExample' {
                 $after = [IO.File]::ReadAllText($settingsPath)
 
                 [IO.File]::ReadAllText($backupPath) | Should -BeExactly $before
-                $after | Should -Match '(?m)^# AzLocal\.UpdateManagement fleet settings \(schema version 3\)\r?$'
-                $after | Should -Match '(?m)^# schemaVersion: 3\r?$'
+                $after | Should -Match '(?m)^# AzLocal\.UpdateManagement fleet settings \(schema version 4\)\r?$'
+                $after | Should -Match '(?m)^# schemaVersion: 4\r?$'
                 $after | Should -Match '(?m)^#       tags:\r?$'
                 $after | Should -Match '(?m)^#         - name: Live-Environment\r?$'
-                $after | Should -Match '(?m)^# AZLOCAL-FLEET-SETTINGS-SCHEMA-V3\r?$'
+                $after | Should -Match '(?m)^# AZLOCAL-FLEET-SETTINGS-SCHEMA-V4\r?$'
                 $after | Should -Not -Match 'SCHEMA-V2'
                 @($after -split '\r?\n' | Where-Object { $_.Trim() -and -not $_.Trim().StartsWith('#') }).Count | Should -Be 0
                 (Get-AzLocalFleetSettings -Path $settingsPath).ScopeMode | Should -Be 'ImplicitSubscriptions'
@@ -11278,8 +11422,57 @@ Describe 'Function: Update-AzLocalPipelineExample' {
             [IO.File]::WriteAllText($settingsPath, "schemaVersion: 1`n# OPERATOR SENTINEL`n", [Text.UTF8Encoding]::new($false))
             try {
                 Update-AzLocalPipelineExample -Destination $dest -Platform GitHub -SkipStarterFleetSettings -Confirm:$false 6>$null 4>$null | Out-Null
-                (Get-AzLocalFleetSettings -Path $settingsPath).SchemaVersion | Should -Be 3
+                (Get-AzLocalFleetSettings -Path $settingsPath).SchemaVersion | Should -Be 4
                 (Get-Content -LiteralPath $settingsPath -Raw) | Should -Match 'OPERATOR SENTINEL'
+            }
+            finally {
+                Remove-Item -Path $repoRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+
+        It 'Upgrades jumbled active schema v3 to canonical v4 order with comments attached' {
+            $repoRoot = Join-Path $env:TEMP "upe-fleet-settings-v3-order-$([guid]::NewGuid())"
+            $dest = Join-Path $repoRoot '.github\workflows'
+            $settingsPath = Join-Path $repoRoot 'config\fleet-settings.yml'
+            $backupPath = Join-Path $repoRoot 'config\fleet-settings_v3.bak.yml'
+            New-Item -Path $dest -ItemType Directory -Force | Out-Null
+            New-Item -Path (Split-Path -Parent $settingsPath) -ItemType Directory -Force | Out-Null
+            $before = @(
+                'schemaVersion: 3'
+                '# ITSM guidance'
+                'itsm:'
+                '  maxIncidentsPerRun: 25'
+                '# Reporting guidance'
+                'reporting:'
+                '  maxRowsPerTable: 100'
+                '# Scope guidance'
+                'scope:'
+                '  managementGroups:'
+                '    - group-a'
+            ) -join "`r`n"
+            [IO.File]::WriteAllText($settingsPath, $before, [Text.UTF8Encoding]::new($false))
+            try {
+                Update-AzLocalPipelineExample -Destination $dest -Platform GitHub -Confirm:$false 6>$null 4>$null | Out-Null
+                $after = [IO.File]::ReadAllText($settingsPath)
+
+                [IO.File]::ReadAllText($backupPath) | Should -BeExactly $before
+                (Get-AzLocalFleetSettings -Path $settingsPath).SchemaVersion | Should -Be 4
+                $after | Should -Match '# Scope guidance\r?\nscope:'
+                $after | Should -Match '(?m)^#   allowBeforeMinutes: 0\r?$'
+                $after | Should -Match '(?m)^#   allowAfterMinutes: 0\r?$'
+                $after | Should -Match '# Reporting guidance\r?\nreporting:'
+                $after | Should -Match '# ITSM guidance\r?\nitsm:'
+                $scopeIndex = $after.IndexOf('scope:')
+                $windowIndex = $after.IndexOf('# updateStartWindow:')
+                $reportingIndex = $after.IndexOf('reporting:')
+                $itsmIndex = $after.IndexOf('itsm:')
+                $scopeIndex | Should -BeLessThan $windowIndex
+                $windowIndex | Should -BeLessThan $reportingIndex
+                $reportingIndex | Should -BeLessThan $itsmIndex
+
+                Update-AzLocalPipelineExample -Destination $dest -Platform GitHub -Confirm:$false 6>$null 4>$null | Out-Null
+                [IO.File]::ReadAllText($settingsPath) | Should -BeExactly $after
+                [IO.File]::ReadAllText($backupPath) | Should -BeExactly $before
             }
             finally {
                 Remove-Item -Path $repoRoot -Recurse -Force -ErrorAction SilentlyContinue
@@ -23348,9 +23541,15 @@ Describe 'v0.8.87: Export-AzLocalApplyUpdatesScheduleAudit recommends an Update:
     It 'Renders an always-on "Recommended in-flight monitor schedule (Update: 4)" section' {
         $script:src887cfg | Should -Match 'Recommended in-flight monitor schedule \(Update: 4\)'
     }
-    It 'Derives the minute field from the cadence (0 for >= 60 min, */N otherwise)' {
+    It 'Phases the minute field from minute 17 while preserving the requested cadence' {
         $script:src887cfg | Should -Match 'if \(\$monitorIntervalMinutes -lt 60\)'
-        $script:src887cfg | Should -Match "\`$monitorMinuteField = \('\*/\{0\}' -f \`$monitorIntervalMinutes\)"
+        $script:src887cfg | Should -Match '\$monitorMinuteOffset\s*=\s*17'
+        $script:src887cfg | Should -Match '\$monitorFiresPerHour\s*=\s*\[int\]\(60 / \$monitorIntervalMinutes\)'
+        $script:src887cfg | Should -Match '\$monitorMinuteField\s*=\s*\(@\(\$monitorMinutes \| Sort-Object\) -join'
+        $script:src887cfg | Should -Match '\$monitorMinuteField\s*=\s*\[string\]\$monitorMinuteOffset'
+        $script:src887cfg | Should -Match 'a 30-minute cadence uses `17,47`'
+        $script:src887cfg | Should -Match 'GitHub Actions and Azure DevOps both accept these sub-hour cron lists'
+        $script:src887cfg | Should -Not -Match 'Azure DevOps YAML `schedules:` is hourly-only'
     }
     It 'Expands the eligible weekday(s) across the trailing coverage window' {
         $script:src887cfg | Should -Match 'for \(\$k = 0; \$k -le \$MonitorTrailingDays; \$k\+\+\)'

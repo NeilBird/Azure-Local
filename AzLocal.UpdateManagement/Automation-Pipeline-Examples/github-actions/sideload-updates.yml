@@ -82,7 +82,7 @@ env:
   # this to the version actually installed and to the latest on PSGallery, and emits a
   # ::notice annotation if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.9.26'
+  GENERATED_AGAINST_MODULE_VERSION: '0.9.27'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): manual workflow_dispatch input >
   # repository variable 'REQUIRED_MODULE_VERSION' > empty (latest).
@@ -138,6 +138,7 @@ jobs:
     # BEGIN-AZLOCAL-CUSTOMIZE:runner-target-preflight
     runs-on: windows-latest
     # END-AZLOCAL-CUSTOMIZE:runner-target-preflight
+    timeout-minutes: ${{ fromJSON(vars.AZLOCAL_MAX_PIPELINE_RUNTIME_MINUTES || '120') }}
     permissions:
       actions: read      # Best-effort runner enumeration (may 403 - graceful fallback)
       contents: read
@@ -207,6 +208,7 @@ jobs:
     # BEGIN-AZLOCAL-CUSTOMIZE:sideload-runner-sideload
     runs-on: [self-hosted, azlocal-sideload]
     # END-AZLOCAL-CUSTOMIZE:sideload-runner-sideload
+    timeout-minutes: ${{ fromJSON(vars.AZLOCAL_MAX_PIPELINE_RUNTIME_MINUTES || '120') }}
     if: ${{ needs.preflight.outputs.enabled == 'true' }}
     permissions:
       id-token: write
