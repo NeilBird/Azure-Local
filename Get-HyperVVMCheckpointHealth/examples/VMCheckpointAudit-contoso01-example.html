@@ -209,7 +209,7 @@
 </head>
 <body>
 <div class="wrap">
-<div class="callout info synthetic-example"><strong>Synthetic example report.</strong> Every cluster, node, VM, path, timestamp, and event message in this file is invented for documentation. TestVM07 demonstrates an active-checkpoint HOLD STATE confirmed by historic event evidence; seven VMs demonstrate historic rollback, orphaned AVHDX, stale checkpoint/layer, and Hyper-V Replica INVESTIGATE findings; 12 VMs are healthy comparisons. The inventory contains 16 input VMs and 4 automatically discovered VMs.</div>
+<div class="callout info synthetic-example"><strong>Synthetic example report.</strong> Every cluster, node, VM, path, timestamp, and event message in this file is invented for documentation. TestVM07 demonstrates an active-checkpoint HOLD STATE confirmed by historic event evidence; seven VMs demonstrate historic rollback, orphaned AVHDX, stale checkpoint/layer, and Hyper-V Replica INVESTIGATE findings; 12 VMs are healthy comparisons. A sustained cluster-level low-signal Event 15268 observation is shown for node04 without changing any VM verdict. The inventory contains 16 input VMs and 4 automatically discovered VMs.</div>
 <div class="disclaimer"><b>&#9888; Disclaimer:</b> This tool is EXAMPLE code only - <b>it is NOT a Microsoft-supported product or service offering</b>; provided AS IS with NO warranty of any kind (see the MIT License and <a href="https://aka.ms/Get-HyperVVMCheckpointHealth#readme" target="_blank" rel="noopener noreferrer">README.md</a>). It collects READ-ONLY diagnostic data to render this report - it does NOT determine root cause definitively and does NOT remediate anything. Each VM's status is a data-driven analysis of cluster / VM state, diagnostic events and file-system objects. If you require assistance to interpret any findings, or need guidance prior to any remediation, open a Microsoft Support (CSS) support request (SR) case and act on their advice.</div><header class="top">
   <h1>Hyper-V VM Checkpoint Health Audit</h1>
   <div class="meta">
@@ -239,7 +239,7 @@
     <div class="card amber"><div class="n">4</div><div class="l">Stale AVHDX layers</div></div>
     <div class="card amber"><div class="n">3</div><div class="l">Stale snapshots</div></div>
   <div class="card amber"><div class="n">4</div><div class="l">Orphaned .avhdx</div></div>
-</div><div class="callout high">
+</div><div class='callout warn'><strong>Cluster-level low-signal event observation:</strong> Event <code>15268</code> remains low-signal for individual VM checkpoint verdicts, but repeated <code>Failed to get the disk information</code> errors were observed at cluster scale on <strong>1 node(s)</strong>. Review storage, VMMS, and backup activity for the affected nodes. This observation does not attribute the errors to every VM and does not establish checkpoint-chain corruption.<ul><li><code>node04</code>: 121 event(s), 2026-07-20 10:45:00Z to 2026-07-20 11:45:00Z, 60.0 minutes, approximately 121.0/hour, 1 distinct message signature(s). Evidence: <code>_NodeEvents_node04_*.csv</code>.</li></ul></div><div class="callout high">
   <strong>Exec Summary - action required:</strong> 1 VM(s) are in <strong>HOLD STATE</strong> - a 'checkpoint fork-commit / merge-failure' signature AND unmerged differencing disk(s) are present together.
   <ul>
     <li><span class="hot">Do NOT live/quick/storage-migrate or restart</span> those VMs until the differencing chain has been validated (and merged if required).</li>

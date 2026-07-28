@@ -307,16 +307,31 @@ $discoverySummary = [pscustomobject]@{
     EligibleCount = 4; AuditedCount = 4; DeferredCount = 0; Cap = $null
 }
 
+$floodStartUtc = [datetimeoffset]'2026-07-20T10:45:00+00:00'
+$nodeEventContext = @([pscustomobject]@{
+    Node = 'node04'
+    Events = @(0..120 | ForEach-Object {
+        [pscustomobject]@{
+            'Time (UTC)' = $floodStartUtc.AddSeconds($_ * 30).UtcDateTime.ToString('yyyy-MM-dd HH:mm:ssZ')
+            Id = 15268
+            FullMessage = 'Synthetic example: Failed to get the disk information.'
+        }
+    })
+})
+
 $html = ConvertTo-VMCheckpointAuditHtml -Results $results -StaleHours 24 `
     -EventLookbackHours 168 -ClusterName 'contoso01' -GeneratedUtc '2026-07-20 12:00:00' `
     -DiscoveredVMs @() -DiscoverySummary $discoverySummary -StorageHealth $storageHealth `
-    -HousekeepingFindings $housekeepingFindings -IncludeDiscoveredVMs:$true `
+    -HousekeepingFindings $housekeepingFindings -NodeEventContext $nodeEventContext -IncludeDiscoveredVMs:$true `
     -ScriptVersion '0.2.28' -ReportGenerationTime '00:01:24' -ClusterNodeCount 10 -ClusterCsvCount 2
 
 $syntheticNotice = @'
-<div class="callout info synthetic-example"><strong>Synthetic example report.</strong> Every cluster, node, VM, path, timestamp, and event message in this file is invented for documentation. TestVM07 demonstrates an active-checkpoint HOLD STATE confirmed by historic event evidence; seven VMs demonstrate historic rollback, orphaned AVHDX, stale checkpoint/layer, and Hyper-V Replica INVESTIGATE findings; 12 VMs are healthy comparisons. The inventory contains 16 input VMs and 4 automatically discovered VMs.</div>
+<div class="callout info synthetic-example"><strong>Synthetic example report.</strong> Every cluster, node, VM, path, timestamp, and event message in this file is invented for documentation. TestVM07 demonstrates an active-checkpoint HOLD STATE confirmed by historic event evidence; seven VMs demonstrate historic rollback, orphaned AVHDX, stale checkpoint/layer, and Hyper-V Replica INVESTIGATE findings; 12 VMs are healthy comparisons. A sustained cluster-level low-signal Event 15268 observation is shown for node04 without changing any VM verdict. The inventory contains 16 input VMs and 4 automatically discovered VMs.</div>
 '@
 $html = $html.Replace('<div class="wrap">', "<div class=`"wrap`">`r`n$syntheticNotice")
+if ($html -notmatch 'Cluster-level low-signal event observation:' -or $html -notmatch '<code>node04</code>: 121 event\(s\)') {
+    throw 'The synthetic cluster-level Event 15268 observation was not rendered.'
+}
 
 $allowedNames = @('contoso01') + @(1..20 | ForEach-Object { 'TestVM{0:d2}' -f $_ }) + `
     @(1..10 | ForEach-Object { 'node{0:d2}' -f $_ })
