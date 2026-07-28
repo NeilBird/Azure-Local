@@ -379,7 +379,7 @@
 
             # ReleaseNotes of this module
             ReleaseNotes = @'
-## Version 0.9.27 - Active schedules use minute 17; Config: 3 uses a seven-minute Apply lead; every pipeline job has an optional timeout with a 120-minute default. No export change (71).
+## Version 0.9.27 - Minute-17 schedules, seven-minute Apply lead, and job timeouts. Schema v4 adds strict UpdateStartWindow allowances and backed-up v1/v2/v3 migration. No export change (71).
 
 ## Version 0.9.26 - Update: 1 scopes and batches ARG reads, preserves Ready solutions beside prerequisite SBE, reconciles stale ARG rows, and emits clean-run JUnit. No export change (71).
 

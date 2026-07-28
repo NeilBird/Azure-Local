@@ -80,17 +80,19 @@ If you are new to this module, work through these in order from a regular PowerS
 
 ## What's New in v0.9.27
 
-**Scheduled pipelines now avoid crowded five-minute boundaries, and every pipeline job has an explicit two-hour runtime cap that customers can reduce centrally.** Config: 3 emits the same offset Apply and Monitor recommendations on GitHub Actions and Azure DevOps.
+**Scheduled pipelines now avoid crowded five-minute boundaries, every pipeline job has an explicit two-hour runtime cap that customers can reduce centrally, and fleet settings can safely widen tagged update-start windows.** Config: 3 emits the same offset Apply and Monitor recommendations on GitHub Actions and Azure DevOps.
 
 ### Added
 
 - **Central maximum job runtime.** Every bundled job uses `AZLOCAL_MAX_PIPELINE_RUNTIME_MINUTES`, defaulting to 120 minutes when the GitHub repository variable or Azure DevOps variable-group member is absent. The native platform timeout cancels a job that exceeds the limit.
+- **Optional update-window allowance.** Fleet settings schema v4 adds independent `0-60` minute before/after allowances around each cluster's tagged `UpdateStartWindow`. Both default to `0`, so existing strict behavior is unchanged.
 
 ### Changed
 
 - **Offset shipped schedules.** Every active bundled cron now starts at minute 17 while retaining its existing hour, weekday, and cadence. The Apply pipeline remains manual-only; its opt-in example is `17 6 * * *`.
 - **Offset Config: 3 recommendations.** The default Apply lead is seven minutes. Retry recommendations are phased seven minutes before their natural target, and Monitor recommendations use minute 17 (`17,47` at the default 30-minute cadence).
 - **Existing custom schedules remain safe.** `Update-AzLocalPipelineExample` continues to preserve schedule customization markers, so customers must opt into the new cron minutes when their copied schedule block has already been customized.
+- **Fleet settings migrate automatically.** A normal pipeline refresh backs up schema v1/v2/v3 byte-for-byte and migrates directly to v4, preserving comments, line endings, inert starters, and canonical section order.
 - No public function or export-count change (71). Bundled GitHub Actions and Azure DevOps pipeline pins are updated to `0.9.27`.
 
 > Previous release notes have moved into the [Release History](#release-history) appendix at the bottom of this document.
@@ -307,6 +309,8 @@ Open `cluster-inventory.csv` and populate the tag columns:
   > ⏱️ **Important - `UpdateStartWindow` controls when an update is allowed to *START*, not how long it takes to complete.** The window is a **start gate** evaluated by `Test-AzLocalUpdateScheduleAllowed` at the moment `Start-AzLocalClusterUpdate` runs. Once the update has started, it runs to completion (or failure) regardless of whether the window is still open - Azure Local update runs are **not** paused, throttled, or aborted when the window closes. A typical Azure Local platform update can take **several hours** on a multi-node cluster (node drains, reboots, firmware/driver/SBE steps, validation), and a "happy path" run with no issues is still measured in hours, not minutes.
   >
   > **Plan your window to *start* far enough before any hard deadline that the full update can finish before that deadline** - for example, if updates must be complete before a retail store opens at 06:00 local time, or before a manufacturing line starts at 06:00 Mon-Fri, do **not** set `UpdateStartWindow` to (say) `Mon-Fri_04:00-06:00` and expect the update to be done by 06:00. Set it to start much earlier (e.g. `Sun-Thu_22:00-02:00` for an overnight start the evening before) so the run has enough headroom for the slowest realistic completion time, plus margin for retries and post-update validation. When in doubt, time a representative update on a non-production cluster first and add a safety buffer.
+
+  > **Pipeline timing allowance (fleet-settings schema v4):** Pipeline deployments can independently permit update attempts to start `0-60` minutes before and/or after every tagged window by activating `updateStartWindow.allowBeforeMinutes` and `updateStartWindow.allowAfterMinutes` in `config/fleet-settings.yml`. Both default to `0`, preserving the strict opening-inclusive/closing-exclusive window. The allowance is fleet-wide and changes only the runtime start gate; it does not rewrite tags, widen exclusion periods, or stop an update at the effective closing edge. See [Configure fleet scope, update-window allowances, and reporting](Automation-Pipeline-Examples/README.md#612-optional-configure-fleet-scope-update-window-allowances-and-reporting) for exact cutoff examples, safety guidance, and schema migration behavior.
 
 
   **Day tokens** - strict 3-letter abbreviations only (case-insensitive - `Mon`, `mon`, `MON` all work):

@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Every bundled GitHub Actions and Azure DevOps job now has a native platform timeout. `AZLOCAL_MAX_PIPELINE_RUNTIME_MINUTES` is an optional non-secret repository variable / `AzureLocal-Pipeline-Settings` member; when absent, every job defaults to 120 minutes. The setting is job-scoped because both platforms expose their native timeout at job scope.
+- Fleet settings schema v4 adds `updateStartWindow.allowBeforeMinutes` and `updateStartWindow.allowAfterMinutes`. Each independently permits update attempts to start `0-60` minutes before or after every cluster's tagged `UpdateStartWindow`; both default to `0`, preserving the existing inclusive-open/exclusive-close behavior.
 
 ### Changed
 
@@ -18,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Config: 3 defaults to a seven-minute Apply lead. Its generated retry cron is phased seven minutes before the natural midpoint/+60-minute target while remaining inside the update window.
 - Config: 3 generated Monitor recommendations use a minute-17 phase while retaining the requested cadence, including `17,47` for the default 30-minute polling interval.
 - Customer schedule blocks already inside `AZLOCAL-CUSTOMIZE:schedule-triggers` markers remain preserved during template refresh and are not silently rewritten.
+- A normal `Update-AzLocalPipelineExample` refresh now creates an exact version-specific backup and migrates fleet settings schema v1, v2, or v3 directly to v4. The migration preserves operator content and line endings, keeps fully commented starters inert, and orders sections to match the v4 starter: `schemaVersion`, `scope`, `updateStartWindow`, `reporting`, then `itsm`.
 - No public function or export-count change (71). Bundled pipeline pins are updated to `0.9.27`.
 
 ## [0.9.26] - 2026-07-27

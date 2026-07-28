@@ -18,6 +18,10 @@ function Test-AzLocalUpdateScheduleAllowed {
         restriction. Renamed from 'UpdateExclusions' in v0.7.90 (breaking change).
     .PARAMETER TestTime
         The UTC time to test against. Defaults to current UTC time.
+    .PARAMETER AllowBeforeMinutes
+        Minutes before UpdateStartWindow opens that an update attempt may start.
+    .PARAMETER AllowAfterMinutes
+        Minutes after UpdateStartWindow closes that an update attempt may start.
     .OUTPUTS
         PSCustomObject with Allowed (bool), Reason (string), WindowOpen (bool or $null),
         ExclusionActive (bool or $null), Details (string)
@@ -36,7 +40,15 @@ function Test-AzLocalUpdateScheduleAllowed {
         [string]$UpdateExclusionsWindow,
 
         [Parameter(Mandatory = $false)]
-        [datetime]$TestTime = (Get-Date).ToUniversalTime()
+        [datetime]$TestTime = (Get-Date).ToUniversalTime(),
+
+        [Parameter(Mandatory = $false)]
+        [ValidateRange(0, 60)]
+        [int]$AllowBeforeMinutes = 0,
+
+        [Parameter(Mandatory = $false)]
+        [ValidateRange(0, 60)]
+        [int]$AllowAfterMinutes = 0
     )
 
     # Schedule evaluation is UTC-based. Normalise Local/Unspecified inputs to
@@ -78,7 +90,11 @@ function Test-AzLocalUpdateScheduleAllowed {
     # Check maintenance window
     if (-not [string]::IsNullOrWhiteSpace($UpdateStartWindow)) {
         try {
-            $windowResult = Test-AzLocalUpdateWindow -WindowString $UpdateStartWindow -TestTime $TestTime
+            $windowResult = Test-AzLocalUpdateWindow `
+                -WindowString $UpdateStartWindow `
+                -TestTime $TestTime `
+                -AllowBeforeMinutes $AllowBeforeMinutes `
+                -AllowAfterMinutes $AllowAfterMinutes
             $windowOpen = $windowResult.Allowed
             if (-not $windowOpen) {
                 return [PSCustomObject]@{

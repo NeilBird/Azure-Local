@@ -1408,12 +1408,12 @@ Get-AzLocalClusterInventory -ExportPath ./cluster-inventory.csv   # now skips th
 
 > **Secrets note:** this list is **non-secret** scoping metadata (subscription GUIDs are not credentials), so it belongs in source control / the `AzureLocal-Pipeline-Settings` group - never in a secret store. Azure authentication still flows through OIDC / the WIF service connection as before.
 
-#### 6.1.2 (Optional) Scope the fleet by management group and cluster tags
+#### 6.1.2 (Optional) Configure fleet scope, update-window allowances, and reporting
 
 Azure CLI and Azure PowerShell forward only the first 1,000 accessible subscriptions when Azure Resource Graph scope is implicit. For larger or growing estates, activate management-group scope in the generated `config/fleet-settings.yml`. Use management-group IDs, not display names or full resource IDs:
 
 ```yaml
-schemaVersion: 3
+schemaVersion: 4
 scope:
   managementGroups:
     - contoso-platform
@@ -1429,6 +1429,9 @@ scope:
       tags:
         - name: Test-Environment
           value: Yes
+updateStartWindow:
+  allowBeforeMinutes: 0
+  allowAfterMinutes: 0
 reporting:
   maxRowsPerTable: 100
   maxSummaryBytes: 900000
@@ -1440,8 +1443,9 @@ YAML indentation is part of the schema. Use spaces only (never tabs) and preserv
 
 | Level | Exact indentation | Property |
 |---|---:|---|
-| Document root | 0 spaces | `schemaVersion`, `scope`, `reporting`, `itsm` |
+| Document root | 0 spaces | `schemaVersion`, `scope`, `updateStartWindow`, `reporting`, `itsm` |
 | Scope property | 2 spaces | `managementGroups`, `clusterTagFilters` |
+| Update-window allowance | 2 spaces | `allowBeforeMinutes`, `allowAfterMinutes` |
 | Management-group item | 4 spaces | `- <management-group-id>` |
 | Filter group | 4 spaces | `- name: <group-name>` |
 | Group tag collection | 6 spaces | `tags:` |
@@ -1452,9 +1456,22 @@ Each item under `clusterTagFilters` is a **group**, not an Azure tag itself. In 
 
 `clusterTagFilters` is a global admission policy used by all pipeline workloads. Names and values use exact, case-insensitive comparison, and tag strings are treated as literals. Group names must be unique; tag names must be unique within a group. Do not use module-owned control tags such as `UpdateRing`, `UpdateStartWindow`, `UpdateSideloaded`, or retry-state tags as selectors; establish stable admission tags through Azure Policy, onboarding, or another enterprise tagging process. Config: 2 validates live tags before mutation and reports `GlobalFilterMismatch` for excluded rows.
 
+`updateStartWindow` controls a fleet-wide UTC allowance around every cluster's existing `UpdateStartWindow` tag. It does not rewrite the tag. `allowBeforeMinutes` permits an update attempt to start that many minutes before the tagged opening; `allowAfterMinutes` permits an attempt to start that many minutes after the tagged closing. Each value is independent, accepts `0-60`, and defaults to `0`. With both at `0`, the original behavior is unchanged: the opening instant is inclusive and the closing instant is exclusive.
+
+For `UpdateStartWindow=Sat_02:00-06:00`:
+
+| Configuration | Effective update-attempt start interval | Use case |
+|---|---|---|
+| `allowBeforeMinutes: 20`, `allowAfterMinutes: 0` | Saturday 01:40 inclusive through 06:00 exclusive | Permit a pipeline pre-warm run to reach the update gate early |
+| `allowBeforeMinutes: 0`, `allowAfterMinutes: 20` | Saturday 02:00 inclusive through 06:20 exclusive | Absorb scheduler or authentication delay after the closing edge |
+| `allowBeforeMinutes: 20`, `allowAfterMinutes: 20` | Saturday 01:40 inclusive through 06:20 exclusive | Allow variance on both edges |
+| `allowBeforeMinutes: 0`, `allowAfterMinutes: 0` | Saturday 02:00 inclusive through 06:00 exclusive | Preserve the strict tagged window |
+
+The allowance controls only when the module may **start** an update attempt; it does not wait, queue, stop, or cancel an update at either boundary. The setting applies fleet-wide, including overnight windows and day-boundary crossings. Keep the values as small as operationally necessary, and leave `allowAfterMinutes` at `0` when the tagged closing time is a hard prohibition on starting new work. `UpdateExclusionsWindow` and the `UpdateExcluded` operator override remain higher-priority blocks and are not widened by these values. The manual break-glass `force_immediate_update` option still bypasses schedule tags entirely.
+
 At the start of each pipeline report, the shared version banner records the effective management-group IDs and grouped tag filters as a **run snapshot**. This remains attached to the historic GitHub Actions or Azure DevOps run even if `fleet-settings.yml` later changes. The install step also emits compact JSON outputs named `management_groups` and `cluster_tag_filters`; the latter preserves each group and its nested tags. When the optional file is missing, empty, fully commented, or contains no scope selectors, no fleet-scope block is rendered.
 
-`Copy-AzLocalPipelineExample` and `Update-AzLocalPipelineExample` create a fully commented schema-v3 starter when the file is missing. During a normal Update, schema v1 or v2 is automatically migrated after its exact original bytes are saved as `config/fleet-settings_v1.bak.yml` or `config/fleet-settings_v2.bak.yml`. A flat v2 pair becomes a named one-tag group, so multiple old pairs become `OR` alternatives in v3; review an active migrated policy before its next scheduled run. Existing comments, values, order, and line endings are preserved. A fully commented source remains fully commented and inert, and reruns are byte-for-byte idempotent. `-WhatIf` previews the operation; `-UpgradeFleetSettingsSchema` remains accepted but is no longer required. Runtime parsing accepts schema v1 without tag filters and schema v3; schema v2 must be upgraded. The precedence is: explicit `-SubscriptionId`, configured management groups, then existing implicit subscription discovery. A missing, empty, or fully commented file therefore preserves existing runtime scope. The pipeline identity needs read access on the target management-group hierarchy; management-group scope can cover the first 10,000 subscriptions beneath it.
+`Copy-AzLocalPipelineExample` and `Update-AzLocalPipelineExample` create a fully commented schema-v4 starter when the file is missing. During a normal Update, schema v1, v2, or v3 is automatically migrated after its exact original bytes are saved as `config/fleet-settings_v1.bak.yml`, `config/fleet-settings_v2.bak.yml`, or `config/fleet-settings_v3.bak.yml`. A flat v2 pair becomes a named one-tag group, so multiple old pairs remain `OR` alternatives. The migrated top-level order matches the v4 starter: `schemaVersion`, `scope`, `updateStartWindow`, `reporting`, `itsm`; comments associated with each section move with it. The new allowance values are added as commented defaults, so migration does not widen any window until an operator explicitly activates them. Existing values and line endings are preserved. A fully commented source remains fully commented and inert, and reruns are byte-for-byte idempotent. `-WhatIf` previews the operation; `-UpgradeFleetSettingsSchema` remains accepted but is no longer required. Runtime parsing accepts schemas v1, v3, and v4; schema v2 must be upgraded. The precedence is: explicit `-SubscriptionId`, configured management groups, then existing implicit subscription discovery. A missing, empty, or fully commented file therefore preserves existing runtime scope and exact window enforcement. The pipeline identity needs read access on the target management-group hierarchy; management-group scope can cover the first 10,000 subscriptions beneath it.
 
 The reporting values cap only human-readable Markdown. Complete CSV, JSON, JUnit, and HTML artifacts remain available for automation and detailed investigation. `maxSummaryBytes` is measured as UTF-8 and defaults below GitHub Actions' 1 MiB per-step summary limit. `maxIncidentsPerRun` bounds ServiceNow fan-out; set it to `0` to suppress new incident creation while retaining deterministic skipped result rows.
 

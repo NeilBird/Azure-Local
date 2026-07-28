@@ -1209,6 +1209,8 @@ Master gate that evaluates whether an update is allowed against the `UpdateStart
 | `-UpdateStartWindow` | String | No | (none) | The `UpdateStartWindow` tag value (e.g. `Mon-Fri_22:00-02:00;Sat-Sun_02:00-06:00`). Empty/null = no window restriction. |
 | `-UpdateExclusionsWindow` | String | No | (none) | The `UpdateExclusionsWindow` tag value (e.g. `2026-12-20/2027-01-03;2027-04-05`). Empty/null = no exclusion restriction. Renamed from `-UpdateExclusions` in v0.7.90. |
 | `-TestTime` | DateTime | No | `(Get-Date).ToUniversalTime()` | UTC time to test against. Local/Unspecified inputs are normalised to UTC automatically. |
+| `-AllowBeforeMinutes` | Int32 | No | `0` | Permit the tested update attempt up to this many minutes before the tagged window opens. Valid range: `0-60`. |
+| `-AllowAfterMinutes` | Int32 | No | `0` | Permit the tested update attempt up to this many minutes after the tagged window closes. Valid range: `0-60`. |
 
 **Examples:**
 
@@ -1227,6 +1229,13 @@ if (-not $gate.Allowed) {
 Test-AzLocalUpdateScheduleAllowed `
     -UpdateStartWindow 'Mon-Fri_22:00-02:00' `
     -TestTime ([DateTime]::UtcNow.AddHours(6))
+
+# Mirror fleet-settings schema v4 with a 20-minute early allowance only
+Test-AzLocalUpdateScheduleAllowed `
+  -UpdateStartWindow 'Sat_02:00-06:00' `
+  -AllowBeforeMinutes 20 `
+  -AllowAfterMinutes 0 `
+  -TestTime ([datetime]'2026-04-18T01:45:00Z')
 ```
 
 ---

@@ -49,6 +49,8 @@ Describe 'v0.9.25: Fleet settings, management-group scope, and grouped cluster t
         @($settings.ManagementGroups).Count | Should -Be 0
         @($settings.ClusterTagFilters).Count | Should -Be 0
         $settings.ClusterTagFilterMode | Should -Be 'AnyGroup'
+        $settings.UpdateStartWindowAllowBeforeMinutes | Should -Be 0
+        $settings.UpdateStartWindowAllowAfterMinutes | Should -Be 0
     }
 
     It 'Keeps defaults when the file is fully commented' {
@@ -65,6 +67,8 @@ Describe 'v0.9.25: Fleet settings, management-group scope, and grouped cluster t
         $settings.MaxRowsPerTable | Should -Be 100
         $settings.MaxSummaryBytes | Should -Be 900000
         $settings.MaxIncidentsPerRun | Should -Be 25
+        $settings.UpdateStartWindowAllowBeforeMinutes | Should -Be 0
+        $settings.UpdateStartWindowAllowAfterMinutes | Should -Be 0
     }
 
     It 'Parses all supported sections and deduplicates management groups' {
@@ -95,6 +99,20 @@ itsm:
             Set-Content -LiteralPath $script:fleetSettingsPath -Encoding ASCII
 
         (Get-AzLocalFleetSettings).MaxRowsPerTable | Should -Be 2000
+    }
+
+    It 'Parses independent schema v4 UpdateStartWindow allowances' {
+        @'
+schemaVersion: 4
+updateStartWindow:
+  allowBeforeMinutes: 20
+  allowAfterMinutes: 15
+'@ | Set-Content -LiteralPath $script:fleetSettingsPath -Encoding ASCII
+
+        $settings = Get-AzLocalFleetSettings
+        $settings.SchemaVersion | Should -Be 4
+        $settings.UpdateStartWindowAllowBeforeMinutes | Should -Be 20
+        $settings.UpdateStartWindowAllowAfterMinutes | Should -Be 15
     }
 
     It 'Parses schema v3 tag groups in declared order with AND-within and OR-across semantics' {
@@ -146,6 +164,11 @@ itsm:
             @{ Content = "schemaVersion: 3`nscope:`n  clusterTagFilters:`n    - name: Live`n      tags:`n        - name: Environment"; Expected = '*requires non-empty name and value*' }
             @{ Content = "schemaVersion: 3`nscope:`n  clusterTagFilters:`n    - name: Live`n      tags:`n        - name: Environment`n          value: Production`n        - name: environment`n          value: Test"; Expected = '*duplicate tag name*Environment*Live*' }
             @{ Content = "schemaVersion: 3`nscope:`n  clusterTagFilters:`n    - name: Live`n      tags:`n        - name: UpdateRing`n          value: Production"; Expected = '*module-owned control tag*UpdateRing*' }
+            @{ Content = "schemaVersion: 3`nupdateStartWindow:`n  allowBeforeMinutes: 20"; Expected = '*require schemaVersion: 4*' }
+            @{ Content = "schemaVersion: 4`nupdateStartWindow:`n  allowBeforeMinutes: -1"; Expected = '*allowBeforeMinutes must be between 0 and 60*' }
+            @{ Content = "schemaVersion: 4`nupdateStartWindow:`n  allowBeforeMinutes: 61"; Expected = '*allowBeforeMinutes must be between 0 and 60*' }
+            @{ Content = "schemaVersion: 4`nupdateStartWindow:`n  allowAfterMinutes: -1"; Expected = '*allowAfterMinutes must be between 0 and 60*' }
+            @{ Content = "schemaVersion: 4`nupdateStartWindow:`n  allowAfterMinutes: 61"; Expected = '*allowAfterMinutes must be between 0 and 60*' }
     ) {
         param($Content, $Expected)
         Set-Content -LiteralPath $script:fleetSettingsPath -Value $Content -Encoding ASCII
@@ -3648,6 +3671,32 @@ Describe 'Helper Function: Test-AzLocalUpdateWindow (Internal)' {
         }
     }
 
+    Context 'Schema v4 before and after allowances' {
+        It 'Evaluates allowance boundaries independently' -TestCases @(
+            @{ Window = 'Sat_02:00-06:00'; Time = '2026-04-18 01:40'; Before = 20; After = 0; Expected = $true }
+            @{ Window = 'Sat_02:00-06:00'; Time = '2026-04-18 01:39'; Before = 20; After = 0; Expected = $false }
+            @{ Window = 'Sat_02:00-06:00'; Time = '2026-04-18 06:14'; Before = 0; After = 15; Expected = $true }
+            @{ Window = 'Sat_02:00-06:00'; Time = '2026-04-18 06:15'; Before = 0; After = 15; Expected = $false }
+            @{ Window = 'Sat_02:00-06:00'; Time = '2026-04-18 06:01'; Before = 20; After = 0; Expected = $false }
+            @{ Window = 'Sat_22:00-06:00'; Time = '2026-04-19 06:14'; Before = 0; After = 15; Expected = $true }
+            @{ Window = 'Mon_00:00-04:00'; Time = '2026-04-19 23:50'; Before = 20; After = 0; Expected = $true }
+        ) {
+            param($Window, $Time, $Before, $After, $Expected)
+
+            $testTime = [datetime]::SpecifyKind(
+                [datetime]::ParseExact($Time, 'yyyy-MM-dd HH:mm', $null),
+                [System.DateTimeKind]::Utc
+            )
+            $result = & (Get-Module $moduleName) {
+                param($w, $tt, $beforeMinutes, $afterMinutes)
+                Test-AzLocalUpdateWindow -WindowString $w -TestTime $tt `
+                    -AllowBeforeMinutes $beforeMinutes -AllowAfterMinutes $afterMinutes
+            } $Window $testTime $Before $After
+
+            $result.Allowed | Should -Be $Expected
+        }
+    }
+
     Context 'Output properties' {
         It 'Returns MatchedWindow when allowed' {
             $testTime = [datetime]::ParseExact('2026-04-18 03:00', 'yyyy-MM-dd HH:mm', $null)
@@ -3775,6 +3824,23 @@ Describe 'Helper Function: Test-AzLocalUpdateScheduleAllowed (Internal)' {
             $result.WindowOpen | Should -Be $true
         }
 
+        It 'Forwards before and after allowances to the maintenance-window gate' -TestCases @(
+            @{ Time = '2026-04-18 01:45'; Before = 20; After = 0 }
+            @{ Time = '2026-04-18 06:10'; Before = 0; After = 15 }
+        ) {
+            param($Time, $Before, $After)
+
+            $testTime = [datetime]::SpecifyKind(
+                [datetime]::ParseExact($Time, 'yyyy-MM-dd HH:mm', $null),
+                [System.DateTimeKind]::Utc
+            )
+            $result = Test-AzLocalUpdateScheduleAllowed -UpdateStartWindow 'Sat_02:00-06:00' `
+                -AllowBeforeMinutes $Before -AllowAfterMinutes $After -TestTime $testTime
+
+            $result.Allowed | Should -BeTrue
+            $result.WindowOpen | Should -BeTrue
+        }
+
         It 'Returns Allowed=false when outside maintenance window' {
             $testTime = [datetime]::ParseExact('2026-04-18 10:00', 'yyyy-MM-dd HH:mm', $null)  # Saturday
             $result = & (Get-Module $moduleName) { param($tt) Test-AzLocalUpdateScheduleAllowed -UpdateStartWindow 'Sat_02:00-06:00' -TestTime $tt } $testTime
@@ -3871,6 +3937,17 @@ Describe 'Function: Test-AzLocalUpdateScheduleAllowed (Exported)' {
         It 'Should have TestTime parameter' {
             $command = Get-Command Test-AzLocalUpdateScheduleAllowed
             $command.Parameters.Keys | Should -Contain 'TestTime'
+        }
+
+        It 'Should expose before and after allowances constrained to 0-60 minutes' {
+            $command = Get-Command Test-AzLocalUpdateScheduleAllowed
+            foreach ($parameterName in @('AllowBeforeMinutes', 'AllowAfterMinutes')) {
+                $command.Parameters.Keys | Should -Contain $parameterName
+                $range = $command.Parameters[$parameterName].Attributes |
+                    Where-Object { $_ -is [System.Management.Automation.ValidateRangeAttribute] }
+                $range.MinRange | Should -Be 0
+                $range.MaxRange | Should -Be 60
+            }
         }
     }
 }
@@ -9079,6 +9156,11 @@ Describe 'Function: Copy-AzLocalPipelineExample' {
             $settingsPath = Join-Path $repoRoot 'config\fleet-settings.yml'
             Test-Path -LiteralPath $settingsPath | Should -BeTrue
             (Get-AzLocalFleetSettings -Path $settingsPath).ScopeMode | Should -Be 'ImplicitSubscriptions'
+            $starterText = Get-Content -LiteralPath $settingsPath -Raw
+            $starterText | Should -Match '(?m)^# schemaVersion: 4\r?$'
+            $starterText | Should -Match '(?m)^# updateStartWindow:\r?$'
+            $starterText | Should -Match '(?m)^#   allowBeforeMinutes: 0\r?$'
+            $starterText | Should -Match '(?m)^#   allowAfterMinutes: 0\r?$'
         }
 
         It 'Preserves an existing operator-owned settings file' {
@@ -9106,6 +9188,17 @@ Describe 'Function: Copy-AzLocalPipelineExample' {
             Copy-AzLocalPipelineExample -Destination $dest -Platform GitHub @Arguments 6>$null | Out-Null
 
             Test-Path -LiteralPath (Join-Path $repoRoot 'config\fleet-settings.yml') | Should -BeFalse
+        }
+    }
+
+    Context 'Schema v4 UpdateStartWindow allowance wiring' {
+        It 'Reads both fleet settings allowances and forwards them to the schedule gate' {
+            $source = Get-Content -LiteralPath (Join-Path $PSScriptRoot '..\Public\Start-AzLocalClusterUpdate.ps1') -Raw
+
+            $source | Should -Match 'Get-AzLocalFleetSettings'
+            $source | Should -Match 'UpdateStartWindowAllowBeforeMinutes'
+            $source | Should -Match 'UpdateStartWindowAllowAfterMinutes'
+            $source | Should -Match '(?s)Test-AzLocalUpdateScheduleAllowed.+-AllowBeforeMinutes \$updateStartWindowAllowBeforeMinutes.+-AllowAfterMinutes \$updateStartWindowAllowAfterMinutes'
         }
     }
 }
@@ -11152,7 +11245,7 @@ Describe 'Function: Update-AzLocalPipelineExample' {
                 Set-Content -LiteralPath $settingsPath -Value "schemaVersion: 1`n# OPERATOR SENTINEL" -Encoding ASCII
                 Update-AzLocalPipelineExample -Destination $dest -Platform GitHub -Confirm:$false 6>$null 4>$null | Out-Null
                 (Get-Content -LiteralPath $settingsPath -Raw) | Should -Match 'OPERATOR SENTINEL'
-                (Get-AzLocalFleetSettings -Path $settingsPath).SchemaVersion | Should -Be 3
+                (Get-AzLocalFleetSettings -Path $settingsPath).SchemaVersion | Should -Be 4
             }
             finally {
                 Remove-Item -Path $repoRoot -Recurse -Force -ErrorAction SilentlyContinue
@@ -11189,9 +11282,10 @@ Describe 'Function: Update-AzLocalPipelineExample' {
                 Update-AzLocalPipelineExample -Destination $dest -Platform GitHub -Confirm:$false 6>$null 4>$null | Out-Null
                 $after = [IO.File]::ReadAllText($settingsPath)
                 [IO.File]::ReadAllText($backupPath) | Should -BeExactly $before
-                $after | Should -Match '(?m)^# schemaVersion: 3\r?$'
+                $after | Should -Match '(?m)^# schemaVersion: 4\r?$'
                 $after | Should -Match '(?m)^#   clusterTagFilters:\r?$'
-                $after | Should -Match '(?m)^# AZLOCAL-FLEET-SETTINGS-SCHEMA-V3\r?$'
+                $after | Should -Match '(?m)^# AZLOCAL-FLEET-SETTINGS-SCHEMA-V4\r?$'
+                $after | Should -Match '(?m)^# updateStartWindow:\r?$'
                 (Get-AzLocalFleetSettings -Path $settingsPath).SchemaVersion | Should -Be 1
                 (Get-AzLocalFleetSettings -Path $settingsPath).ScopeMode | Should -Be 'ImplicitSubscriptions'
             }
@@ -11213,14 +11307,19 @@ Describe 'Function: Update-AzLocalPipelineExample' {
                 $after = [IO.File]::ReadAllText($settingsPath)
                 $backupPath = Join-Path (Split-Path -Parent $settingsPath) 'fleet-settings_v1.bak.yml'
                 [IO.File]::ReadAllText($backupPath) | Should -BeExactly $before
-                $after.StartsWith(($before -replace 'schemaVersion: 1', 'schemaVersion: 3')) | Should -BeTrue
-                $after | Should -Match '(?m)^# AZLOCAL-FLEET-SETTINGS-SCHEMA-V3\r?$'
+                $after | Should -Match '(?m)^schemaVersion: 4\r$'
+                $after | Should -Match '(?m)^scope:\r$'
+                $after | Should -Match '(?m)^  managementGroups:\r$'
+                $after | Should -Match '(?m)^    - group-a\r$'
+                $after | Should -Match '(?m)^# OPERATOR SENTINEL\r$'
+                $after | Should -Not -Match '(?<!\r)\n'
+                $after | Should -Match '(?m)^# AZLOCAL-FLEET-SETTINGS-SCHEMA-V4\r?$'
                 $after | Should -Match '(?m)^#   clusterTagFilters:\r?$'
                 $after | Should -Match '(?m)^#     - name: Production\r?$'
                 $after | Should -Match '(?m)^#       tags:\r?$'
                 $after | Should -Match '(?m)^#           value: Production\r?$'
-                ([regex]::Matches($after, '(?m)^# AZLOCAL-FLEET-SETTINGS-SCHEMA-V3\r?$')).Count | Should -Be 1
-                (Get-AzLocalFleetSettings -Path $settingsPath).SchemaVersion | Should -Be 3
+                ([regex]::Matches($after, '(?m)^# AZLOCAL-FLEET-SETTINGS-SCHEMA-V4\r?$')).Count | Should -Be 1
+                (Get-AzLocalFleetSettings -Path $settingsPath).SchemaVersion | Should -Be 4
 
                 Update-AzLocalPipelineExample -Destination $dest -Platform GitHub -Confirm:$false 6>$null 4>$null | Out-Null
                 [IO.File]::ReadAllText($settingsPath) | Should -BeExactly $after
@@ -11255,11 +11354,11 @@ Describe 'Function: Update-AzLocalPipelineExample' {
                 $after = [IO.File]::ReadAllText($settingsPath)
 
                 [IO.File]::ReadAllText($backupPath) | Should -BeExactly $before
-                $after | Should -Match '(?m)^# AzLocal\.UpdateManagement fleet settings \(schema version 3\)\r?$'
-                $after | Should -Match '(?m)^# schemaVersion: 3\r?$'
+                $after | Should -Match '(?m)^# AzLocal\.UpdateManagement fleet settings \(schema version 4\)\r?$'
+                $after | Should -Match '(?m)^# schemaVersion: 4\r?$'
                 $after | Should -Match '(?m)^#       tags:\r?$'
                 $after | Should -Match '(?m)^#         - name: Live-Environment\r?$'
-                $after | Should -Match '(?m)^# AZLOCAL-FLEET-SETTINGS-SCHEMA-V3\r?$'
+                $after | Should -Match '(?m)^# AZLOCAL-FLEET-SETTINGS-SCHEMA-V4\r?$'
                 $after | Should -Not -Match 'SCHEMA-V2'
                 @($after -split '\r?\n' | Where-Object { $_.Trim() -and -not $_.Trim().StartsWith('#') }).Count | Should -Be 0
                 (Get-AzLocalFleetSettings -Path $settingsPath).ScopeMode | Should -Be 'ImplicitSubscriptions'
@@ -11323,8 +11422,57 @@ Describe 'Function: Update-AzLocalPipelineExample' {
             [IO.File]::WriteAllText($settingsPath, "schemaVersion: 1`n# OPERATOR SENTINEL`n", [Text.UTF8Encoding]::new($false))
             try {
                 Update-AzLocalPipelineExample -Destination $dest -Platform GitHub -SkipStarterFleetSettings -Confirm:$false 6>$null 4>$null | Out-Null
-                (Get-AzLocalFleetSettings -Path $settingsPath).SchemaVersion | Should -Be 3
+                (Get-AzLocalFleetSettings -Path $settingsPath).SchemaVersion | Should -Be 4
                 (Get-Content -LiteralPath $settingsPath -Raw) | Should -Match 'OPERATOR SENTINEL'
+            }
+            finally {
+                Remove-Item -Path $repoRoot -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+
+        It 'Upgrades jumbled active schema v3 to canonical v4 order with comments attached' {
+            $repoRoot = Join-Path $env:TEMP "upe-fleet-settings-v3-order-$([guid]::NewGuid())"
+            $dest = Join-Path $repoRoot '.github\workflows'
+            $settingsPath = Join-Path $repoRoot 'config\fleet-settings.yml'
+            $backupPath = Join-Path $repoRoot 'config\fleet-settings_v3.bak.yml'
+            New-Item -Path $dest -ItemType Directory -Force | Out-Null
+            New-Item -Path (Split-Path -Parent $settingsPath) -ItemType Directory -Force | Out-Null
+            $before = @(
+                'schemaVersion: 3'
+                '# ITSM guidance'
+                'itsm:'
+                '  maxIncidentsPerRun: 25'
+                '# Reporting guidance'
+                'reporting:'
+                '  maxRowsPerTable: 100'
+                '# Scope guidance'
+                'scope:'
+                '  managementGroups:'
+                '    - group-a'
+            ) -join "`r`n"
+            [IO.File]::WriteAllText($settingsPath, $before, [Text.UTF8Encoding]::new($false))
+            try {
+                Update-AzLocalPipelineExample -Destination $dest -Platform GitHub -Confirm:$false 6>$null 4>$null | Out-Null
+                $after = [IO.File]::ReadAllText($settingsPath)
+
+                [IO.File]::ReadAllText($backupPath) | Should -BeExactly $before
+                (Get-AzLocalFleetSettings -Path $settingsPath).SchemaVersion | Should -Be 4
+                $after | Should -Match '# Scope guidance\r?\nscope:'
+                $after | Should -Match '(?m)^#   allowBeforeMinutes: 0\r?$'
+                $after | Should -Match '(?m)^#   allowAfterMinutes: 0\r?$'
+                $after | Should -Match '# Reporting guidance\r?\nreporting:'
+                $after | Should -Match '# ITSM guidance\r?\nitsm:'
+                $scopeIndex = $after.IndexOf('scope:')
+                $windowIndex = $after.IndexOf('# updateStartWindow:')
+                $reportingIndex = $after.IndexOf('reporting:')
+                $itsmIndex = $after.IndexOf('itsm:')
+                $scopeIndex | Should -BeLessThan $windowIndex
+                $windowIndex | Should -BeLessThan $reportingIndex
+                $reportingIndex | Should -BeLessThan $itsmIndex
+
+                Update-AzLocalPipelineExample -Destination $dest -Platform GitHub -Confirm:$false 6>$null 4>$null | Out-Null
+                [IO.File]::ReadAllText($settingsPath) | Should -BeExactly $after
+                [IO.File]::ReadAllText($backupPath) | Should -BeExactly $before
             }
             finally {
                 Remove-Item -Path $repoRoot -Recurse -Force -ErrorAction SilentlyContinue

@@ -1,4 +1,4 @@
-# AzLocal.UpdateManagement fleet settings (schema version 3)
+# AzLocal.UpdateManagement fleet settings (schema version 4)
 #
 # This starter is intentionally fully commented. In this state, every pipeline
 # keeps the existing behavior and queries the subscriptions visible to its Azure
@@ -8,7 +8,7 @@
 # management groups are supported. The pipeline identity needs Reader access (or
 # equivalent resource read permissions) at each configured scope.
 #
-# schemaVersion: 3
+# schemaVersion: 4
 # scope:
 #   managementGroups:
 #     - contoso-platform
@@ -30,8 +30,26 @@
 #         - name: Test-Environment
 #           value: Yes
 #
+# Optional UTC allowance around every cluster UpdateStartWindow tag. The
+# original window remains unchanged; these values only widen the runtime gate
+# used when an update attempt starts. Each value accepts 0 to 60 minutes.
+# Defaults are 0, preserving exact start-inclusive/end-exclusive behavior.
+#
+# Examples:
+#   before only: allowBeforeMinutes: 20, allowAfterMinutes: 0
+#   after only:  allowBeforeMinutes: 0,  allowAfterMinutes: 20
+#   both sides:  allowBeforeMinutes: 20, allowAfterMinutes: 20
+#
+# updateStartWindow:
+#   allowBeforeMinutes: 0
+#   allowAfterMinutes: 0
+#
 # Optional pipeline-summary controls. Full CSV/JSON/JUnit artifacts are never
 # truncated by these values.
+# maxRowsPerTable limits each summary table to 1-2000 rows (default 100).
+# maxSummaryBytes limits the pipeline summary to 10000-1000000 bytes (default
+# 900000). The summary is still generated when its displayed content is truncated.
+#
 # reporting:
 #   maxRowsPerTable: 1000
 #   maxSummaryBytes: 950000

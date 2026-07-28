@@ -10,7 +10,7 @@
 
 ### What's New in v0.9.27
 
-**Scheduled pipelines now avoid crowded five-minute boundaries, and every pipeline job has an explicit maximum runtime.** All active GitHub Actions and Azure DevOps schedules start at minute 17. Config: 3 defaults to a seven-minute Apply lead and emits minute-17 phased Monitor recommendations. `AZLOCAL_MAX_PIPELINE_RUNTIME_MINUTES` optionally reduces the native per-job timeout from its 120-minute fallback. Existing customized schedule marker blocks remain preserved during refresh. No public function or export-count change (71); pipeline pins are updated to `0.9.27`. See [CHANGELOG.md](../CHANGELOG.md#0927---2026-07-28) for full details.
+**Scheduled pipelines now avoid crowded five-minute boundaries, every pipeline job has an explicit maximum runtime, and fleet settings can safely widen tagged update-start windows.** All active GitHub Actions and Azure DevOps schedules start at minute 17. Config: 3 defaults to a seven-minute Apply lead and emits minute-17 phased Monitor recommendations. `AZLOCAL_MAX_PIPELINE_RUNTIME_MINUTES` optionally reduces the native per-job timeout from its 120-minute fallback. Fleet settings schema v4 adds independent `0-60` minute before/after allowances that default to strict `0/0`; normal refreshes back up and migrate schema v1/v2/v3 directly to v4 while preserving comments, line endings, and inert starters. Existing customized schedule marker blocks remain preserved during refresh. No public function or export-count change (71); pipeline pins are updated to `0.9.27`. See [CHANGELOG.md](../CHANGELOG.md#0927---2026-07-28) for full details.
 
 ### What's New in v0.9.26
 

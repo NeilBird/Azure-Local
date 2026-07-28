@@ -8,7 +8,7 @@ function Get-AzLocalFleetSettings {
         empty, or fully commented file returns the existing implicit Azure
         subscription scope used by earlier module versions.
 
-        Schema versions 1 and 3 support scope.managementGroups. When one or more
+        Schema versions 1, 3, and 4 support scope.managementGroups. When one or more
         management-group IDs are configured, Azure Resource Graph queries that
         do not already specify an explicit subscription use those management
         groups as their query scope.
@@ -16,6 +16,10 @@ function Get-AzLocalFleetSettings {
         Schema version 3 adds grouped scope.clusterTagFilters. Tags within one
         named group use AND semantics; groups use OR semantics. A group with one
         tag is therefore a singular alternative.
+
+        Schema version 4 adds updateStartWindow.allowBeforeMinutes and
+        updateStartWindow.allowAfterMinutes. Each independently widens the UTC
+        runtime gate by 0 to 60 minutes and defaults to 0.
 
         The parser is deliberately limited to this small operator-owned schema
         so the core fleet pipelines do not require powershell-yaml.
@@ -90,6 +94,8 @@ function Get-AzLocalFleetSettings {
         ManagementGroups   = [string[]]@()
         ClusterTagFilters  = [object[]]@()
         ClusterTagFilterMode = 'AnyGroup'
+        UpdateStartWindowAllowBeforeMinutes = 0
+        UpdateStartWindowAllowAfterMinutes  = 0
         MaxRowsPerTable    = 100
         MaxSummaryBytes    = 900000
         MaxIncidentsPerRun = 25
@@ -114,6 +120,7 @@ function Get-AzLocalFleetSettings {
     $inManagementGroups = $false
     $inClusterTagFilters = $false
     $clusterTagFiltersDeclared = $false
+    $updateStartWindowDeclared = $false
     $activeSection = ''
     $managementGroups = [System.Collections.Generic.List[string]]::new()
     $clusterTagFilters = [System.Collections.Generic.List[object]]::new()
@@ -136,6 +143,16 @@ function Get-AzLocalFleetSettings {
         }
         if ($line -match '^reporting\s*:\s*(?:#.*)?$') {
             $activeSection = 'reporting'
+            $inScope = $false
+            $inManagementGroups = $false
+            $inClusterTagFilters = $false
+            $currentTagFilterGroup = $null
+            $currentTagFilterTag = $null
+            continue
+        }
+        if ($line -match '^updateStartWindow\s*:\s*(?:#.*)?$') {
+            $activeSection = 'updateStartWindow'
+            $updateStartWindowDeclared = $true
             $inScope = $false
             $inManagementGroups = $false
             $inClusterTagFilters = $false
@@ -233,6 +250,14 @@ function Get-AzLocalFleetSettings {
             $result.MaxRowsPerTable = [int]$Matches[1]
             continue
         }
+        if ($activeSection -eq 'updateStartWindow' -and $line -match '^\s{2}allowBeforeMinutes\s*:\s*(-?[0-9]+)\s*(?:#.*)?$') {
+            $result.UpdateStartWindowAllowBeforeMinutes = [int]$Matches[1]
+            continue
+        }
+        if ($activeSection -eq 'updateStartWindow' -and $line -match '^\s{2}allowAfterMinutes\s*:\s*(-?[0-9]+)\s*(?:#.*)?$') {
+            $result.UpdateStartWindowAllowAfterMinutes = [int]$Matches[1]
+            continue
+        }
         if ($activeSection -eq 'reporting' -and $line -match '^\s{2}maxSummaryBytes\s*:\s*([0-9]+)\s*(?:#.*)?$') {
             $result.MaxSummaryBytes = [int]$Matches[1]
             continue
@@ -246,13 +271,16 @@ function Get-AzLocalFleetSettings {
     }
 
     if ($null -eq $schemaVersion) {
-        throw "Get-AzLocalFleetSettings: active settings in '$($result.Path)' must declare schemaVersion: 1 or 3."
+        throw "Get-AzLocalFleetSettings: active settings in '$($result.Path)' must declare schemaVersion: 1, 3, or 4."
     }
-    if ($schemaVersion -notin @(1, 3)) {
-        throw "Get-AzLocalFleetSettings: unsupported schemaVersion '$schemaVersion' in '$($result.Path)'. This module supports schemaVersion 1 and 3."
+    if ($schemaVersion -notin @(1, 3, 4)) {
+        throw "Get-AzLocalFleetSettings: unsupported schemaVersion '$schemaVersion' in '$($result.Path)'. This module supports schemaVersion 1, 3, and 4."
     }
     if ($schemaVersion -eq 1 -and $clusterTagFiltersDeclared) {
         throw "Get-AzLocalFleetSettings: scope.clusterTagFilters requires schemaVersion: 3."
+    }
+    if ($schemaVersion -ne 4 -and $updateStartWindowDeclared) {
+        throw "Get-AzLocalFleetSettings: updateStartWindow allowances require schemaVersion: 4."
     }
     if ($clusterTagFiltersDeclared -and $clusterTagFilters.Count -eq 0) {
         throw "Get-AzLocalFleetSettings: scope.clusterTagFilters must contain at least one named group."
@@ -311,6 +339,12 @@ function Get-AzLocalFleetSettings {
     }
     if ($result.MaxRowsPerTable -lt 1 -or $result.MaxRowsPerTable -gt 2000) {
         throw "Get-AzLocalFleetSettings: reporting.maxRowsPerTable must be between 1 and 2000."
+    }
+    if ($result.UpdateStartWindowAllowBeforeMinutes -lt 0 -or $result.UpdateStartWindowAllowBeforeMinutes -gt 60) {
+        throw "Get-AzLocalFleetSettings: updateStartWindow.allowBeforeMinutes must be between 0 and 60."
+    }
+    if ($result.UpdateStartWindowAllowAfterMinutes -lt 0 -or $result.UpdateStartWindowAllowAfterMinutes -gt 60) {
+        throw "Get-AzLocalFleetSettings: updateStartWindow.allowAfterMinutes must be between 0 and 60."
     }
     if ($result.MaxSummaryBytes -lt 10000 -or $result.MaxSummaryBytes -gt 1000000) {
         throw "Get-AzLocalFleetSettings: reporting.maxSummaryBytes must be between 10000 and 1000000."

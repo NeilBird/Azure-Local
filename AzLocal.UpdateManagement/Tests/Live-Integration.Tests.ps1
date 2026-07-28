@@ -162,6 +162,9 @@ Describe 'Live-Integration: Fleet settings configuration' -Tag 'Live' -Skip:$Ski
         $settings.FileFound | Should -BeTrue
         $settings.ScopeMode | Should -Be 'ImplicitSubscriptions'
         @($settings.ManagementGroups).Count | Should -Be 0
+        $settings.UpdateStartWindowAllowBeforeMinutes | Should -Be 0
+        $settings.UpdateStartWindowAllowAfterMinutes | Should -Be 0
+        (Get-Content -LiteralPath $starterPath -Raw) | Should -Match '(?m)^# schemaVersion: 4\r?$'
     }
 
     It 'Parses active reporting and ITSM settings without changing Azure scope' {
