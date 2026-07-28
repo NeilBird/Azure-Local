@@ -264,8 +264,13 @@ $housekeepingFindings = @(
     [pscustomobject]@{
         Category = 'Placement inconsistency'; Scope = 'TestVM03, TestVM08'
         FileName = 'TestVM03_Data.vhdx'
-        Observation = 'Virtual disk placement and VM ownership associations differ: C:\ClusterStorage\UserStorage_1\TestVM08\Virtual Hard Disks\TestVM03_Data.vhdx'
-        Review = 'Confirm the intended owner and storage layout with the VM, backup, and storage owners. Do not move the file based only on this report.'
+        FullName = 'C:\ClusterStorage\UserStorage_1\TestVM08\Virtual Hard Disks\TestVM03_Data.vhdx'
+        ParentPath = 'C:\ClusterStorage\UserStorage_1\TestVM08\Virtual Hard Disks'
+        CsvRoot = 'C:\ClusterStorage\UserStorage_1'; Extension = '.vhdx'; Length = 32212254720
+        PlacementReason = 'ReferencedOwnerFolderMismatch'
+        Owners = @('TestVM03'); AssociatedVMs = @('TestVM08')
+        Observation = 'Authoritative VM or snapshot inventory references this disk for TestVM03, but its path is under a folder associated with TestVM08. Filename text is not used as ownership evidence: C:\ClusterStorage\UserStorage_1\TestVM08\Virtual Hard Disks\TestVM03_Data.vhdx'
+        Review = 'Confirm whether the authoritative owner and different associated folder are intentional with the VM, backup, and storage owners. Do not move or rename the file based only on this report.'
     },
     [pscustomobject]@{
         Category = 'Unattached base disk candidate'; Scope = 'TestVM08'
@@ -323,7 +328,7 @@ $html = ConvertTo-VMCheckpointAuditHtml -Results $results -StaleHours 24 `
     -EventLookbackHours 168 -ClusterName 'contoso01' -GeneratedUtc '2026-07-20 12:00:00' `
     -DiscoveredVMs @() -DiscoverySummary $discoverySummary -StorageHealth $storageHealth `
     -HousekeepingFindings $housekeepingFindings -NodeEventContext $nodeEventContext -IncludeDiscoveredVMs:$true `
-    -ScriptVersion '0.2.28' -ReportGenerationTime '00:01:24' -ClusterNodeCount 10 -ClusterCsvCount 2
+    -ScriptVersion '0.2.29' -ReportGenerationTime '00:01:24' -ClusterNodeCount 10 -ClusterCsvCount 2
 
 $syntheticNotice = @'
 <div class="callout info synthetic-example"><strong>Synthetic example report.</strong> Every cluster, node, VM, path, timestamp, and event message in this file is invented for documentation. TestVM07 demonstrates an active-checkpoint HOLD STATE confirmed by historic event evidence; seven VMs demonstrate historic rollback, orphaned AVHDX, stale checkpoint/layer, and Hyper-V Replica INVESTIGATE findings; 12 VMs are healthy comparisons. A sustained cluster-level low-signal Event 15268 observation is shown for node04 without changing any VM verdict. The inventory contains 16 input VMs and 4 automatically discovered VMs.</div>

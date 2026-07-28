@@ -271,10 +271,18 @@ function Get-VirtualDiskHousekeepingClassification {
     } else {
         'UnattachedBaseDiskCandidate'
     }
+    $placementReason = if ($classification -ne 'PlacementInconsistency') {
+        ''
+    } elseif ($ownerSet.Count -eq 0 -and $associatedRows.Count -gt 0) {
+        'UnreferencedInVMAssociatedFolder'
+    } else {
+        'ReferencedOwnerFolderMismatch'
+    }
 
     [pscustomobject]@{
         Path                   = $Path
         Classification         = $classification
+        PlacementReason        = $placementReason
         Owners                 = @($ownerSet | Sort-Object)
         AssociatedVMs          = @($associatedRows | ForEach-Object { [string]$_.VMName } | Where-Object { $_ } | Sort-Object -Unique)
         MatchedImageSegment    = $matchedImageText
