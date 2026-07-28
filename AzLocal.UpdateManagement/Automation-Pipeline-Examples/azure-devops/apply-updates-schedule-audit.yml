@@ -34,7 +34,7 @@ schedules:
   # Weekly on Monday at 05:00 UTC - well before any common Saturday/Sunday or weekday
   # evening update window so a coverage drift report lands in the inbox before the
   # next scheduled apply-updates run.
-  - cron: '0 5 * * 1'
+  - cron: '17 5 * * 1'
     displayName: 'Weekly Apply-Updates Schedule Coverage Audit'
     branches:
       include:
@@ -54,9 +54,9 @@ parameters:
     default: './config/apply-updates-schedule.yml'
 
   - name: leadTimeMinutes
-    displayName: 'Minutes before UpdateStartWindow opens that the pipeline should fire (0-60)'
+    displayName: 'Minutes before UpdateStartWindow opens that the pipeline should fire (0-60; default 7 avoids crowded scheduler boundaries)'
     type: number
-    default: 5
+    default: 7
 
   - name: firesPerWindow
     displayName: 'Cron entries Recommend should emit per UpdateStartWindow segment. 2 (default, recommended) = belt-and-braces: opening edge + one mid-window retry capped at +60min, so schedule jitter and transient first-fire failures cannot silently skip a cluster for the day. 1 = opening edge only. Audit semantics are unchanged either way.'
@@ -118,7 +118,7 @@ variables:
   # to the latest on PSGallery and warns if the YAML looks stale - prompting a
   # refresh via Copy-AzLocalPipelineExample -Update.
   - name: GENERATED_AGAINST_MODULE_VERSION
-    value: '0.9.26'
+    value: '0.9.27'
   # Resolution order for the module version pin: queue-time parameter 'moduleVersion'
   # > empty (latest). Leave empty for the default fix-forward behaviour.
   - name: REQUIRED_MODULE_VERSION
@@ -138,12 +138,15 @@ variables:
   # section 5. A variable redefined inline would OVERRIDE the group, so these are
   # intentionally not redefined here - the group is the single source of truth.
   - group: AzureLocal-Pipeline-Settings
+  - name: AZLOCAL_EFFECTIVE_PIPELINE_RUNTIME_MINUTES
+    value: $[coalesce(variables['AZLOCAL_MAX_PIPELINE_RUNTIME_MINUTES'], 120)]
 
 stages:
 - stage: ScheduleCoverage
   displayName: 'Config: 3 - Audit Apply-Updates Schedule Coverage'
   jobs:
   - job: Audit
+    timeoutInMinutes: $(AZLOCAL_EFFECTIVE_PIPELINE_RUNTIME_MINUTES)
     displayName: 'Run Schedule Coverage Advisor'
     # BEGIN-AZLOCAL-CUSTOMIZE:runner-target-Audit
     pool:

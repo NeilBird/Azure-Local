@@ -56,10 +56,10 @@ on:
   # BEGIN-AZLOCAL-CUSTOMIZE:schedule-triggers
   # Edits inside this block are preserved across Update-AzLocalPipelineExample
   # module upgrades. Add or modify `schedule:` cron blocks below.
-  # Daily at 05:30 UTC - offset 30 min ahead of Step.9 (06:00) and Step.10 (07:00)
+  # Daily at 05:17 UTC - staggered ahead of Monitor: 3 (06:17) and Monitor: 2 (07:17)
   # so the three fleet-scope read pipelines stagger their ARG calls.
   schedule:
-    - cron: '30 5 * * *'  # Daily at 05:30 UTC
+    - cron: '17 5 * * *'  # Daily at 05:17 UTC
   # END-AZLOCAL-CUSTOMIZE:schedule-triggers
 
   # Manual trigger with options
@@ -116,7 +116,7 @@ env:
   # PSGallery, and emits a ::notice annotation if the YAML appears stale -
   # prompting you to refresh via Copy-AzLocalPipelineExample -Update. See
   # Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.9.26'
+  GENERATED_AGAINST_MODULE_VERSION: '0.9.27'
   # Resolution order for the module version pin (leave all unset to install
   # the latest, the default "fix-forward" behaviour): manual workflow_dispatch
   # input > repository variable 'REQUIRED_MODULE_VERSION' > empty (latest).
@@ -143,6 +143,7 @@ jobs:
     # BEGIN-AZLOCAL-CUSTOMIZE:runner-target-fleet-connectivity
     runs-on: windows-latest
     # END-AZLOCAL-CUSTOMIZE:runner-target-fleet-connectivity
+    timeout-minutes: ${{ fromJSON(vars.AZLOCAL_MAX_PIPELINE_RUNTIME_MINUTES || '120') }}
     permissions:
       id-token: write
       contents: read

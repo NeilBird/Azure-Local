@@ -2,7 +2,7 @@
 
 > ⚠️ **Disclaimer**: This module is **NOT** a Microsoft supported service offering or product. It is provided as example code only, with no warranty or official support. Refer to the [MIT license](https://github.com/NeilBird/Azure-Local/blob/main/LICENSE) for further information.
 
-**Latest Version:** v0.9.26 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.9.26)
+**Latest Version:** v0.9.27 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.9.27)
 
 This folder contains the 'AzLocal.UpdateManagement' PowerShell module for managing updates on Azure Local (formerly Azure Stack HCI) clusters using the Azure Local REST API. The module supports both interactive use and CI/CD automation via Service Principal or Managed Identity authentication.
 
@@ -14,7 +14,7 @@ Azure Local REST API specification (includes update management endpoints): https
 **This README (overview + most-recent release notes):**
 
 - [Where to Start](#where-to-start)
-- [What's New in v0.9.26](#whats-new-in-v0926)
+- [What's New in v0.9.27](#whats-new-in-v0927)
 - [Files](#files)
 - [Prerequisites](#prerequisites)
 - [RBAC Requirements](#rbac-requirements) (summary; full reference in [docs/rbac.md](docs/rbac.md))
@@ -78,26 +78,24 @@ If you are new to this module, work through these in order from a regular PowerS
 
 > Most CI/CD pipelines in [Automation-Pipeline-Examples/](Automation-Pipeline-Examples/) are direct implementations of one of these workflows. Start there if you want a copy-pasteable end-to-end pipeline.
 
-## What's New in v0.9.26
+## What's New in v0.9.27
 
-**Update: 1 now respects fleet admission before collecting child resources, avoids duplicate Azure reads, and keeps a Ready solution actionable when a separate SBE update has prerequisites.** The report also recovers from temporary ARG freshness gaps and always creates its JUnit artifacts on healthy fleets.
+**Scheduled pipelines now avoid crowded five-minute boundaries, and every pipeline job has an explicit two-hour runtime cap that customers can reduce centrally.** Config: 3 emits the same offset Apply and Monitor recommendations on GitHub Actions and Azure DevOps.
 
-### Fixed
+### Added
 
-- **Ready plus prerequisite SBE remains Ready.** When a solution update is `Ready` and a separate SBE update is `HasPrerequisite`, the cluster is classified as **Ready for Update**. Only a cluster with prerequisite updates and no Ready update is SBE-blocked.
-- **ARG freshness gaps are reconciled narrowly.** If the update summary says `UpdateAvailable` but ARG returns only prerequisite rows, the collector verifies that contradictory cluster through ARM and restores an omitted Ready update before classification.
-- **Clean runs always publish JUnit.** A fleet with no blocking health findings now receives a valid zero-test `health-blocking.xml`, allowing `assess-readiness.xml` and every diagnostic publisher to succeed.
+- **Central maximum job runtime.** Every bundled job uses `AZLOCAL_MAX_PIPELINE_RUNTIME_MINUTES`, defaulting to 120 minutes when the GitHub repository variable or Azure DevOps variable-group member is absent. The native platform timeout cancels a job that exceeds the limit.
 
 ### Changed
 
-- **Tag admission happens before child-resource collection.** Update-summary, available-update, and blocking-health ARG queries are constrained to admitted cluster IDs in command-line-safe batches.
-- **Readiness and blocking health are collected once each.** CSV and JUnit outputs are generated from the retained rows instead of repeating both Azure-backed workloads solely for a second file format.
-- **No general job fan-out.** ARG remains the fleet-scale collection boundary to avoid job startup, module-import, serialization, and concurrent-throttling overhead.
-- No public function or export-count change (71). Bundled GitHub Actions and Azure DevOps pipeline pins are updated to `0.9.26`.
+- **Offset shipped schedules.** Every active bundled cron now starts at minute 17 while retaining its existing hour, weekday, and cadence. The Apply pipeline remains manual-only; its opt-in example is `17 6 * * *`.
+- **Offset Config: 3 recommendations.** The default Apply lead is seven minutes. Retry recommendations are phased seven minutes before their natural target, and Monitor recommendations use minute 17 (`17,47` at the default 30-minute cadence).
+- **Existing custom schedules remain safe.** `Update-AzLocalPipelineExample` continues to preserve schedule customization markers, so customers must opt into the new cron minutes when their copied schedule block has already been customized.
+- No public function or export-count change (71). Bundled GitHub Actions and Azure DevOps pipeline pins are updated to `0.9.27`.
 
 > Previous release notes have moved into the [Release History](#release-history) appendix at the bottom of this document.
 
-See [CHANGELOG.md](CHANGELOG.md) for full release details. See [`What's New in v0.9.25`](#whats-new-in-v0925) in the Release History for the previous release.
+See [CHANGELOG.md](CHANGELOG.md) for full release details. See [`What's New in v0.9.26`](#whats-new-in-v0926) in the Release History for the previous release.
 
 ## Files
 
@@ -595,7 +593,11 @@ This code is provided as-is for educational and reference purposes.
 
 The full What's-New history (v0.7.81 and earlier) has moved to [docs/release-history.md](docs/release-history.md).
 
-The most recent release notes for **v0.9.26** stay above under [`What's New in v0.9.26`](#whats-new-in-v0926).
+The most recent release notes for **v0.9.27** stay above under [`What's New in v0.9.27`](#whats-new-in-v0927).
+
+### What's New in v0.9.26
+
+**Update: 1 now respects fleet admission before collecting child resources, avoids duplicate Azure reads, and keeps a Ready solution actionable when a separate SBE update has prerequisites.** Update-summary, available-update, and blocking-health ARG queries are constrained to admitted cluster IDs in command-line-safe batches. Sparse direct ARM verification reconciles temporary ARG gaps, and clean runs publish valid zero-test JUnit artifacts. No public function or export-count change (71); pipeline pins are updated to `0.9.26`. See [CHANGELOG.md](CHANGELOG.md#0926---2026-07-27) for full details.
 
 ### What's New in v0.9.25
 

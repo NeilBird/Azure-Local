@@ -65,7 +65,7 @@ on:
   # below or add more `- cron:` entries to suit your maintenance windows.
   schedule:
     # Run weekly on Sunday at 8:00 AM UTC
-    - cron: '0 8 * * 0'
+    - cron: '17 8 * * 0'
   # END-AZLOCAL-CUSTOMIZE:schedule-triggers
 
 env:
@@ -73,7 +73,7 @@ env:
   # this to the version actually installed and to the latest on PSGallery, and emits a
   # ::notice annotation if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample. See Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.9.26'
+  GENERATED_AGAINST_MODULE_VERSION: '0.9.27'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): manual workflow_dispatch input >
   # repository variable 'REQUIRED_MODULE_VERSION' > empty (latest).
@@ -105,6 +105,7 @@ jobs:
     # BEGIN-AZLOCAL-CUSTOMIZE:runner-target-validate
     runs-on: windows-latest
     # END-AZLOCAL-CUSTOMIZE:runner-target-validate
+    timeout-minutes: ${{ fromJSON(vars.AZLOCAL_MAX_PIPELINE_RUNTIME_MINUTES || '120') }}
     environment: ${{ inputs.environment }}
 
     outputs:
@@ -262,6 +263,7 @@ jobs:
     # BEGIN-AZLOCAL-CUSTOMIZE:runner-target-inventory-clusters
     runs-on: windows-latest
     # END-AZLOCAL-CUSTOMIZE:runner-target-inventory-clusters
+    timeout-minutes: ${{ fromJSON(vars.AZLOCAL_MAX_PIPELINE_RUNTIME_MINUTES || '120') }}
     needs: validate
     if: success()
     

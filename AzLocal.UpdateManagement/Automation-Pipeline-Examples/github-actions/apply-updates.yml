@@ -38,7 +38,7 @@ on:
   # day-grain; firing more often is wasteful but harmless thanks to readiness
   # idempotency). Example - 06:00 UTC every day:
   #   schedule:
-  #     - cron: '0 6 * * *'
+  #     - cron: '17 6 * * *'
   #
   # The legacy per-UpdateStartWindow cron pattern still works (one cron per window),
   # but ring resolution then defaults to the workflow_dispatch input default,
@@ -148,7 +148,7 @@ env:
   # this to the version actually installed and to the latest on PSGallery, and emits a
   # ::notice annotation if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.9.26'
+  GENERATED_AGAINST_MODULE_VERSION: '0.9.27'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): manual workflow_dispatch input >
   # repository variable 'REQUIRED_MODULE_VERSION' > empty (latest).
@@ -187,6 +187,7 @@ jobs:
     # BEGIN-AZLOCAL-CUSTOMIZE:runner-target-check-readiness
     runs-on: windows-latest
     # END-AZLOCAL-CUSTOMIZE:runner-target-check-readiness
+    timeout-minutes: ${{ fromJSON(vars.AZLOCAL_MAX_PIPELINE_RUNTIME_MINUTES || '120') }}
     # Required for OIDC authentication and dorny/test-reporter (Check Run publishing)
     permissions:
       id-token: write
@@ -370,6 +371,7 @@ jobs:
     # BEGIN-AZLOCAL-CUSTOMIZE:runner-target-apply-updates
     runs-on: windows-latest
     # END-AZLOCAL-CUSTOMIZE:runner-target-apply-updates
+    timeout-minutes: ${{ fromJSON(vars.AZLOCAL_MAX_PIPELINE_RUNTIME_MINUTES || '120') }}
     # Required for OIDC authentication and dorny/test-reporter (Check Run publishing)
     permissions:
       id-token: write
@@ -750,6 +752,7 @@ jobs:
     # BEGIN-AZLOCAL-CUSTOMIZE:runner-target-no-clusters-ready
     runs-on: windows-latest
     # END-AZLOCAL-CUSTOMIZE:runner-target-no-clusters-ready
+    timeout-minutes: ${{ fromJSON(vars.AZLOCAL_MAX_PIPELINE_RUNTIME_MINUTES || '120') }}
     needs: check-readiness
     if: ${{ needs.check-readiness.outputs.ready_count == 0 }}
 

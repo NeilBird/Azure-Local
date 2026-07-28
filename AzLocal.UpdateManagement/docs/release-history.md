@@ -4,9 +4,13 @@
 >
 > **For older releases**, this is the canonical reference; the main README intentionally stays slim so the most recent block is easy to find.
 >
-> **For v0.9.26 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0926) `What's New in v0.9.26` section.
+> **For v0.9.27 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0927) `What's New in v0.9.27` section.
 
 ---
+
+### What's New in v0.9.27
+
+**Scheduled pipelines now avoid crowded five-minute boundaries, and every pipeline job has an explicit maximum runtime.** All active GitHub Actions and Azure DevOps schedules start at minute 17. Config: 3 defaults to a seven-minute Apply lead and emits minute-17 phased Monitor recommendations. `AZLOCAL_MAX_PIPELINE_RUNTIME_MINUTES` optionally reduces the native per-job timeout from its 120-minute fallback. Existing customized schedule marker blocks remain preserved during refresh. No public function or export-count change (71); pipeline pins are updated to `0.9.27`. See [CHANGELOG.md](../CHANGELOG.md#0927---2026-07-28) for full details.
 
 ### What's New in v0.9.26
 

@@ -5,6 +5,21 @@ All notable changes to the AzLocal.UpdateManagement module (renamed from AzStack
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.27] - 2026-07-28
+
+### Added
+
+- Every bundled GitHub Actions and Azure DevOps job now has a native platform timeout. `AZLOCAL_MAX_PIPELINE_RUNTIME_MINUTES` is an optional non-secret repository variable / `AzureLocal-Pipeline-Settings` member; when absent, every job defaults to 120 minutes. The setting is job-scoped because both platforms expose their native timeout at job scope.
+
+### Changed
+
+- All active bundled schedules now start at minute 17 instead of crowded five-minute boundaries. This includes Config: 1, Config: 3, Update: 1, all four `Monitor: X` pipelines, and the Update: 4 six-hour heartbeat. Existing hour/day staggering is unchanged.
+- Apply Updates remains manual-only by default; its opt-in schedule example is now `17 6 * * *`.
+- Config: 3 defaults to a seven-minute Apply lead. Its generated retry cron is phased seven minutes before the natural midpoint/+60-minute target while remaining inside the update window.
+- Config: 3 generated Monitor recommendations use a minute-17 phase while retaining the requested cadence, including `17,47` for the default 30-minute polling interval.
+- Customer schedule blocks already inside `AZLOCAL-CUSTOMIZE:schedule-triggers` markers remain preserved during template refresh and are not silently rewritten.
+- No public function or export-count change (71). Bundled pipeline pins are updated to `0.9.27`.
+
 ## [0.9.26] - 2026-07-27
 
 ### Fixed

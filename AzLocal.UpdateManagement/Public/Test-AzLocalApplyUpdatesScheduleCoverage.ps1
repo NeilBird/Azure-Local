@@ -120,7 +120,7 @@ function Test-AzLocalApplyUpdatesScheduleCoverage {
         suppresses auto-detect).
     .PARAMETER LeadTimeMinutes
         How many minutes before each window opens the pipeline should fire so
-        that the first cluster's apply step starts inside the window. Default 5.
+        that the first cluster's apply step starts inside the window. Default 7.
     .PARAMETER RecommendFiresPerWindow
         How many cron entries -View Recommend should emit per UpdateStartWindow
         segment. Default 2 (the belt-and-braces pattern: opening edge + one
@@ -189,7 +189,7 @@ function Test-AzLocalApplyUpdatesScheduleCoverage {
 
         [Parameter(Mandatory = $false)]
         [ValidateRange(0, 60)]
-        [int]$LeadTimeMinutes = 5,
+        [int]$LeadTimeMinutes = 7,
 
         [Parameter(Mandatory = $false)]
         [ValidateRange(1, 2)]
@@ -835,7 +835,7 @@ $globalTagFilter
                 [void]$fullSb.AppendLine("Each cron below is set to ``LeadTimeMinutes`` minutes BEFORE the start of its UpdateStartWindow segment so ``Test-AzLocalUpdateScheduleAllowed`` opens the gate exactly when expected. Adjust the value of ``LeadTimeMinutes`` on the apply-updates-schedule-audit pipeline if your fleet needs a different lead time.")
                 [void]$fullSb.AppendLine()
                 if ($RecommendFiresPerWindow -ge 2) {
-                    [void]$fullSb.AppendLine("**Belt-and-braces (default).** Each window emits TWO cron entries - one ``open`` cron LeadTimeMinutes BEFORE the window opens, and one ``retry`` cron INSIDE the window at the lesser of the midpoint or +60 minutes after the window opens. The retry catches the three known failure modes that would otherwise silently skip a cluster for the day: GitHub Actions scheduled-workflow jitter (up to ~15 min, can push the opening cron past a tight window), transient first-fire failures (auth, runner-pool exhaustion, module install hiccup), and a long window that would otherwise have to wait half its duration for a retry (a 24h window retries at +60min, not at +12h). The runtime gate (``Test-AzLocalUpdateScheduleAllowed``) plus the existing in-flight guard ensure clusters whose first run has already started are not re-triggered. Pass ``-RecommendFiresPerWindow 1`` on the apply-updates-schedule-audit pipeline to suppress the retry tier and emit only the opening crons.")
+                    [void]$fullSb.AppendLine("**Belt-and-braces (default).** Each window emits TWO cron entries - one ``open`` cron LeadTimeMinutes BEFORE the window opens, and one ``retry`` cron INSIDE the window. The retry is phased seven minutes before its natural target (the lesser of the midpoint or +60 minutes after opening), then clamped to at least one minute after the window opens. This avoids crowded ``:00`` / five-minute scheduler boundaries without moving the retry outside the window. The retry catches the three known failure modes that would otherwise silently skip a cluster for the day: scheduled-workflow jitter, transient first-fire failures (auth, runner-pool exhaustion, module install hiccup), and a long window that would otherwise wait half its duration for a retry. The runtime gate (``Test-AzLocalUpdateScheduleAllowed``) plus the existing in-flight guard ensure clusters whose first run has already started are not re-triggered. Pass ``-RecommendFiresPerWindow 1`` on the apply-updates-schedule-audit pipeline to suppress the retry tier and emit only the opening crons.")
                     [void]$fullSb.AppendLine()
                 }
                 [void]$fullSb.AppendLine()

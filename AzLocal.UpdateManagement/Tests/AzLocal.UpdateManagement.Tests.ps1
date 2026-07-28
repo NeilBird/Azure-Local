@@ -357,8 +357,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $script:ModuleInfo | Should -Not -BeNullOrEmpty
         }
 
-        It 'Should have version 0.9.26' {
-            $script:ModuleInfo.Version | Should -Be '0.9.26'
+        It 'Should have version 0.9.27' {
+            $script:ModuleInfo.Version | Should -Be '0.9.27'
         }
 
         It 'Module version constants are in sync between .psm1 and .psd1' {
@@ -575,11 +575,11 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $content | Should -Not -Match 'SIDELOAD_[A-Z0-9_]+' -Because "sideload environment-variable compatibility was intentionally removed"
         }
 
-        It 'v0.8.90: monitor-updates.yml (GitHub Actions) defaults to a 6-hour cron and wires the event-driven trigger + -SkipWhenIdle' {
+        It 'v0.9.27: monitor-updates.yml (GitHub Actions) defaults to an offset 6-hour cron and wires the event-driven trigger + -SkipWhenIdle' {
             $yamlPath = Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples\github-actions\monitor-updates.yml'
             Test-Path $yamlPath | Should -BeTrue
             $content = Get-Content -Path $yamlPath -Raw
-            $content | Should -Match "cron:\s*'0 \*/6 \* \* \*'" -Because "monitor default cron is every 6h (v0.8.90)"
+            $content | Should -Match "cron:\s*'17 \*/6 \* \* \*'" -Because "monitor default cron is every 6h from minute 17 (v0.9.27)"
             $content | Should -Match '(?m)^\s+skip_when_idle:' -Because "monitor exposes the skip_when_idle dispatch input"
             $content | Should -Match '(?m)^\s+triggered_by:' -Because "monitor accepts the triggered_by event marker"
             $content | Should -Match 'MONITOR_TRIGGER_DELAY_MINUTES' -Because "monitor reads the trigger-delay var for the event-driven sleep"
@@ -587,11 +587,11 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $content | Should -Match "\`$params\['SkipWhenIdle'\]\s*=\s*\`$true" -Because "monitor passes -SkipWhenIdle to the cmdlet unless explicitly disabled"
         }
 
-        It 'v0.8.90: monitor-updates.yml (Azure DevOps) defaults to a 6-hour cron and wires triggeredBy + skipWhenIdle' {
+        It 'v0.9.27: monitor-updates.yml (Azure DevOps) defaults to an offset 6-hour cron and wires triggeredBy + skipWhenIdle' {
             $yamlPath = Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples\azure-devops\monitor-updates.yml'
             Test-Path $yamlPath | Should -BeTrue
             $content = Get-Content -Path $yamlPath -Raw
-            $content | Should -Match '0 \*/6 \* \* \*' -Because "ADO monitor default cron is every 6h (v0.8.90)"
+            $content | Should -Match '17 \*/6 \* \* \*' -Because "ADO monitor default cron is every 6h from minute 17 (v0.9.27)"
             $content | Should -Match '(?m)^\s*-\s*name:\s*skipWhenIdle' -Because "ADO monitor exposes the skipWhenIdle parameter"
             $content | Should -Match '(?m)^\s*-\s*name:\s*triggeredBy' -Because "ADO monitor accepts the triggeredBy marker"
             $content | Should -Match "eq\('\`$\{\{ parameters\.triggeredBy \}\}',\s*'apply-updates'\)" -Because "the ADO startup delay only runs for apply-driven triggers"
@@ -619,6 +619,43 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $content | Should -Match 'MonitorPollIntervalMinutes' -Because "$Platform audit plumbs the poll interval into the cmdlet"
             $content | Should -Match 'MonitorTrailingDays'        -Because "$Platform audit plumbs trailing days into the cmdlet"
             $content | Should -Match 'MonitorInFlightHours'       -Because "$Platform audit plumbs in-flight hours into the cmdlet"
+        }
+
+        It 'v0.9.27: every GitHub Actions job has the variable-backed 120-minute timeout fallback' {
+            $pipelineRoot = Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples\github-actions'
+            $files = @(Get-ChildItem -LiteralPath $pipelineRoot -Filter '*.yml' -File)
+            $files | Should -HaveCount 10
+            foreach ($file in $files) {
+                $content = Get-Content -LiteralPath $file.FullName -Raw
+                $jobCount = ([regex]::Matches($content, '(?m)^\s{4}runs-on:')).Count
+                $timeoutCount = ([regex]::Matches($content, "(?m)^\s{4}timeout-minutes:\s*\`$\{\{ fromJSON\(vars\.AZLOCAL_MAX_PIPELINE_RUNTIME_MINUTES \|\| '120'\) \}\}\s*\r?\n")).Count
+                $jobCount | Should -BeGreaterThan 0 -Because "$($file.Name) must contain at least one job"
+                $timeoutCount | Should -Be $jobCount -Because "$($file.Name) must apply the runtime cap to every job"
+            }
+        }
+
+        It 'v0.9.27: every Azure DevOps job has the group-overridable 120-minute timeout fallback' {
+            $pipelineRoot = Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples\azure-devops'
+            $files = @(Get-ChildItem -LiteralPath $pipelineRoot -Filter '*.yml' -File)
+            $files | Should -HaveCount 10
+            foreach ($file in $files) {
+                $content = Get-Content -LiteralPath $file.FullName -Raw
+                $jobCount = ([regex]::Matches($content, '(?m)^\s+- job:\s*')).Count
+                $timeoutCount = ([regex]::Matches($content, '(?m)^\s+timeoutInMinutes:\s*\$\(AZLOCAL_EFFECTIVE_PIPELINE_RUNTIME_MINUTES\)\s*$')).Count
+                $content | Should -Match "(?ms)- group:\s*AzureLocal-Pipeline-Settings\s+- name:\s*AZLOCAL_EFFECTIVE_PIPELINE_RUNTIME_MINUTES\s+value:\s*\`$\[coalesce\(variables\['AZLOCAL_MAX_PIPELINE_RUNTIME_MINUTES'\], 120\)\]" -Because "$($file.Name) must let the optional group member override the 120-minute fallback"
+                $jobCount | Should -BeGreaterThan 0 -Because "$($file.Name) must contain at least one job"
+                $timeoutCount | Should -Be $jobCount -Because "$($file.Name) must apply the runtime cap to every job"
+            }
+        }
+
+        It 'v0.9.27: every shipped active cron uses a non-crowded minute' -ForEach @('github-actions', 'azure-devops') {
+            $pipelineRoot = Join-Path -Path $PSScriptRoot -ChildPath "..\Automation-Pipeline-Examples\$_"
+            foreach ($file in @(Get-ChildItem -LiteralPath $pipelineRoot -Filter '*.yml' -File)) {
+                $content = Get-Content -LiteralPath $file.FullName -Raw
+                foreach ($cronMatch in [regex]::Matches($content, "(?m)^\s*- cron:\s*'(?<minute>\d+)\s+[^']+'")) {
+                    ([int]$cronMatch.Groups['minute'].Value % 5) | Should -Not -Be 0 -Because "$($file.Name) active cron must avoid five-minute scheduler boundaries"
+                }
+            }
         }
 
         It 'Should export exactly 71 functions' {
@@ -9262,6 +9299,14 @@ Describe 'Function: Test-AzLocalApplyUpdatesScheduleCoverage' {
     }
 
     Context 'Private helper: Convert-AzLocalUpdateWindowToCron' {
+        It 'Uses a seven-minute default to avoid crowded scheduler boundaries' {
+            InModuleScope AzLocal.UpdateManagement {
+                $r = Convert-AzLocalUpdateWindowToCron -UpdateStartWindow 'Sat-Sun_02:00-06:00'
+                $r | Should -HaveCount 1
+                $r[0].CronExpression | Should -Be '53 1 * * 6,0'
+            }
+        }
+
         It 'Sat-Sun_02:00-06:00 with lead 5 -> 55 1 * * 6,0' {
             InModuleScope AzLocal.UpdateManagement {
                 $r = Convert-AzLocalUpdateWindowToCron -UpdateStartWindow 'Sat-Sun_02:00-06:00' -LeadTimeMinutes 5
@@ -9314,70 +9359,70 @@ Describe 'Function: Test-AzLocalApplyUpdatesScheduleCoverage' {
             }
         }
 
-        It '4h window Sat-Sun_02:00-06:00: open at 01:55, retry at +60min cap (03:00)' {
+        It '4h window Sat-Sun_02:00-06:00: open at 01:55, retry de-contented before the +60min target' {
             InModuleScope AzLocal.UpdateManagement {
                 $r = Convert-AzLocalUpdateWindowToCron -UpdateStartWindow 'Sat-Sun_02:00-06:00' -LeadTimeMinutes 5 -FiresPerWindow 2
                 $r | Should -HaveCount 2
                 $r[0].CronExpression | Should -Be '55 1 * * 6,0'
                 $r[0].IsRetry | Should -BeFalse
-                $r[1].CronExpression | Should -Be '0 3 * * 6,0'
+                $r[1].CronExpression | Should -Be '53 2 * * 6,0'
                 $r[1].IsRetry | Should -BeTrue
                 $r[1].DayShift | Should -BeFalse
             }
         }
 
-        It '3h window Mon-Fri_20:00-23:00: open at 19:55, retry at midpoint 21:00 (180/2=90, capped to 60)' {
+        It '3h window Mon-Fri_20:00-23:00: open at 19:55, retry de-contented before the +60min target' {
             InModuleScope AzLocal.UpdateManagement {
                 $r = Convert-AzLocalUpdateWindowToCron -UpdateStartWindow 'Mon-Fri_20:00-23:00' -LeadTimeMinutes 5 -FiresPerWindow 2
                 $r | Should -HaveCount 2
                 $r[0].CronExpression | Should -Be '55 19 * * 1-5'
-                $r[1].CronExpression | Should -Be '0 21 * * 1-5'
+                $r[1].CronExpression | Should -Be '53 20 * * 1-5'
                 $r[1].IsRetry | Should -BeTrue
             }
         }
 
-        It '6h overnight Mon-Fri_22:00-04:00: retry at 23:00 (no day shift, window has not crossed midnight yet)' {
+        It '6h overnight Mon-Fri_22:00-04:00: retry at 22:53 with no day shift' {
             InModuleScope AzLocal.UpdateManagement {
                 $r = Convert-AzLocalUpdateWindowToCron -UpdateStartWindow 'Mon-Fri_22:00-04:00' -LeadTimeMinutes 5 -FiresPerWindow 2
                 $r | Should -HaveCount 2
                 $r[0].CronExpression | Should -Be '55 21 * * 1-5'
-                $r[1].CronExpression | Should -Be '0 23 * * 1-5'
+                $r[1].CronExpression | Should -Be '53 22 * * 1-5'
                 $r[1].IsRetry | Should -BeTrue
                 $r[1].DayShift | Should -BeFalse
             }
         }
 
-        It 'Short window Sat_03:00-03:30 (30min): retry at midpoint 03:15' {
+        It 'Short window Sat_03:00-03:30 (30min): retry de-contented to 03:08' {
             InModuleScope AzLocal.UpdateManagement {
                 $r = Convert-AzLocalUpdateWindowToCron -UpdateStartWindow 'Sat_03:00-03:30' -LeadTimeMinutes 5 -FiresPerWindow 2
                 $r | Should -HaveCount 2
                 $r[0].CronExpression | Should -Be '55 2 * * 6'
-                $r[1].CronExpression | Should -Be '15 3 * * 6'
+                $r[1].CronExpression | Should -Be '8 3 * * 6'
                 $r[1].IsRetry | Should -BeTrue
             }
         }
 
-        It 'Overnight crossing midnight: Mon_23:30-00:30 retry at 24:00 forward-day-shifts to Tue 00:00' {
+        It 'Overnight crossing midnight: Mon_23:30-00:30 retry de-contented to Mon 23:53' {
             InModuleScope AzLocal.UpdateManagement {
                 $r = Convert-AzLocalUpdateWindowToCron -UpdateStartWindow 'Mon_23:30-00:30' -LeadTimeMinutes 5 -FiresPerWindow 2
                 $r | Should -HaveCount 2
                 # Open: 23:30 - 5min lead = 23:25 Mon (no shift, still Mon).
                 $r[0].CronExpression | Should -Be '25 23 * * 1'
                 $r[0].DayShift | Should -BeFalse
-                # Retry: 23:30 + 30min midpoint = 24:00 -> 00:00 Tue (forward day shift).
-                $r[1].CronExpression | Should -Be '0 0 * * 2'
+                # Retry target is midnight; seven-minute de-contention keeps it on Monday.
+                $r[1].CronExpression | Should -Be '53 23 * * 1'
                 $r[1].IsRetry | Should -BeTrue
-                $r[1].DayShift | Should -BeTrue
+                $r[1].DayShift | Should -BeFalse
             }
         }
 
-        It '24h-style window Mon-Fri_00:00-23:00: retry capped at +60min (01:00, same day, no shift)' {
+        It '24h-style window Mon-Fri_00:00-23:00: retry de-contented before the +60min target' {
             InModuleScope AzLocal.UpdateManagement {
                 $r = Convert-AzLocalUpdateWindowToCron -UpdateStartWindow 'Mon-Fri_00:00-23:00' -LeadTimeMinutes 0 -FiresPerWindow 2
                 $r | Should -HaveCount 2
                 $r[0].CronExpression | Should -Be '0 0 * * 1-5'
                 # 23h = 1380min, midpoint 690min, capped to 60 -> 01:00.
-                $r[1].CronExpression | Should -Be '0 1 * * 1-5'
+                $r[1].CronExpression | Should -Be '53 0 * * 1-5'
                 $r[1].IsRetry | Should -BeTrue
                 $r[1].DayShift | Should -BeFalse
             }
@@ -9652,7 +9697,7 @@ on:
                 $rWave.Status | Should -Be 'Covered'
                 $rWave.ClusterCount | Should -Be 2
                 $rProd.Status | Should -Be 'Uncovered'
-                $rProd.RequiredCronUTC | Should -Be '55 21 * * 1-5'
+                $rProd.RequiredCronUTC | Should -Be '53 21 * * 1-5'
             }
         }
 
@@ -9665,7 +9710,7 @@ on:
                 }
                 $result = Test-AzLocalApplyUpdatesScheduleCoverage -View Matrix -PassThru 6>$null
                 $result | Should -HaveCount 1
-                $result[0].RequiredCronUTC | Should -Be '55 1 * * 6,0'
+                $result[0].RequiredCronUTC | Should -Be '53 1 * * 6,0'
                 $result[0].ClusterCount | Should -Be 1
             }
         }
@@ -9681,7 +9726,7 @@ on:
                 # Pin to FiresPerWindow=1 (pre-v0.7.92 behaviour) so the single-cron dedupe assertion still holds.
                 $result = Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend -RecommendFiresPerWindow 1 -PassThru 6>$null
                 $result | Should -HaveCount 1
-                $result[0].CronExpression | Should -Be '55 1 * * 6,0'
+                $result[0].CronExpression | Should -Be '53 1 * * 6,0'
                 $result[0].ClusterCount   | Should -Be 2
                 ($result[0].Rings | Sort-Object) | Should -Be @('Pilot','Wave1')
                 $result[0].Snippet | Should -Match "schedule:"
@@ -9781,7 +9826,7 @@ on:
             @"
 on:
   schedule:
-    - cron: '55 1 * * 6,0'
+    - cron: '53 1 * * 6,0'
 "@ | Set-Content -Path (Join-Path $script:beltYamlDir 'github-actions\Step.7_apply-updates.yml') -Encoding ASCII
         }
         AfterAll {
@@ -9797,8 +9842,8 @@ on:
                 }
                 $result = Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend -PassThru 6>$null
                 @($result).Count | Should -Be 2
-                $open  = $result | Where-Object CronExpression -eq '55 1 * * 6,0'
-                $retry = $result | Where-Object CronExpression -eq '0 3 * * 6,0'
+                $open  = $result | Where-Object CronExpression -eq '53 1 * * 6,0'
+                $retry = $result | Where-Object CronExpression -eq '53 2 * * 6,0'
                 $open  | Should -Not -BeNullOrEmpty
                 $retry | Should -Not -BeNullOrEmpty
                 $open.Snippet  | Should -Match '\(open\)'
@@ -9815,7 +9860,7 @@ on:
                 }
                 $result = Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend -RecommendFiresPerWindow 1 -PassThru 6>$null
                 @($result).Count | Should -Be 1
-                $result[0].CronExpression | Should -Be '55 1 * * 6,0'
+                $result[0].CronExpression | Should -Be '53 1 * * 6,0'
             }
         }
 
@@ -9970,13 +10015,13 @@ on:
             $script:pruneYamlDir = Join-Path $env:TEMP "schedule-cov-prune-$(Get-Random)"
             New-Item -ItemType Directory -Path (Join-Path $script:pruneYamlDir 'github-actions') -Force | Out-Null
             # Pre-existing Step.6 already covers the Sat-Sun_02:00-06:00 opening
-            # edge (cron '55 1 * * 6,0' = 5 min before 02:00 UTC on Sat+Sun).
-            # With FiresPerWindow=1, Recommend would propose ONLY '55 1 * * 6,0';
+            # edge (cron '53 1 * * 6,0' = 7 min before 02:00 UTC on Sat+Sun).
+            # With FiresPerWindow=1, Recommend would propose ONLY '53 1 * * 6,0';
             # diff-prune should drop it -> zero recommended rows.
             @"
 on:
   schedule:
-    - cron: '55 1 * * 6,0'
+    - cron: '53 1 * * 6,0'
 "@ | Set-Content -Path (Join-Path $script:pruneYamlDir 'github-actions\Step.7_apply-updates.yml') -Encoding ASCII
         }
         AfterAll {
@@ -9992,7 +10037,7 @@ on:
                     )
                 }
                 $result = Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend -RecommendFiresPerWindow 1 -PipelineYamlPath $pruneYamlDir -PassThru 6>$null
-                @($result).Count | Should -Be 0 -Because 'the only recommended cron (55 1 * * 6,0) is already present in the supplied Step.6 yml'
+                @($result).Count | Should -Be 0 -Because 'the only recommended cron (53 1 * * 6,0) is already present in the supplied Step.6 yml'
             }
         }
 
@@ -10005,7 +10050,7 @@ on:
                 }
                 $result = Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend -RecommendFiresPerWindow 1 -PassThru 6>$null
                 @($result).Count | Should -Be 1
-                $result[0].CronExpression | Should -Be '55 1 * * 6,0'
+                $result[0].CronExpression | Should -Be '53 1 * * 6,0'
             }
         }
 
@@ -10017,11 +10062,11 @@ on:
                         [PSCustomObject]@{ ClusterName='c1'; ResourceGroup='r'; SubscriptionId='s'; ClusterResourceId='/s/r/c1'; UpdateRing='Pilot'; UpdateStartWindow='Sat-Sun_02:00-06:00' }
                     )
                 }
-                # FiresPerWindow=2 emits opening (55 1 * * 6,0) + retry (0 3 * * 6,0).
+                # FiresPerWindow=2 emits opening (53 1 * * 6,0) + retry (53 2 * * 6,0).
                 # The pre-existing yml only has the opening, so retry remains.
                 $result = Test-AzLocalApplyUpdatesScheduleCoverage -View Recommend -RecommendFiresPerWindow 2 -PipelineYamlPath $pruneYamlDir -PassThru 6>$null
                 @($result).Count | Should -Be 1 -Because 'opening cron already present, retry remains'
-                $result[0].CronExpression | Should -Be '0 3 * * 6,0'
+                $result[0].CronExpression | Should -Be '53 2 * * 6,0'
                 $result[0].Snippet        | Should -Match '\(retry\)'
             }
         }
@@ -23348,9 +23393,15 @@ Describe 'v0.8.87: Export-AzLocalApplyUpdatesScheduleAudit recommends an Update:
     It 'Renders an always-on "Recommended in-flight monitor schedule (Update: 4)" section' {
         $script:src887cfg | Should -Match 'Recommended in-flight monitor schedule \(Update: 4\)'
     }
-    It 'Derives the minute field from the cadence (0 for >= 60 min, */N otherwise)' {
+    It 'Phases the minute field from minute 17 while preserving the requested cadence' {
         $script:src887cfg | Should -Match 'if \(\$monitorIntervalMinutes -lt 60\)'
-        $script:src887cfg | Should -Match "\`$monitorMinuteField = \('\*/\{0\}' -f \`$monitorIntervalMinutes\)"
+        $script:src887cfg | Should -Match '\$monitorMinuteOffset\s*=\s*17'
+        $script:src887cfg | Should -Match '\$monitorFiresPerHour\s*=\s*\[int\]\(60 / \$monitorIntervalMinutes\)'
+        $script:src887cfg | Should -Match '\$monitorMinuteField\s*=\s*\(@\(\$monitorMinutes \| Sort-Object\) -join'
+        $script:src887cfg | Should -Match '\$monitorMinuteField\s*=\s*\[string\]\$monitorMinuteOffset'
+        $script:src887cfg | Should -Match 'a 30-minute cadence uses `17,47`'
+        $script:src887cfg | Should -Match 'GitHub Actions and Azure DevOps both accept these sub-hour cron lists'
+        $script:src887cfg | Should -Not -Match 'Azure DevOps YAML `schedules:` is hourly-only'
     }
     It 'Expands the eligible weekday(s) across the trailing coverage window' {
         $script:src887cfg | Should -Match 'for \(\$k = 0; \$k -le \$MonitorTrailingDays; \$k\+\+\)'

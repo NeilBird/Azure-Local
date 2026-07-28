@@ -86,7 +86,7 @@ function Export-AzLocalApplyUpdatesScheduleAudit {
 
     .PARAMETER LeadTimeMinutes
         Minutes before UpdateStartWindow opens that the pipeline should
-        fire (0-60). Default 5.
+        fire (0-60). Default 7.
 
     .PARAMETER RecommendFiresPerWindow
         Cron entries the Recommend view should emit per UpdateStartWindow
@@ -202,7 +202,7 @@ function Export-AzLocalApplyUpdatesScheduleAudit {
 
         [Parameter(Mandatory = $false)]
         [ValidateRange(0, 60)]
-        [int]$LeadTimeMinutes = 5,
+        [int]$LeadTimeMinutes = 7,
 
         [Parameter(Mandatory = $false)]
         [ValidateRange(1, 2)]
@@ -904,14 +904,22 @@ function Export-AzLocalApplyUpdatesScheduleAudit {
     #              sets the minute step (< 60 min) or the hour step (>= 60 min).
     # Always emitted (independent of the sideload opt-in).
 
-    # Cadence -> minute field + (for >= 60 min) hour step.
+    # Cadence -> minute field + (for >= 60 min) hour step. Phase every
+    # generated monitor schedule from minute 17 so it avoids crowded
+    # five-minute scheduler boundaries while preserving the requested cadence.
     $monitorIntervalMinutes = $MonitorPollIntervalMinutes
+    $monitorMinuteOffset = 17
     $monitorHourStep = 1
     if ($monitorIntervalMinutes -lt 60) {
-        $monitorMinuteField = ('*/{0}' -f $monitorIntervalMinutes)
+        $monitorMinutes = New-Object 'System.Collections.Generic.List[int]'
+        $monitorFiresPerHour = [int](60 / $monitorIntervalMinutes)
+        for ($monitorFireIndex = 0; $monitorFireIndex -lt $monitorFiresPerHour; $monitorFireIndex++) {
+            $monitorMinutes.Add((($monitorMinuteOffset + ($monitorFireIndex * $monitorIntervalMinutes)) % 60))
+        }
+        $monitorMinuteField = (@($monitorMinutes | Sort-Object) -join ',')
     }
     else {
-        $monitorMinuteField = '0'
+        $monitorMinuteField = [string]$monitorMinuteOffset
         $monitorHourStep = [int]($monitorIntervalMinutes / 60)
     }
 
@@ -1084,7 +1092,7 @@ function Export-AzLocalApplyUpdatesScheduleAudit {
         [void]$md.Add($monitorCron)
         [void]$md.Add('```')
         [void]$md.Add('')
-        [void]$md.Add('> GitHub Actions supports sub-hour cron (e.g. `*/30`). Azure DevOps YAML `schedules:` is hourly-only - for sub-hour cadence on ADO, trigger `monitor-updates.yml` from an external scheduler via REST. Widen the day list above if your runs routinely exceed the trailing-day coverage.')
+        [void]$md.Add('> The minute field is phased from minute 17 to avoid crowded five-minute scheduler boundaries (for example, a 30-minute cadence uses `17,47`). GitHub Actions and Azure DevOps both accept these sub-hour cron lists. Widen the day list above if your runs routinely exceed the trailing-day coverage.')
         [void]$md.Add('')
     }
     else {

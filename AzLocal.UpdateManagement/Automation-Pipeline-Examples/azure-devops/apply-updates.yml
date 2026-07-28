@@ -36,7 +36,7 @@
 # day-grain; firing more often is wasteful but harmless thanks to readiness
 # idempotency). Example - 06:00 UTC every day:
 #   schedules:
-#     - cron: '0 6 * * *'
+#     - cron: '17 6 * * *'
 #       displayName: 'Daily ring-aware apply-updates'
 #       branches:
 #         include: [main]
@@ -129,7 +129,7 @@ variables:
   # log if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
   - name: GENERATED_AGAINST_MODULE_VERSION
-    value: '0.9.26'
+    value: '0.9.27'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): queue-time parameter > pipeline variable
   # 'REQUIRED_MODULE_VERSION' overridden at queue time > empty (latest).
@@ -152,6 +152,8 @@ variables:
   # section 5. A variable redefined inline would OVERRIDE the group, so these are
   # intentionally not redefined here - the group is the single source of truth.
   - group: AzureLocal-Pipeline-Settings
+  - name: AZLOCAL_EFFECTIVE_PIPELINE_RUNTIME_MINUTES
+    value: $[coalesce(variables['AZLOCAL_MAX_PIPELINE_RUNTIME_MINUTES'], 120)]
   # v0.8.90: event-driven monitor trigger. Set MONITOR_PIPELINE_ID to the
   # numeric pipeline definition ID of Update: 4 (Monitor In-Flight Updates) to
   # have this pipeline queue the monitor as soon as it STARTS >=1 update. Find
@@ -179,6 +181,7 @@ stages:
     displayName: 'Check Update Readiness'
     jobs:
       - job: ReadinessCheck
+        timeoutInMinutes: $(AZLOCAL_EFFECTIVE_PIPELINE_RUNTIME_MINUTES)
         displayName: 'Assess Cluster Readiness'
 
         steps:
@@ -357,6 +360,7 @@ stages:
       #         instructions: 'Please review the readiness report and approve to proceed with Production updates.'
 
       - job: ApplyClusterUpdates
+        timeoutInMinutes: $(AZLOCAL_EFFECTIVE_PIPELINE_RUNTIME_MINUTES)
         displayName: 'Apply Cluster Updates'
         # dependsOn: WaitForApproval
         # condition: or(ne('${{ parameters.updateRing }}', 'Production'), succeeded('WaitForApproval'))
@@ -772,6 +776,7 @@ stages:
 
     jobs:
       - job: ReportNoReadyClusters
+        timeoutInMinutes: $(AZLOCAL_EFFECTIVE_PIPELINE_RUNTIME_MINUTES)
         displayName: 'Report Status'
 
         variables:

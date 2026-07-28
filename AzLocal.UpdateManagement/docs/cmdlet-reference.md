@@ -1418,7 +1418,7 @@ Under the covers it pre-scans the pipeline YAML file(s) with a regex (no `powers
 | `-View` | String | No | `Audit` | `Audit` (one row per `(Ring, Window)` pair with `Covered` / `Uncovered` / `PartiallyCovered` / `MalformedTag` / `NoWindowTag` / `UnparseableCron` status + remediation), `Matrix` (every distinct `(Ring, Window)` pair with the cron expression the advisor would generate for it), or `Recommend` (ready-to-paste GH Actions + Azure DevOps cron blocks). |
 | `-PipelineYamlPath` | String | Audit only | - | Path to `apply-updates.yml` file(s) or a folder containing them. Required when `-View Audit`. |
 | `-Platform` | String | No | `Both` | `GitHubActions`, `AzureDevOps`, or `Both`. Filters which YAML files are scanned and which cron blocks the Recommend view emits. |
-| `-LeadTimeMinutes` | Int | No | `5` | Range 0-60. How many minutes the cron should fire **before** the window opens (so cluster enumeration + auth completes before `Test-AzLocalUpdateScheduleAllowed` evaluates). |
+| `-LeadTimeMinutes` | Int | No | `7` | Range 0-60. How many minutes the cron should fire **before** the window opens. Seven avoids crowded five-minute scheduler boundaries while leaving time for authentication and cluster enumeration. |
 | `-UpdateRingTag` | String[] | No | - | Optional. Narrow the audit to one or more `UpdateRing` tag values. |
 | `-IncludeUntagged` | Switch | No | - | Include clusters that have no `UpdateStartWindow` tag in the Audit view (`Status = NoWindowTag`). |
 | `-ExportPath` | String | No | - | Optional `.csv` / `.json` / `.md` path; format auto-detected from extension. `.md` emits the YAML snippet for Recommend, a markdown table for Audit/Matrix. |
