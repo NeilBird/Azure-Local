@@ -59,7 +59,7 @@
   th,td{padding:9px 11px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top;overflow-wrap:break-word}
   th{background:var(--panel2);color:#cbd5e1;font-weight:600;white-space:normal}
   tbody tr:hover{background:#22304a}
-  td.num{text-align:right;font-variant-numeric:tabular-nums}
+    th.num,td.num{text-align:right;font-variant-numeric:tabular-nums}
   /* VM name / node cells must NOT wrap (a wrapped long VM name was unreadable). The global
      'code' rule breaks long words, so override it inside these cells. */
   td.nm{white-space:nowrap}
@@ -172,6 +172,7 @@
      stacked values ('202.2 h' over '8.4 d'); ckptage keeps each value on ONE line (never split
      mid-value onto '202.2' + 'h'). ckptname caps the checkpoint Name column a little (max-width) so a
      long checkpoint name wraps slightly earlier, freeing the small amount of width the Age column needs. */
+  th.ckptage,td.ckptage{text-align:center}
   td.ckptage{white-space:nowrap}
   td.ckptname{max-width:300px;overflow-wrap:anywhere}
     .chain-scroll{width:100%;max-width:100%;overflow-x:auto}
@@ -215,7 +216,7 @@
   <div class="meta">
         Cluster <b>contoso01</b> &nbsp;&bull;&nbsp; 20 processed VMs &nbsp;&bull;&nbsp; 20 fully assessed
     &nbsp;&bull;&nbsp; Fleet report finalized (UTC) <b>2026-07-20 12:00:00Z</b>
-    &nbsp;&bull;&nbsp; Module version <b>0.2.29</b>&nbsp;&bull;&nbsp; Processed <b>20</b> VMs, across <b>10</b> owning cluster nodes, in <b>00:01:24</b><br>
+    &nbsp;&bull;&nbsp; Module version <b>0.2.30</b>&nbsp;&bull;&nbsp; Processed <b>20</b> VMs, across <b>10</b> owning cluster nodes, in <b>00:01:24</b><br>
     Cluster size: <b>10</b> nodes &nbsp;&bull;&nbsp; <b>2</b> Cluster Shared Volumes<br>
     Parameters: Stale CheckPoint threshold: 24 h; Diagnostic events lookback: 168 h; Include discovered VMs: Yes.<br>
     Read-only diagnostic - <b>no changes were made to any VM</b>.<br>Discovery: <b>4</b> eligible &nbsp;&bull;&nbsp; <b>4</b> auto-audited &nbsp;&bull;&nbsp; <b>0</b> deferred &nbsp;&bull;&nbsp; cap: <b>None</b>.
@@ -270,7 +271,7 @@
 <table>
 <thead><tr>
   <th>VM</th><th>State</th><th>Node</th><th>Cfg</th><th>Disks</th><th>Checkpoints</th><th>AVHDX files</th>
-    <th>Orphans</th><th>Stale<br>evidence</th><th>Oldest ckpt age</th><th>Concerning<br>Events (VM)</th><th>Hyper-V Replica</th><th>Verdict</th>
+    <th>Orphans</th><th>Stale<br>evidence</th><th>Oldest snapshot<br>object age</th><th>Concerning<br>Events (VM)</th><th>Hyper-V Replica</th><th>Verdict</th>
 </tr></thead>
 <tbody><tr>
   <td class="vmn"><a href="#vm-TestVM07"><code>TestVM07</code></a><span class="src input">Input</span></td><td>Running</td><td class="nm">node07</td><td>12.0</td>
@@ -391,22 +392,23 @@
     <div class="k">Stale attached AVHDX layers (&ge;24h)</div><div><span class='warnval'>1</span></div>
     <div class="k">Stale named snapshots (&ge;24h)</div><div><span class='warnval'>1</span></div>
     <div class="k">Snapshot/layer representation</div><div>Consistent presence</div>
+    <div class="k">Oldest snapshot object / AVHDX timestamps</div><div>Unavailable - both representations are required</div>
     <div class="k">Checkpoint type</div><div>Production</div>
     <div class="k">Orphaned .avhdx</div><div>0</div>
     <div class="k">Hyper-V Replica</div><div>Not enabled</div>
     <div class="k">Replica measurement assessment</div><div>Unavailable</div>
     <div class="k">VSS writers</div><div>All 10 writer(s) Stable (no last error)</div>
-    <div class="k">Analytic channel</div><div>Enabled (or not checked)</div>
+    <div class="k">Analytic channel</div><div>Enabled</div>
     <div class="k">Policy source</div><div><code>BuiltInDefaults</code></div>
     <div class="k">CSV free-space policy</div><div>Disabled</div>
     <div class="k">HRL cadence assessment</div><div>Unavailable</div>
     <div class="k">Config behind latest</div><div>No - at the latest supported version.</div>
-    <div class="k">Concerning events - this VM (168h)</div><div>0 (low-signal only)</div>
+    <div class="k">Concerning events - this VM (168h)</div><div>0 (none attributed)</div>
     <div class="k">Concerning events - node-wide (168h)</div><div>0 (references other VMs / none - context only)</div>
         <div class="k">Collection state consistency</div><div>Stable - no owner, state, checkpoint, disk-path, or configuration timestamp changes detected</div>
   </div>  <div class='callout high'><strong>HOLD STATE (data-loss risk).</strong> A 'checkpoint fork-commit / merge-failure' signature AND unmerged differencing disk(s) are present together. <span class='hot'>Do NOT migrate or restart this VM</span> until the chain is validated (and merged if required); reopening an inconsistent chain can roll disks back to base. Engage Microsoft Support (CSS) and/or your backup vendor.</div>
   <div class='callout high'><strong>HOLD STATE - fork-commit recorded at this active checkpoint's creation.</strong> This VM has an ACTIVE (still-attached) checkpoint created <strong>2026-07-10 04:20:00Z</strong>, before the 168h event lookback. The historic cross-node scan detected a 'fork-commit / merge-failure' event around that creation time. The differencing chain may be inconsistent while the VM continues to run. A live migration, quick migration, storage migration, or restart could expose the inconsistency and cause the VM disks to roll back to their base disks. <span class='hot'>Do NOT migrate or restart this VM</span> until the chain is validated and, if required, merged. Engage Microsoft Support (CSS) or your backup vendor. This warning identifies a dormant risk; the report has not detected that data loss has occurred.</div>
-  <details open><summary>Checkpoints (1)</summary><table><thead><tr><th>Name</th><th>Type</th><th>Purpose</th><th>Created (UTC)</th><th>Age</th><th>Stale</th><th>Parent</th></tr></thead><tbody><tr><td class='ckptname'>Active checkpoint with historic fork evidence</td><td>Recovery</td><td>Backup</td><td>2026-07-10 04:20:00Z</td><td class='num ckptage'><span class='warnval'>248.7 h<br>10.4 d</span></td><td><span class='warnval'>YES</span></td><td>n/a (root)</td></tr></tbody></table></details>
+  <details open><summary>Checkpoints (1)</summary><p class='muted'><strong>Snapshot object age:</strong> measured from <code>Get-VMSnapshot.CreationTime</code>. Hyper-V can expose a timestamp that differs from the creation time of the attached AVHDX files; compare the chain evidence below.</p><table><thead><tr><th>Name</th><th>Type</th><th>Purpose</th><th>Created (UTC)</th><th class='num ckptage'>Snapshot object age</th><th>Stale</th><th>Parent</th></tr></thead><tbody><tr><td class='ckptname'>Active checkpoint with historic fork evidence</td><td>Recovery</td><td>Backup</td><td>2026-07-10 04:20:00Z</td><td class='num ckptage'><span class='warnval'>248.7 h<br>10.4 d</span></td><td><span class='warnval'>YES</span></td><td>n/a (root)</td></tr></tbody></table></details>
   </div>
 </details><details class="vm" id="vm-TestVM01" open>
   <summary><h3><span class="vm-label">VM Name:</span> <code>TestVM01</code> <span class="pill investigate">INVESTIGATE</span><span class="src input">Input</span></h3></summary>
@@ -425,17 +427,18 @@
     <div class="k">Stale attached AVHDX layers (&ge;24h)</div><div>0</div>
     <div class="k">Stale named snapshots (&ge;24h)</div><div>0</div>
     <div class="k">Snapshot/layer representation</div><div>Consistent presence</div>
+    <div class="k">Oldest snapshot object / AVHDX timestamps</div><div>Unavailable - both representations are required</div>
     <div class="k">Checkpoint type</div><div>Production</div>
     <div class="k">Orphaned .avhdx</div><div><span class='warnval'>2</span></div>
     <div class="k">Hyper-V Replica</div><div>Not enabled</div>
     <div class="k">Replica measurement assessment</div><div>Unavailable</div>
     <div class="k">VSS writers</div><div>All 10 writer(s) Stable (no last error)</div>
-    <div class="k">Analytic channel</div><div>Enabled (or not checked)</div>
+    <div class="k">Analytic channel</div><div>Enabled</div>
     <div class="k">Policy source</div><div><code>BuiltInDefaults</code></div>
     <div class="k">CSV free-space policy</div><div>Disabled</div>
     <div class="k">HRL cadence assessment</div><div>Unavailable</div>
     <div class="k">Config behind latest</div><div>No - at the latest supported version.</div>
-    <div class="k">Concerning events - this VM (168h)</div><div>0 (low-signal only)</div>
+    <div class="k">Concerning events - this VM (168h)</div><div>0 (none attributed)</div>
     <div class="k">Concerning events - node-wide (168h)</div><div>0 (references other VMs / none - context only)</div>
         <div class="k">Collection state consistency</div><div>Stable - no owner, state, checkpoint, disk-path, or configuration timestamp changes detected</div>
   </div>  <div class='callout high'><strong>INVESTIGATE - CONFIRMED historic rollback.</strong> <strong>Reason for this verdict:</strong> recovered historic fork-commit / merge-failure events confirm this scenario; possible historic rollback - 2 orphaned .avhdx frozen at a common date (2026-06-14). The orphaned <code>.avhdx</code> files may contain data that is no longer accessible to the VM. Do NOT remove them. Engage Microsoft Support (CSS) or your backup vendor for recovery guidance.</div>
@@ -459,21 +462,22 @@
     <div class="k">Stale attached AVHDX layers (&ge;24h)</div><div><span class='warnval'>1</span></div>
     <div class="k">Stale named snapshots (&ge;24h)</div><div><span class='warnval'>1</span></div>
     <div class="k">Snapshot/layer representation</div><div>Consistent presence</div>
+    <div class="k">Oldest snapshot object / AVHDX timestamps</div><div>Unavailable - both representations are required</div>
     <div class="k">Checkpoint type</div><div>Production</div>
     <div class="k">Orphaned .avhdx</div><div><span class='warnval'>1</span></div>
     <div class="k">Hyper-V Replica</div><div>Not enabled</div>
     <div class="k">Replica measurement assessment</div><div>Unavailable</div>
     <div class="k">VSS writers</div><div>All 10 writer(s) Stable (no last error)</div>
-    <div class="k">Analytic channel</div><div>Enabled (or not checked)</div>
+    <div class="k">Analytic channel</div><div>Enabled</div>
     <div class="k">Policy source</div><div><code>BuiltInDefaults</code></div>
     <div class="k">CSV free-space policy</div><div>Disabled</div>
     <div class="k">HRL cadence assessment</div><div>Unavailable</div>
     <div class="k">Config behind latest</div><div>No - at the latest supported version.</div>
-    <div class="k">Concerning events - this VM (168h)</div><div>0 (low-signal only)</div>
+    <div class="k">Concerning events - this VM (168h)</div><div>0 (none attributed)</div>
     <div class="k">Concerning events - node-wide (168h)</div><div>0 (references other VMs / none - context only)</div>
         <div class="k">Collection state consistency</div><div>Stable - no owner, state, checkpoint, disk-path, or configuration timestamp changes detected</div>
   </div>  <div class='callout warn'><strong>INVESTIGATE.</strong> <strong>Reason for this verdict:</strong> 1 stale attached AVHDX layer(s); 1 stale named snapshot(s); 1 orphaned .avhdx (leftover file). No confirming checkpoint fork-commit signature was observed, so on-disk chain corruption is not established. Before modifying any checkpoint-related AVHDX/VHD artifact or differencing chain, validate the attached AVHDX layer and stale snapshot and orphaned .avhdx with the backup/storage owner, confirm ownership and purpose, verify current backup protection, and follow an approved procedure.</div>
-  <details open><summary>Checkpoints (1)</summary><table><thead><tr><th>Name</th><th>Type</th><th>Purpose</th><th>Created (UTC)</th><th>Age</th><th>Stale</th><th>Parent</th></tr></thead><tbody><tr><td class='ckptname'>Discovered backup checkpoint - synthetic</td><td>Recovery</td><td>Backup</td><td>2026-07-18 03:30:00Z</td><td class='num ckptage'><span class='warnval'>56.5 h<br>2.4 d</span></td><td><span class='warnval'>YES</span></td><td>n/a (root)</td></tr></tbody></table></details>
+  <details open><summary>Checkpoints (1)</summary><p class='muted'><strong>Snapshot object age:</strong> measured from <code>Get-VMSnapshot.CreationTime</code>. Hyper-V can expose a timestamp that differs from the creation time of the attached AVHDX files; compare the chain evidence below.</p><table><thead><tr><th>Name</th><th>Type</th><th>Purpose</th><th>Created (UTC)</th><th class='num ckptage'>Snapshot object age</th><th>Stale</th><th>Parent</th></tr></thead><tbody><tr><td class='ckptname'>Discovered backup checkpoint - synthetic</td><td>Recovery</td><td>Backup</td><td>2026-07-18 03:30:00Z</td><td class='num ckptage'><span class='warnval'>56.5 h<br>2.4 d</span></td><td><span class='warnval'>YES</span></td><td>n/a (root)</td></tr></tbody></table></details>
   <details open><summary>Orphaned .avhdx files (1) - on disk but NOT attached to the VM</summary><table><thead><tr><th>File Name</th><th>Size (GB)</th><th>Created (UTC)</th><th>LastWrite (UTC)</th><th>Age</th><th>Likely / action</th><th>Full path</th></tr></thead><tbody><tr><td>TestVM17_OS_orphan.avhdx</td><td class='num'>4.6</td><td>2026-07-18 03:31:10Z</td><td>2026-07-18 03:44:52Z</td><td class='num ckptage'><span class='warnval'>56.3 h<br>2.3 d</span></td><td>Unattached backup checkpoint artifact. Preserve it until the synthetic job history is reviewed.</td><td><code>C:\ClusterStorage\UserStorage_2\TestVM17\Virtual Hard Disks\TestVM17_OS_orphan.avhdx</code></td></tr></tbody></table><p class='muted'>Orphaned <code>.avhdx</code> files are on disk but are not attached to the VM. They may remain from a rollback, failed merge, backup, or live-mount operation and may contain required recovery data. <strong>Do not move, rename, merge, or delete these files based only on this report.</strong> Match each file to the VM's backup, restore, live-mount, instant-recovery, or replica-seed history at its Created and LastWrite times. Stop live-mount or instant-recovery sessions through the backup product. For Replica files, review <code>Get-VMReplication</code> health and follow the approved Replica recovery procedure. Before any file change, confirm ownership and purpose, verify that a current backup exists, and use a procedure approved by the backup vendor or Microsoft Support. The 'Likely / action' column provides file-specific guidance.</p></details>
   </div>
 </details><details class="vm" id="vm-TestVM02" open>
@@ -493,17 +497,18 @@
     <div class="k">Stale attached AVHDX layers (&ge;24h)</div><div>0</div>
     <div class="k">Stale named snapshots (&ge;24h)</div><div>0</div>
     <div class="k">Snapshot/layer representation</div><div>Consistent presence</div>
+    <div class="k">Oldest snapshot object / AVHDX timestamps</div><div>Unavailable - both representations are required</div>
     <div class="k">Checkpoint type</div><div>Production</div>
     <div class="k">Orphaned .avhdx</div><div><span class='warnval'>1</span></div>
     <div class="k">Hyper-V Replica</div><div>Not enabled</div>
     <div class="k">Replica measurement assessment</div><div>Unavailable</div>
     <div class="k">VSS writers</div><div>All 10 writer(s) Stable (no last error)</div>
-    <div class="k">Analytic channel</div><div>Enabled (or not checked)</div>
+    <div class="k">Analytic channel</div><div>Enabled</div>
     <div class="k">Policy source</div><div><code>BuiltInDefaults</code></div>
     <div class="k">CSV free-space policy</div><div>Disabled</div>
     <div class="k">HRL cadence assessment</div><div>Unavailable</div>
     <div class="k">Config behind latest</div><div>No - at the latest supported version.</div>
-    <div class="k">Concerning events - this VM (168h)</div><div>0 (low-signal only)</div>
+    <div class="k">Concerning events - this VM (168h)</div><div>0 (none attributed)</div>
     <div class="k">Concerning events - node-wide (168h)</div><div>0 (references other VMs / none - context only)</div>
         <div class="k">Collection state consistency</div><div>Stable - no owner, state, checkpoint, disk-path, or configuration timestamp changes detected</div>
   </div>  <div class='callout warn'><strong>INVESTIGATE.</strong> <strong>Reason for this verdict:</strong> orphaned .avhdx with a matching stuck/failed-merge event. No confirming checkpoint fork-commit signature was observed, so on-disk chain corruption is not established. Before modifying any checkpoint-related AVHDX/VHD artifact or differencing chain, validate the orphaned .avhdx with the backup/storage owner, confirm ownership and purpose, verify current backup protection, and follow an approved procedure.</div>
@@ -526,21 +531,22 @@
     <div class="k">Stale attached AVHDX layers (&ge;24h)</div><div><span class='warnval'>1</span></div>
     <div class="k">Stale named snapshots (&ge;24h)</div><div>0</div>
     <div class="k">Snapshot/layer representation</div><div><span class='warnval'>MISMATCH - only one representation is present</span></div>
+    <div class="k">Oldest snapshot object / AVHDX timestamps</div><div>Unavailable - both representations are required</div>
     <div class="k">Checkpoint type</div><div>Production</div>
     <div class="k">Orphaned .avhdx</div><div>0</div>
     <div class="k">Hyper-V Replica</div><div>Not enabled</div>
     <div class="k">Replica measurement assessment</div><div>Unavailable</div>
     <div class="k">VSS writers</div><div>All 10 writer(s) Stable (no last error)</div>
-    <div class="k">Analytic channel</div><div>Enabled (or not checked)</div>
+    <div class="k">Analytic channel</div><div>Enabled</div>
     <div class="k">Policy source</div><div><code>BuiltInDefaults</code></div>
     <div class="k">CSV free-space policy</div><div>Disabled</div>
     <div class="k">HRL cadence assessment</div><div>Unavailable</div>
     <div class="k">Config behind latest</div><div>No - at the latest supported version.</div>
-    <div class="k">Concerning events - this VM (168h)</div><div>0 (low-signal only)</div>
+    <div class="k">Concerning events - this VM (168h)</div><div>0 (none attributed)</div>
     <div class="k">Concerning events - node-wide (168h)</div><div>0 (references other VMs / none - context only)</div>
         <div class="k">Collection state consistency</div><div>Stable - no owner, state, checkpoint, disk-path, or configuration timestamp changes detected</div>
   </div>  <div class='callout warn'><strong>INVESTIGATE.</strong> <strong>Reason for this verdict:</strong> 1 stale attached AVHDX layer(s); snapshot/layer representation mismatch. No confirming checkpoint fork-commit signature was observed, so on-disk chain corruption is not established. Before modifying any checkpoint-related AVHDX/VHD artifact or differencing chain, validate the attached AVHDX layer and snapshot/layer mismatch with the backup/storage owner, confirm ownership and purpose, verify current backup protection, and follow an approved procedure.</div>
-  <details open><summary>Attached VHD chain evidence (2 layer(s))</summary><div class='chain-scroll'><table class='chain-evidence'><thead><tr><th>Layer</th><th>Role</th><th>Layer file</th><th>Type</th><th>Size (GB)</th><th>Created (UTC)</th><th>Checkpoint age</th><th>Last activity</th><th>Checkpoint stale</th></tr></thead><tbody><tr class='chain-group'><th colspan='9'>Attached chain: <code>TestVM04_OS_9f42.avhdx</code></th></tr><tr><td class='num'>1</td><td>Active (top)</td><td class='chain-file'>TestVM04_OS_9f42.avhdx</td><td>Differencing</td><td class='num'>18.6</td><td class='chain-time'>2026-07-17 06:10:00Z</td><td class='num ckptage'><span class='warnval'>77.9 h<br>3.2 d</span></td><td class='num ckptage'>0.1 h<br>0 d<br><span class="muted">2026-07-20 11:58:00Z</span></td><td><span class='warnval'>YES</span></td></tr><tr><td class='num'>2</td><td>Base</td><td class='chain-file'>TestVM04_OS.vhdx</td><td>Dynamic</td><td class='num'>64</td><td class='chain-time'>2026-03-02 09:00:00Z</td><td class='num ckptage'>n/a</td><td class='num ckptage'>77.9 h<br>3.2 d<br><span class="muted">2026-07-17 06:10:00Z</span></td><td>n/a (base)</td></tr></tbody></table></div><details class='chain-paths'><summary>Full path and parent-path evidence</summary><div class='chain-scroll'><table><thead><tr><th>Layer file</th><th>Full path</th><th>Parent path</th></tr></thead><tbody><tr><td>TestVM04_OS_9f42.avhdx</td><td><code>C:\ClusterStorage\UserStorage_1\TestVM04\Virtual Hard Disks\TestVM04_OS_9f42.avhdx</code></td><td><code>C:\ClusterStorage\UserStorage_1\TestVM04\Virtual Hard Disks\TestVM04_OS.vhdx</code></td></tr><tr><td>TestVM04_OS.vhdx</td><td><code>C:\ClusterStorage\UserStorage_1\TestVM04\Virtual Hard Disks\TestVM04_OS.vhdx</code></td><td><code></code></td></tr></tbody></table></div></details><p class='muted'><strong>Layer order:</strong> Active (top) is the child the VM currently writes to; each Checkpoint row is its next differencing-disk parent; Base is the terminal VHDX parent. Checkpoint age is measured from AVHDX creation. Last activity is measured independently from LastWrite and can remain near zero while an old active checkpoint is continuously written. Base VHDX files are not checkpoints and always show <code>n/a (base)</code>. A differencing <code>.avhdx</code> layer can remain attached even when <code>Get-VMSnapshot</code> exposes no named checkpoint. Validate the chain and the responsible backup/checkpoint job before migration, restart, merge, or removal.</p></details>
+  <details open><summary>Attached VHD chain evidence (2 layer(s))</summary><div class='chain-scroll'><table class='chain-evidence'><thead><tr><th class='num'>Layer</th><th>Role</th><th>Layer file</th><th>Type</th><th class='num'>Size (GB)</th><th>Created (UTC)</th><th class='num ckptage'>AVHDX file age</th><th class='num ckptage'>Last activity</th><th>Checkpoint stale</th></tr></thead><tbody><tr class='chain-group'><th colspan='9'>Attached chain: <code>TestVM04_OS_9f42.avhdx</code></th></tr><tr><td class='num'>1</td><td>Active (top)</td><td class='chain-file'>TestVM04_OS_9f42.avhdx</td><td>Differencing</td><td class='num'>18.6</td><td class='chain-time'>2026-07-17 06:10:00Z</td><td class='num ckptage'><span class='warnval'>77.9 h<br>3.2 d</span></td><td class='num ckptage'>0.1 h<br>0 d<br><span class="muted">2026-07-20 11:58:00Z</span></td><td><span class='warnval'>YES</span></td></tr><tr><td class='num'>2</td><td>Base</td><td class='chain-file'>TestVM04_OS.vhdx</td><td>Dynamic</td><td class='num'>64</td><td class='chain-time'>2026-03-02 09:00:00Z</td><td class='num ckptage'>n/a</td><td class='num ckptage'>77.9 h<br>3.2 d<br><span class="muted">2026-07-17 06:10:00Z</span></td><td>n/a (base)</td></tr></tbody></table></div><details class='chain-paths'><summary>Full path and parent-path evidence</summary><div class='chain-scroll'><table><thead><tr><th>Layer file</th><th>Full path</th><th>Parent path</th></tr></thead><tbody><tr><td>TestVM04_OS_9f42.avhdx</td><td><code>C:\ClusterStorage\UserStorage_1\TestVM04\Virtual Hard Disks\TestVM04_OS_9f42.avhdx</code></td><td><code>C:\ClusterStorage\UserStorage_1\TestVM04\Virtual Hard Disks\TestVM04_OS.vhdx</code></td></tr><tr><td>TestVM04_OS.vhdx</td><td><code>C:\ClusterStorage\UserStorage_1\TestVM04\Virtual Hard Disks\TestVM04_OS.vhdx</code></td><td><code>n/a (base)</code></td></tr></tbody></table></div></details><p class='muted'><strong>Layer order:</strong> Active (top) is the child the VM currently writes to; each Checkpoint row is its next differencing-disk parent; Base is the terminal VHDX parent. AVHDX file age is measured from file creation. Last activity is measured independently from LastWrite and can remain near zero while an old active checkpoint is continuously written. Base VHDX files are not checkpoints and always show <code>n/a (base)</code>. A differencing <code>.avhdx</code> layer can remain attached even when <code>Get-VMSnapshot</code> exposes no named checkpoint. Validate the chain and the responsible backup/checkpoint job before migration, restart, merge, or removal.</p></details>
   </div>
 </details><details class="vm" id="vm-TestVM03" open>
   <summary><h3><span class="vm-label">VM Name:</span> <code>TestVM03</code> <span class="pill investigate">INVESTIGATE</span><span class="src input">Input</span></h3></summary>
@@ -559,21 +565,22 @@
     <div class="k">Stale attached AVHDX layers (&ge;24h)</div><div><span class='warnval'>1</span></div>
     <div class="k">Stale named snapshots (&ge;24h)</div><div><span class='warnval'>1</span></div>
     <div class="k">Snapshot/layer representation</div><div>Consistent presence</div>
+    <div class="k">Oldest snapshot object / AVHDX timestamps</div><div>Unavailable - both representations are required</div>
     <div class="k">Checkpoint type</div><div>Production</div>
     <div class="k">Orphaned .avhdx</div><div>0</div>
     <div class="k">Hyper-V Replica</div><div>Not enabled</div>
     <div class="k">Replica measurement assessment</div><div>Unavailable</div>
     <div class="k">VSS writers</div><div>All 10 writer(s) Stable (no last error)</div>
-    <div class="k">Analytic channel</div><div>Enabled (or not checked)</div>
+    <div class="k">Analytic channel</div><div>Enabled</div>
     <div class="k">Policy source</div><div><code>BuiltInDefaults</code></div>
     <div class="k">CSV free-space policy</div><div>Disabled</div>
     <div class="k">HRL cadence assessment</div><div>Unavailable</div>
     <div class="k">Config behind latest</div><div>No - at the latest supported version.</div>
-    <div class="k">Concerning events - this VM (168h)</div><div>0 (low-signal only)</div>
+    <div class="k">Concerning events - this VM (168h)</div><div>0 (none attributed)</div>
     <div class="k">Concerning events - node-wide (168h)</div><div>0 (references other VMs / none - context only)</div>
         <div class="k">Collection state consistency</div><div>Stable - no owner, state, checkpoint, disk-path, or configuration timestamp changes detected</div>
   </div>  <div class='callout warn'><strong>INVESTIGATE.</strong> <strong>Reason for this verdict:</strong> 1 stale attached AVHDX layer(s); 1 stale named snapshot(s). No confirming checkpoint fork-commit signature was observed, so on-disk chain corruption is not established. Before modifying any checkpoint-related AVHDX/VHD artifact or differencing chain, validate the attached AVHDX layer and stale snapshot with the backup/storage owner, confirm ownership and purpose, verify current backup protection, and follow an approved procedure.</div>
-  <details open><summary>Checkpoints (1)</summary><table><thead><tr><th>Name</th><th>Type</th><th>Purpose</th><th>Created (UTC)</th><th>Age</th><th>Stale</th><th>Parent</th></tr></thead><tbody><tr><td class='ckptname'>Backup checkpoint - synthetic</td><td>Recovery</td><td>Backup</td><td>2026-07-17 00:15:00Z</td><td class='num ckptage'><span class='warnval'>83.8 h<br>3.5 d</span></td><td><span class='warnval'>YES</span></td><td>n/a (root)</td></tr></tbody></table></details>
+  <details open><summary>Checkpoints (1)</summary><p class='muted'><strong>Snapshot object age:</strong> measured from <code>Get-VMSnapshot.CreationTime</code>. Hyper-V can expose a timestamp that differs from the creation time of the attached AVHDX files; compare the chain evidence below.</p><table><thead><tr><th>Name</th><th>Type</th><th>Purpose</th><th>Created (UTC)</th><th class='num ckptage'>Snapshot object age</th><th>Stale</th><th>Parent</th></tr></thead><tbody><tr><td class='ckptname'>Backup checkpoint - synthetic</td><td>Recovery</td><td>Backup</td><td>2026-07-17 00:15:00Z</td><td class='num ckptage'><span class='warnval'>83.8 h<br>3.5 d</span></td><td><span class='warnval'>YES</span></td><td>n/a (root)</td></tr></tbody></table></details>
   </div>
 </details><details class="vm" id="vm-TestVM05" open>
   <summary><h3><span class="vm-label">VM Name:</span> <code>TestVM05</code> <span class="pill investigate">INVESTIGATE</span><span class="src input">Input</span></h3></summary>
@@ -592,17 +599,18 @@
     <div class="k">Stale attached AVHDX layers (&ge;24h)</div><div>0</div>
     <div class="k">Stale named snapshots (&ge;24h)</div><div>0</div>
     <div class="k">Snapshot/layer representation</div><div>Consistent presence</div>
+    <div class="k">Oldest snapshot object / AVHDX timestamps</div><div>Unavailable - both representations are required</div>
     <div class="k">Checkpoint type</div><div>Production</div>
     <div class="k">Orphaned .avhdx</div><div>0</div>
     <div class="k">Hyper-V Replica</div><div><span class='warnval'>Error (Critical)</span></div>
     <div class="k">Replica measurement assessment</div><div><span class='warnval'>Concern - last replication age 105.0 min; effective limit 60.0 min; pending data 3.00 GB (effective limit 1.00 GB); average latency 900.0 sec (effective limit 600.0 sec)</span></div>
     <div class="k">VSS writers</div><div>All 10 writer(s) Stable (no last error)</div>
-    <div class="k">Analytic channel</div><div>Enabled (or not checked)</div>
+    <div class="k">Analytic channel</div><div>Enabled</div>
     <div class="k">Policy source</div><div><code>BuiltInDefaults</code></div>
     <div class="k">CSV free-space policy</div><div>Disabled</div>
     <div class="k">HRL cadence assessment</div><div>Unavailable</div>
     <div class="k">Config behind latest</div><div>No - at the latest supported version.</div>
-    <div class="k">Concerning events - this VM (168h)</div><div>0 (low-signal only)</div>
+    <div class="k">Concerning events - this VM (168h)</div><div>0 (none attributed)</div>
     <div class="k">Concerning events - node-wide (168h)</div><div>0 (references other VMs / none - context only)</div>
         <div class="k">Collection state consistency</div><div>Stable - no owner, state, checkpoint, disk-path, or configuration timestamp changes detected</div>
   </div>  <div class='callout warn'><strong>INVESTIGATE.</strong> <strong>Reason for this verdict:</strong> Replica product health/state Critical (Error / Critical); Replica measurement concern: last replication age 105.0 min; effective limit 60.0 min; pending data 3.00 GB (effective limit 1.00 GB); average latency 900.0 sec (effective limit 600.0 sec). Review the Hyper-V Replica details below, confirm connectivity and capacity on both replication partners, address the breached effective limits, then verify that replication returns to Normal and the backlog drains.</div>
@@ -625,17 +633,18 @@
     <div class="k">Stale attached AVHDX layers (&ge;24h)</div><div>0</div>
     <div class="k">Stale named snapshots (&ge;24h)</div><div>0</div>
     <div class="k">Snapshot/layer representation</div><div>Consistent presence</div>
+    <div class="k">Oldest snapshot object / AVHDX timestamps</div><div>Unavailable - both representations are required</div>
     <div class="k">Checkpoint type</div><div>Production</div>
     <div class="k">Orphaned .avhdx</div><div>0</div>
     <div class="k">Hyper-V Replica</div><div><span class='warnval'>Resynchronizing (Warning)</span></div>
     <div class="k">Replica measurement assessment</div><div><span class='warnval'>Advisory - pending data 1.50 GB (effective limit 2.00 GB); average latency 350.0 sec (effective limit 600.0 sec); missed replications 1; 1.00% of measured attempts</span></div>
     <div class="k">VSS writers</div><div>All 10 writer(s) Stable (no last error)</div>
-    <div class="k">Analytic channel</div><div>Enabled (or not checked)</div>
+    <div class="k">Analytic channel</div><div>Enabled</div>
     <div class="k">Policy source</div><div><code>BuiltInDefaults</code></div>
     <div class="k">CSV free-space policy</div><div>Disabled</div>
     <div class="k">HRL cadence assessment</div><div>Unavailable</div>
     <div class="k">Config behind latest</div><div>No - at the latest supported version.</div>
-    <div class="k">Concerning events - this VM (168h)</div><div>0 (low-signal only)</div>
+    <div class="k">Concerning events - this VM (168h)</div><div>0 (none attributed)</div>
     <div class="k">Concerning events - node-wide (168h)</div><div>0 (references other VMs / none - context only)</div>
         <div class="k">Collection state consistency</div><div>Stable - no owner, state, checkpoint, disk-path, or configuration timestamp changes detected</div>
   </div>  <div class='callout warn'><strong>INVESTIGATE.</strong> <strong>Reason for this verdict:</strong> Replica product health/state Warning (Resynchronizing / Warning). Review the Hyper-V Replica details below, confirm connectivity and capacity on both replication partners, address the breached effective limits, then verify that replication returns to Normal and the backlog drains.</div>
@@ -658,17 +667,18 @@
     <div class="k">Stale attached AVHDX layers (&ge;24h)</div><div>0</div>
     <div class="k">Stale named snapshots (&ge;24h)</div><div>0</div>
     <div class="k">Snapshot/layer representation</div><div>Consistent presence</div>
+    <div class="k">Oldest snapshot object / AVHDX timestamps</div><div>Unavailable - both representations are required</div>
     <div class="k">Checkpoint type</div><div>Production</div>
     <div class="k">Orphaned .avhdx</div><div>0</div>
     <div class="k">Hyper-V Replica</div><div>Not enabled</div>
     <div class="k">Replica measurement assessment</div><div>Unavailable</div>
     <div class="k">VSS writers</div><div>All 10 writer(s) Stable (no last error)</div>
-    <div class="k">Analytic channel</div><div>Enabled (or not checked)</div>
+    <div class="k">Analytic channel</div><div>Enabled</div>
     <div class="k">Policy source</div><div><code>BuiltInDefaults</code></div>
     <div class="k">CSV free-space policy</div><div>Disabled</div>
     <div class="k">HRL cadence assessment</div><div>Unavailable</div>
     <div class="k">Config behind latest</div><div>No - at the latest supported version.</div>
-    <div class="k">Concerning events - this VM (168h)</div><div>0 (low-signal only)</div>
+    <div class="k">Concerning events - this VM (168h)</div><div>0 (none attributed)</div>
     <div class="k">Concerning events - node-wide (168h)</div><div>0 (references other VMs / none - context only)</div>
         <div class="k">Collection state consistency</div><div>Stable - no owner, state, checkpoint, disk-path, or configuration timestamp changes detected</div>
   </div>  <div class='callout ok'><strong>OK.</strong> No active checkpoint layers and no concern signals were found. No action required from this result.</div>
@@ -690,17 +700,18 @@
     <div class="k">Stale attached AVHDX layers (&ge;24h)</div><div>0</div>
     <div class="k">Stale named snapshots (&ge;24h)</div><div>0</div>
     <div class="k">Snapshot/layer representation</div><div>Consistent presence</div>
+    <div class="k">Oldest snapshot object / AVHDX timestamps</div><div>Unavailable - both representations are required</div>
     <div class="k">Checkpoint type</div><div>Production</div>
     <div class="k">Orphaned .avhdx</div><div>0</div>
     <div class="k">Hyper-V Replica</div><div>Not enabled</div>
     <div class="k">Replica measurement assessment</div><div>Unavailable</div>
     <div class="k">VSS writers</div><div>All 10 writer(s) Stable (no last error)</div>
-    <div class="k">Analytic channel</div><div>Enabled (or not checked)</div>
+    <div class="k">Analytic channel</div><div>Enabled</div>
     <div class="k">Policy source</div><div><code>BuiltInDefaults</code></div>
     <div class="k">CSV free-space policy</div><div>Disabled</div>
     <div class="k">HRL cadence assessment</div><div>Unavailable</div>
     <div class="k">Config behind latest</div><div>No - at the latest supported version.</div>
-    <div class="k">Concerning events - this VM (168h)</div><div>0 (low-signal only)</div>
+    <div class="k">Concerning events - this VM (168h)</div><div>0 (none attributed)</div>
     <div class="k">Concerning events - node-wide (168h)</div><div>0 (references other VMs / none - context only)</div>
         <div class="k">Collection state consistency</div><div>Stable - no owner, state, checkpoint, disk-path, or configuration timestamp changes detected</div>
   </div>  <div class='callout ok'><strong>OK.</strong> No active checkpoint layers and no concern signals were found. No action required from this result.</div>
@@ -722,17 +733,18 @@
     <div class="k">Stale attached AVHDX layers (&ge;24h)</div><div>0</div>
     <div class="k">Stale named snapshots (&ge;24h)</div><div>0</div>
     <div class="k">Snapshot/layer representation</div><div>Consistent presence</div>
+    <div class="k">Oldest snapshot object / AVHDX timestamps</div><div>Unavailable - both representations are required</div>
     <div class="k">Checkpoint type</div><div>Production</div>
     <div class="k">Orphaned .avhdx</div><div>0</div>
     <div class="k">Hyper-V Replica</div><div>Not enabled</div>
     <div class="k">Replica measurement assessment</div><div>Unavailable</div>
     <div class="k">VSS writers</div><div>All 10 writer(s) Stable (no last error)</div>
-    <div class="k">Analytic channel</div><div>Enabled (or not checked)</div>
+    <div class="k">Analytic channel</div><div>Enabled</div>
     <div class="k">Policy source</div><div><code>BuiltInDefaults</code></div>
     <div class="k">CSV free-space policy</div><div>Disabled</div>
     <div class="k">HRL cadence assessment</div><div>Unavailable</div>
     <div class="k">Config behind latest</div><div>No - at the latest supported version.</div>
-    <div class="k">Concerning events - this VM (168h)</div><div>0 (low-signal only)</div>
+    <div class="k">Concerning events - this VM (168h)</div><div>0 (none attributed)</div>
     <div class="k">Concerning events - node-wide (168h)</div><div>0 (references other VMs / none - context only)</div>
         <div class="k">Collection state consistency</div><div>Stable - no owner, state, checkpoint, disk-path, or configuration timestamp changes detected</div>
   </div>  <div class='callout ok'><strong>OK.</strong> No active checkpoint layers and no concern signals were found. No action required from this result.</div>
@@ -754,17 +766,18 @@
     <div class="k">Stale attached AVHDX layers (&ge;24h)</div><div>0</div>
     <div class="k">Stale named snapshots (&ge;24h)</div><div>0</div>
     <div class="k">Snapshot/layer representation</div><div>Consistent presence</div>
+    <div class="k">Oldest snapshot object / AVHDX timestamps</div><div>Unavailable - both representations are required</div>
     <div class="k">Checkpoint type</div><div>Production</div>
     <div class="k">Orphaned .avhdx</div><div>0</div>
     <div class="k">Hyper-V Replica</div><div>Not enabled</div>
     <div class="k">Replica measurement assessment</div><div>Unavailable</div>
     <div class="k">VSS writers</div><div>All 10 writer(s) Stable (no last error)</div>
-    <div class="k">Analytic channel</div><div>Enabled (or not checked)</div>
+    <div class="k">Analytic channel</div><div>Enabled</div>
     <div class="k">Policy source</div><div><code>BuiltInDefaults</code></div>
     <div class="k">CSV free-space policy</div><div>Disabled</div>
     <div class="k">HRL cadence assessment</div><div>Unavailable</div>
     <div class="k">Config behind latest</div><div>No - at the latest supported version.</div>
-    <div class="k">Concerning events - this VM (168h)</div><div>0 (low-signal only)</div>
+    <div class="k">Concerning events - this VM (168h)</div><div>0 (none attributed)</div>
     <div class="k">Concerning events - node-wide (168h)</div><div>0 (references other VMs / none - context only)</div>
         <div class="k">Collection state consistency</div><div>Stable - no owner, state, checkpoint, disk-path, or configuration timestamp changes detected</div>
   </div>  <div class='callout ok'><strong>OK.</strong> No active checkpoint layers and no concern signals were found. No action required from this result.</div>
@@ -786,17 +799,18 @@
     <div class="k">Stale attached AVHDX layers (&ge;24h)</div><div>0</div>
     <div class="k">Stale named snapshots (&ge;24h)</div><div>0</div>
     <div class="k">Snapshot/layer representation</div><div>Consistent presence</div>
+    <div class="k">Oldest snapshot object / AVHDX timestamps</div><div>Unavailable - both representations are required</div>
     <div class="k">Checkpoint type</div><div>Production</div>
     <div class="k">Orphaned .avhdx</div><div>0</div>
     <div class="k">Hyper-V Replica</div><div>Not enabled</div>
     <div class="k">Replica measurement assessment</div><div>Unavailable</div>
     <div class="k">VSS writers</div><div>All 10 writer(s) Stable (no last error)</div>
-    <div class="k">Analytic channel</div><div>Enabled (or not checked)</div>
+    <div class="k">Analytic channel</div><div>Enabled</div>
     <div class="k">Policy source</div><div><code>BuiltInDefaults</code></div>
     <div class="k">CSV free-space policy</div><div>Disabled</div>
     <div class="k">HRL cadence assessment</div><div>Unavailable</div>
     <div class="k">Config behind latest</div><div>No - at the latest supported version.</div>
-    <div class="k">Concerning events - this VM (168h)</div><div>0 (low-signal only)</div>
+    <div class="k">Concerning events - this VM (168h)</div><div>0 (none attributed)</div>
     <div class="k">Concerning events - node-wide (168h)</div><div>0 (references other VMs / none - context only)</div>
         <div class="k">Collection state consistency</div><div>Stable - no owner, state, checkpoint, disk-path, or configuration timestamp changes detected</div>
   </div>  <div class='callout ok'><strong>OK.</strong> No active checkpoint layers and no concern signals were found. No action required from this result.</div>
@@ -818,17 +832,18 @@
     <div class="k">Stale attached AVHDX layers (&ge;24h)</div><div>0</div>
     <div class="k">Stale named snapshots (&ge;24h)</div><div>0</div>
     <div class="k">Snapshot/layer representation</div><div>Consistent presence</div>
+    <div class="k">Oldest snapshot object / AVHDX timestamps</div><div>Unavailable - both representations are required</div>
     <div class="k">Checkpoint type</div><div>Production</div>
     <div class="k">Orphaned .avhdx</div><div>0</div>
     <div class="k">Hyper-V Replica</div><div>Not enabled</div>
     <div class="k">Replica measurement assessment</div><div>Unavailable</div>
     <div class="k">VSS writers</div><div>All 10 writer(s) Stable (no last error)</div>
-    <div class="k">Analytic channel</div><div>Enabled (or not checked)</div>
+    <div class="k">Analytic channel</div><div>Enabled</div>
     <div class="k">Policy source</div><div><code>BuiltInDefaults</code></div>
     <div class="k">CSV free-space policy</div><div>Disabled</div>
     <div class="k">HRL cadence assessment</div><div>Unavailable</div>
     <div class="k">Config behind latest</div><div>No - at the latest supported version.</div>
-    <div class="k">Concerning events - this VM (168h)</div><div>0 (low-signal only)</div>
+    <div class="k">Concerning events - this VM (168h)</div><div>0 (none attributed)</div>
     <div class="k">Concerning events - node-wide (168h)</div><div>0 (references other VMs / none - context only)</div>
         <div class="k">Collection state consistency</div><div>Stable - no owner, state, checkpoint, disk-path, or configuration timestamp changes detected</div>
   </div>  <div class='callout ok'><strong>OK.</strong> No active checkpoint layers and no concern signals were found. No action required from this result.</div>
@@ -850,17 +865,18 @@
     <div class="k">Stale attached AVHDX layers (&ge;24h)</div><div>0</div>
     <div class="k">Stale named snapshots (&ge;24h)</div><div>0</div>
     <div class="k">Snapshot/layer representation</div><div>Consistent presence</div>
+    <div class="k">Oldest snapshot object / AVHDX timestamps</div><div>Unavailable - both representations are required</div>
     <div class="k">Checkpoint type</div><div>Production</div>
     <div class="k">Orphaned .avhdx</div><div>0</div>
     <div class="k">Hyper-V Replica</div><div>Not enabled</div>
     <div class="k">Replica measurement assessment</div><div>Unavailable</div>
     <div class="k">VSS writers</div><div>All 10 writer(s) Stable (no last error)</div>
-    <div class="k">Analytic channel</div><div>Enabled (or not checked)</div>
+    <div class="k">Analytic channel</div><div>Enabled</div>
     <div class="k">Policy source</div><div><code>BuiltInDefaults</code></div>
     <div class="k">CSV free-space policy</div><div>Disabled</div>
     <div class="k">HRL cadence assessment</div><div>Unavailable</div>
     <div class="k">Config behind latest</div><div>No - at the latest supported version.</div>
-    <div class="k">Concerning events - this VM (168h)</div><div>0 (low-signal only)</div>
+    <div class="k">Concerning events - this VM (168h)</div><div>0 (none attributed)</div>
     <div class="k">Concerning events - node-wide (168h)</div><div>0 (references other VMs / none - context only)</div>
         <div class="k">Collection state consistency</div><div>Stable - no owner, state, checkpoint, disk-path, or configuration timestamp changes detected</div>
   </div>  <div class='callout ok'><strong>OK.</strong> No active checkpoint layers and no concern signals were found. No action required from this result.</div>
@@ -882,17 +898,18 @@
     <div class="k">Stale attached AVHDX layers (&ge;24h)</div><div>0</div>
     <div class="k">Stale named snapshots (&ge;24h)</div><div>0</div>
     <div class="k">Snapshot/layer representation</div><div>Consistent presence</div>
+    <div class="k">Oldest snapshot object / AVHDX timestamps</div><div>Unavailable - both representations are required</div>
     <div class="k">Checkpoint type</div><div>Production</div>
     <div class="k">Orphaned .avhdx</div><div>0</div>
     <div class="k">Hyper-V Replica</div><div>Not enabled</div>
     <div class="k">Replica measurement assessment</div><div>Unavailable</div>
     <div class="k">VSS writers</div><div>All 10 writer(s) Stable (no last error)</div>
-    <div class="k">Analytic channel</div><div>Enabled (or not checked)</div>
+    <div class="k">Analytic channel</div><div>Enabled</div>
     <div class="k">Policy source</div><div><code>BuiltInDefaults</code></div>
     <div class="k">CSV free-space policy</div><div>Disabled</div>
     <div class="k">HRL cadence assessment</div><div>Unavailable</div>
     <div class="k">Config behind latest</div><div>No - at the latest supported version.</div>
-    <div class="k">Concerning events - this VM (168h)</div><div>0 (low-signal only)</div>
+    <div class="k">Concerning events - this VM (168h)</div><div>0 (none attributed)</div>
     <div class="k">Concerning events - node-wide (168h)</div><div>0 (references other VMs / none - context only)</div>
         <div class="k">Collection state consistency</div><div>Stable - no owner, state, checkpoint, disk-path, or configuration timestamp changes detected</div>
   </div>  <div class='callout ok'><strong>OK.</strong> No active checkpoint layers and no concern signals were found. No action required from this result.</div>
@@ -914,17 +931,18 @@
     <div class="k">Stale attached AVHDX layers (&ge;24h)</div><div>0</div>
     <div class="k">Stale named snapshots (&ge;24h)</div><div>0</div>
     <div class="k">Snapshot/layer representation</div><div>Consistent presence</div>
+    <div class="k">Oldest snapshot object / AVHDX timestamps</div><div>Unavailable - both representations are required</div>
     <div class="k">Checkpoint type</div><div>Production</div>
     <div class="k">Orphaned .avhdx</div><div>0</div>
     <div class="k">Hyper-V Replica</div><div>Not enabled</div>
     <div class="k">Replica measurement assessment</div><div>Unavailable</div>
     <div class="k">VSS writers</div><div>All 10 writer(s) Stable (no last error)</div>
-    <div class="k">Analytic channel</div><div>Enabled (or not checked)</div>
+    <div class="k">Analytic channel</div><div>Enabled</div>
     <div class="k">Policy source</div><div><code>BuiltInDefaults</code></div>
     <div class="k">CSV free-space policy</div><div>Disabled</div>
     <div class="k">HRL cadence assessment</div><div>Unavailable</div>
     <div class="k">Config behind latest</div><div>No - at the latest supported version.</div>
-    <div class="k">Concerning events - this VM (168h)</div><div>0 (low-signal only)</div>
+    <div class="k">Concerning events - this VM (168h)</div><div>0 (none attributed)</div>
     <div class="k">Concerning events - node-wide (168h)</div><div>0 (references other VMs / none - context only)</div>
         <div class="k">Collection state consistency</div><div>Stable - no owner, state, checkpoint, disk-path, or configuration timestamp changes detected</div>
   </div>  <div class='callout ok'><strong>OK.</strong> No active checkpoint layers and no concern signals were found. No action required from this result.</div>
@@ -946,17 +964,18 @@
     <div class="k">Stale attached AVHDX layers (&ge;24h)</div><div>0</div>
     <div class="k">Stale named snapshots (&ge;24h)</div><div>0</div>
     <div class="k">Snapshot/layer representation</div><div>Consistent presence</div>
+    <div class="k">Oldest snapshot object / AVHDX timestamps</div><div>Unavailable - both representations are required</div>
     <div class="k">Checkpoint type</div><div>Production</div>
     <div class="k">Orphaned .avhdx</div><div>0</div>
     <div class="k">Hyper-V Replica</div><div>Not enabled</div>
     <div class="k">Replica measurement assessment</div><div>Unavailable</div>
     <div class="k">VSS writers</div><div>All 10 writer(s) Stable (no last error)</div>
-    <div class="k">Analytic channel</div><div>Enabled (or not checked)</div>
+    <div class="k">Analytic channel</div><div>Enabled</div>
     <div class="k">Policy source</div><div><code>BuiltInDefaults</code></div>
     <div class="k">CSV free-space policy</div><div>Disabled</div>
     <div class="k">HRL cadence assessment</div><div>Unavailable</div>
     <div class="k">Config behind latest</div><div>No - at the latest supported version.</div>
-    <div class="k">Concerning events - this VM (168h)</div><div>0 (low-signal only)</div>
+    <div class="k">Concerning events - this VM (168h)</div><div>0 (none attributed)</div>
     <div class="k">Concerning events - node-wide (168h)</div><div>0 (references other VMs / none - context only)</div>
         <div class="k">Collection state consistency</div><div>Stable - no owner, state, checkpoint, disk-path, or configuration timestamp changes detected</div>
   </div>  <div class='callout ok'><strong>OK.</strong> No active checkpoint layers and no concern signals were found. No action required from this result.</div>
@@ -978,17 +997,18 @@
     <div class="k">Stale attached AVHDX layers (&ge;24h)</div><div>0</div>
     <div class="k">Stale named snapshots (&ge;24h)</div><div>0</div>
     <div class="k">Snapshot/layer representation</div><div>Consistent presence</div>
+    <div class="k">Oldest snapshot object / AVHDX timestamps</div><div>Unavailable - both representations are required</div>
     <div class="k">Checkpoint type</div><div>Production</div>
     <div class="k">Orphaned .avhdx</div><div>0</div>
     <div class="k">Hyper-V Replica</div><div>Not enabled</div>
     <div class="k">Replica measurement assessment</div><div>Unavailable</div>
     <div class="k">VSS writers</div><div>All 10 writer(s) Stable (no last error)</div>
-    <div class="k">Analytic channel</div><div>Enabled (or not checked)</div>
+    <div class="k">Analytic channel</div><div>Enabled</div>
     <div class="k">Policy source</div><div><code>BuiltInDefaults</code></div>
     <div class="k">CSV free-space policy</div><div>Disabled</div>
     <div class="k">HRL cadence assessment</div><div>Unavailable</div>
     <div class="k">Config behind latest</div><div>No - at the latest supported version.</div>
-    <div class="k">Concerning events - this VM (168h)</div><div>0 (low-signal only)</div>
+    <div class="k">Concerning events - this VM (168h)</div><div>0 (none attributed)</div>
     <div class="k">Concerning events - node-wide (168h)</div><div>0 (references other VMs / none - context only)</div>
         <div class="k">Collection state consistency</div><div>Stable - no owner, state, checkpoint, disk-path, or configuration timestamp changes detected</div>
   </div>  <div class='callout ok'><strong>OK.</strong> No active checkpoint layers and no concern signals were found. No action required from this result.</div>
@@ -1010,17 +1030,18 @@
     <div class="k">Stale attached AVHDX layers (&ge;24h)</div><div>0</div>
     <div class="k">Stale named snapshots (&ge;24h)</div><div>0</div>
     <div class="k">Snapshot/layer representation</div><div>Consistent presence</div>
+    <div class="k">Oldest snapshot object / AVHDX timestamps</div><div>Unavailable - both representations are required</div>
     <div class="k">Checkpoint type</div><div>Production</div>
     <div class="k">Orphaned .avhdx</div><div>0</div>
     <div class="k">Hyper-V Replica</div><div>Not enabled</div>
     <div class="k">Replica measurement assessment</div><div>Unavailable</div>
     <div class="k">VSS writers</div><div>All 10 writer(s) Stable (no last error)</div>
-    <div class="k">Analytic channel</div><div>Enabled (or not checked)</div>
+    <div class="k">Analytic channel</div><div>Enabled</div>
     <div class="k">Policy source</div><div><code>BuiltInDefaults</code></div>
     <div class="k">CSV free-space policy</div><div>Disabled</div>
     <div class="k">HRL cadence assessment</div><div>Unavailable</div>
     <div class="k">Config behind latest</div><div>No - at the latest supported version.</div>
-    <div class="k">Concerning events - this VM (168h)</div><div>0 (low-signal only)</div>
+    <div class="k">Concerning events - this VM (168h)</div><div>0 (none attributed)</div>
     <div class="k">Concerning events - node-wide (168h)</div><div>0 (references other VMs / none - context only)</div>
         <div class="k">Collection state consistency</div><div>Stable - no owner, state, checkpoint, disk-path, or configuration timestamp changes detected</div>
   </div>  <div class='callout ok'><strong>OK.</strong> No active checkpoint layers and no concern signals were found. No action required from this result.</div>
@@ -1031,7 +1052,20 @@
 <p><strong>Why this check matters:</strong> storage repair/resync activity, abnormal CSV redirection or state, and unhealthy disks can make checkpoint or merge files temporarily locked or unavailable. A ReFS CSV reporting File System Redirected mode with reason <code>FileSystemReFs</code> is normal on Azure Local / S2D and is not flagged; non-ReFS file-system redirection, block redirection, and paused or offline volumes are treated as abnormal.</p>
 <div class='callout warn'><strong>Why this snapshot is non-healthy:</strong> the lightweight storage snapshot reported a non-healthy state. This is read-only observed evidence; it does not establish root cause.</div>
 <p><strong>Storage knowledge links:</strong></p><ul><li><a href='https://learn.microsoft.com/en-us/windows-server/failover-clustering/health-service-faults' target='_blank' rel='noopener noreferrer'>Health Service faults | Microsoft Learn</a></li><li><a href='https://learn.microsoft.com/en-us/windows-server/storage/storage-spaces/troubleshooting-storage-spaces' target='_blank' rel='noopener noreferrer'>Storage Spaces Direct troubleshooting | Microsoft Learn</a></li></ul><h3>CSVs in an abnormal state (block-redirected, non-ReFS file-system redirected, or paused)</h3><table><thead><tr><th>Volume</th><th>Affected node(s)</th><th>State</th><th>Block reason</th><th>FS reason</th></tr></thead><tbody><tr><td>UserStorage_1</td><td>node01, node02</td><td>FileSystemRedirected</td><td></td><td>IncompatibleFileSystemFilter, FileSystemReFs</td></tr></tbody></table><div class='callout warn'><strong>Incompatible file-system filter reported:</strong> <code>FileSystemReFs</code> remains expected for ReFS CSVs; the additional <code>IncompatibleFileSystemFilter</code> reason is why this observation requires review. It commonly indicates that a file-system minifilter, such as antivirus, EDR, backup, replication, encryption, or file-monitoring software, is not compatible with the CSV direct-I/O path. This point-in-time state does not identify the responsible product and does not, by itself, prove disk failure or data corruption.</div><p><strong>Read-only validation:</strong> confirm that the state persists, compare loaded minifilters and instances on every cluster node, and correlate recent Failover Clustering CSV events.</p><pre><code>Get-ClusterSharedVolumeState | Sort-Object VolumeFriendlyName, Node | Format-Table Node, VolumeFriendlyName, StateInfo, BlockRedirectedIOReason, FileSystemRedirectedIOReason -AutoSize</code></pre><pre><code>$nodes = (Get-ClusterNode).Name
-Invoke-Command -ComputerName $nodes -ScriptBlock { fltmc filters; fltmc instances }</code></pre><pre><code>$nodes = (Get-ClusterNode).Name
+Invoke-Command -ComputerName $nodes -ScriptBlock { fltmc filters; fltmc instances }</code></pre><p><strong>Selected-filter details:</strong> replace <code>&lt;filtername&gt;</code> with a non-Microsoft filter name from <code>fltmc filters</code> to map it to its driver and service registration on every node. Treat <code>SupportedFeatures</code> as collected evidence; confirm its meaning and product support with the driver owner or vendor.</p><pre><code>$filterName = &#39;&lt;filtername&gt;&#39;
+Invoke-Command -ComputerName $nodes -ArgumentList $filterName -ScriptBlock {
+    param($FilterName)
+
+    $escapedFilterName = $FilterName.Replace(&quot;&#39;&quot;, &quot;&#39;&#39;&quot;)
+    Get-CimInstance Win32_SystemDriver -Filter (&quot;Name=&#39;{0}&#39;&quot; -f $escapedFilterName) |
+        Select-Object Name, State, StartMode, PathName
+
+    $servicePath = &quot;HKLM:\SYSTEM\CurrentControlSet\Services\$FilterName&quot;
+    if (Test-Path -LiteralPath $servicePath) {
+        Get-ItemProperty -LiteralPath $servicePath |
+            Select-Object DisplayName, ImagePath, Start, SupportedFeatures
+    }
+}</code></pre><pre><code>$nodes = (Get-ClusterNode).Name
 Invoke-Command -ComputerName $nodes -ScriptBlock {
     Get-WinEvent -FilterHashtable @{LogName=&#39;System&#39;; ProviderName=&#39;Microsoft-Windows-FailoverClustering&#39;; Id=5120,5142; StartTime=(Get-Date).AddDays(-7)} -ErrorAction SilentlyContinue |
         Select-Object TimeCreated, Id, LevelDisplayName, Message
@@ -1143,7 +1177,7 @@ checkpoint or an unhealthy VSS writer), which the operations / backup team shoul
 </details>
 
 <footer>
-    Generated by <code>Get-HyperVVMCheckpointHealth</code> (version 0.2.29). Read-only diagnostic report; no VM state was
+    Generated by <code>Get-HyperVVMCheckpointHealth</code> (version 0.2.30). Read-only diagnostic report; no VM state was
   modified. Verdict legend: <span class="pill hold">HOLD STATE</span> fork-commit signature + unmerged
   disks (case-worthy) &nbsp; <span class="pill investigate">INVESTIGATE</span> concern signals, ops/backup
   team first &nbsp; <span class="pill ok">OK</span> no concerns &nbsp; <span class="pill err">ERROR / NOT FOUND</span>.

@@ -256,7 +256,7 @@ function ConvertTo-VMCheckpointAuditHtml {
   th,td{padding:9px 11px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top;overflow-wrap:break-word}
   th{background:var(--panel2);color:#cbd5e1;font-weight:600;white-space:normal}
   tbody tr:hover{background:#22304a}
-  td.num{text-align:right;font-variant-numeric:tabular-nums}
+    th.num,td.num{text-align:right;font-variant-numeric:tabular-nums}
   /* VM name / node cells must NOT wrap (a wrapped long VM name was unreadable). The global
      'code' rule breaks long words, so override it inside these cells. */
   td.nm{white-space:nowrap}
@@ -369,6 +369,7 @@ function ConvertTo-VMCheckpointAuditHtml {
      stacked values ('202.2 h' over '8.4 d'); ckptage keeps each value on ONE line (never split
      mid-value onto '202.2' + 'h'). ckptname caps the checkpoint Name column a little (max-width) so a
      long checkpoint name wraps slightly earlier, freeing the small amount of width the Age column needs. */
+  th.ckptage,td.ckptage{text-align:center}
   td.ckptage{white-space:nowrap}
   td.ckptname{max-width:300px;overflow-wrap:anywhere}
     .chain-scroll{width:100%;max-width:100%;overflow-x:auto}
@@ -858,7 +859,7 @@ $eventFloodExecSummaryLi
 <table>
 <thead><tr>
   <th>VM</th><th>State</th><th>Node</th><th>Cfg</th><th>Disks</th><th>Checkpoints</th><th>AVHDX files</th>
-    <th>Orphans</th><th>Stale<br>evidence</th><th>Oldest ckpt age</th><th>Concerning<br>Events (VM)</th><th>Hyper-V Replica</th><th>Verdict</th>
+    <th>Orphans</th><th>Stale<br>evidence</th><th>Oldest snapshot<br>object age</th><th>Concerning<br>Events (VM)</th><th>Hyper-V Replica</th><th>Verdict</th>
 </tr></thead>
 <tbody>
 '@)
@@ -986,7 +987,13 @@ $eventFloodExecSummaryLi
         }
         $ckptCount = @($rd.Checkpoints).Count
         $verOld = if ($rd.VmVerOlder) { "Yes - v$(ConvertTo-HtmlText $rd.Version) vs cluster max v$(ConvertTo-HtmlText $rd.HostMaxVersion) (migration/start context only; not a checkpoint cause)." } else { 'No - at the latest supported version.' }
-        $analytic = if (@($rd.AnalyticNodesNeedEnable) -contains $r.OwningNode) { 'Not enabled on this node' } else { 'Enabled (or not checked)' }
+        $analytic = if ($rd.PSObject.Properties['AnalyticCheckSkipped'] -and $rd.AnalyticCheckSkipped) {
+            'Not checked (-SkipAnalyticCheck)'
+        } elseif (@($rd.AnalyticNodesNeedEnable) -contains $r.OwningNode) {
+            'Not enabled on this node'
+        } else {
+            'Enabled'
+        }
         $vss = switch ($rd.VssState) { 'Healthy' { "All $($rd.VssTotal) writer(s) Stable (no last error)" } 'Unhealthy' { "$($rd.VssUnhealthyCount) of $($rd.VssTotal) writer(s) NOT healthy" } default { 'Unavailable (needs elevated context on owner)' } }
         $srcText   = if ($r.PSObject.Properties['Source'] -and $r.Source) { [string]$r.Source } else { 'Input' }
         $nodeWideNote = if ($rd.PSObject.Properties['NodeDominantNote'] -and $rd.NodeDominantNote) { " ($($rd.NodeDominantNote))" } else { '' }
@@ -1029,13 +1036,26 @@ $eventFloodExecSummaryLi
         $staleSnapshotHtml = if ($staleSnapshotCount -gt 0) { "<span class='warnval'>$staleSnapshotCount</span>" } else { '0' }
         $snapshotLayerMismatch = ($rd.PSObject.Properties['SnapshotLayerMismatch'] -and $rd.SnapshotLayerMismatch)
         $snapshotLayerHtml = if ($snapshotLayerMismatch) { "<span class='warnval'>MISMATCH - only one representation is present</span>" } else { 'Consistent presence' }
+        $timestampDivergence = ($rd.PSObject.Properties['SnapshotLayerTimestampDivergence'] -and $rd.SnapshotLayerTimestampDivergence)
+        $timestampComparisonText = if ($timestampDivergence) {
+            "DIVERGENT - oldest snapshot object $($rd.OldestSnapshotUtc); oldest AVHDX file $($rd.OldestAttachedLayerUtc); difference $($rd.OldestTimestampDeltaHours) h"
+        } elseif ($rd.PSObject.Properties['OldestSnapshotUtc'] -and $rd.OldestSnapshotUtc -and $rd.PSObject.Properties['OldestAttachedLayerUtc'] -and $rd.OldestAttachedLayerUtc) {
+            "Aligned within 1 h - snapshot object $($rd.OldestSnapshotUtc); AVHDX file $($rd.OldestAttachedLayerUtc)"
+        } else { 'Unavailable - both representations are required' }
+        $timestampComparisonHtml = if ($timestampDivergence) { "<span class='warnval'>$(ConvertTo-HtmlText $timestampComparisonText)</span>" } else { ConvertTo-HtmlText $timestampComparisonText }
         $orphanCount = [int]$rd.OrphanCount
         $orphanCountHtml = if ($orphanCount -gt 0) { "<span class='warnval'>$orphanCount</span>" } else { '0' }
         $vssHtml = if ($rd.VssState -eq 'Healthy') { ConvertTo-HtmlText $vss } else { "<span class='warnval'>$(ConvertTo-HtmlText $vss)</span>" }
         $csvPolicyHtml = if ($rd.PSObject.Properties['CsvFreeSpaceAssessment'] -and $rd.CsvFreeSpaceAssessment -and $rd.CsvFreeSpaceAssessment.IsConcern) { "<span class='warnval'>$(ConvertTo-HtmlText $csvPolicyText)</span>" } else { ConvertTo-HtmlText $csvPolicyText }
         $hrlPolicyConcern = ($rd.PSObject.Properties['HrlAssessment'] -and $rd.HrlAssessment -and $rd.HrlAssessment.Enabled -and ([int]$rd.HrlAssessment.ExceedsCadenceCount -gt 0) -and $rd.HrlAssessment.CorroboratedByReplication)
         $hrlPolicyHtml = if ($hrlPolicyConcern) { "<span class='warnval'>$(ConvertTo-HtmlText $hrlPolicyText)</span>" } else { ConvertTo-HtmlText $hrlPolicyText }
-        $vmEventHtml = if ([int]$rd.VmHighConcernCount -gt 0) { "<span class='warnval'>$($rd.VmEventConcernCount) ($($rd.VmHighConcernCount) high-signal)</span>" } else { "$($rd.VmEventConcernCount) (low-signal only)" }
+        $vmEventHtml = if ([int]$rd.VmHighConcernCount -gt 0) {
+            "<span class='warnval'>$($rd.VmEventConcernCount) ($($rd.VmHighConcernCount) high-signal)</span>"
+        } elseif ([int]$rd.VmEventConcernCount -gt 0) {
+            "$($rd.VmEventConcernCount) (low-signal only)"
+        } else {
+            '0 (none attributed)'
+        }
         $stateConsistencyText = if ($rd.PSObject.Properties['StateConsistencyImpact'] -and $rd.StateConsistencyImpact -eq 'Advisory') {
             'Advisory - VM configuration (.vmcx) timestamp changed during collection; core state and disk paths remained stable'
         } elseif ($rd.PSObject.Properties['StateConsistencyStatus'] -and $rd.StateConsistencyStatus -eq 'Unavailable') {
@@ -1062,6 +1082,7 @@ $eventFloodExecSummaryLi
     <div class="k">Stale attached AVHDX layers (&ge;$($rd.StaleHours)h)</div><div>$staleAttachedHtml</div>
     <div class="k">Stale named snapshots (&ge;$($rd.StaleHours)h)</div><div>$staleSnapshotHtml</div>
     <div class="k">Snapshot/layer representation</div><div>$snapshotLayerHtml</div>
+    <div class="k">Oldest snapshot object / AVHDX timestamps</div><div>$timestampComparisonHtml</div>
     <div class="k">Checkpoint type</div><div>$(ConvertTo-HtmlText $rd.CheckpointType)</div>
     <div class="k">Orphaned .avhdx</div><div>$orphanCountHtml</div>
     <div class="k">Hyper-V Replica</div><div>$replicaProductHtml</div>
@@ -1280,7 +1301,7 @@ $eventFloodExecSummaryLi
         }
         # Checkpoints table.
         if ($ckptCount -gt 0) {
-            [void]$sb.Append("  <details open><summary>Checkpoints ($ckptCount)</summary><table><thead><tr><th>Name</th><th>Type</th><th>Purpose</th><th>Created (UTC)</th><th>Age</th><th>Stale</th><th>Parent</th></tr></thead><tbody>")
+            [void]$sb.Append("  <details open><summary>Checkpoints ($ckptCount)</summary><p class='muted'><strong>Snapshot object age:</strong> measured from <code>Get-VMSnapshot.CreationTime</code>. Hyper-V can expose a timestamp that differs from the creation time of the attached AVHDX files; compare the chain evidence below.</p><table><thead><tr><th>Name</th><th>Type</th><th>Purpose</th><th>Created (UTC)</th><th class='num ckptage'>Snapshot object age</th><th>Stale</th><th>Parent</th></tr></thead><tbody>")
             foreach ($c in @($rd.Checkpoints | Sort-Object AgeHrs -Descending)) {
                 # Stale YES is amber (matches the summary table's stale-count colour); NO stays plain.
                 $staleTxt = if ($c.Stale) { "<span class='warnval'>YES</span>" } else { 'NO' }
@@ -1295,7 +1316,7 @@ $eventFloodExecSummaryLi
         # Get-VMSnapshot exposes no corresponding named checkpoint.
         $attachedVhdLayers = if ($rd.PSObject.Properties['AttachedVhdLayers']) { @($rd.AttachedVhdLayers) } else { @() }
         if (@($attachedVhdLayers | Where-Object { $_.Type -eq 'Differencing' }).Count -gt 0) {
-            [void]$sb.Append("  <details open><summary>Attached VHD chain evidence ($(@($attachedVhdLayers).Count) layer(s))</summary><div class='chain-scroll'><table class='chain-evidence'><thead><tr><th>Layer</th><th>Role</th><th>Layer file</th><th>Type</th><th>Size (GB)</th><th>Created (UTC)</th><th>Checkpoint age</th><th>Last activity</th><th>Checkpoint stale</th></tr></thead><tbody>")
+            [void]$sb.Append("  <details open><summary>Attached VHD chain evidence ($(@($attachedVhdLayers).Count) layer(s))</summary><div class='chain-scroll'><table class='chain-evidence'><thead><tr><th class='num'>Layer</th><th>Role</th><th>Layer file</th><th>Type</th><th class='num'>Size (GB)</th><th>Created (UTC)</th><th class='num ckptage'>AVHDX file age</th><th class='num ckptage'>Last activity</th><th>Checkpoint stale</th></tr></thead><tbody>")
             $previousChainName = $null
             foreach ($layer in $attachedVhdLayers) {
                 $checkpointStale = [bool](Get-OptionalPropertyValue $layer 'CheckpointStale' (Get-OptionalPropertyValue $layer 'Stale' $false))
@@ -1317,9 +1338,10 @@ $eventFloodExecSummaryLi
             [void]$sb.Append("</tbody></table></div><details class='chain-paths'><summary>Full path and parent-path evidence</summary><div class='chain-scroll'><table><thead><tr><th>Layer file</th><th>Full path</th><th>Parent path</th></tr></thead><tbody>")
             foreach ($layer in $attachedVhdLayers) {
                 $fileName = [string](Get-OptionalPropertyValue $layer 'FileName' (Split-Path ([string]$layer.Path) -Leaf))
-                [void]$sb.Append("<tr><td>$(ConvertTo-HtmlText $fileName)</td><td><code>$(ConvertTo-HtmlText $layer.Path)</code></td><td><code>$(ConvertTo-HtmlText $layer.ParentPath)</code></td></tr>")
+                $parentPathDisplay = if ($layer.Type -in @('Dynamic', 'Fixed') -and [string]::IsNullOrWhiteSpace([string]$layer.ParentPath)) { 'n/a (base)' } else { [string]$layer.ParentPath }
+                [void]$sb.Append("<tr><td>$(ConvertTo-HtmlText $fileName)</td><td><code>$(ConvertTo-HtmlText $layer.Path)</code></td><td><code>$(ConvertTo-HtmlText $parentPathDisplay)</code></td></tr>")
             }
-            [void]$sb.Append("</tbody></table></div></details><p class='muted'><strong>Layer order:</strong> Active (top) is the child the VM currently writes to; each Checkpoint row is its next differencing-disk parent; Base is the terminal VHDX parent. Checkpoint age is measured from AVHDX creation. Last activity is measured independently from LastWrite and can remain near zero while an old active checkpoint is continuously written. Base VHDX files are not checkpoints and always show <code>n/a (base)</code>. A differencing <code>.avhdx</code> layer can remain attached even when <code>Get-VMSnapshot</code> exposes no named checkpoint. Validate the chain and the responsible backup/checkpoint job before migration, restart, merge, or removal.</p></details>`r`n")
+            [void]$sb.Append("</tbody></table></div></details><p class='muted'><strong>Layer order:</strong> Active (top) is the child the VM currently writes to; each Checkpoint row is its next differencing-disk parent; Base is the terminal VHDX parent. AVHDX file age is measured from file creation. Last activity is measured independently from LastWrite and can remain near zero while an old active checkpoint is continuously written. Base VHDX files are not checkpoints and always show <code>n/a (base)</code>. A differencing <code>.avhdx</code> layer can remain attached even when <code>Get-VMSnapshot</code> exposes no named checkpoint. Validate the chain and the responsible backup/checkpoint job before migration, restart, merge, or removal.</p></details>`r`n")
         }
         # Orphaned .avhdx files table (present on disk in this VM's folder(s) but NOT attached to any
         # chain). v0.2.14: per-orphan class + age + a neutral 'Likely / action' read. NEVER states
@@ -1436,11 +1458,29 @@ $eventFloodExecSummaryLi
             if ($hasIncompatibleFileSystemFilter) {
                 $csvStateCommand = 'Get-ClusterSharedVolumeState | Sort-Object VolumeFriendlyName, Node | Format-Table Node, VolumeFriendlyName, StateInfo, BlockRedirectedIOReason, FileSystemRedirectedIOReason -AutoSize'
                 $filterInventoryCommand = '$nodes = (Get-ClusterNode).Name' + [Environment]::NewLine + 'Invoke-Command -ComputerName $nodes -ScriptBlock { fltmc filters; fltmc instances }'
+                $filterDriverCommand = @'
+$filterName = '<filtername>'
+Invoke-Command -ComputerName $nodes -ArgumentList $filterName -ScriptBlock {
+    param($FilterName)
+
+    $escapedFilterName = $FilterName.Replace("'", "''")
+    Get-CimInstance Win32_SystemDriver -Filter ("Name='{0}'" -f $escapedFilterName) |
+        Select-Object Name, State, StartMode, PathName
+
+    $servicePath = "HKLM:\SYSTEM\CurrentControlSet\Services\$FilterName"
+    if (Test-Path -LiteralPath $servicePath) {
+        Get-ItemProperty -LiteralPath $servicePath |
+            Select-Object DisplayName, ImagePath, Start, SupportedFeatures
+    }
+}
+'@
                 $clusterEventCommand = '$nodes = (Get-ClusterNode).Name' + [Environment]::NewLine + 'Invoke-Command -ComputerName $nodes -ScriptBlock {' + [Environment]::NewLine + "    Get-WinEvent -FilterHashtable @{LogName='System'; ProviderName='Microsoft-Windows-FailoverClustering'; Id=5120,5142; StartTime=(Get-Date).AddDays(-7)} -ErrorAction SilentlyContinue |" + [Environment]::NewLine + '        Select-Object TimeCreated, Id, LevelDisplayName, Message' + [Environment]::NewLine + '}'
                 [void]$sb.Append("<div class='callout warn'><strong>Incompatible file-system filter reported:</strong> <code>FileSystemReFs</code> remains expected for ReFS CSVs; the additional <code>IncompatibleFileSystemFilter</code> reason is why this observation requires review. It commonly indicates that a file-system minifilter, such as antivirus, EDR, backup, replication, encryption, or file-monitoring software, is not compatible with the CSV direct-I/O path. This point-in-time state does not identify the responsible product and does not, by itself, prove disk failure or data corruption.</div>")
                 [void]$sb.Append("<p><strong>Read-only validation:</strong> confirm that the state persists, compare loaded minifilters and instances on every cluster node, and correlate recent Failover Clustering CSV events.</p>")
                 [void]$sb.Append("<pre><code>$(ConvertTo-HtmlText $csvStateCommand)</code></pre>")
                 [void]$sb.Append("<pre><code>$(ConvertTo-HtmlText $filterInventoryCommand)</code></pre>")
+                [void]$sb.Append("<p><strong>Selected-filter details:</strong> replace <code>&lt;filtername&gt;</code> with a non-Microsoft filter name from <code>fltmc filters</code> to map it to its driver and service registration on every node. Treat <code>SupportedFeatures</code> as collected evidence; confirm its meaning and product support with the driver owner or vendor.</p>")
+                [void]$sb.Append("<pre><code>$(ConvertTo-HtmlText $filterDriverCommand.Trim())</code></pre>")
                 [void]$sb.Append("<pre><code>$(ConvertTo-HtmlText $clusterEventCommand)</code></pre>")
                 [void]$sb.Append("<p><strong>Action boundary:</strong> map non-Microsoft filter names to the installed security, backup, or data-protection product and validate Azure Local / CSV support with its owner or vendor. Do not unload or remove a filter based only on this report; use an approved maintenance procedure. Microsoft guidance: <a href='https://learn.microsoft.com/windows-server/failover-clustering/failover-cluster-csvs' target='_blank' rel='noopener noreferrer'>Cluster Shared Volumes overview</a> and <a href='https://learn.microsoft.com/troubleshoot/windows-server/virtualization/storage-issues-in-hyper-v-and-windows-server-failover-clusters' target='_blank' rel='noopener noreferrer'>Hyper-V and failover-cluster storage troubleshooting</a>.</p>")
             }

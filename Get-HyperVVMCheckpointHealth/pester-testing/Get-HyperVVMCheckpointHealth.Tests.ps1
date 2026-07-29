@@ -267,6 +267,13 @@ Describe 'Get-HyperVVMCheckpointHealth source contracts' {
         $script:Source | Should -Not -Match 'likely a stalled / failed backup checkpoint or an unhealthy VSS writer'
     }
 
+    It 'keeps HRL-only and event-artifact prose evidence-specific' {
+        $script:Source | Should -Match 'Hyper-V Replica HRL files exceed the cadence-aware threshold with Replica corroboration'
+        $script:Source | Should -Match 'full, untruncated Hyper-V event messages that back the event findings above'
+        $script:Source | Should -Match 'full, untruncated Hyper-V event messages retained as context; no event row drives this verdict'
+        $script:Source | Should -Not -Match 'messages that back the findings above'
+    }
+
     It 'preserves exact file metadata for housekeeping totals and filtering' {
         $script:Source | Should -Match 'Length\s+=\s+\[long\]\$diskFile\.Length'
         $script:Source | Should -Match 'FullName\s+=\s+\[string\]\$diskFile\.FullName'
@@ -527,11 +534,13 @@ Describe 'Cluster low-signal event flood contract' {
 
 Describe 'TXT Replica effective-limit evidence' {
     BeforeAll {
-        $modulePath = Join-Path (Split-Path $PSScriptRoot -Parent) 'Get-HyperVVMCheckpointHealth.psm1'
+        $toolRoot = Split-Path $PSScriptRoot -Parent
+        $modulePath = Join-Path $toolRoot 'Get-HyperVVMCheckpointHealth.psm1'
+        Import-Module (Join-Path $toolRoot 'Private\Get-HyperVVMCheckpointHealth.Rendering.psm1') -Force
         $tokens = $null
         $parseErrors = $null
         $ast = [System.Management.Automation.Language.Parser]::ParseFile($modulePath, [ref]$tokens, [ref]$parseErrors)
-        foreach ($functionName in @('ConvertTo-AuditByteText', 'Get-ReplicaAssessmentRows')) {
+        foreach ($functionName in @('ConvertTo-AuditByteText', 'Get-ReplicaMeasurementEvidenceText', 'Get-ReplicaAssessmentRows')) {
             $functionAst = $ast.FindAll({
                 param($node)
                 $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $functionName
@@ -574,6 +583,20 @@ Describe 'TXT Replica effective-limit evidence' {
         ($rows | Where-Object Signal -eq 'Pending replication data').Observed | Should -Be 'Unavailable'
         ($rows | Where-Object Signal -eq 'Pending replication data').Assessment | Should -Be 'Unavailable'
         ($rows | Where-Object Signal -eq 'Measured replication cycles').Observed | Should -Be 'Unavailable'
+    }
+
+    It 'describes measurement concerns from typed breaches instead of product-health prose' {
+        $assessment = [pscustomobject]@{
+            LastReplicationAgeMinutes = 58318.6; EffectiveMaxAgeMinutes = 180
+            PendingBytes = 0; EffectiveMaxPendingBytes = 1GB
+            LatencySeconds = 0; EffectiveMaxLatencySeconds = 1800
+            MissedCount = 92; MissedRatePercent = 100
+        }
+
+        $text = Get-ReplicaMeasurementEvidenceText -Assessment $assessment -Breaches @('LastReplicationAge', 'MissedCount')
+
+        $text | Should -Be 'last replication age 58,318.6 min (40.5 days); effective limit 180.0 min; missed replications 92; 100.00% of measured attempts'
+        $text | Should -Not -Match 'health is Critical'
     }
 }
 
@@ -797,6 +820,25 @@ Describe 'PassThru automation result contract' {
         [object]::ReferenceEquals($result.RunData, $runData) | Should -BeTrue
     }
 
+    It 'preserves combined CSV file-system reasons in the shared run storage snapshot' {
+        $storageHealth = [pscustomobject]@{
+            Summary = 'Degraded'
+            CsvRedirected = @([pscustomobject]@{
+                Volume = 'UserStorage_1'
+                FsReason = 'IncompatibleFileSystemFilter, FileSystemReFs'
+            })
+        }
+        $runData = [pscustomobject]@{ Cluster = 'TEST-CLUSTER'; StorageHealth = $storageHealth }
+        $inputResult = [pscustomobject]@{
+            VMName = 'TEST-VM'; Cluster = 'TEST-CLUSTER'; Recommendation = 'INVESTIGATE'
+            Detail = 'Storage review required.'; ReportData = $null
+        }
+
+        $result = Complete-CheckpointHealthPassThruResult -Result $inputResult -RunData $runData
+
+        $result.RunData.StorageHealth.CsvRedirected[0].FsReason | Should -Be 'IncompatibleFileSystemFilter, FileSystemReFs'
+    }
+
     It 'promotes the assessment text into Detail for an INVESTIGATE result' {
         $assessmentText = 'Checkpoint or virtual-disk evidence requires validation.'
         $nestedStatus = [pscustomobject]@{
@@ -857,8 +899,8 @@ Describe 'Module distribution contracts' {
         $script:ModuleCommand = Get-Command Get-HyperVVMCheckpointHealth -Module Get-HyperVVMCheckpointHealth
     }
 
-    It 'imports a valid 0.2.29 module manifest' {
-        $script:Manifest.Version.ToString() | Should -Be '0.2.29'
+    It 'imports a valid 0.2.30 module manifest' {
+        $script:Manifest.Version.ToString() | Should -Be '0.2.30'
         $script:Manifest.ExportedFunctions.Keys | Should -Contain 'Get-HyperVVMCheckpointHealth'
     }
 
@@ -901,7 +943,7 @@ Describe 'Module distribution contracts' {
                 -ClusterName 'TEST-CLUSTER' -GeneratedUtc '2026-07-01 01:00:00Z' -DiscoveredVMs @() `
                 -DiscoverySummary ([pscustomobject]@{ EligibleCount = 0; AuditedCount = 0; DeferredCount = 0; Cap = $null }) `
                 -StorageHealth $storageSnapshot -HousekeepingFindings @() -NodeEventContext @([pscustomobject]@{ Node = 'TEST-NODE'; Events = $nodeEvents }) `
-                -IncludeDiscoveredVMs:$false -ScriptVersion '0.2.29' -ReportGenerationTime '00:00:01' -ClusterNodeCount 1 -ClusterCsvCount 1
+                -IncludeDiscoveredVMs:$false -ScriptVersion '0.2.30' -ReportGenerationTime '00:00:01' -ClusterNodeCount 1 -ClusterCsvCount 1
         } $events $storageHealth
         $html | Should -Match 'Cluster-level low-signal event observation'
         $html | Should -Match "<a href='#cluster-low-signal-events'>Cluster-level low-signal event observation:</a>"
@@ -1017,6 +1059,10 @@ Describe 'Module distribution contracts' {
         $setupSource | Should -Match ("\`$version = '{0}'" -f [regex]::Escape($script:Manifest.Version.ToString()))
         $setupSource | Should -Match "\$expectedSha256 = '[0-9a-f]{64}'"
         $setupSource | Should -Match '\[string\]\$InstallRoot = ''C:\\Temp'''
+        $setupSource | Should -Match '\$scriptDirectoryZipPath\s*=\s*Join-Path\s+\$PSScriptRoot\s+\$expectedAssetName'
+        $setupSource | Should -Match '\$tempDirectoryZipPath\s*=\s*Join-Path\s+\$env:TEMP\s+\$expectedAssetName'
+        $setupSource | Should -Match '(?s)Test-Path.+\$scriptDirectoryZipPath.+elseif.+Test-Path.+\$tempDirectoryZipPath'
+        $setupSource | Should -Match "Release ZIP was not found beside the setup script.+or in the temporary directory"
         $setupSource | Should -Match '\$WhatIfPreference\s*=\s*\$false[\s\S]+Get-FileHash.+SHA256'
         $setupSource | Should -Match 'Test-ModuleManifest'
         $setupSource | Should -Not -Match 'Get-ClusterGroup'
@@ -1177,6 +1223,10 @@ Describe 'HTML fleet report usability' {
         $staleLayerReportData.CheckpointLayers = 2
         $staleLayerReportData.StaleAttachedLayerCount = 2
         $staleLayerReportData.SnapshotLayerMismatch = $true
+        $staleLayerReportData | Add-Member -NotePropertyName SnapshotLayerTimestampDivergence -NotePropertyValue $true
+        $staleLayerReportData | Add-Member -NotePropertyName OldestSnapshotUtc -NotePropertyValue '2026-07-15 21:41:33Z'
+        $staleLayerReportData | Add-Member -NotePropertyName OldestAttachedLayerUtc -NotePropertyValue '2026-06-21 21:37:32Z'
+        $staleLayerReportData | Add-Member -NotePropertyName OldestTimestampDeltaHours -NotePropertyValue 576.1
         $staleLayerReportData.AttachedVhdLayers = @(
             [pscustomobject]@{
                 Chain = 'TEST-VM-STALE-LAYER_OS-CURRENT.avhdx'; FileName = 'TEST-VM-STALE-LAYER_OS-CURRENT.avhdx'
@@ -1289,7 +1339,7 @@ Describe 'HTML fleet report usability' {
             -Results @([pscustomobject]@{ VMName = 'TEST-VM-NORMAL'; OwningNode = 'TEST-NODE-01'; Recommendation = 'OK'; Source = 'Input'; StaleCheckpointCount = 0; ReportData = $normalReportData; Detail = '' }) `
             -StaleHours 24 -EventLookbackHours 168 -ClusterName 'CONTOSO-CLUSTER-01' -GeneratedUtc '2026-01-01 00:00:00' `
             -DiscoveredVMs $null -DiscoverySummary ([pscustomobject]@{ EligibleCount = 0; AuditedCount = 0; DeferredCount = 0; Cap = $null }) `
-            -StorageHealth $filterRedirectedStorage -IncludeDiscoveredVMs:$false -ScriptVersion '0.2.29' -ReportGenerationTime '00:00:01' `
+            -StorageHealth $filterRedirectedStorage -IncludeDiscoveredVMs:$false -ScriptVersion '0.2.30' -ReportGenerationTime '00:00:01' `
             -ClusterNodeCount 2 -ClusterCsvCount 1 -HousekeepingFindings @()
         $degradedStorageWithoutFaults = $degradedStorage.PSObject.Copy()
         $degradedStorageWithoutFaults.HealthFaults = @()
@@ -1412,6 +1462,19 @@ Describe 'HTML fleet report usability' {
         $script:CleanRenderedHtml | Should -Match '<strong>1 input \+ 0 automatically discovered = 1 processed</strong>; <strong>1 was fully assessed</strong>; <strong>0 were incomplete</strong>'
     }
 
+    It 'distinguishes no attributed events from low-signal events and reports a checked Analytic channel precisely' {
+        $script:CleanRenderedHtml | Should -Match 'Concerning events - this VM \(168h\)</div><div>0 \(none attributed\)</div>'
+        $script:CleanRenderedHtml | Should -Match 'Analytic channel</div><div>Enabled</div>'
+        $script:CleanRenderedHtml | Should -Not -Match 'Enabled \(or not checked\)'
+    }
+
+    It 'keeps finding-specific orphan guidance aligned across TXT and HTML output' {
+        $moduleSource = Get-Content -LiteralPath (Join-Path (Split-Path $PSScriptRoot -Parent) 'Get-HyperVVMCheckpointHealth.psm1') -Raw
+
+        $moduleSource | Should -Match 'based on your own investigation into that specific orphaned checkpoint file\.'
+        $moduleSource | Should -Not -Match 'at its timestamps and obtain vendor or Microsoft Support guidance before changing it\.'
+    }
+
     It 'keeps healthy Replica timestamp-only activity as quiet state detail' {
         $script:StateAdvisoryHtml | Should -Match '<div class="k">Collection state consistency</div><div>Advisory - VM configuration \(\.vmcx\) timestamp changed during collection; core state and disk paths remained stable</div>'
         $script:StateAdvisoryHtml | Should -Not -Match 'No action is required for this advisory'
@@ -1475,6 +1538,12 @@ Describe 'HTML fleet report usability' {
         $script:FilterRedirectedStorageHtml | Should -Match '<code>FileSystemReFs</code> remains expected for ReFS CSVs'
         $script:FilterRedirectedStorageHtml | Should -Match 'Get-ClusterSharedVolumeState \| Sort-Object VolumeFriendlyName, Node'
         $script:FilterRedirectedStorageHtml | Should -Match 'Invoke-Command -ComputerName \$nodes -ScriptBlock \{ fltmc filters; fltmc instances \}'
+        $script:FilterRedirectedStorageHtml | Should -Match 'Selected-filter details:'
+        $script:FilterRedirectedStorageHtml | Should -Match '\$filterName = .*&lt;filtername&gt;'
+        $script:FilterRedirectedStorageHtml | Should -Match 'Get-CimInstance Win32_SystemDriver -Filter'
+        $script:FilterRedirectedStorageHtml | Should -Match 'Get-ItemProperty -LiteralPath \$servicePath'
+        $script:FilterRedirectedStorageHtml | Should -Match 'Select-Object DisplayName, ImagePath, Start, SupportedFeatures'
+        $script:FilterRedirectedStorageHtml | Should -Match 'Treat <code>SupportedFeatures</code> as collected evidence; confirm its meaning and product support with the driver owner or vendor\.'
         $script:FilterRedirectedStorageHtml | Should -Match 'Id=5120,5142'
         $script:FilterRedirectedStorageHtml | Should -Match 'Do not unload or remove a filter based only on this report'
         $script:DegradedStorageHtml | Should -Not -Match '<strong>Incompatible file-system filter reported:</strong>'
@@ -1662,16 +1731,19 @@ Describe 'HTML fleet report usability' {
         $script:RenderedHtml | Should -Not -Match '>2 / 0<'
         $script:RenderedHtml | Should -Match "Stale attached AVHDX layers \(&ge;24h\)</div><div><span class='warnval'>2</span></div>"
         $script:RenderedHtml | Should -Match "Snapshot/layer representation</div><div><span class='warnval'>MISMATCH"
+        $script:RenderedHtml | Should -Match "Oldest snapshot object / AVHDX timestamps</div><div><span class='warnval'>DIVERGENT - oldest snapshot object 2026-07-15 21:41:33Z; oldest AVHDX file 2026-06-21 21:37:32Z; difference 576\.1 h"
+        $script:RenderedHtml | Should -Match '<th>Oldest snapshot<br>object age</th>'
         $script:RenderedHtml | Should -Match '2 stale attached AVHDX layer\(s\)'
         $script:RenderedHtml | Should -Match 'Attached VHD chain evidence \(3 layer\(s\)\)'
         $script:RenderedHtml | Should -Match "<div class='chain-scroll'><table class='chain-evidence'>"
-        $script:RenderedHtml | Should -Match '<th>Layer</th><th>Role</th><th>Layer file</th>'
+        $script:RenderedHtml | Should -Match "<th class='num'>Layer</th><th>Role</th><th>Layer file</th>"
         $script:RenderedHtml | Should -Match "<tr class='chain-group'><th colspan='9'>Attached chain: <code>TEST-VM-STALE-LAYER_OS-CURRENT\.avhdx</code>"
         $script:RenderedHtml | Should -Match ">Active \(top\)</td><td class='chain-file'>TEST-VM-STALE-LAYER_OS-CURRENT\.avhdx</td>"
         $script:RenderedHtml | Should -Match ">Checkpoint</td><td class='chain-file'>TEST-VM-STALE-LAYER_OS-OLDER\.avhdx</td>"
         $script:RenderedHtml | Should -Match ">Base</td><td class='chain-file'>TEST-VM-STALE-LAYER_OS\.vhdx</td>"
-        $script:RenderedHtml | Should -Match '<th>Checkpoint age</th><th>Last activity</th><th>Checkpoint stale</th>'
+        $script:RenderedHtml | Should -Match "<th class='num ckptage'>AVHDX file age</th><th class='num ckptage'>Last activity</th><th>Checkpoint stale</th>"
         $script:RenderedHtml | Should -Match '<summary>Full path and parent-path evidence</summary>'
+        $script:RenderedHtml | Should -Match '<td><code>n/a \(base\)</code></td>'
         $script:RenderedHtml | Should -Match "<span class='warnval'>74 h<br>3\.1 d</span>.*0\.1 h<br>0 d.*<span class='warnval'>YES</span>"
         $script:RenderedHtml | Should -Match 'class=''num ckptage''>n/a</td><td class=''num ckptage''>98 h<br>4\.1 d<br><span class="muted">.*?</span></td><td>n/a \(base\)</td>'
     }
@@ -1691,6 +1763,7 @@ Describe 'HTML fleet report usability' {
             -ReportGenerationTime '00:00:01' -ClusterNodeCount 2 -ClusterCsvCount 1
 
         $html | Should -Match '<td class=''ckptname''>Root</td>.*<td>n/a \(root\)</td>'
+        $html | Should -Match "<th class='num ckptage'>Snapshot object age</th>"
         $html | Should -Match '<td class=''ckptname''>Child</td>.*<td>Root</td>'
         $html | Should -Match '<td class=''ckptname''>Unknown</td>.*<td>Unavailable</td>'
     }
@@ -2362,6 +2435,22 @@ Describe 'Checkpoint staleness assessment' {
         $assessment.StaleAttachedLayerCount | Should -Be 2
         $assessment.StaleSnapshotCount | Should -Be 1
         $assessment.SnapshotLayerMismatch | Should -BeFalse
+        $assessment.SnapshotLayerTimestampDivergence | Should -BeFalse
+        $assessment.OldestTimestampDeltaHours | Should -Be 0
+    }
+
+    It 'reports divergent oldest snapshot-object and AVHDX-file timestamps independently' {
+        $assessment = Get-CheckpointStalenessAssessment -DiskReports @(
+            [pscustomobject]@{ Chain = @([pscustomobject]@{ Type = 'Differencing'; Created = $script:AssessmentNow.AddDays(-37.6) }) }
+            [pscustomobject]@{ Chain = @([pscustomobject]@{ Type = 'Differencing'; Created = $script:AssessmentNow.AddDays(-37.6) }) }
+        ) -Snapshots @([pscustomobject]@{ CreationTimeUtc = $script:AssessmentNow.AddDays(-13.6) }) `
+            -StaleHours 24 -NowUtc $script:AssessmentNow
+
+        $assessment.SnapshotLayerMismatch | Should -BeFalse
+        $assessment.SnapshotLayerTimestampDivergence | Should -BeTrue
+        $assessment.OldestTimestampDeltaHours | Should -Be 576
+        $assessment.OldestSnapshotUtc | Should -Be $script:AssessmentNow.AddDays(-13.6).ToUniversalTime()
+        $assessment.OldestAttachedLayerUtc | Should -Be $script:AssessmentNow.AddDays(-37.6).ToUniversalTime()
     }
 
     It 'counts an old checkpoint layer beneath a recently written active top layer' {
@@ -3422,6 +3511,18 @@ Describe 'Virtual disk housekeeping classification' {
         $result.HealthVerdictImpact | Should -BeFalse
     }
 
+    It 'retains the unattached differencing category for an AVHDX in a VM-associated folder' {
+        $result = Get-VirtualDiskHousekeepingClassification `
+            -Path 'C:\TEST\CSV01\TEST-VM-01\detached.avhdx' -Owners @() `
+            -VMAssociatedFolders @([pscustomobject]@{ VMName = 'TEST-VM-01'; Path = 'C:\TEST\CSV01\TEST-VM-01' }) `
+            -CoverageComplete $true -ImageLibraryPathPatterns $script:ImageLibraryPathPatterns
+
+        $result.Classification | Should -Be 'UnattachedDifferencingCandidate'
+        $result.PlacementReason | Should -BeNullOrEmpty
+        $result.AssociatedVMs | Should -Be @('TEST-VM-01')
+        $result.HealthVerdictImpact | Should -BeFalse
+    }
+
     It 'distinguishes an authoritative owner from a different VM-associated folder' {
         $result = Get-VirtualDiskHousekeepingClassification `
             -Path 'C:\TEST\CSV01\FOLDER-VM\attached.vhdx' -Owners @('OWNER-VM') `
@@ -3432,6 +3533,21 @@ Describe 'Virtual disk housekeeping classification' {
         $result.PlacementReason | Should -Be 'ReferencedOwnerFolderMismatch'
         $result.Owners | Should -Be @('OWNER-VM')
         $result.AssociatedVMs | Should -Be @('FOLDER-VM')
+    }
+
+    It 'allows an attached disk when a shared folder is associated with its owner and another VM' {
+        $sharedPath = 'C:\TEST\CSV01\arc-rp-storage'
+        $result = Get-VirtualDiskHousekeepingClassification `
+            -Path "$sharedPath\OWNER-VM-OSDisk.vhdx" -Owners @('OWNER-VM') `
+            -VMAssociatedFolders @(
+                [pscustomobject]@{ VMName = 'OWNER-VM'; Path = $sharedPath }
+                [pscustomobject]@{ VMName = 'SIBLING-VM'; Path = $sharedPath }
+            ) -CoverageComplete $true -ImageLibraryPathPatterns $script:ImageLibraryPathPatterns
+
+        $result.Classification | Should -Be 'AttachedVirtualDisk'
+        $result.PlacementReason | Should -BeNullOrEmpty
+        $result.Owners | Should -Be @('OWNER-VM')
+        $result.AssociatedVMs | Should -Be @('OWNER-VM', 'SIBLING-VM')
     }
 
     It 'allows an attached disk outside detected VM folders' {
@@ -3558,7 +3674,8 @@ Describe 'Virtual disk housekeeping classification' {
         $readme = Get-Content -LiteralPath (Join-Path (Split-Path $PSScriptRoot -Parent) 'README.md') -Raw
         $readme | Should -Match '(?m)^## Cluster storage housekeeping\r?$'
         $readme | Should -Match 'Placement inconsistency.+authoritative VM or snapshot reference'
-        $readme | Should -Match 'disk referenced by one VM is located inside a folder associated with a different VM'
+        $readme | Should -Match 'none of the VMs associated with the containing folder is an authoritative owner'
+        $readme | Should -Match 'AKS Arc RP workload directory shared by its control-plane and worker VMs'
         $readme | Should -Match 'Filename tokens are never treated as ownership evidence'
         $readme | Should -Match 'attached disk outside all detected VM folders is allowed'
         $readme | Should -Match 'Filter out as VM image.+only.+Unattached base disk candidate'
@@ -3662,6 +3779,31 @@ Describe 'Storage Health Service fault classification' {
             Get-StorageHealthSummary -Snapshot $snapshot | Should -Be 'Degraded'
             $snapshot.HealthFaults = @()
             Get-StorageHealthSummary -Snapshot $snapshot | Should -Be 'Healthy'
+        }
+    }
+
+    It 'preserves a combined incompatible-filter and ReFS reason as abnormal CSV evidence' {
+        InModuleScope Get-HyperVVMCheckpointHealth.Storage {
+            function Get-StorageJob { @() }
+            function Get-VirtualDisk { @() }
+            function Get-PhysicalDisk { @() }
+            function Get-StorageSubSystem { [pscustomobject]@{ FriendlyName = 'S2D'; HealthStatus = 'Healthy' } }
+            function Get-HealthFault { @() }
+            function Get-ClusterSharedVolumeState {
+                [pscustomobject]@{
+                    Node = 'TEST-NODE-01'
+                    VolumeFriendlyName = 'UserStorage_1'
+                    StateInfo = 'FileSystemRedirected'
+                    BlockRedirectedIOReason = 'NotBlockRedirected'
+                    FileSystemRedirectedIOReason = 'IncompatibleFileSystemFilter, FileSystemReFs'
+                }
+            }
+
+            $result = Get-ClusterStorageHealthSnapshot -TargetNode $env:COMPUTERNAME
+
+            $result.Summary | Should -Be 'Degraded'
+            @($result.CsvRedirected).Count | Should -Be 1
+            $result.CsvRedirected[0].FsReason | Should -Be 'IncompatibleFileSystemFilter, FileSystemReFs'
         }
     }
 
