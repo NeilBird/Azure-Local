@@ -256,7 +256,7 @@ function ConvertTo-VMCheckpointAuditHtml {
   th,td{padding:9px 11px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top;overflow-wrap:break-word}
   th{background:var(--panel2);color:#cbd5e1;font-weight:600;white-space:normal}
   tbody tr:hover{background:#22304a}
-  td.num{text-align:right;font-variant-numeric:tabular-nums}
+    th.num,td.num{text-align:right;font-variant-numeric:tabular-nums}
   /* VM name / node cells must NOT wrap (a wrapped long VM name was unreadable). The global
      'code' rule breaks long words, so override it inside these cells. */
   td.nm{white-space:nowrap}
@@ -369,6 +369,7 @@ function ConvertTo-VMCheckpointAuditHtml {
      stacked values ('202.2 h' over '8.4 d'); ckptage keeps each value on ONE line (never split
      mid-value onto '202.2' + 'h'). ckptname caps the checkpoint Name column a little (max-width) so a
      long checkpoint name wraps slightly earlier, freeing the small amount of width the Age column needs. */
+  th.ckptage,td.ckptage{text-align:center}
   td.ckptage{white-space:nowrap}
   td.ckptname{max-width:300px;overflow-wrap:anywhere}
     .chain-scroll{width:100%;max-width:100%;overflow-x:auto}
@@ -1300,7 +1301,7 @@ $eventFloodExecSummaryLi
         }
         # Checkpoints table.
         if ($ckptCount -gt 0) {
-            [void]$sb.Append("  <details open><summary>Checkpoints ($ckptCount)</summary><p class='muted'><strong>Snapshot object age:</strong> measured from <code>Get-VMSnapshot.CreationTime</code>. Hyper-V can expose a timestamp that differs from the creation time of the attached AVHDX files; compare the chain evidence below.</p><table><thead><tr><th>Name</th><th>Type</th><th>Purpose</th><th>Created (UTC)</th><th>Snapshot object age</th><th>Stale</th><th>Parent</th></tr></thead><tbody>")
+            [void]$sb.Append("  <details open><summary>Checkpoints ($ckptCount)</summary><p class='muted'><strong>Snapshot object age:</strong> measured from <code>Get-VMSnapshot.CreationTime</code>. Hyper-V can expose a timestamp that differs from the creation time of the attached AVHDX files; compare the chain evidence below.</p><table><thead><tr><th>Name</th><th>Type</th><th>Purpose</th><th>Created (UTC)</th><th class='num ckptage'>Snapshot object age</th><th>Stale</th><th>Parent</th></tr></thead><tbody>")
             foreach ($c in @($rd.Checkpoints | Sort-Object AgeHrs -Descending)) {
                 # Stale YES is amber (matches the summary table's stale-count colour); NO stays plain.
                 $staleTxt = if ($c.Stale) { "<span class='warnval'>YES</span>" } else { 'NO' }
@@ -1315,7 +1316,7 @@ $eventFloodExecSummaryLi
         # Get-VMSnapshot exposes no corresponding named checkpoint.
         $attachedVhdLayers = if ($rd.PSObject.Properties['AttachedVhdLayers']) { @($rd.AttachedVhdLayers) } else { @() }
         if (@($attachedVhdLayers | Where-Object { $_.Type -eq 'Differencing' }).Count -gt 0) {
-            [void]$sb.Append("  <details open><summary>Attached VHD chain evidence ($(@($attachedVhdLayers).Count) layer(s))</summary><div class='chain-scroll'><table class='chain-evidence'><thead><tr><th>Layer</th><th>Role</th><th>Layer file</th><th>Type</th><th>Size (GB)</th><th>Created (UTC)</th><th>AVHDX file age</th><th>Last activity</th><th>Checkpoint stale</th></tr></thead><tbody>")
+            [void]$sb.Append("  <details open><summary>Attached VHD chain evidence ($(@($attachedVhdLayers).Count) layer(s))</summary><div class='chain-scroll'><table class='chain-evidence'><thead><tr><th class='num'>Layer</th><th>Role</th><th>Layer file</th><th>Type</th><th class='num'>Size (GB)</th><th>Created (UTC)</th><th class='num ckptage'>AVHDX file age</th><th class='num ckptage'>Last activity</th><th>Checkpoint stale</th></tr></thead><tbody>")
             $previousChainName = $null
             foreach ($layer in $attachedVhdLayers) {
                 $checkpointStale = [bool](Get-OptionalPropertyValue $layer 'CheckpointStale' (Get-OptionalPropertyValue $layer 'Stale' $false))

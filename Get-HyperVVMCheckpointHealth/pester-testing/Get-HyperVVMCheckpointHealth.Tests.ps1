@@ -1736,12 +1736,12 @@ Describe 'HTML fleet report usability' {
         $script:RenderedHtml | Should -Match '2 stale attached AVHDX layer\(s\)'
         $script:RenderedHtml | Should -Match 'Attached VHD chain evidence \(3 layer\(s\)\)'
         $script:RenderedHtml | Should -Match "<div class='chain-scroll'><table class='chain-evidence'>"
-        $script:RenderedHtml | Should -Match '<th>Layer</th><th>Role</th><th>Layer file</th>'
+        $script:RenderedHtml | Should -Match "<th class='num'>Layer</th><th>Role</th><th>Layer file</th>"
         $script:RenderedHtml | Should -Match "<tr class='chain-group'><th colspan='9'>Attached chain: <code>TEST-VM-STALE-LAYER_OS-CURRENT\.avhdx</code>"
         $script:RenderedHtml | Should -Match ">Active \(top\)</td><td class='chain-file'>TEST-VM-STALE-LAYER_OS-CURRENT\.avhdx</td>"
         $script:RenderedHtml | Should -Match ">Checkpoint</td><td class='chain-file'>TEST-VM-STALE-LAYER_OS-OLDER\.avhdx</td>"
         $script:RenderedHtml | Should -Match ">Base</td><td class='chain-file'>TEST-VM-STALE-LAYER_OS\.vhdx</td>"
-        $script:RenderedHtml | Should -Match '<th>AVHDX file age</th><th>Last activity</th><th>Checkpoint stale</th>'
+        $script:RenderedHtml | Should -Match "<th class='num ckptage'>AVHDX file age</th><th class='num ckptage'>Last activity</th><th>Checkpoint stale</th>"
         $script:RenderedHtml | Should -Match '<summary>Full path and parent-path evidence</summary>'
         $script:RenderedHtml | Should -Match '<td><code>n/a \(base\)</code></td>'
         $script:RenderedHtml | Should -Match "<span class='warnval'>74 h<br>3\.1 d</span>.*0\.1 h<br>0 d.*<span class='warnval'>YES</span>"
@@ -1763,6 +1763,7 @@ Describe 'HTML fleet report usability' {
             -ReportGenerationTime '00:00:01' -ClusterNodeCount 2 -ClusterCsvCount 1
 
         $html | Should -Match '<td class=''ckptname''>Root</td>.*<td>n/a \(root\)</td>'
+        $html | Should -Match "<th class='num ckptage'>Snapshot object age</th>"
         $html | Should -Match '<td class=''ckptname''>Child</td>.*<td>Root</td>'
         $html | Should -Match '<td class=''ckptname''>Unknown</td>.*<td>Unavailable</td>'
     }
