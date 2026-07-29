@@ -2815,11 +2815,7 @@ function Invoke-VMCheckpointAudit {
                 $associatedVmText = if (@($classification.AssociatedVMs).Count -gt 0) { @($classification.AssociatedVMs) -join ', ' } else { 'none' }
                 $observation = switch ($classification.Classification) {
                     'PlacementInconsistency'          {
-                        if ($classification.PlacementReason -eq 'UnreferencedInVMAssociatedFolder') {
-                            "VM owner(s): none. Folder-associated VM(s): $associatedVmText. No VM or snapshot inventory references this virtual disk under complete coverage. Filename text is not used as ownership evidence: $($diskFile.FullName)"
-                        } else {
-                            "VM owner(s): $ownerText. Folder-associated VM(s): $associatedVmText. The authoritative VM reference and detected storage-folder association differ. Filename text is not used as ownership evidence: $($diskFile.FullName)"
-                        }
+                        "VM owner(s): $ownerText. Folder-associated VM(s): $associatedVmText. The authoritative VM reference and detected storage-folder association differ. Filename text is not used as ownership evidence: $($diskFile.FullName)"
                     }
                     'UnattachedDifferencingCandidate' { "No VM or snapshot chain references this AVHDX under complete coverage: $($diskFile.FullName)" }
                     'UnattachedVhdSetCandidate'       { "No VM or snapshot inventory references this VHDS under complete coverage: $($diskFile.FullName)" }
@@ -2827,11 +2823,7 @@ function Invoke-VMCheckpointAudit {
                 }
                 $review = switch ($classification.Classification) {
                     'PlacementInconsistency'          {
-                        if ($classification.PlacementReason -eq 'UnreferencedInVMAssociatedFolder') {
-                            'Confirm whether this unreferenced disk is a required image, retired workload disk, backup/live-mount artifact, or intentionally retained data. Verify its history with the VM and backup owners. Do not attach, move, rename, or delete it based only on this report.'
-                        } else {
-                            'Confirm whether the authoritative VM reference and the different VM-associated storage folder are intentional. Review the VM configuration and storage layout with the VM, backup, and storage owners. Do not move or rename the file based only on this report.'
-                        }
+                        'Confirm whether the authoritative VM reference and the different VM-associated storage folder are intentional. Review the VM configuration and storage layout with the VM, backup, and storage owners. Do not move or rename the file based only on this report.'
                     }
                     'UnattachedDifferencingCandidate' { 'Confirm whether this unreferenced differencing disk contains required recovery data with the VM and backup owners. Do not merge, move, or delete the file based only on this report.' }
                     'UnattachedVhdSetCandidate'       { 'Confirm whether this unreferenced VHD Set is still required by a guest cluster with the VM, backup, and storage owners. Do not modify the VHDS or its Hyper-V-managed files based only on this report.' }

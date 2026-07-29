@@ -282,15 +282,11 @@ function Get-VirtualDiskHousekeepingClassification {
         'UnattachedDifferencingCandidate'
     } elseif ($extension -eq '.vhds') {
         'UnattachedVhdSetCandidate'
-    } elseif ($associatedRows.Count -gt 0) {
-        'PlacementInconsistency'
     } else {
         'UnattachedBaseDiskCandidate'
     }
     $placementReason = if ($classification -ne 'PlacementInconsistency') {
         ''
-    } elseif ($ownerSet.Count -eq 0 -and $associatedRows.Count -gt 0) {
-        'UnreferencedInVMAssociatedFolder'
     } else {
         'ReferencedOwnerFolderMismatch'
     }
