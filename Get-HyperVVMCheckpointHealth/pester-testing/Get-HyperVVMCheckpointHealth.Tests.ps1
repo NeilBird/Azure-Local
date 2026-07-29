@@ -3450,6 +3450,18 @@ Describe 'Virtual disk housekeeping classification' {
         $result.HealthVerdictImpact | Should -BeFalse
     }
 
+    It 'retains the unattached differencing category for an AVHDX in a VM-associated folder' {
+        $result = Get-VirtualDiskHousekeepingClassification `
+            -Path 'C:\TEST\CSV01\TEST-VM-01\detached.avhdx' -Owners @() `
+            -VMAssociatedFolders @([pscustomobject]@{ VMName = 'TEST-VM-01'; Path = 'C:\TEST\CSV01\TEST-VM-01' }) `
+            -CoverageComplete $true -ImageLibraryPathPatterns $script:ImageLibraryPathPatterns
+
+        $result.Classification | Should -Be 'UnattachedDifferencingCandidate'
+        $result.PlacementReason | Should -BeNullOrEmpty
+        $result.AssociatedVMs | Should -Be @('TEST-VM-01')
+        $result.HealthVerdictImpact | Should -BeFalse
+    }
+
     It 'distinguishes an authoritative owner from a different VM-associated folder' {
         $result = Get-VirtualDiskHousekeepingClassification `
             -Path 'C:\TEST\CSV01\FOLDER-VM\attached.vhdx' -Owners @('OWNER-VM') `

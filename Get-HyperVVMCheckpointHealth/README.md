@@ -660,6 +660,7 @@ Create the GitHub release with tag `Get-HyperVVMCheckpointHealth-v0.2.30` and up
 - Distinguishes HRL-only investigations from material Replica measurement breaches, so advisory measurements below their effective limits are no longer described as exceeding those limits.
 - Clarifies whether the per-VM Events CSV contains verdict-driving event evidence or non-driving context.
 - Labels the empty parent-path cell for each terminal base VHD as `n/a (base)` in expanded chain evidence.
+- Restores ownerless `.avhdx` files to **Unattached differencing disk candidate** even when they reside inside a VM-associated folder; genuine referenced-owner/folder mismatches remain **Placement inconsistency**.
 
 ### Version 0.2.29
 

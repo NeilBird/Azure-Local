@@ -236,7 +236,7 @@ function Get-VirtualDiskHousekeepingClassification {
     })
     $ownerSet = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
     foreach ($owner in @($Owners)) { if ($owner) { [void]$ownerSet.Add($owner) } }
-    $folderOwnerMismatch = @($associatedRows | Where-Object { $_.VMName -and -not $ownerSet.Contains([string]$_.VMName) }).Count -gt 0
+    $folderOwnerMismatch = $ownerSet.Count -gt 0 -and @($associatedRows | Where-Object { $_.VMName -and -not $ownerSet.Contains([string]$_.VMName) }).Count -gt 0
     # Azure Local ImageStore paths and versioned ARB appliance images are always excluded from
     # housekeeping, even when policy replaces the configurable pattern list with an empty array.
     $automaticImageStorePattern = '(?i)[\\/]imagestore(?:[\\/]|$)'
@@ -260,7 +260,7 @@ function Get-VirtualDiskHousekeepingClassification {
         'ExcludedImageLibraryAsset'
     } elseif ($extension -eq '.avhdx' -and $ownerSet.Count -eq 0 -and $vhdSetManagedFolder.Count -gt 0) {
         'VhdSetManagedAsset'
-    } elseif ($folderOwnerMismatch -or (($ownerSet.Count -eq 0) -and ($associatedRows.Count -gt 0))) {
+    } elseif ($folderOwnerMismatch) {
         'PlacementInconsistency'
     } elseif ($ownerSet.Count -gt 0) {
         'AttachedVirtualDisk'
@@ -268,6 +268,8 @@ function Get-VirtualDiskHousekeepingClassification {
         'UnattachedDifferencingCandidate'
     } elseif ($extension -eq '.vhds') {
         'UnattachedVhdSetCandidate'
+    } elseif ($associatedRows.Count -gt 0) {
+        'PlacementInconsistency'
     } else {
         'UnattachedBaseDiskCandidate'
     }

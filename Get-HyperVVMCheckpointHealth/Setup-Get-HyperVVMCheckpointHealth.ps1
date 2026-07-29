@@ -32,7 +32,7 @@ $ErrorActionPreference = 'Stop'
 
 $moduleName = 'Get-HyperVVMCheckpointHealth'
 $version = '0.2.30'
-$expectedSha256 = 'c4c7db83f47f3499ef705e4544e7fdabe9fd9f81c3f2b89f7a90b5dc87c42ab7'
+$expectedSha256 = 'ec0710bfeb8cf28509f1a73dada3fd9c4a5c6b0aa0ae1542b9d30719342661c8'
 $expectedAssetName = "$moduleName-$version.zip"
 
 if (-not $ZipPath) {
