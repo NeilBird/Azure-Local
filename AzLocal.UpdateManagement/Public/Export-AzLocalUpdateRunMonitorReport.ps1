@@ -293,11 +293,14 @@ function Export-AzLocalUpdateRunMonitorReport {
         }
     }
 
-    # v0.8.90: -SkipWhenIdle fast path. Run ONE cheap fleet-wide ARG probe
-    # ("is any update run InProgress?"). If nothing is in flight, emit the IDLE
-    # result immediately and skip the per-cluster inventory + update-run sweep.
-    # Fail-safe: if the probe itself errors, do NOT skip (treat as in-flight)
-    # so a transient ARG hiccup never hides a genuinely active fleet.
+    $inventoryForTags = $null
+    $inventory = $null
+
+    # v0.8.90: -SkipWhenIdle fast path. Run one cheap fleet-wide ARG probe
+    # ("is any update run InProgress?"). When ARG says idle, inspect inventory
+    # for recent attempt tags before skipping: ARG can omit the exact nested run
+    # that the direct ARM reconciliation below is designed to recover.
+    # Fail-safe: if either probe errors, run the full sweep.
     if ($SkipWhenIdle) {
         $anyInFlight = $true
         try {
@@ -308,28 +311,67 @@ function Export-AzLocalUpdateRunMonitorReport {
             $anyInFlight = $true
         }
         if (-not $anyInFlight) {
-            Write-Host 'SkipWhenIdle: no update runs in flight across the fleet - skipping full sweep.'
-            $idleResult = Complete-MonitorIdle -StatusLine ':white_circle: **Fleet Status: IDLE** - no update runs in flight (full sweep skipped via -SkipWhenIdle)'
-            if ($PassThru) { return $idleResult }
-            return
+            $hasRecentAttempt = $false
+            try {
+                if ($Scope -eq 'by-update-ring' -and $UpdateRing) {
+                    $inventoryForTags = @(Get-AzLocalClusterInventory -ScopeByUpdateRingTag -UpdateRingValue $UpdateRing -PassThru)
+                }
+                else {
+                    $inventory = @(Get-AzLocalClusterInventory -PassThru)
+                    $inventoryForTags = @($inventory)
+                }
+                if ($RecentAttemptWindowHours -gt 0) {
+                    $attemptCutoff = $nowUtc.AddHours(-$RecentAttemptWindowHours)
+                    foreach ($inventoryRow in $inventoryForTags) {
+                        $tagBag = if ($inventoryRow -and $inventoryRow.PSObject.Properties['tags']) { $inventoryRow.tags } else { $null }
+                        $tagValue = Get-TagValue -Tags $tagBag -Name $script:UpdateLastAttemptTagName
+                        if ([string]::IsNullOrWhiteSpace($tagValue)) { continue }
+                        $attempt = ConvertFrom-AzLocalUpdateLastAttemptTagValue -Value $tagValue
+                        if ($attempt -and $attempt.Outcome -in @('UpdateStarted', 'UpdateRetried') -and
+                            $attempt.UpdateName -and $attempt.AttemptUtc -ge $attemptCutoff) {
+                            $hasRecentAttempt = $true
+                            break
+                        }
+                    }
+                }
+            }
+            catch {
+                Write-Warning ("SkipWhenIdle inventory/tag probe failed; running full sweep. {0}" -f $_.Exception.Message)
+                $hasRecentAttempt = $true
+                $inventoryForTags = $null
+                $inventory = $null
+            }
+
+            if (-not $hasRecentAttempt) {
+                Write-Host 'SkipWhenIdle: ARG reports no in-flight runs and inventory has no recent update attempts - skipping update-run sweep.'
+                $idleResult = Complete-MonitorIdle -StatusLine ':white_circle: **Fleet Status: IDLE** - no in-flight runs or recent update attempts (update-run sweep skipped via -SkipWhenIdle)'
+                if ($PassThru) { return $idleResult }
+                return
+            }
+            Write-Host 'SkipWhenIdle: ARG reports no in-flight runs, but inventory has a recent update attempt - running full ARM reconciliation sweep.'
         }
-        Write-Host 'SkipWhenIdle: update run(s) in flight - running full sweep.'
+        else {
+            Write-Host 'SkipWhenIdle: update run(s) in flight - running full sweep.'
+        }
     }
 
     # ---- Query runs --------------------------------------------------------
     # v0.8.82: always fetch inventory (both scope paths) so we have per-cluster
     # tags available for the UpdateLastAttempt reconciliation pass. Previously
     # the by-update-ring path skipped the inventory call entirely.
-    $inventoryForTags = $null
     $runs = @()
     if ($Scope -eq 'by-update-ring' -and $UpdateRing) {
         Write-Host "Scope: UpdateRing = $UpdateRing"
-        $inventoryForTags = @(Get-AzLocalClusterInventory -ScopeByUpdateRingTag -UpdateRingValue $UpdateRing -PassThru)
+        if ($null -eq $inventoryForTags) {
+            $inventoryForTags = @(Get-AzLocalClusterInventory -ScopeByUpdateRingTag -UpdateRingValue $UpdateRing -PassThru)
+        }
         $runs = @(Get-AzLocalUpdateRuns -ScopeByUpdateRingTag -UpdateRingValue $UpdateRing -Latest -PassThru -SkipSideloadedReset)
     }
     else {
         Write-Host "Scope: all clusters (via inventory)"
-        $inventory = Get-AzLocalClusterInventory -PassThru
+        if ($null -eq $inventory) {
+            $inventory = @(Get-AzLocalClusterInventory -PassThru)
+        }
         if (-not $inventory -or @($inventory).Count -eq 0) {
             Write-Warning 'No clusters found in inventory.'
             $idleResult = Complete-MonitorIdle -StatusLine ':white_circle: **Fleet Status: IDLE** - no clusters found in inventory'
@@ -339,6 +381,101 @@ function Export-AzLocalUpdateRunMonitorReport {
         $resourceIds = @($inventory | Select-Object -ExpandProperty ResourceId)
         $runs = @(Get-AzLocalUpdateRuns -ClusterResourceIds $resourceIds -Latest -PassThru -SkipSideloadedReset)
         $inventoryForTags = @($inventory)
+    }
+
+    # ARG can omit nested updateRun resources even when the ARM endpoint and
+    # portal expose them. Reconcile recent UpdateStarted/UpdateRetried tags through ARM so
+    # those runs are monitored instead of reported as false attempt gaps.
+    if ($RecentAttemptWindowHours -gt 0 -and $inventoryForTags -and $inventoryForTags.Count -gt 0) {
+        $attemptCutoff = $nowUtc.AddHours(-$RecentAttemptWindowHours)
+        $argRunCount = @($runs).Count
+        $reconciliationCandidateCount = 0
+        $armEmptyCount = 0
+        $reconciliationFailureCount = 0
+        $runsByAttemptKey = @{}
+        foreach ($run in $runs) {
+            $runResourceId = if ($run.PSObject.Properties['ClusterResourceId']) { [string]$run.ClusterResourceId } else { '' }
+            $runUpdateName = if ($run.PSObject.Properties['UpdateName']) { [string]$run.UpdateName } else { '' }
+            if ($runResourceId -and $runUpdateName) {
+            $runsByAttemptKey[('{0}|{1}' -f $runResourceId.ToLowerInvariant(), $runUpdateName.ToLowerInvariant())] = $run
+            }
+        }
+        $recoveredRuns = [System.Collections.Generic.List[object]]::new()
+        foreach ($inventoryRow in $inventoryForTags) {
+            $tagBag = if ($inventoryRow -and $inventoryRow.PSObject.Properties['tags']) { $inventoryRow.tags } else { $null }
+            $tagValue = Get-TagValue -Tags $tagBag -Name $script:UpdateLastAttemptTagName
+            if ([string]::IsNullOrWhiteSpace($tagValue)) { continue }
+            $attempt = ConvertFrom-AzLocalUpdateLastAttemptTagValue -Value $tagValue
+            if (-not $attempt -or $attempt.Outcome -notin @('UpdateStarted', 'UpdateRetried') -or -not $attempt.UpdateName -or $attempt.AttemptUtc -lt $attemptCutoff) { continue }
+
+            $resourceId = if ($inventoryRow.PSObject.Properties['ResourceId']) { [string]$inventoryRow.ResourceId } else { '' }
+            if (-not $resourceId) { continue }
+            $runKey = '{0}|{1}' -f $resourceId.ToLowerInvariant(), ([string]$attempt.UpdateName).ToLowerInvariant()
+            $existingRun = if ($runsByAttemptKey.ContainsKey($runKey)) { $runsByAttemptKey[$runKey] } else { $null }
+            $existingRunCoversAttempt = $false
+            if ($existingRun -and $existingRun.PSObject.Properties['StartTime'] -and $existingRun.StartTime) {
+                [datetime]$existingStart = [datetime]::MinValue
+                if ([datetime]::TryParse([string]$existingRun.StartTime, [ref]$existingStart)) {
+                    $existingRunCoversAttempt = $existingStart.ToUniversalTime() -ge $attempt.AttemptUtc.AddMinutes(-5)
+                }
+            }
+            if (-not $existingRunCoversAttempt -and $existingRun -and
+                $existingRun.PSObject.Properties['LastUpdatedTime'] -and $existingRun.LastUpdatedTime) {
+                [datetime]$existingUpdated = [datetime]::MinValue
+                if ([datetime]::TryParse([string]$existingRun.LastUpdatedTime, [ref]$existingUpdated)) {
+                    $existingRunCoversAttempt = $existingUpdated.ToUniversalTime() -ge $attempt.AttemptUtc.AddMinutes(-5)
+                }
+            }
+            if ($existingRunCoversAttempt) { continue }
+
+            $reconciliationCandidateCount++
+            $attemptAge = $nowUtc - $attempt.AttemptUtc
+            $clusterName = if ($inventoryRow.PSObject.Properties['ClusterName']) { [string]$inventoryRow.ClusterName } else { '' }
+            Write-Verbose ("ARM reconciliation candidate: cluster='{0}', update='{1}', attemptAgeMinutes={2:N0}, ARG covering run=false." -f $clusterName, $attempt.UpdateName, $attemptAge.TotalMinutes)
+            try {
+                $armRuns = @(Get-AzLocalClusterUpdateRuns -resourceId $resourceId -updateNameFilter $attempt.UpdateName -apiVer $script:DefaultApiVersion)
+                $coveringRun = @($armRuns | Where-Object {
+                    $_ -and $_.PSObject.Properties['properties'] -and $_.properties -and
+                    (($_.properties.PSObject.Properties['timeStarted'] -and $_.properties.timeStarted -and
+                        ([datetime]$_.properties.timeStarted).ToUniversalTime() -ge $attempt.AttemptUtc.AddMinutes(-5)) -or
+                        ($_.properties.PSObject.Properties['lastUpdatedTime'] -and $_.properties.lastUpdatedTime -and
+                        ([datetime]$_.properties.lastUpdatedTime).ToUniversalTime() -ge $attempt.AttemptUtc.AddMinutes(-5)))
+                } | Sort-Object {
+                    if ($_.properties.PSObject.Properties['lastUpdatedTime'] -and $_.properties.lastUpdatedTime) {
+                        [datetime]$_.properties.lastUpdatedTime
+                    }
+                    else { [datetime]$_.properties.timeStarted }
+                } -Descending | Select-Object -First 1)
+                if ($coveringRun.Count -eq 0) {
+                    $armEmptyCount++
+                    Write-Verbose ("ARM reconciliation result: cluster='{0}', update='{1}', covering run=false, ARM rows={2}." -f $clusterName, $attempt.UpdateName, $armRuns.Count)
+                    continue
+                }
+
+                $recoveredRun = Format-AzLocalUpdateRun -run $coveringRun[0] -clusterName $clusterName -clusterResourceId $resourceId
+                $recoveredRuns.Add($recoveredRun) | Out-Null
+                $runsByAttemptKey[$runKey] = $recoveredRun
+                $runs = @($runs | Where-Object {
+                    $candidateResourceId = if ($_.PSObject.Properties['ClusterResourceId']) { [string]$_.ClusterResourceId } else { '' }
+                    $candidateUpdateName = if ($_.PSObject.Properties['UpdateName']) { [string]$_.UpdateName } else { '' }
+                    ('{0}|{1}' -f $candidateResourceId.ToLowerInvariant(), $candidateUpdateName.ToLowerInvariant()) -ne $runKey
+                })
+                Write-Warning ("Recovered update run for cluster '{0}' and update '{1}' through ARM because Resource Graph did not return it." -f $clusterName, $attempt.UpdateName)
+                Write-Verbose ("ARM reconciliation result: cluster='{0}', update='{1}', covering run=true, recoveredRun='{2}'." -f $clusterName, $attempt.UpdateName, $recoveredRun.RunId)
+            }
+            catch {
+                $reconciliationFailureCount++
+                Write-Warning ("ARM reconciliation failed for cluster '{0}' and update '{1}': {2}" -f $resourceId, $attempt.UpdateName, $_.Exception.Message)
+            }
+        }
+        if ($recoveredRuns.Count -gt 0) {
+            $runs = @($runs) + $recoveredRuns.ToArray()
+        }
+        $argScopeMode = Get-Variable -Name LastResourceGraphScopeMode -Scope Script -ValueOnly -ErrorAction SilentlyContinue
+        $argScopeCount = Get-Variable -Name LastResourceGraphScopeCount -Scope Script -ValueOnly -ErrorAction SilentlyContinue
+        $argRetryCount = Get-Variable -Name LastResourceGraphRetryCount -Scope Script -ValueOnly -ErrorAction SilentlyContinue
+        $argTruncated = Get-Variable -Name LastResourceGraphQueryTruncated -Scope Script -ValueOnly -ErrorAction SilentlyContinue
+        Write-Verbose ("Update-run reconciliation summary: inventoryClusters={0}, argRows={1}, candidates={2}, recoveredFromArm={3}, armWithoutCoveringRun={4}, failures={5}, argScopeMode='{6}', argScopeCount={7}, argRetries={8}, argTruncated={9}." -f @($inventoryForTags).Count, $argRunCount, $reconciliationCandidateCount, $recoveredRuns.Count, $armEmptyCount, $reconciliationFailureCount, $argScopeMode, $argScopeCount, $argRetryCount, $argTruncated)
     }
 
     # ---- Project + enrich rows --------------------------------------------
@@ -566,6 +703,16 @@ function Export-AzLocalUpdateRunMonitorReport {
                     }
                 }
             }
+            if (-not $hasCoveringRun -and $matchedRun -and $matchedRun.UpdateName -eq $parsed.UpdateName -and
+                $matchedRun.LastUpdatedUtc) {
+                [datetime]$ru = [datetime]::MinValue
+                if ([datetime]::TryParse([string]$matchedRun.LastUpdatedUtc, [ref]$ru)) {
+                    $runUpdatedUtc = [datetime]::SpecifyKind($ru, [DateTimeKind]::Utc)
+                    if ($runUpdatedUtc -ge $parsed.AttemptUtc.AddMinutes(-5)) {
+                        $hasCoveringRun = $true
+                    }
+                }
+            }
             if ($hasCoveringRun) { continue }
 
             $attemptGaps.Add([pscustomobject]@{
@@ -786,7 +933,7 @@ function Export-AzLocalUpdateRunMonitorReport {
     [void]$md.Add('')
     [void]$md.Add('| Metric | Count |')
     [void]$md.Add('|--------|-------|')
-    [void]$md.Add("| Clusters scoped | $($rows.Count) |")
+    [void]$md.Add("| Clusters scoped | $(@($inventoryForTags).Count) |")
     [void]$md.Add("| Update runs in flight | $($inFlight.Count) |")
     [void]$md.Add("| Step errored (progress.status == 'Error', state still InProgress) | $($stepErrored.Count) |")
     if ($StalledNoProgressHours -gt 0) {

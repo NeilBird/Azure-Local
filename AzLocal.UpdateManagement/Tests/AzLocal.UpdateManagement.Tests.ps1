@@ -532,6 +532,48 @@ Describe 'Module: AzLocal.UpdateManagement' {
             }
         }
 
+        It 'All GitHub Actions pipelines expose one-run diagnostics and publish variable-enabled transcripts for every trigger' {
+            $samplesDir = Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples\github-actions'
+            $yamls = @(Get-ChildItem -LiteralPath $samplesDir -Filter '*.yml' -File)
+            $yamls | Should -HaveCount 10
+            foreach ($yaml in $yamls) {
+                $content = Get-Content -LiteralPath $yaml.FullName -Raw
+                ([regex]::Matches($content, '(?m)^\s{6}diagnostics:\s*\r?$')).Count | Should -Be 1 -Because "$($yaml.Name) must expose one workflow_dispatch diagnostics input"
+                $content | Should -Match "(?ms)^\s{6}diagnostics:\s*.*?default:\s*'false'.*?options:\s*.*?'false'.*?'true'" -Because "$($yaml.Name) diagnostics must default off"
+                $content | Should -Match "DEBUG_VERBOSE:\s*\`$\{\{\s*vars\.DEBUG_VERBOSE\s*==\s*'true'\s*\|\|\s*\(github\.event_name\s*==\s*'workflow_dispatch'" -Because "$($yaml.Name) must let the repository variable enable scheduled runs while gating the input to workflow_dispatch"
+                $content | Should -Match 'Start-Transcript' -Because "$($yaml.Name) must capture the principal workload log"
+                $content | Should -Match "if:\s*always\(\)\s*&&\s*env\.DEBUG_VERBOSE\s*==\s*'true'" -Because "$($yaml.Name) must upload diagnostics after failed workloads too"
+                $content | Should -Match 'actions/upload-artifact@v5' -Because "$($yaml.Name) must publish a downloadable diagnostics artifact"
+                $content | Should -Match 'github\.run_id.*github\.run_attempt' -Because "$($yaml.Name) artifact name must identify the run attempt"
+                $content | Should -Match "retention-days:\s*\`$\{\{\s*fromJSON\(vars\.DEBUG_RETENTION_DAYS\s*\|\|\s*'14'\)\s*\}\}" -Because "$($yaml.Name) diagnostics retention must use DEBUG_RETENTION_DAYS with a 14-day fallback"
+            }
+        }
+
+        It 'All Azure DevOps pipelines expose one-run diagnostics and publish variable-enabled transcripts for every trigger' {
+            $samplesDir = Join-Path -Path $PSScriptRoot -ChildPath '..\Automation-Pipeline-Examples\azure-devops'
+            $yamls = @(Get-ChildItem -LiteralPath $samplesDir -Filter '*.yml' -File)
+            $yamls | Should -HaveCount 10
+            foreach ($yaml in $yamls) {
+                $content = Get-Content -LiteralPath $yaml.FullName -Raw
+                ([regex]::Matches($content, '(?m)^\s{2}- name:\s*diagnostics\s*\r?$')).Count | Should -Be 1 -Because "$($yaml.Name) must expose one queue-time diagnostics parameter"
+                $content | Should -Match "(?ms)- name:\s*diagnostics\s*.*?type:\s*boolean\s*.*?default:\s*false" -Because "$($yaml.Name) diagnostics must default off"
+                $content | Should -Match 'DEBUG_VERBOSE_SETTING:\s*\$\(DEBUG_VERBOSE\)' -Because "$($yaml.Name) must consume the shared DEBUG_VERBOSE setting"
+                $content | Should -Match "DEBUG_VERBOSE_SETTING\s*-eq\s*'true'\s*-or\s*\([\s\S]{0,180}?BUILD_REASON\s*-eq\s*'Manual'" -Because "$($yaml.Name) must let DEBUG_VERBOSE enable schedules while gating the parameter to manual runs"
+                $content | Should -Match 'Start-Transcript' -Because "$($yaml.Name) must capture the principal workload log"
+                $content | Should -Match "displayName:\s*'Publish verbose diagnostics'" -Because "$($yaml.Name) must publish a downloadable diagnostics artifact"
+                $content | Should -Match "condition:\s*and\(always\(\),\s*or\(eq\(variables\['DEBUG_VERBOSE'\],\s*'true'\)" -Because "$($yaml.Name) must publish scheduled variable-enabled diagnostics even after workload failure"
+                $content | Should -Match 'Build\.BuildId.*System\.JobAttempt' -Because "$($yaml.Name) artifact name must identify the run attempt"
+            }
+        }
+
+        It 'Monitor pipeline diagnostics force the full reconciliation sweep on both platforms' -ForEach @(
+            @{ Platform = 'github-actions'; Pattern = "INPUT_SKIP_WHEN_IDLE\s*-ne\s*'false'\s*-and\s*\`$env:DEBUG_VERBOSE\s*-ne\s*'true'" }
+            @{ Platform = 'azure-devops'; Pattern = "parameters\.skipWhenIdle.*-and\s*-not\s*\`$diagnosticsEnabled" }
+        ) {
+            $yamlPath = Join-Path -Path $PSScriptRoot -ChildPath "..\Automation-Pipeline-Examples\$Platform\monitor-updates.yml"
+            (Get-Content -LiteralPath $yamlPath -Raw) | Should -Match $Pattern -Because "$Platform diagnostics must bypass the idle short-circuit and collect ARM/ARG reconciliation evidence"
+        }
+
         It 'fleet-connectivity-status pipeline templates call Export-AzLocalFleetConnectivityStatusReport (v0.8.5 thin-YAML)' -ForEach @(
             @{ Platform = 'github-actions'; Path = '..\Automation-Pipeline-Examples\github-actions\fleet-connectivity-status.yml' }
             @{ Platform = 'azure-devops';   Path = '..\Automation-Pipeline-Examples\azure-devops\fleet-connectivity-status.yml' }
@@ -10639,7 +10681,9 @@ Describe 'v0.7.66 Artifact download names carry a UTC timestamp suffix' {
     # Every downloadable artifact must include either a GH outputs token
     # (steps.<id>.outputs.timestamp) or an ADO output variable
     # ($(<stamp>.artifactStamp)) so that re-running the same pipeline on the
-    # same day produces distinct zip filenames.
+    # same day produces distinct zip filenames. Diagnostic transcripts use the
+    # stronger platform run/build ID + attempt key because they publish under
+    # always() immediately after a workload failure, before timestamp steps run.
 
     BeforeAll {
         $script:examplesRoot = (Resolve-Path -Path (Join-Path $PSScriptRoot '..\Automation-Pipeline-Examples')).Path
@@ -10661,13 +10705,15 @@ Describe 'v0.7.66 Artifact download names carry a UTC timestamp suffix' {
                 if ($name -match '(?i)step\.\d+-') {
                     $offenders.Add("$($yml.Name): upload-artifact name '$name' still carries a legacy step.<digit>- prefix (must be removed to future-proof, v0.8.x+)")
                 }
-                if ($name -notmatch '\$\{\{\s*steps\.[^}]+\.outputs\.timestamp\s*\}\}') {
-                    $offenders.Add("$($yml.Name): upload-artifact name '$name' missing steps.<id>.outputs.timestamp suffix")
+                $hasTimestamp = $name -match '\$\{\{\s*steps\.[^}]+\.outputs\.timestamp\s*\}\}'
+                $hasDiagnosticRunKey = $name -match '-diagnostics_\$\{\{\s*github\.run_id\s*\}\}_\$\{\{\s*github\.run_attempt\s*\}\}'
+                if (-not $hasTimestamp -and -not $hasDiagnosticRunKey) {
+                    $offenders.Add("$($yml.Name): upload-artifact name '$name' missing a timestamp or diagnostics run-id/attempt suffix")
                 }
             }
         }
         $detail = if ($offenders.Count -gt 0) { $offenders -join [Environment]::NewLine } else { '(no offenders)' }
-        $offenders.Count | Should -Be 0 -Because "every actions/upload-artifact step must carry an azlocal-* name (no legacy step.X- prefix) with steps.<id>.outputs.timestamp. Findings:$([Environment]::NewLine)$detail"
+        $offenders.Count | Should -Be 0 -Because "every actions/upload-artifact step must carry an azlocal-* name (no legacy step.X- prefix) with a timestamp or diagnostics run-id/attempt key. Findings:$([Environment]::NewLine)$detail"
     }
 
     It 'Azure DevOps: every PublishBuildArtifacts / PublishPipelineArtifact uses a timestamped azlocal- name with no legacy step.X- prefix' {
@@ -10691,13 +10737,15 @@ Describe 'v0.7.66 Artifact download names carry a UTC timestamp suffix' {
                 # OR a cross-stage variable that ends in `ArtifactStamp)`, which is
                 # how `Step.7_apply-updates.yml` consumes the CheckReadiness stage's stamp
                 # via the `readinessArtifactStamp` mapped variable.
-                if ($name -notmatch '\$\(.+?[Aa]rtifactStamp\)') {
-                    $offenders.Add("$($yml.Name): ${key} '$name' missing a `$(...artifactStamp) suffix")
+                $hasTimestamp = $name -match '\$\(.+?[Aa]rtifactStamp\)'
+                $hasDiagnosticRunKey = $name -match '-diagnostics-\$\(Build\.BuildId\)-\$\(System\.JobAttempt\)'
+                if (-not $hasTimestamp -and -not $hasDiagnosticRunKey) {
+                    $offenders.Add("$($yml.Name): ${key} '$name' missing a timestamp or diagnostics build-id/job-attempt suffix")
                 }
             }
         }
         $detail = if ($offenders.Count -gt 0) { $offenders -join [Environment]::NewLine } else { '(no offenders)' }
-        $offenders.Count | Should -Be 0 -Because "every PublishBuildArtifacts/PublishPipelineArtifact ArtifactName must be azlocal-*_`$(stamp.artifactStamp) (no legacy step.X- prefix). Findings:$([Environment]::NewLine)$detail"
+        $offenders.Count | Should -Be 0 -Because "every PublishBuildArtifacts/PublishPipelineArtifact name must use a timestamp or diagnostics build-id/job-attempt key (no legacy step.X- prefix). Findings:$([Environment]::NewLine)$detail"
     }
 
     It 'GitHub Actions: legacy non-stamped artifact names are gone' {
@@ -17840,17 +17888,18 @@ Describe 'Thin-YAML Step.7: Export-AzLocalUpdateRunMonitorReport' {
         $summary | Should -Match 'Fleet Status: IDLE'
     }
 
-    It '-SkipWhenIdle with no in-flight runs: emits IDLE and SKIPS the per-cluster sweep' {
+    It '-SkipWhenIdle with no in-flight runs or recent attempts: emits IDLE and skips the update-run sweep' {
         $env:GITHUB_ACTIONS      = 'true'
         $env:GITHUB_OUTPUT       = $script:_s7_ghOutputFile
         $env:GITHUB_STEP_SUMMARY = $script:_s7_ghSummaryFile
         $global:_s7_payload = @{ Inventory = $script:_s7_inventory; Runs = @(); Now = $script:_s7_now; OutDir = $script:_s7_outDir }
         $result = InModuleScope AzLocal.UpdateManagement {
             Mock Test-AzLocalUpdateRunsInFlight { $false }
-            # The sweep MUST NOT run when the probe says nothing is in flight.
-            Mock Get-AzLocalClusterInventory { throw 'sweep should have been skipped (Get-AzLocalClusterInventory called)' }
+            Mock Get-AzLocalClusterInventory { @($global:_s7_payload.Inventory) }
             Mock Get-AzLocalUpdateRuns       { throw 'sweep should have been skipped (Get-AzLocalUpdateRuns called)' }
             Export-AzLocalUpdateRunMonitorReport -OutputDirectory $global:_s7_payload.OutDir -Now $global:_s7_payload.Now -SkipWhenIdle -PassThru
+            Should -Invoke Get-AzLocalClusterInventory -Times 1 -Exactly
+            Should -Invoke Get-AzLocalUpdateRuns -Times 0 -Exactly
         }
         $result.InFlightCount | Should -Be 0
         @($result.Rows).Count | Should -Be 0
@@ -17860,7 +17909,45 @@ Describe 'Thin-YAML Step.7: Export-AzLocalUpdateRunMonitorReport' {
         $outputs | Should -Match 'in_flight=0'
         $summary = Get-Content -Raw -LiteralPath $script:_s7_ghSummaryFile
         $summary | Should -Match 'Fleet Status: IDLE'
-        $summary | Should -Match 'full sweep skipped via -SkipWhenIdle'
+        $summary | Should -Match 'update-run sweep skipped via -SkipWhenIdle'
+    }
+
+    It '-SkipWhenIdle with ARG idle but a recent retry: runs ARM reconciliation instead of returning IDLE' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s7_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s7_ghSummaryFile
+        $attemptTime = $script:_s7_now.AddMinutes(-30)
+        $inventory = @([pscustomobject]@{
+            ClusterName = 'arg-missing-retry'
+            ResourceId  = '/subscriptions/s1/resourceGroups/rg1/providers/Microsoft.AzureStackHCI/clusters/arg-missing-retry'
+            tags        = @{ UpdateLastAttempt = ($attemptTime.ToString('yyyy-MM-ddTHH:mm:ssZ') + ';UpdateRetried;Solution12.2606.1003.205;Retry initiated successfully') }
+        })
+        $armRun = [pscustomobject]@{
+            id = ($inventory[0].ResourceId + '/updates/Solution12.2606.1003.205/updateRuns/run-reused')
+            name = 'run-reused'
+            properties = [pscustomobject]@{
+                state           = 'InProgress'
+                timeStarted     = $attemptTime.AddDays(-7).ToString('o')
+                lastUpdatedTime = $script:_s7_now.AddMinutes(-2).ToString('o')
+                progress        = [pscustomobject]@{ status = 'InProgress'; steps = @() }
+                location        = 'eastus'
+            }
+        }
+        $global:_s7_payload = @{ Inventory = $inventory; ArmRun = $armRun; Now = $script:_s7_now; OutDir = $script:_s7_outDir }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Test-AzLocalUpdateRunsInFlight { $false }
+            Mock Get-AzLocalClusterInventory { @($global:_s7_payload.Inventory) }
+            Mock Get-AzLocalUpdateRuns { @() }
+            Mock Get-AzLocalClusterUpdateRuns { @($global:_s7_payload.ArmRun) }
+            Export-AzLocalUpdateRunMonitorReport -OutputDirectory $global:_s7_payload.OutDir -Now $global:_s7_payload.Now -SkipWhenIdle -PassThru
+            Should -Invoke Get-AzLocalClusterInventory -Times 1 -Exactly
+            Should -Invoke Get-AzLocalUpdateRuns -Times 1 -Exactly
+            Should -Invoke Get-AzLocalClusterUpdateRuns -Times 1 -Exactly
+        }
+        $result.InFlightCount | Should -Be 1
+        $result.AttemptWithoutRunCount | Should -Be 0
+        @($result.Rows)[0].RunId | Should -Be 'run-reused'
+        (Get-Content -Raw -LiteralPath $script:_s7_ghSummaryFile) | Should -Not -Match 'Fleet Status: IDLE'
     }
 
     It '-SkipWhenIdle with an in-flight run: runs the FULL sweep (InFlightCount=1)' {
@@ -17893,7 +17980,7 @@ Describe 'Thin-YAML Step.7: Export-AzLocalUpdateRunMonitorReport' {
         $result.InFlightCount | Should -Be 1
         @($result.Rows).Count | Should -Be 1
         $summary = Get-Content -Raw -LiteralPath $script:_s7_ghSummaryFile
-        $summary | Should -Not -Match 'full sweep skipped via -SkipWhenIdle'
+        $summary | Should -Not -Match 'update-run sweep skipped via -SkipWhenIdle'
     }
 
     It '-SkipWhenIdle probe failure is FAIL-SAFE: runs the full sweep instead of skipping' {
@@ -17925,7 +18012,7 @@ Describe 'Thin-YAML Step.7: Export-AzLocalUpdateRunMonitorReport' {
         }
         $result.InFlightCount | Should -Be 1
         $summary = Get-Content -Raw -LiteralPath $script:_s7_ghSummaryFile
-        $summary | Should -Not -Match 'full sweep skipped via -SkipWhenIdle'
+        $summary | Should -Not -Match 'update-run sweep skipped via -SkipWhenIdle'
     }
 
     It 'Test-AzLocalUpdateRunsInFlight returns $true when the probe finds a row, $false when empty' {
@@ -17939,6 +18026,20 @@ Describe 'Thin-YAML Step.7: Export-AzLocalUpdateRunMonitorReport' {
             Test-AzLocalUpdateRunsInFlight
         }
         $idle | Should -BeFalse
+    }
+
+    It 'Get-AzLocalClusterUpdateRuns distinguishes an ARM read failure from an empty run collection' {
+        InModuleScope AzLocal.UpdateManagement {
+            Mock Invoke-AzRestJson {
+                [pscustomobject]@{ Ok = $false; Data = $null; Error = 'Forbidden: updateRuns/read denied' }
+            }
+            {
+                Get-AzLocalClusterUpdateRuns `
+                    -resourceId '/subscriptions/s1/resourceGroups/rg1/providers/Microsoft.AzureStackHCI/clusters/c1' `
+                    -updateNameFilter 'Solution12.2606.1003.205' `
+                    -apiVer '2025-10-01'
+            } | Should -Throw -ExpectedMessage '*updateRuns/read denied*'
+        }
     }
 
     It 'Single in-flight run within thresholds: InFlightCount=1, no warn/crit chips, status HEALTHY' {
@@ -18306,6 +18407,84 @@ Describe 'Thin-YAML Step.7: Export-AzLocalUpdateRunMonitorReport' {
             $r
         }
         $result.InFlightCount | Should -Be 1
+    }
+
+    It 'Recovers an ARG-missing update run through ARM and preserves a genuine attempt gap' {
+        $env:GITHUB_ACTIONS      = 'true'
+        $env:GITHUB_OUTPUT       = $script:_s7_ghOutputFile
+        $env:GITHUB_STEP_SUMMARY = $script:_s7_ghSummaryFile
+        $attemptTime = $script:_s7_now.AddMinutes(-30)
+        $inventory = @(
+            [pscustomobject]@{
+                ClusterName = 'arm-visible'
+                ResourceId  = '/subscriptions/s1/resourceGroups/rg1/providers/Microsoft.AzureStackHCI/clusters/arm-visible'
+                tags        = @{ UpdateLastAttempt = ($attemptTime.ToString('yyyy-MM-ddTHH:mm:ssZ') + ';UpdateStarted;Solution12.2604.1003.1006;Update initiated successfully') }
+            }
+            [pscustomobject]@{
+                ClusterName = 'truly-missing'
+                ResourceId  = '/subscriptions/s1/resourceGroups/rg2/providers/Microsoft.AzureStackHCI/clusters/truly-missing'
+                tags        = @{ UpdateLastAttempt = ($attemptTime.ToString('yyyy-MM-ddTHH:mm:ssZ') + ';UpdateStarted;Solution12.2604.1003.1006;Update initiated successfully') }
+            }
+            [pscustomobject]@{
+                ClusterName = 'resumed-original-start'
+                ResourceId  = '/subscriptions/s1/resourceGroups/rg3/providers/Microsoft.AzureStackHCI/clusters/resumed-original-start'
+                tags        = @{ UpdateLastAttempt = ($attemptTime.ToString('yyyy-MM-ddTHH:mm:ssZ') + ';UpdateRetried;Solution12.2604.1003.1006;Retry initiated successfully') }
+            }
+        )
+        $armRun = [pscustomobject]@{
+            id = ($inventory[0].ResourceId + '/updates/Solution12.2604.1003.1006/updateRuns/run-arm')
+            name = 'run-arm'
+            properties = [pscustomobject]@{
+                state           = 'InProgress'
+                timeStarted     = $attemptTime.AddMinutes(1).ToString('o')
+                lastUpdatedTime = $script:_s7_now.AddMinutes(-2).ToString('o')
+                progress        = [pscustomobject]@{ status = 'InProgress'; steps = @() }
+                location        = 'eastus'
+            }
+        }
+        $resumedArmRun = [pscustomobject]@{
+            id = ($inventory[2].ResourceId + '/updates/Solution12.2604.1003.1006/updateRuns/run-resumed')
+            name = 'run-resumed'
+            properties = [pscustomobject]@{
+                state           = 'Failed'
+                timeStarted     = $attemptTime.AddDays(-7).ToString('o')
+                lastUpdatedTime = $script:_s7_now.AddMinutes(-1).ToString('o')
+                progress        = [pscustomobject]@{ status = 'Error'; steps = @() }
+                location        = 'eastus'
+            }
+        }
+        $staleArgRun = [pscustomobject]@{
+            ClusterName       = 'arm-visible'
+            ClusterResourceId = $inventory[0].ResourceId
+            UpdateName        = 'Solution12.2604.1003.1006'
+            State             = 'Succeeded'
+            Status            = 'Success'
+            CurrentStep       = ''
+            Progress          = '1/1 steps (100%)'
+            StartTime         = $attemptTime.AddDays(-7).ToString('o')
+            EndTime           = $attemptTime.AddDays(-7).AddHours(4).ToString('o')
+            RunId             = 'run-stale'
+            RunResourceId     = ($inventory[0].ResourceId + '/updates/Solution12.2604.1003.1006/updateRuns/run-stale')
+        }
+        $global:_s7_payload = @{ Inventory = $inventory; Runs = @($staleArgRun); ArmRun = $armRun; ResumedArmRun = $resumedArmRun; Now = $script:_s7_now; OutDir = $script:_s7_outDir }
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Get-AzLocalClusterInventory { @($global:_s7_payload.Inventory) }
+            Mock Get-AzLocalUpdateRuns { @($global:_s7_payload.Runs) }
+            Mock Get-AzLocalClusterUpdateRuns {
+                if ($resourceId -match '/arm-visible$') { return @($global:_s7_payload.ArmRun) }
+                if ($resourceId -match '/resumed-original-start$') { return @($global:_s7_payload.ResumedArmRun) }
+                return @()
+            }
+            Export-AzLocalUpdateRunMonitorReport -OutputDirectory $global:_s7_payload.OutDir -Now $global:_s7_payload.Now -PassThru
+        }
+
+        $result.InFlightCount | Should -Be 1
+        $result.AttemptWithoutRunCount | Should -Be 1
+        @($result.Rows).Count | Should -Be 2
+        @($result.Rows | Where-Object ClusterName -eq 'arm-visible')[0].RunId | Should -Be 'run-arm'
+        @($result.Rows | Where-Object ClusterName -eq 'resumed-original-start')[0].RunId | Should -Be 'run-resumed'
+        @($result.AttemptGaps)[0].ClusterName | Should -Be 'truly-missing'
+        (Get-Content -Raw -LiteralPath $script:_s7_ghSummaryFile) | Should -Match '\| Clusters scoped \| 3 \|'
     }
 
     It 'CSV is sorted by SeverityScore descending (worst first), and contains all rows' {

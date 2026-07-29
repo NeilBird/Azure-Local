@@ -61,6 +61,11 @@ parameters:
     type: string
     default: ''
 
+  - name: diagnostics
+    displayName: 'Enable bounded verbose diagnostics for this manual run. DEBUG_VERBOSE=true enables diagnostics for every run.'
+    type: boolean
+    default: false
+
   # --- ITSM Connector (ServiceNow auto-raise on fleet-update-status) ---
   # Set raiseItsmTicket=true to open ServiceNow incidents from each unresolved
   # Failed update run reported by the 'Update Run History and Error Details'
@@ -223,6 +228,10 @@ stages:
         INPUT_SCOPE: ${{ parameters.scope }}
         INPUT_UPDATE_RING: ${{ parameters.updateRing }}
         INPUT_INCLUDE_UPDATE_RUNS: ${{ parameters.includeUpdateRuns }}
+        DIAGNOSTICS_PARAM: ${{ lower(parameters.diagnostics) }}
+        DEBUG_VERBOSE_SETTING: $(DEBUG_VERBOSE)
+        BUILD_REASON: $(Build.Reason)
+        DIAGNOSTICS_LOG_PATH: $(Build.ArtifactStagingDirectory)/diagnostics/fleet-update-status.log
         INSTALLED_MODULE_VERSION: $(moduleVersion.installed_module_version)
       inputs:
         # BEGIN-AZLOCAL-CUSTOMIZE:service-connection-CollectStatus
@@ -233,6 +242,17 @@ stages:
         inlineScript: |
           $ErrorActionPreference = 'Stop'
           Import-Module AzLocal.UpdateManagement -Force
+          $diagnosticsEnabled = $env:DEBUG_VERBOSE_SETTING -eq 'true' -or (
+              $env:BUILD_REASON -eq 'Manual' -and $env:DIAGNOSTICS_PARAM -eq 'true'
+          )
+          if ($diagnosticsEnabled) {
+              $VerbosePreference = 'Continue'
+              $PSDefaultParameterValues['*-AzLocal*:Verbose'] = $true
+              New-Item -ItemType Directory -Path (Split-Path -Parent $env:DIAGNOSTICS_LOG_PATH) -Force | Out-Null
+              Start-Transcript -Path $env:DIAGNOSTICS_LOG_PATH -Force
+              $module = Get-Module AzLocal.UpdateManagement | Sort-Object Version -Descending | Select-Object -First 1
+              Write-Host "Diagnostics enabled (trigger=$env:BUILD_REASON; PowerShell=$($PSVersionTable.PSVersion) $($PSVersionTable.PSEdition); module=$($module.Version); path=$($module.Path))."
+          }
           $params = @{
               Scope                  = if ($env:INPUT_SCOPE) { $env:INPUT_SCOPE } else { 'all' }
               IncludeUpdateRuns      = ($env:INPUT_INCLUDE_UPDATE_RUNS -ne 'false')
@@ -240,9 +260,18 @@ stages:
           }
           if ($env:INPUT_UPDATE_RING) { $params['UpdateRing'] = $env:INPUT_UPDATE_RING }
           Export-AzLocalFleetUpdateStatusReport @params
+          if ($diagnosticsEnabled) { Stop-Transcript }
 
-    # v0.9.12: fail with a run-summary-visible message (instead of the
-    # PublishTestResults "No test result files were found" warning) when the
+    - task: PublishPipelineArtifact@1
+      displayName: 'Publish verbose diagnostics'
+      condition: and(always(), or(eq(variables['DEBUG_VERBOSE'], 'true'), and(eq(variables['Build.Reason'], 'Manual'), eq('${{ lower(parameters.diagnostics) }}', 'true'))))
+      inputs:
+        targetPath: '$(Build.ArtifactStagingDirectory)/diagnostics'
+        artifact: 'azlocal-fleet-update-status-diagnostics-$(Build.BuildId)-$(System.JobAttempt)'
+        publishLocation: 'pipeline'
+
+      # v0.9.12: fail with a run-summary-visible message (instead of the
+      # PublishTestResults "No test result files were found" warning) when the
     # collect task reported success but wrote no report files.
     - task: PowerShell@2
       displayName: 'Verify diagnostic reports were produced'

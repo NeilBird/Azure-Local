@@ -28,6 +28,7 @@ It is written in the same step-by-step style as [`ITSM/README.md`](../ITSM/READM
    - [5.1 GitHub Actions](#51-github-actions)
    - [5.2 Azure DevOps](#52-azure-devops)
      - [5.2.1 The `AzureLocal-Pipeline-Settings` variable group (shared settings, set once)](#521-the-azurelocal-pipeline-settings-variable-group-shared-settings-set-once)
+     - [5.2.2 Diagnostics for any pipeline run](#522-diagnostics-for-any-pipeline-run)
    - [5.3 Optional configuration (not recommended): pin the module version](#53-optional-configuration-not-recommended-pin-the-module-version)
    - [5.4 Azure DevOps onboarding checklist](#54-azure-devops-onboarding-checklist)
    - [5.5 Stay current: one-command refresh with `Update-Module-And-Pipelines.ps1`](#55-stay-current-one-command-refresh-with-update-module-and-pipelinesps1)
@@ -1101,6 +1102,7 @@ Why a group instead of inline variables? Azure DevOps variable **precedence** ru
 | `MONITOR_TRIGGER_DELAY_MINUTES` | `0` (no delay) | One-off startup sleep on the **event-driven** monitor run so the snapshot lands after the run registers `InProgress`. Honoured range 15-240. | `monitor-updates` |
 | `FAILED_UPDATES_SINGLE_RETRY` | unset (`off`) | Opt-in guarded one-time retry of failed update runs. Set `true` to enable. See [8.5](#85-opt-in-single-retry-of-failed-updates-failed_updates_single_retry). | `apply-updates` |
 | `AZLOCAL_MAX_PIPELINE_RUNTIME_MINUTES` | unset (effective default `120`) | Native maximum runtime for each job. Set a positive whole number to reduce the two-hour cap. Multi-job pipelines can exceed this value in total elapsed time because the control is job-scoped. | All pipelines |
+| `DEBUG_VERBOSE` | unset (`off`) | Set `true` to enable bounded verbose diagnostics and a downloadable transcript artifact for every run, including scheduled and event-driven runs. | All pipelines |
 Sideload configuration is not stored in repository/pipeline variables. Use the
 committed `config/sideload-settings.yml` file described in [docs/sideload.md](docs/sideload.md).
 Copy/Update creates it only when absent and never overwrites or migrates an existing file.
@@ -1117,7 +1119,8 @@ az pipelines variable-group create `
         APPLY_UPDATES_SCHEDULE_PATH='./config/apply-updates-schedule.yml' `
         MONITOR_TRIGGER_DELAY_MINUTES='0' `
         FAILED_UPDATES_SINGLE_RETRY='false' `
-        AZLOCAL_MAX_PIPELINE_RUNTIME_MINUTES='120'
+        AZLOCAL_MAX_PIPELINE_RUNTIME_MINUTES='120' `
+        DEBUG_VERBOSE='false'
 
 # Verify the group exists and is authorized for all pipelines.
 az pipelines variable-group list `
@@ -1130,6 +1133,33 @@ az pipelines variable-group list `
 You can equally create the group **in the UI**: **Pipelines -> Library -> + Variable group**, name it exactly `AzureLocal-Pipeline-Settings`, add the rows above, and under **Pipeline permissions** grant access to your pipelines (or toggle "Allow access to all pipelines").
 
 > **Secrets stay separate.** This group is for **non-secret** settings only. ITSM credentials live in a separate `AzureLocal-ITSM-Secrets` group (see [section 7](#7-optional-open-itsm-tickets-for-clusters-needing-operator-action)); Azure auth lives on the service connection. Do not put secrets in `AzureLocal-Pipeline-Settings`.
+
+#### 5.2.2 Diagnostics for any pipeline run
+
+Every GitHub Actions and Azure DevOps pipeline exposes a `diagnostics` input on its manual run form. Leave it at `false` for normal operation; set it to `true` for a one-off manual troubleshooting run. Config: 3 also retains its older `debug` input as a deprecated compatibility alias.
+
+To diagnose a scheduled or event-driven run, set the shared non-secret variable `DEBUG_VERBOSE=true`. On GitHub, create a repository Actions variable named `DEBUG_VERBOSE`; on Azure DevOps, add it to `AzureLocal-Pipeline-Settings`. The variable applies to every trigger. The manual `diagnostics` input applies only when the run was queued manually.
+
+```powershell
+# GitHub repository variable - affects scheduled, event-driven, and manual runs.
+gh variable set DEBUG_VERBOSE --body true
+gh variable set DEBUG_RETENTION_DAYS --body 14
+
+# Azure DevOps variable-group equivalent.
+az pipelines variable-group variable update `
+  --group-id <AzureLocal-Pipeline-Settings-group-id> `
+  --name DEBUG_VERBOSE `
+  --value true
+```
+
+An enabled run sets PowerShell verbose output for AzLocal cmdlets and captures the principal workload in a transcript. It does not enable `az --debug`, print authentication tokens, or deliberately dump raw ARM payloads. The transcript is published even when the workload fails:
+
+- **GitHub Actions:** download `azlocal-<pipeline>-diagnostics_<run-id>_<attempt>` from the run's **Artifacts** section. Set repository variable `DEBUG_RETENTION_DAYS` to a whole number from 1-90; when unset, retention defaults to 14 days. Repository or organization policy can impose a lower maximum.
+- **Azure DevOps:** download `azlocal-<pipeline>-diagnostics-<build-id>-<job-attempt>` from the run's **Related > Published** artifacts. `PublishPipelineArtifact@1` has no per-artifact retention input, so retention follows the project's pipeline-retention policy. `DEBUG_RETENTION_DAYS` is therefore GitHub-only; Azure DevOps administrators should configure **Project settings > Pipelines > Settings > Retention**.
+
+Apply Updates can include both `apply-updates.log` and `retry-failed-updates.log` in one artifact. Monitor In-Flight Updates disables its idle short-circuit while diagnostics are enabled so the transcript includes the full ARM/Resource Graph reconciliation pass.
+
+> **Sharing caution:** transcripts are designed to avoid credentials, but they can contain cluster names, Azure resource IDs, module paths, and service error text. Review them before sharing outside the support boundary, then set `DEBUG_VERBOSE=false` again after scheduled-run troubleshooting.
 
 ### 5.3 Optional configuration (_not recommended_): pin the module version
 

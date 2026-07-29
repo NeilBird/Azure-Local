@@ -78,6 +78,12 @@ If you are new to this module, work through these in order from a regular PowerS
 
 > Most CI/CD pipelines in [Automation-Pipeline-Examples/](Automation-Pipeline-Examples/) are direct implementations of one of these workflows. Start there if you want a copy-pasteable end-to-end pipeline.
 
+## Unreleased
+
+**Update: 4 now distinguishes Resource Graph indexing lag from a genuinely missing update run, and every bundled pipeline can publish a bounded diagnostic transcript.** Recent `UpdateLastAttempt` tags with `UpdateStarted` or `UpdateRetried` outcomes are checked against the cluster's direct ARM `updateRuns` endpoint when ARG lacks a covering row. A run covers the attempt when its `timeStarted` is recent or its `lastUpdatedTime` advanced near the attempt, which handles retries that reuse the original run and start time. The `-SkipWhenIdle` heartbeat checks these tags before trusting an ARG-idle result, so ARG omission cannot bypass reconciliation. Recovered runs replace stale same-cluster/same-update ARG rows, while truly absent runs remain `AttemptWithoutRun`; ARM authorization/transport failures remain explicit. `Clusters scoped` now counts admitted inventory rows.
+
+For pipeline troubleshooting, use the manual `diagnostics=true` input for one manually queued run or set `DEBUG_VERBOSE=true` for all triggers, including schedules and event-driven runs. Diagnostics publish as a separate run-attempt artifact. GitHub defaults to 14-day retention and accepts `DEBUG_RETENTION_DAYS`; Azure DevOps uses project retention. See the [CI/CD diagnostics runbook](Automation-Pipeline-Examples/README.md#522-diagnostics-for-any-pipeline-run).
+
 ## What's New in v0.9.27
 
 **Scheduled pipelines now avoid crowded five-minute boundaries, every pipeline job has an explicit two-hour runtime cap that customers can reduce centrally, and fleet settings can safely widen tagged update-start windows.** Config: 3 emits the same offset Apply and Monitor recommendations on GitHub Actions and Azure DevOps.

@@ -96,6 +96,11 @@ parameters:
     type: string
     default: ''
 
+  - name: diagnostics
+    displayName: 'Enable bounded verbose diagnostics for this manual run. DEBUG_VERBOSE=true enables diagnostics for every run.'
+    type: boolean
+    default: false
+
   # v0.8.90: machine-set markers for the event-driven trigger queued by
   # Update: 3 (Apply Updates). Operators normally leave these BLANK.
   # triggeredBy=apply-updates enables the optional startup delay
@@ -310,6 +315,11 @@ stages:
       # variables (in_flight, long_running, long_running_step,
       # step_errored, recent_failures, unresolved_failures,
       # attempts_without_run).
+      env:
+        DIAGNOSTICS_PARAM: ${{ lower(parameters.diagnostics) }}
+        DEBUG_VERBOSE_SETTING: $(DEBUG_VERBOSE)
+        BUILD_REASON: $(Build.Reason)
+        DIAGNOSTICS_LOG_PATH: $(Build.ArtifactStagingDirectory)/diagnostics/monitor-updates.log
       inputs:
         # BEGIN-AZLOCAL-CUSTOMIZE:service-connection-Monitor
         azureSubscription: 'AzureLocal-ServiceConnection'  # Update with your service connection name
@@ -319,6 +329,17 @@ stages:
         inlineScript: |
           az extension add --name resource-graph --yes
           Import-Module AzLocal.UpdateManagement -Force
+            $diagnosticsEnabled = $env:DEBUG_VERBOSE_SETTING -eq 'true' -or (
+              $env:BUILD_REASON -eq 'Manual' -and $env:DIAGNOSTICS_PARAM -eq 'true'
+            )
+            if ($diagnosticsEnabled) {
+              $VerbosePreference = 'Continue'
+              $PSDefaultParameterValues['*-AzLocal*:Verbose'] = $true
+              New-Item -ItemType Directory -Path (Split-Path -Parent $env:DIAGNOSTICS_LOG_PATH) -Force | Out-Null
+              Start-Transcript -Path $env:DIAGNOSTICS_LOG_PATH -Force
+              $module = Get-Module AzLocal.UpdateManagement | Sort-Object Version -Descending | Select-Object -First 1
+              Write-Host "Diagnostics enabled (trigger=$env:BUILD_REASON; PowerShell=$($PSVersionTable.PSVersion) $($PSVersionTable.PSEdition); module=$($module.Version); path=$($module.Path))."
+            }
           $params = @{
               Scope                  = "${{ parameters.scope }}"
               OutputDirectory        = "$(reportsPath)"
@@ -332,8 +353,16 @@ stages:
           if ([int]::TryParse("${{ parameters.criticalElapsedDays }}",       [ref]$parsed) -and $parsed -gt 0) { $params['CriticalElapsedDays']       = $parsed }
           # v0.8.90: -SkipWhenIdle (cheap idle probe) - the boolean parameter
           # expands to $True / $False at compile time.
-          if ($${{ parameters.skipWhenIdle }}) { $params['SkipWhenIdle'] = $true }
+          if ($${{ parameters.skipWhenIdle }} -and -not $diagnosticsEnabled) { $params['SkipWhenIdle'] = $true }
           Export-AzLocalUpdateRunMonitorReport @params
+
+    - task: PublishPipelineArtifact@1
+      displayName: 'Publish verbose diagnostics'
+      condition: and(always(), or(eq(variables['DEBUG_VERBOSE'], 'true'), and(eq(variables['Build.Reason'], 'Manual'), eq('${{ lower(parameters.diagnostics) }}', 'true'))))
+      inputs:
+        targetPath: '$(Build.ArtifactStagingDirectory)/diagnostics'
+        artifact: 'azlocal-monitor-updates-diagnostics-$(Build.BuildId)-$(System.JobAttempt)'
+        publishLocation: 'pipeline'
 
     # v0.9.12: fail with a run-summary-visible message (instead of the
     # PublishTestResults "No test result files were found" warning) when the

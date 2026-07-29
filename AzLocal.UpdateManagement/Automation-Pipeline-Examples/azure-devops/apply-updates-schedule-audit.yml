@@ -108,7 +108,12 @@ parameters:
     default: ''
 
   - name: debug
-    displayName: 'Enable verbose/debug PowerShell streams for self-service triage. Surfaces $VerbosePreference=Continue, $DebugPreference=Continue, plus a one-shot environment snapshot before the audit runs.'
+    displayName: 'Deprecated alias for diagnostics on a manual run. Retained for backward compatibility.'
+    type: boolean
+    default: false
+
+  - name: diagnostics
+    displayName: 'Enable bounded verbose diagnostics for this manual run. DEBUG_VERBOSE=true enables diagnostics for every run.'
     type: boolean
     default: false
 
@@ -253,7 +258,11 @@ stages:
         INPUT_MONITOR_POLL_INTERVAL_MINUTES: ${{ parameters.monitorPollIntervalMinutes }}
         INPUT_MONITOR_TRAILING_DAYS:         ${{ parameters.monitorTrailingDays }}
         INPUT_MONITOR_IN_FLIGHT_HOURS:       ${{ parameters.monitorInFlightHours }}
-        INPUT_DEBUG:             ${{ lower(parameters.debug) }}
+        DIAGNOSTICS_PARAM:       ${{ lower(parameters.diagnostics) }}
+        LEGACY_DEBUG_PARAM:      ${{ lower(parameters.debug) }}
+        DEBUG_VERBOSE_SETTING:   $(DEBUG_VERBOSE)
+        BUILD_REASON:            $(Build.Reason)
+        DIAGNOSTICS_LOG_PATH:    $(Build.ArtifactStagingDirectory)/diagnostics/apply-updates-schedule-audit.log
         INSTALLED_MODULE_VERSION: $(moduleVersion.installed_module_version)
         REPORTS_PATH: $(reportsPath)
       inputs:
@@ -268,15 +277,18 @@ stages:
           az extension add --name resource-graph --yes
           Import-Module AzLocal.UpdateManagement -Force
 
-          if ($env:INPUT_DEBUG -eq 'true') {
+            $diagnosticsEnabled = $env:DEBUG_VERBOSE_SETTING -eq 'true' -or (
+              $env:BUILD_REASON -eq 'Manual' -and (
+                $env:DIAGNOSTICS_PARAM -eq 'true' -or $env:LEGACY_DEBUG_PARAM -eq 'true'
+              )
+            )
+            if ($diagnosticsEnabled) {
               $VerbosePreference = 'Continue'
-              $DebugPreference   = 'Continue'
-              Write-Host "##[group]Debug environment"
-              Write-Host "PSVersion                : $($PSVersionTable.PSVersion)"
-              Write-Host "PSEdition                : $($PSVersionTable.PSEdition)"
-              $mod = Get-Module AzLocal.UpdateManagement | Sort-Object Version -Descending | Select-Object -First 1
-              Write-Host "AzLocal.UpdateManagement : v$($mod.Version) (path: $($mod.Path))"
-              Write-Host "##[endgroup]"
+              $PSDefaultParameterValues['*-AzLocal*:Verbose'] = $true
+              New-Item -ItemType Directory -Path (Split-Path -Parent $env:DIAGNOSTICS_LOG_PATH) -Force | Out-Null
+              Start-Transcript -Path $env:DIAGNOSTICS_LOG_PATH -Force
+              $module = Get-Module AzLocal.UpdateManagement | Sort-Object Version -Descending | Select-Object -First 1
+              Write-Host "Diagnostics enabled (trigger=$env:BUILD_REASON; PowerShell=$($PSVersionTable.PSVersion) $($PSVersionTable.PSEdition); module=$($module.Version); path=$($module.Path))."
           }
 
           $params = @{
@@ -304,6 +316,14 @@ stages:
             }
 
           Export-AzLocalApplyUpdatesScheduleAudit @params
+
+    - task: PublishPipelineArtifact@1
+      displayName: 'Publish verbose diagnostics'
+      condition: and(always(), or(eq(variables['DEBUG_VERBOSE'], 'true'), and(eq(variables['Build.Reason'], 'Manual'), or(eq('${{ lower(parameters.diagnostics) }}', 'true'), eq('${{ lower(parameters.debug) }}', 'true')))))
+      inputs:
+        targetPath: '$(Build.ArtifactStagingDirectory)/diagnostics'
+        artifact: 'azlocal-apply-updates-schedule-audit-diagnostics-$(Build.BuildId)-$(System.JobAttempt)'
+        publishLocation: 'pipeline'
 
     # v0.9.12: fail with a run-summary-visible message (instead of the
     # PublishTestResults "No test result files were found" warning) when the

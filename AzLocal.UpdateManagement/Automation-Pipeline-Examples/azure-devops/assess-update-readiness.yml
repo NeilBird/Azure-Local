@@ -65,6 +65,11 @@ parameters:
     type: string
     default: ''
 
+  - name: diagnostics
+    displayName: 'Enable bounded verbose diagnostics for this manual run. DEBUG_VERBOSE=true enables diagnostics for every run.'
+    type: boolean
+    default: false
+
 variables:
   # Module version this YAML was generated against (per-file stamp; do NOT move to
   # the shared group). The install step compares this to the installed version and
@@ -202,6 +207,10 @@ stages:
               # default; 'Latest' = no constraint). Leave the file absent to keep
               # the default "latest Ready update" behaviour.
               APPLY_UPDATES_SCHEDULE_PATH: ./config/apply-updates-schedule.yml
+              DIAGNOSTICS_PARAM: ${{ lower(parameters.diagnostics) }}
+              DEBUG_VERBOSE_SETTING: $(DEBUG_VERBOSE)
+              BUILD_REASON: $(Build.Reason)
+              DIAGNOSTICS_LOG_PATH: $(Build.ArtifactStagingDirectory)/diagnostics/assess-update-readiness.log
             inputs:
               # Replace with your service connection name
               # BEGIN-AZLOCAL-CUSTOMIZE:service-connection-AssessReadiness
@@ -213,6 +222,17 @@ stages:
                 $ErrorActionPreference = 'Stop'
                 az extension add --name resource-graph --yes
                 Import-Module AzLocal.UpdateManagement -Force
+                $diagnosticsEnabled = $env:DEBUG_VERBOSE_SETTING -eq 'true' -or (
+                  $env:BUILD_REASON -eq 'Manual' -and $env:DIAGNOSTICS_PARAM -eq 'true'
+                )
+                if ($diagnosticsEnabled) {
+                  $VerbosePreference = 'Continue'
+                  $PSDefaultParameterValues['*-AzLocal*:Verbose'] = $true
+                  New-Item -ItemType Directory -Path (Split-Path -Parent $env:DIAGNOSTICS_LOG_PATH) -Force | Out-Null
+                  Start-Transcript -Path $env:DIAGNOSTICS_LOG_PATH -Force
+                  $module = Get-Module AzLocal.UpdateManagement | Sort-Object Version -Descending | Select-Object -First 1
+                  Write-Host "Diagnostics enabled (trigger=$env:BUILD_REASON; PowerShell=$($PSVersionTable.PSVersion) $($PSVersionTable.PSEdition); module=$($module.Version); path=$($module.Path))."
+                }
                 $params = @{
                     Scope                  = if ($env:INPUT_SCOPE) { $env:INPUT_SCOPE } else { 'all' }
                     OutputDirectory        = $env:ARTIFACTS_PATH
@@ -224,6 +244,14 @@ stages:
                     Write-Host "Applying update allow-list from schedule: $($env:APPLY_UPDATES_SCHEDULE_PATH)"
                 }
                 Export-AzLocalClusterUpdateReadinessReport @params
+
+          - task: PublishPipelineArtifact@1
+            displayName: 'Publish verbose diagnostics'
+            condition: and(always(), or(eq(variables['DEBUG_VERBOSE'], 'true'), and(eq(variables['Build.Reason'], 'Manual'), eq('${{ lower(parameters.diagnostics) }}', 'true'))))
+            inputs:
+              targetPath: '$(Build.ArtifactStagingDirectory)/diagnostics'
+              artifact: 'azlocal-assess-update-readiness-diagnostics-$(Build.BuildId)-$(System.JobAttempt)'
+              publishLocation: 'pipeline'
 
           # v0.9.12: fail with a run-summary-visible message (instead of the
           # PublishTestResults "No test result files were found" warning) when the

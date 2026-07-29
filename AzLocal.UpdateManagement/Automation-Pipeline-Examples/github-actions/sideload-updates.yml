@@ -76,6 +76,14 @@ on:
         description: 'Pin AzLocal.UpdateManagement version (empty = latest from PSGallery). See Automation-Pipeline-Examples/README.md section 5 "Optional configuration".'
         required: false
         default: ''
+      diagnostics:
+        description: 'Enable bounded verbose diagnostics for this manual run. Repository variable DEBUG_VERBOSE=true enables diagnostics for all runs, including schedules.'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
 
 env:
   # Module version this workflow YAML was generated against. The install step compares
@@ -102,6 +110,7 @@ env:
   # When set, every AzLocal.UpdateManagement Azure Resource Graph query in this
   # workflow excludes the listed subscriptions. Leave it unset to exclude nothing.
   AZLOCAL_EXCLUDED_SUBSCRIPTIONS_PATH: ${{ vars.AZLOCAL_EXCLUDED_SUBSCRIPTIONS_PATH }}
+  DEBUG_VERBOSE: ${{ vars.DEBUG_VERBOSE == 'true' || (github.event_name == 'workflow_dispatch' && github.event.inputs.diagnostics == 'true') && 'true' || 'false' }}
 
 # Prevent overlapping sideload runs from racing on the same shared state.
 # cancel-in-progress=false queues a newly-triggered run behind an in-flight one.
@@ -342,6 +351,14 @@ jobs:
       run: |
         $ErrorActionPreference = 'Stop'
         Import-Module AzLocal.UpdateManagement -Force
+        if ($env:DEBUG_VERBOSE -eq 'true') {
+            $VerbosePreference = 'Continue'
+            $PSDefaultParameterValues['*-AzLocal*:Verbose'] = $true
+            New-Item -ItemType Directory -Path './diagnostics' -Force | Out-Null
+            Start-Transcript -Path './diagnostics/sideload-updates.log' -Force
+            $module = Get-Module AzLocal.UpdateManagement | Sort-Object Version -Descending | Select-Object -First 1
+            Write-Host "Diagnostics enabled (trigger=$env:GITHUB_EVENT_NAME; PowerShell=$($PSVersionTable.PSVersion) $($PSVersionTable.PSEdition); module=$($module.Version); path=$($module.Path))."
+        }
 
         $settings = Get-AzLocalSideloadSettings -Path './config/sideload-settings.yml'
 
@@ -404,6 +421,15 @@ jobs:
         if ($report.HasFailures) {
             Write-Host '::warning::One or more clusters are in a Failed state or have plan errors - see the Sideload status report.'
         }
+
+    - name: Upload verbose diagnostics
+      if: always() && env.DEBUG_VERBOSE == 'true'
+      uses: actions/upload-artifact@v5
+      with:
+        name: azlocal-sideload-updates-diagnostics_${{ github.run_id }}_${{ github.run_attempt }}
+        path: ./diagnostics/*.log
+        if-no-files-found: warn
+        retention-days: ${{ fromJSON(vars.DEBUG_RETENTION_DAYS || '14') }}
 
     # v0.9.12: fail with a clear, run-summary-visible message (instead of the
     # downstream publish step's misleading "No test report files were found")
