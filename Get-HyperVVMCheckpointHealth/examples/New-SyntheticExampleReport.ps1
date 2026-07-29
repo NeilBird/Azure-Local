@@ -274,7 +274,7 @@ $housekeepingFindings = @(
         CsvRoot = 'C:\ClusterStorage\UserStorage_1'; Extension = '.vhdx'; Length = 32212254720
         PlacementReason = 'ReferencedOwnerFolderMismatch'
         Owners = @('TestVM03'); AssociatedVMs = @('TestVM08')
-        Observation = 'Authoritative VM or snapshot inventory references this disk for TestVM03, but its path is under a folder associated with TestVM08. Filename text is not used as ownership evidence: C:\ClusterStorage\UserStorage_1\TestVM08\Virtual Hard Disks\TestVM03_Data.vhdx'
+        Observation = 'VM owner(s): TestVM03. Folder-associated VM(s): TestVM08. The authoritative VM reference and detected storage-folder association differ. Filename text is not used as ownership evidence: C:\ClusterStorage\UserStorage_1\TestVM08\Virtual Hard Disks\TestVM03_Data.vhdx'
         Review = 'Confirm whether the authoritative owner and different associated folder are intentional with the VM, backup, and storage owners. Do not move or rename the file based only on this report.'
     },
     [pscustomobject]@{
