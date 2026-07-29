@@ -3505,14 +3505,14 @@ Describe 'Virtual disk housekeeping classification' {
         Import-Module $modulePath -Force
     }
 
-    It 'treats an unattached VHDX in a VM-associated folder as a placement review' {
+    It 'treats an unattached base disk in a shared VM-associated Storage Path as unattached' {
         $result = Get-VirtualDiskHousekeepingClassification `
-            -Path 'C:\TEST\CSV01\TEST-VM-01\detached.vhdx' -Owners @() `
-            -VMAssociatedFolders @([pscustomobject]@{ VMName = 'TEST-VM-01'; Path = 'C:\TEST\CSV01\TEST-VM-01' }) `
+            -Path 'C:\ClusterStorage\UserStorage_2\e583f17a6eccbef\2025-datacenter-azure-edition-01.vhd' -Owners @() `
+            -VMAssociatedFolders @([pscustomobject]@{ VMName = 'TEST-VM-01'; Path = 'C:\ClusterStorage\UserStorage_2\e583f17a6eccbef' }) `
             -CoverageComplete $true -ImageLibraryPathPatterns $script:ImageLibraryPathPatterns
 
-        $result.Classification | Should -Be 'PlacementInconsistency'
-        $result.PlacementReason | Should -Be 'UnreferencedInVMAssociatedFolder'
+        $result.Classification | Should -Be 'UnattachedBaseDiskCandidate'
+        $result.PlacementReason | Should -BeNullOrEmpty
         $result.Owners | Should -BeNullOrEmpty
         $result.AssociatedVMs | Should -Be @('TEST-VM-01')
         $result.HealthVerdictImpact | Should -BeFalse
@@ -3672,10 +3672,9 @@ Describe 'Virtual disk housekeeping classification' {
         $source = Get-Content -LiteralPath (Join-Path (Split-Path $PSScriptRoot -Parent) 'Get-HyperVVMCheckpointHealth.psm1') -Raw
         $source | Should -Match '\$scope = if \(@\(\$classification\.Owners\)\.Count -eq 0 -and \$parentPath\)'
         $source | Should -Match 'ParentPath\s+= \$parentPath'
-        $source | Should -Match 'VM owner\(s\): none\. Folder-associated VM\(s\): \$associatedVmText\. No VM or snapshot inventory references this virtual disk under complete coverage\.'
         $source | Should -Match 'VM owner\(s\): \$ownerText\. Folder-associated VM\(s\): \$associatedVmText\. The authoritative VM reference and detected storage-folder association differ\.'
+        $source | Should -Not -Match 'UnreferencedInVMAssociatedFolder'
         $source | Should -Match 'Filename text is not used as ownership evidence'
-        $source | Should -Match 'Do not attach, move, rename, or delete it based only on this report\.'
         $source | Should -Match "default\s+\{ 'If this virtual disk belongs to an image library, exclude its full path with storage\.imageLibraryPathPatterns"
     }
 
@@ -3683,7 +3682,8 @@ Describe 'Virtual disk housekeeping classification' {
         $readme = Get-Content -LiteralPath (Join-Path (Split-Path $PSScriptRoot -Parent) 'README.md') -Raw
         $readme | Should -Match '(?m)^## Cluster storage housekeeping\r?$'
         $readme | Should -Match 'Placement inconsistency.+authoritative VM or snapshot reference'
-        $readme | Should -Match 'none of the VMs associated with the containing folder is an authoritative owner'
+        $readme | Should -Match 'none of the VMs associated with the containing folder is that authoritative owner'
+        $readme | Should -Match 'Unattached base disk candidate.+classification is unchanged.+generated Azure Local Storage Path shared by one or more VMs'
         $readme | Should -Match 'AKS Arc RP workload directory shared by its control-plane and worker VMs'
         $readme | Should -Match 'Filename tokens are never treated as ownership evidence'
         $readme | Should -Match 'Scope.+immediate parent folder.+no authoritative owner'
@@ -3691,6 +3691,15 @@ Describe 'Virtual disk housekeeping classification' {
         $readme | Should -Match 'shared path is not a VM-owned folder'
         $readme | Should -Match 'attached disk outside all detected VM folders is allowed'
         $readme | Should -Match 'Filter out as VM image.+only.+Unattached base disk candidate'
+    }
+
+    It 'does not retain the obsolete ownerless placement classification path' {
+        $toolRoot = Split-Path $PSScriptRoot -Parent
+        $storageSource = Get-Content -LiteralPath (Join-Path $toolRoot 'Private\Get-HyperVVMCheckpointHealth.Storage.psm1') -Raw
+        $rootSource = Get-Content -LiteralPath (Join-Path $toolRoot 'Get-HyperVVMCheckpointHealth.psm1') -Raw
+
+        $storageSource | Should -Not -Match 'UnreferencedInVMAssociatedFolder'
+        $rootSource | Should -Not -Match 'UnreferencedInVMAssociatedFolder'
     }
 
     It 'documents and reports VHD Set-managed storage conservatively' {
