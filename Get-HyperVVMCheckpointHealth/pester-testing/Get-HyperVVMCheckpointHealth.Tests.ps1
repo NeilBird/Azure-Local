@@ -1040,6 +1040,10 @@ Describe 'Module distribution contracts' {
         $setupSource | Should -Match ("\`$version = '{0}'" -f [regex]::Escape($script:Manifest.Version.ToString()))
         $setupSource | Should -Match "\$expectedSha256 = '[0-9a-f]{64}'"
         $setupSource | Should -Match '\[string\]\$InstallRoot = ''C:\\Temp'''
+        $setupSource | Should -Match '\$scriptDirectoryZipPath\s*=\s*Join-Path\s+\$PSScriptRoot\s+\$expectedAssetName'
+        $setupSource | Should -Match '\$tempDirectoryZipPath\s*=\s*Join-Path\s+\$env:TEMP\s+\$expectedAssetName'
+        $setupSource | Should -Match '(?s)Test-Path.+\$scriptDirectoryZipPath.+elseif.+Test-Path.+\$tempDirectoryZipPath'
+        $setupSource | Should -Match "Release ZIP was not found beside the setup script.+or in the temporary directory"
         $setupSource | Should -Match '\$WhatIfPreference\s*=\s*\$false[\s\S]+Get-FileHash.+SHA256'
         $setupSource | Should -Match 'Test-ModuleManifest'
         $setupSource | Should -Not -Match 'Get-ClusterGroup'

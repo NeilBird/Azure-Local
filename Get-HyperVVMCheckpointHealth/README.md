@@ -135,14 +135,14 @@ Two supported ways to run it, both single-hop:
 
 Download the versioned ZIP from the repository's [GitHub Releases page](https://github.com/NeilBird/Azure-Local/releases). The supported 0.2.30 release asset is `Get-HyperVVMCheckpointHealth-0.2.30.zip`; it contains the manifest, root module, five private modules, example policy YAML, README, and license. Do not use a raw single-file link because the module requires its manifest and sibling private modules.
 
-The release also publishes [`Setup-Get-HyperVVMCheckpointHealth.ps1`](Setup-Get-HyperVVMCheckpointHealth.ps1) as a separate asset outside the ZIP. The setup script is pinned to the supported version and SHA256 hash and changes files only beneath `<InstallRoot>\Get-HyperVVMCheckpointHealth` (`C:\Temp\Get-HyperVVMCheckpointHealth` by default). It validates the staged manifest/version before replacing that directory, restores the previous directory if installation validation fails, imports the module, and verifies the command without running an audit. Use `-InstallRoot` to choose another parent directory and `-WhatIf` for a no-change preview. Do not use an installation root where the `Get-HyperVVMCheckpointHealth` child directory contains unrelated files.
+The release also publishes [`Setup-Get-HyperVVMCheckpointHealth.ps1`](Setup-Get-HyperVVMCheckpointHealth.ps1) as a separate asset outside the ZIP. The setup script is pinned to the supported version and SHA256 hash and changes files only beneath `<InstallRoot>\Get-HyperVVMCheckpointHealth` (`C:\Temp\Get-HyperVVMCheckpointHealth` by default). When `-ZipPath` is omitted, it looks for the versioned ZIP beside the setup script first and then in `$env:TEMP`. It validates the staged manifest/version before replacing that directory, restores the previous directory if installation validation fails, imports the module, and verifies the command without running an audit. Use `-ZipPath` to select another location, `-InstallRoot` to choose another parent directory, and `-WhatIf` for a no-change preview. Do not use an installation root where the `Get-HyperVVMCheckpointHealth` child directory contains unrelated files.
 
 Download the ZIP, download the setup script, and run the setup script:
 
 ```powershell
 Invoke-WebRequest 'https://github.com/NeilBird/Azure-Local/releases/download/Get-HyperVVMCheckpointHealth-v0.2.30/Get-HyperVVMCheckpointHealth-0.2.30.zip' -OutFile "$env:TEMP\Get-HyperVVMCheckpointHealth-0.2.30.zip"
 Invoke-WebRequest 'https://github.com/NeilBird/Azure-Local/releases/download/Get-HyperVVMCheckpointHealth-v0.2.30/Setup-Get-HyperVVMCheckpointHealth.ps1' -OutFile "$env:TEMP\Setup-Get-HyperVVMCheckpointHealth.ps1"
-Unblock-File "$env:TEMP\Setup-Get-HyperVVMCheckpointHealth.ps1"; & "$env:TEMP\Setup-Get-HyperVVMCheckpointHealth.ps1" -ZipPath "$env:TEMP\Get-HyperVVMCheckpointHealth-0.2.30.zip"
+Unblock-File "$env:TEMP\Setup-Get-HyperVVMCheckpointHealth.ps1"; & "$env:TEMP\Setup-Get-HyperVVMCheckpointHealth.ps1"
 ```
 
 Then run the audit separately. On a cluster node:

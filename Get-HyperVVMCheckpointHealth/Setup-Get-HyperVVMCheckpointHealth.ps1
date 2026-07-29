@@ -9,7 +9,8 @@
     replaces only the Get-HyperVVMCheckpointHealth directory under InstallRoot, imports the manifest,
     and verifies the exported command. It does not run an audit.
 .PARAMETER ZipPath
-    Path to the previously downloaded versioned release ZIP.
+    Path to the previously downloaded versioned release ZIP. When omitted, the script checks its
+    own directory first and then the current user's temporary directory.
 .PARAMETER InstallRoot
     Parent directory under which the Get-HyperVVMCheckpointHealth module folder is installed.
     Defaults to C:\Temp.
@@ -20,7 +21,7 @@
 [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'Medium')]
 [OutputType([pscustomobject])]
 param(
-    [string]$ZipPath = (Join-Path $env:TEMP 'Get-HyperVVMCheckpointHealth-0.2.30.zip'),
+    [string]$ZipPath,
 
     [ValidateNotNullOrEmpty()]
     [string]$InstallRoot = 'C:\Temp'
@@ -34,6 +35,19 @@ $version = '0.2.30'
 $expectedSha256 = '0b9d8883d73bc2899dde5b89b75c8b3ee6080c9d06317a09c356db44cf7a7859'
 $expectedAssetName = "$moduleName-$version.zip"
 
+if (-not $ZipPath) {
+    $scriptDirectoryZipPath = Join-Path $PSScriptRoot $expectedAssetName
+    $tempDirectoryZipPath = Join-Path $env:TEMP $expectedAssetName
+    if (Test-Path -LiteralPath $scriptDirectoryZipPath -PathType Leaf) {
+        $ZipPath = $scriptDirectoryZipPath
+    }
+    elseif (Test-Path -LiteralPath $tempDirectoryZipPath -PathType Leaf) {
+        $ZipPath = $tempDirectoryZipPath
+    }
+    else {
+        throw "Release ZIP was not found beside the setup script ('$scriptDirectoryZipPath') or in the temporary directory ('$tempDirectoryZipPath')."
+    }
+}
 if (-not (Test-Path -LiteralPath $ZipPath -PathType Leaf)) {
     throw "Release ZIP was not found: $ZipPath"
 }
