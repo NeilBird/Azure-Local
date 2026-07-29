@@ -2800,8 +2800,17 @@ function Invoke-VMCheckpointAudit {
                     'UnattachedVhdSetCandidate'       { 'Unattached VHD Set candidate' }
                     default                           { 'Unattached base disk candidate' }
                 }
+                $parentPath = [string](Split-Path -Path ([string]$diskFile.FullName) -Parent)
                 $scopeNames = @((@($classification.Owners) + @($classification.AssociatedVMs)) | Where-Object { $_ } | Sort-Object -Unique)
-                $scope = if ($scopeNames.Count -gt 0) { $scopeNames -join ', ' } elseif ($diskFile.CsvRoot) { [string]$diskFile.CsvRoot } else { 'Cluster storage' }
+                $scope = if (@($classification.Owners).Count -eq 0 -and $parentPath) {
+                    $parentPath
+                } elseif ($scopeNames.Count -gt 0) {
+                    $scopeNames -join ', '
+                } elseif ($diskFile.CsvRoot) {
+                    [string]$diskFile.CsvRoot
+                } else {
+                    'Cluster storage'
+                }
                 $ownerText = if (@($classification.Owners).Count -gt 0) { @($classification.Owners) -join ', ' } else { 'none' }
                 $associatedVmText = if (@($classification.AssociatedVMs).Count -gt 0) { @($classification.AssociatedVMs) -join ', ' } else { 'none' }
                 $observation = switch ($classification.Classification) {
@@ -2833,7 +2842,7 @@ function Invoke-VMCheckpointAudit {
                     Scope       = $scope
                     FileName    = [string]$diskFile.Name
                     FullName    = [string]$diskFile.FullName
-                    ParentPath  = [string](Split-Path -Path ([string]$diskFile.FullName) -Parent)
+                    ParentPath  = $parentPath
                     Extension   = [string]$diskFile.Extension
                     Length      = [long]$diskFile.Length
                     CsvRoot     = [string]$diskFile.CsvRoot

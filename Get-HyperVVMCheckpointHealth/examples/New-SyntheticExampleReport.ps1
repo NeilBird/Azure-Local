@@ -278,7 +278,7 @@ $housekeepingFindings = @(
         Review = 'Confirm whether the authoritative owner and different associated folder are intentional with the VM, backup, and storage owners. Do not move or rename the file based only on this report.'
     },
     [pscustomobject]@{
-        Category = 'Unattached base disk candidate'; Scope = 'TestVM08'
+        Category = 'Unattached base disk candidate'; Scope = 'C:\ClusterStorage\UserStorage_1\TestVM08\Virtual Hard Disks'
         FileName = 'TestVM08_LegacyData.vhdx'
         FullName = 'C:\ClusterStorage\UserStorage_1\TestVM08\Virtual Hard Disks\TestVM08_LegacyData.vhdx'
         ParentPath = 'C:\ClusterStorage\UserStorage_1\TestVM08\Virtual Hard Disks'
@@ -287,7 +287,7 @@ $housekeepingFindings = @(
         Review = 'If this virtual disk belongs to an image library, exclude its full path with storage.imageLibraryPathPatterns in a checkpoint-health-policy.yml file supplied via -PolicyPath (see housekeeping guidance). Otherwise, confirm intended ownership and storage layout with the VM, backup, and storage owners. Do not modify the file based only on this report.'
     },
     [pscustomobject]@{
-        Category = 'Unattached base disk candidate'; Scope = 'TestVM12'
+        Category = 'Unattached base disk candidate'; Scope = 'C:\ClusterStorage\UserStorage_2\TestVM12\Virtual Hard Disks'
         FileName = 'TestVM12_Archive.vhdx'
         FullName = 'C:\ClusterStorage\UserStorage_2\TestVM12\Virtual Hard Disks\TestVM12_Archive.vhdx'
         ParentPath = 'C:\ClusterStorage\UserStorage_2\TestVM12\Virtual Hard Disks'

@@ -2249,12 +2249,15 @@ Describe 'Synthetic HTML example report' {
         $script:ExampleHtml | Should -Match 'Placement inconsistency'
         $script:ExampleHtml | Should -Match 'VM owner\(s\): TestVM03\. Folder-associated VM\(s\): TestVM08\.'
         $script:ExampleHtml | Should -Match 'The authoritative VM reference and detected storage-folder association differ\.'
+        $script:ExampleHtml | Should -Match "<td data-label='Scope'><code>TestVM03, TestVM08</code></td>"
         $script:ExampleHtml | Should -Match 'Unattached base disk candidate'
         $script:ExampleHtml | Should -Match 'Shared virtual disk reference'
         $script:ExampleHtml | Should -Match 'Shared VHD Set reference'
         $script:ExampleHtml | Should -Match 'GuestClusterData\.vhds'
         $script:ExampleHtml | Should -Match 'TestVM08_LegacyData\.vhdx'
         $script:ExampleHtml | Should -Match 'TestVM12_Archive\.vhdx'
+        $script:ExampleHtml | Should -Match "<td data-label='Scope'><code>C:\\ClusterStorage\\UserStorage_1\\TestVM08\\Virtual Hard Disks</code></td>"
+        $script:ExampleHtml | Should -Match "<td data-label='Scope'><code>C:\\ClusterStorage\\UserStorage_2\\TestVM12\\Virtual Hard Disks</code></td>"
         ([regex]::Matches($script:ExampleHtml, "class='hk-image-filter' type='checkbox'> Filter out as VM image")).Count | Should -Be 2
         $script:ExampleHtml | Should -Match "id='hk-image-policy' hidden><h3>Persistent VM image policy settings</h3>"
         $script:ExampleHtml | Should -Match 'If this virtual disk belongs to an image library, exclude its full path with storage\.imageLibraryPathPatterns in a checkpoint-health-policy\.yml file supplied via -PolicyPath \(see <a href="https://aka\.ms/Get-HyperVVMCheckpointHealth#cluster-storage-housekeeping" target="_blank" rel="noopener noreferrer">housekeeping guidance</a>\)\.'
@@ -3667,6 +3670,8 @@ Describe 'Virtual disk housekeeping classification' {
 
     It 'keeps image-library guidance off attached placement inconsistencies' {
         $source = Get-Content -LiteralPath (Join-Path (Split-Path $PSScriptRoot -Parent) 'Get-HyperVVMCheckpointHealth.psm1') -Raw
+        $source | Should -Match '\$scope = if \(@\(\$classification\.Owners\)\.Count -eq 0 -and \$parentPath\)'
+        $source | Should -Match 'ParentPath\s+= \$parentPath'
         $source | Should -Match 'VM owner\(s\): none\. Folder-associated VM\(s\): \$associatedVmText\. No VM or snapshot inventory references this virtual disk under complete coverage\.'
         $source | Should -Match 'VM owner\(s\): \$ownerText\. Folder-associated VM\(s\): \$associatedVmText\. The authoritative VM reference and detected storage-folder association differ\.'
         $source | Should -Match 'Filename text is not used as ownership evidence'
@@ -3681,6 +3686,9 @@ Describe 'Virtual disk housekeeping classification' {
         $readme | Should -Match 'none of the VMs associated with the containing folder is an authoritative owner'
         $readme | Should -Match 'AKS Arc RP workload directory shared by its control-plane and worker VMs'
         $readme | Should -Match 'Filename tokens are never treated as ownership evidence'
+        $readme | Should -Match 'Scope.+immediate parent folder.+no authoritative owner'
+        $readme | Should -Match 'multiple VMs can place disks directly in the same generated Storage Path folder'
+        $readme | Should -Match 'shared path is not a VM-owned folder'
         $readme | Should -Match 'attached disk outside all detected VM folders is allowed'
         $readme | Should -Match 'Filter out as VM image.+only.+Unattached base disk candidate'
     }
