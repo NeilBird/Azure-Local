@@ -1223,6 +1223,10 @@ Describe 'HTML fleet report usability' {
         $staleLayerReportData.CheckpointLayers = 2
         $staleLayerReportData.StaleAttachedLayerCount = 2
         $staleLayerReportData.SnapshotLayerMismatch = $true
+        $staleLayerReportData | Add-Member -NotePropertyName SnapshotLayerTimestampDivergence -NotePropertyValue $true
+        $staleLayerReportData | Add-Member -NotePropertyName OldestSnapshotUtc -NotePropertyValue '2026-07-15 21:41:33Z'
+        $staleLayerReportData | Add-Member -NotePropertyName OldestAttachedLayerUtc -NotePropertyValue '2026-06-21 21:37:32Z'
+        $staleLayerReportData | Add-Member -NotePropertyName OldestTimestampDeltaHours -NotePropertyValue 576.1
         $staleLayerReportData.AttachedVhdLayers = @(
             [pscustomobject]@{
                 Chain = 'TEST-VM-STALE-LAYER_OS-CURRENT.avhdx'; FileName = 'TEST-VM-STALE-LAYER_OS-CURRENT.avhdx'
@@ -1727,6 +1731,8 @@ Describe 'HTML fleet report usability' {
         $script:RenderedHtml | Should -Not -Match '>2 / 0<'
         $script:RenderedHtml | Should -Match "Stale attached AVHDX layers \(&ge;24h\)</div><div><span class='warnval'>2</span></div>"
         $script:RenderedHtml | Should -Match "Snapshot/layer representation</div><div><span class='warnval'>MISMATCH"
+        $script:RenderedHtml | Should -Match "Oldest snapshot object / AVHDX timestamps</div><div><span class='warnval'>DIVERGENT - oldest snapshot object 2026-07-15 21:41:33Z; oldest AVHDX file 2026-06-21 21:37:32Z; difference 576\.1 h"
+        $script:RenderedHtml | Should -Match '<th>Oldest snapshot<br>object age</th>'
         $script:RenderedHtml | Should -Match '2 stale attached AVHDX layer\(s\)'
         $script:RenderedHtml | Should -Match 'Attached VHD chain evidence \(3 layer\(s\)\)'
         $script:RenderedHtml | Should -Match "<div class='chain-scroll'><table class='chain-evidence'>"
@@ -1735,7 +1741,7 @@ Describe 'HTML fleet report usability' {
         $script:RenderedHtml | Should -Match ">Active \(top\)</td><td class='chain-file'>TEST-VM-STALE-LAYER_OS-CURRENT\.avhdx</td>"
         $script:RenderedHtml | Should -Match ">Checkpoint</td><td class='chain-file'>TEST-VM-STALE-LAYER_OS-OLDER\.avhdx</td>"
         $script:RenderedHtml | Should -Match ">Base</td><td class='chain-file'>TEST-VM-STALE-LAYER_OS\.vhdx</td>"
-        $script:RenderedHtml | Should -Match '<th>Checkpoint age</th><th>Last activity</th><th>Checkpoint stale</th>'
+        $script:RenderedHtml | Should -Match '<th>AVHDX file age</th><th>Last activity</th><th>Checkpoint stale</th>'
         $script:RenderedHtml | Should -Match '<summary>Full path and parent-path evidence</summary>'
         $script:RenderedHtml | Should -Match '<td><code>n/a \(base\)</code></td>'
         $script:RenderedHtml | Should -Match "<span class='warnval'>74 h<br>3\.1 d</span>.*0\.1 h<br>0 d.*<span class='warnval'>YES</span>"
@@ -2428,6 +2434,22 @@ Describe 'Checkpoint staleness assessment' {
         $assessment.StaleAttachedLayerCount | Should -Be 2
         $assessment.StaleSnapshotCount | Should -Be 1
         $assessment.SnapshotLayerMismatch | Should -BeFalse
+        $assessment.SnapshotLayerTimestampDivergence | Should -BeFalse
+        $assessment.OldestTimestampDeltaHours | Should -Be 0
+    }
+
+    It 'reports divergent oldest snapshot-object and AVHDX-file timestamps independently' {
+        $assessment = Get-CheckpointStalenessAssessment -DiskReports @(
+            [pscustomobject]@{ Chain = @([pscustomobject]@{ Type = 'Differencing'; Created = $script:AssessmentNow.AddDays(-37.6) }) }
+            [pscustomobject]@{ Chain = @([pscustomobject]@{ Type = 'Differencing'; Created = $script:AssessmentNow.AddDays(-37.6) }) }
+        ) -Snapshots @([pscustomobject]@{ CreationTimeUtc = $script:AssessmentNow.AddDays(-13.6) }) `
+            -StaleHours 24 -NowUtc $script:AssessmentNow
+
+        $assessment.SnapshotLayerMismatch | Should -BeFalse
+        $assessment.SnapshotLayerTimestampDivergence | Should -BeTrue
+        $assessment.OldestTimestampDeltaHours | Should -Be 576
+        $assessment.OldestSnapshotUtc | Should -Be $script:AssessmentNow.AddDays(-13.6).ToUniversalTime()
+        $assessment.OldestAttachedLayerUtc | Should -Be $script:AssessmentNow.AddDays(-37.6).ToUniversalTime()
     }
 
     It 'counts an old checkpoint layer beneath a recently written active top layer' {
@@ -3512,6 +3534,21 @@ Describe 'Virtual disk housekeeping classification' {
         $result.AssociatedVMs | Should -Be @('FOLDER-VM')
     }
 
+    It 'allows an attached disk when a shared folder is associated with its owner and another VM' {
+        $sharedPath = 'C:\TEST\CSV01\arc-rp-storage'
+        $result = Get-VirtualDiskHousekeepingClassification `
+            -Path "$sharedPath\OWNER-VM-OSDisk.vhdx" -Owners @('OWNER-VM') `
+            -VMAssociatedFolders @(
+                [pscustomobject]@{ VMName = 'OWNER-VM'; Path = $sharedPath }
+                [pscustomobject]@{ VMName = 'SIBLING-VM'; Path = $sharedPath }
+            ) -CoverageComplete $true -ImageLibraryPathPatterns $script:ImageLibraryPathPatterns
+
+        $result.Classification | Should -Be 'AttachedVirtualDisk'
+        $result.PlacementReason | Should -BeNullOrEmpty
+        $result.Owners | Should -Be @('OWNER-VM')
+        $result.AssociatedVMs | Should -Be @('OWNER-VM', 'SIBLING-VM')
+    }
+
     It 'allows an attached disk outside detected VM folders' {
         $result = Get-VirtualDiskHousekeepingClassification `
             -Path 'C:\TEST\CSV01\SharedData\attached.vhdx' -Owners @('OWNER-VM') `
@@ -3636,7 +3673,8 @@ Describe 'Virtual disk housekeeping classification' {
         $readme = Get-Content -LiteralPath (Join-Path (Split-Path $PSScriptRoot -Parent) 'README.md') -Raw
         $readme | Should -Match '(?m)^## Cluster storage housekeeping\r?$'
         $readme | Should -Match 'Placement inconsistency.+authoritative VM or snapshot reference'
-        $readme | Should -Match 'disk referenced by one VM is located inside a folder associated with a different VM'
+        $readme | Should -Match 'none of the VMs associated with the containing folder is an authoritative owner'
+        $readme | Should -Match 'AKS Arc RP workload directory shared by its control-plane and worker VMs'
         $readme | Should -Match 'Filename tokens are never treated as ownership evidence'
         $readme | Should -Match 'attached disk outside all detected VM folders is allowed'
         $readme | Should -Match 'Filter out as VM image.+only.+Unattached base disk candidate'

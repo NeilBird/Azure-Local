@@ -4432,6 +4432,10 @@ function Invoke-VMCheckpointAudit {
         StaleAttachedLayerCount = $staleAttachedLayerCount
         StaleSnapshotCount   = $staleCheckpoints.Count
         SnapshotLayerMismatch = $snapshotLayerMismatch
+        SnapshotLayerTimestampDivergence = [bool]$stalenessAssessment.SnapshotLayerTimestampDivergence
+        OldestSnapshotUtc    = if ($stalenessAssessment.OldestSnapshotUtc) { ([datetime]$stalenessAssessment.OldestSnapshotUtc).ToString('yyyy-MM-dd HH:mm:ssZ') } else { '' }
+        OldestAttachedLayerUtc = if ($stalenessAssessment.OldestAttachedLayerUtc) { ([datetime]$stalenessAssessment.OldestAttachedLayerUtc).ToString('yyyy-MM-dd HH:mm:ssZ') } else { '' }
+        OldestTimestampDeltaHours = $stalenessAssessment.OldestTimestampDeltaHours
         ChainComplete        = (-not $hasIncompleteChain)
         IncompleteChainCount = $incompleteChains.Count
         IncompleteChains     = @($incompleteChains | ForEach-Object { [pscustomobject]@{ Disk = [string]$_.Attached; FailurePath = [string]$_.FailurePath; Error = [string]$_.ChainError; TerminalType = [string]$_.TerminalType; DepthLimitReached = [bool]$_.DepthLimitReached } })
