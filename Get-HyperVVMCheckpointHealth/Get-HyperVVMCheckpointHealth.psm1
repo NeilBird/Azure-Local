@@ -2807,9 +2807,9 @@ function Invoke-VMCheckpointAudit {
                 $observation = switch ($classification.Classification) {
                     'PlacementInconsistency'          {
                         if ($classification.PlacementReason -eq 'UnreferencedInVMAssociatedFolder') {
-                            "No VM or snapshot inventory references this virtual disk under complete coverage, but its path is inside a folder associated with VM(s): $associatedVmText. Filename text is not used as ownership evidence: $($diskFile.FullName)"
+                            "VM owner(s): none. Folder-associated VM(s): $associatedVmText. No VM or snapshot inventory references this virtual disk under complete coverage. Filename text is not used as ownership evidence: $($diskFile.FullName)"
                         } else {
-                            "This virtual disk is referenced by VM(s): $ownerText, but its path is inside a folder associated with different VM(s): $associatedVmText. Filename text is not used as ownership evidence: $($diskFile.FullName)"
+                            "VM owner(s): $ownerText. Folder-associated VM(s): $associatedVmText. The authoritative VM reference and detected storage-folder association differ. Filename text is not used as ownership evidence: $($diskFile.FullName)"
                         }
                     }
                     'UnattachedDifferencingCandidate' { "No VM or snapshot chain references this AVHDX under complete coverage: $($diskFile.FullName)" }

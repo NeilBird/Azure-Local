@@ -1275,7 +1275,8 @@ Describe 'HTML fleet report usability' {
                     FullName = 'C:\ClusterStorage\Volume1\TEST-VM-NORMAL\Data<review>.vhdx'
                     ParentPath = 'C:\ClusterStorage\Volume1\TEST-VM-NORMAL'
                     CsvRoot = 'C:\ClusterStorage\Volume1'; Extension = '.vhdx'; Length = 1572864
-                    Observation = 'Attached disk is stored under another VM folder <review>'
+                    Owners = @('OWNER-VM'); AssociatedVMs = @('FOLDER-VM')
+                    Observation = 'VM owner(s): OWNER-VM. Folder-associated VM(s): FOLDER-VM. The authoritative VM reference and detected storage-folder association differ <review>.'
                     Review = 'Confirm the intended storage layout.'
                 }
                 [pscustomobject]@{
@@ -1897,7 +1898,7 @@ Describe 'HTML fleet report usability' {
     It 'places operational housekeeping observations immediately before the appendix' {
         $script:RenderedHtml | Should -Match 'Cluster / storage housekeeping to review:'
         $script:RenderedHtml | Should -Match 'Operational excellence and consistent storage practices improve reliability and reduce operational complexity.'
-        $script:RenderedHtml | Should -Match 'Attached disk is stored under another VM folder &lt;review&gt;'
+        $script:RenderedHtml | Should -Match 'VM owner\(s\): OWNER-VM\. Folder-associated VM\(s\): FOLDER-VM\.'
         $script:RenderedHtml | Should -Match 'Do not move, rename, merge, or delete virtual disk files based solely on this report.'
         $script:RenderedHtml | Should -Match 'row and category totals may overlap and are not unique-file counts'
         $script:RenderedHtml.IndexOf('Cluster / storage housekeeping to review:') | Should -BeLessThan $script:RenderedHtml.IndexOf('Appendix - Knowledge and Information')
@@ -1941,6 +1942,7 @@ Describe 'HTML fleet report usability' {
         $script:RenderedHtml | Should -Match "<td data-label='Scope'><code>TEST-NODE-02</code></td>"
         $script:RenderedHtml | Should -Match "<div class='hk-file'><code>Data&lt;review&gt;\.vhdx</code></div><code>C:\\ClusterStorage"
         $script:RenderedHtml | Should -Match "data-label='Size' class='num'>1\.50 MB</td>"
+        $script:RenderedHtml | Should -Match 'VM owner\(s\): OWNER-VM\. Folder-associated VM\(s\): FOLDER-VM\.'
         $script:RenderedHtml | Should -Not -Match '1572864 bytes'
         $script:RenderedHtml | Should -Match 'table\.housekeeping\{table-layout:fixed\}'
         $script:RenderedHtml | Should -Match 'table\.housekeeping col\.hk-filecol\{width:24%\}'
@@ -1984,7 +1986,7 @@ Describe 'HTML fleet report usability' {
         $script:RenderedHtml | Should -Match 'rows\.forEach\(function \(row\)'
         $script:RenderedHtml | Should -Match "return 'CheckpointHousekeeping-' \+ cluster \+ '-' \+ timestamp \+ '\.csv'"
         $script:RenderedHtml | Should -Match "new Blob\(\['\\uFEFF' \+ lines\.join\('\\r\\n'\)\]"
-        $script:RenderedHtml | Should -Match "data-file-name='Data&lt;review&gt;\.vhdx'.*data-observation='Attached disk is stored under another VM folder &lt;review&gt;'"
+        $script:RenderedHtml | Should -Match "data-file-name='Data&lt;review&gt;\.vhdx'.*data-observation='VM owner\(s\): OWNER-VM\. Folder-associated VM\(s\): FOLDER-VM\. The authoritative VM reference and detected storage-folder association differ &lt;review&gt;\.'"
         $script:RenderedHtml | Should -Match "getElementById\('hk-export-csv'\)\.addEventListener\('click', exportHousekeepingCsv\)"
     }
 
@@ -2245,6 +2247,8 @@ Describe 'Synthetic HTML example report' {
 
     It 'demonstrates review-only virtual disk housekeeping findings' {
         $script:ExampleHtml | Should -Match 'Placement inconsistency'
+        $script:ExampleHtml | Should -Match 'VM owner\(s\): TestVM03\. Folder-associated VM\(s\): TestVM08\.'
+        $script:ExampleHtml | Should -Match 'The authoritative VM reference and detected storage-folder association differ\.'
         $script:ExampleHtml | Should -Match 'Unattached base disk candidate'
         $script:ExampleHtml | Should -Match 'Shared virtual disk reference'
         $script:ExampleHtml | Should -Match 'Shared VHD Set reference'
@@ -3663,8 +3667,8 @@ Describe 'Virtual disk housekeeping classification' {
 
     It 'keeps image-library guidance off attached placement inconsistencies' {
         $source = Get-Content -LiteralPath (Join-Path (Split-Path $PSScriptRoot -Parent) 'Get-HyperVVMCheckpointHealth.psm1') -Raw
-        $source | Should -Match 'No VM or snapshot inventory references this virtual disk under complete coverage, but its path is inside a folder associated with VM\(s\)'
-        $source | Should -Match 'This virtual disk is referenced by VM\(s\).+but its path is inside a folder associated with different VM\(s\)'
+        $source | Should -Match 'VM owner\(s\): none\. Folder-associated VM\(s\): \$associatedVmText\. No VM or snapshot inventory references this virtual disk under complete coverage\.'
+        $source | Should -Match 'VM owner\(s\): \$ownerText\. Folder-associated VM\(s\): \$associatedVmText\. The authoritative VM reference and detected storage-folder association differ\.'
         $source | Should -Match 'Filename text is not used as ownership evidence'
         $source | Should -Match 'Do not attach, move, rename, or delete it based only on this report\.'
         $source | Should -Match "default\s+\{ 'If this virtual disk belongs to an image library, exclude its full path with storage\.imageLibraryPathPatterns"
