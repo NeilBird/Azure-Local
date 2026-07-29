@@ -599,10 +599,14 @@ $r | ForEach-Object {
 $run = $r[0].RunData
 $run.HousekeepingFindings | Export-Csv '.\housekeeping.csv' -NoTypeInformation
 $run.StorageHealth
+$run.StorageHealth.CsvRedirected |
+    Select-Object Volume, Nodes, State, BlockReason, FsReason
 $run.Discovery.NotAuditedCandidates
 $run.NodeEventContext | ForEach-Object Events
 $run.Artifacts
 ```
+
+`RunData.StorageHealth.CsvRedirected` contains the abnormal CSV rows shown in the HTML storage section. Each row preserves `BlockReason` and `FsReason`; for example, `FsReason` can contain `IncompatibleFileSystemFilter, FileSystemReFs`. `FileSystemReFs` by itself is the expected Azure Local / S2D ReFS state and is omitted from this abnormal collection.
 
 `RunData` is shared by reference across rows in the live PowerShell session, so use `$r[0].RunData` rather than exporting the same run snapshot once per VM. `Export-Csv` flattens nested objects to type names; use `ConvertTo-Json -Depth 12`, `Export-Clixml`, or select/expand the nested collection being exported. Both `ReportData.VmEvents` and `RunData.NodeEventContext.Events` can contain sensitive full event messages.
 
@@ -659,8 +663,11 @@ Create the GitHub release with tag `Get-HyperVVMCheckpointHealth-v0.2.30` and up
 - Corrects TXT Replica evidence wording without changing verdict logic: material measurement concerns now name their typed breached measurements instead of repeating product-health prose.
 - Distinguishes HRL-only investigations from material Replica measurement breaches, so advisory measurements below their effective limits are no longer described as exceeding those limits.
 - Clarifies whether the per-VM Events CSV contains verdict-driving event evidence or non-driving context.
+- Distinguishes zero attributed events from low-signal events and reports whether the optional VMMS Analytic channel was enabled or deliberately skipped.
 - Labels the empty parent-path cell for each terminal base VHD as `n/a (base)` in expanded chain evidence.
 - Classifies ownerless `.avhdx` files as **Unattached differencing disk candidate** even when they reside inside a VM-associated folder; genuine referenced-owner/folder mismatches remain **Placement inconsistency**.
+- Lets the standalone setup script find the versioned release ZIP beside itself before falling back to `$env:TEMP`.
+- Documents and tests `RunData.StorageHealth.CsvRedirected[].FsReason`, including the combined `IncompatibleFileSystemFilter, FileSystemReFs` evidence value.
 
 ### Version 0.2.29
 

@@ -820,6 +820,25 @@ Describe 'PassThru automation result contract' {
         [object]::ReferenceEquals($result.RunData, $runData) | Should -BeTrue
     }
 
+    It 'preserves combined CSV file-system reasons in the shared run storage snapshot' {
+        $storageHealth = [pscustomobject]@{
+            Summary = 'Degraded'
+            CsvRedirected = @([pscustomobject]@{
+                Volume = 'UserStorage_1'
+                FsReason = 'IncompatibleFileSystemFilter, FileSystemReFs'
+            })
+        }
+        $runData = [pscustomobject]@{ Cluster = 'TEST-CLUSTER'; StorageHealth = $storageHealth }
+        $inputResult = [pscustomobject]@{
+            VMName = 'TEST-VM'; Cluster = 'TEST-CLUSTER'; Recommendation = 'INVESTIGATE'
+            Detail = 'Storage review required.'; ReportData = $null
+        }
+
+        $result = Complete-CheckpointHealthPassThruResult -Result $inputResult -RunData $runData
+
+        $result.RunData.StorageHealth.CsvRedirected[0].FsReason | Should -Be 'IncompatibleFileSystemFilter, FileSystemReFs'
+    }
+
     It 'promotes the assessment text into Detail for an INVESTIGATE result' {
         $assessmentText = 'Checkpoint or virtual-disk evidence requires validation.'
         $nestedStatus = [pscustomobject]@{
@@ -1437,6 +1456,19 @@ Describe 'HTML fleet report usability' {
         $script:RenderedHtml | Should -Match '\.scope-label\{color:#d97706;font-weight:700\}'
         $script:RenderedHtml | Should -Match 'It is not a complete cluster health assessment and does not represent the health of VMs that were not fully assessed\.'
         $script:CleanRenderedHtml | Should -Match '<strong>1 input \+ 0 automatically discovered = 1 processed</strong>; <strong>1 was fully assessed</strong>; <strong>0 were incomplete</strong>'
+    }
+
+    It 'distinguishes no attributed events from low-signal events and reports a checked Analytic channel precisely' {
+        $script:CleanRenderedHtml | Should -Match 'Concerning events - this VM \(168h\)</div><div>0 \(none attributed\)</div>'
+        $script:CleanRenderedHtml | Should -Match 'Analytic channel</div><div>Enabled</div>'
+        $script:CleanRenderedHtml | Should -Not -Match 'Enabled \(or not checked\)'
+    }
+
+    It 'keeps finding-specific orphan guidance aligned across TXT and HTML output' {
+        $moduleSource = Get-Content -LiteralPath (Join-Path (Split-Path $PSScriptRoot -Parent) 'Get-HyperVVMCheckpointHealth.psm1') -Raw
+
+        $moduleSource | Should -Match 'based on your own investigation into that specific orphaned checkpoint file\.'
+        $moduleSource | Should -Not -Match 'at its timestamps and obtain vendor or Microsoft Support guidance before changing it\.'
     }
 
     It 'keeps healthy Replica timestamp-only activity as quiet state detail' {
@@ -3702,6 +3734,31 @@ Describe 'Storage Health Service fault classification' {
             Get-StorageHealthSummary -Snapshot $snapshot | Should -Be 'Degraded'
             $snapshot.HealthFaults = @()
             Get-StorageHealthSummary -Snapshot $snapshot | Should -Be 'Healthy'
+        }
+    }
+
+    It 'preserves a combined incompatible-filter and ReFS reason as abnormal CSV evidence' {
+        InModuleScope Get-HyperVVMCheckpointHealth.Storage {
+            function Get-StorageJob { @() }
+            function Get-VirtualDisk { @() }
+            function Get-PhysicalDisk { @() }
+            function Get-StorageSubSystem { [pscustomobject]@{ FriendlyName = 'S2D'; HealthStatus = 'Healthy' } }
+            function Get-HealthFault { @() }
+            function Get-ClusterSharedVolumeState {
+                [pscustomobject]@{
+                    Node = 'TEST-NODE-01'
+                    VolumeFriendlyName = 'UserStorage_1'
+                    StateInfo = 'FileSystemRedirected'
+                    BlockRedirectedIOReason = 'NotBlockRedirected'
+                    FileSystemRedirectedIOReason = 'IncompatibleFileSystemFilter, FileSystemReFs'
+                }
+            }
+
+            $result = Get-ClusterStorageHealthSnapshot -TargetNode $env:COMPUTERNAME
+
+            $result.Summary | Should -Be 'Degraded'
+            @($result.CsvRedirected).Count | Should -Be 1
+            $result.CsvRedirected[0].FsReason | Should -Be 'IncompatibleFileSystemFilter, FileSystemReFs'
         }
     }
 

@@ -24,7 +24,7 @@
             Tags = @('AzureLocal', 'Hyper-V', 'FailoverCluster', 'Checkpoint', 'Diagnostics')
             LicenseUri = 'https://github.com/NeilBird/Azure-Local/blob/main/LICENSE'
             ProjectUri = 'https://aka.ms/Get-HyperVVMCheckpointHealth'
-            ReleaseNotes = 'Version 0.2.30 improves evidence wording, labels, and housekeeping classification without changing VM verdict logic: material Replica measurement concerns now name their typed breached measurements instead of repeating product-health prose; HRL-only investigations no longer claim that measurements exceed their effective limits; Events CSV descriptions distinguish verdict-driving event evidence from non-driving context; parentless base VHD rows show n/a (base) in expanded path evidence; and ownerless AVHDX files retain the Unattached differencing disk candidate category even inside VM-associated folders.'
+            ReleaseNotes = 'Version 0.2.30 improves evidence wording, labels, setup ergonomics, and housekeeping classification without changing VM verdict logic: material Replica measurement concerns name their typed breached measurements; HRL-only investigations do not claim measurements exceed their effective limits; event and Analytic-channel labels distinguish zero, contextual, enabled, and skipped states; parentless base VHD rows show n/a (base); ownerless AVHDX files retain the Unattached differencing disk candidate category inside VM-associated folders; setup discovers an adjacent release ZIP before TEMP; and PassThru preserves abnormal CSV file-system reasons under RunData.StorageHealth.CsvRedirected.'
         }
     }
 }

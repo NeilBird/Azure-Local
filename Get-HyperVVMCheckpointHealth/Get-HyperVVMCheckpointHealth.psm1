@@ -2882,7 +2882,8 @@ function Invoke-VMCheckpointAudit {
             Write-AuditReportLine  "  A stuck / failed merge, a failed backup checkpoint, an interrupted instant-recovery /"
             Write-AuditReportLine  "  live-mount, or a leftover initial Hyper-V Replica checkpoint can leave these behind."
             Write-AuditReportLine  "  Do NOT delete blindly. Match each file to the VM, backup, restore, mount, or replica activity"
-            Write-AuditReportLine  "  at its timestamps and obtain vendor or Microsoft Support guidance before changing it."
+            Write-AuditReportLine  "  at its timestamps. Before changing it, use vendor or Microsoft Support guidance or a procedure"
+            Write-AuditReportLine  "  based on your own investigation into that specific orphaned checkpoint file."
         } else {
             Write-AuditReportLine "  None found - no globally unattached .avhdx candidate exists in this VM's associated folders."
             Write-AuditReportLine ""
@@ -4106,7 +4107,8 @@ function Invoke-VMCheckpointAudit {
         Write-AuditReportLine  "    3. For an initial Replica recovery point, review Get-VMReplication health and follow the approved"
         Write-AuditReportLine  "       Replica recovery procedure."
         Write-AuditReportLine  "    4. Before any file change, confirm ownership and purpose, verify that a current backup exists, and"
-        Write-AuditReportLine  "       use a procedure approved by the backup vendor or Microsoft Support."
+        Write-AuditReportLine  "       use a procedure approved by the backup vendor or Microsoft Support, or based on your own"
+        Write-AuditReportLine  "       investigation into that specific orphaned checkpoint file."
     }
     if ($holdState) {
         Write-AuditReportLine ""
@@ -4474,6 +4476,7 @@ function Invoke-VMCheckpointAudit {
         VssTotal             = @($vssWriters).Count
         VssUnhealthyCount    = $vssUnhealthy.Count
         VssUnhealthy         = @($vssUnhealthy | ForEach-Object { [pscustomobject]@{ Writer = [string]$_.Writer; State = [string]$_.State; LastError = [string]$_.'Last error' } })
+        AnalyticCheckSkipped    = [bool]$SkipAnalyticCheck
         AnalyticNodesNeedEnable = @($analyticNodesNeedEnable)
         CsvVolumes           = @($csvReport)
         CsvFreeSpaceAssessment = $csvFreeSpaceAssessment

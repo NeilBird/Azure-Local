@@ -986,7 +986,13 @@ $eventFloodExecSummaryLi
         }
         $ckptCount = @($rd.Checkpoints).Count
         $verOld = if ($rd.VmVerOlder) { "Yes - v$(ConvertTo-HtmlText $rd.Version) vs cluster max v$(ConvertTo-HtmlText $rd.HostMaxVersion) (migration/start context only; not a checkpoint cause)." } else { 'No - at the latest supported version.' }
-        $analytic = if (@($rd.AnalyticNodesNeedEnable) -contains $r.OwningNode) { 'Not enabled on this node' } else { 'Enabled (or not checked)' }
+        $analytic = if ($rd.PSObject.Properties['AnalyticCheckSkipped'] -and $rd.AnalyticCheckSkipped) {
+            'Not checked (-SkipAnalyticCheck)'
+        } elseif (@($rd.AnalyticNodesNeedEnable) -contains $r.OwningNode) {
+            'Not enabled on this node'
+        } else {
+            'Enabled'
+        }
         $vss = switch ($rd.VssState) { 'Healthy' { "All $($rd.VssTotal) writer(s) Stable (no last error)" } 'Unhealthy' { "$($rd.VssUnhealthyCount) of $($rd.VssTotal) writer(s) NOT healthy" } default { 'Unavailable (needs elevated context on owner)' } }
         $srcText   = if ($r.PSObject.Properties['Source'] -and $r.Source) { [string]$r.Source } else { 'Input' }
         $nodeWideNote = if ($rd.PSObject.Properties['NodeDominantNote'] -and $rd.NodeDominantNote) { " ($($rd.NodeDominantNote))" } else { '' }
@@ -1035,7 +1041,13 @@ $eventFloodExecSummaryLi
         $csvPolicyHtml = if ($rd.PSObject.Properties['CsvFreeSpaceAssessment'] -and $rd.CsvFreeSpaceAssessment -and $rd.CsvFreeSpaceAssessment.IsConcern) { "<span class='warnval'>$(ConvertTo-HtmlText $csvPolicyText)</span>" } else { ConvertTo-HtmlText $csvPolicyText }
         $hrlPolicyConcern = ($rd.PSObject.Properties['HrlAssessment'] -and $rd.HrlAssessment -and $rd.HrlAssessment.Enabled -and ([int]$rd.HrlAssessment.ExceedsCadenceCount -gt 0) -and $rd.HrlAssessment.CorroboratedByReplication)
         $hrlPolicyHtml = if ($hrlPolicyConcern) { "<span class='warnval'>$(ConvertTo-HtmlText $hrlPolicyText)</span>" } else { ConvertTo-HtmlText $hrlPolicyText }
-        $vmEventHtml = if ([int]$rd.VmHighConcernCount -gt 0) { "<span class='warnval'>$($rd.VmEventConcernCount) ($($rd.VmHighConcernCount) high-signal)</span>" } else { "$($rd.VmEventConcernCount) (low-signal only)" }
+        $vmEventHtml = if ([int]$rd.VmHighConcernCount -gt 0) {
+            "<span class='warnval'>$($rd.VmEventConcernCount) ($($rd.VmHighConcernCount) high-signal)</span>"
+        } elseif ([int]$rd.VmEventConcernCount -gt 0) {
+            "$($rd.VmEventConcernCount) (low-signal only)"
+        } else {
+            '0 (none attributed)'
+        }
         $stateConsistencyText = if ($rd.PSObject.Properties['StateConsistencyImpact'] -and $rd.StateConsistencyImpact -eq 'Advisory') {
             'Advisory - VM configuration (.vmcx) timestamp changed during collection; core state and disk paths remained stable'
         } elseif ($rd.PSObject.Properties['StateConsistencyStatus'] -and $rd.StateConsistencyStatus -eq 'Unavailable') {
