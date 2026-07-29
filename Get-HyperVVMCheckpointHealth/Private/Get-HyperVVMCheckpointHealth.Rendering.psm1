@@ -1317,7 +1317,8 @@ $eventFloodExecSummaryLi
             [void]$sb.Append("</tbody></table></div><details class='chain-paths'><summary>Full path and parent-path evidence</summary><div class='chain-scroll'><table><thead><tr><th>Layer file</th><th>Full path</th><th>Parent path</th></tr></thead><tbody>")
             foreach ($layer in $attachedVhdLayers) {
                 $fileName = [string](Get-OptionalPropertyValue $layer 'FileName' (Split-Path ([string]$layer.Path) -Leaf))
-                [void]$sb.Append("<tr><td>$(ConvertTo-HtmlText $fileName)</td><td><code>$(ConvertTo-HtmlText $layer.Path)</code></td><td><code>$(ConvertTo-HtmlText $layer.ParentPath)</code></td></tr>")
+                $parentPathDisplay = if ($layer.Type -in @('Dynamic', 'Fixed') -and [string]::IsNullOrWhiteSpace([string]$layer.ParentPath)) { 'n/a (base)' } else { [string]$layer.ParentPath }
+                [void]$sb.Append("<tr><td>$(ConvertTo-HtmlText $fileName)</td><td><code>$(ConvertTo-HtmlText $layer.Path)</code></td><td><code>$(ConvertTo-HtmlText $parentPathDisplay)</code></td></tr>")
             }
             [void]$sb.Append("</tbody></table></div></details><p class='muted'><strong>Layer order:</strong> Active (top) is the child the VM currently writes to; each Checkpoint row is its next differencing-disk parent; Base is the terminal VHDX parent. Checkpoint age is measured from AVHDX creation. Last activity is measured independently from LastWrite and can remain near zero while an old active checkpoint is continuously written. Base VHDX files are not checkpoints and always show <code>n/a (base)</code>. A differencing <code>.avhdx</code> layer can remain attached even when <code>Get-VMSnapshot</code> exposes no named checkpoint. Validate the chain and the responsible backup/checkpoint job before migration, restart, merge, or removal.</p></details>`r`n")
         }

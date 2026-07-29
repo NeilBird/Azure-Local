@@ -659,6 +659,7 @@ Create the GitHub release with tag `Get-HyperVVMCheckpointHealth-v0.2.30` and up
 - Corrects TXT Replica evidence wording without changing verdict logic: material measurement concerns now name their typed breached measurements instead of repeating product-health prose.
 - Distinguishes HRL-only investigations from material Replica measurement breaches, so advisory measurements below their effective limits are no longer described as exceeding those limits.
 - Clarifies whether the per-VM Events CSV contains verdict-driving event evidence or non-driving context.
+- Labels the empty parent-path cell for each terminal base VHD as `n/a (base)` in expanded chain evidence.
 
 ### Version 0.2.29
 

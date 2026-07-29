@@ -24,7 +24,7 @@
             Tags = @('AzureLocal', 'Hyper-V', 'FailoverCluster', 'Checkpoint', 'Diagnostics')
             LicenseUri = 'https://github.com/NeilBird/Azure-Local/blob/main/LICENSE'
             ProjectUri = 'https://aka.ms/Get-HyperVVMCheckpointHealth'
-            ReleaseNotes = 'Version 0.2.30 corrects TXT evidence wording without changing verdict logic: material Replica measurement concerns now name their typed breached measurements instead of repeating product-health prose; HRL-only investigations no longer claim that measurements exceed their effective limits; and Events CSV descriptions distinguish verdict-driving event evidence from non-driving context.'
+            ReleaseNotes = 'Version 0.2.30 corrects evidence wording and labels without changing verdict logic: material Replica measurement concerns now name their typed breached measurements instead of repeating product-health prose; HRL-only investigations no longer claim that measurements exceed their effective limits; Events CSV descriptions distinguish verdict-driving event evidence from non-driving context; and parentless base VHD rows show n/a (base) in expanded path evidence.'
         }
     }
 }

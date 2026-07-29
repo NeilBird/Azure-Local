@@ -1699,6 +1699,7 @@ Describe 'HTML fleet report usability' {
         $script:RenderedHtml | Should -Match ">Base</td><td class='chain-file'>TEST-VM-STALE-LAYER_OS\.vhdx</td>"
         $script:RenderedHtml | Should -Match '<th>Checkpoint age</th><th>Last activity</th><th>Checkpoint stale</th>'
         $script:RenderedHtml | Should -Match '<summary>Full path and parent-path evidence</summary>'
+        $script:RenderedHtml | Should -Match '<td><code>n/a \(base\)</code></td>'
         $script:RenderedHtml | Should -Match "<span class='warnval'>74 h<br>3\.1 d</span>.*0\.1 h<br>0 d.*<span class='warnval'>YES</span>"
         $script:RenderedHtml | Should -Match 'class=''num ckptage''>n/a</td><td class=''num ckptage''>98 h<br>4\.1 d<br><span class="muted">.*?</span></td><td>n/a \(base\)</td>'
     }
