@@ -389,6 +389,8 @@ The HTML report's **Cluster / storage housekeeping to review** section is a read
 
 Housekeeping row totals count observations, so one physical file can appear in more than one category. Storage totals deduplicate files by case-insensitive full path. The report opens with every category selected, sorts the table by **Size** from largest to smallest, and provides search, root, extension, minimum-size, and category filters. **Download all findings (CSV)** exports every original finding, independent of active display filters.
 
+The **Scope** column shows the immediate parent folder when complete inventory finds no authoritative owner for a disk. This is especially important for Azure Local deployments where multiple VMs can place disks directly in the same generated Storage Path folder, such as `C:\ClusterStorage\UserStorage_2\e583f17a6eccbef`; that shared path is not a VM-owned folder. Folder-associated VM names remain explicit in **Observation** as contextual evidence and do not imply ownership. When an authoritative owner exists, Scope lists the owner and relevant folder-associated VM context.
+
 The report-local **Filter out as VM image** control is intentionally available only for file-backed **Unattached base disk candidate** `.vhd` and `.vhdx` rows. It is never offered for placement inconsistencies, attached disks, AVHDX files, or VHD Sets. See [Optional policy file](#optional-policy-file) for persistent `storage.imageLibraryPathPatterns` configuration.
 
 ## Portable HTML report & results bundle
@@ -667,6 +669,7 @@ Create the GitHub release with tag `Get-HyperVVMCheckpointHealth-v0.2.30` and up
 - Labels the empty parent-path cell for each terminal base VHD as `n/a (base)` in expanded chain evidence.
 - Classifies ownerless `.avhdx` files as **Unattached differencing disk candidate** even when they reside inside a VM-associated folder; genuine referenced-owner/folder mismatches remain **Placement inconsistency**.
 - Identifies authoritative **VM owner(s)** and **Folder-associated VM(s)** directly in placement observations, with an explicit mismatch example in the synthetic report.
+- Uses the immediate parent Storage Path as **Scope** for ownerless housekeeping findings, avoiding implied VM ownership when Azure Local VMs share a generated storage folder.
 - Lets the standalone setup script find the versioned release ZIP beside itself before falling back to `$env:TEMP`.
 - Documents and tests `RunData.StorageHealth.CsvRedirected[].FsReason`, including the combined `IncompatibleFileSystemFilter, FileSystemReFs` evidence value.
 
