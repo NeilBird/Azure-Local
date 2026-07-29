@@ -1031,7 +1031,20 @@
 <p><strong>Why this check matters:</strong> storage repair/resync activity, abnormal CSV redirection or state, and unhealthy disks can make checkpoint or merge files temporarily locked or unavailable. A ReFS CSV reporting File System Redirected mode with reason <code>FileSystemReFs</code> is normal on Azure Local / S2D and is not flagged; non-ReFS file-system redirection, block redirection, and paused or offline volumes are treated as abnormal.</p>
 <div class='callout warn'><strong>Why this snapshot is non-healthy:</strong> the lightweight storage snapshot reported a non-healthy state. This is read-only observed evidence; it does not establish root cause.</div>
 <p><strong>Storage knowledge links:</strong></p><ul><li><a href='https://learn.microsoft.com/en-us/windows-server/failover-clustering/health-service-faults' target='_blank' rel='noopener noreferrer'>Health Service faults | Microsoft Learn</a></li><li><a href='https://learn.microsoft.com/en-us/windows-server/storage/storage-spaces/troubleshooting-storage-spaces' target='_blank' rel='noopener noreferrer'>Storage Spaces Direct troubleshooting | Microsoft Learn</a></li></ul><h3>CSVs in an abnormal state (block-redirected, non-ReFS file-system redirected, or paused)</h3><table><thead><tr><th>Volume</th><th>Affected node(s)</th><th>State</th><th>Block reason</th><th>FS reason</th></tr></thead><tbody><tr><td>UserStorage_1</td><td>node01, node02</td><td>FileSystemRedirected</td><td></td><td>IncompatibleFileSystemFilter, FileSystemReFs</td></tr></tbody></table><div class='callout warn'><strong>Incompatible file-system filter reported:</strong> <code>FileSystemReFs</code> remains expected for ReFS CSVs; the additional <code>IncompatibleFileSystemFilter</code> reason is why this observation requires review. It commonly indicates that a file-system minifilter, such as antivirus, EDR, backup, replication, encryption, or file-monitoring software, is not compatible with the CSV direct-I/O path. This point-in-time state does not identify the responsible product and does not, by itself, prove disk failure or data corruption.</div><p><strong>Read-only validation:</strong> confirm that the state persists, compare loaded minifilters and instances on every cluster node, and correlate recent Failover Clustering CSV events.</p><pre><code>Get-ClusterSharedVolumeState | Sort-Object VolumeFriendlyName, Node | Format-Table Node, VolumeFriendlyName, StateInfo, BlockRedirectedIOReason, FileSystemRedirectedIOReason -AutoSize</code></pre><pre><code>$nodes = (Get-ClusterNode).Name
-Invoke-Command -ComputerName $nodes -ScriptBlock { fltmc filters; fltmc instances }</code></pre><pre><code>$nodes = (Get-ClusterNode).Name
+Invoke-Command -ComputerName $nodes -ScriptBlock { fltmc filters; fltmc instances }</code></pre><p><strong>Selected-filter details:</strong> replace <code>&lt;filtername&gt;</code> with a non-Microsoft filter name from <code>fltmc filters</code> to map it to its driver and service registration on every node. Treat <code>SupportedFeatures</code> as collected evidence; confirm its meaning and product support with the driver owner or vendor.</p><pre><code>$filterName = &#39;&lt;filtername&gt;&#39;
+Invoke-Command -ComputerName $nodes -ArgumentList $filterName -ScriptBlock {
+    param($FilterName)
+
+    $escapedFilterName = $FilterName.Replace(&quot;&#39;&quot;, &quot;&#39;&#39;&quot;)
+    Get-CimInstance Win32_SystemDriver -Filter (&quot;Name=&#39;{0}&#39;&quot; -f $escapedFilterName) |
+        Select-Object Name, State, StartMode, PathName
+
+    $servicePath = &quot;HKLM:\SYSTEM\CurrentControlSet\Services\$FilterName&quot;
+    if (Test-Path -LiteralPath $servicePath) {
+        Get-ItemProperty -LiteralPath $servicePath |
+            Select-Object DisplayName, ImagePath, Start, SupportedFeatures
+    }
+}</code></pre><pre><code>$nodes = (Get-ClusterNode).Name
 Invoke-Command -ComputerName $nodes -ScriptBlock {
     Get-WinEvent -FilterHashtable @{LogName=&#39;System&#39;; ProviderName=&#39;Microsoft-Windows-FailoverClustering&#39;; Id=5120,5142; StartTime=(Get-Date).AddDays(-7)} -ErrorAction SilentlyContinue |
         Select-Object TimeCreated, Id, LevelDisplayName, Message

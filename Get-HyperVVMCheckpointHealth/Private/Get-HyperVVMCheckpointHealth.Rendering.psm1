@@ -1449,11 +1449,29 @@ $eventFloodExecSummaryLi
             if ($hasIncompatibleFileSystemFilter) {
                 $csvStateCommand = 'Get-ClusterSharedVolumeState | Sort-Object VolumeFriendlyName, Node | Format-Table Node, VolumeFriendlyName, StateInfo, BlockRedirectedIOReason, FileSystemRedirectedIOReason -AutoSize'
                 $filterInventoryCommand = '$nodes = (Get-ClusterNode).Name' + [Environment]::NewLine + 'Invoke-Command -ComputerName $nodes -ScriptBlock { fltmc filters; fltmc instances }'
+                $filterDriverCommand = @'
+$filterName = '<filtername>'
+Invoke-Command -ComputerName $nodes -ArgumentList $filterName -ScriptBlock {
+    param($FilterName)
+
+    $escapedFilterName = $FilterName.Replace("'", "''")
+    Get-CimInstance Win32_SystemDriver -Filter ("Name='{0}'" -f $escapedFilterName) |
+        Select-Object Name, State, StartMode, PathName
+
+    $servicePath = "HKLM:\SYSTEM\CurrentControlSet\Services\$FilterName"
+    if (Test-Path -LiteralPath $servicePath) {
+        Get-ItemProperty -LiteralPath $servicePath |
+            Select-Object DisplayName, ImagePath, Start, SupportedFeatures
+    }
+}
+'@
                 $clusterEventCommand = '$nodes = (Get-ClusterNode).Name' + [Environment]::NewLine + 'Invoke-Command -ComputerName $nodes -ScriptBlock {' + [Environment]::NewLine + "    Get-WinEvent -FilterHashtable @{LogName='System'; ProviderName='Microsoft-Windows-FailoverClustering'; Id=5120,5142; StartTime=(Get-Date).AddDays(-7)} -ErrorAction SilentlyContinue |" + [Environment]::NewLine + '        Select-Object TimeCreated, Id, LevelDisplayName, Message' + [Environment]::NewLine + '}'
                 [void]$sb.Append("<div class='callout warn'><strong>Incompatible file-system filter reported:</strong> <code>FileSystemReFs</code> remains expected for ReFS CSVs; the additional <code>IncompatibleFileSystemFilter</code> reason is why this observation requires review. It commonly indicates that a file-system minifilter, such as antivirus, EDR, backup, replication, encryption, or file-monitoring software, is not compatible with the CSV direct-I/O path. This point-in-time state does not identify the responsible product and does not, by itself, prove disk failure or data corruption.</div>")
                 [void]$sb.Append("<p><strong>Read-only validation:</strong> confirm that the state persists, compare loaded minifilters and instances on every cluster node, and correlate recent Failover Clustering CSV events.</p>")
                 [void]$sb.Append("<pre><code>$(ConvertTo-HtmlText $csvStateCommand)</code></pre>")
                 [void]$sb.Append("<pre><code>$(ConvertTo-HtmlText $filterInventoryCommand)</code></pre>")
+                [void]$sb.Append("<p><strong>Selected-filter details:</strong> replace <code>&lt;filtername&gt;</code> with a non-Microsoft filter name from <code>fltmc filters</code> to map it to its driver and service registration on every node. Treat <code>SupportedFeatures</code> as collected evidence; confirm its meaning and product support with the driver owner or vendor.</p>")
+                [void]$sb.Append("<pre><code>$(ConvertTo-HtmlText $filterDriverCommand.Trim())</code></pre>")
                 [void]$sb.Append("<pre><code>$(ConvertTo-HtmlText $clusterEventCommand)</code></pre>")
                 [void]$sb.Append("<p><strong>Action boundary:</strong> map non-Microsoft filter names to the installed security, backup, or data-protection product and validate Azure Local / CSV support with its owner or vendor. Do not unload or remove a filter based only on this report; use an approved maintenance procedure. Microsoft guidance: <a href='https://learn.microsoft.com/windows-server/failover-clustering/failover-cluster-csvs' target='_blank' rel='noopener noreferrer'>Cluster Shared Volumes overview</a> and <a href='https://learn.microsoft.com/troubleshoot/windows-server/virtualization/storage-issues-in-hyper-v-and-windows-server-failover-clusters' target='_blank' rel='noopener noreferrer'>Hyper-V and failover-cluster storage troubleshooting</a>.</p>")
             }
