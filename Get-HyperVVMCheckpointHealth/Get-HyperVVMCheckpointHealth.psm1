@@ -117,8 +117,8 @@ function Get-HyperVVMCheckpointHealth {
 .NOTES
     Author  : Neil Bird, Microsoft
     Created : 2026-07-10
-    Updated : 2026-07-28
-    Version : 0.2.29
+    Updated : 2026-07-29
+    Version : 0.2.30
     
     Requires: Windows PowerShell 5.1 (this module is written for, and validated against, Windows
               PowerShell 5.1 ONLY - it is NOT intended or tested for PowerShell 7.x). Requires the
@@ -366,7 +366,7 @@ Then run this in Windows PowerShell 5.1, on a cluster node or a workstation that
 
 # Module version - single source of truth surfaced in the HTML report (header meta + footer) so a
 # saved / emailed report always states which build produced it. Keep in sync with the .NOTES Version.
-$script:ScriptVersion = '0.2.29'
+$script:ScriptVersion = '0.2.30'
 
 # v0.2.14: end-to-end run stopwatch - started as early as possible so the HTML report can state the
 # total time taken to audit the whole fleet and render the report ("Report generation time hh:mm:ss").
@@ -671,6 +671,39 @@ function ConvertTo-AuditByteText {
     if ($Bytes -ge 1MB) { return ('{0:N2} MB' -f ($Bytes / 1MB)) }
     if ($Bytes -ge 1KB) { return ('{0:N2} KB' -f ($Bytes / 1KB)) }
     return ("$Bytes bytes")
+}
+
+function Get-ReplicaMeasurementEvidenceText {
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory = $true)][object]$Assessment,
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$Breaches
+    )
+
+    $parts = [System.Collections.Generic.List[string]]::new()
+    foreach ($breach in @($Breaches)) {
+        switch ($breach) {
+            'LastReplicationAge' {
+                [void]$parts.Add(('last replication age {0}; effective limit {1}' -f
+                    (ConvertTo-ReplicaDurationText -Minutes ([double]$Assessment.LastReplicationAgeMinutes)),
+                    (ConvertTo-ReplicaDurationText -Minutes ([double]$Assessment.EffectiveMaxAgeMinutes))))
+            }
+            'PendingBytes' {
+                [void]$parts.Add(('pending data {0} (effective limit {1})' -f
+                    (ConvertTo-AuditByteText ([long]$Assessment.PendingBytes)),
+                    (ConvertTo-AuditByteText ([long]$Assessment.EffectiveMaxPendingBytes))))
+            }
+            'Latency' {
+                [void]$parts.Add(('average latency {0:N1} sec (effective limit {1:N1} sec)' -f
+                    [double]$Assessment.LatencySeconds, [double]$Assessment.EffectiveMaxLatencySeconds))
+            }
+            'MissedCount' {
+                $rateText = if ($null -ne $Assessment.MissedRatePercent) { '; {0:N2}% of measured attempts' -f [double]$Assessment.MissedRatePercent } else { '; rate unavailable' }
+                [void]$parts.Add(('missed replications {0}{1}' -f [long]$Assessment.MissedCount, $rateText))
+            }
+        }
+    }
+    $parts.ToArray() -join '; '
 }
 
 function Get-ReplicaAssessmentRows {
@@ -3936,7 +3969,10 @@ function Invoke-VMCheckpointAudit {
     if ($hasVssDriver) { [void]$investigationDriverLabels.Add(("{0} unhealthy VSS writer(s)" -f $vssUnhealthy.Count)) }
     if ($hasReplicaDriver) {
         if ($replProductConcern) { [void]$investigationDriverLabels.Add(("Hyper-V Replica product health/state concern ({0} / {1})" -f $replAssessment.State, $replAssessment.Health)) }
-        if ($replMeasurementConcern) { [void]$investigationDriverLabels.Add(("Hyper-V Replica measurement concern ({0})" -f $replAssessment.Reason)) }
+        if ($replMeasurementConcern) {
+            $replicaMeasurementEvidence = Get-ReplicaMeasurementEvidenceText -Assessment $replAssessment -Breaches @($replAssessment.ConcernBreaches)
+            [void]$investigationDriverLabels.Add(("Hyper-V Replica measurement concern ({0})" -f $replicaMeasurementEvidence))
+        }
         if ($hrlConcern) { [void]$investigationDriverLabels.Add(("{0} HRL file(s) beyond the cadence-aware threshold with Replica corroboration" -f $hrlAssessment.ExceedsCadenceCount)) }
     }
     if ($hasStorageDriver) { [void]$investigationDriverLabels.Add(("{0} CSV free-space policy breach(es)" -f @($csvFreeSpaceAssessment.Breaches).Count)) }
@@ -3956,8 +3992,10 @@ function Invoke-VMCheckpointAudit {
     } elseif ($hasReplicaDriver -and -not ($hasStateDriver -or $hasVssDriver -or $hasStorageDriver -or $hasEvidenceDriver)) {
         if ($replProductConcern) {
             "Hyper-V Replica product health or state requires attention. This concern is independent of checkpoint-chain corruption."
-        } else {
+        } elseif ($replMeasurementConcern) {
             "Hyper-V Replica measurements exceed effective relationship-aware limits. Product health remains $($replAssessment.Health); this concern is independent of checkpoint-chain corruption."
+        } else {
+            "Hyper-V Replica HRL files exceed the cadence-aware threshold with Replica corroboration. Product health remains $($replAssessment.Health); this concern is independent of checkpoint-chain corruption."
         }
     } elseif ($hasStateDriver -and -not ($hasReplicaDriver -or $hasVssDriver -or $hasStorageDriver -or $hasEvidenceDriver)) {
         "The VM changed state during collection or its final state could not be verified, so the evidence is inconclusive and may combine different VM states."
@@ -4174,7 +4212,11 @@ function Invoke-VMCheckpointAudit {
         Write-AuditReportLine ("    - Text report : {0}" -f $reportFile)
         if ($eventsCsvName) {
             Write-AuditReportLine ("    - Events CSV  : {0}" -f (Join-Path (Split-Path -Parent $reportFile) $eventsCsvName))
-            Write-AuditReportLine  "                    (full, untruncated Hyper-V event messages that back the findings above)"
+            if ($hasEventDriver -or $hasForkSignature -or $historicForkConfirmed -or $activeCkptForkConfirmed) {
+                Write-AuditReportLine  "                    (full, untruncated Hyper-V event messages that back the event findings above)"
+            } else {
+                Write-AuditReportLine  "                    (full, untruncated Hyper-V event messages retained as context; no event row drives this verdict)"
+            }
         }
     } else {
         Write-AuditReportLine  "    - (Re-run with -OutputPath <folder> to capture the .txt report and events .csv to attach.)"

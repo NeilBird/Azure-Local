@@ -267,6 +267,13 @@ Describe 'Get-HyperVVMCheckpointHealth source contracts' {
         $script:Source | Should -Not -Match 'likely a stalled / failed backup checkpoint or an unhealthy VSS writer'
     }
 
+    It 'keeps HRL-only and event-artifact prose evidence-specific' {
+        $script:Source | Should -Match 'Hyper-V Replica HRL files exceed the cadence-aware threshold with Replica corroboration'
+        $script:Source | Should -Match 'full, untruncated Hyper-V event messages that back the event findings above'
+        $script:Source | Should -Match 'full, untruncated Hyper-V event messages retained as context; no event row drives this verdict'
+        $script:Source | Should -Not -Match 'messages that back the findings above'
+    }
+
     It 'preserves exact file metadata for housekeeping totals and filtering' {
         $script:Source | Should -Match 'Length\s+=\s+\[long\]\$diskFile\.Length'
         $script:Source | Should -Match 'FullName\s+=\s+\[string\]\$diskFile\.FullName'
@@ -527,11 +534,13 @@ Describe 'Cluster low-signal event flood contract' {
 
 Describe 'TXT Replica effective-limit evidence' {
     BeforeAll {
-        $modulePath = Join-Path (Split-Path $PSScriptRoot -Parent) 'Get-HyperVVMCheckpointHealth.psm1'
+        $toolRoot = Split-Path $PSScriptRoot -Parent
+        $modulePath = Join-Path $toolRoot 'Get-HyperVVMCheckpointHealth.psm1'
+        Import-Module (Join-Path $toolRoot 'Private\Get-HyperVVMCheckpointHealth.Rendering.psm1') -Force
         $tokens = $null
         $parseErrors = $null
         $ast = [System.Management.Automation.Language.Parser]::ParseFile($modulePath, [ref]$tokens, [ref]$parseErrors)
-        foreach ($functionName in @('ConvertTo-AuditByteText', 'Get-ReplicaAssessmentRows')) {
+        foreach ($functionName in @('ConvertTo-AuditByteText', 'Get-ReplicaMeasurementEvidenceText', 'Get-ReplicaAssessmentRows')) {
             $functionAst = $ast.FindAll({
                 param($node)
                 $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $functionName
@@ -574,6 +583,20 @@ Describe 'TXT Replica effective-limit evidence' {
         ($rows | Where-Object Signal -eq 'Pending replication data').Observed | Should -Be 'Unavailable'
         ($rows | Where-Object Signal -eq 'Pending replication data').Assessment | Should -Be 'Unavailable'
         ($rows | Where-Object Signal -eq 'Measured replication cycles').Observed | Should -Be 'Unavailable'
+    }
+
+    It 'describes measurement concerns from typed breaches instead of product-health prose' {
+        $assessment = [pscustomobject]@{
+            LastReplicationAgeMinutes = 58318.6; EffectiveMaxAgeMinutes = 180
+            PendingBytes = 0; EffectiveMaxPendingBytes = 1GB
+            LatencySeconds = 0; EffectiveMaxLatencySeconds = 1800
+            MissedCount = 92; MissedRatePercent = 100
+        }
+
+        $text = Get-ReplicaMeasurementEvidenceText -Assessment $assessment -Breaches @('LastReplicationAge', 'MissedCount')
+
+        $text | Should -Be 'last replication age 58,318.6 min (40.5 days); effective limit 180.0 min; missed replications 92; 100.00% of measured attempts'
+        $text | Should -Not -Match 'health is Critical'
     }
 }
 
@@ -857,8 +880,8 @@ Describe 'Module distribution contracts' {
         $script:ModuleCommand = Get-Command Get-HyperVVMCheckpointHealth -Module Get-HyperVVMCheckpointHealth
     }
 
-    It 'imports a valid 0.2.29 module manifest' {
-        $script:Manifest.Version.ToString() | Should -Be '0.2.29'
+    It 'imports a valid 0.2.30 module manifest' {
+        $script:Manifest.Version.ToString() | Should -Be '0.2.30'
         $script:Manifest.ExportedFunctions.Keys | Should -Contain 'Get-HyperVVMCheckpointHealth'
     }
 
@@ -901,7 +924,7 @@ Describe 'Module distribution contracts' {
                 -ClusterName 'TEST-CLUSTER' -GeneratedUtc '2026-07-01 01:00:00Z' -DiscoveredVMs @() `
                 -DiscoverySummary ([pscustomobject]@{ EligibleCount = 0; AuditedCount = 0; DeferredCount = 0; Cap = $null }) `
                 -StorageHealth $storageSnapshot -HousekeepingFindings @() -NodeEventContext @([pscustomobject]@{ Node = 'TEST-NODE'; Events = $nodeEvents }) `
-                -IncludeDiscoveredVMs:$false -ScriptVersion '0.2.29' -ReportGenerationTime '00:00:01' -ClusterNodeCount 1 -ClusterCsvCount 1
+                -IncludeDiscoveredVMs:$false -ScriptVersion '0.2.30' -ReportGenerationTime '00:00:01' -ClusterNodeCount 1 -ClusterCsvCount 1
         } $events $storageHealth
         $html | Should -Match 'Cluster-level low-signal event observation'
         $html | Should -Match "<a href='#cluster-low-signal-events'>Cluster-level low-signal event observation:</a>"
@@ -1289,7 +1312,7 @@ Describe 'HTML fleet report usability' {
             -Results @([pscustomobject]@{ VMName = 'TEST-VM-NORMAL'; OwningNode = 'TEST-NODE-01'; Recommendation = 'OK'; Source = 'Input'; StaleCheckpointCount = 0; ReportData = $normalReportData; Detail = '' }) `
             -StaleHours 24 -EventLookbackHours 168 -ClusterName 'CONTOSO-CLUSTER-01' -GeneratedUtc '2026-01-01 00:00:00' `
             -DiscoveredVMs $null -DiscoverySummary ([pscustomobject]@{ EligibleCount = 0; AuditedCount = 0; DeferredCount = 0; Cap = $null }) `
-            -StorageHealth $filterRedirectedStorage -IncludeDiscoveredVMs:$false -ScriptVersion '0.2.29' -ReportGenerationTime '00:00:01' `
+            -StorageHealth $filterRedirectedStorage -IncludeDiscoveredVMs:$false -ScriptVersion '0.2.30' -ReportGenerationTime '00:00:01' `
             -ClusterNodeCount 2 -ClusterCsvCount 1 -HousekeepingFindings @()
         $degradedStorageWithoutFaults = $degradedStorage.PSObject.Copy()
         $degradedStorageWithoutFaults.HealthFaults = @()
