@@ -13,7 +13,8 @@
     It installs/imports the latest published module version, runs
     Update-AzLocalPipelineExample against the target repo's workflow folder
     (a marker-aware merge that preserves AZLOCAL-CUSTOMIZE edits), then stages
-    ONLY the workflow folder + config\ and commits/pushes any changes.
+    ONLY the workflow folder, config\, DevChannel\, managed README, and managed
+    updater paths before committing and pushing any changes.
 
 .PARAMETER RepoRoot
     Root of the repo whose pipelines should be refreshed.
@@ -31,6 +32,19 @@
     Exact module version to install, import, and use for the pipeline refresh.
     Supports unlisted PowerShell Gallery candidates.
 
+.PARAMETER LatestListed
+    Explicitly resolve and use the latest listed PSGallery version, including
+    when a newer unlisted version is installed side-by-side.
+
+.PARAMETER AllowRollbackMarkerRemoval
+    Allow rollback to remove AZLOCAL-CUSTOMIZE sections absent from the older
+    template. Common marker bodies remain preserved.
+
+.PARAMETER KeepNewerVersions
+    Keep installed versions above the latest listed Gallery version. Without
+    this switch, -LatestListed confirms and uninstalls each higher version so
+    a fresh PowerShell session cannot auto-load it instead of the GA target.
+
 .PARAMETER NoPush
     Refresh the YAMLs only - skip git add / commit / push.
 
@@ -38,7 +52,7 @@
     Author : Neil Bird, Microsoft
     Module : AzLocal.UpdateManagement (repo-only maintainer tool; not published)
 #>
-[CmdletBinding(SupportsShouldProcess = $true)]
+[CmdletBinding(SupportsShouldProcess = $true, DefaultParameterSetName = 'Latest')]
 param(
     [Parameter(Mandatory = $true)]
     [string]$RepoRoot,
@@ -51,8 +65,16 @@ param(
     [ValidateSet('CurrentUser', 'AllUsers')]
     [string]$Scope = 'AllUsers',
 
+    [Parameter(Mandatory = $true, ParameterSetName = 'Exact')]
     [ValidatePattern('^\d+\.\d+\.\d+(?:\.\d+)?$')]
     [version]$RequiredVersion,
+
+    [Parameter(ParameterSetName = 'Latest')]
+    [switch]$LatestListed,
+
+    [switch]$AllowRollbackMarkerRemoval,
+
+    [switch]$KeepNewerVersions,
 
     [switch]$NoPush
 )
@@ -75,6 +97,9 @@ try {
 catch {
     if ($PSBoundParameters.ContainsKey('RequiredVersion')) {
         throw "Could not resolve exact $moduleName version $RequiredVersion from PowerShell Gallery. $($_.Exception.Message)"
+    }
+    if ($LatestListed.IsPresent) {
+        throw "Could not resolve the latest listed $moduleName version from PowerShell Gallery. Refusing to fall back to an installed version because it may be an unlisted development-channel candidate. $($_.Exception.Message)"
     }
     Write-Warning "Could not query PowerShell Gallery for '$moduleName' ($($_.Exception.Message)). Using the installed version."
     if ($installed) { $targetVersion = $installed.Version }
@@ -106,7 +131,56 @@ $workflowFull = Join-Path -Path $RepoRoot -ChildPath $WorkflowSubPath
 if (-not (Test-Path -LiteralPath $workflowFull)) {
     throw "Workflow folder not found: '$workflowFull'."
 }
-Update-AzLocalPipelineExample -Destination $workflowFull -Platform $Platform
+$preflightResults = @(Update-AzLocalPipelineExample -Destination $workflowFull -Platform $Platform -PassThru -WhatIf 6>$null)
+$preflightMarkerRemovals = @($preflightResults | Where-Object { @($_.RemovedMarkers).Count -gt 0 })
+if ($LatestListed.IsPresent -and $preflightMarkerRemovals.Count -gt 0 -and -not $AllowRollbackMarkerRemoval.IsPresent) {
+    $preflightDetails = ($preflightMarkerRemovals | ForEach-Object {
+        "{0} [{1}]" -f (Split-Path -Leaf $_.File), ([string]::Join(',', @($_.RemovedMarkers)))
+    }) -join '; '
+    throw "Pipeline rollback preflight stopped because the target templates would remove AZLOCAL-CUSTOMIZE sections: $preflightDetails. Review those bodies, then rerun with -AllowRollbackMarkerRemoval. No pipeline files or installed newer module versions were changed."
+}
+
+if ($LatestListed.IsPresent) {
+    $newerInstalledVersions = @(Get-Module -ListAvailable -Name $moduleName |
+        Where-Object { $_.Version -gt [version]$targetVersion } |
+        Select-Object -ExpandProperty Version -Unique |
+        Sort-Object -Descending)
+    if ($newerInstalledVersions.Count -gt 0) {
+        if ($KeepNewerVersions.IsPresent) {
+            Write-Warning ("Keeping module version(s) newer than latest listed {0}: {1}. A fresh PowerShell session may auto-load the highest retained version." -f $targetVersion, ($newerInstalledVersions -join ', '))
+        }
+        else {
+            Get-Module -Name $moduleName | Remove-Module -Force -ErrorAction SilentlyContinue
+            foreach ($newerVersion in $newerInstalledVersions) {
+                $caption = "Confirm removal of newer-than-listed $moduleName module version: $newerVersion"
+                $message = "$moduleName $newerVersion is installed above latest listed version $targetVersion. It may be an unlisted development-channel candidate and PowerShell may auto-load it in a fresh session. Remove it now?"
+                if (-not $PSCmdlet.ShouldContinue($message, $caption)) {
+                    throw "Latest-listed rollback cancelled because $moduleName $newerVersion remains installed. Rerun and approve removal, or pass -KeepNewerVersions to accept the auto-loading risk explicitly."
+                }
+                if ($PSCmdlet.ShouldProcess("$moduleName $newerVersion", 'Uninstall module version newer than latest listed')) {
+                    Uninstall-Module -Name $moduleName -RequiredVersion $newerVersion -Force -ErrorAction Stop
+                    Write-Host "Removed $moduleName $newerVersion." -ForegroundColor Green
+                }
+            }
+            Import-Module -Name $moduleName -RequiredVersion $targetVersion -Force
+        }
+    }
+}
+
+$refreshParameters = @{
+    Destination = $workflowFull
+    Platform = $Platform
+    PassThru = $true
+}
+if ($AllowRollbackMarkerRemoval -and (Get-Command Update-AzLocalPipelineExample).Parameters.ContainsKey('AllowRollbackMarkerRemoval')) {
+    $refreshParameters.AllowRollbackMarkerRemoval = $true
+}
+$refreshResults = @(Update-AzLocalPipelineExample @refreshParameters)
+$blockedRollbacks = @($refreshResults | Where-Object { $_.Action -eq 'Skipped-RollbackMarkerRemoval' })
+if ($blockedRollbacks.Count -gt 0) {
+    $blockedNames = ($blockedRollbacks | ForEach-Object { Split-Path -Leaf $_.File }) -join ', '
+    throw "Pipeline rollback stopped because older templates would remove customized marker sections from: $blockedNames. Review the diff, then rerun with -AllowRollbackMarkerRemoval."
+}
 
 # 3. Stage ONLY the workflow folder + config\, commit and push on change.
 if ($NoPush) {
@@ -114,7 +188,7 @@ if ($NoPush) {
     return
 }
 
-$gitPaths = @($WorkflowSubPath, 'config') |
+$gitPaths = @($WorkflowSubPath, 'config', 'DevChannel') |
     Where-Object { Test-Path -LiteralPath (Join-Path -Path $RepoRoot -ChildPath $_) }
 if ($gitPaths.Count -eq 0) {
     Write-Warning "Neither '$WorkflowSubPath' nor 'config' exists under '$RepoRoot'; nothing to stage."

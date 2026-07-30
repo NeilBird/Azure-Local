@@ -63,6 +63,7 @@
         'Private/Get-AzLocalPipelineId.ps1',
         'Private/Get-AzLocalPipelineManifest.ps1',
         'Private/Get-AzLocalReadyForUpdateRows.ps1',
+        'Private/Get-AzLocalDevelopmentChannelScriptVersion.ps1',
         'Private/Get-AzLocalReadmeTemplateVersion.ps1',
         'Private/Get-AzLocalReadyForUpdateTableMarkdown.ps1',
         'Private/Get-AzLocalRunEndTime.ps1',

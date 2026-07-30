@@ -6,6 +6,8 @@ Every example pipeline installs `AzLocal.UpdateManagement` from PSGallery at run
 
 If your change-control process requires you to pin the module version (so a release on PSGallery cannot change what runs in production without an explicit promotion), set `REQUIRED_MODULE_VERSION`. The install step pins to that exact version when set, and falls back to "latest" when empty.
 
+For temporary validation of an exact listed or unlisted release candidate, use the managed helper and follow the [development-channel testing runbook](development-channel-testing.md). It keeps template refresh, runtime pinning, rollback preflight, and recovery in one ordered workflow.
+
 **Note**: Pinning shifts ongoing maintenance onto you. With a pin in place you are responsible for: (1) periodically checking PowerShell Gallery for new `AzLocal.UpdateManagement` releases; (2) refreshing the pipeline YAMLs in your repository when a new version ships (run `Copy-AzLocalPipelineExample -Update` - see further below); and (3) bumping `REQUIRED_MODULE_VERSION` to match the version those refreshed YAMLs were generated against. If the three drift apart, the drift-notice warnings (see below) lose most of their value.
 
 **GitHub Actions** - resolution order (first non-empty wins):
@@ -37,7 +39,7 @@ To set an estate-wide pin in ADO, either change the `moduleVersion` parameter de
 | Situation | What you see | What it means |
 |---|---|---|
 | `installed > generated` | "Pipeline YAML was generated against AzLocal.UpdateManagement v<X> but the agent installed v<Y>." | Your committed YAML is older than the module on the agent. Pipeline steps may have been improved since - re-run `Update-AzLocalPipelineExample` (with the `-Platform GitHub` / `-Platform AzureDevOps` flag the v0.8.75 annotation now prints for you) to refresh while preserving your `AZLOCAL-CUSTOMIZE` markers. |
-| `latest > installed` | "AzLocal.UpdateManagement v<L> is available on PSGallery; this run installed v<I>." | A newer module is on PSGallery than the one the pipeline pinned to. Review the [module CHANGELOG](../CHANGELOG.md) before bumping `REQUIRED_MODULE_VERSION` (or clear the pin to install the latest automatically). |
+| `latest > installed` | "AzLocal.UpdateManagement v<L> is available on PSGallery; this run installed v<I>." | A newer module is on PSGallery than the one the pipeline pinned to. Review the [module CHANGELOG](../../CHANGELOG.md) before bumping `REQUIRED_MODULE_VERSION` (or clear the pin to install the latest automatically). |
 
 Both annotations are warnings, not failures - your pipeline still passes.
 

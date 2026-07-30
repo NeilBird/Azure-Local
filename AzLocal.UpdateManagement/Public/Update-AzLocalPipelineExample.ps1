@@ -120,6 +120,14 @@ function Update-AzLocalPipelineExample {
         marker regions. Without -Force these cases produce a
         'Skipped-NeedsForce' result row and no write.
 
+    .PARAMETER AllowRollbackMarkerRemoval
+        Allows a version rollback to remove AZLOCAL-CUSTOMIZE sections that
+        do not exist in the older bundled template. Marker bodies shared by
+        both versions remain preserved. Without this switch, affected files
+        produce `Skipped-RollbackMarkerRemoval` and are not written. This is
+        intentionally narrower than -Force and does not authorize unrelated
+        markerless overwrites.
+
     .PARAMETER PassThru
         Emit the per-file result objects to the pipeline. By default the
         cmdlet only writes summary log messages.
@@ -139,6 +147,14 @@ function Update-AzLocalPipelineExample {
         the script's PARAMETERS (-Scope, -NoPush, etc.), not by editing its
         body - body edits are replaced on a version-gated refresh. Pass
         -SkipStarterUpdater to freeze the file entirely.
+
+    .PARAMETER SkipDevelopmentChannelHelper
+        Suppress the `Apply-ModuleDevelopmentChannel.ps1` drop or version-gated
+        refresh. By default, GitHub and Azure DevOps repositories receive this
+        managed helper under the repo-root `DevChannel\` folder. It auto-detects GitHub from
+        `.github\workflows`; otherwise it prints the Azure DevOps variable-group
+        commands for `REQUIRED_MODULE_VERSION`. A markerless existing file is
+        treated as operator-owned and preserved.
 
     .PARAMETER SkipReadme
         Suppress the v0.9.0 managed repo README drop / version-gated refresh.
@@ -232,6 +248,8 @@ function Update-AzLocalPipelineExample {
 
         [switch]$Force,
 
+        [switch]$AllowRollbackMarkerRemoval,
+
         # v0.8.85: when set, remove deprecated workflow filenames that are
         # superseded by newer merged pipelines (for example, GitHub
         # authentication-test.yml + inventory-clusters.yml replaced by
@@ -244,6 +262,10 @@ function Update-AzLocalPipelineExample {
         # repos that upgrade via Update (not Copy) still receive it. Never
         # overwrites an existing copy. Pass -SkipStarterUpdater to suppress.
         [switch]$SkipStarterUpdater,
+
+        # v0.9.28: suppress the managed helper that applies or describes the
+        # REQUIRED_MODULE_VERSION platform action for exact candidate testing.
+        [switch]$SkipDevelopmentChannelHelper,
 
         # v0.9.0: also drop / version-gate refresh the managed repo README.md
         # at the repo root. Written only when the repo has no usable README
@@ -352,6 +374,7 @@ function Update-AzLocalPipelineExample {
     }
 
     $results = New-Object System.Collections.Generic.List[pscustomobject]
+    $generatedVersionPattern = "(?m)(?:^\s*GENERATED_AGAINST_MODULE_VERSION\s*:\s*'([^']+)'|^\s*-?\s*name\s*:\s*GENERATED_AGAINST_MODULE_VERSION\s*\r?\n\s*value\s*:\s*'([^']+)')"
 
     foreach ($srcFile in $srcFiles) {
         # Canonical destination path = the bundled (already de-numbered)
@@ -439,6 +462,20 @@ function Update-AzLocalPipelineExample {
         #     representation. $srcText was already read above.
         $destText = [System.IO.File]::ReadAllText($existingDestFile, [System.Text.UTF8Encoding]::new($false))
 
+        $sourceVersionMatch = [regex]::Match($srcText, $generatedVersionPattern)
+        $destinationVersionMatch = [regex]::Match($destText, $generatedVersionPattern)
+        [version]$sourceGeneratedVersion = $null
+        [version]$destinationGeneratedVersion = $null
+        if ($sourceVersionMatch.Success) {
+            $sourceVersionText = if ($sourceVersionMatch.Groups[1].Success) { $sourceVersionMatch.Groups[1].Value } else { $sourceVersionMatch.Groups[2].Value }
+            $null = [version]::TryParse($sourceVersionText, [ref]$sourceGeneratedVersion)
+        }
+        if ($destinationVersionMatch.Success) {
+            $destinationVersionText = if ($destinationVersionMatch.Groups[1].Success) { $destinationVersionMatch.Groups[1].Value } else { $destinationVersionMatch.Groups[2].Value }
+            $null = [version]::TryParse($destinationVersionText, [ref]$destinationGeneratedVersion)
+        }
+        $isPipelineRollback = $sourceGeneratedVersion -and $destinationGeneratedVersion -and $sourceGeneratedVersion -lt $destinationGeneratedVersion
+
         $srcMarkers  = Get-AzLocalPipelineCustomiseMarkers -Text $srcText
         $destMarkers = Get-AzLocalPipelineCustomiseMarkers -Text $destText
 
@@ -483,7 +520,7 @@ function Update-AzLocalPipelineExample {
                 $destPinMatch = [regex]::Match($destText, $pinPattern)
                 $srcPinValue  = if ($srcPinMatch.Success)  { ([regex]::Match($srcPinMatch.Value,  "'([^']+)'")).Groups[1].Value } else { '?' }
                 $destPinValue = if ($destPinMatch.Success) { ([regex]::Match($destPinMatch.Value, "'([^']+)'")).Groups[1].Value } else { '?' }
-                if ($PSCmdlet.ShouldProcess($destFile, "Bump GENERATED_AGAINST_MODULE_VERSION from '$destPinValue' to '$srcPinValue' (pin-only diff)")) {
+                if ($PSCmdlet.ShouldProcess($destFile, "Change GENERATED_AGAINST_MODULE_VERSION from '$destPinValue' to '$srcPinValue' (pin-only diff)")) {
                     Write-Utf8NoBomFile -Path $destFile -Content $srcText
                     if ($renamedFrom -and ($existingDestFile -ne $destFile) -and (Test-Path -LiteralPath $existingDestFile)) { Remove-Item -LiteralPath $existingDestFile -Force }
                     Write-Log -Message "  Updated : $($srcFile.Name), pin-only ('$destPinValue' -> '$srcPinValue')" -Level Success
@@ -579,6 +616,14 @@ function Update-AzLocalPipelineExample {
         $row.PreservedMarkers = @($preserved)
         $row.NewMarkers       = @($srcMarkers.Keys  | Where-Object { -not $destMarkers.ContainsKey($_) })
         $row.RemovedMarkers   = @($destMarkers.Keys | Where-Object { -not $srcMarkers.ContainsKey($_) })
+
+        if ($isPipelineRollback -and $row.RemovedMarkers.Count -gt 0 -and -not $AllowRollbackMarkerRemoval.IsPresent) {
+            $row.Action = 'Skipped-RollbackMarkerRemoval'
+            $removedNames = [string]::Join(',', $row.RemovedMarkers)
+            Write-Log -Message "  Skipped : $($srcFile.Name) - rollback $destinationGeneratedVersion -> $sourceGeneratedVersion would remove AZLOCAL-CUSTOMIZE section(s): $removedNames. Review those bodies, then pass -AllowRollbackMarkerRemoval to approve only this rollback-specific removal." -Level Warning
+            [void]$results.Add($row)
+            continue
+        }
 
         if ($merged -eq $destText) {
             if ($renamedFrom) {
@@ -749,7 +794,77 @@ function Update-AzLocalPipelineExample {
     }
 
     # ------------------------------------------------------------------
-    # 6 (v0.9.0). Managed repo README drop / version-gated refresh parity
+    # 6 (v0.9.28). Cross-platform development-channel helper parity with Copy.
+    # This runs independently of -SkipStarterUpdater because the two managed
+    # repo-root scripts have distinct responsibilities and suppression flags.
+    # ------------------------------------------------------------------
+    $trimmedTarget = $destResolved.TrimEnd('\', '/')
+    $oneLevelUp = Split-Path -Parent $trimmedTarget
+    if ($Platform -eq 'GitHub' -and ($trimmedTarget -match '[\\/]\.github[\\/]workflows$')) {
+        $repoRoot = Split-Path -Parent $oneLevelUp
+    }
+    else {
+        $repoRoot = $oneLevelUp
+    }
+    if ([string]::IsNullOrWhiteSpace($repoRoot)) {
+        $repoRoot = $trimmedTarget
+    }
+
+    $developmentChannelDest = $null
+    $developmentChannelAction = $null
+    if ($Platform -in @('GitHub', 'AzureDevOps')) {
+        $developmentChannelSrc = Join-Path -Path $sourceRoot -ChildPath 'apply-module-development-channel.ps1'
+        $developmentChannelDest = Join-Path -Path (Join-Path -Path $repoRoot -ChildPath 'DevChannel') -ChildPath 'Apply-ModuleDevelopmentChannel.ps1'
+
+        if ($SkipDevelopmentChannelHelper.IsPresent) {
+            $developmentChannelAction = 'SkippedBySwitch'
+        }
+        elseif (-not (Test-Path -LiteralPath $developmentChannelSrc -PathType Leaf)) {
+            $developmentChannelAction = 'Missing'
+            Write-Log -Message ("  Note    : development-channel helper source '{0}' not found; skipping helper drop." -f $developmentChannelSrc) -Level Warning
+        }
+        else {
+            $bundledDevelopmentChannelText = Get-Content -LiteralPath $developmentChannelSrc -Raw
+            $bundledDevelopmentChannelVersion = Get-AzLocalDevelopmentChannelScriptVersion -Text $bundledDevelopmentChannelText
+            $developmentChannelExists = Test-Path -LiteralPath $developmentChannelDest -PathType Leaf
+            $isDevelopmentChannelRefresh = $false
+            if ($developmentChannelExists) {
+                $existingDevelopmentChannelVersion = Get-AzLocalDevelopmentChannelScriptVersion -Text (Get-Content -LiteralPath $developmentChannelDest -Raw)
+                if ($existingDevelopmentChannelVersion -and $bundledDevelopmentChannelVersion -and $bundledDevelopmentChannelVersion -gt $existingDevelopmentChannelVersion) {
+                    $isDevelopmentChannelRefresh = $true
+                }
+            }
+
+            if ($developmentChannelExists -and -not $isDevelopmentChannelRefresh) {
+                $developmentChannelAction = 'Preserved'
+                Write-Verbose ("Update-AzLocalPipelineExample: development-channel helper preserved at '{0}'." -f $developmentChannelDest)
+            }
+            else {
+                $developmentChannelShouldMessage = if ($isDevelopmentChannelRefresh) {
+                    "Refresh Apply-ModuleDevelopmentChannel.ps1 to v$bundledDevelopmentChannelVersion"
+                }
+                else {
+                    'Write Apply-ModuleDevelopmentChannel.ps1'
+                }
+                if ($PSCmdlet.ShouldProcess($developmentChannelDest, $developmentChannelShouldMessage)) {
+                    $developmentChannelParent = Split-Path -Parent $developmentChannelDest
+                    if (-not (Test-Path -LiteralPath $developmentChannelParent)) {
+                        $null = New-Item -ItemType Directory -Path $developmentChannelParent -Force -ErrorAction Stop
+                    }
+                    [System.IO.File]::WriteAllText($developmentChannelDest, $bundledDevelopmentChannelText, [System.Text.UTF8Encoding]::new($false))
+                    $developmentChannelAction = if ($isDevelopmentChannelRefresh) { 'Updated' } else { 'Copied' }
+                    $developmentChannelVerb = if ($isDevelopmentChannelRefresh) { 'Updated' } else { 'Created' }
+                    Write-Log -Message ("  {0} : development-channel helper at '{1}'" -f $developmentChannelVerb, $developmentChannelDest) -Level Success
+                }
+                else {
+                    $developmentChannelAction = 'Skipped'
+                }
+            }
+        }
+    }
+
+    # ------------------------------------------------------------------
+    # 7 (v0.9.0). Managed repo README drop / version-gated refresh parity
     #    with Copy-AzLocalPipelineExample (section 6d). Existing users
     #    upgrade via Update, so Update must also drop the managed README at
     #    the repo root when the repo has no usable README (missing /
@@ -838,7 +953,7 @@ function Update-AzLocalPipelineExample {
     }
 
     # ------------------------------------------------------------------
-    # 7. Fleet settings starter drop parity with Copy-AzLocalPipelineExample.
+    # 8. Fleet settings starter drop parity with Copy-AzLocalPipelineExample.
     # Existing repos upgraded via Update receive the fully commented starter;
     # an existing schema v1/v2/v3 file is backed up before migration to v4.
     # ------------------------------------------------------------------
@@ -897,7 +1012,7 @@ function Update-AzLocalPipelineExample {
     }
 
     # ------------------------------------------------------------------
-    # 8. Sideload settings/config parity with Copy-AzLocalPipelineExample.
+    # 9. Sideload settings/config parity with Copy-AzLocalPipelineExample.
     # Settings, auth-map, and catalog files are created only when absent and
     # are never overwritten here.
     # ------------------------------------------------------------------
@@ -1057,6 +1172,10 @@ function Update-AzLocalPipelineExample {
             Set-Content -LiteralPath $exclusionsReadmeDest -Value $exclusionsReadme -Encoding ASCII -ErrorAction Stop
             Write-Log -Message "  Created : starter Excluded-Subscription-Ids_README.txt at '$exclusionsReadmeDest'" -Level Success
         }
+    }
+
+    if ($developmentChannelAction -in @('Copied', 'Updated', 'Preserved')) {
+        Write-Log -Message ("{0} pipeline YAML processing is complete. Optional exact candidate testing: run .\DevChannel\Apply-ModuleDevelopmentChannel.ps1 -RequiredVersion <candidate-version>; later run it with -Disable." -f $Platform) -Level Info
     }
 
     if ($PassThru) {

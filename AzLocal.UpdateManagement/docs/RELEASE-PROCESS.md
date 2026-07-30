@@ -42,12 +42,16 @@ In the steps below, `<candidate>` is the version being released (for example `1.
  9. Copy the bundled pipelines into a separate test repo:
         Copy-AzLocalPipelineExample -Destination .\.github\workflows -Platform GitHub      -Update
         Copy-AzLocalPipelineExample -Destination .\.azure-pipelines  -Platform AzureDevOps -Update
-10. In the GitHub test repo, apply the module development channel from this
-  source repo (the helper validates the exact Gallery version, then creates
-  or updates the REQUIRED_MODULE_VERSION repository variable):
-    .\Tools\Apply-ModuleDevelopmentChannel.ps1 -RequiredVersion <candidate> -Repository <owner>/<repo>
-  For Azure DevOps, set REQUIRED_MODULE_VERSION in the
-  AzureLocal-Pipeline-Settings variable group to the exact candidate.
+10. From the test repo root, run the helper dropped by Copy/Update:
+    .\DevChannel\Apply-ModuleDevelopmentChannel.ps1 -RequiredVersion <candidate>
+  Follow the full [development-channel testing runbook](../Automation-Pipeline-Examples/docs/development-channel-testing.md)
+  for the enable, validation, disable, and recovery procedure.
+  The helper validates the exact Gallery version and detects GitHub when
+  .github\workflows exists. For GitHub it creates or updates the
+  REQUIRED_MODULE_VERSION repository variable. For Azure DevOps it prints
+  the exact variable-group create/update commands; run the applicable command.
+  Use -Platform GitHub or -Platform AzureDevOps to override auto-detection in
+  an unusual mixed-layout repository.
     Without this pin, the auto-install step at job start will resolve
     to the previous LISTED version, NOT the candidate - the runtime
     drift warning emitted by the YAML preamble (the
@@ -67,11 +71,13 @@ In the steps below, `<candidate>` is the version being released (for example `1.
 13. Once validation is clean, LIST the candidate version in PowerShell
     Gallery (Manage Package -> Re-list). The version is now the default
     install for consumers with empty REQUIRED_MODULE_VERSION.
-  Remove the GitHub test-repo development channel so future runs exercise
+  Remove the test-repo development channel so future runs exercise
   latest-listed resolution:
-    .\Tools\Apply-ModuleDevelopmentChannel.ps1 -Disable -Repository <owner>/<repo>
-  Remove REQUIRED_MODULE_VERSION from the Azure DevOps variable group (or
-  set it to an empty value) for the same behavior.
+    .\DevChannel\Apply-ModuleDevelopmentChannel.ps1 -Disable
+  Disable restores and preflights the latest-listed templates before removing
+  the runtime pin. Do not manually remove the pin first.
+  For GitHub the helper deletes the repository variable. For Azure DevOps it
+  prints the variable-group delete command; run that command.
 14. Tag the git commit (e.g. git tag v<candidate>) and push the tag.
 ```
 

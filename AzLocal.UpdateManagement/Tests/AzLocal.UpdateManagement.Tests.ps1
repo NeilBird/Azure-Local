@@ -8949,11 +8949,13 @@ Describe 'Function: Copy-AzLocalPipelineExample' {
         Copy-AzLocalPipelineExample -Destination $dest -Platform GitHub 6>$null | Out-Null
 
         $text = Get-Content -LiteralPath (Join-Path $repoRoot 'Update-Module-And-Pipelines.ps1') -Raw
-        $text | Should -Match 'AZLOCAL-UPDATER-VERSION:\s+1\.3\.0'
+        $text | Should -Match 'AZLOCAL-UPDATER-VERSION:\s+1\.4\.0'
         $text | Should -Match '\[version\]\$RequiredVersion'
         $text | Should -Match 'Find-Module\s+-Name\s+\$moduleName\s+-RequiredVersion\s+\$RequiredVersion'
         $text | Should -Match 'Install-Module\s+-Name\s+\$moduleName.+-RequiredVersion\s+\$targetVersion'
         $text | Should -Match 'Import-Module\s+-Name\s+\$moduleName\s+-RequiredVersion\s+\$targetVersion'
+        $text | Should -Match '\[switch\]\$LatestListed'
+        $text | Should -Match '\[switch\]\$AllowRollbackMarkerRemoval'
     }
 
     It 'v0.9.28: maintainer updater supports the same exact candidate contract' {
@@ -8966,10 +8968,12 @@ Describe 'Function: Copy-AzLocalPipelineExample' {
         $text | Should -Match '\[version\]\$RequiredVersion'
         $text | Should -Match 'Find-Module\s+-Name\s+\$moduleName\s+-RequiredVersion\s+\$RequiredVersion'
         $text | Should -Match 'Import-Module\s+-Name\s+\$moduleName\s+-RequiredVersion\s+\$targetVersion'
+        $text | Should -Match '\[switch\]\$LatestListed'
+        $text | Should -Match '\[switch\]\$AllowRollbackMarkerRemoval'
     }
 
     It 'v0.9.28: development-channel helper manages REQUIRED_MODULE_VERSION through gh CLI' {
-        $path = Join-Path $PSScriptRoot '..\Tools\Apply-ModuleDevelopmentChannel.ps1'
+        $path = Join-Path $PSScriptRoot '..\Automation-Pipeline-Examples\apply-module-development-channel.ps1'
         $text = Get-Content -LiteralPath $path -Raw
         $tokens = $null; $parseErrors = $null
         [System.Management.Automation.Language.Parser]::ParseFile($path, [ref]$tokens, [ref]$parseErrors) | Out-Null
@@ -8981,6 +8985,78 @@ Describe 'Function: Copy-AzLocalPipelineExample' {
         $text | Should -Match 'gh\s+variable\s+set\s+\$VariableName\s+--repo\s+\$Repository\s+--body\s+\$versionText'
         $text | Should -Match 'gh\s+variable\s+delete\s+\$VariableName\s+--repo\s+\$Repository'
         $text | Should -Match 'SupportsShouldProcess\s*=\s*\$true'
+        $text | Should -Match "ValidateSet\('Auto',\s*'GitHub',\s*'AzureDevOps'\)"
+        $text | Should -Match '\.github\\workflows'
+        $text | Should -Match 'az\s+pipelines\s+variable-group\s+variable\s+update'
+        $text | Should -Match '\$updaterParameters\.RequiredVersion\s*=\s*\$RequiredVersion'
+        $text | Should -Match '\$updaterParameters\.LatestListed\s*=\s*\$true'
+    }
+
+    It 'v0.9.28: Azure DevOps helper commands honor a custom variable name' {
+        $path = Join-Path $PSScriptRoot '..\Automation-Pipeline-Examples\apply-module-development-channel.ps1'
+
+        $output = @(& $path -RequiredVersion 0.9.29 -Platform AzureDevOps -VariableName CANDIDATE_MODULE_VERSION -SkipGalleryValidation -SkipPipelineRefresh 6>&1) -join "`n"
+
+        $output | Should -Match 'variable create.+--name CANDIDATE_MODULE_VERSION.+--value 0\.9\.29'
+        $output | Should -Match 'variable update.+--name CANDIDATE_MODULE_VERSION.+--value 0\.9\.29'
+        $output | Should -Not -Match '--name REQUIRED_MODULE_VERSION'
+    }
+
+    It 'v0.9.28: Copy exposes -SkipDevelopmentChannelHelper as a switch' {
+        $cmd = Get-Command Copy-AzLocalPipelineExample
+        $cmd.Parameters.ContainsKey('SkipDevelopmentChannelHelper') | Should -BeTrue
+        $cmd.Parameters['SkipDevelopmentChannelHelper'].ParameterType | Should -Be ([switch])
+    }
+
+    It 'v0.9.28: GitHub Copy drops the managed development-channel helper at the repo root' {
+        $repoRoot = Join-Path $script:cpDestRoot 'gh-development-channel-fresh'
+        $dest = Join-Path $repoRoot '.github\workflows'
+        New-Item -Path $dest -ItemType Directory -Force | Out-Null
+
+        Copy-AzLocalPipelineExample -Destination $dest -Platform GitHub 6>$null | Out-Null
+
+        $helperDest = Join-Path $repoRoot 'DevChannel\Apply-ModuleDevelopmentChannel.ps1'
+        Test-Path $helperDest | Should -BeTrue
+        (Get-Content -LiteralPath $helperDest -Raw) | Should -Match 'AZLOCAL-DEVELOPMENT-CHANNEL-VERSION:\s*1\.3\.0'
+    }
+
+    It 'v0.9.28: GitHub Copy preserves a markerless operator-owned development-channel helper' {
+        $repoRoot = Join-Path $script:cpDestRoot 'gh-development-channel-preserve'
+        $dest = Join-Path $repoRoot '.github\workflows'
+        New-Item -Path $dest -ItemType Directory -Force | Out-Null
+        $helperDest = Join-Path $repoRoot 'DevChannel\Apply-ModuleDevelopmentChannel.ps1'
+        New-Item -Path (Split-Path -Parent $helperDest) -ItemType Directory -Force | Out-Null
+        Set-Content -LiteralPath $helperDest -Value '# OPERATOR OWNED' -Encoding ASCII
+
+        Copy-AzLocalPipelineExample -Destination $dest -Platform GitHub 6>$null | Out-Null
+
+        (Get-Content -LiteralPath $helperDest -Raw) | Should -Match 'OPERATOR OWNED'
+    }
+
+    It 'v0.9.28: -SkipDevelopmentChannelHelper suppresses the GitHub helper drop' {
+        $repoRoot = Join-Path $script:cpDestRoot 'gh-development-channel-skip'
+        $dest = Join-Path $repoRoot '.github\workflows'
+        New-Item -Path $dest -ItemType Directory -Force | Out-Null
+
+        Copy-AzLocalPipelineExample -Destination $dest -Platform GitHub -SkipDevelopmentChannelHelper 6>$null | Out-Null
+
+        Test-Path (Join-Path $repoRoot 'DevChannel\Apply-ModuleDevelopmentChannel.ps1') | Should -BeFalse
+    }
+
+    It 'v0.9.28: Azure DevOps Copy processes YAMLs and drops a helper that prints variable-group steps' {
+        $repoRoot = Join-Path $script:cpDestRoot 'ado-development-channel-guidance'
+        $dest = Join-Path $repoRoot 'pipelines'
+        New-Item -Path $dest -ItemType Directory -Force | Out-Null
+
+        $output = @(Copy-AzLocalPipelineExample -Destination $dest -Platform AzureDevOps 6>&1)
+
+        @(Get-ChildItem -LiteralPath $dest -Filter '*.yml' -File).Count | Should -BeGreaterThan 0
+        $helperDest = Join-Path $repoRoot 'DevChannel\Apply-ModuleDevelopmentChannel.ps1'
+        Test-Path $helperDest | Should -BeTrue
+        ($output -join "`n") | Should -Match '\.\\DevChannel\\Apply-ModuleDevelopmentChannel\.ps1 -RequiredVersion'
+        $helperOutput = @(& $helperDest -RequiredVersion 0.9.29 -SkipGalleryValidation -SkipPipelineRefresh 6>&1) -join "`n"
+        $helperOutput | Should -Match 'Detected pipeline platform: AzureDevOps'
+        $helperOutput | Should -Match 'variable update.+REQUIRED_MODULE_VERSION.+--value 0\.9\.29'
     }
 
     It 'v0.8.98: dropped script is written WITHOUT a UTF-8 BOM' {
@@ -9042,7 +9118,7 @@ Describe 'Function: Copy-AzLocalPipelineExample' {
         Test-Path (Join-Path $repoRoot 'Update-Module-And-Pipelines.ps1') | Should -BeFalse
     }
 
-    It 'v0.8.98: dropped script stages ONLY the workflow folder + config (scoped git add)' {
+    It 'v0.9.28: dropped script stages only managed workflow, config, and DevChannel paths' {
         $repoRoot = Join-Path $script:cpDestRoot 'gh-updater-gitscope'
         $dest = Join-Path $repoRoot '.github\workflows'
         New-Item -Path $dest -ItemType Directory -Force | Out-Null
@@ -9053,7 +9129,7 @@ Describe 'Function: Copy-AzLocalPipelineExample' {
         $text = Get-Content -LiteralPath $updaterDest -Raw
         # Scoped, path-independent add; not a bare 'git add .'.
         $text | Should -Match "git -C \`$RepoRoot add -A -- \`$gitPaths"
-        $text | Should -Match "@\(\`$WorkflowSubPath, 'config'\)"
+        $text | Should -Match "@\(\`$WorkflowSubPath, 'config', 'DevChannel'\)"
         $text | Should -Not -Match 'git add \.'
     }
 
@@ -11825,6 +11901,100 @@ Describe 'Function: Update-AzLocalPipelineExample' {
             try {
                 Update-AzLocalPipelineExample -Destination $dest -Platform GitHub -SkipStarterUpdater -Confirm:$false 6>$null 4>$null | Out-Null
                 Test-Path (Join-Path $repoRoot 'Update-Module-And-Pipelines.ps1') | Should -BeFalse
+            }
+            finally { Remove-Item -Path $repoRoot -Recurse -Force -ErrorAction SilentlyContinue }
+        }
+    }
+
+    Context 'v0.9.28 managed development-channel helper' {
+        It 'Exposes -SkipDevelopmentChannelHelper as a [switch] parameter' {
+            $cmd = Get-Command Update-AzLocalPipelineExample
+            $cmd.Parameters.ContainsKey('SkipDevelopmentChannelHelper') | Should -BeTrue
+            $cmd.Parameters['SkipDevelopmentChannelHelper'].ParameterType | Should -Be ([switch])
+        }
+
+        It 'Drops and version-refreshes Apply-ModuleDevelopmentChannel.ps1 for GitHub' {
+            $repoRoot = Join-Path $env:TEMP "upe-development-channel-$([guid]::NewGuid())"
+            $dest = Join-Path $repoRoot '.github\workflows'
+            New-Item -ItemType Directory -Path $dest -Force | Out-Null
+            try {
+                $helperDest = Join-Path $repoRoot 'DevChannel\Apply-ModuleDevelopmentChannel.ps1'
+                New-Item -Path (Split-Path -Parent $helperDest) -ItemType Directory -Force | Out-Null
+                Set-Content -LiteralPath $helperDest -Value "# AZLOCAL-DEVELOPMENT-CHANNEL-VERSION: 0.0.1`r`n# STALE BODY" -Encoding ASCII
+
+                Update-AzLocalPipelineExample -Destination $dest -Platform GitHub -Confirm:$false 6>$null 4>$null | Out-Null
+
+                $text = Get-Content -LiteralPath $helperDest -Raw
+                $text | Should -Match 'AZLOCAL-DEVELOPMENT-CHANNEL-VERSION:\s*1\.3\.0'
+                $text | Should -Not -Match 'STALE BODY'
+            }
+            finally { Remove-Item -Path $repoRoot -Recurse -Force -ErrorAction SilentlyContinue }
+        }
+
+        It 'Azure DevOps Update processes YAMLs and drops the auto-detecting helper' {
+            $repoRoot = Join-Path $env:TEMP "upe-ado-development-channel-$([guid]::NewGuid())"
+            $dest = Join-Path $repoRoot 'pipelines'
+            New-Item -ItemType Directory -Path $dest -Force | Out-Null
+            try {
+                $output = @(Update-AzLocalPipelineExample -Destination $dest -Platform AzureDevOps -Confirm:$false 6>&1 4>&1)
+
+                ($output -join "`n") | Should -Match 'source file\(s\) processed'
+                $helperDest = Join-Path $repoRoot 'DevChannel\Apply-ModuleDevelopmentChannel.ps1'
+                Test-Path $helperDest | Should -BeTrue
+                ($output -join "`n") | Should -Match '\.\\DevChannel\\Apply-ModuleDevelopmentChannel\.ps1 -RequiredVersion'
+                $disableOutput = @(& $helperDest -Disable -SkipPipelineRefresh 6>&1) -join "`n"
+                $disableOutput | Should -Match 'Detected pipeline platform: AzureDevOps'
+                $disableOutput | Should -Match 'variable delete.+REQUIRED_MODULE_VERSION'
+            }
+            finally { Remove-Item -Path $repoRoot -Recurse -Force -ErrorAction SilentlyContinue }
+        }
+    }
+
+    Context 'Rollback marker safety' {
+        It 'Blocks a downgrade that would remove a destination-only customization marker' {
+            $repoRoot = Join-Path $env:TEMP "upe-rollback-block-$([guid]::NewGuid())"
+            $dest = Join-Path $repoRoot '.github\workflows'
+            New-Item -ItemType Directory -Path $dest -Force | Out-Null
+            try {
+                $sourceFile = Get-ChildItem -LiteralPath $script:UpePlatformSrcGh -Filter '*.yml' -File |
+                    Where-Object { (Get-Content -LiteralPath $_.FullName -Raw) -match 'BEGIN-AZLOCAL-CUSTOMIZE' } |
+                    Select-Object -First 1
+                $destinationFile = Join-Path $dest $sourceFile.Name
+                $destinationText = Get-Content -LiteralPath $sourceFile.FullName -Raw
+                $destinationText = [regex]::Replace($destinationText, "(?m)(GENERATED_AGAINST_MODULE_VERSION\s*:\s*')[^']+(')", '${1}9.9.9${2}')
+                $destinationText += "`r`n# BEGIN-AZLOCAL-CUSTOMIZE:newer-only`r`n# operator value`r`n# END-AZLOCAL-CUSTOMIZE:newer-only`r`n"
+                [IO.File]::WriteAllText($destinationFile, $destinationText, [Text.UTF8Encoding]::new($false))
+
+                $results = @(Update-AzLocalPipelineExample -Destination $dest -Platform GitHub -PassThru -SkipStarterUpdater -SkipDevelopmentChannelHelper -SkipReadme -Confirm:$false 6>$null 4>$null)
+                $row = $results | Where-Object { (Split-Path -Leaf $_.File) -eq $sourceFile.Name }
+
+                $row.Action | Should -Be 'Skipped-RollbackMarkerRemoval'
+                (Get-Content -LiteralPath $destinationFile -Raw) | Should -Match 'operator value'
+            }
+            finally { Remove-Item -Path $repoRoot -Recurse -Force -ErrorAction SilentlyContinue }
+        }
+
+        It 'Completes the downgrade when rollback marker removal is explicitly approved' {
+            $repoRoot = Join-Path $env:TEMP "upe-rollback-allow-$([guid]::NewGuid())"
+            $dest = Join-Path $repoRoot '.github\workflows'
+            New-Item -ItemType Directory -Path $dest -Force | Out-Null
+            try {
+                $sourceFile = Get-ChildItem -LiteralPath $script:UpePlatformSrcGh -Filter '*.yml' -File |
+                    Where-Object { (Get-Content -LiteralPath $_.FullName -Raw) -match 'BEGIN-AZLOCAL-CUSTOMIZE' } |
+                    Select-Object -First 1
+                $destinationFile = Join-Path $dest $sourceFile.Name
+                $destinationText = Get-Content -LiteralPath $sourceFile.FullName -Raw
+                $destinationText = [regex]::Replace($destinationText, "(?m)(GENERATED_AGAINST_MODULE_VERSION\s*:\s*')[^']+(')", '${1}9.9.9${2}')
+                $destinationText += "`r`n# BEGIN-AZLOCAL-CUSTOMIZE:newer-only`r`n# operator value`r`n# END-AZLOCAL-CUSTOMIZE:newer-only`r`n"
+                [IO.File]::WriteAllText($destinationFile, $destinationText, [Text.UTF8Encoding]::new($false))
+
+                $results = @(Update-AzLocalPipelineExample -Destination $dest -Platform GitHub -PassThru -AllowRollbackMarkerRemoval -SkipStarterUpdater -SkipDevelopmentChannelHelper -SkipReadme -Confirm:$false 6>$null 4>$null)
+                $row = $results | Where-Object { (Split-Path -Leaf $_.File) -eq $sourceFile.Name }
+                $updatedText = Get-Content -LiteralPath $destinationFile -Raw
+
+                $row.Action | Should -Be 'Updated'
+                $updatedText | Should -Not -Match 'newer-only|operator value'
+                $updatedText | Should -Not -Match "GENERATED_AGAINST_MODULE_VERSION\s*:\s*'9\.9\.9'"
             }
             finally { Remove-Item -Path $repoRoot -Recurse -Force -ErrorAction SilentlyContinue }
         }

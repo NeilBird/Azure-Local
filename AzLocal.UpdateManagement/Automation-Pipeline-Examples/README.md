@@ -32,6 +32,7 @@ It is written in the same step-by-step style as [`ITSM/README.md`](../ITSM/READM
    - [5.3 Optional configuration (not recommended): pin the module version](#53-optional-configuration-not-recommended-pin-the-module-version)
    - [5.4 Azure DevOps onboarding checklist](#54-azure-devops-onboarding-checklist)
    - [5.5 Stay current: one-command refresh with `Update-Module-And-Pipelines.ps1`](#55-stay-current-one-command-refresh-with-update-module-and-pipelinesps1)
+  - [5.6 Test an exact module candidate](#56-test-an-exact-module-candidate)
 6. [End-to-end runbook: bring an estate online](#6-end-to-end-runbook-bring-an-estate-online)
    - [6.1 Inventory the estate](#61-inventory-the-estate)
      - [6.1.1 (Optional) Exclude whole subscriptions from every fleet scan](#611-optional-exclude-whole-subscriptions-from-every-fleet-scan)
@@ -1247,6 +1248,25 @@ That one command does three things, in order, and **only acts when something act
 > **Self-managing:** the script is a **managed file** - `Copy-`/`Update-AzLocalPipelineExample` auto-refresh it in place when the module ships a newer template, and the run above stages that self-update too. Tune its behaviour with the **parameters** above rather than editing the body (body edits are replaced on refresh).
 
 > **Prefer to review before pushing?** Run `.\Update-Module-And-Pipelines.ps1 -NoPush`, inspect `git diff`, then commit and push manually. The marker-aware merge means a refresh is safe to run even on a heavily-customised repo - your `AZLOCAL-CUSTOMIZE` regions survive.
+
+---
+
+### 5.6 Test an exact module candidate
+
+`Copy-AzLocalPipelineExample` and `Update-AzLocalPipelineExample` drop a managed `Apply-ModuleDevelopmentChannel.ps1` into the repo-root `DevChannel\` folder for both platforms. Pass `-SkipDevelopmentChannelHelper` to suppress it.
+
+```powershell
+# Pin every bundled pipeline to an exact PSGallery version.
+.\DevChannel\Apply-ModuleDevelopmentChannel.ps1 -RequiredVersion 0.9.29
+
+# Restore latest-listed templates, then remove the pin.
+.\DevChannel\Apply-ModuleDevelopmentChannel.ps1 -Disable
+```
+
+The helper refreshes local templates before changing the runtime pin. Disable preflights the rollback before cleanup and stops when an older template would remove a candidate-only `AZLOCAL-CUSTOMIZE` section. The [development-channel testing runbook](docs/development-channel-testing.md) covers the full enable, validation, disable, approval, and recovery flow.
+
+- **GitHub:** validates the exact Gallery version, then uses authenticated `gh` to set or delete the non-secret `REQUIRED_MODULE_VERSION` repository variable.
+- **Azure DevOps:** validates the exact Gallery version, then prints the variable-group create/update command with that version. With `-Disable`, it prints the delete command. Replace `<group-id>` and run the displayed command.
 
 ---
 
