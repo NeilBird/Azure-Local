@@ -78,6 +78,11 @@ parameters:
     type: string
     default: ''
 
+  - name: diagnostics
+    displayName: 'Enable bounded verbose diagnostics for this manual run. DEBUG_VERBOSE=true enables diagnostics for every run.'
+    type: boolean
+    default: false
+
   # --- ITSM Connector (ServiceNow auto-raise on connectivity failures) ---
   # Set raiseItsmTicket=true to open ServiceNow incidents from each Critical /
   # Warning connectivity failure published by this pipeline. Default is false
@@ -111,7 +116,7 @@ variables:
   # to the latest on PSGallery and warns if the YAML looks stale - prompting a
   # refresh via Copy-AzLocalPipelineExample -Update.
   - name: GENERATED_AGAINST_MODULE_VERSION
-    value: '0.9.27'
+    value: '0.9.28'
   # Resolution order for the module version pin: queue-time parameter 'moduleVersion'
   # > empty (latest). Leave empty for the default fix-forward behaviour.
   - name: REQUIRED_MODULE_VERSION
@@ -242,6 +247,11 @@ stages:
         INPUT_SUBSCRIPTION_FILTER: ${{ parameters.subscriptionFilter }}
         INSTALLED_MODULE_VERSION: $(moduleVersion.installed_module_version)
         REPORTS_PATH: $(reportsPath)
+        DIAGNOSTICS_PARAM: ${{ lower(parameters.diagnostics) }}
+        DEBUG_VERBOSE_SETTING: $(DEBUG_VERBOSE)
+        BUILD_REASON: $(Build.Reason)
+        DIAGNOSTICS_LOG_PATH: $(Build.ArtifactStagingDirectory)/diagnostics/pipeline-transcript.log
+        AZLOCAL_PIPELINE_TIMING_PATH: $(Build.ArtifactStagingDirectory)/diagnostics/pipeline-timings.json
       inputs:
         # Replace with your service connection name
         # BEGIN-AZLOCAL-CUSTOMIZE:service-connection-CollectConnectivity
@@ -253,12 +263,33 @@ stages:
           $ErrorActionPreference = 'Stop'
           az extension add --name resource-graph --yes
           Import-Module AzLocal.UpdateManagement -Force
+            $diagnosticsEnabled = $env:DEBUG_VERBOSE_SETTING -eq 'true' -or (
+              $env:BUILD_REASON -eq 'Manual' -and $env:DIAGNOSTICS_PARAM -eq 'true'
+            )
+            if ($diagnosticsEnabled) {
+              $VerbosePreference = 'Continue'
+              $PSDefaultParameterValues['*-AzLocal*:Verbose'] = $true
+              New-Item -ItemType Directory -Path (Split-Path -Parent $env:DIAGNOSTICS_LOG_PATH) -Force | Out-Null
+              Start-Transcript -Path $env:DIAGNOSTICS_LOG_PATH -Force
+              $module = Get-Module AzLocal.UpdateManagement | Sort-Object Version -Descending | Select-Object -First 1
+              Write-Host "Diagnostics enabled (trigger=$env:BUILD_REASON; PowerShell=$($PSVersionTable.PSVersion) $($PSVersionTable.PSEdition); module=$($module.Version); path=$($module.Path))."
+            }
           $params = @{
               OutputDirectory        = $env:REPORTS_PATH
               InstalledModuleVersion = $env:INSTALLED_MODULE_VERSION
           }
           if ($env:INPUT_SUBSCRIPTION_FILTER) { $params['SubscriptionFilter'] = $env:INPUT_SUBSCRIPTION_FILTER }
-          Export-AzLocalFleetConnectivityStatusReport @params
+          Invoke-AzLocalPipelineTimedOperation -PipelineName 'fleet-connectivity-status' -StepNumber 20 -StepName 'Collect fleet connectivity status' -ScriptBlock {
+            Export-AzLocalFleetConnectivityStatusReport @params
+          }
+
+    - task: PublishPipelineArtifact@1
+      displayName: 'Publish pipeline performance diagnostics'
+      condition: always()
+      inputs:
+        targetPath: '$(Build.ArtifactStagingDirectory)/diagnostics'
+        artifact: 'azlocal-fleet-connectivity-status-diagnostics-$(Build.BuildId)-$(System.JobAttempt)'
+        publishLocation: 'pipeline'
 
     # v0.9.12: fail with a run-summary-visible message (instead of the
     # PublishTestResults "No test result files were found" warning) when the

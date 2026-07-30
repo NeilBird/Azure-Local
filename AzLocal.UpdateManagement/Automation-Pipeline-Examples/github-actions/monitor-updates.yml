@@ -17,8 +17,8 @@
 #     <failure> when the elapsed duration exceeds the threshold so the
 #     Checks tab shows stuck runs in red).
 #
-# Data source: Get-AzLocalUpdateRuns -Latest (one row per cluster). No new
-# cmdlets required - this is a pure pipeline composition.
+# Data sources: admitted inventory plus batched Get-AzLocalUpdateRuns -Latest,
+# with direct ARM reconciliation for recent start/retry tags that ARG omits.
 
 # Workflow name carries the same Step.N - prefix as the filename so the GitHub
 # Actions sidebar (which sorts workflows alphabetically by this `name:` field)
@@ -32,9 +32,9 @@ on:
   #
   # Default (v0.8.90+): runs every 6 hours, 24x7 (00:00, 06:00, 12:00, 18:00
   # UTC) as a low-cost safety-net heartbeat. The snapshot step runs with
-  # -SkipWhenIdle, so a heartbeat that finds nothing in flight short-circuits
-  # after a single cheap Resource Graph probe (no per-cluster sweep) - which is
-  # what makes a frequent cron affordable. The PRIMARY, low-latency trigger is
+  # -SkipWhenIdle. When ARG finds nothing in flight, admitted inventory is
+  # checked for recent start/retry tags before the run sweep is skipped. The
+  # PRIMARY, low-latency trigger is
   # event-driven: Update: 3 (Apply Updates) fires this workflow as soon as it
   # starts >=1 update (see the apply-updates pipeline). GitHub Actions cron is
   # ALWAYS UTC - adjust below for your local maintenance window. Comment the
@@ -83,13 +83,13 @@ on:
         required: false
         default: '3'
       # v0.8.90: performance fast path. When 'true' (default) the snapshot runs
-      # with -SkipWhenIdle - one cheap fleet-wide "anything in flight?" probe
-      # that short-circuits to an IDLE report when nothing is updating, skipping
-      # the per-cluster sweep. Set 'false' to force a full sweep even when idle.
+      # with -SkipWhenIdle. An ARG-idle result skips the update-run sweep only
+      # when admitted inventory also has no recent start/retry tags. Set 'false'
+      # to force a full sweep even when idle.
       # NOTE: scheduled (cron) runs always behave as 'true' regardless of this
       # input, since workflow_dispatch inputs do not apply to schedule events.
       skip_when_idle:
-        description: 'Skip the per-cluster sweep when no update runs are in flight (cheap probe only). Default true.'
+        description: 'Skip the update-run sweep when ARG is idle and admitted inventory has no recent start/retry tags. Default true.'
         required: false
         default: 'true'
         type: choice
@@ -133,6 +133,14 @@ on:
         description: 'Pin AzLocal.UpdateManagement version (empty = latest from PSGallery). See Automation-Pipeline-Examples/README.md section 5 "Optional configuration".'
         required: false
         default: ''
+      diagnostics:
+        description: 'Enable bounded verbose diagnostics for this manual run. Repository variable DEBUG_VERBOSE=true enables diagnostics for all runs, including schedules.'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
       # v0.8.90: machine-set markers for the event-driven trigger fired by
       # Update: 3 (Apply Updates). Operators normally leave these BLANK.
       # triggered_by=apply-updates is what enables the optional startup delay
@@ -154,7 +162,7 @@ env:
   # this to the version actually installed and to the latest on PSGallery, and emits a
   # ::notice annotation if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.9.27'
+  GENERATED_AGAINST_MODULE_VERSION: '0.9.28'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): manual workflow_dispatch input >
   # repository variable 'REQUIRED_MODULE_VERSION' > empty (latest).
@@ -174,6 +182,7 @@ env:
   # When set, every AzLocal.UpdateManagement Azure Resource Graph query in this
   # workflow excludes the listed subscriptions. Leave it unset to exclude nothing.
   AZLOCAL_EXCLUDED_SUBSCRIPTIONS_PATH: ${{ vars.AZLOCAL_EXCLUDED_SUBSCRIPTIONS_PATH }}
+  DEBUG_VERBOSE: ${{ vars.DEBUG_VERBOSE == 'true' || (github.event_name == 'workflow_dispatch' && github.event.inputs.diagnostics == 'true') && 'true' || 'false' }}
 
 jobs:
   monitor:
@@ -357,6 +366,14 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           Import-Module AzLocal.UpdateManagement -Force
+          if ($env:DEBUG_VERBOSE -eq 'true') {
+              $VerbosePreference = 'Continue'
+              $PSDefaultParameterValues['*-AzLocal*:Verbose'] = $true
+              New-Item -ItemType Directory -Path './diagnostics' -Force | Out-Null
+              Start-Transcript -Path './diagnostics/pipeline-transcript.log' -Force
+              $module = Get-Module AzLocal.UpdateManagement | Sort-Object Version -Descending | Select-Object -First 1
+              Write-Host "Diagnostics enabled (trigger=$env:GITHUB_EVENT_NAME; PowerShell=$($PSVersionTable.PSVersion) $($PSVersionTable.PSEdition); module=$($module.Version); path=$($module.Path))."
+          }
           $params = @{
               Scope                  = if ($env:INPUT_SCOPE) { $env:INPUT_SCOPE } else { 'all' }
               OutputDirectory        = './reports'
@@ -371,8 +388,21 @@ jobs:
           # v0.8.90: -SkipWhenIdle defaults ON (cheap idle probe). Scheduled runs
           # have no workflow_dispatch inputs, so an empty value also means ON.
           # Only an explicit 'false' disables it (manual full-sweep override).
-          if ($env:INPUT_SKIP_WHEN_IDLE -ne 'false') { $params['SkipWhenIdle'] = $true }
-          Export-AzLocalUpdateRunMonitorReport @params
+          if ($env:INPUT_SKIP_WHEN_IDLE -ne 'false' -and $env:DEBUG_VERBOSE -ne 'true') { $params['SkipWhenIdle'] = $true }
+            Invoke-AzLocalPipelineTimedOperation -PipelineName 'monitor-updates' -StepNumber 20 -StepName 'Snapshot in-flight update runs' -ScriptBlock {
+              Export-AzLocalUpdateRunMonitorReport @params
+            }
+
+      - name: Upload pipeline performance diagnostics
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: azlocal-monitor-updates-diagnostics_${{ github.run_id }}_${{ github.run_attempt }}
+          path: |
+            ./diagnostics/pipeline-transcript.log
+            ./diagnostics/pipeline-timings.json
+          if-no-files-found: warn
+          retention-days: ${{ fromJSON(vars.DEBUG_RETENTION_DAYS || '14') }}
 
       # v0.9.12: fail with a clear, run-summary-visible message (instead of the
       # downstream publish step's misleading "No test report files were found")

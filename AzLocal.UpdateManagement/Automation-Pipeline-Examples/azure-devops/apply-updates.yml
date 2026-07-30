@@ -123,13 +123,18 @@ parameters:
     type: string
     default: ''
 
+  - name: diagnostics
+    displayName: 'Enable bounded verbose diagnostics for this manual run. DEBUG_VERBOSE=true enables diagnostics for every run.'
+    type: boolean
+    default: false
+
 variables:
   # Module version this YAML was generated against. The install step compares this to
   # the version actually installed and to the latest on PSGallery, and emits a warning
   # log if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
   - name: GENERATED_AGAINST_MODULE_VERSION
-    value: '0.9.27'
+    value: '0.9.28'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): queue-time parameter > pipeline variable
   # 'REQUIRED_MODULE_VERSION' overridden at queue time > empty (latest).
@@ -508,6 +513,10 @@ stages:
               # force=false so the override only ever takes effect on a Manual queue.
               FORCE_IMMEDIATE_UPDATE_PARAM: ${{ parameters.forceImmediateUpdate }}
               BUILD_REASON: $(Build.Reason)
+              DIAGNOSTICS_PARAM: ${{ lower(parameters.diagnostics) }}
+              DEBUG_VERBOSE_SETTING: $(DEBUG_VERBOSE)
+              DIAGNOSTICS_LOG_PATH: $(Build.ArtifactStagingDirectory)/diagnostics/pipeline-transcript.log
+              AZLOCAL_PIPELINE_TIMING_PATH: $(Build.ArtifactStagingDirectory)/diagnostics/pipeline-timings.json
             inputs:
               # BEGIN-AZLOCAL-CUSTOMIZE:service-connection-ApplyClusterUpdates-2
               azureSubscription: 'AzureLocal-ServiceConnection'  # Update with your service connection name
@@ -516,6 +525,17 @@ stages:
               scriptLocation: 'inlineScript'
               inlineScript: |
                 Import-Module AzLocal.UpdateManagement -Force
+                $diagnosticsEnabled = $env:DEBUG_VERBOSE_SETTING -eq 'true' -or (
+                    $env:BUILD_REASON -eq 'Manual' -and $env:DIAGNOSTICS_PARAM -eq 'true'
+                )
+                if ($diagnosticsEnabled) {
+                    $VerbosePreference = 'Continue'
+                    $PSDefaultParameterValues['*-AzLocal*:Verbose'] = $true
+                    New-Item -ItemType Directory -Path (Split-Path -Parent $env:DIAGNOSTICS_LOG_PATH) -Force | Out-Null
+                    Start-Transcript -Path $env:DIAGNOSTICS_LOG_PATH -Force
+                    $module = Get-Module AzLocal.UpdateManagement | Sort-Object Version -Descending | Select-Object -First 1
+                    Write-Host "Diagnostics enabled (trigger=$env:BUILD_REASON; PowerShell=$($PSVersionTable.PSVersion) $($PSVersionTable.PSEdition); module=$($module.Version); path=$($module.Path))."
+                }
                 $params = @{
                     ReadinessCsvPath      = "$(Build.ArtifactStagingDirectory)/readiness-report.csv"
                     UpdateRing            = $env:RESOLVED_UPDATE_RING
@@ -532,7 +552,9 @@ stages:
                         Write-Host "##vso[task.logissue type=warning]forceImmediateUpdate=True ignored: Build.Reason='$env:BUILD_REASON' (override is honoured only for Manual queue runs)."
                     }
                 }
-                Invoke-AzLocalReadinessGatedClusterUpdate @params
+                Invoke-AzLocalPipelineTimedOperation -PipelineName 'apply-updates' -StepNumber 20 -StepName 'Apply readiness-gated updates' -ScriptBlock {
+                  Invoke-AzLocalReadinessGatedClusterUpdate @params
+                }
 
           # v0.8.95: OPT-IN guarded single-retry of FAILED updates. Disabled by
           # default; enable by setting the pipeline variable (or variable-group
@@ -551,6 +573,11 @@ stages:
             condition: eq(variables['FAILED_UPDATES_SINGLE_RETRY'], 'true')
             env:
               RESOLVED_UPDATE_RING: $(resolvedUpdateRing)
+              DIAGNOSTICS_PARAM: ${{ lower(parameters.diagnostics) }}
+              DEBUG_VERBOSE_SETTING: $(DEBUG_VERBOSE)
+              BUILD_REASON: $(Build.Reason)
+              DIAGNOSTICS_LOG_PATH: $(Build.ArtifactStagingDirectory)/diagnostics/pipeline-transcript.log
+              AZLOCAL_PIPELINE_TIMING_PATH: $(Build.ArtifactStagingDirectory)/diagnostics/pipeline-timings.json
             inputs:
               # BEGIN-AZLOCAL-CUSTOMIZE:service-connection-RetryFailedUpdates
               azureSubscription: 'AzureLocal-ServiceConnection'  # Update with your service connection name
@@ -559,13 +586,34 @@ stages:
               scriptLocation: 'inlineScript'
               inlineScript: |
                 Import-Module AzLocal.UpdateManagement -Force
+                $diagnosticsEnabled = $env:DEBUG_VERBOSE_SETTING -eq 'true' -or (
+                    $env:BUILD_REASON -eq 'Manual' -and $env:DIAGNOSTICS_PARAM -eq 'true'
+                )
+                if ($diagnosticsEnabled) {
+                    $VerbosePreference = 'Continue'
+                    $PSDefaultParameterValues['*-AzLocal*:Verbose'] = $true
+                    New-Item -ItemType Directory -Path (Split-Path -Parent $env:DIAGNOSTICS_LOG_PATH) -Force | Out-Null
+                    Start-Transcript -Path $env:DIAGNOSTICS_LOG_PATH -Append
+                    $module = Get-Module AzLocal.UpdateManagement | Sort-Object Version -Descending | Select-Object -First 1
+                    Write-Host "Diagnostics enabled (trigger=$env:BUILD_REASON; PowerShell=$($PSVersionTable.PSVersion) $($PSVersionTable.PSEdition); module=$($module.Version); path=$($module.Path))."
+                }
                 $params = @{
                     ReadinessCsvPath = "$(Build.ArtifactStagingDirectory)/readiness-report.csv"
                     UpdateRing       = $env:RESOLVED_UPDATE_RING
                     OutputDirectory  = "$(Build.ArtifactStagingDirectory)"
                 }
                 if ([System.Convert]::ToBoolean("${{ parameters.dryRun }}")) { $params['DryRun'] = $true }
-                Invoke-AzLocalReadinessGatedFailedUpdateRetry @params
+                Invoke-AzLocalPipelineTimedOperation -PipelineName 'apply-updates' -StepNumber 30 -StepName 'Retry failed updates' -ScriptBlock {
+                  Invoke-AzLocalReadinessGatedFailedUpdateRetry @params
+                }
+
+          - task: PublishPipelineArtifact@1
+            displayName: 'Publish pipeline performance diagnostics'
+            condition: always()
+            inputs:
+              targetPath: '$(Build.ArtifactStagingDirectory)/diagnostics'
+              artifact: 'azlocal-apply-updates-diagnostics-$(Build.BuildId)-$(System.JobAttempt)'
+              publishLocation: 'pipeline'
 
           # v0.8.95: discoverability notice. When FAILED_UPDATES_SINGLE_RETRY is
           # NOT enabled, append a short opt-in awareness section to the

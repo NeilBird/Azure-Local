@@ -230,6 +230,19 @@ function Invoke-AzResourceGraphQuery {
         }
     }
 
+    $queryTable = if ($Query -match '^([A-Za-z][A-Za-z0-9]*)') { $Matches[1] } else { 'Unknown' }
+    $queryHashProvider = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $queryHashBytes = $queryHashProvider.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($Query))
+        $queryFingerprint = ([System.BitConverter]::ToString($queryHashBytes) -replace '-', '').Substring(0, 12).ToLowerInvariant()
+    }
+    finally {
+        $queryHashProvider.Dispose()
+    }
+    Write-Verbose ("ARG query start: table={0}; fingerprint={1}; chars={2}; scope={3}; scopeCount={4}; requestedPageSize={5}; maxPages={6}." -f
+        $queryTable, $queryFingerprint, $Query.Length, $script:LastResourceGraphScopeMode,
+        $script:LastResourceGraphScopeCount, $First, $MaxPages)
+
     # Reset the truncation flag at the start of every call so a caller checking
     # $script:LastResourceGraphQueryTruncated sees only THIS call's outcome.
     $script:LastResourceGraphQueryTruncated = $false
@@ -424,7 +437,9 @@ function Invoke-AzResourceGraphQuery {
                 }
 
                 # Either not retryable, or out of retries: fail hard.
-                throw "Azure Resource Graph query failed (exit $exit): $(ConvertTo-ScrubbedCliOutput -Text $errText)"
+                $scrubbedError = ConvertTo-ScrubbedCliOutput -Text $errText
+                Write-Verbose ("ARG query failed: table={0}; fingerprint={1}; page={2}; exit={3}; error={4}" -f $queryTable, $queryFingerprint, $pages, $exit, $scrubbedError)
+                throw "Azure Resource Graph query failed (exit $exit): $scrubbedError"
             }
 
             $rawText = ($stdoutLines | Out-String).Trim()
@@ -435,7 +450,9 @@ function Invoke-AzResourceGraphQuery {
                 $parsed = $rawText | ConvertFrom-Json -ErrorAction Stop
             }
             catch {
-                throw "Azure Resource Graph query failed to parse JSON: $($_.Exception.Message); raw: $(ConvertTo-ScrubbedCliOutput -Text $rawText.Substring(0, [Math]::Min(500, $rawText.Length)))"
+                $parseError = "Azure Resource Graph query failed to parse JSON: $($_.Exception.Message); raw: $(ConvertTo-ScrubbedCliOutput -Text $rawText.Substring(0, [Math]::Min(500, $rawText.Length)))"
+                Write-Verbose ("ARG query failed: table={0}; fingerprint={1}; page={2}; error={3}" -f $queryTable, $queryFingerprint, $pages, $parseError)
+                throw $parseError
             }
 
             # 'az graph query' returns either a top-level array (older CLI) or an
@@ -486,6 +503,13 @@ function Invoke-AzResourceGraphQuery {
     if (-not $script:LastResourceGraphThrottled -and $script:ArgConsecutiveThrottledCalls -gt 0) {
         $script:ArgConsecutiveThrottledCalls = [Math]::Max(0, $script:ArgConsecutiveThrottledCalls - 1)
     }
+
+    $resultLabel = if ($allRows.Count -eq 0) { 'empty result' } else { 'completed' }
+    Write-Verbose ("ARG query {0}: table={1}; fingerprint={2}; rows={3}; pages={4}; effectivePageSize={5}; truncated={6}; throttleRetries={7}; networkRetries={8}; payloadReductions={9}." -f
+        $resultLabel, $queryTable, $queryFingerprint, $allRows.Count, $pages,
+        $script:LastResourceGraphEffectivePageSize, $script:LastResourceGraphQueryTruncated,
+        $script:LastResourceGraphRetryCount, $script:LastResourceGraphTransientRetryCount,
+        $script:LastResourceGraphPayloadRetryCount)
 
     # IMPORTANT: the leading comma is required to preserve array shape so that
     # callers using `$x = Invoke-AzResourceGraphQuery ...` receive an [object[]]

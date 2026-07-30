@@ -75,13 +75,18 @@ parameters:
     type: string
     default: ''
 
+  - name: diagnostics
+    displayName: 'Enable bounded verbose diagnostics for this manual run. DEBUG_VERBOSE=true enables diagnostics for every run.'
+    type: boolean
+    default: false
+
 variables:
   # Module version this YAML was generated against (per-file stamp; do NOT move to
   # the shared group). The install step compares this to the installed version and
   # to the latest on PSGallery and warns if the YAML looks stale - prompting a
   # refresh via Copy-AzLocalPipelineExample -Update.
   - name: GENERATED_AGAINST_MODULE_VERSION
-    value: '0.9.27'
+    value: '0.9.28'
   # Resolution order for the module version pin: queue-time parameter 'moduleVersion'
   # > empty (latest). Leave empty for the default fix-forward behaviour.
   - name: REQUIRED_MODULE_VERSION
@@ -362,6 +367,11 @@ stages:
         INPUT_UPDATE_RING: ${{ parameters.updateRing }}
         INPUT_DRY_RUN: ${{ parameters.dryRun }}
         reportsPath: $(reportsPath)
+        DIAGNOSTICS_PARAM: ${{ lower(parameters.diagnostics) }}
+        DEBUG_VERBOSE_SETTING: $(DEBUG_VERBOSE)
+        BUILD_REASON: $(Build.Reason)
+        DIAGNOSTICS_LOG_PATH: $(Build.ArtifactStagingDirectory)/diagnostics/pipeline-transcript.log
+        AZLOCAL_PIPELINE_TIMING_PATH: $(Build.ArtifactStagingDirectory)/diagnostics/pipeline-timings.json
       inputs:
         # BEGIN-AZLOCAL-CUSTOMIZE:service-connection-AdvanceSideload
         azureSubscription: 'AzureLocal-ServiceConnection'  # Update with your service connection name
@@ -375,6 +385,17 @@ stages:
         inlineScript: |
           $ErrorActionPreference = 'Stop'
           Import-Module AzLocal.UpdateManagement -Force
+          $diagnosticsEnabled = $env:DEBUG_VERBOSE_SETTING -eq 'true' -or (
+              $env:BUILD_REASON -eq 'Manual' -and $env:DIAGNOSTICS_PARAM -eq 'true'
+          )
+          if ($diagnosticsEnabled) {
+              $VerbosePreference = 'Continue'
+              $PSDefaultParameterValues['*-AzLocal*:Verbose'] = $true
+              New-Item -ItemType Directory -Path (Split-Path -Parent $env:DIAGNOSTICS_LOG_PATH) -Force | Out-Null
+              Start-Transcript -Path $env:DIAGNOSTICS_LOG_PATH -Force
+              $module = Get-Module AzLocal.UpdateManagement | Sort-Object Version -Descending | Select-Object -First 1
+              Write-Host "Diagnostics enabled (trigger=$env:BUILD_REASON; PowerShell=$($PSVersionTable.PSVersion) $($PSVersionTable.PSEdition); module=$($module.Version); path=$($module.Path))."
+          }
 
             $settings = Get-AzLocalSideloadSettings -Path './config/sideload-settings.yml'
 
@@ -398,7 +419,9 @@ stages:
           }
           if ($env:INPUT_UPDATE_RING) { $planParams['UpdateRingValue'] = $env:INPUT_UPDATE_RING }
           if ($settings.Remoting.fqdnSuffix) { $planParams['FqdnSuffix'] = [string]$settings.Remoting.fqdnSuffix }
-          $plan = @(Resolve-AzLocalSideloadPlan @planParams)
+          $plan = @(Invoke-AzLocalPipelineTimedOperation -PipelineName 'sideload-updates' -StepNumber 10 -StepName 'Resolve sideload plan' -ScriptBlock {
+            Resolve-AzLocalSideloadPlan @planParams
+          })
           Write-Host ("Resolved {0} cluster plan row(s)." -f $plan.Count)
 
           # 2. Advance the re-entrant state machine by one transition per cluster.
@@ -433,7 +456,9 @@ stages:
               Write-Host 'DRY RUN MODE - no media staged, no tasks registered, no tags flipped.'
           }
             try {
-              $results = @(Invoke-AzLocalSideloadUpdate @applyParams)
+              $results = @(Invoke-AzLocalPipelineTimedOperation -PipelineName 'sideload-updates' -StepNumber 20 -StepName 'Advance sideload state machine' -ScriptBlock {
+                Invoke-AzLocalSideloadUpdate @applyParams
+              })
             }
             finally {
               $taskPassword = $null
@@ -443,11 +468,21 @@ stages:
 
           # 3. Render the status report (markdown step summary + JUnit XML + sideload-status.md).
           New-Item -ItemType Directory -Path $env:reportsPath -Force | Out-Null
-          $report = Add-AzLocalSideloadStepSummary -StateRoot ([string]$settings.Paths.stateRoot) -Plan $plan -OutputPath $env:reportsPath
+          $report = Invoke-AzLocalPipelineTimedOperation -PipelineName 'sideload-updates' -StepNumber 30 -StepName 'Render sideload status report' -ScriptBlock {
+            Add-AzLocalSideloadStepSummary -StateRoot ([string]$settings.Paths.stateRoot) -Plan $plan -OutputPath $env:reportsPath
+          }
 
           if ($report.HasFailures) {
               Write-Host '##vso[task.logissue type=warning]One or more clusters are in a Failed state or have plan errors - see the Sideload status report.'
           }
+
+    - task: PublishPipelineArtifact@1
+      displayName: 'Publish pipeline performance diagnostics'
+      condition: always()
+      inputs:
+        targetPath: '$(Build.ArtifactStagingDirectory)/diagnostics'
+        artifact: 'azlocal-sideload-updates-diagnostics-$(Build.BuildId)-$(System.JobAttempt)'
+        publishLocation: 'pipeline'
 
     # v0.9.12: fail with a run-summary-visible message (instead of the
     # PublishTestResults "No test result files were found" warning) when the

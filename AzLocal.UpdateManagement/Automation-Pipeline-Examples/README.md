@@ -28,9 +28,11 @@ It is written in the same step-by-step style as [`ITSM/README.md`](../ITSM/READM
    - [5.1 GitHub Actions](#51-github-actions)
    - [5.2 Azure DevOps](#52-azure-devops)
      - [5.2.1 The `AzureLocal-Pipeline-Settings` variable group (shared settings, set once)](#521-the-azurelocal-pipeline-settings-variable-group-shared-settings-set-once)
+     - [5.2.2 Diagnostics for any pipeline run](#522-diagnostics-for-any-pipeline-run)
    - [5.3 Optional configuration (not recommended): pin the module version](#53-optional-configuration-not-recommended-pin-the-module-version)
    - [5.4 Azure DevOps onboarding checklist](#54-azure-devops-onboarding-checklist)
    - [5.5 Stay current: one-command refresh with `Update-Module-And-Pipelines.ps1`](#55-stay-current-one-command-refresh-with-update-module-and-pipelinesps1)
+  - [5.6 Test an exact module candidate](#56-test-an-exact-module-candidate)
 6. [End-to-end runbook: bring an estate online](#6-end-to-end-runbook-bring-an-estate-online)
    - [6.1 Inventory the estate](#61-inventory-the-estate)
      - [6.1.1 (Optional) Exclude whole subscriptions from every fleet scan](#611-optional-exclude-whole-subscriptions-from-every-fleet-scan)
@@ -52,7 +54,11 @@ It is written in the same step-by-step style as [`ITSM/README.md`](../ITSM/READM
 9. [Tuning throughput (`-ThrottleLimit`)](#9-tuning-throughput--throttlelimit)
 10. [Standalone HTML report (no pipeline)](#10-standalone-html-report-no-pipeline)
 11. [Security model](#11-security-model)
-12. [Troubleshooting](#12-troubleshooting)
+12. [Troubleshooting pipelines](#12-troubleshooting-pipelines)
+  - [12.1 Capture a diagnostic run](#121-capture-a-diagnostic-run)
+  - [12.2 Read the transcript](#122-read-the-transcript)
+  - [12.3 Investigate zero or unexpected results](#123-investigate-zero-or-unexpected-results)
+  - [12.4 Common failures](#124-common-failures)
 13. [File layout](#13-file-layout)
 14. [Optional: Sideload updates to disconnected / air-gapped clusters (Update: 2)](#14-optional-sideload-updates-to-disconnected--air-gapped-clusters-update-2)
 15. [Pipeline reference](#15-pipeline-reference) (moved to [docs/appendix-pipelines.md](docs/appendix-pipelines.md))
@@ -1101,6 +1107,7 @@ Why a group instead of inline variables? Azure DevOps variable **precedence** ru
 | `MONITOR_TRIGGER_DELAY_MINUTES` | `0` (no delay) | One-off startup sleep on the **event-driven** monitor run so the snapshot lands after the run registers `InProgress`. Honoured range 15-240. | `monitor-updates` |
 | `FAILED_UPDATES_SINGLE_RETRY` | unset (`off`) | Opt-in guarded one-time retry of failed update runs. Set `true` to enable. See [8.5](#85-opt-in-single-retry-of-failed-updates-failed_updates_single_retry). | `apply-updates` |
 | `AZLOCAL_MAX_PIPELINE_RUNTIME_MINUTES` | unset (effective default `120`) | Native maximum runtime for each job. Set a positive whole number to reduce the two-hour cap. Multi-job pipelines can exceed this value in total elapsed time because the control is job-scoped. | All pipelines |
+| `DEBUG_VERBOSE` | unset (`off`) | Set `true` to enable bounded verbose diagnostics and a downloadable transcript artifact for every run, including scheduled and event-driven runs. | All pipelines |
 Sideload configuration is not stored in repository/pipeline variables. Use the
 committed `config/sideload-settings.yml` file described in [docs/sideload.md](docs/sideload.md).
 Copy/Update creates it only when absent and never overwrites or migrates an existing file.
@@ -1117,7 +1124,8 @@ az pipelines variable-group create `
         APPLY_UPDATES_SCHEDULE_PATH='./config/apply-updates-schedule.yml' `
         MONITOR_TRIGGER_DELAY_MINUTES='0' `
         FAILED_UPDATES_SINGLE_RETRY='false' `
-        AZLOCAL_MAX_PIPELINE_RUNTIME_MINUTES='120'
+        AZLOCAL_MAX_PIPELINE_RUNTIME_MINUTES='120' `
+        DEBUG_VERBOSE='false'
 
 # Verify the group exists and is authorized for all pipelines.
 az pipelines variable-group list `
@@ -1130,6 +1138,35 @@ az pipelines variable-group list `
 You can equally create the group **in the UI**: **Pipelines -> Library -> + Variable group**, name it exactly `AzureLocal-Pipeline-Settings`, add the rows above, and under **Pipeline permissions** grant access to your pipelines (or toggle "Allow access to all pipelines").
 
 > **Secrets stay separate.** This group is for **non-secret** settings only. ITSM credentials live in a separate `AzureLocal-ITSM-Secrets` group (see [section 7](#7-optional-open-itsm-tickets-for-clusters-needing-operator-action)); Azure auth lives on the service connection. Do not put secrets in `AzureLocal-Pipeline-Settings`.
+
+#### 5.2.2 Diagnostics for any pipeline run
+
+Every GitHub Actions and Azure DevOps pipeline exposes a `diagnostics` input on its manual run form. Leave it at `false` for normal operation; set it to `true` for a one-off manual troubleshooting run. Config: 3 also retains its older `debug` input as a deprecated compatibility alias.
+
+To diagnose a scheduled or event-driven run, set the shared non-secret variable `DEBUG_VERBOSE=true`. On GitHub, create a repository Actions variable named `DEBUG_VERBOSE`; on Azure DevOps, add it to `AzureLocal-Pipeline-Settings`. The variable applies to every trigger. The manual `diagnostics` input applies only when the run was queued manually.
+
+```powershell
+# GitHub repository variable - affects scheduled, event-driven, and manual runs.
+gh variable set DEBUG_VERBOSE --body true
+gh variable set DEBUG_RETENTION_DAYS --body 14
+
+# Azure DevOps variable-group equivalent.
+az pipelines variable-group variable update `
+  --group-id <AzureLocal-Pipeline-Settings-group-id> `
+  --name DEBUG_VERBOSE `
+  --value true
+```
+
+Every run writes `pipeline-timings.json`, regardless of the diagnostics setting. An enabled diagnostic run additionally sets PowerShell verbose output for AzLocal cmdlets and writes `pipeline-transcript.log`. It does not enable `az --debug`, print authentication tokens, or dump successful ARM payloads. The artifact is published even when the workload fails:
+
+- **GitHub Actions:** download `azlocal-<pipeline>-diagnostics_<run-id>_<attempt>` from the run's **Artifacts** section. Set repository variable `DEBUG_RETENTION_DAYS` to a whole number from 1-90; when unset, retention defaults to 14 days. Repository or organization policy can impose a lower maximum.
+- **Azure DevOps:** download `azlocal-<pipeline>-diagnostics-<build-id>-<job-attempt>` from the run's **Related > Published** artifacts. `PublishPipelineArtifact@1` has no per-artifact retention input, so retention follows the project's pipeline-retention policy. `DEBUG_RETENTION_DAYS` is therefore GitHub-only; Azure DevOps administrators should configure **Project settings > Pipelines > Settings > Retention**.
+
+Normal runs therefore publish one file (`pipeline-timings.json`); diagnostic runs publish two (`pipeline-timings.json` and `pipeline-transcript.log`). Apply Updates appends its guarded retry output to the same transcript. Monitor In-Flight Updates disables its idle short-circuit while diagnostics are enabled so the transcript includes the full ARM/Resource Graph reconciliation pass.
+
+For the exact capture contract and a step-by-step guide to empty or unexpected query results, see [Troubleshooting pipelines](#12-troubleshooting-pipelines).
+
+> **Sharing caution:** transcripts are designed to avoid credentials, but they can contain cluster names, Azure resource IDs, module paths, and service error text. Review them before sharing outside the support boundary, then set `DEBUG_VERBOSE=false` again after scheduled-run troubleshooting.
 
 ### 5.3 Optional configuration (_not recommended_): pin the module version
 
@@ -1203,6 +1240,7 @@ That one command does three things, in order, and **only acts when something act
 | Option | Effect |
 |---|---|
 | *(none)* | Upgrade module if needed, refresh YAMLs, then commit + push any changes. |
+| `-RequiredVersion <version>` | Install and import that exact PSGallery version, including an unlisted candidate, then refresh from its bundled templates. |
 | `-NoPush` | Refresh the YAMLs only - **skip** the `git add` / commit / push so you can review with `git status` / `git diff` and push yourself. |
 | `-Scope AllUsers` | Install the module machine-wide on upgrade (needs an elevated session). Default is `CurrentUser` (no elevation). |
 | `-RepoRoot` / `-Platform` / `-WorkflowSubPath` | Overrides for the values baked in at drop time - rarely needed. |
@@ -1210,6 +1248,25 @@ That one command does three things, in order, and **only acts when something act
 > **Self-managing:** the script is a **managed file** - `Copy-`/`Update-AzLocalPipelineExample` auto-refresh it in place when the module ships a newer template, and the run above stages that self-update too. Tune its behaviour with the **parameters** above rather than editing the body (body edits are replaced on refresh).
 
 > **Prefer to review before pushing?** Run `.\Update-Module-And-Pipelines.ps1 -NoPush`, inspect `git diff`, then commit and push manually. The marker-aware merge means a refresh is safe to run even on a heavily-customised repo - your `AZLOCAL-CUSTOMIZE` regions survive.
+
+---
+
+### 5.6 Test an exact module candidate
+
+`Copy-AzLocalPipelineExample` and `Update-AzLocalPipelineExample` drop a managed `Apply-ModuleDevelopmentChannel.ps1` into the repo-root `DevChannel\` folder for both platforms. Pass `-SkipDevelopmentChannelHelper` to suppress it.
+
+```powershell
+# Pin every bundled pipeline to an exact PSGallery version.
+.\DevChannel\Apply-ModuleDevelopmentChannel.ps1 -RequiredVersion 0.9.29
+
+# Restore latest-listed templates, then remove the pin.
+.\DevChannel\Apply-ModuleDevelopmentChannel.ps1 -Disable
+```
+
+The helper refreshes local templates before changing the runtime pin. Disable preflights the rollback before cleanup and stops when an older template would remove a candidate-only `AZLOCAL-CUSTOMIZE` section. The [development-channel testing runbook](docs/development-channel-testing.md) covers the full enable, validation, disable, approval, and recovery flow.
+
+- **GitHub:** validates the exact Gallery version, then uses authenticated `gh` to set or delete the non-secret `REQUIRED_MODULE_VERSION` repository variable.
+- **Azure DevOps:** validates the exact Gallery version, then prints the variable-group create/update command with that version. With `-Disable`, it prints the delete command. Replace `<group-id>` and run the displayed command.
 
 ---
 
@@ -1609,7 +1666,7 @@ The "steady-state" phase ships **three complementary pipelines**, all read-only,
 | Pipeline | Daily | Answers | Output |
 |----------|-------|---------|--------|
 | `fleet-connectivity-status.yml` *(v0.7.79+, enhanced in v0.7.85)* | 05:30 UTC | *"Are all clusters' Arc agents Connected? Are physical NICs healthy? Are Azure Resource Bridges reachable? Does the cluster's reported node count match the Arc-tagged physical machines we see?"* | JUnit + per-scope CSV/JSON + Markdown summary; one test case per cluster, with reconciliation rows that include "How to interpret + act" remediation guidance for any non-zero node-coverage delta |
-| `monitor-updates.yml` *(v0.7.90; v0.8.90 default cadence)* | every 6h at 00:00, 06:00, 12:00, 18:00 UTC + event-driven (fired by `apply-updates.yml`) + manual | *"What is happening right now? Which clusters are mid-update, which step are they on, and is anything stuck?"* | JUnit + CSV + Markdown summary; one test case per in-flight cluster (failure when elapsed > threshold, default 6h). Runs a cheap `-SkipWhenIdle` heartbeat that short-circuits when nothing is in flight |
+| `monitor-updates.yml` *(v0.7.90; v0.8.90 default cadence)* | every 6h at 00:00, 06:00, 12:00, 18:00 UTC + event-driven (fired by `apply-updates.yml`) + manual | *"What is happening right now? Which clusters are mid-update, which step are they on, and is anything stuck?"* | JUnit + CSV + Markdown summary; one test case per in-flight cluster. `-SkipWhenIdle` checks ARG plus recent admitted-inventory attempts before skipping; direct ARM reconciles ARG gaps. |
 | `fleet-update-status.yml` | 06:00 UTC | *"Is each cluster up-to-date? Which ones need an apply, which ones are SBE-blocked, which ones failed?"* | JUnit + CSV/JSON + Markdown summary; one test case per cluster |
 | `fleet-health-status.yml` *(v0.7.65, Monitor: 2)* | 07:00 UTC | *"Do clusters have actionable health issues even when up-to-date? What failure reasons hit the most clusters?"* | JUnit + CSV/JSON + Markdown summary; one test case per (cluster, failing 24-hour health check) grouped under Critical / Warning testsuites |
 
@@ -1624,7 +1681,7 @@ The four run in distinct (offset) cron slots so they don't contend for the same 
 Before v0.8.90 the in-flight monitor only ran on a manual/uncommented cron, so an operator had to remember to turn it on for a wave and off again afterwards. v0.8.90 makes the monitor **self-driving** by combining three changes that work together:
 
 1. **An always-on 6-hourly heartbeat** - `monitor-updates.yml` ships an active `17 */6 * * *` cron. By itself that generates four idle runs/day, so...
-2. **`-SkipWhenIdle`** - every scheduled run first does one cheap fleet-wide Resource Graph probe ("is *any* `updateRun` `InProgress`?"). If nothing is in flight it emits an `IDLE` result and **skips the per-cluster sweep entirely**, so off-wave runs cost a single ARG query. (Fail-safe: if the probe itself errors, the monitor does NOT skip - it runs the full sweep.)
+2. **`-SkipWhenIdle`** - every scheduled run first asks Resource Graph whether any `updateRun` is `InProgress`. If ARG says idle, v0.9.28 also loads the globally admitted inventory and checks recent `UpdateStarted`/`UpdateRetried` tags. It emits `IDLE` and skips the update-run sweep only when both signals are empty. Any recent attempt or probe error runs the full sweep and direct ARM reconciliation.
 3. **An event-driven trigger from Apply** - the moment `apply-updates.yml` starts >=1 update, it fires `monitor-updates.yml` directly, tagged `triggered_by=apply-updates`, so the monitor catches the run within minutes instead of waiting up to 6 hours for the next cron slot.
 
 **How Apply fires the monitor (fire-and-forget):**
@@ -1636,7 +1693,7 @@ Before v0.8.90 the in-flight monitor only ran on a manual/uncommented cron, so a
 
 Apply never waits on the monitor - it dispatches and moves on. This keeps the wave moving and means a single Apply run that starts updates on several rings still results in exactly one monitor trigger.
 
-**Why a delay can help - and how to set it.** When Apply starts an update, the cluster's `updateRun` takes a short while to transition into `InProgress` in Azure Resource Graph (it first runs pre-update health checks). If the monitor fires *instantly* and `-SkipWhenIdle` runs its probe before that transition lands, the probe can legitimately see "nothing in flight" and short-circuit. The optional **`MONITOR_TRIGGER_DELAY_MINUTES`** variable inserts a one-off sleep at the *start of the monitor run* so the snapshot lands after the run has registered:
+**Why a delay can help - and how to set it.** When Apply starts an update, the cluster's `updateRun` takes a short while to transition into `InProgress` in Azure Resource Graph (it first runs pre-update health checks). The v0.9.28 recent-attempt check prevents that ARG delay from falsely ending the monitor, but an optional **`MONITOR_TRIGGER_DELAY_MINUTES`** still lets the first snapshot land after richer progress details have registered:
 
 | Property | Behaviour |
 |---|---|
@@ -1660,7 +1717,9 @@ az pipelines variable-group variable update `
 
 A practical starting point is `30` minutes - long enough for the `updateRun` to clear pre-update health checks and register as `InProgress`, short enough that the first in-flight snapshot still lands early in the wave. Leave it unset if your environment registers runs quickly and you prefer the monitor to fire immediately (the 6-hourly cron will pick up anything the first event-driven run missed).
 
-> **Net effect:** between waves the monitor is effectively free (one ARG probe every 6h via `-SkipWhenIdle`); during a wave it triggers itself off Apply and - with `MONITOR_TRIGGER_DELAY_MINUTES` set - lands its first snapshot right after updates go `InProgress`, with zero manual cron juggling.
+> **Net effect:** between waves the monitor uses one ARG probe plus a bounded admitted-inventory check every 6h; during a wave it triggers itself off Apply, reconciles ARG gaps through ARM, and can delay its first rich progress snapshot with `MONITOR_TRIGGER_DELAY_MINUTES`.
+
+**Large management-group fleets (v0.9.28):** inventory and update-run queries use the management groups and grouped tag admission from `config/fleet-settings.yml`. The admitted cluster IDs are passed to the child update-run query in batches of 40, avoiding the Windows `az.cmd` command-line limit even when the management groups contain thousands of subscriptions. Direct ARM reconciliation is attempted only for admitted clusters with a recent start/retry tag.
 
 **Fleet Connectivity Status** *(introduced in v0.7.79, enhanced in v0.7.85 and v0.9.22)* runs daily at 05:30 UTC and answers the upstream question every other steady-state pipeline depends on: *"can the pipeline identity actually see every cluster, every physical node, and every Resource Bridge it is supposed to manage?"* The Monitor: 1 reconciliation table compares each cluster's `reportedProperties.nodes` count against the Arc-tagged physical machines visible in Resource Graph and flags both directions of drift (positive = Arc has more machines than the cluster reports; negative = cluster reports more nodes than Arc can see). The v0.7.85 *"How to interpret + act on a non-zero reconciliation"* subsection in the pipeline summary gives operators per-direction remediation lists and an inline Resource Graph query template for triage. **v0.9.22 scaling:** all five ARG calls project only the scalar fields consumed by the report and use deterministic ordering; they no longer download full cluster, update-summary, Arc-machine, NIC, or Resource Bridge documents. RBAC: `Reader` plus `Microsoft.ResourceGraph/resources/read`, `Microsoft.AzureStackHCI/edgeDevices/read`, `Microsoft.HybridCompute/machines/read`, and `Microsoft.ResourceConnector/appliances/read` - all already in the **`Azure Stack HCI Update Operator (custom)`** custom role definition shipped in [section 3.1](#31-custom-role-azure-stack-hci-update-operator-custom).
 
@@ -2259,7 +2318,65 @@ The report includes executive summary cards, cluster information, a status table
 
 ---
 
-## 12. Troubleshooting
+## 12. Troubleshooting pipelines
+
+### 12.1 Capture a diagnostic run
+
+For a one-off manual run, set `diagnostics=true` on the GitHub Actions or Azure DevOps run form. For a scheduled, event-driven, or persistent manual investigation, set `DEBUG_VERBOSE=true` as described in [section 5.2.2](#522-diagnostics-for-any-pipeline-run), reproduce the problem, download the diagnostics artifact, then set the variable back to `false`.
+
+The artifact is published with `always()` semantics, including when the principal workload fails. GitHub artifacts default to 14 days and honor `DEBUG_RETENTION_DAYS` from 1-90; Azure DevOps artifacts follow the project pipeline-retention policy.
+
+The artifact contents are deliberate:
+
+| Run mode | Files | Availability |
+|---|---|---|
+| Normal | `pipeline-timings.json` | Every run |
+| `diagnostics=true` or `DEBUG_VERBOSE=true` | `pipeline-timings.json`, `pipeline-transcript.log` | Manual input applies only to manually queued runs; the shared variable applies to every trigger |
+
+### 12.2 Diagnose performance with `pipeline-timings.json`
+
+The timing report is generated on every run so successful runs can be compared over time without first reproducing them in diagnostic mode. Each principal workload is executed through `Invoke-AzLocalPipelineTimedOperation`, which writes the report before starting the operation and updates it in `finally`. Workload output is preserved, and a workload failure is recorded before the original error is rethrown.
+
+The top-level JSON fields are:
+
+| Field | Meaning |
+|---|---|
+| `schemaVersion` | Report contract version; currently `1`. |
+| `pipelineName`, `pipelineVersion` | Stable template identity and the version it was generated against. |
+| `platform`, `runId`, `runAttempt` | `GitHubActions`, `AzureDevOps`, or `Local`, plus native run correlation values. |
+| `moduleVersion`, `powerShellVersion`, `powerShellEdition` | Runtime versions needed when comparing performance. |
+| `startedUtc`, `lastUpdatedUtc`, `wallClockDurationMs` | Report time span. Wall clock includes the gaps between recorded operations in the same report, not just their summed execution time. |
+| `status`, `operationCount`, `operations` | Aggregate state and the ordered operation records. |
+
+Each operation records `stepNumber`, `stepName`, `invocationId`, start/end UTC timestamps, `durationMs`, `status`, `errorType`, and a scrubbed `errorMessage`. Step numbers are loose ordering keys (`10`, `20`, `30`) so later releases can insert operations without renumbering the report. A completed operation is `Succeeded` or `Failed`. If the PowerShell process or runner is terminated after the initial atomic write but before `finally`, the valid last report retains `Running`, a null end/duration, and its invocation ID; compare that record with the platform timeout or cancellation event.
+
+For a long but successful run, compare reports for the same `pipelineName`, `pipelineVersion`, module version, scope, and trigger shape. Sort or chart `operations[].durationMs` by `stepNumber`; this separates a slower principal workload from platform queue time, module installation, authentication, artifact upload, or other unwrapped setup. `wallClockDurationMs` is not the full native job duration unless the first and last recorded operations span that job.
+
+The report intentionally contains no KQL, ARM response body, URI query string, token, or credential. Failure messages pass through the shared credential scrubber. Timing-write failures emit a warning but never replace the workload result. Files are written through a temporary file and atomic replacement so readers do not observe partially serialized JSON.
+
+### 12.3 Read `pipeline-transcript.log`
+
+`Start-Transcript` records output that reaches PowerShell's host and output, verbose, warning, and error streams after capture starts. Diagnostics enable AzLocal verbose output, so the shared Azure query boundaries now record:
+
+- **Azure Resource Graph:** table name, a non-reversible query fingerprint, query character count, scope mode/count, pages, rows (including an explicit `empty result`), effective page size, truncation, and retry counters.
+- **Direct ARM:** HTTP method, resource path without URI query parameters, response shape/count (including an explicit empty response), and scrubbed failure details.
+- **Fleet workloads:** their own admission, tag-filter, exclusion, batching, reconciliation, and artifact messages where applicable. Monitor In-Flight Updates also bypasses its idle shortcut so diagnostics exercise the complete ARG/ARM reconciliation path.
+
+Diagnostics deliberately do **not** enable `az --debug` or log full KQL, successful ARM response bodies, access tokens, or URI query parameters. Credential-shaped CLI error fragments are scrubbed before they are written or returned. A malformed JSON failure can include the existing bounded, scrubbed first 500 characters of the invalid response so the parse failure remains diagnosable.
+
+There is one important PowerShell boundary: a transcript records emitted data; it cannot invent output for a `catch` block that intentionally suppresses an exception. Pipeline-owning cmdlets and the shared ARG/ARM wrappers emit or propagate operational failures, but benign parsing fallbacks can remain quiet by design. Therefore the presence of a transcript is guaranteed when diagnostics are enabled; a line for every internal `catch` is not. An abrupt end with no final workload message is itself useful evidence and should be compared with the pipeline step error immediately following transcript capture.
+
+### 12.4 Investigate zero or unexpected results
+
+1. Find the `ARG query start` and matching completion line. Compare the fingerprint when comparing runs, then check `scope`, `scopeCount`, `rows`, `pages`, `truncated`, and all retry counters. A clean `rows=0` means Azure Resource Graph successfully returned no matching rows; it is different from a failed query.
+2. Confirm the configured management groups or explicit subscriptions, then inspect subscription exclusions and grouped `clusterTagFilters`. Filter keys within one group use AND semantics; groups use OR semantics. Inventory admission occurs before workload-specific results are reconciled.
+3. If the fleet is large, verify that batching messages continue through every admitted cluster group. A low page count is not proof of truncation; rely on the explicit `truncated` value and admitted inventory count.
+4. For update runs omitted by ARG, inspect the direct ARM lines. `resultCount=0` is a valid empty collection; `ARM request failed` is an authorization, API, authentication, or transport failure. Update-run reconciliation requires `Microsoft.AzureStackHCI/clusters/updates/updateRuns/read`.
+5. Compare the generated CSV/JSON report and pipeline summary with the transcript counts. If a successful query returned rows but a later report omitted them, search forward from that fingerprint for tag admission, normalization, and reconciliation messages.
+
+Before sharing an artifact, review it for cluster names, Azure resource IDs, local paths, and service error text. The scrubber protects credential-shaped values, but operational identifiers remain intentionally visible for diagnosis.
+
+### 12.5 Common failures
 
 | Symptom | Likely cause | Fix |
 |---|---|---|

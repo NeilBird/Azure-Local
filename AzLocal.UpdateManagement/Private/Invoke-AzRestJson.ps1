@@ -42,6 +42,9 @@ function Invoke-AzRestJson {
 
     $tempBodyFile = $null
     $prevPyEncoding = $env:PYTHONIOENCODING
+    $resourcePath = try { ([System.Uri]$Uri).AbsolutePath } catch { ([string]$Uri -split '\?')[0] }
+    if ($resourcePath.Length -gt 500) { $resourcePath = $resourcePath.Substring(0, 500) + '...' }
+    Write-Verbose ("ARM request start: method={0}; path={1}; hasBody={2}." -f $Method, $resourcePath, [bool]($PSBoundParameters.ContainsKey('Body') -and $Body))
     try {
         # Force Azure CLI (Python) to write UTF-8 to stdout/stderr regardless of the
         # host console code page. Without this, any non-cp1252 character in the ARM
@@ -117,27 +120,43 @@ function Invoke-AzRestJson {
         }
 
         if ($exit -ne 0) {
+            $scrubbedError = ConvertTo-ScrubbedCliOutput -Text ((($stderrLines + $stdoutLines) | Out-String).Trim())
+            Write-Verbose ("ARM request failed: method={0}; path={1}; exit={2}; error={3}" -f $Method, $resourcePath, $exit, $scrubbedError)
             return [PSCustomObject]@{
                 Ok    = $false
                 Data  = $null
-                Error = (ConvertTo-ScrubbedCliOutput -Text ((($stderrLines + $stdoutLines) | Out-String).Trim()))
+                Error = $scrubbedError
             }
         }
 
         # Success path: parse JSON from stdout only (empty body is OK for PATCH/DELETE)
         $rawText = ($stdoutLines | Out-String).Trim()
         if ([string]::IsNullOrWhiteSpace($rawText)) {
+            Write-Verbose ("ARM request completed with empty response: method={0}; path={1}." -f $Method, $resourcePath)
             return [PSCustomObject]@{ Ok = $true; Data = $null; Error = $null }
         }
         try {
             $parsed = $rawText | ConvertFrom-Json -ErrorAction Stop
+            $resultCount = if ($parsed -is [System.Array]) {
+                @($parsed).Count
+            }
+            elseif ($parsed.PSObject.Properties['value']) {
+                @($parsed.value).Count
+            }
+            else {
+                1
+            }
+            $resultShape = if ($parsed -is [System.Array]) { 'array' } elseif ($parsed.PSObject.Properties['value']) { 'value collection' } else { 'object' }
+            Write-Verbose ("ARM request completed: method={0}; path={1}; shape={2}; resultCount={3}." -f $Method, $resourcePath, $resultShape, $resultCount)
             return [PSCustomObject]@{ Ok = $true; Data = $parsed; Error = $null }
         }
         catch {
+            $parseError = "JSON parse failure: $($_.Exception.Message); raw: $(ConvertTo-ScrubbedCliOutput -Text $rawText.Substring(0, [Math]::Min(500, $rawText.Length)))"
+            Write-Verbose ("ARM request failed: method={0}; path={1}; error={2}" -f $Method, $resourcePath, $parseError)
             return [PSCustomObject]@{
                 Ok    = $false
                 Data  = $null
-                Error = "JSON parse failure: $($_.Exception.Message); raw: $(ConvertTo-ScrubbedCliOutput -Text $rawText.Substring(0, [Math]::Min(500, $rawText.Length)))"
+                Error = $parseError
             }
         }
     }

@@ -158,6 +158,24 @@ function Copy-AzLocalPipelineExample {
         `-SkipStarterUpdater` to suppress the drop / refresh entirely. Has no
         effect when `-Platform All` is in use.
 
+    .PARAMETER SkipDevelopmentChannelHelper
+        Only meaningful with `-Platform GitHub` or `-Platform AzureDevOps`.
+
+        By default the function drops `Apply-ModuleDevelopmentChannel.ps1`
+        into the repository's `DevChannel\` folder. The helper detects GitHub from the presence
+        of `.github\workflows`; otherwise it selects Azure DevOps. For GitHub,
+        it manages the non-secret repository variable
+        `REQUIRED_MODULE_VERSION`. For Azure DevOps, it prints the equivalent
+        variable-group commands. In both cases `-Disable` shows or performs the
+        action that removes the exact-version pin.
+
+        The helper carries an `AZLOCAL-DEVELOPMENT-CHANNEL-VERSION` marker and
+        is refreshed only when the bundled template is newer. A markerless
+        file is treated as operator-owned and preserved. Pass
+        `-SkipDevelopmentChannelHelper` to suppress the drop or refresh.
+        Use the helper's explicit `-Platform` override for unusual repositories
+        that contain both platform layouts.
+
     .PARAMETER SkipReadme
         By default (v0.9.0+) the function ALSO drops a lightweight, link-first
         `README.md` into the REPO ROOT describing what the repo is for, how to
@@ -345,6 +363,10 @@ function Copy-AzLocalPipelineExample {
         # (Platform=GitHub|AzureDevOps). Default OFF. An existing file at the
         # repo root is always preserved regardless of this switch.
         [switch]$SkipStarterUpdater,
+
+        # v0.9.28: suppress the managed helper that applies or describes the
+        # REQUIRED_MODULE_VERSION platform action for exact candidate testing.
+        [switch]$SkipDevelopmentChannelHelper,
 
         # v0.9.0: when set, suppress the default drop / version-gated refresh
         # of the managed repo README.md at the repo root (all platforms).
@@ -1008,7 +1030,63 @@ function Copy-AzLocalPipelineExample {
     }
 
     # ------------------------------------------------------------------
-    # 6d (v0.9.0). Managed repo README drop / version-gated refresh.
+    # 6d (v0.9.28). Cross-platform development-channel helper drop. The helper
+    # auto-detects GitHub from .github\workflows and otherwise prints the Azure
+    # DevOps variable-group commands.
+    # ------------------------------------------------------------------
+    $developmentChannelSrc = Join-Path -Path $sourceRoot -ChildPath 'apply-module-development-channel.ps1'
+    $developmentChannelDest = $null
+    $developmentChannelAction = $null
+    if ($Platform -in @('GitHub', 'AzureDevOps') -and $repoRoot) {
+        $developmentChannelDest = Join-Path -Path (Join-Path -Path $repoRoot -ChildPath 'DevChannel') -ChildPath 'Apply-ModuleDevelopmentChannel.ps1'
+
+        if ($SkipDevelopmentChannelHelper.IsPresent) {
+            $developmentChannelAction = 'SkippedBySwitch'
+        }
+        elseif (-not (Test-Path -LiteralPath $developmentChannelSrc -PathType Leaf)) {
+            $developmentChannelAction = 'Missing'
+            Write-Warning ("Copy-AzLocalPipelineExample: development-channel helper source '{0}' not found; skipping helper drop." -f $developmentChannelSrc)
+        }
+        else {
+            $bundledDevelopmentChannelText = Get-Content -LiteralPath $developmentChannelSrc -Raw
+            $bundledDevelopmentChannelVersion = Get-AzLocalDevelopmentChannelScriptVersion -Text $bundledDevelopmentChannelText
+            $developmentChannelExists = Test-Path -LiteralPath $developmentChannelDest -PathType Leaf
+            $isDevelopmentChannelRefresh = $false
+            if ($developmentChannelExists) {
+                $existingDevelopmentChannelVersion = Get-AzLocalDevelopmentChannelScriptVersion -Text (Get-Content -LiteralPath $developmentChannelDest -Raw)
+                if ($existingDevelopmentChannelVersion -and $bundledDevelopmentChannelVersion -and $bundledDevelopmentChannelVersion -gt $existingDevelopmentChannelVersion) {
+                    $isDevelopmentChannelRefresh = $true
+                }
+            }
+
+            if ($developmentChannelExists -and -not $isDevelopmentChannelRefresh) {
+                $developmentChannelAction = 'Preserved'
+                Write-Verbose ("Copy-AzLocalPipelineExample: development-channel helper preserved at '{0}'." -f $developmentChannelDest)
+            }
+            else {
+                $developmentChannelShouldMessage = if ($isDevelopmentChannelRefresh) {
+                    "Refresh Apply-ModuleDevelopmentChannel.ps1 to v$bundledDevelopmentChannelVersion"
+                }
+                else {
+                    'Write Apply-ModuleDevelopmentChannel.ps1'
+                }
+                if ($PSCmdlet.ShouldProcess($developmentChannelDest, $developmentChannelShouldMessage)) {
+                    $developmentChannelParent = Split-Path -Parent $developmentChannelDest
+                    if (-not (Test-Path -LiteralPath $developmentChannelParent)) {
+                        $null = New-Item -ItemType Directory -Path $developmentChannelParent -Force -ErrorAction Stop
+                    }
+                    [System.IO.File]::WriteAllText($developmentChannelDest, $bundledDevelopmentChannelText, [System.Text.UTF8Encoding]::new($false))
+                    $developmentChannelAction = if ($isDevelopmentChannelRefresh) { 'Updated' } else { 'Copied' }
+                }
+                else {
+                    $developmentChannelAction = 'Skipped'
+                }
+            }
+        }
+    }
+
+    # ------------------------------------------------------------------
+    # 6e (v0.9.0). Managed repo README drop / version-gated refresh.
     #    Default-on for -Platform GitHub|AzureDevOps; suppressed by
     #    -SkipReadme. Lands a lightweight, link-first README.md in the REPO
     #    ROOT so a fresh repo explains itself (what it is, how to refresh
@@ -1161,6 +1239,15 @@ function Copy-AzLocalPipelineExample {
     elseif ($updaterAction -eq 'Preserved') {
         Write-Host ("  Turnkey refresh script preserved (existing file, up to date): {0}" -f $updaterDest) -ForegroundColor Yellow
     }
+    if ($developmentChannelAction -eq 'Copied') {
+        Write-Host ("  Development-channel helper dropped at: {0}" -f $developmentChannelDest) -ForegroundColor Green
+    }
+    elseif ($developmentChannelAction -eq 'Updated') {
+        Write-Host ("  Development-channel helper refreshed to a newer template version at: {0}" -f $developmentChannelDest) -ForegroundColor Green
+    }
+    elseif ($developmentChannelAction -eq 'Preserved') {
+        Write-Host ("  Development-channel helper preserved (existing file, up to date): {0}" -f $developmentChannelDest) -ForegroundColor Yellow
+    }
     if ($readmeAction -eq 'Created') {
         Write-Host ("  Managed README dropped at: {0}" -f $readmeDest) -ForegroundColor Green
     }
@@ -1248,6 +1335,13 @@ function Copy-AzLocalPipelineExample {
         $updaterHintLines += "     After a future module release, run it to upgrade the module, refresh these pipelines (preserving your AZLOCAL-CUSTOMIZE edits) and commit/push - in one step:"
         $updaterHintLines += "       .\Update-Module-And-Pipelines.ps1"
     }
+    $developmentChannelHintLines = @()
+    if ($developmentChannelAction -in @('Copied', 'Updated', 'Preserved')) {
+        $developmentChannelHintLines += ("  *. OPTIONAL exact candidate testing for all {0} pipelines:" -f $Platform)
+        if ($developmentChannelDest) { $developmentChannelHintLines += ("       {0}" -f $developmentChannelDest) }
+        $developmentChannelHintLines += '     Enable:  .\DevChannel\Apply-ModuleDevelopmentChannel.ps1 -RequiredVersion <candidate-version>'
+        $developmentChannelHintLines += '     Disable: .\DevChannel\Apply-ModuleDevelopmentChannel.ps1 -Disable'
+    }
     switch ($Platform) {
         'GitHub' {
             # Detect the canonical .github\workflows\ destination so we can
@@ -1270,6 +1364,7 @@ function Copy-AzLocalPipelineExample {
             foreach ($line in $sideloadHintLines) { Write-Host $line }
             foreach ($line in $exclusionsHintLines) { Write-Host $line }
             foreach ($line in $updaterHintLines) { Write-Host $line }
+            foreach ($line in $developmentChannelHintLines) { Write-Host $line }
         }
         'AzureDevOps' {
             Write-Host ("  1. Commit the YAML files from '{0}' to your Azure Repo." -f $targetRoot)
@@ -1283,6 +1378,7 @@ function Copy-AzLocalPipelineExample {
             foreach ($line in $sideloadHintLines) { Write-Host $line }
             foreach ($line in $exclusionsHintLines) { Write-Host $line }
             foreach ($line in $updaterHintLines) { Write-Host $line }
+            foreach ($line in $developmentChannelHintLines) { Write-Host $line }
         }
         default {
             $readmePath = Join-Path -Path $targetRoot -ChildPath 'README.md'

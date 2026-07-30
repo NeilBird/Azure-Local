@@ -3,7 +3,7 @@
     RootModule = 'AzLocal.UpdateManagement.psm1'
 
     # Version number of this module.
-    ModuleVersion = '0.9.27'
+    ModuleVersion = '0.9.28'
 
     # Supported PSEditions
     CompatiblePSEditions = @('Desktop', 'Core')
@@ -63,6 +63,7 @@
         'Private/Get-AzLocalPipelineId.ps1',
         'Private/Get-AzLocalPipelineManifest.ps1',
         'Private/Get-AzLocalReadyForUpdateRows.ps1',
+        'Private/Get-AzLocalDevelopmentChannelScriptVersion.ps1',
         'Private/Get-AzLocalReadmeTemplateVersion.ps1',
         'Private/Get-AzLocalReadyForUpdateTableMarkdown.ps1',
         'Private/Get-AzLocalRunEndTime.ps1',
@@ -240,7 +241,8 @@
         'Public/Add-AzLocalFailedUpdateRetryHintSummary.ps1',
         'Public/Add-AzLocalApplyUpdatesStepSummary.ps1',
         'Public/Add-AzLocalNoReadyClustersStepSummary.ps1',
-        'Public/Invoke-AzLocalItsmTicketingFromArtifact.ps1'
+        'Public/Invoke-AzLocalItsmTicketingFromArtifact.ps1',
+        'Public/Invoke-AzLocalPipelineTimedOperation.ps1'
     )
 
     FunctionsToExport = @(
@@ -311,6 +313,8 @@
         # Pipeline preflight guards (v0.9.12) - fail early with a run-summary-visible message on the two most common silent-failure modes: zero accessible subscriptions and no diagnostic reports produced
         'Assert-AzLocalAzureSubscriptionAccess',
         'Assert-AzLocalPipelineReport',
+        # First-class cross-task pipeline timing journal (v0.9.28)
+        'Invoke-AzLocalPipelineTimedOperation',
         # Thin-YAML Step.0 (v0.8.5) - Authentication validation + subscription scope + cluster reachability (condenses ~200-line inline run: | block in Step.0_authentication-test.yml on both platforms)
         'Export-AzLocalAuthValidationReport',
         # Thin-YAML Step.1 (v0.8.5) - Cluster inventory workload (condenses the inline run: | block in Step.1_inventory-clusters.yml on both platforms; writes timestamped + canonical CSV, JSON, README, and step summary)
@@ -379,15 +383,17 @@
 
             # ReleaseNotes of this module
             ReleaseNotes = @'
+## Version 0.9.28 - ARM recovery, retry correlation, tag-aware idle detection, and large-fleet batching. All 20 pipelines add always-on timing JSON plus opt-in transcripts with bounded ARG/ARM telemetry. Exports 71 -> 72.
+
 ## Version 0.9.27 - Minute-17 schedules, seven-minute Apply lead, and job timeouts. Schema v4 adds strict UpdateStartWindow allowances and backed-up v1/v2/v3 migration. No export change (71).
 
 ## Version 0.9.26 - Update: 1 scopes and batches ARG reads, preserves Ready solutions beside prerequisite SBE, reconciles stale ARG rows, and emits clean-run JUnit. No export change (71).
 
 ## Version 0.9.25 - Fixes large readiness summaries, normalizes Markdown cells, and expands Config: 3 remediation. No export change (71).
 
-## Version 0.9.24 - Fleet settings schema v3 adds named tag groups: tags use AND within a group and groups use OR. Normal pipeline updates back up and migrate schema v1/v2, including fully commented inert files. Sparse ARG/CLI/ARM payloads are null-safe, and reporting.maxRowsPerTable accepts 2,000. No public/export change (71). Pipeline pins bumped to 0.9.24.
+## Version 0.9.24 - Adds grouped fleet tag admission, null-safe cloud payload handling, and 2,000-row reporting limits. No export change (71).
 
-## Version 0.9.23 - Global cluster tag admission policy introduced flat schema-v2 AND filters across pipeline reads and mutation boundaries, with cluster inheritance, connectivity attribution, run snapshots, and backed-up v1 migration. No public/export change (71). Pipeline pins bumped to 0.9.23.
+## Version 0.9.23 - Adds global cluster tag admission across read and mutation boundaries with backed-up schema migration. No export change (71).
 
 ## Version 0.9.22 - ARG payload hardening. The shared query helper recovers from ResponsePayloadTooLarge by halving --first and retaining the smaller size across skip-token pages. Monitor: 2 starts health-result paging at 50 rows; Monitor: 1 projects only consumed fields. No public/export change (69). Pipeline pins bumped to 0.9.22.
 

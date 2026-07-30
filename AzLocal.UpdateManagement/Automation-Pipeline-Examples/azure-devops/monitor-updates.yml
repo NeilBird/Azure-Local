@@ -15,7 +15,8 @@
 #     <failure> when the elapsed duration exceeds the threshold so the Tests
 #     tab shows stuck runs in red).
 #
-# Data source: Get-AzLocalUpdateRuns -Latest (one row per cluster).
+# Data sources: admitted inventory plus batched Get-AzLocalUpdateRuns -Latest,
+# with direct ARM reconciliation for recent start/retry tags that ARG omits.
 #
 # AUTHENTICATION:
 # Uses Workload Identity Federation (OIDC) - recommended for secretless authentication.
@@ -27,10 +28,10 @@
 trigger: none  # Manual or scheduled only
 
 # Default (v0.8.90+): runs every 6 hours, 24x7 (00:00, 06:00, 12:00, 18:00 UTC)
-# as a low-cost safety-net heartbeat. The snapshot step runs with -SkipWhenIdle,
-# so a heartbeat that finds nothing in flight short-circuits after a single cheap
-# Resource Graph probe (no per-cluster sweep) - which is what makes a frequent
-# cron affordable. The PRIMARY, low-latency trigger is event-driven: Update: 3
+# as a low-cost safety-net heartbeat. The snapshot step runs with -SkipWhenIdle;
+# an ARG-idle result is checked against admitted inventory for recent start/retry
+# tags before the update-run sweep is skipped. The PRIMARY, low-latency trigger
+# is event-driven: Update: 3
 # (Apply Updates) queues this pipeline as soon as it starts >=1 update. Azure
 # DevOps cron is ALWAYS UTC - adjust below for your local maintenance window.
 # Comment the `schedules:` block out entirely to disable.
@@ -83,11 +84,11 @@ parameters:
     default: '3'
 
   # v0.8.90: performance fast path. When true (default) the snapshot runs with
-  # -SkipWhenIdle - one cheap fleet-wide "anything in flight?" probe that short-
-  # circuits to an IDLE report when nothing is updating, skipping the per-cluster
-  # sweep. Set false to force a full sweep even when idle.
+  # -SkipWhenIdle. An ARG-idle result skips the update-run sweep only when
+  # admitted inventory also has no recent start/retry tags. Set false to force
+  # a full sweep even when idle.
   - name: skipWhenIdle
-    displayName: 'Skip the per-cluster sweep when no update runs are in flight (cheap probe only).'
+    displayName: 'Skip the update-run sweep when ARG is idle and admitted inventory has no recent start/retry tags.'
     type: boolean
     default: true
 
@@ -95,6 +96,11 @@ parameters:
     displayName: 'Pin AzLocal.UpdateManagement version (empty = latest from PSGallery). See Automation-Pipeline-Examples/README.md section 5 "Optional configuration".'
     type: string
     default: ''
+
+  - name: diagnostics
+    displayName: 'Enable bounded verbose diagnostics for this manual run. DEBUG_VERBOSE=true enables diagnostics for every run.'
+    type: boolean
+    default: false
 
   # v0.8.90: machine-set markers for the event-driven trigger queued by
   # Update: 3 (Apply Updates). Operators normally leave these BLANK.
@@ -146,7 +152,7 @@ variables:
   # to the latest on PSGallery and warns if the YAML looks stale - prompting a
   # refresh via Copy-AzLocalPipelineExample -Update.
   - name: GENERATED_AGAINST_MODULE_VERSION
-    value: '0.9.27'
+    value: '0.9.28'
   # Resolution order for the module version pin: queue-time parameter 'moduleVersion'
   # > empty (latest). Leave empty for the default fix-forward behaviour.
   - name: REQUIRED_MODULE_VERSION
@@ -310,6 +316,12 @@ stages:
       # variables (in_flight, long_running, long_running_step,
       # step_errored, recent_failures, unresolved_failures,
       # attempts_without_run).
+      env:
+        DIAGNOSTICS_PARAM: ${{ lower(parameters.diagnostics) }}
+        DEBUG_VERBOSE_SETTING: $(DEBUG_VERBOSE)
+        BUILD_REASON: $(Build.Reason)
+        DIAGNOSTICS_LOG_PATH: $(Build.ArtifactStagingDirectory)/diagnostics/pipeline-transcript.log
+        AZLOCAL_PIPELINE_TIMING_PATH: $(Build.ArtifactStagingDirectory)/diagnostics/pipeline-timings.json
       inputs:
         # BEGIN-AZLOCAL-CUSTOMIZE:service-connection-Monitor
         azureSubscription: 'AzureLocal-ServiceConnection'  # Update with your service connection name
@@ -319,6 +331,17 @@ stages:
         inlineScript: |
           az extension add --name resource-graph --yes
           Import-Module AzLocal.UpdateManagement -Force
+            $diagnosticsEnabled = $env:DEBUG_VERBOSE_SETTING -eq 'true' -or (
+              $env:BUILD_REASON -eq 'Manual' -and $env:DIAGNOSTICS_PARAM -eq 'true'
+            )
+            if ($diagnosticsEnabled) {
+              $VerbosePreference = 'Continue'
+              $PSDefaultParameterValues['*-AzLocal*:Verbose'] = $true
+              New-Item -ItemType Directory -Path (Split-Path -Parent $env:DIAGNOSTICS_LOG_PATH) -Force | Out-Null
+              Start-Transcript -Path $env:DIAGNOSTICS_LOG_PATH -Force
+              $module = Get-Module AzLocal.UpdateManagement | Sort-Object Version -Descending | Select-Object -First 1
+              Write-Host "Diagnostics enabled (trigger=$env:BUILD_REASON; PowerShell=$($PSVersionTable.PSVersion) $($PSVersionTable.PSEdition); module=$($module.Version); path=$($module.Path))."
+            }
           $params = @{
               Scope                  = "${{ parameters.scope }}"
               OutputDirectory        = "$(reportsPath)"
@@ -332,8 +355,18 @@ stages:
           if ([int]::TryParse("${{ parameters.criticalElapsedDays }}",       [ref]$parsed) -and $parsed -gt 0) { $params['CriticalElapsedDays']       = $parsed }
           # v0.8.90: -SkipWhenIdle (cheap idle probe) - the boolean parameter
           # expands to $True / $False at compile time.
-          if ($${{ parameters.skipWhenIdle }}) { $params['SkipWhenIdle'] = $true }
-          Export-AzLocalUpdateRunMonitorReport @params
+          if ($${{ parameters.skipWhenIdle }} -and -not $diagnosticsEnabled) { $params['SkipWhenIdle'] = $true }
+          Invoke-AzLocalPipelineTimedOperation -PipelineName 'monitor-updates' -StepNumber 20 -StepName 'Snapshot in-flight update runs' -ScriptBlock {
+            Export-AzLocalUpdateRunMonitorReport @params
+          }
+
+    - task: PublishPipelineArtifact@1
+      displayName: 'Publish pipeline performance diagnostics'
+      condition: always()
+      inputs:
+        targetPath: '$(Build.ArtifactStagingDirectory)/diagnostics'
+        artifact: 'azlocal-monitor-updates-diagnostics-$(Build.BuildId)-$(System.JobAttempt)'
+        publishLocation: 'pipeline'
 
     # v0.9.12: fail with a run-summary-visible message (instead of the
     # PublishTestResults "No test result files were found" warning) when the

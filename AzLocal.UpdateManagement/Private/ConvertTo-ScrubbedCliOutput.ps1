@@ -48,6 +48,10 @@ function ConvertTo-ScrubbedCliOutput {
         $jsonKeys = '(?i)(\"(?:access_?token|refresh_?token|id_?token|password|client_?secret|clientSecret|secret|authorization|sas_?token|sasToken)\"\s*:\s*\")[^\"]*(\")'
         $s = [regex]::Replace($s, $jsonKeys, '$1<redacted>$2')
 
+        # 2b. Unquoted diagnostic fragments: access_token=value / password: value
+        $plainKeys = '(?i)(\b(?:access_?token|refresh_?token|id_?token|password|client_?secret|clientSecret|secret|authorization|sas_?token|sasToken)\b\s*[:=]\s*)(?!<redacted>)[^\s,;]+'
+        $s = [regex]::Replace($s, $plainKeys, '$1<redacted>')
+
         # 3. Standalone JWTs (3 base64url segments, middle segment typically starts with eyJ)
         $s = [regex]::Replace($s, 'eyJ[A-Za-z0-9\-_]{8,}\.[A-Za-z0-9\-_]{8,}\.[A-Za-z0-9\-_]{8,}', '<redacted-jwt>')
 

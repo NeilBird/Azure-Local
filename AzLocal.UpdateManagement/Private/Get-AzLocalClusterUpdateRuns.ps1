@@ -7,8 +7,12 @@ function Get-AzLocalClusterUpdateRuns {
 
     if ($updateNameFilter) {
         $uri = "https://management.azure.com$resourceId/updates/$updateNameFilter/updateRuns?api-version=$apiVer"
-        $result = (Invoke-AzRestJson -Uri $uri).Data
-        if ($LASTEXITCODE -eq 0 -and $result.value) {
+        $response = Invoke-AzRestJson -Uri $uri
+        if (-not $response.Ok) {
+            throw "ARM update-run read failed for '$resourceId' update '$updateNameFilter': $($response.Error)"
+        }
+        $result = $response.Data
+        if ($result.value) {
             foreach ($_run in @($result.value)) {
                 if ($null -eq $_run) { continue }
                 $allRuns.Add($_run) | Out-Null
@@ -19,7 +23,11 @@ function Get-AzLocalClusterUpdateRuns {
         $updates = @(Get-AzLocalAvailableUpdates -ClusterResourceId $resourceId -ApiVersion $apiVer -Raw)
         foreach ($update in $updates) {
             $uri = "https://management.azure.com$resourceId/updates/$($update.name)/updateRuns?api-version=$apiVer"
-            $runs = (Invoke-AzRestJson -Uri $uri).Data
+            $response = Invoke-AzRestJson -Uri $uri
+            if (-not $response.Ok) {
+                throw "ARM update-run read failed for '$resourceId' update '$($update.name)': $($response.Error)"
+            }
+            $runs = $response.Data
             if ($runs.value) {
                 foreach ($_run in @($runs.value)) {
                     if ($null -eq $_run) { continue }

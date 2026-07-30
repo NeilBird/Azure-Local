@@ -32,18 +32,29 @@ In the steps below, `<candidate>` is the version being released (for example `1.
     for the case study.
  5. Run the full Pester suite. Must be green before publish.
  6. Publish to PowerShell Gallery: .\Publish-Module.ps1
- 7. IMMEDIATELY unlist the published candidate in PowerShell Gallery
-    (Manage Package -> Unlist). The version remains resolvable by exact
-    pin (-RequiredVersion), but is invisible to Find-Module without
-    -AllVersions / -RequiredVersion.
+   The script immediately unlists the exact published version by default.
+   Use -List only when intentionally publishing a version that must become
+   the default Gallery install immediately, without staged validation.
+ 7. Verify the candidate is unlisted in PowerShell Gallery. The version remains
+   resolvable by exact pin (-RequiredVersion), but is invisible to Find-Module
+   without -AllVersions / -RequiredVersion. If automatic unlisting failed,
+   stop and unlist it in Manage Package before continuing.
  8. Verify exact-pin lookup resolves on a clean runner:
         Find-Module    -Name AzLocal.UpdateManagement -RequiredVersion <candidate> -Repository PSGallery
         Install-Module -Name AzLocal.UpdateManagement -RequiredVersion <candidate> -Scope CurrentUser -Force
  9. Copy the bundled pipelines into a separate test repo:
         Copy-AzLocalPipelineExample -Destination .\.github\workflows -Platform GitHub      -Update
         Copy-AzLocalPipelineExample -Destination .\.azure-pipelines  -Platform AzureDevOps -Update
-10. In the test repo, set REQUIRED_MODULE_VERSION (GH workflow_dispatch
-    input / ADO parameter) to the exact unlisted candidate version.
+10. From the test repo root, run the helper dropped by Copy/Update:
+    .\DevChannel\Apply-ModuleDevelopmentChannel.ps1 -RequiredVersion <candidate>
+  Follow the full [development-channel testing runbook](../Automation-Pipeline-Examples/docs/development-channel-testing.md)
+  for the enable, validation, disable, and recovery procedure.
+  The helper validates the exact Gallery version and detects GitHub when
+  .github\workflows exists. For GitHub it creates or updates the
+  REQUIRED_MODULE_VERSION repository variable. For Azure DevOps it prints
+  the exact variable-group create/update commands; run the applicable command.
+  Use -Platform GitHub or -Platform AzureDevOps to override auto-detection in
+  an unusual mixed-layout repository.
     Without this pin, the auto-install step at job start will resolve
     to the previous LISTED version, NOT the candidate - the runtime
     drift warning emitted by the YAML preamble (the
@@ -63,6 +74,13 @@ In the steps below, `<candidate>` is the version being released (for example `1.
 13. Once validation is clean, LIST the candidate version in PowerShell
     Gallery (Manage Package -> Re-list). The version is now the default
     install for consumers with empty REQUIRED_MODULE_VERSION.
+  Remove the test-repo development channel so future runs exercise
+  latest-listed resolution:
+    .\DevChannel\Apply-ModuleDevelopmentChannel.ps1 -Disable
+  Disable restores and preflights the latest-listed templates before removing
+  the runtime pin. Do not manually remove the pin first.
+  For GitHub the helper deletes the repository variable. For Azure DevOps it
+  prints the variable-group delete command; run that command.
 14. Tag the git commit (e.g. git tag v<candidate>) and push the tag.
 ```
 
@@ -77,6 +95,10 @@ Find-Module -Name AzLocal.UpdateManagement -RequiredVersion <candidate> -Reposit
 # Default lookup must still show the PREVIOUS listed version (proves the
 # candidate is correctly hidden from the default install path).
 Find-Module -Name AzLocal.UpdateManagement -Repository PSGallery
+
+# Optionally refresh a local test repo from the unlisted candidate's bundled
+# templates without committing or pushing the result.
+.\Update-Module-And-Pipelines.ps1 -RequiredVersion <candidate> -NoPush
 ```
 
 After step 13 (post-relist):

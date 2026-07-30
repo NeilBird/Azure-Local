@@ -5,6 +5,30 @@ All notable changes to the AzLocal.UpdateManagement module (renamed from AzStack
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.28] - 2026-07-30
+
+### Added
+
+- Every bundled GitHub Actions and Azure DevOps pipeline supports bounded verbose diagnostics. A manual `diagnostics=true` input enables one manually queued run, while the shared non-secret `DEBUG_VERBOSE=true` variable enables diagnostics for every trigger, including schedules and event-driven runs. Config: 3 retains its deprecated `debug` input as a manual compatibility alias.
+- Diagnostics are published separately from normal reports as a run-attempt-specific transcript artifact. GitHub retention uses the optional `DEBUG_RETENTION_DAYS` repository variable and defaults to 14 days; Azure DevOps follows project pipeline-retention policy because `PublishPipelineArtifact@1` has no per-artifact retention setting.
+- Update: 4 emits bounded verbose telemetry for Resource Graph scope, retry/truncation state, recent-attempt reconciliation candidates, direct ARM results, recovered runs, and failures. Diagnostic monitor runs bypass the idle short-circuit so the transcript captures the full collection and reconciliation pass.
+- Shared Resource Graph and direct ARM calls emit bounded start/completion telemetry, including explicit zero-row or empty-response outcomes, scope/count metadata, retries, and scrubbed failures. Query text, URI query parameters, and successful response payloads remain excluded; malformed JSON retains its existing bounded, scrubbed excerpt. The pipeline guide adds a dedicated troubleshooting runbook for interpreting these records and documents that transcripts capture emitted streams rather than silently suppressed exceptions.
+- Every bundled pipeline now publishes `pipeline-timings.json` on every run, independent of verbose diagnostics. The new `Invoke-AzLocalPipelineTimedOperation` public helper records durable, ordered operation timings before execution and in `finally`, preserves workload output, records scrubbed failures before rethrowing, and leaves a valid `Running` record after abrupt process termination. Normal artifacts contain the timing JSON; diagnostic runs additionally contain the stable `pipeline-transcript.log`.
+- `Copy-AzLocalPipelineExample` and `Update-AzLocalPipelineExample` now drop a managed `Apply-ModuleDevelopmentChannel.ps1` into the repo-root `DevChannel\` folder for GitHub and Azure DevOps. The helper validates an exact PSGallery candidate, refreshes the local module and YAMLs through `Update-Module-And-Pipelines.ps1`, auto-detects GitHub from `.github\workflows`, manages the GitHub `REQUIRED_MODULE_VERSION` repository variable through `gh`, and prints the equivalent Azure DevOps variable-group commands. `-Disable` preflights and restores latest-listed templates before removing the pin, blocks unapproved rollback marker loss, and confirms cleanup of higher installed versions; `-Platform` overrides detection, and `-SkipDevelopmentChannelHelper` suppresses distribution. The dropped and maintainer updater scripts support exact-version refreshes, including an unlisted candidate. The pipeline docs include the complete development-channel validation and recovery runbook.
+
+### Fixed
+
+- Update: 4 now reconciles a recent `UpdateLastAttempt` outcome of `UpdateStarted` or `UpdateRetried` against the cluster's direct ARM `updateRuns` endpoint when Azure Resource Graph omits or lags the matching nested resource. Correlation accepts either a run started near the attempt or a pre-existing run whose `lastUpdatedTime` advanced near the attempt, covering retries that reuse a run resource and preserve its original `timeStarted`. A covering ARM run replaces a stale same-cluster/same-update ARG row; a genuinely absent run remains an `AttemptWithoutRun` signal.
+- Update: 4's `-SkipWhenIdle` heartbeat no longer trusts an ARG-idle result by itself. It checks admitted inventory for recent `UpdateStarted`/`UpdateRetried` tags and runs the full ARM reconciliation sweep when one exists; only fleets with neither an ARG in-flight row nor a recent attempt skip the update-run sweep. ARM authorization or transport failures are reported separately instead of being treated as a valid empty run collection.
+- The Update: 4 `Clusters scoped` count now reports the admitted cluster inventory count instead of deriving the value from update-run rows.
+- Multi-cluster update-run reads now batch admitted cluster resource IDs in groups of 40. Large management-group fleets no longer risk exceeding the Windows `az.cmd` command-line limit when global tag groups admit many clusters.
+- CLI-output scrubbing now masks unquoted credential fragments such as `access_token=<value>` in addition to JSON, bearer, JWT, header, and CLI-argument forms before failures reach transcripts or callers.
+
+### Changed
+
+- Public exports increase from 71 to 72 with `Invoke-AzLocalPipelineTimedOperation`. Bundled GitHub Actions and Azure DevOps pipeline pins remain `0.9.28`.
+- `Publish-Module.ps1` now immediately unlists the exact PSGallery version after publishing by default so development-channel validation can use `-RequiredVersion` before general release. Maintainers can specify `-List` to leave the version publicly listed immediately; `-WhatIf` does not request or expose an API key.
+
 ## [0.9.27] - 2026-07-28
 
 ### Added

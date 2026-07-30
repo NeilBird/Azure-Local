@@ -40,13 +40,18 @@ parameters:
     type: string
     default: ''
 
+  - name: diagnostics
+    displayName: 'Enable bounded verbose diagnostics for this manual run. DEBUG_VERBOSE=true enables diagnostics for every run.'
+    type: boolean
+    default: false
+
 variables:
   # Module version this YAML was generated against (per-file stamp; do NOT move to
   # the shared group). The install step compares this to the installed version and
   # to the latest on PSGallery and warns if the YAML looks stale - prompting a
   # refresh via Copy-AzLocalPipelineExample -Update.
   - name: GENERATED_AGAINST_MODULE_VERSION
-    value: '0.9.27'
+    value: '0.9.28'
   # Resolution order for the module version pin: queue-time parameter 'moduleVersion'
   # > empty (latest). Leave empty for the default fix-forward behaviour.
   - name: REQUIRED_MODULE_VERSION
@@ -192,6 +197,12 @@ stages:
             # surfaces the eight pipeline variables (total_count,
             # created_count, updated_count, already_in_sync_count,
             # skipped_count, failed_count, whatif_count, results_json_path).
+            env:
+              DIAGNOSTICS_PARAM: ${{ lower(parameters.diagnostics) }}
+              DEBUG_VERBOSE_SETTING: $(DEBUG_VERBOSE)
+              BUILD_REASON: $(Build.Reason)
+              DIAGNOSTICS_LOG_PATH: $(Build.ArtifactStagingDirectory)/diagnostics/pipeline-transcript.log
+              AZLOCAL_PIPELINE_TIMING_PATH: $(Build.ArtifactStagingDirectory)/diagnostics/pipeline-timings.json
             inputs:
               # BEGIN-AZLOCAL-CUSTOMIZE:service-connection-ApplyTags
               azureSubscription: 'AzureLocal-ServiceConnection'  # Update with your service connection name
@@ -200,6 +211,17 @@ stages:
               scriptLocation: 'inlineScript'
               inlineScript: |
                 Import-Module AzLocal.UpdateManagement -Force
+                $diagnosticsEnabled = $env:DEBUG_VERBOSE_SETTING -eq 'true' -or (
+                    $env:BUILD_REASON -eq 'Manual' -and $env:DIAGNOSTICS_PARAM -eq 'true'
+                )
+                if ($diagnosticsEnabled) {
+                    $VerbosePreference = 'Continue'
+                    $PSDefaultParameterValues['*-AzLocal*:Verbose'] = $true
+                    New-Item -ItemType Directory -Path (Split-Path -Parent $env:DIAGNOSTICS_LOG_PATH) -Force | Out-Null
+                    Start-Transcript -Path $env:DIAGNOSTICS_LOG_PATH -Force
+                    $module = Get-Module AzLocal.UpdateManagement | Sort-Object Version -Descending | Select-Object -First 1
+                    Write-Host "Diagnostics enabled (trigger=$env:BUILD_REASON; PowerShell=$($PSVersionTable.PSVersion) $($PSVersionTable.PSEdition); module=$($module.Version); path=$($module.Path))."
+                }
                 $forceOverwrite = [System.Convert]::ToBoolean("${{ parameters.forceOverwrite }}")
                 $dryRun         = [System.Convert]::ToBoolean("${{ parameters.dryRun }}")
                 $params = @{
@@ -209,7 +231,17 @@ stages:
                 }
                 if ($forceOverwrite) { $params['Force']  = $true }
                 if ($dryRun)         { $params['WhatIf'] = $true }
-                Set-AzLocalClusterUpdateRingTagFromCsv @params
+                Invoke-AzLocalPipelineTimedOperation -PipelineName 'manage-updatering-tags' -StepNumber 20 -StepName 'Apply update ring tags' -ScriptBlock {
+                  Set-AzLocalClusterUpdateRingTagFromCsv @params
+                }
+
+          - task: PublishPipelineArtifact@1
+            displayName: 'Publish pipeline performance diagnostics'
+            condition: always()
+            inputs:
+              targetPath: '$(Build.ArtifactStagingDirectory)/diagnostics'
+              artifact: 'azlocal-manage-updatering-tags-diagnostics-$(Build.BuildId)-$(System.JobAttempt)'
+              publishLocation: 'pipeline'
 
           # compute a UTC timestamp variable so every downloadable artifact name is unique per run.
           - pwsh: |

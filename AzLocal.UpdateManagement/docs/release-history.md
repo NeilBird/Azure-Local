@@ -4,9 +4,13 @@
 >
 > **For older releases**, this is the canonical reference; the main README intentionally stays slim so the most recent block is easy to find.
 >
-> **For v0.9.27 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0927) `What's New in v0.9.27` section.
+> **For v0.9.28 (the current release)**, see the main [README.md](../README.md#whats-new-in-v0928) `What's New in v0.9.28` section.
 
 ---
+
+### What's New in v0.9.28
+
+**Update: 4 now recovers Azure Resource Graph indexing gaps through direct ARM, and all pipelines publish structured performance timing on every run.** Recent start/retry tags prevent the idle gate from trusting ARG alone, reused run resources correlate through `lastUpdatedTime`, ARM failures remain explicit, and admitted cluster IDs are queried in command-line-safe batches for large management-group fleets. Always-on `pipeline-timings.json` records ordered workload durations and durable failure/termination evidence; opt-in diagnostics add `pipeline-transcript.log` with explicit ARG/ARM empty-result and count telemetry, scrubbed failures, and configurable GitHub retention. Copy/Update distribute an auto-detecting development-channel helper for exact candidate pins on GitHub and Azure DevOps, and both updater scripts accept unlisted candidates through `-RequiredVersion`. Public exports increase from 71 to 72 with `Invoke-AzLocalPipelineTimedOperation`; pipeline pins remain `0.9.28`. See [CHANGELOG.md](../CHANGELOG.md#0928---2026-07-30) for full details.
 
 ### What's New in v0.9.27
 

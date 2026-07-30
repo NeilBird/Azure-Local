@@ -142,13 +142,21 @@ on:
         description: 'Pin AzLocal.UpdateManagement version (empty = latest from PSGallery). See Automation-Pipeline-Examples/README.md section 5 "Optional configuration".'
         required: false
         default: ''
+      diagnostics:
+        description: 'Enable bounded verbose diagnostics for this manual run. Repository variable DEBUG_VERBOSE=true enables diagnostics for all runs, including schedules.'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
 
 env:
   # Module version this workflow YAML was generated against. The install step compares
   # this to the version actually installed and to the latest on PSGallery, and emits a
   # ::notice annotation if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.9.27'
+  GENERATED_AGAINST_MODULE_VERSION: '0.9.28'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): manual workflow_dispatch input >
   # repository variable 'REQUIRED_MODULE_VERSION' > empty (latest).
@@ -172,6 +180,7 @@ env:
   # When set, every AzLocal.UpdateManagement Azure Resource Graph query in this
   # workflow excludes the listed subscriptions. Leave it unset to exclude nothing.
   AZLOCAL_EXCLUDED_SUBSCRIPTIONS_PATH: ${{ vars.AZLOCAL_EXCLUDED_SUBSCRIPTIONS_PATH }}
+  DEBUG_VERBOSE: ${{ vars.DEBUG_VERBOSE == 'true' || (github.event_name == 'workflow_dispatch' && github.event.inputs.diagnostics == 'true') && 'true' || 'false' }}
 # prevent overlapping apply-updates runs from racing on the same
 # fleet. cancel-in-progress=false means a newly-triggered run queues behind an
 # in-flight one instead of cancelling it (cancellation mid-apply could leave
@@ -526,6 +535,14 @@ jobs:
         INPUT_ALLOWED_UPDATE_VERSIONS: ${{ needs.check-readiness.outputs.resolved_allowed_update_versions }}
       run: |
         Import-Module AzLocal.UpdateManagement -Force
+        if ($env:DEBUG_VERBOSE -eq 'true') {
+            $VerbosePreference = 'Continue'
+            $PSDefaultParameterValues['*-AzLocal*:Verbose'] = $true
+            New-Item -ItemType Directory -Path './diagnostics' -Force | Out-Null
+            Start-Transcript -Path './diagnostics/pipeline-transcript.log' -Force
+            $module = Get-Module AzLocal.UpdateManagement | Sort-Object Version -Descending | Select-Object -First 1
+            Write-Host "Diagnostics enabled (trigger=$env:GITHUB_EVENT_NAME; PowerShell=$($PSVersionTable.PSVersion) $($PSVersionTable.PSEdition); module=$($module.Version); path=$($module.Path))."
+        }
         $params = @{
             ReadinessCsvPath      = './artifacts/readiness-report.csv'
             UpdateRing            = $env:INPUT_UPDATE_RING
@@ -535,7 +552,9 @@ jobs:
         }
         if ($env:INPUT_DRY_RUN -eq 'true') { $params['DryRun'] = $true }
         if ($env:INPUT_FORCE_IMMEDIATE_UPDATE -eq 'true') { $params['ForceImmediateUpdate'] = $true }
-        Invoke-AzLocalReadinessGatedClusterUpdate @params
+        Invoke-AzLocalPipelineTimedOperation -PipelineName 'apply-updates' -StepNumber 20 -StepName 'Apply readiness-gated updates' -ScriptBlock {
+          Invoke-AzLocalReadinessGatedClusterUpdate @params
+        }
 
     # v0.8.95: OPT-IN guarded single-retry of FAILED updates. Disabled by
     # default; enable by setting the repository Variable
@@ -559,13 +578,34 @@ jobs:
         INPUT_DRY_RUN: ${{ github.event.inputs.dry_run }}
       run: |
         Import-Module AzLocal.UpdateManagement -Force
+        if ($env:DEBUG_VERBOSE -eq 'true') {
+            $VerbosePreference = 'Continue'
+            $PSDefaultParameterValues['*-AzLocal*:Verbose'] = $true
+            New-Item -ItemType Directory -Path './diagnostics' -Force | Out-Null
+            Start-Transcript -Path './diagnostics/pipeline-transcript.log' -Append
+            $module = Get-Module AzLocal.UpdateManagement | Sort-Object Version -Descending | Select-Object -First 1
+            Write-Host "Diagnostics enabled (trigger=$env:GITHUB_EVENT_NAME; PowerShell=$($PSVersionTable.PSVersion) $($PSVersionTable.PSEdition); module=$($module.Version); path=$($module.Path))."
+        }
         $params = @{
             ReadinessCsvPath = './artifacts/readiness-report.csv'
             UpdateRing       = $env:INPUT_UPDATE_RING
             OutputDirectory  = './artifacts'
         }
         if ($env:INPUT_DRY_RUN -eq 'true') { $params['DryRun'] = $true }
-        Invoke-AzLocalReadinessGatedFailedUpdateRetry @params
+        Invoke-AzLocalPipelineTimedOperation -PipelineName 'apply-updates' -StepNumber 30 -StepName 'Retry failed updates' -ScriptBlock {
+          Invoke-AzLocalReadinessGatedFailedUpdateRetry @params
+        }
+
+    - name: Upload pipeline performance diagnostics
+      if: always()
+      uses: actions/upload-artifact@v5
+      with:
+        name: azlocal-apply-updates-diagnostics_${{ github.run_id }}_${{ github.run_attempt }}
+        path: |
+          ./diagnostics/pipeline-transcript.log
+          ./diagnostics/pipeline-timings.json
+        if-no-files-found: warn
+        retention-days: ${{ fromJSON(vars.DEBUG_RETENTION_DAYS || '14') }}
 
     # v0.8.95: discoverability notice. When FAILED_UPDATES_SINGLE_RETRY is NOT
     # enabled (unset / false / 0), append a short opt-in awareness section to the
