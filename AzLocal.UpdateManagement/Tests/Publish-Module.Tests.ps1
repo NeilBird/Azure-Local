@@ -39,6 +39,77 @@ Describe 'Publish-Module package allow-list' -Tag 'ReleaseGate' {
             Should -Match '(?s)if \(\$StageOnly\).*?return'
     }
 
+    It 'publishes before automatically unlisting the exact package version' {
+        $publishIndex = $script:PublishScriptContent.IndexOf('Publish-Module -Path $StagingDir')
+        $unlistIndex = $script:PublishScriptContent.IndexOf('Invoke-RestMethod -Uri $unlistUri -Method Delete')
+
+        $publishIndex | Should -BeGreaterThan -1
+        $unlistIndex | Should -BeGreaterThan $publishIndex
+        $script:PublishScriptContent | Should -Match 'api/v2/package/\$escapedModuleName/\$escapedVersion'
+        $script:PublishScriptContent | Should -Match "'X-NuGet-ApiKey'\s*=\s*\`$apiKey"
+    }
+
+    It 'supports an explicit -List switch that bypasses automatic unlisting' {
+        $command = Get-Command (Join-Path $script:ModuleRoot 'Publish-Module.ps1')
+
+        $command.Parameters.ContainsKey('List') | Should -BeTrue
+        $command.Parameters['List'].ParameterType | Should -Be ([switch])
+        $script:PublishScriptContent | Should -Match 'if \(\$List\.IsPresent\)'
+        $script:PublishScriptContent | Should -Match 'Version remains listed because -List was specified'
+        $script:PublishScriptContent | Should -Match 'Publish to PowerShell Gallery and leave listed'
+    }
+
+    It 'publishes and unlists once by default without exposing the API key' {
+        Mock Read-Host { ConvertTo-SecureString 'test-api-key' -AsPlainText -Force }
+        Mock Publish-Module { }
+        Mock Invoke-RestMethod { }
+
+        & (Join-Path $script:ModuleRoot 'Publish-Module.ps1') -Confirm:$false *> $null
+
+        Should -Invoke Publish-Module -Times 1 -Exactly -ParameterFilter {
+            $Repository -eq 'PSGallery' -and $NuGetApiKey -eq 'test-api-key'
+        }
+        Should -Invoke Invoke-RestMethod -Times 1 -Exactly -ParameterFilter {
+            $Method -eq 'Delete' -and
+            $Uri -eq "https://www.powershellgallery.com/api/v2/package/AzLocal.UpdateManagement/$($script:StagedManifest.Version)" -and
+            $Headers['X-NuGet-ApiKey'] -eq 'test-api-key'
+        }
+    }
+
+    It 'publishes without unlisting when -List is specified' {
+        Mock Read-Host { ConvertTo-SecureString 'test-api-key' -AsPlainText -Force }
+        Mock Publish-Module { }
+        Mock Invoke-RestMethod { }
+
+        & (Join-Path $script:ModuleRoot 'Publish-Module.ps1') -List -Confirm:$false *> $null
+
+        Should -Invoke Publish-Module -Times 1 -Exactly
+        Should -Invoke Invoke-RestMethod -Times 0 -Exactly
+    }
+
+    It 'does not prompt for an API key or publish under -WhatIf' {
+        Mock Read-Host { throw 'Read-Host must not be called under WhatIf' }
+        Mock Publish-Module { }
+        Mock Invoke-RestMethod { }
+
+        { & (Join-Path $script:ModuleRoot 'Publish-Module.ps1') -WhatIf *> $null } | Should -Not -Throw
+
+        Should -Invoke Read-Host -Times 0 -Exactly
+        Should -Invoke Publish-Module -Times 0 -Exactly
+        Should -Invoke Invoke-RestMethod -Times 0 -Exactly
+    }
+
+    It 'throws an actionable error when publish succeeds but automatic unlisting fails' {
+        Mock Read-Host { ConvertTo-SecureString 'test-api-key' -AsPlainText -Force }
+        Mock Publish-Module { }
+        Mock Invoke-RestMethod { throw 'simulated unlist failure' }
+
+        { & (Join-Path $script:ModuleRoot 'Publish-Module.ps1') -Confirm:$false *> $null } |
+            Should -Throw -ExpectedMessage '*Published AzLocal.UpdateManagement v*automatic unlisting failed*package may still be listed*simulated unlist failure*'
+        Should -Invoke Publish-Module -Times 1 -Exactly
+        Should -Invoke Invoke-RestMethod -Times 1 -Exactly
+    }
+
     It 'stages every executable file declared by the module manifest' {
         $sourceManifest = Import-PowerShellDataFile -Path (Join-Path $script:ModuleRoot 'AzLocal.UpdateManagement.psd1')
         $executablePaths = @([string]$sourceManifest.RootModule) + @($sourceManifest.NestedModules)

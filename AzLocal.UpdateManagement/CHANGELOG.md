@@ -27,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Public exports increase from 71 to 72 with `Invoke-AzLocalPipelineTimedOperation`. Bundled GitHub Actions and Azure DevOps pipeline pins remain `0.9.28`.
+- `Publish-Module.ps1` now immediately unlists the exact PSGallery version after publishing by default so development-channel validation can use `-RequiredVersion` before general release. Maintainers can specify `-List` to leave the version publicly listed immediately; `-WhatIf` does not request or expose an API key.
 
 ## [0.9.27] - 2026-07-28
 

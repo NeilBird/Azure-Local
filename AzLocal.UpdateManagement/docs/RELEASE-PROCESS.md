@@ -32,10 +32,13 @@ In the steps below, `<candidate>` is the version being released (for example `1.
     for the case study.
  5. Run the full Pester suite. Must be green before publish.
  6. Publish to PowerShell Gallery: .\Publish-Module.ps1
- 7. IMMEDIATELY unlist the published candidate in PowerShell Gallery
-    (Manage Package -> Unlist). The version remains resolvable by exact
-    pin (-RequiredVersion), but is invisible to Find-Module without
-    -AllVersions / -RequiredVersion.
+   The script immediately unlists the exact published version by default.
+   Use -List only when intentionally publishing a version that must become
+   the default Gallery install immediately, without staged validation.
+ 7. Verify the candidate is unlisted in PowerShell Gallery. The version remains
+   resolvable by exact pin (-RequiredVersion), but is invisible to Find-Module
+   without -AllVersions / -RequiredVersion. If automatic unlisting failed,
+   stop and unlist it in Manage Package before continuing.
  8. Verify exact-pin lookup resolves on a clean runner:
         Find-Module    -Name AzLocal.UpdateManagement -RequiredVersion <candidate> -Repository PSGallery
         Install-Module -Name AzLocal.UpdateManagement -RequiredVersion <candidate> -Scope CurrentUser -Force
