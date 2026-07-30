@@ -8941,6 +8941,48 @@ Describe 'Function: Copy-AzLocalPipelineExample' {
         @($parseErrors).Count | Should -Be 0
     }
 
+    It 'v0.9.28: dropped updater supports exact unlisted candidate selection' {
+        $repoRoot = Join-Path $script:cpDestRoot 'gh-updater-required-version'
+        $dest = Join-Path $repoRoot '.github\workflows'
+        New-Item -Path $dest -ItemType Directory -Force | Out-Null
+
+        Copy-AzLocalPipelineExample -Destination $dest -Platform GitHub 6>$null | Out-Null
+
+        $text = Get-Content -LiteralPath (Join-Path $repoRoot 'Update-Module-And-Pipelines.ps1') -Raw
+        $text | Should -Match 'AZLOCAL-UPDATER-VERSION:\s+1\.3\.0'
+        $text | Should -Match '\[version\]\$RequiredVersion'
+        $text | Should -Match 'Find-Module\s+-Name\s+\$moduleName\s+-RequiredVersion\s+\$RequiredVersion'
+        $text | Should -Match 'Install-Module\s+-Name\s+\$moduleName.+-RequiredVersion\s+\$targetVersion'
+        $text | Should -Match 'Import-Module\s+-Name\s+\$moduleName\s+-RequiredVersion\s+\$targetVersion'
+    }
+
+    It 'v0.9.28: maintainer updater supports the same exact candidate contract' {
+        $path = Join-Path $PSScriptRoot '..\Tools\Update-Module-And-Pipelines.ps1'
+        $text = Get-Content -LiteralPath $path -Raw
+        $tokens = $null; $parseErrors = $null
+        [System.Management.Automation.Language.Parser]::ParseFile($path, [ref]$tokens, [ref]$parseErrors) | Out-Null
+
+        @($parseErrors).Count | Should -Be 0
+        $text | Should -Match '\[version\]\$RequiredVersion'
+        $text | Should -Match 'Find-Module\s+-Name\s+\$moduleName\s+-RequiredVersion\s+\$RequiredVersion'
+        $text | Should -Match 'Import-Module\s+-Name\s+\$moduleName\s+-RequiredVersion\s+\$targetVersion'
+    }
+
+    It 'v0.9.28: development-channel helper manages REQUIRED_MODULE_VERSION through gh CLI' {
+        $path = Join-Path $PSScriptRoot '..\Tools\Apply-ModuleDevelopmentChannel.ps1'
+        $text = Get-Content -LiteralPath $path -Raw
+        $tokens = $null; $parseErrors = $null
+        [System.Management.Automation.Language.Parser]::ParseFile($path, [ref]$tokens, [ref]$parseErrors) | Out-Null
+
+        @($parseErrors).Count | Should -Be 0
+        $text | Should -Match "DefaultParameterSetName\s*=\s*'Enable'"
+        $text | Should -Match '\$VariableName\s*=\s*''REQUIRED_MODULE_VERSION'''
+        $text | Should -Match 'Find-Module\s+-Name\s+\$moduleName\s+-RequiredVersion\s+\$versionText'
+        $text | Should -Match 'gh\s+variable\s+set\s+\$VariableName\s+--repo\s+\$Repository\s+--body\s+\$versionText'
+        $text | Should -Match 'gh\s+variable\s+delete\s+\$VariableName\s+--repo\s+\$Repository'
+        $text | Should -Match 'SupportsShouldProcess\s*=\s*\$true'
+    }
+
     It 'v0.8.98: dropped script is written WITHOUT a UTF-8 BOM' {
         $repoRoot = Join-Path $script:cpDestRoot 'gh-updater-bom'
         $dest = Join-Path $repoRoot '.github\workflows'

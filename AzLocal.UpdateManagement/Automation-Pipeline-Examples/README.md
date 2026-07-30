@@ -1239,6 +1239,7 @@ That one command does three things, in order, and **only acts when something act
 | Option | Effect |
 |---|---|
 | *(none)* | Upgrade module if needed, refresh YAMLs, then commit + push any changes. |
+| `-RequiredVersion <version>` | Install and import that exact PSGallery version, including an unlisted candidate, then refresh from its bundled templates. |
 | `-NoPush` | Refresh the YAMLs only - **skip** the `git add` / commit / push so you can review with `git status` / `git diff` and push yourself. |
 | `-Scope AllUsers` | Install the module machine-wide on upgrade (needs an elevated session). Default is `CurrentUser` (no elevation). |
 | `-RepoRoot` / `-Platform` / `-WorkflowSubPath` | Overrides for the values baked in at drop time - rarely needed. |

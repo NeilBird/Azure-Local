@@ -42,8 +42,12 @@ In the steps below, `<candidate>` is the version being released (for example `1.
  9. Copy the bundled pipelines into a separate test repo:
         Copy-AzLocalPipelineExample -Destination .\.github\workflows -Platform GitHub      -Update
         Copy-AzLocalPipelineExample -Destination .\.azure-pipelines  -Platform AzureDevOps -Update
-10. In the test repo, set REQUIRED_MODULE_VERSION (GH workflow_dispatch
-    input / ADO parameter) to the exact unlisted candidate version.
+10. In the GitHub test repo, apply the module development channel from this
+  source repo (the helper validates the exact Gallery version, then creates
+  or updates the REQUIRED_MODULE_VERSION repository variable):
+    .\Tools\Apply-ModuleDevelopmentChannel.ps1 -RequiredVersion <candidate> -Repository <owner>/<repo>
+  For Azure DevOps, set REQUIRED_MODULE_VERSION in the
+  AzureLocal-Pipeline-Settings variable group to the exact candidate.
     Without this pin, the auto-install step at job start will resolve
     to the previous LISTED version, NOT the candidate - the runtime
     drift warning emitted by the YAML preamble (the
@@ -63,6 +67,11 @@ In the steps below, `<candidate>` is the version being released (for example `1.
 13. Once validation is clean, LIST the candidate version in PowerShell
     Gallery (Manage Package -> Re-list). The version is now the default
     install for consumers with empty REQUIRED_MODULE_VERSION.
+  Remove the GitHub test-repo development channel so future runs exercise
+  latest-listed resolution:
+    .\Tools\Apply-ModuleDevelopmentChannel.ps1 -Disable -Repository <owner>/<repo>
+  Remove REQUIRED_MODULE_VERSION from the Azure DevOps variable group (or
+  set it to an empty value) for the same behavior.
 14. Tag the git commit (e.g. git tag v<candidate>) and push the tag.
 ```
 
@@ -77,6 +86,10 @@ Find-Module -Name AzLocal.UpdateManagement -RequiredVersion <candidate> -Reposit
 # Default lookup must still show the PREVIOUS listed version (proves the
 # candidate is correctly hidden from the default install path).
 Find-Module -Name AzLocal.UpdateManagement -Repository PSGallery
+
+# Optionally refresh a local test repo from the unlisted candidate's bundled
+# templates without committing or pushing the result.
+.\Update-Module-And-Pipelines.ps1 -RequiredVersion <candidate> -NoPush
 ```
 
 After step 13 (post-relist):

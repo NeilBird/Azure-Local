@@ -27,6 +27,10 @@
 .PARAMETER Scope
     Install scope passed to Install-Module when an upgrade is required.
 
+.PARAMETER RequiredVersion
+    Exact module version to install, import, and use for the pipeline refresh.
+    Supports unlisted PowerShell Gallery candidates.
+
 .PARAMETER NoPush
     Refresh the YAMLs only - skip git add / commit / push.
 
@@ -47,6 +51,9 @@ param(
     [ValidateSet('CurrentUser', 'AllUsers')]
     [string]$Scope = 'AllUsers',
 
+    [ValidatePattern('^\d+\.\d+\.\d+(?:\.\d+)?$')]
+    [version]$RequiredVersion,
+
     [switch]$NoPush
 )
 
@@ -56,31 +63,43 @@ $moduleName = 'AzLocal.UpdateManagement'
 # 1. Install/upgrade to the latest published version, then import.
 $installed = Get-Module -ListAvailable -Name $moduleName |
     Sort-Object Version -Descending | Select-Object -First 1
-$latest = $null
+$targetVersion = $null
 try {
-    $latest = (Find-Module -Name $moduleName -ErrorAction Stop).Version
+    if ($PSBoundParameters.ContainsKey('RequiredVersion')) {
+        $targetVersion = (Find-Module -Name $moduleName -RequiredVersion $RequiredVersion -Repository PSGallery -ErrorAction Stop).Version
+    }
+    else {
+        $targetVersion = (Find-Module -Name $moduleName -Repository PSGallery -ErrorAction Stop).Version
+    }
 }
 catch {
+    if ($PSBoundParameters.ContainsKey('RequiredVersion')) {
+        throw "Could not resolve exact $moduleName version $RequiredVersion from PowerShell Gallery. $($_.Exception.Message)"
+    }
     Write-Warning "Could not query PowerShell Gallery for '$moduleName' ($($_.Exception.Message)). Using the installed version."
+    if ($installed) { $targetVersion = $installed.Version }
 }
 
-if ($latest -and (-not $installed -or [version]$latest -gt [version]$installed.Version)) {
-    $fromText = if ($installed) { $installed.Version } else { '(not installed)' }
-    Write-Host "Installing $moduleName $latest (was $fromText)..." -ForegroundColor Cyan
-    Install-Module -Name $moduleName -Scope $Scope -RequiredVersion $latest -Force -AllowClobber
-}
-elseif ($installed) {
-    Write-Host "$moduleName is already up to date ($($installed.Version))." -ForegroundColor Green
-}
-else {
+if (-not $targetVersion) {
     throw "$moduleName is not installed and PowerShell Gallery could not be reached."
 }
 
-Get-Module -Name $moduleName | Remove-Module -Force -ErrorAction SilentlyContinue
-Import-Module -Name $moduleName -Force
+$installedTarget = Get-Module -ListAvailable -Name $moduleName |
+    Where-Object { $_.Version -eq [version]$targetVersion } |
+    Select-Object -First 1
+if (-not $installedTarget) {
+    $fromText = if ($installed) { $installed.Version } else { '(not installed)' }
+    Write-Host "Installing $moduleName $targetVersion (highest installed: $fromText)..." -ForegroundColor Cyan
+    Install-Module -Name $moduleName -Scope $Scope -RequiredVersion $targetVersion -Force -AllowClobber
+}
+else {
+    Write-Host "$moduleName $targetVersion is already installed." -ForegroundColor Green
+}
 
-$version = (Get-Module -Name $moduleName |
-    Sort-Object Version -Descending | Select-Object -First 1).Version.ToString()
+Get-Module -Name $moduleName | Remove-Module -Force -ErrorAction SilentlyContinue
+Import-Module -Name $moduleName -RequiredVersion $targetVersion -Force
+
+$version = (Get-Module -Name $moduleName).Version.ToString()
 
 # 2. Refresh the pipeline YAMLs (marker-aware merge; preserves customisations).
 $workflowFull = Join-Path -Path $RepoRoot -ChildPath $WorkflowSubPath
