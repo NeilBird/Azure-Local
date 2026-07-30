@@ -380,8 +380,8 @@ Describe 'Module: AzLocal.UpdateManagement' {
             $script:ModuleInfo | Should -Not -BeNullOrEmpty
         }
 
-        It 'Should have version 0.9.27' {
-            $script:ModuleInfo.Version | Should -Be '0.9.27'
+        It 'Should have version 0.9.28' {
+            $script:ModuleInfo.Version | Should -Be '0.9.28'
         }
 
         It 'Module version constants are in sync between .psm1 and .psd1' {
@@ -7000,8 +7000,8 @@ Describe 'Get-AzLocalClusterUpdateReadiness readiness gates' {
 # (the cmdlet issues a single ARG batch against
 # microsoft.azurestackhci/clusters/updates/updateruns instead of per-cluster
 # /updateRuns ARM REST fan-out).
-Describe 'Integration: Get-AzLocalUpdateRuns parallel dispatch' {
-    Context 'Single ARG batch read against updateruns' {
+Describe 'Integration: Get-AzLocalUpdateRuns ARG batch dispatch' {
+    Context 'Batched ARG reads against updateruns' {
         It 'Aggregates one row per cluster with correct State + RunId and strips internal fields' {
             InModuleScope AzLocal.UpdateManagement {
                 function global:az { $global:LASTEXITCODE = 0; return '{}' }
@@ -7069,8 +7069,7 @@ Describe 'Integration: Get-AzLocalUpdateRuns parallel dispatch' {
                 ($results | Where-Object ClusterName -eq 'cluster-b').State | Should -Be 'InProgress'
                 ($results | Where-Object ClusterName -eq 'cluster-a').RunId | Should -Be 'run-1'
 
-                # ARG-first contract: exactly ONE ARG call regardless of fleet
-                # size (replaces N ARM REST calls in pre-0.7.68 design).
+                # Two IDs fit in one bounded ARG batch.
                 Assert-MockCalled Invoke-AzResourceGraphQuery -Times 1 -Exactly
 
                 foreach ($r in $results) {
@@ -7078,6 +7077,28 @@ Describe 'Integration: Get-AzLocalUpdateRuns parallel dispatch' {
                     $r.PSObject.Properties.Name | Should -Not -Contain '__CountedState'
                     $r.PSObject.Properties.Name | Should -Not -Contain 'DisplayTag'
                     $r.PSObject.Properties.Name | Should -Not -Contain 'ClusterResourceId_'
+                }
+            }
+        }
+
+        It 'Batches 81 admitted cluster resource IDs into three bounded ARG queries' {
+            InModuleScope AzLocal.UpdateManagement {
+                function global:az { $global:LASTEXITCODE = 0; return '{}' }
+                Mock Test-AzCliAvailable      { return $true }
+                Mock Install-AzGraphExtension { return $true }
+                Mock Invoke-AzLocalResourceGraphValueBatches { return @() }
+
+                $clusterResourceIds = 1..81 | ForEach-Object {
+                    "/subscriptions/sub-$_/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/cluster-$_"
+                }
+
+                $results = @(Get-AzLocalUpdateRuns -ClusterResourceIds $clusterResourceIds -Latest -PassThru)
+
+                $results | Should -HaveCount 81
+                Assert-MockCalled Invoke-AzLocalResourceGraphValueBatches -Times 1 -Exactly -ParameterFilter {
+                    @($Value).Count -eq 81 -and
+                    $QueryTemplate -match 'extensibilityresources' -and
+                    $QueryTemplate -match 'ClusterResourceId_ in~ \(\{0\}\)'
                 }
             }
         }
@@ -17948,6 +17969,56 @@ Describe 'Thin-YAML Step.7: Export-AzLocalUpdateRunMonitorReport' {
         $result.AttemptWithoutRunCount | Should -Be 0
         @($result.Rows)[0].RunId | Should -Be 'run-reused'
         (Get-Content -Raw -LiteralPath $script:_s7_ghSummaryFile) | Should -Not -Match 'Fleet Status: IDLE'
+    }
+
+    It 'Keeps grouped fleet tag admission consistent through the run query and ARM reconciliation' {
+        $attemptTime = $script:_s7_now.AddMinutes(-30)
+        $attemptTag = $attemptTime.ToString('yyyy-MM-ddTHH:mm:ssZ') + ';UpdateRetried;Solution12.2606.1003.205;Retry initiated successfully'
+        $filters = @(
+            [pscustomobject]@{
+                Name = 'Live'
+                Tags = @(
+                    [pscustomobject]@{ Name = 'Live-Environment'; Value = 'Yes' }
+                    [pscustomobject]@{ Name = 'ManagedBy'; Value = 'Central IT' }
+                )
+            }
+            [pscustomobject]@{
+                Name = 'Test'
+                Tags = @([pscustomobject]@{ Name = 'Test-Environment'; Value = 'Yes' })
+            }
+        )
+        $candidates = @(
+            [pscustomobject]@{ ClusterName = 'live-admitted'; ResourceId = '/subscriptions/s1/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/live-admitted'; tags = @{ 'Live-Environment' = 'Yes'; ManagedBy = 'Central IT'; UpdateLastAttempt = $attemptTag } }
+            [pscustomobject]@{ ClusterName = 'test-admitted'; ResourceId = '/subscriptions/s2/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/test-admitted'; tags = @{ 'Test-Environment' = 'Yes'; UpdateLastAttempt = $attemptTag } }
+            [pscustomobject]@{ ClusterName = 'live-partial'; ResourceId = '/subscriptions/s3/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/live-partial'; tags = @{ 'Live-Environment' = 'Yes'; UpdateLastAttempt = $attemptTag } }
+            [pscustomobject]@{ ClusterName = 'not-admitted'; ResourceId = '/subscriptions/s4/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/not-admitted'; tags = @{ Environment = 'Other'; UpdateLastAttempt = $attemptTag } }
+        )
+        $global:_s7_payload = @{ Candidates = $candidates; Filters = $filters; Now = $script:_s7_now; OutDir = $script:_s7_outDir }
+
+        $result = InModuleScope AzLocal.UpdateManagement {
+            Mock Test-AzLocalUpdateRunsInFlight { $false }
+            Mock Get-AzLocalClusterInventory {
+                @($global:_s7_payload.Candidates | Where-Object {
+                    Test-AzLocalClusterMatchesTagFilter -Tags $_.tags -ClusterTagFilters $global:_s7_payload.Filters
+                })
+            }
+            Mock Get-AzLocalUpdateRuns { @() }
+            Mock Get-AzLocalClusterUpdateRuns { @() }
+
+            $monitorResult = Export-AzLocalUpdateRunMonitorReport -OutputDirectory $global:_s7_payload.OutDir -Now $global:_s7_payload.Now -SkipWhenIdle -PassThru
+
+            Should -Invoke Get-AzLocalUpdateRuns -Times 1 -Exactly -ParameterFilter {
+                @($ClusterResourceIds).Count -eq 2 -and
+                $ClusterResourceIds -contains '/subscriptions/s1/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/live-admitted' -and
+                $ClusterResourceIds -contains '/subscriptions/s2/resourceGroups/rg/providers/Microsoft.AzureStackHCI/clusters/test-admitted'
+            }
+            Should -Invoke Get-AzLocalClusterUpdateRuns -Times 2 -Exactly -ParameterFilter {
+                $resourceId -notmatch 'live-partial|not-admitted'
+            }
+            return $monitorResult
+        }
+
+        $result.AttemptWithoutRunCount | Should -Be 2
     }
 
     It '-SkipWhenIdle with an in-flight run: runs the FULL sweep (InFlightCount=1)' {

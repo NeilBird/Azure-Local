@@ -2,7 +2,7 @@
 
 > ⚠️ **Disclaimer**: This module is **NOT** a Microsoft supported service offering or product. It is provided as example code only, with no warranty or official support. Refer to the [MIT license](https://github.com/NeilBird/Azure-Local/blob/main/LICENSE) for further information.
 
-**Latest Version:** v0.9.27 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.9.27)
+**Latest Version:** v0.9.28 - [Published in PowerShell Gallery](https://www.powershellgallery.com/packages/AzLocal.UpdateManagement/0.9.28)
 
 This folder contains the 'AzLocal.UpdateManagement' PowerShell module for managing updates on Azure Local (formerly Azure Stack HCI) clusters using the Azure Local REST API. The module supports both interactive use and CI/CD automation via Service Principal or Managed Identity authentication.
 
@@ -14,7 +14,7 @@ Azure Local REST API specification (includes update management endpoints): https
 **This README (overview + most-recent release notes):**
 
 - [Where to Start](#where-to-start)
-- [What's New in v0.9.27](#whats-new-in-v0927)
+- [What's New in v0.9.28](#whats-new-in-v0928)
 - [Files](#files)
 - [Prerequisites](#prerequisites)
 - [RBAC Requirements](#rbac-requirements) (summary; full reference in [docs/rbac.md](docs/rbac.md))
@@ -78,32 +78,15 @@ If you are new to this module, work through these in order from a regular PowerS
 
 > Most CI/CD pipelines in [Automation-Pipeline-Examples/](Automation-Pipeline-Examples/) are direct implementations of one of these workflows. Start there if you want a copy-pasteable end-to-end pipeline.
 
-## Unreleased
+## What's New in v0.9.28
 
 **Update: 4 now distinguishes Resource Graph indexing lag from a genuinely missing update run, and every bundled pipeline can publish a bounded diagnostic transcript.** Recent `UpdateLastAttempt` tags with `UpdateStarted` or `UpdateRetried` outcomes are checked against the cluster's direct ARM `updateRuns` endpoint when ARG lacks a covering row. A run covers the attempt when its `timeStarted` is recent or its `lastUpdatedTime` advanced near the attempt, which handles retries that reuse the original run and start time. The `-SkipWhenIdle` heartbeat checks these tags before trusting an ARG-idle result, so ARG omission cannot bypass reconciliation. Recovered runs replace stale same-cluster/same-update ARG rows, while truly absent runs remain `AttemptWithoutRun`; ARM authorization/transport failures remain explicit. `Clusters scoped` now counts admitted inventory rows.
 
-For pipeline troubleshooting, use the manual `diagnostics=true` input for one manually queued run or set `DEBUG_VERBOSE=true` for all triggers, including schedules and event-driven runs. Diagnostics publish as a separate run-attempt artifact. GitHub defaults to 14-day retention and accepts `DEBUG_RETENTION_DAYS`; Azure DevOps uses project retention. See the [CI/CD diagnostics runbook](Automation-Pipeline-Examples/README.md#522-diagnostics-for-any-pipeline-run).
-
-## What's New in v0.9.27
-
-**Scheduled pipelines now avoid crowded five-minute boundaries, every pipeline job has an explicit two-hour runtime cap that customers can reduce centrally, and fleet settings can safely widen tagged update-start windows.** Config: 3 emits the same offset Apply and Monitor recommendations on GitHub Actions and Azure DevOps.
-
-### Added
-
-- **Central maximum job runtime.** Every bundled job uses `AZLOCAL_MAX_PIPELINE_RUNTIME_MINUTES`, defaulting to 120 minutes when the GitHub repository variable or Azure DevOps variable-group member is absent. The native platform timeout cancels a job that exceeds the limit.
-- **Optional update-window allowance.** Fleet settings schema v4 adds independent `0-60` minute before/after allowances around each cluster's tagged `UpdateStartWindow`. Both default to `0`, so existing strict behavior is unchanged.
-
-### Changed
-
-- **Offset shipped schedules.** Every active bundled cron now starts at minute 17 while retaining its existing hour, weekday, and cadence. The Apply pipeline remains manual-only; its opt-in example is `17 6 * * *`.
-- **Offset Config: 3 recommendations.** The default Apply lead is seven minutes. Retry recommendations are phased seven minutes before their natural target, and Monitor recommendations use minute 17 (`17,47` at the default 30-minute cadence).
-- **Existing custom schedules remain safe.** `Update-AzLocalPipelineExample` continues to preserve schedule customization markers, so customers must opt into the new cron minutes when their copied schedule block has already been customized.
-- **Fleet settings migrate automatically.** A normal pipeline refresh backs up schema v1/v2/v3 byte-for-byte and migrates directly to v4, preserving comments, line endings, inert starters, and canonical section order.
-- No public function or export-count change (71). Bundled GitHub Actions and Azure DevOps pipeline pins are updated to `0.9.27`.
+For pipeline troubleshooting, use the manual `diagnostics=true` input for one manually queued run or set `DEBUG_VERBOSE=true` for all triggers, including schedules and event-driven runs. Diagnostics publish as a separate run-attempt artifact. GitHub defaults to 14-day retention and accepts `DEBUG_RETENTION_DAYS`; Azure DevOps uses project retention. Multi-cluster update-run reads also batch admitted resource IDs, keeping management-group fleets with grouped tag admission below Windows command-line limits. No public function or export-count change (71); all bundled pipeline pins are updated to `0.9.28`. See the [CI/CD diagnostics runbook](Automation-Pipeline-Examples/README.md#522-diagnostics-for-any-pipeline-run).
 
 > Previous release notes have moved into the [Release History](#release-history) appendix at the bottom of this document.
 
-See [CHANGELOG.md](CHANGELOG.md) for full release details. See [`What's New in v0.9.26`](#whats-new-in-v0926) in the Release History for the previous release.
+See [CHANGELOG.md](CHANGELOG.md) for full release details. See [`What's New in v0.9.27`](#whats-new-in-v0927) in the Release History for the previous release.
 
 ## Files
 
@@ -603,7 +586,11 @@ This code is provided as-is for educational and reference purposes.
 
 The full What's-New history (v0.7.81 and earlier) has moved to [docs/release-history.md](docs/release-history.md).
 
-The most recent release notes for **v0.9.27** stay above under [`What's New in v0.9.27`](#whats-new-in-v0927).
+The most recent release notes for **v0.9.28** stay above under [`What's New in v0.9.28`](#whats-new-in-v0928).
+
+### What's New in v0.9.27
+
+**Scheduled pipelines now avoid crowded five-minute boundaries, every pipeline job has an explicit maximum runtime, and fleet settings can safely widen tagged update-start windows.** All active schedules start at minute 17. Config: 3 uses a seven-minute Apply lead, `AZLOCAL_MAX_PIPELINE_RUNTIME_MINUTES` controls the native per-job timeout, and schema v4 adds strict before/after update-window allowances with backed-up migration. No public function or export-count change (71); pipeline pins are updated to `0.9.27`. See [CHANGELOG.md](CHANGELOG.md#0927---2026-07-28) for full details.
 
 ### What's New in v0.9.26
 

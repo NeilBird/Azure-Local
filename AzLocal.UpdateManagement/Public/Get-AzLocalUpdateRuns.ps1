@@ -9,11 +9,11 @@ function Get-AzLocalUpdateRuns {
 
         Supports multiple input methods:
         - Single cluster by name (uses ARM REST against the cluster's /updateRuns endpoint)
-        - Multiple clusters by name or resource ID (single ARG query)
-        - All clusters matching an UpdateRing tag value (single ARG query)
+        - Multiple clusters by name or resource ID (batched ARG queries)
+        - All clusters matching an UpdateRing tag value (batched ARG queries)
 
-        In multi-cluster mode (v0.7.68+) all update runs are returned by ONE
-        Azure Resource Graph query against the `extensibilityresources`
+        In multi-cluster mode (v0.7.68+) update runs are returned by Azure
+        Resource Graph queries against the `extensibilityresources`
         namespace (microsoft.azurestackhci/clusters/updates/updateruns) -
         typically completes in under 10 seconds for hundreds of clusters,
         replacing the previous per-cluster ARM REST fan-out which took
@@ -386,29 +386,30 @@ function Get-AzLocalUpdateRuns {
     # identical in shape to the ARM REST /updateRuns response, so we can
     # reuse Format-AzLocalUpdateRun unchanged.
 
-    # Build the KQL `in~()` literal: cluster IDs are lowercased to match the
-    # `tolower(...)` projection inside the query. PowerShell single-quoted
-    # strings in the join are valid KQL string literals because cluster IDs
-    # cannot contain apostrophes.
-    $idListKql = ($clustersToProcess | ForEach-Object { "'$($_.ResourceId.ToLower())'" }) -join ','
+    # Batch cluster IDs so large management-group fleets do not produce a KQL
+    # argument that exceeds the Windows az.cmd command-line limit.
+    $clusterResourceIds = @($clustersToProcess | ForEach-Object { [string]$_.ResourceId })
     $updateNameClause = if ($UpdateName) { "| where UpdateName_ =~ '$UpdateName'" } else { '' }
 
-    $runsKql = @"
+    $runsKqlTemplate = @"
 extensibilityresources
 | where type =~ 'microsoft.azurestackhci/clusters/updates/updateruns'
 | extend ids = split(id, '/')
 | extend ClusterName_ = tostring(ids[8]), UpdateName_ = tostring(ids[10])
 | extend ClusterResourceId_ = tolower(strcat('/subscriptions/', tostring(ids[2]), '/resourceGroups/', tostring(ids[4]), '/providers/Microsoft.AzureStackHCI/clusters/', ClusterName_))
-| where ClusterResourceId_ in~ ($idListKql)
+| where ClusterResourceId_ in~ ({0})
 $updateNameClause
 | project id, name, type, location, properties, ClusterName_, ClusterResourceId_, UpdateName_, ts = todatetime(properties.timeStarted)
 | order by ts desc
 "@
 
     try {
-        $argParams = @{ Query = $runsKql }
-        if ($SubscriptionId) { $argParams['SubscriptionId'] = $SubscriptionId }
-        $allRunsRaw = Invoke-AzResourceGraphQuery @argParams
+        $batchParams = @{
+            Value         = $clusterResourceIds
+            QueryTemplate = $runsKqlTemplate
+        }
+        if ($SubscriptionId) { $batchParams['SubscriptionId'] = $SubscriptionId }
+        $allRunsRaw = @(Invoke-AzLocalResourceGraphValueBatches @batchParams)
     }
     catch {
         Write-Log -Message "Azure Resource Graph query for update runs failed: $($_.Exception.Message)" -Level Error

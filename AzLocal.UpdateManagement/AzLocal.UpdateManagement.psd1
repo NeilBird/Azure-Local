@@ -3,7 +3,7 @@
     RootModule = 'AzLocal.UpdateManagement.psm1'
 
     # Version number of this module.
-    ModuleVersion = '0.9.27'
+    ModuleVersion = '0.9.28'
 
     # Supported PSEditions
     CompatiblePSEditions = @('Desktop', 'Core')
@@ -379,15 +379,17 @@
 
             # ReleaseNotes of this module
             ReleaseNotes = @'
+## Version 0.9.28 - Update: 4 recovers ARG-missing update runs through direct ARM, correlates reused retries by lastUpdatedTime, hardens SkipWhenIdle with recent-attempt tags, and batches admitted cluster IDs for large management-group fleets. All 20 pipelines add bounded diagnostic transcript artifacts. No export change (71).
+
 ## Version 0.9.27 - Minute-17 schedules, seven-minute Apply lead, and job timeouts. Schema v4 adds strict UpdateStartWindow allowances and backed-up v1/v2/v3 migration. No export change (71).
 
 ## Version 0.9.26 - Update: 1 scopes and batches ARG reads, preserves Ready solutions beside prerequisite SBE, reconciles stale ARG rows, and emits clean-run JUnit. No export change (71).
 
 ## Version 0.9.25 - Fixes large readiness summaries, normalizes Markdown cells, and expands Config: 3 remediation. No export change (71).
 
-## Version 0.9.24 - Fleet settings schema v3 adds named tag groups: tags use AND within a group and groups use OR. Normal pipeline updates back up and migrate schema v1/v2, including fully commented inert files. Sparse ARG/CLI/ARM payloads are null-safe, and reporting.maxRowsPerTable accepts 2,000. No public/export change (71). Pipeline pins bumped to 0.9.24.
+## Version 0.9.24 - Adds grouped fleet tag admission, null-safe cloud payload handling, and 2,000-row reporting limits. No export change (71).
 
-## Version 0.9.23 - Global cluster tag admission policy introduced flat schema-v2 AND filters across pipeline reads and mutation boundaries, with cluster inheritance, connectivity attribution, run snapshots, and backed-up v1 migration. No public/export change (71). Pipeline pins bumped to 0.9.23.
+## Version 0.9.23 - Adds global cluster tag admission across read and mutation boundaries with backed-up schema migration. No export change (71).
 
 ## Version 0.9.22 - ARG payload hardening. The shared query helper recovers from ResponsePayloadTooLarge by halving --first and retaining the smaller size across skip-token pages. Monitor: 2 starts health-result paging at 50 rows; Monitor: 1 projects only consumed fields. No public/export change (69). Pipeline pins bumped to 0.9.22.
 

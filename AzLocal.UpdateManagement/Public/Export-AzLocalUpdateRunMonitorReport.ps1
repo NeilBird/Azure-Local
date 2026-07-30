@@ -131,12 +131,11 @@ function Export-AzLocalUpdateRunMonitorReport {
     .PARAMETER SkipWhenIdle
         Performance fast path for high-frequency / event-driven schedules.
         When set, the cmdlet first runs ONE cheap fleet-wide Resource Graph
-        probe ('is any update run InProgress?'). If nothing is in flight it
-        emits the IDLE result immediately (empty CSV + JUnit, all-zero step
-        outputs, 'Fleet Status: IDLE' badge) and skips the expensive
-        per-cluster Get-AzLocalClusterInventory + Get-AzLocalUpdateRuns
-        sweep. If anything is InProgress - or if the probe itself errors
-        (fail-safe) - the full sweep runs exactly as without the switch.
+        probe ('is any update run InProgress?'). If ARG reports idle, admitted
+        inventory is checked for recent UpdateStarted/UpdateRetried tags. The
+        cmdlet emits the IDLE result and skips the update-run sweep only when
+        both checks are empty. A recent attempt, an in-flight ARG row, or an
+        error in either probe runs the full sweep and ARM reconciliation.
 
     .OUTPUTS
         Nothing by default. When -PassThru is set, a single PSCustomObject.

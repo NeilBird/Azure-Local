@@ -17,8 +17,8 @@
 #     <failure> when the elapsed duration exceeds the threshold so the
 #     Checks tab shows stuck runs in red).
 #
-# Data source: Get-AzLocalUpdateRuns -Latest (one row per cluster). No new
-# cmdlets required - this is a pure pipeline composition.
+# Data sources: admitted inventory plus batched Get-AzLocalUpdateRuns -Latest,
+# with direct ARM reconciliation for recent start/retry tags that ARG omits.
 
 # Workflow name carries the same Step.N - prefix as the filename so the GitHub
 # Actions sidebar (which sorts workflows alphabetically by this `name:` field)
@@ -32,9 +32,9 @@ on:
   #
   # Default (v0.8.90+): runs every 6 hours, 24x7 (00:00, 06:00, 12:00, 18:00
   # UTC) as a low-cost safety-net heartbeat. The snapshot step runs with
-  # -SkipWhenIdle, so a heartbeat that finds nothing in flight short-circuits
-  # after a single cheap Resource Graph probe (no per-cluster sweep) - which is
-  # what makes a frequent cron affordable. The PRIMARY, low-latency trigger is
+  # -SkipWhenIdle. When ARG finds nothing in flight, admitted inventory is
+  # checked for recent start/retry tags before the run sweep is skipped. The
+  # PRIMARY, low-latency trigger is
   # event-driven: Update: 3 (Apply Updates) fires this workflow as soon as it
   # starts >=1 update (see the apply-updates pipeline). GitHub Actions cron is
   # ALWAYS UTC - adjust below for your local maintenance window. Comment the
@@ -83,13 +83,13 @@ on:
         required: false
         default: '3'
       # v0.8.90: performance fast path. When 'true' (default) the snapshot runs
-      # with -SkipWhenIdle - one cheap fleet-wide "anything in flight?" probe
-      # that short-circuits to an IDLE report when nothing is updating, skipping
-      # the per-cluster sweep. Set 'false' to force a full sweep even when idle.
+      # with -SkipWhenIdle. An ARG-idle result skips the update-run sweep only
+      # when admitted inventory also has no recent start/retry tags. Set 'false'
+      # to force a full sweep even when idle.
       # NOTE: scheduled (cron) runs always behave as 'true' regardless of this
       # input, since workflow_dispatch inputs do not apply to schedule events.
       skip_when_idle:
-        description: 'Skip the per-cluster sweep when no update runs are in flight (cheap probe only). Default true.'
+        description: 'Skip the update-run sweep when ARG is idle and admitted inventory has no recent start/retry tags. Default true.'
         required: false
         default: 'true'
         type: choice
@@ -162,7 +162,7 @@ env:
   # this to the version actually installed and to the latest on PSGallery, and emits a
   # ::notice annotation if the YAML appears stale - prompting you to refresh via
   # Copy-AzLocalPipelineExample -Update. See Automation-Pipeline-Examples/README.md section 5.
-  GENERATED_AGAINST_MODULE_VERSION: '0.9.27'
+  GENERATED_AGAINST_MODULE_VERSION: '0.9.28'
   # Resolution order for the module version pin (leave all unset to install the latest,
   # which is the default "fix-forward" behaviour): manual workflow_dispatch input >
   # repository variable 'REQUIRED_MODULE_VERSION' > empty (latest).

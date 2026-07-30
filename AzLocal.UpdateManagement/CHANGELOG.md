@@ -5,7 +5,7 @@ All notable changes to the AzLocal.UpdateManagement module (renamed from AzStack
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.9.28] - 2026-07-30
 
 ### Added
 
@@ -18,6 +18,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Update: 4 now reconciles a recent `UpdateLastAttempt` outcome of `UpdateStarted` or `UpdateRetried` against the cluster's direct ARM `updateRuns` endpoint when Azure Resource Graph omits or lags the matching nested resource. Correlation accepts either a run started near the attempt or a pre-existing run whose `lastUpdatedTime` advanced near the attempt, covering retries that reuse a run resource and preserve its original `timeStarted`. A covering ARM run replaces a stale same-cluster/same-update ARG row; a genuinely absent run remains an `AttemptWithoutRun` signal.
 - Update: 4's `-SkipWhenIdle` heartbeat no longer trusts an ARG-idle result by itself. It checks admitted inventory for recent `UpdateStarted`/`UpdateRetried` tags and runs the full ARM reconciliation sweep when one exists; only fleets with neither an ARG in-flight row nor a recent attempt skip the update-run sweep. ARM authorization or transport failures are reported separately instead of being treated as a valid empty run collection.
 - The Update: 4 `Clusters scoped` count now reports the admitted cluster inventory count instead of deriving the value from update-run rows.
+- Multi-cluster update-run reads now batch admitted cluster resource IDs in groups of 40. Large management-group fleets no longer risk exceeding the Windows `az.cmd` command-line limit when global tag groups admit many clusters.
+
+### Changed
+
+- No public function or export-count change (71). Bundled GitHub Actions and Azure DevOps pipeline pins are updated to `0.9.28`.
 
 ## [0.9.27] - 2026-07-28
 
